@@ -6,9 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"sync"
 	"time"
 
+	adaptersftp "github.com/mslxl/natcatty/adapters/sftp"
 	"github.com/mslxl/natcatty/adapters/shellhook"
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
@@ -29,6 +32,15 @@ const tmuxProbeTimeout = 10 * time.Second
 // login shell instead of holding the terminal channel or guessing a shell
 // language the peer may not understand.
 const captureHookProbeTimeout = 5 * time.Second
+
+// remoteLoginShellProbeTimeout bounds the non-executing login-shell probe.
+// When the account database cannot be read in time, the Session keeps its
+// plain login shell and falls back to Tier 2/3 instead of risking a wrapper
+// the login shell cannot parse.
+const remoteLoginShellProbeTimeout = 5 * time.Second
+
+// maxPasswdFileBytes bounds the account database read over SFTP.
+const maxPasswdFileBytes = 1 << 20
 
 // routeSource resolves the non-secret jump chain and proxy for a Host. The app
 // backs it with the Vault; tests provide a fake.
@@ -169,13 +181,13 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		route = resolved
 	}
 
-	lease, terminal, notices, attached, hookExpected, err := f.acquireTerminal(ctx, spec, route)
+	lease, terminal, notices, attached, hookExpected, hookWithdrawn, err := f.acquireTerminal(ctx, spec, route)
 	if err != nil {
 		return nil, err
 	}
 	return &leasedTransport{
 		terminal: terminal, lease: lease, notices: notices,
-		tmuxAttached: attached, captureHookExpected: hookExpected,
+		tmuxAttached: attached, captureHookExpected: hookExpected, hookWithdrawn: hookWithdrawn,
 	}, nil
 }
 
@@ -199,7 +211,7 @@ func (f *transportFactory) withMoshPreferences(spec appsession.StartSpec) appses
 // fresh transport instead of failing the Session. When the Session opts into
 // tmux, the same Connection answers a non-interactive probe first, so a
 // missing tmux falls back to the login shell without a second dial.
-func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.StartSpec, route appconnection.Route) (*appconnection.Lease, appconnection.Terminal, <-chan appsession.Notice, bool, bool, error) {
+func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.StartSpec, route appconnection.Route) (*appconnection.Lease, appconnection.Terminal, <-chan appsession.Notice, bool, bool, bool, error) {
 	// hookExpected reports whether the terminal's startup actually installs
 	// the planned capture hook. It stays false when the remote platform is
 	// unknown or the peer's shell cannot host the wrapper.
@@ -242,7 +254,7 @@ func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.
 	for attempt := 0; ; attempt++ {
 		lease, err := f.manager.Acquire(ctx, request)
 		if err != nil {
-			return nil, nil, nil, false, false, err
+			return nil, nil, nil, false, false, false, err
 		}
 		specification := appconnection.TerminalSpec{
 			Cols:    spec.Cols,
@@ -269,16 +281,32 @@ func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.
 			!spec.NetworkDevice && spec.RemoteCommand == "" {
 			specification.Command, attached, pending = f.tmuxTerminal(ctx, lease, spec.HostID)
 		}
+		hookWithdrawn := false
+		if spec.CaptureHookRemote && specification.Command != "" &&
+			!shellhook.IsWindowsOpenSSH(lease.RemoteVersion()) {
+			// sshd runs the RemoteCommand through the login shell with -c. A
+			// POSIX wrapper is a syntax error in xonsh, csh, tcsh, and nu, and
+			// would kill the channel. Establish the login shell without
+			// executing it; only a POSIX shell that accepts the wrapper keeps
+			// it. Every other answer keeps the plain interactive login shell
+			// and lets the Session use Tier 2/3.
+			loginShell := probeRemoteLoginShell(ctx, lease, spec.Username)
+			command := shellhook.RemoteCommandForLoginShell(specification.Command, loginShell)
+			if command != specification.Command {
+				specification.Command = command
+				hookWithdrawn = true
+			}
+		}
 		terminal, err := lease.OpenTerminal(ctx, specification)
 		if err == nil {
 			f.publishTmuxNotices(notices, spec.HostID, pending)
-			return lease, terminal, notices, attached, hookExpected, nil
+			return lease, terminal, notices, attached, hookExpected, hookWithdrawn, nil
 		}
 		_ = lease.Discard()
 		if attempt == 0 && errors.Is(err, appconnection.ErrStaleTransport) {
 			continue
 		}
-		return nil, nil, nil, false, false, err
+		return nil, nil, nil, false, false, false, err
 	}
 }
 
@@ -317,6 +345,119 @@ func captureRemoteCommand(ctx context.Context, lease *appconnection.Lease, fallb
 	// The registered shell cannot host a wrapper. The login shell is always
 	// understood, so the Session opens and capture stays at Tier 2/3.
 	return "", false
+}
+
+// probeRemoteLoginShell reads the SSH account's login shell from /etc/passwd
+// over the SFTP subsystem. Opening a subsystem never executes the login
+// shell, so even an xonsh or csh account cannot be disturbed. Any failure,
+// ambiguity, or timeout returns "" and the caller keeps the plain login
+// shell. A single-channel peer never probes: the SFTP channel would consume
+// the channel the terminal needs.
+func probeRemoteLoginShell(ctx context.Context, lease *appconnection.Lease, username string) string {
+	if lease == nil || lease.SingleChannel() {
+		return ""
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, remoteLoginShellProbeTimeout)
+	defer cancel()
+	// The abort channel closes the SFTP stream if the probe outlives its
+	// deadline, so a wedged subsystem cannot hold the Session open.
+	abort := make(chan struct{})
+	defer close(abort)
+	done := make(chan string, 1)
+	go func() {
+		done <- readRemoteLoginShell(probeCtx, lease, username, abort)
+	}()
+	select {
+	case shell := <-done:
+		return shell
+	case <-probeCtx.Done():
+		return ""
+	}
+}
+
+// readRemoteLoginShell performs the SFTP read. It is separate so the caller
+// can bound the whole exchange, including protocol reads that do not take a
+// context.
+func readRemoteLoginShell(ctx context.Context, lease *appconnection.Lease, username string, abort <-chan struct{}) string {
+	stream, err := lease.Subsystem(ctx, "sftp")
+	if err != nil {
+		return ""
+	}
+	remote, err := adaptersftp.NewRemote(stream, nil)
+	if err != nil {
+		return ""
+	}
+	defer remote.Close()
+	go func() {
+		select {
+		case <-abort:
+			_ = remote.Close()
+		case <-ctx.Done():
+			_ = remote.Close()
+		}
+	}()
+	home := ""
+	if strings.TrimSpace(username) == "" {
+		// Without a configured user, match the SFTP home directory instead of
+		// guessing the account name.
+		home, err = remote.Root(ctx)
+		if err != nil {
+			return ""
+		}
+	}
+	file, err := remote.Open(ctx, "/etc/passwd")
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxPasswdFileBytes))
+	if err != nil {
+		return ""
+	}
+	shell, ok := passwdLoginShell(data, username, home)
+	if !ok {
+		return ""
+	}
+	return shell
+}
+
+// passwdLoginShell finds one account's shell in a passwd file. A username
+// selects its own entry; otherwise the home directory from the SFTP root
+// selects it. An absent or ambiguous match is unknown, never a guess.
+func passwdLoginShell(data []byte, username, home string) (string, bool) {
+	username = strings.TrimSpace(username)
+	var matches []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, ":")
+		if len(fields) < 7 {
+			continue
+		}
+		name := fields[0]
+		if name == "" || strings.HasPrefix(name, "+") || strings.HasPrefix(name, "-") {
+			continue
+		}
+		shell := strings.TrimSpace(fields[6])
+		if shell == "" {
+			continue
+		}
+		if username != "" {
+			if name == username {
+				matches = append(matches, shell)
+			}
+			continue
+		}
+		if home != "" && fields[5] == home {
+			matches = append(matches, shell)
+		}
+	}
+	if len(matches) != 1 {
+		return "", false
+	}
+	return matches[0], true
 }
 
 // tmuxTerminal probes the remote and decides what the terminal channel should
@@ -443,6 +584,10 @@ type leasedTransport struct {
 	// installs the planned capture hook. It is false when the remote shell
 	// cannot host the wrapper, so the Session starts at Tier 2/3 immediately.
 	captureHookExpected bool
+	// hookWithdrawn reports that the planned remote capture wrapper was
+	// replaced by the plain login shell because its shell could not be shown
+	// to accept a POSIX command.
+	hookWithdrawn bool
 
 	mu     sync.Mutex
 	closed bool
@@ -453,7 +598,12 @@ type leasedTransport struct {
 var (
 	_ appsession.Notifier                    = (*leasedTransport)(nil)
 	_ appsession.CaptureHookExpectedReporter = (*leasedTransport)(nil)
+	_ appsession.CaptureHookWithdrawn        = (*leasedTransport)(nil)
 )
+
+// CaptureHookWithdrawn reports that the factory kept the plain login shell
+// instead of the planned capture wrapper.
+func (t *leasedTransport) CaptureHookWithdrawn() bool { return t.hookWithdrawn }
 
 // Notices returns the Session-facing notices produced by the Connection. X11
 // forwarding reports a dead local display here without ending the shell.

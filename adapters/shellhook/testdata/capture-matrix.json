@@ -1,6 +1,6 @@
 {
-  "description": "Ticket 07 capture matrix. Every path records the exact startup flags the planner produces and the fidelity observed or expected for the captured fields. Placeholders: <shell> is the shell path, <home> the Session home, <hook-dir> the session-scoped temporary directory. TestCaptureMatrix validates the startup flags and hook files; the evidence names the test or manual check behind the fidelity claim.",
-  "fidelityLegend": "tier is the capture tier. cwd/exit/duration: exact means a real shell was observed reporting the field; observed means a real shell reported a finish or the field but the value is not equal to the shell's own; missing means the capture path cannot observe it; manual means this machine cannot run the path and the check is documented in evidence. Remote BSD paths are manual: the wrapper is asserted by TestRemoteWrapper* but no BSD Host is available here.",
+  "description": "Ticket 07 capture matrix. Every path records the exact startup flags the planner produces, the login-shell decision the SSH transport applies before opening the terminal, and the field fidelity the path produces. Local paths are replanned for every recorded platform. SSH paths apply shellhook.RemoteCommandForLoginShell to the recorded login shell: zsh, bash, and fish keep the POSIX wrapper; xonsh, csh, tcsh, nu, and an unknown shell keep the plain login shell and use Tier 2/3. Verification is observed (a real shell ran here), manual (a real BSD or OpenSSH host is required), or planned.",
+  "fidelityLegend": "tier is the capture tier. cwd/exit/duration: exact means a real shell was observed reporting that field; observed means a real shell reported the field but not the value; missing means the capture path cannot observe it; manual means this machine cannot run the path; planned means the behavior follows the design but was not run here. A manual or planned path may not claim an exact or observed field.",
   "paths": [
     {
       "name": "bsd-local-zsh",
@@ -24,8 +24,9 @@
         ".zlogin": "source",
         ".zlogout": "source"
       },
+      "verification": "observed",
       "fidelity": {"tier": "1", "cwd": "exact", "exit": "exact", "duration": "exact"},
-      "evidence": "TestRealShellCapture and TestRealShellSessionCapturesTierOneEndToEnd (zsh on darwin); BSD startup files are the same POSIX scripts."
+      "evidence": "TestRealShellCapture and TestRealShellSessionCapturesTierOneEndToEnd (zsh on darwin); the BSD startup files are the same POSIX scripts."
     },
     {
       "name": "bsd-local-bash",
@@ -39,8 +40,9 @@
       "wantCommand": ["<shell>", "--rcfile", "<hook-dir>/bashrc", "-i"],
       "wantEnv": {},
       "wantFiles": {"bashrc": "NETCATTY_HOOK"},
+      "verification": "observed",
       "fidelity": {"tier": "1", "cwd": "exact", "exit": "exact", "duration": "exact"},
-      "evidence": "TestRealShellCapture and TestRealBashSourcesTheProfileAndBashrcOnce (bash on darwin); BSD startup files are the same POSIX scripts."
+      "evidence": "TestRealShellCapture and TestRealBashSourcesTheProfileAndBashrcOnce (bash on darwin); the BSD startup files are the same POSIX scripts."
     },
     {
       "name": "bsd-local-fish",
@@ -54,8 +56,9 @@
       "wantCommand": ["<shell>", "-l", "--init-command", "source \"$NETCATTY_HOOK_FILE\""],
       "wantEnv": {"NETCATTY_HOOK_FILE": "<hook-dir>/hook.fish"},
       "wantFiles": {"hook.fish": "fish_preexec"},
-      "fidelity": {"tier": "1", "cwd": "exact", "exit": "exact", "duration": "exact"},
-      "evidence": "TestRealShellCapture (fish on darwin); manual check on a BSD host because fish is not installed there by default."
+      "verification": "manual",
+      "fidelity": {"tier": "1", "cwd": "manual", "exit": "manual", "duration": "manual"},
+      "evidence": "TestRealShellSessionCapturesTierOneEndToEnd covers fish when NETCATTY_TEST_FISH or fish is installed; fish is not installed in this environment, so the path remains a manual check."
     },
     {
       "name": "bsd-local-csh-unsupported",
@@ -69,53 +72,86 @@
       "wantCommand": ["<shell>", "-l"],
       "wantEnv": {},
       "wantFiles": {},
+      "verification": "manual",
       "fidelity": {"tier": "2/3", "cwd": "missing", "exit": "missing", "duration": "manual"},
-      "evidence": "TestPlanOnBSDPOSIXHostsInstallsTheHook (unsupported shell stays unchanged); the Session keeps the typed fallback. The prompt heuristic usually gives a finish, so the duration depends on the csh prompt."
+      "evidence": "TestPlanOnBSDPOSIXHostsInstallsTheHook (an unsupported shell stays unchanged); no real csh Session was run in this environment, so the prompt-derived duration is manual."
+    },
+    {
+      "name": "bsd-local-tcsh-unsupported",
+      "platforms": ["freebsd", "openbsd", "netbsd", "dragonfly", "darwin"],
+      "kind": "local",
+      "shell": "tcsh",
+      "args": ["-l"],
+      "hookEnabled": true,
+      "specEnv": {"HOME": "<home>"},
+      "wantHookExpected": false,
+      "wantCommand": ["<shell>", "-l"],
+      "wantEnv": {},
+      "wantFiles": {},
+      "verification": "manual",
+      "fidelity": {"tier": "2/3", "cwd": "missing", "exit": "missing", "duration": "manual"},
+      "evidence": "TestPlanOnBSDPOSIXHostsInstallsTheHook (an unsupported shell stays unchanged); no real tcsh Session was run in this environment, so the prompt-derived duration is manual."
     },
     {
       "name": "bsd-remote-zsh",
       "platforms": ["freebsd", "openbsd", "netbsd", "dragonfly", "darwin", "linux"],
       "kind": "ssh",
-      "shell": "zsh",
+      "loginShell": "/bin/zsh",
       "hookEnabled": true,
       "wantHookExpected": true,
-      "wantRemoteContains": ["ZDOTDIR=\"$netcatty_dir\" \"$netcatty_shell\" -l"],
-      "fidelity": {"tier": "1", "cwd": "exact", "exit": "exact", "duration": "exact"},
-      "evidence": "TestRemoteWrapperInstallsEachShellAndCleansUp; manual BSD-host check of the same POSIX wrapper."
+      "wantRemoteWrapper": true,
+      "wantRemoteInvocations": ["NETCATTY_USER_ZDOTDIR=\"$netcatty_zdotdir\" NETCATTY_HOOK_DIR=\"$netcatty_dir\" ZDOTDIR=\"$netcatty_dir\" \"$netcatty_shell\" -l"],
+      "verification": "manual",
+      "fidelity": {"tier": "1", "cwd": "manual", "exit": "manual", "duration": "manual"},
+      "evidence": "TestSSHCaptureHookKeepsTheWrapperForPOSIXLoginShells (fake SSH server with a real SFTP account probe) and TestRemoteWrapperInstallsEachShellAndCleansUp (wrapper run locally); a real BSD/OpenSSH Host is not available here."
     },
     {
       "name": "bsd-remote-bash",
       "platforms": ["freebsd", "openbsd", "netbsd", "dragonfly", "darwin", "linux"],
       "kind": "ssh",
-      "shell": "bash",
+      "loginShell": "/usr/local/bin/bash",
       "hookEnabled": true,
       "wantHookExpected": true,
-      "wantRemoteContains": ["--rcfile \"$netcatty_dir/bashrc\" -i"],
-      "fidelity": {"tier": "1", "cwd": "exact", "exit": "exact", "duration": "exact"},
-      "evidence": "TestRemoteWrapperInstallsEachShellAndCleansUp; manual BSD-host check of the same POSIX wrapper."
+      "wantRemoteWrapper": true,
+      "wantRemoteInvocations": ["NETCATTY_HOOK_DIR=\"$netcatty_dir\" \"$netcatty_shell\" --rcfile \"$netcatty_dir/bashrc\" -i"],
+      "verification": "manual",
+      "fidelity": {"tier": "1", "cwd": "manual", "exit": "manual", "duration": "manual"},
+      "evidence": "TestSSHCaptureHookKeepsTheWrapperForPOSIXLoginShells and TestRemoteWrapperInstallsEachShellAndCleansUp; a real BSD/OpenSSH Host is not available here."
     },
     {
       "name": "bsd-remote-fish",
       "platforms": ["freebsd", "openbsd", "netbsd", "dragonfly", "darwin", "linux"],
       "kind": "ssh",
-      "shell": "fish",
+      "loginShell": "/usr/local/bin/fish",
       "hookEnabled": true,
       "wantHookExpected": true,
-      "wantRemoteContains": ["-l --init-command", "NETCATTY_HOOK_FILE"],
-      "fidelity": {"tier": "1", "cwd": "exact", "exit": "exact", "duration": "exact"},
-      "evidence": "TestRemoteWrapperInstallsEachShellAndCleansUp; manual BSD-host check when fish is installed."
+      "wantRemoteWrapper": true,
+      "wantRemoteInvocations": ["NETCATTY_HOOK_FILE=\"$netcatty_dir/hook.fish\" \"$netcatty_shell\" -l --init-command \"source \\\"\\$NETCATTY_HOOK_FILE\\\"\""],
+      "verification": "manual",
+      "fidelity": {"tier": "1", "cwd": "manual", "exit": "manual", "duration": "manual"},
+      "evidence": "TestSSHCaptureHookKeepsTheWrapperForPOSIXLoginShells and TestRemoteWrapperInstallsEachShellAndCleansUp; fish may not be installed on the remote BSD Host, and no Host is available here."
     },
     {
-      "name": "bsd-remote-csh-unsupported",
+      "name": "bsd-remote-csh-fallback",
       "platforms": ["freebsd", "openbsd", "netbsd", "dragonfly", "darwin"],
       "kind": "ssh",
-      "shell": "csh",
+      "loginShell": "/bin/csh",
       "hookEnabled": true,
-      "wantHookExpected": true,
-      "runtimeSkip": true,
-      "wantRemoteContains": ["NetcattyHookSkip", "exec \"$netcatty_shell\" -l"],
+      "wantHookExpected": false,
+      "verification": "manual",
       "fidelity": {"tier": "2/3", "cwd": "missing", "exit": "missing", "duration": "manual"},
-      "evidence": "TestRemoteWrapperRunsAnUnsupportedShellUnchanged; the wrapper announces its skip before executing csh unchanged. The duration depends on the csh prompt."
+      "evidence": "TestSSHCaptureHookWithdrawsForNonPOSIXLoginShells keeps the plain csh login shell; TestNonPOSIXLoginShellsRejectThePOSIXWrapper reproduces the real csh Unmatched ''' failure. Remote fidelity is manual because no BSD Host is available."
+    },
+    {
+      "name": "bsd-remote-tcsh-fallback",
+      "platforms": ["freebsd", "openbsd", "netbsd", "dragonfly", "darwin"],
+      "kind": "ssh",
+      "loginShell": "/bin/tcsh",
+      "hookEnabled": true,
+      "wantHookExpected": false,
+      "verification": "manual",
+      "fidelity": {"tier": "2/3", "cwd": "missing", "exit": "missing", "duration": "manual"},
+      "evidence": "TestSSHCaptureHookWithdrawsForNonPOSIXLoginShells keeps the plain tcsh login shell; TestNonPOSIXLoginShellsRejectThePOSIXWrapper reproduces the real tcsh Unmatched ''' failure. Remote fidelity is manual because no BSD Host is available."
     },
     {
       "name": "nushell-local-hook",
@@ -129,19 +165,9 @@
       "wantCommand": ["<shell>", "-l", "-e", "source \"<hook-dir>/hook.nu\""],
       "wantEnv": {},
       "wantFiles": {"hook.nu": "1337;NetcattyExec;nu"},
+      "verification": "observed",
       "fidelity": {"tier": "1", "cwd": "exact", "exit": "exact", "duration": "exact"},
       "evidence": "TestRealNushellSessionCapturesTierOneEndToEnd (nushell 0.116.1 on darwin)."
-    },
-    {
-      "name": "nushell-remote-hook",
-      "platforms": ["darwin", "linux", "freebsd", "openbsd", "netbsd"],
-      "kind": "ssh",
-      "shell": "nu",
-      "hookEnabled": true,
-      "wantHookExpected": true,
-      "wantRemoteContains": ["nu)", "hook.nu", "-l -e \"source"],
-      "fidelity": {"tier": "1", "cwd": "exact", "exit": "exact", "duration": "exact"},
-      "evidence": "TestRemoteWrapperInstallsNushellAndXonsh; manual BSD-host check because no BSD host is available here."
     },
     {
       "name": "nushell-local-native-fallback",
@@ -155,8 +181,20 @@
       "wantCommand": ["<shell>", "-l"],
       "wantEnv": {},
       "wantFiles": {},
+      "verification": "observed",
       "fidelity": {"tier": "2", "cwd": "exact", "exit": "missing", "duration": "observed"},
       "evidence": "TestRealNushellWithoutHookKeepsNativeCapture (nushell 0.116.1): native OSC 7 gives the cwd, the prompt mark gives a finish, and the typed capture has no exit code."
+    },
+    {
+      "name": "nushell-remote-fallback",
+      "platforms": ["darwin", "linux", "freebsd", "openbsd", "netbsd"],
+      "kind": "ssh",
+      "loginShell": "/opt/homebrew/bin/nu",
+      "hookEnabled": true,
+      "wantHookExpected": false,
+      "verification": "manual",
+      "fidelity": {"tier": "2", "cwd": "planned", "exit": "missing", "duration": "planned"},
+      "evidence": "TestSSHCaptureHookWithdrawsForNonPOSIXLoginShells keeps the plain nushell login shell; TestRealNushellWithoutHookKeepsNativeCapture observed the local native fallback. No remote Host was available."
     },
     {
       "name": "xonsh-local-hook",
@@ -170,22 +208,12 @@
       "wantCommand": ["<shell>", "-l"],
       "wantEnv": {"XONSHRC_DIR": "/srv/xonsh/rc.d:<hook-dir>"},
       "wantFiles": {"hook.xsh": "on_precommand"},
+      "verification": "observed",
       "fidelity": {"tier": "1", "cwd": "exact", "exit": "exact", "duration": "exact"},
       "evidence": "TestRealXonshSessionCapturesTierOneEndToEnd (xonsh 0.24.2): on_precommand and on_postcommand carry the command, cwd, return code, and finish after the user rc.d startup."
     },
     {
-      "name": "xonsh-remote-hook",
-      "platforms": ["darwin", "linux", "freebsd", "openbsd", "netbsd"],
-      "kind": "ssh",
-      "shell": "xonsh",
-      "hookEnabled": true,
-      "wantHookExpected": true,
-      "wantRemoteContains": ["export XONSHRC_DIR NETCATTY_HOOK_DIR", "/etc/xonsh}/rc.d"],
-      "fidelity": {"tier": "1", "cwd": "exact", "exit": "exact", "duration": "exact"},
-      "evidence": "TestRemoteWrapperInstallsNushellAndXonsh plus the real local xonsh run; the remote wrapper install is asserted, but a real remote xonsh on a BSD Host is still a manual check."
-    },
-    {
-      "name": "xonsh-local-typed-fallback",
+      "name": "xonsh-local-native-fallback",
       "platforms": ["darwin", "linux", "freebsd", "openbsd", "netbsd"],
       "kind": "local",
       "shell": "xonsh",
@@ -196,8 +224,31 @@
       "wantCommand": ["<shell>", "-l"],
       "wantEnv": {},
       "wantFiles": {},
-      "fidelity": {"tier": "3", "cwd": "missing", "exit": "missing", "duration": "missing"},
-      "evidence": "TestRealXonshWithoutHookKeepsTypedFallback (xonsh 0.24.2): no native OSC 133/7 and the default prompt is not prompt-detected, so the row is finalized at Session close with no cwd, exit, or finish."
+      "verification": "observed",
+      "fidelity": {"tier": "2", "cwd": "exact", "exit": "missing", "duration": "missing"},
+      "evidence": "TestRealXonshWithoutHookKeepsNativeFallback (xonsh 0.24.2): OSC 7 at the first interactive prompt gives the cwd and starts the typed command at Tier 2. Xonsh emits no OSC 133 and its default prompt is not prompt-detected, so Session close leaves the exit and finish unknown."
+    },
+    {
+      "name": "xonsh-remote-native-fallback",
+      "platforms": ["darwin", "linux", "freebsd", "openbsd", "netbsd"],
+      "kind": "ssh",
+      "loginShell": "/usr/local/bin/xonsh",
+      "hookEnabled": true,
+      "wantHookExpected": false,
+      "verification": "manual",
+      "fidelity": {"tier": "2", "cwd": "planned", "exit": "missing", "duration": "planned"},
+      "evidence": "TestSSHCaptureHookWithdrawsForNonPOSIXLoginShells keeps the plain xonsh login shell and TestNonPOSIXLoginShellsRejectThePOSIXWrapper reproduces the real xonsh SyntaxError. TestRealXonshWithoutHookKeepsNativeFallback observed the local OSC 7 fallback; no remote Host was available."
+    },
+    {
+      "name": "remote-unknown-login-shell-fallback",
+      "platforms": ["freebsd", "openbsd", "netbsd", "dragonfly", "darwin", "linux"],
+      "kind": "ssh",
+      "loginShell": "",
+      "hookEnabled": true,
+      "wantHookExpected": false,
+      "verification": "manual",
+      "fidelity": {"tier": "2/3", "cwd": "missing", "exit": "missing", "duration": "manual"},
+      "evidence": "TestSSHCaptureHookFallsBackWhenTheLoginShellIsUnknown covers an absent SFTP subsystem or account entry; a real Host with SFTP disabled is not available here."
     }
   ]
 }

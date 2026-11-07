@@ -175,18 +175,23 @@ func TestPlanLocalXonshAppendsToAnExplicitRCDir(t *testing.T) {
 
 func TestPlanLocalSkipsNonInteractiveNushellAndXonsh(t *testing.T) {
 	cases := map[string][]string{
-		"nu command":        {"/bin/nu", "-c", "echo hi"},
-		"nu execute":        {"/bin/nu", "-e", "echo hi"},
-		"nu no config":      {"/bin/nu", "--no-config-file"},
-		"nu script":         {"/bin/nu", "script.nu"},
-		"nu stdin":          {"/bin/nu", "--stdin"},
-		"nu mcp":            {"/bin/nu", "--mcp"},
-		"xonsh command":     {"/bin/xonsh", "-c", "echo hi"},
-		"xonsh no rc":       {"/bin/xonsh", "--no-rc"},
-		"xonsh short no rc": {"/bin/xonsh", "-n"},
-		"xonsh rc":          {"/bin/xonsh", "--rc", "/tmp/user.xsh"},
-		"xonsh script":      {"/bin/xonsh", "script.xsh"},
-		"xonsh version":     {"/bin/xonsh", "-V"},
+		"nu command":             {"/bin/nu", "-c", "echo hi"},
+		"nu execute":             {"/bin/nu", "-e", "echo hi"},
+		"nu commands attached":   {"/bin/nu", "--commands=echo hi"},
+		"nu execute attached":    {"/bin/nu", "--execute=echo hi"},
+		"nu command short":       {"/bin/nu", "-cecho hi"},
+		"nu no config":           {"/bin/nu", "--no-config-file"},
+		"nu script":              {"/bin/nu", "script.nu"},
+		"nu stdin":               {"/bin/nu", "--stdin"},
+		"nu mcp":                 {"/bin/nu", "--mcp"},
+		"xonsh command":          {"/bin/xonsh", "-c", "echo hi"},
+		"xonsh command attached": {"/bin/xonsh", "--command=print(1)"},
+		"xonsh no rc":            {"/bin/xonsh", "--no-rc"},
+		"xonsh short no rc":      {"/bin/xonsh", "-n"},
+		"xonsh rc":               {"/bin/xonsh", "--rc", "/tmp/user.xsh"},
+		"xonsh rc attached":      {"/bin/xonsh", "--rc=/tmp/user.xsh"},
+		"xonsh script":           {"/bin/xonsh", "script.xsh"},
+		"xonsh version":          {"/bin/xonsh", "-V"},
 	}
 	for name, command := range cases {
 		command := command
@@ -360,11 +365,41 @@ func TestPlanSSHInstallsTheRemoteWrapper(t *testing.T) {
 	if !strings.HasPrefix(plan.Spec.RemoteCommand, "exec /bin/sh -c '") {
 		t.Fatalf("remote command = %q", plan.Spec.RemoteCommand)
 	}
+	if !plan.Spec.CaptureHookRemote {
+		t.Fatal("the SSH plan did not mark RemoteCommand as the capture wrapper")
+	}
 	if plan.Cleanup != nil {
 		t.Fatal("the remote wrapper cleans up remotely, not locally")
 	}
 	if plan.Spec.Command != nil || len(plan.Spec.Env) != 0 {
 		t.Fatalf("the SSH plan changed local fields: %+v", plan.Spec)
+	}
+}
+
+// Only the shells whose command language accepts a POSIX command and that
+// have a hook keep the wrapper. Every other login shell falls back to the
+// plain login shell before sshd can hand it a script it cannot parse.
+func TestRemoteLoginShellSupportUsesOnlyThePOSIXHookShells(t *testing.T) {
+	for _, shell := range []string{
+		"/bin/zsh", "/bin/bash", "/usr/local/bin/fish", "-zsh",
+	} {
+		if !RemoteLoginShellSupported(shell) {
+			t.Errorf("RemoteLoginShellSupported(%q) = false, want true", shell)
+		}
+		if got := RemoteCommandForLoginShell("wrapper", shell); got != "wrapper" {
+			t.Errorf("RemoteCommandForLoginShell(%q) = %q, want the wrapper", shell, got)
+		}
+	}
+	for _, shell := range []string{
+		"/usr/local/bin/xonsh", "/bin/csh", "/bin/tcsh", "/opt/homebrew/bin/nu",
+		"/bin/ksh", "/bin/sh", "/bin/dash", "", "/usr/local/bin/myshell",
+	} {
+		if RemoteLoginShellSupported(shell) {
+			t.Errorf("RemoteLoginShellSupported(%q) = true, want false", shell)
+		}
+		if got := RemoteCommandForLoginShell("wrapper", shell); got != "" {
+			t.Errorf("RemoteCommandForLoginShell(%q) = %q, want the plain login shell", shell, got)
+		}
 	}
 }
 
@@ -671,6 +706,12 @@ func TestPlanLocalReportsAWriteFailureSoftly(t *testing.T) {
 	}
 }
 
+// TestScriptsNeverContainASingleQuote covers only the startup scripts the
+// remote wrapper carries. The wrapper passes them inside a single-quoted POSIX
+// command, so one single quote would break every supported remote shell. The
+// nushell and xonsh hooks are written to their own startup files and never
+// reach the wrapper: the transport keeps the plain login shell for those
+// shells.
 func TestScriptsNeverContainASingleQuote(t *testing.T) {
 	scripts := map[string]string{
 		"zsh env":    zshEnvScript,
@@ -678,8 +719,6 @@ func TestScriptsNeverContainASingleQuote(t *testing.T) {
 		"zsh source": zshSourceScript(".zprofile"),
 		"bash":       bashStartupScript(),
 		"fish":       fishHookText,
-		"nushell":    nuHookText,
-		"xonsh":      xonshHookText,
 	}
 	for name, script := range scripts {
 		if strings.Contains(script, "'") {

@@ -35,7 +35,7 @@ type remoteRun struct {
 	command []string
 }
 
-func runRemoteWrapper(t *testing.T, shellName string, useFake bool) (remoteRun, string, string) {
+func runRemoteWrapper(t *testing.T, shellName string, useFake bool) (remoteRun, string, string, string) {
 	t.Helper()
 	root := t.TempDir()
 	bin := filepath.Join(root, "bin")
@@ -78,7 +78,7 @@ func runRemoteWrapper(t *testing.T, shellName string, useFake bool) (remoteRun, 
 	}
 	run := remoteRun{status: status, log: string(contents),
 		command: strings.Fields(strings.TrimPrefix(strings.SplitN(string(contents), "\n", 2)[0], "args="))}
-	return run, home, tempDir
+	return run, home, tempDir, string(output)
 }
 
 // positiveField reports that the fake shell counted one or more matches.
@@ -107,7 +107,7 @@ func TestRemoteWrapperInstallsEachShellAndCleansUp(t *testing.T) {
 	for _, name := range []string{"zsh", "bash", "fish"} {
 		name := name
 		t.Run(name, func(t *testing.T) {
-			run, home, tempDir := runRemoteWrapper(t, name, true)
+			run, home, tempDir, _ := runRemoteWrapper(t, name, true)
 			if run.status != 7 {
 				t.Fatalf("status = %d, want the shell's 7", run.status)
 			}
@@ -152,60 +152,77 @@ func fieldValue(log, key string) string {
 	return ""
 }
 
-// Nushell and xonsh receive their hook through the same session-scoped
-// directory, with the user startup preserved: nushell sources the hook after
-// its config with -e, and xonsh appends the directory to XONSHRC_DIR.
-func TestRemoteWrapperInstallsNushellAndXonsh(t *testing.T) {
-	t.Run("nushell", func(t *testing.T) {
-		run, home, tempDir := runRemoteWrapper(t, "nu", true)
-		if run.status != 7 {
-			t.Fatalf("status = %d, want the shell's 7", run.status)
-		}
-		args := strings.Join(run.command, " ")
-		if !strings.HasPrefix(args, "-l -e source ") || !strings.HasSuffix(args, "/hook.nu\"") {
-			t.Fatalf("args = %q, want a login shell sourcing the hook with -e", args)
-		}
-		if !positiveField(run.log, "nu_hook=") {
-			t.Fatalf("the nushell hook was not installed: %q", run.log)
-		}
-		hookDir := fieldValue(run.log, "hook_dir=")
-		if hookDir == "" {
-			t.Fatalf("the hook directory was not exported: %q", run.log)
-		}
-		assertEmptyDir(t, home, "the user's home")
-		assertEmptyDir(t, tempDir, "the temporary directory")
-	})
-
-	t.Run("xonsh", func(t *testing.T) {
-		run, home, tempDir := runRemoteWrapper(t, "xonsh", true)
-		if run.status != 7 {
-			t.Fatalf("status = %d, want the shell's 7", run.status)
-		}
-		if strings.Join(run.command, " ") != "-l" {
-			t.Fatalf("args = %v, want a login xonsh", run.command)
-		}
-		if !positiveField(run.log, "xonsh_hook=") {
-			t.Fatalf("the xonsh hook was not installed: %q", run.log)
-		}
-		hookDir := fieldValue(run.log, "hook_dir=")
-		wantRC := "/etc/xonsh/rc.d:" + filepath.Join(home, ".config", "xonsh", "rc.d") + ":" + hookDir
-		if got := fieldValue(run.log, "xonshrc_dir="); got != wantRC {
-			t.Fatalf("XONSHRC_DIR = %q, want %q", got, wantRC)
-		}
-		assertEmptyDir(t, home, "the user's home")
-		assertEmptyDir(t, tempDir, "the temporary directory")
-	})
+// The remote wrapper installs a hook only for zsh, bash, and fish. The
+// transport never sends it to a non-POSIX login shell. This test drives the
+// wrapper under /bin/sh with a fake shell of each non-POSIX name to prove the
+// wrapper's own default branch installs nothing, announces the skip, and
+// executes the shell unchanged. It does not claim a real csh or xonsh can run
+// the wrapper: TestNonPOSIXLoginShellsRejectThePOSIXWrapper proves the real
+// shells reject it under sshd's -c, which is why the transport must withdraw
+// it before the channel opens.
+func TestRemoteWrapperNeverInstallsAHookForNonPOSIXLoginShells(t *testing.T) {
+	for _, name := range []string{"xonsh", "csh", "tcsh", "nu"} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			run, home, tempDir, output := runRemoteWrapper(t, name, true)
+			if run.status != 7 {
+				t.Fatalf("status = %d, want the shell's 7", run.status)
+			}
+			if strings.Join(run.command, " ") != "-l" {
+				t.Fatalf("args = %v, want the login shell unchanged", run.command)
+			}
+			if !strings.Contains(output, "\x1b]1337;NetcattyHookSkip\x07") {
+				t.Fatalf("the wrapper never announced the skip: %q", output)
+			}
+			for _, field := range []string{"zdotdir=", "hook_dir=", "hook_file=", "xonshrc_dir="} {
+				if value := fieldValue(run.log, field); value != "" {
+					t.Fatalf("%s = %q for an unsupported login shell", field, value)
+				}
+			}
+			for _, field := range []string{
+				"zsh_hook=", "bash_hook=", "fish_hook=", "nu_hook=", "xonsh_hook=",
+			} {
+				if positiveField(run.log, field) {
+					t.Fatalf("%s was installed for an unsupported login shell: %q", field, run.log)
+				}
+			}
+			assertEmptyDir(t, home, "the user's home")
+			assertEmptyDir(t, tempDir, "the temporary directory")
+		})
+	}
 }
 
-// A shell Netcatty does not support is executed unchanged, with no temporary
-// files and no hook.
+// The wrapper itself has no hook branch for the shells the transport must
+// never hand it to, and still has one for every POSIX hook shell.
+func TestRemoteWrapperSupportsOnlyPOSIXHookShells(t *testing.T) {
+	script := remoteWrapperScript()
+	if !strings.Contains(script, "zsh|bash|fish)") {
+		t.Fatal("the prelude does not accept exactly the POSIX hook shells")
+	}
+	for _, name := range []string{"zsh", "bash", "fish"} {
+		if !strings.Contains(script, name+")\n") {
+			t.Fatalf("the wrapper has no %q branch", name)
+		}
+	}
+	for _, name := range []string{"xonsh", "csh", "tcsh", "nu"} {
+		if strings.Contains(script, name+")") {
+			t.Fatalf("the wrapper has a hook branch for the non-POSIX shell %q", name)
+		}
+	}
+}
+
+// A POSIX shell Netcatty has no hook for is executed unchanged, with no
+// temporary files and no hook.
 func TestRemoteWrapperRunsAnUnsupportedShellUnchanged(t *testing.T) {
-	run, home, tempDir := runRemoteWrapper(t, "ksh", true)
+	run, home, tempDir, output := runRemoteWrapper(t, "ksh", true)
 	if run.status != 7 {
 		t.Fatalf("status = %d, want the shell's 7", run.status)
 	}
 	if strings.Join(run.command, " ") != "-l" {
 		t.Fatalf("args = %v, want the login shell unchanged", run.command)
+	}
+	if !strings.Contains(output, "\x1b]1337;NetcattyHookSkip\x07") {
+		t.Fatalf("the wrapper never announced the skip: %q", output)
 	}
 	if !strings.Contains(run.log, "zdotdir=\n") ||
 		!strings.Contains(run.log, "hook_dir=\n") ||

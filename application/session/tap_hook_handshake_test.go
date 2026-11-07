@@ -88,6 +88,34 @@ func TestTapHookHandshakeSuppressesMultilinePartials(t *testing.T) {
 	}
 }
 
+// A transport that withdraws the planned hook must release the first typed
+// command. Otherwise the tap would keep it tentative until Session close and
+// ignore the shell's own prompt marks.
+func TestTapWithdrawCaptureHookReleasesTheReservedCommand(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.hookExpected = true
+
+	if _, _, _, completions, _ := tap.handleInput([]byte("echo plain\r"), tapAt(0)); len(completions) != 0 {
+		t.Fatalf("Enter completed the command early: %+v", completions)
+	}
+	if tap.pending == nil || !tap.pending.awaitingHook {
+		t.Fatalf("the planned hook did not reserve the command: %+v", tap.pending)
+	}
+
+	tap.withdrawCaptureHook()
+	if tap.pending.awaitingHook {
+		t.Fatal("the withdrawn hook still reserves the command")
+	}
+	_, effects := tap.observe([]byte("echo plain\r\nresult\r\n$ "), tapAt(time.Second))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("completions = %+v, want the typed fallback", effects.Completions)
+	}
+	if completion := effects.Completions[0]; completion.command != "echo plain" ||
+		completion.captureTier != domainhistory.CaptureTierFallback {
+		t.Fatalf("completion = %+v", completion)
+	}
+}
+
 // Without the handshake the typed fallback still works: a shell integration
 // that never installs the hook, or a nested shell, must keep Tier 3 capture.
 func TestTapWithoutAHookHandshakeKeepsTheTypedFallback(t *testing.T) {
