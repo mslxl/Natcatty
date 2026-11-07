@@ -3,6 +3,7 @@ package logs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,12 +12,13 @@ import (
 )
 
 type fakeSource struct {
-	logs      []domainhistory.ConnectionLog
-	entries   []domainhistory.Entry
-	revision  uint64
-	listeners []func()
-	deleteErr error
-	cleared   int
+	logs       []domainhistory.ConnectionLog
+	entries    []domainhistory.Entry
+	revision   uint64
+	listeners  []func()
+	deleteErr  error
+	entriesErr error
+	cleared    int
 }
 
 func (f *fakeSource) ConnectionLogs(context.Context) ([]domainhistory.ConnectionLog, error) {
@@ -24,6 +26,9 @@ func (f *fakeSource) ConnectionLogs(context.Context) ([]domainhistory.Connection
 }
 
 func (f *fakeSource) Entries(context.Context) ([]domainhistory.Entry, error) {
+	if f.entriesErr != nil {
+		return nil, f.entriesErr
+	}
 	return append([]domainhistory.Entry(nil), f.entries...), nil
 }
 
@@ -532,6 +537,269 @@ func TestHistoryMutationsNotifyTheAutocompleteReloader(t *testing.T) {
 	state.ConfirmClear()
 	if reloads != 2 {
 		t.Fatalf("clear reloaded autocomplete %d times, want 2", reloads)
+	}
+}
+
+// facetEntries builds one deterministic result set for the facet and filter
+// tests: two Hosts, a remote origin, equal timestamps, and every exit status.
+func facetEntries() []domainhistory.Entry {
+	recorded := time.Date(2026, 11, 7, 9, 30, 0, 0, time.UTC)
+	return []domainhistory.Entry{
+		{ID: "a", SessionID: "session-1", SessionUUID: "uuid-1", HostID: "host-1",
+			HostLabel: "web-1", Scope: "host:host-1", Command: "git status",
+			CWD: "/srv/app", Shell: "zsh", Origin: "web-1:deploy",
+			RecordedAt: recorded, ExitCode: 0, HasExitCode: true,
+			Source: domainhistory.SourceSession, CaptureTier: 2},
+		{ID: "b", SessionID: "session-2", SessionUUID: "uuid-2", HostID: "host-1",
+			HostLabel: "web-1", Scope: "host:host-1", Command: "make test",
+			CWD: "/srv/app", Shell: "bash", Origin: "web-1:deploy",
+			RecordedAt: recorded, ExitCode: 2, HasExitCode: true,
+			Source: domainhistory.SourceSession, CaptureTier: 1},
+		{ID: "c", SessionID: "session-3", SessionUUID: "uuid-3", HostID: "host-2",
+			HostLabel: "db-1", Scope: "host:host-2", Command: "kubectl get pods",
+			CWD: "/var/log", Shell: "fish", Origin: "db-1:admin",
+			RecordedAt: recorded.Add(-time.Minute), Source: domainhistory.SourceSession},
+		{ID: "d", SessionUUID: "uuid-remote", Scope: "remote:remote:deploy",
+			Command: "remote-cmd", CWD: "/root", Shell: "zsh",
+			Origin: "remote:deploy", RecordedAt: recorded.Add(-2 * time.Minute),
+			Source: domainhistory.SourceAtuinSync},
+		{ID: "e", Scope: "local", Command: "ls", Source: domainhistory.SourceShellHistory,
+			RecordedAt: recorded.Add(-3 * time.Minute)},
+	}
+}
+
+func TestHistoryFiltersCoverEveryDimensionTogether(t *testing.T) {
+	state := NewState(&fakeSource{entries: facetEntries()}, nil)
+	state.Refresh()
+	state.SelectTab(TabHistory)
+
+	// Equal RecordedAt values tie-break by descending identity, so the
+	// ordering does not depend on the Store's row order.
+	if got := entryIDs(state.FilteredEntries()); fmt.Sprint(got) != "[b a c d e]" {
+		t.Fatalf("unfiltered = %v", got)
+	}
+	state.SetSessionFilter("session-2")
+	if got := entryIDs(state.FilteredEntries()); fmt.Sprint(got) != "[b]" {
+		t.Fatalf("session filter = %v", got)
+	}
+	state.SetSessionFilter("uuid-remote")
+	if got := entryIDs(state.FilteredEntries()); fmt.Sprint(got) != "[d]" {
+		t.Fatalf("session UUID filter = %v", got)
+	}
+	state.SetSessionFilter("")
+	state.SetCwdFilter("/srv/app")
+	if got := entryIDs(state.FilteredEntries()); fmt.Sprint(got) != "[b a]" {
+		t.Fatalf("cwd filter = %v", got)
+	}
+	state.SetCwdFilter("")
+	state.SetExitFilter(domainhistory.ExitUnknown)
+	if got := entryIDs(state.FilteredEntries()); fmt.Sprint(got) != "[c d e]" {
+		t.Fatalf("unknown exit filter = %v", got)
+	}
+	state.SetExitFilter(domainhistory.ExitFailure)
+	if got := entryIDs(state.FilteredEntries()); fmt.Sprint(got) != "[b]" {
+		t.Fatalf("failure filter = %v", got)
+	}
+	state.SetExitFilter("")
+	state.SetShellFilter("ZSH")
+	if got := entryIDs(state.FilteredEntries()); fmt.Sprint(got) != "[a d]" {
+		t.Fatalf("shell filter = %v", got)
+	}
+	state.SetShellFilter("")
+	state.SetHostKey(domainhistory.OriginHostKey("remote:deploy"))
+	if got := entryIDs(state.FilteredEntries()); fmt.Sprint(got) != "[d]" {
+		t.Fatalf("origin filter = %v", got)
+	}
+	state.SetHostKey("host-1")
+	state.SetSourceFilter(domainhistory.SourceSession)
+	state.SetExitFilter(domainhistory.ExitFailure)
+	if got := entryIDs(state.FilteredEntries()); fmt.Sprint(got) != "[b]" {
+		t.Fatalf("combined filter = %v", got)
+	}
+}
+
+func entryIDs(entries []domainhistory.Entry) []string {
+	out := make([]string, len(entries))
+	for index, entry := range entries {
+		out[index] = entry.ID
+	}
+	return out
+}
+
+func TestFacetsCountTheCurrentResultSet(t *testing.T) {
+	state := NewState(&fakeSource{entries: facetEntries()}, nil)
+	state.Refresh()
+	state.SelectTab(TabHistory)
+
+	facets := state.Facets()
+	if counts := facetCounts(facets.Sessions); counts["session-1"] != 1 ||
+		counts["uuid-remote"] != 1 {
+		t.Fatalf("session facets = %v", facets.Sessions)
+	}
+	if counts := facetCounts(facets.Cwds); counts["/srv/app"] != 2 ||
+		counts["/var/log"] != 1 {
+		t.Fatalf("cwd facets = %v", facets.Cwds)
+	}
+	if counts := facetCounts(facets.Shells); counts["zsh"] != 2 || counts["fish"] != 1 {
+		t.Fatalf("shell facets = %v", facets.Shells)
+	}
+	if counts := facetCounts(facets.Exits); counts[string(domainhistory.ExitSuccess)] != 1 ||
+		counts[string(domainhistory.ExitFailure)] != 1 ||
+		counts[string(domainhistory.ExitUnknown)] != 3 {
+		t.Fatalf("exit facets = %v", facets.Exits)
+	}
+	if counts := facetCounts(facets.Sources); counts[domainhistory.SourceAtuinSync] != 1 ||
+		counts[domainhistory.SourceShellHistory] != 1 {
+		t.Fatalf("source facets = %v", facets.Sources)
+	}
+	wantOrigin := domainhistory.OriginHostKey("remote:deploy")
+	foundOrigin := false
+	for _, host := range facets.Hosts {
+		if host.Key == wantOrigin && host.Count == 1 {
+			foundOrigin = true
+		}
+	}
+	if !foundOrigin {
+		t.Fatalf("host facets = %+v, want origin key %q", facets.Hosts, wantOrigin)
+	}
+
+	// Filtering by cwd narrows the other dimensions but keeps the cwd facet
+	// itself complete, so another directory stays selectable.
+	state.SetCwdFilter("/var/log")
+	facets = state.Facets()
+	if counts := facetCounts(facets.Sessions); counts["session-3"] != 1 || len(counts) != 1 {
+		t.Fatalf("filtered session facets = %v", facets.Sessions)
+	}
+	if counts := facetCounts(facets.Cwds); counts["/srv/app"] != 2 || counts["/var/log"] != 1 {
+		t.Fatalf("filtered cwd facets = %v", facets.Cwds)
+	}
+}
+
+func facetCounts(values []FacetValue) map[string]int {
+	counts := make(map[string]int, len(values))
+	for _, value := range values {
+		counts[value.Value] = value.Count
+	}
+	return counts
+}
+
+// TestHistoryPagingIsStableWithDeterministicOrder proves the visible page is
+// the same slice of a deterministic ordering when the source returns rows out
+// of order, and that the next page continues without duplicates.
+func TestHistoryPagingIsStableWithDeterministicOrder(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 30, 0, 0, time.UTC)
+	source := &fakeSource{}
+	for index := 0; index < PageSize+3; index++ {
+		// Equal timestamps force the identity tie-break; alternating insertion
+		// order models a Store that returned rows in another order.
+		id := fmt.Sprintf("entry-%03d", index)
+		source.entries = append([]domainhistory.Entry{{
+			ID: id, Scope: "local", Command: "cmd " + id,
+			Source: domainhistory.SourceSession, RecordedAt: now,
+		}}, source.entries...)
+	}
+	state := NewState(source, nil)
+	state.Refresh()
+	state.SelectTab(TabHistory)
+
+	first := entryIDs(state.VisibleEntries())
+	if len(first) != PageSize {
+		t.Fatalf("first page = %d rows", len(first))
+	}
+	// Newest-first at equal timestamps means descending IDs.
+	if first[0] != "entry-102" || first[len(first)-1] != "entry-003" {
+		t.Fatalf("first page runs %s..%s", first[0], first[len(first)-1])
+	}
+	state.ShowMore()
+	second := entryIDs(state.VisibleEntries())
+	if len(second) != PageSize+3 {
+		t.Fatalf("second page = %d rows", len(second))
+	}
+	seen := make(map[string]bool, len(second))
+	for _, id := range second {
+		if seen[id] {
+			t.Fatalf("paging repeated %q", id)
+		}
+		seen[id] = true
+	}
+	if second[len(second)-1] != "entry-000" {
+		t.Fatalf("last row = %q", second[len(second)-1])
+	}
+}
+
+// TestHistorySearchRanksBestMatchFirst proves the surface applies the same
+// relevance ordering as the domain: an exact command match outranks a prefix,
+// a word prefix, and a substring even when the weaker match is newer.
+func TestHistorySearchRanksBestMatchFirst(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 30, 0, 0, time.UTC)
+	state := NewState(&fakeSource{entries: []domainhistory.Entry{
+		{ID: "substring", Scope: "local", Command: "legit",
+			Source: domainhistory.SourceSession, RecordedAt: now},
+		{ID: "word", Scope: "local", Command: "run git",
+			Source: domainhistory.SourceSession, RecordedAt: now.Add(-time.Minute)},
+		{ID: "prefix", Scope: "local", Command: "git status",
+			Source: domainhistory.SourceSession, RecordedAt: now.Add(-2 * time.Minute)},
+		{ID: "exact", Scope: "local", Command: "git",
+			Source: domainhistory.SourceSession, RecordedAt: now.Add(-3 * time.Minute)},
+	}}, nil)
+	state.Refresh()
+	state.SelectTab(TabHistory)
+	state.SetSearch("git")
+	if got := fmt.Sprint(entryIDs(state.FilteredEntries())); got != "[exact prefix word substring]" {
+		t.Fatalf("search order = %s", got)
+	}
+}
+
+// TestOriginFilterOptionsAreHistoryOnly proves the Connections tab cannot
+// offer an origin value that matches no connection log.
+func TestOriginFilterOptionsAreHistoryOnly(t *testing.T) {
+	state := NewState(&fakeSource{entries: facetEntries()}, nil)
+	state.Refresh()
+	state.SelectTab(TabHistory)
+	originKey := domainhistory.OriginHostKey("remote:deploy")
+	if !hostOptionPresent(state.HostOptions(), originKey) {
+		t.Fatalf("history Host options = %+v, want %q", state.HostOptions(), originKey)
+	}
+	state.SelectTab(TabConnections)
+	if hostOptionPresent(state.HostOptions(), originKey) {
+		t.Fatalf("connections Host options = %+v, want no origin keys", state.HostOptions())
+	}
+}
+
+func TestOpenGlobalSearchSelectsHistoryAndClearsHostScope(t *testing.T) {
+	state := NewState(&fakeSource{entries: facetEntries()}, nil)
+	state.Refresh()
+	state.SelectTab(TabConnections)
+	state.SetHostKey("host-1")
+
+	state.OpenGlobalSearch()
+	if state.Tab() != TabHistory {
+		t.Fatalf("tab = %v, want History", state.Tab())
+	}
+	if state.HostKey() != "" {
+		t.Fatalf("Host scope = %q, want global", state.HostKey())
+	}
+	if state.focusRequest != focusHistorySearch {
+		t.Fatalf("focus request = %v, want the search field", state.focusRequest)
+	}
+}
+
+func TestRefreshReportsAHistoryLoadError(t *testing.T) {
+	state := NewState(&fakeSource{entriesErr: errors.New("disk")}, nil)
+	state.Refresh()
+	if state.Problem() != ProblemLoad {
+		t.Fatalf("problem = %v, want ProblemLoad", state.Problem())
+	}
+}
+
+func TestOriginFilterResetsOnConnections(t *testing.T) {
+	state := NewState(&fakeSource{entries: facetEntries()}, nil)
+	state.Refresh()
+	state.SelectTab(TabHistory)
+	state.SetHostKey(domainhistory.OriginHostKey("remote:deploy"))
+	state.SelectTab(TabConnections)
+	if state.HostKey() != "" {
+		t.Fatalf("origin filter survived the tab switch: %q", state.HostKey())
 	}
 }
 

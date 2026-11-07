@@ -111,9 +111,11 @@ var catalog = []Binding{
 	{ID: "open-settings", Action: "openSettings", Mac: "⌘ + ,", PC: "Ctrl + ,", Category: CategoryApp},
 	{ID: "toggle-opacity", Action: "toggleOpacity", Mac: "⌘ + U", PC: "Ctrl + Shift + U", Category: CategoryApp},
 
-	// Local additions. This is Natcatty's own binding, placed inside its
-	// category so the Settings list keeps the catalog's grouping.
+	// Local additions. These are Natcatty's own bindings, placed inside their
+	// category so the Settings list keeps the catalog's grouping. history-search
+	// never binds Ctrl-R or Up: those stay the shell's keys.
 	{ID: "transfer-center", Action: "transferCenter", Mac: "⌘ + Shift + T", PC: "Ctrl + Shift + T", Category: CategoryApp},
+	{ID: "history-search", Action: "historySearch", Mac: "⌘ + Shift + H", PC: "Ctrl + Shift + H", Category: CategoryApp},
 
 	// SFTP Operations
 	{ID: "sftp-copy", Action: "sftpCopy", Mac: "⌘ + C", PC: "Ctrl + C", Category: CategorySFTP},

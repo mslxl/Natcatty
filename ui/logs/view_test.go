@@ -2,6 +2,7 @@ package logs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -286,8 +287,8 @@ func TestHistoryTabRendersRowsAndOpensTheRelatedTerminal(t *testing.T) {
 	if !textsContain(tt, "command-00 --run") {
 		t.Fatalf("history rows are not rendered, texts %q", tt.Texts())
 	}
-	if !textsContain(tt, m.LogsSourceSession()) {
-		t.Fatalf("the history meta is not rendered, texts %q", tt.Texts())
+	if !textsContain(tt, m.LogsProvenanceThisDevice()) {
+		t.Fatalf("the history provenance is not rendered, texts %q", tt.Texts())
 	}
 
 	if err := tt.Click(m.LogsOpenTerminal()); err != nil {
@@ -302,8 +303,9 @@ func TestHistoryTabRendersRowsAndOpensTheRelatedTerminal(t *testing.T) {
 }
 
 // TestHistoryRowsShowCapturedFieldsAndUnknownLabels proves the History list
-// shows cwd, finish, duration, exit, shell, tier, and origin, and labels a
-// field the Session never observed instead of showing a misleading empty one.
+// shows cwd, duration, and start time plus provenance, exit, and tier badges,
+// and labels a field the Session never observed instead of showing a
+// misleading empty one.
 func TestHistoryRowsShowCapturedFieldsAndUnknownLabels(t *testing.T) {
 	m := locales.In("en")
 	recorded := time.Date(2026, 11, 7, 9, 30, 0, 0, time.Local)
@@ -326,15 +328,29 @@ func TestHistoryRowsShowCapturedFieldsAndUnknownLabels(t *testing.T) {
 	state.SelectTab(TabHistory)
 	tt.Frame()
 
-	captured := m.LogsHistoryCaptured(
-		"/srv/app", timestamp(finished), "1.5s", "2", "zsh", "2", "deploy@web-1")
+	captured := m.LogsHistoryRowMeta("web-1", "/srv/app", "1.5s", timestamp(recorded))
 	if !textsContain(tt, captured) {
 		t.Fatalf("captured fields are not rendered: %v", tt.Texts())
 	}
+	if !textsContain(tt, m.LogsProvenanceThisDevice()) {
+		t.Fatalf("the captured row lost its provenance badge: %v", tt.Texts())
+	}
+	if !textsContain(tt, m.LogsHistoryExitBadge(2)) {
+		t.Fatalf("the captured row lost its exit badge: %v", tt.Texts())
+	}
+	if !textsContain(tt, m.LogsHistoryTierBadge(2)) {
+		t.Fatalf("the captured row lost its tier badge: %v", tt.Texts())
+	}
+
+	// The partial row labels what the Session never observed instead of
+	// showing a misleading empty value, and an unknown exit is not success.
 	unknown := m.LogsHistoryUnknown()
-	partial := m.LogsHistoryCaptured(unknown, unknown, unknown, unknown, unknown, unknown, unknown)
+	partial := m.LogsHistoryRowMeta(m.LogsHostLocal(), unknown, unknown, timestamp(recorded))
 	if !textsContain(tt, partial) {
 		t.Fatalf("unknown captured fields are not labelled: %v", tt.Texts())
+	}
+	if !textsContain(tt, m.LogsHistoryExitUnknown()) {
+		t.Fatalf("the unknown exit status is not labelled: %v", tt.Texts())
 	}
 	assertNoHorizontalOverflow(t, tt, 1100, 720)
 }
@@ -354,7 +370,7 @@ func TestHistoryDetailShowsEveryCapturedField(t *testing.T) {
 		Duration: 1500 * time.Millisecond, ExitCode: 137, HasExitCode: true,
 		Source: domainhistory.SourceSession, CaptureTier: 2,
 	}}}
-	tt, state := newProductionLogsView(t, 1100, 900, source, &fakeActions{})
+	tt, state := newProductionLogsView(t, 1100, 1400, source, &fakeActions{})
 	state.SelectTab(TabHistory)
 	tt.Frame()
 
@@ -363,13 +379,19 @@ func TestHistoryDetailShowsEveryCapturedField(t *testing.T) {
 	}
 	tt.Frame()
 
-	assertVisible(t, tt, m.LogsHistoryDetailTitle(), 1100, 900)
-	assertVisible(t, tt, "make test --all", 1100, 900)
+	assertVisible(t, tt, m.LogsHistoryDetailTitle(), 1100, 1400)
+	assertVisible(t, tt, "make test --all", 1100, 1400)
+	unknown := m.LogsHistoryUnknown()
 	fields := []string{
 		m.LogsHistoryDetailField(m.LogsHistoryFieldHost(), "web-1"),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldHostID(), "host-1"),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldHostLabel(), "web-1"),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldUnsaved(), m.LogsHistoryNo()),
 		m.LogsHistoryDetailField(m.LogsHistoryFieldScope(), "host:host-1"),
 		m.LogsHistoryDetailField(m.LogsHistoryFieldOrigin(), "deploy@web-1"),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldID(), "captured"),
 		m.LogsHistoryDetailField(m.LogsHistoryFieldSession(), "session-1"),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldSessionUUID(), unknown),
 		m.LogsHistoryDetailField(m.LogsHistoryFieldCwd(), "/srv/app"),
 		m.LogsHistoryDetailField(m.LogsHistoryFieldShell(), "zsh"),
 		m.LogsHistoryDetailField(m.LogsHistoryFieldStart(), timestamp(recorded)),
@@ -378,11 +400,18 @@ func TestHistoryDetailShowsEveryCapturedField(t *testing.T) {
 		m.LogsHistoryDetailField(m.LogsHistoryFieldExit(), "137"),
 		m.LogsHistoryDetailField(m.LogsHistoryFieldSource(), m.LogsSourceSession()),
 		m.LogsHistoryDetailField(m.LogsHistoryFieldTier(), "2"),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldAuthor(), unknown),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldAuthorKind(), unknown),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldIntent(), unknown),
 	}
 	for _, field := range fields {
-		assertVisible(t, tt, field, 1100, 900)
+		assertVisible(t, tt, field, 1100, 1400)
 	}
-	assertNoHorizontalOverflow(t, tt, 1100, 900)
+	// The detail reuses the row's provenance, exit, and tier badges.
+	assertVisible(t, tt, m.LogsProvenanceThisDevice(), 1100, 1400)
+	assertVisible(t, tt, m.LogsHistoryExitBadge(137), 1100, 1400)
+	assertVisible(t, tt, m.LogsHistoryTierBadge(2), 1100, 1400)
+	assertNoHorizontalOverflow(t, tt, 1100, 1400)
 
 	if err := tt.Click(m.LogsHistoryDetailClose()); err != nil {
 		t.Fatalf("close details: %v", err)
@@ -405,7 +434,7 @@ func TestHistoryDetailLabelsUnknownCapturedFields(t *testing.T) {
 		ID: "partial", Scope: "local", Command: "legacy-command",
 		RecordedAt: recorded, Source: domainhistory.SourceSession,
 	}}}
-	tt, state := newProductionLogsView(t, 1100, 900, source, &fakeActions{})
+	tt, state := newProductionLogsView(t, 1100, 1400, source, &fakeActions{})
 	state.SelectTab(TabHistory)
 	tt.Frame()
 
@@ -416,23 +445,164 @@ func TestHistoryDetailLabelsUnknownCapturedFields(t *testing.T) {
 
 	unknown := m.LogsHistoryUnknown()
 	fields := []string{
+		m.LogsHistoryDetailField(m.LogsHistoryFieldHost(), m.LogsHostLocal()),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldHostID(), unknown),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldHostLabel(), unknown),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldUnsaved(), m.LogsHistoryNo()),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldScope(), "local"),
 		m.LogsHistoryDetailField(m.LogsHistoryFieldOrigin(), unknown),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldID(), "partial"),
 		m.LogsHistoryDetailField(m.LogsHistoryFieldSession(), unknown),
-		m.LogsHistoryDetailField(m.LogsHistoryFieldCwd(), unknown),
-		m.LogsHistoryDetailField(m.LogsHistoryFieldShell(), unknown),
-		m.LogsHistoryDetailField(m.LogsHistoryFieldFinish(), unknown),
-		m.LogsHistoryDetailField(m.LogsHistoryFieldDuration(), unknown),
-		m.LogsHistoryDetailField(m.LogsHistoryFieldExit(), unknown),
-		m.LogsHistoryDetailField(m.LogsHistoryFieldTier(), unknown),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldSessionUUID(), unknown),
+		// A field the shell never reported explains why it is missing
+		// instead of showing a generic empty value.
+		m.LogsHistoryDetailField(m.LogsHistoryFieldCwd(), m.LogsHistoryMissingCwd()),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldShell(), m.LogsHistoryMissingShell()),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldFinish(), m.LogsHistoryMissingFinish()),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldDuration(), m.LogsHistoryMissingDuration()),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldExit(), m.LogsHistoryMissingExit()),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldTier(), m.LogsHistoryMissingTier()),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldAuthor(), unknown),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldAuthorKind(), unknown),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldIntent(), unknown),
 	}
 	for _, field := range fields {
-		assertVisible(t, tt, field, 1100, 900)
+		assertVisible(t, tt, field, 1100, 1400)
 	}
 	// The start time is known, so it is shown rather than labelled unknown.
 	assertVisible(t, tt,
 		m.LogsHistoryDetailField(m.LogsHistoryFieldStart(), timestamp(recorded)),
-		1100, 900)
+		1100, 1400)
+	assertNoHorizontalOverflow(t, tt, 1100, 1400)
+}
+
+// TestHistoryFilterFieldsRenderAndNarrowTheRows drives the History filter
+// surface through its state and proves each dimension changes the rendered
+// result set, including a combined Host/origin scope.
+func TestHistoryFilterFieldsRenderAndNarrowTheRows(t *testing.T) {
+	m := locales.In("en")
+	recorded := time.Date(2026, 11, 7, 9, 30, 0, 0, time.Local)
+	source := &fakeSource{entries: []domainhistory.Entry{
+		{ID: "e1", SessionID: "s1", HostID: "host-1", HostLabel: "web-1",
+			Scope: "host:host-1", Command: "deploy web", CWD: "/srv/app",
+			Shell: "zsh", Origin: "web-1:deploy", RecordedAt: recorded,
+			ExitCode: 0, HasExitCode: true, Source: domainhistory.SourceSession},
+		{ID: "e2", SessionID: "s2", HostID: "host-1", HostLabel: "web-1",
+			Scope: "host:host-1", Command: "make test", CWD: "/srv/app",
+			Shell: "bash", Origin: "web-1:deploy", RecordedAt: recorded.Add(-time.Minute),
+			ExitCode: 2, HasExitCode: true, Source: domainhistory.SourceSession},
+		{ID: "e3", SessionID: "s3", HostID: "host-2", HostLabel: "db-1",
+			Scope: "host:host-2", Command: "kubectl get pods", CWD: "/var/log",
+			Shell: "fish", Origin: "db-1:admin", RecordedAt: recorded.Add(-2 * time.Minute),
+			Source: domainhistory.SourceAtuinImport},
+		{ID: "e4", SessionUUID: "uuid-4", Scope: "remote:remote:deploy",
+			Command: "remote-sync", Origin: "remote:deploy",
+			RecordedAt: recorded.Add(-3 * time.Minute),
+			Source:     domainhistory.SourceAtuinSync},
+	}}
+	tt, state := newProductionLogsView(t, 1100, 900, source, &fakeActions{})
+	state.SelectTab(TabHistory)
+	tt.Frame()
+
+	// Every dimension has a labelled control on the History tab.
+	for _, label := range []string{
+		m.LogsSessionFilter(), m.LogsCwdFilter(), m.LogsShellFilter(),
+		m.LogsExitFilter(), m.LogsSourceFilter(), m.LogsHostFilter(),
+		m.LogsFrom(), m.LogsTo(),
+	} {
+		assertVisible(t, tt, label, 1100, 900)
+	}
+	for _, command := range []string{"deploy web", "make test", "kubectl get pods", "remote-sync"} {
+		if !textsContain(tt, command) {
+			t.Fatalf("%q is missing from the unfiltered list: %v", command, tt.Texts())
+		}
+	}
+
+	state.SetCwdFilter("/srv/app")
+	tt.Frame()
+	if textsContain(tt, "kubectl get pods") || textsContain(tt, "remote-sync") {
+		t.Fatalf("the cwd filter kept another directory's rows: %v", tt.Texts())
+	}
+	state.SetExitFilter(domainhistory.ExitFailure)
+	tt.Frame()
+	if textsContain(tt, "deploy web") || !textsContain(tt, "make test") {
+		t.Fatalf("the exit filter kept a success: %v", tt.Texts())
+	}
+	state.SetCwdFilter("")
+	state.SetExitFilter(domainhistory.ExitAny)
+	state.SetSessionFilter("uuid-4")
+	tt.Frame()
+	if !textsContain(tt, "remote-sync") || textsContain(tt, "make test") {
+		t.Fatalf("the Session UUID filter did not isolate the synced row: %v", tt.Texts())
+	}
+	state.SetSessionFilter("")
+	state.SetShellFilter("FISH")
+	tt.Frame()
+	if !textsContain(tt, "kubectl get pods") || textsContain(tt, "make test") {
+		t.Fatalf("the case-insensitive shell filter did not isolate fish: %v", tt.Texts())
+	}
+	state.SetShellFilter("")
+	state.SetSourceFilter(domainhistory.SourceAtuinImport)
+	tt.Frame()
+	if !textsContain(tt, "kubectl get pods") || textsContain(tt, "deploy web") {
+		t.Fatalf("the source filter did not isolate the import: %v", tt.Texts())
+	}
+	state.SetSourceFilter("")
+	originKey := domainhistory.OriginHostKey("remote:deploy")
+	state.SetHostKey(originKey)
+	tt.Frame()
+	if !textsContain(tt, "remote-sync") || textsContain(tt, "kubectl get pods") {
+		t.Fatalf("the origin scope did not isolate the synced row: %v", tt.Texts())
+	}
+	// The Host selector names the origin rather than showing a raw filter key.
+	assertVisible(t, tt, m.LogsHostOrigin("remote:deploy"), 1100, 900)
 	assertNoHorizontalOverflow(t, tt, 1100, 900)
+}
+
+// TestHistoryEmptyAndLoadErrorStates proves the History tab distinguishes an
+// empty journal from a failed load.
+func TestHistoryEmptyAndLoadErrorStates(t *testing.T) {
+	m := locales.In("en")
+	empty, state := newProductionLogsView(t, 1100, 720, &fakeSource{}, &fakeActions{})
+	state.SelectTab(TabHistory)
+	empty.Frame()
+	assertVisible(t, empty, m.LogsEmptyHistory(), 1100, 720)
+
+	failing := &fakeSource{entriesErr: errors.New("disk")}
+	broken, brokenState := newProductionLogsView(t, 1100, 720, failing, &fakeActions{})
+	brokenState.SelectTab(TabHistory)
+	broken.Frame()
+	if brokenState.Problem() != ProblemLoad {
+		t.Fatalf("problem = %v, want ProblemLoad", brokenState.Problem())
+	}
+	assertVisible(t, broken, m.LogsProblemLoad(), 1100, 720)
+}
+
+// TestGlobalHistorySearchFocusesTheFieldAndFilters proves OpenGlobalSearch
+// arms the search input: typing without clicking or any extra chord filters
+// the History rows.
+func TestGlobalHistorySearchFocusesTheFieldAndFilters(t *testing.T) {
+	source := &fakeSource{entries: []domainhistory.Entry{
+		{ID: "e1", Scope: "local", Command: "deploy web",
+			Source: domainhistory.SourceSession, RecordedAt: time.Now()},
+		{ID: "e2", Scope: "local", Command: "make test",
+			Source: domainhistory.SourceSession, RecordedAt: time.Now().Add(-time.Minute)},
+	}}
+	tt, state := newProductionLogsView(t, 1100, 900, source, &fakeActions{})
+
+	state.OpenGlobalSearch()
+	tt.Frame()
+	if active, _ := tt.TextInputActive(); !active {
+		t.Fatal("the global History search did not focus a text input")
+	}
+	tt.Type("deploy")
+	tt.Frame()
+	if got := *state.Search(); got != "deploy" {
+		t.Fatalf("typed search = %q", got)
+	}
+	if !textsContain(tt, "deploy web") || textsContain(tt, "make test") {
+		t.Fatalf("typing into the focused search did not filter: %v", tt.Texts())
+	}
 }
 
 func TestFormatDurationShowsZeroAndCoarseUnits(t *testing.T) {

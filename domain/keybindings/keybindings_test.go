@@ -7,8 +7,8 @@ import (
 
 func TestCatalogMatchesTheOriginal42ThenLocalAdditions(t *testing.T) {
 	catalog := Catalog()
-	if len(catalog) != 43 {
-		t.Fatalf("catalog = %d entries, want 43", len(catalog))
+	if len(catalog) != 44 {
+		t.Fatalf("catalog = %d entries, want 44", len(catalog))
 	}
 	if got := catalog[0]; got.ID != "switch-tab-1-9" || got.Action != "switchToTab" ||
 		got.Mac != "⌘ + [1...9]" || got.PC != "Ctrl + [1...9]" || got.Category != CategoryTabs {
@@ -18,7 +18,13 @@ func TestCatalogMatchesTheOriginal42ThenLocalAdditions(t *testing.T) {
 		got.Mac != "⌘ + Shift + T" || got.PC != "Ctrl + Shift + T" || got.Category != CategoryApp {
 		t.Errorf("local addition = %+v", got)
 	}
-	if got := catalog[42]; got.ID != "sftp-navigate-to" || got.Action != "sftpNavigateTo" ||
+	// The History search shortcut is a dedicated app chord. It must not take
+	// Ctrl-R or Up, which belong to the shell.
+	if got := catalog[32]; got.ID != "history-search" || got.Action != "historySearch" ||
+		got.Mac != "⌘ + Shift + H" || got.PC != "Ctrl + Shift + H" || got.Category != CategoryApp {
+		t.Errorf("history search addition = %+v", got)
+	}
+	if got := catalog[43]; got.ID != "sftp-navigate-to" || got.Action != "sftpNavigateTo" ||
 		got.Mac != "⌘ + Enter" || got.PC != "Ctrl + Enter" || got.Category != CategorySFTP {
 		t.Errorf("last binding = %+v", got)
 	}
@@ -30,7 +36,7 @@ func TestCatalogMatchesTheOriginal42ThenLocalAdditions(t *testing.T) {
 		"move-focus", "split-horizontal", "split-vertical", "toggle-pane-zoom",
 		"open-hosts", "open-local", "open-sftp", "port-forwarding", "command-palette",
 		"quick-switch", "new-workspace", "snippets", "broadcast", "toggle-side-panel",
-		"open-settings", "toggle-opacity", "transfer-center",
+		"open-settings", "toggle-opacity", "transfer-center", "history-search",
 		"sftp-copy", "sftp-cut", "sftp-paste", "sftp-select-all", "sftp-rename",
 		"sftp-delete", "sftp-refresh", "sftp-new-folder", "sftp-open", "sftp-go-parent",
 		"sftp-navigate-to",
@@ -44,7 +50,7 @@ func TestCatalogMatchesTheOriginal42ThenLocalAdditions(t *testing.T) {
 	for _, binding := range catalog {
 		counts[binding.Category]++
 	}
-	want := map[Category]int{CategoryTabs: 6, CategoryTerminal: 9, CategoryNavigation: 4, CategoryApp: 13, CategorySFTP: 11}
+	want := map[Category]int{CategoryTabs: 6, CategoryTerminal: 9, CategoryNavigation: 4, CategoryApp: 14, CategorySFTP: 11}
 	if !reflect.DeepEqual(counts, want) {
 		t.Errorf("category counts = %v, want %v", counts, want)
 	}
@@ -169,8 +175,8 @@ func TestActiveBindingsSkipDisabledSchemeAndDisabledBindings(t *testing.T) {
 	if seen["open-hosts"] || seen["open-local"] {
 		t.Error("disabled bindings were active")
 	}
-	if len(active) != 41 {
-		t.Errorf("PC active bindings = %d, want 41", len(active))
+	if len(active) != 42 {
+		t.Errorf("PC active bindings = %d, want 42", len(active))
 	}
 }
 

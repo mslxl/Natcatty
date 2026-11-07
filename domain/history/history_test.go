@@ -93,27 +93,47 @@ func TestUnsavedHostIsNotLocal(t *testing.T) {
 	}
 }
 
-func TestEntryFilterMatchesCommandHostSourceAndRange(t *testing.T) {
+func TestEntryFilterMatchesEveryHistoryField(t *testing.T) {
 	entries := []Entry{
-		{ID: "a", HostID: "host-1", HostLabel: "web-1", Scope: "host:host-1",
-			Command: "git status", Source: SourceSession, RecordedAt: at(9)},
-		{ID: "b", HostID: "host-1", HostLabel: "web-1", Scope: "host:host-1",
-			Command: "kubectl get pods", Source: SourceSession, RecordedAt: at(10)},
-		{ID: "c", HostLabel: "Local Terminal", Scope: "local",
-			Command: "make test", Source: SourceShellHistory, RecordedAt: at(11)},
+		{ID: "a", SessionID: "session-1", SessionUUID: "uuid-1", HostID: "host-1",
+			HostLabel: "web-1", Scope: "host:host-1", CWD: "/srv/app", Shell: "zsh",
+			Origin: "web-1:deploy", Command: "git status", Source: SourceSession,
+			ExitCode: 0, HasExitCode: true, RecordedAt: at(9)},
+		{ID: "b", SessionID: "session-2", SessionUUID: "uuid-2", HostID: "host-2",
+			HostLabel: "db-1", Scope: "host:host-2", CWD: "/var/log", Shell: "bash",
+			Origin: "db-1:admin", Command: "kubectl get pods --watch",
+			Source: SourceSession, ExitCode: 2, HasExitCode: true, RecordedAt: at(10)},
+		{ID: "c", SessionUUID: "uuid-remote", Scope: "remote:remote:deploy",
+			Origin: "remote:deploy", Command: "make test", Source: SourceAtuinSync,
+			RecordedAt: at(11)},
+		{ID: "d", Scope: "local", Command: "ls -la", Source: SourceShellHistory,
+			RecordedAt: at(12)},
 	}
 	tests := []struct {
 		name   string
 		filter EntryFilter
 		want   []string
 	}{
-		{"all", EntryFilter{}, []string{"a", "b", "c"}},
-		{"host", EntryFilter{Host: "host-1"}, []string{"a", "b"}},
-		{"local", EntryFilter{Host: LocalHostKey}, []string{"c"}},
+		{"all", EntryFilter{}, []string{"a", "b", "c", "d"}},
+		{"host", EntryFilter{Host: "host-1"}, []string{"a"}},
+		{"local", EntryFilter{Host: LocalHostKey}, []string{"d"}},
+		{"origin key", EntryFilter{Host: OriginHostKey("remote:deploy")}, []string{"c"}},
+		{"session id", EntryFilter{Session: "session-2"}, []string{"b"}},
+		{"session uuid", EntryFilter{Session: "uuid-remote"}, []string{"c"}},
+		{"cwd", EntryFilter{CWD: "/srv/app"}, []string{"a"}},
+		{"success", EntryFilter{Exit: ExitSuccess}, []string{"a"}},
+		{"failure", EntryFilter{Exit: ExitFailure}, []string{"b"}},
+		{"unknown exit", EntryFilter{Exit: ExitUnknown}, []string{"c", "d"}},
+		{"shell", EntryFilter{Shell: "ZSH"}, []string{"a"}},
 		{"source", EntryFilter{Source: SourceSession}, []string{"a", "b"}},
+		{"remote source", EntryFilter{Source: SourceAtuinSync}, []string{"c"}},
 		{"query", EntryFilter{Query: "KUBECTL"}, []string{"b"}},
-		{"host label", EntryFilter{Query: "web-1"}, []string{"a", "b"}},
+		{"query all tokens", EntryFilter{Query: "GIT   status"}, []string{"a"}},
+		{"query rejects a missing token", EntryFilter{Query: "git status extra"}, nil},
 		{"to exclusive", EntryFilter{To: at(11)}, []string{"a", "b"}},
+		{"combined", EntryFilter{Host: "host-2", Session: "session-2",
+			CWD: "/var/log", Exit: ExitFailure, Shell: "bash", Source: SourceSession,
+			Query: "pods watch", From: at(8), To: at(11)}, []string{"b"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -127,6 +147,65 @@ func TestEntryFilterMatchesCommandHostSourceAndRange(t *testing.T) {
 				t.Fatalf("matches = %v, want %v", got, test.want)
 			}
 		})
+	}
+}
+
+// TestEntryFilterRejectsAnUnknownExitValue proves a typo in the exit filter
+// matches nothing instead of silently showing every row.
+func TestEntryFilterRejectsAnUnknownExitValue(t *testing.T) {
+	entry := Entry{ID: "a", Scope: "local", Command: "ls", Source: SourceSession,
+		RecordedAt: at(9)}
+	if (EntryFilter{Exit: ExitFilter("bogus")}).Match(entry) {
+		t.Fatal("an unknown exit filter matched a row")
+	}
+}
+
+// TestSortEntriesIsDeterministic ties equal timestamps to descending ID and
+// pins newest-first ordering regardless of the input order.
+func TestSortEntriesIsDeterministic(t *testing.T) {
+	entries := []Entry{
+		{ID: "b", RecordedAt: at(9)},
+		{ID: "a", RecordedAt: at(10)},
+		{ID: "c", RecordedAt: at(9)},
+	}
+	SortEntries(entries)
+	if got := fmt.Sprint([]string{entries[0].ID, entries[1].ID, entries[2].ID}); got != "[a c b]" {
+		t.Fatalf("sorted IDs = %s, want [a c b]", got)
+	}
+}
+
+// TestSortEntriesForQueryRanksBestMatchFirst proves a search ranks an exact
+// command above a prefix, a word prefix, and a substring even when the weaker
+// match is newer, and that equal scores keep the deterministic time-and-ID
+// order. Whitespace and case in the query do not change the result.
+func TestSortEntriesForQueryRanksBestMatchFirst(t *testing.T) {
+	entries := []Entry{
+		{ID: "substring", Command: "legit", RecordedAt: at(12)},
+		{ID: "word", Command: "run git", RecordedAt: at(11)},
+		{ID: "prefix", Command: "git status", RecordedAt: at(10)},
+		{ID: "exact", Command: "GIT", RecordedAt: at(9)},
+	}
+	SortEntriesForQuery(entries, "  Git  ")
+	ids := make([]string, len(entries))
+	for index, entry := range entries {
+		ids[index] = entry.ID
+	}
+	if got := fmt.Sprint(ids); got != "[exact prefix word substring]" {
+		t.Fatalf("query order = %s", got)
+	}
+}
+
+// TestSortEntriesForQueryBreaksTiesByTimeAndIdentity proves two equally good
+// matches still page deterministically.
+func TestSortEntriesForQueryBreaksTiesByTimeAndIdentity(t *testing.T) {
+	entries := []Entry{
+		{ID: "b", Command: "run git", RecordedAt: at(9)},
+		{ID: "a", Command: "use git", RecordedAt: at(10)},
+		{ID: "c", Command: "git", RecordedAt: at(9)},
+	}
+	SortEntriesForQuery(entries, "git")
+	if got := fmt.Sprint([]string{entries[0].ID, entries[1].ID, entries[2].ID}); got != "[c a b]" {
+		t.Fatalf("query tie order = %s, want [c a b]", got)
 	}
 }
 

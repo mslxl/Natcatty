@@ -10410,18 +10410,32 @@ func (msgs Messages) LogsSearch() string {
 	return Catalog.Format(msgs.locale, "logsSearch", nil)
 }
 
-// LogsHostFilter says "Host"
+// LogsHostFilter says "Host or origin"
 // in the language the app shows.
 //
-// The label of the Host filter.
+// The label of the Host or origin filter.
 func LogsHostFilter() string { return In(i18n.Locale()).LogsHostFilter() }
 
-// LogsHostFilter says "Host"
+// LogsHostFilter says "Host or origin"
 // in the language of msgs.
 //
-// The label of the Host filter.
+// The label of the Host or origin filter.
 func (msgs Messages) LogsHostFilter() string {
 	return Catalog.Format(msgs.locale, "logsHostFilter", nil)
+}
+
+// LogsHostOrigin says "Origin: {origin}"
+// in the language the app shows.
+//
+// The Host filter value for a captured origin with no local Host identity.
+func LogsHostOrigin(origin string) string { return In(i18n.Locale()).LogsHostOrigin(origin) }
+
+// LogsHostOrigin says "Origin: {origin}"
+// in the language of msgs.
+//
+// The Host filter value for a captured origin with no local Host identity.
+func (msgs Messages) LogsHostOrigin(origin string) string {
+	return Catalog.Format(msgs.locale, "logsHostOrigin", map[string]any{"origin": origin})
 }
 
 // LogsHostAll says "All hosts"
@@ -10590,6 +10604,188 @@ func LogsFrom() string { return In(i18n.Locale()).LogsFrom() }
 // The inclusive start-date filter.
 func (msgs Messages) LogsFrom() string {
 	return Catalog.Format(msgs.locale, "logsFrom", nil)
+}
+
+// LogsSourceAtuinImport says "Atuin import"
+// in the language the app shows.
+//
+// A command imported read-only from a Host's Atuin history.
+func LogsSourceAtuinImport() string { return In(i18n.Locale()).LogsSourceAtuinImport() }
+
+// LogsSourceAtuinImport says "Atuin import"
+// in the language of msgs.
+//
+// A command imported read-only from a Host's Atuin history.
+func (msgs Messages) LogsSourceAtuinImport() string {
+	return Catalog.Format(msgs.locale, "logsSourceAtuinImport", nil)
+}
+
+// LogsSourceAtuinSync says "Another device"
+// in the language the app shows.
+//
+// A command downloaded from another device through Atuin sync.
+func LogsSourceAtuinSync() string { return In(i18n.Locale()).LogsSourceAtuinSync() }
+
+// LogsSourceAtuinSync says "Another device"
+// in the language of msgs.
+//
+// A command downloaded from another device through Atuin sync.
+func (msgs Messages) LogsSourceAtuinSync() string {
+	return Catalog.Format(msgs.locale, "logsSourceAtuinSync", nil)
+}
+
+// LogsSessionFilter says "Session"
+// in the language the app shows.
+//
+// The label of the Session filter.
+func LogsSessionFilter() string { return In(i18n.Locale()).LogsSessionFilter() }
+
+// LogsSessionFilter says "Session"
+// in the language of msgs.
+//
+// The label of the Session filter.
+func (msgs Messages) LogsSessionFilter() string {
+	return Catalog.Format(msgs.locale, "logsSessionFilter", nil)
+}
+
+// LogsSessionAll says "All Sessions"
+// in the language the app shows.
+//
+// The Session filter value that matches every Session.
+func LogsSessionAll() string { return In(i18n.Locale()).LogsSessionAll() }
+
+// LogsSessionAll says "All Sessions"
+// in the language of msgs.
+//
+// The Session filter value that matches every Session.
+func (msgs Messages) LogsSessionAll() string {
+	return Catalog.Format(msgs.locale, "logsSessionAll", nil)
+}
+
+// LogsCwdFilter says "Directory"
+// in the language the app shows.
+//
+// The label of the working-directory filter.
+func LogsCwdFilter() string { return In(i18n.Locale()).LogsCwdFilter() }
+
+// LogsCwdFilter says "Directory"
+// in the language of msgs.
+//
+// The label of the working-directory filter.
+func (msgs Messages) LogsCwdFilter() string {
+	return Catalog.Format(msgs.locale, "logsCwdFilter", nil)
+}
+
+// LogsCwdAll says "All directories"
+// in the language the app shows.
+//
+// The directory filter value that matches every working directory.
+func LogsCwdAll() string { return In(i18n.Locale()).LogsCwdAll() }
+
+// LogsCwdAll says "All directories"
+// in the language of msgs.
+//
+// The directory filter value that matches every working directory.
+func (msgs Messages) LogsCwdAll() string {
+	return Catalog.Format(msgs.locale, "logsCwdAll", nil)
+}
+
+// LogsShellFilter says "Shell"
+// in the language the app shows.
+//
+// The label of the shell filter.
+func LogsShellFilter() string { return In(i18n.Locale()).LogsShellFilter() }
+
+// LogsShellFilter says "Shell"
+// in the language of msgs.
+//
+// The label of the shell filter.
+func (msgs Messages) LogsShellFilter() string {
+	return Catalog.Format(msgs.locale, "logsShellFilter", nil)
+}
+
+// LogsShellAll says "All shells"
+// in the language the app shows.
+//
+// The shell filter value that matches every shell.
+func LogsShellAll() string { return In(i18n.Locale()).LogsShellAll() }
+
+// LogsShellAll says "All shells"
+// in the language of msgs.
+//
+// The shell filter value that matches every shell.
+func (msgs Messages) LogsShellAll() string {
+	return Catalog.Format(msgs.locale, "logsShellAll", nil)
+}
+
+// LogsExitFilter says "Exit status"
+// in the language the app shows.
+//
+// The label of the exit-status filter.
+func LogsExitFilter() string { return In(i18n.Locale()).LogsExitFilter() }
+
+// LogsExitFilter says "Exit status"
+// in the language of msgs.
+//
+// The label of the exit-status filter.
+func (msgs Messages) LogsExitFilter() string {
+	return Catalog.Format(msgs.locale, "logsExitFilter", nil)
+}
+
+// LogsExitAll says "Any exit status"
+// in the language the app shows.
+//
+// The exit-status filter value that matches every outcome.
+func LogsExitAll() string { return In(i18n.Locale()).LogsExitAll() }
+
+// LogsExitAll says "Any exit status"
+// in the language of msgs.
+//
+// The exit-status filter value that matches every outcome.
+func (msgs Messages) LogsExitAll() string {
+	return Catalog.Format(msgs.locale, "logsExitAll", nil)
+}
+
+// LogsExitSuccess says "Succeeded"
+// in the language the app shows.
+//
+// A command known to have exited with zero.
+func LogsExitSuccess() string { return In(i18n.Locale()).LogsExitSuccess() }
+
+// LogsExitSuccess says "Succeeded"
+// in the language of msgs.
+//
+// A command known to have exited with zero.
+func (msgs Messages) LogsExitSuccess() string {
+	return Catalog.Format(msgs.locale, "logsExitSuccess", nil)
+}
+
+// LogsExitFailure says "Failed"
+// in the language the app shows.
+//
+// A command known to have exited non-zero.
+func LogsExitFailure() string { return In(i18n.Locale()).LogsExitFailure() }
+
+// LogsExitFailure says "Failed"
+// in the language of msgs.
+//
+// A command known to have exited non-zero.
+func (msgs Messages) LogsExitFailure() string {
+	return Catalog.Format(msgs.locale, "logsExitFailure", nil)
+}
+
+// LogsExitUnknown says "Unknown"
+// in the language the app shows.
+//
+// A command whose exit status the shell never reported.
+func LogsExitUnknown() string { return In(i18n.Locale()).LogsExitUnknown() }
+
+// LogsExitUnknown says "Unknown"
+// in the language of msgs.
+//
+// A command whose exit status the shell never reported.
+func (msgs Messages) LogsExitUnknown() string {
+	return Catalog.Format(msgs.locale, "logsExitUnknown", nil)
 }
 
 // LogsTo says "To"
@@ -10912,6 +11108,234 @@ func (msgs Messages) LogsHistoryUnknown() string {
 	return Catalog.Format(msgs.locale, "logsHistoryUnknown", nil)
 }
 
+// LogsHistoryRowMeta says "{host} · cwd {cwd} · {duration} · {time}"
+// in the language the app shows.
+//
+// The Host or origin, working directory, duration, and start time of a
+// history row.
+func LogsHistoryRowMeta(host string, cwd string, duration string, time_ string) string {
+	return In(i18n.Locale()).LogsHistoryRowMeta(host, cwd, duration, time_)
+}
+
+// LogsHistoryRowMeta says "{host} · cwd {cwd} · {duration} · {time}"
+// in the language of msgs.
+//
+// The Host or origin, working directory, duration, and start time of a
+// history row.
+func (msgs Messages) LogsHistoryRowMeta(host string, cwd string, duration string, time_ string) string {
+	return Catalog.Format(msgs.locale, "logsHistoryRowMeta", map[string]any{"host": host, "cwd": cwd, "duration": duration, "time": time_})
+}
+
+// LogsHistoryExitBadge says "exit {code}"
+// in the language the app shows.
+//
+// The exit-status badge of a history row.
+func LogsHistoryExitBadge(code int) string { return In(i18n.Locale()).LogsHistoryExitBadge(code) }
+
+// LogsHistoryExitBadge says "exit {code}"
+// in the language of msgs.
+//
+// The exit-status badge of a history row.
+func (msgs Messages) LogsHistoryExitBadge(code int) string {
+	return Catalog.Format(msgs.locale, "logsHistoryExitBadge", map[string]any{"code": code})
+}
+
+// LogsHistoryExitUnknown says "exit unknown"
+// in the language the app shows.
+//
+// The exit-status badge when the shell never reported an exit code.
+func LogsHistoryExitUnknown() string { return In(i18n.Locale()).LogsHistoryExitUnknown() }
+
+// LogsHistoryExitUnknown says "exit unknown"
+// in the language of msgs.
+//
+// The exit-status badge when the shell never reported an exit code.
+func (msgs Messages) LogsHistoryExitUnknown() string {
+	return Catalog.Format(msgs.locale, "logsHistoryExitUnknown", nil)
+}
+
+// LogsHistoryTierBadge says "Tier {tier}"
+// in the language the app shows.
+//
+// The capture-tier badge of a history row.
+func LogsHistoryTierBadge(tier int) string { return In(i18n.Locale()).LogsHistoryTierBadge(tier) }
+
+// LogsHistoryTierBadge says "Tier {tier}"
+// in the language of msgs.
+//
+// The capture-tier badge of a history row.
+func (msgs Messages) LogsHistoryTierBadge(tier int) string {
+	return Catalog.Format(msgs.locale, "logsHistoryTierBadge", map[string]any{"tier": tier})
+}
+
+// LogsProvenanceThisDevice says "This device"
+// in the language the app shows.
+//
+// A command captured or imported on this device.
+func LogsProvenanceThisDevice() string { return In(i18n.Locale()).LogsProvenanceThisDevice() }
+
+// LogsProvenanceThisDevice says "This device"
+// in the language of msgs.
+//
+// A command captured or imported on this device.
+func (msgs Messages) LogsProvenanceThisDevice() string {
+	return Catalog.Format(msgs.locale, "logsProvenanceThisDevice", nil)
+}
+
+// LogsProvenanceShellImport says "Shell history import"
+// in the language the app shows.
+//
+// A command imported from this device's shell history file.
+func LogsProvenanceShellImport() string { return In(i18n.Locale()).LogsProvenanceShellImport() }
+
+// LogsProvenanceShellImport says "Shell history import"
+// in the language of msgs.
+//
+// A command imported from this device's shell history file.
+func (msgs Messages) LogsProvenanceShellImport() string {
+	return Catalog.Format(msgs.locale, "logsProvenanceShellImport", nil)
+}
+
+// LogsProvenanceAtuinImport says "Atuin import"
+// in the language the app shows.
+//
+// A command imported read-only from a Host's Atuin database.
+func LogsProvenanceAtuinImport() string { return In(i18n.Locale()).LogsProvenanceAtuinImport() }
+
+// LogsProvenanceAtuinImport says "Atuin import"
+// in the language of msgs.
+//
+// A command imported read-only from a Host's Atuin database.
+func (msgs Messages) LogsProvenanceAtuinImport() string {
+	return Catalog.Format(msgs.locale, "logsProvenanceAtuinImport", nil)
+}
+
+// LogsProvenanceAtuinSync says "Another device"
+// in the language the app shows.
+//
+// A command downloaded from another device through sync.
+func LogsProvenanceAtuinSync() string { return In(i18n.Locale()).LogsProvenanceAtuinSync() }
+
+// LogsProvenanceAtuinSync says "Another device"
+// in the language of msgs.
+//
+// A command downloaded from another device through sync.
+func (msgs Messages) LogsProvenanceAtuinSync() string {
+	return Catalog.Format(msgs.locale, "logsProvenanceAtuinSync", nil)
+}
+
+// LogsHistoryYes says "Yes"
+// in the language the app shows.
+//
+// A boolean field that is set.
+func LogsHistoryYes() string { return In(i18n.Locale()).LogsHistoryYes() }
+
+// LogsHistoryYes says "Yes"
+// in the language of msgs.
+//
+// A boolean field that is set.
+func (msgs Messages) LogsHistoryYes() string {
+	return Catalog.Format(msgs.locale, "logsHistoryYes", nil)
+}
+
+// LogsHistoryNo says "No"
+// in the language the app shows.
+//
+// A boolean field that is not set.
+func LogsHistoryNo() string { return In(i18n.Locale()).LogsHistoryNo() }
+
+// LogsHistoryNo says "No"
+// in the language of msgs.
+//
+// A boolean field that is not set.
+func (msgs Messages) LogsHistoryNo() string {
+	return Catalog.Format(msgs.locale, "logsHistoryNo", nil)
+}
+
+// LogsHistoryMissingCwd says "not captured — the shell did not report its working directory"
+// in the language the app shows.
+//
+// Explains why a history row has no working directory.
+func LogsHistoryMissingCwd() string { return In(i18n.Locale()).LogsHistoryMissingCwd() }
+
+// LogsHistoryMissingCwd says "not captured — the shell did not report its working directory"
+// in the language of msgs.
+//
+// Explains why a history row has no working directory.
+func (msgs Messages) LogsHistoryMissingCwd() string {
+	return Catalog.Format(msgs.locale, "logsHistoryMissingCwd", nil)
+}
+
+// LogsHistoryMissingShell says "not captured — the shell did not identify itself"
+// in the language the app shows.
+//
+// Explains why a history row has no shell name.
+func LogsHistoryMissingShell() string { return In(i18n.Locale()).LogsHistoryMissingShell() }
+
+// LogsHistoryMissingShell says "not captured — the shell did not identify itself"
+// in the language of msgs.
+//
+// Explains why a history row has no shell name.
+func (msgs Messages) LogsHistoryMissingShell() string {
+	return Catalog.Format(msgs.locale, "logsHistoryMissingShell", nil)
+}
+
+// LogsHistoryMissingFinish says "not captured — the shell did not report when the command finished"
+// in the language the app shows.
+//
+// Explains why a history row has no finish time.
+func LogsHistoryMissingFinish() string { return In(i18n.Locale()).LogsHistoryMissingFinish() }
+
+// LogsHistoryMissingFinish says "not captured — the shell did not report when the command finished"
+// in the language of msgs.
+//
+// Explains why a history row has no finish time.
+func (msgs Messages) LogsHistoryMissingFinish() string {
+	return Catalog.Format(msgs.locale, "logsHistoryMissingFinish", nil)
+}
+
+// LogsHistoryMissingDuration says "not captured — the command duration is unknown"
+// in the language the app shows.
+//
+// Explains why a history row has no duration.
+func LogsHistoryMissingDuration() string { return In(i18n.Locale()).LogsHistoryMissingDuration() }
+
+// LogsHistoryMissingDuration says "not captured — the command duration is unknown"
+// in the language of msgs.
+//
+// Explains why a history row has no duration.
+func (msgs Messages) LogsHistoryMissingDuration() string {
+	return Catalog.Format(msgs.locale, "logsHistoryMissingDuration", nil)
+}
+
+// LogsHistoryMissingExit says "not captured — the shell did not report an exit code"
+// in the language the app shows.
+//
+// Explains why a history row has no exit code.
+func LogsHistoryMissingExit() string { return In(i18n.Locale()).LogsHistoryMissingExit() }
+
+// LogsHistoryMissingExit says "not captured — the shell did not report an exit code"
+// in the language of msgs.
+//
+// Explains why a history row has no exit code.
+func (msgs Messages) LogsHistoryMissingExit() string {
+	return Catalog.Format(msgs.locale, "logsHistoryMissingExit", nil)
+}
+
+// LogsHistoryMissingTier says "not applicable — imported or synced rows have no capture tier"
+// in the language the app shows.
+//
+// Explains why a history row has no capture tier.
+func LogsHistoryMissingTier() string { return In(i18n.Locale()).LogsHistoryMissingTier() }
+
+// LogsHistoryMissingTier says "not applicable — imported or synced rows have no capture tier"
+// in the language of msgs.
+//
+// Explains why a history row has no capture tier.
+func (msgs Messages) LogsHistoryMissingTier() string {
+	return Catalog.Format(msgs.locale, "logsHistoryMissingTier", nil)
+}
+
 // LogsHistoryDetails says "Details"
 // in the language the app shows.
 //
@@ -11136,6 +11560,118 @@ func LogsHistoryFieldTier() string { return In(i18n.Locale()).LogsHistoryFieldTi
 // The capture fidelity tier of the row.
 func (msgs Messages) LogsHistoryFieldTier() string {
 	return Catalog.Format(msgs.locale, "logsHistoryFieldTier", nil)
+}
+
+// LogsHistoryFieldID says "History ID"
+// in the language the app shows.
+//
+// The UUID identity shared with the Atuin history record.
+func LogsHistoryFieldID() string { return In(i18n.Locale()).LogsHistoryFieldID() }
+
+// LogsHistoryFieldID says "History ID"
+// in the language of msgs.
+//
+// The UUID identity shared with the Atuin history record.
+func (msgs Messages) LogsHistoryFieldID() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldID", nil)
+}
+
+// LogsHistoryFieldSessionUUID says "Session UUID"
+// in the language the app shows.
+//
+// The stable Atuin session UUID derived from the app Session.
+func LogsHistoryFieldSessionUUID() string { return In(i18n.Locale()).LogsHistoryFieldSessionUUID() }
+
+// LogsHistoryFieldSessionUUID says "Session UUID"
+// in the language of msgs.
+//
+// The stable Atuin session UUID derived from the app Session.
+func (msgs Messages) LogsHistoryFieldSessionUUID() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldSessionUUID", nil)
+}
+
+// LogsHistoryFieldHostID says "Host ID"
+// in the language the app shows.
+//
+// The local Host identity of the row.
+func LogsHistoryFieldHostID() string { return In(i18n.Locale()).LogsHistoryFieldHostID() }
+
+// LogsHistoryFieldHostID says "Host ID"
+// in the language of msgs.
+//
+// The local Host identity of the row.
+func (msgs Messages) LogsHistoryFieldHostID() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldHostID", nil)
+}
+
+// LogsHistoryFieldHostLabel says "Host label"
+// in the language the app shows.
+//
+// The recorded Host label of the row.
+func LogsHistoryFieldHostLabel() string { return In(i18n.Locale()).LogsHistoryFieldHostLabel() }
+
+// LogsHistoryFieldHostLabel says "Host label"
+// in the language of msgs.
+//
+// The recorded Host label of the row.
+func (msgs Messages) LogsHistoryFieldHostLabel() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldHostLabel", nil)
+}
+
+// LogsHistoryFieldUnsaved says "Unsaved Host"
+// in the language the app shows.
+//
+// Whether the command ran against a typed Host with no saved Vault record.
+func LogsHistoryFieldUnsaved() string { return In(i18n.Locale()).LogsHistoryFieldUnsaved() }
+
+// LogsHistoryFieldUnsaved says "Unsaved Host"
+// in the language of msgs.
+//
+// Whether the command ran against a typed Host with no saved Vault record.
+func (msgs Messages) LogsHistoryFieldUnsaved() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldUnsaved", nil)
+}
+
+// LogsHistoryFieldAuthor says "Author"
+// in the language the app shows.
+//
+// The Atuin author of the command.
+func LogsHistoryFieldAuthor() string { return In(i18n.Locale()).LogsHistoryFieldAuthor() }
+
+// LogsHistoryFieldAuthor says "Author"
+// in the language of msgs.
+//
+// The Atuin author of the command.
+func (msgs Messages) LogsHistoryFieldAuthor() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldAuthor", nil)
+}
+
+// LogsHistoryFieldAuthorKind says "Author kind"
+// in the language the app shows.
+//
+// The Atuin author kind of the command.
+func LogsHistoryFieldAuthorKind() string { return In(i18n.Locale()).LogsHistoryFieldAuthorKind() }
+
+// LogsHistoryFieldAuthorKind says "Author kind"
+// in the language of msgs.
+//
+// The Atuin author kind of the command.
+func (msgs Messages) LogsHistoryFieldAuthorKind() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldAuthorKind", nil)
+}
+
+// LogsHistoryFieldIntent says "Intent"
+// in the language the app shows.
+//
+// The Atuin intent metadata of the command.
+func LogsHistoryFieldIntent() string { return In(i18n.Locale()).LogsHistoryFieldIntent() }
+
+// LogsHistoryFieldIntent says "Intent"
+// in the language of msgs.
+//
+// The Atuin intent metadata of the command.
+func (msgs Messages) LogsHistoryFieldIntent() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldIntent", nil)
 }
 
 // LogsProblemLoad says "Could not load the records."
@@ -18800,6 +19336,20 @@ func SettingsBindingTransferCenter() string { return In(i18n.Locale()).SettingsB
 // The Settings shortcut label for the local Transfer center binding.
 func (msgs Messages) SettingsBindingTransferCenter() string {
 	return Catalog.Format(msgs.locale, "settingsBindingTransferCenter", nil)
+}
+
+// SettingsBindingHistorySearch says "Search global history"
+// in the language the app shows.
+//
+// The Settings shortcut label for the global History search binding.
+func SettingsBindingHistorySearch() string { return In(i18n.Locale()).SettingsBindingHistorySearch() }
+
+// SettingsBindingHistorySearch says "Search global history"
+// in the language of msgs.
+//
+// The Settings shortcut label for the global History search binding.
+func (msgs Messages) SettingsBindingHistorySearch() string {
+	return Catalog.Format(msgs.locale, "settingsBindingHistorySearch", nil)
 }
 
 // SftpConflictTitle says "File Conflict"
