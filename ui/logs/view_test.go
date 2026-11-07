@@ -520,6 +520,14 @@ func TestHistoryDetailLabelsUnknownCapturedFields(t *testing.T) {
 	assertVisible(t, tt,
 		m.LogsHistoryDetailField(m.LogsHistoryFieldStart(), timestamp(recorded)),
 		1100, 1400)
+	// Each missing captured field is explained, not only labelled.
+	for _, field := range []string{
+		m.LogsHistoryFieldCwd(), m.LogsHistoryFieldExit(), m.LogsHistoryFieldDuration(),
+	} {
+		assertVisible(t, tt,
+			m.LogsHistoryMissingField(field, m.LogsHistoryMissingReasonUnknown()),
+			1100, 1400)
+	}
 	assertNoHorizontalOverflow(t, tt, 1100, 1400)
 }
 
@@ -649,6 +657,74 @@ func TestGlobalHistorySearchFocusesTheFieldAndFilters(t *testing.T) {
 	}
 	if !textsContain(tt, "deploy web") || textsContain(tt, "make test") {
 		t.Fatalf("typing into the focused search did not filter: %v", tt.Texts())
+	}
+}
+
+// TestHistoryDetailExplainsImportedMissingFields proves a row that came from
+// shell history names the record, not a shell that never ran on this device.
+func TestHistoryDetailExplainsImportedMissingFields(t *testing.T) {
+	m := locales.In("en")
+	recorded := time.Date(2026, 11, 7, 9, 30, 0, 0, time.Local)
+	source := &fakeSource{entries: []domainhistory.Entry{{
+		ID: "imported", Scope: "local", Command: "imported-command",
+		RecordedAt: recorded, Source: domainhistory.SourceShellHistory,
+	}}}
+	tt, state := newProductionLogsView(t, 1100, 1400, source, &fakeActions{})
+	state.SelectTab(TabHistory)
+	tt.Frame()
+
+	if err := tt.Click(m.LogsHistoryDetails()); err != nil {
+		t.Fatalf("open details: %v", err)
+	}
+	tt.Frame()
+	for _, field := range []string{
+		m.LogsHistoryFieldCwd(), m.LogsHistoryFieldExit(), m.LogsHistoryFieldDuration(),
+	} {
+		assertVisible(t, tt,
+			m.LogsHistoryMissingField(field, m.LogsHistoryMissingReasonImported()),
+			1100, 1400)
+	}
+	assertNoHorizontalOverflow(t, tt, 1100, 1400)
+}
+
+// TestHistoryDetailExplainsMissingFieldsByCaptureTier proves the explanation
+// names the capture path that could not observe the field, so a Tier 3 typed
+// fallback row reads differently from a Tier 2 native-OSC row.
+func TestHistoryDetailExplainsMissingFieldsByCaptureTier(t *testing.T) {
+	m := locales.In("en")
+	cases := []struct {
+		name   string
+		tier   int
+		reason string
+	}{
+		{name: "hook", tier: domainhistory.CaptureTierHook, reason: m.LogsHistoryMissingReasonHook()},
+		{name: "native", tier: domainhistory.CaptureTierNativeOSC, reason: m.LogsHistoryMissingReasonNative()},
+		{name: "typed", tier: domainhistory.CaptureTierFallback, reason: m.LogsHistoryMissingReasonTyped()},
+	}
+	for _, testCase := range cases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			recorded := time.Date(2026, 11, 7, 9, 30, 0, 0, time.Local)
+			source := &fakeSource{entries: []domainhistory.Entry{{
+				ID: "partial", SessionID: "session-1", Scope: "local",
+				Command: "partial-command", RecordedAt: recorded,
+				Source: domainhistory.SourceSession, CaptureTier: testCase.tier,
+			}}}
+			tt, state := newProductionLogsView(t, 1100, 1400, source, &fakeActions{})
+			state.SelectTab(TabHistory)
+			tt.Frame()
+
+			if err := tt.Click(m.LogsHistoryDetails()); err != nil {
+				t.Fatalf("open details: %v", err)
+			}
+			tt.Frame()
+			for _, field := range []string{
+				m.LogsHistoryFieldCwd(), m.LogsHistoryFieldExit(), m.LogsHistoryFieldDuration(),
+			} {
+				assertVisible(t, tt, m.LogsHistoryMissingField(field, testCase.reason), 1100, 1400)
+			}
+			assertNoHorizontalOverflow(t, tt, 1100, 1400)
+		})
 	}
 }
 

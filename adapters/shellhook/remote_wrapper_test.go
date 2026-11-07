@@ -18,10 +18,13 @@ const fakeRemoteShell = `#!/bin/sh
   printf "user_zdotdir=%s\n" "${NETCATTY_USER_ZDOTDIR:-}"
   printf "hook_dir=%s\n" "${NETCATTY_HOOK_DIR:-}"
   printf "hook_file=%s\n" "${NETCATTY_HOOK_FILE:-}"
+  printf "xonshrc_dir=%s\n" "${XONSHRC_DIR:-}"
   printf "files=%s\n" "$(ls -A "${ZDOTDIR:-${NETCATTY_HOOK_DIR:-/nonexistent}}" 2>/dev/null | tr "\n" " ")"
   printf "zsh_hook=%s\n" "$(grep -c NETCATTY_HOOK "${ZDOTDIR:-/nonexistent}/.zshrc" 2>/dev/null)"
   printf "bash_hook=%s\n" "$(grep -c NETCATTY_HOOK "${NETCATTY_HOOK_DIR:-/nonexistent}/bashrc" 2>/dev/null)"
   printf "fish_hook=%s\n" "$(grep -c fish_preexec "${NETCATTY_HOOK_FILE:-/nonexistent}" 2>/dev/null)"
+  printf "nu_hook=%s\n" "$(grep -c "1337;NetcattyExec;nu" "${NETCATTY_HOOK_DIR:-/nonexistent}/hook.nu" 2>/dev/null)"
+  printf "xonsh_hook=%s\n" "$(grep -c on_precommand "${NETCATTY_HOOK_DIR:-/nonexistent}/hook.xsh" 2>/dev/null)"
 } > "$NETCATTY_TEST_LOG"
 exit 7
 `
@@ -137,6 +140,61 @@ func TestRemoteWrapperInstallsEachShellAndCleansUp(t *testing.T) {
 			assertEmptyDir(t, tempDir, "the temporary directory")
 		})
 	}
+}
+
+// fieldValue returns the recorded value of one fake-shell field.
+func fieldValue(log, key string) string {
+	for _, line := range strings.Split(log, "\n") {
+		if value, ok := strings.CutPrefix(line, key); ok {
+			return value
+		}
+	}
+	return ""
+}
+
+// Nushell and xonsh receive their hook through the same session-scoped
+// directory, with the user startup preserved: nushell sources the hook after
+// its config with -e, and xonsh appends the directory to XONSHRC_DIR.
+func TestRemoteWrapperInstallsNushellAndXonsh(t *testing.T) {
+	t.Run("nushell", func(t *testing.T) {
+		run, home, tempDir := runRemoteWrapper(t, "nu", true)
+		if run.status != 7 {
+			t.Fatalf("status = %d, want the shell's 7", run.status)
+		}
+		args := strings.Join(run.command, " ")
+		if !strings.HasPrefix(args, "-l -e source ") || !strings.HasSuffix(args, "/hook.nu\"") {
+			t.Fatalf("args = %q, want a login shell sourcing the hook with -e", args)
+		}
+		if !positiveField(run.log, "nu_hook=") {
+			t.Fatalf("the nushell hook was not installed: %q", run.log)
+		}
+		hookDir := fieldValue(run.log, "hook_dir=")
+		if hookDir == "" {
+			t.Fatalf("the hook directory was not exported: %q", run.log)
+		}
+		assertEmptyDir(t, home, "the user's home")
+		assertEmptyDir(t, tempDir, "the temporary directory")
+	})
+
+	t.Run("xonsh", func(t *testing.T) {
+		run, home, tempDir := runRemoteWrapper(t, "xonsh", true)
+		if run.status != 7 {
+			t.Fatalf("status = %d, want the shell's 7", run.status)
+		}
+		if strings.Join(run.command, " ") != "-l" {
+			t.Fatalf("args = %v, want a login xonsh", run.command)
+		}
+		if !positiveField(run.log, "xonsh_hook=") {
+			t.Fatalf("the xonsh hook was not installed: %q", run.log)
+		}
+		hookDir := fieldValue(run.log, "hook_dir=")
+		wantRC := "/etc/xonsh/rc.d:" + filepath.Join(home, ".config", "xonsh", "rc.d") + ":" + hookDir
+		if got := fieldValue(run.log, "xonshrc_dir="); got != wantRC {
+			t.Fatalf("XONSHRC_DIR = %q, want %q", got, wantRC)
+		}
+		assertEmptyDir(t, home, "the user's home")
+		assertEmptyDir(t, tempDir, "the temporary directory")
+	})
 }
 
 // A shell Netcatty does not support is executed unchanged, with no temporary

@@ -573,6 +573,532 @@ func TestRealShellSessionCapturesTierOneEndToEnd(t *testing.T) {
 	}
 }
 
+// nushellPath returns the real nushell this machine can run. Nushell ships as
+// nu; NETCATTY_TEST_NU can name a provisioned binary.
+func nushellPath(t *testing.T) string {
+	t.Helper()
+	path := os.Getenv("NETCATTY_TEST_NU")
+	if path == "" {
+		var err error
+		path, err = exec.LookPath("nu")
+		if err != nil {
+			t.Skip("nushell is not available")
+		}
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		t.Skipf("nushell at %q is not executable", path)
+	}
+	return path
+}
+
+// nuStartupEnv isolates nushell's config directory and installs a user config
+// whose marker proves the user startup ran before the hook. Nushell reads its
+// user config from $XDG_CONFIG_HOME/nushell/config.nu.
+func nuStartupEnv(t *testing.T, home string) []string {
+	t.Helper()
+	configDir := filepath.Join(home, ".config", "nushell")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := "print \"netcatty-user-startup-loaded\"\n$env.NETCATTY_TEST_USER_PROMPT = 1\n"
+	if err := os.WriteFile(filepath.Join(configDir, "config.nu"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return []string{"HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config")}
+}
+
+// TestRealNushellSessionCapturesTierOneEndToEnd drives the real Session stack
+// with nushell. Nushell's pre_execution hook has the exact command line and cwd
+// and its pre_prompt hook has LAST_EXIT_CODE, so one Tier 1 row per command
+// carries every captured field while the user's own config still runs first.
+func TestRealNushellSessionCapturesTierOneEndToEnd(t *testing.T) {
+	path := nushellPath(t)
+	for _, key := range []string{
+		"ATUIN_SESSION", "STARSHIP_SHELL", "STARSHIP_SESSION_KEY",
+		"ITERM_SHELL_INTEGRATION_INSTALLED", "NETCATTY_HOOK",
+		"NETCATTY_HOOK_DIR", "NETCATTY_USER_ZDOTDIR", "NETCATTY_HOOK_FILE",
+		"NETCATTY_NU_PENDING",
+	} {
+		unsetEnv(t, key)
+	}
+	home := t.TempDir()
+	workDir := t.TempDir()
+	subDir := filepath.Join(workDir, "sub")
+	if err := os.MkdirAll(subDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	env := append(nuStartupEnv(t, home), "SHELL="+path)
+	events := make(chan appsession.CommandEvent, 16)
+	service := appsession.NewService(localpty.Factory{},
+		appsession.WithCaptureHook(NewPlanner(WithDefaultShell(func() (string, error) {
+			return path, nil
+		}))),
+		appsession.WithCommandCompletionHook(func(event appsession.CommandEvent) {
+			events <- event
+		}),
+	)
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{
+		Kind:    appsession.KindLocal,
+		Command: []string{path, "-l"},
+		Dir:     workDir,
+		Env:     env,
+		Cols:    100, Rows: 40,
+	})
+	if err != nil {
+		t.Fatalf("open nushell: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		select {
+		case <-session.Done():
+		case <-time.After(5 * time.Second):
+		}
+	})
+	if !waitCondition(func() bool {
+		text, _ := service.ScreenText(session.ID())
+		return strings.Contains(text.Text, "netcatty-user-startup-loaded")
+	}) {
+		text, _ := service.ScreenText(session.ID())
+		t.Fatalf("the nushell user config never ran: snapshot=%+v screen=%q",
+			session.Snapshot(), text.Text)
+	}
+	expectedCWD := workDir
+	if resolved, err := filepath.EvalSymlinks(workDir); err == nil {
+		expectedCWD = resolved
+	}
+	expectedSub := subDir
+	if resolved, err := filepath.EvalSymlinks(subDir); err == nil {
+		expectedSub = resolved
+	}
+
+	// A literal command makes the expected capture independent of nushell
+	// arithmetic syntax.
+	warmup := "echo netcatty_nu_ready_2"
+	service.SendInput([]model.SessionID{session.ID()}, []byte(warmup+"\r"))
+	if !waitCondition(func() bool {
+		text, _ := service.ScreenText(session.ID())
+		return strings.Contains(text.Text, "netcatty_nu_ready_2")
+	}) {
+		text, _ := service.ScreenText(session.ID())
+		t.Fatalf("the nushell warm-up never ran; screen=%q", text.Text)
+	}
+	awaitTierOne(t, events, warmup)
+
+	exchanges := []struct {
+		typed string
+		exit  int
+	}{
+		{typed: "echo netcatty_nu_42"},
+		// Nushell's bare `false` is a boolean value, not a failing command;
+		// ^false runs the external program so LAST_EXIT_CODE is a real 1.
+		{typed: "^false", exit: 1},
+		{typed: `echo $"netcatty_user_($env.NETCATTY_TEST_USER_PROMPT)"`},
+	}
+	for _, step := range exchanges {
+		if result := service.SendInput([]model.SessionID{session.ID()}, []byte(step.typed+"\r")); result.DeliveredCount() != 1 {
+			t.Fatalf("send %q: %+v", step.typed, result)
+		}
+		event := awaitTierOne(t, events, step.typed)
+		if event.Shell != "nu" || event.CaptureTier != domainhistory.CaptureTierHook {
+			t.Fatalf("completion = %+v", event)
+		}
+		if event.CWD != workDir && event.CWD != expectedCWD {
+			t.Fatalf("cwd = %q, want %q", event.CWD, workDir)
+		}
+		if !event.HasExitCode || event.ExitCode != step.exit {
+			t.Fatalf("exit = %d/%t, want %d", event.ExitCode, event.HasExitCode, step.exit)
+		}
+		if event.StartedAt.IsZero() || event.FinishedAt.Before(event.StartedAt) {
+			t.Fatalf("times = %v..%v", event.StartedAt, event.FinishedAt)
+		}
+		select {
+		case extra := <-events:
+			t.Fatalf("the command was captured twice: %+v", extra)
+		default:
+		}
+	}
+	// The user's config set an environment variable, proving it ran and stayed
+	// in effect after the hook appended itself.
+	if !waitCondition(func() bool {
+		text, _ := service.ScreenText(session.ID())
+		return strings.Contains(text.Text, "netcatty_user_1")
+	}) {
+		text, _ := service.ScreenText(session.ID())
+		t.Fatalf("the user config did not take effect; screen=%q", text.Text)
+	}
+
+	// The pre_execution hook reports the cwd at the moment the command starts:
+	// cd itself runs in workDir, and the next command runs in sub.
+	service.SendInput([]model.SessionID{session.ID()}, []byte("cd sub\r"))
+	cdEvent := awaitTierOne(t, events, "cd sub")
+	if cdEvent.CWD != workDir && cdEvent.CWD != expectedCWD {
+		t.Fatalf("cd cwd = %q, want %q", cdEvent.CWD, workDir)
+	}
+	afterCD := "echo netcatty_after_cd_42"
+	service.SendInput([]model.SessionID{session.ID()}, []byte(afterCD+"\r"))
+	cdAfter := awaitTierOne(t, events, afterCD)
+	if cdAfter.CWD != subDir && cdAfter.CWD != expectedSub {
+		t.Fatalf("cwd after cd = %q, want %q", cdAfter.CWD, subDir)
+	}
+	if !cdAfter.HasExitCode || cdAfter.ExitCode != 0 {
+		t.Fatalf("exit after cd = %d/%t, want 0", cdAfter.ExitCode, cdAfter.HasExitCode)
+	}
+}
+
+// xonshPath returns the real xonsh this machine can run. xonsh is not always
+// installed; NETCATTY_TEST_XONSH can name a provisioned binary.
+func xonshPath(t *testing.T) string {
+	t.Helper()
+	path := os.Getenv("NETCATTY_TEST_XONSH")
+	if path == "" {
+		var err error
+		path, err = exec.LookPath("xonsh")
+		if err != nil {
+			t.Skip("xonsh is not available")
+		}
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		t.Skipf("xonsh at %q is not executable", path)
+	}
+	return path
+}
+
+// xonshStartupEnv isolates xonsh's config directory and installs a user rc.d
+// file whose marker proves the user startup runs before the session hook,
+// which the planner appends to the end of XONSHRC_DIR.
+func xonshStartupEnv(t *testing.T, home string) []string {
+	t.Helper()
+	rcDir := filepath.Join(home, ".config", "xonsh", "rc.d")
+	if err := os.MkdirAll(rcDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := "print(\"netcatty-user-startup-loaded\")\n$NETCATTY_TEST_USER_PROMPT = 1\n"
+	if err := os.WriteFile(filepath.Join(rcDir, "00-netcatty-test.xsh"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return []string{"HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config")}
+}
+
+// unsetXonshHookEnv removes the developer's xonsh startup environment so the
+// Session sees only the isolated home the test supplies.
+func unsetXonshHookEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"XONSHRC_DIR", "XONSH_CONFIG_DIR", "XONSH_SYS_CONFIG_DIR",
+		"XONSHRC", "XONSH_LOGIN",
+	} {
+		unsetEnv(t, key)
+	}
+}
+
+// TestRealXonshSessionCapturesTierOneEndToEnd drives the real Session stack
+// with xonsh. The event handlers carry the exact command, cwd, return code,
+// and finish time, so every command is one Tier 1 row while the user's rc.d
+// startup still runs first.
+func TestRealXonshSessionCapturesTierOneEndToEnd(t *testing.T) {
+	path := xonshPath(t)
+	for _, key := range []string{
+		"ATUIN_SESSION", "STARSHIP_SHELL", "STARSHIP_SESSION_KEY",
+		"ITERM_SHELL_INTEGRATION_INSTALLED", "NETCATTY_HOOK",
+		"NETCATTY_HOOK_DIR", "NETCATTY_USER_ZDOTDIR", "NETCATTY_HOOK_FILE",
+	} {
+		unsetEnv(t, key)
+	}
+	unsetXonshHookEnv(t)
+	home := t.TempDir()
+	workDir := t.TempDir()
+	subDir := filepath.Join(workDir, "sub")
+	if err := os.MkdirAll(subDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	env := append(xonshStartupEnv(t, home), "SHELL="+path)
+	events := make(chan appsession.CommandEvent, 16)
+	service := appsession.NewService(localpty.Factory{},
+		appsession.WithCaptureHook(NewPlanner(WithDefaultShell(func() (string, error) {
+			return path, nil
+		}))),
+		appsession.WithCommandCompletionHook(func(event appsession.CommandEvent) {
+			events <- event
+		}),
+	)
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{
+		Kind:    appsession.KindLocal,
+		Command: []string{path, "-l"},
+		Dir:     workDir,
+		Env:     env,
+		Cols:    100, Rows: 40,
+	})
+	if err != nil {
+		t.Fatalf("open xonsh: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		select {
+		case <-session.Done():
+		case <-time.After(5 * time.Second):
+		}
+	})
+	if !waitCondition(func() bool {
+		text, _ := service.ScreenText(session.ID())
+		return strings.Contains(text.Text, "netcatty-user-startup-loaded")
+	}) {
+		text, _ := service.ScreenText(session.ID())
+		t.Fatalf("the xonsh user startup never ran: snapshot=%+v screen=%q",
+			session.Snapshot(), text.Text)
+	}
+	expectedCWD := workDir
+	if resolved, err := filepath.EvalSymlinks(workDir); err == nil {
+		expectedCWD = resolved
+	}
+	expectedSub := subDir
+	if resolved, err := filepath.EvalSymlinks(subDir); err == nil {
+		expectedSub = resolved
+	}
+
+	warmup := "echo netcatty_xonsh_ready_2"
+	service.SendInput([]model.SessionID{session.ID()}, []byte(warmup+"\r"))
+	if !waitCondition(func() bool {
+		text, _ := service.ScreenText(session.ID())
+		return strings.Contains(text.Text, "netcatty_xonsh_ready_2")
+	}) {
+		text, _ := service.ScreenText(session.ID())
+		t.Fatalf("the xonsh warm-up never ran; screen=%q", text.Text)
+	}
+	awaitTierOne(t, events, warmup)
+
+	exchanges := []struct {
+		typed string
+		exit  int
+	}{
+		{typed: "echo netcatty_xonsh_42"},
+		{typed: "false", exit: 1},
+		{typed: `print("netcatty_user_" + str($NETCATTY_TEST_USER_PROMPT))`},
+	}
+	for _, step := range exchanges {
+		if result := service.SendInput([]model.SessionID{session.ID()}, []byte(step.typed+"\r")); result.DeliveredCount() != 1 {
+			t.Fatalf("send %q: %+v", step.typed, result)
+		}
+		event := awaitTierOne(t, events, step.typed)
+		if event.Shell != "xonsh" || event.CaptureTier != domainhistory.CaptureTierHook {
+			t.Fatalf("completion = %+v", event)
+		}
+		if event.CWD != workDir && event.CWD != expectedCWD {
+			t.Fatalf("cwd = %q, want %q", event.CWD, workDir)
+		}
+		if !event.HasExitCode || event.ExitCode != step.exit {
+			t.Fatalf("exit = %d/%t, want %d", event.ExitCode, event.HasExitCode, step.exit)
+		}
+		if event.StartedAt.IsZero() || event.FinishedAt.Before(event.StartedAt) {
+			t.Fatalf("times = %v..%v", event.StartedAt, event.FinishedAt)
+		}
+		select {
+		case extra := <-events:
+			t.Fatalf("the command was captured twice: %+v", extra)
+		default:
+		}
+	}
+	if !waitCondition(func() bool {
+		text, _ := service.ScreenText(session.ID())
+		return strings.Contains(text.Text, "netcatty_user_1")
+	}) {
+		text, _ := service.ScreenText(session.ID())
+		t.Fatalf("the user rc did not take effect; screen=%q", text.Text)
+	}
+
+	service.SendInput([]model.SessionID{session.ID()}, []byte("cd sub\r"))
+	cdEvent := awaitTierOne(t, events, "cd sub")
+	if cdEvent.CWD != workDir && cdEvent.CWD != expectedCWD {
+		t.Fatalf("cd cwd = %q, want %q", cdEvent.CWD, workDir)
+	}
+	afterCD := "echo netcatty_after_cd_42"
+	service.SendInput([]model.SessionID{session.ID()}, []byte(afterCD+"\r"))
+	cdAfter := awaitTierOne(t, events, afterCD)
+	if cdAfter.CWD != subDir && cdAfter.CWD != expectedSub {
+		t.Fatalf("cwd after cd = %q, want %q", cdAfter.CWD, subDir)
+	}
+}
+
+// TestRealXonshWithoutHookKeepsTypedFallback starts xonsh with the hook
+// disabled. Xonsh emits no native OSC 133/7 and its default prompt is not the
+// heuristic's shape, so the command is finalized at Session close as Tier 3
+// with no cwd, exit, or finish. The row must still be captured exactly once.
+func TestRealXonshWithoutHookKeepsTypedFallback(t *testing.T) {
+	path := xonshPath(t)
+	for _, key := range []string{
+		"ATUIN_SESSION", "STARSHIP_SHELL", "STARSHIP_SESSION_KEY",
+		"ITERM_SHELL_INTEGRATION_INSTALLED", "NETCATTY_HOOK",
+		"NETCATTY_HOOK_DIR", "NETCATTY_USER_ZDOTDIR", "NETCATTY_HOOK_FILE",
+	} {
+		unsetEnv(t, key)
+	}
+	unsetXonshHookEnv(t)
+	home := t.TempDir()
+	workDir := t.TempDir()
+	env := append(xonshStartupEnv(t, home), "SHELL="+path)
+	events := make(chan appsession.CommandEvent, 16)
+	service := appsession.NewService(localpty.Factory{},
+		appsession.WithCaptureHook(NewPlanner(
+			WithDefaultShell(func() (string, error) { return path, nil }),
+			WithEnabled(func() bool { return false }),
+		)),
+		appsession.WithCommandCompletionHook(func(event appsession.CommandEvent) {
+			events <- event
+		}),
+	)
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{
+		Kind:    appsession.KindLocal,
+		Command: []string{path, "-l"},
+		Dir:     workDir,
+		Env:     env,
+		Cols:    100, Rows: 40,
+	})
+	if err != nil {
+		t.Fatalf("open xonsh: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		select {
+		case <-session.Done():
+		case <-time.After(5 * time.Second):
+		}
+	})
+	if !waitCondition(func() bool {
+		text, _ := service.ScreenText(session.ID())
+		return strings.Contains(text.Text, "netcatty-user-startup-loaded")
+	}) {
+		text, _ := service.ScreenText(session.ID())
+		t.Fatalf("the xonsh user startup never ran: %q", text.Text)
+	}
+	typed := "echo netcatty_xonsh_typed_42"
+	service.SendInput([]model.SessionID{session.ID()}, []byte(typed+"\r"))
+	if !waitCondition(func() bool {
+		text, _ := service.ScreenText(session.ID())
+		return strings.Contains(text.Text, "netcatty_xonsh_typed_42")
+	}) {
+		text, _ := service.ScreenText(session.ID())
+		t.Fatalf("the typed-fallback command never ran: %q", text.Text)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	event := awaitEvent(t, events)
+	if event.Command != typed {
+		t.Fatalf("completion = %+v, want %q", event, typed)
+	}
+	if event.CaptureTier != domainhistory.CaptureTierFallback {
+		t.Fatalf("fallback tier = %d, want Tier 3: %+v", event.CaptureTier, event)
+	}
+	if event.CWD != "" {
+		t.Fatalf("the typed fallback invented a cwd: %+v", event)
+	}
+	if event.HasExitCode {
+		t.Fatalf("the typed fallback invented an exit code: %+v", event)
+	}
+	if !event.FinishedAt.IsZero() {
+		t.Fatalf("the typed fallback invented a finish: %+v", event)
+	}
+	select {
+	case extra := <-events:
+		t.Fatalf("the fallback was captured twice: %+v", extra)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// TestRealNushellWithoutHookKeepsNativeCapture starts nushell with the hook
+// disabled, as the planner does when the setting is off. Nushell's own OSC
+// 133/7 integration is the fallback: the command is still captured once, as
+// Tier 2, with the cwd and finish the shell reports. The exit code is whatever
+// nushell's native D carries; the test records the observed fidelity.
+func TestRealNushellWithoutHookKeepsNativeCapture(t *testing.T) {
+	path := nushellPath(t)
+	for _, key := range []string{
+		"ATUIN_SESSION", "STARSHIP_SHELL", "STARSHIP_SESSION_KEY",
+		"ITERM_SHELL_INTEGRATION_INSTALLED", "NETCATTY_HOOK",
+		"NETCATTY_HOOK_DIR", "NETCATTY_USER_ZDOTDIR", "NETCATTY_HOOK_FILE",
+		"NETCATTY_NU_PENDING",
+	} {
+		unsetEnv(t, key)
+	}
+	home := t.TempDir()
+	workDir := t.TempDir()
+	env := append(nuStartupEnv(t, home), "SHELL="+path)
+	events := make(chan appsession.CommandEvent, 16)
+	service := appsession.NewService(localpty.Factory{},
+		appsession.WithCaptureHook(NewPlanner(
+			WithDefaultShell(func() (string, error) { return path, nil }),
+			WithEnabled(func() bool { return false }),
+		)),
+		appsession.WithCommandCompletionHook(func(event appsession.CommandEvent) {
+			events <- event
+		}),
+	)
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{
+		Kind:    appsession.KindLocal,
+		Command: []string{path, "-l"},
+		Dir:     workDir,
+		Env:     env,
+		Cols:    100, Rows: 40,
+	})
+	if err != nil {
+		t.Fatalf("open nushell: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		select {
+		case <-session.Done():
+		case <-time.After(5 * time.Second):
+		}
+	})
+	if !waitCondition(func() bool {
+		text, _ := service.ScreenText(session.ID())
+		return strings.Contains(text.Text, "netcatty-user-startup-loaded")
+	}) {
+		text, _ := service.ScreenText(session.ID())
+		t.Fatalf("the nushell user config never ran: %q", text.Text)
+	}
+
+	expectedCWD := workDir
+	if resolved, err := filepath.EvalSymlinks(workDir); err == nil {
+		expectedCWD = resolved
+	}
+	typed := "echo netcatty_nu_native_42"
+	service.SendInput([]model.SessionID{session.ID()}, []byte(typed+"\r"))
+	if !waitCondition(func() bool {
+		text, _ := service.ScreenText(session.ID())
+		return strings.Contains(text.Text, "netcatty_nu_native_42")
+	}) {
+		text, _ := service.ScreenText(session.ID())
+		t.Fatalf("the native-capture command never ran: %q", text.Text)
+	}
+	event := awaitEvent(t, events)
+	if event.Command != typed {
+		t.Fatalf("completion = %+v, want %q", event, typed)
+	}
+	if event.CaptureTier != domainhistory.CaptureTierNativeOSC {
+		t.Fatalf("native capture tier = %d, want Tier 2: %+v", event.CaptureTier, event)
+	}
+	if event.CWD != workDir && event.CWD != expectedCWD {
+		t.Fatalf("native cwd = %q, want %q", event.CWD, workDir)
+	}
+	if event.FinishedAt.IsZero() {
+		t.Fatalf("the native prompt never reported a finish: %+v", event)
+	}
+	t.Logf("nushell native fidelity: tier=%d cwd=%q exit=%d/%t duration=%v",
+		event.CaptureTier, event.CWD, event.ExitCode, event.HasExitCode,
+		event.FinishedAt.Sub(event.StartedAt))
+	select {
+	case extra := <-events:
+		t.Fatalf("the native command was captured twice: %+v", extra)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
 // lastNetcattyExec returns the most recent decodable private sequence, so a
 // test can wait for a capture after an earlier command has already emitted
 // one.

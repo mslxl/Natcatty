@@ -27,6 +27,7 @@ package shellhook
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,6 +42,8 @@ const (
 	shellBash       = "bash"
 	shellFish       = "fish"
 	shellPowerShell = "powershell"
+	shellNu         = "nu"
+	shellXonsh      = "xonsh"
 )
 
 // Planner rewrites a Session StartSpec so its interactive shell installs the
@@ -50,6 +53,7 @@ type Planner struct {
 	enabled      func() bool
 	defaultShell func() (string, error)
 	makeTempDir  func() (string, error)
+	platform     string
 }
 
 // Option customizes a Planner.
@@ -82,11 +86,23 @@ func WithTempDir(create func() (string, error)) Option {
 	}
 }
 
+// WithPlatform replaces the local operating system the planner sees. It exists
+// so the capture matrix can assert the same POSIX mechanism on every BSD, and
+// that Windows stays unsupported, without cross-compiling.
+func WithPlatform(goos string) Option {
+	return func(planner *Planner) {
+		if goos != "" {
+			planner.platform = goos
+		}
+	}
+}
+
 // NewPlanner returns a Planner with the platform defaults.
 func NewPlanner(opts ...Option) *Planner {
 	planner := &Planner{
 		defaultShell: systemDefaultShell,
 		makeTempDir:  systemTempDir,
+		platform:     runtime.GOOS,
 	}
 	for _, opt := range opts {
 		opt(planner)
@@ -137,7 +153,7 @@ func (p *Planner) planLocal(spec appsession.StartSpec) (appsession.CaptureHookPl
 	if !ok {
 		return unchanged, false
 	}
-	if runtime.GOOS == "windows" && shell.name != shellPowerShell {
+	if p.platform == "windows" && shell.name != shellPowerShell {
 		// The Windows hook is the PowerShell session script. An explicit
 		// zsh/bash/fish startup keeps its POSIX shell unchanged, exactly as
 		// the planner did before PowerShell support.
@@ -193,6 +209,24 @@ func (p *Planner) planLocal(spec appsession.StartSpec) (appsession.CaptureHookPl
 			"NETCATTY_HOOK_STATE="+filepath.Join(dir, "hook-loaded"),
 		)
 		spec.Command = powershellCommand(shell.path, shell.args, hookPath)
+	case shellNu:
+		hookPath := filepath.Join(dir, "hook.nu")
+		if err := os.WriteFile(hookPath, []byte(nuHookText), 0o600); err != nil {
+			cleanup()
+			return unchanged, true
+		}
+		// Nushell loads the user config before -e runs, so the hook is appended
+		// after the user's own pre_execution and pre_prompt hooks.
+		spec.Command = nuCommand(shell.path, shell.args, shell.explicit, hookPath)
+	case shellXonsh:
+		hookPath := filepath.Join(dir, "hook.xsh")
+		if err := os.WriteFile(hookPath, []byte(xonshHookText), 0o600); err != nil {
+			cleanup()
+			return unchanged, true
+		}
+		// The hook file lives in a session rc.d directory appended to the end
+		// of XONSHRC_DIR, so every user startup file still runs first.
+		spec.Env = append(spec.Env, "XONSHRC_DIR="+xonshRCDir(spec, dir))
 	default:
 		cleanup()
 		return unchanged, false
@@ -213,8 +247,8 @@ type localShellInfo struct {
 }
 
 // localShell resolves and validates the shell a local Session will start. An
-// explicit command that is not an interactive zsh, bash, or fish is left
-// alone; a non-interactive invocation must not receive a hook.
+// explicit command that is not an interactive zsh, bash, fish, nushell, or
+// xonsh is left alone; a non-interactive invocation must not receive a hook.
 func (p *Planner) localShell(spec appsession.StartSpec) (localShellInfo, bool) {
 	if len(spec.Command) > 0 {
 		path := spec.Command[0]
@@ -256,7 +290,7 @@ func supportedShell(name string) (string, bool) {
 	lower := strings.ToLower(name)
 	lower = strings.TrimSuffix(lower, ".exe")
 	switch lower {
-	case shellZsh, shellBash, shellFish:
+	case shellZsh, shellBash, shellFish, shellNu, shellXonsh:
 		return lower, true
 	case "pwsh", shellPowerShell:
 		return shellPowerShell, true
@@ -297,6 +331,14 @@ func interactiveShellArgs(name string, args []string) bool {
 		case arg == "--rcfile" || strings.HasPrefix(arg, "--rcfile=") ||
 			arg == "--init-file" || strings.HasPrefix(arg, "--init-file="):
 			return false
+		case name == shellNu && nuNonInteractiveArg(arg):
+			// -c runs and exits, -e is the slot the hook needs, -n skips the
+			// user config, and the remaining flags do not start a shell.
+			return false
+		case name == shellXonsh && xonshNonInteractiveArg(arg):
+			// -c runs and exits, -n/--no-rc and --rc replace or skip the user
+			// startup the hook must preserve, and the rest print and exit.
+			return false
 		case optionConsumesNextArg(name, arg):
 			// The next word is this option's value, not a script path.
 			index++
@@ -306,6 +348,46 @@ func interactiveShellArgs(name string, args []string) bool {
 		}
 	}
 	return true
+}
+
+// nuNonInteractiveArg reports a Nushell flag that runs a command, skips the
+// user config, or starts a non-shell mode. A combined short cluster carrying c,
+// e, or n is rejected too, because -e must stay reserved for the hook.
+func nuNonInteractiveArg(arg string) bool {
+	switch arg {
+	case "-c", "--commands", "-e", "--execute", "-n", "--no-config-file",
+		"--stdin", "--mcp", "-h", "--help", "-v", "--version":
+		return true
+	}
+	return shortOptionCarries(arg, "cen")
+}
+
+// xonshNonInteractiveArg reports an xonsh flag that runs a command, replaces or
+// skips the user startup, or prints and exits.
+func xonshNonInteractiveArg(arg string) bool {
+	switch arg {
+	case "-c", "--command", "-n", "--no-rc", "--norc", "--rc",
+		"-V", "--version", "-h", "--help":
+		return true
+	}
+	if strings.HasPrefix(arg, "--rc=") {
+		return true
+	}
+	return shortOptionCarries(arg, "cn")
+}
+
+// shortOptionCarries reports whether a short-option cluster such as -iln
+// contains one of the rejected letters. Long options never qualify.
+func shortOptionCarries(arg, letters string) bool {
+	if len(arg) < 3 || !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") {
+		return false
+	}
+	for _, letter := range arg[1:] {
+		if strings.ContainsRune(letters, letter) {
+			return true
+		}
+	}
+	return false
 }
 
 // fishPrivateShortFlag reports whether a short-option word carries fish's -P
@@ -328,6 +410,14 @@ func optionConsumesNextArg(name, arg string) bool {
 		return true
 	case name == shellBash && arg == "-O":
 		return true
+	case name == shellNu && (arg == "-m" || arg == "--table-mode" ||
+		arg == "--error-style" || arg == "-I" || arg == "--include-path" ||
+		arg == "--config" || arg == "--env-config" || arg == "--config-home" ||
+		arg == "--log-level" || arg == "--log-target" ||
+		arg == "--mcp-transport" || arg == "--mcp-port" || arg == "--mcp-host"):
+		return true
+	case name == shellXonsh && (arg == "-D" || arg == "-st" || arg == "--shell-type"):
+		return true
 	}
 	// A short-option cluster may end in a value-taking option, as in
 	// `zsh -xo extendedglob`. Long options never take an attached value here.
@@ -341,6 +431,8 @@ func optionConsumesNextArg(name, arg string) bool {
 		return arg[len(arg)-1] == 'O'
 	case shellFish:
 		return arg[len(arg)-1] == 'C'
+	case shellNu:
+		return arg[len(arg)-1] == 'm' || arg[len(arg)-1] == 'I'
 	}
 	return false
 }
@@ -404,6 +496,71 @@ func zdotdirFor(spec appsession.StartSpec) string {
 		return home
 	}
 	return ""
+}
+
+// nuCommand starts Nushell with the hook file as the last -e command. Nushell
+// runs -e after loading the user env and config, then enters its interactive
+// loop, so the user hooks are already installed when the hook appends to them.
+func nuCommand(path string, args []string, explicit bool, hookPath string) []string {
+	command := make([]string, 0, len(args)+5)
+	command = append(command, path)
+	if !explicit {
+		command = append(command, "-l")
+	}
+	command = append(command, args...)
+	return append(command, "-e", fmt.Sprintf("source %q", hookPath))
+}
+
+// xonshRCDir appends the session directory to XONSHRC_DIR. Xonsh loads
+// XONSHRC first and then every .xsh or .py file in XONSHRC_DIR in sorted
+// order, so putting the hook in a directory of its own keeps every user
+// startup file ahead of it. When the user already set XONSHRC_DIR it is
+// preserved; otherwise xonsh's documented default directories are reproduced.
+func xonshRCDir(spec appsession.StartSpec, hookDir string) string {
+	if value, set := lookupEnv(spec, "XONSHRC_DIR"); set && value != "" {
+		return strings.Join([]string{value, hookDir}, string(os.PathListSeparator))
+	}
+	systemConfig := envValue(spec, "XONSH_SYS_CONFIG_DIR")
+	if systemConfig == "" {
+		systemConfig = "/etc/xonsh"
+	}
+	configDir := envValue(spec, "XONSH_CONFIG_DIR")
+	if configDir == "" {
+		configHome := envValue(spec, "XDG_CONFIG_HOME")
+		if configHome == "" {
+			if home := envValue(spec, "HOME"); home != "" {
+				configHome = filepath.Join(home, ".config")
+			}
+		}
+		if configHome != "" {
+			configDir = filepath.Join(configHome, "xonsh")
+		}
+	}
+	dirs := []string{filepath.Join(systemConfig, "rc.d")}
+	if configDir != "" {
+		dirs = append(dirs, filepath.Join(configDir, "rc.d"))
+	}
+	dirs = append(dirs, hookDir)
+	return strings.Join(dirs, string(os.PathListSeparator))
+}
+
+// lookupEnv returns the last value of key in the StartSpec environment,
+// falling back to the process environment. set reports that either source
+// defined it, so an explicitly empty value is not mistaken for unset.
+func lookupEnv(spec appsession.StartSpec, key string) (value string, set bool) {
+	value, set = os.LookupEnv(key)
+	for _, entry := range spec.Env {
+		candidateKey, candidate, ok := strings.Cut(entry, "=")
+		if ok && candidateKey == key {
+			value, set = candidate, true
+		}
+	}
+	return value, set
+}
+
+func envValue(spec appsession.StartSpec, key string) string {
+	value, _ := lookupEnv(spec, key)
+	return value
 }
 
 // systemTempDir creates the one private directory a local Session needs.

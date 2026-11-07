@@ -10,6 +10,203 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 )
 
+// TestPlanOnBSDPOSIXHostsInstallsTheHook proves the existing POSIX startup
+// mechanism is not Linux-specific: the same session-scoped files work on the
+// BSDs, so a BSD POSIX Session reaches Tier 1. A BSD default shell Netcatty
+// does not support stays unchanged and falls back to Tier 2/3, and Windows
+// never receives a hook.
+func TestPlanOnBSDPOSIXHostsInstallsTheHook(t *testing.T) {
+	for _, goos := range []string{"freebsd", "openbsd", "netbsd", "dragonfly", "darwin", "linux"} {
+		goos := goos
+		for _, command := range [][]string{
+			{"/bin/zsh"},
+			{"/usr/local/bin/bash"},
+			{"/usr/local/bin/fish"},
+		} {
+			command := command
+			t.Run(goos+"/"+filepath.Base(command[0]), func(t *testing.T) {
+				spec := appsession.StartSpec{Kind: appsession.KindLocal, Command: command}
+				plan, failed, _ := planWith(t, spec, WithPlatform(goos))
+				if failed || !plan.HookExpected {
+					t.Fatalf("plan = failed %t, expected %t", failed, plan.HookExpected)
+				}
+			})
+		}
+	}
+
+	t.Run("bsd unsupported default shell", func(t *testing.T) {
+		spec := appsession.StartSpec{Kind: appsession.KindLocal}
+		dir := t.TempDir()
+		plan, failed := NewPlanner(
+			WithPlatform("freebsd"),
+			WithDefaultShell(func() (string, error) { return "/bin/csh", nil }),
+			WithTempDir(func() (string, error) {
+				t.Fatal("an unsupported BSD shell created a temporary directory")
+				return dir, nil
+			}),
+		).Plan(spec)
+		if failed || plan.HookExpected || plan.Cleanup != nil {
+			t.Fatalf("unsupported BSD plan = %+v, failed %t", plan, failed)
+		}
+	})
+
+	t.Run("windows powershell", func(t *testing.T) {
+		// Windows is supported through the PowerShell hook; the POSIX matrix
+		// above covers only the shells the platform does not own.
+		spec := appsession.StartSpec{Kind: appsession.KindLocal, Command: []string{"C:/Program Files/PowerShell/pwsh.exe"}}
+		plan, failed := NewPlanner(WithPlatform("windows")).Plan(spec)
+		if failed || !plan.HookExpected || plan.Cleanup == nil {
+			t.Fatalf("windows powershell plan = %+v, failed %t", plan, failed)
+		}
+		plan.Cleanup()
+	})
+
+	t.Run("windows posix shell stays unchanged", func(t *testing.T) {
+		spec := appsession.StartSpec{Kind: appsession.KindLocal, Command: []string{"C:/Program Files/Git/bin/bash.exe"}}
+		plan, failed := NewPlanner(WithPlatform("windows")).Plan(spec)
+		if failed || plan.HookExpected || plan.Cleanup != nil {
+			t.Fatalf("windows POSIX plan = %+v, failed %t", plan, failed)
+		}
+	})
+}
+
+// TestPlanLocalNushellInstallsTheHook proves Nushell reaches Tier 1 through its
+// pre_execution and pre_prompt hooks. The hook is appended to the user hooks,
+// not substituted for them, and it runs after the user config through -e.
+func TestPlanLocalNushellInstallsTheHook(t *testing.T) {
+	spec := appsession.StartSpec{Kind: appsession.KindLocal}
+	plan, failed, dir := planWith(t, spec, WithDefaultShell(func() (string, error) {
+		return "/opt/homebrew/bin/nu", nil
+	}))
+	if failed || !plan.HookExpected {
+		t.Fatalf("nushell plan = failed %t, expected %t", failed, plan.HookExpected)
+	}
+	command := plan.Spec.Command
+	if len(command) != 4 || command[0] != "/opt/homebrew/bin/nu" || command[1] != "-l" ||
+		command[2] != "-e" || command[3] != `source "`+filepath.Join(dir, "hook.nu")+`"` {
+		t.Fatalf("command = %v", command)
+	}
+	hook, err := os.ReadFile(filepath.Join(dir, "hook.nu"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(hook)
+	for _, want := range []string{
+		"pre_execution", "pre_prompt", "commandline", "1337;NetcattyExec;nu",
+		"1337;NetcattyHook;nu", "encode base64 --url --nopad", "NETCATTY_HOOK",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("nushell hook is missing %q", want)
+		}
+	}
+	plan.Cleanup()
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("cleanup left %s behind: %v", dir, err)
+	}
+}
+
+func TestPlanLocalExplicitNushellKeepsItsArguments(t *testing.T) {
+	spec := appsession.StartSpec{Kind: appsession.KindLocal, Command: []string{"/bin/nu", "-i"}}
+	plan, failed, dir := planWith(t, spec)
+	if failed || !plan.HookExpected {
+		t.Fatalf("explicit nushell plan = failed %t, expected %t", failed, plan.HookExpected)
+	}
+	command := plan.Spec.Command
+	if len(command) != 4 || command[0] != "/bin/nu" || command[1] != "-i" ||
+		command[2] != "-e" {
+		t.Fatalf("command = %v, want the user's -i before the hook -e", command)
+	}
+	if !strings.Contains(command[3], filepath.Join(dir, "hook.nu")) {
+		t.Fatalf("command = %v", command)
+	}
+}
+
+// TestPlanLocalXonshInstallsTheHook proves xonsh reaches Tier 1 through its
+// on_precommand and on_postcommand events. The hook directory is appended to
+// the user's rc.d directories, so all user startup files still run first.
+func TestPlanLocalXonshInstallsTheHook(t *testing.T) {
+	spec := appsession.StartSpec{
+		Kind: appsession.KindLocal,
+		Env:  []string{"HOME=/session/home", "XDG_CONFIG_HOME=/session/config"},
+	}
+	plan, failed, dir := planWith(t, spec, WithDefaultShell(func() (string, error) {
+		return "/usr/local/bin/xonsh", nil
+	}))
+	if failed || !plan.HookExpected {
+		t.Fatalf("xonsh plan = failed %t, expected %t", failed, plan.HookExpected)
+	}
+	if len(plan.Spec.Command) != 0 {
+		t.Fatalf("the default xonsh command was changed: %v", plan.Spec.Command)
+	}
+	wantRC := "/etc/xonsh/rc.d:/session/config/xonsh/rc.d:" + dir
+	if !containsEnv(plan.Spec, "XONSHRC_DIR", wantRC) {
+		t.Fatalf("XONSHRC_DIR was not appended: %v", plan.Spec.Env)
+	}
+	hook, err := os.ReadFile(filepath.Join(dir, "hook.xsh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(hook)
+	for _, want := range []string{
+		"on_precommand", "on_postcommand", "1337;NetcattyExec;xonsh",
+		"1337;NetcattyHook;xonsh", "XONSH_INTERACTIVE", "NETCATTY_HOOK",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("xonsh hook is missing %q", want)
+		}
+	}
+}
+
+func TestPlanLocalXonshAppendsToAnExplicitRCDir(t *testing.T) {
+	spec := appsession.StartSpec{
+		Kind: appsession.KindLocal,
+		Env:  []string{"XONSHRC_DIR=/srv/xonsh/rc.d"},
+	}
+	plan, failed, dir := planWith(t, spec, WithDefaultShell(func() (string, error) {
+		return "/usr/bin/xonsh", nil
+	}))
+	if failed {
+		t.Fatal("the xonsh plan reported a failure")
+	}
+	if !containsEnv(plan.Spec, "XONSHRC_DIR", "/srv/xonsh/rc.d:"+dir) {
+		t.Fatalf("the explicit XONSHRC_DIR was not preserved: %v", plan.Spec.Env)
+	}
+}
+
+func TestPlanLocalSkipsNonInteractiveNushellAndXonsh(t *testing.T) {
+	cases := map[string][]string{
+		"nu command":        {"/bin/nu", "-c", "echo hi"},
+		"nu execute":        {"/bin/nu", "-e", "echo hi"},
+		"nu no config":      {"/bin/nu", "--no-config-file"},
+		"nu script":         {"/bin/nu", "script.nu"},
+		"nu stdin":          {"/bin/nu", "--stdin"},
+		"nu mcp":            {"/bin/nu", "--mcp"},
+		"xonsh command":     {"/bin/xonsh", "-c", "echo hi"},
+		"xonsh no rc":       {"/bin/xonsh", "--no-rc"},
+		"xonsh short no rc": {"/bin/xonsh", "-n"},
+		"xonsh rc":          {"/bin/xonsh", "--rc", "/tmp/user.xsh"},
+		"xonsh script":      {"/bin/xonsh", "script.xsh"},
+		"xonsh version":     {"/bin/xonsh", "-V"},
+	}
+	for name, command := range cases {
+		command := command
+		t.Run(name, func(t *testing.T) {
+			spec := appsession.StartSpec{Kind: appsession.KindLocal, Command: command}
+			dir := t.TempDir()
+			plan, failed := NewPlanner(WithTempDir(func() (string, error) {
+				t.Fatal("an unsupported startup created a temporary directory")
+				return dir, nil
+			})).Plan(spec)
+			if failed || plan.HookExpected || plan.Cleanup != nil {
+				t.Fatalf("plan = %+v, failed %t", plan, failed)
+			}
+			if strings.Join(plan.Spec.Command, " ") != strings.Join(command, " ") {
+				t.Fatalf("the StartSpec changed: %v", plan.Spec.Command)
+			}
+		})
+	}
+}
+
 // planWith runs the planner with a real session-scoped temporary directory and
 // returns the plan plus the directory for assertions.
 func planWith(t *testing.T, spec appsession.StartSpec, opts ...Option) (appsession.CaptureHookPlan, bool, string) {
@@ -74,7 +271,7 @@ func TestPlanReportsWhetherTheHookIsExpected(t *testing.T) {
 	})
 	t.Run("unsupported shell", func(t *testing.T) {
 		plan, failed := NewPlanner().Plan(appsession.StartSpec{
-			Kind: appsession.KindLocal, Command: []string{"/bin/nu"},
+			Kind: appsession.KindLocal, Command: []string{"/bin/ksh"},
 		})
 		if failed || plan.HookExpected {
 			t.Fatalf("unsupported plan = failed %t, expected %t", failed, plan.HookExpected)
@@ -481,6 +678,8 @@ func TestScriptsNeverContainASingleQuote(t *testing.T) {
 		"zsh source": zshSourceScript(".zprofile"),
 		"bash":       bashStartupScript(),
 		"fish":       fishHookText,
+		"nushell":    nuHookText,
+		"xonsh":      xonshHookText,
 	}
 	for name, script := range scripts {
 		if strings.Contains(script, "'") {
@@ -493,11 +692,33 @@ func TestScriptsNeverContainASingleQuote(t *testing.T) {
 	}
 }
 
+// TestHooksKeepAnUnknownExitUnknown covers the nushell and xonsh finish marks.
+// A shell that has no exit code must emit a bare OSC 133 D; defaulting to 0
+// would record a known success that never happened.
+func TestHooksKeepAnUnknownExitUnknown(t *testing.T) {
+	if strings.Contains(nuHookText, "LAST_EXIT_CODE? | default 0") {
+		t.Fatal("the nushell hook defaults an absent exit code to 0")
+	}
+	for name, script := range map[string]string{"nushell": nuHookText, "xonsh": xonshHookText} {
+		if !strings.Contains(script, "133;D") {
+			t.Fatalf("%s does not emit a finish mark", name)
+		}
+		if !strings.Contains(script, `133;D\u{7}`) && !strings.Contains(script, `133;D\x07`) {
+			t.Fatalf("%s has no unknown-exit finish mark", name)
+		}
+	}
+	if !strings.Contains(nuHookText, "($env.LAST_EXIT_CODE?)") {
+		t.Fatal("the nushell hook does not read LAST_EXIT_CODE as an optional value")
+	}
+}
+
 func TestScriptsGuardAgainstExistingIntegrations(t *testing.T) {
 	scripts := map[string]string{
-		"zsh":  zshHookScript,
-		"bash": bashHookScript,
-		"fish": fishHookText,
+		"zsh":     zshHookScript,
+		"bash":    bashHookScript,
+		"fish":    fishHookText,
+		"nushell": nuHookText,
+		"xonsh":   xonshHookText,
 	}
 	for name, script := range scripts {
 		guards := []string{
@@ -671,9 +892,11 @@ func TestHooksAppendToTheUsersMechanisms(t *testing.T) {
 
 func TestHooksEmitThePrivateSequenceBeforeTheStandardMarks(t *testing.T) {
 	for name, script := range map[string]string{
-		"zsh":  zshHookScript,
-		"bash": bashHookScript,
-		"fish": fishHookText,
+		"zsh":     zshHookScript,
+		"bash":    bashHookScript,
+		"fish":    fishHookText,
+		"nushell": nuHookText,
+		"xonsh":   xonshHookText,
 	} {
 		private := strings.Index(script, "1337;NetcattyExec")
 		standard := strings.Index(script, "133;C")
@@ -734,6 +957,34 @@ func TestRemoteWrapperRunsTheUsersShellAndCleansUp(t *testing.T) {
 	}
 	if strings.Count(script, "NETCATTY_EOF")%2 != 0 {
 		t.Fatal("a heredoc is unbalanced")
+	}
+}
+
+// TestRemotePreludeFindsTheLoginShellWithoutGetent covers the BSD and macOS
+// hosts that have no getent: the wrapper reads the login shell from
+// /etc/passwd before falling back to /bin/sh, using only POSIX sh syntax.
+func TestRemotePreludeFindsTheLoginShellWithoutGetent(t *testing.T) {
+	for _, want := range []string{
+		"netcatty_shell=${SHELL:-}",
+		"getent passwd",
+		"netcatty_uid=$(id -u)",
+		"IFS=: read -r",
+		"done < /etc/passwd",
+		`netcatty_shell=/bin/sh`,
+	} {
+		if !strings.Contains(remotePrelude, want) {
+			t.Fatalf("the remote prelude is missing %q", want)
+		}
+	}
+	for _, bashism := range []string{"[[", "local ", "function "} {
+		if strings.Contains(remotePrelude, bashism) {
+			t.Fatalf("the remote prelude is not POSIX sh: found %q", bashism)
+		}
+	}
+	passwd := strings.Index(remotePrelude, "done < /etc/passwd")
+	fallback := strings.Index(remotePrelude, `netcatty_shell=/bin/sh`)
+	if passwd < 0 || fallback < 0 || passwd > fallback {
+		t.Fatalf("the passwd lookup at %d must precede the /bin/sh fallback at %d", passwd, fallback)
 	}
 }
 
