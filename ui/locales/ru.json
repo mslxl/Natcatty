@@ -625,6 +625,7 @@
   "connectionTmuxSessionRestored": "Сеанс tmux восстановлен.",
   "connectionTmuxNested": "Вы уже находитесь в сеансе tmux на удалённом Host; подключение выполнено без вложения.",
   "connectionTmuxUnavailable": "tmux недоступен на удалённом Host; выполнено подключение с обычной оболочкой.",
+  "connectionCaptureHookUnavailable": "Не удалось установить перехватчик команд оболочки; этот сеанс использует резервный захват.",
   "connectionEternalTerminalDisplaced": "Другой клиент подключился к этому сеансу EternalTerminal, поэтому это подключение завершено. EternalTerminal допускает только одного клиента одновременно.",
   "connectionEternalTerminalResumeUnsupported": "Не удалось восстановить сохранённый сеанс EternalTerminal: сервер не поддерживает повторное подключение к сеансу (etserver 6.2.10 или старше). Запущен новый сеанс; обновите etserver, чтобы восстанавливать сеансы после перезапуска.",
   "@connectionX11CookieUnavailable": {
@@ -1830,6 +1831,9 @@
   "settingsLogsTitle": "Журналы",
   "settingsLogsDescription": "Настройки диагностических журналов.",
   "settingsSSHDebug": "Включить отладочные журналы SSH",
+  "settingsHistoryCaptureHookTitle": "Перехват истории команд",
+  "settingsHistoryCaptureHookDescription": "Устанавливает перехватчик оболочки для zsh, bash и fish в рамках сеанса. Он читает ваши файлы запуска, не изменяя их, и при недоступности переходит к встроенному захвату.",
+  "settingsHistoryCaptureHookEnabled": "Установить перехватчик оболочки",
   "settingsSyncTitle": "Синхронизация и облако",
   "settingsSyncDescription": "Синхронизируйте зашифрованное хранилище через облачный провайдер. Мастер-пароль никогда не покидает это устройство.",
   "settingsSyncSecurityNote": "Провайдер видит метаданные хранилища: имя устройства, версию приложения и метки времени. Записи и учётные данные хранилища остаются зашифрованными.",

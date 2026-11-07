@@ -215,6 +215,20 @@ func renderPowerUxSection(c *ui.Context, state *TerminalState,
 
 }
 
+// renderHistoryCaptureSection toggles the session-scoped shell hook that
+// raises command capture to Tier 1. Turning it off leaves native OSC 133/7 and
+// typed-input capture in place.
+func renderHistoryCaptureSection(c *ui.Context, state *TerminalState,
+	settings domainterminal.Settings, m locales.Messages, t *ui.Theme) {
+	ui.Text(c, m.SettingsHistoryCaptureHookTitle()).Bold()
+	ui.Text(c, m.SettingsHistoryCaptureHookDescription()).FontSize(12).TextColor(t.TextMuted)
+	enabled := settings.HistoryCaptureHookEnabled
+	if ui.Checkbox(c, &enabled, m.SettingsHistoryCaptureHookEnabled()).Changed() {
+		state.SetHistoryCaptureHookEnabled(enabled)
+		c.Invalidate()
+	}
+}
+
 // renderRetentionSection draws the Connection Log retention bounds. The count
 // and age fields are edited independently; each save carries the other
 // field's current value so an edit never silently resets its neighbour.

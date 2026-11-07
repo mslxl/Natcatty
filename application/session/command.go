@@ -224,6 +224,7 @@ func (s *Session) Command(ctx context.Context, command string, opts CommandOptio
 	}
 
 	marker := newCommandMarker()
+	s.noteInternalMarker(marker)
 	wrapper := buildCommandWrapper(command, s.ShellKind(), marker)
 	if err := s.writeRaw([]byte(wrapper)); err != nil {
 		return CommandResult{}, ErrCommandClosed
@@ -379,6 +380,7 @@ func (s *Session) probeShell(ctx context.Context, feed *rawOutputFeed, deadline 
 		timerWindow = remaining
 	}
 	marker := newCommandMarker()
+	s.noteInternalMarker(marker)
 	// ":" is a no-op builtin in POSIX shells, a label in cmd, and a caught
 	// command error in PowerShell; unlike "echo" it never prompts for mandatory
 	// input in an interactive PowerShell host.
@@ -405,6 +407,61 @@ func (s *Session) probeShell(ctx context.Context, feed *rawOutputFeed, deadline 
 			}
 		}
 	}
+}
+
+// noteInternalMarker records a programmatic wrapper marker. It is called
+// before the wrapper is typed so a capture published while the command runs is
+// already recognized as internal.
+func (s *Session) noteInternalMarker(marker string) {
+	s.internalMu.Lock()
+	if s.internalMarkers == nil {
+		s.internalMarkers = make(map[string]struct{})
+	}
+	s.internalMarkers[marker] = struct{}{}
+	s.internalMarkerOrder = append(s.internalMarkerOrder, marker)
+	// A normal command's marker is removed when its capture is suppressed.
+	// This bound only matters when a shell dies before reporting the wrapper,
+	// or when a late capture never arrives.
+	for len(s.internalMarkerOrder) > maxInternalMarkers {
+		oldest := s.internalMarkerOrder[0]
+		s.internalMarkerOrder = s.internalMarkerOrder[1:]
+		delete(s.internalMarkers, oldest)
+	}
+	s.internalMu.Unlock()
+}
+
+// forgetInternalMarkers drops every marker contained in a suppressed capture.
+// The tap finalizes each command exactly once, so after its wrapper's capture
+// is discarded no later capture can carry the same marker.
+func (s *Session) forgetInternalMarkers(command string) {
+	s.internalMu.Lock()
+	for marker := range s.internalMarkers {
+		if strings.Contains(command, marker) {
+			delete(s.internalMarkers, marker)
+		}
+	}
+	s.internalMu.Unlock()
+}
+
+// maxInternalMarkers bounds the markers kept for wrappers whose capture never
+// reached the tap, so a pathological Session cannot grow without limit.
+const maxInternalMarkers = 256
+
+// internalCommand reports whether command is one of this Session's
+// programmatic wrappers. A user command never contains an unguessable marker,
+// so ordinary typed input is still captured while a command runs.
+func (s *Session) internalCommand(command string) bool {
+	if command == "" {
+		return false
+	}
+	s.internalMu.Lock()
+	defer s.internalMu.Unlock()
+	for marker := range s.internalMarkers {
+		if strings.Contains(command, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 var commandMarkerCounter uint64

@@ -164,8 +164,8 @@ func (s *Settings) Apply(ctx context.Context, documents map[string]json.RawMessa
 		plan.preferences = &portable
 	}
 	if raw, ok := documents[KeyTerminal]; ok && s.terminal != nil {
-		var settings domainterminal.Settings
-		if err := json.Unmarshal(raw, &settings); err != nil {
+		settings, err := decodeTerminalSettings(raw)
+		if err != nil {
 			return fmt.Errorf("syncedsettings: decode terminal settings: %w", err)
 		}
 		plan.terminal = &settings
@@ -235,6 +235,28 @@ func (s *Settings) Apply(ctx context.Context, documents map[string]json.RawMessa
 		}
 	}
 	return nil
+}
+
+// decodeTerminalSettings decodes a synced terminal document. Documents
+// written before the capture hook switch omit its key; a plain decode would
+// read that as false and let a download turn the portable on-by-default
+// setting off. The field is therefore defaulted to on only when absent, so an
+// explicit false from another device still syncs.
+func decodeTerminalSettings(raw json.RawMessage) (domainterminal.Settings, error) {
+	var settings domainterminal.Settings
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return domainterminal.Settings{}, err
+	}
+	var presence struct {
+		HistoryCaptureHookEnabled *bool `json:"historyCaptureHookEnabled"`
+	}
+	if err := json.Unmarshal(raw, &presence); err != nil {
+		return domainterminal.Settings{}, err
+	}
+	if presence.HistoryCaptureHookEnabled == nil {
+		settings.HistoryCaptureHookEnabled = true
+	}
+	return settings, nil
 }
 
 func decodeArray[T any](raw json.RawMessage, target *[]T) error {

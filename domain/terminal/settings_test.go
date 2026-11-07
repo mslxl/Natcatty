@@ -19,6 +19,9 @@ func TestDefaults(t *testing.T) {
 		t.Fatalf("dynamic tab title default = %q, want %q",
 			settings.DynamicTabTitleMode, DynamicTabTitleAll)
 	}
+	if !settings.HistoryCaptureHookEnabled {
+		t.Fatal("the history capture hook is off by default")
+	}
 }
 
 func TestNormalizeDynamicTabTitleMode(t *testing.T) {
@@ -100,6 +103,7 @@ func TestPortableTerminalSettingsKeepDeviceLocalState(t *testing.T) {
 	settings.LogDirectory = "/var/log/natcatty"
 	settings.Encodings = map[string]Encoding{"host:host-1": EncodingGB18030}
 	settings.OSC52 = ClipboardReadWrite
+	settings.HistoryCaptureHookEnabled = true
 
 	portable := Portable(settings)
 	if portable.LogDirectory != "" || len(portable.Encodings) != 0 {
@@ -108,10 +112,14 @@ func TestPortableTerminalSettingsKeepDeviceLocalState(t *testing.T) {
 	if portable.OSC52 != ClipboardReadWrite {
 		t.Fatalf("portable OSC52 = %q", portable.OSC52)
 	}
+	if !portable.HistoryCaptureHookEnabled {
+		t.Fatalf("the capture hook preference is not portable: %+v", portable)
+	}
 
 	current := Defaults()
 	current.LogDirectory = "/home/me/logs"
 	current.Encodings = map[string]Encoding{"local": EncodingUTF8}
+	current.HistoryCaptureHookEnabled = false
 	merged := MergePortable(current, portable)
 	if merged.LogDirectory != "/home/me/logs" {
 		t.Fatalf("merged LogDirectory = %q, want the local value", merged.LogDirectory)
@@ -121,5 +129,8 @@ func TestPortableTerminalSettingsKeepDeviceLocalState(t *testing.T) {
 	}
 	if merged.OSC52 != ClipboardReadWrite {
 		t.Fatalf("merged OSC52 = %q, want the portable value", merged.OSC52)
+	}
+	if !merged.HistoryCaptureHookEnabled {
+		t.Fatalf("merged capture hook = %t, want the portable value", merged.HistoryCaptureHookEnabled)
 	}
 }

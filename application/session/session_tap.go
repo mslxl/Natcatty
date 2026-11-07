@@ -99,8 +99,9 @@ func (s *Session) handleInput(data []byte, source bool) (forwarded []byte, chang
 // Host context and origin, plus the fields the tap observed. Unknown values
 // are zero: an empty CWD or Shell, a zero FinishedAt for an execution the
 // shell never reported finishing (duration unknown), and HasExitCode false
-// when no exit code was reported. CaptureTier is 2 for native OSC 133/7 and 3
-// for typed input plus prompt detection in this ticket.
+// when no exit code was reported. CaptureTier is 1 when the installed shell
+// hook reported the command, 2 for native OSC 133/7, and 3 for typed input
+// plus prompt detection.
 type CommandEvent struct {
 	SessionID   model.SessionID
 	Scope       string
@@ -124,6 +125,14 @@ type CommandEvent struct {
 // "local", "host:<id>", or "serial:<port>". An unsaved Host's scope needs the
 // captured origin, so it is left empty for the app to complete.
 func (s *Session) publishCommandCompletion(capture capturedCommand) {
+	// A shell hook captures a programmatic wrapper as if the user typed it.
+	// Wrapper completions are the app's execution machinery, not history; a
+	// concurrent user command never carries an internal marker and is kept.
+	// The marker is no longer needed once its own capture has been dropped.
+	if s.internalCommand(capture.command) {
+		s.forgetInternalMarkers(capture.command)
+		return
+	}
 	if s.onCommandCompletion == nil {
 		return
 	}

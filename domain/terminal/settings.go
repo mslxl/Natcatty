@@ -242,6 +242,10 @@ type Settings struct {
 	// ConnectionLogRetentionDays is how many days of connection logs are
 	// kept. Zero keeps logs of every age.
 	ConnectionLogRetentionDays int
+	// HistoryCaptureHookEnabled installs the session-scoped shell hook that
+	// raises command capture to Tier 1. It is portable and on by default. When
+	// it is off, Sessions fall back to native OSC 133/7 or typed input.
+	HistoryCaptureHookEnabled bool
 }
 
 // Portable returns the terminal settings that follow the user between
@@ -304,6 +308,8 @@ func Defaults() Settings {
 
 		ConnectionLogRetentionCount: DefaultConnectionLogRetentionCount,
 		ConnectionLogRetentionDays:  0,
+
+		HistoryCaptureHookEnabled: true,
 	}
 }
 

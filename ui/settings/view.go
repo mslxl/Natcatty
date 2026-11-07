@@ -389,7 +389,7 @@ func areaContent(c *ui.Context, config Config, area Area, m locales.Messages, t 
 	case AreaSFTPEditor:
 		sftpEditorArea(c, config, m, t)
 	case AreaLogs:
-		logsArea(c, config.Preferences, m, t)
+		logsArea(c, config, m, t)
 	case AreaSystem:
 		if config.Desktop != nil {
 			desktopSections(c, config.Desktop, m, t)
@@ -549,18 +549,23 @@ func sftpEditorArea(c *ui.Context, config Config, m locales.Messages, t *ui.Them
 	})
 }
 
-func logsArea(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {
+// logsArea holds the Logs settings, including the command capture controls.
+// The capture hook decides what Command History can record, so its switch
+// lives beside the other logging controls rather than on the Terminal page.
+func logsArea(c *ui.Context, config Config, m locales.Messages, t *ui.Theme) {
 	sectionBody(c, t, func() {
-		if state == nil {
-			return
+		if state := config.Preferences; state != nil {
+			enabled := state.Settings().Logs.SSHDebug
+			checkboxRow(c, state, m, domain.FieldSSHDebug, m.SettingsSSHDebug(), enabled,
+				func(s *domain.Settings, value bool) { s.Logs.SSHDebug = value })
+			groupReset(c, m, t, m.SettingsLogsTitle(), func() bool {
+				return state.ResetGroup(domain.GroupLogs)
+			}, true)
+			saveProblem(c, state, m, t)
 		}
-		enabled := state.Settings().Logs.SSHDebug
-		checkboxRow(c, state, m, domain.FieldSSHDebug, m.SettingsSSHDebug(), enabled,
-			func(s *domain.Settings, value bool) { s.Logs.SSHDebug = value })
-		groupReset(c, m, t, m.SettingsLogsTitle(), func() bool {
-			return state.ResetGroup(domain.GroupLogs)
-		}, true)
-		saveProblem(c, state, m, t)
+		if config.Terminal != nil {
+			renderHistoryCaptureSection(c, config.Terminal, config.Terminal.Settings(), m, t)
+		}
 	})
 }
 
