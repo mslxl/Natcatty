@@ -170,3 +170,14 @@ func (s *Surface) moveSuggestion(delta int) {
 func (s *Surface) SuggestionRows() []autocomplete.Suggestion {
 	return append([]autocomplete.Suggestion(nil), s.suggestions...)
 }
+
+// InvalidateSuggestions drops the popup rows after the shared journal changed.
+// The next frame recomputes them from the reloaded service, so a deleted,
+// pruned, or cleared command cannot stay visible or be accepted by Tab.
+func (s *Surface) InvalidateSuggestions() {
+	s.suggestions = nil
+	s.suggestionIndex = 0
+	s.showAutocomplete = false
+	s.showGhost = false
+	s.redraw()
+}

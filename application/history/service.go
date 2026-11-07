@@ -65,6 +65,11 @@ type Store interface {
 	// MarkHostAtuinNoticed records the one-time Host Atuin notice and reports
 	// whether this call set it.
 	MarkHostAtuinNoticed(context.Context, string) (bool, error)
+	// LocallyRecordedHistoryIDs returns the identities that have a create
+	// record in writer's series. ClearThisDevice uses it for the spec's
+	// "linked to a local writer record" half of local ownership, which still
+	// holds if a later import or sync overwrote the row's source.
+	LocallyRecordedHistoryIDs(context.Context, string) (map[string]bool, error)
 }
 
 // ShellHistoryImport pairs one imported journal row with its create record.
@@ -541,9 +546,11 @@ const clearBatchSize = 500
 
 // ClearThisDevice soft-deletes every live command this install created: rows
 // captured in a Session or imported from a local Shell History File, including
-// legacy rows with no source. Imported and synced remote-origin rows are left
-// in place so one device's clear never silently erases another writer's
-// history. Each removed row with a UUID identity also gets a delete tombstone;
+// legacy rows with no source, plus any row linked to a create record from this
+// install's writer even when its projection source was rewritten by import or
+// sync. Imported and synced remote-origin rows with neither signal are left in
+// place so one device's clear never silently erases another writer's history.
+// Each removed row with a UUID identity also gets a delete tombstone;
 // a legacy non-UUID row stays local-only. Rows are removed in batches, so a
 // failure part-way through leaves the already-committed batches deleted and
 // stops before the rest.
@@ -555,9 +562,20 @@ func (s *Service) ClearThisDevice(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if len(entries) == 0 {
+		return 0, nil
+	}
+	writer, err := s.store.EnsureWriterUUID(ctx, s.newWriterID)
+	if err != nil {
+		return 0, err
+	}
+	linked, err := s.store.LocallyRecordedHistoryIDs(ctx, writer)
+	if err != nil {
+		return 0, err
+	}
 	owned := make([]domainhistory.Entry, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsLocallyOwned() {
+		if entry.IsLocallyOwned() || linked[entry.ID] {
 			owned = append(owned, entry)
 		}
 	}
@@ -599,6 +617,34 @@ func (s *Service) PruneHistory(ctx context.Context, filter domainhistory.EntryFi
 		return 0, err
 	}
 	return s.deleteEntries(ctx, boundedPrune(matched, limit))
+}
+
+// PruneHistoryEntries soft-deletes exactly the listed live rows and appends a
+// delete tombstone for each one with a UUID identity, all in one transaction.
+// The History surface confirms against the identities its preview counted, so
+// a row that arrives between preview and confirm is left alone.
+func (s *Service) PruneHistoryEntries(ctx context.Context, ids []string) (int, error) {
+	if s.store == nil {
+		return 0, ErrInvalid
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	wanted := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	entries, err := s.store.ListHistoryEntries(ctx)
+	if err != nil {
+		return 0, err
+	}
+	selected := make([]domainhistory.Entry, 0, len(ids))
+	for _, entry := range entries {
+		if wanted[entry.ID] {
+			selected = append(selected, entry)
+		}
+	}
+	return s.deleteEntries(ctx, selected)
 }
 
 // pruneMatches returns the live rows matching filter newest first, using the

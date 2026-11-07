@@ -1052,8 +1052,13 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	}), logsui.WithRefreshRequest(invalidate),
 		logsui.WithMutationHook(func() {
 			// Autocomplete aggregates the same journal; a deleted, pruned, or
-			// cleared row must stop being suggested without a restart.
+			// cleared row must stop being suggested without a restart. The
+			// reload replaces the service's view; open popups cache their own
+			// rows, so they are invalidated to recompute on the next frame.
 			autocompleteService.Load(context.Background())
+			if shellState != nil {
+				shellState.InvalidateSuggestions()
+			}
 		}),
 		logsui.WithAccountPanel(func() {
 			// The account panel is part of the Logs settings area. Selecting
@@ -1066,10 +1071,18 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			}
 		}),
 		// Insert is always an explicit row action. It writes the command to
-		// the focused Session's prompt without a trailing Enter, so nothing
-		// is submitted automatically.
+		// the focused Session's line editor without submitting it. The
+		// surface refuses a multi-line command when the shell did not enable
+		// bracketed paste, rather than typing newlines that would run it.
 		logsui.WithCommandActions(commandActionsFunc(func(command string) error {
-			if shellState == nil || !shellState.SendToFocused(command, false) {
+			if shellState == nil {
+				return logsui.ErrNoActiveSession
+			}
+			err := shellState.InsertIntoFocused(command)
+			if errors.Is(err, sessionui.ErrInsertUnsafe) {
+				return logsui.ErrInsertUnsafe
+			}
+			if err != nil {
 				return logsui.ErrNoActiveSession
 			}
 			return nil

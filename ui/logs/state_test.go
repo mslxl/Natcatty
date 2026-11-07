@@ -18,8 +18,12 @@ type fakeSource struct {
 	listeners  []func()
 	deleteErr  error
 	entriesErr error
-	cleared    int
-	pruned     int
+	// clearErr makes ClearThisDevice remove clearRemoved owned rows and then
+	// fail, simulating a batched clear that committed part of its work.
+	clearErr     error
+	clearRemoved int
+	cleared      int
+	pruned       int
 }
 
 func (f *fakeSource) ConnectionLogs(context.Context) ([]domainhistory.ConnectionLog, error) {
@@ -80,6 +84,10 @@ func (f *fakeSource) ClearThisDevice(context.Context) (int, error) {
 	kept := make([]domainhistory.Entry, 0, len(f.entries))
 	for _, entry := range f.entries {
 		if entry.IsLocallyOwned() {
+			if f.clearErr != nil && removed >= f.clearRemoved {
+				kept = append(kept, entry)
+				continue
+			}
 			removed++
 			continue
 		}
@@ -87,6 +95,32 @@ func (f *fakeSource) ClearThisDevice(context.Context) (int, error) {
 	}
 	f.entries = kept
 	f.cleared = removed
+	f.markChanged()
+	if f.clearErr != nil {
+		return removed, f.clearErr
+	}
+	return removed, nil
+}
+
+func (f *fakeSource) PruneHistoryEntries(_ context.Context, ids []string) (int, error) {
+	if f.deleteErr != nil {
+		return 0, f.deleteErr
+	}
+	wanted := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	kept := make([]domainhistory.Entry, 0, len(f.entries))
+	removed := 0
+	for _, entry := range f.entries {
+		if wanted[entry.ID] {
+			removed++
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	f.entries = kept
+	f.pruned = removed
 	f.markChanged()
 	return removed, nil
 }
@@ -368,6 +402,41 @@ func TestClearThisDeviceLeavesImportedHistory(t *testing.T) {
 	}
 }
 
+// TestClearThisDeviceReportsPartialFailure proves a batched clear that
+// committed some rows keeps that count, preserves the error, and still reloads
+// and notifies the autocomplete reloader.
+func TestClearThisDeviceReportsPartialFailure(t *testing.T) {
+	now := time.Now()
+	source := &fakeSource{
+		clearErr:     errors.New("disk"),
+		clearRemoved: 1,
+		entries: []domainhistory.Entry{
+			entryAt("local-1", "", "ls", domainhistory.SourceSession, now),
+			entryAt("local-2", "", "pwd", domainhistory.SourceSession, now),
+			entryAt("local-3", "", "whoami", domainhistory.SourceSession, now),
+		},
+	}
+	reloads := 0
+	state := NewState(source, nil, WithMutationHook(func() { reloads++ }))
+	state.Refresh()
+	state.SelectTab(TabHistory)
+	state.RequestClear()
+	state.ConfirmClear()
+
+	if state.Problem() != ProblemClear {
+		t.Fatalf("problem = %v, want ProblemClear", state.Problem())
+	}
+	if state.Cleared() != 1 {
+		t.Fatalf("cleared = %d, want the committed row", state.Cleared())
+	}
+	if state.TotalEntries() != 2 {
+		t.Fatalf("entries = %d, want the two rows left by the failure", state.TotalEntries())
+	}
+	if reloads != 1 {
+		t.Fatalf("autocomplete reloads = %d, want a reload after partial clear", reloads)
+	}
+}
+
 func TestPrunePreviewAndConfirmOnlyMatchedRows(t *testing.T) {
 	now := time.Now()
 	source := &fakeSource{entries: []domainhistory.Entry{
@@ -397,6 +466,36 @@ func TestPrunePreviewAndConfirmOnlyMatchedRows(t *testing.T) {
 	}
 	if source.entries[0].Command != "make test" {
 		t.Fatalf("remaining row = %+v, want make test", source.entries[0])
+	}
+}
+
+// TestPruneAppliesExactlyThePreviewedRows pins the race fix: a matching row
+// that arrives after the preview is not swept in by the confirm.
+func TestPruneAppliesExactlyThePreviewedRows(t *testing.T) {
+	now := time.Now()
+	source := &fakeSource{entries: []domainhistory.Entry{
+		entryAt("match-1", "", "match status", domainhistory.SourceSession, now),
+		entryAt("match-2", "", "match log", domainhistory.SourceSession, now.Add(-time.Hour)),
+	}}
+	state := NewState(source, nil)
+	state.Refresh()
+	state.SelectTab(TabHistory)
+	state.SetSearch("match")
+	state.RequestPrune()
+	if got := state.PrunePreview(); got != 2 {
+		t.Fatalf("preview = %d, want the two matched rows", got)
+	}
+
+	// A new matching command lands between preview and confirm.
+	source.entries = append(source.entries, entryAt(
+		"late", "", "match late", domainhistory.SourceSession, now.Add(time.Minute)))
+
+	state.ConfirmPrune()
+	if state.Pruned() != 2 {
+		t.Fatalf("pruned = %d, want exactly the previewed rows", state.Pruned())
+	}
+	if len(source.entries) != 1 || source.entries[0].ID != "late" {
+		t.Fatalf("remaining rows = %+v, want the late row untouched", source.entries)
 	}
 }
 
@@ -462,6 +561,14 @@ func TestInsertEntryIsExplicitAndReportsFailure(t *testing.T) {
 	state.InsertEntry("git stash")
 	if state.OpenProblem() != ProblemInsert {
 		t.Fatalf("insert problem = %v, want ProblemInsert", state.OpenProblem())
+	}
+
+	// A refused multi-line insert has its own explanation, not the generic
+	// missing-Session one.
+	commands.err = ErrInsertUnsafe
+	state.InsertEntry("touch marker\necho SHOULD_NOT_RUN")
+	if state.OpenProblem() != ProblemInsertUnsafe {
+		t.Fatalf("unsafe insert problem = %v, want ProblemInsertUnsafe", state.OpenProblem())
 	}
 
 	// A surface without the action seam never fakes success.

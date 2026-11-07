@@ -281,6 +281,31 @@ func (s *Store) ListHistoryRecords(ctx context.Context) ([]domainhistory.Record,
 	return records, nil
 }
 
+// LocallyRecordedHistoryIDs returns the history identities that have a create
+// record in writer's series. It is the record-linkage half of local ownership:
+// a row whose source was later overwritten by an import or sync is still the
+// row this install created.
+func (s *Store) LocallyRecordedHistoryIDs(ctx context.Context, writer string) (map[string]bool, error) {
+	if writer == "" {
+		return map[string]bool{}, nil
+	}
+	var ids []string
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		return tx.Model(&historyRecordSchema{}).
+			Where("series_host = ? AND tag = ? AND kind = ?",
+				writer, domainhistory.RecordTagHistory, domainhistory.RecordKindCreate).
+			Distinct("history_id").
+			Pluck("history_id", &ids).Error
+	}); err != nil {
+		return nil, fmt.Errorf("store: list locally recorded history ids: %w", err)
+	}
+	recorded := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		recorded[id] = true
+	}
+	return recorded, nil
+}
+
 // appendHistoryRecord assigns the next index in one writer series and inserts
 // the record. It runs inside the caller's transaction so the projection and
 // the log commit or roll back together.

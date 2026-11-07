@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -14,6 +15,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	sessionui "github.com/mslxl/natcatty/ui/session"
 )
 
 // fakeTransport keeps a Session alive until the test closes it.
@@ -83,6 +85,9 @@ type fakeSurface struct {
 	fontSize      float32
 	theme         domaintheme.TerminalTheme
 	themed        bool
+	inserted      []string
+	insertErr     error
+	invalidations int
 }
 
 func (f *fakeSurface) View(c *ui.Context) ui.Element {
@@ -105,6 +110,16 @@ func (f *fakeSurface) SetTerminalFont(family string, size float32) {
 func (f *fakeSurface) SetTerminalTheme(preset domaintheme.TerminalTheme) {
 	f.theme, f.themed = preset, true
 }
+
+func (f *fakeSurface) InsertText(text string) error {
+	if f.insertErr != nil {
+		return f.insertErr
+	}
+	f.inserted = append(f.inserted, text)
+	return nil
+}
+
+func (f *fakeSurface) InvalidateSuggestions() { f.invalidations++ }
 
 // testGraph wires a shell State to fake Sessions and surfaces.
 type testGraph struct {
@@ -495,6 +510,46 @@ func TestTerminalAppearanceReachesOpenSurfaces(t *testing.T) {
 	graph.state.SetTerminalTheme(preset)
 	if !graph.surface.themed || graph.surface.theme.ID != preset.ID {
 		t.Errorf("theme = %+v", graph.surface.theme)
+	}
+}
+
+// TestInsertAndSuggestionInvalidationReachOpenSurfaces proves the History
+// actions target the focused terminal's own safe insertion path and drop its
+// cached popup rows after the journal changes.
+func TestInsertAndSuggestionInvalidationReachOpenSurfaces(t *testing.T) {
+	graph := newTestGraph(t)
+	host := domainvault.Host{
+		ID: "host-1", Label: "prod", Hostname: "example.com", Port: 22,
+		Username: "root", Protocol: domainvault.ProtocolSSH,
+	}
+	if err := graph.state.OpenHost(host); err != nil {
+		t.Fatalf("OpenHost: %v", err)
+	}
+	waitFor(t, "the SSH tab", func() bool {
+		graph.state.Flush()
+		return graph.state.TabCount() == 1
+	})
+
+	if err := graph.state.InsertIntoFocused("git status"); err != nil {
+		t.Fatalf("InsertIntoFocused: %v", err)
+	}
+	if len(graph.surface.inserted) != 1 || graph.surface.inserted[0] != "git status" {
+		t.Fatalf("inserted = %+v, want the command", graph.surface.inserted)
+	}
+	graph.state.InvalidateSuggestions()
+	if graph.surface.invalidations != 1 {
+		t.Fatalf("invalidations = %d, want 1", graph.surface.invalidations)
+	}
+
+	// A shell that cannot insert multi-line text reports its refusal; the
+	// state must not replace it with a typed fallback.
+	graph.surface.insertErr = sessionui.ErrInsertUnsafe
+	err := graph.state.InsertIntoFocused("touch marker\necho SHOULD_NOT_RUN")
+	if !errors.Is(err, sessionui.ErrInsertUnsafe) {
+		t.Fatalf("InsertIntoFocused error = %v, want ErrInsertUnsafe", err)
+	}
+	if len(graph.surface.inserted) != 1 {
+		t.Fatalf("refused insert reached the surface: %+v", graph.surface.inserted)
 	}
 }
 

@@ -265,13 +265,16 @@ func (entry Entry) IsLocal() bool {
 	return isCapturedSource(entry.Source)
 }
 
-// IsLocallyOwned reports a row this install created: a session capture or a
-// shell-history import, including a legacy row whose source predates the
-// source field. Imported and synced remote-origin rows belong to another
-// writer and are not local-owned, so Clear this device leaves them in place.
-// This matches the spec's "or a row linked to a local writer record": the
-// create-record path writes a record only for locally captured rows, so a
-// local writer record cannot exist for a row with an import or sync source.
+// IsLocallyOwned reports a row whose capture source is this install's: a
+// session capture or a shell-history import, including a legacy row whose
+// source predates the source field. Imported and synced remote-origin rows
+// belong to another writer and are not local-owned by this check.
+//
+// The source alone cannot decide ownership: import or sync can rewrite a row's
+// source while a create record from this install's writer still links it. The
+// History service therefore also consults the record log
+// (Store.LocallyRecordedHistoryIDs) and treats a linked row as locally owned
+// even when this predicate is false.
 func (entry Entry) IsLocallyOwned() bool {
 	return entry.Source == "" || isCapturedSource(entry.Source)
 }

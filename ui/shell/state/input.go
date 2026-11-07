@@ -635,6 +635,27 @@ func (s *State) finishCompose(seq uint64, result appsession.SendResult) {
 	s.RequestRedraw()
 }
 
+// InsertIntoFocused puts text into the focused Pane's line editor without
+// submitting it. It returns the surface's error unchanged, so the composition
+// root can tell an unsafe multi-line insertion from a missing Session. A
+// Surface that cannot insert is reported as unavailable rather than falling
+// back to typing, which could submit a line.
+func (s *State) InsertIntoFocused(text string) error {
+	surface := s.ActiveSurface()
+	if surface == nil {
+		return ErrNoActiveTab
+	}
+	inserter, ok := surface.(TextInserter)
+	if !ok {
+		return ErrNoTextInserter
+	}
+	if err := inserter.InsertText(text); err != nil {
+		return err
+	}
+	s.RequestRedraw()
+	return nil
+}
+
 // SendToFocused types text into the focused Session: run submits it with
 // Enter, otherwise it is pasted for the user to finish. The side panel's
 // History uses it. It reports false when no Session is focused or the

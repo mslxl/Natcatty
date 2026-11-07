@@ -116,6 +116,16 @@ func (s *Service) SendInput(targets []model.SessionID, data []byte) SendResult {
 	return result
 }
 
+// InsertInput queues bytes in this Session's transport as an explicit
+// insertion, not as keyboard input: the input hook does not observe it, so
+// Insert into one Session never fans out to broadcast targets. The bytes still
+// pass the tap, which ignores a bracketed paste's contents. It reports whether
+// the Session accepted them.
+func (s *Session) InsertInput(data []byte) bool {
+	status, err := s.deliver(data)
+	return err == nil && status == DeliveryDelivered
+}
+
 // SendChunks sends each chunk to every target in order, waiting delay between
 // chunks. A target is delivered only when every chunk was delivered; a gated
 // chunk marks it gated and a failed chunk marks it failed. SendChunks is for

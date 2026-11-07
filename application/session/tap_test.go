@@ -154,6 +154,39 @@ func TestTapOSC9And777Notifications(t *testing.T) {
 	}
 }
 
+// TestTapBracketedPasteDoesNotSubmitInnerLines proves a pasted multi-line
+// command is text in the line editor, not one submitted command per line. The
+// shell never executes it until the user presses Enter.
+func TestTapBracketedPasteDoesNotSubmitInnerLines(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	pasted := "\x1b[200~touch marker\necho SHOULD_NOT_RUN\x1b[201~"
+	forwarded, _, started, completions, _ := tap.handleInput([]byte(pasted), tapAt(0))
+	if !bytes.Equal(forwarded, []byte(pasted)) {
+		t.Fatalf("forwarded = %q, want the paste unchanged", forwarded)
+	}
+	if started || len(completions) != 0 {
+		t.Fatalf("bracketed paste started a command: started=%v completions=%+v",
+			started, completions)
+	}
+	if state := tap.state(tapAt(0)); state.Command.Running {
+		t.Fatalf("bracketed paste started command %+v", state.Command)
+	}
+
+	// The markers may be split across transport writes.
+	tap = newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("\x1b[20"), tapAt(0))
+	tap.handleInput([]byte("0~one\ntwo"), tapAt(time.Second))
+	tap.handleInput([]byte("\x1b[201~"), tapAt(2*time.Second))
+	if state := tap.state(tapAt(2 * time.Second)); state.Command.Running {
+		t.Fatalf("split bracketed paste started command %+v", state.Command)
+	}
+	tap.handleInput([]byte("echo after\r"), tapAt(3*time.Second))
+	if state := tap.state(tapAt(3 * time.Second)); !state.Command.Running ||
+		state.Command.Text != "echo after" {
+		t.Fatalf("command after the paste = %+v, want echo after", state.Command)
+	}
+}
+
 func TestTapOSC133TracksCommands(t *testing.T) {
 	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
 	if _, changed, _, completions, _ := tap.handleInput([]byte("echo hi\r"), tapAt(0)); !changed {

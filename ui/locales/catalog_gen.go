@@ -12214,6 +12214,22 @@ func (msgs Messages) LogsProblemInsert() string {
 	return Catalog.Format(msgs.locale, "logsProblemInsert", nil)
 }
 
+// LogsProblemInsertUnsafe says "This shell cannot insert a multi-line command safely. Copy the command instead."
+// in the language the app shows.
+//
+// Shown when a multi-line history command is refused because the shell did
+// not enable bracketed paste.
+func LogsProblemInsertUnsafe() string { return In(i18n.Locale()).LogsProblemInsertUnsafe() }
+
+// LogsProblemInsertUnsafe says "This shell cannot insert a multi-line command safely. Copy the command instead."
+// in the language of msgs.
+//
+// Shown when a multi-line history command is refused because the shell did
+// not enable bracketed paste.
+func (msgs Messages) LogsProblemInsertUnsafe() string {
+	return Catalog.Format(msgs.locale, "logsProblemInsertUnsafe", nil)
+}
+
 // LogsProblemOpen says "Could not open the terminal."
 // in the language the app shows.
 //

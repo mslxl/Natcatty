@@ -22,6 +22,12 @@ type memoryStore struct {
 	failWrite error
 	saves     int
 	batches   int
+	// batchLimit fails the batch after batchLimit succeeds, simulating a
+	// multi-batch clear that commits part of its work.
+	batchLimit int
+	// linked marks identities with a local create record even when their
+	// source was later overwritten by an import or sync.
+	linked map[string]bool
 }
 
 func (s *memoryStore) ListConnectionLogs(context.Context) ([]domainhistory.ConnectionLog, error) {
@@ -226,6 +232,17 @@ func (s *memoryStore) ImportShellHistory(_ context.Context, imports []ShellHisto
 	return nil
 }
 
+func (s *memoryStore) LocallyRecordedHistoryIDs(context.Context, string) (map[string]bool, error) {
+	if s.fail != nil {
+		return nil, s.fail
+	}
+	out := make(map[string]bool, len(s.linked))
+	for id := range s.linked {
+		out[id] = true
+	}
+	return out, nil
+}
+
 func (s *memoryStore) SoftDeleteHistoryEntries(_ context.Context, deletions []domainhistory.EntryDeletion, deletedAt time.Time) (int, error) {
 	if s.fail != nil {
 		return 0, s.fail
@@ -234,6 +251,9 @@ func (s *memoryStore) SoftDeleteHistoryEntries(_ context.Context, deletions []do
 		return 0, s.failWrite
 	}
 	s.batches++
+	if s.batchLimit > 0 && s.batches > s.batchLimit {
+		return 0, errors.New("store: simulated batch failure")
+	}
 	removed := 0
 	for _, deletion := range deletions {
 		for index := range s.entries {
@@ -884,6 +904,30 @@ func TestPruneHistoryLimitSelectsTheOldestMatches(t *testing.T) {
 	}
 }
 
+// TestPruneHistoryEntriesRemovesOnlyThePreviewedIdentities proves a row that
+// arrives after the preview is not swept in by a later confirm.
+func TestPruneHistoryEntriesRemovesOnlyThePreviewedIdentities(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	for index := 0; index < 3; index++ {
+		if err := service.Record(ctx, domainhistory.Entry{
+			ID: uuid(index + 1), Scope: "local", Command: "git old",
+			Source: domainhistory.SourceSession, RecordedAt: at(index),
+		}); err != nil {
+			t.Fatalf("Record %d: %v", index, err)
+		}
+	}
+	removed, err := service.PruneHistoryEntries(ctx, []string{uuid(1), uuid(2)})
+	if err != nil || removed != 2 {
+		t.Fatalf("PruneHistoryEntries = %d, %v; want 2", removed, err)
+	}
+	live, _ := service.Load(ctx)
+	if len(live) != 1 || live[0].ID != uuid(3) {
+		t.Fatalf("live rows = %+v, want the row added after the preview", live)
+	}
+}
+
 func TestPruneHistoryKeepsLegacyRowsOutOfTheTombstoneBatch(t *testing.T) {
 	store := &memoryStore{}
 	service := newUUIDService(store)
@@ -995,6 +1039,58 @@ func TestClearThisDeviceAppliesInBoundedBatches(t *testing.T) {
 	}
 	if store.batches != 2 {
 		t.Fatalf("store batches = %d, want 2 for %d rows", store.batches, total)
+	}
+}
+
+// TestClearThisDeviceReportsCommittedRowsWhenALaterBatchFails pins the partial
+// result contract: the count describes the rows already soft-deleted, and the
+// error stops the remaining batches.
+func TestClearThisDeviceReportsCommittedRowsWhenALaterBatchFails(t *testing.T) {
+	store := &memoryStore{batchLimit: 1}
+	service := NewService(store)
+	ctx := context.Background()
+	total := clearBatchSize + 1
+	for index := 0; index < total; index++ {
+		store.entries = append(store.entries, domainhistory.Entry{
+			ID: fmt.Sprintf("legacy-%d", index), Scope: "local", Command: "ls",
+			Source: domainhistory.SourceSession, RecordedAt: at(index),
+		})
+	}
+	removed, err := service.ClearThisDevice(ctx)
+	if err == nil {
+		t.Fatal("ClearThisDevice did not report the failed batch")
+	}
+	if removed != clearBatchSize {
+		t.Fatalf("ClearThisDevice = %d, want the committed first batch", removed)
+	}
+	live, _ := service.Load(ctx)
+	if len(live) != 1 {
+		t.Fatalf("live rows = %d, want the row from the failed batch", len(live))
+	}
+}
+
+// TestClearThisDeviceOwnsRowsLinkedToALocalCreateRecord covers the part of
+// local ownership that survives a later import or sync overwriting the row's
+// source: the create record in this install's writer series still marks it.
+func TestClearThisDeviceOwnsRowsLinkedToALocalCreateRecord(t *testing.T) {
+	store := &memoryStore{linked: map[string]bool{uuid(1): true}}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	for _, entry := range []domainhistory.Entry{
+		{ID: uuid(1), Scope: "local", Command: "ls", Source: domainhistory.SourceAtuinSync, RecordedAt: at(1)},
+		{ID: uuid(2), Scope: "remote:web:deploy", Command: "uptime", Source: domainhistory.SourceAtuinSync, Origin: "web:deploy", RecordedAt: at(2)},
+	} {
+		if err := service.Record(ctx, entry); err != nil {
+			t.Fatalf("Record %s: %v", entry.Command, err)
+		}
+	}
+	removed, err := service.ClearThisDevice(ctx)
+	if err != nil || removed != 1 {
+		t.Fatalf("ClearThisDevice = %d, %v; want the record-linked row", removed, err)
+	}
+	live, _ := service.Load(ctx)
+	if len(live) != 1 || live[0].ID != uuid(2) {
+		t.Fatalf("live rows = %+v, want only the unlinked remote row", live)
 	}
 }
 

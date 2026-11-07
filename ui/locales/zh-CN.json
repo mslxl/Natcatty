@@ -1513,6 +1513,7 @@
   "logsProblemClearConnections": "无法清除连接日志。",
   "logsProblemPrune": "无法清理历史。",
   "logsProblemInsert": "无法插入命令。请先打开活动的会话。",
+  "logsProblemInsertUnsafe": "此 shell 无法安全插入多行命令。请改为复制该命令。",
   "logsProblemOpen": "无法打开终端。",
   "logsProblemHostMissing": "关联的主机已不存在。",
   "logsProblemDate": "请按 YYYY-MM-DD 输入日期，且开始日期早于结束日期。",

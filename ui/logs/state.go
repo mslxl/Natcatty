@@ -48,6 +48,11 @@ var ErrHostMissing = errors.New("logs: the related Host no longer exists")
 // command. The composition root supplies it; the surface never guesses.
 var ErrNoActiveSession = errors.New("logs: no active Session")
 
+// ErrInsertUnsafe reports a multi-line command the focused shell cannot
+// insert without executing it. The composition root translates the session
+// surface's refusal into it; the surface never types the command instead.
+var ErrInsertUnsafe = errors.New("logs: the shell cannot insert multi-line text safely")
+
 // Problem is a localized problem code. The view maps it to a catalog string;
 // the state never carries user-visible text.
 type Problem int
@@ -62,6 +67,7 @@ const (
 	ProblemDate
 	ProblemPrune
 	ProblemInsert
+	ProblemInsertUnsafe
 )
 
 // Source is the read/write seam over the history service.
@@ -74,9 +80,10 @@ type Source interface {
 	// ClearThisDevice soft-deletes locally owned rows and leaves imported and
 	// synced remote-origin rows in place.
 	ClearThisDevice(context.Context) (int, error)
-	// PruneHistory soft-deletes the live rows matching filter. A positive
-	// limit removes only the oldest matching rows.
-	PruneHistory(context.Context, domainhistory.EntryFilter, int) (int, error)
+	// PruneHistoryEntries soft-deletes exactly the listed live rows. The UI
+	// passes the identities its preview showed, so a row that arrives between
+	// preview and confirm is never removed unseen.
+	PruneHistoryEntries(context.Context, []string) (int, error)
 	Revision() uint64
 	Subscribe(func()) func()
 }
@@ -1085,9 +1092,17 @@ func (s *State) ConfirmClear() {
 	}
 	s.problemTab = tab
 	if err != nil {
-		// Do not leave an earlier family's success banner claiming records
-		// were removed when this clear failed.
-		s.cleared = 0
+		// A batched clear can remove rows before a later batch fails. Reload
+		// first so the list and the mutation hook reflect what actually
+		// changed, then report the partial count and the error together:
+		// reloading clears the problem field on a successful refresh.
+		if tab == TabHistory {
+			s.selectedEntryID = ""
+		}
+		s.reload()
+		s.mutated()
+		s.cleared = removed
+		s.clearedTab = tab
 		s.problem = ProblemClear
 		return
 	}
@@ -1128,20 +1143,34 @@ func (s *State) PruneLimit() *string { return &s.pruneLimit }
 // PrunePreview reports how many live rows the current draft would remove. A
 // malformed date range or limit reports zero, and the view explains why.
 func (s *State) PrunePreview() int {
-	filter, ok := s.pruneFilter.entryFilter()
-	if !ok || s.PruneLimitProblem() {
+	entries, ok := s.prunePreviewEntries()
+	if !ok {
 		return 0
 	}
-	matched := 0
+	return len(entries)
+}
+
+// prunePreviewEntries is the exact set the prune preview shows: the live rows
+// in the loaded journal that match the draft, newest first, with a positive
+// limit keeping the oldest matches. ConfirmPrune applies this set by identity,
+// so a row that arrives between preview and confirm cannot be removed without
+// having been counted.
+func (s *State) prunePreviewEntries() ([]domainhistory.Entry, bool) {
+	filter, ok := s.pruneFilter.entryFilter()
+	if !ok || s.PruneLimitProblem() {
+		return nil, false
+	}
+	matched := make([]domainhistory.Entry, 0, len(s.entries))
 	for _, entry := range s.entries {
 		if entry.DeletedAt.IsZero() && filter.Match(entry) {
-			matched++
+			matched = append(matched, entry)
 		}
 	}
-	if limit := s.pruneLimitValue(); limit > 0 && matched > limit {
-		return limit
+	domainhistory.SortEntries(matched)
+	if limit := s.pruneLimitValue(); limit > 0 && len(matched) > limit {
+		matched = matched[len(matched)-limit:]
 	}
-	return matched
+	return matched, true
 }
 
 // PruneDateProblem reports a malformed or inverted date range in the draft.
@@ -1169,19 +1198,21 @@ func (s *State) pruneLimitValue() int {
 	return limit
 }
 
-// ConfirmPrune soft-deletes only the rows matching the draft filter. The
-// optional limit selects the oldest matches. A malformed draft keeps the
-// dialog open instead of guessing what the user meant.
+// ConfirmPrune soft-deletes exactly the rows the preview counted. A malformed
+// draft keeps the dialog open instead of guessing what the user meant.
 func (s *State) ConfirmPrune() {
 	if s.source == nil {
 		return
 	}
-	filter, ok := s.pruneFilter.entryFilter()
-	if !ok || s.PruneLimitProblem() {
+	previewed, ok := s.prunePreviewEntries()
+	if !ok {
 		return
 	}
-	removed, err := s.source.PruneHistory(context.Background(), filter,
-		s.pruneLimitValue())
+	ids := make([]string, 0, len(previewed))
+	for _, entry := range previewed {
+		ids = append(ids, entry.ID)
+	}
+	removed, err := s.source.PruneHistoryEntries(context.Background(), ids)
 	s.problemTab = TabHistory
 	if err != nil {
 		s.pruned = 0
@@ -1207,6 +1238,10 @@ func (s *State) InsertEntry(command string) {
 		return
 	}
 	if err := s.commands.InsertCommand(command); err != nil {
+		if errors.Is(err, ErrInsertUnsafe) {
+			s.openProblem = ProblemInsertUnsafe
+			return
+		}
 		s.openProblem = ProblemInsert
 	}
 }
