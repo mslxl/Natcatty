@@ -452,8 +452,11 @@ Facts (SRC: `src/commands.rs`, `zellij-client/src/lib.rs`,
   number until a client connects). If a live session with that name already exists,
   the client prints `Session already exists` and exits **1** (SRC:
   `zellij-client/src/lib.rs`).
-- `--create` on an existing **live** name attaches; on a dead name it does not
-  attach the dead session: `session_exists` only consults live sockets.
+- `--create` on an existing **live** name attaches. `session_exists` only consults
+  live sockets, but a dead name is handled by the cached-layout branch: if
+  `session-layout.kdl` exists, the code builds `ClientInfo::Resurrect` even when
+  `--create` was passed. A fresh session is created only when there is no live
+  session and no cached layout.
 - Attach name resolution: exact match, then unique prefix; ambiguous prefix prints a
   list and exits 1; no match prints `No session with the name '<name>' found!` and
   exits 1. If no name is given and there is exactly one live session, it attaches;
@@ -517,8 +520,9 @@ Facts (SRC: `zellij-utils/src/sessions.rs`, `src/commands.rs`):
   rename-session <new-name>` (the CLI also exposes `RenameSession { name }`). It
   requires an active session / client context; `zellij action --session <name>` or a
   `ZELLIJ_SESSION_NAME` fallback is used to select the target. It renames the live
-  session (socket/cache naming follows the session name). External rename semantics
-  and output are **UNVERIFIED** beyond the CLI definition.
+  session; whether the socket and cache directory are renamed in lockstep is
+  **UNVERIFIED**, as are the external output and exact exit codes beyond the CLI
+  definition.
 - Name validation for sessions: not empty after `trim()`, not `.` or `..`, and no
   `/`. Other characters, including spaces, colons, and newlines, are accepted, which
   makes the text listing and any shell-free line protocol fragile.
@@ -882,9 +886,9 @@ JSON-RPC 2.0, generation 1, over `hc connect` stdio; after `hello` with
    split, and only herdr's unit is already a single PTY.
 5. **Only tmux can observe without a PTY.** `tmux -C attach-session` is a control
    client with no TUI and no TTY, but it counts as attached and can keep a session
-   alive. zellij and herdr both require a PTY for their interactive attach; herdr's
-   event stream plus `terminal.list` can observe without attaching, and zellij has
-   no equivalent external lifecycle feed.
+   alive. zellij requires a local PTY for attach and has no external lifecycle feed;
+   herdr's framed attach needs no local PTY, and its event stream plus
+   `terminal.list` can observe without attaching at all.
 6. **Event strategy is backend-specific.** tmux control mode (push) or polling;
    zellij polling only; herdr `events.subscribe` (push, with seq/missed) and
    reconnect resubscribe. A common interface should expose a "resync" operation
@@ -920,9 +924,10 @@ JSON-RPC 2.0, generation 1, over `hc connect` stdio; after `hello` with
   escapes controls).
 - zellij: multiple-client resize policy; `list-tabs`/`--json` introduction version;
   Windows named-pipe ACL; exact client exit status when its server is killed;
-  external `action rename-session` selection/output; whether `--create` on a
-  resurrectable name behaves as create or resurrect in all versions (source shows
-  create path only consults live sockets, so it creates).
+  external `action rename-session` selection/output and whether the socket/cache
+  names move with it; whether `--create-background` on a resurrectable name
+  resurrects it detached or creates a fresh session (the cached-layout branch is
+  taken before the background flag is acted on).
 - zellij: the exact default `on_force_close` value in 0.45.1's shipped config (the
   source supports both detach and quit; the default config file was not read here).
 - herdr: exact `terminal.rm` and `terminal.label` request/result shapes and whether
