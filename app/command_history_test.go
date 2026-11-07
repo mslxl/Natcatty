@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/mslxl/natcatty/adapters/histfile"
 	"github.com/mslxl/natcatty/adapters/store"
 	"github.com/mslxl/natcatty/application/autocomplete"
 	apphistory "github.com/mslxl/natcatty/application/history"
@@ -232,6 +234,133 @@ func TestCommandCompletionHookWritesOneRowAndAutocompleteReadsIt(t *testing.T) {
 	autocompleteService.Load(ctx)
 	if suggestions := autocompleteService.Suggestions("git", "local"); len(suggestions) != 0 {
 		t.Fatalf("a deleted row is still suggested: %+v", suggestions)
+	}
+}
+
+// TestShellHistoryImportRunsOnceAcrossRestartAndDeletion drives the startup
+// import with the real reader and a temporary SQLite store: configured files
+// become shell-history rows with create records once, and a restart after a
+// row was deleted neither re-imports nor resurrects it.
+func TestShellHistoryImportRunsOnceAcrossRestartAndDeletion(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	zshPath := filepath.Join(home, ".zsh_history")
+	if err := os.WriteFile(zshPath,
+		[]byte(": 1700000000:0;git status\n: 1700000002:0;make test\n"), 0o644); err != nil {
+		t.Fatalf("write zsh history: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".bash_history"),
+		[]byte("deploy staging\n"), 0o644); err != nil {
+		t.Fatalf("write bash history: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "history.db")
+	database, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	importAt := time.Date(2026, 11, 7, 12, 0, 0, 0, time.Local)
+	service := apphistory.NewService(database,
+		apphistory.WithClock(func() time.Time { return importAt }))
+	importShellHistory(ctx, service, histfile.Default(home), commandTestLocal)
+
+	entries, err := service.Entries(ctx)
+	if err != nil {
+		t.Fatalf("entries: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("imported %d rows, want 3: %+v", len(entries), entries)
+	}
+	byCommand := make(map[string]domainhistory.Entry, len(entries))
+	for _, entry := range entries {
+		byCommand[entry.Command] = entry
+		if entry.Source != domainhistory.SourceShellHistory || entry.Scope != "local" {
+			t.Fatalf("row provenance = %q/%q, want shell-history local", entry.Source, entry.Scope)
+		}
+		if entry.Origin != "workstation:alice" || entry.Author != "alice" ||
+			entry.AuthorKind != domainhistory.AuthorKindUser {
+			t.Fatalf("row origin/author = %q/%q/%q", entry.Origin, entry.Author, entry.AuthorKind)
+		}
+		if entry.CWD != "" || entry.HasExitCode || !entry.FinishedAt.IsZero() ||
+			entry.Duration != 0 || entry.CaptureTier != 0 {
+			t.Fatalf("row invented execution fields: %+v", entry)
+		}
+		if !entry.HasUUIDIdentity() {
+			t.Fatalf("row identity = %q, want a UUID", entry.ID)
+		}
+	}
+	status := byCommand["git status"]
+	if status.Shell != "zsh" || !status.RecordedAt.Equal(time.Unix(1700000000, 0)) {
+		t.Fatalf("git status row = %+v", status)
+	}
+	makeTest := byCommand["make test"]
+	if makeTest.Shell != "zsh" || !makeTest.RecordedAt.Equal(time.Unix(1700000002, 0)) {
+		t.Fatalf("make test row = %+v", makeTest)
+	}
+	deploy := byCommand["deploy staging"]
+	if deploy.Shell != "bash" || !deploy.RecordedAt.Equal(importAt) {
+		t.Fatalf("timestampless bash row = %+v", deploy)
+	}
+
+	records, err := database.ListHistoryRecords(ctx)
+	if err != nil {
+		t.Fatalf("records: %v", err)
+	}
+	if len(records) != 3 {
+		t.Fatalf("records = %d, want one create per imported row", len(records))
+	}
+	for _, record := range records {
+		if record.Kind != domainhistory.RecordKindCreate ||
+			record.Direction != domainhistory.RecordDirectionLocal ||
+			!record.UploadedAt.IsZero() || !domainhistory.IsUUID(record.SeriesHost) {
+			t.Fatalf("record = %+v, want a pending local create", record)
+		}
+	}
+
+	// Deleting an imported row must not bring it back on the next startup.
+	if err := service.DeleteEntry(ctx, status.ID); err != nil {
+		t.Fatalf("delete imported row: %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	// Change the files so a re-import would be visible.
+	if err := os.WriteFile(zshPath, []byte(": 1700000003:0;after restart\n"), 0o644); err != nil {
+		t.Fatalf("rewrite zsh history: %v", err)
+	}
+	reopened, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer reopened.Close()
+	restarted := apphistory.NewService(reopened,
+		apphistory.WithClock(func() time.Time { return importAt.Add(time.Hour) }))
+	importShellHistory(ctx, restarted, histfile.Default(home), commandTestLocal)
+
+	entries, err = restarted.Entries(ctx)
+	if err != nil {
+		t.Fatalf("entries after restart: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("rows after restart = %d, want the two live imports", len(entries))
+	}
+	for _, entry := range entries {
+		if entry.Command == "after restart" {
+			t.Fatal("a completed import was repeated after restart")
+		}
+	}
+	deleted, found, err := reopened.HistoryEntry(ctx, status.ID)
+	if err != nil || !found || deleted.DeletedAt.IsZero() {
+		t.Fatalf("deleted import = %+v, found=%v, err=%v; want it still soft-deleted",
+			deleted, found, err)
+	}
+	records, err = reopened.ListHistoryRecords(ctx)
+	if err != nil {
+		t.Fatalf("records after restart: %v", err)
+	}
+	if len(records) != 4 {
+		t.Fatalf("records after restart = %d, want the three creates and one tombstone", len(records))
 	}
 }
 

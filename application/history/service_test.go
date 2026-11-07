@@ -2,6 +2,7 @@ package history
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -15,6 +16,7 @@ type memoryStore struct {
 	logs      []domainhistory.ConnectionLog
 	entries   []domainhistory.Entry
 	records   []domainhistory.Record
+	metadata  domainhistory.Metadata
 	writer    string
 	fail      error
 	failWrite error
@@ -142,6 +144,41 @@ func (s *memoryStore) EnsureWriterUUID(_ context.Context, generate func() string
 		s.writer = generate()
 	}
 	return s.writer, nil
+}
+
+func (s *memoryStore) HistoryMetadata(context.Context) (domainhistory.Metadata, error) {
+	if s.fail != nil {
+		return domainhistory.Metadata{}, s.fail
+	}
+	return s.metadata, nil
+}
+
+func (s *memoryStore) ListHistoryEntriesIncludingDeleted(context.Context) ([]domainhistory.Entry, error) {
+	if s.fail != nil {
+		return nil, s.fail
+	}
+	out := append([]domainhistory.Entry(nil), s.entries...)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].RecordedAt.After(out[j].RecordedAt) })
+	return out, nil
+}
+
+func (s *memoryStore) ImportShellHistory(_ context.Context, imports []ShellHistoryImport) error {
+	if s.fail != nil {
+		return s.fail
+	}
+	if s.failWrite != nil {
+		return s.failWrite
+	}
+	if s.metadata.ShellHistoryImported {
+		return nil
+	}
+	for _, imported := range imports {
+		s.entries = replaceEntry(s.entries, imported.Entry)
+		s.appendRecord(imported.Record)
+	}
+	s.metadata.ShellHistoryImported = true
+	s.saves += len(imports)
+	return nil
 }
 
 func (s *memoryStore) ClearHistoryEntries(context.Context) (int, error) {
@@ -758,5 +795,194 @@ func TestFailedDeleteLeavesProjectionAndRecordLogUnchanged(t *testing.T) {
 	}
 	if len(store.records) != 1 || store.records[0].Kind != domainhistory.RecordKindCreate {
 		t.Fatalf("failed delete changed the record log: %+v", store.records)
+	}
+}
+
+func TestImportShellHistoryWritesRowsAndCreateRecordsOnce(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	loads := 0
+	source := func() []domainhistory.ShellHistoryCommand {
+		loads++
+		return []domainhistory.ShellHistoryCommand{
+			{Command: " git status ", Shell: "zsh", RecordedAt: at(9)},
+			{Command: "deploy staging", Shell: "bash"},
+		}
+	}
+	if err := service.ImportShellHistory(ctx, source, "workstation:alice"); err != nil {
+		t.Fatalf("ImportShellHistory: %v", err)
+	}
+	if loads != 1 {
+		t.Fatalf("source loads = %d, want 1", loads)
+	}
+	if len(store.entries) != 2 {
+		t.Fatalf("entries = %d, want 2", len(store.entries))
+	}
+	for _, entry := range store.entries {
+		if !domainhistory.IsUUID(entry.ID) || entry.ID[14] != '7' {
+			t.Fatalf("identity = %q, want a UUIDv7", entry.ID)
+		}
+		if entry.Source != domainhistory.SourceShellHistory || entry.Scope != "local" {
+			t.Fatalf("provenance = %q/%q, want shell-history local", entry.Source, entry.Scope)
+		}
+		if entry.Origin != "workstation:alice" || entry.Author != "alice" ||
+			entry.AuthorKind != domainhistory.AuthorKindUser {
+			t.Fatalf("origin/author = %q/%q/%q", entry.Origin, entry.Author, entry.AuthorKind)
+		}
+		if entry.CWD != "" || entry.HasExitCode || entry.ExitCode != 0 ||
+			!entry.FinishedAt.IsZero() || entry.Duration != 0 || entry.CaptureTier != 0 {
+			t.Fatalf("unknown execution fields were invented: %+v", entry)
+		}
+	}
+	timestamped := store.entries[0]
+	if timestamped.Command != "git status" || timestamped.Shell != "zsh" ||
+		!timestamped.RecordedAt.Equal(at(9)) {
+		t.Fatalf("timestamped row = %+v", timestamped)
+	}
+	untimed := store.entries[1]
+	if untimed.Command != "deploy staging" || untimed.Shell != "bash" ||
+		!untimed.RecordedAt.Equal(at(12)) {
+		t.Fatalf("untimed row = %+v", untimed)
+	}
+	if len(store.records) != 2 {
+		t.Fatalf("records = %d, want one create per row", len(store.records))
+	}
+	for index, record := range store.records {
+		if record.Kind != domainhistory.RecordKindCreate ||
+			record.HistoryID != store.entries[index].ID ||
+			record.SeriesHost != store.writer ||
+			record.Direction != domainhistory.RecordDirectionLocal ||
+			!record.UploadedAt.IsZero() {
+			t.Fatalf("record %d = %+v, want a pending local create", index, record)
+		}
+		var payload domainhistory.Entry
+		if err := json.Unmarshal([]byte(record.Payload), &payload); err != nil {
+			t.Fatalf("record %d payload: %v", index, err)
+		}
+		if payload.ID != store.entries[index].ID || payload.Command != store.entries[index].Command {
+			t.Fatalf("record %d payload = %+v", index, payload)
+		}
+	}
+	if !store.metadata.ShellHistoryImported {
+		t.Fatal("the durable import marker was not set")
+	}
+
+	// The marker makes the import one-time: a later startup does not even
+	// read the configured files.
+	if err := service.ImportShellHistory(ctx, func() []domainhistory.ShellHistoryCommand {
+		loads++
+		return []domainhistory.ShellHistoryCommand{{Command: "fresh", Shell: "fish"}}
+	}, "workstation:alice"); err != nil {
+		t.Fatalf("second ImportShellHistory: %v", err)
+	}
+	if loads != 1 {
+		t.Fatalf("source loads = %d after the marker was set, want 1", loads)
+	}
+	if len(store.entries) != 2 || len(store.records) != 2 {
+		t.Fatalf("a later import changed state: entries=%d records=%d",
+			len(store.entries), len(store.records))
+	}
+}
+
+func TestImportShellHistorySetsMarkerForAnEmptyFileSet(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	loads := 0
+	source := func() []domainhistory.ShellHistoryCommand {
+		loads++
+		return nil
+	}
+	if err := service.ImportShellHistory(ctx, source, "workstation:alice"); err != nil {
+		t.Fatalf("ImportShellHistory: %v", err)
+	}
+	if loads != 1 {
+		t.Fatalf("source loads = %d, want 1", loads)
+	}
+	if !store.metadata.ShellHistoryImported {
+		t.Fatal("an empty file set did not set the import marker")
+	}
+	if len(store.entries) != 0 || len(store.records) != 0 {
+		t.Fatalf("an empty file set wrote entries=%d records=%d",
+			len(store.entries), len(store.records))
+	}
+
+	if err := service.ImportShellHistory(ctx, func() []domainhistory.ShellHistoryCommand {
+		loads++
+		return []domainhistory.ShellHistoryCommand{{Command: "ls", Shell: "zsh"}}
+	}, "workstation:alice"); err != nil {
+		t.Fatalf("second ImportShellHistory: %v", err)
+	}
+	if loads != 1 || len(store.entries) != 0 {
+		t.Fatalf("the empty-set marker did not prevent a later import: loads=%d entries=%d",
+			loads, len(store.entries))
+	}
+}
+
+func TestImportShellHistorySkipsDuplicatesIncludingSoftDeletedRows(t *testing.T) {
+	store := &memoryStore{entries: []domainhistory.Entry{
+		{
+			ID: "0198c7e2-6a1b-7c3d-8e4f-5a6b7c8d9e10", Scope: "local",
+			Command: "git status", Source: domainhistory.SourceSession,
+			RecordedAt: at(9).Add(500 * time.Millisecond),
+		},
+		{
+			ID: "0198c7e2-6a1b-7c3d-8e4f-5a6b7c8d9e11", Scope: "local",
+			Command: "rm secret", Source: domainhistory.SourceSession,
+			RecordedAt: at(8), DeletedAt: at(9),
+		},
+	}}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	source := func() []domainhistory.ShellHistoryCommand {
+		return []domainhistory.ShellHistoryCommand{
+			{Command: "git status", Shell: "zsh", RecordedAt: at(9)},
+			{Command: "rm secret", Shell: "bash", RecordedAt: at(8)},
+			{Command: "rm secret", Shell: "fish"},
+			{Command: "fresh", Shell: "fish"},
+		}
+	}
+	if err := service.ImportShellHistory(ctx, source, "workstation:alice"); err != nil {
+		t.Fatalf("ImportShellHistory: %v", err)
+	}
+	if len(store.entries) != 3 {
+		t.Fatalf("entries = %d, want the two existing rows and one import", len(store.entries))
+	}
+	fresh := 0
+	for _, entry := range store.entries {
+		if entry.Command == "rm secret" && entry.DeletedAt.IsZero() {
+			t.Fatalf("a soft-deleted command was resurrected: %+v", entry)
+		}
+		if entry.Command == "fresh" {
+			fresh++
+		}
+	}
+	if fresh != 1 {
+		t.Fatalf("fresh rows = %d, want 1", fresh)
+	}
+	if len(store.records) != 1 || store.records[0].Kind != domainhistory.RecordKindCreate {
+		t.Fatalf("records = %+v, want one create for the fresh row", store.records)
+	}
+	if !store.metadata.ShellHistoryImported {
+		t.Fatal("the import marker was not set after skipping duplicates")
+	}
+}
+
+func TestFailedShellHistoryImportLeavesMarkerUnset(t *testing.T) {
+	store := &memoryStore{failWrite: errors.New("disk full")}
+	service := newUUIDService(store)
+	err := service.ImportShellHistory(context.Background(), func() []domainhistory.ShellHistoryCommand {
+		return []domainhistory.ShellHistoryCommand{{Command: "ls", Shell: "zsh"}}
+	}, "workstation:alice")
+	if err == nil {
+		t.Fatal("ImportShellHistory succeeded despite a failed store write")
+	}
+	if store.metadata.ShellHistoryImported {
+		t.Fatal("a failed import set the durable marker")
+	}
+	if len(store.entries) != 0 || len(store.records) != 0 {
+		t.Fatalf("a failed import changed state: entries=%d records=%d",
+			len(store.entries), len(store.records))
 	}
 }

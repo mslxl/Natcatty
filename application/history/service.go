@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,6 +44,24 @@ type Store interface {
 	ClearHistoryEntries(context.Context) (int, error)
 	// EnsureWriterUUID returns the per-install series host, creating it once.
 	EnsureWriterUUID(context.Context, func() string) (string, error)
+	// HistoryMetadata reads the device-local metadata, including the durable
+	// one-time Shell History File import marker.
+	HistoryMetadata(context.Context) (domainhistory.Metadata, error)
+	// ListHistoryEntriesIncludingDeleted returns every recorded command,
+	// including soft-deleted rows. The one-time import deduplicates against
+	// them so it never resurrects a command the user deleted.
+	ListHistoryEntriesIncludingDeleted(context.Context) ([]domainhistory.Entry, error)
+	// ImportShellHistory writes the one-time Shell History File rows with
+	// their create records and sets the durable import marker in one
+	// transaction. It is a no-op when the marker is already set.
+	ImportShellHistory(context.Context, []ShellHistoryImport) error
+}
+
+// ShellHistoryImport pairs one imported journal row with its create record.
+// The store writes both in the same transaction.
+type ShellHistoryImport struct {
+	Entry  domainhistory.Entry
+	Record domainhistory.Record
 }
 
 // Retention is the configured bound for Connection Logs. Command History is
@@ -58,6 +77,11 @@ type PruneResult struct {
 
 // Option customizes a Service.
 type Option func(*Service)
+
+// ShellHistorySource returns the parsed Shell History File commands. It is
+// called only when the durable import marker is absent, so a later startup
+// never reads the files again. An empty result still completes the import.
+type ShellHistorySource func() []domainhistory.ShellHistoryCommand
 
 // WithRetention supplies the live retention. The function is read on every
 // record and prune, so a Settings change applies without rebuilding.
@@ -204,6 +228,100 @@ func (s *Service) Record(ctx context.Context, entry domainhistory.Entry) error {
 	return nil
 }
 
+// ImportShellHistory runs the one-time Shell History File import. A durable
+// marker makes it a no-op after the first completed attempt, even after a
+// restart or after the imported rows were deleted. An empty file set still
+// sets the marker. Rows are deduplicated against every existing journal row,
+// including soft-deleted ones, and each inserted row gets a create record in
+// this install's writer series.
+func (s *Service) ImportShellHistory(ctx context.Context, source ShellHistorySource, origin string) error {
+	if s.store == nil {
+		return ErrInvalid
+	}
+	metadata, err := s.store.HistoryMetadata(ctx)
+	if err != nil {
+		return err
+	}
+	if metadata.ShellHistoryImported {
+		return nil
+	}
+	var commands []domainhistory.ShellHistoryCommand
+	if source != nil {
+		commands = source()
+	}
+	existing, err := s.store.ListHistoryEntriesIncludingDeleted(ctx)
+	if err != nil {
+		return err
+	}
+
+	origin = strings.TrimSpace(origin)
+	accepted := make([]domainhistory.Entry, 0, len(commands))
+	// dedup keeps the candidate rows before timestamps are defaulted: a
+	// timestamp-less command matches by command and scope, not by the import
+	// time it will be persisted with.
+	dedup := make([]domainhistory.Entry, 0, len(commands))
+	for _, command := range commands {
+		entry := domainhistory.NormalizeEntry(domainhistory.Entry{
+			Scope:      domainhistory.NormalizeScope(""),
+			Command:    command.Command,
+			Shell:      command.Shell,
+			RecordedAt: command.RecordedAt,
+			Origin:     origin,
+			Source:     domainhistory.SourceShellHistory,
+		})
+		if entry.Command == "" {
+			continue
+		}
+		if shellHistoryDuplicate(entry, existing) || shellHistoryDuplicate(entry, dedup) {
+			continue
+		}
+		dedup = append(dedup, entry)
+		// A file format without timestamps leaves the time unknown; the
+		// journal row still needs a start time, so it is stamped with the
+		// import time (the pre-existing import behaviour).
+		if entry.RecordedAt.IsZero() {
+			entry.RecordedAt = s.now()
+		}
+		entry.ID = s.newEntryID()
+		if !entry.HasUUIDIdentity() {
+			return fmt.Errorf("history: shell-history identity %q is not a UUID", entry.ID)
+		}
+		accepted = append(accepted, entry)
+	}
+
+	imports := make([]ShellHistoryImport, 0, len(accepted))
+	if len(accepted) > 0 {
+		writer, err := s.store.EnsureWriterUUID(ctx, s.newWriterID)
+		if err != nil {
+			return err
+		}
+		for _, entry := range accepted {
+			record, err := s.createRecordForWriter(entry, writer)
+			if err != nil {
+				return err
+			}
+			imports = append(imports, ShellHistoryImport{Entry: entry, Record: *record})
+		}
+	}
+	if err := s.store.ImportShellHistory(ctx, imports); err != nil {
+		return err
+	}
+	if len(accepted) > 0 {
+		s.notify()
+	}
+	return nil
+}
+
+// shellHistoryDuplicate reports whether candidate duplicates any existing row.
+func shellHistoryDuplicate(candidate domainhistory.Entry, existing []domainhistory.Entry) bool {
+	for _, row := range existing {
+		if domainhistory.ShellHistoryDuplicate(candidate, row) {
+			return true
+		}
+	}
+	return false
+}
+
 // createRecord returns the create record that belongs to a newly recorded
 // command, or nil when the row must stay local-only. Imported and synced rows
 // are projections of another writer's history and are never uploaded as
@@ -216,20 +334,35 @@ func (s *Service) createRecord(ctx context.Context, entry domainhistory.Entry) (
 	if !entry.HasUUIDIdentity() {
 		return nil, nil
 	}
+	writer, err := s.store.EnsureWriterUUID(ctx, s.newWriterID)
+	if err != nil {
+		return nil, err
+	}
+	return s.createRecordForWriter(entry, writer)
+}
+
+// createRecordForWriter builds one create record for entry in the given
+// writer series. The caller guarantees a UUID identity. The store assigns the
+// series index inside the writing transaction.
+func (s *Service) createRecordForWriter(entry domainhistory.Entry, writer string) (*domainhistory.Record, error) {
 	payload, err := json.Marshal(entry)
 	if err != nil {
 		return nil, fmt.Errorf("history: encode create record: %w", err)
 	}
-	return s.newLocalRecord(ctx, entry.ID, domainhistory.RecordKindCreate, entry.RecordedAt, payload)
+	return s.recordInSeries(writer, entry.ID, domainhistory.RecordKindCreate, entry.RecordedAt, payload), nil
 }
 
 // newLocalRecord builds one pending record in this install's writer series.
-// The store assigns the series index inside the writing transaction.
 func (s *Service) newLocalRecord(ctx context.Context, historyID, kind string, recordedAt time.Time, payload []byte) (*domainhistory.Record, error) {
 	writer, err := s.store.EnsureWriterUUID(ctx, s.newWriterID)
 	if err != nil {
 		return nil, err
 	}
+	return s.recordInSeries(writer, historyID, kind, recordedAt, payload), nil
+}
+
+// recordInSeries builds one pending record for a known writer series.
+func (s *Service) recordInSeries(writer, historyID, kind string, recordedAt time.Time, payload []byte) *domainhistory.Record {
 	return &domainhistory.Record{
 		ID:         s.newHistoryRecordID(),
 		SeriesHost: writer,
@@ -240,7 +373,7 @@ func (s *Service) newLocalRecord(ctx context.Context, historyID, kind string, re
 		HistoryID:  historyID,
 		Payload:    string(payload),
 		Direction:  domainhistory.RecordDirectionLocal,
-	}, nil
+	}
 }
 
 // Load returns the persisted command history newest first. It implements
