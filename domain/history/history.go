@@ -264,34 +264,103 @@ func isCapturedSource(source string) bool {
 	return source == SourceSession || source == SourceShellHistory
 }
 
+// OriginHostKeyPrefix marks a Host filter value that names the captured
+// origin of a command rather than a saved Host identity. It is the filter key
+// imported and synced rows use when they have no local Host identity.
+const OriginHostKeyPrefix = "origin:"
+
+// OriginHostKey returns the Host filter value that selects one origin.
+func OriginHostKey(origin string) string {
+	return OriginHostKeyPrefix + origin
+}
+
+// ExitFilter narrows a command history list by how the command exited.
+// ExitAny matches every row; the other values separate a known success, a
+// known non-zero failure, and a row whose exit status the shell never
+// reported.
+type ExitFilter string
+
+const (
+	// ExitAny keeps every exit status, known or unknown.
+	ExitAny ExitFilter = ""
+	// ExitSuccess selects rows known to have exited with zero.
+	ExitSuccess ExitFilter = "success"
+	// ExitFailure selects rows known to have exited non-zero.
+	ExitFailure ExitFilter = "failure"
+	// ExitUnknown selects rows whose exit status was never reported.
+	ExitUnknown ExitFilter = "unknown"
+)
+
+// Match reports whether entry satisfies the exit filter. An unrecognized
+// value matches nothing rather than silently behaving like ExitAny.
+func (filter ExitFilter) Match(entry Entry) bool {
+	switch filter {
+	case ExitAny:
+		return true
+	case ExitSuccess:
+		return entry.HasExitCode && entry.ExitCode == 0
+	case ExitFailure:
+		return entry.HasExitCode && entry.ExitCode != 0
+	case ExitUnknown:
+		return !entry.HasExitCode
+	default:
+		return false
+	}
+}
+
 // EntryFilter narrows a command history list. Zero fields match everything.
-// From is inclusive and To is exclusive.
+// Host accepts the local, unsaved, and saved Host keys, or an origin key built
+// by OriginHostKey. Query is split on whitespace and every token must appear
+// in the command, case-insensitively. From is inclusive and To is exclusive.
 type EntryFilter struct {
-	Host   string
-	Source string
-	Query  string
-	From   time.Time
-	To     time.Time
+	Host    string
+	Session string
+	CWD     string
+	Exit    ExitFilter
+	Shell   string
+	Source  string
+	Query   string
+	From    time.Time
+	To      time.Time
 }
 
 // Match reports whether entry satisfies the filter. A typed Host entry has no
 // Host identity and is not local; the unsaved key selects it, and the local
-// key never does.
+// key never does. An origin key selects rows by their captured origin. The
+// Session value matches either the app Session identity or the Atuin session
+// UUID, so imported and synced rows are filterable too.
 func (filter EntryFilter) Match(entry Entry) bool {
-	switch filter.Host {
-	case "":
-	case LocalHostKey:
+	switch host := filter.Host; {
+	case host == "":
+	case host == LocalHostKey:
 		if !entry.IsLocal() {
 			return false
 		}
-	case UnsavedHostKey:
+	case host == UnsavedHostKey:
 		if !entry.IsUnsaved() {
 			return false
 		}
-	default:
-		if string(entry.HostID) != filter.Host {
+	case strings.HasPrefix(host, OriginHostKeyPrefix):
+		if entry.Origin != strings.TrimPrefix(host, OriginHostKeyPrefix) {
 			return false
 		}
+	default:
+		if string(entry.HostID) != host {
+			return false
+		}
+	}
+	if filter.Session != "" && string(entry.SessionID) != filter.Session &&
+		entry.SessionUUID != filter.Session {
+		return false
+	}
+	if filter.CWD != "" && entry.CWD != filter.CWD {
+		return false
+	}
+	if !filter.Exit.Match(entry) {
+		return false
+	}
+	if filter.Shell != "" && !strings.EqualFold(entry.Shell, filter.Shell) {
+		return false
 	}
 	if filter.Source != "" && entry.Source != filter.Source {
 		return false
@@ -302,14 +371,73 @@ func (filter EntryFilter) Match(entry Entry) bool {
 	if !filter.To.IsZero() && !entry.RecordedAt.Before(filter.To) {
 		return false
 	}
-	query := strings.ToLower(strings.TrimSpace(filter.Query))
-	if query == "" {
-		return true
+	command := strings.ToLower(entry.Command)
+	for _, token := range strings.Fields(strings.ToLower(filter.Query)) {
+		if !strings.Contains(command, token) {
+			return false
+		}
 	}
-	haystack := strings.ToLower(strings.Join([]string{
-		entry.Command, entry.HostLabel, string(entry.HostID), entry.Source, entry.Scope,
-	}, "\n"))
-	return strings.Contains(haystack, query)
+	return true
+}
+
+// SortEntries orders entries newest first. Equal timestamps tie-break by
+// descending ID, so filtering and paging are deterministic across pages and
+// independent of the order a Store returned rows in.
+func SortEntries(entries []Entry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		return newer(entries[i].RecordedAt, entries[i].ID,
+			entries[j].RecordedAt, entries[j].ID)
+	})
+}
+
+// SortEntriesForQuery orders entries by how well their command matches query,
+// then newest first, then descending identity. Every candidate already
+// contains the query tokens, so the score only separates an exact command
+// match from a prefix, a word prefix, and a plain substring. The time and
+// identity tie-break keeps paging deterministic even when several rows match
+// equally well. An empty query keeps the default newest-first order.
+func SortEntriesForQuery(entries []Entry, query string) {
+	query = strings.Join(strings.Fields(strings.ToLower(query)), " ")
+	if query == "" {
+		SortEntries(entries)
+		return
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		left := queryScore(entries[i].Command, query)
+		right := queryScore(entries[j].Command, query)
+		if left != right {
+			return left > right
+		}
+		return newer(entries[i].RecordedAt, entries[i].ID,
+			entries[j].RecordedAt, entries[j].ID)
+	})
+}
+
+// queryScore rates one command against a lowercased, whitespace-normalized
+// query. The values run from an exact command match down to a substring-only
+// match, so "git status" outranks "run git status" and both outrank "legit".
+func queryScore(command, query string) int {
+	command = strings.ToLower(strings.TrimSpace(command))
+	switch {
+	case command == query:
+		return 4
+	case strings.HasPrefix(command, query):
+		return 3
+	case wordPrefix(command, strings.Fields(query)[0]):
+		return 2
+	default:
+		return 1
+	}
+}
+
+// wordPrefix reports whether any word of command starts with token.
+func wordPrefix(command, token string) bool {
+	for _, word := range strings.Fields(command) {
+		if strings.HasPrefix(word, token) {
+			return true
+		}
+	}
+	return false
 }
 
 // Retention bounds Connection Logs. Count zero keeps every log; MaxAge zero

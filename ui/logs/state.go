@@ -65,10 +65,40 @@ type TerminalActions interface {
 
 // HostOption is one value of the Host filter.
 type HostOption struct {
-	// Key is "", "local", "unsaved", or a Host identity.
+	// Key is "", "local", "unsaved", a Host identity, or an origin key.
 	Key   string
 	Label string
+	// Count is how many rows in the facet's result set carry this value.
+	Count int
 }
+
+// FacetValue is one distinct value present in the current result set, with
+// the number of matching rows.
+type FacetValue struct {
+	Value string
+	Count int
+}
+
+// Facets are the filter values present in the current result set. Each
+// dimension is computed with its own filter cleared, so selecting one value
+// does not hide the other values the user can switch to.
+type Facets struct {
+	Hosts    []HostOption
+	Sessions []FacetValue
+	Cwds     []FacetValue
+	Shells   []FacetValue
+	Sources  []FacetValue
+	Exits    []FacetValue
+}
+
+// focusTarget names the field OpenGlobalSearch asks the next frame to focus.
+// It is a FocusBind value and must stay comparable.
+type focusTarget int
+
+const (
+	focusNone focusTarget = iota
+	focusHistorySearch
+)
 
 // PageSize is how many matching rows render before Show more.
 const PageSize = 100
@@ -98,9 +128,16 @@ type State struct {
 	status       domainhistory.ConnectionStatus
 	sourceFilter string
 	hostKey      string
+	sessionKey   string
+	cwdKey       string
+	shellKey     string
+	exitKey      domainhistory.ExitFilter
 	fromText     string
 	toText       string
 	visible      int
+	// focusRequest is the FocusBind field the search input reads. Assigning
+	// focusHistorySearch asks the next frame to focus the search field.
+	focusRequest focusTarget
 
 	pendingClear bool
 	cleared      int
@@ -177,6 +214,12 @@ func (s *State) SelectTab(tab Tab) {
 	// helps.
 	s.scroll.Y = 0
 	if s.hostKey == domainhistory.UnsavedHostKey {
+		s.hostKey = ""
+	}
+	// An origin key only selects command history rows; leaving it in place on
+	// the Connections tab would hide every connection log.
+	if tab == TabConnections &&
+		strings.HasPrefix(s.hostKey, domainhistory.OriginHostKeyPrefix) {
 		s.hostKey = ""
 	}
 }
@@ -257,6 +300,53 @@ func (s *State) SetSourceFilter(source string) {
 	s.visible = PageSize
 }
 
+// SessionFilter returns the selected app Session or Atuin session UUID.
+func (s *State) SessionFilter() string { return s.sessionKey }
+
+// SetSessionFilter stores the Session filter and resets paging.
+func (s *State) SetSessionFilter(session string) {
+	s.sessionKey = session
+	s.visible = PageSize
+}
+
+// CwdFilter returns the selected working directory.
+func (s *State) CwdFilter() string { return s.cwdKey }
+
+// SetCwdFilter stores the working-directory filter and resets paging.
+func (s *State) SetCwdFilter(cwd string) {
+	s.cwdKey = cwd
+	s.visible = PageSize
+}
+
+// ShellFilter returns the selected shell.
+func (s *State) ShellFilter() string { return s.shellKey }
+
+// SetShellFilter stores the shell filter and resets paging.
+func (s *State) SetShellFilter(shell string) {
+	s.shellKey = shell
+	s.visible = PageSize
+}
+
+// ExitFilter returns the selected exit-status filter.
+func (s *State) ExitFilter() domainhistory.ExitFilter { return s.exitKey }
+
+// SetExitFilter stores the exit-status filter and resets paging.
+func (s *State) SetExitFilter(exit domainhistory.ExitFilter) {
+	s.exitKey = exit
+	s.visible = PageSize
+}
+
+// OpenGlobalSearch selects the History tab, clears the Host scope so every
+// Host and origin is searched, and asks the next frame to focus the search
+// field. It is the app-level shortcut's action; it never touches the
+// terminal's Ctrl-R or Up keys.
+func (s *State) OpenGlobalSearch() {
+	s.SelectTab(TabHistory)
+	s.hostKey = ""
+	s.visible = PageSize
+	s.focusRequest = focusHistorySearch
+}
+
 // HostKey returns the selected Host filter key.
 func (s *State) HostKey() string { return s.hostKey }
 
@@ -280,22 +370,32 @@ func (s *State) SetDateRange(from, to string) {
 	s.visible = PageSize
 }
 
-// HostOptions lists the Host filter values present in the records plus the
-// local shell and, when the selected tab has any, unsaved Hosts. Labels come
-// from the records, so a deleted Host remains identifiable by its recorded
-// label. Saved Hosts sharing a label are qualified by their address, or by
-// their identity when even the address is shared, so the selector cannot show
-// two indistinguishable entries.
+// HostOptions lists the Host/origin filter values present in the loaded
+// records plus the local shell and, when the selected tab has any, unsaved
+// Hosts. The Host filter is shared by both tabs, so saved Host values from
+// either family stay selectable. Labels come from the records, so a deleted
+// Host remains identifiable by its recorded label. Saved Hosts sharing a
+// label are qualified by their address, or by their identity when even the
+// address is shared, so the selector cannot show two indistinguishable
+// entries. Imported and synced rows with no local Host identity offer an
+// origin key on the History tab, where those rows are listed.
 func (s *State) HostOptions() []HostOption {
-	options := []HostOption{{Key: "", Label: ""}, {Key: domainhistory.LocalHostKey, Label: ""}}
+	logFilter := s.connectionFilter()
+	logFilter.Host = ""
+	entryFilter := s.entryFilter()
+	entryFilter.Host = ""
+
 	labels := make(map[string]string)
 	hostnames := make(map[string]string)
-	unsaved := false
+	counts := make(map[string]int)
+	origins := make(map[string]int)
+	unsaved, local, total := 0, 0, 0
 	add := func(hostID model.HostID, label, hostname string) {
 		if hostID == "" {
 			return
 		}
 		key := string(hostID)
+		counts[key]++
 		display := label
 		if display == "" {
 			display = hostname
@@ -309,25 +409,52 @@ func (s *State) HostOptions() []HostOption {
 		}
 	}
 	for _, log := range s.logs {
+		if !logFilter.Match(log) {
+			continue
+		}
+		total++
 		if log.IsUnsaved() {
 			if s.tab == TabConnections {
-				unsaved = true
+				unsaved++
 			}
 			continue
+		}
+		if log.IsLocal() {
+			local++
 		}
 		add(log.HostID, log.HostLabel, log.Hostname)
 	}
 	for _, entry := range s.entries {
+		if !entryFilter.Match(entry) {
+			continue
+		}
+		total++
 		if entry.IsUnsaved() {
 			if s.tab == TabHistory {
-				unsaved = true
+				unsaved++
 			}
 			continue
 		}
+		if entry.IsLocal() {
+			local++
+		}
 		add(entry.HostID, entry.HostLabel, "")
+		// An origin key only makes sense on the History tab. Offering it on
+		// Connections would let the user pick a value that matches no
+		// connection log at all.
+		if s.tab == TabHistory && entry.HostID == "" && !entry.IsLocal() &&
+			entry.Origin != "" {
+			origins[entry.Origin]++
+		}
 	}
-	if unsaved {
-		options = append(options, HostOption{Key: domainhistory.UnsavedHostKey})
+	options := []HostOption{
+		{Key: "", Label: "", Count: total},
+		{Key: domainhistory.LocalHostKey, Label: "", Count: local},
+	}
+	if unsaved > 0 || s.hostKey == domainhistory.UnsavedHostKey {
+		options = append(options, HostOption{
+			Key: domainhistory.UnsavedHostKey, Count: unsaved,
+		})
 	}
 	keys := make([]string, 0, len(labels))
 	for key := range labels {
@@ -353,9 +480,199 @@ func (s *State) HostOptions() []HostOption {
 			display = qualifyHostLabel(display, hostnames[key], key,
 				sharedHostnames[strings.ToLower(hostnames[key])] > 1)
 		}
-		options = append(options, HostOption{Key: key, Label: display})
+		options = append(options, HostOption{Key: key, Label: display, Count: counts[key]})
+	}
+	originValues := make([]string, 0, len(origins))
+	for origin := range origins {
+		originValues = append(originValues, origin)
+	}
+	sort.Slice(originValues, func(i, j int) bool {
+		left := strings.ToLower(originValues[i])
+		right := strings.ToLower(originValues[j])
+		if left == right {
+			return originValues[i] < originValues[j]
+		}
+		return left < right
+	})
+	for _, origin := range originValues {
+		options = append(options, HostOption{
+			Key: domainhistory.OriginHostKey(origin), Label: origin, Count: origins[origin],
+		})
+	}
+	if key := s.hostKey; key != "" {
+		if !hostOptionPresent(options, key) {
+			option := HostOption{Key: key}
+			if strings.HasPrefix(key, domainhistory.OriginHostKeyPrefix) {
+				option.Label = strings.TrimPrefix(key, domainhistory.OriginHostKeyPrefix)
+			}
+			options = append(options, option)
+		}
 	}
 	return options
+}
+
+func hostOptionPresent(options []HostOption, key string) bool {
+	for _, option := range options {
+		if option.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// Facets returns every filter dimension for the current result set.
+func (s *State) Facets() Facets {
+	return Facets{
+		Hosts:    s.HostOptions(),
+		Sessions: s.SessionOptions(),
+		Cwds:     s.CwdOptions(),
+		Shells:   s.ShellOptions(),
+		Sources:  s.SourceOptions(),
+		Exits:    s.ExitOptions(),
+	}
+}
+
+// SessionOptions lists the Session values present in the history result set
+// with the Session filter cleared. A captured row contributes its app Session
+// identity; a synced row contributes its Atuin session UUID.
+func (s *State) SessionOptions() []FacetValue {
+	counts := make(map[string]int)
+	for _, entry := range s.facetEntries(func(filter *domainhistory.EntryFilter) {
+		filter.Session = ""
+	}) {
+		key := string(entry.SessionID)
+		if key == "" {
+			key = entry.SessionUUID
+		}
+		if key != "" {
+			counts[key]++
+		}
+	}
+	return sortedFacetValues(counts, s.sessionKey)
+}
+
+// CwdOptions lists the working directories present in the history result set
+// with the cwd filter cleared.
+func (s *State) CwdOptions() []FacetValue {
+	counts := make(map[string]int)
+	for _, entry := range s.facetEntries(func(filter *domainhistory.EntryFilter) {
+		filter.CWD = ""
+	}) {
+		if entry.CWD != "" {
+			counts[entry.CWD]++
+		}
+	}
+	return sortedFacetValues(counts, s.cwdKey)
+}
+
+// ShellOptions lists the shells present in the history result set with the
+// shell filter cleared.
+func (s *State) ShellOptions() []FacetValue {
+	counts := make(map[string]int)
+	for _, entry := range s.facetEntries(func(filter *domainhistory.EntryFilter) {
+		filter.Shell = ""
+	}) {
+		shell := strings.ToLower(entry.Shell)
+		if shell != "" {
+			counts[shell]++
+		}
+	}
+	return sortedFacetValues(counts, strings.ToLower(s.shellKey))
+}
+
+// SourceOptions lists every known source with its count in the history result
+// set, with the source filter cleared. Keeping absent sources in the selector
+// lets a user switch directly between sources.
+func (s *State) SourceOptions() []FacetValue {
+	counts := make(map[string]int)
+	for _, entry := range s.facetEntries(func(filter *domainhistory.EntryFilter) {
+		filter.Source = ""
+	}) {
+		counts[entry.Source]++
+	}
+	order := []string{
+		domainhistory.SourceSession, domainhistory.SourceShellHistory,
+		domainhistory.SourceAtuinImport, domainhistory.SourceAtuinSync,
+	}
+	return fixedFacetValues(counts, order)
+}
+
+// ExitOptions lists success, failure, and unknown exit status with their
+// counts in the history result set, with the exit filter cleared.
+func (s *State) ExitOptions() []FacetValue {
+	counts := make(map[string]int)
+	for _, entry := range s.facetEntries(func(filter *domainhistory.EntryFilter) {
+		filter.Exit = domainhistory.ExitAny
+	}) {
+		switch {
+		case !entry.HasExitCode:
+			counts[string(domainhistory.ExitUnknown)]++
+		case entry.ExitCode == 0:
+			counts[string(domainhistory.ExitSuccess)]++
+		default:
+			counts[string(domainhistory.ExitFailure)]++
+		}
+	}
+	order := []string{
+		string(domainhistory.ExitSuccess), string(domainhistory.ExitFailure),
+		string(domainhistory.ExitUnknown),
+	}
+	return fixedFacetValues(counts, order)
+}
+
+// facetEntries applies the current entry filters after reset clears one
+// dimension. Facets are computed this way so a selected value does not hide
+// the alternatives in its own selector.
+func (s *State) facetEntries(reset func(*domainhistory.EntryFilter)) []domainhistory.Entry {
+	filter := s.entryFilter()
+	if reset != nil {
+		reset(&filter)
+	}
+	matched := make([]domainhistory.Entry, 0, len(s.entries))
+	for _, entry := range s.entries {
+		if filter.Match(entry) {
+			matched = append(matched, entry)
+		}
+	}
+	return matched
+}
+
+// sortedFacetValues returns counts sorted by value, with the selected value
+// kept even when the rest of the filters exclude it, so the selector never
+// silently falls back to a different value.
+func sortedFacetValues(counts map[string]int, selected string) []FacetValue {
+	values := make([]string, 0, len(counts)+1)
+	for value := range counts {
+		values = append(values, value)
+	}
+	if selected != "" {
+		if _, ok := counts[selected]; !ok {
+			values = append(values, selected)
+		}
+	}
+	sort.Slice(values, func(i, j int) bool {
+		left := strings.ToLower(values[i])
+		right := strings.ToLower(values[j])
+		if left == right {
+			return values[i] < values[j]
+		}
+		return left < right
+	})
+	out := make([]FacetValue, 0, len(values))
+	for _, value := range values {
+		out = append(out, FacetValue{Value: value, Count: counts[value]})
+	}
+	return out
+}
+
+// fixedFacetValues returns counts in a fixed vocabulary order, including
+// values with a zero count.
+func fixedFacetValues(counts map[string]int, order []string) []FacetValue {
+	out := make([]FacetValue, 0, len(order))
+	for _, value := range order {
+		out = append(out, FacetValue{Value: value, Count: counts[value]})
+	}
+	return out
 }
 
 // qualifyHostLabel disambiguates a label shared by saved Hosts. The address
@@ -431,11 +748,15 @@ func (s *State) entryFilter() domainhistory.EntryFilter {
 		return domainhistory.EntryFilter{From: farFuture, To: farFuture.Add(time.Hour)}
 	}
 	return domainhistory.EntryFilter{
-		Host:   s.hostKey,
-		Source: s.sourceFilter,
-		Query:  s.search,
-		From:   from,
-		To:     to,
+		Host:    s.hostKey,
+		Session: s.sessionKey,
+		CWD:     s.cwdKey,
+		Exit:    s.exitKey,
+		Shell:   s.shellKey,
+		Source:  s.sourceFilter,
+		Query:   s.search,
+		From:    from,
+		To:      to,
 	}
 }
 
@@ -455,7 +776,10 @@ func (s *State) FilteredLogs() []domainhistory.ConnectionLog {
 	return matched
 }
 
-// FilteredEntries returns every history entry matching the filters.
+// FilteredEntries returns every history entry matching the filters, ranked by
+// search relevance when a query is active and newest first otherwise. The
+// time-and-identity tie-break keeps paging stable even when the source
+// returned rows in another order.
 func (s *State) FilteredEntries() []domainhistory.Entry {
 	filter := s.entryFilter()
 	matched := make([]domainhistory.Entry, 0, len(s.entries))
@@ -464,6 +788,7 @@ func (s *State) FilteredEntries() []domainhistory.Entry {
 			matched = append(matched, entry)
 		}
 	}
+	domainhistory.SortEntriesForQuery(matched, s.search)
 	return matched
 }
 

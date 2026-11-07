@@ -11,6 +11,7 @@ import (
 	domain "github.com/mslxl/natcatty/domain/keybindings"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	"github.com/mslxl/natcatty/domain/workspace"
+	logsui "github.com/mslxl/natcatty/ui/logs"
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	transferstate "github.com/mslxl/natcatty/ui/transfer/state"
@@ -189,7 +190,9 @@ type bindingDispatcher struct {
 	search  *uisearch.State
 	// transfer owns the SFTP surface's state. The surface registers its own
 	// scoped shortcuts; only open-sftp is dispatched at window scope.
-	transfer      *transferstate.State
+	transfer *transferstate.State
+	// logs owns the History surface the global search shortcut opens.
+	logs          *logsui.State
 	focusMain     func()
 	toggleOpacity func()
 }
@@ -345,6 +348,20 @@ func (d *bindingDispatcher) action(id string) (func(int), bool) {
 		}, true
 	case "toggle-side-panel":
 		return func(int) { d.shell.ToggleActiveFiles() }, true
+	case "history-search":
+		if d.logs == nil {
+			return nil, false
+		}
+		return func(int) {
+			// Open the global History surface and focus its search field. The
+			// action never touches the terminal's Ctrl-R or Up keys.
+			d.shell.ShowLogs()
+			d.logs.OpenGlobalSearch()
+			if d.focusMain != nil {
+				d.focusMain()
+			}
+			d.shell.RequestRedraw()
+		}, true
 	case "open-local":
 		return func(int) { _ = d.shell.NewTab() }, true
 	case "broadcast":

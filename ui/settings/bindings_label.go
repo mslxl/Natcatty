@@ -98,6 +98,8 @@ func bindingLabel(m locales.Messages, binding domain.Binding) string {
 		return m.SettingsBindingSFTPNavigateTo()
 	case "transfer-center":
 		return m.SettingsBindingTransferCenter()
+	case "history-search":
+		return m.SettingsBindingHistorySearch()
 	default:
 		return ""
 	}

@@ -3,6 +3,7 @@ package logs
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -142,79 +143,52 @@ func problemText(m locales.Messages, tab Tab, problem Problem) string {
 // control carries its field name as its label and placeholder.
 func filters(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	ui.Row(c).FillWidth().Gap(8).Wrap().AlignItems(ui.Center).Children(func() {
-		if ui.SearchField(c, s.Search()).Label(m.LogsSearch()).Placeholder(m.LogsSearch()).
-			Grow(1).MinWidth(200).Changed() {
+		// A plain text input rather than a SearchField: the global-search
+		// shortcut has to focus the input itself, and SearchField's wrapper
+		// hides the input from FocusBind.
+		if ui.TextInput(c, s.Search()).Label(m.LogsSearch()).Placeholder(m.LogsSearch()).
+			FocusBind(&s.focusRequest, focusHistorySearch).Grow(1).MinWidth(200).Changed() {
 			s.SetSearch(*s.Search())
 			c.Invalidate()
 		}
 
-		hostOptions := s.HostOptions()
-		hostLabels := make([]string, len(hostOptions))
-		for index, option := range hostOptions {
-			hostLabels[index] = hostOptionLabel(m, option)
-		}
-		hostLabel := hostLabels[0]
-		for index, option := range hostOptions {
-			if option.Key == s.HostKey() {
-				hostLabel = hostLabels[index]
-				break
+		hostChoices := []selectChoice{{Value: "", Label: m.LogsHostAll()}}
+		for _, option := range s.HostOptions() {
+			if option.Key == "" {
+				continue
 			}
+			hostChoices = append(hostChoices, selectChoice{
+				Value: option.Key, Label: hostOptionLabel(m, option),
+			})
 		}
-		if ui.Select(c, &hostLabel, hostLabels).Label(m.LogsHostFilter()).Tooltip(m.LogsHostFilter()).
-			Width(170).Changed() {
-			for index, label := range hostLabels {
-				if label == hostLabel {
-					s.SetHostKey(hostOptions[index].Key)
-					break
-				}
-			}
-			c.Invalidate()
-		}
+		selectField(c, m.LogsHostFilter(), s.HostKey(), hostChoices, 170,
+			func(value string) { s.SetHostKey(value) })
 
 		if s.Tab() == TabConnections {
-			statusLabels := []string{m.LogsStatusAll(), m.LogsStatusConnected(), m.LogsStatusFailed()}
-			statusValues := []domainhistory.ConnectionStatus{
-				"", domainhistory.ConnectionConnected, domainhistory.ConnectionFailed,
+			statusChoices := []selectChoice{
+				{Value: "", Label: m.LogsStatusAll()},
+				{Value: string(domainhistory.ConnectionConnected), Label: m.LogsStatusConnected()},
+				{Value: string(domainhistory.ConnectionFailed), Label: m.LogsStatusFailed()},
 			}
-			statusLabel := statusLabels[0]
-			for index, value := range statusValues {
-				if value == s.Status() {
-					statusLabel = statusLabels[index]
-					break
-				}
-			}
-			if ui.Select(c, &statusLabel, statusLabels).Label(m.LogsStatusFilter()).
-				Tooltip(m.LogsStatusFilter()).Width(140).Changed() {
-				for index, label := range statusLabels {
-					if label == statusLabel {
-						s.SetStatus(statusValues[index])
-						break
-					}
-				}
-				c.Invalidate()
-			}
+			selectField(c, m.LogsStatusFilter(), string(s.Status()), statusChoices, 140,
+				func(value string) { s.SetStatus(domainhistory.ConnectionStatus(value)) })
 		} else {
-			sourceLabels := []string{m.LogsSourceAll(), m.LogsSourceSession(), m.LogsSourceShell()}
-			sourceValues := []string{
-				"", domainhistory.SourceSession, domainhistory.SourceShellHistory,
-			}
-			sourceLabel := sourceLabels[0]
-			for index, value := range sourceValues {
-				if value == s.SourceFilter() {
-					sourceLabel = sourceLabels[index]
-					break
-				}
-			}
-			if ui.Select(c, &sourceLabel, sourceLabels).Label(m.LogsSourceFilter()).
-				Tooltip(m.LogsSourceFilter()).Width(140).Changed() {
-				for index, label := range sourceLabels {
-					if label == sourceLabel {
-						s.SetSourceFilter(sourceValues[index])
-						break
-					}
-				}
-				c.Invalidate()
-			}
+			selectField(c, m.LogsSourceFilter(), s.SourceFilter(),
+				facetChoices(m.LogsSourceAll(), s.SourceOptions(), func(value string) string {
+					return sourceLabel(m, value)
+				}), 140, func(value string) { s.SetSourceFilter(value) })
+			selectField(c, m.LogsSessionFilter(), s.SessionFilter(),
+				facetChoices(m.LogsSessionAll(), s.SessionOptions(), identityLabel), 200,
+				func(value string) { s.SetSessionFilter(value) })
+			selectField(c, m.LogsCwdFilter(), s.CwdFilter(),
+				facetChoices(m.LogsCwdAll(), s.CwdOptions(), identityLabel), 220,
+				func(value string) { s.SetCwdFilter(value) })
+			selectField(c, m.LogsShellFilter(), s.ShellFilter(),
+				facetChoices(m.LogsShellAll(), s.ShellOptions(), identityLabel), 160,
+				func(value string) { s.SetShellFilter(value) })
+			selectField(c, m.LogsExitFilter(), string(s.ExitFilter()),
+				exitChoices(m, s.ExitOptions()), 160,
+				func(value string) { s.SetExitFilter(domainhistory.ExitFilter(value)) })
 		}
 
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
@@ -274,6 +248,68 @@ func dateField(c *ui.Context, m locales.Messages, label, text string, picker *da
 	})
 }
 
+// selectChoice is one option of a filter selector: the stored filter value
+// and the localized label shown to the user.
+type selectChoice struct {
+	Value string
+	Label string
+}
+
+// selectField renders a labelled select over choices and reports the chosen
+// filter value. The select is located by its label, which facets keep unique.
+func selectField(c *ui.Context, label, selected string, choices []selectChoice,
+	width float32, choose func(string)) {
+	labels := make([]string, len(choices))
+	current := ""
+	for index, choice := range choices {
+		labels[index] = choice.Label
+		if choice.Value == selected {
+			current = choice.Label
+		}
+	}
+	if current == "" && len(choices) > 0 {
+		current = labels[0]
+	}
+	if ui.Select(c, &current, labels).Label(label).Tooltip(label).Width(width).Changed() {
+		for index, text := range labels {
+			if text == current {
+				choose(choices[index].Value)
+				break
+			}
+		}
+		c.Invalidate()
+	}
+}
+
+// facetChoices prepends the All value to one facet's values. The label
+// function localizes a value; identityLabel shows the value itself.
+func facetChoices(allLabel string, options []FacetValue, label func(string) string) []selectChoice {
+	choices := make([]selectChoice, 0, len(options)+1)
+	choices = append(choices, selectChoice{Value: "", Label: allLabel})
+	for _, option := range options {
+		choices = append(choices, selectChoice{Value: option.Value, Label: label(option.Value)})
+	}
+	return choices
+}
+
+func identityLabel(value string) string { return value }
+
+// exitChoices localizes the fixed exit-status vocabulary.
+func exitChoices(m locales.Messages, options []FacetValue) []selectChoice {
+	choices := []selectChoice{{Value: "", Label: m.LogsExitAll()}}
+	for _, option := range options {
+		label := m.LogsExitUnknown()
+		switch domainhistory.ExitFilter(option.Value) {
+		case domainhistory.ExitSuccess:
+			label = m.LogsExitSuccess()
+		case domainhistory.ExitFailure:
+			label = m.LogsExitFailure()
+		}
+		choices = append(choices, selectChoice{Value: option.Value, Label: label})
+	}
+	return choices
+}
+
 func hostOptionLabel(m locales.Messages, option HostOption) string {
 	switch option.Key {
 	case "":
@@ -283,6 +319,9 @@ func hostOptionLabel(m locales.Messages, option HostOption) string {
 	case domainhistory.UnsavedHostKey:
 		return m.LogsHostUnsaved()
 	default:
+		if strings.HasPrefix(option.Key, domainhistory.OriginHostKeyPrefix) {
+			return m.LogsHostOrigin(option.Label)
+		}
 		if option.Label != "" {
 			return option.Label
 		}
@@ -361,15 +400,17 @@ func historyRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			kit.ListRow(c).Children(func() {
 				ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 					ui.Text(c, entry.Command).Bold()
-					ui.Text(c, m.LogsHistoryMeta(historyHostLabel(m, entry),
-						sourceLabel(m, entry.Source), timestamp(entry.RecordedAt))).
-						FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
-					// The captured fields are the minimum the History surface
-					// needs for this ticket: cwd, finish and duration, exit,
-					// shell and tier, and origin. Missing values are labelled,
-					// never shown as a misleading empty string.
-					ui.Text(c, capturedHistoryMeta(m, entry)).
+					ui.Text(c, historyMeta(m, entry)).
 						FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine()
+					// Provenance says where the row came from; the exit and
+					// tier badges label how much the capture observed.
+					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+						kit.Pill(c, provenanceLabel(m, entry))
+						exitBadge(c, m, t, entry)
+						if entry.CaptureTier != 0 {
+							kit.Pill(c, m.LogsHistoryTierBadge(entry.CaptureTier))
+						}
+					})
 				})
 				if kit.SecondaryButton(c, icons.Info, m.LogsHistoryDetails()).Clicked() {
 					s.SelectEntry(entry.ID)
@@ -392,10 +433,60 @@ func historyRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	showMore(c, s, m)
 }
 
-// historyDetail renders the full command and every captured field for one
-// history row. It is the minimal detail surface: the list stays in place and
-// the panel opens under the selected row. Unknown values use the localized
-// label rather than a misleading empty string.
+// historyMeta is the compact row summary: Host or origin, cwd, duration, and
+// start time. A field the Session never observed is labelled unknown.
+func historyMeta(m locales.Messages, entry domainhistory.Entry) string {
+	unknown := m.LogsHistoryUnknown()
+	cwd := entry.CWD
+	if cwd == "" {
+		cwd = unknown
+	}
+	duration := unknown
+	if !entry.FinishedAt.IsZero() && !entry.RecordedAt.IsZero() {
+		duration = formatDuration(entry.Duration)
+	}
+	return m.LogsHistoryRowMeta(historyHostLabel(m, entry), cwd, duration,
+		timestamp(entry.RecordedAt))
+}
+
+// provenanceLabel says whether a row came from this device, the shell-history
+// import, an Atuin import, or another device through sync.
+func provenanceLabel(m locales.Messages, entry domainhistory.Entry) string {
+	switch entry.Source {
+	case domainhistory.SourceShellHistory:
+		return m.LogsProvenanceShellImport()
+	case domainhistory.SourceAtuinImport:
+		return m.LogsProvenanceAtuinImport()
+	case domainhistory.SourceAtuinSync:
+		return m.LogsProvenanceAtuinSync()
+	default:
+		return m.LogsProvenanceThisDevice()
+	}
+}
+
+// exitBadge colors a known success green and a known failure red. An unknown
+// exit status keeps a muted badge instead of implying success.
+func exitBadge(c *ui.Context, m locales.Messages, t *ui.Theme, entry domainhistory.Entry) {
+	text := m.LogsHistoryExitUnknown()
+	color := t.TextMuted
+	if entry.HasExitCode {
+		text = m.LogsHistoryExitBadge(entry.ExitCode)
+		color = t.Success
+		if entry.ExitCode != 0 {
+			color = uitheme.DangerText(t)
+		}
+	}
+	badge := ui.Row(c).Gap(5).Padding(1, 7).Radius(999).AlignItems(ui.Center).
+		Background(color.Alpha(0.12)).Shrink(0)
+	badge.Children(func() {
+		ui.Text(c, text).FontSize(11).FontWeight(500).TextColor(color).NoWrap()
+	})
+}
+
+// historyDetail renders the full command, provenance badges, and every field
+// captured for one row. It stays inline under the selected row. Missing values
+// explain what the capture could not observe rather than showing an empty
+// string that looks like a real value.
 func historyDetail(c *ui.Context, s *State, entry domainhistory.Entry, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).FillWidth().Padding(10).Gap(6).Background(t.Surface).Children(func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
@@ -406,18 +497,35 @@ func historyDetail(c *ui.Context, s *State, entry domainhistory.Entry, m locales
 			}
 		})
 		ui.Text(c, entry.Command).FontSize(13).Wrap()
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			kit.Pill(c, provenanceLabel(m, entry))
+			exitBadge(c, m, t, entry)
+			if entry.CaptureTier != 0 {
+				kit.Pill(c, m.LogsHistoryTierBadge(entry.CaptureTier))
+			}
+		})
+
 		detailField(c, m, m.LogsHistoryFieldHost(), historyHostLabel(m, entry))
+		detailField(c, m, m.LogsHistoryFieldHostID(), detailValue(m, string(entry.HostID)))
+		detailField(c, m, m.LogsHistoryFieldHostLabel(), detailValue(m, entry.HostLabel))
+		detailField(c, m, m.LogsHistoryFieldUnsaved(),
+			map[bool]string{true: m.LogsHistoryYes(), false: m.LogsHistoryNo()}[entry.UnsavedHost])
 		detailField(c, m, m.LogsHistoryFieldScope(), detailValue(m, entry.Scope))
 		detailField(c, m, m.LogsHistoryFieldOrigin(), detailValue(m, entry.Origin))
+		detailField(c, m, m.LogsHistoryFieldID(), detailValue(m, entry.ID))
 		detailField(c, m, m.LogsHistoryFieldSession(), detailValue(m, string(entry.SessionID)))
-		detailField(c, m, m.LogsHistoryFieldCwd(), detailValue(m, entry.CWD))
-		detailField(c, m, m.LogsHistoryFieldShell(), detailValue(m, entry.Shell))
+		detailField(c, m, m.LogsHistoryFieldSessionUUID(), detailValue(m, entry.SessionUUID))
+		detailField(c, m, m.LogsHistoryFieldCwd(), detailCwd(m, entry))
+		detailField(c, m, m.LogsHistoryFieldShell(), detailShell(m, entry))
 		detailField(c, m, m.LogsHistoryFieldStart(), detailTime(m, entry.RecordedAt))
-		detailField(c, m, m.LogsHistoryFieldFinish(), detailTime(m, entry.FinishedAt))
-		detailField(c, m, m.LogsHistoryFieldDuration(), historyDuration(m, entry))
-		detailField(c, m, m.LogsHistoryFieldExit(), historyExit(m, entry))
+		detailField(c, m, m.LogsHistoryFieldFinish(), detailFinish(m, entry))
+		detailField(c, m, m.LogsHistoryFieldDuration(), detailDuration(m, entry))
+		detailField(c, m, m.LogsHistoryFieldExit(), detailExit(m, entry))
 		detailField(c, m, m.LogsHistoryFieldSource(), sourceLabel(m, entry.Source))
-		detailField(c, m, m.LogsHistoryFieldTier(), historyTier(m, entry))
+		detailField(c, m, m.LogsHistoryFieldTier(), detailTier(m, entry))
+		detailField(c, m, m.LogsHistoryFieldAuthor(), detailValue(m, entry.Author))
+		detailField(c, m, m.LogsHistoryFieldAuthorKind(), detailValue(m, entry.AuthorKind))
+		detailField(c, m, m.LogsHistoryFieldIntent(), detailValue(m, entry.Intent))
 	})
 }
 
@@ -441,27 +549,48 @@ func detailTime(m locales.Messages, value time.Time) string {
 	return timestamp(value)
 }
 
-// historyDuration reports the captured duration, or unknown when the shell
+func detailCwd(m locales.Messages, entry domainhistory.Entry) string {
+	if entry.CWD == "" {
+		return m.LogsHistoryMissingCwd()
+	}
+	return entry.CWD
+}
+
+func detailShell(m locales.Messages, entry domainhistory.Entry) string {
+	if entry.Shell == "" {
+		return m.LogsHistoryMissingShell()
+	}
+	return entry.Shell
+}
+
+func detailFinish(m locales.Messages, entry domainhistory.Entry) string {
+	if entry.FinishedAt.IsZero() {
+		return m.LogsHistoryMissingFinish()
+	}
+	return timestamp(entry.FinishedAt)
+}
+
+// detailDuration reports the captured duration, or explains that the shell
 // never reported a finish. A zero duration with a known finish is valid.
-func historyDuration(m locales.Messages, entry domainhistory.Entry) string {
+func detailDuration(m locales.Messages, entry domainhistory.Entry) string {
 	if entry.FinishedAt.IsZero() || entry.RecordedAt.IsZero() {
-		return m.LogsHistoryUnknown()
+		return m.LogsHistoryMissingDuration()
 	}
 	return formatDuration(entry.Duration)
 }
 
-// historyExit reports the captured exit code, or unknown when the shell never
+// detailExit reports the captured exit code, or explains that the shell never
 // reported one. A known zero is shown as 0.
-func historyExit(m locales.Messages, entry domainhistory.Entry) string {
+func detailExit(m locales.Messages, entry domainhistory.Entry) string {
 	if !entry.HasExitCode {
-		return m.LogsHistoryUnknown()
+		return m.LogsHistoryMissingExit()
 	}
 	return strconv.Itoa(entry.ExitCode)
 }
 
-func historyTier(m locales.Messages, entry domainhistory.Entry) string {
+func detailTier(m locales.Messages, entry domainhistory.Entry) string {
 	if entry.CaptureTier == 0 {
-		return m.LogsHistoryUnknown()
+		return m.LogsHistoryMissingTier()
 	}
 	return strconv.Itoa(entry.CaptureTier)
 }
@@ -536,7 +665,13 @@ func historyHostLabel(m locales.Messages, entry domainhistory.Entry) string {
 	if entry.HostLabel != "" {
 		return entry.HostLabel
 	}
-	return string(entry.HostID)
+	if entry.HostID != "" {
+		return string(entry.HostID)
+	}
+	if entry.Origin != "" {
+		return entry.Origin
+	}
+	return m.LogsHistoryUnknown()
 }
 
 func statusLabel(m locales.Messages, status domainhistory.ConnectionStatus) string {
@@ -547,46 +682,16 @@ func statusLabel(m locales.Messages, status domainhistory.ConnectionStatus) stri
 }
 
 func sourceLabel(m locales.Messages, source string) string {
-	if source == domainhistory.SourceShellHistory {
+	switch source {
+	case domainhistory.SourceShellHistory:
 		return m.LogsSourceShell()
+	case domainhistory.SourceAtuinImport:
+		return m.LogsSourceAtuinImport()
+	case domainhistory.SourceAtuinSync:
+		return m.LogsSourceAtuinSync()
+	default:
+		return m.LogsSourceSession()
 	}
-	return m.LogsSourceSession()
-}
-
-// capturedHistoryMeta renders the fields the completion pipeline captured. A
-// zero FinishedAt means the shell never reported a finish, so the duration is
-// unknown; a zero duration with a known finish is valid and is shown as 0ms.
-func capturedHistoryMeta(m locales.Messages, entry domainhistory.Entry) string {
-	unknown := m.LogsHistoryUnknown()
-	cwd := entry.CWD
-	if cwd == "" {
-		cwd = unknown
-	}
-	finish := timestamp(entry.FinishedAt)
-	if finish == "" {
-		finish = unknown
-	}
-	duration := unknown
-	if !entry.FinishedAt.IsZero() && !entry.RecordedAt.IsZero() {
-		duration = formatDuration(entry.Duration)
-	}
-	exit := unknown
-	if entry.HasExitCode {
-		exit = strconv.Itoa(entry.ExitCode)
-	}
-	shell := entry.Shell
-	if shell == "" {
-		shell = unknown
-	}
-	tier := unknown
-	if entry.CaptureTier != 0 {
-		tier = strconv.Itoa(entry.CaptureTier)
-	}
-	origin := entry.Origin
-	if origin == "" {
-		origin = unknown
-	}
-	return m.LogsHistoryCaptured(cwd, finish, duration, exit, shell, tier, origin)
 }
 
 // formatDuration renders an execution duration compactly. It clamps a

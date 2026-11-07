@@ -10,6 +10,7 @@ import (
 	"github.com/mslxl/natcatty/application/command"
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
 	domain "github.com/mslxl/natcatty/domain/keybindings"
+	logsui "github.com/mslxl/natcatty/ui/logs"
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
 
@@ -304,6 +305,48 @@ func TestDispatcherRunsRealActionsAndLeavesTerminalChordsAlone(t *testing.T) {
 	}
 	if !shellState.BroadcastPanelOpen() {
 		t.Fatal("Ctrl+B did not open the Broadcast panel")
+	}
+}
+
+// TestHistorySearchShortcutOpensGlobalHistorySearch proves the dedicated app
+// shortcut opens the History surface with its search focused and every Host
+// in scope, and that it steals neither Ctrl-R nor Up from the shell.
+func TestHistorySearchShortcutOpensGlobalHistorySearch(t *testing.T) {
+	service, _ := newBindingFixture(t, "windows")
+	shellState := state.NewState()
+	logsState := logsui.NewState(nil, nil)
+	logsState.SetHostKey("host-1")
+	dispatcher := &bindingDispatcher{
+		service: service,
+		shell:   shellState,
+		logs:    logsState,
+	}
+
+	shortcuts := dispatcher.Shortcuts()
+	opened := false
+	for _, shortcut := range shortcuts {
+		if shortcut.mods == ui.Ctrl && shortcut.key == ui.KeyR {
+			t.Fatal("the history shortcut table stole Ctrl-R from the shell")
+		}
+		if shortcut.mods == 0 && shortcut.key == ui.KeyUp {
+			t.Fatal("the history shortcut table stole Up from the shell")
+		}
+		if shortcut.mods == ui.Ctrl|ui.Shift && shortcut.key == ui.KeyH {
+			opened = true
+			shortcut.run()
+		}
+	}
+	if !opened {
+		t.Fatal("Ctrl+Shift+H is not in the shortcut table")
+	}
+	if !shellState.LogsVisible() {
+		t.Fatal("the History shortcut did not show the Logs surface")
+	}
+	if logsState.Tab() != logsui.TabHistory {
+		t.Fatalf("the History shortcut selected tab %v", logsState.Tab())
+	}
+	if logsState.HostKey() != "" {
+		t.Fatalf("the global History search kept Host filter %q", logsState.HostKey())
 	}
 }
 

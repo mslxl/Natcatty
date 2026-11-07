@@ -2173,9 +2173,19 @@
   "@logsSearch": {
     "description": "The label of the free-text record filter."
   },
-  "logsHostFilter": "Host",
+  "logsHostFilter": "Host or origin",
   "@logsHostFilter": {
-    "description": "The label of the Host filter."
+    "description": "The label of the Host or origin filter."
+  },
+  "logsHostOrigin": "Origin: {origin}",
+  "@logsHostOrigin": {
+    "description": "The Host filter value for a captured origin with no local Host identity.",
+    "placeholders": {
+      "origin": {
+        "type": "String",
+        "example": "web-1:deploy"
+      }
+    }
   },
   "logsHostAll": "All hosts",
   "@logsHostAll": {
@@ -2222,6 +2232,58 @@
     "description": "A command imported from the local shell's history."
   },
   "logsFrom": "From",
+  "logsSourceAtuinImport": "Atuin import",
+  "@logsSourceAtuinImport": {
+    "description": "A command imported read-only from a Host's Atuin history."
+  },
+  "logsSourceAtuinSync": "Another device",
+  "@logsSourceAtuinSync": {
+    "description": "A command downloaded from another device through Atuin sync."
+  },
+  "logsSessionFilter": "Session",
+  "@logsSessionFilter": {
+    "description": "The label of the Session filter."
+  },
+  "logsSessionAll": "All Sessions",
+  "@logsSessionAll": {
+    "description": "The Session filter value that matches every Session."
+  },
+  "logsCwdFilter": "Directory",
+  "@logsCwdFilter": {
+    "description": "The label of the working-directory filter."
+  },
+  "logsCwdAll": "All directories",
+  "@logsCwdAll": {
+    "description": "The directory filter value that matches every working directory."
+  },
+  "logsShellFilter": "Shell",
+  "@logsShellFilter": {
+    "description": "The label of the shell filter."
+  },
+  "logsShellAll": "All shells",
+  "@logsShellAll": {
+    "description": "The shell filter value that matches every shell."
+  },
+  "logsExitFilter": "Exit status",
+  "@logsExitFilter": {
+    "description": "The label of the exit-status filter."
+  },
+  "logsExitAll": "Any exit status",
+  "@logsExitAll": {
+    "description": "The exit-status filter value that matches every outcome."
+  },
+  "logsExitSuccess": "Succeeded",
+  "@logsExitSuccess": {
+    "description": "A command known to have exited with zero."
+  },
+  "logsExitFailure": "Failed",
+  "@logsExitFailure": {
+    "description": "A command known to have exited non-zero."
+  },
+  "logsExitUnknown": "Unknown",
+  "@logsExitUnknown": {
+    "description": "A command whose exit status the shell never reported."
+  },
   "@logsFrom": {
     "description": "The inclusive start-date filter."
   },
@@ -2389,6 +2451,100 @@
   "@logsHistoryUnknown": {
     "description": "The label for a captured field that the Session could not observe."
   },
+  "logsHistoryRowMeta": "{host} · cwd {cwd} · {duration} · {time}",
+  "@logsHistoryRowMeta": {
+    "description": "The Host or origin, working directory, duration, and start time of a history row.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "web-1"
+      },
+      "cwd": {
+        "type": "String",
+        "example": "/srv/app"
+      },
+      "duration": {
+        "type": "String",
+        "example": "1.5s"
+      },
+      "time": {
+        "type": "String",
+        "example": "2026-10-21 14:30:00"
+      }
+    }
+  },
+  "logsHistoryExitBadge": "exit {code}",
+  "@logsHistoryExitBadge": {
+    "description": "The exit-status badge of a history row.",
+    "placeholders": {
+      "code": {
+        "type": "int",
+        "example": "0"
+      }
+    }
+  },
+  "logsHistoryExitUnknown": "exit unknown",
+  "@logsHistoryExitUnknown": {
+    "description": "The exit-status badge when the shell never reported an exit code."
+  },
+  "logsHistoryTierBadge": "Tier {tier}",
+  "@logsHistoryTierBadge": {
+    "description": "The capture-tier badge of a history row.",
+    "placeholders": {
+      "tier": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "logsProvenanceThisDevice": "This device",
+  "@logsProvenanceThisDevice": {
+    "description": "A command captured or imported on this device."
+  },
+  "logsProvenanceShellImport": "Shell history import",
+  "@logsProvenanceShellImport": {
+    "description": "A command imported from this device's shell history file."
+  },
+  "logsProvenanceAtuinImport": "Atuin import",
+  "@logsProvenanceAtuinImport": {
+    "description": "A command imported read-only from a Host's Atuin database."
+  },
+  "logsProvenanceAtuinSync": "Another device",
+  "@logsProvenanceAtuinSync": {
+    "description": "A command downloaded from another device through sync."
+  },
+  "logsHistoryYes": "Yes",
+  "@logsHistoryYes": {
+    "description": "A boolean field that is set."
+  },
+  "logsHistoryNo": "No",
+  "@logsHistoryNo": {
+    "description": "A boolean field that is not set."
+  },
+  "logsHistoryMissingCwd": "not captured — the shell did not report its working directory",
+  "@logsHistoryMissingCwd": {
+    "description": "Explains why a history row has no working directory."
+  },
+  "logsHistoryMissingShell": "not captured — the shell did not identify itself",
+  "@logsHistoryMissingShell": {
+    "description": "Explains why a history row has no shell name."
+  },
+  "logsHistoryMissingFinish": "not captured — the shell did not report when the command finished",
+  "@logsHistoryMissingFinish": {
+    "description": "Explains why a history row has no finish time."
+  },
+  "logsHistoryMissingDuration": "not captured — the command duration is unknown",
+  "@logsHistoryMissingDuration": {
+    "description": "Explains why a history row has no duration."
+  },
+  "logsHistoryMissingExit": "not captured — the shell did not report an exit code",
+  "@logsHistoryMissingExit": {
+    "description": "Explains why a history row has no exit code."
+  },
+  "logsHistoryMissingTier": "not applicable — imported or synced rows have no capture tier",
+  "@logsHistoryMissingTier": {
+    "description": "Explains why a history row has no capture tier."
+  },
   "logsHistoryDetails": "Details",
   "@logsHistoryDetails": {
     "description": "The row action that opens the captured fields of one command."
@@ -2462,6 +2618,38 @@
   "logsHistoryFieldTier": "Capture tier",
   "@logsHistoryFieldTier": {
     "description": "The capture fidelity tier of the row."
+  },
+  "logsHistoryFieldID": "History ID",
+  "@logsHistoryFieldID": {
+    "description": "The UUID identity shared with the Atuin history record."
+  },
+  "logsHistoryFieldSessionUUID": "Session UUID",
+  "@logsHistoryFieldSessionUUID": {
+    "description": "The stable Atuin session UUID derived from the app Session."
+  },
+  "logsHistoryFieldHostID": "Host ID",
+  "@logsHistoryFieldHostID": {
+    "description": "The local Host identity of the row."
+  },
+  "logsHistoryFieldHostLabel": "Host label",
+  "@logsHistoryFieldHostLabel": {
+    "description": "The recorded Host label of the row."
+  },
+  "logsHistoryFieldUnsaved": "Unsaved Host",
+  "@logsHistoryFieldUnsaved": {
+    "description": "Whether the command ran against a typed Host with no saved Vault record."
+  },
+  "logsHistoryFieldAuthor": "Author",
+  "@logsHistoryFieldAuthor": {
+    "description": "The Atuin author of the command."
+  },
+  "logsHistoryFieldAuthorKind": "Author kind",
+  "@logsHistoryFieldAuthorKind": {
+    "description": "The Atuin author kind of the command."
+  },
+  "logsHistoryFieldIntent": "Intent",
+  "@logsHistoryFieldIntent": {
+    "description": "The Atuin intent metadata of the command."
   },
   "logsProblemLoad": "Could not load the records.",
   "@logsProblemLoad": {
@@ -3789,6 +3977,10 @@
   "settingsBindingTransferCenter": "Open the Transfer center",
   "@settingsBindingTransferCenter": {
     "description": "The Settings shortcut label for the local Transfer center binding."
+  },
+  "settingsBindingHistorySearch": "Search global history",
+  "@settingsBindingHistorySearch": {
+    "description": "The Settings shortcut label for the global History search binding."
   },
   "sftpConflictTitle": "File Conflict",
   "@sftpConflictTitle": {

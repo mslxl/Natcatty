@@ -1430,6 +1430,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		shell:     shellState,
 		search:    overlayState,
 		transfer:  transferState,
+		logs:      logsState,
 		focusMain: func() { windows.FocusMain() },
 		toggleOpacity: func() {
 			current := preferenceService.Settings().Appearance.WindowOpacity
