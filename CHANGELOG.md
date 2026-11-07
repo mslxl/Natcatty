@@ -9,6 +9,14 @@ requests; this file is the human-maintained changelog.
 
 ## [Unreleased]
 
+### Added
+
+- Mosh Sessions can use a Network Profile. The in-process Mosh client carries
+  both its SSH bootstrap and its UDP flow through the selected Network
+  Provider, so Mosh works over Tailscale Net and WireGuard Net without an
+  OS-level VPN. A Provider that cannot carry datagrams fails the Session
+  closed; Mosh never falls back to the host network.
+
 ### Fixed
 
 - Restored GPL-3.0-or-later distribution compliance: a root `LICENSE` and

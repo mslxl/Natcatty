@@ -4525,7 +4525,7 @@
   "vaultProblemETPort": "Enter a port between 1 and 65535.",
   "connectionErrorMoshJump": "Mosh Sessions cannot use jump Hosts.",
   "connectionErrorMoshProxy": "Mosh Sessions cannot use proxies.",
-  "connectionErrorMoshNetwork": "Mosh Sessions cannot use an embedded Network Profile. Use an OS-level VPN for this Host.",
+  "connectionErrorMoshNetwork": "Mosh cannot use this Host's Network Profile because its Network Provider cannot carry the UDP flow. Choose a profile backed by Tailscale Net or WireGuard Net.",
   "connectionErrorMoshHandshake": "mosh-server did not start. Check that mosh-server is installed on the Host.",
   "browserAddress": "Address",
   "browserBack": "Back",

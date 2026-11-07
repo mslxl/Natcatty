@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	moshcore "github.com/mslxl/natcatty/internal/mosh"
@@ -711,6 +713,87 @@ resized:
 	}
 	if end := transport.(appsession.EndReporter).End(); end.Reason != appsession.EndReasonClosed {
 		t.Fatalf("end = %+v, want closed", end)
+	}
+}
+
+// TestInProcessAdapterDelegatesDatagramResolutionToTheProvider pins the Network
+// Provider seam: the probe passes the SSH host name unchanged to the injected
+// dialer and runs the Session over the connected flow it returns, so a name
+// that only exists inside the virtual network never reaches the host resolver.
+func TestInProcessAdapterDelegatesDatagramResolutionToTheProvider(t *testing.T) {
+	server := startFakeServer(t)
+	spec := inProcessTestSpec()
+	spec.Hostname = "mosh.internal"
+	spec.Mosh.Hostname = "mosh.internal"
+
+	var (
+		mu     sync.Mutex
+		dialed []string
+	)
+	factory := InProcessFactory{
+		Bootstrap:    bannerBootstrap{banner: server.announcement()},
+		ProbeTimeout: 500 * time.Millisecond,
+		DialDatagram: func(_ context.Context, network, address string) (net.Conn, error) {
+			mu.Lock()
+			dialed = append(dialed, network+" "+address)
+			mu.Unlock()
+			host, _, err := net.SplitHostPort(address)
+			if err != nil || host != "mosh.internal" {
+				return nil, fmt.Errorf("unexpected provider address %q", address)
+			}
+			// Stands in for a Provider that resolves the private name and dials
+			// the server inside its virtual network.
+			return net.Dial(network, server.conn.LocalAddr().String())
+		},
+	}
+	transport, err := factory.Open(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	readUntil(t, transport, "fake$ ", 2*time.Second)
+
+	mu.Lock()
+	got := append([]string(nil), dialed...)
+	mu.Unlock()
+	want := "udp mosh.internal:" + strconv.Itoa(server.Port())
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("provider dials = %v, want [%s]", got, want)
+	}
+}
+
+// TestInProcessAdapterNeverFallsBackToAHostSocket keeps the fail-closed rule:
+// a Provider that cannot open the datagram flow fails the Session instead of
+// probing the same advertised address on the host network.
+func TestInProcessAdapterNeverFallsBackToAHostSocket(t *testing.T) {
+	// The fake server is reachable on the host network on purpose: the test
+	// proves the adapter does not use that path after the Provider fails.
+	server := startFakeServer(t)
+	factory := InProcessFactory{
+		Bootstrap:    bannerBootstrap{banner: server.announcement()},
+		ProbeTimeout: 200 * time.Millisecond,
+		DialDatagram: func(context.Context, string, string) (net.Conn, error) {
+			return nil, &appconnection.Error{
+				Kind:  appconnection.KindProvider,
+				Cause: errors.New("provider datagram unavailable"),
+			}
+		},
+	}
+	_, err := factory.Open(context.Background(), inProcessTestSpec())
+	if err == nil {
+		t.Fatal("Open succeeded, want the Provider failure")
+	}
+	if !errors.Is(err, moshmodel.ErrNetwork) {
+		t.Fatalf("Open = %v, want ErrNetwork", err)
+	}
+	if !strings.Contains(err.Error(), "provider datagram unavailable") {
+		t.Fatalf("Open = %v, want the Provider cause", err)
+	}
+	// The typed Provider failure must survive the probe's classification so the
+	// user sees the login/tunnel reason instead of a generic network error.
+	var typed *appconnection.Error
+	if !errors.As(err, &typed) || typed.Kind != appconnection.KindProvider {
+		t.Fatalf("Open = %v, want the Provider Kind preserved", err)
 	}
 }
 

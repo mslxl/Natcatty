@@ -3074,7 +3074,7 @@
   "vaultProblemETPort": "请输入 1 到 65535 之间的端口。",
   "connectionErrorMoshJump": "Mosh 会话不能使用跳板主机。",
   "connectionErrorMoshProxy": "Mosh 会话不能使用代理。",
-  "connectionErrorMoshNetwork": "Mosh 会话不支持内嵌的网络配置，请为该主机使用 OS 级 VPN。",
+  "connectionErrorMoshNetwork": "Mosh 无法使用此 Host 的网络配置，因为其提供程序无法承载 UDP 数据流。请选择使用 Tailscale Net 或 WireGuard Net 的网络配置。",
   "connectionErrorMoshHandshake": "mosh-server 未能启动。请确认主机上已安装 mosh-server。",
   "browserAddress": "地址",
   "browserBack": "后退",

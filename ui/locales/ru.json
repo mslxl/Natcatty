@@ -3074,7 +3074,7 @@
   "vaultProblemETPort": "Введите порт от 1 до 65535.",
   "connectionErrorMoshJump": "Сеансы Mosh не поддерживают промежуточные хосты.",
   "connectionErrorMoshProxy": "Сеансы Mosh не поддерживают прокси.",
-  "connectionErrorMoshNetwork": "Сеансы Mosh не поддерживают встроенный сетевой профиль. Используйте VPN на уровне операционной системы для этого хоста.",
+  "connectionErrorMoshNetwork": "Mosh не может использовать сетевой профиль этого Host: его провайдер не может передавать UDP-поток. Выберите профиль Tailscale Net или WireGuard Net.",
   "connectionErrorMoshHandshake": "mosh-server не запустился. Проверьте, установлен ли mosh-server на хосте.",
   "browserAddress": "Адрес",
   "browserBack": "Назад",

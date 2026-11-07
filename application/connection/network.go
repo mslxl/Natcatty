@@ -23,12 +23,26 @@ import (
 // KindProvider and ProviderInfo; a target that is simply unreachable is an
 // ordinary dial error and remains KindNetwork.
 //
-// TODO(network-provider): mosh needs UDP datagrams, but mosh is being rewritten
-// without its sidecar. Do not extend this interface until that rewrite lands;
-// keep adapters/mosh and internal/mosh untouched in the meantime. The follow-up
-// adds an optional datagram capability beside this port, not to it.
+// Datagram traffic is a separate optional capability, NetworkProviderDatagram,
+// so a Provider that can only carry streams is not forced to expose a UDP
+// surface it cannot honor.
 type NetworkProvider interface {
 	DialContext(ctx context.Context, network, address string) (net.Conn, error)
+}
+
+// NetworkProviderDatagram is the optional datagram capability of a Provider.
+// mosh speaks UDP beside the SSH bootstrap, so a mosh Session whose route
+// selects a Network Profile opens its datagram flow here; a Provider that does
+// not implement this interface fails the Session closed instead of letting it
+// dial outside the profile.
+//
+// The address is handed to the Provider unresolved, so the caller never uses
+// the host resolver or opens a host socket; each implementation keeps its own
+// target and DNS rules. Only "udp", "udp4", and "udp6" are accepted, and the
+// returned net.Conn is one connected datagram flow. A provider-level failure
+// keeps the same classification as DialContext.
+type NetworkProviderDatagram interface {
+	DialDatagram(ctx context.Context, network, address string) (net.Conn, error)
 }
 
 // NetworkProviderCloser is the optional lifecycle capability of a provider that
