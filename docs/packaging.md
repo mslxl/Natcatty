@@ -59,20 +59,22 @@ go run ./internal/tools/fetchtransportbins -kind all -target linux-x64,linux-arm
 The release workflow fetches only the target it builds and removes the others
 from the ephemeral workspace so each package carries only runnable clients.
 
-## Packaged smoke tests
+## Packaged artifact tests
 
-Ticket 34 Phase 3A adds a hidden smoke mode to the normal, untagged app. The
-binary that ships is the binary CI exercises; there is no `launchsmoke`-style
+Ticket 34 Phase 3A adds a hidden packaged-artifact test mode to the normal,
+untagged app. The binary that ships is the binary CI exercises; there is no
+`launchsmoke`-style
 build tag for this path. The mode is dormant unless `NATCATTY_SMOKE` is exactly
 `1`; the boolean flags below are exact for the same reason.
 
-`scripts/packaged-smoke.nu` unwraps the shipped artifact, launches the app,
-waits for its exit, and validates the result JSON. Phase 3B adds
-`.github/workflows/packaged-smoke.yml`, which runs this driver on macOS, Linux,
-and Windows arm64. See [Packaged smoke tests in CI](ci/packaged-smoke.md) for
-the six jobs, pinned lab servers, dispatch instructions, and residual CI-only
-risks. The workflow is not wired into `release.yml`, publishes nothing, and
-this document makes no claim that it has run.
+`scripts/artifact-tests.nu` unwraps the shipped artifact, launches the app,
+waits for its exit, and validates the result JSON. Phase 3B added
+`.github/workflows/artifact-tests.yml`, which runs this driver on macOS, Linux,
+and Windows arm64. See [Packaged artifact tests in CI](ci/artifact-tests.md)
+for the six jobs, pinned lab servers, dispatch instructions, and residual
+CI-only risks. The workflow is not wired into `release.yml` and publishes
+nothing; its evidence is recorded in
+[transport-rollout.md](releases/transport-rollout.md#flip-evidence).
 
 ### Environment contract
 
@@ -96,7 +98,7 @@ The isolated profile covers user-data files and the Vault database, not every
 OS integration. When an OS credential store is available the app still opens
 it, using a profile-scoped service name so the run does not read or write the
 user's real entries; session-only credential mode is available only when that
-store is missing. Smoke mode skips the real shell-history import and does not
+store is missing. The test mode skips the real shell-history import and does not
 register the `ssh` URL handler, so a temporary artifact cannot change the
 user's handler.
 
@@ -172,27 +174,27 @@ check still fails as before.
 | --- | --- | --- | --- |
 | macOS DMG (`natcatty-<version>-macos-universal.dmg`) | Yes | Yes, against local stock `sshd`/`etserver` (and `mosh-server` for Mosh) | `hdiutil attach`, run `Natcatty.app/Contents/MacOS/Natcatty`, detach. |
 | Linux `.tar.gz` (`natcatty-<version>-linux-<arch>.tar.gz`) | Yes | Yes, with a lab server on the runner | Extracts the tarball and runs under `xvfb-run` when no display is available. |
-| Windows portable zip (`natcatty-<version>-windows-amd64-portable.zip`; the packaged-smoke workflow builds a windows-arm64 artifact that is not published) | Yes | No by default | Launch mode asserts the window; session mode fails closed with an `activation` result unless the lab escape hatch is set. |
+| Windows portable zip (`natcatty-<version>-windows-amd64-portable.zip`; the artifact-tests workflow builds a windows-arm64 artifact that is not published) | Yes | No by default | Launch mode asserts the window; session mode fails closed with an `activation` result unless the lab escape hatch is set. |
 
 Windows arm64 is **launch-only**: hosted arm64 runners cannot provide native
 arm64 mosh/ET servers, and the Windows GUI gives CI no stdout. The
-`launch-windows-arm64` job in `.github/workflows/packaged-smoke.yml` asserts
+`launch-windows-arm64` job in `.github/workflows/artifact-tests.yml` asserts
 that the packaged app reaches a visible window; the result file plus exit code
-are the evidence. Full Windows arm64 session smoke remains a ticket-35 gap. Do
+are the evidence. Full Windows arm64 session coverage remains a ticket-35 gap. Do
 not treat a green launch result as session evidence. The Windows arm64 package
 is CI-only and is not part of the release asset set.
 
 ### Running the driver locally
 
 ```sh
-# Launch smoke on a packaged artifact.
-nu scripts/packaged-smoke.nu dist/natcatty-0.1.0-macos-universal.dmg \
-  --mode launch --result build/packaged-smoke/launch.json
+# Launch test on a packaged artifact.
+nu scripts/artifact-tests.nu dist/natcatty-0.1.0-macos-universal.dmg \
+  --mode launch --result build/artifact-tests/launch.json
 
-# Session smoke against a lab server (macOS/Linux).
+# Session test against a lab server (macOS/Linux).
 NATCATTY_SMOKE_PASSWORD=... \
-nu scripts/packaged-smoke.nu dist/natcatty-0.1.0-linux-arm64.tar.gz \
-  --mode session --result build/packaged-smoke/session.json \
+nu scripts/artifact-tests.nu dist/natcatty-0.1.0-linux-arm64.tar.gz \
+  --mode session --result build/artifact-tests/session.json \
   --ssh-port 2222 --et-port 2022 --session-secrets
 ```
 

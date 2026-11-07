@@ -2,10 +2,10 @@
 
 Status: **The default switch is implemented. The release default is
 `in_process`.** The flip landed after the parity gates owned by tickets 27 (ET)
-and 32 (mosh) and the packaged smoke tests reported green in CI; the run-bound
-evidence is recorded under [Flip evidence](#flip-evidence). This document
-defines the switch, the migration, the bundled retention window, and the
-per-platform waiver.
+and 32 (mosh) and the packaged artifact tests reported green in CI; the
+run-bound evidence is recorded under [Flip evidence](#flip-evidence). This
+document defines the switch, the migration, the bundled retention window, and
+the per-platform waiver.
 
 ## The one switch
 
@@ -58,13 +58,13 @@ commit `5784818d9243e8f8b5c7b2512a3fa0a55147b717`, the parent of the flip:
 | --- | --- | --- |
 | Mosh parity (ticket 32) | [run 42273516811](https://github.com/mslxl/Natcatty/actions/runs/42273516811) | green, all 10 jobs |
 | ET parity (ticket 27) | [run 42273340203](https://github.com/mslxl/Natcatty/actions/runs/42273340203) | green, all 12 jobs |
-| Packaged smoke (macOS, Linux, Windows arm64) | [run 42273340294](https://github.com/mslxl/Natcatty/actions/runs/42273340294) | green, all 6 jobs |
+| Packaged artifact tests (macOS, Linux, Windows arm64) | [run 42273340294](https://github.com/mslxl/Natcatty/actions/runs/42273340294) | green, all 6 jobs |
 | CI | [run 42273340204](https://github.com/mslxl/Natcatty/actions/runs/42273340204) | green, all 7 jobs |
 
 The mosh-parity push trigger is path-filtered, so that run was dispatched on
 `main` at the same commit instead of being triggered by the push. The Windows
-arm64 packaged smoke is launch-only, as documented in
-[packaged-smoke.md](../ci/packaged-smoke.md); session mode for Windows arm64
+arm64 packaged artifact test is launch-only, as documented in
+[artifact-tests.md](../ci/artifact-tests.md); session mode for Windows arm64
 remains the ticket-35 gap.
 
 ## Explicit choice vs. release default

@@ -14,7 +14,8 @@ the per-Host switch, the previous-app-release path, and the release-owner
 decision.
 
 **Status**: accepted and implemented. The default flip landed after the 27/32
-gates and the packaged smoke jobs passed; the run-bound evidence is recorded in
+gates and the packaged artifact test jobs passed; the run-bound evidence is
+recorded in
 [transport-rollout.md](../releases/transport-rollout.md#flip-evidence).
 
 **Amends ADR-0015 and ADR-0016**: both say "No waivers" for the parity release
@@ -70,7 +71,7 @@ flip.
 - The release owner's 2026-11-06 risk acceptance for tickets 15 and 19 is
   referenced by the rollback runbook. It is not a legal certification and does
   not change the notice or source-offer requirements.
-- The CI gate wiring, the packaged smoke tests for macOS, Linux, and Windows
+- The CI gate wiring, the packaged artifact tests for macOS, Linux, and Windows
   arm64, and the default flip after 27/32 became green have landed; the
   run-bound evidence is recorded in
   [transport-rollout.md](../releases/transport-rollout.md#flip-evidence).
