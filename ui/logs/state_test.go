@@ -499,6 +499,112 @@ func TestPruneAppliesExactlyThePreviewedRows(t *testing.T) {
 	}
 }
 
+// TestPruneConfirmsThePreviewSnapshotAcrossARefresh pins the row-ID fix: the
+// surface's per-frame Refresh can load a new matching row while the dialog is
+// open, so ConfirmPrune must delete the row IDs the preview was requested with
+// rather than recomputing from the reloaded list. The live preview count still
+// reflects the refreshed list; only the confirmed set is frozen.
+func TestPruneConfirmsThePreviewSnapshotAcrossARefresh(t *testing.T) {
+	now := time.Now()
+	source := &fakeSource{entries: []domainhistory.Entry{
+		entryAt("match-1", "", "match status", domainhistory.SourceSession, now),
+		entryAt("match-2", "", "match log", domainhistory.SourceSession, now.Add(-time.Hour)),
+	}}
+	state := NewState(source, nil)
+	state.Refresh()
+	state.SelectTab(TabHistory)
+	state.SetSearch("match")
+	state.RequestPrune()
+	if got := state.PrunePreview(); got != 2 {
+		t.Fatalf("preview = %d, want 2", got)
+	}
+
+	// A matching command lands and the frame Refresh loads it before the click.
+	source.entries = append(source.entries, entryAt(
+		"late", "", "match late", domainhistory.SourceSession, now.Add(time.Minute)))
+	source.markChanged()
+	state.Refresh()
+	if got := state.PrunePreview(); got != 3 {
+		t.Fatalf("refreshed preview = %d, want the live count 3", got)
+	}
+
+	state.ConfirmPrune()
+	if state.Pruned() != 2 {
+		t.Fatalf("pruned = %d; the confirm swept in a row the preview never showed", state.Pruned())
+	}
+	if len(source.entries) != 1 || source.entries[0].ID != "late" {
+		t.Fatalf("remaining rows = %+v; want the late row untouched", source.entries)
+	}
+}
+
+// TestPruneConfirmUsesAnEditedDraft proves the snapshot is not stale after the
+// user edits the dialog: a changed draft freezes a new set from the current
+// list, while an unchanged draft keeps the old snapshot.
+func TestPruneConfirmUsesAnEditedDraft(t *testing.T) {
+	now := time.Now()
+	source := &fakeSource{entries: []domainhistory.Entry{
+		entryAt("match-1", "", "match status", domainhistory.SourceSession, now),
+		entryAt("match-2", "", "match log", domainhistory.SourceSession, now.Add(-time.Hour)),
+	}}
+	state := NewState(source, nil)
+	state.Refresh()
+	state.SelectTab(TabHistory)
+	state.SetSearch("match")
+	state.RequestPrune()
+
+	state.PruneFilter().Query = "log"
+	if got := state.PrunePreview(); got != 1 {
+		t.Fatalf("edited preview = %d, want 1", got)
+	}
+	state.ConfirmPrune()
+	if state.Pruned() != 1 {
+		t.Fatalf("pruned = %d, want the edited draft's one row", state.Pruned())
+	}
+	if len(source.entries) != 1 || source.entries[0].ID != "match-1" {
+		t.Fatalf("remaining rows = %+v; want match status untouched", source.entries)
+	}
+}
+
+// TestPruneEditFreezesTheSetBeforeALaterRefresh proves an edited draft freezes
+// the rows its preview counted. A matching row loaded by a later Refresh must
+// still survive, exactly like the original preview's rows do.
+func TestPruneEditFreezesTheSetBeforeALaterRefresh(t *testing.T) {
+	now := time.Now()
+	source := &fakeSource{entries: []domainhistory.Entry{
+		entryAt("match-1", "", "match status", domainhistory.SourceSession, now),
+		entryAt("match-2", "", "match log", domainhistory.SourceSession, now.Add(-time.Hour)),
+	}}
+	state := NewState(source, nil)
+	state.Refresh()
+	state.SelectTab(TabHistory)
+	state.SetSearch("match")
+	state.RequestPrune()
+
+	// The user narrows the draft; the preview recomputes and freezes one row.
+	state.PruneFilter().Query = "status"
+	if got := state.PrunePreview(); got != 1 {
+		t.Fatalf("edited preview = %d, want 1", got)
+	}
+
+	// A matching command lands after the edited preview was displayed.
+	source.entries = append(source.entries, entryAt(
+		"late", "", "status late", domainhistory.SourceSession, now.Add(time.Minute)))
+	source.markChanged()
+	state.Refresh()
+	if got := state.PrunePreview(); got != 2 {
+		t.Fatalf("refreshed preview = %d, want the live count 2", got)
+	}
+
+	state.ConfirmPrune()
+	if state.Pruned() != 1 {
+		t.Fatalf("pruned = %d; the confirm used a set later than the edited preview", state.Pruned())
+	}
+	if len(source.entries) != 2 || source.entries[0].ID != "match-2" ||
+		source.entries[1].ID != "late" {
+		t.Fatalf("remaining rows = %+v; want the edited preview's row only", source.entries)
+	}
+}
+
 func TestPruneLimitSelectsTheOldestMatches(t *testing.T) {
 	now := time.Now()
 	source := &fakeSource{entries: []domainhistory.Entry{
