@@ -213,10 +213,6 @@ type Record struct {
 	// DeviceType is the original Host Details "Network Device Mode" value.
 	// Empty is an ordinary SSH Host.
 	DeviceType string
-	// TransportImplementation is the exported Mosh or ET client override.
-	// Empty inherits the global release default. An unknown value is kept
-	// verbatim so the Session factory, not the importer, fails closed.
-	TransportImplementation string
 }
 
 // Algorithms is a Host's advanced SSH algorithm selection. A non-empty
@@ -438,8 +434,7 @@ func normalizeGroup(raw string) string {
 
 // normalizeProtocol maps external protocol spellings onto the Vault's stored
 // protocols. An empty result means the value is not recognized. Mosh and ET
-// are part of the Netcatty JSON vocabulary and must round-trip, including the
-// per-Host transport implementation that only those protocols carry.
+// are part of the Netcatty JSON vocabulary and must round-trip.
 func normalizeProtocol(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "ssh", "ssh2", "ssh-2", "ssh1", "ssh-1":

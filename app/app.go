@@ -95,12 +95,6 @@ import (
 
 // Run starts Natcatty and blocks until the application quits.
 func Run() error {
-	// The bundled EternalTerminal client invokes this same executable through
-	// SSH_ASKPASS. That mode must run before MyGo takes the main thread or
-	// opens a window; it reads the prompt map from the private SSH home.
-	if adapteret.IsAskpassInvocation(os.Args) {
-		os.Exit(adapteret.RunAskpass(os.Args, os.Stdout))
-	}
 	// The packaged-artifact smoke mode is dormant unless the complete
 	// environment contract is present. It isolates user data before any store
 	// opens, so the real Vault and preferences are never touched.
@@ -863,21 +857,17 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		}
 	}
 
-	transportRoots := transportBundleRoots()
 	sessions = appsession.NewService(newTransportFactory(
 		localpty.Factory{}, adapterserial.Factory{},
 		newTelnetFactory(adapterstnet.Factory{}, routes, networkProviders), connections, routes,
-	).withClients(
-		newMoshFactory(connections, routes, transportRoots),
-		newETFactory(vaultService, routes, transportRoots),
 	).withInProcess(
-		newInProcessMoshFactory(connections, routes),
+		newMoshFactory(connections, routes),
 		adapteret.InProcessFactory{
 			Manager:  connections,
 			Routes:   routes,
 			Sessions: adapteret.SecretSessionStore{Secrets: secretStore},
 		},
-	).withImplementations(vaultService, preferenceService),
+	).withPreferences(preferenceService),
 		// Automatic logging starts with the Session, as the original's
 		// configured log did. An empty directory keeps it off.
 		appsession.WithAutoLogging(func(spec appsession.StartSpec) *appsession.LogOptions {

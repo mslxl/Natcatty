@@ -21,6 +21,12 @@ requests; this file is the human-maintained changelog.
 
 ### Changed
 
+- Mosh and EternalTerminal always use their in-process clients. The global and
+  per-Host client choice, its release default and parity-gate policy, the
+  settings provenance/migration machinery, the bundled-client retention
+  window, and the per-platform waivers were removed. Stored
+  `transportImplementation` values from older builds are ignored on load; no
+  configuration migration or Host re-save is required.
 - Session restore is opt-in. A fresh profile lands on the Vault and opens no
   Tabs; the previous Tabs and layout are restored only after enabling Restore
   the previous session in Settings → Layout & Tabs.
@@ -39,6 +45,12 @@ requests; this file is the human-maintained changelog.
 
 ### Removed
 
+- The bundled Mosh client (`resources/mosh/`, the MoshCatty binary, and its
+  Rust crate notices) and the bundled EternalTerminal client (`resources/et/`,
+  the `et`/`et.exe` binary, its provenance/license/README files, the
+  Netcatty-et-bin manifest, and the `fetchtransportbins` tooling). Mosh and ET
+  always use the in-process Go clients; a stored `bundled` or unknown
+  implementation value is ignored without a configuration migration.
 - The generated parity matrix, its `paritygen` CLI, the CI and release gates
   that read it, and the signed limitations list. The MyGo rewrite is complete;
   the regular test suite and the workflow's artifact checks cover releases.

@@ -72,7 +72,6 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
-	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
@@ -409,9 +408,7 @@ var packagedSmokeKinds = []packagedSmokeKind{
 	},
 }
 
-// hostDraft builds the session-mode Host fixture. The per-Host
-// TransportImplementation is explicit so the InProcess client runs even when
-// a build's release default is Bundled.
+// hostDraft builds the session-mode Host fixture.
 //
 // AuthMethod is password-only, so the lab password is the only credential
 // offered and the default ~/.ssh keys are never enumerated.
@@ -424,14 +421,13 @@ var packagedSmokeKinds = []packagedSmokeKind{
 // mirrored by the probe.
 func (c packagedSmokeConfig) hostDraft(kind packagedSmokeKind, username string) domainvault.Draft {
 	draft := domainvault.Draft{
-		Label:                   kind.Label,
-		Hostname:                "127.0.0.1",
-		Port:                    c.SSHPort,
-		Username:                username,
-		Protocol:                kind.Protocol,
-		Password:                c.Password,
-		AuthMethod:              domainvault.HostAuthPassword,
-		TransportImplementation: transportmodel.InProcess,
+		Label:      kind.Label,
+		Hostname:   "127.0.0.1",
+		Port:       c.SSHPort,
+		Username:   username,
+		Protocol:   kind.Protocol,
+		Password:   c.Password,
+		AuthMethod: domainvault.HostAuthPassword,
 	}
 	if kind.Protocol == domainvault.ProtocolET {
 		draft.ETPort = c.ETPort

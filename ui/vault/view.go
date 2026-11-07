@@ -12,7 +12,6 @@ import (
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
-	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainbackup "github.com/mslxl/natcatty/domain/vaultbackup"
 	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
@@ -1437,24 +1436,6 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					Disabled(form.NetworkDevice)
 				ui.Text(c, m.VaultHostAutoAttachTmuxHint()).FontSize(12).TextColor(t.TextMuted)
 			}
-			if form.Protocol == string(domainvault.ProtocolMosh) || form.Protocol == string(domainvault.ProtocolET) {
-				ui.Field(c, m.VaultHostTransportImplementation(), func() {
-					ui.RadioGroup(c, func() {
-						ui.Radio(c, &form.TransportImplementation, "", m.VaultHostTransportInherit())
-						ui.Radio(c, &form.TransportImplementation,
-							string(transportmodel.Bundled), m.VaultHostTransportBundled())
-						// The in-process client is an opt-in beta and stays
-						// selectable per Host. Bundled is the rollback path
-						// for one full release cycle after the default switch.
-						ui.Radio(c, &form.TransportImplementation,
-							string(transportmodel.InProcess), m.VaultHostTransportInProcess())
-					})
-				}).Description(m.VaultHostTransportImplementationHint())
-				value := transportmodel.Implementation(form.TransportImplementation)
-				if value != transportmodel.Unspecified && !transportmodel.Known(value) {
-					ui.Text(c, m.VaultHostTransportUnknown()).FontSize(12).TextColor(uitheme.DangerText(t))
-				}
-			}
 			if form.Protocol == string(domainvault.ProtocolMosh) {
 				ui.Field(c, m.VaultHostMoshServerPath(), func() {
 					ui.TextInput(c, &form.MoshServerPath).Placeholder("mosh-server")
@@ -1465,7 +1446,6 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				ui.Field(c, m.VaultHostETPort(), func() {
 					ui.TextInput(c, &form.ETPort).Placeholder("2022").Width(120)
 				}).Description(m.VaultHostETPortHint())
-				ui.Text(c, m.VaultHostETRestrictionHint()).FontSize(12).TextColor(t.TextMuted)
 			}
 			ui.Checkbox(c, &form.Pinned, m.VaultHostPinned())
 		})

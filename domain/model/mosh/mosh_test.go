@@ -311,53 +311,6 @@ func TestRemoteCommandDefaultsAndQuoting(t *testing.T) {
 	}
 }
 
-func TestClientEnv(t *testing.T) {
-	env := ClientEnv([]string{
-		"PATH=/bin",
-		"TERM=screen-256color",
-		"LANG=fr_FR.UTF-8",
-		"MOSH_KEY=old",
-		"MOSH_FALLBACK_HOST=old.example",
-	}, "newkey", "en_US.UTF-8", "203.0.113.5")
-	joined := strings.Join(env, "\n")
-	for _, want := range []string{
-		"PATH=/bin",
-		"TERM=screen-256color",
-		"LANG=fr_FR.UTF-8",
-		"MOSH_KEY=newkey",
-		"MOSH_FALLBACK_HOST=203.0.113.5",
-	} {
-		if !strings.Contains(joined, want+"\n") && !strings.HasSuffix(joined, want) {
-			t.Fatalf("env missing %q:\n%s", want, joined)
-		}
-	}
-	if strings.Contains(joined, "MOSH_KEY=old") {
-		t.Fatal("stale MOSH_KEY survived")
-	}
-	if strings.Count(joined, "MOSH_FALLBACK_HOST=") != 1 {
-		t.Fatal("MOSH_FALLBACK_HOST duplicated")
-	}
-
-	empty := ClientEnv(nil, "key", "", "")
-	joined = strings.Join(empty, "\n")
-	if !strings.Contains(joined, "TERM="+DefaultTerm) || !strings.Contains(joined, "LANG="+DefaultLang) {
-		t.Fatalf("defaults missing: %v", empty)
-	}
-}
-
-func TestClientArgs(t *testing.T) {
-	args, err := ClientArgs("203.0.113.5", 60001)
-	if err != nil || len(args) != 2 || args[0] != "203.0.113.5" || args[1] != "60001" {
-		t.Fatalf("args = %v err = %v", args, err)
-	}
-	if _, err := ClientArgs("", 60001); !errors.Is(err, ErrInvalidConfig) {
-		t.Fatalf("empty host error = %v", err)
-	}
-	if _, err := ClientArgs("host", 0); !errors.Is(err, ErrInvalidConfig) {
-		t.Fatalf("zero port error = %v", err)
-	}
-}
-
 func TestConfigValidation(t *testing.T) {
 	if err := (Config{}).Normalized().Validate(); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("empty host error = %v, want ErrInvalidConfig", err)

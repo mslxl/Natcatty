@@ -306,7 +306,7 @@ func TestVaultViewOffersMoshAndETFieldsForTheirProtocols(t *testing.T) {
 	if !tt.HasText(m.VaultHostMoshRestrictionHint()) {
 		t.Fatal("the Mosh Host editor does not explain the route restriction")
 	}
-	if tt.HasText(m.VaultHostETPort()) || tt.HasText(m.VaultHostETRestrictionHint()) {
+	if tt.HasText(m.VaultHostETPort()) {
 		t.Fatal("the ET port was shown for a Mosh Host")
 	}
 
@@ -314,9 +314,6 @@ func TestVaultViewOffersMoshAndETFieldsForTheirProtocols(t *testing.T) {
 	tt.Frame()
 	if !tt.HasText(m.VaultHostETPort()) || !tt.HasText(m.VaultHostETPortHint()) {
 		t.Fatal("the ET Host editor does not offer the ET port")
-	}
-	if !tt.HasText(m.VaultHostETRestrictionHint()) {
-		t.Fatal("the ET Host editor does not explain the route restriction")
 	}
 	if tt.HasText(m.VaultHostMoshServerPath()) || tt.HasText(m.VaultHostMoshRestrictionHint()) {
 		t.Fatal("the mosh-server path was shown for an ET Host")

@@ -6,11 +6,11 @@ against them. `internal/tools/etparity` turns that lab into the parity gate:
 one self-reporting pass/fail report per matrix cell, and a `verify` command
 that fails closed.
 
-Stock ET is Apache-2.0, matching the bundled client's upstream provenance. It
-is cloned and built inside disposable containers or on a throwaway CI runner.
-No stock source is vendored, committed, or shipped; the adapter's own
-GPL-3.0-or-later licensing and the vendored et-go core's Apache-2.0 provenance
-stay unchanged.
+Stock ET is Apache-2.0, the same license as the in-process client's upstream
+EternalTerminal provenance. It is cloned and built inside disposable containers
+or on a throwaway CI runner. No stock source is vendored, committed, or shipped;
+the adapter's own GPL-3.0-or-later licensing and the vendored et-go core's
+Apache-2.0 provenance stay unchanged.
 
 ## Matrix
 

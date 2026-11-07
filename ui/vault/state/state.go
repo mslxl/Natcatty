@@ -16,7 +16,6 @@ import (
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
-	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainbackup "github.com/mslxl/natcatty/domain/vaultbackup"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
@@ -197,10 +196,6 @@ type Form struct {
 	// ETPort is the EternalTerminal server port text for an ET Host. It stays a
 	// string so a malformed value can be rejected.
 	ETPort string
-	// TransportImplementation is the Host's Mosh or ET client choice. Empty
-	// inherits the global default. The value is opaque so a stale record is
-	// preserved rather than rewritten by an unrelated edit.
-	TransportImplementation string
 }
 
 // State is the Vault surface's state.
@@ -734,23 +729,22 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		Pinned:   host.Pinned,
 		// The stored password is never loaded into the form. Leaving the
 		// field blank keeps the existing encrypted value.
-		HasPassword:             host.HasPassword,
-		IdentityID:              string(host.IdentityID),
-		KeyID:                   string(host.KeyID),
-		AuthMethod:              string(host.AuthMethod),
-		UseSSHAgent:             host.UseSSHAgent,
-		RequiresMFA:             host.RequiresMFA,
-		ProxyProfileID:          host.ProxyProfileID,
-		NetworkProfileID:        host.NetworkProfileID,
-		X11Forwarding:           host.X11Forwarding,
-		X11WarningAcknowledged:  host.X11WarningAcknowledged,
-		FileProtocol:            string(domainvault.NormalizeFileProtocol(host.SFTPFileProtocol)),
-		SFTPSudo:                host.SFTPSudo,
-		NetworkDevice:           host.IsNetworkDevice(),
-		AutoAttachTmux:          host.AutoAttachTmux,
-		MoshServerPath:          host.MoshServerPath,
-		ETPort:                  etPortText(host),
-		TransportImplementation: string(host.TransportImplementation),
+		HasPassword:            host.HasPassword,
+		IdentityID:             string(host.IdentityID),
+		KeyID:                  string(host.KeyID),
+		AuthMethod:             string(host.AuthMethod),
+		UseSSHAgent:            host.UseSSHAgent,
+		RequiresMFA:            host.RequiresMFA,
+		ProxyProfileID:         host.ProxyProfileID,
+		NetworkProfileID:       host.NetworkProfileID,
+		X11Forwarding:          host.X11Forwarding,
+		X11WarningAcknowledged: host.X11WarningAcknowledged,
+		FileProtocol:           string(domainvault.NormalizeFileProtocol(host.SFTPFileProtocol)),
+		SFTPSudo:               host.SFTPSudo,
+		NetworkDevice:          host.IsNetworkDevice(),
+		AutoAttachTmux:         host.AutoAttachTmux,
+		MoshServerPath:         host.MoshServerPath,
+		ETPort:                 etPortText(host),
 	}
 	s.hostChain = domainvault.CloneHostChain(host.HostChain)
 	s.proxy = domainvault.CloneProxy(host.Proxy)
@@ -779,8 +773,8 @@ func (s *State) SetX11Forwarding(enabled bool) {
 
 // SetHostProtocol records the Host editor's protocol and clears settings that
 // belong to the previous protocol. A hidden control must never leave a value
-// behind that Save would persist: file-transfer settings, Mosh and ET paths,
-// and SSH-only credentials all follow the protocol.
+// behind that Save would persist: file-transfer settings and SSH-only
+// credentials all follow the protocol.
 func (s *State) SetHostProtocol(protocol string) {
 	s.form.Protocol = protocol
 	if protocol != string(domainvault.ProtocolSSH) {
@@ -795,10 +789,6 @@ func (s *State) SetHostProtocol(protocol string) {
 	}
 	if protocol != string(domainvault.ProtocolET) {
 		s.form.ETPort = ""
-	}
-	if protocol != string(domainvault.ProtocolMosh) && protocol != string(domainvault.ProtocolET) {
-		// The transport choice concerns only the Mosh and ET transports.
-		s.form.TransportImplementation = ""
 	}
 	if !domainvault.Protocol(protocol).UsesSSHAuth() {
 		s.form.IdentityID = ""
@@ -1105,36 +1095,35 @@ func portPlaceholder(protocol domainvault.Protocol, inherited int) string {
 // changing its Pinned preference.
 func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 	return domainvault.Draft{
-		Label:                   host.Label,
-		Hostname:                host.Hostname,
-		Port:                    host.Port,
-		Username:                host.Username,
-		Protocol:                host.Protocol,
-		Group:                   host.Group,
-		Tags:                    host.Tags,
-		Notes:                   host.Notes,
-		Pinned:                  pinned,
-		IdentityID:              host.IdentityID,
-		KeyID:                   host.KeyID,
-		AuthMethod:              host.AuthMethod,
-		UseSSHAgent:             host.UseSSHAgent,
-		RequiresMFA:             host.RequiresMFA,
-		X11Forwarding:           host.X11Forwarding,
-		X11WarningAcknowledged:  host.X11WarningAcknowledged,
-		HostChain:               domainvault.CloneHostChain(host.HostChain),
-		Proxy:                   domainvault.CloneProxy(host.Proxy),
-		ProxyProfileID:          host.ProxyProfileID,
-		NetworkProfileID:        host.NetworkProfileID,
-		LegacyAlgorithms:        host.LegacyAlgorithms,
-		SkipEcdsaHostKey:        host.SkipEcdsaHostKey,
-		Algorithms:              domainvault.CloneAlgorithms(host.Algorithms),
-		SFTPFileProtocol:        domainvault.NormalizeFileProtocol(host.SFTPFileProtocol),
-		SFTPSudo:                host.SFTPSudo,
-		DeviceType:              host.DeviceType,
-		AutoAttachTmux:          host.AutoAttachTmux,
-		MoshServerPath:          host.MoshServerPath,
-		ETPort:                  host.ETPort,
-		TransportImplementation: host.TransportImplementation,
+		Label:                  host.Label,
+		Hostname:               host.Hostname,
+		Port:                   host.Port,
+		Username:               host.Username,
+		Protocol:               host.Protocol,
+		Group:                  host.Group,
+		Tags:                   host.Tags,
+		Notes:                  host.Notes,
+		Pinned:                 pinned,
+		IdentityID:             host.IdentityID,
+		KeyID:                  host.KeyID,
+		AuthMethod:             host.AuthMethod,
+		UseSSHAgent:            host.UseSSHAgent,
+		RequiresMFA:            host.RequiresMFA,
+		X11Forwarding:          host.X11Forwarding,
+		X11WarningAcknowledged: host.X11WarningAcknowledged,
+		HostChain:              domainvault.CloneHostChain(host.HostChain),
+		Proxy:                  domainvault.CloneProxy(host.Proxy),
+		ProxyProfileID:         host.ProxyProfileID,
+		NetworkProfileID:       host.NetworkProfileID,
+		LegacyAlgorithms:       host.LegacyAlgorithms,
+		SkipEcdsaHostKey:       host.SkipEcdsaHostKey,
+		Algorithms:             domainvault.CloneAlgorithms(host.Algorithms),
+		SFTPFileProtocol:       domainvault.NormalizeFileProtocol(host.SFTPFileProtocol),
+		SFTPSudo:               host.SFTPSudo,
+		DeviceType:             host.DeviceType,
+		AutoAttachTmux:         host.AutoAttachTmux,
+		MoshServerPath:         host.MoshServerPath,
+		ETPort:                 host.ETPort,
 	}
 }
 
@@ -1186,20 +1175,19 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		X11WarningAcknowledged: s.form.X11WarningAcknowledged,
 		// The editor does not expose routing yet. Round-trip the saved chain
 		// and proxy so editing another field cannot erase them.
-		HostChain:               domainvault.CloneHostChain(s.hostChain),
-		Proxy:                   domainvault.CloneProxy(s.proxy),
-		ProxyProfileID:          s.form.ProxyProfileID,
-		NetworkProfileID:        s.form.NetworkProfileID,
-		LegacyAlgorithms:        s.legacyAlgorithms,
-		SkipEcdsaHostKey:        s.skipEcdsaHostKey,
-		Algorithms:              domainvault.CloneAlgorithms(s.algorithms),
-		SFTPFileProtocol:        domainvault.FileProtocol(s.form.FileProtocol),
-		SFTPSudo:                s.form.SFTPSudo,
-		DeviceType:              formDeviceType(s.form.NetworkDevice, s.form.Protocol),
-		AutoAttachTmux:          formAutoAttachTmux(s.form.AutoAttachTmux, s.form.NetworkDevice, s.form.Protocol),
-		MoshServerPath:          s.form.MoshServerPath,
-		ETPort:                  etPort,
-		TransportImplementation: transportmodel.Implementation(strings.TrimSpace(s.form.TransportImplementation)),
+		HostChain:        domainvault.CloneHostChain(s.hostChain),
+		Proxy:            domainvault.CloneProxy(s.proxy),
+		ProxyProfileID:   s.form.ProxyProfileID,
+		NetworkProfileID: s.form.NetworkProfileID,
+		LegacyAlgorithms: s.legacyAlgorithms,
+		SkipEcdsaHostKey: s.skipEcdsaHostKey,
+		Algorithms:       domainvault.CloneAlgorithms(s.algorithms),
+		SFTPFileProtocol: domainvault.FileProtocol(s.form.FileProtocol),
+		SFTPSudo:         s.form.SFTPSudo,
+		DeviceType:       formDeviceType(s.form.NetworkDevice, s.form.Protocol),
+		AutoAttachTmux:   formAutoAttachTmux(s.form.AutoAttachTmux, s.form.NetworkDevice, s.form.Protocol),
+		MoshServerPath:   s.form.MoshServerPath,
+		ETPort:           etPort,
 	}, ProblemNone
 }
 

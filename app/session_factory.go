@@ -14,7 +14,6 @@ import (
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
 	"github.com/mslxl/natcatty/domain/model/tmux"
-	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
@@ -30,15 +29,10 @@ type routeSource interface {
 	Route(ctx context.Context, id model.HostID) (appconnection.Route, error)
 }
 
-// implementationHosts reads the Host record that carries a per-Host transport
-// implementation override. The Vault service implements it.
-type implementationHosts interface {
-	Get(ctx context.Context, id model.HostID) (domainvault.Host, error)
-}
-
-// implementationDefaults reads the persisted global transport choice. The
-// preferences service implements it.
-type implementationDefaults interface {
+// preferenceSource reads the persisted preferences. The preferences service
+// implements it; the Mosh prediction display is the only setting the factory
+// copies into a Session.
+type preferenceSource interface {
 	Settings() domainpreferences.Settings
 }
 
@@ -52,35 +46,22 @@ type transportFactory struct {
 	telnet  appsession.Factory
 	manager *appconnection.Manager
 	routes  routeSource
-	// mosh and et are the bundled-client transports. They are optional so a
-	// test can build the factory without a binary bundle; a missing one fails
-	// closed instead of falling back to a system executable.
-	mosh appsession.Factory
-	et   appsession.Factory
 	// moshInProcess and etInProcess are the application-owned clients. They
-	// are optional too; an implementation this build does not supply fails
-	// closed with ErrImplementationUnavailable.
+	// are optional so a test can build the factory without them; a missing one
+	// fails closed instead of falling back to a host executable.
 	moshInProcess appsession.Factory
 	etInProcess   appsession.Factory
-	// hosts and defaults resolve the persisted implementation choice for
-	// Mosh and EternalTerminal Sessions. They are optional so tests that do
-	// not care about the choice keep the bundled default.
-	hosts    implementationHosts
-	defaults implementationDefaults
+	// preferences supplies the Mosh prediction display. It is optional so a
+	// test or MCP caller that supplies no global preferences keeps the
+	// configuration as written.
+	preferences preferenceSource
 	// tmuxNotices deduplicates fallback notices per Host: a missing tmux is
 	// announced once, not on every reconnect.
 	tmuxNotices *tmux.NoticeState
 }
 
-// withClients attaches the bundled Mosh and EternalTerminal factories.
-func (f *transportFactory) withClients(mosh, et appsession.Factory) *transportFactory {
-	f.mosh = mosh
-	f.et = et
-	return f
-}
-
 // withInProcess attaches the application-owned Mosh and EternalTerminal
-// factories. A nil factory keeps that implementation unavailable.
+// factories. A nil factory keeps that transport unavailable.
 func (f *transportFactory) withInProcess(mosh, et appsession.Factory) *transportFactory {
 	f.moshInProcess = mosh
 	f.etInProcess = et
@@ -88,17 +69,14 @@ func (f *transportFactory) withInProcess(mosh, et appsession.Factory) *transport
 }
 
 // withInProcessET attaches only the pure-Go EternalTerminal factory. It keeps
-// tests that predate the Mosh client concise.
+// tests that do not exercise Mosh concise.
 func (f *transportFactory) withInProcessET(et appsession.Factory) *transportFactory {
 	return f.withInProcess(f.moshInProcess, et)
 }
 
-// withImplementations attaches the persisted global default and the Host
-// records that carry a per-Host override. Without them every Mosh and
-// EternalTerminal Session uses the bundled client.
-func (f *transportFactory) withImplementations(hosts implementationHosts, defaults implementationDefaults) *transportFactory {
-	f.hosts = hosts
-	f.defaults = defaults
+// withPreferences attaches the persisted preferences read for Mosh.
+func (f *transportFactory) withPreferences(preferences preferenceSource) *transportFactory {
+	f.preferences = preferences
 	return f
 }
 
@@ -124,9 +102,15 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		}
 		return f.telnet.Open(ctx, spec)
 	case appsession.KindMosh:
-		return f.openSelected(ctx, f.withMoshPreferences(spec), "Mosh", f.mosh, f.moshInProcess)
+		if f.moshInProcess == nil {
+			return nil, errors.New("app: no in-process Mosh client")
+		}
+		return f.moshInProcess.Open(ctx, f.withMoshPreferences(spec))
 	case appsession.KindET:
-		return f.openSelected(ctx, spec, "EternalTerminal", f.et, f.etInProcess)
+		if f.etInProcess == nil {
+			return nil, errors.New("app: no in-process EternalTerminal client")
+		}
+		return f.etInProcess.Open(ctx, spec)
 	default:
 		return f.local.Open(ctx, spec)
 	}
@@ -151,69 +135,18 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 }
 
 // withMoshPreferences copies the persisted prediction choice into a Mosh
-// Session's bootstrap configuration. Both client implementations then receive
-// the same mode: the bundled client through MOSH_PREDICTION_DISPLAY and the
-// in-process client through its prediction engine. A test or MCP caller that
-// supplies no global preferences keeps the configuration as written.
+// Session's bootstrap configuration. The in-process client receives the mode
+// through its prediction engine. A test or MCP caller that supplies no global
+// preferences keeps the configuration as written.
 func (f *transportFactory) withMoshPreferences(spec appsession.StartSpec) appsession.StartSpec {
-	if spec.Mosh == nil || f.defaults == nil {
+	if spec.Mosh == nil || f.preferences == nil {
 		return spec
 	}
-	settings := f.defaults.Settings()
+	settings := f.preferences.Settings()
 	cfg := spec.Mosh.Normalized()
 	cfg.PredictionDisplay = settings.Transport.MoshPredictionDisplay.Normalized()
 	spec.Mosh = &cfg
 	return spec
-}
-
-// openSelected routes a Mosh or EternalTerminal Session to the persisted
-// implementation choice. An implementation this build does not supply fails
-// closed with a typed error instead of silently using the other client. An
-// unknown persisted value fails closed the same way.
-func (f *transportFactory) openSelected(ctx context.Context, spec appsession.StartSpec,
-	label string, bundled, inProcess appsession.Factory) (appsession.Transport, error) {
-
-	selected, err := f.selectedImplementation(ctx, spec)
-	if err != nil {
-		return nil, err
-	}
-	switch selected {
-	case transportmodel.Bundled:
-		if bundled == nil {
-			return nil, fmt.Errorf("%w: bundled %s client", transportmodel.ErrImplementationUnavailable, label)
-		}
-		return bundled.Open(ctx, spec)
-	case transportmodel.InProcess:
-		if inProcess == nil {
-			return nil, fmt.Errorf("%w: in-process %s client", transportmodel.ErrImplementationUnavailable, label)
-		}
-		return inProcess.Open(ctx, spec)
-	default:
-		// Resolve rejects unknown values, but keep the factory fail-closed if a
-		// future value reaches here through another caller.
-		return nil, fmt.Errorf("%w: %q", transportmodel.ErrUnknownImplementation, selected)
-	}
-}
-
-// selectedImplementation applies a Host's persisted override to the global
-// choice. One global choice covers both Mosh and EternalTerminal. A missing
-// Host identity (an unsaved restore descriptor, or a test) falls back to the
-// global default, and an absent global value resolves through the release
-// policy in transport.Resolve.
-func (f *transportFactory) selectedImplementation(ctx context.Context, spec appsession.StartSpec) (transportmodel.Implementation, error) {
-	global := transportmodel.Unspecified
-	if f.defaults != nil {
-		global = f.defaults.Settings().Transport.Implementation
-	}
-	override := transportmodel.Unspecified
-	if f.hosts != nil && spec.HostID != "" {
-		host, err := f.hosts.Get(ctx, spec.HostID)
-		if err != nil {
-			return transportmodel.Unspecified, routeError(fmt.Errorf("transport implementation for Host %s: %w", spec.HostID, err))
-		}
-		override = host.TransportImplementation
-	}
-	return transportmodel.Resolve(global, override)
 }
 
 // acquireTerminal opens a shell on a Connection lease. A parked transport that

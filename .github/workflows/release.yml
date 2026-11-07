@@ -151,15 +151,12 @@ jobs:
           - artifact: darwin-universal
             os: macos-latest
             platform: darwin/universal
-            transport_targets: darwin-universal
           - artifact: windows-amd64
             os: windows-latest
             platform: windows/amd64
-            transport_targets: win32-x64
           - artifact: linux
             os: ubuntu-latest
             platform: linux/amd64,linux/arm64
-            transport_targets: linux-x64,linux-arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -174,27 +171,6 @@ jobs:
 
       - name: Set up Nushell
         uses: ./.github/actions/setup-nu
-
-      - name: Fetch the pinned transport clients
-        run: |
-          set -euo pipefail
-          go run ./internal/tools/fetchtransportbins \
-            -kind all -target "${{ matrix.transport_targets }}" -out resources -force
-
-      - name: Keep only this platform's transport clients
-        # The committed win32-x64 binaries and the fetched directories are
-        # inputs here; MyGo copies the whole resources tree, so dropping the
-        # other targets keeps every package to the clients it can run.
-        run: |
-          set -euo pipefail
-          for kind in et mosh; do
-            for target in win32-x64 linux-x64 linux-arm64 darwin-universal; do
-              case ",${{ matrix.transport_targets }}," in
-                *",${target},"*) ;;
-                *) rm -rf "resources/${kind}/${target}" ;;
-              esac
-            done
-          done
 
       - name: Write the Corresponding Source offer into the resources
         run: |
@@ -234,13 +210,7 @@ jobs:
       - name: Inspect the packaged layout
         run: |
           set -euo pipefail
-          resources=(et/BUILD-PROVENANCE.json
-            et/LICENSE-EternalTerminal-Apache-2.0.txt
-            et/README.md
-            mosh/BUILD-PROVENANCE.json
-            mosh/LICENSE-MoshCatty-GPL-3.0.txt
-            mosh/README.md
-            THIRD-PARTY-NOTICES.md
+          resources=(THIRD-PARTY-NOTICES.md
             LICENSE
             NOTICE
             SOURCE-OFFER.md
@@ -250,13 +220,11 @@ jobs:
             darwin-universal)
               test -s "dist/darwin-universal/natcatty-${NATCATTY_VERSION}-macos-universal.dmg"
               root="dist/darwin-universal/Natcatty.app/Contents/Resources"
-              extra=(et/darwin-universal/et mosh/darwin-universal/mosh-client)
               ;;
             windows-amd64)
               test -s "dist/windows-amd64/natcatty-${NATCATTY_VERSION}-windows-amd64-setup.exe"
               test -s "dist/natcatty-${NATCATTY_VERSION}-windows-amd64-portable.zip"
               root="dist/windows-amd64"
-              extra=(et/win32-x64/et.exe mosh/win32-x64/mosh-client.exe)
               ;;
             linux)
               test -s "dist/linux-amd64/natcatty-${NATCATTY_VERSION}-linux-amd64.tar.gz"
@@ -266,10 +234,9 @@ jobs:
               test ! -e "dist/linux-amd64/install.sh"
               test ! -e "dist/linux-arm64/install.sh"
               root="dist/linux-amd64"
-              extra=(et/linux-x64/et mosh/linux-x64/mosh-client)
               ;;
           esac
-          for entry in "${resources[@]}" "${extra[@]}"; do
+          for entry in "${resources[@]}"; do
             test -s "${root}/${entry}"
           done
           grep -q "\"version\": \"${NATCATTY_VERSION}\"" "${root}/mygo.json"
@@ -277,10 +244,8 @@ jobs:
             for entry in "${resources[@]}"; do
               test -s "dist/linux-arm64/${entry}"
             done
-            test -s "dist/linux-arm64/et/linux-arm64/et"
-            test -s "dist/linux-arm64/mosh/linux-arm64/mosh-client"
           fi
-          echo "layout, version, resources, and transport clients verified"
+          echo "layout, version, and resources verified"
 
       - name: Verify the macOS disk image
         if: matrix.artifact == 'darwin-universal'
@@ -297,18 +262,12 @@ jobs:
           plutil -lint "${app}/Contents/Info.plist"
           test "$(plutil -extract CFBundleShortVersionString raw -o - "${app}/Contents/Info.plist")" = "${NATCATTY_VERSION}"
           test "$(plutil -extract CFBundleIdentifier raw -o - "${app}/Contents/Info.plist")" = "io.github.mslxl.natcatty"
-          for entry in et/BUILD-PROVENANCE.json \
-            et/LICENSE-EternalTerminal-Apache-2.0.txt \
-            mosh/BUILD-PROVENANCE.json \
-            mosh/LICENSE-MoshCatty-GPL-3.0.txt \
-            THIRD-PARTY-NOTICES.md \
+          for entry in THIRD-PARTY-NOTICES.md \
             LICENSE \
             NOTICE \
             SOURCE-OFFER.md \
             CHANGELOG.md \
-            mygo.json \
-            et/darwin-universal/et \
-            mosh/darwin-universal/mosh-client; do
+            mygo.json; do
             test -s "${app}/Contents/Resources/${entry}"
           done
           grep -q "\"version\": \"${NATCATTY_VERSION}\"" "${app}/Contents/Resources/mygo.json"
@@ -343,10 +302,7 @@ jobs:
           sed -n '1,25p' nsis-list.txt
           grep -q '^Type = Nsis$' nsis-list.txt
           for entry in 'Natcatty.exe' 'mygo.json' 'CHANGELOG.md' 'THIRD-PARTY-NOTICES.md' \
-            'LICENSE' 'NOTICE' 'SOURCE-OFFER.md' \
-            'et\BUILD-PROVENANCE.json' 'et\LICENSE-EternalTerminal-Apache-2.0.txt' \
-            'mosh\BUILD-PROVENANCE.json' 'mosh\LICENSE-MoshCatty-GPL-3.0.txt' \
-            'et\win32-x64\et.exe' 'mosh\win32-x64\mosh-client.exe'; do
+            'LICENSE' 'NOTICE' 'SOURCE-OFFER.md'; do
             grep -Fq "${entry}" nsis-list.txt
           done
           if grep -Ei 'update-.*\.json|latest.*\.(yml|yaml)|appcast.*\.xml|\.delta|\.p12|\.pfx|\.mobileprovision' nsis-list.txt; then
@@ -355,9 +311,8 @@ jobs:
           fi
           "${sevenzip}" x -y -o"nsis-extracted" "${setup}" >/dev/null
           test -s nsis-extracted/Natcatty.exe
-          for entry in et/BUILD-PROVENANCE.json THIRD-PARTY-NOTICES.md LICENSE NOTICE \
-            SOURCE-OFFER.md CHANGELOG.md mygo.json \
-            et/win32-x64/et.exe mosh/win32-x64/mosh-client.exe; do
+          for entry in THIRD-PARTY-NOTICES.md LICENSE NOTICE \
+            SOURCE-OFFER.md CHANGELOG.md mygo.json; do
             test -s "nsis-extracted/${entry}"
           done
           grep -q "\"version\": \"${NATCATTY_VERSION}\"" nsis-extracted/mygo.json
@@ -375,10 +330,7 @@ jobs:
           "${sevenzip}" l "${portable}" | tr -d '\r' | tr '\\' '/' > portable-list.txt
           sed -n '1,25p' portable-list.txt
           for entry in 'Natcatty.exe' 'mygo.json' 'CHANGELOG.md' 'THIRD-PARTY-NOTICES.md' \
-            'LICENSE' 'NOTICE' 'SOURCE-OFFER.md' \
-            'et/BUILD-PROVENANCE.json' 'et/LICENSE-EternalTerminal-Apache-2.0.txt' \
-            'mosh/BUILD-PROVENANCE.json' 'mosh/LICENSE-MoshCatty-GPL-3.0.txt' \
-            'et/win32-x64/et.exe' 'mosh/win32-x64/mosh-client.exe'; do
+            'LICENSE' 'NOTICE' 'SOURCE-OFFER.md'; do
             grep -Fq "${entry}" portable-list.txt
           done
           if grep -Fq -- '-setup.exe' portable-list.txt; then
@@ -397,11 +349,6 @@ jobs:
           for arch in amd64 arm64; do
             deb="dist/linux-${arch}/natcatty-${NATCATTY_VERSION}-linux-${arch}.deb"
             tarball="dist/linux-${arch}/natcatty-${NATCATTY_VERSION}-linux-${arch}.tar.gz"
-            if [ "${arch}" = "amd64" ]; then
-              target=linux-x64
-            else
-              target=linux-arm64
-            fi
             test "$(dpkg-deb -f "${deb}" Package)" = "natcatty"
             test "$(dpkg-deb -f "${deb}" Version)" = "${deb_version}"
             test "$(dpkg-deb -f "${deb}" Architecture)" = "${arch}"
@@ -412,33 +359,19 @@ jobs:
               opt/natcatty/THIRD-PARTY-NOTICES.md \
               opt/natcatty/LICENSE \
               opt/natcatty/NOTICE \
-              opt/natcatty/SOURCE-OFFER.md \
-              opt/natcatty/et/BUILD-PROVENANCE.json \
-              opt/natcatty/et/LICENSE-EternalTerminal-Apache-2.0.txt \
-              opt/natcatty/mosh/BUILD-PROVENANCE.json \
-              opt/natcatty/mosh/LICENSE-MoshCatty-GPL-3.0.txt \
-              "opt/natcatty/et/${target}/et" \
-              "opt/natcatty/mosh/${target}/mosh-client"; do
+              opt/natcatty/SOURCE-OFFER.md; do
               grep -q "\./${entry}\$" "deb-${arch}.txt"
             done
             tar -tzf "${tarball}" > "tar-${arch}.txt"
             for entry in natcatty mygo.json CHANGELOG.md THIRD-PARTY-NOTICES.md \
-              LICENSE NOTICE SOURCE-OFFER.md \
-              et/BUILD-PROVENANCE.json \
-              et/LICENSE-EternalTerminal-Apache-2.0.txt \
-              et/README.md \
-              mosh/BUILD-PROVENANCE.json \
-              mosh/LICENSE-MoshCatty-GPL-3.0.txt \
-              mosh/README.md \
-              "et/${target}/et" \
-              "mosh/${target}/mosh-client"; do
+              LICENSE NOTICE SOURCE-OFFER.md; do
               grep -Fxq "${entry}" "tar-${arch}.txt"
             done
             extracted="extract-${arch}"
             mkdir -p "${extracted}"
             tar -xzf "${tarball}" -C "${extracted}"
             grep -q "\"version\": \"${NATCATTY_VERSION}\"" "${extracted}/mygo.json"
-            echo "linux/${arch} deb and tar.gz carry the app, legal documents, resources, and ${target} clients"
+            echo "linux/${arch} deb and tar.gz carry the app, legal documents, and resources"
           done
 
       - name: Upload artifacts

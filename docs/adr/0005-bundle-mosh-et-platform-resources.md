@@ -6,7 +6,8 @@ to binaries on `PATH`. This reproduces the original app's behavior and keeps ide
 versions across platforms; the cost is larger artifacts, per-platform build/signing
 work, and GPL/Apache notice and source-offer obligations.
 
-**Status**: superseded by ADR-0015 and ADR-0016
+**Status**: superseded by ADR-0015 and ADR-0016; both bundled clients have since
+been removed.
 
 **Considered Options**:
 - Require system `mosh-client`/`et`: smaller artifacts, but different versions and

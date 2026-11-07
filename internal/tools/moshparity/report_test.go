@@ -47,11 +47,6 @@ func passingReport(t *testing.T, cell Cell) CellReport {
 	}
 	for _, behavior := range BehaviorsForCell(cell) {
 		for _, ref := range RefsForVersion(behavior, cell.Version) {
-			// A FreeBSD harness has no bundled client, so the real unit suite
-			// skips bundle-dependent tests instead of running them.
-			if ref.RequiresBundleTarget && !hostHasBundleTarget(cell, runtime.GOARCH) {
-				continue
-			}
 			suite := suites[ref.Suite]
 			if suite == nil {
 				t.Fatalf("%s: reference %q uses suite %q, which the cell does not run",
@@ -169,30 +164,20 @@ func TestVerifyReportsAcceptsCompleteGreenMatrix(t *testing.T) {
 	}
 }
 
-// The unit suite runs on the harness host. A FreeBSD harness has no bundled
-// mosh-client target, so TestLocaleFromEnvironment skips there; that skip is
-// inapplicable evidence, not a missing test, because the behavior's model and
-// lab references still run. On a Linux-hosted cell the same skip fails.
-func TestVerifyReportsRequiresBundleDependentTestsOnlyWhereTheyCanRun(t *testing.T) {
+// A required unit test that skips fails the behavior on every cell. The
+// in-process client has no bundled-binary dependency, so no harness platform
+// may excuse a skip.
+func TestVerifyReportsRejectsASkippedRequiredUnitTest(t *testing.T) {
 	cells := testCells(t)
-	reports := testReports(t, cells)
-
-	report := reports["freebsd-14/1.4.0"]
-	suite := reportSuite(t, &report, suiteUnit)
-	// A real FreeBSD run reports the test and skips it.
-	suite.Tests = append(suite.Tests, TestResult{
-		Package: adapterMosh, Name: "TestLocaleFromEnvironment", Action: "skip",
-	})
-	reports["freebsd-14/1.4.0"] = report
-	if err := verifyReports(cells, reports, testCommit); err != nil {
-		t.Fatalf("a bundle-dependent skip on FreeBSD must not fail verify: %v", err)
-	}
-
-	report = reports["debian-12/1.3.2"]
-	tamperNamedTest(reportSuite(t, &report, suiteUnit), "TestLocaleFromEnvironment", "skip")
-	reports["debian-12/1.3.2"] = report
-	if err := verifyReports(cells, reports, testCommit); err == nil {
-		t.Fatal("a bundle-dependent skip on a Linux-hosted cell must fail verify")
+	for _, key := range []string{"freebsd-14/1.4.0", "debian-12/1.3.2"} {
+		reports := testReports(t, cells)
+		report := reports[key]
+		tamperNamedTest(reportSuite(t, &report, suiteUnit),
+			"TestConfigFromEnvironmentCarriesLocale", "skip")
+		reports[key] = report
+		if err := verifyReports(cells, reports, testCommit); err == nil {
+			t.Fatalf("a required unit skip on %s must fail verify", key)
+		}
 	}
 }
 

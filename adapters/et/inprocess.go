@@ -312,10 +312,9 @@ func (f InProcessFactory) dialThrough(ctx context.Context, netDialer leaseNetDia
 // route resolves the Host's non-secret path. A nil resolver is a direct
 // connection, as it is for the SSH factory.
 //
-// The in-process path deliberately does not call the bundled client's
-// CheckRoute: a proxy and any number of jump Hosts are ordinary Connection
-// Manager routes, shared with SSH Sessions. Only the bundled factory keeps the
-// original one-jump/no-proxy restriction.
+// The in-process path is the only ET path and applies no Mosh-style route
+// restriction: a proxy and any number of jump Hosts are ordinary Connection
+// Manager routes, shared with SSH Sessions.
 func (f InProcessFactory) route(ctx context.Context, id model.HostID) (appconnection.Route, error) {
 	if f.Routes == nil {
 		return appconnection.Route{}, nil

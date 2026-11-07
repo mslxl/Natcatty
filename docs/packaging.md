@@ -25,9 +25,9 @@ keeps the SemVer form.
 
 Every artifact copies the `resources/` tree next to the executable (inside
 `Contents/Resources` on macOS). That includes `THIRD-PARTY-NOTICES.md`,
-`LICENSE`, `NOTICE`, `SOURCE-OFFER.md`, `CHANGELOG.md`, the ET and mosh
-metadata and licenses, the platform transport clients fetched for the build,
-`icon.png`, and the `mygo.json` release manifest. `CHANGELOG.md` ships as
+`LICENSE`, `NOTICE`, `SOURCE-OFFER.md`, `CHANGELOG.md`, the ET metadata and
+licenses, the platform ET client fetched for the build, `icon.png`, and the
+`mygo.json` release manifest. `CHANGELOG.md` ships as
 product documentation. `LICENSE`, `NOTICE`, and the third-party notices are
 also read by the in-app **Settings → About & Licenses** area. The five locale
 catalogs (`en`, `es`, `ru`, `zh-CN`, `zh-TW`) are compiled into the executable
@@ -48,16 +48,8 @@ The DMG and its `hdiutil` steps need macOS. Windows NSIS needs Windows, where
 MyGo downloads NSIS when it is not installed. Cross-compiling the executables
 needs no cgo, but the installers are a convenience of the native host.
 
-The transport clients for the target being packaged must exist under
-`resources/et/<target>` and `resources/mosh/<target>`. `win32-x64` is committed;
-the other targets are fetched and digest-verified by:
-
-```sh
-go run ./internal/tools/fetchtransportbins -kind all -target linux-x64,linux-arm64,darwin-universal -out resources
-```
-
-The release workflow fetches only the target it builds and removes the others
-from the ephemeral workspace so each package carries only runnable clients.
+No transport client binary needs to be fetched or placed before packaging:
+every Mosh and EternalTerminal Session runs in process.
 
 ## Packaged artifact tests
 
@@ -397,7 +389,8 @@ go run ./internal/tools/sourceoffer -version 0.1.0 -out SOURCE-OFFER.md
 It uses `internal/legal.SourceOfferDocument`, the same legal text the packaged
 application exposes, so the offer cannot drift from the in-app documents. The
 document names the GPL-3.0-or-later license, the repository URL at the release
-tag, the bundled component sources, and the warranty disclaimer. The build job
+tag, the in-process Mosh and EternalTerminal attributions, and the warranty
+disclaimer. The build job
 writes it to `resources/SOURCE-OFFER.md` for the manifest version, and every
 artifact check requires the file in the package.
 

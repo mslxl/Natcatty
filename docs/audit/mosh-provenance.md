@@ -8,6 +8,14 @@ notices for ticket 15, what was changed, and the exact review that remains. It
 must not be cited as provenance clearance, a legal opinion, or proof of license
 compliance.
 
+**Historical scope note (2026-11-07):** the bundled MoshCatty client and its
+`resources/mosh/` assets have been removed, and the shared
+`adapters/bundle` manifest/resolver cited below was removed with the bundled
+EternalTerminal client. Every Mosh Session now uses the in-process Go client.
+This report remains as the record of the removed component's audit; the
+shipping attribution is the stock-mosh and mosh-go material in
+`internal/mosh/NOTICE` and `resources/THIRD-PARTY-NOTICES.md`.
+
 - Ticket: 15, "Commission mosh provenance audit and fix notices" (HITL)
 - Date: 2026-11-04
 - Branch: `ticket-15-provenance`, based on `2f013f84c`

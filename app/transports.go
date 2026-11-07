@@ -6,60 +6,31 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
-	"strconv"
-	"strings"
 
-	"github.com/mslxl/natcatty/adapters/bundle"
-	etadapter "github.com/mslxl/natcatty/adapters/et"
 	moshadapter "github.com/mslxl/natcatty/adapters/mosh"
 	adapterstnet "github.com/mslxl/natcatty/adapters/telnet"
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
-	appvault "github.com/mslxl/natcatty/application/vault"
-	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
-	etmodel "github.com/mslxl/natcatty/domain/model/et"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
-	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
-// transportBundleRoots is the search order for bundled client binaries:
-// NATCATTY_RESOURCES, next to the executable, a packaged Resources directory,
-// and the working directory's resources during go run and tests.
-func transportBundleRoots() []string {
-	executable, _ := os.Executable()
-	workingDir, _ := os.Getwd()
-	return bundle.Roots("", executable, workingDir)
-}
-
-// newMoshFactory builds the Mosh transport. The bundled client is resolved and
-// verified by adapters/bundle on every open; the SSH bootstrap runs over the
-// app's Connection Manager so saved credentials, MFA prompts, and host-key
-// trust behave exactly as they do for an SSH Session.
-func newMoshFactory(manager *appconnection.Manager, routes routeSource, roots []string) appsession.Factory {
+// newMoshFactory builds the in-process Mosh transport. The SSH bootstrap runs
+// over the app's Connection Manager so saved credentials, MFA prompts, and
+// host-key trust behave exactly as they do for an SSH Session.
+func newMoshFactory(manager *appconnection.Manager, routes routeSource) appsession.Factory {
 	return &moshTransportFactory{
-		inner:   moshadapter.Factory{Spec: bundle.MoshSpec(roots)},
-		manager: manager,
-		routes:  routes,
-	}
-}
-
-// newInProcessMoshFactory builds the pure-Go Mosh transport. It shares the
-// SSH bootstrap, route checks, and Connection Manager with the bundled
-// adapter, but speaks the UDP protocol in-process.
-func newInProcessMoshFactory(manager *appconnection.Manager, routes routeSource) appsession.Factory {
-	return &moshInProcessTransportFactory{
 		inner:   moshadapter.InProcessFactory{},
 		manager: manager,
 		routes:  routes,
 	}
 }
 
-// moshTransportFactory checks the Mosh route restriction before any process or
-// channel starts. Mosh's UDP channel cannot carry a jump chain or a proxy.
+// moshTransportFactory checks the Mosh route restriction before any channel
+// starts, then opens the in-process client. Mosh's UDP channel cannot carry a
+// jump chain or a proxy.
 type moshTransportFactory struct {
-	inner   moshadapter.Factory
+	inner   moshadapter.InProcessFactory
 	manager *appconnection.Manager
 	routes  routeSource
 }
@@ -74,26 +45,8 @@ func (f *moshTransportFactory) Open(ctx context.Context, spec appsession.StartSp
 	return inner.Open(ctx, spec)
 }
 
-// moshInProcessTransportFactory is the in-process counterpart of
-// moshTransportFactory.
-type moshInProcessTransportFactory struct {
-	inner   moshadapter.InProcessFactory
-	manager *appconnection.Manager
-	routes  routeSource
-}
-
-func (f *moshInProcessTransportFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
-	route, err := moshRoute(ctx, spec, f.manager, f.routes)
-	if err != nil {
-		return nil, err
-	}
-	inner := f.inner
-	inner.Bootstrap = &moshBootstrap{manager: f.manager, route: route}
-	return inner.Open(ctx, spec)
-}
-
 // moshRoute validates the Mosh configuration and resolves the route
-// restrictions shared by both client implementations.
+// restrictions Mosh has always applied.
 func moshRoute(ctx context.Context, spec appsession.StartSpec,
 	manager *appconnection.Manager, routes routeSource) (appconnection.Route, error) {
 
@@ -105,9 +58,9 @@ func moshRoute(ctx context.Context, spec appsession.StartSpec,
 		return appconnection.Route{}, err
 	}
 	// Mosh's UDP channel is not connected to a Network Provider yet. Fail
-	// closed before the bundle, the SSH bootstrap, or mosh-server starts:
-	// dialing the bootstrap directly would silently bypass the selected
-	// profile. The UI maps this sentinel to the OS-level-VPN guidance.
+	// closed before the SSH bootstrap or mosh-server starts: dialing the
+	// bootstrap directly would silently bypass the selected profile. The UI
+	// maps this sentinel to the OS-level-VPN guidance.
 	if route.Network != nil {
 		return appconnection.Route{}, &appconnection.Error{
 			Kind: appconnection.KindUnsupported,
@@ -255,219 +208,4 @@ func (f *telnetTransportFactory) networkRoute(ctx context.Context, id model.Host
 		return nil, nil
 	}
 	return f.routes.NetworkRouteForHost(ctx, id)
-}
-
-// etVault is the Vault surface an EternalTerminal Session needs: the Host, its
-// resolved credentials, and the known-host snapshot. The Vault service
-// implements it; tests provide a fake.
-type etVault interface {
-	Get(ctx context.Context, id model.HostID) (domainvault.Host, error)
-	ResolveAuth(ctx context.Context, id model.HostID) (appvault.ResolvedAuth, error)
-	ListKnownHosts(ctx context.Context) ([]domainconn.KnownHost, error)
-}
-
-// newETFactory builds the EternalTerminal transport. The bundled `et` performs
-// its own SSH bootstrap, so the app gives it a private HOME with the resolved
-// credentials, the Vault's known-host snapshot, and at most one jump Host.
-func newETFactory(vault etVault, routes routeSource, roots []string) appsession.Factory {
-	return &etTransportFactory{
-		inner:  etadapter.Factory{Spec: bundle.ETSpec(roots)},
-		vault:  vault,
-		routes: routes,
-	}
-}
-
-type etTransportFactory struct {
-	inner  etadapter.Factory
-	vault  etVault
-	routes routeSource
-}
-
-func (f *etTransportFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
-	if spec.ET == nil {
-		return nil, fmt.Errorf("%w: no EternalTerminal configuration", etmodel.ErrInvalidConfig)
-	}
-	if f.vault == nil {
-		return nil, errors.New("app: no Vault for an EternalTerminal Session")
-	}
-	cfg := spec.ET.Normalized()
-
-	var route appconnection.Route
-	if f.routes != nil {
-		resolved, err := f.routes.Route(ctx, spec.HostID)
-		if err != nil {
-			return nil, err
-		}
-		route = resolved
-	}
-	// The bundled client runs its own SSH bootstrap in a child process on the
-	// operating system's network, so an in-process Network Provider cannot
-	// carry it. Fail closed instead of silently dialing outside the selected
-	// profile; the in-process client is the implementation that supports it.
-	if route.Network != nil {
-		return nil, &appconnection.Error{
-			Kind: appconnection.KindUnsupported,
-			Cause: fmt.Errorf(
-				"%w: Network Profile %q; select the in-process EternalTerminal client",
-				etmodel.ErrNetworkUnsupported, route.Network.ProfileID),
-			Provider: &appconnection.ProviderInfo{
-				ProfileID: route.Network.ProfileID,
-				Label:     route.Network.Label,
-				Kind:      route.Network.Kind,
-			},
-		}
-	}
-	// This factory is the bundled client only: it owns the SSH bootstrap, so
-	// the original one-jump/no-proxy restriction stays here until ticket 35.
-	// An in-process selection never reaches this factory; its implementation
-	// hands the whole route to the Connection Manager.
-	if err := etmodel.CheckRoute(len(route.Jumps), route.Proxy != nil); err != nil {
-		return nil, err
-	}
-
-	cfg, err := f.configure(ctx, spec, cfg, route)
-	if err != nil {
-		return nil, err
-	}
-	spec.ET = &cfg
-	return f.inner.Open(ctx, spec)
-}
-
-// configure adds the Vault's credentials, known-host snapshot, and single jump
-// Host to a Session's non-secret configuration.
-func (f *etTransportFactory) configure(ctx context.Context, spec appsession.StartSpec,
-	cfg etmodel.Config, route appconnection.Route) (etmodel.Config, error) {
-
-	host, err := f.vault.Get(ctx, spec.HostID)
-	if err != nil {
-		return cfg, routeError(fmt.Errorf("Host %s: %w", spec.HostID, err))
-	}
-	// The saved Host owns the ET port. A restored descriptor may carry an
-	// older value, and the domain default (2022) is already filled in by
-	// Normalized, so a recorded non-zero port always wins.
-	if host.ETPort != 0 {
-		cfg.ETPort = host.ETPort
-	}
-
-	auth, err := f.auth(ctx, host.ID)
-	if err != nil {
-		return cfg, err
-	}
-	cfg.Auth = auth.auth
-	if auth.username != "" {
-		cfg.Username = auth.username
-	}
-
-	known, err := f.vault.ListKnownHosts(ctx)
-	if err != nil {
-		return cfg, routeError(fmt.Errorf("Known Hosts: %w", err))
-	}
-	cfg.VerifyHostKeys = true
-	cfg.KnownHostsContent = knownHostsContent(known)
-
-	if len(route.Jumps) == 1 {
-		hop := route.Jumps[0]
-		jumpHost, err := f.vault.Get(ctx, hop.HostID)
-		if err != nil {
-			return cfg, routeError(fmt.Errorf("jump Host %s: %w", hop.HostID, err))
-		}
-		jumpAuth, err := f.auth(ctx, hop.HostID)
-		if err != nil {
-			return cfg, err
-		}
-		cfg.Jump = &etmodel.Hop{
-			Hostname:         hop.Hostname,
-			Port:             hop.Port,
-			ETPort:           jumpHost.ETPort,
-			Username:         firstNonEmpty(jumpAuth.username, hop.Username),
-			Auth:             jumpAuth.auth,
-			LegacyAlgorithms: jumpHost.LegacyAlgorithms,
-		}
-		cfg.JumpKnownHostsContent = cfg.KnownHostsContent
-	}
-	return cfg, nil
-}
-
-// etResolvedAuth is one endpoint's username and authentication material.
-type etResolvedAuth struct {
-	username string
-	auth     etmodel.Auth
-}
-
-// auth resolves the same credentials the SSH Session path would offer, so a
-// saved password, Key, certificate, or agent setting reaches `et` unchanged.
-func (f *etTransportFactory) auth(ctx context.Context, id model.HostID) (etResolvedAuth, error) {
-	resolved, err := f.vault.ResolveAuth(ctx, id)
-	if err != nil {
-		return etResolvedAuth{}, routeError(fmt.Errorf("credentials for Host %s: %w", id, err))
-	}
-	selection := resolved.Selection
-	material := etmodel.Auth{
-		Method:      string(selection.Method),
-		Password:    resolved.Password,
-		UseSSHAgent: selection.UseSSHAgent,
-		RequiresMFA: selection.RequiresMFA,
-	}.Normalized()
-	if resolved.Key != nil {
-		material.PrivateKey = resolved.Key.PrivateKey
-		material.Passphrase = resolved.Key.Passphrase
-		material.Certificate = resolved.Key.Certificate
-	}
-	// A dangling Key reference must fail closed: SSH_ASKPASS cannot invent the
-	// missing material, and falling back to the password would silently change
-	// the configured route.
-	if resolved.MissingKey {
-		return etResolvedAuth{}, &appconnection.Error{
-			Kind:  appconnection.KindAuth,
-			Cause: appconnection.ErrNoCredentials,
-		}
-	}
-	return etResolvedAuth{username: selection.Username, auth: material}, nil
-}
-
-// knownHostsContent renders the Vault's trust decisions as one authoritative
-// OpenSSH known_hosts snapshot. The adapter points both UserKnownHostsFile and
-// GlobalKnownHostsFile at it, so a system file cannot override a Vault pin.
-func knownHostsContent(records []domainconn.KnownHost) string {
-	var builder strings.Builder
-	for _, record := range records {
-		line := knownHostsLine(record)
-		if line == "" {
-			continue
-		}
-		builder.WriteString(line)
-		builder.WriteByte('\n')
-	}
-	return builder.String()
-}
-
-func knownHostsLine(record domainconn.KnownHost) string {
-	hostname := strings.ToLower(strings.TrimSpace(record.Hostname))
-	if hostname == "" || hostname == "(hashed)" {
-		return ""
-	}
-	fields := strings.Fields(record.PublicKey)
-	if len(fields) < 2 || !isPublicKeyType(fields[0]) {
-		return ""
-	}
-	host := hostname
-	if record.Port != 0 && record.Port != 22 {
-		host = "[" + hostname + "]:" + strconv.Itoa(record.Port)
-	}
-	return host + " " + fields[0] + " " + fields[1]
-}
-
-func isPublicKeyType(value string) bool {
-	return strings.HasPrefix(value, "ssh-") ||
-		strings.HasPrefix(value, "ecdsa-") ||
-		strings.HasPrefix(value, "sk-")
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

@@ -4,8 +4,7 @@
 test mode in the artifact users receive. It covers macOS, Linux, and Windows
 arm64. The workflow is deliberately separate from
 `.github/workflows/release.yml`: it does not publish anything, does not change
-the release asset set, is not a release gate, and does not flip
-`transport.ReleasePolicy`.
+the release asset set, and is not a release gate.
 
 The driver and the environment contract are documented in
 [Packaged artifact tests](../packaging.md#packaged-artifact-tests). This page
@@ -25,11 +24,9 @@ The workflow has `permissions: contents: read` and a concurrency group
 (`artifact-tests-<ref>`) that cancels an older run for the same ref. Every
 checkout is pinned to `${{ github.sha }}`.
 
-The workflow never fetches transport clients. The package jobs build only from
-the repository; the committed `resources/et/win32-x64` and
-`resources/mosh/win32-x64` files are the only client resources in the macOS
-and Linux packages, and the Windows arm64 job removes them before building.
-The session jobs exercise the app's in-process Mosh and ET transports.
+The workflow never fetches transport clients and no client binary is bundled:
+both Mosh and ET run in process, and the session jobs exercise those in-process
+transports.
 
 ## Jobs
 
@@ -50,8 +47,8 @@ signature only), renames the DMG to its canonical name with
 `scripts/release.nu`, and verifies both the built `Natcatty.app` and the
 mounted DMG. Both must carry `LICENSE`, `NOTICE`,
 `THIRD-PARTY-NOTICES.md`, `SOURCE-OFFER.md`, `CHANGELOG.md`, `mygo.json`, the
-ET and mosh provenance/license/README files, and must not contain
-`et/darwin-universal` or `mosh/darwin-universal` client binaries.
+ET provenance/license/README files, and must not contain an
+`et/darwin-universal` client binary.
 
 ### `session-macos`
 
@@ -82,9 +79,8 @@ platform, and true `mosh_command` and `et_command` checks.
 Writes the source offer, builds `linux/amd64`, renames the `.deb` with
 `scripts/release.nu`, and verifies the tarball carries `natcatty`, `mygo.json`,
 `CHANGELOG.md`, `THIRD-PARTY-NOTICES.md`, `LICENSE`, `NOTICE`,
-`SOURCE-OFFER.md`, and the ET/mosh provenance, licenses, and READMEs. It must
-not contain `et/linux-x64` or `mosh/linux-x64` clients. The tarball and `.deb`
-are uploaded.
+`SOURCE-OFFER.md`, and the ET provenance, licenses, and README. It must not
+contain an `et/linux-x64` client. The tarball and `.deb` are uploaded.
 
 ### `session-linux`
 
@@ -106,19 +102,16 @@ while passing the client's first `new` argument through. The driver runs under
 
 ### `package-windows-arm64`
 
-Reads the version from `mygo.json`, removes the committed
-`resources/et/win32-x64` and `resources/mosh/win32-x64` directories, and
-asserts no client directory remains under `resources/et` or `resources/mosh`.
-It writes the source offer and builds `windows/arm64`. NSIS may be present on
-the runner; the installer is irrelevant to this job.
+Reads the version from `mygo.json` and writes the source offer, then builds
+`windows/arm64`. NSIS may be present on the runner; the installer is irrelevant
+to this job.
 
-The job asserts `dist/windows-arm64/Natcatty.exe` exists, the compliance files
-and provenance are present, and no `et/*` or `mosh/*` client directory or
-binary exists. It then creates
+The job asserts `dist/windows-arm64/Natcatty.exe` exists and the compliance
+files are present. It then creates
 `natcatty-<version>-windows-arm64-portable.zip` with PowerShell, excluding any
 installer (both a canonical `*-setup.exe` and MyGo's raw
 `Natcatty Setup <version> arm64.exe`). The archive is verified to contain the
-app, resources, and provenance, and no client directory or installer.
+app, resources, and compliance files, and no installer.
 
 This artifact is CI-only. It is not added to `release.yml` or the published
 asset set.
@@ -126,12 +119,11 @@ asset set.
 ### `launch-windows-arm64`
 
 Runs on `windows-11-arm`, downloads and extracts the portable zip with
-PowerShell `Expand-Archive`, and asserts the extracted tree has no bundled
-client directories or binaries. It starts `Natcatty.exe` with
-`Start-Process -PassThru`, waits with `Wait-Process -Timeout 180`, and requires
-a result with `mode=launch`, `platform=windows/arm64`, a true
-`window_visible` check, and exit code 0. The result and isolated profile are
-uploaded even when the step fails.
+PowerShell `Expand-Archive`, and asserts `Natcatty.exe` is present. It starts
+`Natcatty.exe` with `Start-Process -PassThru`, waits with
+`Wait-Process -Timeout 180`, and requires a result with `mode=launch`,
+`platform=windows/arm64`, a true `window_visible` check, and exit code 0. The
+result and isolated profile are uploaded even when the step fails.
 
 Nushell and 7z are not assumed on the arm64 runner; the launch job uses only
 PowerShell and .NET.
@@ -254,8 +246,7 @@ These are not proven until a real hosted run happens.
 - **Windows arm64 runner preview.** `windows-11-arm` availability and its
   PowerShell/GUI behavior are hosted-runner properties; the job fails closed
   if the label is unavailable.
-- **No release wiring.** This workflow is not a release gate and does not
-  replace the parity gates for the `ReleasePolicy` flip; the flip evidence is
-  recorded in
+- **No release wiring.** This workflow is not a release gate. The historical
+  default-flip evidence is recorded in
   [transport-rollout.md](../releases/transport-rollout.md#flip-evidence).
   Nothing here publishes a Windows arm64 asset.

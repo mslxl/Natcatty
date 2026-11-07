@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/mslxl/natcatty/domain/model"
-	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/domain/vaultimport"
 )
@@ -855,10 +854,6 @@ func draftFromRecord(record vaultimport.Record) domainvault.Draft {
 		LegacyAlgorithms: record.LegacyAlgorithms,
 		SkipEcdsaHostKey: record.SkipEcdsaHostKey,
 		DeviceType:       domainvault.NormalizeDeviceType(domainvault.DeviceType(record.DeviceType)),
-		// The importer preserves the exported client choice verbatim,
-		// including an unknown value from a newer build. NormalizeDraft
-		// clears it for protocols that do not use Mosh or ET.
-		TransportImplementation: transportmodel.Implementation(record.TransportImplementation),
 	}
 	if record.Protocol == "" {
 		draft.Protocol = domainvault.ProtocolSSH
@@ -991,36 +986,35 @@ func (preview *ImportPreview) jumpChains(selected func(int) bool,
 
 func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 	return domainvault.Host{
-		Label:                   draft.Label,
-		Hostname:                draft.Hostname,
-		Port:                    draft.Port,
-		Username:                draft.Username,
-		Protocol:                draft.Protocol,
-		Group:                   draft.Group,
-		Tags:                    append([]string(nil), draft.Tags...),
-		Notes:                   draft.Notes,
-		Pinned:                  draft.Pinned,
-		IdentityID:              draft.IdentityID,
-		KeyID:                   draft.KeyID,
-		AuthMethod:              draft.AuthMethod,
-		UseSSHAgent:             draft.UseSSHAgent,
-		RequiresMFA:             draft.RequiresMFA,
-		X11Forwarding:           draft.X11Forwarding,
-		X11WarningAcknowledged:  draft.X11WarningAcknowledged,
-		HostChain:               domainvault.CloneHostChain(draft.HostChain),
-		Proxy:                   domainvault.CloneProxy(draft.Proxy),
-		ProxyProfileID:          draft.ProxyProfileID,
-		NetworkProfileID:        draft.NetworkProfileID,
-		LegacyAlgorithms:        draft.LegacyAlgorithms,
-		SkipEcdsaHostKey:        draft.SkipEcdsaHostKey,
-		Algorithms:              domainvault.CloneAlgorithms(draft.Algorithms),
-		SFTPFileProtocol:        draft.SFTPFileProtocol,
-		SFTPSudo:                draft.SFTPSudo,
-		DeviceType:              draft.DeviceType,
-		AutoAttachTmux:          draft.AutoAttachTmux,
-		MoshServerPath:          draft.MoshServerPath,
-		ETPort:                  draft.ETPort,
-		TransportImplementation: draft.TransportImplementation,
+		Label:                  draft.Label,
+		Hostname:               draft.Hostname,
+		Port:                   draft.Port,
+		Username:               draft.Username,
+		Protocol:               draft.Protocol,
+		Group:                  draft.Group,
+		Tags:                   append([]string(nil), draft.Tags...),
+		Notes:                  draft.Notes,
+		Pinned:                 draft.Pinned,
+		IdentityID:             draft.IdentityID,
+		KeyID:                  draft.KeyID,
+		AuthMethod:             draft.AuthMethod,
+		UseSSHAgent:            draft.UseSSHAgent,
+		RequiresMFA:            draft.RequiresMFA,
+		X11Forwarding:          draft.X11Forwarding,
+		X11WarningAcknowledged: draft.X11WarningAcknowledged,
+		HostChain:              domainvault.CloneHostChain(draft.HostChain),
+		Proxy:                  domainvault.CloneProxy(draft.Proxy),
+		ProxyProfileID:         draft.ProxyProfileID,
+		NetworkProfileID:       draft.NetworkProfileID,
+		LegacyAlgorithms:       draft.LegacyAlgorithms,
+		SkipEcdsaHostKey:       draft.SkipEcdsaHostKey,
+		Algorithms:             domainvault.CloneAlgorithms(draft.Algorithms),
+		SFTPFileProtocol:       draft.SFTPFileProtocol,
+		SFTPSudo:               draft.SFTPSudo,
+		DeviceType:             draft.DeviceType,
+		AutoAttachTmux:         draft.AutoAttachTmux,
+		MoshServerPath:         draft.MoshServerPath,
+		ETPort:                 draft.ETPort,
 	}
 }
 

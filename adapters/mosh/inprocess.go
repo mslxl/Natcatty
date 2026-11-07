@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// In-process Mosh transport. It reuses the SSH bootstrap from the bundled
-// adapter, then speaks mosh's UDP protocol directly through internal/mosh
-// instead of launching a bundled mosh-client.
+// In-process Mosh transport. It shares the SSH bootstrap contract, the
+// MOSH CONNECT announcement parser, and the route checks in this package, then
+// speaks mosh's UDP protocol directly through internal/mosh. No local
+// mosh-client process is launched.
 package mosh
 
 import (
@@ -52,9 +53,9 @@ const (
 	probeRetransmitInterval = 250 * time.Millisecond
 )
 
-// InProcessFactory opens Mosh Sessions without a bundled client binary. The
-// SSH bootstrap, handshake, route checks, and credential handling are shared
-// with the bundled adapter; the UDP protocol is pure Go.
+// InProcessFactory opens Mosh Sessions without a local client binary. The SSH
+// bootstrap, handshake, route checks, and credential handling are shared in
+// this package; the UDP protocol is pure Go.
 type InProcessFactory struct {
 	// Bootstrap opens the SSH channel that runs mosh-server.
 	Bootstrap Bootstrap

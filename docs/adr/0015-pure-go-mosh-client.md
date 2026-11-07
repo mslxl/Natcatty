@@ -2,7 +2,9 @@
 
 Desktop mosh moves from the bundled MoshCatty binary to an application-owned, pure-Go client. `adapters/mosh` implements the session transport; `internal/mosh` owns the protocol core (OCB3, datagram framing, fragmentation, TransportInstruction, SSP, prediction/local echo, and the bounded `Complete`/`Display` layer). MyGo's desktop terminal remains the renderer through `terminal.Options.Conn`, with no local PTY and no cgo. The client must match stock `mosh-client` behavior against stock `mosh-server`; `mosh-go` is the protocol reference and MoshCatty plus stock mosh are behavioral oracles.
 
-**Status**: accepted
+**Status**: accepted and implemented. The bundled Mosh client and its
+`resources/mosh` assets were removed; every Mosh Session uses the in-process
+client, and no stored implementation value needs migration.
 
 **Considered Options**:
 - Keep the bundled MoshCatty binary: preserves parity by construction but defeats the goal of removing bundled clients.

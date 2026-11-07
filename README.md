@@ -134,8 +134,8 @@ To describe the feature set accurately, the following are **explicitly out of sc
 | Protocol | Notes |
 | --- | --- |
 | **SSH** | The sole SSH transport is built on `golang.org/x/crypto/ssh`; supports agent / public key / certificate / password / keyboard-interactive MFA / FIDO security keys (via system OpenSSH), jump hosts, X11 forwarding, and tmux auto-attach |
-| **Mosh** | Bootstraps over SSH, then hands off to Mosh; bundled client or pure-Go in-process client, with predictive local echo |
-| **EternalTerminal (ET)** | Bundled `et` client or pure-Go in-process client, with private HOME and credential lifetime management |
+| **Mosh** | Bootstraps over SSH, then hands off to Mosh; always uses the built-in pure-Go in-process client, with predictive local echo |
+| **EternalTerminal (ET)** | Always uses the built-in pure-Go in-process client; no external `et` binary is launched |
 | **Telnet** | Lazy IAC negotiation and raw-TCP passthrough |
 | **Serial** | Port enumeration and baud / parity settings (POSIX termios / Windows DCB) |
 | **Local** | Local PTY running the system default shell |
@@ -151,13 +151,6 @@ Build the artifact for the platform you can package on (the DMG needs macOS; NSI
 go tool mygo build -platform windows/amd64 -o dist
 go tool mygo build -platform linux/amd64,linux/arm64 -o dist
 go tool mygo build -platform darwin/universal -o dist    # macOS runner needed for the DMG
-```
-
-The transport clients for the target must exist under `resources/et/<target>` and `resources/mosh/<target>`. Fetch and digest-verify them with:
-
-```sh
-go run ./internal/tools/fetchtransportbins -kind all \
-  -target linux-x64,linux-arm64,darwin-universal -out resources
 ```
 ---
 

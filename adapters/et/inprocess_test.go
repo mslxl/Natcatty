@@ -156,14 +156,10 @@ func (f *recordingForwarder) firstAddress() string {
 
 func baseETConfig() *etmodel.Config {
 	cfg := etmodel.Config{
-		Hostname:  "127.0.0.1",
-		Port:      2222,
-		Username:  "tester",
-		ETPort:    2022,
-		Auth:      etmodel.Auth{Method: etmodel.AuthPassword, Password: "testpass"},
-		SessionID: "inprocess-test",
-		Cols:      100,
-		Rows:      40,
+		Hostname: "127.0.0.1",
+		Port:     2222,
+		Username: "tester",
+		ETPort:   2022,
 	}.Normalized()
 	return &cfg
 }

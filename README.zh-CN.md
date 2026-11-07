@@ -129,8 +129,8 @@ Netcatty Native 是 [binaricat/Netcatty](https://github.com/binaricat/Netcatty) 
 | 协议 | 说明 |
 | --- | --- |
 | **SSH** | 唯一的 SSH 传输基于 `golang.org/x/crypto/ssh`；支持 agent / 公钥 / 证书 / 密码 / 键盘交互 MFA / FIDO 安全密钥（经系统 OpenSSH）、跳板机、X11 转发与 tmux 自动附着 |
-| **Mosh** | 经 SSH 引导后切换至 Mosh；可选内置客户端或纯 Go 进程内客户端，支持预测式本地回显 |
-| **EternalTerminal (ET)** | 可选内置 `et` 客户端或纯 Go 进程内客户端，带独立 HOME 与凭据生命周期管理 |
+| **Mosh** | 经 SSH 引导后切换至 Mosh；始终使用内置的纯 Go 进程内客户端，支持预测式本地回显 |
+| **EternalTerminal (ET)** | 始终使用内置的纯 Go 进程内客户端，不启动外部 `et` 二进制 |
 | **Telnet** | 惰性 IAC 协商与原始 TCP 透传 |
 | **Serial** | 端口枚举与波特率 / 校验位设置（POSIX termios / Windows DCB） |
 | **Local** | 运行系统默认 Shell 的本地 PTY |
@@ -146,13 +146,6 @@ Netcatty Native 是 [binaricat/Netcatty](https://github.com/binaricat/Netcatty) 
 go tool mygo build -platform windows/amd64 -o dist
 go tool mygo build -platform linux/amd64,linux/arm64 -o dist
 go tool mygo build -platform darwin/universal -o dist    # 生成 DMG 需要 macOS
-```
-
-目标平台的传输客户端需位于 `resources/et/<target>` 与 `resources/mosh/<target>`。可用以下命令拉取并校验摘要：
-
-```sh
-go run ./internal/tools/fetchtransportbins -kind all \
-  -target linux-x64,linux-arm64,darwin-universal -out resources
 ```
 ---
 

@@ -2,7 +2,10 @@
 
 Desktop ET moves from the bundled `et` binary to an application-owned, pure-Go client forked from the Apache-2.0 `tphakala/et-go` protocol core, extended with ET 7.1 challenge auth, reset/`--attach`, `RETRY_LATER`, and exit status while retaining the protocol-6 handshake used by 6.2.10 servers. The client uses `connection.Manager` leases: `OpenExec` runs the `etterminal` bootstrap, and `Forwarding().DialContext` opens a `direct-tcpip` channel to `etserver`. It implements the session transport and feeds MyGo's terminal through `terminal.Options.Conn`; no cgo, no plugin, no subprocess.
 
-**Status**: accepted
+**Status**: accepted and implemented. The bundled `et` binary, its
+`resources/et` assets, the bundle manifest/fetch tooling, and every
+client-selection UI and settings field were removed; every ET Session uses the
+in-process client, and no stored implementation value needs migration.
 
 **Considered Options**:
 - Run the upstream C++ client in-process: upstream cannot run as-is (it forks `ssh`, needs a PTY, and ships only static C++ libraries); a wrapper is estimated at 12–24 engineer-weeks with high risk.

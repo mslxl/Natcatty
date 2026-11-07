@@ -1,11 +1,11 @@
 // Package mosh holds the Mosh transport vocabulary the app shares with its
 // adapters and UI: the SSH bootstrap command, the MOSH CONNECT parser, and the
-// mosh-client invocation.
+// in-process client's configuration.
 //
 // It mirrors the original Netcatty Mosh wrapper: the bootstrap runs
 // `mosh-server new` over an SSH channel, the server announces itself with
-// `MOSH CONNECT <port> <key>`, and the local Session swaps to the bundled
-// mosh-client with that key. The parser is deliberately tolerant of CSI/OSC
+// `MOSH CONNECT <port> <key>`, and the in-process client speaks the UDP
+// protocol with that key. The parser is deliberately tolerant of CSI/OSC
 // escapes and chunk boundaries because a Windows pseudo-terminal can inject
 // them around the marker.
 package mosh
@@ -27,9 +27,6 @@ const DefaultServerCommand = "mosh-server new -s -c 256"
 
 // DefaultLang is the locale offered when the client has none.
 const DefaultLang = "en_US.UTF-8"
-
-// DefaultTerm is the terminfo entry mosh-client uses locally.
-const DefaultTerm = "xterm-256color"
 
 // Protocol markers are internal to the bootstrap and hidden from the terminal.
 const (
@@ -66,13 +63,6 @@ var (
 	// ErrNetwork reports a local network failure while opening the UDP
 	// channel.
 	ErrNetwork = errors.New("mosh: UDP network failure")
-	// ErrBundleUnavailable reports a missing bundled mosh-client.
-	ErrBundleUnavailable = errors.New("mosh: bundled mosh-client is not available")
-	// ErrChecksumMismatch reports a bundled mosh-client that failed SHA-256
-	// verification.
-	ErrChecksumMismatch = errors.New("mosh: bundled mosh-client failed checksum verification")
-	// ErrPlatformUnsupported reports a platform with no MoshCatty build.
-	ErrPlatformUnsupported = errors.New("mosh: this platform has no bundled mosh-client")
 )
 
 // ValidationError reports the configuration field that is unusable.
@@ -88,7 +78,7 @@ func (e *ValidationError) Error() string {
 // Is makes every validation failure match ErrInvalidConfig.
 func (e *ValidationError) Is(target error) bool { return target == ErrInvalidConfig }
 
-// PredictionDisplay is mosh-client's MOSH_PREDICTION_DISPLAY choice: when the
+// PredictionDisplay is stock mosh's MOSH_PREDICTION_DISPLAY choice: when the
 // client speculatively draws the user's keystrokes before their echo arrives.
 // Stock's default (and the value an empty setting means) is adaptive.
 type PredictionDisplay string
@@ -130,7 +120,7 @@ type Config struct {
 	// Locales carries the client's locale environment in stock mosh order. It
 	// may be nil.
 	Locales map[string]string
-	// Cols and Rows size the local mosh-client.
+	// Cols and Rows size the terminal state.
 	Cols, Rows int
 	// PredictionDisplay selects mosh's local-echo behavior. Empty means
 	// stock's adaptive default.
@@ -244,57 +234,6 @@ func (c Config) RemoteScript() string {
 // login shell that is not sh-compatible must not interpret the script.
 func (c Config) RemoteCommand() string {
 	return "sh -c " + ShellQuote(c.RemoteScript())
-}
-
-// ClientArgs is the local mosh-client argv after the handshake.
-func ClientArgs(host string, port int) ([]string, error) {
-	if strings.TrimSpace(host) == "" {
-		return nil, &ValidationError{Field: "client host", Reason: "is required"}
-	}
-	if port < 1 || port > 65535 {
-		return nil, &ValidationError{Field: "client port", Reason: "is out of range"}
-	}
-	return []string{host, strconv.Itoa(port)}, nil
-}
-
-// ClientEnv merges the mosh-client environment. MOSH_KEY carries the shared
-// secret. TERM and LANG are preserved so the local terminfo lookup matches the
-// terminal; MOSH_NO_TERM_INIT is set by the adapter because the existing
-// terminal already owns screen initialization.
-func ClientEnv(base []string, key, lang, fallbackHost string) []string {
-	if lang == "" {
-		lang = DefaultLang
-	}
-	haveLang, haveTerm := false, false
-	env := make([]string, 0, len(base)+3)
-	for _, entry := range base {
-		name, _, ok := strings.Cut(entry, "=")
-		if !ok {
-			env = append(env, entry)
-			continue
-		}
-		if name == "MOSH_FALLBACK_HOST" || name == "MOSH_KEY" {
-			continue
-		}
-		switch name {
-		case "LANG":
-			haveLang = true
-		case "TERM":
-			haveTerm = true
-		}
-		env = append(env, entry)
-	}
-	if !haveLang {
-		env = append(env, "LANG="+lang)
-	}
-	if !haveTerm {
-		env = append(env, "TERM="+DefaultTerm)
-	}
-	env = append(env, "MOSH_KEY="+key)
-	if fallbackHost != "" {
-		env = append(env, "MOSH_FALLBACK_HOST="+fallbackHost)
-	}
-	return env
 }
 
 // ResolveLang maps a terminal charset onto the UTF-8 locale Mosh offers. Mosh

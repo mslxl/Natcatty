@@ -220,8 +220,6 @@ func routeSpec(hostname string, port int, username string) appsession.StartSpec 
 		Port:     port,
 		Username: username,
 		ETPort:   etmodel.DefaultETPort,
-		Cols:     100,
-		Rows:     30,
 	}.Normalized()
 	return appsession.StartSpec{
 		Kind:     appsession.KindET,
@@ -854,8 +852,8 @@ func TestInProcessETPassesTheSharedRouteAndPolicies(t *testing.T) {
 }
 
 // TestInProcessETCreatesNoSSHArtifacts proves the in-process path never builds
-// the bundled client's private HOME, generated ssh_config, known-hosts
-// snapshot, key file, or askpass helper.
+// the private HOME, generated ssh_config, known-hosts snapshot, key file, or
+// askpass helper that a child-process client would need.
 func TestInProcessETCreatesNoSSHArtifacts(t *testing.T) {
 	tempRoot := t.TempDir()
 	home := t.TempDir()
