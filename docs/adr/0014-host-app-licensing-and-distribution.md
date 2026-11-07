@@ -1,6 +1,6 @@
 # Keep the host app GPL-3.0-or-later and defer mobile/App Store distribution
 
-The native Natcatty app is a GPL-3.0-or-later derivative of `binaricat/Netcatty`: the rewrite has no root LICENSE, but it ports code and data from the upstream app and copies substantial expression (locale strings, catalogs, presets, themes, icon). It stays GPL-3.0-or-later. Desktop distribution and the mosh/ET migration proceed under that license; mobile and App Store work is deferred until a licensing route exists. A GPLv3 app cannot ship on the App Store without an exception or non-assertion from every upstream copyright holder, and a fork cannot grant that unilaterally.
+The native Natcatty app is a GPL-3.0-or-later derivative of `binaricat/Netcatty`: the rewrite has no root LICENSE, but it ports code and data from the upstream app and copies substantial expression (locale strings, catalogs, presets, and themes). Its current application icon artwork is an original design. It stays GPL-3.0-or-later. Desktop distribution and the mosh/ET migration proceed under that license; mobile and App Store work is deferred until a licensing route exists. A GPLv3 app cannot ship on the App Store without an exception or non-assertion from every upstream copyright holder, and a fork cannot grant that unilaterally.
 
 **Status**: accepted
 
