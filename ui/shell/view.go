@@ -483,6 +483,8 @@ func noticeText(m locales.Messages, notice *appsession.Notice) string {
 		return m.ConnectionEternalTerminalResumeUnsupported()
 	case appsession.NoticeCaptureHookUnavailable:
 		return m.ConnectionCaptureHookUnavailable()
+	case appsession.NoticeHostAtuinDetected:
+		return m.ConnectionHostAtuinDetected()
 	default:
 		return ""
 	}

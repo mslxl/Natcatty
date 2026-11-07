@@ -626,6 +626,7 @@
   "connectionTmuxNested": "遠端 Host 已在 tmux 工作階段中；已直接連線，未巢狀。",
   "connectionTmuxUnavailable": "遠端 Host 無法使用 tmux；已改用一般 Shell 連線。",
   "connectionCaptureHookUnavailable": "無法安裝 shell 擷取掛鉤；此工作階段將使用盡力擷取。",
+  "connectionHostAtuinDetected": "此主機正在使用 Atuin。Netcatty 優先使用主機 Atuin 歷史記錄，並對此主機略過自身的 shell 擷取掛鉤。關閉「優先使用主機 Atuin 歷史記錄」即可改用 Netcatty 掛鉤。",
   "connectionEternalTerminalDisplaced": "另一個用戶端已接入此 EternalTerminal 工作階段，因此目前連線已結束。EternalTerminal 同一時間只允許一個用戶端。",
   "connectionEternalTerminalResumeUnsupported": "無法還原已儲存的 EternalTerminal 工作階段，因為伺服器不支援工作階段重新連線（etserver 6.2.10 或更早版本）。已啟動新工作階段；請升級 etserver 以在重新啟動後還原工作階段。",
   "@connectionX11CookieUnavailable": {
@@ -1891,6 +1892,8 @@
   "settingsHistoryCaptureHookTitle": "歷史擷取掛鉤",
   "settingsHistoryCaptureHookDescription": "為 zsh、bash 和 fish 安裝工作階段層級的 shell 掛鉤。它只會讀取而不會修改你的啟動檔案，無法使用時會退回原生擷取。",
   "settingsHistoryCaptureHookEnabled": "安裝 shell 擷取掛鉤",
+  "settingsHistoryPreferHostAtuin": "優先使用主機 Atuin 歷史記錄",
+  "settingsHistoryPreferHostAtuinDescription": "當主機已執行 Atuin 時，在工作階段開啟時以唯讀方式匯入其歷史記錄，並略過 Netcatty 擷取掛鉤。關閉此選項將使用 Netcatty 掛鉤並略過匯入。",
   "settingsSyncTitle": "同步與雲端",
   "settingsSyncDescription": "透過雲端服務提供者同步加密的保管庫。主密碼絕不會離開此裝置。",
   "settingsSyncSecurityNote": "服務提供者可以看到保管庫的中繼資料，例如裝置名稱、應用程式版本和時間戳記。保管庫記錄和認證資訊始終保持加密。",

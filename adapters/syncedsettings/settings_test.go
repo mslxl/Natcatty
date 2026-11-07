@@ -3,6 +3,7 @@ package syncedsettings_test
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
 	"time"
 
@@ -394,4 +395,46 @@ func marshal(t *testing.T, value any) json.RawMessage {
 		t.Fatalf("encode document: %v", err)
 	}
 	return data
+}
+
+// The Host Atuin preference is device-local: the portable payload must not
+// carry it, and a remote document cannot change it in either direction.
+func TestApplyLeavesTheDeviceLocalHostAtuinPreferenceAlone(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+
+	for _, local := range []bool{true, false} {
+		if err := f.terminal.Update(func(next *domainterminal.Settings) {
+			next.HistoryPreferHostAtuin = local
+		}); err != nil {
+			t.Fatal(err)
+		}
+		documents := map[string]json.RawMessage{
+			adaptersyncedsettings.KeyTerminal: json.RawMessage(
+				`{"historyPreferHostAtuin":` + strconv.FormatBool(!local) + `,"osc52":"off"}`),
+		}
+		if err := f.adapter.Apply(ctx, documents); err != nil {
+			t.Fatalf("Apply with local %t: %v", local, err)
+		}
+		got := f.terminal.Settings()
+		if got.HistoryPreferHostAtuin != local {
+			t.Fatalf("a remote document changed the device-local preference from %t to %t",
+				local, got.HistoryPreferHostAtuin)
+		}
+		if got.OSC52 != domainterminal.ClipboardOff {
+			t.Fatalf("OSC52 = %q, want the synced value", got.OSC52)
+		}
+	}
+
+	snapshot, err := f.adapter.Snapshot(ctx)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	var document map[string]any
+	decode(t, snapshot[adaptersyncedsettings.KeyTerminal], &document)
+	for _, key := range []string{"HistoryPreferHostAtuin", "historyPreferHostAtuin"} {
+		if _, found := document[key]; found {
+			t.Fatalf("the portable terminal document carries the device-local key %q", key)
+		}
+	}
 }

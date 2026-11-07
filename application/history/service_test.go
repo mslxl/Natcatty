@@ -986,3 +986,191 @@ func TestFailedShellHistoryImportLeavesMarkerUnset(t *testing.T) {
 			len(store.entries), len(store.records))
 	}
 }
+
+func stringPtr(value string) *string { return &value }
+
+func int64Ptr(value int64) *int64 { return &value }
+
+func TestImportHostAtuinMapsRowsAndPreservesAtuinIDs(t *testing.T) {
+	store := &memoryStore{}
+	service := newTestService(store, Retention{})
+	const atuinID = "9b2f3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+	recorded := time.Date(2026, 3, 1, 9, 0, 0, 123, time.UTC)
+	rows := []domainhistory.AtuinRow{{
+		ID: atuinID, Timestamp: recorded.UnixNano(), Command: "git status",
+		Duration: int64Ptr(int64(150 * time.Millisecond)), Exit: int64Ptr(0),
+		CWD: stringPtr("/srv/app"), Hostname: stringPtr("web-1.example.test"),
+		Author: stringPtr("deploy"), AuthorKind: stringPtr(domainhistory.AuthorKindUser),
+		Shell: stringPtr("zsh"),
+	}}
+
+	result, err := service.ImportHostAtuin(context.Background(), "host-1", rows, "web-1.example.test:deploy")
+	if err != nil {
+		t.Fatalf("ImportHostAtuin: %v", err)
+	}
+	if result.Imported != 1 || result.Skipped != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	if want := (domainhistory.ImportCheckpoint{Timestamp: recorded, HistoryID: atuinID}); result.Checkpoint != want {
+		t.Fatalf("checkpoint = %+v, want %+v", result.Checkpoint, want)
+	}
+	if len(store.entries) != 1 {
+		t.Fatalf("entries = %+v", store.entries)
+	}
+	entry := store.entries[0]
+	if entry.ID != atuinID {
+		t.Fatalf("ID = %q, want the preserved Atuin UUID", entry.ID)
+	}
+	if entry.Source != domainhistory.SourceAtuinImport ||
+		entry.Scope != "remote:web-1.example.test" {
+		t.Fatalf("source/scope = %q/%q", entry.Source, entry.Scope)
+	}
+	if !entry.RecordedAt.Equal(recorded) || entry.Duration != 150*time.Millisecond ||
+		!entry.HasExitCode || entry.ExitCode != 0 {
+		t.Fatalf("mapped row = %+v", entry)
+	}
+	if entry.CWD != "/srv/app" || entry.Author != "deploy" ||
+		entry.AuthorKind != domainhistory.AuthorKindUser || entry.Shell != "zsh" {
+		t.Fatalf("mapped metadata = %+v", entry)
+	}
+	if len(store.records) != 0 {
+		t.Fatalf("an import appended create records: %+v", store.records)
+	}
+	if got := store.metadata.HostImports["host-1"]; got != result.Checkpoint {
+		t.Fatalf("stored checkpoint = %+v, want %+v", got, result.Checkpoint)
+	}
+}
+
+func TestImportHostAtuinSkipsCheckpointedRowsAndNeverDuplicates(t *testing.T) {
+	store := &memoryStore{}
+	service := newTestService(store, Retention{})
+	ctx := context.Background()
+	first := domainhistory.AtuinRow{ID: "first", Timestamp: at(9).UnixNano(), Command: "ls"}
+	second := domainhistory.AtuinRow{ID: "second", Timestamp: at(10).UnixNano(), Command: "pwd"}
+
+	result, err := service.ImportHostAtuin(ctx, "host-1", []domainhistory.AtuinRow{second, first}, "")
+	if err != nil || result.Imported != 2 {
+		t.Fatalf("first import = %+v, %v", result, err)
+	}
+	if len(store.entries) != 2 {
+		t.Fatalf("entries = %d, want 2", len(store.entries))
+	}
+
+	repeated, err := service.ImportHostAtuin(ctx, "host-1", []domainhistory.AtuinRow{first, second}, "")
+	if err != nil {
+		t.Fatalf("repeated import: %v", err)
+	}
+	if repeated.Imported != 0 || repeated.Skipped != 2 {
+		t.Fatalf("repeated import = %+v", repeated)
+	}
+	if len(store.entries) != 2 {
+		t.Fatalf("a repeated import appended rows: %d", len(store.entries))
+	}
+
+	newer := domainhistory.AtuinRow{ID: "newer", Timestamp: at(11).UnixNano(), Command: "uptime"}
+	extended, err := service.ImportHostAtuin(ctx, "host-1",
+		[]domainhistory.AtuinRow{first, second, newer}, "")
+	if err != nil {
+		t.Fatalf("extended import: %v", err)
+	}
+	if extended.Imported != 1 || extended.Skipped != 2 {
+		t.Fatalf("extended import = %+v", extended)
+	}
+	if len(store.entries) != 3 {
+		t.Fatalf("entries = %d, want 3", len(store.entries))
+	}
+	if !extended.Checkpoint.Timestamp.Equal(at(11)) {
+		t.Fatalf("checkpoint = %+v, want the newest row's timestamp", extended.Checkpoint)
+	}
+	newest := false
+	for _, entry := range store.entries {
+		if entry.Command == "uptime" && entry.ID == extended.Checkpoint.HistoryID {
+			newest = true
+		}
+	}
+	if !newest {
+		t.Fatalf("checkpoint identity = %q, want the newest row's id", extended.Checkpoint.HistoryID)
+	}
+
+	// A row older than the checkpoint is skipped even on its first import.
+	older := domainhistory.AtuinRow{ID: "older", Timestamp: at(8).UnixNano(), Command: "old"}
+	ignored, err := service.ImportHostAtuin(ctx, "host-1", []domainhistory.AtuinRow{older}, "")
+	if err != nil || ignored.Imported != 0 || ignored.Skipped != 1 {
+		t.Fatalf("older import = %+v, %v", ignored, err)
+	}
+}
+
+func TestImportHostAtuinKeepsTheCheckpointWhenTheStoreFails(t *testing.T) {
+	store := &memoryStore{}
+	service := newTestService(store, Retention{})
+	ctx := context.Background()
+	rows := []domainhistory.AtuinRow{
+		{ID: "first", Timestamp: at(9).UnixNano(), Command: "ls"},
+	}
+
+	store.failWrite = errors.New("disk full")
+	result, err := service.ImportHostAtuin(ctx, "host-1", rows, "")
+	if err == nil {
+		t.Fatal("ImportHostAtuin succeeded despite a failed store write")
+	}
+	if result.Imported != 0 {
+		t.Fatalf("failed import reported rows: %+v", result)
+	}
+	if _, found := store.metadata.HostImports["host-1"]; found {
+		t.Fatal("a failed import advanced the checkpoint")
+	}
+
+	store.failWrite = nil
+	retried, err := service.ImportHostAtuin(ctx, "host-1", rows, "")
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if retried.Imported != 1 {
+		t.Fatalf("retry = %+v, want the row imported from the unchanged checkpoint", retried)
+	}
+}
+
+func TestImportHostAtuinFailsClosedOnAMalformedRowBeforeWriting(t *testing.T) {
+	store := &memoryStore{}
+	service := newTestService(store, Retention{})
+	rows := []domainhistory.AtuinRow{
+		{ID: "good", Timestamp: at(9).UnixNano(), Command: "ls"},
+		{ID: "bad", Timestamp: at(10).UnixNano(), Command: "   "},
+	}
+
+	if _, err := service.ImportHostAtuin(context.Background(), "host-1", rows, ""); !errors.Is(err, domainhistory.ErrInvalidAtuinRow) {
+		t.Fatalf("error = %v, want ErrInvalidAtuinRow", err)
+	}
+	if len(store.entries) != 0 {
+		t.Fatalf("a malformed snapshot was partly imported: %+v", store.entries)
+	}
+	if _, found := store.metadata.HostImports["host-1"]; found {
+		t.Fatal("a malformed snapshot advanced the checkpoint")
+	}
+}
+
+func TestImportHostAtuinRejectsAnEmptyHostIdentity(t *testing.T) {
+	service := newTestService(&memoryStore{}, Retention{})
+	if _, err := service.ImportHostAtuin(context.Background(), "", nil, ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("error = %v, want ErrInvalid", err)
+	}
+}
+
+func TestMarkHostAtuinNoticedIsOneTimePerHost(t *testing.T) {
+	store := &memoryStore{}
+	service := newTestService(store, Retention{})
+	ctx := context.Background()
+
+	first, err := service.MarkHostAtuinNoticed(ctx, "host-1")
+	if err != nil || !first {
+		t.Fatalf("first = %t, %v; want true", first, err)
+	}
+	second, err := service.MarkHostAtuinNoticed(ctx, "host-1")
+	if err != nil || second {
+		t.Fatalf("second = %t, %v; want false", second, err)
+	}
+	other, err := service.MarkHostAtuinNoticed(ctx, "host-2")
+	if err != nil || !other {
+		t.Fatalf("other Host = %t, %v; want true", other, err)
+	}
+}

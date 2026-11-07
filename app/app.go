@@ -23,6 +23,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	fileapplock "github.com/mslxl/natcatty/adapters/applock"
+	adapteratuinimport "github.com/mslxl/natcatty/adapters/atuinimport"
 	adapteret "github.com/mslxl/natcatty/adapters/et"
 	adaptergdrive "github.com/mslxl/natcatty/adapters/gdrive"
 	adaptergithub "github.com/mslxl/natcatty/adapters/github"
@@ -52,6 +53,7 @@ import (
 	appfileopen "github.com/mslxl/natcatty/application/fileopen"
 	appforwarding "github.com/mslxl/natcatty/application/forwarding"
 	apphistory "github.com/mslxl/natcatty/application/history"
+	apphostatuin "github.com/mslxl/natcatty/application/hostatuin"
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
 	appmcp "github.com/mslxl/natcatty/application/mcp"
 	appmonitor "github.com/mslxl/natcatty/application/monitor"
@@ -667,10 +669,20 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 
 	// SFTP reuses the Vault's routes and the same connection manager as a
 	// terminal Session. The local pane and the global bookmark file belong to
-	// the same service, so both panes share one copy engine.
+	// the same service, so both panes share one copy engine. The same opener
+	// serves the read-only Host Atuin probe.
+	remoteOpener := &sftpRemoteOpener{manager: connections, routes: routes, vault: vaultService}
+	hostAtuinService := apphostatuin.New(
+		apphostatuin.WithRemote(atuinRemoteSource{opener: remoteOpener}),
+		apphostatuin.WithDatabase(adapteratuinimport.Reader{}),
+		apphostatuin.WithRecorder(atuinHistoryRecorder{history: historyService}),
+		apphostatuin.WithPreference(func() bool {
+			return terminalService.Settings().HistoryPreferHostAtuin
+		}),
+	)
 	transferService := apptransfer.NewService(
 		adaptersftp.NewLocal(),
-		&sftpRemoteOpener{manager: connections, routes: routes, vault: vaultService},
+		remoteOpener,
 		apptransfer.WithHosts(sftpHostSource{vault: vaultService}),
 		apptransfer.WithBookmarks(sftpBookmarks),
 	)
@@ -897,6 +909,11 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				return terminalService.Settings().HistoryCaptureHookEnabled
 			}),
 		)),
+		// A Host that already runs Atuin is detected before the terminal
+		// opens. When the preference is on, its history is imported read-only
+		// and the Netcatty hook is skipped for that Session; turning the
+		// preference off uses the hook and skips the import.
+		appsession.WithHostAtuin(atuinHostPolicy{service: hostAtuinService}),
 		// A new Session inherits the encoding remembered for its Host, or the
 		// global default. The terminal surface applies live changes and
 		// persists them through the same Settings service.

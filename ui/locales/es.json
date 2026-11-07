@@ -626,6 +626,7 @@
   "connectionTmuxNested": "Ya estás dentro de una sesión de tmux en el Host remoto; se conectó sin anidar.",
   "connectionTmuxUnavailable": "tmux no está disponible en el Host remoto; se conectó con un shell simple.",
   "connectionCaptureHookUnavailable": "No se pudo instalar el gancho de captura del shell; esta sesión usa la captura de mejor esfuerzo.",
+  "connectionHostAtuinDetected": "Este Host ejecuta Atuin. Netcatty prefiere el historial Atuin del Host y omite su propio gancho de captura del shell para este Host. Desactiva «Preferir el historial Atuin del Host» para usar el gancho de Netcatty.",
   "connectionEternalTerminalDisplaced": "Otro cliente se conectó a esta sesión de EternalTerminal, por lo que esta conexión terminó. EternalTerminal permite un solo cliente a la vez.",
   "connectionEternalTerminalResumeUnsupported": "No se pudo restaurar la sesión de EternalTerminal guardada porque el servidor no admite la reanudación de sesiones (etserver 6.2.10 o anterior). Se inició una sesión nueva; actualice etserver para reanudar sesiones tras reiniciar.",
   "@connectionX11CookieUnavailable": {
@@ -1891,6 +1892,8 @@
   "settingsHistoryCaptureHookTitle": "Gancho de captura del historial",
   "settingsHistoryCaptureHookDescription": "Instala un gancho de shell por sesión para zsh, bash y fish. Lee tus archivos de inicio sin modificarlos y usa la captura nativa cuando no está disponible.",
   "settingsHistoryCaptureHookEnabled": "Instalar el gancho de captura del shell",
+  "settingsHistoryPreferHostAtuin": "Preferir el historial Atuin del Host",
+  "settingsHistoryPreferHostAtuinDescription": "Cuando un Host ya ejecuta Atuin, importa su historial en modo de solo lectura al abrir la sesión y omite el gancho de captura de Netcatty. Al desactivarlo se usa el gancho de Netcatty y se omite la importación.",
   "settingsSyncTitle": "Sincronización y nube",
   "settingsSyncDescription": "Sincroniza el Vault cifrado mediante tu proveedor de nube. La contraseña maestra nunca sale de este dispositivo.",
   "settingsSyncSecurityNote": "El proveedor puede ver los metadatos del Vault, como el nombre del dispositivo, la versión de la aplicación y las marcas de tiempo. Los registros y las credenciales del Vault permanecen cifrados.",

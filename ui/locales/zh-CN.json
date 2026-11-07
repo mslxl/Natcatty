@@ -626,6 +626,7 @@
   "connectionTmuxNested": "远程 Host 已在 tmux 会话中；已直接连接，未嵌套。",
   "connectionTmuxUnavailable": "远程 Host 上无法使用 tmux；已改用普通 Shell 连接。",
   "connectionCaptureHookUnavailable": "无法安装 shell 捕获钩子；此会话将使用尽力捕获。",
+  "connectionHostAtuinDetected": "此主机正在使用 Atuin。Netcatty 优先使用主机 Atuin 历史记录，并对此主机跳过自身的 shell 捕获钩子。关闭“优先使用主机 Atuin 历史记录”即可改用 Netcatty 钩子。",
   "connectionEternalTerminalDisplaced": "另一个客户端已接入该 EternalTerminal 会话，因此当前连接已结束。EternalTerminal 同一时间只允许一个客户端。",
   "connectionEternalTerminalResumeUnsupported": "无法恢复已保存的 EternalTerminal 会话，因为服务器不支持会话重连（etserver 6.2.10 或更早版本）。已启动新会话；请升级 etserver 以在重启后恢复会话。",
   "@connectionX11CookieUnavailable": {
@@ -1891,6 +1892,8 @@
   "settingsHistoryCaptureHookTitle": "历史捕获钩子",
   "settingsHistoryCaptureHookDescription": "为 zsh、bash 和 fish 安装会话级 shell 钩子。它只读取而不会修改你的启动文件，不可用时会回退到原生捕获。",
   "settingsHistoryCaptureHookEnabled": "安装 shell 捕获钩子",
+  "settingsHistoryPreferHostAtuin": "优先使用主机 Atuin 历史记录",
+  "settingsHistoryPreferHostAtuinDescription": "当主机已运行 Atuin 时，在会话打开时以只读方式导入其历史记录，并跳过 Netcatty 捕获钩子。关闭此选项将使用 Netcatty 钩子并跳过导入。",
   "settingsSyncTitle": "同步与云",
   "settingsSyncDescription": "通过云服务提供商同步加密的保管库。主密码绝不会离开此设备。",
   "settingsSyncSecurityNote": "服务提供商可以看到保管库的元数据，例如设备名称、应用版本和时间戳。保管库记录和凭据始终保持加密。",

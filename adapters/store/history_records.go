@@ -25,6 +25,7 @@ const (
 	metaKeyHistoryKeyFingerprint = "history.key_fingerprint"
 	metaKeyHistoryAccount        = "history.account"
 	metaKeyHistoryHostImports    = "history.host_imports"
+	metaKeyHistoryHostNotified   = "history.host_atuin_notified"
 	metaKeyHistorySeries         = "history.series_checkpoints"
 )
 
@@ -94,6 +95,9 @@ func (s *Store) HistoryMetadata(ctx context.Context) (domainhistory.Metadata, er
 		if err := readMetaJSON(tx, metaKeyHistoryHostImports, &metadata.HostImports); err != nil {
 			return err
 		}
+		if err := readMetaJSON(tx, metaKeyHistoryHostNotified, &metadata.HostAtuinNotified); err != nil {
+			return err
+		}
 		return readMetaJSON(tx, metaKeyHistorySeries, &metadata.Series)
 	}); err != nil {
 		return domainhistory.Metadata{}, fmt.Errorf("store: read history metadata: %w", err)
@@ -120,6 +124,10 @@ func (s *Store) SaveHistoryMetadata(ctx context.Context, metadata domainhistory.
 		}
 		if err := writeMetaJSON(tx, metaKeyHistoryHostImports, metadata.HostImports,
 			len(metadata.HostImports) > 0); err != nil {
+			return err
+		}
+		if err := writeMetaJSON(tx, metaKeyHistoryHostNotified, metadata.HostAtuinNotified,
+			len(metadata.HostAtuinNotified) > 0); err != nil {
 			return err
 		}
 		return writeMetaJSON(tx, metaKeyHistorySeries, metadata.Series,
@@ -166,6 +174,88 @@ func (s *Store) ImportShellHistory(ctx context.Context, imports []apphistory.She
 	return nil
 }
 
+// ImportHostAtuinEntries writes one read-only Host Atuin snapshot and its
+// checkpoint in one transaction. Imported rows are local projections, so no
+// create record is appended and the checkpoint advances only when every row
+// was written. A repeated import upserts the same history ids instead of
+// producing duplicates, and an older checkpoint never moves the stored one
+// backwards.
+func (s *Store) ImportHostAtuinEntries(ctx context.Context, hostID string,
+	checkpoint domainhistory.ImportCheckpoint, entries []domainhistory.Entry) error {
+	if hostID == "" {
+		return fmt.Errorf("store: import Host Atuin history: empty Host id")
+	}
+	if checkpoint.Timestamp.IsZero() || checkpoint.HistoryID == "" {
+		return fmt.Errorf("store: import Host Atuin history: empty checkpoint")
+	}
+	models := make([]historyEntrySchema, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Source != domainhistory.SourceAtuinImport {
+			return fmt.Errorf("store: import Host Atuin history: row %q has source %q", entry.ID, entry.Source)
+		}
+		if !entry.Valid() {
+			return fmt.Errorf("store: import Host Atuin history: invalid row %q", entry.ID)
+		}
+		if !domainhistory.CheckpointAfter(checkpoint, entry) {
+			return fmt.Errorf("store: import Host Atuin history: checkpoint does not cover row %q", entry.ID)
+		}
+		model, err := historyEntryModel(entry)
+		if err != nil {
+			return err
+		}
+		models = append(models, model)
+	}
+	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
+		for index := range models {
+			if err := upsertModel(tx, &models[index], "id", historyEntryColumns...); err != nil {
+				return err
+			}
+		}
+		var imports map[string]domainhistory.ImportCheckpoint
+		if err := readMetaJSON(tx, metaKeyHistoryHostImports, &imports); err != nil {
+			return err
+		}
+		if imports == nil {
+			imports = make(map[string]domainhistory.ImportCheckpoint)
+		}
+		current, found := imports[hostID]
+		if !found || domainhistory.CompareImportCheckpoint(checkpoint, current) > 0 {
+			imports[hostID] = checkpoint
+		}
+		return writeMetaJSON(tx, metaKeyHistoryHostImports, imports, true)
+	}); err != nil {
+		return fmt.Errorf("store: import Host Atuin history: %w", err)
+	}
+	return nil
+}
+
+// MarkHostAtuinNoticed records that the one-time Host Atuin notice was
+// published. It reports whether this call set the marker, so a later Session
+// or a concurrent open suppresses a duplicate notice.
+func (s *Store) MarkHostAtuinNoticed(ctx context.Context, hostID string) (bool, error) {
+	if hostID == "" {
+		return false, nil
+	}
+	var first bool
+	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
+		var notified map[string]bool
+		if err := readMetaJSON(tx, metaKeyHistoryHostNotified, &notified); err != nil {
+			return err
+		}
+		if notified == nil {
+			notified = make(map[string]bool)
+		}
+		if notified[hostID] {
+			return nil
+		}
+		notified[hostID] = true
+		first = true
+		return writeMetaJSON(tx, metaKeyHistoryHostNotified, notified, true)
+	}); err != nil {
+		return false, fmt.Errorf("store: mark Host Atuin noticed: %w", err)
+	}
+	return first, nil
+}
 // ListHistoryRecords returns the append-only log in series and index order.
 func (s *Store) ListHistoryRecords(ctx context.Context) ([]domainhistory.Record, error) {
 	var rows []historyRecordSchema

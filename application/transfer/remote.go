@@ -97,6 +97,10 @@ type RemoteOptions struct {
 	Protocol     FileProtocol
 	Sudo         bool
 	SudoPassword string
+	// RequireExtraChannel refuses a single-channel Host before any channel
+	// opens. A read-only probe that is not the user's terminal request must
+	// never consume the one channel such a peer allows.
+	RequireExtraChannel bool
 }
 
 // SelectRemote opens a remote filesystem according to the Host's protocol
@@ -123,7 +127,7 @@ func SelectRemote(ctx context.Context, connector RemoteConnector, options Remote
 	if err != nil {
 		return nil, "", err
 	}
-	if session.Reused() && session.SingleChannel() {
+	if session.SingleChannel() && (session.Reused() || options.RequireExtraChannel) {
 		session.Discard()
 		return nil, "", ErrSingleChannel
 	}

@@ -23,6 +23,9 @@ type Metadata struct {
 	Account AccountIdentity `json:"account,omitempty"`
 	// HostImports holds the per-Host read-only Atuin import checkpoint.
 	HostImports map[string]ImportCheckpoint `json:"hostImports,omitempty"`
+	// HostAtuinNotified marks Hosts whose one-time Atuin detection notice was
+	// already published, so a later Session does not repeat it.
+	HostAtuinNotified map[string]bool `json:"hostAtuinNotified,omitempty"`
 	// Series holds the per-series download and upload checkpoints.
 	Series map[string]SeriesCheckpoint `json:"series,omitempty"`
 }

@@ -51,6 +51,7 @@ type terminalSettingsRecord struct {
 	ConnectionLogRetentionDays  int `json:"connectionLogRetentionDays"`
 
 	HistoryCaptureHookEnabled bool `json:"historyCaptureHookEnabled"`
+	HistoryPreferHostAtuin    bool `json:"historyPreferHostAtuin"`
 }
 
 // terminalSettingsVersion is the current record version. Version 1 files
@@ -58,9 +59,10 @@ type terminalSettingsRecord struct {
 // autocomplete, keyword highlight, and statistics fields; version 3 files
 // lack the connection log retention fields; version 4 files lack the dynamic
 // tab title mode; version 5 files lack the history capture hook switch, whose
-// default is on. Zero values for a missing group are replaced by the defaults
-// on load. Older history retention fields are accepted and ignored.
-const terminalSettingsVersion = 6
+// default is on; version 6 files lack the Host Atuin preference, whose default
+// is on. Zero values for a missing group are replaced by the defaults on load.
+// Older history retention fields are accepted and ignored.
+const terminalSettingsVersion = 7
 
 // Load returns the stored settings. A missing file is the original defaults,
 // not an error.
@@ -113,6 +115,9 @@ func (s *TerminalSettingsStore) Load(context.Context) (domainterminal.Settings, 
 	if record.Version >= 6 {
 		settings.HistoryCaptureHookEnabled = record.HistoryCaptureHookEnabled
 	}
+	if record.Version >= 7 {
+		settings.HistoryPreferHostAtuin = record.HistoryPreferHostAtuin
+	}
 	return domainterminal.Normalize(settings), nil
 }
 
@@ -148,6 +153,7 @@ func (s *TerminalSettingsStore) Save(_ context.Context, settings domainterminal.
 		ConnectionLogRetentionDays:  settings.ConnectionLogRetentionDays,
 
 		HistoryCaptureHookEnabled: settings.HistoryCaptureHookEnabled,
+		HistoryPreferHostAtuin:    settings.HistoryPreferHostAtuin,
 	}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
