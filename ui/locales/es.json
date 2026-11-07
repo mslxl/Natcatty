@@ -3074,7 +3074,7 @@
   "vaultProblemETPort": "Introduce un puerto entre 1 y 65535.",
   "connectionErrorMoshJump": "Las sesiones Mosh no pueden usar Hosts de salto.",
   "connectionErrorMoshProxy": "Las sesiones Mosh no pueden usar proxies.",
-  "connectionErrorMoshNetwork": "Las sesiones Mosh no pueden usar un perfil de red integrado. Use una VPN del sistema operativo para este Host.",
+  "connectionErrorMoshNetwork": "Mosh no puede usar el perfil de red de este Host porque su proveedor no puede transportar el flujo UDP. Elige un perfil de Tailscale Net o WireGuard Net.",
   "connectionErrorMoshHandshake": "mosh-server no se inició. Comprueba que mosh-server esté instalado en el Host.",
   "browserAddress": "Dirección",
   "browserBack": "Atrás",

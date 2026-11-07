@@ -861,7 +861,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		localpty.Factory{}, adapterserial.Factory{},
 		newTelnetFactory(adapterstnet.Factory{}, routes, networkProviders), connections, routes,
 	).withInProcess(
-		newMoshFactory(connections, routes),
+		newMoshFactory(connections, routes, networkProviders),
 		adapteret.InProcessFactory{
 			Manager:  connections,
 			Routes:   routes,

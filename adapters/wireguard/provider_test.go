@@ -624,6 +624,55 @@ func TestProviderDialRejectsNetworksThePortDoesNotCarry(t *testing.T) {
 	}
 }
 
+func TestProviderDialDatagramCarriesUDPOnlyAndUsesTheNetstack(t *testing.T) {
+	config := testConfig()
+	config.Peers[0].Endpoint = "198.51.100.9:51820"
+	factory := &fakeFactory{}
+	provider := newTestProvider(t, config, factory, nil)
+
+	for _, network := range []string{"tcp", "tcp4", "tcp6", "unix", ""} {
+		_, err := provider.DialDatagram(context.Background(), network, "10.9.0.10:60001")
+		var typed *appconnection.Error
+		if !errors.As(err, &typed) || typed.Kind != appconnection.KindUnsupported {
+			t.Fatalf("%q: error = %v, want KindUnsupported", network, err)
+		}
+		if !errors.Is(err, ErrUnsupportedNetwork) {
+			t.Fatalf("%q: error = %v, want ErrUnsupportedNetwork", network, err)
+		}
+	}
+	if factory.backendCount() != 0 {
+		t.Fatalf("a rejected network started %d backends, want none", factory.backendCount())
+	}
+
+	conn, err := provider.DialDatagram(context.Background(), "udp", "10.9.0.10:60001")
+	if err != nil {
+		t.Fatalf("DialDatagram: %v", err)
+	}
+	_ = conn.Close()
+	if factory.backendCount() != 1 {
+		t.Fatalf("the dial started %d backends, want 1", factory.backendCount())
+	}
+	if got := factory.backend(0).dialCalls; len(got) != 1 || got[0] != "udp 10.9.0.10:60001" {
+		t.Fatalf("backend dials = %v, want one udp dial", got)
+	}
+}
+
+func TestProviderDialDatagramKeepsTunnelOnlyDNS(t *testing.T) {
+	config := testConfig()
+	config.DNS = nil
+	config.Peers[0].Endpoint = "198.51.100.9:51820"
+	factory := &fakeFactory{}
+	provider := newTestProvider(t, config, factory, nil)
+
+	_, err := provider.DialDatagram(context.Background(), "udp", "internal.example.com:60001")
+	if !errors.Is(err, ErrDNSUnavailable) {
+		t.Fatalf("error = %v, want ErrDNSUnavailable", err)
+	}
+	if factory.backendCount() == 1 && factory.backend(0).dialCount() != 0 {
+		t.Fatal("a host-name datagram target reached the netstack without tunnel DNS")
+	}
+}
+
 func TestProviderDialWithoutTunnelDNSFailsBeforeSendingAnything(t *testing.T) {
 	config := testConfig()
 	config.DNS = nil

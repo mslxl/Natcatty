@@ -17,12 +17,16 @@ import (
 
 // newMoshFactory builds the in-process Mosh transport. The SSH bootstrap runs
 // over the app's Connection Manager so saved credentials, MFA prompts, and
-// host-key trust behave exactly as they do for an SSH Session.
-func newMoshFactory(manager *appconnection.Manager, routes routeSource) appsession.Factory {
+// host-key trust behave exactly as they do for an SSH Session; the UDP flow
+// can live inside a Network Provider, which is why the factory takes the
+// registry.
+func newMoshFactory(manager *appconnection.Manager, routes routeSource,
+	providers *appconnection.NetworkProviderRegistry) appsession.Factory {
 	return &moshTransportFactory{
-		inner:   moshadapter.InProcessFactory{},
-		manager: manager,
-		routes:  routes,
+		inner:     moshadapter.InProcessFactory{},
+		manager:   manager,
+		routes:    routes,
+		providers: providers,
 	}
 }
 
@@ -30,9 +34,10 @@ func newMoshFactory(manager *appconnection.Manager, routes routeSource) appsessi
 // starts, then opens the in-process client. Mosh's UDP channel cannot carry a
 // jump chain or a proxy.
 type moshTransportFactory struct {
-	inner   moshadapter.InProcessFactory
-	manager *appconnection.Manager
-	routes  routeSource
+	inner     moshadapter.InProcessFactory
+	manager   *appconnection.Manager
+	routes    routeSource
+	providers *appconnection.NetworkProviderRegistry
 }
 
 func (f *moshTransportFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
@@ -42,7 +47,46 @@ func (f *moshTransportFactory) Open(ctx context.Context, spec appsession.StartSp
 	}
 	inner := f.inner
 	inner.Bootstrap = &moshBootstrap{manager: f.manager, route: route}
+	if route.Network != nil {
+		datagram, err := f.datagramProvider(ctx, *route.Network)
+		if err != nil {
+			return nil, err
+		}
+		inner.DialDatagram = datagram.DialDatagram
+	}
 	return inner.Open(ctx, spec)
+}
+
+// datagramProvider acquires the live Provider for the route and requires its
+// optional datagram capability. A Provider without it fails the Session closed:
+// the UDP flow must never fall back to a host socket outside the profile. The
+// SSH bootstrap uses the same registry entry through the Connection Manager, so
+// one profile still has one Provider.
+func (f *moshTransportFactory) datagramProvider(ctx context.Context,
+	network appconnection.NetworkRoute) (appconnection.NetworkProviderDatagram, error) {
+
+	provider, err := f.providers.Acquire(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	datagram, ok := provider.(appconnection.NetworkProviderDatagram)
+	if !ok {
+		// Every production Provider implements the capability. This branch
+		// guards a registry built with a custom factory and still fails closed
+		// rather than dialing around it.
+		return nil, &appconnection.Error{
+			Kind: appconnection.KindUnsupported,
+			Cause: fmt.Errorf(
+				"%w: Network Provider for profile %q cannot carry mosh datagrams",
+				moshmodel.ErrNetworkUnsupported, network.ProfileID),
+			Provider: &appconnection.ProviderInfo{
+				ProfileID: network.ProfileID,
+				Label:     network.Label,
+				Kind:      network.Kind,
+			},
+		}
+	}
+	return datagram, nil
 }
 
 // moshRoute validates the Mosh configuration and resolves the route
@@ -56,23 +100,6 @@ func moshRoute(ctx context.Context, spec appsession.StartSpec,
 	route, err := resolveMoshRoute(ctx, spec.HostID, routes)
 	if err != nil {
 		return appconnection.Route{}, err
-	}
-	// Mosh's UDP channel is not connected to a Network Provider yet. Fail
-	// closed before the SSH bootstrap or mosh-server starts: dialing the
-	// bootstrap directly would silently bypass the selected profile. The UI
-	// maps this sentinel to the OS-level-VPN guidance.
-	if route.Network != nil {
-		return appconnection.Route{}, &appconnection.Error{
-			Kind: appconnection.KindUnsupported,
-			Cause: fmt.Errorf(
-				"%w: Network Profile %q; use an OS-level VPN",
-				moshmodel.ErrNetworkUnsupported, route.Network.ProfileID),
-			Provider: &appconnection.ProviderInfo{
-				ProfileID: route.Network.ProfileID,
-				Label:     route.Network.Label,
-				Kind:      route.Network.Kind,
-			},
-		}
 	}
 	if err := moshadapter.CheckRoute(len(route.Jumps), route.Proxy != nil); err != nil {
 		return appconnection.Route{}, err
@@ -104,6 +131,7 @@ func (b *moshBootstrap) OpenBootstrap(ctx context.Context, spec appsession.Start
 		Username:          spec.Username,
 		Jumps:             b.route.Jumps,
 		Proxy:             b.route.Proxy,
+		Network:           b.route.Network,
 		Algorithms:        b.route.Algorithms,
 		ConfigFingerprint: b.route.ConfigFingerprint,
 		LeaseKind:         appconnection.LeaseShell,

@@ -1026,6 +1026,38 @@ func TestDialRejectsNetworksOtherThanTCP(t *testing.T) {
 	}
 }
 
+func TestDialDatagramAcceptsUDPOnlyAndUsesTheSameNode(t *testing.T) {
+	fake := &fakeBackend{}
+	provider, _ := fakeProvider(t, testConfig(t), fake)
+	if err := provider.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	for _, network := range []string{"tcp", "tcp4", "tcp6", "unix", ""} {
+		_, err := provider.DialDatagram(context.Background(), network, "peer:60001")
+		if err == nil {
+			t.Fatalf("DialDatagram(%q) succeeded", network)
+		}
+		typed := typedProviderError(t, err)
+		if typed.Kind != appconnection.KindUnsupported {
+			t.Fatalf("DialDatagram(%q) Kind = %q, want unsupported", network, typed.Kind)
+		}
+	}
+	if calls, _, _ := fake.dialCalls(); calls != 0 {
+		t.Fatalf("backend dials = %d, want none for non-UDP networks", calls)
+	}
+
+	conn, err := provider.DialDatagram(context.Background(), "udp", "peer.example:60001")
+	if err != nil {
+		t.Fatalf("DialDatagram: %v", err)
+	}
+	_ = conn.Close()
+	calls, networks, addresses := fake.dialCalls()
+	if calls != 1 || networks[0] != "udp" || addresses[0] != "peer.example:60001" {
+		t.Fatalf("backend dials = %d %v %v, want one udp dial", calls, networks, addresses)
+	}
+}
+
 func TestAuthKeyNeverAppearsInErrorsLogsOrTheStateDirectory(t *testing.T) {
 	cfg := testConfig(t)
 	var logMu sync.Mutex

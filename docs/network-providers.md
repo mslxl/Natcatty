@@ -34,12 +34,18 @@ a local operating-system process whose traffic cannot enter the in-process
 netstack. The combination fails before the process starts with a localized
 `KindUnsupported` error that names both selections. Remove one of them.
 
-The port accepts `tcp`, `tcp4`, and `tcp6` only and offers no inbound `Listen`.
+The TCP port accepts `tcp`, `tcp4`, and `tcp6` only and offers no inbound
+`Listen`. A separate optional datagram capability, implemented by both
+production Providers, accepts `udp`, `udp4`, and `udp6` for the in-process
+mosh client. A Provider that does not implement it fails a mosh Session closed
+rather than opening a host socket.
+
 Failures are fail-closed: when a route has a Network Profile, a missing
 Provider, a failed start, a login requirement, or a dial failure ends the
 connection with a typed error. The application never falls back to a direct
 connection and never downgrades a Provider failure into an ordinary network
-error.
+error. The same rule covers datagrams: mosh never probes the host network when
+the Provider cannot open the UDP flow.
 
 ## Transport support
 
@@ -48,7 +54,7 @@ error.
 | SSH | Yes | Provider carries the first dial; later hops stay in SSH. |
 | telnet | Yes | Provider wraps the target dial. |
 | ET, in-process client | Yes | The route is handed to the Connection Manager. |
-| mosh | No | Its UDP channel is not wired to a Provider yet; the UI directs the user to an OS-level VPN. |
+| mosh | Yes | Mosh always uses its in-process client; the Provider carries the SSH bootstrap and the mosh UDP datagram flow. |
 
 ## Tailscale Net
 
@@ -106,12 +112,17 @@ Limits and boundaries:
 
 ## mosh
 
-mosh is currently unsupported with a Network Profile because its UDP channel
-has not been integrated. A mosh Session on a Host whose route resolves a
-Network Profile fails closed before the SSH bootstrap or `mosh-server` starts,
-and the localized error tells the user to use an OS-level VPN. The
-`NetworkProvider` port deliberately has no datagram capability yet; UDP
-integration is a separate follow-up ticket.
+The in-process mosh client supports a Network Profile. The Provider carries
+both dials of the route: the SSH bootstrap that launches `mosh-server` runs
+through the TCP port, and the mosh datagram flow runs through the optional
+datagram capability. The announced address and the fallback SSH host name are
+handed to the Provider unresolved, so the mosh adapter never resolves them on
+the host and never opens a host UDP socket as a fallback; resolution follows
+each Provider's own rules (tunnel-only DNS for WireGuard Net).
+
+`internal/mosh` remains a pure protocol core that never touches the network;
+`adapters/mosh` supplies the connected UDP flow, which opens the host UDP socket
+directly only when no Network Profile is selected.
 
 ## Validation status
 
@@ -125,6 +136,7 @@ real WireGuard peer.
 | Tailscale state machine (key login, interactive login, cancel, retry, close) | Verified with a fake backend | `adapters/tailscale` default tests. |
 | WireGuard `.conf` parser | Verified | `domain/wireguardconf` table-driven tests. |
 | WireGuard netstack data path | Verified with two in-process devices | `adapters/wireguard.TestLoopbackPeersHandshakeAndCarryTCPThroughTheTunnel`, `TestLoopbackProviderCloseStopsTheTunnel`. |
+| mosh UDP through a Provider | Verified with a fake Provider | `adapters/mosh.TestInProcessAdapterDelegatesDatagramResolutionToTheProvider`, `TestInProcessAdapterNeverFallsBackToAHostSocket`, and the `app` mosh routing tests. No real tailnet or WireGuard peer has carried mosh UDP yet. |
 | Windows real-machine Tailscale Net | **Unverified here** | No tailnet credentials or reachable peer were available. Run the opt-in test below on Windows. |
 | Windows real-machine WireGuard Net | **Unverified here** | No WireGuard peer was available. Run the opt-in test below on Windows. |
 | macOS runtime | **Unverified** | macOS guarantees the builds in this release; the default CI checks also run the hermetic tests on macOS, but no real-network check is performed. |

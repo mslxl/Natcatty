@@ -66,6 +66,11 @@ type InProcessFactory struct {
 	HandshakeTimeout time.Duration
 	// ProbeTimeout overrides DefaultProbeTimeout.
 	ProbeTimeout time.Duration
+	// DialDatagram, when non-nil, opens the UDP flow inside a Network
+	// Provider's virtual network. The address is handed to the Provider
+	// unresolved, so the adapter never uses the host resolver or a host UDP
+	// socket. Nil keeps stock mosh's unconnected host socket.
+	DialDatagram func(ctx context.Context, network, address string) (net.Conn, error)
 	// clock overrides the overlay clock in tests. Production uses the
 	// process monotonic clock.
 	clock terminal.Clock
@@ -148,7 +153,7 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 	if probeTimeout <= 0 {
 		probeTimeout = DefaultProbeTimeout
 	}
-	result, err := probe(ctx, client, cfg, connect, probeTimeout, renderer)
+	result, err := probe(ctx, client, cfg, connect, probeTimeout, renderer, f.DialDatagram)
 	if err != nil {
 		client.Close()
 		return nil, err
@@ -186,7 +191,9 @@ func announce(ctx context.Context, stream io.ReadWriteCloser, queue *outputQueue
 	return connect, nil
 }
 
-// candidateAddress is one resolved UDP endpoint to probe.
+// candidateAddress is one UDP endpoint to probe. In host mode addr is the
+// resolved address; in Provider mode resolution is left to the Provider and
+// addr is nil.
 type candidateAddress struct {
 	host string
 	addr *net.UDPAddr
@@ -219,6 +226,29 @@ func (l *udpLink) setReadDeadline(deadline time.Time) error {
 
 func (l *udpLink) close() error { return l.conn.Close() }
 
+// connLink adapts a connected datagram flow, such as the one a Network
+// Provider opens inside its virtual network, to datagramLink. The Provider
+// owns resolution and family selection; this side only reads and writes
+// datagrams.
+type connLink struct {
+	conn net.Conn
+}
+
+func (l *connLink) writeOne(datagram []byte) error {
+	_, err := l.conn.Write(datagram)
+	return err
+}
+
+func (l *connLink) readFrom(buffer []byte) (int, error) {
+	return l.conn.Read(buffer)
+}
+
+func (l *connLink) setReadDeadline(deadline time.Time) error {
+	return l.conn.SetReadDeadline(deadline)
+}
+
+func (l *connLink) close() error { return l.conn.Close() }
+
 // datagramLink is the UDP surface the transport uses. Tests substitute a link
 // whose writes fail so the network-error notification path is deterministic.
 type datagramLink interface {
@@ -232,7 +262,7 @@ type datagramLink interface {
 // datagram already carried. A server whose shell exits immediately can send
 // its shutdown sentinel before the probe returns.
 type probeResult struct {
-	link           *udpLink
+	link           datagramLink
 	remoteShutdown bool
 }
 
@@ -245,9 +275,12 @@ func isClosedNetworkError(err error) bool {
 // probe sends the initial SSP datagram to each candidate and keeps the first
 // endpoint that returns an authenticated mosh packet. The cryptographic check
 // authenticates the server; the source address of a reply is not pinned,
-// matching stock mosh-client.
+// matching stock mosh-client. A nil dialDatagram uses an unconnected host UDP
+// socket; a non-nil one opens a connected flow through a Network Provider and
+// leaves resolution to it.
 func probe(ctx context.Context, client *moshcore.Client, cfg moshmodel.Config,
-	connect moshmodel.Connect, timeout time.Duration, renderer *terminalRenderer) (*probeResult, error) {
+	connect moshmodel.Connect, timeout time.Duration, renderer *terminalRenderer,
+	dialDatagram func(context.Context, string, string) (net.Conn, error)) (*probeResult, error) {
 
 	hosts := make([]string, 0, 2)
 	if connect.Host != "" {
@@ -262,28 +295,57 @@ func probe(ctx context.Context, client *moshcore.Client, cfg moshmodel.Config,
 
 	candidates := make([]candidateAddress, 0, len(hosts))
 	for _, host := range hosts {
+		if dialDatagram != nil {
+			// The Provider resolves the announcement inside its virtual
+			// network, where MagicDNS and tunnel DNS names only exist.
+			// Resolving on the host here would pick the wrong address or fail
+			// entirely.
+			candidates = append(candidates, candidateAddress{host: host})
+			continue
+		}
 		address, err := net.ResolveUDPAddr("udp", net.JoinHostPort(host, strconv.Itoa(connect.Port)))
 		candidates = append(candidates, candidateAddress{host: host, addr: address, err: err})
 	}
 
 	var lastErr error
-	resolved := false
+	sent := false
 	for _, candidate := range candidates {
 		if candidate.err != nil {
 			lastErr = candidate.err
 			continue
 		}
-		resolved = true
-		network := "udp4"
-		if candidate.addr.IP.To4() == nil {
-			network = "udp6"
+		var link datagramLink
+		if dialDatagram != nil {
+			// Bound the Provider dial by the same window as one endpoint
+			// probe, so an unreachable tunnel cannot hold Open open and the
+			// fallback address still gets its turn. The context only bounds
+			// the dial; the response window is awaitResponse's own deadline.
+			dialCtx, cancel := context.WithTimeout(ctx, timeout)
+			conn, err := dialDatagram(dialCtx, "udp",
+				net.JoinHostPort(candidate.host, strconv.Itoa(connect.Port)))
+			cancel()
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if conn == nil {
+				lastErr = errors.New("mosh: the Network Provider returned no datagram flow")
+				continue
+			}
+			link = &connLink{conn: conn}
+		} else {
+			network := "udp4"
+			if candidate.addr.IP.To4() == nil {
+				network = "udp6"
+			}
+			socket, err := net.ListenUDP(network, nil)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			link = &udpLink{conn: socket, remote: candidate.addr}
 		}
-		socket, err := net.ListenUDP(network, nil)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		link := &udpLink{conn: socket, remote: candidate.addr}
+		sent = true
 		// The first candidate sends the initial state; a fallback candidate
 		// needs an immediate retransmission because the shared client may
 		// have sent moments ago and its RTO may not be due yet.
@@ -321,15 +383,19 @@ func probe(ctx context.Context, client *moshcore.Client, cfg moshmodel.Config,
 			lastErr = err
 		}
 	}
-	if resolved {
+	if sent {
 		if lastErr != nil {
 			return nil, fmt.Errorf("%w: no response from %s: %v", moshmodel.ErrTimeout,
 				strings.Join(hosts, ", "), lastErr)
 		}
 		return nil, fmt.Errorf("%w: no response from %s", moshmodel.ErrTimeout, strings.Join(hosts, ", "))
 	}
+	// Nothing was sent: every candidate failed to resolve or to open a flow.
+	// That is a network failure, never a silent fall back to another path.
 	if lastErr != nil {
-		return nil, fmt.Errorf("%w: resolve mosh-server address: %v", moshmodel.ErrNetwork, lastErr)
+		// Keep the Provider's typed failure in the chain: a login requirement
+		// or a stopped tunnel must not degrade into a generic network error.
+		return nil, fmt.Errorf("%w: reach mosh-server address: %w", moshmodel.ErrNetwork, lastErr)
 	}
 	return nil, fmt.Errorf("%w: resolve mosh-server address", moshmodel.ErrNetwork)
 }
@@ -341,7 +407,7 @@ func probe(ctx context.Context, client *moshcore.Client, cfg moshmodel.Config,
 // remoteShutdown flag reports a sentinel that arrived before the probe
 // finished. A non-nil error is either terminal (protocol/cancellation) or a
 // candidate timeout.
-func awaitResponse(ctx context.Context, client *moshcore.Client, link *udpLink,
+func awaitResponse(ctx context.Context, client *moshcore.Client, link datagramLink,
 	timeout time.Duration, renderer *terminalRenderer, host string) (*probeResult, error) {
 
 	lastRetransmit := time.Now()

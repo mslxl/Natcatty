@@ -21562,11 +21562,11 @@ func (msgs Messages) ConnectionErrorMoshProxy() string {
 	return Catalog.Format(msgs.locale, "connectionErrorMoshProxy", nil)
 }
 
-// ConnectionErrorMoshNetwork says "Mosh Sessions cannot use an embedded Network Profile. Use an OS-level VPN for this Host."
+// ConnectionErrorMoshNetwork says "Mosh cannot use this Host's Network Profile because its Network Provider cannot carry the UDP flow. Choose a profile …"
 // in the language the app shows.
 func ConnectionErrorMoshNetwork() string { return In(i18n.Locale()).ConnectionErrorMoshNetwork() }
 
-// ConnectionErrorMoshNetwork says "Mosh Sessions cannot use an embedded Network Profile. Use an OS-level VPN for this Host."
+// ConnectionErrorMoshNetwork says "Mosh cannot use this Host's Network Profile because its Network Provider cannot carry the UDP flow. Choose a profile …"
 // in the language of msgs.
 func (msgs Messages) ConnectionErrorMoshNetwork() string {
 	return Catalog.Format(msgs.locale, "connectionErrorMoshNetwork", nil)

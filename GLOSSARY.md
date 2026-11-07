@@ -82,8 +82,10 @@ carries `HasAuthKey`, `HasPrivateKey`, and `HasPresharedKey` presence markers.
 _Avoid_: VPN, network, tunnel
 
 **Network Provider**:
-The runtime dialing port that opens TCP connections through one Network Profile.
-Tailscale Net and WireGuard Net are its two implementations.
+The runtime dialing port that opens connections through one Network Profile: TCP
+for the first SSH dial, plus an optional datagram capability that carries the
+in-process mosh client's UDP flow. Tailscale Net and WireGuard Net are its two
+implementations.
 _Avoid_: VPN client, tunnel, sidecar
 
 **Tailscale Net**:
