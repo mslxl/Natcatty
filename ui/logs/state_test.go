@@ -771,10 +771,14 @@ func TestOpenGlobalSearchSelectsHistoryAndClearsHostScope(t *testing.T) {
 	state.Refresh()
 	state.SelectTab(TabConnections)
 	state.SetHostKey("host-1")
+	state.SetHistoryMode(HistoryModeStatistics)
 
 	state.OpenGlobalSearch()
 	if state.Tab() != TabHistory {
 		t.Fatalf("tab = %v, want History", state.Tab())
+	}
+	if state.HistoryMode() != HistoryModeCommands {
+		t.Fatalf("mode = %v, want the command list", state.HistoryMode())
 	}
 	if state.HostKey() != "" {
 		t.Fatalf("Host scope = %q, want global", state.HostKey())
@@ -789,6 +793,75 @@ func TestRefreshReportsAHistoryLoadError(t *testing.T) {
 	state.Refresh()
 	if state.Problem() != ProblemLoad {
 		t.Fatalf("problem = %v, want ProblemLoad", state.Problem())
+	}
+}
+
+// statisticsSource is the History result set used by the summary tests: two
+// saved Hosts, two working directories, one failure, and one row whose finish
+// time the shell never reported.
+func statisticsSource() *fakeSource {
+	recorded := time.Date(2026, 11, 7, 9, 30, 0, 0, time.UTC)
+	return &fakeSource{entries: []domainhistory.Entry{
+		{ID: "a", HostID: "host-1", HostLabel: "web-1", Scope: "host:host-1",
+			Command: "git status", CWD: "/srv/app", RecordedAt: recorded,
+			FinishedAt: recorded.Add(time.Second), Duration: time.Second,
+			ExitCode: 0, HasExitCode: true, Source: domainhistory.SourceSession},
+		{ID: "b", HostID: "host-1", HostLabel: "web-1", Scope: "host:host-1",
+			Command: "make test", CWD: "/srv/app", RecordedAt: recorded.Add(-time.Minute),
+			FinishedAt: recorded.Add(-time.Minute + 3*time.Second),
+			Duration:   3 * time.Second, ExitCode: 2, HasExitCode: true,
+			Source: domainhistory.SourceSession},
+		{ID: "c", HostID: "host-2", HostLabel: "db-1", Scope: "host:host-2",
+			Command: "ls", CWD: "/var/log", RecordedAt: recorded.Add(-2 * time.Minute),
+			Source: domainhistory.SourceSession},
+	}}
+}
+
+// TestHistoryStatisticsFollowTheActiveFilters proves the summary is computed
+// from the same result set as the rows: every filter changes it, and the mode
+// selector is a separate view rather than another filter.
+func TestHistoryStatisticsFollowTheActiveFilters(t *testing.T) {
+	state := NewState(statisticsSource(), nil)
+	state.Refresh()
+	state.SelectTab(TabHistory)
+	if state.HistoryMode() != HistoryModeCommands {
+		t.Fatalf("default mode = %v, want commands", state.HistoryMode())
+	}
+	state.SetHistoryMode(HistoryModeStatistics)
+	if state.HistoryMode() != HistoryModeStatistics {
+		t.Fatalf("mode = %v, want statistics", state.HistoryMode())
+	}
+
+	stats := state.Statistics()
+	if stats.Total != 3 || stats.Unique != 3 {
+		t.Fatalf("unfiltered total = %d, unique = %d; want 3 and 3",
+			stats.Total, stats.Unique)
+	}
+	if stats.Failures != 1 || stats.KnownExits != 2 || stats.FailureRate != 0.5 {
+		t.Fatalf("unfiltered failures = %d/%d (%v), want 1/2 (0.5)",
+			stats.Failures, stats.KnownExits, stats.FailureRate)
+	}
+	if stats.AverageDuration != 2*time.Second ||
+		stats.DurationsKnown != 2 || stats.DurationsUnknown != 1 {
+		t.Fatalf("unfiltered durations = %v (%d known, %d unknown)",
+			stats.AverageDuration, stats.DurationsKnown, stats.DurationsUnknown)
+	}
+
+	state.SetExitFilter(domainhistory.ExitFailure)
+	if stats = state.Statistics(); stats.Total != 1 || stats.Failures != 1 {
+		t.Fatalf("failure-filtered statistics = %+v", stats)
+	}
+	state.SetExitFilter(domainhistory.ExitAny)
+
+	state.SetCwdFilter("/srv/app")
+	if stats = state.Statistics(); stats.Total != 2 || stats.Unique != 2 {
+		t.Fatalf("cwd-filtered statistics = %+v", stats)
+	}
+	state.SetCwdFilter("")
+
+	state.SetSearch("no-match")
+	if stats = state.Statistics(); stats.Total != 0 || stats.Unique != 0 {
+		t.Fatalf("empty statistics = %+v", stats)
 	}
 }
 

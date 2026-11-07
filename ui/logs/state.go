@@ -27,6 +27,17 @@ const (
 	TabHistory
 )
 
+// HistoryMode selects the History tab's view. Commands and Statistics share
+// the same active filters; the summary is a separate view, not a filter.
+type HistoryMode int
+
+const (
+	// HistoryModeCommands lists the matching command rows.
+	HistoryModeCommands HistoryMode = iota
+	// HistoryModeStatistics summarizes the matching rows.
+	HistoryModeStatistics
+)
+
 // ErrHostMissing reports a record whose Host has been deleted from the Vault.
 // The composition root translates the shell's unavailable-Host error into it
 // so this package need not know the shell.
@@ -124,6 +135,7 @@ type State struct {
 	revision uint64
 
 	tab          Tab
+	historyMode  HistoryMode
 	search       string
 	status       domainhistory.ConnectionStatus
 	sourceFilter string
@@ -222,6 +234,24 @@ func (s *State) SelectTab(tab Tab) {
 		strings.HasPrefix(s.hostKey, domainhistory.OriginHostKeyPrefix) {
 		s.hostKey = ""
 	}
+}
+
+// HistoryMode returns the selected History view.
+func (s *State) HistoryMode() HistoryMode { return s.historyMode }
+
+// SetHistoryMode switches between the command list and the summary of the same
+// filtered result set. Switching views starts at the top so the summary is not
+// opened at the command list's old offset.
+func (s *State) SetHistoryMode(mode HistoryMode) {
+	if mode != HistoryModeStatistics {
+		mode = HistoryModeCommands
+	}
+	if s.historyMode == mode {
+		return
+	}
+	s.historyMode = mode
+	s.visible = PageSize
+	s.scroll.Y = 0
 }
 
 // Refresh reloads the lists when the source revision changed. The view calls
@@ -339,9 +369,11 @@ func (s *State) SetExitFilter(exit domainhistory.ExitFilter) {
 // OpenGlobalSearch selects the History tab, clears the Host scope so every
 // Host and origin is searched, and asks the next frame to focus the search
 // field. It is the app-level shortcut's action; it never touches the
-// terminal's Ctrl-R or Up keys.
+// terminal's Ctrl-R or Up keys. It returns to the command list so the shortcut
+// always opens search results, even if the Statistics view was left open.
 func (s *State) OpenGlobalSearch() {
 	s.SelectTab(TabHistory)
+	s.SetHistoryMode(HistoryModeCommands)
 	s.hostKey = ""
 	s.visible = PageSize
 	s.focusRequest = focusHistorySearch
@@ -790,6 +822,13 @@ func (s *State) FilteredEntries() []domainhistory.Entry {
 	}
 	domainhistory.SortEntriesForQuery(matched, s.search)
 	return matched
+}
+
+// Statistics summarizes the live history rows matching the active filters. It
+// consumes the same FilteredEntries result set the list renders, so every
+// filter change updates the summary without a second source query.
+func (s *State) Statistics() domainhistory.Statistics {
+	return domainhistory.ComputeStatistics(s.FilteredEntries())
 }
 
 // VisibleLogs returns the paged connection logs.

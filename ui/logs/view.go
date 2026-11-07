@@ -38,7 +38,12 @@ func View(s *State) func(*ui.Context) {
 				if s.Tab() == TabConnections {
 					connectionRows(c, s, m, t)
 				} else {
-					historyRows(c, s, m, t)
+					historyModeSelector(c, s, m)
+					if s.HistoryMode() == HistoryModeStatistics {
+						historyStatistics(c, s, m, t)
+					} else {
+						historyRows(c, s, m, t)
+					}
 				}
 			})
 		})
