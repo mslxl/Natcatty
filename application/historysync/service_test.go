@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -155,17 +156,51 @@ func (s *memorySyncStore) ApplyRemotePage(_ context.Context, page historysync.Re
 		return s.applyErr
 	}
 	checkpoint := page.Checkpoint
+	moves := make(map[string]int64, len(page.Reindexes))
+	for _, reindex := range page.Reindexes {
+		if reindex.RecordID == "" || reindex.Index <= checkpoint.AppliedIndex {
+			return errors.New("invalid reindex")
+		}
+		found := false
+		for _, existing := range s.records {
+			if existing.ID != reindex.RecordID {
+				continue
+			}
+			if existing.SeriesHost != checkpoint.SeriesHost || existing.Tag != checkpoint.Tag ||
+				existing.Direction != domainhistory.RecordDirectionLocal ||
+				!existing.UploadedAt.IsZero() {
+				return errors.New("invalid reindex target")
+			}
+			moves[reindex.RecordID] = reindex.Index
+			found = true
+			break
+		}
+		if !found {
+			return errors.New("reindex target missing")
+		}
+	}
+	indexOf := func(record domainhistory.Record) int64 {
+		if moved, ok := moves[record.ID]; ok {
+			return moved
+		}
+		return record.Index
+	}
 	for _, record := range page.Records {
 		if !record.Valid() || record.Direction != domainhistory.RecordDirectionRemote {
 			return errors.New("invalid remote record")
 		}
 		for _, existing := range s.records {
 			if existing.SeriesHost == record.SeriesHost && existing.Tag == record.Tag &&
-				existing.Index == record.Index {
+				indexOf(existing) == record.Index {
 				if !sameMemoryRecord(existing, record) {
 					return errors.New("conflicting remote record")
 				}
 			}
+		}
+	}
+	for index := range s.records {
+		if moved, ok := moves[s.records[index].ID]; ok {
+			s.records[index].Index = moved
 		}
 	}
 	for _, record := range page.Records {
@@ -1117,20 +1152,27 @@ func TestLocalWriterSeriesAheadOnServerIsDownloaded(t *testing.T) {
 	}
 }
 
-// TestServerAcknowledgedPrefixIsRecordedWithoutResending proves the server's
-// high-water mark, not the stale local display cache, becomes the persisted
-// upload checkpoint when a re-login cleared the acknowledgment marks.
+// TestServerAcknowledgedPrefixIsRecordedWithoutResending proves the uploaded
+// prefix, verified against the server's records after a re-login cleared the
+// acknowledgment marks, is recorded without being sent again.
 func TestServerAcknowledgedPrefixIsRecordedWithoutResending(t *testing.T) {
 	store := newMemorySyncStore()
 	store.setMetadata(func(metadata *domainhistory.Metadata) {
 		metadata.UnverifiedKeyConfirmed = true
 	})
+	var serverPrefix []historysync.SyncRecord
 	for index, command := range []string{"one", "two", "three"} {
-		store.addLocalEntry(localEntry(
-			"0198d000-0000-7000-8000-0000000000e"+string(rune('1'+index)),
-			command, testStart.Add(time.Duration(index)*time.Minute)))
+		id := "0198d000-0000-7000-8000-0000000000e" + string(rune('1'+index))
+		at := testStart.Add(time.Duration(index) * time.Minute)
+		store.addLocalEntry(localEntry(id, command, at))
+		if index < 2 {
+			// The server already holds the first two commands; the local log
+			// is the same events with the upload marks cleared.
+			serverPrefix = append(serverPrefix, remoteCreate(testWriter, id, command, int64(index), at))
+		}
 	}
 	factory := fake.NewFactory(fake.Options{
+		Records: serverPrefix,
 		Statuses: []historysync.SeriesStatus{{
 			Series: historysync.Series{
 				SeriesHost: testWriter, Tag: domainhistory.RecordTagHistory,
@@ -1148,9 +1190,14 @@ func TestServerAcknowledgedPrefixIsRecordedWithoutResending(t *testing.T) {
 	if result.Uploaded != 1 {
 		t.Fatalf("uploaded = %d, want only the index the server lacks", result.Uploaded)
 	}
-	events := factory.Events()
-	if len(events) != 1 || events[0] != "upload:"+testWriter+":2-2" {
-		t.Fatalf("uploads = %v, want one batch starting at index 2", events)
+	var uploads []string
+	for _, event := range factory.Events() {
+		if strings.HasPrefix(event, "upload:") {
+			uploads = append(uploads, event)
+		}
+	}
+	if len(uploads) != 1 || uploads[0] != "upload:"+testWriter+":2-2" {
+		t.Fatalf("uploads = %v, want one batch starting at index 2", uploads)
 	}
 	if got := store.checkpoint(testWriter).UploadedIndex; got != 2 {
 		t.Fatalf("upload checkpoint = %d, want the server high-water mark 2", got)
@@ -1259,6 +1306,429 @@ func TestConcurrentTriggersCoalesceIntoOneRun(t *testing.T) {
 	if factory.Opens() != 2 {
 		t.Fatalf("opens = %d, want startup plus one coalesced run", factory.Opens())
 	}
+}
+
+// TestRestoredLocalCaptureIsReindexedAndUploaded reproduces the restoration
+// scenario: an older log holds indexes 0-4, the server already stores indexes
+// 5-6 for the same writer, and a command captured before the first download
+// takes index 5. The server record must be applied, the unsent capture must be
+// moved after the server's maximum, and the capture must reach the server.
+func TestRestoredLocalCaptureIsReindexedAndUploaded(t *testing.T) {
+	serverRecords := []historysync.SyncRecord{
+		remoteCreate(testWriter, "0198d000-0000-7000-8000-00000000020a", "server five", 5, testStart.Add(5*time.Minute)),
+		remoteCreate(testWriter, "0198d000-0000-7000-8000-00000000020b", "server six", 6, testStart.Add(6*time.Minute)),
+	}
+	factory := fake.NewFactory(fake.Options{Records: serverRecords})
+	store := newMemorySyncStore()
+	store.setMetadata(func(metadata *domainhistory.Metadata) {
+		metadata.UnverifiedKeyConfirmed = true
+	})
+	for index := 0; index < 5; index++ {
+		store.addLocalEntry(localEntry(
+			"0198d000-0000-7000-8000-0000000002a"+string(rune('0'+index)),
+			"old", testStart.Add(time.Duration(index)*time.Minute)))
+	}
+	captured := store.addLocalEntry(localEntry(
+		"0198d000-0000-7000-8000-0000000002b1", "captured after restore", testStart.Add(7*time.Minute)))
+	service, _, _ := newEngine(t, store, factory)
+
+	result, err := service.SyncNow(context.Background())
+	if err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+	if result.Downloaded != 2 || result.Applied != 2 || result.Uploaded != 1 {
+		t.Fatalf("result = %+v (events %v), want two downloaded and the capture uploaded",
+			result, factory.Events())
+	}
+	if _, ok := store.snapshotEntries()[serverRecords[0].HistoryID]; !ok {
+		t.Fatal("the server's index-5 record was not applied")
+	}
+	var captureRecord domainhistory.Record
+	for _, record := range store.snapshotRecords() {
+		if record.ID == captured.ID {
+			captureRecord = record
+		}
+	}
+	if captureRecord.ID == "" {
+		t.Fatal("the captured local record disappeared from the log")
+	}
+	if captureRecord.Index <= serverRecords[1].Index {
+		t.Fatalf("capture index = %d, want it moved after the server maximum %d",
+			captureRecord.Index, serverRecords[1].Index)
+	}
+	if captureRecord.UploadedAt.IsZero() {
+		t.Fatalf("the capture was not acknowledged: %+v", captureRecord)
+	}
+	capturedOnServer := false
+	for _, record := range factory.ServerRecords() {
+		if record.ID == captured.ID && record.Index == captureRecord.Index {
+			capturedOnServer = true
+		}
+	}
+	if !capturedOnServer {
+		t.Fatalf("the captured record never reached the server: %v", factory.Events())
+	}
+	if got := store.checkpoint(testWriter); got.AppliedIndex != 6 || got.UploadedIndex != captureRecord.Index {
+		t.Fatalf("checkpoint = %+v, want applied 6 and uploaded %d", got, captureRecord.Index)
+	}
+	if status := service.Status(); status.PendingUploads != 0 {
+		t.Fatalf("pending uploads = %d, want none", status.PendingUploads)
+	}
+}
+
+// TestRestoredLocalCapturesReachingServerMaxAreReindexed proves the applied
+// checkpoint is never rebuilt from unacknowledged captures even when their
+// indexes catch up with the server's high-water mark. A restored log with
+// indexes 0-4 acknowledged holds two captures at 5-6 while different server
+// records occupy those same indexes; the server suffix must still be
+// downloaded, both captures moved after it, and both uploaded.
+func TestRestoredLocalCapturesReachingServerMaxAreReindexed(t *testing.T) {
+	serverRecords := []historysync.SyncRecord{
+		remoteCreate(testWriter, "0198d000-0000-7000-8000-00000000020c", "server five", 5, testStart.Add(5*time.Minute)),
+		remoteCreate(testWriter, "0198d000-0000-7000-8000-00000000020d", "server six", 6, testStart.Add(6*time.Minute)),
+	}
+	factory := fake.NewFactory(fake.Options{Records: serverRecords})
+	store := newMemorySyncStore()
+	store.setMetadata(func(metadata *domainhistory.Metadata) {
+		metadata.UnverifiedKeyConfirmed = true
+	})
+	var acknowledged []string
+	for index := 0; index < 5; index++ {
+		record := store.addLocalEntry(localEntry(
+			"0198d000-0000-7000-8000-0000000002c"+string(rune('0'+index)),
+			"old", testStart.Add(time.Duration(index)*time.Minute)))
+		acknowledged = append(acknowledged, record.ID)
+	}
+	store.setUploaded(acknowledged...)
+	captures := []domainhistory.Record{
+		store.addLocalEntry(localEntry(
+			"0198d000-0000-7000-8000-0000000002d1", "captured five", testStart.Add(7*time.Minute))),
+		store.addLocalEntry(localEntry(
+			"0198d000-0000-7000-8000-0000000002d2", "captured six", testStart.Add(8*time.Minute))),
+	}
+	service, _, _ := newEngine(t, store, factory)
+
+	result, err := service.SyncNow(context.Background())
+	if err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+	if result.Downloaded != 2 || result.Applied != 2 || result.Uploaded != 2 {
+		t.Fatalf("result = %+v (events %v), want two downloaded and both captures uploaded",
+			result, factory.Events())
+	}
+	if _, ok := store.snapshotEntries()[serverRecords[0].HistoryID]; !ok {
+		t.Fatal("the server's index-5 record was not applied")
+	}
+	stored := make(map[string]domainhistory.Record)
+	for _, record := range store.snapshotRecords() {
+		stored[record.ID] = record
+	}
+	for _, capture := range captures {
+		record, ok := stored[capture.ID]
+		if !ok {
+			t.Fatalf("captured record %s disappeared from the log", capture.ID)
+		}
+		if record.Index <= 6 {
+			t.Fatalf("capture index = %d, want it moved after the server maximum 6", record.Index)
+		}
+		if record.UploadedAt.IsZero() {
+			t.Fatalf("the capture was not acknowledged: %+v", record)
+		}
+	}
+	sent := make(map[string]bool)
+	for _, record := range factory.ServerRecords() {
+		sent[record.ID] = true
+	}
+	for _, capture := range captures {
+		if !sent[capture.ID] {
+			t.Fatalf("capture %s never reached the server: %v", capture.ID, factory.Events())
+		}
+	}
+	if got := store.checkpoint(testWriter); got.AppliedIndex != 6 || got.UploadedIndex != 8 {
+		t.Fatalf("checkpoint = %+v, want applied 6 and uploaded 8", got)
+	}
+	if status := service.Status(); status.PendingUploads != 0 {
+		t.Fatalf("pending uploads = %d, want none", status.PendingUploads)
+	}
+}
+
+// TestAppliedRowsNotifyObserversWhenUploadFails proves downloaded projections
+// are announced as soon as they commit, even though the completion callback
+// still reports only a fully successful run.
+func TestAppliedRowsNotifyObserversWhenUploadFails(t *testing.T) {
+	remote := remoteCreate(remoteWriterID,
+		"0198d000-0000-7000-8000-000000000281", "remote", 0, testStart)
+	factory := fake.NewFactory(fake.Options{
+		Records:   []historysync.SyncRecord{remote},
+		UploadErr: historysync.ErrOffline,
+	})
+	store := newMemorySyncStore()
+	store.setMetadata(func(metadata *domainhistory.Metadata) {
+		metadata.UnverifiedKeyConfirmed = true
+	})
+	store.addLocalEntry(localEntry("0198d000-0000-7000-8000-000000000282", "local", testStart))
+	var applied []historysync.SyncResult
+	completed := 0
+	service, _, _ := newEngine(t, store, factory,
+		historysync.WithSyncApplied(func(result historysync.SyncResult) {
+			applied = append(applied, result)
+		}),
+		historysync.WithSyncCompleted(func(historysync.SyncResult) { completed++ }))
+
+	if _, err := service.SyncNow(context.Background()); !errors.Is(err, historysync.ErrOffline) {
+		t.Fatalf("SyncNow = %v, want ErrOffline", err)
+	}
+	if _, ok := store.snapshotEntries()[remote.HistoryID]; !ok {
+		t.Fatal("the remote row was not applied")
+	}
+	if len(applied) != 1 || applied[0].Applied == 0 {
+		t.Fatalf("applied callbacks = %+v, want one with the committed rows", applied)
+	}
+	if completed != 0 {
+		t.Fatalf("completion callback ran %d times for a failed run", completed)
+	}
+}
+
+// TestAppLockPausesEveryAutomaticTrigger proves a locked UI is a pause: no
+// trigger opens a remote until the gate opens again.
+func TestAppLockPausesEveryAutomaticTrigger(t *testing.T) {
+	factory := fake.NewFactory(fake.Options{})
+	store := newMemorySyncStore()
+	var locked atomic.Bool
+	locked.Store(true)
+	service, scheduler, _ := newEngine(t, store, factory,
+		historysync.WithAppLocked(func() bool { return locked.Load() }))
+
+	service.Start(context.Background())
+	waitIdle(t, service)
+	if factory.Opens() != 0 {
+		t.Fatalf("startup opened %d remotes while App Lock was engaged", factory.Opens())
+	}
+	service.NotifyFocus()
+	scheduler.Advance(time.Second)
+	waitIdle(t, service)
+	service.NotifyLocalChange()
+	scheduler.Advance(time.Second)
+	waitIdle(t, service)
+	scheduler.Advance(5 * time.Minute)
+	waitIdle(t, service)
+	if factory.Opens() != 0 {
+		t.Fatalf("automatic triggers opened %d remotes while App Lock was engaged", factory.Opens())
+	}
+	status := service.Status()
+	if status.State != atuinmodel.SyncLocked || status.Problem != atuinmodel.ProblemLocked ||
+		!status.NextRetryAt.IsZero() {
+		t.Fatalf("status = %+v, want locked with no retry", status)
+	}
+
+	locked.Store(false)
+	if _, err := service.SyncNow(context.Background()); err != nil {
+		t.Fatalf("SyncNow after unlock: %v", err)
+	}
+	if factory.Opens() != 1 {
+		t.Fatalf("opens after unlock = %d, want one", factory.Opens())
+	}
+}
+
+// TestSecretsLockedDuringRunKeepsLockedStatus proves the final status is not
+// overwritten with idle when the field-secret store locks mid-run.
+func TestSecretsLockedDuringRunKeepsLockedStatus(t *testing.T) {
+	remote := remoteCreate(remoteWriterID,
+		"0198d000-0000-7000-8000-000000000291", "remote", 0, testStart)
+	var secrets *syncSecrets
+	factory := fake.NewFactory(fake.Options{
+		Records: []historysync.SyncRecord{remote},
+		DownloadHook: func(historysync.Series, int64, int) {
+			secrets.mode = historysync.SecretModePassphraseLocked
+		},
+	})
+	store := newMemorySyncStore()
+	service, _, engineSecrets := newEngine(t, store, factory)
+	secrets = engineSecrets
+
+	if _, err := service.SyncNow(context.Background()); err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+	if _, ok := store.snapshotEntries()[remote.HistoryID]; !ok {
+		t.Fatal("the downloaded row was not applied before the lock")
+	}
+	status := service.Status()
+	if status.State != atuinmodel.SyncLocked || status.Problem != atuinmodel.ProblemLocked {
+		t.Fatalf("status = %+v, want the locked state preserved", status)
+	}
+	if !status.NextRetryAt.IsZero() {
+		t.Fatalf("next retry = %v, want none while locked", status.NextRetryAt)
+	}
+}
+
+// TestTerminalAuthErrorWaitsForUserUntilConfigurationChanges proves automatic
+// triggers stop opening remotes after an auth failure, while a manual retry
+// and a real configuration change still resume work.
+func TestTerminalAuthErrorWaitsForUserUntilConfigurationChanges(t *testing.T) {
+	factory := fake.NewFactory(fake.Options{AuthErr: historysync.ErrAuthExpired})
+	store := newMemorySyncStore()
+	service, scheduler, _ := newEngine(t, store, factory)
+
+	service.Start(context.Background())
+	waitIdle(t, service)
+	opened := factory.Opens()
+	if opened == 0 {
+		t.Fatal("the startup run did not open a remote")
+	}
+	service.NotifyFocus()
+	scheduler.Advance(time.Second)
+	waitIdle(t, service)
+	service.NotifyLocalChange()
+	scheduler.Advance(time.Second)
+	waitIdle(t, service)
+	scheduler.Advance(5 * time.Minute)
+	waitIdle(t, service)
+	if factory.Opens() != opened {
+		t.Fatalf("automatic triggers opened %d remotes after an auth failure", factory.Opens()-opened)
+	}
+	status := service.Status()
+	if status.State != atuinmodel.SyncAuthExpired || !status.NextRetryAt.IsZero() {
+		t.Fatalf("status = %+v, want auth expired with no retry", status)
+	}
+
+	if _, err := service.SyncNow(context.Background()); !errors.Is(err, historysync.ErrAuthExpired) {
+		t.Fatalf("manual SyncNow = %v, want a manual retry to hit the remote", err)
+	}
+	if factory.Opens() != opened+1 {
+		t.Fatalf("opens after manual retry = %d, want %d", factory.Opens(), opened+1)
+	}
+	// The manual failure re-arms the park; focus stays quiet until a real
+	// configuration change.
+	service.NotifyFocus()
+	scheduler.Advance(time.Second)
+	waitIdle(t, service)
+	if factory.Opens() != opened+1 {
+		t.Fatalf("focus opened %d remotes after the manual retry", factory.Opens()-opened-1)
+	}
+
+	service.NotifyConfigurationChanged()
+	scheduler.Advance(5 * time.Minute)
+	waitIdle(t, service)
+	if factory.Opens() != opened+2 {
+		t.Fatalf("opens after a configuration change = %d, want %d", factory.Opens(), opened+2)
+	}
+}
+
+// TestStopCancelsAnInFlightManualRun proves shutdown cancels work started by a
+// manual SyncNow whose caller passed context.Background().
+func TestStopCancelsAnInFlightManualRun(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	factory := fake.NewFactory(fake.Options{
+		UploadHook: func([]historysync.SyncRecord) {
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+			<-release
+		},
+	})
+	store := newMemorySyncStore()
+	store.setMetadata(func(metadata *domainhistory.Metadata) {
+		metadata.UnverifiedKeyConfirmed = true
+	})
+	store.addLocalEntry(localEntry("0198d000-0000-7000-8000-0000000002c1", "one", testStart))
+	service, _, _ := newEngine(t, store, factory)
+
+	results := make(chan error, 1)
+	go func() {
+		_, err := service.SyncNow(context.Background())
+		results <- err
+	}()
+	waitSignal(t, started)
+	service.Stop()
+	close(release)
+
+	select {
+	case err := <-results:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("SyncNow after Stop = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not cancel the in-flight manual run")
+	}
+}
+
+// TestAddressChangedAfterStatusSnapshotFailsClosed proves credentials are
+// never opened for an address the stored account does not own even when the
+// setting changes between the status snapshot and the remote open.
+func TestAddressChangedAfterStatusSnapshotFailsClosed(t *testing.T) {
+	factory := fake.NewFactory(fake.Options{})
+	store := newMemorySyncStore()
+	settings := &flipSyncSettings{
+		syncSettings: newSyncSettings(),
+		alternate:    "https://attacker.example.test",
+	}
+	service := historysync.NewService(settings, newSyncSecrets(), store, factory,
+		historysync.WithScheduler(newManualScheduler()),
+		historysync.WithJitter(identityJitter))
+	t.Cleanup(service.Stop)
+
+	if _, err := service.SyncNow(context.Background()); !errors.Is(err, historysync.ErrAccountMismatch) {
+		t.Fatalf("SyncNow = %v, want ErrAccountMismatch", err)
+	}
+	if factory.Opens() != 0 {
+		t.Fatalf("the engine opened %d remotes for a changed address", factory.Opens())
+	}
+	status := service.Status()
+	if status.State != atuinmodel.SyncError || !status.NextRetryAt.IsZero() {
+		t.Fatalf("status = %+v, want a non-retrying error", status)
+	}
+}
+
+// TestStoredAccountUserIDMismatchFailsClosedBeforeExchange covers the same
+// server address with a different user id.
+func TestStoredAccountUserIDMismatchFailsClosedBeforeExchange(t *testing.T) {
+	factory := fake.NewFactory(fake.Options{
+		Account: historysync.Account{ServerURL: testServerURL, UserID: "a-different-account"},
+	})
+	store := newMemorySyncStore()
+	record := store.addLocalEntry(localEntry(
+		"0198d000-0000-7000-8000-0000000002d1", "one", testStart))
+	service, _, _ := newEngine(t, store, factory)
+
+	if _, err := service.SyncNow(context.Background()); !errors.Is(err, historysync.ErrAccountMismatch) {
+		t.Fatalf("SyncNow = %v, want ErrAccountMismatch", err)
+	}
+	calls := factory.Last().Calls()
+	if calls.Download != 0 || calls.Upload != 0 {
+		t.Fatalf("calls = %+v, want no records exchanged with a different user", calls)
+	}
+	for _, stored := range store.snapshotRecords() {
+		if stored.ID == record.ID && !stored.UploadedAt.IsZero() {
+			t.Fatalf("record was acknowledged for the wrong account: %+v", stored)
+		}
+	}
+	status := service.Status()
+	if status.State != atuinmodel.SyncError || !status.NextRetryAt.IsZero() {
+		t.Fatalf("status = %+v, want a non-retrying account error", status)
+	}
+}
+
+// flipSyncSettings changes the persisted address after the first read, which
+// models the user editing Settings between the status snapshot and the remote
+// open.
+type flipSyncSettings struct {
+	*syncSettings
+	mu        sync.Mutex
+	alternate string
+	reads     int
+}
+
+func (s *flipSyncSettings) HistorySettings() domainpreferences.History {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reads++
+	history := s.syncSettings.history
+	if s.reads > 1 {
+		history.SyncAddress = s.alternate
+	}
+	return history
 }
 
 func equalStrings(left, right []string) bool {

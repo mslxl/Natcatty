@@ -190,6 +190,14 @@ The highest writer-series index this device has applied from another writer and
 the highest index the server has acknowledged for this device's uploads.
 _Avoid_: cursor, offset
 
+**Reindex**:
+Moving an unsynced local capture to a new writer-series index because a
+downloaded record already occupies that index. The capture keeps its command
+and identity; only its position changes, so the server's record and the unsent
+capture both survive. A reindexed capture is never acknowledged by the move
+itself.
+_Avoid_: rewrite, renumber
+
 **Atuin Account**:
 The one Atuin service identity this install connects to: a base URL (`atuin.sh`
 or a self-hosted Atuin v18.x server), username, auth mode, session token, and

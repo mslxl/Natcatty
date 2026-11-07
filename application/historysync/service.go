@@ -36,6 +36,9 @@ var (
 	// ErrIncompletePage reports a download page that made no progress or broke
 	// series index continuity. The checkpoint is never advanced for it.
 	ErrIncompletePage = errors.New("historysync: incomplete or discontinuous remote page")
+	// ErrAppLocked reports a sync trigger while App Lock hides the app. No
+	// credential is read and no remote is opened.
+	ErrAppLocked = errors.New("historysync: app lock is engaged")
 )
 
 // SyncResult counts one sync operation. Applied counts downloaded records
@@ -91,6 +94,18 @@ type RemotePage struct {
 	Records    []domainhistory.Record
 	Entries    []domainhistory.Entry
 	Deletes    []RemoteDelete
+	// Reindexes moves unsynced local captures out of index positions the
+	// downloaded records claim. It commits with the page, so a capture is never
+	// lost or falsely acknowledged between two transactions.
+	Reindexes []Reindex
+}
+
+// Reindex assigns a new series index to one local record that has not been
+// uploaded. A restore or an offline capture can otherwise collide with a
+// record the server already stores at that index.
+type Reindex struct {
+	RecordID string
+	Index    int64
 }
 
 // SyncStore is the local persistence port the sync engine needs. The SQLite
@@ -199,10 +214,31 @@ func WithFocusDebounce(delay time.Duration) Option {
 
 // WithSyncCompleted registers a callback for every successful run, including a
 // run that applied no downloaded rows. It runs on the sync goroutine outside
-// every service lock and must not block. The app uses it to refresh History
-// and autocomplete after downloaded projections change the store.
+// every service lock and must not block. It reports only fully successful
+// runs; use WithSyncApplied to learn about committed rows when a later phase
+// fails.
 func WithSyncCompleted(fn func(SyncResult)) Option {
 	return func(service *Service) { service.onCompleted = fn }
+}
+
+// WithSyncApplied registers a callback for every run that committed downloaded
+// projections, even when a later phase (such as upload) fails. It runs on the
+// sync goroutine outside every service lock and must not block. Observers must
+// learn about applied rows immediately; otherwise History and autocomplete
+// stay stale until a later successful run.
+func WithSyncApplied(fn func(SyncResult)) Option {
+	return func(service *Service) { service.onApplied = fn }
+}
+
+// WithAppLocked supplies a predicate that reports whether App Lock currently
+// hides the app. App Lock pauses sync exactly like a locked field-secret
+// store, while capture continues. A nil predicate keeps sync unpaused.
+func WithAppLocked(locked func() bool) Option {
+	return func(service *Service) {
+		if locked != nil {
+			service.appLocked = locked
+		}
+	}
 }
 
 // Service is the background history sync engine. It downloads before it
@@ -222,6 +258,8 @@ type Service struct {
 	captureDebounce time.Duration
 	focusDebounce   time.Duration
 	onCompleted     func(SyncResult)
+	onApplied       func(SyncResult)
+	appLocked       func() bool
 
 	// statusMu protects cached. Status reads it without running a sync.
 	statusMu sync.Mutex
@@ -244,6 +282,15 @@ type Service struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	// runCancel cancels the in-flight run, including a manual SyncNow started
+	// with context.Background(). Stop uses it so shutdown never leaves network
+	// work running.
+	runCancel context.CancelFunc
+	// terminal records an auth, key, or version failure that waits for the
+	// user. Automatic triggers stay parked until NotifyConfigurationChanged or
+	// a manual SyncNow clears it.
+	terminal error
 
 	intervalTimer Timer
 	retryTimer    Timer
@@ -323,6 +370,8 @@ func (s *Service) Stop() {
 	}
 	s.stopped = true
 	cancel := s.cancel
+	runCancel := s.runCancel
+	s.runCancel = nil
 	timers := []Timer{s.intervalTimer, s.retryTimer, s.focusTimer, s.captureTimer}
 	s.intervalTimer, s.retryTimer, s.focusTimer, s.captureTimer = nil, nil, nil, nil
 	waiters := []chan runOutcome(nil)
@@ -337,12 +386,23 @@ func (s *Service) Stop() {
 			timer.Stop()
 		}
 	}
+	if runCancel != nil {
+		runCancel()
+	}
 	if cancel != nil {
 		cancel()
 	}
 	for _, waiter := range waiters {
 		waiter <- runOutcome{err: context.Canceled}
 	}
+}
+
+// NotifyConfigurationChanged clears a terminal auth, key, or server-version
+// failure so the next automatic trigger may try again. The app calls it after
+// a successful login, key change, logout, or History settings change. It never
+// runs a sync itself and never touches credentials.
+func (s *Service) NotifyConfigurationChanged() {
+	s.clearTerminalFailure()
 }
 
 // NotifyFocus requests a debounced sync after the window regains focus. It
@@ -546,7 +606,27 @@ func (s *Service) enqueue(ctx context.Context, trigger Trigger, waiter chan runO
 
 func (s *Service) worker(ctx context.Context, trigger Trigger, waiters []chan runOutcome) {
 	for {
-		result, err := s.run(ctx, trigger)
+		runCtx, cancel := context.WithCancel(ctx)
+		s.mu.Lock()
+		if s.stopped {
+			s.mu.Unlock()
+			cancel()
+			outcome := runOutcome{err: context.Canceled}
+			for _, waiter := range waiters {
+				waiter <- outcome
+			}
+			s.finishWorker()
+			return
+		}
+		s.runCancel = cancel
+		s.mu.Unlock()
+
+		result, err := s.run(runCtx, trigger)
+		cancel()
+		s.mu.Lock()
+		s.runCancel = nil
+		s.mu.Unlock()
+
 		outcome := runOutcome{result: result, err: err}
 		for _, waiter := range waiters {
 			waiter <- outcome
@@ -564,6 +644,14 @@ func (s *Service) worker(ctx context.Context, trigger Trigger, waiters []chan ru
 		s.mu.Unlock()
 		ctx, trigger, waiters = next.ctx, next.trigger, next.waiters
 	}
+}
+
+// finishWorker marks the engine idle after a worker stopped before running.
+func (s *Service) finishWorker() {
+	s.mu.Lock()
+	s.running = false
+	close(s.idle)
+	s.mu.Unlock()
 }
 
 // preferTrigger keeps the strongest reason for a coalesced run. Manual wins so
@@ -587,6 +675,21 @@ func preferTrigger(current, next Trigger) Trigger {
 // a remote call or a store transaction.
 func (s *Service) run(ctx context.Context, trigger Trigger) (SyncResult, error) {
 	result := SyncResult{Trigger: trigger}
+	if s.isStopped() {
+		return result, context.Canceled
+	}
+	if trigger == TriggerManual {
+		// A manual run is the user's explicit retry, even after an auth, key,
+		// or server-version failure.
+		s.clearTerminalFailure()
+	} else if failure := s.terminalFailure(); failure != nil {
+		// These failures wait for the user. Scheduled, focus, capture, and
+		// interval triggers must not keep opening remotes until the account,
+		// key, or server configuration changes.
+		result.PendingUploads = s.cachedStatus().PendingUploads
+		return result, failure
+	}
+
 	status, metadata, err := s.localStatus(ctx)
 	if err != nil {
 		return result, s.fail(status, err, &result)
@@ -600,6 +703,9 @@ func (s *Service) run(ctx context.Context, trigger Trigger) (SyncResult, error) 
 	case atuinmodel.SyncLocked:
 		s.clearRetry()
 		s.setStatus(status)
+		if s.appLockEngaged() {
+			return result, ErrAppLocked
+		}
 		return result, ErrSecretsLocked
 	case atuinmodel.SyncNotConfigured:
 		s.clearRetry()
@@ -616,9 +722,22 @@ func (s *Service) run(ctx context.Context, trigger Trigger) (SyncResult, error) 
 	syncing.LastSyncAt = previous.LastSyncAt
 	s.setStatus(syncing)
 
-	address, err := NormalizeSyncAddress(s.settings.HistorySettings().SyncAddress)
+	// Re-read the configuration the credentials are about to be sent to. The
+	// status snapshot above must not authorize a different address that the
+	// user selected in the meantime.
+	settings := s.settings.HistorySettings()
+	address, err := NormalizeSyncAddress(settings.SyncAddress)
 	if err != nil {
 		return result, s.fail(status, ErrInvalidSyncAddress, &result)
+	}
+	if !settings.SyncEnabled {
+		return result, s.fail(status, ErrSyncDisabled, &result)
+	}
+	if address != status.ServerURL || !sameAccountAddress(metadata.Account, address) {
+		return result, s.fail(status, ErrAccountMismatch, &result)
+	}
+	if err := s.stopOrPause(ctx); err != nil {
+		return result, s.fail(status, err, &result)
 	}
 	token, err := s.secrets.Get(ctx, SessionTokenRef())
 	if err != nil {
@@ -634,7 +753,7 @@ func (s *Service) run(ctx context.Context, trigger Trigger) (SyncResult, error) 
 	defer domainhistory.WipeMasterKey(key)
 
 	config := Config{
-		BaseURL: address, AuthMode: atuinmodel.NormalizeAuthMode(s.settings.HistorySettings().AuthMode),
+		BaseURL: address, AuthMode: atuinmodel.NormalizeAuthMode(settings.AuthMode),
 		Token: token, MasterKey: key,
 	}
 	defer config.Wipe()
@@ -683,7 +802,16 @@ func (s *Service) run(ctx context.Context, trigger Trigger) (SyncResult, error) 
 	// device never re-creates something another device already deleted.
 	downloaded, applied, err := s.download(ctx, remote, capabilities, statuses, &metadata)
 	result.Downloaded, result.Applied = downloaded, applied
+	if applied > 0 && s.onApplied != nil {
+		// The projections are committed. Announce them even if a later upload
+		// phase fails; otherwise the History surface and autocomplete stay
+		// stale until some later successful run.
+		s.onApplied(result)
+	}
 	if err != nil {
+		return result, s.fail(status, err, &result)
+	}
+	if err := s.stopOrPause(ctx); err != nil {
 		return result, s.fail(status, err, &result)
 	}
 
@@ -706,10 +834,16 @@ func (s *Service) run(ctx context.Context, trigger Trigger) (SyncResult, error) 
 		s.setStatus(blocked)
 		return result, ErrKeyUnverified
 	}
+	if err := s.stopOrPause(ctx); err != nil {
+		return result, s.fail(status, err, &result)
+	}
 
 	uploaded, err := s.upload(ctx, remote, capabilities, statuses, metadata)
 	result.Uploaded = uploaded
 	if err != nil {
+		return result, s.fail(status, err, &result)
+	}
+	if err := s.stopOrPause(ctx); err != nil {
 		return result, s.fail(status, err, &result)
 	}
 
@@ -717,8 +851,11 @@ func (s *Service) run(ctx context.Context, trigger Trigger) (SyncResult, error) 
 	if err != nil {
 		return result, s.fail(status, err, &result)
 	}
-	final.State = atuinmodel.SyncIdle
-	final.Problem = atuinmodel.ProblemNone
+	if final.State == atuinmodel.SyncIdle {
+		final.Problem = atuinmodel.ProblemNone
+	}
+	// A lock that engaged during the run stays visible: never overwrite a
+	// locked (or otherwise blocked) local state with idle.
 	final.ServerVersion = capabilities.ServerVersion
 	final.ServerURL = address
 	final.LastSyncAt = s.scheduler.Now()
@@ -726,11 +863,70 @@ func (s *Service) run(ctx context.Context, trigger Trigger) (SyncResult, error) 
 	result.PendingUploads = final.PendingUploads
 	result.LastSyncAt = final.LastSyncAt
 	s.clearRetry()
+	s.clearTerminalFailure()
 	s.setStatus(final)
 	if s.onCompleted != nil {
 		s.onCompleted(result)
 	}
 	return result, nil
+}
+
+func (s *Service) isStopped() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stopped
+}
+
+func (s *Service) appLockEngaged() bool {
+	return s.appLocked != nil && s.appLocked()
+}
+
+// stopOrPause reports shutdown or App Lock before another phase starts. A
+// locked UI is a pause, not a sync error to retry.
+func (s *Service) stopOrPause(ctx context.Context) error {
+	if s.isStopped() {
+		return context.Canceled
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.appLockEngaged() {
+		return ErrAppLocked
+	}
+	return nil
+}
+
+func (s *Service) terminalFailure() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.terminal
+}
+
+func (s *Service) setTerminalFailure(err error) {
+	s.mu.Lock()
+	s.terminal = err
+	s.mu.Unlock()
+}
+
+func (s *Service) clearTerminalFailure() {
+	s.mu.Lock()
+	s.terminal = nil
+	s.mu.Unlock()
+}
+
+// terminalSyncError reports a failure that only the user can fix. Automatic
+// triggers wait until NotifyConfigurationChanged or a manual run.
+func terminalSyncError(err error) bool {
+	switch {
+	case errors.Is(err, ErrAuthExpired), errors.Is(err, ErrAuthFailed):
+		return true
+	case errors.Is(err, ErrKeyMismatch):
+		return true
+	case errors.Is(err, ErrIncompatibleServer):
+		return true
+	default:
+		return false
+	}
 }
 
 // localStatus computes the status from device-local state only.
@@ -760,6 +956,14 @@ func (s *Service) localStatus(ctx context.Context) (SyncStatus, domainhistory.Me
 	case SecretModeUnavailable:
 		status.State = atuinmodel.SyncNotConfigured
 		status.Problem = atuinmodel.ProblemNotConfigured
+		return status, metadata, nil
+	}
+	if s.appLockEngaged() {
+		// The spec pauses sync while App Lock hides the app, just like a
+		// locked field-secret store. Capture continues because it never needs
+		// a credential.
+		status.State = atuinmodel.SyncLocked
+		status.Problem = atuinmodel.ProblemLocked
 		return status, metadata, nil
 	}
 
@@ -807,7 +1011,7 @@ func (s *Service) localStatus(ctx context.Context) (SyncStatus, domainhistory.Me
 
 func syncStatusForSecretError(status SyncStatus, err error) SyncStatus {
 	switch {
-	case errors.Is(err, ErrSecretsLocked):
+	case errors.Is(err, ErrSecretsLocked), errors.Is(err, ErrAppLocked):
 		status.State = atuinmodel.SyncLocked
 		status.Problem = atuinmodel.ProblemLocked
 	case errors.Is(err, ErrSecretsUnavailable):
@@ -876,56 +1080,88 @@ func (s *Service) download(ctx context.Context, remote Remote, capabilities Capa
 		if checkpoint.AppliedIndex < -1 {
 			checkpoint.AppliedIndex = -1
 		}
-		if local := maxSeriesIndex(records, series.SeriesHost, series.Tag); local > checkpoint.AppliedIndex {
-			// A logout clears checkpoints but not the appended log. Rebuild the
-			// applied position from the records so a reconnect never
-			// re-downloads or re-applies a page it already committed.
-			checkpoint.AppliedIndex = local
-		}
+		// A logout clears checkpoints but not the appended log, and a restored
+		// or older database can hold captures the server never received. The
+		// applied position may therefore only be rebuilt from records known to
+		// have reached the server: a downloaded remote record or an
+		// acknowledged local record. An unacknowledged capture proves nothing,
+		// even when its index matches the server's high-water mark: on a
+		// restored database it can occupy the index the server already uses
+		// for a different record, and starting past it would silently drop
+		// that record and later acknowledge the capture without sending it.
+		// A persisted position above every trusted record is likewise re-
+		// examined instead of trusted.
+		checkpoint.AppliedIndex = maxTrustedSeriesIndex(records, series.SeriesHost, series.Tag)
 		if checkpoint.AppliedIndex >= series.MaxIndex {
 			metadata.Series[key] = checkpoint
 			continue
 		}
 		for checkpoint.AppliedIndex < series.MaxIndex {
-			page, err := remote.Download(ctx, series.Series, checkpoint.AppliedIndex+1, pageSize)
+			start := checkpoint.AppliedIndex + 1
+			page, err := remote.Download(ctx, series.Series, start, pageSize)
 			if err != nil {
 				return downloaded, applied, err
 			}
-			pageRecords, entries, deletes, last, err := prepareRemotePage(
-				series, checkpoint.AppliedIndex+1, page)
+			// A capture can commit while the page is in flight. Re-read the log
+			// so both the leading-gap check and collision handling see it.
+			localRecords, err := s.store.ListHistoryRecords(ctx)
+			if err != nil {
+				return downloaded, applied, err
+			}
+			prepared, last, err := prepareRemotePage(series, start, page,
+				localIndexSet(localRecords, series.SeriesHost, series.Tag))
+			if err != nil {
+				return downloaded, applied, err
+			}
+			kept, reindexes, err := reconcileRemotePage(series, prepared, localRecords, last)
 			if err != nil {
 				return downloaded, applied, err
 			}
 			next := checkpoint
 			next.AppliedIndex = last
-			if err := s.store.ApplyRemotePage(ctx, RemotePage{
-				Checkpoint: next,
-				Records:    pageRecords,
-				Entries:    entries,
-				Deletes:    deletes,
-			}); err != nil {
+			remotePage := RemotePage{Checkpoint: next, Reindexes: reindexes}
+			for _, item := range kept {
+				remotePage.Records = append(remotePage.Records, item.record)
+				if item.entry != nil {
+					remotePage.Entries = append(remotePage.Entries, *item.entry)
+				}
+				if item.deleted != nil {
+					remotePage.Deletes = append(remotePage.Deletes, *item.deleted)
+				}
+			}
+			if err := s.store.ApplyRemotePage(ctx, remotePage); err != nil {
 				return downloaded, applied, err
 			}
 			checkpoint = next
 			metadata.Series[key] = checkpoint
-			downloaded += len(pageRecords)
-			applied += len(pageRecords)
+			downloaded += len(remotePage.Records)
+			applied += len(remotePage.Records)
 		}
 	}
 	return downloaded, applied, nil
 }
 
+// preparedPageRecord is one accepted record of a downloaded page together with
+// the projection it applies.
+type preparedPageRecord struct {
+	record  domainhistory.Record
+	entry   *domainhistory.Entry
+	deleted *RemoteDelete
+}
+
 // prepareRemotePage validates index continuity, ignores records for any tag
 // other than history, and builds the domain log records plus typed projections
-// for one atomic page.
-func prepareRemotePage(series SeriesStatus, start int64, page Page) ([]domainhistory.Record, []domainhistory.Entry, []RemoteDelete, int64, error) {
+// for one atomic page. localIndexes holds every index already present in the
+// local log for this series; it lets a page that begins after the requested
+// start skip only indexes already held locally, never missing records.
+func prepareRemotePage(series SeriesStatus, start int64, page Page,
+	localIndexes map[int64]struct{}) ([]preparedPageRecord, int64, error) {
 	if start < 0 {
-		return nil, nil, nil, 0, ErrIncompletePage
+		return nil, 0, ErrIncompletePage
 	}
 	next := start
-	var records []domainhistory.Record
-	var entries []domainhistory.Entry
-	var deletes []RemoteDelete
+	seen := false
+	var prepared []preparedPageRecord
 	for _, record := range page.Records {
 		if record.Tag != domainhistory.RecordTagHistory || record.SeriesHost != series.SeriesHost {
 			// Other Atuin tags are out of scope. They are never applied and
@@ -938,9 +1174,19 @@ func prepareRemotePage(series SeriesStatus, start int64, page Page) ([]domainhis
 			// it again would add nothing.
 			continue
 		}
-		if record.Index != next || !record.Valid() {
-			return nil, nil, nil, 0, ErrIncompletePage
+		if !seen && record.Index > next {
+			// The server's series begins after the requested start. That is
+			// only safe when every skipped index is already in the local log;
+			// otherwise this page would silently skip records we still need.
+			if !localIndexGapKnown(localIndexes, next, record.Index) {
+				return nil, 0, ErrIncompletePage
+			}
+			next = record.Index
 		}
+		if record.Index != next || !record.Valid() {
+			return nil, 0, ErrIncompletePage
+		}
+		seen = true
 		switch record.Kind {
 		case domainhistory.RecordKindCreate:
 			entry := *record.Entry
@@ -948,7 +1194,7 @@ func prepareRemotePage(series SeriesStatus, start int64, page Page) ([]domainhis
 				entry.ID = record.HistoryID
 			}
 			if entry.ID != record.HistoryID {
-				return nil, nil, nil, 0, ErrIncompletePage
+				return nil, 0, ErrIncompletePage
 			}
 			entry.Source = domainhistory.SourceAtuinSync
 			if entry.RecordedAt.IsZero() {
@@ -966,32 +1212,132 @@ func prepareRemotePage(series SeriesStatus, start int64, page Page) ([]domainhis
 			entry = domainhistory.NormalizeEntry(entry)
 			payload, err := json.Marshal(entry)
 			if err != nil {
-				return nil, nil, nil, 0, err
+				return nil, 0, err
 			}
-			records = append(records, remoteRecord(record, string(payload)))
-			entries = append(entries, entry)
+			prepared = append(prepared, preparedPageRecord{
+				record: remoteRecord(record, string(payload)),
+				entry:  &entry,
+			})
 		case domainhistory.RecordKindDelete:
 			payload, err := json.Marshal(domainhistory.DeleteRecordPayload{
 				HistoryID: record.HistoryID,
 				DeletedAt: record.DeletedAt,
 			})
 			if err != nil {
-				return nil, nil, nil, 0, err
+				return nil, 0, err
 			}
-			records = append(records, remoteRecord(record, string(payload)))
-			deletes = append(deletes, RemoteDelete{
-				HistoryID: record.HistoryID,
-				DeletedAt: record.DeletedAt,
+			prepared = append(prepared, preparedPageRecord{
+				record:  remoteRecord(record, string(payload)),
+				deleted: &RemoteDelete{HistoryID: record.HistoryID, DeletedAt: record.DeletedAt},
 			})
 		default:
-			return nil, nil, nil, 0, ErrIncompletePage
+			return nil, 0, ErrIncompletePage
 		}
 		next++
 	}
-	if next == start {
-		return nil, nil, nil, 0, ErrIncompletePage
+	if !seen {
+		return nil, 0, ErrIncompletePage
 	}
-	return records, entries, deletes, next - 1, nil
+	return prepared, next - 1, nil
+}
+
+// localIndexSet returns every index already present in the local log for one
+// series, regardless of direction.
+func localIndexSet(records []domainhistory.Record, seriesHost, tag string) map[int64]struct{} {
+	indexes := make(map[int64]struct{})
+	for _, record := range records {
+		if record.SeriesHost == seriesHost && record.Tag == tag {
+			indexes[record.Index] = struct{}{}
+		}
+	}
+	return indexes
+}
+
+// localIndexGapKnown reports whether every index in [from, to) is present. The
+// length bound keeps a malformed page from making the check walk a huge range.
+func localIndexGapKnown(indexes map[int64]struct{}, from, to int64) bool {
+	if to <= from {
+		return true
+	}
+	if to-from > int64(len(indexes)) {
+		return false
+	}
+	for index := from; index < to; index++ {
+		if _, ok := indexes[index]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// reconcileRemotePage compares one downloaded page with the local log. A local
+// record that already describes the same event is kept and the remote copy is
+// dropped, so a restored log is never rewritten. An unacknowledged local
+// capture that occupies an index the server also uses is moved after the page:
+// both records survive and the capture is uploaded under its new index. An
+// acknowledged local record that differs from the server is a real conflict
+// and fails closed.
+func reconcileRemotePage(series SeriesStatus, prepared []preparedPageRecord,
+	local []domainhistory.Record, last int64) ([]preparedPageRecord, []Reindex, error) {
+	occupied := make(map[int64]domainhistory.Record)
+	maxIndex := last
+	for _, record := range local {
+		if record.SeriesHost != series.SeriesHost || record.Tag != series.Tag {
+			continue
+		}
+		occupied[record.Index] = record
+		if record.Index > maxIndex {
+			maxIndex = record.Index
+		}
+	}
+	kept := make([]preparedPageRecord, 0, len(prepared))
+	collisions := make([]preparedPageRecord, 0)
+	for _, item := range prepared {
+		existing, found := occupied[item.record.Index]
+		if !found {
+			kept = append(kept, item)
+			continue
+		}
+		if sameLogicalRecord(existing, item.record) {
+			// The local log already holds this command. Do not replace it with
+			// a reconstructed remote payload; the checkpoint still advances.
+			continue
+		}
+		if existing.Direction != domainhistory.RecordDirectionLocal || !existing.UploadedAt.IsZero() {
+			return nil, nil, ErrUploadConflict
+		}
+		collisions = append(collisions, item)
+	}
+	sort.Slice(collisions, func(i, j int) bool {
+		return collisions[i].record.Index < collisions[j].record.Index
+	})
+	reindexes := make([]Reindex, 0, len(collisions))
+	next := maxIndex + 1
+	for _, item := range collisions {
+		existing := occupied[item.record.Index]
+		reindexes = append(reindexes, Reindex{RecordID: existing.ID, Index: next})
+		next++
+		kept = append(kept, item)
+	}
+	sort.Slice(kept, func(i, j int) bool {
+		return kept[i].record.Index < kept[j].record.Index
+	})
+	return kept, reindexes, nil
+}
+
+// sameLogicalRecord reports whether a local log record and an incoming remote
+// record describe the same history event. The record id is excluded because a
+// record restored from an older database can carry a different log id for the
+// same writer-series position; history id, timestamp, version, and kind are
+// the event's identity.
+func sameLogicalRecord(local, remote domainhistory.Record) bool {
+	return local.SeriesHost == remote.SeriesHost &&
+		local.Tag == remote.Tag &&
+		local.Index == remote.Index &&
+		local.HistoryID == remote.HistoryID &&
+		local.Version == remote.Version &&
+		local.Kind == remote.Kind &&
+		local.RecordedAt.UnixNano() == remote.RecordedAt.UnixNano()
 }
 
 func remoteRecord(record SyncRecord, payload string) domainhistory.Record {
@@ -1079,12 +1425,11 @@ func remoteHistorySeries(statuses []SeriesStatus) []SeriesStatus {
 func (s *Service) prepareUpload(ctx context.Context, records []domainhistory.Record,
 	statuses []SeriesStatus, metadata domainhistory.Metadata) (int, error) {
 	local := localSeriesRecords(records, metadata.WriterUUID)
-	for index, record := range local {
-		if record.Index != int64(index) {
-			// The local writer series is assigned inside a transaction and can
-			// never have a gap. Refuse to upload rather than skip an index.
-			return 0, ErrIncompletePage
-		}
+	if !continuousSeries(records, metadata.WriterUUID) {
+		// One writer series shares its index space between local captures and
+		// downloaded records. Refuse to upload a series with a gap rather than
+		// skip an index.
+		return 0, ErrIncompletePage
 	}
 	serverMax := serverMaxIndex(statuses, metadata.WriterUUID)
 	checkpoint := metadata.Series[domainhistory.SeriesKey(metadata.WriterUUID, domainhistory.RecordTagHistory)]
@@ -1282,11 +1627,40 @@ func localSeriesRecords(records []domainhistory.Record, writer string) []domainh
 	return local
 }
 
-func maxSeriesIndex(records []domainhistory.Record, seriesHost, tag string) int64 {
+// continuousSeries reports whether the writer series holds every index from
+// zero to its maximum, regardless of direction. A local capture and a
+// downloaded record share one index space, so a gap anywhere means the upload
+// order cannot be proven.
+func continuousSeries(records []domainhistory.Record, writer string) bool {
+	indexes := make([]int64, 0)
+	for _, record := range records {
+		if record.SeriesHost == writer && record.Tag == domainhistory.RecordTagHistory {
+			indexes = append(indexes, record.Index)
+		}
+	}
+	sort.Slice(indexes, func(i, j int) bool { return indexes[i] < indexes[j] })
+	for position, index := range indexes {
+		if index != int64(position) {
+			return false
+		}
+	}
+	return true
+}
+
+// maxTrustedSeriesIndex returns the highest index whose record is known to
+// have reached the server: a downloaded remote record or a local record the
+// engine acknowledged. An unacknowledged local capture proves nothing about
+// the server position and must never extend the applied checkpoint.
+func maxTrustedSeriesIndex(records []domainhistory.Record, seriesHost, tag string) int64 {
 	max := int64(-1)
 	for _, record := range records {
-		if record.SeriesHost == seriesHost && record.Tag == tag && record.Index > max {
-			max = record.Index
+		if record.SeriesHost != seriesHost || record.Tag != tag {
+			continue
+		}
+		if record.Direction == domainhistory.RecordDirectionRemote || !record.UploadedAt.IsZero() {
+			if record.Index > max {
+				max = record.Index
+			}
 		}
 	}
 	return max
@@ -1366,6 +1740,11 @@ func (s *Service) fail(base SyncStatus, err error, result *SyncResult) error {
 	} else {
 		s.clearRetry()
 		status.NextRetryAt = time.Time{}
+	}
+	if terminalSyncError(err) {
+		s.setTerminalFailure(publicSyncError(err))
+	} else {
+		s.clearTerminalFailure()
 	}
 	status.PendingUploads = base.PendingUploads
 	result.PendingUploads = status.PendingUploads
@@ -1461,7 +1840,8 @@ func retryableSyncError(err error) bool {
 		return false
 	case errors.Is(err, ErrAccountMismatch), errors.Is(err, ErrUploadConflict):
 		return false
-	case errors.Is(err, ErrSecretsLocked), errors.Is(err, ErrSecretsUnavailable):
+	case errors.Is(err, ErrSecretsLocked), errors.Is(err, ErrSecretsUnavailable),
+		errors.Is(err, ErrAppLocked):
 		return false
 	case errors.Is(err, ErrNotConfigured), errors.Is(err, ErrSyncDisabled):
 		return false
@@ -1478,7 +1858,7 @@ func statusForSyncError(base SyncStatus, err error) SyncStatus {
 	status := base
 	status.NextRetryAt = time.Time{}
 	switch {
-	case errors.Is(err, ErrSecretsLocked):
+	case errors.Is(err, ErrSecretsLocked), errors.Is(err, ErrAppLocked):
 		status.State = atuinmodel.SyncLocked
 		status.Problem = atuinmodel.ProblemLocked
 	case errors.Is(err, ErrSecretsUnavailable):
@@ -1545,6 +1925,8 @@ func publicSyncError(err error) error {
 		return ErrUploadConflict
 	case errors.Is(err, ErrSecretsLocked):
 		return ErrSecretsLocked
+	case errors.Is(err, ErrAppLocked):
+		return ErrAppLocked
 	case errors.Is(err, ErrSecretsUnavailable):
 		return ErrSecretsUnavailable
 	case errors.Is(err, ErrNotConfigured):

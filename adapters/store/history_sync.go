@@ -14,7 +14,8 @@ import (
 var _ historysync.SyncStore = (*Store)(nil)
 
 // ApplyRemotePage appends one downloaded page to the record log, applies its
-// projections, and advances the series checkpoint in one transaction. A failed
+// projections, reindexes any local capture that would collide with a page
+// record, and advances the series checkpoint in one transaction. A failed
 // commit leaves the previous checkpoint and log intact.
 func (s *Store) ApplyRemotePage(ctx context.Context, page historysync.RemotePage) error {
 	checkpoint := page.Checkpoint
@@ -40,8 +41,27 @@ func (s *Store) ApplyRemotePage(ctx context.Context, page historysync.RemotePage
 			return fmt.Errorf("store: apply remote page: invalid tombstone")
 		}
 	}
+	for _, reindex := range page.Reindexes {
+		// A moved local capture must land after the page it makes room for.
+		if reindex.RecordID == "" || reindex.Index <= checkpoint.AppliedIndex {
+			return fmt.Errorf("store: apply remote page: invalid reindex")
+		}
+	}
 
 	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
+		for _, reindex := range page.Reindexes {
+			result := tx.Model(&historyRecordSchema{}).
+				Where("id = ? AND series_host = ? AND tag = ? AND direction = ? AND uploaded_at = 0",
+					reindex.RecordID, checkpoint.SeriesHost, checkpoint.Tag,
+					domainhistory.RecordDirectionLocal).
+				Update("idx", reindex.Index)
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return fmt.Errorf("store: apply remote page: reindex target is not an unsynced local record")
+			}
+		}
 		for _, record := range page.Records {
 			if err := insertRemoteHistoryRecord(tx, record); err != nil {
 				return err

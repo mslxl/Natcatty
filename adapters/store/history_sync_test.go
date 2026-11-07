@@ -2,12 +2,15 @@ package store
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 	"time"
 
 	historysync "github.com/mslxl/natcatty/application/historysync"
+	"github.com/mslxl/natcatty/application/historysync/fake"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 )
 
 const (
@@ -172,6 +175,322 @@ func TestApplyRemotePageRollsBackEveryRecordAndCheckpointOnFailure(t *testing.T)
 	if _, found, _ := store.HistoryEntry(ctx, "0198d000-0000-7000-8000-000000000022"); found {
 		t.Fatal("the rolled-back projection was applied")
 	}
+}
+
+// TestApplyRemotePageReindexesAnUnsyncedCaptureAtomically proves a downloaded
+// record can take an index an unsent local capture occupied, with both rows and
+// the checkpoint committing together.
+func TestApplyRemotePageReindexesAnUnsyncedCaptureAtomically(t *testing.T) {
+	store, _ := openTestStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	writer, err := store.EnsureWriterUUID(ctx, func() string { return syncTestWriter })
+	if err != nil {
+		t.Fatalf("EnsureWriterUUID: %v", err)
+	}
+	captured := recordSyncLocalEntry(t, store, writer,
+		"0198d000-0000-7000-8000-000000000401", "captured", at.Add(5*time.Minute))
+	serverEntry := syncTestEntry("0198d000-0000-7000-8000-000000000402", "server", at.Add(5*time.Minute))
+	serverRecord := syncTestCreateRecord(writer, serverEntry.ID, 5, at.Add(5*time.Minute), serverEntry)
+
+	if err := store.ApplyRemotePage(ctx, historysync.RemotePage{
+		Checkpoint: domainhistory.SeriesCheckpoint{
+			SeriesHost: writer, Tag: domainhistory.RecordTagHistory, AppliedIndex: 5,
+		},
+		Records:   []domainhistory.Record{serverRecord},
+		Entries:   []domainhistory.Entry{serverEntry},
+		Reindexes: []historysync.Reindex{{RecordID: captured.ID + "-record", Index: 6}},
+	}); err != nil {
+		t.Fatalf("ApplyRemotePage: %v", err)
+	}
+
+	records, err := store.ListHistoryRecords(ctx)
+	if err != nil {
+		t.Fatalf("ListHistoryRecords: %v", err)
+	}
+	var moved, remote *domainhistory.Record
+	for index := range records {
+		switch records[index].ID {
+		case captured.ID + "-record":
+			moved = &records[index]
+		case serverRecord.ID:
+			remote = &records[index]
+		}
+	}
+	if remote == nil || remote.Index != 5 {
+		t.Fatalf("server record = %+v, want index 5", remote)
+	}
+	if moved == nil || moved.Index != 6 {
+		t.Fatalf("capture = %+v, want it moved to index 6", moved)
+	}
+	if !moved.UploadedAt.IsZero() {
+		t.Fatalf("the moved capture was falsely acknowledged: %+v", moved)
+	}
+	if _, found, err := store.HistoryEntry(ctx, serverEntry.ID); err != nil || !found {
+		t.Fatalf("server projection found=%v err=%v, want it applied", found, err)
+	}
+	metadata, err := store.HistoryMetadata(ctx)
+	if err != nil {
+		t.Fatalf("HistoryMetadata: %v", err)
+	}
+	if got := metadata.Series[domainhistory.SeriesKey(writer, domainhistory.RecordTagHistory)]; got.AppliedIndex != 5 {
+		t.Fatalf("checkpoint = %+v, want applied index 5", got)
+	}
+}
+
+// TestRestoredLocalCaptureIsReindexedAndUploadedWithRealStore runs the exact
+// restoration scenario through the engine and a real SQLite store: older local
+// indexes 0-4, a capture at index 5, and server records at indexes 5-6. The
+// server record must be applied and the capture must reach the server.
+func TestRestoredLocalCaptureIsReindexedAndUploadedWithRealStore(t *testing.T) {
+	ctx := context.Background()
+	db, _ := openTestStore(t)
+	writer, err := db.EnsureWriterUUID(ctx, func() string { return syncTestWriter })
+	if err != nil {
+		t.Fatalf("EnsureWriterUUID: %v", err)
+	}
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	for index := 0; index < 5; index++ {
+		recordSyncLocalEntry(t, db, writer,
+			"0198d000-0000-7000-8000-0000000004a"+string(rune('0'+index)),
+			"old", at.Add(time.Duration(index)*time.Minute))
+	}
+	captured := recordSyncLocalEntry(t, db, writer,
+		"0198d000-0000-7000-8000-0000000004b1", "captured after restore", at.Add(7*time.Minute))
+
+	serverFive := syncTestServerCreateRecord(writer, "server-history-five", "server five", 5, at.Add(5*time.Minute))
+	serverSix := syncTestServerCreateRecord(writer, "server-history-six", "server six", 6, at.Add(6*time.Minute))
+	metadata, err := db.HistoryMetadata(ctx)
+	if err != nil {
+		t.Fatalf("HistoryMetadata: %v", err)
+	}
+	metadata.Account = domainhistory.AccountIdentity{
+		ServerURL: "https://atuin.example.test", UserID: "fake-atuin-user",
+	}
+	if err := db.SaveHistoryMetadata(ctx, metadata); err != nil {
+		t.Fatalf("SaveHistoryMetadata: %v", err)
+	}
+	settings := domainpreferences.Defaults().History
+	settings.SyncEnabled = true
+	settings.SyncAddress = "https://atuin.example.test"
+	factory := fake.NewFactory(fake.Options{Records: []historysync.SyncRecord{serverFive, serverSix}})
+	service := historysync.NewService(&restoreSettings{history: settings}, &restoreSecrets{values: map[historysync.SecretRef]string{
+		historysync.SessionTokenRef(): "session-token",
+		historysync.MasterKeyRef():    base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
+	}}, db, factory)
+	t.Cleanup(service.Stop)
+
+	if _, err := service.SyncNow(ctx); err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+	if _, found, err := db.HistoryEntry(ctx, serverFive.HistoryID); err != nil || !found {
+		t.Fatalf("server index 5 projection found=%v err=%v, want it applied", found, err)
+	}
+	capturedUploaded := false
+	for _, record := range factory.ServerRecords() {
+		if record.ID == captured.ID+"-record" {
+			capturedUploaded = true
+		}
+	}
+	if !capturedUploaded {
+		t.Fatalf("the captured local record never reached the server; pending=%d",
+			service.Status().PendingUploads)
+	}
+	records, err := db.ListHistoryRecords(ctx)
+	if err != nil {
+		t.Fatalf("ListHistoryRecords: %v", err)
+	}
+	for _, record := range records {
+		if record.ID == captured.ID+"-record" {
+			if record.Index <= 6 {
+				t.Fatalf("capture index = %d, want it moved after the server maximum", record.Index)
+			}
+			if record.UploadedAt.IsZero() {
+				t.Fatalf("the capture was not acknowledged: %+v", record)
+			}
+		}
+	}
+	if status := service.Status(); status.PendingUploads != 0 {
+		t.Fatalf("pending uploads = %d, want none", status.PendingUploads)
+	}
+}
+
+// TestRestoredLocalCapturesAtServerMaxWithRealStore mirrors the in-memory
+// regression through SQLite: indexes 0-4 are acknowledged, two captures take
+// 5-6, and different server records occupy those indexes. The server suffix
+// must be applied and both captures reindexed and uploaded, proving the
+// rebuilt checkpoint ignores unacknowledged captures even when their indexes
+// reach the server's high-water mark.
+func TestRestoredLocalCapturesAtServerMaxWithRealStore(t *testing.T) {
+	ctx := context.Background()
+	db, _ := openTestStore(t)
+	writer, err := db.EnsureWriterUUID(ctx, func() string { return syncTestWriter })
+	if err != nil {
+		t.Fatalf("EnsureWriterUUID: %v", err)
+	}
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	var acknowledged []string
+	for index := 0; index < 5; index++ {
+		entry := recordSyncLocalEntry(t, db, writer,
+			"0198d000-0000-7000-8000-0000000004c"+string(rune('0'+index)),
+			"old", at.Add(time.Duration(index)*time.Minute))
+		acknowledged = append(acknowledged, entry.ID+"-record")
+	}
+	if err := db.MarkUploaded(ctx, acknowledged, at.Add(time.Hour), domainhistory.SeriesCheckpoint{
+		SeriesHost: writer, Tag: domainhistory.RecordTagHistory, AppliedIndex: -1, UploadedIndex: 4,
+	}); err != nil {
+		t.Fatalf("MarkUploaded: %v", err)
+	}
+	captures := []domainhistory.Entry{
+		recordSyncLocalEntry(t, db, writer,
+			"0198d000-0000-7000-8000-0000000004d1", "captured five", at.Add(7*time.Minute)),
+		recordSyncLocalEntry(t, db, writer,
+			"0198d000-0000-7000-8000-0000000004d2", "captured six", at.Add(8*time.Minute)),
+	}
+
+	serverFive := syncTestServerCreateRecord(writer, "server-history-five-c", "server five", 5, at.Add(5*time.Minute))
+	serverSix := syncTestServerCreateRecord(writer, "server-history-six-c", "server six", 6, at.Add(6*time.Minute))
+	metadata, err := db.HistoryMetadata(ctx)
+	if err != nil {
+		t.Fatalf("HistoryMetadata: %v", err)
+	}
+	metadata.Account = domainhistory.AccountIdentity{
+		ServerURL: "https://atuin.example.test", UserID: "fake-atuin-user",
+	}
+	if err := db.SaveHistoryMetadata(ctx, metadata); err != nil {
+		t.Fatalf("SaveHistoryMetadata: %v", err)
+	}
+	settings := domainpreferences.Defaults().History
+	settings.SyncEnabled = true
+	settings.SyncAddress = "https://atuin.example.test"
+	factory := fake.NewFactory(fake.Options{Records: []historysync.SyncRecord{serverFive, serverSix}})
+	service := historysync.NewService(&restoreSettings{history: settings}, &restoreSecrets{values: map[historysync.SecretRef]string{
+		historysync.SessionTokenRef(): "session-token",
+		historysync.MasterKeyRef():    base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
+	}}, db, factory)
+	t.Cleanup(service.Stop)
+
+	if _, err := service.SyncNow(ctx); err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+	if _, found, err := db.HistoryEntry(ctx, serverFive.HistoryID); err != nil || !found {
+		t.Fatalf("server index 5 projection found=%v err=%v, want it applied", found, err)
+	}
+	sent := make(map[string]bool)
+	for _, record := range factory.ServerRecords() {
+		sent[record.ID] = true
+	}
+	for _, capture := range captures {
+		if !sent[capture.ID+"-record"] {
+			t.Fatalf("capture %s never reached the server; pending=%d",
+				capture.ID, service.Status().PendingUploads)
+		}
+	}
+	records, err := db.ListHistoryRecords(ctx)
+	if err != nil {
+		t.Fatalf("ListHistoryRecords: %v", err)
+	}
+	for _, record := range records {
+		for _, capture := range captures {
+			if record.ID != capture.ID+"-record" {
+				continue
+			}
+			if record.Index <= 6 {
+				t.Fatalf("capture index = %d, want it moved after the server maximum", record.Index)
+			}
+			if record.UploadedAt.IsZero() {
+				t.Fatalf("the capture was not acknowledged: %+v", record)
+			}
+		}
+	}
+	metadata, err = db.HistoryMetadata(ctx)
+	if err != nil {
+		t.Fatalf("HistoryMetadata after sync: %v", err)
+	}
+	if got := metadata.Series[domainhistory.SeriesKey(writer, domainhistory.RecordTagHistory)]; got.AppliedIndex != 6 || got.UploadedIndex != 8 {
+		t.Fatalf("checkpoint = %+v, want applied 6 and uploaded 8", got)
+	}
+	if status := service.Status(); status.PendingUploads != 0 {
+		t.Fatalf("pending uploads = %d, want none", status.PendingUploads)
+	}
+}
+
+// recordSyncLocalEntry appends one unacknowledged local capture to the store
+// and returns the projected entry. The log assigns its writer-series index.
+func recordSyncLocalEntry(t *testing.T, store *Store, writer, id, command string, at time.Time) domainhistory.Entry {
+	t.Helper()
+	entry := syncTestEntry(id, command, at)
+	record := domainhistory.Record{
+		ID: id + "-record", SeriesHost: writer, Tag: domainhistory.RecordTagHistory,
+		RecordedAt: at, Version: domainhistory.RecordVersion,
+		Kind: domainhistory.RecordKindCreate, HistoryID: id,
+		Payload: mustSyncPayload(t, entry), Direction: domainhistory.RecordDirectionLocal,
+	}
+	if err := store.RecordHistoryEntry(context.Background(), entry, &record); err != nil {
+		t.Fatalf("RecordHistoryEntry: %v", err)
+	}
+	return entry
+}
+
+// syncTestServerCreateRecord builds a server-side create record for the local
+// writer series, as another install of the same writer would have uploaded it.
+func syncTestServerCreateRecord(writer, id, command string, index int64, at time.Time) historysync.SyncRecord {
+	return historysync.SyncRecord{
+		ID: "server-record-" + id, SeriesHost: writer, Tag: domainhistory.RecordTagHistory,
+		Index: index, RecordedAt: at, Version: domainhistory.RecordVersion,
+		Kind: domainhistory.RecordKindCreate, HistoryID: id,
+		Entry: &domainhistory.Entry{
+			ID: id, Scope: "local", Command: command,
+			RecordedAt: at, Source: domainhistory.SourceAtuinSync,
+		},
+	}
+}
+
+func mustSyncPayload(t *testing.T, entry domainhistory.Entry) string {
+	t.Helper()
+	payload, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("marshal entry: %v", err)
+	}
+	return string(payload)
+}
+
+type restoreSettings struct{ history domainpreferences.History }
+
+func (s *restoreSettings) HistorySettings() domainpreferences.History { return s.history }
+
+func (s *restoreSettings) UpdateHistorySettings(change func(*domainpreferences.History)) error {
+	change(&s.history)
+	return nil
+}
+
+type restoreSecrets struct {
+	values map[historysync.SecretRef]string
+}
+
+func (s *restoreSecrets) Mode() historysync.SecretMode { return historysync.SecretModeOS }
+
+func (s *restoreSecrets) Has(_ context.Context, ref historysync.SecretRef) (bool, error) {
+	_, ok := s.values[ref]
+	return ok, nil
+}
+
+func (s *restoreSecrets) Get(_ context.Context, ref historysync.SecretRef) (string, error) {
+	value, ok := s.values[ref]
+	if !ok {
+		return "", historysync.ErrSecretNotFound
+	}
+	return value, nil
+}
+
+func (s *restoreSecrets) Set(_ context.Context, ref historysync.SecretRef, value string) error {
+	s.values[ref] = value
+	return nil
+}
+
+func (s *restoreSecrets) Delete(_ context.Context, ref historysync.SecretRef) error {
+	delete(s.values, ref)
+	return nil
 }
 
 func TestMarkAndResetUploadedUpdateTheLogAndCheckpoint(t *testing.T) {
