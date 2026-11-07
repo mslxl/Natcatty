@@ -111,7 +111,7 @@ const (
 	DefaultDarkTheme = "midnight"
 	// DefaultTerminalTheme is the original's terminal color scheme.
 	DefaultTerminalTheme = "netcatty-dark"
-	// DefaultIconVariant is the original app icon.
+	// DefaultIconVariant is the default app icon.
 	DefaultIconVariant = "original"
 )
 
@@ -227,7 +227,7 @@ func ValidIconVariant(id string) bool {
 	return ok
 }
 
-// ResolveIconVariant returns the requested variant or the original icon.
+// ResolveIconVariant returns the requested variant or the default icon.
 func ResolveIconVariant(id string) IconVariant {
 	if variant, ok := LookupIconVariant(id); ok {
 		return variant
@@ -261,13 +261,13 @@ var iconVariants = []IconVariant{
 	{ID: "dark", Name: "Dark", Group: IconGroupClassic},
 	{ID: "colorful", Name: "Colorful", Group: IconGroupClassic},
 	{ID: "high-contrast", Name: "High contrast", Group: IconGroupClassic},
-	{ID: "white-navy", Name: "White · Navy cat", Group: IconGroupWhite},
-	{ID: "white-sky", Name: "White · Sky cat", Group: IconGroupWhite},
-	{ID: "white-rose", Name: "White · Rose cat", Group: IconGroupWhite},
-	{ID: "white-emerald", Name: "White · Emerald cat", Group: IconGroupWhite},
-	{ID: "white-amber", Name: "White · Amber cat", Group: IconGroupWhite},
-	{ID: "white-violet", Name: "White · Violet cat", Group: IconGroupWhite},
-	{ID: "rainbow", Name: "Rainbow cat", Group: IconGroupSpecial},
+	{ID: "white-navy", Name: "White · Navy", Group: IconGroupWhite},
+	{ID: "white-sky", Name: "White · Sky", Group: IconGroupWhite},
+	{ID: "white-rose", Name: "White · Rose", Group: IconGroupWhite},
+	{ID: "white-emerald", Name: "White · Emerald", Group: IconGroupWhite},
+	{ID: "white-amber", Name: "White · Amber", Group: IconGroupWhite},
+	{ID: "white-violet", Name: "White · Violet", Group: IconGroupWhite},
+	{ID: "rainbow", Name: "Rainbow", Group: IconGroupSpecial},
 }
 
 // Accents returns the original's eighteen accent presets in picker order.
