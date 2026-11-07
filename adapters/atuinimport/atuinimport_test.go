@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -186,6 +188,23 @@ func TestReadHistoryRejectsAMissingFile(t *testing.T) {
 	}
 }
 
+// A stale file at an Atuin database path that is not SQLite at all must be
+// classified as unknown schema, so detection does not treat the Host as Atuin
+// forever and suppress the normal capture hook.
+func TestReadHistoryClassifiesANonSQLiteFileAsUnknownSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+	if err := os.WriteFile(path, []byte("this is not a database"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	_, err := (Reader{}).ReadHistory(context.Background(), path)
+	if !errors.Is(err, ErrUnknownSchema) {
+		t.Fatalf("error = %v, want ErrUnknownSchema", err)
+	}
+	if errors.Is(err, ErrInconsistent) {
+		t.Fatalf("a foreign file was reported as a retryable Atuin copy: %v", err)
+	}
+}
+
 // A live Atuin keeps recent rows in history.db-wal until a checkpoint. The
 // importer's copy includes the side files, so the read sees those rows too.
 func TestReadHistorySeesRowsStillInTheWAL(t *testing.T) {
@@ -249,5 +268,56 @@ func copyFile(t *testing.T, source, target string) {
 	}
 	if err := out.Close(); err != nil {
 		t.Fatalf("close %s: %v", target, err)
+	}
+}
+
+func TestReadOnlyDSNBuildsValidWindowsDriveURIs(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{
+			name: "drive path uses forward slashes and an empty authority",
+			path: `C:\Users\me\AppData\Local\Temp\netcatty-atuin-1\history.db`,
+			want: "file:///C:/Users/me/AppData/Local/Temp/netcatty-atuin-1/history.db" +
+				"?mode=ro&_pragma=query_only(1)",
+		},
+		{
+			name: "spaces and percent signs are escaped",
+			path: `C:\Users\a b\%TEMP%\history.db`,
+			want: "file:///C:/Users/a%20b/%25TEMP%25/history.db" +
+				"?mode=ro&_pragma=query_only(1)",
+		},
+		{
+			name: "lowercase drive is preserved",
+			path: `d:\atuin\history.db`,
+			want: "file:///d:/atuin/history.db?mode=ro&_pragma=query_only(1)",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := readOnlyDSN(test.path, "windows")
+			if got != test.want {
+				t.Fatalf("readOnlyDSN = %q, want %q", got, test.want)
+			}
+			parsed, err := url.Parse(got)
+			if err != nil {
+				t.Fatalf("the DSN is not a URI: %v", err)
+			}
+			if parsed.Host != "" {
+				t.Fatalf("authority = %q, want empty", parsed.Host)
+			}
+			if strings.Contains(got, `\`) || strings.Contains(strings.Split(got, "?")[0], "%5C") {
+				t.Fatalf("the DSN still carries backslashes: %q", got)
+			}
+		})
+	}
+}
+
+func TestReadOnlyDSNKeepsAnAbsoluteUnixPath(t *testing.T) {
+	got := readOnlyDSN("/home/me/.atuin/data/history.db", "linux")
+	if want := "file:///home/me/.atuin/data/history.db?mode=ro&_pragma=query_only(1)"; got != want {
+		t.Fatalf("readOnlyDSN = %q, want %q", got, want)
 	}
 }

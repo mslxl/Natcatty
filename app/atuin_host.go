@@ -69,6 +69,7 @@ func (f atuinRemoteFiles) Stat(ctx context.Context, path string) (apphostatuin.F
 		Size:    entry.Size,
 		ModTime: entry.ModTime,
 		Regular: entry.Kind == domainsftp.KindFile,
+		Symlink: entry.Symlink,
 	}, nil
 }
 
@@ -94,10 +95,14 @@ func (p atuinHostPolicy) Probe(ctx context.Context, spec appsession.StartSpec) a
 	if !ok {
 		return appsession.HostAtuinProbe{}
 	}
-	result, _ := p.service.Probe(ctx, ref)
+	result, probeErr := p.service.Probe(ctx, ref)
 	// A failed import still reports Present: the Host runs Atuin, so the
-	// capture hook stays skipped and a later Session retries the copy.
-	return appsession.HostAtuinProbe{Present: result.Present}
+	// capture hook stays skipped and a later Session retries the copy. Failed
+	// is surfaced to the Session so the failure is not silent.
+	return appsession.HostAtuinProbe{
+		Present: result.Present,
+		Failed:  result.Present && probeErr != nil,
+	}
 }
 
 func (p atuinHostPolicy) MarkNoticed(ctx context.Context, spec appsession.StartSpec) bool {

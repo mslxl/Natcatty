@@ -3,9 +3,11 @@ package hostatuin
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -21,6 +23,10 @@ type fakeFile struct {
 	content []byte
 	modTime time.Time
 	regular bool
+	symlink bool
+	// size overrides the stat size, which lets a test model a file that grows
+	// after the pre-copy check.
+	size *int64
 }
 
 // fakeRemoteFiles records every read-only operation. It deliberately has no
@@ -29,9 +35,19 @@ type fakeRemoteFiles struct {
 	root    string
 	rootErr error
 	files   map[string]*fakeFile
-	// changingPath gains a modification-time change after its first copy stat,
-	// simulating Atuin writing the database while the copy is in flight.
-	changingPath string
+	// noInstall removes the default Atuin binary marker, modelling a Host
+	// whose Atuin was uninstalled while its database stayed behind.
+	noInstall bool
+	// changingPath gains a modification-time change after the given stat,
+	// simulating Atuin writing a file while the copy is in flight.
+	changingPath  string
+	changingAfter int
+	// openBlockPath stalls Open until Close, modelling an SFTP call that does
+	// not observe the deadline.
+	openBlockPath string
+	openBlock     chan struct{}
+	openEntered   chan struct{}
+	openReturned  chan struct{}
 
 	mu        sync.Mutex
 	stats     []string
@@ -54,10 +70,25 @@ func (f *fakeRemoteFiles) Stat(_ context.Context, name string) (FileInfo, error)
 	f.statCalls[name]++
 	file, ok := f.files[name]
 	if !ok {
+		// Every test Host is an installed Atuin Host unless it opts out via
+		// noInstall. The marker is a real stat the detector must see.
+		if !f.noInstall && name == path.Join(f.root, ".local/bin/atuin") {
+			return FileInfo{Size: 1, Regular: true}, nil
+		}
 		return FileInfo{}, os.ErrNotExist
 	}
-	info := FileInfo{Size: int64(len(file.content)), ModTime: file.modTime, Regular: file.regular}
-	if name == f.changingPath && f.statCalls[name] >= 3 {
+	size := int64(len(file.content))
+	if file.size != nil {
+		size = *file.size
+	}
+	info := FileInfo{Size: size, ModTime: file.modTime, Regular: file.regular, Symlink: file.symlink}
+	threshold := f.changingAfter
+	if threshold == 0 {
+		// Detection and the candidate re-stat account for the first stats;
+		// four makes the pre-open stat the first changed one.
+		threshold = 4
+	}
+	if name == f.changingPath && f.statCalls[name] >= threshold {
 		info.ModTime = info.ModTime.Add(time.Second)
 	}
 	return info, nil
@@ -65,9 +96,26 @@ func (f *fakeRemoteFiles) Stat(_ context.Context, name string) (FileInfo, error)
 
 func (f *fakeRemoteFiles) Open(_ context.Context, name string) (io.ReadCloser, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.opens = append(f.opens, name)
 	file, ok := f.files[name]
+	blocked := f.openBlock
+	entered := f.openEntered
+	returned := f.openReturned
+	f.mu.Unlock()
+
+	if f.openBlockPath == name && blocked != nil {
+		if entered != nil {
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+		}
+		<-blocked
+		if returned != nil {
+			close(returned)
+		}
+		return nil, errors.New("channel closed")
+	}
 	if !ok {
 		return nil, os.ErrNotExist
 	}
@@ -76,8 +124,13 @@ func (f *fakeRemoteFiles) Open(_ context.Context, name string) (io.ReadCloser, e
 
 func (f *fakeRemoteFiles) Close() error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.closed++
+	block := f.openBlock
+	f.openBlock = nil
+	f.mu.Unlock()
+	if block != nil {
+		close(block)
+	}
 	return nil
 }
 
@@ -198,6 +251,28 @@ func testRow(id string, timestamp int64, command string) domainhistory.AtuinRow 
 	return domainhistory.AtuinRow{ID: id, Timestamp: timestamp, Command: command}
 }
 
+// testWALHeader builds a WAL header with committed frames (size > 32) and the
+// given salts. The WAL header is always big-endian.
+func testWALHeader(salt1, salt2 uint32) []byte {
+	header := make([]byte, walHeaderSize+1)
+	binary.BigEndian.PutUint32(header[0:4], walMagic2)
+	binary.BigEndian.PutUint32(header[8:12], 4096)
+	binary.BigEndian.PutUint32(header[16:20], salt1)
+	binary.BigEndian.PutUint32(header[20:24], salt2)
+	return header
+}
+
+// testSHMHeader builds an initialized wal-index header. Its salts use the
+// Host's byte order; the tests model a little-endian Host, and the matcher
+// must accept either order.
+func testSHMHeader(salt1, salt2 uint32) []byte {
+	header := make([]byte, shmHeaderSize)
+	header[12] = 1
+	binary.LittleEndian.PutUint32(header[32:36], salt1)
+	binary.LittleEndian.PutUint32(header[36:40], salt2)
+	return header
+}
+
 func testService(source RemoteSource, database Database, recorder Recorder, opts ...Option) *Service {
 	options := []Option{WithRemote(source), WithDatabase(database), WithRecorder(recorder)}
 	options = append(options, opts...)
@@ -210,12 +285,14 @@ var testRef = HostRef{
 
 func TestProbeCopiesTheNewDataDirWithWALAndSHMAndImports(t *testing.T) {
 	const historyPath = "/home/me/.atuin/data/history.db"
+	wal := testWALHeader(7, 9)
+	shm := testSHMHeader(7, 9)
 	files := &fakeRemoteFiles{
 		root: "/home/me",
 		files: map[string]*fakeFile{
 			historyPath:          {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
-			historyPath + "-wal": {content: []byte("wal"), modTime: time.Unix(101, 0), regular: true},
-			historyPath + "-shm": {content: []byte("shm"), modTime: time.Unix(102, 0), regular: true},
+			historyPath + "-wal": {content: wal, modTime: time.Unix(101, 0), regular: true},
+			historyPath + "-shm": {content: shm, modTime: time.Unix(102, 0), regular: true},
 			// A legacy copy must not win over the newer directory.
 			"/home/me/.local/share/atuin/history.db": {content: []byte("legacy"), regular: true},
 		},
@@ -242,9 +319,9 @@ func TestProbeCopiesTheNewDataDirWithWALAndSHMAndImports(t *testing.T) {
 		t.Fatal("the database was not read")
 	}
 	if string(database.copied[historyName]) != "database" ||
-		string(database.copied[walName]) != "wal" ||
-		string(database.copied[shmName]) != "shm" {
-		t.Fatalf("copied files = %q / %q / %q",
+		!bytes.Equal(database.copied[walName], wal) ||
+		!bytes.Equal(database.copied[shmName], shm) {
+		t.Fatalf("copied files = %q / %x / %x",
 			database.copied[historyName], database.copied[walName], database.copied[shmName])
 	}
 	if got := files.openedNames(); len(got) != 3 {
@@ -534,6 +611,366 @@ func TestTempDirFailureLeavesPresentButImportsNothing(t *testing.T) {
 	}
 	if len(recorder.importCalls()) != 0 {
 		t.Fatal("a failed copy was imported")
+	}
+}
+
+// The three files must describe one WAL generation: a mismatched WAL and SHM
+// means the copy could mix committed rows from different instants. The copy is
+// rejected and the recorder is never called, so the checkpoint cannot advance.
+func TestProbeRejectsMismatchedWALAndSHMHeadersWithoutImporting(t *testing.T) {
+	const historyPath = "/home/me/.atuin/data/history.db"
+	files := &fakeRemoteFiles{
+		root: "/home/me",
+		files: map[string]*fakeFile{
+			historyPath:          {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
+			historyPath + "-wal": {content: testWALHeader(11, 12), modTime: time.Unix(101, 0), regular: true},
+			historyPath + "-shm": {content: testSHMHeader(21, 22), modTime: time.Unix(102, 0), regular: true},
+		},
+	}
+	database := &fakeDatabase{rows: []domainhistory.AtuinRow{testRow("id-1", 100, "ls")}}
+	recorder := &fakeRecorder{}
+	service := testService(&fakeRemoteSource{files: files}, database, recorder)
+
+	result, err := service.Probe(context.Background(), testRef)
+	if !errors.Is(err, ErrInconsistentCopy) {
+		t.Fatalf("error = %v, want ErrInconsistentCopy", err)
+	}
+	if !result.Present {
+		t.Fatal("a mismatched side file erased the Host's Atuin presence")
+	}
+	if database.calls != 0 {
+		t.Fatalf("a mismatched copy was parsed %d times", database.calls)
+	}
+	if len(recorder.importCalls()) != 0 {
+		t.Fatal("a mismatched copy advanced the import checkpoint")
+	}
+}
+
+// A file that changes after its own per-file check must still be caught by the
+// full second pass over all three files.
+func TestProbeCatchesAChangeAfterAFileWasCopied(t *testing.T) {
+	const historyPath = "/home/me/.atuin/data/history.db"
+	files := &fakeRemoteFiles{
+		root:          "/home/me",
+		changingPath:  historyPath,
+		changingAfter: 6,
+		files: map[string]*fakeFile{
+			historyPath: {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
+		},
+	}
+	database := &fakeDatabase{rows: []domainhistory.AtuinRow{testRow("id-1", 100, "ls")}}
+	recorder := &fakeRecorder{}
+	service := testService(&fakeRemoteSource{files: files}, database, recorder)
+
+	result, err := service.Probe(context.Background(), testRef)
+	if !errors.Is(err, ErrInconsistentCopy) {
+		t.Fatalf("error = %v, want ErrInconsistentCopy", err)
+	}
+	if !result.Present {
+		t.Fatal("a late change erased the Host's Atuin presence")
+	}
+	if database.calls != 0 || len(recorder.importCalls()) != 0 {
+		t.Fatalf("a late change reached the journal: db=%d imports=%d",
+			database.calls, len(recorder.importCalls()))
+	}
+}
+
+// SFTP calls ignore contexts. The attempt must close the channel on its
+// deadline, which unblocks the read and lets the goroutine exit.
+func TestProbeDeadlineClosesAStalledRemoteOpen(t *testing.T) {
+	const historyPath = "/home/me/.atuin/data/history.db"
+	files := &fakeRemoteFiles{
+		root:          "/home/me",
+		openBlockPath: historyPath,
+		openBlock:     make(chan struct{}),
+		openEntered:   make(chan struct{}, 1),
+		openReturned:  make(chan struct{}),
+		files: map[string]*fakeFile{
+			historyPath: {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
+		},
+	}
+	service := testService(&fakeRemoteSource{files: files}, &fakeDatabase{}, &fakeRecorder{},
+		WithTimeout(50*time.Millisecond))
+
+	start := time.Now()
+	result, err := service.Probe(context.Background(), testRef)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("a stalled remote read completed without an error")
+	}
+	if !result.Present {
+		t.Fatal("a stalled read erased the Host's Atuin presence")
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("the probe took %v, want a bounded attempt", elapsed)
+	}
+	select {
+	case <-files.openEntered:
+	default:
+		t.Fatal("the fake Open never started")
+	}
+	select {
+	case <-files.openReturned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the stalled Open did not return after the channel closed")
+	}
+	files.mu.Lock()
+	closed := files.closed
+	files.mu.Unlock()
+	if closed != 1 {
+		t.Fatalf("the channel was closed %d times, want 1", closed)
+	}
+}
+
+func TestProbeRejectsAnOversizedDatabaseBeforeCopying(t *testing.T) {
+	const historyPath = "/home/me/.atuin/data/history.db"
+	files := &fakeRemoteFiles{
+		root: "/home/me",
+		files: map[string]*fakeFile{
+			historyPath: {content: []byte("0123456789"), modTime: time.Unix(100, 0), regular: true},
+		},
+	}
+	database := &fakeDatabase{rows: []domainhistory.AtuinRow{testRow("id-1", 100, "ls")}}
+	recorder := &fakeRecorder{}
+	service := testService(&fakeRemoteSource{files: files}, database, recorder,
+		WithMaxTotalBytes(4))
+
+	result, err := service.Probe(context.Background(), testRef)
+	if !errors.Is(err, ErrCopyTooLarge) {
+		t.Fatalf("error = %v, want ErrCopyTooLarge", err)
+	}
+	if !result.Present {
+		t.Fatal("an oversized database erased the Host's Atuin presence")
+	}
+	if opened := files.openedNames(); len(opened) != 0 {
+		t.Fatalf("an oversized database was opened: %v", opened)
+	}
+	if database.calls != 0 || len(recorder.importCalls()) != 0 {
+		t.Fatal("an oversized database was imported")
+	}
+}
+
+// The stat size can understate a file that grows after the check; the stream
+// itself is capped too.
+func TestProbeStopsACopyThatGrowsPastTheLimit(t *testing.T) {
+	const historyPath = "/home/me/.atuin/data/history.db"
+	reported := int64(2)
+	files := &fakeRemoteFiles{
+		root: "/home/me",
+		files: map[string]*fakeFile{
+			historyPath: {
+				content: []byte("0123456789"), size: &reported,
+				modTime: time.Unix(100, 0), regular: true,
+			},
+		},
+	}
+	database := &fakeDatabase{rows: []domainhistory.AtuinRow{testRow("id-1", 100, "ls")}}
+	recorder := &fakeRecorder{}
+	service := testService(&fakeRemoteSource{files: files}, database, recorder,
+		WithMaxTotalBytes(4))
+
+	result, err := service.Probe(context.Background(), testRef)
+	if !errors.Is(err, ErrCopyTooLarge) {
+		t.Fatalf("error = %v, want ErrCopyTooLarge", err)
+	}
+	if !result.Present {
+		t.Fatal("a growing copy erased the Host's Atuin presence")
+	}
+	if database.calls != 0 || len(recorder.importCalls()) != 0 {
+		t.Fatal("a growing copy was imported")
+	}
+}
+
+// A database left behind by an uninstalled Atuin must not suppress the normal
+// capture hook. Without a config, binary, or profile hint, the Host is absent.
+func TestProbeTreatsAStaleDatabaseWithoutAtuinAsAbsent(t *testing.T) {
+	const historyPath = "/home/me/.atuin/data/history.db"
+	files := &fakeRemoteFiles{
+		root:      "/home/me",
+		noInstall: true,
+		files: map[string]*fakeFile{
+			historyPath: {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
+		},
+	}
+	database := &fakeDatabase{rows: []domainhistory.AtuinRow{testRow("id-1", 100, "ls")}}
+	recorder := &fakeRecorder{}
+	service := testService(&fakeRemoteSource{files: files}, database, recorder)
+
+	result, err := service.Probe(context.Background(), testRef)
+	if err != nil || result != (ProbeResult{}) {
+		t.Fatalf("Probe = %+v, %v, want absent", result, err)
+	}
+	if database.calls != 0 || len(recorder.importCalls()) != 0 {
+		t.Fatal("a stale database was imported without an Atuin installation")
+	}
+}
+
+// A profile with an ATUIN_HOME assignment is installation evidence and a data
+// directory hint, all without running the shell or Atuin.
+func TestProbeUsesAnAtuinHomeHintFromAProfile(t *testing.T) {
+	const historyPath = "/home/me/.atuin-custom/history.db"
+	files := &fakeRemoteFiles{
+		root:      "/home/me",
+		noInstall: true,
+		files: map[string]*fakeFile{
+			"/home/me/.profile": {
+				content: []byte("export PATH=$HOME/bin:$PATH\nexport ATUIN_HOME=\"$HOME/.atuin-custom\"\n"),
+				regular: true,
+			},
+			historyPath: {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
+		},
+	}
+	database := &fakeDatabase{rows: []domainhistory.AtuinRow{testRow("id-1", 100, "ls")}}
+	recorder := &fakeRecorder{}
+	service := testService(&fakeRemoteSource{files: files}, database, recorder)
+
+	result, err := service.Probe(context.Background(), testRef)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if !result.Present || result.Imported != 1 {
+		t.Fatalf("result = %+v, want an import from the hinted directory", result)
+	}
+	if database.calls != 1 {
+		t.Fatalf("database reads = %d, want 1", database.calls)
+	}
+}
+
+// XDG_DATA_HOME is the other documented relocation hint; its Atuin directory
+// is checked without running the shell.
+func TestProbeUsesAnXDGDataHomeHintFromAProfile(t *testing.T) {
+	const historyPath = "/home/me/.xdg/atuin/history.db"
+	files := &fakeRemoteFiles{
+		root:      "/home/me",
+		noInstall: true,
+		files: map[string]*fakeFile{
+			"/home/me/.bashrc": {
+				content: []byte("export XDG_DATA_HOME=\"$HOME/.xdg\"\n"),
+				regular: true,
+			},
+			historyPath: {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
+		},
+	}
+	database := &fakeDatabase{rows: []domainhistory.AtuinRow{testRow("id-1", 100, "ls")}}
+	recorder := &fakeRecorder{}
+	service := testService(&fakeRemoteSource{files: files}, database, recorder)
+
+	result, err := service.Probe(context.Background(), testRef)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if !result.Present || result.Imported != 1 {
+		t.Fatalf("result = %+v, want an import from XDG_DATA_HOME", result)
+	}
+}
+
+// A db_path in Atuin's config overrides the default directory scan.
+func TestProbeUsesTheDatabasePathFromAConfig(t *testing.T) {
+	const historyPath = "/home/me/custom/atuin-history.db"
+	files := &fakeRemoteFiles{
+		root: "/home/me",
+		files: map[string]*fakeFile{
+			"/home/me/.config/atuin/config.toml": {
+				content: []byte("[general]\n# db_path = \"/ignored\"\ndb_path = \"~/custom/atuin-history.db\"\n"),
+				regular: true,
+			},
+			historyPath: {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
+		},
+	}
+	database := &fakeDatabase{rows: []domainhistory.AtuinRow{testRow("id-1", 100, "ls")}}
+	recorder := &fakeRecorder{}
+	service := testService(&fakeRemoteSource{files: files}, database, recorder)
+
+	result, err := service.Probe(context.Background(), testRef)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if !result.Present || result.Imported != 1 {
+		t.Fatalf("result = %+v, want an import from db_path", result)
+	}
+}
+
+// An unknown Atuin schema is not imported and is not treated as a reason to
+// skip the capture hook: the Host falls back to the normal hook.
+func TestProbeTreatsAnUnknownSchemaAsAbsent(t *testing.T) {
+	const historyPath = "/home/me/.atuin/data/history.db"
+	files := &fakeRemoteFiles{
+		root: "/home/me",
+		files: map[string]*fakeFile{
+			historyPath: {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
+		},
+	}
+	database := &fakeDatabase{err: domainhistory.ErrUnknownAtuinSchema}
+	recorder := &fakeRecorder{}
+	service := testService(&fakeRemoteSource{files: files}, database, recorder)
+
+	result, err := service.Probe(context.Background(), testRef)
+	if err != nil || result != (ProbeResult{}) {
+		t.Fatalf("Probe = %+v, %v, want absent", result, err)
+	}
+	if len(recorder.importCalls()) != 0 {
+		t.Fatal("an unknown schema was imported")
+	}
+}
+
+// A symlinked database is never followed, so detection cannot read outside the
+// Host's own Atuin directory. The Host falls back to the capture hook.
+func TestProbeDoesNotFollowASymlinkedDatabase(t *testing.T) {
+	const historyPath = "/home/me/.atuin/data/history.db"
+	files := &fakeRemoteFiles{
+		root: "/home/me",
+		files: map[string]*fakeFile{
+			historyPath: {content: []byte("database"), modTime: time.Unix(100, 0), regular: true, symlink: true},
+		},
+	}
+	database := &fakeDatabase{rows: []domainhistory.AtuinRow{testRow("id-1", 100, "ls")}}
+	service := testService(&fakeRemoteSource{files: files}, database, &fakeRecorder{})
+
+	result, err := service.Probe(context.Background(), testRef)
+	if err != nil || result != (ProbeResult{}) {
+		t.Fatalf("Probe = %+v, %v, want absent", result, err)
+	}
+	if database.calls != 0 {
+		t.Fatal("a symlinked database was copied and read")
+	}
+}
+
+func TestVerifyWALAndSHMAcceptsEitherSaltByteOrder(t *testing.T) {
+	dir := t.TempDir()
+	walPath := filepath.Join(dir, walName)
+	shmPath := filepath.Join(dir, shmName)
+	wal := testWALHeader(0x11223344, 0x55667788)
+	if err := os.WriteFile(walPath, wal, 0o600); err != nil {
+		t.Fatalf("write WAL: %v", err)
+	}
+	for name, shm := range map[string][]byte{
+		"little endian": testSHMHeader(0x11223344, 0x55667788),
+		"big endian": func() []byte {
+			header := make([]byte, shmHeaderSize)
+			header[12] = 1
+			binary.BigEndian.PutUint32(header[32:36], 0x11223344)
+			binary.BigEndian.PutUint32(header[36:40], 0x55667788)
+			return header
+		}(),
+	} {
+		if err := os.WriteFile(shmPath, shm, 0o600); err != nil {
+			t.Fatalf("%s: write SHM: %v", name, err)
+		}
+		if err := verifyWALAndSHM(walPath, shmPath); err != nil {
+			t.Errorf("%s: verifyWALAndSHM: %v", name, err)
+		}
+	}
+}
+
+func TestVerifyWALAndSHMRejectsAnUnknownWALHeader(t *testing.T) {
+	dir := t.TempDir()
+	walPath := filepath.Join(dir, walName)
+	wal := make([]byte, walHeaderSize+1)
+	if err := os.WriteFile(walPath, wal, 0o600); err != nil {
+		t.Fatalf("write WAL: %v", err)
+	}
+	if err := verifyWALAndSHM(walPath, filepath.Join(dir, shmName)); !errors.Is(err, ErrInconsistentCopy) {
+		t.Fatalf("error = %v, want ErrInconsistentCopy", err)
 	}
 }
 

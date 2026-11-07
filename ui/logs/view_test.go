@@ -355,6 +355,21 @@ func TestHistoryRowsShowCapturedFieldsAndUnknownLabels(t *testing.T) {
 	assertNoHorizontalOverflow(t, tt, 1100, 720)
 }
 
+// An imported Host Atuin row carries its own provenance instead of being
+// mislabelled as a Netcatty Session.
+func TestSourceLabelDistinguishesAnAtuinImport(t *testing.T) {
+	m := locales.In("en")
+	if got := sourceLabel(m, domainhistory.SourceAtuinImport); got != m.LogsSourceAtuinImport() {
+		t.Fatalf("Atuin import source label = %q, want %q", got, m.LogsSourceAtuinImport())
+	}
+	if got := sourceLabel(m, domainhistory.SourceSession); got != m.LogsSourceSession() {
+		t.Fatalf("Session source label = %q, want %q", got, m.LogsSourceSession())
+	}
+	if got := sourceLabel(m, domainhistory.SourceShellHistory); got != m.LogsSourceShell() {
+		t.Fatalf("shell source label = %q, want %q", got, m.LogsSourceShell())
+	}
+}
+
 // TestHistoryDetailShowsEveryCapturedField opens the inline detail panel for a
 // fully populated row and proves it renders the full command and every
 // captured field, then closes it again.

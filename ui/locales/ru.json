@@ -1388,7 +1388,7 @@
   "logsTabConnections": "Журналы подключений ({count})",
   "logsTabHistory": "История команд ({count})",
   "logsSearch": "Поиск",
-  "logsHostFilter": "Хост или источник",
+  "logsHostFilter": "Хост",
   "logsHostOrigin": "Источник: {origin}",
   "logsHostAll": "Все хосты",
   "logsHostLocal": "Локальный",
@@ -3439,5 +3439,6 @@
   "settingsAboutNoticesTitle": "Уведомления третьих сторон",
   "settingsAboutNoticesBody": "Лицензии и уведомления об авторских правах MyGo, libghostty-vt, модулей Go, EternalTerminal и других включённых компонентов.",
   "settingsAboutUnavailable": "Правовые документы отсутствуют в этой установке. Переустановите из артефакта выпуска.",
-  "settingsAboutLegalReview": "Соответствие требованиям распространения проверяется механически и всё ещё ожидает человеческой и юридической проверки."
+  "settingsAboutLegalReview": "Соответствие требованиям распространения проверяется механически и всё ещё ожидает человеческой и юридической проверки.",
+  "connectionHostAtuinImportFailed": "Этот хост использует Atuin, но Netcatty не удалось прочитать его историю в этот раз. Повторная попытка будет выполнена в следующем сеансе."
 }

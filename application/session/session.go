@@ -276,9 +276,14 @@ const (
 	// 133/7 or typed input. It is never a connection failure.
 	NoticeCaptureHookUnavailable NoticeCode = "capture_hook_unavailable"
 	// NoticeHostAtuinDetected reports that the Host already runs Atuin.
-	// Netcatty imported its history read-only and skipped its own capture
+	// Netcatty prefers the Host's Atuin history and skipped its own capture
 	// hook, so the notice explains the Host-Atuin preference.
 	NoticeHostAtuinDetected NoticeCode = "host_atuin_detected"
+	// NoticeHostAtuinImportFailed reports that the Host runs Atuin but this
+	// read-only import attempt failed. The capture hook stays skipped and a
+	// later Session retries; the notice makes the failure visible instead of
+	// silently leaving the Host without Netcatty capture.
+	NoticeHostAtuinImportFailed NoticeCode = "host_atuin_import_failed"
 )
 
 // Notice is a non-fatal problem reported while a Session keeps running.
@@ -487,6 +492,10 @@ type CaptureHook interface {
 // skipped.
 type HostAtuinProbe struct {
 	Present bool
+	// Failed reports that the Host has Atuin but this attempt could not read
+	// its history. The hook stays skipped and the copy retries later, so the
+	// Session publishes a warning instead of failing the Open.
+	Failed bool
 }
 
 // HostAtuin is the optional Host-Atuin compatibility path. Probe runs on the
@@ -855,11 +864,13 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	// hook out of the startup; MarkNoticed publishes the one-time preference
 	// notice once the Session is live. The probe never fails an Open.
 	hostAtuinActive := false
+	hostAtuinFailed := false
 	if s.hostAtuin != nil {
 		probeCtx, cancel := context.WithTimeout(ctx, hostAtuinProbeTimeout)
 		probe := s.hostAtuin.Probe(probeCtx, spec)
 		cancel()
 		hostAtuinActive = probe.Present
+		hostAtuinFailed = probe.Failed
 	}
 
 	// The capture hook rewrites the startup before the transport opens: local
@@ -992,14 +1003,22 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		session.PublishNotice(Notice{Code: NoticeCaptureHookUnavailable})
 	}
 	if hostAtuinActive && s.hostAtuin != nil {
-		// The Host-Atuin service persists the one-time marker, so a later
-		// Session does not repeat this notice. Marking it here, after a
-		// successful Open, means a failed terminal start does not swallow it.
-		noticeCtx, cancel := context.WithTimeout(context.Background(), hostAtuinProbeTimeout)
-		first := s.hostAtuin.MarkNoticed(noticeCtx, spec)
-		cancel()
-		if first {
-			session.PublishNotice(Notice{Code: NoticeHostAtuinDetected})
+		if hostAtuinFailed {
+			// The Host runs Atuin but this read failed. The hook stays skipped
+			// so Netcatty never double-captures, and the warning says why the
+			// Host's history is temporarily unavailable.
+			session.PublishNotice(Notice{Code: NoticeHostAtuinImportFailed})
+		} else {
+			// The Host-Atuin service persists the one-time marker, so a later
+			// Session does not repeat this notice. Marking it here, after a
+			// successful Open, means a failed terminal start or a failed import
+			// does not swallow it.
+			noticeCtx, cancel := context.WithTimeout(context.Background(), hostAtuinProbeTimeout)
+			first := s.hostAtuin.MarkNoticed(noticeCtx, spec)
+			cancel()
+			if first {
+				session.PublishNotice(Notice{Code: NoticeHostAtuinDetected})
+			}
 		}
 	}
 

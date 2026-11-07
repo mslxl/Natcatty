@@ -1388,7 +1388,7 @@
   "logsTabConnections": "連線日誌 ({count})",
   "logsTabHistory": "命令歷史 ({count})",
   "logsSearch": "搜尋",
-  "logsHostFilter": "主機或來源",
+  "logsHostFilter": "主機",
   "logsHostOrigin": "來源：{origin}",
   "logsHostAll": "所有主機",
   "logsHostLocal": "本機",
@@ -3439,5 +3439,6 @@
   "settingsAboutNoticesTitle": "第三方聲明",
   "settingsAboutNoticesBody": "MyGo、libghostty-vt、Go 模組、EternalTerminal 及其他隨附元件的授權與版權聲明。",
   "settingsAboutUnavailable": "此安裝缺少法律文件。請從發行產物重新安裝。",
-  "settingsAboutLegalReview": "散布合規性已進行機械檢查，仍有待人工與法律審查。"
+  "settingsAboutLegalReview": "散布合規性已進行機械檢查，仍有待人工與法律審查。",
+  "connectionHostAtuinImportFailed": "此主機正在使用 Atuin，但 Netcatty 本次無法讀取其歷史記錄。將在之後的工作階段中重試。"
 }

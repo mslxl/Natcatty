@@ -15,7 +15,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,12 +34,17 @@ import (
 
 var (
 	// ErrUnknownSchema reports a database that is not an Atuin history
-	// database this build can read. The import is skipped and retried later.
-	ErrUnknownSchema = errors.New("atuinimport: unknown Atuin history schema")
+	// database this build can read. Detection treats it as absence, so a
+	// foreign file at an Atuin path cannot suppress normal command capture.
+	ErrUnknownSchema = domainhistory.ErrUnknownAtuinSchema
 	// ErrInconsistent reports a copy SQLite rejects or considers damaged. The
 	// Host is never modified; a later Session retries the copy.
 	ErrInconsistent = errors.New("atuinimport: inconsistent Atuin history copy")
 )
+
+// sqliteHeader is the 16-byte magic every SQLite database starts with. A file
+// that lacks it is neither a live nor a stale Atuin database.
+const sqliteHeader = "SQLite format 3\x00"
 
 // Reader reads Atuin history rows from a local database copy.
 type Reader struct{}
@@ -44,6 +53,9 @@ type Reader struct{}
 // unknown schema, a failed integrity check, or a malformed row rejects the
 // whole copy so no partial checkpoint is advanced.
 func (Reader) ReadHistory(ctx context.Context, path string) ([]domainhistory.AtuinRow, error) {
+	if err := checkSQLiteHeader(path); err != nil {
+		return nil, err
+	}
 	db, err := openReadOnly(ctx, path)
 	if err != nil {
 		return nil, err
@@ -87,6 +99,25 @@ func (Reader) ReadHistory(ctx context.Context, path string) ([]domainhistory.Atu
 	return out, nil
 }
 
+// checkSQLiteHeader rejects a local copy that is not a SQLite database. The
+// check runs before SQLite opens the file so a stale or foreign file is
+// classified as unknown instead of a retryable, inconsistent Atuin copy.
+func checkSQLiteHeader(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInconsistent, err)
+	}
+	defer file.Close()
+	header := make([]byte, len(sqliteHeader))
+	if _, err := io.ReadFull(file, header); err != nil {
+		return fmt.Errorf("%w: %v", ErrUnknownSchema, err)
+	}
+	if string(header) != sqliteHeader {
+		return fmt.Errorf("%w: the file is not SQLite", ErrUnknownSchema)
+	}
+	return nil
+}
+
 // openReadOnly opens the local copy with SQLite's read-only URI mode. The
 // copy lives in a private temporary directory owned by the importer, so WAL
 // recovery cannot touch the Host.
@@ -94,8 +125,7 @@ func openReadOnly(ctx context.Context, path string) (*sql.DB, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("%w: empty path", ErrInconsistent)
 	}
-	uri := (&url.URL{Scheme: "file", Path: path}).String()
-	dsn := uri + "?mode=ro&_pragma=query_only(1)"
+	dsn := readOnlyDSN(path, runtime.GOOS)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("atuinimport: open history: %w", err)
@@ -106,6 +136,33 @@ func openReadOnly(ctx context.Context, path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("%w: %v", ErrInconsistent, err)
 	}
 	return db, nil
+}
+
+// readOnlyDSN builds SQLite's read-only DSN for a local copy. The file URI
+// must have an empty authority: Windows drive paths become
+// file:///C:/Users/... with forward slashes, never file://C:\Users\..., which
+// SQLite rejects. Percent and space characters are URI-escaped.
+func readOnlyDSN(path, goos string) string {
+	return fileURI(path, goos) + "?mode=ro&_pragma=query_only(1)"
+}
+
+func fileURI(path, goos string) string {
+	if goos == "windows" {
+		slash := strings.ReplaceAll(path, `\`, "/")
+		if strings.HasPrefix(slash, "//") {
+			// A UNC path keeps the server as the URI authority.
+			server, rest, _ := strings.Cut(strings.TrimPrefix(slash, "//"), "/")
+			return (&url.URL{Scheme: "file", Host: server, Path: "/" + rest}).String()
+		}
+		switch {
+		case len(slash) >= 2 && slash[1] == ':':
+			slash = "/" + slash
+		case !strings.HasPrefix(slash, "/"):
+			slash = "/" + slash
+		}
+		return (&url.URL{Scheme: "file", Path: slash}).String()
+	}
+	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
 }
 
 type queryer interface {

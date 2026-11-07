@@ -10420,16 +10420,16 @@ func (msgs Messages) LogsSearch() string {
 	return Catalog.Format(msgs.locale, "logsSearch", nil)
 }
 
-// LogsHostFilter says "Host or origin"
+// LogsHostFilter says "Host"
 // in the language the app shows.
 //
-// The label of the Host or origin filter.
+// The label of the Host filter.
 func LogsHostFilter() string { return In(i18n.Locale()).LogsHostFilter() }
 
-// LogsHostFilter says "Host or origin"
+// LogsHostFilter says "Host"
 // in the language of msgs.
 //
-// The label of the Host or origin filter.
+// The label of the Host filter.
 func (msgs Messages) LogsHostFilter() string {
 	return Catalog.Format(msgs.locale, "logsHostFilter", nil)
 }
@@ -10619,13 +10619,13 @@ func (msgs Messages) LogsFrom() string {
 // LogsSourceAtuinImport says "Atuin import"
 // in the language the app shows.
 //
-// A command imported read-only from a Host's Atuin history.
+// A command imported read-only from a Host's own Atuin history.
 func LogsSourceAtuinImport() string { return In(i18n.Locale()).LogsSourceAtuinImport() }
 
 // LogsSourceAtuinImport says "Atuin import"
 // in the language of msgs.
 //
-// A command imported read-only from a Host's Atuin history.
+// A command imported read-only from a Host's own Atuin history.
 func (msgs Messages) LogsSourceAtuinImport() string {
 	return Catalog.Format(msgs.locale, "logsSourceAtuinImport", nil)
 }
@@ -25386,4 +25386,16 @@ func SettingsAboutLegalReview() string { return In(i18n.Locale()).SettingsAboutL
 // in the language of msgs.
 func (msgs Messages) SettingsAboutLegalReview() string {
 	return Catalog.Format(msgs.locale, "settingsAboutLegalReview", nil)
+}
+
+// ConnectionHostAtuinImportFailed says "This Host runs Atuin, but Netcatty could not read its history this time. It will retry on a later Session."
+// in the language the app shows.
+func ConnectionHostAtuinImportFailed() string {
+	return In(i18n.Locale()).ConnectionHostAtuinImportFailed()
+}
+
+// ConnectionHostAtuinImportFailed says "This Host runs Atuin, but Netcatty could not read its history this time. It will retry on a later Session."
+// in the language of msgs.
+func (msgs Messages) ConnectionHostAtuinImportFailed() string {
+	return Catalog.Format(msgs.locale, "connectionHostAtuinImportFailed", nil)
 }
