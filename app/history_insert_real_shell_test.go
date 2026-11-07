@@ -50,7 +50,7 @@ func TestHistoryInsertIsSafeInARealShell(t *testing.T) {
 			dir := realShellDir(t)
 			marker := filepath.Join(dir, "natcat-insert-marker")
 			text := test.text(marker)
-			surface := openInsertSurface(t, command, dir, true)
+			surface, session := openInsertSurface(t, command, dir, true)
 			if err := surface.InsertText(text); err != nil {
 				if errors.Is(err, sessionui.ErrInsertUnsafe) {
 					t.Skip("this shell did not enable bracketed paste")
@@ -62,6 +62,10 @@ func TestHistoryInsertIsSafeInARealShell(t *testing.T) {
 			}) {
 				t.Fatalf("the inserted text is not on the shell line: %q", surface.ScreenText())
 			}
+			if !strings.Contains(session.Snapshot().Input, "touch "+marker) {
+				t.Fatalf("the tracked line = %q, want the inserted command",
+					session.Snapshot().Input)
+			}
 			if markerAppeared(marker, 500*time.Millisecond) {
 				t.Fatalf("inserting %q executed the command", text)
 			}
@@ -71,7 +75,7 @@ func TestHistoryInsertIsSafeInARealShell(t *testing.T) {
 	t.Run("single line", func(t *testing.T) {
 		dir := realShellDir(t)
 		marker := filepath.Join(dir, "natcat-single-marker")
-		surface := openInsertSurface(t, command, dir, false)
+		surface, session := openInsertSurface(t, command, dir, false)
 		if err := surface.InsertText("touch " + marker); err != nil {
 			if errors.Is(err, sessionui.ErrInsertUnsafe) {
 				t.Skip("this shell did not enable bracketed paste")
@@ -82,6 +86,10 @@ func TestHistoryInsertIsSafeInARealShell(t *testing.T) {
 			return strings.Contains(surface.ScreenText(), "touch "+marker)
 		}) {
 			t.Fatalf("the inserted text is not on the shell line: %q", surface.ScreenText())
+		}
+		if session.Snapshot().Input != "touch "+marker {
+			t.Fatalf("the tracked line = %q, want the inserted command",
+				session.Snapshot().Input)
 		}
 		if markerAppeared(marker, 500*time.Millisecond) {
 			t.Fatal("inserting a single-line command submitted it")
@@ -98,7 +106,7 @@ func TestHistoryInsertRefusesMultilineWithoutBracketedPaste(t *testing.T) {
 	dir := realShellDir(t)
 	multilineMarker := filepath.Join(dir, "natcat-multiline-marker")
 	singleMarker := filepath.Join(dir, "natcat-single-marker")
-	surface := openInsertSurface(t, shell, dir, false)
+	surface, session := openInsertSurface(t, shell, dir, false)
 
 	err := surface.InsertText("touch " + multilineMarker + "\necho SHOULD_NOT_RUN")
 	if !errors.Is(err, sessionui.ErrInsertUnsafe) {
@@ -106,6 +114,10 @@ func TestHistoryInsertRefusesMultilineWithoutBracketedPaste(t *testing.T) {
 	}
 	if markerAppeared(multilineMarker, 500*time.Millisecond) {
 		t.Fatal("a refused multi-line insert executed the command")
+	}
+	if session.Snapshot().Input != "" {
+		t.Fatalf("a refused insert changed the tracked line to %q",
+			session.Snapshot().Input)
 	}
 
 	if err := surface.InsertText("touch " + singleMarker); err != nil {
@@ -116,6 +128,10 @@ func TestHistoryInsertRefusesMultilineWithoutBracketedPaste(t *testing.T) {
 	}) {
 		t.Fatalf("the single-line insert is not on the shell line: %q", surface.ScreenText())
 	}
+	if session.Snapshot().Input != "touch "+singleMarker {
+		t.Fatalf("the tracked line = %q, want the inserted command",
+			session.Snapshot().Input)
+	}
 	if markerAppeared(singleMarker, 500*time.Millisecond) {
 		t.Fatal("a single-line insert submitted the command")
 	}
@@ -123,7 +139,7 @@ func TestHistoryInsertRefusesMultilineWithoutBracketedPaste(t *testing.T) {
 
 // openInsertSurface starts one real shell and returns its live surface after
 // the prompt is visible and the terminal has recorded its modes.
-func openInsertSurface(t *testing.T, command []string, dir string, waitBracketed bool) *sessionui.Surface {
+func openInsertSurface(t *testing.T, command []string, dir string, waitBracketed bool) (*sessionui.Surface, *appsession.Session) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	t.Cleanup(cancel)
@@ -151,7 +167,7 @@ func openInsertSurface(t *testing.T, command []string, dir string, waitBracketed
 	if waitBracketed && !realShellWait(t, surface.BracketedPasteEnabled) {
 		t.Skip("this shell did not enable bracketed paste")
 	}
-	return surface
+	return surface, session
 }
 
 // bracketedPasteShellCommand prefers a shell whose line editor enables DEC
