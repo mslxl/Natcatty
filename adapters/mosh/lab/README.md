@@ -257,8 +257,9 @@ fail. All reports must carry the same commit, and that commit must be the one
 being verified; `verify` also refuses to run when the expected commit cannot
 be determined. A stale green report therefore cannot authorize a later tree.
 There is no waiver, partial-green path, or per-platform opt-out. The workflow
-is also exposed as `workflow_call` so a release/default-switch workflow can
-require it, and the `verify` job passes `${{ github.sha }}` explicitly.
+runs as ordinary CI on pull requests and `main` pushes that touch the mosh
+client, the session layer, or the parity tool, and on manual dispatch; its
+`verify` job passes `${{ github.sha }}` explicitly.
 
 ## Supplementary local evidence
 

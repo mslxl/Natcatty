@@ -67,18 +67,24 @@ def is-artifact [name: string] {
 def canonical-asset-name [name: string, version: string] {
     let base = ($name | path basename)
     let deb = (deb-version $version)
-    let dmg = $"natcatty-($version)-macos-universal.dmg"
+    # darwin/universal stays supported for the packaged-artifact CI job; the
+    # release workflow builds darwin/arm64 and darwin/amd64 separately.
+    let dmg_arm64 = $"natcatty-($version)-macos-arm64.dmg"
+    let dmg_amd64 = $"natcatty-($version)-macos-amd64.dmg"
+    let dmg_universal = $"natcatty-($version)-macos-universal.dmg"
     let setup = $"natcatty-($version)-windows-amd64-setup.exe"
     let portable = $"natcatty-($version)-windows-amd64-portable.zip"
     let linux_amd64_tar = $"natcatty-($version)-linux-amd64.tar.gz"
     let linux_arm64_tar = $"natcatty-($version)-linux-arm64.tar.gz"
     let linux_amd64_deb = $"natcatty-($version)-linux-amd64.deb"
     let linux_arm64_deb = $"natcatty-($version)-linux-arm64.deb"
-    if ($base == $"Natcatty ($version).dmg") { return $dmg }
+    if ($base == $"Natcatty ($version) arm64.dmg") { return $dmg_arm64 }
+    if ($base == $"Natcatty ($version) amd64.dmg") { return $dmg_amd64 }
+    if ($base == $"Natcatty ($version).dmg") { return $dmg_universal }
     if ($base == $"Natcatty Setup ($version) amd64.exe") { return $setup }
     if ($base == $"natcatty_($deb)_amd64.deb") { return $linux_amd64_deb }
     if ($base == $"natcatty_($deb)_arm64.deb") { return $linux_arm64_deb }
-    let canonical = [$dmg $setup $portable $linux_amd64_tar $linux_arm64_tar $linux_amd64_deb $linux_arm64_deb]
+    let canonical = [$dmg_arm64 $dmg_amd64 $dmg_universal $setup $portable $linux_amd64_tar $linux_arm64_tar $linux_amd64_deb $linux_arm64_deb]
     if ($base in $canonical) { return $base }
     error make { msg: $"($base) is a release artifact but has no canonical name for version ($version)" }
 }
