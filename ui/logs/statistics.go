@@ -36,7 +36,7 @@ func historyStatistics(c *ui.Context, s *State, m locales.Messages, t *ui.Theme)
 	}
 	ui.Column(c).FillWidth().Gap(10).Children(func() {
 		ui.Column(c).FillWidth().Padding(10).Gap(3).
-			Radius(kit.RadiusControl).Background(t.Surface).Children(func() {
+			Radius(kit.M(c).Radius.Control).Background(t.Surface).Children(func() {
 			statisticValue(c, m.LogsStatisticsTotal(stats.Total))
 			statisticValue(c, m.LogsStatisticsUnique(stats.Unique))
 			statisticValue(c, m.LogsStatisticsFailures(stats.Failures))

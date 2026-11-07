@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	historysync "github.com/mslxl/natcatty/application/historysync"
 	appsync "github.com/mslxl/natcatty/application/sync"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainforward "github.com/mslxl/natcatty/domain/forwarding"
@@ -124,6 +125,29 @@ func TestSnapshotCarriesPlaintextSecretsAndNewestTimestamp(t *testing.T) {
 	}
 	if payload.Secrets[0].Value != "host-password" || payload.Secrets[1].Value != "private" {
 		t.Fatalf("secrets = %+v", payload.Secrets)
+	}
+}
+
+func TestSnapshotNeverCarriesAtuinAccountCredentials(t *testing.T) {
+	const token = "fake-session-token-must-not-sync"
+	const key = "not-a-real-key-value-for-the-vault-snapshot"
+	secrets := &fakeSecrets{mode: appvault.SecretModeOS, values: map[appvault.SecretRef]string{
+		appvault.SecretRef(historysync.SessionTokenRef()): token,
+		appvault.SecretRef(historysync.MasterKeyRef()):    key,
+	}}
+	payload, err := New(&fakeRecords{}, secrets).Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(payload.Secrets) != 0 {
+		t.Fatalf("Vault snapshot carried Atuin credentials: %+v", payload.Secrets)
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if strings.Contains(string(encoded), token) || strings.Contains(string(encoded), key) {
+		t.Fatalf("Vault snapshot leaked an Atuin credential: %s", encoded)
 	}
 }
 

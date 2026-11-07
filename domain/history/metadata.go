@@ -18,8 +18,9 @@ type Metadata struct {
 	// KeyFingerprint is a hash prefix of the local Atuin master key, never the
 	// key itself.
 	KeyFingerprint string `json:"keyFingerprint,omitempty"`
-	// Account identifies the connected Atuin account so a same-account
-	// reconnect can be told from an account change.
+	// Account identifies the last connected Atuin account so a same-account
+	// reconnect can be told from an account change. It survives logout; the
+	// absent session token is what marks the account disconnected.
 	Account AccountIdentity `json:"account,omitempty"`
 	// HostImports holds the per-Host read-only Atuin import checkpoint.
 	HostImports map[string]ImportCheckpoint `json:"hostImports,omitempty"`

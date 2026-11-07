@@ -95,6 +95,24 @@ func (s *Service) Update(change func(*domain.Settings)) error {
 	return nil
 }
 
+// HistorySettings returns the device-local Atuin account settings. This is a
+// narrow accessor for the history sync service; it carries no credential.
+func (s *Service) HistorySettings() domain.History {
+	return s.Settings().History
+}
+
+// UpdateHistorySettings applies change to the device-local Atuin account
+// settings and saves the document. A failed save leaves the previous value in
+// place.
+func (s *Service) UpdateHistorySettings(change func(*domain.History)) error {
+	if change == nil {
+		return nil
+	}
+	return s.Update(func(settings *domain.Settings) {
+		change(&settings.History)
+	})
+}
+
 // Replace stores a complete document and publishes it. Cloud sync uses it
 // after overlaying the synced groups on the current local document, so a
 // device-local field such as the app icon is never taken from the cloud copy.
