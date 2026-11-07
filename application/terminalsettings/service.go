@@ -243,6 +243,14 @@ func (s *Service) SetPasteMinLines(lines int) error {
 	})
 }
 
+// SetHistoryCaptureHookEnabled installs or skips the session-scoped shell
+// hook. It applies to Sessions opened after the change.
+func (s *Service) SetHistoryCaptureHookEnabled(enabled bool) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.HistoryCaptureHookEnabled = enabled
+	})
+}
+
 // SetConnectionLogRetention sets how many connection logs are kept. Zero
 // keeps every log.
 func (s *Service) SetConnectionLogRetention(count, days int) error {

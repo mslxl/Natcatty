@@ -49,15 +49,18 @@ type terminalSettingsRecord struct {
 
 	ConnectionLogRetentionCount int `json:"connectionLogRetentionCount"`
 	ConnectionLogRetentionDays  int `json:"connectionLogRetentionDays"`
+
+	HistoryCaptureHookEnabled bool `json:"historyCaptureHookEnabled"`
 }
 
 // terminalSettingsVersion is the current record version. Version 1 files
 // lack the encoding, paste, and drop fields; version 2 files lack the
 // autocomplete, keyword highlight, and statistics fields; version 3 files
 // lack the connection log retention fields; version 4 files lack the dynamic
-// tab title mode. Zero values for a missing group are replaced by the defaults
+// tab title mode; version 5 files lack the history capture hook switch, whose
+// default is on. Zero values for a missing group are replaced by the defaults
 // on load. Older history retention fields are accepted and ignored.
-const terminalSettingsVersion = 5
+const terminalSettingsVersion = 6
 
 // Load returns the stored settings. A missing file is the original defaults,
 // not an error.
@@ -107,6 +110,9 @@ func (s *TerminalSettingsStore) Load(context.Context) (domainterminal.Settings, 
 	if record.Version >= 5 {
 		settings.DynamicTabTitleMode = record.DynamicTabTitleMode
 	}
+	if record.Version >= 6 {
+		settings.HistoryCaptureHookEnabled = record.HistoryCaptureHookEnabled
+	}
 	return domainterminal.Normalize(settings), nil
 }
 
@@ -140,6 +146,8 @@ func (s *TerminalSettingsStore) Save(_ context.Context, settings domainterminal.
 
 		ConnectionLogRetentionCount: settings.ConnectionLogRetentionCount,
 		ConnectionLogRetentionDays:  settings.ConnectionLogRetentionDays,
+
+		HistoryCaptureHookEnabled: settings.HistoryCaptureHookEnabled,
 	}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {

@@ -481,6 +481,8 @@ func noticeText(m locales.Messages, notice *appsession.Notice) string {
 		return m.ConnectionEternalTerminalDisplaced()
 	case appsession.NoticeETResumeFallback:
 		return m.ConnectionEternalTerminalResumeUnsupported()
+	case appsession.NoticeCaptureHookUnavailable:
+		return m.ConnectionCaptureHookUnavailable()
 	default:
 		return ""
 	}

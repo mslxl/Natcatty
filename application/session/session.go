@@ -271,6 +271,10 @@ const (
 	// reattached because the server lacks the v7 reattach capability. The
 	// stale secret was cleared and a fresh session was started instead.
 	NoticeETResumeFallback NoticeCode = "et_resume_fallback"
+	// NoticeCaptureHookUnavailable reports that the session-scoped shell hook
+	// could not be installed, so command capture falls back to native OSC
+	// 133/7 or typed input. It is never a connection failure.
+	NoticeCaptureHookUnavailable NoticeCode = "capture_hook_unavailable"
 )
 
 // Notice is a non-fatal problem reported while a Session keeps running.
@@ -433,6 +437,28 @@ type Factory interface {
 	Open(ctx context.Context, spec StartSpec) (Transport, error)
 }
 
+// CaptureHookPlan is the rewrite a session-scoped capture hook applies before
+// the transport opens. Spec is the StartSpec to use. HookExpected reports that
+// the hook was actually injected, so its first private sequence or prompt
+// handshake is still to come; a typed command before that point must stay
+// tentative instead of being finalized by the shell's own prompt marks.
+// Cleanup releases the plan's session-scoped resources, such as temporary
+// startup files, when the Session ends; nil means nothing to release.
+type CaptureHookPlan struct {
+	Spec         StartSpec
+	HookExpected bool
+	Cleanup      func()
+}
+
+// CaptureHook installs a shell hook that raises capture fidelity to Tier 1.
+// Plan runs once per Open on the dialing goroutine, before the transport
+// opens. It must never fail an Open: an unmodified Spec falls back to native
+// capture. The bool reports that the hook could not be installed, so the app
+// announces one capability notice per Host instead of a connection failure.
+type CaptureHook interface {
+	Plan(spec StartSpec) (CaptureHookPlan, bool)
+}
+
 // ErrClosed reports an operation on a Session that has already ended.
 var ErrClosed = errors.New("session: closed")
 
@@ -479,8 +505,11 @@ type Session struct {
 
 	tap             *terminalTap
 	clipboardAccess domainterminal.ClipboardAccess
-	codec           Codec
-	highlighter     *domainterminal.Highlighter
+	// captureCleanup releases the capture hook's session-scoped resources. The
+	// command loop calls it exactly once during teardown.
+	captureCleanup func()
+	codec          Codec
+	highlighter    *domainterminal.Highlighter
 
 	// rawExecMu serializes programmatic commands on the one interactive PTY.
 	// rawMu guards the single raw-output subscriber that a running command
@@ -488,6 +517,18 @@ type Session struct {
 	rawExecMu sync.Mutex
 	rawMu     sync.Mutex
 	rawFeed   *rawOutputFeed
+
+	// internalMu guards internalMarkers. Every wrapper this Session types
+	// carries an unguessable marker; the shell hook captures the wrapper line
+	// exactly like user input, so a completion carrying a marker belongs to
+	// the app's execution path and is never published as Command History.
+	// A marker is dropped when its own capture is suppressed, so a long
+	// Session does not accumulate one entry per command; internalMarkerOrder
+	// bounds the set if a capture never arrives, for example when a shell
+	// dies mid-command.
+	internalMu          sync.Mutex
+	internalMarkers     map[string]struct{}
+	internalMarkerOrder []string
 
 	// commandReady records that the interactive shell has answered a
 	// programmatic wrapper since it started, reconnected, or was interrupted.
@@ -584,9 +625,13 @@ type Service struct {
 	onBell              func(model.SessionID)
 	onConnection        func(ConnectionEvent)
 	highlightPolicy     func() (bool, []domainterminal.KeywordHighlightRule)
+	captureHook         CaptureHook
 	mu                  sync.Mutex
 	sessions            map[model.SessionID]*Session
-	closing             bool
+	// captureNotices records the Host whose capture-hook failure was already
+	// announced, so a reconnect loop does not repeat the capability notice.
+	captureNotices map[string]bool
+	closing        bool
 }
 
 // Option customizes a Service.
@@ -660,6 +705,13 @@ func WithCommandCompletionHook(fn func(CommandEvent)) Option {
 // tab as having new activity, as the original did.
 func WithBellHook(fn func(model.SessionID)) Option {
 	return func(s *Service) { s.onBell = fn }
+}
+
+// WithCaptureHook installs a session-scoped shell hook. Plan runs before each
+// transport opens and may rewrite the StartSpec; a nil hook leaves every
+// Session unchanged. A plan failure never fails the Open.
+func WithCaptureHook(hook CaptureHook) Option {
+	return func(s *Service) { s.captureHook = hook }
 }
 
 // WithConnectionHook receives one event per completed connection attempt. The
@@ -738,8 +790,24 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		return nil, fmt.Errorf("session: codec factory returned nil for %q", spec.Encoding)
 	}
 
+	// The capture hook rewrites the startup before the transport opens: local
+	// temp startup files or a remote wrapper command. It never fails an Open;
+	// a failed plan leaves the Session unmodified and reports a capability
+	// notice once per Host.
+	var captureCleanup func()
+	captureFailed := false
+	hookExpected := false
+	if s.captureHook != nil {
+		plan, failed := s.captureHook.Plan(spec)
+		spec = plan.Spec
+		captureCleanup = plan.Cleanup
+		captureFailed = failed
+		hookExpected = plan.HookExpected && !failed
+	}
+
 	transport, err := s.factory.Open(ctx, spec)
 	if err != nil {
+		runCaptureCleanup(captureCleanup)
 		s.reportConnection(ConnectionEvent{
 			HostID: spec.HostID, Label: specLabel(spec), Hostname: spec.Hostname,
 			Username: spec.Username, Kind: spec.Kind, StartedAt: startedAt,
@@ -749,6 +817,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	}
 	if err := ctx.Err(); err != nil {
 		_ = transport.Close()
+		runCaptureCleanup(captureCleanup)
 		s.reportConnection(ConnectionEvent{
 			HostID: spec.HostID, Label: specLabel(spec), Hostname: spec.Hostname,
 			Username: spec.Username, Kind: spec.Kind, StartedAt: startedAt,
@@ -769,6 +838,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		}
 	}
 	tap := newTerminalTap(policy)
+	tap.hookExpected = hookExpected
 	highlightEnabled, highlightRules := false, []domainterminal.KeywordHighlightRule(nil)
 	if s.highlightPolicy != nil {
 		highlightEnabled, highlightRules = s.highlightPolicy()
@@ -782,6 +852,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		spec:                spec,
 		tap:                 tap,
 		clipboardAccess:     policy,
+		captureCleanup:      captureCleanup,
 		codec:               codec,
 		highlighter:         domainterminal.NewHighlighter(highlightEnabled, highlightRules),
 		genDone:             make(chan struct{}),
@@ -818,6 +889,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		s.mu.Unlock()
 		cancel()
 		_ = transport.Close()
+		runCaptureCleanup(captureCleanup)
 		return nil, ErrClosed
 	}
 	s.sessions[id] = session
@@ -833,6 +905,12 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		StartedAt: startedAt,
 		EndedAt:   time.Now(),
 	})
+
+	if captureFailed && s.announceCaptureFailure(spec) {
+		// The hook could not be installed but the Session opened: capture is
+		// simply less precise. The notice is per Host, never per connection.
+		session.PublishNotice(Notice{Code: NoticeCaptureHookUnavailable})
+	}
 
 	if s.autoLog != nil {
 		if options := s.autoLog(spec); options != nil {
@@ -979,6 +1057,42 @@ func (s *Service) SetHighlightPolicy(enabled bool, rules []domainterminal.Keywor
 	for _, session := range live {
 		session.setHighlighter(highlighter)
 	}
+}
+
+// runCaptureCleanup releases a plan's resources exactly once. The plan runs
+// before the Session exists, so an Open that fails or is refused cleans up
+// here instead of through the command loop.
+func runCaptureCleanup(cleanup func()) {
+	if cleanup != nil {
+		cleanup()
+	}
+}
+
+// announceCaptureFailure reports whether this Host has not yet shown the
+// capture-hook capability notice. A local Session and an unsaved Host have
+// their own stable keys.
+func (s *Service) announceCaptureFailure(spec StartSpec) bool {
+	key := captureNoticeKey(spec)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.captureNotices == nil {
+		s.captureNotices = make(map[string]bool)
+	}
+	if s.captureNotices[key] {
+		return false
+	}
+	s.captureNotices[key] = true
+	return true
+}
+
+func captureNoticeKey(spec StartSpec) string {
+	if spec.HostID != "" {
+		return "host:" + string(spec.HostID)
+	}
+	if spec.Hostname != "" {
+		return "host:" + spec.Hostname
+	}
+	return "local"
 }
 
 func (s *Session) setHighlighter(highlighter *domainterminal.Highlighter) {
@@ -1450,6 +1564,13 @@ finished:
 	s.closeObservations()
 	if s.transport != nil {
 		_ = s.transport.Close()
+	}
+	// Temporary startup files are session-scoped. The command loop is the one
+	// teardown path, so the cleanup runs exactly once.
+	if s.captureCleanup != nil {
+		cleanup := s.captureCleanup
+		s.captureCleanup = nil
+		cleanup()
 	}
 	// A command still pending when the Session ends is finalized with an
 	// unknown exit and no finish time, so no duration is invented. The tap

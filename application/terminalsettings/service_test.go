@@ -107,6 +107,7 @@ func TestEverySetterUpdatesItsField(t *testing.T) {
 		func() error { return service.SetLogTimestamps(true) },
 		func() error { return service.SetOSC52(domainterminal.ClipboardReadWrite) },
 		func() error { return service.SetOSCNotifications(domainterminal.NotificationOff) },
+		func() error { return service.SetHistoryCaptureHookEnabled(false) },
 	}
 	for index, step := range steps {
 		if err := step(); err != nil {
@@ -117,7 +118,8 @@ func TestEverySetterUpdatesItsField(t *testing.T) {
 	if !settings.LoggingEnabled || settings.LogDirectory != `C:\logs` ||
 		settings.LogFormat != domainterminal.LogFormatRaw || !settings.LogTimestamps ||
 		settings.OSC52 != domainterminal.ClipboardReadWrite ||
-		settings.OSCNotifications != domainterminal.NotificationOff {
+		settings.OSCNotifications != domainterminal.NotificationOff ||
+		settings.HistoryCaptureHookEnabled {
 		t.Fatalf("settings = %+v", settings)
 	}
 }

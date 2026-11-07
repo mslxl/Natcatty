@@ -33,6 +33,7 @@ import (
 	adapters3 "github.com/mslxl/natcatty/adapters/s3"
 	adapterserial "github.com/mslxl/natcatty/adapters/serial"
 	adaptersftp "github.com/mslxl/natcatty/adapters/sftp"
+	"github.com/mslxl/natcatty/adapters/shellhook"
 	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
 	"github.com/mslxl/natcatty/adapters/store"
 	adaptersyncbackup "github.com/mslxl/natcatty/adapters/syncbackup"
@@ -886,6 +887,15 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		appsession.WithClipboardPolicy(func() domainterminal.ClipboardAccess {
 			return terminalService.Settings().OSC52
 		}),
+		// The session-scoped shell hook raises POSIX local and SSH Sessions to
+		// Tier 1. It contains no binary, reads the user's startup files without
+		// editing them, and is skipped when the setting is off or the transport
+		// owns shell startup.
+		appsession.WithCaptureHook(shellhook.NewPlanner(
+			shellhook.WithEnabled(func() bool {
+				return terminalService.Settings().HistoryCaptureHookEnabled
+			}),
+		)),
 		// A new Session inherits the encoding remembered for its Host, or the
 		// global default. The terminal surface applies live changes and
 		// persists them through the same Settings service.

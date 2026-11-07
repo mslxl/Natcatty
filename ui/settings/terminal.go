@@ -31,6 +31,7 @@ type Terminal interface {
 	SetKeywordHighlightEnabled(bool) error
 	SetKeywordHighlightRules([]domainterminal.KeywordHighlightRule) error
 	SetConnectionLogRetention(count, days int) error
+	SetHistoryCaptureHookEnabled(bool) error
 }
 
 // terminalResetter is implemented by the application service. Keeping it
@@ -262,6 +263,12 @@ func (s *TerminalState) SetKeywordHighlightRuleEnabled(id string, enabled bool) 
 		}
 	}
 	return s.SetKeywordHighlightRules(rules)
+}
+
+// SetHistoryCaptureHookEnabled installs or skips the session-scoped shell
+// hook.
+func (s *TerminalState) SetHistoryCaptureHookEnabled(enabled bool) bool {
+	return s.apply(func() error { return s.terminal.SetHistoryCaptureHookEnabled(enabled) })
 }
 
 // SetConnectionLogRetention stores how many connection logs are kept and for

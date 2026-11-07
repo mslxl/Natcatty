@@ -4976,6 +4976,18 @@ func (msgs Messages) ConnectionTmuxUnavailable() string {
 	return Catalog.Format(msgs.locale, "connectionTmuxUnavailable", nil)
 }
 
+// ConnectionCaptureHookUnavailable says "The shell capture hook could not be installed; this Session uses best-effort capture."
+// in the language the app shows.
+func ConnectionCaptureHookUnavailable() string {
+	return In(i18n.Locale()).ConnectionCaptureHookUnavailable()
+}
+
+// ConnectionCaptureHookUnavailable says "The shell capture hook could not be installed; this Session uses best-effort capture."
+// in the language of msgs.
+func (msgs Messages) ConnectionCaptureHookUnavailable() string {
+	return Catalog.Format(msgs.locale, "connectionCaptureHookUnavailable", nil)
+}
+
 // ConnectionEternalTerminalDisplaced says "Another client attached to this EternalTerminal session, so this connection ended. EternalTerminal allows one client …"
 // in the language the app shows.
 func ConnectionEternalTerminalDisplaced() string {
@@ -13970,6 +13982,42 @@ func SettingsSSHDebug() string { return In(i18n.Locale()).SettingsSSHDebug() }
 // in the language of msgs.
 func (msgs Messages) SettingsSSHDebug() string {
 	return Catalog.Format(msgs.locale, "settingsSSHDebug", nil)
+}
+
+// SettingsHistoryCaptureHookTitle says "History capture hook"
+// in the language the app shows.
+func SettingsHistoryCaptureHookTitle() string {
+	return In(i18n.Locale()).SettingsHistoryCaptureHookTitle()
+}
+
+// SettingsHistoryCaptureHookTitle says "History capture hook"
+// in the language of msgs.
+func (msgs Messages) SettingsHistoryCaptureHookTitle() string {
+	return Catalog.Format(msgs.locale, "settingsHistoryCaptureHookTitle", nil)
+}
+
+// SettingsHistoryCaptureHookDescription says "Install a session-scoped shell hook for zsh, bash, and fish. It reads your startup files without editing them and fal…"
+// in the language the app shows.
+func SettingsHistoryCaptureHookDescription() string {
+	return In(i18n.Locale()).SettingsHistoryCaptureHookDescription()
+}
+
+// SettingsHistoryCaptureHookDescription says "Install a session-scoped shell hook for zsh, bash, and fish. It reads your startup files without editing them and fal…"
+// in the language of msgs.
+func (msgs Messages) SettingsHistoryCaptureHookDescription() string {
+	return Catalog.Format(msgs.locale, "settingsHistoryCaptureHookDescription", nil)
+}
+
+// SettingsHistoryCaptureHookEnabled says "Install the shell capture hook"
+// in the language the app shows.
+func SettingsHistoryCaptureHookEnabled() string {
+	return In(i18n.Locale()).SettingsHistoryCaptureHookEnabled()
+}
+
+// SettingsHistoryCaptureHookEnabled says "Install the shell capture hook"
+// in the language of msgs.
+func (msgs Messages) SettingsHistoryCaptureHookEnabled() string {
+	return Catalog.Format(msgs.locale, "settingsHistoryCaptureHookEnabled", nil)
 }
 
 // SettingsSyncTitle says "Sync & Cloud"

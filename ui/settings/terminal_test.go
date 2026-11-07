@@ -118,6 +118,10 @@ func (t *fakeTerminal) SetConnectionLogRetention(count, days int) error {
 	})
 }
 
+func (t *fakeTerminal) SetHistoryCaptureHookEnabled(enabled bool) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.HistoryCaptureHookEnabled = enabled })
+}
+
 func TestTerminalStateSavesEachSettingAndReportsFailure(t *testing.T) {
 	fake := newFakeTerminal()
 	state := NewTerminalState(fake)
@@ -194,7 +198,10 @@ func TestTerminalStateSavesEachSettingAndReportsFailure(t *testing.T) {
 		fake.settings.ConnectionLogRetentionDays != 7 {
 		t.Fatal("connection log retention was not stored")
 	}
-	if state.Problem() || redraws != 20 {
+	if !state.SetHistoryCaptureHookEnabled(false) || fake.settings.HistoryCaptureHookEnabled {
+		t.Fatal("the capture hook was not disabled")
+	}
+	if state.Problem() || redraws != 21 {
 		t.Fatalf("problem = %v, redraws = %d", state.Problem(), redraws)
 	}
 
@@ -372,6 +379,44 @@ func TestTerminalSettingsShowThePowerUxControls(t *testing.T) {
 				t.Fatalf("%dx%d does not show %q: %v", size[0], size[1], text, tester.Texts())
 			}
 		}
+	}
+}
+
+// The capture hook decides what Command History can record, so its switch
+// lives in the Logs area rather than on the Terminal page. Clicking the real
+// checkbox there must reach the terminal settings service.
+func TestTerminalSettingsToggleTheCaptureHook(t *testing.T) {
+	fake := newFakeTerminal()
+	state := NewTerminalState(fake)
+	tester := ui.NewTester(viewAt(AreaLogs, Config{
+		Lock:        NewAppLockState(&fakeAppLock{}),
+		Preferences: NewPreferencesState(newFakePreferences()),
+		Terminal:    state,
+	}), 1100, 900)
+	tester.SetLocale("en")
+	tester.Frame()
+	m := locales.In("en")
+	if !tester.HasText(m.SettingsHistoryCaptureHookTitle()) {
+		t.Fatalf("the capture hook setting is not rendered in Logs: %v", tester.Texts())
+	}
+	if !fake.settings.HistoryCaptureHookEnabled {
+		t.Fatal("the capture hook is not on by default")
+	}
+	if err := tester.Click(m.SettingsHistoryCaptureHookEnabled()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if fake.settings.HistoryCaptureHookEnabled {
+		t.Fatal("the capture hook checkbox did not reach the service")
+	}
+
+	terminalTester := ui.NewTester(viewAt(AreaTerminal, Config{
+		Lock: NewAppLockState(&fakeAppLock{}), Terminal: state,
+	}), 1100, 2600)
+	terminalTester.SetLocale("en")
+	terminalTester.Frame()
+	if terminalTester.HasText(m.SettingsHistoryCaptureHookTitle()) {
+		t.Fatal("the capture hook setting is still on the Terminal page")
 	}
 }
 

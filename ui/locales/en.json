@@ -971,6 +971,7 @@
   "connectionTmuxSessionRestored": "tmux session restored.",
   "connectionTmuxNested": "Already inside a tmux session on the remote Host; connected without nesting.",
   "connectionTmuxUnavailable": "tmux is not available on the remote Host; connected with a plain shell.",
+  "connectionCaptureHookUnavailable": "The shell capture hook could not be installed; this Session uses best-effort capture.",
   "connectionEternalTerminalDisplaced": "Another client attached to this EternalTerminal session, so this connection ended. EternalTerminal allows one client at a time.",
   "connectionEternalTerminalResumeUnsupported": "The saved EternalTerminal session could not be restored because the server does not support session reattach (etserver 6.2.10 or older). A new session was started; upgrade etserver to resume sessions after a restart.",
   "@connectionX11CookieUnavailable": {
@@ -2888,6 +2889,9 @@
   "settingsLogsTitle": "Logs",
   "settingsLogsDescription": "Diagnostic logging controls.",
   "settingsSSHDebug": "Enable SSH debug logs",
+  "settingsHistoryCaptureHookTitle": "History capture hook",
+  "settingsHistoryCaptureHookDescription": "Install a session-scoped shell hook for zsh, bash, and fish. It reads your startup files without editing them and falls back to native capture when unavailable.",
+  "settingsHistoryCaptureHookEnabled": "Install the shell capture hook",
   "settingsSyncTitle": "Sync & Cloud",
   "settingsSyncDescription": "Sync the encrypted Vault through your cloud provider. The master password never leaves this device.",
   "settingsSyncSecurityNote": "The provider can see Vault metadata, such as the device name, app version, and timestamps. Vault records and credentials stay encrypted.",

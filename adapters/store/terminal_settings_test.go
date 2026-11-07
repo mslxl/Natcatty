@@ -38,6 +38,7 @@ func TestTerminalSettingsRoundTrip(t *testing.T) {
 		KeywordHighlightRules: []domainterminal.KeywordHighlightRule{
 			{ID: "custom", Patterns: []string{`boom`}, Color: "#123456", Enabled: true},
 		},
+		HistoryCaptureHookEnabled: false,
 	}
 	if err := store.Save(context.Background(), want); err != nil {
 		t.Fatal(err)
@@ -111,6 +112,24 @@ func TestTerminalSettingsIgnoresOldHistoryRetentionFields(t *testing.T) {
 	if got.ConnectionLogRetentionCount != 7 || got.ConnectionLogRetentionDays != 3 {
 		t.Fatalf("connection log retention = %d/%d, want 7/3",
 			got.ConnectionLogRetentionCount, got.ConnectionLogRetentionDays)
+	}
+	if !got.HistoryCaptureHookEnabled {
+		t.Fatal("a version 5 file did not get the capture hook default")
+	}
+}
+
+func TestTerminalSettingsVersion6ReadsTheCaptureHookFlag(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "terminal-settings.json")
+	body := `{"version":6,"historyCaptureHookEnabled":false}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := OpenTerminalSettings(path).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HistoryCaptureHookEnabled {
+		t.Fatal("the stored disabled capture hook was ignored")
 	}
 }
 

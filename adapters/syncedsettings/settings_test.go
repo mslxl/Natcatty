@@ -313,6 +313,58 @@ func TestApplyRejectsAMalformedDocumentBeforeWritingAny(t *testing.T) {
 	}
 }
 
+// A synced terminal document from a build before the capture hook switch has
+// no key for it. Downloading that document must leave the portable
+// on-by-default setting on, while an explicit false from a newer build still
+// syncs.
+func TestApplyDefaultsAMissingCaptureHookToOn(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	if err := f.terminal.Update(func(next *domainterminal.Settings) {
+		next.HistoryCaptureHookEnabled = true
+		next.OSC52 = domainterminal.ClipboardReadWrite
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	documents := map[string]json.RawMessage{
+		adaptersyncedsettings.KeyTerminal: json.RawMessage(`{"osc52":"off"}`),
+	}
+	if err := f.adapter.Apply(ctx, documents); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	got := f.terminal.Settings()
+	if !got.HistoryCaptureHookEnabled {
+		t.Fatal("a document without the capture hook key disabled the hook")
+	}
+	if got.OSC52 != domainterminal.ClipboardOff {
+		t.Fatalf("OSC52 = %q, want the synced value", got.OSC52)
+	}
+
+	// Both spellings name the same JSON field: this build marshals its
+	// settings with Go field names, while the stored and older synced
+	// documents use the lower-camel key.
+	for _, document := range []string{
+		`{"historyCaptureHookEnabled":false}`,
+		`{"HistoryCaptureHookEnabled":false}`,
+	} {
+		if err := f.terminal.Update(func(next *domainterminal.Settings) {
+			next.HistoryCaptureHookEnabled = true
+		}); err != nil {
+			t.Fatal(err)
+		}
+		documents := map[string]json.RawMessage{
+			adaptersyncedsettings.KeyTerminal: json.RawMessage(document),
+		}
+		if err := f.adapter.Apply(ctx, documents); err != nil {
+			t.Fatalf("Apply %s: %v", document, err)
+		}
+		if f.terminal.Settings().HistoryCaptureHookEnabled {
+			t.Fatalf("an explicit false was ignored in %s", document)
+		}
+	}
+}
+
 func customTheme(t *testing.T, id, name string) domaintheme.TerminalTheme {
 	t.Helper()
 	preset, ok := domaintheme.LookupTerminalTheme(domaintheme.DefaultTerminalTheme)

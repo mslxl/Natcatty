@@ -51,6 +51,13 @@ type pendingCommand struct {
 	startedAt   time.Time
 	captureTier int
 	interrupted bool
+	// awaitingHook marks a command typed while a hook was planned but its
+	// first private sequence or handshake has not arrived yet. The shell's own
+	// prompt marks must not finalize it: the private sequence replaces it and
+	// its D publishes exactly one Tier 1 row. A skip marker releases it to the
+	// ordinary prompt path; if the hook never speaks at all, Session close
+	// publishes the tentative once with an unknown finish.
+	awaitingHook bool
 }
 
 // TransferKind names a detected file transfer protocol.
@@ -135,10 +142,13 @@ type tapEffects struct {
 
 // tapState is the immutable per-chunk view the Session copies into Snapshot.
 type tapState struct {
-	CWD          string
-	Title        string
-	Command      CommandState
-	Input        string
+	CWD     string
+	Title   string
+	Command CommandState
+	Input   string
+	// HookActive reports that the session-scoped Netcatty hook has emitted an
+	// authoritative event for this Session, so capture can reach Tier 1.
+	HookActive   bool
 	Busy         bool
 	LastActivity time.Time
 	Notification *TerminalNotification
@@ -164,6 +174,34 @@ const promptWindow = 50 * time.Millisecond
 // for the rest of it. Past it the bytes are forwarded as they are rather than
 // buffered without limit.
 const sequenceCarryMax = 1 << 20
+
+// The session hook prefixes its app-owned sequences with these markers:
+//
+//	OSC 1337;NetcattyHook;<shell>
+//	OSC 1337;NetcattyHookSkip[;<shell>]
+//	OSC 1337;NetcattyExec;<shell>;<base64url(cwd)>;<base64url(command)>
+//
+// The prompt handshake marks the hook active, so the tap trusts the private
+// preexec sequence instead of finalizing typed input at a native prompt mark.
+// The skip marker says the startup script deliberately installed nothing (an
+// existing integration, a missing encoder, private fish, or an unsupported
+// remote shell), so the tap must stop reserving the first typed command for a
+// hook that will never speak. The tap consumes all three sequences before the
+// renderer sees them. The two exec payload fields are base64url with or
+// without padding.
+const (
+	netcattyHookPrefix = "NetcattyHook;"
+	// netcattyHookSkipPrefix has no trailing semicolon: the shell field is
+	// optional, so the remote wrapper can mark an unsupported shell whose name
+	// is not a safe token.
+	netcattyHookSkipPrefix = "NetcattyHookSkip"
+	netcattyExecPrefix     = "NetcattyExec;"
+	// hookShellMax and hookValueMax bound the decoded fields. A command longer
+	// than the history limit is truncated, matching the domain's write path; a
+	// hostile sequence cannot make the tap retain an unbounded string.
+	hookShellMax = 32
+	hookValueMax = 4096
+)
 
 // Notification policy, matching the original.
 const (
@@ -203,7 +241,22 @@ type terminalTap struct {
 	pending *pendingCommand
 	// nativeSeen reports that the shell emitted OSC 133 or OSC 7. Without it,
 	// typed input plus prompt detection is Tier 3; with it, capture is Tier 2.
-	nativeSeen   bool
+	nativeSeen bool
+	// hookActive reports that the session-scoped Netcatty hook emitted its
+	// private sequence. It is not a tier by itself: a command is Tier 1 only
+	// when the private sequence replaced or started it.
+	hookActive bool
+	// hookExpected reports that the Session planned and injected a hook, so
+	// its first handshake or private sequence is still to come. Until one
+	// arrives, a typed Enter is tentative: the shell's native prompt marks
+	// belong to the pre-hook prompt and must not finalize the command. A
+	// NetcattyHookSkip marker also ends the wait, releasing the command to the
+	// ordinary Tier 2/3 fallback.
+	hookExpected bool
+	// hookSeen reports that the planned hook has spoken at least once. A
+	// nested shell detected later clears hookActive but not hookSeen, so its
+	// inner commands return to the ordinary Tier 2/3 capture.
+	hookSeen     bool
 	inputBuffer  string
 	inputPending []byte
 	inputEscape  inputState
@@ -598,6 +651,20 @@ func (t *terminalTap) handleOSC(payload []byte, now time.Time) (bool, tapEffects
 			effects.Completions = []capturedCommand{*completion}
 		}
 		return true, effects
+	case 1337:
+		if changed, owned := t.handleNetcattyHook(string(rest)); owned {
+			return false, tapEffects{Changed: changed}
+		}
+		if changed, owned := t.handleNetcattyHookSkip(string(rest)); owned {
+			return false, tapEffects{Changed: changed}
+		}
+		changed, owned := t.handleNetcattyExec(string(rest), now)
+		if !owned {
+			// Another OSC 1337 extension, such as iTerm2's image protocol,
+			// belongs to the terminal.
+			return true, tapEffects{}
+		}
+		return false, tapEffects{Changed: changed}
 	case 9:
 		notification := parseOSC9(string(rest))
 		if notification == nil {
@@ -672,6 +739,10 @@ func (t *terminalTap) handleOSC133(rest string, now time.Time) (bool, *capturedC
 	switch kind {
 	case 'A':
 		t.nativeSeen = true
+		if t.hookOwnedPending() {
+			// The hook owns this capture; only its D may finish it.
+			return false, nil
+		}
 		// A prompt-start mark without a preceding D still finishes the
 		// command, with an unknown exit code.
 		completion := t.finalizePendingLocked(now, true, 0, false)
@@ -712,6 +783,12 @@ func (t *terminalTap) handleOSC133(rest string, now time.Time) (bool, *capturedC
 		if hasExitCode && exitCode != 0 {
 			t.stats.FailedCommands++
 		}
+		if t.pending != nil && t.pending.awaitingHook {
+			// A prompt mark that arrived before the planned hook's first
+			// private sequence belongs to an earlier command; the tentative
+			// capture must stay until the hook replaces it or the Session ends.
+			return false, nil
+		}
 		completion := t.finalizePendingLocked(now, true, exitCode, hasExitCode)
 		if completion == nil {
 			return false, nil
@@ -720,6 +797,137 @@ func (t *terminalTap) handleOSC133(rest string, now time.Time) (bool, *capturedC
 	default:
 		return false, nil
 	}
+}
+
+// handleNetcattyHook consumes the session hook's prompt handshake. The
+// handshake is emitted at every prompt by the installed hook; once seen, the
+// tap stops finalizing typed input at native prompt marks, because the hook's
+// private preexec sequence is the authoritative command start. A sequence with
+// the private marker is always consumed, even when malformed; a malformed
+// payload changes nothing so a broken handshake leaves the fallback in place.
+func (t *terminalTap) handleNetcattyHook(rest string) (changed, owned bool) {
+	if !strings.HasPrefix(rest, netcattyHookPrefix) {
+		return false, false
+	}
+	if !validHookShell(rest[len(netcattyHookPrefix):]) {
+		return false, true
+	}
+	if t.hookActive {
+		t.hookSeen = true
+		return false, true
+	}
+	t.hookActive = true
+	t.hookSeen = true
+	return true, true
+}
+
+// handleNetcattyHookSkip consumes the startup script's refusal marker. A hook
+// that deliberately installs nothing (an existing integration, a missing
+// encoder, private fish, or an unsupported remote shell) emits it instead of
+// the prompt handshake. The tap then stops waiting for a hook that will never
+// speak: hookExpected is cleared and the current tentative capture becomes an
+// ordinary typed capture, so the prompt path finishes it and every later
+// Enter starts a normal Tier 2/3 capture. A skip that arrives after a real
+// handshake is ignored, because the installed hook stays authoritative.
+func (t *terminalTap) handleNetcattyHookSkip(rest string) (changed, owned bool) {
+	if rest != netcattyHookSkipPrefix && !strings.HasPrefix(rest, netcattyHookSkipPrefix+";") {
+		return false, false
+	}
+	shell := strings.TrimPrefix(rest, netcattyHookSkipPrefix)
+	shell = strings.TrimPrefix(shell, ";")
+	if shell != "" && !validHookShell(shell) {
+		return false, true
+	}
+	if t.hookSeen {
+		return false, true
+	}
+	changed = t.hookExpected
+	t.hookExpected = false
+	if t.pending != nil {
+		t.pending.awaitingHook = false
+	}
+	return changed, true
+}
+
+// handleNetcattyExec consumes the session hook's private sequence. It reports
+// whether the tap owned the sequence and whether Session state changed. A
+// sequence with the private marker is always consumed, even when malformed, so
+// it can never reach the renderer; a malformed payload changes nothing.
+func (t *terminalTap) handleNetcattyExec(rest string, now time.Time) (changed, owned bool) {
+	if !strings.HasPrefix(rest, netcattyExecPrefix) {
+		return false, false
+	}
+	fields := strings.Split(rest[len(netcattyExecPrefix):], ";")
+	if len(fields) != 3 {
+		return false, true
+	}
+	shell := fields[0]
+	cwd, cwdErr := decodeBase64URL(fields[1])
+	command, commandErr := decodeBase64URL(fields[2])
+	if cwdErr != nil || commandErr != nil || !validHookShell(shell) ||
+		command == "" || !utf8.ValidString(cwd) || !utf8.ValidString(command) {
+		return false, true
+	}
+	if len(command) > domainhistory.MaxCommandLength {
+		command = command[:domainhistory.MaxCommandLength]
+	}
+	if len(cwd) > hookValueMax {
+		cwd = cwd[:hookValueMax]
+	}
+
+	// The hook's values are authoritative: replace any pending fallback
+	// capture, or start the pending command when nothing was observed yet.
+	t.hookActive = true
+	t.hookSeen = true
+	if t.pending == nil {
+		t.pending = &pendingCommand{}
+		t.stats.Commands++
+	}
+	t.pending.command = command
+	t.pending.cwd = cwd
+	t.pending.shell = shell
+	t.pending.startedAt = now
+	t.pending.captureTier = domainhistory.CaptureTierHook
+	t.pending.interrupted = false
+	// The private sequence is the authoritative start: it replaces the
+	// tentative typed capture, so the hook's D may finish it.
+	t.pending.awaitingHook = false
+	t.command = CommandState{Text: command, Running: true, StartedAt: now}
+	// Only output after the command starts can carry its prompt.
+	t.outputSinceStart = false
+	return true, true
+}
+
+// decodeBase64URL accepts the URL-safe alphabet with or without padding.
+func decodeBase64URL(value string) (string, error) {
+	if decoded, err := base64.RawURLEncoding.DecodeString(value); err == nil {
+		return string(decoded), nil
+	}
+	decoded, err := base64.URLEncoding.DecodeString(value)
+	if err != nil {
+		return "", err
+	}
+	return string(decoded), nil
+}
+
+// validHookShell keeps the shell name to a short token so a hostile sequence
+// cannot smuggle control bytes into a snapshot or a log.
+func validHookShell(shell string) bool {
+	if shell == "" || len(shell) > hookShellMax {
+		return false
+	}
+	for index := 0; index < len(shell); index++ {
+		value := shell[index]
+		switch {
+		case value >= 'a' && value <= 'z':
+		case value >= 'A' && value <= 'Z':
+		case value >= '0' && value <= '9':
+		case value == '-', value == '_', value == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func parseInt(value string) (int, error) {
@@ -1026,6 +1234,106 @@ func (t *terminalTap) checkPrompt(now time.Time) (promptResult, *capturedCommand
 	if t.pending == nil || !t.outputSinceStart || len(t.tail) == 0 {
 		return promptNoChange, nil
 	}
+	if t.pending.awaitingHook {
+		// The hook was planned but has not spoken yet. Only its private
+		// sequence (or Session close) may decide this capture's fate.
+		return promptNoChange, nil
+	}
+	if t.hookOwnedPending() {
+		// A hooked command's output may itself end in a prompt-like line
+		// (progress percentages, interactive programs, `printf '12%'`), and
+		// only the hook's OSC 133 D may finish it. The one exception is a
+		// command that started an interactive shell or attach client: its
+		// inner prompt proves the outer command is no longer the foreground
+		// capture owner.
+		return t.promptNestedShellLocked(now)
+	}
+	return t.promptCandidateLocked(now)
+}
+
+// hookOwnedPending reports whether a planned or active hook owns the current
+// capture. While it does, typed input only queues and native prompt marks and
+// the prompt heuristic must not finalize the command.
+func (t *terminalTap) hookOwnedPending() bool {
+	if t.pending == nil {
+		return false
+	}
+	return t.pending.awaitingHook ||
+		(t.hookActive && t.pending.captureTier == domainhistory.CaptureTierHook)
+}
+
+// promptNestedShellLocked detects the point where a hooked command handed the
+// terminal to an interactive shell, ssh, or tmux attach. The outer command has
+// no D yet (the inner shell is still running), but its primary prompt proves
+// the outer command reached the foreground prompt. Finalize it with the
+// unknown-finish semantics of a new Enter, stop treating the outer hook as
+// authoritative, and let the inner shell use the ordinary typed/prompt
+// capture. The outer D that arrives when the inner shell exits is ignored
+// because the capture is already finalized; the next handshake restores Tier 1.
+func (t *terminalTap) promptNestedShellLocked(now time.Time) (promptResult, *capturedCommand) {
+	if !nestedShellCommand(t.pending.command) {
+		return promptNoChange, nil
+	}
+	line := lastVisibleLine(t.tail)
+	if line == "" || !promptLike(line) || continuationPrompt(line) {
+		return promptNoChange, nil
+	}
+	if !t.pending.startedAt.IsZero() && now.Sub(t.pending.startedAt) < promptWindow {
+		return promptDeferred, nil
+	}
+	t.hookActive = false
+	return promptFinished, t.finalizePendingLocked(now, false, 0, false)
+}
+
+// nestedShellCommand reports whether command starts an interactive shell or an
+// attach client that takes over the terminal. A shell is only recognized when
+// every argument is an option: an operand is a script path and -c runs a
+// command, so neither produces an inner interactive prompt. The list is
+// intentionally small and conservative; an unrecognized launch keeps the
+// existing Tier 1 semantics until its D arrives.
+func nestedShellCommand(command string) bool {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return false
+	}
+	first := strings.Trim(fields[0], "\"'")
+	if slash := strings.LastIndexByte(first, '/'); slash >= 0 {
+		first = first[slash+1:]
+	}
+	switch first {
+	case "bash", "zsh", "fish", "sh", "dash", "ksh":
+		for _, argument := range fields[1:] {
+			if !strings.HasPrefix(argument, "-") {
+				return false
+			}
+			if strings.HasPrefix(argument, "--") {
+				continue
+			}
+			if strings.Contains(argument, "c") {
+				return false
+			}
+		}
+		return true
+	case "ssh":
+		return true
+	case "tmux":
+		if len(fields) < 2 {
+			return false
+		}
+		switch fields[1] {
+		case "attach", "attach-session", "a":
+			return true
+		}
+	}
+	return false
+}
+
+// promptCandidateLocked applies the prompt heuristic without the hook guards.
+// It is used by the fallback paths once the hook has been ruled out.
+func (t *terminalTap) promptCandidateLocked(now time.Time) (promptResult, *capturedCommand) {
+	if t.pending == nil || !t.outputSinceStart || len(t.tail) == 0 {
+		return promptNoChange, nil
+	}
 	line := lastVisibleLine(t.tail)
 	if line == "" || !promptLike(line) {
 		return promptNoChange, nil
@@ -1049,6 +1357,33 @@ func (t *terminalTap) resolvePrompt(now time.Time) *capturedCommand {
 		return nil
 	}
 	return completion
+}
+
+// continuationPrompt recognizes the shell continuation prompts that would
+// otherwise look like a finished command. Bash's PS2 is ">"; zsh's PS2 is a
+// parser status such as "dquote>" or "cmdand>". A real primary prompt may also
+// end in ">", but the common shapes contain the user@host form, "PS ", or a
+// different prompt character, and treating an ambiguous line as a continuation
+// only delays a fallback capture instead of publishing a partial command.
+func continuationPrompt(line string) bool {
+	line = strings.TrimRight(line, " \t")
+	if line == ">" {
+		return true
+	}
+	if !strings.HasSuffix(line, ">") || strings.Contains(line, "@") ||
+		strings.HasPrefix(line, "PS ") {
+		return false
+	}
+	for _, status := range []string{
+		"quote", "dquote", "cmdand", "cmdor", "pipe", "brace", "subsh",
+		"math", "then", "else", "do", "done", "fi", "for", "while", "if",
+		"case", "select", "repeat", "time", "coproc", "here",
+	} {
+		if strings.HasSuffix(line, status+">") {
+			return true
+		}
+	}
+	return false
 }
 
 // startPendingLocked begins capturing one command at Enter. The cwd is the
@@ -1116,12 +1451,17 @@ func (t *terminalTap) finalizePending() *capturedCommand {
 }
 
 func lastVisibleLine(data []byte) string {
-	clean := stripTerminalControls(data)
-	clean = strings.ReplaceAll(clean, "\r", "\n")
-	lines := strings.Split(clean, "\n")
+	// Split on the raw CR/LF bytes first. Stripping terminal controls removes
+	// them too, and doing that first concatenated every line of the tail into
+	// one string, so a continuation prompt such as "dquote> " was never seen
+	// as the last line.
+	normalized := bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
+	normalized = bytes.ReplaceAll(normalized, []byte("\r"), []byte("\n"))
+	lines := bytes.Split(normalized, []byte("\n"))
 	for index := len(lines) - 1; index >= 0; index-- {
-		if strings.TrimSpace(lines[index]) != "" {
-			return strings.TrimRight(lines[index], " \t")
+		line := strings.TrimRight(stripTerminalControls(lines[index]), " \t")
+		if strings.TrimSpace(line) != "" {
+			return line
 		}
 	}
 	return ""
@@ -1270,10 +1610,29 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 			command := strings.TrimSpace(t.inputBuffer)
 			t.inputBuffer = ""
 			t.inputPending = nil
+			if t.hookActive {
+				// The installed hook's private preexec sequence is the only
+				// authority while it is active. Typed Enter must not start,
+				// finalize, or publish anything: a line typed while a command
+				// runs waits in the terminal input queue, and the hook reports
+				// it when the shell actually executes it. A nested shell is
+				// detected from its prompt, not from elapsed time.
+				changed = true
+				continue
+			}
+			if t.pending != nil && t.pending.awaitingHook {
+				// The planned hook has not spoken yet. This line (or a later
+				// line of the same pasted command) belongs to one tentative
+				// capture; its private sequence replaces it, and its D
+				// publishes the single Tier 1 row. Never publish a partial.
+				changed = true
+				continue
+			}
 			if command != "" {
-				// A new Enter finalizes the previous command with an unknown
-				// exit and no finish time before the next one starts.
 				if previous := t.finalizePendingLocked(now, false, 0, false); previous != nil {
+					// A new Enter finalizes the previous command with an
+					// unknown exit and no finish time before the next one
+					// starts.
 					completions = append(completions, *previous)
 				}
 				t.command = CommandState{
@@ -1282,6 +1641,12 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 					StartedAt: now,
 				}
 				t.startPendingLocked(command, now)
+				if t.hookExpected && !t.hookSeen {
+					// A planned hook has not spoken yet: the shell's own
+					// prompt marks (from before the hook's first handshake)
+					// must not finalize this line.
+					t.pending.awaitingHook = true
+				}
 				// Only output after the command starts can carry its prompt;
 				// the previous prompt may still be in the tail.
 				t.outputSinceStart = false
@@ -1362,6 +1727,7 @@ func (t *terminalTap) state(now time.Time) tapState {
 		Title:        t.title,
 		Command:      t.command,
 		Input:        t.inputBuffer,
+		HookActive:   t.hookActive,
 		Busy:         t.busyLocked(now),
 		LastActivity: t.lastOutput,
 		Transfer:     t.transfer,
