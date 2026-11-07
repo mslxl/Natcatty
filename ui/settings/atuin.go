@@ -77,6 +77,14 @@ func WithAtuinSyncNow(fn func()) AtuinOption {
 	return func(s *AtuinState) { s.syncNow = fn }
 }
 
+// WithAtuinConfigurationChanged notifies the background engine after the
+// account, key, or History settings changed. The engine parks automatic
+// retries after a terminal auth, key, or server-version failure; this is the
+// relevant change that lets them resume.
+func WithAtuinConfigurationChanged(fn func()) AtuinOption {
+	return func(s *AtuinState) { s.configurationChanged = fn }
+}
+
 // AtuinState owns the Logs area's one-account panel. Credentials exist only
 // in the bounded string fields while the user types; a successful login or
 // key save clears them. The state never renders or logs them.
@@ -94,10 +102,11 @@ type AtuinState struct {
 	askForget    bool
 	askLogout    bool
 
-	lastHistory   domainpreferences.History
-	requestRedraw func()
-	syncStatus    func() historysync.SyncStatus
-	syncNow       func()
+	lastHistory          domainpreferences.History
+	requestRedraw        func()
+	syncStatus           func() historysync.SyncStatus
+	syncNow              func()
+	configurationChanged func()
 }
 
 // NewAtuinState returns the account panel state for account.
@@ -217,6 +226,7 @@ func (s *AtuinState) Login(serverURL, username string, authMode atuinmodel.AuthM
 	if err == nil {
 		s.password = ""
 		s.token = ""
+		s.notifyConfigurationChanged()
 	}
 	s.redraw()
 }
@@ -281,6 +291,7 @@ func (s *AtuinState) setMasterKey(confirm bool) {
 	s.finish(status, err)
 	if err == nil {
 		s.masterKey = ""
+		s.notifyConfigurationChanged()
 	}
 	s.redraw()
 }
@@ -293,6 +304,9 @@ func (s *AtuinState) ConfirmUnverified() {
 	}
 	status, err := s.account.ConfirmUnverifiedKey(context.Background())
 	s.finish(status, err)
+	if err == nil {
+		s.notifyConfigurationChanged()
+	}
 	s.redraw()
 }
 
@@ -323,6 +337,9 @@ func (s *AtuinState) ConfirmForget() {
 	status, err := s.account.ForgetMasterKey(context.Background())
 	s.finish(status, err)
 	s.masterKey = ""
+	if err == nil {
+		s.notifyConfigurationChanged()
+	}
 	s.redraw()
 }
 
@@ -356,6 +373,9 @@ func (s *AtuinState) ConfirmLogout() {
 	s.password = ""
 	s.token = ""
 	s.masterKey = ""
+	if err == nil {
+		s.notifyConfigurationChanged()
+	}
 	s.redraw()
 }
 
@@ -368,6 +388,13 @@ func (s *AtuinState) SyncHistory(history domainpreferences.History) {
 	}
 	s.lastHistory = history
 	s.status = s.account.Status()
+	s.notifyConfigurationChanged()
+}
+
+func (s *AtuinState) notifyConfigurationChanged() {
+	if s.configurationChanged != nil {
+		s.configurationChanged()
+	}
 }
 
 func (s *AtuinState) finish(status historysync.Status, err error) {

@@ -189,6 +189,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	var registry *command.Registry
 	var currentMenu *mygo.Menu
 	var historyService *apphistory.Service
+	var appLock *appapplock.Service
 	var atuinState *settings.AtuinState
 	var logsState *logsui.State
 	var sessions *appsession.Service
@@ -454,6 +455,19 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	}
 	defer secretStore.Close()
 
+	// App Lock is a UI gate backed by its own versioned verifier file. It is
+	// loaded before the sync engine starts so a locked app never opens a
+	// remote on startup.
+	appLock = appapplock.NewService(
+		fileapplock.Open(filepath.Join(userData, "app-lock-settings.json")),
+		appapplock.WithRedrawRequest(invalidate),
+	)
+	// A malformed file means the fail-safe defaults inside the adapter. An
+	// IO failure must not silently disable a security control.
+	if err := appLock.Load(context.Background()); err != nil {
+		return err
+	}
+
 	// The single Atuin account lives beside the Vault. Its token and master
 	// key use the dedicated field-secret entity, never the Vault sync payload.
 	// The real HTTP Remote factory arrives with the sync engine's transport
@@ -464,9 +478,12 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		preferenceService, historySecrets, database, nil)
 	// The background engine owns scheduling, download/apply, upload, and retry.
 	// Capture only signals it: history subscriptions never block the write.
+	// App Lock pauses sync; downloaded rows are announced as soon as their
+	// transaction commits, even if a later upload phase fails.
 	historySyncService := historysync.NewService(
 		preferenceService, historySecrets, database, nil,
-		historysync.WithSyncCompleted(func(result historysync.SyncResult) {
+		historysync.WithAppLocked(func() bool { return appLock.Snapshot().Locked }),
+		historysync.WithSyncApplied(func(result historysync.SyncResult) {
 			// Downloaded projections are written through the store, so the
 			// History surface and autocomplete only learn about them here.
 			if result.Applied == 0 {
@@ -481,6 +498,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	historyService.SubscribeLocal(func() { historySyncService.NotifyLocalChange() })
 	atuinState = settings.NewAtuinState(historyAccountService,
 		settings.WithAtuinRedrawRequest(invalidate),
+		settings.WithAtuinConfigurationChanged(historySyncService.NotifyConfigurationChanged),
 		settings.WithAtuinSyncStatus(historySyncService.Status),
 		settings.WithAtuinSyncNow(func() {
 			// A manual run must not block the UI thread. Concurrent triggers
@@ -618,16 +636,8 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	defer syncService.Stop()
 	syncState = settings.NewSyncState(syncService, settings.WithSyncRedrawRequest(invalidate))
 
-	// App Lock is a UI gate backed by its own versioned verifier file.
-	appLock := appapplock.NewService(
-		fileapplock.Open(filepath.Join(userData, "app-lock-settings.json")),
-		appapplock.WithRedrawRequest(invalidate),
-	)
-	// A malformed file means the fail-safe defaults inside the adapter. An
-	// IO failure must not silently disable a security control.
-	if err := appLock.Load(context.Background()); err != nil {
-		return err
-	}
+	// App Lock was loaded before the sync engine so the startup run could
+	// already honor it; the gate and panel state wrap the same service.
 	gate = uiapplock.NewGate(appLock, uiapplock.WithRedrawRequest(invalidate))
 	settingsState = settings.NewAppLockState(appLock, settings.WithAppLockRedrawRequest(invalidate))
 
