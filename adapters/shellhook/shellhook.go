@@ -10,6 +10,19 @@
 // keeps its native or typed fallback instead of reserving a first command for
 // a hook that will never speak. A Session whose hook cannot be planned opens
 // unchanged and falls back to Tier 2 or 3 as well.
+//
+// A machine policy can refuse the -File script before its first statement runs
+// (Group Policy script execution, AppLocker, or WDAC). -ExecutionPolicy Bypass
+// overrides process and user policy but not a machine policy, and the script
+// cannot report a refusal to load itself. The PowerShell launchers therefore
+// run the same file once in a short-lived -NoProfile -NonInteractive child
+// before starting the interactive shell. That child prints a private marker
+// when the script reaches a decision and exits without it when the script is
+// refused, unreadable, or broken. On failure the launcher announces the skip
+// marker itself and starts a plain shell, so the Session stays usable, keeps
+// Tier 2/3, and never waits for a refused -NoExit child to exit. The check
+// costs one short-lived process per PowerShell Session and adds no profile
+// load. POSIX hooks report their own refusals; cmd.exe has no hook to check.
 package shellhook
 
 import (
@@ -24,9 +37,10 @@ import (
 )
 
 const (
-	shellZsh  = "zsh"
-	shellBash = "bash"
-	shellFish = "fish"
+	shellZsh        = "zsh"
+	shellBash       = "bash"
+	shellFish       = "fish"
+	shellPowerShell = "powershell"
 )
 
 // Planner rewrites a Session StartSpec so its interactive shell installs the
@@ -86,7 +100,7 @@ func NewPlanner(opts ...Option) *Planner {
 // and reports one capability notice per Host.
 func (p *Planner) Plan(spec appsession.StartSpec) (appsession.CaptureHookPlan, bool) {
 	unchanged := appsession.CaptureHookPlan{Spec: spec}
-	if p == nil || runtime.GOOS == "windows" {
+	if p == nil {
 		return unchanged, false
 	}
 	if p.enabled != nil && !p.enabled() {
@@ -103,6 +117,10 @@ func (p *Planner) Plan(spec appsession.StartSpec) (appsession.CaptureHookPlan, b
 			return unchanged, false
 		}
 		spec.RemoteCommand = remoteWrapperCommand()
+		// The transport learns the peer's platform only after connecting. A
+		// Windows OpenSSH peer needs a PowerShell wrapper instead of the POSIX
+		// one, so the factory may choose the final command then.
+		spec.CaptureHookRemote = true
 		return appsession.CaptureHookPlan{Spec: spec, HookExpected: true}, false
 	default:
 		// ET, Telnet, and serial own their terminal bootstrap and fall back to
@@ -117,6 +135,12 @@ func (p *Planner) planLocal(spec appsession.StartSpec) (appsession.CaptureHookPl
 	unchanged := appsession.CaptureHookPlan{Spec: spec}
 	shell, ok := p.localShell(spec)
 	if !ok {
+		return unchanged, false
+	}
+	if runtime.GOOS == "windows" && shell.name != shellPowerShell {
+		// The Windows hook is the PowerShell session script. An explicit
+		// zsh/bash/fish startup keeps its POSIX shell unchanged, exactly as
+		// the planner did before PowerShell support.
 		return unchanged, false
 	}
 	dir, err := p.makeTempDir()
@@ -151,6 +175,24 @@ func (p *Planner) planLocal(spec appsession.StartSpec) (appsession.CaptureHookPl
 		}
 		spec.Env = append(spec.Env, "NETCATTY_HOOK_FILE="+hookPath)
 		spec.Command = fishCommand(shell.path, shell.args, shell.explicit)
+	case shellPowerShell:
+		hookPath := filepath.Join(dir, "hook.ps1")
+		if err := os.WriteFile(hookPath, []byte(powershellHookText), 0o600); err != nil {
+			cleanup()
+			return unchanged, true
+		}
+		// The hook must not gate on [Environment]::UserInteractive: Win32-OpenSSH
+		// starts an interactive shell in session 0 with a non-visible window
+		// station, where that property is false. This marker is the launcher's
+		// statement that the shell it starts is interactive. The state file
+		// lets the bootstrap tell "the hook loaded and the user exited" apart
+		// from "the hook never loaded" (a machine policy refusing -File), in
+		// which case it starts a plain shell instead of ending the Session.
+		spec.Env = append(spec.Env,
+			"NETCATTY_HOOK_START=1",
+			"NETCATTY_HOOK_STATE="+filepath.Join(dir, "hook-loaded"),
+		)
+		spec.Command = powershellCommand(shell.path, shell.args, hookPath)
 	default:
 		cleanup()
 		return unchanged, false
@@ -177,7 +219,7 @@ func (p *Planner) localShell(spec appsession.StartSpec) (localShellInfo, bool) {
 	if len(spec.Command) > 0 {
 		path := spec.Command[0]
 		args := append([]string(nil), spec.Command[1:]...)
-		name, ok := supportedShell(filepath.Base(path))
+		name, ok := supportedShell(shellName(path))
 		if !ok || !interactiveShellArgs(name, args) {
 			return localShellInfo{}, false
 		}
@@ -194,7 +236,7 @@ func (p *Planner) localShell(spec appsession.StartSpec) (localShellInfo, bool) {
 	if err != nil || path == "" {
 		return localShellInfo{}, false
 	}
-	name, ok := supportedShell(filepath.Base(path))
+	name, ok := supportedShell(shellName(path))
 	if !ok {
 		return localShellInfo{}, false
 	}
@@ -205,21 +247,38 @@ func (p *Planner) localShell(spec appsession.StartSpec) (localShellInfo, bool) {
 	}, true
 }
 
-// supportedShell maps a program name onto the hook's shell vocabulary.
+// supportedShell maps a program name onto the hook's shell vocabulary. The
+// Windows executable suffix is optional and the name is case-insensitive,
+// because a Windows OpenSSH DefaultShell and a local Windows path both spell
+// PowerShell with different casing and a .exe suffix.
 func supportedShell(name string) (string, bool) {
 	name = strings.TrimPrefix(name, "-")
-	switch name {
+	lower := strings.ToLower(name)
+	lower = strings.TrimSuffix(lower, ".exe")
+	switch lower {
 	case shellZsh, shellBash, shellFish:
-		return name, true
+		return lower, true
+	case "pwsh", shellPowerShell:
+		return shellPowerShell, true
 	default:
 		return "", false
 	}
+}
+
+// shellName returns the final path element for a local path. Windows paths
+// arrive with backslashes even on a test host that does not use them.
+func shellName(path string) string {
+	path = strings.ReplaceAll(path, `\`, "/")
+	return path[strings.LastIndex(path, "/")+1:]
 }
 
 // interactiveShellArgs rejects invocations that run a command or a script, or
 // that tell the shell not to read a startup file. A user-supplied startup file
 // is preserved by skipping injection instead of overriding it.
 func interactiveShellArgs(name string, args []string) bool {
+	if name == shellPowerShell {
+		return interactivePowerShellArgs(args)
+	}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -353,10 +412,20 @@ func systemTempDir() (string, error) {
 }
 
 // systemDefaultShell mirrors the local PTY adapter's resolution. Keeping the
-// rule here lets the planner run before the adapter without importing it.
+// rule here lets the planner run before the adapter without importing it. On
+// Windows the adapter prefers PowerShell and falls back to cmd.exe; the
+// planner accepts only the PowerShell candidates and leaves cmd alone.
 func systemDefaultShell() (string, error) {
 	if runtime.GOOS == "windows" {
-		return "", errors.New("shellhook: no POSIX shell on Windows")
+		for _, candidate := range []string{"pwsh.exe", "powershell.exe", os.Getenv("COMSPEC"), "cmd.exe"} {
+			if candidate == "" {
+				continue
+			}
+			if path, err := exec.LookPath(candidate); err == nil {
+				return path, nil
+			}
+		}
+		return "", errors.New("shellhook: no shell found on Windows")
 	}
 	if shell := os.Getenv("SHELL"); shell != "" {
 		if path, err := exec.LookPath(shell); err == nil {

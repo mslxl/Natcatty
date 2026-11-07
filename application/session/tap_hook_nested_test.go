@@ -82,16 +82,17 @@ func TestTapHookNestedShellHandsCaptureToTheInnerShell(t *testing.T) {
 	tap.handleInput([]byte("echo one\r"), tapAt(1300*time.Millisecond))
 	_, _, _, firstCompletions, _ := tap.handleInput([]byte("echo two\r"),
 		tapAt(1300*time.Millisecond+time.Millisecond))
-	if len(firstCompletions) != 1 || firstCompletions[0].command != "echo one" {
-		t.Fatalf("first inner command was not retired: %+v", firstCompletions)
+	if len(firstCompletions) != 1 || firstCompletions[0].command != "echo one" ||
+		firstCompletions[0].captureTier != domainhistory.CaptureTierFallback {
+		t.Fatalf("first inner command was not retired as Tier 3: %+v", firstCompletions)
 	}
 	_, effects = tap.observe([]byte("one\r\ntwo\r\nbash-5.3$ "), tapAt(1500*time.Millisecond))
 	if len(effects.Completions) != 1 {
 		t.Fatalf("second inner completions = %+v, want one", effects.Completions)
 	}
 	second := effects.Completions[0]
-	if second.command != "echo two" || second.captureTier == domainhistory.CaptureTierHook {
-		t.Fatalf("second inner completion = %+v", second)
+	if second.command != "echo two" || second.captureTier != domainhistory.CaptureTierFallback {
+		t.Fatalf("second inner completion = %+v, want Tier 3", second)
 	}
 
 	// Returning to the hooked prompt restores Tier 1 capture.
@@ -107,6 +108,155 @@ func TestTapHookNestedShellHandsCaptureToTheInnerShell(t *testing.T) {
 		t.Fatalf("restored completions = %+v, want one", effects.Completions)
 	}
 	if completion := effects.Completions[0]; completion.command != "echo back" ||
+		completion.captureTier != domainhistory.CaptureTierHook {
+		t.Fatalf("restored completion = %+v", completion)
+	}
+}
+
+// A nested shell launched from a Tier 2 or Tier 3 capture must reset the
+// parent's tier like the hook-owned path does. Before this branch existed,
+// promptNestedShellLocked only ran while a hook owned the capture, so a Tier 2
+// parent's nativeSeen stayed set and the child's commands were published as
+// Tier 2 even though the child itself emitted no OSC 133/7 at all.
+func TestTapNestedShellFromAFallbackCaptureClearsTheParentTier(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(tap *terminalTap)
+		tier  int
+	}{
+		{
+			name: "native OSC parent is Tier 2",
+			setup: func(tap *terminalTap) {
+				tap.observe([]byte("\x1b]7;file://host/work\x07\x1b]133;A\x07$ "), tapAt(0))
+			},
+			tier: domainhistory.CaptureTierNativeOSC,
+		},
+		{
+			name:  "typed parent is Tier 3",
+			setup: func(tap *terminalTap) {},
+			tier:  domainhistory.CaptureTierFallback,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+			testCase.setup(tap)
+
+			tap.handleInput([]byte("/bin/bash\r"), tapAt(time.Second))
+			if testCase.tier == domainhistory.CaptureTierNativeOSC {
+				tap.observe([]byte("\x1b]133;C\x07"), tapAt(time.Second+time.Millisecond))
+			}
+
+			// The child's primary prompt finalizes the parent with an unknown
+			// finish and must clear the parent's native marks.
+			_, effects := tap.observe([]byte("bash-5.3$ "), tapAt(1200*time.Millisecond))
+			if len(effects.Completions) != 1 {
+				t.Fatalf("outer completions = %+v, want one", effects.Completions)
+			}
+			outer := effects.Completions[0]
+			if outer.command != "/bin/bash" || outer.captureTier != testCase.tier ||
+				!outer.finishedAt.IsZero() || outer.hasExitCode {
+				t.Fatalf("outer completion = %+v, want tier %d with an unknown finish",
+					outer, testCase.tier)
+			}
+			if tap.nativeSeen {
+				t.Fatal("the child inherited the parent's native marks")
+			}
+
+			// The child emits no OSC: both back-to-back commands are Tier 3.
+			tap.handleInput([]byte("echo one\r"), tapAt(1300*time.Millisecond))
+			_, _, _, firstCompletions, _ := tap.handleInput([]byte("echo two\r"),
+				tapAt(1300*time.Millisecond+time.Millisecond))
+			if len(firstCompletions) != 1 ||
+				firstCompletions[0].captureTier != domainhistory.CaptureTierFallback {
+				t.Fatalf("first inner command was not Tier 3: %+v", firstCompletions)
+			}
+			_, effects = tap.observe([]byte("one\r\ntwo\r\nbash-5.3$ "), tapAt(1500*time.Millisecond))
+			if len(effects.Completions) != 1 {
+				t.Fatalf("second inner completions = %+v, want one", effects.Completions)
+			}
+			if second := effects.Completions[0]; second.captureTier != domainhistory.CaptureTierFallback {
+				t.Fatalf("second inner completion = %+v, want Tier 3", second)
+			}
+		})
+	}
+}
+
+// A nested PowerShell started from a hooked prompt takes over capture just
+// like a POSIX shell. The parent command is finalized once when the child's
+// primary prompt appears. The child then refuses to install its own hook (an
+// existing integration, or no PSReadLine): its skip marker must release the
+// reservation so both back-to-back inner commands use Tier 2/3 capture.
+func TestTapHookNestedPowerShellFallsBackAfterTheChildSkip(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.observe([]byte(hookHandshake("powershell")), tapAt(0))
+
+	const inner = `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+	tap.handleInput([]byte(inner+"\r"), tapAt(time.Second))
+	tap.observe([]byte(netcattyExec("powershell", `C:\work`, inner, false)),
+		tapAt(time.Second+time.Millisecond))
+
+	// The inner PowerShell declines the hook before its first prompt. The
+	// outer hook still owns the outer command, but the plan must stop
+	// expecting a child hook.
+	output, effects := tap.observe([]byte("\x1b]1337;NetcattyHookSkip;powershell\x07"),
+		tapAt(1100*time.Millisecond))
+	if len(output) != 0 {
+		t.Fatalf("the child skip marker reached the renderer: %q", output)
+	}
+	if len(effects.Completions) != 0 {
+		t.Fatalf("the child skip marker completed a command: %+v", effects.Completions)
+	}
+	if tap.hookExpected {
+		t.Fatal("the tap still expects a hook the inner shell refused")
+	}
+	if !tap.state(tapAt(1100 * time.Millisecond)).HookActive {
+		t.Fatal("the child skip cleared the outer hook before its prompt")
+	}
+
+	// The inner primary prompt is not a continuation prompt. It finalizes the
+	// outer command and hands capture to the child.
+	_, effects = tap.observe([]byte(`PS C:\work> `), tapAt(1200*time.Millisecond))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("outer completions = %+v, want one", effects.Completions)
+	}
+	outer := effects.Completions[0]
+	if outer.command != inner ||
+		outer.captureTier != domainhistory.CaptureTierHook ||
+		!outer.finishedAt.IsZero() || outer.hasExitCode {
+		t.Fatalf("outer completion = %+v", outer)
+	}
+	if tap.state(tapAt(1200 * time.Millisecond)).HookActive {
+		t.Fatal("the outer hook stayed authoritative over the inner PowerShell")
+	}
+
+	// Back-to-back inner commands are both captured before close.
+	tap.handleInput([]byte("Get-Date\r"), tapAt(1400*time.Millisecond))
+	_, _, _, firstCompletions, _ := tap.handleInput([]byte("Get-Location\r"),
+		tapAt(1400*time.Millisecond+time.Millisecond))
+	if len(firstCompletions) != 1 || firstCompletions[0].command != "Get-Date" ||
+		firstCompletions[0].captureTier != domainhistory.CaptureTierFallback {
+		t.Fatalf("first inner command was not retired as Tier 3: %+v", firstCompletions)
+	}
+	_, effects = tap.observe([]byte("Friday\r\nPS C:\\work> "), tapAt(1600*time.Millisecond))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("second inner completions = %+v, want one", effects.Completions)
+	}
+	second := effects.Completions[0]
+	if second.command != "Get-Location" || second.captureTier != domainhistory.CaptureTierFallback {
+		t.Fatalf("second inner completion = %+v, want Tier 3", second)
+	}
+
+	// Returning to the hooked prompt restores Tier 1 capture.
+	tap.observe([]byte(hookHandshake("powershell")), tapAt(1700*time.Millisecond))
+	tap.handleInput([]byte("Get-Process\r"), tapAt(1800*time.Millisecond))
+	tap.observe([]byte(netcattyExec("powershell", `C:\work`, "Get-Process", false)),
+		tapAt(1800*time.Millisecond+time.Millisecond))
+	_, effects = tap.observe([]byte("\x1b]133;D;0\x07"), tapAt(2*time.Second))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("restored completions = %+v, want one", effects.Completions)
+	}
+	if completion := effects.Completions[0]; completion.command != "Get-Process" ||
 		completion.captureTier != domainhistory.CaptureTierHook {
 		t.Fatalf("restored completion = %+v", completion)
 	}
@@ -342,6 +492,59 @@ func TestNestedShellCommand(t *testing.T) {
 		"tmux attach":        true,
 		"tmux attach -t dev": true,
 		"tmux a":             true,
+		"pwsh":               true,
+		"powershell.exe":     true,
+		`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`: true,
+		`"C:\Program Files\PowerShell\7\pwsh.exe"`:                  true,
+		"pwsh -NoLogo -NoExit":                                      true,
+		"pwsh -ExecutionPolicy:Bypass":                              true,
+		"powershell -NoProfile":                                     true,
+		"pwsh -ExecutionPolicy Bypass":                              true,
+		"powershell -ExecutionPolicy Bypass":                        true,
+		"pwsh -NoLogo -ExecutionPolicy Bypass -NoExit":              true,
+		"pwsh -WorkingDirectory /tmp":                               true,
+		"pwsh -WindowStyle Hidden":                                  true,
+		"powershell -ConfigurationName foo":                         true,
+		"pwsh -ExecutionPolicy Bypass -NoLogo":                      true,
+		"pwsh -Login":                                               true,
+		"pwsh -l":                                                   true,
+		"& pwsh -Login":                                             true,
+		`& pwsh`:                                                    true,
+		`&pwsh -NoLogo`:                                             true,
+		`& "C:\Program Files\PowerShell\7\pwsh.exe"`:                true,
+		`& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoLogo`:        true,
+		`&"C:\Program Files\PowerShell\7\pwsh.exe" -NoExit`:         true,
+		`& pwsh -ExecutionPolicy Bypass -NoExit`:                    true,
+		`& bash`:                                                    true,
+		`& tmux attach`:                                             true,
+		// A quoted option value keeps its spaces as one word.
+		`pwsh -WorkingDirectory 'C:\dir with a space'`:             true,
+		`pwsh -WorkingDirectory "C:\Program Files\PowerShell\7"`:   true,
+		`& pwsh -NoLogo -WorkingDirectory '/tmp/dir with a space'`: true,
+		`pwsh -WorkingDirectory 'C:\it''s here' -NoLogo`:           true,
+		// -NoExit keeps the prompt after -Command/-File/-EncodedCommand,
+		// but only before them: after, it is the command's own argument.
+		"pwsh -NoExit -Command 'echo hi'":                           true,
+		"pwsh -NoExit -File script.ps1":                             true,
+		"pwsh -NoExit -EncodedCommand AAAA":                         true,
+		"pwsh -NoExit -WorkingDirectory '/tmp/dir with a space'":    true,
+		"pwsh -NoExit -NonInteractive -Command 'echo hi'":           false,
+		"pwsh -Command 'echo hi' -NoExit":                           false,
+		"pwsh -File script.ps1 -NoExit":                             false,
+		"pwsh -Command 'echo hi'":                                   false,
+		"pwsh -c 'echo hi'":                                         false,
+		"pwsh -File script.ps1":                                     false,
+		"pwsh -NoLogo script.ps1":                                   false,
+		"pwsh -NonInteractive":                                      false,
+		"pwsh -nonin":                                               false,
+		"pwsh -ExecutionPolicy":                                     false,
+		"pwsh -ExecutionPolicy -NoLogo":                             false,
+		"pwsh -ExecutionPolicy Bypass script.ps1":                   false,
+		`& pwsh -Command 'echo hi'`:                                 false,
+		`& bash -c 'echo hi'`:                                       false,
+		`& "C:\Program Files\PowerShell\7\pwsh.exe" -File hook.ps1`: false,
+		"&":                  false,
+		"&& pwsh":            false,
 		"bash -c 'echo hi'":  false,
 		"bash -lc 'echo hi'": false,
 		"sh script.sh":       false,

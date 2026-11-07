@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mslxl/natcatty/adapters/shellhook"
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appvault "github.com/mslxl/natcatty/application/vault"
@@ -22,6 +23,12 @@ import (
 // Connection. A slow or wedged probe falls back to a plain login shell instead
 // of holding the Session in "connecting" forever.
 const tmuxProbeTimeout = 10 * time.Second
+
+// captureHookProbeTimeout bounds the non-interactive probe that resolves a
+// Windows OpenSSH peer's default shell. A failed or slow probe opens the plain
+// login shell instead of holding the terminal channel or guessing a shell
+// language the peer may not understand.
+const captureHookProbeTimeout = 5 * time.Second
 
 // routeSource resolves the non-secret jump chain and proxy for a Host. The app
 // backs it with the Vault; tests provide a fake.
@@ -58,6 +65,40 @@ type transportFactory struct {
 	// tmuxNotices deduplicates fallback notices per Host: a missing tmux is
 	// announced once, not on every reconnect.
 	tmuxNotices *tmux.NoticeState
+	// captureNotices deduplicates the capture-hook fallback notice per Host.
+	// A Windows peer whose shell cannot host the hook is announced once, not
+	// on every reconnect.
+	captureNotices *captureNoticeState
+}
+
+// captureNoticeState remembers which Hosts already reported that the capture
+// hook could not be installed. The app owns one state for its lifetime.
+type captureNoticeState struct {
+	mu        sync.Mutex
+	announced map[string]bool
+}
+
+func (s *captureNoticeState) shouldAnnounce(hostID model.HostID, hostname string) bool {
+	key := string(hostID)
+	if key == "" {
+		key = hostname
+	}
+	if key == "" {
+		key = "local"
+	}
+	if s == nil {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.announced == nil {
+		s.announced = make(map[string]bool)
+	}
+	if s.announced[key] {
+		return false
+	}
+	s.announced[key] = true
+	return true
 }
 
 // withInProcess attaches the application-owned Mosh and EternalTerminal
@@ -83,7 +124,8 @@ func (f *transportFactory) withPreferences(preferences preferenceSource) *transp
 func newTransportFactory(local, serial, telnet appsession.Factory, manager *appconnection.Manager, routes routeSource) *transportFactory {
 	return &transportFactory{
 		local: local, serial: serial, telnet: telnet, manager: manager, routes: routes,
-		tmuxNotices: tmux.NewNoticeState(),
+		tmuxNotices:    tmux.NewNoticeState(),
+		captureNotices: &captureNoticeState{},
 	}
 }
 
@@ -127,11 +169,14 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		route = resolved
 	}
 
-	lease, terminal, notices, attached, err := f.acquireTerminal(ctx, spec, route)
+	lease, terminal, notices, attached, hookExpected, err := f.acquireTerminal(ctx, spec, route)
 	if err != nil {
 		return nil, err
 	}
-	return &leasedTransport{terminal: terminal, lease: lease, notices: notices, tmuxAttached: attached}, nil
+	return &leasedTransport{
+		terminal: terminal, lease: lease, notices: notices,
+		tmuxAttached: attached, captureHookExpected: hookExpected,
+	}, nil
 }
 
 // withMoshPreferences copies the persisted prediction choice into a Mosh
@@ -154,12 +199,16 @@ func (f *transportFactory) withMoshPreferences(spec appsession.StartSpec) appses
 // fresh transport instead of failing the Session. When the Session opts into
 // tmux, the same Connection answers a non-interactive probe first, so a
 // missing tmux falls back to the login shell without a second dial.
-func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.StartSpec, route appconnection.Route) (*appconnection.Lease, appconnection.Terminal, <-chan appsession.Notice, bool, error) {
+func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.StartSpec, route appconnection.Route) (*appconnection.Lease, appconnection.Terminal, <-chan appsession.Notice, bool, bool, error) {
+	// hookExpected reports whether the terminal's startup actually installs
+	// the planned capture hook. It stays false when the remote platform is
+	// unknown or the peer's shell cannot host the wrapper.
+	hookExpected := false
 	var notices chan appsession.Notice
 	var onX11Notice func(appconnection.X11Notice)
-	if spec.X11Forwarding || spec.AutoAttachTmux {
-		// Room for the X11 notices and the at most two tmux notices this
-		// connection can publish.
+	if spec.X11Forwarding || spec.AutoAttachTmux || spec.CaptureHookRemote {
+		// Room for the X11 notices, the at most two tmux notices this
+		// connection can publish, and the capture-hook fallback notice.
 		notices = make(chan appsession.Notice, 8)
 	}
 	if spec.X11Forwarding {
@@ -193,13 +242,26 @@ func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.
 	for attempt := 0; ; attempt++ {
 		lease, err := f.manager.Acquire(ctx, request)
 		if err != nil {
-			return nil, nil, nil, false, err
+			return nil, nil, nil, false, false, err
 		}
 		specification := appconnection.TerminalSpec{
 			Cols:    spec.Cols,
 			Rows:    spec.Rows,
 			Term:    "xterm-256color",
 			Command: spec.RemoteCommand,
+		}
+		if spec.CaptureHookRemote {
+			var hookPlanned bool
+			specification.Command, hookPlanned = captureRemoteCommand(ctx, lease, spec.RemoteCommand)
+			hookExpected = hookPlanned
+			if !hookPlanned && f.captureNotices.shouldAnnounce(spec.HostID, spec.Hostname) {
+				// The Session opens at Tier 2/3. Report it once per Host,
+				// never as a connection failure.
+				select {
+				case notices <- appsession.Notice{Code: appsession.NoticeCaptureHookUnavailable}:
+				default:
+				}
+			}
 		}
 		attached := false
 		var pending []tmux.NoticeKind
@@ -210,14 +272,51 @@ func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.
 		terminal, err := lease.OpenTerminal(ctx, specification)
 		if err == nil {
 			f.publishTmuxNotices(notices, spec.HostID, pending)
-			return lease, terminal, notices, attached, nil
+			return lease, terminal, notices, attached, hookExpected, nil
 		}
 		_ = lease.Discard()
 		if attempt == 0 && errors.Is(err, appconnection.ErrStaleTransport) {
 			continue
 		}
-		return nil, nil, nil, false, err
+		return nil, nil, nil, false, false, err
 	}
+}
+
+// captureRemoteCommand chooses the capture-hook wrapper for a peer whose
+// platform Netcatty learns only after connecting. Win32-OpenSSH runs the
+// user's registered DefaultShell for an exec request, so the wrapper must be
+// written in that shell: PowerShell receives the hook, cmd.exe receives a
+// private skip marker and its own interactive shell, and a POSIX-like shell
+// keeps the planner's wrapper. Anything that is not a Windows OpenSSH peer is
+// untouched, so the POSIX path is unchanged.
+//
+// When the peer accepts only one session channel a probe would consume the
+// terminal's channel, and when the probe fails the shell is unknown. In both
+// cases a wrapper in the wrong language could close the Session, so the
+// terminal opens the peer's plain login shell and capture falls back to
+// Tier 2/3.
+func captureRemoteCommand(ctx context.Context, lease *appconnection.Lease, fallback string) (string, bool) {
+	if lease == nil || !shellhook.IsWindowsOpenSSH(lease.RemoteVersion()) {
+		return fallback, true
+	}
+	if lease.SingleChannel() {
+		return "", false
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, captureHookProbeTimeout)
+	result, err := lease.Exec(probeCtx, shellhook.WindowsDefaultShellProbeCommand())
+	cancel()
+	if err != nil {
+		// The registered shell is unknown. Guessing cmd.exe would break a
+		// PowerShell-default peer; the login shell is always understood.
+		return "", false
+	}
+	if command, hookPlanned, ok := shellhook.WindowsRemoteCaptureCommand(
+		shellhook.ParseWindowsDefaultShell(result.Stdout)); ok {
+		return command, hookPlanned
+	}
+	// The registered shell cannot host a wrapper. The login shell is always
+	// understood, so the Session opens and capture stays at Tier 2/3.
+	return "", false
 }
 
 // tmuxTerminal probes the remote and decides what the terminal channel should
@@ -340,6 +439,10 @@ type leasedTransport struct {
 	// tmuxAttached reports that the terminal runs the tmux wrapper, so a clean
 	// exit is a detach rather than a shell exit.
 	tmuxAttached bool
+	// captureHookExpected reports whether the terminal's startup actually
+	// installs the planned capture hook. It is false when the remote shell
+	// cannot host the wrapper, so the Session starts at Tier 2/3 immediately.
+	captureHookExpected bool
 
 	mu     sync.Mutex
 	closed bool
@@ -347,11 +450,19 @@ type leasedTransport struct {
 	end    appsession.End
 }
 
-var _ appsession.Notifier = (*leasedTransport)(nil)
+var (
+	_ appsession.Notifier                    = (*leasedTransport)(nil)
+	_ appsession.CaptureHookExpectedReporter = (*leasedTransport)(nil)
+)
 
 // Notices returns the Session-facing notices produced by the Connection. X11
 // forwarding reports a dead local display here without ending the shell.
 func (t *leasedTransport) Notices() <-chan appsession.Notice { return t.notices }
+
+// CaptureHookExpected reports whether the opened terminal actually installs
+// the planned capture hook. A plain login shell opened because the remote
+// shell was unknown starts at Tier 2/3 from the first typed command.
+func (t *leasedTransport) CaptureHookExpected() bool { return t.captureHookExpected }
 
 func (t *leasedTransport) Read(p []byte) (int, error) {
 	n, err := t.terminal.Read(p)

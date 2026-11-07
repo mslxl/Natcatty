@@ -3,6 +3,7 @@ package shellhook
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -79,6 +80,8 @@ end
 			t.Fatal(err)
 		}
 		return env
+	case "pwsh", "powershell":
+		return powerShellStartupEnv(t, home)
 	}
 	t.Fatalf("unknown shell %q", name)
 	return nil
@@ -131,6 +134,9 @@ type shellProcess struct {
 	notify   chan struct{}
 }
 
+// startShell runs path in a PTY. args is the full argv passed to exec, so
+// args[0] must name the program; passing a command's arguments without their
+// program would silently shift every option by one.
 func startShell(t *testing.T, path string, args []string, dir string, env []string) *shellProcess {
 	t.Helper()
 	terminal, err := pty.Start(pty.Options{
@@ -151,9 +157,24 @@ func startShell(t *testing.T, path string, args []string, dir string, env []stri
 
 func (p *shellProcess) readLoop() {
 	buffer := make([]byte, 4096)
+	// PSReadLine asks the terminal for the cursor position when it starts. A
+	// real terminal answers; a bare PTY must too, or line editing never
+	// becomes ready. The three-byte tail joins a query split across reads.
+	tail := ""
 	for {
 		count, readErr := p.terminal.Read(buffer)
 		if count > 0 {
+			chunk := tail + string(buffer[:count])
+			if queries := strings.Count(chunk, "\x1b[6n"); queries > 0 {
+				for index := 0; index < queries; index++ {
+					_, _ = p.terminal.Write([]byte("\x1b[1;1R"))
+				}
+			}
+			if len(chunk) >= 3 {
+				tail = chunk[len(chunk)-3:]
+			} else {
+				tail = chunk
+			}
 			p.mu.Lock()
 			p.output.Write(buffer[:count])
 			p.mu.Unlock()
@@ -253,6 +274,33 @@ func countNetcattyExec(output string) int {
 		}
 		count++
 		rest = rest[index+len("\x1b]1337;NetcattyExec;"):]
+	}
+}
+
+// netcattyExecCommands returns the decoded command of every private sequence
+// in output, in order. A sequence whose payload does not decode is skipped.
+func netcattyExecCommands(output string) []string {
+	const prefix = "\x1b]1337;NetcattyExec;"
+	commands := []string{}
+	for {
+		index := strings.Index(output, prefix)
+		if index < 0 {
+			return commands
+		}
+		output = output[index+len(prefix):]
+		end := strings.IndexByte(output, '\a')
+		if end < 0 {
+			return commands
+		}
+		fields := strings.Split(output[:end], ";")
+		if len(fields) == 3 {
+			_, cwdOK := decodeBase64URL(fields[1])
+			command, commandOK := decodeBase64URL(fields[2])
+			if cwdOK && commandOK {
+				commands = append(commands, command)
+			}
+		}
+		output = output[end+1:]
 	}
 }
 
@@ -1588,17 +1636,24 @@ func TestRealNestedShellCapturesBackToBackInnerCommands(t *testing.T) {
 			service.SendInput([]model.SessionID{session.ID()}, []byte("exit\r"))
 			awaitCommandEvent(t, events, "exit", nil)
 			// The outer prompt handshake follows the D that finished the exit
-			// row; give the tap the moment it needs to mark the hook active
-			// again before asserting the next command's tier.
-			time.Sleep(300 * time.Millisecond)
-			back := "echo nested_back_$((3+3))"
-			if outerName == "fish" {
-				back = "echo nested_back_(math 3+3)"
-			}
-			service.SendInput([]model.SessionID{session.ID()}, []byte(back+"\r"))
-			backEvent := awaitCommandEvent(t, events, back, nil)
-			if backEvent.CaptureTier != domainhistory.CaptureTierHook {
-				t.Fatalf("the outer hook did not return after the nested shell: %+v", backEvent)
+			// row and can be delayed under load or the race detector. Probe
+			// with real commands until the hook speaks rather than assuming a
+			// fixed settling delay.
+			deadline := time.Now().Add(20 * time.Second)
+			for attempt := 1; ; attempt++ {
+				value := attempt * 3
+				back := fmt.Sprintf("echo nested_back_$((%d+%d))", value, value)
+				if outerName == "fish" {
+					back = fmt.Sprintf("echo nested_back_(math %d+%d)", value, value)
+				}
+				service.SendInput([]model.SessionID{session.ID()}, []byte(back+"\r"))
+				backEvent := awaitCommandEvent(t, events, back, nil)
+				if backEvent.CaptureTier == domainhistory.CaptureTierHook {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("the outer hook did not return after the nested shell: %+v", backEvent)
+				}
 			}
 		})
 	}

@@ -358,6 +358,13 @@ type channelTerminal struct {
 	stdin   io.WriteCloser
 	stdout  io.Reader
 
+	// writeMu serializes Write with the CloseWrite half of Close. x/crypto's
+	// channel.Write reads its sentEOF flag outside the channel's write lock,
+	// and channel.CloseWrite writes it outside that lock too. Session teardown
+	// can close the transport while the input writer is still draining, so
+	// the two calls must not overlap.
+	writeMu sync.Mutex
+
 	mu       sync.Mutex
 	closed   bool
 	waitOnce sync.Once
@@ -404,7 +411,11 @@ func (t *channelTerminal) End() appconnection.TerminalEnd {
 func (t *channelTerminal) Read(p []byte) (int, error) { return t.stdout.Read(p) }
 
 // Write sends terminal input.
-func (t *channelTerminal) Write(p []byte) (int, error) { return t.stdin.Write(p) }
+func (t *channelTerminal) Write(p []byte) (int, error) {
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	return t.stdin.Write(p)
+}
 
 // Resize changes the remote PTY size. SSH exchanges window-change as
 // (columns, rows), so the argument order turns around here.
@@ -426,7 +437,14 @@ func (t *channelTerminal) Close() error {
 	}
 	t.closed = true
 	t.mu.Unlock()
-	_ = t.stdin.Close()
+	// The EOF half-close is only sent when no input write is in flight;
+	// otherwise it would race an in-flight Write inside x/crypto. Skipping it
+	// is safe here because session.Close aborts the whole channel, and the
+	// Session is tearing down anyway.
+	if t.writeMu.TryLock() {
+		_ = t.stdin.Close()
+		t.writeMu.Unlock()
+	}
 	return t.session.Close()
 }
 
