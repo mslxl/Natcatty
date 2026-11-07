@@ -236,8 +236,8 @@
       "hookEnabled": true,
       "wantHookExpected": false,
       "verification": "manual",
-      "fidelity": {"tier": "2", "cwd": "planned", "exit": "missing", "duration": "planned"},
-      "evidence": "TestSSHCaptureHookWithdrawsForNonPOSIXLoginShells keeps the plain xonsh login shell and TestNonPOSIXLoginShellsRejectThePOSIXWrapper reproduces the real xonsh SyntaxError. TestRealXonshWithoutHookKeepsNativeFallback observed the local OSC 7 fallback; no remote Host was available."
+      "fidelity": {"tier": "2", "cwd": "planned", "exit": "missing", "duration": "missing"},
+      "evidence": "TestSSHCaptureHookWithdrawsForNonPOSIXLoginShells keeps the plain xonsh login shell and TestNonPOSIXLoginShellsRejectThePOSIXWrapper reproduces the real xonsh SyntaxError. TestRealXonshWithoutHookKeepsNativeFallback observed the local OSC 7 fallback with no exit or finish: xonsh emits no OSC 133 and its prompt is not detected, and the remote transport adds no finish source. No remote Host was available."
     },
     {
       "name": "remote-unknown-login-shell-fallback",
