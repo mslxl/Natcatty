@@ -11644,104 +11644,14 @@ func (msgs Messages) SettingsAreaTransport() string {
 	return Catalog.Format(msgs.locale, "settingsAreaTransport", nil)
 }
 
-// SettingsTransportDescription says "Choose the client implementation for Mosh and EternalTerminal Sessions."
+// SettingsTransportDescription says "Choose how Mosh displays predicted local echo."
 // in the language the app shows.
 func SettingsTransportDescription() string { return In(i18n.Locale()).SettingsTransportDescription() }
 
-// SettingsTransportDescription says "Choose the client implementation for Mosh and EternalTerminal Sessions."
+// SettingsTransportDescription says "Choose how Mosh displays predicted local echo."
 // in the language of msgs.
 func (msgs Messages) SettingsTransportDescription() string {
 	return Catalog.Format(msgs.locale, "settingsTransportDescription", nil)
-}
-
-// SettingsTransportImplementation says "Transport implementation"
-// in the language the app shows.
-func SettingsTransportImplementation() string {
-	return In(i18n.Locale()).SettingsTransportImplementation()
-}
-
-// SettingsTransportImplementation says "Transport implementation"
-// in the language of msgs.
-func (msgs Messages) SettingsTransportImplementation() string {
-	return Catalog.Format(msgs.locale, "settingsTransportImplementation", nil)
-}
-
-// SettingsTransportBundled says "Bundled client"
-// in the language the app shows.
-func SettingsTransportBundled() string { return In(i18n.Locale()).SettingsTransportBundled() }
-
-// SettingsTransportBundled says "Bundled client"
-// in the language of msgs.
-func (msgs Messages) SettingsTransportBundled() string {
-	return Catalog.Format(msgs.locale, "settingsTransportBundled", nil)
-}
-
-// SettingsTransportInProcess says "In-process client (beta)"
-// in the language the app shows.
-func SettingsTransportInProcess() string { return In(i18n.Locale()).SettingsTransportInProcess() }
-
-// SettingsTransportInProcess says "In-process client (beta)"
-// in the language of msgs.
-func (msgs Messages) SettingsTransportInProcess() string {
-	return Catalog.Format(msgs.locale, "settingsTransportInProcess", nil)
-}
-
-// SettingsTransportUseReleaseDefault says "Release default (recommended)"
-// in the language the app shows.
-func SettingsTransportUseReleaseDefault() string {
-	return In(i18n.Locale()).SettingsTransportUseReleaseDefault()
-}
-
-// SettingsTransportUseReleaseDefault says "Release default (recommended)"
-// in the language of msgs.
-func (msgs Messages) SettingsTransportUseReleaseDefault() string {
-	return Catalog.Format(msgs.locale, "settingsTransportUseReleaseDefault", nil)
-}
-
-// SettingsTransportEffectiveDefault says "Release default: {client}"
-// in the language the app shows.
-func SettingsTransportEffectiveDefault(client string) string {
-	return In(i18n.Locale()).SettingsTransportEffectiveDefault(client)
-}
-
-// SettingsTransportEffectiveDefault says "Release default: {client}"
-// in the language of msgs.
-func (msgs Messages) SettingsTransportEffectiveDefault(client string) string {
-	return Catalog.Format(msgs.locale, "settingsTransportEffectiveDefault", map[string]any{"client": client})
-}
-
-// SettingsTransportImplementationHint says "Mosh and EternalTerminal Sessions use the selected client unless a Host overrides it. The in-process client is an opt…"
-// in the language the app shows.
-func SettingsTransportImplementationHint() string {
-	return In(i18n.Locale()).SettingsTransportImplementationHint()
-}
-
-// SettingsTransportImplementationHint says "Mosh and EternalTerminal Sessions use the selected client unless a Host overrides it. The in-process client is an opt…"
-// in the language of msgs.
-func (msgs Messages) SettingsTransportImplementationHint() string {
-	return Catalog.Format(msgs.locale, "settingsTransportImplementationHint", nil)
-}
-
-// SettingsTransportBetaHint says "The in-process client is an opt-in beta. The release default is currently {client}; Bundled remains selectable per Ho…"
-// in the language the app shows.
-func SettingsTransportBetaHint(client string) string {
-	return In(i18n.Locale()).SettingsTransportBetaHint(client)
-}
-
-// SettingsTransportBetaHint says "The in-process client is an opt-in beta. The release default is currently {client}; Bundled remains selectable per Ho…"
-// in the language of msgs.
-func (msgs Messages) SettingsTransportBetaHint(client string) string {
-	return Catalog.Format(msgs.locale, "settingsTransportBetaHint", map[string]any{"client": client})
-}
-
-// SettingsTransportUnknown says "The saved transport implementation is not recognized. Mosh and EternalTerminal Sessions will fail until you choose th…"
-// in the language the app shows.
-func SettingsTransportUnknown() string { return In(i18n.Locale()).SettingsTransportUnknown() }
-
-// SettingsTransportUnknown says "The saved transport implementation is not recognized. Mosh and EternalTerminal Sessions will fail until you choose th…"
-// in the language of msgs.
-func (msgs Messages) SettingsTransportUnknown() string {
-	return Catalog.Format(msgs.locale, "settingsTransportUnknown", nil)
 }
 
 // SettingsMoshPredictionDisplay says "Mosh prediction"
@@ -11794,94 +11704,6 @@ func SettingsMoshPredictionHint() string { return In(i18n.Locale()).SettingsMosh
 // in the language of msgs.
 func (msgs Messages) SettingsMoshPredictionHint() string {
 	return Catalog.Format(msgs.locale, "settingsMoshPredictionHint", nil)
-}
-
-// ConnectionErrorTransportUnavailable says "The selected in-process transport is not available in this build. Choose Bundled for the Host or in Settings."
-// in the language the app shows.
-func ConnectionErrorTransportUnavailable() string {
-	return In(i18n.Locale()).ConnectionErrorTransportUnavailable()
-}
-
-// ConnectionErrorTransportUnavailable says "The selected in-process transport is not available in this build. Choose Bundled for the Host or in Settings."
-// in the language of msgs.
-func (msgs Messages) ConnectionErrorTransportUnavailable() string {
-	return Catalog.Format(msgs.locale, "connectionErrorTransportUnavailable", nil)
-}
-
-// ConnectionErrorTransportUnknown says "The saved transport implementation is not recognized by this version. Choose Bundled for the Host or in Settings."
-// in the language the app shows.
-func ConnectionErrorTransportUnknown() string {
-	return In(i18n.Locale()).ConnectionErrorTransportUnknown()
-}
-
-// ConnectionErrorTransportUnknown says "The saved transport implementation is not recognized by this version. Choose Bundled for the Host or in Settings."
-// in the language of msgs.
-func (msgs Messages) ConnectionErrorTransportUnknown() string {
-	return Catalog.Format(msgs.locale, "connectionErrorTransportUnknown", nil)
-}
-
-// VaultHostTransportImplementation says "Transport implementation"
-// in the language the app shows.
-func VaultHostTransportImplementation() string {
-	return In(i18n.Locale()).VaultHostTransportImplementation()
-}
-
-// VaultHostTransportImplementation says "Transport implementation"
-// in the language of msgs.
-func (msgs Messages) VaultHostTransportImplementation() string {
-	return Catalog.Format(msgs.locale, "vaultHostTransportImplementation", nil)
-}
-
-// VaultHostTransportInherit says "Use global default"
-// in the language the app shows.
-func VaultHostTransportInherit() string { return In(i18n.Locale()).VaultHostTransportInherit() }
-
-// VaultHostTransportInherit says "Use global default"
-// in the language of msgs.
-func (msgs Messages) VaultHostTransportInherit() string {
-	return Catalog.Format(msgs.locale, "vaultHostTransportInherit", nil)
-}
-
-// VaultHostTransportBundled says "Bundled client"
-// in the language the app shows.
-func VaultHostTransportBundled() string { return In(i18n.Locale()).VaultHostTransportBundled() }
-
-// VaultHostTransportBundled says "Bundled client"
-// in the language of msgs.
-func (msgs Messages) VaultHostTransportBundled() string {
-	return Catalog.Format(msgs.locale, "vaultHostTransportBundled", nil)
-}
-
-// VaultHostTransportInProcess says "In-process client (beta)"
-// in the language the app shows.
-func VaultHostTransportInProcess() string { return In(i18n.Locale()).VaultHostTransportInProcess() }
-
-// VaultHostTransportInProcess says "In-process client (beta)"
-// in the language of msgs.
-func (msgs Messages) VaultHostTransportInProcess() string {
-	return Catalog.Format(msgs.locale, "vaultHostTransportInProcess", nil)
-}
-
-// VaultHostTransportImplementationHint says "Overrides the global Mosh and EternalTerminal client choice for this Host. The in-process client is an opt-in beta; c…"
-// in the language the app shows.
-func VaultHostTransportImplementationHint() string {
-	return In(i18n.Locale()).VaultHostTransportImplementationHint()
-}
-
-// VaultHostTransportImplementationHint says "Overrides the global Mosh and EternalTerminal client choice for this Host. The in-process client is an opt-in beta; c…"
-// in the language of msgs.
-func (msgs Messages) VaultHostTransportImplementationHint() string {
-	return Catalog.Format(msgs.locale, "vaultHostTransportImplementationHint", nil)
-}
-
-// VaultHostTransportUnknown says "This Host has an unrecognized transport implementation and will fail to connect until you choose a valid option."
-// in the language the app shows.
-func VaultHostTransportUnknown() string { return In(i18n.Locale()).VaultHostTransportUnknown() }
-
-// VaultHostTransportUnknown says "This Host has an unrecognized transport implementation and will fail to connect until you choose a valid option."
-// in the language of msgs.
-func (msgs Messages) VaultHostTransportUnknown() string {
-	return Catalog.Format(msgs.locale, "vaultHostTransportUnknown", nil)
 }
 
 // SettingsAreaLayout says "Layout & Tabs"
@@ -21710,16 +21532,6 @@ func (msgs Messages) VaultHostETPortHint() string {
 	return Catalog.Format(msgs.locale, "vaultHostETPortHint", nil)
 }
 
-// VaultHostETRestrictionHint says "EternalTerminal Sessions support one jump Host and no proxies."
-// in the language the app shows.
-func VaultHostETRestrictionHint() string { return In(i18n.Locale()).VaultHostETRestrictionHint() }
-
-// VaultHostETRestrictionHint says "EternalTerminal Sessions support one jump Host and no proxies."
-// in the language of msgs.
-func (msgs Messages) VaultHostETRestrictionHint() string {
-	return Catalog.Format(msgs.locale, "vaultHostETRestrictionHint", nil)
-}
-
 // VaultProblemETPort says "Enter a port between 1 and 65535."
 // in the language the app shows.
 func VaultProblemETPort() string { return In(i18n.Locale()).VaultProblemETPort() }
@@ -21728,28 +21540,6 @@ func VaultProblemETPort() string { return In(i18n.Locale()).VaultProblemETPort()
 // in the language of msgs.
 func (msgs Messages) VaultProblemETPort() string {
 	return Catalog.Format(msgs.locale, "vaultProblemETPort", nil)
-}
-
-// ConnectionErrorMoshUnavailable says "The bundled Mosh client is not available for this platform."
-// in the language the app shows.
-func ConnectionErrorMoshUnavailable() string {
-	return In(i18n.Locale()).ConnectionErrorMoshUnavailable()
-}
-
-// ConnectionErrorMoshUnavailable says "The bundled Mosh client is not available for this platform."
-// in the language of msgs.
-func (msgs Messages) ConnectionErrorMoshUnavailable() string {
-	return Catalog.Format(msgs.locale, "connectionErrorMoshUnavailable", nil)
-}
-
-// ConnectionErrorMoshChecksum says "The bundled Mosh client failed checksum verification. Reinstall the application."
-// in the language the app shows.
-func ConnectionErrorMoshChecksum() string { return In(i18n.Locale()).ConnectionErrorMoshChecksum() }
-
-// ConnectionErrorMoshChecksum says "The bundled Mosh client failed checksum verification. Reinstall the application."
-// in the language of msgs.
-func (msgs Messages) ConnectionErrorMoshChecksum() string {
-	return Catalog.Format(msgs.locale, "connectionErrorMoshChecksum", nil)
 }
 
 // ConnectionErrorMoshJump says "Mosh Sessions cannot use jump Hosts."
@@ -21790,56 +21580,6 @@ func ConnectionErrorMoshHandshake() string { return In(i18n.Locale()).Connection
 // in the language of msgs.
 func (msgs Messages) ConnectionErrorMoshHandshake() string {
 	return Catalog.Format(msgs.locale, "connectionErrorMoshHandshake", nil)
-}
-
-// ConnectionErrorETUnavailable says "The bundled EternalTerminal client is not available for this platform."
-// in the language the app shows.
-func ConnectionErrorETUnavailable() string { return In(i18n.Locale()).ConnectionErrorETUnavailable() }
-
-// ConnectionErrorETUnavailable says "The bundled EternalTerminal client is not available for this platform."
-// in the language of msgs.
-func (msgs Messages) ConnectionErrorETUnavailable() string {
-	return Catalog.Format(msgs.locale, "connectionErrorETUnavailable", nil)
-}
-
-// ConnectionErrorETChecksum says "The bundled EternalTerminal client failed checksum verification. Reinstall the application."
-// in the language the app shows.
-func ConnectionErrorETChecksum() string { return In(i18n.Locale()).ConnectionErrorETChecksum() }
-
-// ConnectionErrorETChecksum says "The bundled EternalTerminal client failed checksum verification. Reinstall the application."
-// in the language of msgs.
-func (msgs Messages) ConnectionErrorETChecksum() string {
-	return Catalog.Format(msgs.locale, "connectionErrorETChecksum", nil)
-}
-
-// ConnectionErrorETJump says "EternalTerminal Sessions support at most one jump Host."
-// in the language the app shows.
-func ConnectionErrorETJump() string { return In(i18n.Locale()).ConnectionErrorETJump() }
-
-// ConnectionErrorETJump says "EternalTerminal Sessions support at most one jump Host."
-// in the language of msgs.
-func (msgs Messages) ConnectionErrorETJump() string {
-	return Catalog.Format(msgs.locale, "connectionErrorETJump", nil)
-}
-
-// ConnectionErrorETProxy says "EternalTerminal Sessions cannot use proxies."
-// in the language the app shows.
-func ConnectionErrorETProxy() string { return In(i18n.Locale()).ConnectionErrorETProxy() }
-
-// ConnectionErrorETProxy says "EternalTerminal Sessions cannot use proxies."
-// in the language of msgs.
-func (msgs Messages) ConnectionErrorETProxy() string {
-	return Catalog.Format(msgs.locale, "connectionErrorETProxy", nil)
-}
-
-// ConnectionErrorETNetwork says "The bundled EternalTerminal client cannot use an embedded Network Profile. Select the in-process client for this Host."
-// in the language the app shows.
-func ConnectionErrorETNetwork() string { return In(i18n.Locale()).ConnectionErrorETNetwork() }
-
-// ConnectionErrorETNetwork says "The bundled EternalTerminal client cannot use an embedded Network Profile. Select the in-process client for this Host."
-// in the language of msgs.
-func (msgs Messages) ConnectionErrorETNetwork() string {
-	return Catalog.Format(msgs.locale, "connectionErrorETNetwork", nil)
 }
 
 // BrowserAddress says "Address"
@@ -24194,11 +23934,11 @@ func (msgs Messages) SettingsAboutNoticesTitle() string {
 	return Catalog.Format(msgs.locale, "settingsAboutNoticesTitle", nil)
 }
 
-// SettingsAboutNoticesBody says "Licenses and copyright notices for MyGo, libghostty-vt, the Go modules, MoshCatty, EternalTerminal, and other bundled…"
+// SettingsAboutNoticesBody says "Licenses and copyright notices for MyGo, libghostty-vt, the Go modules, EternalTerminal, and other bundled components."
 // in the language the app shows.
 func SettingsAboutNoticesBody() string { return In(i18n.Locale()).SettingsAboutNoticesBody() }
 
-// SettingsAboutNoticesBody says "Licenses and copyright notices for MyGo, libghostty-vt, the Go modules, MoshCatty, EternalTerminal, and other bundled…"
+// SettingsAboutNoticesBody says "Licenses and copyright notices for MyGo, libghostty-vt, the Go modules, EternalTerminal, and other bundled components."
 // in the language of msgs.
 func (msgs Messages) SettingsAboutNoticesBody() string {
 	return Catalog.Format(msgs.locale, "settingsAboutNoticesBody", nil)

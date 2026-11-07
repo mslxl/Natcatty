@@ -6,12 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	domainkeybindings "github.com/mslxl/natcatty/domain/keybindings"
-	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
+	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 )
 
@@ -189,286 +188,35 @@ func TestSFTPTransferSettingsSurviveRestart(t *testing.T) {
 	}
 }
 
-// postSwitchPolicy is the release policy after tickets 27 and 32 are green.
-// It is constructed in tests only; production flips transport.ReleasePolicy.
-func postSwitchPolicy() transportmodel.Policy {
-	return transportmodel.Policy{
-		Default: transportmodel.InProcess,
-		VerifiedGates: []transportmodel.Gate{
-			transportmodel.GateMoshParity, transportmodel.GateETParity,
-		},
-	}
-}
-
-// fixedClock keeps waiver expiry and the release default deterministic.
-func fixedClock() func() time.Time {
-	at := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
-	return func() time.Time { return at }
-}
-
-// TestTransportDefaultSwitchMigratesEachStoredCase is the table-driven
-// migration contract: new installs and installs that never chose adopt the
-// new default, an explicit bundled choice survives the flip, and old Hosts
-// never need to be re-saved because their empty override inherits the resolved
-// global value.
-func TestTransportDefaultSwitchMigratesEachStoredCase(t *testing.T) {
+// TestPreferencesStoreIgnoresTheRemovedTransportChoice proves a document from
+// an older build, which still carries the transport implementation keys, loads
+// without a migration and keeps the Mosh prediction setting. The stale keys are
+// dropped on the next save.
+func TestPreferencesStoreIgnoresTheRemovedTransportChoice(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "preferences.json")
 	ctx := context.Background()
-	writeDocument := func(document string) {
-		t.Helper()
-		if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	loadPostSwitch := func() domainpreferences.Settings {
-		t.Helper()
-		store := OpenPreferences(path,
-			WithReleasePolicy(postSwitchPolicy()), WithClock(fixedClock()))
-		settings, err := store.Load(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return settings
-	}
-
-	cases := []struct {
-		name         string
-		document     string // empty means no file, a fresh install
-		want         transportmodel.Implementation
-		wantExplicit bool
-	}{
-		{
-			name:         "new install gets the configured default",
-			want:         transportmodel.InProcess,
-			wantExplicit: false,
-		},
-		{
-			name:         "old document without the field adopts the new default",
-			document:     `{"version":1,"layout":{"showSftpTab":false}}`,
-			want:         transportmodel.InProcess,
-			wantExplicit: false,
-		},
-		{
-			name:         "old document without the implementation key adopts the new default",
-			document:     `{"version":1,"transport":{"moshPredictionDisplay":"always"}}`,
-			want:         transportmodel.InProcess,
-			wantExplicit: false,
-		},
-		{
-			name:         "old document with an empty implementation adopts the new default",
-			document:     `{"version":1,"transport":{"implementation":""}}`,
-			want:         transportmodel.InProcess,
-			wantExplicit: false,
-		},
-		{
-			name:         "old document holding the old default adopts the new default",
-			document:     `{"version":1,"transport":{"implementation":"bundled"}}`,
-			want:         transportmodel.InProcess,
-			wantExplicit: false,
-		},
-		{
-			name:         "old document that opted into the beta keeps its choice",
-			document:     `{"version":1,"transport":{"implementation":"in_process"}}`,
-			want:         transportmodel.InProcess,
-			wantExplicit: true,
-		},
-		{
-			name:         "explicit bundled choice survives the switch",
-			document:     `{"version":2,"transport":{"implementation":"bundled","implementationExplicit":true}}`,
-			want:         transportmodel.Bundled,
-			wantExplicit: true,
-		},
-		{
-			name:         "recorded non-choice follows the switch",
-			document:     `{"version":2,"transport":{"implementation":"bundled","implementationExplicit":false}}`,
-			want:         transportmodel.InProcess,
-			wantExplicit: false,
-		},
-		{
-			name:         "unknown value from another build fails closed and is kept",
-			document:     `{"version":1,"transport":{"implementation":"bundled_v2"}}`,
-			want:         transportmodel.Implementation("bundled_v2"),
-			wantExplicit: true,
-		},
-		{
-			name:         "malformed document falls back to the configured default",
-			document:     `{not json`,
-			want:         transportmodel.InProcess,
-			wantExplicit: false,
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			_ = os.Remove(path)
-			if c.document != "" {
-				writeDocument(c.document)
-			}
-			settings := loadPostSwitch()
-			if got := settings.Transport.Implementation; got != c.want {
-				t.Fatalf("implementation = %q, want %q", got, c.want)
-			}
-			if got := settings.Transport.ImplementationExplicit; got != c.wantExplicit {
-				t.Fatalf("explicit = %v, want %v", got, c.wantExplicit)
-			}
-		})
-	}
-}
-
-// TestTransportDefaultSwitchSettingsFileRoundTrip proves a saved document
-// always records the provenance flag, so a non-choice follows a later default
-// flip while an explicit bundled choice does not. It also proves the file
-// version is the new schema.
-func TestTransportDefaultSwitchSettingsFileRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "preferences.json")
-	ctx := context.Background()
-
-	first := apppreferences.NewService(OpenPreferences(path))
-	if err := first.Load(ctx); err != nil {
+	document := `{"version":2,"transport":{"implementation":"bundled",` +
+		`"implementationExplicit":true,"moshPredictionDisplay":"always"}}`
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := first.Update(func(settings *domainpreferences.Settings) {
-		settings.Transport.Implementation = transportmodel.InProcess
-		settings.Transport.ImplementationExplicit = true
-	}); err != nil {
+	store := OpenPreferences(path)
+	settings, err := store.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := settings.Transport.MoshPredictionDisplay; got != moshmodel.PredictionAlways {
+		t.Fatalf("prediction display = %q, want always", got)
+	}
+	if err := store.Save(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"version": 2`, `"implementationExplicit": true`} {
-		if !strings.Contains(string(data), want) {
-			t.Fatalf("saved document has no %s:\n%s", want, data)
-		}
-	}
-
-	// The beta opt-in survives the switch.
-	second := apppreferences.NewService(OpenPreferences(path,
-		WithReleasePolicy(postSwitchPolicy()), WithClock(fixedClock())))
-	if err := second.Load(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got := second.Settings().Transport.Implementation; got != transportmodel.InProcess {
-		t.Fatalf("beta choice after switch = %q, want in_process", got)
-	}
-
-	// A user who locks the bundled client keeps it even after the flip.
-	if err := second.Update(func(settings *domainpreferences.Settings) {
-		settings.Transport.Implementation = transportmodel.Bundled
-		settings.Transport.ImplementationExplicit = true
-	}); err != nil {
-		t.Fatal(err)
-	}
-	third := apppreferences.NewService(OpenPreferences(path,
-		WithReleasePolicy(postSwitchPolicy()), WithClock(fixedClock())))
-	if err := third.Load(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got := third.Settings().Transport.Implementation; got != transportmodel.Bundled {
-		t.Fatalf("explicit bundled after switch = %q, want bundled", got)
-	}
-	if !third.Settings().Transport.ImplementationExplicit {
-		t.Fatal("the explicit bundled choice lost its provenance")
-	}
-
-	// Selecting the release default clears provenance and follows the switch.
-	if err := third.Update(func(settings *domainpreferences.Settings) {
-		settings.Transport.Implementation = transportmodel.CurrentDefault()
-		settings.Transport.ImplementationExplicit = false
-	}); err != nil {
-		t.Fatal(err)
-	}
-	fourth := apppreferences.NewService(OpenPreferences(path,
-		WithReleasePolicy(postSwitchPolicy()), WithClock(fixedClock())))
-	if err := fourth.Load(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got := fourth.Settings().Transport.Implementation; got != transportmodel.InProcess {
-		t.Fatalf("release-default choice after switch = %q, want in_process", got)
-	}
-	if fourth.Settings().Transport.ImplementationExplicit {
-		t.Fatal("selecting the release default kept the explicit-choice flag")
-	}
-}
-
-// TestTransportWaiverExpiresWithoutADataMigration proves the store resolves a
-// platform waiver on every load, so an expiry takes effect by itself and no
-// settings or Host record has to be rewritten.
-func TestTransportWaiverExpiresWithoutADataMigration(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "preferences.json")
-	ctx := context.Background()
-	expires := time.Date(2027, 1, 15, 0, 0, 0, 0, time.UTC)
-	policy := postSwitchPolicy()
-	policy.Waivers = []transportmodel.Waiver{{
-		Platform: transportmodel.CurrentPlatform(),
-		Reason:   transportmodel.WaiverParityBlocker,
-		Gate:     transportmodel.GateETParity,
-		Detail:   "ET parity summary 1234 fails on this platform",
-		Expires:  expires,
-	}}
-	if err := policy.Validate(); err != nil {
-		t.Fatalf("policy: %v", err)
-	}
-
-	loadAt := func(at time.Time) domainpreferences.Settings {
-		t.Helper()
-		store := OpenPreferences(path, WithReleasePolicy(policy), WithClock(func() time.Time { return at }))
-		settings, err := store.Load(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return settings
-	}
-
-	if got := loadAt(expires.Add(-time.Hour)).Transport.Implementation; got != transportmodel.Bundled {
-		t.Fatalf("during the waiver = %q, want bundled", got)
-	}
-	if got := loadAt(expires).Transport.Implementation; got != transportmodel.InProcess {
-		t.Fatalf("after the waiver = %q, want in_process", got)
-	}
-}
-
-// TestTransportImplementationSelectionSurvivesRestart proves the global Mosh
-// and EternalTerminal choice is saved and read back by a new service over the
-// same preferences file. Expectations follow the release default, so the
-// documented one-place flip does not break this test.
-func TestTransportImplementationSelectionSurvivesRestart(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "preferences.json")
-	ctx := context.Background()
-	wantDefault := transportmodel.CurrentDefault()
-
-	first := apppreferences.NewService(OpenPreferences(path))
-	if err := first.Load(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got := first.Settings().Transport.Implementation; got != wantDefault {
-		t.Fatalf("default implementation = %q, want %q", got, wantDefault)
-	}
-	if err := first.Update(func(settings *domainpreferences.Settings) {
-		settings.Transport.ChooseImplementation(transportmodel.InProcess)
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	second := apppreferences.NewService(OpenPreferences(path))
-	if err := second.Load(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got := second.Settings().Transport.Implementation; got != transportmodel.InProcess {
-		t.Fatalf("implementation after restart = %q, want in_process", got)
-	}
-
-	// A document written before the field existed must keep working under the
-	// release default rather than failing to open Mosh and ET Hosts.
-	if err := os.WriteFile(path, []byte(`{"version":1,"layout":{"showSftpTab":false}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	legacy := apppreferences.NewService(OpenPreferences(path))
-	if err := legacy.Load(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got := legacy.Settings().Transport.Implementation; got != wantDefault {
-		t.Fatalf("legacy document implementation = %q, want %q", got, wantDefault)
+	if strings.Contains(string(data), "implementation") {
+		t.Fatalf("the removed transport choice was saved again:\n%s", data)
 	}
 }
 

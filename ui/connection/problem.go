@@ -7,9 +7,7 @@ import (
 	"errors"
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
-	etmodel "github.com/mslxl/natcatty/domain/model/et"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
-	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
@@ -41,21 +39,9 @@ func ProblemTextFor(m locales.Messages, err error) string {
 		return m.ConnectionErrorSecurityKeyUnavailable()
 	case errors.Is(err, appconnection.ErrSecurityKeyDeviceTimeout):
 		return m.ConnectionErrorSecurityKeyTimeout()
-	// A persisted implementation choice this build cannot honor is the
-	// actionable answer, ahead of the generic internal text: the user can
-	// repair it in the Host editor or Settings.
-	case errors.Is(err, transportmodel.ErrImplementationUnavailable):
-		return m.ConnectionErrorTransportUnavailable()
-	case errors.Is(err, transportmodel.ErrUnknownImplementation):
-		return m.ConnectionErrorTransportUnknown()
-	// A Mosh or EternalTerminal failure is more specific than the generic
-	// internal text: the user can act on a missing bundle, a checksum failure,
-	// an unsupported route, or a server that never announced itself.
-	case errors.Is(err, moshmodel.ErrChecksumMismatch):
-		return m.ConnectionErrorMoshChecksum()
-	case errors.Is(err, moshmodel.ErrBundleUnavailable),
-		errors.Is(err, moshmodel.ErrPlatformUnsupported):
-		return m.ConnectionErrorMoshUnavailable()
+	// A Mosh failure is more specific than the generic internal text: the
+	// user can act on an unsupported route or a server that never announced
+	// itself.
 	case errors.Is(err, moshmodel.ErrJumpUnsupported):
 		return m.ConnectionErrorMoshJump()
 	case errors.Is(err, moshmodel.ErrProxyUnsupported):
@@ -64,17 +50,6 @@ func ProblemTextFor(m locales.Messages, err error) string {
 		return m.ConnectionErrorMoshNetwork()
 	case errors.Is(err, moshmodel.ErrHandshake):
 		return m.ConnectionErrorMoshHandshake()
-	case errors.Is(err, etmodel.ErrNetworkUnsupported):
-		return m.ConnectionErrorETNetwork()
-	case errors.Is(err, etmodel.ErrChecksumMismatch):
-		return m.ConnectionErrorETChecksum()
-	case errors.Is(err, etmodel.ErrBundleUnavailable),
-		errors.Is(err, etmodel.ErrPlatformUnsupported):
-		return m.ConnectionErrorETUnavailable()
-	case errors.Is(err, etmodel.ErrMultipleJumpHosts):
-		return m.ConnectionErrorETJump()
-	case errors.Is(err, etmodel.ErrProxyUnsupported):
-		return m.ConnectionErrorETProxy()
 	}
 	return ProblemText(m, Kind(err))
 }

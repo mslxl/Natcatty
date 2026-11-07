@@ -190,8 +190,6 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaTerminal, "", m.SettingsHistoryRetentionCount(), "command history retention count")
 	add(AreaTerminal, "", m.SettingsHistoryRetentionDays(), "command history retention days")
 
-	add(AreaTransport, domain.FieldTransportImplementation, m.SettingsTransportImplementation(),
-		"transport implementation mosh eternal terminal et bundled in-process in process client")
 	add(AreaTransport, domain.FieldMoshPredictionDisplay, m.SettingsMoshPredictionDisplay(),
 		"mosh prediction local echo adaptive always never latency")
 

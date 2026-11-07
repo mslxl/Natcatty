@@ -43,9 +43,9 @@ release tag, for example:
 - `v0.1.0`: <https://github.com/mslxl/natcatty/tree/v0.1.0>
 - general form: `https://github.com/mslxl/natcatty/tree/v<MAJOR>.<MINOR>.<PATCH>`
 
-Build instructions are in [`docs/packaging.md`](docs/packaging.md). The bundled
-`mosh-client` and `et` clients and their sources are identified in
-[`resources/THIRD-PARTY-NOTICES.md`](resources/THIRD-PARTY-NOTICES.md).
+Build instructions are in [`docs/packaging.md`](docs/packaging.md). The
+in-process Mosh and EternalTerminal clients, with their sources, are identified
+in [`resources/THIRD-PARTY-NOTICES.md`](resources/THIRD-PARTY-NOTICES.md).
 
 ## No warranty
 

@@ -8,7 +8,6 @@ import (
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
-	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -39,34 +38,33 @@ func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainva
 	}
 	f.nextID++
 	host := domainvault.Host{
-		ID:                      model.HostID("host-" + strconv.Itoa(f.nextID)),
-		Label:                   normalized.Label,
-		Hostname:                normalized.Hostname,
-		Port:                    normalized.Port,
-		Username:                normalized.Username,
-		Protocol:                normalized.Protocol,
-		Group:                   normalized.Group,
-		Tags:                    normalized.Tags,
-		Notes:                   normalized.Notes,
-		Pinned:                  normalized.Pinned,
-		IdentityID:              normalized.IdentityID,
-		KeyID:                   normalized.KeyID,
-		AuthMethod:              normalized.AuthMethod,
-		UseSSHAgent:             normalized.UseSSHAgent,
-		RequiresMFA:             normalized.RequiresMFA,
-		X11Forwarding:           normalized.X11Forwarding,
-		X11WarningAcknowledged:  normalized.X11WarningAcknowledged,
-		HostChain:               domainvault.CloneHostChain(normalized.HostChain),
-		Proxy:                   domainvault.CloneProxy(normalized.Proxy),
-		LegacyAlgorithms:        normalized.LegacyAlgorithms,
-		SkipEcdsaHostKey:        normalized.SkipEcdsaHostKey,
-		Algorithms:              domainvault.CloneAlgorithms(normalized.Algorithms),
-		DeviceType:              normalized.DeviceType,
-		AutoAttachTmux:          normalized.AutoAttachTmux,
-		MoshServerPath:          normalized.MoshServerPath,
-		ETPort:                  normalized.ETPort,
-		TransportImplementation: normalized.TransportImplementation,
-		OrderKey:                int64(f.nextID) * 1000,
+		ID:                     model.HostID("host-" + strconv.Itoa(f.nextID)),
+		Label:                  normalized.Label,
+		Hostname:               normalized.Hostname,
+		Port:                   normalized.Port,
+		Username:               normalized.Username,
+		Protocol:               normalized.Protocol,
+		Group:                  normalized.Group,
+		Tags:                   normalized.Tags,
+		Notes:                  normalized.Notes,
+		Pinned:                 normalized.Pinned,
+		IdentityID:             normalized.IdentityID,
+		KeyID:                  normalized.KeyID,
+		AuthMethod:             normalized.AuthMethod,
+		UseSSHAgent:            normalized.UseSSHAgent,
+		RequiresMFA:            normalized.RequiresMFA,
+		X11Forwarding:          normalized.X11Forwarding,
+		X11WarningAcknowledged: normalized.X11WarningAcknowledged,
+		HostChain:              domainvault.CloneHostChain(normalized.HostChain),
+		Proxy:                  domainvault.CloneProxy(normalized.Proxy),
+		LegacyAlgorithms:       normalized.LegacyAlgorithms,
+		SkipEcdsaHostKey:       normalized.SkipEcdsaHostKey,
+		Algorithms:             domainvault.CloneAlgorithms(normalized.Algorithms),
+		DeviceType:             normalized.DeviceType,
+		AutoAttachTmux:         normalized.AutoAttachTmux,
+		MoshServerPath:         normalized.MoshServerPath,
+		ETPort:                 normalized.ETPort,
+		OrderKey:               int64(f.nextID) * 1000,
 	}
 	f.created = append(f.created, draft)
 	f.items = append(f.items, host)
@@ -110,7 +108,6 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.AutoAttachTmux = normalized.AutoAttachTmux
 		host.MoshServerPath = normalized.MoshServerPath
 		host.ETPort = normalized.ETPort
-		host.TransportImplementation = normalized.TransportImplementation
 		f.items[i] = host
 		f.updated = append(f.updated, draft)
 		return host, nil
@@ -900,52 +897,6 @@ func TestBeginEditRestoresTheNetworkDeviceMode(t *testing.T) {
 	last := repo.updated[len(repo.updated)-1]
 	if last.DeviceType != domainvault.DeviceTypeDefault {
 		t.Fatalf("switched Host device type = %q, want the default", last.DeviceType)
-	}
-}
-
-// TestTransportImplementationIsSavedOnlyForMoshAndET checks the per-Host
-// override the editor collects: it is stored for Mosh and ET, restored into
-// the form on edit, and cleared when the Host changes to a protocol that has
-// no client implementation to choose.
-func TestTransportImplementationIsSavedOnlyForMoshAndET(t *testing.T) {
-	repo := &fakeHosts{}
-	state, _ := newTestState(t, repo)
-
-	state.BeginCreate()
-	form := state.Form()
-	form.Label = "mosh-box"
-	form.Hostname = "mosh.example.com"
-	form.Protocol = string(domainvault.ProtocolMosh)
-	form.TransportImplementation = string(transportmodel.InProcess)
-	if err := state.Save(); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	if len(repo.created) != 1 || repo.created[0].TransportImplementation != transportmodel.InProcess {
-		t.Fatalf("created draft = %+v, want the in-process override", repo.created)
-	}
-
-	// A value saved by this version, including one this build cannot connect
-	// with, must come back into the editor so the user can repair it.
-	if !state.BeginEdit(repo.items[0].ID) {
-		t.Fatal("BeginEdit did not open the editor")
-	}
-	if got := state.Form().TransportImplementation; got != string(transportmodel.InProcess) {
-		t.Fatalf("restored implementation = %q, want in_process", got)
-	}
-
-	state.SetHostProtocol(string(domainvault.ProtocolSSH))
-	if got := state.Form().TransportImplementation; got != "" {
-		t.Fatalf("SSH form kept implementation %q, want empty", got)
-	}
-	if err := state.Save(); err != nil {
-		t.Fatalf("Save protocol change: %v", err)
-	}
-	updated := repo.updated[len(repo.updated)-1]
-	if updated.TransportImplementation != "" {
-		t.Fatalf("SSH draft kept implementation %q, want empty", updated.TransportImplementation)
-	}
-	if got := repo.items[0].TransportImplementation; got != "" {
-		t.Fatalf("SSH Host kept implementation %q, want empty", got)
 	}
 }
 

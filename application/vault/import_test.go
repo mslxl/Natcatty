@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/mslxl/natcatty/domain/model"
-	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/domain/vaultimport"
 )
@@ -540,11 +539,10 @@ func TestCommitImportRunsTheApplyBarrierOnlyAtTheStart(t *testing.T) {
 	}
 }
 
-// TestImportPersistsTheTransportImplementation proves the Netcatty JSON round
-// trip keeps the per-Host Mosh/ET client override, preserves an unknown value
-// for the factory to fail closed on, and clears it for protocols that do not
-// use Mosh or ET.
-func TestImportPersistsTheTransportImplementation(t *testing.T) {
+// TestImportIgnoresTheRemovedTransportImplementation keeps an export written by
+// an older build importable: transportImplementation is no longer part of the
+// Host, so encoding/json ignores it and every record imports normally.
+func TestImportIgnoresTheRemovedTransportImplementation(t *testing.T) {
 	service, hosts, _, _, _ := newImportService(t)
 	document := `{"kind":"netcatty.vault","version":1,"hosts":[
 		{"id":"m","label":"mosh","hostname":"mosh.example.test","port":22,"protocol":"mosh","transportImplementation":"in_process"},
@@ -560,18 +558,21 @@ func TestImportPersistsTheTransportImplementation(t *testing.T) {
 		t.Fatalf("CommitImport: %v", err)
 	}
 
-	byHostname := make(map[string]domainvault.Host, len(hosts.hosts))
+	if len(hosts.hosts) != 3 {
+		t.Fatalf("imported %d Hosts, want 3: %+v", len(hosts.hosts), hosts.hosts)
+	}
+	protocols := make(map[string]domainvault.Protocol, len(hosts.hosts))
 	for _, host := range hosts.hosts {
-		byHostname[host.Hostname] = host
+		protocols[host.Hostname] = host.Protocol
 	}
-	if got := byHostname["mosh.example.test"].TransportImplementation; got != transportmodel.InProcess {
-		t.Fatalf("Mosh implementation = %q, want in_process", got)
-	}
-	if got := byHostname["et.example.test"].TransportImplementation; got != transportmodel.Implementation("future_client") {
-		t.Fatalf("ET implementation = %q, want the value preserved verbatim", got)
-	}
-	if got := byHostname["ssh.example.test"].TransportImplementation; got != transportmodel.Unspecified {
-		t.Fatalf("SSH implementation = %q, want it cleared for a non-Mosh Host", got)
+	for hostname, want := range map[string]domainvault.Protocol{
+		"mosh.example.test": domainvault.ProtocolMosh,
+		"et.example.test":   domainvault.ProtocolET,
+		"ssh.example.test":  domainvault.ProtocolSSH,
+	} {
+		if got := protocols[hostname]; got != want {
+			t.Fatalf("%s protocol = %q, want %q", hostname, got, want)
+		}
 	}
 }
 

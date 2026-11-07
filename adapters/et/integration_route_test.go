@@ -64,7 +64,7 @@ func labSpecAt(t *testing.T, hostID model.HostID, address, username string) apps
 	}
 	cfg := etmodel.Config{
 		Hostname: host, Port: port, Username: username,
-		ETPort: etmodel.DefaultETPort, SessionID: "lab-" + string(hostID), Cols: 100, Rows: 30,
+		ETPort: etmodel.DefaultETPort,
 	}.Normalized()
 	return appsession.StartSpec{
 		Kind: appsession.KindET, HostID: hostID, Hostname: host, Port: port,

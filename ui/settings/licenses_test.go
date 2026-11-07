@@ -16,7 +16,7 @@ func legalFixture() LegalDocuments {
 		Version:           "0.1.0",
 		License:           "GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007\n",
 		Notice:            "This is a modified version of Netcatty.\nGPL-3.0-or-later\n",
-		ThirdPartyNotices: "MyGo\nlibghostty-vt\nMoshCatty\nEternalTerminal\nNetcatty\n",
+		ThirdPartyNotices: "MyGo\nlibghostty-vt\nmosh-go\nEternalTerminal\nNetcatty\n",
 		SourceURL:         "https://github.com/mslxl/natcatty/tree/v0.1.0",
 	}
 }

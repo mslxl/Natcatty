@@ -1,14 +1,11 @@
 // Package mosh implements the Mosh Session transport: an SSH bootstrap that
-// runs the remote mosh-server, the MOSH CONNECT handshake, and a local
-// mosh-client launched from the verified bundle.
+// runs the remote mosh-server, the MOSH CONNECT handshake, and an in-process
+// client that speaks mosh's UDP protocol through internal/mosh. No local
+// mosh-client process or bundled binary is involved.
 //
-// The adapter never resolves `mosh-client` or `mosh-server` through PATH. The
-// client path comes only from adapters/bundle, which verifies the SHA-256 of
-// the bundled binary before every launch; the remote server runs on the Host,
-// optionally at a user-supplied path. The SSH bootstrap itself is supplied by
-// the application through the Bootstrap port, so saved credentials, MFA,
-// known-host trust, and jump chains use the same Connection Manager as an SSH
-// Session.
+// The SSH bootstrap itself is supplied by the application through the
+// Bootstrap port, so saved credentials, MFA, known-host trust, and jump chains
+// use the same Connection Manager as an SSH Session.
 package mosh
 
 import (
@@ -17,15 +14,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/mslxl/natcatty/adapters/bundle"
 	appsession "github.com/mslxl/natcatty/application/session"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
-	"github.com/mslxl/natcatty/platform/pty"
 )
 
 // DefaultHandshakeTimeout bounds the wait for mosh-server's announcement. The
@@ -38,130 +32,14 @@ const DefaultHandshakeTimeout = 60 * time.Second
 // drains it.
 const maxBufferedOutput = 4 << 20
 
-// maxPendingInput bounds keystrokes typed before the client is ready.
-const maxPendingInput = 64 << 10
-
-// viewportReset clears the handshake output before mosh-client's first frame,
-// keeping the terminal's primary screen and scrollback.
-const viewportReset = "\x1b[2J\x1b[H"
-
 // Bootstrap opens the SSH channel that runs mosh-server. The application backs
 // it with the Connection Manager; tests use an in-process fixture.
 type Bootstrap interface {
 	OpenBootstrap(ctx context.Context, spec appsession.StartSpec, cfg moshmodel.Config) (io.ReadWriteCloser, error)
 }
 
-// Process is one local mosh-client pseudo-terminal.
-type Process interface {
-	io.ReadWriteCloser
-	Resize(cols, rows int) error
-	Wait() (int, error)
-	Exited() <-chan struct{}
-	Kill() error
-}
-
-// Factory opens Mosh Sessions.
-type Factory struct {
-	// Spec resolves and verifies the bundled mosh-client.
-	Spec bundle.Spec
-	// Bootstrap opens the SSH handshake channel. Nil fails every open with a
-	// clear error instead of falling back to a system ssh.
-	Bootstrap Bootstrap
-	// Spawn starts the local mosh-client. Nil uses platform/pty.
-	Spawn func(pty.Options) (Process, error)
-	// BaseEnv supplies the process environment. Nil uses os.Environ.
-	BaseEnv func() []string
-	// HomeDir supplies the client's working directory. Nil uses the user's
-	// home directory.
-	HomeDir func() string
-	// HandshakeTimeout overrides DefaultHandshakeTimeout.
-	HandshakeTimeout time.Duration
-}
-
-// Open performs the handshake and returns a transport already switched to the
-// bundled mosh-client. The bootstrap's visible output is buffered for the
-// terminal, with the protocol markers removed.
-func (f Factory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if spec.Mosh == nil {
-		return nil, fmt.Errorf("%w: no Mosh configuration", moshmodel.ErrInvalidConfig)
-	}
-	cfg := f.config(spec)
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
-	resolved, err := f.Spec.Resolve()
-	if err != nil {
-		return nil, translateBundleError(err)
-	}
-	if f.Bootstrap == nil {
-		return nil, errors.New("mosh: no SSH bootstrap is available")
-	}
-
-	queue := newOutputQueue(maxBufferedOutput)
-	tr := &transport{
-		queue:  queue,
-		done:   make(chan struct{}),
-		reaped: make(chan struct{}),
-		cols:   spec.Cols,
-		rows:   spec.Rows,
-	}
-
-	timeout := f.HandshakeTimeout
-	if timeout <= 0 {
-		timeout = DefaultHandshakeTimeout
-	}
-	handshakeCtx, cancel := context.WithTimeout(ctx, timeout)
-	stop := context.AfterFunc(handshakeCtx, func() {
-		tr.closeBootstrap()
-		queue.close(io.ErrClosedPipe)
-	})
-	defer func() {
-		stop()
-		cancel()
-	}()
-
-	stream, err := f.Bootstrap.OpenBootstrap(handshakeCtx, spec, cfg)
-	if err != nil {
-		return nil, err
-	}
-	tr.setBootstrap(stream)
-	connect, err := tr.handshake(handshakeCtx, stream)
-	if err != nil {
-		if ctx.Err() != nil {
-			tr.closeBootstrap()
-			tr.finish(appsession.End{Reason: appsession.EndReasonClosed}, 0)
-			return nil, ctx.Err()
-		}
-		tr.closeBootstrap()
-		if errors.Is(err, context.DeadlineExceeded) {
-			tr.finish(appsession.End{Reason: appsession.EndReasonError}, 0)
-			return nil, fmt.Errorf("%w: no announcement within %s", moshmodel.ErrHandshake, timeout)
-		}
-		tr.finish(appsession.End{Reason: appsession.EndReasonError}, 0)
-		return nil, err
-	}
-	tr.closeBootstrap()
-
-	client, err := f.launch(resolved, cfg, spec, connect, tr)
-	if err != nil {
-		tr.finish(appsession.End{Reason: appsession.EndReasonError}, 0)
-		return nil, err
-	}
-	tr.attach(client)
-	return tr, nil
-}
-
-// config merges the Session's locale environment into the Mosh configuration.
-func (f Factory) config(spec appsession.StartSpec) moshmodel.Config {
-	return configFromEnvironment(spec, f.baseEnv(spec.Env))
-}
-
 // configFromEnvironment merges a Session's locale environment into its Mosh
-// configuration. Both client implementations use it so the bootstrap command
-// is identical.
+// configuration. The SSH bootstrap command is built from the result.
 func configFromEnvironment(spec appsession.StartSpec, environment []string) moshmodel.Config {
 	cfg := spec.Mosh.Normalized()
 	locales := make(map[string]string)
@@ -189,52 +67,6 @@ func configFromEnvironment(spec appsession.StartSpec, environment []string) mosh
 		cfg.Rows = spec.Rows
 	}
 	return cfg
-}
-
-func (f Factory) baseEnv(extra []string) []string {
-	base := os.Environ()
-	if f.BaseEnv != nil {
-		base = f.BaseEnv()
-	}
-	return mergeEnv(base, extra)
-}
-
-func (f Factory) homeDir() string {
-	if f.HomeDir != nil {
-		return f.HomeDir()
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return home
-}
-
-// transport is one Mosh Session after the handshake. Read is terminal output,
-// Write is terminal input, and Resize reaches mosh-client.
-type transport struct {
-	queue *outputQueue
-
-	mu        sync.Mutex
-	client    Process
-	bootstrap io.ReadWriteCloser
-	closed    bool
-	pending   [][]byte
-	// pendingBytes counts buffered input, not output.
-	pendingBytes int
-	cols, rows   int
-	hasEnd       bool
-	end          appsession.End
-	exitCode     int
-
-	done chan struct{}
-	// reaped closes after mosh-client's Wait returned, so Close can wait for
-	// the process itself instead of for the Session-facing done channel that
-	// Close closes early.
-	reaped     chan struct{}
-	reapOnce   sync.Once
-	closeOnce  sync.Once
-	finishOnce sync.Once
 }
 
 // readAnnouncement consumes bootstrap output until the MOSH CONNECT marker
@@ -275,292 +107,13 @@ func readAnnouncement(ctx context.Context, stream io.ReadWriteCloser, queue *out
 	}
 }
 
-// handshake reads the bootstrap until the announcement arrives. It returns the
-// parsed announcement or a typed error.
-func (t *transport) handshake(ctx context.Context, stream io.ReadWriteCloser) (moshmodel.Connect, error) {
-	connect, _, err := readAnnouncement(ctx, stream, t.queue)
-	if err != nil {
-		if ctx.Err() != nil {
-			return moshmodel.Connect{}, ctx.Err()
-		}
-		return moshmodel.Connect{}, mochHandshakeError(err)
-	}
-	return connect, nil
-}
-
+// mochHandshakeError classifies a bootstrap read that ended before
+// mosh-server announced itself.
 func mochHandshakeError(cause error) error {
 	if cause == nil || errors.Is(cause, io.EOF) {
 		return fmt.Errorf("%w: the SSH channel closed before mosh-server announced itself", moshmodel.ErrHandshake)
 	}
 	return fmt.Errorf("%w: %v", moshmodel.ErrHandshake, cause)
-}
-
-// launch starts the verified client with the server's key.
-func (f Factory) launch(resolved bundle.Resolved, cfg moshmodel.Config, spec appsession.StartSpec,
-	connect moshmodel.Connect, tr *transport) (Process, error) {
-
-	host := connect.Host
-	if host == "" {
-		host = cfg.Hostname
-	}
-	args, err := moshmodel.ClientArgs(host, connect.Port)
-	if err != nil {
-		return nil, err
-	}
-	// platform/pty gives Args[0] to the child as its own name, and Windows
-	// builds the command line from Path plus Args[1:]. The bundled executable
-	// therefore has to open the argv, just as localpty passes spec.Command.
-	argv := append([]string{resolved.Path}, args...)
-	fallback := ""
-	if connect.Host != "" && !strings.EqualFold(connect.Host, cfg.Hostname) {
-		fallback = cfg.Hostname
-	}
-	environment := f.baseEnv(spec.Env)
-	environment = setEnv(environment, "TERM", moshmodel.DefaultTerm)
-	environment = moshmodel.ClientEnv(environment, connect.Key, cfg.Lang, fallback)
-	environment = setEnv(environment, "MOSH_NO_TERM_INIT", "1")
-	// Stock's default is adaptive; the setting is passed explicitly so the
-	// user's choice reaches the bundled client with the same meaning as the
-	// in-process prediction engine.
-	environment = setEnv(environment, "MOSH_PREDICTION_DISPLAY", cfg.PredictionDisplay.EnvValue())
-
-	spawn := f.Spawn
-	if spawn == nil {
-		spawn = func(options pty.Options) (Process, error) {
-			terminal, err := pty.Start(options)
-			if err != nil {
-				return nil, err
-			}
-			return terminal, nil
-		}
-	}
-	client, err := spawn(pty.Options{
-		Path: resolved.Path,
-		Args: argv,
-		Dir:  f.homeDir(),
-		Env:  environment,
-		Cols: spec.Cols,
-		Rows: spec.Rows,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("mosh: launch the bundled mosh-client: %w", err)
-	}
-	if spec.Cols > 0 && spec.Rows > 0 {
-		if resizeErr := client.Resize(spec.Cols, spec.Rows); resizeErr != nil {
-			_ = client.Close()
-			return nil, fmt.Errorf("mosh: size mosh-client: %w", resizeErr)
-		}
-	}
-	return client, nil
-}
-
-// attach switches the transport to the client, preserving buffered output.
-func (t *transport) attach(client Process) {
-	t.mu.Lock()
-	t.client = client
-	ready := !t.closed
-	pending := t.pending
-	t.pending = nil
-	t.pendingBytes = 0
-	cols, rows := t.cols, t.rows
-	t.mu.Unlock()
-
-	if err := t.queue.push([]byte(viewportReset)); err != nil {
-		_ = client.Close()
-		t.markReaped()
-		t.finish(appsession.End{Reason: appsession.EndReasonError}, 0)
-		return
-	}
-	if cols > 0 && rows > 0 {
-		_ = client.Resize(cols, rows)
-	}
-	if ready {
-		for _, chunk := range pending {
-			if _, err := client.Write(chunk); err != nil {
-				break
-			}
-		}
-	}
-	go t.supervise(client)
-}
-
-// supervise pumps client output and records the exit.
-func (t *transport) supervise(client Process) {
-	buffer := make([]byte, 32<<10)
-	for {
-		n, err := client.Read(buffer)
-		if n > 0 {
-			if pushErr := t.queue.push(buffer[:n]); pushErr != nil {
-				break
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
-	code, waitErr := client.Wait()
-	t.markReaped()
-	end := appsession.End{Reason: appsession.EndReasonExited, ExitCode: code, HasExitCode: true}
-	switch {
-	case t.isClosed():
-		end = appsession.End{Reason: appsession.EndReasonClosed}
-	case waitErr != nil || code != 0:
-		end = appsession.End{Reason: appsession.EndReasonError, ExitCode: code, HasExitCode: true}
-	}
-	t.finish(end, code)
-}
-
-func (t *transport) isClosed() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.closed
-}
-
-// finish records the first end and releases readers.
-func (t *transport) finish(end appsession.End, exitCode int) {
-	t.finishOnce.Do(func() {
-		t.mu.Lock()
-		if !t.hasEnd {
-			t.hasEnd = true
-			t.end = end
-			t.exitCode = exitCode
-		}
-		t.mu.Unlock()
-		t.queue.close(io.EOF)
-		close(t.done)
-	})
-}
-
-// Read returns terminal output, including handshake output buffered before the
-// swap.
-func (t *transport) Read(p []byte) (int, error) { return t.queue.Read(p) }
-
-// Write sends input to mosh-client. Input typed before the swap is buffered
-// and flushed in order.
-func (t *transport) Write(p []byte) (int, error) {
-	t.mu.Lock()
-	if t.closed {
-		t.mu.Unlock()
-		return 0, io.ErrClosedPipe
-	}
-	client := t.client
-	ready := client != nil
-	if !ready && t.pendingBytes+len(p) > maxPendingInput {
-		t.mu.Unlock()
-		return 0, errors.New("mosh: too much input before the client is ready")
-	}
-	if !ready {
-		chunk := append([]byte(nil), p...)
-		t.pending = append(t.pending, chunk)
-		t.pendingBytes += len(chunk)
-		t.mu.Unlock()
-		return len(p), nil
-	}
-	t.mu.Unlock()
-	return client.Write(p)
-}
-
-// Resize forwards the terminal size to mosh-client.
-func (t *transport) Resize(cols, rows int) error {
-	if cols <= 0 || rows <= 0 {
-		return nil
-	}
-	t.mu.Lock()
-	t.cols, t.rows = cols, rows
-	client := t.client
-	t.mu.Unlock()
-	if client == nil {
-		return nil
-	}
-	return client.Resize(cols, rows)
-}
-
-// Wait reports the mosh-client exit code.
-func (t *transport) Wait() (int, error) {
-	<-t.done
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.exitCode, nil
-}
-
-// End reports the transport's final classification.
-func (t *transport) End() appsession.End {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.hasEnd {
-		return t.end
-	}
-	return appsession.End{Reason: appsession.EndReasonError}
-}
-
-// Close hangs up the client and reaps it. The bootstrap channel, when still
-// open, is closed too.
-func (t *transport) Close() error {
-	t.closeOnce.Do(func() {
-		t.mu.Lock()
-		t.closed = true
-		client := t.client
-		bootstrap := t.bootstrap
-		t.mu.Unlock()
-		if bootstrap != nil {
-			_ = bootstrap.Close()
-		}
-		if client != nil {
-			_ = client.Close()
-		}
-		t.finish(appsession.End{Reason: appsession.EndReasonClosed}, 0)
-	})
-	if t.client != nil {
-		select {
-		case <-t.reaped:
-		case <-time.After(2 * time.Second):
-			_ = t.client.Kill()
-			select {
-			case <-t.reaped:
-			case <-time.After(2 * time.Second):
-			}
-		}
-	}
-	return nil
-}
-
-// markReaped records that the client's Wait returned (or that the client was
-// closed before it could be supervised).
-func (t *transport) markReaped() {
-	t.reapOnce.Do(func() { close(t.reaped) })
-}
-
-func (t *transport) setBootstrap(stream io.ReadWriteCloser) {
-	t.mu.Lock()
-	t.bootstrap = stream
-	t.mu.Unlock()
-}
-
-func (t *transport) closeBootstrap() {
-	t.mu.Lock()
-	stream := t.bootstrap
-	t.bootstrap = nil
-	t.mu.Unlock()
-	if stream != nil {
-		_ = stream.Close()
-	}
-}
-
-// translateBundleError maps bundle failures onto the Mosh vocabulary. A
-// missing or invalid bundle is never replaced by another executable.
-func translateBundleError(err error) error {
-	var typed *bundle.Error
-	if errors.As(err, &typed) {
-		switch typed.Kind {
-		case bundle.ErrorChecksumMismatch:
-			return fmt.Errorf("%w: %v", moshmodel.ErrChecksumMismatch, err)
-		case bundle.ErrorUnsupportedPlatform:
-			return fmt.Errorf("%w: %v", moshmodel.ErrPlatformUnsupported, err)
-		default:
-			return fmt.Errorf("%w: %v", moshmodel.ErrBundleUnavailable, err)
-		}
-	}
-	return err
 }
 
 // CheckRoute enforces the original restrictions: Mosh bootstraps its own SSH
@@ -614,9 +167,9 @@ func mergeEnv(base, extra []string) []string {
 	return result
 }
 
-// outputQueue is the bounded handoff between the bootstrap/client readers and
-// the terminal. Push blocks when full, which backpressures the process; Read
-// blocks when empty.
+// outputQueue is the bounded handoff between the bootstrap reader and the
+// terminal. Push blocks when full, which backpressures the reader; Read blocks
+// when empty.
 type outputQueue struct {
 	mu     sync.Mutex
 	cond   *sync.Cond
