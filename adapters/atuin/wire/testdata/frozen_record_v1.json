@@ -1,0 +1,13 @@
+{
+  "source": "atuin-domain src/record/mod.rs test decrypts_frozen_record_blob (pinned ad5bf5c)",
+  "key_hex": "5555555555555555555555555555555555555555555555555555555555555555",
+  "id": "00000000-0000-0000-0000-000000000001",
+  "idx": 7,
+  "host": "00000000-0000-0000-0000-000000000002",
+  "timestamp": 1687244806000000000,
+  "version": "v1",
+  "tag": "history",
+  "raw": "v4.local.cSFhI9n30MfwkZrRAt-YAoxp6DrAMMybmLury7svdFMkapmxQmLQaRzqCfIdanPaQ55VbJjGjqwjst2AnLiBQE9cAQAyH69u2HVHrkaKv7rGtQ",
+  "cek": "{\"wpk\":\"k4.local-wrap.pie.8xXPgrNyliEUy_PnbM3S88Yk8tQQA0HN2o6jyUkGHK5duUEfW-zSCI1kSYRpyPESCK7-5822hPzRAbyZXPRVAbCkoLqqwPJ8_oi8clKEr6u8nJuIQQLHVClvYJmZyZIu\",\"kid\":\"k4.lid.2LzCmxDtbwu2tK5T1X1VLEth8umaI9vbKgTDkkt7ARR0\"}",
+  "plaintext_b64": "AQIDBAU="
+}

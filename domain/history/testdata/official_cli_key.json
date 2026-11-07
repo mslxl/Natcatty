@@ -1,0 +1,6 @@
+{
+  "source": "atuin 18.24.2 CLI `atuin key` and `atuin key --base64`, private ATUIN_HOME, synthetic 0x55*32 key",
+  "key_hex": "5555555555555555555555555555555555555555555555555555555555555555",
+  "base64": "3AAgVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVU=",
+  "mnemonic": "fetch primary fetch primary fetch primary fetch primary fetch primary fetch primary fetch primary fetch primary fetch primary fetch primary fetch primary fetch rack"
+}

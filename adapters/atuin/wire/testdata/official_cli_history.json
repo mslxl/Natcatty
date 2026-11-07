@@ -1,0 +1,173 @@
+{
+  "source": "Official atuin 18.24.2 CLI (NO_GIT) local record store. Private ATUIN_HOME, synthetic 0x55*32 key, commands created with `atuin history start/end` and a tombstone with `atuin history prune`. Pinned reference ad5bf5c/v18.24.5 has the same wire format.",
+  "key_hex": "5555555555555555555555555555555555555555555555555555555555555555",
+  "host_id": "01a1b7db-a87a-74bc-ae21-eb8d48b62297",
+  "records": [
+    {
+      "record": {
+        "id": "01a1b7db-a87b-71d2-8354-d364c282a499",
+        "idx": 0,
+        "host": "01a1b7db-a87a-74bc-ae21-eb8d48b62297",
+        "timestamp": 1794085988475059000,
+        "version": "v2",
+        "tag": "history",
+        "data": {
+          "data": "v4.local.4tfv5HRNipT-6XI0fUm_-T_EWpi-nhtPR0dolzyphrrkYe-f6FXRqVkoOqmyswXU8YjR_wQNa4MWrhgkPkJJriqhXBjADKa4ieQwGS0vZpN5LnuKpiNlzJcFuTL2F9Q3dmT1oHfHKbPKG-9FEqu7sLkbS_Hxy6ULVxdSmVx5JtUjRiE2GGl1dU-1ZEXiqxIBtGxEL_a0_ic8EaXtqnk2BaIMz5sqgRPHl7XRTi0uZTDIkuLHwZZq_BSGl0WAmWjP0vJtad2bxcvnPBKkXWW5OKHXe0d1xYBzN7eqUc1ZkVG8wKI_0EnQZQWSo0nMEV9ZUFjoeNf2qbE5_B1bOBsvG-9mMlFYwCchviJ6gyT5u8kf6CJ_gZZ1LYu54-QKlEqo1QGryT-ThUMUG-FAXb173wlrg4KUd1TUQt5Gm7iUkCRY_h-nxjMY44qpQkdQslLD7NuMal8GhFIG",
+          "content_encryption_key": "{\"wpk\":\"k4.local-wrap.pie.KzBbnP8u5g5iwHx1R3dyx0tRCuYwzU-pad884q-Dxl5ASU9SAg0NvYgz2IH4M3iSTA5IZeMUWsYIPHiqu1HGxEFBEV-IGJGRS5zqgpn22jdtrD3wPBHr9r2XiwKOoohH\",\"kid\":\"k4.lid.2LzCmxDtbwu2tK5T1X1VLEth8umaI9vbKgTDkkt7ARR0\"}"
+        }
+      },
+      "kind": "create",
+      "expected_history": {
+        "id": "01a1b7db-a868-738d-ba25-69ee756cba40",
+        "timestamp": 1794085988455668000,
+        "duration": 12345678,
+        "exit": 0,
+        "command": "echo héllo 世界 🚀",
+        "cwd": "/tmp/atuin-home.jujjJM/workdir",
+        "session": "018cd4fe-8175-7cd2-aee6-5cd7861f9c81",
+        "origin": "vector-host:vector-user",
+        "deleted_at": null,
+        "author": "vector-user",
+        "intent": "say hello",
+        "shell": "zsh",
+        "author_kind": 1
+      }
+    },
+    {
+      "record": {
+        "id": "01a1b7db-a890-7641-8945-4ba23fc53f32",
+        "idx": 1,
+        "host": "01a1b7db-a87a-74bc-ae21-eb8d48b62297",
+        "timestamp": 1794085988496796000,
+        "version": "v2",
+        "tag": "history",
+        "data": {
+          "data": "v4.local.rpIGjUd6chCv5ID6TGu9BHQ4sfe3YjhfcOlymNhTOLx6ijb7GFufSEi4N7iEJEQXLf0EaEqN6p3sBBkMCWaTFNh6SQPFlI5U3vsngK7jVIbgVbpRKBjjYdJ0jlb5S_s2aBfjVS3o9oPgzRhf0xa92N9KXlHsags3lJQTBjdiTiYVQRF5ZaEZFQ4r11IXMyj6ahVPf0fVFKdX8g2RVUoUyEKiQETpcKsRqRr2ZitykeYYNXsa3A10oEomiuZkYrJ5oTJ36JPIgzTyT0QQel7a7WDLLGbdnfM9Kpu6SYGPPMHPpGXoS3zLWtZfuKpLnCPAc48QtWtcVr2BXij-Jt1qCUyElNb352rrcTfxfn4ApG1mhnJoxIMzruZkxMHUai9jS2u4JM5m966XI8GRPy6qLb5l7UndRRlXqe2Y55F4KRZdZmDhDqfrIt6jTCWuAMItEgTfaWl3QJTRCuhv2qyEzyIjlC8owqGy9KDlhD3nHjqkwpdkzOc",
+          "content_encryption_key": "{\"wpk\":\"k4.local-wrap.pie.40wnHefMgw6Q9xRv2Ip3RtMRUvjhbo3wWiMVNObqJtr2f8ENRBAPbSsrtYlO7hFold3-R9LbedjstIqoBZ_BmvcwfHgKl7TZzCHhI0u2mfaHEp-KGKYE-Qusy9bSJ4hg\",\"kid\":\"k4.lid.2LzCmxDtbwu2tK5T1X1VLEth8umaI9vbKgTDkkt7ARR0\"}"
+        }
+      },
+      "kind": "create",
+      "expected_history": {
+        "id": "01a1b7db-a883-7077-b60d-608c3f5ddb14",
+        "timestamp": 1794085988483398000,
+        "duration": 42000000000,
+        "exit": 0,
+        "command": "printf 'line one\nline two\n'",
+        "cwd": "/tmp/atuin-home.jujjJM/workdir",
+        "session": "018cd4fe-8175-7cd2-aee6-5cd7861f9c81",
+        "origin": "vector-host:vector-user",
+        "deleted_at": null,
+        "author": "vector-user",
+        "intent": "重新运行\n第二行",
+        "shell": "bash",
+        "author_kind": 1
+      }
+    },
+    {
+      "record": {
+        "id": "01a1b7db-a8a5-765f-8f58-b19065c6c0e1",
+        "idx": 2,
+        "host": "01a1b7db-a87a-74bc-ae21-eb8d48b62297",
+        "timestamp": 1794085988517629000,
+        "version": "v2",
+        "tag": "history",
+        "data": {
+          "data": "v4.local.t7-CnBeS0tRIVaV50V9NCrZgEqS2XJ_3Wi37hGgc1-9HcuwQYD3KOm1dulCvmJIcHUU4QlS3-AwssQ_nBgC2W4GTDJy6Dzo3watkI4Hg3uK9Cl4nhHELjJykntdIqjUIvLXWKWSnkviLl7BesCj-CAsqVZ8T-Ghq2-1iL7onDfifpg8fFF4ndgPu9nk63zD9AB6H1zP2L_XQFz_VGU6vjw2-sEbh5HpiCmdmqLanDLLrpvyYf_2I8X4A8Bc9EAfkjlSKomfpgQfWtJ_qt7pjvVjqCze7A1e8p9OATOlCoHhFLGWSYjB7AObN3fIWZ3EBOzrtSwUUn1wpgnczBXN-16mXnzQvm2v8oP-297ZLubixxF9Run_fuJAYgrjFCoWiUn9XOp1zxbL7iYRm68y6gJJqxR8dkIw475DkW1i0HpcAhon3svrK1lVTN7lTsGTifcr0ZXJdj_hfpUm4AcRD",
+          "content_encryption_key": "{\"wpk\":\"k4.local-wrap.pie.wtMV010lz06NygVTExg-pdpzgOFSLWCkQ9rQqs6mCZRQpp2cBKzD8n4axaQsJJP_4GNB0x7s5FPkgcJBLLuQJ7G22LxakxUBlfmzCEtIBdLa4fryMgDy1JVm5DghWkmf\",\"kid\":\"k4.lid.2LzCmxDtbwu2tK5T1X1VLEth8umaI9vbKgTDkkt7ARR0\"}"
+        }
+      },
+      "kind": "create",
+      "expected_history": {
+        "id": "01a1b7db-a898-7610-9cc2-9e899a098845",
+        "timestamp": 1794085988504524000,
+        "duration": 999999,
+        "exit": 127,
+        "command": "sh -c 'exit 127'",
+        "cwd": "/tmp/atuin-home.jujjJM/workdir",
+        "session": "018cd4fe-8175-7cd2-aee6-5cd7861f9c81",
+        "origin": "vector-host:vector-user",
+        "deleted_at": null,
+        "author": "vector-agent",
+        "intent": "demonstrate failure",
+        "shell": "fish",
+        "author_kind": 2
+      }
+    },
+    {
+      "record": {
+        "id": "01a1b7db-a8ba-76aa-88f1-8c54b263608c",
+        "idx": 3,
+        "host": "01a1b7db-a87a-74bc-ae21-eb8d48b62297",
+        "timestamp": 1794085988538199000,
+        "version": "v2",
+        "tag": "history",
+        "data": {
+          "data": "v4.local.EJzYB2iUipsKRZiLsljaCWf7XPHJQttvoVlWGRdhY8-NWR59H1o_EUqR1y2ukLnr3klKpvFkuzCGzPENg8yC-9trvqDYYGGS_ayAbGtpcoiMFWOB8bURTvEuYvzl5l3CEdgEq8gzRtu0fZSY_smquRaGES54hsNSSE01Ao357jl7_cL-JSr5Z6gyFaxQgCMwX32CRnbi6EA8U6B9qDxwQP9l_y1f_VGr5jvCHJcnIGCDdpRLSuwqkrXuzzewBLQTyBde-RWnsEv_oK39TLhC5tptoNCd520vzzWcAQLD1QohzdxA5k6N18DcEO0OgDxbcek15BHn-RYuP513pzeEZwqauHma2oV-lH5G181_kyXAXU2UlxjUYZ5511aRZduGkUKlEcGdwfms5RUw-JIp7uDaLQ",
+          "content_encryption_key": "{\"wpk\":\"k4.local-wrap.pie.o-v2_F8blNK8RZdL2VPik7HzcUUqc1bybtzw1mvBe38dhKblQqiLfCPHkIBn0VuXIfzKan9ahsePbcSwPlBnX4P16G9POr56gVCQmTDIa7vUYSBl-6EPiIqs8Ati8Mnh\",\"kid\":\"k4.lid.2LzCmxDtbwu2tK5T1X1VLEth8umaI9vbKgTDkkt7ARR0\"}"
+        }
+      },
+      "kind": "create",
+      "expected_history": {
+        "id": "01a1b7db-a8ad-7618-ab67-2ee1999698cb",
+        "timestamp": 1794085988525519000,
+        "duration": 1,
+        "exit": 255,
+        "command": "false",
+        "cwd": "/tmp/atuin-home.jujjJM/workdir",
+        "session": "018cd4fe-8175-7cd2-aee6-5cd7861f9c81",
+        "origin": "vector-host:vector-user",
+        "deleted_at": null,
+        "author": "vector-user",
+        "intent": "false",
+        "shell": null,
+        "author_kind": 1
+      }
+    },
+    {
+      "record": {
+        "id": "01a1b7db-a8cd-70c5-ac33-787c6c5a381a",
+        "idx": 4,
+        "host": "01a1b7db-a87a-74bc-ae21-eb8d48b62297",
+        "timestamp": 1794085988557943000,
+        "version": "v2",
+        "tag": "history",
+        "data": {
+          "data": "v4.local.GqA2vrhkEvmpsEGmCe1g6CKmLzpG5_IIUlhBp0WdiuNCy6AIznGcdvZi5Wr-UzIST6jrHNq_jeMpQ1KltBAnlitAW103qaKAHY6GQ7N0LBTjuEJDJaR6HzLB5YuKW9Ak3i4mkGYW7M_qsbXINZ8b8RhIMloIvouLLA0xD2SwPX7V_UEgmcpc5La49Pp_83DnBcxPI_NYAljh4sp8h7Ru210_Hg10GfbVIIeX8aEgG8NvVjTm8qY1PClAdFE0S_r0neVFlmp3ZPTY0O6nn_7h2BRH_JNW-oQhNWa9lBiJO-NX4L78ZxwkF6IONi_odw093DfldUvcdO7Nrf0JzCH7dbi0AyG9qTermWO6VdYNUln4ETZopEkvLM9s9GYFLyFDfkk0lxEPqu5nyQ270R_YJPtO3wAUt-n_V78Hg_9G7-w5gf3HrwCNfNO2WcHE_sakV4HHOUY",
+          "content_encryption_key": "{\"wpk\":\"k4.local-wrap.pie._j_DnqWBRjsqos4pNTtItUVTHsRCM32YCYnc652sLSotkA44scAiHy8dkMoJtz2_mx__P7NyHCwX03IEfARS0oDZ_L8rP7ryoV04Ryiv51bqrNFmMuPNM6gI4ctAwkyb\",\"kid\":\"k4.lid.2LzCmxDtbwu2tK5T1X1VLEth8umaI9vbKgTDkkt7ARR0\"}"
+        }
+      },
+      "kind": "create",
+      "expected_history": {
+        "id": "01a1b7db-a8c1-71d1-acaf-c6294aac9539",
+        "timestamp": 1794085988545432000,
+        "duration": 42,
+        "exit": 0,
+        "command": "PRUNE-ME obsolete command",
+        "cwd": "/tmp/atuin-home.jujjJM/workdir",
+        "session": "018cd4fe-8175-7cd2-aee6-5cd7861f9c81",
+        "origin": "vector-host:vector-user",
+        "deleted_at": null,
+        "author": "vector-user",
+        "intent": "obsolete",
+        "shell": "zsh",
+        "author_kind": 1
+      }
+    },
+    {
+      "record": {
+        "id": "01a1b7db-a8dc-74f8-8ce0-5ed5288a0af8",
+        "idx": 5,
+        "host": "01a1b7db-a87a-74bc-ae21-eb8d48b62297",
+        "timestamp": 1794085988572825000,
+        "version": "v2",
+        "tag": "history",
+        "data": {
+          "data": "v4.local.O8dd81zdE8cW6_a-T00JM--X71-GABSZ_sGpxIfXG28n4Ty6BfBWRuvVk-LhYneFVHbd1aK_4yAa1Et5HXDgO18z9sBZbiNGySCoE2e0tgK6eHyCycqnD18o5SKHUPlJbAsv5cpAikB8nhmKKei2w0c3f7d0WzGpBB3s",
+          "content_encryption_key": "{\"wpk\":\"k4.local-wrap.pie.MhA46W1fsdKHdMS9Kx3diWkJkNMIEwwM2YvefihY5JWVsN_9LGPoVNan7tXbm4t2WOYNh3Q3a7gxb8mrom7f0iLJGQ9EBWX6p9--U8H1a18pk0wURSv7lT2IBNjay2uG\",\"kid\":\"k4.lid.2LzCmxDtbwu2tK5T1X1VLEth8umaI9vbKgTDkkt7ARR0\"}"
+        }
+      },
+      "kind": "delete",
+      "expected_delete_id": "01a1b7db-a8c1-71d1-acaf-c6294aac9539"
+    }
+  ]
+}
