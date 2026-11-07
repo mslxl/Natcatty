@@ -134,6 +134,10 @@ type State struct {
 	// revision is the source revision the lists were read at.
 	revision uint64
 
+	// accountPanel opens the Settings Logs area's Atuin account panel. It is
+	// nil when the composition root has no account service.
+	accountPanel func()
+
 	tab          Tab
 	historyMode  HistoryMode
 	search       string
@@ -185,6 +189,24 @@ func WithRefreshRequest(fn func()) Option {
 // another consumer of the same store (autocomplete) can reload.
 func WithMutationHook(fn func()) Option {
 	return func(s *State) { s.afterMutation = fn }
+}
+
+// WithAccountPanel adds the History surface's entry point to the single Atuin
+// account panel. The composition root opens Settings at the Logs area; this
+// package stays independent of the Settings window.
+func WithAccountPanel(fn func()) Option {
+	return func(s *State) { s.accountPanel = fn }
+}
+
+// AccountPanelAvailable reports whether the surface can show the account
+// entry point.
+func (s *State) AccountPanelAvailable() bool { return s.accountPanel != nil }
+
+// OpenAccountPanel asks the composition root to show the account panel.
+func (s *State) OpenAccountPanel() {
+	if s.accountPanel != nil {
+		s.accountPanel()
+	}
 }
 
 // NewState returns a State over source and actions and subscribes to source

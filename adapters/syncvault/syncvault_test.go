@@ -180,6 +180,50 @@ func TestApplyRefusesLockedCredentialsBeforeReplacingRecords(t *testing.T) {
 	}
 }
 
+func TestApplyRejectsInboundAtuinAccountCredentialsBeforeWritingAnything(t *testing.T) {
+	const token = "local-session-token-must-survive"
+	const key = "local-master-key-must-survive"
+	tokenRef := appvault.SecretRef(historysync.SessionTokenRef())
+	keyRef := appvault.SecretRef(historysync.MasterKeyRef())
+	records := &fakeRecords{}
+	settings := &fakeSettings{}
+	secrets := &fakeSecrets{mode: appvault.SecretModeOS, values: map[appvault.SecretRef]string{
+		tokenRef: token, keyRef: key,
+	}}
+	payload := appsync.Payload{
+		Hosts: []domainvault.Host{{
+			ID: "host-1", Label: "h", Hostname: "h", Port: 22,
+			Protocol: domainvault.ProtocolSSH, HasPassword: true,
+		}},
+		Settings: map[string]json.RawMessage{
+			"natcatty.preferences": json.RawMessage(`{"appearance":{}}`),
+		},
+		Secrets: []appsync.SecretValue{
+			{EntityType: appvault.EntityHost, EntityID: "host-1", Field: appvault.FieldPassword, Value: "fresh"},
+			{EntityType: historysync.SecretEntityType, EntityID: historysync.SecretEntityID,
+				Field: "session_token", Value: "attacker-token"},
+			{EntityType: historysync.SecretEntityType, EntityID: historysync.SecretEntityID,
+				Field: "master_key", Value: "attacker-key"},
+		},
+	}
+	err := New(records, secrets, WithSettings(settings)).Apply(context.Background(), payload)
+	if !errors.Is(err, ErrUnsupportedSecretEntity) {
+		t.Fatalf("Apply = %v, want ErrUnsupportedSecretEntity", err)
+	}
+	if secrets.values[tokenRef] != token || secrets.values[keyRef] != key {
+		t.Fatalf("inbound payload replaced Atuin credentials: %+v", secrets.values)
+	}
+	if len(secrets.set) != 0 {
+		t.Fatalf("credentials were written after the preflight failed: %+v", secrets.set)
+	}
+	if len(records.applied) != 0 {
+		t.Fatalf("records were replaced after the preflight failed: %+v", records.applied)
+	}
+	if len(settings.applied) != 0 {
+		t.Fatal("portable settings were applied after the preflight failed")
+	}
+}
+
 func TestApplyStoresIncomingSecretsAndClearsStaleOnes(t *testing.T) {
 	records := &fakeRecords{}
 	secrets := &fakeSecrets{mode: appvault.SecretModeOS, values: map[appvault.SecretRef]string{

@@ -25399,3 +25399,797 @@ func ConnectionHostAtuinImportFailed() string {
 func (msgs Messages) ConnectionHostAtuinImportFailed() string {
 	return Catalog.Format(msgs.locale, "connectionHostAtuinImportFailed", nil)
 }
+
+// SettingsAtuinSectionTitle says "Command History sync"
+// in the language the app shows.
+func SettingsAtuinSectionTitle() string { return In(i18n.Locale()).SettingsAtuinSectionTitle() }
+
+// SettingsAtuinSectionTitle says "Command History sync"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinSectionTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinSectionTitle", nil)
+}
+
+// SettingsAtuinSectionDescription says "One Atuin account; local history stays plaintext. These settings stay on this device."
+// in the language the app shows.
+func SettingsAtuinSectionDescription() string {
+	return In(i18n.Locale()).SettingsAtuinSectionDescription()
+}
+
+// SettingsAtuinSectionDescription says "One Atuin account; local history stays plaintext. These settings stay on this device."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinSectionDescription() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinSectionDescription", nil)
+}
+
+// SettingsAtuinSyncEnabled says "Sync Command History"
+// in the language the app shows.
+func SettingsAtuinSyncEnabled() string { return In(i18n.Locale()).SettingsAtuinSyncEnabled() }
+
+// SettingsAtuinSyncEnabled says "Sync Command History"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinSyncEnabled() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinSyncEnabled", nil)
+}
+
+// SettingsAtuinAddress says "Server address"
+// in the language the app shows.
+func SettingsAtuinAddress() string { return In(i18n.Locale()).SettingsAtuinAddress() }
+
+// SettingsAtuinAddress says "Server address"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinAddress() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinAddress", nil)
+}
+
+// SettingsAtuinAddressHint says "Use atuin.sh or a self-hosted Atuin v18 URL. Plain HTTP is allowed only for localhost."
+// in the language the app shows.
+func SettingsAtuinAddressHint() string { return In(i18n.Locale()).SettingsAtuinAddressHint() }
+
+// SettingsAtuinAddressHint says "Use atuin.sh or a self-hosted Atuin v18 URL. Plain HTTP is allowed only for localhost."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinAddressHint() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinAddressHint", nil)
+}
+
+// SettingsAtuinUsername says "Username"
+// in the language the app shows.
+func SettingsAtuinUsername() string { return In(i18n.Locale()).SettingsAtuinUsername() }
+
+// SettingsAtuinUsername says "Username"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinUsername() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinUsername", nil)
+}
+
+// SettingsAtuinAuthMode says "Token header"
+// in the language the app shows.
+func SettingsAtuinAuthMode() string { return In(i18n.Locale()).SettingsAtuinAuthMode() }
+
+// SettingsAtuinAuthMode says "Token header"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinAuthMode() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinAuthMode", nil)
+}
+
+// SettingsAtuinAuthModeSession says "Session token"
+// in the language the app shows.
+func SettingsAtuinAuthModeSession() string { return In(i18n.Locale()).SettingsAtuinAuthModeSession() }
+
+// SettingsAtuinAuthModeSession says "Session token"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinAuthModeSession() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinAuthModeSession", nil)
+}
+
+// SettingsAtuinAuthModeBearer says "Bearer token"
+// in the language the app shows.
+func SettingsAtuinAuthModeBearer() string { return In(i18n.Locale()).SettingsAtuinAuthModeBearer() }
+
+// SettingsAtuinAuthModeBearer says "Bearer token"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinAuthModeBearer() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinAuthModeBearer", nil)
+}
+
+// SettingsAtuinAuthModeHint says "Session tokens use the Token header; Bearer tokens use Authorization: Bearer."
+// in the language the app shows.
+func SettingsAtuinAuthModeHint() string { return In(i18n.Locale()).SettingsAtuinAuthModeHint() }
+
+// SettingsAtuinAuthModeHint says "Session tokens use the Token header; Bearer tokens use Authorization: Bearer."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinAuthModeHint() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinAuthModeHint", nil)
+}
+
+// SettingsAtuinSyncInterval says "Sync interval (minutes)"
+// in the language the app shows.
+func SettingsAtuinSyncInterval() string { return In(i18n.Locale()).SettingsAtuinSyncInterval() }
+
+// SettingsAtuinSyncInterval says "Sync interval (minutes)"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinSyncInterval() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinSyncInterval", nil)
+}
+
+// SettingsAtuinPreferHostAtuin says "Prefer Atuin on a Host"
+// in the language the app shows.
+func SettingsAtuinPreferHostAtuin() string { return In(i18n.Locale()).SettingsAtuinPreferHostAtuin() }
+
+// SettingsAtuinPreferHostAtuin says "Prefer Atuin on a Host"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinPreferHostAtuin() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinPreferHostAtuin", nil)
+}
+
+// SettingsAtuinPreferHostAtuinHint says "When the Host has Atuin, open its history instead of importing a transcript."
+// in the language the app shows.
+func SettingsAtuinPreferHostAtuinHint() string {
+	return In(i18n.Locale()).SettingsAtuinPreferHostAtuinHint()
+}
+
+// SettingsAtuinPreferHostAtuinHint says "When the Host has Atuin, open its history instead of importing a transcript."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinPreferHostAtuinHint() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinPreferHostAtuinHint", nil)
+}
+
+// SettingsAtuinAccountTitle says "Atuin account"
+// in the language the app shows.
+func SettingsAtuinAccountTitle() string { return In(i18n.Locale()).SettingsAtuinAccountTitle() }
+
+// SettingsAtuinAccountTitle says "Atuin account"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinAccountTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinAccountTitle", nil)
+}
+
+// SettingsAtuinAccountDescription says "One account per install. The token and master key are kept only in this device's field-secret store and are never syn…"
+// in the language the app shows.
+func SettingsAtuinAccountDescription() string {
+	return In(i18n.Locale()).SettingsAtuinAccountDescription()
+}
+
+// SettingsAtuinAccountDescription says "One account per install. The token and master key are kept only in this device's field-secret store and are never syn…"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinAccountDescription() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinAccountDescription", nil)
+}
+
+// SettingsAtuinStatus says "Status"
+// in the language the app shows.
+func SettingsAtuinStatus() string { return In(i18n.Locale()).SettingsAtuinStatus() }
+
+// SettingsAtuinStatus says "Status"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinStatus() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinStatus", nil)
+}
+
+// SettingsAtuinStatusDisabled says "Sync disabled"
+// in the language the app shows.
+func SettingsAtuinStatusDisabled() string { return In(i18n.Locale()).SettingsAtuinStatusDisabled() }
+
+// SettingsAtuinStatusDisabled says "Sync disabled"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinStatusDisabled() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinStatusDisabled", nil)
+}
+
+// SettingsAtuinStatusNotConfigured says "Not configured"
+// in the language the app shows.
+func SettingsAtuinStatusNotConfigured() string {
+	return In(i18n.Locale()).SettingsAtuinStatusNotConfigured()
+}
+
+// SettingsAtuinStatusNotConfigured says "Not configured"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinStatusNotConfigured() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinStatusNotConfigured", nil)
+}
+
+// SettingsAtuinStatusLocked says "Secret store locked"
+// in the language the app shows.
+func SettingsAtuinStatusLocked() string { return In(i18n.Locale()).SettingsAtuinStatusLocked() }
+
+// SettingsAtuinStatusLocked says "Secret store locked"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinStatusLocked() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinStatusLocked", nil)
+}
+
+// SettingsAtuinStatusIdle says "Ready"
+// in the language the app shows.
+func SettingsAtuinStatusIdle() string { return In(i18n.Locale()).SettingsAtuinStatusIdle() }
+
+// SettingsAtuinStatusIdle says "Ready"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinStatusIdle() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinStatusIdle", nil)
+}
+
+// SettingsAtuinStatusSyncing says "Syncing"
+// in the language the app shows.
+func SettingsAtuinStatusSyncing() string { return In(i18n.Locale()).SettingsAtuinStatusSyncing() }
+
+// SettingsAtuinStatusSyncing says "Syncing"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinStatusSyncing() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinStatusSyncing", nil)
+}
+
+// SettingsAtuinStatusOffline says "Offline"
+// in the language the app shows.
+func SettingsAtuinStatusOffline() string { return In(i18n.Locale()).SettingsAtuinStatusOffline() }
+
+// SettingsAtuinStatusOffline says "Offline"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinStatusOffline() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinStatusOffline", nil)
+}
+
+// SettingsAtuinStatusAuthExpired says "Sign-in expired"
+// in the language the app shows.
+func SettingsAtuinStatusAuthExpired() string {
+	return In(i18n.Locale()).SettingsAtuinStatusAuthExpired()
+}
+
+// SettingsAtuinStatusAuthExpired says "Sign-in expired"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinStatusAuthExpired() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinStatusAuthExpired", nil)
+}
+
+// SettingsAtuinStatusKeyMismatch says "Master key mismatch"
+// in the language the app shows.
+func SettingsAtuinStatusKeyMismatch() string {
+	return In(i18n.Locale()).SettingsAtuinStatusKeyMismatch()
+}
+
+// SettingsAtuinStatusKeyMismatch says "Master key mismatch"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinStatusKeyMismatch() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinStatusKeyMismatch", nil)
+}
+
+// SettingsAtuinStatusIncompatible says "Incompatible server"
+// in the language the app shows.
+func SettingsAtuinStatusIncompatible() string {
+	return In(i18n.Locale()).SettingsAtuinStatusIncompatible()
+}
+
+// SettingsAtuinStatusIncompatible says "Incompatible server"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinStatusIncompatible() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinStatusIncompatible", nil)
+}
+
+// SettingsAtuinStatusError says "Error"
+// in the language the app shows.
+func SettingsAtuinStatusError() string { return In(i18n.Locale()).SettingsAtuinStatusError() }
+
+// SettingsAtuinStatusError says "Error"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinStatusError() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinStatusError", nil)
+}
+
+// SettingsAtuinServerVersion says "Server {version}"
+// in the language the app shows.
+func SettingsAtuinServerVersion(version string) string {
+	return In(i18n.Locale()).SettingsAtuinServerVersion(version)
+}
+
+// SettingsAtuinServerVersion says "Server {version}"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinServerVersion(version string) string {
+	return Catalog.Format(msgs.locale, "settingsAtuinServerVersion", map[string]any{"version": version})
+}
+
+// SettingsAtuinAccountID says "Account {id}"
+// in the language the app shows.
+func SettingsAtuinAccountID(id string) string { return In(i18n.Locale()).SettingsAtuinAccountID(id) }
+
+// SettingsAtuinAccountID says "Account {id}"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinAccountID(id string) string {
+	return Catalog.Format(msgs.locale, "settingsAtuinAccountID", map[string]any{"id": id})
+}
+
+// SettingsAtuinKeyFingerprint says "Key fingerprint {fingerprint}"
+// in the language the app shows.
+func SettingsAtuinKeyFingerprint(fingerprint string) string {
+	return In(i18n.Locale()).SettingsAtuinKeyFingerprint(fingerprint)
+}
+
+// SettingsAtuinKeyFingerprint says "Key fingerprint {fingerprint}"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinKeyFingerprint(fingerprint string) string {
+	return Catalog.Format(msgs.locale, "settingsAtuinKeyFingerprint", map[string]any{"fingerprint": fingerprint})
+}
+
+// SettingsAtuinLoginMethod says "Sign-in method"
+// in the language the app shows.
+func SettingsAtuinLoginMethod() string { return In(i18n.Locale()).SettingsAtuinLoginMethod() }
+
+// SettingsAtuinLoginMethod says "Sign-in method"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinLoginMethod() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinLoginMethod", nil)
+}
+
+// SettingsAtuinLoginPassword says "Username and password"
+// in the language the app shows.
+func SettingsAtuinLoginPassword() string { return In(i18n.Locale()).SettingsAtuinLoginPassword() }
+
+// SettingsAtuinLoginPassword says "Username and password"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinLoginPassword() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinLoginPassword", nil)
+}
+
+// SettingsAtuinLoginToken says "Paste a session token"
+// in the language the app shows.
+func SettingsAtuinLoginToken() string { return In(i18n.Locale()).SettingsAtuinLoginToken() }
+
+// SettingsAtuinLoginToken says "Paste a session token"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinLoginToken() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinLoginToken", nil)
+}
+
+// SettingsAtuinPassword says "Password"
+// in the language the app shows.
+func SettingsAtuinPassword() string { return In(i18n.Locale()).SettingsAtuinPassword() }
+
+// SettingsAtuinPassword says "Password"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinPassword() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinPassword", nil)
+}
+
+// SettingsAtuinToken says "Session or Bearer token"
+// in the language the app shows.
+func SettingsAtuinToken() string { return In(i18n.Locale()).SettingsAtuinToken() }
+
+// SettingsAtuinToken says "Session or Bearer token"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinToken() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinToken", nil)
+}
+
+// SettingsAtuinSignIn says "Sign in"
+// in the language the app shows.
+func SettingsAtuinSignIn() string { return In(i18n.Locale()).SettingsAtuinSignIn() }
+
+// SettingsAtuinSignIn says "Sign in"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinSignIn() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinSignIn", nil)
+}
+
+// SettingsAtuinCheck says "Check connection"
+// in the language the app shows.
+func SettingsAtuinCheck() string { return In(i18n.Locale()).SettingsAtuinCheck() }
+
+// SettingsAtuinCheck says "Check connection"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinCheck() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinCheck", nil)
+}
+
+// SettingsAtuinLogout says "Log out"
+// in the language the app shows.
+func SettingsAtuinLogout() string { return In(i18n.Locale()).SettingsAtuinLogout() }
+
+// SettingsAtuinLogout says "Log out"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinLogout() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinLogout", nil)
+}
+
+// SettingsAtuinLogoutTitle says "Log out of Atuin?"
+// in the language the app shows.
+func SettingsAtuinLogoutTitle() string { return In(i18n.Locale()).SettingsAtuinLogoutTitle() }
+
+// SettingsAtuinLogoutTitle says "Log out of Atuin?"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinLogoutTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinLogoutTitle", nil)
+}
+
+// SettingsAtuinLogoutBody says "The session token and master key are deleted from this device. Local history, tombstones, the writer identity, and th…"
+// in the language the app shows.
+func SettingsAtuinLogoutBody() string { return In(i18n.Locale()).SettingsAtuinLogoutBody() }
+
+// SettingsAtuinLogoutBody says "The session token and master key are deleted from this device. Local history, tombstones, the writer identity, and th…"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinLogoutBody() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinLogoutBody", nil)
+}
+
+// SettingsAtuinLogoutConfirm says "Yes, log out"
+// in the language the app shows.
+func SettingsAtuinLogoutConfirm() string { return In(i18n.Locale()).SettingsAtuinLogoutConfirm() }
+
+// SettingsAtuinLogoutConfirm says "Yes, log out"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinLogoutConfirm() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinLogoutConfirm", nil)
+}
+
+// SettingsAtuinKeyTitle says "Master key"
+// in the language the app shows.
+func SettingsAtuinKeyTitle() string { return In(i18n.Locale()).SettingsAtuinKeyTitle() }
+
+// SettingsAtuinKeyTitle says "Master key"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinKeyTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinKeyTitle", nil)
+}
+
+// SettingsAtuinKeyDescription says "Enter the 24-word BIP39 phrase or the base64 32-byte key. Local history stays plaintext; the key protects sync only."
+// in the language the app shows.
+func SettingsAtuinKeyDescription() string { return In(i18n.Locale()).SettingsAtuinKeyDescription() }
+
+// SettingsAtuinKeyDescription says "Enter the 24-word BIP39 phrase or the base64 32-byte key. Local history stays plaintext; the key protects sync only."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinKeyDescription() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinKeyDescription", nil)
+}
+
+// SettingsAtuinMasterKey says "Master key"
+// in the language the app shows.
+func SettingsAtuinMasterKey() string { return In(i18n.Locale()).SettingsAtuinMasterKey() }
+
+// SettingsAtuinMasterKey says "Master key"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinMasterKey() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinMasterKey", nil)
+}
+
+// SettingsAtuinSaveKey says "Save key"
+// in the language the app shows.
+func SettingsAtuinSaveKey() string { return In(i18n.Locale()).SettingsAtuinSaveKey() }
+
+// SettingsAtuinSaveKey says "Save key"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinSaveKey() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinSaveKey", nil)
+}
+
+// SettingsAtuinKeyUnverifiedTitle says "Key not verified"
+// in the language the app shows.
+func SettingsAtuinKeyUnverifiedTitle() string {
+	return In(i18n.Locale()).SettingsAtuinKeyUnverifiedTitle()
+}
+
+// SettingsAtuinKeyUnverifiedTitle says "Key not verified"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinKeyUnverifiedTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinKeyUnverifiedTitle", nil)
+}
+
+// SettingsAtuinKeyUnverifiedBody says "This account has no remote history, so the key cannot be checked against a record. Confirm it to use it for the first…"
+// in the language the app shows.
+func SettingsAtuinKeyUnverifiedBody() string {
+	return In(i18n.Locale()).SettingsAtuinKeyUnverifiedBody()
+}
+
+// SettingsAtuinKeyUnverifiedBody says "This account has no remote history, so the key cannot be checked against a record. Confirm it to use it for the first…"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinKeyUnverifiedBody() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinKeyUnverifiedBody", nil)
+}
+
+// SettingsAtuinConfirmUnverified says "Confirm unverified key"
+// in the language the app shows.
+func SettingsAtuinConfirmUnverified() string {
+	return In(i18n.Locale()).SettingsAtuinConfirmUnverified()
+}
+
+// SettingsAtuinConfirmUnverified says "Confirm unverified key"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinConfirmUnverified() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinConfirmUnverified", nil)
+}
+
+// SettingsAtuinKeyConfirmed says "Key confirmed for the first upload. It is still checked once remote history exists."
+// in the language the app shows.
+func SettingsAtuinKeyConfirmed() string { return In(i18n.Locale()).SettingsAtuinKeyConfirmed() }
+
+// SettingsAtuinKeyConfirmed says "Key confirmed for the first upload. It is still checked once remote history exists."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinKeyConfirmed() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinKeyConfirmed", nil)
+}
+
+// SettingsAtuinKeyVerified says "Master key verified against remote history."
+// in the language the app shows.
+func SettingsAtuinKeyVerified() string { return In(i18n.Locale()).SettingsAtuinKeyVerified() }
+
+// SettingsAtuinKeyVerified says "Master key verified against remote history."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinKeyVerified() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinKeyVerified", nil)
+}
+
+// SettingsAtuinKeyChangeTitle says "Replace the master key?"
+// in the language the app shows.
+func SettingsAtuinKeyChangeTitle() string { return In(i18n.Locale()).SettingsAtuinKeyChangeTitle() }
+
+// SettingsAtuinKeyChangeTitle says "Replace the master key?"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinKeyChangeTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinKeyChangeTitle", nil)
+}
+
+// SettingsAtuinKeyChangeBody says "A different key makes existing remote history unreadable. Local history and the writer identity stay. Continue only i…"
+// in the language the app shows.
+func SettingsAtuinKeyChangeBody() string { return In(i18n.Locale()).SettingsAtuinKeyChangeBody() }
+
+// SettingsAtuinKeyChangeBody says "A different key makes existing remote history unreadable. Local history and the writer identity stay. Continue only i…"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinKeyChangeBody() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinKeyChangeBody", nil)
+}
+
+// SettingsAtuinReplaceKey says "Replace key"
+// in the language the app shows.
+func SettingsAtuinReplaceKey() string { return In(i18n.Locale()).SettingsAtuinReplaceKey() }
+
+// SettingsAtuinReplaceKey says "Replace key"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinReplaceKey() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinReplaceKey", nil)
+}
+
+// SettingsAtuinKeyMissingTitle says "Master key missing"
+// in the language the app shows.
+func SettingsAtuinKeyMissingTitle() string { return In(i18n.Locale()).SettingsAtuinKeyMissingTitle() }
+
+// SettingsAtuinKeyMissingTitle says "Master key missing"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinKeyMissingTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinKeyMissingTitle", nil)
+}
+
+// SettingsAtuinKeyMissingBody says "Remote history cannot be decrypted until the master key is entered. If it is lost, forget it and start a new encrypti…"
+// in the language the app shows.
+func SettingsAtuinKeyMissingBody() string { return In(i18n.Locale()).SettingsAtuinKeyMissingBody() }
+
+// SettingsAtuinKeyMissingBody says "Remote history cannot be decrypted until the master key is entered. If it is lost, forget it and start a new encrypti…"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinKeyMissingBody() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinKeyMissingBody", nil)
+}
+
+// SettingsAtuinForgetKey says "Forget key"
+// in the language the app shows.
+func SettingsAtuinForgetKey() string { return In(i18n.Locale()).SettingsAtuinForgetKey() }
+
+// SettingsAtuinForgetKey says "Forget key"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinForgetKey() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinForgetKey", nil)
+}
+
+// SettingsAtuinForgetKeyTitle says "Forget the master key?"
+// in the language the app shows.
+func SettingsAtuinForgetKeyTitle() string { return In(i18n.Locale()).SettingsAtuinForgetKeyTitle() }
+
+// SettingsAtuinForgetKeyTitle says "Forget the master key?"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinForgetKeyTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinForgetKeyTitle", nil)
+}
+
+// SettingsAtuinForgetKeyBody says "There is no server-side recovery. Remote history encrypted with this key becomes unreadable and sync checkpoints rese…"
+// in the language the app shows.
+func SettingsAtuinForgetKeyBody() string { return In(i18n.Locale()).SettingsAtuinForgetKeyBody() }
+
+// SettingsAtuinForgetKeyBody says "There is no server-side recovery. Remote history encrypted with this key becomes unreadable and sync checkpoints rese…"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinForgetKeyBody() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinForgetKeyBody", nil)
+}
+
+// SettingsAtuinForgetKeyConfirm says "Yes, forget key"
+// in the language the app shows.
+func SettingsAtuinForgetKeyConfirm() string { return In(i18n.Locale()).SettingsAtuinForgetKeyConfirm() }
+
+// SettingsAtuinForgetKeyConfirm says "Yes, forget key"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinForgetKeyConfirm() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinForgetKeyConfirm", nil)
+}
+
+// SettingsAtuinNoKey says "No master key configured"
+// in the language the app shows.
+func SettingsAtuinNoKey() string { return In(i18n.Locale()).SettingsAtuinNoKey() }
+
+// SettingsAtuinNoKey says "No master key configured"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinNoKey() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinNoKey", nil)
+}
+
+// SettingsAtuinNotSignedIn says "Not signed in"
+// in the language the app shows.
+func SettingsAtuinNotSignedIn() string { return In(i18n.Locale()).SettingsAtuinNotSignedIn() }
+
+// SettingsAtuinNotSignedIn says "Not signed in"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinNotSignedIn() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinNotSignedIn", nil)
+}
+
+// SettingsAtuinProblemInvalidAddress says "The server address must be HTTPS, or HTTP only for localhost."
+// in the language the app shows.
+func SettingsAtuinProblemInvalidAddress() string {
+	return In(i18n.Locale()).SettingsAtuinProblemInvalidAddress()
+}
+
+// SettingsAtuinProblemInvalidAddress says "The server address must be HTTPS, or HTTP only for localhost."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinProblemInvalidAddress() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinProblemInvalidAddress", nil)
+}
+
+// SettingsAtuinProblemInvalidLogin says "Enter either a username and password or a pasted token."
+// in the language the app shows.
+func SettingsAtuinProblemInvalidLogin() string {
+	return In(i18n.Locale()).SettingsAtuinProblemInvalidLogin()
+}
+
+// SettingsAtuinProblemInvalidLogin says "Enter either a username and password or a pasted token."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinProblemInvalidLogin() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinProblemInvalidLogin", nil)
+}
+
+// SettingsAtuinProblemAuthFailed says "The server rejected the sign-in. Check the credentials."
+// in the language the app shows.
+func SettingsAtuinProblemAuthFailed() string {
+	return In(i18n.Locale()).SettingsAtuinProblemAuthFailed()
+}
+
+// SettingsAtuinProblemAuthFailed says "The server rejected the sign-in. Check the credentials."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinProblemAuthFailed() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinProblemAuthFailed", nil)
+}
+
+// SettingsAtuinProblemKeyInvalid says "The master key is not a valid BIP39 phrase or base64 32-byte key."
+// in the language the app shows.
+func SettingsAtuinProblemKeyInvalid() string {
+	return In(i18n.Locale()).SettingsAtuinProblemKeyInvalid()
+}
+
+// SettingsAtuinProblemKeyInvalid says "The master key is not a valid BIP39 phrase or base64 32-byte key."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinProblemKeyInvalid() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinProblemKeyInvalid", nil)
+}
+
+// SettingsAtuinProblemKeyMismatch says "The master key does not decrypt existing remote history."
+// in the language the app shows.
+func SettingsAtuinProblemKeyMismatch() string {
+	return In(i18n.Locale()).SettingsAtuinProblemKeyMismatch()
+}
+
+// SettingsAtuinProblemKeyMismatch says "The master key does not decrypt existing remote history."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinProblemKeyMismatch() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinProblemKeyMismatch", nil)
+}
+
+// SettingsAtuinProblemKeyUnverified says "The key could not be verified against remote history."
+// in the language the app shows.
+func SettingsAtuinProblemKeyUnverified() string {
+	return In(i18n.Locale()).SettingsAtuinProblemKeyUnverified()
+}
+
+// SettingsAtuinProblemKeyUnverified says "The key could not be verified against remote history."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinProblemKeyUnverified() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinProblemKeyUnverified", nil)
+}
+
+// SettingsAtuinProblemAccountChange says "A different account or server is connected. Log out first."
+// in the language the app shows.
+func SettingsAtuinProblemAccountChange() string {
+	return In(i18n.Locale()).SettingsAtuinProblemAccountChange()
+}
+
+// SettingsAtuinProblemAccountChange says "A different account or server is connected. Log out first."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinProblemAccountChange() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinProblemAccountChange", nil)
+}
+
+// SettingsAtuinProblemNotConfigured says "Sign in and enter a master key first."
+// in the language the app shows.
+func SettingsAtuinProblemNotConfigured() string {
+	return In(i18n.Locale()).SettingsAtuinProblemNotConfigured()
+}
+
+// SettingsAtuinProblemNotConfigured says "Sign in and enter a master key first."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinProblemNotConfigured() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinProblemNotConfigured", nil)
+}
+
+// SettingsAtuinProblemLocked says "Unlock the field-secret store first."
+// in the language the app shows.
+func SettingsAtuinProblemLocked() string { return In(i18n.Locale()).SettingsAtuinProblemLocked() }
+
+// SettingsAtuinProblemLocked says "Unlock the field-secret store first."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinProblemLocked() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinProblemLocked", nil)
+}
+
+// SettingsAtuinProblemSecretsUnavailable says "The field-secret store is unavailable."
+// in the language the app shows.
+func SettingsAtuinProblemSecretsUnavailable() string {
+	return In(i18n.Locale()).SettingsAtuinProblemSecretsUnavailable()
+}
+
+// SettingsAtuinProblemSecretsUnavailable says "The field-secret store is unavailable."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinProblemSecretsUnavailable() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinProblemSecretsUnavailable", nil)
+}
+
+// SettingsAtuinProblemIncompatible says "The server version or capabilities are not supported. This client requires Atuin v18."
+// in the language the app shows.
+func SettingsAtuinProblemIncompatible() string {
+	return In(i18n.Locale()).SettingsAtuinProblemIncompatible()
+}
+
+// SettingsAtuinProblemIncompatible says "The server version or capabilities are not supported. This client requires Atuin v18."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinProblemIncompatible() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinProblemIncompatible", nil)
+}
+
+// SettingsAtuinProblemOffline says "The server could not be reached."
+// in the language the app shows.
+func SettingsAtuinProblemOffline() string { return In(i18n.Locale()).SettingsAtuinProblemOffline() }
+
+// SettingsAtuinProblemOffline says "The server could not be reached."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinProblemOffline() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinProblemOffline", nil)
+}
+
+// SettingsAtuinProblemRemote says "The Atuin request failed."
+// in the language the app shows.
+func SettingsAtuinProblemRemote() string { return In(i18n.Locale()).SettingsAtuinProblemRemote() }
+
+// SettingsAtuinProblemRemote says "The Atuin request failed."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinProblemRemote() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinProblemRemote", nil)
+}
+
+// SettingsAtuinProblemSave says "The account change could not be saved."
+// in the language the app shows.
+func SettingsAtuinProblemSave() string { return In(i18n.Locale()).SettingsAtuinProblemSave() }
+
+// SettingsAtuinProblemSave says "The account change could not be saved."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinProblemSave() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinProblemSave", nil)
+}
+
+// LogsAtuinAccount says "Atuin account"
+// in the language the app shows.
+func LogsAtuinAccount() string { return In(i18n.Locale()).LogsAtuinAccount() }
+
+// LogsAtuinAccount says "Atuin account"
+// in the language of msgs.
+func (msgs Messages) LogsAtuinAccount() string {
+	return Catalog.Format(msgs.locale, "logsAtuinAccount", nil)
+}

@@ -53,6 +53,7 @@ import (
 	appfileopen "github.com/mslxl/natcatty/application/fileopen"
 	appforwarding "github.com/mslxl/natcatty/application/forwarding"
 	apphistory "github.com/mslxl/natcatty/application/history"
+	historysync "github.com/mslxl/natcatty/application/historysync"
 	apphostatuin "github.com/mslxl/natcatty/application/hostatuin"
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
 	appmcp "github.com/mslxl/natcatty/application/mcp"
@@ -188,6 +189,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	var registry *command.Registry
 	var currentMenu *mygo.Menu
 	var historyService *apphistory.Service
+	var atuinState *settings.AtuinState
 	var logsState *logsui.State
 	var sessions *appsession.Service
 	var externalMCPServer *externalMCP
@@ -451,6 +453,16 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		return err
 	}
 	defer secretStore.Close()
+
+	// The single Atuin account lives beside the Vault. Its token and master
+	// key use the dedicated field-secret entity, never the Vault sync payload.
+	// The real HTTP Remote factory arrives with the sync engine; until then
+	// nil makes every remote operation fail closed as unavailable rather than
+	// silently using the test fake in production.
+	historyAccountService := historysync.NewAccountService(
+		preferenceService, store.OpenHistorySecrets(secretStore), database, nil)
+	atuinState = settings.NewAtuinState(historyAccountService,
+		settings.WithAtuinRedrawRequest(invalidate))
 
 	// Local backups snapshot the Vault after committed changes. The store keeps
 	// its own keychain key, separate from the field-secret key, so a backup can
@@ -1042,6 +1054,16 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			// Autocomplete aggregates the same journal; a deleted or cleared
 			// row must stop being suggested without a restart.
 			autocompleteService.Load(context.Background())
+		}),
+		logsui.WithAccountPanel(func() {
+			// The account panel is part of the Logs settings area. Selecting
+			// the area before opening makes the entry point go straight to it
+			// whether Settings is new or already open on another page.
+			searchState.SetArea(settings.AreaLogs)
+			invalidate()
+			if windows != nil {
+				windows.OpenSettings()
+			}
 		}))
 	// The Quick Switcher and command palette read live Vault and Tab state.
 	// Their closures resolve the shell and registry lazily, as both are
@@ -1346,6 +1368,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				Search:       searchState,
 				Sync:         syncState,
 				MCP:          mcpSettingsState,
+				Atuin:        atuinState,
 				Licenses:     licensesState,
 			})
 		},

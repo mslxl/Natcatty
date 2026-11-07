@@ -10,6 +10,7 @@ package historysync
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 	"time"
 
@@ -237,8 +238,15 @@ type Remote interface {
 	Download(ctx context.Context, series Series, start int64, count int) (Page, error)
 	// Upload sends one ordered batch of history records.
 	Upload(ctx context.Context, records []SyncRecord) error
-	// ValidateMasterKey decrypts one existing history record when the account
-	// has any, using the key in the operation config.
+	// ValidateMasterKey has one contract: when RecordStatus reported history,
+	// it decrypts at least one existing history record with Config.MasterKey
+	// and returns KeyValidationVerified only if that decryption succeeded.
+	// KeyValidationMismatch is required when it fails, and the adapter must
+	// never infer verification from a local fingerprint. With no history the
+	// account service does not call it; an unverified result there is accepted
+	// only as an explicit user-confirmed warning. A real HTTP/MessagePack
+	// implementation arrives with the sync engine; ticket 13 tests this
+	// contract through the fake adapter.
 	ValidateMasterKey(ctx context.Context) (KeyValidation, error)
 	// Close wipes the operation credentials and releases adapter resources.
 	Close() error
@@ -250,9 +258,18 @@ type Factory interface {
 	Open(ctx context.Context, config Config) (Remote, error)
 }
 
-// SanitizeServerURL trims a configured base URL for comparison and display.
-// It only removes surrounding whitespace and trailing slashes; full policy
-// validation belongs to the account service.
+// SanitizeServerURL trims a configured base URL and normalizes its scheme and
+// host case for comparison and display. It deliberately does not enforce the
+// full address policy; NormalizeSyncAddress does that. A value that cannot be
+// parsed is only trimmed so an invalid configured address remains visible.
 func SanitizeServerURL(raw string) string {
-	return strings.TrimRight(strings.TrimSpace(raw), "/")
+	trimmed := strings.TrimSpace(raw)
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return strings.TrimRight(trimmed, "/")
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	return parsed.String()
 }

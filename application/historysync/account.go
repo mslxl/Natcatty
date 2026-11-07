@@ -67,6 +67,10 @@ type Status struct {
 	ServerVersion  string
 	KeyFingerprint string
 	KeyState       atuinmodel.KeyState
+	// KeyConfirmed is true only after the user explicitly accepted an
+	// unverified key for an empty account. A later key change clears it. The
+	// sync engine must require verified or confirmed before its first upload.
+	KeyConfirmed   bool
 	LastSyncAt     time.Time
 	PendingUploads int
 	NextRetryAt    time.Time
@@ -139,8 +143,27 @@ func NormalizeSyncAddress(raw string) (string, error) {
 	default:
 		return "", ErrInvalidSyncAddress
 	}
+	// Host names are case-insensitive. Normalizing here keeps an address
+	// comparison from treating API.ATUIN.SH as a different server from
+	// api.atuin.sh, while a genuinely different server still differs.
+	parsed.Host = strings.ToLower(parsed.Host)
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	return parsed.String(), nil
+}
+
+// sameAccountAddress reports whether the effective sync address belongs to
+// the last connected account. An absent or invalid identity fails closed: a
+// stored token must never be sent to an address this service has not recorded
+// as that account's server.
+func sameAccountAddress(existing domainhistory.AccountIdentity, effective string) bool {
+	if existing.ServerURL == "" {
+		return false
+	}
+	recorded, err := NormalizeSyncAddress(existing.ServerURL)
+	if err != nil {
+		return false
+	}
+	return recorded == effective
 }
 
 func isLoopbackHost(host string) bool {
@@ -194,6 +217,15 @@ func (s *AccountService) Login(ctx context.Context, request LoginRequest) (Statu
 	connected, err := s.secrets.Has(ctx, SessionTokenRef())
 	if err != nil {
 		return s.statusFromLocalError(err), publicSecretError(err)
+	}
+	if connected && !sameAccountAddress(metadata.Account, address) {
+		// Do not even open a remote: its config would carry the stored master
+		// key to an address that does not belong to the connected account.
+		status := s.localStatus(ctx)
+		status.State = atuinmodel.SyncError
+		status.Problem = atuinmodel.ProblemError
+		s.setCached(status)
+		return status, ErrAccountChangeRequiresLogout
 	}
 	storedKey, keyPresent, err := s.loadMasterKey(ctx)
 	if err != nil {
@@ -302,30 +334,45 @@ func (s *AccountService) SetMasterKey(ctx context.Context, input string, confirm
 		s.setCached(status)
 		return status, err
 	}
+	settings := s.settings.HistorySettings()
+	address, err := NormalizeSyncAddress(settings.SyncAddress)
+	if err != nil {
+		return s.localStatus(ctx), ErrInvalidSyncAddress
+	}
+	tokenPresent, err := s.secrets.Has(ctx, SessionTokenRef())
+	if err != nil {
+		return s.statusFromLocalError(err), publicSecretError(err)
+	}
+	if !tokenPresent {
+		return s.localStatus(ctx), ErrNotConfigured
+	}
+	metadata, err := s.metadata.HistoryMetadata(ctx)
+	if err != nil {
+		return s.statusFromLocalError(err), err
+	}
+	if !sameAccountAddress(metadata.Account, address) {
+		// The token is present, so this operation would send it (and the key
+		// being configured) to an address the connected account never owned.
+		// Fail before decrypting the token or opening a remote; the user must
+		// log out first.
+		status := s.localStatus(ctx)
+		status.State = atuinmodel.SyncError
+		status.Problem = atuinmodel.ProblemError
+		s.setCached(status)
+		return status, ErrAccountChangeRequiresLogout
+	}
 	key, err := domainhistory.ParseMasterKey(input)
 	if err != nil {
 		return s.localStatus(ctx), err
 	}
 	defer domainhistory.WipeMasterKey(key)
 	fingerprint := domainhistory.KeyFingerprint(key)
-
-	settings := s.settings.HistorySettings()
-	address, err := NormalizeSyncAddress(settings.SyncAddress)
-	if err != nil {
-		return s.localStatus(ctx), ErrInvalidSyncAddress
-	}
 	token, err := s.secrets.Get(ctx, SessionTokenRef())
 	if err != nil {
-		if errors.Is(err, ErrSecretNotFound) {
-			return s.localStatus(ctx), ErrNotConfigured
-		}
 		return s.statusFromLocalError(err), publicSecretError(err)
 	}
-	metadata, err := s.metadata.HistoryMetadata(ctx)
-	if err != nil {
-		return s.statusFromLocalError(err), err
-	}
 	changed := metadata.KeyFingerprint != "" && metadata.KeyFingerprint != fingerprint
+	sameKey := metadata.KeyFingerprint != "" && metadata.KeyFingerprint == fingerprint
 	if changed && !confirmChange {
 		return s.localStatus(ctx), ErrKeyChangeConfirmation
 	}
@@ -414,6 +461,11 @@ func (s *AccountService) SetMasterKey(ctx context.Context, input string, confirm
 		return s.statusFromLocalError(err), publicSecretError(err)
 	}
 	metadata.KeyFingerprint = fingerprint
+	// A confirmation only applies to the exact unverified key the user
+	// accepted for an account with no history. A new key, or a key validated
+	// against a real record, needs no confirmation and clears the old one.
+	metadata.UnverifiedKeyConfirmed = validation == KeyValidationUnverified &&
+		sameKey && metadata.UnverifiedKeyConfirmed
 	if changed {
 		// Sync checkpoints belong to the old key. Local records, tombstones,
 		// the writer UUID, and the account identity survive.
@@ -430,6 +482,58 @@ func (s *AccountService) SetMasterKey(ctx context.Context, input string, confirm
 
 	status := s.statusForValidation(s.localStatus(ctx), validation, hasHistory, fingerprint, settings)
 	status.KeyFingerprint = fingerprint
+	status.KeyConfirmed = metadata.UnverifiedKeyConfirmed
+	if !settings.SyncEnabled {
+		// The key is stored, but sync remains off. Report the same disabled
+		// status Status() and Check() report instead of an idle key warning.
+		status.State = atuinmodel.SyncDisabled
+		status.Problem = atuinmodel.ProblemDisabled
+	}
+	s.setCached(status)
+	return status, nil
+}
+
+// ConfirmUnverifiedKey records the user's explicit acceptance of an
+// unverified master key on an empty account. The confirmation is local,
+// survives a restart, and is cleared by a key change, forgetting the key, or
+// logout. It never makes a key "verified": a later account with history still
+// has to decrypt a real record, and a mismatch still fails closed.
+func (s *AccountService) ConfirmUnverifiedKey(ctx context.Context) (Status, error) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	if err := s.secretsReady(); err != nil {
+		status := s.localStatus(ctx)
+		s.setCached(status)
+		return status, err
+	}
+	metadata, err := s.metadata.HistoryMetadata(ctx)
+	if err != nil {
+		return s.statusFromLocalError(err), err
+	}
+	keyPresent, err := s.secrets.Has(ctx, MasterKeyRef())
+	if err != nil {
+		return s.statusFromLocalError(err), publicSecretError(err)
+	}
+	if !keyPresent || metadata.KeyFingerprint == "" {
+		status := s.localStatus(ctx)
+		if status.Problem != atuinmodel.ProblemKeyMissing {
+			status.State = atuinmodel.SyncNotConfigured
+			status.Problem = atuinmodel.ProblemKeyMissing
+		}
+		s.setCached(status)
+		return status, ErrNotConfigured
+	}
+	metadata.UnverifiedKeyConfirmed = true
+	if err := s.metadata.SaveHistoryMetadata(ctx, metadata); err != nil {
+		return s.statusFromLocalError(err), err
+	}
+	status := s.localStatus(ctx)
+	if status.State == atuinmodel.SyncIdle {
+		status.Problem = atuinmodel.ProblemKeyUnverified
+	}
+	status.KeyState = atuinmodel.KeyStateUnverified
+	status.KeyConfirmed = true
 	s.setCached(status)
 	return status, nil
 }
@@ -451,6 +555,7 @@ func (s *AccountService) ForgetMasterKey(ctx context.Context) (Status, error) {
 		return s.statusFromLocalError(err), err
 	}
 	metadata.Series = nil
+	metadata.UnverifiedKeyConfirmed = false
 	if err := s.metadata.SaveHistoryMetadata(ctx, metadata); err != nil {
 		return s.statusFromLocalError(err), err
 	}
@@ -479,6 +584,7 @@ func (s *AccountService) Logout(ctx context.Context) (Status, error) {
 		return s.statusFromLocalError(err), err
 	}
 	metadata.Series = nil
+	metadata.UnverifiedKeyConfirmed = false
 	if err := s.metadata.SaveHistoryMetadata(ctx, metadata); err != nil {
 		return s.statusFromLocalError(err), err
 	}
@@ -514,14 +620,28 @@ func (s *AccountService) Check(ctx context.Context) (Status, error) {
 		s.setCached(status)
 		return status, ErrInvalidSyncAddress
 	}
+	tokenPresent, err := s.secrets.Has(ctx, SessionTokenRef())
+	if err != nil {
+		return s.statusFromLocalError(err), publicSecretError(err)
+	}
+	if !tokenPresent {
+		status.State = atuinmodel.SyncNotConfigured
+		status.Problem = atuinmodel.ProblemNotConfigured
+		s.setCached(status)
+		return status, nil
+	}
+	metadata, err := s.metadata.HistoryMetadata(ctx)
+	if err != nil {
+		return s.statusFromLocalError(err), err
+	}
+	if !sameAccountAddress(metadata.Account, address) {
+		status.State = atuinmodel.SyncError
+		status.Problem = atuinmodel.ProblemError
+		s.setCached(status)
+		return status, ErrAccountChangeRequiresLogout
+	}
 	token, err := s.secrets.Get(ctx, SessionTokenRef())
 	if err != nil {
-		if errors.Is(err, ErrSecretNotFound) {
-			status.State = atuinmodel.SyncNotConfigured
-			status.Problem = atuinmodel.ProblemNotConfigured
-			s.setCached(status)
-			return status, nil
-		}
 		return s.statusFromLocalError(err), publicSecretError(err)
 	}
 	key, keyPresent, err := s.loadMasterKey(ctx)
@@ -537,10 +657,6 @@ func (s *AccountService) Check(ctx context.Context) (Status, error) {
 		return status, nil
 	}
 
-	metadata, err := s.metadata.HistoryMetadata(ctx)
-	if err != nil {
-		return s.statusFromLocalError(err), err
-	}
 	config := Config{
 		BaseURL: address, AuthMode: atuinmodel.NormalizeAuthMode(settings.AuthMode),
 		Token: token, MasterKey: key,
@@ -605,6 +721,14 @@ func (s *AccountService) Status() Status {
 				status.State = cached.State
 				status.Problem = cached.Problem
 				status.Detail = cached.Detail
+			case atuinmodel.SyncIdle:
+				// An empty account has no record to validate. Keep the
+				// warning the last key operation produced instead of letting
+				// localStatus's generic "no problem" overwrite it.
+				if cached.Problem == atuinmodel.ProblemKeyUnverified {
+					status.Problem = cached.Problem
+					status.KeyState = atuinmodel.KeyStateUnverified
+				}
 			}
 		}
 	}
@@ -628,6 +752,7 @@ func (s *AccountService) inspect(ctx context.Context, remote Remote, capabilitie
 	}
 	if keyPresent {
 		status.KeyState = atuinmodel.KeyStateUnverified
+		status.KeyConfirmed = metadata.UnverifiedKeyConfirmed && metadata.KeyFingerprint != ""
 	} else if metadata.KeyFingerprint != "" {
 		status.KeyState = atuinmodel.KeyStateMissing
 	} else {
@@ -749,6 +874,7 @@ func (s *AccountService) localStatus(ctx context.Context) Status {
 		status.KeyState = atuinmodel.KeyStateUnverified
 	case keyPresent:
 		status.KeyState = atuinmodel.KeyStateUnverified
+		status.KeyConfirmed = metadata.UnverifiedKeyConfirmed
 	case metadata.KeyFingerprint != "":
 		status.KeyState = atuinmodel.KeyStateMissing
 	default:

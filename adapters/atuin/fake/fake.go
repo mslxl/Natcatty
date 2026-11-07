@@ -248,13 +248,18 @@ func (r *Remote) Upload(context.Context, []historysync.SyncRecord) error {
 
 // ValidateMasterKey reports the configured validation. With no explicit
 // validation, an account with history is verified and an empty account is
-// unverified.
+// unverified. It refuses a missing or wrong-length operation key so tests
+// cannot accidentally prove validation with no key material. A real adapter
+// must decrypt a record; this fake has no ciphertext to decrypt.
 func (r *Remote) ValidateMasterKey(context.Context) (historysync.KeyValidation, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls.ValidateMasterKey++
 	if r.options.ValidationErr != nil {
 		return "", r.options.ValidationErr
+	}
+	if len(r.config.MasterKey) != domainhistory.MasterKeyBytes {
+		return "", historysync.ErrKeyMismatch
 	}
 	if r.options.Validation != "" {
 		return r.options.Validation, nil

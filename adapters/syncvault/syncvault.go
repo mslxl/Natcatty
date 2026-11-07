@@ -47,6 +47,33 @@ type Settings interface {
 	Apply(ctx context.Context, settings map[string]json.RawMessage) error
 }
 
+// syncedEntityTypes are the field-secret entities a Vault payload is allowed
+// to address. Atuin account credentials use their own entity type and are
+// device-local; an inbound payload must not be able to overwrite them (or any
+// other local-only secret) by naming its entity type.
+var syncedEntityTypes = map[string]bool{
+	appvault.EntityHost:           true,
+	appvault.EntitySSHKey:         true,
+	appvault.EntityIdentity:       true,
+	appvault.EntityProxyProfile:   true,
+	appvault.EntityNetworkProfile: true,
+	appvault.EntityNetworkPeer:    true,
+}
+
+// ErrUnsupportedSecretEntity reports an inbound credential address outside
+// the Vault's synced entity families. The apply is refused before any record
+// or credential is written.
+var ErrUnsupportedSecretEntity = errors.New("syncvault: unsupported credential entity type")
+
+func validateIncomingSecrets(secrets []appsync.SecretValue) error {
+	for _, secret := range secrets {
+		if !syncedEntityTypes[secret.EntityType] {
+			return ErrUnsupportedSecretEntity
+		}
+	}
+	return nil
+}
+
 // Vault implements appsync.Vault over the local records and credentials.
 type Vault struct {
 	records  Records
@@ -292,6 +319,9 @@ func (v *Vault) Apply(ctx context.Context, payload appsync.Payload) error {
 	mode := v.secrets.Mode()
 	if mode == appvault.SecretModeUnavailable || mode == appvault.SecretModePassphraseLocked {
 		return fmt.Errorf("syncvault: cannot apply credentials in %s mode", mode)
+	}
+	if err := validateIncomingSecrets(payload.Secrets); err != nil {
+		return err
 	}
 	// Network Profile secrets are addressed by profile and peer id, and a peer
 	// is nested inside a record that the apply replaces wholesale. Capture the
