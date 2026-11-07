@@ -1,0 +1,12 @@
+{
+ "source": "PASERK k4.local-wrap.pie official test vectors (via rusty_paserk 0.5.0 tests)",
+ "tests": [
+  {
+   "name": "k4.local-wrap.pie-2",
+   "expect-fail": false,
+   "unwrapped": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+   "wrapping-key": "707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f",
+   "paserk": "k4.local-wrap.pie.cy-Mu6zSfhu6q0_XdAM9p1zre_joUWjreSjHgisVNh-oHaNarN4_c7xuSyaHwqEDxF7lTbfNplBGU7wTeUyt__hZyj1J38NdNxVwuXamJY2QhRE-kWYA9_16xTsGwCQX"
+  }
+ ]
+}

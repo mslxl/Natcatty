@@ -81,12 +81,117 @@ func decodeMasterKeyBase64(input string) ([]byte, error) {
 			}
 			continue
 		}
-		if len(decoded) != MasterKeyBytes {
-			return nil, fmt.Errorf("%w: got %d bytes", ErrMasterKeyLength, len(decoded))
+		if len(decoded) == MasterKeyBytes {
+			// Legacy Atuin releases base64-encoded the raw 32 bytes.
+			return decoded, nil
 		}
-		return decoded, nil
+		if key, ok := decodeAtuinKeyEncoding(decoded); ok {
+			return key, nil
+		}
+		return nil, fmt.Errorf("%w: got %d bytes", ErrMasterKeyLength, len(decoded))
 	}
 	return nil, firstErr
+}
+
+// decodeAtuinKeyEncoding decodes the two MessagePack shapes the official
+// client accepts after base64: an array16 of 32 integers (the canonical form
+// written by `atuin key --base64` and the key file since v15) and a bin8 of 32
+// bytes. The raw 32-byte legacy form is handled by the caller.
+//
+// This tiny MessagePack envelope is the official key-export format, not a sync
+// record; parsing it beside the BIP39 and base64 forms lets the account service
+// import `atuin key --base64` without depending on the Atuin adapter. The sync
+// record codec, PASETO, and PASERK remain in adapters/atuin/wire.
+func decodeAtuinKeyEncoding(decoded []byte) ([]byte, bool) {
+	if len(decoded) == 0 {
+		return nil, false
+	}
+	switch decoded[0] {
+	case 0xc4: // bin8
+		if len(decoded) != 2+MasterKeyBytes || decoded[1] != MasterKeyBytes {
+			return nil, false
+		}
+		return append([]byte(nil), decoded[2:]...), true
+	case 0xdc: // array16
+		if len(decoded) < 3 || int(decoded[1])<<8|int(decoded[2]) != MasterKeyBytes {
+			return nil, false
+		}
+		key := make([]byte, 0, MasterKeyBytes)
+		position := 3
+		for len(key) < MasterKeyBytes {
+			value, next, ok := decodeAtuinKeyInt(decoded, position)
+			if !ok {
+				return nil, false
+			}
+			key = append(key, byte(value))
+			position = next
+		}
+		// The pinned client does not require the array to end here; trailing
+		// bytes are ignored.
+		return key, true
+	default:
+		return nil, false
+	}
+}
+
+// decodeAtuinKeyInt reads one MessagePack integer the way rust-rmp's
+// read_int::<u8> does. It accepts every integer marker and rejects values
+// outside 0..255.
+func decodeAtuinKeyInt(decoded []byte, position int) (uint8, int, bool) {
+	if position >= len(decoded) {
+		return 0, position, false
+	}
+	marker := decoded[position]
+	position++
+	readBigEndian := func(size int) (uint64, bool) {
+		if len(decoded)-position < size {
+			return 0, false
+		}
+		var value uint64
+		for index := 0; index < size; index++ {
+			value = value<<8 | uint64(decoded[position+index])
+		}
+		position += size
+		return value, true
+	}
+	var value uint64
+	var ok bool
+	switch {
+	case marker <= 0x7f:
+		value, ok = uint64(marker), true
+	case marker >= 0xe0:
+		return 0, position, false
+	case marker == 0xcc:
+		value, ok = readBigEndian(1)
+	case marker == 0xcd:
+		value, ok = readBigEndian(2)
+	case marker == 0xce:
+		value, ok = readBigEndian(4)
+	case marker == 0xcf:
+		value, ok = readBigEndian(8)
+	case marker == 0xd0:
+		signed, valid := readBigEndian(1)
+		ok = valid && int8(signed) >= 0
+		value = uint64(int8(signed))
+	case marker == 0xd1:
+		signed, valid := readBigEndian(2)
+		ok = valid && int16(signed) >= 0
+		value = uint64(int16(signed))
+	case marker == 0xd2:
+		signed, valid := readBigEndian(4)
+		ok = valid && int32(signed) >= 0
+		value = uint64(int32(signed))
+	case marker == 0xd3:
+		signed, valid := readBigEndian(8)
+		ok = valid && int64(signed) >= 0
+		value = uint64(int64(signed))
+	default:
+		return 0, position, false
+	}
+	if !ok || value > 255 {
+		return 0, position, false
+	}
+	return uint8(value), position, true
 }
 
 func parseMnemonic(words []string) ([]byte, error) {

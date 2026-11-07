@@ -103,6 +103,125 @@ func TestParseMasterKeyRejectsBase64OfTheWrongLength(t *testing.T) {
 	}
 }
 
+// atuinKeyArray16 is the canonical encoding `atuin key --base64` writes:
+// a MessagePack array16 of 32 integers, each with rmp's compact unsigned form.
+func atuinKeyArray16(key []byte) []byte {
+	encoded := []byte{0xdc, 0x00, 0x20}
+	for _, value := range key {
+		if value < 0x80 {
+			encoded = append(encoded, value)
+			continue
+		}
+		encoded = append(encoded, 0xcc, value)
+	}
+	return encoded
+}
+
+func testMasterKey() []byte {
+	key := make([]byte, MasterKeyBytes)
+	for index := range key {
+		key[index] = byte(index * 7)
+	}
+	return key
+}
+
+func TestParseMasterKeyAcceptsAtuinMessagePackEncodings(t *testing.T) {
+	want := testMasterKey()
+	encodings := []struct {
+		name  string
+		bytes []byte
+	}{
+		{"array16 canonical", atuinKeyArray16(want)},
+		{"bin8", append([]byte{0xc4, 0x20}, want...)},
+	}
+	for _, candidate := range encodings {
+		t.Run(candidate.name, func(t *testing.T) {
+			input := base64.StdEncoding.EncodeToString(candidate.bytes)
+			key, err := ParseMasterKey(input)
+			if err != nil {
+				t.Fatalf("ParseMasterKey: %v", err)
+			}
+			if !bytes.Equal(key, want) {
+				t.Fatalf("key = %x, want %x", key, want)
+			}
+			// The official client trims trailing whitespace from the encoded
+			// key before base64-decoding it.
+			key, err = ParseMasterKey(input + "\n")
+			if err != nil || !bytes.Equal(key, want) {
+				t.Fatalf("trailing newline: key=%x err=%v", key, err)
+			}
+		})
+	}
+}
+
+func TestParseMasterKeyAcceptsAtuinArray16IntegerForms(t *testing.T) {
+	want := bytes.Repeat([]byte{0x05}, MasterKeyBytes)
+	var encoded []byte
+	encoded = append(encoded, 0xdc, 0x00, 0x20)
+	for index := 0; index < MasterKeyBytes; index++ {
+		// A uint16 marker for a value that fits in a byte; rmp's
+		// read_int::<u8> accepts it, and so does Atuin.
+		encoded = append(encoded, 0xcd, 0x00, 0x05)
+	}
+	key, err := ParseMasterKey(base64.StdEncoding.EncodeToString(encoded))
+	if err != nil {
+		t.Fatalf("ParseMasterKey: %v", err)
+	}
+	if !bytes.Equal(key, want) {
+		t.Fatalf("key = %x, want %x", key, want)
+	}
+}
+
+func TestParseMasterKeyRejectsMalformedAtuinEncodings(t *testing.T) {
+	key := testMasterKey()
+	tests := []struct {
+		name  string
+		bytes []byte
+	}{
+		{"array16 wrong length", append([]byte{0xdc, 0x00, 0x1f}, atuinKeyArray16(key)[3:]...)},
+		{"array16 truncated", atuinKeyArray16(key)[:3+MasterKeyBytes-1]},
+		{"array16 negative", encodedArray16Values(bytes.Repeat([]byte{0x05}, MasterKeyBytes-1), []byte{0xff})},
+		{"array16 out of range", encodedArray16Values(bytes.Repeat([]byte{0x05}, MasterKeyBytes-1), []byte{0xcd, 0x01, 0x00})},
+		{"bin8 wrong length", append([]byte{0xc4, 0x1f}, key[:MasterKeyBytes-1]...)},
+		{"bin8 truncated", append([]byte{0xc4, 0x20}, key[:MasterKeyBytes-1]...)},
+		{"bin8 trailing", append(append([]byte{0xc4, 0x20}, key...), 0x00)},
+		{"unknown marker", append([]byte{0xc5, 0x00, 0x20}, key...)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := ParseMasterKey(base64.StdEncoding.EncodeToString(test.bytes)); err == nil {
+				t.Fatal("malformed Atuin key encoding was accepted")
+			}
+		})
+	}
+}
+
+func TestParseMasterKeyIgnoresArray16TrailingBytes(t *testing.T) {
+	// The pinned decoder reads 32 integers and never checks for trailing
+	// bytes, so neither do we.
+	want := testMasterKey()
+	encoded := append(atuinKeyArray16(want), 0xc0, 0x00)
+	key, err := ParseMasterKey(base64.StdEncoding.EncodeToString(encoded))
+	if err != nil {
+		t.Fatalf("ParseMasterKey: %v", err)
+	}
+	if !bytes.Equal(key, want) {
+		t.Fatalf("key = %x, want %x", key, want)
+	}
+}
+
+func encodedArray16Values(prefix []byte, last []byte) []byte {
+	encoded := []byte{0xdc, 0x00, 0x20}
+	for _, value := range prefix {
+		if value < 0x80 {
+			encoded = append(encoded, value)
+		} else {
+			encoded = append(encoded, 0xcc, value)
+		}
+	}
+	return append(encoded, last...)
+}
+
 func TestParseMasterKeyRejectsAnUnknownWord(t *testing.T) {
 	invalid := strings.Replace(bip39VectorKey, "legal", "notaword", 1)
 	if _, err := ParseMasterKey(invalid); err == nil {
