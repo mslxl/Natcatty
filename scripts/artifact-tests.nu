@@ -1,8 +1,8 @@
 #!/usr/bin/env nu
-# Drive the hidden packaged-artifact smoke mode in a shipped Natcatty build.
+# Drive the app's hidden packaged-artifact test mode in a shipped Natcatty build.
 #
-#   nu scripts/packaged-smoke.nu <artifact> [--mode launch|session]
-#       [--result packaged-smoke-result.json] [--ssh-port 0] [--et-port 0]
+#   nu scripts/artifact-tests.nu <artifact> [--mode launch|session]
+#       [--result artifact-tests-result.json] [--ssh-port 0] [--et-port 0]
 #       [--session-secrets] [--timeout 180]
 #
 # The artifact is the platform package, not a checkout build:
@@ -16,8 +16,8 @@
 # authoritative. The lab secret is read from NATCATTY_SMOKE_PASSWORD in the
 # environment and is never accepted as a command-line argument.
 #
-# CI wiring: .github/workflows/packaged-smoke.yml. See docs/packaging.md,
-# "Packaged smoke tests", and docs/ci/packaged-smoke.md.
+# CI wiring: .github/workflows/artifact-tests.yml. See docs/packaging.md,
+# "Packaged artifact tests", and docs/ci/artifact-tests.md.
 #
 # Run from the repository root. Exit codes:
 #   0  the app exited 0 and every result check passed
@@ -71,12 +71,12 @@ def find-windows-binary [root: path] {
     $candidates | first
 }
 
-# Run argv with the smoke environment. perl preinstalled on macOS and Linux
-# supervises the child so the deadline survives a Go app that ignores
-# SIGALRM: the previous "alarm shift; exec" form was a no-op after exec, and
-# a blocked app ran until the workflow job timeout. The supervisor forwards
-# the app's exit code, or 124 after TERM, a one-second grace, and KILL.
-# The app's own 90s watchdog covers the case where perl is absent.
+# Run argv with the packaged-artifact test environment. perl, preinstalled on
+# macOS and Linux, supervises the child so the deadline survives a Go app that
+# ignores SIGALRM: the previous "alarm shift; exec" form was a no-op after
+# exec, and a blocked app ran until the workflow job timeout. The supervisor
+# forwards the app's exit code, or 124 after TERM, a one-second grace, and
+# KILL. The app's own 90s watchdog covers the case where perl is absent.
 def run-command [argv: list, environment: record, timeout: int] {
     if ((which perl | length) > 0) {
         let supervisor = 'my $timeout = shift; my $pid = fork(); die "fork: $!" unless defined $pid; if ($pid == 0) { exec @ARGV; exit 127; } my $timed_out = 0; local $SIG{ALRM} = sub { $timed_out = 1; kill "TERM", $pid; sleep 1; kill "KILL", $pid; }; alarm $timeout; waitpid($pid, 0); my $status = $?; alarm 0; exit 124 if $timed_out; exit 128 + ($status & 127) if ($status & 127); exit $status >> 8;'
@@ -84,7 +84,7 @@ def run-command [argv: list, environment: record, timeout: int] {
             run-external "perl" "-e" $supervisor ($timeout | into string) ...$argv
         } | complete
     } else {
-        print --stderr "packaged smoke: warning: perl is unavailable, so the driver cannot enforce its timeout"
+        print --stderr "artifact tests: warning: perl is unavailable, so the driver cannot enforce its timeout"
         with-env $environment { run-external ...$argv } | complete
     }
 }
@@ -246,7 +246,7 @@ def validate-result [result: record, mode: string, session_secrets: bool] {
 def main [
     artifact: path
     --mode (-m): string = "launch"
-    --result (-r): path = "packaged-smoke-result.json"
+    --result (-r): path = "artifact-tests-result.json"
     --ssh-port: int = 0
     --et-port: int = 0
     --session-secrets
@@ -273,7 +273,7 @@ def main [
     } else {
         "/tmp"
     }
-    let work = ($tmp_root | path join $"natcatty-packaged-smoke-((random uuid))")
+    let work = ($tmp_root | path join $"natcatty-artifact-tests-((random uuid))")
     mkdir $work
     let profile = ($work | path join "profile")
     mkdir $profile
@@ -337,13 +337,13 @@ def main [
                 let failed = ($result.checks | where {|check| not $check.ok})
                 if not ($failed | is-empty) {
                     let names = ($failed | each {|check| $check.name} | str join ", ")
-                    error make { msg: $"packaged smoke checks failed: ($names)" }
+                    error make { msg: $"artifact test checks failed: ($names)" }
                 }
             }
             if $outcome.exit_code != 0 {
                 error make { msg: $"the app exited ($outcome.exit_code) but every result check passed" }
             }
-            print $"packaged smoke ($mode) passed on ($result.platform)"
+            print $"artifact test ($mode) passed on ($result.platform)"
             null
         } catch {|err|
             let message = if (($err | describe) == "string") { $err } else { $err.msg }

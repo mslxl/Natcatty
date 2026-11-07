@@ -1,15 +1,16 @@
-# Packaged smoke tests in CI
+# Packaged artifact tests in CI
 
-`.github/workflows/packaged-smoke.yml` runs the hidden packaged-artifact smoke
-mode in the artifact users receive. It covers macOS, Linux, and Windows arm64.
-The workflow is deliberately separate from `.github/workflows/release.yml`: it
-does not publish anything, does not change the release asset set, is not a
-release gate, and does not flip `transport.ReleasePolicy`.
+`.github/workflows/artifact-tests.yml` runs the app's hidden packaged-artifact
+test mode in the artifact users receive. It covers macOS, Linux, and Windows
+arm64. The workflow is deliberately separate from
+`.github/workflows/release.yml`: it does not publish anything, does not change
+the release asset set, is not a release gate, and does not flip
+`transport.ReleasePolicy`.
 
 The driver and the environment contract are documented in
-[Packaged smoke tests](../packaging.md#packaged-smoke-tests). This page covers
-the CI wiring, the pinned lab servers, and the risks that only a real hosted
-run can settle.
+[Packaged artifact tests](../packaging.md#packaged-artifact-tests). This page
+covers the CI wiring, the pinned lab servers, and the risks that only a real
+hosted run can settle.
 
 ## Triggers and scope
 
@@ -21,8 +22,8 @@ run can settle.
 | `workflow_dispatch` | Manual run from the Actions tab or `gh`. |
 
 The workflow has `permissions: contents: read` and a concurrency group
-(`packaged-smoke-<workflow>-<ref>`) that cancels an older run for the same
-ref. Every checkout is pinned to `${{ github.sha }}`.
+(`artifact-tests-<ref>`) that cancels an older run for the same ref. Every
+checkout is pinned to `${{ github.sha }}`.
 
 The workflow never fetches transport clients. The package jobs build only from
 the repository; the committed `resources/et/win32-x64` and
@@ -34,12 +35,12 @@ The session jobs exercise the app's in-process Mosh and ET transports.
 
 | Job | Runner | Timeout | Needs | Actions artifact |
 | --- | --- | --- | --- | --- |
-| `package-macos` | `macos-latest` | 45 min | - | `packaged-smoke-macos` (DMG) |
-| `session-macos` | `macos-latest` | 60 min | `package-macos` | `packaged-smoke-macos-session` (result, driver log, etserver log) |
-| `package-linux` | `ubuntu-latest` | 45 min | - | `packaged-smoke-linux` (tarball and `.deb`) |
-| `session-linux` | `ubuntu-latest` | 75 min | `package-linux` | `packaged-smoke-linux-session` (result, driver log, container log) |
-| `package-windows-arm64` | `windows-latest` | 45 min | - | `packaged-smoke-windows-arm64` (portable zip) |
-| `launch-windows-arm64` | `windows-11-arm` | 20 min | `package-windows-arm64` | `packaged-smoke-windows-arm64-launch` (result and profile) |
+| `package-macos` | `macos-latest` | 45 min | - | `artifact-tests-macos` (DMG) |
+| `session-macos` | `macos-latest` | 60 min | `package-macos` | `artifact-tests-macos-session` (result, driver log, etserver log) |
+| `package-linux` | `ubuntu-latest` | 45 min | - | `artifact-tests-linux` (tarball and `.deb`) |
+| `session-linux` | `ubuntu-latest` | 75 min | `package-linux` | `artifact-tests-linux-session` (result, driver log, container log) |
+| `package-windows-arm64` | `windows-latest` | 45 min | - | `artifact-tests-windows-arm64` (portable zip) |
+| `launch-windows-arm64` | `windows-11-arm` | 20 min | `package-windows-arm64` | `artifact-tests-windows-arm64-launch` (result and profile) |
 
 ### `package-macos`
 
@@ -157,7 +158,7 @@ lab, and a hosted Windows arm64 runner cannot execute the x64 lab servers.
 Windows GUI builds also have no usable stdout, so the result file and exit
 code are the evidence. A green `launch-windows-arm64` run proves that the
 arm64 package starts and reaches a visible main window; it is not session
-evidence. Full Windows arm64 session smoke remains a ticket-35 gap.
+evidence. Full Windows arm64 session coverage remains a ticket-35 gap.
 
 ## Dispatching on a branch
 
@@ -165,8 +166,8 @@ After the workflow exists on the default branch, dispatch it on another branch
 with:
 
 ```sh
-gh workflow run packaged-smoke.yml --ref <branch>
-gh run list --workflow packaged-smoke.yml
+gh workflow run artifact-tests.yml --ref <branch>
+gh run list --workflow artifact-tests.yml
 ```
 
 `workflow_dispatch` only appears for a workflow GitHub has registered from the
@@ -177,21 +178,21 @@ reserved for a future release integration; `release.yml` does not call it now.
 
 ## Local reproduction
 
-The same driver runs locally. A launch smoke needs only a built package:
+The same driver runs locally. A launch test needs only a built package:
 
 ```sh
 go tool mygo build -platform darwin/universal -o dist -sign -
-nu scripts/packaged-smoke.nu "dist/darwin-universal/Natcatty 0.1.0-beta.1.dmg" \
-  --mode launch --result build/packaged-smoke/launch.json
+nu scripts/artifact-tests.nu "dist/darwin-universal/Natcatty 0.1.0-beta.1.dmg" \
+  --mode launch --result build/artifact-tests/launch.json
 ```
 
-A session smoke needs a lab endpoint. The CI jobs show the exact macOS and
+A session test needs a lab endpoint. The CI jobs show the exact macOS and
 Linux provisioning. A local container can mirror `session-linux` on different
 ports, for example SSH 2522 and UDP 25607:
 
 ```sh
 docker compose -f adapters/et/lab/compose.yaml build debian12-et711
-docker run -d --name natcatty-smoke-local \
+docker run -d --name natcatty-artifact-tests-local \
   -p 127.0.0.1:2522:22 -p 127.0.0.1:25607:24607/udp \
   natcatty-et-parity-debian12-et711:latest
 # install mosh 1.4.0, create a user matching $USER, install the wrapper
@@ -199,8 +200,8 @@ docker run -d --name natcatty-smoke-local \
 # The pinned Debian lab ships only C/C.utf8; set a locale it can serve:
 export LANG=C.UTF-8 LC_ALL=C.UTF-8
 NATCATTY_SMOKE_PASSWORD=<lab-secret> \
-  nu scripts/packaged-smoke.nu <package> --mode session \
-  --result build/packaged-smoke/session.json \
+  nu scripts/artifact-tests.nu <package> --mode session \
+  --result build/artifact-tests/session.json \
   --ssh-port 2522 --et-port 2022 --session-secrets
 ```
 
@@ -222,16 +223,16 @@ and fails if the captured type is not the dialer's preferred one.
 These are not proven until a real hosted run happens.
 
 - **Runner desktop availability.** A macOS or Windows hosted runner may not
-  expose a usable interactive desktop/WindowServer to a GUI app. The smoke
+  expose a usable interactive desktop/WindowServer to a GUI app. The test
   would then fail before the window becomes visible. That failure is real
   evidence about the runner, not a package defect, but it blocks the launch
   and session jobs.
 - **macOS login keychain.** Session mode uses the OS credential store because
-  the runner has one. The smoke scopes it to a per-profile service name, so the
+  the runner has one. The test scopes it to a per-profile service name, so the
   app's real entries are never read or written, but a locked or prompt-gated
   keychain can still block the app's main thread. Each local run can leave one
   orphan scoped keychain entry; hosted runners are disposable. During local
-  verification, a concurrent smoke plus a rebuilt ad-hoc-signed app produced a
+  verification, a concurrent test plus a rebuilt ad-hoc-signed app produced a
   `SecItemCopyMatching` wait; that is why the driver supervises the app and
   kills it at `--timeout` instead of relying on a signal a Go process ignores.
 - **Lab build time and network.** The Linux session job compiles stock ET
@@ -253,7 +254,8 @@ These are not proven until a real hosted run happens.
 - **Windows arm64 runner preview.** `windows-11-arm` availability and its
   PowerShell/GUI behavior are hosted-runner properties; the job fails closed
   if the label is unavailable.
-- **No release wiring.** This workflow is not a release gate. Its evidence
-  does not authorize the `ReleasePolicy` flip, and the packaged-smoke checkbox
-  in ticket 34 stays unchecked until a real CI run exists. Nothing here
-  publishes a Windows arm64 asset.
+- **No release wiring.** This workflow is not a release gate and does not
+  replace the parity gates for the `ReleasePolicy` flip; the flip evidence is
+  recorded in
+  [transport-rollout.md](../releases/transport-rollout.md#flip-evidence).
+  Nothing here publishes a Windows arm64 asset.

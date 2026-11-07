@@ -1,4 +1,4 @@
-name: packaged-smoke
+name: artifact-tests
 
 # Real packaged-artifact evidence for macOS, Linux, and Windows arm64.
 #
@@ -15,9 +15,9 @@ name: packaged-smoke
 #
 # Windows arm64 is launch-only: there is no native arm64 mosh-server/etserver
 # in the lab, and a hosted Windows arm64 runner cannot execute the x64 lab
-# servers. Session smoke on Windows arm64 remains a ticket-35 gap.
+# servers. Session tests on Windows arm64 remain a ticket-35 gap.
 #
-# See docs/ci/packaged-smoke.md for the job matrix, lab pins, dispatch
+# See docs/ci/artifact-tests.md for the job matrix, lab pins, dispatch
 # instructions, and residual CI-only risks.
 
 on:
@@ -25,21 +25,21 @@ on:
   pull_request:
     paths:
       - "app/**"
-      - "scripts/packaged-smoke.nu"
+      - "scripts/artifact-tests.nu"
       - "docs/packaging.md"
-      - "docs/ci/packaged-smoke.md"
+      - "docs/ci/artifact-tests.md"
       - "resources/**"
       - "mygo.json"
       - "go.mod"
       - "go.sum"
-      - ".github/workflows/packaged-smoke.yml"
+      - ".github/workflows/artifact-tests.yml"
   push:
     branches:
       - main
   workflow_dispatch:
 
 concurrency:
-  group: packaged-smoke-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -130,12 +130,12 @@ jobs:
       - name: Upload the disk image
         uses: actions/upload-artifact@v4
         with:
-          name: packaged-smoke-macos
+          name: artifact-tests-macos
           path: ${{ env.NATCATTY_DMG }}
           if-no-files-found: error
 
   session-macos:
-    name: session smoke macOS
+    name: session tests macOS
     needs:
       - package-macos
     runs-on: macos-latest
@@ -146,7 +146,7 @@ jobs:
       NATCATTY_SMOKE_PASSWORD: testpass
       # The runner account carries a Secure Token, so a scripted password
       # reset is refused; authenticate to the lab as the provisioned account
-      # instead. The smoke still runs as the runner user.
+      # instead. The test still runs as the runner user.
       NATCATTY_SMOKE_SSH_USER: tester
     defaults:
       run:
@@ -163,7 +163,7 @@ jobs:
       - name: Download the packaged DMG
         uses: actions/download-artifact@v4
         with:
-          name: packaged-smoke-macos
+          name: artifact-tests-macos
           path: ${{ runner.temp }}/artifact
 
       - name: Install the stock ET build dependencies
@@ -213,7 +213,7 @@ jobs:
           sudo cat /tmp/etserver.log >&2 || true
           exit 1
 
-      - name: Run the packaged session smoke
+      - name: Run the packaged session tests
         run: |
           set -euo pipefail
           dmg="$(find "${RUNNER_TEMP}/artifact" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
@@ -222,7 +222,7 @@ jobs:
           log="${RUNNER_TEMP}/session-driver.log"
           # macOS runners have an OS credential store, so session-only mode
           # is not used here; it fails closed when the OS store is available.
-          nu scripts/packaged-smoke.nu "${dmg}" \
+          nu scripts/artifact-tests.nu "${dmg}" \
             --mode session --result "${result}" \
             --ssh-port 22 --et-port 2022 2>&1 | tee "${log}"
           python3 - "${result}" session <<'PY'
@@ -242,15 +242,15 @@ jobs:
               if checks.get(name) is not True:
                   failures.append(f"{name} is not true")
           if failures:
-              raise SystemExit("packaged smoke result invalid: " + ", ".join(failures))
-          print("packaged smoke result:", json.dumps(result, sort_keys=True))
+              raise SystemExit("artifact test result invalid: " + ", ".join(failures))
+          print("artifact test result:", json.dumps(result, sort_keys=True))
           PY
 
       - name: Upload the session evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: packaged-smoke-macos-session
+          name: artifact-tests-macos-session
           path: |
             ${{ runner.temp }}/session.json
             ${{ runner.temp }}/session-driver.log
@@ -324,14 +324,14 @@ jobs:
       - name: Upload the Linux packages
         uses: actions/upload-artifact@v4
         with:
-          name: packaged-smoke-linux
+          name: artifact-tests-linux
           path: |
             ${{ env.NATCATTY_TARBALL }}
             ${{ env.NATCATTY_DEB }}
           if-no-files-found: error
 
   session-linux:
-    name: session smoke Linux
+    name: session tests Linux
     needs:
       - package-linux
     runs-on: ubuntu-latest
@@ -360,7 +360,7 @@ jobs:
       - name: Download the packaged tarball
         uses: actions/download-artifact@v4
         with:
-          name: packaged-smoke-linux
+          name: artifact-tests-linux
           path: ${{ runner.temp }}/artifact
 
       - name: Install the headless host dependencies
@@ -377,7 +377,7 @@ jobs:
       - name: Start the lab container
         run: |
           set -euo pipefail
-          container="natcatty-packaged-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          container="natcatty-artifact-tests-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           docker rm -f "${container}" >/dev/null 2>&1 || true
           docker run -d --name "${container}" \
             -p 127.0.0.1:2322:22 \
@@ -414,7 +414,7 @@ jobs:
           mosh_version="$(docker exec "${container}" mosh-server --version)"
           printf '%s\n' "${mosh_version}"
           printf '%s\n' "${mosh_version}" | grep -Eq 'mosh(-server)? 1\.4\.0'
-          # Session smoke uses the current OS user; create the same account in
+          # The session test uses the current OS user; create the same account in
           # the container with the same secret as NATCATTY_SMOKE_PASSWORD.
           docker exec -e SMOKE_USER="${USER}" -e SMOKE_PASSWORD="${NATCATTY_SMOKE_PASSWORD}" \
             "${container}" bash -euc '
@@ -432,14 +432,14 @@ jobs:
           WRAPPER
           docker exec "${container}" chmod 0755 /usr/local/bin/mosh-server
 
-      - name: Run the packaged session smoke
+      - name: Run the packaged session tests
         run: |
           set -euo pipefail
           tarball="$(find "${RUNNER_TEMP}/artifact" -maxdepth 1 -type f -name '*.tar.gz' -print -quit)"
           test -n "${tarball}"
           result="${RUNNER_TEMP}/session.json"
           log="${RUNNER_TEMP}/session-driver.log"
-          nu scripts/packaged-smoke.nu "${tarball}" \
+          nu scripts/artifact-tests.nu "${tarball}" \
             --mode session --result "${result}" \
             --ssh-port 2322 --et-port 2022 --session-secrets 2>&1 | tee "${log}"
           python3 - "${result}" session <<'PY'
@@ -459,8 +459,8 @@ jobs:
               if checks.get(name) is not True:
                   failures.append(f"{name} is not true")
           if failures:
-              raise SystemExit("packaged smoke result invalid: " + ", ".join(failures))
-          print("packaged smoke result:", json.dumps(result, sort_keys=True))
+              raise SystemExit("artifact test result invalid: " + ", ".join(failures))
+          print("artifact test result:", json.dumps(result, sort_keys=True))
           PY
 
       - name: Collect the lab logs and stop the container
@@ -476,7 +476,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: packaged-smoke-linux-session
+          name: artifact-tests-linux-session
           path: |
             ${{ runner.temp }}/session.json
             ${{ runner.temp }}/session-driver.log
@@ -605,12 +605,12 @@ jobs:
       - name: Upload the Windows arm64 portable archive
         uses: actions/upload-artifact@v4
         with:
-          name: packaged-smoke-windows-arm64
+          name: artifact-tests-windows-arm64
           path: dist/natcatty-*-windows-arm64-portable.zip
           if-no-files-found: error
 
   launch-windows-arm64:
-    name: launch smoke Windows arm64
+    name: launch tests Windows arm64
     needs:
       - package-windows-arm64
     runs-on: windows-11-arm
@@ -624,7 +624,7 @@ jobs:
       - name: Download the portable archive
         uses: actions/download-artifact@v4
         with:
-          name: packaged-smoke-windows-arm64
+          name: artifact-tests-windows-arm64
           path: ${{ runner.temp }}/artifact
 
       - name: Extract and inspect the app tree
@@ -702,13 +702,13 @@ jobs:
             throw "the window_visible check is not true"
           }
           if ($exitCode -ne 0) { throw "Natcatty.exe exited $exitCode" }
-          Write-Host "packaged launch smoke passed on $($result.platform)"
+          Write-Host "packaged launch test passed on $($result.platform)"
 
       - name: Upload the launch evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: packaged-smoke-windows-arm64-launch
+          name: artifact-tests-windows-arm64-launch
           path: |
             ${{ runner.temp }}/launch.json
             ${{ runner.temp }}/profile

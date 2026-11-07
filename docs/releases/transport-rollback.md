@@ -29,9 +29,9 @@ server/platform:
    or authentication behave differently from the bundled client in a way that
    weakens or breaks the configured route.
 6. **Packaging failure:** a platform's beta artifacts are missing required
-   notices or fail the packaged smoke test. (The packaged smoke matrix covers
-   macOS, Linux, and Windows arm64; Windows arm64 session mode remains a
-   documented gap until ticket 35.)
+   notices or fail the packaged artifact test. (The packaged artifact test
+   matrix covers macOS, Linux, and Windows arm64; Windows arm64 session mode
+   remains a documented gap until ticket 35.)
 
 Do not wait for a second platform to fail. A platform-specific blocker uses a
 waiver (see the rollout document) rather than holding every platform.
@@ -131,11 +131,11 @@ engineering record, not a legal certification.
   no explicit transport choice adopt `in_process`; explicit global and per-Host
   `bundled` choices keep their stored value. No platform waiver was needed.
 - Trigger: scheduled flip, not a rollback trigger. Both parity gates and the
-  packaged smoke jobs were green on the evidence commit.
+  packaged artifact test jobs were green on the evidence commit.
 - Evidence: commit `5784818d9243e8f8b5c7b2512a3fa0a55147b717` on `main`:
   [mosh-parity 42273516811](https://github.com/mslxl/Natcatty/actions/runs/42273516811),
   [et-parity 42273340203](https://github.com/mslxl/Natcatty/actions/runs/42273340203),
-  [packaged-smoke 42273340294](https://github.com/mslxl/Natcatty/actions/runs/42273340294),
+  [artifact-tests 42273340294](https://github.com/mslxl/Natcatty/actions/runs/42273340294),
   [ci 42273340204](https://github.com/mslxl/Natcatty/actions/runs/42273340204).
 - Gates: mosh-parity green
   ([run 42273516811](https://github.com/mslxl/Natcatty/actions/runs/42273516811));
