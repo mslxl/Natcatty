@@ -485,6 +485,8 @@ func noticeText(m locales.Messages, notice *appsession.Notice) string {
 		return m.ConnectionCaptureHookUnavailable()
 	case appsession.NoticeHostAtuinDetected:
 		return m.ConnectionHostAtuinDetected()
+	case appsession.NoticeHostAtuinImportFailed:
+		return m.ConnectionHostAtuinImportFailed()
 	default:
 		return ""
 	}

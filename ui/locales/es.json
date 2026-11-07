@@ -1388,7 +1388,7 @@
   "logsTabConnections": "Registros de conexión ({count})",
   "logsTabHistory": "Historial de comandos ({count})",
   "logsSearch": "Buscar",
-  "logsHostFilter": "Host u origen",
+  "logsHostFilter": "Host",
   "logsHostOrigin": "Origen: {origin}",
   "logsHostAll": "Todos los hosts",
   "logsHostLocal": "Local",
@@ -3439,5 +3439,6 @@
   "settingsAboutNoticesTitle": "Avisos de terceros",
   "settingsAboutNoticesBody": "Licencias y avisos de copyright de MyGo, libghostty-vt, los módulos de Go, EternalTerminal y otros componentes incluidos.",
   "settingsAboutUnavailable": "Los documentos legales faltan en esta instalación. Reinstale desde un artefacto de versión.",
-  "settingsAboutLegalReview": "El cumplimiento de la distribución se comprueba mecánicamente y sigue pendiente de revisión humana y legal."
+  "settingsAboutLegalReview": "El cumplimiento de la distribución se comprueba mecánicamente y sigue pendiente de revisión humana y legal.",
+  "connectionHostAtuinImportFailed": "Este Host ejecuta Atuin, pero Netcatty no pudo leer su historial esta vez. Se reintentará en una sesión posterior."
 }

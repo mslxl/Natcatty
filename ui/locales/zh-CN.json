@@ -1388,7 +1388,7 @@
   "logsTabConnections": "连接日志 ({count})",
   "logsTabHistory": "命令历史 ({count})",
   "logsSearch": "搜索",
-  "logsHostFilter": "主机或来源",
+  "logsHostFilter": "主机",
   "logsHostOrigin": "来源：{origin}",
   "logsHostAll": "所有主机",
   "logsHostLocal": "本地",
@@ -3439,5 +3439,6 @@
   "settingsAboutNoticesTitle": "第三方声明",
   "settingsAboutNoticesBody": "MyGo、libghostty-vt、Go 模块、EternalTerminal 及其他随附组件的许可证和版权声明。",
   "settingsAboutUnavailable": "此安装缺少法律文件。请从发布产物重新安装。",
-  "settingsAboutLegalReview": "分发合规性已进行机械检查，仍有待人工和法律审查。"
+  "settingsAboutLegalReview": "分发合规性已进行机械检查，仍有待人工和法律审查。",
+  "connectionHostAtuinImportFailed": "此主机正在使用 Atuin，但 Netcatty 本次无法读取其历史记录。将在之后的会话中重试。"
 }

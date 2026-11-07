@@ -13,6 +13,11 @@ import (
 // later Session instead of silently dropping data.
 var ErrInvalidAtuinRow = errors.New("history: invalid Atuin row")
 
+// ErrUnknownAtuinSchema reports a file that is not an Atuin history database
+// this build can read. Detection treats it as absence, so a foreign or stale
+// SQLite database at an Atuin path cannot suppress normal command capture.
+var ErrUnknownAtuinSchema = errors.New("history: unknown Atuin history schema")
+
 // AtuinRow is one row read from a Host's read-only Atuin history database.
 // Nil optional fields mean the column was absent or held NULL, which is
 // different from an empty value: the mapping labels the former as unknown.

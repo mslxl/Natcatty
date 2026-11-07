@@ -166,6 +166,40 @@ func TestHostAtuinAbsentHasNoPostSessionImport(t *testing.T) {
 	}
 }
 
+// A Host whose Atuin history could not be read keeps the hook skipped, shows
+// a warning, and does not consume the one-time preference notice.
+func TestHostAtuinImportFailurePublishesAWarningWithoutConsumingTheNotice(t *testing.T) {
+	factory := &fakeFactory{transport: newFakeTransport()}
+	hookCalls := 0
+	hook := captureHookFunc(func(spec StartSpec) (CaptureHookPlan, bool) {
+		hookCalls++
+		return CaptureHookPlan{Spec: spec}, false
+	})
+	policy := &fakeHostAtuin{
+		probe: HostAtuinProbe{Present: true, Failed: true},
+		mark:  true,
+	}
+	service := newTestService(factory, WithCaptureHook(hook), WithHostAtuin(policy))
+
+	session, err := service.Open(context.Background(), StartSpec{
+		Kind: KindSSH, HostID: "host-1", Label: "web",
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	if hookCalls != 0 {
+		t.Fatalf("the capture hook ran %d times, want 0", hookCalls)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.Notice == nil || snapshot.Notice.Code != NoticeHostAtuinImportFailed {
+		t.Fatalf("notice = %+v, want the import failure warning", snapshot.Notice)
+	}
+	if policy.markCount() != 0 {
+		t.Fatalf("a failed import consumed the one-time notice: %d marks", policy.markCount())
+	}
+}
+
 func TestHostAtuinPresentAlreadyNoticedStillSkipsTheHook(t *testing.T) {
 	factory := &fakeFactory{transport: newFakeTransport()}
 	hookCalls := 0

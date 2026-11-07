@@ -2174,9 +2174,9 @@
   "@logsSearch": {
     "description": "The label of the free-text record filter."
   },
-  "logsHostFilter": "Host or origin",
+  "logsHostFilter": "Host",
   "@logsHostFilter": {
-    "description": "The label of the Host or origin filter."
+    "description": "The label of the Host filter."
   },
   "logsHostOrigin": "Origin: {origin}",
   "@logsHostOrigin": {
@@ -2235,7 +2235,7 @@
   "logsFrom": "From",
   "logsSourceAtuinImport": "Atuin import",
   "@logsSourceAtuinImport": {
-    "description": "A command imported read-only from a Host's Atuin history."
+    "description": "A command imported read-only from a Host's own Atuin history."
   },
   "logsSourceAtuinSync": "Another device",
   "@logsSourceAtuinSync": {
@@ -5253,5 +5253,6 @@
   "settingsAboutNoticesTitle": "Third-party notices",
   "settingsAboutNoticesBody": "Licenses and copyright notices for MyGo, libghostty-vt, the Go modules, EternalTerminal, and other bundled components.",
   "settingsAboutUnavailable": "The legal documents are missing from this installation. Reinstall from a release artifact.",
-  "settingsAboutLegalReview": "Distribution compliance is mechanically checked and remains pending human and legal review."
+  "settingsAboutLegalReview": "Distribution compliance is mechanically checked and remains pending human and legal review.",
+  "connectionHostAtuinImportFailed": "This Host runs Atuin, but Netcatty could not read its history this time. It will retry on a later Session."
 }

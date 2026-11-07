@@ -205,6 +205,14 @@ func TestHistoryFiltersAndPaging(t *testing.T) {
 	if got := state.FilteredEntries(); len(got) != 1 || got[0].ID != "shell" {
 		t.Fatalf("source filter = %+v", got)
 	}
+
+	source.entries = append(source.entries, entryAt("atuin", "", "cd /srv",
+		domainhistory.SourceAtuinImport, now))
+	state.reload()
+	state.SetSourceFilter(domainhistory.SourceAtuinImport)
+	if got := state.FilteredEntries(); len(got) != 1 || got[0].ID != "atuin" {
+		t.Fatalf("Atuin import source filter = %+v", got)
+	}
 }
 
 func TestRefreshFollowsTheSourceRevision(t *testing.T) {
