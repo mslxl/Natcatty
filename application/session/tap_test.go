@@ -170,6 +170,8 @@ func TestTapBracketedPasteDoesNotSubmitInnerLines(t *testing.T) {
 	}
 	if state := tap.state(tapAt(0)); state.Command.Running {
 		t.Fatalf("bracketed paste started command %+v", state.Command)
+	} else if state.Input != "touch marker\necho SHOULD_NOT_RUN" {
+		t.Fatalf("tracked line after the paste = %q", state.Input)
 	}
 
 	// The markers may be split across transport writes.
@@ -179,7 +181,12 @@ func TestTapBracketedPasteDoesNotSubmitInnerLines(t *testing.T) {
 	tap.handleInput([]byte("\x1b[201~"), tapAt(2*time.Second))
 	if state := tap.state(tapAt(2 * time.Second)); state.Command.Running {
 		t.Fatalf("split bracketed paste started command %+v", state.Command)
+	} else if state.Input != "one\ntwo" {
+		t.Fatalf("tracked line after the split paste = %q", state.Input)
 	}
+	// Ctrl+C clears the line-editor buffer before the next command, as it
+	// does in the shell; the paste's newline must not have submitted it.
+	tap.handleInput([]byte{0x03}, tapAt(2*time.Second))
 	tap.handleInput([]byte("echo after\r"), tapAt(3*time.Second))
 	if state := tap.state(tapAt(3 * time.Second)); !state.Command.Running ||
 		state.Command.Text != "echo after" {

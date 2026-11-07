@@ -1750,8 +1750,18 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 			// A bracketed paste is inserted into the line editor literally.
 			// Only the end marker is meaningful; every other byte, including
 			// a newline, is pasted text rather than Enter or a control key.
+			// The text still joins the tracked line, so the input indicator
+			// and autocomplete see the whole command after a paste or an
+			// explicit History insertion.
 			if value == 0x1b {
 				t.inputEscape = inputEscape
+				continue
+			}
+			if value == '\r' {
+				value = '\n'
+			}
+			if (value >= 0x20 && value != 0x7f) || value == '\n' || value == '\t' {
+				changed = t.appendInputByte(value) || changed
 			}
 			continue
 		}
