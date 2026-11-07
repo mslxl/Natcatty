@@ -71,7 +71,7 @@ const (
 	KindTelnet Kind = "telnet"
 	// KindMosh is a UDP Mosh Session bootstrapped over SSH.
 	KindMosh Kind = "mosh"
-	// KindET is an EternalTerminal Session using the bundled et client.
+	// KindET is an EternalTerminal Session using the in-process et client.
 	KindET Kind = "et"
 )
 

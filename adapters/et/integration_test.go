@@ -145,14 +145,10 @@ func labSpec(t *testing.T, server labServer) appsession.StartSpec {
 	}
 	port, _ := strconv.Atoi(portText)
 	cfg := etmodel.Config{
-		Hostname:  host,
-		Port:      port,
-		Username:  server.username,
-		ETPort:    etmodel.DefaultETPort,
-		Auth:      etmodel.Auth{Method: etmodel.AuthPassword},
-		SessionID: "lab-" + server.name,
-		Cols:      100,
-		Rows:      30,
+		Hostname: host,
+		Port:     port,
+		Username: server.username,
+		ETPort:   etmodel.DefaultETPort,
 	}.Normalized()
 	return appsession.StartSpec{
 		Kind:     appsession.KindET,

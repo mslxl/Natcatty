@@ -3,15 +3,13 @@ name: artifact-tests
 # Real packaged-artifact evidence for macOS, Linux, and Windows arm64.
 #
 # This workflow is deliberately separate from release.yml: it is not called by
-# the release workflow, does not change the published asset set or the release
-# gate, and does not flip ReleasePolicy. It builds the same untagged app users
-# receive, launches it from the package, and (on macOS and Linux) drives real
-# in-process Mosh and ET Sessions against pinned stock lab servers.
+# the release workflow, does not change the published asset set, and is not a
+# release gate. It builds the same untagged app users receive, launches it from
+# the package, and (on macOS and Linux) drives real in-process Mosh and ET
+# Sessions against pinned stock lab servers.
 #
-# The package jobs do not fetch transport clients. The DMG and Linux tarball
-# therefore carry only the committed win32-x64 resources; the Windows arm64
-# package removes those too, because no native arm64 client exists. The
-# clients exercised by the session jobs are the in-process transports.
+# The package jobs do not fetch transport clients: no client binary is bundled,
+# and the clients exercised by the session jobs are the in-process transports.
 #
 # Windows arm64 is launch-only: there is no native arm64 mosh-server/etserver
 # in the lab, and a hosted Windows arm64 runner cannot execute the x64 lab
@@ -109,20 +107,13 @@ jobs:
       - name: Verify the app bundle and the disk image
         run: |
           set -euo pipefail
-          resources=(LICENSE NOTICE THIRD-PARTY-NOTICES.md SOURCE-OFFER.md CHANGELOG.md mygo.json
-            et/BUILD-PROVENANCE.json et/LICENSE-EternalTerminal-Apache-2.0.txt et/README.md
-            mosh/BUILD-PROVENANCE.json mosh/LICENSE-MoshCatty-GPL-3.0.txt
-            mosh/LICENSE-MoshGo-MIT.txt mosh/README.md)
+          resources=(LICENSE NOTICE THIRD-PARTY-NOTICES.md SOURCE-OFFER.md CHANGELOG.md mygo.json)
 
           app="dist/darwin-universal/Natcatty.app/Contents/Resources"
           test -d "dist/darwin-universal/Natcatty.app"
           for entry in "${resources[@]}"; do
             test -s "${app}/${entry}"
           done
-          # This workflow does not fetch transport clients. The committed
-          # win32-x64 resources remain, but no native client may appear.
-          test ! -e "${app}/et/darwin-universal"
-          test ! -e "${app}/mosh/darwin-universal"
 
           hdiutil verify "${NATCATTY_DMG}"
           mount="$(mktemp -d)"
@@ -134,10 +125,8 @@ jobs:
           for entry in "${resources[@]}"; do
             test -s "${mounted_app}/${entry}"
           done
-          test ! -e "${mounted_app}/et/darwin-universal"
-          test ! -e "${mounted_app}/mosh/darwin-universal"
           grep -q "\"version\": \"${NATCATTY_VERSION}\"" "${mounted_app}/mygo.json"
-          echo "the DMG and its app bundle carry the compliance files and provenance, with no native transport clients"
+          echo "the DMG and its app bundle carry the compliance files"
 
       - name: Upload the disk image
         uses: actions/upload-artifact@v4
@@ -316,22 +305,13 @@ jobs:
       - name: Verify the tarball layout
         run: |
           set -euo pipefail
-          entries=(natcatty mygo.json CHANGELOG.md THIRD-PARTY-NOTICES.md LICENSE NOTICE SOURCE-OFFER.md
-            et/BUILD-PROVENANCE.json et/LICENSE-EternalTerminal-Apache-2.0.txt et/README.md
-            mosh/BUILD-PROVENANCE.json mosh/LICENSE-MoshCatty-GPL-3.0.txt
-            mosh/LICENSE-MoshGo-MIT.txt mosh/README.md)
+          entries=(natcatty mygo.json CHANGELOG.md THIRD-PARTY-NOTICES.md LICENSE NOTICE SOURCE-OFFER.md)
           tar -tzf "${NATCATTY_TARBALL}" > tar-list.txt
           for entry in "${entries[@]}"; do
             grep -Fxq "${entry}" tar-list.txt
           done
           grep -q "\"version\": \"${NATCATTY_VERSION}\"" mygo.json
-          # No transport clients were fetched for this build.
-          if grep -Eq '^(et|mosh)/linux-(x64|arm64)(/|$)' tar-list.txt; then
-            echo "the tarball unexpectedly carries a native Linux transport client" >&2
-            grep -E '^(et|mosh)/linux-(x64|arm64)(/|$)' tar-list.txt >&2
-            exit 1
-          fi
-          echo "the tarball carries the app, compliance files, provenance, and no Linux transport clients"
+          echo "the tarball carries the app and compliance files"
 
       - name: Upload the Linux packages
         uses: actions/upload-artifact@v4
@@ -514,22 +494,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Remove the committed x64 transport clients
+      - name: Read the version
         run: |
           set -euo pipefail
           version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' mygo.json | head -n 1)"
           test -n "${version}"
           echo "NATCATTY_VERSION=${version}" >> "${GITHUB_ENV}"
-          # The arm64 app ships no bundled clients: there is no native arm64
-          # mosh/ET asset, and x64 clients cannot run on this target.
-          rm -rf resources/et/win32-x64 resources/mosh/win32-x64
-          test ! -e resources/et/win32-x64
-          test ! -e resources/mosh/win32-x64
-          if find resources/et resources/mosh -mindepth 1 -type d -print -quit | grep -q .; then
-            echo "a transport client directory remains under resources/et or resources/mosh" >&2
-            find resources/et resources/mosh -mindepth 1 -type d >&2
-            exit 1
-          fi
 
       - name: Write the Corresponding Source offer
         run: |
@@ -550,24 +520,12 @@ jobs:
           set -euo pipefail
           root="dist/windows-arm64"
           test -s "${root}/Natcatty.exe"
-          entries=(mygo.json CHANGELOG.md THIRD-PARTY-NOTICES.md LICENSE NOTICE SOURCE-OFFER.md
-            et/BUILD-PROVENANCE.json et/LICENSE-EternalTerminal-Apache-2.0.txt et/README.md
-            mosh/BUILD-PROVENANCE.json mosh/LICENSE-MoshCatty-GPL-3.0.txt
-            mosh/LICENSE-MoshGo-MIT.txt mosh/README.md)
+          entries=(mygo.json CHANGELOG.md THIRD-PARTY-NOTICES.md LICENSE NOTICE SOURCE-OFFER.md)
           for entry in "${entries[@]}"; do
             test -s "${root}/${entry}"
           done
           grep -q "\"version\": \"${NATCATTY_VERSION}\"" "${root}/mygo.json"
-          if find "${root}/et" "${root}/mosh" -mindepth 1 -type d -print -quit | grep -q .; then
-            echo "the arm64 package carries a bundled client directory" >&2
-            find "${root}/et" "${root}/mosh" -mindepth 1 -type d >&2
-            exit 1
-          fi
-          if find "${root}/et" "${root}/mosh" -type f \( -iname '*.exe' -o -name 'mosh-client*' \) -print -quit | grep -q .; then
-            echo "the arm64 package carries a bundled client binary" >&2
-            exit 1
-          fi
-          echo "the arm64 app carries compliance files and provenance with no bundled clients"
+          echo "the arm64 app carries the compliance files"
 
       - name: Build the portable archive
         shell: pwsh
@@ -594,17 +552,10 @@ jobs:
           try {
             $entries = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
             foreach ($required in @("Natcatty.exe", "mygo.json", "CHANGELOG.md",
-                "THIRD-PARTY-NOTICES.md", "LICENSE", "NOTICE", "SOURCE-OFFER.md",
-                "et/BUILD-PROVENANCE.json", "et/LICENSE-EternalTerminal-Apache-2.0.txt",
-                "et/README.md", "mosh/BUILD-PROVENANCE.json",
-                "mosh/LICENSE-MoshCatty-GPL-3.0.txt", "mosh/LICENSE-MoshGo-MIT.txt",
-                "mosh/README.md")) {
+                "THIRD-PARTY-NOTICES.md", "LICENSE", "NOTICE", "SOURCE-OFFER.md")) {
               if ($entries -notcontains $required) {
                 throw "the portable archive is missing $required"
               }
-            }
-            if ($entries | Where-Object { $_ -match '(^|/)(et|mosh)/[^/]+/' }) {
-              throw "the portable archive contains a bundled client directory"
             }
             if ($entries | Where-Object { $_ -match '(^|/)([^/]*-setup\.exe|[^/]* Setup [^/]*\.exe)$' }) {
               throw "the portable archive contains an installer"
@@ -612,7 +563,7 @@ jobs:
           } finally {
             $archive.Dispose()
           }
-          Write-Host "wrote $zip with $($entries.Count) entries and no bundled clients or installer"
+          Write-Host "wrote $zip with $($entries.Count) entries and no installer"
 
       - name: Upload the Windows arm64 portable archive
         uses: actions/upload-artifact@v4
@@ -651,22 +602,6 @@ jobs:
           if (-not (Test-Path -LiteralPath (Join-Path $app "Natcatty.exe"))) {
             throw "Natcatty.exe is missing from the portable archive"
           }
-          foreach ($kind in @("et", "mosh")) {
-            $kindRoot = Join-Path $app $kind
-            if (-not (Test-Path -LiteralPath $kindRoot)) {
-              throw "$kind metadata directory is missing"
-            }
-            $dirs = @(Get-ChildItem -LiteralPath $kindRoot -Directory -Recurse)
-            if ($dirs.Count -ne 0) {
-              throw "bundled $kind client directory in the arm64 package: $($dirs.FullName -join ', ')"
-            }
-            $binaries = @(Get-ChildItem -LiteralPath $kindRoot -Recurse -File |
-              Where-Object { $_.Name -like "*.exe" -or $_.Name -like "mosh-client*" })
-            if ($binaries.Count -ne 0) {
-              throw "bundled $kind client binary in the arm64 package: $($binaries.FullName -join ', ')"
-            }
-          }
-          Write-Host "the arm64 package has no bundled client directories or binaries"
 
       - name: Launch the app and validate the result
         shell: pwsh

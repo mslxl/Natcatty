@@ -48,7 +48,6 @@ error.
 | SSH | Yes | Provider carries the first dial; later hops stay in SSH. |
 | telnet | Yes | Provider wraps the target dial. |
 | ET, in-process client | Yes | The route is handed to the Connection Manager. |
-| ET, bundled external client | No | The bundled child process uses the OS network; the error says to select the in-process client. |
 | mosh | No | Its UDP channel is not wired to a Provider yet; the UI directs the user to an OS-level VPN. |
 
 ## Tailscale Net
@@ -109,11 +108,10 @@ Limits and boundaries:
 
 mosh is currently unsupported with a Network Profile because its UDP channel
 has not been integrated. A mosh Session on a Host whose route resolves a
-Network Profile fails closed before the bundle, SSH bootstrap, or `mosh-server`
-starts, and the localized error tells the user to use an OS-level VPN. The
+Network Profile fails closed before the SSH bootstrap or `mosh-server` starts,
+and the localized error tells the user to use an OS-level VPN. The
 `NetworkProvider` port deliberately has no datagram capability yet; UDP
-integration is a separate follow-up ticket. This feature does not modify
-`adapters/mosh/` or `internal/mosh/`.
+integration is a separate follow-up ticket.
 
 ## Validation status
 

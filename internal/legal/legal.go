@@ -61,22 +61,21 @@ Build instructions are in `+"`docs/packaging.md`"+`. The license text is in
 third-party components with their sources are in
 `+"`THIRD-PARTY-NOTICES.md`"+`.
 
-Bundled client sources:
+In-process transport clients:
 
-- MoshCatty `+"`moshcatty-0.1.8`"+` (mosh-client), the bundled pure-Rust
-  implementation:
-  <https://github.com/binaricat/MoshCatty/tree/moshcatty-0.1.8>, tag commit
-  `+"`554b9d305e7ac4b11de740d764bbc3e05f816d7b`"+`. Upstream mosh
-  (<https://github.com/mobile-shell/mosh>) is a protocol reference only and is
-  not the source of this binary. The bundled client also contains
-  MIT-licensed material from
-  <https://github.com/unixshells/mosh-go/tree/8dca5c67ec8e09f71a4dc8eda9216f2f4ee7ec0f>
-  (Copyright (c) 2026 Unix Shells); its notice ships as
-  `+"`resources/mosh/LICENSE-MoshGo-MIT.txt`"+`.
-- Netcatty-et-bin `+"`et-bin-6.2.10-1`"+` (et):
-  <https://github.com/binaricat/Netcatty-et-bin/releases/tag/et-bin-6.2.10-1>.
-  Upstream EternalTerminal at `+"`et-v6.2.10`"+`:
-  <https://github.com/MisterTea/EternalTerminal/tree/et-v6.2.10>.
+- The Mosh client is part of this repository's source under `+"`internal/mosh`"+` and
+  `+"`adapters/mosh`"+`. Its terminal model is a Go port of stock mosh 1.4.0
+  (<https://github.com/mobile-shell/mosh/releases/download/mosh-1.4.0/mosh-1.4.0.tar.gz>);
+  its OCB3 implementation is adapted from
+  <https://github.com/unixshells/mosh-go> at commit
+  `+"`0284bd652aab3dfff5b0b74945c23901d7537b61`"+` (MIT; Copyright (c) 2026 Unix Shells).
+  No separate `+"`mosh-client`"+` binary is bundled or launched.
+- The EternalTerminal client is part of this repository's source under
+  `+"`adapters/et`"+`. Its protocol core is vendored from
+  <https://github.com/tphakala/et-go> at commit
+  `+"`bc33dd76b558418bc1079ba27c8c477b8145eea5`"+` (Apache-2.0;
+  Copyright 2026 Tomi P. Hakala).
+  No separate `+"`et`"+` binary is bundled or launched.
 
 This program is distributed in the hope that it will be useful, but WITHOUT
 ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
@@ -105,8 +104,8 @@ func licenseChecks() []documentCheck {
 		{LicenseFile, []string{"GNU GENERAL PUBLIC LICENSE", "Version 3, 29 June 2007"}},
 		{NoticeFile, []string{"GPL-3.0-or-later", "modified version"}},
 		{filepath.Join("resources", ThirdPartyNoticesFile), []string{
-			"MyGo", "libghostty-vt", "MoshCatty", "EternalTerminal", "Netcatty",
-			"mosh-go", "554b9d305e7ac4b11de740d764bbc3e05f816d7b",
+			"MyGo", "libghostty-vt", "EternalTerminal", "Netcatty",
+			"mosh-go", "0284bd652aab3dfff5b0b74945c23901d7537b61",
 		}},
 	}
 }

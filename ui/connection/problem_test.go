@@ -6,9 +6,7 @@ import (
 	"testing"
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
-	etmodel "github.com/mslxl/natcatty/domain/model/et"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
-	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
@@ -105,49 +103,16 @@ func TestSecurityKeyMessagesExistInEveryLocale(t *testing.T) {
 	}
 }
 
-// TestProblemTextForNamesTransportImplementationFailures checks the typed
-// fail-closed errors of ticket 21 reach the user as actionable text, not the
-// generic internal fallback.
-func TestProblemTextForNamesTransportImplementationFailures(t *testing.T) {
+func TestProblemTextForNamesMoshFailures(t *testing.T) {
 	cases := []struct {
 		name string
 		err  error
 		want func(locales.Messages) string
 	}{
-		{"unavailable", fmt.Errorf("%w: in-process", transportmodel.ErrImplementationUnavailable),
-			func(m locales.Messages) string { return m.ConnectionErrorTransportUnavailable() }},
-		{"unknown", fmt.Errorf("%w: %q", transportmodel.ErrUnknownImplementation, "future_client"),
-			func(m locales.Messages) string { return m.ConnectionErrorTransportUnknown() }},
-	}
-	for _, locale := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
-		m := locales.In(locale)
-		for _, tc := range cases {
-			if got, want := ProblemTextFor(m, tc.err), tc.want(m); got == "" || got != want {
-				t.Fatalf("%s/%s = %q, want %q", locale, tc.name, got, want)
-			}
-		}
-	}
-}
-
-func TestProblemTextForNamesMoshAndETFailures(t *testing.T) {
-	cases := []struct {
-		name string
-		err  error
-		want func(locales.Messages) string
-	}{
-		{"mosh-checksum", moshmodel.ErrChecksumMismatch, func(m locales.Messages) string { return m.ConnectionErrorMoshChecksum() }},
-		{"mosh-unavailable", moshmodel.ErrBundleUnavailable, func(m locales.Messages) string { return m.ConnectionErrorMoshUnavailable() }},
-		{"mosh-platform", moshmodel.ErrPlatformUnsupported, func(m locales.Messages) string { return m.ConnectionErrorMoshUnavailable() }},
 		{"mosh-jump", moshmodel.ErrJumpUnsupported, func(m locales.Messages) string { return m.ConnectionErrorMoshJump() }},
 		{"mosh-proxy", moshmodel.ErrProxyUnsupported, func(m locales.Messages) string { return m.ConnectionErrorMoshProxy() }},
 		{"mosh-network", moshmodel.ErrNetworkUnsupported, func(m locales.Messages) string { return m.ConnectionErrorMoshNetwork() }},
 		{"mosh-handshake", moshmodel.ErrHandshake, func(m locales.Messages) string { return m.ConnectionErrorMoshHandshake() }},
-		{"et-checksum", etmodel.ErrChecksumMismatch, func(m locales.Messages) string { return m.ConnectionErrorETChecksum() }},
-		{"et-unavailable", etmodel.ErrBundleUnavailable, func(m locales.Messages) string { return m.ConnectionErrorETUnavailable() }},
-		{"et-platform", etmodel.ErrPlatformUnsupported, func(m locales.Messages) string { return m.ConnectionErrorETUnavailable() }},
-		{"et-jump", etmodel.ErrMultipleJumpHosts, func(m locales.Messages) string { return m.ConnectionErrorETJump() }},
-		{"et-proxy", etmodel.ErrProxyUnsupported, func(m locales.Messages) string { return m.ConnectionErrorETProxy() }},
-		{"et-network", etmodel.ErrNetworkUnsupported, func(m locales.Messages) string { return m.ConnectionErrorETNetwork() }},
 	}
 	for _, locale := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
 		m := locales.In(locale)

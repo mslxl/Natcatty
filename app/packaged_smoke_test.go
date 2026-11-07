@@ -23,7 +23,6 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
-	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
@@ -484,9 +483,6 @@ func TestPackagedSmokeHostDraft(t *testing.T) {
 		normalized.Port != 2222 || normalized.Username != "alice" {
 		t.Fatalf("Mosh draft = %+v", normalized)
 	}
-	if normalized.TransportImplementation != transportmodel.InProcess {
-		t.Fatalf("Mosh implementation = %q, want in_process", normalized.TransportImplementation)
-	}
 	if normalized.ETPort != 0 {
 		t.Fatalf("Mosh draft kept ETPort = %d", normalized.ETPort)
 	}
@@ -501,9 +497,6 @@ func TestPackagedSmokeHostDraft(t *testing.T) {
 	}
 	if et.Protocol != domainvault.ProtocolET || et.ETPort != 8822 {
 		t.Fatalf("ET draft = %+v", et)
-	}
-	if et.TransportImplementation != transportmodel.InProcess {
-		t.Fatalf("ET implementation = %q, want in_process", et.TransportImplementation)
 	}
 	// Password-only auth keeps the smoke from enumerating the real ~/.ssh keys.
 	for _, draft := range []domainvault.Draft{normalized, et} {
@@ -649,14 +642,13 @@ func (f *smokeVaultFake) Create(_ context.Context, draft domainvault.Draft) (dom
 		return domainvault.Host{}, f.createErr
 	}
 	return domainvault.Host{
-		ID:                      model.HostID("host-" + string(draft.Protocol)),
-		Label:                   draft.Label,
-		Hostname:                draft.Hostname,
-		Port:                    draft.Port,
-		Username:                draft.Username,
-		Protocol:                draft.Protocol,
-		ETPort:                  draft.ETPort,
-		TransportImplementation: draft.TransportImplementation,
+		ID:       model.HostID("host-" + string(draft.Protocol)),
+		Label:    draft.Label,
+		Hostname: draft.Hostname,
+		Port:     draft.Port,
+		Username: draft.Username,
+		Protocol: draft.Protocol,
+		ETPort:   draft.ETPort,
 	}, nil
 }
 
@@ -839,9 +831,6 @@ func TestPackagedSmokeSessionSuccess(t *testing.T) {
 		t.Fatalf("protocols = %q, %q", vault.drafts[0].Protocol, vault.drafts[1].Protocol)
 	}
 	for _, draft := range vault.drafts {
-		if draft.TransportImplementation != transportmodel.InProcess {
-			t.Fatalf("%s implementation = %q", draft.Protocol, draft.TransportImplementation)
-		}
 		if draft.Password != "lab-secret" {
 			t.Fatalf("%s lost the secret", draft.Protocol)
 		}

@@ -173,8 +173,8 @@ func TestEveryFieldBelongsToAGroup(t *testing.T) {
 			t.Errorf("field %q has unknown group %q", field, group)
 		}
 	}
-	if len(seen) != 42 {
-		t.Errorf("fields = %d, want 42", len(seen))
+	if len(seen) != 41 {
+		t.Errorf("fields = %d, want 41", len(seen))
 	}
 }
 

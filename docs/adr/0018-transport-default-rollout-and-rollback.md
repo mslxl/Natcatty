@@ -13,10 +13,17 @@ reason, gate, evidence, and expiry. A rollback runbook records the triggers,
 the per-Host switch, the previous-app-release path, and the release-owner
 decision.
 
-**Status**: accepted and implemented. The default flip landed after the 27/32
-gates and the packaged artifact test jobs passed; the run-bound evidence is
-recorded in
-[transport-rollout.md](../releases/transport-rollout.md#flip-evidence).
+**Status**: accepted and implemented, then superseded by removal. The default
+flip landed after the 27/32 gates and the packaged artifact test jobs passed;
+the run-bound evidence is recorded in
+[transport-rollout.md](../releases/transport-rollout.md#flip-evidence). The
+bundled Mosh client was subsequently removed (ADR-0015). On 2026-11-07 the
+bundled ET client and the entire selection feature described here were removed:
+the `domain/model/transport` policy, the settings provenance and migration
+machinery, the per-Host override, the client-choice UI, the retention window,
+the waivers, and the bundled assets no longer exist. Both clients are
+in-process-only, old `transportImplementation` values are ignored on load, and
+no rollback switch remains.
 
 **Amends ADR-0015 and ADR-0016**: both say "No waivers" for the parity release
 gate. That rule remains in force for the parity claim itself: a gate is green
@@ -58,16 +65,19 @@ flip.
 - An explicit `bundled` choice survives every later default flip. An unknown
   value is preserved verbatim and the Session factory keeps failing closed with
   `transport.ErrUnknownImplementation`.
-- The beta is a first-class explicit choice globally and per Host, and the
-  stale "not available yet" strings are gone.
+- The in-process client is a first-class explicit choice globally and per Host
+  for EternalTerminal, and the stale "not available yet" strings are gone.
+  Mosh has one implementation and shows no choice.
 - `transportImplementation` round-trips through Netcatty JSON export/import;
   the importer also accepts the `mosh` and `et` protocol values those Hosts
   use. Unknown values survive import for the factory to reject.
-- The bundled clients remain the documented rollback path for one full release
-  cycle: release `N` (the default-switch release) plus the stable release line
-  `N+1`. Removal is eligible only in `N+2` (ticket 35), and all notices,
-  bundled assets, manifests, fetch tooling, and the source offer remain in
-  place until then.
+- The bundled ET client remained the documented rollback path for one full
+  release cycle: release `N` (the default-switch release) plus the stable
+  release line `N+1`. That retention ended early: the bundled client, its
+  notices, assets, manifests, fetch tooling, and the selection machinery were
+  removed on 2026-11-07, so no release carries a bundled transport client. The
+  bundled Mosh client had been removed earlier; every Mosh Session uses the
+  in-process client.
 - The release owner's 2026-11-06 risk acceptance for tickets 15 and 19 is
   referenced by the rollback runbook. It is not a legal certification and does
   not change the notice or source-offer requirements.
