@@ -303,6 +303,18 @@ type ExitWaiter interface {
 	Wait() (int, error)
 }
 
+// CaptureHookExpectedReporter is implemented by transports that decide after
+// connecting whether the planned capture hook was actually installed. A remote
+// peer's shell is only known once its terminal opens: a Windows OpenSSH peer
+// with an unwrappable registered shell, an unreadable default-shell setting,
+// or a single-channel connection opens a plain login shell instead of the
+// planned wrapper. Reporting false makes the Session capture the first typed
+// command through the ordinary Tier 2/3 path instead of reserving it for a
+// handshake that will never arrive.
+type CaptureHookExpectedReporter interface {
+	CaptureHookExpected() bool
+}
+
 // ResumePreserver is implemented by transports that can keep their resume
 // credentials in the secret store past Close. Close clears them by default; the
 // Session service preserves them when it abandons a transport for a reconnect
@@ -374,6 +386,13 @@ type StartSpec struct {
 	// run this command instead of the login shell. Empty keeps the login-shell
 	// behavior. Other transports ignore it.
 	RemoteCommand string
+	// CaptureHookRemote marks an SSH Session whose interactive shell startup
+	// the session capture hook owns. A transport that learns the peer platform
+	// after connecting may replace RemoteCommand with the wrapper for that
+	// platform; a transport that does not leaves it unchanged. The flag is only
+	// set by the capture hook planner and never accompanies a user-supplied
+	// RemoteCommand. Other transports ignore it.
+	CaptureHookRemote bool
 	// AutoAttachTmux asks an SSH transport to keep the remote shell in the
 	// Host's deterministic tmux session. The transport probes the remote and
 	// falls back to a plain login shell when tmux is unavailable or already
@@ -824,6 +843,12 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 			EndedAt: time.Now(), Err: err,
 		})
 		return nil, err
+	}
+	if reporter, ok := transport.(CaptureHookExpectedReporter); ok && !reporter.CaptureHookExpected() {
+		// The transport learned while connecting that the planned hook was not
+		// installed. Do not reserve the first typed command for a handshake
+		// that will never come; Tier 2/3 capture starts at the first Enter.
+		hookExpected = false
 	}
 
 	id := s.newID()

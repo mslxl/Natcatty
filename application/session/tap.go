@@ -827,8 +827,10 @@ func (t *terminalTap) handleNetcattyHook(rest string) (changed, owned bool) {
 // the prompt handshake. The tap then stops waiting for a hook that will never
 // speak: hookExpected is cleared and the current tentative capture becomes an
 // ordinary typed capture, so the prompt path finishes it and every later
-// Enter starts a normal Tier 2/3 capture. A skip that arrives after a real
-// handshake is ignored, because the installed hook stays authoritative.
+// Enter starts a normal Tier 2/3 capture. A skip that arrives while the hook
+// is active is ignored, because the installed hook stays authoritative. A
+// skip from a child shell after a nested reset is not ignored: the parent's
+// hook no longer owns the prompt, and the child needs the Tier 2/3 fallback.
 func (t *terminalTap) handleNetcattyHookSkip(rest string) (changed, owned bool) {
 	if rest != netcattyHookSkipPrefix && !strings.HasPrefix(rest, netcattyHookSkipPrefix+";") {
 		return false, false
@@ -838,8 +840,17 @@ func (t *terminalTap) handleNetcattyHookSkip(rest string) (changed, owned bool) 
 	if shell != "" && !validHookShell(shell) {
 		return false, true
 	}
-	if t.hookSeen {
-		return false, true
+	if t.hookActive {
+		if t.pending == nil || !nestedShellCommand(t.pending.command) {
+			return false, true
+		}
+		// A shell we launched nested refused its own hook. Its startup script
+		// emits the marker before its first prompt, so the outer hook is still
+		// authoritative over the outer command; the nested prompt will hand
+		// capture to the child. Only the plan's remaining expectation changes.
+		changed = t.hookExpected
+		t.hookExpected = false
+		return changed, true
 	}
 	changed = t.hookExpected
 	t.hookExpected = false
@@ -1248,6 +1259,15 @@ func (t *terminalTap) checkPrompt(now time.Time) (promptResult, *capturedCommand
 		// capture owner.
 		return t.promptNestedShellLocked(now)
 	}
+	if t.pending != nil && nestedShellCommand(t.pending.command) {
+		// A shell launched from a Tier 2 or Tier 3 capture takes the terminal
+		// too. The inner prompt finalizes the outer capture and clears the
+		// parent's native marks so the child's commands start at Tier 3
+		// unless the child emits OSC 133/7 itself.
+		if result, completion := t.promptNestedShellLocked(now); result != promptNoChange {
+			return result, completion
+		}
+	}
 	return t.promptCandidateLocked(now)
 }
 
@@ -1282,27 +1302,54 @@ func (t *terminalTap) promptNestedShellLocked(now time.Time) (promptResult, *cap
 		return promptDeferred, nil
 	}
 	t.hookActive = false
+	// The marks seen so far came from the outer shell. The child has not
+	// emitted any OSC 133/7 at this point, so its typed commands must start at
+	// Tier 3 instead of inheriting Tier 2 from the parent. A child that emits
+	// native marks sets this again for its own commands.
+	t.nativeSeen = false
 	return promptFinished, t.finalizePendingLocked(now, false, 0, false)
 }
 
 // nestedShellCommand reports whether command starts an interactive shell or an
-// attach client that takes over the terminal. A shell is only recognized when
-// every argument is an option: an operand is a script path and -c runs a
-// command, so neither produces an inner interactive prompt. The list is
-// intentionally small and conservative; an unrecognized launch keeps the
-// existing Tier 1 semantics until its D arrives.
+// attach client that takes over the terminal. The command line is split with
+// quote and escape awareness, so a launcher or an option value that contains
+// spaces ("-WorkingDirectory 'C:\dir with a space'") stays one word. A shell
+// is only recognized when every argument is an option: an operand is a script
+// path and -c runs a command, so neither produces an inner interactive prompt.
+// The list is intentionally small and conservative; an unrecognized launch
+// keeps the existing Tier 1 semantics until its D arrives.
 func nestedShellCommand(command string) bool {
-	fields := strings.Fields(strings.TrimSpace(command))
-	if len(fields) == 0 {
+	words := splitShellWords(command)
+	if len(words) == 0 {
 		return false
 	}
-	first := strings.Trim(fields[0], "\"'")
+	// PowerShell's call operator prefixes the launcher: "& pwsh" or
+	// "& 'C:\Program Files\...\pwsh.exe'". A leading ampersand is a syntax
+	// error in a POSIX shell, so unwrapping it cannot misclassify a POSIX
+	// command.
+	if words[0] == "&" {
+		words = words[1:]
+		if len(words) == 0 {
+			return false
+		}
+	} else if strings.HasPrefix(words[0], "&") {
+		words[0] = strings.TrimPrefix(words[0], "&")
+		if words[0] == "" {
+			return false
+		}
+	}
+	first := words[0]
+	// A Windows launcher may name its executable with backslashes and the
+	// optional .exe suffix; the basename is what identifies the shell.
+	first = strings.ReplaceAll(first, `\`, "/")
 	if slash := strings.LastIndexByte(first, '/'); slash >= 0 {
 		first = first[slash+1:]
 	}
+	first = strings.ToLower(strings.TrimSuffix(first, ".exe"))
+	arguments := words[1:]
 	switch first {
 	case "bash", "zsh", "fish", "sh", "dash", "ksh":
-		for _, argument := range fields[1:] {
+		for _, argument := range arguments {
 			if !strings.HasPrefix(argument, "-") {
 				return false
 			}
@@ -1314,16 +1361,160 @@ func nestedShellCommand(command string) bool {
 			}
 		}
 		return true
+	case "pwsh", "powershell":
+		// PowerShell's interactive options do not share the POSIX short
+		// forms; -Command, -File, -EncodedCommand, and -NonInteractive all
+		// end the interactive prompt unless -NoExit comes before them.
+		// Known value-taking options may carry their value as the next
+		// argument ("-ExecutionPolicy Bypass") and still open the prompt.
+		return nestedPowerShellArguments(arguments)
 	case "ssh":
 		return true
 	case "tmux":
-		if len(fields) < 2 {
+		if len(arguments) < 1 {
 			return false
 		}
-		switch fields[1] {
+		switch arguments[0] {
 		case "attach", "attach-session", "a":
 			return true
 		}
+	}
+	return false
+}
+
+// splitShellWords splits a command line into words, honoring PowerShell's
+// quoting rules: single-quoted text is literal except for a doubled quote,
+// double-quoted text allows a backtick escape, and a backtick escapes the next
+// character outside quotes. Backslashes are literal so a Windows path with
+// spaces or separators survives. Shells do not agree on every escape, but the
+// classification only needs option words and their values; an unquoted
+// backslash is common in the paths this sees.
+func splitShellWords(command string) []string {
+	words := []string{}
+	var word strings.Builder
+	inWord := false
+	flush := func() {
+		if inWord {
+			words = append(words, word.String())
+			word.Reset()
+			inWord = false
+		}
+	}
+	for index := 0; index < len(command); index++ {
+		character := command[index]
+		switch character {
+		case ' ', '\t':
+			flush()
+		case '\'':
+			inWord = true
+			for index+1 < len(command) {
+				index++
+				if command[index] != '\'' {
+					word.WriteByte(command[index])
+					continue
+				}
+				if index+1 < len(command) && command[index+1] == '\'' {
+					word.WriteByte('\'')
+					index++
+					continue
+				}
+				break
+			}
+		case '"':
+			inWord = true
+			for index+1 < len(command) {
+				index++
+				if command[index] == '`' && index+1 < len(command) {
+					index++
+					word.WriteByte(command[index])
+					continue
+				}
+				if command[index] == '"' {
+					break
+				}
+				word.WriteByte(command[index])
+			}
+		case '`':
+			inWord = true
+			if index+1 < len(command) {
+				index++
+				word.WriteByte(command[index])
+			}
+		default:
+			inWord = true
+			word.WriteByte(character)
+		}
+	}
+	flush()
+	return words
+}
+
+// nestedPowerShellArguments reports whether every argument keeps a PowerShell
+// invocation interactive. Options are case-insensitive and may be abbreviated
+// or carry a colon-attached value, so they are matched like the planner does.
+// A known value-taking option may also carry its value as the next argument.
+// -NoExit keeps the prompt after -Command, -File, or -EncodedCommand; because
+// PowerShell treats the rest of the line as that command's own arguments,
+// -NoExit only counts when it appears before them.
+func nestedPowerShellArguments(arguments []string) bool {
+	noExit := false
+	for index := 0; index < len(arguments); index++ {
+		argument := arguments[index]
+		if !strings.HasPrefix(argument, "-") || argument == "-" || argument == "--" {
+			return false
+		}
+		name := strings.ToLower(strings.TrimLeft(argument, "-"))
+		valueAttached := false
+		if base, _, found := strings.Cut(name, ":"); found {
+			name, valueAttached = base, true
+		}
+		switch {
+		case len(name) >= 3 && strings.HasPrefix("noexit", name):
+			noExit = true
+		case strings.HasPrefix("command", name),
+			strings.HasPrefix("encodedcommand", name),
+			strings.HasPrefix("file", name):
+			// Everything after the command or script belongs to it, so an
+			// earlier -NoExit is the only one that can keep the prompt.
+			return noExit
+		case len(name) >= 3 && strings.HasPrefix("noninteractive", name),
+			strings.HasPrefix("help", name), name == "?",
+			strings.HasPrefix("version", name),
+			strings.HasPrefix("embedding", name):
+			return false
+		case !valueAttached && nestedPowerShellValueOption(name):
+			if index+1 >= len(arguments) || strings.HasPrefix(arguments[index+1], "-") {
+				// The option's value is missing, so PowerShell would report
+				// an error instead of opening a prompt.
+				return false
+			}
+			index++
+		}
+	}
+	return true
+}
+
+// nestedPowerShellValueOption reports whether an option's value is the
+// following word. Without this, a value such as Bypass would look like a bare
+// script operand and the nested shell would go unrecognized.
+func nestedPowerShellValueOption(name string) bool {
+	switch {
+	case strings.HasPrefix(name, "executionpolicy"), name == "ex":
+		return true
+	case strings.HasPrefix(name, "windowstyle"), name == "w", name == "wo", name == "win", name == "wind":
+		return true
+	case strings.HasPrefix(name, "workingdirectory"), name == "wd", name == "work", name == "worki":
+		return true
+	case strings.HasPrefix(name, "configurationname"), name == "config", name == "conf", name == "con":
+		return true
+	case strings.HasPrefix(name, "settingsfile"), strings.HasPrefix(name, "custompipename"), name == "settings":
+		return true
+	case strings.HasPrefix(name, "outputformat"), name == "of", name == "o":
+		return true
+	case strings.HasPrefix(name, "inputformat"), name == "if", name == "i":
+		return true
+	case strings.HasPrefix(name, "psconsolefile"), name == "psc":
+		return true
 	}
 	return false
 }
