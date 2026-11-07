@@ -1,7 +1,8 @@
 # Packaged artifact tests in CI
 
 `.github/workflows/artifact-tests.yml` runs the app's hidden packaged-artifact
-test mode in the artifact users receive. It covers macOS, Linux, and Windows
+test mode against packages built from the same untagged app. It covers macOS,
+Linux, and Windows
 arm64. The workflow is deliberately separate from
 `.github/workflows/release.yml`: it does not publish anything, does not change
 the release asset set, and is not a release gate.
@@ -15,7 +16,6 @@ hosted run can settle.
 
 | Trigger | Behavior |
 | --- | --- |
-| `workflow_call` | Reusable with no inputs. Nothing in `release.yml` calls it yet. |
 | `pull_request` | Runs only when the app, the driver, `scripts/release.nu`, the legal texts, the source-offer tool, `resources/**`, `mygo.json`, `go.mod`, `go.sum`, or this workflow changes. A docs-only change does not run it. |
 | `push` to `main` | Runs the full matrix only when one of the same paths changes; an unrelated main push skips the workflow. |
 | `workflow_dispatch` | Manual run from the Actions tab or `gh`; it bypasses the path filters. |
@@ -165,8 +165,7 @@ gh run list --workflow artifact-tests.yml
 `workflow_dispatch` only appears for a workflow GitHub has registered from the
 default branch. A `pull_request` run starts automatically when one of the
 path-filtered changes above lands, and a manual dispatch runs on any branch.
-The `workflow_call` trigger has no inputs and is reserved for a future release
-integration; `release.yml` does not call it now.
+The workflow is not reusable: `release.yml` does not call it.
 
 ## Local reproduction
 

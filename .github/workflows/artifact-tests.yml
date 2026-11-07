@@ -4,9 +4,10 @@ name: artifact-tests
 #
 # This workflow is deliberately separate from release.yml: it is not called by
 # the release workflow, does not change the published asset set, and is not a
-# release gate. It builds the same untagged app users receive, launches it from
-# the package, and (on macOS and Linux) drives real in-process Mosh and ET
-# Sessions against pinned stock lab servers.
+# release gate. It builds the same untagged app, packages it (macOS uses one
+# universal DMG for this CI run), launches it from the package, and (on macOS
+# and Linux) drives real in-process Mosh and ET Sessions against pinned stock
+# lab servers.
 #
 # The package jobs do not fetch transport clients: no client binary is bundled,
 # and the clients exercised by the session jobs are the in-process transports.
@@ -19,7 +20,6 @@ name: artifact-tests
 # instructions, and residual CI-only risks.
 
 on:
-  workflow_call:
   pull_request:
     paths:
       - "app/**"

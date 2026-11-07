@@ -2213,11 +2213,11 @@ func jobBlock(t *testing.T, workflow, job string) string {
 	return block
 }
 
-// TestReleaseWorkflowWiresBothParityGates is the locally testable half of the
-// release contract: both reusable gates are called, their summaries and
-// artifacts are consumed by parity-verify, and no release/publish job can
-// bypass a failed gate. The Actions semantics themselves are CI-only.
-func TestReleaseWorkflowWiresBothParityGates(t *testing.T) {
+// TestParityWorkflowsUploadSummaries keeps the parity verdicts
+// machine-checkable and independent of the release workflow: each workflow
+// uploads its summary, and release.yml neither calls the parity workflows nor
+// gates publication on them. The Actions semantics themselves are CI-only.
+func TestParityWorkflowsUploadSummaries(t *testing.T) {
 	root := repoRootAbs(t)
 	read := func(name string) string {
 		t.Helper()
@@ -2230,7 +2230,6 @@ func TestReleaseWorkflowWiresBothParityGates(t *testing.T) {
 
 	etWorkflow := read("et-parity.yml")
 	for _, want := range []string{
-		"workflow_call:",
 		"name: et-parity-summary",
 		"path: ${{ env.ET_PARITY_OUT }}/summary.json",
 		"if: always()",
@@ -2242,9 +2241,11 @@ func TestReleaseWorkflowWiresBothParityGates(t *testing.T) {
 			t.Fatalf("et-parity.yml lacks %q", want)
 		}
 	}
+	if strings.Contains(etWorkflow, "workflow_call:") {
+		t.Fatal("et-parity.yml is still callable from the release workflow")
+	}
 	moshWorkflow := read("mosh-parity.yml")
 	for _, want := range []string{
-		"workflow_call:",
 		"name: mosh-parity-summary",
 		"path: build/mosh-parity/summary.json",
 	} {
@@ -2252,41 +2253,26 @@ func TestReleaseWorkflowWiresBothParityGates(t *testing.T) {
 			t.Fatalf("mosh-parity.yml lacks %q", want)
 		}
 	}
+	if strings.Contains(moshWorkflow, "workflow_call:") {
+		t.Fatal("mosh-parity.yml is still callable from the release workflow")
+	}
 
 	release := read("release.yml")
-	for _, want := range []string{
+	for _, unwanted := range []string{
 		"uses: ./.github/workflows/mosh-parity.yml",
 		"uses: ./.github/workflows/et-parity.yml",
 		"parity-verify:",
-		"pattern: mosh-parity-*",
-		"pattern: et-parity-*",
-		"Require both gate summaries",
 		"moshparity verify",
 		"etparity verify",
 		"-require-summary",
-		"ref: ${{ github.sha }}",
 	} {
-		if !strings.Contains(release, want) {
-			t.Fatalf("release.yml lacks %q", want)
-		}
-	}
-	for _, job := range []string{"mosh-parity", "et-parity"} {
-		block := jobBlock(t, release, job)
-		if strings.Contains(block, "\n    with:") || strings.Contains(block, "\n    with:\n") {
-			t.Fatalf("%s takes an input that could redirect the gate", job)
-		}
-		if !strings.Contains(block, "uses: ./.github/workflows/"+job+".yml") {
-			t.Fatalf("%s does not call its reusable workflow", job)
-		}
-	}
-	for _, job := range []string{"checksums", "publish"} {
-		if !strings.Contains(jobBlock(t, release, job), "- parity-verify") {
-			t.Fatalf("%s does not depend on parity-verify", job)
+		if strings.Contains(release, unwanted) {
+			t.Fatalf("release.yml still couples parity into the release: %q", unwanted)
 		}
 	}
 	publish := jobBlock(t, release, "publish")
 	if strings.Contains(publish, "if: always()") {
-		t.Fatal("publish waives a failed gate with always()")
+		t.Fatal("publish waives a failed prerequisite with always()")
 	}
 	if !strings.Contains(publish, "if: success() && github.event_name == 'push'") {
 		t.Fatal("publish does not require success() before publishing")

@@ -1,13 +1,11 @@
 name: mosh-parity
 
-# Release gate for the in-process mosh client. Every required matrix cell runs
+# CI gate for the in-process mosh client. Every required matrix cell runs
 # against real stock mosh-server / mosh-client binaries over real UDP; the
-# final `verify` job fails closed over the per-cell reports. Ticket 34's
-# default switch must require this workflow (or run `moshparity verify` on the
-# same reports) and must not treat a missing or failed cell as green.
+# final `verify` job fails closed over the per-cell reports. Runs on changes to
+# the mosh client, the session layer, or the parity tool, and on demand.
 on:
   workflow_dispatch:
-  workflow_call:
   push:
     branches:
       - main
@@ -32,6 +30,10 @@ on:
       - ".github/workflows/mosh-parity.yml"
       - "go.mod"
       - "go.sum"
+
+concurrency:
+  group: mosh-parity-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -61,8 +63,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # Pin the called workflow's checkout to the caller's commit so a
-          # release gate cannot follow a force-moved tag between jobs.
+          # Pin every job to the workflow's commit so a force-moved tag cannot
+          # mix trees between jobs.
           ref: ${{ github.sha }}
 
       - name: Set up Go
@@ -96,8 +98,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # Pin the called workflow's checkout to the caller's commit so a
-          # release gate cannot follow a force-moved tag between jobs.
+          # Pin every job to the workflow's commit so a force-moved tag cannot
+          # mix trees between jobs.
           ref: ${{ github.sha }}
 
       - name: Set up Go
@@ -129,8 +131,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # Pin the called workflow's checkout to the caller's commit so a
-          # release gate cannot follow a force-moved tag between jobs.
+          # Pin every job to the workflow's commit so a force-moved tag cannot
+          # mix trees between jobs.
           ref: ${{ github.sha }}
 
       - name: Set up Go
@@ -165,8 +167,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # Pin the called workflow's checkout to the caller's commit so a
-          # release gate cannot follow a force-moved tag between jobs.
+          # Pin every job to the workflow's commit so a force-moved tag cannot
+          # mix trees between jobs.
           ref: ${{ github.sha }}
 
       - name: Set up Go
@@ -223,8 +225,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # Pin the called workflow's checkout to the caller's commit so a
-          # release gate cannot follow a force-moved tag between jobs.
+          # Pin every job to the workflow's commit so a force-moved tag cannot
+          # mix trees between jobs.
           ref: ${{ github.sha }}
 
       - name: Set up Go
@@ -244,15 +246,15 @@ jobs:
         # Pin the expected commit to GitHub's SHA so a report from another
         # checkout cannot be mistaken for this run; verify also fails closed
         # when no commit can be determined at all. Run unconditionally so a
-        # failed download still produces a fail summary.json for ticket 34.
+        # failed download still produces a fail summary.json.
         if: always()
         run: >-
           go run ./internal/tools/moshparity verify
           -dir build/mosh-parity -commit '${{ github.sha }}'
 
-      # summary.json is the machine-readable verdict for the default switch
-      # (ticket 34). It is uploaded even when verify fails, so a failed gate
-      # still leaves the per-cell verdict on the run.
+      # summary.json is the machine-readable verdict for the parity matrix. It
+      # is uploaded even when verify fails, so a failed gate still leaves the
+      # per-cell verdict on the run.
       - name: Upload summary.json
         if: always()
         uses: actions/upload-artifact@v4

@@ -1,11 +1,9 @@
 name: et-parity
 
 on:
-  # Reusable from the release workflow (ticket 34). Automatic runs are limited
-  # to the ET client, the session layer it uses, and its parity tool; a manual
-  # dispatch still runs the full matrix on any ref. Reusable calls ignore the
-  # path filters, so the release gate always runs.
-  workflow_call:
+  # Automatic runs are limited to the ET client, the session layer it uses,
+  # and its parity tool; a manual dispatch still runs the full matrix on any
+  # ref.
   pull_request:
     paths:
       - "adapters/et/**"
@@ -63,8 +61,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # Pin the called workflow's checkout to the caller's commit so a
-          # release gate cannot follow a force-moved tag between jobs.
+          # Pin every job to the workflow's commit so a force-moved tag cannot
+          # mix trees between jobs.
           ref: ${{ github.sha }}
 
       - name: Set up Go
@@ -105,8 +103,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # Pin the called workflow's checkout to the caller's commit so a
-          # release gate cannot follow a force-moved tag between jobs.
+          # Pin every job to the workflow's commit so a force-moved tag cannot
+          # mix trees between jobs.
           ref: ${{ github.sha }}
 
       - name: Set up Go
@@ -181,8 +179,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # Pin the called workflow's checkout to the caller's commit so a
-          # release gate cannot follow a force-moved tag between jobs.
+          # Pin every job to the workflow's commit so a force-moved tag cannot
+          # mix trees between jobs.
           ref: ${{ github.sha }}
 
       - name: Set up Go
@@ -237,8 +235,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # Pin the called workflow's checkout to the caller's commit so a
-          # release gate cannot follow a force-moved tag between jobs.
+          # Pin every job to the workflow's commit so a force-moved tag cannot
+          # mix trees between jobs.
           ref: ${{ github.sha }}
 
       - name: Set up Go
@@ -281,9 +279,9 @@ jobs:
           -job-result "macos-native=${MACOS_JOB_RESULT}"
           -job-result "fuzz=${FUZZ_JOB_RESULT}"
 
-      # summary.json is the machine-readable verdict for the default switch
-      # (ticket 34). etparity writes it on pass and fail, so a failed gate
-      # still leaves per-cell/per-fuzz evidence on the run.
+      # summary.json is the machine-readable verdict for the parity matrix.
+      # etparity writes it on pass and fail, so a failed gate still leaves
+      # per-cell/per-fuzz evidence on the run.
       - name: Upload summary.json
         if: always()
         uses: actions/upload-artifact@v4

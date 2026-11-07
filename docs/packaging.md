@@ -17,18 +17,18 @@ keeps the SemVer form.
 
 | Platform | Artifact | Notes |
 | --- | --- | --- |
-| macOS (universal) | `natcatty-0.1.0-macos-universal.dmg` | Contains `Natcatty.app` for arm64 and amd64. Ad hoc signed only. |
+| macOS arm64 (Apple Silicon) | `natcatty-0.1.0-macos-arm64.dmg` | Contains a native arm64 `Natcatty.app`. Ad hoc signed only. |
+| macOS amd64 (Intel) | `natcatty-0.1.0-macos-amd64.dmg` | Contains a native amd64 `Natcatty.app`. Ad hoc signed only. |
 | Windows amd64 | `natcatty-0.1.0-windows-amd64-setup.exe` | NSIS installer, unsigned. The raw `Natcatty.exe` and its resources are the build inputs. |
 | Windows amd64 | `natcatty-0.1.0-windows-amd64-portable.zip` | The raw executable and resources, without the NSIS installer. |
 | Linux amd64 | `natcatty-0.1.0-linux-amd64.tar.gz`, `natcatty-0.1.0-linux-amd64.deb` | The tarball holds the executable and resources. MyGo's standalone `install.sh` is removed and not published. |
-| Linux arm64 | `natcatty-0.1.0-linux-arm64.tar.gz`, `natcatty-0.1.0-linux-arm64.deb` | Same shape; the arm64 bundle selects the arm64 transport clients. |
+| Linux arm64 | `natcatty-0.1.0-linux-arm64.tar.gz`, `natcatty-0.1.0-linux-arm64.deb` | Same shape. |
 
 Every artifact copies the `resources/` tree next to the executable (inside
 `Contents/Resources` on macOS). That includes `THIRD-PARTY-NOTICES.md`,
 `LICENSE`, `NOTICE`, `SOURCE-OFFER.md`, `CHANGELOG.md`, the ET metadata and
-licenses, the platform ET client fetched for the build, `icon.png`, and the
-`mygo.json` release manifest. `CHANGELOG.md` ships as
-product documentation. `LICENSE`, `NOTICE`, and the third-party notices are
+licenses, `icon.png`, and the `mygo.json` release manifest. `CHANGELOG.md`
+ships as product documentation. `LICENSE`, `NOTICE`, and the third-party notices are
 also read by the in-app **Settings → About & Licenses** area. The five locale
 catalogs (`en`, `es`, `ru`, `zh-CN`, `zh-TW`) are compiled into the executable
 with `go:embed`; they are not loose files. `SOURCE-OFFER.md` is generated for
@@ -41,7 +41,7 @@ Build the platform you can package on its own machine:
 ```sh
 go tool mygo build -platform windows/amd64 -o dist
 go tool mygo build -platform linux/amd64,linux/arm64 -o dist
-go tool mygo build -platform darwin/universal -o dist
+go tool mygo build -platform darwin/arm64,darwin/amd64 -o dist
 ```
 
 The DMG and its `hdiutil` steps need macOS. Windows NSIS needs Windows, where
@@ -164,7 +164,7 @@ check still fails as before.
 
 | Artifact | Launch | Session | Notes |
 | --- | --- | --- | --- |
-| macOS DMG (`natcatty-<version>-macos-universal.dmg`) | Yes | Yes, against local stock `sshd`/`etserver` (and `mosh-server` for Mosh) | `hdiutil attach`, run `Natcatty.app/Contents/MacOS/Natcatty`, detach. |
+| macOS DMG (CI universal build; releases publish `natcatty-<version>-macos-arm64.dmg` and `natcatty-<version>-macos-amd64.dmg`) | Yes | Yes, against local stock `sshd`/`etserver` (and `mosh-server` for Mosh) | `hdiutil attach`, run `Natcatty.app/Contents/MacOS/Natcatty`, detach. |
 | Linux `.tar.gz` (`natcatty-<version>-linux-<arch>.tar.gz`) | Yes | Yes, with a lab server on the runner | Extracts the tarball and runs under `xvfb-run` when no display is available. |
 | Windows portable zip (`natcatty-<version>-windows-amd64-portable.zip`; the artifact-tests workflow builds a windows-arm64 artifact that is not published) | Yes | No by default | Launch mode asserts the window; session mode fails closed with an `activation` result unless the lab escape hatch is set. |
 
@@ -180,7 +180,7 @@ is CI-only and is not part of the release asset set.
 
 ```sh
 # Launch test on a packaged artifact.
-nu scripts/artifact-tests.nu dist/natcatty-0.1.0-macos-universal.dmg \
+nu scripts/artifact-tests.nu dist/natcatty-0.1.0-macos-arm64.dmg \
   --mode launch --result build/artifact-tests/launch.json
 
 # Session test against a lab server (macOS/Linux).
@@ -204,28 +204,18 @@ workflow input that selects a commit: every job checks out `github.sha`, the
 commit of the pushed tag or the dispatched ref, and `validate` asserts that
 `git rev-parse HEAD` equals it.
 
-1. **validate** runs the legal package tests (`go test ./internal/legal`), reads
-   the version and pre-release flag from `mygo.json` with
-   `nu scripts/release.nu`, refuses updater or signing environment
-   variables, and pins the release commit to `github.sha`.
-2. **mosh-parity** and **et-parity** call the reusable
-   `.github/workflows/mosh-parity.yml` and `.github/workflows/et-parity.yml`
-   workflows for the release commit. Reusable workflow calls inherit the
-   caller's `GITHUB_RUN_ID`, so every cell report and fuzz receipt is bound to
-   this run; the called workflows also use the caller's `github.sha` for
-   checkout. Neither call job accepts inputs, so a release cannot point the
-   gates at another commit. See [Release parity gate](#release-parity-gate).
-3. **build** runs on `macos-latest`, `windows-latest`, and `ubuntu-latest`,
+1. **validate** reads the version and pre-release flag from `mygo.json` with
+   `nu scripts/release.nu`, refuses updater or signing environment variables,
+   and pins the release commit to `github.sha`.
+2. **build** runs on `macos-latest`, `windows-latest`, and `ubuntu-latest`,
    writes `resources/SOURCE-OFFER.md` for the manifest version with
    `go run ./internal/tools/sourceoffer`, builds with MyGo, renames every
    release artifact to its canonical name with
    `nu scripts/release.nu rename-assets`, and removes MyGo's standalone Linux
    `install.sh`. Windows also gets the portable archive, built from the app
    directory without the Setup executable by
-   `nu scripts/release.nu make-portable`. Build and package jobs remain
-   independent of the parity gates; their Actions artifacts are internal and
-   cannot be published before the gate below passes. Every platform then
-   verifies the artifact's layout and required resources:
+   `nu scripts/release.nu make-portable`. Every platform then verifies the
+   artifact's layout and required resources:
    - macOS: `hdiutil verify`, mounts the DMG, checks `Info.plist`, the version,
      the resources (including `CHANGELOG.md` and the legal documents), and
      `codesign -dv` (ad hoc, no `Authority`).
@@ -237,26 +227,16 @@ commit of the pushed tag or the dispatched ref, and `validate` asserts that
    - Linux: `dpkg-deb -f`/`-c` and `tar -tzf` must list the app, resources
      (including `CHANGELOG.md` and the legal documents), and platform transport
      clients.
-4. **parity-verify** belongs to the release commit and requires both reusable
-   gate jobs to report `success`. It downloads the `mosh-parity-*` and
-   `et-parity-*` artifacts, requires both `summary.json` files, asserts the
-   checkout is `github.sha`, and runs
-   `go run ./internal/tools/moshparity verify -require-summary` and
-   `go run ./internal/tools/etparity verify -require-summary` over the merged
-   report directories. The job runs even after a failed gate so it can report
-   which gate failed, but its first step exits non-zero for any non-`success`
-   gate result; there is no `always()` waiver on a downstream release job.
-5. **checksums** downloads the platform artifacts, flattens the release set
-   with `nu scripts/release.nu collect`, asserts the exact seven-file set, and
+3. **checksums** downloads the platform artifacts, flattens the release set
+   with `nu scripts/release.nu collect`, asserts the exact eight-file set, and
    generates one aggregate checksum manifest with relative names. Both the
    platform artifacts and the aggregate manifest are uploaded as workflow
-   artifacts. It depends on `build` and `parity-verify`, so a failed gate
-   prevents the release set from being assembled.
-6. **publish** runs only for a pushed tag, depends on `validate`, `build`,
-   `checksums`, and `parity-verify`, and is the only job with
-   `contents: write`. Its condition is
+   artifacts. It depends on `build`, so a failed build prevents the release set
+   from being assembled.
+4. **publish** runs only for a pushed tag, depends on `validate`, `build`, and
+   `checksums`, and is the only job with `contents: write`. Its condition is
    `success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')`;
-   it never uses `if: always()`, so a failed or skipped parity gate blocks
+   it never uses `if: always()`, so a failed or skipped prerequisite blocks
    publication even when the tag condition is true. It downloads the platform
    artifacts and flattens them again. It regenerates the aggregate checksum
    manifest and requires it to be byte-identical to the one the `checksums`
@@ -270,43 +250,18 @@ commit of the pushed tag or the dispatched ref, and `validate` asserts that
    never deleted. A `workflow_dispatch` run skips this job and publishes
    nothing.
 
-### Release parity gate
+### Transport parity
 
-Ticket 34 may switch the in-process transports to the default only after both
-parity gates are green. The release pipeline enforces that contract fail
-closed:
+Transport parity runs as ordinary CI, not as part of a release.
+`.github/workflows/mosh-parity.yml` and `.github/workflows/et-parity.yml` are
+triggered by pull requests and pushes to `main` that touch the corresponding
+client, the session layer, or the parity tool, and can also be started
+manually with `workflow_dispatch`. Each workflow fails closed over its matrix
+cells and uploads a machine-readable summary as `mosh-parity-summary` /
+`et-parity-summary`, so a failed gate still leaves per-cell or per-fuzz
+evidence on the run.
 
-- Both `mosh-parity` and `et-parity` are required. A skipped, cancelled, or
-  failed gate has a non-`success` result and blocks `parity-verify`; there is
-  no waiver, partial-green, or `if: always()` path around it.
-- Both gates consume the same release commit (`github.sha`) and the same CI
-  run (`GITHUB_RUN_ID`). ET reports and receipts carry the commit, tree, and
-  run ID explicitly; the mosh gate relies on the caller's run-scoped Actions
-  artifacts and verifies every report against `-commit github.sha`.
-- `parity-verify` requires a `summary.json` from each gate before it runs
-  either verifier, then passes `-require-summary` so the summary's schema,
-  status, commit, tree (ET), run ID (ET), cell verdicts, and fuzz-target
-  verdicts are checked against this run. A missing or mismatched artifact,
-  cell, fuzz receipt, commit, tree, or run ID fails the job.
-- `etparity verify` writes `summary.json` on both pass and fail; it always
-  records the schema, status, commit, tree, run ID, per-cell verdicts with
-  behavior counts and problems, per-fuzz-target verdicts with problems, and
-  gate-level problems. The ET gate workflow runs verify unconditionally and
-  passes `needs.<job>.result` with `-job-result`, so a cell or fuzz job that
-  failed after uploading apparently green evidence still fails the gate and is
-  recorded in the summary. `moshparity verify` writes its existing summary on
-  both pass and fail. Each gate workflow uploads its summary as
-  `mosh-parity-summary` / `et-parity-summary` with `if: always()`, so a failed
-  gate still leaves a machine-readable verdict on the run.
-- `checksums` and `publish` both depend on `parity-verify`. Build/package
-  jobs may run in parallel, but no artifact reaches the GitHub release until
-  the gate passes; the publish job's explicit `success()` condition is the
-  final no-waiver check.
-
-The summaries are downloaded into `build/mosh-parity/summary.json` and
-`build/et-parity/summary.json` (and are attached to the run as
-`mosh-parity-summary` and `et-parity-summary`). Locally, the same contract can
-be checked over a locally produced report directory with:
+The same verdict can be checked locally over a report directory with:
 
 ```sh
 go run ./internal/tools/moshparity verify -dir build/mosh-parity \
@@ -324,16 +279,17 @@ that run.
 A tag push creates a GitHub release for that tag. Its body is generated by
 GitHub's release-notes API from the tag's commits and merged pull requests; it
 is not written by hand and is not derived from `CHANGELOG.md`. The assets are
-the seven installers and the checksum manifest:
+the eight installers and the checksum manifest:
 
-- `natcatty-<version>-macos-universal.dmg`
+- `natcatty-<version>-macos-arm64.dmg`
+- `natcatty-<version>-macos-amd64.dmg`
 - `natcatty-<version>-windows-amd64-setup.exe`
 - `natcatty-<version>-windows-amd64-portable.zip`
 - `natcatty-<version>-linux-amd64.tar.gz`
 - `natcatty-<version>-linux-arm64.tar.gz`
 - `natcatty-<version>-linux-amd64.deb`
 - `natcatty-<version>-linux-arm64.deb`
-- the checksum manifest, which lists all seven with relative names
+- the checksum manifest, which lists all eight with relative names
 
 A tag whose version has a pre-release suffix (for example
 `v0.1.0-rc.1`) produces a GitHub pre-release instead of a normal release, and
