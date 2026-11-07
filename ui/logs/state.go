@@ -142,6 +142,22 @@ type PruneFilter struct {
 	To      string
 }
 
+// pruneSnapshot is the frozen row set the prune confirm deletes: the row IDs a
+// preview counted, the draft that produced them, and whether that draft was
+// valid. Keeping the draft lets an edited preview re-freeze from the current
+// list while a frame Refresh with an unchanged draft leaves the set alone.
+type pruneSnapshot struct {
+	ids    []string
+	filter PruneFilter
+	limit  string
+	ready  bool
+}
+
+// matches reports whether the snapshot was taken for this exact draft.
+func (s pruneSnapshot) matches(filter PruneFilter, limit string) bool {
+	return s.ready && s.filter == filter && s.limit == limit
+}
+
 // entryFilter converts the prune draft into the shared history filter. ok is
 // false for a malformed or inverted date range, which must not match rows.
 func (draft PruneFilter) entryFilter() (domainhistory.EntryFilter, bool) {
@@ -238,6 +254,12 @@ type State struct {
 	pruneFilter  PruneFilter
 	pruneLimit   string
 	pruned       int
+	// prunePreview freezes the row IDs a preview counted. A per-frame Refresh
+	// can load a matching row while the dialog is open, so ConfirmPrune must
+	// not recompute from the reloaded list: the frozen set, not the live
+	// count, is what the user confirmed. An edited draft re-freezes the set
+	// the next time the preview is computed.
+	prunePreview pruneSnapshot
 	// selectedEntryID names the history row whose detail panel is open. The
 	// panel is inline under that row, so a reload that removes the row also
 	// closes the panel without leaving it detached.
@@ -1117,7 +1139,9 @@ func (s *State) ConfirmClear() {
 }
 
 // RequestPrune opens the prune dialog seeded with the History filters the
-// user is looking at.
+// user is looking at and freezes the row IDs the preview shows. A matching row
+// loaded by a later frame is visible in the live preview count but cannot be
+// removed by the confirm, because ConfirmPrune deletes this snapshot.
 func (s *State) RequestPrune() {
 	s.pruneFilter = PruneFilter{
 		Query: s.search, Host: s.hostKey, Session: s.sessionKey, CWD: s.cwdKey,
@@ -1126,6 +1150,29 @@ func (s *State) RequestPrune() {
 	}
 	s.pruneLimit = ""
 	s.pendingPrune = true
+	s.freezePrunePreview()
+}
+
+// freezePrunePreview records the current preview's row IDs together with the
+// draft that produced them. PrunePreview re-freezes after an edit; a frame
+// Refresh with an unchanged draft leaves the snapshot alone.
+func (s *State) freezePrunePreview() {
+	s.prunePreview = pruneSnapshot{filter: s.pruneFilter, limit: s.pruneLimit}
+	entries, ok := s.prunePreviewEntries()
+	if !ok {
+		return
+	}
+	s.prunePreview.ids = pruneEntryIDs(entries)
+	s.prunePreview.ready = true
+}
+
+// pruneEntryIDs extracts the row IDs from a matched entry set.
+func pruneEntryIDs(entries []domainhistory.Entry) []string {
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		ids = append(ids, entry.ID)
+	}
+	return ids
 }
 
 // CancelPrune closes the prune dialog without changing any record.
@@ -1141,8 +1188,13 @@ func (s *State) PruneFilter() *PruneFilter { return &s.pruneFilter }
 func (s *State) PruneLimit() *string { return &s.pruneLimit }
 
 // PrunePreview reports how many live rows the current draft would remove. A
-// malformed date range or limit reports zero, and the view explains why.
+// malformed date range or limit reports zero, and the view explains why. When
+// the draft changed since the snapshot was taken, this recomputes and freezes
+// the new set, so an edited preview is the set the confirm will delete.
 func (s *State) PrunePreview() int {
+	if !s.prunePreview.matches(s.pruneFilter, s.pruneLimit) {
+		s.freezePrunePreview()
+	}
 	entries, ok := s.prunePreviewEntries()
 	if !ok {
 		return 0
@@ -1150,11 +1202,12 @@ func (s *State) PrunePreview() int {
 	return len(entries)
 }
 
-// prunePreviewEntries is the exact set the prune preview shows: the live rows
-// in the loaded journal that match the draft, newest first, with a positive
-// limit keeping the oldest matches. ConfirmPrune applies this set by identity,
-// so a row that arrives between preview and confirm cannot be removed without
-// having been counted.
+// prunePreviewEntries is the live set the prune preview counts: the rows in
+// the loaded Command History that match the draft, newest first, with a
+// positive limit keeping the oldest matches. PrunePreview freezes this set as
+// row IDs when the dialog opens or the draft changes; ConfirmPrune deletes
+// that snapshot instead of re-reading the list, so a row loaded after the
+// preview cannot be removed without having been counted.
 func (s *State) prunePreviewEntries() ([]domainhistory.Entry, bool) {
 	filter, ok := s.pruneFilter.entryFilter()
 	if !ok || s.PruneLimitProblem() {
@@ -1198,20 +1251,22 @@ func (s *State) pruneLimitValue() int {
 	return limit
 }
 
-// ConfirmPrune soft-deletes exactly the rows the preview counted. A malformed
-// draft keeps the dialog open instead of guessing what the user meant.
+// ConfirmPrune soft-deletes exactly the row IDs in the snapshot the preview
+// froze for the current draft. A draft edited since the last preview freezes
+// its set at confirm, so the confirm never deletes from a stale selection. A
+// malformed draft keeps the dialog open instead of guessing what the user
+// meant.
 func (s *State) ConfirmPrune() {
 	if s.source == nil {
 		return
 	}
-	previewed, ok := s.prunePreviewEntries()
-	if !ok {
+	if !s.prunePreview.matches(s.pruneFilter, s.pruneLimit) {
+		s.freezePrunePreview()
+	}
+	if !s.prunePreview.ready {
 		return
 	}
-	ids := make([]string, 0, len(previewed))
-	for _, entry := range previewed {
-		ids = append(ids, entry.ID)
-	}
+	ids := append([]string(nil), s.prunePreview.ids...)
 	removed, err := s.source.PruneHistoryEntries(context.Background(), ids)
 	s.problemTab = TabHistory
 	if err != nil {
