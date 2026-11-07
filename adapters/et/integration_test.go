@@ -217,21 +217,36 @@ func (c *outputCollector) signal() {
 
 func (c *outputCollector) waitFor(t *testing.T, want string, timeout time.Duration) string {
 	t.Helper()
+	text, err, found := c.waitForWithin(want, timeout)
+	if found {
+		return text
+	}
+	if err != nil {
+		t.Fatalf("terminal output ended before %q: %v; output = %q", want, err, text)
+	}
+	t.Fatalf("timed out waiting for %q; output = %q", want, text)
+	return text
+}
+
+// waitForWithin waits for want without failing the test. It reports the text
+// seen so far, the terminal read error if one ended the wait, and whether want
+// was found before the timeout.
+func (c *outputCollector) waitForWithin(want string, timeout time.Duration) (string, error, bool) {
 	deadline := time.After(timeout)
 	for {
 		c.mu.Lock()
 		text, err := c.text.String(), c.err
 		c.mu.Unlock()
 		if strings.Contains(text, want) {
-			return text
+			return text, nil, true
 		}
 		if err != nil {
-			t.Fatalf("terminal output ended before %q: %v; output = %q", want, err, text)
+			return text, err, false
 		}
 		select {
 		case <-c.updated:
 		case <-deadline:
-			t.Fatalf("timed out waiting for %q; output = %q", want, text)
+			return text, nil, false
 		}
 	}
 }
@@ -274,8 +289,24 @@ func TestInProcessAgainstStockServers(t *testing.T) {
 			if err := transport.Resize(100, 33); err != nil {
 				t.Fatalf("Resize: %v", err)
 			}
-			writeCommand(t, transport, "stty size")
-			output.waitFor(t, "33 100", 20*time.Second)
+			// The resize is queued as its own TERMINAL_INFO packet, so the
+			// input for the next command can reach the wire first and one
+			// `stty size` may still read the old size. Ask again until the
+			// shell reports the new size.
+			deadline := time.Now().Add(20 * time.Second)
+			for {
+				writeCommand(t, transport, "stty size")
+				text, err, found := output.waitForWithin("33 100", 2*time.Second)
+				if found {
+					break
+				}
+				if err != nil {
+					t.Fatalf("terminal output ended before %q: %v; output = %q", "33 100", err, text)
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("timed out waiting for %q; output = %q", "33 100", text)
+				}
+			}
 
 			writeCommand(t, transport, "exit 7")
 			code, err := waitExit(t, transport)
