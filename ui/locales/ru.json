@@ -1402,8 +1402,8 @@
   "logsFrom": "С",
   "logsTo": "По",
   "logsDateClear": "Сбросить дату",
-  "logsSourceAtuinImport": "Импорт Atuin",
-  "logsSourceAtuinSync": "Другое устройство",
+  "logsSourceAtuinImport": "Импорт из Atuin",
+  "logsSourceAtuinSync": "Синхронизация Atuin",
   "logsSessionFilter": "Сеанс",
   "logsSessionAll": "Все сеансы",
   "logsCwdFilter": "Каталог",
@@ -3535,5 +3535,9 @@
   "settingsAtuinProblemOffline": "Не удалось связаться с сервером.",
   "settingsAtuinProblemRemote": "Запрос к Atuin завершился ошибкой.",
   "settingsAtuinProblemSave": "Не удалось сохранить изменение учётной записи.",
-  "logsAtuinAccount": "Учётная запись Atuin"
+  "logsAtuinAccount": "Учётная запись Atuin",
+  "settingsAtuinLastSync": "Последняя синхронизация {time}",
+  "settingsAtuinPendingUploads": "Ожидают загрузки: {count}",
+  "settingsAtuinNextRetry": "Следующая попытка {time}",
+  "settingsAtuinSyncNow": "Синхронизировать сейчас"
 }

@@ -10595,27 +10595,27 @@ func (msgs Messages) LogsFrom() string {
 // LogsSourceAtuinImport says "Atuin import"
 // in the language the app shows.
 //
-// A command imported read-only from a Host's own Atuin history.
+// A command projected from an Atuin history import.
 func LogsSourceAtuinImport() string { return In(i18n.Locale()).LogsSourceAtuinImport() }
 
 // LogsSourceAtuinImport says "Atuin import"
 // in the language of msgs.
 //
-// A command imported read-only from a Host's own Atuin history.
+// A command projected from an Atuin history import.
 func (msgs Messages) LogsSourceAtuinImport() string {
 	return Catalog.Format(msgs.locale, "logsSourceAtuinImport", nil)
 }
 
-// LogsSourceAtuinSync says "Another device"
+// LogsSourceAtuinSync says "Atuin sync"
 // in the language the app shows.
 //
-// A command downloaded from another device through Atuin sync.
+// A command downloaded from another Atuin device.
 func LogsSourceAtuinSync() string { return In(i18n.Locale()).LogsSourceAtuinSync() }
 
-// LogsSourceAtuinSync says "Another device"
+// LogsSourceAtuinSync says "Atuin sync"
 // in the language of msgs.
 //
-// A command downloaded from another device through Atuin sync.
+// A command downloaded from another Atuin device.
 func (msgs Messages) LogsSourceAtuinSync() string {
 	return Catalog.Format(msgs.locale, "logsSourceAtuinSync", nil)
 }
@@ -26492,4 +26492,50 @@ func LogsAtuinAccount() string { return In(i18n.Locale()).LogsAtuinAccount() }
 // in the language of msgs.
 func (msgs Messages) LogsAtuinAccount() string {
 	return Catalog.Format(msgs.locale, "logsAtuinAccount", nil)
+}
+
+// SettingsAtuinLastSync says "Last sync {time}"
+// in the language the app shows.
+func SettingsAtuinLastSync(time_ string) string {
+	return In(i18n.Locale()).SettingsAtuinLastSync(time_)
+}
+
+// SettingsAtuinLastSync says "Last sync {time}"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinLastSync(time_ string) string {
+	return Catalog.Format(msgs.locale, "settingsAtuinLastSync", map[string]any{"time": time_})
+}
+
+// SettingsAtuinPendingUploads says "Pending uploads: {count}"
+// in the language the app shows.
+func SettingsAtuinPendingUploads(count string) string {
+	return In(i18n.Locale()).SettingsAtuinPendingUploads(count)
+}
+
+// SettingsAtuinPendingUploads says "Pending uploads: {count}"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinPendingUploads(count string) string {
+	return Catalog.Format(msgs.locale, "settingsAtuinPendingUploads", map[string]any{"count": count})
+}
+
+// SettingsAtuinNextRetry says "Next retry {time}"
+// in the language the app shows.
+func SettingsAtuinNextRetry(time_ string) string {
+	return In(i18n.Locale()).SettingsAtuinNextRetry(time_)
+}
+
+// SettingsAtuinNextRetry says "Next retry {time}"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinNextRetry(time_ string) string {
+	return Catalog.Format(msgs.locale, "settingsAtuinNextRetry", map[string]any{"time": time_})
+}
+
+// SettingsAtuinSyncNow says "Sync now"
+// in the language the app shows.
+func SettingsAtuinSyncNow() string { return In(i18n.Locale()).SettingsAtuinSyncNow() }
+
+// SettingsAtuinSyncNow says "Sync now"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinSyncNow() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinSyncNow", nil)
 }

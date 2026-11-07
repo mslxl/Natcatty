@@ -456,13 +456,37 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 
 	// The single Atuin account lives beside the Vault. Its token and master
 	// key use the dedicated field-secret entity, never the Vault sync payload.
-	// The real HTTP Remote factory arrives with the sync engine; until then
-	// nil makes every remote operation fail closed as unavailable rather than
-	// silently using the test fake in production.
+	// The real HTTP Remote factory arrives with the sync engine's transport
+	// ticket; until then nil makes every remote operation fail closed as
+	// unavailable rather than silently using the test fake in production.
+	historySecrets := store.OpenHistorySecrets(secretStore)
 	historyAccountService := historysync.NewAccountService(
-		preferenceService, store.OpenHistorySecrets(secretStore), database, nil)
+		preferenceService, historySecrets, database, nil)
+	// The background engine owns scheduling, download/apply, upload, and retry.
+	// Capture only signals it: history subscriptions never block the write.
+	historySyncService := historysync.NewService(
+		preferenceService, historySecrets, database, nil,
+		historysync.WithSyncCompleted(func(result historysync.SyncResult) {
+			// Downloaded projections are written through the store, so the
+			// History surface and autocomplete only learn about them here.
+			if result.Applied == 0 {
+				return
+			}
+			historyService.NotifyExternalChange()
+			autocompleteService.Load(context.Background())
+		}))
+	historySyncService.Start(context.Background())
+	defer historySyncService.Stop()
+	historySyncService.Subscribe(invalidate)
+	historyService.SubscribeLocal(func() { historySyncService.NotifyLocalChange() })
 	atuinState = settings.NewAtuinState(historyAccountService,
-		settings.WithAtuinRedrawRequest(invalidate))
+		settings.WithAtuinRedrawRequest(invalidate),
+		settings.WithAtuinSyncStatus(historySyncService.Status),
+		settings.WithAtuinSyncNow(func() {
+			// A manual run must not block the UI thread. Concurrent triggers
+			// coalesce inside the engine, and its status drives the redraw.
+			go func() { _, _ = historySyncService.SyncNow(context.Background()) }()
+		}))
 
 	// Local backups snapshot the Vault after committed changes. The store keeps
 	// its own keychain key, separate from the field-secret key, so a backup can
@@ -1405,6 +1429,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		mygo.App.Quit,
 	)
 	windows.SetCloseToTray(desktopCtl.HideOnClose)
+	// Regaining focus asks the sync engine for a debounced run. Every window
+	// reports focus through the same hook, so a detached Session works too.
+	windows.SetFocusHandler(historySyncService.NotifyFocus)
 	// The Security preference governs close intent live.
 	windows.SetSessionConfirmation(func() bool {
 		return preferenceService.Settings().Security.ConfirmCloseSessions

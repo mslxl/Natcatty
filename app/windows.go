@@ -179,11 +179,14 @@ type windowManager struct {
 	// confirmPolicy asks the Security preference whether closing Sessions
 	// needs a confirmation. Nil keeps the original behavior (always ask).
 	confirmPolicy func() bool
-	main          hostWindow
-	settings      hostWindow
-	detached      map[model.TabID]hostWindow
-	forceClose    map[string]bool
-	quitting      bool
+	// onFocus runs after any window gains focus, beside the App Lock activity
+	// record. The sync engine uses it for its debounced focus trigger.
+	onFocus    func()
+	main       hostWindow
+	settings   hostWindow
+	detached   map[model.TabID]hostWindow
+	forceClose map[string]bool
+	quitting   bool
 	// mainFocuses counts FocusMain calls so the desktop test can observe that
 	// a second launch raised the existing main window.
 	mainFocuses int
@@ -606,6 +609,10 @@ func (m *windowManager) SetCloseToTray(policy func() bool) {
 	m.closeToTray = policy
 }
 
+// SetFocusHandler installs the callback every window focus runs after the
+// App Lock activity record. The handler must not block the UI thread.
+func (m *windowManager) SetFocusHandler(fn func()) { m.onFocus = fn }
+
 func (m *windowManager) allowDetachedClose(tabID model.TabID) bool {
 	key := "detached:" + string(tabID)
 	if m.quitting || m.forceClose[key] {
@@ -661,6 +668,9 @@ func (m *windowManager) confirmSessions(count int, quitting bool) bool {
 func (m *windowManager) recordActivity() {
 	if m.gate != nil {
 		m.gate.RecordActivity()
+	}
+	if m.onFocus != nil {
+		m.onFocus()
 	}
 }
 

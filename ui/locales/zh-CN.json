@@ -1403,7 +1403,7 @@
   "logsTo": "结束日期",
   "logsDateClear": "清除日期",
   "logsSourceAtuinImport": "Atuin 导入",
-  "logsSourceAtuinSync": "其他设备",
+  "logsSourceAtuinSync": "Atuin 同步",
   "logsSessionFilter": "会话",
   "logsSessionAll": "所有会话",
   "logsCwdFilter": "目录",
@@ -3535,5 +3535,9 @@
   "settingsAtuinProblemOffline": "无法连接到服务器。",
   "settingsAtuinProblemRemote": "Atuin 请求失败。",
   "settingsAtuinProblemSave": "无法保存账户更改。",
-  "logsAtuinAccount": "Atuin 账户"
+  "logsAtuinAccount": "Atuin 账户",
+  "settingsAtuinLastSync": "上次同步 {time}",
+  "settingsAtuinPendingUploads": "待上传：{count}",
+  "settingsAtuinNextRetry": "下次重试 {time}",
+  "settingsAtuinSyncNow": "立即同步"
 }

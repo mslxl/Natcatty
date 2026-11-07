@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mslxl/natcatty/adapters/atuin/fake"
 	historysync "github.com/mslxl/natcatty/application/historysync"
+	"github.com/mslxl/natcatty/application/historysync/fake"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	atuinmodel "github.com/mslxl/natcatty/domain/model/atuin"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"

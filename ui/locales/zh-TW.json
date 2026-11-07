@@ -1403,7 +1403,7 @@
   "logsTo": "結束日期",
   "logsDateClear": "清除日期",
   "logsSourceAtuinImport": "Atuin 匯入",
-  "logsSourceAtuinSync": "其他裝置",
+  "logsSourceAtuinSync": "Atuin 同步",
   "logsSessionFilter": "工作階段",
   "logsSessionAll": "所有工作階段",
   "logsCwdFilter": "目錄",
@@ -3535,5 +3535,9 @@
   "settingsAtuinProblemOffline": "無法連線到伺服器。",
   "settingsAtuinProblemRemote": "Atuin 請求失敗。",
   "settingsAtuinProblemSave": "無法儲存帳戶變更。",
-  "logsAtuinAccount": "Atuin 帳戶"
+  "logsAtuinAccount": "Atuin 帳戶",
+  "settingsAtuinLastSync": "上次同步 {time}",
+  "settingsAtuinPendingUploads": "待上傳：{count}",
+  "settingsAtuinNextRetry": "下次重試 {time}",
+  "settingsAtuinSyncNow": "立即同步"
 }

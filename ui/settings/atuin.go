@@ -63,6 +63,20 @@ func WithAtuinRedrawRequest(fn func()) AtuinOption {
 	return func(s *AtuinState) { s.requestRedraw = fn }
 }
 
+// WithAtuinSyncStatus supplies the background sync engine's live status. The
+// panel merges its last sync time, pending upload count, next retry, and
+// state over the account status so the user sees progress without opening the
+// engine. A nil provider leaves the account status unchanged.
+func WithAtuinSyncStatus(fn func() historysync.SyncStatus) AtuinOption {
+	return func(s *AtuinState) { s.syncStatus = fn }
+}
+
+// WithAtuinSyncNow supplies the manual trigger. The callback must not block:
+// the engine coalesces a manual run with any scheduled one.
+func WithAtuinSyncNow(fn func()) AtuinOption {
+	return func(s *AtuinState) { s.syncNow = fn }
+}
+
 // AtuinState owns the Logs area's one-account panel. Credentials exist only
 // in the bounded string fields while the user types; a successful login or
 // key save clears them. The state never renders or logs them.
@@ -82,6 +96,8 @@ type AtuinState struct {
 
 	lastHistory   domainpreferences.History
 	requestRedraw func()
+	syncStatus    func() historysync.SyncStatus
+	syncNow       func()
 }
 
 // NewAtuinState returns the account panel state for account.
@@ -96,12 +112,34 @@ func NewAtuinState(account HistoryAccount, opts ...AtuinOption) *AtuinState {
 	return state
 }
 
-// Status returns the last account status the service reported.
+// Status returns the account status with the live sync engine fields merged in.
+// The account service owns the identity and key state; the engine owns sync
+// progress, so the panel shows the engine's state, last sync time, pending
+// upload count, and next retry without waiting for an account action.
 func (s *AtuinState) Status() historysync.Status {
 	if s == nil {
 		return historysync.Status{}
 	}
-	return s.status
+	status := s.status
+	if s.syncStatus == nil {
+		return status
+	}
+	synced := s.syncStatus()
+	if synced.State != "" {
+		status.State = synced.State
+	}
+	if synced.Problem != "" {
+		status.Problem = synced.Problem
+	}
+	if synced.ServerVersion != "" {
+		status.ServerVersion = synced.ServerVersion
+	}
+	if !synced.LastSyncAt.IsZero() {
+		status.LastSyncAt = synced.LastSyncAt
+	}
+	status.PendingUploads = synced.PendingUploads
+	status.NextRetryAt = synced.NextRetryAt
+	return status
 }
 
 // Problem returns the localized action problem code.
@@ -180,6 +218,16 @@ func (s *AtuinState) Login(serverURL, username string, authMode atuinmodel.AuthM
 		s.password = ""
 		s.token = ""
 	}
+	s.redraw()
+}
+
+// SyncNow asks the engine for one manual run. The engine coalesces it with a
+// scheduled run, so the call is safe to make from the UI thread.
+func (s *AtuinState) SyncNow() {
+	if s == nil || s.syncNow == nil {
+		return
+	}
+	s.syncNow()
 	s.redraw()
 }
 

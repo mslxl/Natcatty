@@ -1,6 +1,9 @@
 package settings
 
 import (
+	"strconv"
+	"time"
+
 	"github.com/egoist/mygo/ui"
 
 	historysync "github.com/mslxl/natcatty/application/historysync"
@@ -107,6 +110,24 @@ func atuinStatusRow(c *ui.Context, state *AtuinState, m locales.Messages, t *ui.
 	if status.AccountID != "" {
 		ui.Text(c, m.SettingsAtuinAccountID(status.AccountID)).FontSize(11).TextColor(t.TextMuted)
 	}
+	if !status.LastSyncAt.IsZero() {
+		ui.Text(c, m.SettingsAtuinLastSync(atuinSyncTime(status.LastSyncAt))).
+			FontSize(11).TextColor(t.TextMuted)
+	}
+	if status.PendingUploads > 0 {
+		ui.Text(c, m.SettingsAtuinPendingUploads(strconv.Itoa(status.PendingUploads))).
+			FontSize(11).TextColor(t.TextMuted)
+	}
+	if !status.NextRetryAt.IsZero() {
+		ui.Text(c, m.SettingsAtuinNextRetry(atuinSyncTime(status.NextRetryAt))).
+			FontSize(11).TextColor(uitheme.WarningText(t))
+	}
+}
+
+// atuinSyncTime renders a sync timestamp in the user's local zone, matching
+// the other device-local settings timestamps.
+func atuinSyncTime(at time.Time) string {
+	return at.Local().Format("2006-01-02 15:04")
 }
 
 func atuinLoginControls(c *ui.Context, state *AtuinState, prefs *PreferencesState,
@@ -158,6 +179,10 @@ func atuinLoginControls(c *ui.Context, state *AtuinState, prefs *PreferencesStat
 		if status.Configured {
 			if ui.Button(c, m.SettingsAtuinCheck()).Clicked() {
 				state.Check()
+				c.Invalidate()
+			}
+			if ui.Button(c, m.SettingsAtuinSyncNow()).Clicked() {
+				state.SyncNow()
 				c.Invalidate()
 			}
 		}

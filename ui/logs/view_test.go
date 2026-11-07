@@ -334,6 +334,43 @@ func TestHistoryTabRendersRowsAndOpensTheRelatedTerminal(t *testing.T) {
 	assertNoHorizontalOverflow(t, tt, 1100, 720)
 }
 
+// TestHistoryRowsLabelAtuinImportAndSyncProvenance proves downloaded and
+// imported Atuin rows are labelled by provenance, not reported as local
+// Sessions, and that the source filter separates the two.
+func TestHistoryRowsLabelAtuinImportAndSyncProvenance(t *testing.T) {
+	m := locales.In("en")
+	now := time.Now()
+	source := &fakeSource{entries: []domainhistory.Entry{
+		{
+			ID: "imported", Scope: "local", Command: "imported-command",
+			Origin: "alice@laptop", RecordedAt: now,
+			Source: domainhistory.SourceAtuinImport,
+		},
+		{
+			ID: "synced", Scope: "local", Command: "synced-command",
+			Origin: "bob@desktop", RecordedAt: now.Add(-time.Minute),
+			Source: domainhistory.SourceAtuinSync,
+		},
+	}}
+	tt, state := newProductionLogsView(t, 1100, 720, source, &fakeActions{})
+	state.SelectTab(TabHistory)
+	tt.Frame()
+
+	for _, want := range []string{
+		m.LogsSourceAtuinImport(), m.LogsProvenanceAtuinSync(),
+		"imported-command", "synced-command",
+	} {
+		if !textsContain(tt, want) {
+			t.Fatalf("%q is not rendered: %v", want, tt.Texts())
+		}
+	}
+	state.SetSourceFilter(domainhistory.SourceAtuinSync)
+	tt.Frame()
+	if textsContain(tt, "imported-command") || !textsContain(tt, "synced-command") {
+		t.Fatalf("source filter did not isolate sync rows: %v", tt.Texts())
+	}
+}
+
 // TestHistoryRowsShowCapturedFieldsAndUnknownLabels proves the History list
 // shows cwd, duration, and start time plus provenance, exit, and tier badges,
 // and labels a field the Session never observed instead of showing a

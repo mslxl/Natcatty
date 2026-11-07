@@ -138,10 +138,11 @@ type Service struct {
 	newHistoryRecordID func() string
 	newWriterID        func() string
 
-	mu         sync.Mutex
-	revision   uint64
-	listeners  map[int]func()
-	nextListen int
+	mu             sync.Mutex
+	revision       uint64
+	listeners      map[int]func()
+	localListeners map[int]func()
+	nextListen     int
 }
 
 // NewService returns a Service over store. A nil retention keeps every
@@ -155,6 +156,7 @@ func NewService(store Store, opts ...Option) *Service {
 		newHistoryRecordID: newHistoryID,
 		newWriterID:        newHistoryID,
 		listeners:          make(map[int]func()),
+		localListeners:     make(map[int]func()),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -739,23 +741,43 @@ func (s *Service) Prune(ctx context.Context) (PruneResult, error) {
 	return result, nil
 }
 
-// Subscribe registers fn for record and prune changes. It returns an
-// unsubscribe function. The callback runs outside the service lock and only
-// asks the UI for a redraw.
+// Subscribe registers fn for every record and prune change, including rows
+// another component projected into the journal. It returns an unsubscribe
+// function. The callback runs outside the service lock and only asks the UI
+// for a redraw.
 func (s *Service) Subscribe(fn func()) func() {
+	return s.subscribe(s.listeners, fn)
+}
+
+// SubscribeLocal registers fn only for rows this device recorded, deleted, or
+// pruned. The background sync engine uses it to schedule an upload without a
+// downloaded page looking like a new local capture.
+func (s *Service) SubscribeLocal(fn func()) func() {
+	return s.subscribe(s.localListeners, fn)
+}
+
+func (s *Service) subscribe(listeners map[int]func(), fn func()) func() {
 	if fn == nil {
 		return func() {}
 	}
 	s.mu.Lock()
 	id := s.nextListen
 	s.nextListen++
-	s.listeners[id] = fn
+	listeners[id] = fn
 	s.mu.Unlock()
 	return func() {
 		s.mu.Lock()
-		delete(s.listeners, id)
+		delete(listeners, id)
 		s.mu.Unlock()
 	}
+}
+
+// NotifyExternalChange reports rows another component wrote directly through
+// the store, as the sync engine does when it applies a downloaded page. UI
+// observers reload; local-write observers do not, because nothing new is
+// waiting to be uploaded.
+func (s *Service) NotifyExternalChange() {
+	s.notifyListeners(false)
 }
 
 // Revision increments on every change, so a UI that misses a callback can
@@ -767,11 +789,20 @@ func (s *Service) Revision() uint64 {
 }
 
 func (s *Service) notify() {
+	s.notifyListeners(true)
+}
+
+func (s *Service) notifyListeners(includeLocal bool) {
 	s.mu.Lock()
 	s.revision++
-	listeners := make([]func(), 0, len(s.listeners))
+	listeners := make([]func(), 0, len(s.listeners)+len(s.localListeners))
 	for _, listener := range s.listeners {
 		listeners = append(listeners, listener)
+	}
+	if includeLocal {
+		for _, listener := range s.localListeners {
+			listeners = append(listeners, listener)
+		}
 	}
 	s.mu.Unlock()
 	for _, listener := range listeners {

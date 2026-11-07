@@ -1402,8 +1402,8 @@
   "logsFrom": "Desde",
   "logsTo": "Hasta",
   "logsDateClear": "Borrar fecha",
-  "logsSourceAtuinImport": "Importación de Atuin",
-  "logsSourceAtuinSync": "Otro dispositivo",
+  "logsSourceAtuinImport": "Importado desde Atuin",
+  "logsSourceAtuinSync": "Sincronización de Atuin",
   "logsSessionFilter": "Sesión",
   "logsSessionAll": "Todas las sesiones",
   "logsCwdFilter": "Directorio",
@@ -3535,5 +3535,9 @@
   "settingsAtuinProblemOffline": "No se pudo contactar con el servidor.",
   "settingsAtuinProblemRemote": "La solicitud a Atuin falló.",
   "settingsAtuinProblemSave": "No se pudo guardar el cambio de cuenta.",
-  "logsAtuinAccount": "Cuenta de Atuin"
+  "logsAtuinAccount": "Cuenta de Atuin",
+  "settingsAtuinLastSync": "Última sincronización {time}",
+  "settingsAtuinPendingUploads": "Cargas pendientes: {count}",
+  "settingsAtuinNextRetry": "Próximo reintento {time}",
+  "settingsAtuinSyncNow": "Sincronizar ahora"
 }
