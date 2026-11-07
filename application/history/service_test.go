@@ -674,6 +674,68 @@ func TestFailedRecordLeavesProjectionAndRecordLogUnchanged(t *testing.T) {
 	}
 }
 
+func TestStatisticsCoverUnfilteredFilteredAndEmptySets(t *testing.T) {
+	store := &memoryStore{entries: []domainhistory.Entry{
+		{ID: "a", HostID: "host-1", Scope: "host:host-1", Command: "git status",
+			CWD: "/srv/app", RecordedAt: at(9), FinishedAt: at(9).Add(time.Second),
+			Duration: time.Second, ExitCode: 0, HasExitCode: true,
+			Source: domainhistory.SourceSession},
+		{ID: "b", HostID: "host-1", Scope: "host:host-1", Command: "make test",
+			CWD: "/srv/app", RecordedAt: at(9).Add(time.Minute),
+			FinishedAt: at(9).Add(time.Minute + 3*time.Second), Duration: 3 * time.Second,
+			ExitCode: 2, HasExitCode: true, Source: domainhistory.SourceSession},
+		{ID: "c", HostID: "host-2", Scope: "host:host-2", Command: "ls",
+			RecordedAt: at(10), Source: domainhistory.SourceSession},
+		// A soft-deleted row is not live and must not be summarized.
+		{ID: "deleted", Scope: "local", Command: "secret",
+			RecordedAt: at(10), DeletedAt: at(11), Source: domainhistory.SourceSession},
+	}}
+	service := newTestService(store, Retention{})
+	ctx := context.Background()
+
+	all, err := service.Statistics(ctx, domainhistory.EntryFilter{})
+	if err != nil {
+		t.Fatalf("Statistics: %v", err)
+	}
+	if all.Total != 3 || all.Unique != 3 {
+		t.Fatalf("unfiltered total = %d, unique = %d; want 3 and 3",
+			all.Total, all.Unique)
+	}
+	if all.Failures != 1 || all.KnownExits != 2 || all.FailureRate != 0.5 {
+		t.Fatalf("unfiltered failures = %d/%d (%v), want 1/2 (0.5)",
+			all.Failures, all.KnownExits, all.FailureRate)
+	}
+	if all.AverageDuration != 2*time.Second ||
+		all.DurationsKnown != 2 || all.DurationsUnknown != 1 {
+		t.Fatalf("unfiltered durations = %v (%d known, %d unknown)",
+			all.AverageDuration, all.DurationsKnown, all.DurationsUnknown)
+	}
+
+	filtered, err := service.Statistics(ctx, domainhistory.EntryFilter{Host: "host-1"})
+	if err != nil {
+		t.Fatalf("filtered Statistics: %v", err)
+	}
+	if filtered.Total != 2 || filtered.Unique != 2 || filtered.Failures != 1 ||
+		filtered.AverageDuration != 2*time.Second {
+		t.Fatalf("filtered statistics = %+v", filtered)
+	}
+
+	empty, err := service.Statistics(ctx, domainhistory.EntryFilter{Query: "no-match"})
+	if err != nil {
+		t.Fatalf("empty Statistics: %v", err)
+	}
+	if empty.Total != 0 || empty.Unique != 0 || empty.Failures != 0 ||
+		empty.KnownExits != 0 || empty.BusiestHour != nil ||
+		len(empty.TopCommands) != 0 || len(empty.Hosts) != 0 {
+		t.Fatalf("empty statistics = %+v", empty)
+	}
+
+	store.fail = errors.New("disk")
+	if _, err := service.Statistics(ctx, domainhistory.EntryFilter{}); err == nil {
+		t.Fatal("Statistics succeeded despite a store failure")
+	}
+}
+
 func TestFailedDeleteLeavesProjectionAndRecordLogUnchanged(t *testing.T) {
 	store := &memoryStore{}
 	service := newUUIDService(store)

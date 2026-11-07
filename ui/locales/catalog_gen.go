@@ -11674,6 +11674,294 @@ func (msgs Messages) LogsHistoryFieldIntent() string {
 	return Catalog.Format(msgs.locale, "logsHistoryFieldIntent", nil)
 }
 
+// LogsHistoryModeCommands says "Commands"
+// in the language the app shows.
+//
+// Switches the History tab back to the list of matching commands.
+func LogsHistoryModeCommands() string { return In(i18n.Locale()).LogsHistoryModeCommands() }
+
+// LogsHistoryModeCommands says "Commands"
+// in the language of msgs.
+//
+// Switches the History tab back to the list of matching commands.
+func (msgs Messages) LogsHistoryModeCommands() string {
+	return Catalog.Format(msgs.locale, "logsHistoryModeCommands", nil)
+}
+
+// LogsStatisticsTitle says "Statistics"
+// in the language the app shows.
+//
+// Switches the History tab to the summary of the matching commands.
+func LogsStatisticsTitle() string { return In(i18n.Locale()).LogsStatisticsTitle() }
+
+// LogsStatisticsTitle says "Statistics"
+// in the language of msgs.
+//
+// Switches the History tab to the summary of the matching commands.
+func (msgs Messages) LogsStatisticsTitle() string {
+	return Catalog.Format(msgs.locale, "logsStatisticsTitle", nil)
+}
+
+// LogsStatisticsTotal says "Total commands: {count}"
+// in the language the app shows.
+//
+// How many commands match the active History filters.
+func LogsStatisticsTotal(count int) string { return In(i18n.Locale()).LogsStatisticsTotal(count) }
+
+// LogsStatisticsTotal says "Total commands: {count}"
+// in the language of msgs.
+//
+// How many commands match the active History filters.
+func (msgs Messages) LogsStatisticsTotal(count int) string {
+	return Catalog.Format(msgs.locale, "logsStatisticsTotal", map[string]any{"count": count})
+}
+
+// LogsStatisticsUnique says "Unique commands: {count}"
+// in the language the app shows.
+//
+// How many distinct command texts match the active History filters.
+func LogsStatisticsUnique(count int) string { return In(i18n.Locale()).LogsStatisticsUnique(count) }
+
+// LogsStatisticsUnique says "Unique commands: {count}"
+// in the language of msgs.
+//
+// How many distinct command texts match the active History filters.
+func (msgs Messages) LogsStatisticsUnique(count int) string {
+	return Catalog.Format(msgs.locale, "logsStatisticsUnique", map[string]any{"count": count})
+}
+
+// LogsStatisticsFailures says "Failures: {count}"
+// in the language the app shows.
+//
+// How many matching commands exited with a known non-zero status.
+func LogsStatisticsFailures(count int) string { return In(i18n.Locale()).LogsStatisticsFailures(count) }
+
+// LogsStatisticsFailures says "Failures: {count}"
+// in the language of msgs.
+//
+// How many matching commands exited with a known non-zero status.
+func (msgs Messages) LogsStatisticsFailures(count int) string {
+	return Catalog.Format(msgs.locale, "logsStatisticsFailures", map[string]any{"count": count})
+}
+
+// LogsStatisticsFailureRate says "Failure rate (known exit statuses): {rate}"
+// in the language the app shows.
+//
+// Failures divided by matching commands whose exit status was observed.
+func LogsStatisticsFailureRate(rate string) string {
+	return In(i18n.Locale()).LogsStatisticsFailureRate(rate)
+}
+
+// LogsStatisticsFailureRate says "Failure rate (known exit statuses): {rate}"
+// in the language of msgs.
+//
+// Failures divided by matching commands whose exit status was observed.
+func (msgs Messages) LogsStatisticsFailureRate(rate string) string {
+	return Catalog.Format(msgs.locale, "logsStatisticsFailureRate", map[string]any{"rate": rate})
+}
+
+// LogsStatisticsFailureRateUnknown says "Failure rate: unknown — no exit status was captured"
+// in the language the app shows.
+//
+// Shown instead of a failure rate when no matching command reported an exit
+// status.
+func LogsStatisticsFailureRateUnknown() string {
+	return In(i18n.Locale()).LogsStatisticsFailureRateUnknown()
+}
+
+// LogsStatisticsFailureRateUnknown says "Failure rate: unknown — no exit status was captured"
+// in the language of msgs.
+//
+// Shown instead of a failure rate when no matching command reported an exit
+// status.
+func (msgs Messages) LogsStatisticsFailureRateUnknown() string {
+	return Catalog.Format(msgs.locale, "logsStatisticsFailureRateUnknown", nil)
+}
+
+// LogsStatisticsAverageDuration says "Average duration: {duration}"
+// in the language the app shows.
+//
+// The mean duration of matching commands whose finish time was captured.
+func LogsStatisticsAverageDuration(duration string) string {
+	return In(i18n.Locale()).LogsStatisticsAverageDuration(duration)
+}
+
+// LogsStatisticsAverageDuration says "Average duration: {duration}"
+// in the language of msgs.
+//
+// The mean duration of matching commands whose finish time was captured.
+func (msgs Messages) LogsStatisticsAverageDuration(duration string) string {
+	return Catalog.Format(msgs.locale, "logsStatisticsAverageDuration", map[string]any{"duration": duration})
+}
+
+// LogsStatisticsAverageDurationUnknown says "Average duration: unknown — no command reported a finish time"
+// in the language the app shows.
+//
+// Shown instead of an average duration when no matching command has a known
+// duration.
+func LogsStatisticsAverageDurationUnknown() string {
+	return In(i18n.Locale()).LogsStatisticsAverageDurationUnknown()
+}
+
+// LogsStatisticsAverageDurationUnknown says "Average duration: unknown — no command reported a finish time"
+// in the language of msgs.
+//
+// Shown instead of an average duration when no matching command has a known
+// duration.
+func (msgs Messages) LogsStatisticsAverageDurationUnknown() string {
+	return Catalog.Format(msgs.locale, "logsStatisticsAverageDurationUnknown", nil)
+}
+
+// LogsStatisticsDurationExcluded says "{count, plural, one {# command with unknown duration is excluded from the average.} other {# commands with unknown du…"
+// in the language the app shows.
+//
+// Explains that rows without a captured finish time are left out of the
+// average duration.
+func LogsStatisticsDurationExcluded(count int) string {
+	return In(i18n.Locale()).LogsStatisticsDurationExcluded(count)
+}
+
+// LogsStatisticsDurationExcluded says "{count, plural, one {# command with unknown duration is excluded from the average.} other {# commands with unknown du…"
+// in the language of msgs.
+//
+// Explains that rows without a captured finish time are left out of the
+// average duration.
+func (msgs Messages) LogsStatisticsDurationExcluded(count int) string {
+	return Catalog.Format(msgs.locale, "logsStatisticsDurationExcluded", map[string]any{"count": count})
+}
+
+// LogsStatisticsDurationAllKnown says "{count, plural, one {The average covers the only command with a known duration.} other {The average covers all # comm…"
+// in the language the app shows.
+//
+// States the number of matching commands the average duration covers.
+func LogsStatisticsDurationAllKnown(count int) string {
+	return In(i18n.Locale()).LogsStatisticsDurationAllKnown(count)
+}
+
+// LogsStatisticsDurationAllKnown says "{count, plural, one {The average covers the only command with a known duration.} other {The average covers all # comm…"
+// in the language of msgs.
+//
+// States the number of matching commands the average duration covers.
+func (msgs Messages) LogsStatisticsDurationAllKnown(count int) string {
+	return Catalog.Format(msgs.locale, "logsStatisticsDurationAllKnown", map[string]any{"count": count})
+}
+
+// LogsStatisticsTopCommands says "Top commands"
+// in the language the app shows.
+//
+// Heading for the most frequently run commands in the filtered set.
+func LogsStatisticsTopCommands() string { return In(i18n.Locale()).LogsStatisticsTopCommands() }
+
+// LogsStatisticsTopCommands says "Top commands"
+// in the language of msgs.
+//
+// Heading for the most frequently run commands in the filtered set.
+func (msgs Messages) LogsStatisticsTopCommands() string {
+	return Catalog.Format(msgs.locale, "logsStatisticsTopCommands", nil)
+}
+
+// LogsStatisticsTopCwds says "Top directories"
+// in the language the app shows.
+//
+// Heading for the working directories used most often in the filtered set.
+func LogsStatisticsTopCwds() string { return In(i18n.Locale()).LogsStatisticsTopCwds() }
+
+// LogsStatisticsTopCwds says "Top directories"
+// in the language of msgs.
+//
+// Heading for the working directories used most often in the filtered set.
+func (msgs Messages) LogsStatisticsTopCwds() string {
+	return Catalog.Format(msgs.locale, "logsStatisticsTopCwds", nil)
+}
+
+// LogsStatisticsNoCwds says "No working directory was captured."
+// in the language the app shows.
+//
+// Shown when no matching command has a captured working directory.
+func LogsStatisticsNoCwds() string { return In(i18n.Locale()).LogsStatisticsNoCwds() }
+
+// LogsStatisticsNoCwds says "No working directory was captured."
+// in the language of msgs.
+//
+// Shown when no matching command has a captured working directory.
+func (msgs Messages) LogsStatisticsNoCwds() string {
+	return Catalog.Format(msgs.locale, "logsStatisticsNoCwds", nil)
+}
+
+// LogsStatisticsBusiestHour says "Busiest hour: {hour} · {count}"
+// in the language the app shows.
+//
+// The hour of day with the most matching commands, and that hour's count.
+func LogsStatisticsBusiestHour(hour string, count int) string {
+	return In(i18n.Locale()).LogsStatisticsBusiestHour(hour, count)
+}
+
+// LogsStatisticsBusiestHour says "Busiest hour: {hour} · {count}"
+// in the language of msgs.
+//
+// The hour of day with the most matching commands, and that hour's count.
+func (msgs Messages) LogsStatisticsBusiestHour(hour string, count int) string {
+	return Catalog.Format(msgs.locale, "logsStatisticsBusiestHour", map[string]any{"hour": hour, "count": count})
+}
+
+// LogsStatisticsBusiestHourNone says "Busiest hour: none"
+// in the language the app shows.
+//
+// Shown when there are no matching commands to find a busiest hour for.
+func LogsStatisticsBusiestHourNone() string { return In(i18n.Locale()).LogsStatisticsBusiestHourNone() }
+
+// LogsStatisticsBusiestHourNone says "Busiest hour: none"
+// in the language of msgs.
+//
+// Shown when there are no matching commands to find a busiest hour for.
+func (msgs Messages) LogsStatisticsBusiestHourNone() string {
+	return Catalog.Format(msgs.locale, "logsStatisticsBusiestHourNone", nil)
+}
+
+// LogsStatisticsHosts says "Hosts and origins"
+// in the language the app shows.
+//
+// Heading for matching command counts by Host or captured origin.
+func LogsStatisticsHosts() string { return In(i18n.Locale()).LogsStatisticsHosts() }
+
+// LogsStatisticsHosts says "Hosts and origins"
+// in the language of msgs.
+//
+// Heading for matching command counts by Host or captured origin.
+func (msgs Messages) LogsStatisticsHosts() string {
+	return Catalog.Format(msgs.locale, "logsStatisticsHosts", nil)
+}
+
+// LogsStatisticsRow says "{name} · {count}"
+// in the language the app shows.
+//
+// One row of a ranked statistics list: the value and its command count.
+func LogsStatisticsRow(name string, count int) string {
+	return In(i18n.Locale()).LogsStatisticsRow(name, count)
+}
+
+// LogsStatisticsRow says "{name} · {count}"
+// in the language of msgs.
+//
+// One row of a ranked statistics list: the value and its command count.
+func (msgs Messages) LogsStatisticsRow(name string, count int) string {
+	return Catalog.Format(msgs.locale, "logsStatisticsRow", map[string]any{"name": name, "count": count})
+}
+
+// LogsStatisticsEmpty says "No commands to summarize."
+// in the language the app shows.
+//
+// Shown when the active History filters match no commands.
+func LogsStatisticsEmpty() string { return In(i18n.Locale()).LogsStatisticsEmpty() }
+
+// LogsStatisticsEmpty says "No commands to summarize."
+// in the language of msgs.
+//
+// Shown when the active History filters match no commands.
+func (msgs Messages) LogsStatisticsEmpty() string {
+	return Catalog.Format(msgs.locale, "logsStatisticsEmpty", nil)
+}
+
 // LogsProblemLoad says "Could not load the records."
 // in the language the app shows.
 //

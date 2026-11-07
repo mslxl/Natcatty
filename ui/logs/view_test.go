@@ -790,6 +790,151 @@ func TestClearErrorNamesTheHistoryFamily(t *testing.T) {
 	}
 }
 
+// TestHistoryStatisticsViewSummarizesAndTracksFilters opens the Statistics
+// view through its selector and proves the unfiltered, filtered, and empty
+// result sets each render the summary of the same rows the History list uses.
+func TestHistoryStatisticsViewSummarizesAndTracksFilters(t *testing.T) {
+	m := locales.In("en")
+	tt, state := newProductionLogsView(t, 1100, 900, statisticsSource(), &fakeActions{})
+	state.SelectTab(TabHistory)
+	tt.Frame()
+
+	// The command list is the default view; the summary is a separate view
+	// selected explicitly.
+	if textsContain(tt, m.LogsStatisticsTotal(3)) {
+		t.Fatalf("the statistics summary rendered before it was selected: %v", tt.Texts())
+	}
+	if err := tt.Click(m.LogsStatisticsTitle()); err != nil {
+		t.Fatalf("open statistics: %v", err)
+	}
+	tt.Frame()
+	if state.HistoryMode() != HistoryModeStatistics {
+		t.Fatalf("mode = %v, want statistics", state.HistoryMode())
+	}
+
+	for _, want := range []string{
+		m.LogsStatisticsTotal(3),
+		m.LogsStatisticsUnique(3),
+		m.LogsStatisticsFailures(1),
+		m.LogsStatisticsFailureRate(formatRate(0.5)),
+		m.LogsStatisticsAverageDuration("2.0s"),
+		m.LogsStatisticsDurationExcluded(1),
+		m.LogsStatisticsTopCommands(),
+		m.LogsStatisticsRow("git status", 1),
+		m.LogsStatisticsRow("make test", 1),
+		m.LogsStatisticsRow("ls", 1),
+		m.LogsStatisticsTopCwds(),
+		m.LogsStatisticsRow("/srv/app", 2),
+		m.LogsStatisticsRow("/var/log", 1),
+		m.LogsStatisticsBusiestHour("09:00", 3),
+		m.LogsStatisticsHosts(),
+		m.LogsStatisticsRow("web-1", 2),
+		m.LogsStatisticsRow("db-1", 1),
+	} {
+		if !textsContain(tt, want) {
+			t.Fatalf("%q is missing from the summary: %v", want, tt.Texts())
+		}
+	}
+	assertNoHorizontalOverflow(t, tt, 1100, 900)
+
+	// Every filter narrows the summary exactly as it narrows the rows.
+	state.SetCwdFilter("/srv/app")
+	tt.Frame()
+	for _, want := range []string{
+		m.LogsStatisticsTotal(2),
+		m.LogsStatisticsUnique(2),
+		m.LogsStatisticsFailures(1),
+		m.LogsStatisticsFailureRate(formatRate(0.5)),
+		m.LogsStatisticsAverageDuration("2.0s"),
+		m.LogsStatisticsDurationAllKnown(2),
+		m.LogsStatisticsBusiestHour("09:00", 2),
+		m.LogsStatisticsRow("web-1", 2),
+	} {
+		if !textsContain(tt, want) {
+			t.Fatalf("%q is missing from the filtered summary: %v", want, tt.Texts())
+		}
+	}
+	if textsContain(tt, m.LogsStatisticsTotal(3)) ||
+		textsContain(tt, m.LogsStatisticsRow("db-1", 1)) {
+		t.Fatalf("the summary ignored the cwd filter: %v", tt.Texts())
+	}
+
+	state.SetCwdFilter("")
+	state.SetSearch("no-match")
+	tt.Frame()
+	assertVisible(t, tt, m.LogsStatisticsEmpty(), 1100, 900)
+	if textsContain(tt, m.LogsStatisticsTotal(0)) {
+		t.Fatalf("an empty result set rendered summary counts: %v", tt.Texts())
+	}
+
+	// Switching back to Commands shows the row list again.
+	if err := tt.Click(m.LogsHistoryModeCommands()); err != nil {
+		t.Fatalf("return to commands: %v", err)
+	}
+	state.SetSearch("")
+	tt.Frame()
+	if state.HistoryMode() != HistoryModeCommands {
+		t.Fatalf("mode = %v, want commands", state.HistoryMode())
+	}
+	if !textsContain(tt, "git status") {
+		t.Fatalf("the command list did not return: %v", tt.Texts())
+	}
+}
+
+// TestHistoryStatisticsViewExplainsPartialData proves the summary labels data
+// the shell never captured instead of presenting zeros as measurements: no
+// known duration, no known exit, and no working directory are each explained.
+func TestHistoryStatisticsViewExplainsPartialData(t *testing.T) {
+	m := locales.In("en")
+	recorded := time.Date(2026, 11, 7, 9, 30, 0, 0, time.Local)
+	source := &fakeSource{entries: []domainhistory.Entry{
+		{ID: "a", Scope: "local", Command: "ls", RecordedAt: recorded,
+			Source: domainhistory.SourceSession},
+		{ID: "b", Scope: "local", Command: "pwd",
+			RecordedAt: recorded.Add(-time.Minute), Source: domainhistory.SourceSession},
+	}}
+	tt, state := newProductionLogsView(t, 720, 480, source, &fakeActions{})
+	state.SelectTab(TabHistory)
+	state.SetHistoryMode(HistoryModeStatistics)
+	tt.Frame()
+
+	// The summary is scrollable, so assert its text without requiring it all
+	// to fit at once.
+	for _, want := range []string{
+		m.LogsStatisticsTotal(2),
+		m.LogsStatisticsFailureRateUnknown(),
+		m.LogsStatisticsAverageDurationUnknown(),
+		m.LogsStatisticsNoCwds(),
+	} {
+		if !textsContain(tt, want) {
+			t.Fatalf("%q is missing from the partial summary: %v", want, tt.Texts())
+		}
+	}
+}
+
+// TestStatisticsHostLabelsQualifySharedSavedHostLabels proves two saved Hosts
+// with the same recorded label stay distinguishable in the summary, while
+// marker and origin groups keep their own labels.
+func TestStatisticsHostLabelsQualifySharedSavedHostLabels(t *testing.T) {
+	m := locales.In("en")
+	hosts := []domainhistory.HostStat{
+		{Key: "host-1", Label: "web", Count: 3},
+		{Key: "host-2", Label: "web", Count: 1},
+		{Key: domainhistory.LocalHostKey, Count: 1},
+		{Key: domainhistory.UnsavedHostKey, Label: "typed.example", Count: 1},
+		{Key: domainhistory.OriginHostKey("remote.example:deploy"),
+			Label: "remote.example:deploy", Count: 1},
+	}
+	want := []string{
+		"web (host-1)", "web (host-2)", m.LogsHostLocal(),
+		"typed.example", "remote.example:deploy",
+	}
+	got := statisticsHostLabels(m, hosts)
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("host labels = %v, want %v", got, want)
+	}
+}
+
 func textsContain(tt *ui.Tester, want string) bool {
 	for _, text := range tt.Texts() {
 		if strings.Contains(text, want) {

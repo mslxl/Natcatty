@@ -2651,6 +2651,144 @@
   "@logsHistoryFieldIntent": {
     "description": "The Atuin intent metadata of the command."
   },
+  "logsHistoryModeCommands": "Commands",
+  "@logsHistoryModeCommands": {
+    "description": "Switches the History tab back to the list of matching commands."
+  },
+  "logsStatisticsTitle": "Statistics",
+  "@logsStatisticsTitle": {
+    "description": "Switches the History tab to the summary of the matching commands."
+  },
+  "logsStatisticsTotal": "Total commands: {count}",
+  "@logsStatisticsTotal": {
+    "description": "How many commands match the active History filters.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "128"
+      }
+    }
+  },
+  "logsStatisticsUnique": "Unique commands: {count}",
+  "@logsStatisticsUnique": {
+    "description": "How many distinct command texts match the active History filters.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "96"
+      }
+    }
+  },
+  "logsStatisticsFailures": "Failures: {count}",
+  "@logsStatisticsFailures": {
+    "description": "How many matching commands exited with a known non-zero status.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "7"
+      }
+    }
+  },
+  "logsStatisticsFailureRate": "Failure rate (known exit statuses): {rate}",
+  "@logsStatisticsFailureRate": {
+    "description": "Failures divided by matching commands whose exit status was observed.",
+    "placeholders": {
+      "rate": {
+        "type": "String",
+        "example": "25%"
+      }
+    }
+  },
+  "logsStatisticsFailureRateUnknown": "Failure rate: unknown — no exit status was captured",
+  "@logsStatisticsFailureRateUnknown": {
+    "description": "Shown instead of a failure rate when no matching command reported an exit status."
+  },
+  "logsStatisticsAverageDuration": "Average duration: {duration}",
+  "@logsStatisticsAverageDuration": {
+    "description": "The mean duration of matching commands whose finish time was captured.",
+    "placeholders": {
+      "duration": {
+        "type": "String",
+        "example": "1.5s"
+      }
+    }
+  },
+  "logsStatisticsAverageDurationUnknown": "Average duration: unknown — no command reported a finish time",
+  "@logsStatisticsAverageDurationUnknown": {
+    "description": "Shown instead of an average duration when no matching command has a known duration."
+  },
+  "logsStatisticsDurationExcluded": "{count, plural, one {# command with unknown duration is excluded from the average.} other {# commands with unknown duration are excluded from the average.}}",
+  "@logsStatisticsDurationExcluded": {
+    "description": "Explains that rows without a captured finish time are left out of the average duration.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "logsStatisticsDurationAllKnown": "{count, plural, one {The average covers the only command with a known duration.} other {The average covers all # commands with a known duration.}}",
+  "@logsStatisticsDurationAllKnown": {
+    "description": "States the number of matching commands the average duration covers.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "116"
+      }
+    }
+  },
+  "logsStatisticsTopCommands": "Top commands",
+  "@logsStatisticsTopCommands": {
+    "description": "Heading for the most frequently run commands in the filtered set."
+  },
+  "logsStatisticsTopCwds": "Top directories",
+  "@logsStatisticsTopCwds": {
+    "description": "Heading for the working directories used most often in the filtered set."
+  },
+  "logsStatisticsNoCwds": "No working directory was captured.",
+  "@logsStatisticsNoCwds": {
+    "description": "Shown when no matching command has a captured working directory."
+  },
+  "logsStatisticsBusiestHour": "Busiest hour: {hour} · {count}",
+  "@logsStatisticsBusiestHour": {
+    "description": "The hour of day with the most matching commands, and that hour's count.",
+    "placeholders": {
+      "hour": {
+        "type": "String",
+        "example": "09:00"
+      },
+      "count": {
+        "type": "int",
+        "example": "24"
+      }
+    }
+  },
+  "logsStatisticsBusiestHourNone": "Busiest hour: none",
+  "@logsStatisticsBusiestHourNone": {
+    "description": "Shown when there are no matching commands to find a busiest hour for."
+  },
+  "logsStatisticsHosts": "Hosts and origins",
+  "@logsStatisticsHosts": {
+    "description": "Heading for matching command counts by Host or captured origin."
+  },
+  "logsStatisticsRow": "{name} · {count}",
+  "@logsStatisticsRow": {
+    "description": "One row of a ranked statistics list: the value and its command count.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "git status"
+      },
+      "count": {
+        "type": "int",
+        "example": "27"
+      }
+    }
+  },
+  "logsStatisticsEmpty": "No commands to summarize.",
+  "@logsStatisticsEmpty": {
+    "description": "Shown when the active History filters match no commands."
+  },
   "logsProblemLoad": "Could not load the records.",
   "@logsProblemLoad": {
     "description": "Shown when reading the records failed."
