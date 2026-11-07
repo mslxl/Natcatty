@@ -245,10 +245,10 @@ func TestNormalizeEntryDefaultsCapturedAuthorFromOrigin(t *testing.T) {
 	if captured.AuthorKind != AuthorKindUser || captured.Author != "deploy" {
 		t.Fatalf("captured author = %q/%q, want user/deploy", captured.AuthorKind, captured.Author)
 	}
-	if got := authorFromOrigin("[2001:db8::1]:admin"); got != "admin" {
+	if got := AuthorFromOrigin("[2001:db8::1]:admin"); got != "admin" {
 		t.Fatalf("IPv6 origin author = %q, want admin", got)
 	}
-	if got := authorFromOrigin("just-a-host"); got != "" {
+	if got := AuthorFromOrigin("just-a-host"); got != "" {
 		t.Fatalf("origin without a user = %q, want empty", got)
 	}
 	remote := NormalizeEntry(Entry{
