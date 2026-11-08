@@ -11,8 +11,19 @@
 //
 // Only the history record tag is exposed. The delete-all-store endpoint at
 // DELETE /api/v0/store is deliberately absent: no method builds that path.
-// Requests are never retried here; the sync engine owns retry and backoff, and
-// an upload is idempotent by the server's (series host, tag, index) key.
+// Requests are never retried here; the sync engine owns retry and backoff.
+// The pinned server silently ignores a duplicate insert, so an upload is
+// acknowledged only after the record stored at every sent (history, host,
+// index) has been read back and compared with what was sent. A duplicate that
+// the server already holds with different metadata or plaintext is therefore a
+// conflict, never a silent success.
+//
+// A username/password login mints a legacy CLI session token, which this
+// adapter sends with the Token scheme. Atuin Hub can answer the login with a
+// Hub API token (auth "hub") that requires the Bearer scheme. The Remote port
+// cannot return or change an auth kind after a login, so a Hub token and any
+// unknown auth kind are refused fail-closed instead of being stored and sent
+// with the wrong scheme.
 //
 // The adapter never logs. Error values carry a sentinel and, at most, a fixed
 // method and path: never a token, key, request body, response body, or record
@@ -26,6 +37,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -47,7 +59,13 @@ const (
 	DefaultTimeout = 30 * time.Second
 	// DefaultPageSize is used before the server's page-size capability is read.
 	DefaultPageSize = 100
-	// maxBodyBytes bounds a response read into memory.
+	// maxBodyBytes bounds one response read into memory. The pinned server's
+	// default maximum record size is 1 GiB, so a remote peer could put a record
+	// on the wire that this cap refuses. A page larger than the cap fails
+	// closed with ErrRemote instead of being partially applied: reading a GiB
+	// into memory to accept one pathological record would make the client a
+	// memory-exhaustion target, and this client's own records are many orders
+	// of magnitude smaller.
 	maxBodyBytes = 64 << 20
 
 	headerAtuinVersion = "Atuin-Version"
@@ -67,13 +85,31 @@ const (
 var (
 	errUnauthorized = errors.New("atuin remote: unauthorized")
 	errNotFound     = errors.New("atuin remote: not found")
+	errBadRequest   = errors.New("atuin remote: rejected request")
 )
+
+// uploadConflictError reports that the server acknowledged an upload but does
+// not hold the record that was sent at that index. It wraps ErrRemote so a
+// caller that knows only the port's vocabulary treats the upload as failed and
+// must not advance its checkpoint. The message never carries a credential or
+// record plaintext: only the index and a fixed reason.
+type uploadConflictError struct {
+	index  uint64
+	reason string
+}
+
+func (conflict *uploadConflictError) Error() string {
+	return fmt.Sprintf("atuin remote: upload conflict at index %d: %s", conflict.index, conflict.reason)
+}
+
+func (conflict *uploadConflictError) Unwrap() error { return historysync.ErrRemote }
 
 // Options configure the adapter. The zero value uses the system TLS trust
 // store, a bounded timeout, and a User-Agent naming Netcatty and its version.
 type Options struct {
-	// HTTPClient replaces the default client. Its redirect policy is kept when
-	// set; the default refuses redirects so a credential is never forwarded.
+	// HTTPClient replaces the default client. Its redirect policy is always
+	// replaced with the adapter's refusal policy: a supplied policy must not
+	// be able to forward a credential to another origin.
 	HTTPClient *http.Client
 	// Timeout bounds one request when HTTPClient has no timeout. The zero value
 	// is DefaultTimeout.
@@ -107,12 +143,11 @@ func NewFactory(options Options) *Factory {
 	if client.Timeout <= 0 {
 		client.Timeout = timeout
 	}
-	if client.CheckRedirect == nil {
-		// A redirected sync request could forward the token to another origin.
-		// Refuse redirects and treat the 3xx as an ordinary remote failure.
-		client.CheckRedirect = func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		}
+	// A redirected sync request could forward the token to another origin.
+	// Refuse redirects and treat the 3xx as an ordinary remote failure, even
+	// when the caller supplied a client with a more permissive policy.
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
 	}
 
 	return &Factory{userAgent: userAgent, http: &client}
@@ -253,7 +288,12 @@ func (r *Remote) Authenticate(ctx context.Context) (historysync.AuthResult, erro
 		var account meResponse
 		if err := r.getJSON(ctx, pathAccount, nil, &account, true); err != nil {
 			switch {
-			case errors.Is(err, errUnauthorized), errors.Is(err, errNotFound):
+			case errors.Is(err, errUnauthorized), errors.Is(err, errNotFound), errors.Is(err, errBadRequest):
+				// The account endpoint uses HTTP 400 for a missing or
+				// undecodable Authorization header. On this endpoint that is
+				// a terminal authentication/configuration failure (for
+				// example Bearer against an OSS server), not a retryable
+				// remote error.
 				return historysync.AuthResult{}, historysync.ErrAuthFailed
 			default:
 				return historysync.AuthResult{}, publicRemoteError(err)
@@ -284,6 +324,17 @@ func (r *Remote) Authenticate(ctx context.Context) (historysync.AuthResult, erro
 	if login.Session == "" {
 		return historysync.AuthResult{}, fmt.Errorf("%w: login returned no session", historysync.ErrRemote)
 	}
+	switch authKind := strings.TrimSpace(login.Auth); authKind {
+	case "", "cli":
+		// A legacy CLI session token is sent with the Token scheme. An old
+		// server omits the field; the pinned client treats that as "cli".
+	case "hub":
+		// The port has no way to switch this operation to the Bearer scheme,
+		// so storing a Hub token would send it with the wrong scheme forever.
+		return historysync.AuthResult{}, fmt.Errorf("%w: the server minted a Hub token this login cannot use", historysync.ErrAuthFailed)
+	default:
+		return historysync.AuthResult{}, fmt.Errorf("%w: the server returned an unsupported login auth kind", historysync.ErrAuthFailed)
+	}
 
 	r.mu.Lock()
 	r.token = login.Session
@@ -304,6 +355,11 @@ func (r *Remote) Capabilities(ctx context.Context) (historysync.Capabilities, er
 	var document capabilityDocument
 	body, version, err := r.do(ctx, http.MethodGet, pathCapabilities, nil, nil, true)
 	if err != nil {
+		if errors.Is(err, errNotFound) {
+			// A v18 server exposes capabilities; a 404 means this is not a
+			// server this client can negotiate with, not a transient error.
+			return historysync.Capabilities{}, fmt.Errorf("%w: the server does not expose capabilities", historysync.ErrIncompatibleServer)
+		}
 		return historysync.Capabilities{}, publicRemoteError(err)
 	}
 	if err := decodeJSON(body, &document); err != nil {
@@ -372,9 +428,12 @@ func (r *Remote) fetchWirePage(ctx context.Context, seriesHost string, start int
 	return parseWireRecords(body, count)
 }
 
-// Upload sends one ordered batch of history records. It never retries: a
-// caller retrying the same batch is safe because the server keeps series
-// indexes unique and ignores a duplicate insert.
+// Upload sends one ordered batch of history records. It never retries. The
+// pinned server ignores a duplicate insert and acknowledges a POST without
+// metadata, so success is reported only after the stored record at every sent
+// index has been read back and compared with what was sent. A server holding a
+// different record, or no record, at a sent index is a conflict: acknowledging
+// it would let the engine advance its checkpoint and lose the local command.
 func (r *Remote) Upload(ctx context.Context, records []historysync.SyncRecord) error {
 	if len(records) == 0 {
 		return nil
@@ -382,6 +441,9 @@ func (r *Remote) Upload(ctx context.Context, records []historysync.SyncRecord) e
 	key, haveKey := r.keyCopy()
 	if !haveKey {
 		return historysync.ErrKeyMismatch
+	}
+	if err := validateUploadBatch(records); err != nil {
+		return err
 	}
 	encoded := make([]wire.Record, 0, len(records))
 	for _, record := range records {
@@ -398,7 +460,154 @@ func (r *Remote) Upload(ctx context.Context, records []historysync.SyncRecord) e
 	if _, _, err := r.do(ctx, http.MethodPost, pathRecord, nil, body, true); err != nil {
 		return publicRemoteError(err)
 	}
+	return r.verifyUpload(ctx, encoded, key)
+}
+
+// validateUploadBatch enforces the invariant read-back verification relies on:
+// within one writer series, indexes are strictly increasing, so each sent
+// record has a distinct server key. A batch may carry more than one series.
+func validateUploadBatch(records []historysync.SyncRecord) error {
+	previous := make(map[string]int64, len(records))
+	seen := make(map[string]bool, len(records))
+	for _, record := range records {
+		host, ok := wire.CanonicalUUID(record.SeriesHost)
+		if !ok {
+			return fmt.Errorf("%w: series host is not a UUID", historysync.ErrRemote)
+		}
+		if seen[host] && record.Index <= previous[host] {
+			return fmt.Errorf("%w: upload batch is not ordered by a unique index", historysync.ErrRemote)
+		}
+		previous[host] = record.Index
+		seen[host] = true
+	}
 	return nil
+}
+
+// verifyUpload reads back each series' index range and confirms the server
+// stored exactly the records that were sent. It decrypts with the operation's
+// master key and compares the outer identity (id, index, host, timestamp,
+// version, tag) and the plaintext payload. Extra records in a range are
+// ignored; a missing index or any difference is a conflict.
+func (r *Remote) verifyUpload(ctx context.Context, sent []wire.Record, key wire.Key) error {
+	if len(sent) == 0 {
+		return nil
+	}
+	series := make(map[string][]wire.Record, 1)
+	order := make([]string, 0, 1)
+	for _, record := range sent {
+		host, ok := wire.CanonicalUUID(record.SeriesHost)
+		if !ok {
+			return fmt.Errorf("%w: series host is not a UUID", historysync.ErrRemote)
+		}
+		if _, exists := series[host]; !exists {
+			order = append(order, host)
+		}
+		series[host] = append(series[host], record)
+	}
+	for _, host := range order {
+		if err := r.verifySeriesUpload(ctx, host, series[host], key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// verifySeriesUpload reads back one series' index range. Its records are in
+// strictly increasing index order, as validateUploadBatch requires.
+func (r *Remote) verifySeriesUpload(ctx context.Context, seriesHost string, sent []wire.Record, key wire.Key) error {
+	start := sent[0].Index
+	end := sent[len(sent)-1].Index
+
+	expected := make(map[uint64]wire.Record, len(sent))
+	for _, record := range sent {
+		expected[record.Index] = record
+	}
+	found := make(map[uint64]wire.Record, len(sent))
+	position := start
+	// A batch is page-sized in normal use. The bound keeps a sparse or
+	// hostile range from turning one upload into unbounded HTTP traffic.
+	const maxReadBackPages = 1024
+	for pages := 0; position <= end; pages++ {
+		if pages >= maxReadBackPages {
+			return &uploadConflictError{index: position, reason: "server record range is too large to verify"}
+		}
+		span := end - position + 1
+		requested := DefaultPageSize
+		if span < uint64(requested) {
+			requested = int(span)
+		}
+		page, err := r.fetchWirePage(ctx, seriesHost, int64(position), r.effectivePageSize(requested))
+		if err != nil {
+			return err
+		}
+		if len(page) == 0 {
+			break
+		}
+		next := position
+		for _, record := range page {
+			if record.Tag != domainhistory.RecordTagHistory || record.SeriesHost != seriesHost {
+				continue
+			}
+			if record.Index < position {
+				return &uploadConflictError{index: position, reason: "server returned an out-of-order record"}
+			}
+			if _, wanted := expected[record.Index]; wanted {
+				if _, duplicate := found[record.Index]; duplicate {
+					return &uploadConflictError{index: record.Index, reason: "server returned an index more than once"}
+				}
+				found[record.Index] = record
+			}
+			if record.Index >= next {
+				next = record.Index
+				if next != math.MaxUint64 {
+					next++
+				}
+			}
+		}
+		if next <= position {
+			return &uploadConflictError{index: position, reason: "server returned no forward progress"}
+		}
+		position = next
+	}
+	for _, record := range sent {
+		serverRecord, ok := found[record.Index]
+		if !ok {
+			return &uploadConflictError{index: record.Index, reason: "the server does not hold the uploaded record"}
+		}
+		if !sameUploadedRecord(record, serverRecord, key) {
+			return &uploadConflictError{index: record.Index, reason: "the server holds a different record"}
+		}
+	}
+	return nil
+}
+
+// sameUploadedRecord compares one sent wire record with the record the server
+// stored at the same index. Ciphertext is not comparable because every attempt
+// uses a fresh content key, so the decrypted plaintext is compared instead. A
+// read-back record that does not decrypt under this operation's key is not
+// ours; that is a difference at the sent index, so it is reported as a
+// conflict rather than as a key mismatch.
+func sameUploadedRecord(sent, server wire.Record, key wire.Key) bool {
+	sentID, sentOK := wire.CanonicalUUID(sent.ID)
+	serverID, serverOK := wire.CanonicalUUID(server.ID)
+	sentHost, sentHostOK := wire.CanonicalUUID(sent.SeriesHost)
+	serverHost, serverHostOK := wire.CanonicalUUID(server.SeriesHost)
+	if !sentOK || !serverOK || !sentHostOK || !serverHostOK {
+		return false
+	}
+	if sentID != serverID || sentHost != serverHost || sent.Index != server.Index ||
+		sent.Timestamp != server.Timestamp || sent.Version != server.Version || sent.Tag != server.Tag {
+		return false
+	}
+	sentPlaintext, err := sent.Decrypt(key)
+	if err != nil {
+		return false
+	}
+	serverPlaintext, err := server.Decrypt(key)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(sentPlaintext, serverPlaintext)
 }
 
 // ValidateMasterKey decrypts one existing history record. An account with no
@@ -526,22 +735,27 @@ func (r *Remote) do(ctx context.Context, method, path string, query url.Values, 
 	}
 	defer response.Body.Close()
 
-	data, err := io.ReadAll(io.LimitReader(response.Body, maxBodyBytes+1))
-	if err != nil {
-		return nil, zero, fmt.Errorf("%w: %s %s response could not be read", historysync.ErrRemote, method, path)
-	}
-	if len(data) > maxBodyBytes {
-		return nil, zero, fmt.Errorf("%w: %s %s response is too large", historysync.ErrRemote, method, path)
-	}
+	// Classify the status before reading the body: an auth failure must remain
+	// an auth failure even when the error body is truncated or larger than the
+	// cap, and a 404 must not be masked by a body-read error.
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		switch response.StatusCode {
 		case http.StatusUnauthorized, http.StatusForbidden:
 			return nil, zero, fmt.Errorf("%w: %s %s returned HTTP %d", errUnauthorized, method, path, response.StatusCode)
 		case http.StatusNotFound:
 			return nil, zero, fmt.Errorf("%w: %s %s returned HTTP %d", errNotFound, method, path, response.StatusCode)
+		case http.StatusBadRequest:
+			return nil, zero, fmt.Errorf("%w: %s %s returned HTTP %d", errBadRequest, method, path, response.StatusCode)
 		default:
 			return nil, zero, fmt.Errorf("%w: %s %s returned HTTP %d", historysync.ErrRemote, method, path, response.StatusCode)
 		}
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxBodyBytes+1))
+	if err != nil {
+		return nil, zero, fmt.Errorf("%w: %s %s response could not be read", historysync.ErrRemote, method, path)
+	}
+	if len(data) > maxBodyBytes {
+		return nil, zero, fmt.Errorf("%w: %s %s response is too large", historysync.ErrRemote, method, path)
 	}
 
 	version, err := parseServerVersion(response.Header.Get(headerAtuinVersion))
@@ -580,6 +794,8 @@ func publicRemoteError(err error) error {
 		return fmt.Errorf("%w: the server rejected the session token", historysync.ErrAuthExpired)
 	case errors.Is(err, errNotFound):
 		return fmt.Errorf("%w: the server has no such endpoint", historysync.ErrRemote)
+	case errors.Is(err, errBadRequest):
+		return fmt.Errorf("%w: the server rejected the request", historysync.ErrRemote)
 	default:
 		return err
 	}

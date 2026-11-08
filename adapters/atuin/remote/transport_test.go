@@ -164,12 +164,17 @@ func TestStatusErrorsMapWithoutLeaking(t *testing.T) {
 		name   string
 		status int
 		want   error
+		// capabilitiesWant overrides want for the capabilities endpoint when a
+		// status means something endpoint-specific there.
+		capabilitiesWant error
 	}{
-		{"unauthorized", http.StatusUnauthorized, historysync.ErrAuthExpired},
-		{"forbidden", http.StatusForbidden, historysync.ErrAuthExpired},
-		{"not found", http.StatusNotFound, historysync.ErrRemote},
-		{"rate limited", http.StatusTooManyRequests, historysync.ErrRemote},
-		{"server error", http.StatusInternalServerError, historysync.ErrRemote},
+		{"unauthorized", http.StatusUnauthorized, historysync.ErrAuthExpired, nil},
+		{"forbidden", http.StatusForbidden, historysync.ErrAuthExpired, nil},
+		// A server without the capabilities endpoint cannot be negotiated
+		// with; that is not transient.
+		{"not found", http.StatusNotFound, historysync.ErrRemote, historysync.ErrIncompatibleServer},
+		{"rate limited", http.StatusTooManyRequests, historysync.ErrRemote, nil},
+		{"server error", http.StatusInternalServerError, historysync.ErrRemote, nil},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -204,8 +209,12 @@ func TestStatusErrorsMapWithoutLeaking(t *testing.T) {
 				}),
 			}
 			for name, err := range operations {
-				if !errors.Is(err, test.want) {
-					t.Errorf("%s = %v, want %v", name, err, test.want)
+				want := test.want
+				if name == "capabilities" && test.capabilitiesWant != nil {
+					want = test.capabilitiesWant
+				}
+				if !errors.Is(err, want) {
+					t.Errorf("%s = %v, want %v", name, err, want)
 				}
 				if err != nil && strings.Contains(err.Error(), "server-secret-body") {
 					t.Errorf("%s leaked a response body: %v", name, err)
@@ -220,7 +229,7 @@ func TestStatusErrorsMapWithoutLeaking(t *testing.T) {
 
 func TestStoreDeleteEndpointIsNeverRequested(t *testing.T) {
 	key := testKey(t)
-	record := mustWireRecord(t, recordSpec{ID: testRecordID0, Index: 0}, key)
+	record := encodedTestRecord(t, testCreateRecord(testUploadEntry()), key)
 	server, recorder := newTestServer(t, historysync.PinnedAtuinVersion, map[string]http.HandlerFunc{
 		"/api/v0/me": func(writer http.ResponseWriter, request *http.Request) {
 			writeJSON(t, writer, http.StatusOK, map[string]string{"username": "alice"})

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -82,10 +83,10 @@ func decryptUploaded(t *testing.T, record wire.Record, key wire.Key) wire.Histor
 
 func TestUploadEncodesCreateAndDeleteRecords(t *testing.T) {
 	key := testKey(t)
+	store := &uploadStore{records: make(map[string]wire.Record)}
 	server, recorder := newTestServer(t, historysync.PinnedAtuinVersion, map[string]http.HandlerFunc{
-		"/api/v0/record": func(writer http.ResponseWriter, request *http.Request) {
-			writer.WriteHeader(http.StatusOK)
-		},
+		"/api/v0/record":      newUploadHandler(t, store, key),
+		"/api/v0/record/next": store.readBackHandler(t),
 	})
 	remote := openTestRemote(t, server.URL, historysync.Config{
 		AuthMode: atuinmodel.AuthModeSession, Token: "session-token", MasterKey: key.Bytes(),
@@ -98,8 +99,8 @@ func TestUploadEncodesCreateAndDeleteRecords(t *testing.T) {
 	}
 
 	requests := recorder.all()
-	if len(requests) != 1 {
-		t.Fatalf("requests = %d, want 1", len(requests))
+	if len(requests) != 2 {
+		t.Fatalf("requests = %d, want a POST and a read-back GET", len(requests))
 	}
 	request := requests[0]
 	if request.Method != http.MethodPost || request.Path != "/api/v0/record" {
@@ -164,10 +165,10 @@ func TestUploadEncodesCreateAndDeleteRecords(t *testing.T) {
 
 func TestUploadMapsUnknownDurationAndExitAndAgentKind(t *testing.T) {
 	key := testKey(t)
+	store := &uploadStore{records: make(map[string]wire.Record)}
 	server, recorder := newTestServer(t, historysync.PinnedAtuinVersion, map[string]http.HandlerFunc{
-		"/api/v0/record": func(writer http.ResponseWriter, request *http.Request) {
-			writer.WriteHeader(http.StatusOK)
-		},
+		"/api/v0/record":      newUploadHandler(t, store, key),
+		"/api/v0/record/next": store.readBackHandler(t),
 	})
 	remote := openTestRemote(t, server.URL, historysync.Config{
 		AuthMode: atuinmodel.AuthModeSession, Token: "session-token", MasterKey: key.Bytes(),
@@ -296,10 +297,73 @@ type uploadStore struct {
 	records  map[string]wire.Record
 }
 
+func uploadRecordKey(record wire.Record) string {
+	return record.SeriesHost + "\x00" + record.Tag + "\x00" + strconv.FormatUint(record.Index, 10)
+}
+
 func (store *uploadStore) commit(records []wire.Record) {
 	for _, record := range records {
-		key := record.SeriesHost + "\x00" + record.Tag + "\x00" + strconv.FormatUint(record.Index, 10)
-		store.records[key] = record
+		key := uploadRecordKey(record)
+		if _, exists := store.records[key]; !exists {
+			store.records[key] = record
+		}
+	}
+}
+
+// insertExisting seeds the server with a record it already holds, bypassing
+// the duplicate-insert rule.
+func (store *uploadStore) insertExisting(record wire.Record) {
+	store.records[uploadRecordKey(record)] = record
+}
+
+func (store *uploadStore) count() int { return len(store.records) }
+
+// routes serves the pinned server's record endpoints. POST ignores a duplicate
+// insert, exactly as the server's INSERT ... ON CONFLICT DO NOTHING does.
+func (store *uploadStore) routes(t *testing.T, key wire.Key) map[string]http.HandlerFunc {
+	t.Helper()
+	return map[string]http.HandlerFunc{
+		"/api/v0/record":      newUploadHandler(t, store, key),
+		"/api/v0/record/next": store.readBackHandler(t),
+	}
+}
+
+// next serves the pinned (host, tag, start, count) read-back query.
+func (store *uploadStore) next(host, tag string, start uint64, count int) []wire.Record {
+	records := make([]wire.Record, 0, len(store.records))
+	for _, record := range store.records {
+		if record.SeriesHost == host && record.Tag == tag && record.Index >= start {
+			records = append(records, record)
+		}
+	}
+	sort.Slice(records, func(left, right int) bool {
+		return records[left].Index < records[right].Index
+	})
+	if count >= 0 && len(records) > count {
+		records = records[:count]
+	}
+	return records
+}
+
+func (store *uploadStore) readBackHandler(t *testing.T) http.HandlerFunc {
+	t.Helper()
+	return func(writer http.ResponseWriter, request *http.Request) {
+		query := request.URL.Query()
+		start := uint64(0)
+		if raw := query.Get("start"); raw != "" {
+			parsed, err := strconv.ParseUint(raw, 10, 64)
+			if err != nil {
+				http.Error(writer, "bad start", http.StatusBadRequest)
+				return
+			}
+			start = parsed
+		}
+		count, err := strconv.Atoi(query.Get("count"))
+		if err != nil || count < 0 {
+			http.Error(writer, "bad count", http.StatusBadRequest)
+			return
+		}
+		writeJSON(t, writer, http.StatusOK, store.next(query.Get("host"), query.Get("tag"), start, count))
 	}
 }
 
@@ -338,7 +402,8 @@ func TestUploadRetryAfterLostAcknowledgementIsIdempotent(t *testing.T) {
 	key := testKey(t)
 	store := &uploadStore{records: make(map[string]wire.Record), rejected: 0}
 	server, recorder := newTestServer(t, historysync.PinnedAtuinVersion, map[string]http.HandlerFunc{
-		"/api/v0/record": newUploadHandler(t, store, key),
+		"/api/v0/record":      newUploadHandler(t, store, key),
+		"/api/v0/record/next": store.readBackHandler(t),
 	})
 	remote := openTestRemote(t, server.URL, historysync.Config{
 		AuthMode: atuinmodel.AuthModeSession, Token: "session-token", MasterKey: key.Bytes(),
@@ -370,8 +435,8 @@ func TestUploadRetryAfterLostAcknowledgementIsIdempotent(t *testing.T) {
 		t.Fatalf("retry duplicated records: %d stored", len(store.records))
 	}
 	requests := recorder.all()
-	if len(requests) != 2 {
-		t.Fatalf("requests = %d, want 2", len(requests))
+	if len(requests) != 3 {
+		t.Fatalf("requests = %d, want two POSTs and one read-back GET", len(requests))
 	}
 	// A fresh content encryption key per attempt means the ciphertext differs,
 	// but the outer identities the server deduplicates on are stable.
@@ -395,7 +460,8 @@ func TestUploadRetryCompletesAPartiallyAppliedBatch(t *testing.T) {
 	key := testKey(t)
 	store := &uploadStore{records: make(map[string]wire.Record)}
 	server, recorder := newTestServer(t, historysync.PinnedAtuinVersion, map[string]http.HandlerFunc{
-		"/api/v0/record": newUploadHandler(t, store, key),
+		"/api/v0/record":      newUploadHandler(t, store, key),
+		"/api/v0/record/next": store.readBackHandler(t),
 	})
 	remote := openTestRemote(t, server.URL, historysync.Config{
 		AuthMode: atuinmodel.AuthModeSession, Token: "session-token", MasterKey: key.Bytes(),
@@ -425,8 +491,8 @@ func TestUploadRetryCompletesAPartiallyAppliedBatch(t *testing.T) {
 	if len(store.records) != len(batch) {
 		t.Fatalf("stored after retry = %d, want %d", len(store.records), len(batch))
 	}
-	if len(recorder.all()) != 2 {
-		t.Fatalf("requests = %d, want 2", len(recorder.all()))
+	if len(recorder.all()) != 3 {
+		t.Fatalf("requests = %d, want two POSTs and one read-back GET", len(recorder.all()))
 	}
 }
 
@@ -434,7 +500,8 @@ func TestUploadTreatsDuplicateConflictAsSuccess(t *testing.T) {
 	key := testKey(t)
 	store := &uploadStore{records: make(map[string]wire.Record)}
 	server, recorder := newTestServer(t, historysync.PinnedAtuinVersion, map[string]http.HandlerFunc{
-		"/api/v0/record": newUploadHandler(t, store, key),
+		"/api/v0/record":      newUploadHandler(t, store, key),
+		"/api/v0/record/next": store.readBackHandler(t),
 	})
 	remote := openTestRemote(t, server.URL, historysync.Config{
 		AuthMode: atuinmodel.AuthModeSession, Token: "session-token", MasterKey: key.Bytes(),
@@ -448,8 +515,8 @@ func TestUploadTreatsDuplicateConflictAsSuccess(t *testing.T) {
 	if len(store.records) != 1 {
 		t.Fatalf("stored = %d, want the duplicate to be ignored", len(store.records))
 	}
-	if len(recorder.all()) != 2 {
-		t.Fatalf("requests = %d, want 2", len(recorder.all()))
+	if len(recorder.all()) != 4 {
+		t.Fatalf("requests = %d, want two POSTs and two read-back GETs", len(recorder.all()))
 	}
 }
 
