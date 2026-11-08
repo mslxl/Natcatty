@@ -2301,6 +2301,28 @@
   "@logsClearHistory": {
     "description": "The button that opens the clear-this-device confirmation for command history."
   },
+  "logsDeleteEverywhere": "Delete everywhere",
+  "@logsDeleteEverywhere": {
+    "description": "The History header action that deletes every history entry this device knows across devices."
+  },
+  "logsDeleteEverywhereConfirm": "This deletes every history entry this device knows, including imported and synced entries, and uploads deletions for entries with a UUID identity. Entries this device has never downloaded cannot be reached and stay on other devices.",
+  "@logsDeleteEverywhereConfirm": {
+    "description": "The separate Delete everywhere confirmation that names the unseen-row limit."
+  },
+  "logsDeleteEverywhereYes": "Delete all history",
+  "@logsDeleteEverywhereYes": {
+    "description": "The confirmation button that deletes every known history entry."
+  },
+  "logsDeleteEverywhereDone": "{count, plural, one {# history entry deleted on this device; queued deletions upload when sync runs.} other {# history entries deleted on this device; queued deletions upload when sync runs.}}",
+  "@logsDeleteEverywhereDone": {
+    "description": "Confirms how many history entries the bulk delete removed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "40"
+      }
+    }
+  },
   "logsClearConnections": "Clear connection logs",
   "@logsClearConnections": {
     "description": "The button that opens the clear-connection-logs confirmation."
@@ -2560,6 +2582,10 @@
   "logsProblemClear": "Could not clear this device's history.",
   "@logsProblemClear": {
     "description": "Shown when clearing this device's history failed."
+  },
+  "logsProblemDeleteEverywhere": "Could not delete history everywhere.",
+  "@logsProblemDeleteEverywhere": {
+    "description": "Shown when the Delete everywhere bulk action failed."
   },
   "logsProblemClearConnections": "Could not clear the connection logs.",
   "@logsProblemClearConnections": {

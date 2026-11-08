@@ -20,10 +20,11 @@ type fakeSource struct {
 	entriesErr error
 	// clearErr makes ClearThisDevice remove clearRemoved owned rows and then
 	// fail, simulating a batched clear that committed part of its work.
-	clearErr     error
-	clearRemoved int
-	cleared      int
-	pruned       int
+	clearErr          error
+	clearRemoved      int
+	cleared           int
+	deletedEverywhere int
+	pruned            int
 }
 
 func (f *fakeSource) ConnectionLogs(context.Context) ([]domainhistory.ConnectionLog, error) {
@@ -99,6 +100,19 @@ func (f *fakeSource) ClearThisDevice(context.Context) (int, error) {
 	if f.clearErr != nil {
 		return removed, f.clearErr
 	}
+	return removed, nil
+}
+
+// DeleteEverywhere removes every row, including imported and synced rows,
+// mirroring the service's all-known-rows contract.
+func (f *fakeSource) DeleteEverywhere(context.Context) (int, error) {
+	if f.deleteErr != nil {
+		return 0, f.deleteErr
+	}
+	removed := len(f.entries)
+	f.entries = nil
+	f.deletedEverywhere = removed
+	f.markChanged()
 	return removed, nil
 }
 
@@ -434,6 +448,115 @@ func TestClearThisDeviceReportsPartialFailure(t *testing.T) {
 	}
 	if reloads != 1 {
 		t.Fatalf("autocomplete reloads = %d, want a reload after partial clear", reloads)
+	}
+}
+
+// TestDeleteEverywhereRequiresConfirmationAndRemovesEveryKnownRow proves the
+// bulk action is not a one-click operation and, unlike Clear this device, it
+// removes imported and synced rows too.
+func TestDeleteEverywhereRequiresConfirmationAndRemovesEveryKnownRow(t *testing.T) {
+	now := time.Now()
+	source := &fakeSource{entries: []domainhistory.Entry{
+		entryAt("local", "", "ls", domainhistory.SourceSession, now),
+		entryAt("imported", "", "uptime", domainhistory.SourceAtuinImport, now),
+		entryAt("synced", "", "df -h", domainhistory.SourceAtuinSync, now),
+	}}
+	reloads := 0
+	state := NewState(source, nil, WithMutationHook(func() { reloads++ }))
+	state.Refresh()
+	state.SelectTab(TabHistory)
+	state.SelectEntry("local")
+
+	state.RequestDeleteEverywhere()
+	if !state.PendingDeleteEverywhere() {
+		t.Fatal("the Delete everywhere confirmation did not open")
+	}
+	if state.TotalEntries() != 3 || state.DeletedEverywhere() != 0 {
+		t.Fatalf("entries = %d, deleted everywhere = %d; want nothing removed before confirmation",
+			state.TotalEntries(), state.DeletedEverywhere())
+	}
+	state.CancelDeleteEverywhere()
+	if state.PendingDeleteEverywhere() || state.TotalEntries() != 3 {
+		t.Fatalf("cancel changed the journal: pending=%v entries=%d",
+			state.PendingDeleteEverywhere(), state.TotalEntries())
+	}
+
+	state.RequestDeleteEverywhere()
+	state.ConfirmDeleteEverywhere()
+	if state.PendingDeleteEverywhere() || state.Problem() != ProblemNone {
+		t.Fatalf("pending = %v, problem = %v", state.PendingDeleteEverywhere(), state.Problem())
+	}
+	if state.DeletedEverywhere() != 3 || state.TotalEntries() != 0 {
+		t.Fatalf("deleted everywhere = %d, entries = %d; want every known row removed",
+			state.DeletedEverywhere(), state.TotalEntries())
+	}
+	if state.EntrySelected("local") {
+		t.Fatal("the detail panel stayed open after its row was deleted")
+	}
+	if reloads != 1 {
+		t.Fatalf("autocomplete reloads = %d, want one after the bulk delete", reloads)
+	}
+}
+
+// TestDeleteEverywhereReportsAStoreFailure proves a failed bulk action leaves
+// the confirmation closed, reports the dedicated problem code, and still
+// reloads the consumers that share the store.
+func TestDeleteEverywhereReportsAStoreFailure(t *testing.T) {
+	now := time.Now()
+	source := &fakeSource{
+		deleteErr: errors.New("disk"),
+		entries: []domainhistory.Entry{
+			entryAt("local", "", "ls", domainhistory.SourceSession, now),
+		},
+	}
+	reloads := 0
+	state := NewState(source, nil, WithMutationHook(func() { reloads++ }))
+	state.Refresh()
+	state.SelectTab(TabHistory)
+	state.RequestDeleteEverywhere()
+	state.ConfirmDeleteEverywhere()
+
+	if state.Problem() != ProblemDeleteEverywhere {
+		t.Fatalf("problem = %v, want ProblemDeleteEverywhere", state.Problem())
+	}
+	if state.PendingDeleteEverywhere() {
+		t.Fatal("the confirmation stayed open after the failure")
+	}
+	if state.DeletedEverywhere() != 0 || state.TotalEntries() != 1 {
+		t.Fatalf("deleted everywhere = %d, entries = %d",
+			state.DeletedEverywhere(), state.TotalEntries())
+	}
+	if reloads != 1 {
+		t.Fatalf("autocomplete reloads = %d, want one after the failure", reloads)
+	}
+}
+
+// TestDestructiveConfirmationsAreMutuallyExclusive proves opening one bulk
+// confirmation closes the others, so a stale Clear or Prune prompt cannot be
+// confirmed alongside Delete everywhere.
+func TestDestructiveConfirmationsAreMutuallyExclusive(t *testing.T) {
+	state := NewState(&fakeSource{}, nil)
+	state.RequestClear()
+	state.RequestDeleteEverywhere()
+	if state.PendingClear() || !state.PendingDeleteEverywhere() {
+		t.Fatalf("Delete everywhere left Clear open: clear=%v everywhere=%v",
+			state.PendingClear(), state.PendingDeleteEverywhere())
+	}
+	state.RequestClear()
+	if state.PendingDeleteEverywhere() || !state.PendingClear() {
+		t.Fatalf("Clear left Delete everywhere open: clear=%v everywhere=%v",
+			state.PendingClear(), state.PendingDeleteEverywhere())
+	}
+	state.RequestDeleteEverywhere()
+	state.RequestPrune()
+	if state.PendingDeleteEverywhere() || !state.PendingPrune() {
+		t.Fatalf("Prune left Delete everywhere open: everywhere=%v prune=%v",
+			state.PendingDeleteEverywhere(), state.PendingPrune())
+	}
+	state.RequestClear()
+	if state.PendingPrune() || !state.PendingClear() {
+		t.Fatalf("Clear left Prune open: prune=%v clear=%v",
+			state.PendingPrune(), state.PendingClear())
 	}
 }
 

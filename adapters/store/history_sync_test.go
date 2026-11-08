@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"maps"
+	"strings"
 	"testing"
 	"time"
 
@@ -1298,6 +1300,142 @@ func TestPruneAndClearUploadTombstonesOnlyForUUIDRowsWithRealStore(t *testing.T)
 		if err != nil || !found || entry.DeletedAt.IsZero() {
 			t.Fatalf("legacy row %s = %+v, found=%v, err=%v; want it deleted locally",
 				id, entry, found, err)
+		}
+	}
+}
+
+// pendingDeleteTombstones returns one count per UUID row with a pending
+// (not-yet-uploaded) delete record, failing on an unexpected record shape.
+func pendingDeleteTombstones(t *testing.T, db *Store) map[string]int {
+	t.Helper()
+	records, err := db.ListHistoryRecords(context.Background())
+	if err != nil {
+		t.Fatalf("ListHistoryRecords: %v", err)
+	}
+	pending := make(map[string]int)
+	for _, record := range records {
+		if record.Kind != domainhistory.RecordKindDelete {
+			continue
+		}
+		if record.Tag != domainhistory.RecordTagHistory {
+			t.Fatalf("non-history tombstone in the record log: %+v", record)
+		}
+		if record.UploadedAt.IsZero() {
+			pending[record.HistoryID]++
+		}
+	}
+	return pending
+}
+
+// TestDeleteEverywhereUploadsTombstonesForEveryKnownUUIDRowWithRealStore proves
+// Delete everywhere soft-deletes local, shell-history, imported, and synced
+// rows; queues exactly one tombstone per UUID row; keeps the tombstones pending
+// while sync is unconfigured or offline; then uploads them through the existing
+// sync path while never uploading the legacy non-UUID row. Only history delete
+// records travel; no store-wide deletion is reachable from the engine, as
+// TestRemotePortHasNoStoreDeleteOperation pins.
+func TestDeleteEverywhereUploadsTombstonesForEveryKnownUUIDRowWithRealStore(t *testing.T) {
+	ctx := context.Background()
+	db, _ := openTestStore(t)
+	if _, err := db.EnsureWriterUUID(ctx, func() string { return syncTestWriter }); err != nil {
+		t.Fatalf("EnsureWriterUUID: %v", err)
+	}
+	historyService := apphistory.NewService(db)
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	const (
+		localID    = "0198d000-0000-7000-8000-000000000861"
+		shellID    = "0198d000-0000-7000-8000-000000000862"
+		importedID = "0198d000-0000-7000-8000-000000000863"
+		syncedID   = "0198d000-0000-7000-8000-000000000864"
+		legacyID   = "legacy-delete-everywhere-row"
+	)
+	rows := []domainhistory.Entry{
+		{ID: localID, Scope: "local", Command: "make test",
+			Source: domainhistory.SourceSession, RecordedAt: at},
+		{ID: shellID, Scope: "local", Command: "git status",
+			Source: domainhistory.SourceShellHistory, RecordedAt: at.Add(time.Minute)},
+		{ID: importedID, Scope: "remote:web:deploy", Origin: "web:deploy",
+			Command: "uptime", Source: domainhistory.SourceAtuinImport,
+			RecordedAt: at.Add(2 * time.Minute)},
+		{ID: syncedID, Scope: "remote:other:admin", Origin: "other:admin",
+			Command: "df -h", Source: domainhistory.SourceAtuinSync,
+			RecordedAt: at.Add(3 * time.Minute)},
+		{ID: legacyID, Scope: "local", Command: "whoami",
+			Source: domainhistory.SourceSession, RecordedAt: at.Add(4 * time.Minute)},
+	}
+	for _, entry := range rows {
+		if err := historyService.Record(ctx, entry); err != nil {
+			t.Fatalf("record %s: %v", entry.Command, err)
+		}
+	}
+
+	removed, err := historyService.DeleteEverywhere(ctx)
+	if err != nil || removed != len(rows) {
+		t.Fatalf("DeleteEverywhere = %d, %v; want every known row", removed, err)
+	}
+	live, err := historyService.Entries(ctx)
+	if err != nil {
+		t.Fatalf("Entries: %v", err)
+	}
+	if len(live) != 0 {
+		t.Fatalf("live rows = %+v, want none", live)
+	}
+	legacy, found, err := db.HistoryEntry(ctx, legacyID)
+	if err != nil || !found || legacy.DeletedAt.IsZero() {
+		t.Fatalf("legacy row = %+v, found=%v, err=%v; want it deleted locally",
+			legacy, found, err)
+	}
+
+	// Sync is unconfigured here: the tombstones are committed locally and wait
+	// for an upload, one per UUID row and none for the legacy row.
+	wantPending := map[string]int{
+		localID: 1, shellID: 1, importedID: 1, syncedID: 1,
+	}
+	if got := pendingDeleteTombstones(t, db); !maps.Equal(got, wantPending) {
+		t.Fatalf("pending tombstones = %+v, want %+v", got, wantPending)
+	}
+
+	// An offline run leaves the local deletion in place and the tombstones
+	// pending, so a later successful sync can still propagate them.
+	confirmStoreKey(t, db)
+	offlineFactory := fake.NewFactory(fake.Options{UploadErr: historysync.ErrOffline})
+	offlineService := newStoreSyncService(t, db, offlineFactory)
+	if _, err := offlineService.SyncNow(ctx); !errors.Is(err, historysync.ErrOffline) {
+		t.Fatalf("offline SyncNow = %v, want ErrOffline", err)
+	}
+	if got := pendingDeleteTombstones(t, db); !maps.Equal(got, wantPending) {
+		t.Fatalf("tombstones after offline sync = %+v, want them pending %+v", got, wantPending)
+	}
+	offlineService.Stop()
+
+	// The online run uploads the pending tombstones in the writer series.
+	factory := fake.NewFactory(fake.Options{})
+	service := newStoreSyncService(t, db, factory)
+	syncStoreNow(t, service)
+
+	serverDeletes := make(map[string]int)
+	serverIDs := make(map[string]bool)
+	for _, record := range factory.ServerRecords() {
+		if record.Tag != domainhistory.RecordTagHistory {
+			t.Fatalf("non-history tag uploaded: %+v", record)
+		}
+		serverIDs[record.HistoryID] = true
+		if record.Kind == domainhistory.RecordKindDelete {
+			serverDeletes[record.HistoryID]++
+		}
+	}
+	for _, id := range []string{localID, shellID, importedID, syncedID} {
+		if serverDeletes[id] != 1 {
+			t.Fatalf("uploaded tombstones for %s = %d, want exactly one",
+				id, serverDeletes[id])
+		}
+	}
+	if serverIDs[legacyID] {
+		t.Fatal("the legacy non-UUID row reached the server")
+	}
+	for _, event := range factory.Events() {
+		if !strings.HasPrefix(event, "download:") && !strings.HasPrefix(event, "upload:") {
+			t.Fatalf("Delete everywhere reached an unexpected remote operation: %q", event)
 		}
 	}
 }

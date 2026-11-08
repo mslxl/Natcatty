@@ -45,6 +45,22 @@ func View(s *State) func(*ui.Context) {
 				if s.PendingPrune() {
 					pruneDialog(c, s, m, t)
 				}
+				if s.PendingDeleteEverywhere() {
+					// Delete everywhere is a separate, danger-styled action: the
+					// confirmation names the limit that rows this device never
+					// downloaded cannot be reached.
+					confirmed, cancelled := kit.Confirm(c, true,
+						m.LogsDeleteEverywhere(), m.LogsDeleteEverywhereConfirm(),
+						m.LogsDeleteEverywhereYes(), m.LogsCancel())
+					switch {
+					case confirmed:
+						s.ConfirmDeleteEverywhere()
+						c.Invalidate()
+					case cancelled:
+						s.CancelDeleteEverywhere()
+						c.Invalidate()
+					}
+				}
 
 				if s.Tab() == TabConnections {
 					connectionRows(c, s, m, t)
@@ -107,6 +123,17 @@ func tabs(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			}
 		}
 	})
+	if s.Tab() == TabHistory {
+		// Delete everywhere is visibly separate from Clear this device and is
+		// danger-styled: it also removes imported and synced rows and uploads a
+		// tombstone for every row with a UUID identity.
+		ui.Row(c).FillWidth().Gap(8).Children(func() {
+			if kit.DangerButton(c, icons.Trash, m.LogsDeleteEverywhere()).Clicked() {
+				s.RequestDeleteEverywhere()
+				c.Invalidate()
+			}
+		})
+	}
 	if s.PendingClear() {
 		kit.Notice(c, icons.Trash, t.Danger, clearConfirm, func() {
 			if kit.GhostButton(c, "", m.LogsCancel()).Clicked() {
@@ -141,6 +168,9 @@ func problems(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	if count := s.Pruned(); count > 0 {
 		ui.Text(c, m.LogsPruned(count)).FontSize(12).TextColor(t.TextMuted)
 	}
+	if count := s.DeletedEverywhere(); count > 0 {
+		ui.Text(c, m.LogsDeleteEverywhereDone(count)).FontSize(12).TextColor(t.TextMuted)
+	}
 }
 
 func problemText(m locales.Messages, tab Tab, problem Problem) string {
@@ -166,6 +196,8 @@ func problemText(m locales.Messages, tab Tab, problem Problem) string {
 		return m.LogsProblemInsert()
 	case ProblemInsertUnsafe:
 		return m.LogsProblemInsertUnsafe()
+	case ProblemDeleteEverywhere:
+		return m.LogsProblemDeleteEverywhere()
 	default:
 		return ""
 	}

@@ -816,6 +816,70 @@ func TestClearHistoryConfirmationIsReachable(t *testing.T) {
 	}
 }
 
+// TestDeleteEverywhereIsSeparateFromClearAndExplainsUnseenRows proves the
+// History surface offers a distinct bulk action, asks before deleting,
+// explains that rows this device never downloaded are out of reach, and leaves
+// the journal untouched on cancel. Confirming removes imported and synced rows
+// as well, unlike Clear this device.
+func TestDeleteEverywhereIsSeparateFromClearAndExplainsUnseenRows(t *testing.T) {
+	m := locales.In("en")
+	now := time.Now()
+	source := &fakeSource{entries: []domainhistory.Entry{
+		entryAt("local", "", "ls", domainhistory.SourceSession, now),
+		entryAt("imported", "", "uptime", domainhistory.SourceAtuinImport, now),
+		entryAt("synced", "", "df -h", domainhistory.SourceAtuinSync, now),
+	}}
+	state := NewState(source, nil)
+	tester := ui.NewTester(View(state), 900, 600)
+	tester.SetLocale("en")
+	state.SelectTab(TabHistory)
+	tester.Frame()
+
+	if !tester.HasText(m.LogsClearHistory()) || !tester.HasText(m.LogsDeleteEverywhere()) {
+		t.Fatalf("the two bulk actions are not both visible: %v", tester.Texts())
+	}
+	if m.LogsClearHistory() == m.LogsDeleteEverywhere() {
+		t.Fatal("Delete everywhere reused the Clear this device label")
+	}
+	if !strings.Contains(m.LogsDeleteEverywhereConfirm(), "never downloaded") {
+		t.Fatalf("the confirmation does not name the unseen-row limit: %q",
+			m.LogsDeleteEverywhereConfirm())
+	}
+
+	if err := tester.Click(m.LogsDeleteEverywhere()); err != nil {
+		t.Fatalf("click Delete everywhere: %v", err)
+	}
+	tester.Frame()
+	assertVisible(t, tester, m.LogsDeleteEverywhereConfirm(), 900, 600)
+	if state.TotalEntries() != 3 || state.DeletedEverywhere() != 0 {
+		t.Fatalf("the first click removed rows: entries=%d deleted=%d",
+			state.TotalEntries(), state.DeletedEverywhere())
+	}
+	if err := tester.Click(m.LogsCancel()); err != nil {
+		t.Fatalf("click Cancel: %v", err)
+	}
+	tester.Frame()
+	if state.PendingDeleteEverywhere() || state.TotalEntries() != 3 {
+		t.Fatalf("cancel changed the journal: pending=%v entries=%d",
+			state.PendingDeleteEverywhere(), state.TotalEntries())
+	}
+
+	if err := tester.Click(m.LogsDeleteEverywhere()); err != nil {
+		t.Fatalf("reopen Delete everywhere: %v", err)
+	}
+	tester.Frame()
+	if err := tester.Click(m.LogsDeleteEverywhereYes()); err != nil {
+		t.Fatalf("confirm Delete everywhere: %v", err)
+	}
+	tester.Frame()
+	if state.PendingDeleteEverywhere() || state.TotalEntries() != 0 ||
+		state.DeletedEverywhere() != 3 {
+		t.Fatalf("after confirmation: pending=%v entries=%d deleted=%d",
+			state.PendingDeleteEverywhere(), state.TotalEntries(), state.DeletedEverywhere())
+	}
+	assertVisible(t, tester, m.LogsDeleteEverywhereDone(3), 900, 600)
+}
+
 func TestHistoryRowCopyAndInsertAreExplicitActions(t *testing.T) {
 	m := locales.In("en")
 	commands := &fakeCommandActions{}

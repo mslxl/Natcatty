@@ -1055,7 +1055,7 @@ func TestClearThisDeviceAppliesInBoundedBatches(t *testing.T) {
 	store := &memoryStore{}
 	service := NewService(store)
 	ctx := context.Background()
-	total := clearBatchSize + 1
+	total := bulkDeleteBatchSize + 1
 	for index := 0; index < total; index++ {
 		store.entries = append(store.entries, domainhistory.Entry{
 			ID: fmt.Sprintf("legacy-%d", index), Scope: "local", Command: "ls",
@@ -1078,7 +1078,7 @@ func TestClearThisDeviceReportsCommittedRowsWhenALaterBatchFails(t *testing.T) {
 	store := &memoryStore{batchLimit: 1}
 	service := NewService(store)
 	ctx := context.Background()
-	total := clearBatchSize + 1
+	total := bulkDeleteBatchSize + 1
 	for index := 0; index < total; index++ {
 		store.entries = append(store.entries, domainhistory.Entry{
 			ID: fmt.Sprintf("legacy-%d", index), Scope: "local", Command: "ls",
@@ -1089,7 +1089,7 @@ func TestClearThisDeviceReportsCommittedRowsWhenALaterBatchFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("ClearThisDevice did not report the failed batch")
 	}
-	if removed != clearBatchSize {
+	if removed != bulkDeleteBatchSize {
 		t.Fatalf("ClearThisDevice = %d, want the committed first batch", removed)
 	}
 	live, _ := service.Load(ctx)
@@ -1120,6 +1120,131 @@ func TestClearThisDeviceOwnsRowsLinkedToALocalCreateRecord(t *testing.T) {
 	live, _ := service.Load(ctx)
 	if len(live) != 1 || live[0].ID != uuid(2) {
 		t.Fatalf("live rows = %+v, want only the unlinked remote row", live)
+	}
+}
+
+// TestDeleteEverywhereSoftDeletesEveryKnownRowAndTombstonesUUIDRows proves the
+// bulk action reaches local, shell-history, imported, and synced rows alike,
+// appends exactly one delete tombstone per UUID row, keeps a legacy non-UUID
+// row local-only, and signals the local-change observers that drive upload.
+func TestDeleteEverywhereSoftDeletesEveryKnownRowAndTombstonesUUIDRows(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	rows := []domainhistory.Entry{
+		{ID: uuid(1), Scope: "local", Command: "ls", Source: domainhistory.SourceSession, RecordedAt: at(1)},
+		{ID: uuid(2), Scope: "local", Command: "pwd", Source: domainhistory.SourceShellHistory, RecordedAt: at(2)},
+		{ID: uuid(3), Scope: "remote:web:deploy", Command: "uptime", Source: domainhistory.SourceAtuinImport, Origin: "web:deploy", RecordedAt: at(3)},
+		{ID: uuid(4), Scope: "remote:other:admin", Command: "df -h", Source: domainhistory.SourceAtuinSync, Origin: "other:admin", RecordedAt: at(4)},
+		{ID: "legacy-local-1", Scope: "local", Command: "whoami", Source: domainhistory.SourceSession, RecordedAt: at(5)},
+	}
+	for _, entry := range rows {
+		if err := service.Record(ctx, entry); err != nil {
+			t.Fatalf("Record %s: %v", entry.Command, err)
+		}
+	}
+	recordsBefore := len(store.records)
+	localChanges := 0
+	service.SubscribeLocal(func() { localChanges++ })
+
+	removed, err := service.DeleteEverywhere(ctx)
+	if err != nil || removed != len(rows) {
+		t.Fatalf("DeleteEverywhere = %d, %v; want every known row", removed, err)
+	}
+	live, err := service.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(live) != 0 {
+		t.Fatalf("live rows = %+v, want none", live)
+	}
+
+	added := store.records[recordsBefore:]
+	if len(added) != len(rows)-1 {
+		t.Fatalf("tombstones = %d, want one per UUID row only", len(added))
+	}
+	tombstones := make(map[string]int, len(added))
+	for _, record := range added {
+		if record.Tag != domainhistory.RecordTagHistory ||
+			record.Kind != domainhistory.RecordKindDelete {
+			t.Fatalf("unexpected tombstone %+v", record)
+		}
+		tombstones[record.HistoryID]++
+	}
+	for _, id := range []string{uuid(1), uuid(2), uuid(3), uuid(4)} {
+		if tombstones[id] != 1 {
+			t.Fatalf("tombstones for %s = %d, want exactly one", id, tombstones[id])
+		}
+	}
+	if tombstones["legacy-local-1"] != 0 {
+		t.Fatal("the legacy non-UUID row entered the tombstone batch")
+	}
+	stored, found, err := store.HistoryEntry(ctx, "legacy-local-1")
+	if err != nil || !found || stored.DeletedAt.IsZero() {
+		t.Fatalf("legacy row = %+v, found=%v, err=%v; want it deleted locally",
+			stored, found, err)
+	}
+	if localChanges == 0 {
+		t.Fatal("Delete everywhere did not signal the local-change upload trigger")
+	}
+}
+
+func TestDeleteEverywhereWithNoRowsIsANoOp(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	removed, err := service.DeleteEverywhere(context.Background())
+	if err != nil || removed != 0 {
+		t.Fatalf("DeleteEverywhere = %d, %v; want 0", removed, err)
+	}
+	if len(store.records) != 0 {
+		t.Fatalf("empty Delete everywhere appended records: %+v", store.records)
+	}
+}
+
+func TestDeleteEverywhereAppliesInBoundedBatches(t *testing.T) {
+	store := &memoryStore{}
+	service := NewService(store)
+	ctx := context.Background()
+	total := bulkDeleteBatchSize + 1
+	for index := 0; index < total; index++ {
+		store.entries = append(store.entries, domainhistory.Entry{
+			ID: fmt.Sprintf("legacy-%d", index), Scope: "local", Command: "ls",
+			Source: domainhistory.SourceSession, RecordedAt: at(index),
+		})
+	}
+	removed, err := service.DeleteEverywhere(ctx)
+	if err != nil || removed != total {
+		t.Fatalf("DeleteEverywhere = %d, %v; want %d", removed, err, total)
+	}
+	if store.batches != 2 {
+		t.Fatalf("store batches = %d, want 2 for %d rows", store.batches, total)
+	}
+}
+
+// TestDeleteEverywhereReportsCommittedRowsWhenALaterBatchFails pins the partial
+// result contract: the count describes rows already soft-deleted and the error
+// stops the remaining batches.
+func TestDeleteEverywhereReportsCommittedRowsWhenALaterBatchFails(t *testing.T) {
+	store := &memoryStore{batchLimit: 1}
+	service := NewService(store)
+	ctx := context.Background()
+	total := bulkDeleteBatchSize + 1
+	for index := 0; index < total; index++ {
+		store.entries = append(store.entries, domainhistory.Entry{
+			ID: fmt.Sprintf("legacy-%d", index), Scope: "local", Command: "ls",
+			Source: domainhistory.SourceSession, RecordedAt: at(index),
+		})
+	}
+	removed, err := service.DeleteEverywhere(ctx)
+	if err == nil {
+		t.Fatal("DeleteEverywhere did not report the failed batch")
+	}
+	if removed != bulkDeleteBatchSize {
+		t.Fatalf("DeleteEverywhere = %d, want the committed first batch", removed)
+	}
+	live, _ := service.Load(ctx)
+	if len(live) != 1 {
+		t.Fatalf("live rows = %d, want the row from the failed batch", len(live))
 	}
 }
 

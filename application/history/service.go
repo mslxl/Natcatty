@@ -541,10 +541,10 @@ func (s *Service) ClearConnectionLogs(ctx context.Context) (int, error) {
 	return removed, nil
 }
 
-// clearBatchSize bounds one Clear this device transaction. A large journal is
-// cleared in several committed batches instead of one transaction that holds
+// bulkDeleteBatchSize bounds one bulk-delete transaction. A large journal is
+// deleted in several committed batches instead of one transaction that holds
 // the writer lock for the whole operation.
-const clearBatchSize = 500
+const bulkDeleteBatchSize = 500
 
 // ClearThisDevice soft-deletes every live command this install created: rows
 // captured in a Session or imported from a local Shell History File, including
@@ -581,13 +581,40 @@ func (s *Service) ClearThisDevice(ctx context.Context) (int, error) {
 			owned = append(owned, entry)
 		}
 	}
+	return s.deleteInBatches(ctx, owned)
+}
+
+// DeleteEverywhere soft-deletes every live command this device knows: rows
+// captured or imported on this device and imported or synced remote-origin
+// rows. Every row with a UUID identity also gets a delete tombstone, and the
+// local-change notification lets the sync engine upload the tombstones; a
+// legacy non-UUID row is deleted locally without a record. Records this device
+// has never downloaded are not known here and are therefore out of reach. The
+// Atuin delete-all-store endpoint is never involved: deletions travel as
+// ordinary history delete records.
+func (s *Service) DeleteEverywhere(ctx context.Context) (int, error) {
+	if s.store == nil {
+		return 0, ErrInvalid
+	}
+	entries, err := s.store.ListHistoryEntries(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return s.deleteInBatches(ctx, entries)
+}
+
+// deleteInBatches soft-deletes entries in committed batches, so a large bulk
+// delete does not hold the writer lock for the whole journal. A failure in a
+// later batch stops the remaining batches and reports the rows already
+// committed together with the error.
+func (s *Service) deleteInBatches(ctx context.Context, entries []domainhistory.Entry) (int, error) {
 	removed := 0
-	for start := 0; start < len(owned); start += clearBatchSize {
-		end := start + clearBatchSize
-		if end > len(owned) {
-			end = len(owned)
+	for start := 0; start < len(entries); start += bulkDeleteBatchSize {
+		end := start + bulkDeleteBatchSize
+		if end > len(entries) {
+			end = len(entries)
 		}
-		removedInBatch, err := s.deleteEntries(ctx, owned[start:end])
+		removedInBatch, err := s.deleteEntries(ctx, entries[start:end])
 		if err != nil {
 			return removed, err
 		}
@@ -680,7 +707,7 @@ func boundedPrune(entries []domainhistory.Entry, limit int) []domainhistory.Entr
 
 // deleteEntries soft-deletes the listed rows and appends one tombstone per
 // UUID-identified row in a single store transaction. It is the shared path for
-// Delete one, Prune, and Clear this device.
+// Delete one, Prune, Clear this device, and Delete everywhere.
 func (s *Service) deleteEntries(ctx context.Context, entries []domainhistory.Entry) (int, error) {
 	if len(entries) == 0 {
 		return 0, nil

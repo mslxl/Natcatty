@@ -10860,6 +10860,68 @@ func (msgs Messages) LogsClearHistory() string {
 	return Catalog.Format(msgs.locale, "logsClearHistory", nil)
 }
 
+// LogsDeleteEverywhere says "Delete everywhere"
+// in the language the app shows.
+//
+// The History header action that deletes every history entry this device
+// knows across devices.
+func LogsDeleteEverywhere() string { return In(i18n.Locale()).LogsDeleteEverywhere() }
+
+// LogsDeleteEverywhere says "Delete everywhere"
+// in the language of msgs.
+//
+// The History header action that deletes every history entry this device
+// knows across devices.
+func (msgs Messages) LogsDeleteEverywhere() string {
+	return Catalog.Format(msgs.locale, "logsDeleteEverywhere", nil)
+}
+
+// LogsDeleteEverywhereConfirm says "This deletes every history entry this device knows, including imported and synced entries, and uploads deletions for …"
+// in the language the app shows.
+//
+// The separate Delete everywhere confirmation that names the unseen-row
+// limit.
+func LogsDeleteEverywhereConfirm() string { return In(i18n.Locale()).LogsDeleteEverywhereConfirm() }
+
+// LogsDeleteEverywhereConfirm says "This deletes every history entry this device knows, including imported and synced entries, and uploads deletions for …"
+// in the language of msgs.
+//
+// The separate Delete everywhere confirmation that names the unseen-row
+// limit.
+func (msgs Messages) LogsDeleteEverywhereConfirm() string {
+	return Catalog.Format(msgs.locale, "logsDeleteEverywhereConfirm", nil)
+}
+
+// LogsDeleteEverywhereYes says "Delete all history"
+// in the language the app shows.
+//
+// The confirmation button that deletes every known history entry.
+func LogsDeleteEverywhereYes() string { return In(i18n.Locale()).LogsDeleteEverywhereYes() }
+
+// LogsDeleteEverywhereYes says "Delete all history"
+// in the language of msgs.
+//
+// The confirmation button that deletes every known history entry.
+func (msgs Messages) LogsDeleteEverywhereYes() string {
+	return Catalog.Format(msgs.locale, "logsDeleteEverywhereYes", nil)
+}
+
+// LogsDeleteEverywhereDone says "{count, plural, one {# history entry deleted on this device; queued deletions upload when sync runs.} other {# histor…"
+// in the language the app shows.
+//
+// Confirms how many history entries the bulk delete removed.
+func LogsDeleteEverywhereDone(count int) string {
+	return In(i18n.Locale()).LogsDeleteEverywhereDone(count)
+}
+
+// LogsDeleteEverywhereDone says "{count, plural, one {# history entry deleted on this device; queued deletions upload when sync runs.} other {# histor…"
+// in the language of msgs.
+//
+// Confirms how many history entries the bulk delete removed.
+func (msgs Messages) LogsDeleteEverywhereDone(count int) string {
+	return Catalog.Format(msgs.locale, "logsDeleteEverywhereDone", map[string]any{"count": count})
+}
+
 // LogsClearConnections says "Clear connection logs"
 // in the language the app shows.
 //
@@ -11460,6 +11522,20 @@ func LogsProblemClear() string { return In(i18n.Locale()).LogsProblemClear() }
 // Shown when clearing this device's history failed.
 func (msgs Messages) LogsProblemClear() string {
 	return Catalog.Format(msgs.locale, "logsProblemClear", nil)
+}
+
+// LogsProblemDeleteEverywhere says "Could not delete history everywhere."
+// in the language the app shows.
+//
+// Shown when the Delete everywhere bulk action failed.
+func LogsProblemDeleteEverywhere() string { return In(i18n.Locale()).LogsProblemDeleteEverywhere() }
+
+// LogsProblemDeleteEverywhere says "Could not delete history everywhere."
+// in the language of msgs.
+//
+// Shown when the Delete everywhere bulk action failed.
+func (msgs Messages) LogsProblemDeleteEverywhere() string {
+	return Catalog.Format(msgs.locale, "logsProblemDeleteEverywhere", nil)
 }
 
 // LogsProblemClearConnections says "Could not clear the connection logs."

@@ -149,6 +149,13 @@ duration, exit code, origin, author, source, capture tier, and deletion state.
 Autocomplete aggregates the same rows instead of keeping its own copy.
 _Avoid_: shell history, command log
 
+**Delete Everywhere**:
+The explicit, confirmed bulk action that soft-deletes every live Command History
+row this device knows, including imported and synced rows, and uploads a delete
+record for each row with a UUID identity. Rows this device never downloaded are
+out of reach, and the action never calls the Atuin delete-all-store endpoint.
+_Avoid_: remote wipe, purge everywhere
+
 **Origin**:
 The immutable `host:user` captured when a command ran, recording where it executed
 even after a Host is renamed or relabelled. Imported and synced rows keep the origin
