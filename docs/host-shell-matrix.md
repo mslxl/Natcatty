@@ -18,10 +18,21 @@ Capture tiers:
 - **Tier 3** — typed input plus prompt detection. The command and a finish are
   captured; cwd and exit code are absent.
 
-`observed` in a cell means a real shell ran on the named Host and architecture
-and the cited test asserted the fidelity. `manual` means this environment could
-not run the cell; the cell records the runner, exact steps, startup flags, and
-expected fidelity, but never claims a result. A path-level `verification` only
+Evidence kinds in a cell:
+
+- **observed** — a real shell ran on the named Host and architecture, and the
+  cited test asserted the fidelity. The run is recorded in `observedRuns`.
+- **ci** — the cell is exercised by a required job in
+  `.github/workflows/release.yml`. It has **not** run on this machine. The
+  checker reads the workflow and fails if the job is missing, has a job-level
+  `if` that can skip it, is not reachable from `publish`, does not run the cited
+  test, or does not name the cell's shell binding.
+- **manual** — a human procedure that can really run, recorded with exact
+  commands and expected fidelity. It is never an observation.
+
+An observed cell may also carry a `ci` object: the historical observation is
+evidence, and the release job is the release-time re-run. A `ci` cell with no
+observation makes no claim about this machine. A path-level `verification` only
 covers the platforms in its `observedPlatforms`; per-platform truth lives in
 the cells.
 
@@ -29,69 +40,100 @@ the cells.
 
 | Host/arch | zsh | bash | fish | nushell | xonsh | PowerShell | Tier 3 fallback |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Linux amd64 | T1 observed, gate | T1 observed, gate | T1 observed, gate | T1 observed | T1 observed | T1 manual, gate | T3 observed, gate |
-| Linux arm64 | T1 observed, gate | T1 observed, gate | T1 observed, gate | T1 observed | T1 observed | T1 manual, gate | T3 observed, gate |
-| macOS arm64 | T1 observed, gate | T1 observed, gate | T1 observed, gate | T1 observed | T1 observed | T1 observed, gate | T3 observed, gate |
-| macOS x86_64 | T1 manual, gate | T1 manual, gate | T1 manual, gate | T1 manual | T1 manual | T1 manual, gate | T3 manual, gate |
-| Windows x86_64 | T3 manual | T3 manual | T3 manual | T2 manual | T2 manual | T1 manual, gate | T3 manual, gate |
-| Windows arm64 | T3 manual | T3 manual | T3 manual | T2 manual | T2 manual | T1 manual, gate | T3 manual, gate |
-| FreeBSD amd64 | T1 manual, gate | T1 manual, gate | T1 manual, gate | T1 manual | T1 manual | out of scope | T3 manual, gate |
+| Linux amd64 | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed (Linux) + CI | T3 observed + CI |
+| Linux arm64 | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed (Linux) + CI | T3 observed + CI |
+| macOS arm64 | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + CI | T3 observed + CI |
+| macOS x86_64 | T1 observed (Rosetta) + CI | T1 observed (Rosetta) + CI | T1 observed (Rosetta) + CI | T1 observed (Rosetta) + CI | T1 observed (Rosetta) + CI | T1 observed (Rosetta) + CI | T3 observed (Rosetta) + CI |
+| Windows x86_64 | T3 manual | T3 manual | T3 manual | T2 manual | T2 manual | T1 CI | T3 CI |
+| Windows arm64 | T3 manual | T3 manual | T3 manual | T2 manual | T2 manual | T1 CI | T3 CI |
+| FreeBSD amd64 | T1 CI (SSH) | T1 CI (SSH) | T1 CI (SSH) | T2 CI (SSH) | T2 CI (SSH) | out of scope | T3 CI (SSH) |
 
 Notes:
 
 - PowerShell on BSD is out of scope: BSD is in scope for POSIX shells.
 - nushell and xonsh are best-effort on every Host and are never release gates,
-  whatever tier they reach. They are Tier 1 where the hook takes, Tier 2 where
-  only the native integration works, and Tier 3 on Windows POSIX shells.
+  whatever tier they reach. They are Tier 1 where the local hook takes, Tier 2
+  where only the native integration works, and Tier 3 on Windows POSIX shells.
 - Windows zsh, bash, and fish keep their POSIX startup and receive no Netcatty
-  hook, so they are Tier 3. Their manual check is in the Windows section below.
-- macOS arm64 PowerShell is an observed POSIX-Host cross-check. It is **not**
-  Windows fidelity; only the Windows cells establish that.
+  hook, so they are Tier 3. Their manual check is in the Windows section.
+- macOS x86_64 was observed with an amd64 test binary and x86_64 shells under
+  Rosetta 2 on an arm64 Mac; it is x86_64 userland evidence, not x86_64
+  hardware. The release job re-runs the cells on the `macos-15-intel` runner.
+- Linux PowerShell is Linux fidelity, not Windows fidelity. Only the Windows
+  jobs establish the Windows cells.
+- BSD has no local PTY implementation: `platform/pty/pty_other.go` returns
+  `errors.ErrUnsupported` on FreeBSD/OpenBSD/NetBSD/DragonFly. A BSD Host is
+  therefore reached over SSH, which is the product path, and the acceptance
+  tests drive the real planner and Session tap on the client side while the
+  capture hook runs remotely. The SSH test transport is `x/crypto/ssh` with a
+  remote PTY; the `app` package separately covers the production transport's
+  SFTP login-shell probe and wrapper withdrawal. No cgo or untested local PTY
+  was added.
 
 ## Release gates
 
-Every gate below is `releaseBlocking` in the fixture. The checker fails when a
-gate is missing, is not marked release-blocking, is classified below the
-required tier, or has only a `planned` check. The full list is the
+Every gate below is `releaseBlocking` in the fixture and is bound to a release
+workflow job. The checker fails when a gate is missing, is not marked
+release-blocking, is classified below the required tier, has only a `planned`
+check, or cites a job that is absent, conditional, unreachable from `publish`,
+or does not run the cell's test with its shell binding. The full list is the
 `requiredHostShellGates` table in `capture_matrix_test.go`.
 
-| Gate cell | Tier | Verification | Exact startup | Expected fidelity (cwd/exit/duration) |
-| --- | --- | --- | --- | --- |
-| linux-amd64-zsh | 1 | observed | `zsh -l` with `ZDOTDIR=<hook-dir>` | exact/exact/exact |
-| linux-amd64-bash | 1 | observed | `bash --rcfile <hook-dir>/bashrc -i` | exact/exact/exact |
-| linux-amd64-fish | 1 | observed | `fish -l --init-command 'source "$NETCATTY_HOOK_FILE"'` | exact/exact/exact |
-| linux-amd64-powershell | 1 | manual | `pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -Command <bootstrap>` | exact/exact/exact |
-| linux-amd64-tier3-fallback | 3 | observed | `zsh -l`, hook disabled | missing/missing/observed |
-| linux-arm64-zsh | 1 | observed | `zsh -l` with `ZDOTDIR=<hook-dir>` | exact/exact/exact |
-| linux-arm64-bash | 1 | observed | `bash --rcfile <hook-dir>/bashrc -i` | exact/exact/exact |
-| linux-arm64-fish | 1 | observed | `fish -l --init-command 'source "$NETCATTY_HOOK_FILE"'` | exact/exact/exact |
-| linux-arm64-powershell | 1 | manual | `pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -Command <bootstrap>` | exact/exact/exact |
-| linux-arm64-tier3-fallback | 3 | observed | `zsh -l`, hook disabled | missing/missing/observed |
-| macos-arm64-zsh | 1 | observed | `zsh -l` with `ZDOTDIR=<hook-dir>` | exact/exact/exact |
-| macos-arm64-bash | 1 | observed | `bash --rcfile <hook-dir>/bashrc -i` | exact/exact/exact |
-| macos-arm64-fish | 1 | observed | `fish -l --init-command 'source "$NETCATTY_HOOK_FILE"'` | exact/exact/exact |
-| macos-arm64-powershell | 1 | observed | `pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -Command <bootstrap>` | exact/exact/exact |
-| macos-arm64-tier3-fallback | 3 | observed | `zsh -l`, hook disabled | missing/missing/observed |
-| macos-amd64-zsh | 1 | manual | `zsh -l` with `ZDOTDIR=<hook-dir>` | exact/exact/exact |
-| macos-amd64-bash | 1 | manual | `bash --rcfile <hook-dir>/bashrc -i` | exact/exact/exact |
-| macos-amd64-fish | 1 | manual | `fish -l --init-command 'source "$NETCATTY_HOOK_FILE"'` | exact/exact/exact |
-| macos-amd64-powershell | 1 | manual | `pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -Command <bootstrap>` | exact/exact/exact |
-| macos-amd64-tier3-fallback | 3 | manual | `zsh -l`, hook disabled | missing/missing/observed |
-| windows-amd64-powershell | 1 | manual | `pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -Command <bootstrap>` | exact/exact/exact |
-| windows-amd64-tier3-fallback | 3 | manual | `pwsh`, no flags, hook disabled | missing/missing/observed |
-| windows-arm64-powershell | 1 | manual | `pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -Command <bootstrap>` | exact/exact/exact |
-| windows-arm64-tier3-fallback | 3 | manual | `pwsh`, no flags, hook disabled | missing/missing/observed |
-| bsd-amd64-zsh | 1 | manual | `zsh -l` with `ZDOTDIR=<hook-dir>` | exact/exact/exact |
-| bsd-amd64-bash | 1 | manual | `bash --rcfile <hook-dir>/bashrc -i` | exact/exact/exact |
-| bsd-amd64-fish | 1 | manual | `fish -l --init-command 'source "$NETCATTY_HOOK_FILE"'` | exact/exact/exact |
-| bsd-amd64-tier3-fallback | 3 | manual | `zsh -l`, hook disabled | missing/missing/observed |
+| Gate cell | Tier | Evidence | Release job / runner | Exact startup | Expected fidelity (cwd/exit/duration) |
+| --- | --- | --- | --- | --- | --- |
+| linux-amd64-zsh | 1 | observed + CI | capture-linux-amd64 / ubuntu-latest | `zsh -l` with `ZDOTDIR=<hook-dir>` | exact/exact/exact |
+| linux-amd64-bash | 1 | observed + CI | capture-linux-amd64 / ubuntu-latest | `bash --rcfile <hook-dir>/bashrc -i` | exact/exact/exact |
+| linux-amd64-fish | 1 | observed + CI | capture-linux-amd64 / ubuntu-latest | `fish -l --init-command 'source "$NETCATTY_HOOK_FILE"'` | exact/exact/exact |
+| linux-amd64-powershell | 1 | observed + CI | capture-linux-amd64 / ubuntu-latest | `pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -Command <bootstrap>` | exact/exact/exact |
+| linux-amd64-tier3-fallback | 3 | observed + CI | capture-linux-amd64 / ubuntu-latest | `zsh -l`, hook disabled | missing/missing/observed |
+| linux-arm64-zsh | 1 | observed + CI | capture-linux-arm64 / ubuntu-24.04-arm | `zsh -l` with `ZDOTDIR=<hook-dir>` | exact/exact/exact |
+| linux-arm64-bash | 1 | observed + CI | capture-linux-arm64 / ubuntu-24.04-arm | `bash --rcfile <hook-dir>/bashrc -i` | exact/exact/exact |
+| linux-arm64-fish | 1 | observed + CI | capture-linux-arm64 / ubuntu-24.04-arm | `fish -l --init-command 'source "$NETCATTY_HOOK_FILE"'` | exact/exact/exact |
+| linux-arm64-powershell | 1 | observed + CI | capture-linux-arm64 / ubuntu-24.04-arm | `pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -Command <bootstrap>` | exact/exact/exact |
+| linux-arm64-tier3-fallback | 3 | observed + CI | capture-linux-arm64 / ubuntu-24.04-arm | `zsh -l`, hook disabled | missing/missing/observed |
+| macos-arm64-zsh | 1 | observed + CI | capture-macos-arm64 / macos-latest | `zsh -l` with `ZDOTDIR=<hook-dir>` | exact/exact/exact |
+| macos-arm64-bash | 1 | observed + CI | capture-macos-arm64 / macos-latest | `bash --rcfile <hook-dir>/bashrc -i` | exact/exact/exact |
+| macos-arm64-fish | 1 | observed + CI | capture-macos-arm64 / macos-latest | `fish -l --init-command 'source "$NETCATTY_HOOK_FILE"'` | exact/exact/exact |
+| macos-arm64-powershell | 1 | observed + CI | capture-macos-arm64 / macos-latest | `pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -Command <bootstrap>` | exact/exact/exact |
+| macos-arm64-tier3-fallback | 3 | observed + CI | capture-macos-arm64 / macos-latest | `zsh -l`, hook disabled | missing/missing/observed |
+| macos-amd64-zsh | 1 | observed (Rosetta) + CI | capture-macos-amd64 / macos-15-intel | `zsh -l` with `ZDOTDIR=<hook-dir>` | exact/exact/exact |
+| macos-amd64-bash | 1 | observed (Rosetta) + CI | capture-macos-amd64 / macos-15-intel | `bash --rcfile <hook-dir>/bashrc -i` | exact/exact/exact |
+| macos-amd64-fish | 1 | observed (Rosetta) + CI | capture-macos-amd64 / macos-15-intel | `fish -l --init-command 'source "$NETCATTY_HOOK_FILE"'` | exact/exact/exact |
+| macos-amd64-powershell | 1 | observed (Rosetta) + CI | capture-macos-amd64 / macos-15-intel | `pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -Command <bootstrap>` | exact/exact/exact |
+| macos-amd64-tier3-fallback | 3 | observed (Rosetta) + CI | capture-macos-amd64 / macos-15-intel | `zsh -l`, hook disabled | missing/missing/observed |
+| windows-amd64-powershell | 1 | CI | capture-windows-amd64 / windows-latest | `pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -Command <bootstrap>` | exact/exact/exact |
+| windows-amd64-tier3-fallback | 3 | CI | capture-windows-amd64 / windows-latest | `pwsh`, no flags, hook disabled | missing/missing/observed |
+| windows-arm64-powershell | 1 | CI | capture-windows-arm64 / windows-11-arm | `pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -Command <bootstrap>` | exact/exact/exact |
+| windows-arm64-tier3-fallback | 3 | CI | capture-windows-arm64 / windows-11-arm | `pwsh`, no flags, hook disabled | missing/missing/observed |
+| bsd-amd64-zsh | 1 | CI (SSH) | capture-freebsd-amd64 / ubuntu-latest | account login shell `zsh`; wrapper `zsh -l` | exact/exact/exact |
+| bsd-amd64-bash | 1 | CI (SSH) | capture-freebsd-amd64 / ubuntu-latest | account login shell `bash`; wrapper `bash --rcfile <hook-dir>/bashrc -i` | exact/exact/exact |
+| bsd-amd64-fish | 1 | CI (SSH) | capture-freebsd-amd64 / ubuntu-latest | account login shell `fish`; wrapper `fish -l --init-command 'source "$NETCATTY_HOOK_FILE"'` | exact/exact/exact |
+| bsd-amd64-tier3-fallback | 3 | CI (SSH) | capture-freebsd-amd64 / ubuntu-latest | account login shell `zsh -l`, hook disabled | missing/missing/observed |
 
 `<hook-dir>` is a session-scoped temporary directory. The user's own startup
 files are sourced, never edited: zsh preserves the original `ZDOTDIR` in
 `NETCATTY_USER_ZDOTDIR`, bash sources the user's profile and rc once, and fish
 sources the user config before the hook. nushell uses
 `nu -l -e 'source "<hook-dir>/hook.nu"'`; xonsh uses `xonsh -l` with
-`XONSHRC_DIR=/srv/xonsh/rc.d:<hook-dir>`. Neither is release-blocking.
+`XONSHRC_DIR` built as follows (this matches `xonshRCDir` in
+`adapters/shellhook/shellhook.go`):
+
+- if the user already set `XONSHRC_DIR`, Netcatty appends only the hook
+  directory to that value;
+- otherwise the list is
+  `<XONSH_SYS_CONFIG_DIR or /etc/xonsh>/rc.d:<XONSH_CONFIG_DIR or
+  $XDG_CONFIG_HOME/xonsh or ~/.config/xonsh>/rc.d:<hook-dir>`, for example
+  `XONSHRC_DIR=/etc/xonsh/rc.d:${XDG_CONFIG_HOME:-$HOME/.config}/xonsh/rc.d:<hook-dir>`.
+
+Neither nushell nor xonsh is release-blocking on a local Host.
+
+For the FreeBSD SSH cells, the account login shell is started by sshd. For
+zsh/bash/fish the planner's remote wrapper is sent and the wrapper invokes the
+shell with the flags above. For nushell and xonsh the transport withdraws the
+wrapper (`RemoteLoginShellSupported` rejects them) and opens the plain login
+shell; their startup is the account shell with no added arguments. nushell is
+Tier 2 (cwd exact, no Netcatty exit, native finish observed); xonsh is Tier 2
+(cwd exact from OSC 7, no Netcatty exit, no finish).
 
 PowerShell's `<bootstrap>` is the outer `-NoProfile` process. It validates the
 hook in a short-lived child:
@@ -114,152 +156,136 @@ instead of ending the Session.
 
 ## Observed runs
 
-These are the only runs recorded by this environment. They ran on 2026-11-08.
-The exact command strings, including the nix-store PATH entries, are in the
-fixture's `observedRuns`; the table below names the same runs.
+These are the only runs recorded by this environment. The exact command
+strings, including the nix-store PATH entries, are in the fixture's
+`observedRuns`; the table below names the same runs.
 
-| Run | Host | Shells and versions | Result |
+| Run | Environment | Shells and versions | Result |
 | --- | --- | --- | --- |
-| macos-arm64-local-2026-11-08 | macOS 27.2, arm64 | zsh 5.9.2, bash 5.3.20, fish 4.9.3, nushell 0.116.1, xonsh 0.24.2, pwsh 7.6.9 | PASS, 45.884s |
-| macos-arm64-bash32-local-2026-11-08 | same | `/bin/bash` 3.2.57 | PASS, 0.09s |
-| macos-arm64-native-fallback-local-2026-11-08 | same | nushell 0.116.1, xonsh 0.24.2 | PASS, 5.512s |
-| linux-arm64-docker-2026-11-08 | Linux arm64, Docker 29.8.2 (OrbStack), Debian 12.15 | zsh 5.9, bash 5.2.15, fish 3.6.0, nushell 0.116.1, xonsh 0.24.2 | PASS, 28.075s |
-| linux-amd64-docker-2026-11-08 | Linux amd64, same runtime and image | zsh 5.9, bash 5.2.15, fish 3.6.0, nushell 0.116.1, xonsh 0.24.2 | PASS, 30.395s |
+| macos-arm64-local-2026-11-08 | macOS 27.2, arm64 | zsh 5.9.2, bash 5.3.20, fish 4.9.3, nushell 0.116.1, xonsh 0.24.2, pwsh 7.6.9 | PASS, 52.290s |
+| macos-arm64-bash32-local-2026-11-08 | same | `/bin/bash` 3.2.57 | PASS, 0.12s |
+| macos-arm64-native-fallback-local-2026-11-08 | same | nushell 0.116.1, xonsh 0.24.2 | PASS, 5.567s |
+| macos-amd64-rosetta-local-2026-11-08 | macOS 27.2, x86_64 userland under Rosetta 2 | zsh 5.9, bash 3.2.57, fish 4.7.1, nushell 0.116.1, xonsh 0.23.7, pwsh 7.6.9 | PASS, 59.063s |
+| linux-arm64-docker-2026-11-08 | Linux arm64, Docker 29.8.2 (OrbStack), Debian 12.15 | zsh 5.9, bash 5.2.15, fish 3.6.0, nushell 0.116.1, xonsh 0.24.2 | PASS, 29.361s |
+| linux-amd64-docker-2026-11-08 | Linux amd64, same runtime and image | zsh 5.9, bash 5.2.15, fish 3.6.0, nushell 0.116.1, xonsh 0.24.2 | PASS, 30.938s |
+| linux-arm64-pwsh-docker-2026-11-08 | Linux arm64, same runtime and image | pwsh 7.6.9 | PASS, 2.167s |
+| linux-amd64-pwsh-docker-2026-11-08 | Linux amd64, same runtime and image | pwsh 7.6.9 | PASS, 9.344s |
+| ssh-linux-arm64-lab-2026-11-08 | Ubuntu 24.04.5 arm64 container `natcatty-ssh-lab`, OpenSSH | zsh 5.9, bash 5.2.21, fish 3.7.0, nushell 0.116.1, xonsh 0.24.2 | PASS, 5.848s |
 
-Both Linux runs used `golang:1.27-bookworm` pinned to
+Both Linux matrix runs used `golang:1.27-bookworm` pinned to
 `sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0`.
 The arm64 container was `natcatty-debug`; the amd64 container was
 `natcatty-debug-amd64`. nushell was installed from the matching
-`nu-0.116.1-<arch>-unknown-linux-gnu.tar.gz`; xonsh from a pip install under
-`/opt/xonsh`.
+`nu-0.116.1-<arch>-unknown-linux-gnu.tar.gz`; xonsh from `/opt/xonsh`;
+PowerShell 7.6.9 was installed at `/usr/local/bin/pwsh` for the Linux
+PowerShell runs.
 
-The exact commands were:
+The macOS x86_64 run built the test binary with
+`GOARCH=amd64 CGO_ENABLED=0 go test -c`. The system `/bin/zsh` and `/bin/bash`
+(universal binaries) were forced to x86_64 with `arch -x86_64`; fish 4.7.1,
+nushell 0.116.1, xonsh 0.23.7, and pwsh 7.6.9 were x86_64 builds. The test
+command is recorded verbatim in the fixture. This is Rosetta x86_64 userland
+evidence; the release job uses the native Intel runner.
 
-```
-nix develop --command bash -c 'export PATH=/nix/store/89xsm9bg4z03cgbbxlcz036df1n1jzzk-fish-4.9.3/bin:/nix/store/sg4qjfh6qyj58zgcrscwp2bg18lb2a64-xonsh-0.24.2/bin:/nix/store/hx0gqai3qzgah05nmzdv1d87vnz1qkf9-powershell-7.6.9/bin:$PATH; GOFLAGS=-buildvcs=false go test ./adapters/shellhook -run "^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$" -count=1 -v'
-```
-
-```
-nix develop --command bash -c 'GO=$(command -v go); export PATH=/bin:/usr/bin:/usr/sbin:/sbin; GOFLAGS=-buildvcs=false "$GO" test ./adapters/shellhook -run "TestRealShellSessionCapturesTierOneEndToEnd/bash" -count=1 -v'
-```
-
-```
-nix develop --command bash -c 'export PATH=/nix/store/sg4qjfh6qyj58zgcrscwp2bg18lb2a64-xonsh-0.24.2/bin:$PATH; GOFLAGS=-buildvcs=false go test ./adapters/shellhook -run "^(TestRealNushellWithoutHookKeepsNativeCapture|TestRealXonshWithoutHookKeepsNativeFallback)$" -count=1 -v'
-```
-
-```
-docker exec natcatty-debug bash -c 'export PATH=/opt/xonsh/bin:$PATH; GOFLAGS=-buildvcs=false go test ./adapters/shellhook -run "^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$" -count=1 -v'
-```
-
-```
-docker exec natcatty-debug-amd64 bash -c 'export PATH=/opt/xonsh/bin:$PATH; GOFLAGS=-buildvcs=false go test ./adapters/shellhook -run "^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$" -count=1 -v'
-```
+The SSH lab run used the product planner and Session tap against a Linux
+container with one account per shell; only the transport was the lab's
+x86_64/aarch64 OpenSSH. The fixture records `zshuser@127.0.0.1:2223` as the
+target and the result notes the other accounts. The Tier 3 check reused
+`zshuser` because that disposable lab did not create a separate `tier3user`.
+This run validates the harness; it is **not** a FreeBSD observation and no BSD
+cell cites it.
 
 Observed fidelity:
 
 - zsh, bash, and fish Tier 1: exact command, cwd, exit code, and duration.
-  bash was checked with both 5.3.20 and macOS `/bin/bash` 3.2.57.
+  bash was checked with 5.3.20, 3.2.57, and 5.2.15/5.2.21.
 - nushell and xonsh Tier 1: exact command, cwd, exit code, and duration.
-- nushell Tier 2 without the hook: exact cwd, no exit code, observed duration.
-- xonsh Tier 2 without the hook: exact cwd, no exit code, no duration; its
+- nushell Tier 2 without the hook: exact cwd, no exit code, observed finish.
+- xonsh Tier 2 without the hook: exact cwd, no exit code, no finish; its
   prompt is not prompt-detected, so Session close leaves the finish unknown.
 - zsh Tier 3 without the hook: typed command and a measured duration; no cwd
   and no exit code.
-- pwsh 7.6.9 Tier 1 on macOS arm64: exact command, cwd, exit code, and
-  duration, with exactly one profile load. This is not Windows evidence.
-- pwsh 7.6.9 Tier 3 on macOS arm64: typed command and duration; no cwd and no
-  exit code.
+- pwsh 7.6.9 Tier 1 on macOS arm64, macOS x86_64 under Rosetta, and Linux
+  arm64/amd64: exact command, cwd, exit code, and duration, with exactly one
+  profile load. The macOS and Linux runs are not Windows evidence.
+- pwsh 7.6.9 Tier 3 on macOS: typed command and duration; no cwd and no exit
+  code.
 
 ## Manual acceptance procedures
 
-These procedures are release acceptance steps. Run them for every release
-that changes capture, startup, or the matrix. Record the runner/image, exact
-versions, commands, and result in the release log. Do not mark a cell
+These procedures are for cells that are not observed here. Run them for every
+release that changes capture, startup, or the matrix. Record the runner or VM,
+exact versions, commands, and result in the release log. Do not mark a cell
 `observed` until a run exists in `observedRuns`.
 
-### Linux PowerShell (manual)
+### Windows PowerShell gate reproduction (manual)
 
-Runner: Docker `golang:1.27-bookworm` pinned to
-`sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0`,
-for `linux/amd64` and `linux/arm64`, plus PowerShell 7.6.9 from the official
-`linux-<arch>` tarball.
+The release evidence is `capture-windows-amd64` on `windows-latest` and
+`capture-windows-arm64` on `windows-11-arm`, both required by the matrix
+checker. This is the same procedure by hand. Use a Windows Server 2025 or
+Windows 11 VM, or a GitHub Windows runner, with Go matching `go.mod`.
+
+In PowerShell:
 
 ```
-docker run --platform linux/amd64 --rm -it -v "$PWD":/work -w /work golang:1.27-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0 bash
-# inside the container, after installing pwsh 7.6.9:
+$ErrorActionPreference = 'Stop'
+$pwsh = (Get-Command pwsh).Source
+if (-not (Test-Path -LiteralPath $pwsh)) { throw 'pwsh is missing' }
 pwsh --version
-GOFLAGS=-buildvcs=false go test ./adapters/shellhook -run '^TestRealPowerShellLocalHookCapturesTierOne$' -count=1 -v
-```
+$PSVersionTable.PSVersion
 
-Repeat with `--platform linux/arm64` and the `linux-arm64` PowerShell tarball.
-Startup flags are the PowerShell bootstrap above. Expected fidelity is
-exact/exact/exact. This cell is release-blocking; the hook is the same one
-observed on macOS arm64, but the Linux run is the acceptance evidence.
-
-### macOS x86_64 (manual)
-
-Runner: GitHub Actions `macos-15-intel` (x86_64). Record `sw_vers` and
-`uname -m`. Install fish 4.9.3, nushell 0.116.1, xonsh 0.24.2, and PowerShell
-7.6.9 (`osx-x64` tarball); record every `--version`.
-
-```
-go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$' -count=1 -v
 go test ./adapters/shellhook -run '^TestRealPowerShellLocalHookCapturesTierOne$' -count=1 -v
-```
-
-Expected: zsh, bash, fish, and PowerShell at Tier 1 with exact cwd, exit code,
-and duration; nushell and xonsh at Tier 1; the Tier 3 fallback with no cwd and
-no exit. Startup flags are the POSIX and PowerShell entries in the gate table.
-All six zsh/bash/fish/PowerShell cells are release-blocking.
-
-### Windows runners (manual)
-
-Runners: GitHub Actions `windows-2025` (x86_64) and `windows-11-arm` (arm64).
-Record `$env:ImageOS`, `$env:ImageVersion`, `$PSVersionTable.PSVersion`, and
-the PSReadLine version. Use `actions/setup-go@v5` with
-`go-version-file: go.mod`.
-
-PowerShell Tier 1:
-
-```
-go test ./adapters/shellhook -run '^TestRealPowerShellLocalHookCapturesTierOne$' -count=1 -v
-```
-
-PowerShell Tier 3 fallback (hook disabled):
-
-```
 go test ./adapters/shellhook -run '^TestRealPowerShellTierThreeFallback$' -count=1 -v
 ```
 
 Expected: Tier 1 has the typed command, cwd, exit code, and exactly one
 profile load; the fallback has no cwd and no exit code, finished by the profile
-prompt. Both cells are release-blocking. Startup flags: the PowerShell
-bootstrap for Tier 1; plain `pwsh` with no flags for the fallback.
+prompt. Both are release-blocking. These cells were **not** run on this
+machine; the jobs are the provisioning mechanism and the release gate.
 
-nushell and xonsh (best-effort, non-blocking):
+### Windows best-effort shells (manual)
+
+These cells are not release-blocking and were not run here. Use the same
+Windows runner or VM and PowerShell.
+
+nushell (Tier 2):
 
 ```
-winget install --id Nushell.Nushell --exact
-nu --version
-set NETCATTY_TEST_NU to the installed nu.exe
+winget install --id Nushell.Nushell --exact --accept-source-agreements --accept-package-agreements --silent
+# Open a new PowerShell so the WinGet link directory is on PATH.
+$nu = (Get-Command nu.exe).Source
+if (-not (Test-Path -LiteralPath $nu)) { throw 'nu.exe is missing' }
+& $nu --version
+$env:NETCATTY_TEST_NU = $nu
 go test ./adapters/shellhook -run '^TestRealNushellWithoutHookKeepsNativeCapture$' -count=1 -v
+```
 
-py -3 -m pip install xonsh==0.24.2
-xonsh --version
-set NETCATTY_TEST_XONSH to the xonsh executable
+xonsh (Tier 2):
+
+```
+py -3 -m pip install --user xonsh==0.24.2
+$userBase = (py -3 -m site --user-base).Trim()
+$xonsh = Join-Path $userBase 'Scripts\xonsh.exe'
+if (-not (Test-Path -LiteralPath $xonsh)) { throw 'xonsh.exe is missing' }
+& $xonsh --version
+$env:NETCATTY_TEST_XONSH = $xonsh
 go test ./adapters/shellhook -run '^TestRealXonshWithoutHookKeepsNativeFallback$' -count=1 -v
 ```
 
-Expected Tier 2 with the native cwd and no exit code. The Windows planner does
-not hook either shell.
+For cmd.exe the equivalent environment assignment is (per shell):
 
-zsh, bash, and fish (best-effort, non-blocking, Tier 3):
+```
+for /f "delims=" %I in ('where nu.exe') do set "NETCATTY_TEST_NU=%I"
+for /f "delims=" %I in ('where xonsh.exe') do set "NETCATTY_TEST_XONSH=%I"
+```
+
+zsh, bash, and fish (Tier 3):
 
 1. Install the shell: bash ships with Git for Windows; install zsh and fish
-   from MSYS2 (`winget install MSYS2.MSYS2`, then
+   from MSYS2 (`winget install MSYS2.MSYS2`, then in the MSYS2 shell
    `pacman -S --needed zsh fish`). Record each `--version`.
-2. Put the shell, or the MSYS2 `usr/bin`, on PATH. Set `NETCATTY_TEST_FISH`
-   when fish is not on PATH.
+2. Put the shell, or the MSYS2 `usr/bin`, on PATH. For fish, in PowerShell:
+   `$env:NETCATTY_TEST_FISH = (Get-Command fish.exe).Source`.
 3. In Netcatty open **Settings > Logs** and confirm **History capture hook**
    is off. The Windows planner only installs the hook for PowerShell, so
    zsh/bash/fish run unhooked either way; the setting makes the check explicit.
@@ -272,64 +298,275 @@ zsh, bash, and fish (best-effort, non-blocking, Tier 3):
 Startup flags: `zsh -l`, `bash -l`, `fish -l`. Expected fidelity:
 missing/missing/observed. These cells are not release gates.
 
-### BSD VM (manual)
+### macOS x86_64 reproduction (manual)
 
-Runner: FreeBSD 14.2-RELEASE amd64, in bhyve, UTM, or QEMU. Record the image
-name and checksum, `uname -a`, and `freebsd-version -ku`.
+The observed run used Rosetta 2. To repeat that evidence on an arm64 Mac,
+install the x86_64 builds of fish, nushell, xonsh, and PowerShell, put
+`/bin/zsh` and `/bin/bash` behind wrappers that exec through
+`arch -x86_64`, then build and run the amd64 test binary:
 
 ```
-pkg install -y zsh bash fish
-# install Go 1.27.3 or newer (the pkg version may be older; use the upstream
-# freebsd-amd64 tarball when needed), then nushell 0.116.1 and xonsh 0.24.2
-go version
-go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$' -count=1 -v
+GOFLAGS=-buildvcs=false GOARCH=amd64 CGO_ENABLED=0 go test -c -o /tmp/shellhook-amd64.test ./adapters/shellhook
+cd adapters/shellhook
+NETCATTY_TEST_FISH=<x86_64-fish> \
+NETCATTY_TEST_NU=<x86_64-nu> \
+NETCATTY_TEST_XONSH=<x86_64-xonsh> \
+NETCATTY_TEST_PWSH=<x86_64-pwsh> \
+/usr/bin/arch -x86_64 /tmp/shellhook-amd64.test \
+  -test.run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' \
+  -test.count=1 -test.v
 ```
 
-Set `NETCATTY_TEST_FISH`, `NETCATTY_TEST_NU`, or `NETCATTY_TEST_XONSH` when the
-shell is not on PATH. Expected: zsh, bash, and fish Tier 1 with exact cwd, exit
-code, and duration; nushell and xonsh Tier 1; the Tier 3 fallback with no cwd
-and no exit. Startup flags are the POSIX entries in the gate table. PowerShell
-is out of scope for BSD. The zsh/bash/fish and fallback cells are
-release-blocking.
+Expected: zsh, bash, fish, and PowerShell at Tier 1 with exact cwd, exit code,
+and duration; nushell and xonsh at Tier 1; the Tier 3 fallback with no cwd and
+no exit. All four zsh/bash/fish/PowerShell cells are release-blocking; nushell
+and xonsh are best-effort. The release workflow runs the same matrix natively
+on `macos-15-intel`; that job is the release-time x86_64 hardware evidence.
 
-### Promoting a manual cell to observed
+### FreeBSD amd64 over SSH (manual)
+
+There is no FreeBSD local acceptance command. `platform/pty` returns
+`errors.ErrUnsupported` there, so `adapters/localpty` and the local
+`TestReal...` tests cannot start a FreeBSD shell. The product path for a BSD
+Host is SSH: the client runs the planner and the Session tap, sends the remote
+wrapper, and the FreeBSD account runs the shell. The release evidence is
+`capture-freebsd-amd64`, which boots a FreeBSD 14.5 VM under QEMU and runs the
+SSH tests. The following is the same procedure by hand on a Linux client; the
+release job uses Ubuntu. `cloud-localds` is not a Homebrew formula, so on macOS
+run the procedure in a Linux container or VM. Go runs on the client, not in the
+VM.
+
+Client prerequisites: `qemu-system-x86_64`, `qemu-img`, `cloud-localds`
+(Ubuntu/Debian package `cloud-image-utils`), `ssh`, `ssh-keyscan`, `xz`,
+`curl`, and Go matching `go.mod`.
+
+1. Download and verify the image:
+
+```
+export LAB="$PWD/bsd-lab"
+mkdir -p "$LAB"
+curl -fL -o "$LAB/freebsd.qcow2.xz" \
+  https://download.freebsd.org/releases/VM-IMAGES/14.5-RELEASE/amd64/Latest/FreeBSD-14.5-RELEASE-amd64-BASIC-CLOUDINIT-ufs.qcow2.xz
+echo "a2a8cd84cd59077225a0e75ead852e8a08fe26f9ab251a96d5a4fd4fe1db4454  $LAB/freebsd.qcow2.xz" | sha256sum -c -
+unxz -k "$LAB/freebsd.qcow2.xz"
+```
+
+2. Create the lab key and the nuageinit seed. FreeBSD's
+   `BASIC-CLOUDINIT` images use nuageinit, which reads the same NoCloud
+   `user-data`/`meta-data` files from a `cidata` CD. It accepts
+   `#cloud-config`, `users[].ssh_authorized_keys`, `write_files`, and
+   `runcmd` where each command is a **string**:
+
+```
+ssh-keygen -q -t ed25519 -N '' -f "$LAB/freebsd-key"
+key="$(cat "$LAB/freebsd-key.pub")"
+cat > "$LAB/user-data" <<EOF
+#cloud-config
+users:
+  - name: freebsd
+    shell: /bin/sh
+    ssh_authorized_keys: ["$key"]
+  - name: zshuser
+    shell: /bin/sh
+    ssh_authorized_keys: ["$key"]
+  - name: bashuser
+    shell: /bin/sh
+    ssh_authorized_keys: ["$key"]
+  - name: fishuser
+    shell: /bin/sh
+    ssh_authorized_keys: ["$key"]
+  - name: tier3user
+    shell: /bin/sh
+    ssh_authorized_keys: ["$key"]
+  - name: nuuser
+    shell: /bin/sh
+    ssh_authorized_keys: ["$key"]
+  - name: xonshuser
+    shell: /bin/sh
+    ssh_authorized_keys: ["$key"]
+write_files:
+  - path: /root/netcatty-provision.sh
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      set -eux
+      env ASSUME_ALWAYS_YES=yes pkg bootstrap -f
+      env ASSUME_ALWAYS_YES=yes pkg install -y zsh bash fish nushell python3 py3-pip ca_root_nss curl
+      mkdir -p /opt/xonsh/bin /opt/xonsh/lib
+      /usr/local/bin/python3 -m pip install --quiet --break-system-packages --target /opt/xonsh/lib "xonsh==0.24.2"
+      cat > /opt/xonsh/bin/xonsh <<'EOS'
+      #!/bin/sh
+      PYTHONPATH=/opt/xonsh/lib exec /usr/local/bin/python3 -m xonsh "\$@"
+      EOS
+      chmod 0755 /opt/xonsh/bin/xonsh
+      for shell in /usr/local/bin/zsh /usr/local/bin/bash /usr/local/bin/fish /usr/local/bin/nu /opt/xonsh/bin/xonsh; do
+        grep -qx "\$shell" /etc/shells || echo "\$shell" >> /etc/shells
+      done
+      pw usermod zshuser -s /usr/local/bin/zsh
+      pw usermod bashuser -s /usr/local/bin/bash
+      pw usermod fishuser -s /usr/local/bin/fish
+      pw usermod tier3user -s /usr/local/bin/zsh
+      pw usermod nuuser -s /usr/local/bin/nu
+      pw usermod xonshuser -s /opt/xonsh/bin/xonsh
+      touch /home/tier3user/.zshrc
+      chown tier3user:tier3user /home/tier3user/.zshrc
+      sysrc sshd_enable=YES
+      service sshd restart
+      touch /var/run/netcatty-provisioned
+runcmd:
+  - /bin/sh /root/netcatty-provision.sh
+EOF
+cat > "$LAB/meta-data" <<EOF
+instance-id: netcatty-freebsd
+local-hostname: netcatty-freebsd
+EOF
+cloud-localds "$LAB/seed.img" "$LAB/user-data" "$LAB/meta-data"
+```
+
+3. Boot the VM with SSH forwarded to local port 2222. KVM is used when
+   available; otherwise QEMU falls back to multi-threaded TCG, which is
+   slower but works:
+
+```
+accel="tcg,thread=multi"
+if [ -e /dev/kvm ]; then accel="kvm"; fi
+qemu-system-x86_64 -machine "accel=$accel" -m 2048 -smp 2 -cpu max \
+  -drive "file=$LAB/freebsd.qcow2,if=virtio,format=qcow2" \
+  -drive "file=$LAB/seed.img,media=cdrom,readonly=on,format=raw" \
+  -netdev user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22 \
+  -device virtio-net-pci,netdev=net0 \
+  -display none -monitor none -serial "file:$LAB/console.log" \
+  -daemonize -pidfile "$LAB/qemu.pid"
+```
+
+4. Wait until nuageinit has installed the shells and changed the account
+   shells, then record the host key:
+
+```
+ssh_options=(-i "$LAB/freebsd-key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -p 2222)
+for attempt in $(seq 1 180); do
+  if ssh "${ssh_options[@]}" freebsd@127.0.0.1 'test -f /var/run/netcatty-provisioned' >/dev/null 2>&1; then
+    break
+  fi
+  sleep 5
+done
+ssh "${ssh_options[@]}" freebsd@127.0.0.1 'test -f /var/run/netcatty-provisioned'
+ssh-keyscan -p 2222 127.0.0.1 > "$LAB/known_hosts"
+ssh "${ssh_options[@]}" freebsd@127.0.0.1 'uname -a; freebsd-version -ku; zsh --version; bash --version | head -1; fish --version; nu --version; /opt/xonsh/bin/xonsh --version'
+```
+
+If provisioning failed, the console log is at `$LAB/console.log`. Nushell
+comes from the FreeBSD package and may be older than 0.116.1; record the
+reported version. xonsh is pinned to 0.24.2 because older xonsh releases do
+not emit OSC 7 at the first prompt.
+
+5. Run the acceptance tests from the repository root with the SSH labs:
+
+```
+NETCATTY_TEST_SSH_REQUIRED=1 \
+NETCATTY_TEST_SSH_KEY="$LAB/freebsd-key" \
+NETCATTY_TEST_SSH_KNOWN_HOSTS="$LAB/known_hosts" \
+NETCATTY_TEST_SSH_ZSH=zshuser@127.0.0.1:2222 \
+NETCATTY_TEST_SSH_ZSH_LOGIN=/usr/local/bin/zsh \
+NETCATTY_TEST_SSH_BASH=bashuser@127.0.0.1:2222 \
+NETCATTY_TEST_SSH_BASH_LOGIN=/usr/local/bin/bash \
+NETCATTY_TEST_SSH_FISH=fishuser@127.0.0.1:2222 \
+NETCATTY_TEST_SSH_FISH_LOGIN=/usr/local/bin/fish \
+NETCATTY_TEST_SSH_TIER3=tier3user@127.0.0.1:2222 \
+NETCATTY_TEST_SSH_TIER3_LOGIN=/usr/local/bin/zsh \
+NETCATTY_TEST_SSH_NU=nuuser@127.0.0.1:2222 \
+NETCATTY_TEST_SSH_NU_LOGIN=/usr/local/bin/nu \
+NETCATTY_TEST_SSH_XONSH=xonshuser@127.0.0.1:2222 \
+NETCATTY_TEST_SSH_XONSH_LOGIN=/opt/xonsh/bin/xonsh \
+go test ./adapters/shellhook \
+  -run '^(TestRealSSHRemoteHookCapturesTierOne|TestRealSSHRemoteTierThreeFallback|TestRealSSHRemoteNativeFallback)$' \
+  -count=1 -v
+```
+
+`NETCATTY_TEST_SSH_REQUIRED=1` makes a missing lab a failure instead of a
+skip, so a green run proves every shell was exercised. The test opens the
+account's login shell (or the planner's `RemoteCommand`) over SSH, requests a
+PTY, and asserts the Session tap's Command History row.
+
+Expected fidelity: zsh, bash, fish exact cwd/exit/duration (Tier 1); nushell
+exact cwd, no Netcatty exit, observed native finish (Tier 2); xonsh exact cwd,
+no Netcatty exit, no finish (Tier 2); Tier 3 typed command and measured
+duration with no cwd and no exit. The zsh/bash/fish and fallback cells are
+release-blocking; nushell and xonsh are best-effort.
+
+6. Clean up:
+
+```
+kill "$(cat "$LAB/qemu.pid")"
+rm -rf "$LAB"
+```
+
+This procedure was **not** run on this machine. The FreeBSD cells are
+`ci`-provisioned by `capture-freebsd-amd64`; the job is the required release
+gate and the matrix checker fails if it is deleted, conditional, or unreachable
+from `publish`.
+
+### Promoting a manual or ci cell to observed
 
 1. Run the cell on its real Host and architecture with the exact startup flags
-   recorded in the cell.
+   recorded in the cell. For BSD, use the SSH procedure above; a local FreeBSD
+   `go test` is not an acceptance path.
 2. Add an `observedRuns` entry with `harness` (`local`, `docker`,
-   `github-actions`, or `vm`), `hostOS`, `arch`, `platform`, `runtime`,
-   `runner` or `image` + `imageDigest`, `shellVersions` keyed by the shell,
-   the exact `command`, the `result`, and `recordedAt`.
+   `github-actions`, `vm`, or `ssh`), `hostOS`, `arch`, `platform`, `runtime`,
+   `runner` or `image` + `imageDigest`, `target` for SSH, `shellVersions`
+   keyed by the shell, the exact `command`, the `result` beginning with
+   `PASS`, and `recordedAt`.
 3. Change the cell's `verification` to `observed`, fill `observed.runs` with
-   the run ID, `observed.test` with a test that exists in this package, and
-   `observed.fidelity` with what the test asserted. Delete `manual`.
-4. Keep `startup` exact. The checker rejects a mismatched Host/architecture, a
-   missing shell version, a Docker run without a sha256 digest, an invented
-   test name, and a manual cell that carries observation data.
+   the run ID, `observed.test` with a test that exists in this package and
+   covers that shell, and `observed.fidelity` with what the test asserted.
+   Keep or add the release `ci` object if a release job also exercises the
+   cell; remove `manual` from an observed cell.
+4. Keep `startup` exact. The checker rejects a mismatched Host/architecture,
+   a platform that disagrees with the recorded host/arch, a result that is not
+   `PASS`, a missing shell version, a Docker run without a sha256 digest, an
+   invented test name, a test or run that selects another shell, a manual cell
+   that carries observation or CI evidence, and a machine without a required
+   release job.
 
-The run command must contain the cited test name. A macOS pwsh run can never
-support a Windows cell.
+The run command must contain the cited test name. A macOS, Linux, or Rosetta
+pwsh run can never support a Windows cell.
 
 ## CI
 
-`ci.yml` runs the checker in the `checks` job on every pull request and push
-to main, and `release.yml` runs it in the `validate` job before building:
+`ci.yml` runs the pure Go/JSON checker in the `checks` job on every pull
+request and push to main. `release.yml` runs it in `validate` before building:
 
 ```
 go test ./adapters/shellhook -run '^(TestCaptureMatrix|TestHostShellMatrix|TestHostShellReleaseGates|TestHostShellMatrixRejectsBadFixtures)$' -count=1 -v
 ```
 
-This step is pure Go and JSON, so it runs on Linux, macOS, and Windows runners
-without any real shell. It fails when a release-blocking cell is missing, is
-not marked release-blocking, is classified below its required tier, has only a
-planned check, claims an observation that its run does not support, records
-startup flags that disagree with its path, or claims a fidelity its tier
-cannot produce. The real-shell tests remain in `go test ./...` and in the
-manual acceptance procedures above; the release pipeline does not pretend the
-manual cells ran.
+The same workflow contains the required capture jobs:
+
+| Job | Runner | Cells |
+| --- | --- | --- |
+| capture-linux-amd64 | ubuntu-latest | Linux amd64 zsh/bash/fish/nushell/xonsh/PowerShell/fallback |
+| capture-linux-arm64 | ubuntu-24.04-arm | Linux arm64 zsh/bash/fish/nushell/xonsh/PowerShell/fallback |
+| capture-macos-arm64 | macos-latest | macOS arm64 zsh/bash/fish/nushell/xonsh/PowerShell/fallback |
+| capture-macos-amd64 | macos-15-intel | macOS x86_64 zsh/bash/fish/nushell/xonsh/PowerShell/fallback |
+| capture-windows-amd64 | windows-latest | Windows x86_64 PowerShell Tier 1 and fallback |
+| capture-windows-arm64 | windows-11-arm | Windows arm64 PowerShell Tier 1 and fallback |
+| capture-freebsd-amd64 | ubuntu-latest (QEMU FreeBSD 14.5 VM) | BSD zsh/bash/fish/nushell/xonsh/fallback over SSH |
+
+`checksums` needs every capture job, and `publish` needs `checksums`, so a
+failed or skipped capture job prevents publishing. The checker parses
+`release.yml` itself: deleting a job, adding a job-level `if`, changing
+`runs-on`, removing a cited test or `NETCATTY_TEST_SSH_*` binding, or moving a
+job out of the publish dependency chain fails `TestHostShellMatrix`. The
+Windows and FreeBSD jobs are `ci` evidence in the cells and were not run on
+this machine; the Linux, macOS, and SSH-lab observations are attached as
+`observedRuns`. The Linux and macOS `observed` cells also carry the release
+job that re-runs them, so observed history and release provisioning are both
+recorded.
 
 `TestCaptureMatrix` still replans every path on each recorded platform, so a
 startup-file or argument change cannot drift from the fixture.
 `TestHostShellMatrix` validates the cells; `TestHostShellMatrixRejectsBadFixtures`
-proves the checker rejects a missing cell, a wrong tier, and a false observed
-claim.
+proves the checker rejects a missing gate, a missing best-effort cell, a wrong
+tier, a false observed claim, a FAIL result, a wrong shell binding, a platform
+mismatch, a Tier 2 exit code, a BSD cell that points at a local PTY path, and a
+CI job that does not exist or does not run the cell.

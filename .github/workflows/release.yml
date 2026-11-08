@@ -117,6 +117,436 @@ jobs:
           fi
           echo "release commit ${RELEASE_SHA}"
 
+  capture-linux-amd64:
+    name: capture Linux amd64 shells
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install the matrix shells
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y zsh bash fish python3-venv libicu74
+          curl -fsSL -o nu.tar.gz https://github.com/nushell/nushell/releases/download/0.116.1/nu-0.116.1-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf nu.tar.gz
+          sudo install -m 0755 nu-0.116.1-x86_64-unknown-linux-gnu/nu /usr/local/bin/nu
+          python3 -m venv /opt/xonsh
+          /opt/xonsh/bin/pip install --quiet xonsh==0.24.2
+          curl -fsSL -o pwsh.tar.gz https://github.com/PowerShell/PowerShell/releases/download/v7.6.9/powershell-7.6.9-linux-x64.tar.gz
+          sudo mkdir -p /opt/pwsh
+          sudo tar -xzf pwsh.tar.gz -C /opt/pwsh
+          sudo chmod +x /opt/pwsh/pwsh
+
+      - name: Assert the matrix shells
+        run: |
+          set -euo pipefail
+          command -v zsh
+          command -v bash
+          command -v fish
+          command -v nu
+          test -x /opt/xonsh/bin/xonsh
+          test -x /opt/pwsh/pwsh
+          zsh --version
+          bash --version | head -1
+          fish --version
+          nu --version
+          /opt/xonsh/bin/xonsh --version
+          /opt/pwsh/pwsh --version
+
+      - name: Run the capture matrix
+        run: |
+          set -euo pipefail
+          NETCATTY_TEST_FISH="$(command -v fish)" \
+          NETCATTY_TEST_NU="$(command -v nu)" \
+          NETCATTY_TEST_XONSH=/opt/xonsh/bin/xonsh \
+          NETCATTY_TEST_PWSH=/opt/pwsh/pwsh \
+          go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+
+  capture-linux-arm64:
+    name: capture Linux arm64 shells
+    needs: validate
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install the matrix shells
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y zsh bash fish python3-venv libicu74
+          curl -fsSL -o nu.tar.gz https://github.com/nushell/nushell/releases/download/0.116.1/nu-0.116.1-aarch64-unknown-linux-gnu.tar.gz
+          tar -xzf nu.tar.gz
+          sudo install -m 0755 nu-0.116.1-aarch64-unknown-linux-gnu/nu /usr/local/bin/nu
+          python3 -m venv /opt/xonsh
+          /opt/xonsh/bin/pip install --quiet xonsh==0.24.2
+          curl -fsSL -o pwsh.tar.gz https://github.com/PowerShell/PowerShell/releases/download/v7.6.9/powershell-7.6.9-linux-arm64.tar.gz
+          sudo mkdir -p /opt/pwsh
+          sudo tar -xzf pwsh.tar.gz -C /opt/pwsh
+          sudo chmod +x /opt/pwsh/pwsh
+
+      - name: Assert the matrix shells
+        run: |
+          set -euo pipefail
+          command -v zsh
+          command -v bash
+          command -v fish
+          command -v nu
+          test -x /opt/xonsh/bin/xonsh
+          test -x /opt/pwsh/pwsh
+          zsh --version
+          bash --version | head -1
+          fish --version
+          nu --version
+          /opt/xonsh/bin/xonsh --version
+          /opt/pwsh/pwsh --version
+
+      - name: Run the capture matrix
+        run: |
+          set -euo pipefail
+          NETCATTY_TEST_FISH="$(command -v fish)" \
+          NETCATTY_TEST_NU="$(command -v nu)" \
+          NETCATTY_TEST_XONSH=/opt/xonsh/bin/xonsh \
+          NETCATTY_TEST_PWSH=/opt/pwsh/pwsh \
+          go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+
+  capture-macos-arm64:
+    name: capture macOS arm64 shells
+    needs: validate
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install the matrix shells
+        run: |
+          set -euo pipefail
+          brew install fish
+          mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/pwsh"
+          curl -fsSL -o "$RUNNER_TEMP/nu.tar.gz" https://github.com/nushell/nushell/releases/download/0.116.1/nu-0.116.1-aarch64-apple-darwin.tar.gz
+          tar -xzf "$RUNNER_TEMP/nu.tar.gz" -C "$RUNNER_TEMP/bin"
+          python3 -m venv "$RUNNER_TEMP/xonsh"
+          "$RUNNER_TEMP/xonsh/bin/pip" install --quiet xonsh==0.24.2
+          curl -fsSL -o "$RUNNER_TEMP/pwsh.tar.gz" https://github.com/PowerShell/PowerShell/releases/download/v7.6.9/powershell-7.6.9-osx-arm64.tar.gz
+          tar -xzf "$RUNNER_TEMP/pwsh.tar.gz" -C "$RUNNER_TEMP/pwsh"
+          chmod +x "$RUNNER_TEMP/pwsh/pwsh" "$RUNNER_TEMP/bin/nu"
+
+      - name: Assert the matrix shells
+        run: |
+          set -euo pipefail
+          command -v zsh
+          command -v bash
+          command -v fish
+          "$RUNNER_TEMP/bin/nu" --version
+          "$RUNNER_TEMP/xonsh/bin/xonsh" --version
+          "$RUNNER_TEMP/pwsh/pwsh" --version
+
+      - name: Run the capture matrix
+        run: |
+          set -euo pipefail
+          NETCATTY_TEST_FISH="$(command -v fish)" \
+          NETCATTY_TEST_NU="$RUNNER_TEMP/bin/nu" \
+          NETCATTY_TEST_XONSH="$RUNNER_TEMP/xonsh/bin/xonsh" \
+          NETCATTY_TEST_PWSH="$RUNNER_TEMP/pwsh/pwsh" \
+          go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+
+  capture-macos-amd64:
+    name: capture macOS x86_64 shells
+    needs: validate
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install the matrix shells
+        run: |
+          set -euo pipefail
+          brew install fish
+          mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/pwsh"
+          curl -fsSL -o "$RUNNER_TEMP/nu.tar.gz" https://github.com/nushell/nushell/releases/download/0.116.1/nu-0.116.1-x86_64-apple-darwin.tar.gz
+          tar -xzf "$RUNNER_TEMP/nu.tar.gz" -C "$RUNNER_TEMP/bin"
+          python3 -m venv "$RUNNER_TEMP/xonsh"
+          "$RUNNER_TEMP/xonsh/bin/pip" install --quiet xonsh==0.24.2
+          curl -fsSL -o "$RUNNER_TEMP/pwsh.tar.gz" https://github.com/PowerShell/PowerShell/releases/download/v7.6.9/powershell-7.6.9-osx-x64.tar.gz
+          tar -xzf "$RUNNER_TEMP/pwsh.tar.gz" -C "$RUNNER_TEMP/pwsh"
+          chmod +x "$RUNNER_TEMP/pwsh/pwsh" "$RUNNER_TEMP/bin/nu"
+
+      - name: Assert the matrix shells
+        run: |
+          set -euo pipefail
+          command -v zsh
+          command -v bash
+          command -v fish
+          "$RUNNER_TEMP/bin/nu" --version
+          "$RUNNER_TEMP/xonsh/bin/xonsh" --version
+          "$RUNNER_TEMP/pwsh/pwsh" --version
+          uname -m
+
+      - name: Run the capture matrix
+        run: |
+          set -euo pipefail
+          NETCATTY_TEST_FISH="$(command -v fish)" \
+          NETCATTY_TEST_NU="$RUNNER_TEMP/bin/nu" \
+          NETCATTY_TEST_XONSH="$RUNNER_TEMP/xonsh/bin/xonsh" \
+          NETCATTY_TEST_PWSH="$RUNNER_TEMP/pwsh/pwsh" \
+          go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+
+  capture-windows-amd64:
+    name: capture Windows amd64 PowerShell
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Assert PowerShell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pwsh = (Get-Command pwsh).Source
+          if (-not (Test-Path -LiteralPath $pwsh)) { throw "pwsh is missing" }
+          pwsh --version
+          $PSVersionTable.PSVersion
+
+      - name: Run the capture matrix
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test ./adapters/shellhook -run '^(TestRealPowerShellLocalHookCapturesTierOne|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+
+  capture-windows-arm64:
+    name: capture Windows arm64 PowerShell
+    needs: validate
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Assert PowerShell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pwsh = (Get-Command pwsh).Source
+          if (-not (Test-Path -LiteralPath $pwsh)) { throw "pwsh is missing" }
+          pwsh --version
+          $PSVersionTable.PSVersion
+
+      - name: Run the capture matrix
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test ./adapters/shellhook -run '^(TestRealPowerShellLocalHookCapturesTierOne|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+
+  capture-freebsd-amd64:
+    name: capture FreeBSD amd64 over SSH
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install QEMU and cloud-init tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils openssh-client xz-utils
+
+      - name: Create the lab SSH key
+        run: |
+          set -euo pipefail
+          ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/freebsd-key"
+
+      - name: Write the FreeBSD cloud-init seed
+        run: |
+          set -euo pipefail
+          key="$(cat "$RUNNER_TEMP/freebsd-key.pub")"
+          cat > "$RUNNER_TEMP/user-data" <<EOF
+          #cloud-config
+          users:
+            - name: freebsd
+              shell: /bin/sh
+              ssh_authorized_keys: ["$key"]
+            - name: zshuser
+              shell: /bin/sh
+              ssh_authorized_keys: ["$key"]
+            - name: bashuser
+              shell: /bin/sh
+              ssh_authorized_keys: ["$key"]
+            - name: fishuser
+              shell: /bin/sh
+              ssh_authorized_keys: ["$key"]
+            - name: tier3user
+              shell: /bin/sh
+              ssh_authorized_keys: ["$key"]
+            - name: nuuser
+              shell: /bin/sh
+              ssh_authorized_keys: ["$key"]
+            - name: xonshuser
+              shell: /bin/sh
+              ssh_authorized_keys: ["$key"]
+          write_files:
+            - path: /root/netcatty-provision.sh
+              permissions: '0755'
+              content: |
+                #!/bin/sh
+                set -eux
+                env ASSUME_ALWAYS_YES=yes pkg bootstrap -f
+                env ASSUME_ALWAYS_YES=yes pkg install -y zsh bash fish nushell python3 py3-pip ca_root_nss curl
+                mkdir -p /opt/xonsh/bin /opt/xonsh/lib
+                /usr/local/bin/python3 -m pip install --quiet --break-system-packages --target /opt/xonsh/lib "xonsh==0.24.2"
+                cat > /opt/xonsh/bin/xonsh <<'EOS'
+                #!/bin/sh
+                PYTHONPATH=/opt/xonsh/lib exec /usr/local/bin/python3 -m xonsh "\$@"
+                EOS
+                chmod 0755 /opt/xonsh/bin/xonsh
+                for shell in /usr/local/bin/zsh /usr/local/bin/bash /usr/local/bin/fish /usr/local/bin/nu /opt/xonsh/bin/xonsh; do
+                  grep -qx "\$shell" /etc/shells || echo "\$shell" >> /etc/shells
+                done
+                pw usermod zshuser -s /usr/local/bin/zsh
+                pw usermod bashuser -s /usr/local/bin/bash
+                pw usermod fishuser -s /usr/local/bin/fish
+                pw usermod tier3user -s /usr/local/bin/zsh
+                pw usermod nuuser -s /usr/local/bin/nu
+                pw usermod xonshuser -s /opt/xonsh/bin/xonsh
+                touch /home/tier3user/.zshrc
+                chown tier3user:tier3user /home/tier3user/.zshrc
+                sysrc sshd_enable=YES
+                service sshd restart
+                touch /var/run/netcatty-provisioned
+          runcmd:
+            - /bin/sh /root/netcatty-provision.sh
+          EOF
+          cat > "$RUNNER_TEMP/meta-data" <<EOF
+          instance-id: netcatty-freebsd
+          local-hostname: netcatty-freebsd
+          EOF
+          cloud-localds "$RUNNER_TEMP/seed.img" "$RUNNER_TEMP/user-data" "$RUNNER_TEMP/meta-data"
+
+      - name: Boot the FreeBSD VM
+        run: |
+          set -euo pipefail
+          curl -fL -o "$RUNNER_TEMP/freebsd.qcow2.xz" https://download.freebsd.org/releases/VM-IMAGES/14.5-RELEASE/amd64/Latest/FreeBSD-14.5-RELEASE-amd64-BASIC-CLOUDINIT-ufs.qcow2.xz
+          echo "a2a8cd84cd59077225a0e75ead852e8a08fe26f9ab251a96d5a4fd4fe1db4454  $RUNNER_TEMP/freebsd.qcow2.xz" | sha256sum -c -
+          unxz -k "$RUNNER_TEMP/freebsd.qcow2.xz"
+          accel="tcg,thread=multi"
+          if [ -e /dev/kvm ]; then accel="kvm"; fi
+          qemu-system-x86_64 -machine "accel=$accel" -m 2048 -smp 2 -cpu max \
+            -drive "file=$RUNNER_TEMP/freebsd.qcow2,if=virtio,format=qcow2" \
+            -drive "file=$RUNNER_TEMP/seed.img,media=cdrom,readonly=on,format=raw" \
+            -netdev user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22 \
+            -device virtio-net-pci,netdev=net0 \
+            -display none -monitor none -serial "file:$RUNNER_TEMP/freebsd-console.log" \
+            -daemonize -pidfile "$RUNNER_TEMP/qemu.pid"
+
+      - name: Wait for the FreeBSD lab
+        run: |
+          set -euo pipefail
+          ssh_options=(-i "$RUNNER_TEMP/freebsd-key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -p 2222)
+          ready=false
+          for attempt in $(seq 1 180); do
+            if ssh "${ssh_options[@]}" freebsd@127.0.0.1 'test -f /var/run/netcatty-provisioned' >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$ready" != true ]; then
+            echo "the FreeBSD VM never finished provisioning" >&2
+            cat "$RUNNER_TEMP/freebsd-console.log" >&2 || true
+            exit 1
+          fi
+          ssh-keyscan -p 2222 127.0.0.1 > "$RUNNER_TEMP/known_hosts"
+          ssh "${ssh_options[@]}" freebsd@127.0.0.1 'uname -a; freebsd-version -ku; zsh --version; bash --version | head -1; fish --version; nu --version; /opt/xonsh/bin/xonsh --version'
+
+      - name: Run the SSH capture matrix
+        run: |
+          set -euo pipefail
+          NETCATTY_TEST_SSH_REQUIRED=1 \
+          NETCATTY_TEST_SSH_KEY="$RUNNER_TEMP/freebsd-key" \
+          NETCATTY_TEST_SSH_KNOWN_HOSTS="$RUNNER_TEMP/known_hosts" \
+          NETCATTY_TEST_SSH_ZSH=zshuser@127.0.0.1:2222 \
+          NETCATTY_TEST_SSH_ZSH_LOGIN=/usr/local/bin/zsh \
+          NETCATTY_TEST_SSH_BASH=bashuser@127.0.0.1:2222 \
+          NETCATTY_TEST_SSH_BASH_LOGIN=/usr/local/bin/bash \
+          NETCATTY_TEST_SSH_FISH=fishuser@127.0.0.1:2222 \
+          NETCATTY_TEST_SSH_FISH_LOGIN=/usr/local/bin/fish \
+          NETCATTY_TEST_SSH_TIER3=tier3user@127.0.0.1:2222 \
+          NETCATTY_TEST_SSH_TIER3_LOGIN=/usr/local/bin/zsh \
+          NETCATTY_TEST_SSH_NU=nuuser@127.0.0.1:2222 \
+          NETCATTY_TEST_SSH_NU_LOGIN=/usr/local/bin/nu \
+          NETCATTY_TEST_SSH_XONSH=xonshuser@127.0.0.1:2222 \
+          NETCATTY_TEST_SSH_XONSH_LOGIN=/opt/xonsh/bin/xonsh \
+          go test ./adapters/shellhook -run '^(TestRealSSHRemoteHookCapturesTierOne|TestRealSSHRemoteTierThreeFallback|TestRealSSHRemoteNativeFallback)$' -count=1 -v
+
   build:
     name: build (${{ matrix.artifact }})
     needs: validate
@@ -384,6 +814,13 @@ jobs:
     name: aggregate checksums
     needs:
       - validate
+      - capture-linux-amd64
+      - capture-linux-arm64
+      - capture-macos-arm64
+      - capture-macos-amd64
+      - capture-windows-amd64
+      - capture-windows-arm64
+      - capture-freebsd-amd64
       - build
     runs-on: ubuntu-latest
     timeout-minutes: 15
