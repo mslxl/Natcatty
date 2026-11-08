@@ -34,14 +34,14 @@ const (
 // ExportFormats returns every format in menu order.
 func ExportFormats() []ExportFormat { return vaultexport.Formats() }
 
-// HistoryReader is the connection-log and command-history port an export
-// consumes. application/history.Service implements it.
+// HistoryReader is the connection-log port an export consumes.
+// application/history.Service implements it. Command history is deliberately
+// not part of this port: spec O5 keeps Command History out of portable export.
 type HistoryReader interface {
 	ConnectionLogs(ctx context.Context) ([]domainhistory.ConnectionLog, error)
-	Entries(ctx context.Context) ([]domainhistory.Entry, error)
 }
 
-// WithHistoryReader gives the Service the log and history source used by the
+// WithHistoryReader gives the Service the connection-log source used by the
 // log export formats.
 func WithHistoryReader(reader HistoryReader) Option {
 	return func(s *Service) { s.history = reader }
@@ -341,16 +341,13 @@ func (s *Service) exportDataset(ctx context.Context, opts ExportOptions) (vaulte
 		dataset.NoteGroups = groups
 	}
 	if s.history != nil {
+		// Connection Logs are allowed in a portable export. Command History is
+		// not (spec O5), so the port cannot even ask for it here.
 		logs, err := s.history.ConnectionLogs(ctx)
 		if err != nil {
 			return dataset, 0, internal(err)
 		}
-		entries, err := s.history.Entries(ctx)
-		if err != nil {
-			return dataset, 0, internal(err)
-		}
 		dataset.Logs = logs
-		dataset.History = entries
 	}
 	return dataset, unreadable, nil
 }

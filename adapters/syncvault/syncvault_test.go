@@ -121,10 +121,10 @@ func TestSnapshotCarriesPlaintextSecretsAndNewestTimestamp(t *testing.T) {
 		t.Fatalf("SyncedAt = %d", payload.SyncedAt)
 	}
 	if len(payload.Secrets) != 2 {
-		t.Fatalf("secrets = %+v", payload.Secrets)
+		t.Fatalf("snapshot secret count = %d, want 2", len(payload.Secrets))
 	}
 	if payload.Secrets[0].Value != "host-password" || payload.Secrets[1].Value != "private" {
-		t.Fatalf("secrets = %+v", payload.Secrets)
+		t.Fatal("snapshot secret values did not match the stored credentials")
 	}
 }
 
@@ -140,14 +140,16 @@ func TestSnapshotNeverCarriesAtuinAccountCredentials(t *testing.T) {
 		t.Fatalf("Snapshot: %v", err)
 	}
 	if len(payload.Secrets) != 0 {
-		t.Fatalf("Vault snapshot carried Atuin credentials: %+v", payload.Secrets)
+		t.Fatalf("Vault snapshot carried %d credential(s)", len(payload.Secrets))
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("json: %v", err)
 	}
 	if strings.Contains(string(encoded), token) || strings.Contains(string(encoded), key) {
-		t.Fatalf("Vault snapshot leaked an Atuin credential: %s", encoded)
+		// Never print the encoded payload: a regression would publish the
+		// planted credential to CI logs, which is the disclosure under test.
+		t.Fatal("Vault snapshot leaked an Atuin credential")
 	}
 }
 
@@ -159,7 +161,7 @@ func TestSnapshotToleratesAStaleSecretFlagButNotAnUnreadableSecret(t *testing.T)
 		t.Fatalf("a missing credential should be omitted, got %v", err)
 	}
 	if len(payload.Secrets) != 0 {
-		t.Fatalf("secrets = %+v", payload.Secrets)
+		t.Fatalf("snapshot secret count = %d, want 0", len(payload.Secrets))
 	}
 
 	secrets.getErr = appvault.ErrSecretsLocked
@@ -211,10 +213,10 @@ func TestApplyRejectsInboundAtuinAccountCredentialsBeforeWritingAnything(t *test
 		t.Fatalf("Apply = %v, want ErrUnsupportedSecretEntity", err)
 	}
 	if secrets.values[tokenRef] != token || secrets.values[keyRef] != key {
-		t.Fatalf("inbound payload replaced Atuin credentials: %+v", secrets.values)
+		t.Fatal("inbound payload replaced the stored Atuin credentials")
 	}
 	if len(secrets.set) != 0 {
-		t.Fatalf("credentials were written after the preflight failed: %+v", secrets.set)
+		t.Fatalf("credentials were written after the preflight failed: %d write(s)", len(secrets.set))
 	}
 	if len(records.applied) != 0 {
 		t.Fatalf("records were replaced after the preflight failed: %+v", records.applied)
@@ -242,7 +244,7 @@ func TestApplyStoresIncomingSecretsAndClearsStaleOnes(t *testing.T) {
 		t.Fatal("records were not replaced")
 	}
 	if secrets.values[hostRef("host-1")] != "fresh" {
-		t.Fatalf("secret = %q", secrets.values[hostRef("host-1")])
+		t.Fatal("the host credential was not stored")
 	}
 
 	// A later payload without the password deletes the stale credential.
@@ -393,7 +395,7 @@ func TestSnapshotCarriesNetworkProfileSecretsWithoutPlaintextRecords(t *testing.
 		t.Fatalf("SyncedAt = %d", payload.SyncedAt)
 	}
 	if len(payload.Secrets) != 3 {
-		t.Fatalf("secrets = %+v", payload.Secrets)
+		t.Fatalf("snapshot secret count = %d, want 3", len(payload.Secrets))
 	}
 	byRef := map[appvault.SecretRef]string{}
 	for _, secret := range payload.Secrets {
@@ -402,7 +404,7 @@ func TestSnapshotCarriesNetworkProfileSecretsWithoutPlaintextRecords(t *testing.
 		}] = secret.Value
 	}
 	if byRef[auth] != testAuthKey || byRef[private] != testPrivateKey || byRef[psk] != testPSK {
-		t.Fatalf("network secrets = %+v", byRef)
+		t.Fatal("network secrets did not match the stored credentials")
 	}
 	// The profile records themselves never carry credential plaintext; they
 	// only advertise the Has* markers.
@@ -412,7 +414,7 @@ func TestSnapshotCarriesNetworkProfileSecretsWithoutPlaintextRecords(t *testing.
 	}
 	for _, plaintext := range []string{testAuthKey, testPrivateKey, testPSK} {
 		if strings.Contains(string(encoded), plaintext) {
-			t.Fatalf("profile records contain plaintext %q", plaintext)
+			t.Fatal("profile records contain a credential plaintext")
 		}
 	}
 	if !strings.Contains(string(encoded), `"hasAuthKey":true`) ||
@@ -463,7 +465,7 @@ func TestSnapshotOmitsAMissingNetworkSecretButFailsOnAnUnreadableOne(t *testing.
 		t.Fatalf("a stale HasAuthKey marker should omit the secret: %v", err)
 	}
 	if len(payload.Secrets) != 0 {
-		t.Fatalf("secrets = %+v", payload.Secrets)
+		t.Fatalf("snapshot secret count = %d, want 0", len(payload.Secrets))
 	}
 
 	secrets.getErr = appvault.ErrSecretsLocked
@@ -535,7 +537,7 @@ func TestApplyRemovesSecretsForDroppedNetworkProfilesAndPeers(t *testing.T) {
 		t.Fatal("a dropped peer's Preshared Key ciphertext survived")
 	}
 	if secrets.values[private] != "new-private" || secrets.values[psk] != "new-psk" {
-		t.Fatalf("incoming network secrets = %+v", secrets.values)
+		t.Fatal("incoming network secrets were not stored")
 	}
 
 	// A payload written before the family existed has no opinion about

@@ -972,6 +972,15 @@ func (s *Service) localStatus(ctx context.Context) (SyncStatus, domainhistory.Me
 		status.PendingUploads = pendingUploads(records, metadata.WriterUUID)
 	}
 
+	if s.appLockEngaged() {
+		// The spec pauses sync while App Lock hides the app, just like a
+		// locked field-secret store. Capture continues because it never needs
+		// a credential. Check this before Mode so App Lock performs no
+		// secret-store query at all, matching AccountService.localStatus.
+		status.State = atuinmodel.SyncLocked
+		status.Problem = atuinmodel.ProblemLocked
+		return status, metadata, nil
+	}
 	switch s.secrets.Mode() {
 	case SecretModePassphraseLocked:
 		status.State = atuinmodel.SyncLocked
@@ -980,14 +989,6 @@ func (s *Service) localStatus(ctx context.Context) (SyncStatus, domainhistory.Me
 	case SecretModeUnavailable:
 		status.State = atuinmodel.SyncNotConfigured
 		status.Problem = atuinmodel.ProblemNotConfigured
-		return status, metadata, nil
-	}
-	if s.appLockEngaged() {
-		// The spec pauses sync while App Lock hides the app, just like a
-		// locked field-secret store. Capture continues because it never needs
-		// a credential.
-		status.State = atuinmodel.SyncLocked
-		status.Problem = atuinmodel.ProblemLocked
 		return status, metadata, nil
 	}
 

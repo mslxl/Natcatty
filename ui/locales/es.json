@@ -3544,5 +3544,15 @@
   "settingsAtuinLastSync": "Última sincronización {time}",
   "settingsAtuinPendingUploads": "Cargas pendientes: {count}",
   "settingsAtuinNextRetry": "Próximo reintento {time}",
-  "settingsAtuinSyncNow": "Sincronizar ahora"
+  "settingsAtuinSyncNow": "Sincronizar ahora",
+  "settingsAtuinDetailsShow": "Detalles",
+  "settingsAtuinDetailsHide": "Ocultar detalles",
+  "settingsAtuinDetailsTitle": "Diagnóstico saneado",
+  "settingsAtuinDetailsHint": "Solo se muestra estado no sensible; ni credenciales, ni texto de comandos, ni mensajes del servidor.",
+  "settingsAtuinDetailsState": "Estado: {state}",
+  "settingsAtuinDetailsProblem": "Problema: {problem}",
+  "settingsAtuinDetailsServer": "Versión del servidor: {version}",
+  "settingsAtuinDetailsLastSync": "Última sincronización: {time}",
+  "settingsAtuinDetailsPending": "Subidas sin sincronizar: {count}",
+  "settingsAtuinDetailsNextRetry": "Próximo reintento: {time}"
 }

@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"errors"
+	"time"
 
 	historysync "github.com/mslxl/natcatty/application/historysync"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
@@ -86,8 +87,10 @@ func WithAtuinConfigurationChanged(fn func()) AtuinOption {
 }
 
 // AtuinState owns the Logs area's one-account panel. Credentials exist only
-// in the bounded string fields while the user types; a successful login or
-// key save clears them. The state never renders or logs them.
+// in the draft strings while the user types; the panel imposes no length
+// bound, and the service and adapter validate the submitted values. A
+// successful login, key save, or logout clears the drafts. The state never
+// renders or logs them.
 type AtuinState struct {
 	account HistoryAccount
 	status  historysync.Status
@@ -101,6 +104,7 @@ type AtuinState struct {
 	askKeyChange bool
 	askForget    bool
 	askLogout    bool
+	showDetails  bool
 
 	lastHistory          domainpreferences.History
 	requestRedraw        func()
@@ -157,6 +161,51 @@ func (s *AtuinState) Problem() AtuinProblem {
 		return AtuinProblemNone
 	}
 	return s.problem
+}
+
+// AtuinDiagnostics is the details control's sanitized model. It contains only
+// a localized action problem, the sync state, and non-sensitive status fields.
+// It has no field for an error string, Status.Detail, a server message, a
+// token, a key, command text, a URL, or a username, so rendering it cannot
+// expose any of those values even if an internal error carries them.
+type AtuinDiagnostics struct {
+	State          atuinmodel.SyncState
+	Problem        AtuinProblem
+	ServerVersion  string
+	LastSyncAt     time.Time
+	PendingUploads int
+	NextRetryAt    time.Time
+}
+
+// Diagnostics returns the sanitized fields the details control may reveal.
+func (s *AtuinState) Diagnostics() AtuinDiagnostics {
+	if s == nil {
+		return AtuinDiagnostics{}
+	}
+	status := s.Status()
+	return AtuinDiagnostics{
+		State:          status.State,
+		Problem:        s.problem,
+		ServerVersion:  status.ServerVersion,
+		LastSyncAt:     status.LastSyncAt,
+		PendingUploads: status.PendingUploads,
+		NextRetryAt:    status.NextRetryAt,
+	}
+}
+
+// ShowDetails reports whether the explicit Details control is expanded. It is
+// collapsed until the user clicks it.
+func (s *AtuinState) ShowDetails() bool {
+	return s != nil && s.showDetails
+}
+
+// ToggleDetails expands or collapses the sanitized details control. It never
+// changes an error, credential, or account operation.
+func (s *AtuinState) ToggleDetails() {
+	if s == nil {
+		return
+	}
+	s.showDetails = !s.showDetails
 }
 
 // LoginMethod returns the selected credential entry mode.

@@ -3544,5 +3544,15 @@
   "settingsAtuinLastSync": "Последняя синхронизация {time}",
   "settingsAtuinPendingUploads": "Ожидают загрузки: {count}",
   "settingsAtuinNextRetry": "Следующая попытка {time}",
-  "settingsAtuinSyncNow": "Синхронизировать сейчас"
+  "settingsAtuinSyncNow": "Синхронизировать сейчас",
+  "settingsAtuinDetailsShow": "Подробности",
+  "settingsAtuinDetailsHide": "Скрыть подробности",
+  "settingsAtuinDetailsTitle": "Безопасная диагностика",
+  "settingsAtuinDetailsHint": "Показаны только несекретные данные; без учётных данных, текста команд и сообщений сервера.",
+  "settingsAtuinDetailsState": "Состояние: {state}",
+  "settingsAtuinDetailsProblem": "Проблема: {problem}",
+  "settingsAtuinDetailsServer": "Версия сервера: {version}",
+  "settingsAtuinDetailsLastSync": "Последняя синхронизация: {time}",
+  "settingsAtuinDetailsPending": "Несинхронизированные отправки: {count}",
+  "settingsAtuinDetailsNextRetry": "Следующая попытка: {time}"
 }

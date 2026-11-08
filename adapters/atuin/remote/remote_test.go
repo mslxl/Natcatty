@@ -161,8 +161,8 @@ func TestAuthenticatePastedTokenSendsTokenHeaderAndReadsAccount(t *testing.T) {
 	if got := request.Header.Get("Accept"); got != "application/json" {
 		t.Fatalf("Accept = %q, want application/json", got)
 	}
-	if !strings.HasPrefix(request.Header.Get("User-Agent"), "netcatty/") {
-		t.Fatalf("User-Agent = %q, want a netcatty version", request.Header.Get("User-Agent"))
+	if got := request.Header.Get("User-Agent"); got != DefaultUserAgent {
+		t.Fatalf("User-Agent = %q, want %q", got, DefaultUserAgent)
 	}
 }
 

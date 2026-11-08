@@ -3544,5 +3544,15 @@
   "settingsAtuinLastSync": "上次同步 {time}",
   "settingsAtuinPendingUploads": "待上傳：{count}",
   "settingsAtuinNextRetry": "下次重試 {time}",
-  "settingsAtuinSyncNow": "立即同步"
+  "settingsAtuinSyncNow": "立即同步",
+  "settingsAtuinDetailsShow": "詳情",
+  "settingsAtuinDetailsHide": "收合詳情",
+  "settingsAtuinDetailsTitle": "已脫敏診斷資訊",
+  "settingsAtuinDetailsHint": "僅顯示非敏感狀態；不包含憑證、命令文字或伺服器訊息。",
+  "settingsAtuinDetailsState": "狀態：{state}",
+  "settingsAtuinDetailsProblem": "問題：{problem}",
+  "settingsAtuinDetailsServer": "伺服器版本：{version}",
+  "settingsAtuinDetailsLastSync": "上次同步：{time}",
+  "settingsAtuinDetailsPending": "未同步上傳：{count}",
+  "settingsAtuinDetailsNextRetry": "下次重試：{time}"
 }

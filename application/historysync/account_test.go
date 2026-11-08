@@ -1242,6 +1242,20 @@ func TestNormalizeSyncAddress(t *testing.T) {
 	}
 }
 
+// TestPublicSecretErrorReducesUnknownErrorsToASentinel proves an arbitrary
+// secret-store failure cannot pass its message to a caller. The planted value
+// stands in for a token, key, or path a future adapter might include.
+func TestPublicSecretErrorReducesUnknownErrorsToASentinel(t *testing.T) {
+	const planted = "token=sqzv-planted-internal-secret"
+	public := publicSecretError(fmt.Errorf("secret store exploded: %s", planted))
+	if !errors.Is(public, ErrSecretUnreadable) {
+		t.Fatalf("publicSecretError(unknown) = %v, want ErrSecretUnreadable", public)
+	}
+	if strings.Contains(public.Error(), planted) {
+		t.Fatal("publicSecretError leaked the internal error text")
+	}
+}
+
 func assertCredentialFree(t *testing.T, label string, value any, credentials ...string) {
 	t.Helper()
 	encoded, err := json.Marshal(value)

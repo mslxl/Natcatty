@@ -876,6 +876,12 @@ func TestLockedStoresNeverDecryptCredentials(t *testing.T) {
 		if reads := secrets.Reads(); reads != 0 {
 			t.Fatalf("a locked store decrypted %d credential(s)", reads)
 		}
+		// The explicit passphrase-locked early return must prevent even a Has
+		// presence check. Without it the store itself fails closed, so a Get
+		// count alone cannot pin the early return.
+		if has := secrets.HasCalls(); has != 0 {
+			t.Fatalf("a locked store performed %d presence check(s)", has)
+		}
 		if factory.Opens() != 0 {
 			t.Fatalf("a locked store opened %d remote(s)", factory.Opens())
 		}
@@ -904,6 +910,12 @@ func TestLockedStoresNeverDecryptCredentials(t *testing.T) {
 		waitIdle(t, service)
 		if reads := secrets.Reads(); reads != 0 {
 			t.Fatalf("App Lock decrypted %d credential(s)", reads)
+		}
+		if has := secrets.HasCalls(); has != 0 {
+			t.Fatalf("App Lock performed %d presence check(s)", has)
+		}
+		if modes := secrets.ModeCalls(); modes != 0 {
+			t.Fatalf("App Lock queried the secret-store mode %d time(s)", modes)
 		}
 		if factory.Opens() != 0 {
 			t.Fatalf("App Lock opened %d remote(s)", factory.Opens())
@@ -2354,6 +2366,8 @@ type countingSecrets struct {
 	*syncSecrets
 	mu    sync.Mutex
 	reads int
+	has   int
+	modes int
 }
 
 func newCountingSecrets(inner *syncSecrets) *countingSecrets {
@@ -2367,10 +2381,36 @@ func (s *countingSecrets) Get(ctx context.Context, ref historysync.SecretRef) (s
 	return s.syncSecrets.Get(ctx, ref)
 }
 
+func (s *countingSecrets) Has(ctx context.Context, ref historysync.SecretRef) (bool, error) {
+	s.mu.Lock()
+	s.has++
+	s.mu.Unlock()
+	return s.syncSecrets.Has(ctx, ref)
+}
+
+func (s *countingSecrets) Mode() historysync.SecretMode {
+	s.mu.Lock()
+	s.modes++
+	s.mu.Unlock()
+	return s.syncSecrets.Mode()
+}
+
 func (s *countingSecrets) Reads() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.reads
+}
+
+func (s *countingSecrets) HasCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.has
+}
+
+func (s *countingSecrets) ModeCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.modes
 }
 
 // flipSyncSettings changes the persisted address after the first read, which

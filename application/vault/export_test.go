@@ -57,16 +57,50 @@ func exportService(t *testing.T) *Service {
 }
 
 type fakeHistory struct {
-	logs    []domainhistory.ConnectionLog
-	entries []domainhistory.Entry
+	logs       []domainhistory.ConnectionLog
+	entries    []domainhistory.Entry
+	entryCalls int
 }
 
 func (f *fakeHistory) ConnectionLogs(context.Context) ([]domainhistory.ConnectionLog, error) {
 	return append([]domainhistory.ConnectionLog(nil), f.logs...), nil
 }
 
+// Entries is deliberately outside the export port. It is kept on the fake so
+// the export boundary test can prove the service never asks for command
+// history.
 func (f *fakeHistory) Entries(context.Context) ([]domainhistory.Entry, error) {
+	f.entryCalls++
 	return append([]domainhistory.Entry(nil), f.entries...), nil
+}
+
+// TestPortableExportNeverCarriesCommandHistory pins spec O5 for every export
+// format: a planted command must not reach the document, and the export must
+// not even request the command-history family.
+func TestPortableExportNeverCarriesCommandHistory(t *testing.T) {
+	service := exportService(t)
+	history, ok := service.history.(*fakeHistory)
+	if !ok {
+		t.Fatalf("export history source = %T, want the test fake", service.history)
+	}
+	const planted = "guqzv-planted-command-that-must-not-export"
+	history.entries = []domainhistory.Entry{{
+		ID: "planted-entry", Command: planted, Scope: "global",
+	}}
+	for _, format := range ExportFormats() {
+		exported, err := service.ExportVault(context.Background(), ExportOptions{
+			Format: format, IncludeSecrets: true, ExportedAt: fixedExportTime,
+		})
+		if err != nil {
+			t.Fatalf("ExportVault(%s): %v", format, err)
+		}
+		if strings.Contains(string(exported.Content), planted) {
+			t.Fatalf("%s export contains a planted command", format)
+		}
+	}
+	if history.entryCalls != 0 {
+		t.Fatalf("a portable export asked for command history %d time(s)", history.entryCalls)
+	}
 }
 
 func TestExportProducesEveryFormat(t *testing.T) {
