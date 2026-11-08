@@ -3,6 +3,7 @@ package historysync
 import (
 	"errors"
 	"maps"
+	"reflect"
 	"testing"
 	"time"
 
@@ -102,5 +103,32 @@ func TestSyncRecordValid(t *testing.T) {
 	deletion.DeletedAt = testRecordedAt
 	if !deletion.Valid() {
 		t.Fatal("a valid delete record was rejected")
+	}
+}
+
+// TestRemotePortHasNoStoreDeleteOperation pins the sync port to the
+// non-destructive operations it implements. Deletion travels as ordinary
+// delete records through Upload; the delete-all-store endpoint is never
+// reachable from the application.
+func TestRemotePortHasNoStoreDeleteOperation(t *testing.T) {
+	remoteType := reflect.TypeOf((*Remote)(nil)).Elem()
+	expected := map[string]bool{
+		"Authenticate":      true,
+		"Capabilities":      true,
+		"RecordStatus":      true,
+		"Download":          true,
+		"Upload":            true,
+		"ValidateMasterKey": true,
+		"Close":             true,
+	}
+	for index := 0; index < remoteType.NumMethod(); index++ {
+		name := remoteType.Method(index).Name
+		if !expected[name] {
+			t.Errorf("Remote exposes %q; the delete-all-store endpoint must not be reachable", name)
+		}
+		delete(expected, name)
+	}
+	for name := range expected {
+		t.Errorf("Remote is missing expected operation %q", name)
 	}
 }

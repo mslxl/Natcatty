@@ -483,15 +483,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	historySyncService := historysync.NewService(
 		preferenceService, historySecrets, database, nil,
 		historysync.WithAppLocked(func() bool { return appLock.Snapshot().Locked }),
-		historysync.WithSyncApplied(func(result historysync.SyncResult) {
-			// Downloaded projections are written through the store, so the
-			// History surface and autocomplete only learn about them here.
-			if result.Applied == 0 {
-				return
-			}
-			historyService.NotifyExternalChange()
-			autocompleteService.Load(context.Background())
-		}))
+		historysync.WithSyncApplied(historySyncApplied(historyService, autocompleteService)))
 	historySyncService.Start(context.Background())
 	defer historySyncService.Stop()
 	historySyncService.Subscribe(invalidate)
@@ -1909,6 +1901,21 @@ func resolveCommandLocalIdentity() commandLocalIdentity {
 		name = current.Username
 	}
 	return commandLocalIdentity{Host: host, User: name}
+}
+
+// historySyncApplied refreshes the History surface and autocomplete after the
+// sync engine commits downloaded projections. A tombstone page counts as
+// applied, so a delete from another writer removes the row without a restart.
+// It runs on the sync goroutine outside every service lock.
+func historySyncApplied(historyService *apphistory.Service,
+	autocompleteService *autocomplete.Service) func(historysync.SyncResult) {
+	return func(result historysync.SyncResult) {
+		if result.Applied == 0 {
+			return
+		}
+		historyService.NotifyExternalChange()
+		autocompleteService.Load(context.Background())
+	}
 }
 
 // commandCompletionHook turns one completed Session command into exactly one
