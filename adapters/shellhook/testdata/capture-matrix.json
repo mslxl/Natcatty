@@ -1,6 +1,6 @@
 {
-  "description": "Shared ticket 07/21 capture matrix. Paths describe shell and transport mechanics, the exact startup rewrite, and the fidelity each mechanism produces. Cells enumerate the Host/Arch/Shell matrix with the capture tier and release classification. observedRuns record only what actually ran on this machine (macOS arm64, Linux Docker arm64/amd64); Linux PowerShell, macOS x86_64, Windows, and BSD cells are documented manual acceptance steps and never claim an observation. Erroring in this file is a test failure, not product behavior.",
-  "fidelityLegend": "Path fidelity: tier is the capture tier; exact means a real shell was observed reporting that field, observed means a real shell reported the field but not the value, missing means the mechanism cannot observe it, and manual/planned means this machine did not run it. A path's verification covers only the platforms named in observedPlatforms; every platform has its own cell truth. Cell fidelity: the observed object's fidelity is present only on cells with an observation run; manual.expectedFidelity is the acceptance expectation for an unrun cell and is never an observation claim. Tier 1 is the authoritative session hook, Tier 2 native OSC 133/7 without a Netcatty hook, and Tier 3 typed input plus prompt detection.",
+  "description": "Shared ticket 07/21 capture matrix. Paths describe shell and transport mechanics, the exact startup rewrite, and the fidelity each mechanism produces. Cells enumerate the Host/Arch/Shell matrix with the capture tier, release classification, and evidence kind: observed (a real run recorded here), ci (a required job in .github/workflows/release.yml, not run on this machine), or manual (a runnable procedure a human performs). observedRuns record only what actually ran here: macOS arm64 and macOS amd64 under Rosetta 2, Linux Docker arm64/amd64, and the Linux SSH lab used to validate the remote harness. Windows and FreeBSD cells never claim an observation. Erroring in this file is a test failure, not product behavior.",
+  "fidelityLegend": "Path fidelity: tier is the capture tier; exact means a real shell was observed reporting that field, observed means a real shell reported the field but not the value, missing means the mechanism cannot observe it, and manual/planned means this machine did not run it. A path's verification covers only the platforms named in observedPlatforms; every platform has its own cell truth. Cell evidence: observed cells cite only a real recorded run (observed.fidelity is an observation claim); ci cells cite a required release-workflow job and never claim a local run; manual cells record runnable steps for an unrun environment and are never observations. Tier 1 is the authoritative session hook, Tier 2 native OSC 133/7 without a Netcatty hook, and Tier 3 typed input plus prompt detection.",
   "paths": [
     {
       "name": "bsd-local-zsh",
@@ -754,6 +754,150 @@
         "duration": "manual"
       },
       "evidence": "Same unhooked typed-input plus prompt-detection mechanism as the observed zsh Tier 3 fallback (TestRealTierThreeFallbackCapturesTypedInput). No bash or fish typed-fallback Session was run in this environment; Windows cells use the documented manual check."
+    },
+    {
+      "name": "freebsd-ssh-zsh",
+      "platforms": [
+        "freebsd"
+      ],
+      "kind": "ssh",
+      "loginShell": "/usr/local/bin/zsh",
+      "remoteShell": "zsh",
+      "remoteStartup": [
+        "-l"
+      ],
+      "hookEnabled": true,
+      "wantHookExpected": true,
+      "wantRemoteWrapper": true,
+      "wantRemoteInvocations": [
+        "NETCATTY_USER_ZDOTDIR=\"$netcatty_zdotdir\" NETCATTY_HOOK_DIR=\"$netcatty_dir\" ZDOTDIR=\"$netcatty_dir\" \"$netcatty_shell\" -l"
+      ],
+      "verification": "manual",
+      "fidelity": {
+        "tier": "1",
+        "cwd": "manual",
+        "exit": "manual",
+        "duration": "manual"
+      },
+      "evidence": "TestRealSSHRemoteHookCapturesTierOne is the acceptance test driving the planner and Session tap over SSH with a remote PTY; TestSSHCaptureHookKeepsTheWrapperForPOSIXLoginShells and TestRemoteWrapperInstallsEachShellAndCleansUp cover the planner and wrapper. FreeBSD zsh is a pkg install at /usr/local/bin/zsh."
+    },
+    {
+      "name": "freebsd-ssh-bash",
+      "platforms": [
+        "freebsd"
+      ],
+      "kind": "ssh",
+      "loginShell": "/usr/local/bin/bash",
+      "remoteShell": "bash",
+      "remoteStartup": [
+        "--rcfile",
+        "<hook-dir>/bashrc",
+        "-i"
+      ],
+      "hookEnabled": true,
+      "wantHookExpected": true,
+      "wantRemoteWrapper": true,
+      "wantRemoteInvocations": [
+        "NETCATTY_HOOK_DIR=\"$netcatty_dir\" \"$netcatty_shell\" --rcfile \"$netcatty_dir/bashrc\" -i"
+      ],
+      "verification": "manual",
+      "fidelity": {
+        "tier": "1",
+        "cwd": "manual",
+        "exit": "manual",
+        "duration": "manual"
+      },
+      "evidence": "TestRealSSHRemoteHookCapturesTierOne is the acceptance test driving the planner and Session tap over SSH with a remote PTY; TestSSHCaptureHookKeepsTheWrapperForPOSIXLoginShells and TestRemoteWrapperInstallsEachShellAndCleansUp cover the planner and wrapper. FreeBSD bash is a pkg install at /usr/local/bin/bash."
+    },
+    {
+      "name": "freebsd-ssh-fish",
+      "platforms": [
+        "freebsd"
+      ],
+      "kind": "ssh",
+      "loginShell": "/usr/local/bin/fish",
+      "remoteShell": "fish",
+      "remoteStartup": [
+        "-l",
+        "--init-command",
+        "source \"$NETCATTY_HOOK_FILE\""
+      ],
+      "hookEnabled": true,
+      "wantHookExpected": true,
+      "wantRemoteWrapper": true,
+      "wantRemoteInvocations": [
+        "NETCATTY_HOOK_FILE=\"$netcatty_dir/hook.fish\" \"$netcatty_shell\" -l --init-command \"source \\\"\\$NETCATTY_HOOK_FILE\\\"\""
+      ],
+      "verification": "manual",
+      "fidelity": {
+        "tier": "1",
+        "cwd": "manual",
+        "exit": "manual",
+        "duration": "manual"
+      },
+      "evidence": "TestRealSSHRemoteHookCapturesTierOne is the acceptance test driving the planner and Session tap over SSH with a remote PTY; TestSSHCaptureHookKeepsTheWrapperForPOSIXLoginShells and TestRemoteWrapperInstallsEachShellAndCleansUp cover the planner and wrapper. FreeBSD fish is a pkg install at /usr/local/bin/fish."
+    },
+    {
+      "name": "freebsd-ssh-nu",
+      "platforms": [
+        "freebsd"
+      ],
+      "kind": "ssh",
+      "loginShell": "/usr/local/bin/nu",
+      "remoteShell": "nu",
+      "remoteStartup": [],
+      "hookEnabled": true,
+      "wantHookExpected": false,
+      "verification": "manual",
+      "fidelity": {
+        "tier": "2",
+        "cwd": "planned",
+        "exit": "missing",
+        "duration": "planned"
+      },
+      "evidence": "TestRealSSHRemoteNativeFallback is the acceptance test. The SSH transport withdraws the POSIX wrapper for a nushell login account (TestSSHCaptureHookWithdrawsForNonPOSIXLoginShells), and nushell reports cwd and finish through its own OSC 133/7. No Netcatty exit code."
+    },
+    {
+      "name": "freebsd-ssh-xonsh",
+      "platforms": [
+        "freebsd"
+      ],
+      "kind": "ssh",
+      "loginShell": "/opt/xonsh/bin/xonsh",
+      "remoteShell": "xonsh",
+      "remoteStartup": [],
+      "hookEnabled": true,
+      "wantHookExpected": false,
+      "verification": "manual",
+      "fidelity": {
+        "tier": "2",
+        "cwd": "planned",
+        "exit": "missing",
+        "duration": "missing"
+      },
+      "evidence": "TestRealSSHRemoteNativeFallback is the acceptance test. The SSH transport withdraws the POSIX wrapper for a xonsh login account, and xonsh reports its cwd through OSC 7. It has no OSC 133 finish, so the duration stays missing."
+    },
+    {
+      "name": "freebsd-ssh-tier3",
+      "platforms": [
+        "freebsd"
+      ],
+      "kind": "ssh",
+      "loginShell": "/usr/local/bin/zsh",
+      "remoteShell": "zsh",
+      "remoteStartup": [
+        "-l"
+      ],
+      "hookEnabled": false,
+      "wantHookExpected": false,
+      "verification": "manual",
+      "fidelity": {
+        "tier": "3",
+        "cwd": "manual",
+        "exit": "missing",
+        "duration": "manual"
+      },
+      "evidence": "TestRealSSHRemoteTierThreeFallback is the acceptance test: the hook is off, sshd starts the zsh login shell, and the Session tap captures the typed command at the next prompt without cwd or exit code. No local FreeBSD PTY is involved."
     }
   ],
   "observedRuns": [
@@ -776,7 +920,7 @@
         "pwsh": "7.6.9"
       },
       "command": "nix develop --command bash -c 'export PATH=/nix/store/89xsm9bg4z03cgbbxlcz036df1n1jzzk-fish-4.9.3/bin:/nix/store/sg4qjfh6qyj58zgcrscwp2bg18lb2a64-xonsh-0.24.2/bin:/nix/store/hx0gqai3qzgah05nmzdv1d87vnz1qkf9-powershell-7.6.9/bin:$PATH; GOFLAGS=-buildvcs=false go test ./adapters/shellhook -run \"^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$\" -count=1 -v'",
-      "result": "PASS: zsh 5.9.2, bash 5.3.20, and fish 4.9.3 subtests; nushell 0.116.1; xonsh 0.24.2; pwsh 7.6.9 Tier 1; POSIX and PowerShell Tier 3; 45.884s.",
+      "result": "PASS: zsh 5.9.2, bash 5.3.20, and fish 4.9.3 subtests; nushell 0.116.1; xonsh 0.24.2; pwsh 7.6.9 Tier 1; POSIX and PowerShell Tier 3; 52.290s.",
       "recordedAt": "2026-11-08"
     },
     {
@@ -793,7 +937,7 @@
         "bash": "GNU bash, version 3.2.57(1)-release (arm64-apple-darwin26)"
       },
       "command": "nix develop --command bash -c 'GO=$(command -v go); export PATH=/bin:/usr/bin:/usr/sbin:/sbin; GOFLAGS=-buildvcs=false \"$GO\" test ./adapters/shellhook -run \"TestRealShellSessionCapturesTierOneEndToEnd/bash\" -count=1 -v'",
-      "result": "PASS: TestRealShellSessionCapturesTierOneEndToEnd/bash with /bin/bash 3.2.57; 0.09s.",
+      "result": "PASS: TestRealShellSessionCapturesTierOneEndToEnd/bash with /bin/bash 3.2.57; 0.12s.",
       "recordedAt": "2026-11-08"
     },
     {
@@ -811,7 +955,7 @@
         "xonsh": "xonsh/0.24.2"
       },
       "command": "nix develop --command bash -c 'export PATH=/nix/store/sg4qjfh6qyj58zgcrscwp2bg18lb2a64-xonsh-0.24.2/bin:$PATH; GOFLAGS=-buildvcs=false go test ./adapters/shellhook -run \"^(TestRealNushellWithoutHookKeepsNativeCapture|TestRealXonshWithoutHookKeepsNativeFallback)$\" -count=1 -v'",
-      "result": "PASS: nushell 0.116.1 native Tier 2 (cwd, no exit code, measured duration); xonsh 0.24.2 native Tier 2 (cwd, no exit code or duration); 5.512s.",
+      "result": "PASS: nushell 0.116.1 native Tier 2 (cwd, no exit code, measured duration); xonsh 0.24.2 native Tier 2 (cwd, no exit code or duration); 5.567s.",
       "recordedAt": "2026-11-08"
     },
     {
@@ -832,7 +976,7 @@
         "xonsh": "xonsh/0.24.2"
       },
       "command": "docker exec natcatty-debug bash -c 'export PATH=/opt/xonsh/bin:$PATH; GOFLAGS=-buildvcs=false go test ./adapters/shellhook -run \"^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$\" -count=1 -v'",
-      "result": "PASS: zsh 5.9, bash 5.2.15, fish 3.6.0, nushell 0.116.1, xonsh 0.24.2, and the Tier 3 fallback; 28.075s.",
+      "result": "PASS: zsh 5.9, bash 5.2.15, fish 3.6.0, nushell 0.116.1, xonsh 0.24.2, and the Tier 3 fallback; 29.361s.",
       "recordedAt": "2026-11-08"
     },
     {
@@ -853,7 +997,85 @@
         "xonsh": "xonsh/0.24.2"
       },
       "command": "docker exec natcatty-debug-amd64 bash -c 'export PATH=/opt/xonsh/bin:$PATH; GOFLAGS=-buildvcs=false go test ./adapters/shellhook -run \"^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$\" -count=1 -v'",
-      "result": "PASS: zsh 5.9, bash 5.2.15, fish 3.6.0, nushell 0.116.1, xonsh 0.24.2, and the Tier 3 fallback; 30.395s.",
+      "result": "PASS: zsh 5.9, bash 5.2.15, fish 3.6.0, nushell 0.116.1, xonsh 0.24.2, and the Tier 3 fallback; 30.938s.",
+      "recordedAt": "2026-11-08"
+    },
+    {
+      "id": "macos-amd64-rosetta-local-2026-11-08",
+      "harness": "local",
+      "hostOS": "darwin",
+      "arch": "amd64",
+      "platform": "darwin/amd64",
+      "image": "",
+      "imageDigest": "",
+      "runtime": "macOS 27.2 (26B123); Rosetta 2 x86_64 userland",
+      "runner": "",
+      "shellVersions": {
+        "zsh": "zsh 5.9 (x86_64-apple-darwin26.0)",
+        "bash": "GNU bash, version 3.2.57(1)-release (x86_64-apple-darwin26)",
+        "fish": "fish, version 4.7.1",
+        "nu": "0.116.1",
+        "xonsh": "xonsh/0.23.7",
+        "pwsh": "PowerShell 7.6.9"
+      },
+      "command": "cd /Users/mslxl/.lody/repos/github---mslxl---natcatty/bare.git/.claude/worktrees/ticket21-manual/adapters/shellhook && export PATH=/tmp/natcatty-amd64/nu:/tmp/natcatty-amd64/pwsh:/tmp/natcatty-amd64/bin:/usr/bin:/bin:/usr/sbin:/sbin && export NETCATTY_TEST_FISH=/nix/store/cks6zgb13fcvlwgkhan6rnc80a1bv1zc-fish-4.7.1/bin/fish NETCATTY_TEST_NU=/tmp/natcatty-amd64/nu/nu NETCATTY_TEST_XONSH=/nix/store/wjwxpdyr1k6mawfqnqnyp7b8ic58jjci-xonsh-0.23.7/bin/xonsh NETCATTY_TEST_PWSH=/tmp/natcatty-amd64/pwsh/pwsh && time /usr/bin/arch -x86_64 /tmp/shellhook-amd64.test -test.run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -test.count=1 -test.v",
+      "result": "PASS: zsh 5.9, bash 3.2.57, and fish 4.7.1 subtests; nushell 0.116.1; xonsh 0.23.7; pwsh 7.6.9 Tier 1; POSIX and PowerShell Tier 3; 59.063s under Rosetta 2. zsh and bash were the universal system binaries forced to x86_64 with arch -x86_64; fish, nushell, xonsh, and pwsh were x86_64 builds.",
+      "recordedAt": "2026-11-08"
+    },
+    {
+      "id": "linux-arm64-pwsh-docker-2026-11-08",
+      "harness": "docker",
+      "hostOS": "linux",
+      "arch": "arm64",
+      "platform": "linux/arm64",
+      "image": "golang:1.27-bookworm",
+      "imageDigest": "sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0",
+      "runtime": "Docker 29.8.2 (OrbStack); Debian 12.15",
+      "runner": "",
+      "shellVersions": {
+        "pwsh": "PowerShell 7.6.9"
+      },
+      "command": "docker exec -w /src natcatty-debug bash -c 'NETCATTY_TEST_PWSH=/usr/local/bin/pwsh GOFLAGS=-buildvcs=false go test ./adapters/shellhook -run \"^TestRealPowerShellLocalHookCapturesTierOne$\" -count=1 -v'",
+      "result": "PASS: TestRealPowerShellLocalHookCapturesTierOne with PowerShell 7.6.9 on Linux arm64; 2.167s. Linux fidelity, not Windows.",
+      "recordedAt": "2026-11-08"
+    },
+    {
+      "id": "linux-amd64-pwsh-docker-2026-11-08",
+      "harness": "docker",
+      "hostOS": "linux",
+      "arch": "amd64",
+      "platform": "linux/amd64",
+      "image": "golang:1.27-bookworm",
+      "imageDigest": "sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0",
+      "runtime": "Docker 29.8.2 (OrbStack); Debian 12.15",
+      "runner": "",
+      "shellVersions": {
+        "pwsh": "PowerShell 7.6.9"
+      },
+      "command": "docker exec -w /src natcatty-debug-amd64 bash -c 'NETCATTY_TEST_PWSH=/usr/local/bin/pwsh GOFLAGS=-buildvcs=false go test ./adapters/shellhook -run \"^TestRealPowerShellLocalHookCapturesTierOne$\" -count=1 -v'",
+      "result": "PASS: TestRealPowerShellLocalHookCapturesTierOne with PowerShell 7.6.9 on Linux amd64; 9.344s. Linux fidelity, not Windows.",
+      "recordedAt": "2026-11-08"
+    },
+    {
+      "id": "ssh-linux-arm64-lab-2026-11-08",
+      "harness": "ssh",
+      "hostOS": "linux",
+      "arch": "arm64",
+      "platform": "linux/arm64",
+      "image": "",
+      "imageDigest": "",
+      "runtime": "Ubuntu 24.04.5 aarch64 container natcatty-ssh-lab; OpenSSH",
+      "runner": "",
+      "target": "zshuser@127.0.0.1:2223",
+      "shellVersions": {
+        "zsh": "zsh 5.9 (aarch64-unknown-linux-gnu)",
+        "bash": "GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)",
+        "fish": "fish, version 3.7.0",
+        "nu": "0.116.1",
+        "xonsh": "xonsh/0.24.2"
+      },
+      "command": "NETCATTY_TEST_SSH_REQUIRED=1 NETCATTY_TEST_SSH_ZSH=zshuser@127.0.0.1:2223 NETCATTY_TEST_SSH_ZSH_LOGIN=/usr/bin/zsh NETCATTY_TEST_SSH_BASH=bashuser@127.0.0.1:2223 NETCATTY_TEST_SSH_BASH_LOGIN=/usr/bin/bash NETCATTY_TEST_SSH_FISH=fishuser@127.0.0.1:2223 NETCATTY_TEST_SSH_FISH_LOGIN=/usr/bin/fish NETCATTY_TEST_SSH_TIER3=zshuser@127.0.0.1:2223 NETCATTY_TEST_SSH_TIER3_LOGIN=/usr/bin/zsh NETCATTY_TEST_SSH_NU=nuuser@127.0.0.1:2223 NETCATTY_TEST_SSH_NU_LOGIN=/usr/bin/nu NETCATTY_TEST_SSH_XONSH=xonshuser@127.0.0.1:2223 NETCATTY_TEST_SSH_XONSH_LOGIN=/opt/xonsh/bin/xonsh NETCATTY_TEST_SSH_KEY=/tmp/natcatty-ssh-lab-key NETCATTY_TEST_SSH_INSECURE=1 nix develop --command bash -c 'GOFLAGS=-buildvcs=false go test ./adapters/shellhook -run \"^(TestRealSSHRemoteHookCapturesTierOne|TestRealSSHRemoteTierThreeFallback|TestRealSSHRemoteNativeFallback)$\" -count=1 -v'",
+      "result": "PASS: TestRealSSHRemoteHookCapturesTierOne zsh/bash/fish; TestRealSSHRemoteTierThreeFallback; TestRealSSHRemoteNativeFallback nushell and xonsh; 5.848s. Accounts zshuser, bashuser, fishuser, nuuser, xonshuser on 127.0.0.1:2223; the Tier 3 check reused zshuser because no separate tier3user was provisioned in this lab. This validates the SSH acceptance harness on Linux; the BSD cells remain ci-provisioned.",
       "recordedAt": "2026-11-08"
     }
   ],
@@ -881,7 +1103,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "Tier 1 zsh hook observed on the real shell; see the cited test."
+      "evidence": "Tier 1 zsh hook observed on the real shell; see the cited test. The release workflow re-runs this cell in capture-linux-arm64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-linux-arm64",
+        "runner": "ubuntu-24.04-arm",
+        "platform": "linux/arm64",
+        "tests": [
+          "TestRealShellSessionCapturesTierOneEndToEnd"
+        ],
+        "requires": [
+          "command -v zsh"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "linux-arm64-bash",
@@ -908,7 +1148,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "Tier 1 bash hook observed on the cited runs; see the cited test."
+      "evidence": "Tier 1 bash hook observed on the cited runs; see the cited test. The release workflow re-runs this cell in capture-linux-arm64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-linux-arm64",
+        "runner": "ubuntu-24.04-arm",
+        "platform": "linux/arm64",
+        "tests": [
+          "TestRealShellSessionCapturesTierOneEndToEnd"
+        ],
+        "requires": [
+          "command -v bash"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "linux-arm64-fish",
@@ -935,7 +1193,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "Tier 1 fish hook observed on the real shell; see the cited test."
+      "evidence": "Tier 1 fish hook observed on the real shell; see the cited test. The release workflow re-runs this cell in capture-linux-arm64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-linux-arm64",
+        "runner": "ubuntu-24.04-arm",
+        "platform": "linux/arm64",
+        "tests": [
+          "TestRealShellSessionCapturesTierOneEndToEnd"
+        ],
+        "requires": [
+          "NETCATTY_TEST_FISH="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "linux-arm64-nushell",
@@ -962,7 +1238,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "Best-effort nushell cell, non-blocking: the real shell took the Tier 1 hook."
+      "evidence": "Best-effort nushell cell, non-blocking: the real shell took the Tier 1 hook. The release workflow re-runs this cell in capture-linux-arm64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-linux-arm64",
+        "runner": "ubuntu-24.04-arm",
+        "platform": "linux/arm64",
+        "tests": [
+          "TestRealNushellSessionCapturesTierOneEndToEnd"
+        ],
+        "requires": [
+          "NETCATTY_TEST_NU="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "linux-arm64-xonsh",
@@ -987,7 +1281,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "Best-effort xonsh cell, non-blocking: the real shell took the Tier 1 hook."
+      "evidence": "Best-effort xonsh cell, non-blocking: the real shell took the Tier 1 hook. The release workflow re-runs this cell in capture-linux-arm64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-linux-arm64",
+        "runner": "ubuntu-24.04-arm",
+        "platform": "linux/arm64",
+        "tests": [
+          "TestRealXonshSessionCapturesTierOneEndToEnd"
+        ],
+        "requires": [
+          "NETCATTY_TEST_XONSH="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "linux-arm64-tier3-fallback",
@@ -1012,7 +1324,25 @@
           "duration": "observed"
         }
       },
-      "evidence": "Release-blocking Tier 3 fallback: no hook, typed input, prompt detection."
+      "evidence": "Release-blocking Tier 3 fallback: no hook, typed input, prompt detection. The release workflow re-runs this cell in capture-linux-arm64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-linux-arm64",
+        "runner": "ubuntu-24.04-arm",
+        "platform": "linux/arm64",
+        "tests": [
+          "TestRealTierThreeFallbackCapturesTypedInput"
+        ],
+        "requires": [
+          "command -v zsh"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "missing",
+          "exit": "missing",
+          "duration": "observed"
+        }
+      }
     },
     {
       "name": "linux-amd64-zsh",
@@ -1037,7 +1367,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "Tier 1 zsh hook observed on the real shell; see the cited test."
+      "evidence": "Tier 1 zsh hook observed on the real shell; see the cited test. The release workflow re-runs this cell in capture-linux-amd64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-linux-amd64",
+        "runner": "ubuntu-latest",
+        "platform": "linux/amd64",
+        "tests": [
+          "TestRealShellSessionCapturesTierOneEndToEnd"
+        ],
+        "requires": [
+          "command -v zsh"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "linux-amd64-bash",
@@ -1064,7 +1412,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "Tier 1 bash hook observed on the cited runs; see the cited test."
+      "evidence": "Tier 1 bash hook observed on the cited runs; see the cited test. The release workflow re-runs this cell in capture-linux-amd64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-linux-amd64",
+        "runner": "ubuntu-latest",
+        "platform": "linux/amd64",
+        "tests": [
+          "TestRealShellSessionCapturesTierOneEndToEnd"
+        ],
+        "requires": [
+          "command -v bash"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "linux-amd64-fish",
@@ -1091,7 +1457,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "Tier 1 fish hook observed on the real shell; see the cited test."
+      "evidence": "Tier 1 fish hook observed on the real shell; see the cited test. The release workflow re-runs this cell in capture-linux-amd64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-linux-amd64",
+        "runner": "ubuntu-latest",
+        "platform": "linux/amd64",
+        "tests": [
+          "TestRealShellSessionCapturesTierOneEndToEnd"
+        ],
+        "requires": [
+          "NETCATTY_TEST_FISH="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "linux-amd64-nushell",
@@ -1118,7 +1502,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "Best-effort nushell cell, non-blocking: the real shell took the Tier 1 hook."
+      "evidence": "Best-effort nushell cell, non-blocking: the real shell took the Tier 1 hook. The release workflow re-runs this cell in capture-linux-amd64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-linux-amd64",
+        "runner": "ubuntu-latest",
+        "platform": "linux/amd64",
+        "tests": [
+          "TestRealNushellSessionCapturesTierOneEndToEnd"
+        ],
+        "requires": [
+          "NETCATTY_TEST_NU="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "linux-amd64-xonsh",
@@ -1143,7 +1545,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "Best-effort xonsh cell, non-blocking: the real shell took the Tier 1 hook."
+      "evidence": "Best-effort xonsh cell, non-blocking: the real shell took the Tier 1 hook. The release workflow re-runs this cell in capture-linux-amd64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-linux-amd64",
+        "runner": "ubuntu-latest",
+        "platform": "linux/amd64",
+        "tests": [
+          "TestRealXonshSessionCapturesTierOneEndToEnd"
+        ],
+        "requires": [
+          "NETCATTY_TEST_XONSH="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "linux-amd64-tier3-fallback",
@@ -1168,7 +1588,25 @@
           "duration": "observed"
         }
       },
-      "evidence": "Release-blocking Tier 3 fallback: no hook, typed input, prompt detection."
+      "evidence": "Release-blocking Tier 3 fallback: no hook, typed input, prompt detection. The release workflow re-runs this cell in capture-linux-amd64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-linux-amd64",
+        "runner": "ubuntu-latest",
+        "platform": "linux/amd64",
+        "tests": [
+          "TestRealTierThreeFallbackCapturesTypedInput"
+        ],
+        "requires": [
+          "command -v zsh"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "missing",
+          "exit": "missing",
+          "duration": "observed"
+        }
+      }
     },
     {
       "name": "macos-arm64-zsh",
@@ -1193,7 +1631,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "Tier 1 zsh hook observed on the real shell; see the cited test."
+      "evidence": "Tier 1 zsh hook observed on the real shell; see the cited test. The release workflow re-runs this cell in capture-macos-arm64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-macos-arm64",
+        "runner": "macos-latest",
+        "platform": "darwin/arm64",
+        "tests": [
+          "TestRealShellSessionCapturesTierOneEndToEnd"
+        ],
+        "requires": [
+          "command -v zsh"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "macos-arm64-bash",
@@ -1221,7 +1677,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "Tier 1 bash hook observed on the cited runs; see the cited test."
+      "evidence": "Tier 1 bash hook observed on the cited runs; see the cited test. The release workflow re-runs this cell in capture-macos-arm64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-macos-arm64",
+        "runner": "macos-latest",
+        "platform": "darwin/arm64",
+        "tests": [
+          "TestRealShellSessionCapturesTierOneEndToEnd"
+        ],
+        "requires": [
+          "command -v bash"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "macos-arm64-fish",
@@ -1248,7 +1722,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "Tier 1 fish hook observed on the real shell; see the cited test."
+      "evidence": "Tier 1 fish hook observed on the real shell; see the cited test. The release workflow re-runs this cell in capture-macos-arm64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-macos-arm64",
+        "runner": "macos-latest",
+        "platform": "darwin/arm64",
+        "tests": [
+          "TestRealShellSessionCapturesTierOneEndToEnd"
+        ],
+        "requires": [
+          "NETCATTY_TEST_FISH="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "macos-arm64-nushell",
@@ -1275,7 +1767,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "Best-effort nushell cell, non-blocking: the real shell took the Tier 1 hook."
+      "evidence": "Best-effort nushell cell, non-blocking: the real shell took the Tier 1 hook. The release workflow re-runs this cell in capture-macos-arm64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-macos-arm64",
+        "runner": "macos-latest",
+        "platform": "darwin/arm64",
+        "tests": [
+          "TestRealNushellSessionCapturesTierOneEndToEnd"
+        ],
+        "requires": [
+          "NETCATTY_TEST_NU="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "macos-arm64-xonsh",
@@ -1300,7 +1810,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "Best-effort xonsh cell, non-blocking: the real shell took the Tier 1 hook."
+      "evidence": "Best-effort xonsh cell, non-blocking: the real shell took the Tier 1 hook. The release workflow re-runs this cell in capture-macos-arm64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-macos-arm64",
+        "runner": "macos-latest",
+        "platform": "darwin/arm64",
+        "tests": [
+          "TestRealXonshSessionCapturesTierOneEndToEnd"
+        ],
+        "requires": [
+          "NETCATTY_TEST_XONSH="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "macos-arm64-tier3-fallback",
@@ -1325,7 +1853,25 @@
           "duration": "observed"
         }
       },
-      "evidence": "Release-blocking Tier 3 fallback: no hook, typed input, prompt detection."
+      "evidence": "Release-blocking Tier 3 fallback: no hook, typed input, prompt detection. The release workflow re-runs this cell in capture-macos-arm64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-macos-arm64",
+        "runner": "macos-latest",
+        "platform": "darwin/arm64",
+        "tests": [
+          "TestRealTierThreeFallbackCapturesTypedInput"
+        ],
+        "requires": [
+          "command -v zsh"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "missing",
+          "exit": "missing",
+          "duration": "observed"
+        }
+      }
     },
     {
       "name": "macos-arm64-powershell",
@@ -1355,7 +1901,25 @@
           "duration": "exact"
         }
       },
-      "evidence": "macOS pwsh 7.6.9 proves the PowerShell hook on a Unix Host. This is a POSIX-Host cross-check, not Windows fidelity."
+      "evidence": "macOS pwsh 7.6.9 proves the PowerShell hook on a Unix Host. This is a POSIX-Host cross-check, not Windows fidelity. The release workflow re-runs this cell in capture-macos-arm64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-macos-arm64",
+        "runner": "macos-latest",
+        "platform": "darwin/arm64",
+        "tests": [
+          "TestRealPowerShellLocalHookCapturesTierOne"
+        ],
+        "requires": [
+          "NETCATTY_TEST_PWSH="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
+        "expectedFidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "macos-amd64-zsh",
@@ -1365,25 +1929,40 @@
       "path": "bsd-local-zsh",
       "tier": 1,
       "releaseBlocking": true,
-      "verification": "manual",
+      "verification": "observed",
       "startup": [
         "-l"
       ],
-      "manual": {
-        "runner": "GitHub Actions macos-15-intel (x86_64)",
-        "steps": [
-          "Record sw_vers and uname -m on the runner image; require x86_64.",
-          "Install fish 4.9.3, nushell 0.116.1, and xonsh 0.24.2; record each --version.",
-          "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$' -count=1 -v",
-          "Require PASS for the zsh, bash, and fish subtests and for the nushell and xonsh tests; the Tier 3 fallback must report no cwd and no exit."
+      "evidence": "Observed on macOS x86_64 under Rosetta 2 on 2026-11-08 (run macos-amd64-rosetta-local-2026-11-08); the release workflow re-runs this cell on macos-15-intel. Release-blocking.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-macos-amd64",
+        "runner": "macos-15-intel",
+        "platform": "darwin/amd64",
+        "tests": [
+          "TestRealShellSessionCapturesTierOneEndToEnd"
         ],
+        "requires": [
+          "command -v zsh"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "exact",
           "exit": "exact",
           "duration": "exact"
         }
       },
-      "evidence": "Not observed here. Documented macOS x86_64 acceptance step; expected Tier 1 from the same hook planner. Release-blocking."
+      "observed": {
+        "runs": [
+          "macos-amd64-rosetta-local-2026-11-08"
+        ],
+        "test": "TestRealShellSessionCapturesTierOneEndToEnd",
+        "fidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "macos-amd64-bash",
@@ -1393,27 +1972,42 @@
       "path": "bsd-local-bash",
       "tier": 1,
       "releaseBlocking": true,
-      "verification": "manual",
+      "verification": "observed",
       "startup": [
         "--rcfile",
         "<hook-dir>/bashrc",
         "-i"
       ],
-      "manual": {
-        "runner": "GitHub Actions macos-15-intel (x86_64)",
-        "steps": [
-          "Record sw_vers and uname -m on the runner image; require x86_64.",
-          "Install fish 4.9.3, nushell 0.116.1, and xonsh 0.24.2; record each --version.",
-          "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$' -count=1 -v",
-          "Require PASS for the zsh, bash, and fish subtests and for the nushell and xonsh tests; the Tier 3 fallback must report no cwd and no exit."
+      "evidence": "Observed on macOS x86_64 under Rosetta 2 on 2026-11-08 (run macos-amd64-rosetta-local-2026-11-08); the release workflow re-runs this cell on macos-15-intel. Release-blocking.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-macos-amd64",
+        "runner": "macos-15-intel",
+        "platform": "darwin/amd64",
+        "tests": [
+          "TestRealShellSessionCapturesTierOneEndToEnd"
         ],
+        "requires": [
+          "command -v bash"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "exact",
           "exit": "exact",
           "duration": "exact"
         }
       },
-      "evidence": "Not observed here. Documented macOS x86_64 acceptance step; expected Tier 1 from the same hook planner. Release-blocking."
+      "observed": {
+        "runs": [
+          "macos-amd64-rosetta-local-2026-11-08"
+        ],
+        "test": "TestRealShellSessionCapturesTierOneEndToEnd",
+        "fidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "macos-amd64-fish",
@@ -1423,27 +2017,42 @@
       "path": "bsd-local-fish",
       "tier": 1,
       "releaseBlocking": true,
-      "verification": "manual",
+      "verification": "observed",
       "startup": [
         "-l",
         "--init-command",
         "source \"$NETCATTY_HOOK_FILE\""
       ],
-      "manual": {
-        "runner": "GitHub Actions macos-15-intel (x86_64)",
-        "steps": [
-          "Record sw_vers and uname -m on the runner image; require x86_64.",
-          "Install fish 4.9.3, nushell 0.116.1, and xonsh 0.24.2; record each --version.",
-          "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$' -count=1 -v",
-          "Require PASS for the zsh, bash, and fish subtests and for the nushell and xonsh tests; the Tier 3 fallback must report no cwd and no exit."
+      "evidence": "Observed on macOS x86_64 under Rosetta 2 on 2026-11-08 (run macos-amd64-rosetta-local-2026-11-08); the release workflow re-runs this cell on macos-15-intel. Release-blocking.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-macos-amd64",
+        "runner": "macos-15-intel",
+        "platform": "darwin/amd64",
+        "tests": [
+          "TestRealShellSessionCapturesTierOneEndToEnd"
         ],
+        "requires": [
+          "NETCATTY_TEST_FISH="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "exact",
           "exit": "exact",
           "duration": "exact"
         }
       },
-      "evidence": "Not observed here. Documented macOS x86_64 acceptance step; expected Tier 1 from the same hook planner. Release-blocking."
+      "observed": {
+        "runs": [
+          "macos-amd64-rosetta-local-2026-11-08"
+        ],
+        "test": "TestRealShellSessionCapturesTierOneEndToEnd",
+        "fidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "macos-amd64-nushell",
@@ -1453,27 +2062,42 @@
       "path": "nushell-local-hook",
       "tier": 1,
       "releaseBlocking": false,
-      "verification": "manual",
+      "verification": "observed",
       "startup": [
         "-l",
         "-e",
         "source \"<hook-dir>/hook.nu\""
       ],
-      "manual": {
-        "runner": "GitHub Actions macos-15-intel (x86_64)",
-        "steps": [
-          "Record sw_vers and uname -m on the runner image; require x86_64.",
-          "Install fish 4.9.3, nushell 0.116.1, and xonsh 0.24.2; record each --version.",
-          "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$' -count=1 -v",
-          "Require PASS for the zsh, bash, and fish subtests and for the nushell and xonsh tests; the Tier 3 fallback must report no cwd and no exit."
+      "evidence": "Observed on macOS x86_64 under Rosetta 2 on 2026-11-08; the release workflow re-runs this cell on macos-15-intel. Best-effort shell, non-blocking.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-macos-amd64",
+        "runner": "macos-15-intel",
+        "platform": "darwin/amd64",
+        "tests": [
+          "TestRealNushellSessionCapturesTierOneEndToEnd"
         ],
+        "requires": [
+          "NETCATTY_TEST_NU="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "exact",
           "exit": "exact",
           "duration": "exact"
         }
       },
-      "evidence": "Not observed here. Documented macOS x86_64 acceptance step; expected Tier 1 from the same hook planner. Best-effort shell, non-blocking."
+      "observed": {
+        "runs": [
+          "macos-amd64-rosetta-local-2026-11-08"
+        ],
+        "test": "TestRealNushellSessionCapturesTierOneEndToEnd",
+        "fidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "macos-amd64-xonsh",
@@ -1483,25 +2107,40 @@
       "path": "xonsh-local-hook",
       "tier": 1,
       "releaseBlocking": false,
-      "verification": "manual",
+      "verification": "observed",
       "startup": [
         "-l"
       ],
-      "manual": {
-        "runner": "GitHub Actions macos-15-intel (x86_64)",
-        "steps": [
-          "Record sw_vers and uname -m on the runner image; require x86_64.",
-          "Install fish 4.9.3, nushell 0.116.1, and xonsh 0.24.2; record each --version.",
-          "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$' -count=1 -v",
-          "Require PASS for the zsh, bash, and fish subtests and for the nushell and xonsh tests; the Tier 3 fallback must report no cwd and no exit."
+      "evidence": "Observed on macOS x86_64 under Rosetta 2 on 2026-11-08; the release workflow re-runs this cell on macos-15-intel. Best-effort shell, non-blocking.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-macos-amd64",
+        "runner": "macos-15-intel",
+        "platform": "darwin/amd64",
+        "tests": [
+          "TestRealXonshSessionCapturesTierOneEndToEnd"
         ],
+        "requires": [
+          "NETCATTY_TEST_XONSH="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "exact",
           "exit": "exact",
           "duration": "exact"
         }
       },
-      "evidence": "Not observed here. Documented macOS x86_64 acceptance step; expected Tier 1 from the same hook planner. Best-effort shell, non-blocking."
+      "observed": {
+        "runs": [
+          "macos-amd64-rosetta-local-2026-11-08"
+        ],
+        "test": "TestRealXonshSessionCapturesTierOneEndToEnd",
+        "fidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "macos-amd64-powershell",
@@ -1511,7 +2150,7 @@
       "path": "powershell-local-hook",
       "tier": 1,
       "releaseBlocking": true,
-      "verification": "manual",
+      "verification": "observed",
       "startup": [
         "-NoProfile",
         "-NoLogo",
@@ -1520,21 +2159,36 @@
         "-Command",
         "<bootstrap>"
       ],
-      "manual": {
-        "runner": "GitHub Actions macos-15-intel (x86_64)",
-        "steps": [
-          "Record sw_vers and uname -m; require x86_64.",
-          "Install PowerShell 7.6.9 from the official osx-x64 tar.gz and record pwsh --version.",
-          "go test ./adapters/shellhook -run '^TestRealPowerShellLocalHookCapturesTierOne$' -count=1 -v",
-          "Require PASS with a Tier 1 row carrying the typed command, cwd, exit code, and exactly one profile load."
+      "evidence": "Observed on macOS x86_64 under Rosetta 2 on 2026-11-08 (run macos-amd64-rosetta-local-2026-11-08); the release workflow re-runs this cell on macos-15-intel. Release-blocking.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-macos-amd64",
+        "runner": "macos-15-intel",
+        "platform": "darwin/amd64",
+        "tests": [
+          "TestRealPowerShellLocalHookCapturesTierOne"
         ],
+        "requires": [
+          "NETCATTY_TEST_PWSH="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "exact",
           "exit": "exact",
           "duration": "exact"
         }
       },
-      "evidence": "Not observed here. Release-blocking macOS x86_64 PowerShell acceptance step; the hook is the same pwsh path observed on arm64."
+      "observed": {
+        "runs": [
+          "macos-amd64-rosetta-local-2026-11-08"
+        ],
+        "test": "TestRealPowerShellLocalHookCapturesTierOne",
+        "fidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "macos-amd64-tier3-fallback",
@@ -1544,25 +2198,40 @@
       "path": "local-tier3-typed-fallback",
       "tier": 3,
       "releaseBlocking": true,
-      "verification": "manual",
+      "verification": "observed",
       "startup": [
         "-l"
       ],
-      "manual": {
-        "runner": "GitHub Actions macos-15-intel (x86_64)",
-        "steps": [
-          "Record sw_vers and uname -m on the runner image; require x86_64.",
-          "Install fish 4.9.3, nushell 0.116.1, and xonsh 0.24.2; record each --version.",
-          "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$' -count=1 -v",
-          "Require PASS for the zsh, bash, and fish subtests and for the nushell and xonsh tests; the Tier 3 fallback must report no cwd and no exit."
+      "evidence": "Observed on macOS x86_64 under Rosetta 2 on 2026-11-08 (run macos-amd64-rosetta-local-2026-11-08); the release workflow re-runs this cell on macos-15-intel. Release-blocking.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-macos-amd64",
+        "runner": "macos-15-intel",
+        "platform": "darwin/amd64",
+        "tests": [
+          "TestRealTierThreeFallbackCapturesTypedInput"
         ],
+        "requires": [
+          "command -v zsh"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "missing",
           "exit": "missing",
           "duration": "observed"
         }
       },
-      "evidence": "Not observed here. Documented macOS x86_64 acceptance step for the Tier 3 fallback."
+      "observed": {
+        "runs": [
+          "macos-amd64-rosetta-local-2026-11-08"
+        ],
+        "test": "TestRealTierThreeFallbackCapturesTypedInput",
+        "fidelity": {
+          "cwd": "missing",
+          "exit": "missing",
+          "duration": "observed"
+        }
+      }
     },
     {
       "name": "windows-amd64-powershell",
@@ -1572,7 +2241,7 @@
       "path": "powershell-local-hook",
       "tier": 1,
       "releaseBlocking": true,
-      "verification": "manual",
+      "verification": "ci",
       "startup": [
         "-NoProfile",
         "-NoLogo",
@@ -1581,22 +2250,25 @@
         "-Command",
         "<bootstrap>"
       ],
-      "manual": {
-        "runner": "GitHub Actions windows-2025 (x86_64)",
-        "steps": [
-          "Record the runner image from $env:ImageOS and $env:ImageVersion in the job log.",
-          "Use actions/setup-go@v5 with go-version-file: go.mod.",
-          "Record $PSVersionTable.PSVersion and (Get-Module PSReadLine -ListAvailable | Select-Object -First 1).Version.",
-          "go test ./adapters/shellhook -run '^TestRealPowerShellLocalHookCapturesTierOne$' -count=1 -v",
-          "Require one Tier 1 row with the typed command, cwd, exit code, and exactly one profile load."
+      "evidence": "CI-provisioned by capture-windows-amd64 on windows-latest; not run on this machine. Release-blocking. PowerShell fidelity is established only by this Windows job.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-windows-amd64",
+        "runner": "windows-latest",
+        "platform": "windows/amd64",
+        "tests": [
+          "TestRealPowerShellLocalHookCapturesTierOne"
         ],
+        "requires": [
+          "Get-Command pwsh"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealPowerShellLocalHookCapturesTierOne|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "exact",
           "exit": "exact",
           "duration": "exact"
         }
-      },
-      "evidence": "Not observed here. Release-blocking Windows PowerShell Tier 1 acceptance step; a macOS pwsh run is not Windows fidelity."
+      }
     },
     {
       "name": "windows-amd64-tier3-fallback",
@@ -1606,24 +2278,27 @@
       "path": "powershell-local-tier3-fallback",
       "tier": 3,
       "releaseBlocking": true,
-      "verification": "manual",
+      "verification": "ci",
       "startup": [],
-      "manual": {
-        "runner": "GitHub Actions windows-2025 (x86_64)",
-        "steps": [
-          "Record the runner image from $env:ImageOS and $env:ImageVersion in the job log.",
-          "Use actions/setup-go@v5 with go-version-file: go.mod.",
-          "Record $PSVersionTable.PSVersion and (Get-Module PSReadLine -ListAvailable | Select-Object -First 1).Version.",
-          "go test ./adapters/shellhook -run '^TestRealPowerShellTierThreeFallback$' -count=1 -v",
-          "Require a Tier 3 row with no cwd and no exit code, finished by the profile prompt."
+      "evidence": "CI-provisioned by capture-windows-amd64 on windows-latest; not run on this machine. Release-blocking. PowerShell fidelity is established only by this Windows job.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-windows-amd64",
+        "runner": "windows-latest",
+        "platform": "windows/amd64",
+        "tests": [
+          "TestRealPowerShellTierThreeFallback"
         ],
+        "requires": [
+          "Get-Command pwsh"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealPowerShellLocalHookCapturesTierOne|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "missing",
           "exit": "missing",
           "duration": "observed"
         }
-      },
-      "evidence": "Not observed here. Release-blocking Tier 3 fallback with the capture hook disabled."
+      }
     },
     {
       "name": "windows-amd64-nushell",
@@ -1638,15 +2313,11 @@
         "-l"
       ],
       "manual": {
-        "runner": "GitHub Actions windows-2025 (x86_64)",
+        "runner": "GitHub Actions windows-2025 (x86_64) or windows-11-arm (arm64); not run on this machine",
         "steps": [
-          "Record the runner image from $env:ImageOS and $env:ImageVersion in the job log.",
-          "Use actions/setup-go@v5 with go-version-file: go.mod.",
-          "Record $PSVersionTable.PSVersion and (Get-Module PSReadLine -ListAvailable | Select-Object -First 1).Version.",
-          "winget install --id Nushell.Nushell --exact; record nu --version.",
-          "set NETCATTY_TEST_NU to the installed nu.exe.",
-          "go test ./adapters/shellhook -run '^TestRealNushellWithoutHookKeepsNativeCapture$' -count=1 -v",
-          "Require Tier 2 with the native cwd and no exit code; the Windows planner does not hook nushell."
+          "In PowerShell: winget install --id Nushell.Nushell --exact --accept-source-agreements --accept-package-agreements --silent; then open a new PowerShell: $nu = (Get-Command nu.exe).Source; if (-not (Test-Path -LiteralPath $nu)) { throw 'nu.exe is missing' }; & $nu --version",
+          "In that PowerShell: $env:NETCATTY_TEST_NU = $nu; go test ./adapters/shellhook -run '^TestRealNushellWithoutHookKeepsNativeCapture$' -count=1 -v",
+          "Require PASS with Tier 2, the native cwd, and no Netcatty exit code. The Windows planner does not install a nushell hook."
         ],
         "expectedFidelity": {
           "cwd": "exact",
@@ -1654,7 +2325,7 @@
           "duration": "observed"
         }
       },
-      "evidence": "Not observed here. Best-effort, non-blocking: the Windows planner does not hook nushell, so the native OSC 133/7 path is Tier 2."
+      "evidence": "Not observed here. Runnable Windows best-effort procedure; Tier 2 only, non-blocking. Windows PowerShell fidelity comes from the CI gate jobs, not this cell."
     },
     {
       "name": "windows-amd64-xonsh",
@@ -1669,15 +2340,11 @@
         "-l"
       ],
       "manual": {
-        "runner": "GitHub Actions windows-2025 (x86_64)",
+        "runner": "GitHub Actions windows-2025 (x86_64) or windows-11-arm (arm64); not run on this machine",
         "steps": [
-          "Record the runner image from $env:ImageOS and $env:ImageVersion in the job log.",
-          "Use actions/setup-go@v5 with go-version-file: go.mod.",
-          "Record $PSVersionTable.PSVersion and (Get-Module PSReadLine -ListAvailable | Select-Object -First 1).Version.",
-          "py -3 -m pip install xonsh==0.24.2; record xonsh --version.",
-          "set NETCATTY_TEST_XONSH to the xonsh executable.",
-          "go test ./adapters/shellhook -run '^TestRealXonshWithoutHookKeepsNativeFallback$' -count=1 -v",
-          "Require Tier 2 with the native cwd and no exit code; the Windows planner does not hook xonsh."
+          "In PowerShell: py -3 -m pip install --user xonsh==0.24.2; then $userBase = (py -3 -m site --user-base).Trim(); $xonsh = Join-Path $userBase 'Scripts\\xonsh.exe'; if (-not (Test-Path -LiteralPath $xonsh)) { throw 'xonsh.exe is missing' }; & $xonsh --version",
+          "In that PowerShell: $env:NETCATTY_TEST_XONSH = $xonsh; go test ./adapters/shellhook -run '^TestRealXonshWithoutHookKeepsNativeFallback$' -count=1 -v",
+          "Require PASS with Tier 2, the OSC 7 cwd, no Netcatty exit code, and no finish: xonsh emits no OSC 133 and its prompt is not detected."
         ],
         "expectedFidelity": {
           "cwd": "exact",
@@ -1685,7 +2352,7 @@
           "duration": "missing"
         }
       },
-      "evidence": "Not observed here. Best-effort, non-blocking: the Windows planner does not hook xonsh, so the native OSC 7 path is Tier 2."
+      "evidence": "Not observed here. Runnable Windows best-effort procedure; Tier 2 only, non-blocking. Windows PowerShell fidelity comes from the CI gate jobs, not this cell."
     },
     {
       "name": "windows-amd64-zsh",
@@ -1700,14 +2367,14 @@
         "-l"
       ],
       "manual": {
-        "runner": "GitHub Actions windows-2025 (x86_64)",
+        "runner": "GitHub Actions windows-2025 (x86_64) or windows-11-arm (arm64); not run on this machine",
         "steps": [
-          "Record the runner image from $env:ImageOS and $env:ImageVersion in the job log.",
-          "Install the shell: bash ships with Git for Windows; install zsh/fish from MSYS2 (winget install MSYS2.MSYS2; pacman -S --needed zsh fish).",
-          "Record the shell --version and put its directory, or the MSYS2 usr/bin, on PATH (set NETCATTY_TEST_FISH for fish when it is not on PATH).",
-          "Open Settings > Logs in Netcatty, turn off \"History capture hook\", then open a local session that starts zsh with `-l`.",
-          "Type `echo netcatty_tier3_matrix`, press Enter, and require a Command History row with the typed command, no cwd, no exit code, and a measured duration (Tier 3).",
-          "Turn the capture hook back on before the next cell."
+          "Install the shell: bash ships with Git for Windows; install zsh and fish from MSYS2 (winget install MSYS2.MSYS2, then in the MSYS2 shell pacman -S --needed zsh fish). Record each --version.",
+          "Put the shell, or the MSYS2 usr/bin directory, on PATH. For fish, set $env:NETCATTY_TEST_FISH = (Get-Command fish.exe).Source in PowerShell.",
+          "In Netcatty open Settings > Logs and confirm History capture hook is off. The Windows planner only installs the hook for PowerShell, so zsh runs unhooked either way.",
+          "Open a local session that starts zsh with its login flag: zsh -l.",
+          "Type echo netcatty_tier3_matrix, press Enter, and require one Command History row with the typed command, no cwd, no exit code, and a measured duration (Tier 3).",
+          "Turn the capture hook back on before the next cell if you turned it off."
         ],
         "expectedFidelity": {
           "cwd": "missing",
@@ -1715,7 +2382,7 @@
           "duration": "observed"
         }
       },
-      "evidence": "Not observed here. Best-effort, non-blocking: an explicit POSIX shell on Windows keeps its POSIX startup and has no Netcatty hook; typed input plus prompt detection is Tier 3."
+      "evidence": "Not observed here. Runnable Windows best-effort procedure; Tier 3 only, non-blocking. Windows PowerShell fidelity comes from the CI gate jobs, not this cell."
     },
     {
       "name": "windows-amd64-bash",
@@ -1730,14 +2397,14 @@
         "-l"
       ],
       "manual": {
-        "runner": "GitHub Actions windows-2025 (x86_64)",
+        "runner": "GitHub Actions windows-2025 (x86_64) or windows-11-arm (arm64); not run on this machine",
         "steps": [
-          "Record the runner image from $env:ImageOS and $env:ImageVersion in the job log.",
-          "Install the shell: bash ships with Git for Windows; install zsh/fish from MSYS2 (winget install MSYS2.MSYS2; pacman -S --needed zsh fish).",
-          "Record the shell --version and put its directory, or the MSYS2 usr/bin, on PATH (set NETCATTY_TEST_FISH for fish when it is not on PATH).",
-          "Open Settings > Logs in Netcatty, turn off \"History capture hook\", then open a local session that starts bash with `-l`.",
-          "Type `echo netcatty_tier3_matrix`, press Enter, and require a Command History row with the typed command, no cwd, no exit code, and a measured duration (Tier 3).",
-          "Turn the capture hook back on before the next cell."
+          "Install the shell: bash ships with Git for Windows; install zsh and fish from MSYS2 (winget install MSYS2.MSYS2, then in the MSYS2 shell pacman -S --needed zsh fish). Record each --version.",
+          "Put the shell, or the MSYS2 usr/bin directory, on PATH. For fish, set $env:NETCATTY_TEST_FISH = (Get-Command fish.exe).Source in PowerShell.",
+          "In Netcatty open Settings > Logs and confirm History capture hook is off. The Windows planner only installs the hook for PowerShell, so bash runs unhooked either way.",
+          "Open a local session that starts bash with its login flag: bash -l.",
+          "Type echo netcatty_tier3_matrix, press Enter, and require one Command History row with the typed command, no cwd, no exit code, and a measured duration (Tier 3).",
+          "Turn the capture hook back on before the next cell if you turned it off."
         ],
         "expectedFidelity": {
           "cwd": "missing",
@@ -1745,7 +2412,7 @@
           "duration": "observed"
         }
       },
-      "evidence": "Not observed here. Best-effort, non-blocking: an explicit POSIX shell on Windows keeps its POSIX startup and has no Netcatty hook; typed input plus prompt detection is Tier 3."
+      "evidence": "Not observed here. Runnable Windows best-effort procedure; Tier 3 only, non-blocking. Windows PowerShell fidelity comes from the CI gate jobs, not this cell."
     },
     {
       "name": "windows-amd64-fish",
@@ -1760,14 +2427,14 @@
         "-l"
       ],
       "manual": {
-        "runner": "GitHub Actions windows-2025 (x86_64)",
+        "runner": "GitHub Actions windows-2025 (x86_64) or windows-11-arm (arm64); not run on this machine",
         "steps": [
-          "Record the runner image from $env:ImageOS and $env:ImageVersion in the job log.",
-          "Install the shell: bash ships with Git for Windows; install zsh/fish from MSYS2 (winget install MSYS2.MSYS2; pacman -S --needed zsh fish).",
-          "Record the shell --version and put its directory, or the MSYS2 usr/bin, on PATH (set NETCATTY_TEST_FISH for fish when it is not on PATH).",
-          "Open Settings > Logs in Netcatty, turn off \"History capture hook\", then open a local session that starts fish with `-l`.",
-          "Type `echo netcatty_tier3_matrix`, press Enter, and require a Command History row with the typed command, no cwd, no exit code, and a measured duration (Tier 3).",
-          "Turn the capture hook back on before the next cell."
+          "Install the shell: bash ships with Git for Windows; install zsh and fish from MSYS2 (winget install MSYS2.MSYS2, then in the MSYS2 shell pacman -S --needed zsh fish). Record each --version.",
+          "Put the shell, or the MSYS2 usr/bin directory, on PATH. For fish, set $env:NETCATTY_TEST_FISH = (Get-Command fish.exe).Source in PowerShell.",
+          "In Netcatty open Settings > Logs and confirm History capture hook is off. The Windows planner only installs the hook for PowerShell, so fish runs unhooked either way.",
+          "Open a local session that starts fish with its login flag: fish -l.",
+          "Type echo netcatty_tier3_matrix, press Enter, and require one Command History row with the typed command, no cwd, no exit code, and a measured duration (Tier 3).",
+          "Turn the capture hook back on before the next cell if you turned it off."
         ],
         "expectedFidelity": {
           "cwd": "missing",
@@ -1775,7 +2442,7 @@
           "duration": "observed"
         }
       },
-      "evidence": "Not observed here. Best-effort, non-blocking: an explicit POSIX shell on Windows keeps its POSIX startup and has no Netcatty hook; typed input plus prompt detection is Tier 3."
+      "evidence": "Not observed here. Runnable Windows best-effort procedure; Tier 3 only, non-blocking. Windows PowerShell fidelity comes from the CI gate jobs, not this cell."
     },
     {
       "name": "windows-arm64-powershell",
@@ -1785,7 +2452,7 @@
       "path": "powershell-local-hook",
       "tier": 1,
       "releaseBlocking": true,
-      "verification": "manual",
+      "verification": "ci",
       "startup": [
         "-NoProfile",
         "-NoLogo",
@@ -1794,22 +2461,25 @@
         "-Command",
         "<bootstrap>"
       ],
-      "manual": {
-        "runner": "GitHub Actions windows-11-arm (arm64)",
-        "steps": [
-          "Record the runner image from $env:ImageOS and $env:ImageVersion in the job log.",
-          "Use actions/setup-go@v5 with go-version-file: go.mod.",
-          "Record $PSVersionTable.PSVersion and (Get-Module PSReadLine -ListAvailable | Select-Object -First 1).Version.",
-          "go test ./adapters/shellhook -run '^TestRealPowerShellLocalHookCapturesTierOne$' -count=1 -v",
-          "Require one Tier 1 row with the typed command, cwd, exit code, and exactly one profile load."
+      "evidence": "CI-provisioned by capture-windows-arm64 on windows-11-arm; not run on this machine. Release-blocking. PowerShell fidelity is established only by this Windows job.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-windows-arm64",
+        "runner": "windows-11-arm",
+        "platform": "windows/arm64",
+        "tests": [
+          "TestRealPowerShellLocalHookCapturesTierOne"
         ],
+        "requires": [
+          "Get-Command pwsh"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealPowerShellLocalHookCapturesTierOne|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "exact",
           "exit": "exact",
           "duration": "exact"
         }
-      },
-      "evidence": "Not observed here. Release-blocking Windows PowerShell Tier 1 acceptance step; a macOS pwsh run is not Windows fidelity."
+      }
     },
     {
       "name": "windows-arm64-tier3-fallback",
@@ -1819,24 +2489,27 @@
       "path": "powershell-local-tier3-fallback",
       "tier": 3,
       "releaseBlocking": true,
-      "verification": "manual",
+      "verification": "ci",
       "startup": [],
-      "manual": {
-        "runner": "GitHub Actions windows-11-arm (arm64)",
-        "steps": [
-          "Record the runner image from $env:ImageOS and $env:ImageVersion in the job log.",
-          "Use actions/setup-go@v5 with go-version-file: go.mod.",
-          "Record $PSVersionTable.PSVersion and (Get-Module PSReadLine -ListAvailable | Select-Object -First 1).Version.",
-          "go test ./adapters/shellhook -run '^TestRealPowerShellTierThreeFallback$' -count=1 -v",
-          "Require a Tier 3 row with no cwd and no exit code, finished by the profile prompt."
+      "evidence": "CI-provisioned by capture-windows-arm64 on windows-11-arm; not run on this machine. Release-blocking. PowerShell fidelity is established only by this Windows job.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-windows-arm64",
+        "runner": "windows-11-arm",
+        "platform": "windows/arm64",
+        "tests": [
+          "TestRealPowerShellTierThreeFallback"
         ],
+        "requires": [
+          "Get-Command pwsh"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealPowerShellLocalHookCapturesTierOne|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "missing",
           "exit": "missing",
           "duration": "observed"
         }
-      },
-      "evidence": "Not observed here. Release-blocking Tier 3 fallback with the capture hook disabled."
+      }
     },
     {
       "name": "windows-arm64-nushell",
@@ -1851,15 +2524,11 @@
         "-l"
       ],
       "manual": {
-        "runner": "GitHub Actions windows-11-arm (arm64)",
+        "runner": "GitHub Actions windows-2025 (x86_64) or windows-11-arm (arm64); not run on this machine",
         "steps": [
-          "Record the runner image from $env:ImageOS and $env:ImageVersion in the job log.",
-          "Use actions/setup-go@v5 with go-version-file: go.mod.",
-          "Record $PSVersionTable.PSVersion and (Get-Module PSReadLine -ListAvailable | Select-Object -First 1).Version.",
-          "winget install --id Nushell.Nushell --exact; record nu --version.",
-          "set NETCATTY_TEST_NU to the installed nu.exe.",
-          "go test ./adapters/shellhook -run '^TestRealNushellWithoutHookKeepsNativeCapture$' -count=1 -v",
-          "Require Tier 2 with the native cwd and no exit code; the Windows planner does not hook nushell."
+          "In PowerShell: winget install --id Nushell.Nushell --exact --accept-source-agreements --accept-package-agreements --silent; then open a new PowerShell: $nu = (Get-Command nu.exe).Source; if (-not (Test-Path -LiteralPath $nu)) { throw 'nu.exe is missing' }; & $nu --version",
+          "In that PowerShell: $env:NETCATTY_TEST_NU = $nu; go test ./adapters/shellhook -run '^TestRealNushellWithoutHookKeepsNativeCapture$' -count=1 -v",
+          "Require PASS with Tier 2, the native cwd, and no Netcatty exit code. The Windows planner does not install a nushell hook."
         ],
         "expectedFidelity": {
           "cwd": "exact",
@@ -1867,7 +2536,7 @@
           "duration": "observed"
         }
       },
-      "evidence": "Not observed here. Best-effort, non-blocking: the Windows planner does not hook nushell, so the native OSC 133/7 path is Tier 2."
+      "evidence": "Not observed here. Runnable Windows best-effort procedure; Tier 2 only, non-blocking. Windows PowerShell fidelity comes from the CI gate jobs, not this cell."
     },
     {
       "name": "windows-arm64-xonsh",
@@ -1882,15 +2551,11 @@
         "-l"
       ],
       "manual": {
-        "runner": "GitHub Actions windows-11-arm (arm64)",
+        "runner": "GitHub Actions windows-2025 (x86_64) or windows-11-arm (arm64); not run on this machine",
         "steps": [
-          "Record the runner image from $env:ImageOS and $env:ImageVersion in the job log.",
-          "Use actions/setup-go@v5 with go-version-file: go.mod.",
-          "Record $PSVersionTable.PSVersion and (Get-Module PSReadLine -ListAvailable | Select-Object -First 1).Version.",
-          "py -3 -m pip install xonsh==0.24.2; record xonsh --version.",
-          "set NETCATTY_TEST_XONSH to the xonsh executable.",
-          "go test ./adapters/shellhook -run '^TestRealXonshWithoutHookKeepsNativeFallback$' -count=1 -v",
-          "Require Tier 2 with the native cwd and no exit code; the Windows planner does not hook xonsh."
+          "In PowerShell: py -3 -m pip install --user xonsh==0.24.2; then $userBase = (py -3 -m site --user-base).Trim(); $xonsh = Join-Path $userBase 'Scripts\\xonsh.exe'; if (-not (Test-Path -LiteralPath $xonsh)) { throw 'xonsh.exe is missing' }; & $xonsh --version",
+          "In that PowerShell: $env:NETCATTY_TEST_XONSH = $xonsh; go test ./adapters/shellhook -run '^TestRealXonshWithoutHookKeepsNativeFallback$' -count=1 -v",
+          "Require PASS with Tier 2, the OSC 7 cwd, no Netcatty exit code, and no finish: xonsh emits no OSC 133 and its prompt is not detected."
         ],
         "expectedFidelity": {
           "cwd": "exact",
@@ -1898,7 +2563,7 @@
           "duration": "missing"
         }
       },
-      "evidence": "Not observed here. Best-effort, non-blocking: the Windows planner does not hook xonsh, so the native OSC 7 path is Tier 2."
+      "evidence": "Not observed here. Runnable Windows best-effort procedure; Tier 2 only, non-blocking. Windows PowerShell fidelity comes from the CI gate jobs, not this cell."
     },
     {
       "name": "windows-arm64-zsh",
@@ -1913,14 +2578,14 @@
         "-l"
       ],
       "manual": {
-        "runner": "GitHub Actions windows-11-arm (arm64)",
+        "runner": "GitHub Actions windows-2025 (x86_64) or windows-11-arm (arm64); not run on this machine",
         "steps": [
-          "Record the runner image from $env:ImageOS and $env:ImageVersion in the job log.",
-          "Install the shell: bash ships with Git for Windows; install zsh/fish from MSYS2 (winget install MSYS2.MSYS2; pacman -S --needed zsh fish).",
-          "Record the shell --version and put its directory, or the MSYS2 usr/bin, on PATH (set NETCATTY_TEST_FISH for fish when it is not on PATH).",
-          "Open Settings > Logs in Netcatty, turn off \"History capture hook\", then open a local session that starts zsh with `-l`.",
-          "Type `echo netcatty_tier3_matrix`, press Enter, and require a Command History row with the typed command, no cwd, no exit code, and a measured duration (Tier 3).",
-          "Turn the capture hook back on before the next cell."
+          "Install the shell: bash ships with Git for Windows; install zsh and fish from MSYS2 (winget install MSYS2.MSYS2, then in the MSYS2 shell pacman -S --needed zsh fish). Record each --version.",
+          "Put the shell, or the MSYS2 usr/bin directory, on PATH. For fish, set $env:NETCATTY_TEST_FISH = (Get-Command fish.exe).Source in PowerShell.",
+          "In Netcatty open Settings > Logs and confirm History capture hook is off. The Windows planner only installs the hook for PowerShell, so zsh runs unhooked either way.",
+          "Open a local session that starts zsh with its login flag: zsh -l.",
+          "Type echo netcatty_tier3_matrix, press Enter, and require one Command History row with the typed command, no cwd, no exit code, and a measured duration (Tier 3).",
+          "Turn the capture hook back on before the next cell if you turned it off."
         ],
         "expectedFidelity": {
           "cwd": "missing",
@@ -1928,7 +2593,7 @@
           "duration": "observed"
         }
       },
-      "evidence": "Not observed here. Best-effort, non-blocking: an explicit POSIX shell on Windows keeps its POSIX startup and has no Netcatty hook; typed input plus prompt detection is Tier 3."
+      "evidence": "Not observed here. Runnable Windows best-effort procedure; Tier 3 only, non-blocking. Windows PowerShell fidelity comes from the CI gate jobs, not this cell."
     },
     {
       "name": "windows-arm64-bash",
@@ -1943,14 +2608,14 @@
         "-l"
       ],
       "manual": {
-        "runner": "GitHub Actions windows-11-arm (arm64)",
+        "runner": "GitHub Actions windows-2025 (x86_64) or windows-11-arm (arm64); not run on this machine",
         "steps": [
-          "Record the runner image from $env:ImageOS and $env:ImageVersion in the job log.",
-          "Install the shell: bash ships with Git for Windows; install zsh/fish from MSYS2 (winget install MSYS2.MSYS2; pacman -S --needed zsh fish).",
-          "Record the shell --version and put its directory, or the MSYS2 usr/bin, on PATH (set NETCATTY_TEST_FISH for fish when it is not on PATH).",
-          "Open Settings > Logs in Netcatty, turn off \"History capture hook\", then open a local session that starts bash with `-l`.",
-          "Type `echo netcatty_tier3_matrix`, press Enter, and require a Command History row with the typed command, no cwd, no exit code, and a measured duration (Tier 3).",
-          "Turn the capture hook back on before the next cell."
+          "Install the shell: bash ships with Git for Windows; install zsh and fish from MSYS2 (winget install MSYS2.MSYS2, then in the MSYS2 shell pacman -S --needed zsh fish). Record each --version.",
+          "Put the shell, or the MSYS2 usr/bin directory, on PATH. For fish, set $env:NETCATTY_TEST_FISH = (Get-Command fish.exe).Source in PowerShell.",
+          "In Netcatty open Settings > Logs and confirm History capture hook is off. The Windows planner only installs the hook for PowerShell, so bash runs unhooked either way.",
+          "Open a local session that starts bash with its login flag: bash -l.",
+          "Type echo netcatty_tier3_matrix, press Enter, and require one Command History row with the typed command, no cwd, no exit code, and a measured duration (Tier 3).",
+          "Turn the capture hook back on before the next cell if you turned it off."
         ],
         "expectedFidelity": {
           "cwd": "missing",
@@ -1958,7 +2623,7 @@
           "duration": "observed"
         }
       },
-      "evidence": "Not observed here. Best-effort, non-blocking: an explicit POSIX shell on Windows keeps its POSIX startup and has no Netcatty hook; typed input plus prompt detection is Tier 3."
+      "evidence": "Not observed here. Runnable Windows best-effort procedure; Tier 3 only, non-blocking. Windows PowerShell fidelity comes from the CI gate jobs, not this cell."
     },
     {
       "name": "windows-arm64-fish",
@@ -1973,14 +2638,14 @@
         "-l"
       ],
       "manual": {
-        "runner": "GitHub Actions windows-11-arm (arm64)",
+        "runner": "GitHub Actions windows-2025 (x86_64) or windows-11-arm (arm64); not run on this machine",
         "steps": [
-          "Record the runner image from $env:ImageOS and $env:ImageVersion in the job log.",
-          "Install the shell: bash ships with Git for Windows; install zsh/fish from MSYS2 (winget install MSYS2.MSYS2; pacman -S --needed zsh fish).",
-          "Record the shell --version and put its directory, or the MSYS2 usr/bin, on PATH (set NETCATTY_TEST_FISH for fish when it is not on PATH).",
-          "Open Settings > Logs in Netcatty, turn off \"History capture hook\", then open a local session that starts fish with `-l`.",
-          "Type `echo netcatty_tier3_matrix`, press Enter, and require a Command History row with the typed command, no cwd, no exit code, and a measured duration (Tier 3).",
-          "Turn the capture hook back on before the next cell."
+          "Install the shell: bash ships with Git for Windows; install zsh and fish from MSYS2 (winget install MSYS2.MSYS2, then in the MSYS2 shell pacman -S --needed zsh fish). Record each --version.",
+          "Put the shell, or the MSYS2 usr/bin directory, on PATH. For fish, set $env:NETCATTY_TEST_FISH = (Get-Command fish.exe).Source in PowerShell.",
+          "In Netcatty open Settings > Logs and confirm History capture hook is off. The Windows planner only installs the hook for PowerShell, so fish runs unhooked either way.",
+          "Open a local session that starts fish with its login flag: fish -l.",
+          "Type echo netcatty_tier3_matrix, press Enter, and require one Command History row with the typed command, no cwd, no exit code, and a measured duration (Tier 3).",
+          "Turn the capture hook back on before the next cell if you turned it off."
         ],
         "expectedFidelity": {
           "cwd": "missing",
@@ -1988,7 +2653,7 @@
           "duration": "observed"
         }
       },
-      "evidence": "Not observed here. Best-effort, non-blocking: an explicit POSIX shell on Windows keeps its POSIX startup and has no Netcatty hook; typed input plus prompt detection is Tier 3."
+      "evidence": "Not observed here. Runnable Windows best-effort procedure; Tier 3 only, non-blocking. Windows PowerShell fidelity comes from the CI gate jobs, not this cell."
     },
     {
       "name": "linux-amd64-powershell",
@@ -1998,7 +2663,7 @@
       "path": "powershell-local-hook",
       "tier": 1,
       "releaseBlocking": true,
-      "verification": "manual",
+      "verification": "observed",
       "startup": [
         "-NoProfile",
         "-NoLogo",
@@ -2007,22 +2672,36 @@
         "-Command",
         "<bootstrap>"
       ],
-      "manual": {
-        "runner": "Linux amd64 Docker container golang:1.27-bookworm (sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0) with PowerShell 7.6.9",
-        "steps": [
-          "Start the pinned image: docker run --platform linux/amd64 --rm -it -v \"$PWD\":/work -w /work golang:1.27-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0 bash",
-          "Install PowerShell 7.6.9 from the official linux-amd64 tar.gz into /opt/microsoft/powershell/7; record pwsh --version.",
-          "go test ./adapters/shellhook -run '^TestRealPowerShellLocalHookCapturesTierOne$' -count=1 -v",
-          "Require PASS with a Tier 1 row carrying the typed command, cwd, exit code, and exactly one profile load.",
-          "Record the image digest, pwsh version, and result in the release acceptance log."
+      "evidence": "Observed on Linux amd64 in the pinned Debian container with PowerShell 7.6.9 (run linux-amd64-pwsh-docker-2026-11-08); Linux fidelity, not Windows. The release workflow re-runs this cell in capture-linux-amd64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-linux-amd64",
+        "runner": "ubuntu-latest",
+        "platform": "linux/amd64",
+        "tests": [
+          "TestRealPowerShellLocalHookCapturesTierOne"
         ],
+        "requires": [
+          "NETCATTY_TEST_PWSH="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "exact",
           "exit": "exact",
           "duration": "exact"
         }
       },
-      "evidence": "Not observed here. Release-blocking Linux PowerShell acceptance step in Docker; pwsh is optional on Linux but the Tier 1 PowerShell hook is the same one observed on macOS arm64."
+      "observed": {
+        "runs": [
+          "linux-amd64-pwsh-docker-2026-11-08"
+        ],
+        "test": "TestRealPowerShellLocalHookCapturesTierOne",
+        "fidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "linux-arm64-powershell",
@@ -2032,7 +2711,7 @@
       "path": "powershell-local-hook",
       "tier": 1,
       "releaseBlocking": true,
-      "verification": "manual",
+      "verification": "observed",
       "startup": [
         "-NoProfile",
         "-NoLogo",
@@ -2041,202 +2720,234 @@
         "-Command",
         "<bootstrap>"
       ],
-      "manual": {
-        "runner": "Linux arm64 Docker container golang:1.27-bookworm (sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0) with PowerShell 7.6.9",
-        "steps": [
-          "Start the pinned image: docker run --platform linux/arm64 --rm -it -v \"$PWD\":/work -w /work golang:1.27-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0 bash",
-          "Install PowerShell 7.6.9 from the official linux-arm64 tar.gz into /opt/microsoft/powershell/7; record pwsh --version.",
-          "go test ./adapters/shellhook -run '^TestRealPowerShellLocalHookCapturesTierOne$' -count=1 -v",
-          "Require PASS with a Tier 1 row carrying the typed command, cwd, exit code, and exactly one profile load.",
-          "Record the image digest, pwsh version, and result in the release acceptance log."
+      "evidence": "Observed on Linux arm64 in the pinned Debian container with PowerShell 7.6.9 (run linux-arm64-pwsh-docker-2026-11-08); Linux fidelity, not Windows. The release workflow re-runs this cell in capture-linux-arm64.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-linux-arm64",
+        "runner": "ubuntu-24.04-arm",
+        "platform": "linux/arm64",
+        "tests": [
+          "TestRealPowerShellLocalHookCapturesTierOne"
         ],
+        "requires": [
+          "NETCATTY_TEST_PWSH="
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "exact",
           "exit": "exact",
           "duration": "exact"
         }
       },
-      "evidence": "Not observed here. Release-blocking Linux PowerShell acceptance step in Docker; pwsh is optional on Linux but the Tier 1 PowerShell hook is the same one observed on macOS arm64."
+      "observed": {
+        "runs": [
+          "linux-arm64-pwsh-docker-2026-11-08"
+        ],
+        "test": "TestRealPowerShellLocalHookCapturesTierOne",
+        "fidelity": {
+          "cwd": "exact",
+          "exit": "exact",
+          "duration": "exact"
+        }
+      }
     },
     {
       "name": "bsd-amd64-zsh",
       "host": "freebsd",
       "arch": "amd64",
       "shell": "zsh",
-      "path": "bsd-local-zsh",
+      "path": "freebsd-ssh-zsh",
       "tier": 1,
       "releaseBlocking": true,
-      "verification": "manual",
+      "verification": "ci",
       "startup": [
         "-l"
       ],
-      "manual": {
-        "runner": "FreeBSD 14.2-RELEASE amd64 VM (bhyve, UTM, or QEMU)",
-        "steps": [
-          "Record uname -a, freebsd-version -ku, and the downloaded image/checksum in the release log.",
-          "pkg install -y go zsh bash fish; install nushell 0.116.1 and xonsh 0.24.2 from pkg or the upstream release and record their versions.",
-          "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$' -count=1 -v",
-          "Set NETCATTY_TEST_FISH, NETCATTY_TEST_NU, or NETCATTY_TEST_XONSH when the shell is not on PATH.",
-          "Require PASS and record the exact shell versions; the Tier 3 fallback must report no cwd and no exit."
+      "evidence": "CI-provisioned by capture-freebsd-amd64 over SSH to a FreeBSD 14.5 VM (planner and Session tap on the client, hook in the VM); not run on this machine. BSD has no local PTY path. Release-blocking.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-freebsd-amd64",
+        "runner": "ubuntu-latest",
+        "platform": "freebsd/amd64",
+        "tests": [
+          "TestRealSSHRemoteHookCapturesTierOne"
         ],
+        "requires": [
+          "NETCATTY_TEST_SSH_ZSH=",
+          "NETCATTY_TEST_SSH_REQUIRED=1"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealSSHRemoteHookCapturesTierOne|TestRealSSHRemoteTierThreeFallback|TestRealSSHRemoteNativeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "exact",
           "exit": "exact",
           "duration": "exact"
         }
-      },
-      "evidence": "Not observed here. FreeBSD VM acceptance step; the POSIX startup files are shared with the observed macOS and Linux paths. Release-blocking."
+      }
     },
     {
       "name": "bsd-amd64-bash",
       "host": "freebsd",
       "arch": "amd64",
       "shell": "bash",
-      "path": "bsd-local-bash",
+      "path": "freebsd-ssh-bash",
       "tier": 1,
       "releaseBlocking": true,
-      "verification": "manual",
+      "verification": "ci",
       "startup": [
         "--rcfile",
         "<hook-dir>/bashrc",
         "-i"
       ],
-      "manual": {
-        "runner": "FreeBSD 14.2-RELEASE amd64 VM (bhyve, UTM, or QEMU)",
-        "steps": [
-          "Record uname -a, freebsd-version -ku, and the downloaded image/checksum in the release log.",
-          "pkg install -y go zsh bash fish; install nushell 0.116.1 and xonsh 0.24.2 from pkg or the upstream release and record their versions.",
-          "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$' -count=1 -v",
-          "Set NETCATTY_TEST_FISH, NETCATTY_TEST_NU, or NETCATTY_TEST_XONSH when the shell is not on PATH.",
-          "Require PASS and record the exact shell versions; the Tier 3 fallback must report no cwd and no exit."
+      "evidence": "CI-provisioned by capture-freebsd-amd64 over SSH to a FreeBSD 14.5 VM (planner and Session tap on the client, hook in the VM); not run on this machine. BSD has no local PTY path. Release-blocking.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-freebsd-amd64",
+        "runner": "ubuntu-latest",
+        "platform": "freebsd/amd64",
+        "tests": [
+          "TestRealSSHRemoteHookCapturesTierOne"
         ],
+        "requires": [
+          "NETCATTY_TEST_SSH_BASH=",
+          "NETCATTY_TEST_SSH_REQUIRED=1"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealSSHRemoteHookCapturesTierOne|TestRealSSHRemoteTierThreeFallback|TestRealSSHRemoteNativeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "exact",
           "exit": "exact",
           "duration": "exact"
         }
-      },
-      "evidence": "Not observed here. FreeBSD VM acceptance step; the POSIX startup files are shared with the observed macOS and Linux paths. Release-blocking."
+      }
     },
     {
       "name": "bsd-amd64-fish",
       "host": "freebsd",
       "arch": "amd64",
       "shell": "fish",
-      "path": "bsd-local-fish",
+      "path": "freebsd-ssh-fish",
       "tier": 1,
       "releaseBlocking": true,
-      "verification": "manual",
+      "verification": "ci",
       "startup": [
         "-l",
         "--init-command",
         "source \"$NETCATTY_HOOK_FILE\""
       ],
-      "manual": {
-        "runner": "FreeBSD 14.2-RELEASE amd64 VM (bhyve, UTM, or QEMU)",
-        "steps": [
-          "Record uname -a, freebsd-version -ku, and the downloaded image/checksum in the release log.",
-          "pkg install -y go zsh bash fish; install nushell 0.116.1 and xonsh 0.24.2 from pkg or the upstream release and record their versions.",
-          "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$' -count=1 -v",
-          "Set NETCATTY_TEST_FISH, NETCATTY_TEST_NU, or NETCATTY_TEST_XONSH when the shell is not on PATH.",
-          "Require PASS and record the exact shell versions; the Tier 3 fallback must report no cwd and no exit."
+      "evidence": "CI-provisioned by capture-freebsd-amd64 over SSH to a FreeBSD 14.5 VM (planner and Session tap on the client, hook in the VM); not run on this machine. BSD has no local PTY path. Release-blocking.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-freebsd-amd64",
+        "runner": "ubuntu-latest",
+        "platform": "freebsd/amd64",
+        "tests": [
+          "TestRealSSHRemoteHookCapturesTierOne"
         ],
+        "requires": [
+          "NETCATTY_TEST_SSH_FISH=",
+          "NETCATTY_TEST_SSH_REQUIRED=1"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealSSHRemoteHookCapturesTierOne|TestRealSSHRemoteTierThreeFallback|TestRealSSHRemoteNativeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "exact",
           "exit": "exact",
           "duration": "exact"
         }
-      },
-      "evidence": "Not observed here. FreeBSD VM acceptance step; the POSIX startup files are shared with the observed macOS and Linux paths. Release-blocking."
+      }
     },
     {
       "name": "bsd-amd64-nushell",
       "host": "freebsd",
       "arch": "amd64",
       "shell": "nu",
-      "path": "nushell-local-hook",
-      "tier": 1,
+      "path": "freebsd-ssh-nu",
+      "tier": 2,
       "releaseBlocking": false,
-      "verification": "manual",
-      "startup": [
-        "-l",
-        "-e",
-        "source \"<hook-dir>/hook.nu\""
-      ],
-      "manual": {
-        "runner": "FreeBSD 14.2-RELEASE amd64 VM (bhyve, UTM, or QEMU)",
-        "steps": [
-          "Record uname -a, freebsd-version -ku, and the downloaded image/checksum in the release log.",
-          "pkg install -y go zsh bash fish; install nushell 0.116.1 and xonsh 0.24.2 from pkg or the upstream release and record their versions.",
-          "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$' -count=1 -v",
-          "Set NETCATTY_TEST_FISH, NETCATTY_TEST_NU, or NETCATTY_TEST_XONSH when the shell is not on PATH.",
-          "Require PASS and record the exact shell versions; the Tier 3 fallback must report no cwd and no exit."
+      "verification": "ci",
+      "startup": [],
+      "evidence": "CI-provisioned by capture-freebsd-amd64 over SSH to a FreeBSD 14.5 VM (planner and Session tap on the client, hook in the VM); not run on this machine. BSD has no local PTY path. Best-effort shell, non-blocking.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-freebsd-amd64",
+        "runner": "ubuntu-latest",
+        "platform": "freebsd/amd64",
+        "tests": [
+          "TestRealSSHRemoteNativeFallback"
         ],
+        "requires": [
+          "NETCATTY_TEST_SSH_NU=",
+          "NETCATTY_TEST_SSH_REQUIRED=1"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealSSHRemoteHookCapturesTierOne|TestRealSSHRemoteTierThreeFallback|TestRealSSHRemoteNativeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "exact",
-          "exit": "exact",
-          "duration": "exact"
+          "exit": "missing",
+          "duration": "observed"
         }
-      },
-      "evidence": "Not observed here. FreeBSD VM acceptance step; the POSIX startup files are shared with the observed macOS and Linux paths. Best-effort shell, non-blocking."
+      }
     },
     {
       "name": "bsd-amd64-xonsh",
       "host": "freebsd",
       "arch": "amd64",
       "shell": "xonsh",
-      "path": "xonsh-local-hook",
-      "tier": 1,
+      "path": "freebsd-ssh-xonsh",
+      "tier": 2,
       "releaseBlocking": false,
-      "verification": "manual",
-      "startup": [
-        "-l"
-      ],
-      "manual": {
-        "runner": "FreeBSD 14.2-RELEASE amd64 VM (bhyve, UTM, or QEMU)",
-        "steps": [
-          "Record uname -a, freebsd-version -ku, and the downloaded image/checksum in the release log.",
-          "pkg install -y go zsh bash fish; install nushell 0.116.1 and xonsh 0.24.2 from pkg or the upstream release and record their versions.",
-          "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$' -count=1 -v",
-          "Set NETCATTY_TEST_FISH, NETCATTY_TEST_NU, or NETCATTY_TEST_XONSH when the shell is not on PATH.",
-          "Require PASS and record the exact shell versions; the Tier 3 fallback must report no cwd and no exit."
+      "verification": "ci",
+      "startup": [],
+      "evidence": "CI-provisioned by capture-freebsd-amd64 over SSH to a FreeBSD 14.5 VM (planner and Session tap on the client, hook in the VM); not run on this machine. BSD has no local PTY path. Best-effort shell, non-blocking.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-freebsd-amd64",
+        "runner": "ubuntu-latest",
+        "platform": "freebsd/amd64",
+        "tests": [
+          "TestRealSSHRemoteNativeFallback"
         ],
+        "requires": [
+          "NETCATTY_TEST_SSH_XONSH=",
+          "NETCATTY_TEST_SSH_REQUIRED=1"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealSSHRemoteHookCapturesTierOne|TestRealSSHRemoteTierThreeFallback|TestRealSSHRemoteNativeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "exact",
-          "exit": "exact",
-          "duration": "exact"
+          "exit": "missing",
+          "duration": "missing"
         }
-      },
-      "evidence": "Not observed here. FreeBSD VM acceptance step; the POSIX startup files are shared with the observed macOS and Linux paths. Best-effort shell, non-blocking."
+      }
     },
     {
       "name": "bsd-amd64-tier3-fallback",
       "host": "freebsd",
       "arch": "amd64",
       "shell": "zsh",
-      "path": "local-tier3-typed-fallback",
+      "path": "freebsd-ssh-tier3",
       "tier": 3,
       "releaseBlocking": true,
-      "verification": "manual",
+      "verification": "ci",
       "startup": [
         "-l"
       ],
-      "manual": {
-        "runner": "FreeBSD 14.2-RELEASE amd64 VM (bhyve, UTM, or QEMU)",
-        "steps": [
-          "Record uname -a, freebsd-version -ku, and the downloaded image/checksum in the release log.",
-          "pkg install -y go zsh bash fish; install nushell 0.116.1 and xonsh 0.24.2 from pkg or the upstream release and record their versions.",
-          "go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput)$' -count=1 -v",
-          "Set NETCATTY_TEST_FISH, NETCATTY_TEST_NU, or NETCATTY_TEST_XONSH when the shell is not on PATH.",
-          "Require PASS and record the exact shell versions; the Tier 3 fallback must report no cwd and no exit."
+      "evidence": "CI-provisioned by capture-freebsd-amd64 over SSH to a FreeBSD 14.5 VM (planner and Session tap on the client, hook in the VM); not run on this machine. BSD has no local PTY path. Release-blocking.",
+      "ci": {
+        "workflow": ".github/workflows/release.yml",
+        "job": "capture-freebsd-amd64",
+        "runner": "ubuntu-latest",
+        "platform": "freebsd/amd64",
+        "tests": [
+          "TestRealSSHRemoteTierThreeFallback"
         ],
+        "requires": [
+          "NETCATTY_TEST_SSH_ZSH=",
+          "NETCATTY_TEST_SSH_REQUIRED=1"
+        ],
+        "command": "go test ./adapters/shellhook -run '^(TestRealSSHRemoteHookCapturesTierOne|TestRealSSHRemoteTierThreeFallback|TestRealSSHRemoteNativeFallback)$' -count=1 -v",
         "expectedFidelity": {
           "cwd": "missing",
           "exit": "missing",
           "duration": "observed"
         }
-      },
-      "evidence": "Not observed here. Release-blocking FreeBSD VM Tier 3 fallback check."
+      }
     }
   ]
 }

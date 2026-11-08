@@ -164,7 +164,17 @@ func startShell(t *testing.T, path string, args []string, dir string, env []stri
 		t.Fatalf("start %s: %v", path, err)
 	}
 	process := &shellProcess{terminal: terminal, notify: make(chan struct{}, 1)}
-	t.Cleanup(func() { _ = terminal.Close() })
+	t.Cleanup(func() {
+		// A shell that still runs while t.TempDir removes its home can
+		// recreate startup files under a directory the test owns. Kill and
+		// reap it before the earlier TempDir cleanups run (t.Cleanup is LIFO).
+		_ = terminal.Kill()
+		_ = terminal.Close()
+		select {
+		case <-terminal.Exited():
+		case <-time.After(5 * time.Second):
+		}
+	})
 	go process.readLoop()
 	return process
 }
