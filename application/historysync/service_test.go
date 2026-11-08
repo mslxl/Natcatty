@@ -156,6 +156,16 @@ func (s *memorySyncStore) ApplyRemotePage(_ context.Context, page historysync.Re
 		return s.applyErr
 	}
 	checkpoint := page.Checkpoint
+	if len(page.Acknowledged) > 0 {
+		if page.AcknowledgedAt.IsZero() {
+			return errors.New("missing acknowledgement timestamp")
+		}
+		for _, id := range page.Acknowledged {
+			if id == "" {
+				return errors.New("invalid acknowledged record")
+			}
+		}
+	}
 	moves := make(map[string]int64, len(page.Reindexes))
 	for _, reindex := range page.Reindexes {
 		if reindex.RecordID == "" || reindex.Index <= checkpoint.AppliedIndex {
@@ -223,6 +233,31 @@ func (s *memorySyncStore) ApplyRemotePage(_ context.Context, page historysync.Re
 		if entry, ok := s.entries[deleted.HistoryID]; ok {
 			entry.DeletedAt = deleted.DeletedAt
 			s.entries[deleted.HistoryID] = entry
+		}
+	}
+	for _, id := range page.Acknowledged {
+		found := false
+		for index := range s.records {
+			record := &s.records[index]
+			if record.ID == id && record.SeriesHost == checkpoint.SeriesHost &&
+				record.Tag == checkpoint.Tag && record.Direction == domainhistory.RecordDirectionLocal {
+				found = true
+				break
+			}
+		}
+		if !found {
+			// Validate every acknowledgement before mutating so a failed apply
+			// never leaves a partial acknowledgement behind.
+			return errors.New("acknowledged record missing")
+		}
+	}
+	for _, id := range page.Acknowledged {
+		for index := range s.records {
+			record := &s.records[index]
+			if record.ID == id && record.SeriesHost == checkpoint.SeriesHost &&
+				record.Tag == checkpoint.Tag && record.Direction == domainhistory.RecordDirectionLocal {
+				record.UploadedAt = page.AcknowledgedAt
+			}
 		}
 	}
 	if s.metadata.Series == nil {
@@ -1309,10 +1344,13 @@ func TestConcurrentTriggersCoalesceIntoOneRun(t *testing.T) {
 }
 
 // TestRestoredLocalCaptureIsReindexedAndUploaded reproduces the restoration
-// scenario: an older log holds indexes 0-4, the server already stores indexes
-// 5-6 for the same writer, and a command captured before the first download
-// takes index 5. The server record must be applied, the unsent capture must be
-// moved after the server's maximum, and the capture must reach the server.
+// scenario: an older log holds indexes 0-4 without any local upload
+// acknowledgement, the server already stores indexes 5-6 for the same writer,
+// and a command captured before the first download takes index 5. The server
+// record must be applied, the unsent capture must be moved after the server's
+// maximum, and the capture must reach the server. The restored 0-4 cannot be
+// assumed present from the server's high-water mark either: they are sent too,
+// so the server ends up holding the whole series.
 func TestRestoredLocalCaptureIsReindexedAndUploaded(t *testing.T) {
 	serverRecords := []historysync.SyncRecord{
 		remoteCreate(testWriter, "0198d000-0000-7000-8000-00000000020a", "server five", 5, testStart.Add(5*time.Minute)),
@@ -1336,8 +1374,8 @@ func TestRestoredLocalCaptureIsReindexedAndUploaded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SyncNow: %v", err)
 	}
-	if result.Downloaded != 2 || result.Applied != 2 || result.Uploaded != 1 {
-		t.Fatalf("result = %+v (events %v), want two downloaded and the capture uploaded",
+	if result.Downloaded != 2 || result.Applied != 2 || result.Uploaded != 6 {
+		t.Fatalf("result = %+v (events %v), want two downloaded and the five restored indexes plus the capture uploaded",
 			result, factory.Events())
 	}
 	if _, ok := store.snapshotEntries()[serverRecords[0].HistoryID]; !ok {
@@ -1450,6 +1488,207 @@ func TestRestoredLocalCapturesReachingServerMaxAreReindexed(t *testing.T) {
 	if status := service.Status(); status.PendingUploads != 0 {
 		t.Fatalf("pending uploads = %d, want none", status.PendingUploads)
 	}
+}
+
+// TestServerSeriesHoleWithLocalCaptureIsFilled models a pinned server whose
+// writer series has a hole at index 5 while the local log holds an unsent
+// capture there. The download may use the local capture to skip the gap, but
+// the server's high-water mark must not turn that capture into an
+// acknowledgement: it must actually be uploaded into the hole.
+func TestServerSeriesHoleWithLocalCaptureIsFilled(t *testing.T) {
+	store := newMemorySyncStore()
+	store.setMetadata(func(metadata *domainhistory.Metadata) {
+		metadata.UnverifiedKeyConfirmed = true
+	})
+	var acknowledged []string
+	server := make([]historysync.SyncRecord, 0, 7)
+	for index := 0; index < 5; index++ {
+		id := "0198d000-0000-7000-8000-0000000003a" + string(rune('0'+index))
+		at := testStart.Add(time.Duration(index) * time.Minute)
+		record := store.addLocalEntry(localEntry(id, "old", at))
+		acknowledged = append(acknowledged, record.ID)
+		server = append(server, remoteCreate(testWriter, id, "old", int64(index), at))
+	}
+	store.setUploaded(acknowledged...)
+	captured := store.addLocalEntry(localEntry(
+		"0198d000-0000-7000-8000-0000000003b1", "capture in the server hole",
+		testStart.Add(7*time.Minute)))
+	server = append(server, remoteCreate(testWriter,
+		"0198d000-0000-7000-8000-0000000003d6", "server six", 6, testStart.Add(6*time.Minute)))
+	factory := fake.NewFactory(fake.Options{Records: server})
+	service, _, _ := newEngine(t, store, factory)
+
+	result, err := service.SyncNow(context.Background())
+	if err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+	if result.Downloaded != 1 || result.Applied != 1 || result.Uploaded != 1 {
+		t.Fatalf("result = %+v (events %v), want the server record applied and the capture uploaded",
+			result, factory.Events())
+	}
+	stored, ok := recordByID(store.snapshotRecords(), captured.ID)
+	if !ok {
+		t.Fatal("captured record vanished")
+	}
+	if stored.Index != 5 || stored.UploadedAt.IsZero() {
+		t.Fatalf("capture = %+v, want index 5 and acknowledged only by a real upload", stored)
+	}
+	serverRecord, onServer := syncRecordByID(factory.ServerRecords(), captured.ID)
+	if !onServer {
+		t.Fatalf("capture %s was acknowledged but never reached the server: %v",
+			captured.ID, factory.Events())
+	}
+	if serverRecord.Index != 5 {
+		t.Fatalf("server capture index = %d, want the hole at 5", serverRecord.Index)
+	}
+	if got := store.checkpoint(testWriter); got.AppliedIndex != 6 || got.UploadedIndex != 6 {
+		t.Fatalf("checkpoint = %+v, want applied 6 and uploaded 6", got)
+	}
+	if status := service.Status(); status.PendingUploads != 0 {
+		t.Fatalf("pending uploads = %d, want none", status.PendingUploads)
+	}
+}
+
+// TestServerSeriesHoleWithoutLocalCaptureFailsClosed proves a server hole
+// with no local record to fill it stops the sync instead of advancing past a
+// record this device never received.
+func TestServerSeriesHoleWithoutLocalCaptureFailsClosed(t *testing.T) {
+	store := newMemorySyncStore()
+	store.setMetadata(func(metadata *domainhistory.Metadata) {
+		metadata.UnverifiedKeyConfirmed = true
+	})
+	var acknowledged []string
+	server := make([]historysync.SyncRecord, 0, 6)
+	for index := 0; index < 5; index++ {
+		id := "0198d000-0000-7000-8000-0000000003e" + string(rune('0'+index))
+		at := testStart.Add(time.Duration(index) * time.Minute)
+		record := store.addLocalEntry(localEntry(id, "old", at))
+		acknowledged = append(acknowledged, record.ID)
+		server = append(server, remoteCreate(testWriter, id, "old", int64(index), at))
+	}
+	store.setUploaded(acknowledged...)
+	server = append(server, remoteCreate(testWriter,
+		"0198d000-0000-7000-8000-0000000003f6", "server six", 6, testStart.Add(6*time.Minute)))
+	factory := fake.NewFactory(fake.Options{Records: server})
+	service, _, _ := newEngine(t, store, factory)
+
+	if _, err := service.SyncNow(context.Background()); !errors.Is(err, historysync.ErrIncompletePage) {
+		t.Fatalf("SyncNow = %v, want ErrIncompletePage for the unfilled hole", err)
+	}
+	if calls := factory.Last().Calls(); calls.Upload != 0 {
+		t.Fatalf("upload calls = %d, want none after a failed download", calls.Upload)
+	}
+	for _, record := range store.snapshotRecords() {
+		if record.SeriesHost != testWriter {
+			continue
+		}
+		if record.UploadedAt.IsZero() {
+			t.Fatalf("record at index %d was left unacknowledged: %+v", record.Index, record)
+		}
+	}
+	if status := service.Status(); status.PendingUploads != 0 {
+		t.Fatalf("pending uploads = %d, want none", status.PendingUploads)
+	}
+	if checkpoint := store.checkpoint(testWriter); checkpoint.AppliedIndex > 4 {
+		t.Fatalf("applied checkpoint = %d, want no advance past the trusted prefix", checkpoint.AppliedIndex)
+	}
+}
+
+// TestServerSeriesMultipleHolesWithLocalCapturesAreFilled proves every hole
+// in the server series that a local capture covers is uploaded, including
+// holes in the middle of a page, and that the download applies the records on
+// either side.
+func TestServerSeriesMultipleHolesWithLocalCapturesAreFilled(t *testing.T) {
+	store := newMemorySyncStore()
+	store.setMetadata(func(metadata *domainhistory.Metadata) {
+		metadata.UnverifiedKeyConfirmed = true
+	})
+	var acknowledged []string
+	server := make([]historysync.SyncRecord, 0, 6)
+	for index := 0; index < 4; index++ {
+		id := "0198d000-0000-7000-8000-0000000004a" + string(rune('0'+index))
+		at := testStart.Add(time.Duration(index) * time.Minute)
+		record := store.addLocalEntry(localEntry(id, "old", at))
+		acknowledged = append(acknowledged, record.ID)
+		server = append(server, remoteCreate(testWriter, id, "old", int64(index), at))
+	}
+	store.setUploaded(acknowledged...)
+	captures := []domainhistory.Record{
+		store.addLocalEntry(localEntry(
+			"0198d000-0000-7000-8000-0000000004b1", "capture four", testStart.Add(4*time.Minute))),
+		store.addLocalEntry(localEntry(
+			"0198d000-0000-7000-8000-0000000004b2", "capture five", testStart.Add(5*time.Minute))),
+		store.addLocalEntry(localEntry(
+			"0198d000-0000-7000-8000-0000000004b3", "capture seven", testStart.Add(7*time.Minute))),
+	}
+	// The third capture was appended at index 6; move it to 7 so the server's
+	// record at 6 and its hole at 7 model two separate gaps.
+	thirdID := captures[2].ID
+	store.mu.Lock()
+	for index := range store.records {
+		if store.records[index].ID == thirdID {
+			store.records[index].Index = 7
+		}
+	}
+	store.mu.Unlock()
+	captures[2].Index = 7
+	server = append(server,
+		remoteCreate(testWriter, "0198d000-0000-7000-8000-0000000004c6", "server six", 6, testStart.Add(6*time.Minute)),
+		remoteCreate(testWriter, "0198d000-0000-7000-8000-0000000004c8", "server eight", 8, testStart.Add(8*time.Minute)))
+	factory := fake.NewFactory(fake.Options{Records: server})
+	service, _, _ := newEngine(t, store, factory)
+
+	result, err := service.SyncNow(context.Background())
+	if err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+	if result.Applied != 2 || result.Uploaded != 3 {
+		t.Fatalf("result = %+v (events %v), want two applied and three captures uploaded",
+			result, factory.Events())
+	}
+	records := store.snapshotRecords()
+	for _, capture := range captures {
+		stored, ok := recordByID(records, capture.ID)
+		if !ok {
+			t.Fatalf("capture %s vanished", capture.ID)
+		}
+		if stored.UploadedAt.IsZero() {
+			t.Fatalf("capture %s was not acknowledged: %+v", capture.ID, stored)
+		}
+		serverRecord, onServer := syncRecordByID(factory.ServerRecords(), capture.ID)
+		if !onServer {
+			t.Fatalf("capture %s was acknowledged but never reached the server: %v",
+				capture.ID, factory.Events())
+		}
+		if serverRecord.Index != stored.Index {
+			t.Fatalf("capture %s server index %d, local %d", capture.ID, serverRecord.Index, stored.Index)
+		}
+	}
+	if got := store.checkpoint(testWriter); got.AppliedIndex != 8 || got.UploadedIndex != 8 {
+		t.Fatalf("checkpoint = %+v, want applied 8 and uploaded 8", got)
+	}
+	if status := service.Status(); status.PendingUploads != 0 {
+		t.Fatalf("pending uploads = %d, want none", status.PendingUploads)
+	}
+}
+
+// recordByID and syncRecordByID are small lookup helpers for the hole tests.
+func recordByID(records []domainhistory.Record, id string) (domainhistory.Record, bool) {
+	for _, record := range records {
+		if record.ID == id {
+			return record, true
+		}
+	}
+	return domainhistory.Record{}, false
+}
+
+func syncRecordByID(records []historysync.SyncRecord, id string) (historysync.SyncRecord, bool) {
+	for _, record := range records {
+		if record.ID == id {
+			return record, true
+		}
+	}
+	return historysync.SyncRecord{}, false
 }
 
 // TestAppliedRowsNotifyObserversWhenUploadFails proves downloaded projections
@@ -1708,6 +1947,86 @@ func TestStoredAccountUserIDMismatchFailsClosedBeforeExchange(t *testing.T) {
 	if status.State != atuinmodel.SyncError || !status.NextRetryAt.IsZero() {
 		t.Fatalf("status = %+v, want a non-retrying account error", status)
 	}
+}
+
+// TestStoredAccountChangedAfterSnapshotFailsBeforeCredentialRead flips the
+// stored account on the same server immediately after the status snapshot.
+// The engine must fail closed before it reads a credential or opens a remote,
+// even though the stale snapshot still names the configured address.
+func TestStoredAccountChangedAfterSnapshotFailsBeforeCredentialRead(t *testing.T) {
+	factory := fake.NewFactory(fake.Options{
+		Account: historysync.Account{ServerURL: testServerURL, UserID: "a-different-account"},
+	})
+	store := newAccountChangeStore(newMemorySyncStore(), domainhistory.AccountIdentity{
+		ServerURL: testServerURL, UserID: "a-different-account",
+	})
+	secrets := newCountingSecrets(newSyncSecrets())
+	service := historysync.NewService(newSyncSettings(), secrets, store, factory,
+		historysync.WithScheduler(newManualScheduler()),
+		historysync.WithJitter(identityJitter))
+	t.Cleanup(service.Stop)
+
+	if _, err := service.SyncNow(context.Background()); !errors.Is(err, historysync.ErrAccountMismatch) {
+		t.Fatalf("SyncNow = %v, want ErrAccountMismatch", err)
+	}
+	if factory.Opens() != 0 {
+		t.Fatalf("the engine opened %d remotes before noticing the stored account change",
+			factory.Opens())
+	}
+	if reads := secrets.Reads(); reads != 0 {
+		t.Fatalf("the engine read %d credentials after the stored account changed", reads)
+	}
+	status := service.Status()
+	if status.State != atuinmodel.SyncError || !status.NextRetryAt.IsZero() {
+		t.Fatalf("status = %+v, want a non-retrying account error", status)
+	}
+}
+
+// accountChangeStore rewrites the stored account right after the first
+// HistoryMetadata read, modelling another actor changing the account between
+// the status snapshot and the credential exchange.
+type accountChangeStore struct {
+	*memorySyncStore
+	account domainhistory.AccountIdentity
+	once    sync.Once
+}
+
+func newAccountChangeStore(inner *memorySyncStore, account domainhistory.AccountIdentity) *accountChangeStore {
+	return &accountChangeStore{memorySyncStore: inner, account: account}
+}
+
+func (s *accountChangeStore) HistoryMetadata(ctx context.Context) (domainhistory.Metadata, error) {
+	metadata, err := s.memorySyncStore.HistoryMetadata(ctx)
+	s.once.Do(func() {
+		s.memorySyncStore.setMetadata(func(stored *domainhistory.Metadata) {
+			stored.Account = s.account
+		})
+	})
+	return metadata, err
+}
+
+// countingSecrets counts credential reads so a test can prove none happened.
+type countingSecrets struct {
+	*syncSecrets
+	mu    sync.Mutex
+	reads int
+}
+
+func newCountingSecrets(inner *syncSecrets) *countingSecrets {
+	return &countingSecrets{syncSecrets: inner}
+}
+
+func (s *countingSecrets) Get(ctx context.Context, ref historysync.SecretRef) (string, error) {
+	s.mu.Lock()
+	s.reads++
+	s.mu.Unlock()
+	return s.syncSecrets.Get(ctx, ref)
+}
+
+func (s *countingSecrets) Reads() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reads
 }
 
 // flipSyncSettings changes the persisted address after the first read, which
