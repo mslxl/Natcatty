@@ -65,6 +65,11 @@ func TestUploadRejectsAMismatchedDuplicateAtTheSameIndex(t *testing.T) {
 	if !errors.Is(err, historysync.ErrRemote) {
 		t.Fatalf("Upload = %v, want ErrRemote", err)
 	}
+	// The engine must not retry a permanent series-index collision, so the
+	// adapter also reports the engine's own conflict sentinel.
+	if !errors.Is(err, historysync.ErrUploadConflict) {
+		t.Fatalf("Upload = %v, want ErrUploadConflict", err)
+	}
 	var conflict *uploadConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("Upload = %v, want a conflict error", err)
@@ -138,6 +143,11 @@ func TestUploadRejectsAMissingServerRecord(t *testing.T) {
 	}
 	if !errors.Is(err, historysync.ErrRemote) {
 		t.Fatalf("Upload = %v, want ErrRemote", err)
+	}
+	// The engine must not retry a permanent series-index collision, so the
+	// adapter also reports the engine's own conflict sentinel.
+	if !errors.Is(err, historysync.ErrUploadConflict) {
+		t.Fatalf("Upload = %v, want ErrUploadConflict", err)
 	}
 	var conflict *uploadConflictError
 	if !errors.As(err, &conflict) {

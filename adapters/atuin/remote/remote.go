@@ -16,7 +16,9 @@
 // acknowledged only after the record stored at every sent (history, host,
 // index) has been read back and compared with what was sent. A duplicate that
 // the server already holds with different metadata or plaintext is therefore a
-// conflict, never a silent success.
+// conflict, never a silent success. The conflict reports ErrUploadConflict so
+// the engine does not retry a permanent series-index collision, and ErrRemote
+// so every caller still treats the upload as failed.
 //
 // A username/password login mints a legacy CLI session token, which this
 // adapter sends with the Token scheme. Atuin Hub can answer the login with a
@@ -89,10 +91,12 @@ var (
 )
 
 // uploadConflictError reports that the server acknowledged an upload but does
-// not hold the record that was sent at that index. It wraps ErrRemote so a
-// caller that knows only the port's vocabulary treats the upload as failed and
-// must not advance its checkpoint. The message never carries a credential or
-// record plaintext: only the index and a fixed reason.
+// not hold the record that was sent at that index. It reports
+// ErrUploadConflict so the engine parks a permanent series-index collision
+// instead of retrying it forever, and ErrRemote so a caller that knows only
+// the generic remote failure still treats the upload as failed and must not
+// advance its checkpoint. The message never carries a credential or record
+// plaintext: only the index and a fixed reason.
 type uploadConflictError struct {
 	index  uint64
 	reason string
@@ -102,7 +106,9 @@ func (conflict *uploadConflictError) Error() string {
 	return fmt.Sprintf("atuin remote: upload conflict at index %d: %s", conflict.index, conflict.reason)
 }
 
-func (conflict *uploadConflictError) Unwrap() error { return historysync.ErrRemote }
+func (conflict *uploadConflictError) Unwrap() []error {
+	return []error{historysync.ErrUploadConflict, historysync.ErrRemote}
+}
 
 // Options configure the adapter. The zero value uses the system TLS trust
 // store, a bounded timeout, and a User-Agent naming Netcatty and its version.
