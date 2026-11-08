@@ -146,7 +146,6 @@ type Dataset struct {
 	Notes           []domainvault.Note
 	NoteGroups      []domainvault.NoteGroup
 	Logs            []domainhistory.ConnectionLog
-	History         []domainhistory.Entry
 	// IdentityPasswords and ProxyProfilePasswords carry credential plaintext
 	// for the profiles a JSON export restores. They are keyed by source id and
 	// are populated only when secrets are included.
@@ -874,7 +873,6 @@ type logsDocument struct {
 	Version        int                           `json:"version"`
 	ExportedAt     string                        `json:"exportedAt"`
 	ConnectionLogs []domainhistory.ConnectionLog `json:"connectionLogs"`
-	History        []domainhistory.Entry         `json:"history"`
 }
 
 func exportLogsJSON(d Dataset, opts Options) ([]byte, error) {
@@ -883,7 +881,6 @@ func exportLogsJSON(d Dataset, opts Options) ([]byte, error) {
 		Version:        Version,
 		ExportedAt:     opts.exportedAt(),
 		ConnectionLogs: sortedLogs(d.Logs),
-		History:        sortedHistory(d.History),
 	})
 }
 
@@ -904,14 +901,6 @@ func exportLogsCSV(d Dataset) []byte {
 			"connection", string(log.Status), log.HostLabel, log.Hostname,
 			log.Username, string(log.SessionID), log.StartedAt.UTC().Format(time.RFC3339),
 			formatOptionalTime(log.EndedAt), log.Kind, log.Error,
-		}
-		writeCSVRow(&out, row)
-	}
-	for _, entry := range sortedHistory(d.History) {
-		row := []string{
-			"history", "", entry.HostLabel, "", "",
-			string(entry.SessionID), entry.RecordedAt.UTC().Format(time.RFC3339),
-			"", entry.Command, entry.Scope,
 		}
 		writeCSVRow(&out, row)
 	}
@@ -992,17 +981,6 @@ func sortedLogs(items []domainhistory.ConnectionLog) []domainhistory.ConnectionL
 	sort.SliceStable(out, func(i, j int) bool {
 		if !out[i].StartedAt.Equal(out[j].StartedAt) {
 			return out[i].StartedAt.Before(out[j].StartedAt)
-		}
-		return out[i].ID < out[j].ID
-	})
-	return out
-}
-
-func sortedHistory(items []domainhistory.Entry) []domainhistory.Entry {
-	out := append([]domainhistory.Entry(nil), items...)
-	sort.SliceStable(out, func(i, j int) bool {
-		if !out[i].RecordedAt.Equal(out[j].RecordedAt) {
-			return out[i].RecordedAt.Before(out[j].RecordedAt)
 		}
 		return out[i].ID < out[j].ID
 	})

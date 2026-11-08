@@ -5461,5 +5461,15 @@
   "settingsAtuinLastSync": "Last sync {time}",
   "settingsAtuinPendingUploads": "Pending uploads: {count}",
   "settingsAtuinNextRetry": "Next retry {time}",
-  "settingsAtuinSyncNow": "Sync now"
+  "settingsAtuinSyncNow": "Sync now",
+  "settingsAtuinDetailsShow": "Details",
+  "settingsAtuinDetailsHide": "Hide details",
+  "settingsAtuinDetailsTitle": "Sanitized diagnostics",
+  "settingsAtuinDetailsHint": "Only non-sensitive status is shown; no credentials, command text, or server messages.",
+  "settingsAtuinDetailsState": "State: {state}",
+  "settingsAtuinDetailsProblem": "Problem: {problem}",
+  "settingsAtuinDetailsServer": "Server version: {version}",
+  "settingsAtuinDetailsLastSync": "Last sync: {time}",
+  "settingsAtuinDetailsPending": "Unsynced uploads: {count}",
+  "settingsAtuinDetailsNextRetry": "Next retry: {time}"
 }

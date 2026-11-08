@@ -53,8 +53,10 @@ type LoginRequest struct {
 
 // Status is the account panel's view of the one Atuin account. It never
 // contains the session token, master key, request bodies, or decrypted
-// payloads. Detail is reserved for a sanitized message; remote errors are
-// reduced to a Problem code.
+// payloads. Remote errors are reduced to a Problem code; Detail is not
+// populated with an error string and is never rendered by the account panel.
+// The panel's details control renders only Problem and the non-sensitive
+// fields below.
 type Status struct {
 	State          atuinmodel.SyncState
 	Problem        atuinmodel.Problem
@@ -1047,6 +1049,9 @@ func publicRemoteError(err error) error {
 	}
 }
 
+// publicSecretError returns only a known sentinel. An unknown secret-store
+// failure may carry an adapter message, a path, or a credential fragment, so it
+// is reported as ErrSecretUnreadable rather than passed through to a caller.
 func publicSecretError(err error) error {
 	switch {
 	case errors.Is(err, ErrSecretNotFound):
@@ -1058,7 +1063,7 @@ func publicSecretError(err error) error {
 	case errors.Is(err, ErrSecretUnreadable):
 		return ErrSecretUnreadable
 	default:
-		return err
+		return ErrSecretUnreadable
 	}
 }
 

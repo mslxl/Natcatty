@@ -89,6 +89,7 @@ func atuinAccountSection(c *ui.Context, state *AtuinState, prefs *PreferencesSta
 		if problem := state.Problem(); problem != AtuinProblemNone {
 			ui.Text(c, atuinProblemText(m, problem)).FontSize(12).TextColor(uitheme.DangerText(t))
 		}
+		atuinDetailsControl(c, state, m, t)
 		if status.KeyFingerprint != "" {
 			ui.Text(c, m.SettingsAtuinKeyFingerprint(status.KeyFingerprint)).
 				FontSize(12).TextColor(t.TextMuted)
@@ -122,6 +123,49 @@ func atuinStatusRow(c *ui.Context, state *AtuinState, m locales.Messages, t *ui.
 		ui.Text(c, m.SettingsAtuinNextRetry(atuinSyncTime(status.NextRetryAt))).
 			FontSize(11).TextColor(uitheme.WarningText(t))
 	}
+}
+
+// atuinDetailsControl is the explicit details surface. It is collapsed by
+// default and renders only the typed sanitized diagnostics model: a localized
+// problem explanation, the sync state, and non-sensitive status fields. No raw
+// error, server message or body, Status.Detail, URL, username, token, key, or
+// command text has a path into this render.
+func atuinDetailsControl(c *ui.Context, state *AtuinState, m locales.Messages, t *ui.Theme) {
+	label := m.SettingsAtuinDetailsShow()
+	if state.ShowDetails() {
+		label = m.SettingsAtuinDetailsHide()
+	}
+	if ui.Button(c, label).Clicked() {
+		state.ToggleDetails()
+		c.Invalidate()
+	}
+	if !state.ShowDetails() {
+		return
+	}
+	diagnostics := state.Diagnostics()
+	ui.Column(c).FillWidth().Padding(10).Gap(4).Radius(6).Background(t.Surface).Children(func() {
+		ui.Text(c, m.SettingsAtuinDetailsTitle()).FontSize(12).Bold()
+		ui.Text(c, m.SettingsAtuinDetailsHint()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsAtuinDetailsState(atuinStatusText(m,
+			historysync.Status{State: diagnostics.State}))).FontSize(11)
+		if diagnostics.Problem != AtuinProblemNone {
+			ui.Text(c, m.SettingsAtuinDetailsProblem(
+				atuinProblemText(m, diagnostics.Problem))).FontSize(11)
+		}
+		if diagnostics.ServerVersion != "" {
+			ui.Text(c, m.SettingsAtuinDetailsServer(diagnostics.ServerVersion)).FontSize(11)
+		}
+		if !diagnostics.LastSyncAt.IsZero() {
+			ui.Text(c, m.SettingsAtuinDetailsLastSync(
+				atuinSyncTime(diagnostics.LastSyncAt))).FontSize(11)
+		}
+		ui.Text(c, m.SettingsAtuinDetailsPending(
+			strconv.Itoa(diagnostics.PendingUploads))).FontSize(11)
+		if !diagnostics.NextRetryAt.IsZero() {
+			ui.Text(c, m.SettingsAtuinDetailsNextRetry(
+				atuinSyncTime(diagnostics.NextRetryAt))).FontSize(11)
+		}
+	})
 }
 
 // atuinSyncTime renders a sync timestamp in the user's local zone, matching

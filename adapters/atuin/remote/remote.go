@@ -78,9 +78,24 @@ const (
 	pathRecord       = "/api/v0/record"
 	pathRecordNext   = "/api/v0/record/next"
 
-	defaultAppVersion = "0.1.0"
-	userAgentPrefix   = "netcatty/"
+	// defaultAppVersion is the fallback for a build without a package manifest.
+	// Keep it in step with mygo.json; the composition root passes the packaged
+	// version through UserAgentForVersion.
+	defaultAppVersion = "0.1.0-beta.1"
+	userAgentProduct  = "natcatty"
+	// DefaultUserAgent names this client when a caller supplies no version.
+	DefaultUserAgent = userAgentProduct + "/" + defaultAppVersion
 )
+
+// UserAgentForVersion returns the production User-Agent for a packaged version.
+// An empty version falls back to DefaultUserAgent.
+func UserAgentForVersion(version string) string {
+	trimmed := strings.TrimSpace(version)
+	if trimmed == "" {
+		return DefaultUserAgent
+	}
+	return userAgentProduct + "/" + trimmed
+}
 
 // Internal request errors. They become a public historysync sentinel before
 // they leave the adapter.
@@ -120,7 +135,7 @@ type Options struct {
 	// Timeout bounds one request when HTTPClient has no timeout. The zero value
 	// is DefaultTimeout.
 	Timeout time.Duration
-	// UserAgent overrides the default "netcatty/<version>" value.
+	// UserAgent overrides the default "natcatty/<version>" value.
 	UserAgent string
 }
 
@@ -139,7 +154,7 @@ func NewFactory(options Options) *Factory {
 	}
 	userAgent := strings.TrimSpace(options.UserAgent)
 	if userAgent == "" {
-		userAgent = userAgentPrefix + defaultAppVersion
+		userAgent = DefaultUserAgent
 	}
 
 	var client http.Client
@@ -777,14 +792,19 @@ func (r *Remote) do(ctx context.Context, method, path string, query url.Values, 
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxBodyBytes+1))
 	if err != nil {
+		// A partial read can already contain a minted session token or record
+		// data. The caller never receives this buffer on error, so wipe it here.
+		zeroBytes(data)
 		return nil, zero, fmt.Errorf("%w: %s %s response could not be read", historysync.ErrRemote, method, path)
 	}
 	if len(data) > maxBodyBytes {
+		zeroBytes(data)
 		return nil, zero, fmt.Errorf("%w: %s %s response is too large", historysync.ErrRemote, method, path)
 	}
 
 	version, err := parseServerVersion(response.Header.Get(headerAtuinVersion))
 	if err != nil || version.Major != historysync.PinnedAtuinMajor {
+		zeroBytes(data)
 		return nil, zero, fmt.Errorf("%w: server does not speak Atuin v%d", historysync.ErrIncompatibleServer, historysync.PinnedAtuinMajor)
 	}
 	return data, version, nil
@@ -803,6 +823,11 @@ func (r *Remote) postJSON(ctx context.Context, path string, query url.Values, bo
 	if err != nil {
 		return err
 	}
+	// A POST response may carry a freshly minted session token (the login
+	// endpoint does). Decode first, then zero the buffer on every path so the
+	// credential does not linger on the heap. This is safe for any endpoint:
+	// the decoded value owns the data it needs.
+	defer zeroBytes(response)
 	if target == nil {
 		return nil
 	}

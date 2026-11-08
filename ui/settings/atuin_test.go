@@ -426,3 +426,137 @@ func TestAppLockMapsToTheLockedProblem(t *testing.T) {
 		t.Fatalf("problemFor(ErrAppLocked) = %q, want %q", got, AtuinProblemLocked)
 	}
 }
+
+// TestAtuinDetailsControlIsCollapsedAndShowsSanitizedFields proves the details
+// surface exists, is collapsed by default, and reveals only the typed
+// non-sensitive values after the explicit click.
+func TestAtuinDetailsControlIsCollapsedAndShowsSanitizedFields(t *testing.T) {
+	status := atuinStatus(atuinmodel.KeyStateVerified)
+	lastSync := time.Date(2026, 11, 8, 12, 0, 0, 0, time.Local)
+	status.LastSyncAt = lastSync
+	status.PendingUploads = 4
+	status.NextRetryAt = lastSync.Add(30 * time.Minute)
+	account := &fakeHistoryAccount{status: status, loginErr: historysync.ErrOffline}
+	tester, _, state := atuinPanel(t, account, nil)
+	m := locales.In("en")
+	*state.Password() = "hunter2"
+	if err := tester.Click(m.SettingsAtuinSignIn()); err != nil {
+		t.Fatalf("click Sign in: %v", err)
+	}
+
+	if !tester.HasText(m.SettingsAtuinDetailsShow()) {
+		t.Fatalf("the Details control is missing: %v", tester.Texts())
+	}
+	if state.ShowDetails() {
+		t.Fatal("the Details control started expanded")
+	}
+	for _, hidden := range []string{
+		m.SettingsAtuinDetailsTitle(),
+		m.SettingsAtuinDetailsHint(),
+		m.SettingsAtuinDetailsServer(status.ServerVersion),
+		m.SettingsAtuinDetailsPending("4"),
+	} {
+		if tester.HasText(hidden) {
+			t.Fatalf("collapsed details already showed %q", hidden)
+		}
+	}
+
+	if err := tester.Click(m.SettingsAtuinDetailsShow()); err != nil {
+		t.Fatalf("click Details: %v", err)
+	}
+	tester.Frame()
+	if !state.ShowDetails() {
+		t.Fatal("Details did not expand")
+	}
+	for _, want := range []string{
+		m.SettingsAtuinDetailsHide(),
+		m.SettingsAtuinDetailsTitle(),
+		m.SettingsAtuinDetailsHint(),
+		m.SettingsAtuinDetailsState(m.SettingsAtuinStatusIdle()),
+		m.SettingsAtuinDetailsProblem(m.SettingsAtuinProblemOffline()),
+		m.SettingsAtuinDetailsServer(status.ServerVersion),
+		m.SettingsAtuinDetailsLastSync("2026-11-08 12:00"),
+		m.SettingsAtuinDetailsPending("4"),
+		m.SettingsAtuinDetailsNextRetry("2026-11-08 12:30"),
+	} {
+		if !tester.HasText(want) {
+			t.Errorf("expanded details is missing %q: %v", want, tester.Texts())
+		}
+	}
+}
+
+// TestAtuinDetailsNeverRenderAnInternalError plants the same secret in the
+// internal error and in Status.Detail. Neither may reach the rendered details:
+// the control renders only AtuinDiagnostics, which has no error-string field.
+func TestAtuinDetailsNeverRenderAnInternalError(t *testing.T) {
+	const secret = "sztq-planted-secret-pflmzbwx"
+	status := atuinStatus(atuinmodel.KeyStateVerified)
+	status.Detail = "server said token=" + secret
+	account := &fakeHistoryAccount{
+		status:   status,
+		loginErr: errors.New("secret store: token=" + secret),
+	}
+	tester, _, state := atuinPanel(t, account, nil)
+	m := locales.In("en")
+	*state.Password() = "hunter2"
+	if err := tester.Click(m.SettingsAtuinSignIn()); err != nil {
+		t.Fatalf("click Sign in: %v", err)
+	}
+	if err := tester.Click(m.SettingsAtuinDetailsShow()); err != nil {
+		t.Fatalf("click Details: %v", err)
+	}
+	tester.Frame()
+	texts := strings.Join(tester.Texts(), "\n")
+	for _, leaked := range []string{secret, "hunter2", "token="} {
+		if strings.Contains(texts, leaked) {
+			t.Fatalf("the details control rendered internal error content")
+		}
+	}
+	if !tester.HasText(m.SettingsAtuinDetailsTitle()) {
+		t.Fatalf("the details control did not expand: %v", tester.Texts())
+	}
+}
+
+// TestAtuinDetailsStringsExistInEveryLocale keeps the details control fully
+// translated in every shipped catalog.
+func TestAtuinDetailsStringsExistInEveryLocale(t *testing.T) {
+	for _, locale := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
+		m := locales.In(locale)
+		values := map[string]string{
+			"show":       m.SettingsAtuinDetailsShow(),
+			"hide":       m.SettingsAtuinDetailsHide(),
+			"title":      m.SettingsAtuinDetailsTitle(),
+			"hint":       m.SettingsAtuinDetailsHint(),
+			"state":      m.SettingsAtuinDetailsState("state"),
+			"problem":    m.SettingsAtuinDetailsProblem("problem"),
+			"server":     m.SettingsAtuinDetailsServer("1.2.3"),
+			"last sync":  m.SettingsAtuinDetailsLastSync("12:00"),
+			"pending":    m.SettingsAtuinDetailsPending("1"),
+			"next retry": m.SettingsAtuinDetailsNextRetry("12:30"),
+		}
+		for name, value := range values {
+			if strings.TrimSpace(value) == "" {
+				t.Errorf("%s: details string %q is empty", locale, name)
+				continue
+			}
+			if name == "state" && !strings.Contains(value, "state") {
+				t.Errorf("%s: state string lost its placeholder: %q", locale, value)
+			}
+			if name == "problem" && !strings.Contains(value, "problem") {
+				t.Errorf("%s: problem string lost its placeholder: %q", locale, value)
+			}
+			if name == "server" && !strings.Contains(value, "1.2.3") {
+				t.Errorf("%s: server string lost its version: %q", locale, value)
+			}
+			if name == "last sync" && !strings.Contains(value, "12:00") {
+				t.Errorf("%s: last-sync string lost its time: %q", locale, value)
+			}
+			if name == "pending" && !strings.Contains(value, "1") {
+				t.Errorf("%s: pending string lost its count: %q", locale, value)
+			}
+			if name == "next retry" && !strings.Contains(value, "12:30") {
+				t.Errorf("%s: next-retry string lost its time: %q", locale, value)
+			}
+		}
+	}
+}

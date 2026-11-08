@@ -65,9 +65,6 @@ func testDataset() Dataset {
 			Status: domainhistory.ConnectionConnected, StartedAt: stamp.Add(-time.Minute),
 			EndedAt: stamp,
 		}},
-		History: []domainhistory.Entry{{
-			ID: "e1", Command: "=cmd", Scope: "global", RecordedAt: stamp,
-		}},
 	}
 }
 
@@ -320,9 +317,11 @@ func TestKeysExportAuthorizedLineAndOptionalMaterial(t *testing.T) {
 	}
 }
 
-func TestLogsExportsBothFamiliesDeterministically(t *testing.T) {
+// TestLogsExportConnectionLogsWithoutCommandHistory pins spec O5: Connection
+// Logs are a portable export family, but Command History entries never are.
+func TestLogsExportConnectionLogsWithoutCommandHistory(t *testing.T) {
 	jsonDoc := string(exportFor(t, FormatLogsJSON, Options{}))
-	if strings.Count(jsonDoc, `"connectionLogs"`) != 1 || !strings.Contains(jsonDoc, `"history"`) {
+	if strings.Count(jsonDoc, `"connectionLogs"`) != 1 || strings.Contains(jsonDoc, `"history"`) {
 		t.Fatalf("log document = %s", jsonDoc)
 	}
 	csvDoc := string(exportFor(t, FormatLogsCSV, Options{}))
@@ -333,8 +332,8 @@ func TestLogsExportsBothFamiliesDeterministically(t *testing.T) {
 	if !strings.HasPrefix(csvDoc, strings.Join(logsHeader, ",")+"\r\n") {
 		t.Fatalf("log header = %q", csvDoc)
 	}
-	if !strings.Contains(csvDoc, "'=cmd") {
-		t.Fatalf("history command was not guarded: %s", csvDoc)
+	if strings.Contains(csvDoc, ",history,") || strings.Contains(csvDoc, "'=cmd") {
+		t.Fatalf("logs CSV carried a command-history row: %s", csvDoc)
 	}
 }
 

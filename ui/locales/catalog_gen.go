@@ -26615,3 +26615,115 @@ func SettingsAtuinSyncNow() string { return In(i18n.Locale()).SettingsAtuinSyncN
 func (msgs Messages) SettingsAtuinSyncNow() string {
 	return Catalog.Format(msgs.locale, "settingsAtuinSyncNow", nil)
 }
+
+// SettingsAtuinDetailsShow says "Details"
+// in the language the app shows.
+func SettingsAtuinDetailsShow() string { return In(i18n.Locale()).SettingsAtuinDetailsShow() }
+
+// SettingsAtuinDetailsShow says "Details"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinDetailsShow() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinDetailsShow", nil)
+}
+
+// SettingsAtuinDetailsHide says "Hide details"
+// in the language the app shows.
+func SettingsAtuinDetailsHide() string { return In(i18n.Locale()).SettingsAtuinDetailsHide() }
+
+// SettingsAtuinDetailsHide says "Hide details"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinDetailsHide() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinDetailsHide", nil)
+}
+
+// SettingsAtuinDetailsTitle says "Sanitized diagnostics"
+// in the language the app shows.
+func SettingsAtuinDetailsTitle() string { return In(i18n.Locale()).SettingsAtuinDetailsTitle() }
+
+// SettingsAtuinDetailsTitle says "Sanitized diagnostics"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinDetailsTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinDetailsTitle", nil)
+}
+
+// SettingsAtuinDetailsHint says "Only non-sensitive status is shown; no credentials, command text, or server messages."
+// in the language the app shows.
+func SettingsAtuinDetailsHint() string { return In(i18n.Locale()).SettingsAtuinDetailsHint() }
+
+// SettingsAtuinDetailsHint says "Only non-sensitive status is shown; no credentials, command text, or server messages."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinDetailsHint() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinDetailsHint", nil)
+}
+
+// SettingsAtuinDetailsState says "State: {state}"
+// in the language the app shows.
+func SettingsAtuinDetailsState(state string) string {
+	return In(i18n.Locale()).SettingsAtuinDetailsState(state)
+}
+
+// SettingsAtuinDetailsState says "State: {state}"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinDetailsState(state string) string {
+	return Catalog.Format(msgs.locale, "settingsAtuinDetailsState", map[string]any{"state": state})
+}
+
+// SettingsAtuinDetailsProblem says "Problem: {problem}"
+// in the language the app shows.
+func SettingsAtuinDetailsProblem(problem string) string {
+	return In(i18n.Locale()).SettingsAtuinDetailsProblem(problem)
+}
+
+// SettingsAtuinDetailsProblem says "Problem: {problem}"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinDetailsProblem(problem string) string {
+	return Catalog.Format(msgs.locale, "settingsAtuinDetailsProblem", map[string]any{"problem": problem})
+}
+
+// SettingsAtuinDetailsServer says "Server version: {version}"
+// in the language the app shows.
+func SettingsAtuinDetailsServer(version string) string {
+	return In(i18n.Locale()).SettingsAtuinDetailsServer(version)
+}
+
+// SettingsAtuinDetailsServer says "Server version: {version}"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinDetailsServer(version string) string {
+	return Catalog.Format(msgs.locale, "settingsAtuinDetailsServer", map[string]any{"version": version})
+}
+
+// SettingsAtuinDetailsLastSync says "Last sync: {time}"
+// in the language the app shows.
+func SettingsAtuinDetailsLastSync(time_ string) string {
+	return In(i18n.Locale()).SettingsAtuinDetailsLastSync(time_)
+}
+
+// SettingsAtuinDetailsLastSync says "Last sync: {time}"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinDetailsLastSync(time_ string) string {
+	return Catalog.Format(msgs.locale, "settingsAtuinDetailsLastSync", map[string]any{"time": time_})
+}
+
+// SettingsAtuinDetailsPending says "Unsynced uploads: {count}"
+// in the language the app shows.
+func SettingsAtuinDetailsPending(count string) string {
+	return In(i18n.Locale()).SettingsAtuinDetailsPending(count)
+}
+
+// SettingsAtuinDetailsPending says "Unsynced uploads: {count}"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinDetailsPending(count string) string {
+	return Catalog.Format(msgs.locale, "settingsAtuinDetailsPending", map[string]any{"count": count})
+}
+
+// SettingsAtuinDetailsNextRetry says "Next retry: {time}"
+// in the language the app shows.
+func SettingsAtuinDetailsNextRetry(time_ string) string {
+	return In(i18n.Locale()).SettingsAtuinDetailsNextRetry(time_)
+}
+
+// SettingsAtuinDetailsNextRetry says "Next retry: {time}"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinDetailsNextRetry(time_ string) string {
+	return Catalog.Format(msgs.locale, "settingsAtuinDetailsNextRetry", map[string]any{"time": time_})
+}

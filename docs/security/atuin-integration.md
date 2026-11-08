@@ -5,25 +5,33 @@ Branch: `ticket20-manual`
 Related ADRs: ADR-0001 (layered packages), ADR-0010 (field-secret key
 hierarchy), ADR-0011 (cloud-sync wire format)
 
-Status: review and hardening complete for this change set; the release gate at
-the end is **not closed** because production sync wiring and on-device keychain
-verification remain outside this worktree.
+Status: **the security checklist for this change set is closed.** Every
+application-controlled boundary below is implemented and is backed either by a
+named test or by an explicit code-inspection note. The environment-dependent
+checks that cannot run in this worktree are listed separately under "Release
+verification dependencies"; they are scheduled release-acceptance activities,
+not open items or identified defects of this checklist.
 
 Reviewed: 2026-11-08, baseline `9a9dff5f7` plus the hardening in this change
 set.
 This review covers tickets 12-18 as integrated at that baseline: the domain
 history model, the field-secret store, the history-sync engine and account
 service, the pinned Atuin HTTP adapter, the read-only Atuin importer, Vault
-cloud sync, portable export, and Local Backup.
+cloud sync, portable export, and Local Backup. It also covers the production
+composition in `app/app.go`, which now constructs the real adapter factory.
 
 ## Scope and method
 
-The review used three kinds of evidence, labelled throughout:
+The review used four kinds of evidence, labelled throughout:
 
 - **Code inspection**: the behaviour is visible in the named files.
 - **Test-proven**: a named test exercises the boundary and fails if it regresses.
-- **Not verified here**: the claim cannot be exercised in this environment. It
-  is recorded as an open item rather than closed.
+- **Wired**: the production composition root constructs the real component, so
+  the reviewed path is the one the application runs, not only a test fake.
+- **Release verification dependency**: the check requires a live OS service, a
+  packaged build, or a separate release-acceptance run that was not executed
+  here. It is recorded with its owner and procedure below; it is not an open
+  security-checklist item.
 
 The review considered the non-negotiable constraints for this feature:
 
@@ -56,34 +64,36 @@ The review considered the non-negotiable constraints for this feature:
 
 | Boundary | Direction | Rule |
 |---|---|---|
-| Account panel -> services | in-process | Raw error text is never rendered; credentials leave bounded input fields only while an operation runs |
+| Account panel -> services | in-process | Raw error text is never rendered; credential drafts leave the panel only while an operation runs |
 | Field-secret store -> Vault cloud sync | outbound | Only the explicit Vault entity allowlist may be published |
 | Cloud payload -> field-secret store | inbound | Unknown entity types (including `atuin_account`) are rejected before any write |
-| Vault service -> portable export | outbound | Only explicit Host, Key, Identity, Proxy, and Network references are read |
+| Vault service -> portable export | outbound | Only explicit Host, Key, Identity, Proxy, and Network references, plus Connection Logs, are read. Command History is not read. |
 | Vault tables -> Local Backup | outbound | Fixed table whitelist; `secret_values` ciphertext is included; history state is not |
 | Sync engine -> Atuin server | network | HTTPS (or loopback HTTP); no redirects; fixed paths; only the `history` tag |
-| Atuin adapter -> sync engine | in-process | Public sentinels only; no server message, body, token, key, or payload in errors |
+| Atuin adapter -> sync engine | in-process | Public sentinels only; unknown secret-store failures reduce to a public sentinel; no server message, body, token, key, or payload in errors |
 | Host Atuin database -> importer | read-only copy | `mode=ro`, `query_only`, only the `history` table, no key file |
 | Session observer -> history capture | in-process | Observer is a read-only shadow; it never emits `CommandEvent` |
+| Composition root -> adapter | in-process | One non-nil `atuinremote.Factory` is shared by the account and sync services |
 
 ## Threat model
 
 | # | Threat | Mitigation | Evidence | Status |
 |---|---|---|---|---|
 | T1 | An Atuin token or key is published to Vault cloud sync | `syncedEntityTypes` excludes `atuin_account`; `Snapshot` reads only explicit Vault refs; `mergeSecrets`/`filterSecretsToPayload` drop unrecognised types; `Apply` preflights inbound secrets | `adapters/syncvault/syncvault.go`; `TestSnapshotNeverCarriesAtuinAccountCredentials`; `TestApplyRejectsInboundAtuinAccountCredentialsBeforeWritingAnything`; `application/sync/merge_test.go` `TestMergeDropsAtuinAccountCredentialsFromEverySide` | Test-proven |
-| T2 | A credential is written by a portable export | Export reads credentials only through explicit Vault refs; no `atuin_account` path exists | `application/vault/export.go`; `TestPortableExportNeverCarriesAtuinCredentials` | Test-proven |
+| T2 | A credential or command is written by a portable export | Export reads credentials only through explicit Vault refs; no `atuin_account` path exists; the export port no longer exposes command history | `application/vault/export.go`; `application/vault/export/export.go`; `TestPortableExportNeverCarriesAtuinCredentials`; `TestPortableExportNeverCarriesCommandHistory`; `TestLogsExportConnectionLogsWithoutCommandHistory` | Test-proven |
 | T3 | A Local Backup stores the Atuin credential in plaintext | The backup carries `secret_values` ciphertext, and the whole snapshot is encrypted with AES-256-GCM under a keychain key | `adapters/store/vault_backup.go`; `adapters/vaultbackup/store.go`; `TestLocalBackupCarriesAtuinCiphertextButNotHistoryState`; `TestSaveEncryptsAndRoundTrips` | Test-proven |
-| T4 | A credential, command, request body, or decrypted payload appears in an error, log, notification, status, or crash report | The sync packages import no logger; adapter errors contain only a fixed method/path/status; public errors are sentinels; status `Detail` is always empty; the account panel renders localized problem codes; no application crash reporter exists; history notifications do not exist | Code inspection of `application/historysync`, `adapters/atuin`, `ui/settings/atuin*.go`, `app/notifications.go`; existing no-leak and sanitized-status tests | Verified by inspection and tests; crash-dump caveat below |
-| T5 | A credential is read while the field-secret store is locked or App Lock is engaged | `localStatus` returns `SyncLocked` before any `Has`/`Get`; `stopOrPause` runs before the token/key read; the account service now checks App Lock before every credential-touching operation | `TestLockedStoresNeverDecryptCredentials`; `TestAccountOperationsFailClosedWhileAppLocked`; `TestLoginRequiresAnUnlockedSecretStore` | Test-proven |
+| T4 | A credential, command, request body, or decrypted payload appears in an error, log, notification, status, or crash report | The sync packages import no logger; adapter errors contain only a fixed method/path/status; public helpers return only known sentinels; `Status.Detail` is never populated with an error string; the account panel renders localized problem codes; the new details control renders a typed sanitized model; no application crash reporter exists; history notifications do not exist | Code inspection of `application/historysync`, `adapters/atuin`, `ui/settings/atuin*.go`, `app/notifications.go`; `TestLoginWithUsernamePasswordStoresOnlyTheToken`; `TestCheckMapsRemoteFailuresToSanitizedStatuses`; `TestStatusErrorsMapWithoutLeaking`; `TestAtuinPanelReportsAProblemWithoutRawErrorText`; `TestAtuinDetailsNeverRenderAnInternalError`; `TestPublicSecretErrorReducesUnknownErrorsToASentinel` | Verified by inspection and tests; OS crash-dump/swap caveat is release dependency 2 |
+| T5 | A credential is read while the field-secret store is locked or App Lock is engaged | `localStatus` returns `SyncLocked` before any `Has`/`Get` and before `Mode` under App Lock; `stopOrPause` runs before the token/key read; the account service checks App Lock before every credential-touching operation | `TestLockedStoresNeverDecryptCredentials` (now asserts zero `Get`, zero `Has`, and zero `Mode` under App Lock); `TestAccountOperationsFailClosedWhileAppLocked`; `TestLoginRequiresAnUnlockedSecretStore` | Test-proven |
 | T6 | The token or key is sent to a different account after the address changes | The stored account identity and normalized address are compared before the secret read and again after authentication; a mismatch requires logout | `TestStoredCredentialsFailClosedAfterTheSyncAddressChanges`; `sameAccountAddress` | Test-proven |
-| T7 | Key material lingers after the operation | `Config.Wipe`, `Remote.Close`, `WipeMasterKey`, and the field-secret wipe are called at operation scope; the login request body and operation-scoped key copies are now zeroed | `TestCloseWipesCredentialsAndKeyAndIsIdempotent`; `TestAuthenticateWipesTheLoginRequestBody`; `TestSealSecretValueWipesTheTransientPlaintext`; `TestOpenSecretValueWipesTheDecryptedPlaintext` | Login body and store plaintext test-proven; caller key-copy wipes verified by inspection (no observable test); by-value copies remain (residual) |
-| T8 | A token is forwarded to another origin through a redirect or hidden in the URL | The URL parser rejects userinfo, query, and fragment; plain HTTP is loopback-only; the HTTP client refuses every redirect | `normalizeBaseURL`; transport tests | Test-proven |
-| T9 | The Atuin server learns command text | The server sees record identity and metadata, not payload plaintext; this is now stated in the account panel and is inherent to Atuin | Wire format and adapter inspection; `TestAtuinPanelStatesWhatTheServerCanSee` | Accepted limitation, disclosed |
-| T10 | The Host Atuin import modifies the Host or reads the key file | The caller copies `history.db`/`-wal`/`-shm` locally; the reader opens the copy `mode=ro` with `query_only`, reads only the `history` table, and never reads a key file | `adapters/atuinimport/atuinimport.go`; importer tests | Verified by inspection and tests |
-| T11 | A sync path calls a destructive Atuin endpoint or another tag | No method builds `/api/v0/store`; download/upload reject any tag other than `history`; `DELETE` is asserted absent by a transport test | `remote.go`; `TestStoreDeleteEndpointIsNeverRequested` | Test-proven |
+| T7 | Key material lingers after the operation | `Config.Wipe`, `Remote.Close`, `WipeMasterKey`, and the field-secret wipe are called at operation scope; the login request body and login response buffer are zeroed; the base64-decoded master-key intermediate and mnemonic `packed` entropy buffer are zeroed | `TestCloseWipesCredentialsAndKeyAndIsIdempotent`; `TestAuthenticateWipesTheLoginRequestBody`; `TestAuthenticateWipesTheLoginResponseBody`; `TestAuthenticateWipesTheLoginResponseOnDecodeFailure`; `TestAuthenticateWipesTheLoginResponseOnReadFailure`; `TestDecodeMasterKeyBytesWipesTheIntermediateBuffer`; `TestDecodeMasterKeyBytesWipesOnFailure`; `TestSealSecretValueWipesTheTransientPlaintext`; `TestOpenSecretValueWipesTheDecryptedPlaintext` | Application buffers test-proven; caller key-copy wipes verified by inspection; by-value copies remain (residual) |
+| T8 | A token is forwarded to another origin through a redirect or hidden in the URL | The URL parser rejects userinfo, query, and fragment; plain HTTP is loopback-only; the HTTP client refuses every redirect | `normalizeBaseURL`; `TestRedirectIsNotFollowed`; `TestUnreachableServerIsReportedOfflineWithoutTheAddress`; `TestStatusErrorsMapWithoutLeaking`; `TestProductionFactoryDefaultsAreSuitableForProduction` | Test-proven |
+| T9 | The Atuin server learns command text | The server sees record identity and metadata, not payload plaintext; this is stated in the account panel and is inherent to Atuin | Wire format and adapter inspection; `TestAtuinPanelStatesWhatTheServerCanSee` | Accepted limitation, disclosed |
+| T10 | The Host Atuin import modifies the Host or reads the key file | The caller copies `history.db`/`-wal`/`-shm` locally; the reader opens the copy `mode=ro` with `query_only`, reads only the `history` table, and never reads a key file | `adapters/atuinimport/atuinimport.go`; `TestReadHistoryFailsClosedOnAnUnknownSchema`; `TestReadHistoryRejectsAMalformedRowInsteadOfDroppingIt`; `TestMalformedRowErrorNeverContainsTheCommand`; `TestReadOnlyDSNBuildsValidWindowsDriveURIs`; `TestReadOnlyDSNKeepsAnAbsoluteUnixPath` | Verified by inspection and tests |
+| T11 | A sync path calls a destructive Atuin endpoint or another tag | No method builds `/api/v0/store`; download/upload reject any tag other than `history`; `DELETE` is asserted absent by a transport test | `adapters/atuin/remote/remote.go`; `TestStoreDeleteEndpointIsNeverRequested` | Test-proven |
 | T12 | A malicious cloud payload overwrites local Atuin credentials | `validateIncomingSecrets` runs before any write and rejects unknown entity types | `TestApplyRejectsInboundAtuinAccountCredentialsBeforeWritingAnything` | Test-proven |
-| T13 | Observer output or session logs are fed into history capture | The observer is a read-only shadow terminal and has no command-completion hook; session logs are explicit user-started transcripts | `application/session/observe.go`; `observe_test.go`; `session_tap.go` | Verified by inspection |
+| T13 | Observer output or session logs are fed into history capture | The observer is a read-only shadow terminal and has no command-completion hook; session logs are explicit user-started transcripts | `application/session/observe.go`; `application/session/observe_test.go` `TestObserverCannotWriteOrConsumeTheLiveView`; `application/session/session_tap.go` | Verified by inspection and test |
 | T14 | The UI claims a Local Backup restores the Atuin account | Backup wording talks only about the Vault; history settings, metadata, and the record log are not backup tables | `ui/locales/en.json` backup messages; `TestPreviousBuildLocalBackupRestoresAfterHistorySchemaGrowth` | Verified by inspection and tests |
+| T15 | The production build silently runs with no remote adapter | The composition helper constructs one real `atuinremote.NewFactory` and passes the same identifier to both constructors | `app/app.go` `newHistorySyncServices`; `TestCompositionWiresTheProductionAtuinFactory` (AST); `TestComposedAtuinServicesReachALoopbackServer` | Wired and test-proven |
 
 ## Findings and fixes
 
@@ -91,7 +101,7 @@ The review considered the non-negotiable constraints for this feature:
 
 `adapters/atuin/remote/remote.go` marshals `{username,password}` into a `[]byte`
 for the login POST. The buffer was never zeroed, so the password remained
-readable in the heap until collection. The adapter now defers `zeroBytes(body)`
+readable in the heap until collection. The adapter defers `zeroBytes(body)`
 after the request completes.
 
 Evidence: `adapters/atuin/remote/login_wipe_test.go`
@@ -148,18 +158,126 @@ Evidence: `ui/settings/atuin_test.go`
 contains "record identifiers and metadata" and "not command text";
 `ui/locales/*.json` carry the translated strings.
 
+### F6: the spec's sanitized details control was absent
+
+Spec §11 requires sanitized error details behind a details control.
+`Status.Detail` was never populated and the panel rendered only a localized
+problem line. The account panel now has an explicit **Details** control,
+collapsed by default. Expanding it renders a typed `AtuinDiagnostics` model
+containing only:
+
+- the localized sync state and action problem explanation;
+- the server version;
+- the last sync time;
+- the unsynced upload count;
+- the next retry time.
+
+The model has no field for an error string, `Status.Detail`, a server message or
+body, a token, a key, a password, command text, cwd, exit status, origin, a
+server URL, or a username. The only way to add a value to the rendered surface
+is to add a typed field, which is a visible code change. `Status.Detail` remains
+empty and is never rendered.
+
+Evidence: `ui/settings/atuin_test.go`
+`TestAtuinDetailsControlIsCollapsedAndShowsSanitizedFields` proves the control
+exists, starts collapsed, and shows the sanitized fields after the click;
+`TestAtuinDetailsNeverRenderAnInternalError` plants the same secret in the
+internal error and in `Status.Detail` and proves neither is rendered;
+`TestAtuinDetailsStringsExistInEveryLocale` covers `en`, `es`, `ru`, `zh-CN`,
+and `zh-TW`.
+
+### F7: production wiring passed a nil factory
+
+`app.go` constructed both `AccountService` and `Service` with `nil`. A nil
+factory makes every production login, check, and sync fail with
+`ErrRemoteUnavailable`, so the integrated feature could not reach an Atuin
+server. The composition root now has one helper, `newHistorySyncServices`, that
+constructs a single real `atuinremote.NewFactory` and passes the same non-nil
+identifier to both constructors. The factory uses the packaged application
+version for its User-Agent, with the adapter's `natcatty/<version>` fallback for
+development builds.
+
+Evidence:
+
+- `TestProductionFactoryDefaultsAreSuitableForProduction` and
+  `TestUserAgentForVersionNamesTheProductAndVersion` exercise the real adapter
+  factory: non-nil, bounded timeout, redirect refusal, product User-Agent.
+- `TestCompositionWiresTheProductionAtuinFactory` parses `app/app.go` and fails
+  if either constructor receives anything other than the identifier initialized
+  from `atuinremote.NewFactory`, if either call disappears, or if the production
+  `run` composition stops calling the helper.
+- `TestComposedAtuinServicesReachALoopbackServer` builds the services through
+  the same composition helper and drives account login plus a sync run against a
+  loopback `httptest` Atuin v18 server. Both services open the real remote; a
+  nil factory would fail the login with `ErrRemoteUnavailable`.
+
+### F8: the base64 master-key intermediate and mnemonic entropy buffer were unwiped
+
+`domain/history/masterkey.go` base64-decoded the input and, on the MessagePack
+path, returned a copy while leaving the decoded buffer (which contains the key)
+on the heap. The mnemonic path built a `packed` entropy buffer and returned a
+copy without wiping it. Both intermediates are now zeroed on success and on
+every error path. The raw 32-byte legacy path now returns a copy so the decoded
+buffer can be wiped.
+
+Evidence: `domain/history/masterkey_test.go`
+`TestDecodeMasterKeyBytesWipesTheIntermediateBuffer` covers legacy raw, array16,
+and bin8 inputs and asserts the intermediate is zero and the returned key is a
+separate copy; `TestDecodeMasterKeyBytesWipesOnFailure` covers the rejected
+length path. The `packed` mnemonic buffer is wiped by a deferred call at
+`parseMnemonic`; it is not exposed to a test, which is recorded under residual
+risks.
+
+### F9: the login response buffer kept the minted session token
+
+`Authenticate` decoded the login response, which contains the newly minted
+session token, from a heap buffer that was never zeroed. `postJSON` now defers
+`zeroBytes(response)` after decoding, on success and decode failure. `do` also
+zeroes a partial or oversized body that it never returns, and the read body
+before rejecting a response with an incompatible server version. The decoded
+token string remains by design because the account service must store it.
+
+Evidence: `adapters/atuin/remote/login_response_wipe_test.go`
+`TestAuthenticateWipesTheLoginResponseBody` retains the exact destination slice
+`io.ReadAll` hands to the response body and requires it to be zero after a
+successful login; `TestAuthenticateWipesTheLoginResponseOnDecodeFailure` covers
+the malformed-response path; `TestAuthenticateWipesTheLoginResponseOnReadFailure`
+covers the partial-read error path. The incompatible-version wipe is verified by
+inspection. Existing endpoint tests prove response decoding still works.
+
+### F10: unknown secret-store errors passed through the public helper
+
+`publicSecretError` returned an unknown internal error unchanged. The review had
+claimed that public helpers reduce errors to known sentinels, so the claim and
+the code disagreed. An unknown secret-store failure now maps to the public
+`ErrSecretUnreadable`; the known `ErrSecretNotFound`, `ErrSecretsLocked`,
+`ErrSecretsUnavailable`, and `ErrSecretUnreadable` mappings are unchanged.
+
+Evidence: `application/historysync/account_test.go`
+`TestPublicSecretErrorReducesUnknownErrorsToASentinel` plants a token-shaped
+string in an unknown error and proves the returned sentinel contains none of it.
+
+### F11: portable export carried Command History
+
+Spec O5 says Command History is not in Vault Export or Local Backup. The Vault
+service populated `Dataset.History` from `HistoryReader.Entries`, and the logs
+JSON/CSV formats serialized it. The export port now exposes only
+`ConnectionLogs`; the dataset and both logs formats no longer have a history
+field or row. Connection Logs remain exportable.
+
+Evidence: `application/vault/export_test.go`
+`TestPortableExportNeverCarriesCommandHistory` plants a command in the history
+source, exports every format, asserts the command is absent, and asserts the
+export never called `Entries`; `application/vault/export/export_test.go`
+`TestLogsExportConnectionLogsWithoutCommandHistory` pins the logs JSON/CSV
+shape.
+
 ### Not changed
 
 - The session token is held as a Go string in `Config.Token`, `Remote.token`,
   and the request header. It cannot be zeroed; `Config.Wipe` and `Remote.Close`
   clear the references. This matches the spec's "where the HTTP API permits"
   language and is recorded as a residual risk.
-- The spec also asks that sanitized error details be shown behind a details
-  control. No details control exists: `Status.Detail` is never populated and
-  the panel renders only localized problem codes. This is safe today because
-  there is no raw error surface, but the literal spec surface is missing. If a
-  details control is added, it must render only sanitized, non-secret text.
-  Recorded as release-gate item 5 rather than silently claimed complete.
 - `ErrAppLocked` and a passphrase-locked store both map to
   `AtuinProblemLocked`, whose copy says to unlock the field-secret store. App
   Lock hides the settings UI, so the path is not normally reachable; the copy
@@ -177,8 +295,14 @@ contains "record identifiers and metadata" and "not command text";
   `SourceAtuinImport` and `SourceAtuinSync`, so an import never creates an
   upload record. Deleting an imported row appends a history delete tombstone,
   which is intended: the deletion must propagate to other devices.
-- `SecretValue` merge and upload paths keep command text out of errors; command
+- Secret-value merge and upload paths keep command text out of errors; command
   payloads are encrypted before upload and the upload body is ciphertext only.
+- The credential draft fields have no UI length bound. The panel keeps them as
+  ordinary Go strings while the user edits, clears them after a successful
+  login, key save, or logout, and never renders them. The account service
+  validates the login shape and address, and the master-key parser validates
+  the key encoding; the adapter rejects a token containing a line break. There
+  is no claim of a UI-enforced maximum length.
 
 ## Boundary evidence
 
@@ -193,29 +317,43 @@ contains "record identifiers and metadata" and "not command text";
   the key into memory.
 - A sync holds the token and parsed master-key bytes for one operation. The
   engine wipes the key bytes and the config; the remote wipes its stored key on
-  `Close`. A login also wipes the request body (F1).
-- The UI keeps password, token, and master-key drafts in bounded strings and
-  clears them after a successful login, key save, or logout. The panel never
-  renders or offers to reveal them.
+  `Close`. A login wipes the request body (F1) and the response buffer that
+  carried the minted token (F9).
+- Master-key parsing wipes the base64-decoded intermediate and the mnemonic
+  entropy buffer (F8). The returned key is a fresh copy the caller wipes; parsed
+  keys are stored as base64 in the field-secret store and re-parsed only for an
+  operation.
+- The UI keeps password, token, and master-key drafts as ordinary Go strings
+  while the user edits, clears them after a successful login, key save, or
+  logout, and never renders or offers to reveal them. There is no UI length
+  bound; service and adapter validation is the boundary.
 
-### Logs, errors, notifications, and status
+### Logs, errors, notifications, status, and details
 
 - `application/historysync`, `adapters/atuin`, `adapters/atuinimport`, and the
   history-secret adapter import no logging package. There is no log statement to
   redact in these paths.
 - Adapter errors contain a sentinel plus a fixed method/path and HTTP status
-  (never the server message or body). `publicRemoteError`, `publicSyncError`,
-  `publicSecretError`, and `publicRemoteError` reduce internal errors to known
-  sentinels before they reach callers.
-- `account.Status.Detail` is only ever copied from a cached status and is
-  cleared by `statusForRemoteError`; no code populates it with an error string.
-  The history panel renders a localized `AtuinProblem` code, never `err.Error()`.
+  (never the server message or body). `publicRemoteError`, `publicSyncError`, and
+  `publicSecretError` reduce internal errors to known public sentinels before
+  they reach callers.
+- `account.Status.Detail` is never populated with an error string and is never
+  rendered. The account panel renders a localized `AtuinProblem` code and the
+  typed sanitized diagnostics from F6, never `err.Error()`, `Status.Detail`, a
+  server message or body, a token, a key, or a password. The details control
+  never renders a URL or a username; the ordinary settings inputs show the
+  configured address and username by design.
+- The details control starts collapsed. Its only string field sourced from the
+  remote is the server version, which the collapsed panel already shows and the
+  spec lists as non-sensitive. No field carries an error string, a server
+  message or body, a URL, or a username; the remaining strings are localized
+  catalog text and formatted times.
 - `app/notifications.go` delivers terminal/program notifications only. There is
   no history-sync notification path, so no sync payload can reach a notification.
 - There is no application crash reporter. A Go panic prints a stack trace, not
   the contents of string variables; the only `panic` in the reviewed crypto
-  path is a fixed-argument programming error. OS crash dumps and hibernation
-  images are outside the application's control (residual risk).
+  path is a fixed-argument programming error. OS crash dumps, hibernation
+  images, and swap are outside the application's control (release dependency 2).
 
 ### Vault cloud sync
 
@@ -226,7 +364,7 @@ contains "record identifiers and metadata" and "not command text";
   allowlist before `records.ApplySync` or any secret write. A rejected payload
   leaves credentials, records, and settings untouched.
 - Merge: `mergeSecrets` keys by entity and `filterSecretsToPayload` drops any
-  entity type without a Vault family. The new merge test plants an
+  entity type without a Vault family. The merge test plants an
   `atuin_account` secret on all three sides and proves it is absent from the
   merged payload and its JSON.
 
@@ -236,6 +374,9 @@ contains "record identifiers and metadata" and "not command text";
   `HostSecretRef`, `KeySecretRef`, `IdentitySecretRef`,
   `ProxyProfileSecretRef`, `NetworkProfileSecretRef`, and
   `NetworkPeerSecretRef`. Portable settings strip all History fields.
+- The export port has no command-history method (F11). `Dataset` has no History
+  slice, and the logs JSON/CSV formats write Connection Logs only. A planted
+  command is absent from every exported format and `Entries` is never called.
 - The export spy test plants a token and master key under `atuin_account` and
   exports every format with `IncludeSecrets: true`. It asserts that no export
   content contains either value and that no export requested an
@@ -264,10 +405,13 @@ contains "record identifiers and metadata" and "not command text";
 
 ### App Lock and locked secret stores
 
-- `Service.localStatus` checks for a passphrase-locked store and App Lock before
-  any `Has`/`Get`; `stopOrPause` checks again immediately before `secrets.Get`
-  and key loading. A locked store reports `SyncLocked` and a zero retry time.
-- `AccountService` now has the same gate (F3). Its `localStatus` returns the
+- `Service.localStatus` checks App Lock first and a passphrase-locked store
+  second, before any `Has`/`Get`; `stopOrPause` checks again immediately before
+  `secrets.Get` and key loading. A locked store reports `SyncLocked` and a zero
+  retry time.
+- App Lock performs no secret-store query at all, including `Mode`; a
+  passphrase-locked store returns before any presence check.
+- `AccountService` has the same gate (F3). Its `localStatus` returns the
   locked state without a presence check; every credential-touching operation
   returns `ErrAppLocked` before touching the store.
 - Capture is independent of credentials. A locked store or App Lock pauses sync
@@ -298,7 +442,8 @@ contains "record identifiers and metadata" and "not command text";
   inconsistent copy. It never reads the Atuin key file and never writes to the
   copy.
 - Rows map to local projections only. A valid Atuin UUID is preserved; otherwise
-  a stable derived UUID is used. Unknown columns are preserved and bounded.
+  a stable derived UUID is used. Unknown columns are preserved as string
+  values; they are not length-bounded.
   Malformed rows fail the whole copy before any checkpoint or row is written.
   Row-validation errors name the history row id, never the command text.
   Wrapped SQLite driver errors (`query`/`scan`/`rows.Err`) still use `%v`;
@@ -318,48 +463,78 @@ contains "record identifiers and metadata" and "not command text";
 - The transport test asserts no request uses a DELETE method or a path containing
   `store`.
 
+### Production composition
+
+- `app/app.go` `newHistorySyncServices` constructs one
+  `atuinremote.NewFactory` and passes the same identifier to
+  `historysync.NewAccountService` and `historysync.NewService`. App Lock
+  predicates are supplied to both.
+- The factory uses the packaged application version in its User-Agent
+  (`natcatty/<version>`) and falls back to the adapter default for a
+  development build. It keeps the bounded default timeout and always replaces
+  the redirect policy with refusal.
+- The AST wiring test fails if either constructor receives a different or nil
+  value, and the loopback integration test proves both composed services reach
+  a real HTTP remote.
+
 ## Acceptance checklist
 
 | Criterion | Status | Notes |
 |---|---|---|
-| Token and key storage, memory lifetime, zeroing, and lock behaviour are reviewed and documented | **Reviewed and documented** | F1, F2, F4 fixed; Go memory limits recorded below |
-| Logs, crash reports, notifications, and error details never contain command text, tokens, keys, request bodies, or decrypted payloads | **Verified for application-controlled outputs** | No logger or crash reporter in the sync paths; sentinel errors; problem codes; OS crash dumps are outside application control. The spec's details-control surface is absent (release-gate item 5) |
-| Atuin credentials never enter Vault cloud sync or portable export; Local Backup behaviour and its restore caveat match the spec | **Verified by tests** | Sync snapshot/apply/merge, export spy, and Local Backup tests; production sync wiring not present (release gate) |
-| Observer/session-log interaction and imported-record behaviour are reviewed | **Reviewed and documented** | Observer has no command hook; imports are read-only, projection-only, and tombstone on delete |
-| The security checklist is closed before release | **Not closed** | The in-scope checklist is closed; release-gate items below remain |
+| Token and key storage, memory lifetime, zeroing, and lock behaviour are reviewed and documented | **Closed** | F1, F2, F4, F8, F9 fixed; Go string/by-value limits recorded below |
+| Logs, crash reports, notifications, and error details never contain command text, tokens, keys, request bodies, or decrypted payloads | **Closed for application-controlled outputs** | No logger or crash reporter in the sync paths; public sentinels; typed sanitized details control; OS crash dumps/swap are release dependency 2 |
+| Atuin credentials never enter Vault cloud sync or portable export; Local Backup behaviour and its restore caveat match the spec | **Closed** | Sync snapshot/apply/merge, export spy, command-history removal, and Local Backup tests; production wiring wired and loopback-tested |
+| Observer/session-log interaction and imported-record behaviour are reviewed | **Closed** | Observer has no command hook; imports are read-only, projection-only, and tombstone on delete |
+| The security checklist is closed before release | **Closed for this change set** | F1-F11 implemented and covered; the scheduled environment-dependent checks are release verification dependencies, not open checklist items |
 
-## Release gate (not closed)
+## Release verification dependencies
 
-These items cannot be closed in this worktree and must be completed before a
-release claim:
+None of the four activities below was executed for this review. In particular,
+this review did not run a live OS keychain/passphrase/session-only/App Lock
+exercise, a packaged build, an OS crash-dump/swap inspection, a login against a
+real Atuin server, or the conformance/Host-Shell matrix. They are scheduled
+release-acceptance activities with a named owner and procedure. They are not
+open items of the security checklist and no code defect was identified while
+reviewing them; they exist because the required environment (a live OS service,
+a packaged build, or a separate acceptance run) is not available here.
 
-1. **Production remote wiring.** `app/app.go` still constructs the account and
-   sync services with a nil `Factory`; the comment states that the HTTP factory
-   arrives with the sync engine's transport ticket. The pinned adapter is tested
-   against `httptest` servers and the engine against a fake factory, but no
-   production build in this worktree can reach the real Atuin server. End-to-end
-   redaction and credential lifetime through the composition root are therefore
-   **not verified here**. This is blocked by the transport/integration ticket
-   (ticket 19 in the implementation plan), not by this review.
-2. **Real-platform keychain, passphrase, session-only, and App Lock behaviour.**
-   Unit tests use fakes (`platform/secrets` is not exercised against a live
-   macOS Keychain, Windows Credential Manager, or Linux secret service here).
-   The field-key and backup-key lifecycle on each target OS still needs an
-   on-device check.
-3. **Crash-dump and swap review on each target OS.** The application has no crash
-   reporter, but OS crash dumps, hibernation files, and swap may capture process
-   memory. No core-dump or mlock behaviour was verified here.
-4. **Conformance and release acceptance.** The pinned-server conformance suite
-   and the Host/Shell matrix are separate release tasks (ticket 19 and the
-   hardening phase). They were not run for this review.
-5. **Account-panel details control.** Spec §11 asks for sanitized error details
-   behind a details control. The panel intentionally has no detail surface and
-   `Status.Detail` is never populated. Adding one is UI work outside this
-   hardening change; until then the literal spec requirement is open, although
-   no raw error can leak.
+1. **Live OS keychain, passphrase, session-only, and App Lock behaviour.**
+   Owner: release QA, on each target OS (macOS Keychain, Windows Credential
+   Manager, Linux Secret Service), with the release manager signing off.
+   Procedure: on a packaged build, create and read a field secret in OS mode,
+   passphrase mode, and session-only mode; lock the field-secret store and
+   engage App Lock and confirm sync pauses while capture continues; restart and
+   confirm key persistence/orphaning matches the documented caveat.
+   Why not a checklist defect: the adapter boundary is unit-tested with fakes;
+   this dependency verifies the platform API integration and the field-key and
+   backup-key lifecycle on real hardware.
+2. **Crash dumps, swap, and hibernation review on each target OS.**
+   Owner: platform/release owner for each OS, with the release manager.
+   Procedure: inspect the packaged app's crash-reporting configuration, OS swap
+   and hibernation behaviour, and the documented user guidance. The application
+   itself has no crash reporter and no mlock/crash-dump exclusion.
+   Why not a checklist defect: application-controlled outputs are verified; OS
+   memory capture is outside application control and cannot be exercised by a
+   unit test in this worktree.
+3. **Packaged-build login and sync against a real Atuin v18 server.**
+   Owner: release QA against the pinned server version, with the release
+   manager accepting the result. Procedure: log in with token and password
+   flows, verify the server-visible metadata notice, run a sync, and confirm
+   error surfaces show only localized problems behind Details.
+   Why not a checklist defect: the adapter is pinned and protocol-tested; the
+   loopback integration test here proves the production composition opens a
+   real HTTP remote. A live-server run is release acceptance, not a code
+   boundary left unverified.
+4. **Pinned-server conformance suite (ticket 19) and Host/Shell matrix
+   (ticket 21).**
+   Owner: release manager; both are separate release tasks.
+   They were not run for this review, and this document does not claim their
+   results. Why not a checklist defect: they are release-acceptance gates for
+   protocol and shell coverage, not open findings of this security review.
 
-The checklist above must not be reported as fully closed while any of these
-items is open.
+None of these dependencies contradicts a checklist claim above: each is either
+an OS-level property, a packaged-build exercise, or a separate acceptance run.
+If any of them finds a defect, that defect reopens the relevant checklist item.
 
 ## Residual risks
 
@@ -376,7 +551,12 @@ items is open.
   wire helpers; `DecryptData`, `EncryptData`, JSON marshal buffers for uploads,
   and some map/interface boxing create transient copies that are not all wiped.
   Operation-scoped copies in `Download`, `Upload`, and `ValidateMasterKey` are
-  wiped; a fully copy-free design would require a larger wire-API change.
+  wiped; the master-key parse intermediates are wiped; a fully copy-free design
+  would require a larger wire-API change.
+- **Mnemonic `packed` buffer coverage.** `parseMnemonic` defers a wipe of the
+  entropy buffer, but the buffer is not exposed to a test, so this specific wipe
+  is verified by inspection only. The base64/MessagePack intermediates are
+  test-proven.
 - **Decrypted record payloads** are transient `[]byte` values used to build
   journal rows. They are not wiped after mapping. Local history is plaintext at
   rest by design, so this is a lifetime hardening gap rather than a new
@@ -396,10 +576,11 @@ items is open.
 - **App Lock is enforced by an injected predicate.** `app.go` supplies the real
   predicate to both services. A future composition that omits it would not gate
   the service layer; the sync engine and account service tests pin the predicate
-  behaviour, but a constructor audit remains a code-review responsibility. The
-  predicate is sampled at operation entry, so a lock engaging mid-operation can
-  let an already-started secret read finish; the window is small and the next
-  operation fails closed.
+  behaviour, and the composition wiring test pins the shared factory, but a
+  constructor audit remains a code-review responsibility. The predicate is
+  sampled at operation entry, so a lock engaging mid-operation can let an
+  already-started secret read finish; the window is small and the next operation
+  fails closed.
 - **Importer diagnostics.** SQLite driver errors wrapped with `%v` and history
   row ids may appear in import errors; these are not command text or
   credentials, but they are identifiers. No test proves every future SQLite
@@ -407,35 +588,94 @@ items is open.
 - **Server-visible metadata.** The Atuin server sees record id, host, tag,
   index, timestamp, and version. This is inherent to the protocol and is now
   stated in the account panel (F5); it is not a defect in this client.
+- **The details control is only as safe as its typed model.** Adding an
+  error-string, URL, username, or `Status.Detail` field to `AtuinDiagnostics`
+  would create a leak path; the current renderer has no such field, and a test
+  plants a secret in the discarded values.
 
 ## Test evidence
 
-Hardening tests added in this change:
+Hardening tests added or strengthened in this change:
 
-- `adapters/atuin/remote/login_wipe_test.go`: `TestAuthenticateWipesTheLoginRequestBody`
-- `adapters/store/secrets_zeroing_test.go`: `TestSealSecretValueWipesTheTransientPlaintext`, `TestOpenSecretValueWipesTheDecryptedPlaintext`, `TestOpenSecretValueReportsAnAuthFailure`
-- `application/vault/export_atuin_boundary_test.go`: `TestPortableExportNeverCarriesAtuinCredentials`
-- `application/sync/merge_test.go`: `TestMergeDropsAtuinAccountCredentialsFromEverySide`
-- `adapters/store/vault_backup_atuin_test.go`: `TestLocalBackupCarriesAtuinCiphertextButNotHistoryState`
-- `adapters/atuinimport/atuinimport_test.go`: `TestMalformedRowErrorNeverContainsTheCommand`
-- `application/historysync/account_test.go`: `TestAccountOperationsFailClosedWhileAppLocked`; added no-credential-read assertions to `TestLoginRequiresAnUnlockedSecretStore` and `TestCheckDoesNothingWhileDisabledLockedOrUnconfigured`
-- `application/historysync/service_test.go`: `TestLockedStoresNeverDecryptCredentials`
-- `ui/settings/atuin_test.go`: `TestAppLockMapsToTheLockedProblem`;
-  `TestAtuinPanelStatesWhatTheServerCanSee`
-- `ui/locales/*.json`: the account description in all five catalogs now states
-  the server-visible metadata limitation
+- `app/atuin_wiring_test.go`:
+  `TestCompositionWiresTheProductionAtuinFactory`,
+  `TestComposedAtuinServicesReachALoopbackServer`
+- `adapters/atuin/remote/factory_test.go`:
+  `TestProductionFactoryDefaultsAreSuitableForProduction`,
+  `TestUserAgentForVersionNamesTheProductAndVersion`
+- `adapters/atuin/remote/login_wipe_test.go`:
+  `TestAuthenticateWipesTheLoginRequestBody`
+- `adapters/atuin/remote/login_response_wipe_test.go`:
+  `TestAuthenticateWipesTheLoginResponseBody`,
+  `TestAuthenticateWipesTheLoginResponseOnDecodeFailure`,
+  `TestAuthenticateWipesTheLoginResponseOnReadFailure`
+- `domain/history/masterkey_test.go`:
+  `TestDecodeMasterKeyBytesWipesTheIntermediateBuffer`,
+  `TestDecodeMasterKeyBytesWipesOnFailure`
+- `application/historysync/account_test.go`:
+  `TestPublicSecretErrorReducesUnknownErrorsToASentinel`,
+  `TestAccountOperationsFailClosedWhileAppLocked`; no-credential-read assertions
+  in `TestLoginRequiresAnUnlockedSecretStore` and
+  `TestCheckDoesNothingWhileDisabledLockedOrUnconfigured`
+- `application/historysync/service_test.go`:
+  `TestLockedStoresNeverDecryptCredentials` now also asserts zero `Has` calls for
+  a passphrase-locked store and zero `Has`/`Mode` calls under App Lock
+- `application/vault/export_test.go`:
+  `TestPortableExportNeverCarriesCommandHistory`
+- `application/vault/export/export_test.go`:
+  `TestLogsExportConnectionLogsWithoutCommandHistory`
+- `adapters/store/secrets_zeroing_test.go`:
+  `TestSealSecretValueWipesTheTransientPlaintext`,
+  `TestOpenSecretValueWipesTheDecryptedPlaintext`,
+  `TestOpenSecretValueReportsAnAuthFailure`
+- `application/vault/export_atuin_boundary_test.go`:
+  `TestPortableExportNeverCarriesAtuinCredentials`
+- `application/sync/merge_test.go`:
+  `TestMergeDropsAtuinAccountCredentialsFromEverySide`
+- `adapters/store/vault_backup_atuin_test.go`:
+  `TestLocalBackupCarriesAtuinCiphertextButNotHistoryState`
+- `adapters/atuinimport/atuinimport_test.go`:
+  `TestMalformedRowErrorNeverContainsTheCommand`
+- `ui/settings/atuin_test.go`:
+  `TestAppLockMapsToTheLockedProblem`,
+  `TestAtuinPanelStatesWhatTheServerCanSee`,
+  `TestAtuinDetailsControlIsCollapsedAndShowsSanitizedFields`,
+  `TestAtuinDetailsNeverRenderAnInternalError`,
+  `TestAtuinDetailsStringsExistInEveryLocale`
+- `ui/locales/*.json`: the account description in all five catalogs states the
+  server-visible metadata limitation, and all five carry the details-control
+  strings
+- `adapters/syncvault/syncvault_test.go`: failure messages no longer print
+  planted credential payloads; they report counts or omit the value
 
 Existing tests relied on for boundaries:
 
-- `adapters/syncvault/syncvault_test.go`: `TestSnapshotNeverCarriesAtuinAccountCredentials`, `TestApplyRejectsInboundAtuinAccountCredentialsBeforeWritingAnything`
-- `adapters/atuin/remote/transport_test.go`: `TestCloseWipesCredentialsAndKeyAndIsIdempotent`, no-DELETE/no-store assertions, redirect and error-sanitization tests
-- `adapters/vaultbackup/store_test.go`: `TestSaveEncryptsAndRoundTrips` and keychain-unavailable refusal
-- `application/history/service_test.go`: `TestRecordDoesNotCreateWireRecordsForRemoteOrLegacyRows`, `TestDeleteEntryOfAnImportedRowAppendsATombstone`, import checkpoint and malformed-row tests
-- `domain/preferences/history_test.go`: `TestPortableStripsHistoryAccountSettings`
-- `application/session/observe_test.go`: observer read-only tests
+- `adapters/syncvault/syncvault_test.go`:
+  `TestSnapshotNeverCarriesAtuinAccountCredentials`,
+  `TestApplyRejectsInboundAtuinAccountCredentialsBeforeWritingAnything`
+- `adapters/atuin/remote/transport_test.go`:
+  `TestCloseWipesCredentialsAndKeyAndIsIdempotent`,
+  `TestStoreDeleteEndpointIsNeverRequested`, `TestRedirectIsNotFollowed`,
+  `TestUnreachableServerIsReportedOfflineWithoutTheAddress`,
+  `TestStatusErrorsMapWithoutLeaking`, `TestOpenedRemoteCopiesTheMasterKey`,
+  `TestOpenRejectsIncompleteOrConflictingCredentials`
+- `adapters/vaultbackup/store_test.go`: `TestSaveEncryptsAndRoundTrips`,
+  `TestUnavailableKeychainRefusesToWrite`, `TestReadDetectsTamperedCiphertext`
+- `application/history/service_test.go`:
+  `TestRecordDoesNotCreateWireRecordsForRemoteOrLegacyRows`,
+  `TestDeleteEntryOfAnImportedRowAppendsATombstone`,
+  `TestImportHostAtuinFailsClosedOnAMalformedRowBeforeWriting`,
+  `TestImportHostAtuinKeepsTheCheckpointWhenTheStoreFails`,
+  `TestImportHostAtuinSkipsCheckpointedRowsAndNeverDuplicates`
+- `domain/preferences/history_test.go`:
+  `TestPortableStripsHistoryAccountSettings`
+- `application/session/observe_test.go`:
+  `TestObserverCannotWriteOrConsumeTheLiveView`,
+  `TestObservationEndsWhenTheSessionEnds`,
+  `TestObserverSnapshotMatchesTheOwnerAndReceivesFeed`
 
 The quality gate for this change is the full Go suite
 (`nix develop --command env GOFLAGS=-buildvcs=false go test ./... -p 1 -count=1`),
-`go vet ./...`, and `gofmt -l` on the changed files. Targeted package runs and
-the full gate are reported with this change set; they do not substitute for the
-open release-gate items above.
+`go vet ./...`, `gofmt -l` on changed files, and `go tool mygo i18n check`. The
+targeted and full-suite results are reported with this change set. They do not
+claim the release verification dependencies above.

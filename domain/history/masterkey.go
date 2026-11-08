@@ -60,9 +60,7 @@ func KeyFingerprint(key []byte) string {
 // WipeMasterKey zeroes key material in place. Callers keep the key only for
 // the duration of a sync operation.
 func WipeMasterKey(key []byte) {
-	for index := range key {
-		key[index] = 0
-	}
+	wipeBytes(key)
 }
 
 func decodeMasterKeyBase64(input string) ([]byte, error) {
@@ -81,16 +79,32 @@ func decodeMasterKeyBase64(input string) ([]byte, error) {
 			}
 			continue
 		}
-		if len(decoded) == MasterKeyBytes {
-			// Legacy Atuin releases base64-encoded the raw 32 bytes.
-			return decoded, nil
-		}
-		if key, ok := decodeAtuinKeyEncoding(decoded); ok {
-			return key, nil
-		}
-		return nil, fmt.Errorf("%w: got %d bytes", ErrMasterKeyLength, len(decoded))
+		return decodeMasterKeyBytes(decoded)
 	}
 	return nil, firstErr
+}
+
+// decodeMasterKeyBytes interprets one base64-decoded payload and wipes that
+// intermediate buffer before returning. The returned key is always a fresh
+// copy the caller owns and must wipe.
+func decodeMasterKeyBytes(decoded []byte) ([]byte, error) {
+	defer wipeBytes(decoded)
+	if len(decoded) == MasterKeyBytes {
+		// Legacy Atuin releases base64-encoded the raw 32 bytes.
+		return append([]byte(nil), decoded...), nil
+	}
+	if key, ok := decodeAtuinKeyEncoding(decoded); ok {
+		return key, nil
+	}
+	return nil, fmt.Errorf("%w: got %d bytes", ErrMasterKeyLength, len(decoded))
+}
+
+// wipeBytes zeroes a buffer that held key material. It is best effort: Go
+// strings and by-value copies cannot all be reached.
+func wipeBytes(data []byte) {
+	for index := range data {
+		data[index] = 0
+	}
 }
 
 // decodeAtuinKeyEncoding decodes the two MessagePack shapes the official
@@ -121,6 +135,7 @@ func decodeAtuinKeyEncoding(decoded []byte) ([]byte, bool) {
 		for len(key) < MasterKeyBytes {
 			value, next, ok := decodeAtuinKeyInt(decoded, position)
 			if !ok {
+				wipeBytes(key)
 				return nil, false
 			}
 			key = append(key, byte(value))
@@ -214,6 +229,9 @@ func parseMnemonic(words []string) ([]byte, error) {
 	checksumBits := totalBits / 33
 	entropyBits := totalBits - checksumBits
 	packed := make([]byte, (totalBits+7)/8)
+	// packed carries the mnemonic entropy bits, which are the key itself. Wipe
+	// it on every return path; the caller receives a separate copy.
+	defer wipeBytes(packed)
 	for position, index := range indexes {
 		for bit := 0; bit < 11; bit++ {
 			if index&(1<<(10-bit)) == 0 {

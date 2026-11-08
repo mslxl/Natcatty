@@ -142,7 +142,7 @@ func TestParseMasterKeyAcceptsAtuinMessagePackEncodings(t *testing.T) {
 				t.Fatalf("ParseMasterKey: %v", err)
 			}
 			if !bytes.Equal(key, want) {
-				t.Fatalf("key = %x, want %x", key, want)
+				t.Fatal("the decoded key differs from the expected test key")
 			}
 			// The official client trims trailing whitespace from the encoded
 			// key before base64-decoding it.
@@ -245,6 +245,50 @@ func TestKeyFingerprintIsStableAndDoesNotContainTheKey(t *testing.T) {
 	if strings.Contains(fingerprint, base64.StdEncoding.EncodeToString(key)) ||
 		strings.Contains(fingerprint, bip39VectorKey) {
 		t.Fatalf("fingerprint %q contains the key", fingerprint)
+	}
+}
+
+// TestDecodeMasterKeyBytesWipesTheIntermediateBuffer covers every base64
+// decode shape. The base64-decoded buffer and the MessagePack envelope hold the
+// key bytes, so decodeMasterKeyBytes must zero its input before returning and
+// hand back a separate copy the caller owns.
+func TestDecodeMasterKeyBytesWipesTheIntermediateBuffer(t *testing.T) {
+	want := testMasterKey()
+	tests := []struct {
+		name  string
+		input []byte
+	}{
+		{"legacy raw", append([]byte(nil), want...)},
+		{"array16", atuinKeyArray16(want)},
+		{"bin8", append([]byte{0xc4, 0x20}, want...)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			key, err := decodeMasterKeyBytes(test.input)
+			if err != nil {
+				t.Fatalf("decodeMasterKeyBytes: %v", err)
+			}
+			if !bytes.Equal(key, want) {
+				t.Fatal("the decoded key differs from the expected test key")
+			}
+			if !bytes.Equal(test.input, make([]byte, len(test.input))) {
+				t.Fatal("the decode intermediate was not wiped")
+			}
+			// The returned key must not alias the wiped buffer.
+			if bytes.Equal(key, test.input) {
+				t.Fatal("the returned key aliases the wiped intermediate")
+			}
+		})
+	}
+}
+
+func TestDecodeMasterKeyBytesWipesOnFailure(t *testing.T) {
+	input := append([]byte(nil), testMasterKey()[:MasterKeyBytes-1]...)
+	if _, err := decodeMasterKeyBytes(input); err == nil {
+		t.Fatal("a short key was accepted")
+	}
+	if !bytes.Equal(input, make([]byte, len(input))) {
+		t.Fatal("the failed decode intermediate was not wiped")
 	}
 }
 
