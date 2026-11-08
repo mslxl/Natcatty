@@ -93,7 +93,22 @@ end
 		if err := os.WriteFile(filepath.Join(dir, "config.fish"), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		return env
+		// fish 3.6 and later start a man-page completion generator in the
+		// background on the first interactive start when this cache directory
+		// is missing, then disown it so it deliberately outlives the shell
+		// (fish's own comment cites "an early exit"). The generator writes into
+		// the isolated home after the Session has ended; no PTY or Session
+		// teardown can join a disowned process in another process group.
+		// Pre-creating the empty cache directory is fish's own "cache exists"
+		// condition, so the unrelated writer never starts and the test's
+		// temporary home contains only writes by processes the Session owns.
+		// Capture behavior is unaffected: the hook, the user config, and the
+		// prompt all still run.
+		dataDir := filepath.Join(home, ".local", "share")
+		if err := os.MkdirAll(filepath.Join(dataDir, "fish", "generated_completions"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return append(env, "XDG_DATA_HOME="+dataDir)
 	case "pwsh", "powershell":
 		return powerShellStartupEnv(t, home)
 	}
@@ -172,7 +187,7 @@ func startShell(t *testing.T, path string, args []string, dir string, env []stri
 		_ = terminal.Close()
 		select {
 		case <-terminal.Exited():
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 		}
 	})
 	go process.readLoop()
@@ -500,7 +515,7 @@ func TestRealShellSessionCapturesTierOneEndToEnd(t *testing.T) {
 				_ = session.Close()
 				select {
 				case <-session.Done():
-				case <-time.After(5 * time.Second):
+				case <-time.After(10 * time.Second):
 				}
 			})
 
@@ -677,7 +692,7 @@ func TestRealNushellSessionCapturesTierOneEndToEnd(t *testing.T) {
 		_ = session.Close()
 		select {
 		case <-session.Done():
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 		}
 	})
 	if !waitCondition(func() bool {
@@ -863,7 +878,7 @@ func TestRealXonshSessionCapturesTierOneEndToEnd(t *testing.T) {
 		_ = session.Close()
 		select {
 		case <-session.Done():
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 		}
 	})
 	if !waitCondition(func() bool {
@@ -1000,7 +1015,7 @@ func TestRealXonshWithoutHookKeepsNativeFallback(t *testing.T) {
 		_ = session.Close()
 		select {
 		case <-session.Done():
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 		}
 	})
 	if !waitCondition(func() bool {
@@ -1098,7 +1113,7 @@ func TestRealNushellWithoutHookKeepsNativeCapture(t *testing.T) {
 		_ = session.Close()
 		select {
 		case <-session.Done():
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 		}
 	})
 	if !waitCondition(func() bool {
@@ -1385,7 +1400,7 @@ func TestRealShellSessionCapturesMultilineCommandsOnce(t *testing.T) {
 				_ = session.Close()
 				select {
 				case <-session.Done():
-				case <-time.After(5 * time.Second):
+				case <-time.After(10 * time.Second):
 				}
 			})
 			if !waitCondition(func() bool { return session.Snapshot().CWD != "" }) {
@@ -1468,7 +1483,7 @@ func openLocalSession(t *testing.T, name, path, home, workDir string,
 		_ = session.Close()
 		select {
 		case <-session.Done():
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 		}
 	})
 	if !waitCondition(func() bool { return ready(service, session) }) {
@@ -1700,7 +1715,7 @@ func TestRealZshWithoutEncoderKeepsTheTypedFallback(t *testing.T) {
 		_ = session.Close()
 		select {
 		case <-session.Done():
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 		}
 	})
 	if !waitCondition(func() bool {
@@ -1909,7 +1924,7 @@ func TestRealShellSessionCapturesAnEarlyCommandOnce(t *testing.T) {
 				_ = session.Close()
 				select {
 				case <-session.Done():
-				case <-time.After(5 * time.Second):
+				case <-time.After(10 * time.Second):
 				}
 			})
 
@@ -2429,7 +2444,7 @@ func TestRealTierThreeFallbackCapturesTypedInput(t *testing.T) {
 		_ = session.Close()
 		select {
 		case <-session.Done():
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 		}
 	})
 	if !waitCondition(func() bool {

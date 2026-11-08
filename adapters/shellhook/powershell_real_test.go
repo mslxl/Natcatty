@@ -170,7 +170,7 @@ func openHookedPowerShellSession(t *testing.T, path, home, workDir string) (*app
 		_ = session.Close()
 		select {
 		case <-session.Done():
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 		}
 	})
 	if !waitCondition(func() bool { return session.Snapshot().CWD != "" }) {
@@ -301,6 +301,70 @@ func TestRealPowerShellLocalHookCapturesTierOne(t *testing.T) {
 	})
 	if count := countNetcattyExec(process.snapshotString()); count != beforeCaptures {
 		t.Fatalf("an empty line replayed a command: %d, want %d", count, beforeCaptures)
+	}
+}
+
+// TestRealPowerShellSessionCapturesTierOneEndToEnd drives the real Session
+// stack with PowerShell, not just the raw terminal: the planner, local PTY,
+// hook marks, and tap together must publish exactly one Tier 1 completion with
+// the command, cwd, exit code, and a measured duration. The raw hook test above
+// proves the script's sequences; this test proves the fidelity the matrix
+// records for the PowerShell Tier 1 cells.
+func TestRealPowerShellSessionCapturesTierOneEndToEnd(t *testing.T) {
+	pwsh := availablePowerShell()
+	if pwsh == "" {
+		t.Skip("no PowerShell available; set NETCATTY_TEST_PWSH")
+	}
+	home := t.TempDir()
+	workDir := t.TempDir()
+	service, session, events := openHookedPowerShellSession(t, pwsh, home, workDir)
+	warmUpHookedSession(t, service, session, events, "pwsh")
+
+	expectedCWD := workDir
+	if resolved, err := filepath.EvalSymlinks(workDir); err == nil {
+		expectedCWD = resolved
+	}
+
+	// The sleep makes the duration observable, so the row cannot pass with a
+	// zero or invented measurement.
+	command := "Start-Sleep -Milliseconds 350; Write-Output netcatty_pwsh_session_42"
+	service.SendInput([]model.SessionID{session.ID()}, []byte(command+"\r"))
+	event := awaitTierOne(t, events, command)
+	if event.Shell != "powershell" || event.CaptureTier != domainhistory.CaptureTierHook {
+		t.Fatalf("completion = %+v", event)
+	}
+	if event.CWD != workDir && event.CWD != expectedCWD {
+		t.Fatalf("cwd = %q, want %q", event.CWD, workDir)
+	}
+	if !event.HasExitCode || event.ExitCode != 0 {
+		t.Fatalf("exit = %d/%t, want 0", event.ExitCode, event.HasExitCode)
+	}
+	duration := event.FinishedAt.Sub(event.StartedAt)
+	if event.StartedAt.IsZero() || event.FinishedAt.IsZero() ||
+		event.FinishedAt.Before(event.StartedAt) || duration < 250*time.Millisecond {
+		t.Fatalf("times = %v..%v (duration %v), want the command's real duration",
+			event.StartedAt, event.FinishedAt, duration)
+	}
+
+	// A failing native command must report its own status through the tap, not
+	// the previous command's success.
+	exitCommand := "/bin/sh -c 'exit 7'"
+	if runtime.GOOS == "windows" {
+		exitCommand = "cmd /c exit 7"
+	}
+	service.SendInput([]model.SessionID{session.ID()}, []byte(exitCommand+"\r"))
+	failed := awaitTierOne(t, events, exitCommand)
+	if !failed.HasExitCode || failed.ExitCode != 7 {
+		t.Fatalf("exit = %d/%t, want the native command's 7: %+v",
+			failed.ExitCode, failed.HasExitCode, failed)
+	}
+	if failed.StartedAt.IsZero() || !failed.FinishedAt.After(failed.StartedAt) {
+		t.Fatalf("times = %v..%v, want a measured duration", failed.StartedAt, failed.FinishedAt)
+	}
+	select {
+	case extra := <-events:
+		t.Fatalf("the command was captured twice: %+v", extra)
+	default:
 	}
 }
 
@@ -1298,7 +1362,7 @@ func TestRealPowerShellTierThreeFallback(t *testing.T) {
 		_ = session.Close()
 		select {
 		case <-session.Done():
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 		}
 	})
 	if !waitCondition(func() bool {

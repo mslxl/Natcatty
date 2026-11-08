@@ -22,13 +22,23 @@ Evidence kinds in a cell:
 
 - **observed** — a real shell ran on the named Host and architecture, and the
   cited test asserted the fidelity. The run is recorded in `observedRuns`.
-- **ci** — the cell is exercised by a required job in
-  `.github/workflows/release.yml`. It has **not** run on this machine. The
-  checker reads the workflow and fails if the job is missing, has a job-level
-  `if` that can skip it, is not reachable from `publish`, does not run the cited
-  test, or does not name the cell's shell binding.
-- **manual** — a human procedure that can really run, recorded with exact
-  commands and expected fidelity. It is never an observation.
+- **ci** — the cell is exercised by a job in
+  `.github/workflows/release.yml`. It has **not** run on this machine. A
+  release-blocking cell's test must run in a required step of a job reachable
+  from `publish`. The checker fails if the job is missing, has a job-level `if`
+  that can skip it, is continue-on-error, is not reachable from `publish`, does
+  not run the cited test in a required step, or does not name the cell's shell
+  binding.
+- **ci (best-effort)** — a nushell or xonsh cell's tests run in a step with
+  `continue-on-error: true`, or in a whole continue-on-error job that is outside
+  the publish dependency chain. The checker rejects optional evidence on a
+  release-blocking cell, a gate test that appears only in an optional step,
+  optional evidence that cites a required-step test, and a whole optional job in
+  the publish chain. A failure in the best-effort step is visible in the step
+  outcome but cannot fail the job, `checksums`, or `publish`.
+- **manual** — a human procedure, recorded with exact commands and expected
+  fidelity. It is never an observation. A manual cell must say when it has not
+  been run on a real Host, and must not claim PASS.
 
 An observed cell may also carry a `ci` object: the historical observation is
 evidence, and the release job is the release-time re-run. A `ci` cell with no
@@ -40,20 +50,29 @@ the cells.
 
 | Host/arch | zsh | bash | fish | nushell | xonsh | PowerShell | Tier 3 fallback |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Linux amd64 | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed (Linux) + CI | T3 observed + CI |
-| Linux arm64 | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed (Linux) + CI | T3 observed + CI |
-| macOS arm64 | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + CI | T3 observed + CI |
-| macOS x86_64 | T1 observed (Rosetta) + CI | T1 observed (Rosetta) + CI | T1 observed (Rosetta) + CI | T1 observed (Rosetta) + CI | T1 observed (Rosetta) + CI | T1 observed (Rosetta) + CI | T3 observed (Rosetta) + CI |
-| Windows x86_64 | T3 manual | T3 manual | T3 manual | T2 manual | T2 manual | T1 CI | T3 CI |
-| Windows arm64 | T3 manual | T3 manual | T3 manual | T2 manual | T2 manual | T1 CI | T3 CI |
-| FreeBSD amd64 | T1 CI (SSH) | T1 CI (SSH) | T1 CI (SSH) | T2 CI (SSH) | T2 CI (SSH) | out of scope | T3 CI (SSH) |
+| Linux amd64 | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + best-effort CI | T1 observed + best-effort CI | T1 observed (Linux) + CI | T3 observed + CI |
+| Linux arm64 | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + best-effort CI | T1 observed + best-effort CI | T1 observed (Linux) + CI | T3 observed + CI |
+| macOS arm64 | T1 observed + CI | T1 observed + CI | T1 observed + CI | T1 observed + best-effort CI | T1 observed + best-effort CI | T1 observed + CI | T3 observed + CI |
+| macOS x86_64 | T1 observed (Rosetta) + CI | T1 observed (Rosetta) + CI | T1 observed (Rosetta) + CI | T1 observed (Rosetta) + best-effort CI | T1 observed (Rosetta) + best-effort CI | T1 observed (Rosetta) + CI | T3 observed (Rosetta) + CI |
+| Windows x86_64 | T3 manual | T3 manual | T3 manual | T2 manual (unverified) | T2 manual | T1 CI | T3 CI |
+| Windows arm64 | T3 manual | T3 manual | T3 manual | T2 manual (unverified) | T2 manual | T1 CI | T3 CI |
+| FreeBSD amd64 | T1 CI (SSH) | T1 CI (SSH) | T1 CI (SSH) | T2 best-effort CI (SSH) | T2 best-effort CI (SSH) | out of scope | T3 CI (SSH) |
 
 Notes:
 
 - PowerShell on BSD is out of scope: BSD is in scope for POSIX shells.
 - nushell and xonsh are best-effort on every Host and are never release gates,
-  whatever tier they reach. They are Tier 1 where the local hook takes, Tier 2
-  where only the native integration works, and Tier 3 on Windows POSIX shells.
+  whatever tier they reach. Their tests run in a continue-on-error step, so a
+  failure cannot fail the job or block `checksums`/`publish`. They are Tier 1
+  where the local hook takes, Tier 2 where only the native integration works,
+  and Tier 3 on Windows POSIX shells.
+- The Windows nushell procedure is **unverified**: it has not been run on a
+  Windows machine. The test writes its isolated `config.nu` under
+  `XDG_CONFIG_HOME/nushell`. Nushell honors an absolute `XDG_CONFIG_HOME` on
+  Windows since nushell/nushell#12118, but a build without that change resolves
+  `%APPDATA%\nushell` instead and fails the test's user-config assertion. The
+  procedure starts with a preflight that makes this explicit; do not record a
+  PASS unless that preflight and the test both pass on the real Host.
 - Windows zsh, bash, and fish keep their POSIX startup and receive no Netcatty
   hook, so they are Tier 3. Their manual check is in the Windows section.
 - macOS x86_64 was observed with an amd64 test binary and x86_64 shells under
@@ -72,12 +91,27 @@ Notes:
 
 ## Release gates
 
-Every gate below is `releaseBlocking` in the fixture and is bound to a release
-workflow job. The checker fails when a gate is missing, is not marked
-release-blocking, is classified below the required tier, has only a `planned`
-check, or cites a job that is absent, conditional, unreachable from `publish`,
-or does not run the cell's test with its shell binding. The full list is the
-`requiredHostShellGates` table in `capture_matrix_test.go`.
+Every gate below is `releaseBlocking` in the fixture and is bound to a required
+step of a release workflow job. The checker fails when a gate is missing, is
+not marked release-blocking, is classified below the required tier, has only a
+`planned` check, or cites a job that is absent, conditional, unreachable from
+`publish`, does not run the cell's test in a required step, or does not name the
+cell's shell binding. The full list is the `requiredHostShellGates` table in
+`capture_matrix_test.go`.
+
+The required Linux and macOS step runs
+`TestRealShellSessionCapturesTierOneEndToEnd`,
+`TestRealPowerShellLocalHookCapturesTierOne`,
+`TestRealPowerShellSessionCapturesTierOneEndToEnd`,
+`TestRealTierThreeFallbackCapturesTypedInput`, and
+`TestRealPowerShellTierThreeFallback`. The PowerShell Session test drives the
+real Session stack, asserts the exit code and `StartedAt`/`FinishedAt`, and
+requires a measured duration above 250 ms, so the PowerShell Tier 1 cells'
+`duration: exact` is backed by an assertion, not inferred from the raw hook
+test. Nushell and xonsh run in the sibling `Run the best-effort shells` step
+with `continue-on-error: true`; the Windows jobs run the same PowerShell Session
+test in their required step, and the FreeBSD job runs the SSH native fallback in
+a continue-on-error step.
 
 | Gate cell | Tier | Evidence | Release job / runner | Exact startup | Expected fidelity (cwd/exit/duration) |
 | --- | --- | --- | --- | --- | --- |
@@ -162,14 +196,15 @@ strings, including the nix-store PATH entries, are in the fixture's
 
 | Run | Environment | Shells and versions | Result |
 | --- | --- | --- | --- |
-| macos-arm64-local-2026-11-08 | macOS 27.2, arm64 | zsh 5.9.2, bash 5.3.20, fish 4.9.3, nushell 0.116.1, xonsh 0.24.2, pwsh 7.6.9 | PASS, 52.290s |
-| macos-arm64-bash32-local-2026-11-08 | same | `/bin/bash` 3.2.57 | PASS, 0.12s |
-| macos-arm64-native-fallback-local-2026-11-08 | same | nushell 0.116.1, xonsh 0.24.2 | PASS, 5.567s |
-| macos-amd64-rosetta-local-2026-11-08 | macOS 27.2, x86_64 userland under Rosetta 2 | zsh 5.9, bash 3.2.57, fish 4.7.1, nushell 0.116.1, xonsh 0.23.7, pwsh 7.6.9 | PASS, 59.063s |
-| linux-arm64-docker-2026-11-08 | Linux arm64, Docker 29.8.2 (OrbStack), Debian 12.15 | zsh 5.9, bash 5.2.15, fish 3.6.0, nushell 0.116.1, xonsh 0.24.2 | PASS, 29.361s |
-| linux-amd64-docker-2026-11-08 | Linux amd64, same runtime and image | zsh 5.9, bash 5.2.15, fish 3.6.0, nushell 0.116.1, xonsh 0.24.2 | PASS, 30.938s |
-| linux-arm64-pwsh-docker-2026-11-08 | Linux arm64, same runtime and image | pwsh 7.6.9 | PASS, 2.167s |
-| linux-amd64-pwsh-docker-2026-11-08 | Linux amd64, same runtime and image | pwsh 7.6.9 | PASS, 9.344s |
+| macos-arm64-local-2026-11-08 | macOS 27.2, arm64 | zsh 5.9.2, bash 5.3.20, fish 4.9.3, nushell 0.116.1, xonsh 0.24.2, pwsh 7.6.9 | PASS 3/3, 53.295s, 51.105s, 52.470s |
+| macos-arm64-bash32-local-2026-11-08 | same | `/bin/bash` 3.2.57 | PASS, 0.09s |
+| macos-arm64-native-fallback-local-2026-11-08 | same | nushell 0.116.1, xonsh 0.24.2 | PASS, 5.147s |
+| macos-amd64-rosetta-local-2026-11-08 | macOS 27.2, x86_64 userland under Rosetta 2 | zsh 5.9, bash 3.2.57, fish 4.7.1, nushell 0.116.1, xonsh 0.23.7, pwsh 7.6.9 | PASS, 57.323s |
+| linux-arm64-docker-2026-11-08 | Linux arm64, Docker 29.8.2 (OrbStack), Debian 12.15 | zsh 5.9, bash 5.2.15, fish 3.6.0, nushell 0.116.1, xonsh 0.24.2 | PASS, 28.590s |
+| linux-amd64-docker-2026-11-08 | Linux amd64, same runtime and image | zsh 5.9, bash 5.2.15, fish 3.6.0, nushell 0.116.1, xonsh 0.24.2, pwsh 7.6.9 | PASS 3/3, 53.064s, 43.656s, 51.183s |
+| linux-amd64-fish-stress-2026-11-08 | Linux amd64, same runtime and image | fish 3.6.0 | PASS 10/10, 7.735s test time |
+| linux-arm64-pwsh-docker-2026-11-08 | Linux arm64, same runtime and image | pwsh 7.6.9 | PASS, 1.783s |
+| linux-amd64-pwsh-docker-2026-11-08 | Linux amd64, same runtime and image | pwsh 7.6.9 | PASS, 6.325s |
 | ssh-linux-arm64-lab-2026-11-08 | Ubuntu 24.04.5 arm64 container `natcatty-ssh-lab`, OpenSSH | zsh 5.9, bash 5.2.21, fish 3.7.0, nushell 0.116.1, xonsh 0.24.2 | PASS, 5.848s |
 
 Both Linux matrix runs used `golang:1.27-bookworm` pinned to
@@ -179,6 +214,19 @@ The arm64 container was `natcatty-debug`; the amd64 container was
 `nu-0.116.1-<arch>-unknown-linux-gnu.tar.gz`; xonsh from `/opt/xonsh`;
 PowerShell 7.6.9 was installed at `/usr/local/bin/pwsh` for the Linux
 PowerShell runs.
+
+The Linux amd64 and macOS arm64 full runs were executed three times each; the
+three durations are recorded above and in the fixture result. The linux/amd64
+fish subtest was additionally executed ten times in one `-count=10` invocation:
+10 runs, 10 passes, 0 skips (the run is recorded as
+`linux-amd64-fish-stress-2026-11-08` and cited by `linux-amd64-fish`). This is
+the regression run for the teardown race: the local tests put `HOME` in
+`t.TempDir()`, and the fish case pre-creates fish's empty
+`generated_completions` cache directory so fish 3.6 does not start its disowned
+background man-page generator after the shell exits. `localpty.Close` now hangs
+up, waits a bounded time for the shell process to exit, then kills and reaps it
+before the Session publishes `Done`; teardown therefore joins every process the
+Session owns, and the temporary home is safe to remove.
 
 The macOS x86_64 run built the test binary with
 `GOARCH=amd64 CGO_ENABLED=0 go test -c`. The system `/bin/zsh` and `/bin/bash`
@@ -207,7 +255,11 @@ Observed fidelity:
   and no exit code.
 - pwsh 7.6.9 Tier 1 on macOS arm64, macOS x86_64 under Rosetta, and Linux
   arm64/amd64: exact command, cwd, exit code, and duration, with exactly one
-  profile load. The macOS and Linux runs are not Windows evidence.
+  profile load. The duration and exit records are asserted by
+  `TestRealPowerShellSessionCapturesTierOneEndToEnd`, which drives the real
+  Session stack and requires a measured duration above 250 ms; the raw
+  `TestRealPowerShellLocalHookCapturesTierOne` alone did not assert them. The
+  macOS and Linux runs are not Windows evidence.
 - pwsh 7.6.9 Tier 3 on macOS: typed command and duration; no cwd and no exit
   code.
 
@@ -235,18 +287,23 @@ pwsh --version
 $PSVersionTable.PSVersion
 
 go test ./adapters/shellhook -run '^TestRealPowerShellLocalHookCapturesTierOne$' -count=1 -v
+go test ./adapters/shellhook -run '^TestRealPowerShellSessionCapturesTierOneEndToEnd$' -count=1 -v
 go test ./adapters/shellhook -run '^TestRealPowerShellTierThreeFallback$' -count=1 -v
 ```
 
 Expected: Tier 1 has the typed command, cwd, exit code, and exactly one
-profile load; the fallback has no cwd and no exit code, finished by the profile
-prompt. Both are release-blocking. These cells were **not** run on this
-machine; the jobs are the provisioning mechanism and the release gate.
+profile load; the Session test also asserts the exit code and a measured
+duration above 250 ms; the fallback has no cwd and no exit code, finished by the
+profile prompt. Both cells are release-blocking. These cells were **not** run on
+this machine; the jobs are the provisioning mechanism and the release gate.
 
 ### Windows best-effort shells (manual)
 
 These cells are not release-blocking and were not run here. Use the same
-Windows runner or VM and PowerShell.
+Windows runner or VM and PowerShell. The nushell procedure is explicitly
+unverified: it has not been executed on Windows. It preflights the one Windows
+behavior the test depends on, `XDG_CONFIG_HOME` support, so a failure is
+distinguishable from a passing capture.
 
 nushell (Tier 2):
 
@@ -256,9 +313,26 @@ winget install --id Nushell.Nushell --exact --accept-source-agreements --accept-
 $nu = (Get-Command nu.exe).Source
 if (-not (Test-Path -LiteralPath $nu)) { throw 'nu.exe is missing' }
 & $nu --version
+
+# The test writes its isolated config.nu under XDG_CONFIG_HOME/nushell. Nushell
+# honors an absolute XDG_CONFIG_HOME on Windows since nushell/nushell#12118.
+# Require the printed directory to end with netcatty-nu-xdg\nushell. If it
+# prints %APPDATA%\nushell, this build ignores XDG_CONFIG_HOME, the test cannot
+# read its isolated config, and the run is unverified rather than PASS.
+$env:XDG_CONFIG_HOME = Join-Path $env:TEMP 'netcatty-nu-xdg'
+New-Item -ItemType Directory -Force (Join-Path $env:XDG_CONFIG_HOME 'nushell') | Out-Null
+'print "xdg-ok"' | Set-Content (Join-Path $env:XDG_CONFIG_HOME 'nushell\config.nu')
+& $nu -c '$nu.default-config-dir'
+Remove-Item Env:XDG_CONFIG_HOME -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force (Join-Path $env:TEMP 'netcatty-nu-xdg')
+
 $env:NETCATTY_TEST_NU = $nu
 go test ./adapters/shellhook -run '^TestRealNushellWithoutHookKeepsNativeCapture$' -count=1 -v
 ```
+
+Record the printed `$nu.default-config-dir` and the `nu --version` output with
+the result. Do not record a PASS if the preflight prints the `%APPDATA%`
+directory or the test fails its user-config assertion.
 
 xonsh (Tier 2):
 
@@ -313,15 +387,17 @@ NETCATTY_TEST_NU=<x86_64-nu> \
 NETCATTY_TEST_XONSH=<x86_64-xonsh> \
 NETCATTY_TEST_PWSH=<x86_64-pwsh> \
 /usr/bin/arch -x86_64 /tmp/shellhook-amd64.test \
-  -test.run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' \
+  -test.run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealPowerShellSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' \
   -test.count=1 -test.v
 ```
 
 Expected: zsh, bash, fish, and PowerShell at Tier 1 with exact cwd, exit code,
-and duration; nushell and xonsh at Tier 1; the Tier 3 fallback with no cwd and
-no exit. All four zsh/bash/fish/PowerShell cells are release-blocking; nushell
-and xonsh are best-effort. The release workflow runs the same matrix natively
-on `macos-15-intel`; that job is the release-time x86_64 hardware evidence.
+and duration; the PowerShell Session test asserts the exit and duration;
+nushell and xonsh at Tier 1; the Tier 3 fallback with no cwd and no exit. All
+four zsh/bash/fish/PowerShell cells are release-blocking; nushell and xonsh are
+best-effort and run in the workflow's continue-on-error step. The release
+workflow runs the same matrix natively on `macos-15-intel`; that job is the
+release-time x86_64 hardware evidence.
 
 ### FreeBSD amd64 over SSH (manual)
 
@@ -492,7 +568,10 @@ Expected fidelity: zsh, bash, fish exact cwd/exit/duration (Tier 1); nushell
 exact cwd, no Netcatty exit, observed native finish (Tier 2); xonsh exact cwd,
 no Netcatty exit, no finish (Tier 2); Tier 3 typed command and measured
 duration with no cwd and no exit. The zsh/bash/fish and fallback cells are
-release-blocking; nushell and xonsh are best-effort.
+release-blocking; nushell and xonsh are best-effort. In `release.yml` the
+zsh/bash/fish and fallback SSH tests run in the required step, while
+`TestRealSSHRemoteNativeFallback` runs in a separate continue-on-error step, so
+a nushell or xonsh problem cannot make `capture-freebsd-amd64` fail.
 
 6. Clean up:
 
@@ -537,31 +616,34 @@ pwsh run can never support a Windows cell.
 request and push to main. `release.yml` runs it in `validate` before building:
 
 ```
-go test ./adapters/shellhook -run '^(TestCaptureMatrix|TestHostShellMatrix|TestHostShellReleaseGates|TestHostShellMatrixRejectsBadFixtures)$' -count=1 -v
+go test ./adapters/shellhook -run '^(TestCaptureMatrix|TestHostShellMatrix|TestHostShellReleaseGates|TestHostShellMatrixRejectsBadFixtures|TestValidateCellCIRejectsOptionalEvidenceThatCouldGate)$' -count=1 -v
 ```
 
-The same workflow contains the required capture jobs:
+The same workflow contains the capture jobs:
 
-| Job | Runner | Cells |
-| --- | --- | --- |
-| capture-linux-amd64 | ubuntu-latest | Linux amd64 zsh/bash/fish/nushell/xonsh/PowerShell/fallback |
-| capture-linux-arm64 | ubuntu-24.04-arm | Linux arm64 zsh/bash/fish/nushell/xonsh/PowerShell/fallback |
-| capture-macos-arm64 | macos-latest | macOS arm64 zsh/bash/fish/nushell/xonsh/PowerShell/fallback |
-| capture-macos-amd64 | macos-15-intel | macOS x86_64 zsh/bash/fish/nushell/xonsh/PowerShell/fallback |
-| capture-windows-amd64 | windows-latest | Windows x86_64 PowerShell Tier 1 and fallback |
-| capture-windows-arm64 | windows-11-arm | Windows arm64 PowerShell Tier 1 and fallback |
-| capture-freebsd-amd64 | ubuntu-latest (QEMU FreeBSD 14.5 VM) | BSD zsh/bash/fish/nushell/xonsh/fallback over SSH |
+| Job | Runner | Required step | Best-effort step |
+| --- | --- | --- | --- |
+| capture-linux-amd64 | ubuntu-latest | Linux amd64 zsh/bash/fish/PowerShell/fallback | nushell/xonsh |
+| capture-linux-arm64 | ubuntu-24.04-arm | Linux arm64 zsh/bash/fish/PowerShell/fallback | nushell/xonsh |
+| capture-macos-arm64 | macos-latest | macOS arm64 zsh/bash/fish/PowerShell/fallback | nushell/xonsh |
+| capture-macos-amd64 | macos-15-intel | macOS x86_64 zsh/bash/fish/PowerShell/fallback | nushell/xonsh |
+| capture-windows-amd64 | windows-latest | Windows x86_64 PowerShell Tier 1 (hook and Session) and fallback | none |
+| capture-windows-arm64 | windows-11-arm | Windows arm64 PowerShell Tier 1 (hook and Session) and fallback | none |
+| capture-freebsd-amd64 | ubuntu-latest (QEMU FreeBSD 14.5 VM) | BSD zsh/bash/fish/fallback over SSH | nushell/xonsh SSH native fallback |
 
 `checksums` needs every capture job, and `publish` needs `checksums`, so a
-failed or skipped capture job prevents publishing. The checker parses
-`release.yml` itself: deleting a job, adding a job-level `if`, changing
-`runs-on`, removing a cited test or `NETCATTY_TEST_SSH_*` binding, or moving a
-job out of the publish dependency chain fails `TestHostShellMatrix`. The
-Windows and FreeBSD jobs are `ci` evidence in the cells and were not run on
-this machine; the Linux, macOS, and SSH-lab observations are attached as
-`observedRuns`. The Linux and macOS `observed` cells also carry the release
-job that re-runs them, so observed history and release provisioning are both
-recorded.
+failed or skipped required step prevents publishing. A failure in a
+continue-on-error best-effort step does not fail its job and therefore does not
+block `checksums` or `publish`; the step's own outcome still records the
+failure. The checker parses `release.yml` itself, including step-level
+`continue-on-error`: deleting a job, adding a job-level `if`, changing
+`runs-on`, moving a required test into an optional step, removing a cited test
+or `NETCATTY_TEST_SSH_*` binding, or moving a job out of the publish dependency
+chain fails `TestHostShellMatrix`. The Windows and FreeBSD jobs are `ci`
+evidence in the cells and were not run on this machine; the Linux, macOS, and
+SSH-lab observations are attached as `observedRuns`. The Linux and macOS
+`observed` cells also carry the release job that re-runs them, so observed
+history and release provisioning are both recorded.
 
 `TestCaptureMatrix` still replans every path on each recorded platform, so a
 startup-file or argument change cannot drift from the fixture.
@@ -570,3 +652,8 @@ proves the checker rejects a missing gate, a missing best-effort cell, a wrong
 tier, a false observed claim, a FAIL result, a wrong shell binding, a platform
 mismatch, a Tier 2 exit code, a BSD cell that points at a local PTY path, and a
 CI job that does not exist or does not run the cell.
+`TestValidateCellCIRejectsOptionalEvidenceThatCouldGate` separately proves the
+optional path cannot smuggle a failure into a release: optional evidence on a
+gate, a gate test that only runs in a continue-on-error step, optional evidence
+citing a required-step test, and a whole optional job in the publish chain are
+all rejected.

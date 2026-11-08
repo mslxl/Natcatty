@@ -66,7 +66,7 @@ jobs:
         # steps are documented in docs/host-shell-matrix.md; they are not
         # claimed as observations by this fixture. TestCaptureMatrix also
         # replans every path so a startup-file change cannot drift from it.
-        run: go test ./adapters/shellhook -run '^(TestCaptureMatrix|TestHostShellMatrix|TestHostShellReleaseGates|TestHostShellMatrixRejectsBadFixtures)$' -count=1 -v
+        run: go test ./adapters/shellhook -run '^(TestCaptureMatrix|TestHostShellMatrix|TestHostShellReleaseGates|TestHostShellMatrixRejectsBadFixtures|TestValidateCellCIRejectsOptionalEvidenceThatCouldGate)$' -count=1 -v
 
       - name: Read the release version from mygo.json
         id: tag
@@ -173,7 +173,18 @@ jobs:
           NETCATTY_TEST_NU="$(command -v nu)" \
           NETCATTY_TEST_XONSH=/opt/xonsh/bin/xonsh \
           NETCATTY_TEST_PWSH=/opt/pwsh/pwsh \
-          go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+          go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealPowerShellSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+
+      - name: Run the best-effort shells
+        # nushell and xonsh are best-effort in the ticket and the matrix: they
+        # are not release gates. A failure here is recorded but does not fail
+        # the job, so checksums and publish still run.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          NETCATTY_TEST_NU="$(command -v nu)" \
+          NETCATTY_TEST_XONSH=/opt/xonsh/bin/xonsh \
+          go test ./adapters/shellhook -run '^(TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealNushellWithoutHookKeepsNativeCapture|TestRealXonshWithoutHookKeepsNativeFallback)$' -count=1 -v
 
   capture-linux-arm64:
     name: capture Linux arm64 shells
@@ -231,7 +242,18 @@ jobs:
           NETCATTY_TEST_NU="$(command -v nu)" \
           NETCATTY_TEST_XONSH=/opt/xonsh/bin/xonsh \
           NETCATTY_TEST_PWSH=/opt/pwsh/pwsh \
-          go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+          go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealPowerShellSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+
+      - name: Run the best-effort shells
+        # nushell and xonsh are best-effort in the ticket and the matrix: they
+        # are not release gates. A failure here is recorded but does not fail
+        # the job, so checksums and publish still run.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          NETCATTY_TEST_NU="$(command -v nu)" \
+          NETCATTY_TEST_XONSH=/opt/xonsh/bin/xonsh \
+          go test ./adapters/shellhook -run '^(TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealNushellWithoutHookKeepsNativeCapture|TestRealXonshWithoutHookKeepsNativeFallback)$' -count=1 -v
 
   capture-macos-arm64:
     name: capture macOS arm64 shells
@@ -281,7 +303,18 @@ jobs:
           NETCATTY_TEST_NU="$RUNNER_TEMP/bin/nu" \
           NETCATTY_TEST_XONSH="$RUNNER_TEMP/xonsh/bin/xonsh" \
           NETCATTY_TEST_PWSH="$RUNNER_TEMP/pwsh/pwsh" \
-          go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+          go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealPowerShellSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+
+      - name: Run the best-effort shells
+        # nushell and xonsh are best-effort in the ticket and the matrix: they
+        # are not release gates. A failure here is recorded but does not fail
+        # the job, so checksums and publish still run.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          NETCATTY_TEST_NU="$RUNNER_TEMP/bin/nu" \
+          NETCATTY_TEST_XONSH="$RUNNER_TEMP/xonsh/bin/xonsh" \
+          go test ./adapters/shellhook -run '^(TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealNushellWithoutHookKeepsNativeCapture|TestRealXonshWithoutHookKeepsNativeFallback)$' -count=1 -v
 
   capture-macos-amd64:
     name: capture macOS x86_64 shells
@@ -332,7 +365,18 @@ jobs:
           NETCATTY_TEST_NU="$RUNNER_TEMP/bin/nu" \
           NETCATTY_TEST_XONSH="$RUNNER_TEMP/xonsh/bin/xonsh" \
           NETCATTY_TEST_PWSH="$RUNNER_TEMP/pwsh/pwsh" \
-          go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+          go test ./adapters/shellhook -run '^(TestRealShellSessionCapturesTierOneEndToEnd|TestRealPowerShellLocalHookCapturesTierOne|TestRealPowerShellSessionCapturesTierOneEndToEnd|TestRealTierThreeFallbackCapturesTypedInput|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+
+      - name: Run the best-effort shells
+        # nushell and xonsh are best-effort in the ticket and the matrix: they
+        # are not release gates. A failure here is recorded but does not fail
+        # the job, so checksums and publish still run.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          NETCATTY_TEST_NU="$RUNNER_TEMP/bin/nu" \
+          NETCATTY_TEST_XONSH="$RUNNER_TEMP/xonsh/bin/xonsh" \
+          go test ./adapters/shellhook -run '^(TestRealNushellSessionCapturesTierOneEndToEnd|TestRealXonshSessionCapturesTierOneEndToEnd|TestRealNushellWithoutHookKeepsNativeCapture|TestRealXonshWithoutHookKeepsNativeFallback)$' -count=1 -v
 
   capture-windows-amd64:
     name: capture Windows amd64 PowerShell
@@ -363,7 +407,7 @@ jobs:
       - name: Run the capture matrix
         run: |
           $ErrorActionPreference = 'Stop'
-          go test ./adapters/shellhook -run '^(TestRealPowerShellLocalHookCapturesTierOne|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+          go test ./adapters/shellhook -run '^(TestRealPowerShellLocalHookCapturesTierOne|TestRealPowerShellSessionCapturesTierOneEndToEnd|TestRealPowerShellTierThreeFallback)$' -count=1 -v
 
   capture-windows-arm64:
     name: capture Windows arm64 PowerShell
@@ -394,7 +438,7 @@ jobs:
       - name: Run the capture matrix
         run: |
           $ErrorActionPreference = 'Stop'
-          go test ./adapters/shellhook -run '^(TestRealPowerShellLocalHookCapturesTierOne|TestRealPowerShellTierThreeFallback)$' -count=1 -v
+          go test ./adapters/shellhook -run '^(TestRealPowerShellLocalHookCapturesTierOne|TestRealPowerShellSessionCapturesTierOneEndToEnd|TestRealPowerShellTierThreeFallback)$' -count=1 -v
 
   capture-freebsd-amd64:
     name: capture FreeBSD amd64 over SSH
@@ -545,7 +589,23 @@ jobs:
           NETCATTY_TEST_SSH_NU_LOGIN=/usr/local/bin/nu \
           NETCATTY_TEST_SSH_XONSH=xonshuser@127.0.0.1:2222 \
           NETCATTY_TEST_SSH_XONSH_LOGIN=/opt/xonsh/bin/xonsh \
-          go test ./adapters/shellhook -run '^(TestRealSSHRemoteHookCapturesTierOne|TestRealSSHRemoteTierThreeFallback|TestRealSSHRemoteNativeFallback)$' -count=1 -v
+          go test ./adapters/shellhook -run '^(TestRealSSHRemoteHookCapturesTierOne|TestRealSSHRemoteTierThreeFallback)$' -count=1 -v
+
+      - name: Run the best-effort SSH shells
+        # nushell and xonsh are best-effort on every Host: they are not release
+        # gates. A failure here is recorded but does not fail the required BSD
+        # job, so checksums and publish still run.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          NETCATTY_TEST_SSH_REQUIRED=1 \
+          NETCATTY_TEST_SSH_KEY="$RUNNER_TEMP/freebsd-key" \
+          NETCATTY_TEST_SSH_KNOWN_HOSTS="$RUNNER_TEMP/known_hosts" \
+          NETCATTY_TEST_SSH_NU=nuuser@127.0.0.1:2222 \
+          NETCATTY_TEST_SSH_NU_LOGIN=/usr/local/bin/nu \
+          NETCATTY_TEST_SSH_XONSH=xonshuser@127.0.0.1:2222 \
+          NETCATTY_TEST_SSH_XONSH_LOGIN=/opt/xonsh/bin/xonsh \
+          go test ./adapters/shellhook -run '^TestRealSSHRemoteNativeFallback$' -count=1 -v
 
   build:
     name: build (${{ matrix.artifact }})
