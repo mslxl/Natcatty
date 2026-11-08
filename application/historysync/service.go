@@ -98,6 +98,15 @@ type RemotePage struct {
 	// downloaded records claim. It commits with the page, so a capture is never
 	// lost or falsely acknowledged between two transactions.
 	Reindexes []Reindex
+	// Acknowledged names local records this page proved the server already
+	// holds: a downloaded record described the same event at the same index.
+	// They are marked uploaded in the page transaction. The record ids may
+	// differ from the server copy, so resending one would look like a
+	// conflicting duplicate; only the download can establish this proof.
+	Acknowledged []string
+	// AcknowledgedAt is the upload timestamp recorded for Acknowledged. It is
+	// required when Acknowledged is non-empty.
+	AcknowledgedAt time.Time
 }
 
 // Reindex assigns a new series index to one local record that has not been
@@ -733,6 +742,21 @@ func (s *Service) run(ctx context.Context, trigger Trigger) (SyncResult, error) 
 	if !settings.SyncEnabled {
 		return result, s.fail(status, ErrSyncDisabled, &result)
 	}
+	// Re-read the stored account before reading any credential. The status
+	// snapshot may be stale: another actor on the same server (a second
+	// window, the CLI, or the account service) can change the stored account
+	// after the snapshot. Comparing the address alone is not enough because
+	// the stale identity still names the address the user selected. The
+	// session token and master key must never be released to a remote before
+	// this check fails closed.
+	stored, err := s.store.HistoryMetadata(ctx)
+	if err != nil {
+		return result, s.fail(status, err, &result)
+	}
+	if stored.Account != metadata.Account {
+		return result, s.fail(status, ErrAccountMismatch, &result)
+	}
+	metadata = stored
 	if address != status.ServerURL || !sameAccountAddress(metadata.Account, address) {
 		return result, s.fail(status, ErrAccountMismatch, &result)
 	}
@@ -1113,13 +1137,16 @@ func (s *Service) download(ctx context.Context, remote Remote, capabilities Capa
 			if err != nil {
 				return downloaded, applied, err
 			}
-			kept, reindexes, err := reconcileRemotePage(series, prepared, localRecords, last)
+			kept, reindexes, acknowledged, err := reconcileRemotePage(series, prepared, localRecords, last)
 			if err != nil {
 				return downloaded, applied, err
 			}
 			next := checkpoint
 			next.AppliedIndex = last
-			remotePage := RemotePage{Checkpoint: next, Reindexes: reindexes}
+			remotePage := RemotePage{
+				Checkpoint: next, Reindexes: reindexes,
+				Acknowledged: acknowledged, AcknowledgedAt: s.scheduler.Now(),
+			}
 			for _, item := range kept {
 				remotePage.Records = append(remotePage.Records, item.record)
 				if item.entry != nil {
@@ -1174,10 +1201,13 @@ func prepareRemotePage(series SeriesStatus, start int64, page Page,
 			// it again would add nothing.
 			continue
 		}
-		if !seen && record.Index > next {
-			// The server's series begins after the requested start. That is
-			// only safe when every skipped index is already in the local log;
-			// otherwise this page would silently skip records we still need.
+		if record.Index > next {
+			// The server's series is missing one or more indexes the page
+			// requested. That is only safe when every skipped index is
+			// already in the local log; otherwise this page would silently
+			// skip records we still need. A skipped index backed only by an
+			// unsent local capture is not an acknowledgement: prepareUpload
+			// must still upload that capture at this index.
 			if !localIndexGapKnown(localIndexes, next, record.Index) {
 				return nil, 0, ErrIncompletePage
 			}
@@ -1272,13 +1302,14 @@ func localIndexGapKnown(indexes map[int64]struct{}, from, to int64) bool {
 
 // reconcileRemotePage compares one downloaded page with the local log. A local
 // record that already describes the same event is kept and the remote copy is
-// dropped, so a restored log is never rewritten. An unacknowledged local
-// capture that occupies an index the server also uses is moved after the page:
-// both records survive and the capture is uploaded under its new index. An
-// acknowledged local record that differs from the server is a real conflict
-// and fails closed.
+// dropped, so a restored log is never rewritten; the local record is reported
+// as acknowledged because the download observed the same event on the server.
+// An unacknowledged local capture that occupies an index the server also uses
+// is moved after the page: both records survive and the capture is uploaded
+// under its new index. An acknowledged local record that differs from the
+// server is a real conflict and fails closed.
 func reconcileRemotePage(series SeriesStatus, prepared []preparedPageRecord,
-	local []domainhistory.Record, last int64) ([]preparedPageRecord, []Reindex, error) {
+	local []domainhistory.Record, last int64) ([]preparedPageRecord, []Reindex, []string, error) {
 	occupied := make(map[int64]domainhistory.Record)
 	maxIndex := last
 	for _, record := range local {
@@ -1292,6 +1323,7 @@ func reconcileRemotePage(series SeriesStatus, prepared []preparedPageRecord,
 	}
 	kept := make([]preparedPageRecord, 0, len(prepared))
 	collisions := make([]preparedPageRecord, 0)
+	acknowledged := make([]string, 0)
 	for _, item := range prepared {
 		existing, found := occupied[item.record.Index]
 		if !found {
@@ -1301,10 +1333,16 @@ func reconcileRemotePage(series SeriesStatus, prepared []preparedPageRecord,
 		if sameLogicalRecord(existing, item.record) {
 			// The local log already holds this command. Do not replace it with
 			// a reconstructed remote payload; the checkpoint still advances.
+			// The downloaded copy proves the server holds the event, so the
+			// local record is acknowledged even when its log id differs.
+			if existing.Direction == domainhistory.RecordDirectionLocal &&
+				existing.UploadedAt.IsZero() {
+				acknowledged = append(acknowledged, existing.ID)
+			}
 			continue
 		}
 		if existing.Direction != domainhistory.RecordDirectionLocal || !existing.UploadedAt.IsZero() {
-			return nil, nil, ErrUploadConflict
+			return nil, nil, nil, ErrUploadConflict
 		}
 		collisions = append(collisions, item)
 	}
@@ -1322,7 +1360,7 @@ func reconcileRemotePage(series SeriesStatus, prepared []preparedPageRecord,
 	sort.Slice(kept, func(i, j int) bool {
 		return kept[i].record.Index < kept[j].record.Index
 	})
-	return kept, reindexes, nil
+	return kept, reindexes, acknowledged, nil
 }
 
 // sameLogicalRecord reports whether a local log record and an incoming remote
@@ -1418,10 +1456,13 @@ func remoteHistorySeries(statuses []SeriesStatus) []SeriesStatus {
 }
 
 // prepareUpload reconciles the local writer series with the server status.
-// Uploaded timestamps are only a display cache; the server's highest index is
-// authoritative for what still has to be sent. An account change (or a server
-// that lost the series) has no local series status, so every local record is
-// sent to the new account.
+// Uploaded timestamps are only a display cache; every unacknowledged local
+// record still has to be sent. The server's highest index is not an
+// acknowledgement: the pinned server permits holes, so a local capture can sit
+// at or below that index without the server ever holding it. Only a real
+// upload acknowledgement or a downloaded copy of the same event may mark a
+// record uploaded. An account change (or a server that lost the series) has no
+// local series status, so every local record is sent to the new account.
 func (s *Service) prepareUpload(ctx context.Context, records []domainhistory.Record,
 	statuses []SeriesStatus, metadata domainhistory.Metadata) (int, error) {
 	local := localSeriesRecords(records, metadata.WriterUUID)
@@ -1441,39 +1482,51 @@ func (s *Service) prepareUpload(ctx context.Context, records []domainhistory.Rec
 	maxUploaded := maxUploadedIndex(local)
 	if serverMax < maxUploaded {
 		// The account changed or the server no longer holds what this device
-		// thought it uploaded. Clear the display cache and send the records
-		// again; the new account must receive the local history.
+		// thought it uploaded. Clear the acknowledgements it can no longer
+		// justify and send those records again. Acknowledgements at or below
+		// the server's high-water mark are real past uploads of this account
+		// and stay valid; re-marking them is not an inference about an
+		// unsent row.
+		preserved := uploadedRecordIDsInRange(local, 0, serverMax)
 		checkpoint.UploadedIndex = serverMax
 		if err := s.store.ResetUploaded(ctx, checkpoint); err != nil {
 			return 0, err
 		}
-		// The server's prefix still counts as acknowledged. Let the mark step
-		// below restore it instead of showing those rows as pending forever.
-		maxUploaded = -1
-	}
-	if serverMax > maxUploaded {
-		// A re-login clears checkpoints but not the log. The server proves a
-		// prefix is present, so record that without re-sending it. The
-		// checkpoint must name the server's high-water mark, not the stale
-		// local value, or the next run would persist an old position.
+		if len(preserved) > 0 {
+			if err := s.store.MarkUploaded(ctx, preserved, s.scheduler.Now(), checkpoint); err != nil {
+				return 0, err
+			}
+		}
+	} else if serverMax > checkpoint.UploadedIndex {
+		// Persist the server's high-water mark for display. No local record is
+		// acknowledged here; upload marks each row only after the server
+		// accepts it (or the download proves it).
 		checkpoint.UploadedIndex = serverMax
-		if err := s.store.MarkUploaded(ctx, recordIDsInRange(local, maxUploaded+1, serverMax),
-			s.scheduler.Now(), checkpoint); err != nil {
+		if err := s.store.MarkUploaded(ctx, nil, s.scheduler.Now(), checkpoint); err != nil {
 			return 0, err
 		}
 	}
+	// Count what upload will actually send: unacknowledged captures, plus
+	// records whose acknowledgement the reset above cleared because the
+	// server's high-water mark no longer covers them.
 	pending := 0
 	for _, record := range local {
-		if record.Index > serverMax {
+		if record.UploadedAt.IsZero() || record.Index > serverMax {
 			pending++
 		}
 	}
 	return pending, nil
 }
 
-// upload sends the local writer series in index order in page-sized batches.
-// Each batch is marked uploaded only after the server acknowledges it. A
-// matching duplicate conflict is acknowledged; a mismatched one fails closed.
+// upload sends every unacknowledged local record in index order in
+// page-sized batches. Each batch is marked uploaded only after the server
+// acknowledges it. A matching duplicate conflict is acknowledged; a mismatched
+// one fails closed.
+//
+// A record at or below the server's high-water mark is still sent when it has
+// no acknowledgement: the server series may contain a hole at that index, and
+// the server is the only authority that can accept the record into the hole or
+// reject it as a conflicting duplicate.
 func (s *Service) upload(ctx context.Context, remote Remote, capabilities Capabilities,
 	statuses []SeriesStatus, metadata domainhistory.Metadata) (int, error) {
 	records, err := s.store.ListHistoryRecords(ctx)
@@ -1490,30 +1543,31 @@ func (s *Service) upload(ctx context.Context, remote Remote, capabilities Capabi
 
 	uploaded := 0
 	position := 0
-	for position < len(local) && local[position].Index <= serverMax {
-		position++
-	}
 	for position < len(local) {
-		limit := position + pageSize
-		if limit > len(local) {
-			limit = len(local)
+		chunk := make([]domainhistory.Record, 0, pageSize)
+		for position < len(local) && len(chunk) < pageSize {
+			if local[position].UploadedAt.IsZero() {
+				chunk = append(chunk, local[position])
+			}
+			position++
 		}
-		chunk := local[position:limit]
-		if chunk[0].Index != serverMax+1 {
-			return uploaded, ErrIncompletePage
+		if len(chunk) == 0 {
+			continue
 		}
 		acked, err := s.uploadChunk(ctx, remote, chunk)
 		if err != nil {
 			return uploaded, err
 		}
 		last := acked[len(acked)-1].Index
-		checkpoint.UploadedIndex = last
+		if last > checkpoint.UploadedIndex {
+			// Filling a hole below the high-water mark must not move the
+			// recorded server position backwards.
+			checkpoint.UploadedIndex = last
+		}
 		if err := s.store.MarkUploaded(ctx, recordIDs(acked), s.scheduler.Now(), checkpoint); err != nil {
 			return uploaded, err
 		}
-		serverMax = last
 		uploaded += len(acked)
-		position = limit
 	}
 	return uploaded, nil
 }
@@ -1695,10 +1749,13 @@ func recordIDs(records []domainhistory.Record) []string {
 	return ids
 }
 
-func recordIDsInRange(records []domainhistory.Record, from, to int64) []string {
+// uploadedRecordIDsInRange returns the records in [from, to] that already
+// carry an upload acknowledgement. A reset can restore those instead of
+// reporting them pending forever, without acknowledging any unsent row.
+func uploadedRecordIDsInRange(records []domainhistory.Record, from, to int64) []string {
 	ids := make([]string, 0)
 	for _, record := range records {
-		if record.Index >= from && record.Index <= to {
+		if record.Index >= from && record.Index <= to && !record.UploadedAt.IsZero() {
 			ids = append(ids, record.ID)
 		}
 	}

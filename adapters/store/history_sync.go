@@ -47,6 +47,16 @@ func (s *Store) ApplyRemotePage(ctx context.Context, page historysync.RemotePage
 			return fmt.Errorf("store: apply remote page: invalid reindex")
 		}
 	}
+	if len(page.Acknowledged) > 0 {
+		if page.AcknowledgedAt.IsZero() {
+			return fmt.Errorf("store: apply remote page: missing acknowledgement timestamp")
+		}
+		for _, id := range page.Acknowledged {
+			if id == "" {
+				return fmt.Errorf("store: apply remote page: invalid acknowledged record")
+			}
+		}
+	}
 
 	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
 		for _, reindex := range page.Reindexes {
@@ -60,6 +70,27 @@ func (s *Store) ApplyRemotePage(ctx context.Context, page historysync.RemotePage
 			}
 			if result.RowsAffected != 1 {
 				return fmt.Errorf("store: apply remote page: reindex target is not an unsynced local record")
+			}
+		}
+		if len(page.Acknowledged) > 0 {
+			// A downloaded record proved the server already holds these local
+			// events. The local log ids may differ from the server copies, so
+			// record the acknowledgement here and never resend them.
+			query := func() *gorm.DB {
+				return tx.Model(&historyRecordSchema{}).
+					Where("id IN ? AND series_host = ? AND tag = ? AND direction = ?",
+						page.Acknowledged, checkpoint.SeriesHost, checkpoint.Tag,
+						domainhistory.RecordDirectionLocal)
+			}
+			var present int64
+			if err := query().Count(&present).Error; err != nil {
+				return err
+			}
+			if present != int64(len(page.Acknowledged)) {
+				return fmt.Errorf("store: apply remote page: acknowledged record is not a local record")
+			}
+			if err := query().Update("uploaded_at", timestampNano(page.AcknowledgedAt)).Error; err != nil {
+				return err
 			}
 		}
 		for _, record := range page.Records {
