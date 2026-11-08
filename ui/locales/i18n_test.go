@@ -166,6 +166,35 @@ func TestClearBannersUsePluralForms(t *testing.T) {
 	}
 }
 
+// TestDeleteEverywhereWordingNamesUnseenRows pins the one limit the bulk
+// action cannot overcome: entries this device never downloaded stay on other
+// devices. Each catalog must keep that disclosure even if it words the rest
+// differently.
+func TestDeleteEverywhereWordingNamesUnseenRows(t *testing.T) {
+	unseen := map[string]string{
+		"en":    "never downloaded",
+		"es":    "nunca ha descargado",
+		"ru":    "никогда не загружало",
+		"zh-CN": "从未下载",
+		"zh-TW": "從未下載",
+	}
+	tags := Tags()
+	if len(tags) != len(unseen) {
+		t.Fatalf("catalogs = %v, add the unseen-row wording for every shipped locale", tags)
+	}
+	for _, tag := range tags {
+		phrase, ok := unseen[tag]
+		if !ok {
+			t.Fatalf("no unseen-row wording is pinned for %s", tag)
+		}
+		message := In(tag).LogsDeleteEverywhereConfirm()
+		if !strings.Contains(message, phrase) {
+			t.Errorf("%s Delete everywhere confirmation = %q, missing %q",
+				tag, message, phrase)
+		}
+	}
+}
+
 func tagsIn(t *testing.T) []string {
 	t.Helper()
 	paths, err := filepath.Glob("*.json")

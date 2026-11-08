@@ -68,6 +68,7 @@ const (
 	ProblemPrune
 	ProblemInsert
 	ProblemInsertUnsafe
+	ProblemDeleteEverywhere
 )
 
 // Source is the read/write seam over the history service.
@@ -80,6 +81,11 @@ type Source interface {
 	// ClearThisDevice soft-deletes locally owned rows and leaves imported and
 	// synced remote-origin rows in place.
 	ClearThisDevice(context.Context) (int, error)
+	// DeleteEverywhere soft-deletes every live row this device knows, including
+	// imported and synced remote-origin rows, and queues tombstones for the
+	// rows with a UUID identity. Rows this device never downloaded are out of
+	// reach.
+	DeleteEverywhere(context.Context) (int, error)
 	// PruneHistoryEntries soft-deletes exactly the listed live rows. The UI
 	// passes the identities its preview showed, so a row that arrives between
 	// preview and confirm is never removed unseen.
@@ -247,6 +253,12 @@ type State struct {
 	cleared         int
 	clearedTab      Tab
 
+	// pendingDeleteEverywhere is the separate, explicit bulk deletion across
+	// every row this device knows. It is not Clear this device: it also removes
+	// imported and synced rows.
+	pendingDeleteEverywhere bool
+	deletedEverywhere       int
+
 	// Prune matching uses its own draft filters, seeded from the History
 	// filters when the dialog opens, so a failed or cancelled prune never
 	// changes what the surface is showing.
@@ -347,8 +359,10 @@ func (s *State) SelectTab(tab Tab) {
 	s.visible = PageSize
 	s.pendingClear = false
 	s.pendingPrune = false
+	s.pendingDeleteEverywhere = false
 	s.pendingDeleteID = ""
 	s.cleared = 0
+	s.deletedEverywhere = 0
 	s.pruned = 0
 	s.selectedEntryID = ""
 	// Each tab starts at its top rather than at the other list's offset. The
@@ -1089,8 +1103,14 @@ func (s *State) DeleteEntry(id string) {
 	s.mutated()
 }
 
-// RequestClear opens the clear-all confirmation for the selected tab.
-func (s *State) RequestClear() { s.pendingClear = true }
+// RequestClear opens the clear-all confirmation for the selected tab. It
+// closes the other destructive confirmations, so two prompts are never active
+// at once.
+func (s *State) RequestClear() {
+	s.pendingPrune = false
+	s.pendingDeleteEverywhere = false
+	s.pendingClear = true
+}
 
 // CancelClear closes the clear-all confirmation.
 func (s *State) CancelClear() { s.pendingClear = false }
@@ -1138,11 +1158,61 @@ func (s *State) ConfirmClear() {
 	s.mutated()
 }
 
+// RequestDeleteEverywhere opens the separate confirmation for the explicit
+// cross-device bulk deletion. It closes the other destructive confirmations,
+// so a stale Clear or Prune prompt cannot be confirmed alongside it. Nothing is
+// removed until ConfirmDeleteEverywhere runs.
+func (s *State) RequestDeleteEverywhere() {
+	s.pendingClear = false
+	s.pendingPrune = false
+	s.pendingDeleteEverywhere = true
+}
+
+// CancelDeleteEverywhere closes the Delete everywhere confirmation without
+// changing any record.
+func (s *State) CancelDeleteEverywhere() { s.pendingDeleteEverywhere = false }
+
+// PendingDeleteEverywhere reports whether the Delete everywhere confirmation
+// is open.
+func (s *State) PendingDeleteEverywhere() bool { return s.pendingDeleteEverywhere }
+
+// ConfirmDeleteEverywhere soft-deletes every live row this device knows,
+// including imported and synced rows. Rows this device never downloaded are out
+// of reach. A partial failure keeps the committed count, reloads the list, and
+// reports the error so the banner never claims more than was removed.
+func (s *State) ConfirmDeleteEverywhere() {
+	s.pendingDeleteEverywhere = false
+	if s.source == nil {
+		return
+	}
+	removed, err := s.source.DeleteEverywhere(context.Background())
+	s.problemTab = TabHistory
+	s.deletedEverywhere = removed
+	s.selectedEntryID = ""
+	if err != nil {
+		// Reload before setting the problem: a successful refresh clears the
+		// field, and the banner must survive with the committed count.
+		s.reload()
+		s.mutated()
+		s.problem = ProblemDeleteEverywhere
+		return
+	}
+	s.problem = ProblemNone
+	s.reload()
+	s.mutated()
+}
+
+// DeletedEverywhere reports how many entries the last confirmed Delete
+// everywhere removed.
+func (s *State) DeletedEverywhere() int { return s.deletedEverywhere }
+
 // RequestPrune opens the prune dialog seeded with the History filters the
 // user is looking at and freezes the row IDs the preview shows. A matching row
 // loaded by a later frame is visible in the live preview count but cannot be
 // removed by the confirm, because ConfirmPrune deletes this snapshot.
 func (s *State) RequestPrune() {
+	s.pendingClear = false
+	s.pendingDeleteEverywhere = false
 	s.pruneFilter = PruneFilter{
 		Query: s.search, Host: s.hostKey, Session: s.sessionKey, CWD: s.cwdKey,
 		Exit: s.exitKey, Shell: s.shellKey, Source: s.sourceFilter,
