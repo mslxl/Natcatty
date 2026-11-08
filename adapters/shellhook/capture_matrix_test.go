@@ -3,10 +3,12 @@ package shellhook
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -14,14 +16,16 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 )
 
-// captureMatrix is the ticket 07 fixture: every shell, transport, and fallback
-// path with the exact startup flags and the field fidelity it produces. The
-// verification value separates observed behavior (a real shell ran here) from
-// manual checks (a real BSD or OpenSSH host is required) and planned behavior.
+// captureMatrix is the shared fixture for ticket 07 (shell/transport mechanics)
+// and ticket 21 (complete Host/Shell matrix and release gates). The verification
+// value separates observed behavior (a real shell ran here) from manual checks
+// (a real runner or VM is required) and planned behavior.
 type captureMatrix struct {
 	Description    string              `json:"description"`
 	FidelityLegend string              `json:"fidelityLegend"`
+	ObservedRuns   []matrixObservedRun `json:"observedRuns"`
 	Paths          []captureMatrixPath `json:"paths"`
+	Cells          []matrixCell        `json:"cells"`
 }
 
 type captureMatrixPath struct {
@@ -37,17 +41,24 @@ type captureMatrixPath struct {
 	SpecEnv          map[string]string `json:"specEnv"`
 	WantHookExpected bool              `json:"wantHookExpected"`
 	WantCommand      []string          `json:"wantCommand"`
-	WantEnv          map[string]string `json:"wantEnv"`
-	WantFiles        map[string]string `json:"wantFiles"`
+	// WantCommandPrefix and WantCommandContains describe a planned command
+	// whose full text is a generated bootstrap (PowerShell).
+	WantCommandPrefix   []string          `json:"wantCommandPrefix"`
+	WantCommandContains []string          `json:"wantCommandContains"`
+	WantEnv             map[string]string `json:"wantEnv"`
+	WantFiles           map[string]string `json:"wantFiles"`
 	// WantRemoteWrapper reports whether the transport may send the POSIX
 	// wrapper after it establishes the login shell.
 	WantRemoteWrapper bool `json:"wantRemoteWrapper"`
 	// WantRemoteInvocations records the exact shell invocation lines the
 	// wrapper must contain for this login shell.
 	WantRemoteInvocations []string `json:"wantRemoteInvocations"`
-	// Verification is observed, manual, or planned for the whole path.
-	Verification string `json:"verification"`
-	Fidelity     struct {
+	// Verification applies to the evidence platform(s) named by
+	// ObservedPlatforms. It never claims an observation for a platform this
+	// machine did not run; per-platform truth is in Cells instead.
+	Verification      string   `json:"verification"`
+	ObservedPlatforms []string `json:"observedPlatforms"`
+	Fidelity          struct {
 		Tier     string `json:"tier"`
 		Cwd      string `json:"cwd"`
 		Exit     string `json:"exit"`
@@ -56,21 +67,69 @@ type captureMatrixPath struct {
 	Evidence string `json:"evidence"`
 }
 
+// matrixObservedRun records one real run of a real-shell test. The host,
+// architecture, and version fields bind the evidence to the cell it supports,
+// so a Darwin PowerShell run cannot be cited as Windows fidelity.
+type matrixObservedRun struct {
+	ID            string            `json:"id"`
+	Harness       string            `json:"harness"` // local, docker, github-actions, vm
+	HostOS        string            `json:"hostOS"`
+	Arch          string            `json:"arch"`
+	Platform      string            `json:"platform"`
+	Image         string            `json:"image"`
+	ImageDigest   string            `json:"imageDigest"`
+	Runtime       string            `json:"runtime"`
+	Runner        string            `json:"runner"`
+	ShellVersions map[string]string `json:"shellVersions"`
+	Command       string            `json:"command"`
+	Result        string            `json:"result"`
+	RecordedAt    string            `json:"recordedAt"`
+}
+
+// matrixCell is one Host/Shell cell. Tier 1 means the authoritative hook, Tier
+// 2 native OSC 133/7 without a Netcatty hook, and Tier 3 typed input plus
+// prompt detection.
+type matrixCell struct {
+	Name string `json:"name"`
+	// Host is the operating system in the Host/Shell matrix (linux, darwin,
+	// windows, freebsd), not a saved Host target in the Vault.
+	Host            string        `json:"host"`
+	Arch            string        `json:"arch"`
+	Shell           string        `json:"shell"`
+	Path            string        `json:"path"`
+	Tier            int           `json:"tier"`
+	ReleaseBlocking bool          `json:"releaseBlocking"`
+	Verification    string        `json:"verification"`
+	Startup         []string      `json:"startup"`
+	Observed        *cellObserved `json:"observed,omitempty"`
+	Manual          *cellManual   `json:"manual,omitempty"`
+	Evidence        string        `json:"evidence"`
+}
+
+type cellFidelity struct {
+	Cwd      string `json:"cwd"`
+	Exit     string `json:"exit"`
+	Duration string `json:"duration"`
+}
+
+type cellObserved struct {
+	Runs     []string     `json:"runs"`
+	Test     string       `json:"test"`
+	Fidelity cellFidelity `json:"fidelity"`
+}
+
+type cellManual struct {
+	Runner           string       `json:"runner"`
+	Steps            []string     `json:"steps"`
+	ExpectedFidelity cellFidelity `json:"expectedFidelity"`
+}
+
 // TestCaptureMatrix keeps the fixture honest: it replans every local path on
 // each recorded platform and checks the exact command, environment, and hook
 // files; it replans every remote path and applies the same login-shell
 // decision the SSH transport applies before opening the terminal.
 func TestCaptureMatrix(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("testdata", "capture-matrix.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var matrix captureMatrix
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&matrix); err != nil {
-		t.Fatalf("decode the capture matrix: %v", err)
-	}
+	matrix := loadCaptureMatrix(t)
 	if len(matrix.Paths) == 0 {
 		t.Fatal("the capture matrix is empty")
 	}
@@ -96,6 +155,209 @@ func TestCaptureMatrix(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHostShellMatrix is the ticket 21 checker: every Host/Shell cell has a
+// fixture and a Tier 1/2/3 classification, every observed cell cites a real
+// run on the cell's own host and architecture, and no unrun platform claims an
+// observation.
+func TestHostShellMatrix(t *testing.T) {
+	matrix := loadCaptureMatrix(t)
+	if err := validateHostShellMatrix(matrix); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestHostShellReleaseGates fails when a release-blocking cell is missing or
+// classified below its required tier. The requirements name Tier 1 zsh, bash,
+// fish, and PowerShell cells and a Tier 3 fallback for every release Host.
+func TestHostShellReleaseGates(t *testing.T) {
+	matrix := loadCaptureMatrix(t)
+	if err := validateHostShellReleaseGates(matrix); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestHostShellMatrixRejectsBadFixtures proves the checker catches the three
+// failure modes the ticket names: a missing cell, a wrong tier, and a false
+// observed or exact claim for a platform that did not run here.
+func TestHostShellMatrixRejectsBadFixtures(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*captureMatrix)
+		want   string
+	}{
+		{
+			name: "missing release-blocking cell",
+			mutate: func(matrix *captureMatrix) {
+				matrix.Cells = removeCell(matrix.Cells, "linux-amd64-zsh")
+			},
+			want: `release-blocking cell "linux-amd64-zsh" is missing`,
+		},
+		{
+			name: "release-blocking cell below its tier",
+			mutate: func(matrix *captureMatrix) {
+				cell := findCell(matrix.Cells, "linux-amd64-zsh")
+				cell.Tier = 2
+			},
+			want: "classified Tier 2, required Tier 1",
+		},
+		{
+			name: "tier 3 fallback misclassified as tier 1",
+			mutate: func(matrix *captureMatrix) {
+				cell := findCell(matrix.Cells, "linux-amd64-tier3-fallback")
+				cell.Tier = 1
+			},
+			want: "classified Tier 1, required Tier 3",
+		},
+		{
+			name: "observed claim cites a run on another host",
+			mutate: func(matrix *captureMatrix) {
+				cell := findCell(matrix.Cells, "windows-amd64-powershell")
+				cell.Verification = "observed"
+				cell.Manual = nil
+				cell.Observed = &cellObserved{
+					Runs:     []string{"macos-arm64-local-2026-11-08"},
+					Test:     "TestRealPowerShellLocalHookCapturesTierOne",
+					Fidelity: cellFidelity{Cwd: "exact", Exit: "exact", Duration: "exact"},
+				}
+			},
+			want: "observed on darwin/arm64",
+		},
+		{
+			name: "observed claim with no run",
+			mutate: func(matrix *captureMatrix) {
+				cell := findCell(matrix.Cells, "linux-amd64-zsh")
+				cell.Observed.Runs = nil
+			},
+			want: "no observation run",
+		},
+		{
+			name: "manual cell carries observation evidence",
+			mutate: func(matrix *captureMatrix) {
+				cell := findCell(matrix.Cells, "windows-amd64-powershell")
+				cell.Observed = &cellObserved{
+					Runs:     []string{"macos-arm64-local-2026-11-08"},
+					Test:     "TestRealPowerShellLocalHookCapturesTierOne",
+					Fidelity: cellFidelity{Cwd: "exact", Exit: "exact", Duration: "exact"},
+				}
+			},
+			want: "carries observation evidence",
+		},
+		{
+			name: "observed claim cites a test that does not exist",
+			mutate: func(matrix *captureMatrix) {
+				cell := findCell(matrix.Cells, "linux-amd64-zsh")
+				cell.Observed.Test = "TestRealImaginary"
+			},
+			want: "no test in this package defines",
+		},
+		{
+			name: "observed cell records startup flags its path does not use",
+			mutate: func(matrix *captureMatrix) {
+				cell := findCell(matrix.Cells, "linux-amd64-zsh")
+				cell.Startup = []string{"--bogus-flag"}
+			},
+			want: "records startup flags",
+		},
+		{
+			name: "tier 1 cell claims fallback fidelity",
+			mutate: func(matrix *captureMatrix) {
+				cell := findCell(matrix.Cells, "linux-amd64-zsh")
+				cell.Observed.Fidelity.Cwd = "missing"
+			},
+			want: "Tier 1 has",
+		},
+		{
+			name: "tier 3 cell claims an exact cwd",
+			mutate: func(matrix *captureMatrix) {
+				cell := findCell(matrix.Cells, "linux-amd64-tier3-fallback")
+				cell.Observed.Fidelity.Cwd = "exact"
+			},
+			want: "Tier 3 has",
+		},
+		{
+			name: "docker observation without an image digest",
+			mutate: func(matrix *captureMatrix) {
+				run := findRun(matrix.ObservedRuns, "linux-arm64-docker-2026-11-08")
+				run.ImageDigest = ""
+			},
+			want: "image digest",
+		},
+		{
+			name: "release-blocking cell has only a planned check",
+			mutate: func(matrix *captureMatrix) {
+				cell := findCell(matrix.Cells, "windows-amd64-powershell")
+				cell.Verification = "planned"
+			},
+			want: "no observed or documented manual check",
+		},
+		{
+			name: "release-blocking cell has no gate requirement",
+			mutate: func(matrix *captureMatrix) {
+				cell := findCell(matrix.Cells, "windows-amd64-nushell")
+				cell.ReleaseBlocking = true
+			},
+			want: "no release gate requirement",
+		},
+	}
+	for _, testCase := range tests {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			matrix := loadCaptureMatrix(t)
+			testCase.mutate(&matrix)
+			err := validateHostShellMatrix(matrix)
+			if err == nil {
+				t.Fatal("the checker accepted a bad fixture")
+			}
+			if !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("error = %q, want it to contain %q", err, testCase.want)
+			}
+		})
+	}
+}
+
+func loadCaptureMatrix(t *testing.T) captureMatrix {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "capture-matrix.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matrix captureMatrix
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&matrix); err != nil {
+		t.Fatalf("decode the capture matrix: %v", err)
+	}
+	return matrix
+}
+
+func findCell(cells []matrixCell, name string) *matrixCell {
+	for index := range cells {
+		if cells[index].Name == name {
+			return &cells[index]
+		}
+	}
+	panic("no cell named " + name)
+}
+
+func removeCell(cells []matrixCell, name string) []matrixCell {
+	result := make([]matrixCell, 0, len(cells))
+	for _, cell := range cells {
+		if cell.Name != name {
+			result = append(result, cell)
+		}
+	}
+	return result
+}
+
+func findRun(runs []matrixObservedRun, id string) *matrixObservedRun {
+	for index := range runs {
+		if runs[index].ID == id {
+			return &runs[index]
+		}
+	}
+	panic("no observation run named " + id)
 }
 
 // checkCaptureFidelity rejects a tier claim that contradicts the hook the path
@@ -128,6 +390,15 @@ func checkCaptureFidelity(t *testing.T, entry captureMatrixPath) {
 	switch entry.Verification {
 	case "observed":
 		assertCitedRealTestsExist(t, entry.Evidence)
+		if len(entry.ObservedPlatforms) == 0 {
+			t.Fatal("an observed path names no platform it was observed on")
+		}
+		for _, platform := range entry.ObservedPlatforms {
+			if !slices.Contains(entry.Platforms, platform) {
+				t.Fatalf("observed platform %q is not one of the planned platforms %v",
+					platform, entry.Platforms)
+			}
+		}
 		for name, value := range fields {
 			if value == "manual" || value == "planned" {
 				t.Fatalf("observed path calls %s %q", name, value)
@@ -135,7 +406,10 @@ func checkCaptureFidelity(t *testing.T, entry captureMatrixPath) {
 		}
 	case "manual", "planned":
 		// Nothing on this machine ran the path, so no field may claim an
-		// observation.
+		// observation and no platform may be named as observed.
+		if len(entry.ObservedPlatforms) != 0 {
+			t.Fatalf("%s path names observed platforms %v", entry.Verification, entry.ObservedPlatforms)
+		}
 		for name, value := range fields {
 			if value == "exact" || value == "observed" {
 				t.Fatalf("%s path claims %s = %q", entry.Verification, name, value)
@@ -158,9 +432,23 @@ func assertCitedRealTestsExist(t *testing.T, evidence string) {
 	if len(names) == 0 {
 		t.Fatalf("observed path cites no real-shell test: %q", evidence)
 	}
-	entries, err := os.ReadDir(".")
+	source, err := testPackageSource()
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, name := range names {
+		if !strings.Contains(source, "func "+name+"(") {
+			t.Fatalf("observed evidence cites %s, which no test in this package defines", name)
+		}
+	}
+}
+
+// testPackageSource returns every test file in this package, so a fixture can
+// prove that the test it cites exists instead of trusting a stale name.
+func testPackageSource() (string, error) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		return "", err
 	}
 	var source strings.Builder
 	for _, entry := range entries {
@@ -169,15 +457,15 @@ func assertCitedRealTestsExist(t *testing.T, evidence string) {
 		}
 		data, err := os.ReadFile(entry.Name())
 		if err != nil {
-			t.Fatal(err)
+			return "", err
 		}
 		source.Write(data)
 	}
-	for _, name := range names {
-		if !strings.Contains(source.String(), "func "+name+"(") {
-			t.Fatalf("observed evidence cites %s, which no test in this package defines", name)
-		}
-	}
+	return source.String(), nil
+}
+
+func testDefinedInSource(source, name string) bool {
+	return strings.Contains(source, "func "+name+"(")
 }
 
 // checkLocalCapturePath plans the recorded local invocation on every recorded
@@ -233,7 +521,8 @@ func checkLocalCapturePath(t *testing.T, entry captureMatrixPath) {
 			if !entry.WantHookExpected && plan.Cleanup != nil {
 				t.Fatal("a path without a hook still created a session directory")
 			}
-			assertMatrixCommand(t, plan.Spec.Command, entry.WantCommand, shellPath, home, hookDir)
+			assertMatrixCommand(t, plan.Spec.Command, entry.WantCommand,
+				entry.WantCommandPrefix, entry.WantCommandContains, shellPath, home, hookDir)
 			assertMatrixEnv(t, plan.Spec.Env, entry.SpecEnv, entry.WantEnv, shellPath, home, hookDir)
 			assertMatrixFiles(t, hookDir, entry.WantFiles)
 		})
@@ -333,17 +622,41 @@ func normalizeMatrixValue(value, shellPath, home, hookDir string) string {
 	value = strings.ReplaceAll(value, hookDir, "<hook-dir>")
 	value = strings.ReplaceAll(value, home, "<home>")
 	value = strings.ReplaceAll(value, shellPath, "<shell>")
-	return value
+	// The fixture records one command shape for every platform; Windows
+	// planners build the same paths with backslashes and joins path lists
+	// with a semicolon.
+	value = filepath.ToSlash(value)
+	return normalizeMatrixPathList(value)
 }
 
-func assertMatrixCommand(t *testing.T, got, want []string, shellPath, home, hookDir string) {
+func normalizeMatrixPathList(value string) string {
+	return strings.ReplaceAll(value, string(os.PathListSeparator), "<path-list>")
+}
+
+func assertMatrixCommand(t *testing.T, got, want, prefix, contains []string,
+	shellPath, home, hookDir string) {
 	t.Helper()
 	normalized := make([]string, len(got))
 	for index, value := range got {
 		normalized[index] = normalizeMatrixValue(value, shellPath, home, hookDir)
 	}
-	if !reflect.DeepEqual(normalized, want) {
-		t.Fatalf("command = %v, want %v", normalized, want)
+	if want != nil {
+		if !reflect.DeepEqual(normalized, want) {
+			t.Fatalf("command = %v, want %v", normalized, want)
+		}
+		return
+	}
+	if len(prefix) == 0 {
+		t.Fatal("the path records no command expectation")
+	}
+	if len(normalized) < len(prefix) || !reflect.DeepEqual(normalized[:len(prefix)], prefix) {
+		t.Fatalf("command = %v, want prefix %v", normalized, prefix)
+	}
+	joined := strings.Join(normalized, " ")
+	for _, value := range contains {
+		if !strings.Contains(joined, value) {
+			t.Fatalf("command = %q, want it to contain %q", joined, value)
+		}
 	}
 }
 
@@ -352,10 +665,10 @@ func assertMatrixEnv(t *testing.T, got []string, specEnv, want map[string]string
 	t.Helper()
 	expected := map[string]string{}
 	for key, value := range specEnv {
-		expected[key] = value
+		expected[key] = normalizeMatrixPathList(value)
 	}
 	for key, value := range want {
-		expected[key] = value
+		expected[key] = normalizeMatrixPathList(value)
 	}
 	actual := map[string]string{}
 	for _, entry := range got {
@@ -398,4 +711,405 @@ func assertMatrixFiles(t *testing.T, dir string, want map[string]string) {
 			t.Fatalf("%s does not contain %q", name, marker)
 		}
 	}
+}
+
+var (
+	imageDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	recordedAtPattern  = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+)
+
+// hostShellGate is one release-blocking requirement. Tier numbers are capture
+// quality (1 best), so a cell classified Tier 2 or 3 fails a Tier 1 gate, and a
+// fallback cell classified Tier 1 fails the Tier 3 gate because typed input
+// plus prompt detection is the required mechanism there.
+type hostShellGate struct {
+	Name     string
+	Tier     int
+	Category string
+}
+
+// requiredHostShellGates is the release contract from the spec: every Tier 1
+// zsh, bash, fish, and PowerShell cell is release-blocking, as is a Tier 3
+// fallback on every Host. Linux covers x86_64 and aarch64, macOS arm64 and
+// x86_64, Windows x86_64 and arm64, and BSD is represented by FreeBSD amd64
+// (the other BSDs use the same POSIX startup files; their support is planned
+// by the path fixture and does not add a release gate). PowerShell on BSD is
+// out of scope: BSD is in scope for POSIX shells. nushell and xonsh are
+// best-effort cells and are never release gates, whatever tier they reach.
+var requiredHostShellGates = []hostShellGate{
+	{"linux-amd64-zsh", 1, "zsh-tier1"},
+	{"linux-amd64-bash", 1, "bash-tier1"},
+	{"linux-amd64-fish", 1, "fish-tier1"},
+	{"linux-amd64-powershell", 1, "powershell-tier1"},
+	{"linux-amd64-tier3-fallback", 3, "tier3-fallback"},
+	{"linux-arm64-zsh", 1, "zsh-tier1"},
+	{"linux-arm64-bash", 1, "bash-tier1"},
+	{"linux-arm64-fish", 1, "fish-tier1"},
+	{"linux-arm64-powershell", 1, "powershell-tier1"},
+	{"linux-arm64-tier3-fallback", 3, "tier3-fallback"},
+	{"macos-arm64-zsh", 1, "zsh-tier1"},
+	{"macos-arm64-bash", 1, "bash-tier1"},
+	{"macos-arm64-fish", 1, "fish-tier1"},
+	{"macos-arm64-powershell", 1, "powershell-tier1"},
+	{"macos-arm64-tier3-fallback", 3, "tier3-fallback"},
+	{"macos-amd64-zsh", 1, "zsh-tier1"},
+	{"macos-amd64-bash", 1, "bash-tier1"},
+	{"macos-amd64-fish", 1, "fish-tier1"},
+	{"macos-amd64-powershell", 1, "powershell-tier1"},
+	{"macos-amd64-tier3-fallback", 3, "tier3-fallback"},
+	{"windows-amd64-powershell", 1, "powershell-tier1"},
+	{"windows-amd64-tier3-fallback", 3, "tier3-fallback"},
+	{"windows-arm64-powershell", 1, "powershell-tier1"},
+	{"windows-arm64-tier3-fallback", 3, "tier3-fallback"},
+	{"bsd-amd64-zsh", 1, "zsh-tier1"},
+	{"bsd-amd64-bash", 1, "bash-tier1"},
+	{"bsd-amd64-fish", 1, "fish-tier1"},
+	{"bsd-amd64-tier3-fallback", 3, "tier3-fallback"},
+}
+
+var requiredGateCategories = []string{
+	"zsh-tier1", "bash-tier1", "fish-tier1", "powershell-tier1", "tier3-fallback",
+}
+
+func validateHostShellMatrix(matrix captureMatrix) error {
+	if len(matrix.Cells) == 0 {
+		return fmt.Errorf("the Host/Shell matrix has no cells")
+	}
+	// The release contract is the first thing a broken matrix should report:
+	// a missing gate cell or a misclassified tier is the failure a release
+	// owner has to fix, not a detail of the cell that happens to be invalid.
+	if err := validateHostShellReleaseGates(matrix); err != nil {
+		return err
+	}
+	paths := map[string]captureMatrixPath{}
+	for _, path := range matrix.Paths {
+		paths[path.Name] = path
+	}
+	runs := map[string]matrixObservedRun{}
+	for _, run := range matrix.ObservedRuns {
+		if run.ID == "" {
+			return fmt.Errorf("an observation run has an empty id")
+		}
+		if _, exists := runs[run.ID]; exists {
+			return fmt.Errorf("observation run %q is duplicated", run.ID)
+		}
+		if err := validateObservedRun(run); err != nil {
+			return fmt.Errorf("observation run %q: %w", run.ID, err)
+		}
+		runs[run.ID] = run
+	}
+	source, err := testPackageSource()
+	if err != nil {
+		return fmt.Errorf("read the test package source: %w", err)
+	}
+	seen := map[string]bool{}
+	for _, cell := range matrix.Cells {
+		if cell.Name == "" || seen[cell.Name] {
+			return fmt.Errorf("cell %q has an empty or duplicate name", cell.Name)
+		}
+		seen[cell.Name] = true
+		if err := validateHostShellCell(cell, paths, runs, source); err != nil {
+			return fmt.Errorf("cell %q: %w", cell.Name, err)
+		}
+	}
+	return nil
+}
+
+func validateObservedRun(run matrixObservedRun) error {
+	if len(run.ShellVersions) == 0 {
+		return fmt.Errorf("records no shell version")
+	}
+	if run.Command == "" || run.Result == "" {
+		return fmt.Errorf("records no command or result")
+	}
+	if !recordedAtPattern.MatchString(run.RecordedAt) {
+		return fmt.Errorf("recordedAt %q is not YYYY-MM-DD", run.RecordedAt)
+	}
+	switch run.Harness {
+	case "local":
+		if run.HostOS != "darwin" {
+			return fmt.Errorf("local observation host %q is not darwin", run.HostOS)
+		}
+		if run.Platform == "" {
+			return fmt.Errorf("local observation records no platform")
+		}
+	case "docker":
+		if run.HostOS != "linux" {
+			return fmt.Errorf("docker observation host %q is not linux", run.HostOS)
+		}
+		if run.Image == "" {
+			return fmt.Errorf("docker observation records no image")
+		}
+		if !imageDigestPattern.MatchString(run.ImageDigest) {
+			return fmt.Errorf("docker observation records no sha256 image digest")
+		}
+		if run.Platform != "linux/"+run.Arch {
+			return fmt.Errorf("docker platform %q does not match %s/%s", run.Platform, run.HostOS, run.Arch)
+		}
+		if run.Runtime == "" {
+			return fmt.Errorf("docker observation records no runtime version")
+		}
+	case "github-actions":
+		if run.HostOS != "windows" && run.HostOS != "darwin" {
+			return fmt.Errorf("runner observation host %q is not Windows or macOS", run.HostOS)
+		}
+		if run.Runner == "" {
+			return fmt.Errorf("runner observation records no runner label")
+		}
+	case "vm":
+		if run.HostOS != "freebsd" {
+			return fmt.Errorf("VM observation host %q is not freebsd", run.HostOS)
+		}
+		if run.Image == "" || run.Runner == "" {
+			return fmt.Errorf("VM observation records no image or hypervisor")
+		}
+	default:
+		return fmt.Errorf("unknown harness %q", run.Harness)
+	}
+	return nil
+}
+
+func validateHostShellCell(cell matrixCell, paths map[string]captureMatrixPath,
+	runs map[string]matrixObservedRun, testSource string) error {
+	if !slices.Contains([]string{"linux", "darwin", "windows", "freebsd"}, cell.Host) {
+		return fmt.Errorf("unknown Host %q", cell.Host)
+	}
+	if !slices.Contains([]string{"amd64", "arm64"}, cell.Arch) {
+		return fmt.Errorf("unknown architecture %q", cell.Arch)
+	}
+	if !slices.Contains([]string{"zsh", "bash", "fish", "nu", "xonsh", "powershell"}, cell.Shell) {
+		return fmt.Errorf("unknown shell %q", cell.Shell)
+	}
+	path, ok := paths[cell.Path]
+	if !ok {
+		return fmt.Errorf("names missing path fixture %q", cell.Path)
+	}
+	if path.Kind != "local" {
+		return fmt.Errorf("uses the non-local path %q", cell.Path)
+	}
+	if path.Shell != "" && !pathShellMatches(cell.Shell, path.Shell) {
+		return fmt.Errorf("shell %q does not match path %q shell %q", cell.Shell, cell.Path, path.Shell)
+	}
+	// An empty list is a real value: a shell that takes no startup flags.
+	// A missing field is not, so the cell cannot silently omit them.
+	if cell.Startup == nil {
+		return fmt.Errorf("records no exact startup flags")
+	}
+	wantStartup := pathStartup(path)
+	if !reflect.DeepEqual(cell.Startup, wantStartup) {
+		return fmt.Errorf("records startup flags %v, but path %q starts with %v",
+			cell.Startup, cell.Path, wantStartup)
+	}
+	if cell.Evidence == "" {
+		return fmt.Errorf("has no evidence note")
+	}
+	switch cell.Tier {
+	case 1:
+		if !cellHookExpected(cell.Host, cell.Shell) {
+			return fmt.Errorf("Tier 1 has no local hook on %s", cell.Host)
+		}
+		if !path.WantHookExpected {
+			return fmt.Errorf("Tier 1 uses a path that installs no hook")
+		}
+	case 2, 3:
+		if cellHookExpected(cell.Host, cell.Shell) && path.WantHookExpected {
+			return fmt.Errorf("Tier %d uses a path that installs a supported hook", cell.Tier)
+		}
+	default:
+		return fmt.Errorf("unknown capture tier %d", cell.Tier)
+	}
+	switch cell.Verification {
+	case "observed":
+		if cell.Observed == nil {
+			return fmt.Errorf("is observed but has no observation")
+		}
+		if cell.Manual != nil {
+			return fmt.Errorf("is observed but also carries a manual check")
+		}
+		if len(cell.Observed.Runs) == 0 {
+			return fmt.Errorf("is observed but records no observation run")
+		}
+		if err := validateCellFidelity(cell.Observed.Fidelity); err != nil {
+			return fmt.Errorf("observed fidelity: %w", err)
+		}
+		if err := validateTierFidelity(cell.Tier, cell.Observed.Fidelity); err != nil {
+			return fmt.Errorf("observed fidelity: %w", err)
+		}
+		if !testDefinedInSource(testSource, cell.Observed.Test) {
+			return fmt.Errorf("cites %s, which no test in this package defines", cell.Observed.Test)
+		}
+		for _, id := range cell.Observed.Runs {
+			run, ok := runs[id]
+			if !ok {
+				return fmt.Errorf("cites missing observation run %q", id)
+			}
+			if run.HostOS != cell.Host || run.Arch != cell.Arch {
+				return fmt.Errorf("observed on %s/%s by run %q, want %s/%s",
+					run.HostOS, run.Arch, id, cell.Host, cell.Arch)
+			}
+			if shellVersion(run, cell.Shell) == "" {
+				return fmt.Errorf("run %q records no %s version", id, cell.Shell)
+			}
+			if !strings.Contains(run.Command, cell.Observed.Test) {
+				return fmt.Errorf("run %q does not run %s", id, cell.Observed.Test)
+			}
+		}
+	case "manual", "planned":
+		if cell.Observed != nil {
+			return fmt.Errorf("%s cell carries observation evidence", cell.Verification)
+		}
+		if cell.Manual == nil {
+			return fmt.Errorf("%s cell has no documented check", cell.Verification)
+		}
+		if cell.Manual.Runner == "" || len(cell.Manual.Steps) == 0 {
+			return fmt.Errorf("%s cell has no runner or steps", cell.Verification)
+		}
+		if err := validateCellFidelity(cell.Manual.ExpectedFidelity); err != nil {
+			return fmt.Errorf("expected fidelity: %w", err)
+		}
+		if err := validateTierFidelity(cell.Tier, cell.Manual.ExpectedFidelity); err != nil {
+			return fmt.Errorf("expected fidelity: %w", err)
+		}
+		if cell.Verification == "planned" && cell.ReleaseBlocking {
+			return fmt.Errorf("a release-blocking cell has only a planned check")
+		}
+	default:
+		return fmt.Errorf("unknown verification %q", cell.Verification)
+	}
+	return nil
+}
+
+func validateCellFidelity(fidelity cellFidelity) error {
+	for name, value := range map[string]string{
+		"cwd": fidelity.Cwd, "exit": fidelity.Exit, "duration": fidelity.Duration,
+	} {
+		switch value {
+		case "exact", "observed", "missing":
+		default:
+			return fmt.Errorf("unknown %s value %q", name, value)
+		}
+	}
+	return nil
+}
+
+// pathStartup returns the flags the planned command adds after the shell
+// executable. A generated bootstrap is represented by <bootstrap> in the
+// fixture, because its text is not a startup flag the cell can name exactly.
+// Comparing this with the cell's startup keeps the two records from drifting.
+func pathStartup(path captureMatrixPath) []string {
+	var flags []string
+	bootstrap := false
+	switch {
+	case len(path.WantCommandPrefix) > 0:
+		flags = path.WantCommandPrefix[1:]
+		bootstrap = true
+	case len(path.WantCommand) > 0:
+		flags = path.WantCommand[1:]
+	}
+	startup := make([]string, 0, len(flags)+1)
+	startup = append(startup, flags...)
+	if bootstrap {
+		startup = append(startup, "<bootstrap>")
+	}
+	return startup
+}
+
+// validateTierFidelity rejects a tier claim that contradicts the capture
+// mechanism. Tier 1 is the authoritative hook, so all three fields are exact.
+// Tier 3 is typed input plus prompt detection, so it cannot know the cwd or
+// exit code and cannot measure an exact duration.
+func validateTierFidelity(tier int, fidelity cellFidelity) error {
+	switch tier {
+	case 1:
+		if fidelity.Cwd != "exact" || fidelity.Exit != "exact" || fidelity.Duration != "exact" {
+			return fmt.Errorf("Tier 1 has cwd=%q exit=%q duration=%q, want exact for all three",
+				fidelity.Cwd, fidelity.Exit, fidelity.Duration)
+		}
+	case 3:
+		if fidelity.Cwd != "missing" || fidelity.Exit != "missing" || fidelity.Duration == "exact" {
+			return fmt.Errorf("Tier 3 has cwd=%q exit=%q duration=%q, want missing cwd and exit and a non-exact duration",
+				fidelity.Cwd, fidelity.Exit, fidelity.Duration)
+		}
+	}
+	return nil
+}
+
+// cellHookExpected reports whether the local planner can install its session
+// hook for this Host and shell. Windows is PowerShell-only; every POSIX Host
+// supports every shell in the matrix, including an explicitly started
+// PowerShell.
+func cellHookExpected(host, shell string) bool {
+	if host == "windows" {
+		return shell == "powershell"
+	}
+	switch shell {
+	case "zsh", "bash", "fish", "nu", "xonsh", "powershell":
+		return true
+	default:
+		return false
+	}
+}
+
+func pathShellMatches(cellShell, pathShell string) bool {
+	if cellShell == "powershell" {
+		return pathShell == "pwsh" || pathShell == "powershell"
+	}
+	return cellShell == pathShell
+}
+
+func shellVersion(run matrixObservedRun, shell string) string {
+	if version := run.ShellVersions[shell]; version != "" {
+		return version
+	}
+	if shell == "powershell" {
+		for _, key := range []string{"pwsh", "powershell.exe", "powershell"} {
+			if version := run.ShellVersions[key]; version != "" {
+				return version
+			}
+		}
+	}
+	return ""
+}
+
+func validateHostShellReleaseGates(matrix captureMatrix) error {
+	cells := map[string]matrixCell{}
+	for _, cell := range matrix.Cells {
+		cells[cell.Name] = cell
+	}
+	required := map[string]hostShellGate{}
+	categories := map[string]bool{}
+	for _, gate := range requiredHostShellGates {
+		required[gate.Name] = gate
+		categories[gate.Category] = true
+	}
+	for _, category := range requiredGateCategories {
+		if !categories[category] {
+			return fmt.Errorf("no release gate requires a %s cell", category)
+		}
+	}
+	for _, gate := range requiredHostShellGates {
+		cell, ok := cells[gate.Name]
+		if !ok {
+			return fmt.Errorf("release-blocking cell %q is missing", gate.Name)
+		}
+		if !cell.ReleaseBlocking {
+			return fmt.Errorf("required cell %q is not marked releaseBlocking", gate.Name)
+		}
+		if cell.Tier != gate.Tier {
+			return fmt.Errorf("release-blocking cell %q is classified Tier %d, required Tier %d",
+				gate.Name, cell.Tier, gate.Tier)
+		}
+		if cell.Verification == "planned" {
+			return fmt.Errorf("release-blocking cell %q has no observed or documented manual check", gate.Name)
+		}
+	}
+	for _, cell := range matrix.Cells {
+		if !cell.ReleaseBlocking {
+			continue
+		}
+		if _, ok := required[cell.Name]; !ok {
+			return fmt.Errorf("cell %q is releaseBlocking but has no release gate requirement", cell.Name)
+		}
+	}
+	return nil
 }

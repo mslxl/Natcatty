@@ -1257,3 +1257,79 @@ func TestRealPowerShellNestedShellWithSpacesAndNoExit(t *testing.T) {
 		})
 	}
 }
+
+// TestRealPowerShellTierThreeFallback starts an interactive PowerShell with
+// the capture hook disabled. There is no private sequence and no OSC 133, so
+// the tap starts the command from the typed Enter and the profile's own prompt
+// finishes it at Tier 3 with a measured duration but no cwd or exit. The test
+// runs on every PowerShell this package can launch; only a Windows runner can
+// claim Windows fidelity.
+func TestRealPowerShellTierThreeFallback(t *testing.T) {
+	pwsh := availablePowerShell()
+	if pwsh == "" {
+		t.Skip("no PowerShell available; set NETCATTY_TEST_PWSH")
+	}
+	unsetShellIntegrationEnv(t)
+	home := t.TempDir()
+	workDir := t.TempDir()
+	env := append(startupEnv(t, "pwsh", home), "SHELL="+pwsh)
+	events := make(chan appsession.CommandEvent, 8)
+	service := appsession.NewService(answeringFactory{},
+		appsession.WithCaptureHook(NewPlanner(
+			WithDefaultShell(func() (string, error) { return pwsh, nil }),
+			WithEnabled(func() bool { return false }),
+		)),
+		appsession.WithCommandCompletionHook(func(event appsession.CommandEvent) {
+			events <- event
+		}),
+	)
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{
+		Kind:    appsession.KindLocal,
+		Command: []string{pwsh},
+		Dir:     workDir,
+		Env:     env,
+		Cols:    100, Rows: 40,
+	})
+	if err != nil {
+		t.Fatalf("open PowerShell: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		select {
+		case <-session.Done():
+		case <-time.After(5 * time.Second):
+		}
+	})
+	if !waitCondition(func() bool {
+		text, _ := service.ScreenText(session.ID())
+		return strings.Contains(text.Text, "USERPROMPT1> ")
+	}) {
+		text, _ := service.ScreenText(session.ID())
+		t.Fatalf("the unhooked PowerShell prompt never appeared: snapshot=%+v screen=%q",
+			session.Snapshot(), text.Text)
+	}
+	typed := "Write-Output netcatty_pwsh_tier3_42"
+	service.SendInput([]model.SessionID{session.ID()}, []byte(typed+"\r"))
+	if !waitCondition(func() bool {
+		text, _ := service.ScreenText(session.ID())
+		return strings.Contains(text.Text, "netcatty_pwsh_tier3_42")
+	}) {
+		text, _ := service.ScreenText(session.ID())
+		t.Fatalf("the unhooked PowerShell command never ran; screen=%q", text.Text)
+	}
+	event := awaitCommandEvent(t, events, typed, nil)
+	if event.CaptureTier != domainhistory.CaptureTierFallback {
+		t.Fatalf("capture tier = %d, want the typed Tier 3 fallback: %+v",
+			event.CaptureTier, event)
+	}
+	if event.CWD != "" {
+		t.Fatalf("the unhooked fallback invented a cwd: %+v", event)
+	}
+	if event.HasExitCode {
+		t.Fatalf("the unhooked fallback invented an exit code: %+v", event)
+	}
+	if event.FinishedAt.IsZero() || event.FinishedAt.Before(event.StartedAt) {
+		t.Fatalf("the prompt fallback did not measure a duration: %+v", event)
+	}
+}
