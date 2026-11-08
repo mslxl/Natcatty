@@ -90,7 +90,7 @@ jobs:
         # required tier, or claims an observation this machine did not make.
         # TestCaptureMatrix replans the paths; it normalizes host path
         # separators so the same fixture is checked on Windows too.
-        run: go test ./adapters/shellhook -run '^(TestCaptureMatrix|TestHostShellMatrix|TestHostShellReleaseGates|TestHostShellMatrixRejectsBadFixtures)$' -count=1 -v
+        run: go test ./adapters/shellhook -run '^(TestCaptureMatrix|TestHostShellMatrix|TestHostShellReleaseGates|TestHostShellMatrixRejectsBadFixtures|TestValidateCellCIRejectsOptionalEvidenceThatCouldGate)$' -count=1 -v
 
       - name: Confirm real-network tests skip without credentials
         # Default CI has no tailnet and no WireGuard peer. The opt-in tests are

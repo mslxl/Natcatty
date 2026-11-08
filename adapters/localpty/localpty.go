@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	appsession "github.com/mslxl/natcatty/application/session"
@@ -171,6 +172,9 @@ func hasLocale(values ...string) bool {
 // transport adapts a PTY to the Session transport port.
 type transport struct {
 	pty *pty.PTY
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (t *transport) Read(p []byte) (int, error)  { return t.pty.Read(p) }
@@ -178,22 +182,41 @@ func (t *transport) Write(p []byte) (int, error) { return t.pty.Write(p) }
 func (t *transport) Resize(cols, rows int) error { return t.pty.Resize(cols, rows) }
 func (t *transport) Wait() (int, error)          { return t.pty.Wait() }
 
-// Close hangs up the shell. A program that ignores the hangup is killed after
-// a moment, as a terminal app does, without blocking Session teardown.
+const (
+	// closeGrace bounds how long Close waits for a hung-up shell to exit
+	// before killing it.
+	closeGrace = 2 * time.Second
+	// closeReapTimeout bounds the wait for the kill to be reaped, so a process
+	// that cannot be reaped cannot wedge Session teardown forever.
+	closeReapTimeout = 2 * time.Second
+)
+
+// Close hangs up the shell and waits for the process to exit, bounded by
+// closeGrace; a shell that ignores the hangup is killed and reaped, bounded by
+// closeReapTimeout. Session teardown calls Close before publishing its end, so
+// returning only after the shell exits means Done implies the shell's writes
+// have completed. Close is idempotent: concurrent and repeated calls share one
+// teardown and never signal a reaped process.
 func (t *transport) Close() error {
-	err := t.pty.Close()
-	go func() {
-		select {
-		case <-t.pty.Exited():
-		case <-time.After(2 * time.Second):
-			// The shell may have exited while the timer fired; do not signal
-			// after it is reaped.
-			select {
-			case <-t.pty.Exited():
-			default:
-				_ = t.pty.Kill()
-			}
+	t.closeOnce.Do(func() {
+		t.closeErr = t.pty.Close()
+		if waitExited(t.pty.Exited(), closeGrace) {
+			return
 		}
-	}()
-	return err
+		_ = t.pty.Kill()
+		_ = waitExited(t.pty.Exited(), closeReapTimeout)
+	})
+	return t.closeErr
+}
+
+// waitExited reports whether exited closed within timeout.
+func waitExited(exited <-chan struct{}, timeout time.Duration) bool {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-exited:
+		return true
+	case <-timer.C:
+		return false
+	}
 }

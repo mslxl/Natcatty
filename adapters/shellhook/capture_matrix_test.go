@@ -156,7 +156,12 @@ type cellCI struct {
 	Requires []string `json:"requires,omitempty"`
 	// Command is the exact command line the job runs. Every test in Tests must
 	// appear in it.
-	Command          string       `json:"command"`
+	Command string `json:"command"`
+	// Optional marks best-effort evidence: every cited test must run in a
+	// continue-on-error step (or in a whole job marked continue-on-error that
+	// is outside the publish dependency chain), so a failure cannot block a
+	// release. A release-blocking cell must never cite optional evidence.
+	Optional         bool         `json:"optional,omitempty"`
 	ExpectedFidelity cellFidelity `json:"expectedFidelity"`
 }
 
@@ -435,6 +440,101 @@ func TestHostShellMatrixRejectsBadFixtures(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), testCase.want) {
 				t.Fatalf("error = %q, want it to contain %q", err, testCase.want)
+			}
+		})
+	}
+}
+
+// TestValidateCellCIRejectsOptionalEvidenceThatCouldGate proves the best-effort
+// CI path cannot smuggle a failure into a release: optional evidence on a gate,
+// a gate test that only runs in a continue-on-error step, optional evidence
+// citing a required-step test, and a whole optional job in the publish chain
+// must all be rejected.
+func TestValidateCellCIRejectsOptionalEvidenceThatCouldGate(t *testing.T) {
+	source, err := testPackageSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const (
+		zshTest = "TestRealShellSessionCapturesTierOneEndToEnd"
+		nuTest  = "TestRealNushellSessionCapturesTierOneEndToEnd"
+	)
+	command := func(test string) string {
+		return "go test ./adapters/shellhook -run '^" + test + "$' -count=1 -v"
+	}
+	jobs := map[string]releaseWorkflowJob{
+		"publish":   {Name: "publish", Needs: []string{"checksums"}},
+		"checksums": {Name: "checksums", Needs: []string{"capture", "blocking-capture", "optional-capture"}},
+		"capture": {
+			Name:   "capture",
+			RunsOn: "ubuntu-latest",
+			// The gate test exists only in a continue-on-error step.
+			Steps: []releaseWorkflowStep{{Name: "best effort", Optional: true, Text: command(zshTest)}},
+			Text:  command(zshTest),
+		},
+		"blocking-capture": {
+			Name:   "blocking-capture",
+			RunsOn: "ubuntu-latest",
+			Steps:  []releaseWorkflowStep{{Name: "required", Text: command(zshTest)}},
+			Text:   command(zshTest),
+		},
+		"optional-capture": {
+			Name:     "optional-capture",
+			RunsOn:   "ubuntu-latest",
+			Optional: true,
+			Text:     command(zshTest) + command(nuTest),
+		},
+	}
+	cell := matrixCell{Host: "linux", Arch: "amd64", Shell: "zsh", Tier: 1}
+	ci := cellCI{
+		Workflow:         ".github/workflows/release.yml",
+		Job:              "capture",
+		Runner:           "ubuntu-latest",
+		Platform:         "linux/amd64",
+		Tests:            []string{zshTest},
+		Command:          command(zshTest),
+		ExpectedFidelity: cellFidelity{Cwd: "exact", Exit: "exact", Duration: "exact"},
+	}
+	tests := []struct {
+		name   string
+		cell   matrixCell
+		ci     cellCI
+		expect string
+	}{
+		{
+			name:   "optional evidence on a release-blocking cell",
+			cell:   func() matrixCell { result := cell; result.ReleaseBlocking = true; return result }(),
+			ci:     func() cellCI { result := ci; result.Optional = true; return result }(),
+			expect: "optional best-effort evidence",
+		},
+		{
+			name:   "gate test only in a continue-on-error step",
+			cell:   func() matrixCell { result := cell; result.ReleaseBlocking = true; return result }(),
+			ci:     ci,
+			expect: "in a required step",
+		},
+		{
+			name:   "optional evidence cites a required-step test",
+			cell:   cell,
+			ci:     func() cellCI { result := ci; result.Optional = true; result.Job = "blocking-capture"; return result }(),
+			expect: "in a continue-on-error step",
+		},
+		{
+			name:   "whole optional job in the publish dependency chain",
+			cell:   cell,
+			ci:     func() cellCI { result := ci; result.Optional = true; result.Job = "optional-capture"; return result }(),
+			expect: "publish dependency chain",
+		},
+	}
+	for _, testCase := range tests {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			err := validateCellCI(testCase.cell, testCase.ci, jobs, source)
+			if err == nil {
+				t.Fatal("the checker accepted optional evidence that could gate a release")
+			}
+			if !strings.Contains(err.Error(), testCase.expect) {
+				t.Fatalf("error = %q, want it to contain %q", err, testCase.expect)
 			}
 		})
 	}
@@ -895,13 +995,46 @@ var requiredGateCategories = []string{
 }
 
 // releaseWorkflowJob is the part of a release.yml job the matrix checker
-// needs: what it runs on, whether it can be skipped, and what it depends on.
+// needs: what it runs on, whether it can be skipped, whether it is optional,
+// and what it depends on.
 type releaseWorkflowJob struct {
-	Name   string
-	RunsOn string
-	HasIf  bool
-	Needs  []string
-	Text   string
+	Name     string
+	RunsOn   string
+	HasIf    bool
+	Optional bool
+	Needs    []string
+	Steps    []releaseWorkflowStep
+	Text     string
+}
+
+// releaseWorkflowStep is one step of a job. Optional records a step-level
+// continue-on-error: true: a failure there cannot fail the job, so a test in
+// that step cannot gate a release.
+type releaseWorkflowStep struct {
+	Name     string
+	Optional bool
+	Text     string
+}
+
+// optionalStepWith returns a continue-on-error step that runs the named test.
+func (job releaseWorkflowJob) optionalStepWith(test string) (releaseWorkflowStep, bool) {
+	for _, step := range job.Steps {
+		if step.Optional && strings.Contains(step.Text, test) {
+			return step, true
+		}
+	}
+	return releaseWorkflowStep{}, false
+}
+
+// blockingStepWith returns a required step that runs the named test. A test
+// that only appears in a continue-on-error step cannot be a release gate.
+func (job releaseWorkflowJob) blockingStepWith(test string) (releaseWorkflowStep, bool) {
+	for _, step := range job.Steps {
+		if !step.Optional && strings.Contains(step.Text, test) {
+			return step, true
+		}
+	}
+	return releaseWorkflowStep{}, false
 }
 
 // releaseWorkflowJobs parses the subset of the release workflow the matrix
@@ -917,6 +1050,8 @@ func releaseWorkflowJobs() (map[string]releaseWorkflowJob, error) {
 	inJobs := false
 	current := ""
 	inNeeds := false
+	inSteps := false
+	stepIndex := -1
 	for _, raw := range strings.Split(string(data), "\n") {
 		line := strings.TrimRight(raw, "\r")
 		trimmed := strings.TrimSpace(line)
@@ -928,6 +1063,8 @@ func releaseWorkflowJobs() (map[string]releaseWorkflowJob, error) {
 			inJobs = trimmed == "jobs:"
 			current = ""
 			inNeeds = false
+			inSteps = false
+			stepIndex = -1
 			continue
 		}
 		if !inJobs {
@@ -942,6 +1079,8 @@ func releaseWorkflowJobs() (map[string]releaseWorkflowJob, error) {
 			jobs[name] = releaseWorkflowJob{Name: name}
 			current = name
 			inNeeds = false
+			inSteps = false
+			stepIndex = -1
 			continue
 		}
 		if current == "" {
@@ -954,19 +1093,46 @@ func releaseWorkflowJobs() (map[string]releaseWorkflowJob, error) {
 			case strings.HasPrefix(trimmed, "runs-on:"):
 				job.RunsOn = strings.TrimSpace(strings.TrimPrefix(trimmed, "runs-on:"))
 				inNeeds = false
+				inSteps = false
 			case strings.HasPrefix(trimmed, "if:"):
 				job.HasIf = true
 				inNeeds = false
+				inSteps = false
+			case strings.HasPrefix(trimmed, "continue-on-error:"):
+				job.Optional = strings.TrimSpace(strings.TrimPrefix(trimmed, "continue-on-error:")) == "true"
+				inNeeds = false
+				inSteps = false
+			case trimmed == "steps:":
+				inSteps = true
+				inNeeds = false
 			case trimmed == "needs:":
 				inNeeds = true
+				inSteps = false
 			case strings.HasPrefix(trimmed, "needs:"):
 				job.Needs = parseWorkflowList(strings.TrimSpace(strings.TrimPrefix(trimmed, "needs:")))
 				inNeeds = false
+				inSteps = false
 			default:
 				inNeeds = false
+				inSteps = false
 			}
 		} else if inNeeds && indent > 4 && strings.HasPrefix(trimmed, "- ") {
 			job.Needs = append(job.Needs, strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
+		} else if inSteps {
+			if indent == 6 && strings.HasPrefix(trimmed, "- ") {
+				job.Steps = append(job.Steps, releaseWorkflowStep{
+					Name: strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")),
+					Text: line + "\n",
+				})
+				stepIndex = len(job.Steps) - 1
+			} else if stepIndex >= 0 {
+				step := job.Steps[stepIndex]
+				step.Text += line + "\n"
+				if indent == 8 && strings.HasPrefix(trimmed, "continue-on-error:") {
+					step.Optional = strings.TrimSpace(strings.TrimPrefix(trimmed, "continue-on-error:")) == "true"
+				}
+				job.Steps[stepIndex] = step
+			}
 		}
 		jobs[current] = job
 	}
@@ -1330,9 +1496,13 @@ func validateHostShellCell(cell matrixCell, paths map[string]captureMatrixPath,
 	return nil
 }
 
-// validateCellCI binds a cell to a real release-workflow job. The job must run
-// on the recorded runner, run the cell's test, name the per-shell binding, and
-// sit in the publish dependency chain without a condition that could skip it.
+// validateCellCI binds a cell to a real release-workflow job. A blocking cell's
+// job must run on the recorded runner, run the cell's test in a required step,
+// name the per-shell binding, and sit in the publish dependency chain without a
+// condition that could skip it. A best-effort cell's evidence must instead be
+// unable to fail the release: its tests run in a continue-on-error step of a
+// required job, or the whole cited job is continue-on-error and outside the
+// publish dependency chain.
 func validateCellCI(cell matrixCell, ci cellCI, jobs map[string]releaseWorkflowJob,
 	testSource string) error {
 	if err := validateCellFidelity(ci.ExpectedFidelity); err != nil {
@@ -1349,6 +1519,9 @@ func validateCellCI(cell matrixCell, ci cellCI, jobs map[string]releaseWorkflowJ
 	}
 	if ci.Runner == "" || len(ci.Tests) == 0 || ci.Command == "" {
 		return fmt.Errorf("CI evidence has no runner, test, or command")
+	}
+	if ci.Optional && cell.ReleaseBlocking {
+		return fmt.Errorf("a release-blocking cell cites optional best-effort evidence")
 	}
 	for _, test := range ci.Tests {
 		if !testDefinedInSource(testSource, test) {
@@ -1372,17 +1545,57 @@ func validateCellCI(cell matrixCell, ci cellCI, jobs map[string]releaseWorkflowJ
 		return fmt.Errorf("release job %q runs on %q, but the cell records %q",
 			ci.Job, job.RunsOn, ci.Runner)
 	}
-	if !releaseReachable(jobs, ci.Job) {
-		return fmt.Errorf("release job %q is not in the publish dependency chain", ci.Job)
+	if !ci.Optional {
+		if job.Optional {
+			return fmt.Errorf("release job %q is continue-on-error and cannot gate a release", ci.Job)
+		}
+		if !releaseReachable(jobs, ci.Job) {
+			return fmt.Errorf("release job %q is not in the publish dependency chain", ci.Job)
+		}
+		for _, test := range ci.Tests {
+			if _, ok := job.blockingStepWith(test); !ok {
+				return fmt.Errorf("release job %q does not run %s in a required step", ci.Job, test)
+			}
+		}
+		for _, requirement := range ci.Requires {
+			if !strings.Contains(job.Text, requirement) {
+				return fmt.Errorf("release job %q does not bind the cell with %q", ci.Job, requirement)
+			}
+		}
+		return nil
+	}
+
+	// Optional best-effort evidence. A whole-job continue-on-error is accepted
+	// only outside the publish dependency chain, where its failure cannot affect
+	// publishing; otherwise the cited test must run in a continue-on-error step
+	// of a required job.
+	if job.Optional {
+		if releaseReachable(jobs, ci.Job) {
+			return fmt.Errorf("optional release job %q is in the publish dependency chain", ci.Job)
+		}
+		for _, test := range ci.Tests {
+			if !strings.Contains(job.Text, test) {
+				return fmt.Errorf("optional release job %q does not run %s", ci.Job, test)
+			}
+		}
+		for _, requirement := range ci.Requires {
+			if !strings.Contains(job.Text, requirement) {
+				return fmt.Errorf("optional release job %q does not bind the cell with %q", ci.Job, requirement)
+			}
+		}
+		return nil
 	}
 	for _, test := range ci.Tests {
-		if !strings.Contains(job.Text, test) {
-			return fmt.Errorf("release job %q does not run %s", ci.Job, test)
+		step, ok := job.optionalStepWith(test)
+		if !ok {
+			return fmt.Errorf("release job %q does not run best-effort %s in a continue-on-error step",
+				ci.Job, test)
 		}
-	}
-	for _, requirement := range ci.Requires {
-		if !strings.Contains(job.Text, requirement) {
-			return fmt.Errorf("release job %q does not bind the cell with %q", ci.Job, requirement)
+		for _, requirement := range ci.Requires {
+			if !strings.Contains(step.Text, requirement) {
+				return fmt.Errorf("best-effort step in release job %q does not bind the cell with %q",
+					ci.Job, requirement)
+			}
 		}
 	}
 	return nil
@@ -1397,6 +1610,7 @@ var shellTestCoverage = map[string][]string{
 	"TestRealNushellSessionCapturesTierOneEndToEnd":        {"nu"},
 	"TestRealXonshSessionCapturesTierOneEndToEnd":          {"xonsh"},
 	"TestRealPowerShellLocalHookCapturesTierOne":           {"powershell"},
+	"TestRealPowerShellSessionCapturesTierOneEndToEnd":     {"powershell"},
 	"TestRealTierThreeFallbackCapturesTypedInput":          {"zsh"},
 	"TestRealPowerShellTierThreeFallback":                  {"powershell"},
 	"TestRealNushellWithoutHookKeepsNativeCapture":         {"nu"},
