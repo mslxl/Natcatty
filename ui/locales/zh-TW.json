@@ -3480,7 +3480,7 @@
   "settingsAtuinPreferHostAtuin": "優先使用主機上的 Atuin",
   "settingsAtuinPreferHostAtuinHint": "當主機上存在 Atuin 時，開啟其歷史記錄而不是匯入終端記錄。",
   "settingsAtuinAccountTitle": "Atuin 帳戶",
-  "settingsAtuinAccountDescription": "每次安裝僅一個帳戶。權杖和主金鑰只保存在本裝置的欄位密鑰儲存中，絕不進入 Vault 雲端同步。",
+  "settingsAtuinAccountDescription": "每次安裝僅一個帳戶。權杖和主金鑰只保存在本裝置的欄位密鑰儲存中，絕不進入 Vault 雲端同步。Atuin 伺服器只能看到記錄的識別碼和中繼資料，看不到指令文字、工作目錄、結束狀態或來源。",
   "settingsAtuinStatus": "狀態",
   "settingsAtuinStatusDisabled": "同步已停用",
   "settingsAtuinStatusNotConfigured": "未設定",

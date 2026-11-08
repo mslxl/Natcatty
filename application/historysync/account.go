@@ -99,20 +99,57 @@ type MetadataStore interface {
 // thread while an operation runs because it reads only local state and a
 // cached snapshot.
 type AccountService struct {
-	settings AccountSettings
-	secrets  Secrets
-	metadata MetadataStore
-	factory  Factory
+	settings  AccountSettings
+	secrets   Secrets
+	metadata  MetadataStore
+	factory   Factory
+	appLocked func() bool
 
 	opMu     sync.Mutex
 	statusMu sync.Mutex
 	cached   Status
 }
 
+// AccountOption customizes an AccountService.
+type AccountOption func(*AccountService)
+
+// WithAccountAppLocked supplies a predicate that reports whether App Lock is
+// engaged. While it is, every account operation that could read or write a
+// credential fails closed before touching the secret store. Status still reads
+// only device-local metadata and never decrypts a credential.
+func WithAccountAppLocked(locked func() bool) AccountOption {
+	return func(s *AccountService) {
+		if locked != nil {
+			s.appLocked = locked
+		}
+	}
+}
+
 // NewAccountService returns the account service. factory may be nil until the
 // real adapter exists; operations then report ErrRemoteUnavailable.
-func NewAccountService(settings AccountSettings, secrets Secrets, metadata MetadataStore, factory Factory) *AccountService {
-	return &AccountService{settings: settings, secrets: secrets, metadata: metadata, factory: factory}
+func NewAccountService(settings AccountSettings, secrets Secrets, metadata MetadataStore,
+	factory Factory, opts ...AccountOption) *AccountService {
+	service := &AccountService{settings: settings, secrets: secrets, metadata: metadata, factory: factory}
+	for _, opt := range opts {
+		opt(service)
+	}
+	return service
+}
+
+func (s *AccountService) appLockEngaged() bool {
+	return s != nil && s.appLocked != nil && s.appLocked()
+}
+
+// appLockStatus fails an account operation while App Lock is engaged. It reads
+// only device-local metadata; localStatus's App Lock branch performs no secret
+// Has or Get.
+func (s *AccountService) appLockStatus(ctx context.Context) (Status, error) {
+	if !s.appLockEngaged() {
+		return Status{}, nil
+	}
+	status := s.localStatus(ctx)
+	s.setCached(status)
+	return status, ErrAppLocked
 }
 
 // NormalizeSyncAddress validates and normalizes an Atuin base URL. HTTPS is
@@ -181,6 +218,9 @@ func (s *AccountService) Login(ctx context.Context, request LoginRequest) (Statu
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 
+	if status, err := s.appLockStatus(ctx); err != nil {
+		return status, err
+	}
 	if err := s.secretsReady(); err != nil {
 		status := s.localStatus(ctx)
 		s.setCached(status)
@@ -329,6 +369,9 @@ func (s *AccountService) SetMasterKey(ctx context.Context, input string, confirm
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 
+	if status, err := s.appLockStatus(ctx); err != nil {
+		return status, err
+	}
 	if err := s.secretsReady(); err != nil {
 		status := s.localStatus(ctx)
 		s.setCached(status)
@@ -502,6 +545,9 @@ func (s *AccountService) ConfirmUnverifiedKey(ctx context.Context) (Status, erro
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 
+	if status, err := s.appLockStatus(ctx); err != nil {
+		return status, err
+	}
 	if err := s.secretsReady(); err != nil {
 		status := s.localStatus(ctx)
 		s.setCached(status)
@@ -546,6 +592,9 @@ func (s *AccountService) ForgetMasterKey(ctx context.Context) (Status, error) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 
+	if status, err := s.appLockStatus(ctx); err != nil {
+		return status, err
+	}
 	if err := s.secrets.Delete(ctx, MasterKeyRef()); err != nil &&
 		!errors.Is(err, ErrSecretNotFound) {
 		return s.statusFromLocalError(err), publicSecretError(err)
@@ -574,6 +623,9 @@ func (s *AccountService) Logout(ctx context.Context) (Status, error) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 
+	if status, err := s.appLockStatus(ctx); err != nil {
+		return status, err
+	}
 	for _, ref := range []SecretRef{SessionTokenRef(), MasterKeyRef()} {
 		if err := s.secrets.Delete(ctx, ref); err != nil && !errors.Is(err, ErrSecretNotFound) {
 			return s.statusFromLocalError(err), publicSecretError(err)
@@ -602,6 +654,9 @@ func (s *AccountService) Check(ctx context.Context) (Status, error) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 
+	if status, err := s.appLockStatus(ctx); err != nil {
+		return status, err
+	}
 	status := s.localStatus(ctx)
 	switch status.State {
 	case atuinmodel.SyncDisabled, atuinmodel.SyncNotConfigured, atuinmodel.SyncLocked,
@@ -847,6 +902,14 @@ func (s *AccountService) localStatus(ctx context.Context) Status {
 	if metadataErr == nil {
 		status.AccountID = metadata.Account.UserID
 		status.KeyFingerprint = metadata.KeyFingerprint
+	}
+	if s.appLockEngaged() {
+		// App Lock hides the app. The status may report the lock without
+		// touching the secret store at all: Has would reveal credential
+		// presence, and Get would decrypt.
+		status.State = atuinmodel.SyncLocked
+		status.Problem = atuinmodel.ProblemLocked
+		return status
 	}
 
 	mode := s.secrets.Mode()

@@ -3480,7 +3480,7 @@
   "settingsAtuinPreferHostAtuin": "Preferir Atuin en el Host",
   "settingsAtuinPreferHostAtuinHint": "Si el Host tiene Atuin, abre su historial en lugar de importar una transcripción.",
   "settingsAtuinAccountTitle": "Cuenta de Atuin",
-  "settingsAtuinAccountDescription": "Una cuenta por instalación. El token y la clave maestra solo se guardan en el almacén de secretos de este dispositivo y nunca se sincronizan con Vault Cloud.",
+  "settingsAtuinAccountDescription": "Una cuenta por instalación. El token y la clave maestra solo se guardan en el almacén de secretos de este dispositivo y nunca se sincronizan con Vault Cloud. El servidor de Atuin ve los identificadores y metadatos de los registros, pero no el texto del comando, el directorio de trabajo, el estado de salida ni el origen.",
   "settingsAtuinStatus": "Estado",
   "settingsAtuinStatusDisabled": "Sincronización desactivada",
   "settingsAtuinStatusNotConfigured": "Sin configurar",

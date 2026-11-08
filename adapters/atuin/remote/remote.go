@@ -318,6 +318,10 @@ func (r *Remote) Authenticate(ctx context.Context) (historysync.AuthResult, erro
 	if err != nil {
 		return historysync.AuthResult{}, fmt.Errorf("%w: could not encode login", historysync.ErrRemote)
 	}
+	// The encoded body contains the password. Zero the buffer once the request
+	// has completed so the credential does not linger on the heap; the password
+	// string itself is immutable and cannot be wiped.
+	defer zeroBytes(body)
 	var login loginResponse
 	if err := r.postJSON(ctx, pathLogin, nil, body, &login, false); err != nil {
 		switch {
@@ -409,6 +413,10 @@ func (r *Remote) Download(ctx context.Context, series historysync.Series, start 
 	if !haveKey {
 		return historysync.Page{}, historysync.ErrKeyMismatch
 	}
+	// Wipe the operation-scoped copy when the call ends. The remote keeps its
+	// own copy for later operations; copies made inside wire helpers are
+	// transient and cannot all be reached.
+	defer key.Wipe()
 	effectiveCount := r.effectivePageSize(count)
 	records, err := r.fetchWirePage(ctx, seriesHost, start, effectiveCount)
 	if err != nil {
@@ -448,6 +456,7 @@ func (r *Remote) Upload(ctx context.Context, records []historysync.SyncRecord) e
 	if !haveKey {
 		return historysync.ErrKeyMismatch
 	}
+	defer key.Wipe()
 	if err := validateUploadBatch(records); err != nil {
 		return err
 	}
@@ -638,6 +647,7 @@ func (r *Remote) ValidateMasterKey(ctx context.Context) (historysync.KeyValidati
 	if !haveKey {
 		return "", historysync.ErrKeyMismatch
 	}
+	defer key.Wipe()
 	seriesHost, ok := wire.CanonicalUUID(sample.SeriesHost)
 	if !ok {
 		return "", fmt.Errorf("%w: series host is not a UUID", historysync.ErrRemote)
@@ -679,6 +689,15 @@ func (r *Remote) keyCopy() (wire.Key, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.key, r.haveKey
+}
+
+// zeroBytes overwrites a buffer that held a credential. It is best effort:
+// Go strings cannot be wiped and a compiler is not obliged to preserve a store
+// it cannot observe.
+func zeroBytes(data []byte) {
+	for index := range data {
+		data[index] = 0
+	}
 }
 
 func (r *Remote) effectivePageSize(requested int) int {

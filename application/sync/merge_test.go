@@ -739,6 +739,34 @@ func TestFilterSecretsKeepsOnlyNestedPeerKeys(t *testing.T) {
 	}
 }
 
+// TestMergeDropsAtuinAccountCredentialsFromEverySide proves the merge cannot
+// smuggle a device-local Atuin credential into a Vault payload even when every
+// side names the entity type: no Vault family owns it, so filterSecretsToPayload
+// removes it before the payload is written.
+func TestMergeDropsAtuinAccountCredentialsFromEverySide(t *testing.T) {
+	const entityType = "atuin_account"
+	const token = "qzwvun-bqjv-vjrwp"
+	credential := SecretValue{
+		EntityType: entityType, EntityID: "default", Field: "session_token", Value: token,
+	}
+	payload := Payload{Secrets: []SecretValue{credential}}
+	result, err := MergePayloads(&payload, payload, payload, MergeOptions{})
+	if err != nil {
+		t.Fatalf("MergePayloads: %v", err)
+	}
+	if len(result.Payload.Secrets) != 0 {
+		// Print only the count: the values are credentials.
+		t.Fatalf("merged payload carries %d Atuin credentials, want 0", len(result.Payload.Secrets))
+	}
+	encoded, err := json.Marshal(result.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte(token)) {
+		t.Fatal("the merged Vault payload contains the Atuin token")
+	}
+}
+
 func TestLegacyPayloadWithoutNetworkProfilesStillParsesAndMerges(t *testing.T) {
 	// A payload written before the family existed has no networkProfiles key.
 	legacy := []byte(`{"hosts":[{"id":"h1","label":"H","hostname":"h.example","port":22,"username":"root","protocol":"ssh"}],"keys":[],"identities":[],"proxyProfiles":[],"snippets":[],"groups":[],"snippetPackages":[],"notes":[],"noteGroups":[],"portForwardingRules":[],"syncedAt":1}`)

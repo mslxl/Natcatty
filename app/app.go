@@ -475,7 +475,8 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// unavailable rather than silently using the test fake in production.
 	historySecrets := store.OpenHistorySecrets(secretStore)
 	historyAccountService := historysync.NewAccountService(
-		preferenceService, historySecrets, database, nil)
+		preferenceService, historySecrets, database, nil,
+		historysync.WithAccountAppLocked(func() bool { return appLock.Snapshot().Locked }))
 	// The background engine owns scheduling, download/apply, upload, and retry.
 	// Capture only signals it: history subscriptions never block the write.
 	// App Lock pauses sync; downloaded rows are announced as soon as their

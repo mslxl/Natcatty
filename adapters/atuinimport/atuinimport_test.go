@@ -181,6 +181,26 @@ func TestReadHistoryRejectsAMalformedRowInsteadOfDroppingIt(t *testing.T) {
 	}
 }
 
+// TestMalformedRowErrorNeverContainsTheCommand proves the importer reports a
+// bad row by its history id, not by the command text it could not accept.
+func TestMalformedRowErrorNeverContainsTheCommand(t *testing.T) {
+	const command = "deploy --token SENTINEL_COMMAND_TEXT"
+	statement := "INSERT INTO history VALUES ('row-1', 0, '" + command + "')"
+	path := createHistoryDB(t, t.TempDir(),
+		`CREATE TABLE history (id TEXT, timestamp INTEGER, command TEXT)`, statement)
+	_, err := (Reader{}).ReadHistory(context.Background(), path)
+	if !errors.Is(err, ErrInconsistent) {
+		t.Fatalf("ReadHistory = %v, want ErrInconsistent", err)
+	}
+	if strings.Contains(err.Error(), command) {
+		// Do not print the error: it contains the command text.
+		t.Fatal("the import error contains the command text")
+	}
+	if !strings.Contains(err.Error(), "row-1") {
+		t.Fatalf("the import error does not identify the row: %v", err)
+	}
+}
+
 func TestReadHistoryRejectsAMissingFile(t *testing.T) {
 	_, err := (Reader{}).ReadHistory(context.Background(), filepath.Join(t.TempDir(), "missing", "history.db"))
 	if err == nil {

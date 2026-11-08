@@ -458,6 +458,101 @@ func TestLoginRequiresAnUnlockedSecretStore(t *testing.T) {
 		if h.factory.opens != 0 {
 			t.Errorf("%s: opened a remote with a locked secret store", test.mode)
 		}
+		if h.secrets.get[SessionTokenRef()] != 0 || h.secrets.get[MasterKeyRef()] != 0 {
+			t.Errorf("%s: Login decrypted a credential while the store was locked", test.mode)
+		}
+	}
+}
+
+// TestAccountOperationsFailClosedWhileAppLocked proves the account service
+// enforces App Lock itself, not only the sync engine. Every operation that
+// could read, write, or delete a credential returns ErrAppLocked before the
+// secret store is touched; the stored credentials survive unchanged.
+func TestAccountOperationsFailClosedWhileAppLocked(t *testing.T) {
+	h := newAccountHarness(t)
+	h.configureEmptyAccount(t)
+	h.secrets.has = map[SecretRef]int{}
+	h.secrets.get = map[SecretRef]int{}
+	h.secrets.set = map[SecretRef]int{}
+	h.secrets.delete = map[SecretRef]int{}
+	tokenBefore := h.secrets.values[SessionTokenRef()]
+	keyBefore := h.secrets.values[MasterKeyRef()]
+	opensBefore := h.factory.opens
+
+	locked := true
+	h.service = NewAccountService(h.settings, h.secrets, h.metadata, h.factory,
+		WithAccountAppLocked(func() bool { return locked }))
+
+	operations := []struct {
+		name string
+		call func() (Status, error)
+	}{
+		{"Login", func() (Status, error) {
+			return h.service.Login(context.Background(), LoginRequest{
+				ServerURL: testServer, Username: "alice", Password: "hunter2",
+			})
+		}},
+		{"SetMasterKey", func() (Status, error) {
+			return h.service.SetMasterKey(context.Background(), testKeyB64, false)
+		}},
+		{"ConfirmUnverifiedKey", func() (Status, error) {
+			return h.service.ConfirmUnverifiedKey(context.Background())
+		}},
+		{"ForgetMasterKey", func() (Status, error) {
+			return h.service.ForgetMasterKey(context.Background())
+		}},
+		{"Logout", func() (Status, error) {
+			return h.service.Logout(context.Background())
+		}},
+		{"Check", func() (Status, error) {
+			return h.service.Check(context.Background())
+		}},
+	}
+	for _, operation := range operations {
+		status, err := operation.call()
+		if !errors.Is(err, ErrAppLocked) {
+			t.Errorf("%s = %v, want ErrAppLocked", operation.name, err)
+		}
+		if status.State != atuinmodel.SyncLocked || status.Problem != atuinmodel.ProblemLocked {
+			t.Errorf("%s status = %+v, want locked", operation.name, status)
+		}
+	}
+
+	for name, count := range map[string]int{
+		"token Has":    h.secrets.has[SessionTokenRef()],
+		"key Has":      h.secrets.has[MasterKeyRef()],
+		"token Get":    h.secrets.get[SessionTokenRef()],
+		"key Get":      h.secrets.get[MasterKeyRef()],
+		"token Set":    h.secrets.set[SessionTokenRef()],
+		"key Set":      h.secrets.set[MasterKeyRef()],
+		"token Delete": h.secrets.delete[SessionTokenRef()],
+		"key Delete":   h.secrets.delete[MasterKeyRef()],
+	} {
+		if count != 0 {
+			t.Errorf("%s ran %d time(s) while App Lock was engaged", name, count)
+		}
+	}
+	if h.secrets.values[SessionTokenRef()] != tokenBefore ||
+		h.secrets.values[MasterKeyRef()] != keyBefore {
+		t.Fatal("a locked account operation changed stored credentials")
+	}
+	if h.factory.opens != opensBefore {
+		t.Fatalf("a locked account operation opened %d remote(s)", h.factory.opens-opensBefore)
+	}
+
+	status := h.service.Status()
+	if status.State != atuinmodel.SyncLocked || status.Problem != atuinmodel.ProblemLocked {
+		t.Fatalf("Status = %+v, want locked without a secret read", status)
+	}
+	for name, count := range map[string]int{
+		"token Has": h.secrets.has[SessionTokenRef()],
+		"key Has":   h.secrets.has[MasterKeyRef()],
+		"token Get": h.secrets.get[SessionTokenRef()],
+		"key Get":   h.secrets.get[MasterKeyRef()],
+	} {
+		if count != 0 {
+			t.Errorf("Status ran %s %d time(s) while App Lock was engaged", name, count)
+		}
 	}
 }
 
@@ -828,6 +923,9 @@ func TestCheckDoesNothingWhileDisabledLockedOrUnconfigured(t *testing.T) {
 		}
 		if h.factory.opens != 0 {
 			t.Fatal("a locked store opened a remote")
+		}
+		if h.secrets.get[SessionTokenRef()] != 0 || h.secrets.get[MasterKeyRef()] != 0 {
+			t.Fatal("a locked Check decrypted a credential")
 		}
 	})
 	t.Run("not configured", func(t *testing.T) {
