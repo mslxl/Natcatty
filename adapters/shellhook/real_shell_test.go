@@ -38,6 +38,20 @@ func availableShells() map[string]string {
 	return shells
 }
 
+// unsetShellIntegrationEnv clears the integration variables a developer's own
+// shell may export, so a real-shell test observes only what Netcatty sets.
+func unsetShellIntegrationEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"ATUIN_SESSION", "STARSHIP_SHELL", "STARSHIP_SESSION_KEY",
+		"ITERM_SHELL_INTEGRATION_INSTALLED", "NETCATTY_HOOK",
+		"NETCATTY_HOOK_DIR", "NETCATTY_USER_ZDOTDIR", "NETCATTY_HOOK_FILE",
+		"NETCATTY_HOOK_START", "NETCATTY_HOOK_STATE",
+	} {
+		unsetEnv(t, key)
+	}
+}
+
 // startupEnv creates an isolated home with the user's own startup file and
 // returns the extra environment the shell needs.
 func startupEnv(t *testing.T, name, home string) []string {
@@ -859,6 +873,10 @@ func TestRealXonshSessionCapturesTierOneEndToEnd(t *testing.T) {
 		expectedSub = resolved
 	}
 
+	// xonsh prints the startup marker while prompt_toolkit is still
+	// initializing. Typing before its first prompt can be echoed by the PTY
+	// and then dropped, so wait for the prompt itself before the warm-up.
+	waitForXonshPrompt(t, service, session)
 	warmup := "echo netcatty_xonsh_ready_2"
 	service.SendInput([]model.SessionID{session.ID()}, []byte(warmup+"\r"))
 	if !waitCondition(func() bool {
@@ -869,6 +887,10 @@ func TestRealXonshSessionCapturesTierOneEndToEnd(t *testing.T) {
 		t.Fatalf("the xonsh warm-up never ran; screen=%q", text.Text)
 	}
 	awaitTierOne(t, events, warmup)
+	// The hook's D mark arrives before prompt_toolkit redraws the prompt.
+	// Wait for the prompt title before typing the next line, or xonsh drops
+	// input that lands during the redraw.
+	waitForXonshPrompt(t, service, session)
 
 	exchanges := []struct {
 		typed string
@@ -900,6 +922,7 @@ func TestRealXonshSessionCapturesTierOneEndToEnd(t *testing.T) {
 			t.Fatalf("the command was captured twice: %+v", extra)
 		default:
 		}
+		waitForXonshPrompt(t, service, session)
 	}
 	if !waitCondition(func() bool {
 		text, _ := service.ScreenText(session.ID())
@@ -914,6 +937,7 @@ func TestRealXonshSessionCapturesTierOneEndToEnd(t *testing.T) {
 	if cdEvent.CWD != workDir && cdEvent.CWD != expectedCWD {
 		t.Fatalf("cd cwd = %q, want %q", cdEvent.CWD, workDir)
 	}
+	waitForXonshPrompt(t, service, session)
 	afterCD := "echo netcatty_after_cd_42"
 	service.SendInput([]model.SessionID{session.ID()}, []byte(afterCD+"\r"))
 	cdAfter := awaitTierOne(t, events, afterCD)
@@ -2347,4 +2371,127 @@ func TestRealShellSkipsWhenAnIntegrationIsActive(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRealTierThreeFallbackCapturesTypedInput starts a real zsh with the
+// capture hook disabled. The Session has no private sequence and no OSC 133:
+// the tap starts the command from the typed Enter, and zsh's own recognizable
+// prompt finishes it at Tier 3 with a measured duration but no cwd or exit.
+func TestRealTierThreeFallbackCapturesTypedInput(t *testing.T) {
+	zsh, ok := availableShells()["zsh"]
+	if !ok {
+		t.Skip("zsh is not available")
+	}
+	unsetShellIntegrationEnv(t)
+	home := t.TempDir()
+	workDir := t.TempDir()
+	zdotdir := filepath.Join(home, ".config", "zsh")
+	if err := os.MkdirAll(zdotdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rc := "print -r -- netcatty-tier3-ready\nPROMPT='netcatty$ '\n"
+	if err := os.WriteFile(filepath.Join(zdotdir, ".zshrc"), []byte(rc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"HOME=" + home, "ZDOTDIR=" + zdotdir, "SHELL=" + zsh}
+	events := make(chan appsession.CommandEvent, 8)
+	service := appsession.NewService(localpty.Factory{},
+		appsession.WithCaptureHook(NewPlanner(
+			WithDefaultShell(func() (string, error) { return zsh, nil }),
+			WithEnabled(func() bool { return false }),
+		)),
+		appsession.WithCommandCompletionHook(func(event appsession.CommandEvent) {
+			events <- event
+		}),
+	)
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{
+		Kind:    appsession.KindLocal,
+		Command: []string{zsh, "-l"},
+		Dir:     workDir,
+		Env:     env,
+		Cols:    100, Rows: 40,
+	})
+	if err != nil {
+		t.Fatalf("open zsh: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		select {
+		case <-session.Done():
+		case <-time.After(5 * time.Second):
+		}
+	})
+	if !waitCondition(func() bool {
+		text, _ := service.ScreenText(session.ID())
+		return strings.Contains(text.Text, "netcatty-tier3-ready") &&
+			strings.Contains(text.Text, "netcatty$")
+	}) {
+		text, _ := service.ScreenText(session.ID())
+		t.Fatalf("the unhooked zsh prompt never appeared: snapshot=%+v screen=%q",
+			session.Snapshot(), text.Text)
+	}
+	typed := "echo netcatty_tier3_fallback_42"
+	service.SendInput([]model.SessionID{session.ID()}, []byte(typed+"\r"))
+	if !waitCondition(func() bool {
+		text, _ := service.ScreenText(session.ID())
+		return strings.Contains(text.Text, "netcatty_tier3_fallback_42")
+	}) {
+		text, _ := service.ScreenText(session.ID())
+		t.Fatalf("the unhooked command never ran; screen=%q", text.Text)
+	}
+	event := awaitCommandEvent(t, events, typed, nil)
+	if event.CaptureTier != domainhistory.CaptureTierFallback {
+		t.Fatalf("capture tier = %d, want the typed Tier 3 fallback: %+v",
+			event.CaptureTier, event)
+	}
+	if event.CWD != "" {
+		t.Fatalf("the unhooked fallback invented a cwd: %+v", event)
+	}
+	if event.HasExitCode {
+		t.Fatalf("the unhooked fallback invented an exit code: %+v", event)
+	}
+	if event.FinishedAt.IsZero() || event.FinishedAt.Before(event.StartedAt) {
+		t.Fatalf("the prompt fallback did not measure a duration: %+v", event)
+	}
+}
+
+// waitForXonshPrompt waits until xonsh has finished drawing a prompt. Xonsh
+// updates its OSC 0 title to "<command> | <user>@<host>: <cwd> | xonsh" during
+// preexec and back to "<user>@<host>: <cwd> | xonsh" once prompt_toolkit is
+// ready for input. The hook's D mark arrives between those two title updates,
+// so a test that types immediately after a completion can have its line
+// echoed by the PTY and then dropped by prompt_toolkit.
+func waitForXonshPrompt(t *testing.T, service *appsession.Service, session *appsession.Session) {
+	t.Helper()
+	if !waitCondition(func() bool {
+		head, _, ok := strings.Cut(session.Snapshot().Title, " | xonsh")
+		if !ok || !strings.Contains(head, "@") {
+			return false
+		}
+		text, _ := service.ScreenText(session.ID())
+		return screenEndsWithPrompt(text.Text)
+	}) {
+		text, _ := service.ScreenText(session.ID())
+		t.Fatalf("the xonsh prompt never appeared; title=%q screen=%q",
+			session.Snapshot().Title, text.Text)
+	}
+}
+
+// screenEndsWithPrompt reports whether the last non-empty screen line looks
+// like a shell prompt. The title update arrives just before prompt_toolkit
+// paints the prompt, so both are required before typing.
+func screenEndsWithPrompt(text string) bool {
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		line := strings.TrimSpace(lines[index])
+		if line == "" {
+			continue
+		}
+		return strings.HasSuffix(line, "$") || strings.HasSuffix(line, "#") ||
+			strings.HasSuffix(line, "%") || strings.HasSuffix(line, ">") ||
+			// xonsh's default non-root prompt ends with "@".
+			strings.HasSuffix(line, "@")
+	}
+	return false
 }

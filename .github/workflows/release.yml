@@ -53,6 +53,21 @@ jobs:
       - name: Set up Nushell
         uses: ./.github/actions/setup-nu
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check Host/Shell release matrix
+        # Release-blocking capture cells: Tier 1 zsh, bash, fish, and
+        # PowerShell plus the Tier 3 fallback. The checker also rejects a
+        # manual or planned cell presented as observed evidence. Manual
+        # Windows-runner, macOS Intel, Linux PowerShell, and BSD VM acceptance
+        # steps are documented in docs/host-shell-matrix.md; they are not
+        # claimed as observations by this fixture. TestCaptureMatrix also
+        # replans every path so a startup-file change cannot drift from it.
+        run: go test ./adapters/shellhook -run '^(TestCaptureMatrix|TestHostShellMatrix|TestHostShellReleaseGates|TestHostShellMatrixRejectsBadFixtures)$' -count=1 -v
+
       - name: Read the release version from mygo.json
         id: tag
         env:
