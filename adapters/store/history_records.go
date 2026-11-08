@@ -285,7 +285,6 @@ func writeHistoryMetadata(tx *gorm.DB, metadata domainhistory.Metadata) error {
 		len(metadata.Series) > 0)
 }
 
-
 // ListHistoryRecords returns the append-only log in series and index order.
 func (s *Store) ListHistoryRecords(ctx context.Context) ([]domainhistory.Record, error) {
 	var rows []historyRecordSchema
