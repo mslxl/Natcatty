@@ -370,8 +370,7 @@ func probeRemoteLoginShell(ctx context.Context, lease *appconnection.Lease, user
 	// The abort channel closes the SFTP stream if the probe outlives its
 	// deadline, so a wedged subsystem cannot hold the Session open.
 	abort := make(chan struct{})
-	var abortOnce sync.Once
-	stop := func() { abortOnce.Do(func() { close(abort) }) }
+	stop := sync.OnceFunc(func() { close(abort) })
 	defer stop()
 	done := make(chan string, 1)
 	go func() {
@@ -434,8 +433,7 @@ func readRemoteLoginShell(ctx context.Context, lease *appconnection.Lease, usern
 	// subsystem and then goes silent must release the channel and this
 	// goroutine instead of holding them for the life of the SSH Connection.
 	// Closing the stream also aborts every later SFTP request.
-	var streamOnce sync.Once
-	closeStream := func() { streamOnce.Do(func() { _ = guarded.Close() }) }
+	closeStream := sync.OnceFunc(func() { _ = guarded.Close() })
 	watchDone := make(chan struct{})
 	defer close(watchDone)
 	go func() {
@@ -641,8 +639,8 @@ type leasedTransport struct {
 	// cannot host the wrapper, so the Session starts at Tier 2/3 immediately.
 	captureHookExpected bool
 	// hookWithdrawn reports that the planned remote capture wrapper was
-	// replaced by the plain login shell because its shell could not be shown
-	// to accept a POSIX command.
+	// replaced by the plain login shell because the account's shell has no
+	// remote hook Netcatty can use.
 	hookWithdrawn bool
 
 	mu     sync.Mutex

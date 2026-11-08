@@ -136,9 +136,9 @@ func (p *Planner) Plan(spec appsession.StartSpec) (appsession.CaptureHookPlan, b
 		// The transport learns the peer's platform only after connecting. A
 		// Windows OpenSSH peer needs a PowerShell wrapper instead of the POSIX
 		// one, so the factory may choose the final command then. On POSIX
-		// peers it must also prove the login shell can parse a POSIX command;
-		// the wrapper is withdrawn for xonsh, csh, tcsh, nu, and unknown
-		// shells.
+		// peers it must still check the login shell before sending the
+		// wrapper; it withdraws it for xonsh, csh, tcsh, nu, and every unknown
+		// shell (see RemoteLoginShellSupported).
 		spec.CaptureHookRemote = true
 		return appsession.CaptureHookPlan{Spec: spec, HookExpected: true}, false
 	default:
