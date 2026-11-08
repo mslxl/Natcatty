@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	apphistory "github.com/mslxl/natcatty/application/history"
 	historysync "github.com/mslxl/natcatty/application/historysync"
 	"github.com/mslxl/natcatty/application/historysync/fake"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
@@ -836,5 +837,467 @@ func TestMarkAndResetUploadedUpdateTheLogAndCheckpoint(t *testing.T) {
 	}
 	if got := metadata.Series[domainhistory.SeriesKey(writer, domainhistory.RecordTagHistory)]; got != reset {
 		t.Fatalf("checkpoint after reset = %+v, want %+v", got, reset)
+	}
+}
+
+// TestRemoteTombstoneSuppressesALaterCreateForTheSameHistoryID proves a
+// tombstone that arrived before its row still wins when the create is
+// downloaded later from a different writer's series. A tombstone is keyed by
+// history id, not by the series or page that happened to deliver it.
+func TestRemoteTombstoneSuppressesALaterCreateForTheSameHistoryID(t *testing.T) {
+	store, _ := openTestStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	const historyID = "0198d000-0000-7000-8000-000000000701"
+	deletedAt := at.Add(time.Minute)
+
+	tombstone := syncTestDeleteRecord(syncTestRemote, historyID, 0, deletedAt)
+	if err := store.ApplyRemotePage(ctx, historysync.RemotePage{
+		Checkpoint: domainhistory.SeriesCheckpoint{
+			SeriesHost: syncTestRemote, Tag: domainhistory.RecordTagHistory, AppliedIndex: 0,
+		},
+		Records: []domainhistory.Record{tombstone},
+		Deletes: []historysync.RemoteDelete{{HistoryID: historyID, DeletedAt: deletedAt}},
+	}); err != nil {
+		t.Fatalf("apply unseen tombstone: %v", err)
+	}
+	if _, found, err := store.HistoryEntry(ctx, historyID); err != nil || found {
+		t.Fatalf("an unseen tombstone created a projection: found=%v err=%v", found, err)
+	}
+
+	entry := syncTestEntry(historyID, "doomed", at)
+	create := syncTestCreateRecord(syncTestWriter, historyID, 0, at, entry)
+	if err := store.ApplyRemotePage(ctx, historysync.RemotePage{
+		Checkpoint: domainhistory.SeriesCheckpoint{
+			SeriesHost: syncTestWriter, Tag: domainhistory.RecordTagHistory, AppliedIndex: 0,
+		},
+		Records: []domainhistory.Record{create},
+		Entries: []domainhistory.Entry{entry},
+	}); err != nil {
+		t.Fatalf("apply the later create: %v", err)
+	}
+	stored, found, err := store.HistoryEntry(ctx, historyID)
+	if err != nil || !found {
+		t.Fatalf("HistoryEntry = %+v, found=%v, err=%v", stored, found, err)
+	}
+	if stored.DeletedAt.IsZero() {
+		t.Fatalf("a later create undid the stored tombstone: %+v", stored)
+	}
+	live, err := store.ListHistoryEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListHistoryEntries: %v", err)
+	}
+	if len(live) != 0 {
+		t.Fatalf("live entries = %+v, want the tombstoned row hidden", live)
+	}
+
+	// Replaying the create page must not resurrect the row either.
+	if err := store.ApplyRemotePage(ctx, historysync.RemotePage{
+		Checkpoint: domainhistory.SeriesCheckpoint{
+			SeriesHost: syncTestWriter, Tag: domainhistory.RecordTagHistory, AppliedIndex: 0,
+		},
+		Records: []domainhistory.Record{create},
+		Entries: []domainhistory.Entry{entry},
+	}); err != nil {
+		t.Fatalf("replay the create page: %v", err)
+	}
+	if stored, _, err := store.HistoryEntry(ctx, historyID); err != nil || stored.DeletedAt.IsZero() {
+		t.Fatalf("a replayed create resurrected the row: %+v (err %v)", stored, err)
+	}
+}
+
+// TestRemoteTombstoneOlderThanALiveLocalRowWins proves deletion is decided by
+// tombstone presence, never by comparing timestamps. Clock skew can make the
+// other device's tombstone older than the row it deletes.
+func TestRemoteTombstoneOlderThanALiveLocalRowWins(t *testing.T) {
+	store, _ := openTestStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	writer, err := store.EnsureWriterUUID(ctx, func() string { return syncTestWriter })
+	if err != nil {
+		t.Fatalf("EnsureWriterUUID: %v", err)
+	}
+	const historyID = "0198d000-0000-7000-8000-000000000702"
+	recordSyncLocalEntry(t, store, writer, historyID, "live", at)
+	deletedAt := at.Add(-24 * time.Hour)
+
+	tombstone := syncTestDeleteRecord(syncTestRemote, historyID, 0, deletedAt)
+	if err := store.ApplyRemotePage(ctx, historysync.RemotePage{
+		Checkpoint: domainhistory.SeriesCheckpoint{
+			SeriesHost: syncTestRemote, Tag: domainhistory.RecordTagHistory, AppliedIndex: 0,
+		},
+		Records: []domainhistory.Record{tombstone},
+		Deletes: []historysync.RemoteDelete{{HistoryID: historyID, DeletedAt: deletedAt}},
+	}); err != nil {
+		t.Fatalf("apply older tombstone: %v", err)
+	}
+	stored, found, err := store.HistoryEntry(ctx, historyID)
+	if err != nil || !found {
+		t.Fatalf("HistoryEntry = %+v, found=%v, err=%v", stored, found, err)
+	}
+	if !stored.DeletedAt.Equal(deletedAt) {
+		t.Fatalf("deleted at %v, want the tombstone time %v despite the newer row",
+			stored.DeletedAt, deletedAt)
+	}
+	live, err := store.ListHistoryEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListHistoryEntries: %v", err)
+	}
+	if len(live) != 0 {
+		t.Fatalf("live entries = %+v, want the row hidden", live)
+	}
+}
+
+// TestMalformedTombstonePayloadFailsClosed proves an unreadable tombstone is
+// rejected as a whole page instead of being stored as a live row.
+func TestMalformedTombstonePayloadFailsClosed(t *testing.T) {
+	store, _ := openTestStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	const historyID = "0198d000-0000-7000-8000-000000000703"
+
+	malformed := syncTestDeleteRecord(syncTestRemote, historyID, 0, at)
+	malformed.Payload = "{not-json"
+	err := store.ApplyRemotePage(ctx, historysync.RemotePage{
+		Checkpoint: domainhistory.SeriesCheckpoint{
+			SeriesHost: syncTestRemote, Tag: domainhistory.RecordTagHistory, AppliedIndex: 0,
+		},
+		Records: []domainhistory.Record{malformed},
+		Deletes: []historysync.RemoteDelete{{HistoryID: historyID, DeletedAt: at}},
+	})
+	if err == nil {
+		t.Fatal("ApplyRemotePage accepted a malformed tombstone payload")
+	}
+	records, listErr := store.ListHistoryRecords(ctx)
+	if listErr != nil {
+		t.Fatalf("ListHistoryRecords: %v", listErr)
+	}
+	if len(records) != 0 {
+		t.Fatalf("records = %+v, want the rejected page rolled back", records)
+	}
+	metadata, metaErr := store.HistoryMetadata(ctx)
+	if metaErr != nil {
+		t.Fatalf("HistoryMetadata: %v", metaErr)
+	}
+	if _, found := metadata.Series[domainhistory.SeriesKey(syncTestRemote, domainhistory.RecordTagHistory)]; found {
+		t.Fatalf("checkpoint advanced for a rejected tombstone page: %+v", metadata.Series)
+	}
+}
+
+// TestMalformedStoredTombstoneBlocksALaterCreate proves a corrupted tombstone
+// already in the local log fails the download closed instead of being ignored
+// and resurrecting the row.
+func TestMalformedStoredTombstoneBlocksALaterCreate(t *testing.T) {
+	store, _ := openTestStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	const historyID = "0198d000-0000-7000-8000-000000000704"
+
+	if err := store.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
+		return tx.Create(&historyRecordSchema{
+			ID: "corrupt-tombstone", SeriesHost: syncTestRemote,
+			Tag: domainhistory.RecordTagHistory, Index: 0, RecordedAt: at.UnixNano(),
+			Version: domainhistory.RecordVersion, Kind: domainhistory.RecordKindDelete,
+			HistoryID: historyID, Payload: "{not-json",
+			Direction: domainhistory.RecordDirectionRemote,
+		}).Error
+	}); err != nil {
+		t.Fatalf("seed corrupt tombstone: %v", err)
+	}
+
+	entry := syncTestEntry(historyID, "doomed", at)
+	create := syncTestCreateRecord(syncTestWriter, historyID, 0, at, entry)
+	err := store.ApplyRemotePage(ctx, historysync.RemotePage{
+		Checkpoint: domainhistory.SeriesCheckpoint{
+			SeriesHost: syncTestWriter, Tag: domainhistory.RecordTagHistory, AppliedIndex: 0,
+		},
+		Records: []domainhistory.Record{create},
+		Entries: []domainhistory.Entry{entry},
+	})
+	if err == nil {
+		t.Fatal("ApplyRemotePage ignored a corrupted stored tombstone")
+	}
+	if _, found, lookupErr := store.HistoryEntry(ctx, historyID); lookupErr != nil || found {
+		t.Fatalf("the rejected create was projected: found=%v err=%v", found, lookupErr)
+	}
+}
+
+// confirmStoreKey marks the account key confirmed so a first sync against an
+// empty server is allowed to upload.
+func confirmStoreKey(t *testing.T, db *Store) {
+	t.Helper()
+	ctx := context.Background()
+	metadata, err := db.HistoryMetadata(ctx)
+	if err != nil {
+		t.Fatalf("HistoryMetadata: %v", err)
+	}
+	metadata.UnverifiedKeyConfirmed = true
+	if err := db.SaveHistoryMetadata(ctx, metadata); err != nil {
+		t.Fatalf("SaveHistoryMetadata: %v", err)
+	}
+}
+
+func syncStoreNow(t *testing.T, service *historysync.Service) historysync.SyncResult {
+	t.Helper()
+	result, err := service.SyncNow(context.Background())
+	if err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+	return result
+}
+
+// TestTwoDevicesConvergeAndPropagateDeletesWithRealStore runs two writers
+// against one fake account through SQLite. Each row appears exactly once on
+// both devices, and a delete on either device removes the row on the other.
+func TestTwoDevicesConvergeAndPropagateDeletesWithRealStore(t *testing.T) {
+	ctx := context.Background()
+	storeA, _ := openTestStore(t)
+	storeB, _ := openTestStore(t)
+	if _, err := storeA.EnsureWriterUUID(ctx, func() string { return syncTestWriter }); err != nil {
+		t.Fatalf("writer a: %v", err)
+	}
+	if _, err := storeB.EnsureWriterUUID(ctx, func() string { return syncTestRemote }); err != nil {
+		t.Fatalf("writer b: %v", err)
+	}
+	historyA := apphistory.NewService(storeA)
+	historyB := apphistory.NewService(storeB)
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	entryA := syncTestEntry("0198d000-0000-7000-8000-000000000841",
+		"from writer a", at.Add(10*time.Minute))
+	entryB := syncTestEntry("0198d000-0000-7000-8000-000000000842",
+		"from writer b", at)
+	if err := historyA.Record(ctx, entryA); err != nil {
+		t.Fatalf("record on a: %v", err)
+	}
+	if err := historyB.Record(ctx, entryB); err != nil {
+		t.Fatalf("record on b: %v", err)
+	}
+	confirmStoreKey(t, storeA)
+	confirmStoreKey(t, storeB)
+	factory := fake.NewFactory(fake.Options{})
+	serviceA := newStoreSyncService(t, storeA, factory)
+	serviceB := newStoreSyncService(t, storeB, factory)
+
+	syncStoreNow(t, serviceA)
+	syncStoreNow(t, serviceB)
+	syncStoreNow(t, serviceA)
+
+	assertLive := func(label string, historyService *apphistory.Service, want map[string]bool) {
+		t.Helper()
+		entries, err := historyService.Entries(ctx)
+		if err != nil {
+			t.Fatalf("%s Entries: %v", label, err)
+		}
+		if len(entries) != len(want) {
+			t.Fatalf("%s live rows = %d, want %d: %+v", label, len(entries), len(want), entries)
+		}
+		for _, entry := range entries {
+			if !want[entry.ID] {
+				t.Fatalf("%s shows an unexpected row %s: %+v", label, entry.ID, entries)
+			}
+		}
+	}
+	both := map[string]bool{entryA.ID: true, entryB.ID: true}
+	assertLive("writer a", historyA, both)
+	assertLive("writer b", historyB, both)
+	creates := make(map[string]int)
+	for _, record := range factory.ServerRecords() {
+		if record.Tag != domainhistory.RecordTagHistory {
+			t.Fatalf("a non-history tag reached the server: %+v", record)
+		}
+		if record.Kind == domainhistory.RecordKindCreate {
+			creates[record.HistoryID]++
+		}
+	}
+	for _, entry := range []domainhistory.Entry{entryA, entryB} {
+		if creates[entry.ID] != 1 {
+			t.Fatalf("server holds %d creates for %s, want exactly one",
+				creates[entry.ID], entry.ID)
+		}
+	}
+
+	// Writer A deletes its row; writer B must lose it.
+	if err := historyA.DeleteEntry(ctx, entryA.ID); err != nil {
+		t.Fatalf("delete on a: %v", err)
+	}
+	syncStoreNow(t, serviceA)
+	syncStoreNow(t, serviceB)
+	assertLive("writer a after its delete", historyA, map[string]bool{entryB.ID: true})
+	assertLive("writer b after a's delete", historyB, map[string]bool{entryB.ID: true})
+	if stored, found, err := storeB.HistoryEntry(ctx, entryA.ID); err != nil || !found ||
+		stored.DeletedAt.IsZero() {
+		t.Fatalf("writer b's tombstoned row = %+v, found=%v, err=%v", stored, found, err)
+	}
+
+	// Writer A deletes writer B's downloaded row: the create lives in B's
+	// series while the tombstone lives in A's, so B must apply a cross-series
+	// tombstone to a row it created itself.
+	if err := historyA.DeleteEntry(ctx, entryB.ID); err != nil {
+		t.Fatalf("delete b's row on a: %v", err)
+	}
+	syncStoreNow(t, serviceA)
+	syncStoreNow(t, serviceB)
+	assertLive("writer a after deleting b's row", historyA, map[string]bool{})
+	assertLive("writer b after a deletes its row", historyB, map[string]bool{})
+	if stored, found, err := storeB.HistoryEntry(ctx, entryB.ID); err != nil || !found ||
+		stored.DeletedAt.IsZero() {
+		t.Fatalf("writer b's cross-series tombstoned row = %+v, found=%v, err=%v",
+			stored, found, err)
+	}
+
+	tombstones := make(map[string]int)
+	for _, record := range factory.ServerRecords() {
+		if record.Kind == domainhistory.RecordKindDelete {
+			tombstones[record.HistoryID]++
+		}
+	}
+	for _, entry := range []domainhistory.Entry{entryA, entryB} {
+		if tombstones[entry.ID] != 1 {
+			t.Fatalf("server holds %d tombstones for %s, want exactly one",
+				tombstones[entry.ID], entry.ID)
+		}
+	}
+}
+
+// TestPruneAndClearUploadTombstonesOnlyForUUIDRowsWithRealStore proves Prune
+// and Clear this device write tombstones for every UUID row they delete, never
+// for a legacy non-UUID row, and that the engine uploads those tombstones.
+func TestPruneAndClearUploadTombstonesOnlyForUUIDRowsWithRealStore(t *testing.T) {
+	ctx := context.Background()
+	db, _ := openTestStore(t)
+	if _, err := db.EnsureWriterUUID(ctx, func() string { return syncTestWriter }); err != nil {
+		t.Fatalf("EnsureWriterUUID: %v", err)
+	}
+	historyService := apphistory.NewService(db)
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	const (
+		pruneOne   = "0198d000-0000-7000-8000-000000000851"
+		pruneTwo   = "0198d000-0000-7000-8000-000000000852"
+		clearOne   = "0198d000-0000-7000-8000-000000000853"
+		clearTwo   = "0198d000-0000-7000-8000-000000000854"
+		importedID = "0198d000-0000-7000-8000-000000000855"
+		legacyGone = "legacy-prune-row"
+		legacyKeep = "legacy-clear-row"
+	)
+	rows := []domainhistory.Entry{
+		{ID: pruneOne, Scope: "local", Command: "git status",
+			Source: domainhistory.SourceSession, RecordedAt: at},
+		{ID: pruneTwo, Scope: "local", Command: "git fetch",
+			Source: domainhistory.SourceSession, RecordedAt: at.Add(time.Minute)},
+		{ID: legacyGone, Scope: "local", Command: "git old",
+			Source: domainhistory.SourceSession, RecordedAt: at.Add(2 * time.Minute)},
+		{ID: clearOne, Scope: "local", Command: "make test",
+			Source: domainhistory.SourceShellHistory, RecordedAt: at.Add(3 * time.Minute)},
+		{ID: clearTwo, Scope: "local", Command: "make build",
+			Source: domainhistory.SourceSession, RecordedAt: at.Add(4 * time.Minute)},
+		{ID: legacyKeep, Scope: "local", Command: "whoami",
+			Source: domainhistory.SourceSession, RecordedAt: at.Add(5 * time.Minute)},
+		{ID: importedID, Scope: "remote:web:deploy", Origin: "web:deploy",
+			Command: "uptime", Source: domainhistory.SourceAtuinImport,
+			RecordedAt: at.Add(6 * time.Minute)},
+	}
+	for _, entry := range rows {
+		if err := historyService.Record(ctx, entry); err != nil {
+			t.Fatalf("record %s: %v", entry.Command, err)
+		}
+	}
+	if removed, err := historyService.PruneHistory(ctx,
+		domainhistory.EntryFilter{Query: "git"}, 0); err != nil || removed != 3 {
+		t.Fatalf("PruneHistory = %d, %v; want the three git rows", removed, err)
+	}
+	if removed, err := historyService.ClearThisDevice(ctx); err != nil || removed != 3 {
+		t.Fatalf("ClearThisDevice = %d, %v; want the three remaining local rows", removed, err)
+	}
+
+	// The local log holds one tombstone per UUID row and none for the legacy
+	// rows or the imported projection.
+	records, err := db.ListHistoryRecords(ctx)
+	if err != nil {
+		t.Fatalf("ListHistoryRecords: %v", err)
+	}
+	deletes := make(map[string]int)
+	for _, record := range records {
+		if record.Tag != domainhistory.RecordTagHistory {
+			t.Fatalf("non-history tag in the local log: %+v", record)
+		}
+		if record.Kind == domainhistory.RecordKindDelete {
+			deletes[record.HistoryID]++
+		}
+		if record.HistoryID == legacyGone || record.HistoryID == legacyKeep ||
+			record.HistoryID == importedID {
+			t.Fatalf("an unrepresentable or imported row got a record: %+v", record)
+		}
+	}
+	for _, id := range []string{pruneOne, pruneTwo, clearOne, clearTwo} {
+		if deletes[id] != 1 {
+			t.Fatalf("tombstones for %s = %d, want one", id, deletes[id])
+		}
+	}
+
+	confirmStoreKey(t, db)
+	factory := fake.NewFactory(fake.Options{})
+	service := newStoreSyncService(t, db, factory)
+	syncStoreNow(t, service)
+
+	serverDeletes := make(map[string]int)
+	serverIDs := make(map[string]bool)
+	for _, record := range factory.ServerRecords() {
+		if record.Tag != domainhistory.RecordTagHistory {
+			t.Fatalf("non-history tag uploaded: %+v", record)
+		}
+		serverIDs[record.HistoryID] = true
+		if record.Kind == domainhistory.RecordKindDelete {
+			serverDeletes[record.HistoryID]++
+		}
+	}
+	for _, id := range []string{pruneOne, pruneTwo, clearOne, clearTwo} {
+		if serverDeletes[id] != 1 {
+			t.Fatalf("uploaded tombstones for %s = %d, want one", id, serverDeletes[id])
+		}
+	}
+	for _, id := range []string{legacyGone, legacyKeep, importedID} {
+		if serverIDs[id] {
+			t.Fatalf("legacy or imported row %s reached the server", id)
+		}
+	}
+
+	// Tombstones are ordinary delete records and are retained after upload,
+	// not compacted away.
+	retained, err := db.ListHistoryRecords(ctx)
+	if err != nil {
+		t.Fatalf("ListHistoryRecords after sync: %v", err)
+	}
+	retainedDeletes := make(map[string]int)
+	uploadedDeletes := make(map[string]int)
+	for _, record := range retained {
+		if record.Kind != domainhistory.RecordKindDelete {
+			continue
+		}
+		retainedDeletes[record.HistoryID]++
+		if !record.UploadedAt.IsZero() {
+			uploadedDeletes[record.HistoryID]++
+		}
+	}
+	for _, id := range []string{pruneOne, pruneTwo, clearOne, clearTwo} {
+		if retainedDeletes[id] != 1 || uploadedDeletes[id] != 1 {
+			t.Fatalf("tombstone for %s retained/uploaded = %d/%d, want 1/1",
+				id, retainedDeletes[id], uploadedDeletes[id])
+		}
+	}
+
+	// Imported history stays visible; the legacy rows are deleted locally.
+	live, err := historyService.Entries(ctx)
+	if err != nil {
+		t.Fatalf("Entries: %v", err)
+	}
+	if len(live) != 1 || live[0].ID != importedID {
+		t.Fatalf("live rows = %+v, want only the imported row", live)
+	}
+	for _, id := range []string{legacyGone, legacyKeep} {
+		entry, found, err := db.HistoryEntry(ctx, id)
+		if err != nil || !found || entry.DeletedAt.IsZero() {
+			t.Fatalf("legacy row %s = %+v, found=%v, err=%v; want it deleted locally",
+				id, entry, found, err)
+		}
 	}
 }

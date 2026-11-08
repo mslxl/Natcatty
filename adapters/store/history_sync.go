@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -29,6 +30,14 @@ func (s *Store) ApplyRemotePage(ctx context.Context, page historysync.RemotePage
 		if record.SeriesHost != checkpoint.SeriesHost || record.Tag != checkpoint.Tag ||
 			record.Index > checkpoint.AppliedIndex {
 			return fmt.Errorf("store: apply remote page: record outside checkpoint")
+		}
+		if record.Kind == domainhistory.RecordKindDelete {
+			// A tombstone that cannot be decoded must fail the page closed:
+			// storing it as an opaque row could let a later create resurrect
+			// the history id.
+			if _, err := deleteRecordDeletedAt(record); err != nil {
+				return fmt.Errorf("store: apply remote page: invalid tombstone payload: %w", err)
+			}
 		}
 	}
 	for _, entry := range page.Entries {
@@ -98,7 +107,19 @@ func (s *Store) ApplyRemotePage(ctx context.Context, page historysync.RemotePage
 				return err
 			}
 		}
+		// The page's own delete records were inserted above, so this lookup
+		// also sees a tombstone in the same page. A create never resurrects an
+		// identity another record already deleted, whatever its timestamp.
+		tombstones, err := storedTombstones(tx, page.Entries)
+		if err != nil {
+			return err
+		}
 		for _, entry := range page.Entries {
+			if entry.DeletedAt.IsZero() {
+				if deletedAt, ok := tombstones[entry.ID]; ok {
+					entry.DeletedAt = deletedAt
+				}
+			}
 			model, err := historyEntryModel(entry)
 			if err != nil {
 				return err
@@ -162,6 +183,62 @@ func sameHistoryRecordMetadata(existing, incoming domainhistory.Record) bool {
 		existing.Kind == incoming.Kind &&
 		existing.HistoryID == incoming.HistoryID &&
 		timestampNano(existing.RecordedAt) == timestampNano(incoming.RecordedAt)
+}
+
+// storedTombstones returns the deletion time recorded by any delete record
+// already in the log for the listed projections, regardless of the series or
+// direction that delivered it. It is the half of tombstone handling that keeps
+// an out-of-order create from resurrecting a row: the delete record may have
+// arrived in an earlier page, or from another writer's series entirely.
+func storedTombstones(tx *gorm.DB, entries []domainhistory.Entry) (map[string]time.Time, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		ids = append(ids, entry.ID)
+	}
+	var rows []historyRecordSchema
+	if err := tx.Where("history_id IN ? AND kind = ?", ids, domainhistory.RecordKindDelete).
+		Order("history_id ASC").Order("series_host ASC").Order("tag ASC").Order("idx ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	tombstones := make(map[string]time.Time, len(rows))
+	for _, row := range rows {
+		if _, seen := tombstones[row.HistoryID]; seen {
+			continue
+		}
+		deletedAt, err := deleteRecordDeletedAt(historyRecord(row))
+		if err != nil {
+			return nil, fmt.Errorf("store: apply remote page: stored tombstone for %q is unreadable: %w",
+				row.HistoryID, err)
+		}
+		tombstones[row.HistoryID] = deletedAt
+	}
+	return tombstones, nil
+}
+
+// deleteRecordDeletedAt decodes the deletion time from a delete record's
+// plaintext payload. The record timestamp is the fallback for an older row
+// whose payload left the time zero. A payload that cannot be decoded, or that
+// names a different history id, fails closed rather than being ignored.
+func deleteRecordDeletedAt(record domainhistory.Record) (time.Time, error) {
+	var payload domainhistory.DeleteRecordPayload
+	if err := json.Unmarshal([]byte(record.Payload), &payload); err != nil {
+		return time.Time{}, err
+	}
+	if payload.HistoryID != "" && payload.HistoryID != record.HistoryID {
+		return time.Time{}, fmt.Errorf("payload history id %q does not match record %q",
+			payload.HistoryID, record.HistoryID)
+	}
+	if payload.DeletedAt.IsZero() {
+		if record.RecordedAt.IsZero() {
+			return time.Time{}, fmt.Errorf("delete record has no deletion time")
+		}
+		return record.RecordedAt, nil
+	}
+	return payload.DeletedAt, nil
 }
 
 // applyRemoteTombstone soft-deletes a projection without appending another

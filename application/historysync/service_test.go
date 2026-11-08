@@ -227,6 +227,26 @@ func (s *memorySyncStore) ApplyRemotePage(_ context.Context, page historysync.Re
 		}
 	}
 	for _, entry := range page.Entries {
+		if entry.DeletedAt.IsZero() {
+			// Mirror the SQLite store: a delete record already in the log wins
+			// over a create for the same history id, even when the tombstone
+			// arrived first from another writer's series.
+			for _, existing := range s.records {
+				if existing.Kind != domainhistory.RecordKindDelete ||
+					existing.HistoryID != entry.ID {
+					continue
+				}
+				var payload domainhistory.DeleteRecordPayload
+				if err := json.Unmarshal([]byte(existing.Payload), &payload); err != nil {
+					return err
+				}
+				if payload.DeletedAt.IsZero() {
+					payload.DeletedAt = existing.RecordedAt
+				}
+				entry.DeletedAt = payload.DeletedAt
+				break
+			}
+		}
 		s.entries[entry.ID] = entry
 	}
 	for _, deleted := range page.Deletes {
@@ -304,19 +324,14 @@ func (s *memorySyncStore) ResetUploaded(_ context.Context, checkpoint domainhist
 func (s *memorySyncStore) addLocalEntry(entry domainhistory.Entry) domainhistory.Record {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	index := int64(0)
-	for _, record := range s.records {
-		if record.SeriesHost == testWriter && record.Tag == domainhistory.RecordTagHistory &&
-			record.Index >= index {
-			index = record.Index + 1
-		}
-	}
+	writer := s.metadata.WriterUUID
+	index := s.nextIndexLocked(writer)
 	payload, err := json.Marshal(entry)
 	if err != nil {
 		panic(err)
 	}
 	record := domainhistory.Record{
-		ID: entry.ID + "-record", SeriesHost: testWriter, Tag: domainhistory.RecordTagHistory,
+		ID: entry.ID + "-record", SeriesHost: writer, Tag: domainhistory.RecordTagHistory,
 		Index: index, RecordedAt: entry.RecordedAt, Version: domainhistory.RecordVersion,
 		Kind: domainhistory.RecordKindCreate, HistoryID: entry.ID, Payload: string(payload),
 		Direction: domainhistory.RecordDirectionLocal,
@@ -324,6 +339,43 @@ func (s *memorySyncStore) addLocalEntry(entry domainhistory.Entry) domainhistory
 	s.records = append(s.records, record)
 	s.entries[entry.ID] = entry
 	return record
+}
+
+// addLocalDelete appends this device's tombstone for entry in the writer
+// series and soft-deletes the projection, as the History service does for a
+// delete, prune, or clear.
+func (s *memorySyncStore) addLocalDelete(entry domainhistory.Entry, at time.Time) domainhistory.Record {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	writer := s.metadata.WriterUUID
+	payload, err := json.Marshal(domainhistory.DeleteRecordPayload{
+		HistoryID: entry.ID, DeletedAt: at,
+	})
+	if err != nil {
+		panic(err)
+	}
+	record := domainhistory.Record{
+		ID: entry.ID + "-delete", SeriesHost: writer, Tag: domainhistory.RecordTagHistory,
+		Index: s.nextIndexLocked(writer), RecordedAt: at, Version: domainhistory.RecordVersion,
+		Kind: domainhistory.RecordKindDelete, HistoryID: entry.ID, Payload: string(payload),
+		Direction: domainhistory.RecordDirectionLocal,
+	}
+	s.records = append(s.records, record)
+	projected := s.entries[entry.ID]
+	projected.DeletedAt = at
+	s.entries[entry.ID] = projected
+	return record
+}
+
+func (s *memorySyncStore) nextIndexLocked(writer string) int64 {
+	index := int64(0)
+	for _, record := range s.records {
+		if record.SeriesHost == writer && record.Tag == domainhistory.RecordTagHistory &&
+			record.Index >= index {
+			index = record.Index + 1
+		}
+	}
+	return index
 }
 
 func (s *memorySyncStore) setUploaded(ids ...string) {
@@ -550,6 +602,15 @@ func waitIdle(t *testing.T, service *historysync.Service) {
 	if err := service.WaitIdle(ctx); err != nil {
 		t.Fatalf("wait for sync idle: %v", err)
 	}
+}
+
+func syncNow(t *testing.T, service *historysync.Service) historysync.SyncResult {
+	t.Helper()
+	result, err := service.SyncNow(context.Background())
+	if err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+	return result
 }
 
 // --- tests -----------------------------------------------------------------
@@ -1036,6 +1097,231 @@ func TestDownloadedTombstonesApplyToTheProjection(t *testing.T) {
 	}
 	if got := store.checkpoint(remoteWriterID).AppliedIndex; got != 2 {
 		t.Fatalf("applied index = %d, want the tombstone page committed (2)", got)
+	}
+}
+
+// TestTwoIndependentWritersConvergeAndPropagateDeletes proves two devices with
+// separate writer series end up with one copy of each row, and a delete on
+// either side removes the row on the other side. The two rows carry inverted
+// timestamps so neither convergence nor propagation can be timestamp-ordered.
+func TestTwoIndependentWritersConvergeAndPropagateDeletes(t *testing.T) {
+	factory := fake.NewFactory(fake.Options{})
+	storeA := newMemorySyncStore()
+	storeA.setMetadata(func(metadata *domainhistory.Metadata) {
+		metadata.UnverifiedKeyConfirmed = true
+	})
+	storeB := newMemorySyncStore()
+	storeB.setMetadata(func(metadata *domainhistory.Metadata) {
+		metadata.WriterUUID = remoteWriterID
+		metadata.UnverifiedKeyConfirmed = true
+	})
+	entryA := localEntry("0198d000-0000-7000-8000-000000000801",
+		"from writer a", testStart.Add(10*time.Minute))
+	entryB := localEntry("0198d000-0000-7000-8000-000000000802",
+		"from writer b", testStart)
+	storeA.addLocalEntry(entryA)
+	storeB.addLocalEntry(entryB)
+
+	engineA, _, _ := newEngine(t, storeA, factory)
+	engineB, _, _ := newEngine(t, storeB, factory)
+	syncNow(t, engineA)
+	syncNow(t, engineB)
+	syncNow(t, engineA)
+
+	assertConverged := func(label string, store *memorySyncStore) {
+		t.Helper()
+		entries := store.snapshotEntries()
+		if len(entries) != 2 {
+			t.Fatalf("%s entries = %v, want one row per writer", label, sortedKeys(entries))
+		}
+		creates := make(map[string]int)
+		for _, record := range store.snapshotRecords() {
+			if record.Kind == domainhistory.RecordKindCreate {
+				creates[record.HistoryID]++
+			}
+		}
+		for _, entry := range []domainhistory.Entry{entryA, entryB} {
+			if _, ok := entries[entry.ID]; !ok {
+				t.Fatalf("%s is missing %s", label, entry.ID)
+			}
+			if creates[entry.ID] != 1 {
+				t.Fatalf("%s holds %d create records for %s, want exactly one",
+					label, creates[entry.ID], entry.ID)
+			}
+		}
+	}
+	assertConverged("writer a", storeA)
+	assertConverged("writer b", storeB)
+	for _, record := range factory.ServerRecords() {
+		if record.Tag != domainhistory.RecordTagHistory {
+			t.Fatalf("a non-history tag reached the server: %+v", record)
+		}
+	}
+	if got := len(factory.ServerRecords()); got != 2 {
+		t.Fatalf("server records = %d, want the two creates: %+v",
+			got, factory.ServerRecords())
+	}
+
+	// Delete on writer A propagates to writer B.
+	storeA.addLocalDelete(entryA, testStart.Add(30*time.Minute))
+	syncNow(t, engineA)
+	syncNow(t, engineB)
+	if deleted := storeB.snapshotEntries()[entryA.ID].DeletedAt; deleted.IsZero() {
+		t.Fatalf("writer B still shows %s after writer A deleted it", entryA.ID)
+	}
+
+	// Delete on writer B propagates back to writer A.
+	storeB.addLocalDelete(entryB, testStart.Add(5*time.Minute))
+	syncNow(t, engineB)
+	syncNow(t, engineA)
+	if deleted := storeA.snapshotEntries()[entryB.ID].DeletedAt; deleted.IsZero() {
+		t.Fatalf("writer A still shows %s after writer B deleted it", entryB.ID)
+	}
+
+	tombstones := make(map[string]int)
+	for _, record := range factory.ServerRecords() {
+		if record.Kind == domainhistory.RecordKindDelete {
+			tombstones[record.HistoryID]++
+		}
+	}
+	for _, entry := range []domainhistory.Entry{entryA, entryB} {
+		if tombstones[entry.ID] != 1 {
+			t.Fatalf("server holds %d tombstones for %s, want one", tombstones[entry.ID], entry.ID)
+		}
+	}
+}
+
+// TestDownloadedTombstonesApplyBeforeTheWriterUploads proves a run applies
+// another writer's tombstone before it sends this writer's pending record.
+func TestDownloadedTombstonesApplyBeforeTheWriterUploads(t *testing.T) {
+	const doomedID = "0198d000-0000-7000-8000-000000000811"
+	remoteCreateRecord := remoteCreate(remoteWriterID, doomedID, "doomed", 0, testStart)
+	store := newMemorySyncStore()
+	store.setMetadata(func(metadata *domainhistory.Metadata) {
+		metadata.UnverifiedKeyConfirmed = true
+	})
+	payload, err := json.Marshal(remoteCreateRecord.Entry)
+	if err != nil {
+		t.Fatalf("encode remote entry: %v", err)
+	}
+	store.addRemoteRecord(domainhistory.Record{
+		ID: remoteCreateRecord.ID, SeriesHost: remoteWriterID,
+		Tag: domainhistory.RecordTagHistory, Index: 0, RecordedAt: testStart,
+		Version: domainhistory.RecordVersion, Kind: domainhistory.RecordKindCreate,
+		HistoryID: doomedID, Payload: string(payload),
+		Direction: domainhistory.RecordDirectionRemote,
+	})
+	store.setMetadata(func(metadata *domainhistory.Metadata) {
+		metadata.Series = map[string]domainhistory.SeriesCheckpoint{
+			domainhistory.SeriesKey(remoteWriterID, domainhistory.RecordTagHistory): {
+				SeriesHost: remoteWriterID, Tag: domainhistory.RecordTagHistory,
+				AppliedIndex: 0, UploadedIndex: -1,
+			},
+		}
+	})
+	store.addLocalEntry(localEntry("0198d000-0000-7000-8000-000000000812",
+		"pending local", testStart.Add(time.Minute)))
+
+	appliedBeforeUpload := false
+	factory := fake.NewFactory(fake.Options{
+		Records: []historysync.SyncRecord{
+			remoteDelete(remoteWriterID, doomedID, 1, testStart.Add(2*time.Minute)),
+		},
+		UploadHook: func(records []historysync.SyncRecord) {
+			if len(records) == 0 || records[0].SeriesHost != testWriter {
+				return
+			}
+			appliedBeforeUpload = !store.snapshotEntries()[doomedID].DeletedAt.IsZero()
+		},
+	})
+	service, _, _ := newEngine(t, store, factory)
+	result := syncNow(t, service)
+	if result.Uploaded != 1 {
+		t.Fatalf("uploaded = %d, want the pending local record: %v", result.Uploaded, factory.Events())
+	}
+	if !appliedBeforeUpload {
+		t.Fatalf("the tombstone was not applied before upload: %v", factory.Events())
+	}
+	events := factory.Events()
+	if len(events) != 2 || !strings.HasPrefix(events[0], "download:") ||
+		!strings.HasPrefix(events[1], "upload:") {
+		t.Fatalf("events = %v, want the download before the upload", events)
+	}
+}
+
+// TestSyncOrdersBySeriesIndexNotTimestamps proves the checkpoint is a series
+// index, not a timestamp: a higher index with an older timestamp is still
+// downloaded, and a tombstone older than the row it deletes still wins.
+func TestSyncOrdersBySeriesIndexNotTimestamps(t *testing.T) {
+	const (
+		firstID  = "0198d000-0000-7000-8000-000000000821"
+		secondID = "0198d000-0000-7000-8000-000000000822"
+		thirdID  = "0198d000-0000-7000-8000-000000000823"
+	)
+	factory := fake.NewFactory(fake.Options{
+		Records: []historysync.SyncRecord{
+			remoteCreate(remoteWriterID, firstID, "first", 0, testStart.Add(10*time.Minute)),
+			remoteCreate(remoteWriterID, secondID, "second", 1, testStart),
+			remoteDelete(remoteWriterID, secondID, 2, testStart.Add(-time.Hour)),
+		},
+	})
+	store := newMemorySyncStore()
+	service, _, _ := newEngine(t, store, factory)
+	syncNow(t, service)
+
+	entries := store.snapshotEntries()
+	if deleted := entries[secondID].DeletedAt; deleted.IsZero() {
+		t.Fatalf("a tombstone older than the row did not delete %s: %+v", secondID, entries[secondID])
+	}
+	if deleted := entries[firstID].DeletedAt; !deleted.IsZero() {
+		t.Fatalf("the tombstone deleted an unrelated row: %+v", entries[firstID])
+	}
+	if got := store.checkpoint(remoteWriterID).AppliedIndex; got != 2 {
+		t.Fatalf("applied index = %d, want 2", got)
+	}
+
+	// A record with a higher index but an older timestamp is still new work.
+	factory.AppendRecord(remoteCreate(remoteWriterID, thirdID, "third", 3, testStart.Add(-24*time.Hour)))
+	syncNow(t, service)
+	if _, ok := store.snapshotEntries()[thirdID]; !ok {
+		t.Fatalf("a higher index with an older timestamp was skipped: %+v",
+			factory.Events())
+	}
+	if got := store.checkpoint(remoteWriterID).AppliedIndex; got != 3 {
+		t.Fatalf("applied index = %d, want 3", got)
+	}
+}
+
+// TestTombstoneFromOneWriterSuppressesALaterCreateFromAnother proves an
+// out-of-order download (a tombstone from one writer's series, then the create
+// from another writer's series) does not resurrect the row.
+func TestTombstoneFromOneWriterSuppressesALaterCreateFromAnother(t *testing.T) {
+	const (
+		tombstoneWriter = "0198d000-0000-7000-8000-000000000830"
+		createWriter    = "0198d000-0000-7000-8000-000000000831"
+		historyID       = "0198d000-0000-7000-8000-000000000832"
+	)
+	factory := fake.NewFactory(fake.Options{
+		Records: []historysync.SyncRecord{
+			remoteDelete(tombstoneWriter, historyID, 0, testStart.Add(time.Minute)),
+			remoteCreate(createWriter, historyID, "doomed", 0, testStart),
+		},
+	})
+	store := newMemorySyncStore()
+	service, _, _ := newEngine(t, store, factory)
+	syncNow(t, service)
+
+	entry, ok := store.snapshotEntries()[historyID]
+	if !ok {
+		t.Fatalf("the create was dropped instead of projected as deleted: %v", factory.Events())
+	}
+	if entry.DeletedAt.IsZero() {
+		t.Fatalf("the earlier tombstone was undone by the later create: %+v", entry)
+	}
+	// A replay is idempotent and must not resurrect the row either.
+	syncNow(t, service)
+	if entry := store.snapshotEntries()[historyID]; entry.DeletedAt.IsZero() {
+		t.Fatalf("a replay resurrected the row: %+v", entry)
 	}
 }
 

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,8 +12,11 @@ import (
 	"github.com/mslxl/natcatty/adapters/store"
 	"github.com/mslxl/natcatty/application/autocomplete"
 	apphistory "github.com/mslxl/natcatty/application/history"
+	historysync "github.com/mslxl/natcatty/application/historysync"
+	"github.com/mslxl/natcatty/application/historysync/fake"
 	appsession "github.com/mslxl/natcatty/application/session"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 )
 
@@ -372,4 +376,152 @@ func originUser(origin string) string {
 		}
 	}
 	return ""
+}
+
+// historySyncTestSettings is a live History settings source for the engine.
+type historySyncTestSettings struct {
+	history domainpreferences.History
+}
+
+func (s *historySyncTestSettings) HistorySettings() domainpreferences.History {
+	return s.history
+}
+
+func (s *historySyncTestSettings) UpdateHistorySettings(change func(*domainpreferences.History)) error {
+	change(&s.history)
+	return nil
+}
+
+// historySyncTestSecrets is an unlocked field-secret store holding one token
+// and master key.
+type historySyncTestSecrets struct {
+	values map[historysync.SecretRef]string
+}
+
+func newHistorySyncTestSecrets() *historySyncTestSecrets {
+	return &historySyncTestSecrets{values: map[historysync.SecretRef]string{
+		historysync.SessionTokenRef(): "session-token",
+		historysync.MasterKeyRef(): base64.StdEncoding.EncodeToString(
+			[]byte("0123456789abcdef0123456789abcdef")),
+	}}
+}
+
+func (s *historySyncTestSecrets) Mode() historysync.SecretMode {
+	return historysync.SecretModeOS
+}
+
+func (s *historySyncTestSecrets) Has(_ context.Context, ref historysync.SecretRef) (bool, error) {
+	_, ok := s.values[ref]
+	return ok, nil
+}
+
+func (s *historySyncTestSecrets) Get(_ context.Context, ref historysync.SecretRef) (string, error) {
+	value, ok := s.values[ref]
+	if !ok {
+		return "", historysync.ErrSecretNotFound
+	}
+	return value, nil
+}
+
+func (s *historySyncTestSecrets) Set(_ context.Context, ref historysync.SecretRef, value string) error {
+	s.values[ref] = value
+	return nil
+}
+
+func (s *historySyncTestSecrets) Delete(_ context.Context, ref historysync.SecretRef) error {
+	delete(s.values, ref)
+	return nil
+}
+
+// TestDownloadedTombstoneRefreshesHistoryAndAutocomplete proves the engine's
+// applied-page hook removes a row another writer deleted from both the History
+// surface and autocomplete without a restart.
+func TestDownloadedTombstoneRefreshesHistoryAndAutocomplete(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.Open(ctx, filepath.Join(t.TempDir(), "history.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	historyService := apphistory.NewService(database)
+	autocompleteService := autocomplete.NewService(historyService, func() autocomplete.Config {
+		return autocomplete.Config{
+			Enabled:        true,
+			MinChars:       1,
+			MaxSuggestions: 5,
+			Scope:          domainterminal.AutocompleteHistoryHost,
+		}
+	})
+	autocompleteService.Load(ctx)
+
+	metadata, err := database.HistoryMetadata(ctx)
+	if err != nil {
+		t.Fatalf("HistoryMetadata: %v", err)
+	}
+	metadata.Account = domainhistory.AccountIdentity{
+		ServerURL: "https://atuin.example.test", UserID: "fake-atuin-user",
+	}
+	if err := database.SaveHistoryMetadata(ctx, metadata); err != nil {
+		t.Fatalf("SaveHistoryMetadata: %v", err)
+	}
+
+	const (
+		remoteWriter = "0198d000-0000-7000-8000-000000000861"
+		entryID      = "0198d000-0000-7000-8000-000000000862"
+		remoteScope  = "remote:web-1:deploy"
+	)
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	create := historysync.SyncRecord{
+		ID: "remote-create-" + entryID, SeriesHost: remoteWriter,
+		Tag: domainhistory.RecordTagHistory, Index: 0, RecordedAt: at,
+		Version: domainhistory.RecordVersion, Kind: domainhistory.RecordKindCreate,
+		HistoryID: entryID, Entry: &domainhistory.Entry{
+			ID: entryID, Command: "deploy staging", Origin: "web-1:deploy",
+			RecordedAt: at, Source: domainhistory.SourceAtuinSync,
+		},
+	}
+	tombstone := historysync.SyncRecord{
+		ID: "remote-delete-" + entryID, SeriesHost: remoteWriter,
+		Tag: domainhistory.RecordTagHistory, Index: 1, RecordedAt: at.Add(time.Minute),
+		Version: domainhistory.RecordVersion, Kind: domainhistory.RecordKindDelete,
+		HistoryID: entryID, DeletedAt: at.Add(time.Minute),
+	}
+	factory := fake.NewFactory(fake.Options{Records: []historysync.SyncRecord{create}})
+	settings := &historySyncTestSettings{history: domainpreferences.Defaults().History}
+	settings.history.SyncEnabled = true
+	settings.history.SyncAddress = "https://atuin.example.test"
+	service := historysync.NewService(settings, newHistorySyncTestSecrets(), database, factory,
+		historysync.WithSyncApplied(historySyncApplied(historyService, autocompleteService)))
+	t.Cleanup(service.Stop)
+
+	if _, err := service.SyncNow(ctx); err != nil {
+		t.Fatalf("first sync: %v", err)
+	}
+	entries, err := historyService.Entries(ctx)
+	if err != nil {
+		t.Fatalf("Entries: %v", err)
+	}
+	if len(entries) != 1 || entries[0].ID != entryID {
+		t.Fatalf("live rows = %+v, want the downloaded row", entries)
+	}
+	suggestions := autocompleteService.Suggestions("deploy", remoteScope)
+	if len(suggestions) != 1 || suggestions[0].Text != "deploy staging" {
+		t.Fatalf("suggestions = %+v, want the downloaded row", suggestions)
+	}
+
+	factory.AppendRecord(tombstone)
+	if _, err := service.SyncNow(ctx); err != nil {
+		t.Fatalf("sync with tombstone: %v", err)
+	}
+	entries, err = historyService.Entries(ctx)
+	if err != nil {
+		t.Fatalf("Entries after tombstone: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("History still shows a row another writer deleted: %+v", entries)
+	}
+	if suggestions := autocompleteService.Suggestions("deploy", remoteScope); len(suggestions) != 0 {
+		t.Fatalf("autocomplete still suggests a row another writer deleted: %+v", suggestions)
+	}
 }

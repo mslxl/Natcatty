@@ -230,6 +230,49 @@ func webViewUses(t *testing.T, root string) []string {
 	return uses
 }
 
+// TestProductionSourcesNeverReferenceTheStoreDeleteEndpoint guards the
+// compatibility promise that Netcatty never calls DELETE /api/v0/store. Test
+// code may name the endpoint to assert it is absent; production code may not
+// even hold it as a string literal.
+func TestProductionSourcesNeverReferenceTheStoreDeleteEndpoint(t *testing.T) {
+	root := testutil.ModuleRoot(t)
+	const endpoint = `"/api/v0/store"`
+	var offenders []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".git", "build", ".mygo", "node_modules":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(data, []byte(endpoint)) {
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				return relErr
+			}
+			offenders = append(offenders, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(offenders) > 0 {
+		t.Fatalf("production sources reference the delete-all-store endpoint: %v", offenders)
+	}
+}
+
 func fileUsesWebView(file *ast.File) bool {
 	aliases, dotImported := webViewImportNames(file)
 	if len(aliases) == 0 && !dotImported {
