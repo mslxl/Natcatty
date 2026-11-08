@@ -853,6 +853,64 @@ func TestLockedSecretsPauseSyncWithoutOpeningARemote(t *testing.T) {
 	}
 }
 
+// TestLockedStoresNeverDecryptCredentials proves the pause happens before the
+// credential read, not merely before the remote open: a locked field-secret
+// store and an engaged App Lock must not call Get at all.
+func TestLockedStoresNeverDecryptCredentials(t *testing.T) {
+	t.Run("passphrase locked", func(t *testing.T) {
+		factory := fake.NewFactory(fake.Options{})
+		store := newMemorySyncStore()
+		secrets := newCountingSecrets(newSyncSecrets())
+		secrets.mode = historysync.SecretModePassphraseLocked
+		scheduler := newManualScheduler()
+		service := historysync.NewService(newSyncSettings(), secrets, store, factory,
+			historysync.WithScheduler(scheduler),
+			historysync.WithJitter(identityJitter),
+			historysync.WithCaptureDebounce(time.Second),
+			historysync.WithFocusDebounce(time.Second))
+		t.Cleanup(service.Stop)
+
+		if _, err := service.SyncNow(context.Background()); !errors.Is(err, historysync.ErrSecretsLocked) {
+			t.Fatalf("SyncNow = %v, want ErrSecretsLocked", err)
+		}
+		if reads := secrets.Reads(); reads != 0 {
+			t.Fatalf("a locked store decrypted %d credential(s)", reads)
+		}
+		if factory.Opens() != 0 {
+			t.Fatalf("a locked store opened %d remote(s)", factory.Opens())
+		}
+	})
+
+	t.Run("app lock", func(t *testing.T) {
+		factory := fake.NewFactory(fake.Options{})
+		store := newMemorySyncStore()
+		secrets := newCountingSecrets(newSyncSecrets())
+		var locked atomic.Bool
+		locked.Store(true)
+		scheduler := newManualScheduler()
+		service := historysync.NewService(newSyncSettings(), secrets, store, factory,
+			historysync.WithScheduler(scheduler),
+			historysync.WithJitter(identityJitter),
+			historysync.WithCaptureDebounce(time.Second),
+			historysync.WithFocusDebounce(time.Second),
+			historysync.WithAppLocked(func() bool { return locked.Load() }))
+		t.Cleanup(service.Stop)
+
+		service.Start(context.Background())
+		waitIdle(t, service)
+		service.NotifyFocus()
+		service.NotifyLocalChange()
+		scheduler.Advance(5 * time.Minute)
+		waitIdle(t, service)
+		if reads := secrets.Reads(); reads != 0 {
+			t.Fatalf("App Lock decrypted %d credential(s)", reads)
+		}
+		if factory.Opens() != 0 {
+			t.Fatalf("App Lock opened %d remote(s)", factory.Opens())
+		}
+	})
+}
+
 func TestAuthExpiryKeyMismatchAndVersionMismatchFailWithoutRetry(t *testing.T) {
 	t.Run("auth expired", func(t *testing.T) {
 		factory := fake.NewFactory(fake.Options{AuthErr: historysync.ErrAuthExpired})

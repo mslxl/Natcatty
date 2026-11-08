@@ -5397,7 +5397,7 @@
   "settingsAtuinPreferHostAtuin": "Prefer Atuin on a Host",
   "settingsAtuinPreferHostAtuinHint": "When the Host has Atuin, open its history instead of importing a transcript.",
   "settingsAtuinAccountTitle": "Atuin account",
-  "settingsAtuinAccountDescription": "One account per install. The token and master key are kept only in this device's field-secret store and are never synced to the Vault cloud.",
+  "settingsAtuinAccountDescription": "One account per install. The token and master key are kept only in this device's field-secret store and are never synced to the Vault cloud. The Atuin server sees record identifiers and metadata, but not command text, working directory, exit status, or origin.",
   "settingsAtuinStatus": "Status",
   "settingsAtuinStatusDisabled": "Sync disabled",
   "settingsAtuinStatusNotConfigured": "Not configured",

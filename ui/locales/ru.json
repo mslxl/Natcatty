@@ -3480,7 +3480,7 @@
   "settingsAtuinPreferHostAtuin": "Предпочитать Atuin на хосте",
   "settingsAtuinPreferHostAtuinHint": "Если на хосте есть Atuin, открывать его историю вместо импорта расшифровки.",
   "settingsAtuinAccountTitle": "Учётная запись Atuin",
-  "settingsAtuinAccountDescription": "Одна учётная запись на установку. Токен и мастер-ключ хранятся только в локальном хранилище секретов и никогда не синхронизируются с Vault Cloud.",
+  "settingsAtuinAccountDescription": "Одна учётная запись на установку. Токен и мастер-ключ хранятся только в локальном хранилище секретов и никогда не синхронизируются с Vault Cloud. Сервер Atuin видит идентификаторы и метаданные записей, но не текст команды, рабочий каталог, код завершения или источник.",
   "settingsAtuinStatus": "Состояние",
   "settingsAtuinStatusDisabled": "Синхронизация отключена",
   "settingsAtuinStatusNotConfigured": "Не настроено",

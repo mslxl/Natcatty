@@ -20,6 +20,7 @@ type fakeSecrets struct {
 	setErr      error
 	setFieldErr map[string]error
 	getErr      error
+	getRefs     []SecretRef
 	deleteErr   error
 	unlockErr   error
 	setPassErr  error
@@ -44,6 +45,7 @@ func (f *fakeSecrets) Set(_ context.Context, ref SecretRef, value string) error 
 }
 
 func (f *fakeSecrets) Get(_ context.Context, ref SecretRef) (string, error) {
+	f.getRefs = append(f.getRefs, ref)
 	if f.getErr != nil {
 		return "", f.getErr
 	}

@@ -429,7 +429,8 @@ func problemFor(err error) AtuinProblem {
 		return AtuinProblemAccountChange
 	case errors.Is(err, historysync.ErrNotConfigured):
 		return AtuinProblemNotConfigured
-	case errors.Is(err, historysync.ErrSecretsLocked):
+	case errors.Is(err, historysync.ErrSecretsLocked),
+		errors.Is(err, historysync.ErrAppLocked):
 		return AtuinProblemLocked
 	case errors.Is(err, historysync.ErrSecretsUnavailable),
 		errors.Is(err, historysync.ErrSecretUnreadable):

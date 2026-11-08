@@ -3480,7 +3480,7 @@
   "settingsAtuinPreferHostAtuin": "优先使用主机上的 Atuin",
   "settingsAtuinPreferHostAtuinHint": "当主机上存在 Atuin 时，打开其历史记录而不是导入终端记录。",
   "settingsAtuinAccountTitle": "Atuin 账户",
-  "settingsAtuinAccountDescription": "每次安装仅一个账户。令牌和主密钥只保存在本设备的字段密钥存储中，绝不进入 Vault 云同步。",
+  "settingsAtuinAccountDescription": "每次安装仅一个账户。令牌和主密钥只保存在本设备的字段密钥存储中，绝不进入 Vault 云同步。Atuin 服务器只能看到记录的标识符和元数据，看不到命令文本、工作目录、退出状态或来源。",
   "settingsAtuinStatus": "状态",
   "settingsAtuinStatusDisabled": "同步已禁用",
   "settingsAtuinStatusNotConfigured": "未配置",

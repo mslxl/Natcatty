@@ -238,7 +238,7 @@ func (s *SecretStore) Set(ctx context.Context, ref appvault.SecretRef, value str
 	if err != nil {
 		return err
 	}
-	ciphertext := aead.Seal(nil, nonce, []byte(value), aad(ref, currentKeyVersion))
+	ciphertext := sealSecretValue(aead, nonce, value, aad(ref, currentKeyVersion))
 	return s.db.saveSecretValue(ctx, secretValueRow{
 		Ref:        ref,
 		Alg:        secretAlgorithm,
@@ -284,11 +284,11 @@ func (s *SecretStore) Get(ctx context.Context, ref appvault.SecretRef) (string, 
 	if err != nil {
 		return "", err
 	}
-	plaintext, err := aead.Open(nil, row.Nonce, row.Ciphertext, aad(ref, row.KeyVersion))
+	value, err := openSecretValue(aead, row.Nonce, row.Ciphertext, aad(ref, row.KeyVersion))
 	if err != nil {
 		return "", appvault.ErrSecretUnreadable
 	}
-	return string(plaintext), nil
+	return value, nil
 }
 
 // Delete removes one field. Deleting a missing value is not an error.
@@ -503,6 +503,26 @@ func wipe(data []byte) {
 	for i := range data {
 		data[i] = 0
 	}
+}
+
+// sealSecretValue encrypts value and wipes the transient plaintext copy. The
+// caller's string is immutable and is collected normally; Go offers no way to
+// zero it.
+func sealSecretValue(aead cipher.AEAD, nonce []byte, value string, additionalData []byte) []byte {
+	plaintext := []byte(value)
+	defer wipe(plaintext)
+	return aead.Seal(nil, nonce, plaintext, additionalData)
+}
+
+// openSecretValue decrypts one field and wipes the plaintext buffer after
+// copying it into the returned string.
+func openSecretValue(aead cipher.AEAD, nonce, ciphertext, additionalData []byte) (string, error) {
+	plaintext, err := aead.Open(nil, nonce, ciphertext, additionalData)
+	if err != nil {
+		return "", err
+	}
+	defer wipe(plaintext)
+	return string(plaintext), nil
 }
 
 // secretValueRow is one secret_values row.

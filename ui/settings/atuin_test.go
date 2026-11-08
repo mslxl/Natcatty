@@ -173,6 +173,22 @@ func TestAtuinPanelShowsStatusFingerprintAndNoCredential(t *testing.T) {
 	}
 }
 
+// TestAtuinPanelStatesWhatTheServerCanSee pins the spec-required limitation
+// notice: the server sees record identifiers and metadata, not command text.
+func TestAtuinPanelStatesWhatTheServerCanSee(t *testing.T) {
+	account := &fakeHistoryAccount{status: atuinStatus(atuinmodel.KeyStateVerified)}
+	tester, _, _ := atuinPanel(t, account, nil)
+	description := locales.In("en").SettingsAtuinAccountDescription()
+	for _, want := range []string{"record identifiers and metadata", "not command text"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("the account description is missing %q: %q", want, description)
+		}
+	}
+	if !tester.HasText(description) {
+		t.Fatalf("the panel does not render the account description: %v", tester.Texts())
+	}
+}
+
 // TestAtuinPanelShowsEngineProgressAndManualSync proves the account panel
 // reads the background engine live: pending uploads, the next retry time, and
 // last sync appear without an account action, and the Sync now control reaches
@@ -400,5 +416,13 @@ func TestAtuinPanelReportsAProblemWithoutRawErrorText(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(tester.Texts(), "\n"), atuinTestToken) {
 		t.Fatal("the panel rendered an error string containing a credential")
+	}
+}
+
+// TestAppLockMapsToTheLockedProblem pins the account service's fail-closed
+// result to the localized locked message. The raw error is never rendered.
+func TestAppLockMapsToTheLockedProblem(t *testing.T) {
+	if got := problemFor(historysync.ErrAppLocked); got != AtuinProblemLocked {
+		t.Fatalf("problemFor(ErrAppLocked) = %q, want %q", got, AtuinProblemLocked)
 	}
 }
