@@ -28,7 +28,10 @@ func decodePage(records []wire.Record, seriesHost string, start int64, key wire.
 		if wireRecord.SeriesHost != seriesHost {
 			return historysync.Page{}, fmt.Errorf("%w: response mixed series hosts", historysync.ErrRemote)
 		}
-		if wireRecord.Index > math.MaxInt64 {
+		// Page.NextIndex is Index+1, so MaxInt64 cannot be represented without
+		// overflowing. Reject the whole page rather than report a negative
+		// next index.
+		if wireRecord.Index >= math.MaxInt64 {
 			return historysync.Page{}, fmt.Errorf("%w: record index is out of range", historysync.ErrRemote)
 		}
 		index := int64(wireRecord.Index)
