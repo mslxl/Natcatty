@@ -195,9 +195,13 @@ func TestSSHCaptureHookWedgedSFTPSubsystemIsBoundedAndReleased(t *testing.T) {
 			_, _ = io.WriteString(channel, "plain-login-shell\r\n")
 		},
 	})
+	// Keep the budget independent of the implementation constants: this test
+	// guards the caller-visible bound, so widening the probe must not widen
+	// the test silently.
+	const openBudget = 7 * time.Second
 	started := time.Now()
 	transport := openCaptureHookSSH(t, fixture, "exec /bin/sh -c 'posix wrapper'")
-	if elapsed := time.Since(started); elapsed > 7*time.Second {
+	if elapsed := time.Since(started); elapsed > openBudget {
 		t.Fatalf("Open took %v, want the 5s probe bound plus a bounded drain", elapsed)
 	}
 	server := fixture.sshServer(t)

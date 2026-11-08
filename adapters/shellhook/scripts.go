@@ -620,8 +620,10 @@ NETCATTY_USER_ZDOTDIR="$netcatty_zdotdir" NETCATTY_HOOK_DIR="$netcatty_dir" ZDOT
 	builder.WriteString(`NETCATTY_HOOK_FILE="$netcatty_dir/hook.fish" "$netcatty_shell" -l --init-command "source \"\$NETCATTY_HOOK_FILE\""
 ` + ";;\n")
 	// xonsh, csh, tcsh, nushell, and every other login shell never reach this
-	// wrapper: the SSH transport keeps the plain login shell for them, because
-	// sshd would ask the login shell to parse this POSIX script itself.
+	// wrapper: the SSH transport keeps the plain login shell for them. sshd
+	// asks the login shell to parse the outer `exec /bin/sh -c '...'` command;
+	// xonsh, csh, and tcsh reject it, and nushell parses it but has no hook
+	// branch here, so it would only skip and re-exec the login shell.
 	builder.WriteString("esac\n")
 	builder.WriteString("netcatty_status=$?\nexit $netcatty_status\n")
 	return builder.String()
