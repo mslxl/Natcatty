@@ -596,7 +596,13 @@ func TestQueueConflictPromptWaitsForAnOpenDialogToClose(t *testing.T) {
 	}
 
 	// Closing the folder prompt frees the slot, and the queued conflict shows.
+	// The attention event that queues the conflict is delivered asynchronously,
+	// so wait for the promoted dialog instead of sampling immediately.
 	f.state.CloseDialog()
+	settle(t, f.state, "the queued conflict to appear", func() bool {
+		dialog := f.state.Dialog()
+		return dialog != nil && dialog.Kind == DialogConflict && dialog.TaskID != ""
+	})
 	dialog := f.state.Dialog()
 	if dialog == nil || dialog.Kind != DialogConflict || dialog.TaskID == "" {
 		t.Fatalf("the queued conflict did not appear after the prompt closed: %+v", dialog)
