@@ -8,6 +8,7 @@ import (
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
+	"github.com/mslxl/natcatty/ui/layout"
 	"github.com/mslxl/natcatty/ui/locales"
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	sessionui "github.com/mslxl/natcatty/ui/session"
@@ -17,9 +18,8 @@ import (
 	"github.com/mslxl/natcatty/ui/vault/section"
 )
 
-// sidebarWidth is the fixed width of the home Tab's navigation column. Only
-// the home Tab has one: SFTP and the terminal Tabs take the window's width.
-const sidebarWidth float32 = 220
+// sidebarWidth is the home Tab's navigation column width.
+const sidebarWidth = layout.SidebarWidth
 
 // topBarHeight is the height of the window's Tab bar, and tabHeight of a Tab
 // in it, as the original's h-9 bar and h-7 Tabs.
@@ -28,20 +28,13 @@ const (
 	tabHeight    float32 = 28
 )
 
-// shellPadding is the distance from the body's edges to a surface's content:
-// the gap around the content card plus the card's own padding.
-const shellPadding float32 = 16
-
-// cardGap is the room between the window's edges and the content card.
-// cardPadding insets a surface inside the card, so the two add up to
-// shellPadding.
+// The content card's geometry, as the layout draws it.
 const (
-	cardGap     float32 = 8
-	cardPadding         = shellPadding - cardGap
+	shellPadding = layout.ShellPadding
+	cardGap      = layout.CardGap
+	cardPadding  = layout.CardPadding
+	cardBorder   = layout.CardBorder
 )
-
-// cardBorder is the width of the content card's outline.
-const cardBorder float32 = 1
 
 // View returns the main window's shell, laid out as the original's: one Tab
 // bar across the window holding the home Tab (the Vault and the pages its
@@ -67,10 +60,9 @@ func View(s *state.State) func(*ui.Context) {
 		}
 		t := c.Theme()
 
-		ui.Column(c).Fill().Background(t.Background).Children(func() {
-			workTabs(c, s, m, t, reveal)
-			body(c, s, m, t)
-		})
+		layout.WindowFrame(c, layout.FrameOptions{Opaque: true},
+			func() { workTabs(c, s, m, t, reveal) },
+			func() { body(c, s, m, t) })
 
 		if prompt := s.TrustPrompt(); prompt != nil {
 			sessionui.TrustView(prompt)(c)
@@ -105,41 +97,27 @@ func homeVisible(s *state.State) bool {
 
 // body draws the chosen Tab's surface below the Tab bar.
 func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
-	// MinHeight(0) and MinWidth(0) keep the body at the window's size when a
-	// surface's content is larger; it scrolls or clips inside instead.
-	ui.Row(c).FillWidth().Grow(1).MinHeight(0).MinWidth(0).Children(func() {
-		switch {
-		case terminalVisible(s):
-			// The terminal reaches the window's edges, as the original's.
-			ui.Column(c).Grow(1).FillHeight().MinWidth(0).Children(func() {
-				notices(c, s, m, t)
-				activeTab(c, s, m, t)
-			})
-		case s.SFTPVisible():
-			contentCard(c, s, m, t, cardGap, func() {
+	switch {
+	case terminalVisible(s):
+		activeTab(c, s, m, t)
+	case s.SFTPVisible():
+		layout.HomeLayout(c, layout.HomeSlots{
+			Notices: func() { notices(c, s, m, t) },
+			Content: func() {
 				if view := s.SFTPView(); view != nil {
 					view(c)
 					return
 				}
 				placeholder(c, icons.FolderOpen, m.NavSftp(), "")
-			})
-		default:
-			homeSidebar(c, s, m, t)
-			contentCard(c, s, m, t, 0, func() { homeSurface(c, s, m, t) })
-		}
-	})
-}
-
-// contentCard is the raised, rounded card a home page or SFTP draws in.
-// start is the gap at its left: none beside the home sidebar, which already
-// leaves room, and cardGap when it spans the window.
-func contentCard(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, start float32, page func()) {
-	ui.Column(c).Grow(1).FillHeight().MinWidth(0).Padding(0, cardGap, cardGap, start).Gap(cardGap).Children(func() {
-		notices(c, s, m, t)
-		ui.Column(c).FillWidth().Grow(1).MinHeight(0).MinWidth(0).Padding(cardPadding).
-			Background(t.Surface).Border(cardBorder, t.Border).Radius(kit.M(c).Radius.Card).
-			Shadow(0, 1, 3, 0, kit.CardShadow(t)).Clip().Children(page)
-	})
+			},
+		})
+	default:
+		layout.HomeLayout(c, layout.HomeSlots{
+			Sidebar: func() { homeSidebar(c, s, m, t) },
+			Notices: func() { notices(c, s, m, t) },
+			Content: func() { homeSurface(c, s, m, t) },
+		})
+	}
 }
 
 // notices shows the window's desktop and connection problems above the
@@ -163,50 +141,45 @@ func placeholder(c *ui.Context, icon, title, description string) {
 // the brand, the Vault's pages with monitoring, System manager, and Logs among
 // them, and Settings at the foot.
 func homeSidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
-	// FillHeight, not Fill: the sidebar shares the body's row with the
-	// content, and Fill would set its width to the whole window and push the
-	// content past the right edge.
-	ui.Column(c).Width(sidebarWidth).FillHeight().Shrink(0).Padding(4, 8, 8, 8).Gap(2).Children(func() {
-		ui.Row(c).FillWidth().Height(40).Padding(0, 8).Gap(10).AlignItems(ui.Center).Margin(0, 0, 8, 0).Children(func() {
-			if mark := s.BrandMark(); mark != nil {
-				ui.Image(c, mark).Size(28, 28).Shrink(0)
-			} else {
-				ui.Box(c).Size(28, 28).Radius(8).Background(t.Accent).Center().TextColor(t.AccentText).
-					Children(func() { kit.IconSized(c, icons.SquareTerminal, kit.M(c).Icon.Regular) })
-			}
-			ui.Text(c, m.AppName()).FontSize(kit.M(c).Font.Title3).FontWeight(700).SingleLine()
-		})
-
-		// The list scrolls when the window is too short for every entry.
-		ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
-			kit.NavList(c, kit.NavHome, func() {
-				nav := func(key, icon, label string, active bool, show func()) {
-					if kit.NavItem(c, kit.NavHome, key, icon, label, active).Clicked() {
-						show()
-					}
-				}
-				vaultPage := func(page section.Section) {
-					nav("nav-vault-"+string(page), vaultPageIcon(page), vaultPageLabel(m, page),
-						s.VaultVisible() && s.VaultSection() == page,
-						func() { s.ShowVaultSection(page) })
-				}
-				vaultPage(section.Hosts)
-				nav("nav-monitor", icons.Gauge, m.NavMonitor(), s.MonitorVisible(), s.ShowMonitor)
-				nav("nav-sysmanager", icons.MonitorCog, m.NavSysManager(), s.SysManagerVisible(), s.ShowSystemManager)
-				for _, page := range section.Pages() {
-					if page != section.Hosts {
-						vaultPage(page)
-					}
-				}
-				nav("nav-logs", icons.Activity, m.NavLogs(), s.LogsVisible(), s.ShowLogs)
-			})
-		})
-
-		// Settings is a window rather than a surface, so it is never active.
-		if kit.NavItem(c, kit.NavHome, "nav-settings", icons.Settings, m.NavSettings(), false).Clicked() {
-			s.RequestSettings()
+	ui.Row(c).FillWidth().Height(40).Padding(0, 8).Gap(10).AlignItems(ui.Center).Margin(0, 0, 8, 0).Children(func() {
+		if mark := s.BrandMark(); mark != nil {
+			ui.Image(c, mark).Size(28, 28).Shrink(0)
+		} else {
+			ui.Box(c).Size(28, 28).Radius(8).Background(t.Accent).Center().TextColor(t.AccentText).
+				Children(func() { kit.IconSized(c, icons.SquareTerminal, kit.M(c).Icon.Regular) })
 		}
+		ui.Text(c, m.AppName()).FontSize(kit.M(c).Font.Title3).FontWeight(700).SingleLine()
 	})
+
+	// The list scrolls when the window is too short for every entry.
+	ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
+		kit.NavList(c, kit.NavHome, func() {
+			nav := func(key, icon, label string, active bool, show func()) {
+				if kit.NavItem(c, kit.NavHome, key, icon, label, active).Clicked() {
+					show()
+				}
+			}
+			vaultPage := func(page section.Section) {
+				nav("nav-vault-"+string(page), vaultPageIcon(page), vaultPageLabel(m, page),
+					s.VaultVisible() && s.VaultSection() == page,
+					func() { s.ShowVaultSection(page) })
+			}
+			vaultPage(section.Hosts)
+			nav("nav-monitor", icons.Gauge, m.NavMonitor(), s.MonitorVisible(), s.ShowMonitor)
+			nav("nav-sysmanager", icons.MonitorCog, m.NavSysManager(), s.SysManagerVisible(), s.ShowSystemManager)
+			for _, page := range section.Pages() {
+				if page != section.Hosts {
+					vaultPage(page)
+				}
+			}
+			nav("nav-logs", icons.Activity, m.NavLogs(), s.LogsVisible(), s.ShowLogs)
+		})
+	})
+
+	// Settings is a window rather than a surface, so it is never active.
+	if kit.NavItem(c, kit.NavHome, "nav-settings", icons.Settings, m.NavSettings(), false).Clicked() {
+		s.RequestSettings()
+	}
 }
 
 // homeSurface draws the home Tab's chosen page.
@@ -304,59 +277,48 @@ func controlPanel(c *ui.Context, s *state.State, m locales.Messages) {
 }
 
 func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
-	terminalPanels(c, s, m, t)
-	if snapshot, ok := s.ActiveSnapshot(); ok {
-		if notice := noticeText(m, snapshot.Notice); notice != "" {
-			ui.Box(c).FillWidth().Padding(0, 0, 6, 0).Children(func() {
-				kit.Notice(c, icons.TriangleAlert, t.Warning, notice, nil)
-			})
+	slots := layout.WorkSlots{Top: func() {
+		notices(c, s, m, t)
+		terminalPanels(c, s, m, t)
+		if snapshot, ok := s.ActiveSnapshot(); ok {
+			if notice := noticeText(m, snapshot.Notice); notice != "" {
+				ui.Box(c).FillWidth().Padding(0, 0, 6, 0).Children(func() {
+					kit.Notice(c, icons.TriangleAlert, t.Warning, notice, nil)
+				})
+			}
 		}
-	}
+	}}
 	if root, focus, ok := s.TabTree(s.ActiveTab()); ok {
 		ordinal := 0
 		ref := mainTabRef(s, s.ActiveTab())
 		ref.split = !root.IsPane()
 		ref.status = activeStatus(s, m, t)
-		panes := func() {
-			ui.Column(c).Fill().MinWidth(0).Children(func() {
-				paneTree(c, s, m, t, ref, root, focus, &ordinal)
-			})
-		}
+		slots.Panes = func() { paneTree(c, s, m, t, ref, root, focus, &ordinal) }
 		dock := s.FilesDock()
 		window, _ := c.Size()
 		width := window
 		if dock != state.DockBottom {
 			width = *s.FilesWidth(window)
 		}
-		files := s.FilesView(ref.id, width)
-		if files == nil {
-			ui.Column(c).FillWidth().Grow(1).MinHeight(0).Children(panes)
-			return
-		}
-		tabID := ref.id
-		panel := func() { sidePanel(c, s, m, t, tabID, dock, files) }
-		// The side panel docks at the Tab's left edge by default, as the
-		// original's, flush with the terminal: the split's own one-DIP line
-		// is the only separator, and the divider keeps the width the user
-		// drags it to.
-		switch dock {
-		case state.DockBottom:
-			ui.SplitVerticalPercent(c, s.FilesRatio(), panes, panel).FillWidth().Grow(1).MinHeight(0)
-		case state.DockRight:
-			// Split puts its first child, the panel and its width, at the
-			// leading edge; a right-to-left box makes that the right one, and
-			// each side turns back to left to right inside.
-			ui.Row(c).Direction(ui.RightToLeft).FillWidth().Grow(1).MinHeight(0).Children(func() {
-				ui.Split(c, s.FilesWidth(window), func() {
-					ui.Column(c).Direction(ui.LeftToRight).Fill().MinWidth(0).Children(panel)
-				}, func() {
-					ui.Column(c).Direction(ui.LeftToRight).Fill().MinWidth(0).Children(panes)
-				}).Fill()
-			})
-		default:
-			ui.Split(c, s.FilesWidth(window), panel, panes).FillWidth().Grow(1).MinHeight(0)
+		if files := s.FilesView(ref.id, width); files != nil {
+			tabID := ref.id
+			slots.Panel = func() { sidePanel(c, s, m, t, tabID, dock, files) }
+			slots.Dock = layoutDock(dock)
+			slots.Width, slots.Ratio = s.FilesWidth(window), s.FilesRatio()
 		}
 	}
+	layout.WorkLayout(c, slots)
+}
+
+// layoutDock is the layout's edge for the side panel's dock.
+func layoutDock(dock state.PanelDock) layout.Dock {
+	switch dock {
+	case state.DockRight:
+		return layout.DockRight
+	case state.DockBottom:
+		return layout.DockBottom
+	}
+	return layout.DockLeft
 }
 
 // sidePanel is a Session Tab's side panel, as the original's: a strip of
