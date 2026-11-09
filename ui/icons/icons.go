@@ -96,6 +96,7 @@ const (
 	BookMarked        = "book-marked"
 	Bookmark          = "bookmark"
 	Cable             = "cable"
+	Calendar          = "calendar"
 	Check             = "check"
 	ChevronDown       = "chevron-down"
 	ChevronLeft       = "chevron-left"

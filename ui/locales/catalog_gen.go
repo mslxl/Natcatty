@@ -9092,11 +9092,11 @@ func (msgs Messages) VaultSnippetNew() string {
 	return Catalog.Format(msgs.locale, "vaultSnippetNew", nil)
 }
 
-// VaultSnippetPackageNew says "New package"
+// VaultSnippetPackageNew says "New Package"
 // in the language the app shows.
 func VaultSnippetPackageNew() string { return In(i18n.Locale()).VaultSnippetPackageNew() }
 
-// VaultSnippetPackageNew says "New package"
+// VaultSnippetPackageNew says "New Package"
 // in the language of msgs.
 func (msgs Messages) VaultSnippetPackageNew() string {
 	return Catalog.Format(msgs.locale, "vaultSnippetPackageNew", nil)
@@ -9658,13 +9658,13 @@ func (msgs Messages) VaultNoteNew() string {
 	return Catalog.Format(msgs.locale, "vaultNoteNew", nil)
 }
 
-// VaultNoteGroupNew says "New group"
+// VaultNoteGroupNew says "New Group"
 // in the language the app shows.
 //
 // The button that opens the Note Group editor.
 func VaultNoteGroupNew() string { return In(i18n.Locale()).VaultNoteGroupNew() }
 
-// VaultNoteGroupNew says "New group"
+// VaultNoteGroupNew says "New Group"
 // in the language of msgs.
 //
 // The button that opens the Note Group editor.
@@ -9770,13 +9770,13 @@ func (msgs Messages) VaultNoteExportZIP() string {
 	return Catalog.Format(msgs.locale, "vaultNoteExportZIP", nil)
 }
 
-// VaultNoteExportAll says "Export all as ZIP"
+// VaultNoteExportAll says "Export All as ZIP"
 // in the language the app shows.
 //
 // The button that saves every Note as a ZIP archive.
 func VaultNoteExportAll() string { return In(i18n.Locale()).VaultNoteExportAll() }
 
-// VaultNoteExportAll says "Export all as ZIP"
+// VaultNoteExportAll says "Export All as ZIP"
 // in the language of msgs.
 //
 // The button that saves every Note as a ZIP archive.
@@ -10378,13 +10378,13 @@ func (msgs Messages) LogsSourceShell() string {
 	return Catalog.Format(msgs.locale, "logsSourceShell", nil)
 }
 
-// LogsFrom says "From (YYYY-MM-DD)"
+// LogsFrom says "From"
 // in the language the app shows.
 //
 // The inclusive start-date filter.
 func LogsFrom() string { return In(i18n.Locale()).LogsFrom() }
 
-// LogsFrom says "From (YYYY-MM-DD)"
+// LogsFrom says "From"
 // in the language of msgs.
 //
 // The inclusive start-date filter.
@@ -10392,18 +10392,32 @@ func (msgs Messages) LogsFrom() string {
 	return Catalog.Format(msgs.locale, "logsFrom", nil)
 }
 
-// LogsTo says "To (YYYY-MM-DD)"
+// LogsTo says "To"
 // in the language the app shows.
 //
 // The inclusive end-date filter.
 func LogsTo() string { return In(i18n.Locale()).LogsTo() }
 
-// LogsTo says "To (YYYY-MM-DD)"
+// LogsTo says "To"
 // in the language of msgs.
 //
 // The inclusive end-date filter.
 func (msgs Messages) LogsTo() string {
 	return Catalog.Format(msgs.locale, "logsTo", nil)
+}
+
+// LogsDateClear says "Clear date"
+// in the language the app shows.
+//
+// The button beside a date filter that removes it.
+func LogsDateClear() string { return In(i18n.Locale()).LogsDateClear() }
+
+// LogsDateClear says "Clear date"
+// in the language of msgs.
+//
+// The button beside a date filter that removes it.
+func (msgs Messages) LogsDateClear() string {
+	return Catalog.Format(msgs.locale, "logsDateClear", nil)
 }
 
 // LogsOpenTerminal says "Open terminal"
@@ -10750,13 +10764,13 @@ func (msgs Messages) LogsProblemHostMissing() string {
 	return Catalog.Format(msgs.locale, "logsProblemHostMissing", nil)
 }
 
-// LogsProblemDate says "Enter dates as YYYY-MM-DD, with the start before the end."
+// LogsProblemDate says "The start date must be on or before the end date."
 // in the language the app shows.
 //
 // Shown when a date filter is malformed or inverted.
 func LogsProblemDate() string { return In(i18n.Locale()).LogsProblemDate() }
 
-// LogsProblemDate says "Enter dates as YYYY-MM-DD, with the start before the end."
+// LogsProblemDate says "The start date must be on or before the end date."
 // in the language of msgs.
 //
 // Shown when a date filter is malformed or inverted.
