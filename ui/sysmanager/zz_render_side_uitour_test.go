@@ -1,0 +1,60 @@
+//go:build uitour
+
+package sysmanager
+
+import (
+	"image/png"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/egoist/mygo/ui"
+
+	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
+)
+
+// renderSide writes a side panel tool to NATCATTY_SCREENSHOT_DIR in both
+// themes, at the panel's width on the terminal's background.
+func renderSide(t *testing.T, name string, view func(*ui.Context), settle func(*ui.Tester)) {
+	t.Helper()
+	out := os.Getenv("NATCATTY_SCREENSHOT_DIR")
+	if out == "" {
+		t.Skip("set NATCATTY_SCREENSHOT_DIR")
+	}
+	for _, dark := range []bool{false, true} {
+		preset := domaintheme.ResolvePreset(dark, domaintheme.DefaultLightTheme, domaintheme.DefaultDarkTheme)
+		theme := uitheme.UI(dark, preset, uitheme.Options{})
+		tt := ui.NewTester(func(c *ui.Context) {
+			c.SetTheme(theme)
+			ui.Column(c).Fill().Background(c.Theme().Background).Children(func() { view(c) })
+		}, 360, 620)
+		tt.SetLocale("en")
+		tt.Frame()
+		if settle != nil {
+			settle(tt)
+		}
+		tt.Frame()
+		mode := "light"
+		if dark {
+			mode = "dark"
+		}
+		file, err := os.Create(filepath.Join(out, "side-"+name+"-"+mode+".png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := png.Encode(file, tt.Image()); err != nil {
+			t.Fatal(err)
+		}
+		file.Close()
+	}
+}
+
+// TestRenderSideUITour renders the System side tool with a fake service.
+func TestRenderSideUITour(t *testing.T) {
+	service := newFakeService()
+	service.snapshot = demoSnapshot()
+	state := newTestState(service, newFakePreferences())
+	state.ShowHost("alpha")
+	renderSide(t, "system", SideView(state), nil)
+}

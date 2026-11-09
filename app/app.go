@@ -135,6 +135,10 @@ type runOptions struct {
 	// The packaged smoke sets it to a per-profile name so an isolated run never
 	// reads or writes the user's real entries.
 	secretService string
+	// secrets, when set, replaces the OS credential store outright. Debug
+	// harnesses pass an in-memory store so an unattended run never reaches
+	// the keychain or waits on its permission prompt.
+	secrets platformsecrets.Store
 }
 
 // importsShellHistory reports whether the composition root may read the real
@@ -439,6 +443,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	secretBackend := platformsecrets.Store(platformsecrets.System{})
 	if options.secretService != "" {
 		secretBackend = platformsecrets.Scoped{Service: options.secretService}
+	}
+	if options.secrets != nil {
+		secretBackend = options.secrets
 	}
 
 	// Host credentials live in the field-secret store. It reports OS,
