@@ -300,13 +300,7 @@ func controlPanel(c *ui.Context, s *state.State, m locales.Messages) {
 		*open = !*open
 		c.Invalidate()
 	}
-	t := c.Theme()
-	ui.PopoverBase(c, button, open, func(panel ui.Element) {
-		panel.AttachTo(button, ui.AnchorBottomEnd, ui.AnchorTopEnd).Margin(6, 0, 0, 0).
-			Background(t.Surface).Border(1, t.Border).Radius(kit.M(c).Radius.Card).
-			Shadow(0, 8, 24, 0, kit.CardShadow(t)).Clip()
-		content(c)
-	})
+	kit.Popover(c, kit.PopoverPanel, button, open, func() { content(c) })
 }
 
 func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {

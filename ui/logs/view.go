@@ -246,7 +246,7 @@ func dateField(c *ui.Context, m locales.Messages, label, text string, picker *da
 			picker.draft = time.Now()
 			c.Invalidate()
 		}
-		ui.Popover(c, anchor, &picker.open, func() {
+		kit.Popover(c, kit.PopoverPicker, anchor, &picker.open, func() {
 			shown := picker.draft
 			if ui.Calendar(c, &picker.draft).Label(label).AutoFocus().Changed() {
 				// Calendar reports the months its buttons and Page keys move

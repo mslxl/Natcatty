@@ -35,7 +35,7 @@ func promptPanel(c *ui.Context, label string, build func()) bool {
 		promptPanelWidth = width - 2*promptMargin
 	}
 	open := true
-	ui.Modal(c, &open, build).Label(label).Width(promptPanelWidth)
+	kit.DialogWith(c, &open, kit.DialogOptions{Role: kit.DialogSheet, Label: label, Width: promptPanelWidth}, build, nil)
 	return open
 }
 
@@ -62,61 +62,40 @@ func View(s *State) func(*ui.Context) {
 	}
 }
 
-func panel(c *ui.Context, t *ui.Theme) ui.Element {
-	width, height := c.Size()
-	panelWidth := min(width-32, panelMaxWidth)
-	panelHeight := min(height-32, panelMaxHeight)
-	return ui.Column(c).Role(ui.RoleDialog).
-		Width(panelWidth).Height(panelHeight).
-		Margin(panelTop, 0, 0, 0).Padding(panelPadding).Gap(8).
-		Background(t.Background).Border(1, t.Border).
-		Radius(t.Radius+2).Shadow(0, 10, 30, 0, uitheme.OverlayShadow).
-		Clip()
-}
-
 func documentView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
-	closed := false
-	ui.Overlay(c, func() {
-		back := ui.Column(c).Absolute().Left(0).Top(0).Right(0).Bottom(0).
-			AlignItems(ui.Center).Justify(ui.Start).Modal().
-			Background(uitheme.Scrim)
-		if back.OverlayShortcut(0, ui.KeyEscape) {
-			closed = true
-		}
-		back.Children(func() {
-			box := panel(c, t)
-			box.OnClick(func() {})
-			box.Children(func() {
-				ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, m.SftpEditorTitle(s.Name())).FontSize(kit.M(c).Font.Title3).Bold().
-						SingleLine().MinWidth(0).TextColor(t.Text)
-					ui.Column(c).Grow(1)
-					if ui.Button(c, m.SftpEditorClose()).Clicked() {
-						s.Close()
-						c.Invalidate()
-					}
-					if ui.PrimaryButton(c, m.SftpEditorSave()).Clicked() {
-						s.Save()
-						c.Invalidate()
-					}
-				})
-				content := s.Content()
-				if content != nil {
-					c.Key("editor-content")
-					ui.TextArea(c, content).
-						Label("editor-content").
-						FillWidth().Grow(1).MinHeight(0).AutoFocus()
-				}
-				switch {
-				case s.Saving():
-					ui.Text(c, m.SftpEditorSaving()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
-				case s.SaveError():
-					ui.Text(c, m.SftpEditorSaveFailed()).FontSize(kit.M(c).Font.Caption).TextColor(uitheme.DangerText(t))
-				case s.Saved():
-					ui.Text(c, m.SftpEditorSaved()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
-				}
-			})
+	width, height := c.Size()
+	closed := kit.Palette(c, kit.PaletteOptions{
+		Width: min(width-32, panelMaxWidth), Height: min(height-32, panelMaxHeight),
+		Top: panelTop, Padding: panelPadding, Gap: 8,
+	}, func() {
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.SftpEditorTitle(s.Name())).FontSize(kit.M(c).Font.Title3).Bold().
+				SingleLine().MinWidth(0).TextColor(t.Text)
+			ui.Column(c).Grow(1)
+			if ui.Button(c, m.SftpEditorClose()).Clicked() {
+				s.Close()
+				c.Invalidate()
+			}
+			if ui.PrimaryButton(c, m.SftpEditorSave()).Clicked() {
+				s.Save()
+				c.Invalidate()
+			}
 		})
+		content := s.Content()
+		if content != nil {
+			c.Key("editor-content")
+			ui.TextArea(c, content).
+				Label("editor-content").
+				FillWidth().Grow(1).MinHeight(0).AutoFocus()
+		}
+		switch {
+		case s.Saving():
+			ui.Text(c, m.SftpEditorSaving()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+		case s.SaveError():
+			ui.Text(c, m.SftpEditorSaveFailed()).FontSize(kit.M(c).Font.Caption).TextColor(uitheme.DangerText(t))
+		case s.Saved():
+			ui.Text(c, m.SftpEditorSaved()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+		}
 	})
 	if closed {
 		s.Close()

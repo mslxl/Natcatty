@@ -36,7 +36,7 @@ func View(s *State) func(*ui.Context) {
 		t := c.Theme()
 
 		open := true
-		ui.Modal(c, &open, func() {
+		kit.DialogWith(c, &open, kit.DialogOptions{Role: kit.DialogSheet}, func() {
 			ui.Column(c).Width(dialogWidth).Padding(20).Gap(dialogGap).Children(func() {
 				ui.Text(c, m.SerialTitle()).FontSize(kit.M(c).Font.Title).Bold()
 				ui.Text(c, m.SerialDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
@@ -71,7 +71,7 @@ func View(s *State) func(*ui.Context) {
 					}
 				})
 			})
-		})
+		}, nil)
 		// Clicking outside the modal or pressing Escape clears the local open
 		// flag; the dialog state is the source of truth for the next frame.
 		if !open {

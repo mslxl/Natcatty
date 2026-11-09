@@ -797,7 +797,7 @@ func (s *Surface) observerView(c *ui.Context, m locales.Messages, t *ui.Theme) {
 // renameDialog collects the Pane title. The shell owns the Tab that actually
 // carries the name, so Rename hands the trimmed text to PaneActions.Rename.
 func (s *Surface) renameDialog(c *ui.Context, m locales.Messages, t *ui.Theme) {
-	ui.Modal(c, &s.renaming, func() {
+	kit.DialogWith(c, &s.renaming, kit.DialogOptions{Role: kit.DialogSheet}, func() {
 		ui.Column(c).Width(320).Padding(14).Gap(10).Background(t.Surface).
 			Radius(t.Radius).Border(1, t.Border).Children(func() {
 			ui.Text(c, m.SessionMenuRenameTitle()).FontSize(kit.M(c).Font.Callout).Bold().TextColor(t.Text)
@@ -817,7 +817,7 @@ func (s *Surface) renameDialog(c *ui.Context, m locales.Messages, t *ui.Theme) {
 				}
 			})
 		})
-	})
+	}, nil)
 }
 
 func (s *Surface) applyRename() bool {
