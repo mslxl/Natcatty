@@ -8,10 +8,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainbackup "github.com/mslxl/natcatty/domain/vaultbackup"
 	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
@@ -35,6 +37,66 @@ type options struct {
 	// from the Hosts page's toolbar, as the original's Terminal and Serial.
 	localTerminal func()
 	serial        func()
+	// layout reads the persisted Vault layout (view mode, sort, sections) and
+	// updateLayout writes one preference. Without them the page uses the
+	// defaults and keeps changes in memory.
+	layout       func() domainpreferences.Layout
+	updateLayout func(func(*domainpreferences.Layout))
+	// openSFTP opens the dual-pane SFTP surface for a Host; enabled hides the
+	// action while the SFTP tab is turned off.
+	openSFTP    func(domainvault.Host)
+	sftpEnabled func() bool
+	// openBrowser opens a Host's browser panel. It needs a Session, which the
+	// shell opens for the Host first.
+	openBrowser func(domainvault.Host)
+	// copyText writes to the clipboard. The app leaves it at the platform
+	// clipboard; tests inject a recorder, because the platform clipboard needs
+	// a running main loop.
+	copyText func(string)
+}
+
+// WithClipboard overrides where the Host actions write copied text.
+func WithClipboard(write func(string)) Option {
+	return func(o *options) { o.copyText = write }
+}
+
+// WithOpenSFTP lets a Host card open the dual-pane SFTP surface. enabled is
+// read every frame so the "Show SFTP tab" setting also hides the action.
+func WithOpenSFTP(open func(domainvault.Host), enabled func() bool) Option {
+	return func(o *options) {
+		o.openSFTP = open
+		o.sftpEnabled = enabled
+	}
+}
+
+// WithOpenBrowser lets a Host card open the Host's browser panel.
+func WithOpenBrowser(open func(domainvault.Host)) Option {
+	return func(o *options) { o.openBrowser = open }
+}
+
+// layout returns the current Vault layout, or its defaults when the host app
+// did not wire preferences.
+func (o options) currentLayout() domainpreferences.Layout {
+	if o.layout != nil {
+		return o.layout()
+	}
+	return domainpreferences.Defaults().Layout
+}
+
+// setLayout records one change to the Vault layout, if anything can store it.
+func (o options) setLayout(change func(*domainpreferences.Layout)) {
+	if o.updateLayout != nil {
+		o.updateLayout(change)
+	}
+}
+
+// WithLayout gives the Hosts page the persisted layout and a way to change
+// it, so the view and sort switches survive a restart.
+func WithLayout(get func() domainpreferences.Layout, update func(func(*domainpreferences.Layout))) Option {
+	return func(o *options) {
+		o.layout = get
+		o.updateLayout = update
+	}
 }
 
 // WithLocalTerminal puts a Terminal button on the Hosts page that calls open.
@@ -162,6 +224,14 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 	var configured options
 	for _, opt := range opts {
 		opt(&configured)
+	}
+	if configured.copyText == nil {
+		configured.copyText = mygo.Clipboard.WriteText
+	}
+	if configured.layout == nil {
+		fallback := domainpreferences.Defaults().Layout
+		configured.layout = func() domainpreferences.Layout { return fallback }
+		configured.updateLayout = func(change func(*domainpreferences.Layout)) { change(&fallback) }
 	}
 	var positions scrolls
 	var at browse
@@ -304,7 +374,7 @@ func list(c *ui.Context, s *vaultstate.State, opts options,
 			return
 		}
 		if page.Shows(section.Hosts) {
-			hostsPage(c, s, at, m, t)
+			hostsPage(c, s, opts, at, m, t)
 		}
 		if page.Shows(section.Keychain) {
 			keySection(c, s, m, t)
@@ -1787,6 +1857,8 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultSnippetProblemTargets()
 	case vaultstate.ProblemSnippetNoSession:
 		return m.VaultSnippetProblemNoSession()
+	case vaultstate.ProblemNoPassword:
+		return m.VaultProblemNoPassword()
 	case vaultstate.ProblemSnippetRunFailed:
 		return m.VaultSnippetProblemRun()
 	case vaultstate.ProblemNote:

@@ -2,11 +2,14 @@ package vault
 
 import (
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/mslxl/natcatty/domain/model"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	"github.com/mslxl/natcatty/ui/icons"
@@ -23,6 +26,16 @@ const hostCardMinWidth float32 = 236
 // gridGap is the room between cards in a grid.
 const gridGap float32 = 10
 
+// rowHeight is the height of a Host or group row in the list and tree views.
+const rowHeight float32 = 44
+
+// treeIndent is how far one level of the group tree indents its rows.
+const treeIndent float32 = 18
+
+// recentHostLimit is how many Recently Connected Hosts the root shows, the
+// same six as the original.
+const recentHostLimit = 6
+
 // browse is the Hosts page's place in the group tree: the group path it
 // shows, "" for every Host. It lives with the view, as the original kept the
 // chosen group in the Vault's own state.
@@ -31,15 +44,24 @@ type browse struct {
 	// dragging is set while a Host card drags; dragged is last frame's value,
 	// which shows the Vault root target only while a Host can be dropped there.
 	dragging, dragged bool
+	// focused is the card the select click behavior is focusing. The next
+	// click on it activates.
+	focused model.HostID
+	// collapsed holds the group paths the tree view collapsed. A path missing
+	// from it is expanded, so a fresh Vault shows its contents.
+	collapsed map[string]bool
 }
 
 // hostsToolbar is the Hosts page's top row, as the original's: the search
-// field, New Host with its menu of the Vault-wide actions, and the local
-// terminal and serial shortcuts.
+// field, the view and sort switches, New Host with its menu of the Vault-wide
+// actions, and the local terminal and serial shortcuts.
 func hostsToolbar(c *ui.Context, s *vaultstate.State, field func(), opts options, at *browse,
 	m locales.Messages, t *ui.Theme) {
+	layout := opts.layout()
 	ui.Row(c).FillWidth().Gap(8).Wrap().AlignItems(ui.Center).Children(func() {
-		ui.Row(c).Grow(1).MinWidth(220).Children(field)
+		ui.Row(c).Grow(1).MinWidth(180).Children(field)
+		viewModeToggle(c, opts, layout, m, t)
+		sortSelect(c, opts, layout, m, t)
 		ui.Row(c).Gap(1).Shrink(0).AlignItems(ui.Center).Children(func() {
 			if kit.PrimaryButton(c, icons.Plus, m.VaultHostNew()).Clicked() {
 				s.BeginCreate()
@@ -87,52 +109,568 @@ func hostsToolbar(c *ui.Context, s *vaultstate.State, field func(), opts options
 	})
 }
 
-// hostsPage draws the Host Groups and Hosts at the browsed group: a
-// breadcrumb back to every Host, the group's subgroups as cards, and its
-// Hosts as cards. At the top it lists the root groups and every Host.
-func hostsPage(c *ui.Context, s *vaultstate.State, at *browse, m locales.Messages, t *ui.Theme) {
-	sections, _ := groupSections(s)
+// viewOption is one entry of the view switch.
+type viewOption struct {
+	mode  domainpreferences.HostViewMode
+	icon  string
+	label string
+}
+
+func viewOptions(m locales.Messages) []viewOption {
+	return []viewOption{
+		{domainpreferences.HostViewGrid, icons.LayoutGrid, m.VaultViewGrid()},
+		{domainpreferences.HostViewList, icons.List, m.VaultViewList()},
+		{domainpreferences.HostViewTree, icons.FolderTree, m.VaultViewTree()},
+	}
+}
+
+// viewModeToggle is the original's grid/list/tree switch.
+func viewModeToggle(c *ui.Context, opts options, layout domainpreferences.Layout, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).Gap(1).Shrink(0).AlignItems(ui.Center).Children(func() {
+		for _, option := range viewOptions(m) {
+			button := ui.ButtonBase(c).Key("vault-view-"+string(option.mode)).Label(option.label).
+				Tooltip(option.label).Size(28, kit.ControlHeight).Radius(kit.RadiusControl).
+				Justify(ui.Center).AlignItems(ui.Center)
+			switch {
+			case option.mode == layout.HostViewMode:
+				button.Background(t.Accent).TextColor(t.AccentText)
+			case button.Hovered():
+				button.Background(kit.Subtle(t)).TextColor(t.Text)
+			default:
+				button.TextColor(t.TextMuted)
+			}
+			if button.Clicked() {
+				mode := option.mode
+				opts.setLayout(func(next *domainpreferences.Layout) { next.HostViewMode = mode })
+				c.Invalidate()
+			}
+			button.Children(func() { ui.Icon(c, icons.Lucide(option.icon)).Size(15, 15) })
+		}
+	})
+}
+
+// sortOption is one entry of the sort menu.
+type sortOption struct {
+	mode  domainpreferences.HostSortMode
+	label string
+}
+
+func sortOptions(m locales.Messages) []sortOption {
+	return []sortOption{
+		{domainpreferences.HostSortManual, m.VaultSortManual()},
+		{domainpreferences.HostSortAZ, m.VaultSortAZ()},
+		{domainpreferences.HostSortZA, m.VaultSortZA()},
+		{domainpreferences.HostSortNewest, m.VaultSortNewest()},
+		{domainpreferences.HostSortOldest, m.VaultSortOldest()},
+		{domainpreferences.HostSortGroup, m.VaultSortGroup()},
+		{domainpreferences.HostSortIP, m.VaultSortIP()},
+	}
+}
+
+// sortSelect is the original's Host sort menu.
+func sortSelect(c *ui.Context, opts options, layout domainpreferences.Layout, m locales.Messages, t *ui.Theme) {
+	options := sortOptions(m)
+	labels := make([]string, 0, len(options))
+	current := options[0].label
+	for _, option := range options {
+		labels = append(labels, option.label)
+		if option.mode == layout.HostSortMode {
+			current = option.label
+		}
+	}
+	chosen := current
+	if ui.Select(c, &chosen, labels).Width(128).Tooltip(m.VaultSortTitle()).Changed() {
+		for _, option := range options {
+			if option.label != chosen {
+				continue
+			}
+			mode := option.mode
+			opts.setLayout(func(next *domainpreferences.Layout) { next.HostSortMode = mode })
+			c.Invalidate()
+		}
+	}
+}
+
+// hostsPage draws the Vault's Hosts page in the mode the user chose: cards,
+// rows, or the whole group tree.
+func hostsPage(c *ui.Context, s *vaultstate.State, opts options, at *browse, m locales.Messages, t *ui.Theme) {
+	layout := opts.layout()
+	sections, ungrouped := groupSections(s)
 	// A group renamed or deleted elsewhere takes the page back to the top.
 	if at.group != "" && !groupShown(sections, at.group) {
 		at.group = ""
 	}
+
+	if layout.HostViewMode == domainpreferences.HostViewTree {
+		hostTree(c, s, opts, at, m, t, layout, sections, ungrouped)
+		return
+	}
 	if at.group != "" {
-		breadcrumb(c, s, at, m, t)
+		browsedGroup(c, s, opts, at, m, t, layout, sections)
+		return
 	}
+	browsedRoot(c, s, opts, at, m, t, layout, sections, ungrouped)
+}
 
-	groups := childGroups(sections, at.group)
-	// As the original's, a group lists the Hosts in it and in every group
-	// below it, and the top lists every Host.
-	var hosts []domainvault.Host
-	for _, host := range s.EffectiveItems() {
-		if at.group == "" || domainvault.IsGroupAtOrBelow(host.Group, at.group) {
-			hosts = append(hosts, host)
+// browsedRoot draws the Vault root: the Pinned and Recently Connected
+// sections the original lifts out of the list, the root groups, and every
+// Host the root lists.
+func browsedRoot(c *ui.Context, s *vaultstate.State, opts options, at *browse, m locales.Messages, t *ui.Theme,
+	layout domainpreferences.Layout, sections []hostGroupSection, ungrouped []domainvault.Host) {
+	groups := sortSections(childGroups(sections, ""), layout.HostSortMode)
+	rootHosts := s.EffectiveItems()
+	if layout.ShowOnlyUngroupedHostsInRoot {
+		rootHosts = ungrouped
+	}
+	pinned := pinnedHosts(s)
+	recent := recentHosts(s, layout)
+	hidden := make(map[model.HostID]bool, len(pinned)+len(recent))
+	for _, host := range pinned {
+		hidden[host.ID] = true
+	}
+	if layout.ShowRecentHosts {
+		for _, host := range recent {
+			hidden[host.ID] = true
 		}
 	}
-
-	if len(groups) > 0 || at.group == "" {
-		sectionHeading(c, t, m.VaultGroupListTitle(len(groups)))
-		if len(groups) == 0 {
-			kit.EmptyHint(c, m.VaultGroupEmpty())
+	visible := make([]domainvault.Host, 0, len(rootHosts))
+	for _, host := range rootHosts {
+		if !hidden[host.ID] {
+			visible = append(visible, host)
 		}
-		cardGrid(c, "groups", len(groups), func(i int) { groupCard(c, s, groups[i], at, m, t) })
 	}
+	visible = sortHosts(visible, layout.HostSortMode)
+
 	dragged := at.dragging
 	if dragged != at.dragged {
 		c.Invalidate()
 	}
 	at.dragged, at.dragging = dragged, false
-	if at.group == "" && dragged {
+	if dragged {
 		// While a Host drags, the Vault root is a drop target, so a Host can
 		// always leave its group.
 		rootDropTarget(c, s, m, t)
 	}
 
+	if len(pinned) > 0 {
+		sectionHeading(c, t, m.VaultHostsPinned())
+		renderHosts(c, s, opts, pinned, at, m, t, layout, 0, "pinned-hosts")
+	}
+	if len(recent) > 0 {
+		sectionHeading(c, t, m.VaultHostsRecent())
+		renderHosts(c, s, opts, recent, at, m, t, layout, 0, "recent-hosts")
+	}
+	if len(groups) > 0 {
+		sectionHeading(c, t, m.VaultGroupListTitle(len(groups)))
+		renderGroups(c, s, groups, at, m, t, layout)
+	}
+	// An empty Host list is only worth a section when the page has nothing
+	// else; the original hides it behind Pinned, Recent, and the groups.
+	if len(visible) > 0 || (len(groups) == 0 && len(pinned) == 0 && len(recent) == 0) {
+		sectionHeading(c, t, m.VaultHostListTitle(len(visible)))
+		if len(visible) == 0 {
+			kit.EmptyHint(c, m.VaultHostEmpty())
+		} else {
+			renderHosts(c, s, opts, visible, at, m, t, layout, 0, "hosts")
+		}
+	}
+}
+
+// browsedGroup draws one group: its subgroups as cards or rows, then the
+// Hosts that belong to it directly. A subgroup's Hosts are not repeated here;
+// the original shows one level at a time.
+func browsedGroup(c *ui.Context, s *vaultstate.State, opts options, at *browse, m locales.Messages, t *ui.Theme,
+	layout domainpreferences.Layout, sections []hostGroupSection) {
+	breadcrumb(c, s, at, m, t)
+	groups := sortSections(childGroups(sections, at.group), layout.HostSortMode)
+	if len(groups) > 0 {
+		sectionHeading(c, t, m.VaultGroupListTitle(len(groups)))
+		renderGroups(c, s, groups, at, m, t, layout)
+	}
+	hosts := sortHosts(directHosts(sections, at.group), layout.HostSortMode)
 	sectionHeading(c, t, m.VaultHostListTitle(len(hosts)))
 	if len(hosts) == 0 {
 		kit.EmptyHint(c, m.VaultHostEmpty())
+		return
 	}
-	cardGrid(c, "hosts", len(hosts), func(i int) { hostCard(c, s, hosts[i], at, m, t) })
+	renderHosts(c, s, opts, hosts, at, m, t, layout, 0, "group-hosts")
+}
+
+// renderGroups draws a group list in the current view mode.
+func renderGroups(c *ui.Context, s *vaultstate.State, groups []hostGroupSection, at *browse,
+	m locales.Messages, t *ui.Theme, layout domainpreferences.Layout) {
+	if layout.HostViewMode == domainpreferences.HostViewList || layout.HostViewMode == domainpreferences.HostViewTree {
+		ui.Column(c).FillWidth().Gap(2).Children(func() {
+			for _, section := range groups {
+				groupRow(c, s, section, at, m, t, 0)
+			}
+		})
+		return
+	}
+	cardGrid(c, "groups", len(groups), func(i int) { groupCard(c, s, groups[i], at, m, t) })
+}
+
+// renderHosts draws a Host list in the current view mode. The key names the
+// section, so the Pinned, Recent, and main grids are distinct elements.
+func renderHosts(c *ui.Context, s *vaultstate.State, opts options, hosts []domainvault.Host, at *browse,
+	m locales.Messages, t *ui.Theme, layout domainpreferences.Layout, depth int, key string) {
+	if layout.HostViewMode == domainpreferences.HostViewList || layout.HostViewMode == domainpreferences.HostViewTree {
+		ui.Column(c).FillWidth().Gap(2).Children(func() {
+			for _, host := range hosts {
+				hostRow(c, s, opts, host, at, m, t, layout, depth)
+			}
+		})
+		return
+	}
+	cardGrid(c, key, len(hosts), func(i int) { hostCard(c, s, opts, hosts[i], at, m, t, layout) })
+}
+
+// hostTree draws every group and ungrouped Host in one indented tree, which is
+// the original's third view mode. The browsed group does not narrow it.
+func hostTree(c *ui.Context, s *vaultstate.State, opts options, at *browse, m locales.Messages, t *ui.Theme,
+	layout domainpreferences.Layout, sections []hostGroupSection, ungrouped []domainvault.Host) {
+	hosts := s.EffectiveItems()
+	sectionHeading(c, t, m.VaultHostListTitle(len(hosts)))
+	if len(hosts) == 0 {
+		kit.EmptyHint(c, m.VaultHostEmpty())
+		return
+	}
+	ui.Column(c).FillWidth().Gap(1).Children(func() {
+		for _, node := range sortTree(groupForest(sections), layout.HostSortMode) {
+			treeGroup(c, s, opts, at, m, t, layout, node, 0)
+		}
+		for _, host := range sortHosts(ungrouped, layout.HostSortMode) {
+			hostRow(c, s, opts, host, at, m, t, layout, 0)
+		}
+	})
+}
+
+// groupTreeNode is one level of the tree view.
+type groupTreeNode struct {
+	section  hostGroupSection
+	children []*groupTreeNode
+}
+
+// groupForest materializes the whole group tree, adding the intermediate
+// levels a Host path implies even when no record names them.
+func groupForest(sections []hostGroupSection) []*groupTreeNode {
+	nodes := make(map[string]*groupTreeNode, len(sections))
+	var roots []*groupTreeNode
+	var ensure func(path string) *groupTreeNode
+	ensure = func(path string) *groupTreeNode {
+		if node, ok := nodes[path]; ok {
+			return node
+		}
+		node := &groupTreeNode{section: hostGroupSection{path: path, depth: groupDepth(path)}}
+		nodes[path] = node
+		if at := sectionIndex(sections, path); at >= 0 {
+			node.section = sections[at]
+		}
+		if parent := parentGroup(path); parent != "" {
+			up := ensure(parent)
+			up.children = append(up.children, node)
+		} else {
+			roots = append(roots, node)
+		}
+		return node
+	}
+	for _, section := range sections {
+		ensure(section.path)
+	}
+	return roots
+}
+
+// sortTree orders sibling groups by the active sort. Manual keeps the Vault's
+// own group order; every other mode sorts by name, as the original's tree.
+func sortTree(nodes []*groupTreeNode, mode domainpreferences.HostSortMode) []*groupTreeNode {
+	if mode != domainpreferences.HostSortManual {
+		sort.SliceStable(nodes, func(left, right int) bool {
+			return strings.ToLower(groupName(nodes[left].section.path)) <
+				strings.ToLower(groupName(nodes[right].section.path))
+		})
+	}
+	for _, node := range nodes {
+		sortTree(node.children, mode)
+	}
+	return nodes
+}
+
+// treeGroup draws one group of the tree and, when expanded, its Hosts and
+// child groups.
+func treeGroup(c *ui.Context, s *vaultstate.State, opts options, at *browse, m locales.Messages, t *ui.Theme,
+	layout domainpreferences.Layout, node *groupTreeNode, depth int) {
+	path := node.section.path
+	expanded := at.collapsed == nil || !at.collapsed[path]
+	toggle := func() {
+		if at.collapsed == nil {
+			at.collapsed = map[string]bool{}
+		}
+		at.collapsed[path] = expanded
+		c.Invalidate()
+	}
+	row := groupRowElement(c, t, path, depth)
+	hostDropTarget(c, s, row, path, t)
+	// A group row expands or collapses, as the original's tree does. Its
+	// chevron and menu keep their own hit areas.
+	if row.Clicked() {
+		toggle()
+	}
+	if node.section.stored {
+		section := node.section
+		row.ContextMenu(func(menu *ui.Menu) {
+			if menu.Item(m.VaultHostEdit()).Chosen() {
+				s.BeginEditGroup(section.group.Path)
+				c.Invalidate()
+			}
+			if menu.Item(m.VaultHostDelete()).Chosen() {
+				s.RequestDeleteGroup(section.group.Path)
+				c.Invalidate()
+			}
+		})
+	}
+	row.Children(func() {
+		chevron := ui.ButtonBase(c).Key("tree-toggle-"+path).Label(m.VaultTreeToggle()).
+			Size(20, 20).Radius(kit.RadiusControl).Justify(ui.Center).AlignItems(ui.Center).
+			TextColor(t.TextMuted).Shrink(0)
+		if chevron.Hovered() {
+			chevron.Background(kit.Subtle(t)).TextColor(t.Text)
+		}
+		if chevron.Clicked() {
+			toggle()
+		}
+		icon := icons.ChevronRight
+		if expanded {
+			icon = icons.ChevronDown
+		}
+		chevron.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(14, 14) })
+		groupRowBody(c, s, node.section, at, m, t)
+	})
+	if !expanded {
+		return
+	}
+	for _, child := range node.children {
+		treeGroup(c, s, opts, at, m, t, layout, child, depth+1)
+	}
+	for _, host := range sortHosts(node.section.hosts, layout.HostSortMode) {
+		hostRow(c, s, opts, host, at, m, t, layout, depth+1)
+	}
+}
+
+// groupRowElement is a group's row shell: indented, hoverable, and a drop
+// target for a dragged Host.
+func groupRowElement(c *ui.Context, t *ui.Theme, path string, depth int) ui.Element {
+	row := ui.Row(c).Key("group-row-" + path).FillWidth().Height(rowHeight).
+		PaddingStart(8 + float32(depth)*treeIndent).PaddingEnd(8).
+		Radius(kit.RadiusControl).AlignItems(ui.Center).Gap(8)
+	if row.Hovered() {
+		row.Background(kit.Subtle(t))
+	}
+	return row
+}
+
+// groupRow is one Host Group in the list and tree views: open it with a
+// click, drop a Host on it to move the Host in. Its menu edits or deletes a
+// saved group.
+func groupRow(c *ui.Context, s *vaultstate.State, section hostGroupSection, at *browse,
+	m locales.Messages, t *ui.Theme, depth int) {
+	row := groupRowElement(c, t, section.path, depth)
+	open := func() {
+		at.group = section.path
+		c.Invalidate()
+	}
+	actions := groupActions(s, section, open, m, c)
+	if row.Clicked() {
+		open()
+	}
+	row.ContextMenu(actions)
+	hostDropTarget(c, s, row, section.path, t)
+	row.Children(func() {
+		groupRowBody(c, s, section, at, m, t)
+	})
+}
+
+// hostDropTarget makes a group row accept a dragged Host. The card, list row,
+// and tree row all accept the same drop.
+func hostDropTarget(c *ui.Context, s *vaultstate.State, row ui.Element, path string, t *ui.Theme) {
+	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
+		row.Border(1, t.Accent).Background(t.Accent.Alpha(0.08))
+	}
+	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && drag.HostID != "" {
+		s.MoveHostToGroup(drag.HostID, path)
+		c.Invalidate()
+	}
+}
+
+// groupRowBody draws a group's icon, name, notes indicator, and member count.
+func groupRowBody(c *ui.Context, s *vaultstate.State, section hostGroupSection, at *browse,
+	m locales.Messages, t *ui.Theme) {
+	kit.HostAvatar(c, "", kit.AvatarGroup, section.path, 28)
+	ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, groupName(section.path)).FontSize(14).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
+			groupNotes(c, section, m, t)
+		})
+		ui.Text(c, m.VaultGroupMemberCount(s.GroupMemberCount(section.path))).
+			FontSize(12).TextColor(t.TextMuted).SingleLine()
+	})
+	cardControl(c, "menu", icons.EllipsisVertical, m.VaultItemActions(groupName(section.path))).
+		Menu(groupActions(s, section, func() {
+			at.group = section.path
+			c.Invalidate()
+		}, m, c))
+}
+
+// groupNotes shows a saved group's notes indicator, as the original marks a
+// group that carries a note.
+func groupNotes(c *ui.Context, section hostGroupSection, m locales.Messages, t *ui.Theme) {
+	if !section.stored || strings.TrimSpace(section.group.Notes) == "" {
+		return
+	}
+	ui.Icon(c, icons.Lucide(icons.FileText)).Size(12, 12).TextColor(t.TextMuted).Shrink(0).
+		Tooltip(m.VaultGroupNotes())
+}
+
+// groupActions builds a group's context menu.
+func groupActions(s *vaultstate.State, section hostGroupSection, open func(), m locales.Messages, c *ui.Context) func(*ui.Menu) {
+	return func(menu *ui.Menu) {
+		if menu.Item(m.VaultGroupOpen()).Chosen() {
+			open()
+		}
+		if !section.stored {
+			return
+		}
+		menu.Separator()
+		if menu.Item(m.VaultHostEdit()).Chosen() {
+			s.BeginEditGroup(section.group.Path)
+			c.Invalidate()
+		}
+		if menu.Item(m.VaultHostDelete()).Chosen() {
+			s.RequestDeleteGroup(section.group.Path)
+			c.Invalidate()
+		}
+	}
+}
+
+// groupName returns the last path segment of a group.
+func groupName(path string) string {
+	if at := strings.LastIndex(path, "/"); at >= 0 {
+		return path[at+1:]
+	}
+	return path
+}
+
+// pinnedHosts returns the pinned Hosts the root lists above everything else.
+func pinnedHosts(s *vaultstate.State) []domainvault.Host {
+	var hosts []domainvault.Host
+	for _, host := range s.EffectiveItems() {
+		if host.Pinned {
+			hosts = append(hosts, host)
+		}
+	}
+	sort.SliceStable(hosts, func(left, right int) bool {
+		return strings.ToLower(hosts[left].Label) < strings.ToLower(hosts[right].Label)
+	})
+	return hosts
+}
+
+// recentHosts returns the most recently connected Hosts for the root's
+// Recently Connected section. A pinned Host keeps its place in the Pinned
+// section instead of appearing twice.
+func recentHosts(s *vaultstate.State, layout domainpreferences.Layout) []domainvault.Host {
+	if !layout.ShowRecentHosts {
+		return nil
+	}
+	var hosts []domainvault.Host
+	for _, host := range s.EffectiveItems() {
+		if host.Pinned || host.LastConnectedAt == 0 {
+			continue
+		}
+		hosts = append(hosts, host)
+	}
+	sort.SliceStable(hosts, func(left, right int) bool {
+		return hosts[left].LastConnectedAt > hosts[right].LastConnectedAt
+	})
+	if len(hosts) > recentHostLimit {
+		hosts = hosts[:recentHostLimit]
+	}
+	return hosts
+}
+
+// directHosts returns the Hosts that belong to path itself. A subgroup's
+// Hosts are deliberately absent: the original shows one level at a time.
+func directHosts(sections []hostGroupSection, path string) []domainvault.Host {
+	if at := sectionIndex(sections, path); at >= 0 {
+		return sections[at].hosts
+	}
+	return nil
+}
+
+// sortHosts orders a Host list. Manual keeps the Vault's own order, which the
+// store already returns with pinned Hosts first.
+func sortHosts(hosts []domainvault.Host, mode domainpreferences.HostSortMode) []domainvault.Host {
+	out := append([]domainvault.Host(nil), hosts...)
+	switch mode {
+	case domainpreferences.HostSortAZ:
+		sort.SliceStable(out, func(left, right int) bool {
+			return strings.ToLower(out[left].Label) < strings.ToLower(out[right].Label)
+		})
+	case domainpreferences.HostSortZA:
+		sort.SliceStable(out, func(left, right int) bool {
+			return strings.ToLower(out[left].Label) > strings.ToLower(out[right].Label)
+		})
+	case domainpreferences.HostSortNewest:
+		sort.SliceStable(out, func(left, right int) bool {
+			return out[left].CreatedAt.After(out[right].CreatedAt)
+		})
+	case domainpreferences.HostSortOldest:
+		sort.SliceStable(out, func(left, right int) bool {
+			return out[left].CreatedAt.Before(out[right].CreatedAt)
+		})
+	case domainpreferences.HostSortGroup:
+		sort.SliceStable(out, func(left, right int) bool {
+			leftGroup, rightGroup := strings.ToLower(out[left].Group), strings.ToLower(out[right].Group)
+			if leftGroup != rightGroup {
+				return leftGroup < rightGroup
+			}
+			return strings.ToLower(out[left].Label) < strings.ToLower(out[right].Label)
+		})
+	case domainpreferences.HostSortIP:
+		sort.SliceStable(out, func(left, right int) bool {
+			if order := compareAddresses(out[left].Hostname, out[right].Hostname); order != 0 {
+				return order < 0
+			}
+			return strings.ToLower(out[left].Label) < strings.ToLower(out[right].Label)
+		})
+	}
+	return out
+}
+
+// compareAddresses orders two Host addresses numerically when both are IP
+// literals, then alphabetically, as the original's IP sort.
+func compareAddresses(left, right string) int {
+	leftIP, rightIP := net.ParseIP(strings.TrimSpace(left)), net.ParseIP(strings.TrimSpace(right))
+	switch {
+	case leftIP != nil && rightIP != nil:
+		return strings.Compare(leftIP.To16().String(), rightIP.To16().String())
+	case leftIP != nil:
+		return -1
+	case rightIP != nil:
+		return 1
+	}
+	return strings.Compare(strings.ToLower(left), strings.ToLower(right))
+}
+
+// sortSections orders group cards. Manual keeps the Vault's group order;
+// every other mode sorts by name.
+func sortSections(sections []hostGroupSection, mode domainpreferences.HostSortMode) []hostGroupSection {
+	if mode == domainpreferences.HostSortManual {
+		return sections
+	}
+	out := append([]hostGroupSection(nil), sections...)
+	sort.SliceStable(out, func(left, right int) bool {
+		return strings.ToLower(groupName(out[left].path)) < strings.ToLower(groupName(out[right].path))
+	})
+	return out
 }
 
 // childGroups is the groups one level below parent, in the Vault's order. A
@@ -200,7 +738,7 @@ func breadcrumb(c *ui.Context, s *vaultstate.State, at *browse, m locales.Messag
 	})
 }
 
-// sectionHeading names a grid of cards.
+// sectionHeading names a grid of cards or rows.
 func sectionHeading(c *ui.Context, t *ui.Theme, title string) {
 	kit.SectionBar(c, title, nil)
 }
@@ -244,8 +782,8 @@ func cardShell(c *ui.Context, t *ui.Theme, key string) ui.Element {
 	return card
 }
 
-// groupCard is one Host Group: double-click or click its name to open it, drop
-// a Host on it to move the Host in. Its menu edits or deletes a saved group.
+// groupCard is one Host Group card: click its name to open it, drop a Host on
+// it to move the Host in. Its menu edits or deletes a saved group.
 func groupCard(c *ui.Context, s *vaultstate.State, section hostGroupSection, at *browse,
 	m locales.Messages, t *ui.Theme) {
 	card := cardShell(c, t, "group-"+section.path)
@@ -263,55 +801,28 @@ func groupCard(c *ui.Context, s *vaultstate.State, section hostGroupSection, at 
 	if card.Clicked() {
 		open()
 	}
-	actions := func(menu *ui.Menu) {
-		if menu.Item(m.VaultGroupOpen()).Chosen() {
-			open()
-		}
-		if !section.stored {
-			return
-		}
-		menu.Separator()
-		if menu.Item(m.VaultHostEdit()).Chosen() {
-			s.BeginEditGroup(section.group.Path)
-			c.Invalidate()
-		}
-		if menu.Item(m.VaultHostDelete()).Chosen() {
-			s.RequestDeleteGroup(section.group.Path)
-			c.Invalidate()
-		}
-	}
+	actions := groupActions(s, section, open, m, c)
 	card.ContextMenu(actions)
-	name := section.path
-	if at := strings.LastIndex(name, "/"); at >= 0 {
-		name = name[at+1:]
-	}
 	card.Children(func() {
 		kit.HostAvatar(c, "", kit.AvatarGroup, section.path, 40)
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-			ui.Text(c, name).FontSize(14).FontWeight(600).SingleLine()
+			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, groupName(section.path)).FontSize(14).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
+				groupNotes(c, section, m, t)
+			})
 			ui.Text(c, m.VaultGroupMemberCount(s.GroupMemberCount(section.path))).
 				FontSize(12).TextColor(t.TextMuted).SingleLine()
 		})
-		cardControl(c, "menu", icons.EllipsisVertical, m.VaultItemActions(name)).Menu(actions)
+		cardControl(c, "menu", icons.EllipsisVertical, m.VaultItemActions(groupName(section.path))).Menu(actions)
 	})
 }
 
-// hostCard is one Host, as the original's: its avatar, label, and address.
-// A double-click connects; the pencil, shown while hovered, edits; the menu,
-// also on a right-click, holds every other action. The card drags the Host to
-// a group.
-func hostCard(c *ui.Context, s *vaultstate.State, host domainvault.Host, at *browse, m locales.Messages, t *ui.Theme) {
-	remote := host.Protocol == domainvault.ProtocolSSH ||
-		host.Protocol == domainvault.ProtocolMosh ||
-		host.Protocol == domainvault.ProtocolET
-	pin := m.VaultHostPin()
-	if host.Pinned {
-		pin = m.VaultHostUnpin()
-	}
-	testLabel := m.VaultHostTest()
-	if s.Testing(host.ID) {
-		testLabel = m.VaultHostTesting()
-	}
+// hostCard is one Host card, as the original's: its avatar, label, and
+// address. A click connects; the pencil, shown while hovered, edits; the
+// menu, also on a right-click, holds every other action. The card drags the
+// Host to a group.
+func hostCard(c *ui.Context, s *vaultstate.State, opts options, host domainvault.Host, at *browse,
+	m locales.Messages, t *ui.Theme, layout domainpreferences.Layout) {
 	card := cardShell(c, t, "host-"+string(host.ID)).Tooltip(strings.Join(hostSummary(s, host, m), "  ·  "))
 	card.Drag(vaultstate.HostDrag(host.ID))
 	hovered := card.Hovered()
@@ -323,37 +834,11 @@ func hostCard(c *ui.Context, s *vaultstate.State, host domainvault.Host, at *bro
 			c.Invalidate()
 		}
 	}
-	if remote && card.DoubleClicked() {
-		s.Connect(host.ID)
-		c.Invalidate()
+	activateHost(c, s, host, at, layout, card)
+	if host.Pinned {
+		card.Border(1, t.Accent.Alpha(0.4))
 	}
-	actions := func(menu *ui.Menu) {
-		if remote {
-			if menu.Item(m.VaultHostConnect()).Chosen() {
-				s.Connect(host.ID)
-				c.Invalidate()
-			}
-			if menu.Item(testLabel).Disabled(s.Testing(host.ID)).Chosen() {
-				s.Test(host.ID)
-				c.Invalidate()
-			}
-			menu.Separator()
-		}
-		if menu.Item(m.VaultHostEdit()).Chosen() {
-			s.BeginEdit(host.ID)
-			c.Invalidate()
-		}
-		if menu.Item(pin).Chosen() {
-			_ = s.TogglePinned(host.ID)
-			c.Invalidate()
-		}
-		menu.Separator()
-		if menu.Item(m.VaultHostDelete()).Chosen() {
-			s.RequestDelete(host.ID)
-			c.Invalidate()
-		}
-	}
-	card.ContextMenu(actions)
+	card.ContextMenu(hostActions(s, opts, host, m, c))
 	card.Children(func() {
 		kit.HostAvatar(c, "", hostAvatarKind(host.Protocol), host.Label, 40)
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
@@ -369,8 +854,127 @@ func hostCard(c *ui.Context, s *vaultstate.State, host domainvault.Host, at *bro
 			s.BeginEdit(host.ID)
 			c.Invalidate()
 		}
-		cardControl(c, "menu", icons.EllipsisVertical, m.VaultItemActions(host.Label)).Menu(actions)
+		cardControl(c, "menu", icons.EllipsisVertical, m.VaultItemActions(host.Label)).Menu(hostActions(s, opts, host, m, c))
 	})
+}
+
+// hostRow is one Host in the list and tree views.
+func hostRow(c *ui.Context, s *vaultstate.State, opts options, host domainvault.Host, at *browse,
+	m locales.Messages, t *ui.Theme, layout domainpreferences.Layout, depth int) {
+	row := ui.Row(c).Key("host-row-" + string(host.ID)).FillWidth().Height(rowHeight).
+		PaddingStart(8 + float32(depth)*treeIndent).PaddingEnd(8).
+		Radius(kit.RadiusControl).AlignItems(ui.Center).Gap(8)
+	if row.Hovered() {
+		row.Background(kit.Subtle(t))
+	}
+	if at.focused == host.ID && layout.HostClickBehavior == domainpreferences.HostClickSelect {
+		row.Border(1, t.Accent)
+	}
+	row.Drag(vaultstate.HostDrag(host.ID))
+	if row.Dragging() {
+		at.dragging = true
+	}
+	activateHost(c, s, host, at, layout, row)
+	row.ContextMenu(hostActions(s, opts, host, m, c))
+	row.Children(func() {
+		kit.HostAvatar(c, "", hostAvatarKind(host.Protocol), host.Label, 28)
+		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
+			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, host.Label).FontSize(14).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
+				if host.Pinned {
+					ui.Icon(c, icons.Lucide(icons.Pin)).Size(12, 12).TextColor(t.Accent).Shrink(0)
+				}
+			})
+			ui.Text(c, hostAddress(host, m)).FontSize(12).TextColor(t.TextMuted).SingleLine().MinWidth(0)
+		})
+		if row.Hovered() && cardControl(c, "edit", icons.Pencil, m.VaultHostEdit()).Clicked() {
+			s.BeginEdit(host.ID)
+			c.Invalidate()
+		}
+		cardControl(c, "menu", icons.EllipsisVertical, m.VaultItemActions(host.Label)).Menu(hostActions(s, opts, host, m, c))
+	})
+}
+
+// activateHost applies the click behavior to one Host card or row. Connect is
+// the original's default; Select focuses the first click and activates the
+// next one on the same Host.
+func activateHost(c *ui.Context, s *vaultstate.State, host domainvault.Host, at *browse,
+	layout domainpreferences.Layout, element ui.Element) bool {
+	if !element.Clicked() && !element.DoubleClicked() {
+		return false
+	}
+	if layout.HostClickBehavior == domainpreferences.HostClickSelect && element.Clicked() && !element.DoubleClicked() {
+		if at.focused != host.ID {
+			at.focused = host.ID
+			c.Invalidate()
+			return false
+		}
+	}
+	at.focused = host.ID
+	s.Connect(host.ID)
+	c.Invalidate()
+	return true
+}
+
+// hostActions builds a Host's context menu.
+func hostActions(s *vaultstate.State, opts options, host domainvault.Host, m locales.Messages, c *ui.Context) func(*ui.Menu) {
+	pin := m.VaultHostPin()
+	if host.Pinned {
+		pin = m.VaultHostUnpin()
+	}
+	testLabel := m.VaultHostTest()
+	if s.Testing(host.ID) {
+		testLabel = m.VaultHostTesting()
+	}
+	return func(menu *ui.Menu) {
+		if menu.Item(m.VaultHostConnect()).Chosen() {
+			s.Connect(host.ID)
+			c.Invalidate()
+		}
+		if opts.openSFTP != nil && host.Protocol.UsesSSHAuth() &&
+			(opts.sftpEnabled == nil || opts.sftpEnabled()) {
+			if menu.Item(m.VaultHostOpenSftp()).Chosen() {
+				opts.openSFTP(host)
+			}
+		}
+		if opts.openBrowser != nil && host.Protocol == domainvault.ProtocolSSH {
+			if menu.Item(m.VaultHostOpenBrowser()).Chosen() {
+				opts.openBrowser(host)
+			}
+		}
+		if menu.Item(testLabel).Disabled(s.Testing(host.ID)).Chosen() {
+			s.Test(host.ID)
+			c.Invalidate()
+		}
+		menu.Separator()
+		if menu.Item(m.VaultHostEdit()).Chosen() {
+			s.BeginEdit(host.ID)
+			c.Invalidate()
+		}
+		if menu.Item(m.VaultHostDuplicate()).Chosen() {
+			s.BeginDuplicate(host.ID, m.SessionMenuCopy())
+			c.Invalidate()
+		}
+		if host.Hostname != "" && menu.Item(m.VaultHostCopyHostname()).Chosen() {
+			opts.copyText(host.Hostname)
+		}
+		if menu.Item(m.VaultHostCopyCredentials()).Chosen() {
+			if text, ok := s.CopyCredentials(host.ID); ok {
+				opts.copyText(text)
+			}
+			c.Invalidate()
+		}
+		menu.Separator()
+		if menu.Item(pin).Chosen() {
+			_ = s.TogglePinned(host.ID)
+			c.Invalidate()
+		}
+		menu.Separator()
+		if menu.Item(m.VaultHostDelete()).Chosen() {
+			s.RequestDelete(host.ID)
+			c.Invalidate()
+		}
+	}
 }
 
 // hostCardDetail is the line under a Host's label: the outcome of a connection

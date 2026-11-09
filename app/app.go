@@ -816,6 +816,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				live, routes, connections)
 		}),
 		vaultstate.WithKnownHosts(vaultService),
+		vaultstate.WithHostCredentials(vaultService),
 		vaultstate.WithSnippets(vaultService),
 		vaultstate.WithNotes(vaultService),
 		vaultstate.WithNoteFileWriter(noteFileWriter{}),
@@ -919,6 +920,16 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// log row. Failures record the error so the Logs surface can explain
 		// them; local attempts keep an empty Host identity.
 		appsession.WithConnectionHook(func(event appsession.ConnectionEvent) {
+			// A successful open is the Vault's Recently Connected fact. It is
+			// device-local telemetry, so the list is only invalidated here; the
+			// UI thread reloads it before the next frame. This covers every
+			// connect path, including the palette and a restored Workspace,
+			// which never pass through the Vault's own button.
+			if event.Err == nil && !event.UnsavedHost && event.HostID != "" && vaultState != nil {
+				if err := vaultService.MarkConnected(context.Background(), event.HostID); err == nil {
+					vaultState.InvalidateLists()
+				}
+			}
 			if historyService == nil {
 				return
 			}
@@ -1158,6 +1169,33 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			return sessionui.New(s, options...)
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState),
+			// The Hosts page's view and sort switches are this device's
+			// layout; the preference service persists them.
+			vaultui.WithLayout(
+				func() domainpreferences.Layout { return preferenceService.Settings().Layout },
+				func(change func(*domainpreferences.Layout)) {
+					_ = preferenceService.Update(func(next *domainpreferences.Settings) {
+						change(&next.Layout)
+					})
+				},
+			),
+			// Dual-pane SFTP and the Host browser open from a Host card. Both
+			// actions resolve against the live state, so they are wired lazily.
+			vaultui.WithOpenSFTP(func(host domainvault.Host) {
+				if transferState != nil {
+					transferState.OpenRemote(transferstate.Left, host.ID, host.Label)
+				}
+				if shellState != nil {
+					shellState.ShowSFTP()
+				}
+			}, func() bool {
+				return preferenceService.Settings().Layout.ShowSFTPTab
+			}),
+			vaultui.WithOpenBrowser(func(host domainvault.Host) {
+				if shellState != nil {
+					_ = shellState.OpenHostBrowser(host)
+				}
+			}),
 			vaultui.WithSection(func() vaultsection.Section {
 				if shellState == nil {
 					return vaultsection.Hosts

@@ -27,11 +27,23 @@ import (
 // exercise, including the Proxy Profile reference and the Host Group.
 type entityHosts struct {
 	items  []domainvault.Host
+	groups *entityGroups
 	nextID int
 }
 
-func (f *entityHosts) List(context.Context) ([]domainvault.Host, error) {
-	return append([]domainvault.Host(nil), f.items...), nil
+func (f *entityHosts) List(ctx context.Context) ([]domainvault.Host, error) {
+	hosts := append([]domainvault.Host(nil), f.items...)
+	if f.groups == nil {
+		return hosts, nil
+	}
+	groups, err := f.groups.ListGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for index := range hosts {
+		hosts[index] = domainvault.MaterializeHostGroup(hosts[index], groups)
+	}
+	return hosts, nil
 }
 
 func (f *entityHosts) Create(_ context.Context, draft domainvault.Draft) (domainvault.Host, error) {
@@ -48,6 +60,7 @@ func (f *entityHosts) Create(_ context.Context, draft domainvault.Draft) (domain
 		Protocol: normalized.Protocol,
 	}
 	applyEntityDraft(&host, normalized)
+	host.GroupID = f.groupIDForPath(normalized.Group)
 	f.items = append(f.items, host)
 	return host, nil
 }
@@ -62,6 +75,7 @@ func (f *entityHosts) Update(_ context.Context, id model.HostID, draft domainvau
 		return domainvault.Host{}, appvault.ErrNotFound
 	}
 	applyEntityDraft(&host, normalized)
+	host.GroupID = f.groupIDForPath(normalized.Group)
 	f.replace(host)
 	return host, nil
 }
@@ -74,6 +88,18 @@ func (f *entityHosts) Delete(_ context.Context, id model.HostID) error {
 		}
 	}
 	return appvault.ErrNotFound
+}
+
+// groupIDForPath mirrors the Service: a draft names a path, storage keeps the
+// group's stable ID.
+func (f *entityHosts) groupIDForPath(path string) string {
+	if f.groups == nil || domainvault.NormalizeGroup(path) == "" {
+		return ""
+	}
+	if group, ok := f.groups.findByPath(path); ok {
+		return group.ID
+	}
+	return ""
 }
 
 func (f *entityHosts) find(id model.HostID) (domainvault.Host, bool) {
@@ -120,7 +146,16 @@ type entityGroups struct {
 }
 
 func (f *entityGroups) ListGroups(context.Context) ([]domainvault.Group, error) {
-	return append([]domainvault.Group(nil), f.items...), nil
+	materialized := domainvault.MaterializeGroupPaths(append([]domainvault.Group(nil), f.items...))
+	// Adopt the derived identity of a fixture written before IDs existed.
+	for _, group := range materialized {
+		for index := range f.items {
+			if f.items[index].ID == "" && domainvault.NormalizeGroup(f.items[index].Path) == group.Path {
+				f.items[index] = group
+			}
+		}
+	}
+	return materialized, nil
 }
 
 func (f *entityGroups) CreateGroup(_ context.Context, draft domainvault.GroupDraft) (domainvault.Group, error) {
@@ -128,102 +163,148 @@ func (f *entityGroups) CreateGroup(_ context.Context, draft domainvault.GroupDra
 	if err != nil {
 		return domainvault.Group{}, &appvault.Error{Kind: appvault.KindValidation, Cause: err}
 	}
-	if _, ok := f.find(normalized.Path); ok {
+	if _, ok := f.findByPath(normalized.Path); ok {
 		return domainvault.Group{}, &appvault.Error{Kind: appvault.KindConflict}
 	}
 	f.nextID++
-	group := domainvault.Group{Path: normalized.Path, OrderKey: int64(f.nextID) * 1000}
+	group := domainvault.Group{
+		ID: "group-" + strconv.Itoa(f.nextID), Name: domainvault.GroupName(normalized.Path),
+		ParentID: f.idForPath(domainvault.ParentGroupPath(normalized.Path)),
+		Path:     normalized.Path, OrderKey: int64(f.nextID) * 1000,
+	}
 	applyEntityGroupDraft(&group, normalized)
 	f.items = append(f.items, group)
 	return group, nil
 }
 
-func (f *entityGroups) UpdateGroup(_ context.Context, path string, draft domainvault.GroupDraft) (domainvault.Group, error) {
+func (f *entityGroups) UpdateGroup(_ context.Context, id string, draft domainvault.GroupDraft) (domainvault.Group, error) {
 	normalized, err := domainvault.NormalizeGroupDraft(draft)
 	if err != nil {
 		return domainvault.Group{}, &appvault.Error{Kind: appvault.KindValidation, Cause: err}
 	}
-	group, ok := f.find(domainvault.NormalizeGroup(path))
+	group, ok := f.findByID(id)
 	if !ok {
 		return domainvault.Group{}, appvault.ErrNotFound
 	}
 	oldPath := group.Path
+	group.ParentID = f.idForPath(domainvault.ParentGroupPath(normalized.Path))
+	group.Name = domainvault.GroupName(normalized.Path)
 	applyEntityGroupDraft(&group, normalized)
 	f.replace(group)
 	if group.Path != oldPath {
+		// The fake stores paths; keep descendants consistent with the tree a
+		// real store derives. Host Membership is the ID, so Hosts are untouched.
 		for i := range f.items {
+			if f.items[i].ID == group.ID {
+				continue
+			}
 			f.items[i].Path = domainvault.ReplaceGroupPrefix(f.items[i].Path, oldPath, group.Path)
-		}
-		for i := range f.hosts.items {
-			f.hosts.items[i].Group = domainvault.ReplaceGroupPrefix(f.hosts.items[i].Group, oldPath, group.Path)
 		}
 	}
 	return group, nil
 }
 
-func (f *entityGroups) DeleteGroup(_ context.Context, path string) error {
-	root := domainvault.NormalizeGroup(path)
-	matched := false
-	kept := f.items[:0]
-	for _, group := range f.items {
-		if domainvault.IsGroupAtOrBelow(group.Path, root) {
-			matched = true
-			continue
-		}
-		kept = append(kept, group)
-	}
-	f.items = kept
-	for i := range f.hosts.items {
-		if domainvault.IsGroupAtOrBelow(f.hosts.items[i].Group, root) {
-			f.hosts.items[i].Group = ""
-			matched = true
+func (f *entityGroups) DeleteGroup(_ context.Context, id string) error {
+	groups, _ := f.ListGroups(context.Background())
+	byPath := make(map[string]string, len(groups))
+	var root domainvault.Group
+	found := false
+	for _, group := range groups {
+		byPath[domainvault.NormalizeGroup(group.Path)] = group.ID
+		if group.ID == id {
+			root, found = group, true
 		}
 	}
-	if !matched {
+	if !found {
 		return appvault.ErrNotFound
+	}
+	removed := make(map[string]bool, len(groups))
+	for _, group := range groups {
+		if domainvault.IsGroupAtOrBelow(group.Path, root.Path) {
+			removed[group.ID] = true
+		}
+	}
+	// Hosts keep their record; only the membership goes.
+	for i := range f.hosts.items {
+		member := f.hosts.items[i].GroupID
+		if member == "" {
+			// A fixture written before IDs existed carries only a path.
+			member = byPath[domainvault.NormalizeGroup(f.hosts.items[i].Group)]
+		}
+		if removed[member] {
+			f.hosts.items[i].GroupID = ""
+			f.hosts.items[i].Group = ""
+		}
+	}
+	f.items = nil
+	for _, group := range groups {
+		if !removed[group.ID] {
+			f.items = append(f.items, group)
+		}
 	}
 	return nil
 }
 
-func (f *entityGroups) AssignHostGroup(_ context.Context, id model.HostID, groupPath string) error {
-	path := domainvault.NormalizeGroup(groupPath)
-	if path != "" {
-		if _, ok := f.find(path); !ok {
-			// Mirror the application service: a path Hosts already reference
-			// is an implicit group and is a valid membership target.
-			referenced := false
-			for _, host := range f.hosts.items {
-				if domainvault.IsGroupAtOrBelow(host.Group, path) {
-					referenced = true
-					break
-				}
-			}
-			if !referenced {
-				return &appvault.Error{Kind: appvault.KindValidation}
-			}
+func (f *entityGroups) AssignHostGroup(_ context.Context, id model.HostID, groupID string) error {
+	group := domainvault.Group{}
+	if groupID != "" {
+		var ok bool
+		group, ok = f.findByID(groupID)
+		if !ok {
+			return &appvault.Error{Kind: appvault.KindValidation}
 		}
 	}
 	host, ok := f.hosts.find(id)
 	if !ok {
 		return appvault.ErrNotFound
 	}
-	host.Group = path
+	host.GroupID = groupID
+	host.Group = group.Path
 	f.hosts.replace(host)
 	return nil
 }
 
-func (f *entityGroups) find(path string) (domainvault.Group, bool) {
-	for _, group := range f.items {
-		if group.Path == path {
+func (f *entityGroups) findByID(id string) (domainvault.Group, bool) {
+	groups, _ := f.ListGroups(context.Background())
+	for _, group := range groups {
+		if group.ID == id {
 			return group, true
 		}
 	}
 	return domainvault.Group{}, false
 }
 
+func (f *entityGroups) findByPath(path string) (domainvault.Group, bool) {
+	normalized := domainvault.NormalizeGroup(path)
+	if normalized == "" {
+		return domainvault.Group{}, false
+	}
+	groups, _ := f.ListGroups(context.Background())
+	for _, group := range groups {
+		if domainvault.NormalizeGroup(group.Path) == normalized {
+			return group, true
+		}
+	}
+	return domainvault.Group{}, false
+}
+
+func (f *entityGroups) idForPath(path string) string {
+	group, ok := f.findByPath(path)
+	if !ok {
+		return ""
+	}
+	return group.ID
+}
+
 func (f *entityGroups) replace(group domainvault.Group) {
 	for i := range f.items {
-		if f.items[i].Path == group.Path {
+		if f.items[i].ID == group.ID {
+			f.items[i] = group
+			return
+		}
+	}
+	for i := range f.items {
+		if f.items[i].ID == "" && domainvault.NormalizeGroup(f.items[i].Path) == domainvault.NormalizeGroup(group.Path) {
 			f.items[i] = group
 			return
 		}
@@ -413,6 +494,7 @@ func newProductionEntityView(t *testing.T, width, height int) (*vaultstate.State
 		Protocol: domainvault.ProtocolSSH,
 	}}}
 	groups := &entityGroups{hosts: hosts}
+	hosts.groups = groups
 	proxies := &entityProxies{hosts: hosts, groups: groups}
 	known := &entityKnownHosts{}
 	state := vaultstate.NewState(hosts,
@@ -1476,8 +1558,13 @@ func TestNestedGroupsOpenOneLevelAtATime(t *testing.T) {
 		t.Fatalf("open prod: %v", err)
 	}
 	tt.Frame()
-	if !showsExactly(tt, "web") || !tt.HasText("deep-1") {
-		t.Fatalf("prod does not list its subgroup and the Host below it, texts %q", tt.Texts())
+	// One level at a time, as the original: prod shows its subgroup but not
+	// the Host that belongs to that subgroup.
+	if !showsExactly(tt, "web") || tt.HasText("deep-1") {
+		t.Fatalf("prod lists its subgroup's Host, texts %q", tt.Texts())
+	}
+	if !tt.HasText(m.VaultHostEmpty()) {
+		t.Fatalf("prod has no direct Hosts but does not say so, texts %q", tt.Texts())
 	}
 	if err := tt.Click("web"); err != nil {
 		t.Fatalf("open prod/web: %v", err)
@@ -1498,17 +1585,24 @@ func TestNestedGroupsOpenOneLevelAtATime(t *testing.T) {
 	}
 }
 
-func TestAnImplicitGroupIsListedInItsParentAndAcceptsDrops(t *testing.T) {
+// A group that holds only subgroups is still a level: it appears in its
+// parent, counts its descendants, and accepts a dropped Host by its ID.
+func TestAGroupWithOnlySubgroupsIsStillALevel(t *testing.T) {
 	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1100, 720)
 	hosts.items = []domainvault.Host{
 		{ID: "web", Label: "web-1", Hostname: "10.0.0.1", Port: 22,
-			Protocol: domainvault.ProtocolSSH, Group: "prod/web"},
+			Protocol: domainvault.ProtocolSSH, Group: "prod/web", GroupID: "g-web"},
 		{ID: "db", Label: "db-1", Hostname: "10.0.0.2", Port: 22,
-			Protocol: domainvault.ProtocolSSH, Group: "prod/web/db"},
+			Protocol: domainvault.ProtocolSSH, Group: "prod/web/db", GroupID: "g-db"},
 		{ID: "loose", Label: "loose-1", Hostname: "10.0.0.3", Port: 22,
-			Protocol: domainvault.ProtocolSSH, Group: "prod"},
+			Protocol: domainvault.ProtocolSSH, Group: "prod", GroupID: "g-prod"},
 	}
-	groups.items = []domainvault.Group{{Path: "prod"}, {Path: "other"}}
+	groups.items = []domainvault.Group{
+		{ID: "g-prod", Name: "prod", Path: "prod"},
+		{ID: "g-web", ParentID: "g-prod", Name: "web", Path: "prod/web"},
+		{ID: "g-db", ParentID: "g-web", Name: "db", Path: "prod/web/db"},
+		{ID: "g-other", Name: "other", Path: "other"},
+	}
 	if err := state.Reload(); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
@@ -1521,20 +1615,16 @@ func TestAnImplicitGroupIsListedInItsParentAndAcceptsDrops(t *testing.T) {
 		t.Fatalf("open prod: %v", err)
 	}
 	tt.Frame()
-	// prod/web has no record, yet it is a card in prod, and it counts its
-	// descendants as a stored group does: web-1, and db-1 in prod/web/db.
 	if !showsExactly(tt, "web") || showsExactly(tt, "other") {
-		t.Fatalf("prod does not list exactly its implicit subgroup, texts %q", tt.Texts())
+		t.Fatalf("prod does not list exactly its subgroup, texts %q", tt.Texts())
 	}
 	if !tt.HasText("2 Hosts") {
-		t.Fatalf("the implicit group does not report its recursive member count, texts %q", tt.Texts())
+		t.Fatalf("the subgroup does not report its recursive member count, texts %q", tt.Texts())
 	}
 
-	// A group card takes a drop whether or not a record exists for it.
 	dragOnto(t, tt, "loose-1", "web")
-	if hosts.items[2].Group != "prod/web" {
-		t.Fatalf("Host Group after dropping on an implicit group = %q, want prod/web",
-			hosts.items[2].Group)
+	if hosts.items[2].GroupID != "g-web" {
+		t.Fatalf("Host membership after dropping on web = %q, want g-web", hosts.items[2].GroupID)
 	}
 }
 
