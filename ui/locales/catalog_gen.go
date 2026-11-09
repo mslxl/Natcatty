@@ -504,6 +504,206 @@ func (msgs Messages) VaultAllHosts() string {
 	return Catalog.Format(msgs.locale, "vaultAllHosts", nil)
 }
 
+// VaultViewGrid says "Card grid"
+// in the language the app shows.
+func VaultViewGrid() string { return In(i18n.Locale()).VaultViewGrid() }
+
+// VaultViewGrid says "Card grid"
+// in the language of msgs.
+func (msgs Messages) VaultViewGrid() string {
+	return Catalog.Format(msgs.locale, "vaultViewGrid", nil)
+}
+
+// VaultViewList says "List"
+// in the language the app shows.
+func VaultViewList() string { return In(i18n.Locale()).VaultViewList() }
+
+// VaultViewList says "List"
+// in the language of msgs.
+func (msgs Messages) VaultViewList() string {
+	return Catalog.Format(msgs.locale, "vaultViewList", nil)
+}
+
+// VaultViewTree says "Tree"
+// in the language the app shows.
+func VaultViewTree() string { return In(i18n.Locale()).VaultViewTree() }
+
+// VaultViewTree says "Tree"
+// in the language of msgs.
+func (msgs Messages) VaultViewTree() string {
+	return Catalog.Format(msgs.locale, "vaultViewTree", nil)
+}
+
+// VaultSortTitle says "Sort Hosts"
+// in the language the app shows.
+func VaultSortTitle() string { return In(i18n.Locale()).VaultSortTitle() }
+
+// VaultSortTitle says "Sort Hosts"
+// in the language of msgs.
+func (msgs Messages) VaultSortTitle() string {
+	return Catalog.Format(msgs.locale, "vaultSortTitle", nil)
+}
+
+// VaultSortManual says "Manual"
+// in the language the app shows.
+func VaultSortManual() string { return In(i18n.Locale()).VaultSortManual() }
+
+// VaultSortManual says "Manual"
+// in the language of msgs.
+func (msgs Messages) VaultSortManual() string {
+	return Catalog.Format(msgs.locale, "vaultSortManual", nil)
+}
+
+// VaultSortAZ says "Name (A–Z)"
+// in the language the app shows.
+func VaultSortAZ() string { return In(i18n.Locale()).VaultSortAZ() }
+
+// VaultSortAZ says "Name (A–Z)"
+// in the language of msgs.
+func (msgs Messages) VaultSortAZ() string {
+	return Catalog.Format(msgs.locale, "vaultSortAZ", nil)
+}
+
+// VaultSortZA says "Name (Z–A)"
+// in the language the app shows.
+func VaultSortZA() string { return In(i18n.Locale()).VaultSortZA() }
+
+// VaultSortZA says "Name (Z–A)"
+// in the language of msgs.
+func (msgs Messages) VaultSortZA() string {
+	return Catalog.Format(msgs.locale, "vaultSortZA", nil)
+}
+
+// VaultSortNewest says "Newest first"
+// in the language the app shows.
+func VaultSortNewest() string { return In(i18n.Locale()).VaultSortNewest() }
+
+// VaultSortNewest says "Newest first"
+// in the language of msgs.
+func (msgs Messages) VaultSortNewest() string {
+	return Catalog.Format(msgs.locale, "vaultSortNewest", nil)
+}
+
+// VaultSortOldest says "Oldest first"
+// in the language the app shows.
+func VaultSortOldest() string { return In(i18n.Locale()).VaultSortOldest() }
+
+// VaultSortOldest says "Oldest first"
+// in the language of msgs.
+func (msgs Messages) VaultSortOldest() string {
+	return Catalog.Format(msgs.locale, "vaultSortOldest", nil)
+}
+
+// VaultSortGroup says "Host Group"
+// in the language the app shows.
+func VaultSortGroup() string { return In(i18n.Locale()).VaultSortGroup() }
+
+// VaultSortGroup says "Host Group"
+// in the language of msgs.
+func (msgs Messages) VaultSortGroup() string {
+	return Catalog.Format(msgs.locale, "vaultSortGroup", nil)
+}
+
+// VaultSortIP says "IP address"
+// in the language the app shows.
+func VaultSortIP() string { return In(i18n.Locale()).VaultSortIP() }
+
+// VaultSortIP says "IP address"
+// in the language of msgs.
+func (msgs Messages) VaultSortIP() string {
+	return Catalog.Format(msgs.locale, "vaultSortIP", nil)
+}
+
+// VaultHostsPinned says "Pinned"
+// in the language the app shows.
+func VaultHostsPinned() string { return In(i18n.Locale()).VaultHostsPinned() }
+
+// VaultHostsPinned says "Pinned"
+// in the language of msgs.
+func (msgs Messages) VaultHostsPinned() string {
+	return Catalog.Format(msgs.locale, "vaultHostsPinned", nil)
+}
+
+// VaultHostsRecent says "Recently connected"
+// in the language the app shows.
+func VaultHostsRecent() string { return In(i18n.Locale()).VaultHostsRecent() }
+
+// VaultHostsRecent says "Recently connected"
+// in the language of msgs.
+func (msgs Messages) VaultHostsRecent() string {
+	return Catalog.Format(msgs.locale, "vaultHostsRecent", nil)
+}
+
+// VaultHostDuplicate says "Duplicate"
+// in the language the app shows.
+func VaultHostDuplicate() string { return In(i18n.Locale()).VaultHostDuplicate() }
+
+// VaultHostDuplicate says "Duplicate"
+// in the language of msgs.
+func (msgs Messages) VaultHostDuplicate() string {
+	return Catalog.Format(msgs.locale, "vaultHostDuplicate", nil)
+}
+
+// VaultHostOpenSftp says "Open SFTP"
+// in the language the app shows.
+func VaultHostOpenSftp() string { return In(i18n.Locale()).VaultHostOpenSftp() }
+
+// VaultHostOpenSftp says "Open SFTP"
+// in the language of msgs.
+func (msgs Messages) VaultHostOpenSftp() string {
+	return Catalog.Format(msgs.locale, "vaultHostOpenSftp", nil)
+}
+
+// VaultHostOpenBrowser says "Open host browser"
+// in the language the app shows.
+func VaultHostOpenBrowser() string { return In(i18n.Locale()).VaultHostOpenBrowser() }
+
+// VaultHostOpenBrowser says "Open host browser"
+// in the language of msgs.
+func (msgs Messages) VaultHostOpenBrowser() string {
+	return Catalog.Format(msgs.locale, "vaultHostOpenBrowser", nil)
+}
+
+// VaultHostCopyCredentials says "Copy credentials"
+// in the language the app shows.
+func VaultHostCopyCredentials() string { return In(i18n.Locale()).VaultHostCopyCredentials() }
+
+// VaultHostCopyCredentials says "Copy credentials"
+// in the language of msgs.
+func (msgs Messages) VaultHostCopyCredentials() string {
+	return Catalog.Format(msgs.locale, "vaultHostCopyCredentials", nil)
+}
+
+// VaultProblemNoPassword says "This Host has no saved password to copy."
+// in the language the app shows.
+func VaultProblemNoPassword() string { return In(i18n.Locale()).VaultProblemNoPassword() }
+
+// VaultProblemNoPassword says "This Host has no saved password to copy."
+// in the language of msgs.
+func (msgs Messages) VaultProblemNoPassword() string {
+	return Catalog.Format(msgs.locale, "vaultProblemNoPassword", nil)
+}
+
+// VaultHostCopyHostname says "Copy hostname"
+// in the language the app shows.
+func VaultHostCopyHostname() string { return In(i18n.Locale()).VaultHostCopyHostname() }
+
+// VaultHostCopyHostname says "Copy hostname"
+// in the language of msgs.
+func (msgs Messages) VaultHostCopyHostname() string {
+	return Catalog.Format(msgs.locale, "vaultHostCopyHostname", nil)
+}
+
+// VaultGroupNotes says "Group notes"
+// in the language the app shows.
+func VaultGroupNotes() string { return In(i18n.Locale()).VaultGroupNotes() }
+
+// VaultGroupNotes says "Group notes"
+// in the language of msgs.
+func (msgs Messages) VaultGroupNotes() string {
+	return Catalog.Format(msgs.locale, "vaultGroupNotes", nil)
+}
+
 // VaultGroupOpen says "Open"
 // in the language the app shows.
 func VaultGroupOpen() string { return In(i18n.Locale()).VaultGroupOpen() }
@@ -512,6 +712,16 @@ func VaultGroupOpen() string { return In(i18n.Locale()).VaultGroupOpen() }
 // in the language of msgs.
 func (msgs Messages) VaultGroupOpen() string {
 	return Catalog.Format(msgs.locale, "vaultGroupOpen", nil)
+}
+
+// VaultTreeToggle says "Expand or collapse group"
+// in the language the app shows.
+func VaultTreeToggle() string { return In(i18n.Locale()).VaultTreeToggle() }
+
+// VaultTreeToggle says "Expand or collapse group"
+// in the language of msgs.
+func (msgs Messages) VaultTreeToggle() string {
+	return Catalog.Format(msgs.locale, "vaultTreeToggle", nil)
 }
 
 // VaultMoreActions says "More actions"
@@ -974,16 +1184,6 @@ func VaultGroupNew() string { return In(i18n.Locale()).VaultGroupNew() }
 // in the language of msgs.
 func (msgs Messages) VaultGroupNew() string {
 	return Catalog.Format(msgs.locale, "vaultGroupNew", nil)
-}
-
-// VaultGroupEmpty says "No Host Groups yet."
-// in the language the app shows.
-func VaultGroupEmpty() string { return In(i18n.Locale()).VaultGroupEmpty() }
-
-// VaultGroupEmpty says "No Host Groups yet."
-// in the language of msgs.
-func (msgs Messages) VaultGroupEmpty() string {
-	return Catalog.Format(msgs.locale, "vaultGroupEmpty", nil)
 }
 
 // VaultGroupUngrouped says "Vault root (no Host Group)"
@@ -12968,6 +13168,48 @@ func SettingsShowRecentHosts() string { return In(i18n.Locale()).SettingsShowRec
 // in the language of msgs.
 func (msgs Messages) SettingsShowRecentHosts() string {
 	return Catalog.Format(msgs.locale, "settingsShowRecentHosts", nil)
+}
+
+// SettingsShowOnlyUngroupedHostsInRoot says "Only show ungrouped hosts at root"
+// in the language the app shows.
+func SettingsShowOnlyUngroupedHostsInRoot() string {
+	return In(i18n.Locale()).SettingsShowOnlyUngroupedHostsInRoot()
+}
+
+// SettingsShowOnlyUngroupedHostsInRoot says "Only show ungrouped hosts at root"
+// in the language of msgs.
+func (msgs Messages) SettingsShowOnlyUngroupedHostsInRoot() string {
+	return Catalog.Format(msgs.locale, "settingsShowOnlyUngroupedHostsInRoot", nil)
+}
+
+// SettingsHostClickBehavior says "Host click behavior"
+// in the language the app shows.
+func SettingsHostClickBehavior() string { return In(i18n.Locale()).SettingsHostClickBehavior() }
+
+// SettingsHostClickBehavior says "Host click behavior"
+// in the language of msgs.
+func (msgs Messages) SettingsHostClickBehavior() string {
+	return Catalog.Format(msgs.locale, "settingsHostClickBehavior", nil)
+}
+
+// SettingsHostClickConnect says "Connect on click"
+// in the language the app shows.
+func SettingsHostClickConnect() string { return In(i18n.Locale()).SettingsHostClickConnect() }
+
+// SettingsHostClickConnect says "Connect on click"
+// in the language of msgs.
+func (msgs Messages) SettingsHostClickConnect() string {
+	return Catalog.Format(msgs.locale, "settingsHostClickConnect", nil)
+}
+
+// SettingsHostClickSelect says "Select on click"
+// in the language the app shows.
+func SettingsHostClickSelect() string { return In(i18n.Locale()).SettingsHostClickSelect() }
+
+// SettingsHostClickSelect says "Select on click"
+// in the language of msgs.
+func (msgs Messages) SettingsHostClickSelect() string {
+	return Catalog.Format(msgs.locale, "settingsHostClickSelect", nil)
 }
 
 // SettingsTabBarPosition says "Tab bar position"
