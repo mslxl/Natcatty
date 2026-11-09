@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"github.com/mslxl/natcatty/ui/internal/styletest"
 	"io"
 	"os"
 	"path/filepath"
@@ -233,133 +234,135 @@ func waitForSFTPFrame(t *testing.T, tester *ui.Tester, what string, cond func() 
 // languages; the other three are checked because a longer translation wraps
 // differently in the same column.
 func TestSFTPSurfaceStaysInsideTheShellContentColumn(t *testing.T) {
-	for _, tag := range locales.Tags() {
-		m := locales.In(tag)
-		for _, size := range [][2]int{{720, 480}, {1100, 720}} {
-			width, height := float32(size[0]), float32(size[1])
-			t.Run(layoutName(size[0], size[1], "sftp-"+tag), func(t *testing.T) {
-				ts, tester := newSFTPLayoutShell(t, size[0], size[1], tag)
-				surface := wideContent(width, height)
-				surfaceRight := surface.X + surface.W
+	styletest.Each(t, func(t *testing.T) {
+		for _, tag := range locales.Tags() {
+			m := locales.In(tag)
+			for _, size := range [][2]int{{720, 480}, {1100, 720}} {
+				width, height := float32(size[0]), float32(size[1])
+				t.Run(layoutName(size[0], size[1], "sftp-"+tag), func(t *testing.T) {
+					ts, tester := newSFTPLayoutShell(t, size[0], size[1], tag)
+					surface := wideContent(width, height)
+					surfaceRight := surface.X + surface.W
 
-				// The surface title is skipped: the sidebar's own SFTP entry
-				// carries the same label, so a lookup by text cannot say which
-				// one it found, and the sidebar entry is deliberately outside
-				// the content column.
-				// The Tab bar, the toolbars, and the rows' highlight run edge to
-				// edge, as the original's, so they only have to stay inside the
-				// surface; the footers' text keeps the gutter from its sides.
-				// The pane's "+" is skipped for the title's reason: some
-				// locales give it the same words as the shell's New Tab.
-				chrome := []string{
-					m.SftpLocal(), "Test", m.SftpGoHome(),
-					m.SftpBookmarks(), m.SftpCopyPath(), m.SftpCompactList(), m.SftpFilter(),
-					m.SftpNewFolder(), m.SftpNewFile(), m.SftpShowHiddenFiles(), m.SftpRefresh(),
-					m.SftpMore(), m.SftpColumnName(), m.SftpColumnSize(),
-					"alpha.txt", "beta.bin", "remote.txt",
-				}
-				content := []string{m.SftpItemCount(3), m.SftpItemCount(2)}
-				for _, group := range []struct {
-					labels []string
-					gutter float32
-				}{{chrome, 0}, {content, sftpSurfaceEdgeGutter}} {
-					for _, label := range group.labels {
+					// The surface title is skipped: the sidebar's own SFTP entry
+					// carries the same label, so a lookup by text cannot say which
+					// one it found, and the sidebar entry is deliberately outside
+					// the content column.
+					// The Tab bar, the toolbars, and the rows' highlight run edge to
+					// edge, as the original's, so they only have to stay inside the
+					// surface; the footers' text keeps the gutter from its sides.
+					// The pane's "+" is skipped for the title's reason: some
+					// locales give it the same words as the shell's New Tab.
+					chrome := []string{
+						m.SftpLocal(), "Test", m.SftpGoHome(),
+						m.SftpBookmarks(), m.SftpCopyPath(), m.SftpCompactList(), m.SftpFilter(),
+						m.SftpNewFolder(), m.SftpNewFile(), m.SftpShowHiddenFiles(), m.SftpRefresh(),
+						m.SftpMore(), m.SftpColumnName(), m.SftpColumnSize(),
+						"alpha.txt", "beta.bin", "remote.txt",
+					}
+					content := []string{m.SftpItemCount(3), m.SftpItemCount(2)}
+					for _, group := range []struct {
+						labels []string
+						gutter float32
+					}{{chrome, 0}, {content, sftpSurfaceEdgeGutter}} {
+						for _, label := range group.labels {
+							rect, ok := tester.Find(label)
+							if !ok {
+								t.Fatalf("%dx%d %s does not show %q; texts: %v",
+									size[0], size[1], tag, label, tester.Texts())
+							}
+							assertInsideSFTPFrame(t, size, surface, label, rect, group.gutter)
+						}
+					}
+
+					// The icon toolbar is one row; its buttons must never share a
+					// cell.
+					toolbar := []string{
+						m.SftpBookmarks(), m.SftpCopyPath(), m.SftpCompactList(), m.SftpFilter(),
+						m.SftpNewFolder(), m.SftpNewFile(), m.SftpShowHiddenFiles(), m.SftpRefresh(),
+						m.SftpMore(),
+					}
+					for i, first := range toolbar {
+						a, _ := tester.Find(first)
+						for _, second := range toolbar[i+1:] {
+							b, _ := tester.Find(second)
+							if overlaps(a, b) {
+								t.Fatalf("%dx%d %s toolbar buttons overlap: %q %+v and %q %+v",
+									size[0], size[1], tag, first, a, second, b)
+							}
+						}
+					}
+
+					// The panes split the surface: side by side, equal width, and
+					// each footer inside its own pane.
+					left, ok := tester.Find(m.SftpItemCount(3))
+					if !ok {
+						t.Fatalf("%dx%d %s does not show the left footer", size[0], size[1], tag)
+					}
+					right, ok := tester.Find(m.SftpItemCount(2))
+					if !ok {
+						t.Fatalf("%dx%d %s does not show the right footer", size[0], size[1], tag)
+					}
+					if right.X <= left.X || overlaps(left, right) {
+						t.Fatalf("%dx%d %s panes are not side by side: left footer %+v right footer %+v",
+							size[0], size[1], tag, left, right)
+					}
+					if left.W-right.W > 2 || right.W-left.W > 2 {
+						t.Fatalf("%dx%d %s panes have different widths: left footer %+v right footer %+v",
+							size[0], size[1], tag, left, right)
+					}
+					// This is the regression the acceptance screenshot showed: the
+					// right pane's content column used to end 9 DIPs from the
+					// surface's edge, so it read as clipped by the window frame.
+					if right.X+right.W > surfaceRight-sftpSurfaceEdgeGutter {
+						t.Fatalf("%dx%d %s right pane reaches the surface edge: footer %+v ends at %.1f, surface ends at %.1f",
+							size[0], size[1], tag, right, right.X+right.W, surfaceRight)
+					}
+
+					// The operation bar and a conflict dialog are the surface's
+					// densest overlay: a running transfer plus five actions, at the
+					// size the acceptance exercised.
+					if err := tester.Click("target.bin"); err != nil {
+						t.Fatalf("%dx%d %s select the transferring file: %v", size[0], size[1], tag, err)
+					}
+					tester.Frame()
+					ts.Transfer(transferstate.Left)
+					waitForSFTPFrame(t, tester, "the conflict dialog", func() bool {
+						dialog := ts.Dialog()
+						return dialog != nil && dialog.Kind == transferstate.DialogConflict
+					})
+					tester.Frame()
+					if ts.Snapshot() == nil {
+						t.Fatalf("%dx%d %s shows a conflict but no operation bar", size[0], size[1], tag)
+					}
+					cancel, ok := tester.Find(m.SftpCancel())
+					if !ok {
+						t.Fatalf("%dx%d %s operation bar has no Cancel: %v", size[0], size[1], tag, tester.Texts())
+					}
+					assertInsideSFTPFrame(t, size, surface, m.SftpCancel(), cancel, sftpSurfaceEdgeGutter)
+
+					dialogActions := []string{
+						m.SftpConflictTitle(), m.SftpConflictStop(), m.SftpConflictSkip(),
+						m.SftpConflictDuplicate(), m.SftpConflictReplace(),
+					}
+					for _, label := range dialogActions {
 						rect, ok := tester.Find(label)
 						if !ok {
-							t.Fatalf("%dx%d %s does not show %q; texts: %v",
+							t.Fatalf("%dx%d %s conflict dialog does not show %q; texts: %v",
 								size[0], size[1], tag, label, tester.Texts())
 						}
-						assertInsideSFTPFrame(t, size, surface, label, rect, group.gutter)
+						// The dialog is centred in the window rather than in the
+						// surface, so it keeps the window margin, not the gutter.
+						assertInsideSFTPFrame(t, size, ui.Rect{X: 0, Y: 0, W: width, H: height},
+							label, rect, shellPadding)
 					}
-				}
-
-				// The icon toolbar is one row; its buttons must never share a
-				// cell.
-				toolbar := []string{
-					m.SftpBookmarks(), m.SftpCopyPath(), m.SftpCompactList(), m.SftpFilter(),
-					m.SftpNewFolder(), m.SftpNewFile(), m.SftpShowHiddenFiles(), m.SftpRefresh(),
-					m.SftpMore(),
-				}
-				for i, first := range toolbar {
-					a, _ := tester.Find(first)
-					for _, second := range toolbar[i+1:] {
-						b, _ := tester.Find(second)
-						if overlaps(a, b) {
-							t.Fatalf("%dx%d %s toolbar buttons overlap: %q %+v and %q %+v",
-								size[0], size[1], tag, first, a, second, b)
-						}
+					if overlaps(mustFind(t, tester, m.SftpConflictStop()), mustFind(t, tester, m.SftpConflictReplace())) {
+						t.Fatalf("%dx%d %s conflict actions overlap", size[0], size[1], tag)
 					}
-				}
-
-				// The panes split the surface: side by side, equal width, and
-				// each footer inside its own pane.
-				left, ok := tester.Find(m.SftpItemCount(3))
-				if !ok {
-					t.Fatalf("%dx%d %s does not show the left footer", size[0], size[1], tag)
-				}
-				right, ok := tester.Find(m.SftpItemCount(2))
-				if !ok {
-					t.Fatalf("%dx%d %s does not show the right footer", size[0], size[1], tag)
-				}
-				if right.X <= left.X || overlaps(left, right) {
-					t.Fatalf("%dx%d %s panes are not side by side: left footer %+v right footer %+v",
-						size[0], size[1], tag, left, right)
-				}
-				if left.W-right.W > 2 || right.W-left.W > 2 {
-					t.Fatalf("%dx%d %s panes have different widths: left footer %+v right footer %+v",
-						size[0], size[1], tag, left, right)
-				}
-				// This is the regression the acceptance screenshot showed: the
-				// right pane's content column used to end 9 DIPs from the
-				// surface's edge, so it read as clipped by the window frame.
-				if right.X+right.W > surfaceRight-sftpSurfaceEdgeGutter {
-					t.Fatalf("%dx%d %s right pane reaches the surface edge: footer %+v ends at %.1f, surface ends at %.1f",
-						size[0], size[1], tag, right, right.X+right.W, surfaceRight)
-				}
-
-				// The operation bar and a conflict dialog are the surface's
-				// densest overlay: a running transfer plus five actions, at the
-				// size the acceptance exercised.
-				if err := tester.Click("target.bin"); err != nil {
-					t.Fatalf("%dx%d %s select the transferring file: %v", size[0], size[1], tag, err)
-				}
-				tester.Frame()
-				ts.Transfer(transferstate.Left)
-				waitForSFTPFrame(t, tester, "the conflict dialog", func() bool {
-					dialog := ts.Dialog()
-					return dialog != nil && dialog.Kind == transferstate.DialogConflict
 				})
-				tester.Frame()
-				if ts.Snapshot() == nil {
-					t.Fatalf("%dx%d %s shows a conflict but no operation bar", size[0], size[1], tag)
-				}
-				cancel, ok := tester.Find(m.SftpCancel())
-				if !ok {
-					t.Fatalf("%dx%d %s operation bar has no Cancel: %v", size[0], size[1], tag, tester.Texts())
-				}
-				assertInsideSFTPFrame(t, size, surface, m.SftpCancel(), cancel, sftpSurfaceEdgeGutter)
-
-				dialogActions := []string{
-					m.SftpConflictTitle(), m.SftpConflictStop(), m.SftpConflictSkip(),
-					m.SftpConflictDuplicate(), m.SftpConflictReplace(),
-				}
-				for _, label := range dialogActions {
-					rect, ok := tester.Find(label)
-					if !ok {
-						t.Fatalf("%dx%d %s conflict dialog does not show %q; texts: %v",
-							size[0], size[1], tag, label, tester.Texts())
-					}
-					// The dialog is centred in the window rather than in the
-					// surface, so it keeps the window margin, not the gutter.
-					assertInsideSFTPFrame(t, size, ui.Rect{X: 0, Y: 0, W: width, H: height},
-						label, rect, shellPadding)
-				}
-				if overlaps(mustFind(t, tester, m.SftpConflictStop()), mustFind(t, tester, m.SftpConflictReplace())) {
-					t.Fatalf("%dx%d %s conflict actions overlap", size[0], size[1], tag)
-				}
-			})
+			}
 		}
-	}
+	})
 }
 
 func mustFind(t *testing.T, tester *ui.Tester, label string) ui.Rect {

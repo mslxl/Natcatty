@@ -6,6 +6,7 @@ import (
 
 	"github.com/mslxl/natcatty/domain/model"
 	uiapplock "github.com/mslxl/natcatty/ui/applock"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell"
 	"github.com/mslxl/natcatty/ui/shell/state"
@@ -171,6 +172,9 @@ type windowManager struct {
 	// frame so an open window follows a change without being recreated.
 	theme func() *ui.Theme
 	icon  func() []byte
+	// style reads the live Interface Style, resolved per frame beside the
+	// theme for the same reason.
+	style func() kit.Style
 	// confirmPolicy asks the Security preference whether closing Sessions
 	// needs a confirmation. Nil keeps the original behavior (always ask).
 	confirmPolicy func() bool
@@ -230,6 +234,9 @@ func (m *windowManager) SetOpacity(value float64) {
 // SetThemeProvider installs the live widget theme. Every window calls it at
 // its root, before the App Lock gate builds anything.
 func (m *windowManager) SetThemeProvider(fn func() *ui.Theme) { m.theme = fn }
+
+// SetStyleProvider sets how each window resolves the Interface Style.
+func (m *windowManager) SetStyleProvider(fn func() kit.Style) { m.style = fn }
 
 // SetIconProvider installs the live application icon. Windows created later
 // read it, and SetIcon applies a change to every open window.
@@ -296,6 +303,11 @@ func (m *windowManager) withTheme(content func(*ui.Context)) func(*ui.Context) {
 				c.SetTheme(theme)
 			}
 		}
+		style := kit.Classic
+		if m.style != nil {
+			style = m.style()
+		}
+		kit.SetStyle(style)
 		content(c)
 	}
 }

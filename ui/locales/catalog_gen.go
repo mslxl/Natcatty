@@ -12472,6 +12472,36 @@ func (msgs Messages) SettingsThemeMode() string {
 	return Catalog.Format(msgs.locale, "settingsThemeMode", nil)
 }
 
+// SettingsInterfaceStyle says "Interface style"
+// in the language the app shows.
+func SettingsInterfaceStyle() string { return In(i18n.Locale()).SettingsInterfaceStyle() }
+
+// SettingsInterfaceStyle says "Interface style"
+// in the language of msgs.
+func (msgs Messages) SettingsInterfaceStyle() string {
+	return Catalog.Format(msgs.locale, "settingsInterfaceStyle", nil)
+}
+
+// SettingsInterfaceStyleClassic says "Classic"
+// in the language the app shows.
+func SettingsInterfaceStyleClassic() string { return In(i18n.Locale()).SettingsInterfaceStyleClassic() }
+
+// SettingsInterfaceStyleClassic says "Classic"
+// in the language of msgs.
+func (msgs Messages) SettingsInterfaceStyleClassic() string {
+	return Catalog.Format(msgs.locale, "settingsInterfaceStyleClassic", nil)
+}
+
+// SettingsInterfaceStyleMacOS says "macOS"
+// in the language the app shows.
+func SettingsInterfaceStyleMacOS() string { return In(i18n.Locale()).SettingsInterfaceStyleMacOS() }
+
+// SettingsInterfaceStyleMacOS says "macOS"
+// in the language of msgs.
+func (msgs Messages) SettingsInterfaceStyleMacOS() string {
+	return Catalog.Format(msgs.locale, "settingsInterfaceStyleMacOS", nil)
+}
+
 // SettingsThemeSystem says "System"
 // in the language the app shows.
 func SettingsThemeSystem() string { return In(i18n.Locale()).SettingsThemeSystem() }

@@ -122,7 +122,7 @@ var classicMetrics = Metrics{
 }
 
 // M returns the metrics of the active Interface Style.
-func M(*ui.Context) Metrics { return classicMetrics }
+func M(*ui.Context) Metrics { return CurrentStyle().Metrics() }
 
 // IconSized draws a named Lucide icon size DIPs square, one of
 // Metrics.Icon's sizes.
