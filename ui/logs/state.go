@@ -77,6 +77,8 @@ const PageSize = 100
 // the only cross-goroutine entry point is the refresh callback installed by
 // WithRefreshRequest, which just asks for a redraw.
 type State struct {
+	// pickers are the calendars of the From and To filters while unset.
+	pickers [2]datePicker
 	source  Source
 	actions TerminalActions
 	redraw  func()
@@ -382,12 +384,15 @@ func (s *State) dateRange() (time.Time, time.Time, bool) {
 	return from, to, true
 }
 
+// dayLayout is how a date filter end is kept: the day alone, in local time.
+const dayLayout = "2006-01-02"
+
 func parseDay(text string) (time.Time, bool) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return time.Time{}, true
 	}
-	parsed, err := time.ParseInLocation("2006-01-02", text, time.Local)
+	parsed, err := time.ParseInLocation(dayLayout, text, time.Local)
 	if err != nil {
 		return time.Time{}, false
 	}
