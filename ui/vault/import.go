@@ -7,6 +7,7 @@ import (
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/vaultimport"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
@@ -105,7 +106,7 @@ var importLayoutProbe func(importFieldLayout)
 // bar stay fixed; the summary, problem report, and row list scroll, so the
 // panel stays usable at 720x480.
 func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
-	ui.Text(c, m.VaultImportTitle()).FontSize(20).Bold()
+	ui.Text(c, m.VaultImportTitle()).FontSize(kit.M(c).Font.LargeTitle).Bold()
 	problem(c, s, t)
 	if problem := s.ImportProblem(); problem != vaultstate.ProblemNone {
 		ui.Text(c, problemText(m, problem)).TextColor(uitheme.DangerText(t))
@@ -113,7 +114,7 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 
 	preview := s.ImportPreview()
 	if preview == nil {
-		ui.Text(c, m.VaultImportIntro()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultImportIntro()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		ui.Row(c).Gap(8).Children(func() {
 			if ui.PrimaryButton(c, m.VaultImportChooseFile()).Clicked() {
 				s.ChooseImportFile()
@@ -136,22 +137,22 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 		ui.Text(c, m.VaultImportSummary(
 			preview.Counts.Total, preview.Counts.New, preview.Counts.Conflicts,
 			preview.Counts.Duplicates, preview.Counts.Invalid,
-		)).FontSize(12)
+		)).FontSize(kit.M(c).Font.Footnote)
 		if fileName := s.ImportFileName(); fileName != "" {
-			ui.Text(c, fileName).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, fileName).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		}
 		if len(preview.GroupsToCreate) > 0 {
 			ui.Text(c, m.VaultImportGroups(len(preview.GroupsToCreate))).
-				FontSize(12).TextColor(t.TextMuted)
+				FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		}
 		if preview.FamilyCounts.Total() > 0 {
 			ui.Text(c, m.VaultImportFamily(preview.FamilyCounts.Total())).
-				FontSize(12).TextColor(t.TextMuted)
+				FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		}
 
 		ui.Row(c).FillWidth().Gap(12).Children(func() {
 			ui.Column(c).Grow(1).Children(func() {
-				ui.Text(c, m.VaultImportFormat()).FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, m.VaultImportFormat()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 				selected := importFormatLabel(m, s.ImportFormatValue())
 				_, labels := importFormatOptions(m)
 				if ui.Select(c, &selected, labels).Width(220).Changed() {
@@ -160,7 +161,7 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 				}
 			})
 			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
-				ui.Text(c, m.VaultImportMasterPassword()).FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, m.VaultImportMasterPassword()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 				field := ui.TextInput(c, s.ImportMasterPasswordInput()).Password()
 				if importLayoutProbe != nil {
 					importLayoutProbe(importFieldLayout{
@@ -175,9 +176,9 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 				}
 			})
 		})
-		ui.Text(c, m.VaultImportMasterHint()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultImportMasterHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 
-		ui.Text(c, m.VaultImportMerge()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultImportMerge()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		mergeLabels := []string{m.VaultImportMergeSkip(), m.VaultImportMergeOverwrite()}
 		merge := importMergeLabel(m, s.ImportMergeValue())
 		if ui.Select(c, &merge, mergeLabels).Width(260).Changed() {
@@ -187,7 +188,7 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 
 		ui.Text(c, m.VaultImportIssues()).Bold()
 		if len(preview.Issues) == 0 {
-			ui.Text(c, m.VaultImportNoIssues()).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, m.VaultImportNoIssues()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		}
 		for _, item := range preview.Issues {
 			message := importIssueText(m, item)
@@ -199,18 +200,18 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 			if item.Severity == vaultimport.SeverityError {
 				color = uitheme.DangerText(t)
 			}
-			ui.Text(c, line).FontSize(12).TextColor(color)
+			ui.Text(c, line).FontSize(kit.M(c).Font.Footnote).TextColor(color)
 		}
 
 		if len(s.ImportFamilyRows()) > 0 {
 			ui.Text(c, m.VaultImportFamilyRows()).Bold()
 			for _, row := range s.ImportFamilyRows() {
 				ui.Row(c).FillWidth().Gap(8).Children(func() {
-					ui.Text(c, importFamilyKindText(m, row.Kind)).FontSize(12).
+					ui.Text(c, importFamilyKindText(m, row.Kind)).FontSize(kit.M(c).Font.Footnote).
 						TextColor(t.TextMuted)
-					ui.Text(c, row.Label).FontSize(12).Grow(1)
+					ui.Text(c, row.Label).FontSize(kit.M(c).Font.Footnote).Grow(1)
 					if row.Detail != "" {
-						ui.Text(c, row.Detail).FontSize(11).TextColor(t.TextMuted)
+						ui.Text(c, row.Detail).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 					}
 				})
 			}
@@ -233,20 +234,20 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 					c.Invalidate()
 				}
 				if row.SourceRow > 0 {
-					ui.Text(c, m.VaultImportRowNumber(row.SourceRow)).FontSize(11).
+					ui.Text(c, m.VaultImportRowNumber(row.SourceRow)).FontSize(kit.M(c).Font.Caption).
 						TextColor(t.TextMuted)
 				}
 				address := row.Hostname
 				if row.Port > 0 {
 					address += ":" + strconv.Itoa(row.Port)
 				}
-				ui.Text(c, address).FontSize(12).TextColor(t.TextMuted).Grow(1)
-				ui.Text(c, importStatusText(m, row.Status)).FontSize(12).
+				ui.Text(c, address).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).Grow(1)
+				ui.Text(c, importStatusText(m, row.Status)).FontSize(kit.M(c).Font.Footnote).
 					TextColor(importStatusColor(t, row.Status))
 			})
 			if row.ExistingLabel != "" {
 				ui.Text(c, m.VaultImportConflictWith(row.ExistingLabel)).
-					FontSize(11).TextColor(t.TextMuted)
+					FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 			}
 		}
 	})
@@ -254,13 +255,13 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	selected := s.ImportSelectedCount()
 	familyCount := s.ImportFamilyCounts().Total()
 	if selected == 0 && familyCount == 0 {
-		ui.Text(c, m.VaultImportNoneSelected()).FontSize(12).TextColor(uitheme.WarningText(t))
+		ui.Text(c, m.VaultImportNoneSelected()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.WarningText(t))
 	} else {
 		if selected > 0 {
-			ui.Text(c, m.VaultImportSelected(selected)).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, m.VaultImportSelected(selected)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		}
 		if familyCount > 0 {
-			ui.Text(c, m.VaultImportFamilySelected(familyCount)).FontSize(12).
+			ui.Text(c, m.VaultImportFamilySelected(familyCount)).FontSize(kit.M(c).Font.Footnote).
 				TextColor(t.TextMuted)
 		}
 	}
@@ -414,9 +415,9 @@ func importOutcomeBanner(c *ui.Context, s *vaultstate.State, m locales.Messages,
 	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
 		ui.Column(c).Grow(1).Children(func() {
 			ui.Text(c, m.VaultImportDone(outcome.Imported, outcome.Overwritten,
-				outcome.Skipped, outcome.Groups)).FontSize(12)
+				outcome.Skipped, outcome.Groups)).FontSize(kit.M(c).Font.Footnote)
 			if outcome.Family > 0 {
-				ui.Text(c, m.VaultImportDoneFamily(outcome.Family)).FontSize(11).
+				ui.Text(c, m.VaultImportDoneFamily(outcome.Family)).FontSize(kit.M(c).Font.Caption).
 					TextColor(t.TextMuted)
 			}
 		})

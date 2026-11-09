@@ -8,6 +8,7 @@ import (
 	appsearch "github.com/mslxl/natcatty/application/search"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
@@ -310,11 +311,11 @@ func vaultSearchResults(c *ui.Context, search *uisearch.State, m locales.Message
 	search.Clamp(count)
 	reveal := search.TakeReveal()
 
-	ui.Text(c, m.VaultSearchResults(count)).FontSize(11).TextColor(t.TextMuted)
+	ui.Text(c, m.VaultSearchResults(count)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 	if count == 0 {
 		ui.Column(c).FillWidth().Padding(16).Gap(4).Children(func() {
 			ui.Text(c, m.VaultSearchNoResults()).Bold()
-			ui.Text(c, m.VaultSearchNoResultsBody()).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, m.VaultSearchNoResultsBody()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		})
 		return
 	}

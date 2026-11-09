@@ -72,12 +72,12 @@ func hostsToolbar(c *ui.Context, s *vaultstate.State, field func(), opts options
 				c.Invalidate()
 			}
 			more := ui.ButtonBase(c).Label(m.VaultMoreActions()).Tooltip(m.VaultMoreActions()).
-				Size(28, kit.ControlHeight).Radius(kit.RadiusControl).Justify(ui.Center).AlignItems(ui.Center).
+				Size(28, kit.M(c).Control.Large).Radius(kit.M(c).Radius.Control).Justify(ui.Center).AlignItems(ui.Center).
 				Background(t.Accent).TextColor(t.AccentText)
 			if more.Hovered() {
 				more.Background(t.AccentHover)
 			}
-			more.Children(func() { ui.Icon(c, icons.Lucide(icons.ChevronDown)).Size(14, 14) })
+			more.Children(func() { kit.IconSized(c, icons.ChevronDown, kit.M(c).Icon.Medium) })
 			more.Menu(func(menu *ui.Menu) {
 				if menu.Item(m.VaultGroupNew()).Chosen() {
 					s.BeginCreateGroup()
@@ -133,7 +133,7 @@ func viewModeToggle(c *ui.Context, opts options, layout domainpreferences.Layout
 	ui.Row(c).Gap(1).Shrink(0).AlignItems(ui.Center).Children(func() {
 		for _, option := range viewOptions(m) {
 			button := ui.ButtonBase(c).Key("vault-view-"+string(option.mode)).Label(option.label).
-				Tooltip(option.label).Size(28, kit.ControlHeight).Radius(kit.RadiusControl).
+				Tooltip(option.label).Size(28, kit.M(c).Control.Large).Radius(kit.M(c).Radius.Control).
 				Justify(ui.Center).AlignItems(ui.Center)
 			switch {
 			case option.mode == layout.HostViewMode:
@@ -439,7 +439,7 @@ func treeGroup(c *ui.Context, s *vaultstate.State, opts options, at *browse, m l
 			return
 		}
 		chevron := ui.ButtonBase(c).Key("tree-toggle-"+path).Label(m.VaultTreeToggle()).
-			Size(treeToggleSize, treeToggleSize).Radius(kit.RadiusControl).Justify(ui.Center).AlignItems(ui.Center).
+			Size(treeToggleSize, treeToggleSize).Radius(kit.M(c).Radius.Control).Justify(ui.Center).AlignItems(ui.Center).
 			TextColor(t.TextMuted).Shrink(0)
 		if chevron.Hovered() {
 			chevron.Background(kit.Subtle(t)).TextColor(t.Text)
@@ -451,7 +451,7 @@ func treeGroup(c *ui.Context, s *vaultstate.State, opts options, at *browse, m l
 		if expanded {
 			icon = icons.ChevronDown
 		}
-		chevron.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(14, 14) })
+		chevron.Children(func() { kit.IconSized(c, icon, kit.M(c).Icon.Medium) })
 		groupRowBody(c, s, node.section, at, m, t)
 	})
 	if !expanded {
@@ -470,7 +470,7 @@ func treeGroup(c *ui.Context, s *vaultstate.State, opts options, at *browse, m l
 func groupRowElement(c *ui.Context, t *ui.Theme, path string, depth int) ui.Element {
 	row := ui.Row(c).Key("group-row-" + path).FillWidth().Height(rowHeight).
 		PaddingStart(8 + float32(depth)*treeIndent).PaddingEnd(8).
-		Radius(kit.RadiusControl).AlignItems(ui.Center).Gap(8)
+		Radius(kit.M(c).Radius.Control).AlignItems(ui.Center).Gap(8)
 	if row.Hovered() {
 		row.Background(kit.Subtle(t))
 	}
@@ -516,11 +516,11 @@ func groupRowBody(c *ui.Context, s *vaultstate.State, section hostGroupSection, 
 	kit.HostAvatar(c, "", kit.AvatarGroup, section.path, 28)
 	ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
 		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, groupName(section.path)).FontSize(14).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
+			ui.Text(c, groupName(section.path)).FontSize(kit.M(c).Font.Body).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
 			groupNotes(c, section, m, t)
 		})
 		ui.Text(c, m.VaultGroupMemberCount(s.GroupMemberCount(section.path))).
-			FontSize(12).TextColor(t.TextMuted).SingleLine()
+			FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine()
 	})
 	cardControl(c, "menu", icons.EllipsisVertical, m.VaultItemActions(groupName(section.path))).
 		Menu(groupActions(s, section, func() {
@@ -535,7 +535,7 @@ func groupNotes(c *ui.Context, section hostGroupSection, m locales.Messages, t *
 	if !section.stored || strings.TrimSpace(section.group.Notes) == "" {
 		return
 	}
-	ui.Icon(c, icons.Lucide(icons.FileText)).Size(12, 12).TextColor(t.TextMuted).Shrink(0).
+	kit.IconSized(c, icons.FileText, kit.M(c).Icon.Small).TextColor(t.TextMuted).Shrink(0).
 		Tooltip(m.VaultGroupNotes())
 }
 
@@ -731,7 +731,7 @@ func breadcrumb(c *ui.Context, s *vaultstate.State, at *browse, m locales.Messag
 	parts := strings.Split(at.group, "/")
 	path := append([]string{m.VaultAllHosts()}, parts...)
 	chosen := len(path) - 1
-	row := ui.Row(c).FillWidth().Padding(4).Radius(kit.RadiusControl).Border(1, ui.Transparent)
+	row := ui.Row(c).FillWidth().Padding(4).Radius(kit.M(c).Radius.Control).Border(1, ui.Transparent)
 	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
 		row.Border(1, t.Accent)
 	}
@@ -782,7 +782,7 @@ func cardGrid(c *ui.Context, key string, count int, card func(int)) {
 // hovered or dragged over. The key comes first, before any state is read, so
 // the card stays the same element when the root drop target appears above it.
 func cardShell(c *ui.Context, t *ui.Theme, key string) ui.Element {
-	card := ui.Row(c).Key(key).MinWidth(0).Height(64).Padding(0, 8, 0, 12).Gap(12).Radius(kit.RadiusCard).
+	card := ui.Row(c).Key(key).MinWidth(0).Height(64).Padding(0, 8, 0, 12).Gap(12).Radius(kit.M(c).Radius.Card).
 		Border(1, t.Border).Background(t.Surface).AlignItems(ui.Center).
 		Shadow(0, 1, 2, 0, kit.CardShadow(t))
 	if card.Hovered() {
@@ -816,11 +816,11 @@ func groupCard(c *ui.Context, s *vaultstate.State, section hostGroupSection, at 
 		kit.HostAvatar(c, "", kit.AvatarGroup, section.path, 40)
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, groupName(section.path)).FontSize(14).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
+				ui.Text(c, groupName(section.path)).FontSize(kit.M(c).Font.Body).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
 				groupNotes(c, section, m, t)
 			})
 			ui.Text(c, m.VaultGroupMemberCount(s.GroupMemberCount(section.path))).
-				FontSize(12).TextColor(t.TextMuted).SingleLine()
+				FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine()
 		})
 		cardControl(c, "menu", icons.EllipsisVertical, m.VaultItemActions(groupName(section.path))).Menu(actions)
 	})
@@ -852,9 +852,9 @@ func hostCard(c *ui.Context, s *vaultstate.State, opts options, host domainvault
 		kit.HostAvatar(c, "", hostAvatarKind(host.Protocol), host.Label, 40)
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, host.Label).FontSize(14).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
+				ui.Text(c, host.Label).FontSize(kit.M(c).Font.Body).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
 				if host.Pinned {
-					ui.Icon(c, icons.Lucide(icons.Pin)).Size(12, 12).TextColor(t.Accent).Shrink(0)
+					kit.IconSized(c, icons.Pin, kit.M(c).Icon.Small).TextColor(t.Accent).Shrink(0)
 				}
 			})
 			hostCardDetail(c, s, host, m, t)
@@ -872,7 +872,7 @@ func hostRow(c *ui.Context, s *vaultstate.State, opts options, host domainvault.
 	m locales.Messages, t *ui.Theme, layout domainpreferences.Layout, depth int) {
 	row := ui.Row(c).Key("host-row-" + string(host.ID)).FillWidth().Height(rowHeight).
 		PaddingStart(8 + float32(depth)*treeIndent).PaddingEnd(8).
-		Radius(kit.RadiusControl).AlignItems(ui.Center).Gap(8)
+		Radius(kit.M(c).Radius.Control).AlignItems(ui.Center).Gap(8)
 	if row.Hovered() {
 		row.Background(kit.Subtle(t))
 	}
@@ -892,12 +892,12 @@ func hostRow(c *ui.Context, s *vaultstate.State, opts options, host domainvault.
 		kit.HostAvatar(c, "", hostAvatarKind(host.Protocol), host.Label, 28)
 		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
 			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, host.Label).FontSize(14).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
+				ui.Text(c, host.Label).FontSize(kit.M(c).Font.Body).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
 				if host.Pinned {
-					ui.Icon(c, icons.Lucide(icons.Pin)).Size(12, 12).TextColor(t.Accent).Shrink(0)
+					kit.IconSized(c, icons.Pin, kit.M(c).Icon.Small).TextColor(t.Accent).Shrink(0)
 				}
 			})
-			ui.Text(c, hostAddress(host, m)).FontSize(12).TextColor(t.TextMuted).SingleLine().MinWidth(0)
+			ui.Text(c, hostAddress(host, m)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine().MinWidth(0)
 		})
 		if row.Hovered() && cardControl(c, "edit", icons.Pencil, m.VaultHostEdit()).Clicked() {
 			s.BeginEdit(host.ID)
@@ -993,7 +993,7 @@ func hostActions(s *vaultstate.State, opts options, host domainvault.Host, m loc
 // test while there is one, else where the Host connects.
 func hostCardDetail(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locales.Messages, t *ui.Theme) {
 	line := func(text string, color ui.Color) {
-		ui.Text(c, text).FontSize(12).TextColor(color).SingleLine().MinWidth(0)
+		ui.Text(c, text).FontSize(kit.M(c).Font.Footnote).TextColor(color).SingleLine().MinWidth(0)
 	}
 	switch {
 	case s.Testing(host.ID):
@@ -1029,7 +1029,7 @@ func hostAddress(host domainvault.Host, m locales.Messages) string {
 // element when a control before it shows only while the card is hovered.
 func cardControl(c *ui.Context, key, icon, label string) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Key(key).Label(label).Tooltip(label).Size(28, 28).Radius(kit.RadiusControl).
+	button := ui.ButtonBase(c).Key(key).Label(label).Tooltip(label).Size(28, 28).Radius(kit.M(c).Radius.Control).
 		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
 	switch {
 	case button.Pressed():

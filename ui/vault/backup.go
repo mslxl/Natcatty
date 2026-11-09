@@ -8,6 +8,7 @@ import (
 
 	appbackup "github.com/mslxl/natcatty/application/vaultbackup"
 	domainbackup "github.com/mslxl/natcatty/domain/vaultbackup"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
@@ -34,7 +35,7 @@ var backupLayoutProbe func(backupPanelLayout)
 // panel stays usable at 720x480.
 func backupPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
 	ui.Row(c).FillWidth().Gap(8).Children(func() {
-		ui.Text(c, m.VaultBackupTitle()).FontSize(20).Bold()
+		ui.Text(c, m.VaultBackupTitle()).FontSize(kit.M(c).Font.LargeTitle).Bold()
 		ui.Column(c).Grow(1)
 		if ui.Button(c, m.VaultBackupBack()).Clicked() {
 			s.CancelBackups()
@@ -43,14 +44,14 @@ func backupPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	})
 
 	if !s.BackupEncryptionAvailable() {
-		ui.Text(c, m.VaultBackupUnavailable()).FontSize(12).TextColor(uitheme.WarningText(t))
+		ui.Text(c, m.VaultBackupUnavailable()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.WarningText(t))
 	} else {
-		ui.Text(c, m.VaultBackupIntro()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultBackupIntro()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}
 
 	var retentionRect ui.Rect
 	ui.Row(c).FillWidth().Gap(8).Wrap().Children(func() {
-		ui.Text(c, m.VaultBackupRetentionLabel()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultBackupRetentionLabel()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		field := ui.TextInput(c, s.BackupRetentionInput()).Width(90)
 		retentionRect = field.LayoutBounds()
 		if ui.PrimaryButton(c, m.VaultBackupRetentionSave()).Clicked() {
@@ -60,7 +61,7 @@ func backupPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	})
 	ui.Text(c, m.VaultBackupRetentionHint(
 		domainbackup.MinRetention, domainbackup.MaxRetention, domainbackup.DefaultRetention,
-	)).FontSize(11).TextColor(t.TextMuted)
+	)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 
 	if problem := s.BackupProblem(); problem != vaultstate.ProblemNone {
 		ui.Text(c, problemText(m, problem)).TextColor(uitheme.DangerText(t))
@@ -108,7 +109,7 @@ func backupPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	scrollBox := ui.Scroll(c).Grow(1).FillWidth().PaddingEnd(gutter).TrackScroll(scroll)
 	scrollBox.Children(func() {
 		if len(s.BackupItems()) == 0 {
-			ui.Text(c, m.VaultBackupEmpty()).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, m.VaultBackupEmpty()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			return
 		}
 		for index, item := range s.BackupItems() {
@@ -128,7 +129,7 @@ func backupPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	}
 
 	ui.Row(c).FillWidth().Gap(8).Wrap().Children(func() {
-		ui.Text(c, m.VaultBackupListTitle(len(s.BackupItems()))).FontSize(12).
+		ui.Text(c, m.VaultBackupListTitle(len(s.BackupItems()))).FontSize(kit.M(c).Font.Footnote).
 			TextColor(t.TextMuted).Grow(1)
 		if len(s.BackupItems()) > 0 && !s.BackupPendingClear() {
 			if ui.Button(c, m.VaultBackupClear()).Clicked() {
@@ -147,14 +148,14 @@ func backupRow(c *ui.Context, s *vaultstate.State, item domainbackup.Summary,
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Row(c).FillWidth().Gap(8).Wrap().Children(func() {
 				ui.Text(c, backupReasonText(m, item.Reason)).Bold()
-				ui.Text(c, backupTime(item)).FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, backupTime(item)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			})
 			ui.Row(c).FillWidth().Gap(8).Wrap().Children(func() {
-				ui.Text(c, formatBackupSize(item.SizeBytes)).FontSize(12)
-				ui.Text(c, m.VaultBackupRecords(item.Counts.Total())).FontSize(12).
+				ui.Text(c, formatBackupSize(item.SizeBytes)).FontSize(kit.M(c).Font.Footnote)
+				ui.Text(c, m.VaultBackupRecords(item.Counts.Total())).FontSize(kit.M(c).Font.Footnote).
 					TextColor(t.TextMuted)
 				ui.Text(c, m.VaultBackupFingerprint(shortFingerprint(item.Fingerprint))).
-					FontSize(11).TextColor(t.TextMuted)
+					FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 			})
 		})
 		if s.BackupEncryptionAvailable() {
@@ -205,7 +206,7 @@ func backupNoticeBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, 
 	if message == "" {
 		return
 	}
-	ui.Text(c, message).FontSize(12).TextColor(color)
+	ui.Text(c, message).FontSize(kit.M(c).Font.Footnote).TextColor(color)
 }
 
 func backupReasonText(m locales.Messages, reason domainbackup.Reason) string {

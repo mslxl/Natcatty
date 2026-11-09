@@ -509,7 +509,7 @@ func groupSummary(s *vaultstate.State, group domainvault.Group, m locales.Messag
 // stays visible with no groups so a Host can always return to the root, and it
 // is tall enough that a dragged row does not hide its label.
 func rootDropTarget(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
-	row := ui.Row(c).FillWidth().Gap(10).Padding(8, 10).Margin(8, 0, 0, 0).Radius(kit.RadiusControl).
+	row := ui.Row(c).FillWidth().Gap(10).Padding(8, 10).Margin(8, 0, 0, 0).Radius(kit.M(c).Radius.Control).
 		Border(1, t.Border).AlignItems(ui.Center).TextColor(t.TextMuted)
 	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
 		row.Background(t.Accent.Alpha(0.08)).Border(2, t.Accent)
@@ -519,9 +519,9 @@ func rootDropTarget(c *ui.Context, s *vaultstate.State, m locales.Messages, t *u
 		c.Invalidate()
 	}
 	row.Children(func() {
-		ui.Icon(c, icons.Lucide(icons.LayoutGrid)).Size(16, 16)
-		ui.Text(c, m.VaultGroupUngrouped()).FontSize(12).Grow(1).MinWidth(0)
-		ui.Text(c, m.VaultGroupMemberCount(s.RootHostCount())).FontSize(12)
+		kit.IconSized(c, icons.LayoutGrid, kit.M(c).Icon.Regular)
+		ui.Text(c, m.VaultGroupUngrouped()).FontSize(kit.M(c).Font.Footnote).Grow(1).MinWidth(0)
+		ui.Text(c, m.VaultGroupMemberCount(s.RootHostCount())).FontSize(kit.M(c).Font.Footnote)
 	})
 }
 
@@ -559,7 +559,7 @@ func keyRow(c *ui.Context, s *vaultstate.State, key domainvault.Key, m locales.M
 	kit.ListRow(c).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, key.Label).Bold()
-			ui.Text(c, keySummary(key, m)).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, keySummary(key, m)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		})
 		if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
 			s.BeginEditKey(key.ID)
@@ -634,7 +634,7 @@ func identityRow(c *ui.Context, s *vaultstate.State, identity domainvault.Identi
 	kit.ListRow(c).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, identity.Label).Bold()
-			ui.Text(c, identitySummary(identity, m)).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, identitySummary(identity, m)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		})
 		if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
 			s.BeginEditIdentity(identity.ID)
@@ -716,7 +716,7 @@ func proxyRow(c *ui.Context, s *vaultstate.State, profile domainvault.ProxyProfi
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, profile.Label).Bold()
 			ui.Text(c, proxySummary(m, profile)).
-				FontSize(12).TextColor(t.TextMuted)
+				FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		})
 		if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
 			s.BeginEditProxyProfile(profile.ID)
@@ -786,9 +786,9 @@ func knownHostRow(c *ui.Context, s *vaultstate.State, record domainconn.KnownHos
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, net.JoinHostPort(record.Hostname, strconv.Itoa(record.Port))).Bold()
 			ui.Text(c, record.KeyType+" · "+record.Fingerprint).
-				FontSize(12).TextColor(t.TextMuted)
+				FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		})
-		ui.Text(c, m.VaultKnownHostTrusted()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultKnownHostTrusted()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		if kit.IconButton(c, icons.Trash, m.VaultKnownHostRemove()).Clicked() {
 			s.RequestDeleteKnownHost(record.ID)
 			c.Invalidate()
@@ -840,7 +840,7 @@ func snippetSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *u
 	}
 	root := s.SnippetsInPackage("")
 	if len(root) > 0 {
-		ui.Text(c, m.VaultGroupUngrouped()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultGroupUngrouped()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		for _, snippet := range root {
 			snippetRow(c, s, snippet, m, t, 0)
 		}
@@ -852,7 +852,7 @@ func snippetPackageRow(c *ui.Context, s *vaultstate.State, pkg domainvault.Snipp
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, pkg.Path).Bold()
 			ui.Text(c, m.VaultSnippetPackageSnippetCount(len(s.SnippetsInPackage(pkg.Path)))).
-				FontSize(12).TextColor(t.TextMuted)
+				FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		})
 		if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
 			s.BeginEditSnippetPackage(pkg.Path)
@@ -985,7 +985,7 @@ func snippetEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui
 	}
 
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
-		ui.Text(c, title).FontSize(20).Bold()
+		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 
 		ui.Form(c, func() {
 			ui.Field(c, m.VaultSnippetLabel(), func() {
@@ -1006,10 +1006,10 @@ func snippetEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui
 				c.Invalidate()
 			}
 			if !form.TargetsAllHosts {
-				ui.Text(c, m.VaultSnippetNoTargetsHint()).FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, m.VaultSnippetNoTargetsHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 				groups := s.SnippetTargetGroupPaths()
 				if len(groups) > 0 {
-					ui.Text(c, m.VaultSnippetTargetGroups()).FontSize(12).TextColor(t.TextMuted)
+					ui.Text(c, m.VaultSnippetTargetGroups()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 					ui.Row(c).Gap(8).Wrap().Children(func() {
 						for _, path := range groups {
 							checked := form.TargetGroups[path]
@@ -1058,7 +1058,7 @@ func snippetPackageEditor(c *ui.Context, s *vaultstate.State, m locales.Messages
 	}
 
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
-		ui.Text(c, title).FontSize(20).Bold()
+		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 		ui.Form(c, func() {
 			ui.Field(c, m.VaultSnippetPackagePath(), func() {
 				ui.TextInput(c, &form.Path).Placeholder("ops/linux")
@@ -1081,12 +1081,12 @@ func snippetRunEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t 
 	}
 
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
-		ui.Text(c, m.VaultSnippetRunTitle(label)).FontSize(20).Bold()
+		ui.Text(c, m.VaultSnippetRunTitle(label)).FontSize(kit.M(c).Font.LargeTitle).Bold()
 		destination := m.VaultSnippetRunDestinationActive()
 		if form.Destination == vaultstate.SnippetDestinationHosts {
 			destination = m.VaultSnippetRunDestinationHosts()
 		}
-		ui.Text(c, destination).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, destination).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 
 		ui.Form(c, func() {
 			for index := range form.Variables {
@@ -1096,14 +1096,14 @@ func snippetRunEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t 
 				})
 				if variable.HasDefault {
 					ui.Text(c, m.VaultSnippetRunVariableDefault(variable.DefaultValue)).
-						FontSize(12).TextColor(t.TextMuted)
+						FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 				}
 			}
 			ui.Text(c, m.VaultSnippetRunPreview()).Bold()
-			ui.Text(c, s.SnippetRunPreview()).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, s.SnippetRunPreview()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		})
 
-		ui.Text(c, m.VaultSnippetVariablesHint()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultSnippetVariablesHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	})
 
 	// A run failure must be visible without scrolling, like every editor's
@@ -1146,7 +1146,7 @@ func secretBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.
 	case appvault.SecretModeUnavailable:
 		ui.Column(c).Fill().Padding(12).Gap(8).Background(t.Surface).Children(func() {
 			ui.Text(c, m.VaultSecretSetupTitle()).Bold()
-			ui.Text(c, m.VaultSecretSetupBody()).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, m.VaultSecretSetupBody()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			ui.Field(c, m.VaultSecretPassphrase(), func() {
 				ui.TextInput(c, s.SecretPassphrase()).Password().Width(260)
 			})
@@ -1168,7 +1168,7 @@ func secretBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.
 	case appvault.SecretModePassphraseLocked:
 		ui.Column(c).Fill().Padding(12).Gap(8).Background(t.Surface).Children(func() {
 			ui.Text(c, m.VaultSecretLockedTitle()).Bold()
-			ui.Text(c, m.VaultSecretLockedBody()).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, m.VaultSecretLockedBody()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			ui.Row(c).Gap(8).Children(func() {
 				ui.TextInput(c, s.SecretPassphrase()).Password().Width(260)
 				if ui.PrimaryButton(c, m.VaultSecretUnlock()).Clicked() {
@@ -1179,7 +1179,7 @@ func secretBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.
 			secretProblem(c, s, t)
 		})
 	case appvault.SecretModeSession:
-		ui.Text(c, m.VaultSecretSessionNote()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultSecretSessionNote()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}
 }
 
@@ -1212,11 +1212,11 @@ func securityKeyStatus(c *ui.Context, s *vaultstate.State, m locales.Messages, t
 	}
 	switch {
 	case !summary.Available:
-		ui.Text(c, m.VaultHostSecurityKeyUnavailable()).FontSize(12).TextColor(uitheme.DangerText(t))
+		ui.Text(c, m.VaultHostSecurityKeyUnavailable()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 	case summary.Count == 0:
-		ui.Text(c, m.VaultHostSecurityKeyEmpty()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultHostSecurityKeyEmpty()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	default:
-		ui.Text(c, m.VaultHostSecurityKeyReady(summary.Count)).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultHostSecurityKeyReady(summary.Count)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}
 }
 
@@ -1230,7 +1230,7 @@ func summaryRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m loc
 func tokenRow(c *ui.Context, parts []string, t *ui.Theme) {
 	ui.Row(c).Wrap().Gap(6).Children(func() {
 		for _, part := range parts {
-			ui.Text(c, part).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, part).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		}
 	})
 }
@@ -1320,7 +1320,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 	// The form scrolls independently of the actions, so Save and Cancel stay
 	// on screen at every supported window size.
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
-		ui.Text(c, title).FontSize(20).Bold()
+		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 
 		ui.Form(c, func() {
 			ui.Field(c, m.VaultHostLabel(), func() {
@@ -1440,7 +1440,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				}).Description(m.VaultHostFileProtocolHint())
 				ui.Checkbox(c, &form.SFTPSudo, m.VaultHostSFTPSudo()).
 					Disabled(form.FileProtocol == string(domainvault.FileProtocolSCP))
-				ui.Text(c, m.VaultHostSFTPSudoHint()).FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, m.VaultHostSFTPSudoHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 				if ui.Checkbox(c, &form.X11Forwarding, m.VaultHostX11Forwarding()).Changed() {
 					// Turning X11 off clears the acknowledgement, so re-enabling it
 					// always asks the user to accept the warning again.
@@ -1448,7 +1448,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					c.Invalidate()
 				}
 				if form.X11Forwarding {
-					ui.Text(c, m.VaultHostX11Warning()).FontSize(12).TextColor(uitheme.DangerText(t))
+					ui.Text(c, m.VaultHostX11Warning()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 					ui.Checkbox(c, &form.X11WarningAcknowledged, m.VaultHostX11Acknowledge())
 				}
 				if ui.Checkbox(c, &form.NetworkDevice, m.VaultHostNetworkDevice()).Changed() {
@@ -1458,16 +1458,16 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					}
 					c.Invalidate()
 				}
-				ui.Text(c, m.VaultHostNetworkDeviceHint()).FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, m.VaultHostNetworkDeviceHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 				ui.Checkbox(c, &form.AutoAttachTmux, m.VaultHostAutoAttachTmux()).
 					Disabled(form.NetworkDevice)
-				ui.Text(c, m.VaultHostAutoAttachTmuxHint()).FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, m.VaultHostAutoAttachTmuxHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			}
 			if form.Protocol == string(domainvault.ProtocolMosh) {
 				ui.Field(c, m.VaultHostMoshServerPath(), func() {
 					ui.TextInput(c, &form.MoshServerPath).Placeholder("mosh-server")
 				}).Description(m.VaultHostMoshServerPathHint())
-				ui.Text(c, m.VaultHostMoshRestrictionHint()).FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, m.VaultHostMoshRestrictionHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			}
 			if form.Protocol == string(domainvault.ProtocolET) {
 				ui.Field(c, m.VaultHostETPort(), func() {
@@ -1477,7 +1477,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 			ui.Checkbox(c, &form.Pinned, m.VaultHostPinned())
 		})
 
-		ui.Text(c, m.VaultHostCredentialsNote()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultHostCredentialsNote()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	})
 
 	problem(c, s, t)
@@ -1507,7 +1507,7 @@ func keyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.The
 	}
 
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
-		ui.Text(c, title).FontSize(20).Bold()
+		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 
 		ui.Form(c, func() {
 			ui.Field(c, m.VaultHostLabel(), func() {
@@ -1539,7 +1539,7 @@ func keyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.The
 			}
 		})
 
-		ui.Text(c, m.VaultKeyNote()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultKeyNote()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	})
 
 	problem(c, s, t)
@@ -1554,7 +1554,7 @@ func identityEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *u
 	}
 
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
-		ui.Text(c, title).FontSize(20).Bold()
+		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 
 		ui.Form(c, func() {
 			ui.Field(c, m.VaultHostLabel(), func() {
@@ -1593,7 +1593,7 @@ func identityEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *u
 			}
 		})
 
-		ui.Text(c, m.VaultIdentityNote()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultIdentityNote()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	})
 
 	problem(c, s, t)
@@ -1608,7 +1608,7 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	}
 
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
-		ui.Text(c, title).FontSize(20).Bold()
+		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 
 		ui.Form(c, func() {
 			ui.Field(c, m.VaultHostGroup(), func() {
@@ -1706,7 +1706,7 @@ func proxyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	}
 
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
-		ui.Text(c, title).FontSize(20).Bold()
+		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 
 		ui.Form(c, func() {
 			ui.Field(c, m.VaultHostLabel(), func() {

@@ -50,7 +50,7 @@ func notesSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.
 	}
 	root := s.NotesInGroup("")
 	if len(root) > 0 {
-		ui.Text(c, m.VaultNoteRoot()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultNoteRoot()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		for _, note := range root {
 			noteRow(c, s, note, m, t, 0, false)
 		}
@@ -62,7 +62,7 @@ func noteGroupRow(c *ui.Context, s *vaultstate.State, group domainvault.NoteGrou
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, group.Path).Bold()
 			ui.Text(c, m.VaultNoteGroupNoteCount(s.NoteGroupNoteCount(group.Path))).
-				FontSize(12).TextColor(t.TextMuted)
+				FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		})
 		if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
 			s.BeginEditNoteGroup(group.Path)
@@ -95,7 +95,7 @@ func noteRow(c *ui.Context, s *vaultstate.State, note domainvault.Note, m locale
 				}
 			})
 			if showGroup && note.Group != "" {
-				ui.Text(c, note.Group).FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, note.Group).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			}
 		})
 	})
@@ -149,7 +149,7 @@ func noteExportBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t 
 		return
 	}
 	if path := s.NoteExportPath(); path != "" {
-		ui.Text(c, m.VaultNoteExportSaved(path)).FontSize(12).TextColor(t.TextMuted).Selectable()
+		ui.Text(c, m.VaultNoteExportSaved(path)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).Selectable()
 	}
 }
 
@@ -177,7 +177,7 @@ func noteEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Th
 	}
 
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
-		ui.Text(c, title).FontSize(20).Bold()
+		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 		ui.Form(c, func() {
 			ui.Field(c, m.VaultNoteTitle(), func() {
 				ui.TextInput(c, &form.Title)
@@ -206,7 +206,7 @@ func noteGroupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *
 	}
 
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
-		ui.Text(c, title).FontSize(20).Bold()
+		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 		ui.Form(c, func() {
 			ui.Field(c, m.VaultNoteGroupPath(), func() {
 				ui.TextInput(c, &form.Path).Placeholder("ops/runbooks")
@@ -228,7 +228,7 @@ func noteViewer(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Th
 	}
 
 	ui.Row(c).FillWidth().Gap(8).Wrap().Children(func() {
-		ui.Text(c, note.Title).FontSize(20).Bold()
+		ui.Text(c, note.Title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 		ui.Column(c).Grow(1)
 		if ui.Button(c, m.VaultNoteBack()).Clicked() {
 			s.CloseNoteView()
@@ -240,9 +240,9 @@ func noteViewer(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Th
 		}
 	})
 	if note.Group == "" {
-		ui.Text(c, m.VaultNoteViewerRoot()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultNoteViewerRoot()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	} else {
-		ui.Text(c, m.VaultNoteViewerGroup(note.Group)).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultNoteViewerGroup(note.Group)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}
 	ui.Row(c).FillWidth().Gap(8).Wrap().Children(func() {
 		if ui.Button(c, m.VaultNoteExportMarkdown()).Clicked() {

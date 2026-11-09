@@ -55,7 +55,7 @@ func networkRow(c *ui.Context, s *vaultstate.State, profile domainvault.NetworkP
 	kit.ListRow(c).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, profile.Label).Bold()
-			ui.Text(c, networkSummary(m, profile)).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, networkSummary(m, profile)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			networkProviderStatus(c, s, profile, m, t)
 		})
 		if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
@@ -92,18 +92,18 @@ func networkProviderStatus(c *ui.Context, s *vaultstate.State,
 		if address := status.Address(); address != "" {
 			text = m.VaultNetworkProviderStatus(phase, address)
 		}
-		ui.Text(c, text).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, text).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}
 	// A WireGuard Profile reports its live tunnel state: whether a handshake
 	// completed, when, and the summed counters. None of it is secret.
 	if status.Kind == string(domainvault.NetworkKindWireGuard) {
 		ui.Text(c, uiconnection.WireGuardDetail(m, status.HandshakeEstablished,
 			status.LastHandshake, status.RxBytes, status.TxBytes)).
-			FontSize(12).TextColor(t.TextMuted)
+			FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}
 	if status.AuthURL != "" {
 		ui.Text(c, m.VaultNetworkLoginRequired(status.AuthURL)).
-			FontSize(12).TextColor(t.TextMuted)
+			FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		ui.Row(c).Gap(6).Wrap().Children(func() {
 			if ui.Button(c, m.VaultNetworkLoginCopy()).Clicked() {
 				mygo.Clipboard.WriteText(status.AuthURL)
@@ -115,7 +115,7 @@ func networkProviderStatus(c *ui.Context, s *vaultstate.State,
 	}
 	if status.LastError != "" {
 		ui.Text(c, m.VaultNetworkProviderStatusError(status.LastError)).
-			FontSize(12).TextColor(uitheme.DangerText(t))
+			FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 	}
 	ui.Row(c).Gap(6).Wrap().Children(func() {
 		switch status.Phase {
@@ -179,14 +179,14 @@ func networkDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages,
 		// visible before the user confirms.
 		if hosts > 0 || groups > 0 {
 			ui.Text(c, m.VaultNetworkDeleteAffected(hosts, groups)).
-				FontSize(12).TextColor(t.TextMuted)
+				FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		}
 		// Deleting closes the Provider. Say so when a Session or lease is
 		// using it, because those owners fail on their next I/O and must
 		// retry instead of silently falling back.
 		if s.NetworkProfileInUse(id) {
 			ui.Text(c, m.VaultNetworkDeleteActiveUse()).
-				FontSize(12).TextColor(uitheme.DangerText(t))
+				FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 		}
 	}, m.VaultHostCancel(), m.VaultHostDelete())
 	if cancelled {
@@ -216,10 +216,10 @@ func hostNetworkProfileField(c *ui.Context, s *vaultstate.State, m locales.Messa
 	switch source {
 	case vaultstate.NetworkProfileSourceRecord:
 		ui.Text(c, m.VaultNetworkProfileSourceHost()).
-			FontSize(12).TextColor(t.TextMuted)
+			FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	case vaultstate.NetworkProfileSourceInherited:
 		ui.Text(c, m.VaultNetworkProfileInherited(path, s.NetworkProfileLabel(id))).
-			FontSize(12).TextColor(t.TextMuted)
+			FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}
 }
 
@@ -239,10 +239,10 @@ func groupNetworkProfileField(c *ui.Context, s *vaultstate.State, m locales.Mess
 	switch source {
 	case vaultstate.NetworkProfileSourceRecord:
 		ui.Text(c, m.VaultNetworkProfileSourceHostGroup()).
-			FontSize(12).TextColor(t.TextMuted)
+			FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	case vaultstate.NetworkProfileSourceInherited:
 		ui.Text(c, m.VaultNetworkProfileInherited(path, s.NetworkProfileLabel(id))).
-			FontSize(12).TextColor(t.TextMuted)
+			FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}
 }
 
@@ -255,7 +255,7 @@ func networkEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui
 	}
 
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
-		ui.Text(c, title).FontSize(20).Bold()
+		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 		// A parsed .conf is reviewed on its own surface. Save is not offered
 		// until the user confirms it, so an unconfirmed import cannot be
 		// persisted by a stray Save click.
@@ -298,7 +298,7 @@ func networkEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui
 		// Warnings never block Save; they tell the user before the profile is
 		// persisted that a local Control URL is unencrypted.
 		for _, warning := range s.NetworkProfileWarnings() {
-			ui.Text(c, networkWarningText(m, warning)).FontSize(12).TextColor(uitheme.DangerText(t))
+			ui.Text(c, networkWarningText(m, warning)).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 		}
 	})
 
@@ -327,7 +327,7 @@ func tailscaleFields(c *ui.Context, s *vaultstate.State,
 	}).Description(authKeyHint)
 	// tsnet prefers an existing registration in the state directory over a new
 	// Auth Key. Say so here so a key that appears to be ignored is explained.
-	ui.Text(c, m.VaultNetworkAuthKeyStateHint()).FontSize(12).TextColor(t.TextMuted)
+	ui.Text(c, m.VaultNetworkAuthKeyStateHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 
 	// A custom Control URL may be a Headscale control plane. Until the
 	// Headscale + tsnet matrix in decisions/08 is verified on a real
@@ -343,7 +343,7 @@ func tailscaleFields(c *ui.Context, s *vaultstate.State,
 	// The embedded node's logtail upload cannot be disabled from this build.
 	// Say so before the profile is saved rather than implying privacy the
 	// Provider does not provide.
-	ui.Text(c, m.VaultNetworkPrivacyNotice()).FontSize(12).TextColor(t.TextMuted)
+	ui.Text(c, m.VaultNetworkPrivacyNotice()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 
 	// A saved Profile can start its node and show the interactive-login state
 	// here, so logging in does not require editing a Host first.
@@ -379,7 +379,7 @@ func wireguardFields(c *ui.Context, s *vaultstate.State, form *vaultstate.Networ
 		ui.TextInput(c, &form.ListenPort).Placeholder("0").Width(120)
 	}).Description(m.VaultNetworkListenPortHint())
 
-	ui.Text(c, m.VaultNetworkPeers()).FontSize(14).Bold()
+	ui.Text(c, m.VaultNetworkPeers()).FontSize(kit.M(c).Font.Body).Bold()
 	for index := range form.Peers {
 		peerFields(c, s, form, index, m, t)
 	}

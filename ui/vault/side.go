@@ -142,20 +142,20 @@ func (p *SidePanels) matchingSnippets() []domainvault.Snippet {
 func (p *SidePanels) scriptRow(c *ui.Context, m locales.Messages, t *ui.Theme, snippet domainvault.Snippet) {
 	c.Key("side-snippet-" + snippet.ID)
 	row := ui.ButtonBase(c).Label(snippet.Label).Tooltip(m.SidePanelRunSnippet()).FillWidth().
-		Padding(6, 8).Gap(8).Radius(kit.RadiusControl).AlignItems(ui.Center)
+		Padding(6, 8).Gap(8).Radius(kit.M(c).Radius.Control).AlignItems(ui.Center)
 	hovered := row.Hovered()
 	if hovered {
 		row.Background(kit.Subtle(t))
 	}
 	row.Children(func() {
-		ui.Box(c).Size(26, 26).Radius(6).Background(t.Accent.Alpha(0.12)).Center().TextColor(t.Accent).Shrink(0).
+		ui.Box(c).Size(26, 26).Radius(kit.M(c).Radius.Control).Background(t.Accent.Alpha(0.12)).Center().TextColor(t.Accent).Shrink(0).
 			Children(func() { ui.Icon(c, icons.Lucide(icons.Zap)).Size(13, 13) })
 		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
-			ui.Text(c, snippet.Label).FontSize(13).FontWeight(500).SingleLine()
-			ui.Text(c, firstLine(snippet.Command)).FontSize(11).TextColor(t.TextMuted).SingleLine()
+			ui.Text(c, snippet.Label).FontSize(kit.M(c).Font.Callout).FontWeight(500).SingleLine()
+			ui.Text(c, firstLine(snippet.Command)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
 		})
 		if hovered {
-			ui.Icon(c, icons.Lucide(icons.Play)).Size(14, 14).TextColor(t.Accent)
+			kit.IconSized(c, icons.Play, kit.M(c).Icon.Medium).TextColor(t.Accent)
 		}
 	})
 	if row.Clicked() {
@@ -177,8 +177,8 @@ func sideRunProblem(m locales.Messages, s *vaultstate.State) string {
 func sideGroupLabel(c *ui.Context, icon, label string) {
 	t := c.Theme()
 	ui.Row(c).FillWidth().Gap(6).Padding(8, 8, 2, 8).AlignItems(ui.Center).TextColor(t.TextMuted).Children(func() {
-		ui.Icon(c, icons.Lucide(icon)).Size(12, 12)
-		ui.Text(c, label).FontSize(11).FontWeight(600).SingleLine().TextColor(t.TextMuted)
+		kit.IconSized(c, icon, kit.M(c).Icon.Small)
+		ui.Text(c, label).FontSize(kit.M(c).Font.Caption).FontWeight(600).SingleLine().TextColor(t.TextMuted)
 	})
 }
 
@@ -267,17 +267,17 @@ func (p *SidePanels) matchingNotes() []domainvault.Note {
 func (p *SidePanels) noteRow(c *ui.Context, t *ui.Theme, note domainvault.Note) {
 	c.Key("side-note-" + note.ID)
 	row := ui.ButtonBase(c).Label(note.Title).FillWidth().Padding(6, 8).Gap(8).
-		Radius(kit.RadiusControl).AlignItems(ui.Center)
+		Radius(kit.M(c).Radius.Control).AlignItems(ui.Center)
 	if row.Hovered() {
 		row.Background(kit.Subtle(t))
 	}
 	row.Children(func() {
-		ui.Box(c).Size(26, 26).Radius(6).Background(kit.Muted(t)).Center().TextColor(t.TextMuted).Shrink(0).
+		ui.Box(c).Size(26, 26).Radius(kit.M(c).Radius.Control).Background(kit.Muted(t)).Center().TextColor(t.TextMuted).Shrink(0).
 			Children(func() { ui.Icon(c, icons.Lucide(icons.FileText)).Size(13, 13) })
 		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
-			ui.Text(c, note.Title).FontSize(13).FontWeight(500).SingleLine()
+			ui.Text(c, note.Title).FontSize(kit.M(c).Font.Callout).FontWeight(500).SingleLine()
 			if preview := notePreview(note.Content); preview != "" {
-				ui.Text(c, preview).FontSize(11).TextColor(t.TextMuted).SingleLine()
+				ui.Text(c, preview).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
 			}
 		})
 	})
@@ -307,14 +307,14 @@ func (p *SidePanels) noteReader(c *ui.Context, m locales.Messages, t *ui.Theme, 
 			p.noteID = ""
 			c.Invalidate()
 		}
-		ui.Text(c, note.Title).FontSize(14).FontWeight(600).SingleLine().Grow(1).MinWidth(0)
+		ui.Text(c, note.Title).FontSize(kit.M(c).Font.Body).FontWeight(600).SingleLine().Grow(1).MinWidth(0)
 		if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
 			p.state.BeginEditNote(note.ID)
 			p.openPage(section.Notes)
 		}
 	})
 	if note.Group != "" {
-		ui.Text(c, note.Group).FontSize(11).TextColor(t.TextMuted).Padding(0, 12, 4, 12)
+		ui.Text(c, note.Group).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).Padding(0, 12, 4, 12)
 	}
 	ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).TrackScroll(&p.noteScroll).Children(func() {
 		ui.Column(c).FillWidth().MinWidth(0).Padding(4, 12, 12, 12).Gap(10).Children(func() {
