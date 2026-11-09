@@ -129,7 +129,8 @@ func settingsBody(c *ui.Context, config Config, search *SearchState, panes *view
 // a row under a 12-high band, the whole of it dragging the window, with a
 // line below. The row leaves the close button its end.
 func header(c *ui.Context, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).Key("title-bar").FillWidth().Shrink(0).Padding(titlebar.CloseTop, 16+titlebar.DialogRoom, 8, 16).
+	left, right := titlebar.Insets(c, titlebar.Dialog)
+	ui.Row(c).Key("title-bar").FillWidth().Shrink(0).Padding(titlebar.CloseTop, 16+right, 8, 16+left).
 		AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).
 		DragWindow().Children(func() {
 		ui.Row(c).Height(titlebar.CloseSize).AlignItems(ui.Center).Children(func() {

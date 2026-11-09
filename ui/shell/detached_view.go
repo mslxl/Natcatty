@@ -39,7 +39,8 @@ func DetachedView(s *state.State, tabID model.TabID) func(*ui.Context) {
 		ui.Column(c).Fill().Background(t.Background).Children(func() {
 			// As the original's terminal popup, the title bar is the terminal's
 			// own background with its title dimmed, and the controls follow.
-			ui.Row(c).FillWidth().Height(topBarHeight).Shrink(0).Padding(0, 4+titlebar.PopupRoom, 0, 16).Gap(8).
+			left, right := titlebar.Insets(c, titlebar.Popup)
+			ui.Row(c).FillWidth().Height(topBarHeight).Shrink(0).Padding(0, 4+right, 0, 16+left).Gap(8).
 				AlignItems(ui.Center).Background(t.Background).DragWindow().Children(func() {
 				ui.Text(c, DetachedTitle(m, info)).FontSize(12).FontWeight(500).TextColor(t.Text.Alpha(0.7)).
 					SingleLine().MinWidth(0).Shrink(1)
