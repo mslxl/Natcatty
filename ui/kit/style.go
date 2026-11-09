@@ -52,7 +52,7 @@ const (
 	// MaterialGlass paints Paint, such as a glass.Glass.
 	MaterialGlass
 	// MaterialVibrant leaves the surface clear over the window's vibrancy,
-	// or fills it with the theme's surface where the window shows none.
+	// or fills it as MaterialOpaque where the window shows none.
 	MaterialVibrant
 	// MaterialClear draws nothing.
 	MaterialClear
@@ -85,8 +85,9 @@ func (classic) Material(role SurfaceRole) Material {
 	return Material{Kind: MaterialOpaque}
 }
 
-// macOS is the macOS 27 style: a vibrant sidebar, Liquid Glass bars and
-// overlays, and a hierarchy drawn with fills more than with lines.
+// macOS is the macOS 27 style: the window's vibrancy behind a floating glass
+// sidebar, Liquid Glass bars and overlays, and a hierarchy drawn with fills
+// more than with lines.
 type macOS struct{}
 
 func (macOS) ID() string       { return StyleMacOS }
@@ -95,9 +96,9 @@ func (macOS) Native() bool     { return true }
 
 func (macOS) Material(role SurfaceRole) Material {
 	switch role {
-	case SurfaceSidebar:
+	case SurfaceWindow:
 		return Material{Kind: MaterialVibrant}
-	case SurfaceBar, SurfaceOverlay:
+	case SurfaceSidebar, SurfaceBar, SurfaceOverlay:
 		return Material{Kind: MaterialGlass, Paint: glass.Glass{Style: glass.Regular}}
 	case SurfaceScrollEdge:
 		return Material{Kind: MaterialGlass, Paint: glass.ScrollEdge{}}
@@ -156,9 +157,9 @@ func CurrentStyle() Style {
 }
 
 // Fill fills el as the active style fills a surface of role: the theme's
-// color for it, the style's glass, or nothing over the window's vibrancy.
-// A vibrant surface in a window that shows no vibrancy is solid, the
-// theme's Surface.
+// color for it, the style's glass, or clear over the window's vibrancy. A
+// vibrant surface in a window that shows no vibrancy is filled as an opaque
+// one.
 func Fill(c *ui.Context, el ui.Element, role SurfaceRole) ui.Element {
 	t := c.Theme()
 	switch m := CurrentStyle().Material(role); m.Kind {
@@ -166,9 +167,9 @@ func Fill(c *ui.Context, el ui.Element, role SurfaceRole) ui.Element {
 		return el.Material(m.Paint)
 	case MaterialVibrant:
 		if c.Vibrancy() {
-			return el
+			// Explicitly clear: the root paints the background otherwise.
+			return el.Background(ui.Transparent)
 		}
-		return el.Background(t.Surface)
 	case MaterialClear:
 		return el
 	}
@@ -182,5 +183,5 @@ func Fill(c *ui.Context, el ui.Element, role SurfaceRole) ui.Element {
 // Vibrant reports whether s shows the window's vibrancy anywhere, so the
 // window should have one.
 func Vibrant(s Style) bool {
-	return s.Material(SurfaceSidebar).Kind == MaterialVibrant
+	return s.Material(SurfaceWindow).Kind == MaterialVibrant
 }

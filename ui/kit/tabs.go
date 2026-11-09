@@ -67,15 +67,56 @@ func TabStrip(c *ui.Context, role TabRole, o TabStripOptions, tabs func()) (adde
 	if height == 0 {
 		height = M(c).Bar.Title
 	}
+	// Classic tabs sit on the bar's floor; macOS capsules are centered in it.
+	align, addMargin := ui.End, [4]float32{0, 0, 4, 4}
+	if CurrentStyle().Native() {
+		align, addMargin = ui.Center, [4]float32{0, 0, 0, 4}
+	}
 	ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Height(height).Label(o.Label).Children(func() {
-		ui.Row(c).Height(height).AlignItems(ui.End).Children(func() {
+		ui.Row(c).Height(height).AlignItems(align).Gap(workTabGap(c)).Children(func() {
 			tabs()
 			if o.Add != "" {
-				added = IconButtonWith(c, icons.Plus, o.Add, IconOptions{Role: IconTab}).Margin(0, 0, 4, 4).Clicked()
+				added = IconButtonWith(c, icons.Plus, o.Add, IconOptions{Role: IconTab}).
+					Margin(addMargin[0], addMargin[1], addMargin[2], addMargin[3]).Clicked()
 			}
 		})
 	})
 	return added
+}
+
+// workTabShape rounds a Work tab: the top corners in Classic, so the chosen
+// tab opens into the surface below; a capsule in the macOS style.
+func workTabShape(c *ui.Context, tab ui.Element) ui.Element {
+	if CurrentStyle().Native() {
+		return tab.Radius(M(c).Radius.Pill)
+	}
+	return tab.Radius(workTabRadius, workTabRadius, 0, 0)
+}
+
+// workTabGap is the room between Work tabs: Classic tabs touch, macOS
+// capsules stand apart.
+func workTabGap(c *ui.Context) float32 {
+	if CurrentStyle().Native() {
+		return M(c).Space.XSmall
+	}
+	return 0
+}
+
+// workTabFill fills a Work tab: the chosen one with the surface's color in
+// Classic, a glass capsule in the macOS style; a hovered one with a tint.
+func workTabFill(c *ui.Context, tab ui.Element, active, hovered bool) {
+	t := c.Theme()
+	native := CurrentStyle().Native()
+	switch {
+	case active && native:
+		Fill(c, tab, SurfaceBar)
+	case active:
+		tab.Background(t.Background)
+	case hovered && native:
+		tab.Background(t.Text.Alpha(0.06))
+	case hovered:
+		tab.Background(t.Background.Alpha(0.4))
+	}
 }
 
 // TabSpec is one tab of a TabStrip.
@@ -126,12 +167,11 @@ func Tab(c *ui.Context, role TabRole, spec TabSpec) TabResult {
 func fixedWorkTab(c *ui.Context, spec TabSpec) TabResult {
 	t := c.Theme()
 	tab := ui.ButtonBase(c).Key(spec.Key).Label(spec.Title).Height(M(c).Control.Regular).Padding(0, 12).Gap(8).
-		Radius(workTabRadius, workTabRadius, 0, 0).AlignItems(ui.Center).Shrink(0).TextColor(t.TextMuted)
-	switch {
-	case spec.Active:
-		tab.Background(t.Background).TextColor(t.Text)
-	case tab.Hovered():
-		tab.Background(t.Background.Alpha(0.4)).TextColor(t.Text)
+		AlignItems(ui.Center).Shrink(0).TextColor(t.TextMuted)
+	workTabShape(c, tab)
+	workTabFill(c, tab, spec.Active, tab.Hovered())
+	if spec.Active || tab.Hovered() {
+		tab.TextColor(t.Text)
 	}
 	tab.Children(func() {
 		IconSized(c, spec.Icon, M(c).Icon.Medium)
@@ -143,17 +183,13 @@ func fixedWorkTab(c *ui.Context, spec TabSpec) TabResult {
 func workTab(c *ui.Context, spec TabSpec) TabResult {
 	t := c.Theme()
 	body := ui.Row(c).Height(M(c).Control.Regular).MinWidth(140).MaxWidth(240).Padding(0, 4, 0, 12).Gap(8).
-		Radius(workTabRadius, workTabRadius, 0, 0).AlignItems(ui.Center).Tooltip(spec.Title)
+		AlignItems(ui.Center).Tooltip(spec.Title)
+	workTabShape(c, body)
 	if spec.Key != "" {
 		body.Key(spec.Key)
 	}
 	hovered := body.Hovered()
-	switch {
-	case spec.Active:
-		body.Background(t.Background)
-	case hovered:
-		body.Background(t.Background.Alpha(0.4))
-	}
+	workTabFill(c, body, spec.Active, hovered)
 	result := TabResult{Element: body, Clicked: body.Clicked()}
 	if spec.ContextMenu != nil {
 		body.ContextMenu(spec.ContextMenu)

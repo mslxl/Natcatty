@@ -73,26 +73,27 @@ func contrastTo(a, b ui.Color) int {
 	return d(a.R, b.R) + d(a.G, b.G) + d(a.B, b.B)
 }
 
-func TestFillShowsTheSidebarVibrancyOrASolidSurface(t *testing.T) {
+func TestFillClearsTheWindowOverItsVibrancyOrPaintsItsBackground(t *testing.T) {
 	SetStyle(MacOS)
 	t.Cleanup(func() { SetStyle(nil) })
-	red := ui.RGB(255, 0, 0)
-	theme := &ui.Theme{Background: red, Surface: ui.RGB(0, 0, 255), Text: ui.RGB(0, 0, 0)}
+	under := ui.RGB(0, 255, 0)
+	theme := &ui.Theme{Background: ui.RGB(255, 0, 0), Surface: ui.RGB(0, 0, 255), Text: ui.RGB(0, 0, 0)}
 	for _, vibrant := range []bool{true, false} {
 		tt := ui.NewTester(func(c *ui.Context) {
 			c.SetTheme(theme)
-			Fill(c, ui.Column(c).Size(40, 40), SurfaceSidebar)
+			c.Root().Background(under)
+			Fill(c, ui.Column(c).Size(40, 40), SurfaceWindow)
 		}, 80, 80)
 		tt.SetVibrancy(vibrant)
 		tt.Frame()
 		got := tt.Image().RGBAAt(20, 20)
-		want := theme.Surface
+		want := theme.Background
 		if vibrant {
-			// Clear: what is under it, the root's background, shows.
-			want = red
+			// Clear: what is under it shows.
+			want = under
 		}
 		if got.R != want.R || got.G != want.G || got.B != want.B {
-			t.Fatalf("vibrancy=%v: sidebar pixel = %v, want %v", vibrant, got, want)
+			t.Fatalf("vibrancy=%v: window pixel = %v, want %v", vibrant, got, want)
 		}
 	}
 }

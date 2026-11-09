@@ -1,6 +1,9 @@
 package kit
 
-import "github.com/egoist/mygo/ui"
+import (
+	"github.com/egoist/mygo/plugins/glass"
+	"github.com/egoist/mygo/ui"
+)
 
 // IconRole is where an icon button sits, which decides its size.
 type IconRole int
@@ -14,6 +17,9 @@ const (
 	IconPane
 	// IconTab is an action inside a Tab or a Pane header.
 	IconTab
+	// IconBar is an action in the window's title bar: an IconCard in
+	// Classic, a glass capsule in the macOS style.
+	IconBar
 )
 
 // IconOptions configure IconButtonWith.
@@ -31,7 +37,7 @@ type IconOptions struct {
 func iconRecipe(c *ui.Context, role IconRole) (box, glyph, radius float32) {
 	metrics := M(c)
 	switch role {
-	case IconCard:
+	case IconCard, IconBar:
 		return metrics.Control.Regular, 15, metrics.Radius.Control
 	case IconPane:
 		return metrics.Control.Small, metrics.Icon.Medium, 5
@@ -54,6 +60,16 @@ func IconButtonWith(c *ui.Context, name, label string, options IconOptions) ui.E
 	}
 	button.Label(label).Tooltip(label).Size(box, box).Radius(radius).
 		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
+	if options.Role == IconBar && CurrentStyle().Native() {
+		// A capsule of interactive glass; an open toggle is tinted.
+		face := glass.Glass{Interactive: true}
+		if options.On {
+			face.Tint = t.Text.Alpha(0.12)
+		}
+		button.Radius(M(c).Radius.Pill).Material(face).TextColor(t.Text)
+		button.Children(func() { IconSized(c, name, glyph) })
+		return button
+	}
 	switch {
 	case options.On || button.Pressed():
 		button.Background(t.Text.Alpha(0.12)).TextColor(t.Text)
@@ -122,4 +138,19 @@ func Badge(c *ui.Context, tone ui.Color, text string) ui.Element {
 		StatusDot(c, tone).Size(6, 6)
 		ui.Text(c, text).FontSize(M(c).Font.Caption).FontWeight(500).TextColor(tone).NoWrap()
 	})
+}
+
+// TitleBarFill fills the window's title bar, which the work Tabs share. In
+// Classic it is a shade off the surface below; in the macOS style it is
+// clear over the window's material, or the surface's own color when flush
+// with it, as over a terminal.
+func TitleBarFill(c *ui.Context, bar ui.Element, flush bool) ui.Element {
+	t := c.Theme()
+	if !CurrentStyle().Native() {
+		return bar.Background(Muted(t))
+	}
+	if flush {
+		return bar.Background(t.Background)
+	}
+	return bar
 }
