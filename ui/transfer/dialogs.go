@@ -103,7 +103,7 @@ func dialogLabel(m locales.Messages, dialog *transferstate.Dialog) string {
 
 func inputDialog(c *ui.Context, s *transferstate.State, dialog *transferstate.Dialog, m locales.Messages, t *ui.Theme, dialogWidth float32) {
 	ui.Text(c, dialogTitle(m, dialog)).FontSize(15).Bold().TextColor(t.Text)
-	ui.Text(c, dialogLabel(m, dialog)).FontSize(11).TextColor(t.TextMuted).MinWidth(0)
+	ui.Text(c, dialogLabel(m, dialog)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).MinWidth(0)
 	input := ui.TextInput(c, &dialog.Draft)
 	// The field never asks for more than the dialog's content box, which is
 	// already clamped to the window.
@@ -114,7 +114,7 @@ func inputDialog(c *ui.Context, s *transferstate.State, dialog *transferstate.Di
 		if dialog.Err == "invalid-mode" {
 			message = m.SftpInvalidMode()
 		}
-		ui.Text(c, message).FontSize(11).TextColor(uitheme.DangerText(t))
+		ui.Text(c, message).FontSize(kit.M(c).Font.Caption).TextColor(uitheme.DangerText(t))
 	}
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Column(c).Grow(1)
@@ -141,20 +141,20 @@ func chmodDialog(c *ui.Context, s *transferstate.State, dialog *transferstate.Di
 	}
 	ui.Text(c, m.SftpPermissionsTitle()).FontSize(15).Bold().TextColor(t.Text)
 	if len(dialog.Paths) == 1 {
-		ui.Text(c, baseName(dialog.Paths[0])).FontSize(12).TextColor(t.TextMuted).SingleLine().MinWidth(0)
+		ui.Text(c, baseName(dialog.Paths[0])).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine().MinWidth(0)
 	}
 	who := []string{m.SftpPermissionsOwner(), m.SftpPermissionsGroup(), m.SftpPermissionsOthers()}
 	what := []string{m.SftpPermissionsRead(), m.SftpPermissionsWrite(), m.SftpPermissionsExecute()}
-	ui.Column(c).FillWidth().Gap(8).Padding(12).Radius(kit.RadiusControl).Background(kit.Muted(t)).Children(func() {
+	ui.Column(c).FillWidth().Gap(8).Padding(12).Radius(kit.M(c).Radius.Control).Background(kit.Muted(t)).Children(func() {
 		for i, name := range who {
 			ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, name).FontSize(12).FontWeight(500).Width(84).SingleLine().TextColor(t.Text)
+				ui.Text(c, name).FontSize(kit.M(c).Font.Footnote).FontWeight(500).Width(84).SingleLine().TextColor(t.Text)
 				for j, right := range what {
 					bit := uint32(1) << uint(8-3*i-j)
 					on := mode&bit != 0
 					// The mode is the dialog's draft, so a click flips its bit
 					// rather than a copy the checkbox would write.
-					box := ui.Checkbox(c, &on, right).FontSize(12)
+					box := ui.Checkbox(c, &on, right).FontSize(kit.M(c).Font.Footnote)
 					box.Grow(1)
 					if box.Clicked() {
 						dialog.Draft = domainsftp.FormatOctal(mode ^ bit)
@@ -165,18 +165,18 @@ func chmodDialog(c *ui.Context, s *transferstate.State, dialog *transferstate.Di
 		}
 	})
 	ui.Row(c).FillWidth().Gap(16).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, m.SftpPermissionsOctal()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.SftpPermissionsOctal()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		input := ui.TextInput(c, &dialog.Draft)
-		input.FontSize(12)
+		input.FontSize(kit.M(c).Font.Footnote)
 		input.Width(72)
 		if input.Submitted() {
 			s.SubmitDialog()
 		}
-		ui.Text(c, m.SftpPermissionsSymbolic()).FontSize(11).TextColor(t.TextMuted)
-		ui.Text(c, symbolicMode(mode)).FontSize(12).Font("Consolas").TextColor(t.Text)
+		ui.Text(c, m.SftpPermissionsSymbolic()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+		ui.Text(c, symbolicMode(mode)).FontSize(kit.M(c).Font.Footnote).Font("Consolas").TextColor(t.Text)
 	})
 	if dialog.Err != "" {
-		ui.Text(c, m.SftpInvalidMode()).FontSize(11).TextColor(uitheme.DangerText(t))
+		ui.Text(c, m.SftpInvalidMode()).FontSize(kit.M(c).Font.Caption).TextColor(uitheme.DangerText(t))
 	}
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Column(c).Grow(1)
@@ -203,7 +203,7 @@ func symbolicMode(mode uint32) string {
 
 func deleteDialog(c *ui.Context, s *transferstate.State, dialog *transferstate.Dialog, m locales.Messages, t *ui.Theme) {
 	ui.Text(c, m.SftpDeleteTitle()).FontSize(15).Bold().TextColor(uitheme.DangerText(t))
-	ui.Text(c, m.SftpDeleteBody(len(dialog.Paths))).FontSize(12).TextColor(t.Text)
+	ui.Text(c, m.SftpDeleteBody(len(dialog.Paths))).FontSize(kit.M(c).Font.Footnote).TextColor(t.Text)
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Column(c).Grow(1)
 		confirm := ui.Button(c, m.SftpDelete())
@@ -250,48 +250,48 @@ func conflictDialog(c *ui.Context, s *transferstate.State, dialog *transferstate
 		title = m.SftpConflictFolderTitle()
 	}
 	ui.Text(c, title).FontSize(15).Bold().TextColor(t.Text)
-	ui.Text(c, conflict.Name+" "+m.SftpConflictAlreadyExists()).FontSize(13).
+	ui.Text(c, conflict.Name+" "+m.SftpConflictAlreadyExists()).FontSize(kit.M(c).Font.Callout).
 		TextColor(t.Text).SingleLine()
-	ui.Text(c, conflictDescription(m, *conflict)).FontSize(11).TextColor(t.TextMuted)
+	ui.Text(c, conflictDescription(m, *conflict)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 
 	if !conflict.IsDirectory {
 		fileConflictSummary(c, m, t, conflict)
 	}
 	if conflict.CanMerge() {
-		ui.Text(c, m.SftpConflictMergeHint()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.SftpConflictMergeHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 	}
 	if conflict.IsDirectory && conflict.ExistingKind == domainsftp.ExistingDirectory {
-		ui.Text(c, m.SftpConflictReplaceWarning()).FontSize(11).TextColor(uitheme.DangerText(t))
+		ui.Text(c, m.SftpConflictReplaceWarning()).FontSize(kit.M(c).Font.Caption).TextColor(uitheme.DangerText(t))
 	}
 
 	count := conflict.ApplyToAllCount
 	if count > 0 {
-		ui.Checkbox(c, &dialog.ApplyToAll, m.SftpConflictApplyToAll(count)).FontSize(11)
+		ui.Checkbox(c, &dialog.ApplyToAll, m.SftpConflictApplyToAll(count)).FontSize(kit.M(c).Font.Caption)
 	}
 	if dialog.Err != "" {
-		ui.Text(c, m.SftpConflictInvalidAction()).FontSize(11).TextColor(uitheme.DangerText(t))
+		ui.Text(c, m.SftpConflictInvalidAction()).FontSize(kit.M(c).Font.Caption).TextColor(uitheme.DangerText(t))
 	}
 
 	ui.Row(c).FillWidth().Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
 		stop := ui.Button(c, m.SftpConflictStop())
-		stop.FontSize(12)
+		stop.FontSize(kit.M(c).Font.Footnote)
 		if stop.Clicked() {
 			s.ResolveDialogConflict(apptransfer.ConflictStop, dialog.ApplyToAll)
 		}
 		ui.Column(c).Grow(1)
 		skip := ui.Button(c, m.SftpConflictSkip())
-		skip.FontSize(12)
+		skip.FontSize(kit.M(c).Font.Footnote)
 		if skip.Clicked() {
 			s.ResolveDialogConflict(apptransfer.ConflictSkip, dialog.ApplyToAll)
 		}
 		duplicate := ui.Button(c, m.SftpConflictDuplicate())
-		duplicate.FontSize(12)
+		duplicate.FontSize(kit.M(c).Font.Footnote)
 		if duplicate.Clicked() {
 			s.ResolveDialogConflict(apptransfer.ConflictDuplicate, dialog.ApplyToAll)
 		}
 		if conflict.IsDirectory {
 			merge := ui.Button(c, m.SftpConflictMerge())
-			merge.FontSize(12)
+			merge.FontSize(kit.M(c).Font.Footnote)
 			merge.Disabled(!conflict.CanMerge())
 			if merge.Clicked() && conflict.CanMerge() {
 				s.ResolveDialogConflict(apptransfer.ConflictMerge, dialog.ApplyToAll)
@@ -299,7 +299,7 @@ func conflictDialog(c *ui.Context, s *transferstate.State, dialog *transferstate
 		}
 		if conflict.CanReplace() {
 			replace := ui.Button(c, m.SftpConflictReplace())
-			replace.FontSize(12)
+			replace.FontSize(kit.M(c).Font.Footnote)
 			if conflict.IsDirectory && conflict.ExistingKind == domainsftp.ExistingDirectory {
 				replace.Background(t.Danger).TextColor(t.AccentText)
 			} else {
@@ -323,11 +323,11 @@ func fileConflictSummary(c *ui.Context, m locales.Messages, t *ui.Theme, conflic
 
 func fileSummary(c *ui.Context, m locales.Messages, t *ui.Theme, title string, size int64, modified time.Time) {
 	ui.Column(c).Grow(1).Gap(2).Padding(8).Background(t.SurfaceHover).Radius(t.Radius).Children(func() {
-		ui.Text(c, title).FontSize(11).Bold().TextColor(t.Text).SingleLine()
-		ui.Text(c, m.SftpConflictSize()+domainsftp.FormatSize(size)).FontSize(10).
+		ui.Text(c, title).FontSize(kit.M(c).Font.Caption).Bold().TextColor(t.Text).SingleLine()
+		ui.Text(c, m.SftpConflictSize()+domainsftp.FormatSize(size)).FontSize(kit.M(c).Font.Caption2).
 			TextColor(t.TextMuted).SingleLine()
 		if text := modifiedText(modified); text != "" {
-			ui.Text(c, m.SftpConflictModified()+text).FontSize(10).
+			ui.Text(c, m.SftpConflictModified()+text).FontSize(kit.M(c).Font.Caption2).
 				TextColor(t.TextMuted).SingleLine()
 		}
 	})
@@ -387,12 +387,12 @@ func hostPicker(c *ui.Context, s *transferstate.State, dialog *transferstate.Dia
 	}
 
 	ui.Row(c).FillWidth().Height(36).Padding(0, 10).Gap(8).AlignItems(ui.Center).
-		Radius(kit.RadiusControl).Border(1, t.Border).Background(t.Background).Children(func() {
-		ui.Icon(c, icons.Lucide(icons.Search)).Size(14, 14).TextColor(t.TextMuted).Shrink(0)
+		Radius(kit.M(c).Radius.Control).Border(1, t.Border).Background(t.Background).Children(func() {
+		kit.IconSized(c, icons.Search, kit.M(c).Icon.Medium).TextColor(t.TextMuted).Shrink(0)
 		before := dialog.Draft
 		input := ui.TextInputBase(c, &dialog.Draft)
 		input.Placeholder(m.SftpSearchHosts())
-		input.FontSize(13)
+		input.FontSize(kit.M(c).Font.Callout)
 		input.Grow(1)
 		input.MinWidth(0)
 		input.AutoFocus()
@@ -412,7 +412,7 @@ func hostPicker(c *ui.Context, s *transferstate.State, dialog *transferstate.Dia
 		if dialog.Side == transferstate.Right {
 			side = m.SftpPaneRight()
 		}
-		ui.Text(c, side).FontSize(10).FontWeight(600).TextColor(t.TextMuted).Padding(2, 6).
+		ui.Text(c, side).FontSize(kit.M(c).Font.Caption2).FontWeight(600).TextColor(t.TextMuted).Padding(2, 6).
 			Radius(4).Background(kit.Muted(t)).Shrink(0)
 	})
 
@@ -423,7 +423,7 @@ func hostPicker(c *ui.Context, s *transferstate.State, dialog *transferstate.Dia
 				if s.HostsLoading() {
 					text = m.SftpLoading()
 				}
-				ui.Text(c, text).FontSize(12).TextColor(t.TextMuted).Padding(20, 8).FillWidth().TextAlign(ui.Center)
+				ui.Text(c, text).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).Padding(20, 8).FillWidth().TextAlign(ui.Center)
 				return
 			}
 			section := ""
@@ -434,7 +434,7 @@ func hostPicker(c *ui.Context, s *transferstate.State, dialog *transferstate.Dia
 				}
 				if title != section {
 					section = title
-					ui.Text(c, strings.ToUpper(title)).FontSize(10).FontWeight(600).
+					ui.Text(c, strings.ToUpper(title)).FontSize(kit.M(c).Font.Caption2).FontWeight(600).
 						TextColor(t.TextMuted).Padding(8, 8, 4, 8)
 				}
 				if pickerItem(c, row, index == dialog.Cursor, m, t).Clicked() {
@@ -442,7 +442,7 @@ func hostPicker(c *ui.Context, s *transferstate.State, dialog *transferstate.Dia
 				}
 			}
 			if s.HostsLoading() {
-				ui.Text(c, m.SftpLoading()).FontSize(11).TextColor(t.TextMuted).Padding(6, 8)
+				ui.Text(c, m.SftpLoading()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).Padding(6, 8)
 			}
 		})
 	})
@@ -454,13 +454,13 @@ func pickerItem(c *ui.Context, row pickerRow, highlighted bool, m locales.Messag
 		title, detail = m.SftpLocalFilesystem(), m.SftpBrowseLocal()
 	}
 	el := ui.Row(c).FillWidth().Height(44).Padding(0, 8).Gap(10).AlignItems(ui.Center).
-		Radius(kit.RadiusControl).Cursor(ui.CursorPointer).Label(title)
+		Radius(kit.M(c).Radius.Control).Cursor(ui.CursorPointer).Label(title)
 	if highlighted || el.Hovered() {
 		el.Background(kit.Subtle(t))
 	}
 	el.Children(func() {
 		if row.local {
-			ui.Column(c).Size(28, 28).Radius(6).Background(t.Accent.Alpha(0.12)).Shrink(0).
+			ui.Column(c).Size(28, 28).Radius(kit.M(c).Radius.Control).Background(t.Accent.Alpha(0.12)).Shrink(0).
 				Justify(ui.Center).AlignItems(ui.Center).Children(func() {
 				ui.Icon(c, icons.Lucide(icons.Monitor)).Size(15, 15).TextColor(t.Accent)
 			})
@@ -468,8 +468,8 @@ func pickerItem(c *ui.Context, row pickerRow, highlighted bool, m locales.Messag
 			kit.HostAvatar(c, "", kit.AvatarServer, string(row.host.ID), 28)
 		}
 		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
-			ui.Text(c, title).FontSize(13).FontWeight(500).SingleLine().MinWidth(0).TextColor(t.Text)
-			ui.Text(c, detail).FontSize(11).SingleLine().MinWidth(0).TextColor(t.TextMuted)
+			ui.Text(c, title).FontSize(kit.M(c).Font.Callout).FontWeight(500).SingleLine().MinWidth(0).TextColor(t.Text)
+			ui.Text(c, detail).FontSize(kit.M(c).Font.Caption).SingleLine().MinWidth(0).TextColor(t.TextMuted)
 		})
 	})
 	return el

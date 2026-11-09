@@ -7,6 +7,7 @@ import (
 
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 	transferstate "github.com/mslxl/natcatty/ui/transfer/state"
@@ -68,13 +69,13 @@ func centerView(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui
 			panel.Children(func() {
 				centerHeader(c, s, m, t)
 				if code := s.CenterError(); code != "" {
-					ui.Text(c, noticeText(m, code)).FontSize(11).
+					ui.Text(c, noticeText(m, code)).FontSize(kit.M(c).Font.Caption).
 						TextColor(uitheme.DangerText(t)).SingleLine()
 				}
 				if len(tasks) == 0 {
 					ui.Column(c).Grow(1).FillWidth().
 						AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-						ui.Text(c, m.SftpTransferEmpty()).FontSize(12).
+						ui.Text(c, m.SftpTransferEmpty()).FontSize(kit.M(c).Font.Footnote).
 							TextColor(t.TextMuted).AlignSelf(ui.Center)
 					})
 				} else {
@@ -99,10 +100,10 @@ func centerView(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui
 func centerHeader(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.Theme) {
 	stats := s.TransferStats()
 	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, m.SftpTransferCenter()).FontSize(16).Bold().TextColor(t.Text)
-		ui.Text(c, m.SftpTransferActive(stats.Active)).FontSize(11).
+		ui.Text(c, m.SftpTransferCenter()).FontSize(kit.M(c).Font.Title3).Bold().TextColor(t.Text)
+		ui.Text(c, m.SftpTransferActive(stats.Active)).FontSize(kit.M(c).Font.Caption).
 			TextColor(t.TextMuted).NoWrap()
-		ui.Text(c, m.SftpTransferQueued(stats.Queued)).FontSize(11).
+		ui.Text(c, m.SftpTransferQueued(stats.Queued)).FontSize(kit.M(c).Font.Caption).
 			TextColor(t.TextMuted).NoWrap()
 		ui.Column(c).Grow(1)
 		if ui.Button(c, m.SftpDismiss()).Clicked() {
@@ -138,14 +139,14 @@ func centerRow(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.
 		Padding(8).Background(t.Surface).Radius(t.Radius).
 		Border(1, t.Border).Children(func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, transferName(m, task)).FontSize(12).Bold().Grow(1).
+			ui.Text(c, transferName(m, task)).FontSize(kit.M(c).Font.Footnote).Bold().Grow(1).
 				MinWidth(0).SingleLine().TextColor(t.Text)
-			ui.Text(c, transferStatusLabel(m, task.Status)).FontSize(11).
+			ui.Text(c, transferStatusLabel(m, task.Status)).FontSize(kit.M(c).Font.Caption).
 				TextColor(transferStatusColor(t, task.Status)).NoWrap()
 		})
 		ui.Progress(c, float64(task.Percent())/100).FillWidth()
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, transferDetail(m, task)).FontSize(10).
+			ui.Text(c, transferDetail(m, task)).FontSize(kit.M(c).Font.Caption2).
 				TextColor(t.TextMuted).Grow(1).MinWidth(0).SingleLine()
 			transferButtons(c, s, m, task)
 		})
@@ -154,7 +155,7 @@ func centerRow(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.
 		// out of room in English at both supported window sizes. It wraps
 		// instead of ending in an ellipsis, so the whole instruction is read.
 		if task.ReconnectRequired {
-			ui.Text(c, m.SftpTransferReconnectRequired()).FontSize(10).
+			ui.Text(c, m.SftpTransferReconnectRequired()).FontSize(kit.M(c).Font.Caption2).
 				TextColor(uitheme.WarningText(t)).FillWidth().MinWidth(0)
 		}
 	})
@@ -194,9 +195,9 @@ func centerFooter(c *ui.Context, s *transferstate.State, m locales.Messages, t *
 	}
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).
 		Justify(ui.SpaceBetween).Children(func() {
-		ui.Text(c, limit).FontSize(10).TextColor(t.TextMuted).NoWrap()
+		ui.Text(c, limit).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted).NoWrap()
 		if hint != "" {
-			ui.Text(c, hint).FontSize(10).TextColor(t.TextMuted).NoWrap()
+			ui.Text(c, hint).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted).NoWrap()
 		}
 	})
 }

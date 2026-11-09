@@ -39,7 +39,7 @@ func toolbar(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 func pathField(c *ui.Context, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab, m locales.Messages) {
 	input := ui.TextInput(c, &tab.Draft)
 	input.Placeholder(m.SftpPathPlaceholder())
-	input.FontSize(12)
+	input.FontSize(kit.M(c).Font.Footnote)
 	input.Height(24)
 	input.Grow(1)
 	input.MinWidth(0)
@@ -120,7 +120,7 @@ func breadcrumb(c *ui.Context, s *transferstate.State, side transferstate.Side, 
 				}
 				more := ui.ButtonBase(c).Label(strings.Join(names, " > ")).Tooltip(strings.Join(names, " > ")).
 					Padding(0, 4).Height(20).Radius(4).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
-				more.Children(func() { ui.Icon(c, icons.Lucide(icons.Ellipsis)).Size(12, 12) })
+				more.Children(func() { kit.IconSized(c, icons.Ellipsis, kit.M(c).Icon.Small) })
 				more.Menu(func(menu *ui.Menu) {
 					for _, f := range folded {
 						if menu.Item(f.label).Chosen() {
@@ -142,7 +142,7 @@ func breadcrumb(c *ui.Context, s *transferstate.State, side transferstate.Side, 
 }
 
 func chevron(c *ui.Context, t *ui.Theme) {
-	ui.Icon(c, icons.Lucide(icons.ChevronRight)).Size(12, 12).TextColor(t.TextMuted.Alpha(0.5)).Shrink(0)
+	kit.IconSized(c, icons.ChevronRight, kit.M(c).Icon.Small).TextColor(t.TextMuted.Alpha(0.5)).Shrink(0)
 }
 
 func crumbButton(c *ui.Context, label, tooltip string, current bool, t *ui.Theme) ui.Element {
@@ -157,7 +157,7 @@ func crumbButton(c *ui.Context, label, tooltip string, current bool, t *ui.Theme
 		color = t.Text
 	}
 	button.Children(func() {
-		text := ui.Text(c, label).FontSize(12).SingleLine().MinWidth(0).TextColor(color)
+		text := ui.Text(c, label).FontSize(kit.M(c).Font.Footnote).SingleLine().MinWidth(0).TextColor(color)
 		if current {
 			text.FontWeight(500)
 		}
@@ -239,7 +239,7 @@ var uiYellow = ui.Hex("#EAB308")
 // active fills it.
 func toolButton(c *ui.Context, icon, label string, active bool) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(28, 28).Radius(kit.RadiusControl).
+	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(28, 28).Radius(kit.M(c).Radius.Control).
 		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
 	switch {
 	case button.Pressed():
@@ -260,10 +260,10 @@ func filterBar(c *ui.Context, s *transferstate.State, side transferstate.Side, t
 		BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 		ui.Row(c).Grow(1).MinWidth(0).Height(24).Padding(0, 8).Gap(6).AlignItems(ui.Center).
 			Radius(5).Border(1, t.Border).Background(t.Surface).Children(func() {
-			ui.Icon(c, icons.Lucide(icons.Search)).Size(12, 12).TextColor(t.TextMuted).Shrink(0)
+			kit.IconSized(c, icons.Search, kit.M(c).Icon.Small).TextColor(t.TextMuted).Shrink(0)
 			input := ui.TextInputBase(c, &tab.Filter)
 			input.Placeholder(m.SftpFilterPlaceholder())
-			input.FontSize(12)
+			input.FontSize(kit.M(c).Font.Footnote)
 			input.Grow(1)
 			input.MinWidth(0)
 			input.AutoFocus()
@@ -273,7 +273,7 @@ func filterBar(c *ui.Context, s *transferstate.State, side transferstate.Side, t
 			if tab.Filter != "" {
 				clear := ui.ButtonBase(c).Label(m.SftpFilterClear()).Tooltip(m.SftpFilterClear()).
 					Size(16, 16).Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted)
-				clear.Children(func() { ui.Icon(c, icons.Lucide(icons.X)).Size(12, 12) })
+				clear.Children(func() { kit.IconSized(c, icons.X, kit.M(c).Icon.Small) })
 				if clear.Clicked() {
 					tab.Filter = ""
 				}

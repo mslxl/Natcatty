@@ -4,6 +4,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appvault "github.com/mslxl/natcatty/application/vault"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
@@ -84,7 +85,7 @@ var exportLayoutProbe func(exportFieldLayout)
 // fixed; the options scroll inside a gutter-reserving viewport, so the panel
 // stays readable at 720x480.
 func exportPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
-	ui.Text(c, m.VaultExportTitle()).FontSize(20).Bold()
+	ui.Text(c, m.VaultExportTitle()).FontSize(kit.M(c).Font.LargeTitle).Bold()
 	problem(c, s, t)
 	if issue := s.ExportProblem(); issue != vaultstate.ProblemNone {
 		ui.Text(c, problemText(m, issue)).TextColor(uitheme.DangerText(t))
@@ -93,17 +94,17 @@ func exportPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	gutter := scrollbarGutter(t)
 	scrollBox := ui.Scroll(c).Grow(1).FillWidth().PaddingEnd(gutter).TrackScroll(scroll)
 	scrollBox.Children(func() {
-		ui.Text(c, m.VaultExportIntro()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultExportIntro()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 
 		format := exportFormatLabel(m, s.ExportFormatValue())
 		_, labels := exportFormatOptions(m)
-		ui.Text(c, m.VaultExportFormat()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultExportFormat()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		if ui.Select(c, &format, labels).Width(280).Changed() {
 			s.SetExportFormat(exportFormatCode(m, format))
 			c.Invalidate()
 		}
 
-		ui.Text(c, m.VaultExportScope()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultExportScope()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		scopeLabels := []string{m.VaultExportScopeAll(), m.VaultExportScopeSelected()}
 		scope := exportScopeLabel(m, s.ExportScopeValue())
 		if ui.Select(c, &scope, scopeLabels).Width(280).Changed() {
@@ -112,7 +113,7 @@ func exportPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 		}
 		if s.ExportScopeValue() == vaultstate.ExportScopeSelected {
 			ui.Text(c, m.VaultExportSelectedHost(exportSelectedLabel(s))).
-				FontSize(11).TextColor(t.TextMuted)
+				FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		}
 
 		include := s.ExportIncludesSecrets()
@@ -130,11 +131,11 @@ func exportPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 		}
 		switch {
 		case !s.ExportIncludesSecrets():
-			ui.Text(c, m.VaultExportSecretsHint()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.VaultExportSecretsHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		case s.ExportSecretsConfirmed():
-			ui.Text(c, m.VaultExportSecretsConfirmed()).FontSize(11).TextColor(t.Success)
+			ui.Text(c, m.VaultExportSecretsConfirmed()).FontSize(kit.M(c).Font.Caption).TextColor(t.Success)
 		default:
-			ui.Text(c, m.VaultExportSecretsWarning()).FontSize(11).TextColor(uitheme.WarningText(t))
+			ui.Text(c, m.VaultExportSecretsWarning()).FontSize(kit.M(c).Font.Caption).TextColor(uitheme.WarningText(t))
 			if ui.Button(c, m.VaultExportConfirmSecrets()).Clicked() {
 				s.ConfirmExportSecrets()
 				c.Invalidate()
@@ -143,9 +144,9 @@ func exportPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	})
 
 	if s.ExportIncludesSecrets() && !s.ExportSecretsConfirmed() {
-		ui.Text(c, m.VaultExportUnconfirmed()).FontSize(12).TextColor(uitheme.WarningText(t))
+		ui.Text(c, m.VaultExportUnconfirmed()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.WarningText(t))
 	} else {
-		ui.Text(c, m.VaultExportSaveHint()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultExportSaveHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}
 	ui.Row(c).Gap(8).Children(func() {
 		if ui.PrimaryButton(c, m.VaultExportExport()).Clicked() {
@@ -179,14 +180,14 @@ func exportOutcomeBanner(c *ui.Context, s *vaultstate.State, m locales.Messages,
 	}
 	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
 		ui.Column(c).Grow(1).Children(func() {
-			ui.Text(c, m.VaultExportDone(outcome.Path, outcome.Bytes)).FontSize(12)
+			ui.Text(c, m.VaultExportDone(outcome.Path, outcome.Bytes)).FontSize(kit.M(c).Font.Footnote)
 			if outcome.Unreadable > 0 {
 				ui.Text(c, m.VaultExportUnreadable(outcome.Unreadable)).
-					FontSize(11).TextColor(uitheme.WarningText(t))
+					FontSize(kit.M(c).Font.Caption).TextColor(uitheme.WarningText(t))
 			}
 			if outcome.Omitted > 0 {
 				ui.Text(c, m.VaultExportOmitted(outcome.Omitted)).
-					FontSize(11).TextColor(t.TextMuted)
+					FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 			}
 		})
 		if ui.Button(c, m.VaultExportDismiss()).Clicked() {

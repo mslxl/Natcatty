@@ -82,7 +82,7 @@ func headerCell(c *ui.Context, s *transferstate.State, side transferstate.Side, 
 		color = t.Text
 	}
 	cell.Children(func() {
-		ui.Text(c, label).FontSize(12).FontWeight(600).SingleLine().MinWidth(0).TextColor(color)
+		ui.Text(c, label).FontSize(kit.M(c).Font.Footnote).FontWeight(600).SingleLine().MinWidth(0).TextColor(color)
 		if sorted {
 			arrow := icons.ArrowUp
 			if tab.Sort.Descending {
@@ -190,7 +190,7 @@ func listPlaceholder(c *ui.Context, tab *transferstate.Tab, m locales.Messages, 
 			icon, text = icons.Loader, m.SftpLoading()
 		}
 		ui.Icon(c, icons.Lucide(icon)).Size(32, 32).TextColor(t.TextMuted.Alpha(0.6))
-		ui.Text(c, text).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, text).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	})
 }
 
@@ -237,7 +237,7 @@ func fileRow(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 			if entry.IsDir() {
 				tint, fill = t.Accent, t.Accent.Alpha(0.1)
 			}
-			ui.Column(c).Size(tile, tile).Radius(6).Background(fill).Shrink(0).
+			ui.Column(c).Size(tile, tile).Radius(kit.M(c).Radius.Control).Background(fill).Shrink(0).
 				Justify(ui.Center).AlignItems(ui.Center).Children(func() {
 				ui.Icon(c, icons.Lucide(icon)).Size(glyph, glyph).TextColor(tint)
 			})
@@ -245,7 +245,7 @@ func fileRow(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 			if entry.Symlink && entry.LinkTarget != "" {
 				name += " → " + entry.LinkTarget
 			}
-			text := ui.Text(c, name).FontSize(13).SingleLine().MinWidth(0).TextColor(t.Text)
+			text := ui.Text(c, name).FontSize(kit.M(c).Font.Callout).SingleLine().MinWidth(0).TextColor(t.Text)
 			if entry.IsDir() {
 				text.FontWeight(500)
 			}
@@ -315,7 +315,7 @@ func cell(c *ui.Context, text string, width float32, right bool, t *ui.Theme) {
 		box.Justify(ui.End)
 	}
 	box.Children(func() {
-		ui.Text(c, text).FontSize(12).SingleLine().MinWidth(0).TextColor(t.TextMuted)
+		ui.Text(c, text).FontSize(kit.M(c).Font.Footnote).SingleLine().MinWidth(0).TextColor(t.TextMuted)
 	})
 }
 
@@ -394,8 +394,8 @@ func footer(c *ui.Context, s *transferstate.State, side transferstate.Side, tab 
 		if selected := len(tab.SelectedPaths()); selected > 0 {
 			text += " · " + m.SftpSelected(selected)
 		}
-		ui.Text(c, text).FontSize(11).TextColor(t.TextMuted).SingleLine().MinWidth(0).Grow(1)
-		ui.Text(c, tab.Path).FontSize(11).TextColor(t.TextMuted).SingleLine().MinWidth(0).MaxWidth(200).
+		ui.Text(c, text).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine().MinWidth(0).Grow(1)
+		ui.Text(c, tab.Path).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine().MinWidth(0).MaxWidth(200).
 			Tooltip(tab.Path)
 	})
 }
@@ -427,14 +427,14 @@ func queueStrip(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui
 		BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
 		ui.Row(c).FillWidth().Height(30).Padding(0, 6, 0, 12).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Icon(c, icons.Lucide(icons.ArrowDownUp)).Size(13, 13).TextColor(t.TextMuted)
-			ui.Text(c, m.SftpTransfers()).FontSize(12).FontWeight(600).TextColor(t.Text)
+			ui.Text(c, m.SftpTransfers()).FontSize(kit.M(c).Font.Footnote).FontWeight(600).TextColor(t.Text)
 			if active > 0 {
-				ui.Text(c, m.SftpTransferActive(active)).FontSize(11).TextColor(t.TextMuted).SingleLine().MinWidth(0)
+				ui.Text(c, m.SftpTransferActive(active)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine().MinWidth(0)
 			}
 			ui.Column(c).Grow(1)
 			if s.HasFinished() {
 				clear := kit.GhostButton(c, "", m.SftpClearCompleted())
-				clear.Height(22).FontSize(11)
+				clear.Height(22).FontSize(kit.M(c).Font.Caption)
 				if clear.Clicked() {
 					s.ClearFinished()
 				}
@@ -458,13 +458,13 @@ func stripRow(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.T
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Icon(c, icons.Lucide(transferStatusIcon(task.Status))).Size(13, 13).
 				TextColor(transferStatusColor(t, task.Status)).Shrink(0)
-			ui.Text(c, transferName(m, task)).FontSize(12).FontWeight(500).SingleLine().MinWidth(0).Shrink(1).
+			ui.Text(c, transferName(m, task)).FontSize(kit.M(c).Font.Footnote).FontWeight(500).SingleLine().MinWidth(0).Shrink(1).
 				TextColor(t.Text)
 			if task.DestDir != "" {
-				ui.Text(c, "→ "+task.DestDir).FontSize(11).SingleLine().MinWidth(0).Shrink(2).TextColor(t.TextMuted)
+				ui.Text(c, "→ "+task.DestDir).FontSize(kit.M(c).Font.Caption).SingleLine().MinWidth(0).Shrink(2).TextColor(t.TextMuted)
 			}
 			ui.Column(c).Grow(1)
-			ui.Text(c, transferDetail(m, task)).FontSize(11).NoWrap().TextColor(t.TextMuted)
+			ui.Text(c, transferDetail(m, task)).FontSize(kit.M(c).Font.Caption).NoWrap().TextColor(t.TextMuted)
 			transferButtons(c, s, m, task)
 		})
 		if !task.Status.Terminal() {

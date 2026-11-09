@@ -158,7 +158,7 @@ func tabBar(c *ui.Context, s *transferstate.State, side transferstate.Side, m lo
 		if add.Hovered() {
 			add.Background(kit.Subtle(t)).TextColor(t.Text)
 		}
-		add.Children(func() { ui.Icon(c, icons.Lucide(icons.Plus)).Size(14, 14) })
+		add.Children(func() { kit.IconSized(c, icons.Plus, kit.M(c).Icon.Medium) })
 		if add.Clicked() {
 			s.RequestHostPicker(side)
 		}
@@ -185,15 +185,15 @@ func paneTab(c *ui.Context, s *transferstate.State, side transferstate.Side, ind
 		if tab.Kind == transferstate.KindLocal {
 			icon = icons.Monitor
 		}
-		ui.Icon(c, icons.Lucide(icon)).Size(12, 12).TextColor(glyph).Shrink(0)
-		ui.Text(c, title).FontSize(12).FontWeight(500).SingleLine().MinWidth(0).Grow(1).TextColor(text)
+		kit.IconSized(c, icon, kit.M(c).Icon.Small).TextColor(glyph).Shrink(0)
+		ui.Text(c, title).FontSize(kit.M(c).Font.Footnote).FontWeight(500).SingleLine().MinWidth(0).Grow(1).TextColor(text)
 		closer := ui.ButtonBase(c).Label(m.SftpCloseTab()).Tooltip(m.SftpCloseTab()).
 			Size(18, 18).Radius(4).Justify(ui.Center).AlignItems(ui.Center).Shrink(0).
 			TextColor(t.TextMuted)
 		if closer.Hovered() {
 			closer.Background(kit.Strong(t)).TextColor(uitheme.DangerText(t))
 		}
-		closer.Children(func() { ui.Icon(c, icons.Lucide(icons.X)).Size(12, 12) })
+		closer.Children(func() { kit.IconSized(c, icons.X, kit.M(c).Icon.Small) })
 		if closer.Clicked() {
 			s.CloseTabAt(side, index)
 		}
@@ -228,8 +228,8 @@ func emptyPane(c *ui.Context, s *transferstate.State, side transferstate.Side, m
 			ui.Icon(c, icons.Lucide(icon)).Size(24, 24).TextColor(t.Accent)
 		})
 		ui.Column(c).Gap(4).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.SftpSelectHostTitle()).FontSize(14).FontWeight(600).TextColor(t.Text)
-			ui.Text(c, m.SftpSelectHostSubtitle()).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, m.SftpSelectHostTitle()).FontSize(kit.M(c).Font.Body).FontWeight(600).TextColor(t.Text)
+			ui.Text(c, m.SftpSelectHostSubtitle()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		})
 		pick := kit.PrimaryButton(c, icons.Plus, m.SftpSelectHost())
 		if pick.Clicked() {
@@ -244,11 +244,11 @@ func problemBanner(c *ui.Context, s *transferstate.State, side transferstate.Sid
 	ui.Row(c).FillWidth().Gap(8).Padding(6, 12).AlignItems(ui.Center).Shrink(0).
 		Background(t.Background.Mix(t.Danger, 0.1)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).
 		Children(func() {
-			ui.Icon(c, icons.Lucide(icons.TriangleAlert)).Size(14, 14).TextColor(uitheme.DangerText(t)).Shrink(0)
-			ui.Text(c, errorText(m, tab.Problem)).FontSize(12).TextColor(uitheme.DangerText(t)).
+			kit.IconSized(c, icons.TriangleAlert, kit.M(c).Icon.Medium).TextColor(uitheme.DangerText(t)).Shrink(0)
+			ui.Text(c, errorText(m, tab.Problem)).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t)).
 				Grow(1).MinWidth(0).SingleLine()
 			retry := kit.GhostButton(c, icons.RefreshCw, m.SftpRetry())
-			retry.Height(24).FontSize(12)
+			retry.Height(24).FontSize(kit.M(c).Font.Footnote)
 			if retry.Clicked() {
 				s.Refresh(side)
 			}
@@ -268,9 +268,9 @@ func operationBar(c *ui.Context, s *transferstate.State, m locales.Messages, t *
 			text, color = errorText(m, op.Err), uitheme.DangerText(t)
 		}
 		if op.Running {
-			ui.Icon(c, icons.Lucide(icons.Loader)).Size(14, 14).TextColor(t.Accent).Shrink(0)
+			kit.IconSized(c, icons.Loader, kit.M(c).Icon.Medium).TextColor(t.Accent).Shrink(0)
 		}
-		ui.Text(c, text).FontSize(12).Grow(1).MinWidth(0).SingleLine().TextColor(color)
+		ui.Text(c, text).FontSize(kit.M(c).Font.Footnote).Grow(1).MinWidth(0).SingleLine().TextColor(color)
 		if op.Status != "" {
 			// A queue-backed operation also shows the bar the Transfer center
 			// uses, so progress is visible without opening the center.
@@ -281,7 +281,7 @@ func operationBar(c *ui.Context, s *transferstate.State, m locales.Messages, t *
 			label = m.SftpCancel()
 		}
 		button := kit.GhostButton(c, "", label)
-		button.Height(24).FontSize(12)
+		button.Height(24).FontSize(kit.M(c).Font.Footnote)
 		if button.Clicked() {
 			if op.Running {
 				s.CancelOperation()
@@ -304,6 +304,6 @@ func status(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.The
 	}
 	ui.Row(c).FillWidth().Padding(4, 12).Shrink(0).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).
 		Children(func() {
-			ui.Text(c, text).FontSize(11).TextColor(color).SingleLine().MinWidth(0)
+			ui.Text(c, text).FontSize(kit.M(c).Font.Caption).TextColor(color).SingleLine().MinWidth(0)
 		})
 }

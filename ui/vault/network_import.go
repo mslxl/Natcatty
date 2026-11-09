@@ -8,6 +8,7 @@ import (
 
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/domain/wireguardconf"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
@@ -25,15 +26,15 @@ func networkImportControls(c *ui.Context, s *vaultstate.State, m locales.Message
 			c.Invalidate()
 		}
 	})
-	ui.Text(c, m.VaultNetworkImportHint()).FontSize(12).TextColor(t.TextMuted)
+	ui.Text(c, m.VaultNetworkImportHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	if parseErr := s.NetworkImportError(); parseErr != nil {
 		ui.Text(c, m.VaultNetworkImportIssue(parseErr.Line,
 			networkImportFieldLabel(m, parseErr.Field),
 			networkImportErrorMessage(m, parseErr.Kind))).
-			FontSize(12).TextColor(uitheme.DangerText(t))
+			FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 	}
 	if problem := s.NetworkImportProblem(); problem != vaultstate.ProblemNone {
-		ui.Text(c, problemText(m, problem)).FontSize(12).TextColor(uitheme.DangerText(t))
+		ui.Text(c, problemText(m, problem)).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 	}
 }
 
@@ -48,48 +49,48 @@ func networkImportReview(c *ui.Context, s *vaultstate.State,
 	}
 	ui.Text(c, m.VaultNetworkImportResult(preview.FileName)).Bold()
 	if value := joinNetworkPrefixes(preview.Config.Interface.Addresses); value != "" {
-		ui.Text(c, m.VaultNetworkImportAddresses(value)).FontSize(12)
+		ui.Text(c, m.VaultNetworkImportAddresses(value)).FontSize(kit.M(c).Font.Footnote)
 	}
 	if value := joinNetworkAddresses(preview.Config.Interface.DNS); value != "" {
-		ui.Text(c, m.VaultNetworkImportDNS(value)).FontSize(12)
+		ui.Text(c, m.VaultNetworkImportDNS(value)).FontSize(kit.M(c).Font.Footnote)
 	}
-	ui.Text(c, m.VaultNetworkImportMTU(int(mtu))).FontSize(12)
+	ui.Text(c, m.VaultNetworkImportMTU(int(mtu))).FontSize(kit.M(c).Font.Footnote)
 	if preview.Config.Interface.ListenPort != 0 {
-		ui.Text(c, m.VaultNetworkImportListenPort(int(preview.Config.Interface.ListenPort))).FontSize(12)
+		ui.Text(c, m.VaultNetworkImportListenPort(int(preview.Config.Interface.ListenPort))).FontSize(kit.M(c).Font.Footnote)
 	}
-	ui.Text(c, m.VaultNetworkImportPeers(len(preview.Config.Peers))).FontSize(12)
+	ui.Text(c, m.VaultNetworkImportPeers(len(preview.Config.Peers))).FontSize(kit.M(c).Font.Footnote)
 	for index, peer := range preview.Config.Peers {
 		ui.Column(c).FillWidth().Gap(2).Padding(8).Background(t.Surface).Children(func() {
 			ui.Text(c, m.VaultNetworkPeerTitle(index+1)).Bold()
 			// Public keys and endpoints are not secret. The Preshared Key is
 			// only reported as present; its value never reaches this surface.
 			ui.Text(c, m.VaultNetworkImportPeerPublicKey(
-				wireguardconf.EncodeKey(peer.PublicKey))).FontSize(12)
+				wireguardconf.EncodeKey(peer.PublicKey))).FontSize(kit.M(c).Font.Footnote)
 			if peer.Endpoint.Host != "" && peer.Endpoint.Port != 0 {
-				ui.Text(c, m.VaultNetworkImportPeerEndpoint(peer.Endpoint.String())).FontSize(12)
+				ui.Text(c, m.VaultNetworkImportPeerEndpoint(peer.Endpoint.String())).FontSize(kit.M(c).Font.Footnote)
 			}
 			if allowed := joinNetworkPrefixes(peer.AllowedIPs); allowed != "" {
-				ui.Text(c, m.VaultNetworkImportPeerAllowedIPs(allowed)).FontSize(12)
+				ui.Text(c, m.VaultNetworkImportPeerAllowedIPs(allowed)).FontSize(kit.M(c).Font.Footnote)
 			}
 			if peer.PersistentKeepalive != 0 {
 				ui.Text(c, m.VaultNetworkImportPeerKeepalive(
-					int(peer.PersistentKeepalive))).FontSize(12)
+					int(peer.PersistentKeepalive))).FontSize(kit.M(c).Font.Footnote)
 			}
 			if peer.PresharedKey != nil {
-				ui.Text(c, m.VaultNetworkImportPeerPresharedKeySet()).FontSize(12)
+				ui.Text(c, m.VaultNetworkImportPeerPresharedKeySet()).FontSize(kit.M(c).Font.Footnote)
 			}
 		})
 	}
 
 	ui.Text(c, m.VaultNetworkImportDiagnostics()).Bold()
 	if len(preview.Diagnostics) == 0 {
-		ui.Text(c, m.VaultNetworkImportNoDiagnostics()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.VaultNetworkImportNoDiagnostics()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}
 	for _, diagnostic := range preview.Diagnostics {
 		ui.Text(c, m.VaultNetworkImportIssue(diagnostic.Line,
 			networkImportFieldLabel(m, diagnostic.Field),
 			networkImportDiagnosticMessage(m, diagnostic.Code))).
-			FontSize(12).TextColor(uitheme.WarningText(t))
+			FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.WarningText(t))
 	}
 
 	ui.Row(c).Gap(8).Children(func() {

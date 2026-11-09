@@ -3,6 +3,7 @@ package transfer
 import (
 	"github.com/egoist/mygo/ui"
 
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	transferstate "github.com/mslxl/natcatty/ui/transfer/state"
 )
@@ -31,7 +32,7 @@ func SidePanel(s *transferstate.State, width float32) func(*ui.Context) {
 		root.Children(func() {
 			if tab == nil {
 				ui.Column(c).Grow(1).FillWidth().AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-					ui.Text(c, m.SftpNoTab()).FontSize(12).TextColor(t.TextMuted).SingleLine().MinWidth(0)
+					ui.Text(c, m.SftpNoTab()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine().MinWidth(0)
 				})
 				return
 			}
