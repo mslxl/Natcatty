@@ -13,7 +13,10 @@ _Avoid_: server, target, machine
 
 **Host Group**:
 A user-defined grouping of hosts with shared display and connection defaults.
-In Go, `domain/vault.Group` is a Host Group and `Host.Group` holds its path.
+In Go, `domain/vault.Group` is a Host Group with a stable ID and a
+`(ParentID, Name)` position; its `Path` is derived from the tree. A Host
+belongs to at most one group through `Host.GroupID`; `Host.Group` is the
+derived path used for display and for the portable payload.
 _Avoid_: folder, category
 
 **Backing**:
