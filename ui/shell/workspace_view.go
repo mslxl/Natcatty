@@ -127,12 +127,12 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 	ui.Row(c).FillWidth().Height(topBarHeight).Shrink(0).Padding(0, 8+right, 0, 12+left).Gap(2).AlignItems(ui.End).
 		Background(kit.Muted(t)).DragWindow().Children(func() {
 		titlebar.DragStripe(c)
-		if fixedTab(c, "tab-home", icons.LayoutGrid, m.NavVault(), homeVisible(s)).Clicked() {
+		if kit.Tab(c, kit.TabWork, kit.TabSpec{Key: "tab-home", Icon: icons.LayoutGrid, Title: m.NavVault(), Fixed: true, Active: homeVisible(s)}).Clicked {
 			s.ShowHome()
 			c.Invalidate()
 		}
 		if s.SFTPTabShown() {
-			if fixedTab(c, "tab-sftp", icons.FolderOpen, m.NavSftp(), s.SFTPVisible()).Clicked() {
+			if kit.Tab(c, kit.TabWork, kit.TabSpec{Key: "tab-sftp", Icon: icons.FolderOpen, Title: m.NavSftp(), Fixed: true, Active: s.SFTPVisible()}).Clicked {
 				s.ShowSFTP()
 				c.Invalidate()
 			}
@@ -146,54 +146,34 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 		// The strip scrolls sideways at the minimum window width. Tabs keep a
 		// readable title width instead of shrinking or clipping the last Tab;
 		// every Tab stays reachable with the wheel, trackpad or keyboard.
-		ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Height(topBarHeight).Label(m.WorkTabsLabel()).
-			Children(func() {
-				ui.Row(c).Height(topBarHeight).AlignItems(ui.End).Children(func() {
-					for index := 0; index < s.TabCount(); index++ {
-						info, ok := s.TabInfo(index)
-						if !ok {
-							continue
-						}
-						if !terminal {
-							info.Active = false
-						}
-						tabInsertionStrip(c, s, t, info.ID, false)
-						tabBody(c, s, m, t, index, info, revealActive && terminal)
-						tabInsertionStrip(c, s, t, info.ID, true)
-					}
-					for _, label := range s.PendingConnections() {
-						pendingTab(c, m, t, label)
-					}
-					if kit.IconButtonWith(c, icons.Plus, m.MenuNewTab(), kit.IconOptions{Role: kit.IconTab}).Margin(0, 0, 4, 4).Clicked() {
-						_ = s.NewTab()
-						c.Invalidate()
-					}
-				})
-			})
+		added := kit.TabStrip(c, kit.TabWork, kit.TabStripOptions{
+			Label: m.WorkTabsLabel(), Height: topBarHeight, Add: m.MenuNewTab(),
+		}, func() {
+			for index := 0; index < s.TabCount(); index++ {
+				info, ok := s.TabInfo(index)
+				if !ok {
+					continue
+				}
+				if !terminal {
+					info.Active = false
+				}
+				tabInsertionStrip(c, s, t, info.ID, false)
+				tabBody(c, s, m, t, index, info, revealActive && terminal)
+				tabInsertionStrip(c, s, t, info.ID, true)
+			}
+			for _, label := range s.PendingConnections() {
+				pendingTab(c, m, t, label)
+			}
+		})
+		if added {
+			_ = s.NewTab()
+			c.Invalidate()
+		}
 		controlPanel(c, s, m)
 		if kit.IconButtonWith(c, icons.Settings, m.NavSettings(), kit.IconOptions{Role: kit.IconCard, Key: "bar-settings"}).Clicked() {
 			s.RequestSettings()
 		}
 	})
-}
-
-// fixedTab is one of the Tabs every window has, the home Tab and SFTP: an
-// icon and a label, raised while it is the chosen one.
-func fixedTab(c *ui.Context, key, icon, label string, active bool) ui.Element {
-	t := c.Theme()
-	tab := ui.ButtonBase(c).Key(key).Label(label).Height(tabHeight).Padding(0, 12).Gap(8).
-		Radius(tabRadius, tabRadius, 0, 0).AlignItems(ui.Center).Shrink(0).TextColor(t.TextMuted)
-	switch {
-	case active:
-		tab.Background(t.Background).TextColor(t.Text)
-	case tab.Hovered():
-		tab.Background(t.Background.Alpha(0.4)).TextColor(t.Text)
-	}
-	tab.Children(func() {
-		kit.IconSized(c, icon, kit.M(c).Icon.Medium)
-		ui.Text(c, label).FontSize(kit.M(c).Font.Footnote).FontWeight(600).SingleLine()
-	})
-	return tab
 }
 
 // tabRadius rounds a Tab's top corners, as the original's rounded-t-md.
@@ -221,36 +201,6 @@ func tabInsertionStrip(c *ui.Context, s *state.State, t *ui.Theme, target model.
 }
 
 func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, index int, info state.TabInfo, reveal bool) {
-	title := tabTitle(m, info)
-	body := ui.Row(c).Height(tabHeight).MinWidth(140).MaxWidth(240).Padding(0, 4, 0, 12).Gap(8).
-		Radius(tabRadius, tabRadius, 0, 0).AlignItems(ui.Center).Tooltip(title)
-	hovered := body.Hovered()
-	switch {
-	case info.Active:
-		body.Background(t.Background)
-	case hovered:
-		body.Background(t.Background.Alpha(0.4))
-	}
-	body.Drag(state.TabDrag(info.ID))
-	if body.Clicked() {
-		s.SelectTab(index)
-		c.Invalidate()
-	}
-	if drag, over := ui.DragOver[state.DragItem](body); over && drag.TabID != info.ID {
-		body.Border(1, t.Accent)
-	}
-	if drag, dropped := ui.Drop[state.DragItem](body); dropped && drag.TabID != info.ID {
-		moved := false
-		switch drag.Kind {
-		case state.DragKindTab:
-			moved = s.MoveTab(drag.TabID, info.ID, false)
-		case state.DragKindPane:
-			moved = s.MovePaneToTab(drag.TabID, drag.PaneID, info.ID)
-		}
-		if moved {
-			c.Invalidate()
-		}
-	}
 	tabMenu := func(menu *ui.Menu) {
 		if menu.Item(m.MenuCloseTab()).Chosen() {
 			s.CloseTab(index)
@@ -278,35 +228,52 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 			c.Invalidate()
 		}
 	}
-	body.ContextMenu(tabMenu)
-	body.Children(func() {
-		snapshot, ok := s.TabSnapshot(index)
-		kit.StatusDot(c, sessionTone(t, snapshot, ok))
-		// SingleLine text can shrink to nothing in a flex row; give the title
-		// a readable minimum so it is not squeezed out beside the controls.
-		titleText := ui.Text(c, title).FontSize(kit.M(c).Font.Footnote).FontWeight(600).SingleLine().MinWidth(72).Grow(1)
-		if info.Active || hovered {
-			titleText.TextColor(t.Text)
-		} else {
-			titleText.TextColor(t.TextMuted)
-		}
-		if info.Dirty {
-			ui.Text(c, m.TabDirtyMarker()).FontSize(9).TextColor(t.Accent)
-		}
-		// The menu and close controls show on the active and the hovered Tab,
-		// as the original's; a right-click opens the same menu on any Tab.
-		if info.Active || hovered {
-			kit.IconButtonWith(c, icons.Ellipsis, m.TabMenuGlyph(), kit.IconOptions{Role: kit.IconTab}).Menu(tabMenu)
-			if kit.IconButtonWith(c, icons.X, m.CloseGlyph(), kit.IconOptions{Role: kit.IconTab}).Clicked() {
-				s.CloseTab(index)
-				c.Invalidate()
-			}
-		}
+	marker := ""
+	if info.Dirty {
+		marker = m.TabDirtyMarker()
+	}
+	// The menu and close controls show on the active and the hovered Tab,
+	// as the original's; a right-click opens the same menu on any Tab. The
+	// strip scrolls sideways, so reveal keeps the active Tab whole when it is
+	// opened or selected while the strip is scrolled, and after a resize.
+	tab := kit.Tab(c, kit.TabWork, kit.TabSpec{
+		Title:  tabTitle(m, info),
+		Active: info.Active,
+		Lead: func() {
+			snapshot, ok := s.TabSnapshot(index)
+			kit.StatusDot(c, sessionTone(t, snapshot, ok))
+		},
+		Marker:      marker,
+		Close:       m.CloseGlyph(),
+		MenuLabel:   m.TabMenuGlyph(),
+		Menu:        tabMenu,
+		ContextMenu: tabMenu,
+		Reveal:      reveal,
 	})
-	if info.Active && reveal {
-		// The strip scrolls sideways; keep the active Tab whole when it is
-		// opened or selected while the strip is scrolled, and after a resize.
-		body.ScrollIntoView()
+	body := tab.Element
+	body.Drag(state.TabDrag(info.ID))
+	if tab.Clicked {
+		s.SelectTab(index)
+		c.Invalidate()
+	}
+	if tab.Closed {
+		s.CloseTab(index)
+		c.Invalidate()
+	}
+	if drag, over := ui.DragOver[state.DragItem](body); over && drag.TabID != info.ID {
+		body.Border(1, t.Accent)
+	}
+	if drag, dropped := ui.Drop[state.DragItem](body); dropped && drag.TabID != info.ID {
+		moved := false
+		switch drag.Kind {
+		case state.DragKindTab:
+			moved = s.MoveTab(drag.TabID, info.ID, false)
+		case state.DragKindPane:
+			moved = s.MovePaneToTab(drag.TabID, drag.PaneID, info.ID)
+		}
+		if moved {
+			c.Invalidate()
+		}
 	}
 }
 

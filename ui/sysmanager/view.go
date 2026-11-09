@@ -462,8 +462,9 @@ func dockerContent(c *ui.Context, s *State, state appsysmanager.TabState,
 	view := s.DockerView()
 	chosen := view
 	ui.Row(c).FillWidth().Children(func() {
-		ui.Segmented(c, &chosen, m.SysManagerContainers(), m.SysManagerImages()).
-			Label(m.SysManagerDockerView())
+		kit.Segmented(c, kit.SegmentedText, &chosen, m.SysManagerDockerView(), []kit.Segment{
+			{Label: m.SysManagerContainers()}, {Label: m.SysManagerImages()},
+		})
 	})
 	if chosen != view {
 		s.SetDockerView(chosen)
