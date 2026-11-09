@@ -4,6 +4,8 @@ package styletest
 import (
 	"testing"
 
+	"github.com/egoist/mygo/ui"
+
 	"github.com/mslxl/natcatty/ui/kit"
 )
 
@@ -21,5 +23,15 @@ func Each(t *testing.T, fn func(t *testing.T)) {
 			t.Cleanup(func() { kit.SetStyle(nil) })
 			fn(t)
 		})
+	}
+}
+
+// Styled draws view in style, with the theme style derives from theme, as
+// the app's window does. It leaves the style active; the test restores it.
+func Styled(style kit.Style, theme *ui.Theme, view func(*ui.Context)) func(*ui.Context) {
+	return func(c *ui.Context) {
+		kit.SetStyle(style)
+		c.SetTheme(style.Theme(theme))
+		view(c)
 	}
 }

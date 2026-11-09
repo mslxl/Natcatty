@@ -60,7 +60,7 @@ func View(s *state.State) func(*ui.Context) {
 		}
 		t := c.Theme()
 
-		layout.WindowFrame(c, layout.FrameOptions{Opaque: true},
+		layout.WindowFrame(c, layout.FrameOptions{Opaque: true, Vibrant: true},
 			func() { workTabs(c, s, m, t, reveal) },
 			func() { body(c, s, m, t) })
 
@@ -265,8 +265,11 @@ func controlPanel(c *ui.Context, s *state.State, m locales.Messages) {
 		return
 	}
 	open := s.QuickControlsOpen()
-	button := kit.IconButtonWith(c, icons.SlidersHorizontal, m.NavControlPanel(), kit.IconOptions{Role: kit.IconCard, Key: "bar-control-panel"})
-	if *open {
+	// An open panel tints its glass capsule in the macOS style, and shades
+	// the Classic button a little lighter than a press.
+	native := kit.CurrentStyle().Native()
+	button := kit.IconButtonWith(c, icons.SlidersHorizontal, m.NavControlPanel(), kit.IconOptions{Role: kit.IconBar, On: *open && native, Key: "bar-control-panel"})
+	if *open && !native {
 		button.Background(c.Theme().Text.Alpha(0.1))
 	}
 	if button.Clicked() {

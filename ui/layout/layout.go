@@ -33,12 +33,23 @@ type FrameOptions struct {
 	// Opaque paints the window's background under the frame. A clear frame
 	// leaves the window's own background, as Settings does.
 	Opaque bool
+	// Vibrant lets a style whose window is vibrant show the window's
+	// material through the frame instead, where the body paints nothing.
+	Vibrant bool
 }
+
+// SidebarRadius rounds the macOS style's floating sidebar: concentric with
+// the window's corners at its CardGap inset.
+const SidebarRadius float32 = 18
 
 // WindowFrame is a window's root: its title bar, then its body below.
 func WindowFrame(c *ui.Context, o FrameOptions, bar, body func()) {
 	frame := ui.Column(c).Fill()
-	if o.Opaque {
+	vibrant := o.Vibrant && kit.Vibrant(kit.CurrentStyle())
+	switch {
+	case vibrant:
+		kit.Fill(c, c.Root(), kit.SurfaceWindow)
+	case o.Opaque:
 		frame.Background(c.Theme().Background)
 	}
 	frame.Children(func() {
@@ -66,8 +77,13 @@ type HomeSlots struct {
 }
 
 // HomeLayout is the main window's page body: the sidebar, and the raised,
-// rounded card the page draws in.
+// rounded card the page draws in. The macOS style floats the sidebar, inset
+// on glass, beside the page drawn flush, with no card.
 func HomeLayout(c *ui.Context, slots HomeSlots) {
+	if kit.CurrentStyle().Native() {
+		nativeHome(c, slots)
+		return
+	}
 	bodyRow(c, func() {
 		start := CardGap
 		if slots.Sidebar != nil {
@@ -86,6 +102,26 @@ func HomeLayout(c *ui.Context, slots HomeSlots) {
 			ui.Column(c).FillWidth().Grow(1).MinHeight(0).MinWidth(0).Padding(CardPadding).
 				Background(t.Surface).Border(CardBorder, t.Border).Radius(kit.M(c).Radius.Card).
 				Shadow(0, 1, 3, 0, kit.CardShadow(t)).Clip().Children(slots.Content)
+		})
+	})
+}
+
+func nativeHome(c *ui.Context, slots HomeSlots) {
+	t := c.Theme()
+	bodyRow(c, func() {
+		if slots.Sidebar != nil {
+			ui.Column(c).Width(SidebarWidth).FillHeight().Shrink(0).Padding(0, 0, CardGap, CardGap).Children(func() {
+				panel := ui.Column(c).Fill().MinHeight(0).Padding(8).Gap(2).Radius(SidebarRadius).Clip()
+				kit.Fill(c, panel, kit.SurfaceSidebar).Children(slots.Sidebar)
+			})
+		}
+		// The page fills the rest of the body, and its notices sit above
+		// it on its own background.
+		ui.Column(c).Grow(1).FillHeight().MinWidth(0).Background(t.Background).Children(func() {
+			if slots.Notices != nil {
+				ui.Column(c).FillWidth().Padding(CardGap, CardGap, 0, CardGap).Gap(CardGap).Children(slots.Notices)
+			}
+			ui.Column(c).FillWidth().Grow(1).MinHeight(0).MinWidth(0).Padding(ShellPadding).Children(slots.Content)
 		})
 	})
 }
@@ -118,7 +154,9 @@ type WorkSlots struct {
 // with the terminal: the split's own one-DIP line is the only separator.
 func WorkLayout(c *ui.Context, slots WorkSlots) {
 	bodyRow(c, func() {
-		ui.Column(c).Grow(1).FillHeight().MinWidth(0).Children(func() {
+		// The body paints its own background, so a vibrant window shows its
+		// material only beside the home pages, never around a terminal.
+		ui.Column(c).Grow(1).FillHeight().MinWidth(0).Background(c.Theme().Background).Children(func() {
 			if slots.Top != nil {
 				slots.Top()
 			}

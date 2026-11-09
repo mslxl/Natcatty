@@ -124,8 +124,13 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 	// opens into it. The bar is the window's title bar too: its empty room
 	// drags the window, and its right end stays clear of the window controls.
 	left, right := titlebar.Insets(c, titlebar.Tabs)
-	ui.Row(c).FillWidth().Height(topBarHeight).Shrink(0).Padding(0, 8+right, 0, 12+left).Gap(2).AlignItems(ui.End).
-		Background(kit.Muted(t)).DragWindow().Children(func() {
+	// Classic Tabs sit on the bar's floor; macOS capsules are centered in it.
+	align := ui.End
+	if kit.CurrentStyle().Native() {
+		align = ui.Center
+	}
+	bar := ui.Row(c).FillWidth().Height(topBarHeight).Shrink(0).Padding(0, 8+right, 0, 12+left).Gap(2).AlignItems(align)
+	kit.TitleBarFill(c, bar, terminal).DragWindow().Children(func() {
 		titlebar.DragStripe(c)
 		if kit.Tab(c, kit.TabWork, kit.TabSpec{Key: "tab-home", Icon: icons.LayoutGrid, Title: m.NavVault(), Fixed: true, Active: homeVisible(s)}).Clicked {
 			s.ShowHome()
@@ -170,7 +175,7 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 			c.Invalidate()
 		}
 		controlPanel(c, s, m)
-		if kit.IconButtonWith(c, icons.Settings, m.NavSettings(), kit.IconOptions{Role: kit.IconCard, Key: "bar-settings"}).Clicked() {
+		if kit.IconButtonWith(c, icons.Settings, m.NavSettings(), kit.IconOptions{Role: kit.IconBar, Key: "bar-settings"}).Clicked() {
 			s.RequestSettings()
 		}
 	})
