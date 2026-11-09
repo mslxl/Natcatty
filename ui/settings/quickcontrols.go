@@ -22,7 +22,7 @@ func (s *PreferencesState) QuickControls() func(*ui.Context) {
 		appearance := s.Settings().Appearance
 		ui.Column(c).Width(288).Children(func() {
 			ui.Row(c).FillWidth().Padding(8, 12).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-				ui.Text(c, m.NavControlPanel()).FontSize(13).FontWeight(500).SingleLine()
+				ui.Text(c, m.NavControlPanel()).FontSize(kit.M(c).Font.Callout).FontWeight(500).SingleLine()
 			})
 			ui.Column(c).FillWidth().Padding(8).Gap(4).Children(func() {
 				quickOpacity(c, s, m, t, appearance.WindowOpacity)
@@ -44,9 +44,9 @@ func quickOpacity(c *ui.Context, s *PreferencesState, m locales.Messages, t *ui.
 			if opacity < 1 {
 				color = t.Accent
 			}
-			ui.Icon(c, icons.Lucide(icons.Droplets)).Size(14, 14).TextColor(color)
-			ui.Text(c, m.SettingsWindowOpacity()).FontSize(13).SingleLine().Grow(1).MinWidth(0)
-			ui.Text(c, m.SettingsWindowOpacityValue(percent)).FontSize(12).TextColor(t.TextMuted)
+			kit.IconSized(c, icons.Droplets, kit.M(c).Icon.Medium).TextColor(color)
+			ui.Text(c, m.SettingsWindowOpacity()).FontSize(kit.M(c).Font.Callout).SingleLine().Grow(1).MinWidth(0)
+			ui.Text(c, m.SettingsWindowOpacityValue(percent)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		})
 		value := opacity
 		if ui.Slider(c, &value, domain.MinWindowOpacity, 1).FillWidth().Label(m.SettingsWindowOpacity()).Changed() {
@@ -58,8 +58,8 @@ func quickOpacity(c *ui.Context, s *PreferencesState, m locales.Messages, t *ui.
 			for _, preset := range []float64{1, 0.95, 0.9, 0.85, 0.8} {
 				label := m.SettingsWindowOpacityValue(strconv.Itoa(int(math.Round(preset * 100))))
 				c.Key("quick-opacity-" + label)
-				button := ui.ButtonBase(c).Label(label).Grow(1).Height(24).Radius(kit.RadiusControl).
-					Justify(ui.Center).AlignItems(ui.Center).FontSize(11).FontWeight(500)
+				button := ui.ButtonBase(c).Label(label).Grow(1).Height(24).Radius(kit.M(c).Radius.Control).
+					Justify(ui.Center).AlignItems(ui.Center).FontSize(kit.M(c).Font.Caption).FontWeight(500)
 				switch {
 				case math.Abs(opacity-preset) < 0.005:
 					button.Background(t.Accent).TextColor(t.AccentText)
@@ -88,9 +88,9 @@ func quickTheme(c *ui.Context, s *PreferencesState, m locales.Messages, t *ui.Th
 		icon = icons.Moon
 	}
 	ui.Row(c).FillWidth().Padding(4, 8).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Icon(c, icons.Lucide(icon)).Size(14, 14).TextColor(t.TextMuted)
-		ui.Text(c, m.SettingsThemeMode()).FontSize(13).SingleLine().Grow(1).MinWidth(0)
-		ui.Row(c).Padding(2).Gap(2).Radius(kit.RadiusControl).Background(kit.Subtle(t)).Children(func() {
+		kit.IconSized(c, icon, kit.M(c).Icon.Medium).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsThemeMode()).FontSize(kit.M(c).Font.Callout).SingleLine().Grow(1).MinWidth(0)
+		ui.Row(c).Padding(2).Gap(2).Radius(kit.M(c).Radius.Control).Background(kit.Subtle(t)).Children(func() {
 			for _, option := range []struct {
 				mode  domain.ThemeMode
 				label string
@@ -101,7 +101,7 @@ func quickTheme(c *ui.Context, s *PreferencesState, m locales.Messages, t *ui.Th
 			} {
 				c.Key("quick-theme-" + string(option.mode))
 				button := ui.ButtonBase(c).Label(option.label).Height(20).Padding(0, 6).Radius(4).
-					AlignItems(ui.Center).FontSize(11).FontWeight(500).TextColor(t.TextMuted)
+					AlignItems(ui.Center).FontSize(kit.M(c).Font.Caption).FontWeight(500).TextColor(t.TextMuted)
 				if option.mode == mode {
 					button.Background(t.Background).TextColor(t.Text).Shadow(0, 1, 2, 0, kit.CardShadow(t))
 				} else if button.Hovered() {

@@ -122,15 +122,15 @@ func licensesArea(c *ui.Context, state *LicensesState, m locales.Messages, t *ui
 	section(c, m.SettingsAboutLicenseTitle(), "", t, func() {
 		version := state.Version()
 		if version != "" {
-			ui.Text(c, m.SettingsAboutVersion(version)).FontSize(13).FontWeight(500)
+			ui.Text(c, m.SettingsAboutVersion(version)).FontSize(kit.M(c).Font.Callout).FontWeight(500)
 		}
-		ui.Text(c, m.SettingsAboutLicenseBody()).FontSize(12).TextColor(t.TextMuted)
-		ui.Text(c, m.SettingsAboutLegalReview()).FontSize(11).TextColor(uitheme.WarningText(t))
+		ui.Text(c, m.SettingsAboutLicenseBody()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsAboutLegalReview()).FontSize(kit.M(c).Font.Caption).TextColor(uitheme.WarningText(t))
 	})
 
 	section(c, m.SettingsAboutModificationTitle(), "", t, func() {
 		if state.Notice() == "" {
-			ui.Text(c, m.SettingsAboutUnavailable()).FontSize(12).TextColor(uitheme.DangerText(t))
+			ui.Text(c, m.SettingsAboutUnavailable()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 			return
 		}
 		ui.TextArea(c, state.NoticeText()).ReadOnly(true).FillWidth().Height(170)
@@ -138,22 +138,22 @@ func licensesArea(c *ui.Context, state *LicensesState, m locales.Messages, t *ui
 
 	section(c, m.SettingsAboutSourceTitle(), m.SettingsAboutSourceBody(), t, func() {
 		if source := state.SourceURL(); source != "" {
-			ui.Text(c, source).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, source).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			if kit.PrimaryButton(c, "", m.SettingsAboutOpenSource()).Clicked() {
 				state.OpenSource()
 				c.Invalidate()
 			}
 			if state.OpenFailed() {
-				ui.Text(c, m.SettingsAboutUnavailable()).FontSize(11).TextColor(uitheme.WarningText(t))
+				ui.Text(c, m.SettingsAboutUnavailable()).FontSize(kit.M(c).Font.Caption).TextColor(uitheme.WarningText(t))
 			}
 		} else {
-			ui.Text(c, m.SettingsAboutUnavailable()).FontSize(12).TextColor(uitheme.DangerText(t))
+			ui.Text(c, m.SettingsAboutUnavailable()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 		}
 	})
 
 	section(c, m.SettingsAboutLicenseTextTitle(), "", t, func() {
 		if state.License() == "" {
-			ui.Text(c, m.SettingsAboutUnavailable()).FontSize(12).TextColor(uitheme.DangerText(t))
+			ui.Text(c, m.SettingsAboutUnavailable()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 			return
 		}
 		ui.TextArea(c, state.LicenseText()).ReadOnly(true).FillWidth().Height(300)
@@ -161,7 +161,7 @@ func licensesArea(c *ui.Context, state *LicensesState, m locales.Messages, t *ui
 
 	section(c, m.SettingsAboutNoticesTitle(), m.SettingsAboutNoticesBody(), t, func() {
 		if state.ThirdPartyNotices() == "" {
-			ui.Text(c, m.SettingsAboutUnavailable()).FontSize(12).TextColor(uitheme.DangerText(t))
+			ui.Text(c, m.SettingsAboutUnavailable()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 			return
 		}
 		ui.TextArea(c, state.ThirdPartyNoticesText()).ReadOnly(true).FillWidth().Height(300)

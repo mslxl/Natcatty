@@ -4,6 +4,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -12,7 +13,7 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 	settings := state.Settings()
 	sectionBody(c, t, func() {
 		ui.Text(c, m.SettingsTerminalLoggingTitle()).Bold()
-		ui.Text(c, m.SettingsTerminalLoggingDescription()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsTerminalLoggingDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 
 		enabled := settings.LoggingEnabled
 		if ui.Checkbox(c, &enabled, m.SettingsLogEnabled()).Changed() {
@@ -44,7 +45,7 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 		}
 
 		ui.Text(c, m.SettingsOSC52Title()).Bold()
-		ui.Text(c, m.SettingsOSC52Description()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsOSC52Description()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		accessLabels, accesses := osc52Options(m)
 		accessLabel := labelForAccess(accessLabels, accesses, settings.OSC52)
 		if ui.Select(c, &accessLabel, accessLabels).Label(m.SettingsOSC52Title()).Width(180).Changed() {
@@ -53,7 +54,7 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 		}
 
 		ui.Text(c, m.SettingsOSCNotificationsTitle()).Bold()
-		ui.Text(c, m.SettingsOSCNotificationsDescription()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsOSCNotificationsDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		modeLabels, modes := notificationOptions(m)
 		modeLabel := labelForMode(modeLabels, modes, settings.OSCNotifications)
 		if ui.Select(c, &modeLabel, modeLabels).Label(m.SettingsOSCNotificationsTitle()).Width(180).Changed() {
@@ -62,7 +63,7 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 		}
 
 		ui.Text(c, m.SettingsDynamicTabTitle()).Bold()
-		ui.Text(c, m.SettingsDynamicTabTitleDescription()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsDynamicTabTitleDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		titleLabels, titleModes := dynamicTabTitleOptions(m)
 		titleLabel := labelForDynamicTabTitle(titleLabels, titleModes, settings.DynamicTabTitleMode)
 		if ui.Select(c, &titleLabel, titleLabels).Label(m.SettingsDynamicTabTitle()).Width(180).Changed() {
@@ -123,7 +124,7 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 		})
 
 		if state.Problem() {
-			ui.Text(c, m.SettingsTerminalSaveFailed()).TextColor(uitheme.DangerText(t)).FontSize(12)
+			ui.Text(c, m.SettingsTerminalSaveFailed()).TextColor(uitheme.DangerText(t)).FontSize(kit.M(c).Font.Footnote)
 		}
 	})
 }
@@ -134,7 +135,7 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 func renderPowerUxSection(c *ui.Context, state *TerminalState,
 	settings domainterminal.Settings, m locales.Messages, t *ui.Theme) {
 	ui.Text(c, m.SettingsAutocompleteTitle()).Bold()
-	ui.Text(c, m.SettingsAutocompleteDescription()).FontSize(12).TextColor(t.TextMuted)
+	ui.Text(c, m.SettingsAutocompleteDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 
 	autocomplete := settings.AutocompleteEnabled
 	if ui.Checkbox(c, &autocomplete, m.SettingsAutocompleteEnabled()).Changed() {
@@ -184,7 +185,7 @@ func renderPowerUxSection(c *ui.Context, state *TerminalState,
 	})
 
 	ui.Text(c, m.SettingsKeywordHighlightTitle()).Bold()
-	ui.Text(c, m.SettingsKeywordHighlightDescription()).FontSize(12).TextColor(t.TextMuted)
+	ui.Text(c, m.SettingsKeywordHighlightDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	highlight := settings.KeywordHighlightEnabled
 	if ui.Checkbox(c, &highlight, m.SettingsKeywordHighlightEnabled()).Changed() {
 		state.SetKeywordHighlightEnabled(highlight)
@@ -199,7 +200,7 @@ func renderPowerUxSection(c *ui.Context, state *TerminalState,
 					state.SetKeywordHighlightRuleEnabled(rule.ID, ruleEnabled)
 					c.Invalidate()
 				}
-				ui.Text(c, rule.Color).FontSize(10).TextColor(t.TextMuted)
+				ui.Text(c, rule.Color).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted)
 			})
 			ui.Field(c, m.SettingsKeywordHighlightPatterns(), func() {
 				patterns := state.RulePatterns(rule.ID)
@@ -221,7 +222,7 @@ func renderPowerUxSection(c *ui.Context, state *TerminalState,
 func renderRetentionSection(c *ui.Context, state *TerminalState,
 	settings domainterminal.Settings, m locales.Messages, t *ui.Theme) {
 	ui.Text(c, m.SettingsRetentionTitle()).Bold()
-	ui.Text(c, m.SettingsRetentionDescription()).FontSize(12).TextColor(t.TextMuted)
+	ui.Text(c, m.SettingsRetentionDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 
 	logCount := float64(domainterminal.NormalizeRetentionCount(settings.ConnectionLogRetentionCount))
 	ui.Field(c, m.SettingsConnectionLogRetentionCount(), func() {

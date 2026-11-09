@@ -336,7 +336,7 @@ func mcpDangerTextColor(t *ui.Theme, fill ui.Color) ui.Color {
 // mcpArea renders the external MCP status and the current approval prompt.
 func mcpArea(c *ui.Context, state *MCPState, m locales.Messages, t *ui.Theme) {
 	if state == nil || state.service == nil {
-		ui.Text(c, m.SettingsMCPUnavailable()).FontSize(12).TextColor(mcpBodyTextColor(t, t.Surface))
+		ui.Text(c, m.SettingsMCPUnavailable()).FontSize(kit.M(c).Font.Footnote).TextColor(mcpBodyTextColor(t, t.Surface))
 		return
 	}
 	snapshot := state.Snapshot()
@@ -351,19 +351,19 @@ func mcpArea(c *ui.Context, state *MCPState, m locales.Messages, t *ui.Theme) {
 			mcpActivityStrip(c, *snapshot.LastActivity, m, t)
 		}
 		mcpModeField(c, state, snapshot, m, t)
-		ui.Text(c, mcpModeDescription(snapshot.Mode, m)).FontSize(12).TextColor(body)
+		ui.Text(c, mcpModeDescription(snapshot.Mode, m)).FontSize(kit.M(c).Font.Footnote).TextColor(body)
 
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.SettingsMCPScope()).FontSize(11).TextColor(body)
-			ui.Text(c, m.SettingsMCPScopeValue(snapshot.ForcedScope)).FontSize(12).TextColor(body)
+			ui.Text(c, m.SettingsMCPScope()).FontSize(kit.M(c).Font.Caption).TextColor(body)
+			ui.Text(c, m.SettingsMCPScopeValue(snapshot.ForcedScope)).FontSize(kit.M(c).Font.Footnote).TextColor(body)
 		})
 		mcpSessionsSection(c, state, snapshot, m, t)
 		ui.Text(c, m.SettingsMCPGeneration(strconv.FormatUint(snapshot.Generation, 10))).
-			FontSize(12).TextColor(body)
-		ui.Text(c, m.SettingsMCPBypassHint()).FontSize(11).TextColor(body)
+			FontSize(kit.M(c).Font.Footnote).TextColor(body)
+		ui.Text(c, m.SettingsMCPBypassHint()).FontSize(kit.M(c).Font.Caption).TextColor(body)
 
 		if problem := mcpProblemText(state.Problem(), m); problem != "" {
-			ui.Text(c, problem).FontSize(12).TextColor(mcpWarningTextColor(t, t.Surface))
+			ui.Text(c, problem).FontSize(kit.M(c).Font.Footnote).TextColor(mcpWarningTextColor(t, t.Surface))
 		}
 
 		prompt, expired, ok := mcpCurrentPrompt(snapshot)
@@ -373,7 +373,7 @@ func mcpArea(c *ui.Context, state *MCPState, m locales.Messages, t *ui.Theme) {
 		mcpPromptCard(c, prompt, expired, m, t)
 		if len(snapshot.Pending) > 1 {
 			ui.Text(c, m.SettingsMCPMorePending(len(snapshot.Pending)-1)).
-				FontSize(11).TextColor(body)
+				FontSize(kit.M(c).Font.Caption).TextColor(body)
 		}
 		if !expired {
 			// The policy owns the deadline; this only asks for a frame so the
@@ -396,8 +396,8 @@ func mcpSessionsSection(c *ui.Context, state *MCPState, snapshot appmcp.Snapshot
 	m locales.Messages, t *ui.Theme) {
 	body := mcpBodyTextColor(t, t.Surface)
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, m.SettingsMCPSessions()).FontSize(11).TextColor(body)
-		ui.Text(c, mcpExposedCountLabel(snapshot, m)).FontSize(12).TextColor(body)
+		ui.Text(c, m.SettingsMCPSessions()).FontSize(kit.M(c).Font.Caption).TextColor(body)
+		ui.Text(c, mcpExposedCountLabel(snapshot, m)).FontSize(kit.M(c).Font.Footnote).TextColor(body)
 	})
 	if !snapshot.LiveScope {
 		// A graph without the live-Session port keeps the ticket-57 static
@@ -417,17 +417,17 @@ func mcpSessionsSection(c *ui.Context, state *MCPState, snapshot appmcp.Snapshot
 			c.Invalidate()
 		}
 	})
-	ui.Text(c, mcpSharingHint(snapshot, m)).FontSize(11).TextColor(body)
+	ui.Text(c, mcpSharingHint(snapshot, m)).FontSize(kit.M(c).Font.Caption).TextColor(body)
 	if snapshot.EnvAllowlistSet {
 		ui.Text(c, m.SettingsMCPEnvAllowlist(strings.Join(snapshot.EnvAllowlist, ", "))).
-			FontSize(11).TextColor(body)
+			FontSize(kit.M(c).Font.Caption).TextColor(body)
 	}
 	if len(snapshot.ExposedSessions) == 0 {
 		return
 	}
 	ui.Column(c).Padding(8).Gap(2).Background(t.Surface).Border(1, t.Border).Children(func() {
 		for _, session := range snapshot.ExposedSessions {
-			ui.Text(c, mcpExposedSessionLabel(session, m)).FontSize(11).TextColor(body)
+			ui.Text(c, mcpExposedSessionLabel(session, m)).FontSize(kit.M(c).Font.Caption).TextColor(body)
 		}
 	})
 }
@@ -503,14 +503,14 @@ func mcpActivityStrip(c *ui.Context, activity appmcp.ActivityView,
 		border = t.Warning
 	}
 	ui.Column(c).Padding(8).Gap(2).Background(fill).Border(1, border).Children(func() {
-		ui.Text(c, m.SettingsMCPActivityTitle()).FontSize(11).TextColor(body)
+		ui.Text(c, m.SettingsMCPActivityTitle()).FontSize(kit.M(c).Font.Caption).TextColor(body)
 		ui.Row(c).Gap(6).AlignItems(ui.Center).MinWidth(0).Children(func() {
-			ui.Text(c, mcpActivityStatusText(activity.Status, m)).FontSize(12).Bold().
+			ui.Text(c, mcpActivityStatusText(activity.Status, m)).FontSize(kit.M(c).Font.Footnote).Bold().
 				TextColor(statusColor)
-			ui.Text(c, m.SettingsMCPActivityTool(activity.Tool)).FontSize(11).TextColor(body)
+			ui.Text(c, m.SettingsMCPActivityTool(activity.Tool)).FontSize(kit.M(c).Font.Caption).TextColor(body)
 		})
 		if activity.Rule != "" {
-			ui.Text(c, m.SettingsMCPActivityRule(activity.Rule)).FontSize(11).TextColor(body)
+			ui.Text(c, m.SettingsMCPActivityRule(activity.Rule)).FontSize(kit.M(c).Font.Caption).TextColor(body)
 		}
 	})
 }
@@ -535,18 +535,18 @@ func mcpPromptCard(c *ui.Context, prompt appmcp.ApprovalView, expired bool,
 	}
 	body := mcpBodyTextColor(t, t.Background)
 	ui.Column(c).Padding(12).Gap(6).Background(t.Background).Border(1, border).Children(func() {
-		ui.Text(c, title).FontSize(13).Bold().TextColor(titleColor)
-		ui.Text(c, m.SettingsMCPApprovalClient(client)).FontSize(12).TextColor(body)
-		ui.Text(c, m.SettingsMCPApprovalTool(prompt.Tool)).FontSize(12).TextColor(body)
-		ui.Text(c, m.SettingsMCPApprovalTarget(prompt.Target)).FontSize(12).TextColor(body)
-		ui.Text(c, m.SettingsMCPApprovalScope(prompt.Scope)).FontSize(12).TextColor(body)
-		ui.Text(c, m.SettingsMCPApprovalSummary(prompt.Summary)).FontSize(12).TextColor(body)
+		ui.Text(c, title).FontSize(kit.M(c).Font.Callout).Bold().TextColor(titleColor)
+		ui.Text(c, m.SettingsMCPApprovalClient(client)).FontSize(kit.M(c).Font.Footnote).TextColor(body)
+		ui.Text(c, m.SettingsMCPApprovalTool(prompt.Tool)).FontSize(kit.M(c).Font.Footnote).TextColor(body)
+		ui.Text(c, m.SettingsMCPApprovalTarget(prompt.Target)).FontSize(kit.M(c).Font.Footnote).TextColor(body)
+		ui.Text(c, m.SettingsMCPApprovalScope(prompt.Scope)).FontSize(kit.M(c).Font.Footnote).TextColor(body)
+		ui.Text(c, m.SettingsMCPApprovalSummary(prompt.Summary)).FontSize(kit.M(c).Font.Footnote).TextColor(body)
 		if expired {
-			ui.Text(c, m.SettingsMCPApprovalExpired()).FontSize(12).TextColor(mcpDangerTextColor(t, t.Background))
+			ui.Text(c, m.SettingsMCPApprovalExpired()).FontSize(kit.M(c).Font.Footnote).TextColor(mcpDangerTextColor(t, t.Background))
 			return
 		}
 		ui.Text(c, m.SettingsMCPApprovalRemaining(strconv.Itoa(mcpRemainingSeconds(prompt.Remaining)))).
-			FontSize(12).TextColor(mcpWarningTextColor(t, t.Background))
+			FontSize(kit.M(c).Font.Footnote).TextColor(mcpWarningTextColor(t, t.Background))
 	})
 }
 

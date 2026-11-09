@@ -135,14 +135,14 @@ func header(c *ui.Context, m locales.Messages, t *ui.Theme) {
 		AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).
 		DragWindow().Children(func() {
 		ui.Row(c).Height(titlebar.CloseSize).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.NavSettings()).FontSize(18).FontWeight(600)
+			ui.Text(c, m.NavSettings()).FontSize(kit.M(c).Font.Title).FontWeight(600)
 		})
 	})
 }
 
 func confirmResetAll(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {
 	cancelled, confirmed := kit.ConfirmBar(c, m.SettingsResetAllTitle(), func() {
-		ui.Text(c, m.SettingsResetAllBody()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsResetAllBody()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}, m.SettingsCancel(), m.SettingsResetAllConfirm())
 	if cancelled {
 		state.CancelResetAll()
@@ -162,7 +162,7 @@ func searchField(c *ui.Context, search *SearchState, hits []SearchHit, m locales
 		ui.TextInput(c, search.Query()).
 			Label(m.SettingsSearchPlaceholder()).
 			Placeholder(m.SettingsSearchPlaceholder()).
-			FillWidth().Height(36).FontSize(14).Padding(0, 32, 0, 32).
+			FillWidth().Height(36).FontSize(kit.M(c).Font.Body).Padding(0, 32, 0, 32).
 			OnTextKey(func(k ui.TextKey) bool {
 				switch k.Key {
 				case ui.KeyDown:
@@ -192,7 +192,7 @@ func searchField(c *ui.Context, search *SearchState, hits []SearchHit, m locales
 				return false
 			})
 		ui.Box(c).Absolute().Left(10).Top(11).Size(14, 14).TextColor(t.TextMuted).Children(func() {
-			ui.Icon(c, icons.Lucide(icons.Search)).Size(14, 14)
+			kit.IconSized(c, icons.Search, kit.M(c).Icon.Medium)
 		})
 		if search.Filtering() {
 			clear := ui.ButtonBase(c).Key("settings-search-clear").Label(m.SettingsSearchClear()).
@@ -200,7 +200,7 @@ func searchField(c *ui.Context, search *SearchState, hits []SearchHit, m locales
 			if clear.Hovered() || clear.Pressed() {
 				clear.Background(t.Text.Alpha(0.08)).TextColor(t.Text)
 			}
-			clear.Children(func() { ui.Icon(c, icons.Lucide(icons.X)).Size(14, 14) })
+			clear.Children(func() { kit.IconSized(c, icons.X, kit.M(c).Icon.Medium) })
 			if clear.Clicked() {
 				search.Clear()
 				c.Invalidate()
@@ -214,10 +214,10 @@ func searchField(c *ui.Context, search *SearchState, hits []SearchHit, m locales
 // faint primary fill, in a bordered popover box.
 func searchResults(c *ui.Context, search *SearchState, hits []SearchHit, m locales.Messages, t *ui.Theme) {
 	ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
-		ui.Column(c).FillWidth().MinWidth(0).Radius(6).Border(1, t.Border).Background(t.Surface).Clip().
+		ui.Column(c).FillWidth().MinWidth(0).Radius(kit.M(c).Radius.Control).Border(1, t.Border).Background(t.Surface).Clip().
 			Children(func() {
 				if len(hits) == 0 {
-					ui.Text(c, m.SettingsSearchNoResults()).FontSize(12).TextColor(t.TextMuted).Padding(12)
+					ui.Text(c, m.SettingsSearchNoResults()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).Padding(12)
 					return
 				}
 				for index, hit := range hits {
@@ -232,8 +232,8 @@ func searchResults(c *ui.Context, search *SearchState, hits []SearchHit, m local
 					}
 					option.Children(func() {
 						ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-							ui.Text(c, hit.Label).FontSize(14).FontWeight(500).TextColor(t.Text).MinWidth(0)
-							ui.Text(c, AreaTitle(m, hit.Area)).FontSize(11).TextColor(t.TextMuted).MinWidth(0)
+							ui.Text(c, hit.Label).FontSize(kit.M(c).Font.Body).FontWeight(500).TextColor(t.Text).MinWidth(0)
+							ui.Text(c, AreaTitle(m, hit.Area)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).MinWidth(0)
 						})
 					})
 					if option.Clicked() {
@@ -242,7 +242,7 @@ func searchResults(c *ui.Context, search *SearchState, hits []SearchHit, m local
 					}
 				}
 			})
-		ui.Text(c, m.SettingsSearchHint()).FontSize(11).TextColor(t.TextMuted).Padding(6, 4, 0, 4)
+		ui.Text(c, m.SettingsSearchHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).Padding(6, 4, 0, 4)
 	})
 }
 
@@ -260,9 +260,9 @@ func body(c *ui.Context, config Config, search *SearchState, panes *viewState,
 		ui.Column(c).FillWidth().MinWidth(0).Padding(24).Gap(24).Children(func() {
 			area := search.Area()
 			ui.Column(c).FillWidth().MinWidth(0).Gap(4).Children(func() {
-				ui.Text(c, AreaTitle(m, area)).FontSize(18).FontWeight(600)
+				ui.Text(c, AreaTitle(m, area)).FontSize(kit.M(c).Font.Title).FontWeight(600)
 				if description := AreaDescription(m, area); description != "" {
-					ui.Text(c, description).FontSize(12).TextColor(t.TextMuted)
+					ui.Text(c, description).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 				}
 			})
 			areaContent(c, config, area, m, t)
@@ -345,7 +345,7 @@ func areaIcon(area Area) string {
 // 14-glyph and the label on a rounded row, muted until hovered or selected.
 func navItem(c *ui.Context, key, icon, label string, active bool, t *ui.Theme) ui.Element {
 	item := ui.ButtonBase(c).Key(key).Label(label).FillWidth().MinWidth(0).Padding(8, 12).Gap(8).
-		Radius(6).Justify(ui.Start).AlignItems(ui.Center).TextColor(t.TextMuted)
+		Radius(kit.M(c).Radius.Control).Justify(ui.Start).AlignItems(ui.Center).TextColor(t.TextMuted)
 	switch {
 	case active:
 		item.Background(t.Text.Alpha(0.08)).TextColor(t.Text)
@@ -354,7 +354,7 @@ func navItem(c *ui.Context, key, icon, label string, active bool, t *ui.Theme) u
 	}
 	item.Children(func() {
 		ui.Icon(c, icons.Lucide(icon)).Size(navIconSize, navIconSize).Shrink(0)
-		ui.Text(c, label).FontSize(14).SingleLine().MinWidth(0).Shrink(1)
+		ui.Text(c, label).FontSize(kit.M(c).Font.Body).SingleLine().MinWidth(0).Shrink(1)
 	})
 	return item
 }
@@ -635,7 +635,7 @@ func shortcutsArea(c *ui.Context, state *ShortcutsState, m locales.Messages, t *
 				c.Invalidate()
 			}
 		})
-		ui.Text(c, m.SettingsShortcutSchemeDescription()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsShortcutSchemeDescription()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 
 		if pending, ok := state.Pending(); ok {
 			pendingConflict(c, state, pending, m, t)
@@ -652,7 +652,7 @@ func shortcutsArea(c *ui.Context, state *ShortcutsState, m locales.Messages, t *
 					names = append(names, conflictMenuName(m, menu))
 				}
 				ui.Text(c, m.SettingsShortcutConflictBody(conflict.Chord, joinNames(names))).
-					FontSize(12).TextColor(uitheme.WarningText(t))
+					FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.WarningText(t))
 			}
 		}
 
@@ -667,7 +667,7 @@ func shortcutsArea(c *ui.Context, state *ShortcutsState, m locales.Messages, t *
 			// is worded apart from the preferences reset.
 			ui.Column(c).Padding(10).Gap(6).Background(t.Surface).Border(1, t.Danger).Children(func() {
 				ui.Text(c, m.SettingsShortcutResetAllTitle()).Bold()
-				ui.Text(c, m.SettingsShortcutResetAllBody()).FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, m.SettingsShortcutResetAllBody()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 				ui.Row(c).Gap(8).Children(func() {
 					if kit.SecondaryButton(c, "", m.SettingsShortcutResetAllConfirm()).Clicked() {
 						state.ResetAll()
@@ -680,11 +680,11 @@ func shortcutsArea(c *ui.Context, state *ShortcutsState, m locales.Messages, t *
 				})
 			})
 		}
-		ui.Text(c, m.SettingsShortcutRecordHint()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsShortcutRecordHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		// MyGo v0.5.5 applies terminal keybinds when it constructs the
 		// terminal and exposes no setter, so the limitation is stated rather
 		// than silently surprising the user.
-		ui.Text(c, m.SettingsShortcutTerminalNote()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsShortcutTerminalNote()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 
 		for _, category := range kb.Categories() {
 			bindings := make([]kb.Binding, 0)
@@ -702,7 +702,7 @@ func shortcutsArea(c *ui.Context, state *ShortcutsState, m locales.Messages, t *
 			}
 		}
 		if state.Failed() {
-			ui.Text(c, m.SettingsSaveFailed()).FontSize(12).TextColor(uitheme.DangerText(t))
+			ui.Text(c, m.SettingsSaveFailed()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 		}
 	})
 }
@@ -724,7 +724,7 @@ func pendingConflict(c *ui.Context, state *ShortcutsState, pending PendingConfli
 	ui.Column(c).Padding(10).Gap(6).Background(t.Surface).Border(1, t.Warning).Children(func() {
 		ui.Text(c, m.SettingsShortcutConflictTitle()).Bold().TextColor(uitheme.WarningText(t))
 		ui.Text(c, m.SettingsShortcutConflictBody(pending.Chord, joinNames(names))).
-			FontSize(12).TextColor(uitheme.WarningText(t))
+			FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.WarningText(t))
 		ui.Row(c).Gap(8).Children(func() {
 			if kit.PrimaryButton(c, "", m.SettingsShortcutConflictReplace()).Clicked() {
 				state.Replace()
@@ -744,9 +744,9 @@ func bindingRow(c *ui.Context, state *ShortcutsState, binding kb.Binding,
 	recording := state.Recording() == binding.ID
 	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
 		ui.Column(c).Width(280).Children(func() {
-			ui.Text(c, label).FontSize(13)
+			ui.Text(c, label).FontSize(kit.M(c).Font.Callout)
 			if !state.Available(binding.ID) {
-				ui.Text(c, m.SettingsShortcutUnavailable()).FontSize(10).TextColor(uitheme.WarningText(t))
+				ui.Text(c, m.SettingsShortcutUnavailable()).FontSize(kit.M(c).Font.Caption2).TextColor(uitheme.WarningText(t))
 			}
 		})
 		chord := state.Chord(binding.ID)
@@ -850,7 +850,7 @@ func groupReset(c *ui.Context, m locales.Messages, t *ui.Theme, group string,
 
 func saveProblem(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {
 	if state.Failed() {
-		ui.Text(c, m.SettingsSaveFailed()).FontSize(12).TextColor(uitheme.DangerText(t))
+		ui.Text(c, m.SettingsSaveFailed()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 	}
 }
 
@@ -1059,11 +1059,11 @@ func notificationToggle(c *ui.Context, state *DesktopState, value bool, label st
 // section is a titled card inside an area. Its title sits a step below the
 // area's own heading, so the page reads as one hierarchy.
 func section(c *ui.Context, title, description string, t *ui.Theme, build func()) {
-	ui.Column(c).Padding(16).Gap(10).Radius(kit.RadiusCard).Background(t.Surface).Border(1, t.Border).Children(func() {
+	ui.Column(c).Padding(16).Gap(10).Radius(kit.M(c).Radius.Card).Background(t.Surface).Border(1, t.Border).Children(func() {
 		ui.Column(c).FillWidth().Gap(2).Children(func() {
 			ui.Text(c, title).FontSize(15).FontWeight(600)
 			if description != "" {
-				ui.Text(c, description).FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, description).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			}
 		})
 		build()
@@ -1073,7 +1073,7 @@ func section(c *ui.Context, title, description string, t *ui.Theme, build func()
 // sectionBody is a section whose title and description the area header
 // already shows.
 func sectionBody(c *ui.Context, t *ui.Theme, build func()) {
-	ui.Column(c).Padding(16).Gap(10).Radius(kit.RadiusCard).Background(t.Surface).Border(1, t.Border).Children(build)
+	ui.Column(c).Padding(16).Gap(10).Radius(kit.M(c).Radius.Card).Background(t.Surface).Border(1, t.Border).Children(build)
 }
 
 func appLockSection(c *ui.Context, lock *AppLockState, m locales.Messages, t *ui.Theme) {
