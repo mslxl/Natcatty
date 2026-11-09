@@ -237,27 +237,16 @@ func actions(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 func filterBar(c *ui.Context, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab,
 	m locales.Messages, t *ui.Theme) {
 	kit.Bar(c, kit.BarFilter).Padding(0, 8, 0, 12).Gap(6).Children(func() {
-		ui.Row(c).Grow(1).MinWidth(0).Height(24).Padding(0, 8).Gap(6).AlignItems(ui.Center).
-			Radius(5).Border(1, t.Border).Background(t.Surface).Children(func() {
-			kit.IconSized(c, icons.Search, kit.M(c).Icon.Small).TextColor(t.TextMuted).Shrink(0)
-			input := ui.TextInputBase(c, &tab.Filter)
-			input.Placeholder(m.SftpFilterPlaceholder())
-			input.FontSize(kit.M(c).Font.Footnote)
-			input.Grow(1)
-			input.MinWidth(0)
-			input.AutoFocus()
-			if input.Shortcut(0, ui.KeyEscape) {
-				s.EscapeFilter(side)
-			}
-			if tab.Filter != "" {
-				clear := ui.ButtonBase(c).Label(m.SftpFilterClear()).Tooltip(m.SftpFilterClear()).
-					Size(16, 16).Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted)
-				clear.Children(func() { kit.IconSized(c, icons.X, kit.M(c).Icon.Small) })
-				if clear.Clicked() {
-					tab.Filter = ""
-				}
-			}
+		input := kit.SearchField(c, &tab.Filter, kit.SearchOptions{
+			Role:        kit.SearchFilter,
+			Placeholder: m.SftpFilterPlaceholder(),
+			AutoFocus:   true,
+			Clear:       m.SftpFilterClear(),
+			ShowClear:   tab.Filter != "",
 		})
+		if input.Shortcut(0, ui.KeyEscape) {
+			s.EscapeFilter(side)
+		}
 		if kit.IconButtonWith(c, icons.X, m.SftpFilterClose(), kit.IconOptions{On: false}).Clicked() {
 			s.ToggleFilter(side)
 		}

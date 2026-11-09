@@ -158,54 +158,40 @@ func confirmResetAll(c *ui.Context, state *PreferencesState, m locales.Messages,
 // search glyph at its start and, while a query is active, a clear glyph at
 // its end. Arrows move the highlighted match and Enter opens it.
 func searchField(c *ui.Context, search *SearchState, hits []SearchHit, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Shrink(0).Height(36).Children(func() {
-		ui.TextInput(c, search.Query()).
-			Label(m.SettingsSearchPlaceholder()).
-			Placeholder(m.SettingsSearchPlaceholder()).
-			FillWidth().Height(36).FontSize(kit.M(c).Font.Body).Padding(0, 32, 0, 32).
-			OnTextKey(func(k ui.TextKey) bool {
-				switch k.Key {
-				case ui.KeyDown:
-					if search.Move(1, len(hits)) {
-						c.Invalidate()
-					}
-					return true
-				case ui.KeyUp:
-					if search.Move(-1, len(hits)) {
-						c.Invalidate()
-					}
-					return true
-				case ui.KeyEnter:
-					if search.OpenHit(hits) {
-						c.Invalidate()
-						return true
-					}
-					return false
-				case ui.KeyEscape:
-					if search.Filtering() {
-						search.Clear()
-						c.Invalidate()
-						return true
-					}
-					return false
-				}
-				return false
-			})
-		ui.Box(c).Absolute().Left(10).Top(11).Size(14, 14).TextColor(t.TextMuted).Children(func() {
-			kit.IconSized(c, icons.Search, kit.M(c).Icon.Medium)
-		})
-		if search.Filtering() {
-			clear := ui.ButtonBase(c).Key("settings-search-clear").Label(m.SettingsSearchClear()).
-				Absolute().Right(6).Top(7).Size(22, 22).Radius(3).TextColor(t.TextMuted)
-			if clear.Hovered() || clear.Pressed() {
-				clear.Background(t.Text.Alpha(0.08)).TextColor(t.Text)
-			}
-			clear.Children(func() { kit.IconSized(c, icons.X, kit.M(c).Icon.Medium) })
-			if clear.Clicked() {
-				search.Clear()
+	kit.SearchField(c, search.Query(), kit.SearchOptions{
+		Role:        kit.SearchSidebar,
+		Placeholder: m.SettingsSearchPlaceholder(),
+		Clear:       m.SettingsSearchClear(),
+		ClearKey:    "settings-search-clear",
+		ShowClear:   search.Filtering(),
+		OnClear:     search.Clear,
+	}).OnTextKey(func(k ui.TextKey) bool {
+		switch k.Key {
+		case ui.KeyDown:
+			if search.Move(1, len(hits)) {
 				c.Invalidate()
 			}
+			return true
+		case ui.KeyUp:
+			if search.Move(-1, len(hits)) {
+				c.Invalidate()
+			}
+			return true
+		case ui.KeyEnter:
+			if search.OpenHit(hits) {
+				c.Invalidate()
+				return true
+			}
+			return false
+		case ui.KeyEscape:
+			if search.Filtering() {
+				search.Clear()
+				c.Invalidate()
+				return true
+			}
+			return false
 		}
+		return false
 	})
 }
 
@@ -289,13 +275,12 @@ func sidebarWidth(c *ui.Context, m locales.Messages, t *ui.Theme) float32 {
 	const (
 		baseSidebarWidth = 224
 		columnPadding    = 2 * 12
-		itemChrome       = 2*12 + navIconSize + 8
 		// MeasureText and the layout both round fractional DIPs, so leave
 		// one DIP of room for the last glyph.
 		roundingRoom = 1
 	)
 	width := float32(baseSidebarWidth)
-	chrome := columnPadding + itemChrome + scrollbarGutter(t) + roundingRoom
+	chrome := columnPadding + kit.NavChrome(c, kit.NavSettings) + scrollbarGutter(t) + roundingRoom
 	for _, area := range Areas() {
 		label := AreaTitle(m, area)
 		if measured, _ := c.MeasureText(0, ui.Span{Text: label, Size: 14}); measured > 0 {
@@ -306,9 +291,6 @@ func sidebarWidth(c *ui.Context, m locales.Messages, t *ui.Theme) float32 {
 	}
 	return width
 }
-
-// navIconSize is the size of the nav column's Lucide glyphs, the original's 14.
-const navIconSize = 14
 
 // areaIcon is the glyph the original shows beside each Settings tab.
 func areaIcon(area Area) string {
@@ -341,24 +323,6 @@ func areaIcon(area Area) string {
 	return icons.Settings
 }
 
-// navItem is one entry of the nav column, as the original's tab trigger: a
-// 14-glyph and the label on a rounded row, muted until hovered or selected.
-func navItem(c *ui.Context, key, icon, label string, active bool, t *ui.Theme) ui.Element {
-	item := ui.ButtonBase(c).Key(key).Label(label).FillWidth().MinWidth(0).Padding(8, 12).Gap(8).
-		Radius(kit.M(c).Radius.Control).Justify(ui.Start).AlignItems(ui.Center).TextColor(t.TextMuted)
-	switch {
-	case active:
-		item.Background(t.Text.Alpha(0.08)).TextColor(t.Text)
-	case item.Hovered() || item.Pressed():
-		item.Background(t.Text.Alpha(0.04)).TextColor(t.Text)
-	}
-	item.Children(func() {
-		ui.Icon(c, icons.Lucide(icon)).Size(navIconSize, navIconSize).Shrink(0)
-		ui.Text(c, label).FontSize(kit.M(c).Font.Body).SingleLine().MinWidth(0).Shrink(1)
-	})
-	return item
-}
-
 // sidebar is the original's nav column: the search at its top, then the
 // areas, or the matches while a query is active. At 720x480 the entries can
 // exceed the height left by the header, so the list scrolls instead of
@@ -375,11 +339,11 @@ func sidebar(c *ui.Context, config Config, search *SearchState, panes *viewState
 		}
 		ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).PaddingEnd(scrollbarGutter(t)).
 			TrackScroll(&panes.sidebar).Children(func() {
-			ui.Column(c).FillWidth().MinWidth(0).Gap(4).Children(func() {
+			kit.NavList(c, kit.NavSettings, func() {
 				for _, area := range Areas() {
 					area := area
-					if navItem(c, "settings-nav-"+string(area), areaIcon(area), AreaTitle(m, area),
-						area == search.Area(), t).Clicked() {
+					if kit.NavItem(c, kit.NavSettings, "settings-nav-"+string(area), areaIcon(area), AreaTitle(m, area),
+						area == search.Area()).Clicked() {
 						search.SetArea(area)
 						c.Invalidate()
 					}
@@ -389,7 +353,7 @@ func sidebar(c *ui.Context, config Config, search *SearchState, panes *viewState
 		if config.Preferences != nil {
 			ui.Column(c).FillWidth().Shrink(0).BorderWidth(1, 0, 0, 0).
 				BorderColor(t.Border).Padding(8, scrollbarGutter(t), 0, 0).Children(func() {
-				if navItem(c, "settings-reset-all", icons.RefreshCw, m.SettingsResetAll(), false, t).Clicked() {
+				if kit.NavItem(c, kit.NavSettings, "settings-reset-all", icons.RefreshCw, m.SettingsResetAll(), false).Clicked() {
 					config.Preferences.AskResetAll()
 					c.Invalidate()
 				}

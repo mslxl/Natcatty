@@ -179,26 +179,33 @@ func homeSidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme)
 
 		// The list scrolls when the window is too short for every entry.
 		ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
-			ui.Column(c).FillWidth().Gap(2).Children(func() {
+			kit.NavList(c, kit.NavHome, func() {
+				nav := func(key, icon, label string, active bool, show func()) {
+					if kit.NavItem(c, kit.NavHome, key, icon, label, active).Clicked() {
+						show()
+					}
+				}
 				vaultPage := func(page section.Section) {
-					navItem(c, "nav-vault-"+string(page), vaultPageIcon(page), vaultPageLabel(m, page),
+					nav("nav-vault-"+string(page), vaultPageIcon(page), vaultPageLabel(m, page),
 						s.VaultVisible() && s.VaultSection() == page,
 						func() { s.ShowVaultSection(page) })
 				}
 				vaultPage(section.Hosts)
-				navItem(c, "nav-monitor", icons.Gauge, m.NavMonitor(), s.MonitorVisible(), s.ShowMonitor)
-				navItem(c, "nav-sysmanager", icons.MonitorCog, m.NavSysManager(), s.SysManagerVisible(), s.ShowSystemManager)
+				nav("nav-monitor", icons.Gauge, m.NavMonitor(), s.MonitorVisible(), s.ShowMonitor)
+				nav("nav-sysmanager", icons.MonitorCog, m.NavSysManager(), s.SysManagerVisible(), s.ShowSystemManager)
 				for _, page := range section.Pages() {
 					if page != section.Hosts {
 						vaultPage(page)
 					}
 				}
-				navItem(c, "nav-logs", icons.Activity, m.NavLogs(), s.LogsVisible(), s.ShowLogs)
+				nav("nav-logs", icons.Activity, m.NavLogs(), s.LogsVisible(), s.ShowLogs)
 			})
 		})
 
 		// Settings is a window rather than a surface, so it is never active.
-		navItem(c, "nav-settings", icons.Settings, m.NavSettings(), false, s.RequestSettings)
+		if kit.NavItem(c, kit.NavHome, "nav-settings", icons.Settings, m.NavSettings(), false).Clicked() {
+			s.RequestSettings()
+		}
 	})
 }
 
@@ -273,32 +280,6 @@ func vaultPageLabel(m locales.Messages, page section.Section) string {
 		return m.NavKnownHosts()
 	default:
 		return m.NavHosts()
-	}
-}
-
-// navItem renders one sidebar entry: an icon and a label, filled while its
-// page is the visible one.
-func navItem(c *ui.Context, key, icon, label string, active bool, show func()) {
-	t := c.Theme()
-	item := ui.ButtonBase(c).Key(key).Label(label).FillWidth().Height(36).Padding(0, 12).Gap(12).
-		Radius(8).AlignItems(ui.Center).TextColor(t.TextMuted)
-	switch {
-	case active:
-		item.Background(kit.Strong(t)).TextColor(t.Text)
-	case item.Pressed():
-		item.Background(kit.Strong(t)).TextColor(t.Text)
-	case item.Hovered():
-		item.Background(kit.Subtle(t)).TextColor(t.Text)
-	}
-	item.Children(func() {
-		kit.Icon(c, icon)
-		text := ui.Text(c, label).SingleLine().Grow(1).MinWidth(0)
-		if active {
-			text.FontWeight(500)
-		}
-	})
-	if item.Clicked() {
-		show()
 	}
 }
 

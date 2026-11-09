@@ -46,12 +46,9 @@ func (p *HistoryPanel) View(host model.HostID) func(*ui.Context) {
 		t := c.Theme()
 		p.state.Refresh()
 		ui.Column(c).Fill().MinWidth(0).Children(func() {
-			ui.Row(c).FillWidth().Gap(4).Padding(8, 8, 4, 8).AlignItems(ui.Center).Shrink(0).Children(func() {
-				if ui.SearchField(c, &p.search).Placeholder(m.SidePanelSearchHistory()).
-					Label(m.SidePanelSearchHistory()).Grow(1).MinWidth(0).Changed() {
-					c.Invalidate()
-				}
-			})
+			if kit.SidePanelHeader(c, &p.search, m.SidePanelSearchHistory(), nil) {
+				c.Invalidate()
+			}
 			entries := p.entries(host)
 			ui.Row(c).FillWidth().Gap(8).Padding(0, 8, 4, 8).AlignItems(ui.Center).Shrink(0).Children(func() {
 				scope := 0

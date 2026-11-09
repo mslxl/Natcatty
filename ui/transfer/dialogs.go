@@ -386,35 +386,32 @@ func hostPicker(c *ui.Context, s *transferstate.State, dialog *transferstate.Dia
 		}
 	}
 
-	ui.Row(c).FillWidth().Height(36).Padding(0, 10).Gap(8).AlignItems(ui.Center).
-		Radius(kit.M(c).Radius.Control).Border(1, t.Border).Background(t.Background).Children(func() {
-		kit.IconSized(c, icons.Search, kit.M(c).Icon.Medium).TextColor(t.TextMuted).Shrink(0)
-		before := dialog.Draft
-		input := ui.TextInputBase(c, &dialog.Draft)
-		input.Placeholder(m.SftpSearchHosts())
-		input.FontSize(kit.M(c).Font.Callout)
-		input.Grow(1)
-		input.MinWidth(0)
-		input.AutoFocus()
-		if dialog.Draft != before {
-			dialog.Cursor = 0
-		}
-		if input.Shortcut(0, ui.KeyDown) && dialog.Cursor < len(rows)-1 {
-			dialog.Cursor++
-		}
-		if input.Shortcut(0, ui.KeyUp) && dialog.Cursor > 0 {
-			dialog.Cursor--
-		}
-		if input.Submitted() && len(rows) > 0 {
-			choose(rows[dialog.Cursor])
-		}
-		side := m.SftpPaneLeft()
-		if dialog.Side == transferstate.Right {
-			side = m.SftpPaneRight()
-		}
-		ui.Text(c, side).FontSize(kit.M(c).Font.Caption2).FontWeight(600).TextColor(t.TextMuted).Padding(2, 6).
-			Radius(4).Background(kit.Muted(t)).Shrink(0)
+	side := m.SftpPaneLeft()
+	if dialog.Side == transferstate.Right {
+		side = m.SftpPaneRight()
+	}
+	before := dialog.Draft
+	input := kit.SearchField(c, &dialog.Draft, kit.SearchOptions{
+		Role:        kit.SearchPicker,
+		Placeholder: m.SftpSearchHosts(),
+		AutoFocus:   true,
+		Trailing: func() {
+			ui.Text(c, side).FontSize(kit.M(c).Font.Caption2).FontWeight(600).TextColor(t.TextMuted).Padding(2, 6).
+				Radius(4).Background(kit.Muted(t)).Shrink(0)
+		},
 	})
+	if dialog.Draft != before {
+		dialog.Cursor = 0
+	}
+	if input.Shortcut(0, ui.KeyDown) && dialog.Cursor < len(rows)-1 {
+		dialog.Cursor++
+	}
+	if input.Shortcut(0, ui.KeyUp) && dialog.Cursor > 0 {
+		dialog.Cursor--
+	}
+	if input.Submitted() && len(rows) > 0 {
+		choose(rows[dialog.Cursor])
+	}
 
 	ui.Scroll(c).FillWidth().MaxHeight(320).Children(func() {
 		ui.Column(c).FillWidth().Gap(2).Children(func() {
