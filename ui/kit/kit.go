@@ -136,12 +136,35 @@ func Card(c *ui.Context, hoverable bool) ui.Element {
 	return card
 }
 
-// SectionHeader is the small muted title above a group of cards, with an
-// optional trailing text such as a count.
-func SectionHeader(c *ui.Context, title, trailing string) {
+// SectionRole picks a SectionHeader's recipe.
+type SectionRole int
+
+const (
+	// SectionCards titles a group of cards.
+	SectionCards SectionRole = iota
+	// SectionGroup titles a group in a side tool's list, such as a package
+	// or a Note Group, after a small glyph.
+	SectionGroup
+)
+
+// SectionHeader is the small muted title above a group: an optional glyph,
+// the title, and an optional trailing text such as a count.
+func SectionHeader(c *ui.Context, role SectionRole, icon, title, trailing string) {
 	t := c.Theme()
-	ui.Row(c).FillWidth().AlignItems(ui.Center).Padding(4, 2).Children(func() {
-		ui.Text(c, title).FontSize(M(c).Font.Callout).FontWeight(600).TextColor(t.TextMuted).Grow(1).SingleLine()
+	row := ui.Row(c).FillWidth().AlignItems(ui.Center).TextColor(t.TextMuted)
+	size, padding := M(c).Font.Callout, []float32{4, 2}
+	if role == SectionGroup {
+		size, padding = M(c).Font.Caption, []float32{8, 8, 2, 8}
+		row.Gap(6)
+	}
+	row.Padding(padding...).Children(func() {
+		if icon != "" {
+			IconSized(c, icon, M(c).Icon.Small)
+		}
+		text := ui.Text(c, title).FontSize(size).FontWeight(600).TextColor(t.TextMuted).SingleLine()
+		if role == SectionCards {
+			text.Grow(1)
+		}
 		if trailing != "" {
 			ui.Text(c, trailing).FontSize(M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine()
 		}

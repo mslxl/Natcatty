@@ -43,17 +43,6 @@ func (p *SidePanels) openPage(page section.Section) {
 	}
 }
 
-// sideHeader is a tool's search field with its actions at the end.
-func sideHeader(c *ui.Context, query *string, placeholder string, actions func()) bool {
-	changed := false
-	ui.Row(c).FillWidth().Gap(4).Padding(8, 8, 4, 8).AlignItems(ui.Center).Shrink(0).Children(func() {
-		changed = ui.SearchField(c, query).Placeholder(placeholder).Label(placeholder).
-			Grow(1).MinWidth(0).Changed()
-		actions()
-	})
-	return changed
-}
-
 // Scripts is the side panel's Snippet library, as the original's Scripts
 // tool: the Vault's Snippets by package, and a click runs one in the focused
 // Session. A Snippet with variables asks for them first.
@@ -69,7 +58,7 @@ func (p *SidePanels) Scripts() func(*ui.Context) {
 				})
 				return
 			}
-			if sideHeader(c, &p.scriptSearch, m.SidePanelSearchScripts(), func() {
+			if kit.SidePanelHeader(c, &p.scriptSearch, m.SidePanelSearchScripts(), func() {
 				if kit.IconButton(c, icons.Plus, m.VaultSnippetNew()).Clicked() {
 					s.BeginCreateSnippet()
 					p.openPage(section.Snippets)
@@ -102,7 +91,7 @@ func (p *SidePanels) Scripts() func(*ui.Context) {
 						if snippet.Package != pkg {
 							pkg = snippet.Package
 							if pkg != "" {
-								sideGroupLabel(c, icons.Folder, pkg)
+								kit.SectionHeader(c, kit.SectionGroup, icons.Folder, pkg, "")
 							}
 						}
 						p.scriptRow(c, m, t, snippet)
@@ -173,15 +162,6 @@ func sideRunProblem(m locales.Messages, s *vaultstate.State) string {
 	return m.VaultSnippetProblemRun()
 }
 
-// sideGroupLabel is a package or Note Group heading in a tool's list.
-func sideGroupLabel(c *ui.Context, icon, label string) {
-	t := c.Theme()
-	ui.Row(c).FillWidth().Gap(6).Padding(8, 8, 2, 8).AlignItems(ui.Center).TextColor(t.TextMuted).Children(func() {
-		kit.IconSized(c, icon, kit.M(c).Icon.Small)
-		ui.Text(c, label).FontSize(kit.M(c).Font.Caption).FontWeight(600).SingleLine().TextColor(t.TextMuted)
-	})
-}
-
 func firstLine(text string) string {
 	text = strings.TrimSpace(text)
 	if line, _, found := strings.Cut(text, "\n"); found {
@@ -206,7 +186,7 @@ func (p *SidePanels) Notes() func(*ui.Context) {
 				}
 				p.noteID = ""
 			}
-			if sideHeader(c, &p.noteSearch, m.VaultNoteSearchPlaceholder(), func() {
+			if kit.SidePanelHeader(c, &p.noteSearch, m.VaultNoteSearchPlaceholder(), func() {
 				if kit.IconButton(c, icons.Plus, m.VaultNoteNew()).Clicked() {
 					s.BeginCreateNote()
 					p.openPage(section.Notes)
@@ -230,7 +210,7 @@ func (p *SidePanels) Notes() func(*ui.Context) {
 						if note.Group != group {
 							group = note.Group
 							if group != "" {
-								sideGroupLabel(c, icons.Folder, group)
+								kit.SectionHeader(c, kit.SectionGroup, icons.Folder, group, "")
 							}
 						}
 						p.noteRow(c, t, note)

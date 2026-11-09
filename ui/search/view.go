@@ -82,35 +82,34 @@ func Overlay(s *State) func(*ui.Context) {
 				panel.OnClick(func() {})
 				panel.Children(func() {
 					placeholder := placeholderText(m, s.Mode())
-					ui.TextInput(c, s.QueryPtr()).
-						Label(placeholder).
-						Placeholder(placeholder).
-						FillWidth().
-						AutoFocus().
-						OnTextKey(func(k ui.TextKey) bool {
-							switch k.Key {
-							case ui.KeyDown:
-								if s.Move(1) {
-									c.Invalidate()
-								}
-								return true
-							case ui.KeyUp:
-								if s.Move(-1) {
-									c.Invalidate()
-								}
-								return true
-							case ui.KeyEnter:
-								if s.Activate() {
-									c.Invalidate()
-								}
-								return true
-							case ui.KeyEscape:
-								s.Close()
+					kit.SearchField(c, s.QueryPtr(), kit.SearchOptions{
+						Role:        kit.SearchPalette,
+						Placeholder: placeholder,
+						AutoFocus:   true,
+					}).OnTextKey(func(k ui.TextKey) bool {
+						switch k.Key {
+						case ui.KeyDown:
+							if s.Move(1) {
 								c.Invalidate()
-								return true
 							}
-							return false
-						})
+							return true
+						case ui.KeyUp:
+							if s.Move(-1) {
+								c.Invalidate()
+							}
+							return true
+						case ui.KeyEnter:
+							if s.Activate() {
+								c.Invalidate()
+							}
+							return true
+						case ui.KeyEscape:
+							s.Close()
+							c.Invalidate()
+							return true
+						}
+						return false
+					})
 					hintRow(c, m, t)
 					if count == 0 {
 						emptyState(c, s, m, t)
