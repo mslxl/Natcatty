@@ -270,6 +270,82 @@ func TestAtuinAccountCardOwnsTheIdentityAndSyncCardDoesNot(t *testing.T) {
 	}
 }
 
+// TestAtuinAccountCardFollowsTheSyncToggle proves the account card is absent
+// while command history sync is off, appears when the user enables sync on the
+// real checkbox, and disappears again when it is turned off. The sync card
+// itself never leaves the page, so sync can always be re-enabled from it.
+func TestAtuinAccountCardFollowsTheSyncToggle(t *testing.T) {
+	t.Run("account card follows the sync checkbox", func(t *testing.T) {
+		account := &fakeHistoryAccount{status: atuinStatus(atuinmodel.KeyStateVerified)}
+		tester, prefs, _ := atuinPanel(t, account,
+			func(s *domain.Settings) { s.History.SyncEnabled = false })
+		m := locales.In("en")
+
+		accountControls := []string{
+			m.SettingsAtuinAccountTitle(), m.SettingsAtuinAddress(), m.SettingsAtuinUsername(),
+			m.SettingsAtuinSignIn(), m.SettingsAtuinKeyTitle(), m.SettingsAtuinMasterKey(),
+			m.SettingsAtuinLogout(),
+		}
+		syncControls := []string{
+			m.SettingsAtuinSectionTitle(), m.SettingsAtuinSyncEnabled(),
+			m.SettingsAtuinSyncInterval(), m.SettingsAtuinPreferHostAtuin(),
+		}
+		assertPresence := func(step string, present bool, labels []string) {
+			t.Helper()
+			for _, label := range labels {
+				if _, ok := tester.Find(label); ok != present {
+					t.Fatalf("%s: presence of %q = %v, want %v: %v",
+						step, label, ok, present, tester.Texts())
+				}
+			}
+		}
+
+		if prefs.settings.History.SyncEnabled {
+			t.Fatal("the fixture did not start with sync disabled")
+		}
+		assertPresence("sync off", false, accountControls)
+		assertPresence("sync off", true, syncControls)
+
+		if err := tester.Click(m.SettingsAtuinSyncEnabled()); err != nil {
+			t.Fatalf("click the sync checkbox: %v", err)
+		}
+		tester.Frame()
+		if !prefs.settings.History.SyncEnabled {
+			t.Fatal("the sync checkbox did not reach the preferences service")
+		}
+		assertPresence("sync on", true, accountControls)
+		assertPresence("sync on", true, syncControls)
+
+		if err := tester.Click(m.SettingsAtuinSyncEnabled()); err != nil {
+			t.Fatalf("click the sync checkbox again: %v", err)
+		}
+		tester.Frame()
+		if prefs.settings.History.SyncEnabled {
+			t.Fatal("the second click did not disable sync")
+		}
+		assertPresence("sync off again", false, accountControls)
+		assertPresence("sync off again", true, syncControls)
+	})
+
+	// A nil Preferences is a test-only constructor with no persisted document
+	// to consult, so the account card keeps rendering as it did before.
+	t.Run("nil preferences", func(t *testing.T) {
+		state := NewAtuinState(&fakeHistoryAccount{status: atuinStatus(atuinmodel.KeyStateVerified)})
+		tester := ui.NewTester(viewAt(AreaLogs, Config{Atuin: state}), 1100, 2400)
+		tester.SetLocale("en")
+		tester.Frame()
+		m := locales.In("en")
+		for _, label := range []string{
+			m.SettingsAtuinAccountTitle(), m.SettingsAtuinSignIn(),
+			m.SettingsAtuinKeyTitle(), m.SettingsAtuinLogout(),
+		} {
+			if _, ok := tester.Find(label); !ok {
+				t.Fatalf("nil Preferences dropped %q: %v", label, tester.Texts())
+			}
+		}
+	})
+}
+
 // TestAtuinPanelStatesWhatTheServerCanSee pins the spec-required limitation
 // notice: the server sees record identifiers and metadata, not command text.
 func TestAtuinPanelStatesWhatTheServerCanSee(t *testing.T) {

@@ -557,7 +557,9 @@ func sftpEditorArea(c *ui.Context, config Config, m locales.Messages, t *ui.Them
 // the Terminal page.
 func logsArea(c *ui.Context, config Config, m locales.Messages, t *ui.Theme) {
 	historySyncSettingsSection(c, config.Preferences, config.Atuin, m, t)
-	atuinAccountSection(c, config.Atuin, config.Preferences, m, t)
+	if atuinAccountVisible(config.Preferences) {
+		atuinAccountSection(c, config.Atuin, config.Preferences, m, t)
+	}
 	if config.Terminal != nil {
 		renderHistoryCaptureSection(c, config.Terminal, config.Terminal.Settings(), m, t)
 	}
