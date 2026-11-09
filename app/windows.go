@@ -22,7 +22,10 @@ type windowSpec struct {
 	Height    int
 	MinWidth  int
 	MinHeight int
-	Content   func(*ui.Context)
+	// Chrome is the window's title bar style. On macOS it places the traffic
+	// lights level with that title bar.
+	Chrome  titlebar.Style
+	Content func(*ui.Context)
 }
 
 // windowHooks are the events the composition root handles. OnCloseRequest
@@ -93,10 +96,12 @@ func (nativeConfirmer) Confirm(prompt closePrompt) bool {
 type mygoWindowHost struct{}
 
 func (mygoWindowHost) Create(spec windowSpec, hooks windowHooks) hostWindow {
-	// Every window is frameless, as the original's: no native caption or
-	// menu bar, and the content draws its own title bar and window controls
-	// (see withFrame). The menu still drives the accelerators.
-	window := mygo.NewWindow(mygo.WindowOptions{
+	// Every window draws its own title bar, as the original's: no native
+	// caption or menu bar. Elsewhere the window is frameless and the content
+	// draws the window controls too (see withFrame); on macOS the title bar is
+	// hidden instead, so the window keeps its traffic lights, set level with
+	// the content's title bar. The menu still drives the accelerators.
+	options := mygo.WindowOptions{
 		Title:     spec.Title,
 		Width:     spec.Width,
 		Height:    spec.Height,
@@ -105,7 +110,13 @@ func (mygoWindowHost) Create(spec windowSpec, hooks windowHooks) hostWindow {
 		StateKey:  spec.StateKey,
 		Frameless: true,
 		Content:   ui.View(spec.Content),
-	})
+	}
+	if titlebar.NativeControls {
+		options.Frameless = false
+		options.TitleBarStyle = mygo.TitleBarHidden
+		options.TrafficLightPosition = trafficLights(spec.Chrome)
+	}
+	window := mygo.NewWindow(options)
 	if hooks.OnFocus != nil {
 		window.OnFocus(hooks.OnFocus)
 	}
@@ -118,6 +129,20 @@ func (mygoWindowHost) Create(spec windowSpec, hooks windowHooks) hostWindow {
 		window.OnClosed(hooks.OnClosed)
 	}
 	return window
+}
+
+// trafficLights places the macOS window controls so they sit centered on the
+// title bar the content draws: the Tab bar, a detached terminal's bar, or the
+// Settings header row.
+func trafficLights(style titlebar.Style) *mygo.Point {
+	// The lights are about 14 high; center them on a bar of the given height
+	// starting at top.
+	const lights = 14
+	top, height := float32(0), titlebar.Height
+	if style == titlebar.Dialog {
+		top, height = titlebar.CloseTop, titlebar.CloseSize
+	}
+	return &mygo.Point{X: 14, Y: int(top + (height-lights)/2)}
 }
 
 // windowManager owns every application window and the shared App Lock gate.
@@ -371,6 +396,7 @@ func (m *windowManager) OpenMain() hostWindow {
 		Height:    720,
 		MinWidth:  720,
 		MinHeight: 480,
+		Chrome:    titlebar.Tabs,
 		Content:   content,
 	}, windowHooks{
 		OnFocus:        m.recordActivity,
@@ -423,6 +449,7 @@ func (m *windowManager) OpenSettings() {
 		Height:    720,
 		MinWidth:  720,
 		MinHeight: 480,
+		Chrome:    titlebar.Dialog,
 		Content:   m.withTheme(withFrame(titlebar.Dialog, func() hostWindow { return m.settings }, m.wrap(m.settingsContent()))),
 	}, windowHooks{
 		OnFocus:  m.recordActivity,
@@ -452,6 +479,7 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 		Height:    600,
 		MinWidth:  480,
 		MinHeight: 320,
+		Chrome:    titlebar.Popup,
 		Content:   content,
 	}, windowHooks{
 		OnFocus:        m.recordActivity,

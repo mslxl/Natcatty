@@ -123,7 +123,8 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 	// Tabs sit on its floor: the chosen one takes the surface's own color and
 	// opens into it. The bar is the window's title bar too: its empty room
 	// drags the window, and its right end stays clear of the window controls.
-	ui.Row(c).FillWidth().Height(topBarHeight).Shrink(0).Padding(0, 8+titlebar.Room, 0, 12).Gap(2).AlignItems(ui.End).
+	left, right := titlebar.Insets(c, titlebar.Tabs)
+	ui.Row(c).FillWidth().Height(topBarHeight).Shrink(0).Padding(0, 8+right, 0, 12+left).Gap(2).AlignItems(ui.End).
 		Background(kit.Muted(t)).DragWindow().Children(func() {
 		titlebar.DragStripe(c)
 		if fixedTab(c, "tab-home", icons.LayoutGrid, m.NavVault(), homeVisible(s)).Clicked() {
