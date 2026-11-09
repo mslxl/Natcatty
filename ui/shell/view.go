@@ -311,7 +311,7 @@ func controlPanel(c *ui.Context, s *state.State, m locales.Messages) {
 		return
 	}
 	open := s.QuickControlsOpen()
-	button := barButton(c, "bar-control-panel", icons.SlidersHorizontal, m.NavControlPanel())
+	button := kit.IconButtonWith(c, icons.SlidersHorizontal, m.NavControlPanel(), kit.IconOptions{Role: kit.IconCard, Key: "bar-control-panel"})
 	if *open {
 		button.Background(c.Theme().Text.Alpha(0.1))
 	}
@@ -326,18 +326,6 @@ func controlPanel(c *ui.Context, s *state.State, m locales.Messages) {
 			Shadow(0, 8, 24, 0, kit.CardShadow(t)).Clip()
 		content(c)
 	})
-}
-
-// barButton is an icon-only control at the right of the Tab bar.
-func barButton(c *ui.Context, key, icon, label string) ui.Element {
-	t := c.Theme()
-	button := ui.ButtonBase(c).Key(key).Label(label).Tooltip(label).Size(tabHeight, tabHeight).Radius(kit.M(c).Radius.Control).
-		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
-	if button.Hovered() || button.Pressed() {
-		button.Background(t.Text.Alpha(0.1))
-	}
-	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(15, 15) })
-	return button
 }
 
 func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
@@ -404,8 +392,7 @@ func sidePanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	// The panel shares the terminal's background, as the original's, with a
 	// line under its strip.
 	ui.Column(c).Fill().MinWidth(0).Background(t.Background).Children(func() {
-		ui.Row(c).FillWidth().Height(36).Padding(0, 6).Gap(4).AlignItems(ui.Center).Shrink(0).
-			BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+		kit.Bar(c, kit.BarStrip).Padding(0, 6).Gap(4).Children(func() {
 			chosen := s.SideTool(tab)
 			for _, id := range s.SideTools(tab) {
 				icon, label := sideToolFace(m, id)
@@ -468,17 +455,10 @@ func sideToolFace(m locales.Messages, id state.SideToolID) (string, string) {
 // tool is tinted with the accent.
 func sidePanelButton(c *ui.Context, icon, label string, active bool) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(28, 28).Radius(kit.M(c).Radius.Control).
-		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
-	switch {
-	case active:
+	button := kit.IconButtonWith(c, icon, label, kit.IconOptions{Role: kit.IconCard})
+	if active {
 		button.Background(t.Accent.Alpha(0.24)).TextColor(t.Text)
-	case button.Pressed():
-		button.Background(kit.Strong(t)).TextColor(t.Text)
-	case button.Hovered():
-		button.Background(kit.Subtle(t)).TextColor(t.Text)
 	}
-	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(15, 15) })
 	return button
 }
 

@@ -51,7 +51,7 @@ func pathField(c *ui.Context, s *transferstate.State, side transferstate.Side, t
 	if input.Shortcut(0, ui.KeyEscape) {
 		s.CancelPathEdit(side)
 	}
-	if toolButton(c, icons.X, m.SftpCancel(), false).Clicked() {
+	if kit.IconButtonWith(c, icons.X, m.SftpCancel(), kit.IconOptions{On: false}).Clicked() {
 		s.CancelPathEdit(side)
 	}
 }
@@ -89,7 +89,7 @@ func crumbs(path string) (posix bool, out []crumb) {
 func breadcrumb(c *ui.Context, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab,
 	m locales.Messages, t *ui.Theme) {
 	posix, parts := crumbs(tab.Path)
-	if toolButton(c, icons.House, m.SftpGoHome(), false).Disabled(tab.Home == "").Clicked() {
+	if kit.IconButtonWith(c, icons.House, m.SftpGoHome(), kit.IconOptions{On: false}).Disabled(tab.Home == "").Clicked() {
 		s.GoHome(side)
 	}
 	if posix {
@@ -171,7 +171,7 @@ func actions(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 	m locales.Messages, t *ui.Theme) {
 	ready := tab.FS != nil
 
-	bookmark := toolButton(c, icons.Bookmark, m.SftpBookmarks(), false).Disabled(!ready)
+	bookmark := kit.IconButtonWith(c, icons.Bookmark, m.SftpBookmarks(), kit.IconOptions{On: false}).Disabled(!ready)
 	if s.Bookmarked(side) {
 		bookmark.TextColor(uitheme.Bookmark)
 	}
@@ -179,45 +179,45 @@ func actions(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 	// The last directory a terminal on this file system reported, as the
 	// original's "go to terminal directory"; it is gone until one reports.
 	if cwd := s.TerminalCwd(side); cwd != "" && ready {
-		if toolButton(c, icons.SquareTerminal, m.SftpGoTerminalCwd(), false).Tooltip(m.SftpGoTerminalCwd() + " · " + cwd).Clicked() {
+		if kit.IconButtonWith(c, icons.SquareTerminal, m.SftpGoTerminalCwd(), kit.IconOptions{On: false}).Tooltip(m.SftpGoTerminalCwd() + " · " + cwd).Clicked() {
 			s.GoTerminalCwd(side)
 		}
 	}
-	if toolButton(c, icons.ClipboardCopy, m.SftpCopyPath(), false).Disabled(tab.Path == "").Clicked() {
+	if kit.IconButtonWith(c, icons.ClipboardCopy, m.SftpCopyPath(), kit.IconOptions{On: false}).Disabled(tab.Path == "").Clicked() {
 		mygo.Clipboard.WriteText(tab.Path)
 	}
 	density := m.SftpCompactList()
 	if tab.Compact {
 		density = m.SftpComfortableList()
 	}
-	if toolButton(c, icons.Rows3, density, tab.Compact).Clicked() {
+	if kit.IconButtonWith(c, icons.Rows3, density, kit.IconOptions{On: tab.Compact}).Clicked() {
 		s.ToggleCompact(side)
 	}
-	if toolButton(c, icons.Search, m.SftpFilter(), tab.FilterOpen).Clicked() {
+	if kit.IconButtonWith(c, icons.Search, m.SftpFilter(), kit.IconOptions{On: tab.FilterOpen}).Clicked() {
 		s.ToggleFilter(side)
 	}
-	if toolButton(c, icons.FolderPlus, m.SftpNewFolder(), false).Disabled(!ready).Clicked() {
+	if kit.IconButtonWith(c, icons.FolderPlus, m.SftpNewFolder(), kit.IconOptions{On: false}).Disabled(!ready).Clicked() {
 		s.RequestNewFolder(side)
 	}
-	if toolButton(c, icons.FilePlus, m.SftpNewFile(), false).Disabled(!ready).Clicked() {
+	if kit.IconButtonWith(c, icons.FilePlus, m.SftpNewFile(), kit.IconOptions{On: false}).Disabled(!ready).Clicked() {
 		s.RequestNewFile(side)
 	}
 	hidden := icons.EyeOff
 	if tab.ShowHidden {
 		hidden = icons.Eye
 	}
-	if toolButton(c, hidden, m.SftpShowHiddenFiles(), tab.ShowHidden).Clicked() {
+	if kit.IconButtonWith(c, hidden, m.SftpShowHiddenFiles(), kit.IconOptions{On: tab.ShowHidden}).Clicked() {
 		s.ToggleHidden(side)
 	}
 	refresh := icons.RefreshCw
 	if tab.Loading {
 		refresh = icons.Loader
 	}
-	if toolButton(c, refresh, m.SftpRefresh(), false).Disabled(!ready).Clicked() {
+	if kit.IconButtonWith(c, refresh, m.SftpRefresh(), kit.IconOptions{On: false}).Disabled(!ready).Clicked() {
 		s.Refresh(side)
 	}
 	ui.Column(c).Grow(1)
-	toolButton(c, icons.Ellipsis, m.SftpMore(), false).Menu(func(menu *ui.Menu) {
+	kit.IconButtonWith(c, icons.Ellipsis, m.SftpMore(), kit.IconOptions{On: false}).Menu(func(menu *ui.Menu) {
 		menu.Submenu(m.SftpSort(), func(sort *ui.Menu) { sortMenu(sort, s, side, tab, m) })
 		menu.Separator()
 		if menu.Item(m.SftpTransferCenter()).Chosen() {
@@ -233,29 +233,10 @@ func actions(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 	})
 }
 
-// toolButton is the toolbar's ghost icon button, kit.IconButton's size;
-// active fills it.
-func toolButton(c *ui.Context, icon, label string, active bool) ui.Element {
-	t := c.Theme()
-	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(28, 28).Radius(kit.M(c).Radius.Control).
-		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
-	switch {
-	case button.Pressed():
-		button.Background(kit.Strong(t)).TextColor(t.Text)
-	case active:
-		button.Background(kit.Strong(t)).TextColor(t.Text)
-	case button.Hovered():
-		button.Background(kit.Subtle(t)).TextColor(t.Text)
-	}
-	button.Children(func() { kit.Icon(c, icon) })
-	return button
-}
-
 // filterBar narrows the listing by name. Esc clears the text, then closes.
 func filterBar(c *ui.Context, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab,
 	m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Height(34).Padding(0, 8, 0, 12).Gap(6).AlignItems(ui.Center).Shrink(0).
-		BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+	kit.Bar(c, kit.BarFilter).Padding(0, 8, 0, 12).Gap(6).Children(func() {
 		ui.Row(c).Grow(1).MinWidth(0).Height(24).Padding(0, 8).Gap(6).AlignItems(ui.Center).
 			Radius(5).Border(1, t.Border).Background(t.Surface).Children(func() {
 			kit.IconSized(c, icons.Search, kit.M(c).Icon.Small).TextColor(t.TextMuted).Shrink(0)
@@ -277,7 +258,7 @@ func filterBar(c *ui.Context, s *transferstate.State, side transferstate.Side, t
 				}
 			}
 		})
-		if toolButton(c, icons.X, m.SftpFilterClose(), false).Clicked() {
+		if kit.IconButtonWith(c, icons.X, m.SftpFilterClose(), kit.IconOptions{On: false}).Clicked() {
 			s.ToggleFilter(side)
 		}
 	})

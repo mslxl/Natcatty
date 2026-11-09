@@ -33,21 +33,11 @@ func Icon(c *ui.Context, name string) ui.Element {
 	return ui.Icon(c, icons.Lucide(name)).Size(M(c).Icon.Regular, M(c).Icon.Regular)
 }
 
-// IconButton is a square ghost button showing only an icon. label names it
-// for assistive technology and the tests, and shows as its tooltip.
+// IconButton is a square ghost button showing only an icon, at the toolbar
+// size. label names it for assistive technology and the tests, and shows as
+// its tooltip.
 func IconButton(c *ui.Context, name, label string) ui.Element {
-	t := c.Theme()
-	button := ui.ButtonBase(c).Label(label).Tooltip(label).
-		Size(M(c).Control.Regular, M(c).Control.Regular).Radius(M(c).Radius.Control).Justify(ui.Center).AlignItems(ui.Center).
-		TextColor(t.TextMuted).Shrink(0)
-	switch {
-	case button.Pressed():
-		button.Background(Strong(t)).TextColor(t.Text)
-	case button.Hovered():
-		button.Background(Subtle(t)).TextColor(t.Text)
-	}
-	button.Children(func() { Icon(c, name) })
-	return button
+	return IconButtonWith(c, name, label, IconOptions{})
 }
 
 // GhostButton is a flat button with an icon and a label, as a toolbar's.

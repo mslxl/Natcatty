@@ -82,6 +82,10 @@ type BarHeights struct {
 	ListHeader float32
 	// Filter is a filter row under a toolbar.
 	Filter float32
+	// Footer is a list's status row.
+	Footer float32
+	// Strip is a side panel's tool strip.
+	Strip float32
 	// Page is a page's title header.
 	Page float32
 }
@@ -109,9 +113,10 @@ var classicMetrics = Metrics{
 		Title3: 16, Title: 18, LargeTitle: 20},
 	Radius:  Radii{Small: 4, Control: 6, Card: 10, Overlay: 12, Pill: 999},
 	Control: ControlHeights{Mini: 20, Small: 22, Compact: 24, Regular: 28, Large: 32},
-	Bar:     BarHeights{Title: 36, Tabs: 32, Toolbar: 30, Pane: 30, ListHeader: 28, Filter: 34, Page: 56},
-	Icon:    IconSizes{Small: 12, Medium: 14, Regular: 16},
-	Space:   Spacing{Hairline: 2, XSmall: 4, Small: 6, Medium: 8, Large: 12, XLarge: 16},
+	Bar: BarHeights{Title: 36, Tabs: 32, Toolbar: 30, Pane: 30, ListHeader: 28, Filter: 34,
+		Footer: 30, Strip: 36, Page: 56},
+	Icon:  IconSizes{Small: 12, Medium: 14, Regular: 16},
+	Space: Spacing{Hairline: 2, XSmall: 4, Small: 6, Medium: 8, Large: 12, XLarge: 16},
 }
 
 // M returns the metrics of the active Interface Style.

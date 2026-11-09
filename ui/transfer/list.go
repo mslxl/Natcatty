@@ -42,8 +42,7 @@ func columnsFor(width float32) columns {
 // click reverses it.
 func listHeader(c *ui.Context, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab,
 	cols columns, m locales.Messages, t *ui.Theme) {
-	row := ui.Row(c).FillWidth().Height(28).Padding(0, 12).Gap(8).AlignItems(ui.Center).Shrink(0).
-		Background(kit.Muted(t)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border)
+	row := kit.Bar(c, kit.BarListHeader).Padding(0, 12).Gap(8)
 	row.Children(func() {
 		headerCell(c, s, side, tab, domainsftp.SortName, m.SftpColumnName(), 0, false, t)
 		if cols.modified {
@@ -388,8 +387,7 @@ func kindText(m locales.Messages, entry domainsftp.Entry) string {
 // footer counts the listing and the selection, and names the folder.
 func footer(c *ui.Context, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab,
 	m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Height(30).Padding(0, 12).Gap(8).AlignItems(ui.Center).Shrink(0).
-		Background(kit.Muted(t)).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
+	kit.Bar(c, kit.BarFooter).Padding(0, 12).Gap(8).Children(func() {
 		text := m.SftpItemCount(visibleCount(tab))
 		if selected := len(tab.SelectedPaths()); selected > 0 {
 			text += " · " + m.SftpSelected(selected)
@@ -439,7 +437,7 @@ func queueStrip(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui
 					s.ClearFinished()
 				}
 			}
-			if toolButton(c, icons.Maximize, m.SftpTransferCenterOpen(), false).Clicked() {
+			if kit.IconButtonWith(c, icons.Maximize, m.SftpTransferCenterOpen(), kit.IconOptions{On: false}).Clicked() {
 				s.OpenCenter()
 			}
 		})

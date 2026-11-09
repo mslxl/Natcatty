@@ -48,7 +48,7 @@ func terminalToolbar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Th
 	if s.Broadcasting() {
 		broadcastLabel = m.BroadcastButtonActive(s.BroadcastTargetCount())
 	}
-	broadcastButton := toolbarToggle(c, icons.Radio, broadcastLabel, s.BroadcastPanelOpen())
+	broadcastButton := kit.IconButtonWith(c, icons.Radio, broadcastLabel, kit.IconOptions{Role: kit.IconPane, On: s.BroadcastPanelOpen()})
 	if s.Broadcasting() {
 		broadcastButton.Background(t.Accent.Alpha(0.14)).TextColor(t.Accent)
 	}
@@ -57,13 +57,13 @@ func terminalToolbar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Th
 		c.Invalidate()
 	}
 	if s.Broadcasting() {
-		stop := toolbarToggle(c, icons.CircleX, m.BroadcastStop(), false).TextColor(t.Danger)
+		stop := kit.IconButtonWith(c, icons.CircleX, m.BroadcastStop(), kit.IconOptions{Role: kit.IconPane, On: false}).TextColor(t.Danger)
 		if stop.Clicked() {
 			s.StopBroadcast()
 			c.Invalidate()
 		}
 	}
-	if toolbarToggle(c, icons.NotebookPen, m.ComposeButton(), s.ComposeOpen()).Clicked() {
+	if kit.IconButtonWith(c, icons.NotebookPen, m.ComposeButton(), kit.IconOptions{Role: kit.IconPane, On: s.ComposeOpen()}).Clicked() {
 		if s.ComposeOpen() {
 			s.CloseCompose()
 		} else {
@@ -71,23 +71,6 @@ func terminalToolbar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Th
 		}
 		c.Invalidate()
 	}
-}
-
-// toolbarToggle is a square ghost button showing an icon, filled while what
-// it toggles is open. label names it and shows as its tooltip: the strip
-// beside it needs the room for its Tabs at the minimum window.
-func toolbarToggle(c *ui.Context, icon, label string, on bool) ui.Element {
-	t := c.Theme()
-	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(22, 22).
-		Radius(5).Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
-	switch {
-	case on || button.Pressed():
-		button.Background(kit.Strong(t)).TextColor(t.Text)
-	case button.Hovered():
-		button.Background(kit.Subtle(t)).TextColor(t.Text)
-	}
-	button.Children(func() { kit.IconSized(c, icon, kit.M(c).Icon.Medium) })
-	return button
 }
 
 // terminalPanels renders the open broadcast and compose panels above the
