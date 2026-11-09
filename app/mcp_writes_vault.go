@@ -671,10 +671,12 @@ func (e *mcpWriteExecutor) executeGroups(ctx context.Context, tool string,
 			return nil, e.vaultToolError(tool, err)
 		}
 		draft := domainvault.GroupDraft{Path: domainvault.NormalizeGroup(groupPath)}
+		groupID := ""
 		for _, group := range groups {
 			if group.Path != draft.Path {
 				continue
 			}
+			groupID = group.ID
 			draft = domainvault.GroupDraft{
 				Path: group.Path, Notes: group.Notes, Username: group.Username,
 				Port: group.Port, Protocol: group.Protocol, AuthMethod: group.AuthMethod,
@@ -690,8 +692,11 @@ func (e *mcpWriteExecutor) executeGroups(ctx context.Context, tool string,
 		if hasArg(arguments, "newPath") {
 			draft.Path = stringParam(arguments, "newPath")
 		}
+		if groupID == "" {
+			return nil, e.vaultToolError(tool, appvault.ErrNotFound)
+		}
 		ignored := applyGroupDefaults(&draft, defaults)
-		group, err := e.vault.UpdateGroup(ctx, groupPath, draft)
+		group, err := e.vault.UpdateGroup(ctx, groupID, draft)
 		if err != nil {
 			return nil, e.vaultToolError(tool, err)
 		}
@@ -706,6 +711,11 @@ func (e *mcpWriteExecutor) executeGroups(ctx context.Context, tool string,
 			return nil, appmcp.InvalidArgumentError(tool, "path is required.")
 		}
 		deleteHosts := boolArg(arguments, "deleteHosts")
+		groups, err := e.vault.ListGroups(ctx)
+		if err != nil {
+			return nil, e.vaultToolError(tool, err)
+		}
+		group, found := domainvault.GroupByPath(groups, groupPath)
 		hosts, err := e.vault.List(ctx)
 		if err != nil {
 			return nil, e.vaultToolError(tool, err)
@@ -722,10 +732,14 @@ func (e *mcpWriteExecutor) executeGroups(ctx context.Context, tool string,
 				deletedHosts++
 			}
 		}
-		if err := e.vault.DeleteGroup(ctx, groupPath); err != nil {
-			if !errors.Is(err, appvault.ErrNotFound) || deletedHosts == 0 {
-				return nil, e.vaultToolError(tool, err)
+		if found {
+			if err := e.vault.DeleteGroup(ctx, group.ID); err != nil {
+				if !errors.Is(err, appvault.ErrNotFound) || deletedHosts == 0 {
+					return nil, e.vaultToolError(tool, err)
+				}
 			}
+		} else if deletedHosts == 0 {
+			return nil, e.vaultToolError(tool, appvault.ErrNotFound)
 		}
 		return map[string]any{
 			"ok": true, "path": domainvault.NormalizeGroup(groupPath),

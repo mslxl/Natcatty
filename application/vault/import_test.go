@@ -67,13 +67,15 @@ func importCSV() string {
 		"Lab," + longLabel + ",bad.example.test,ssh,22,root,\r\n"
 }
 
-func seedConflict(t *testing.T, service *Service) domainvault.Host {
+// seedConflict writes the existing Host directly, without the group tree the
+// Service would create with it, so the imported Host Groups are still new.
+func seedConflict(t *testing.T, repo *fakeHosts) domainvault.Host {
 	t.Helper()
-	host, err := service.Create(context.Background(), domainvault.Draft{
-		Label: "existing", Hostname: "web1.example.test", Port: 2222,
-		Username: "deploy", Group: "Prod/Web", Password: "old-secret",
-	})
-	if err != nil {
+	host := domainvault.Host{
+		ID: "seed-existing", Label: "existing", Hostname: "web1.example.test", Port: 2222,
+		Username: "deploy", Protocol: domainvault.ProtocolSSH, Group: "Prod/Web",
+	}
+	if err := repo.Save(context.Background(), host); err != nil {
 		t.Fatal(err)
 	}
 	return host
@@ -81,7 +83,7 @@ func seedConflict(t *testing.T, service *Service) domainvault.Host {
 
 func TestPreviewImportReportsConflictsDuplicatesAndInvalidRows(t *testing.T) {
 	service, hosts, _, _, _ := newImportService(t)
-	seedConflict(t, service)
+	seedConflict(t, hosts)
 
 	preview, err := service.PreviewImport(context.Background(), importCSV(), PreviewImportOptions{FileName: "hosts.csv"})
 	if err != nil {
@@ -124,7 +126,7 @@ func TestPreviewImportReportsConflictsDuplicatesAndInvalidRows(t *testing.T) {
 
 func TestCommitImportIsChunkedAndPersistsThroughSecrets(t *testing.T) {
 	service, hosts, groups, secrets, store := newImportService(t)
-	seedConflict(t, service)
+	seedConflict(t, hosts)
 	preview, err := service.PreviewImport(context.Background(), importCSV(), PreviewImportOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -171,8 +173,21 @@ func TestCommitImportIsChunkedAndPersistsThroughSecrets(t *testing.T) {
 	if imported == nil {
 		t.Fatal("web2 was not imported")
 	}
-	if imported.Group != "Prod/Web" || imported.Port != 22 || imported.Username != "root" {
+	if imported.GroupID == "" || imported.Port != 22 || imported.Username != "root" {
 		t.Fatalf("imported = %+v", imported)
+	}
+	rediscovered, err := service.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	importedPath := ""
+	for _, host := range rediscovered {
+		if host.Hostname == "web2.example.test" {
+			importedPath = host.Group
+		}
+	}
+	if importedPath != "Prod/Web" {
+		t.Fatalf("derived import path = %q, want Prod/Web", importedPath)
 	}
 	if imported.HasPassword {
 		t.Fatal("web2 has no password")
@@ -386,7 +401,7 @@ func TestCommitImportRollsBackSecretsWhenTheBatchFails(t *testing.T) {
 
 func TestCommitImportSkipsConflictsByDefault(t *testing.T) {
 	service, hosts, _, _, _ := newImportService(t)
-	existing := seedConflict(t, service)
+	existing := seedConflict(t, hosts)
 	preview, err := service.PreviewImport(context.Background(), importCSV(), PreviewImportOptions{})
 	if err != nil {
 		t.Fatal(err)

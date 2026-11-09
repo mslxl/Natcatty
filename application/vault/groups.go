@@ -8,14 +8,14 @@ import (
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
-// GroupRepository persists Host Groups. Path remains the storage key and the
-// value Hosts and Snippets reference, while ID is the stable identity
-// convergent sync uses so a rename or move keeps one record.
+// GroupRepository persists Host Groups. A group is addressed by its stable ID;
+// its path is derived from the tree and is not a storage key. Renaming or
+// moving a group therefore never rewrites the Hosts that belong to it.
 type GroupRepository interface {
 	ListGroups(ctx context.Context) ([]domainvault.Group, error)
-	GetGroup(ctx context.Context, path string) (domainvault.Group, error)
+	GetGroup(ctx context.Context, id string) (domainvault.Group, error)
 	SaveGroup(ctx context.Context, group domainvault.Group) error
-	DeleteGroup(ctx context.Context, path string) error
+	DeleteGroup(ctx context.Context, id string) error
 }
 
 // WithGroups gives the Service Host Group persistence and group defaults.
@@ -23,7 +23,7 @@ func WithGroups(repo GroupRepository) Option {
 	return func(s *Service) { s.groups = repo }
 }
 
-// ListGroups returns every Host Group in display order.
+// ListGroups returns every Host Group with its derived path, in display order.
 func (s *Service) ListGroups(ctx context.Context) ([]domainvault.Group, error) {
 	if s.groups == nil {
 		return nil, unsupported(ErrGroupsUnavailable)
@@ -32,10 +32,12 @@ func (s *Service) ListGroups(ctx context.Context) ([]domainvault.Group, error) {
 	if err != nil {
 		return nil, internal(err)
 	}
-	return groups, nil
+	return domainvault.MaterializeGroupPaths(groups), nil
 }
 
-// CreateGroup validates and persists a Host Group.
+// CreateGroup validates and persists a Host Group. The draft names the desired
+// path; the path's missing ancestors are created so the tree is always
+// well-formed.
 func (s *Service) CreateGroup(ctx context.Context, draft domainvault.GroupDraft) (domainvault.Group, error) {
 	if s.groups == nil {
 		return domainvault.Group{}, unsupported(ErrGroupsUnavailable)
@@ -44,23 +46,24 @@ func (s *Service) CreateGroup(ctx context.Context, draft domainvault.GroupDraft)
 	if err != nil {
 		return domainvault.Group{}, invalid(err)
 	}
-	groups, err := s.groups.ListGroups(ctx)
+	groups, err := s.ListGroups(ctx)
 	if err != nil {
-		return domainvault.Group{}, internal(err)
+		return domainvault.Group{}, err
 	}
-	groups = domainvault.EnsureGroupIdentities(groups)
-	for _, group := range groups {
-		if group.Path == normalized.Path {
-			return domainvault.Group{}, conflict(nil)
-		}
+	if _, exists := domainvault.GroupByPath(groups, normalized.Path); exists {
+		return domainvault.Group{}, conflict(nil)
+	}
+	parentID, err := s.ensureGroupPath(ctx, &groups, domainvault.ParentGroupPath(normalized.Path))
+	if err != nil {
+		return domainvault.Group{}, err
 	}
 	now := s.now()
 	group := groupFromDraft(domainvault.Group{
 		ID:        s.newGroupID(),
-		ParentID:  groupIdentityForPath(groups, domainvault.ParentGroupPath(normalized.Path)),
+		ParentID:  parentID,
 		Name:      domainvault.GroupName(normalized.Path),
 		Path:      normalized.Path,
-		OrderKey:  nextGroupOrder(groups),
+		OrderKey:  nextGroupOrder(groups) + orderStep,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}, normalized)
@@ -70,15 +73,15 @@ func (s *Service) CreateGroup(ctx context.Context, draft domainvault.GroupDraft)
 	return group, nil
 }
 
-// UpdateGroup edits a Host Group. A changed Path renames the group and every
-// descendant group and Host reference below it. Deleting a group is separate:
-// UpdateGroup never removes Hosts.
-func (s *Service) UpdateGroup(ctx context.Context, path string, draft domainvault.GroupDraft) (domainvault.Group, error) {
+// UpdateGroup edits the Host Group with the given stable ID. A changed path
+// moves the group in the tree (renaming it and/or changing its parent) by
+// updating this record alone: member Hosts keep the ID and follow the move,
+// and descendant groups derive their new paths from the tree.
+func (s *Service) UpdateGroup(ctx context.Context, id string, draft domainvault.GroupDraft) (domainvault.Group, error) {
 	if s.groups == nil {
 		return domainvault.Group{}, unsupported(ErrGroupsUnavailable)
 	}
-	oldPath := domainvault.NormalizeGroup(path)
-	if oldPath == "" {
+	if id == "" {
 		return domainvault.Group{}, invalid(&domainvault.ValidationError{
 			Field: domainvault.FieldGroup, Rule: domainvault.RuleRequired,
 		})
@@ -87,70 +90,47 @@ func (s *Service) UpdateGroup(ctx context.Context, path string, draft domainvaul
 	if err != nil {
 		return domainvault.Group{}, invalid(err)
 	}
-	if normalized.Path != oldPath && domainvault.IsGroupAtOrBelow(normalized.Path, oldPath) {
-		return domainvault.Group{}, invalid(&domainvault.ValidationError{
-			Field: domainvault.FieldGroup, Rule: domainvault.RuleInvalid,
-		})
-	}
-
-	groups, err := s.groups.ListGroups(ctx)
+	groups, err := s.ListGroups(ctx)
 	if err != nil {
-		return domainvault.Group{}, internal(err)
+		return domainvault.Group{}, err
 	}
-	groups = domainvault.EnsureGroupIdentities(groups)
-	existing, found := findGroup(groups, oldPath)
+	existing, found := domainvault.GroupByID(groups, id)
 	if !found {
-		// An implicit group exists only while a Host references its path.
-		hosts, listErr := s.repo.List(ctx)
-		if listErr != nil {
-			return domainvault.Group{}, internal(listErr)
+		return domainvault.Group{}, ErrNotFound
+	}
+	oldPath := existing.Path
+	if normalized.Path != oldPath {
+		if domainvault.IsGroupAtOrBelow(normalized.Path, oldPath) {
+			return domainvault.Group{}, invalid(&domainvault.ValidationError{
+				Field: domainvault.FieldGroup, Rule: domainvault.RuleInvalid,
+			})
 		}
-		if !hostsReferenceGroup(hosts, oldPath) {
-			return domainvault.Group{}, ErrNotFound
+		if other, exists := domainvault.GroupByPath(groups, normalized.Path); exists && other.ID != id {
+			return domainvault.Group{}, conflict(nil)
 		}
 	}
-	if normalized.Path != oldPath {
-		for _, group := range groups {
-			if group.Path == normalized.Path {
-				return domainvault.Group{}, conflict(nil)
-			}
-		}
-		if err := s.renameHosts(ctx, oldPath, normalized.Path); err != nil {
-			return domainvault.Group{}, err
-		}
-		if err := s.renameDescendantGroups(ctx, groups, oldPath, normalized.Path); err != nil {
-			return domainvault.Group{}, err
-		}
-		// Snippet target group paths follow the rename, the same as Host
-		// references do.
-		if err := s.remapSnippetTargetGroups(ctx, oldPath, normalized.Path); err != nil {
-			return domainvault.Group{}, err
-		}
+	parentID, err := s.ensureGroupPath(ctx, &groups, domainvault.ParentGroupPath(normalized.Path))
+	if err != nil {
+		return domainvault.Group{}, err
 	}
 
 	now := s.now()
 	updated := groupFromDraft(existing, normalized)
-	// A path that only a Host referenced has no persisted identity yet. Give
-	// it the deterministic path identity so another device that upgrades the
-	// same implicit group produces the same ID.
-	if updated.ID == "" {
-		updated.ID = domainvault.GroupIDFromPath(oldPath)
-	}
 	updated.Name = domainvault.GroupName(normalized.Path)
-	updated.ParentID = groupIdentityForPath(groups, domainvault.ParentGroupPath(normalized.Path))
+	updated.ParentID = parentID
+	updated.Path = normalized.Path
 	if updated.CreatedAt.IsZero() {
 		updated.CreatedAt = now
 	}
 	updated.UpdatedAt = now
-	if normalized.Path != oldPath && updated.OrderKey == 0 {
-		updated.OrderKey = nextGroupOrder(groups)
-	}
 	if err := s.groups.SaveGroup(ctx, updated); err != nil {
 		return domainvault.Group{}, internal(err)
 	}
+	// Snippets still address groups by path, so their target lists follow a
+	// rename. Hosts do not: their membership is the stable ID.
 	if normalized.Path != oldPath {
-		if err := s.groups.DeleteGroup(ctx, oldPath); err != nil && !errors.Is(err, ErrNotFound) {
-			return domainvault.Group{}, internal(err)
+		if err := s.remapSnippetTargetGroups(ctx, oldPath, normalized.Path); err != nil {
+			return domainvault.Group{}, err
 		}
 	}
 	return updated, nil
@@ -159,100 +139,82 @@ func (s *Service) UpdateGroup(ctx context.Context, path string, draft domainvaul
 // DeleteGroup removes a Host Group and its descendant groups. Member Hosts
 // survive and move to the Vault root, matching the original Vault's default
 // non-cascading group delete.
-func (s *Service) DeleteGroup(ctx context.Context, path string) error {
+func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 	if s.groups == nil {
 		return unsupported(ErrGroupsUnavailable)
 	}
-	root := domainvault.NormalizeGroup(path)
-	if root == "" {
-		return invalid(&domainvault.ValidationError{
-			Field: domainvault.FieldGroup, Rule: domainvault.RuleRequired,
-		})
-	}
-	groups, err := s.groups.ListGroups(ctx)
+	groups, err := s.ListGroups(ctx)
 	if err != nil {
-		return internal(err)
+		return err
+	}
+	root, found := domainvault.GroupByID(groups, id)
+	if !found {
+		return ErrNotFound
+	}
+	removed := make(map[string]bool)
+	for _, group := range groups {
+		if domainvault.IsGroupAtOrBelow(group.Path, root.Path) {
+			removed[group.ID] = true
+		}
 	}
 	hosts, err := s.repo.List(ctx)
 	if err != nil {
 		return internal(err)
 	}
-
-	matched := false
-	for _, group := range groups {
-		if !domainvault.IsGroupAtOrBelow(group.Path, root) {
-			continue
-		}
-		matched = true
-		if err := s.groups.DeleteGroup(ctx, group.Path); err != nil && !errors.Is(err, ErrNotFound) {
-			return internal(err)
-		}
-	}
 	for _, host := range hosts {
-		if !domainvault.IsGroupAtOrBelow(host.Group, root) {
+		if !removed[host.GroupID] {
 			continue
 		}
-		matched = true
-		host.Group = ""
 		host.GroupID = ""
+		host.Group = ""
 		host.UpdatedAt = s.now()
 		if err := s.repo.Save(ctx, host); err != nil {
 			return internal(err)
 		}
 	}
-	if !matched {
-		return ErrNotFound
+	for _, group := range groups {
+		if !removed[group.ID] {
+			continue
+		}
+		if err := s.groups.DeleteGroup(ctx, group.ID); err != nil && !errors.Is(err, ErrNotFound) {
+			return internal(err)
+		}
 	}
 	// Snippet target group references are cleared, never deleted with the
 	// group; the Snippets stay in the Vault.
-	if err := s.removeSnippetTargetGroups(ctx, root); err != nil {
+	if err := s.removeSnippetTargetGroups(ctx, root.Path); err != nil {
 		return err
 	}
 	return nil
 }
 
-// AssignHostGroup moves one Host into a Host Group, or to the Vault root when
-// groupPath is empty. The Host's other fields, including credentials, are
-// preserved.
-func (s *Service) AssignHostGroup(ctx context.Context, id model.HostID, groupPath string) error {
+// AssignHostGroup moves one Host into a Host Group addressed by its stable ID,
+// or to the Vault root when groupID is empty. The Host's other fields,
+// including credentials, are preserved.
+func (s *Service) AssignHostGroup(ctx context.Context, hostID model.HostID, groupID string) error {
 	if s.groups == nil {
 		return unsupported(ErrGroupsUnavailable)
 	}
-	path := domainvault.NormalizeGroup(groupPath)
-	groupID := ""
-	if path != "" {
-		groups, err := s.groups.ListGroups(ctx)
+	if groupID != "" {
+		groups, err := s.ListGroups(ctx)
 		if err != nil {
-			return internal(err)
+			return err
 		}
-		groups = domainvault.EnsureGroupIdentities(groups)
-		if !groupsAtOrBelow(groups, path) {
-			// A path that only Hosts reference, or that only leads to a saved
-			// group, is an implicit group: it has no saved defaults yet, but
-			// the Vault already displays it and the editor lets a Host use
-			// it. Accepting it here keeps the visible drop target and the
-			// saved membership in agreement.
-			hosts, listErr := s.repo.List(ctx)
-			if listErr != nil {
-				return internal(listErr)
-			}
-			if !hostsReferenceGroup(hosts, path) {
-				return invalid(&domainvault.ValidationError{
-					Field: domainvault.FieldGroup, Rule: domainvault.RuleInvalid,
-				})
-			}
+		if _, found := domainvault.GroupByID(groups, groupID); !found {
+			return invalid(&domainvault.ValidationError{
+				Field: domainvault.FieldGroup, Rule: domainvault.RuleInvalid,
+			})
 		}
-		groupID = groupIdentityForPath(groups, path)
 	}
-	host, err := s.repo.Get(ctx, id)
+	host, err := s.repo.Get(ctx, hostID)
 	if errors.Is(err, ErrNotFound) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return internal(err)
 	}
-	host.Group = path
 	host.GroupID = groupID
+	host.Group = ""
 	host.UpdatedAt = s.now()
 	if err := s.repo.Save(ctx, host); err != nil {
 		return internal(err)
@@ -280,12 +242,20 @@ func (s *Service) EffectiveHost(ctx context.Context, id model.HostID) (domainvau
 func (s *Service) resolveEffective(ctx context.Context, host domainvault.Host) (domainvault.Host, error) {
 	effective := host
 	if s.groups != nil {
-		groups, err := s.groups.ListGroups(ctx)
+		groups, err := s.ListGroups(ctx)
 		if err != nil {
-			return domainvault.Host{}, internal(err)
+			return domainvault.Host{}, err
 		}
-		effective = domainvault.ApplyGroupDefaults(host,
-			domainvault.ResolveGroupDefaults(groups, host.Group))
+		effective = domainvault.MaterializeHostGroup(effective, groups)
+		// A record written before stable IDs kept only its path; resolve it by
+		// path so an upgrade never drops the defaults it inherited.
+		defaults := domainvault.GroupDefaults{}
+		if host.GroupID != "" {
+			defaults = domainvault.ResolveGroupDefaultsByID(groups, host.GroupID)
+		} else if legacyPath := host.Group; legacyPath != "" {
+			defaults = domainvault.ResolveGroupDefaults(groups, legacyPath)
+		}
+		effective = domainvault.ApplyGroupDefaults(effective, defaults)
 	}
 	// A Host that leaves Port empty inherits its group's port; without one the
 	// protocol default is what the connection would use anyway, so resolve it
@@ -321,56 +291,72 @@ func (s *Service) GroupDefaults(ctx context.Context, path string) (domainvault.G
 	if s.groups == nil {
 		return domainvault.GroupDefaults{}, nil
 	}
-	groups, err := s.groups.ListGroups(ctx)
+	groups, err := s.ListGroups(ctx)
 	if err != nil {
-		return domainvault.GroupDefaults{}, internal(err)
+		return domainvault.GroupDefaults{}, err
 	}
 	return domainvault.ResolveGroupDefaults(groups, path), nil
 }
 
-func (s *Service) renameHosts(ctx context.Context, oldPath, newPath string) error {
-	hosts, err := s.repo.List(ctx)
-	if err != nil {
-		return internal(err)
+// ensureGroupPath returns the ID of the group at path, creating the path and
+// any missing ancestor so every level of the tree has a record. An empty path
+// is the Vault root and has no identity.
+func (s *Service) ensureGroupPath(ctx context.Context, groups *[]domainvault.Group, path string) (string, error) {
+	path = domainvault.NormalizeGroup(path)
+	if path == "" {
+		return "", nil
 	}
-	for _, host := range hosts {
-		if !domainvault.IsGroupAtOrBelow(host.Group, oldPath) {
+	byPath := indexGroupsByPath(*groups)
+	if id := byPath[path]; id != "" {
+		return id, nil
+	}
+	now := s.now()
+	order := nextGroupOrder(*groups)
+	var parentID string
+	for _, ancestor := range domainvault.GroupAncestors(path) {
+		if id := byPath[ancestor]; id != "" {
+			parentID = id
 			continue
 		}
-		host.Group = domainvault.ReplaceGroupPrefix(host.Group, oldPath, newPath)
-		host.UpdatedAt = s.now()
-		if err := s.repo.Save(ctx, host); err != nil {
-			return internal(err)
+		order += orderStep
+		group := domainvault.Group{
+			ID: s.newGroupID(), ParentID: parentID,
+			Name: domainvault.GroupName(ancestor), Path: ancestor,
+			OrderKey: order, CreatedAt: now, UpdatedAt: now,
 		}
+		if err := s.groups.SaveGroup(ctx, group); err != nil {
+			return "", internal(err)
+		}
+		*groups = append(*groups, group)
+		byPath[ancestor] = group.ID
+		parentID = group.ID
 	}
-	return nil
+	return byPath[path], nil
 }
 
-func (s *Service) renameDescendantGroups(ctx context.Context, groups []domainvault.Group, oldPath, newPath string) error {
-	for _, group := range groups {
-		if !domainvault.IsGroupAtOrBelow(group.Path, oldPath) {
-			continue
-		}
-		if group.Path == oldPath {
-			continue
-		}
-		previousPath := group.Path
-		if group.ID == "" {
-			group.ID = domainvault.GroupIDFromPath(previousPath)
-		}
-		group.Path = domainvault.ReplaceGroupPrefix(previousPath, oldPath, newPath)
-		group.Name = domainvault.GroupName(group.Path)
-		group.UpdatedAt = s.now()
-		if err := s.groups.SaveGroup(ctx, group); err != nil {
-			return internal(err)
-		}
-		// Move the record rather than leaving the old path behind: SaveGroup
-		// writes the new path, so the old row must be removed explicitly.
-		if err := s.groups.DeleteGroup(ctx, previousPath); err != nil && !errors.Is(err, ErrNotFound) {
-			return internal(err)
-		}
+// resolveHostGroup turns a Host draft's group path into the stable ID a Host
+// stores, creating the group (and its ancestors) when the path is new.
+func (s *Service) resolveHostGroup(ctx context.Context, path string) (string, error) {
+	path = domainvault.NormalizeGroup(path)
+	if path == "" {
+		return "", nil
 	}
-	return nil
+	if s.groups == nil {
+		return "", unsupported(ErrGroupsUnavailable)
+	}
+	groups, err := s.ListGroups(ctx)
+	if err != nil {
+		return "", err
+	}
+	return s.ensureGroupPath(ctx, &groups, path)
+}
+
+func indexGroupsByPath(groups []domainvault.Group) map[string]string {
+	byPath := make(map[string]string, len(groups))
+	for _, group := range groups {
+		byPath[domainvault.NormalizeGroup(group.Path)] = group.ID
+	}
+	return byPath
 }
 
 func groupFromDraft(group domainvault.Group, draft domainvault.GroupDraft) domainvault.Group {
@@ -392,49 +378,6 @@ func groupFromDraft(group domainvault.Group, draft domainvault.GroupDraft) domai
 	return group
 }
 
-func findGroup(groups []domainvault.Group, path string) (domainvault.Group, bool) {
-	for _, group := range groups {
-		if group.Path == path {
-			return group, true
-		}
-	}
-	return domainvault.Group{}, false
-}
-
-// groupsAtOrBelow reports whether a saved group is path or lies below it,
-// which makes path one of its levels.
-func groupsAtOrBelow(groups []domainvault.Group, path string) bool {
-	for _, group := range groups {
-		if domainvault.IsGroupAtOrBelow(group.Path, path) {
-			return true
-		}
-	}
-	return false
-}
-
-// groupIdentityForPath returns the stable ID of the saved group at path, or
-// the deterministic identity of an implicit path. An empty path is the Vault
-// root and has no identity.
-func groupIdentityForPath(groups []domainvault.Group, path string) string {
-	path = domainvault.NormalizeGroup(path)
-	if path == "" {
-		return ""
-	}
-	if group, ok := findGroup(groups, path); ok && group.ID != "" {
-		return group.ID
-	}
-	return domainvault.GroupIDFromPath(path)
-}
-
-func hostsReferenceGroup(hosts []domainvault.Host, path string) bool {
-	for _, host := range hosts {
-		if domainvault.IsGroupAtOrBelow(host.Group, path) {
-			return true
-		}
-	}
-	return false
-}
-
 func nextGroupOrder(groups []domainvault.Group) int64 {
 	var max int64
 	for _, group := range groups {
@@ -442,7 +385,7 @@ func nextGroupOrder(groups []domainvault.Group) int64 {
 			max = group.OrderKey
 		}
 	}
-	return max + orderStep
+	return max
 }
 
 // ErrGroupsUnavailable reports a Service built without Host Group persistence.
