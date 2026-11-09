@@ -14,6 +14,8 @@ import (
 
 	appsysmanager "github.com/mslxl/natcatty/application/sysmanager"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
+	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -80,9 +82,14 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	// apiece left the minimum window three of a tab's four list rows.
 	ui.Row(c).FillWidth().Gap(8).Wrap().AlignItems(ui.Center).Children(func() {
 		ui.Row(c).Grow(1).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.SysManagerTitle()).FontSize(18).Bold().SingleLine()
-			text, color := statusText(m, state, t)
-			ui.Text(c, text).FontSize(12).TextColor(color).NoWrap()
+			ui.Text(c, m.SysManagerTitle()).FontSize(18).FontWeight(600).SingleLine()
+			// Every other status fills the body as the status panel, so the
+			// title names only a live connection.
+			if state.Status == appsysmanager.StatusLive {
+				text, _ := statusText(m, state, t)
+				kit.StatusDot(c, t.Success)
+				ui.Text(c, text).FontSize(12).TextColor(t.TextMuted).NoWrap()
+			}
 		})
 		if len(s.Hosts()) > 0 {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() { refreshControls(c, s, m) })
@@ -156,7 +163,8 @@ func refreshControls(c *ui.Context, s *State, m locales.Messages) {
 		}
 		c.Invalidate()
 	}
-	if ui.Button(c, m.SysManagerRefreshNow()).Key("sysmanager-refresh").Clicked() {
+	c.Key("sysmanager-refresh")
+	if kit.GhostButton(c, icons.RefreshCw, m.SysManagerRefreshNow()).Clicked() {
 		s.Refresh()
 		c.Invalidate()
 	}
@@ -172,7 +180,7 @@ func tabsMenu(c *ui.Context, s *State, m locales.Messages) {
 	// positional one, so the menu would never be built: the button showed its
 	// label, yet clicking it opened nothing.
 	c.Key("sysmanager-tabs-layout")
-	ui.MenuButton(c, m.SysManagerTabsLayout(), func(menu *ui.Menu) {
+	kit.IconButton(c, icons.Columns, m.SysManagerTabsLayout()).Menu(func(menu *ui.Menu) {
 		for _, tab := range s.AllTabs() {
 			if menu.Item(tabLabel(m, tab)).
 				Checked(s.TabVisible(tab)).
@@ -248,36 +256,7 @@ func tabs(c *ui.Context, s *State, m locales.Messages) {
 	s.revealTab = false
 
 	ui.ScrollHorizontal(c).FillWidth().Height(tabStripHeight+tabStripBarRoom).Padding(0, 0, tabStripBarRoom, 0).
-		Shrink(0).Children(func() {
-		t := c.Theme()
-		parts := ui.TabsBase(c, &chosen, len(labels))
-		parts.List.Gap(t.Space(1)).Children(func() {
-			for i, label := range labels {
-				on := i == chosen
-				tab := parts.Tab(i).Padding(t.Space(2), t.Space(3)).FocusRing(false)
-				tab.TextColor(t.TextMuted)
-				if on {
-					tab.TextColor(t.Text).FontWeight(600)
-					if reveal {
-						tab = tab.ScrollIntoView()
-					}
-				} else if tab.Hovered() {
-					tab.TextColor(t.Text)
-				}
-				tab.DrawOver(func(p *ui.Painter, r ui.Rect) {
-					if on {
-						in, height := t.Space(1.5), t.Space(0.5)
-						p.Fill(ui.Rect{X: r.X + in, Y: r.Y + r.H - height, W: r.W - 2*in, H: height},
-							t.Accent, height/2)
-					}
-					if tab.FocusVisible() {
-						p.FocusRing(r, [4]float32{t.Radius, t.Radius, t.Radius, t.Radius})
-					}
-				})
-				tab.Children(func() { ui.Text(c, label).SingleLine() })
-			}
-		})
-	})
+		Shrink(0).Children(func() { kit.UnderlineTabs(c, &chosen, labels, reveal) })
 
 	if chosen != index && chosen >= 0 && chosen < len(visible) {
 		s.SetTab(visible[chosen])
@@ -390,7 +369,7 @@ func tmuxContent(c *ui.Context, s *State, state appsysmanager.TabState, m locale
 			if name != s.TmuxName() {
 				s.SetTmuxName(name)
 			}
-			create := ui.Button(c, m.SysManagerCreate()).Key("sysmanager-tmux-create").
+			create := kit.SecondaryButton(c, "", m.SysManagerCreate()).Key("sysmanager-tmux-create").
 				Disabled(s.ActionBusy() || strings.TrimSpace(name) == "")
 			if create.Clicked() {
 				_ = s.CreateSession()
@@ -467,11 +446,11 @@ func sessionActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	actionBar(c, func() {
 		ui.Text(c, m.SysManagerSelectedSession(session.Name, session.Windows)).
 			FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
-		if ui.Button(c, m.SysManagerAttach()).Key("sysmanager-tmux-attach").Clicked() {
+		if kit.SecondaryButton(c, "", m.SysManagerAttach()).Key("sysmanager-tmux-attach").Clicked() {
 			_ = s.AttachSession(session.Name)
 			c.Invalidate()
 		}
-		if ui.Button(c, m.SysManagerKill()).Key("sysmanager-tmux-kill").Clicked() {
+		if kit.SecondaryButton(c, "", m.SysManagerKill()).Key("sysmanager-tmux-kill").Clicked() {
 			request(s, s.RequestTmuxKill(session.Name))
 			c.Invalidate()
 		}
@@ -565,27 +544,27 @@ func dockerContainerActions(c *ui.Context, s *State, m locales.Messages, t *ui.T
 	actionBar(c, func() {
 		ui.Text(c, m.SysManagerSelectedContainer(containerDisplayName(container),
 			container.Image)).FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
-		if ui.Button(c, m.SysManagerStart()).Key("sysmanager-docker-start").
+		if kit.SecondaryButton(c, "", m.SysManagerStart()).Key("sysmanager-docker-start").
 			Disabled(s.ActionBusy() || running).Clicked() {
 			request(s, s.RequestDockerAction(container, appsysmanager.DockerStart))
 			c.Invalidate()
 		}
-		if ui.Button(c, m.SysManagerStop()).Key("sysmanager-docker-stop").
+		if kit.SecondaryButton(c, "", m.SysManagerStop()).Key("sysmanager-docker-stop").
 			Disabled(s.ActionBusy() || !running).Clicked() {
 			request(s, s.RequestDockerAction(container, appsysmanager.DockerStop))
 			c.Invalidate()
 		}
-		if ui.Button(c, m.SysManagerRemove()).Key("sysmanager-docker-remove").
+		if kit.SecondaryButton(c, "", m.SysManagerRemove()).Key("sysmanager-docker-remove").
 			Disabled(s.ActionBusy()).Clicked() {
 			request(s, s.RequestDockerAction(container, appsysmanager.DockerRemove))
 			c.Invalidate()
 		}
-		if ui.Button(c, m.SysManagerInspect()).Key("sysmanager-docker-inspect").
+		if kit.SecondaryButton(c, "", m.SysManagerInspect()).Key("sysmanager-docker-inspect").
 			Clicked() {
 			request(s, s.InspectContainer(container))
 			c.Invalidate()
 		}
-		if ui.Button(c, m.SysManagerLogs()).Key("sysmanager-docker-logs").
+		if kit.SecondaryButton(c, "", m.SysManagerLogs()).Key("sysmanager-docker-logs").
 			Clicked() {
 			request(s, s.ContainerLogs(container))
 			c.Invalidate()
@@ -683,7 +662,7 @@ func documentPanel(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		ui.Row(c).FillWidth().Gap(6).Children(func() {
 			ui.Text(c, title).FontSize(12).Bold().SingleLine()
 			ui.Column(c).Grow(1)
-			if ui.Button(c, m.SysManagerClose()).Key("sysmanager-document-close").Clicked() {
+			if kit.SecondaryButton(c, "", m.SysManagerClose()).Key("sysmanager-document-close").Clicked() {
 				s.CloseDocument()
 				c.Invalidate()
 			}
@@ -859,7 +838,8 @@ func statusPanel(c *ui.Context, s *State, state appsysmanager.TabState, m locale
 			state.Status == appsysmanager.StatusConnecting {
 			return
 		}
-		if ui.Button(c, m.SysManagerRefreshNow()).Key("sysmanager-retry").Clicked() {
+		c.Key("sysmanager-retry")
+		if kit.SecondaryButton(c, icons.RefreshCw, m.SysManagerRefreshNow()).Clicked() {
 			s.Refresh()
 			c.Invalidate()
 		}
@@ -981,21 +961,21 @@ func processActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
 		stopped := strings.Contains(strings.ToUpper(process.Stat), "T")
 		if !stopped {
-			if ui.Button(c, m.SysManagerStop()).Key("sysmanager-process-stop").Clicked() {
+			if kit.SecondaryButton(c, "", m.SysManagerStop()).Key("sysmanager-process-stop").Clicked() {
 				request(s, s.RequestSignal(process.PID, "STOP"))
 				c.Invalidate()
 			}
 		} else {
-			if ui.Button(c, m.SysManagerContinue()).Key("sysmanager-process-continue").Clicked() {
+			if kit.SecondaryButton(c, "", m.SysManagerContinue()).Key("sysmanager-process-continue").Clicked() {
 				request(s, s.RequestSignal(process.PID, "CONT"))
 				c.Invalidate()
 			}
 		}
-		if ui.Button(c, m.SysManagerTerminate()).Key("sysmanager-process-terminate").Clicked() {
+		if kit.SecondaryButton(c, "", m.SysManagerTerminate()).Key("sysmanager-process-terminate").Clicked() {
 			request(s, s.RequestSignal(process.PID, "TERM"))
 			c.Invalidate()
 		}
-		if ui.Button(c, m.SysManagerKill()).Key("sysmanager-process-kill").Clicked() {
+		if kit.SecondaryButton(c, "", m.SysManagerKill()).Key("sysmanager-process-kill").Clicked() {
 			request(s, s.RequestSignal(process.PID, "KILL"))
 			c.Invalidate()
 		}
@@ -1015,7 +995,7 @@ func portActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			strconv.Itoa(port.Port), strconv.Itoa(port.PID))).
 			FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
 		if port.PID > 0 {
-			if ui.Button(c, m.SysManagerTerminate()).Key("sysmanager-port-terminate").Clicked() {
+			if kit.SecondaryButton(c, "", m.SysManagerTerminate()).Key("sysmanager-port-terminate").Clicked() {
 				request(s, s.RequestPortTerminate(port))
 				c.Invalidate()
 			}
@@ -1037,17 +1017,17 @@ func serviceActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	actionBar(c, func() {
 		ui.Text(c, m.SysManagerSelectedService(unit.Name, scope)).
 			FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
-		if ui.Button(c, m.SysManagerStart()).Key("sysmanager-service-start").Clicked() {
+		if kit.SecondaryButton(c, "", m.SysManagerStart()).Key("sysmanager-service-start").Clicked() {
 			request(s, s.RequestServiceAction(unit.Name, appsysmanager.ServiceStart,
 				appsysmanager.Scope(unit.Scope)))
 			c.Invalidate()
 		}
-		if ui.Button(c, m.SysManagerStop()).Key("sysmanager-service-stop").Clicked() {
+		if kit.SecondaryButton(c, "", m.SysManagerStop()).Key("sysmanager-service-stop").Clicked() {
 			request(s, s.RequestServiceAction(unit.Name, appsysmanager.ServiceStop,
 				appsysmanager.Scope(unit.Scope)))
 			c.Invalidate()
 		}
-		if ui.Button(c, m.SysManagerRestart()).Key("sysmanager-service-restart").Clicked() {
+		if kit.SecondaryButton(c, "", m.SysManagerRestart()).Key("sysmanager-service-restart").Clicked() {
 			request(s, s.RequestServiceAction(unit.Name, appsysmanager.ServiceRestart,
 				appsysmanager.Scope(unit.Scope)))
 			c.Invalidate()

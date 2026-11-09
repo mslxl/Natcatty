@@ -47,34 +47,28 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 		ui.Text(c, m.SettingsOSC52Description()).FontSize(12).TextColor(t.TextMuted)
 		accessLabels, accesses := osc52Options(m)
 		accessLabel := labelForAccess(accessLabels, accesses, settings.OSC52)
-		ui.Field(c, m.SettingsOSC52Title(), func() {
-			if ui.Select(c, &accessLabel, accessLabels).Width(180).Changed() {
-				state.SetOSC52(accesses[indexOf(accessLabels, accessLabel)])
-				c.Invalidate()
-			}
-		})
+		if ui.Select(c, &accessLabel, accessLabels).Label(m.SettingsOSC52Title()).Width(180).Changed() {
+			state.SetOSC52(accesses[indexOf(accessLabels, accessLabel)])
+			c.Invalidate()
+		}
 
 		ui.Text(c, m.SettingsOSCNotificationsTitle()).Bold()
 		ui.Text(c, m.SettingsOSCNotificationsDescription()).FontSize(12).TextColor(t.TextMuted)
 		modeLabels, modes := notificationOptions(m)
 		modeLabel := labelForMode(modeLabels, modes, settings.OSCNotifications)
-		ui.Field(c, m.SettingsOSCNotificationsTitle(), func() {
-			if ui.Select(c, &modeLabel, modeLabels).Width(180).Changed() {
-				state.SetOSCNotifications(modes[indexOf(modeLabels, modeLabel)])
-				c.Invalidate()
-			}
-		})
+		if ui.Select(c, &modeLabel, modeLabels).Label(m.SettingsOSCNotificationsTitle()).Width(180).Changed() {
+			state.SetOSCNotifications(modes[indexOf(modeLabels, modeLabel)])
+			c.Invalidate()
+		}
 
 		ui.Text(c, m.SettingsDynamicTabTitle()).Bold()
 		ui.Text(c, m.SettingsDynamicTabTitleDescription()).FontSize(12).TextColor(t.TextMuted)
 		titleLabels, titleModes := dynamicTabTitleOptions(m)
 		titleLabel := labelForDynamicTabTitle(titleLabels, titleModes, settings.DynamicTabTitleMode)
-		ui.Field(c, m.SettingsDynamicTabTitle(), func() {
-			if ui.Select(c, &titleLabel, titleLabels).Width(180).Changed() {
-				state.SetDynamicTabTitleMode(titleModes[indexOf(titleLabels, titleLabel)])
-				c.Invalidate()
-			}
-		})
+		if ui.Select(c, &titleLabel, titleLabels).Label(m.SettingsDynamicTabTitle()).Width(180).Changed() {
+			state.SetDynamicTabTitleMode(titleModes[indexOf(titleLabels, titleLabel)])
+			c.Invalidate()
+		}
 
 		renderPowerUxSection(c, state, settings, m, t)
 		renderRetentionSection(c, state, settings, m, t)
@@ -86,17 +80,15 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 			encodingLabels = append(encodingLabels, locales.EncodingLabel(m, encoding))
 		}
 		encodingLabel := locales.EncodingLabel(m, settings.Encoding)
-		ui.Field(c, m.SettingsTerminalEncoding(), func() {
-			if ui.Select(c, &encodingLabel, encodingLabels).Width(160).Changed() {
-				for index, label := range encodingLabels {
-					if label == encodingLabel {
-						state.SetEncoding(encodings[index])
-						break
-					}
+		if ui.Select(c, &encodingLabel, encodingLabels).Label(m.SettingsTerminalEncoding()).Width(160).Changed() {
+			for index, label := range encodingLabels {
+				if label == encodingLabel {
+					state.SetEncoding(encodings[index])
+					break
 				}
-				c.Invalidate()
 			}
-		})
+			c.Invalidate()
+		}
 
 		ui.Text(c, m.SettingsPasteProtection()).Bold()
 		protection := settings.PasteProtection

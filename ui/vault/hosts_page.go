@@ -113,7 +113,7 @@ func hostsPage(c *ui.Context, s *vaultstate.State, at *browse, m locales.Message
 	if len(groups) > 0 || at.group == "" {
 		sectionHeading(c, t, m.VaultGroupListTitle(len(groups)))
 		if len(groups) == 0 {
-			ui.Text(c, m.VaultGroupEmpty()).FontSize(12).TextColor(t.TextMuted).Padding(0, 4)
+			kit.EmptyHint(c, m.VaultGroupEmpty())
 		}
 		cardGrid(c, "groups", len(groups), func(i int) { groupCard(c, s, groups[i], at, m, t) })
 	}
@@ -130,7 +130,7 @@ func hostsPage(c *ui.Context, s *vaultstate.State, at *browse, m locales.Message
 
 	sectionHeading(c, t, m.VaultHostListTitle(len(hosts)))
 	if len(hosts) == 0 {
-		ui.Text(c, m.VaultHostEmpty()).FontSize(12).TextColor(t.TextMuted).Padding(0, 4)
+		kit.EmptyHint(c, m.VaultHostEmpty())
 	}
 	cardGrid(c, "hosts", len(hosts), func(i int) { hostCard(c, s, hosts[i], at, m, t) })
 }
@@ -202,7 +202,7 @@ func breadcrumb(c *ui.Context, s *vaultstate.State, at *browse, m locales.Messag
 
 // sectionHeading names a grid of cards.
 func sectionHeading(c *ui.Context, t *ui.Theme, title string) {
-	ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(t.TextMuted).Padding(10, 4, 2, 4).SingleLine()
+	kit.SectionBar(c, title, nil)
 }
 
 // cardGrid lays count cards out in as many equal columns as fit at
