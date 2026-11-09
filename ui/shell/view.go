@@ -168,8 +168,12 @@ func homeSidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme)
 	// content past the right edge.
 	ui.Column(c).Width(sidebarWidth).FillHeight().Shrink(0).Padding(4, 8, 8, 8).Gap(2).Children(func() {
 		ui.Row(c).FillWidth().Height(40).Padding(0, 8).Gap(10).AlignItems(ui.Center).Margin(0, 0, 8, 0).Children(func() {
-			ui.Box(c).Size(28, 28).Radius(8).Background(t.Accent).Center().TextColor(t.AccentText).
-				Children(func() { ui.Icon(c, icons.Lucide(icons.SquareTerminal)).Size(16, 16) })
+			if mark := s.BrandMark(); mark != nil {
+				ui.Image(c, mark).Size(28, 28).Shrink(0)
+			} else {
+				ui.Box(c).Size(28, 28).Radius(8).Background(t.Accent).Center().TextColor(t.AccentText).
+					Children(func() { ui.Icon(c, icons.Lucide(icons.SquareTerminal)).Size(16, 16) })
+			}
 			ui.Text(c, m.AppName()).FontSize(16).FontWeight(700).SingleLine()
 		})
 

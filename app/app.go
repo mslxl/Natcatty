@@ -299,7 +299,8 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	}
 	preferencesState = settings.NewPreferencesState(preferenceService,
 		settings.WithPreferencesRedrawRequest(invalidate),
-		settings.WithLocaleRequest(func(tag string) { mygo.App.SetLocale(tag) }))
+		settings.WithLocaleRequest(func(tag string) { mygo.App.SetLocale(tag) }),
+		settings.WithIconArtwork(appIconPNG))
 
 	// File associations and the default opener live in the same preferences
 	// document. The launch adapter is the only platform-aware piece. The
@@ -1067,6 +1068,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			}
 		}),
 		state.WithQuickControls(preferencesState.QuickControls()),
+		state.WithBrandMark(func() *ui.Bitmap {
+			return brandMarkBitmap(preferenceService.Settings().Appearance.AppIcon)
+		}),
 		// Opening and closing a Tab changes the shell's structure; ask for the
 		// frame that shows the new tab strip or Vault placeholder. Every
 		// window redraws so a lock or unlock propagates.

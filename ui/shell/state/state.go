@@ -183,6 +183,8 @@ type State struct {
 	requestLocale func(string)
 	quickControls func(*ui.Context)
 	quickOpen     bool
+	// brandMark reads the app icon the sidebar shows beside the app's name.
+	brandMark func() *ui.Bitmap
 	// terminalTheme is the scheme open terminals draw with, for the chrome
 	// around them; hasTerminalTheme is false until the app sets one.
 	terminalTheme    domaintheme.TerminalTheme
@@ -292,6 +294,21 @@ func WithLocaleRequest(fn func(string)) Option {
 // it the bar has no control panel button.
 func WithQuickControls(view func(*ui.Context)) Option {
 	return func(s *State) { s.quickControls = view }
+}
+
+// WithBrandMark sets the reader of the app icon the home sidebar shows beside
+// the app's name, which follows the chosen icon variant. Without it, or while
+// it returns nil, the sidebar shows a terminal glyph.
+func WithBrandMark(fn func() *ui.Bitmap) Option {
+	return func(s *State) { s.brandMark = fn }
+}
+
+// BrandMark returns the sidebar's app icon, or nil.
+func (s *State) BrandMark() *ui.Bitmap {
+	if s.brandMark == nil {
+		return nil
+	}
+	return s.brandMark()
 }
 
 // QuickControls returns the control panel's content, or nil.

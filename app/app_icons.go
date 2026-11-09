@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"sync"
 
+	"github.com/egoist/mygo/ui"
 	xdraw "golang.org/x/image/draw"
 
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
@@ -27,6 +28,33 @@ func appIconPNG(variant string) []byte {
 		data, _ = iconAssets.ReadFile("icons/variants/original.png")
 	}
 	return data
+}
+
+var (
+	brandMarkMu    sync.Mutex
+	brandMarkCache = make(map[string]*ui.Bitmap)
+)
+
+// brandMarkBitmap returns the variant's artwork for the home sidebar, cropped
+// to the icon as the tray's is and scaled to 56px, twice its drawn size. It
+// is nil when the artwork cannot be decoded.
+func brandMarkBitmap(variant string) *ui.Bitmap {
+	id := domaintheme.ResolveIconVariant(variant).ID
+	brandMarkMu.Lock()
+	defer brandMarkMu.Unlock()
+	if bitmap, ok := brandMarkCache[id]; ok {
+		return bitmap
+	}
+	var bitmap *ui.Bitmap
+	if source, err := png.Decode(bytes.NewReader(appIconPNG(id))); err == nil {
+		cropped := cropIconArtwork(source)
+		const size = 56
+		target := image.NewNRGBA(image.Rect(0, 0, size, size))
+		xdraw.CatmullRom.Scale(target, target.Bounds(), cropped, cropped.Bounds(), xdraw.Over, nil)
+		bitmap = ui.NewBitmap(target)
+	}
+	brandMarkCache[id] = bitmap
+	return bitmap
 }
 
 var (
