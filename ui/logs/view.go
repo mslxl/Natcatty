@@ -96,19 +96,19 @@ func tabs(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 
 func problems(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	if text := problemText(m, s.ProblemTab(), s.Problem()); text != "" {
-		ui.Text(c, text).TextColor(uitheme.DangerText(t)).FontSize(12)
+		ui.Text(c, text).TextColor(uitheme.DangerText(t)).FontSize(kit.M(c).Font.Footnote)
 	}
 	if text := problemText(m, s.Tab(), s.OpenProblem()); text != "" {
-		ui.Text(c, text).TextColor(uitheme.DangerText(t)).FontSize(12)
+		ui.Text(c, text).TextColor(uitheme.DangerText(t)).FontSize(kit.M(c).Font.Footnote)
 	}
 	if s.DateProblem() {
-		ui.Text(c, m.LogsProblemDate()).TextColor(uitheme.DangerText(t)).FontSize(12)
+		ui.Text(c, m.LogsProblemDate()).TextColor(uitheme.DangerText(t)).FontSize(kit.M(c).Font.Footnote)
 	}
 	if count := s.Cleared(); count > 0 {
 		if s.ClearedTab() == TabConnections {
-			ui.Text(c, m.LogsConnectionsCleared(count)).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, m.LogsConnectionsCleared(count)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		} else {
-			ui.Text(c, m.LogsHistoryCleared(count)).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, m.LogsHistoryCleared(count)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		}
 	}
 }
@@ -305,7 +305,7 @@ func connectionRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 							uiconnection.ProviderPhaseText(m,
 								appconnection.ProviderPhase(log.NetworkProviderPhase)),
 							log.NetworkProviderKind)
-						ui.Text(c, meta).FontSize(12).TextColor(t.TextMuted)
+						ui.Text(c, meta).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 						// A WireGuard row also keeps the handshake time and the
 						// counters recorded for that event, so the Logs surface
 						// shows the same tunnel detail as the Profile row.
@@ -313,7 +313,7 @@ func connectionRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 							ui.Text(c, uiconnection.WireGuardDetail(m,
 								!log.NetworkLastHandshake.IsZero(), log.NetworkLastHandshake,
 								log.NetworkRxBytes, log.NetworkTxBytes)).
-								FontSize(12).TextColor(t.TextMuted)
+								FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 						}
 					} else {
 						status := statusLabel(m, log.Status)
@@ -321,15 +321,15 @@ func connectionRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 						if log.IsUnsaved() {
 							meta = m.LogsConnectionMetaUnsaved(status, log.Kind)
 						}
-						ui.Text(c, meta).FontSize(12).TextColor(t.TextMuted)
+						ui.Text(c, meta).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 					}
 					if address := connectionAddress(log); address != "" {
-						ui.Text(c, address).FontSize(12).TextColor(t.TextMuted)
+						ui.Text(c, address).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 					}
 					if log.Error != "" {
-						ui.Text(c, log.Error).FontSize(12).TextColor(uitheme.DangerText(t))
+						ui.Text(c, log.Error).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 					}
-					ui.Text(c, timestamp(log.StartedAt)).FontSize(11).TextColor(t.TextMuted)
+					ui.Text(c, timestamp(log.StartedAt)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 				})
 				// A provider row has no terminal Session to reopen. Delete stays
 				// available for every row.
@@ -361,7 +361,7 @@ func historyRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 					ui.Text(c, entry.Command).Bold()
 					ui.Text(c, m.LogsHistoryMeta(historyHostLabel(m, entry),
 						sourceLabel(m, entry.Source), timestamp(entry.RecordedAt))).
-						FontSize(12).TextColor(t.TextMuted)
+						FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 				})
 				if kit.SecondaryButton(c, icons.SquareTerminal, m.LogsOpenTerminal()).Clicked() {
 					s.OpenTerminal(entry.SessionID, entry.HostID)

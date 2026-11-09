@@ -10,18 +10,6 @@ import (
 	"github.com/mslxl/natcatty/ui/icons"
 )
 
-// Sizes shared by every surface.
-//
-// Deprecated: use M(c).Radius.Card, M(c).Radius.Control,
-// M(c).Control.Large, and M(c).Icon.Regular, which follow the Interface
-// Style.
-const (
-	RadiusCard    float32 = 10
-	RadiusControl float32 = 6
-	ControlHeight float32 = 32
-	IconSize      float32 = 16
-)
-
 // Muted is a quiet fill for a secondary surface: a sidebar, a toolbar input,
 // or a selected list row when the window has no focus.
 func Muted(t *ui.Theme) ui.Color { return t.Background.Mix(t.Text, 0.05) }

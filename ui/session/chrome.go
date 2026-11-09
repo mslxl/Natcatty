@@ -153,7 +153,7 @@ func screenBanner(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Th
 	}
 	ui.Row(c).FillWidth().Height(30).Padding(2, 8).Gap(8).Background(t.Surface).
 		Border(1, t.Accent).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, text).FontSize(11).SingleLine().MinWidth(0).Grow(1).TextColor(t.Text)
+		ui.Text(c, text).FontSize(kit.M(c).Font.Caption).SingleLine().MinWidth(0).Grow(1).TextColor(t.Text)
 		if ui.Button(c, m.SessionDismiss()).Clicked() && actions.DismissScreen != nil {
 			actions.DismissScreen()
 		}
@@ -240,7 +240,7 @@ func toolbarButton(c *ui.Context, icon, label string) ui.Element {
 	case button.Hovered():
 		button.Background(kit.Subtle(theme)).TextColor(theme.Text)
 	}
-	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(14, 14) })
+	button.Children(func() { kit.IconSized(c, icon, kit.M(c).Icon.Medium) })
 	return button
 }
 
@@ -288,7 +288,7 @@ func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *
 		Background(t.Surface).Border(autocompleteBorder, t.Accent).Clip().Children(func() {
 		ui.Row(c).FillWidth().Height(autocompleteHeaderHeight).Gap(6).
 			AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.SessionAutocompleteLabel()).FontSize(10).Bold().
+			ui.Text(c, m.SessionAutocompleteLabel()).FontSize(kit.M(c).Font.Caption2).Bold().
 				TextColor(t.TextMuted)
 			ui.Text(c, m.SessionAutocompleteHint()).FontSize(9).SingleLine().
 				MinWidth(0).Grow(1).TextColor(t.TextMuted)
@@ -320,8 +320,8 @@ func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *
 				if selected {
 					marker, markerColor = "›", t.Accent
 				}
-				ui.Text(c, marker).FontSize(11).TextColor(markerColor)
-				command := ui.Text(c, display).FontSize(10).SingleLine().
+				ui.Text(c, marker).FontSize(kit.M(c).Font.Caption).TextColor(markerColor)
+				command := ui.Text(c, display).FontSize(kit.M(c).Font.Caption2).SingleLine().
 					MinWidth(0).Grow(1).TextColor(t.Text)
 				if selected {
 					command.Bold()
@@ -351,7 +351,7 @@ func autocompleteGhost(c *ui.Context, model chromeModel, m locales.Messages, t *
 		Width(placement.Width).Height(autocompleteGhostHeight).Padding(0, 6).
 		Background(t.Surface).Border(autocompleteBorder, t.Border).Clip().
 		AlignItems(ui.Center).Children(func() {
-		ui.Text(c, m.SessionAutocompleteGhost(model.GhostText)).FontSize(10).
+		ui.Text(c, m.SessionAutocompleteGhost(model.GhostText)).FontSize(kit.M(c).Font.Caption2).
 			SingleLine().MinWidth(0).Grow(1).TextColor(t.TextMuted)
 	})
 }
@@ -391,7 +391,7 @@ func pastePrompt(c *ui.Context, pending PendingPaste, m locales.Messages, t *ui.
 	ui.Column(c).FillWidth().Padding(6).Gap(4).Background(t.Surface).
 		Border(1, t.Accent).Children(func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.SessionPasteConfirmTitle(pending.Lines)).FontSize(12).
+			ui.Text(c, m.SessionPasteConfirmTitle(pending.Lines)).FontSize(kit.M(c).Font.Footnote).
 				Bold().SingleLine().MinWidth(0).Grow(1).TextColor(t.Text)
 			send := ui.PrimaryButton(c, m.SessionPasteSend())
 			if send.Clicked() && actions.AcceptPaste != nil {
@@ -401,16 +401,16 @@ func pastePrompt(c *ui.Context, pending PendingPaste, m locales.Messages, t *ui.
 				actions.CancelPaste()
 			}
 		})
-		ui.Text(c, m.SessionPasteConfirmBody(pending.Chars)).FontSize(10).
+		ui.Text(c, m.SessionPasteConfirmBody(pending.Chars)).FontSize(kit.M(c).Font.Caption2).
 			SingleLine().MinWidth(0).TextColor(t.TextMuted)
 		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Start).Children(func() {
-			ui.Text(c, m.SessionPastePreviewLabel()).FontSize(10).TextColor(t.TextMuted)
+			ui.Text(c, m.SessionPastePreviewLabel()).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted)
 			ui.Scroll(c).Grow(1).Height(42).Children(func() {
-				ui.Text(c, pending.Preview).FontSize(11).Wrap().TextColor(t.Text)
+				ui.Text(c, pending.Preview).FontSize(kit.M(c).Font.Caption).Wrap().TextColor(t.Text)
 			})
 		})
 		if pending.Truncated {
-			ui.Text(c, m.SessionPasteTruncated()).FontSize(10).
+			ui.Text(c, m.SessionPasteTruncated()).FontSize(kit.M(c).Font.Caption2).
 				SingleLine().TextColor(uitheme.WarningText(t))
 		}
 	})
@@ -421,7 +421,7 @@ func dropBanner(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Them
 	text := dropBannerText(model, m)
 	ui.Row(c).FillWidth().Height(30).Padding(2, 8).Gap(8).Background(t.Surface).
 		Border(1, t.Accent).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, text).FontSize(11).SingleLine().MinWidth(0).Grow(1).TextColor(t.Text)
+		ui.Text(c, text).FontSize(kit.M(c).Font.Caption).SingleLine().MinWidth(0).Grow(1).TextColor(t.Text)
 		if !model.DropActive {
 			dismiss := ui.Button(c, m.SessionDropDismiss())
 			// The visible label matches the original Cancel. The accessible
@@ -462,13 +462,13 @@ func logDetail(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme
 	ui.Row(c).Height(18).Padding(0, 6).Background(t.Surface).Children(func() {
 		switch {
 		case model.LogProblem:
-			ui.Text(c, m.SessionLoggingFailed()).FontSize(10).
+			ui.Text(c, m.SessionLoggingFailed()).FontSize(kit.M(c).Font.Caption2).
 				SingleLine().MinWidth(0).Grow(1).TextColor(uitheme.DangerText(t))
 		case model.Logging.Path != "":
-			ui.Text(c, m.SessionLoggingPath(filepath.Clean(model.Logging.Path))).FontSize(10).
+			ui.Text(c, m.SessionLoggingPath(filepath.Clean(model.Logging.Path))).FontSize(kit.M(c).Font.Caption2).
 				SingleLine().MinWidth(0).Grow(1).TextColor(t.TextMuted)
 		case !model.Logging.Active && model.LogDirectory == "":
-			ui.Text(c, m.SessionLoggingNoDirectory()).FontSize(10).
+			ui.Text(c, m.SessionLoggingNoDirectory()).FontSize(kit.M(c).Font.Caption2).
 				SingleLine().MinWidth(0).Grow(1).TextColor(t.TextMuted)
 		}
 	})
@@ -477,7 +477,7 @@ func logDetail(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme
 func transferBanner(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
 	ui.Row(c).Height(30).Padding(2, 8).Gap(8).Background(t.Surface).
 		Border(1, t.Warning).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, m.SessionTransferActive(transferKindLabel(model.Transfer.Kind))).FontSize(11).
+		ui.Text(c, m.SessionTransferActive(transferKindLabel(model.Transfer.Kind))).FontSize(kit.M(c).Font.Caption).
 			SingleLine().MinWidth(0).Grow(1).TextColor(uitheme.WarningText(t))
 		if ui.Button(c, m.SessionTransferCancel()).Clicked() && actions.CancelTransfer != nil {
 			actions.CancelTransfer()
@@ -488,7 +488,7 @@ func transferBanner(c *ui.Context, model chromeModel, m locales.Messages, t *ui.
 func clipboardBanner(c *ui.Context, m locales.Messages, t *ui.Theme, actions chromeActions) {
 	ui.Row(c).Height(32).Padding(2, 8).Gap(8).Background(t.Surface).
 		Border(1, t.Accent).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, m.SessionClipboardRequest()).FontSize(11).
+		ui.Text(c, m.SessionClipboardRequest()).FontSize(kit.M(c).Font.Caption).
 			SingleLine().MinWidth(0).Grow(1).TextColor(t.Text)
 		if ui.PrimaryButton(c, m.SessionClipboardAllow()).Clicked() && actions.AllowClipboard != nil {
 			actions.AllowClipboard()

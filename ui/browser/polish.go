@@ -10,6 +10,7 @@ import (
 
 	appbrowser "github.com/mslxl/natcatty/application/browser"
 	domainbrowser "github.com/mslxl/natcatty/domain/browser"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -53,7 +54,7 @@ func (p *Panel) bookmarkPane(c *ui.Context, state appbrowser.State, m locales.Me
 	// shrinks to the panel and the Scroll below takes the bounded remainder.
 	ui.Column(c).Grow(1).FillWidth().MinHeight(0).Padding(8).Gap(6).Children(func() {
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(6).Children(func() {
-			ui.Text(c, m.BrowserBookmarks()).FontSize(13).Bold().Grow(1).
+			ui.Text(c, m.BrowserBookmarks()).FontSize(kit.M(c).Font.Callout).Bold().Grow(1).
 				SingleLine().TextColor(t.Text)
 			if ui.PrimaryButton(c, m.BrowserBookmarkAdd()).Height(26).Clicked() {
 				active, _ := activeTab(state)
@@ -76,7 +77,7 @@ func (p *Panel) bookmarkPane(c *ui.Context, state appbrowser.State, m locales.Me
 		}
 		if len(p.core.VisibleBookmarks()) == 0 {
 			ui.Column(c).Grow(1).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, m.BrowserBookmarkEmpty()).FontSize(11).
+				ui.Text(c, m.BrowserBookmarkEmpty()).FontSize(kit.M(c).Font.Caption).
 					TextAlign(ui.Center).TextColor(t.TextMuted)
 			})
 			return
@@ -97,7 +98,7 @@ func (p *Panel) bookmarkEditor(c *ui.Context, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).FillWidth().Gap(4).Padding(6).
 		Background(t.Surface).Children(func() {
 		if p.bookmarkForm.err != nil {
-			ui.Text(c, bookmarkErrorText(p.bookmarkForm.err, m)).FontSize(10).
+			ui.Text(c, bookmarkErrorText(p.bookmarkForm.err, m)).FontSize(kit.M(c).Font.Caption2).
 				SingleLine().TextColor(uitheme.DangerText(t))
 		}
 		ui.TextInput(c, &p.bookmarkForm.title).FillWidth().
@@ -105,7 +106,7 @@ func (p *Panel) bookmarkEditor(c *ui.Context, m locales.Messages, t *ui.Theme) {
 		ui.TextInput(c, &p.bookmarkForm.url).FillWidth().
 			Label(m.BrowserBookmarkAddress())
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.BrowserBookmarkScope()).FontSize(10).TextColor(t.TextMuted)
+			ui.Text(c, m.BrowserBookmarkScope()).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted)
 			if ui.Radio(c, &p.bookmarkForm.scope, domainbrowser.ScopeHost,
 				m.BrowserBookmarkThisHost()).Changed() {
 				c.Invalidate()
@@ -164,7 +165,7 @@ func (p *Panel) bookmarkRow(c *ui.Context, bookmark appbrowser.BookmarkView, m l
 			if glyph == "" {
 				glyph = "◇"
 			}
-			ui.Text(c, glyph).FontSize(13).Width(16).TextAlign(ui.Center).
+			ui.Text(c, glyph).FontSize(kit.M(c).Font.Callout).Width(16).TextAlign(ui.Center).
 				TextColor(t.Accent)
 		}
 		column := ui.Column(c).Grow(1).MinWidth(0).Gap(0)
@@ -264,7 +265,7 @@ func (p *Panel) downloadPane(c *ui.Context, m locales.Messages, t *ui.Theme) {
 	// bounded viewport inside the Pane instead of growing the panel.
 	ui.Column(c).Grow(1).FillWidth().MinHeight(0).Padding(8).Gap(6).Children(func() {
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(6).Children(func() {
-			ui.Text(c, m.BrowserDownloads()).FontSize(13).Bold().Grow(1).
+			ui.Text(c, m.BrowserDownloads()).FontSize(kit.M(c).Font.Callout).Bold().Grow(1).
 				SingleLine().TextColor(t.Text)
 			if ui.Button(c, m.BrowserDownloadClear()).Height(26).Clicked() {
 				p.core.ClearDownloads()
@@ -276,12 +277,12 @@ func (p *Panel) downloadPane(c *ui.Context, m locales.Messages, t *ui.Theme) {
 			}
 		})
 		if p.downloadErr != nil {
-			ui.Text(c, downloadErrorText(p.downloadErr, m)).FontSize(10).
+			ui.Text(c, downloadErrorText(p.downloadErr, m)).FontSize(kit.M(c).Font.Caption2).
 				SingleLine().TextColor(uitheme.DangerText(t))
 		}
 		if len(items) == 0 {
 			ui.Column(c).Grow(1).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, m.BrowserDownloadEmpty()).FontSize(11).
+				ui.Text(c, m.BrowserDownloadEmpty()).FontSize(kit.M(c).Font.Caption).
 					TextAlign(ui.Center).TextColor(t.TextMuted)
 			})
 			return
@@ -304,8 +305,8 @@ func (p *Panel) downloadRow(c *ui.Context, item appbrowser.Download, m locales.M
 		Padding(4, 2).Gap(6).AlignItems(ui.Center)
 	row.Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-			ui.Text(c, item.Filename).FontSize(12).Bold().SingleLine().TextColor(t.Text)
-			ui.Text(c, downloadStatusText(item, m)).FontSize(11).SingleLine().
+			ui.Text(c, item.Filename).FontSize(kit.M(c).Font.Footnote).Bold().SingleLine().TextColor(t.Text)
+			ui.Text(c, downloadStatusText(item, m)).FontSize(kit.M(c).Font.Caption).SingleLine().
 				TextColor(t.TextMuted)
 			if active {
 				value := float64(0)

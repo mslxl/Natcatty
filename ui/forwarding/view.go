@@ -80,13 +80,13 @@ func ruleRow(c *ui.Context, s *State, view appforwarding.View, m locales.Message
 	kit.ListRow(c).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, rule.Label).Bold()
-			ui.Text(c, ruleSummary(s, rule, m)).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, ruleSummary(s, rule, m)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			if text, danger := statusText(m, view); text != "" {
 				color := t.TextMuted
 				if danger {
 					color = uitheme.DangerText(t)
 				}
-				ui.Text(c, text).FontSize(12).TextColor(color)
+				ui.Text(c, text).FontSize(kit.M(c).Font.Footnote).TextColor(color)
 			}
 		})
 
@@ -209,7 +209,7 @@ func Editor(c *ui.Context, s *State, scroll *ui.ScrollState) {
 	}
 
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
-		ui.Text(c, title).FontSize(20).Bold()
+		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 
 		ui.Form(c, func() {
 			ui.Field(c, m.VaultForwardingType(), func() {
@@ -224,7 +224,7 @@ func Editor(c *ui.Context, s *State, scroll *ui.ScrollState) {
 			})
 			ui.Field(c, m.VaultForwardingHost(), func() {
 				if len(s.Hosts()) == 0 {
-					ui.Text(c, m.VaultForwardingHostNone()).FontSize(12).TextColor(uitheme.DangerText(t))
+					ui.Text(c, m.VaultForwardingHostNone()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 					return
 				}
 				ui.RadioGroup(c, func() {

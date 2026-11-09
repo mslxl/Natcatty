@@ -82,13 +82,13 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	// apiece left the minimum window three of a tab's four list rows.
 	ui.Row(c).FillWidth().Gap(8).Wrap().AlignItems(ui.Center).Children(func() {
 		ui.Row(c).Grow(1).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.SysManagerTitle()).FontSize(18).FontWeight(600).SingleLine()
+			ui.Text(c, m.SysManagerTitle()).FontSize(kit.M(c).Font.Title).FontWeight(600).SingleLine()
 			// Every other status fills the body as the status panel, so the
 			// title names only a live connection.
 			if state.Status == appsysmanager.StatusLive {
 				text, _ := statusText(m, state, t)
 				kit.StatusDot(c, t.Success)
-				ui.Text(c, text).FontSize(12).TextColor(t.TextMuted).NoWrap()
+				ui.Text(c, text).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).NoWrap()
 			}
 		})
 		if len(s.Hosts()) > 0 {
@@ -128,19 +128,19 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 				age = 0
 			}
 			ui.Text(c, m.SysManagerUpdatedSeconds(int(age/time.Second))).
-				FontSize(11).TextColor(t.TextMuted).SingleLine().Shrink(1).MinWidth(0)
+				FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine().Shrink(1).MinWidth(0)
 			if state.Latency > 0 {
 				ui.Text(c, m.SysManagerLatency()+" "+m.SysManagerLatencyValue(int(state.Latency/time.Millisecond))).
-					FontSize(11).TextColor(t.TextMuted).SingleLine().Shrink(1).MinWidth(0)
+					FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine().Shrink(1).MinWidth(0)
 			}
 		}
 	})
 
 	if problem := problemText(m, s.Problem()); problem != "" {
-		ui.Text(c, problem).FontSize(12).TextColor(uitheme.DangerText(t))
+		ui.Text(c, problem).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 	}
 	if notice := actionNotice(s, m); notice != "" {
-		ui.Text(c, notice).FontSize(12).TextColor(actionNoticeColor(s, t))
+		ui.Text(c, notice).FontSize(kit.M(c).Font.Footnote).TextColor(actionNoticeColor(s, t))
 	}
 }
 
@@ -406,21 +406,21 @@ func sessionTable(c *ui.Context, s *State, rows []appsysmanager.TmuxSession,
 		session := rows[row]
 		switch col {
 		case 0:
-			ui.Text(c, session.Name).FontSize(12).SingleLine()
+			ui.Text(c, session.Name).FontSize(kit.M(c).Font.Footnote).SingleLine()
 		case 1:
-			ui.Text(c, strconv.Itoa(session.Windows)).FontSize(12)
+			ui.Text(c, strconv.Itoa(session.Windows)).FontSize(kit.M(c).Font.Footnote)
 		case 2:
 			attached := m.SysManagerUnknown()
 			if session.Attached {
 				attached = m.SysManagerYes()
 			}
-			text := ui.Text(c, attached).FontSize(12)
+			text := ui.Text(c, attached).FontSize(kit.M(c).Font.Footnote)
 			if s.selected != row {
 				text.TextColor(t.TextMuted)
 			}
 		case 3:
 			text := ui.Text(c, sessionCreatedText(session.Created)).
-				FontSize(12).SingleLine()
+				FontSize(kit.M(c).Font.Footnote).SingleLine()
 			if s.selected != row {
 				text.TextColor(t.TextMuted)
 			}
@@ -439,13 +439,13 @@ func sessionActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	session, ok := s.SelectedSession()
 	if !ok {
 		actionBar(c, func() {
-			ui.Text(c, m.SysManagerSessionHint()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SysManagerSessionHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		})
 		return
 	}
 	actionBar(c, func() {
 		ui.Text(c, m.SysManagerSelectedSession(session.Name, session.Windows)).
-			FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
+			FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).Grow(1).SingleLine()
 		if kit.SecondaryButton(c, "", m.SysManagerAttach()).Key("sysmanager-tmux-attach").Clicked() {
 			_ = s.AttachSession(session.Name)
 			c.Invalidate()
@@ -504,11 +504,11 @@ func dockerContainers(c *ui.Context, s *State, state appsysmanager.TabState,
 			container := rows[row]
 			switch col {
 			case 0:
-				ui.Text(c, containerDisplayName(container)).FontSize(12).SingleLine()
+				ui.Text(c, containerDisplayName(container)).FontSize(kit.M(c).Font.Footnote).SingleLine()
 			case 1:
-				ui.Text(c, container.Image).FontSize(12).SingleLine()
+				ui.Text(c, container.Image).FontSize(kit.M(c).Font.Footnote).SingleLine()
 			case 2:
-				text := ui.Text(c, container.State).FontSize(12).SingleLine()
+				text := ui.Text(c, container.State).FontSize(kit.M(c).Font.Footnote).SingleLine()
 				if s.selected != row {
 					switch strings.ToLower(container.State) {
 					case "running":
@@ -519,12 +519,12 @@ func dockerContainers(c *ui.Context, s *State, state appsysmanager.TabState,
 					}
 				}
 			case 3:
-				text := ui.Text(c, container.Status).FontSize(12).SingleLine()
+				text := ui.Text(c, container.Status).FontSize(kit.M(c).Font.Footnote).SingleLine()
 				if s.selected != row {
 					text.TextColor(t.TextMuted)
 				}
 			case 4:
-				ui.Text(c, blank(container.Ports, m)).FontSize(12).SingleLine()
+				ui.Text(c, blank(container.Ports, m)).FontSize(kit.M(c).Font.Footnote).SingleLine()
 			}
 		}).Grow(1).MinHeight(0).FillWidth()
 		dockerContainerActions(c, s, m, t)
@@ -535,7 +535,7 @@ func dockerContainerActions(c *ui.Context, s *State, m locales.Messages, t *ui.T
 	container, ok := s.SelectedContainer()
 	if !ok {
 		actionBar(c, func() {
-			ui.Text(c, m.SysManagerContainerHint()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SysManagerContainerHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		})
 		documentPanel(c, s, m, t)
 		return
@@ -543,7 +543,7 @@ func dockerContainerActions(c *ui.Context, s *State, m locales.Messages, t *ui.T
 	running := strings.EqualFold(container.State, "running")
 	actionBar(c, func() {
 		ui.Text(c, m.SysManagerSelectedContainer(containerDisplayName(container),
-			container.Image)).FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
+			container.Image)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).Grow(1).SingleLine()
 		if kit.SecondaryButton(c, "", m.SysManagerStart()).Key("sysmanager-docker-start").
 			Disabled(s.ActionBusy() || running).Clicked() {
 			request(s, s.RequestDockerAction(container, appsysmanager.DockerStart))
@@ -599,26 +599,26 @@ func dockerImages(c *ui.Context, s *State, state appsysmanager.TabState,
 			image := rows[row]
 			switch col {
 			case 0:
-				ui.Text(c, image.Name()).FontSize(12).SingleLine()
+				ui.Text(c, image.Name()).FontSize(kit.M(c).Font.Footnote).SingleLine()
 			case 1:
-				ui.Text(c, blank(image.Size, m)).FontSize(12)
+				ui.Text(c, blank(image.Size, m)).FontSize(kit.M(c).Font.Footnote)
 			case 2:
 				text := ui.Text(c, imageCreatedText(image.CreatedAt, m)).
-					FontSize(12).SingleLine()
+					FontSize(kit.M(c).Font.Footnote).SingleLine()
 				if s.selected != row {
 					text.TextColor(t.TextMuted)
 				}
 			case 3:
-				ui.Text(c, shortID(image.ID)).FontSize(12).SingleLine()
+				ui.Text(c, shortID(image.ID)).FontSize(kit.M(c).Font.Footnote).SingleLine()
 			}
 		}).Grow(1).MinHeight(0).FillWidth()
 		actionBar(c, func() {
 			if image, ok := s.SelectedImage(); ok {
 				ui.Text(c, m.SysManagerSelectedImage(image.Name(), blank(image.Size, m))).
-					FontSize(11).TextColor(t.TextMuted).SingleLine()
+					FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
 				return
 			}
-			ui.Text(c, m.SysManagerImageHint()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SysManagerImageHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		})
 	})
 }
@@ -660,7 +660,7 @@ func documentPanel(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).FillWidth().Height(150).Padding(8).Gap(4).
 		Background(t.Surface).Radius(t.Radius).Children(func() {
 		ui.Row(c).FillWidth().Gap(6).Children(func() {
-			ui.Text(c, title).FontSize(12).Bold().SingleLine()
+			ui.Text(c, title).FontSize(kit.M(c).Font.Footnote).Bold().SingleLine()
 			ui.Column(c).Grow(1)
 			if kit.SecondaryButton(c, "", m.SysManagerClose()).Key("sysmanager-document-close").Clicked() {
 				s.CloseDocument()
@@ -669,21 +669,21 @@ func documentPanel(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		})
 		switch {
 		case s.DocumentBusy():
-			ui.Text(c, m.SysManagerDocumentLoading()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SysManagerDocumentLoading()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		case s.DocumentError() != nil:
-			ui.Text(c, m.SysManagerDocumentFailed()).FontSize(11).TextColor(uitheme.DangerText(t))
-			ui.Text(c, s.DocumentError().Error()).FontSize(11).TextColor(t.TextMuted).SingleLine()
+			ui.Text(c, m.SysManagerDocumentFailed()).FontSize(kit.M(c).Font.Caption).TextColor(uitheme.DangerText(t))
+			ui.Text(c, s.DocumentError().Error()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
 		default:
 			if document.Truncated {
 				ui.Text(c, m.SysManagerDocumentTruncated()).
-					FontSize(10).TextColor(t.TextMuted)
+					FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted)
 			}
 			ui.Scroll(c).Grow(1).MinHeight(0).FillWidth().Children(func() {
 				text := document.Text
 				if strings.TrimSpace(text) == "" {
 					text = m.SysManagerUnknown()
 				}
-				ui.Text(c, text).FontSize(11).Selectable()
+				ui.Text(c, text).FontSize(kit.M(c).Font.Caption).Selectable()
 			})
 		}
 	})
@@ -702,10 +702,10 @@ func gpuContent(c *ui.Context, s *State, state appsysmanager.TabState,
 		}
 		ui.Row(c).FillWidth().Gap(8).Children(func() {
 			ui.Text(c, m.SysManagerGPUCount(len(state.GPU.Devices))).
-				FontSize(12).TextColor(t.TextMuted)
+				FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			if state.GPU.DriverVersion != "" {
 				ui.Text(c, m.SysManagerGPUDriver()+" "+state.GPU.DriverVersion).
-					FontSize(12).TextColor(t.TextMuted).NoWrap()
+					FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).NoWrap()
 			}
 			ui.Column(c).Grow(1)
 		})
@@ -720,16 +720,16 @@ func gpuCard(c *ui.Context, device appsysmanager.GPUDevice, m locales.Messages, 
 		Background(t.Surface).Radius(t.Radius).Children(func() {
 		ui.Row(c).FillWidth().Gap(8).Children(func() {
 			ui.Text(c, m.SysManagerGPUDevice(device.Index, device.Name)).
-				FontSize(13).Bold().Grow(1).SingleLine()
-			ui.Text(c, device.Vendor).FontSize(11).TextColor(t.TextMuted).NoWrap()
+				FontSize(kit.M(c).Font.Callout).Bold().Grow(1).SingleLine()
+			ui.Text(c, device.Vendor).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).NoWrap()
 		})
 		ui.Row(c).FillWidth().Gap(12).Children(func() {
 			ui.Column(c).Grow(1).Gap(2).Children(func() {
 				ui.Row(c).FillWidth().Children(func() {
 					ui.Text(c, m.SysManagerGPUUtilization()).
-						FontSize(11).TextColor(t.TextMuted)
+						FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 					ui.Column(c).Grow(1)
-					ui.Text(c, percentText(device.UtilizationPercent)).FontSize(11)
+					ui.Text(c, percentText(device.UtilizationPercent)).FontSize(kit.M(c).Font.Caption)
 				})
 				if ratio := ratio(device.UtilizationPercent, 100); ratio >= 0 {
 					ui.Progress(c, ratio).Grow(1)
@@ -738,9 +738,9 @@ func gpuCard(c *ui.Context, device appsysmanager.GPUDevice, m locales.Messages, 
 			ui.Column(c).Grow(1).Gap(2).Children(func() {
 				ui.Row(c).FillWidth().Children(func() {
 					ui.Text(c, m.SysManagerGPUMemory()).
-						FontSize(11).TextColor(t.TextMuted)
+						FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 					ui.Column(c).Grow(1)
-					ui.Text(c, gpuMemoryText(device, m)).FontSize(11).NoWrap()
+					ui.Text(c, gpuMemoryText(device, m)).FontSize(kit.M(c).Font.Caption).NoWrap()
 				})
 				if ratio := ratio(device.MemoryUsedMB, device.MemoryTotalMB); ratio >= 0 {
 					ui.Progress(c, ratio).Grow(1)
@@ -760,8 +760,8 @@ func gpuCard(c *ui.Context, device appsysmanager.GPUDevice, m locales.Messages, 
 
 func gpuValue(c *ui.Context, label, value string, t *ui.Theme) {
 	ui.Row(c).Gap(4).Children(func() {
-		ui.Text(c, label).FontSize(11).TextColor(t.TextMuted).NoWrap()
-		ui.Text(c, value).FontSize(11).NoWrap()
+		ui.Text(c, label).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).NoWrap()
+		ui.Text(c, value).FontSize(kit.M(c).Font.Caption).NoWrap()
 	})
 }
 
@@ -807,7 +807,7 @@ func toolbar(c *ui.Context, s *State, m locales.Messages, t *ui.Theme,
 			s.SetSearch(query)
 			c.Invalidate()
 		}
-		ui.Text(c, summary).FontSize(11).TextColor(t.TextMuted).NoWrap()
+		ui.Text(c, summary).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).NoWrap()
 		// The content's right edge sits under the window edge in a narrow
 		// window; the reserve keeps the last summary character whole.
 		ui.Column(c).Width(12)
@@ -823,16 +823,16 @@ func emptyText(total int, none, noMatches string) string {
 
 func emptyState(c *ui.Context, message string, t *ui.Theme) {
 	ui.Column(c).Grow(1).MinHeight(0).FillWidth().AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-		ui.Text(c, message).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, message).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	})
 }
 
 func statusPanel(c *ui.Context, s *State, state appsysmanager.TabState, m locales.Messages, t *ui.Theme) {
 	text, color := statusText(m, state, t)
 	ui.Column(c).Grow(1).MinHeight(0).FillWidth().AlignItems(ui.Center).Justify(ui.Center).Gap(6).Children(func() {
-		ui.Text(c, text).FontSize(14).Bold().TextColor(color)
+		ui.Text(c, text).FontSize(kit.M(c).Font.Body).Bold().TextColor(color)
 		if reason := reasonText(m, state.Reason); reason != "" {
-			ui.Text(c, reason).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, reason).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		}
 		if state.Status == appsysmanager.StatusIdle ||
 			state.Status == appsysmanager.StatusConnecting {
@@ -863,15 +863,15 @@ func processTable(c *ui.Context, s *State, rows []appsysmanager.Process, m local
 		process := rows[row]
 		switch col {
 		case 0:
-			ui.Text(c, strconv.Itoa(process.PID)).FontSize(12)
+			ui.Text(c, strconv.Itoa(process.PID)).FontSize(kit.M(c).Font.Footnote)
 		case 1:
-			ui.Text(c, process.User).FontSize(12).SingleLine()
+			ui.Text(c, process.User).FontSize(kit.M(c).Font.Footnote).SingleLine()
 		case 2:
-			ui.Text(c, percent(process.CPUPercent)).FontSize(12)
+			ui.Text(c, percent(process.CPUPercent)).FontSize(kit.M(c).Font.Footnote)
 		case 3:
-			ui.Text(c, percent(process.MemPercent)).FontSize(12)
+			ui.Text(c, percent(process.MemPercent)).FontSize(kit.M(c).Font.Footnote)
 		case 4:
-			ui.Text(c, process.Command).FontSize(12).SingleLine()
+			ui.Text(c, process.Command).FontSize(kit.M(c).Font.Footnote).SingleLine()
 		}
 	}).Grow(1).MinHeight(0).FillWidth()
 }
@@ -893,15 +893,15 @@ func portTable(c *ui.Context, s *State, rows []appsysmanager.Port, m locales.Mes
 		port := rows[row]
 		switch col {
 		case 0:
-			ui.Text(c, strconv.Itoa(port.Port)).FontSize(12)
+			ui.Text(c, strconv.Itoa(port.Port)).FontSize(kit.M(c).Font.Footnote)
 		case 1:
-			ui.Text(c, port.Protocol).FontSize(12)
+			ui.Text(c, port.Protocol).FontSize(kit.M(c).Font.Footnote)
 		case 2:
-			ui.Text(c, port.Address).FontSize(12).SingleLine()
+			ui.Text(c, port.Address).FontSize(kit.M(c).Font.Footnote).SingleLine()
 		case 3:
-			ui.Text(c, pidText(port.PID)).FontSize(12)
+			ui.Text(c, pidText(port.PID)).FontSize(kit.M(c).Font.Footnote)
 		case 4:
-			ui.Text(c, port.ProcessName).FontSize(12).SingleLine()
+			ui.Text(c, port.ProcessName).FontSize(kit.M(c).Font.Footnote).SingleLine()
 		}
 	}).Grow(1).MinHeight(0).FillWidth()
 }
@@ -922,13 +922,13 @@ func serviceTable(c *ui.Context, s *State, rows []appsysmanager.Unit, m locales.
 		unit := rows[row]
 		switch col {
 		case 0:
-			ui.Text(c, unit.Name).FontSize(12).SingleLine()
+			ui.Text(c, unit.Name).FontSize(kit.M(c).Font.Footnote).SingleLine()
 		case 1:
-			ui.Text(c, scopeText(m, unit.Scope)).FontSize(12)
+			ui.Text(c, scopeText(m, unit.Scope)).FontSize(kit.M(c).Font.Footnote)
 		case 2:
 			// The selected row inherits the accent's high-contrast foreground,
 			// so a state color from the normal background would be illegible.
-			text := ui.Text(c, unit.ActiveState).FontSize(12).SingleLine()
+			text := ui.Text(c, unit.ActiveState).FontSize(kit.M(c).Font.Footnote).SingleLine()
 			if s.selected != row {
 				color := t.TextMuted
 				switch unit.ActiveState {
@@ -940,7 +940,7 @@ func serviceTable(c *ui.Context, s *State, rows []appsysmanager.Unit, m locales.
 				text.TextColor(color)
 			}
 		case 3:
-			text := ui.Text(c, unit.Description).FontSize(12).SingleLine()
+			text := ui.Text(c, unit.Description).FontSize(kit.M(c).Font.Footnote).SingleLine()
 			if s.selected != row {
 				text.TextColor(t.TextMuted)
 			}
@@ -952,13 +952,13 @@ func processActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	process, ok := s.SelectedProcess()
 	if !ok {
 		actionBar(c, func() {
-			ui.Text(c, m.SysManagerProcessHint()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SysManagerProcessHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		})
 		return
 	}
 	actionBar(c, func() {
 		ui.Text(c, m.SysManagerSelectedProcess(process.PID, process.Command)).
-			FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
+			FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).Grow(1).SingleLine()
 		stopped := strings.Contains(strings.ToUpper(process.Stat), "T")
 		if !stopped {
 			if kit.SecondaryButton(c, "", m.SysManagerStop()).Key("sysmanager-process-stop").Clicked() {
@@ -986,21 +986,21 @@ func portActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	port, ok := s.SelectedPort()
 	if !ok {
 		actionBar(c, func() {
-			ui.Text(c, m.SysManagerPortHint()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SysManagerPortHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		})
 		return
 	}
 	actionBar(c, func() {
 		ui.Text(c, m.SysManagerSelectedPort(port.Protocol, port.Address,
 			strconv.Itoa(port.Port), strconv.Itoa(port.PID))).
-			FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
+			FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).Grow(1).SingleLine()
 		if port.PID > 0 {
 			if kit.SecondaryButton(c, "", m.SysManagerTerminate()).Key("sysmanager-port-terminate").Clicked() {
 				request(s, s.RequestPortTerminate(port))
 				c.Invalidate()
 			}
 		} else {
-			ui.Text(c, m.SysManagerPortOwnerUnknown()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SysManagerPortOwnerUnknown()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		}
 	})
 }
@@ -1009,14 +1009,14 @@ func serviceActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	unit, ok := s.SelectedService()
 	if !ok {
 		actionBar(c, func() {
-			ui.Text(c, m.SysManagerServiceHint()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SysManagerServiceHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		})
 		return
 	}
 	scope := scopeText(m, unit.Scope)
 	actionBar(c, func() {
 		ui.Text(c, m.SysManagerSelectedService(unit.Name, scope)).
-			FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
+			FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).Grow(1).SingleLine()
 		if kit.SecondaryButton(c, "", m.SysManagerStart()).Key("sysmanager-service-start").Clicked() {
 			request(s, s.RequestServiceAction(unit.Name, appsysmanager.ServiceStart,
 				appsysmanager.Scope(unit.Scope)))
@@ -1053,7 +1053,7 @@ func overview(c *ui.Context, data appsysmanager.Overview, m locales.Messages, t 
 
 func systemCard(c *ui.Context, data appsysmanager.Overview, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).Grow(1).MinWidth(150).Padding(10).Gap(5).Background(t.Surface).Radius(t.Radius).Children(func() {
-		ui.Text(c, m.SysManagerOverviewSystem()).FontSize(13).Bold()
+		ui.Text(c, m.SysManagerOverviewSystem()).FontSize(kit.M(c).Font.Callout).Bold()
 		field(c, m.SysManagerOverviewHostname(), blank(data.Hostname, m), t)
 		field(c, m.SysManagerOverviewOS(), blank(data.OSName, m), t)
 		field(c, m.SysManagerOverviewKernel(), blank(data.KernelRelease, m), t)
@@ -1068,7 +1068,7 @@ func resourceCard(c *ui.Context, data appsysmanager.Overview, m locales.Messages
 	swapRatio := ratio(data.SwapUsedMB, data.SwapTotalMB)
 	diskRatio := ratio(data.DiskUsedGB, data.DiskTotalGB)
 	ui.Column(c).Grow(1).MinWidth(150).Padding(10).Gap(5).Background(t.Surface).Radius(t.Radius).Children(func() {
-		ui.Text(c, m.SysManagerOverviewResources()).FontSize(13).Bold()
+		ui.Text(c, m.SysManagerOverviewResources()).FontSize(kit.M(c).Font.Callout).Bold()
 		metric(c, m.SysManagerOverviewCPU(), percentText(data.CPUPercent),
 			ratio(data.CPUPercent, 100), t)
 		metric(c, m.SysManagerOverviewMemory(),
@@ -1083,9 +1083,9 @@ func resourceCard(c *ui.Context, data appsysmanager.Overview, m locales.Messages
 func metric(c *ui.Context, label, value string, ratio float64, t *ui.Theme) {
 	ui.Column(c).FillWidth().Gap(2).Children(func() {
 		ui.Row(c).FillWidth().Gap(6).Children(func() {
-			ui.Text(c, label).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, label).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 			ui.Column(c).Grow(1)
-			ui.Text(c, value).FontSize(11).NoWrap()
+			ui.Text(c, value).FontSize(kit.M(c).Font.Caption).NoWrap()
 		})
 		if ratio >= 0 {
 			ui.Progress(c, ratio).Grow(1)
@@ -1095,9 +1095,9 @@ func metric(c *ui.Context, label, value string, ratio float64, t *ui.Theme) {
 
 func field(c *ui.Context, label, value string, t *ui.Theme) {
 	ui.Row(c).FillWidth().Gap(6).Children(func() {
-		ui.Text(c, label).FontSize(11).TextColor(t.TextMuted).NoWrap()
+		ui.Text(c, label).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).NoWrap()
 		ui.Column(c).Grow(1)
-		ui.Text(c, value).FontSize(11).NoWrap()
+		ui.Text(c, value).FontSize(kit.M(c).Font.Caption).NoWrap()
 	})
 }
 

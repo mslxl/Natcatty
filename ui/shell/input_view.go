@@ -42,7 +42,7 @@ func inputCheckbox(c *ui.Context, value *bool, label string) ui.Element {
 // Session or the broadcast set.
 func terminalToolbar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	if s.ComposeOpen() && s.ComposeSending() {
-		ui.Text(c, m.ComposeSending()).FontSize(11).TextColor(t.TextMuted).SingleLine()
+		ui.Text(c, m.ComposeSending()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
 	}
 	broadcastLabel := m.BroadcastButton()
 	if s.Broadcasting() {
@@ -86,7 +86,7 @@ func toolbarToggle(c *ui.Context, icon, label string, on bool) ui.Element {
 	case button.Hovered():
 		button.Background(kit.Subtle(t)).TextColor(t.Text)
 	}
-	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(14, 14) })
+	button.Children(func() { kit.IconSized(c, icon, kit.M(c).Icon.Medium) })
 	return button
 }
 
@@ -113,12 +113,12 @@ func broadcastPanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.The
 	ui.Column(c).FillWidth().Padding(4).Gap(2).Radius(t.Radius).
 		Background(t.Surface).Border(1, t.Border).Children(func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.BroadcastPanelTitle()).FontSize(13).Bold()
+			ui.Text(c, m.BroadcastPanelTitle()).FontSize(kit.M(c).Font.Callout).Bold()
 			if s.Broadcasting() {
 				ui.Text(c, m.BroadcastActive(s.BroadcastTargetCount())).
-					FontSize(11).TextColor(t.Accent)
+					FontSize(kit.M(c).Font.Caption).TextColor(t.Accent)
 			} else {
-				ui.Text(c, m.BroadcastStopped()).FontSize(11).TextColor(t.TextMuted)
+				ui.Text(c, m.BroadcastStopped()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 			}
 			ui.Column(c).Grow(1)
 			if inputButton(c, m.BroadcastClose()).Clicked() {
@@ -166,19 +166,19 @@ func broadcastPanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.The
 		})
 
 		if !s.Broadcasting() && !s.BroadcastCanStart() {
-			ui.Text(c, m.BroadcastSelectHint()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.BroadcastSelectHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		}
-		ui.Text(c, m.BroadcastTargetsTitle()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.BroadcastTargetsTitle()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		for _, info := range sessions {
 			broadcastTargetRow(c, s, m, t, info)
 		}
 		if notice := s.BroadcastNotice(); notice > 0 {
-			ui.Text(c, m.BroadcastTargetsRemoved(notice)).FontSize(11).
+			ui.Text(c, m.BroadcastTargetsRemoved(notice)).FontSize(kit.M(c).Font.Caption).
 				TextColor(uitheme.WarningText(t))
 		}
 		if result, ok := s.BroadcastResult(); ok {
 			ui.Text(c, m.BroadcastSummary(result.DeliveredCount(), len(result.Deliveries))).
-				FontSize(11).Bold().TextColor(summaryColor(result, t))
+				FontSize(kit.M(c).Font.Caption).Bold().TextColor(summaryColor(result, t))
 		}
 	})
 }
@@ -194,14 +194,14 @@ func broadcastTargetRow(c *ui.Context, s *state.State, m locales.Messages, t *ui
 			c.Invalidate()
 		}
 		if info.Focused {
-			ui.Text(c, m.BroadcastFocused()).FontSize(10).Bold().TextColor(t.Accent)
+			ui.Text(c, m.BroadcastFocused()).FontSize(kit.M(c).Font.Caption2).Bold().TextColor(t.Accent)
 		}
 		ui.Column(c).Grow(1)
 		if info.HasStatus {
-			ui.Text(c, deliveryText(m, info.Status)).FontSize(11).
+			ui.Text(c, deliveryText(m, info.Status)).FontSize(kit.M(c).Font.Caption).
 				TextColor(deliveryColor(info.Status, t))
 		} else if !info.Running {
-			ui.Text(c, m.BroadcastMissing()).FontSize(11).TextColor(uitheme.DangerText(t))
+			ui.Text(c, m.BroadcastMissing()).FontSize(kit.M(c).Font.Caption).TextColor(uitheme.DangerText(t))
 		}
 	})
 }
@@ -270,14 +270,14 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 
 	body := func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.ComposeTitle()).FontSize(13).Bold()
+			ui.Text(c, m.ComposeTitle()).FontSize(kit.M(c).Font.Callout).Bold()
 			// At the minimum width the target and result stay on one line:
 			// the compact target label truncates rather than wrapping the
 			// header into a ragged block above Cancel.
-			ui.Text(c, composeTargetText(s, m)).FontSize(11).
+			ui.Text(c, composeTargetText(s, m)).FontSize(kit.M(c).Font.Caption).
 				TextColor(t.TextMuted).SingleLine()
 			if result, ok := s.ComposeResult(); ok {
-				ui.Text(c, composeResultText(m, result)).FontSize(11).
+				ui.Text(c, composeResultText(m, result)).FontSize(kit.M(c).Font.Caption).
 					TextColor(summaryColor(result, t)).SingleLine()
 			}
 			ui.Column(c).Grow(1)
@@ -316,12 +316,12 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 			previewText = preview.PreviewText()
 		}
 		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Start).Children(func() {
-			ui.Text(c, m.ComposePreview()).FontSize(10).TextColor(t.TextMuted)
+			ui.Text(c, m.ComposePreview()).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted)
 			// The transformed draft wraps in a short scroll view: a long
 			// multi-line command can be inspected in full before Send instead
 			// of being cut at the first line.
 			ui.Scroll(c).Grow(1).Height(previewHeight).Children(func() {
-				ui.Text(c, previewText).FontSize(11).Wrap().TextColor(t.Text)
+				ui.Text(c, previewText).FontSize(kit.M(c).Font.Caption).Wrap().TextColor(t.Text)
 			})
 		})
 	}

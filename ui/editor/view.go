@@ -3,6 +3,7 @@ package editor
 import (
 	"github.com/egoist/mygo/ui"
 
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -69,7 +70,7 @@ func panel(c *ui.Context, t *ui.Theme) ui.Element {
 		Width(panelWidth).Height(panelHeight).
 		Margin(panelTop, 0, 0, 0).Padding(panelPadding).Gap(8).
 		Background(t.Background).Border(1, t.Border).
-		Radius(t.Radius+2).Shadow(0, 10, 30, 0, ui.RGBA(0, 0, 0, 0.3)).
+		Radius(t.Radius+2).Shadow(0, 10, 30, 0, uitheme.OverlayShadow).
 		Clip()
 }
 
@@ -78,7 +79,7 @@ func documentView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	ui.Overlay(c, func() {
 		back := ui.Column(c).Absolute().Left(0).Top(0).Right(0).Bottom(0).
 			AlignItems(ui.Center).Justify(ui.Start).Modal().
-			Background(ui.RGBA(0, 0, 0, 0.4))
+			Background(uitheme.Scrim)
 		if back.OverlayShortcut(0, ui.KeyEscape) {
 			closed = true
 		}
@@ -87,7 +88,7 @@ func documentView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			box.OnClick(func() {})
 			box.Children(func() {
 				ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, m.SftpEditorTitle(s.Name())).FontSize(16).Bold().
+					ui.Text(c, m.SftpEditorTitle(s.Name())).FontSize(kit.M(c).Font.Title3).Bold().
 						SingleLine().MinWidth(0).TextColor(t.Text)
 					ui.Column(c).Grow(1)
 					if ui.Button(c, m.SftpEditorClose()).Clicked() {
@@ -108,11 +109,11 @@ func documentView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 				}
 				switch {
 				case s.Saving():
-					ui.Text(c, m.SftpEditorSaving()).FontSize(11).TextColor(t.TextMuted)
+					ui.Text(c, m.SftpEditorSaving()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 				case s.SaveError():
-					ui.Text(c, m.SftpEditorSaveFailed()).FontSize(11).TextColor(uitheme.DangerText(t))
+					ui.Text(c, m.SftpEditorSaveFailed()).FontSize(kit.M(c).Font.Caption).TextColor(uitheme.DangerText(t))
 				case s.Saved():
-					ui.Text(c, m.SftpEditorSaved()).FontSize(11).TextColor(t.TextMuted)
+					ui.Text(c, m.SftpEditorSaved()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 				}
 			})
 		})
@@ -125,8 +126,8 @@ func documentView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 
 func confirmView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	open := promptPanel(c, "editor-confirm-prompt", func() {
-		ui.Text(c, m.SftpEditorUnsavedTitle()).FontSize(16).Bold().TextColor(t.Text)
-		ui.Text(c, m.SftpEditorUnsavedBody(s.Name())).FontSize(12).
+		ui.Text(c, m.SftpEditorUnsavedTitle()).FontSize(kit.M(c).Font.Title3).Bold().TextColor(t.Text)
+		ui.Text(c, m.SftpEditorUnsavedBody(s.Name())).FontSize(kit.M(c).Font.Footnote).
 			TextColor(t.TextMuted)
 		ui.Row(c).FillWidth().Gap(8).Justify(ui.End).Children(func() {
 			if ui.Button(c, m.SftpEditorCancel()).Clicked() {
@@ -147,8 +148,8 @@ func confirmView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 
 func conflictView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	open := promptPanel(c, "editor-conflict-prompt", func() {
-		ui.Text(c, m.SftpEditorConflictTitle()).FontSize(16).Bold().TextColor(t.Text)
-		ui.Text(c, m.SftpEditorConflictBody(s.ConflictName())).FontSize(12).
+		ui.Text(c, m.SftpEditorConflictTitle()).FontSize(kit.M(c).Font.Title3).Bold().TextColor(t.Text)
+		ui.Text(c, m.SftpEditorConflictBody(s.ConflictName())).FontSize(kit.M(c).Font.Footnote).
 			TextColor(t.TextMuted)
 		ui.Row(c).FillWidth().Gap(8).Justify(ui.End).Children(func() {
 			if ui.Button(c, m.SftpEditorCancel()).Clicked() {
@@ -169,9 +170,9 @@ func conflictView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 
 func failureView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	open := promptPanel(c, "editor-failure-prompt", func() {
-		ui.Text(c, m.SftpEditorSyncFailedTitle()).FontSize(16).Bold().
+		ui.Text(c, m.SftpEditorSyncFailedTitle()).FontSize(kit.M(c).Font.Title3).Bold().
 			TextColor(t.Text)
-		ui.Text(c, m.SftpEditorSyncFailedBody(s.failure.name)).FontSize(12).
+		ui.Text(c, m.SftpEditorSyncFailedBody(s.failure.name)).FontSize(kit.M(c).Font.Footnote).
 			TextColor(t.TextMuted)
 		ui.Row(c).FillWidth().Gap(8).Justify(ui.End).Children(func() {
 			if ui.Button(c, m.SftpEditorDismiss()).Clicked() {

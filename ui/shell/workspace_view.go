@@ -190,8 +190,8 @@ func fixedTab(c *ui.Context, key, icon, label string, active bool) ui.Element {
 		tab.Background(t.Background.Alpha(0.4)).TextColor(t.Text)
 	}
 	tab.Children(func() {
-		ui.Icon(c, icons.Lucide(icon)).Size(14, 14)
-		ui.Text(c, label).FontSize(12).FontWeight(600).SingleLine()
+		kit.IconSized(c, icon, kit.M(c).Icon.Medium)
+		ui.Text(c, label).FontSize(kit.M(c).Font.Footnote).FontWeight(600).SingleLine()
 	})
 	return tab
 }
@@ -284,7 +284,7 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 		kit.StatusDot(c, sessionTone(t, snapshot, ok))
 		// SingleLine text can shrink to nothing in a flex row; give the title
 		// a readable minimum so it is not squeezed out beside the controls.
-		titleText := ui.Text(c, title).FontSize(12).FontWeight(600).SingleLine().MinWidth(72).Grow(1)
+		titleText := ui.Text(c, title).FontSize(kit.M(c).Font.Footnote).FontWeight(600).SingleLine().MinWidth(72).Grow(1)
 		if info.Active || hovered {
 			titleText.TextColor(t.Text)
 		} else {
@@ -326,8 +326,8 @@ func tabControl(c *ui.Context, icon, label string) ui.Element {
 func pendingTab(c *ui.Context, m locales.Messages, t *ui.Theme, label string) {
 	ui.Row(c).Height(tabHeight).Padding(0, 12).Gap(8).Margin(0, 0, 0, 4).Radius(tabRadius, tabRadius, 0, 0).
 		AlignItems(ui.Center).TextColor(t.TextMuted).Children(func() {
-		ui.Icon(c, icons.Lucide(icons.Loader)).Size(14, 14).TextColor(t.Warning)
-		ui.Text(c, m.ConnectionConnectingTo(label)).FontSize(12).SingleLine()
+		kit.IconSized(c, icons.Loader, kit.M(c).Icon.Medium).TextColor(t.Warning)
+		ui.Text(c, m.ConnectionConnectingTo(label)).FontSize(kit.M(c).Font.Footnote).SingleLine()
 	})
 }
 
@@ -533,12 +533,12 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		// or another Tab.
 		if ref.managesPanes && (ref.split || s.TabCount() > 1) {
 			handle := ui.Box(c).Label(m.PaneDragHandle()).Size(16, 22).Center().TextColor(t.TextMuted).
-				Children(func() { ui.Icon(c, icons.Lucide(icons.GripVertical)).Size(14, 14) })
+				Children(func() { kit.IconSized(c, icons.GripVertical, kit.M(c).Icon.Medium) })
 			handle.Drag(state.PaneDrag(ref.id, info.ID))
 		}
 
 		if !lone {
-			titleElement := ui.Text(c, paneTitle(m, info)).FontSize(11).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
+			titleElement := ui.Text(c, paneTitle(m, info)).FontSize(kit.M(c).Font.Caption).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
 			if info.Focused {
 				titleElement.TextColor(t.Text)
 			} else {
@@ -633,10 +633,10 @@ func paneFiles(s *state.State, info state.PaneInfo) (model.HostID, bool) {
 
 // statusPill is a Session status: a dot in tone and its text.
 func statusPill(c *ui.Context, tone ui.Color, text string) {
-	ui.Row(c).Height(20).Padding(0, 8).Gap(6).Radius(10).Background(tone.Alpha(0.12)).
+	ui.Row(c).Height(20).Padding(0, 8).Gap(6).Radius(kit.M(c).Radius.Card).Background(tone.Alpha(0.12)).
 		AlignItems(ui.Center).Shrink(0).Children(func() {
 		ui.Box(c).Size(6, 6).Radius(3).Background(tone)
-		ui.Text(c, text).FontSize(11).SingleLine().TextColor(c.Theme().Text)
+		ui.Text(c, text).FontSize(kit.M(c).Font.Caption).SingleLine().TextColor(c.Theme().Text)
 	})
 }
 
@@ -671,7 +671,7 @@ func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		ui.Column(c).Fill().Padding(24).Gap(10).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
 			ui.Box(c).Size(44, 44).Radius(12).Background(t.Danger.Alpha(0.1)).Center().TextColor(t.Danger).
 				Children(func() { ui.Icon(c, icons.Lucide(icons.TriangleAlert)).Size(20, 20) })
-			ui.Text(c, message).FontSize(13).MaxWidth(420).TextColor(uitheme.DangerText(t))
+			ui.Text(c, message).FontSize(kit.M(c).Font.Callout).MaxWidth(420).TextColor(uitheme.DangerText(t))
 			if !retryable {
 				return
 			}
@@ -696,7 +696,7 @@ func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	default:
 		ui.Column(c).Fill().Gap(10).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
 			ui.Icon(c, icons.Lucide(icons.Loader)).Size(22, 22).TextColor(t.TextMuted)
-			ui.Text(c, m.PaneConnecting()).TextColor(t.TextMuted).FontSize(13)
+			ui.Text(c, m.PaneConnecting()).TextColor(t.TextMuted).FontSize(kit.M(c).Font.Callout)
 		})
 	}
 }

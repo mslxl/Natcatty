@@ -6,6 +6,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	domainserial "github.com/mslxl/natcatty/domain/model/serial"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -37,8 +38,8 @@ func View(s *State) func(*ui.Context) {
 		open := true
 		ui.Modal(c, &open, func() {
 			ui.Column(c).Width(dialogWidth).Padding(20).Gap(dialogGap).Children(func() {
-				ui.Text(c, m.SerialTitle()).FontSize(18).Bold()
-				ui.Text(c, m.SerialDescription()).FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, m.SerialTitle()).FontSize(kit.M(c).Font.Title).Bold()
+				ui.Text(c, m.SerialDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 
 				ui.Scroll(c).FillWidth().MaxHeight(formViewport(c, t)).Children(func() {
 					ui.Column(c).FillWidth().Gap(dialogGap).Children(func() {
@@ -100,13 +101,13 @@ func statusView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	}
 	ui.Column(c).FillWidth().Gap(4).Children(func() {
 		if warning {
-			ui.Text(c, m.SerialStopBitsWarning()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SerialStopBitsWarning()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		}
 		if portsFailed {
-			ui.Text(c, m.SerialPortsFailed()).FontSize(12).TextColor(uitheme.DangerText(t))
+			ui.Text(c, m.SerialPortsFailed()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 		}
 		if problem != nil {
-			ui.Text(c, ProblemText(m, problem)).FontSize(12).TextColor(uitheme.DangerText(t))
+			ui.Text(c, ProblemText(m, problem)).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 		}
 	})
 }
@@ -115,7 +116,7 @@ func statusView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 // A device may be absent from enumeration, so the path stays editable.
 func portField(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	ui.Row(c).Gap(8).Children(func() {
-		ui.Text(c, m.SerialPort()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.SerialPort()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		if ui.Button(c, m.SerialRefresh()).Key("serial-refresh").Clicked() {
 			s.RefreshPorts()
 			c.Invalidate()
@@ -124,7 +125,7 @@ func portField(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 
 	ports := s.Ports()
 	if len(ports) == 0 {
-		ui.Text(c, m.SerialNoPorts()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.SerialNoPorts()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	} else {
 		portsView(c, s, ports)
 	}
@@ -179,7 +180,7 @@ func baudField(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			Background(t.Surface).Border(1, t.Border).Children(func() {
 			box = ui.ComboboxBase(c.Key("serial-baud"), &baud)
 			box.Input.Grow(1).MinWidth(0).Placeholder(m.SerialBaudRatePlaceholder())
-			arrow := ui.Text(c, "▾").FontSize(10).TextColor(t.TextMuted)
+			arrow := ui.Text(c, "▾").FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted)
 			arrow.OnClick(func() {
 				box.SetOpen(!box.Open())
 				box.Input.Focus()

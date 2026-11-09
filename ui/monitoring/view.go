@@ -19,14 +19,6 @@ import (
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
-// The original's metric colors: CPU sky, memory emerald, upload violet.
-var (
-	cpuColor    = ui.Hex("#0EA5E9")
-	memoryColor = ui.Hex("#10B981")
-	uploadColor = ui.Hex("#8B5CF6")
-	amberColor  = ui.Hex("#F59E0B")
-)
-
 const (
 	asideWidth float32 = 380
 	cardWidth  float32 = 280
@@ -310,7 +302,7 @@ func hostCard(c *ui.Context, s *State, m locales.Messages, t *ui.Theme,
 			kit.HostAvatar(c, "", avatarKind(host.Protocol), s.HostLabel(host), 36)
 			ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
 				ui.Text(c, s.HostLabel(host)).FontWeight(600).SingleLine()
-				ui.Text(c, host.Hostname).FontSize(12).TextColor(t.TextMuted).SingleLine()
+				ui.Text(c, host.Hostname).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine()
 			})
 			if kit.IconButton(c, icons.SquareTerminal, m.MonitoringOpenTerminal()).Clicked() {
 				s.OpenHost(id)
@@ -324,28 +316,28 @@ func hostCard(c *ui.Context, s *State, m locales.Messages, t *ui.Theme,
 		})
 		ui.Row(c).FillWidth().Gap(12).Children(func() {
 			metricBlock(c, t, m.MonitoringCpu(), unknownUnless(ready, sample.CPU), cpuSub(m, ready, sample),
-				points, func(p domainmonitor.Point) float64 { return p.CPU }, 100, cpuColor)
+				points, func(p domainmonitor.Point) float64 { return p.CPU }, 100, uitheme.SeriesCPU)
 			metricBlock(c, t, m.MonitoringMemory(), unknownUnless(ready, sample.Memory), memorySub(ready, sample),
-				points, func(p domainmonitor.Point) float64 { return p.Memory }, 100, memoryColor)
+				points, func(p domainmonitor.Point) float64 { return p.Memory }, 100, uitheme.SeriesMemory)
 		})
 		partitions(c, m, t, ready, sample, 2)
 		ui.Row(c).FillWidth().Gap(14).AlignItems(ui.Center).Children(func() {
-			rate(c, t, icons.ArrowDown, cpuColor, unknownUnless(ready, sample.Rx))
-			rate(c, t, icons.ArrowUp, uploadColor, unknownUnless(ready, sample.Tx))
+			rate(c, t, icons.ArrowDown, uitheme.SeriesCPU, unknownUnless(ready, sample.Rx))
+			rate(c, t, icons.ArrowUp, uitheme.SeriesUpload, unknownUnless(ready, sample.Tx))
 		})
 		ui.Spacer(c)
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Padding(8, 0, 0, 0).
 			BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
-			ui.Text(c, host.Notes).FontSize(11).TextColor(t.TextMuted).SingleLine().Grow(1).MinWidth(0)
+			ui.Text(c, host.Notes).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine().Grow(1).MinWidth(0)
 			if ready {
 				ui.Row(c).Gap(4).AlignItems(ui.Center).TextColor(t.TextMuted).Children(func() {
-					ui.Icon(c, icons.Lucide(icons.Clock)).Size(12, 12)
-					ui.Text(c, sample.At.Format("15:04:05")).FontSize(11).TextColor(t.TextMuted).NoWrap()
+					kit.IconSized(c, icons.Clock, kit.M(c).Icon.Small)
+					ui.Text(c, sample.At.Format("15:04:05")).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).NoWrap()
 				})
 			} else if reason := reasonText(m, state.Reason); reason != "" {
-				ui.Text(c, reason).FontSize(11).TextColor(uitheme.DangerText(t)).NoWrap()
+				ui.Text(c, reason).FontSize(kit.M(c).Font.Caption).TextColor(uitheme.DangerText(t)).NoWrap()
 			} else if status != StatusStopped {
-				ui.Text(c, m.MonitoringWaiting()).FontSize(11).TextColor(t.TextMuted).NoWrap()
+				ui.Text(c, m.MonitoringWaiting()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).NoWrap()
 			}
 		})
 	})
@@ -356,10 +348,10 @@ func hostCard(c *ui.Context, s *State, m locales.Messages, t *ui.Theme,
 func metricBlock(c *ui.Context, t *ui.Theme, label string, value float64, sub string,
 	points []domainmonitor.Point, pick func(domainmonitor.Point) float64, scale float64, color ui.Color) {
 	ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(2).Children(func() {
-		ui.Text(c, label).FontSize(11).FontWeight(500).TextColor(t.TextMuted).SingleLine()
-		ui.Text(c, percentText(value)).FontSize(20).FontWeight(600).
+		ui.Text(c, label).FontSize(kit.M(c).Font.Caption).FontWeight(500).TextColor(t.TextMuted).SingleLine()
+		ui.Text(c, percentText(value)).FontSize(kit.M(c).Font.LargeTitle).FontWeight(600).
 			TextColor(toneColor(t, domainmonitor.ToneForPercent(value), t.Text)).SingleLine()
-		ui.Text(c, sub).FontSize(10).TextColor(t.TextMuted).SingleLine()
+		ui.Text(c, sub).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted).SingleLine()
 		trend(c, t, points, pick, scale, color, 56).Margin(4, 0, 0, 0)
 	})
 }
@@ -411,8 +403,8 @@ func trend(c *ui.Context, t *ui.Theme, points []domainmonitor.Point,
 func partitions(c *ui.Context, m locales.Messages, t *ui.Theme, ready bool, sample domainmonitor.Sample, limit int) {
 	ui.Column(c).FillWidth().Gap(6).Children(func() {
 		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).TextColor(t.TextMuted).Children(func() {
-			ui.Icon(c, icons.Lucide(icons.HardDrive)).Size(12, 12)
-			ui.Text(c, m.MonitoringPartitions()).FontSize(11).FontWeight(500).TextColor(t.TextMuted)
+			kit.IconSized(c, icons.HardDrive, kit.M(c).Icon.Small)
+			ui.Text(c, m.MonitoringPartitions()).FontSize(kit.M(c).Font.Caption).FontWeight(500).TextColor(t.TextMuted)
 		})
 		disks := sample.Disks
 		if !ready || len(disks) == 0 {
@@ -438,8 +430,8 @@ func partitions(c *ui.Context, m locales.Messages, t *ui.Theme, ready bool, samp
 func resourceBar(c *ui.Context, t *ui.Theme, label string, percent float64, detail string) {
 	ui.Column(c).FillWidth().Gap(3).Children(func() {
 		ui.Row(c).FillWidth().Gap(6).Children(func() {
-			ui.Text(c, label).FontSize(11).SingleLine().Grow(1).MinWidth(0)
-			ui.Text(c, percentText(percent)).FontSize(10).TextColor(t.TextMuted).NoWrap()
+			ui.Text(c, label).FontSize(kit.M(c).Font.Caption).SingleLine().Grow(1).MinWidth(0)
+			ui.Text(c, percentText(percent)).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted).NoWrap()
 		})
 		fill := t.Accent
 		switch {
@@ -447,7 +439,7 @@ func resourceBar(c *ui.Context, t *ui.Theme, label string, percent float64, deta
 		case percent > 85:
 			fill = t.Danger
 		case percent > 60:
-			fill = amberColor
+			fill = uitheme.MonitorAttention
 		}
 		ui.Box(c).FillWidth().Height(4).Radius(2).Background(kit.Subtle(t)).Draw(func(p *ui.Painter, r ui.Rect) {
 			if !domainmonitor.Valid(percent) {
@@ -457,15 +449,15 @@ func resourceBar(c *ui.Context, t *ui.Theme, label string, percent float64, deta
 			p.Fill(ui.Rect{X: r.X, Y: r.Y, W: w, H: r.H}, fill, 2)
 		})
 		if detail != "" {
-			ui.Text(c, detail).FontSize(10).TextColor(t.TextMuted).SingleLine()
+			ui.Text(c, detail).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted).SingleLine()
 		}
 	})
 }
 
 func rate(c *ui.Context, t *ui.Theme, icon string, color ui.Color, value float64) {
 	ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-		ui.Icon(c, icons.Lucide(icon)).Size(12, 12).TextColor(color)
-		ui.Text(c, rateText(value)).FontSize(12).TextColor(t.Text).NoWrap()
+		kit.IconSized(c, icon, kit.M(c).Icon.Small).TextColor(color)
+		ui.Text(c, rateText(value)).FontSize(kit.M(c).Font.Footnote).TextColor(t.Text).NoWrap()
 	})
 }
 
@@ -483,7 +475,7 @@ func signalBars(c *ui.Context, t *ui.Theme, latency float64) {
 	default:
 		lit = 1
 	}
-	color := toneColor(t, domainmonitor.ToneForLatency(latency), memoryColor)
+	color := toneColor(t, domainmonitor.ToneForLatency(latency), uitheme.SeriesMemory)
 	ui.Row(c).Gap(4).AlignItems(ui.Center).Tooltip(latencyText(latency)).Children(func() {
 		ui.Row(c).Gap(2).AlignItems(ui.End).Height(13).Children(func() {
 			for bar := 0; bar < 4; bar++ {
@@ -494,7 +486,7 @@ func signalBars(c *ui.Context, t *ui.Theme, latency float64) {
 				ui.Box(c).Width(3).Height(float32(4 + 3*bar)).Radius(1).Background(fill)
 			}
 		})
-		ui.Text(c, latencyText(latency)).FontSize(11).TextColor(t.TextMuted).NoWrap()
+		ui.Text(c, latencyText(latency)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).NoWrap()
 	})
 }
 
@@ -511,14 +503,14 @@ func tagBadges(c *ui.Context, tags []string) {
 func statusBadge(c *ui.Context, m locales.Messages, t *ui.Theme, status domainmonitor.Status, reason domainmonitor.Reason) {
 	text, color := statusText(m, t, status)
 	tip := reasonText(m, reason)
-	badge := ui.Row(c).Gap(5).Padding(2, 8).Radius(999).AlignItems(ui.Center).
+	badge := ui.Row(c).Gap(5).Padding(2, 8).Radius(kit.M(c).Radius.Pill).AlignItems(ui.Center).
 		Background(color.Alpha(0.12)).Shrink(0)
 	if tip != "" {
 		badge.Tooltip(tip)
 	}
 	badge.Children(func() {
 		kit.StatusDot(c, color).Size(6, 6)
-		ui.Text(c, text).FontSize(11).FontWeight(500).TextColor(color).NoWrap()
+		ui.Text(c, text).FontSize(kit.M(c).Font.Caption).FontWeight(500).TextColor(color).NoWrap()
 	})
 }
 
@@ -559,7 +551,7 @@ func hostList(c *ui.Context, s *State, panel domainpreferences.MonitorPanel, m l
 					state := s.HostState(id)
 					status := s.DisplayStatus(id)
 					row := ui.Row(c).Key("host-"+id).FillWidth().MinHeight(52).Padding(8, 12).
-						AlignItems(ui.Center).Radius(10).Background(t.Surface).Border(1, t.Border)
+						AlignItems(ui.Center).Radius(kit.M(c).Radius.Card).Background(t.Surface).Border(1, t.Border)
 					if row.Hovered() {
 						row.Border(1, t.Border.Mix(t.Text, 0.18))
 					}
@@ -594,7 +586,7 @@ func cellBox(c *ui.Context, s *State, key string) ui.Element {
 
 func columnHeader(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, key string) {
 	cellBox(c, s, key).Padding(0, 0, 0, 6).Children(func() {
-		ui.Text(c, columnTitle(m, key)).FontSize(11).FontWeight(600).TextColor(t.TextMuted).
+		ui.Text(c, columnTitle(m, key)).FontSize(kit.M(c).Font.Caption).FontWeight(600).TextColor(t.TextMuted).
 			SingleLine().Grow(1).MinWidth(0)
 		if key == "terminal" {
 			return
@@ -631,20 +623,20 @@ func cell(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, key string,
 				text, color := statusText(m, t, status)
 				kit.StatusDot(c, color).Size(6, 6).Tooltip(text)
 			})
-			ui.Text(c, host.Hostname).FontSize(11).TextColor(t.TextMuted).SingleLine()
+			ui.Text(c, host.Hostname).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
 		})
 	case "latency":
 		signalBars(c, t, unknownUnless(ready, sample.Latency))
 	case "tags":
 		ui.Row(c).Gap(4).Clip().Children(func() { tagBadges(c, host.Tags) })
 	case "notes":
-		ui.Text(c, host.Notes).FontSize(12).TextColor(t.TextMuted).SingleLine()
+		ui.Text(c, host.Notes).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine()
 	case "cpu":
 		listMetric(c, t, unknownUnless(ready, sample.CPU), state.Points, started, panel, now,
-			func(p domainmonitor.Point) float64 { return p.CPU }, cpuColor)
+			func(p domainmonitor.Point) float64 { return p.CPU }, uitheme.SeriesCPU)
 	case "memory":
 		listMetric(c, t, unknownUnless(ready, sample.Memory), state.Points, started, panel, now,
-			func(p domainmonitor.Point) float64 { return p.Memory }, memoryColor)
+			func(p domainmonitor.Point) float64 { return p.Memory }, uitheme.SeriesMemory)
 	case "disks":
 		percent := math.NaN()
 		if ready && len(sample.Disks) > 0 {
@@ -655,15 +647,15 @@ func cell(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, key string,
 		ui.Column(c).FillWidth().Children(func() { resourceBar(c, t, diskLabel(sample, ready), percent, "") })
 	case "network":
 		ui.Column(c).Gap(2).Children(func() {
-			rate(c, t, icons.ArrowDown, cpuColor, unknownUnless(ready, sample.Rx))
-			rate(c, t, icons.ArrowUp, uploadColor, unknownUnless(ready, sample.Tx))
+			rate(c, t, icons.ArrowDown, uitheme.SeriesCPU, unknownUnless(ready, sample.Rx))
+			rate(c, t, icons.ArrowUp, uitheme.SeriesUpload, unknownUnless(ready, sample.Tx))
 		})
 	case "updated":
 		text := "--"
 		if ready {
 			text = sample.At.Format("15:04:05")
 		}
-		ui.Text(c, text).FontSize(12).TextColor(t.TextMuted).NoWrap()
+		ui.Text(c, text).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).NoWrap()
 	case "status":
 		statusBadge(c, m, t, status, state.Reason)
 	case "terminal":
@@ -677,7 +669,7 @@ func listMetric(c *ui.Context, t *ui.Theme, value float64, points []domainmonito
 	started time.Time, panel domainpreferences.MonitorPanel, now time.Time,
 	pick func(domainmonitor.Point) float64, color ui.Color) {
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, percentText(value)).FontSize(12).FontWeight(500).Width(46).NoWrap().
+		ui.Text(c, percentText(value)).FontSize(kit.M(c).Font.Footnote).FontWeight(500).Width(46).NoWrap().
 			TextColor(toneColor(t, domainmonitor.ToneForPercent(value), t.Text))
 		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 			trend(c, t, chartPoints(points, started, panel.Range, now), pick, 100, color, 24)
@@ -712,14 +704,14 @@ func detail(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 		})
 		ui.Row(c).FillWidth().Gap(12).Children(func() {
 			metricBlock(c, t, m.MonitoringCpu(), unknownUnless(ready, sample.CPU), cpuSub(m, ready, sample),
-				points, func(p domainmonitor.Point) float64 { return p.CPU }, 100, cpuColor)
+				points, func(p domainmonitor.Point) float64 { return p.CPU }, 100, uitheme.SeriesCPU)
 			metricBlock(c, t, m.MonitoringMemory(), unknownUnless(ready, sample.Memory), memorySub(ready, sample),
-				points, func(p domainmonitor.Point) float64 { return p.Memory }, 100, memoryColor)
+				points, func(p domainmonitor.Point) float64 { return p.Memory }, 100, uitheme.SeriesMemory)
 		})
 		if ready && domainmonitor.Valid(sample.GPU) {
 			kit.FormSection(c, m.MonitoringGpu(), func() {
 				if sample.GPUName != "" {
-					ui.Text(c, sample.GPUName).FontSize(12).SingleLine()
+					ui.Text(c, sample.GPUName).FontSize(kit.M(c).Font.Footnote).SingleLine()
 				}
 				resourceBar(c, t, m.MonitoringGpuUtil(), sample.GPU, "")
 				if sample.GPUMemTotalMB > 0 {
@@ -741,7 +733,7 @@ func detail(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 		})
 		if started := s.StartedAt(); !started.IsZero() {
 			ui.Text(c, m.MonitoringObserved(int(s.Now().Sub(started)/time.Minute))).
-				FontSize(11).TextColor(t.TextMuted)
+				FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		}
 	}, func() {
 		if kit.PrimaryButton(c, icons.SquareTerminal, m.MonitoringOpenTerminal()).Clicked() {
@@ -752,9 +744,9 @@ func detail(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 
 func infoRow(c *ui.Context, t *ui.Theme, label, value string) {
 	ui.Row(c).FillWidth().Gap(8).Children(func() {
-		ui.Text(c, label).FontSize(12).TextColor(t.TextMuted).NoWrap()
+		ui.Text(c, label).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).NoWrap()
 		ui.Spacer(c)
-		ui.Text(c, value).FontSize(12).SingleLine().MinWidth(0)
+		ui.Text(c, value).FontSize(kit.M(c).Font.Footnote).SingleLine().MinWidth(0)
 	})
 }
 
@@ -773,21 +765,21 @@ func editor(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 	}
 	kit.Panel(c, width, title, "", m.MonitoringClose(), nil, s.CancelEdit, func() {
 		ui.Column(c).FillWidth().Gap(6).Children(func() {
-			ui.Text(c, m.MonitoringName()).FontSize(12).FontWeight(500)
+			ui.Text(c, m.MonitoringName()).FontSize(kit.M(c).Font.Footnote).FontWeight(500)
 			ui.TextInput(c, &form.Name).FillWidth()
 		})
 		ui.Column(c).FillWidth().Gap(6).Children(func() {
-			ui.Text(c, m.MonitoringDescription()).FontSize(12).FontWeight(500)
+			ui.Text(c, m.MonitoringDescription()).FontSize(kit.M(c).Font.Footnote).FontWeight(500)
 			ui.TextInput(c, &form.Description).FillWidth()
 		})
 		ui.Column(c).FillWidth().Gap(8).Children(func() {
 			ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
-				ui.Text(c, m.MonitoringPanelHosts()).FontSize(12).FontWeight(500).Grow(1)
+				ui.Text(c, m.MonitoringPanelHosts()).FontSize(kit.M(c).Font.Footnote).FontWeight(500).Grow(1)
 				if kit.SecondaryButton(c, icons.Plus, m.MonitoringSelectedCount(len(form.HostIDs))).Clicked() {
 					s.BeginPickHosts()
 				}
 			})
-			ui.Text(c, m.MonitoringSelectionHint()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.MonitoringSelectionHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 			ids := append([]string(nil), form.HostIDs...)
 			for index, hostID := range ids {
 				host, known := s.Host(hostID)
@@ -796,13 +788,13 @@ func editor(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 					label = s.HostLabel(host)
 				}
 				first := index == 0
-				ui.Row(c).Key("selected-"+hostID).FillWidth().Gap(8).Padding(6, 8).Radius(kit.RadiusControl).
+				ui.Row(c).Key("selected-"+hostID).FillWidth().Gap(8).Padding(6, 8).Radius(kit.M(c).Radius.Control).
 					Background(kit.Muted(t)).AlignItems(ui.Center).Children(func() {
 					kit.HostAvatar(c, "", avatarKind(host.Protocol), label, 24)
 					ui.Column(c).Grow(1).MinWidth(0).Children(func() {
-						ui.Text(c, label).FontSize(12).FontWeight(500).SingleLine()
+						ui.Text(c, label).FontSize(kit.M(c).Font.Footnote).FontWeight(500).SingleLine()
 						if known && host.Hostname != "" {
-							ui.Text(c, host.Hostname).FontSize(11).TextColor(t.TextMuted).SingleLine()
+							ui.Text(c, host.Hostname).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
 						}
 					})
 					if !first && kit.IconButton(c, icons.ArrowUp, m.MonitoringMoveUp()).Clicked() {
@@ -815,7 +807,7 @@ func editor(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 			}
 		})
 		ui.Column(c).FillWidth().Gap(6).Children(func() {
-			ui.Text(c, m.MonitoringDefaultView()).FontSize(12).FontWeight(500)
+			ui.Text(c, m.MonitoringDefaultView()).FontSize(kit.M(c).Font.Footnote).FontWeight(500)
 			view := 1
 			if form.View == domainpreferences.MonitorViewList {
 				view = 0
@@ -827,9 +819,9 @@ func editor(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 				}
 			}
 		})
-		ui.Text(c, m.MonitoringSaveHint()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.MonitoringSaveHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		if problem := problemText(m, s.Problem()); problem != "" {
-			ui.Text(c, problem).FontSize(12).TextColor(uitheme.DangerText(t))
+			ui.Text(c, problem).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 		}
 	}, func() {
 		if kit.SecondaryButton(c, "", m.MonitoringCancel()).Clicked() {
@@ -849,7 +841,7 @@ func picker(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 			ui.SearchField(c, &s.pickerSearch).Placeholder(m.MonitoringSearch()).FillWidth()
 			hosts := s.PickerHosts()
 			if len(hosts) == 0 {
-				ui.Text(c, m.MonitoringNoHostsAvailable()).FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, m.MonitoringNoHostsAvailable()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 				return
 			}
 			ui.Column(c).FillWidth().Gap(2).Children(func() {
@@ -857,7 +849,7 @@ func picker(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 					id := string(host.ID)
 					selected := s.FormHostSelected(id)
 					row := ui.Row(c).Key("pick-"+id).FillWidth().Gap(10).Padding(6, 8).
-						Radius(kit.RadiusControl).AlignItems(ui.Center)
+						Radius(kit.M(c).Radius.Control).AlignItems(ui.Center)
 					if row.Hovered() {
 						row.Background(kit.Subtle(t))
 					}
@@ -867,12 +859,12 @@ func picker(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 						}
 						kit.HostAvatar(c, "", avatarKind(host.Protocol), s.HostLabel(host), 24)
 						ui.Column(c).Grow(1).MinWidth(0).Children(func() {
-							ui.Text(c, s.HostLabel(host)).FontSize(12).FontWeight(500).SingleLine()
+							ui.Text(c, s.HostLabel(host)).FontSize(kit.M(c).Font.Footnote).FontWeight(500).SingleLine()
 							detail := host.Hostname
 							if host.Group != "" {
 								detail = host.Group + " · " + detail
 							}
-							ui.Text(c, detail).FontSize(11).TextColor(t.TextMuted).SingleLine()
+							ui.Text(c, detail).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
 						})
 					})
 					if row.Clicked() {
@@ -982,11 +974,11 @@ func statusText(m locales.Messages, t *ui.Theme, status domainmonitor.Status) (s
 	case StatusStopped:
 		return m.MonitoringStatusStopped(), t.TextMuted
 	case StatusStale:
-		return m.MonitoringStale(), amberColor
+		return m.MonitoringStale(), uitheme.MonitorAttention
 	case domainmonitor.StatusLive:
-		return m.MonitoringStatusLive(), memoryColor
+		return m.MonitoringStatusLive(), uitheme.SeriesMemory
 	case domainmonitor.StatusConnecting:
-		return m.MonitoringStatusConnecting(), cpuColor
+		return m.MonitoringStatusConnecting(), uitheme.SeriesCPU
 	case domainmonitor.StatusQueued:
 		return m.MonitoringStatusQueued(), t.TextMuted
 	case domainmonitor.StatusLogin:
@@ -996,11 +988,11 @@ func statusText(m locales.Messages, t *ui.Theme, status domainmonitor.Status) (s
 	case domainmonitor.StatusUnsupported:
 		return m.MonitoringStatusUnsupported(), t.TextMuted
 	case domainmonitor.StatusDisconnected:
-		return m.MonitoringStatusDisconnected(), amberColor
+		return m.MonitoringStatusDisconnected(), uitheme.MonitorAttention
 	case domainmonitor.StatusUnavailable:
 		return m.MonitoringStatusUnavailable(), uitheme.DangerText(t)
 	case domainmonitor.StatusLimit:
-		return m.MonitoringStatusLimit(), amberColor
+		return m.MonitoringStatusLimit(), uitheme.MonitorAttention
 	default:
 		return m.MonitoringStatusQueued(), t.TextMuted
 	}

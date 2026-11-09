@@ -6,7 +6,9 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsearch "github.com/mslxl/natcatty/application/search"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // The overlay follows the original Quick Switcher's proportions: a panel at
@@ -60,7 +62,7 @@ func Overlay(s *State) func(*ui.Context) {
 		ui.Overlay(c, func() {
 			back := ui.Column(c).Absolute().Left(0).Top(0).Right(0).Bottom(0).
 				AlignItems(ui.Center).Justify(ui.Start).Modal().
-				Background(ui.RGBA(0, 0, 0, 0.4))
+				Background(uitheme.Scrim)
 			// Clicking the backdrop closes; the panel swallows its own clicks
 			// below, so a click inside it never reaches this handler.
 			back.OnClick(func() {
@@ -75,7 +77,7 @@ func Overlay(s *State) func(*ui.Context) {
 					Width(panelWidth).Height(panelHeight).
 					Margin(panelTop, 0, 0, 0).Padding(panelPadding).Gap(panelGap).
 					Background(t.Background).Border(1, t.Border).
-					Radius(t.Radius+2).Shadow(0, 10, 30, 0, ui.RGBA(0, 0, 0, 0.3)).
+					Radius(t.Radius+2).Shadow(0, 10, 30, 0, uitheme.OverlayShadow).
 					Clip()
 				panel.OnClick(func() {})
 				panel.Children(func() {
@@ -144,8 +146,8 @@ func Overlay(s *State) func(*ui.Context) {
 func hintRow(c *ui.Context, m locales.Messages, t *ui.Theme) {
 	ui.Row(c).FillWidth().Height(hintHeight).AlignItems(ui.Center).
 		Justify(ui.SpaceBetween).Children(func() {
-		ui.Text(c, m.SearchJumpTo()).FontSize(11).TextColor(t.TextMuted)
-		ui.Text(c, m.SearchHint()).FontSize(11).TextColor(t.TextMuted).NoWrap()
+		ui.Text(c, m.SearchJumpTo()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+		ui.Text(c, m.SearchHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).NoWrap()
 	})
 }
 
@@ -162,7 +164,7 @@ func emptyState(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).Grow(1).FillWidth().AlignItems(ui.Center).Justify(ui.Center).Gap(4).
 		Children(func() {
 			ui.Text(c, title).Bold().AlignSelf(ui.Center)
-			ui.Text(c, body).FontSize(12).TextColor(t.TextMuted).AlignSelf(ui.Center)
+			ui.Text(c, body).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).AlignSelf(ui.Center)
 		})
 }
 
@@ -242,7 +244,7 @@ func ListAt(c *ui.Context, sections []Section, m locales.Messages, t *ui.Theme, 
 	index := 0
 	for _, section := range sections {
 		if title := SectionTitle(m, section.Key); title != "" {
-			ui.Text(c, title).FontSize(11).TextColor(t.TextMuted).
+			ui.Text(c, title).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).
 				Height(sectionHeight).NoWrap()
 		}
 		for _, result := range section.Results {
@@ -274,13 +276,13 @@ func row(c *ui.Context, result appsearch.Result, selected bool, activate func(),
 	}
 	e.OnClick(activate)
 	e.Children(func() {
-		ui.Text(c, record.Title).FontSize(14).Grow(1).MinWidth(0).NoWrap()
+		ui.Text(c, record.Title).FontSize(kit.M(c).Font.Body).Grow(1).MinWidth(0).NoWrap()
 		if record.Subtitle != "" {
-			ui.Text(c, record.Subtitle).FontSize(11).TextColor(t.TextMuted).
+			ui.Text(c, record.Subtitle).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).
 				MaxWidth(200).NoWrap()
 		}
 		if record.Shortcut != "" {
-			ui.Text(c, record.Shortcut).FontSize(11).TextColor(t.TextMuted).NoWrap()
+			ui.Text(c, record.Shortcut).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).NoWrap()
 		}
 	})
 }

@@ -40,7 +40,7 @@ func centerView(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui
 	ui.Overlay(c, func() {
 		back := ui.Column(c).Absolute().Left(0).Top(0).Right(0).Bottom(0).
 			AlignItems(ui.Center).Justify(ui.Start).Modal().
-			Background(ui.RGBA(0, 0, 0, 0.4))
+			Background(uitheme.Scrim)
 		// The backdrop closes. OnClick runs after this build, so it closes the
 		// state directly instead of leaving a flag this pass can no longer see;
 		// the panel swallows its own clicks below, so a click inside the center
@@ -63,7 +63,7 @@ func centerView(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui
 				Width(panelWidth).Height(panelHeight).
 				Margin(centerTop, 0, 0, 0).Padding(centerPadding).Gap(8).
 				Background(t.Background).Border(1, t.Border).
-				Radius(t.Radius+2).Shadow(0, 10, 30, 0, ui.RGBA(0, 0, 0, 0.3)).
+				Radius(t.Radius+2).Shadow(0, 10, 30, 0, uitheme.OverlayShadow).
 				Clip()
 			panel.OnClick(func() {})
 			panel.Children(func() {
