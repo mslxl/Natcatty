@@ -110,10 +110,7 @@ func nativeHome(c *ui.Context, slots HomeSlots) {
 	t := c.Theme()
 	bodyRow(c, func() {
 		if slots.Sidebar != nil {
-			ui.Column(c).Width(SidebarWidth).FillHeight().Shrink(0).Padding(0, 0, CardGap, CardGap).Children(func() {
-				panel := ui.Column(c).Fill().MinHeight(0).Padding(8).Gap(2).Radius(SidebarRadius).Clip()
-				kit.Fill(c, panel, kit.SurfaceSidebar).Children(slots.Sidebar)
-			})
+			floatingSidebar(c, SidebarWidth, 0, 2, slots.Sidebar)
 		}
 		// The page fills the rest of the body, and its notices sit above
 		// it on its own background.
@@ -123,6 +120,15 @@ func nativeHome(c *ui.Context, slots HomeSlots) {
 			}
 			ui.Column(c).FillWidth().Grow(1).MinHeight(0).MinWidth(0).Padding(ShellPadding).Children(slots.Content)
 		})
+	})
+}
+
+// floatingSidebar is the macOS style's sidebar: a glass panel inset by
+// CardGap from the window's edges below top, width wide with the inset.
+func floatingSidebar(c *ui.Context, width, top, gap float32, children func()) {
+	ui.Column(c).Width(width).FillHeight().Shrink(0).Padding(top, 0, CardGap, CardGap).Children(func() {
+		panel := ui.Column(c).Fill().MinHeight(0).Padding(8).Gap(gap).Radius(SidebarRadius).Clip()
+		kit.Fill(c, panel, kit.SurfaceSidebar).Children(children)
 	})
 }
 
@@ -204,6 +210,10 @@ type SettingsSlots struct {
 // and leaves the close button its end, then the nav column beside the
 // content pane on a faint muted fill.
 func SettingsLayout(c *ui.Context, slots SettingsSlots) {
+	if kit.CurrentStyle().Native() {
+		nativeSettings(c, slots)
+		return
+	}
 	t := c.Theme()
 	WindowFrame(c, FrameOptions{}, func() {
 		left, right := titlebar.Insets(c, titlebar.Dialog)
@@ -220,6 +230,37 @@ func SettingsLayout(c *ui.Context, slots SettingsSlots) {
 				BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(slots.Sidebar)
 			ui.Column(c).Grow(1).FillHeight().MinWidth(0).MinHeight(0).Background(t.TextMuted.Alpha(0.04)).
 				Children(slots.Content)
+		})
+	})
+}
+
+// nativeSettings is the macOS style's Settings window, as System Settings:
+// the floating sidebar runs the window's height under the window controls,
+// with the search at its top, and the pane beside it has the title bar.
+func nativeSettings(c *ui.Context, slots SettingsSlots) {
+	t := c.Theme()
+	WindowFrame(c, FrameOptions{Vibrant: true}, func() {}, func() {
+		ui.Row(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
+			// The panel's inner padding is 4 DIPs less than Classic's column,
+			// which the inset at its left makes up for.
+			floatingSidebar(c, slots.SidebarWidth, CardGap, 8, func() {
+				// The window controls sit in the panel's top corner, centered
+				// on the title bar's close row; the room down to its foot,
+				// above the search, drags the window.
+				room := titlebar.CloseTop + titlebar.CloseSize - 2*CardGap
+				ui.Box(c).FillWidth().Height(room).Shrink(0).DragWindow()
+				slots.Sidebar()
+			})
+			ui.Column(c).Grow(1).FillHeight().MinWidth(0).MinHeight(0).Background(t.Background).Children(func() {
+				_, right := titlebar.Insets(c, titlebar.Dialog)
+				ui.Row(c).Key("title-bar").FillWidth().Shrink(0).Padding(titlebar.CloseTop, 16+right, 0, 24).
+					AlignItems(ui.Center).DragWindow().Children(func() {
+					ui.Row(c).Height(titlebar.CloseSize).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, slots.Title).FontSize(kit.M(c).Font.Headline).FontWeight(600)
+					})
+				})
+				slots.Content()
+			})
 		})
 	})
 }

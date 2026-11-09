@@ -136,9 +136,14 @@ func Panel(c *ui.Context, width float32, title, subtitle, closeLabel string,
 }
 
 // FormGroup is a titled group of FormRows and FormToggles inside a panel
-// or page, drawn as the original's bordered field groups.
+// or page, drawn as the original's bordered field groups. The macOS style
+// draws it as System Settings' inset grouped list: a rounded fill, the
+// labels in a column beside their controls, a hairline between rows.
 func FormGroup(c *ui.Context, title string, body func()) ui.Element {
 	t := c.Theme()
+	if CurrentStyle().Native() {
+		return groupedForm(c, title, "", body)
+	}
 	return ui.Column(c).FillWidth().Gap(10).Children(func() {
 		if title != "" {
 			ui.Text(c, title).FontSize(M(c).Font.Footnote).FontWeight(600).TextColor(t.TextMuted)
@@ -148,16 +153,101 @@ func FormGroup(c *ui.Context, title string, body func()) ui.Element {
 	})
 }
 
+// FormCard is a titled card of a page's settings, its title and optional
+// description heading it, as a Settings area's sections; an empty title
+// and description leave the heading out. In the macOS style it is a
+// FormGroup with the heading above it.
+func FormCard(c *ui.Context, title, description string, body func()) ui.Element {
+	if CurrentStyle().Native() {
+		return groupedForm(c, title, description, body)
+	}
+	t := c.Theme()
+	return ui.Column(c).Padding(16).Gap(10).Radius(M(c).Radius.Card).Background(t.Surface).Border(1, t.Border).Children(func() {
+		if title != "" || description != "" {
+			formCardHeading(c, title, description)
+		}
+		body()
+	})
+}
+
+func formCardHeading(c *ui.Context, title, description string) {
+	t := c.Theme()
+	ui.Column(c).FillWidth().Gap(2).Children(func() {
+		if title != "" {
+			ui.Text(c, title).FontSize(M(c).Font.Headline).FontWeight(600)
+		}
+		if description != "" {
+			ui.Text(c, description).FontSize(M(c).Font.Footnote).TextColor(t.TextMuted)
+		}
+	})
+}
+
+// groupRowPaddingY is a grouped row's room above and below its label and
+// control, with the form's gap around its hairline; groupPadding is the
+// group's inset, which the hairlines keep at its sides too, as System
+// Settings' inset separators.
+const (
+	groupRowPaddingY float32 = 6
+	groupGap         float32 = 4
+	groupPaddingY    float32 = 6
+	groupPaddingX    float32 = 12
+)
+
+// groupRows counts the rows of each grouped form being built, innermost
+// last, so a row knows whether one came before it. Views build on the UI
+// thread, one at a time.
+var groupRows []int
+
+func groupedForm(c *ui.Context, title, description string, body func()) ui.Element {
+	t := c.Theme()
+	return ui.Column(c).FillWidth().Gap(6).Children(func() {
+		if title != "" || description != "" {
+			ui.Column(c).FillWidth().Padding(0, groupPaddingX).Children(func() {
+				formCardHeading(c, title, description)
+			})
+		}
+		// The group stands out from the page by its fill: the surface's,
+		// or a shade where a preset's surface is the page's own color.
+		fill := t.Surface
+		if fill == t.Background {
+			fill = Muted(t)
+		}
+		ui.Column(c).FillWidth().Radius(M(c).Radius.Card-4).Padding(groupPaddingY, groupPaddingX).
+			Background(fill).Children(func() {
+			groupRows = append(groupRows, 0)
+			defer func() { groupRows = groupRows[:len(groupRows)-1] }()
+			ui.Form(c, body).FillWidth().Gap(groupGap)
+		})
+	})
+}
+
+// groupSeparator draws the hairline between a grouped form's rows, before
+// every row but the first. Outside a grouped form it draws nothing.
+func groupSeparator(c *ui.Context) {
+	if len(groupRows) == 0 {
+		return
+	}
+	last := len(groupRows) - 1
+	if groupRows[last] > 0 {
+		ui.Box(c).FillWidth().Height(1).Shrink(0).Background(c.Theme().Border)
+	}
+	groupRows[last]++
+}
+
 // FormRow is one labeled field of a form: control builds the control the
 // label names. It returns the field for its Description and Error.
 func FormRow(c *ui.Context, label string, control func()) ui.Element {
-	return ui.Field(c, label, control)
+	if !CurrentStyle().Native() {
+		return ui.Field(c, label, control)
+	}
+	groupSeparator(c)
+	return ui.Field(c, label, control).FillWidth().Padding(groupRowPaddingY, 0)
 }
 
 // FormRowWith is a FormRow with an accessory after the control, such as a
 // preference's reset.
 func FormRowWith(c *ui.Context, label string, control, accessory func()) ui.Element {
-	return ui.Field(c, label, func() {
+	return FormRow(c, label, func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			control()
 			accessory()
@@ -170,6 +260,18 @@ func FormRowWith(c *ui.Context, label string, control, accessory func()) ui.Elem
 // accessory after it. It reports whether the user changed *value.
 func FormToggle(c *ui.Context, label string, value *bool, accessory func()) bool {
 	changed := false
+	if CurrentStyle().Native() {
+		// A switch in a labeled row, which a click on the label flips.
+		FormRow(c, label, func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				changed = ui.Switch(c, value).Changed()
+				if accessory != nil {
+					accessory()
+				}
+			})
+		})
+		return changed
+	}
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		changed = ui.Checkbox(c, value, label).Changed()
 		if accessory != nil {

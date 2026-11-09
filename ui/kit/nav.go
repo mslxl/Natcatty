@@ -33,6 +33,9 @@ func navRecipeOf(c *ui.Context, role NavRole) navRecipe {
 // NavChrome is the width a NavItem of role adds around its label: its
 // padding, its glyph, and the gap between them.
 func NavChrome(c *ui.Context, role NavRole) float32 {
+	if role == NavSettings && CurrentStyle().Native() {
+		return 2*8 + navTile + 8
+	}
 	r := navRecipeOf(c, role)
 	return 2*r.padX + r.glyph + r.gap
 }
@@ -45,6 +48,20 @@ func NavList(c *ui.Context, role NavRole, items func()) {
 // NavItem is one entry of a navigation column: a glyph and a label, muted
 // until it is hovered or is the visible page.
 func NavItem(c *ui.Context, role NavRole, key, icon, label string, active bool) ui.Element {
+	return NavItemWith(c, role, key, icon, label, active, ui.Color{})
+}
+
+// navTile is the side of a NavSettings item's colored icon tile in the
+// macOS style.
+const navTile float32 = 22
+
+// NavItemWith is a NavItem whose glyph the macOS style shows on a tile of
+// tint, as System Settings' sidebar does; Classic ignores the tint, and a
+// zero tint draws the bare glyph.
+func NavItemWith(c *ui.Context, role NavRole, key, icon, label string, active bool, tint ui.Color) ui.Element {
+	if role == NavSettings && CurrentStyle().Native() {
+		return tiledNavItem(c, key, icon, label, active, tint)
+	}
 	t := c.Theme()
 	r := navRecipeOf(c, role)
 	item := ui.ButtonBase(c).Key(key).Label(label).FillWidth().MinWidth(0).Padding(r.padY, r.padX).
@@ -203,4 +220,27 @@ func (o SearchOptions) clear(query *string) {
 		return
 	}
 	*query = ""
+}
+
+// tiledNavItem is a macOS Settings sidebar row: the glyph white on a rounded
+// tile of tint, and the label; the chosen row is filled with the accent.
+func tiledNavItem(c *ui.Context, key, icon, label string, active bool, tint ui.Color) ui.Element {
+	t := c.Theme()
+	item := ui.ButtonBase(c).Key(key).Label(label).FillWidth().MinWidth(0).Padding(5, 8).Gap(8).
+		Radius(M(c).Radius.Control).Justify(ui.Start).AlignItems(ui.Center).TextColor(t.Text)
+	switch {
+	case active:
+		item.Background(t.Accent).TextColor(t.AccentText)
+	case item.Hovered() || item.Pressed():
+		item.Background(t.Text.Alpha(0.06))
+	}
+	item.Children(func() {
+		tile := ui.Box(c).Size(navTile, navTile).Radius(6).Center().Shrink(0)
+		if tint.A > 0 {
+			tile.Background(tint).TextColor(ui.RGB(255, 255, 255))
+		}
+		tile.Children(func() { IconSized(c, icon, M(c).Icon.Small+1) })
+		ui.Text(c, label).FontSize(M(c).Font.Body).SingleLine().MinWidth(0).Shrink(1)
+	})
+	return item
 }

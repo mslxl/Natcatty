@@ -9,6 +9,7 @@ import (
 
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
 	domainkeybindings "github.com/mslxl/natcatty/domain/keybindings"
+	"github.com/mslxl/natcatty/ui/internal/styletest"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
@@ -109,59 +110,61 @@ func measuredSettingsTextHeight(t *testing.T, text string, size float32) float32
 // needs on the running platform, so the label must also stay on the sidebar
 // side of the content viewport.
 func TestSettingsSidebarLabelsAreNotEllipsized(t *testing.T) {
-	for _, tag := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
-		m := locales.In(tag)
-		for _, size := range [][2]int{{720, 480}, {1100, 720}} {
-			t.Run(fmt.Sprintf("%s/%dx%d", tag, size[0], size[1]), func(t *testing.T) {
-				var layout viewLayout
-				var context *ui.Context
-				view := viewWithLayout(Config{Search: NewSearchState()}, &layout)
-				tester := ui.NewTester(func(c *ui.Context) {
-					context = c
-					view(c)
-				}, size[0], size[1])
-				tester.SetLocale(tag)
-				tester.Frame()
-				viewport := layout.Content.Bounds(context)
-				if viewport.W <= 0 {
-					t.Fatalf("%s/%dx%d: the content viewport has no width: %+v",
-						tag, size[0], size[1], viewport)
-				}
-				for _, area := range Areas() {
-					label := AreaTitle(m, area)
-					needed := intrinsicSettingsTextWidth(t, label)
-					rect, ok := tester.Find(label)
-					if !ok {
-						t.Fatalf("%q is not rendered; texts %q", label, tester.Texts())
+	styletest.Each(t, func(t *testing.T) {
+		for _, tag := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
+			m := locales.In(tag)
+			for _, size := range [][2]int{{720, 480}, {1100, 720}} {
+				t.Run(fmt.Sprintf("%s/%dx%d", tag, size[0], size[1]), func(t *testing.T) {
+					var layout viewLayout
+					var context *ui.Context
+					view := viewWithLayout(Config{Search: NewSearchState()}, &layout)
+					tester := ui.NewTester(func(c *ui.Context) {
+						context = c
+						view(c)
+					}, size[0], size[1])
+					tester.SetLocale(tag)
+					tester.Frame()
+					viewport := layout.Content.Bounds(context)
+					if viewport.W <= 0 {
+						t.Fatalf("%s/%dx%d: the content viewport has no width: %+v",
+							tag, size[0], size[1], viewport)
 					}
-					// The sidebar scrolls at the minimum size, so a later area
-					// starts below the viewport. Wheel it into view the way a
-					// user would before judging its label. A row clipped at the
-					// viewport's bottom edge reports an empty box, so the loop
-					// must react to that too, not only to a visible row whose
-					// bottom overflows: a taller font can leave the label at
-					// the edge with H zero.
-					for step := 0; step < 40 && (rect.W <= 0 || rect.H <= 0 || rect.Y < 0 || rect.Y+rect.H > float32(size[1])); step++ {
-						tester.Scroll(80, float32(size[1])*0.6, 0, 40)
-						rect, ok = tester.Find(label)
+					for _, area := range Areas() {
+						label := AreaTitle(m, area)
+						needed := intrinsicSettingsTextWidth(t, label)
+						rect, ok := tester.Find(label)
 						if !ok {
-							t.Fatalf("%q disappeared while scrolling the sidebar", label)
+							t.Fatalf("%q is not rendered; texts %q", label, tester.Texts())
+						}
+						// The sidebar scrolls at the minimum size, so a later area
+						// starts below the viewport. Wheel it into view the way a
+						// user would before judging its label. A row clipped at the
+						// viewport's bottom edge reports an empty box, so the loop
+						// must react to that too, not only to a visible row whose
+						// bottom overflows: a taller font can leave the label at
+						// the edge with H zero.
+						for step := 0; step < 40 && (rect.W <= 0 || rect.H <= 0 || rect.Y < 0 || rect.Y+rect.H > float32(size[1])); step++ {
+							tester.Scroll(80, float32(size[1])*0.6, 0, 40)
+							rect, ok = tester.Find(label)
+							if !ok {
+								t.Fatalf("%q disappeared while scrolling the sidebar", label)
+							}
+						}
+						if rect.W <= 0 || rect.H <= 0 || rect.Y < 0 || rect.Y+rect.H > float32(size[1])+0.5 {
+							t.Fatalf("%q is not laid out inside the window: %+v", label, rect)
+						}
+						if rect.X+rect.W > viewport.X-0.5 {
+							t.Fatalf("%q runs into the content viewport %+v: %+v", label, viewport, rect)
+						}
+						if rect.W+0.5 < needed {
+							t.Fatalf("%q needs %.1fpx on one line but its box is %.1fpx wide, so it is ellipsized",
+								label, needed, rect.W)
 						}
 					}
-					if rect.W <= 0 || rect.H <= 0 || rect.Y < 0 || rect.Y+rect.H > float32(size[1])+0.5 {
-						t.Fatalf("%q is not laid out inside the window: %+v", label, rect)
-					}
-					if rect.X+rect.W > viewport.X-0.5 {
-						t.Fatalf("%q runs into the content viewport %+v: %+v", label, viewport, rect)
-					}
-					if rect.W+0.5 < needed {
-						t.Fatalf("%q needs %.1fpx on one line but its box is %.1fpx wide, so it is ellipsized",
-							label, needed, rect.W)
-					}
-				}
-			})
+				})
+			}
 		}
-	}
+	})
 }
 
 // TestSettingsShortcutPaneScrollsEveryRowIntoView renders the Shortcuts area
@@ -169,81 +172,83 @@ func TestSettingsSidebarLabelsAreNotEllipsized(t *testing.T) {
 // rows must pass through the content viewport, the last row must end inside
 // the window at the bottom, and PageUp must scroll back with the keyboard.
 func TestSettingsShortcutPaneScrollsEveryRowIntoView(t *testing.T) {
-	m := locales.In("en")
-	bindings := catalogBindings()
-	first := bindingLabelByID(t, m, bindings[0].ID)
-	last := bindingLabelByID(t, m, bindings[len(bindings)-1].ID)
+	styletest.Each(t, func(t *testing.T) {
+		m := locales.In("en")
+		bindings := catalogBindings()
+		first := bindingLabelByID(t, m, bindings[0].ID)
+		last := bindingLabelByID(t, m, bindings[len(bindings)-1].ID)
 
-	for _, size := range [][2]int{{1100, 720}, {720, 480}} {
-		w, h := size[0], size[1]
-		name := fmt.Sprintf("%dx%d", w, h)
-		t.Run(name, func(t *testing.T) {
-			state, _ := newShortcutFixtureOverrides(t, nil)
-			search := NewSearchState()
-			search.SetArea(AreaShortcuts)
-			tester := ui.NewTester(ViewWithSettings(Config{Shortcuts: state, Search: search}), w, h)
-			tester.SetLocale("en")
-			tester.Frame()
+		for _, size := range [][2]int{{1100, 720}, {720, 480}} {
+			w, h := size[0], size[1]
+			name := fmt.Sprintf("%dx%d", w, h)
+			t.Run(name, func(t *testing.T) {
+				state, _ := newShortcutFixtureOverrides(t, nil)
+				search := NewSearchState()
+				search.SetArea(AreaShortcuts)
+				tester := ui.NewTester(ViewWithSettings(Config{Shortcuts: state, Search: search}), w, h)
+				tester.SetLocale("en")
+				tester.Frame()
 
-			// The pane starts at its top, with the first row in view.
-			firstRect, ok := tester.Find(first)
-			if !ok || !insideSettingsContent(firstRect, w, h) {
-				t.Fatalf("the first shortcut row is not visible: %+v, texts %q",
-					firstRect, tester.Texts())
-			}
+				// The pane starts at its top, with the first row in view.
+				firstRect, ok := tester.Find(first)
+				if !ok || !insideSettingsContent(firstRect, w, h) {
+					t.Fatalf("the first shortcut row is not visible: %+v, texts %q",
+						firstRect, tester.Texts())
+				}
 
-			seen := make(map[string]bool, len(bindings))
-			record := func() {
-				for _, binding := range bindings {
-					rect, ok := tester.Find(bindingLabel(m, binding))
-					if ok && insideSettingsContent(rect, w, h) {
-						seen[binding.ID] = true
+				seen := make(map[string]bool, len(bindings))
+				record := func() {
+					for _, binding := range bindings {
+						rect, ok := tester.Find(bindingLabel(m, binding))
+						if ok && insideSettingsContent(rect, w, h) {
+							seen[binding.ID] = true
+						}
 					}
 				}
-			}
-			record()
-
-			// Wheel with the pointer over the content, as a user scrolls it.
-			x, y := float32(w)*3/5, float32(h)*3/5
-			for step := 0; step < 160 && len(seen) < len(bindings); step++ {
-				tester.Scroll(x, y, 0, 40)
 				record()
-			}
-			if len(seen) != len(bindings) {
-				var missing []string
-				for _, binding := range bindings {
-					if !seen[binding.ID] {
-						missing = append(missing, binding.ID)
-					}
+
+				// Wheel with the pointer over the content, as a user scrolls it.
+				x, y := float32(w)*3/5, float32(h)*3/5
+				for step := 0; step < 160 && len(seen) < len(bindings); step++ {
+					tester.Scroll(x, y, 0, 40)
+					record()
 				}
-				t.Fatalf("wheel scrolling left %d of %d shortcut rows unreachable: %v",
-					len(missing), len(bindings), missing)
-			}
+				if len(seen) != len(bindings) {
+					var missing []string
+					for _, binding := range bindings {
+						if !seen[binding.ID] {
+							missing = append(missing, binding.ID)
+						}
+					}
+					t.Fatalf("wheel scrolling left %d of %d shortcut rows unreachable: %v",
+						len(missing), len(bindings), missing)
+				}
 
-			// Scrolled to the bottom, the last row is a real box inside the
-			// window rather than a Scroll that merely exists.
-			lastRect, ok := tester.Find(last)
-			if !ok {
-				t.Fatalf("the last shortcut row was never laid out: %q", last)
-			}
-			if lastRect.W <= 0 || lastRect.H <= 0 {
-				t.Fatalf("the last shortcut row has an empty box: %+v", lastRect)
-			}
-			if !insideSettingsContent(lastRect, w, h) {
-				t.Fatalf("the last shortcut row is outside the content viewport: %+v", lastRect)
-			}
+				// Scrolled to the bottom, the last row is a real box inside the
+				// window rather than a Scroll that merely exists.
+				lastRect, ok := tester.Find(last)
+				if !ok {
+					t.Fatalf("the last shortcut row was never laid out: %q", last)
+				}
+				if lastRect.W <= 0 || lastRect.H <= 0 {
+					t.Fatalf("the last shortcut row has an empty box: %+v", lastRect)
+				}
+				if !insideSettingsContent(lastRect, w, h) {
+					t.Fatalf("the last shortcut row is outside the content viewport: %+v", lastRect)
+				}
 
-			// PageUp reaches the pane with the pointer over it and scrolls
-			// back to the first row.
-			for press := 0; press < 40; press++ {
-				tester.Key(0, ui.KeyPageUp)
-			}
-			back, ok := tester.Find(first)
-			if !ok || !insideSettingsContent(back, w, h) {
-				t.Fatalf("PageUp did not scroll back to the first row: %+v", back)
-			}
-		})
-	}
+				// PageUp reaches the pane with the pointer over it and scrolls
+				// back to the first row.
+				for press := 0; press < 40; press++ {
+					tester.Key(0, ui.KeyPageUp)
+				}
+				back, ok := tester.Find(first)
+				if !ok || !insideSettingsContent(back, w, h) {
+					t.Fatalf("PageUp did not scroll back to the first row: %+v", back)
+				}
+			})
+		}
+	})
 }
 
 // TestSettingsSidebarKeepsTheLastAreaReachable checks the smallest window:
@@ -251,167 +256,171 @@ func TestSettingsShortcutPaneScrollsEveryRowIntoView(t *testing.T) {
 // areas. If a longer translation ever pushes it out, the sidebar scroll must
 // bring it back before the click.
 func TestSettingsSidebarKeepsTheLastAreaReachable(t *testing.T) {
-	m := locales.In("en")
-	for _, size := range [][2]int{{1100, 720}, {720, 480}} {
-		w, h := size[0], size[1]
-		search := NewSearchState() // starts on Appearance
-		tester := ui.NewTester(ViewWithSettings(Config{Search: search}), w, h)
-		tester.SetLocale("en")
-		tester.Frame()
+	styletest.Each(t, func(t *testing.T) {
+		m := locales.In("en")
+		for _, size := range [][2]int{{1100, 720}, {720, 480}} {
+			w, h := size[0], size[1]
+			search := NewSearchState() // starts on Appearance
+			tester := ui.NewTester(ViewWithSettings(Config{Search: search}), w, h)
+			tester.SetLocale("en")
+			tester.Frame()
 
-		label := m.SettingsAreaShortcuts()
-		rect, ok := tester.Find(label)
-		if !ok {
-			t.Fatalf("%dx%d: the sidebar lost %q: %q", w, h, label, tester.Texts())
-		}
-		// The sidebar is the left column; its own scroll reveals a clipped
-		// entry. A fixed delay is never used: each iteration is a real wheel
-		// step with a hard bound.
-		for step := 0; step < 20 && rect.Y+rect.H > float32(h); step++ {
-			tester.Scroll(100, float32(h)/2, 0, 30)
-			rect, ok = tester.Find(label)
+			label := m.SettingsAreaShortcuts()
+			rect, ok := tester.Find(label)
 			if !ok {
-				t.Fatalf("%dx%d: the sidebar lost %q while scrolling", w, h, label)
+				t.Fatalf("%dx%d: the sidebar lost %q: %q", w, h, label, tester.Texts())
+			}
+			// The sidebar is the left column; its own scroll reveals a clipped
+			// entry. A fixed delay is never used: each iteration is a real wheel
+			// step with a hard bound.
+			for step := 0; step < 20 && rect.Y+rect.H > float32(h); step++ {
+				tester.Scroll(100, float32(h)/2, 0, 30)
+				rect, ok = tester.Find(label)
+				if !ok {
+					t.Fatalf("%dx%d: the sidebar lost %q while scrolling", w, h, label)
+				}
+			}
+			if rect.Y+rect.H > float32(h)+0.5 {
+				t.Fatalf("%dx%d: the last sidebar entry is clipped by the window edge: %+v", w, h, rect)
+			}
+			if err := tester.Click(label); err != nil {
+				t.Fatalf("%dx%d: click the last sidebar entry: %v", w, h, err)
+			}
+			tester.Frame()
+			if search.Area() != AreaShortcuts {
+				t.Fatalf("%dx%d: the last sidebar entry opened %q, want shortcuts", w, h, search.Area())
 			}
 		}
-		if rect.Y+rect.H > float32(h)+0.5 {
-			t.Fatalf("%dx%d: the last sidebar entry is clipped by the window edge: %+v", w, h, rect)
-		}
-		if err := tester.Click(label); err != nil {
-			t.Fatalf("%dx%d: click the last sidebar entry: %v", w, h, err)
-		}
-		tester.Frame()
-		if search.Area() != AreaShortcuts {
-			t.Fatalf("%dx%d: the last sidebar entry opened %q, want shortcuts", w, h, search.Area())
-		}
-	}
+	})
 }
 
 // TestSettingsAreasShowFieldLabels asserts every preference field carries its
 // localized label at both sizes. Before the rework fieldRow dropped the
 // label, so selects, numbers, and text inputs appeared without context.
 func TestSettingsAreasShowFieldLabels(t *testing.T) {
-	cases := []struct {
-		area   Area
-		labels func(locales.Messages) []string
-	}{
-		{AreaAppearance, func(m locales.Messages) []string {
-			return []string{
-				m.SettingsThemeMode(), m.SettingsAccentMode(), m.SettingsAccentColor(),
-				m.SettingsUIFont(), m.SettingsWindowOpacity(), m.SettingsFollowAppTerminalTheme(),
-				m.SettingsTerminalFontFamily(), m.SettingsTerminalFontSize(),
-				m.SettingsTerminalCursorStyle(), m.SettingsTerminalCursorBlink(),
-			}
-		}},
-		{AreaTerminal, func(m locales.Messages) []string {
-			return []string{
-				m.SettingsLogDirectory(), m.SettingsLogFormat(), m.SettingsOSC52Title(),
-				m.SettingsTerminalEncoding(), m.SettingsPasteMinLines(), m.SettingsDropAction(),
-			}
-		}},
-		{AreaLayout, func(m locales.Messages) []string {
-			return []string{
-				m.SettingsShowHostTreeSidebar(), m.SettingsShowSFTPTab(), m.SettingsShowRecentHosts(),
-				m.SettingsTabBarPosition(), m.SettingsShellOnlyTabNumberShortcuts(),
-				m.SettingsShowTabNumberBadges(), m.SettingsRestorePreviousSession(),
-				m.SettingsStartupLanding(), m.SettingsSidePanelDock(),
-			}
-		}},
-		{AreaSFTPEditor, func(m locales.Messages) []string {
-			return []string{
-				m.SettingsDoubleClickBehavior(), m.SettingsAutoSync(), m.SettingsShowHiddenFiles(),
-				m.SettingsUseCompressedUpload(), m.SettingsAutoOpenSidebar(),
-				m.SettingsFollowTerminalCwd(), m.SettingsDefaultViewMode(),
-				m.SettingsEditorWordWrap(), m.SettingsEditorFontSize(),
-			}
-		}},
-		{AreaLogs, func(m locales.Messages) []string { return []string{m.SettingsSSHDebug()} }},
-		{AreaSystem, func(m locales.Messages) []string {
-			return []string{
-				m.SettingsHotkeyAccelerator(), m.SettingsShowTrayIcon(),
-				m.SettingsCloseToTray(), m.SettingsSSHDeepLinks(),
-			}
-		}},
-		{AreaSync, func(m locales.Messages) []string {
-			return []string{
-				m.SettingsSyncMasterPassword(), m.SettingsSyncAutoSync(),
-				m.SettingsSyncConflictStrategy(),
-			}
-		}},
-		{AreaSecurity, func(m locales.Messages) []string {
-			return []string{m.SettingsConfirmCloseSessions(), m.SettingsConfirmDestructive()}
-		}},
-	}
-	for _, locale := range []string{"en", "zh-CN"} {
-		for _, size := range [][2]int{{1100, 720}, {720, 480}} {
-			w, h := size[0], size[1]
-			for _, test := range cases {
-				name := fmt.Sprintf("%s/%s/%dx%d", test.area, locale, w, h)
-				t.Run(name, func(t *testing.T) {
-					m := locales.In(locale)
-					config := Config{Preferences: NewPreferencesState(newFakePreferences())}
-					switch test.area {
-					case AreaTerminal:
-						config.Terminal = NewTerminalState(newFakeTerminal())
-					case AreaSystem:
-						config.Desktop = NewDesktopState(newFakeDesktop())
-					case AreaSecurity:
-						config.Lock = NewAppLockState(&fakeAppLock{})
-					case AreaSync:
-						config.Sync = NewSyncState(newFakeSyncService())
-					}
-					var layout viewLayout
-					var context *ui.Context
-					view := viewAtWithLayout(test.area, config, &layout)
-					tester := ui.NewTester(func(c *ui.Context) {
-						context = c
-						view(c)
-					}, w, h)
-					tester.SetLocale(locale)
-					tester.Frame()
-					// Wheel over the content scroll's own end padding: a point
-					// over the middle of the pane can land on a text input or a
-					// list that consumes the wheel, and which control lands there
-					// moves with the platform's font metrics.
-					viewport := layout.Content.Bounds(context)
-					for _, label := range test.labels(m) {
-						if !tester.HasText(label) {
-							t.Errorf("%q has no label: %q", label, tester.Texts())
-							continue
+	styletest.Each(t, func(t *testing.T) {
+		cases := []struct {
+			area   Area
+			labels func(locales.Messages) []string
+		}{
+			{AreaAppearance, func(m locales.Messages) []string {
+				return []string{
+					m.SettingsThemeMode(), m.SettingsAccentMode(), m.SettingsAccentColor(),
+					m.SettingsUIFont(), m.SettingsWindowOpacity(), m.SettingsFollowAppTerminalTheme(),
+					m.SettingsTerminalFontFamily(), m.SettingsTerminalFontSize(),
+					m.SettingsTerminalCursorStyle(), m.SettingsTerminalCursorBlink(),
+				}
+			}},
+			{AreaTerminal, func(m locales.Messages) []string {
+				return []string{
+					m.SettingsLogDirectory(), m.SettingsLogFormat(), m.SettingsOSC52Title(),
+					m.SettingsTerminalEncoding(), m.SettingsPasteMinLines(), m.SettingsDropAction(),
+				}
+			}},
+			{AreaLayout, func(m locales.Messages) []string {
+				return []string{
+					m.SettingsShowHostTreeSidebar(), m.SettingsShowSFTPTab(), m.SettingsShowRecentHosts(),
+					m.SettingsTabBarPosition(), m.SettingsShellOnlyTabNumberShortcuts(),
+					m.SettingsShowTabNumberBadges(), m.SettingsRestorePreviousSession(),
+					m.SettingsStartupLanding(), m.SettingsSidePanelDock(),
+				}
+			}},
+			{AreaSFTPEditor, func(m locales.Messages) []string {
+				return []string{
+					m.SettingsDoubleClickBehavior(), m.SettingsAutoSync(), m.SettingsShowHiddenFiles(),
+					m.SettingsUseCompressedUpload(), m.SettingsAutoOpenSidebar(),
+					m.SettingsFollowTerminalCwd(), m.SettingsDefaultViewMode(),
+					m.SettingsEditorWordWrap(), m.SettingsEditorFontSize(),
+				}
+			}},
+			{AreaLogs, func(m locales.Messages) []string { return []string{m.SettingsSSHDebug()} }},
+			{AreaSystem, func(m locales.Messages) []string {
+				return []string{
+					m.SettingsHotkeyAccelerator(), m.SettingsShowTrayIcon(),
+					m.SettingsCloseToTray(), m.SettingsSSHDeepLinks(),
+				}
+			}},
+			{AreaSync, func(m locales.Messages) []string {
+				return []string{
+					m.SettingsSyncMasterPassword(), m.SettingsSyncAutoSync(),
+					m.SettingsSyncConflictStrategy(),
+				}
+			}},
+			{AreaSecurity, func(m locales.Messages) []string {
+				return []string{m.SettingsConfirmCloseSessions(), m.SettingsConfirmDestructive()}
+			}},
+		}
+		for _, locale := range []string{"en", "zh-CN"} {
+			for _, size := range [][2]int{{1100, 720}, {720, 480}} {
+				w, h := size[0], size[1]
+				for _, test := range cases {
+					name := fmt.Sprintf("%s/%s/%dx%d", test.area, locale, w, h)
+					t.Run(name, func(t *testing.T) {
+						m := locales.In(locale)
+						config := Config{Preferences: NewPreferencesState(newFakePreferences())}
+						switch test.area {
+						case AreaTerminal:
+							config.Terminal = NewTerminalState(newFakeTerminal())
+						case AreaSystem:
+							config.Desktop = NewDesktopState(newFakeDesktop())
+						case AreaSecurity:
+							config.Lock = NewAppLockState(&fakeAppLock{})
+						case AreaSync:
+							config.Sync = NewSyncState(newFakeSyncService())
 						}
-						rect, ok := tester.Find(label)
-						// Scrolling down through the pane reaches a field below
-						// the fold; a label clipped out of the scene reports an
-						// empty box until it scrolls in. Start each label from
-						// the top: the list here need not be in document order,
-						// and a label above the current offset would otherwise
-						// stay clipped while the loop scrolled further down.
-						x, y := viewport.X+viewport.W-4, viewport.Y+viewport.H/2
-						tester.Scroll(x, y, 0, -1e6)
-						rect, ok = tester.Find(label)
-						for step := 0; step < 80 && (!ok || rect.W <= 0 || rect.H <= 0); step++ {
-							tester.Scroll(x, y, 0, 40)
+						var layout viewLayout
+						var context *ui.Context
+						view := viewAtWithLayout(test.area, config, &layout)
+						tester := ui.NewTester(func(c *ui.Context) {
+							context = c
+							view(c)
+						}, w, h)
+						tester.SetLocale(locale)
+						tester.Frame()
+						// Wheel over the content scroll's own end padding: a point
+						// over the middle of the pane can land on a text input or a
+						// list that consumes the wheel, and which control lands there
+						// moves with the platform's font metrics.
+						viewport := layout.Content.Bounds(context)
+						for _, label := range test.labels(m) {
+							if !tester.HasText(label) {
+								t.Errorf("%q has no label: %q", label, tester.Texts())
+								continue
+							}
+							rect, ok := tester.Find(label)
+							// Scrolling down through the pane reaches a field below
+							// the fold; a label clipped out of the scene reports an
+							// empty box until it scrolls in. Start each label from
+							// the top: the list here need not be in document order,
+							// and a label above the current offset would otherwise
+							// stay clipped while the loop scrolled further down.
+							x, y := viewport.X+viewport.W-4, viewport.Y+viewport.H/2
+							tester.Scroll(x, y, 0, -1e6)
 							rect, ok = tester.Find(label)
+							for step := 0; step < 80 && (!ok || rect.W <= 0 || rect.H <= 0); step++ {
+								tester.Scroll(x, y, 0, 40)
+								rect, ok = tester.Find(label)
+							}
+							if !ok {
+								t.Errorf("%q has no label: %q", label, tester.Texts())
+								continue
+							}
+							if rect.W <= 0 || rect.H <= 0 {
+								t.Errorf("%q never scrolled into view: %+v", label, rect)
+								continue
+							}
+							if rect.X < -0.5 || rect.X+rect.W > float32(w)+0.5 {
+								t.Errorf("%q does not fit horizontally at %d DIPs: %+v", label, w, rect)
+							}
+							if rect.Y < 0 || rect.Y+rect.H > float32(h)+0.5 {
+								t.Errorf("%q is clipped vertically at %d DIPs: %+v", label, h, rect)
+							}
 						}
-						if !ok {
-							t.Errorf("%q has no label: %q", label, tester.Texts())
-							continue
-						}
-						if rect.W <= 0 || rect.H <= 0 {
-							t.Errorf("%q never scrolled into view: %+v", label, rect)
-							continue
-						}
-						if rect.X < -0.5 || rect.X+rect.W > float32(w)+0.5 {
-							t.Errorf("%q does not fit horizontally at %d DIPs: %+v", label, w, rect)
-						}
-						if rect.Y < 0 || rect.Y+rect.H > float32(h)+0.5 {
-							t.Errorf("%q is clipped vertically at %d DIPs: %+v", label, h, rect)
-						}
-					}
-				})
+					})
+				}
 			}
 		}
-	}
+	})
 }
 
 // TestSettingsSearchMatchesChordsAndOverrides types a chord, including one
