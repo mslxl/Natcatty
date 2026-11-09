@@ -14,13 +14,13 @@ func Dialog(c *ui.Context, open *bool, width float32, title, description string,
 	t := c.Theme()
 	return ui.DialogBase(c, open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.45))
-		panel.Width(width).MaxWidthPercent(92).MaxHeightPercent(90).Radius(12).
+		panel.Width(width).MaxWidthPercent(92).MaxHeightPercent(90).Radius(M(c).Radius.Overlay).
 			Background(t.Surface).Border(1, t.Border).
 			Shadow(0, 16, 48, 0, ui.RGBA(0, 0, 0, 0.28)).Clip()
 		ui.Column(c).FillWidth().Padding(20, 20, 0, 20).Gap(4).Children(func() {
-			ui.Text(c, title).FontSize(16).FontWeight(600)
+			ui.Text(c, title).FontSize(M(c).Font.Title3).FontWeight(600)
 			if description != "" {
-				ui.Text(c, description).FontSize(13).TextColor(t.TextMuted)
+				ui.Text(c, description).FontSize(M(c).Font.Callout).TextColor(t.TextMuted)
 			}
 		})
 		if body != nil {
@@ -73,7 +73,7 @@ func Panel(c *ui.Context, width float32, title, subtitle, closeLabel string,
 			ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
 				ui.Text(c, title).FontWeight(600).SingleLine()
 				if subtitle != "" {
-					ui.Text(c, subtitle).FontSize(12).TextColor(t.TextMuted).SingleLine()
+					ui.Text(c, subtitle).FontSize(M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine()
 				}
 			})
 			if onClose != nil && IconButton(c, icons.X, closeLabel).Clicked() {
@@ -101,9 +101,9 @@ func FormSection(c *ui.Context, title string, body func()) ui.Element {
 	t := c.Theme()
 	return ui.Column(c).FillWidth().Gap(10).Children(func() {
 		if title != "" {
-			ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(t.TextMuted)
+			ui.Text(c, title).FontSize(M(c).Font.Footnote).FontWeight(600).TextColor(t.TextMuted)
 		}
-		ui.Column(c).FillWidth().Gap(12).Padding(14).Radius(RadiusCard).
+		ui.Column(c).FillWidth().Gap(12).Padding(14).Radius(M(c).Radius.Card).
 			Background(t.Background).Border(1, t.Border).Children(body)
 	})
 }

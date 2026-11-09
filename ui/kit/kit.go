@@ -11,15 +11,15 @@ import (
 )
 
 // Sizes shared by every surface.
+//
+// Deprecated: use M(c).Radius.Card, M(c).Radius.Control,
+// M(c).Control.Large, and M(c).Icon.Regular, which follow the Interface
+// Style.
 const (
-	// RadiusCard rounds cards, panels, and dialogs.
-	RadiusCard float32 = 10
-	// RadiusControl rounds buttons, inputs, and list rows.
+	RadiusCard    float32 = 10
 	RadiusControl float32 = 6
-	// ControlHeight is the height of a toolbar button or input.
 	ControlHeight float32 = 32
-	// IconSize is the size of an icon inside a control.
-	IconSize float32 = 16
+	IconSize      float32 = 16
 )
 
 // Muted is a quiet fill for a secondary surface: a sidebar, a toolbar input,
@@ -42,7 +42,7 @@ func CardShadow(t *ui.Theme) ui.Color {
 
 // Icon draws a named Lucide icon at the control icon size.
 func Icon(c *ui.Context, name string) ui.Element {
-	return ui.Icon(c, icons.Lucide(name)).Size(IconSize, IconSize)
+	return ui.Icon(c, icons.Lucide(name)).Size(M(c).Icon.Regular, M(c).Icon.Regular)
 }
 
 // IconButton is a square ghost button showing only an icon. label names it
@@ -50,7 +50,7 @@ func Icon(c *ui.Context, name string) ui.Element {
 func IconButton(c *ui.Context, name, label string) ui.Element {
 	t := c.Theme()
 	button := ui.ButtonBase(c).Label(label).Tooltip(label).
-		Size(28, 28).Radius(RadiusControl).Justify(ui.Center).AlignItems(ui.Center).
+		Size(M(c).Control.Regular, M(c).Control.Regular).Radius(M(c).Radius.Control).Justify(ui.Center).AlignItems(ui.Center).
 		TextColor(t.TextMuted).Shrink(0)
 	switch {
 	case button.Pressed():
@@ -66,8 +66,8 @@ func IconButton(c *ui.Context, name, label string) ui.Element {
 // An empty icon name shows the label alone.
 func GhostButton(c *ui.Context, name, label string) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Label(label).Height(ControlHeight).Padding(0, 10).Gap(6).
-		Radius(RadiusControl).AlignItems(ui.Center).TextColor(t.Text).Shrink(0)
+	button := ui.ButtonBase(c).Label(label).Height(M(c).Control.Large).Padding(0, 10).Gap(6).
+		Radius(M(c).Radius.Control).AlignItems(ui.Center).TextColor(t.Text).Shrink(0)
 	switch {
 	case button.Pressed():
 		button.Background(Strong(t))
@@ -87,8 +87,8 @@ func GhostButton(c *ui.Context, name, label string) ui.Element {
 // original's secondary variant.
 func SecondaryButton(c *ui.Context, name, label string) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Label(label).Height(ControlHeight).Padding(0, 12).Gap(6).
-		Radius(RadiusControl).AlignItems(ui.Center).TextColor(t.Text).
+	button := ui.ButtonBase(c).Label(label).Height(M(c).Control.Large).Padding(0, 12).Gap(6).
+		Radius(M(c).Radius.Control).AlignItems(ui.Center).TextColor(t.Text).
 		Background(Muted(t)).Shrink(0)
 	switch {
 	case button.Pressed():
@@ -108,8 +108,8 @@ func SecondaryButton(c *ui.Context, name, label string) ui.Element {
 // PrimaryButton is the accent button with an optional icon.
 func PrimaryButton(c *ui.Context, name, label string) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Label(label).Height(ControlHeight).Padding(0, 14).Gap(6).
-		Radius(RadiusControl).AlignItems(ui.Center).TextColor(t.AccentText).
+	button := ui.ButtonBase(c).Label(label).Height(M(c).Control.Large).Padding(0, 14).Gap(6).
+		Radius(M(c).Radius.Control).AlignItems(ui.Center).TextColor(t.AccentText).
 		Background(t.Accent).Shrink(0)
 	switch {
 	case button.Pressed():
@@ -129,8 +129,8 @@ func PrimaryButton(c *ui.Context, name, label string) ui.Element {
 // DangerButton is a destructive action's button.
 func DangerButton(c *ui.Context, name, label string) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Label(label).Height(ControlHeight).Padding(0, 14).Gap(6).
-		Radius(RadiusControl).AlignItems(ui.Center).TextColor(ui.RGB(255, 255, 255)).
+	button := ui.ButtonBase(c).Label(label).Height(M(c).Control.Large).Padding(0, 14).Gap(6).
+		Radius(M(c).Radius.Control).AlignItems(ui.Center).TextColor(ui.RGB(255, 255, 255)).
 		Background(t.Danger).Shrink(0)
 	if button.Hovered() || button.Pressed() {
 		button.Background(t.Danger.Mix(ui.RGB(0, 0, 0), 0.12))
@@ -148,7 +148,7 @@ func DangerButton(c *ui.Context, name, label string) ui.Element {
 // Vault's Host cards do. Build the card's content with Children.
 func Card(c *ui.Context, hoverable bool) ui.Element {
 	t := c.Theme()
-	card := ui.Column(c).Background(t.Surface).Border(1, t.Border).Radius(RadiusCard)
+	card := ui.Column(c).Background(t.Surface).Border(1, t.Border).Radius(M(c).Radius.Card)
 	if hoverable && card.Hovered() {
 		card.Border(1, t.Border.Mix(t.Text, 0.18)).
 			Shadow(0, 4, 14, 0, CardShadow(t))
@@ -163,9 +163,9 @@ func Card(c *ui.Context, hoverable bool) ui.Element {
 func SectionHeader(c *ui.Context, title, trailing string) {
 	t := c.Theme()
 	ui.Row(c).FillWidth().AlignItems(ui.Center).Padding(4, 2).Children(func() {
-		ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(t.TextMuted).Grow(1).SingleLine()
+		ui.Text(c, title).FontSize(M(c).Font.Callout).FontWeight(600).TextColor(t.TextMuted).Grow(1).SingleLine()
 		if trailing != "" {
-			ui.Text(c, trailing).FontSize(12).TextColor(t.TextMuted).SingleLine()
+			ui.Text(c, trailing).FontSize(M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine()
 		}
 	})
 }
@@ -176,7 +176,7 @@ func SectionHeader(c *ui.Context, title, trailing string) {
 func SectionBar(c *ui.Context, title string, actions func()) {
 	t := c.Theme()
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Wrap().Padding(10, 0, 6, 4).Children(func() {
-		ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(t.TextMuted).
+		ui.Text(c, title).FontSize(M(c).Font.Callout).FontWeight(600).TextColor(t.TextMuted).
 			Grow(1).MinWidth(0).SingleLine()
 		if actions != nil {
 			actions()
@@ -222,9 +222,9 @@ func UnderlineTabs(c *ui.Context, chosen *int, labels []string, reveal bool) {
 func PageTitle(c *ui.Context, title, description string) {
 	t := c.Theme()
 	ui.Column(c).Gap(2).Grow(1).MinWidth(0).Children(func() {
-		ui.Text(c, title).FontSize(18).FontWeight(600).SingleLine()
+		ui.Text(c, title).FontSize(M(c).Font.Title).FontWeight(600).SingleLine()
 		if description != "" {
-			ui.Text(c, description).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, description).FontSize(M(c).Font.Footnote).TextColor(t.TextMuted)
 		}
 	})
 }
@@ -238,7 +238,7 @@ func EmptyState(c *ui.Context, name, title, description string, action func()) u
 			Children(func() { ui.Icon(c, icons.Lucide(name)).Size(22, 22) })
 		ui.Text(c, title).FontWeight(600).Margin(6, 0, 0, 0)
 		if description != "" {
-			ui.Text(c, description).FontSize(13).TextColor(t.TextMuted).MaxWidth(420).TextAlign(ui.Center)
+			ui.Text(c, description).FontSize(M(c).Font.Callout).TextColor(t.TextMuted).MaxWidth(420).TextAlign(ui.Center)
 		}
 		if action != nil {
 			ui.Row(c).Gap(8).Margin(8, 0, 0, 0).Children(action)
@@ -251,7 +251,7 @@ func EmptyState(c *ui.Context, name, title, description string, action func()) u
 // as a whole uses EmptyState instead.
 func EmptyHint(c *ui.Context, text string) ui.Element {
 	t := c.Theme()
-	return ui.Text(c, text).FontSize(12).TextColor(t.TextMuted).Padding(0, 4, 4, 4)
+	return ui.Text(c, text).FontSize(M(c).Font.Footnote).TextColor(t.TextMuted).Padding(0, 4, 4, 4)
 }
 
 // ListRow is one item of a list section: a bordered row in the shape of the
@@ -260,7 +260,7 @@ func EmptyHint(c *ui.Context, text string) ui.Element {
 func ListRow(c *ui.Context) ui.Element {
 	t := c.Theme()
 	row := ui.Row(c).FillWidth().MinWidth(0).Gap(8).Padding(8, 8, 8, 12).Margin(0, 0, 6, 0).
-		Radius(RadiusCard).Border(1, t.Border).Background(t.Surface).AlignItems(ui.Center)
+		Radius(M(c).Radius.Card).Border(1, t.Border).Background(t.Surface).AlignItems(ui.Center)
 	if row.Hovered() {
 		row.Background(Muted(t)).Border(1, t.Border.Mix(t.Text, 0.15))
 	}
@@ -272,12 +272,12 @@ func ListRow(c *ui.Context) ui.Element {
 // reports which button was clicked.
 func ConfirmBar(c *ui.Context, text string, detail func(), cancel, confirm string) (cancelled, confirmed bool) {
 	t := c.Theme()
-	ui.Row(c).FillWidth().Gap(10).Padding(10, 12).Radius(RadiusControl).Wrap().
+	ui.Row(c).FillWidth().Gap(10).Padding(10, 12).Radius(M(c).Radius.Control).Wrap().
 		Background(t.Danger.Alpha(0.08)).Border(1, t.Danger.Alpha(0.35)).AlignItems(ui.Center).
 		Children(func() {
-			ui.Icon(c, icons.Lucide(icons.TriangleAlert)).Size(IconSize, IconSize).TextColor(t.Danger)
+			ui.Icon(c, icons.Lucide(icons.TriangleAlert)).Size(M(c).Icon.Regular, M(c).Icon.Regular).TextColor(t.Danger)
 			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-				ui.Text(c, text).FontSize(13).TextColor(t.Text)
+				ui.Text(c, text).FontSize(M(c).Font.Callout).TextColor(t.Text)
 				if detail != nil {
 					detail()
 				}
@@ -293,8 +293,8 @@ func ConfirmBar(c *ui.Context, text string, detail func(), cancel, confirm strin
 // Pill is a small rounded label, as a tag or a count.
 func Pill(c *ui.Context, text string) ui.Element {
 	t := c.Theme()
-	return ui.Box(c).Padding(1, 7).Radius(999).Background(Muted(t)).Border(1, t.Border).
-		Children(func() { ui.Text(c, text).FontSize(11).TextColor(t.TextMuted).SingleLine() })
+	return ui.Box(c).Padding(1, 7).Radius(M(c).Radius.Pill).Background(Muted(t)).Border(1, t.Border).
+		Children(func() { ui.Text(c, text).FontSize(M(c).Font.Caption).TextColor(t.TextMuted).SingleLine() })
 }
 
 // StatusDot is a small filled circle in color.
@@ -306,11 +306,11 @@ func StatusDot(c *ui.Context, color ui.Color) ui.Element {
 // tone is the color of the icon and the left edge.
 func Notice(c *ui.Context, name string, tone ui.Color, text string, actions func()) ui.Element {
 	t := c.Theme()
-	return ui.Row(c).FillWidth().Gap(10).Padding(10, 12).Radius(RadiusControl).
+	return ui.Row(c).FillWidth().Gap(10).Padding(10, 12).Radius(M(c).Radius.Control).
 		Background(tone.Alpha(0.08)).Border(1, tone.Alpha(0.35)).AlignItems(ui.Center).
 		Children(func() {
-			ui.Icon(c, icons.Lucide(name)).Size(IconSize, IconSize).TextColor(tone)
-			ui.Text(c, text).FontSize(13).Grow(1).MinWidth(0).TextColor(t.Text)
+			ui.Icon(c, icons.Lucide(name)).Size(M(c).Icon.Regular, M(c).Icon.Regular).TextColor(tone)
+			ui.Text(c, text).FontSize(M(c).Font.Callout).Grow(1).MinWidth(0).TextColor(t.Text)
 			if actions != nil {
 				actions()
 			}
