@@ -22,9 +22,8 @@ commit `5784818d9243e8f8b5c7b2512a3fa0a55147b717`, the parent of the flip:
 
 The mosh-parity push trigger is path-filtered, so that run was dispatched on
 `main` at the same commit instead of being triggered by the push. The Windows
-arm64 packaged artifact test is launch-only, as documented in
-[artifact-tests.md](../ci/artifact-tests.md); session mode for Windows arm64
-remains the ticket-35 gap.
+arm64 packaged artifact test was launch-only; session mode for Windows arm64
+remained the ticket-35 gap.
 
 ## Bundled ET retention: closed
 

@@ -67,8 +67,7 @@ def is-artifact [name: string] {
 def canonical-asset-name [name: string, version: string] {
     let base = ($name | path basename)
     let deb = (deb-version $version)
-    # darwin/universal stays supported for the packaged-artifact CI job; the
-    # release workflow builds darwin/arm64 and darwin/amd64 separately.
+    # The release workflow builds darwin/arm64 and darwin/amd64 separately.
     let dmg_arm64 = $"natcatty-($version)-macos-arm64.dmg"
     let dmg_amd64 = $"natcatty-($version)-macos-amd64.dmg"
     let dmg_universal = $"natcatty-($version)-macos-universal.dmg"
