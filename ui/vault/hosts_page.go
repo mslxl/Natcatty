@@ -522,7 +522,7 @@ func groupRowBody(c *ui.Context, s *vaultstate.State, section hostGroupSection, 
 		ui.Text(c, m.VaultGroupMemberCount(s.GroupMemberCount(section.path))).
 			FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine()
 	})
-	cardControl(c, "menu", icons.EllipsisVertical, m.VaultItemActions(groupName(section.path))).
+	kit.IconButtonWith(c, icons.EllipsisVertical, m.VaultItemActions(groupName(section.path)), kit.IconOptions{Role: kit.IconCard, Key: "menu"}).
 		Menu(groupActions(s, section, func() {
 			at.group = section.path
 			c.Invalidate()
@@ -822,7 +822,7 @@ func groupCard(c *ui.Context, s *vaultstate.State, section hostGroupSection, at 
 			ui.Text(c, m.VaultGroupMemberCount(s.GroupMemberCount(section.path))).
 				FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine()
 		})
-		cardControl(c, "menu", icons.EllipsisVertical, m.VaultItemActions(groupName(section.path))).Menu(actions)
+		kit.IconButtonWith(c, icons.EllipsisVertical, m.VaultItemActions(groupName(section.path)), kit.IconOptions{Role: kit.IconCard, Key: "menu"}).Menu(actions)
 	})
 }
 
@@ -859,11 +859,11 @@ func hostCard(c *ui.Context, s *vaultstate.State, opts options, host domainvault
 			})
 			hostCardDetail(c, s, host, m, t)
 		})
-		if hovered && cardControl(c, "edit", icons.Pencil, m.VaultHostEdit()).Clicked() {
+		if hovered && kit.IconButtonWith(c, icons.Pencil, m.VaultHostEdit(), kit.IconOptions{Role: kit.IconCard, Key: "edit"}).Clicked() {
 			s.BeginEdit(host.ID)
 			c.Invalidate()
 		}
-		cardControl(c, "menu", icons.EllipsisVertical, m.VaultItemActions(host.Label)).Menu(hostActions(s, opts, host, m, c))
+		kit.IconButtonWith(c, icons.EllipsisVertical, m.VaultItemActions(host.Label), kit.IconOptions{Role: kit.IconCard, Key: "menu"}).Menu(hostActions(s, opts, host, m, c))
 	})
 }
 
@@ -899,11 +899,11 @@ func hostRow(c *ui.Context, s *vaultstate.State, opts options, host domainvault.
 			})
 			ui.Text(c, hostAddress(host, m)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine().MinWidth(0)
 		})
-		if row.Hovered() && cardControl(c, "edit", icons.Pencil, m.VaultHostEdit()).Clicked() {
+		if row.Hovered() && kit.IconButtonWith(c, icons.Pencil, m.VaultHostEdit(), kit.IconOptions{Role: kit.IconCard, Key: "edit"}).Clicked() {
 			s.BeginEdit(host.ID)
 			c.Invalidate()
 		}
-		cardControl(c, "menu", icons.EllipsisVertical, m.VaultItemActions(host.Label)).Menu(hostActions(s, opts, host, m, c))
+		kit.IconButtonWith(c, icons.EllipsisVertical, m.VaultItemActions(host.Label), kit.IconOptions{Role: kit.IconCard, Key: "menu"}).Menu(hostActions(s, opts, host, m, c))
 	})
 }
 
@@ -1023,20 +1023,4 @@ func hostAddress(host domainvault.Host, m locales.Messages) string {
 		return host.Username + "@" + address
 	}
 	return address
-}
-
-// cardControl is a small icon button inside a card. The key keeps it the same
-// element when a control before it shows only while the card is hovered.
-func cardControl(c *ui.Context, key, icon, label string) ui.Element {
-	t := c.Theme()
-	button := ui.ButtonBase(c).Key(key).Label(label).Tooltip(label).Size(28, 28).Radius(kit.M(c).Radius.Control).
-		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
-	switch {
-	case button.Pressed():
-		button.Background(kit.Strong(t)).TextColor(t.Text)
-	case button.Hovered():
-		button.Background(kit.Subtle(t)).TextColor(t.Text)
-	}
-	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(15, 15) })
-	return button
 }

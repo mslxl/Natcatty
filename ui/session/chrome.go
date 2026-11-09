@@ -169,25 +169,23 @@ func screenBanner(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Th
 // them all inside its header.
 func toolbar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
 	if actions.ToggleFiles != nil {
-		files := toolbarButton(c, icons.FolderOpen, m.SessionFilesPanel())
-		if model.FilesOpen {
-			files.Background(kit.Strong(t)).TextColor(t.Text)
-		}
+		files := kit.IconButtonWith(c, icons.FolderOpen, m.SessionFilesPanel(),
+			kit.IconOptions{Role: kit.IconPane, On: model.FilesOpen})
 		if files.Clicked() {
 			actions.ToggleFiles()
 		}
 	}
-	if actions.SplitRight != nil && toolbarButton(c, icons.Columns, m.PaneSplitRight()).Clicked() {
+	if actions.SplitRight != nil && kit.IconButtonWith(c, icons.Columns, m.PaneSplitRight(), kit.IconOptions{Role: kit.IconPane}).Clicked() {
 		actions.SplitRight()
 	}
-	if actions.SplitDown != nil && toolbarButton(c, icons.Rows, m.PaneSplitDown()).Clicked() {
+	if actions.SplitDown != nil && kit.IconButtonWith(c, icons.Rows, m.PaneSplitDown(), kit.IconOptions{Role: kit.IconPane}).Clicked() {
 		actions.SplitDown()
 	}
 	menuLabel := model.MenuLabel
 	if menuLabel == "" {
 		menuLabel = m.SessionMenuLabel()
 	}
-	toolbarButton(c, icons.EllipsisVertical, menuLabel).Menu(func(menu *ui.Menu) {
+	kit.IconButtonWith(c, icons.EllipsisVertical, menuLabel, kit.IconOptions{Role: kit.IconPane}).Menu(func(menu *ui.Menu) {
 		buildSessionMenu(menu, sessionMenuModel{
 			Encoding:     domainterminal.NormalizeEncoding(model.Encoding),
 			Logging:      model.Logging.Active,
@@ -226,22 +224,6 @@ func toolbar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, 
 			Observe:        actions.Observe,
 		})
 	})
-}
-
-// toolbarButton is a small icon button in the Pane header, matching the
-// shell's own header controls. label names it and shows as its tooltip.
-func toolbarButton(c *ui.Context, icon, label string) ui.Element {
-	theme := c.Theme()
-	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(22, 22).Radius(5).
-		Justify(ui.Center).AlignItems(ui.Center).TextColor(theme.TextMuted).Shrink(0)
-	switch {
-	case button.Pressed():
-		button.Background(kit.Strong(theme)).TextColor(theme.Text)
-	case button.Hovered():
-		button.Background(kit.Subtle(theme)).TextColor(theme.Text)
-	}
-	button.Children(func() { kit.IconSized(c, icon, kit.M(c).Icon.Medium) })
-	return button
 }
 
 // autocompleteLayers floats the suggestion popup and the ghost hint over the

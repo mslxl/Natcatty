@@ -164,14 +164,14 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 					for _, label := range s.PendingConnections() {
 						pendingTab(c, m, t, label)
 					}
-					if tabControl(c, icons.Plus, m.MenuNewTab()).Margin(0, 0, 4, 4).Clicked() {
+					if kit.IconButtonWith(c, icons.Plus, m.MenuNewTab(), kit.IconOptions{Role: kit.IconTab}).Margin(0, 0, 4, 4).Clicked() {
 						_ = s.NewTab()
 						c.Invalidate()
 					}
 				})
 			})
 		controlPanel(c, s, m)
-		if barButton(c, "bar-settings", icons.Settings, m.NavSettings()).Clicked() {
+		if kit.IconButtonWith(c, icons.Settings, m.NavSettings(), kit.IconOptions{Role: kit.IconCard, Key: "bar-settings"}).Clicked() {
 			s.RequestSettings()
 		}
 	})
@@ -296,8 +296,8 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 		// The menu and close controls show on the active and the hovered Tab,
 		// as the original's; a right-click opens the same menu on any Tab.
 		if info.Active || hovered {
-			tabControl(c, icons.Ellipsis, m.TabMenuGlyph()).Menu(tabMenu)
-			if tabControl(c, icons.X, m.CloseGlyph()).Clicked() {
+			kit.IconButtonWith(c, icons.Ellipsis, m.TabMenuGlyph(), kit.IconOptions{Role: kit.IconTab}).Menu(tabMenu)
+			if kit.IconButtonWith(c, icons.X, m.CloseGlyph(), kit.IconOptions{Role: kit.IconTab}).Clicked() {
 				s.CloseTab(index)
 				c.Invalidate()
 			}
@@ -308,18 +308,6 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 		// opened or selected while the strip is scrolled, and after a resize.
 		body.ScrollIntoView()
 	}
-}
-
-// tabControl is a small icon button inside a Tab or a Pane header.
-func tabControl(c *ui.Context, icon, label string) ui.Element {
-	t := c.Theme()
-	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(20, 20).Radius(4).
-		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
-	if button.Hovered() || button.Pressed() {
-		button.Background(t.Text.Alpha(0.1)).TextColor(t.Text)
-	}
-	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(13, 13) })
-	return button
 }
 
 // pendingTab is a connection still opening, shown after the Tabs.
@@ -526,8 +514,7 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	if lone && !info.Pending && !(info.Focused && ref.status.text != "" && !ref.status.settled) {
 		return
 	}
-	header := ui.Row(c).FillWidth().Height(30).Padding(0, 4, 0, 8).Gap(4).Shrink(0).
-		Background(t.Background).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).AlignItems(ui.Center)
+	header := kit.Bar(c, kit.BarPane).Padding(0, 4, 0, 8).Gap(4)
 	header.Children(func() {
 		// The grip shows where a drop can land: another Pane of a split Tab,
 		// or another Tab.
@@ -552,9 +539,9 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		}
 		switch {
 		case info.Pending:
-			statusPill(c, t.Warning, m.PaneConnecting())
+			kit.Badge(c, t.Warning, m.PaneConnecting())
 		case info.Focused && ref.status.text != "" && !ref.status.settled:
-			statusPill(c, ref.status.tone, ref.status.text)
+			kit.Badge(c, ref.status.tone, ref.status.text)
 		}
 
 		ui.Column(c).Grow(1).MinWidth(0)
@@ -570,7 +557,7 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		} else {
 			paneMenu(c, m, ref, info)
 		}
-		if tabControl(c, icons.X, m.CloseGlyph()).Clicked() {
+		if kit.IconButtonWith(c, icons.X, m.CloseGlyph(), kit.IconOptions{Role: kit.IconTab}).Clicked() {
 			ref.focus(info.ID)
 			ref.closeFocused()
 			c.Invalidate()
@@ -581,7 +568,7 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 // paneMenu is the Pane commands of a Pane with no Session to hold them: one
 // that failed to open or is still connecting.
 func paneMenu(c *ui.Context, m locales.Messages, ref tabRef, info state.PaneInfo) {
-	tabControl(c, icons.EllipsisVertical, m.PaneMenuGlyph()).Menu(func(menu *ui.Menu) {
+	kit.IconButtonWith(c, icons.EllipsisVertical, m.PaneMenuGlyph(), kit.IconOptions{Role: kit.IconTab}).Menu(func(menu *ui.Menu) {
 		if menu.Item(m.PaneSplitRight()).Chosen() {
 			ref.focus(info.ID)
 			_ = ref.splitRight()
@@ -629,15 +616,6 @@ func paneFiles(s *state.State, info state.PaneInfo) (model.HostID, bool) {
 		return "", true
 	}
 	return "", false
-}
-
-// statusPill is a Session status: a dot in tone and its text.
-func statusPill(c *ui.Context, tone ui.Color, text string) {
-	ui.Row(c).Height(20).Padding(0, 8).Gap(6).Radius(kit.M(c).Radius.Card).Background(tone.Alpha(0.12)).
-		AlignItems(ui.Center).Shrink(0).Children(func() {
-		ui.Box(c).Size(6, 6).Radius(3).Background(tone)
-		ui.Text(c, text).FontSize(kit.M(c).Font.Caption).SingleLine().TextColor(c.Theme().Text)
-	})
 }
 
 // paneTitle is the Pane's display name: the Session's resolved title (which

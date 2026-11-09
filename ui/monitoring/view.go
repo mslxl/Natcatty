@@ -503,15 +503,10 @@ func tagBadges(c *ui.Context, tags []string) {
 func statusBadge(c *ui.Context, m locales.Messages, t *ui.Theme, status domainmonitor.Status, reason domainmonitor.Reason) {
 	text, color := statusText(m, t, status)
 	tip := reasonText(m, reason)
-	badge := ui.Row(c).Gap(5).Padding(2, 8).Radius(kit.M(c).Radius.Pill).AlignItems(ui.Center).
-		Background(color.Alpha(0.12)).Shrink(0)
+	badge := kit.Badge(c, color, text)
 	if tip != "" {
 		badge.Tooltip(tip)
 	}
-	badge.Children(func() {
-		kit.StatusDot(c, color).Size(6, 6)
-		ui.Text(c, text).FontSize(kit.M(c).Font.Caption).FontWeight(500).TextColor(color).NoWrap()
-	})
 }
 
 // hostList is the list view: a header of the visible columns, whose context

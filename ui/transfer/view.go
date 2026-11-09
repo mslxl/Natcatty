@@ -143,9 +143,8 @@ func browser(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 // Tab.
 func tabBar(c *ui.Context, s *transferstate.State, side transferstate.Side, m locales.Messages, t *ui.Theme) {
 	pane := s.Pane(side)
-	ui.Row(c).FillWidth().Height(32).Shrink(0).Background(kit.Muted(t)).
-		BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-		ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Height(32).Children(func() {
+	kit.Bar(c, kit.BarTabs).Children(func() {
+		ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Height(kit.M(c).Bar.Tabs).Children(func() {
 			ui.Row(c).Height(32).Children(func() {
 				for index, item := range pane.Tabs {
 					paneTab(c, s, side, index, item, index == pane.Active, m, t)

@@ -46,7 +46,7 @@ func DetachedView(s *state.State, tabID model.TabID) func(*ui.Context) {
 				ui.Text(c, DetachedTitle(m, info)).FontSize(kit.M(c).Font.Footnote).FontWeight(500).TextColor(t.Text.Alpha(0.7)).
 					SingleLine().MinWidth(0).Shrink(1)
 				ui.Column(c).Grow(1)
-				if barButton(c, "detached-move-main", icons.LogIn, m.DetachedMoveToMain()).Clicked() {
+				if kit.IconButtonWith(c, icons.LogIn, m.DetachedMoveToMain(), kit.IconOptions{Role: kit.IconCard, Key: "detached-move-main"}).Clicked() {
 					s.ReattachDetachedTab(tabID)
 					c.Invalidate()
 				}
