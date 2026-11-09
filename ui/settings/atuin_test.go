@@ -283,8 +283,8 @@ func TestAtuinAccountCardFollowsTheSyncToggle(t *testing.T) {
 
 		accountControls := []string{
 			m.SettingsAtuinAccountTitle(), m.SettingsAtuinAddress(), m.SettingsAtuinUsername(),
-			m.SettingsAtuinSignIn(), m.SettingsAtuinKeyTitle(), m.SettingsAtuinMasterKey(),
-			m.SettingsAtuinLogout(),
+			m.SettingsAtuinSignIn(), m.SettingsAtuinKeyTitle(), m.SettingsAtuinKeyPurpose(),
+			m.SettingsAtuinChangeKey(), m.SettingsAtuinLogout(),
 		}
 		syncControls := []string{
 			m.SettingsAtuinSectionTitle(), m.SettingsAtuinSyncEnabled(),
@@ -475,6 +475,12 @@ func TestAtuinPanelConfirmsAnUnverifiedKey(t *testing.T) {
 	tester, _, state := atuinPanel(t, account, nil)
 	m := locales.In("en")
 
+	// The fixture starts with a stored key, so the editor is collapsed until
+	// the user explicitly opens it.
+	if err := tester.Click(m.SettingsAtuinChangeKey()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
 	*state.MasterKey() = atuinTestKey
 	if err := tester.Click(m.SettingsAtuinSaveKey()); err != nil {
 		t.Fatal(err)
@@ -518,6 +524,12 @@ func TestAtuinPanelRequiresExplicitKeyChangeKeyLossAndLogout(t *testing.T) {
 	tester, _, state := atuinPanel(t, account, nil)
 	m := locales.In("en")
 
+	// The fixture starts with a stored key, so open the editor before
+	// submitting a different key.
+	if err := tester.Click(m.SettingsAtuinChangeKey()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
 	*state.MasterKey() = atuinTestKey
 	if err := tester.Click(m.SettingsAtuinSaveKey()); err != nil {
 		t.Fatal(err)
@@ -541,6 +553,10 @@ func TestAtuinPanelRequiresExplicitKeyChangeKeyLossAndLogout(t *testing.T) {
 	}
 	if tester.HasText(m.SettingsAtuinKeyChangeTitle()) {
 		t.Fatal("the key-change warning survived confirmation")
+	}
+	if state.EditingKey() || tester.HasText(m.SettingsAtuinKeyDescription()) ||
+		tester.HasText(m.SettingsAtuinSaveKey()) {
+		t.Fatalf("the editor survived the confirmed key replacement: %v", tester.Texts())
 	}
 
 	if err := tester.Click(m.SettingsAtuinForgetKey()); err != nil {
@@ -572,6 +588,231 @@ func TestAtuinPanelRequiresExplicitKeyChangeKeyLossAndLogout(t *testing.T) {
 	if account.logoutCalls != 1 {
 		t.Fatalf("logout calls = %d", account.logoutCalls)
 	}
+}
+
+// TestAtuinPanelCollapsesTheMasterKeyEditorForAStoredKey pins the stored-key
+// card: the long description, input, and save button stay hidden behind one
+// explicit Change key action, so the master key does not read as a second
+// sign-in method. The purpose line stays visible in every key state, and the
+// editor is always open when no usable key is stored.
+func TestAtuinPanelCollapsesTheMasterKeyEditorForAStoredKey(t *testing.T) {
+	m := locales.In("en")
+	assertPresence := func(t *testing.T, tester *ui.Tester, step string, present bool, labels ...string) {
+		t.Helper()
+		for _, label := range labels {
+			if _, ok := tester.Find(label); ok != present {
+				t.Fatalf("%s: presence of %q = %v, want %v: %v",
+					step, label, ok, present, tester.Texts())
+			}
+		}
+	}
+	hiddenEditor := []string{
+		m.SettingsAtuinKeyDescription(), m.SettingsAtuinSaveKey(), m.SettingsCancel(),
+	}
+
+	storedKeyStates := []struct {
+		name     string
+		keyState atuinmodel.KeyState
+		status   string
+	}{
+		{"verified", atuinmodel.KeyStateVerified, m.SettingsAtuinKeyVerified()},
+		{"unverified", atuinmodel.KeyStateUnverified, m.SettingsAtuinKeyUnverifiedTitle()},
+		{"mismatch", atuinmodel.KeyStateMismatch, m.SettingsAtuinProblemKeyMismatch()},
+	}
+	for _, test := range storedKeyStates {
+		t.Run(test.name+" key starts collapsed", func(t *testing.T) {
+			account := &fakeHistoryAccount{status: atuinStatus(test.keyState)}
+			tester, _, state := atuinPanel(t, account, nil)
+			if state.EditingKey() {
+				t.Fatal("the editor started expanded for a stored key")
+			}
+			assertPresence(t, tester, "collapsed", true,
+				m.SettingsAtuinKeyTitle(), m.SettingsAtuinKeyPurpose(), test.status,
+				m.SettingsAtuinChangeKey(), m.SettingsAtuinForgetKey(),
+				m.SettingsAtuinKeyFingerprint("sha256:0123456789abcdef"))
+			assertPresence(t, tester, "collapsed", false, hiddenEditor...)
+		})
+	}
+
+	t.Run("change key expands and cancel clears the draft", func(t *testing.T) {
+		account := &fakeHistoryAccount{status: atuinStatus(atuinmodel.KeyStateVerified)}
+		tester, _, state := atuinPanel(t, account, nil)
+		if err := tester.Click(m.SettingsAtuinChangeKey()); err != nil {
+			t.Fatalf("click Change key: %v", err)
+		}
+		tester.Frame()
+		if !state.EditingKey() {
+			t.Fatal("Change key did not expand the editor")
+		}
+		assertPresence(t, tester, "expanded", true,
+			m.SettingsAtuinKeyPurpose(), m.SettingsAtuinKeyDescription(),
+			m.SettingsAtuinSaveKey(), m.SettingsCancel())
+		*state.MasterKey() = atuinTestKey
+		tester.Frame()
+		if err := tester.Click(m.SettingsCancel()); err != nil {
+			t.Fatalf("click Cancel: %v", err)
+		}
+		tester.Frame()
+		if state.EditingKey() {
+			t.Fatal("Cancel did not collapse the editor")
+		}
+		if *state.MasterKey() != "" {
+			t.Fatal("Cancel kept the master-key draft")
+		}
+		assertPresence(t, tester, "cancelled", false, hiddenEditor...)
+		if !tester.HasText(m.SettingsAtuinChangeKey()) {
+			t.Fatalf("the Change key action is missing after Cancel: %v", tester.Texts())
+		}
+	})
+
+	t.Run("successful save collapses the editor", func(t *testing.T) {
+		account := &fakeHistoryAccount{
+			status:    atuinStatus(atuinmodel.KeyStateVerified),
+			keyStatus: atuinStatus(atuinmodel.KeyStateVerified),
+		}
+		tester, _, state := atuinPanel(t, account, nil)
+		if err := tester.Click(m.SettingsAtuinChangeKey()); err != nil {
+			t.Fatalf("click Change key: %v", err)
+		}
+		tester.Frame()
+		*state.MasterKey() = atuinTestKey
+		if err := tester.Click(m.SettingsAtuinSaveKey()); err != nil {
+			t.Fatalf("click Save key: %v", err)
+		}
+		tester.Frame()
+		if account.setKeyCalls != 1 || account.keys[0] != atuinTestKey {
+			t.Fatalf("key submissions = %+v", account.keys)
+		}
+		if state.EditingKey() {
+			t.Fatal("a successful save left the editor expanded")
+		}
+		if *state.MasterKey() != "" {
+			t.Fatal("the master-key draft survived a successful save")
+		}
+		assertPresence(t, tester, "saved", false, hiddenEditor...)
+		if !tester.HasText(m.SettingsAtuinChangeKey()) {
+			t.Fatalf("the Change key action is missing after saving: %v", tester.Texts())
+		}
+	})
+
+	t.Run("cancelling the key-change warning keeps the draft and editor", func(t *testing.T) {
+		account := &fakeHistoryAccount{
+			status:       atuinStatus(atuinmodel.KeyStateVerified),
+			askKeyChange: true,
+			keyStatus:    atuinStatus(atuinmodel.KeyStateVerified),
+		}
+		tester, _, state := atuinPanel(t, account, nil)
+		if err := tester.Click(m.SettingsAtuinChangeKey()); err != nil {
+			t.Fatalf("click Change key: %v", err)
+		}
+		tester.Frame()
+		*state.MasterKey() = atuinTestKey
+		if err := tester.Click(m.SettingsAtuinSaveKey()); err != nil {
+			t.Fatalf("click Save key: %v", err)
+		}
+		tester.Frame()
+		if !tester.HasText(m.SettingsAtuinKeyChangeTitle()) {
+			t.Fatalf("the key-change warning is missing: %v", tester.Texts())
+		}
+		if !state.EditingKey() || *state.MasterKey() != atuinTestKey {
+			t.Fatal("the pending key draft was lost before confirmation")
+		}
+		// The confirmation owns the only Cancel while it is open.
+		if tester.HasText(m.SettingsAtuinSaveKey()) {
+			t.Fatalf("the editor's save control is still rendered: %v", tester.Texts())
+		}
+		if err := tester.Click(m.SettingsCancel()); err != nil {
+			t.Fatalf("click Cancel: %v", err)
+		}
+		tester.Frame()
+		if tester.HasText(m.SettingsAtuinKeyChangeTitle()) {
+			t.Fatal("Cancel kept the key-change warning open")
+		}
+		if !state.EditingKey() || *state.MasterKey() != atuinTestKey {
+			t.Fatal("CancelKeyChange did not keep the editor open with its draft")
+		}
+		assertPresence(t, tester, "retry", true,
+			m.SettingsAtuinKeyDescription(), m.SettingsAtuinSaveKey(), m.SettingsCancel())
+	})
+
+	t.Run("no stored key keeps the editor visible", func(t *testing.T) {
+		for _, keyState := range []atuinmodel.KeyState{atuinmodel.KeyStateNone, atuinmodel.KeyStateMissing} {
+			account := &fakeHistoryAccount{status: atuinStatus(keyState)}
+			tester, _, state := atuinPanel(t, account, nil)
+			if state.EditingKey() {
+				t.Fatalf("%v: the editing flag started set", keyState)
+			}
+			assertPresence(t, tester, string(keyState), true,
+				m.SettingsAtuinKeyPurpose(), m.SettingsAtuinKeyDescription(),
+				m.SettingsAtuinSaveKey())
+			assertPresence(t, tester, string(keyState), false,
+				m.SettingsAtuinChangeKey(), m.SettingsCancel())
+		}
+	})
+
+	t.Run("forget returns to the empty editor", func(t *testing.T) {
+		forgotten := atuinStatus(atuinmodel.KeyStateNone)
+		forgotten.KeyFingerprint = ""
+		account := &fakeHistoryAccount{
+			status:       atuinStatus(atuinmodel.KeyStateVerified),
+			forgetStatus: forgotten,
+		}
+		tester, _, state := atuinPanel(t, account, nil)
+		if err := tester.Click(m.SettingsAtuinChangeKey()); err != nil {
+			t.Fatalf("click Change key: %v", err)
+		}
+		tester.Frame()
+		if err := tester.Click(m.SettingsAtuinForgetKey()); err != nil {
+			t.Fatalf("click Forget key: %v", err)
+		}
+		tester.Frame()
+		if err := tester.Click(m.SettingsAtuinForgetKeyConfirm()); err != nil {
+			t.Fatalf("confirm Forget key: %v", err)
+		}
+		tester.Frame()
+		if account.forgetCalls != 1 {
+			t.Fatalf("forget calls = %d", account.forgetCalls)
+		}
+		if state.EditingKey() || *state.MasterKey() != "" {
+			t.Fatal("forgetting the key kept the editor state")
+		}
+		assertPresence(t, tester, "forgotten", true,
+			m.SettingsAtuinKeyDescription(), m.SettingsAtuinSaveKey())
+		assertPresence(t, tester, "forgotten", false,
+			m.SettingsAtuinChangeKey(), m.SettingsCancel())
+	})
+
+	t.Run("logout returns to the empty editor", func(t *testing.T) {
+		account := &fakeHistoryAccount{
+			status: atuinStatus(atuinmodel.KeyStateVerified),
+			logoutStatus: historysync.Status{
+				State: atuinmodel.SyncNotConfigured, Problem: atuinmodel.ProblemNotConfigured,
+			},
+		}
+		tester, _, state := atuinPanel(t, account, nil)
+		if err := tester.Click(m.SettingsAtuinChangeKey()); err != nil {
+			t.Fatalf("click Change key: %v", err)
+		}
+		tester.Frame()
+		if err := tester.Click(m.SettingsAtuinLogout()); err != nil {
+			t.Fatalf("click Log out: %v", err)
+		}
+		tester.Frame()
+		if err := tester.Click(m.SettingsAtuinLogoutConfirm()); err != nil {
+			t.Fatalf("confirm Log out: %v", err)
+		}
+		tester.Frame()
+		if account.logoutCalls != 1 {
+			t.Fatalf("logout calls = %d", account.logoutCalls)
+		}
+		if state.EditingKey() || *state.MasterKey() != "" {
+			t.Fatal("logout kept the editor state")
+		}
+		assertPresence(t, tester, "logged out", true,
+			m.SettingsAtuinKeyDescription(), m.SettingsAtuinSaveKey())
+		assertPresence(t, tester, "logged out", false,
+			m.SettingsAtuinChangeKey(), m.SettingsCancel())
+	})
 }
 
 func TestAtuinPanelReportsAProblemWithoutRawErrorText(t *testing.T) {
