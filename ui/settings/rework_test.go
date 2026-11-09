@@ -397,9 +397,13 @@ func TestSettingsAreasShowFieldLabels(t *testing.T) {
 					name := fmt.Sprintf("%s/%s/%dx%d", test.area, locale, w, h)
 					t.Run(name, func(t *testing.T) {
 						m := locales.In(locale)
-						config := Config{Preferences: NewPreferencesState(newFakePreferences())}
+						prefs := newFakePreferences()
+						config := Config{Preferences: NewPreferencesState(prefs)}
 						switch test.area {
 						case AreaLogs:
+							// The account card is rendered only while command history
+							// sync is enabled, and this case asserts its labels too.
+							prefs.settings.History.SyncEnabled = true
 							config.Atuin = NewAtuinState(nil)
 						case AreaTerminal:
 							config.Terminal = NewTerminalState(newFakeTerminal())

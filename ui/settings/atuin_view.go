@@ -74,6 +74,15 @@ func atuinIdentityFields(c *ui.Context, state *PreferencesState, m locales.Messa
 	})
 }
 
+// atuinAccountVisible reports whether the Atuin account card belongs on the
+// Logs page. Sync disabled hides the account controls: they cannot do
+// anything until sync is enabled, and the sync card above carries the toggle
+// that brings them back. A nil Preferences is a test-only constructor with no
+// persisted document to consult, so the card keeps rendering there.
+func atuinAccountVisible(prefs *PreferencesState) bool {
+	return prefs == nil || prefs.Settings().History.SyncEnabled
+}
+
 // atuinAccountSection is the one-account panel: identity (server address and
 // username), status, sign-in, master-key entry and validation, explicit
 // warnings, and logout. It never displays a token or a master key.
