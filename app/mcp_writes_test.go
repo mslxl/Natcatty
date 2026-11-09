@@ -695,9 +695,11 @@ func TestMCPWriteVaultNotesGroupsAndSnippetsExecute(t *testing.T) {
 		t.Fatal("vault_notes_delete left the Note")
 	}
 
-	// Groups create, update (rename), delete with hosts.
+	// Groups create, update (rename), delete with hosts. Creating a Host in a
+	// path already created that group, so create targets a new level and the
+	// rename exercises the group the Host belongs to.
 	group := callMCPTool(t, fixture, "vault_groups_create", map[string]any{
-		"path": "58/infra", "defaults": `{"username":"group-user"}`,
+		"path": "58/empty", "defaults": `{"username":"group-user"}`,
 	})
 	requireMCPWriteOK(t, "vault_groups_create", group)
 	groupUpdate := callMCPTool(t, fixture, "vault_groups_update", map[string]any{
