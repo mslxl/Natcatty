@@ -209,6 +209,26 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 		"file associations extension opener application")
 
 	add(AreaLogs, domain.FieldSSHDebug, m.SettingsSSHDebug(), "ssh debug logs")
+	// Every Atuin History setting shares these stable terms, so "atuin",
+	// "command history", and "sync" reach the group regardless of language.
+	atuin := func(field domain.Field, label string, extra ...string) {
+		keywords := append([]string{"atuin", "command history", "sync"}, extra...)
+		add(AreaLogs, field, label, keywords...)
+	}
+	atuin(domain.FieldHistorySyncEnabled, m.SettingsAtuinSyncEnabled(), "enabled")
+	atuin(domain.FieldHistorySyncAddress, m.SettingsAtuinAddress(),
+		"server", "address", "url")
+	atuin(domain.FieldHistoryUsername, m.SettingsAtuinUsername(),
+		"username", "user", "account")
+	atuin(domain.FieldHistoryAuthMode, m.SettingsAtuinAuthMode(),
+		"auth", "token", "session", "bearer")
+	atuin(domain.FieldHistorySyncInterval, m.SettingsAtuinSyncInterval(),
+		"interval", "minutes", "schedule")
+	atuin(domain.FieldHistoryPreferHostAtuin, m.SettingsAtuinPreferHostAtuin(),
+		"host", "prefer")
+	atuin("", m.SettingsAtuinSectionTitle(), "section")
+	atuin("", m.SettingsAtuinAccountTitle(), "account", "sign in", "master key")
+	atuin("", m.SettingsAtuinKeyTitle(), "master key", "key", "encryption")
 
 	add(AreaSystem, "", m.SettingsHotkeyTitle(), "global hotkey toggle window")
 	add(AreaSystem, "", m.SettingsAutostartTitle(), "launch login autostart")

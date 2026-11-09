@@ -167,6 +167,38 @@ func TestSettingsSidebarLabelsAreNotEllipsized(t *testing.T) {
 	})
 }
 
+// TestLogsAreaNamesLogsAndCommandHistory pins the Logs area's new name and
+// description in every catalog. The area now holds diagnostic logs, Command
+// History, and Atuin sync, so the sidebar entry and the header must say so.
+func TestLogsAreaNamesLogsAndCommandHistory(t *testing.T) {
+	want := map[string][2]string{
+		"en":    {"Logs & Command History", "Diagnostic logs, command history, and Atuin sync."},
+		"zh-CN": {"日志与命令历史", "诊断日志、命令历史与 Atuin 同步。"},
+		"zh-TW": {"日誌與命令歷史", "診斷日誌、命令歷史與 Atuin 同步。"},
+		"es":    {"Registros e historial de comandos", "Registros de diagnóstico, historial de comandos y sincronización con Atuin."},
+		"ru":    {"Журналы и история команд", "Диагностические журналы, история команд и синхронизация Atuin."},
+	}
+	for locale, texts := range want {
+		t.Run(locale, func(t *testing.T) {
+			m := locales.In(locale)
+			if got := m.SettingsAreaLogs(); got != texts[0] {
+				t.Fatalf("the Logs area name = %q, want %q", got, texts[0])
+			}
+			if got := m.SettingsLogsDescription(); got != texts[1] {
+				t.Fatalf("the Logs area description = %q, want %q", got, texts[1])
+			}
+			tester := ui.NewTester(viewAt(AreaLogs, Config{}), 1100, 720)
+			tester.SetLocale(locale)
+			tester.Frame()
+			for _, text := range texts {
+				if !tester.HasText(text) {
+					t.Errorf("the Logs area does not show %q: %q", text, tester.Texts())
+				}
+			}
+		})
+	}
+}
+
 // TestSettingsShortcutPaneScrollsEveryRowIntoView renders the Shortcuts area
 // at both supported sizes and wheels through it. Every one of the 42 binding
 // rows must pass through the content viewport, the last row must end inside
@@ -333,7 +365,15 @@ func TestSettingsAreasShowFieldLabels(t *testing.T) {
 					m.SettingsEditorWordWrap(), m.SettingsEditorFontSize(),
 				}
 			}},
-			{AreaLogs, func(m locales.Messages) []string { return []string{m.SettingsSSHDebug()} }},
+			{AreaLogs, func(m locales.Messages) []string {
+				return []string{
+					m.SettingsAtuinSectionTitle(), m.SettingsAtuinSyncEnabled(),
+					m.SettingsAtuinSyncInterval(), m.SettingsAtuinPreferHostAtuin(),
+					m.SettingsAtuinAccountTitle(), m.SettingsAtuinAddress(),
+					m.SettingsAtuinUsername(), m.SettingsAtuinKeyTitle(),
+					m.SettingsSSHDebug(),
+				}
+			}},
 			{AreaSystem, func(m locales.Messages) []string {
 				return []string{
 					m.SettingsHotkeyAccelerator(), m.SettingsShowTrayIcon(),
@@ -359,6 +399,8 @@ func TestSettingsAreasShowFieldLabels(t *testing.T) {
 						m := locales.In(locale)
 						config := Config{Preferences: NewPreferencesState(newFakePreferences())}
 						switch test.area {
+						case AreaLogs:
+							config.Atuin = NewAtuinState(nil)
 						case AreaTerminal:
 							config.Terminal = NewTerminalState(newFakeTerminal())
 						case AreaSystem:

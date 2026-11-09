@@ -12528,11 +12528,11 @@ func (msgs Messages) SettingsAreaSFTPEditor() string {
 	return Catalog.Format(msgs.locale, "settingsAreaSFTPEditor", nil)
 }
 
-// SettingsAreaLogs says "Logs"
+// SettingsAreaLogs says "Logs & Command History"
 // in the language the app shows.
 func SettingsAreaLogs() string { return In(i18n.Locale()).SettingsAreaLogs() }
 
-// SettingsAreaLogs says "Logs"
+// SettingsAreaLogs says "Logs & Command History"
 // in the language of msgs.
 func (msgs Messages) SettingsAreaLogs() string {
 	return Catalog.Format(msgs.locale, "settingsAreaLogs", nil)
@@ -14322,11 +14322,11 @@ func (msgs Messages) SettingsLogsTitle() string {
 	return Catalog.Format(msgs.locale, "settingsLogsTitle", nil)
 }
 
-// SettingsLogsDescription says "Diagnostic logging controls."
+// SettingsLogsDescription says "Diagnostic logs, command history, and Atuin sync."
 // in the language the app shows.
 func SettingsLogsDescription() string { return In(i18n.Locale()).SettingsLogsDescription() }
 
-// SettingsLogsDescription says "Diagnostic logging controls."
+// SettingsLogsDescription says "Diagnostic logs, command history, and Atuin sync."
 // in the language of msgs.
 func (msgs Messages) SettingsLogsDescription() string {
 	return Catalog.Format(msgs.locale, "settingsLogsDescription", nil)
