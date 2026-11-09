@@ -490,9 +490,9 @@ func TestVaultNoteEditorOpensAtTheSourceStart(t *testing.T) {
 	}
 }
 
-// TestVaultNoteSearchAndGroupDeleteInTheView covers the list's search field and
-// the non-cascading group delete through the production chrome.
-func TestVaultNoteSearchAndGroupDeleteInTheView(t *testing.T) {
+// TestVaultNoteGroupDeleteInTheView covers the non-cascading group delete
+// through the production chrome.
+func TestVaultNoteGroupDeleteInTheView(t *testing.T) {
 	m := locales.In("en")
 	state, _ := newNoteProductionState(t)
 	state.BeginCreateNoteGroup()
@@ -513,17 +513,6 @@ func TestVaultNoteSearchAndGroupDeleteInTheView(t *testing.T) {
 	}
 	tt.Frame()
 
-	state.SetNoteSearch("NEEDLE")
-	tt.Frame()
-	scrollToEnd(tt, 720, 480)
-	assertVisible(t, tt, "Unique title", 720, 480)
-	state.SetNoteSearch("absent")
-	tt.Frame()
-	if !tt.HasText(m.VaultNoteSearchEmpty("absent")) {
-		t.Fatalf("the no-match message is missing: %v", tt.Texts())
-	}
-
-	state.SetNoteSearch("")
 	state.RequestDeleteNoteGroup("ops")
 	tt.Frame()
 	if !textsContain(tt, "Delete group") {

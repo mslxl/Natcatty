@@ -82,7 +82,7 @@ func headerCell(c *ui.Context, s *transferstate.State, side transferstate.Side, 
 		color = t.Text
 	}
 	cell.Children(func() {
-		ui.Text(c, strings.ToUpper(label)).FontSize(11).FontWeight(600).SingleLine().MinWidth(0).TextColor(color)
+		ui.Text(c, label).FontSize(12).FontWeight(600).SingleLine().MinWidth(0).TextColor(color)
 		if sorted {
 			arrow := icons.ArrowUp
 			if tab.Sort.Descending {

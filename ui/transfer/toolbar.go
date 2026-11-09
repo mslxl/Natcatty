@@ -29,7 +29,7 @@ func toolbar(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 			}
 			breadcrumb(c, s, side, tab, m, t)
 		})
-		ui.Row(c).FillWidth().Height(30).Padding(0, 6).Gap(2).AlignItems(ui.Center).
+		ui.Row(c).FillWidth().Height(36).Padding(0, 6).Gap(2).AlignItems(ui.Center).
 			BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
 			actions(c, s, side, tab, m, t)
 		})
@@ -235,10 +235,11 @@ func actions(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 // uiYellow marks a bookmarked folder, as the original's yellow bookmark.
 var uiYellow = ui.Hex("#EAB308")
 
-// toolButton is the toolbar's 24-DIP ghost icon button; active fills it.
+// toolButton is the toolbar's ghost icon button, kit.IconButton's size;
+// active fills it.
 func toolButton(c *ui.Context, icon, label string, active bool) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(24, 24).Radius(5).
+	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(28, 28).Radius(kit.RadiusControl).
 		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
 	switch {
 	case button.Pressed():
@@ -248,7 +249,7 @@ func toolButton(c *ui.Context, icon, label string, active bool) ui.Element {
 	case button.Hovered():
 		button.Background(kit.Subtle(t)).TextColor(t.Text)
 	}
-	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(14, 14) })
+	button.Children(func() { kit.Icon(c, icon) })
 	return button
 }
 

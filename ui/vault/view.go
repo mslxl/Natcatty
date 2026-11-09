@@ -247,52 +247,54 @@ func list(c *ui.Context, s *vaultstate.State, opts options,
 	search *uisearch.State, page section.Section, at *browse, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
 	forwarding := opts.forwarding
 	field := func() { searchBar(c, search, m) }
-	if page.Shows(section.Hosts) {
-		hostsToolbar(c, s, field, opts, at, m, t)
-	} else {
-		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Padding(2, 4, 0, 4).Children(func() {
-			ui.Text(c, pageTitle(s, page, m)).FontSize(20).FontWeight(600).SingleLine()
-			ui.Column(c).Grow(1)
-		})
-		field()
-	}
-
-	problem(c, s, t)
-	secretBanner(c, s, m, t)
-
-	if pending := s.PendingDelete(); pending != "" {
-		message := m.VaultHostDeleteConfirmUnknown()
-		for _, host := range s.Items() {
-			if host.ID == pending {
-				message = m.VaultHostDeleteConfirm(host.Label)
-				break
-			}
+	// The toolbar and banners keep the list's scroll bar gutter, so every
+	// row of the page ends on one right edge.
+	ui.Column(c).FillWidth().Gap(12).PaddingEnd(scrollbarGutter(t)).Children(func() {
+		if page.Shows(section.Hosts) {
+			hostsToolbar(c, s, field, opts, at, m, t)
+		} else {
+			// As on Hosts, the page opens on its toolbar; the sidebar names the
+			// page and the section header below names and counts its list.
+			field()
 		}
-		kit.Notice(c, icons.Trash, t.Danger, message, func() {
-			if kit.GhostButton(c, "", m.VaultHostCancel()).Clicked() {
-				s.CancelDelete()
-				c.Invalidate()
-			}
-			if kit.DangerButton(c, icons.Trash, m.VaultHostDelete()).Clicked() {
-				_ = s.ConfirmDelete()
-				c.Invalidate()
-			}
-		})
-	}
 
-	keyDeleteBanner(c, s, m, t)
-	identityDeleteBanner(c, s, m, t)
-	groupDeleteBanner(c, s, m, t)
-	proxyDeleteBanner(c, s, m, t)
-	networkDeleteBanner(c, s, m, t)
-	knownHostDeleteBanner(c, s, m, t)
-	snippetDeleteBanner(c, s, m, t)
-	snippetPackageDeleteBanner(c, s, m, t)
-	noteDeleteBanner(c, s, m, t)
-	noteGroupDeleteBanner(c, s, m, t)
-	noteExportBanner(c, s, m, t)
-	importOutcomeBanner(c, s, m, t)
-	exportOutcomeBanner(c, s, m, t)
+		problem(c, s, t)
+		secretBanner(c, s, m, t)
+
+		if pending := s.PendingDelete(); pending != "" {
+			message := m.VaultHostDeleteConfirmUnknown()
+			for _, host := range s.Items() {
+				if host.ID == pending {
+					message = m.VaultHostDeleteConfirm(host.Label)
+					break
+				}
+			}
+			kit.Notice(c, icons.Trash, t.Danger, message, func() {
+				if kit.GhostButton(c, "", m.VaultHostCancel()).Clicked() {
+					s.CancelDelete()
+					c.Invalidate()
+				}
+				if kit.DangerButton(c, icons.Trash, m.VaultHostDelete()).Clicked() {
+					_ = s.ConfirmDelete()
+					c.Invalidate()
+				}
+			})
+		}
+
+		keyDeleteBanner(c, s, m, t)
+		identityDeleteBanner(c, s, m, t)
+		groupDeleteBanner(c, s, m, t)
+		proxyDeleteBanner(c, s, m, t)
+		networkDeleteBanner(c, s, m, t)
+		knownHostDeleteBanner(c, s, m, t)
+		snippetDeleteBanner(c, s, m, t)
+		snippetPackageDeleteBanner(c, s, m, t)
+		noteDeleteBanner(c, s, m, t)
+		noteGroupDeleteBanner(c, s, m, t)
+		noteExportBanner(c, s, m, t)
+		importOutcomeBanner(c, s, m, t)
+		exportOutcomeBanner(c, s, m, t)
+	})
 
 	// Reserve the overlay scroll bar's gutter so a row's last action does not
 	// run under it, as the Settings viewport does.
@@ -327,28 +329,6 @@ func list(c *ui.Context, s *vaultstate.State, opts options,
 			uiforwarding.Section(c, forwarding)
 		}
 	})
-}
-
-// pageTitle names the Vault page in its header. The Hosts page, and the single
-// page of a Vault with no sidebar, count the Hosts.
-func pageTitle(s *vaultstate.State, page section.Section, m locales.Messages) string {
-	switch page {
-	case section.Keychain:
-		return m.NavKeychain()
-	case section.Proxies:
-		return m.NavProxies()
-	case section.Networks:
-		return m.NavNetworks()
-	case section.Forwarding:
-		return m.NavForwarding()
-	case section.Snippets:
-		return m.NavSnippets()
-	case section.Notes:
-		return m.NavNotes()
-	case section.KnownHosts:
-		return m.NavKnownHosts()
-	}
-	return m.VaultHostListTitle(s.HostCount())
 }
 
 // scrollbarGutter is the width of the overlay scroll bar's track for theme t:
@@ -479,30 +459,26 @@ func groupDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t
 	if s.PendingDeleteGroup() == "" {
 		return
 	}
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-		ui.Text(c, m.VaultGroupDeleteConfirm(s.PendingDeleteGroup())).Grow(1).TextColor(uitheme.DangerText(t))
-		if ui.Button(c, m.VaultHostCancel()).Clicked() {
-			s.CancelDeleteGroup()
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
-			_ = s.ConfirmDeleteGroup()
-			c.Invalidate()
-		}
-	})
+	cancelled, confirmed := kit.ConfirmBar(c, m.VaultGroupDeleteConfirm(s.PendingDeleteGroup()), nil, m.VaultHostCancel(), m.VaultHostDelete())
+	if cancelled {
+		s.CancelDeleteGroup()
+		c.Invalidate()
+	}
+	if confirmed {
+		_ = s.ConfirmDeleteGroup()
+		c.Invalidate()
+	}
 }
 
 func keySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Padding(0, 8).Children(func() {
-		ui.Text(c, m.VaultKeyListTitle(s.KeyCount())).FontSize(16).Bold()
-		ui.Column(c).Grow(1)
-		if ui.Button(c, m.VaultKeyNew()).Clicked() {
+	kit.SectionBar(c, m.VaultKeyListTitle(s.KeyCount()), func() {
+		if kit.PrimaryButton(c, icons.Plus, m.VaultKeyNew()).Clicked() {
 			s.BeginCreateKey()
 			c.Invalidate()
 		}
 	})
 	if s.KeyCount() == 0 {
-		ui.Text(c, m.VaultKeyEmpty()).FontSize(12).TextColor(t.TextMuted)
+		kit.EmptyHint(c, m.VaultKeyEmpty())
 	}
 	for _, key := range s.Keys() {
 		keyRow(c, s, key, m, t)
@@ -510,16 +486,16 @@ func keySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Th
 }
 
 func keyRow(c *ui.Context, s *vaultstate.State, key domainvault.Key, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+	kit.ListRow(c).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, key.Label).Bold()
 			ui.Text(c, keySummary(key, m)).FontSize(12).TextColor(t.TextMuted)
 		})
-		if ui.Button(c, m.VaultHostEdit()).Clicked() {
+		if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
 			s.BeginEditKey(key.ID)
 			c.Invalidate()
 		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+		if kit.IconButton(c, icons.Trash, m.VaultHostDelete()).Clicked() {
 			s.RequestDeleteKey(key.ID)
 			c.Invalidate()
 		}
@@ -558,30 +534,26 @@ func keyDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *
 	if label != "" {
 		message = m.VaultDeleteConfirm(label)
 	}
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-		ui.Text(c, message).Grow(1).TextColor(uitheme.DangerText(t))
-		if ui.Button(c, m.VaultHostCancel()).Clicked() {
-			s.CancelDeleteKey()
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
-			_ = s.ConfirmDeleteKey()
-			c.Invalidate()
-		}
-	})
+	cancelled, confirmed := kit.ConfirmBar(c, message, nil, m.VaultHostCancel(), m.VaultHostDelete())
+	if cancelled {
+		s.CancelDeleteKey()
+		c.Invalidate()
+	}
+	if confirmed {
+		_ = s.ConfirmDeleteKey()
+		c.Invalidate()
+	}
 }
 
 func identitySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Padding(0, 8).Children(func() {
-		ui.Text(c, m.VaultIdentityListTitle(s.IdentityCount())).FontSize(16).Bold()
-		ui.Column(c).Grow(1)
-		if ui.Button(c, m.VaultIdentityNew()).Clicked() {
+	kit.SectionBar(c, m.VaultIdentityListTitle(s.IdentityCount()), func() {
+		if kit.SecondaryButton(c, icons.Plus, m.VaultIdentityNew()).Clicked() {
 			s.BeginCreateIdentity()
 			c.Invalidate()
 		}
 	})
 	if s.IdentityCount() == 0 {
-		ui.Text(c, m.VaultIdentityEmpty()).FontSize(12).TextColor(t.TextMuted)
+		kit.EmptyHint(c, m.VaultIdentityEmpty())
 	}
 	for _, identity := range s.Identities() {
 		identityRow(c, s, identity, m, t)
@@ -589,16 +561,16 @@ func identitySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *
 }
 
 func identityRow(c *ui.Context, s *vaultstate.State, identity domainvault.Identity, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+	kit.ListRow(c).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, identity.Label).Bold()
 			ui.Text(c, identitySummary(identity, m)).FontSize(12).TextColor(t.TextMuted)
 		})
-		if ui.Button(c, m.VaultHostEdit()).Clicked() {
+		if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
 			s.BeginEditIdentity(identity.ID)
 			c.Invalidate()
 		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+		if kit.IconButton(c, icons.Trash, m.VaultHostDelete()).Clicked() {
 			s.RequestDeleteIdentity(identity.ID)
 			c.Invalidate()
 		}
@@ -643,30 +615,26 @@ func identityDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages
 	if label != "" {
 		message = m.VaultDeleteConfirm(label)
 	}
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-		ui.Text(c, message).Grow(1).TextColor(uitheme.DangerText(t))
-		if ui.Button(c, m.VaultHostCancel()).Clicked() {
-			s.CancelDeleteIdentity()
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
-			_ = s.ConfirmDeleteIdentity()
-			c.Invalidate()
-		}
-	})
+	cancelled, confirmed := kit.ConfirmBar(c, message, nil, m.VaultHostCancel(), m.VaultHostDelete())
+	if cancelled {
+		s.CancelDeleteIdentity()
+		c.Invalidate()
+	}
+	if confirmed {
+		_ = s.ConfirmDeleteIdentity()
+		c.Invalidate()
+	}
 }
 
 func proxySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Padding(0, 8).Children(func() {
-		ui.Text(c, m.VaultProxyListTitle(s.ProxyProfileCount())).FontSize(16).Bold()
-		ui.Column(c).Grow(1)
-		if ui.Button(c, m.VaultProxyNew()).Clicked() {
+	kit.SectionBar(c, m.VaultProxyListTitle(s.ProxyProfileCount()), func() {
+		if kit.PrimaryButton(c, icons.Plus, m.VaultProxyNew()).Clicked() {
 			s.BeginCreateProxyProfile()
 			c.Invalidate()
 		}
 	})
 	if s.ProxyProfileCount() == 0 {
-		ui.Text(c, m.VaultProxyEmpty()).FontSize(12).TextColor(t.TextMuted)
+		kit.EmptyHint(c, m.VaultProxyEmpty())
 	}
 	for _, profile := range s.ProxyProfiles() {
 		proxyRow(c, s, profile, m, t)
@@ -674,17 +642,17 @@ func proxySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.
 }
 
 func proxyRow(c *ui.Context, s *vaultstate.State, profile domainvault.ProxyProfile, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+	kit.ListRow(c).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, profile.Label).Bold()
 			ui.Text(c, proxySummary(m, profile)).
 				FontSize(12).TextColor(t.TextMuted)
 		})
-		if ui.Button(c, m.VaultHostEdit()).Clicked() {
+		if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
 			s.BeginEditProxyProfile(profile.ID)
 			c.Invalidate()
 		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+		if kit.IconButton(c, icons.Trash, m.VaultHostDelete()).Clicked() {
 			s.RequestDeleteProxyProfile(profile.ID)
 			c.Invalidate()
 		}
@@ -722,23 +690,21 @@ func proxyDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t
 	if label != "" {
 		message = m.VaultDeleteConfirm(label)
 	}
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-		ui.Text(c, message).Grow(1).TextColor(uitheme.DangerText(t))
-		if ui.Button(c, m.VaultHostCancel()).Clicked() {
-			s.CancelDeleteProxyProfile()
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
-			_ = s.ConfirmDeleteProxyProfile()
-			c.Invalidate()
-		}
-	})
+	cancelled, confirmed := kit.ConfirmBar(c, message, nil, m.VaultHostCancel(), m.VaultHostDelete())
+	if cancelled {
+		s.CancelDeleteProxyProfile()
+		c.Invalidate()
+	}
+	if confirmed {
+		_ = s.ConfirmDeleteProxyProfile()
+		c.Invalidate()
+	}
 }
 
 func knownHostSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
-	ui.Text(c, m.VaultKnownHostsTitle(s.KnownHostCount())).FontSize(16).Bold()
+	kit.SectionBar(c, m.VaultKnownHostsTitle(s.KnownHostCount()), nil)
 	if s.KnownHostCount() == 0 {
-		ui.Text(c, m.VaultKnownHostsEmpty()).FontSize(12).TextColor(t.TextMuted)
+		kit.EmptyHint(c, m.VaultKnownHostsEmpty())
 	}
 	for _, record := range s.KnownHosts() {
 		knownHostRow(c, s, record, m, t)
@@ -746,14 +712,14 @@ func knownHostSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t 
 }
 
 func knownHostRow(c *ui.Context, s *vaultstate.State, record domainconn.KnownHost, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+	kit.ListRow(c).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, net.JoinHostPort(record.Hostname, strconv.Itoa(record.Port))).Bold()
 			ui.Text(c, record.KeyType+" · "+record.Fingerprint).
 				FontSize(12).TextColor(t.TextMuted)
 		})
 		ui.Text(c, m.VaultKnownHostTrusted()).FontSize(12).TextColor(t.TextMuted)
-		if ui.Button(c, m.VaultKnownHostRemove()).Clicked() {
+		if kit.IconButton(c, icons.Trash, m.VaultKnownHostRemove()).Clicked() {
 			s.RequestDeleteKnownHost(record.ID)
 			c.Invalidate()
 		}
@@ -770,34 +736,30 @@ func knownHostDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Message
 		return
 	}
 	endpoint := net.JoinHostPort(record.Hostname, strconv.Itoa(record.Port))
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-		ui.Text(c, m.VaultKnownHostRemoveConfirm(endpoint)).Grow(1).TextColor(uitheme.DangerText(t))
-		if ui.Button(c, m.VaultHostCancel()).Clicked() {
-			s.CancelDeleteKnownHost()
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
-			_ = s.ConfirmDeleteKnownHost()
-			c.Invalidate()
-		}
-	})
+	cancelled, confirmed := kit.ConfirmBar(c, m.VaultKnownHostRemoveConfirm(endpoint), nil, m.VaultHostCancel(), m.VaultHostDelete())
+	if cancelled {
+		s.CancelDeleteKnownHost()
+		c.Invalidate()
+	}
+	if confirmed {
+		_ = s.ConfirmDeleteKnownHost()
+		c.Invalidate()
+	}
 }
 
 func snippetSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Padding(0, 8).Wrap().Children(func() {
-		ui.Text(c, m.VaultSnippetListTitle(s.SnippetCount())).FontSize(16).Bold()
-		ui.Column(c).Grow(1)
-		if ui.Button(c, m.VaultSnippetPackageNew()).Clicked() {
+	kit.SectionBar(c, m.VaultSnippetListTitle(s.SnippetCount()), func() {
+		if kit.SecondaryButton(c, icons.FolderPlus, m.VaultSnippetPackageNew()).Clicked() {
 			s.BeginCreateSnippetPackage()
 			c.Invalidate()
 		}
-		if ui.PrimaryButton(c, m.VaultSnippetNew()).Clicked() {
+		if kit.PrimaryButton(c, icons.Plus, m.VaultSnippetNew()).Clicked() {
 			s.BeginCreateSnippet()
 			c.Invalidate()
 		}
 	})
 	if s.SnippetCount() == 0 && s.SnippetPackageCount() == 0 {
-		ui.Text(c, m.VaultSnippetEmpty()).FontSize(12).TextColor(t.TextMuted)
+		kit.EmptyHint(c, m.VaultSnippetEmpty())
 		return
 	}
 	for _, pkg := range s.SnippetPackages() {
@@ -816,17 +778,17 @@ func snippetSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *u
 }
 
 func snippetPackageRow(c *ui.Context, s *vaultstate.State, pkg domainvault.SnippetPackage, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Wrap().Background(t.Surface).Children(func() {
+	kit.ListRow(c).Wrap().Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, pkg.Path).Bold()
 			ui.Text(c, m.VaultSnippetPackageSnippetCount(len(s.SnippetsInPackage(pkg.Path)))).
 				FontSize(12).TextColor(t.TextMuted)
 		})
-		if ui.Button(c, m.VaultHostEdit()).Clicked() {
+		if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
 			s.BeginEditSnippetPackage(pkg.Path)
 			c.Invalidate()
 		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+		if kit.IconButton(c, icons.Trash, m.VaultHostDelete()).Clicked() {
 			s.RequestDeleteSnippetPackage(pkg.Path)
 			c.Invalidate()
 		}
@@ -834,25 +796,24 @@ func snippetPackageRow(c *ui.Context, s *vaultstate.State, pkg domainvault.Snipp
 }
 
 func snippetRow(c *ui.Context, s *vaultstate.State, snippet domainvault.Snippet, m locales.Messages, t *ui.Theme, indent int) {
-	ui.Row(c).FillWidth().Gap(8).Padding(8).PaddingStart(groupIndent(indent)).
-		Background(t.Surface).Children(func() {
+	kit.ListRow(c).MarginStart(groupIndent(indent) - 8).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Row(c).FillWidth().Gap(6).Wrap().Children(func() {
 				ui.Text(c, snippet.Label).Bold()
 				ui.Column(c).Grow(1)
-				if ui.PrimaryButton(c, m.VaultSnippetRunActive()).Clicked() {
+				if kit.PrimaryButton(c, icons.Play, m.VaultSnippetRunActive()).Clicked() {
 					s.BeginSnippetRun(snippet.ID, vaultstate.SnippetDestinationActive)
 					c.Invalidate()
 				}
-				if ui.Button(c, m.VaultSnippetRunHosts()).Clicked() {
+				if kit.SecondaryButton(c, "", m.VaultSnippetRunHosts()).Clicked() {
 					s.BeginSnippetRun(snippet.ID, vaultstate.SnippetDestinationHosts)
 					c.Invalidate()
 				}
-				if ui.Button(c, m.VaultHostEdit()).Clicked() {
+				if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
 					s.BeginEditSnippet(snippet.ID)
 					c.Invalidate()
 				}
-				if ui.Button(c, m.VaultHostDelete()).Clicked() {
+				if kit.IconButton(c, icons.Trash, m.VaultHostDelete()).Clicked() {
 					s.RequestDeleteSnippet(snippet.ID)
 					c.Invalidate()
 				}
@@ -919,35 +880,31 @@ func snippetDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages,
 		s.CancelDeleteSnippet()
 		return
 	}
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Wrap().Background(t.Surface).Children(func() {
-		ui.Text(c, m.VaultSnippetDeleteConfirm(label)).Grow(1).TextColor(uitheme.DangerText(t))
-		if ui.Button(c, m.VaultHostCancel()).Clicked() {
-			s.CancelDeleteSnippet()
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
-			_ = s.ConfirmDeleteSnippet()
-			c.Invalidate()
-		}
-	})
+	cancelled, confirmed := kit.ConfirmBar(c, m.VaultSnippetDeleteConfirm(label), nil, m.VaultHostCancel(), m.VaultHostDelete())
+	if cancelled {
+		s.CancelDeleteSnippet()
+		c.Invalidate()
+	}
+	if confirmed {
+		_ = s.ConfirmDeleteSnippet()
+		c.Invalidate()
+	}
 }
 
 func snippetPackageDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
 	if s.PendingDeleteSnippetPackage() == "" {
 		return
 	}
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Wrap().Background(t.Surface).Children(func() {
-		ui.Text(c, m.VaultSnippetPackageDeleteConfirm(s.PendingDeleteSnippetPackage())).
-			Grow(1).TextColor(uitheme.DangerText(t))
-		if ui.Button(c, m.VaultHostCancel()).Clicked() {
-			s.CancelDeleteSnippetPackage()
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
-			_ = s.ConfirmDeleteSnippetPackage()
-			c.Invalidate()
-		}
-	})
+	cancelled, confirmed := kit.ConfirmBar(c, m.VaultSnippetPackageDeleteConfirm(s.PendingDeleteSnippetPackage()),
+		nil, m.VaultHostCancel(), m.VaultHostDelete())
+	if cancelled {
+		s.CancelDeleteSnippetPackage()
+		c.Invalidate()
+	}
+	if confirmed {
+		_ = s.ConfirmDeleteSnippetPackage()
+		c.Invalidate()
+	}
 }
 
 func snippetEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {

@@ -10,6 +10,7 @@ import (
 
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domain "github.com/mslxl/natcatty/domain/preferences"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -360,11 +361,11 @@ func terminalPicker(c *ui.Context, state *PreferencesState, themes *ThemesState,
 			c.Invalidate()
 		}
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			if ui.Button(c, m.SettingsTerminalThemeImport()).Clicked() {
+			if kit.SecondaryButton(c, "", m.SettingsTerminalThemeImport()).Clicked() {
 				themes.RequestImport()
 			}
 			if !state.IsDefault(domain.FieldTerminalTheme) {
-				if ui.Button(c, m.SettingsReset()).FontSize(11).Clicked() {
+				if kit.GhostButton(c, "", m.SettingsReset()).Clicked() {
 					state.ResetField(domain.FieldTerminalTheme)
 					c.Invalidate()
 				}

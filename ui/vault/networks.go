@@ -10,6 +10,8 @@ import (
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
+	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
@@ -28,22 +30,20 @@ func networkKindLabel(m locales.Messages, kind domainvault.NetworkProfileKind) s
 }
 
 func networkSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Padding(0, 8).Children(func() {
-		ui.Text(c, m.VaultNetworkListTitle(s.NetworkProfileCount())).FontSize(16).Bold()
-		ui.Column(c).Grow(1)
+	kit.SectionBar(c, m.VaultNetworkListTitle(s.NetworkProfileCount()), func() {
 		// Two Kinds need two create buttons; a single "New" would have to ask
 		// for the Kind before the editor can show its fields.
-		if ui.Button(c, m.VaultNetworkNewTailscale()).Clicked() {
+		if kit.SecondaryButton(c, icons.Plus, m.VaultNetworkNewTailscale()).Clicked() {
 			s.BeginCreateNetworkProfile(domainvault.NetworkKindTailscale)
 			c.Invalidate()
 		}
-		if ui.Button(c, m.VaultNetworkNewWireGuard()).Clicked() {
+		if kit.SecondaryButton(c, icons.Plus, m.VaultNetworkNewWireGuard()).Clicked() {
 			s.BeginCreateNetworkProfile(domainvault.NetworkKindWireGuard)
 			c.Invalidate()
 		}
 	})
 	if s.NetworkProfileCount() == 0 {
-		ui.Text(c, m.VaultNetworkEmpty()).FontSize(12).TextColor(t.TextMuted)
+		kit.EmptyHint(c, m.VaultNetworkEmpty())
 	}
 	for _, profile := range s.NetworkProfiles() {
 		networkRow(c, s, profile, m, t)
@@ -52,17 +52,17 @@ func networkSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *u
 
 func networkRow(c *ui.Context, s *vaultstate.State, profile domainvault.NetworkProfile,
 	m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+	kit.ListRow(c).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, profile.Label).Bold()
 			ui.Text(c, networkSummary(m, profile)).FontSize(12).TextColor(t.TextMuted)
 			networkProviderStatus(c, s, profile, m, t)
 		})
-		if ui.Button(c, m.VaultHostEdit()).Clicked() {
+		if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
 			s.BeginEditNetworkProfile(profile.ID)
 			c.Invalidate()
 		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+		if kit.IconButton(c, icons.Trash, m.VaultHostDelete()).Clicked() {
 			s.RequestDeleteNetworkProfile(profile.ID)
 			c.Invalidate()
 		}
@@ -174,32 +174,29 @@ func networkDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages,
 		message = m.VaultDeleteConfirm(label)
 	}
 	hosts, groups := s.NetworkProfileUsage(id)
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-			ui.Text(c, message).TextColor(uitheme.DangerText(t))
-			// Deleting clears soft references, so the affected scope must be
-			// visible before the user confirms.
-			if hosts > 0 || groups > 0 {
-				ui.Text(c, m.VaultNetworkDeleteAffected(hosts, groups)).
-					FontSize(12).TextColor(t.TextMuted)
-			}
-			// Deleting closes the Provider. Say so when a Session or lease is
-			// using it, because those owners fail on their next I/O and must
-			// retry instead of silently falling back.
-			if s.NetworkProfileInUse(id) {
-				ui.Text(c, m.VaultNetworkDeleteActiveUse()).
-					FontSize(12).TextColor(uitheme.DangerText(t))
-			}
-		})
-		if ui.Button(c, m.VaultHostCancel()).Clicked() {
-			s.CancelDeleteNetworkProfile()
-			c.Invalidate()
+	cancelled, confirmed := kit.ConfirmBar(c, message, func() {
+		// Deleting clears soft references, so the affected scope must be
+		// visible before the user confirms.
+		if hosts > 0 || groups > 0 {
+			ui.Text(c, m.VaultNetworkDeleteAffected(hosts, groups)).
+				FontSize(12).TextColor(t.TextMuted)
 		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
-			_ = s.ConfirmDeleteNetworkProfile()
-			c.Invalidate()
+		// Deleting closes the Provider. Say so when a Session or lease is
+		// using it, because those owners fail on their next I/O and must
+		// retry instead of silently falling back.
+		if s.NetworkProfileInUse(id) {
+			ui.Text(c, m.VaultNetworkDeleteActiveUse()).
+				FontSize(12).TextColor(uitheme.DangerText(t))
 		}
-	})
+	}, m.VaultHostCancel(), m.VaultHostDelete())
+	if cancelled {
+		s.CancelDeleteNetworkProfile()
+		c.Invalidate()
+	}
+	if confirmed {
+		_ = s.ConfirmDeleteNetworkProfile()
+		c.Invalidate()
+	}
 }
 
 // hostNetworkProfileField renders the Host editor's Network Profile selector

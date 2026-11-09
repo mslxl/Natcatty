@@ -7,6 +7,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -138,7 +139,7 @@ func licensesArea(c *ui.Context, state *LicensesState, m locales.Messages, t *ui
 	section(c, m.SettingsAboutSourceTitle(), m.SettingsAboutSourceBody(), t, func() {
 		if source := state.SourceURL(); source != "" {
 			ui.Text(c, source).FontSize(12).TextColor(t.TextMuted)
-			if ui.PrimaryButton(c, m.SettingsAboutOpenSource()).Clicked() {
+			if kit.PrimaryButton(c, "", m.SettingsAboutOpenSource()).Clicked() {
 				state.OpenSource()
 				c.Invalidate()
 			}

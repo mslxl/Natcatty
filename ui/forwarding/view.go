@@ -9,6 +9,8 @@ import (
 
 	appforwarding "github.com/mslxl/natcatty/application/forwarding"
 	domainforward "github.com/mslxl/natcatty/domain/forwarding"
+	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -32,10 +34,8 @@ func Section(c *ui.Context, s *State) {
 	m := locales.In(c.Locale())
 	t := c.Theme()
 
-	ui.Row(c).Fill().Gap(8).Padding(0, 8).Children(func() {
-		ui.Text(c, m.VaultForwardingTitle(s.RuleCount())).FontSize(16).Bold()
-		ui.Column(c).Grow(1)
-		if ui.Button(c, m.VaultForwardingNew()).Clicked() {
+	kit.SectionBar(c, m.VaultForwardingTitle(s.RuleCount()), func() {
+		if kit.PrimaryButton(c, icons.Plus, m.VaultForwardingNew()).Clicked() {
 			s.BeginCreate()
 			c.Invalidate()
 		}
@@ -49,17 +49,15 @@ func Section(c *ui.Context, s *State) {
 				break
 			}
 		}
-		ui.Row(c).Fill().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-			ui.Text(c, message).Grow(1).TextColor(uitheme.DangerText(t))
-			if ui.Button(c, m.VaultHostCancel()).Clicked() {
-				s.CancelDelete()
-				c.Invalidate()
-			}
-			if ui.Button(c, m.VaultHostDelete()).Clicked() {
-				_ = s.ConfirmDelete()
-				c.Invalidate()
-			}
-		})
+		cancelled, confirmed := kit.ConfirmBar(c, message, nil, m.VaultHostCancel(), m.VaultHostDelete())
+		if cancelled {
+			s.CancelDelete()
+			c.Invalidate()
+		}
+		if confirmed {
+			_ = s.ConfirmDelete()
+			c.Invalidate()
+		}
 	}
 
 	if s.Problem() != ProblemNone {
@@ -69,7 +67,7 @@ func Section(c *ui.Context, s *State) {
 	}
 
 	if s.RuleCount() == 0 {
-		ui.Text(c, m.VaultForwardingEmpty()).FontSize(12).TextColor(t.TextMuted)
+		kit.EmptyHint(c, m.VaultForwardingEmpty())
 		return
 	}
 	for _, view := range s.Items() {
@@ -79,8 +77,8 @@ func Section(c *ui.Context, s *State) {
 
 func ruleRow(c *ui.Context, s *State, view appforwarding.View, m locales.Messages, t *ui.Theme) {
 	rule := view.Rule
-	ui.Row(c).Fill().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-		ui.Column(c).Grow(1).Gap(2).Children(func() {
+	kit.ListRow(c).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, rule.Label).Bold()
 			ui.Text(c, ruleSummary(s, rule, m)).FontSize(12).TextColor(t.TextMuted)
 			if text, danger := statusText(m, view); text != "" {
@@ -94,17 +92,17 @@ func ruleRow(c *ui.Context, s *State, view appforwarding.View, m locales.Message
 
 		switch view.Status {
 		case domainforward.StatusActive, domainforward.StatusConnecting:
-			if ui.Button(c, m.VaultForwardingStop()).Clicked() {
+			if kit.SecondaryButton(c, icons.Square, m.VaultForwardingStop()).Clicked() {
 				s.Stop(rule.ID)
 				c.Invalidate()
 			}
 		default:
-			if ui.Button(c, m.VaultForwardingStart()).Clicked() {
+			if kit.SecondaryButton(c, icons.Play, m.VaultForwardingStart()).Clicked() {
 				s.Start(rule.ID)
 				c.Invalidate()
 			}
 		}
-		if ui.Button(c, m.VaultHostEdit()).Clicked() {
+		if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
 			s.BeginEdit(rule.ID)
 			c.Invalidate()
 		}
@@ -112,11 +110,11 @@ func ruleRow(c *ui.Context, s *State, view appforwarding.View, m locales.Message
 		if !rule.IsEnabled() {
 			enabledLabel = m.VaultForwardingEnable()
 		}
-		if ui.Button(c, enabledLabel).Clicked() {
+		if kit.IconButton(c, icons.Power, enabledLabel).Clicked() {
 			s.ToggleEnabled(rule.ID)
 			c.Invalidate()
 		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+		if kit.IconButton(c, icons.Trash, m.VaultHostDelete()).Clicked() {
 			s.RequestDelete(rule.ID)
 			c.Invalidate()
 		}

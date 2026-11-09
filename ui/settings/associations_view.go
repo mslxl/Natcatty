@@ -4,6 +4,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	domain "github.com/mslxl/natcatty/domain/preferences"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -37,7 +38,7 @@ func defaultRow(c *ui.Context, prefs *PreferencesState, state *AssociationsState
 			if name := state.DefaultOpener().Application.Name; name != "" {
 				label = name
 			}
-			if ui.Button(c, label).Clicked() {
+			if kit.SecondaryButton(c, "", label).Clicked() {
 				state.ChooseDefaultApplication()
 				c.Invalidate()
 			}
@@ -66,11 +67,11 @@ func associationsList(c *ui.Context, state *AssociationsState, m locales.Message
 			ui.Text(c, "."+association.Extension).Width(110).FontSize(13)
 			ui.Text(c, openerLabel(m, association.Kind, association.Application)).
 				Grow(1).MinWidth(0).FontSize(13)
-			if ui.Button(c, m.SettingsAssociationEdit()).FontSize(11).Clicked() {
+			if kit.GhostButton(c, "", m.SettingsAssociationEdit()).Clicked() {
 				state.BeginEdit(association.Extension)
 				c.Invalidate()
 			}
-			if ui.Button(c, m.SettingsAssociationRemove()).FontSize(11).Clicked() {
+			if kit.GhostButton(c, "", m.SettingsAssociationRemove()).Clicked() {
 				state.Remove(association.Extension)
 				c.Invalidate()
 			}
@@ -98,7 +99,7 @@ func associationsForm(c *ui.Context, state *AssociationsState, m locales.Message
 			if name := state.Application().Name; name != "" {
 				label = name
 			}
-			if ui.Button(c, label).Clicked() {
+			if kit.SecondaryButton(c, "", label).Clicked() {
 				state.ChooseAssociationApplication()
 				c.Invalidate()
 			}
@@ -112,12 +113,12 @@ func associationsForm(c *ui.Context, state *AssociationsState, m locales.Message
 		if state.Editing() != "" {
 			label = m.SettingsAssociationSave()
 		}
-		if ui.Button(c, label).Clicked() {
+		if kit.SecondaryButton(c, "", label).Clicked() {
 			state.Save()
 			c.Invalidate()
 		}
 		if state.Editing() != "" {
-			if ui.Button(c, m.SettingsCancel()).Clicked() {
+			if kit.SecondaryButton(c, "", m.SettingsCancel()).Clicked() {
 				state.CancelEdit()
 				c.Invalidate()
 			}

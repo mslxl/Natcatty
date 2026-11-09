@@ -14,6 +14,7 @@ import (
 	appsync "github.com/mslxl/natcatty/application/sync"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainsync "github.com/mslxl/natcatty/domain/sync"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -1122,7 +1123,8 @@ func (s *SyncState) RestoreBackup(source appsync.BackupSource, id string) {
 func syncSection(c *ui.Context, state *SyncState, m locales.Messages, t *ui.Theme) {
 	state.Flush()
 	snapshot := state.Snapshot()
-	section(c, m.SettingsSyncTitle(), m.SettingsSyncDescription(), t, func() {
+	// The Sync area's card and heading already name and describe it.
+	ui.Column(c).FillWidth().Gap(10).Children(func() {
 		if syncSetupShown(state, snapshot) {
 			syncSetup(c, state, snapshot, m, t)
 			return
@@ -1535,11 +1537,11 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 		ui.Column(c).Padding(10).Gap(8).Background(t.Background).Border(1, t.Danger).Children(func() {
 			ui.Text(c, m.SettingsSyncDisconnectConfirm()).FontSize(12)
 			ui.Row(c).Gap(8).Children(func() {
-				if ui.Button(c, m.SettingsSyncDisconnect()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsSyncDisconnect()).Clicked() {
 					state.Disconnect()
 					c.Invalidate()
 				}
-				if ui.Button(c, m.SettingsCancel()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsCancel()).Clicked() {
 					state.CancelDisconnect()
 					c.Invalidate()
 				}
@@ -1619,33 +1621,33 @@ func syncConvergentPinnedBar(c *ui.Context, state *SyncState, snapshot appsync.S
 		Background(t.Surface).Border(1, t.Border).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			if showEnable {
-				if ui.Button(c, m.SettingsSyncConvergentEnable()).Disabled(state.Busy()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsSyncConvergentEnable()).Disabled(state.Busy()).Clicked() {
 					state.SetConvergentEnabled(true)
 					c.Invalidate()
 				}
 			}
 			if showResume {
-				if ui.Button(c, m.SettingsSyncConvergentResume()).Disabled(state.Busy()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsSyncConvergentResume()).Disabled(state.Busy()).Clicked() {
 					state.SetConvergentEnabled(true)
 					c.Invalidate()
 				}
 			}
 			if showPause {
-				if ui.Button(c, m.SettingsSyncConvergentPause()).Disabled(state.Busy()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsSyncConvergentPause()).Disabled(state.Busy()).Clicked() {
 					state.SetConvergentEnabled(false)
 					c.Invalidate()
 				}
 			}
 			if showDivergence {
-				if ui.Button(c, m.SettingsSyncConvergentInspect()).Disabled(state.Busy()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsSyncConvergentInspect()).Disabled(state.Busy()).Clicked() {
 					state.ToggleConvergentDetails()
 					c.Invalidate()
 				}
-				if ui.Button(c, m.SettingsSyncConvergentRestore()).Disabled(state.Busy()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsSyncConvergentRestore()).Disabled(state.Busy()).Clicked() {
 					state.RestoreLastVerified()
 					c.Invalidate()
 				}
-				if ui.Button(c, m.SettingsSyncConvergentResync()).Disabled(state.Busy()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsSyncConvergentResync()).Disabled(state.Busy()).Clicked() {
 					state.SyncNow()
 					c.Invalidate()
 				}
@@ -1696,11 +1698,11 @@ func syncActionsPinnedBar(c *ui.Context, state *SyncState, snapshot appsync.Snap
 				if state.InsecureSyncPrompt() {
 					label = m.SettingsSyncWebDAVInsecureSyncConfirm()
 				}
-				if ui.Button(c, label).Disabled(state.Busy()).Clicked() {
+				if kit.SecondaryButton(c, "", label).Disabled(state.Busy()).Clicked() {
 					state.ConfirmInsecure()
 					c.Invalidate()
 				}
-				if ui.Button(c, m.SettingsCancel()).Disabled(state.Busy()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsCancel()).Disabled(state.Busy()).Clicked() {
 					state.CancelInsecure()
 					c.Invalidate()
 				}
@@ -1709,12 +1711,12 @@ func syncActionsPinnedBar(c *ui.Context, state *SyncState, snapshot appsync.Snap
 		}
 		if showSetup {
 			syncActionRow(c, func() {
-				if ui.Button(c, m.SettingsSyncConnect()).Disabled(state.Busy()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsSyncConnect()).Disabled(state.Busy()).Clicked() {
 					state.Connect()
 					c.Invalidate()
 				}
 				if state.Reconfiguring() {
-					if ui.Button(c, m.SettingsCancel()).Disabled(state.Busy()).Clicked() {
+					if kit.SecondaryButton(c, "", m.SettingsCancel()).Disabled(state.Busy()).Clicked() {
 						state.CancelReconfigure()
 						c.Invalidate()
 					}
@@ -1724,16 +1726,16 @@ func syncActionsPinnedBar(c *ui.Context, state *SyncState, snapshot appsync.Snap
 		}
 		if showConflict {
 			syncActionRow(c, func() {
-				if ui.Button(c, m.SettingsSyncConflictUseLocal()).Disabled(state.Busy()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsSyncConflictUseLocal()).Disabled(state.Busy()).Clicked() {
 					state.ResolveConflict(appsync.ResolutionLocal)
 					c.Invalidate()
 				}
-				if ui.Button(c, m.SettingsSyncConflictUseRemote()).Disabled(state.Busy()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsSyncConflictUseRemote()).Disabled(state.Busy()).Clicked() {
 					state.ResolveConflict(appsync.ResolutionRemote)
 					c.Invalidate()
 				}
 				if conflict.CanMerge {
-					if ui.Button(c, m.SettingsSyncConflictMerge()).Disabled(state.Busy()).Clicked() {
+					if kit.SecondaryButton(c, "", m.SettingsSyncConflictMerge()).Disabled(state.Busy()).Clicked() {
 						state.ResolveConflict(appsync.ResolutionMerge)
 						c.Invalidate()
 					}
@@ -1742,22 +1744,22 @@ func syncActionsPinnedBar(c *ui.Context, state *SyncState, snapshot appsync.Snap
 		}
 		if showGuard {
 			syncActionRow(c, func() {
-				if ui.Button(c, m.SettingsSyncGuardRestore()).Disabled(state.Busy()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsSyncGuardRestore()).Disabled(state.Busy()).Clicked() {
 					state.RestoreGuard()
 					c.Invalidate()
 				}
-				if ui.Button(c, m.SettingsSyncGuardForce()).Disabled(state.Busy()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsSyncGuardForce()).Disabled(state.Busy()).Clicked() {
 					state.AskForcePush()
 					c.Invalidate()
 				}
 			})
 			if state.ForcePushing() {
 				syncActionRow(c, func() {
-					if ui.Button(c, m.SettingsSyncDoForcePush()).Disabled(state.Busy()).Clicked() {
+					if kit.SecondaryButton(c, "", m.SettingsSyncDoForcePush()).Disabled(state.Busy()).Clicked() {
 						state.ForcePush()
 						c.Invalidate()
 					}
-					if ui.Button(c, m.SettingsCancel()).Disabled(state.Busy()).Clicked() {
+					if kit.SecondaryButton(c, "", m.SettingsCancel()).Disabled(state.Busy()).Clicked() {
 						state.CancelForcePush()
 						c.Invalidate()
 					}
@@ -1766,7 +1768,7 @@ func syncActionsPinnedBar(c *ui.Context, state *SyncState, snapshot appsync.Snap
 		}
 		if showBackups {
 			syncActionRow(c, func() {
-				if ui.Button(c, m.SettingsSyncBackupsRefresh()).Disabled(state.Busy()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsSyncBackupsRefresh()).Disabled(state.Busy()).Clicked() {
 					state.LoadBackups()
 					c.Invalidate()
 				}
@@ -2151,7 +2153,7 @@ func syncBackupsPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapshot
 					syncBackupSourceName(entry.Source, m),
 					syncBackupReasonName(entry.Reason, m),
 					formatSyncTime(entry.CreatedAt))).FontSize(11).TextColor(t.Text)
-				if ui.Button(c, m.SettingsSyncBackupRestore()).Disabled(state.Busy()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsSyncBackupRestore()).Disabled(state.Busy()).Clicked() {
 					state.RestoreBackup(entry.Source, entry.ID)
 					c.Invalidate()
 				}
@@ -2188,29 +2190,29 @@ func syncBackupReasonName(reason string, m locales.Messages) string {
 
 func syncButtons(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages) {
 	ui.Row(c).Gap(8).Children(func() {
-		if ui.Button(c, m.SettingsSyncSyncNow()).Disabled(state.Busy()).Clicked() {
+		if kit.SecondaryButton(c, "", m.SettingsSyncSyncNow()).Disabled(state.Busy()).Clicked() {
 			state.SyncNow()
 			c.Invalidate()
 		}
 		switch appsync.NormalizeProvider(snapshot.Provider) {
 		case appsync.ProviderWebDAV:
-			if ui.Button(c, m.SettingsSyncWebDAVReconfigure()).Disabled(state.Busy()).Clicked() {
+			if kit.SecondaryButton(c, "", m.SettingsSyncWebDAVReconfigure()).Disabled(state.Busy()).Clicked() {
 				state.Reconfigure()
 				c.Invalidate()
 			}
 		case appsync.ProviderS3:
-			if ui.Button(c, m.SettingsSyncS3Reconfigure()).Disabled(state.Busy()).Clicked() {
+			if kit.SecondaryButton(c, "", m.SettingsSyncS3Reconfigure()).Disabled(state.Busy()).Clicked() {
 				state.Reconfigure()
 				c.Invalidate()
 			}
 		}
 		if snapshot.Problem == appsync.ProblemReauthorization {
-			if ui.Button(c, m.SettingsSyncReconnect()).Disabled(state.Busy()).Clicked() {
+			if kit.SecondaryButton(c, "", m.SettingsSyncReconnect()).Disabled(state.Busy()).Clicked() {
 				state.Reconnect()
 				c.Invalidate()
 			}
 		}
-		if ui.Button(c, m.SettingsSyncDisconnect()).Disabled(state.Busy()).Clicked() {
+		if kit.SecondaryButton(c, "", m.SettingsSyncDisconnect()).Disabled(state.Busy()).Clicked() {
 			state.AskDisconnect()
 			c.Invalidate()
 		}
