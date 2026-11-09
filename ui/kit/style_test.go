@@ -97,3 +97,41 @@ func TestFillClearsTheWindowOverItsVibrancyOrPaintsItsBackground(t *testing.T) {
 		}
 	}
 }
+
+func TestHighContrastFillsTheMacOSGlassAndVibrancyOpaque(t *testing.T) {
+	SetStyle(MacOS)
+	t.Cleanup(func() { SetStyle(nil) })
+	theme := &ui.Theme{Background: ui.RGB(255, 0, 0), Surface: ui.RGB(0, 0, 255), Text: ui.RGB(0, 0, 0)}
+	for _, tc := range []struct {
+		role SurfaceRole
+		want ui.Color
+	}{
+		{SurfaceWindow, theme.Background},
+		{SurfaceSidebar, theme.Surface},
+		{SurfaceOverlay, theme.Surface},
+	} {
+		tt := ui.NewTester(func(c *ui.Context) {
+			c.SetTheme(theme)
+			c.Root().Background(ui.RGB(0, 255, 0))
+			Fill(c, ui.Column(c).Size(40, 40), tc.role)
+		}, 80, 80)
+		tt.SetVibrancy(true)
+		tt.SetPreferences(ui.Preferences{HighContrast: true})
+		tt.Frame()
+		got := tt.Image().RGBAAt(20, 20)
+		if got.R != tc.want.R || got.G != tc.want.G || got.B != tc.want.B || got.A != 255 {
+			t.Fatalf("role %d: pixel = %v, want the opaque %v", tc.role, got, tc.want)
+		}
+	}
+}
+
+func TestHighContrastKeepsThePresetBorders(t *testing.T) {
+	base := &ui.Theme{Background: ui.RGB(250, 250, 250), Border: ui.RGB(200, 200, 200), FontSize: 14}
+	var got *ui.Theme
+	tt := ui.NewTester(func(c *ui.Context) { got = StyleTheme(c, MacOS, base) }, 10, 10)
+	tt.SetPreferences(ui.Preferences{HighContrast: true})
+	tt.Frame()
+	if got.Border != base.Border || got.FontSize != 13 {
+		t.Fatalf("high contrast macOS theme: border %v, size %v; want the preset's border and 13", got.Border, got.FontSize)
+	}
+}
