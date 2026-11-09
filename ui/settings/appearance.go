@@ -138,7 +138,7 @@ func presetPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t 
 				ui.Box(c).Width(18).Height(18).Radius(3).
 					Background(uitheme.PresetBackground(preset)).
 					Border(1, t.TextMuted)
-				ui.Text(c, preset.Name).FontSize(13).
+				ui.Text(c, preset.Name).FontSize(kit.M(c).Font.Callout).
 					TextColor(uitheme.PresetForeground(preset))
 			})
 		})
@@ -155,7 +155,7 @@ func presetPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t 
 							item = item.Border(1, t.Accent)
 						}
 						item.Children(func() {
-							ui.Text(c, option.Name).FontSize(13).
+							ui.Text(c, option.Name).FontSize(kit.M(c).Font.Callout).
 								TextColor(uitheme.PresetForeground(option))
 						})
 					}
@@ -244,7 +244,7 @@ func opacityPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t
 		for _, value := range []float64{1, 0.85, 0.7} {
 			value := value
 			wanted := int(math.Round(value * 100))
-			button := ui.Button(c, m.SettingsWindowOpacityValue(strconv.Itoa(wanted))).FontSize(11)
+			button := ui.Button(c, m.SettingsWindowOpacityValue(strconv.Itoa(wanted))).FontSize(kit.M(c).Font.Caption)
 			if math.Abs(opacity-value) < 0.001 {
 				button = button.Background(t.Accent).TextColor(t.AccentText)
 			}
@@ -262,11 +262,11 @@ func iconPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t *u
 	settings domain.Settings) {
 	fieldRow(c, state, m, t, domain.FieldAppIcon, m.SettingsAppIcon(), func() {
 		ui.Text(c, iconVariantName(m, settings.Appearance.AppIcon)).
-			FontSize(11).TextColor(t.TextMuted)
+			FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 	})
 	ui.Column(c).Gap(6).FillWidth().Children(func() {
 		for _, group := range domaintheme.IconGroupOrder() {
-			ui.Text(c, iconGroupName(m, group)).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, iconGroupName(m, group)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 			ui.Row(c).Wrap().Gap(6).FillWidth().Children(func() {
 				for _, variant := range domaintheme.IconVariantsInGroup(group) {
 					variant := variant
@@ -285,7 +285,7 @@ func iconPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t *u
 // ring when chosen, shaded on hover as a ListRow.
 func iconTile(c *ui.Context, t *ui.Theme, name string, thumb *ui.Bitmap, chosen bool) ui.Element {
 	tile := ui.ButtonBase(c).Label(name).Tooltip(name).Width(108).Padding(8, 4).
-		Radius(kit.RadiusCard).Border(1, t.Border).Background(t.Surface).
+		Radius(kit.M(c).Radius.Card).Border(1, t.Border).Background(t.Surface).
 		Justify(ui.Center).TextColor(t.Text)
 	switch {
 	case chosen:
@@ -298,7 +298,7 @@ func iconTile(c *ui.Context, t *ui.Theme, name string, thumb *ui.Bitmap, chosen 
 			if thumb != nil {
 				ui.Image(c, thumb).Width(40).Height(40).Shrink(0)
 			}
-			ui.Text(c, name).FontSize(11).SingleLine().MaxWidth(100)
+			ui.Text(c, name).FontSize(kit.M(c).Font.Caption).SingleLine().MaxWidth(100)
 		})
 	})
 	return tile
@@ -311,7 +311,7 @@ func followAppToggle(c *ui.Context, state *PreferencesState, m locales.Messages,
 	follow := settings.Appearance.FollowAppTerminalTheme
 	checkboxRow(c, state, m, domain.FieldFollowAppTerminalTheme, m.SettingsFollowAppTerminalTheme(), follow,
 		func(s *domain.Settings, value bool) { s.Appearance.FollowAppTerminalTheme = value })
-	ui.Text(c, m.SettingsFollowAppTerminalThemeDescription()).FontSize(11).TextColor(t.TextMuted)
+	ui.Text(c, m.SettingsFollowAppTerminalThemeDescription()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 }
 
 // terminalPicker is the scheme list and its import control. Imported schemes
@@ -338,7 +338,7 @@ func terminalPicker(c *ui.Context, state *PreferencesState, themes *ThemesState,
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Box(c).Width(18).Height(18).Radius(3).
 					Background(uitheme.TerminalForeground(scheme)).Border(1, t.TextMuted)
-				ui.Text(c, scheme.Name).FontSize(13).
+				ui.Text(c, scheme.Name).FontSize(kit.M(c).Font.Callout).
 					TextColor(uitheme.TerminalForeground(scheme))
 			})
 		})
@@ -352,7 +352,7 @@ func terminalPicker(c *ui.Context, state *PreferencesState, themes *ThemesState,
 				visible := themes.Filtered()
 				if len(visible) == 0 {
 					ui.Text(c, m.SettingsTerminalThemeNoResults(strings.TrimSpace(*themes.Filter()))).
-						FontSize(12).TextColor(t.TextMuted)
+						FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 					return
 				}
 				ui.Scroll(c).Height(260).FillWidth().Children(func() {
@@ -366,7 +366,7 @@ func terminalPicker(c *ui.Context, state *PreferencesState, themes *ThemesState,
 								item = item.Border(1, t.Accent)
 							}
 							item.Children(func() {
-								ui.Text(c, option.Name).FontSize(13).
+								ui.Text(c, option.Name).FontSize(kit.M(c).Font.Callout).
 									TextColor(uitheme.TerminalForeground(option))
 							})
 						}
@@ -389,7 +389,7 @@ func terminalPicker(c *ui.Context, state *PreferencesState, themes *ThemesState,
 				}
 			}
 			ui.Text(c, m.SettingsThemeCount(len(themes.Themes()))).
-				FontSize(11).TextColor(t.TextMuted)
+				FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		})
 		importStatus(c, themes, m, t)
 	})
@@ -414,11 +414,11 @@ func importStatus(c *ui.Context, themes *ThemesState, m locales.Messages, t *ui.
 	switch themes.Problem() {
 	case ThemeImportOK:
 		ui.Text(c, m.SettingsTerminalThemeImported(themes.ImportedName())).
-			FontSize(12).TextColor(t.Success)
+			FontSize(kit.M(c).Font.Footnote).TextColor(t.Success)
 	case ThemeImportInvalid:
-		ui.Text(c, m.SettingsTerminalThemeImportInvalid()).FontSize(12).TextColor(uitheme.DangerText(t))
+		ui.Text(c, m.SettingsTerminalThemeImportInvalid()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 	case ThemeImportFailed:
-		ui.Text(c, m.SettingsTerminalThemeImportFailed()).FontSize(12).TextColor(uitheme.DangerText(t))
+		ui.Text(c, m.SettingsTerminalThemeImportFailed()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 	}
 }
 

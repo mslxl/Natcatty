@@ -44,7 +44,7 @@ func (p *ThemePanel) View() func(*ui.Context) {
 		appearance := p.look.Settings().Appearance
 		ui.Column(c).Fill().MinWidth(0).Children(func() {
 			ui.Row(c).FillWidth().Gap(4).Padding(10, 8, 6, 12).AlignItems(ui.Center).Shrink(0).Children(func() {
-				ui.Text(c, m.SettingsTerminalFontSize()).FontSize(12).FontWeight(500).Grow(1).MinWidth(0).SingleLine()
+				ui.Text(c, m.SettingsTerminalFontSize()).FontSize(kit.M(c).Font.Footnote).FontWeight(500).Grow(1).MinWidth(0).SingleLine()
 				size := appearance.TerminalFontSize
 				if size <= 0 {
 					size = domain.DefaultTerminalFontSize
@@ -59,7 +59,7 @@ func (p *ThemePanel) View() func(*ui.Context) {
 				if kit.IconButton(c, icons.Minus, m.SidePanelFontSmaller()).Clicked() {
 					step(-1)
 				}
-				ui.Text(c, fmt.Sprintf("%g", size)).FontSize(12).Width(28).TextAlign(ui.Center)
+				ui.Text(c, fmt.Sprintf("%g", size)).FontSize(kit.M(c).Font.Footnote).Width(28).TextAlign(ui.Center)
 				if kit.IconButton(c, icons.Plus, m.SidePanelFontLarger()).Clicked() {
 					step(1)
 				}
@@ -122,7 +122,7 @@ func (p *ThemePanel) matching(follow bool) []domaintheme.TerminalTheme {
 func (p *ThemePanel) schemeRow(c *ui.Context, m locales.Messages, t *ui.Theme,
 	scheme domaintheme.TerminalTheme, current bool) {
 	c.Key("side-theme-" + scheme.ID)
-	card := ui.ButtonBase(c).Label(scheme.Name).FillWidth().Padding(6).Gap(6).Radius(kit.RadiusControl).
+	card := ui.ButtonBase(c).Label(scheme.Name).FillWidth().Padding(6).Gap(6).Radius(kit.M(c).Radius.Control).
 		Border(1, t.Border)
 	switch {
 	case current:
@@ -135,11 +135,11 @@ func (p *ThemePanel) schemeRow(c *ui.Context, m locales.Messages, t *ui.Theme,
 	// the preview, so a narrow panel never cuts the name short.
 	card.Children(func() {
 		ui.Column(c).FillWidth().Gap(6).Children(func() {
-			ui.Column(c).FillWidth().Height(44).Radius(6).Padding(6, 8).Gap(6).
+			ui.Column(c).FillWidth().Height(44).Radius(kit.M(c).Radius.Control).Padding(6, 8).Gap(6).
 				Background(uitheme.TerminalBackground(scheme)).Children(func() {
 				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, "$").FontSize(11).TextColor(uitheme.TerminalSwatch(colors.Green)).SingleLine()
-					ui.Text(c, "ls -la").FontSize(11).TextColor(uitheme.TerminalForeground(scheme)).SingleLine()
+					ui.Text(c, "$").FontSize(kit.M(c).Font.Caption).TextColor(uitheme.TerminalSwatch(colors.Green)).SingleLine()
+					ui.Text(c, "ls -la").FontSize(kit.M(c).Font.Caption).TextColor(uitheme.TerminalForeground(scheme)).SingleLine()
 					ui.Box(c).Size(6, 11).Background(uitheme.TerminalSwatch(colors.Cursor))
 				})
 				ui.Row(c).Gap(4).Children(func() {
@@ -150,12 +150,12 @@ func (p *ThemePanel) schemeRow(c *ui.Context, m locales.Messages, t *ui.Theme,
 				})
 			})
 			ui.Row(c).FillWidth().Gap(6).Padding(0, 2).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, scheme.Name).FontSize(12).FontWeight(500).SingleLine().Grow(1).MinWidth(0)
+				ui.Text(c, scheme.Name).FontSize(kit.M(c).Font.Footnote).FontWeight(500).SingleLine().Grow(1).MinWidth(0)
 				if scheme.Custom {
 					kit.Pill(c, m.SidePanelThemeCustom())
 				}
 				if current {
-					ui.Icon(c, icons.Lucide(icons.Check)).Size(14, 14).TextColor(t.Accent)
+					kit.IconSized(c, icons.Check, kit.M(c).Icon.Medium).TextColor(t.Accent)
 				}
 			})
 		})

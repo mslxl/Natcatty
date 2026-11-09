@@ -1135,7 +1135,7 @@ func syncSection(c *ui.Context, state *SyncState, m locales.Messages, t *ui.Them
 
 func syncSetup(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
 	if !snapshot.Connected {
-		ui.Text(c, m.SettingsSyncNotConnected()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsSyncNotConnected()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}
 	syncProviderSelector(c, state, snapshot, m)
 	provider := appsync.NormalizeProvider(snapshot.Provider)
@@ -1149,20 +1149,20 @@ func syncSetup(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m loc
 	}
 	switch provider {
 	case appsync.ProviderGoogleDrive:
-		ui.Text(c, m.SettingsSyncGoogleHint()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsSyncGoogleHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 	case appsync.ProviderOneDrive:
-		ui.Text(c, m.SettingsSyncOneDriveHint()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsSyncOneDriveHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 	case appsync.ProviderWebDAV:
-		ui.Text(c, m.SettingsSyncWebDAVHint()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsSyncWebDAVHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		syncWebDAVForm(c, state, m, t)
 	case appsync.ProviderS3:
-		ui.Text(c, m.SettingsSyncS3Hint()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsSyncS3Hint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		syncS3Form(c, state, m, t)
 	}
 	syncDeviceCode(c, snapshot, m, t)
 	syncPasswordField(c, state, m)
-	ui.Text(c, m.SettingsSyncMasterPasswordHint()).FontSize(11).TextColor(t.TextMuted)
-	ui.Text(c, m.SettingsSyncSecurityNote()).FontSize(11).TextColor(t.TextMuted)
+	ui.Text(c, m.SettingsSyncMasterPasswordHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+	ui.Text(c, m.SettingsSyncSecurityNote()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 	// Connect (and the Reconfigure Cancel) is pinned in
 	// syncActionsPinnedBar, outside this scrolling form.
 	syncStatus(c, state, snapshot, m, t)
@@ -1223,7 +1223,7 @@ func syncWebDAVForm(c *ui.Context, state *SyncState, m locales.Messages, t *ui.T
 
 	if state.InsecureEndpointEntered() {
 		ui.Column(c).Padding(10).Gap(4).Background(t.Background).Border(1, t.Warning).Children(func() {
-			ui.Text(c, m.SettingsSyncWebDAVInsecureWarning()).FontSize(11).TextColor(syncWarningTextColor(t))
+			ui.Text(c, m.SettingsSyncWebDAVInsecureWarning()).FontSize(kit.M(c).Font.Caption).TextColor(syncWarningTextColor(t))
 		})
 	}
 }
@@ -1341,7 +1341,7 @@ func syncS3Form(c *ui.Context, state *SyncState, m locales.Messages, t *ui.Theme
 
 	if state.InsecureEndpointEntered() {
 		ui.Column(c).Padding(10).Gap(4).Background(t.Background).Border(1, t.Warning).Children(func() {
-			ui.Text(c, m.SettingsSyncS3InsecureWarning()).FontSize(11).TextColor(syncWarningTextColor(t))
+			ui.Text(c, m.SettingsSyncS3InsecureWarning()).FontSize(kit.M(c).Font.Caption).TextColor(syncWarningTextColor(t))
 		})
 	}
 }
@@ -1352,9 +1352,9 @@ func syncS3Form(c *ui.Context, state *SyncState, m locales.Messages, t *ui.Theme
 func syncInsecurePrompt(c *ui.Context, endpointText, warning string, t *ui.Theme) {
 	ui.Column(c).Padding(10).Gap(6).Background(t.Background).Border(1, t.Danger).Children(func() {
 		if endpointText != "" {
-			ui.Text(c, endpointText).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, endpointText).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		}
-		ui.Text(c, warning).FontSize(12).TextColor(syncDangerTextColor(t))
+		ui.Text(c, warning).FontSize(kit.M(c).Font.Footnote).TextColor(syncDangerTextColor(t))
 		// Confirm and Cancel are pinned in syncActionsPinnedBar, outside this
 		// scrolling card, so the decision is fully visible at every window size.
 	})
@@ -1419,9 +1419,9 @@ func syncDeviceCode(c *ui.Context, snapshot appsync.Snapshot, m locales.Messages
 		return
 	}
 	ui.Column(c).Padding(10).Gap(4).Background(t.Background).Border(1, t.Border).Children(func() {
-		ui.Text(c, m.SettingsSyncDeviceCode()).FontSize(11).TextColor(t.TextMuted)
-		ui.Text(c, code.UserCode).FontSize(18).Bold()
-		ui.Text(c, m.SettingsSyncDeviceCodeHint(code.VerificationURI)).FontSize(11).
+		ui.Text(c, m.SettingsSyncDeviceCode()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+		ui.Text(c, code.UserCode).FontSize(kit.M(c).Font.Title).Bold()
+		ui.Text(c, m.SettingsSyncDeviceCodeHint(code.VerificationURI)).FontSize(kit.M(c).Font.Caption).
 			TextColor(t.TextMuted)
 	})
 }
@@ -1438,31 +1438,31 @@ func syncPasswordField(c *ui.Context, state *SyncState, m locales.Messages) {
 func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
 	provider := appsync.NormalizeProvider(snapshot.Provider)
 	ui.Row(c).Gap(8).Children(func() {
-		ui.Text(c, m.SettingsSyncProvider()).FontSize(11).TextColor(t.TextMuted)
-		ui.Text(c, syncProviderName(snapshot.Provider, m)).FontSize(11)
+		ui.Text(c, m.SettingsSyncProvider()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+		ui.Text(c, syncProviderName(snapshot.Provider, m)).FontSize(kit.M(c).Font.Caption)
 	})
 	ui.Text(c, m.SettingsSyncConnectedAs(snapshot.Login)).Bold()
 	if provider == appsync.ProviderWebDAV {
 		if snapshot.WebDAVEndpoint != "" {
-			ui.Text(c, m.SettingsSyncWebDAVEndpointValue(snapshot.WebDAVEndpoint)).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SettingsSyncWebDAVEndpointValue(snapshot.WebDAVEndpoint)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		}
 		ui.Row(c).Gap(8).Children(func() {
-			ui.Text(c, m.SettingsSyncWebDAVAuth()).FontSize(11).TextColor(t.TextMuted)
-			ui.Text(c, webDAVAuthName(snapshot.WebDAVAuthType, m)).FontSize(11)
+			ui.Text(c, m.SettingsSyncWebDAVAuth()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+			ui.Text(c, webDAVAuthName(snapshot.WebDAVAuthType, m)).FontSize(kit.M(c).Font.Caption)
 		})
 	}
 	if provider == appsync.ProviderS3 {
 		if snapshot.S3Endpoint != "" {
-			ui.Text(c, m.SettingsSyncS3EndpointValue(snapshot.S3Endpoint)).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SettingsSyncS3EndpointValue(snapshot.S3Endpoint)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		}
 		ui.Row(c).Gap(8).Children(func() {
-			ui.Text(c, m.SettingsSyncS3Region()).FontSize(11).TextColor(t.TextMuted)
-			ui.Text(c, snapshot.S3Region).FontSize(11)
-			ui.Text(c, m.SettingsSyncS3Bucket()).FontSize(11).TextColor(t.TextMuted)
-			ui.Text(c, snapshot.S3Bucket).FontSize(11)
+			ui.Text(c, m.SettingsSyncS3Region()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+			ui.Text(c, snapshot.S3Region).FontSize(kit.M(c).Font.Caption)
+			ui.Text(c, m.SettingsSyncS3Bucket()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+			ui.Text(c, snapshot.S3Bucket).FontSize(kit.M(c).Font.Caption)
 		})
 		if snapshot.S3Prefix != "" {
-			ui.Text(c, m.SettingsSyncS3PrefixValue(snapshot.S3Prefix)).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SettingsSyncS3PrefixValue(snapshot.S3Prefix)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		}
 	}
 	if state.InsecurePrompt() {
@@ -1475,9 +1475,9 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 		return
 	}
 	if snapshot.HasPassword {
-		ui.Text(c, m.SettingsSyncReady()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsSyncReady()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 	} else {
-		ui.Text(c, m.SettingsSyncNeedsPassword()).FontSize(11).TextColor(uitheme.WarningText(t))
+		ui.Text(c, m.SettingsSyncNeedsPassword()).FontSize(kit.M(c).Font.Caption).TextColor(uitheme.WarningText(t))
 		syncPasswordField(c, state, m)
 	}
 	syncDeviceCode(c, snapshot, m, t)
@@ -1494,7 +1494,7 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 		if provider == appsync.ProviderS3 {
 			warning = m.SettingsSyncS3InsecureAutoSync()
 		}
-		ui.Text(c, warning).FontSize(11).TextColor(syncWarningTextColor(t))
+		ui.Text(c, warning).FontSize(kit.M(c).Font.Caption).TextColor(syncWarningTextColor(t))
 	} else {
 		auto := snapshot.AutoSync
 		if ui.Checkbox(c, &auto, m.SettingsSyncAutoSync()).Changed() {
@@ -1521,7 +1521,7 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 			c.Invalidate()
 		}
 	})
-	ui.Text(c, syncLastSynced(m, snapshot.LastSyncedAt)).FontSize(11).TextColor(t.TextMuted)
+	ui.Text(c, syncLastSynced(m, snapshot.LastSyncedAt)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 
 	syncConvergentPanel(c, state, snapshot, m, t)
 	syncConflictPanel(c, state, snapshot, m, t)
@@ -1535,7 +1535,7 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 
 	if state.Disconnecting() {
 		ui.Column(c).Padding(10).Gap(8).Background(t.Background).Border(1, t.Danger).Children(func() {
-			ui.Text(c, m.SettingsSyncDisconnectConfirm()).FontSize(12)
+			ui.Text(c, m.SettingsSyncDisconnectConfirm()).FontSize(kit.M(c).Font.Footnote)
 			ui.Row(c).Gap(8).Children(func() {
 				if kit.SecondaryButton(c, "", m.SettingsSyncDisconnect()).Clicked() {
 					state.Disconnect()
@@ -1816,10 +1816,10 @@ func syncConvergentPanel(c *ui.Context, state *SyncState, snapshot appsync.Snaps
 	}
 	ui.Column(c).Padding(10).Gap(8).Background(t.Background).Border(1, border).Children(func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.SettingsSyncConvergentTitle()).FontSize(12).Bold().TextColor(t.Text)
-			ui.Text(c, m.SettingsSyncConvergentState(convergentPhaseName(phase, m))).FontSize(11).TextColor(t.Text)
+			ui.Text(c, m.SettingsSyncConvergentTitle()).FontSize(kit.M(c).Font.Footnote).Bold().TextColor(t.Text)
+			ui.Text(c, m.SettingsSyncConvergentState(convergentPhaseName(phase, m))).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 		})
-		ui.Text(c, m.SettingsSyncConvergentDescription()).FontSize(11).TextColor(t.Text)
+		ui.Text(c, m.SettingsSyncConvergentDescription()).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 
 		switch {
 		case phase == "blocked":
@@ -1829,12 +1829,12 @@ func syncConvergentPanel(c *ui.Context, state *SyncState, snapshot appsync.Snaps
 			syncConvergentDivergence(c, state, info, m, t)
 			return
 		case info.SchemaVersion == 0:
-			ui.Text(c, m.SettingsSyncConvergentEnableHint()).FontSize(11).TextColor(t.Text)
+			ui.Text(c, m.SettingsSyncConvergentEnableHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 			return
 		}
 
 		if !info.Enabled {
-			ui.Text(c, m.SettingsSyncConvergentPausedHint()).FontSize(11).TextColor(t.Text)
+			ui.Text(c, m.SettingsSyncConvergentPausedHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 			return
 		}
 		syncConvergentVerification(c, state, info, m, t)
@@ -1845,16 +1845,16 @@ func syncConvergentPanel(c *ui.Context, state *SyncState, snapshot appsync.Snaps
 // rendering raw Go error text. The cloud bytes and local Vault are unchanged
 // until the user resolves the named condition and retries.
 func syncConvergentMigrationBlocked(c *ui.Context, state *SyncState, info appsync.ConvergentInfo, m locales.Messages, t *ui.Theme) {
-	ui.Text(c, m.SettingsSyncConvergentMigrationBlocked()).FontSize(12).Bold().TextColor(syncDangerTextColor(t))
-	ui.Text(c, m.SettingsSyncConvergentEnableHint()).FontSize(11).TextColor(t.Text)
+	ui.Text(c, m.SettingsSyncConvergentMigrationBlocked()).FontSize(kit.M(c).Font.Footnote).Bold().TextColor(syncDangerTextColor(t))
+	ui.Text(c, m.SettingsSyncConvergentEnableHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 	if preview := info.Migration; preview != nil {
 		ui.Text(c, m.SettingsSyncConvergentMigrationSummary(
 			strconv.Itoa(preview.ProviderSchemaVersion),
 			strconv.Itoa(preview.LocalSchemaVersion),
 			strconv.Itoa(preview.EntityCount),
-		)).FontSize(11).TextColor(t.Text)
+		)).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 		for _, reason := range preview.BlockedReasons {
-			ui.Text(c, convergentReasonName(reason.Code, m)).FontSize(11).TextColor(syncDangerTextColor(t))
+			ui.Text(c, convergentReasonName(reason.Code, m)).FontSize(kit.M(c).Font.Caption).TextColor(syncDangerTextColor(t))
 		}
 	}
 }
@@ -1863,39 +1863,39 @@ func syncConvergentMigrationBlocked(c *ui.Context, state *SyncState, info appsyn
 // value-free report, restore the last provider-verified local copy, or re-run
 // sync. There is deliberately no overwrite-provider action.
 func syncConvergentDivergence(c *ui.Context, state *SyncState, info appsync.ConvergentInfo, m locales.Messages, t *ui.Theme) {
-	ui.Text(c, m.SettingsSyncConvergentDivergenceTitle()).FontSize(12).Bold().TextColor(syncDangerTextColor(t))
-	ui.Text(c, m.SettingsSyncConvergentDivergenceDescription()).FontSize(11).TextColor(t.Text)
+	ui.Text(c, m.SettingsSyncConvergentDivergenceTitle()).FontSize(kit.M(c).Font.Footnote).Bold().TextColor(syncDangerTextColor(t))
+	ui.Text(c, m.SettingsSyncConvergentDivergenceDescription()).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 	divergence := info.Divergence
 	if divergence != nil {
 		ui.Text(c, m.SettingsSyncConvergentDivergenceKind(convergentDivergenceKindName(divergence.Kind, m))).
-			FontSize(11).TextColor(t.Text)
+			FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 		if divergence.Family != "" || divergence.EntityID != "" {
 			family := m.SettingsSyncEntityUnknown()
 			if divergence.Family != "" {
 				family = syncEntityLabel(divergence.Family, m)
 			}
 			ui.Text(c, m.SettingsSyncConvergentDivergenceAddress(family, divergence.EntityID)).
-				FontSize(11).TextColor(t.Text)
+				FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 		}
 		if divergence.Dot != "" {
-			ui.Text(c, m.SettingsSyncConvergentDivergenceDot(divergence.Dot)).FontSize(11).TextColor(t.Text)
+			ui.Text(c, m.SettingsSyncConvergentDivergenceDot(divergence.Dot)).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 		}
 	}
-	ui.Text(c, m.SettingsSyncConvergentActionsHint()).FontSize(11).TextColor(t.Text)
+	ui.Text(c, m.SettingsSyncConvergentActionsHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 	if state.ShowConvergentDetails() {
 		detail := m.SettingsSyncConvergentInspectDetails(
 			divergenceHash(divergence, true),
 			divergenceHash(divergence, false),
 		)
-		ui.Text(c, detail).FontSize(11).TextColor(t.Text)
+		ui.Text(c, detail).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 		if divergence != nil && (divergence.LocalVector != nil || divergence.RemoteVector != nil) {
 			ui.Text(c, m.SettingsSyncConvergentVectorDetail(
 				strconv.Itoa(len(divergence.LocalVector)),
 				strconv.Itoa(len(divergence.RemoteVector)),
-			)).FontSize(11).TextColor(t.Text)
+			)).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 		}
 	}
-	ui.Text(c, m.SettingsSyncConvergentRestoreHint()).FontSize(11).TextColor(t.Text)
+	ui.Text(c, m.SettingsSyncConvergentRestoreHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 }
 
 func divergenceHash(divergence *appsync.ConvergentDivergenceInfo, local bool) string {
@@ -1927,20 +1927,20 @@ func syncConvergentVerification(c *ui.Context, state *SyncState, info appsync.Co
 		if len(info.Rounds) == 0 {
 			ui.Text(c, m.SettingsSyncConvergentRound(strconv.Itoa(info.Round), strconv.Itoa(total),
 				convergentRoundKindName(info.RoundKind, m),
-				convergentRoundOutcomeName(info.Outcome, m))).FontSize(11).TextColor(t.Text)
+				convergentRoundOutcomeName(info.Outcome, m))).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 		} else {
 			for _, round := range info.Rounds {
 				ui.Text(c, m.SettingsSyncConvergentRound(strconv.Itoa(round.Round), strconv.Itoa(total),
 					convergentRoundKindName(round.Kind, m),
-					convergentRoundOutcomeName(round.Outcome, m))).FontSize(11).TextColor(t.Text)
+					convergentRoundOutcomeName(round.Outcome, m))).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 			}
 		}
 	}
-	ui.Text(c, m.SettingsSyncConvergentWrites(strconv.Itoa(info.Writes))).FontSize(11).TextColor(t.Text)
-	ui.Text(c, m.SettingsSyncConvergentSummary(strconv.Itoa(info.EntityCount), strconv.Itoa(info.ConflictCount))).FontSize(11).TextColor(t.Text)
+	ui.Text(c, m.SettingsSyncConvergentWrites(strconv.Itoa(info.Writes))).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
+	ui.Text(c, m.SettingsSyncConvergentSummary(strconv.Itoa(info.EntityCount), strconv.Itoa(info.ConflictCount))).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 	if info.LastVerifiedAt > 0 {
 		ui.Text(c, m.SettingsSyncConvergentLastVerified(formatSyncTime(info.LastVerifiedAt))).
-			FontSize(11).TextColor(t.Text)
+			FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 	}
 }
 
@@ -2051,7 +2051,7 @@ func syncGuardPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, 
 		return
 	}
 	ui.Column(c).Padding(10).Gap(8).Background(t.Background).Border(1, t.Warning).Children(func() {
-		ui.Text(c, m.SettingsSyncGuardTitle()).FontSize(12).Bold().TextColor(syncWarningTextColor(t))
+		ui.Text(c, m.SettingsSyncGuardTitle()).FontSize(kit.M(c).Font.Footnote).Bold().TextColor(syncWarningTextColor(t))
 		detail := m.SettingsSyncGuardShrink(
 			strconv.Itoa(finding.Lost),
 			strconv.Itoa(finding.BaseCount),
@@ -2061,16 +2061,16 @@ func syncGuardPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, 
 		if finding.Kind == appsync.GuardTombstone {
 			detail = m.SettingsSyncGuardTombstone(strconv.Itoa(finding.BaseCount))
 		}
-		ui.Text(c, detail).FontSize(11).TextColor(t.Text)
+		ui.Text(c, detail).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 		if finding.ViaRemote {
-			ui.Text(c, m.SettingsSyncGuardViaRemote()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SettingsSyncGuardViaRemote()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		}
 		// Restore and Force push are pinned in syncActionsPinnedBar, outside
 		// this scrolling report, so a short window can never cut them.
 		if state.ForcePushing() {
 			ui.Column(c).Padding(8).Gap(6).Border(1, t.Danger).Children(func() {
-				ui.Text(c, m.SettingsSyncGuardForceConfirm()).FontSize(12).Bold().TextColor(syncDangerTextColor(t))
-				ui.Text(c, m.SettingsSyncGuardForceWarning()).FontSize(11).TextColor(t.Text)
+				ui.Text(c, m.SettingsSyncGuardForceConfirm()).FontSize(kit.M(c).Font.Footnote).Bold().TextColor(syncDangerTextColor(t))
+				ui.Text(c, m.SettingsSyncGuardForceWarning()).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 			})
 		}
 	})
@@ -2088,12 +2088,12 @@ func syncConflictPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapsho
 		device = m.SettingsSyncConflictUnknownDevice()
 	}
 	ui.Column(c).Padding(10).Gap(6).Background(t.Background).Border(1, t.Danger).Children(func() {
-		ui.Text(c, m.SettingsSyncConflictTitle()).FontSize(12).Bold()
-		ui.Text(c, m.SettingsSyncConflictRemoteDevice(device)).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsSyncConflictTitle()).FontSize(kit.M(c).Font.Footnote).Bold()
+		ui.Text(c, m.SettingsSyncConflictRemoteDevice(device)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		if info.RemoteVersion > 0 {
 			ui.Text(c, m.SettingsSyncConflictRemoteVersion(
 				strconv.Itoa(info.RemoteVersion), formatSyncTime(info.RemoteUpdatedAt))).
-				FontSize(11).TextColor(t.TextMuted)
+				FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		}
 		ui.Text(c, m.SettingsSyncConflictSummary(
 			strconv.Itoa(info.Summary.AddedLocal),
@@ -2102,14 +2102,14 @@ func syncConflictPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapsho
 			strconv.Itoa(info.Summary.AddedRemote),
 			strconv.Itoa(info.Summary.ModifiedRemote),
 			strconv.Itoa(info.Summary.DeletedRemote),
-		)).FontSize(11).TextColor(t.Text)
+		)).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 		for _, item := range info.Items {
 			id := item.EntityID
 			if id == "" {
 				id = "—"
 			}
 			ui.Text(c, m.SettingsSyncConflictItem(syncEntityLabel(item.EntityType, m), id,
-				syncConflictKindName(item.Kind, m))).FontSize(11).TextColor(t.Text)
+				syncConflictKindName(item.Kind, m))).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 		}
 		// The three resolutions are pinned in syncActionsPinnedBar so the
 		// row is never cut at the bottom of a short window.
@@ -2135,15 +2135,15 @@ func syncConflictKindName(kind appsync.ConflictKind, m locales.Messages) string 
 // are timestamped and restorable; no entry carries decrypted data.
 func syncBackupsPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).Gap(6).Children(func() {
-		ui.Text(c, m.SettingsSyncBackupsTitle()).FontSize(12).Bold()
-		ui.Text(c, m.SettingsSyncBackupsDescription()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsSyncBackupsTitle()).FontSize(kit.M(c).Font.Footnote).Bold()
+		ui.Text(c, m.SettingsSyncBackupsDescription()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		// Refresh backups is pinned in syncActionsPinnedBar so it stays
 		// visible even when the list is long.
 		if snapshot.BackupsProblem != appsync.ProblemNone {
-			ui.Text(c, m.SettingsSyncBackupsProblem()).FontSize(11).TextColor(syncWarningTextColor(t))
+			ui.Text(c, m.SettingsSyncBackupsProblem()).FontSize(kit.M(c).Font.Caption).TextColor(syncWarningTextColor(t))
 		}
 		if len(snapshot.Backups) == 0 {
-			ui.Text(c, m.SettingsSyncBackupsEmpty()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SettingsSyncBackupsEmpty()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 			return
 		}
 		for _, backup := range snapshot.Backups {
@@ -2152,7 +2152,7 @@ func syncBackupsPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapshot
 				ui.Text(c, fmt.Sprintf("%s · %s · %s",
 					syncBackupSourceName(entry.Source, m),
 					syncBackupReasonName(entry.Reason, m),
-					formatSyncTime(entry.CreatedAt))).FontSize(11).TextColor(t.Text)
+					formatSyncTime(entry.CreatedAt))).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 				if kit.SecondaryButton(c, "", m.SettingsSyncBackupRestore()).Disabled(state.Busy()).Clicked() {
 					state.RestoreBackup(entry.Source, entry.ID)
 					c.Invalidate()
@@ -2222,7 +2222,7 @@ func syncButtons(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m l
 func syncStatus(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
 	provider := appsync.NormalizeProvider(snapshot.Provider)
 	if problem := syncProblemTextFor(m, provider, snapshot.Problem); problem != "" {
-		ui.Text(c, problem).FontSize(12).TextColor(uitheme.DangerText(t))
+		ui.Text(c, problem).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 		return
 	}
 	if err := state.Err(); err != nil {
@@ -2231,12 +2231,12 @@ func syncStatus(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m lo
 		if text == "" {
 			text = m.SettingsSyncOperationFailed()
 		}
-		ui.Text(c, text).FontSize(12).TextColor(uitheme.DangerText(t))
+		ui.Text(c, text).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 		return
 	}
 	status := syncStatusText(m, snapshot.Status)
 	if status != "" {
-		ui.Text(c, status).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, status).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}
 }
 

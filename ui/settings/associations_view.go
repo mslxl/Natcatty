@@ -19,7 +19,7 @@ func associationsSection(c *ui.Context, prefs *PreferencesState,
 	}
 	defaultRow(c, prefs, state, m, t)
 	ui.Text(c, m.SettingsFileAssociations()).Bold()
-	ui.Text(c, m.SettingsFileAssociationsDescription()).FontSize(11).TextColor(t.TextMuted)
+	ui.Text(c, m.SettingsFileAssociationsDescription()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 	associationsList(c, state, m)
 	associationsForm(c, state, m)
 }
@@ -51,22 +51,22 @@ func defaultRow(c *ui.Context, prefs *PreferencesState, state *AssociationsState
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(build)
 		})
 	}
-	ui.Text(c, m.SettingsDefaultOpenerDescription()).FontSize(11).TextColor(t.TextMuted)
+	ui.Text(c, m.SettingsDefaultOpenerDescription()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 	associationProblem(c, state, m, t)
 }
 
 func associationsList(c *ui.Context, state *AssociationsState, m locales.Messages) {
 	list := state.Associations()
 	if len(list) == 0 {
-		ui.Text(c, m.SettingsAssociationEmpty()).FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, m.SettingsAssociationEmpty()).FontSize(kit.M(c).Font.Footnote).TextColor(c.Theme().TextMuted)
 		return
 	}
 	for _, association := range list {
 		association := association
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "."+association.Extension).Width(110).FontSize(13)
+			ui.Text(c, "."+association.Extension).Width(110).FontSize(kit.M(c).Font.Callout)
 			ui.Text(c, openerLabel(m, association.Kind, association.Application)).
-				Grow(1).MinWidth(0).FontSize(13)
+				Grow(1).MinWidth(0).FontSize(kit.M(c).Font.Callout)
 			if kit.GhostButton(c, "", m.SettingsAssociationEdit()).Clicked() {
 				state.BeginEdit(association.Extension)
 				c.Invalidate()
@@ -106,7 +106,7 @@ func associationsForm(c *ui.Context, state *AssociationsState, m locales.Message
 		}
 	})
 	if editing := state.Editing(); editing != "" {
-		ui.Text(c, m.SettingsAssociationEditing(editing)).FontSize(11).TextColor(c.Theme().TextMuted)
+		ui.Text(c, m.SettingsAssociationEditing(editing)).FontSize(kit.M(c).Font.Caption).TextColor(c.Theme().TextMuted)
 	}
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		label := m.SettingsAssociationAdd()
@@ -138,7 +138,7 @@ func associationProblem(c *ui.Context, state *AssociationsState, m locales.Messa
 		message = m.SettingsSaveFailed()
 	}
 	if message != "" {
-		ui.Text(c, message).FontSize(12).TextColor(uitheme.DangerText(t))
+		ui.Text(c, message).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 	}
 }
 
