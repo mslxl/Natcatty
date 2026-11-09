@@ -242,3 +242,10 @@ _Avoid_: safety copy, pre-restore export
 Replacing every backed-up Vault family with one Local Backup's snapshot in a single
 transaction. A failed Restore leaves the current Vault unchanged.
 _Avoid_: import, sync down, rollback
+
+**Interface Style**:
+The look of the interface's shapes and materials: radii, control and bar sizes, type
+scale, translucency, and layout. Classic is the original's shadcn look; macOS is the
+macOS Liquid Glass look. It is independent of the color preset, which decides colors
+only, and it is device-local: sync never carries it.
+_Avoid_: theme, skin, UI mode

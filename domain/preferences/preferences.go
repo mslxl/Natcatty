@@ -5,6 +5,7 @@ package preferences
 
 import (
 	"math"
+	"runtime"
 
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
@@ -182,6 +183,32 @@ func (style CursorStyle) Valid() bool {
 	}
 }
 
+// InterfaceStyle is the look of the interface's shapes and materials:
+// radii, sizes, translucency, and layout. It is independent of the color
+// preset, which decides colors only.
+type InterfaceStyle string
+
+const (
+	// InterfaceClassic is the original's shadcn look.
+	InterfaceClassic InterfaceStyle = "classic"
+	// InterfaceMacOS is the macOS Liquid Glass look.
+	InterfaceMacOS InterfaceStyle = "macos"
+)
+
+// Valid reports whether style is a known Interface Style.
+func (style InterfaceStyle) Valid() bool {
+	return style == InterfaceClassic || style == InterfaceMacOS
+}
+
+// DefaultInterfaceStyle is the style a fresh profile starts with on goos: the
+// macOS style on a Mac, Classic elsewhere.
+func DefaultInterfaceStyle(goos string) InterfaceStyle {
+	if goos == "darwin" {
+		return InterfaceMacOS
+	}
+	return InterfaceClassic
+}
+
 // Appearance group.
 type Appearance struct {
 	ThemeMode     ThemeMode  `json:"themeMode"`
@@ -192,6 +219,9 @@ type Appearance struct {
 	AppIcon       string     `json:"appIcon"`
 	UIFont        string     `json:"uiFont"`
 	WindowOpacity float64    `json:"windowOpacity"`
+	// InterfaceStyle is device-local: the best style differs by platform, so
+	// it is stripped from the synced document.
+	InterfaceStyle InterfaceStyle `json:"interfaceStyle"`
 	// TerminalTheme persists a built-in terminal scheme ID or an imported
 	// custom scheme ID. Custom IDs live in themes.json, so this field cannot
 	// be validated against the built-in catalog alone.
@@ -312,6 +342,7 @@ type PortableSettings struct {
 func Portable(settings Settings) PortableSettings {
 	appearance := settings.Appearance
 	appearance.AppIcon = ""
+	appearance.InterfaceStyle = ""
 	editor := settings.SFTPEditor
 	editor.DefaultOpener = Opener{}
 	editor.FileAssociations = nil
@@ -338,6 +369,7 @@ func MergePortable(current Settings, portable PortableSettings) Settings {
 	next := current
 	next.Appearance = portable.Appearance
 	next.Appearance.AppIcon = current.Appearance.AppIcon
+	next.Appearance.InterfaceStyle = current.Appearance.InterfaceStyle
 	next.Layout = portable.Layout
 	next.Layout.HostViewMode = current.Layout.HostViewMode
 	next.Layout.HostSortMode = current.Layout.HostSortMode
@@ -369,15 +401,16 @@ const (
 func Defaults() Settings {
 	return Settings{
 		Appearance: Appearance{
-			ThemeMode:     ThemeSystem,
-			LightTheme:    domaintheme.DefaultLightTheme,
-			DarkTheme:     domaintheme.DefaultDarkTheme,
-			AccentMode:    AccentTheme,
-			AccentColor:   DefaultAccentColor,
-			AppIcon:       domaintheme.DefaultIconVariant,
-			UIFont:        "",
-			WindowOpacity: 1,
-			TerminalTheme: DefaultTerminalTheme,
+			ThemeMode:      ThemeSystem,
+			LightTheme:     domaintheme.DefaultLightTheme,
+			DarkTheme:      domaintheme.DefaultDarkTheme,
+			AccentMode:     AccentTheme,
+			AccentColor:    DefaultAccentColor,
+			AppIcon:        domaintheme.DefaultIconVariant,
+			UIFont:         "",
+			WindowOpacity:  1,
+			InterfaceStyle: DefaultInterfaceStyle(runtime.GOOS),
+			TerminalTheme:  DefaultTerminalTheme,
 			// As the original's, a fresh profile's terminal follows the app;
 			// the store keeps an older profile's chosen scheme.
 			FollowAppTerminalTheme: true,
@@ -444,6 +477,9 @@ func Normalize(settings Settings) Settings {
 	}
 	if !domaintheme.ValidIconVariant(settings.Appearance.AppIcon) {
 		settings.Appearance.AppIcon = defaults.Appearance.AppIcon
+	}
+	if !settings.Appearance.InterfaceStyle.Valid() {
+		settings.Appearance.InterfaceStyle = defaults.Appearance.InterfaceStyle
 	}
 	if settings.Appearance.AccentMode != AccentTheme && settings.Appearance.AccentMode != AccentCustom {
 		settings.Appearance.AccentMode = defaults.Appearance.AccentMode
@@ -584,6 +620,7 @@ const (
 	FieldAppIcon                      Field = "appearance.appIcon"
 	FieldUIFont                       Field = "appearance.uiFont"
 	FieldWindowOpacity                Field = "appearance.windowOpacity"
+	FieldInterfaceStyle               Field = "appearance.interfaceStyle"
 	FieldTerminalTheme                Field = "appearance.terminalTheme"
 	FieldFollowAppTerminalTheme       Field = "appearance.followAppTerminalTheme"
 	FieldTerminalFontFamily           Field = "appearance.terminalFontFamily"
@@ -626,7 +663,7 @@ func Fields() []Field {
 	return []Field{
 		FieldThemeMode, FieldLightTheme, FieldDarkTheme, FieldAccentMode,
 		FieldAccentColor, FieldAppIcon, FieldUIFont,
-		FieldWindowOpacity, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
+		FieldWindowOpacity, FieldInterfaceStyle, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
 		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink,
 		FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
 		FieldShowOnlyUngroupedHostsInRoot, FieldHostClickBehavior,
@@ -650,7 +687,7 @@ func GroupOf(field Field) (Group, bool) {
 	switch field {
 	case FieldThemeMode, FieldLightTheme, FieldDarkTheme, FieldAccentMode,
 		FieldAccentColor, FieldAppIcon, FieldUIFont,
-		FieldWindowOpacity, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
+		FieldWindowOpacity, FieldInterfaceStyle, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
 		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink:
 		return GroupAppearance, true
 	case FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
@@ -699,6 +736,8 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.Appearance.UIFont = defaults.Appearance.UIFont
 	case FieldWindowOpacity:
 		settings.Appearance.WindowOpacity = defaults.Appearance.WindowOpacity
+	case FieldInterfaceStyle:
+		settings.Appearance.InterfaceStyle = defaults.Appearance.InterfaceStyle
 	case FieldTerminalTheme:
 		settings.Appearance.TerminalTheme = defaults.Appearance.TerminalTheme
 	case FieldFollowAppTerminalTheme:
