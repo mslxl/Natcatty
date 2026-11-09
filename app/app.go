@@ -77,6 +77,7 @@ import (
 	uiapplock "github.com/mslxl/natcatty/ui/applock"
 	editorui "github.com/mslxl/natcatty/ui/editor"
 	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	logsui "github.com/mslxl/natcatty/ui/logs"
 	uimonitoring "github.com/mslxl/natcatty/ui/monitoring"
@@ -1367,6 +1368,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// desktop's live appearance through MyGo's theme module.
 	windows.SetThemeProvider(func() *ui.Theme {
 		return resolveUITheme(preferenceService.Settings().Appearance, mygo.Theme.IsDark())
+	})
+	// The Interface Style is per device and follows the setting live.
+	windows.SetStyleProvider(func() kit.Style {
+		return kit.StyleFor(string(preferenceService.Settings().Appearance.InterfaceStyle))
 	})
 	desktopCtl.SetIconProvider(func() []byte {
 		return trayIconPNG(preferenceService.Settings().Appearance.AppIcon)

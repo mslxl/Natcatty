@@ -2,6 +2,7 @@ package settings
 
 import (
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -40,6 +41,8 @@ func appearanceArea(c *ui.Context, state *PreferencesState, themes *ThemesState,
 				c.Invalidate()
 			}
 		})
+
+		interfaceStylePicker(c, state, m, t, settings.Appearance.InterfaceStyle)
 
 		presetPicker(c, state, m, t, domain.FieldLightTheme, m.SettingsLightTheme(),
 			domaintheme.LightPresets(), settings.Appearance.LightTheme, func(s *domain.Settings, id string) {
@@ -564,6 +567,24 @@ func languagePicker(c *ui.Context, state *PreferencesState, m locales.Messages) 
 					c.Invalidate()
 				}
 			}
+		}
+	})
+}
+
+// interfaceStylePicker chooses the Interface Style: the sizes, materials,
+// and layout the windows draw with, apart from the colors. It applies to
+// this device only.
+func interfaceStylePicker(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme,
+	current domain.InterfaceStyle) {
+	styles := []domain.InterfaceStyle{domain.InterfaceClassic, domain.InterfaceMacOS}
+	labels := []string{m.SettingsInterfaceStyleClassic(), m.SettingsInterfaceStyleMacOS()}
+	label := labels[max(slices.Index(styles, current), 0)]
+	fieldRow(c, state, m, t, domain.FieldInterfaceStyle, m.SettingsInterfaceStyle(), func() {
+		c.Key("settings-interface-style")
+		if ui.Select(c, &label, labels).Width(180).Label(m.SettingsInterfaceStyle()).Changed() {
+			chosen := styles[max(slices.Index(labels, label), 0)]
+			state.Update(func(s *domain.Settings) { s.Appearance.InterfaceStyle = chosen })
+			c.Invalidate()
 		}
 	})
 }

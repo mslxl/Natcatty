@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"github.com/mslxl/natcatty/ui/internal/styletest"
 	"strconv"
 	"testing"
 	"time"
@@ -73,91 +74,93 @@ func waitForRealSurfaces(t *testing.T, st *state.State, count int) {
 // must now expose its menu inside its own Pane box at both sizes, including
 // left/right and top/bottom splits.
 func TestSessionMenuStaysReachableInRealWindowLayouts(t *testing.T) {
-	m := locales.In("en")
-	for _, size := range [][2]int{{720, 480}, {1100, 720}} {
-		t.Run(layoutName(size[0], size[1], "single"), func(t *testing.T) {
-			st := newRealSurfaceState(t)
-			if err := st.NewTab(); err != nil {
-				t.Fatal(err)
-			}
-			waitForRealSurfaces(t, st, 1)
-			tt := ui.NewTester(View(st), size[0], size[1])
-			tt.SetLocale("en")
-			tt.Frame()
+	styletest.Each(t, func(t *testing.T) {
+		m := locales.In("en")
+		for _, size := range [][2]int{{720, 480}, {1100, 720}} {
+			t.Run(layoutName(size[0], size[1], "single"), func(t *testing.T) {
+				st := newRealSurfaceState(t)
+				if err := st.NewTab(); err != nil {
+					t.Fatal(err)
+				}
+				waitForRealSurfaces(t, st, 1)
+				tt := ui.NewTester(View(st), size[0], size[1])
+				tt.SetLocale("en")
+				tt.Frame()
 
-			menu := assertMenuInsidePane(t, tt, m, 1, size)
-			if menu.X < float32(sidebarWidth) {
-				t.Fatalf("single Pane menu starts left of the sidebar: %+v", menu)
-			}
-			if err := tt.Click(m.SessionMenuFor(1)); err != nil {
-				t.Fatalf("click the single Pane menu: %v", err)
-			}
-			if len(tt.Menu()) == 0 {
-				t.Fatalf("%dx%d single Pane menu did not open after a click", size[0], size[1])
-			}
-		})
-
-		t.Run(layoutName(size[0], size[1], "split-right"), func(t *testing.T) {
-			st := newRealSurfaceState(t)
-			if err := st.NewTab(); err != nil {
-				t.Fatal(err)
-			}
-			if err := st.SplitRight(); err != nil {
-				t.Fatal(err)
-			}
-			waitForRealSurfaces(t, st, 2)
-			tt := ui.NewTester(View(st), size[0], size[1])
-			tt.SetLocale("en")
-			tt.Frame()
-
-			left := assertMenuInsidePane(t, tt, m, 1, size)
-			right := assertMenuInsidePane(t, tt, m, 2, size)
-			if right.X <= left.X {
-				t.Fatalf("%dx%d right Pane menu is not to the right of the left one: left %+v right %+v",
-					size[0], size[1], left, right)
-			}
-			// Both menus must be clickable, not merely painted.
-			for _, number := range []int{1, 2} {
-				if err := tt.Click(m.SessionMenuFor(number)); err != nil {
-					t.Fatalf("click menu %d: %v", number, err)
+				menu := assertMenuInsidePane(t, tt, m, 1, size)
+				if menu.X < float32(sidebarWidth) {
+					t.Fatalf("single Pane menu starts left of the sidebar: %+v", menu)
+				}
+				if err := tt.Click(m.SessionMenuFor(1)); err != nil {
+					t.Fatalf("click the single Pane menu: %v", err)
 				}
 				if len(tt.Menu()) == 0 {
-					t.Fatalf("%dx%d menu %d did not open after a click", size[0], size[1], number)
+					t.Fatalf("%dx%d single Pane menu did not open after a click", size[0], size[1])
 				}
-				tt.CloseMenu()
-			}
-		})
+			})
 
-		t.Run(layoutName(size[0], size[1], "split-down"), func(t *testing.T) {
-			st := newRealSurfaceState(t)
-			if err := st.NewTab(); err != nil {
-				t.Fatal(err)
-			}
-			if err := st.SplitDown(); err != nil {
-				t.Fatal(err)
-			}
-			waitForRealSurfaces(t, st, 2)
-			tt := ui.NewTester(View(st), size[0], size[1])
-			tt.SetLocale("en")
-			tt.Frame()
+			t.Run(layoutName(size[0], size[1], "split-right"), func(t *testing.T) {
+				st := newRealSurfaceState(t)
+				if err := st.NewTab(); err != nil {
+					t.Fatal(err)
+				}
+				if err := st.SplitRight(); err != nil {
+					t.Fatal(err)
+				}
+				waitForRealSurfaces(t, st, 2)
+				tt := ui.NewTester(View(st), size[0], size[1])
+				tt.SetLocale("en")
+				tt.Frame()
 
-			top := assertMenuInsidePane(t, tt, m, 1, size)
-			bottom := assertMenuInsidePane(t, tt, m, 2, size)
-			if bottom.Y <= top.Y {
-				t.Fatalf("%dx%d bottom Pane menu is not below the top one: top %+v bottom %+v",
-					size[0], size[1], top, bottom)
-			}
-			for _, number := range []int{1, 2} {
-				if err := tt.Click(m.SessionMenuFor(number)); err != nil {
-					t.Fatalf("click menu %d: %v", number, err)
+				left := assertMenuInsidePane(t, tt, m, 1, size)
+				right := assertMenuInsidePane(t, tt, m, 2, size)
+				if right.X <= left.X {
+					t.Fatalf("%dx%d right Pane menu is not to the right of the left one: left %+v right %+v",
+						size[0], size[1], left, right)
 				}
-				if len(tt.Menu()) == 0 {
-					t.Fatalf("%dx%d stacked menu %d did not open after a click", size[0], size[1], number)
+				// Both menus must be clickable, not merely painted.
+				for _, number := range []int{1, 2} {
+					if err := tt.Click(m.SessionMenuFor(number)); err != nil {
+						t.Fatalf("click menu %d: %v", number, err)
+					}
+					if len(tt.Menu()) == 0 {
+						t.Fatalf("%dx%d menu %d did not open after a click", size[0], size[1], number)
+					}
+					tt.CloseMenu()
 				}
-				tt.CloseMenu()
-			}
-		})
-	}
+			})
+
+			t.Run(layoutName(size[0], size[1], "split-down"), func(t *testing.T) {
+				st := newRealSurfaceState(t)
+				if err := st.NewTab(); err != nil {
+					t.Fatal(err)
+				}
+				if err := st.SplitDown(); err != nil {
+					t.Fatal(err)
+				}
+				waitForRealSurfaces(t, st, 2)
+				tt := ui.NewTester(View(st), size[0], size[1])
+				tt.SetLocale("en")
+				tt.Frame()
+
+				top := assertMenuInsidePane(t, tt, m, 1, size)
+				bottom := assertMenuInsidePane(t, tt, m, 2, size)
+				if bottom.Y <= top.Y {
+					t.Fatalf("%dx%d bottom Pane menu is not below the top one: top %+v bottom %+v",
+						size[0], size[1], top, bottom)
+				}
+				for _, number := range []int{1, 2} {
+					if err := tt.Click(m.SessionMenuFor(number)); err != nil {
+						t.Fatalf("click menu %d: %v", number, err)
+					}
+					if len(tt.Menu()) == 0 {
+						t.Fatalf("%dx%d stacked menu %d did not open after a click", size[0], size[1], number)
+					}
+					tt.CloseMenu()
+				}
+			})
+		}
+	})
 }
 
 func layoutName(width, height int, kind string) string {

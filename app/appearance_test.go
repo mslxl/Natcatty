@@ -9,6 +9,7 @@ import (
 
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
+	"github.com/mslxl/natcatty/ui/kit"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
@@ -161,3 +162,24 @@ func TestWindowManagerAppliesThemeAndIconToOpenAndFutureWindows(t *testing.T) {
 type fakeConfirmer struct{}
 
 func (fakeConfirmer) Confirm(closePrompt) bool { return true }
+
+func TestWindowManagerAppliesTheInterfaceStyleEachFrame(t *testing.T) {
+	manager := newWindowManager(&fakeWindowHost{}, fakeConfirmer{}, nil, nil,
+		func() func(*ui.Context) { return func(*ui.Context) {} },
+		func() string { return "en" })
+	stored := kit.StyleMacOS
+	manager.SetStyleProvider(func() kit.Style { return kit.StyleFor(stored) })
+	t.Cleanup(func() { kit.SetStyle(nil) })
+
+	var got string
+	tester := ui.NewTester(manager.withTheme(func(*ui.Context) { got = kit.CurrentStyle().ID() }), 100, 100)
+	tester.Frame()
+	if got != kit.StyleMacOS {
+		t.Fatalf("style = %q, want macos", got)
+	}
+	stored = kit.StyleClassic
+	tester.Frame()
+	if got != kit.StyleClassic {
+		t.Fatalf("style after the setting changed = %q, want classic", got)
+	}
+}

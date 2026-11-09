@@ -136,6 +136,7 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 
 	add(AreaAppearance, "", m.NavLanguage(), "language locale translation")
 	add(AreaAppearance, domain.FieldThemeMode, m.SettingsThemeMode(), "theme mode light dark system")
+	add(AreaAppearance, domain.FieldInterfaceStyle, m.SettingsInterfaceStyle(), "interface style classic macos look")
 	add(AreaAppearance, domain.FieldLightTheme, m.SettingsLightTheme(), "light theme preset palette")
 	add(AreaAppearance, domain.FieldDarkTheme, m.SettingsDarkTheme(), "dark theme preset palette")
 	add(AreaAppearance, domain.FieldAccentMode, m.SettingsAccentMode(), "accent color custom")
