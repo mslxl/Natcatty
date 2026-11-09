@@ -256,9 +256,8 @@ func opacityPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t
 	})
 }
 
-// iconPicker shows the original's three icon groups. The variants are named,
-// not drawn: MyGo's taskbar and tray accept a PNG, but a themed icon preview
-// would have to reproduce twelve 1024px assets in the settings surface.
+// iconPicker shows the original's three icon groups, each variant as a tile
+// with its artwork above its name. Without artwork the tiles show names only.
 func iconPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme,
 	settings domain.Settings) {
 	fieldRow(c, state, m, t, domain.FieldAppIcon, m.SettingsAppIcon(), func() {
@@ -271,12 +270,8 @@ func iconPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t *u
 			ui.Row(c).Wrap().Gap(6).FillWidth().Children(func() {
 				for _, variant := range domaintheme.IconVariantsInGroup(group) {
 					variant := variant
-					button := ui.Button(c, iconVariantName(m, variant.ID)).
-						Width(112).Height(28).FontSize(12)
-					if variant.ID == settings.Appearance.AppIcon {
-						button = button.Background(t.Accent).TextColor(t.AccentText)
-					}
-					if button.Clicked() {
+					if iconTile(c, t, iconVariantName(m, variant.ID), state.iconThumb(variant.ID),
+						variant.ID == settings.Appearance.AppIcon).Clicked() {
 						state.Update(func(s *domain.Settings) { s.Appearance.AppIcon = variant.ID })
 						c.Invalidate()
 					}
@@ -284,6 +279,29 @@ func iconPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t *u
 			})
 		}
 	})
+}
+
+// iconTile is one app-icon choice: its artwork and its name, with an accent
+// ring when chosen, shaded on hover as a ListRow.
+func iconTile(c *ui.Context, t *ui.Theme, name string, thumb *ui.Bitmap, chosen bool) ui.Element {
+	tile := ui.ButtonBase(c).Label(name).Tooltip(name).Width(108).Padding(8, 4).
+		Radius(kit.RadiusCard).Border(1, t.Border).Background(t.Surface).
+		Justify(ui.Center).TextColor(t.Text)
+	switch {
+	case chosen:
+		tile.Border(2, t.Accent).Background(t.Accent.Alpha(0.08))
+	case tile.Hovered():
+		tile.Background(kit.Muted(t)).Border(1, t.Border.Mix(t.Text, 0.15))
+	}
+	tile.Children(func() {
+		ui.Column(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			if thumb != nil {
+				ui.Image(c, thumb).Width(40).Height(40).Shrink(0)
+			}
+			ui.Text(c, name).FontSize(11).SingleLine().MaxWidth(100)
+		})
+	})
+	return tile
 }
 
 // followAppToggle is the original's "Follow application theme": the terminal

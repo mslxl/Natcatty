@@ -1,6 +1,8 @@
 package settings
 
 import (
+	"github.com/egoist/mygo/ui"
+
 	domain "github.com/mslxl/natcatty/domain/preferences"
 )
 
@@ -24,6 +26,10 @@ type PreferencesState struct {
 	// requestLocale shows the app in another language; nil hides the
 	// Language row.
 	requestLocale func(tag string)
+	// iconArtwork reads an app-icon variant's PNG for the icon picker, whose
+	// scaled thumbnails iconThumbs keeps.
+	iconArtwork func(variant string) []byte
+	iconThumbs  map[string]*ui.Bitmap
 }
 
 // PreferencesOption customizes a PreferencesState.
