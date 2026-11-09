@@ -9,6 +9,7 @@ import (
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 	transferstate "github.com/mslxl/natcatty/ui/transfer/state"
 )
 
@@ -172,7 +173,7 @@ func actions(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 
 	bookmark := toolButton(c, icons.Bookmark, m.SftpBookmarks(), false).Disabled(!ready)
 	if s.Bookmarked(side) {
-		bookmark.TextColor(uiYellow)
+		bookmark.TextColor(uitheme.Bookmark)
 	}
 	bookmark.Menu(func(menu *ui.Menu) { bookmarksMenu(menu, s, side, tab, m) })
 	// The last directory a terminal on this file system reported, as the
@@ -231,9 +232,6 @@ func actions(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 		}
 	})
 }
-
-// uiYellow marks a bookmarked folder, as the original's yellow bookmark.
-var uiYellow = ui.Hex("#EAB308")
 
 // toolButton is the toolbar's ghost icon button, kit.IconButton's size;
 // active fills it.

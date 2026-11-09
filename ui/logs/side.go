@@ -63,7 +63,7 @@ func (p *HistoryPanel) View(host model.HostID) func(*ui.Context) {
 					c.Invalidate()
 				}
 				ui.Column(c).Grow(1)
-				ui.Text(c, m.SidePanelHistoryCount(len(entries))).FontSize(11).TextColor(t.TextMuted).SingleLine()
+				ui.Text(c, m.SidePanelHistoryCount(len(entries))).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
 			})
 			if p.state.Problem() == ProblemLoad {
 				ui.Box(c).FillWidth().Padding(0, 8, 4, 8).Children(func() {
@@ -124,18 +124,18 @@ func (p *HistoryPanel) row(c *ui.Context, m locales.Messages, t *ui.Theme, entry
 	c.Key("side-history-" + entry.ID)
 	// Run and Paste stay on every row, so they need no hover to be found;
 	// a double click pastes, and Delete is in the row's context menu.
-	row := ui.Row(c).FillWidth().Padding(4, 4, 4, 8).Gap(2).Radius(kit.RadiusControl).AlignItems(ui.Center)
+	row := ui.Row(c).FillWidth().Padding(4, 4, 4, 8).Gap(2).Radius(kit.M(c).Radius.Control).AlignItems(ui.Center)
 	if row.Hovered() {
 		row.Background(kit.Subtle(t))
 	}
 	row.Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
-			ui.Text(c, strings.TrimSpace(entry.Command)).FontSize(12).SingleLine()
+			ui.Text(c, strings.TrimSpace(entry.Command)).FontSize(kit.M(c).Font.Footnote).SingleLine()
 			meta := relativeTime(m, entry.RecordedAt)
 			if p.all {
 				meta = historyHostLabel(m, entry) + " · " + meta
 			}
-			ui.Text(c, meta).FontSize(11).TextColor(t.TextMuted).SingleLine()
+			ui.Text(c, meta).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
 		})
 		if kit.IconButton(c, icons.CornerDownLeft, m.SidePanelHistoryPaste()).Clicked() {
 			p.failed = !p.send(entry.Command, false)

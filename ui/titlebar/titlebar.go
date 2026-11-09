@@ -9,7 +9,9 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // Height is the height of a window's title bar, as the original's h-9 Tab
@@ -63,9 +65,6 @@ func Insets(c *ui.Context, style Style) (left, right float32) {
 		return 0, Room
 	}
 }
-
-// closeHover is the main window's close hover fill, the original's red-500.
-var closeHover = ui.RGB(239, 68, 68)
 
 // Style picks the controls a window shows.
 type Style int
@@ -149,7 +148,7 @@ func tabsControl(c *ui.Context, key, icon, label string, danger bool) ui.Element
 		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted)
 	switch {
 	case danger && (button.Hovered() || button.Pressed()):
-		button.Background(closeHover).TextColor(ui.Hex("#ffffff"))
+		button.Background(uitheme.CloseHover).TextColor(uitheme.CloseHoverText)
 	case button.Hovered() || button.Pressed():
 		button.Background(t.Text.Alpha(0.1))
 	}
@@ -188,12 +187,12 @@ func popupControl(c *ui.Context, key, icon, label string, closing bool) ui.Eleme
 // rounded square that turns the destructive color on hover.
 func dialogClose(c *ui.Context, label string) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Key("window-close").Label(label).Size(CloseSize, CloseSize).Radius(6).
+	button := ui.ButtonBase(c).Key("window-close").Label(label).Size(CloseSize, CloseSize).Radius(kit.M(c).Radius.Control).
 		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted)
 	if button.Hovered() || button.Pressed() {
 		button.Background(t.Danger.Alpha(0.2)).TextColor(t.Danger)
 	}
-	button.Children(func() { ui.Icon(c, icons.Lucide(icons.X)).Size(16, 16) })
+	button.Children(func() { kit.IconSized(c, icons.X, kit.M(c).Icon.Regular) })
 	return button
 }
 

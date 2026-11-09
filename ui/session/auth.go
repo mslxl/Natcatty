@@ -9,6 +9,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
@@ -306,7 +307,7 @@ func AuthPromptModal(prompt *AuthPrompt) func(*ui.Context) {
 				switch view.Kind {
 				case AuthPromptPassphrase:
 					title := m.AuthPromptPassphraseTitle(view.Passphrase.Username, view.Passphrase.Hostname)
-					ui.Text(c, title).FontSize(18).Bold()
+					ui.Text(c, title).FontSize(kit.M(c).Font.Title).Bold()
 					body := m.AuthPromptPassphraseBody(view.Passphrase.KeyLabel)
 					if view.Passphrase.Invalid {
 						body = m.AuthPromptPassphraseInvalid(view.Passphrase.KeyLabel)
@@ -318,7 +319,7 @@ func AuthPromptModal(prompt *AuthPrompt) func(*ui.Context) {
 						}
 					})
 				case AuthPromptKeyboardInteractive:
-					ui.Text(c, m.AuthPromptKeyboardTitle(view.Keyboard.Username, view.Keyboard.Hostname)).FontSize(18).Bold()
+					ui.Text(c, m.AuthPromptKeyboardTitle(view.Keyboard.Username, view.Keyboard.Hostname)).FontSize(kit.M(c).Font.Title).Bold()
 					if view.Keyboard.Instruction != "" {
 						ui.Text(c, view.Keyboard.Instruction).TextColor(t.TextMuted)
 					}

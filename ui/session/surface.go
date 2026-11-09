@@ -23,6 +23,7 @@ import (
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -543,7 +544,7 @@ func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
 		if s.browserErr != nil {
 			ui.Row(c).FillWidth().Padding(6, 8).Gap(8).AlignItems(ui.Center).
 				Background(t.Surface).Children(func() {
-				ui.Text(c, m.BrowserOpenFailed()).FontSize(11).Grow(1).
+				ui.Text(c, m.BrowserOpenFailed()).FontSize(kit.M(c).Font.Caption).Grow(1).
 					MinWidth(0).SingleLine().TextColor(uitheme.DangerText(t))
 				if ui.Button(c, m.SessionDismiss()).Clicked() {
 					s.browserErr = nil
@@ -760,9 +761,9 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 func (s *Surface) hibernatedView(c *ui.Context, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).Grow(1).FillWidth().Padding(24).Gap(10).
 		Justify(ui.Center).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, m.SessionHibernatedTitle()).FontSize(16).Bold().
+		ui.Text(c, m.SessionHibernatedTitle()).FontSize(kit.M(c).Font.Title3).Bold().
 			TextAlign(ui.Center).TextColor(t.Text)
-		ui.Text(c, m.SessionHibernatedBody()).FontSize(11).Wrap().
+		ui.Text(c, m.SessionHibernatedBody()).FontSize(kit.M(c).Font.Caption).Wrap().
 			TextAlign(ui.Center).MaxWidth(520).TextColor(t.TextMuted)
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			if ui.PrimaryButton(c, m.SessionResume()).Clicked() {
@@ -781,9 +782,9 @@ func (s *Surface) hibernatedView(c *ui.Context, m locales.Messages, t *ui.Theme)
 func (s *Surface) observerView(c *ui.Context, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).Grow(1).FillWidth().Gap(6).Padding(8).Children(func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.SessionObserverTitle()).FontSize(13).Bold().SingleLine().
+			ui.Text(c, m.SessionObserverTitle()).FontSize(kit.M(c).Font.Callout).Bold().SingleLine().
 				TextColor(t.Text)
-			ui.Text(c, m.SessionObserverHint()).FontSize(10).SingleLine().
+			ui.Text(c, m.SessionObserverHint()).FontSize(kit.M(c).Font.Caption2).SingleLine().
 				MinWidth(0).Grow(1).TextColor(t.TextMuted)
 			if ui.Button(c, m.SessionObserverClose()).Clicked() {
 				s.CloseObserver()
@@ -799,7 +800,7 @@ func (s *Surface) renameDialog(c *ui.Context, m locales.Messages, t *ui.Theme) {
 	ui.Modal(c, &s.renaming, func() {
 		ui.Column(c).Width(320).Padding(14).Gap(10).Background(t.Surface).
 			Radius(t.Radius).Border(1, t.Border).Children(func() {
-			ui.Text(c, m.SessionMenuRenameTitle()).FontSize(13).Bold().TextColor(t.Text)
+			ui.Text(c, m.SessionMenuRenameTitle()).FontSize(kit.M(c).Font.Callout).Bold().TextColor(t.Text)
 			input := ui.TextInput(c, &s.renameValue)
 			input.Label(m.SessionRenameField())
 			submitted := input.Submitted()

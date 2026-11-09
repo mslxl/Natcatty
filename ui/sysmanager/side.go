@@ -71,14 +71,14 @@ func SideView(s *State) func(*ui.Context) {
 					dot = t.Success
 				}
 				ui.Box(c).Size(7, 7).Radius(4).Background(dot).Shrink(0)
-				ui.Text(c, text).FontSize(12).TextColor(color).SingleLine().Grow(1).MinWidth(0)
+				ui.Text(c, text).FontSize(kit.M(c).Font.Footnote).TextColor(color).SingleLine().Grow(1).MinWidth(0)
 				sideRefreshControls(c, s, m)
 			})
 			if problem := problemText(m, s.Problem()); problem != "" {
-				ui.Text(c, problem).FontSize(12).TextColor(t.Danger)
+				ui.Text(c, problem).FontSize(kit.M(c).Font.Footnote).TextColor(t.Danger)
 			}
 			if notice := actionNotice(s, m); notice != "" {
-				ui.Text(c, notice).FontSize(12).TextColor(actionNoticeColor(s, t))
+				ui.Text(c, notice).FontSize(kit.M(c).Font.Footnote).TextColor(actionNoticeColor(s, t))
 			}
 			tabs(c, s, m)
 			tabContent(c, s, m, t)

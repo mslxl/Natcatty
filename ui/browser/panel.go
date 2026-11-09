@@ -14,6 +14,7 @@ import (
 
 	appbrowser "github.com/mslxl/natcatty/application/browser"
 	domainbrowser "github.com/mslxl/natcatty/domain/browser"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -498,15 +499,15 @@ func (p *Panel) tabStrip(c *ui.Context, state appbrowser.State, m locales.Messag
 
 func (p *Panel) banner(c *ui.Context, text string, t *ui.Theme) {
 	ui.Row(c).FillWidth().Padding(6, 8).Background(t.Surface).Children(func() {
-		ui.Text(c, text).FontSize(11).Grow(1).MinWidth(0).SingleLine().TextColor(uitheme.DangerText(t))
+		ui.Text(c, text).FontSize(kit.M(c).Font.Caption).Grow(1).MinWidth(0).SingleLine().TextColor(uitheme.DangerText(t))
 	})
 }
 
 func (p *Panel) status(c *ui.Context, title, body, retry string, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).Grow(1).FillWidth().Padding(24).Gap(10).
 		Justify(ui.Center).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, title).FontSize(16).Bold().TextAlign(ui.Center).TextColor(t.Text)
-		ui.Text(c, body).FontSize(11).Wrap().TextAlign(ui.Center).
+		ui.Text(c, title).FontSize(kit.M(c).Font.Title3).Bold().TextAlign(ui.Center).TextColor(t.Text)
+		ui.Text(c, body).FontSize(kit.M(c).Font.Caption).Wrap().TextAlign(ui.Center).
 			MaxWidth(420).TextColor(t.TextMuted)
 		if retry != "" {
 			if ui.PrimaryButton(c, retry).Clicked() {
@@ -533,9 +534,9 @@ func (p *Panel) page(c *ui.Context, tab appbrowser.Tab, t *ui.Theme) {
 		if title == "" {
 			title = tab.URL
 		}
-		ui.Text(c, title).FontSize(14).Bold().TextAlign(ui.Center).
+		ui.Text(c, title).FontSize(kit.M(c).Font.Body).Bold().TextAlign(ui.Center).
 			MaxWidth(420).SingleLine().TextColor(t.Text)
-		ui.Text(c, tab.URL).FontSize(11).TextAlign(ui.Center).
+		ui.Text(c, tab.URL).FontSize(kit.M(c).Font.Caption).TextAlign(ui.Center).
 			MaxWidth(420).SingleLine().TextColor(t.TextMuted)
 	})
 }

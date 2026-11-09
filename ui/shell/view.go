@@ -137,7 +137,7 @@ func contentCard(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	ui.Column(c).Grow(1).FillHeight().MinWidth(0).Padding(0, cardGap, cardGap, start).Gap(cardGap).Children(func() {
 		notices(c, s, m, t)
 		ui.Column(c).FillWidth().Grow(1).MinHeight(0).MinWidth(0).Padding(cardPadding).
-			Background(t.Surface).Border(cardBorder, t.Border).Radius(kit.RadiusCard).
+			Background(t.Surface).Border(cardBorder, t.Border).Radius(kit.M(c).Radius.Card).
 			Shadow(0, 1, 3, 0, kit.CardShadow(t)).Clip().Children(page)
 	})
 }
@@ -172,9 +172,9 @@ func homeSidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme)
 				ui.Image(c, mark).Size(28, 28).Shrink(0)
 			} else {
 				ui.Box(c).Size(28, 28).Radius(8).Background(t.Accent).Center().TextColor(t.AccentText).
-					Children(func() { ui.Icon(c, icons.Lucide(icons.SquareTerminal)).Size(16, 16) })
+					Children(func() { kit.IconSized(c, icons.SquareTerminal, kit.M(c).Icon.Regular) })
 			}
-			ui.Text(c, m.AppName()).FontSize(16).FontWeight(700).SingleLine()
+			ui.Text(c, m.AppName()).FontSize(kit.M(c).Font.Title3).FontWeight(700).SingleLine()
 		})
 
 		// The list scrolls when the window is too short for every entry.
@@ -322,7 +322,7 @@ func controlPanel(c *ui.Context, s *state.State, m locales.Messages) {
 	t := c.Theme()
 	ui.PopoverBase(c, button, open, func(panel ui.Element) {
 		panel.AttachTo(button, ui.AnchorBottomEnd, ui.AnchorTopEnd).Margin(6, 0, 0, 0).
-			Background(t.Surface).Border(1, t.Border).Radius(kit.RadiusCard).
+			Background(t.Surface).Border(1, t.Border).Radius(kit.M(c).Radius.Card).
 			Shadow(0, 8, 24, 0, kit.CardShadow(t)).Clip()
 		content(c)
 	})
@@ -331,7 +331,7 @@ func controlPanel(c *ui.Context, s *state.State, m locales.Messages) {
 // barButton is an icon-only control at the right of the Tab bar.
 func barButton(c *ui.Context, key, icon, label string) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Key(key).Label(label).Tooltip(label).Size(tabHeight, tabHeight).Radius(kit.RadiusControl).
+	button := ui.ButtonBase(c).Key(key).Label(label).Tooltip(label).Size(tabHeight, tabHeight).Radius(kit.M(c).Radius.Control).
 		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
 	if button.Hovered() || button.Pressed() {
 		button.Background(t.Text.Alpha(0.1))
@@ -468,7 +468,7 @@ func sideToolFace(m locales.Messages, id state.SideToolID) (string, string) {
 // tool is tinted with the accent.
 func sidePanelButton(c *ui.Context, icon, label string, active bool) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(28, 28).Radius(kit.RadiusControl).
+	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(28, 28).Radius(kit.M(c).Radius.Control).
 		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
 	switch {
 	case active:
