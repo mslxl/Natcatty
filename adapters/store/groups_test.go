@@ -66,18 +66,18 @@ func TestHostGroupsPersistAndReorder(t *testing.T) {
 	if err := second.SaveGroup(ctx, loaded[1]); err != nil {
 		t.Fatalf("update SaveGroup: %v", err)
 	}
-	got, err := second.GetGroup(ctx, "prod/web")
-	if err != nil || got.Username != "ops" {
+	got, err := second.GetGroup(ctx, "g-web")
+	if err != nil || got.Username != "ops" || got.Path != "prod/web" {
 		t.Fatalf("GetGroup = %+v, %v", got, err)
 	}
 
-	if err := second.DeleteGroup(ctx, "prod/web"); err != nil {
+	if err := second.DeleteGroup(ctx, "g-web"); err != nil {
 		t.Fatalf("DeleteGroup: %v", err)
 	}
-	if _, err := second.GetGroup(ctx, "prod/web"); !errors.Is(err, appvault.ErrNotFound) {
+	if _, err := second.GetGroup(ctx, "g-web"); !errors.Is(err, appvault.ErrNotFound) {
 		t.Fatalf("deleted group error = %v, want ErrNotFound", err)
 	}
-	if _, err := second.GetGroup(ctx, "prod"); err != nil {
+	if _, err := second.GetGroup(ctx, "g-prod"); err != nil {
 		t.Fatalf("sibling group was removed: %v", err)
 	}
 }
@@ -87,17 +87,18 @@ func TestDeletingAGroupDoesNotDeleteItsHosts(t *testing.T) {
 	store, _ := openTestStore(t)
 	when := time.Unix(1700000000, 0).UTC()
 
-	if err := store.SaveGroup(ctx, domainvault.Group{Path: "prod", CreatedAt: when, UpdatedAt: when}); err != nil {
+	group := domainvault.Group{ID: "g-prod", Name: "prod", Path: "prod", CreatedAt: when, UpdatedAt: when}
+	if err := store.SaveGroup(ctx, group); err != nil {
 		t.Fatalf("SaveGroup: %v", err)
 	}
 	host := domainvault.Host{
 		ID: "host-1", Label: "web", Hostname: "web.example.com", Port: 22,
-		Protocol: domainvault.ProtocolSSH, Group: "prod", CreatedAt: when, UpdatedAt: when,
+		Protocol: domainvault.ProtocolSSH, GroupID: group.ID, CreatedAt: when, UpdatedAt: when,
 	}
 	if err := store.Save(ctx, host); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := store.DeleteGroup(ctx, "prod"); err != nil {
+	if err := store.DeleteGroup(ctx, group.ID); err != nil {
 		t.Fatalf("DeleteGroup: %v", err)
 	}
 	stored, err := store.Get(ctx, "host-1")

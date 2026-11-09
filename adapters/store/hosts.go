@@ -24,6 +24,23 @@ func (s *Store) List(ctx context.Context) ([]domainvault.Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	return s.materializeHostGroups(ctx, hosts)
+}
+
+// materializeHostGroups fills each Host's display path from the group tree.
+// Storage keeps only the stable GroupID, so this is the one place a path is
+// produced for a Host read from disk.
+func (s *Store) materializeHostGroups(ctx context.Context, hosts []domainvault.Host) ([]domainvault.Host, error) {
+	if len(hosts) == 0 {
+		return hosts, nil
+	}
+	groups, err := s.ListGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for index := range hosts {
+		hosts[index] = domainvault.MaterializeHostGroup(hosts[index], groups)
+	}
 	return hosts, nil
 }
 
@@ -45,7 +62,11 @@ func (s *Store) Get(ctx context.Context, id model.HostID) (domainvault.Host, err
 	if err := decodeData(data, "Host", &host); err != nil {
 		return domainvault.Host{}, err
 	}
-	return host, nil
+	hosts, err := s.materializeHostGroups(ctx, []domainvault.Host{host})
+	if err != nil {
+		return domainvault.Host{}, err
+	}
+	return hosts[0], nil
 }
 
 // Save inserts or replaces one Host aggregate. The indexed columns are
@@ -57,7 +78,7 @@ func (s *Store) Save(ctx context.Context, host domainvault.Host) error {
 	}
 	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
 		return upsertModel(tx, &model, "id",
-			"label", "hostname", "port", "username", "protocol", "group_path",
+			"label", "hostname", "port", "username", "protocol", "group_id",
 			"pinned", "order_key", "updated_at", "data")
 	}); err != nil {
 		return fmt.Errorf("store: save Host: %w", err)

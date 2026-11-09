@@ -90,7 +90,18 @@ func (v *Vault) Snapshot(ctx context.Context) (appsync.Payload, error) {
 	if payload.Hosts, err = v.records.List(ctx); err != nil {
 		return appsync.Payload{}, err
 	}
-	for _, host := range payload.Hosts {
+	// A connection is this device's telemetry, not a Vault fact: the
+	// original's sanitizeHostsForSync strips it before upload so a peer's
+	// clock never reorders another device's Recently Connected list. Copy the
+	// slice first; a repository is free to return its own backing array.
+	hosts := make([]domainvault.Host, len(payload.Hosts))
+	copy(hosts, payload.Hosts)
+	for index := range hosts {
+		hosts[index].LastConnectedAt = 0
+	}
+	payload.Hosts = hosts
+	for index := range payload.Hosts {
+		host := &payload.Hosts[index]
 		add(host.UpdatedAt.UnixMilli())
 		if host.HasPassword {
 			if err := v.addSecret(ctx, &payload, appvault.HostSecretRef(host.ID, appvault.FieldPassword)); err != nil {
