@@ -3,6 +3,7 @@ package kit
 import (
 	"sync/atomic"
 
+	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -13,6 +14,9 @@ type Style interface {
 	// ID is the style's stored name, as Appearance.InterfaceStyle's.
 	ID() string
 	Metrics() Metrics
+	// Theme derives the style's widget theme from the preset's. It returns
+	// a copy and never changes base.
+	Theme(base *ui.Theme) *ui.Theme
 	// Material is what fills a surface of role.
 	Material(role SurfaceRole) Material
 	// Native reports whether the style follows the platform's own idiom,
@@ -34,6 +38,9 @@ const (
 	SurfaceBar
 	// SurfaceOverlay is a popover, palette, or dialog.
 	SurfaceOverlay
+	// SurfaceScrollEdge lies over content scrolling under a bar, where the
+	// macOS style fades the content out.
+	SurfaceScrollEdge
 )
 
 // MaterialKind is how a Material fills a surface.
@@ -44,8 +51,11 @@ const (
 	MaterialOpaque MaterialKind = iota
 	// MaterialGlass paints Paint, such as a glass.Glass.
 	MaterialGlass
-	// MaterialVibrant leaves the surface clear over the window's vibrancy.
+	// MaterialVibrant leaves the surface clear over the window's vibrancy,
+	// or fills it with the theme's surface where the window shows none.
 	MaterialVibrant
+	// MaterialClear draws nothing.
+	MaterialClear
 )
 
 // Material is a surface's fill. Paint is set for MaterialGlass.
@@ -63,16 +73,53 @@ const (
 // classic is today's look: the original's sizes on opaque surfaces.
 type classic struct{}
 
-func (classic) ID() string                    { return StyleClassic }
-func (classic) Metrics() Metrics              { return classicMetrics }
-func (classic) Material(SurfaceRole) Material { return Material{Kind: MaterialOpaque} }
-func (classic) Native() bool                  { return false }
+func (classic) ID() string                     { return StyleClassic }
+func (classic) Metrics() Metrics               { return classicMetrics }
+func (classic) Theme(base *ui.Theme) *ui.Theme { return base }
+func (classic) Native() bool                   { return false }
 
-// macOS is the macOS 27 style. Until it has its own recipes it draws as
-// Classic under its own ID.
-type macOS struct{ classic }
+func (classic) Material(role SurfaceRole) Material {
+	if role == SurfaceScrollEdge {
+		return Material{Kind: MaterialClear}
+	}
+	return Material{Kind: MaterialOpaque}
+}
 
-func (macOS) ID() string { return StyleMacOS }
+// macOS is the macOS 27 style: a vibrant sidebar, Liquid Glass bars and
+// overlays, and a hierarchy drawn with fills more than with lines.
+type macOS struct{}
+
+func (macOS) ID() string       { return StyleMacOS }
+func (macOS) Metrics() Metrics { return macOSMetrics }
+func (macOS) Native() bool     { return true }
+
+func (macOS) Material(role SurfaceRole) Material {
+	switch role {
+	case SurfaceSidebar:
+		return Material{Kind: MaterialVibrant}
+	case SurfaceBar, SurfaceOverlay:
+		return Material{Kind: MaterialGlass, Paint: glass.Glass{Style: glass.Regular}}
+	case SurfaceScrollEdge:
+		return Material{Kind: MaterialGlass, Paint: glass.ScrollEdge{}}
+	}
+	return Material{Kind: MaterialOpaque}
+}
+
+// Theme keeps the preset's colors and fades its borders toward the
+// background, so that a surface over a translucent material reads by its
+// fill; the body text is macOS's 13 DIPs.
+func (macOS) Theme(base *ui.Theme) *ui.Theme {
+	t := *base
+	fade := float32(0.5)
+	if t.Dark {
+		// A dark border is already close to the background.
+		fade = 0.35
+	}
+	t.Border = base.Border.Mix(base.Background, fade)
+	t.Radius = macOSMetrics.Radius.Control
+	t.FontSize = macOSMetrics.Font.Body
+	return &t
+}
 
 // Classic and MacOS are the two Interface Styles.
 var (
@@ -106,4 +153,34 @@ func CurrentStyle() Style {
 		return *s
 	}
 	return Classic
+}
+
+// Fill fills el as the active style fills a surface of role: the theme's
+// color for it, the style's glass, or nothing over the window's vibrancy.
+// A vibrant surface in a window that shows no vibrancy is solid, the
+// theme's Surface.
+func Fill(c *ui.Context, el ui.Element, role SurfaceRole) ui.Element {
+	t := c.Theme()
+	switch m := CurrentStyle().Material(role); m.Kind {
+	case MaterialGlass:
+		return el.Material(m.Paint)
+	case MaterialVibrant:
+		if c.Vibrancy() {
+			return el
+		}
+		return el.Background(t.Surface)
+	case MaterialClear:
+		return el
+	}
+	switch role {
+	case SurfaceContent, SurfaceOverlay:
+		return el.Background(t.Surface)
+	}
+	return el.Background(t.Background)
+}
+
+// Vibrant reports whether s shows the window's vibrancy anywhere, so the
+// window should have one.
+func Vibrant(s Style) bool {
+	return s.Material(SurfaceSidebar).Kind == MaterialVibrant
 }

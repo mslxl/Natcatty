@@ -1382,6 +1382,8 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// SFTP and sync) are read by those surfaces when they are built.
 	applyPreferences := func(current domainpreferences.Settings) {
 		if windows != nil {
+			// SetOpacity also syncs the windows' vibrancy, so an Interface Style
+			// change lands here too.
 			windows.SetOpacity(current.Appearance.WindowOpacity)
 			windows.SetIconProvider(func() []byte { return appIconPNG(current.Appearance.AppIcon) })
 		}

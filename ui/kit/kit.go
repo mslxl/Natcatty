@@ -45,7 +45,7 @@ func IconButton(c *ui.Context, name, label string) ui.Element {
 func GhostButton(c *ui.Context, name, label string) ui.Element {
 	t := c.Theme()
 	button := ui.ButtonBase(c).Label(label).Height(M(c).Control.Large).Padding(0, 10).Gap(6).
-		Radius(M(c).Radius.Control).AlignItems(ui.Center).TextColor(t.Text).Shrink(0)
+		Radius(M(c).Radius.Button).AlignItems(ui.Center).TextColor(t.Text).Shrink(0)
 	switch {
 	case button.Pressed():
 		button.Background(Strong(t))
@@ -66,7 +66,7 @@ func GhostButton(c *ui.Context, name, label string) ui.Element {
 func SecondaryButton(c *ui.Context, name, label string) ui.Element {
 	t := c.Theme()
 	button := ui.ButtonBase(c).Label(label).Height(M(c).Control.Large).Padding(0, 12).Gap(6).
-		Radius(M(c).Radius.Control).AlignItems(ui.Center).TextColor(t.Text).
+		Radius(M(c).Radius.Button).AlignItems(ui.Center).TextColor(t.Text).
 		Background(Muted(t)).Shrink(0)
 	switch {
 	case button.Pressed():
@@ -87,7 +87,7 @@ func SecondaryButton(c *ui.Context, name, label string) ui.Element {
 func PrimaryButton(c *ui.Context, name, label string) ui.Element {
 	t := c.Theme()
 	button := ui.ButtonBase(c).Label(label).Height(M(c).Control.Large).Padding(0, 14).Gap(6).
-		Radius(M(c).Radius.Control).AlignItems(ui.Center).TextColor(t.AccentText).
+		Radius(M(c).Radius.Button).AlignItems(ui.Center).TextColor(t.AccentText).
 		Background(t.Accent).Shrink(0)
 	switch {
 	case button.Pressed():
@@ -108,7 +108,7 @@ func PrimaryButton(c *ui.Context, name, label string) ui.Element {
 func DangerButton(c *ui.Context, name, label string) ui.Element {
 	t := c.Theme()
 	button := ui.ButtonBase(c).Label(label).Height(M(c).Control.Large).Padding(0, 14).Gap(6).
-		Radius(M(c).Radius.Control).AlignItems(ui.Center).TextColor(ui.RGB(255, 255, 255)).
+		Radius(M(c).Radius.Button).AlignItems(ui.Center).TextColor(ui.RGB(255, 255, 255)).
 		Background(t.Danger).Shrink(0)
 	if button.Hovered() || button.Pressed() {
 		button.Background(t.Danger.Mix(ui.RGB(0, 0, 0), 0.12))
