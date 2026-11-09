@@ -52,9 +52,8 @@ func Palette(c *ui.Context, o PaletteOptions, content func()) (closed bool) {
 			panel := ui.Column(c).Role(ui.RoleDialog).
 				Width(o.Width).Height(o.Height).
 				Margin(o.Top, 0, 0, 0).Padding(o.Padding).Gap(o.Gap).
-				Background(t.Background).Border(1, t.Border).
-				Radius(t.Radius+2).Shadow(0, 10, 30, 0, uitheme.OverlayShadow).
-				Clip()
+				Shadow(0, 10, 30, 0, uitheme.OverlayShadow).Clip()
+			overlaySurface(c, panel, t.Background, t.Radius+2)
 			panel.OnClick(func() {})
 			panel.Children(content)
 		})
@@ -84,8 +83,8 @@ func Popover(c *ui.Context, role PopoverRole, anchor ui.Element, open *bool, con
 	t := c.Theme()
 	ui.PopoverBase(c, anchor, open, func(panel ui.Element) {
 		panel.AttachTo(anchor, ui.AnchorBottomEnd, ui.AnchorTopEnd).Margin(6, 0, 0, 0).
-			Background(t.Surface).Border(1, t.Border).Radius(M(c).Radius.Card).
 			Shadow(0, 8, 24, 0, CardShadow(t)).Clip()
+		overlaySurface(c, panel, t.Surface, M(c).Radius.Card)
 		content()
 	})
 }
@@ -93,5 +92,18 @@ func Popover(c *ui.Context, role PopoverRole, anchor ui.Element, open *bool, con
 // PopoverSurface paints el, a floating list the caller places itself, as
 // the autocomplete popup: the surface fill inside a rule of border.
 func PopoverSurface(c *ui.Context, el ui.Element, border ui.Color) ui.Element {
+	if CurrentStyle().Native() {
+		return overlaySurface(c, el, ui.Color{}, 0).Clip()
+	}
 	return el.Background(c.Theme().Surface).Border(1, border).Clip()
+}
+
+// overlaySurface fills a floating panel: in Classic with fill inside a rule
+// of the border, rounded by radius; in the macOS style on the style's glass,
+// with no rule, rounded as an overlay.
+func overlaySurface(c *ui.Context, el ui.Element, fill ui.Color, radius float32) ui.Element {
+	if CurrentStyle().Native() {
+		return Fill(c, el.Radius(M(c).Radius.Overlay), SurfaceOverlay)
+	}
+	return el.Background(fill).Border(1, c.Theme().Border).Radius(radius)
 }

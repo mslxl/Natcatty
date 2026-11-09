@@ -65,6 +65,18 @@
       <sub>124 套界面预设、强调色、终端配色与 <code>.itermcolors</code> 导入</sub>
     </td>
   </tr>
+  <tr>
+    <td align="center" width="50%">
+      <a href="docs/screenshots/05-macos-home.png"><img src="docs/screenshots/05-macos-home.png" alt="macOS 界面风格" width="100%"></a>
+      <br><b>界面风格 · macOS</b><br>
+      <sub>悬浮玻璃侧边栏与胶囊标签；在 设置 › 外观 中切换风格</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="docs/screenshots/07-macos-settings.png"><img src="docs/screenshots/07-macos-settings.png" alt="macOS 风格设置" width="100%"></a>
+      <br><b>设置 · macOS 风格</b><br>
+      <sub>彩色分区图标与内嵌分组表单</sub>
+    </td>
+  </tr>
 </table>
 
 ---

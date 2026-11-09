@@ -287,6 +287,10 @@ func DetachedLayout(c *ui.Context, title string, actions, body func()) {
 // LockLayout is the lock screen: content centered in a window that, being
 // frameless, drags as a whole.
 func LockLayout(c *ui.Context, content func()) {
+	// The macOS style shows the window's material behind the lock.
+	if kit.Vibrant(kit.CurrentStyle()) {
+		kit.Fill(c, c.Root(), kit.SurfaceWindow)
+	}
 	ui.Column(c).Fill().DragWindow().Children(func() {
 		ui.Column(c).FillWidth().Grow(1).MinHeight(0).Padding(48).Gap(12).Justify(ui.Center).AlignItems(ui.Center).
 			Children(content)
