@@ -192,14 +192,14 @@ type Host struct {
 	Port     int          `json:"port"`
 	Username string       `json:"username"`
 	Protocol Protocol     `json:"protocol"`
-	// Group is a slash-separated Host Group path, "" for the Vault root.
-	// It is the display and reference path; GroupID is the stable identity
-	// convergent sync uses so a group move carries its members with it. A Host
-	// may reference a group that no longer exists, matching the original's
-	// non-cascading behavior.
+	// Group is the Host Group path, "" for the Vault root. It is derived from
+	// the group tree when a Host is read or written to a portable payload;
+	// storage keeps only GroupID. A legacy record written before IDs existed
+	// may still carry a path without one.
 	Group string `json:"group"`
-	// GroupID is the stable Host Group identity. It is empty for the Vault
-	// root and for a path no saved group owns.
+	// GroupID is the Host's only stored membership: the stable identity of the
+	// group it belongs to. It is empty for the Vault root. A rename or a move
+	// keeps the ID, so the member follows the group without being rewritten.
 	GroupID string   `json:"groupId,omitempty"`
 	Tags    []string `json:"tags"`
 	Notes   string   `json:"notes,omitempty"`
@@ -269,10 +269,16 @@ type Host struct {
 	// ETPort is the EternalTerminal server port for an ET Host. Zero means the
 	// 2022 default. It is kept only for ProtocolET.
 	ETPort int `json:"etPort,omitempty"`
-	// OrderKey orders Hosts within their Host Group, in steps of 1000.
-	OrderKey  int64     `json:"orderKey"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	// LastConnectedAt records when the user last opened a Session to this
+	// Host, in Unix milliseconds. It is device-local telemetry: sync strips it
+	// exactly as the original's sanitizeHostsForSync does, so another device's
+	// clock never reorders this one's Recently Connected list. Zero means the
+	// Host has never been connected. The integer form matches the original's
+	// payload, so an upstream export imports without conversion.
+	LastConnectedAt int64     `json:"lastConnectedAt,omitempty"`
+	OrderKey        int64     `json:"orderKey"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 // Draft is the editable part of a Host: what a create or edit form supplies.

@@ -12,12 +12,11 @@ import (
 )
 
 // Group is one Host Group: a user-defined grouping of Hosts with shared
-// connection defaults. Path remains the local display identity and the value a
-// Host or Snippet references. ID is the stable identity convergent sync uses,
-// so moving or renaming a group keeps its causal history and does not look
-// like a delete plus an insert to another device. A Host may keep a Group path
-// that no longer exists, matching the original Vault's non-cascading
-// references.
+// connection defaults. Identity is the stable ID and the tree position is
+// (ParentID, Name); Path is derived from the tree when a list or payload is
+// materialized, so a rename or a move never rewrites a member. Hosts and
+// Snippets reference the group by ID and by path respectively, matching the
+// convergent payload and the portable file format.
 type Group struct {
 	// ID is the sync identity. It is generated once and survives renames and
 	// moves. Path-derived IDs are used only for records written before IDs
@@ -171,82 +170,186 @@ type GroupDefaults struct {
 	NetworkProfileID string
 }
 
-// ResolveGroupDefaults merges the group configs along a Host Group's ancestor
-// chain. For "A/B/C" it applies A, then A/B, then A/B/C, so a child overrides
-// its parent. A group path with no saved group config yields a zero value.
+// ResolveGroupDefaults merges the group configs along a Host Group path. The
+// path only locates the group; the chain follows the tree's ParentID links, so
+// a rename or a move never changes which defaults a Host sees. A path with no
+// saved group yields a zero value.
 func ResolveGroupDefaults(groups []Group, path string) GroupDefaults {
-	byPath := make(map[string]Group, len(groups))
-	for _, group := range groups {
-		byPath[group.Path] = group
+	groups = EnsureGroupIdentities(groups)
+	group, ok := GroupByPath(groups, path)
+	if !ok {
+		return GroupDefaults{}
 	}
+	return ResolveGroupDefaultsByID(groups, group.ID)
+}
 
+// ResolveGroupDefaultsByID merges the defaults of the group and its ancestors,
+// root first, so a child overrides its parent. A list whose records predate
+// stable IDs is upgraded first so the chain still resolves.
+func ResolveGroupDefaultsByID(groups []Group, id string) GroupDefaults {
+	groups = EnsureGroupIdentities(groups)
 	var merged GroupDefaults
-	for _, ancestor := range GroupAncestors(path) {
-		group, ok := byPath[ancestor]
-		if !ok {
-			continue
-		}
-		defaults := group.Defaults()
-		// SSH credentials are one bundle, as in the original Vault: a group
-		// that selects an Identity replaces inherited manual credentials, and
-		// a group that sets manual credentials replaces an inherited Identity.
-		// Mixing an Identity with a lower level's username would resolve a
-		// different method than either group intended.
-		switch {
-		case defaults.IdentityID != "":
+	for _, group := range GroupChainByID(groups, id) {
+		mergeGroupDefaults(&merged, group.Defaults())
+	}
+	return merged
+}
+
+// mergeGroupDefaults layers one group's defaults onto the merged set.
+func mergeGroupDefaults(merged *GroupDefaults, defaults GroupDefaults) {
+	// SSH credentials are one bundle, as in the original Vault: a group
+	// that selects an Identity replaces inherited manual credentials, and
+	// a group that sets manual credentials replaces an inherited Identity.
+	// Mixing an Identity with a lower level's username would resolve a
+	// different method than either group intended.
+	switch {
+	case defaults.IdentityID != "":
+		merged.Username = ""
+		merged.AuthMethod = ""
+		merged.KeyID = ""
+	case defaults.Username != "" || defaults.AuthMethod != "" || defaults.KeyID != "":
+		replacedIdentity := merged.IdentityID != ""
+		merged.IdentityID = ""
+		if replacedIdentity {
 			merged.Username = ""
 			merged.AuthMethod = ""
 			merged.KeyID = ""
-		case defaults.Username != "" || defaults.AuthMethod != "" || defaults.KeyID != "":
-			replacedIdentity := merged.IdentityID != ""
-			merged.IdentityID = ""
-			if replacedIdentity {
-				merged.Username = ""
-				merged.AuthMethod = ""
-				merged.KeyID = ""
-			}
-		}
-		if defaults.Username != "" {
-			merged.Username = defaults.Username
-		}
-		if defaults.Port != 0 {
-			merged.Port = defaults.Port
-		}
-		if defaults.Protocol != "" {
-			merged.Protocol = defaults.Protocol
-		}
-		if defaults.AuthMethod != "" {
-			merged.AuthMethod = defaults.AuthMethod
-		}
-		if defaults.IdentityID != "" {
-			merged.IdentityID = defaults.IdentityID
-		}
-		if defaults.KeyID != "" {
-			merged.KeyID = defaults.KeyID
-		}
-		if defaults.UseSSHAgent {
-			merged.UseSSHAgent = true
-		}
-		if defaults.RequiresMFA {
-			merged.RequiresMFA = true
-		}
-		if defaults.LegacyAlgorithms {
-			merged.LegacyAlgorithms = true
-		}
-		if defaults.SkipEcdsaHostKey {
-			merged.SkipEcdsaHostKey = true
-		}
-		if defaults.Algorithms != nil {
-			merged.Algorithms = CloneAlgorithms(defaults.Algorithms)
-		}
-		if defaults.ProxyProfileID != "" {
-			merged.ProxyProfileID = defaults.ProxyProfileID
-		}
-		if defaults.NetworkProfileID != "" {
-			merged.NetworkProfileID = defaults.NetworkProfileID
 		}
 	}
-	return merged
+	if defaults.Username != "" {
+		merged.Username = defaults.Username
+	}
+	if defaults.Port != 0 {
+		merged.Port = defaults.Port
+	}
+	if defaults.Protocol != "" {
+		merged.Protocol = defaults.Protocol
+	}
+	if defaults.AuthMethod != "" {
+		merged.AuthMethod = defaults.AuthMethod
+	}
+	if defaults.IdentityID != "" {
+		merged.IdentityID = defaults.IdentityID
+	}
+	if defaults.KeyID != "" {
+		merged.KeyID = defaults.KeyID
+	}
+	if defaults.UseSSHAgent {
+		merged.UseSSHAgent = true
+	}
+	if defaults.RequiresMFA {
+		merged.RequiresMFA = true
+	}
+	if defaults.LegacyAlgorithms {
+		merged.LegacyAlgorithms = true
+	}
+	if defaults.SkipEcdsaHostKey {
+		merged.SkipEcdsaHostKey = true
+	}
+	if defaults.Algorithms != nil {
+		merged.Algorithms = CloneAlgorithms(defaults.Algorithms)
+	}
+	if defaults.ProxyProfileID != "" {
+		merged.ProxyProfileID = defaults.ProxyProfileID
+	}
+	if defaults.NetworkProfileID != "" {
+		merged.NetworkProfileID = defaults.NetworkProfileID
+	}
+}
+
+// GroupByID returns one saved group.
+func GroupByID(groups []Group, id string) (Group, bool) {
+	if id == "" {
+		return Group{}, false
+	}
+	for _, group := range groups {
+		if group.ID == id {
+			return group, true
+		}
+	}
+	return Group{}, false
+}
+
+// GroupByPath returns the group whose derived path is path.
+func GroupByPath(groups []Group, path string) (Group, bool) {
+	normalized := NormalizeGroup(path)
+	if normalized == "" {
+		return Group{}, false
+	}
+	for _, group := range groups {
+		if NormalizeGroup(group.Path) == normalized {
+			return group, true
+		}
+	}
+	return Group{}, false
+}
+
+// GroupChainByID returns the group and its ancestors, root first. A missing
+// parent or a cycle ends the chain instead of looping.
+func GroupChainByID(groups []Group, id string) []Group {
+	byID := make(map[string]Group, len(groups))
+	for _, group := range groups {
+		if group.ID != "" {
+			byID[group.ID] = group
+		}
+	}
+	chain := make([]Group, 0, len(byID))
+	seen := make(map[string]bool, len(byID))
+	for id != "" && !seen[id] {
+		seen[id] = true
+		group, ok := byID[id]
+		if !ok {
+			break
+		}
+		chain = append(chain, group)
+		id = group.ParentID
+	}
+	for left, right := 0, len(chain)-1; left < right; left, right = left+1, right-1 {
+		chain[left], chain[right] = chain[right], chain[left]
+	}
+	return chain
+}
+
+// MaterializeGroupPaths derives every group's Path from the tree its ID and
+// ParentID links describe. Storage keeps identity and structure only; a path is
+// never a stored field. A legacy record without an ID gets the deterministic
+// path identity so an old payload still materializes.
+func MaterializeGroupPaths(groups []Group) []Group {
+	// A legacy list carries paths but no IDs or parent links; derive them
+	// first so the tree rebuild does not mistake a nested path for a root.
+	out := EnsureGroupIdentities(groups)
+	nodes := make([]GroupTreeNode, 0, len(out))
+	for index := range out {
+		if out[index].Name == "" {
+			out[index].Name = GroupName(out[index].Path)
+		}
+		nodes = append(nodes, GroupTreeNode{
+			ID: out[index].ID, ParentID: out[index].ParentID,
+			Name: out[index].Name, OrderKey: out[index].OrderKey,
+		})
+	}
+	paths := ResolveGroupTree(nodes)
+	for index := range out {
+		out[index].Path = paths[out[index].ID]
+	}
+	return out
+}
+
+// MaterializeHostGroup fills a Host's derived group path from the tree. A
+// Host whose GroupID names no group is at the Vault root; a legacy record with
+// no ID keeps the path it was stored with.
+func MaterializeHostGroup(host Host, groups []Group) Host {
+	if host.GroupID == "" {
+		return host
+	}
+	host.Group = ""
+	for _, group := range groups {
+		if group.ID == host.GroupID {
+			host.Group = group.Path
+			return host
+		}
+	}
+	return host
 }
 
 // ApplyGroupDefaults fills a Host's unset connection settings from its group's
