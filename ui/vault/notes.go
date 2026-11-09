@@ -179,13 +179,13 @@ func noteEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Th
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
 		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 		ui.Form(c, func() {
-			ui.Field(c, m.VaultNoteTitle(), func() {
+			kit.FormRow(c, m.VaultNoteTitle(), func() {
 				ui.TextInput(c, &form.Title)
 			})
-			ui.Field(c, m.VaultNoteGroup(), func() {
+			kit.FormRow(c, m.VaultNoteGroup(), func() {
 				ui.TextInput(c, &form.Group).Placeholder("ops/runbooks")
 			}).Description(m.VaultNoteGroupHint())
-			ui.Field(c, m.VaultNoteContent(), func() {
+			kit.FormRow(c, m.VaultNoteContent(), func() {
 				area := ui.TextArea(c, &form.Content).Height(240)
 				if justOpened {
 					area.SetTextSelection(0, 0)
@@ -208,7 +208,7 @@ func noteGroupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
 		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 		ui.Form(c, func() {
-			ui.Field(c, m.VaultNoteGroupPath(), func() {
+			kit.FormRow(c, m.VaultNoteGroupPath(), func() {
 				ui.TextInput(c, &form.Path).Placeholder("ops/runbooks")
 			}).Description(m.VaultNoteGroupPathHint())
 		})

@@ -10,6 +10,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appaplock "github.com/mslxl/natcatty/application/applock"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -137,7 +138,7 @@ func (g *Gate) lockScreen(c *ui.Context) {
 
 			ui.Column(c).Width(320).Gap(8).Children(func() {
 				var submitted bool
-				ui.Field(c, m.AppLockPassword(), func() {
+				kit.FormRow(c, m.AppLockPassword(), func() {
 					submitted = ui.TextInput(c, &g.password).Password().AutoFocus().Submitted()
 				}).Width(320)
 				unlock := ui.PrimaryButton(c, m.AppLockUnlock()).Width(320).Clicked()

@@ -5,6 +5,7 @@ import (
 
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	domain "github.com/mslxl/natcatty/domain/preferences"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
@@ -22,7 +23,7 @@ func transportArea(c *ui.Context, state *PreferencesState, m locales.Messages, t
 		// The local-echo mode is stock mosh's MOSH_PREDICTION_DISPLAY choice.
 		// Adaptive is stock's default; always and never are the explicit
 		// overrides.
-		ui.Field(c, m.SettingsMoshPredictionDisplay(), func() {
+		kit.FormRow(c, m.SettingsMoshPredictionDisplay(), func() {
 			ui.RadioGroup(c, func() {
 				if ui.Radio(c, &prediction, string(moshmodel.PredictionAdaptive),
 					m.SettingsMoshPredictionAdaptive()).Changed() {

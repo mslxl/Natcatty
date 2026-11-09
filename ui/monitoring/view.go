@@ -706,7 +706,7 @@ func detail(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 				points, func(p domainmonitor.Point) float64 { return p.Memory }, 100, uitheme.SeriesMemory)
 		})
 		if ready && domainmonitor.Valid(sample.GPU) {
-			kit.FormSection(c, m.MonitoringGpu(), func() {
+			kit.FormGroup(c, m.MonitoringGpu(), func() {
 				if sample.GPUName != "" {
 					ui.Text(c, sample.GPUName).FontSize(kit.M(c).Font.Footnote).SingleLine()
 				}
@@ -717,12 +717,12 @@ func detail(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 				}
 			})
 		}
-		kit.FormSection(c, m.MonitoringNetwork(), func() {
+		kit.FormGroup(c, m.MonitoringNetwork(), func() {
 			infoRow(c, t, m.MonitoringDownload(), rateText(unknownUnless(ready, sample.Rx)))
 			infoRow(c, t, m.MonitoringUpload(), rateText(unknownUnless(ready, sample.Tx)))
 		})
-		kit.FormSection(c, "", func() { partitions(c, m, t, ready, sample, 0) })
-		kit.FormSection(c, m.MonitoringSystem(), func() {
+		kit.FormGroup(c, "", func() { partitions(c, m, t, ready, sample, 0) })
+		kit.FormGroup(c, m.MonitoringSystem(), func() {
 			infoRow(c, t, m.MonitoringHost(), orDash(sample.Hostname))
 			infoRow(c, t, "OS", orDash(sample.OSName))
 			infoRow(c, t, "Kernel", orDash(sample.KernelRelease))

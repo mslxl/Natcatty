@@ -212,17 +212,17 @@ func Editor(c *ui.Context, s *State, scroll *ui.ScrollState) {
 		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 
 		ui.Form(c, func() {
-			ui.Field(c, m.VaultForwardingType(), func() {
+			kit.FormRow(c, m.VaultForwardingType(), func() {
 				ui.RadioGroup(c, func() {
 					ui.Radio(c, &form.Type, string(domainforward.TypeLocal), m.VaultForwardingTypeLocal())
 					ui.Radio(c, &form.Type, string(domainforward.TypeRemote), m.VaultForwardingTypeRemote())
 					ui.Radio(c, &form.Type, string(domainforward.TypeDynamic), m.VaultForwardingTypeDynamic())
 				})
 			})
-			ui.Field(c, m.VaultForwardingLabel(), func() {
+			kit.FormRow(c, m.VaultForwardingLabel(), func() {
 				ui.TextInput(c, &form.Label)
 			})
-			ui.Field(c, m.VaultForwardingHost(), func() {
+			kit.FormRow(c, m.VaultForwardingHost(), func() {
 				if len(s.Hosts()) == 0 {
 					ui.Text(c, m.VaultForwardingHostNone()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 					return
@@ -239,25 +239,25 @@ func Editor(c *ui.Context, s *State, scroll *ui.ScrollState) {
 			// own row instead of clipping at the right edge. The default
 			// 1084x661 window keeps both fields on one row.
 			ui.Row(c).Gap(8).Wrap().Children(func() {
-				ui.Field(c, m.VaultForwardingBindAddress(), func() {
+				kit.FormRow(c, m.VaultForwardingBindAddress(), func() {
 					ui.TextInput(c, &form.BindAddress).Width(200)
 				})
-				ui.Field(c, m.VaultForwardingLocalPort(), func() {
+				kit.FormRow(c, m.VaultForwardingLocalPort(), func() {
 					ui.TextInput(c, &form.LocalPort).Placeholder("8080").Width(120)
 				})
 			})
 			if form.Type != string(domainforward.TypeDynamic) {
 				ui.Row(c).Gap(8).Wrap().Children(func() {
-					ui.Field(c, m.VaultForwardingRemoteHost(), func() {
+					kit.FormRow(c, m.VaultForwardingRemoteHost(), func() {
 						ui.TextInput(c, &form.RemoteHost).Placeholder("localhost").Width(220)
 					})
-					ui.Field(c, m.VaultForwardingRemotePort(), func() {
+					kit.FormRow(c, m.VaultForwardingRemotePort(), func() {
 						ui.TextInput(c, &form.RemotePort).Placeholder("80").Width(120)
 					})
 				})
 			}
 			ui.Checkbox(c, &form.AutoStart, m.VaultForwardingAutoStart())
-			ui.Field(c, m.VaultForwardingAutoReconnect(), func() {
+			kit.FormRow(c, m.VaultForwardingAutoReconnect(), func() {
 				ui.RadioGroup(c, func() {
 					ui.Radio(c, &form.AutoReconnect, AutoReconnectFollow, m.VaultForwardingAutoReconnectFollow())
 					ui.Radio(c, &form.AutoReconnect, AutoReconnectOn, m.VaultForwardingAutoReconnectOn())

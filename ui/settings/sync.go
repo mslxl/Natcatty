@@ -1173,7 +1173,7 @@ func syncSetup(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m loc
 // before any credential can be sent.
 func syncWebDAVForm(c *ui.Context, state *SyncState, m locales.Messages, t *ui.Theme) {
 	state.EnsureWebDAVForm()
-	ui.Field(c, m.SettingsSyncWebDAVEndpoint(), func() {
+	kit.FormRow(c, m.SettingsSyncWebDAVEndpoint(), func() {
 		endpoint := state.WebDAVEndpoint()
 		if ui.TextInput(c, &endpoint).Width(360).Changed() {
 			state.SetWebDAVEndpoint(endpoint)
@@ -1192,7 +1192,7 @@ func syncWebDAVForm(c *ui.Context, state *SyncState, m locales.Messages, t *ui.T
 	}
 	authType := state.WebDAVAuthType()
 	selected := authLabels[indexOf(authValues, authType)]
-	ui.Field(c, m.SettingsSyncWebDAVAuth(), func() {
+	kit.FormRow(c, m.SettingsSyncWebDAVAuth(), func() {
 		if ui.Select(c, &selected, authLabels).Width(300).Changed() {
 			state.SetWebDAVAuthType(authValues[indexOf(authLabels, selected)])
 			c.Invalidate()
@@ -1200,20 +1200,20 @@ func syncWebDAVForm(c *ui.Context, state *SyncState, m locales.Messages, t *ui.T
 	})
 
 	if state.WebDAVAuthType() == domainsync.WebDAVAuthBearer {
-		ui.Field(c, m.SettingsSyncWebDAVToken(), func() {
+		kit.FormRow(c, m.SettingsSyncWebDAVToken(), func() {
 			token := state.WebDAVToken()
 			if ui.TextInput(c, &token).Password().Width(280).Changed() {
 				state.SetWebDAVToken(token)
 			}
 		})
 	} else {
-		ui.Field(c, m.SettingsSyncWebDAVUsername(), func() {
+		kit.FormRow(c, m.SettingsSyncWebDAVUsername(), func() {
 			username := state.WebDAVUsername()
 			if ui.TextInput(c, &username).Width(280).Changed() {
 				state.SetWebDAVUsername(username)
 			}
 		})
-		ui.Field(c, m.SettingsSyncWebDAVPassword(), func() {
+		kit.FormRow(c, m.SettingsSyncWebDAVPassword(), func() {
 			password := state.WebDAVPassword()
 			if ui.TextInput(c, &password).Password().Width(280).Changed() {
 				state.SetWebDAVPassword(password)
@@ -1292,47 +1292,47 @@ func syncColorContrast(a, b ui.Color) float64 {
 // Connect button.
 func syncS3Form(c *ui.Context, state *SyncState, m locales.Messages, t *ui.Theme) {
 	state.EnsureS3Form()
-	ui.Field(c, m.SettingsSyncS3Endpoint(), func() {
+	kit.FormRow(c, m.SettingsSyncS3Endpoint(), func() {
 		endpoint := state.S3Endpoint()
 		if ui.TextInput(c, &endpoint).Width(360).Changed() {
 			state.SetS3Endpoint(endpoint)
 		}
 	})
 	ui.Row(c).FillWidth().Gap(12).AlignItems(ui.End).Children(func() {
-		ui.Field(c, m.SettingsSyncS3Region(), func() {
+		kit.FormRow(c, m.SettingsSyncS3Region(), func() {
 			region := state.S3Region()
 			if ui.TextInput(c, &region).Width(150).Changed() {
 				state.SetS3Region(region)
 			}
 		})
-		ui.Field(c, m.SettingsSyncS3Bucket(), func() {
+		kit.FormRow(c, m.SettingsSyncS3Bucket(), func() {
 			bucket := state.S3Bucket()
 			if ui.TextInput(c, &bucket).Width(210).Changed() {
 				state.SetS3Bucket(bucket)
 			}
 		})
 	})
-	ui.Field(c, m.SettingsSyncS3Prefix(), func() {
+	kit.FormRow(c, m.SettingsSyncS3Prefix(), func() {
 		prefix := state.S3Prefix()
 		if ui.TextInput(c, &prefix).Width(220).Changed() {
 			state.SetS3Prefix(prefix)
 		}
 	})
 	ui.Row(c).FillWidth().Gap(12).AlignItems(ui.End).Children(func() {
-		ui.Field(c, m.SettingsSyncS3AccessKeyID(), func() {
+		kit.FormRow(c, m.SettingsSyncS3AccessKeyID(), func() {
 			accessKeyID := state.S3AccessKeyID()
 			if ui.TextInput(c, &accessKeyID).Width(200).Changed() {
 				state.SetS3AccessKeyID(accessKeyID)
 			}
 		})
-		ui.Field(c, m.SettingsSyncS3SecretAccessKey(), func() {
+		kit.FormRow(c, m.SettingsSyncS3SecretAccessKey(), func() {
 			secret := state.S3SecretAccessKey()
 			if ui.TextInput(c, &secret).Password().Width(220).Changed() {
 				state.SetS3SecretAccessKey(secret)
 			}
 		})
 	})
-	ui.Field(c, m.SettingsSyncS3SessionToken(), func() {
+	kit.FormRow(c, m.SettingsSyncS3SessionToken(), func() {
 		token := state.S3SessionToken()
 		if ui.TextInput(c, &token).Password().Width(280).Changed() {
 			state.SetS3SessionToken(token)
@@ -1376,7 +1376,7 @@ func syncProviderSelector(c *ui.Context, state *SyncState, snapshot appsync.Snap
 		m.SettingsSyncProviderS3(),
 	}
 	selected := names[indexOf(values, appsync.NormalizeProvider(snapshot.Provider))]
-	ui.Field(c, m.SettingsSyncProvider(), func() {
+	kit.FormRow(c, m.SettingsSyncProvider(), func() {
 		if ui.Select(c, &selected, names).Width(190).Changed() {
 			state.SetProvider(values[indexOf(names, selected)])
 			c.Invalidate()
@@ -1427,7 +1427,7 @@ func syncDeviceCode(c *ui.Context, snapshot appsync.Snapshot, m locales.Messages
 }
 
 func syncPasswordField(c *ui.Context, state *SyncState, m locales.Messages) {
-	ui.Field(c, m.SettingsSyncMasterPassword(), func() {
+	kit.FormRow(c, m.SettingsSyncMasterPassword(), func() {
 		password := state.Password()
 		if ui.TextInput(c, &password).Password().Width(280).Changed() {
 			state.SetPassword(password)
@@ -1515,7 +1515,7 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 		domainsync.StrategyPreferLocal,
 	}
 	strategy := strategies[syncStrategyIndex(values, snapshot.Strategy)]
-	ui.Field(c, m.SettingsSyncConflictStrategy(), func() {
+	kit.FormRow(c, m.SettingsSyncConflictStrategy(), func() {
 		if ui.Select(c, &strategy, strategies).Width(300).Changed() {
 			state.SetStrategy(values[indexOf(strategies, strategy)])
 			c.Invalidate()

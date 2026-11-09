@@ -988,16 +988,16 @@ func snippetEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui
 		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 
 		ui.Form(c, func() {
-			ui.Field(c, m.VaultSnippetLabel(), func() {
+			kit.FormRow(c, m.VaultSnippetLabel(), func() {
 				ui.TextInput(c, &form.Label)
 			})
-			ui.Field(c, m.VaultSnippetCommand(), func() {
+			kit.FormRow(c, m.VaultSnippetCommand(), func() {
 				ui.TextArea(c, &form.Command).Height(120)
 			}).Description(m.VaultSnippetCommandHint())
-			ui.Field(c, m.VaultSnippetPackage(), func() {
+			kit.FormRow(c, m.VaultSnippetPackage(), func() {
 				ui.TextInput(c, &form.Package).Placeholder("ops/linux")
 			}).Description(m.VaultSnippetPackageHint())
-			ui.Field(c, m.VaultHostTags(), func() {
+			kit.FormRow(c, m.VaultHostTags(), func() {
 				ui.TextInput(c, &form.Tags).Placeholder("prod, web")
 			})
 
@@ -1033,7 +1033,7 @@ func snippetEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui
 				}
 			}
 
-			ui.Field(c, m.VaultSnippetRunMode(), func() {
+			kit.FormRow(c, m.VaultSnippetRunMode(), func() {
 				ui.RadioGroup(c, func() {
 					ui.Radio(c, &form.MultiLineRunMode,
 						string(domainvault.SnippetRunPaste), m.VaultSnippetRunModePaste())
@@ -1060,7 +1060,7 @@ func snippetPackageEditor(c *ui.Context, s *vaultstate.State, m locales.Messages
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
 		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 		ui.Form(c, func() {
-			ui.Field(c, m.VaultSnippetPackagePath(), func() {
+			kit.FormRow(c, m.VaultSnippetPackagePath(), func() {
 				ui.TextInput(c, &form.Path).Placeholder("ops/linux")
 			}).Description(m.VaultSnippetPackagePathHint())
 		})
@@ -1091,7 +1091,7 @@ func snippetRunEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t 
 		ui.Form(c, func() {
 			for index := range form.Variables {
 				variable := &form.Variables[index]
-				ui.Field(c, m.VaultSnippetRunVariable(variable.Name), func() {
+				kit.FormRow(c, m.VaultSnippetRunVariable(variable.Name), func() {
 					ui.TextInput(c, &variable.Value)
 				})
 				if variable.HasDefault {
@@ -1147,10 +1147,10 @@ func secretBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.
 		ui.Column(c).Fill().Padding(12).Gap(8).Background(t.Surface).Children(func() {
 			ui.Text(c, m.VaultSecretSetupTitle()).Bold()
 			ui.Text(c, m.VaultSecretSetupBody()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
-			ui.Field(c, m.VaultSecretPassphrase(), func() {
+			kit.FormRow(c, m.VaultSecretPassphrase(), func() {
 				ui.TextInput(c, s.SecretPassphrase()).Password().Width(260)
 			})
-			ui.Field(c, m.VaultSecretConfirm(), func() {
+			kit.FormRow(c, m.VaultSecretConfirm(), func() {
 				ui.TextInput(c, s.SecretConfirmation()).Password().Width(260)
 			})
 			secretProblem(c, s, t)
@@ -1323,10 +1323,10 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 
 		ui.Form(c, func() {
-			ui.Field(c, m.VaultHostLabel(), func() {
+			kit.FormRow(c, m.VaultHostLabel(), func() {
 				ui.TextInput(c, &form.Label)
 			})
-			ui.Field(c, m.VaultHostHostname(), func() {
+			kit.FormRow(c, m.VaultHostHostname(), func() {
 				ui.TextInput(c, &form.Hostname).Placeholder("example.com")
 			})
 			ui.Row(c).Gap(8).Wrap().Children(func() {
@@ -1334,7 +1334,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				if placeholder := s.HostPortPlaceholder(); placeholder != "" {
 					portHint = m.VaultHostPortHint(placeholder)
 				}
-				portField := ui.Field(c, m.VaultHostPort(), func() {
+				portField := kit.FormRow(c, m.VaultHostPort(), func() {
 					// The hint follows the protocol and group selection, so a
 					// Telnet Host shows 23 rather than a hardcoded 22. A blank
 					// field preserves inheritance; the hint shows what a
@@ -1345,10 +1345,10 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				if portHint != "" {
 					portField.Description(portHint)
 				}
-				ui.Field(c, m.VaultHostUsername(), func() {
+				kit.FormRow(c, m.VaultHostUsername(), func() {
 					ui.TextInput(c, &form.Username).Placeholder("root").Width(200)
 				})
-				ui.Field(c, m.VaultHostProtocol(), func() {
+				kit.FormRow(c, m.VaultHostProtocol(), func() {
 					changed := ui.Select(c, &form.Protocol, []string{
 						string(domainvault.ProtocolSSH),
 						string(domainvault.ProtocolMosh),
@@ -1364,20 +1364,20 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					}
 				})
 			})
-			ui.Field(c, m.VaultHostGroup(), func() {
+			kit.FormRow(c, m.VaultHostGroup(), func() {
 				ui.TextInput(c, &form.Group).Placeholder("prod/web")
 			}).Description(m.VaultHostGroupHint())
-			ui.Field(c, m.VaultHostTags(), func() {
+			kit.FormRow(c, m.VaultHostTags(), func() {
 				ui.TextInput(c, &form.Tags).Placeholder("prod, web")
 			}).Description(m.VaultHostTagsHint())
-			ui.Field(c, m.VaultHostNotes(), func() {
+			kit.FormRow(c, m.VaultHostNotes(), func() {
 				ui.TextArea(c, &form.Notes).Height(80)
 			})
 			passwordHint := m.VaultHostPasswordHint()
 			if form.HasPassword {
 				passwordHint = m.VaultHostPasswordKeep()
 			}
-			ui.Field(c, m.VaultHostPassword(), func() {
+			kit.FormRow(c, m.VaultHostPassword(), func() {
 				// The input is plaintext only while the editor is open. It is
 				// never loaded back from storage and never rendered again.
 				ui.TextInput(c, &form.Password).Password()
@@ -1385,7 +1385,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 
 			if domainvault.Protocol(form.Protocol).UsesSSHAuth() {
 				ui.Text(c, m.VaultHostAuthSection()).Bold()
-				ui.Field(c, m.VaultHostIdentity(), func() {
+				kit.FormRow(c, m.VaultHostIdentity(), func() {
 					ui.RadioGroup(c, func() {
 						ui.Radio(c, &form.IdentityID, "", m.VaultNone())
 						for _, identity := range s.Identities() {
@@ -1393,7 +1393,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 						}
 					})
 				}).Description(m.VaultHostIdentityHint())
-				ui.Field(c, m.VaultHostKey(), func() {
+				kit.FormRow(c, m.VaultHostKey(), func() {
 					ui.RadioGroup(c, func() {
 						ui.Radio(c, &form.KeyID, "", m.VaultNone())
 						for _, key := range s.Keys() {
@@ -1401,7 +1401,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 						}
 					})
 				}).Description(m.VaultHostKeyHint())
-				ui.Field(c, m.VaultHostAuthMethod(), func() {
+				kit.FormRow(c, m.VaultHostAuthMethod(), func() {
 					ui.RadioGroup(c, func() {
 						ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthAuto), m.VaultHostAuthAuto())
 						ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthPassword), m.VaultHostAuthPassword())
@@ -1415,7 +1415,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				}
 				ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
 			}
-			ui.Field(c, m.VaultHostProxyProfile(), func() {
+			kit.FormRow(c, m.VaultHostProxyProfile(), func() {
 				ui.RadioGroup(c, func() {
 					ui.Radio(c, &form.ProxyProfileID, "", m.VaultNone())
 					for _, profile := range s.ProxyProfiles() {
@@ -1425,7 +1425,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 			}).Description(m.VaultHostProxyProfileHint())
 			hostNetworkProfileField(c, s, m, t)
 			if form.Protocol == string(domainvault.ProtocolSSH) {
-				ui.Field(c, m.VaultHostFileProtocol(), func() {
+				kit.FormRow(c, m.VaultHostFileProtocol(), func() {
 					changed := ui.Select(c, &form.FileProtocol, []string{
 						string(domainvault.FileProtocolAuto),
 						string(domainvault.FileProtocolSFTP),
@@ -1464,13 +1464,13 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				ui.Text(c, m.VaultHostAutoAttachTmuxHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			}
 			if form.Protocol == string(domainvault.ProtocolMosh) {
-				ui.Field(c, m.VaultHostMoshServerPath(), func() {
+				kit.FormRow(c, m.VaultHostMoshServerPath(), func() {
 					ui.TextInput(c, &form.MoshServerPath).Placeholder("mosh-server")
 				}).Description(m.VaultHostMoshServerPathHint())
 				ui.Text(c, m.VaultHostMoshRestrictionHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			}
 			if form.Protocol == string(domainvault.ProtocolET) {
-				ui.Field(c, m.VaultHostETPort(), func() {
+				kit.FormRow(c, m.VaultHostETPort(), func() {
 					ui.TextInput(c, &form.ETPort).Placeholder("2022").Width(120)
 				}).Description(m.VaultHostETPortHint())
 			}
@@ -1510,28 +1510,28 @@ func keyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.The
 		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 
 		ui.Form(c, func() {
-			ui.Field(c, m.VaultHostLabel(), func() {
+			kit.FormRow(c, m.VaultHostLabel(), func() {
 				ui.TextInput(c, &form.Label)
 			})
 			materialHint := m.VaultKeyMaterialHint()
 			if form.HasPrivateKey {
 				materialHint = m.VaultKeyMaterialKeep()
 			}
-			ui.Field(c, m.VaultKeyMaterial(), func() {
+			kit.FormRow(c, m.VaultKeyMaterial(), func() {
 				ui.TextArea(c, &form.PrivateKey).Height(120)
 			}).Description(materialHint)
 			passphraseHint := m.VaultKeyPassphraseHint()
 			if form.HasPassphrase {
 				passphraseHint = m.VaultKeyPassphraseKeep()
 			}
-			ui.Field(c, m.VaultKeyPassphrase(), func() {
+			kit.FormRow(c, m.VaultKeyPassphrase(), func() {
 				ui.TextInput(c, &form.Passphrase).Password()
 			}).Description(passphraseHint)
 			ui.Checkbox(c, &form.SavePassphrase, m.VaultKeySavePassphrase())
 			if form.HasPassphrase {
 				ui.Checkbox(c, &form.ClearPassphrase, m.VaultKeyClearPassphrase())
 			}
-			ui.Field(c, m.VaultKeyCertificate(), func() {
+			kit.FormRow(c, m.VaultKeyCertificate(), func() {
 				ui.TextArea(c, &form.Certificate).Height(60)
 			}).Description(m.VaultKeyCertificateHint())
 			if form.HasCertificate {
@@ -1557,13 +1557,13 @@ func identityEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *u
 		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 
 		ui.Form(c, func() {
-			ui.Field(c, m.VaultHostLabel(), func() {
+			kit.FormRow(c, m.VaultHostLabel(), func() {
 				ui.TextInput(c, &form.Label)
 			})
-			ui.Field(c, m.VaultHostUsername(), func() {
+			kit.FormRow(c, m.VaultHostUsername(), func() {
 				ui.TextInput(c, &form.Username).Placeholder("root")
 			})
-			ui.Field(c, m.VaultIdentityMethod(), func() {
+			kit.FormRow(c, m.VaultIdentityMethod(), func() {
 				ui.RadioGroup(c, func() {
 					ui.Radio(c, &form.AuthMethod, string(domainvault.IdentityAuthPassword), m.VaultIdentityMethodPassword())
 					ui.Radio(c, &form.AuthMethod, string(domainvault.IdentityAuthKey), m.VaultIdentityMethodKey())
@@ -1571,7 +1571,7 @@ func identityEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *u
 				})
 			})
 			if form.AuthMethod != string(domainvault.IdentityAuthPassword) {
-				ui.Field(c, m.VaultIdentityKey(), func() {
+				kit.FormRow(c, m.VaultIdentityKey(), func() {
 					ui.RadioGroup(c, func() {
 						for _, key := range s.Keys() {
 							ui.Radio(c, &form.KeyID, string(key.ID), key.Label)
@@ -1584,7 +1584,7 @@ func identityEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *u
 				if form.HasPassword {
 					passwordHint = m.VaultHostPasswordKeep()
 				}
-				ui.Field(c, m.VaultHostPassword(), func() {
+				kit.FormRow(c, m.VaultHostPassword(), func() {
 					ui.TextInput(c, &form.Password).Password()
 				}).Description(passwordHint)
 				if form.HasPassword {
@@ -1611,10 +1611,10 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 
 		ui.Form(c, func() {
-			ui.Field(c, m.VaultHostGroup(), func() {
+			kit.FormRow(c, m.VaultHostGroup(), func() {
 				ui.TextInput(c, &form.Path).Placeholder("prod/web")
 			}).Description(m.VaultHostGroupHint())
-			ui.Field(c, m.VaultHostNotes(), func() {
+			kit.FormRow(c, m.VaultHostNotes(), func() {
 				ui.TextArea(c, &form.Notes).Height(60)
 			})
 			ui.Text(c, m.VaultGroupDefaults()).Bold()
@@ -1623,7 +1623,7 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 				if placeholder := s.GroupPortPlaceholder(); placeholder != "" {
 					portHint = m.VaultHostPortHint(placeholder)
 				}
-				portField := ui.Field(c, m.VaultHostPort(), func() {
+				portField := kit.FormRow(c, m.VaultHostPort(), func() {
 					// A group inherits its parent groups' port before the
 					// protocol default, so the hint follows both.
 					ui.TextInput(c, &form.Port).
@@ -1632,10 +1632,10 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 				if portHint != "" {
 					portField.Description(portHint)
 				}
-				ui.Field(c, m.VaultHostUsername(), func() {
+				kit.FormRow(c, m.VaultHostUsername(), func() {
 					ui.TextInput(c, &form.Username).Placeholder("root").Width(200)
 				})
-				ui.Field(c, m.VaultHostProtocol(), func() {
+				kit.FormRow(c, m.VaultHostProtocol(), func() {
 					if ui.Select(c, &form.Protocol, []string{
 						string(domainvault.ProtocolSSH),
 						string(domainvault.ProtocolTelnet),
@@ -1648,7 +1648,7 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 				})
 			})
 			if domainvault.Protocol(form.Protocol).UsesSSHAuth() {
-				ui.Field(c, m.VaultHostAuthMethod(), func() {
+				kit.FormRow(c, m.VaultHostAuthMethod(), func() {
 					ui.RadioGroup(c, func() {
 						ui.Radio(c, &form.AuthMethod, "", m.VaultNone())
 						ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthAuto), m.VaultHostAuthAuto())
@@ -1657,7 +1657,7 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 						ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthCertificate), m.VaultHostAuthCertificate())
 					})
 				})
-				ui.Field(c, m.VaultHostIdentity(), func() {
+				kit.FormRow(c, m.VaultHostIdentity(), func() {
 					ui.RadioGroup(c, func() {
 						ui.Radio(c, &form.IdentityID, "", m.VaultNone())
 						for _, identity := range s.Identities() {
@@ -1665,7 +1665,7 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 						}
 					})
 				})
-				ui.Field(c, m.VaultHostKey(), func() {
+				kit.FormRow(c, m.VaultHostKey(), func() {
 					ui.RadioGroup(c, func() {
 						ui.Radio(c, &form.KeyID, "", m.VaultNone())
 						for _, key := range s.Keys() {
@@ -1674,7 +1674,7 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 					})
 				})
 			}
-			ui.Field(c, m.VaultHostProxyProfile(), func() {
+			kit.FormRow(c, m.VaultHostProxyProfile(), func() {
 				ui.RadioGroup(c, func() {
 					ui.Radio(c, &form.ProxyProfileID, "", m.VaultNone())
 					for _, profile := range s.ProxyProfiles() {
@@ -1709,10 +1709,10 @@ func proxyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 
 		ui.Form(c, func() {
-			ui.Field(c, m.VaultHostLabel(), func() {
+			kit.FormRow(c, m.VaultHostLabel(), func() {
 				ui.TextInput(c, &form.Label)
 			})
-			ui.Field(c, m.VaultProxyType(), func() {
+			kit.FormRow(c, m.VaultProxyType(), func() {
 				ui.Select(c, &form.Type, []string{
 					string(domainvault.ProxyCommand),
 					string(domainvault.ProxyHTTP),
@@ -1721,18 +1721,18 @@ func proxyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 			})
 			switch domainvault.ProxyType(form.Type) {
 			case domainvault.ProxyCommand:
-				ui.Field(c, m.VaultProxyCommand(), func() {
+				kit.FormRow(c, m.VaultProxyCommand(), func() {
 					ui.TextInput(c, &form.Command).Placeholder("ssh -W %h:%p jump")
 				})
 			default:
 				ui.Row(c).Gap(8).Wrap().Children(func() {
-					ui.Field(c, m.VaultProxyHost(), func() {
+					kit.FormRow(c, m.VaultProxyHost(), func() {
 						ui.TextInput(c, &form.Host).Placeholder("proxy.example.com")
 					})
-					ui.Field(c, m.VaultHostPort(), func() {
+					kit.FormRow(c, m.VaultHostPort(), func() {
 						ui.TextInput(c, &form.Port).Placeholder("1080").Width(120)
 					})
-					ui.Field(c, m.VaultProxyUsername(), func() {
+					kit.FormRow(c, m.VaultProxyUsername(), func() {
 						ui.TextInput(c, &form.Username).Width(180)
 					})
 				})

@@ -174,7 +174,7 @@ func baudField(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	}
 	baud := s.BaudRate()
 	var box ui.ComboboxParts
-	ui.Field(c, m.SerialBaudRate(), func() {
+	kit.FormRow(c, m.SerialBaudRate(), func() {
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(t.Space(1.5)).
 			Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius).
 			Background(t.Surface).Border(1, t.Border).Children(func() {
@@ -215,7 +215,7 @@ func dataBitsField(c *ui.Context, s *State, m locales.Messages) {
 	if !contains(labels, chosen) {
 		chosen = "8"
 	}
-	ui.Field(c, m.SerialDataBits(), func() {
+	kit.FormRow(c, m.SerialDataBits(), func() {
 		ui.Select(c.Key("serial-data-bits"), &chosen, labels).FillWidth()
 	}).Width(dialogField)
 	if chosen != s.DataBits() {
@@ -236,7 +236,7 @@ func stopBitsField(c *ui.Context, s *State, m locales.Messages) {
 	if !contains(labels, chosen) {
 		chosen = labels[0]
 	}
-	ui.Field(c, m.SerialStopBits(), func() {
+	kit.FormRow(c, m.SerialStopBits(), func() {
 		ui.Select(c.Key("serial-stop-bits"), &chosen, labels).FillWidth()
 	}).Width(dialogField)
 	if chosen != s.StopBits() {
@@ -292,7 +292,7 @@ func choice(c *ui.Context, label, key, current string,
 	if index >= 0 {
 		selected = labels[index]
 	}
-	ui.Field(c, label, func() {
+	kit.FormRow(c, label, func() {
 		ui.Select(c.Key(key), &selected, labels).FillWidth()
 	}).Width(dialogField)
 	if index < 0 || selected == labels[index] {

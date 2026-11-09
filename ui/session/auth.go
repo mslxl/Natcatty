@@ -313,7 +313,7 @@ func AuthPromptModal(prompt *AuthPrompt) func(*ui.Context) {
 						body = m.AuthPromptPassphraseInvalid(view.Passphrase.KeyLabel)
 					}
 					ui.Text(c, body).TextColor(t.TextMuted)
-					ui.Field(c, m.AuthPromptPassphraseLabel(), func() {
+					kit.FormRow(c, m.AuthPromptPassphraseLabel(), func() {
 						if input := prompt.PassphraseInput(); input != nil {
 							ui.TextInput(c, input).Password().Width(300)
 						}
@@ -325,7 +325,7 @@ func AuthPromptModal(prompt *AuthPrompt) func(*ui.Context) {
 					}
 					for index, question := range view.Keyboard.Prompts {
 						index := index
-						ui.Field(c, question.Text, func() {
+						kit.FormRow(c, question.Text, func() {
 							input := prompt.AnswerInput(index)
 							if input == nil {
 								return
