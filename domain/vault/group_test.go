@@ -87,6 +87,9 @@ func TestResolveGroupDefaultsMergesAncestorsChildLast(t *testing.T) {
 		{Path: "prod", Username: "deploy", Port: 2222, IdentityID: "identity-parent"},
 		{Path: "prod/web", Username: "www", ProxyProfileID: "proxy-web"},
 		{Path: "prod/web/internal", KeyID: "key-internal"},
+		// A group exists before a Host can belong to it; inheritance follows
+		// this node's ParentID chain.
+		{Path: "prod/db"},
 	}
 
 	got := ResolveGroupDefaults(groups, "prod/web/internal")
@@ -282,6 +285,7 @@ func TestNetworkProfileReferenceFollowsProxyProfileMergingRules(t *testing.T) {
 	groups := []Group{
 		{Path: "prod", NetworkProfileID: "net-parent"},
 		{Path: "prod/web", NetworkProfileID: "net-child"},
+		{Path: "prod/db"},
 	}
 	if got := ResolveGroupDefaults(groups, "prod/web").NetworkProfileID; got != "net-child" {
 		t.Fatalf("child default = %q, want net-child", got)
