@@ -6,10 +6,10 @@ import (
 	"github.com/mslxl/natcatty/domain/model"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
+	"github.com/mslxl/natcatty/ui/layout"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
-	"github.com/mslxl/natcatty/ui/titlebar"
 )
 
 // DetachedView renders one detached Tab in its own window: the Tab's split
@@ -37,21 +37,12 @@ func DetachedView(s *state.State, tabID model.TabID) func(*ui.Context) {
 		}
 		t := c.Theme()
 
-		ui.Column(c).Fill().Background(t.Background).Children(func() {
-			// As the original's terminal popup, the title bar is the terminal's
-			// own background with its title dimmed, and the controls follow.
-			left, right := titlebar.Insets(c, titlebar.Popup)
-			ui.Row(c).FillWidth().Height(topBarHeight).Shrink(0).Padding(0, 4+right, 0, 16+left).Gap(8).
-				AlignItems(ui.Center).Background(t.Background).DragWindow().Children(func() {
-				ui.Text(c, DetachedTitle(m, info)).FontSize(kit.M(c).Font.Footnote).FontWeight(500).TextColor(t.Text.Alpha(0.7)).
-					SingleLine().MinWidth(0).Shrink(1)
-				ui.Column(c).Grow(1)
-				if kit.IconButtonWith(c, icons.LogIn, m.DetachedMoveToMain(), kit.IconOptions{Role: kit.IconCard, Key: "detached-move-main"}).Clicked() {
-					s.ReattachDetachedTab(tabID)
-					c.Invalidate()
-				}
-			})
-
+		layout.DetachedLayout(c, DetachedTitle(m, info), func() {
+			if kit.IconButtonWith(c, icons.LogIn, m.DetachedMoveToMain(), kit.IconOptions{Role: kit.IconCard, Key: "detached-move-main"}).Clicked() {
+				s.ReattachDetachedTab(tabID)
+				c.Invalidate()
+			}
+		}, func() {
 			if root, focus, ok := s.DetachedTabTree(tabID); ok {
 				ordinal := 0
 				paneTree(c, s, m, t, detachedTabRef(s, tabID), root, focus, &ordinal)

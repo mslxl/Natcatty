@@ -13,9 +13,9 @@ import (
 	domain "github.com/mslxl/natcatty/domain/preferences"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
+	uilayout "github.com/mslxl/natcatty/ui/layout"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
-	"github.com/mslxl/natcatty/ui/titlebar"
 )
 
 // Config is everything the Settings window can show. A nil state leaves its
@@ -94,50 +94,32 @@ func viewWithSettings(config Config, layout *viewLayout) func(*ui.Context) {
 
 		// The window is frameless: as the original's, its header drags it
 		// and its close button sits at the header row's end.
-		ui.Column(c).Fill().Children(func() {
-			header(c, m, t)
-			settingsBody(c, config, search, panes, hits, m, t)
+		uilayout.SettingsLayout(c, uilayout.SettingsSlots{
+			Title:        m.NavSettings(),
+			SidebarWidth: sidebarWidth(c, m, t),
+			Sidebar:      func() { sidebar(c, config, search, panes, hits, m, t) },
+			Content:      func() { settingsContent(c, config, search, panes, m, t) },
 		})
 	}
 }
 
-// settingsBody is the original's split under the header: the nav column with
-// the search at its top, and the content pane on a faint muted fill.
-func settingsBody(c *ui.Context, config Config, search *SearchState, panes *viewState, hits []SearchHit,
+// settingsContent is the content pane beside the nav column: the reset-all
+// confirmation, the chosen area, and the area's pinned action bars.
+func settingsContent(c *ui.Context, config Config, search *SearchState, panes *viewState,
 	m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
-		sidebar(c, config, search, panes, hits, m, t)
-		ui.Column(c).Grow(1).FillHeight().MinWidth(0).MinHeight(0).Background(t.TextMuted.Alpha(0.04)).
-			Children(func() {
-				if config.Preferences != nil && config.Preferences.ResettingAll() {
-					ui.Column(c).FillWidth().Shrink(0).Padding(24, 24, 0, 24).Children(func() {
-						confirmResetAll(c, config.Preferences, m, t)
-					})
-				}
-				body(c, config, search, panes, m, t)
-				if config.Sync != nil && search.Area() == AreaSync {
-					syncActionsPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t, panes.layout)
-					syncConvergentPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t)
-				}
-				if config.MCP != nil && search.Area() == AreaMCP {
-					mcpApprovalPinnedBar(c, config.MCP, config.MCP.Snapshot(), m, t, panes.layout)
-				}
-			})
-	})
-}
-
-// header is the Settings window's title bar, as the original's: the title on
-// a row under a 12-high band, the whole of it dragging the window, with a
-// line below. The row leaves the close button its end.
-func header(c *ui.Context, m locales.Messages, t *ui.Theme) {
-	left, right := titlebar.Insets(c, titlebar.Dialog)
-	ui.Row(c).Key("title-bar").FillWidth().Shrink(0).Padding(titlebar.CloseTop, 16+right, 8, 16+left).
-		AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).
-		DragWindow().Children(func() {
-		ui.Row(c).Height(titlebar.CloseSize).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.NavSettings()).FontSize(kit.M(c).Font.Title).FontWeight(600)
+	if config.Preferences != nil && config.Preferences.ResettingAll() {
+		ui.Column(c).FillWidth().Shrink(0).Padding(24, 24, 0, 24).Children(func() {
+			confirmResetAll(c, config.Preferences, m, t)
 		})
-	})
+	}
+	body(c, config, search, panes, m, t)
+	if config.Sync != nil && search.Area() == AreaSync {
+		syncActionsPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t, panes.layout)
+		syncConvergentPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t)
+	}
+	if config.MCP != nil && search.Area() == AreaMCP {
+		mcpApprovalPinnedBar(c, config.MCP, config.MCP.Snapshot(), m, t, panes.layout)
+	}
 }
 
 func confirmResetAll(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {
@@ -330,36 +312,33 @@ func areaIcon(area Area) string {
 // the original keeps elsewhere, sits at the column's foot.
 func sidebar(c *ui.Context, config Config, search *SearchState, panes *viewState, hits []SearchHit,
 	m locales.Messages, t *ui.Theme) {
-	ui.Column(c).Width(sidebarWidth(c, m, t)).Shrink(0).FillHeight().MinHeight(0).Padding(12).Gap(8).
-		BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(func() {
-		searchField(c, search, hits, m, t)
-		if search.Filtering() {
-			searchResults(c, search, hits, m, t)
-			return
-		}
-		ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).PaddingEnd(scrollbarGutter(t)).
-			TrackScroll(&panes.sidebar).Children(func() {
-			kit.NavList(c, kit.NavSettings, func() {
-				for _, area := range Areas() {
-					area := area
-					if kit.NavItem(c, kit.NavSettings, "settings-nav-"+string(area), areaIcon(area), AreaTitle(m, area),
-						area == search.Area()).Clicked() {
-						search.SetArea(area)
-						c.Invalidate()
-					}
-				}
-			})
-		})
-		if config.Preferences != nil {
-			ui.Column(c).FillWidth().Shrink(0).BorderWidth(1, 0, 0, 0).
-				BorderColor(t.Border).Padding(8, scrollbarGutter(t), 0, 0).Children(func() {
-				if kit.NavItem(c, kit.NavSettings, "settings-reset-all", icons.RefreshCw, m.SettingsResetAll(), false).Clicked() {
-					config.Preferences.AskResetAll()
+	searchField(c, search, hits, m, t)
+	if search.Filtering() {
+		searchResults(c, search, hits, m, t)
+		return
+	}
+	ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).PaddingEnd(scrollbarGutter(t)).
+		TrackScroll(&panes.sidebar).Children(func() {
+		kit.NavList(c, kit.NavSettings, func() {
+			for _, area := range Areas() {
+				area := area
+				if kit.NavItem(c, kit.NavSettings, "settings-nav-"+string(area), areaIcon(area), AreaTitle(m, area),
+					area == search.Area()).Clicked() {
+					search.SetArea(area)
 					c.Invalidate()
 				}
-			})
-		}
+			}
+		})
 	})
+	if config.Preferences != nil {
+		ui.Column(c).FillWidth().Shrink(0).BorderWidth(1, 0, 0, 0).
+			BorderColor(t.Border).Padding(8, scrollbarGutter(t), 0, 0).Children(func() {
+			if kit.NavItem(c, kit.NavSettings, "settings-reset-all", icons.RefreshCw, m.SettingsResetAll(), false).Clicked() {
+				config.Preferences.AskResetAll()
+				c.Invalidate()
+			}
+		})
+	}
 }
 
 func areaContent(c *ui.Context, config Config, area Area, m locales.Messages, t *ui.Theme) {

@@ -11,6 +11,7 @@ import (
 
 	appaplock "github.com/mslxl/natcatty/application/applock"
 	"github.com/mslxl/natcatty/ui/kit"
+	"github.com/mslxl/natcatty/ui/layout"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -131,26 +132,24 @@ func (g *Gate) lockScreen(c *ui.Context) {
 
 	// The window is frameless: as the original's, the whole lock screen
 	// drags it.
-	ui.Column(c).Fill().DragWindow().Children(func() {
-		ui.Column(c).FillWidth().Grow(1).MinHeight(0).Padding(48).Gap(12).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.AppLockTitle()).FontSize(24).Bold()
-			ui.Text(c, m.AppLockBody()).TextColor(t.TextMuted)
+	layout.LockLayout(c, func() {
+		ui.Text(c, m.AppLockTitle()).FontSize(24).Bold()
+		ui.Text(c, m.AppLockBody()).TextColor(t.TextMuted)
 
-			ui.Column(c).Width(320).Gap(8).Children(func() {
-				var submitted bool
-				kit.FormRow(c, m.AppLockPassword(), func() {
-					submitted = ui.TextInput(c, &g.password).Password().AutoFocus().Submitted()
-				}).Width(320)
-				unlock := ui.PrimaryButton(c, m.AppLockUnlock()).Width(320).Clicked()
-				if submitted || unlock {
-					g.unlock(c)
-				}
-			})
-
-			if message := problemText(m, g.problem); message != "" {
-				ui.Text(c, message).TextColor(uitheme.DangerText(t))
+		ui.Column(c).Width(320).Gap(8).Children(func() {
+			var submitted bool
+			kit.FormRow(c, m.AppLockPassword(), func() {
+				submitted = ui.TextInput(c, &g.password).Password().AutoFocus().Submitted()
+			}).Width(320)
+			unlock := ui.PrimaryButton(c, m.AppLockUnlock()).Width(320).Clicked()
+			if submitted || unlock {
+				g.unlock(c)
 			}
 		})
+
+		if message := problemText(m, g.problem); message != "" {
+			ui.Text(c, message).TextColor(uitheme.DangerText(t))
+		}
 	})
 }
 
