@@ -305,6 +305,36 @@ func areaIcon(area Area) string {
 	return icons.Settings
 }
 
+// areaTint is the color of an area's icon tile in the macOS style's
+// sidebar, from the system palette, as System Settings colors its panes.
+func areaTint(area Area) ui.Color {
+	switch area {
+	case AreaAppearance:
+		return ui.RGB(175, 82, 222) // purple
+	case AreaTerminal:
+		return ui.RGB(72, 72, 74) // graphite
+	case AreaTransport:
+		return ui.RGB(0, 122, 255) // blue
+	case AreaLayout:
+		return ui.RGB(88, 86, 214) // indigo
+	case AreaSFTPEditor:
+		return ui.RGB(48, 176, 199) // teal
+	case AreaLogs:
+		return ui.RGB(162, 132, 94) // brown
+	case AreaSystem:
+		return ui.RGB(142, 142, 147) // gray
+	case AreaSecurity:
+		return ui.RGB(255, 59, 48) // red
+	case AreaSync:
+		return ui.RGB(50, 173, 230) // cyan
+	case AreaShortcuts:
+		return ui.RGB(255, 149, 0) // orange
+	case AreaMCP:
+		return ui.RGB(52, 199, 89) // green
+	}
+	return ui.RGB(142, 142, 147)
+}
+
 // sidebar is the original's nav column: the search at its top, then the
 // areas, or the matches while a query is active. At 720x480 the entries can
 // exceed the height left by the header, so the list scrolls instead of
@@ -322,8 +352,8 @@ func sidebar(c *ui.Context, config Config, search *SearchState, panes *viewState
 		kit.NavList(c, kit.NavSettings, func() {
 			for _, area := range Areas() {
 				area := area
-				if kit.NavItem(c, kit.NavSettings, "settings-nav-"+string(area), areaIcon(area), AreaTitle(m, area),
-					area == search.Area()).Clicked() {
+				if kit.NavItemWith(c, kit.NavSettings, "settings-nav-"+string(area), areaIcon(area), AreaTitle(m, area),
+					area == search.Area(), areaTint(area)).Clicked() {
 					search.SetArea(area)
 					c.Invalidate()
 				}
@@ -991,21 +1021,13 @@ func notificationToggle(c *ui.Context, state *DesktopState, value bool, label st
 // section is a titled card inside an area. Its title sits a step below the
 // area's own heading, so the page reads as one hierarchy.
 func section(c *ui.Context, title, description string, t *ui.Theme, build func()) {
-	ui.Column(c).Padding(16).Gap(10).Radius(kit.M(c).Radius.Card).Background(t.Surface).Border(1, t.Border).Children(func() {
-		ui.Column(c).FillWidth().Gap(2).Children(func() {
-			ui.Text(c, title).FontSize(kit.M(c).Font.Headline).FontWeight(600)
-			if description != "" {
-				ui.Text(c, description).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
-			}
-		})
-		build()
-	})
+	kit.FormCard(c, title, description, build)
 }
 
 // sectionBody is a section whose title and description the area header
 // already shows.
 func sectionBody(c *ui.Context, t *ui.Theme, build func()) {
-	ui.Column(c).Padding(16).Gap(10).Radius(kit.M(c).Radius.Card).Background(t.Surface).Border(1, t.Border).Children(build)
+	kit.FormCard(c, "", "", build)
 }
 
 func appLockSection(c *ui.Context, lock *AppLockState, m locales.Messages, t *ui.Theme) {
