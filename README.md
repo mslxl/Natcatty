@@ -63,6 +63,18 @@
       <sub>124 interface presets, accent colors, terminal color schemes, and <code>.itermcolors</code> import</sub>
     </td>
   </tr>
+  <tr>
+    <td align="center" width="50%">
+      <a href="docs/screenshots/05-macos-home.png"><img src="docs/screenshots/05-macos-home.png" alt="macOS interface style" width="100%"></a>
+      <br><b>Interface style · macOS</b><br>
+      <sub>Floating glass sidebar and capsule tabs; switch styles in Settings › Appearance</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="docs/screenshots/07-macos-settings.png"><img src="docs/screenshots/07-macos-settings.png" alt="macOS-style Settings" width="100%"></a>
+      <br><b>Settings · macOS style</b><br>
+      <sub>Colored area tiles and inset grouped forms</sub>
+    </td>
+  </tr>
 </table>
 
 ---

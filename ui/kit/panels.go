@@ -54,9 +54,9 @@ func DialogWith(c *ui.Context, open *bool, o DialogOptions, body, footer func())
 	width, title, description := o.Width, o.Title, o.Description
 	return ui.DialogBase(c, open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.45))
-		panel.Width(width).MaxWidthPercent(92).MaxHeightPercent(90).Radius(M(c).Radius.Overlay).
-			Background(t.Surface).Border(1, t.Border).
+		panel.Width(width).MaxWidthPercent(92).MaxHeightPercent(90).
 			Shadow(0, 16, 48, 0, ui.RGBA(0, 0, 0, 0.28)).Clip()
+		overlaySurface(c, panel, t.Surface, M(c).Radius.Overlay)
 		ui.Column(c).FillWidth().Padding(20, 20, 0, 20).Gap(4).Children(func() {
 			ui.Text(c, title).FontSize(M(c).Font.Title3).FontWeight(600)
 			if description != "" {
