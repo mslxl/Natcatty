@@ -4,6 +4,8 @@
 package titlebar
 
 import (
+	"runtime"
+
 	"github.com/egoist/mygo/ui"
 
 	"github.com/mslxl/natcatty/ui/icons"
@@ -39,6 +41,28 @@ const (
 	CloseTop   float32 = 20
 	DialogRoom         = CloseSize + 8
 )
+
+// NativeControls reports whether the platform draws the window controls
+// itself. On macOS the windows keep their traffic lights over a hidden title
+// bar, so the app draws no controls of its own there.
+var NativeControls = runtime.GOOS == "darwin"
+
+// Insets is the room a window's top bar keeps clear of the window controls at
+// its left and right ends: the traffic lights' room on macOS (none in full
+// screen, where they hide), and the drawn controls' room elsewhere.
+func Insets(c *ui.Context, style Style) (left, right float32) {
+	if NativeControls {
+		return c.TitleBar().Left, 0
+	}
+	switch style {
+	case Popup:
+		return 0, PopupRoom
+	case Dialog:
+		return 0, DialogRoom
+	default:
+		return 0, Room
+	}
+}
 
 // closeHover is the main window's close hover fill, the original's red-500.
 var closeHover = ui.RGB(239, 68, 68)
@@ -84,6 +108,9 @@ func Frame(style Style, window func() Window, content func(*ui.Context)) func(*u
 // Controls draws a window's controls at the top-right corner of their parent,
 // above its other children.
 func Controls(c *ui.Context, style Style, w Window) {
+	if NativeControls {
+		return
+	}
 	m := locales.In(c.Locale())
 	if style == Dialog {
 		ui.Row(c).Key("window-controls").Absolute().Top(CloseTop).Right(CloseInset).Children(func() {
