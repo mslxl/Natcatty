@@ -1025,7 +1025,7 @@ func notificationToggle(c *ui.Context, state *DesktopState, value bool, label st
 func section(c *ui.Context, title, description string, t *ui.Theme, build func()) {
 	ui.Column(c).Padding(16).Gap(10).Radius(kit.M(c).Radius.Card).Background(t.Surface).Border(1, t.Border).Children(func() {
 		ui.Column(c).FillWidth().Gap(2).Children(func() {
-			ui.Text(c, title).FontSize(15).FontWeight(600)
+			ui.Text(c, title).FontSize(kit.M(c).Font.Headline).FontWeight(600)
 			if description != "" {
 				ui.Text(c, description).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			}

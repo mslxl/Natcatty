@@ -48,7 +48,7 @@ func dialogView(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui
 	if windowWidth, _ := c.Size(); width > windowWidth-2*dialogMargin {
 		width = windowWidth - 2*dialogMargin
 	}
-	ui.Modal(c, &open, func() {
+	kit.DialogWith(c, &open, kit.DialogOptions{Role: kit.DialogSheet}, func() {
 		// The modal draws the card; a frame of the dialog's own would nest a
 		// second card inside it.
 		ui.Column(c).Width(width).Gap(10).Children(func() {
@@ -65,7 +65,7 @@ func dialogView(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui
 				inputDialog(c, s, dialog, m, t, width)
 			}
 		})
-	})
+	}, nil)
 	if !open {
 		s.CloseDialog()
 	}
@@ -102,7 +102,7 @@ func dialogLabel(m locales.Messages, dialog *transferstate.Dialog) string {
 }
 
 func inputDialog(c *ui.Context, s *transferstate.State, dialog *transferstate.Dialog, m locales.Messages, t *ui.Theme, dialogWidth float32) {
-	ui.Text(c, dialogTitle(m, dialog)).FontSize(15).Bold().TextColor(t.Text)
+	ui.Text(c, dialogTitle(m, dialog)).FontSize(kit.M(c).Font.Headline).Bold().TextColor(t.Text)
 	ui.Text(c, dialogLabel(m, dialog)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).MinWidth(0)
 	input := ui.TextInput(c, &dialog.Draft)
 	// The field never asks for more than the dialog's content box, which is
@@ -139,7 +139,7 @@ func chmodDialog(c *ui.Context, s *transferstate.State, dialog *transferstate.Di
 	if err != nil {
 		mode = 0
 	}
-	ui.Text(c, m.SftpPermissionsTitle()).FontSize(15).Bold().TextColor(t.Text)
+	ui.Text(c, m.SftpPermissionsTitle()).FontSize(kit.M(c).Font.Headline).Bold().TextColor(t.Text)
 	if len(dialog.Paths) == 1 {
 		ui.Text(c, baseName(dialog.Paths[0])).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine().MinWidth(0)
 	}
@@ -202,7 +202,7 @@ func symbolicMode(mode uint32) string {
 }
 
 func deleteDialog(c *ui.Context, s *transferstate.State, dialog *transferstate.Dialog, m locales.Messages, t *ui.Theme) {
-	ui.Text(c, m.SftpDeleteTitle()).FontSize(15).Bold().TextColor(uitheme.DangerText(t))
+	ui.Text(c, m.SftpDeleteTitle()).FontSize(kit.M(c).Font.Headline).Bold().TextColor(uitheme.DangerText(t))
 	ui.Text(c, m.SftpDeleteBody(len(dialog.Paths))).FontSize(kit.M(c).Font.Footnote).TextColor(t.Text)
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Column(c).Grow(1)
@@ -249,7 +249,7 @@ func conflictDialog(c *ui.Context, s *transferstate.State, dialog *transferstate
 	if conflict.IsDirectory {
 		title = m.SftpConflictFolderTitle()
 	}
-	ui.Text(c, title).FontSize(15).Bold().TextColor(t.Text)
+	ui.Text(c, title).FontSize(kit.M(c).Font.Headline).Bold().TextColor(t.Text)
 	ui.Text(c, conflict.Name+" "+m.SftpConflictAlreadyExists()).FontSize(kit.M(c).Font.Callout).
 		TextColor(t.Text).SingleLine()
 	ui.Text(c, conflictDescription(m, *conflict)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)

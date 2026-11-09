@@ -161,7 +161,7 @@ func TrustView(p *TrustPrompt) func(*ui.Context) {
 		t := c.Theme()
 
 		open := true
-		ui.Modal(c, &open, func() {
+		kit.DialogWith(c, &open, kit.DialogOptions{Role: kit.DialogSheet}, func() {
 			ui.Column(c).Width(520).Padding(20).Gap(10).Background(t.Surface).Children(func() {
 				title := m.HostKeyPromptUnknownTitle()
 				body := m.HostKeyPromptUnknownBody(key.Hostname)
@@ -188,6 +188,6 @@ func TrustView(p *TrustPrompt) func(*ui.Context) {
 					}
 				})
 			})
-		})
+		}, nil)
 	}
 }

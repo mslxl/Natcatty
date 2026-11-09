@@ -8,7 +8,6 @@ import (
 	appsearch "github.com/mslxl/natcatty/application/search"
 	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
-	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // The overlay follows the original Quick Switcher's proportions: a panel at
@@ -58,79 +57,61 @@ func Overlay(s *State) func(*ui.Context) {
 		chrome := panelPadding*2 + headerHeight + hintHeight + panelGap*2
 		panelHeight := minf(minf(panelMaxHeight, height-panelTop-16), chrome+listHeight)
 
-		closed := false
-		ui.Overlay(c, func() {
-			back := ui.Column(c).Absolute().Left(0).Top(0).Right(0).Bottom(0).
-				AlignItems(ui.Center).Justify(ui.Start).Modal().
-				Background(uitheme.Scrim)
-			// Clicking the backdrop closes; the panel swallows its own clicks
-			// below, so a click inside it never reaches this handler.
-			back.OnClick(func() {
+		closed := kit.Palette(c, kit.PaletteOptions{
+			Width: panelWidth, Height: panelHeight, Top: panelTop, Padding: panelPadding, Gap: panelGap,
+			OnBackdrop: func() {
 				s.Close()
 				c.Invalidate()
+			},
+		}, func() {
+			placeholder := placeholderText(m, s.Mode())
+			kit.SearchField(c, s.QueryPtr(), kit.SearchOptions{
+				Role:        kit.SearchPalette,
+				Placeholder: placeholder,
+				AutoFocus:   true,
+			}).OnTextKey(func(k ui.TextKey) bool {
+				switch k.Key {
+				case ui.KeyDown:
+					if s.Move(1) {
+						c.Invalidate()
+					}
+					return true
+				case ui.KeyUp:
+					if s.Move(-1) {
+						c.Invalidate()
+					}
+					return true
+				case ui.KeyEnter:
+					if s.Activate() {
+						c.Invalidate()
+					}
+					return true
+				case ui.KeyEscape:
+					s.Close()
+					c.Invalidate()
+					return true
+				}
+				return false
 			})
-			if back.OverlayShortcut(0, ui.KeyEscape) {
-				closed = true
+			hintRow(c, m, t)
+			if count == 0 {
+				emptyState(c, s, m, t)
+				return
 			}
-			back.Children(func() {
-				panel := ui.Column(c).Role(ui.RoleDialog).
-					Width(panelWidth).Height(panelHeight).
-					Margin(panelTop, 0, 0, 0).Padding(panelPadding).Gap(panelGap).
-					Background(t.Background).Border(1, t.Border).
-					Radius(t.Radius+2).Shadow(0, 10, 30, 0, uitheme.OverlayShadow).
-					Clip()
-				panel.OnClick(func() {})
-				panel.Children(func() {
-					placeholder := placeholderText(m, s.Mode())
-					kit.SearchField(c, s.QueryPtr(), kit.SearchOptions{
-						Role:        kit.SearchPalette,
-						Placeholder: placeholder,
-						AutoFocus:   true,
-					}).OnTextKey(func(k ui.TextKey) bool {
-						switch k.Key {
-						case ui.KeyDown:
-							if s.Move(1) {
+			ui.Scroll(c).Grow(1).MinHeight(0).Children(func() {
+				ui.Column(c).FillWidth().MinWidth(0).Children(func() {
+					ListAt(c, sections, m, t, ListOptions{
+						Selected:  selected,
+						Reveal:    reveal,
+						KeyPrefix: "search-row",
+						Activate: func(index int) {
+							if s.Select(index) {
 								c.Invalidate()
 							}
-							return true
-						case ui.KeyUp:
-							if s.Move(-1) {
-								c.Invalidate()
-							}
-							return true
-						case ui.KeyEnter:
 							if s.Activate() {
 								c.Invalidate()
 							}
-							return true
-						case ui.KeyEscape:
-							s.Close()
-							c.Invalidate()
-							return true
-						}
-						return false
-					})
-					hintRow(c, m, t)
-					if count == 0 {
-						emptyState(c, s, m, t)
-						return
-					}
-					ui.Scroll(c).Grow(1).MinHeight(0).Children(func() {
-						ui.Column(c).FillWidth().MinWidth(0).Children(func() {
-							ListAt(c, sections, m, t, ListOptions{
-								Selected:  selected,
-								Reveal:    reveal,
-								KeyPrefix: "search-row",
-								Activate: func(index int) {
-									if s.Select(index) {
-										c.Invalidate()
-									}
-									if s.Activate() {
-										c.Invalidate()
-									}
-								},
-							})
-						})
+						},
 					})
 				})
 			})

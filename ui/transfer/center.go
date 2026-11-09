@@ -36,60 +36,35 @@ func centerView(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui
 	panelWidth := min(width-32, centerMaxWidth)
 	panelHeight := min(height-32, centerMaxHeight)
 
-	closed := false
-	ui.Overlay(c, func() {
-		back := ui.Column(c).Absolute().Left(0).Top(0).Right(0).Bottom(0).
-			AlignItems(ui.Center).Justify(ui.Start).Modal().
-			Background(uitheme.Scrim)
-		// The backdrop closes. OnClick runs after this build, so it closes the
-		// state directly instead of leaving a flag this pass can no longer see;
-		// the panel swallows its own clicks below, so a click inside the center
-		// never reaches this handler.
-		back.OnClick(func() {
+	closed := kit.Palette(c, kit.PaletteOptions{
+		Width: panelWidth, Height: panelHeight, Top: centerTop, Padding: centerPadding, Gap: 8,
+		OnBackdrop: func() {
 			s.CloseCenter()
 			c.Invalidate()
-		})
-		if back.OverlayShortcut(0, ui.KeyEscape) {
-			closed = true
+		},
+		Close: centerClose(s),
+	}, func() {
+		centerHeader(c, s, m, t)
+		if code := s.CenterError(); code != "" {
+			ui.Text(c, noticeText(m, code)).FontSize(kit.M(c).Font.Caption).
+				TextColor(uitheme.DangerText(t)).SingleLine()
 		}
-		// The Modal backdrop suppresses the window shortcut that opened the
-		// center, so the same effective, rebindable chord has to be offered to
-		// the overlay itself to toggle it closed.
-		if mods, key, ok := centerChord(s); ok && back.OverlayShortcut(mods, key) {
-			closed = true
-		}
-		back.Children(func() {
-			panel := ui.Column(c).Role(ui.RoleDialog).
-				Width(panelWidth).Height(panelHeight).
-				Margin(centerTop, 0, 0, 0).Padding(centerPadding).Gap(8).
-				Background(t.Background).Border(1, t.Border).
-				Radius(t.Radius+2).Shadow(0, 10, 30, 0, uitheme.OverlayShadow).
-				Clip()
-			panel.OnClick(func() {})
-			panel.Children(func() {
-				centerHeader(c, s, m, t)
-				if code := s.CenterError(); code != "" {
-					ui.Text(c, noticeText(m, code)).FontSize(kit.M(c).Font.Caption).
-						TextColor(uitheme.DangerText(t)).SingleLine()
-				}
-				if len(tasks) == 0 {
-					ui.Column(c).Grow(1).FillWidth().
-						AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-						ui.Text(c, m.SftpTransferEmpty()).FontSize(kit.M(c).Font.Footnote).
-							TextColor(t.TextMuted).AlignSelf(ui.Center)
-					})
-				} else {
-					ui.Scroll(c).Grow(1).MinHeight(0).Children(func() {
-						ui.Column(c).FillWidth().MinWidth(0).Gap(6).Children(func() {
-							for _, task := range tasks {
-								centerRow(c, s, m, t, task)
-							}
-						})
-					})
-				}
-				centerFooter(c, s, m, t)
+		if len(tasks) == 0 {
+			ui.Column(c).Grow(1).FillWidth().
+				AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+				ui.Text(c, m.SftpTransferEmpty()).FontSize(kit.M(c).Font.Footnote).
+					TextColor(t.TextMuted).AlignSelf(ui.Center)
 			})
-		})
+		} else {
+			ui.Scroll(c).Grow(1).MinHeight(0).Children(func() {
+				ui.Column(c).FillWidth().MinWidth(0).Gap(6).Children(func() {
+					for _, task := range tasks {
+						centerRow(c, s, m, t, task)
+					}
+				})
+			})
+		}
+		centerFooter(c, s, m, t)
 	})
 	if closed {
 		s.CloseCenter()
@@ -110,6 +85,16 @@ func centerHeader(c *ui.Context, s *transferstate.State, m locales.Messages, t *
 			s.CloseCenter()
 		}
 	})
+}
+
+// centerClose is the chord that closes the center: the Palette's backdrop
+// holds back the window shortcut that opened it, so the same effective,
+// rebindable chord is offered to the overlay itself to toggle it closed.
+func centerClose(s *transferstate.State) []kit.Chord {
+	if mods, key, ok := centerChord(s); ok {
+		return []kit.Chord{{Mods: mods, Key: key}}
+	}
+	return nil
 }
 
 // centerChord resolves the effective Transfer-center binding to the key pair

@@ -31,6 +31,8 @@ type FontScale struct {
 	Callout float32
 	// Body is the default text size.
 	Body float32
+	// Headline heads a card or a compact dialog.
+	Headline float32
 	// Title3 heads a dialog.
 	Title3 float32
 	// Title heads a page.
@@ -110,7 +112,7 @@ type Spacing struct {
 // classicMetrics are the original's sizes.
 var classicMetrics = Metrics{
 	Font: FontScale{Caption2: 10, Caption: 11, Footnote: 12, Callout: 13, Body: 14,
-		Title3: 16, Title: 18, LargeTitle: 20},
+		Headline: 15, Title3: 16, Title: 18, LargeTitle: 20},
 	Radius:  Radii{Small: 4, Control: 6, Card: 10, Overlay: 12, Pill: 999},
 	Control: ControlHeights{Mini: 20, Small: 22, Compact: 24, Regular: 28, Large: 32},
 	Bar: BarHeights{Title: 36, Tabs: 32, Toolbar: 30, Pane: 30, ListHeader: 28, Filter: 34,

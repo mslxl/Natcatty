@@ -265,9 +265,8 @@ func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *
 	}
 	start = min(max(start, 0), max(len(model.Suggestions)-rows, 0))
 	visible := model.Suggestions[start : start+rows]
-	ui.Column(c).Absolute().Left(placement.Left).Top(placement.PopupTop).
-		Width(placement.Width).Padding(autocompletePadding, 6).Gap(autocompleteRowGap).
-		Background(t.Surface).Border(autocompleteBorder, t.Accent).Clip().Children(func() {
+	kit.PopoverSurface(c, ui.Column(c).Absolute().Left(placement.Left).Top(placement.PopupTop).
+		Width(placement.Width).Padding(autocompletePadding, 6).Gap(autocompleteRowGap), t.Accent).Children(func() {
 		ui.Row(c).FillWidth().Height(autocompleteHeaderHeight).Gap(6).
 			AlignItems(ui.Center).Children(func() {
 			ui.Text(c, m.SessionAutocompleteLabel()).FontSize(kit.M(c).Font.Caption2).Bold().
@@ -329,10 +328,9 @@ func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *
 // list. It floats like the popup so turning Ghost text on cannot resize the
 // terminal either.
 func autocompleteGhost(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, placement autocompletePlacement) {
-	ui.Row(c).Absolute().Left(placement.Left).Top(placement.GhostTop).
-		Width(placement.Width).Height(autocompleteGhostHeight).Padding(0, 6).
-		Background(t.Surface).Border(autocompleteBorder, t.Border).Clip().
-		AlignItems(ui.Center).Children(func() {
+	ghost := ui.Row(c).Absolute().Left(placement.Left).Top(placement.GhostTop).
+		Width(placement.Width).Height(autocompleteGhostHeight).Padding(0, 6).AlignItems(ui.Center)
+	kit.PopoverSurface(c, ghost, t.Border).Children(func() {
 		ui.Text(c, m.SessionAutocompleteGhost(model.GhostText)).FontSize(kit.M(c).Font.Caption2).
 			SingleLine().MinWidth(0).Grow(1).TextColor(t.TextMuted)
 	})

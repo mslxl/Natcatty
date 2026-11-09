@@ -302,7 +302,7 @@ func AuthPromptModal(prompt *AuthPrompt) func(*ui.Context) {
 		t := c.Theme()
 
 		open := true
-		ui.Modal(c, &open, func() {
+		kit.DialogWith(c, &open, kit.DialogOptions{Role: kit.DialogSheet}, func() {
 			ui.Column(c).Width(520).Padding(20).Gap(10).Background(t.Surface).Children(func() {
 				switch view.Kind {
 				case AuthPromptPassphrase:
@@ -356,6 +356,6 @@ func AuthPromptModal(prompt *AuthPrompt) func(*ui.Context) {
 					}
 				})
 			})
-		})
+		}, nil)
 	}
 }

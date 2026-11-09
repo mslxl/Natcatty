@@ -6,12 +6,52 @@ import (
 	"github.com/mslxl/natcatty/ui/icons"
 )
 
+// DialogRole picks a Dialog's recipe.
+type DialogRole int
+
+const (
+	// DialogPanel is a titled panel: the title and description, the body
+	// in a scroll, and the footer's buttons at the end.
+	DialogPanel DialogRole = iota
+	// DialogSheet is the modal card alone: body draws the whole content,
+	// its own heading and buttons included.
+	DialogSheet
+)
+
+// DialogOptions configure DialogWith.
+type DialogOptions struct {
+	Role DialogRole
+	// Width is the panel's width. A sheet's card sizes to its content when
+	// it is zero.
+	Width              float32
+	Title, Description string
+	// Label names a sheet for assistive technology and the tests.
+	Label string
+}
+
 // Dialog shows a centered dialog over the dimmed window while *open is true.
 // body builds its content and footer, when not nil, its right-aligned
 // buttons. Escape and a click outside set *open to false; Dismissed on the
 // returned panel reports it.
 func Dialog(c *ui.Context, open *bool, width float32, title, description string, body, footer func()) ui.Element {
+	return DialogWith(c, open, DialogOptions{Width: width, Title: title, Description: description}, body, footer)
+}
+
+// DialogWith is Dialog in any role. A DialogSheet has no footer: its body
+// lays out its own buttons.
+func DialogWith(c *ui.Context, open *bool, o DialogOptions, body, footer func()) ui.Element {
+	if o.Role == DialogSheet {
+		sheet := ui.Modal(c, open, body)
+		if o.Label != "" {
+			sheet.Label(o.Label)
+		}
+		if o.Width > 0 {
+			sheet.Width(o.Width)
+		}
+		return sheet
+	}
 	t := c.Theme()
+	width, title, description := o.Width, o.Title, o.Description
 	return ui.DialogBase(c, open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.45))
 		panel.Width(width).MaxWidthPercent(92).MaxHeightPercent(90).Radius(M(c).Radius.Overlay).
