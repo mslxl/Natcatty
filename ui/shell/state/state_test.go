@@ -77,11 +77,12 @@ func (f *fakeFactory) Open(_ context.Context, spec appsession.StartSpec) (appses
 
 // fakeSurface stands in for the MyGo terminal the UI owns.
 type fakeSurface struct {
-	closed     bool
-	fontFamily string
-	fontSize   float32
-	theme      domaintheme.TerminalTheme
-	themed     bool
+	closed        bool
+	browserOpened bool
+	fontFamily    string
+	fontSize      float32
+	theme         domaintheme.TerminalTheme
+	themed        bool
 }
 
 func (f *fakeSurface) View(c *ui.Context) ui.Element {
@@ -89,6 +90,13 @@ func (f *fakeSurface) View(c *ui.Context) ui.Element {
 }
 
 func (f *fakeSurface) Close() { f.closed = true }
+
+// OpenBrowser makes the fake a BrowserOpener so a shell test can prove the
+// Vault's browser action reaches the Session surface.
+func (f *fakeSurface) OpenBrowser() error {
+	f.browserOpened = true
+	return nil
+}
 
 func (f *fakeSurface) SetTerminalFont(family string, size float32) {
 	f.fontFamily, f.fontSize = family, size

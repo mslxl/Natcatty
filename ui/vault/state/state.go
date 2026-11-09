@@ -8,6 +8,8 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +48,12 @@ type Identities interface {
 	CreateIdentity(ctx context.Context, draft domainvault.IdentityDraft) (domainvault.Identity, error)
 	UpdateIdentity(ctx context.Context, id model.IdentityID, draft domainvault.IdentityDraft) (domainvault.Identity, error)
 	DeleteIdentity(ctx context.Context, id model.IdentityID) error
+}
+
+// HostCredentials is the credential source the Copy Credentials action reads.
+// The application Service implements it over the encrypted field-secret store.
+type HostCredentials interface {
+	HostCredentials(ctx context.Context, id model.HostID) (appvault.HostCredentials, error)
 }
 
 // Secrets is the field-secret mode seam. The application Service implements
@@ -112,6 +120,7 @@ const (
 	ProblemSnippetTargets           Problem = "snippet_targets"
 	ProblemSnippetNoSession         Problem = "snippet_no_session"
 	ProblemSnippetRunFailed         Problem = "snippet_run_failed"
+	ProblemNoPassword               Problem = "no_password"
 	ProblemNote                     Problem = "note"
 	ProblemNoteContent              Problem = "note_content"
 	ProblemNoteGroup                Problem = "note_group"
@@ -242,6 +251,7 @@ type State struct {
 	requestRedraw       func()
 	connect             func(domainvault.Host)
 	tester              ConnectionTester
+	credentials         HostCredentials
 
 	// Test results are keyed by Host. The maps are mutated only on the UI
 	// thread; completed attempts arrive through the lock-protected queue.
@@ -456,6 +466,58 @@ func (s *State) Connect(id model.HostID) bool {
 	s.problem = ProblemNone
 	s.connect(host)
 	return true
+}
+
+// WithHostCredentials gives the Vault the credential source the Copy
+// Credentials action reads.
+func WithHostCredentials(source HostCredentials) Option {
+	return func(s *State) { s.credentials = source }
+}
+
+// CopyCredentials returns the text the Copy Credentials action places on the
+// clipboard: the address, the effective username, and the stored password. It
+// reports false and records a localized Problem when there is nothing to copy.
+func (s *State) CopyCredentials(id model.HostID) (string, bool) {
+	host, ok := s.EffectiveHost(id)
+	if !ok {
+		s.problem = ProblemNotFound
+		s.redraw()
+		return "", false
+	}
+	if s.credentials == nil {
+		s.problem = ProblemInternal
+		s.redraw()
+		return "", false
+	}
+	credentials, err := s.credentials.HostCredentials(context.Background(), id)
+	if err != nil {
+		s.problem = problemFor(err)
+		s.redraw()
+		return "", false
+	}
+	username := credentials.Username
+	if username == "" {
+		// A Host or group default still names the login even when the
+		// credential source only produces a password.
+		username = host.Username
+	}
+	password := strings.TrimSpace(credentials.Password)
+	if password == "" {
+		s.problem = ProblemNoPassword
+		s.redraw()
+		return "", false
+	}
+	address := host.Hostname
+	defaultPort := 22
+	if host.Protocol == domainvault.ProtocolTelnet {
+		defaultPort = 23
+	}
+	if host.Port != 0 && host.Port != defaultPort {
+		address = net.JoinHostPort(host.Hostname, strconv.Itoa(host.Port))
+	}
+	s.problem = ProblemNone
+	s.redraw()
+	return fmt.Sprintf("host: %s\nusername: %s\npassword: %s", address, username, password), true
 }
 
 // Test starts a Test connection attempt for one listed Host. The dial runs on
@@ -756,6 +818,31 @@ func (s *State) BeginEdit(id model.HostID) bool {
 	}
 	if host.Protocol == domainvault.ProtocolLocal {
 		s.form.Port = ""
+	}
+	s.redraw()
+	return true
+}
+
+// BeginDuplicate opens the Host editor with a copy of a listed Host. Identity,
+// the pinned flag, and every stored credential are dropped so Save creates a
+// second Host instead of overwriting the first; the label carries the
+// original's copy suffix until the user renames it.
+func (s *State) BeginDuplicate(id model.HostID, suffix string) bool {
+	if !s.BeginEdit(id) {
+		return false
+	}
+	s.form.ID = ""
+	s.form.Pinned = false
+	// A copy has no credential of its own: the source's encrypted values are
+	// keyed by its ID and are never inherited.
+	s.form.HasPassword = false
+	if s.proxy != nil {
+		s.proxy = domainvault.CloneProxy(s.proxy)
+		s.proxy.Password = ""
+		s.proxy.HasPassword = false
+	}
+	if suffix = strings.TrimSpace(suffix); suffix != "" {
+		s.form.Label = strings.TrimSpace(s.form.Label + " (" + suffix + ")")
 	}
 	s.redraw()
 	return true
@@ -1212,6 +1299,14 @@ func formAutoAttachTmux(enabled, networkDevice bool, protocol string) bool {
 func problemFor(err error) Problem {
 	if errors.Is(err, appvault.ErrSecretUnreadable) {
 		return ProblemSecretUnreadable
+	}
+	// A caller that hands back the sentinel directly, as a credential read can,
+	// still gets the actionable message instead of the generic one.
+	if errors.Is(err, appvault.ErrSecretsLocked) {
+		return ProblemSecretsLocked
+	}
+	if errors.Is(err, appvault.ErrSecretsUnavailable) {
+		return ProblemSecretsUnavailable
 	}
 	var typed *appvault.Error
 	if !errors.As(err, &typed) {

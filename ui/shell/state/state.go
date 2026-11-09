@@ -51,6 +51,13 @@ type Surface interface {
 	Close()
 }
 
+// BrowserOpener is implemented by a Session surface that can show its Host's
+// browser panel. The Vault's "Open host browser" action opens a Session and
+// asks the surface for the panel once it exists.
+type BrowserOpener interface {
+	OpenBrowser() error
+}
+
 // SurfaceFactory builds the terminal surface for a Session. The app wires the
 // real MyGo terminal; tests wire a fake.
 type SurfaceFactory func(*appsession.Session) (Surface, error)
@@ -92,8 +99,11 @@ type HostResolver func(context.Context, model.HostID) (domainvault.Host, bool)
 // a new Tab. Outcome fields are written by the dial goroutine and applied on
 // the UI thread by Flush.
 type openOutcome struct {
-	session    *appsession.Session
-	label      string
+	session *appsession.Session
+	label   string
+	// browser asks Flush to open the new Session's browser panel once its
+	// surface exists.
+	browser    bool
 	descriptor domainworkspace.SessionDescriptor
 	startup    StartupInput
 	err        error
@@ -792,13 +802,26 @@ func (s *State) NewTab() error {
 // its outcome is applied by the next Flush. It returns ErrNoSessions when the
 // shell has no Session service.
 func (s *State) OpenHost(host domainvault.Host) error {
-	return s.OpenHostWithStartup(host, StartupInput{})
+	return s.openHost(host, StartupInput{}, false)
+}
+
+// OpenHostBrowser opens a Host Session and, once its surface exists, opens the
+// Session's browser panel. A surface without a browser route leaves the
+// terminal running and records the failure the Session view shows.
+func (s *State) OpenHostBrowser(host domainvault.Host) error {
+	return s.openHost(host, StartupInput{}, true)
 }
 
 // OpenHostWithStartup opens a Host Session like OpenHost and sends startup
 // once the Session is attached to its Tab. A Snippet run uses this to deliver
 // the resolved command to each target Host without racing the connection.
 func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput) error {
+	return s.openHost(host, startup, false)
+}
+
+// openHost is the one connection path: OpenHost, OpenHostWithStartup, and
+// OpenHostBrowser differ only in what they do once the Tab is attached.
+func (s *State) openHost(host domainvault.Host, startup StartupInput, browser bool) error {
 	if s.sessions == nil || s.surfaces == nil {
 		return ErrNoSessions
 	}
@@ -836,6 +859,7 @@ func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput)
 		s.outcomes = append(s.outcomes, openOutcome{
 			session: session,
 			label:   label,
+			browser: browser,
 			descriptor: domainworkspace.SessionDescriptor{
 				Kind:           plan.descriptor,
 				Label:          label,
@@ -1116,6 +1140,11 @@ func (s *State) Flush() {
 		descriptor.Number = number
 		tab := s.newTab(TabOptions{Label: outcome.label, AutoTitle: true, Descriptor: descriptor})
 		tab.attachOnlySession(outcome.session, surface)
+		if outcome.browser {
+			if opener, ok := surface.(BrowserOpener); ok {
+				_ = opener.OpenBrowser()
+			}
+		}
 		s.tabs = append(s.tabs, tab)
 		s.active = len(s.tabs) - 1
 		s.leaveMonitor()

@@ -61,8 +61,10 @@ func WithKnownHosts(known KnownHosts) Option {
 // GroupForm is the editable text of one Host Group. Port stays a string so a
 // malformed value is rejected instead of silently becoming zero.
 type GroupForm struct {
-	// OriginalPath is the stored path while editing and empty while creating.
-	// Changing Path renames the group and remaps its members.
+	// ID is the edited group's stable identity, empty while creating.
+	// OriginalPath is its path when the editor opened, for the header and for
+	// deciding whether the path changed.
+	ID               string
 	OriginalPath     string
 	Path             string
 	Notes            string
@@ -150,6 +152,7 @@ func (s *State) BeginEditGroup(path string) bool {
 	s.closeEditors()
 	s.editingGroup = true
 	s.groupForm = GroupForm{
+		ID:               group.ID,
 		OriginalPath:     group.Path,
 		Path:             group.Path,
 		Notes:            group.Notes,
@@ -195,10 +198,10 @@ func (s *State) SaveGroup() error {
 	}
 
 	var err error
-	if s.groupForm.OriginalPath == "" {
+	if s.groupForm.ID == "" {
 		_, err = s.groups.CreateGroup(context.Background(), draft)
 	} else {
-		_, err = s.groups.UpdateGroup(context.Background(), s.groupForm.OriginalPath, draft)
+		_, err = s.groups.UpdateGroup(context.Background(), s.groupForm.ID, draft)
 	}
 	if err != nil {
 		s.problem = problemFor(err)
@@ -242,7 +245,13 @@ func (s *State) ConfirmDeleteGroup() error {
 		s.redraw()
 		return nil
 	}
-	if err := s.groups.DeleteGroup(context.Background(), path); err != nil {
+	group, ok := s.findGroup(path)
+	if !ok {
+		s.problem = ProblemNotFound
+		s.redraw()
+		return nil
+	}
+	if err := s.groups.DeleteGroup(context.Background(), group.ID); err != nil {
 		s.problem = problemFor(err)
 		s.redraw()
 		return nil
@@ -264,7 +273,17 @@ func (s *State) MoveHostToGroup(id model.HostID, path string) bool {
 		s.redraw()
 		return false
 	}
-	if err := s.groups.AssignHostGroup(context.Background(), id, path); err != nil {
+	groupID := ""
+	if path != "" {
+		group, ok := s.findGroup(path)
+		if !ok {
+			s.problem = ProblemNotFound
+			s.redraw()
+			return false
+		}
+		groupID = group.ID
+	}
+	if err := s.groups.AssignHostGroup(context.Background(), id, groupID); err != nil {
 		s.problem = problemFor(err)
 		s.redraw()
 		return false
