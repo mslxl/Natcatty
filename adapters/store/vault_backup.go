@@ -17,10 +17,10 @@ var _ appbackup.Snapshotter = (*Store)(nil)
 var vaultColumns = map[string][]string{
 	domainbackup.TableHosts: {
 		"id", "label", "hostname", "port", "username", "protocol",
-		"group_path", "pinned", "order_key", "created_at", "updated_at", "data",
+		"group_id", "pinned", "order_key", "created_at", "updated_at", "data",
 	},
 	domainbackup.TableGroups: {
-		"path", "notes", "username", "port", "protocol", "auth_method",
+		"id", "parent_id", "name", "notes", "username", "port", "protocol", "auth_method",
 		"identity_id", "key_id", "use_ssh_agent", "requires_mfa",
 		"legacy_algorithms", "skip_ecdsa_host_key", "proxy_profile_id",
 		"order_key", "created_at", "updated_at", "data",
@@ -175,6 +175,15 @@ func (s *Store) Validate(ctx context.Context, snapshot domainbackup.Snapshot) er
 // Restore replaces every Vault table in one ORM transaction. A constraint or
 // encoding failure rolls the whole transaction back.
 func (s *Store) Restore(ctx context.Context, snapshot domainbackup.Snapshot) error {
+	if snapshot.SchemaVersion == 1 {
+		// A snapshot written before Host Groups were ID-keyed stores paths.
+		// Upgrade it into this build's shape instead of refusing it.
+		upgraded, err := upgradeSnapshotV1(snapshot)
+		if err != nil {
+			return fmt.Errorf("%w: %v", appbackup.ErrIncompatibleSnapshot, err)
+		}
+		snapshot = upgraded
+	}
 	if err := s.Validate(ctx, snapshot); err != nil {
 		return fmt.Errorf("%w: %v", appbackup.ErrIncompatibleSnapshot, err)
 	}

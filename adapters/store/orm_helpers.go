@@ -102,38 +102,47 @@ func decodeDataList[T any](data []string, label string) ([]T, error) {
 	return values, nil
 }
 
+// hostModel projects one Host onto the indexed row. The display path is
+// derived and never persisted: the aggregate JSON carries the stable GroupID,
+// and the tree turns it into a path on read.
 func hostModel(host domainvault.Host) (hostSchema, error) {
 	if err := host.Validate(); err != nil {
 		return hostSchema{}, fmt.Errorf("store: save Host: %w", err)
 	}
-	data, err := marshalData(host, "Host")
+	stored := host
+	stored.Group = ""
+	data, err := marshalData(stored, "Host")
 	if err != nil {
 		return hostSchema{}, err
 	}
 	return hostSchema{
 		ID: string(host.ID), Label: host.Label, Hostname: host.Hostname,
 		Port: int64(host.Port), Username: host.Username, Protocol: string(host.Protocol),
-		GroupPath: host.Group, Pinned: int64(boolInt(host.Pinned)), OrderKey: host.OrderKey,
+		GroupID: host.GroupID, Pinned: int64(boolInt(host.Pinned)), OrderKey: host.OrderKey,
 		CreatedAt: host.CreatedAt.UnixMilli(), UpdatedAt: host.UpdatedAt.UnixMilli(), Data: data,
 	}, nil
 }
 
+// groupModel projects one Host Group onto the tree row. The path is derived
+// and never persisted; identity, parent, and name are the stored structure.
 func groupModel(group domainvault.Group) (hostGroupSchema, error) {
-	if group.Path == "" {
-		return hostGroupSchema{}, fmt.Errorf("store: Host Group has no path")
-	}
 	if group.ID == "" {
+		if group.Path == "" {
+			return hostGroupSchema{}, fmt.Errorf("store: Host Group has no identity")
+		}
 		group.ID = domainvault.GroupIDFromPath(group.Path)
 	}
 	if group.Name == "" {
 		group.Name = domainvault.GroupName(group.Path)
 	}
-	data, err := marshalData(group, "Host Group")
+	stored := group
+	stored.Path = ""
+	data, err := marshalData(stored, "Host Group")
 	if err != nil {
 		return hostGroupSchema{}, err
 	}
 	return hostGroupSchema{
-		Path: group.Path, GroupID: group.ID, ParentID: group.ParentID, Name: group.Name,
+		ID: group.ID, ParentID: group.ParentID, Name: group.Name,
 		Notes: group.Notes, Username: group.Username, Port: int64(group.Port),
 		Protocol: string(group.Protocol), AuthMethod: string(group.AuthMethod),
 		IdentityID: string(group.IdentityID), KeyID: string(group.KeyID),
@@ -143,6 +152,15 @@ func groupModel(group domainvault.Group) (hostGroupSchema, error) {
 		ProxyProfileID:   group.ProxyProfileID, OrderKey: group.OrderKey,
 		CreatedAt: group.CreatedAt.UnixMilli(), UpdatedAt: group.UpdatedAt.UnixMilli(), Data: data,
 	}, nil
+}
+
+// decodeGroupRows turns stored aggregates into groups with their derived paths.
+func decodeGroupRows(data []string) ([]domainvault.Group, error) {
+	groups, err := decodeDataList[domainvault.Group](data, "Host Group")
+	if err != nil {
+		return nil, err
+	}
+	return domainvault.MaterializeGroupPaths(groups), nil
 }
 
 func keyModel(key domainvault.Key) (sshKeySchema, error) {

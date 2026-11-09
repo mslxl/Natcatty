@@ -34,7 +34,8 @@ func (s *Store) SaveImportBatch(ctx context.Context, batch appvault.ImportBatch)
 	}
 	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
 		for index := range groups {
-			if err := upsertModel(tx, &groups[index], "path",
+			if err := upsertModel(tx, &groups[index], "id",
+				"parent_id", "name",
 				"notes", "username", "port", "protocol", "auth_method", "identity_id", "key_id",
 				"use_ssh_agent", "requires_mfa", "legacy_algorithms", "skip_ecdsa_host_key",
 				"proxy_profile_id", "order_key", "updated_at", "data"); err != nil {
@@ -43,7 +44,7 @@ func (s *Store) SaveImportBatch(ctx context.Context, batch appvault.ImportBatch)
 		}
 		for index := range hosts {
 			if err := upsertModel(tx, &hosts[index], "id",
-				"label", "hostname", "port", "username", "protocol", "group_path",
+				"label", "hostname", "port", "username", "protocol", "group_id",
 				"pinned", "order_key", "updated_at", "data"); err != nil {
 				return err
 			}

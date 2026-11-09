@@ -14,11 +14,13 @@ func TestSaveImportBatchWritesGroupsAndHostsTogether(t *testing.T) {
 	store, _ := openTestStore(t)
 	now := time.Unix(1700000000, 0).UTC()
 	batch := appvault.ImportBatch{
-		Groups: []domainvault.Group{{Path: "Prod", OrderKey: 1000, CreatedAt: now, UpdatedAt: now}},
+		Groups: []domainvault.Group{{
+			ID: "g-prod", Name: "Prod", Path: "Prod", OrderKey: 1000, CreatedAt: now, UpdatedAt: now,
+		}},
 		Hosts: []domainvault.Host{{
 			ID: model.HostID("host-1"), Label: "web", Hostname: "web.example.test",
 			Port: 2222, Username: "deploy", Protocol: domainvault.ProtocolSSH,
-			Group: "Prod", OrderKey: 1000, CreatedAt: now, UpdatedAt: now,
+			GroupID: "g-prod", OrderKey: 1000, CreatedAt: now, UpdatedAt: now,
 		}},
 	}
 	if err := store.SaveImportBatch(context.Background(), batch); err != nil {
@@ -29,7 +31,8 @@ func TestSaveImportBatchWritesGroupsAndHostsTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hosts) != 1 || hosts[0].ID != "host-1" || hosts[0].Group != "Prod" {
+	if len(hosts) != 1 || hosts[0].ID != "host-1" || hosts[0].Group != "Prod" ||
+		hosts[0].GroupID != "g-prod" {
 		t.Fatalf("hosts = %+v", hosts)
 	}
 	groups, err := store.ListGroups(context.Background())
