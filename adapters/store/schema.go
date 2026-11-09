@@ -12,15 +12,17 @@ type metaSchema struct {
 func (metaSchema) TableName() string { return "meta" }
 
 type hostSchema struct {
-	ID        string `gorm:"column:id;type:text;primaryKey"`
-	Label     string `gorm:"column:label;type:text;not null"`
-	Hostname  string `gorm:"column:hostname;type:text;not null"`
-	Port      int64  `gorm:"column:port;not null;default:0"`
-	Username  string `gorm:"column:username;type:text;not null;default:''"`
-	Protocol  string `gorm:"column:protocol;type:text;not null;default:'ssh'"`
-	GroupPath string `gorm:"column:group_path;type:text;not null;default:'';index:hosts_group_order,priority:1"`
+	ID       string `gorm:"column:id;type:text;primaryKey"`
+	Label    string `gorm:"column:label;type:text;not null"`
+	Hostname string `gorm:"column:hostname;type:text;not null"`
+	Port     int64  `gorm:"column:port;not null;default:0"`
+	Username string `gorm:"column:username;type:text;not null;default:''"`
+	Protocol string `gorm:"column:protocol;type:text;not null;default:'ssh'"`
+	// GroupID is the Host's only stored membership: the Host Group's stable
+	// identity. The display path is derived from the group tree on read.
+	GroupID   string `gorm:"column:group_id;type:text;not null;default:'';index:hosts_group"`
 	Pinned    int64  `gorm:"column:pinned;type:integer;not null;default:0;index:hosts_recent,priority:1,sort:desc"`
-	OrderKey  int64  `gorm:"column:order_key;not null;default:0;index:hosts_group_order,priority:2"`
+	OrderKey  int64  `gorm:"column:order_key;not null;default:0"`
 	CreatedAt int64  `gorm:"column:created_at;not null"`
 	UpdatedAt int64  `gorm:"column:updated_at;not null;index:hosts_recent,priority:2,sort:desc"`
 	Data      string `gorm:"column:data;type:text;not null"`
@@ -124,14 +126,14 @@ type workspaceLayoutSchema struct {
 
 func (workspaceLayoutSchema) TableName() string { return "workspace_layout" }
 
+// hostGroupSchema is the Host Group tree. Identity is the stable ID and the
+// structure is (parent_id, name); a group's path is derived from the tree on
+// read, exactly as the sync payload materializes it. No column stores a path,
+// so a rename or a move is one row update and never touches its members.
 type hostGroupSchema struct {
-	Path string `gorm:"column:path;type:text;primaryKey;index:host_groups_order,priority:2,collate:nocase"`
-	// GroupID is the stable sync identity. It is not the primary key because
-	// the original Vault addressed groups by path; keeping path as the key
-	// lets an existing database open without a table rewrite.
-	GroupID          string `gorm:"column:id;type:text;not null;default:'';index:host_groups_id"`
+	ID               string `gorm:"column:id;type:text;primaryKey"`
 	ParentID         string `gorm:"column:parent_id;type:text;not null;default:'';index:host_groups_parent"`
-	Name             string `gorm:"column:name;type:text;not null;default:''"`
+	Name             string `gorm:"column:name;type:text;not null;default:'';index:host_groups_order,priority:2,collate:nocase"`
 	Notes            string `gorm:"column:notes;type:text;not null;default:''"`
 	Username         string `gorm:"column:username;type:text;not null;default:''"`
 	Port             int64  `gorm:"column:port;not null;default:0"`

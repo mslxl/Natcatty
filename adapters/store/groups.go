@@ -9,53 +9,45 @@ import (
 	"gorm.io/gorm"
 )
 
-// ListGroups returns every Host Group in display order.
+// ListGroups returns every Host Group with the path its tree position derives,
+// in display order.
 func (s *Store) ListGroups(ctx context.Context) ([]domainvault.Group, error) {
 	var data []string
 	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
 		var err error
-		data, err = loadDataRows(tx, &hostGroupSchema{}, "order_key ASC", "path COLLATE NOCASE ASC")
+		data, err = loadDataRows(tx, &hostGroupSchema{}, "order_key ASC", "name COLLATE NOCASE ASC", "id ASC")
 		return err
 	}); err != nil {
 		return nil, fmt.Errorf("store: list Host Groups: %w", err)
 	}
-	groups, err := decodeDataList[domainvault.Group](data, "Host Group")
-	if err != nil {
-		return nil, err
-	}
-	return domainvault.EnsureGroupIdentities(groups), nil
+	return decodeGroupRows(data)
 }
 
-// GetGroup returns one Host Group by path.
-func (s *Store) GetGroup(ctx context.Context, path string) (domainvault.Group, error) {
-	var data string
-	var found bool
-	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
-		var err error
-		data, found, err = loadDataRow(tx, &hostGroupSchema{}, &hostGroupSchema{Path: path})
-		return err
-	}); err != nil {
-		return domainvault.Group{}, fmt.Errorf("store: get Host Group: %w", err)
-	}
-	if !found {
-		return domainvault.Group{}, appvault.ErrNotFound
-	}
-	var group domainvault.Group
-	if err := decodeData(data, "Host Group", &group); err != nil {
+// GetGroup returns one Host Group by its stable ID. A group is located through
+// the whole tree because its path is derived.
+func (s *Store) GetGroup(ctx context.Context, id string) (domainvault.Group, error) {
+	groups, err := s.ListGroups(ctx)
+	if err != nil {
 		return domainvault.Group{}, err
 	}
-	return domainvault.EnsureGroupIdentities([]domainvault.Group{group})[0], nil
+	for _, group := range groups {
+		if group.ID == id {
+			return group, nil
+		}
+	}
+	return domainvault.Group{}, appvault.ErrNotFound
 }
 
-// SaveGroup inserts or replaces one Host Group.
+// SaveGroup inserts or replaces one Host Group, keyed by its stable ID. A
+// rename or a move updates this row alone; no member Host is rewritten.
 func (s *Store) SaveGroup(ctx context.Context, group domainvault.Group) error {
 	model, err := groupModel(group)
 	if err != nil {
 		return err
 	}
 	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
-		return upsertModel(tx, &model, "path",
-			"id", "parent_id", "name",
+		return upsertModel(tx, &model, "id",
+			"parent_id", "name",
 			"notes", "username", "port", "protocol", "auth_method", "identity_id", "key_id",
 			"use_ssh_agent", "requires_mfa", "legacy_algorithms", "skip_ecdsa_host_key",
 			"proxy_profile_id", "order_key", "updated_at", "data")
@@ -66,13 +58,13 @@ func (s *Store) SaveGroup(ctx context.Context, group domainvault.Group) error {
 	return nil
 }
 
-// DeleteGroup removes one Host Group. Hosts and descendant groups are not
+// DeleteGroup removes one Host Group by ID. Hosts and descendant groups are not
 // cascaded: the Vault service decides what happens to them.
-func (s *Store) DeleteGroup(ctx context.Context, path string) error {
+func (s *Store) DeleteGroup(ctx context.Context, id string) error {
 	var changed int64
 	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
 		var err error
-		changed, err = deleteModel(tx, &hostGroupSchema{}, &hostGroupSchema{Path: path})
+		changed, err = deleteModel(tx, &hostGroupSchema{}, &hostGroupSchema{ID: id})
 		return err
 	}); err != nil {
 		return fmt.Errorf("store: delete Host Group: %w", err)

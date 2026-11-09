@@ -54,7 +54,7 @@ var (
 // schemaVersion identifies the AutoMigrate schema used by this build. It is
 // kept in backup metadata even though the schema is no longer migration-file
 // driven.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // Open opens path, configures the connection, and applies the schema declared
 // by the GORM models.
@@ -69,6 +69,13 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err := db.Configure(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
+	}
+	// Host Groups changed from a path-keyed table to an ID-keyed tree, which
+	// GORM cannot re-key in place. Upgrade the physical schema first, while
+	// the old columns still exist.
+	if err := store.migrateGroupIdentity(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("store: migrate Host Group identity: %w", err)
 	}
 	if err := db.AutoMigrate(ctx, schemaModels...); err != nil {
 		_ = db.Close()

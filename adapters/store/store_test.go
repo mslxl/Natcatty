@@ -92,12 +92,25 @@ func TestHostsSurviveReopen(t *testing.T) {
 		Username:  "root",
 		Protocol:  domainvault.ProtocolSSH,
 		Group:     "prod/web",
+		GroupID:   "g-web",
 		Tags:      []string{"prod", "web"},
 		Notes:     "primary",
 		Pinned:    true,
 		OrderKey:  1000,
 		CreatedAt: now,
 		UpdatedAt: now,
+	}
+	// Membership is an ID, so the tree must exist before the Host.
+	if err := first.SaveGroup(ctx, domainvault.Group{
+		ID: "g-prod", Name: "prod", Path: "prod", OrderKey: 1000, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveGroup prod: %v", err)
+	}
+	if err := first.SaveGroup(ctx, domainvault.Group{
+		ID: "g-web", ParentID: "g-prod", Name: "web", Path: "prod/web",
+		OrderKey: 2000, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveGroup web: %v", err)
 	}
 	if err := first.Save(ctx, host); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -211,7 +224,7 @@ func TestListOrdersPinnedHostsThenOrderKeys(t *testing.T) {
 func TestApplicationServiceCreatesAndDeletesThroughStore(t *testing.T) {
 	ctx := context.Background()
 	store, _ := openTestStore(t)
-	service := appvault.NewService(store)
+	service := appvault.NewService(store, appvault.WithGroups(store))
 
 	host, err := service.Create(ctx, domainvault.Draft{
 		Label: "web", Hostname: "example.com", Username: "root", Group: "prod",
