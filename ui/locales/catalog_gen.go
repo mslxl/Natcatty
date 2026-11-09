@@ -26204,6 +26204,16 @@ func (msgs Messages) SettingsAtuinKeyTitle() string {
 	return Catalog.Format(msgs.locale, "settingsAtuinKeyTitle", nil)
 }
 
+// SettingsAtuinKeyPurpose says "The master key encrypts sync data and is independent of the sign-in method."
+// in the language the app shows.
+func SettingsAtuinKeyPurpose() string { return In(i18n.Locale()).SettingsAtuinKeyPurpose() }
+
+// SettingsAtuinKeyPurpose says "The master key encrypts sync data and is independent of the sign-in method."
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinKeyPurpose() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinKeyPurpose", nil)
+}
+
 // SettingsAtuinKeyDescription says "Enter the 24-word BIP39 phrase or the base64 32-byte key. Local history stays plaintext; the key protects sync only."
 // in the language the app shows.
 func SettingsAtuinKeyDescription() string { return In(i18n.Locale()).SettingsAtuinKeyDescription() }
@@ -26232,6 +26242,16 @@ func SettingsAtuinSaveKey() string { return In(i18n.Locale()).SettingsAtuinSaveK
 // in the language of msgs.
 func (msgs Messages) SettingsAtuinSaveKey() string {
 	return Catalog.Format(msgs.locale, "settingsAtuinSaveKey", nil)
+}
+
+// SettingsAtuinChangeKey says "Change key"
+// in the language the app shows.
+func SettingsAtuinChangeKey() string { return In(i18n.Locale()).SettingsAtuinChangeKey() }
+
+// SettingsAtuinChangeKey says "Change key"
+// in the language of msgs.
+func (msgs Messages) SettingsAtuinChangeKey() string {
+	return Catalog.Format(msgs.locale, "settingsAtuinChangeKey", nil)
 }
 
 // SettingsAtuinKeyUnverifiedTitle says "Key not verified"

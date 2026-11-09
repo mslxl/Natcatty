@@ -246,25 +246,59 @@ func atuinLoginControls(c *ui.Context, state *AtuinState, prefs *PreferencesStat
 	})
 }
 
+// atuinKeyControls renders the master-key section. A stored key collapses the
+// long description, input, and save button behind one explicit Change key
+// action, so the key does not read as a second sign-in method. Without a
+// usable key the editor stays visible because entering the key is the only
+// action.
 func atuinKeyControls(c *ui.Context, state *AtuinState, m locales.Messages, t *ui.Theme) {
 	status := state.Status()
 	ui.Text(c, m.SettingsAtuinKeyTitle()).FontSize(15).Bold()
-	ui.Text(c, m.SettingsAtuinKeyDescription()).FontSize(12).TextColor(t.TextMuted)
-	ui.Field(c, m.SettingsAtuinMasterKey(), func() {
-		ui.TextInput(c, state.MasterKey()).Password().Width(380)
-	})
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		if ui.PrimaryButton(c, m.SettingsAtuinSaveKey()).Clicked() {
-			state.SaveMasterKey()
-			c.Invalidate()
-		}
-		if status.KeyFingerprint != "" || status.KeyState != atuinmodel.KeyStateNone {
-			if ui.Button(c, m.SettingsAtuinForgetKey()).Clicked() {
-				state.AskForget()
+	ui.Text(c, m.SettingsAtuinKeyPurpose()).FontSize(12).TextColor(t.TextMuted)
+
+	// Verified, unverified, and mismatched keys are all stored; the editor is
+	// opt-in. None and missing have no usable key, so the editor is visible.
+	storedKey := status.KeyState == atuinmodel.KeyStateUnverified ||
+		status.KeyState == atuinmodel.KeyStateVerified ||
+		status.KeyState == atuinmodel.KeyStateMismatch
+	editing := state.EditingKey() || !storedKey
+	// One confirmation at a time: while a key-change, forget, or logout
+	// confirmation is open, the editor's controls step back so its Cancel
+	// cannot be confused with the confirmation's Cancel. Cancelling the key
+	// change or forget prompt brings the editor back with its draft intact.
+	confirming := state.AskingKeyChange() || state.AskingForget() || state.AskingLogout()
+
+	if editing && !confirming {
+		ui.Text(c, m.SettingsAtuinKeyDescription()).FontSize(12).TextColor(t.TextMuted)
+		ui.Field(c, m.SettingsAtuinMasterKey(), func() {
+			ui.TextInput(c, state.MasterKey()).Password().Width(380)
+		})
+	}
+	if !confirming {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			if editing {
+				if ui.PrimaryButton(c, m.SettingsAtuinSaveKey()).Clicked() {
+					state.SaveMasterKey()
+					c.Invalidate()
+				}
+				if storedKey {
+					if ui.Button(c, m.SettingsCancel()).Clicked() {
+						state.CancelKeyEdit()
+						c.Invalidate()
+					}
+				}
+			} else if ui.Button(c, m.SettingsAtuinChangeKey()).Clicked() {
+				state.EditKey()
 				c.Invalidate()
 			}
-		}
-	})
+			if status.KeyFingerprint != "" || status.KeyState != atuinmodel.KeyStateNone {
+				if ui.Button(c, m.SettingsAtuinForgetKey()).Clicked() {
+					state.AskForget()
+					c.Invalidate()
+				}
+			}
+		})
+	}
 
 	if state.AskingKeyChange() {
 		atuinWarning(c, m.SettingsAtuinKeyChangeTitle(), m.SettingsAtuinKeyChangeBody(), t, func() {

@@ -96,10 +96,11 @@ type AtuinState struct {
 	status  historysync.Status
 	problem AtuinProblem
 
-	method    AtuinLoginMethod
-	password  string
-	token     string
-	masterKey string
+	method     AtuinLoginMethod
+	password   string
+	token      string
+	masterKey  string
+	editingKey bool
 
 	askKeyChange bool
 	askForget    bool
@@ -245,6 +246,39 @@ func (s *AtuinState) Token() *string { return &s.token }
 // MasterKey is the master-key input's bound draft.
 func (s *AtuinState) MasterKey() *string { return &s.masterKey }
 
+// EditingKey reports whether the user explicitly expanded the stored-key
+// editor. A stored key starts collapsed so the master key does not read as a
+// second sign-in method; no usable key keeps the editor visible without this
+// flag.
+func (s *AtuinState) EditingKey() bool { return s != nil && s.editingKey }
+
+// EditKey expands the key editor and clears any previous draft.
+func (s *AtuinState) EditKey() {
+	if s == nil {
+		return
+	}
+	s.masterKey = ""
+	s.editingKey = true
+	s.redraw()
+}
+
+// CancelKeyEdit collapses the key editor and clears the draft. It never sends
+// the key.
+func (s *AtuinState) CancelKeyEdit() {
+	if s == nil {
+		return
+	}
+	s.clearKeyDraft()
+	s.redraw()
+}
+
+// clearKeyDraft resets the master-key editor after the key was saved,
+// forgotten, or logged out.
+func (s *AtuinState) clearKeyDraft() {
+	s.masterKey = ""
+	s.editingKey = false
+}
+
 // AskingKeyChange reports whether the different-key confirmation is open.
 func (s *AtuinState) AskingKeyChange() bool { return s != nil && s.askKeyChange }
 
@@ -339,7 +373,7 @@ func (s *AtuinState) setMasterKey(confirm bool) {
 	}
 	s.finish(status, err)
 	if err == nil {
-		s.masterKey = ""
+		s.clearKeyDraft()
 		s.notifyConfigurationChanged()
 	}
 	s.redraw()
@@ -385,7 +419,7 @@ func (s *AtuinState) ConfirmForget() {
 	s.askForget = false
 	status, err := s.account.ForgetMasterKey(context.Background())
 	s.finish(status, err)
-	s.masterKey = ""
+	s.clearKeyDraft()
 	if err == nil {
 		s.notifyConfigurationChanged()
 	}
@@ -421,7 +455,7 @@ func (s *AtuinState) ConfirmLogout() {
 	s.finish(status, err)
 	s.password = ""
 	s.token = ""
-	s.masterKey = ""
+	s.clearKeyDraft()
 	if err == nil {
 		s.notifyConfigurationChanged()
 	}
