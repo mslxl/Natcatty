@@ -130,27 +130,20 @@ func viewOptions(m locales.Messages) []viewOption {
 
 // viewModeToggle is the original's grid/list/tree switch.
 func viewModeToggle(c *ui.Context, opts options, layout domainpreferences.Layout, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).Gap(1).Shrink(0).AlignItems(ui.Center).Children(func() {
-		for _, option := range viewOptions(m) {
-			button := ui.ButtonBase(c).Key("vault-view-"+string(option.mode)).Label(option.label).
-				Tooltip(option.label).Size(28, kit.M(c).Control.Large).Radius(kit.M(c).Radius.Control).
-				Justify(ui.Center).AlignItems(ui.Center)
-			switch {
-			case option.mode == layout.HostViewMode:
-				button.Background(t.Accent).TextColor(t.AccentText)
-			case button.Hovered():
-				button.Background(kit.Subtle(t)).TextColor(t.Text)
-			default:
-				button.TextColor(t.TextMuted)
-			}
-			if button.Clicked() {
-				mode := option.mode
-				opts.setLayout(func(next *domainpreferences.Layout) { next.HostViewMode = mode })
-				c.Invalidate()
-			}
-			button.Children(func() { ui.Icon(c, icons.Lucide(option.icon)).Size(15, 15) })
+	options := viewOptions(m)
+	segments := make([]kit.Segment, len(options))
+	chosen := -1
+	for i, option := range options {
+		segments[i] = kit.Segment{Key: "vault-view-" + string(option.mode), Label: option.label, Icon: option.icon}
+		if option.mode == layout.HostViewMode {
+			chosen = i
 		}
-	})
+	}
+	if kit.Segmented(c, kit.SegmentedIcons, &chosen, "", segments) {
+		mode := options[chosen].mode
+		opts.setLayout(func(next *domainpreferences.Layout) { next.HostViewMode = mode })
+		c.Invalidate()
+	}
 }
 
 // sortOption is one entry of the sort menu.

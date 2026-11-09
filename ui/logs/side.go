@@ -55,7 +55,9 @@ func (p *HistoryPanel) View(host model.HostID) func(*ui.Context) {
 				if p.all {
 					scope = 1
 				}
-				if ui.Segmented(c, &scope, m.SidePanelHistoryThisHost(), m.SidePanelHistoryAllHosts()).Changed() {
+				if kit.Segmented(c, kit.SegmentedText, &scope, "", []kit.Segment{
+					{Label: m.SidePanelHistoryThisHost()}, {Label: m.SidePanelHistoryAllHosts()},
+				}) {
 					p.all = scope == 1
 					c.Invalidate()
 				}

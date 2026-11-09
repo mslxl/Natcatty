@@ -2,6 +2,7 @@ package settings
 
 import (
 	"math"
+	"slices"
 	"strconv"
 
 	"github.com/egoist/mygo/ui"
@@ -54,27 +55,21 @@ func quickOpacity(c *ui.Context, s *PreferencesState, m locales.Messages, t *ui.
 			s.Update(func(settings *domain.Settings) { settings.Appearance.WindowOpacity = rounded })
 			c.Invalidate()
 		}
-		ui.Row(c).FillWidth().Gap(4).Children(func() {
-			for _, preset := range []float64{1, 0.95, 0.9, 0.85, 0.8} {
-				label := m.SettingsWindowOpacityValue(strconv.Itoa(int(math.Round(preset * 100))))
-				c.Key("quick-opacity-" + label)
-				button := ui.ButtonBase(c).Label(label).Grow(1).Height(24).Radius(kit.M(c).Radius.Control).
-					Justify(ui.Center).AlignItems(ui.Center).FontSize(kit.M(c).Font.Caption).FontWeight(500)
-				switch {
-				case math.Abs(opacity-preset) < 0.005:
-					button.Background(t.Accent).TextColor(t.AccentText)
-				case button.Hovered():
-					button.Background(kit.Strong(t)).TextColor(t.Text)
-				default:
-					button.Background(kit.Subtle(t)).TextColor(t.TextMuted)
-				}
-				button.Children(func() { ui.Text(c, label).SingleLine() })
-				if button.Clicked() {
-					s.Update(func(settings *domain.Settings) { settings.Appearance.WindowOpacity = preset })
-					c.Invalidate()
-				}
+		presets := []float64{1, 0.95, 0.9, 0.85, 0.8}
+		segments := make([]kit.Segment, len(presets))
+		chosen := -1
+		for i, preset := range presets {
+			label := m.SettingsWindowOpacityValue(strconv.Itoa(int(math.Round(preset * 100))))
+			segments[i] = kit.Segment{Key: "quick-opacity-" + label, Label: label}
+			if math.Abs(opacity-preset) < 0.005 {
+				chosen = i
 			}
-		})
+		}
+		if kit.Segmented(c, kit.SegmentedFill, &chosen, "", segments) {
+			preset := presets[chosen]
+			s.Update(func(settings *domain.Settings) { settings.Appearance.WindowOpacity = preset })
+			c.Invalidate()
+		}
 	})
 }
 
@@ -90,30 +85,17 @@ func quickTheme(c *ui.Context, s *PreferencesState, m locales.Messages, t *ui.Th
 	ui.Row(c).FillWidth().Padding(4, 8).Gap(8).AlignItems(ui.Center).Children(func() {
 		kit.IconSized(c, icon, kit.M(c).Icon.Medium).TextColor(t.TextMuted)
 		ui.Text(c, m.SettingsThemeMode()).FontSize(kit.M(c).Font.Callout).SingleLine().Grow(1).MinWidth(0)
-		ui.Row(c).Padding(2).Gap(2).Radius(kit.M(c).Radius.Control).Background(kit.Subtle(t)).Children(func() {
-			for _, option := range []struct {
-				mode  domain.ThemeMode
-				label string
-			}{
-				{domain.ThemeSystem, m.SettingsThemeSystem()},
-				{domain.ThemeLight, m.SettingsThemeLight()},
-				{domain.ThemeDark, m.SettingsThemeDark()},
-			} {
-				c.Key("quick-theme-" + string(option.mode))
-				button := ui.ButtonBase(c).Label(option.label).Height(20).Padding(0, 6).Radius(4).
-					AlignItems(ui.Center).FontSize(kit.M(c).Font.Caption).FontWeight(500).TextColor(t.TextMuted)
-				if option.mode == mode {
-					button.Background(t.Background).TextColor(t.Text).Shadow(0, 1, 2, 0, kit.CardShadow(t))
-				} else if button.Hovered() {
-					button.TextColor(t.Text)
-				}
-				button.Children(func() { ui.Text(c, option.label).SingleLine() })
-				if button.Clicked() && option.mode != mode {
-					chosen := option.mode
-					s.Update(func(settings *domain.Settings) { settings.Appearance.ThemeMode = chosen })
-					c.Invalidate()
-				}
-			}
-		})
+		modes := []domain.ThemeMode{domain.ThemeSystem, domain.ThemeLight, domain.ThemeDark}
+		segments := []kit.Segment{
+			{Key: "quick-theme-" + string(domain.ThemeSystem), Label: m.SettingsThemeSystem()},
+			{Key: "quick-theme-" + string(domain.ThemeLight), Label: m.SettingsThemeLight()},
+			{Key: "quick-theme-" + string(domain.ThemeDark), Label: m.SettingsThemeDark()},
+		}
+		chosen := slices.Index(modes, mode)
+		if kit.Segmented(c, kit.SegmentedTrack, &chosen, "", segments) {
+			next := modes[chosen]
+			s.Update(func(settings *domain.Settings) { settings.Appearance.ThemeMode = next })
+			c.Invalidate()
+		}
 	})
 }

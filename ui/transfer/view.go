@@ -143,75 +143,43 @@ func browser(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 // Tab.
 func tabBar(c *ui.Context, s *transferstate.State, side transferstate.Side, m locales.Messages, t *ui.Theme) {
 	pane := s.Pane(side)
-	kit.Bar(c, kit.BarTabs).Children(func() {
-		ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Height(kit.M(c).Bar.Tabs).Children(func() {
-			ui.Row(c).Height(32).Children(func() {
-				for index, item := range pane.Tabs {
-					paneTab(c, s, side, index, item, index == pane.Active, m, t)
-				}
-			})
-		})
-		add := ui.ButtonBase(c).Label(m.SftpAddTab()).Tooltip(m.SftpAddTab()).
-			Width(32).FillHeight().Justify(ui.Center).AlignItems(ui.Center).Shrink(0).
-			BorderWidth(0, 0, 0, 1).BorderColor(t.Border).TextColor(t.TextMuted)
-		if add.Hovered() {
-			add.Background(kit.Subtle(t)).TextColor(t.Text)
-		}
-		add.Children(func() { kit.IconSized(c, icons.Plus, kit.M(c).Icon.Medium) })
-		if add.Clicked() {
-			s.RequestHostPicker(side)
+	added := kit.TabStrip(c, kit.TabPane, kit.TabStripOptions{Add: m.SftpAddTab()}, func() {
+		for index, item := range pane.Tabs {
+			paneTab(c, s, side, index, item, index == pane.Active, m)
 		}
 	})
+	if added {
+		s.RequestHostPicker(side)
+	}
 }
 
 func paneTab(c *ui.Context, s *transferstate.State, side transferstate.Side, index int,
-	tab *transferstate.Tab, active bool, m locales.Messages, t *ui.Theme) {
-	title := paneTitle(m, tab)
-	el := ui.Row(c).Height(32).MinWidth(100).MaxWidth(180).Padding(0, 6, 0, 12).Gap(6).
-		AlignItems(ui.Center).BorderWidth(0, 1, 0, 0).BorderColor(t.Border).
-		Cursor(ui.CursorPointer).Label(title)
-	text, glyph := t.TextMuted, t.TextMuted
-	switch {
-	case active:
-		el.Background(t.Background)
-		text, glyph = t.Text, t.Accent
-	case el.Hovered():
-		el.Background(kit.Subtle(t))
-		text = t.Text
+	tab *transferstate.Tab, active bool, m locales.Messages) {
+	icon := icons.HardDrive
+	if tab.Kind == transferstate.KindLocal {
+		icon = icons.Monitor
 	}
-	el.Children(func() {
-		icon := icons.HardDrive
-		if tab.Kind == transferstate.KindLocal {
-			icon = icons.Monitor
-		}
-		kit.IconSized(c, icon, kit.M(c).Icon.Small).TextColor(glyph).Shrink(0)
-		ui.Text(c, title).FontSize(kit.M(c).Font.Footnote).FontWeight(500).SingleLine().MinWidth(0).Grow(1).TextColor(text)
-		closer := ui.ButtonBase(c).Label(m.SftpCloseTab()).Tooltip(m.SftpCloseTab()).
-			Size(18, 18).Radius(4).Justify(ui.Center).AlignItems(ui.Center).Shrink(0).
-			TextColor(t.TextMuted)
-		if closer.Hovered() {
-			closer.Background(kit.Strong(t)).TextColor(uitheme.DangerText(t))
-		}
-		closer.Children(func() { kit.IconSized(c, icons.X, kit.M(c).Icon.Small) })
-		if closer.Clicked() {
-			s.CloseTabAt(side, index)
-		}
-		if active {
-			ui.Box(c).Absolute().Left(0).Right(0).Bottom(0).Height(2).Background(t.Accent)
-		}
+	result := kit.Tab(c, kit.TabPane, kit.TabSpec{
+		Title:  paneTitle(m, tab),
+		Icon:   icon,
+		Active: active,
+		Close:  m.SftpCloseTab(),
+		ContextMenu: func(menu *ui.Menu) {
+			if menu.Item(m.SftpDuplicateTab()).Chosen() {
+				s.SelectTab(side, index)
+				s.Duplicate(side)
+			}
+			if menu.Item(m.SftpCloseTab()).Chosen() {
+				s.CloseTabAt(side, index)
+			}
+		},
 	})
-	if el.Clicked() {
+	if result.Closed {
+		s.CloseTabAt(side, index)
+	}
+	if result.Clicked {
 		s.SelectTab(side, index)
 	}
-	el.ContextMenu(func(menu *ui.Menu) {
-		if menu.Item(m.SftpDuplicateTab()).Chosen() {
-			s.SelectTab(side, index)
-			s.Duplicate(side)
-		}
-		if menu.Item(m.SftpCloseTab()).Chosen() {
-			s.CloseTabAt(side, index)
-		}
-	})
 }
 
 // emptyPane invites the user to pick what the pane browses.

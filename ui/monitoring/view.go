@@ -196,7 +196,9 @@ func toolbarView(c *ui.Context, s *State, panel domainpreferences.MonitorPanel, 
 	if panel.View == domainpreferences.MonitorViewList {
 		view = 0
 	}
-	if ui.Segmented(c, &view, m.MonitoringViewList(), m.MonitoringViewCharts()).Changed() {
+	if kit.Segmented(c, kit.SegmentedText, &view, "", []kit.Segment{
+		{Label: m.MonitoringViewList()}, {Label: m.MonitoringViewCharts()},
+	}) {
 		if view == 0 {
 			s.UpdatePanelView(domainpreferences.MonitorViewList)
 		} else {
@@ -807,7 +809,9 @@ func editor(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 			if form.View == domainpreferences.MonitorViewList {
 				view = 0
 			}
-			if ui.Segmented(c, &view, m.MonitoringViewList(), m.MonitoringViewCharts()).Changed() {
+			if kit.Segmented(c, kit.SegmentedText, &view, "", []kit.Segment{
+				{Label: m.MonitoringViewList()}, {Label: m.MonitoringViewCharts()},
+			}) {
 				form.View = domainpreferences.MonitorViewCharts
 				if view == 0 {
 					form.View = domainpreferences.MonitorViewList
