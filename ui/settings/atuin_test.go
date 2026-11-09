@@ -173,6 +173,103 @@ func TestAtuinPanelShowsStatusFingerprintAndNoCredential(t *testing.T) {
 	}
 }
 
+// TestAtuinAccountCardOwnsTheIdentityAndSyncCardDoesNot proves the one
+// account reads as one card: the server address and username are inside the
+// Atuin account card, above its status row, beside the sign-in controls. The
+// Command History sync card keeps only the sync toggle, interval, and host
+// preference, and the page renders exactly one identity input for each.
+func TestAtuinAccountCardOwnsTheIdentityAndSyncCardDoesNot(t *testing.T) {
+	account := &fakeHistoryAccount{status: atuinStatus(atuinmodel.KeyStateVerified)}
+	tester, _, state := atuinPanel(t, account, nil)
+	m := locales.In("en")
+
+	// Count real keyboard focus stops rather than label nodes: a field's
+	// label also names its input, so the same string can appear twice.
+	searchLabel := m.SettingsSearchPlaceholder()
+	inputStops := func(label string) int {
+		for step := 0; step < 120 && !tester.Focused(searchLabel); step++ {
+			tester.Key(0, ui.KeyTab)
+			tester.Frame()
+		}
+		if !tester.Focused(searchLabel) {
+			t.Fatalf("Tab never reached the search field %q", searchLabel)
+		}
+		count := 0
+		for step := 0; step < 120; step++ {
+			tester.Key(0, ui.KeyTab)
+			tester.Frame()
+			if tester.Focused(searchLabel) {
+				return count
+			}
+			if tester.Focused(label) {
+				count++
+			}
+		}
+		t.Fatalf("focus did not wrap back to the search field: %v", tester.Texts())
+		return 0
+	}
+	for _, label := range []string{m.SettingsAtuinAddress(), m.SettingsAtuinUsername()} {
+		if got := inputStops(label); got != 1 {
+			t.Fatalf("the page gives %q %d focusable inputs, want exactly one", label, got)
+		}
+	}
+
+	find := func(text string) ui.Rect {
+		t.Helper()
+		rect, ok := tester.Find(text)
+		if !ok {
+			t.Fatalf("the page does not show %q: %v", text, tester.Texts())
+		}
+		return rect
+	}
+	syncTitle := find(m.SettingsAtuinSectionTitle())
+	accountTitle := find(m.SettingsAtuinAccountTitle())
+	address := find(m.SettingsAtuinAddress())
+	username := find(m.SettingsAtuinUsername())
+	statusLine := find(m.SettingsAtuinAccountID("user-1"))
+	signIn := find(m.SettingsAtuinSignIn())
+
+	// The sync card comes before the account card, so its controls end above
+	// the account title; none of them is an identity input.
+	for _, label := range []string{
+		m.SettingsAtuinSyncEnabled(), m.SettingsAtuinSyncInterval(),
+		m.SettingsAtuinPreferHostAtuin(),
+	} {
+		rect := find(label)
+		if rect.Y < syncTitle.Y || rect.Y+rect.H > accountTitle.Y+0.5 {
+			t.Errorf("the sync control %q is outside the sync card: %+v", label, rect)
+		}
+	}
+
+	// Identity sits at the top of the account card, before the status row;
+	// sign-in follows the status row in the same card.
+	if address.Y <= accountTitle.Y+accountTitle.H || username.Y <= accountTitle.Y+accountTitle.H {
+		t.Errorf("the identity inputs are not inside the account card: address=%+v username=%+v",
+			address, username)
+	}
+	if address.Y >= statusLine.Y || username.Y >= statusLine.Y {
+		t.Errorf("the identity inputs are not above the status row: address=%+v username=%+v status=%+v",
+			address, username, statusLine)
+	}
+	if signIn.Y <= statusLine.Y || signIn.Y <= accountTitle.Y {
+		t.Errorf("the sign-in control is not below the status row inside the account card: %+v", signIn)
+	}
+
+	// The auth-mode selector is meaningful only for a pasted token, so the
+	// password path renders it nowhere.
+	if got := inputStops(m.SettingsAtuinAuthMode()); got != 0 {
+		t.Fatalf("the password path gives the auth-mode selector %d focus stops, want none", got)
+	}
+	state.SetLoginMethod(AtuinLoginToken)
+	tester.Frame()
+	if got := inputStops(m.SettingsAtuinAuthMode()); got != 1 {
+		t.Fatalf("the pasted-token path gives the auth-mode selector %d focus stops, want once", got)
+	}
+	if auth := find(m.SettingsAtuinAuthMode()); auth.Y <= accountTitle.Y {
+		t.Errorf("the auth-mode selector is outside the account card: %+v", auth)
+	}
+}
+
 // TestAtuinPanelStatesWhatTheServerCanSee pins the spec-required limitation
 // notice: the server sees record identifiers and metadata, not command text.
 func TestAtuinPanelStatesWhatTheServerCanSee(t *testing.T) {

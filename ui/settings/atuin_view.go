@@ -13,8 +13,10 @@ import (
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
-// historySyncSettingsSection renders the device-local sync Settings. None of
-// these fields travels in the portable settings document or the Vault.
+// historySyncSettingsSection renders the device-local sync controls. The
+// account identity lives in the Atuin account card, so this card keeps only
+// the sync toggle, interval, and host preference. None of these fields
+// travels in the portable settings document or the Vault.
 func historySyncSettingsSection(c *ui.Context, state *PreferencesState, atuin *AtuinState,
 	m locales.Messages, t *ui.Theme) {
 	if state == nil {
@@ -26,35 +28,6 @@ func historySyncSettingsSection(c *ui.Context, state *PreferencesState, atuin *A
 			settings.History.SyncEnabled, func(s *domain.Settings, value bool) {
 				s.History.SyncEnabled = value
 			})
-		fieldRow(c, state, m, t, domain.FieldHistorySyncAddress, m.SettingsAtuinAddress(), func() {
-			if ui.TextInput(c, state.Field(domain.FieldHistorySyncAddress)).Width(320).Changed() {
-				state.Update(func(s *domain.Settings) {
-					s.History.SyncAddress = state.FieldValue(domain.FieldHistorySyncAddress)
-				})
-				c.Invalidate()
-			}
-		})
-		ui.Text(c, m.SettingsAtuinAddressHint()).FontSize(11).TextColor(t.TextMuted)
-		fieldRow(c, state, m, t, domain.FieldHistoryUsername, m.SettingsAtuinUsername(), func() {
-			if ui.TextInput(c, state.Field(domain.FieldHistoryUsername)).Width(240).Changed() {
-				state.Update(func(s *domain.Settings) {
-					s.History.Username = state.FieldValue(domain.FieldHistoryUsername)
-				})
-				c.Invalidate()
-			}
-		})
-		authModes := []string{string(atuinmodel.AuthModeSession), string(atuinmodel.AuthModeBearer)}
-		authLabels := []string{m.SettingsAtuinAuthModeSession(), m.SettingsAtuinAuthModeBearer()}
-		authMode := authLabels[indexOf(authModes, string(settings.History.AuthMode))]
-		fieldRow(c, state, m, t, domain.FieldHistoryAuthMode, m.SettingsAtuinAuthMode(), func() {
-			if ui.Select(c, &authMode, authLabels).Width(200).Changed() {
-				state.Update(func(s *domain.Settings) {
-					s.History.AuthMode = atuinmodel.AuthMode(authModes[indexOf(authLabels, authMode)])
-				})
-				c.Invalidate()
-			}
-		})
-		ui.Text(c, m.SettingsAtuinAuthModeHint()).FontSize(11).TextColor(t.TextMuted)
 		interval := float64(settings.History.SyncIntervalMinutes)
 		fieldRow(c, state, m, t, domain.FieldHistorySyncInterval, m.SettingsAtuinSyncInterval(), func() {
 			if ui.NumberInput(c, &interval, float64(domain.MinHistorySyncIntervalMinutes),
@@ -75,9 +48,35 @@ func historySyncSettingsSection(c *ui.Context, state *PreferencesState, atuin *A
 	})
 }
 
-// atuinAccountSection is the one-account panel: sign-in, status, master-key
-// entry and validation, explicit warnings, and logout. It never displays a
-// token or a master key.
+// atuinIdentityFields is the one account's identity at the top of the
+// account card. The sign-in button reads these same persisted fields, so the
+// address and username a user sees here are the ones the service validates.
+func atuinIdentityFields(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {
+	if state == nil {
+		return
+	}
+	fieldRow(c, state, m, t, domain.FieldHistorySyncAddress, m.SettingsAtuinAddress(), func() {
+		if ui.TextInput(c, state.Field(domain.FieldHistorySyncAddress)).Width(320).Changed() {
+			state.Update(func(s *domain.Settings) {
+				s.History.SyncAddress = state.FieldValue(domain.FieldHistorySyncAddress)
+			})
+			c.Invalidate()
+		}
+	})
+	ui.Text(c, m.SettingsAtuinAddressHint()).FontSize(11).TextColor(t.TextMuted)
+	fieldRow(c, state, m, t, domain.FieldHistoryUsername, m.SettingsAtuinUsername(), func() {
+		if ui.TextInput(c, state.Field(domain.FieldHistoryUsername)).Width(240).Changed() {
+			state.Update(func(s *domain.Settings) {
+				s.History.Username = state.FieldValue(domain.FieldHistoryUsername)
+			})
+			c.Invalidate()
+		}
+	})
+}
+
+// atuinAccountSection is the one-account panel: identity (server address and
+// username), status, sign-in, master-key entry and validation, explicit
+// warnings, and logout. It never displays a token or a master key.
 func atuinAccountSection(c *ui.Context, state *AtuinState, prefs *PreferencesState,
 	m locales.Messages, t *ui.Theme) {
 	if state == nil {
@@ -85,6 +84,7 @@ func atuinAccountSection(c *ui.Context, state *AtuinState, prefs *PreferencesSta
 	}
 	status := state.Status()
 	section(c, m.SettingsAtuinAccountTitle(), m.SettingsAtuinAccountDescription(), t, func() {
+		atuinIdentityFields(c, prefs, m, t)
 		atuinStatusRow(c, state, m, t)
 		if problem := state.Problem(); problem != AtuinProblemNone {
 			ui.Text(c, atuinProblemText(m, problem)).FontSize(12).TextColor(uitheme.DangerText(t))
@@ -194,7 +194,7 @@ func atuinLoginControls(c *ui.Context, state *AtuinState, prefs *PreferencesStat
 			authModes := []string{string(atuinmodel.AuthModeSession), string(atuinmodel.AuthModeBearer)}
 			authLabels := []string{m.SettingsAtuinAuthModeSession(), m.SettingsAtuinAuthModeBearer()}
 			authMode := authLabels[indexOf(authModes, string(prefs.Settings().History.AuthMode))]
-			ui.Field(c, m.SettingsAtuinAuthMode(), func() {
+			fieldRow(c, prefs, m, t, domain.FieldHistoryAuthMode, m.SettingsAtuinAuthMode(), func() {
 				if ui.Select(c, &authMode, authLabels).Width(200).Changed() {
 					prefs.Update(func(settings *domain.Settings) {
 						settings.History.AuthMode = atuinmodel.AuthMode(authModes[indexOf(authLabels, authMode)])
@@ -202,6 +202,7 @@ func atuinLoginControls(c *ui.Context, state *AtuinState, prefs *PreferencesStat
 					c.Invalidate()
 				}
 			})
+			ui.Text(c, m.SettingsAtuinAuthModeHint()).FontSize(11).TextColor(t.TextMuted)
 		}
 	} else {
 		ui.Field(c, m.SettingsAtuinPassword(), func() {

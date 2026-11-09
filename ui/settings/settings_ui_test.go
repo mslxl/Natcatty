@@ -110,6 +110,84 @@ func TestSearchIndexesEveryTerminalSetting(t *testing.T) {
 	}
 }
 
+// TestSearchIndexReachesTheAtuinHistorySettings pins every Atuin History
+// setting in the Logs-area search index: the product name and the English and
+// Chinese section names reach their hits, as do the stable terms server,
+// username, master key, and sync.
+func TestSearchIndexReachesTheAtuinHistorySettings(t *testing.T) {
+	allAtuinHits := func(m locales.Messages) []string {
+		return []string{
+			m.SettingsAtuinSyncEnabled(), m.SettingsAtuinAddress(),
+			m.SettingsAtuinUsername(), m.SettingsAtuinAuthMode(),
+			m.SettingsAtuinSyncInterval(), m.SettingsAtuinPreferHostAtuin(),
+			m.SettingsAtuinSectionTitle(), m.SettingsAtuinAccountTitle(),
+			m.SettingsAtuinKeyTitle(),
+		}
+	}
+	tests := []struct {
+		locale string
+		query  string
+		want   func(locales.Messages) []string
+	}{
+		{"en", "atuin", allAtuinHits},
+		{"en", "command history", allAtuinHits},
+		{"en", "sync", allAtuinHits},
+		{"en", "server", func(m locales.Messages) []string { return []string{m.SettingsAtuinAddress()} }},
+		{"en", "username", func(m locales.Messages) []string { return []string{m.SettingsAtuinUsername()} }},
+		{"en", "master key", func(m locales.Messages) []string {
+			return []string{m.SettingsAtuinAccountTitle(), m.SettingsAtuinKeyTitle()}
+		}},
+		{"zh-CN", "命令历史", func(m locales.Messages) []string {
+			return []string{m.SettingsAtuinSectionTitle(), m.SettingsAtuinSyncEnabled()}
+		}},
+		{"zh-CN", "Atuin 账户", func(m locales.Messages) []string { return []string{m.SettingsAtuinAccountTitle()} }},
+		{"zh-CN", "主密钥", func(m locales.Messages) []string { return []string{m.SettingsAtuinKeyTitle()} }},
+		{"zh-CN", "服务器地址", func(m locales.Messages) []string { return []string{m.SettingsAtuinAddress()} }},
+		{"zh-TW", "命令歷史", func(m locales.Messages) []string {
+			return []string{m.SettingsAtuinSectionTitle(), m.SettingsAtuinSyncEnabled()}
+		}},
+		{"zh-TW", "Atuin 帳戶", func(m locales.Messages) []string { return []string{m.SettingsAtuinAccountTitle()} }},
+		{"zh-TW", "主金鑰", func(m locales.Messages) []string { return []string{m.SettingsAtuinKeyTitle()} }},
+		{"zh-TW", "伺服器位址", func(m locales.Messages) []string { return []string{m.SettingsAtuinAddress()} }},
+	}
+	for _, test := range tests {
+		t.Run(test.locale+"/"+test.query, func(t *testing.T) {
+			m := locales.In(test.locale)
+			hits := FilterHits(SearchIndex(m), test.query)
+			for _, label := range test.want(m) {
+				found := false
+				for _, hit := range hits {
+					if hit.Area == AreaLogs && hit.Label == label {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("query %q does not reach the Logs hit %q", test.query, label)
+				}
+			}
+		})
+	}
+
+	// Every persisted History field is indexed by its own Field, so a future
+	// search-to-field jump keeps working.
+	fields := map[domain.Field]bool{}
+	for _, hit := range FilterHits(SearchIndex(locales.In("en")), "atuin") {
+		if hit.Area == AreaLogs {
+			fields[hit.Field] = true
+		}
+	}
+	for _, field := range []domain.Field{
+		domain.FieldHistorySyncEnabled, domain.FieldHistorySyncAddress,
+		domain.FieldHistoryUsername, domain.FieldHistoryAuthMode,
+		domain.FieldHistorySyncInterval, domain.FieldHistoryPreferHostAtuin,
+	} {
+		if !fields[field] {
+			t.Errorf("query %q does not index %s", "atuin", field)
+		}
+	}
+}
+
 // TestEveryBindingHasALocalizedLabel keeps the label contract in the UI after
 // ADR-0009 removed the English fallback from the domain catalog.
 func TestEveryBindingHasALocalizedLabel(t *testing.T) {
