@@ -32,6 +32,10 @@ const rowHeight float32 = 44
 // treeIndent is how far one level of the group tree indents its rows.
 const treeIndent float32 = 18
 
+// treeToggleSize is the side of a tree group's chevron. A row without one, a
+// Host or an empty group, keeps its room so the avatars line up by level.
+const treeToggleSize float32 = 20
+
 // recentHostLimit is how many Recently Connected Hosts the root shows, the
 // same six as the original.
 const recentHostLimit = 6
@@ -429,8 +433,13 @@ func treeGroup(c *ui.Context, s *vaultstate.State, opts options, at *browse, m l
 		})
 	}
 	row.Children(func() {
+		if len(node.children) == 0 && len(node.section.hosts) == 0 {
+			ui.Box(c).Size(treeToggleSize, treeToggleSize).Shrink(0)
+			groupRowBody(c, s, node.section, at, m, t)
+			return
+		}
 		chevron := ui.ButtonBase(c).Key("tree-toggle-"+path).Label(m.VaultTreeToggle()).
-			Size(20, 20).Radius(kit.RadiusControl).Justify(ui.Center).AlignItems(ui.Center).
+			Size(treeToggleSize, treeToggleSize).Radius(kit.RadiusControl).Justify(ui.Center).AlignItems(ui.Center).
 			TextColor(t.TextMuted).Shrink(0)
 		if chevron.Hovered() {
 			chevron.Background(kit.Subtle(t)).TextColor(t.Text)
@@ -877,6 +886,9 @@ func hostRow(c *ui.Context, s *vaultstate.State, opts options, host domainvault.
 	activateHost(c, s, host, at, layout, row)
 	row.ContextMenu(hostActions(s, opts, host, m, c))
 	row.Children(func() {
+		if layout.HostViewMode == domainpreferences.HostViewTree {
+			ui.Box(c).Size(treeToggleSize, treeToggleSize).Shrink(0)
+		}
 		kit.HostAvatar(c, "", hostAvatarKind(host.Protocol), host.Label, 28)
 		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
 			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {

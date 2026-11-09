@@ -89,7 +89,7 @@
   "connectionStatusError": "连接错误",
   "connectionConnectingTo": "正在连接到 {host}…",
   "commandFailed": "无法完成命令",
-  "vaultHostListTitle": "主机 ({count})",
+  "vaultHostListTitle": "主机（{count}）",
   "vaultHostNew": "新建主机",
   "vaultHostEdit": "编辑",
   "vaultHostDelete": "删除",
