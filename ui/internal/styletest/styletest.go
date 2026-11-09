@@ -31,7 +31,7 @@ func Each(t *testing.T, fn func(t *testing.T)) {
 func Styled(style kit.Style, theme *ui.Theme, view func(*ui.Context)) func(*ui.Context) {
 	return func(c *ui.Context) {
 		kit.SetStyle(style)
-		c.SetTheme(style.Theme(theme))
+		c.SetTheme(kit.StyleTheme(c, style, theme))
 		view(c)
 	}
 }

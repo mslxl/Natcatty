@@ -159,10 +159,15 @@ func CurrentStyle() Style {
 // Fill fills el as the active style fills a surface of role: the theme's
 // color for it, the style's glass, or clear over the window's vibrancy. A
 // vibrant surface in a window that shows no vibrancy is filled as an opaque
-// one.
+// one, and so is every surface while the desktop asks for more contrast,
+// which on macOS stands in for Reduce Transparency too.
 func Fill(c *ui.Context, el ui.Element, role SurfaceRole) ui.Element {
 	t := c.Theme()
-	switch m := CurrentStyle().Material(role); m.Kind {
+	m := CurrentStyle().Material(role)
+	if c.Preferences().HighContrast && (m.Kind == MaterialGlass || m.Kind == MaterialVibrant) {
+		m = Material{Kind: MaterialOpaque}
+	}
+	switch m.Kind {
 	case MaterialGlass:
 		return el.Material(m.Paint)
 	case MaterialVibrant:
@@ -174,10 +179,22 @@ func Fill(c *ui.Context, el ui.Element, role SurfaceRole) ui.Element {
 		return el
 	}
 	switch role {
-	case SurfaceContent, SurfaceOverlay:
+	case SurfaceContent, SurfaceSidebar, SurfaceOverlay:
 		return el.Background(t.Surface)
+	case SurfaceScrollEdge:
+		return el
 	}
 	return el.Background(t.Background)
+}
+
+// StyleTheme is style's theme from the preset's base, as a window draws it:
+// while the desktop asks for more contrast it keeps the preset's borders.
+func StyleTheme(c *ui.Context, style Style, base *ui.Theme) *ui.Theme {
+	t := style.Theme(base)
+	if t != base && c.Preferences().HighContrast {
+		t.Border = base.Border
+	}
+	return t
 }
 
 // Vibrant reports whether s shows the window's vibrancy anywhere, so the

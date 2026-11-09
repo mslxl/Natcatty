@@ -61,12 +61,21 @@ func IconButtonWith(c *ui.Context, name, label string, options IconOptions) ui.E
 	button.Label(label).Tooltip(label).Size(box, box).Radius(radius).
 		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
 	if options.Role == IconBar && CurrentStyle().Native() {
-		// A capsule of interactive glass; an open toggle is tinted.
-		face := glass.Glass{Interactive: true}
-		if options.On {
-			face.Tint = t.Text.Alpha(0.12)
+		// A capsule of interactive glass; an open toggle is tinted. With
+		// more contrast asked for, it is an opaque, outlined capsule.
+		button.Radius(M(c).Radius.Pill).TextColor(t.Text)
+		switch {
+		case c.Preferences().HighContrast:
+			fill := t.Surface
+			if options.On || button.Pressed() {
+				fill = Strong(t)
+			}
+			button.Background(fill).Border(1, t.Border)
+		case options.On:
+			button.Material(glass.Glass{Interactive: true, Tint: t.Text.Alpha(0.12)})
+		default:
+			button.Material(glass.Glass{Interactive: true})
 		}
-		button.Radius(M(c).Radius.Pill).Material(face).TextColor(t.Text)
 		button.Children(func() { IconSized(c, name, glyph) })
 		return button
 	}

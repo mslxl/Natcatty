@@ -353,7 +353,7 @@ func (m *windowManager) withTheme(content func(*ui.Context)) func(*ui.Context) {
 		}
 		style := m.currentStyle()
 		kit.SetStyle(style)
-		c.SetTheme(style.Theme(c.Theme()))
+		c.SetTheme(kit.StyleTheme(c, style, c.Theme()))
 		content(c)
 	}
 }

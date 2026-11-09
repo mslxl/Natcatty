@@ -42,7 +42,7 @@ func newWorkspaceViewGraph(t *testing.T) *workspaceViewGraph {
 	)}
 }
 
-func (g *workspaceViewGraph) waitForSurfaces(t *testing.T, count int) {
+func (g *workspaceViewGraph) waitForSurfaces(t testing.TB, count int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
