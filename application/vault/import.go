@@ -379,6 +379,12 @@ func (s *Service) PreviewImport(ctx context.Context, text string, opts PreviewIm
 	preview.collectFamilyPlan(missingGroups)
 
 	preview.GroupsToCreate = sortedGroupPaths(missingGroups)
+	if preview.family != nil {
+		// The banner adds family records and created groups. Under the
+		// ID-keyed tree an implicit ancestor becomes a record too, so the
+		// preview total must count the same set the commit will create.
+		preview.FamilyCounts.Groups = len(missingGroups)
+	}
 	return preview, nil
 }
 
@@ -567,6 +573,17 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 	if err != nil {
 		return result, internal(err)
 	}
+	// A conflicting row resolved by Overwrite creates the Host Groups its draft
+	// names. Remember which groups already existed so the report still names
+	// every group this import created.
+	groupsBefore, err := s.importExistingGroups(ctx)
+	if err != nil {
+		return result, err
+	}
+	existedBefore := make(map[string]bool, len(groupsBefore))
+	for _, group := range groupsBefore {
+		existedBefore[group.Path] = true
+	}
 	// ProxyJump references resolve against the preview's stable new IDs, so a
 	// forwarding chain works no matter which chunk its jump Host is in.
 	chains := preview.jumpChains(selected, hosts)
@@ -614,9 +631,16 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 	if err != nil {
 		return result, err
 	}
-	groupByPath := make(map[string]bool, len(existingGroups))
 	for _, group := range existingGroups {
-		groupByPath[group.Path] = true
+		if !existedBefore[group.Path] {
+			result.GroupsCreated = append(result.GroupsCreated, group.Path)
+		}
+	}
+	// Paths locate groups for the import; membership travels as the group's
+	// stable ID so a later rename carries the imported Hosts with it.
+	groupByPath := make(map[string]string, len(existingGroups))
+	for _, group := range existingGroups {
+		groupByPath[group.Path] = group.ID
 	}
 
 	now := s.now()
@@ -634,7 +658,7 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 	if preview.family != nil {
 		for _, group := range preview.family.Groups {
 			for _, ancestor := range groupAncestorsWithSelf(group) {
-				if !groupByPath[ancestor] {
+				if groupByPath[ancestor] == "" {
 					missingGroups[ancestor] = true
 				}
 			}
@@ -661,7 +685,7 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 		draft.NetworkProfileID = preview.remapNetworkProfileID(draft.NetworkProfileID)
 		draft.HostChain = chains[index]
 		for _, ancestor := range groupAncestorsWithSelf(draft.Group) {
-			if !groupByPath[ancestor] {
+			if groupByPath[ancestor] == "" {
 				missingGroups[ancestor] = true
 			}
 		}
@@ -692,13 +716,21 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 
 	batch := ImportBatch{}
 	groupOrder := nextGroupOrder(existingGroups)
+	// Lexicographic order puts an ancestor before its descendants, so a child
+	// can always resolve its parent's new ID.
 	for _, groupPath := range sortedGroupPaths(missingGroups) {
-		batch.Groups = append(batch.Groups, domainvault.Group{
-			Path: groupPath, OrderKey: groupOrder, CreatedAt: now, UpdatedAt: now,
-		})
 		groupOrder += orderStep
+		group := domainvault.Group{
+			ID: s.newGroupID(), ParentID: groupByPath[domainvault.ParentGroupPath(groupPath)],
+			Name: domainvault.GroupName(groupPath), Path: groupPath,
+			OrderKey: groupOrder, CreatedAt: now, UpdatedAt: now,
+		}
+		batch.Groups = append(batch.Groups, group)
+		groupByPath[groupPath] = group.ID
 	}
 	for _, item := range pending {
+		item.host.GroupID = groupByPath[domainvault.NormalizeGroup(item.host.Group)]
+		item.host.Group = ""
 		batch.Hosts = append(batch.Hosts, item.host)
 	}
 

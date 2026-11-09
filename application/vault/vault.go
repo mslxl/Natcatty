@@ -165,11 +165,29 @@ func NewService(repo HostRepository, opts ...Option) *Service {
 	return service
 }
 
-// List returns every Host in the order the repository reports.
+// List returns every Host in the order the repository reports, with the group
+// path its stable GroupID derives.
 func (s *Service) List(ctx context.Context) ([]domainvault.Host, error) {
 	hosts, err := s.repo.List(ctx)
 	if err != nil {
 		return nil, internal(err)
+	}
+	return s.materializeHostPaths(ctx, hosts)
+}
+
+// materializeHostPaths fills each Host's derived group path from the tree. A
+// repository normally does this on read; the service repeats it so a repository
+// that stores only identity cannot leak an empty path to a caller.
+func (s *Service) materializeHostPaths(ctx context.Context, hosts []domainvault.Host) ([]domainvault.Host, error) {
+	if len(hosts) == 0 || s.groups == nil {
+		return hosts, nil
+	}
+	groups, err := s.ListGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for index := range hosts {
+		hosts[index] = domainvault.MaterializeHostGroup(hosts[index], groups)
 	}
 	return hosts, nil
 }
@@ -203,13 +221,18 @@ func (s *Service) Create(ctx context.Context, draft domainvault.Draft) (domainva
 		return domainvault.Host{}, conflict(nil)
 	}
 
+	groupID, err := s.resolveHostGroup(ctx, normalized.Group)
+	if err != nil {
+		return domainvault.Host{}, err
+	}
+
 	now := s.now()
 	host := applyDraft(domainvault.Host{
 		ID:        s.newID(),
 		OrderKey:  nextOrder(hosts),
 		CreatedAt: now,
 		UpdatedAt: now,
-	}, normalized)
+	}, normalized, groupID)
 	passwordStored := normalized.Password != ""
 	proxyPasswordStored := normalized.Proxy != nil && normalized.Proxy.Password != ""
 	if err := s.persistPassword(ctx, host.ID, normalized.Password); err != nil {
@@ -267,7 +290,11 @@ func (s *Service) Update(ctx context.Context, id model.HostID, draft domainvault
 		return domainvault.Host{}, conflict(nil)
 	}
 
-	updated := applyDraft(existing, normalized)
+	groupID, err := s.resolveHostGroup(ctx, normalized.Group)
+	if err != nil {
+		return domainvault.Host{}, err
+	}
+	updated := applyDraft(existing, normalized, groupID)
 	updated.UpdatedAt = s.now()
 
 	// Read every credential that a write will replace before writing any of
@@ -429,20 +456,41 @@ func (s *Service) persistProxyPassword(ctx context.Context, id model.HostID, pro
 }
 
 // applyDraft copies a normalized draft's editable fields onto host, leaving
-// identity, ordering, and timestamps to the caller.
-func applyDraft(host domainvault.Host, draft domainvault.Draft) domainvault.Host {
+// identity, ordering, and timestamps to the caller. Membership travels as the
+// stable group ID resolved at the edge; the path on the returned value is the
+// derived one storage will materialize again on read.
+func applyDraft(host domainvault.Host, draft domainvault.Draft, groupID string) domainvault.Host {
 	edited := hostFromDraft(draft)
 	edited.ID = host.ID
 	edited.OrderKey = host.OrderKey
 	edited.CreatedAt = host.CreatedAt
 	edited.UpdatedAt = host.UpdatedAt
-	// A Host that stays in the same group keeps its stable group reference.
-	// A draft that moves it gets a fresh resolution from the sync snapshot;
-	// carrying the old ID here would point at the wrong group.
-	if domainvault.NormalizeGroup(edited.Group) == domainvault.NormalizeGroup(host.Group) {
-		edited.GroupID = host.GroupID
+	edited.GroupID = groupID
+	// Connection telemetry is not editable and must survive every save.
+	edited.LastConnectedAt = host.LastConnectedAt
+	if groupID == "" {
+		edited.Group = ""
 	}
 	return edited
+}
+
+// MarkConnected records that the user opened a Session to a Host. The
+// timestamp is device-local and deliberately does not move UpdatedAt: a
+// connection is not an edit, so it must not win a sync conflict or reorder a
+// list that sorts by modification time.
+func (s *Service) MarkConnected(ctx context.Context, id model.HostID) error {
+	host, err := s.repo.Get(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return internal(err)
+	}
+	host.LastConnectedAt = s.now().UnixMilli()
+	if err := s.repo.Save(ctx, host); err != nil {
+		return internal(err)
+	}
+	return nil
 }
 
 // duplicate reports whether any Host other than except has the same merge key

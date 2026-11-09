@@ -279,14 +279,15 @@ func TestSnippetTargetGroupsFollowHostGroupRenameAndDelete(t *testing.T) {
 	)
 	ctx := context.Background()
 
-	if _, err := service.UpdateGroup(ctx, "prod", domainvault.GroupDraft{Path: "platform"}); err != nil {
+	prodID := domainvault.GroupIDFromPath("prod")
+	if _, err := service.UpdateGroup(ctx, prodID, domainvault.GroupDraft{Path: "platform"}); err != nil {
 		t.Fatalf("UpdateGroup: %v", err)
 	}
 	if got := snippets.snippets[0].TargetGroups; !reflect.DeepEqual(got, []string{"platform", "db"}) {
 		t.Fatalf("target groups after rename = %v", got)
 	}
 
-	if err := service.DeleteGroup(ctx, "platform"); err != nil {
+	if err := service.DeleteGroup(ctx, prodID); err != nil {
 		t.Fatalf("DeleteGroup: %v", err)
 	}
 	if got := snippets.snippets[0].TargetGroups; !reflect.DeepEqual(got, []string{"db"}) {

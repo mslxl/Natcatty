@@ -237,7 +237,11 @@ func TestVaultJSONRoundTripRestoresEveryFamilyAndLink(t *testing.T) {
 	if len(result.Imported) != 1 || len(destination.hosts.hosts) != 1 {
 		t.Fatalf("imported hosts = %v, stored = %d", result.Imported, len(destination.hosts.hosts))
 	}
-	host := destination.hosts.hosts[0]
+	restored, err := destination.service.List(ctx)
+	if err != nil {
+		t.Fatalf("List after import: %v", err)
+	}
+	host := restored[0]
 	if host.Label != "Web One" || host.Hostname != "web1.example.test" ||
 		host.Port != 2222 || host.Group != "Prod/Web" || !host.Pinned {
 		t.Fatalf("Host = %+v", host)

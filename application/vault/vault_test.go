@@ -58,13 +58,20 @@ func (f *fakeHosts) Delete(_ context.Context, id model.HostID) error {
 
 func newTestService(t *testing.T, hosts *fakeHosts) *Service {
 	t.Helper()
-	var ids int
+	var hostIDs, groupIDs int
 	return NewService(hosts,
 		WithIDGenerator(func() model.HostID {
-			ids++
-			return model.HostID("host-" + strconv.Itoa(ids))
+			hostIDs++
+			return model.HostID("host-" + strconv.Itoa(hostIDs))
 		}),
 		WithClock(func() time.Time { return time.Unix(1700000000, 0).UTC() }),
+		// Host membership is a stable group ID, so a draft that names a group
+		// needs the group repository even in the Host-only tests.
+		WithGroups(&fakeGroups{}),
+		WithGroupIDGenerator(func() string {
+			groupIDs++
+			return "group-" + strconv.Itoa(groupIDs)
+		}),
 	)
 }
 
