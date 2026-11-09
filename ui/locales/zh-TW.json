@@ -89,7 +89,7 @@
   "connectionStatusError": "連線錯誤",
   "connectionConnectingTo": "正在連線至 {host}…",
   "commandFailed": "無法完成命令",
-  "vaultHostListTitle": "主機 ({count})",
+  "vaultHostListTitle": "主機（{count}）",
   "vaultHostNew": "新增主機",
   "vaultHostEdit": "編輯",
   "vaultHostDelete": "刪除",
