@@ -1804,7 +1804,7 @@
   },
   "vaultSnippetEmpty": "No Snippets yet. Save a command you run often.",
   "vaultSnippetNew": "New Snippet",
-  "vaultSnippetPackageNew": "New package",
+  "vaultSnippetPackageNew": "New Package",
   "vaultSnippetRunActive": "Run here",
   "vaultSnippetRunHosts": "Run on targets",
   "vaultSnippetSummaryTargets": "Targets: {targets}",
@@ -1949,7 +1949,7 @@
   "@vaultNoteNew": {
     "description": "The button that opens the Note editor for a new Note."
   },
-  "vaultNoteGroupNew": "New group",
+  "vaultNoteGroupNew": "New Group",
   "@vaultNoteGroupNew": {
     "description": "The button that opens the Note Group editor."
   },
@@ -1987,7 +1987,7 @@
   "@vaultNoteExportZIP": {
     "description": "The button that saves a Note in a ZIP archive."
   },
-  "vaultNoteExportAll": "Export all as ZIP",
+  "vaultNoteExportAll": "Export All as ZIP",
   "@vaultNoteExportAll": {
     "description": "The button that saves every Note as a ZIP archive."
   },
@@ -2201,13 +2201,17 @@
   "@logsSourceShell": {
     "description": "A command imported from the local shell's history."
   },
-  "logsFrom": "From (YYYY-MM-DD)",
+  "logsFrom": "From",
   "@logsFrom": {
     "description": "The inclusive start-date filter."
   },
-  "logsTo": "To (YYYY-MM-DD)",
+  "logsTo": "To",
   "@logsTo": {
     "description": "The inclusive end-date filter."
+  },
+  "logsDateClear": "Clear date",
+  "@logsDateClear": {
+    "description": "The button beside a date filter that removes it."
   },
   "logsOpenTerminal": "Open terminal",
   "@logsOpenTerminal": {
@@ -2351,7 +2355,7 @@
   "@logsProblemHostMissing": {
     "description": "Shown when a record refers to a Host deleted from the Vault."
   },
-  "logsProblemDate": "Enter dates as YYYY-MM-DD, with the start before the end.",
+  "logsProblemDate": "The start date must be on or before the end date.",
   "@logsProblemDate": {
     "description": "Shown when a date filter is malformed or inverted."
   },

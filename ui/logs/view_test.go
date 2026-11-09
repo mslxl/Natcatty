@@ -476,3 +476,32 @@ func textsContain(tt *ui.Tester, want string) bool {
 	}
 	return false
 }
+
+// TestDateFilterOpensCalendarBeforeSettingTheDay drives the From filter: the
+// first click opens a calendar and leaves the filter open-ended; the filter
+// is set only once a day is chosen, and choosing it closes the calendar.
+func TestDateFilterOpensCalendarBeforeSettingTheDay(t *testing.T) {
+	state := NewState(seededSource(), nil)
+	tt := ui.NewTester(View(state), 880, 680)
+	tt.Frame()
+	if err := tt.Click("From"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if *state.From() != "" {
+		t.Fatalf("opening the calendar set the start to %q", *state.From())
+	}
+	if _, ok := tt.Find("12"); !ok {
+		t.Fatal("the calendar did not open")
+	}
+	if err := tt.Click("12"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !strings.HasSuffix(*state.From(), "-12") {
+		t.Fatalf("choosing the 12th set the start to %q", *state.From())
+	}
+	if state.pickers[0].open {
+		t.Fatal("the calendar stayed open after a day was chosen")
+	}
+}

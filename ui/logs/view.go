@@ -9,6 +9,8 @@ import (
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
+	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -25,7 +27,7 @@ func View(s *State) func(*ui.Context) {
 
 		ui.Scroll(c).Grow(1).FillHeight().MinWidth(0).TrackScroll(s.Scroll()).Children(func() {
 			ui.Column(c).FillWidth().MinWidth(0).Gap(8).Children(func() {
-				ui.Text(c, m.LogsTitle()).FontSize(20).Bold()
+				kit.PageTitle(c, m.LogsTitle(), "")
 				tabs(c, s, m, t)
 				problems(c, s, m, t)
 				filters(c, s, m, t)
@@ -46,42 +48,45 @@ func View(s *State) func(*ui.Context) {
 // is a known, accepted limitation rather than a redesign target here: the
 // records below stay reachable because the whole surface scrolls.
 func tabs(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Children(func() {
-		connections := m.LogsTabConnections(s.TotalLogs())
-		if s.Tab() == TabConnections {
-			if ui.PrimaryButton(c, connections).Clicked() {
-				s.SelectTab(TabConnections)
-			}
-		} else if ui.Button(c, connections).Clicked() {
-			s.SelectTab(TabConnections)
-			c.Invalidate()
-		}
-		history := m.LogsTabHistory(s.TotalEntries())
-		if s.Tab() == TabHistory {
-			if ui.PrimaryButton(c, history).Clicked() {
-				s.SelectTab(TabHistory)
-			}
-		} else if ui.Button(c, history).Clicked() {
-			s.SelectTab(TabHistory)
-			c.Invalidate()
-		}
-	})
 	clearLabel, clearConfirm := m.LogsClearConnections(), m.LogsClearConnectionsConfirm()
 	if s.Tab() == TabHistory {
 		clearLabel, clearConfirm = m.LogsClearHistory(), m.LogsClearConfirm()
 	}
-	if ui.Button(c, clearLabel).Clicked() {
-		s.RequestClear()
-		c.Invalidate()
-	}
+	// The record families switch with the same underline tabs as the System
+	// manager's, and the clear-all action trails them as a toolbar action.
+	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+		labels := []string{m.LogsTabConnections(s.TotalLogs()), m.LogsTabHistory(s.TotalEntries())}
+		index := 0
+		if s.Tab() == TabHistory {
+			index = 1
+		}
+		chosen := index
+		ui.Row(c).Grow(1).MinWidth(0).Children(func() { kit.UnderlineTabs(c, &chosen, labels, false) })
+		if chosen != index {
+			if chosen == 1 {
+				s.SelectTab(TabHistory)
+			} else {
+				s.SelectTab(TabConnections)
+			}
+			c.Invalidate()
+		}
+		total := s.TotalLogs()
+		if s.Tab() == TabHistory {
+			total = s.TotalEntries()
+		}
+		// There is nothing to clear in an empty family.
+		if total > 0 && kit.GhostButton(c, icons.Trash, clearLabel).Clicked() {
+			s.RequestClear()
+			c.Invalidate()
+		}
+	})
 	if s.PendingClear() {
-		ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-			ui.Text(c, clearConfirm).Grow(1).TextColor(uitheme.DangerText(t))
-			if ui.Button(c, m.LogsCancel()).Clicked() {
+		kit.Notice(c, icons.Trash, t.Danger, clearConfirm, func() {
+			if kit.GhostButton(c, "", m.LogsCancel()).Clicked() {
 				s.CancelClear()
 				c.Invalidate()
 			}
-			if ui.Button(c, m.LogsClearYes()).Clicked() {
+			if kit.DangerButton(c, icons.Trash, m.LogsClearYes()).Clicked() {
 				s.ConfirmClear()
 				c.Invalidate()
 			}
@@ -130,15 +135,17 @@ func problemText(m locales.Messages, tab Tab, problem Problem) string {
 	}
 }
 
+// filters is the record list's toolbar: the search, the Host and status or
+// source pickers, and the date range on one row that wraps when narrow. Each
+// control carries its field name as its label and placeholder.
 func filters(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
-	ui.Field(c, m.LogsSearch(), func() {
-		if ui.TextInput(c, s.Search()).FillWidth().Changed() {
+	ui.Row(c).FillWidth().Gap(8).Wrap().AlignItems(ui.Center).Children(func() {
+		if ui.SearchField(c, s.Search()).Label(m.LogsSearch()).Placeholder(m.LogsSearch()).
+			Grow(1).MinWidth(200).Changed() {
 			s.SetSearch(*s.Search())
 			c.Invalidate()
 		}
-	})
 
-	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Start).Children(func() {
 		hostOptions := s.HostOptions()
 		hostLabels := make([]string, len(hostOptions))
 		for index, option := range hostOptions {
@@ -151,17 +158,16 @@ func filters(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 				break
 			}
 		}
-		ui.Field(c, m.LogsHostFilter(), func() {
-			if ui.Select(c, &hostLabel, hostLabels).Width(180).Changed() {
-				for index, label := range hostLabels {
-					if label == hostLabel {
-						s.SetHostKey(hostOptions[index].Key)
-						break
-					}
+		if ui.Select(c, &hostLabel, hostLabels).Label(m.LogsHostFilter()).Tooltip(m.LogsHostFilter()).
+			Width(170).Changed() {
+			for index, label := range hostLabels {
+				if label == hostLabel {
+					s.SetHostKey(hostOptions[index].Key)
+					break
 				}
-				c.Invalidate()
 			}
-		}).Width(190)
+			c.Invalidate()
+		}
 
 		if s.Tab() == TabConnections {
 			statusLabels := []string{m.LogsStatusAll(), m.LogsStatusConnected(), m.LogsStatusFailed()}
@@ -175,17 +181,16 @@ func filters(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 					break
 				}
 			}
-			ui.Field(c, m.LogsStatusFilter(), func() {
-				if ui.Select(c, &statusLabel, statusLabels).Width(150).Changed() {
-					for index, label := range statusLabels {
-						if label == statusLabel {
-							s.SetStatus(statusValues[index])
-							break
-						}
+			if ui.Select(c, &statusLabel, statusLabels).Label(m.LogsStatusFilter()).
+				Tooltip(m.LogsStatusFilter()).Width(140).Changed() {
+				for index, label := range statusLabels {
+					if label == statusLabel {
+						s.SetStatus(statusValues[index])
+						break
 					}
-					c.Invalidate()
 				}
-			}).Width(160)
+				c.Invalidate()
+			}
 		} else {
 			sourceLabels := []string{m.LogsSourceAll(), m.LogsSourceSession(), m.LogsSourceShell()}
 			sourceValues := []string{
@@ -198,35 +203,72 @@ func filters(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 					break
 				}
 			}
-			ui.Field(c, m.LogsSourceFilter(), func() {
-				if ui.Select(c, &sourceLabel, sourceLabels).Width(150).Changed() {
-					for index, label := range sourceLabels {
-						if label == sourceLabel {
-							s.SetSourceFilter(sourceValues[index])
-							break
-						}
+			if ui.Select(c, &sourceLabel, sourceLabels).Label(m.LogsSourceFilter()).
+				Tooltip(m.LogsSourceFilter()).Width(140).Changed() {
+				for index, label := range sourceLabels {
+					if label == sourceLabel {
+						s.SetSourceFilter(sourceValues[index])
+						break
 					}
-					c.Invalidate()
 				}
-			}).Width(160)
+				c.Invalidate()
+			}
 		}
-	})
 
-	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Start).Children(func() {
-		from := s.From()
-		ui.Field(c, m.LogsFrom(), func() {
-			if ui.TextInput(c, from).Width(130).Changed() {
-				s.SetDateRange(*from, *s.To())
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+			c.Key("logs-from")
+			dateField(c, m, m.LogsFrom(), *s.From(), &s.pickers[0], func(day string) { s.SetDateRange(day, *s.To()) })
+			ui.Text(c, "–").TextColor(t.TextMuted)
+			c.Key("logs-to")
+			dateField(c, m, m.LogsTo(), *s.To(), &s.pickers[1], func(day string) { s.SetDateRange(*s.From(), day) })
+		})
+	})
+}
+
+// datePicker is the calendar of an unset date filter end: whether it is open
+// and the month it shows, which starts at today's.
+type datePicker struct {
+	open  bool
+	draft time.Time
+}
+
+// dateField is one end of the date range. A set end is the calendar's
+// DateInput, in the user's regional format, with a button that clears it. An
+// open end is a button naming it that opens a calendar; DateInput has no
+// empty value, so the end is set only once a day is chosen.
+func dateField(c *ui.Context, m locales.Messages, label, text string, picker *datePicker,
+	set func(day string)) {
+	day, ok := parseDay(text)
+	if !ok || day.IsZero() {
+		anchor := kit.SecondaryButton(c, icons.Calendar, label)
+		if anchor.Clicked() {
+			picker.open = !picker.open
+			picker.draft = time.Now()
+			c.Invalidate()
+		}
+		ui.Popover(c, anchor, &picker.open, func() {
+			shown := picker.draft
+			if ui.Calendar(c, &picker.draft).Label(label).AutoFocus().Changed() {
+				// Calendar reports the months its buttons and Page keys move
+				// through too: only a day in the month shown chooses it.
+				if picker.draft.Year() == shown.Year() && picker.draft.Month() == shown.Month() {
+					set(picker.draft.Format(dayLayout))
+					picker.open = false
+				}
 				c.Invalidate()
 			}
-		}).Width(150)
-		to := s.To()
-		ui.Field(c, m.LogsTo(), func() {
-			if ui.TextInput(c, to).Width(130).Changed() {
-				s.SetDateRange(*s.From(), *to)
-				c.Invalidate()
-			}
-		}).Width(150)
+		})
+		return
+	}
+	ui.Row(c).Gap(2).AlignItems(ui.Center).Children(func() {
+		if ui.DateInput(c, &day).Label(label).Tooltip(label).Changed() {
+			set(day.Format(dayLayout))
+			c.Invalidate()
+		}
+		if kit.IconButton(c, icons.X, m.LogsDateClear()).Clicked() {
+			set("")
+			c.Invalidate()
+		}
 	})
 }
 
@@ -253,7 +295,7 @@ func connectionRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	} else {
 		for _, log := range rows {
 			log := log
-			ui.Row(c).FillWidth().Gap(8).Padding(6, 8).AlignItems(ui.Center).Children(func() {
+			kit.ListRow(c).Children(func() {
 				ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 					ui.Text(c, connectionTitle(m, log)).Bold()
 					if log.IsProvider() {
@@ -292,12 +334,12 @@ func connectionRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 				// A provider row has no terminal Session to reopen. Delete stays
 				// available for every row.
 				if !log.IsProvider() {
-					if ui.Button(c, m.LogsOpenTerminal()).Clicked() {
+					if kit.SecondaryButton(c, icons.SquareTerminal, m.LogsOpenTerminal()).Clicked() {
 						s.OpenTerminal(log.SessionID, log.HostID)
 						c.Invalidate()
 					}
 				}
-				if ui.Button(c, m.LogsDelete()).Clicked() {
+				if kit.IconButton(c, icons.Trash, m.LogsDelete()).Clicked() {
 					s.DeleteLog(log.ID)
 					c.Invalidate()
 				}
@@ -314,18 +356,18 @@ func historyRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	} else {
 		for _, entry := range rows {
 			entry := entry
-			ui.Row(c).FillWidth().Gap(8).Padding(6, 8).AlignItems(ui.Center).Children(func() {
+			kit.ListRow(c).Children(func() {
 				ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 					ui.Text(c, entry.Command).Bold()
 					ui.Text(c, m.LogsHistoryMeta(historyHostLabel(m, entry),
 						sourceLabel(m, entry.Source), timestamp(entry.RecordedAt))).
 						FontSize(12).TextColor(t.TextMuted)
 				})
-				if ui.Button(c, m.LogsOpenTerminal()).Clicked() {
+				if kit.SecondaryButton(c, icons.SquareTerminal, m.LogsOpenTerminal()).Clicked() {
 					s.OpenTerminal(entry.SessionID, entry.HostID)
 					c.Invalidate()
 				}
-				if ui.Button(c, m.LogsDelete()).Clicked() {
+				if kit.IconButton(c, icons.Trash, m.LogsDelete()).Clicked() {
 					s.DeleteEntry(entry.ID)
 					c.Invalidate()
 				}
@@ -337,7 +379,7 @@ func historyRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 
 func showMore(c *ui.Context, s *State, m locales.Messages) {
 	if s.HasMore() {
-		if ui.Button(c, m.LogsShowMore()).Clicked() {
+		if kit.SecondaryButton(c, "", m.LogsShowMore()).Clicked() {
 			s.ShowMore()
 			c.Invalidate()
 		}
@@ -346,10 +388,10 @@ func showMore(c *ui.Context, s *State, m locales.Messages) {
 
 func empty(c *ui.Context, total int, emptyText string, m locales.Messages, t *ui.Theme) {
 	if total == 0 {
-		ui.Text(c, emptyText).TextColor(t.TextMuted)
+		kit.EmptyState(c, icons.Activity, emptyText, "", nil)
 		return
 	}
-	ui.Text(c, m.LogsNoMatches()).TextColor(t.TextMuted)
+	kit.EmptyState(c, icons.Search, m.LogsNoMatches(), "", nil)
 }
 
 func connectionTitle(m locales.Messages, log domainhistory.ConnectionLog) string {
