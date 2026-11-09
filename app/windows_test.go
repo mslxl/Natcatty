@@ -30,6 +30,7 @@ type fakeWindow struct {
 	invalidations int
 	title         string
 	opacity       float64
+	vibrancy      mygo.Vibrancy
 	icon          []byte
 	minimized     bool
 	maximized     bool
@@ -62,10 +63,11 @@ func (w *fakeWindow) IsVisible() bool   { return w.shown && !w.destroyed }
 func (w *fakeWindow) SetTitle(title string) {
 	w.title = title
 }
-func (w *fakeWindow) SetOpacity(value float64) { w.opacity = value }
-func (w *fakeWindow) Minimize()                { w.minimized = true }
-func (w *fakeWindow) ToggleMaximize()          { w.maximized = !w.maximized }
-func (w *fakeWindow) IsMaximized() bool        { return w.maximized }
+func (w *fakeWindow) SetOpacity(value float64)    { w.opacity = value }
+func (w *fakeWindow) SetVibrancy(v mygo.Vibrancy) { w.vibrancy = v }
+func (w *fakeWindow) Minimize()                   { w.minimized = true }
+func (w *fakeWindow) ToggleMaximize()             { w.maximized = !w.maximized }
+func (w *fakeWindow) IsMaximized() bool           { return w.maximized }
 func (w *fakeWindow) SetIcon(png []byte) error {
 	w.icon = append([]byte(nil), png...)
 	return nil

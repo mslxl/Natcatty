@@ -51,6 +51,7 @@ type hostWindow interface {
 	IsFocused() bool
 	SetTitle(string)
 	SetOpacity(float64)
+	SetVibrancy(mygo.Vibrancy)
 	SetIcon([]byte) error
 	// The self-drawn title bar's controls.
 	Minimize()
@@ -219,16 +220,54 @@ func (m *windowManager) SetShortcuts(shortcuts []keyShortcut) {
 // windows created later.
 func (m *windowManager) SetOpacity(value float64) {
 	m.opacity = value
-	apply := func(window hostWindow) {
+	m.each(func(window hostWindow) { window.SetOpacity(value) })
+	// The vibrancy depends on the opacity.
+	m.SyncStyle()
+}
+
+// each runs fn on every open window.
+func (m *windowManager) each(fn func(hostWindow)) {
+	for _, window := range append([]hostWindow{m.main, m.settings}, m.detachedWindows()...) {
 		if window != nil && !window.IsDestroyed() {
-			window.SetOpacity(value)
+			fn(window)
 		}
 	}
-	apply(m.main)
-	apply(m.settings)
+}
+
+func (m *windowManager) detachedWindows() []hostWindow {
+	windows := make([]hostWindow, 0, len(m.detached))
 	for _, window := range m.detached {
-		apply(window)
+		windows = append(windows, window)
 	}
+	return windows
+}
+
+// currentStyle is the live Interface Style.
+func (m *windowManager) currentStyle() kit.Style {
+	if m.style != nil {
+		if style := m.style(); style != nil {
+			return style
+		}
+	}
+	return kit.Classic
+}
+
+// vibrancy is the material a window shows behind its sidebar: the sidebar's
+// when the style is vibrant and the window opaque. A see-through window
+// would show the desktop through the material as well, so it shows none.
+func (m *windowManager) vibrancy() mygo.Vibrancy {
+	if !kit.Vibrant(m.currentStyle()) || (m.opacity > 0 && m.opacity < 1) {
+		return mygo.VibrancyNone
+	}
+	return mygo.VibrancySidebar
+}
+
+// SyncStyle applies the Interface Style's window material to every open
+// window, after the style or the opacity changed. The frame itself follows
+// the style on its own; see withTheme.
+func (m *windowManager) SyncStyle() {
+	v := m.vibrancy()
+	m.each(func(window hostWindow) { window.SetVibrancy(v) })
 }
 
 // SetThemeProvider installs the live widget theme. Every window calls it at
@@ -293,6 +332,15 @@ func (m *windowManager) applyOpacity(window hostWindow) {
 	window.SetOpacity(m.opacity)
 }
 
+func (m *windowManager) applyVibrancy(window hostWindow) {
+	if window == nil {
+		return
+	}
+	if v := m.vibrancy(); v != mygo.VibrancyNone {
+		window.SetVibrancy(v)
+	}
+}
+
 // withTheme applies the live widget theme at the window's root context. It
 // runs before the gate and the content, so every surface is painted with the
 // current preset, accent, and interface font.
@@ -303,11 +351,9 @@ func (m *windowManager) withTheme(content func(*ui.Context)) func(*ui.Context) {
 				c.SetTheme(theme)
 			}
 		}
-		style := kit.Classic
-		if m.style != nil {
-			style = m.style()
-		}
+		style := m.currentStyle()
 		kit.SetStyle(style)
+		c.SetTheme(style.Theme(c.Theme()))
 		content(c)
 	}
 }
@@ -426,6 +472,7 @@ func (m *windowManager) OpenMain() hostWindow {
 		},
 	})
 	m.applyOpacity(m.main)
+	m.applyVibrancy(m.main)
 	m.applyIcon(m.main)
 	return m.main
 }
@@ -468,6 +515,7 @@ func (m *windowManager) OpenSettings() {
 		OnClosed: func() { m.settings = nil; m.markQuittingIfNoWindows() },
 	})
 	m.applyOpacity(m.settings)
+	m.applyVibrancy(m.settings)
 	m.applyIcon(m.settings)
 }
 
@@ -510,6 +558,7 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 		},
 	})
 	m.applyOpacity(m.detached[tabID])
+	m.applyVibrancy(m.detached[tabID])
 	m.applyIcon(m.detached[tabID])
 }
 

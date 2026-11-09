@@ -45,8 +45,10 @@ type FontScale struct {
 type Radii struct {
 	// Small rounds an indicator, a swatch, or a small chip.
 	Small float32
-	// Control rounds buttons, inputs, and list rows.
+	// Control rounds inputs and list rows.
 	Control float32
+	// Button rounds push buttons: a capsule in the macOS style.
+	Button float32
 	// Card rounds cards, panels, and popovers.
 	Card float32
 	// Overlay rounds dialogs and palettes.
@@ -113,12 +115,26 @@ type Spacing struct {
 var classicMetrics = Metrics{
 	Font: FontScale{Caption2: 10, Caption: 11, Footnote: 12, Callout: 13, Body: 14,
 		Headline: 15, Title3: 16, Title: 18, LargeTitle: 20},
-	Radius:  Radii{Small: 4, Control: 6, Card: 10, Overlay: 12, Pill: 999},
+	Radius:  Radii{Small: 4, Control: 6, Button: 6, Card: 10, Overlay: 12, Pill: 999},
 	Control: ControlHeights{Mini: 20, Small: 22, Compact: 24, Regular: 28, Large: 32},
 	Bar: BarHeights{Title: 36, Tabs: 32, Toolbar: 30, Pane: 30, ListHeader: 28, Filter: 34,
 		Footer: 30, Strip: 36, Page: 56},
 	Icon:  IconSizes{Small: 12, Medium: 14, Regular: 16},
 	Space: Spacing{Hairline: 2, XSmall: 4, Small: 6, Medium: 8, Large: 12, XLarge: 16},
+}
+
+// macOSMetrics are macOS 27's: 13-DIP body text on its type scale, capsule
+// buttons, and cards rounded so that a control inset by its padding is
+// concentric with them.
+var macOSMetrics = Metrics{
+	Font: FontScale{Caption2: 10, Caption: 10, Footnote: 11, Callout: 12, Body: 13,
+		Headline: 13, Title3: 15, Title: 17, LargeTitle: 22},
+	Radius:  Radii{Small: 5, Control: 8, Button: 999, Card: 16, Overlay: 22, Pill: 999},
+	Control: classicMetrics.Control,
+	Bar: BarHeights{Title: 36, Tabs: 32, Toolbar: 30, Pane: 30, ListHeader: 28, Filter: 34,
+		Footer: 30, Strip: 36, Page: 52},
+	Icon:  classicMetrics.Icon,
+	Space: classicMetrics.Space,
 }
 
 // M returns the metrics of the active Interface Style.
