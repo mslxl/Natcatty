@@ -47,7 +47,7 @@ func defaultRow(c *ui.Context, prefs *PreferencesState, state *AssociationsState
 	if prefs != nil {
 		fieldRow(c, prefs, m, t, domain.FieldDefaultOpener, m.SettingsDefaultOpener(), build)
 	} else {
-		ui.Field(c, m.SettingsDefaultOpener(), func() {
+		kit.FormRow(c, m.SettingsDefaultOpener(), func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(build)
 		})
 	}
@@ -81,12 +81,12 @@ func associationsList(c *ui.Context, state *AssociationsState, m locales.Message
 
 func associationsForm(c *ui.Context, state *AssociationsState, m locales.Messages) {
 	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.End).Children(func() {
-		ui.Field(c, m.SettingsAssociationExtension(), func() {
+		kit.FormRow(c, m.SettingsAssociationExtension(), func() {
 			ui.TextInput(c, state.Extension()).
 				Placeholder(m.SettingsAssociationExtensionPlaceholder()).
 				Width(140)
 		})
-		ui.Field(c, m.SettingsAssociationOpener(), func() {
+		kit.FormRow(c, m.SettingsAssociationOpener(), func() {
 			kinds, labels := openerChoices(m)
 			current := labels[indexOfOpeners(kinds, state.Kind())]
 			if ui.Select(c, &current, labels).Width(200).Changed() {

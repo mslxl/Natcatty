@@ -204,7 +204,7 @@ func networkDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages,
 // Host Group default.
 func hostNetworkProfileField(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
 	form := s.Form()
-	ui.Field(c, m.VaultNetworkProfile(), func() {
+	kit.FormRow(c, m.VaultNetworkProfile(), func() {
 		ui.RadioGroup(c, func() {
 			ui.Radio(c, &form.NetworkProfileID, "", m.VaultNone())
 			for _, profile := range s.NetworkProfiles() {
@@ -227,7 +227,7 @@ func hostNetworkProfileField(c *ui.Context, s *vaultstate.State, m locales.Messa
 // default and says whether it belongs to this group or a parent group.
 func groupNetworkProfileField(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
 	form := s.GroupForm()
-	ui.Field(c, m.VaultNetworkProfile(), func() {
+	kit.FormRow(c, m.VaultNetworkProfile(), func() {
 		ui.RadioGroup(c, func() {
 			ui.Radio(c, &form.NetworkProfileID, "", m.VaultNone())
 			for _, profile := range s.NetworkProfiles() {
@@ -265,11 +265,11 @@ func networkEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui
 		}
 
 		ui.Form(c, func() {
-			ui.Field(c, m.VaultHostLabel(), func() {
+			kit.FormRow(c, m.VaultHostLabel(), func() {
 				ui.TextInput(c, &form.Label)
 			})
 			if form.ID == "" {
-				ui.Field(c, m.VaultNetworkKind(), func() {
+				kit.FormRow(c, m.VaultNetworkKind(), func() {
 					ui.RadioGroup(c, func() {
 						ui.Radio(c, &form.Kind, string(domainvault.NetworkKindTailscale),
 							m.VaultNetworkKindTailscale())
@@ -280,7 +280,7 @@ func networkEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui
 			} else {
 				// A profile's Kind decides which secret fields exist, so an
 				// edit shows it without offering a change.
-				ui.Field(c, m.VaultNetworkKind(), func() {
+				kit.FormRow(c, m.VaultNetworkKind(), func() {
 					ui.Text(c, networkKindLabel(m, domainvault.NetworkProfileKind(form.Kind)))
 				})
 			}
@@ -314,7 +314,7 @@ func networkEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui
 
 func tailscaleFields(c *ui.Context, s *vaultstate.State,
 	form *vaultstate.NetworkProfileForm, m locales.Messages, t *ui.Theme) {
-	ui.Field(c, m.VaultNetworkHostname(), func() {
+	kit.FormRow(c, m.VaultNetworkHostname(), func() {
 		ui.TextInput(c, &form.Hostname).Placeholder("netcatty-node")
 	}).Description(m.VaultNetworkHostnameHint())
 
@@ -322,7 +322,7 @@ func tailscaleFields(c *ui.Context, s *vaultstate.State,
 	if form.HasAuthKey {
 		authKeyHint = m.VaultNetworkAuthKeySaved()
 	}
-	ui.Field(c, m.VaultNetworkAuthKey(), func() {
+	kit.FormRow(c, m.VaultNetworkAuthKey(), func() {
 		ui.TextInput(c, &form.AuthKey).Password()
 	}).Description(authKeyHint)
 	// tsnet prefers an existing registration in the state directory over a new
@@ -332,11 +332,11 @@ func tailscaleFields(c *ui.Context, s *vaultstate.State,
 	// A custom Control URL may be a Headscale control plane. Until the
 	// Headscale + tsnet matrix in decisions/08 is verified on a real
 	// environment, the field is labeled experimental instead of promised.
-	ui.Field(c, m.VaultNetworkControlURLExperimental(), func() {
+	kit.FormRow(c, m.VaultNetworkControlURLExperimental(), func() {
 		ui.TextInput(c, &form.ControlURL).Placeholder("https://controlplane.tailscale.com")
 	}).Description(m.VaultNetworkControlURLHint())
 	ui.Checkbox(c, &form.Ephemeral, m.VaultNetworkEphemeral())
-	ui.Field(c, m.VaultNetworkTags(), func() {
+	kit.FormRow(c, m.VaultNetworkTags(), func() {
 		ui.TextInput(c, &form.Tags).Placeholder("tag:prod, tag:ops")
 	}).Description(m.VaultNetworkTagsHint())
 
@@ -362,20 +362,20 @@ func wireguardFields(c *ui.Context, s *vaultstate.State, form *vaultstate.Networ
 	if form.HasPrivateKey {
 		privateKeyHint = m.VaultNetworkPrivateKeySaved()
 	}
-	ui.Field(c, m.VaultNetworkPrivateKey(), func() {
+	kit.FormRow(c, m.VaultNetworkPrivateKey(), func() {
 		ui.TextInput(c, &form.PrivateKey).Password()
 	}).Description(privateKeyHint)
 
-	ui.Field(c, m.VaultNetworkAddresses(), func() {
+	kit.FormRow(c, m.VaultNetworkAddresses(), func() {
 		ui.TextInput(c, &form.Addresses).Placeholder("10.0.0.2/32, fd00::2/128")
 	}).Description(m.VaultNetworkAddressesHint())
-	ui.Field(c, m.VaultNetworkDNS(), func() {
+	kit.FormRow(c, m.VaultNetworkDNS(), func() {
 		ui.TextInput(c, &form.DNS).Placeholder("10.0.0.1")
 	}).Description(m.VaultNetworkDNSHint())
-	ui.Field(c, m.VaultNetworkMTU(), func() {
+	kit.FormRow(c, m.VaultNetworkMTU(), func() {
 		ui.TextInput(c, &form.MTU).Placeholder(strconv.Itoa(domainvault.DefaultWireGuardMTU)).Width(120)
 	}).Description(m.VaultNetworkMTUHint())
-	ui.Field(c, m.VaultNetworkListenPort(), func() {
+	kit.FormRow(c, m.VaultNetworkListenPort(), func() {
 		ui.TextInput(c, &form.ListenPort).Placeholder("0").Width(120)
 	}).Description(m.VaultNetworkListenPortHint())
 
@@ -402,14 +402,14 @@ func peerFields(c *ui.Context, s *vaultstate.State, form *vaultstate.NetworkProf
 			}
 		})
 		ui.Row(c).Gap(8).Wrap().Children(func() {
-			ui.Field(c, m.VaultNetworkPeerPublicKey(), func() {
+			kit.FormRow(c, m.VaultNetworkPeerPublicKey(), func() {
 				ui.TextInput(c, &peer.PublicKey)
 			})
-			ui.Field(c, m.VaultNetworkPeerEndpoint(), func() {
+			kit.FormRow(c, m.VaultNetworkPeerEndpoint(), func() {
 				ui.TextInput(c, &peer.Endpoint).Placeholder("vpn.example.com:51820")
 			})
 		})
-		ui.Field(c, m.VaultNetworkPeerAllowedIPs(), func() {
+		kit.FormRow(c, m.VaultNetworkPeerAllowedIPs(), func() {
 			ui.TextInput(c, &peer.AllowedIPs).Placeholder("10.0.0.0/24, 0.0.0.0/0")
 		}).Description(m.VaultNetworkPeerAllowedIPsHint())
 		ui.Row(c).Gap(8).Wrap().Children(func() {
@@ -417,10 +417,10 @@ func peerFields(c *ui.Context, s *vaultstate.State, form *vaultstate.NetworkProf
 			if peer.HasPresharedKey {
 				presharedHint = m.VaultNetworkPeerPresharedKeySaved()
 			}
-			ui.Field(c, m.VaultNetworkPeerPresharedKey(), func() {
+			kit.FormRow(c, m.VaultNetworkPeerPresharedKey(), func() {
 				ui.TextInput(c, &peer.PresharedKey).Password()
 			}).Description(presharedHint)
-			ui.Field(c, m.VaultNetworkPeerKeepalive(), func() {
+			kit.FormRow(c, m.VaultNetworkPeerKeepalive(), func() {
 				ui.TextInput(c, &peer.PersistentKeepalive).Placeholder("25").Width(120)
 			})
 		})

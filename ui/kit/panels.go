@@ -135,9 +135,9 @@ func Panel(c *ui.Context, width float32, title, subtitle, closeLabel string,
 	return panel
 }
 
-// FormSection is a titled group of fields inside a panel or page, drawn as
-// the original's bordered field groups.
-func FormSection(c *ui.Context, title string, body func()) ui.Element {
+// FormGroup is a titled group of FormRows and FormToggles inside a panel
+// or page, drawn as the original's bordered field groups.
+func FormGroup(c *ui.Context, title string, body func()) ui.Element {
 	t := c.Theme()
 	return ui.Column(c).FillWidth().Gap(10).Children(func() {
 		if title != "" {
@@ -146,4 +146,35 @@ func FormSection(c *ui.Context, title string, body func()) ui.Element {
 		ui.Column(c).FillWidth().Gap(12).Padding(14).Radius(M(c).Radius.Card).
 			Background(t.Background).Border(1, t.Border).Children(body)
 	})
+}
+
+// FormRow is one labeled field of a form: control builds the control the
+// label names. It returns the field for its Description and Error.
+func FormRow(c *ui.Context, label string, control func()) ui.Element {
+	return ui.Field(c, label, control)
+}
+
+// FormRowWith is a FormRow with an accessory after the control, such as a
+// preference's reset.
+func FormRowWith(c *ui.Context, label string, control, accessory func()) ui.Element {
+	return ui.Field(c, label, func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			control()
+			accessory()
+		})
+	})
+}
+
+// FormToggle is a check box with its label on one line, where a label
+// above it would read as the caption of an unlabeled box, and an optional
+// accessory after it. It reports whether the user changed *value.
+func FormToggle(c *ui.Context, label string, value *bool, accessory func()) bool {
+	changed := false
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		changed = ui.Checkbox(c, value, label).Changed()
+		if accessory != nil {
+			accessory()
+		}
+	})
+	return changed
 }

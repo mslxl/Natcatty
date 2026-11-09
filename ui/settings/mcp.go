@@ -464,7 +464,7 @@ func mcpModeField(c *ui.Context, state *MCPState, snapshot appmcp.Snapshot,
 	m locales.Messages, t *ui.Theme) {
 	labels := mcpModeLabels(m)
 	selected := labels[mcpModeIndex(snapshot.Mode)]
-	ui.Field(c, m.SettingsMCPMode(), func() {
+	kit.FormRow(c, m.SettingsMCPMode(), func() {
 		if ui.Select(c, &selected, labels).Width(220).Changed() {
 			values := mcpModeValues()
 			for index, label := range labels {

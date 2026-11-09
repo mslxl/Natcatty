@@ -593,7 +593,7 @@ func shortcutsArea(c *ui.Context, state *ShortcutsState, m locales.Messages, t *
 		schemes := []string{m.SettingsSchemeDisabled(), m.SettingsSchemeMac(), m.SettingsSchemePC()}
 		values := []kb.Scheme{kb.SchemeDisabled, kb.SchemeMac, kb.SchemePC}
 		scheme := schemes[indexOfScheme(values, state.Scheme())]
-		ui.Field(c, m.SettingsShortcutScheme(), func() {
+		kit.FormRow(c, m.SettingsShortcutScheme(), func() {
 			if ui.Select(c, &scheme, schemes).Width(190).Changed() {
 				state.SetScheme(values[indexOf(schemes, scheme)])
 				c.Invalidate()
@@ -750,32 +750,21 @@ func bindingRow(c *ui.Context, state *ShortcutsState, binding kb.Binding,
 }
 
 // fieldRow places a localized label above a preference control and, when the
-// field differs from its default, a reset control beside it. The label was
-// previously dropped, which left selects, numbers, and text inputs without
-// any context.
+// field differs from its default, a reset control beside it.
 func fieldRow(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme,
 	field domain.Field, label string, build func()) {
-	ui.Field(c, label, func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			build()
-			resetField(c, state, m, field)
-		})
-	})
+	kit.FormRowWith(c, label, build, func() { resetField(c, state, m, field) })
 }
 
-// checkboxRow puts a check box and its label on one line, where a Field's
-// label above the control would read as a caption for an unlabeled box, and
-// keeps the per-field reset beside them.
+// checkboxRow is a preference's check box, with the per-field reset beside
+// it.
 func checkboxRow(c *ui.Context, state *PreferencesState, m locales.Messages,
 	field domain.Field, label string, value bool, set func(*domain.Settings, bool)) {
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		enabled := value
-		if ui.Checkbox(c, &enabled, label).Changed() {
-			state.Update(func(s *domain.Settings) { set(s, enabled) })
-			c.Invalidate()
-		}
-		resetField(c, state, m, field)
-	})
+	enabled := value
+	if kit.FormToggle(c, label, &enabled, func() { resetField(c, state, m, field) }) {
+		state.Update(func(s *domain.Settings) { set(s, enabled) })
+		c.Invalidate()
+	}
 }
 
 // resetField offers the per-field reset beside a control once the field
@@ -946,7 +935,7 @@ func hotkeySection(c *ui.Context, state *DesktopState, settings desktop.Settings
 			state.SetGlobalHotkeyEnabled(enabled)
 			c.Invalidate()
 		}
-		ui.Field(c, m.SettingsHotkeyAccelerator(), func() {
+		kit.FormRow(c, m.SettingsHotkeyAccelerator(), func() {
 			ui.TextInput(c, state.Hotkey()).Width(220)
 		})
 		ui.Row(c).Gap(8).Children(func() {
@@ -1051,7 +1040,7 @@ func appLockSection(c *ui.Context, lock *AppLockState, m locales.Messages, t *ui
 
 		ui.Text(c, m.SettingsAppLockEnabled()).Bold()
 		timeoutField(c, lock, snapshot.TimeoutMinutes, m)
-		ui.Field(c, m.SettingsAppLockCurrentPassword(), func() {
+		kit.FormRow(c, m.SettingsAppLockCurrentPassword(), func() {
 			ui.TextInput(c, lock.CurrentPassword()).Password().Width(240)
 		})
 		ui.Row(c).Gap(8).Children(func() {
@@ -1070,10 +1059,10 @@ func appLockSection(c *ui.Context, lock *AppLockState, m locales.Messages, t *ui
 
 func enableSection(c *ui.Context, lock *AppLockState, m locales.Messages) {
 	ui.Text(c, m.SettingsAppLockDisabled()).TextColor(c.Theme().TextMuted)
-	ui.Field(c, m.SettingsAppLockPassword(), func() {
+	kit.FormRow(c, m.SettingsAppLockPassword(), func() {
 		ui.TextInput(c, lock.Password()).Password().Width(240)
 	})
-	ui.Field(c, m.SettingsAppLockConfirm(), func() {
+	kit.FormRow(c, m.SettingsAppLockConfirm(), func() {
 		ui.TextInput(c, lock.Confirmation()).Password().Width(240)
 	})
 	if kit.PrimaryButton(c, "", m.SettingsAppLockEnable()).AlignSelf(ui.Start).Clicked() {
@@ -1090,7 +1079,7 @@ func timeoutField(c *ui.Context, lock *AppLockState, current int, m locales.Mess
 		labels[i] = timeoutLabel(m, minutes)
 	}
 	selected := timeoutLabel(m, current)
-	ui.Field(c, m.SettingsAppLockTimeout(), func() {
+	kit.FormRow(c, m.SettingsAppLockTimeout(), func() {
 		if ui.Select(c, &selected, labels).Width(180).Changed() {
 			if index := slices.Index(labels, selected); index >= 0 {
 				lock.SetTimeout(options[index])

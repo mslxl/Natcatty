@@ -193,7 +193,7 @@ func accentPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t 
 				s.Appearance.AccentMode = domain.AccentTheme
 			}
 		})
-	ui.Field(c, m.SettingsAccentPresets(), func() {
+	kit.FormRow(c, m.SettingsAccentPresets(), func() {
 		ui.Row(c).Wrap().Gap(6).FillWidth().Children(func() {
 			for _, preset := range domaintheme.Accents() {
 				preset := preset
@@ -329,7 +329,7 @@ func terminalPicker(c *ui.Context, state *PreferencesState, themes *ThemesState,
 		})
 		return
 	}
-	ui.Field(c, m.SettingsTerminalTheme(), func() {
+	kit.FormRow(c, m.SettingsTerminalTheme(), func() {
 		current := settings.Appearance.TerminalTheme
 		sel := ui.SelectBase(c, &current)
 		scheme, _ := findTerminalTheme(themes.Themes(), current)
@@ -556,7 +556,7 @@ func languagePicker(c *ui.Context, state *PreferencesState, m locales.Messages) 
 		labels = append(labels, i18n.Autonym(tag))
 	}
 	chosen := i18n.Autonym(current)
-	ui.Field(c, m.NavLanguage(), func() {
+	kit.FormRow(c, m.NavLanguage(), func() {
 		if ui.Select(c, &chosen, labels).Width(180).Changed() {
 			for index, label := range labels {
 				if label == chosen && locales.Tags()[index] != current {

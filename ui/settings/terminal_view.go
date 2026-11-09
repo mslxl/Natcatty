@@ -21,7 +21,7 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 			c.Invalidate()
 		}
 
-		ui.Field(c, m.SettingsLogDirectory(), func() {
+		kit.FormRow(c, m.SettingsLogDirectory(), func() {
 			input := ui.TextInput(c, state.Directory()).Width(320)
 			if input.Changed() {
 				state.SetLogDirectory(*state.Directory())
@@ -31,7 +31,7 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 
 		formatLabels, formats := logFormatOptions(m)
 		formatLabel := labelForFormat(formatLabels, formats, settings.LogFormat)
-		ui.Field(c, m.SettingsLogFormat(), func() {
+		kit.FormRow(c, m.SettingsLogFormat(), func() {
 			if ui.Select(c, &formatLabel, formatLabels).Width(160).Changed() {
 				state.SetLogFormat(formats[indexOf(formatLabels, formatLabel)])
 				c.Invalidate()
@@ -98,7 +98,7 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 			c.Invalidate()
 		}
 		minLines := float64(domainterminal.NormalizePasteMinLines(settings.PasteMinLines))
-		ui.Field(c, m.SettingsPasteMinLines(), func() {
+		kit.FormRow(c, m.SettingsPasteMinLines(), func() {
 			if ui.NumberInput(c, &minLines, 1, 1000, 1).Width(96).Changed() {
 				state.SetPasteMinLines(int(minLines))
 				c.Invalidate()
@@ -111,7 +111,7 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 		if settings.DropAction == domainterminal.DropUpload {
 			dropLabel = dropLabels[1]
 		}
-		ui.Field(c, m.SettingsDropAction(), func() {
+		kit.FormRow(c, m.SettingsDropAction(), func() {
 			if ui.Select(c, &dropLabel, dropLabels).Width(180).Changed() {
 				for index, label := range dropLabels {
 					if label == dropLabel {
@@ -153,7 +153,7 @@ func renderPowerUxSection(c *ui.Context, state *TerminalState,
 		c.Invalidate()
 	}
 	minChars := float64(domainterminal.NormalizeAutocompleteMinChars(settings.AutocompleteMinChars))
-	ui.Field(c, m.SettingsAutocompleteMinChars(), func() {
+	kit.FormRow(c, m.SettingsAutocompleteMinChars(), func() {
 		if ui.NumberInput(c, &minChars, 1,
 			float64(domainterminal.MaxAutocompleteMinChars), 1).Width(96).Changed() {
 			state.SetAutocompleteMinChars(int(minChars))
@@ -161,7 +161,7 @@ func renderPowerUxSection(c *ui.Context, state *TerminalState,
 		}
 	})
 	maxSuggestions := float64(domainterminal.NormalizeAutocompleteMaxSuggestions(settings.AutocompleteMaxSuggestions))
-	ui.Field(c, m.SettingsAutocompleteMaxSuggestions(), func() {
+	kit.FormRow(c, m.SettingsAutocompleteMaxSuggestions(), func() {
 		if ui.NumberInput(c, &maxSuggestions, 1,
 			float64(domainterminal.MaxAutocompleteMaxSuggestions), 1).Width(96).Changed() {
 			state.SetAutocompleteMaxSuggestions(int(maxSuggestions))
@@ -169,7 +169,7 @@ func renderPowerUxSection(c *ui.Context, state *TerminalState,
 		}
 	})
 	debounce := float64(domainterminal.NormalizeAutocompleteDebounce(settings.AutocompleteDebounceMs))
-	ui.Field(c, m.SettingsAutocompleteDebounce(), func() {
+	kit.FormRow(c, m.SettingsAutocompleteDebounce(), func() {
 		if ui.NumberInput(c, &debounce, 0, 5000, 10).Width(96).Changed() {
 			state.SetAutocompleteDebounceMs(int(debounce))
 			c.Invalidate()
@@ -177,7 +177,7 @@ func renderPowerUxSection(c *ui.Context, state *TerminalState,
 	})
 	scopeLabels, scopes := autocompleteScopeOptions(m)
 	scopeLabel := labelForScope(scopeLabels, scopes, settings.AutocompleteHistoryScope)
-	ui.Field(c, m.SettingsAutocompleteHistoryScope(), func() {
+	kit.FormRow(c, m.SettingsAutocompleteHistoryScope(), func() {
 		if ui.Select(c, &scopeLabel, scopeLabels).Width(180).Changed() {
 			state.SetAutocompleteHistoryScope(scopes[indexOf(scopeLabels, scopeLabel)])
 			c.Invalidate()
@@ -202,7 +202,7 @@ func renderPowerUxSection(c *ui.Context, state *TerminalState,
 				}
 				ui.Text(c, rule.Color).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted)
 			})
-			ui.Field(c, m.SettingsKeywordHighlightPatterns(), func() {
+			kit.FormRow(c, m.SettingsKeywordHighlightPatterns(), func() {
 				patterns := state.RulePatterns(rule.ID)
 				if ui.TextArea(c, patterns).Width(420).Height(56).Changed() {
 					if !state.SetRulePatterns(rule.ID, *patterns) {
@@ -225,7 +225,7 @@ func renderRetentionSection(c *ui.Context, state *TerminalState,
 	ui.Text(c, m.SettingsRetentionDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 
 	logCount := float64(domainterminal.NormalizeRetentionCount(settings.ConnectionLogRetentionCount))
-	ui.Field(c, m.SettingsConnectionLogRetentionCount(), func() {
+	kit.FormRow(c, m.SettingsConnectionLogRetentionCount(), func() {
 		if ui.NumberInput(c, &logCount, 0,
 			float64(domainterminal.MaxRetentionCount), 100).Width(120).Changed() {
 			state.SetConnectionLogRetention(int(logCount), settings.ConnectionLogRetentionDays)
@@ -233,7 +233,7 @@ func renderRetentionSection(c *ui.Context, state *TerminalState,
 		}
 	})
 	logDays := float64(domainterminal.NormalizeRetentionDays(settings.ConnectionLogRetentionDays))
-	ui.Field(c, m.SettingsConnectionLogRetentionDays(), func() {
+	kit.FormRow(c, m.SettingsConnectionLogRetentionDays(), func() {
 		if ui.NumberInput(c, &logDays, 0,
 			float64(domainterminal.MaxRetentionDays), 1).Width(120).Changed() {
 			state.SetConnectionLogRetention(settings.ConnectionLogRetentionCount, int(logDays))
@@ -242,7 +242,7 @@ func renderRetentionSection(c *ui.Context, state *TerminalState,
 	})
 
 	historyCount := float64(domainterminal.NormalizeRetentionCount(settings.HistoryRetentionCount))
-	ui.Field(c, m.SettingsHistoryRetentionCount(), func() {
+	kit.FormRow(c, m.SettingsHistoryRetentionCount(), func() {
 		if ui.NumberInput(c, &historyCount, 0,
 			float64(domainterminal.MaxRetentionCount), 100).Width(120).Changed() {
 			state.SetHistoryRetention(int(historyCount), settings.HistoryRetentionDays)
@@ -250,7 +250,7 @@ func renderRetentionSection(c *ui.Context, state *TerminalState,
 		}
 	})
 	historyDays := float64(domainterminal.NormalizeRetentionDays(settings.HistoryRetentionDays))
-	ui.Field(c, m.SettingsHistoryRetentionDays(), func() {
+	kit.FormRow(c, m.SettingsHistoryRetentionDays(), func() {
 		if ui.NumberInput(c, &historyDays, 0,
 			float64(domainterminal.MaxRetentionDays), 1).Width(120).Changed() {
 			state.SetHistoryRetention(settings.HistoryRetentionCount, int(historyDays))
