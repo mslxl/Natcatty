@@ -155,6 +155,8 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaLayout, domain.FieldShowHostTreeSidebar, m.SettingsShowHostTreeSidebar(), "host sidebar tree")
 	add(AreaLayout, domain.FieldShowSFTPTab, m.SettingsShowSFTPTab(), "sftp tab")
 	add(AreaLayout, domain.FieldShowRecentHosts, m.SettingsShowRecentHosts(), "recent hosts")
+	add(AreaLayout, domain.FieldShowOnlyUngroupedHostsInRoot, m.SettingsShowOnlyUngroupedHostsInRoot(), "ungrouped root hosts")
+	add(AreaLayout, domain.FieldHostClickBehavior, m.SettingsHostClickBehavior(), "host click connect select")
 	add(AreaLayout, domain.FieldTabBarPosition, m.SettingsTabBarPosition(), "tab bar top bottom")
 	add(AreaLayout, domain.FieldShellOnlyTabNumberShortcuts, m.SettingsShellOnlyTabNumberShortcuts(), "tab number pinned")
 	add(AreaLayout, domain.FieldShowTabNumberBadges, m.SettingsShowTabNumberBadges(), "tab badge number")

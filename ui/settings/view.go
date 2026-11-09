@@ -452,6 +452,21 @@ func layoutArea(c *ui.Context, state *PreferencesState, m locales.Messages, t *u
 			settings.Layout.ShowRecentHosts, func(s *domain.Settings, value bool) {
 				s.Layout.ShowRecentHosts = value
 			})
+		checkboxRow(c, state, m, domain.FieldShowOnlyUngroupedHostsInRoot,
+			m.SettingsShowOnlyUngroupedHostsInRoot(), settings.Layout.ShowOnlyUngroupedHostsInRoot,
+			func(s *domain.Settings, value bool) { s.Layout.ShowOnlyUngroupedHostsInRoot = value })
+
+		clickLabels := []string{m.SettingsHostClickConnect(), m.SettingsHostClickSelect()}
+		clickValues := []domain.HostClickBehavior{domain.HostClickConnect, domain.HostClickSelect}
+		click := clickLabels[indexOfHostClicks(clickValues, settings.Layout.HostClickBehavior)]
+		fieldRow(c, state, m, t, domain.FieldHostClickBehavior, m.SettingsHostClickBehavior(), func() {
+			if ui.Select(c, &click, clickLabels).Width(180).Changed() {
+				state.Update(func(s *domain.Settings) {
+					s.Layout.HostClickBehavior = clickValues[indexOf(clickLabels, click)]
+				})
+				c.Invalidate()
+			}
+		})
 
 		positions := []string{m.SettingsTabBarTop(), m.SettingsTabBarBottom()}
 		values := []domain.TabBarPosition{domain.TabBarTop, domain.TabBarBottom}
@@ -894,6 +909,15 @@ func indexOfDocks(values []domain.SidePanelDock, value domain.SidePanelDock) int
 }
 
 func indexOfBehaviors(values []domain.DoubleClickBehavior, value domain.DoubleClickBehavior) int {
+	for index, candidate := range values {
+		if candidate == value {
+			return index
+		}
+	}
+	return 0
+}
+
+func indexOfHostClicks(values []domain.HostClickBehavior, value domain.HostClickBehavior) int {
 	for index, candidate := range values {
 		if candidate == value {
 			return index

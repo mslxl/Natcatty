@@ -90,6 +90,65 @@ const (
 	ViewTree ViewMode = "tree"
 )
 
+// HostViewMode is the Vault Hosts page's presentation: a card grid, a row
+// list, or an indented group tree, matching the original's view switch.
+type HostViewMode string
+
+const (
+	HostViewGrid HostViewMode = "grid"
+	HostViewList HostViewMode = "list"
+	HostViewTree HostViewMode = "tree"
+)
+
+// Valid reports whether the mode is one the Vault offers.
+func (mode HostViewMode) Valid() bool {
+	switch mode {
+	case HostViewGrid, HostViewList, HostViewTree:
+		return true
+	default:
+		return false
+	}
+}
+
+// HostSortMode orders the Vault's Hosts. Manual keeps each Host Group's saved
+// order; the other modes sort the visible list, as the original's sort menu.
+type HostSortMode string
+
+const (
+	HostSortManual HostSortMode = "manual"
+	HostSortAZ     HostSortMode = "az"
+	HostSortZA     HostSortMode = "za"
+	HostSortNewest HostSortMode = "newest"
+	HostSortOldest HostSortMode = "oldest"
+	HostSortGroup  HostSortMode = "group"
+	HostSortIP     HostSortMode = "ip"
+)
+
+// Valid reports whether the mode is one the Vault offers.
+func (mode HostSortMode) Valid() bool {
+	switch mode {
+	case HostSortManual, HostSortAZ, HostSortZA, HostSortNewest, HostSortOldest, HostSortGroup, HostSortIP:
+		return true
+	default:
+		return false
+	}
+}
+
+// HostClickBehavior is what one click on a Vault Host card does. Connect is
+// the original's default: a click opens the Session immediately. Select makes
+// the first click focus the card and the second activate it.
+type HostClickBehavior string
+
+const (
+	HostClickConnect HostClickBehavior = "connect"
+	HostClickSelect  HostClickBehavior = "select"
+)
+
+// Valid reports whether the behavior is one the Vault offers.
+func (behavior HostClickBehavior) Valid() bool {
+	return behavior == HostClickConnect || behavior == HostClickSelect
+}
+
 // SyncConflictStrategy decides which side wins a cloud-sync conflict.
 type SyncConflictStrategy string
 
@@ -154,15 +213,26 @@ type Appearance struct {
 
 // Layout group.
 type Layout struct {
-	ShowHostTreeSidebar         bool           `json:"showHostTreeSidebar"`
-	ShowSFTPTab                 bool           `json:"showSftpTab"`
-	ShowRecentHosts             bool           `json:"showRecentHosts"`
-	TabBarPosition              TabBarPosition `json:"tabBarPosition"`
-	ShellOnlyTabNumberShortcuts bool           `json:"shellOnlyTabNumberShortcuts"`
-	ShowTabNumberBadges         bool           `json:"showTabNumberBadges"`
-	RestorePreviousSession      bool           `json:"restorePreviousSession"`
-	StartupLanding              StartupLanding `json:"startupLanding"`
-	SidePanelDock               SidePanelDock  `json:"sidePanelDock"`
+	ShowHostTreeSidebar bool `json:"showHostTreeSidebar"`
+	ShowSFTPTab         bool `json:"showSftpTab"`
+	ShowRecentHosts     bool `json:"showRecentHosts"`
+	// ShowOnlyUngroupedHostsInRoot keeps grouped Hosts out of the Vault's root
+	// list, as the original's setting of the same name. Opening a group still
+	// shows its Hosts.
+	ShowOnlyUngroupedHostsInRoot bool              `json:"showOnlyUngroupedHostsInRoot"`
+	HostClickBehavior            HostClickBehavior `json:"hostClickBehavior"`
+	TabBarPosition               TabBarPosition    `json:"tabBarPosition"`
+	ShellOnlyTabNumberShortcuts  bool              `json:"shellOnlyTabNumberShortcuts"`
+	ShowTabNumberBadges          bool              `json:"showTabNumberBadges"`
+	RestorePreviousSession       bool              `json:"restorePreviousSession"`
+	StartupLanding               StartupLanding    `json:"startupLanding"`
+	SidePanelDock                SidePanelDock     `json:"sidePanelDock"`
+	// HostViewMode and HostSortMode are this device's Vault layout. They are
+	// persisted with the other preferences but stripped from the synced
+	// document: the original kept them in per-device storage, so a phone-sized
+	// card grid never follows the user to a desktop.
+	HostViewMode HostViewMode `json:"hostViewMode"`
+	HostSortMode HostSortMode `json:"hostSortMode"`
 }
 
 // SFTPEditor group.
@@ -245,9 +315,14 @@ func Portable(settings Settings) PortableSettings {
 	editor := settings.SFTPEditor
 	editor.DefaultOpener = Opener{}
 	editor.FileAssociations = nil
+	// The Vault's view and sort belong to the screen the user is sitting at,
+	// as they did in the original's per-device storage.
+	layout := settings.Layout
+	layout.HostViewMode = ""
+	layout.HostSortMode = ""
 	return PortableSettings{
 		Appearance: appearance,
-		Layout:     settings.Layout,
+		Layout:     layout,
 		SFTPEditor: editor,
 		Logs:       settings.Logs,
 		Security:   settings.Security,
@@ -264,6 +339,8 @@ func MergePortable(current Settings, portable PortableSettings) Settings {
 	next.Appearance = portable.Appearance
 	next.Appearance.AppIcon = current.Appearance.AppIcon
 	next.Layout = portable.Layout
+	next.Layout.HostViewMode = current.Layout.HostViewMode
+	next.Layout.HostSortMode = current.Layout.HostSortMode
 	next.SFTPEditor = portable.SFTPEditor
 	next.SFTPEditor.DefaultOpener = current.SFTPEditor.DefaultOpener
 	next.SFTPEditor.FileAssociations = current.SFTPEditor.FileAssociations
@@ -310,12 +387,16 @@ func Defaults() Settings {
 			TerminalCursorStyle: DefaultCursorStyle,
 		},
 		Layout: Layout{
-			ShowHostTreeSidebar:         true,
-			ShowSFTPTab:                 true,
-			ShowRecentHosts:             true,
-			TabBarPosition:              TabBarTop,
-			ShellOnlyTabNumberShortcuts: false,
-			ShowTabNumberBadges:         true,
+			ShowHostTreeSidebar:          true,
+			ShowSFTPTab:                  true,
+			ShowRecentHosts:              true,
+			ShowOnlyUngroupedHostsInRoot: false,
+			HostClickBehavior:            HostClickConnect,
+			HostViewMode:                 HostViewGrid,
+			HostSortMode:                 HostSortManual,
+			TabBarPosition:               TabBarTop,
+			ShellOnlyTabNumberShortcuts:  false,
+			ShowTabNumberBadges:          true,
 			// Restore is opt-in: a fresh profile lands on the Vault instead
 			// of reopening a stale Workspace and its connections.
 			RestorePreviousSession: false,
@@ -384,6 +465,15 @@ func Normalize(settings Settings) Settings {
 		settings.Appearance.TerminalCursorStyle = defaults.Appearance.TerminalCursorStyle
 	}
 
+	if !settings.Layout.HostViewMode.Valid() {
+		settings.Layout.HostViewMode = defaults.Layout.HostViewMode
+	}
+	if !settings.Layout.HostSortMode.Valid() {
+		settings.Layout.HostSortMode = defaults.Layout.HostSortMode
+	}
+	if !settings.Layout.HostClickBehavior.Valid() {
+		settings.Layout.HostClickBehavior = defaults.Layout.HostClickBehavior
+	}
 	if settings.Layout.TabBarPosition != TabBarTop && settings.Layout.TabBarPosition != TabBarBottom {
 		settings.Layout.TabBarPosition = defaults.Layout.TabBarPosition
 	}
@@ -486,47 +576,49 @@ func ResetGroup(settings Settings, group Group) Settings {
 type Field string
 
 const (
-	FieldThemeMode                   Field = "appearance.themeMode"
-	FieldLightTheme                  Field = "appearance.lightTheme"
-	FieldDarkTheme                   Field = "appearance.darkTheme"
-	FieldAccentMode                  Field = "appearance.accentMode"
-	FieldAccentColor                 Field = "appearance.accentColor"
-	FieldAppIcon                     Field = "appearance.appIcon"
-	FieldUIFont                      Field = "appearance.uiFont"
-	FieldWindowOpacity               Field = "appearance.windowOpacity"
-	FieldTerminalTheme               Field = "appearance.terminalTheme"
-	FieldFollowAppTerminalTheme      Field = "appearance.followAppTerminalTheme"
-	FieldTerminalFontFamily          Field = "appearance.terminalFontFamily"
-	FieldTerminalFontSize            Field = "appearance.terminalFontSize"
-	FieldTerminalCursorStyle         Field = "appearance.terminalCursorStyle"
-	FieldTerminalCursorBlink         Field = "appearance.terminalCursorBlink"
-	FieldShowHostTreeSidebar         Field = "layout.showHostTreeSidebar"
-	FieldShowSFTPTab                 Field = "layout.showSftpTab"
-	FieldShowRecentHosts             Field = "layout.showRecentHosts"
-	FieldTabBarPosition              Field = "layout.tabBarPosition"
-	FieldShellOnlyTabNumberShortcuts Field = "layout.shellOnlyTabNumberShortcuts"
-	FieldShowTabNumberBadges         Field = "layout.showTabNumberBadges"
-	FieldRestorePreviousSession      Field = "layout.restorePreviousSession"
-	FieldStartupLanding              Field = "layout.startupLanding"
-	FieldSidePanelDock               Field = "layout.sidePanelDock"
-	FieldDoubleClickBehavior         Field = "sftpEditor.doubleClickBehavior"
-	FieldAutoSync                    Field = "sftpEditor.autoSync"
-	FieldShowHiddenFiles             Field = "sftpEditor.showHiddenFiles"
-	FieldUseCompressedUpload         Field = "sftpEditor.useCompressedUpload"
-	FieldAutoOpenSidebar             Field = "sftpEditor.autoOpenSidebar"
-	FieldFollowTerminalCwd           Field = "sftpEditor.followTerminalCwd"
-	FieldDefaultViewMode             Field = "sftpEditor.defaultViewMode"
-	FieldEditorWordWrap              Field = "sftpEditor.editorWordWrap"
-	FieldEditorFontSize              Field = "sftpEditor.editorFontSize"
-	FieldDefaultOpener               Field = "sftpEditor.defaultOpener"
-	FieldSSHDebug                    Field = "logs.sshDebug"
-	FieldSyncEnabled                 Field = "sync.enabled"
-	FieldSyncAutoSync                Field = "sync.autoSync"
-	FieldSyncConflictStrategy        Field = "sync.conflictStrategy"
-	FieldSyncProvider                Field = "sync.provider"
-	FieldConfirmCloseSessions        Field = "security.confirmCloseSessions"
-	FieldConfirmDestructive          Field = "security.confirmDestructive"
-	FieldMoshPredictionDisplay       Field = "transport.moshPredictionDisplay"
+	FieldThemeMode                    Field = "appearance.themeMode"
+	FieldLightTheme                   Field = "appearance.lightTheme"
+	FieldDarkTheme                    Field = "appearance.darkTheme"
+	FieldAccentMode                   Field = "appearance.accentMode"
+	FieldAccentColor                  Field = "appearance.accentColor"
+	FieldAppIcon                      Field = "appearance.appIcon"
+	FieldUIFont                       Field = "appearance.uiFont"
+	FieldWindowOpacity                Field = "appearance.windowOpacity"
+	FieldTerminalTheme                Field = "appearance.terminalTheme"
+	FieldFollowAppTerminalTheme       Field = "appearance.followAppTerminalTheme"
+	FieldTerminalFontFamily           Field = "appearance.terminalFontFamily"
+	FieldTerminalFontSize             Field = "appearance.terminalFontSize"
+	FieldTerminalCursorStyle          Field = "appearance.terminalCursorStyle"
+	FieldTerminalCursorBlink          Field = "appearance.terminalCursorBlink"
+	FieldShowHostTreeSidebar          Field = "layout.showHostTreeSidebar"
+	FieldShowSFTPTab                  Field = "layout.showSftpTab"
+	FieldShowRecentHosts              Field = "layout.showRecentHosts"
+	FieldShowOnlyUngroupedHostsInRoot Field = "layout.showOnlyUngroupedHostsInRoot"
+	FieldHostClickBehavior            Field = "layout.hostClickBehavior"
+	FieldTabBarPosition               Field = "layout.tabBarPosition"
+	FieldShellOnlyTabNumberShortcuts  Field = "layout.shellOnlyTabNumberShortcuts"
+	FieldShowTabNumberBadges          Field = "layout.showTabNumberBadges"
+	FieldRestorePreviousSession       Field = "layout.restorePreviousSession"
+	FieldStartupLanding               Field = "layout.startupLanding"
+	FieldSidePanelDock                Field = "layout.sidePanelDock"
+	FieldDoubleClickBehavior          Field = "sftpEditor.doubleClickBehavior"
+	FieldAutoSync                     Field = "sftpEditor.autoSync"
+	FieldShowHiddenFiles              Field = "sftpEditor.showHiddenFiles"
+	FieldUseCompressedUpload          Field = "sftpEditor.useCompressedUpload"
+	FieldAutoOpenSidebar              Field = "sftpEditor.autoOpenSidebar"
+	FieldFollowTerminalCwd            Field = "sftpEditor.followTerminalCwd"
+	FieldDefaultViewMode              Field = "sftpEditor.defaultViewMode"
+	FieldEditorWordWrap               Field = "sftpEditor.editorWordWrap"
+	FieldEditorFontSize               Field = "sftpEditor.editorFontSize"
+	FieldDefaultOpener                Field = "sftpEditor.defaultOpener"
+	FieldSSHDebug                     Field = "logs.sshDebug"
+	FieldSyncEnabled                  Field = "sync.enabled"
+	FieldSyncAutoSync                 Field = "sync.autoSync"
+	FieldSyncConflictStrategy         Field = "sync.conflictStrategy"
+	FieldSyncProvider                 Field = "sync.provider"
+	FieldConfirmCloseSessions         Field = "security.confirmCloseSessions"
+	FieldConfirmDestructive           Field = "security.confirmDestructive"
+	FieldMoshPredictionDisplay        Field = "transport.moshPredictionDisplay"
 )
 
 // Fields returns every resettable field in Settings-window order.
@@ -537,6 +629,7 @@ func Fields() []Field {
 		FieldWindowOpacity, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
 		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink,
 		FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
+		FieldShowOnlyUngroupedHostsInRoot, FieldHostClickBehavior,
 		FieldTabBarPosition, FieldShellOnlyTabNumberShortcuts,
 		FieldShowTabNumberBadges, FieldRestorePreviousSession,
 		FieldStartupLanding, FieldSidePanelDock,
@@ -561,6 +654,7 @@ func GroupOf(field Field) (Group, bool) {
 		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink:
 		return GroupAppearance, true
 	case FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
+		FieldShowOnlyUngroupedHostsInRoot, FieldHostClickBehavior,
 		FieldTabBarPosition, FieldShellOnlyTabNumberShortcuts,
 		FieldShowTabNumberBadges, FieldRestorePreviousSession,
 		FieldStartupLanding, FieldSidePanelDock:
@@ -623,6 +717,10 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.Layout.ShowSFTPTab = defaults.Layout.ShowSFTPTab
 	case FieldShowRecentHosts:
 		settings.Layout.ShowRecentHosts = defaults.Layout.ShowRecentHosts
+	case FieldShowOnlyUngroupedHostsInRoot:
+		settings.Layout.ShowOnlyUngroupedHostsInRoot = defaults.Layout.ShowOnlyUngroupedHostsInRoot
+	case FieldHostClickBehavior:
+		settings.Layout.HostClickBehavior = defaults.Layout.HostClickBehavior
 	case FieldTabBarPosition:
 		settings.Layout.TabBarPosition = defaults.Layout.TabBarPosition
 	case FieldShellOnlyTabNumberShortcuts:
