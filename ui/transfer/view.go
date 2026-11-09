@@ -19,9 +19,6 @@ import (
 // smallest window is 720 wide, and stacking there leaves each list a few rows.
 const sideBySideWidth float32 = 640
 
-// focusMark is the small triangle in the focused pane's top-left corner.
-var focusMark = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><path d="M0 0H12L0 12Z" fill="currentColor"/></svg>`))
-
 // View renders the main window's SFTP surface.
 func View(s *transferstate.State) func(*ui.Context) {
 	return func(c *ui.Context) {
@@ -39,8 +36,9 @@ func View(s *transferstate.State) func(*ui.Context) {
 			paneWidth = width / 2
 		}
 
-		root := ui.Column(c).Grow(1).FillHeight().MinWidth(0).Background(t.Background).
-			BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Focusable().AutoFocus()
+		// The browser draws on its host's surface: the SFTP Tab's card or a
+		// Session's side panel, which each draw their own edges.
+		root := ui.Column(c).Grow(1).FillHeight().MinWidth(0).Focusable().AutoFocus()
 		root.Children(func() {
 			split := ui.Row(c)
 			if !sideBySide {
@@ -96,11 +94,14 @@ func pane(c *ui.Context, s *transferstate.State, side transferstate.Side, width 
 		} else {
 			browser(c, s, side, tab, width, m, t)
 		}
-		if s.Focused() == side {
-			ui.Icon(c, focusMark).Size(12, 12).TextColor(t.Accent).
-				Absolute().Left(0).Top(0)
-		}
 	})
+	// The focused pane carries an accent bar along its top edge, as a chosen
+	// tab does, while the other pane is open too and the focus is a choice.
+	if s.Focused() == side && len(s.Pane(side.Other()).Tabs) > 0 {
+		el.DrawOver(func(p *ui.Painter, r ui.Rect) {
+			p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W, H: 2}, t.Accent, 0)
+		})
+	}
 	if el.Clicked() || el.RightClicked() {
 		s.Focus(side)
 	}

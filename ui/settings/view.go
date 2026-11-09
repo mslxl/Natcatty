@@ -12,6 +12,7 @@ import (
 	kb "github.com/mslxl/natcatty/domain/keybindings"
 	domain "github.com/mslxl/natcatty/domain/preferences"
 	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 	"github.com/mslxl/natcatty/ui/titlebar"
@@ -140,20 +141,17 @@ func header(c *ui.Context, m locales.Messages, t *ui.Theme) {
 }
 
 func confirmResetAll(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {
-	ui.Column(c).FillWidth().Padding(12, 16).Gap(8).Radius(8).Background(t.Surface).Border(1, t.Danger).Children(func() {
-		ui.Text(c, m.SettingsResetAllTitle()).FontSize(14).FontWeight(600)
+	cancelled, confirmed := kit.ConfirmBar(c, m.SettingsResetAllTitle(), func() {
 		ui.Text(c, m.SettingsResetAllBody()).FontSize(12).TextColor(t.TextMuted)
-		ui.Row(c).Gap(8).Children(func() {
-			if ui.Button(c, m.SettingsResetAllConfirm()).Clicked() {
-				state.ResetAll()
-				c.Invalidate()
-			}
-			if ui.Button(c, m.SettingsCancel()).Clicked() {
-				state.CancelResetAll()
-				c.Invalidate()
-			}
-		})
-	})
+	}, m.SettingsCancel(), m.SettingsResetAllConfirm())
+	if cancelled {
+		state.CancelResetAll()
+		c.Invalidate()
+	}
+	if confirmed {
+		state.ResetAll()
+		c.Invalidate()
+	}
 }
 
 // searchField is the original's expanded search: a 36-high input with a
@@ -644,7 +642,7 @@ func shortcutsArea(c *ui.Context, state *ShortcutsState, m locales.Messages, t *
 		}
 
 		ui.Row(c).Gap(8).Children(func() {
-			if ui.Button(c, m.SettingsShortcutResetAll()).Clicked() {
+			if kit.SecondaryButton(c, "", m.SettingsShortcutResetAll()).Clicked() {
 				state.AskResetAll()
 				c.Invalidate()
 			}
@@ -656,11 +654,11 @@ func shortcutsArea(c *ui.Context, state *ShortcutsState, m locales.Messages, t *
 				ui.Text(c, m.SettingsShortcutResetAllTitle()).Bold()
 				ui.Text(c, m.SettingsShortcutResetAllBody()).FontSize(12).TextColor(t.TextMuted)
 				ui.Row(c).Gap(8).Children(func() {
-					if ui.Button(c, m.SettingsShortcutResetAllConfirm()).Clicked() {
+					if kit.SecondaryButton(c, "", m.SettingsShortcutResetAllConfirm()).Clicked() {
 						state.ResetAll()
 						c.Invalidate()
 					}
-					if ui.Button(c, m.SettingsCancel()).Clicked() {
+					if kit.SecondaryButton(c, "", m.SettingsCancel()).Clicked() {
 						state.CancelResetAll()
 						c.Invalidate()
 					}
@@ -713,11 +711,11 @@ func pendingConflict(c *ui.Context, state *ShortcutsState, pending PendingConfli
 		ui.Text(c, m.SettingsShortcutConflictBody(pending.Chord, joinNames(names))).
 			FontSize(12).TextColor(uitheme.WarningText(t))
 		ui.Row(c).Gap(8).Children(func() {
-			if ui.PrimaryButton(c, m.SettingsShortcutConflictReplace()).Clicked() {
+			if kit.PrimaryButton(c, "", m.SettingsShortcutConflictReplace()).Clicked() {
 				state.Replace()
 				c.Invalidate()
 			}
-			if ui.Button(c, m.SettingsShortcutConflictCancel()).Clicked() {
+			if kit.SecondaryButton(c, "", m.SettingsShortcutConflictCancel()).Clicked() {
 				state.CancelConflict()
 				c.Invalidate()
 			}
@@ -764,7 +762,7 @@ func bindingRow(c *ui.Context, state *ShortcutsState, binding kb.Binding,
 				return true
 			})
 		if state.IsOverridden(binding.ID) {
-			if ui.Button(c, m.SettingsShortcutReset()).FontSize(11).Clicked() {
+			if kit.GhostButton(c, "", m.SettingsShortcutReset()).Clicked() {
 				state.ResetBinding(binding.ID)
 				c.Invalidate()
 			}
@@ -807,7 +805,7 @@ func resetField(c *ui.Context, state *PreferencesState, m locales.Messages, fiel
 	if state.IsDefault(field) {
 		return
 	}
-	if ui.Button(c, m.SettingsReset()).FontSize(11).Clicked() {
+	if kit.GhostButton(c, icons.RefreshCw, m.SettingsReset()).Clicked() {
 		state.ResetField(field)
 		c.Invalidate()
 	}
@@ -828,7 +826,7 @@ func groupReset(c *ui.Context, m locales.Messages, t *ui.Theme, group string,
 	if !visible {
 		return
 	}
-	if ui.Button(c, m.SettingsResetGroup(group)).FontSize(11).Clicked() {
+	if kit.GhostButton(c, icons.RefreshCw, m.SettingsResetGroup(group)).AlignSelf(ui.Start).Clicked() {
 		if reset() {
 			c.Invalidate()
 		}
@@ -964,11 +962,11 @@ func hotkeySection(c *ui.Context, state *DesktopState, settings desktop.Settings
 			ui.TextInput(c, state.Hotkey()).Width(220)
 		})
 		ui.Row(c).Gap(8).Children(func() {
-			if ui.PrimaryButton(c, m.SettingsHotkeyApply()).Clicked() {
+			if kit.PrimaryButton(c, "", m.SettingsHotkeyApply()).Clicked() {
 				state.ApplyHotkey()
 				c.Invalidate()
 			}
-			if ui.Button(c, m.SettingsHotkeyReset()).Clicked() {
+			if kit.SecondaryButton(c, "", m.SettingsHotkeyReset()).Clicked() {
 				state.ResetHotkey()
 				c.Invalidate()
 			}
@@ -1034,10 +1032,16 @@ func notificationToggle(c *ui.Context, state *DesktopState, value bool, label st
 	}
 }
 
+// section is a titled card inside an area. Its title sits a step below the
+// area's own heading, so the page reads as one hierarchy.
 func section(c *ui.Context, title, description string, t *ui.Theme, build func()) {
-	ui.Column(c).Padding(16).Gap(10).Radius(8).Background(t.Surface).Border(1, t.Border).Children(func() {
-		ui.Text(c, title).FontSize(18).Bold()
-		ui.Text(c, description).FontSize(12).TextColor(t.TextMuted)
+	ui.Column(c).Padding(16).Gap(10).Radius(kit.RadiusCard).Background(t.Surface).Border(1, t.Border).Children(func() {
+		ui.Column(c).FillWidth().Gap(2).Children(func() {
+			ui.Text(c, title).FontSize(15).FontWeight(600)
+			if description != "" {
+				ui.Text(c, description).FontSize(12).TextColor(t.TextMuted)
+			}
+		})
 		build()
 	})
 }
@@ -1045,7 +1049,7 @@ func section(c *ui.Context, title, description string, t *ui.Theme, build func()
 // sectionBody is a section whose title and description the area header
 // already shows.
 func sectionBody(c *ui.Context, t *ui.Theme, build func()) {
-	ui.Column(c).Padding(16).Gap(10).Radius(8).Background(t.Surface).Border(1, t.Border).Children(build)
+	ui.Column(c).Padding(16).Gap(10).Radius(kit.RadiusCard).Background(t.Surface).Border(1, t.Border).Children(build)
 }
 
 func appLockSection(c *ui.Context, lock *AppLockState, m locales.Messages, t *ui.Theme) {
@@ -1063,11 +1067,11 @@ func appLockSection(c *ui.Context, lock *AppLockState, m locales.Messages, t *ui
 			ui.TextInput(c, lock.CurrentPassword()).Password().Width(240)
 		})
 		ui.Row(c).Gap(8).Children(func() {
-			if ui.Button(c, m.SettingsAppLockDisable()).Clicked() {
+			if kit.SecondaryButton(c, "", m.SettingsAppLockDisable()).Clicked() {
 				lock.Disable()
 				c.Invalidate()
 			}
-			if ui.Button(c, m.SettingsAppLockLockNow()).Clicked() {
+			if kit.SecondaryButton(c, "", m.SettingsAppLockLockNow()).Clicked() {
 				lock.LockNow()
 				c.Invalidate()
 			}
@@ -1084,7 +1088,7 @@ func enableSection(c *ui.Context, lock *AppLockState, m locales.Messages) {
 	ui.Field(c, m.SettingsAppLockConfirm(), func() {
 		ui.TextInput(c, lock.Confirmation()).Password().Width(240)
 	})
-	if ui.PrimaryButton(c, m.SettingsAppLockEnable()).Clicked() {
+	if kit.PrimaryButton(c, "", m.SettingsAppLockEnable()).AlignSelf(ui.Start).Clicked() {
 		lock.Enable()
 		c.Invalidate()
 	}

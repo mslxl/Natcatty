@@ -170,6 +170,54 @@ func SectionHeader(c *ui.Context, title, trailing string) {
 	})
 }
 
+// SectionBar is the header row of a list section: the SectionHeader title,
+// and the section's actions, such as its create buttons, at the row's end.
+// actions may be nil.
+func SectionBar(c *ui.Context, title string, actions func()) {
+	t := c.Theme()
+	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Wrap().Padding(10, 0, 6, 4).Children(func() {
+		ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(t.TextMuted).
+			Grow(1).MinWidth(0).SingleLine()
+		if actions != nil {
+			actions()
+		}
+	})
+}
+
+// UnderlineTabs is a surface's view switcher: text tabs with an accent bar
+// under the chosen one. It sets *chosen when a tab is picked. reveal scrolls
+// the chosen tab into view when the strip sits in a horizontal scroll.
+func UnderlineTabs(c *ui.Context, chosen *int, labels []string, reveal bool) {
+	t := c.Theme()
+	parts := ui.TabsBase(c, chosen, len(labels))
+	parts.List.Gap(t.Space(1)).Children(func() {
+		for i, label := range labels {
+			on := i == *chosen
+			tab := parts.Tab(i).Padding(t.Space(2), t.Space(3)).FocusRing(false)
+			tab.TextColor(t.TextMuted)
+			if on {
+				tab.TextColor(t.Text).FontWeight(600)
+				if reveal {
+					tab = tab.ScrollIntoView()
+				}
+			} else if tab.Hovered() {
+				tab.TextColor(t.Text)
+			}
+			tab.DrawOver(func(p *ui.Painter, r ui.Rect) {
+				if on {
+					in, height := t.Space(1.5), t.Space(0.5)
+					p.Fill(ui.Rect{X: r.X + in, Y: r.Y + r.H - height, W: r.W - 2*in, H: height},
+						t.Accent, height/2)
+				}
+				if tab.FocusVisible() {
+					p.FocusRing(r, [4]float32{t.Radius, t.Radius, t.Radius, t.Radius})
+				}
+			})
+			tab.Children(func() { ui.Text(c, label).SingleLine() })
+		}
+	})
+}
+
 // PageTitle is a surface's heading with an optional description.
 func PageTitle(c *ui.Context, title, description string) {
 	t := c.Theme()
@@ -190,12 +238,56 @@ func EmptyState(c *ui.Context, name, title, description string, action func()) u
 			Children(func() { ui.Icon(c, icons.Lucide(name)).Size(22, 22) })
 		ui.Text(c, title).FontWeight(600).Margin(6, 0, 0, 0)
 		if description != "" {
-			ui.Text(c, description).FontSize(13).TextColor(t.TextMuted).MaxWidth(420)
+			ui.Text(c, description).FontSize(13).TextColor(t.TextMuted).MaxWidth(420).TextAlign(ui.Center)
 		}
 		if action != nil {
 			ui.Row(c).Gap(8).Margin(8, 0, 0, 0).Children(action)
 		}
 	})
+}
+
+// EmptyHint is the one-line placeholder of an empty section inside a longer
+// list, inset to line up with its SectionBar title. A surface that is empty
+// as a whole uses EmptyState instead.
+func EmptyHint(c *ui.Context, text string) ui.Element {
+	t := c.Theme()
+	return ui.Text(c, text).FontSize(12).TextColor(t.TextMuted).Padding(0, 4, 4, 4)
+}
+
+// ListRow is one item of a list section: a bordered row in the shape of the
+// Vault's Host cards that shades on hover. Build its content with Children;
+// its actions go last, as IconButtons.
+func ListRow(c *ui.Context) ui.Element {
+	t := c.Theme()
+	row := ui.Row(c).FillWidth().MinWidth(0).Gap(8).Padding(8, 8, 8, 12).Margin(0, 0, 6, 0).
+		Radius(RadiusCard).Border(1, t.Border).Background(t.Surface).AlignItems(ui.Center)
+	if row.Hovered() {
+		row.Background(Muted(t)).Border(1, t.Border.Mix(t.Text, 0.15))
+	}
+	return row
+}
+
+// ConfirmBar asks inline to confirm a destructive action: a danger Notice
+// with text, an optional detail under it, and cancel and confirm buttons. It
+// reports which button was clicked.
+func ConfirmBar(c *ui.Context, text string, detail func(), cancel, confirm string) (cancelled, confirmed bool) {
+	t := c.Theme()
+	ui.Row(c).FillWidth().Gap(10).Padding(10, 12).Radius(RadiusControl).Wrap().
+		Background(t.Danger.Alpha(0.08)).Border(1, t.Danger.Alpha(0.35)).AlignItems(ui.Center).
+		Children(func() {
+			ui.Icon(c, icons.Lucide(icons.TriangleAlert)).Size(IconSize, IconSize).TextColor(t.Danger)
+			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+				ui.Text(c, text).FontSize(13).TextColor(t.Text)
+				if detail != nil {
+					detail()
+				}
+			})
+			ui.Row(c).Gap(8).Children(func() {
+				cancelled = GhostButton(c, "", cancel).Clicked()
+				confirmed = DangerButton(c, "", confirm).Clicked()
+			})
+		})
+	return cancelled, confirmed
 }
 
 // Pill is a small rounded label, as a tag or a count.

@@ -9,6 +9,8 @@ import (
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/markdown"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
@@ -17,45 +19,25 @@ import (
 // notesSection lists Note Groups and Vault Notes. A search query flattens the
 // tree into matches across title, Markdown source, and group path.
 func notesSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Padding(0, 8).Wrap().Children(func() {
-		ui.Text(c, m.VaultNoteListTitle(s.NoteCount())).FontSize(16).Bold()
-		ui.Column(c).Grow(1)
-		if ui.Button(c, m.VaultNoteGroupNew()).Clicked() {
+	kit.SectionBar(c, m.VaultNoteListTitle(s.NoteCount()), func() {
+		if kit.SecondaryButton(c, icons.FolderPlus, m.VaultNoteGroupNew()).Clicked() {
 			s.BeginCreateNoteGroup()
 			c.Invalidate()
 		}
-		if ui.Button(c, m.VaultNoteExportAll()).Clicked() {
+		if kit.SecondaryButton(c, icons.Download, m.VaultNoteExportAll()).Clicked() {
 			s.ExportAllNotes()
 			c.Invalidate()
 		}
-		if ui.PrimaryButton(c, m.VaultNoteNew()).Clicked() {
+		if kit.PrimaryButton(c, icons.Plus, m.VaultNoteNew()).Clicked() {
 			s.BeginCreateNote()
 			c.Invalidate()
 		}
 	})
 
-	query := s.NoteSearch()
-	field := ui.SearchField(c, &query).
-		Placeholder(m.VaultNoteSearchPlaceholder()).
-		Label(m.VaultNoteSearchLabel())
-	if field.Changed() {
-		s.SetNoteSearch(query)
-	}
-	if s.SearchingNotes() {
-		matches := s.NotesMatchingSearch()
-		if len(matches) == 0 {
-			ui.Text(c, m.VaultNoteSearchEmpty(strings.TrimSpace(s.NoteSearch()))).
-				FontSize(12).TextColor(t.TextMuted)
-			return
-		}
-		for _, note := range matches {
-			noteRow(c, s, note, m, t, 0, true)
-		}
-		return
-	}
-
+	// The Vault's search bar above the page finds Notes by title and body,
+	// so the list has no search field of its own.
 	if s.NoteCount() == 0 && s.NoteGroupCount() == 0 {
-		ui.Text(c, m.VaultNoteEmpty()).FontSize(12).TextColor(t.TextMuted)
+		kit.EmptyHint(c, m.VaultNoteEmpty())
 		return
 	}
 
@@ -76,18 +58,17 @@ func notesSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.
 }
 
 func noteGroupRow(c *ui.Context, s *vaultstate.State, group domainvault.NoteGroup, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Padding(8).PaddingStart(groupIndent(domainvault.NoteGroupDepth(group.Path))).
-		Wrap().Background(t.Surface).Children(func() {
+	kit.ListRow(c).MarginStart(groupIndent(domainvault.NoteGroupDepth(group.Path)) - 8).Wrap().Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, group.Path).Bold()
 			ui.Text(c, m.VaultNoteGroupNoteCount(s.NoteGroupNoteCount(group.Path))).
 				FontSize(12).TextColor(t.TextMuted)
 		})
-		if ui.Button(c, m.VaultHostEdit()).Clicked() {
+		if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
 			s.BeginEditNoteGroup(group.Path)
 			c.Invalidate()
 		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+		if kit.IconButton(c, icons.Trash, m.VaultHostDelete()).Clicked() {
 			s.RequestDeleteNoteGroup(group.Path)
 			c.Invalidate()
 		}
@@ -95,21 +76,20 @@ func noteGroupRow(c *ui.Context, s *vaultstate.State, group domainvault.NoteGrou
 }
 
 func noteRow(c *ui.Context, s *vaultstate.State, note domainvault.Note, m locales.Messages, t *ui.Theme, depth int, showGroup bool) {
-	ui.Row(c).FillWidth().Gap(8).Padding(8).PaddingStart(groupIndent(depth)).
-		Background(t.Surface).Children(func() {
+	kit.ListRow(c).MarginStart(groupIndent(depth) - 8).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Row(c).FillWidth().Gap(6).Wrap().Children(func() {
 				ui.Text(c, note.Title).Bold()
 				ui.Column(c).Grow(1)
-				if ui.PrimaryButton(c, m.VaultNoteOpen()).Clicked() {
+				if kit.SecondaryButton(c, "", m.VaultNoteOpen()).Clicked() {
 					s.BeginViewNote(note.ID)
 					c.Invalidate()
 				}
-				if ui.Button(c, m.VaultHostEdit()).Clicked() {
+				if kit.IconButton(c, icons.Pencil, m.VaultHostEdit()).Clicked() {
 					s.BeginEditNote(note.ID)
 					c.Invalidate()
 				}
-				if ui.Button(c, m.VaultHostDelete()).Clicked() {
+				if kit.IconButton(c, icons.Trash, m.VaultHostDelete()).Clicked() {
 					s.RequestDeleteNote(note.ID)
 					c.Invalidate()
 				}
@@ -133,17 +113,15 @@ func noteDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t 
 		s.CancelDeleteNote()
 		return
 	}
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Wrap().Background(t.Surface).Children(func() {
-		ui.Text(c, m.VaultNoteDeleteConfirm(title)).Grow(1).TextColor(uitheme.DangerText(t))
-		if ui.Button(c, m.VaultHostCancel()).Clicked() {
-			s.CancelDeleteNote()
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
-			_ = s.ConfirmDeleteNote()
-			c.Invalidate()
-		}
-	})
+	cancelled, confirmed := kit.ConfirmBar(c, m.VaultNoteDeleteConfirm(title), nil, m.VaultHostCancel(), m.VaultHostDelete())
+	if cancelled {
+		s.CancelDeleteNote()
+		c.Invalidate()
+	}
+	if confirmed {
+		_ = s.ConfirmDeleteNote()
+		c.Invalidate()
+	}
 }
 
 func noteGroupDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
@@ -151,17 +129,15 @@ func noteGroupDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Message
 	if path == "" {
 		return
 	}
-	ui.Row(c).FillWidth().Gap(8).Padding(8).Wrap().Background(t.Surface).Children(func() {
-		ui.Text(c, m.VaultNoteGroupDeleteConfirm(path)).Grow(1).TextColor(uitheme.DangerText(t))
-		if ui.Button(c, m.VaultHostCancel()).Clicked() {
-			s.CancelDeleteNoteGroup()
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
-			_ = s.ConfirmDeleteNoteGroup()
-			c.Invalidate()
-		}
-	})
+	cancelled, confirmed := kit.ConfirmBar(c, m.VaultNoteGroupDeleteConfirm(path), nil, m.VaultHostCancel(), m.VaultHostDelete())
+	if cancelled {
+		s.CancelDeleteNoteGroup()
+		c.Invalidate()
+	}
+	if confirmed {
+		_ = s.ConfirmDeleteNoteGroup()
+		c.Invalidate()
+	}
 }
 
 // noteExportBanner shows where the last export went, or why it failed.

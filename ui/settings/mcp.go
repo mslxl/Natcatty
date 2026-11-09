@@ -10,6 +10,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appmcp "github.com/mslxl/natcatty/application/mcp"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
@@ -411,7 +412,7 @@ func mcpSessionsSection(c *ui.Context, state *MCPState, snapshot appmcp.Snapshot
 			state.SetSharing(sharing)
 			c.Invalidate()
 		}
-		if ui.Button(c, m.SettingsMCPRefreshSessions()).Clicked() {
+		if kit.SecondaryButton(c, "", m.SettingsMCPRefreshSessions()).Clicked() {
 			state.RefreshScope()
 			c.Invalidate()
 		}
@@ -569,17 +570,17 @@ func mcpApprovalPinnedBar(c *ui.Context, state *MCPState, snapshot appmcp.Snapsh
 	bar.Children(func() {
 		syncActionRow(c, func() {
 			if expired {
-				if ui.Button(c, m.SettingsMCPDismiss()).Clicked() {
+				if kit.SecondaryButton(c, "", m.SettingsMCPDismiss()).Clicked() {
 					state.Dismiss(prompt.ID)
 					c.Invalidate()
 				}
 				return
 			}
-			if ui.PrimaryButton(c, m.SettingsMCPApprove()).Clicked() {
+			if kit.PrimaryButton(c, "", m.SettingsMCPApprove()).Clicked() {
 				state.Approve(prompt.ID)
 				c.Invalidate()
 			}
-			if ui.Button(c, m.SettingsMCPDeny()).Clicked() {
+			if kit.SecondaryButton(c, "", m.SettingsMCPDeny()).Clicked() {
 				state.Deny(prompt.ID)
 				c.Invalidate()
 			}

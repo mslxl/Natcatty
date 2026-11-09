@@ -57,7 +57,7 @@ func View(s *State) func(*ui.Context) {
 			avail -= asideWidth
 		}
 		compact := avail < 640
-		ui.Row(c).Fill().MinHeight(0).Background(t.Background).Children(func() {
+		ui.Row(c).Fill().MinHeight(0).Children(func() {
 			if aside && narrow {
 				asidePanel(c, s, m, t, width)
 				return
@@ -165,12 +165,16 @@ func header(c *ui.Context, s *State, m locales.Messages, compact bool) {
 				s.Start()
 			}
 		}
-		newPanel := kit.IconButton
-		if !compact {
-			newPanel = kit.SecondaryButton
-		}
-		if newPanel(c, icons.Plus, m.MonitoringNewPanel()).Clicked() {
-			s.BeginCreatePanel()
+		// With no panels the empty state's own button creates the first one,
+		// so the header does not offer a second.
+		if len(panels) > 0 {
+			newPanel := kit.IconButton
+			if !compact {
+				newPanel = kit.SecondaryButton
+			}
+			if newPanel(c, icons.Plus, m.MonitoringNewPanel()).Clicked() {
+				s.BeginCreatePanel()
+			}
 		}
 	})
 }
