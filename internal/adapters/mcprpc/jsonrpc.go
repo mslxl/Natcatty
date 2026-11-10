@@ -22,6 +22,25 @@ const (
 // original 10 MiB TCP buffer cap.
 const MaxLineBytes = 10 << 20
 
+// MaxClientLineBytes bounds one inbound response on the stdio process's
+// connection. A 16 MiB plugin tool result is JSON-escaped inside the loopback
+// response, so this sits well above the MCP result bound.
+const MaxClientLineBytes = 64 << 20
+
+// Reserved methods for the plugin-contributed MCP tool bridge. They are
+// internal app methods, not catalog RPCs: the stdio process calls them on
+// behalf of MCP tools/list and tools/call.
+const (
+	MethodPluginToolList = "netcatty/pluginTool/list"
+	MethodPluginToolCall = "netcatty/pluginTool/call"
+)
+
+// MCP notification methods the app pushes through the loopback connection.
+const (
+	NotificationToolsListChanged = "notifications/tools/list_changed"
+	NotificationProgress         = "notifications/progress"
+)
+
 // ErrLineTooLong reports a line beyond the configured buffer cap. The caller
 // closes the connection.
 var ErrLineTooLong = errors.New("mcprpc: JSON-RPC line exceeds the buffer limit")

@@ -17,10 +17,10 @@ func checkImport(pkg, imp string) string {
 	}
 	if imp == mygoPath || strings.HasPrefix(imp, mygoPath+"/") {
 		switch layer {
-		case "ui", "platform", "app":
+		case "ui", "platform", "plugins", "app":
 			return ""
 		}
-		return "MyGo may be imported only by ui, platform, and app"
+		return "MyGo may be imported only by ui, platform, plugins, and app"
 	}
 
 	inModule := imp == modulePath || strings.HasPrefix(imp, modulePath+"/")
@@ -77,6 +77,12 @@ func checkImport(pkg, imp string) string {
 		case "domain", "application", "ui":
 		default:
 			return "ui may import only domain, application, ui, and MyGo"
+		}
+	case "plugins":
+		switch importedLayer {
+		case "domain", "application", "platform", "plugins":
+		default:
+			return "plugins may import only domain, application, platform, and plugins"
 		}
 	case "platform":
 		if importedLayer != "platform" {

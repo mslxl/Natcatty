@@ -35,6 +35,10 @@ func TestCheckImportRejectsLayerViolations(t *testing.T) {
 		{"adapters may not use other internals", "adapters/mosh", "github.com/mslxl/natcatty/internal/legal"},
 		{"ui may not use adapters", "ui/shell", "github.com/mslxl/natcatty/adapters/store"},
 		{"ui may not use the composition root", "ui/shell", "github.com/mslxl/natcatty/app"},
+		{"plugins may not use adapters", "plugins/acme", "github.com/mslxl/natcatty/adapters/store"},
+		{"plugins may not use the UI", "plugins/acme", "github.com/mslxl/natcatty/ui/shell"},
+		{"plugins may not use the composition root", "plugins/acme", "github.com/mslxl/natcatty/app"},
+		{"plugins may not use internals", "plugins/acme", "github.com/mslxl/natcatty/internal/legal"},
 		{"unrecognized packages may not use MyGo", "tools/foo", "github.com/egoist/mygo"},
 	}
 	for _, test := range tests {
@@ -65,6 +69,11 @@ func TestCheckImportAllowsTheDocumentedDirection(t *testing.T) {
 		{"ui uses application", "ui/shell", "github.com/mslxl/natcatty/application/vault"},
 		{"ui uses generated catalogs", "ui/shell", "github.com/mslxl/natcatty/ui/locales"},
 		{"platform uses MyGo", "platform/linux", "github.com/egoist/mygo"},
+		{"plugins use MyGo", "plugins/acme", "github.com/egoist/mygo/ui"},
+		{"plugins use domain", "plugins/acme", "github.com/mslxl/natcatty/domain/plugin"},
+		{"plugins use application", "plugins/acme", "github.com/mslxl/natcatty/application/plugin"},
+		{"plugins use platform", "plugins/acme", "github.com/mslxl/natcatty/platform/linux"},
+		{"plugins use other plugins", "plugins/acme", "github.com/mslxl/natcatty/plugins/shared"},
 		{"app uses everything", "app", "github.com/mslxl/natcatty/adapters/store"},
 		{"main uses app", "", "github.com/mslxl/natcatty/app"},
 	}
@@ -96,7 +105,25 @@ func TestArchitecture(t *testing.T) {
 	}
 
 	for _, use := range webViewUses(t, root) {
-		t.Errorf("%s: ui.WebView is allowed only in ui/browser, the host-routed browser panel", use)
+		t.Errorf("%s: ui.WebView is allowed only in ui/browser and ui/pluginwebview", use)
+	}
+}
+
+func TestWebViewAllowedPackages(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"ui/browser/panel.go", true},
+		{"ui/pluginwebview/view.go", true},
+		{"ui/shell/shell.go", false},
+		{"ui/plugins/webview/view.go", false},
+		{"plugins/acme/webview.go", false},
+	}
+	for _, test := range tests {
+		if got := webViewAllowed(test.path); got != test.want {
+			t.Errorf("webViewAllowed(%q) = %v, want %v", test.path, got, test.want)
+		}
 	}
 }
 
@@ -208,7 +235,7 @@ func webViewUses(t *testing.T, root string) []string {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(rel, "ui/browser/") {
+		if webViewAllowed(rel) {
 			return nil
 		}
 		data, err := os.ReadFile(path)
@@ -228,6 +255,13 @@ func webViewUses(t *testing.T, root string) []string {
 		t.Fatal(err)
 	}
 	return uses
+}
+
+// webViewAllowed reports whether a module-relative file may call ui.WebView.
+// The host-routed browser and the plugin WebView sandbox are the only allowed
+// surfaces (ADR-0007).
+func webViewAllowed(rel string) bool {
+	return strings.HasPrefix(rel, "ui/browser/") || strings.HasPrefix(rel, "ui/pluginwebview/")
 }
 
 func fileUsesWebView(file *ast.File) bool {

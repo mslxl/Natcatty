@@ -7,12 +7,15 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/mslxl/natcatty/internal/adapters/mcprpc"
 	"github.com/mslxl/natcatty/internal/mcp/catalog"
@@ -43,6 +46,17 @@ const (
 	// transport metadata, never a tool argument, and is excluded from approval
 	// summaries.
 	reservedClientArgument = "_mcpClient"
+
+	// maxQueuedRequests bounds the handoff between the stdin pump and the
+	// sequential request loop. The pump never blocks on the handoff, so it can
+	// always keep reading and observe EOF; once the bound is reached further
+	// requests are answered with a JSON-RPC error instead of growing memory.
+	maxQueuedRequests = 16
+
+	// maxPendingCancellations bounds cancellation notifications remembered for
+	// requests the request loop has not started yet. A client that sends
+	// cancellations for ids it never used cannot grow the table without bound.
+	maxPendingCancellations = 256
 )
 
 // JSON-RPC protocol error codes.
@@ -50,6 +64,9 @@ const (
 	codeInvalidParams  = -32602
 	codeMethodNotFound = -32601
 	codeInternal       = -32603
+	// codeRequestCancelled is the MCP/JSON-RPC error for a request the client
+	// cancelled with notifications/cancelled.
+	codeRequestCancelled = -32800
 )
 
 // Caller forwards one catalog RPC to the running app.
@@ -57,40 +74,286 @@ type Caller interface {
 	Call(ctx context.Context, method string, params map[string]any) (any, error)
 }
 
-// Server is one stdio MCP session. It is single-threaded: MCP stdio delivers
-// requests in order and the app transport serializes calls.
+// Server is one stdio MCP session. Requests are handled in arrival order, but
+// stdin is pumped concurrently so EOF (the client going away) is observed
+// while a request is still running.
 type Server struct {
 	caller     Caller
 	visibility *catalog.Visibility
 	// clientID is the sanitized clientInfo from initialize. It is forwarded as
 	// the reserved _mcpClient argument so the app can show which client is
-	// asking for approval.
+	// asking for approval. It is only written and read by the request loop.
 	clientID string
+
+	// mu guards inflight and pendingCancels. The stdin pump cancels a request
+	// while the request loop is handling it, so the tables are shared between
+	// the two goroutines.
+	mu       sync.Mutex
+	inflight map[string]*inflightRequest
+	// pendingCancels holds cancellations the pump read before the request
+	// loop registered the request, which happens when the client writes a
+	// request and its cancellation in one stdin write.
+	pendingCancels map[string]struct{}
 }
 
 // NewServer starts a session with the original 14 core tools plus the loader.
 func NewServer(caller Caller) *Server {
-	return &Server{caller: caller, visibility: catalog.NewVisibility()}
+	return &Server{
+		caller:         caller,
+		visibility:     catalog.NewVisibility(),
+		inflight:       make(map[string]*inflightRequest),
+		pendingCancels: make(map[string]struct{}),
+	}
+}
+
+// inflightRequest is one request the request loop is handling. cancelled is set
+// by a notifications/cancelled message; the reply is then the JSON-RPC
+// cancellation error rather than a possibly late result.
+type inflightRequest struct {
+	cancel    context.CancelFunc
+	cancelled atomic.Bool
+}
+
+// requestKey canonicalizes a JSON-RPC id so a cancellation notification's
+// requestId (the same JSON value) matches the request being handled.
+func requestKey(id json.RawMessage) string {
+	trimmed := bytes.TrimSpace(id)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return ""
+	}
+	return string(trimmed)
 }
 
 // Serve reads newline-delimited JSON-RPC from in until EOF and writes responses
-// and notifications to out.
+// and notifications to out. A dedicated pump reads stdin, so EOF is observed
+// while a request is still running: on EOF the whole session is cancelled and
+// the caller's loopback transport is closed instead of waiting for the
+// outstanding call. Requests themselves are still handled one at a time, so
+// arrival order and the single discovery/loopback design are preserved.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
-	reader := bufio.NewReader(in)
+	sessionCtx, cancelSession := context.WithCancel(ctx)
+	defer cancelSession()
+	// If Serve returns before the pump reaches EOF (a stdout write failure or
+	// parent cancellation), closing a closable stdin unblocks the pump's
+	// pending ReadLine so the pump goroutine cannot leak.
+	defer closeInput(in)
+
+	output := &serializedWriter{writer: out}
+	lines := make(chan []byte, maxQueuedRequests)
+	readDone := make(chan error, 1)
+	go s.pump(sessionCtx, cancelSession, in, lines, output, readDone)
+
 	for {
-		line, err := mcprpc.ReadLine(reader, MaxInputLineBytes)
-		if len(line) > 0 {
-			if serveErr := s.handleLine(ctx, line, out); serveErr != nil {
-				return serveErr
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				// The pump closed the handoff after its terminal read. Any
+				// request it queued before that has already been handled
+				// above; EOF cancelled the session, so an in-flight call has
+				// already unwound rather than delaying the disconnect.
+				return readResult(<-readDone)
 			}
-		}
-		if err != nil {
-			if errors.Is(err, mcprpc.ErrLineTooLong) {
+			if err := s.handleLine(sessionCtx, line, output); err != nil {
 				return err
 			}
+		case <-ctx.Done():
 			return nil
 		}
 	}
+}
+
+// readResult keeps the historical read-error contract: an oversized line is a
+// protocol failure, while EOF and a broken pipe are an orderly disconnect.
+func readResult(err error) error {
+	if errors.Is(err, mcprpc.ErrLineTooLong) {
+		return err
+	}
+	return nil
+}
+
+// closeInput unblocks a pump still inside ReadLine when Serve returns for a
+// reason other than EOF. Readers that cannot be closed are already at EOF in
+// the ordinary disconnect path.
+func closeInput(in io.Reader) {
+	if closer, ok := in.(io.Closer); ok {
+		_ = closer.Close()
+	}
+}
+
+// pump reads stdin until EOF or a terminal read error. Cancellation
+// notifications are applied inline so they are not stuck behind a running
+// request; every other notification has no response and is ignored, exactly as
+// the request loop did before. Requests are only enqueued, never handed off
+// synchronously, so a queued request can never stop the pump from reading the
+// EOF that follows a client disconnect.
+func (s *Server) pump(ctx context.Context, cancelSession context.CancelFunc,
+	in io.Reader, lines chan<- []byte, out io.Writer, done chan<- error) {
+	reader := bufio.NewReader(in)
+	for {
+		line, err := mcprpc.ReadLine(reader, MaxInputLineBytes)
+		if len(line) > 0 && !s.handleNotification(line) {
+			if enqueueErr := s.enqueueRequest(ctx, lines, out, line); enqueueErr != nil {
+				// A full queue whose protocol error could not be written, or a
+				// concurrently cancelled session, ends the pump just like a
+				// terminal read error.
+				err = enqueueErr
+			}
+		}
+		if err != nil {
+			// EOF (or a broken pipe) means the client is gone. Cancel every
+			// in-flight request and close the loopback connection now: a
+			// running tool call must not delay the disconnect. Closing the
+			// handoff lets the request loop finish any already-queued work and
+			// then return.
+			cancelSession()
+			s.closeCaller()
+			close(lines)
+			done <- err
+			return
+		}
+	}
+}
+
+// enqueueRequest hands one request line to the request loop without ever
+// blocking the pump. The queue has a hard bound; a request that finds it full
+// is answered immediately with a JSON-RPC error rather than being dropped or
+// growing memory while the pump keeps reading.
+func (s *Server) enqueueRequest(ctx context.Context, lines chan<- []byte,
+	out io.Writer, line []byte) error {
+	select {
+	case lines <- line:
+		return nil
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	return rejectRequest(out, line)
+}
+
+// rejectRequest answers a request the bounded queue could not accept. The
+// request loop answers queued requests; this is the only path that writes from
+// the pump, and it goes through the same serialized writer.
+func rejectRequest(out io.Writer, line []byte) error {
+	var message incoming
+	if err := json.Unmarshal(line, &message); err != nil {
+		return writeError(out, nil, codeInvalidParams, "Parse error")
+	}
+	if len(message.ID) == 0 || string(message.ID) == "null" {
+		// handleNotification consumes every well-formed notification; this is
+		// a defensive no-reply branch for a malformed one.
+		return nil
+	}
+	return writeError(out, message.ID, codeInternal, "Server is busy: request queue is full")
+}
+
+// handleNotification consumes one client notification. Cancellation has an
+// effect; everything else is fire-and-forget. It reports whether line was a
+// notification and therefore must not reach the request loop.
+func (s *Server) handleNotification(line []byte) bool {
+	var message incoming
+	if err := json.Unmarshal(line, &message); err != nil {
+		return false
+	}
+	if len(message.ID) != 0 && string(message.ID) != "null" {
+		return false
+	}
+	if message.Method == "notifications/cancelled" {
+		var params struct {
+			RequestID json.RawMessage `json:"requestId"`
+		}
+		if json.Unmarshal(message.Params, &params) == nil {
+			s.cancelRequest(params.RequestID)
+		}
+	}
+	return true
+}
+
+// cancelRequest cancels the request whose id matches id. The pump can read a
+// cancellation before the request loop has registered the request, notably
+// when the client writes a request and its cancellation in one stdin write, so
+// an unmatched cancellation is remembered for beginRequest instead of being
+// dropped. The request loop then replies with the cancellation error.
+func (s *Server) cancelRequest(id json.RawMessage) {
+	key := requestKey(id)
+	if key == "" {
+		return
+	}
+	s.mu.Lock()
+	request := s.inflight[key]
+	if request == nil {
+		if s.pendingCancels == nil {
+			s.pendingCancels = make(map[string]struct{})
+		}
+		if len(s.pendingCancels) < maxPendingCancellations {
+			s.pendingCancels[key] = struct{}{}
+		}
+		s.mu.Unlock()
+		return
+	}
+	request.cancelled.Store(true)
+	s.mu.Unlock()
+	request.cancel()
+}
+
+// beginRequest gives one request its own context and registers it for
+// cancellation notifications. A cancellation the pump observed before this
+// point is applied now, so a request and its cancellation in one stdin write
+// always cancel the call.
+func (s *Server) beginRequest(ctx context.Context, id json.RawMessage) (context.Context, *inflightRequest) {
+	requestCtx, cancel := context.WithCancel(ctx)
+	request := &inflightRequest{cancel: cancel}
+	key := requestKey(id)
+	if key == "" {
+		return requestCtx, request
+	}
+	s.mu.Lock()
+	s.inflight[key] = request
+	_, wasCancelled := s.pendingCancels[key]
+	if wasCancelled {
+		delete(s.pendingCancels, key)
+		request.cancelled.Store(true)
+	}
+	s.mu.Unlock()
+	if wasCancelled {
+		cancel()
+	}
+	return requestCtx, request
+}
+
+// endRequest unregisters and releases one request context.
+func (s *Server) endRequest(id json.RawMessage, request *inflightRequest) {
+	if key := requestKey(id); key != "" {
+		s.mu.Lock()
+		if s.inflight[key] == request {
+			delete(s.inflight, key)
+		}
+		s.mu.Unlock()
+	}
+	request.cancel()
+}
+
+// closeCaller closes the loopback transport when the caller owns one, so the
+// app observes the disconnect immediately even while a call is unwinding.
+func (s *Server) closeCaller() {
+	if closer, ok := s.caller.(io.Closer); ok {
+		_ = closer.Close()
+	}
+}
+
+// serializedWriter keeps newline-delimited JSON-RPC messages intact when a
+// notification handler and the request loop share one stdout.
+type serializedWriter struct {
+	mu     sync.Mutex
+	writer io.Writer
+}
+
+func (w *serializedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writer.Write(p)
 }
 
 type incoming struct {
@@ -118,29 +381,36 @@ func (s *Server) handleLine(ctx context.Context, line []byte, out io.Writer) err
 		return writeError(out, nil, codeInvalidParams, "Parse error")
 	}
 	if len(message.ID) == 0 || string(message.ID) == "null" {
-		// A notification is fire-and-forget; MCP's initialized and cancelled
-		// notifications need no reply.
+		// Notifications are consumed by the stdin pump; this is a defensive
+		// no-reply branch for a line the pump forwarded.
 		return nil
 	}
+
+	requestCtx, request := s.beginRequest(ctx, message.ID)
+	defer s.endRequest(message.ID, request)
+	reply := responder{out: out, id: message.ID, request: request}
 
 	switch message.Method {
 	case "initialize":
 		result, rpcErr := s.initialize(message.Params)
-		return s.respond(out, message.ID, result, rpcErr)
+		return reply.respond(result, rpcErr)
 	case "ping":
-		return writeSuccess(out, message.ID, map[string]any{})
+		return reply.success(map[string]any{})
 	case "tools/list":
-		return writeSuccess(out, message.ID, map[string]any{"tools": s.toolEntries()})
+		return reply.success(map[string]any{"tools": s.toolEntries(requestCtx)})
 	case "tools/call":
-		result, notification, rpcErr := s.callTool(ctx, message.Params)
+		result, notification, rpcErr := s.callTool(requestCtx, message.Params)
 		if notification != nil {
+			if reply.cancelled() {
+				return reply.failure(codeRequestCancelled, "Request cancelled")
+			}
 			if err := mcprpc.WriteMessage(out, notification); err != nil {
 				return err
 			}
 		}
-		return s.respond(out, message.ID, result, rpcErr)
+		return reply.respond(result, rpcErr)
 	case "resources/list":
-		return writeSuccess(out, message.ID, map[string]any{
+		return reply.success(map[string]any{
 			"resources": []any{map[string]any{
 				"uri":         ContextResourceURI,
 				"name":        "environment",
@@ -149,10 +419,40 @@ func (s *Server) handleLine(ctx context.Context, line []byte, out io.Writer) err
 			}},
 		})
 	case "resources/read":
-		return s.readResource(ctx, message.ID, message.Params, out)
+		return s.readResource(requestCtx, reply, message.Params)
 	default:
-		return writeError(out, message.ID, codeMethodNotFound, "Method not found: "+message.Method)
+		return reply.failure(codeMethodNotFound, "Method not found: "+message.Method)
 	}
+}
+
+// responder writes one request's reply. A request the client cancelled gets the
+// JSON-RPC cancellation error instead of a possibly late result.
+type responder struct {
+	out     io.Writer
+	id      json.RawMessage
+	request *inflightRequest
+}
+
+func (r responder) cancelled() bool {
+	return r.request != nil && r.request.cancelled.Load()
+}
+
+func (r responder) success(result any) error {
+	if r.cancelled() {
+		return r.failure(codeRequestCancelled, "Request cancelled")
+	}
+	return writeSuccess(r.out, r.id, result)
+}
+
+func (r responder) failure(code int, message string) error {
+	return writeError(r.out, r.id, code, message)
+}
+
+func (r responder) respond(result any, rpcErr *mcprpc.RPCError) error {
+	if rpcErr != nil {
+		return r.failure(rpcErr.Code, rpcErr.Message)
+	}
+	return r.success(result)
 }
 
 func (s *Server) initialize(params json.RawMessage) (any, *mcprpc.RPCError) {
@@ -191,14 +491,56 @@ func supportedProtocolVersion(requested string) string {
 	}
 }
 
-func (s *Server) toolEntries() []any {
-	tools := make([]any, 0, s.visibility.VisibleCount())
+func (s *Server) toolEntries(ctx context.Context) []any {
+	tools := make([]any, 0, s.visibility.VisibleCount()+1)
 	loader := catalog.LoaderTool()
 	tools = append(tools, toolEntry(loader))
 	for _, tool := range s.visibility.Visible() {
 		tools = append(tools, toolEntry(tool))
 	}
+	// Plugin tools are served by the app's single registry after its
+	// two-gate check. An app failure removes them rather than failing the
+	// built-in list, so a broken plugin never hides the core tools.
+	tools = append(tools, s.pluginToolEntries(ctx)...)
 	return tools
+}
+
+// pluginToolEntries asks the app for the currently authorized plugin tools.
+// Only names inside the plugin namespace are accepted, and a duplicate name is
+// dropped: the host never advertises a tool it did not receive from the one
+// registry.
+func (s *Server) pluginToolEntries(ctx context.Context) []any {
+	params := map[string]any{}
+	if s.clientID != "" {
+		params[reservedClientArgument] = s.clientID
+	}
+	value, err := s.caller.Call(ctx, mcprpc.MethodPluginToolList, params)
+	if err != nil {
+		return nil
+	}
+	result, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	if success, present := result["ok"].(bool); present && !success {
+		return nil
+	}
+	raw, _ := result["tools"].([]any)
+	entries := make([]any, 0, len(raw))
+	seen := make(map[string]bool, len(raw))
+	for _, item := range raw {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := entry["name"].(string)
+		if !strings.HasPrefix(name, "plugin.") || seen[name] {
+			continue
+		}
+		seen[name] = true
+		entries = append(entries, entry)
+	}
+	return entries
 }
 
 func toolEntry(tool catalog.Tool) map[string]any {
@@ -213,6 +555,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, any
 	var body struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`
+		Meta      map[string]any `json:"_meta"`
 	}
 	if err := json.Unmarshal(params, &body); err != nil {
 		return nil, nil, &mcprpc.RPCError{Code: codeInvalidParams, Message: "tools/call needs a name"}
@@ -222,6 +565,12 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, any
 	}
 	if body.Arguments == nil {
 		body.Arguments = map[string]any{}
+	}
+	// A plugin-namespaced name always goes to the app, even when it is not in
+	// the current list: the app answers with the typed unavailable/reloading
+	// failure instead of the host inventing a tool.
+	if strings.HasPrefix(body.Name, "plugin.") {
+		return s.callPluginTool(ctx, body.Name, body.Arguments, body.Meta)
 	}
 	if s.clientID != "" {
 		body.Arguments[reservedClientArgument] = s.clientID
@@ -250,6 +599,73 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, any
 		response["isError"] = true
 	}
 	return response, nil, nil
+}
+
+// callPluginTool forwards one plugin tool call to the app. The app owns the
+// two-gate authorization, dispatch, result normalization, and audit; this
+// layer only carries the client identity, an optional progress token, and the
+// normalized MCP result.
+func (s *Server) callPluginTool(ctx context.Context, name string,
+	arguments map[string]any, meta map[string]any) (any, any, *mcprpc.RPCError) {
+	params := map[string]any{
+		"name":      name,
+		"arguments": arguments,
+	}
+	if s.clientID != "" {
+		params[reservedClientArgument] = s.clientID
+	}
+	if token, ok := meta["progressToken"]; ok && token != nil {
+		params["_progressToken"] = token
+	}
+	value, err := s.caller.Call(ctx, mcprpc.MethodPluginToolCall, params)
+	if err != nil {
+		return toolError("Error: " + err.Error()), nil, nil
+	}
+	result, ok := value.(map[string]any)
+	if !ok {
+		return toolError("Error: plugin tool returned no result"), nil, nil
+	}
+	if success, present := result["ok"].(bool); present && !success {
+		return toolError("Error: " + rpcErrorText(result)), nil, nil
+	}
+	content, _ := result["content"].([]any)
+	if content == nil {
+		content = []any{}
+	}
+	response := map[string]any{"content": boundPluginContent(content)}
+	if structured, present := result["structuredContent"]; present {
+		response["structuredContent"] = structured
+	}
+	if isError, _ := result["isError"].(bool); isError {
+		response["isError"] = true
+	}
+	return response, nil, nil
+}
+
+// boundPluginContent caps text blocks with the same marker the stdio layer
+// uses for built-in results. Image data was already validated and bounded by
+// the app.
+func boundPluginContent(content []any) []any {
+	out := make([]any, 0, len(content))
+	for _, raw := range content {
+		block, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if block["type"] == "text" {
+			if text, ok := block["text"].(string); ok {
+				copied := make(map[string]any, len(block))
+				for key, value := range block {
+					copied[key] = value
+				}
+				copied["text"] = boundText(text)
+				out = append(out, copied)
+				continue
+			}
+		}
+		out = append(out, block)
+	}
+	return out
 }
 
 // loadTools runs the transport-control loader. It returns the tool result, an
@@ -295,37 +711,30 @@ func (s *Server) loadTools(arguments map[string]any) (any, any, *mcprpc.RPCError
 	return result, notification, nil
 }
 
-func (s *Server) readResource(ctx context.Context, id json.RawMessage, params json.RawMessage, out io.Writer) error {
+func (s *Server) readResource(ctx context.Context, reply responder, params json.RawMessage) error {
 	var body struct {
 		URI string `json:"uri"`
 	}
 	if err := json.Unmarshal(params, &body); err != nil || body.URI != ContextResourceURI {
-		return writeError(out, id, codeInvalidParams, "Unknown resource")
+		return reply.failure(codeInvalidParams, "Unknown resource")
 	}
 	value, err := s.caller.Call(ctx, "netcatty/getContext", map[string]any{
 		reservedClientArgument: s.clientID,
 	})
 	if err != nil {
-		return writeError(out, id, codeInternal, err.Error())
+		return reply.failure(codeInternal, err.Error())
 	}
 	text, err := prettyJSON(value)
 	if err != nil {
-		return writeError(out, id, codeInternal, err.Error())
+		return reply.failure(codeInternal, err.Error())
 	}
-	return writeSuccess(out, id, map[string]any{
+	return reply.success(map[string]any{
 		"contents": []any{map[string]any{
 			"uri":      ContextResourceURI,
 			"mimeType": "application/json",
 			"text":     boundText(text),
 		}},
 	})
-}
-
-func (s *Server) respond(out io.Writer, id json.RawMessage, result any, rpcErr *mcprpc.RPCError) error {
-	if rpcErr != nil {
-		return writeError(out, id, rpcErr.Code, rpcErr.Message)
-	}
-	return writeSuccess(out, id, result)
 }
 
 func writeSuccess(out io.Writer, id json.RawMessage, result any) error {
