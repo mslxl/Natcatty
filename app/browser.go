@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -92,10 +93,10 @@ func browserDownloadName(rawURL string) string {
 	return name
 }
 
-// errBrowserSessionUnavailable is returned when a Session has no saved Host to
-// route a browser through. The Session menu keeps Open Browser disabled in
-// that case, so this is a last line of defence rather than a normal path.
-var errBrowserSessionUnavailable = errors.New("app: the browser needs a saved SSH Host")
+// errBrowserSessionUnavailable is returned when a Session has no route a
+// browser can use. The Session menu keeps Open Browser disabled in that case,
+// so this is a last line of defence rather than a normal path.
+var errBrowserSessionUnavailable = errors.New("app: the browser needs a local or saved SSH Session")
 
 // errBrowserWindowUnavailable is returned when the native window that owns the
 // Session cannot make a web view. A real window always can; a fake host in a
@@ -179,6 +180,27 @@ type browserTunnel struct {
 func (t *browserTunnel) Done() <-chan struct{} { return t.lease.Done() }
 func (t *browserTunnel) Discard()              { _ = t.lease.Discard() }
 
+// localBrowserConnector routes a local Session's browser to this computer's
+// own services, as a Host's browser reaches the Host's: the tunnel dials
+// directly, through the same per-origin gateway and sandbox.
+type localBrowserConnector struct{}
+
+var _ appbrowser.Connector = localBrowserConnector{}
+
+func (localBrowserConnector) Connect(context.Context, model.HostID) (appbrowser.Tunnel, error) {
+	return &localBrowserTunnel{done: make(chan struct{})}, nil
+}
+
+// localBrowserTunnel dials this computer until it is discarded.
+type localBrowserTunnel struct {
+	net.Dialer
+	done    chan struct{}
+	discard sync.Once
+}
+
+func (t *localBrowserTunnel) Done() <-chan struct{} { return t.done }
+func (t *localBrowserTunnel) Discard()              { t.discard.Do(func() { close(t.done) }) }
+
 // browserWindow is the native window capability a page factory needs.
 type browserWindow interface {
 	NewWebView(mygo.WebViewOptions) (*mygo.WebView, error)
@@ -207,7 +229,16 @@ func (m *windowManager) windowForSession(id model.SessionID) hostWindow {
 // the connector, and the owning window supplies the page views.
 func openSessionBrowser(session *appsession.Session, windows *windowManager,
 	connector appbrowser.Connector, redraw func(), onClose func()) (sessionui.BrowserPanel, error) {
-	if session == nil || session.HostID() == "" {
+	if session == nil {
+		return nil, errBrowserSessionUnavailable
+	}
+	// Bookmarks and site icons are kept per Host; an unsaved local shell keeps
+	// them under this computer.
+	hostID := session.HostID()
+	if hostID == "" && session.Snapshot().Kind == appsession.KindLocal {
+		hostID = thisComputerID
+	}
+	if hostID == "" {
 		return nil, errBrowserSessionUnavailable
 	}
 	if windows == nil {
@@ -219,7 +250,7 @@ func openSessionBrowser(session *appsession.Session, windows *windowManager,
 		return nil, errBrowserWindowUnavailable
 	}
 	core := appbrowser.New(appbrowser.Config{
-		HostID:    session.HostID(),
+		HostID:    hostID,
 		Label:     session.Label(),
 		Connector: connector,
 		Redraw:    redraw,

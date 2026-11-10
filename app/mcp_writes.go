@@ -419,13 +419,10 @@ func (e *mcpWriteExecutor) openRemoteFiles(ctx context.Context,
 	if !ok {
 		return nil, fmt.Errorf("Session %q was not found.", sessionID)
 	}
-	if description.HostID == "" {
-		return nil, errors.New("SFTP requires a Session with a saved Host.")
-	}
 	if e.transfer == nil {
 		return nil, errors.New("SFTP is not available in this build.")
 	}
-	return e.transfer.OpenRemote(ctx, description.HostID, description.Label)
+	return openSessionFiles(ctx, e.transfer, description)
 }
 
 func (e *mcpWriteExecutor) transferBetween(ctx context.Context, tool string,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -138,7 +139,17 @@ func (f *fakeFiles) Close() error { return nil }
 
 type fakeTransfer struct {
 	files *fakeFiles
+	// local is this computer's filesystem, which a local Session's file
+	// tools work on.
+	local *fakeFiles
 	err   error
+}
+
+func (f fakeTransfer) OpenLocal(context.Context) (apptransfer.FileSystem, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.local, nil
 }
 
 func (f fakeTransfer) OpenRemote(context.Context, model.HostID, string) (apptransfer.FileSystem, error) {
@@ -455,7 +466,9 @@ func TestMCPSFTFReadsAreBounded(t *testing.T) {
 		Status: appsession.StatusRunning, Connected: true,
 	}}
 	bridge := newMCPReadBridge(fakeVault{}, fakeForwarding{},
-		fakeSessions{descriptions: descriptions}, fakeTransfer{files: files})
+		fakeSessions{descriptions: descriptions}, fakeTransfer{files: files, local: &fakeFiles{
+			entries: []domainsftp.Entry{{Name: "notes.txt", Path: "/Users/me/notes.txt", Kind: domainsftp.KindFile}},
+		}})
 
 	list := mustOK(t, callMap(t, bridge, "netcatty/sftp/list", map[string]any{"sessionId": "s1"}))
 	if len(list["entries"].([]any)) != maxMCPListEntries || list["truncated"] != true {
@@ -510,9 +523,11 @@ func TestMCPSFTFReadsAreBounded(t *testing.T) {
 	if home["homeDir"] != "/home/deploy" {
 		t.Fatalf("home = %v", home)
 	}
-	local := callMap(t, bridge, "netcatty/sftp/list", map[string]any{"sessionId": "s2"})
-	if local["ok"] != false {
-		t.Fatalf("local session SFTP = %v", local)
+	// A local Session's file tools work on this computer, as its Files panel
+	// does.
+	local := mustOK(t, callMap(t, bridge, "netcatty/sftp/list", map[string]any{"sessionId": "s2"}))
+	if !strings.Contains(fmt.Sprint(local), "notes.txt") {
+		t.Fatalf("local session SFTP = %v, want this computer's files", local)
 	}
 }
 

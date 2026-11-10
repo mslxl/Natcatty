@@ -72,9 +72,6 @@ type SideTarget struct {
 // SideTool is a side panel tool besides SFTP, such as Scripts or System.
 type SideTool struct {
 	ID SideToolID
-	// RemoteOnly keeps the tool off a local Session's panel: System reads a
-	// Host over SSH.
-	RemoteOnly bool
 	// View renders the tool for target about width DIPs wide.
 	View func(target SideTarget, width float32) func(*ui.Context)
 	// Hide, when set, is called once the tool is no longer drawn, so a tool
@@ -107,8 +104,7 @@ func (s *State) sftpToolAvailable() bool { return s.filesPanel != nil && s.files
 // SideTools lists the tools the Tab's open panel offers, in strip order. It
 // is empty when the panel is closed.
 func (s *State) SideTools(tab model.TabID) []SideToolID {
-	target, open := s.filesOpen[tab]
-	if !open {
+	if _, open := s.filesOpen[tab]; !open {
 		return nil
 	}
 	var ids []SideToolID
@@ -116,9 +112,6 @@ func (s *State) SideTools(tab model.TabID) []SideToolID {
 		ids = append(ids, SideSFTP)
 	}
 	for _, tool := range s.sideTools {
-		if tool.RemoteOnly && target.host == "" {
-			continue
-		}
 		ids = append(ids, tool.ID)
 	}
 	return ids

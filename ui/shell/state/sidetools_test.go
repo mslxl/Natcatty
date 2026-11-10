@@ -12,32 +12,40 @@ type sideProbe struct {
 	hidden  int
 }
 
-func (p *sideProbe) tool(id SideToolID, remoteOnly bool) SideTool {
-	tool := SideTool{ID: id, RemoteOnly: remoteOnly, View: func(target SideTarget, _ float32) func(*ui.Context) {
+func (p *sideProbe) tool(id SideToolID, sampled bool) SideTool {
+	tool := SideTool{ID: id, View: func(target SideTarget, _ float32) func(*ui.Context) {
 		p.targets = append(p.targets, target)
 		return func(*ui.Context) {}
 	}}
-	if remoteOnly {
+	if sampled {
 		tool.Hide = func() { p.hidden++ }
 	}
 	return tool
 }
 
-func TestSideToolsFollowSFTPAndSkipRemoteOnlyOnALocalTab(t *testing.T) {
+// A local Session's panel offers every tool a remote one does: System samples
+// this computer as it samples a Host.
+func TestSideToolsFollowSFTPOnLocalAndRemoteTabsAlike(t *testing.T) {
 	probe := &sideProbe{}
 	s := NewState(WithFilesPanel((&filesProbe{}).panel()),
 		WithSideTools(probe.tool(SideScripts, false), probe.tool(SideSystem, true)))
 	s.ToggleFiles("remote-tab", "h1", "Host one")
 	s.ToggleFiles("local-tab", "", "")
 
-	if got := s.SideTools("remote-tab"); !slices.Equal(got, []SideToolID{SideSFTP, SideScripts, SideSystem}) {
+	want := []SideToolID{SideSFTP, SideScripts, SideSystem}
+	if got := s.SideTools("remote-tab"); !slices.Equal(got, want) {
 		t.Fatalf("remote Tab tools = %v", got)
 	}
-	if got := s.SideTools("local-tab"); !slices.Equal(got, []SideToolID{SideSFTP, SideScripts}) {
-		t.Fatalf("local Tab tools = %v, want no System", got)
+	if got := s.SideTools("local-tab"); !slices.Equal(got, want) {
+		t.Fatalf("local Tab tools = %v, want %v", got, want)
 	}
 	if s.SideTool("remote-tab") != SideSFTP {
 		t.Fatalf("the first tool is %q, want SFTP", s.SideTool("remote-tab"))
+	}
+	s.SetSideTool("local-tab", SideSystem)
+	s.FilesView("local-tab", 300)
+	if len(probe.targets) != 1 || probe.targets[0].Host != "" {
+		t.Fatalf("System on the local Tab was pointed at %+v, want this computer", probe.targets)
 	}
 }
 
@@ -87,8 +95,8 @@ func TestEachTabRemembersItsToolAndAHiddenToolIsTold(t *testing.T) {
 
 	// A tool the Tab no longer offers falls back to the first one.
 	s.ToggleFiles("local", "", "")
-	s.SetSideTool("local", SideSystem)
+	s.SetSideTool("local", "gone")
 	if s.SideTool("local") != SideSFTP {
-		t.Fatalf("a local Tab shows %q", s.SideTool("local"))
+		t.Fatalf("a Tab that chose a missing tool shows %q", s.SideTool("local"))
 	}
 }

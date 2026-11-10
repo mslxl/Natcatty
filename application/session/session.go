@@ -698,6 +698,11 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	if spec.Kind == "" {
 		spec.Kind = KindLocal
 	}
+	if spec.Kind == KindLocal && spec.Reconnect == nil {
+		// A local shell restarts by hand as a remote Session reconnects, but
+		// never on its own: nothing drops between here and the shell.
+		spec.Reconnect = &ReconnectPolicy{ShouldRetry: func(End) bool { return false }}
+	}
 	if spec.Cols <= 0 {
 		spec.Cols = 80
 	}
@@ -705,7 +710,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		spec.Rows = 24
 	}
 	if spec.EncodingScope == "" {
-		if (spec.Kind == KindSSH || spec.Kind == KindTelnet) && spec.HostID != "" {
+		if (spec.Kind == KindSSH || spec.Kind == KindTelnet || spec.Kind == KindLocal) && spec.HostID != "" {
 			spec.EncodingScope = domainterminal.EncodingScopeHost(string(spec.HostID))
 		} else {
 			spec.EncodingScope = domainterminal.EncodingScopeLocal

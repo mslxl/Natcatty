@@ -81,9 +81,9 @@ type Options struct {
 	// ResumedView that replays the hibernated screen; nil claims the
 	// Session's one live view with AttachView.
 	View io.ReadWriteCloser
-	// Browser opens this Session's host-routed browser panel. Nil leaves the
-	// Session menu's Open Browser item disabled, as for a local Session with
-	// no saved Host route.
+	// Browser opens this Session's browser panel, routed through its Host or
+	// to this computer. Nil leaves the Session menu's Open Browser item
+	// disabled, as for a serial Session.
 	Browser func(onClose func()) (BrowserPanel, error)
 }
 
