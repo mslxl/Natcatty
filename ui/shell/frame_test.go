@@ -25,8 +25,7 @@ func wideContent(width, height float32) ui.Rect {
 
 func content(sidebar, width, height float32) ui.Rect {
 	if kit.CurrentStyle().Native() {
-		// The macOS sidebar is beside every Tab.
-		left, top := sidebarWidth+shellPadding, topBarHeight+shellPadding
+		left, top := sidebar+shellPadding, topBarHeight+shellPadding
 		return ui.Rect{X: left, Y: top, W: width - shellPadding - left, H: height - shellPadding - top}
 	}
 	left := sidebar + cardInset

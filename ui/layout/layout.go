@@ -11,9 +11,8 @@ import (
 	"github.com/mslxl/natcatty/ui/titlebar"
 )
 
-// SidebarWidth is the fixed width of the main window's navigation column.
-// In Classic only the home Tab has one, and SFTP and the terminal Tabs take
-// the window's width; the macOS style shows it beside every Tab.
+// SidebarWidth is the fixed width of the home Tab's navigation column. Only
+// the home Tab has one: SFTP and the terminal Tabs take the window's width.
 const SidebarWidth float32 = 220
 
 // ShellPadding is the distance from the body's edges to a surface's content:
@@ -78,8 +77,8 @@ type HomeSlots struct {
 }
 
 // HomeLayout is the main window's page body: the sidebar, and the raised,
-// rounded card the page draws in. The macOS style draws the page flush, with
-// no card; its sidebar is MainLayout's, beside every Tab.
+// rounded card the page draws in. The macOS style floats the sidebar, inset
+// on glass, beside the page drawn flush, with no card.
 func HomeLayout(c *ui.Context, slots HomeSlots) {
 	if kit.CurrentStyle().Native() {
 		nativeHome(c, slots)
@@ -110,6 +109,9 @@ func HomeLayout(c *ui.Context, slots HomeSlots) {
 func nativeHome(c *ui.Context, slots HomeSlots) {
 	t := c.Theme()
 	bodyRow(c, func() {
+		if slots.Sidebar != nil {
+			floatingSidebar(c, SidebarWidth, 0, 2, slots.Sidebar)
+		}
 		// The page fills the rest of the body, and its notices sit above
 		// it on its own background.
 		ui.Column(c).Grow(1).FillHeight().MinWidth(0).Background(t.Background).Children(func() {
@@ -163,12 +165,7 @@ func WorkLayout(c *ui.Context, slots WorkSlots) {
 	bodyRow(c, func() {
 		// The body paints its own background, so a vibrant window shows its
 		// material only beside the home pages, never around a terminal.
-		body := ui.Column(c).Grow(1).FillHeight().MinWidth(0).Background(c.Theme().Background)
-		if kit.CurrentStyle().Native() {
-			// Clear of the floating sidebar beside it.
-			body.Padding(0, 0, 0, CardGap)
-		}
-		body.Children(func() {
+		ui.Column(c).Grow(1).FillHeight().MinWidth(0).Background(c.Theme().Background).Children(func() {
 			if slots.Top != nil {
 				slots.Top()
 			}
