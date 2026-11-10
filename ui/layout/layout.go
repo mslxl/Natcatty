@@ -135,6 +135,26 @@ func floatingSidebar(c *ui.Context, width, top, gap float32, children func()) {
 	})
 }
 
+// insetPanel is the macOS style's docked panel: a raised, rounded card inset
+// from the window's edges, as the home sidebar floats, and set off from the
+// terminal beside it.
+func insetPanel(c *ui.Context, dock Dock, panel func()) func() {
+	return func() {
+		t := c.Theme()
+		outer := ui.Column(c).Fill().MinWidth(0).MinHeight(0)
+		top := float32(0)
+		if dock == DockBottom {
+			top = CardGap
+		}
+		outer.Padding(top, CardGap, CardGap, CardGap)
+		outer.Children(func() {
+			ui.Column(c).Fill().MinWidth(0).MinHeight(0).Radius(kit.M(c).Radius.Card).Clip().
+				Border(1, t.Border).Shadow(0, 1, 4, 0, kit.CardShadow(t)).Background(kit.Raised(t)).
+				Children(panel)
+		})
+	}
+}
+
 // Dock is the edge a WorkLayout's panel docks at.
 type Dock int
 
@@ -171,6 +191,9 @@ func WorkLayout(c *ui.Context, slots WorkSlots) {
 			}
 			if slots.Panes == nil {
 				return
+			}
+			if slots.Panel != nil && kit.CurrentStyle().Native() {
+				slots.Panel = insetPanel(c, slots.Dock, slots.Panel)
 			}
 			panes := func() { ui.Column(c).Fill().MinWidth(0).Children(slots.Panes) }
 			if slots.Panel == nil {

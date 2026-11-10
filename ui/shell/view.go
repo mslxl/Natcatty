@@ -70,7 +70,6 @@ func View(s *state.State) func(*ui.Context) {
 			HomeTabs: func() { homeTabs(c, s, m) },
 			Tabs:     func() { workTabs(c, s, m, t, reveal) },
 			Flush:    terminalVisible(s),
-			Actions:  windowActions(c, s, m),
 			Body:     func() { body(c, s, m, t) },
 		})
 
@@ -177,19 +176,6 @@ func homeSidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme)
 		SettingsLabel: m.NavSettings(),
 		Settings:      s.RequestSettings,
 	}
-}
-
-// windowActions are the Tab bar's actions, as the original's: the control
-// panel, a quiet icon button opening the window opacity and theme, and
-// Settings. The language is in Settings, as the original's.
-func windowActions(c *ui.Context, s *state.State, m locales.Messages) layout.Actions {
-	actions := layout.Actions{SettingsLabel: m.NavSettings(), Settings: s.RequestSettings}
-	if content := s.QuickControls(); content != nil {
-		actions.ControlsLabel = m.NavControlPanel()
-		actions.Controls = func() { content(c) }
-		actions.ControlsOpen = s.QuickControlsOpen()
-	}
-	return actions
 }
 
 // brand heads the sidebar: the app's mark and name.
@@ -344,48 +330,53 @@ func layoutDock(dock state.PanelDock) layout.Dock {
 func sidePanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	tab model.TabID, dock state.PanelDock, tool func(*ui.Context)) {
 	// The panel shares the terminal's background, as the original's, with a
-	// line under its strip.
-	ui.Column(c).Fill().MinWidth(0).Background(t.Background).Children(func() {
-		kit.Bar(c, kit.BarStrip).Padding(0, 6).Gap(4).Children(func() {
-			chosen := s.SideTool(tab)
-			for _, id := range s.SideTools(tab) {
-				icon, label := sideToolFace(m, id)
-				// The strip changes with the target: a local Session has no
-				// System, so each button keeps its tool's identity.
-				c.Key("side-tool-" + string(id))
-				if sidePanelButton(c, icon, label, id == chosen).Clicked() && id != chosen {
-					s.SetSideTool(tab, id)
-					c.Invalidate()
-				}
+	// line under its strip; the macOS style raises it as a card.
+	ui.Column(c).Fill().MinWidth(0).Background(kit.CardInnerFill(t, t.Background)).Children(func() {
+		ids := s.SideTools(tab)
+		chosen, tools := -1, make([]kit.Segment, len(ids))
+		for i, id := range ids {
+			icon, label := sideToolFace(m, id)
+			// The strip changes with the target: a local Session has no
+			// System, so each button keeps its tool's identity.
+			tools[i] = kit.Segment{Key: "side-tool-" + string(id), Label: label, Icon: icon}
+			if id == s.SideTool(tab) {
+				chosen = i
 			}
-			ui.Column(c).Grow(1)
-			icon := icons.PanelLeft
-			switch dock {
-			case state.DockRight:
-				icon = icons.PanelRight
-			case state.DockBottom:
-				icon = icons.PanelBottom
-			}
-			sidePanelButton(c, icon, m.SettingsSidePanelDock(), false).Menu(func(menu *ui.Menu) {
-				for _, option := range []struct {
-					dock  state.PanelDock
-					label string
-				}{
-					{state.DockLeft, m.SettingsDockLeft()},
-					{state.DockRight, m.SettingsDockRight()},
-					{state.DockBottom, m.SettingsDockBottom()},
-				} {
-					if menu.Item(option.label).Checked(dock == option.dock).Chosen() {
-						s.SetFilesDock(option.dock)
-					}
-				}
-			})
-			if sidePanelButton(c, icons.X, m.SidePanelClose(), false).Clicked() {
-				s.CloseFiles(tab)
-			}
-		})
+		}
+		if kit.ToolStrip(c, tools, &chosen, m.SessionFilesPanel(), func() { sidePanelControls(c, s, m, tab, dock) }) {
+			s.SetSideTool(tab, ids[chosen])
+			c.Invalidate()
+		}
 		ui.Column(c).FillWidth().Grow(1).MinHeight(0).Children(func() { tool(c) })
 	})
+}
+
+// sidePanelControls are the side panel's dock menu and close button.
+func sidePanelControls(c *ui.Context, s *state.State, m locales.Messages, tab model.TabID, dock state.PanelDock) {
+	icon := icons.PanelLeft
+	switch dock {
+	case state.DockRight:
+		icon = icons.PanelRight
+	case state.DockBottom:
+		icon = icons.PanelBottom
+	}
+	sidePanelButton(c, icon, m.SettingsSidePanelDock()).Menu(func(menu *ui.Menu) {
+		for _, option := range []struct {
+			dock  state.PanelDock
+			label string
+		}{
+			{state.DockLeft, m.SettingsDockLeft()},
+			{state.DockRight, m.SettingsDockRight()},
+			{state.DockBottom, m.SettingsDockBottom()},
+		} {
+			if menu.Item(option.label).Checked(dock == option.dock).Chosen() {
+				s.SetFilesDock(option.dock)
+			}
+		}
+	})
+	if sidePanelButton(c, icons.X, m.SidePanelClose()).Clicked() {
+		s.CloseFiles(tab)
+	}
 }
 
 // sideToolFace is a side panel tool's icon and name in the strip.
@@ -405,10 +396,9 @@ func sideToolFace(m locales.Messages, id state.SideToolID) (string, string) {
 	return icons.FolderTree, "SFTP"
 }
 
-// sidePanelButton is one of the strip's 28-DIP icon buttons; the active
-// tool is marked as selected.
-func sidePanelButton(c *ui.Context, icon, label string, active bool) ui.Element {
-	return kit.IconButtonWith(c, icon, label, kit.IconOptions{Role: kit.IconCard, Selected: active})
+// sidePanelButton is one of the strip's 28-DIP icon buttons.
+func sidePanelButton(c *ui.Context, icon, label string) ui.Element {
+	return kit.IconButtonWith(c, icon, label, kit.IconOptions{Role: kit.IconCard})
 }
 
 // sessionTone is the color of a Session's status dot: green while it runs

@@ -55,7 +55,8 @@ func Segmented(c *ui.Context, role SegmentedRole, chosen *int, label string, seg
 		if CurrentStyle().Native() {
 			// A macOS segmented control: the choices on a sunken capsule,
 			// the chosen one raised.
-			row.Padding(2).Gap(2).Radius(M(c).Radius.Pill).Background(Subtle(t))
+			// It is shaded from whatever it sits on, as a page or a card.
+			row.Padding(2).Gap(2).Radius(M(c).Radius.Pill).Background(t.Text.Alpha(0.07))
 		}
 	case SegmentedTrack:
 		row.Padding(2).Gap(2).Radius(M(c).Radius.Control).Background(Subtle(t))
@@ -82,6 +83,9 @@ func Segmented(c *ui.Context, role SegmentedRole, chosen *int, label string, seg
 					button.Size(32, M(c).Control.Large-4).Radius(M(c).Radius.Pill)
 				}
 				switch {
+				case on && native && t.Dark:
+					// A dark surface is no lighter than the track under it.
+					button.Background(t.Text.Alpha(0.18)).TextColor(t.Text)
 				case on && native:
 					button.Background(t.Surface).TextColor(t.Text).Shadow(0, 1, 2, 0, CardShadow(t))
 				case on:
@@ -118,6 +122,38 @@ func Segmented(c *ui.Context, role SegmentedRole, chosen *int, label string, seg
 				*chosen, changed = i, true
 			}
 		}
+	})
+	return changed
+}
+
+// ToolStrip is the head of a panel that shows one of several tools, as a
+// terminal's side panel: the tools, of which *chosen is the index of the
+// one shown, then end's controls at the strip's end. Classic draws the tools
+// as icon buttons, the chosen one tinted, over a rule; the macOS style as a
+// segmented control. Each tool's Key keys its button. ToolStrip reports a
+// click on another tool, which sets *chosen.
+func ToolStrip(c *ui.Context, tools []Segment, chosen *int, label string, end func()) bool {
+	changed := false
+	if CurrentStyle().Native() {
+		ui.Row(c).FillWidth().Height(M(c).Bar.Strip+4).Shrink(0).Padding(0, 8).Gap(4).
+			AlignItems(ui.Center).Children(func() {
+			changed = Segmented(c, SegmentedIcons, chosen, label, tools)
+			ui.Column(c).Grow(1)
+			end()
+		})
+		return changed
+	}
+	Bar(c, BarStrip).Padding(0, 6).Gap(4).Children(func() {
+		for i, tool := range tools {
+			if tool.Key != "" {
+				c.Key(tool.Key)
+			}
+			if IconButtonWith(c, tool.Icon, tool.Label, IconOptions{Role: IconCard, Selected: i == *chosen}).Clicked() && i != *chosen {
+				*chosen, changed = i, true
+			}
+		}
+		ui.Column(c).Grow(1)
+		end()
 	})
 	return changed
 }

@@ -613,11 +613,25 @@ func TestTabBarLeavesTheWindowControlsTheirCorner(t *testing.T) {
 	tt := ui.NewTester(View(state.NewState()), width, 600)
 	tt.SetLocale("en")
 	tt.Frame()
-	rect, ok := tt.Find(locales.In("en").NavSettings())
+	rect, ok := tt.Find(locales.In("en").MenuNewTab())
 	if !ok {
-		t.Fatalf("no Settings button: %v", tt.Texts())
+		t.Fatalf("no New Tab button: %v", tt.Texts())
 	}
 	if rect.Y >= topBarHeight || rect.X+rect.W > width-titlebar.Room+0.5 {
-		t.Fatalf("Settings at %+v, under the window controls", rect)
+		t.Fatalf("New Tab at %+v, under the window controls", rect)
+	}
+}
+
+// TestTabBarHoldsOnlyTabs keeps Settings and the control panel out of the
+// Tab bar: Settings is in the home sidebar, the app menu, and its shortcut.
+func TestTabBarHoldsOnlyTabs(t *testing.T) {
+	tt := ui.NewTester(View(state.NewState()), 900, 600)
+	tt.SetLocale("en")
+	tt.Frame()
+	m := locales.In("en")
+	for _, label := range []string{m.NavSettings(), m.NavControlPanel()} {
+		if rect, ok := tt.Find(label); ok && rect.Y < topBarHeight {
+			t.Fatalf("the Tab bar holds %q at %+v", label, rect)
+		}
 	}
 }
