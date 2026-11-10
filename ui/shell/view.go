@@ -265,13 +265,7 @@ func controlPanel(c *ui.Context, s *state.State, m locales.Messages) {
 		return
 	}
 	open := s.QuickControlsOpen()
-	// An open panel tints its glass capsule in the macOS style, and shades
-	// the Classic button a little lighter than a press.
-	native := kit.CurrentStyle().Native()
-	button := kit.IconButtonWith(c, icons.SlidersHorizontal, m.NavControlPanel(), kit.IconOptions{Role: kit.IconBar, On: *open && native, Key: "bar-control-panel"})
-	if *open && !native {
-		button.Background(c.Theme().Text.Alpha(0.1))
-	}
+	button := kit.IconButtonWith(c, icons.SlidersHorizontal, m.NavControlPanel(), kit.IconOptions{Role: kit.IconBar, On: *open, Key: "bar-control-panel"})
 	if button.Clicked() {
 		*open = !*open
 		c.Invalidate()
