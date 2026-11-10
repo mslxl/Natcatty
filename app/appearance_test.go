@@ -185,7 +185,10 @@ func TestWindowManagerAppliesTheInterfaceStyleEachFrame(t *testing.T) {
 	}
 }
 
-func TestWindowManagerShowsTheSidebarVibrancyOnlyForAnOpaqueMacOSWindow(t *testing.T) {
+// TestWindowManagerShowsNoVibrancyInEitherStyle keeps every window on the
+// theme's colors: the system material follows the desktop's light or dark
+// mode, not the theme.
+func TestWindowManagerShowsNoVibrancyInEitherStyle(t *testing.T) {
 	host := &fakeWindowHost{}
 	manager := newWindowManager(host, fakeConfirmer{}, nil, nil,
 		func() func(*ui.Context) { return func(*ui.Context) {} },
@@ -193,20 +196,9 @@ func TestWindowManagerShowsTheSidebarVibrancyOnlyForAnOpaqueMacOSWindow(t *testi
 	stored := kit.StyleMacOS
 	manager.SetStyleProvider(func() kit.Style { return kit.StyleFor(stored) })
 	main := manager.OpenMain().(*fakeWindow)
-	if main.vibrancy != mygo.VibrancySidebar {
-		t.Fatalf("a new macOS window's vibrancy = %q, want sidebar", main.vibrancy)
-	}
-
-	// A see-through window would show the desktop through the material too.
-	manager.SetOpacity(0.8)
 	if main.vibrancy != mygo.VibrancyNone {
-		t.Fatalf("vibrancy at 80%% opacity = %q, want none", main.vibrancy)
+		t.Fatalf("a new macOS window's vibrancy = %q, want none", main.vibrancy)
 	}
-	manager.SetOpacity(1)
-	if main.vibrancy != mygo.VibrancySidebar {
-		t.Fatalf("vibrancy back at full opacity = %q, want sidebar", main.vibrancy)
-	}
-
 	stored = kit.StyleClassic
 	manager.SyncStyle()
 	if main.vibrancy != mygo.VibrancyNone {

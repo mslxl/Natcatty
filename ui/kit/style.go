@@ -85,9 +85,11 @@ func (classic) Material(role SurfaceRole) Material {
 	return Material{Kind: MaterialOpaque}
 }
 
-// macOS is the macOS 27 style: the window's vibrancy behind a floating glass
-// sidebar, Liquid Glass bars and overlays, and a hierarchy drawn with fills
-// more than with lines.
+// macOS is the macOS 27 style: a floating sidebar panel, Liquid Glass bar
+// buttons and overlays, and a hierarchy drawn with fills more than with
+// lines. The window and its sidebar take the theme's own colors rather than
+// the system's vibrancy, which follows the desktop's light or dark mode and
+// never the theme preset's colors.
 type macOS struct{}
 
 func (macOS) ID() string       { return StyleMacOS }
@@ -96,9 +98,7 @@ func (macOS) Native() bool     { return true }
 
 func (macOS) Material(role SurfaceRole) Material {
 	switch role {
-	case SurfaceWindow:
-		return Material{Kind: MaterialVibrant}
-	case SurfaceSidebar, SurfaceBar, SurfaceOverlay:
+	case SurfaceBar, SurfaceOverlay:
 		return Material{Kind: MaterialGlass, Paint: glass.Glass{Style: glass.Regular}}
 	case SurfaceScrollEdge:
 		return Material{Kind: MaterialGlass, Paint: glass.ScrollEdge{}}
