@@ -1559,6 +1559,7 @@ func DefaultConvergentFamilies() []ConvergentFamily {
 		{Name: "identities", KeyFields: []string{"id"}},
 		{Name: "proxyProfiles", KeyFields: []string{"id"}},
 		{Name: "networkProfiles", KeyFields: []string{"id"}},
+		{Name: "dataProfiles", KeyFields: []string{"id"}},
 		{Name: "snippets", KeyFields: []string{"id"}},
 		{Name: "groups", KeyFields: []string{"path"}},
 		{Name: "snippetPackages", KeyFields: []string{"path"}},

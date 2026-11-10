@@ -11,13 +11,17 @@ const (
 	SysManagerTmux      SysManagerTab = "tmux"
 	SysManagerDocker    SysManagerTab = "docker"
 	SysManagerGPU       SysManagerTab = "gpu"
+	// SysManagerExtensions is the host-owned Extensions tab. It is one fixed
+	// canonical tab, appended after the seven built-ins, so order and
+	// visibility persist exactly like a built-in tab.
+	SysManagerExtensions SysManagerTab = "extensions"
 )
 
 // SysManagerTabs lists every known tab in the original's default display
 // order. The first four are ticket 45's core; tmux, Docker, and GPU follow.
 var SysManagerTabs = []SysManagerTab{
 	SysManagerOverview, SysManagerProcesses, SysManagerPorts, SysManagerServices,
-	SysManagerTmux, SysManagerDocker, SysManagerGPU,
+	SysManagerTmux, SysManagerDocker, SysManagerGPU, SysManagerExtensions,
 }
 
 // SysManagerLockedTabs lists tabs the user cannot hide. The overview stays
@@ -50,6 +54,9 @@ type SysManager struct {
 	TmuxInterval      int `json:"tmuxInterval"`
 	DockerInterval    int `json:"dockerInterval"`
 	GPUInterval       int `json:"gpuInterval"`
+	// The host-owned Extensions tab has no sampler of its own: every plugin
+	// section keeps the cadence its manifest declares, so there is no tab-level
+	// interval to persist here.
 	// TabOrder lists every known tab in display order. NormalizeSysManager
 	// guarantees each known tab appears exactly once.
 	TabOrder []string `json:"tabOrder"`

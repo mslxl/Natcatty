@@ -59,7 +59,10 @@ type jsonHost struct {
 	SkipEcdsaHostKey       bool            `json:"skipEcdsaHostKey"`
 	Algorithms             *jsonAlgorithms `json:"algorithms"`
 	DeviceType             string          `json:"deviceType"`
-	HostChain              *struct {
+	// PluginData is retained as raw JSON so this package never interprets a
+	// provider's fields. The application validates the structural subset.
+	PluginData json.RawMessage `json:"pluginData"`
+	HostChain  *struct {
 		HostIDs []string `json:"hostIds"`
 	} `json:"hostChain"`
 }
@@ -257,6 +260,7 @@ func parseJSON(text string) Result {
 			LegacyAlgorithms:       source.LegacyAlgorithms,
 			SkipEcdsaHostKey:       source.SkipEcdsaHostKey,
 			DeviceType:             strings.TrimSpace(source.DeviceType),
+			PluginData:             append([]byte(nil), source.PluginData...),
 		}
 		if source.Algorithms != nil {
 			record.Algorithms = &Algorithms{

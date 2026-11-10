@@ -81,6 +81,7 @@ const (
 	TableSnippetPackages = "snippet_packages"
 	TableNotes           = "vault_notes"
 	TableNoteGroups      = "note_groups"
+	TableDataProfiles    = "data_profiles"
 	TableSecrets         = "secret_values"
 	TableCryptoKeys      = "crypto_keys"
 )
@@ -88,6 +89,7 @@ const (
 // Tables is the fixed set a Snapshot may contain, in canonical order.
 var Tables = []string{
 	TableCryptoKeys,
+	TableDataProfiles,
 	TableForwardingRules,
 	TableGroups,
 	TableHosts,
@@ -109,7 +111,7 @@ var Tables = []string{
 // predates it. A reader must treat a missing optional table as empty. No
 // existing table is optional, so absence still fails validation for them.
 func OptionalTable(name string) bool {
-	return name == TableNetworkProfiles
+	return name == TableNetworkProfiles || name == TableDataProfiles
 }
 
 func knownTable(name string) bool {
@@ -212,13 +214,14 @@ type Counts struct {
 	SnippetPackages int `json:"snippetPackages"`
 	Notes           int `json:"notes"`
 	NoteGroups      int `json:"noteGroups"`
+	DataProfiles    int `json:"dataProfiles"`
 }
 
 // Total reports how many Vault records the snapshot carries.
 func (c Counts) Total() int {
 	return c.Hosts + c.Groups + c.Keys + c.Identities + c.ProxyProfiles +
 		c.NetworkProfiles + c.KnownHosts + c.ForwardingRules + c.Snippets +
-		c.SnippetPackages + c.Notes + c.NoteGroups
+		c.SnippetPackages + c.Notes + c.NoteGroups + c.DataProfiles
 }
 
 // Summary describes one stored backup without its encrypted payload.
@@ -372,6 +375,8 @@ func (s Snapshot) Counts() Counts {
 			counts.Notes = rows
 		case TableNoteGroups:
 			counts.NoteGroups = rows
+		case TableDataProfiles:
+			counts.DataProfiles = rows
 		}
 	}
 	return counts

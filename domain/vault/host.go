@@ -11,6 +11,8 @@ import (
 	"unicode"
 
 	"github.com/mslxl/natcatty/domain/model"
+	"github.com/mslxl/natcatty/domain/model/plugindata"
+	protocolmodel "github.com/mslxl/natcatty/domain/model/protocol"
 )
 
 // Protocol is the connection protocol a Host uses. Serial and network-device
@@ -19,16 +21,16 @@ type Protocol string
 
 const (
 	// ProtocolSSH is a Host reached over SSH.
-	ProtocolSSH Protocol = "ssh"
+	ProtocolSSH Protocol = Protocol(protocolmodel.SSH)
 	// ProtocolTelnet is a Host reached over Telnet.
-	ProtocolTelnet Protocol = "telnet"
+	ProtocolTelnet Protocol = Protocol(protocolmodel.Telnet)
 	// ProtocolLocal is a shell that runs on this machine.
-	ProtocolLocal Protocol = "local"
+	ProtocolLocal Protocol = Protocol(protocolmodel.Local)
 	// ProtocolMosh is an SSH Host that swaps to Mosh after the bootstrap.
-	ProtocolMosh Protocol = "mosh"
-	// ProtocolET is an SSH Host reached through the in-process
-	// EternalTerminal transport.
-	ProtocolET Protocol = "et"
+	ProtocolMosh Protocol = Protocol(protocolmodel.Mosh)
+	// ProtocolET is an SSH Host reached through the EternalTerminal
+	// transport, bundled or in process.
+	ProtocolET Protocol = Protocol(protocolmodel.ET)
 )
 
 // Limits keep a malformed Host from entering the Vault. They are generous
@@ -186,12 +188,17 @@ const (
 // field-secret store, and the Host carries only the non-secret HasPassword
 // flag. Nothing on this struct is ever credential plaintext.
 type Host struct {
-	ID       model.HostID `json:"id"`
-	Label    string       `json:"label"`
-	Hostname string       `json:"hostname"`
-	Port     int          `json:"port"`
-	Username string       `json:"username"`
-	Protocol Protocol     `json:"protocol"`
+	ID model.HostID `json:"id"`
+	// CreatedBy names the plugin that created this Host through the hosts
+	// host service. It is empty for a Host the user created in the Vault UI.
+	// The host service uses it to let a plugin read and update the Hosts it
+	// created without a per-Host grant; it never grants access to other Hosts.
+	CreatedBy string   `json:"createdBy,omitempty"`
+	Label     string   `json:"label"`
+	Hostname  string   `json:"hostname"`
+	Port      int      `json:"port"`
+	Username  string   `json:"username"`
+	Protocol  Protocol `json:"protocol"`
 	// Group is the Host Group path, "" for the Vault root. It is derived from
 	// the group tree when a Host is read or written to a portable payload;
 	// storage keeps only GroupID. A legacy record written before IDs existed
@@ -275,24 +282,31 @@ type Host struct {
 	// clock never reorders this one's Recently Connected list. Zero means the
 	// Host has never been connected. The integer form matches the original's
 	// payload, so an upstream export imports without conversion.
-	LastConnectedAt int64     `json:"lastConnectedAt,omitempty"`
-	OrderKey        int64     `json:"orderKey"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	LastConnectedAt int64 `json:"lastConnectedAt,omitempty"`
+	OrderKey        int64 `json:"orderKey"`
+	// PluginData is the host-opaque structural data provider-defined fields
+	// carry, keyed by Plugin ID. The host never interprets its contents; a
+	// missing provider leaves it dormant and read-only instead of deleting it.
+	PluginData plugindata.Map `json:"pluginData,omitempty"`
+	CreatedAt  time.Time      `json:"createdAt"`
+	UpdatedAt  time.Time      `json:"updatedAt"`
 }
 
 // Draft is the editable part of a Host: what a create or edit form supplies.
 // The application layer owns the identity and timestamps.
 type Draft struct {
-	Label    string
-	Hostname string
-	Port     int
-	Username string
-	Protocol Protocol
-	Group    string
-	Tags     []string
-	Notes    string
-	Pinned   bool
+	// CreatedBy carries the creating plugin id when the hosts host service
+	// creates the record. User-facing editors leave it empty.
+	CreatedBy string
+	Label     string
+	Hostname  string
+	Port      int
+	Username  string
+	Protocol  Protocol
+	Group     string
+	Tags      []string
+	Notes     string
+	Pinned    bool
 	// IdentityID, KeyID, AuthMethod, UseSSHAgent, and RequiresMFA select how
 	// the Host authenticates. They carry references only, never material.
 	IdentityID  model.IdentityID
@@ -336,6 +350,10 @@ type Draft struct {
 	// ETPort is the EternalTerminal server port. Zero means the default and is
 	// kept only for ProtocolET.
 	ETPort int
+	// PluginData carries plugin-owned data through an import. It is not a form
+	// field: an ordinary editor leaves it nil, and the Vault's update path
+	// preserves the stored value instead of replacing it from the draft.
+	PluginData plugindata.Map
 	// Password is plaintext form input. The Vault application encrypts it
 	// into the field-secret store; it is never copied onto Host or written
 	// to the JSON tail. An empty value on Update keeps the stored password.
@@ -579,9 +597,11 @@ func (h Host) AutoAttachTmuxEnabled() bool {
 }
 
 func validateFields(draft Draft) error {
-	switch draft.Protocol {
-	case ProtocolSSH, ProtocolTelnet, ProtocolLocal, ProtocolMosh, ProtocolET:
-	default:
+	// The registry owns the built-in set and the namespaced provider shape, so
+	// a new protocol does not require editing Host validation. Provider
+	// availability is resolved when the Session opens, not here: a Host saved
+	// with an unavailable provider must stay readable and repairable.
+	if !protocolmodel.ValidHostID(protocolmodel.ID(draft.Protocol)) {
 		return validation(FieldProtocol, RuleUnsupported)
 	}
 
@@ -924,14 +944,13 @@ func normalizeTags(tags []string) []string {
 }
 
 func defaultPort(protocol Protocol) int {
-	switch protocol {
-	case ProtocolTelnet:
-		return 23
-	case ProtocolLocal:
-		return 0
-	default:
-		return 22
+	if descriptor, ok := protocolmodel.Lookup(protocolmodel.ID(protocol)); ok {
+		return descriptor.DefaultPort
 	}
+	// A protocol this build does not know has no descriptor. Keep the
+	// historical SSH default so a forward-written record shows a usable port
+	// while the transport still fails closed when the Session opens.
+	return 22
 }
 
 // EffectivePort returns the port a connection uses. A Host with a port of its
@@ -950,11 +969,8 @@ func EffectivePort(protocol Protocol, port int) int {
 // and EternalTerminal all bootstrap through SSH; Telnet and a Local shell do
 // not, so their editors must not show those controls.
 func (p Protocol) UsesSSHAuth() bool {
-	switch p {
-	case ProtocolSSH, ProtocolMosh, ProtocolET:
-		return true
-	}
-	return false
+	descriptor, ok := protocolmodel.Lookup(protocolmodel.ID(p))
+	return ok && descriptor.UsesSSHAuth
 }
 
 func validation(field Field, rule Rule) error {

@@ -213,6 +213,11 @@ type Record struct {
 	// DeviceType is the original Host Details "Network Device Mode" value.
 	// Empty is an ordinary SSH Host.
 	DeviceType string
+	// PluginData is the raw host-opaque pluginData container from a Netcatty
+	// JSON document. nil means the document carried no property. The parser
+	// never interprets it; the application decodes the structural subset and
+	// preserves unknown namespaces and fields.
+	PluginData []byte
 }
 
 // Algorithms is a Host's advanced SSH algorithm selection. A non-empty

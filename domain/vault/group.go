@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mslxl/natcatty/domain/model"
+	protocolmodel "github.com/mslxl/natcatty/domain/model/protocol"
 )
 
 // Group is one Host Group: a user-defined grouping of Hosts with shared
@@ -111,10 +112,11 @@ func NormalizeGroupDraft(draft GroupDraft) (GroupDraft, error) {
 	if err := validateText(FieldUsername, draft.Username, maxUsernameLength, false); err != nil {
 		return GroupDraft{}, err
 	}
-	switch draft.Protocol {
-	case "", ProtocolSSH, ProtocolTelnet:
-	default:
-		return GroupDraft{}, validation(FieldProtocol, RuleUnsupported)
+	if draft.Protocol != "" {
+		descriptor, ok := protocolmodel.Lookup(protocolmodel.ID(draft.Protocol))
+		if !ok || !descriptor.GroupDefault {
+			return GroupDraft{}, validation(FieldProtocol, RuleUnsupported)
+		}
 	}
 	switch draft.AuthMethod {
 	case "", HostAuthAuto, HostAuthPassword, HostAuthKey, HostAuthCertificate:

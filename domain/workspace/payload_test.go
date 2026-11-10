@@ -6,11 +6,16 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/mslxl/natcatty/domain/model"
 	domainserial "github.com/mslxl/natcatty/domain/model/serial"
 )
 
 func validDescriptor() SessionDescriptor {
 	return SessionDescriptor{Kind: SessionSSH, HostID: "h1", Hostname: "example.com", Port: 22, Username: "root", Label: "web"}
+}
+
+func restoredSessionPane(id string, descriptor SessionDescriptor) RestoredPane {
+	return RestoredPane{ID: model.PaneID(id), PaneDescriptor: NewSessionPaneDescriptor(descriptor)}
 }
 
 func TestSanitizePayloadKeepsAValidWorkspace(t *testing.T) {
@@ -26,9 +31,9 @@ func TestSanitizePayloadKeepsAValidWorkspace(t *testing.T) {
 			{ID: "t2", Number: 2, Title: "work", GeneratedTitle: true, Copy: 1, Root: root, FocusPath: []int{1}},
 		},
 		Panes: []RestoredPane{
-			{ID: "p1", Session: validDescriptor()},
-			{ID: "p2", Session: SessionDescriptor{Kind: SessionLocal, Number: 3, Dir: "/tmp"}},
-			{ID: "p3", Session: validDescriptor()},
+			restoredSessionPane("p1", validDescriptor()),
+			restoredSessionPane("p2", SessionDescriptor{Kind: SessionLocal, Number: 3, Dir: "/tmp"}),
+			restoredSessionPane("p3", validDescriptor()),
 		},
 	}
 
@@ -58,7 +63,7 @@ func TestSanitizePayloadIsSafeWithACorruptPayload(t *testing.T) {
 			payload: Payload{
 				Version: 99,
 				Tabs:    []RestoredTab{{ID: "t", Root: NewPaneNode("p")}},
-				Panes:   []RestoredPane{{ID: "p", Session: good}},
+				Panes:   []RestoredPane{restoredSessionPane("p", good)},
 			},
 			want: 0,
 		},
@@ -78,7 +83,7 @@ func TestSanitizePayloadIsSafeWithACorruptPayload(t *testing.T) {
 					ID:   "t",
 					Root: NewSplitNode("s", Vertical, 50, NewPaneNode("p"), NewPaneNode("p")),
 				}},
-				Panes: []RestoredPane{{ID: "p", Session: good}},
+				Panes: []RestoredPane{restoredSessionPane("p", good)},
 			},
 			want: 1,
 		},
@@ -90,7 +95,7 @@ func TestSanitizePayloadIsSafeWithACorruptPayload(t *testing.T) {
 					{ID: "t", Root: NewPaneNode("p")},
 					{ID: "t", Root: NewPaneNode("q")},
 				},
-				Panes: []RestoredPane{{ID: "p", Session: good}, {ID: "q", Session: good}},
+				Panes: []RestoredPane{restoredSessionPane("p", good), restoredSessionPane("q", good)},
 			},
 			want: 1,
 		},
@@ -116,9 +121,9 @@ func TestSanitizePayloadRepairsFocusAndSplitIdentity(t *testing.T) {
 			{ID: "t", Root: root, FocusPath: []int{0, 0}},
 		},
 		Panes: []RestoredPane{
-			{ID: "p1", Session: validDescriptor()},
-			{ID: "p2", Session: validDescriptor()},
-			{ID: "p3", Session: validDescriptor()},
+			restoredSessionPane("p1", validDescriptor()),
+			restoredSessionPane("p2", validDescriptor()),
+			restoredSessionPane("p3", validDescriptor()),
 		},
 	}
 
@@ -148,8 +153,8 @@ func TestSanitizePayloadDropsInvalidSessionKinds(t *testing.T) {
 			{ID: "t", Root: NewSplitNode("s", Vertical, 50, NewPaneNode("ssh"), NewPaneNode("bad"))},
 		},
 		Panes: []RestoredPane{
-			{ID: "ssh", Session: validDescriptor()},
-			{ID: "bad", Session: SessionDescriptor{Kind: "telnet"}},
+			restoredSessionPane("ssh", validDescriptor()),
+			restoredSessionPane("bad", SessionDescriptor{Kind: "telnet"}),
 		},
 	}
 	got := SanitizePayload(payload)
@@ -257,11 +262,14 @@ func TestPayloadJSONRoundTrips(t *testing.T) {
 		Tabs: []RestoredTab{
 			{ID: "t", Number: 1, AutoTitle: true, Root: NewPaneNode("p1"), FocusPath: []int{}},
 		},
-		Panes: []RestoredPane{{ID: "p1", Session: validDescriptor()}},
+		Panes: []RestoredPane{restoredSessionPane("p1", validDescriptor())},
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`"kind":"session"`)) {
+		t.Fatalf("payload JSON = %s, want an explicit Session content kind", data)
 	}
 	var decoded Payload
 	if err := json.Unmarshal(data, &decoded); err != nil {
@@ -269,6 +277,97 @@ func TestPayloadJSONRoundTrips(t *testing.T) {
 	}
 	if got := SanitizePayload(decoded); !reflect.DeepEqual(got, SanitizePayload(payload)) {
 		t.Fatalf("round trip = %+v, want %+v", got, payload)
+	}
+}
+
+// TestSanitizePayloadTreatsLegacyPanesAsSessions: a payload written before
+// content kinds existed has no kind field; it must restore as Session content
+// with the kind made explicit.
+func TestSanitizePayloadTreatsLegacyPanesAsSessions(t *testing.T) {
+	const legacy = `{
+		"version": 1,
+		"activeTab": 0,
+		"tabs": [{"id": "t", "number": 1, "root": {"type": "pane", "paneId": "p"}}],
+		"panes": [{"id": "p", "session": {"kind": "ssh", "hostId": "h1",
+			"hostname": "example.com", "port": 22, "username": "root"}}]
+	}`
+	var payload Payload
+	if err := json.Unmarshal([]byte(legacy), &payload); err != nil {
+		t.Fatal(err)
+	}
+	got := SanitizePayload(payload)
+	if len(got.Tabs) != 1 || len(got.Panes) != 1 {
+		t.Fatalf("sanitized legacy payload = %+v, want one tab and one pane", got)
+	}
+	pane := got.Panes[0]
+	if pane.Kind != PaneKindSession {
+		t.Fatalf("legacy pane kind = %q, want %q", pane.Kind, PaneKindSession)
+	}
+	session, ok := pane.SessionContent()
+	if !ok || !session.Valid() || session.Kind != SessionSSH {
+		t.Fatalf("legacy pane session = %+v, %v; want a valid SSH Session", session, ok)
+	}
+}
+
+// TestSanitizePayloadKeepsUnsupportedKindsAsUnavailable: a View or an unknown
+// content kind never drops its Pane or blocks the Workspace; it becomes an
+// unavailable placeholder.
+func TestSanitizePayloadKeepsUnsupportedKindsAsUnavailable(t *testing.T) {
+	root := NewSplitNode("s", Vertical, 50,
+		NewPaneNode("session"), NewPaneNode("view"))
+	root = NewSplitNode("s2", Vertical, 50, root, NewPaneNode("unknown"))
+	payload := Payload{
+		Version:   PayloadVersion,
+		ActiveTab: 0,
+		Tabs:      []RestoredTab{{ID: "t", Root: root, FocusPath: []int{0}}},
+		Panes: []RestoredPane{
+			restoredSessionPane("session", validDescriptor()),
+			{ID: "view", PaneDescriptor: PaneDescriptor{
+				Kind: PaneKindView,
+				View: &ViewPaneDescriptor{ViewID: "acme.notes", ContextKey: "global"},
+			}},
+			{ID: "unknown", PaneDescriptor: PaneDescriptor{Kind: "future-kind"}},
+		},
+	}
+	got := SanitizePayload(payload)
+	if len(got.Tabs) != 1 || len(got.Panes) != 3 {
+		t.Fatalf("sanitized payload = %+v, want the full split layout", got)
+	}
+	if ids := CollectPaneIDs(got.Tabs[0].Root); !reflect.DeepEqual(ids,
+		[]model.PaneID{"session", "view", "unknown"}) {
+		t.Fatalf("panes = %v, want all three leaves preserved", ids)
+	}
+	byID := make(map[model.PaneID]PaneDescriptor, len(got.Panes))
+	for _, pane := range got.Panes {
+		byID[pane.ID] = pane.PaneDescriptor
+	}
+	if byID["session"].Available() != true || byID["session"].Kind != PaneKindSession {
+		t.Fatalf("session descriptor = %+v, want available Session content", byID["session"])
+	}
+	if byID["view"].Kind != PaneKindView || byID["view"].Available() ||
+		byID["view"].View == nil || byID["view"].View.ViewID != "acme.notes" {
+		t.Fatalf("view descriptor = %+v, want the reserved View shape as unavailable", byID["view"])
+	}
+	if byID["unknown"].Kind != "future-kind" || byID["unknown"].Available() {
+		t.Fatalf("unknown descriptor = %+v, want an unavailable placeholder", byID["unknown"])
+	}
+}
+
+// TestSanitizePayloadCapsViewState keeps an oversized View state blob from
+// entering the Workspace while preserving the placeholder.
+func TestSanitizePayloadCapsViewState(t *testing.T) {
+	payload := Payload{
+		Version:   PayloadVersion,
+		ActiveTab: 0,
+		Tabs:      []RestoredTab{{ID: "t", Root: NewPaneNode("view")}},
+		Panes: []RestoredPane{{ID: "view", PaneDescriptor: PaneDescriptor{
+			Kind: PaneKindView,
+			View: &ViewPaneDescriptor{ViewID: "acme.notes", State: bytes.Repeat([]byte("x"), MaxViewStateBytes+1)},
+		}}},
+	}
+	got := SanitizePayload(payload)
+	if len(got.Panes) != 1 || got.Panes[0].View == nil || len(got.Panes[0].View.State) != 0 {
+		t.Fatalf("view descriptor = %+v, want the placeholder with state dropped", got.Panes)
 	}
 }
 
@@ -318,8 +417,8 @@ func TestSanitizePayloadMapsActiveTabPastDroppedTabs(t *testing.T) {
 			{ID: "b", Root: NewPaneNode("b1")},
 		},
 		Panes: []RestoredPane{
-			{ID: "a1", Session: validDescriptor()},
-			{ID: "b1", Session: validDescriptor()},
+			restoredSessionPane("a1", validDescriptor()),
+			restoredSessionPane("b1", validDescriptor()),
 		},
 	}
 	got := SanitizePayload(payload)
@@ -328,5 +427,184 @@ func TestSanitizePayloadMapsActiveTabPastDroppedTabs(t *testing.T) {
 	}
 	if got.Tabs[got.ActiveTab].ID != "a" {
 		t.Fatalf("active Tab = %q, want a", got.Tabs[got.ActiveTab].ID)
+	}
+}
+
+func TestPluginSessionDescriptorRoundTripsBoundedRestoreState(t *testing.T) {
+	descriptor := SessionDescriptor{
+		Kind:     SessionPlugin,
+		Label:    "Loopback",
+		HostID:   "host-loop",
+		Hostname: "loopback",
+		Protocol: "x-acme-loopback",
+		Provider: "acme.loopback",
+		Restore:  []byte(`{"token":"opaque"}`),
+	}
+	if !descriptor.Valid() {
+		t.Fatal("plugin descriptor is not valid")
+	}
+	encoded, err := json.Marshal(descriptor)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !bytes.Contains(encoded, []byte(`"restore":"eyJ0b2tlbiI6Im9wYXF1ZSJ9"`)) {
+		t.Fatalf("restore is not bounded base64 JSON: %s", encoded)
+	}
+	var decoded SessionDescriptor
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !reflect.DeepEqual(decoded, descriptor) {
+		t.Fatalf("round trip = %+v, want %+v", decoded, descriptor)
+	}
+	payload := Payload{
+		Version: PayloadVersion,
+		Tabs:    []RestoredTab{{ID: "t", Root: NewPaneNode("p")}},
+		Panes:   []RestoredPane{restoredSessionPane("p", descriptor)},
+	}
+	got := SanitizePayload(payload)
+	if len(got.Panes) != 1 || got.Panes[0].Session == nil {
+		t.Fatalf("sanitized plugin pane = %+v", got.Panes)
+	}
+	if got.Panes[0].Session.Kind != SessionPlugin ||
+		got.Panes[0].Session.Provider != "acme.loopback" ||
+		string(got.Panes[0].Session.Restore) != `{"token":"opaque"}` {
+		t.Fatalf("restored plugin descriptor = %+v", got.Panes[0].Session)
+	}
+}
+
+func TestPluginSessionDescriptorFailsClosedOnBadProtocolAndOversizedRestore(t *testing.T) {
+	base := SessionDescriptor{
+		Kind: SessionPlugin, HostID: "h", Hostname: "loopback",
+		Protocol: "x-acme-loopback", Provider: "acme.loopback",
+	}
+	tests := []SessionDescriptor{
+		{Kind: SessionPlugin, HostID: "h", Hostname: "loopback", Protocol: "ssh"},
+		{Kind: SessionPlugin, HostID: "h", Hostname: "loopback", Protocol: "acme-loopback"},
+		{Kind: SessionPlugin, HostID: "h", Protocol: "x-acme-loopback"},
+		func() SessionDescriptor {
+			value := base
+			value.Restore = make([]byte, MaxSessionRestoreBytes+1)
+			return value
+		}(),
+	}
+	for i, descriptor := range tests {
+		if descriptor.Valid() {
+			t.Fatalf("descriptor %d unexpectedly valid: %+v", i, descriptor)
+		}
+	}
+	oversized := base
+	oversized.Restore = make([]byte, MaxSessionRestoreBytes+1)
+	payload := Payload{
+		Version: PayloadVersion,
+		Tabs:    []RestoredTab{{ID: "t", Root: NewPaneNode("p")}},
+		Panes:   []RestoredPane{restoredSessionPane("p", oversized)},
+	}
+	got := SanitizePayload(payload)
+	if len(got.Panes) != 1 || got.Panes[0].Session == nil || got.Panes[0].Session.Restore != nil {
+		t.Fatalf("oversized restore was not dropped while keeping the pane: %+v", got.Panes)
+	}
+}
+
+func TestPayloadVersionTwoReadsVersionOne(t *testing.T) {
+	payload := Payload{
+		Version: 1,
+		Tabs:    []RestoredTab{{ID: "t", Root: NewPaneNode("p")}},
+		Panes:   []RestoredPane{restoredSessionPane("p", validDescriptor())},
+	}
+	got := SanitizePayload(payload)
+	if got.Version != PayloadVersion || len(got.Tabs) != 1 || len(got.Panes) != 1 {
+		t.Fatalf("version 1 payload = %+v", got)
+	}
+}
+
+// TestSanitizePayloadKeepsPerPlacementViewDescriptors proves a View stored
+// outside a work Tab (page, window, aside) survives restore while a diagram
+// placement inside a Tab is left to that Tab's Pane descriptor.
+func TestSanitizePayloadKeepsPerPlacementViewDescriptors(t *testing.T) {
+	payload := Payload{
+		Version: PayloadVersion,
+		Views: []RestoredView{
+			{Placement: ViewPlacementPage, ViewID: "acme.notes", ContextKey: "global", Title: " Notes ", State: []byte("a"), Order: 1},
+			{Placement: ViewPlacementWindow, ViewID: "acme.logs", ContextKey: "host-1"},
+			{Placement: ViewPlacementAside, ViewID: "acme.tools", ContextKey: "global", Order: 2},
+			{Placement: ViewPlacementPane, ViewID: "acme.ignored", ContextKey: "global"},
+			{Placement: ViewPlacementTab, ViewID: "acme.ignored", ContextKey: "global"},
+			{Placement: "shell", ViewID: "acme.bad"},
+			{Placement: ViewPlacementPage, ViewID: " "},
+		},
+	}
+	got := SanitizePayload(payload)
+	if len(got.Views) != 3 {
+		t.Fatalf("views = %+v, want three placement descriptors", got.Views)
+	}
+	if got.Views[0].Placement != ViewPlacementPage || got.Views[0].Title != "Notes" ||
+		string(got.Views[0].State) != "a" || got.Views[0].Order != 1 {
+		t.Fatalf("page descriptor = %+v", got.Views[0])
+	}
+	if got.Views[1].Placement != ViewPlacementWindow || got.Views[1].ViewID != "acme.logs" {
+		t.Fatalf("window descriptor = %+v", got.Views[1])
+	}
+	if got.Views[2].Placement != ViewPlacementAside || got.Views[2].ViewID != "acme.tools" {
+		t.Fatalf("aside descriptor = %+v", got.Views[2])
+	}
+}
+
+// TestSanitizePayloadKeepsOnlyTheFirstPagePerView proves the page singleton
+// rule is repaired on load instead of letting two instances claim the slot.
+func TestSanitizePayloadKeepsOnlyTheFirstPagePerView(t *testing.T) {
+	payload := Payload{
+		Version: PayloadVersion,
+		Views: []RestoredView{
+			{Placement: ViewPlacementPage, ViewID: "acme.notes", ContextKey: "one"},
+			{Placement: ViewPlacementPage, ViewID: "acme.notes", ContextKey: "two"},
+			{Placement: ViewPlacementPage, ViewID: "acme.other"},
+		},
+	}
+	got := SanitizePayload(payload)
+	if len(got.Views) != 2 {
+		t.Fatalf("views = %+v, want the first page per view", got.Views)
+	}
+	if got.Views[0].ContextKey != "one" || got.Views[1].ViewID != "acme.other" {
+		t.Fatalf("views = %+v", got.Views)
+	}
+}
+
+// TestSanitizePayloadCapsPlacementViewState drops oversized blob state but
+// keeps the placement, so the View still restores as an unavailable surface.
+func TestSanitizePayloadCapsPlacementViewState(t *testing.T) {
+	payload := Payload{
+		Version: PayloadVersion,
+		Views: []RestoredView{{
+			Placement: ViewPlacementAside,
+			ViewID:    "acme.notes",
+			State:     bytes.Repeat([]byte("x"), MaxViewStateBytes+1),
+		}},
+	}
+	got := SanitizePayload(payload)
+	if len(got.Views) != 1 || len(got.Views[0].State) != 0 {
+		t.Fatalf("views = %+v, want the placement with dropped state", got.Views)
+	}
+}
+
+// TestViewPaneDescriptorPlacementDefaultsToPane keeps payloads written before
+// View Tab placement existed restoring as ordinary view Panes.
+func TestViewPaneDescriptorPlacementDefaultsToPane(t *testing.T) {
+	payload := Payload{
+		Version:   PayloadVersion,
+		ActiveTab: 0,
+		Tabs:      []RestoredTab{{ID: "tab-1", Root: NewPaneNode("pane-view")}},
+		Panes: []RestoredPane{{
+			ID: "pane-view",
+			PaneDescriptor: PaneDescriptor{
+				Kind: PaneKindView,
+				View: &ViewPaneDescriptor{ViewID: "acme.notes"},
+			},
+		}},
+	}
+	got := SanitizePayload(payload)
+	if len(got.Panes) != 1 || got.Panes[0].View == nil ||
+		got.Panes[0].View.PlacementOrDefault() != ViewPlacementPane {
+		t.Fatalf("pane descriptor = %+v", got.Panes)
 	}
 }

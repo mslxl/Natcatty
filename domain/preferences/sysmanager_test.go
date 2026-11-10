@@ -67,7 +67,7 @@ func TestSysManagerTabOrderAndVisibilityNormalize(t *testing.T) {
 	got := NormalizeSysManager(broken)
 	want := []SysManagerTab{
 		SysManagerGPU, SysManagerProcesses, SysManagerOverview, SysManagerPorts,
-		SysManagerServices, SysManagerTmux, SysManagerDocker,
+		SysManagerServices, SysManagerTmux, SysManagerDocker, SysManagerExtensions,
 	}
 	if !reflect.DeepEqual(got.Order(), want) {
 		t.Errorf("normalized order = %v, want %v", got.Order(), want)
@@ -87,7 +87,7 @@ func TestSysManagerTabLayoutReadsAndWritesOnlyTheRequestedTab(t *testing.T) {
 	moved := manager.MoveTab(SysManagerDocker, -1)
 	want := []SysManagerTab{
 		SysManagerOverview, SysManagerProcesses, SysManagerPorts, SysManagerServices,
-		SysManagerDocker, SysManagerTmux, SysManagerGPU,
+		SysManagerDocker, SysManagerTmux, SysManagerGPU, SysManagerExtensions,
 	}
 	if !reflect.DeepEqual(moved.Order(), want) {
 		t.Fatalf("moved order = %v", moved.Order())

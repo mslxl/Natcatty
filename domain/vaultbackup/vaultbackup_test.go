@@ -148,12 +148,14 @@ func TestCountsAndEmpty(t *testing.T) {
 	}
 }
 
-func TestOptionalNetworkProfilesTable(t *testing.T) {
-	if !OptionalTable(TableNetworkProfiles) {
-		t.Fatal("network_profiles must be optional")
+func TestOptionalProfileTables(t *testing.T) {
+	for _, name := range []string{TableNetworkProfiles, TableDataProfiles} {
+		if !OptionalTable(name) {
+			t.Fatalf("%q must be optional", name)
+		}
 	}
 	for _, table := range Tables {
-		if table != TableNetworkProfiles && OptionalTable(table) {
+		if table != TableNetworkProfiles && table != TableDataProfiles && OptionalTable(table) {
 			t.Errorf("%q was made optional", table)
 		}
 	}
