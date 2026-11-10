@@ -191,8 +191,6 @@ type State struct {
 	serialView    func(*ui.Context)
 	serialRequest func()
 	requestLocale func(string)
-	quickControls func(*ui.Context)
-	quickOpen     bool
 	// brandMark reads the app icon the sidebar shows beside the app's name.
 	brandMark func() *ui.Bitmap
 	// terminalTheme is the scheme open terminals draw with, for the chrome
@@ -300,12 +298,6 @@ func WithLocaleRequest(fn func(string)) Option {
 	return func(s *State) { s.requestLocale = fn }
 }
 
-// WithQuickControls sets the content of the Tab bar's control panel. Without
-// it the bar has no control panel button.
-func WithQuickControls(view func(*ui.Context)) Option {
-	return func(s *State) { s.quickControls = view }
-}
-
 // WithBrandMark sets the reader of the app icon the home sidebar shows beside
 // the app's name, which follows the chosen icon variant. Without it, or while
 // it returns nil, the sidebar shows a terminal glyph.
@@ -321,16 +313,10 @@ func (s *State) BrandMark() *ui.Bitmap {
 	return s.brandMark()
 }
 
-// QuickControls returns the control panel's content, or nil.
-func (s *State) QuickControls() func(*ui.Context) { return s.quickControls }
-
 // TerminalTheme is the scheme open terminals draw with, if the app set one.
 func (s *State) TerminalTheme() (domaintheme.TerminalTheme, bool) {
 	return s.terminalTheme, s.hasTerminalTheme
 }
-
-// QuickControlsOpen is whether the control panel is open, for its popover.
-func (s *State) QuickControlsOpen() *bool { return &s.quickOpen }
 
 // WithSettingsRequest sets the function called when the user opens Settings.
 // The app wires this to the singleton Settings window.

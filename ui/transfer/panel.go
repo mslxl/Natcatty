@@ -27,7 +27,7 @@ func SidePanel(s *transferstate.State, width float32) func(*ui.Context) {
 		t := c.Theme()
 		tab := s.Tab(panelSide)
 
-		root := ui.Column(c).Fill().MinWidth(0).Background(t.Surface).Clip().
+		root := ui.Column(c).Fill().MinWidth(0).Background(kit.CardInnerFill(t, t.Surface)).Clip().
 			Label(m.SessionFilesPanel()).Focusable()
 		root.Children(func() {
 			if tab == nil {

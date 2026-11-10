@@ -17,8 +17,6 @@ type MainSlots struct {
 	Tabs func()
 	// Flush marks a body that shares the bar's color, as a terminal does.
 	Flush bool
-	// Actions are the window's actions at the bar's end.
-	Actions Actions
 	// Body draws the chosen Tab's surface: a HomeLayout or a WorkLayout.
 	Body func()
 }
@@ -34,19 +32,9 @@ type SidebarSlots struct {
 	Settings      func()
 }
 
-// Actions are the main window's own actions at the title bar's end.
-type Actions struct {
-	SettingsLabel string
-	Settings      func()
-	// Controls draws the quick controls' panel; nil shows no button.
-	ControlsLabel string
-	Controls      func()
-	ControlsOpen  *bool
-}
-
 // MainLayout is the main window: one title bar across it holding the home
-// and SFTP Tabs, the work Tabs, and the actions, over the chosen Tab's body.
-// Both styles share it; each draws the bar and its Tabs its own way.
+// and SFTP Tabs and the work Tabs, over the chosen Tab's body. Both styles
+// share it; each draws the bar and its Tabs its own way.
 func MainLayout(c *ui.Context, slots MainSlots) {
 	t := c.Theme()
 	WindowFrame(c, FrameOptions{Opaque: true, Vibrant: true}, func() {
@@ -55,13 +43,6 @@ func MainLayout(c *ui.Context, slots MainSlots) {
 			slots.HomeTabs()
 			ui.Box(c).Size(1, 16).Margin(0, 6).Background(t.Border).Shrink(0).AlignSelf(ui.Center)
 			slots.Tabs()
-			a := slots.Actions
-			if a.Controls != nil {
-				controlsButton(c, a)
-			}
-			if kit.IconButtonWith(c, icons.Settings, a.SettingsLabel, kit.IconOptions{Role: kit.IconBar, Key: "bar-settings"}).Clicked() {
-				a.Settings()
-			}
 		})
 	}, slots.Body)
 }
@@ -89,16 +70,4 @@ func Sidebar(c *ui.Context, slots SidebarSlots) {
 	if kit.NavItem(c, kit.NavHome, "nav-settings", icons.Settings, slots.SettingsLabel, false).Clicked() {
 		slots.Settings()
 	}
-}
-
-// controlsButton toggles the quick controls' panel, which opens under it.
-func controlsButton(c *ui.Context, a Actions) {
-	open := a.ControlsOpen
-	button := kit.IconButtonWith(c, icons.SlidersHorizontal, a.ControlsLabel,
-		kit.IconOptions{Role: kit.IconBar, On: *open, Key: "bar-control-panel"})
-	if button.Clicked() {
-		*open = !*open
-		c.Invalidate()
-	}
-	kit.Popover(c, kit.PopoverPanel, button, open, a.Controls)
 }

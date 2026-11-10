@@ -221,7 +221,15 @@ func workTab(c *ui.Context, spec TabSpec) TabResult {
 		if spec.Marker != "" {
 			ui.Text(c, spec.Marker).FontSize(9).TextColor(t.Accent)
 		}
+		// An idle Tab keeps the controls' room, so showing them on hover
+		// moves no Tab after it.
 		if !spec.Active && !hovered {
+			box, _, _ := iconRecipe(c, IconTab)
+			for _, shown := range []bool{spec.Menu != nil, spec.Close != ""} {
+				if shown {
+					ui.Box(c).Size(box, box).Shrink(0)
+				}
+			}
 			return
 		}
 		if spec.Menu != nil {

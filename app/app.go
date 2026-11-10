@@ -1086,7 +1086,6 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				windows.OpenSettings()
 			}
 		}),
-		state.WithQuickControls(preferencesState.QuickControls()),
 		state.WithBrandMark(func() *ui.Bitmap {
 			return brandMarkBitmap(preferenceService.Settings().Appearance.AppIcon)
 		}),

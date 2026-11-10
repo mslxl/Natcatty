@@ -170,6 +170,16 @@ func ChromeFill(t *ui.Theme) ui.Color {
 	return Muted(t)
 }
 
+// CardInnerFill is the fill of a surface drawn inside a panel the macOS
+// style raises as a card, as a terminal's side panel: classic in Classic,
+// none in the macOS style, which shows the card's own fill.
+func CardInnerFill(t *ui.Theme, classic ui.Color) ui.Color {
+	if CurrentStyle().Native() {
+		return ui.Transparent
+	}
+	return classic
+}
+
 // ChromeRule is the color of a rule inside a surface's toolbar: the
 // divider in Classic, none in the macOS style, whose toolbars run as one.
 func ChromeRule(t *ui.Theme) ui.Color {
