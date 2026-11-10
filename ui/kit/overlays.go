@@ -71,9 +71,6 @@ const (
 	// PopoverPicker is the toolkit's popover, for a picker such as the
 	// calendar.
 	PopoverPicker
-	// PopoverBeside is a PopoverPanel beside its button, its foot level with
-	// the button's: the quick controls opened from a sidebar's foot.
-	PopoverBeside
 )
 
 // Popover shows content beside anchor while *open is true. A click outside
@@ -85,12 +82,8 @@ func Popover(c *ui.Context, role PopoverRole, anchor ui.Element, open *bool, con
 	}
 	t := c.Theme()
 	ui.PopoverBase(c, anchor, open, func(panel ui.Element) {
-		if role == PopoverBeside {
-			panel.AttachTo(anchor, ui.AnchorBottomEnd, ui.AnchorBottomStart).Margin(0, 0, 0, 12)
-		} else {
-			panel.AttachTo(anchor, ui.AnchorBottomEnd, ui.AnchorTopEnd).Margin(6, 0, 0, 0)
-		}
-		panel.Shadow(0, 8, 24, 0, CardShadow(t)).Clip()
+		panel.AttachTo(anchor, ui.AnchorBottomEnd, ui.AnchorTopEnd).Margin(6, 0, 0, 0).
+			Shadow(0, 8, 24, 0, CardShadow(t)).Clip()
 		overlaySurface(c, panel, t.Surface, M(c).Radius.Card)
 		content()
 	})

@@ -66,13 +66,12 @@ func View(s *state.State) func(*ui.Context) {
 			s.ShowHome()
 			c.Invalidate()
 		}
-		sidebar := mainSidebar(c, s, m, t)
 		layout.MainLayout(c, layout.MainSlots{
 			HomeTabs: func() { homeTabs(c, s, m) },
 			Tabs:     func() { workTabs(c, s, m, t, reveal) },
 			Flush:    terminalVisible(s),
-			Sidebar:  sidebar,
-			Body:     func() { body(c, s, m, t, sidebar) },
+			Actions:  windowActions(c, s, m),
+			Body:     func() { body(c, s, m, t) },
 		})
 
 		if prompt := s.TrustPrompt(); prompt != nil {
@@ -107,7 +106,7 @@ func homeVisible(s *state.State) bool {
 }
 
 // body draws the chosen Tab's surface below the Tab bar.
-func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, sidebar layout.SidebarSlots) {
+func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	switch {
 	case terminalVisible(s):
 		activeTab(c, s, m, t)
@@ -124,7 +123,7 @@ func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, sideba
 		})
 	default:
 		layout.HomeLayout(c, layout.HomeSlots{
-			Sidebar: func() { layout.Sidebar(c, sidebar) },
+			Sidebar: func() { layout.Sidebar(c, homeSidebar(c, s, m, t)) },
 			Notices: func() { notices(c, s, m, t) },
 			Content: func() { homeSurface(c, s, m, t) },
 		})
@@ -148,17 +147,16 @@ func placeholder(c *ui.Context, icon, title, description string) {
 	})
 }
 
-// mainSidebar is the window's navigation, as the original's Vault sidebar:
+// homeSidebar is the home Tab's navigation, as the original's Vault sidebar:
 // the brand, the Vault's pages with monitoring, System manager, and Logs
-// among them, SFTP where the style lists it, and the window's actions.
-func mainSidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) layout.SidebarSlots {
+// among them, and Settings at the foot.
+func homeSidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) layout.SidebarSlots {
 	nav := func(key, icon, label string, active bool, show func()) {
 		if kit.NavItem(c, kit.NavHome, key, icon, label, active).Clicked() {
 			show()
-			c.Invalidate()
 		}
 	}
-	slots := layout.SidebarSlots{
+	return layout.SidebarSlots{
 		Brand: func() { brand(c, s, m, t) },
 		Pages: func() {
 			vaultPage := func(page section.Section) {
@@ -176,17 +174,22 @@ func mainSidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme)
 			}
 			nav("nav-logs", icons.Activity, m.NavLogs(), s.LogsVisible(), s.ShowLogs)
 		},
-		Actions: layout.Actions{SettingsLabel: m.NavSettings(), Settings: s.RequestSettings},
+		SettingsLabel: m.NavSettings(),
+		Settings:      s.RequestSettings,
 	}
-	if s.SFTPTabShown() {
-		slots.Places = func() { nav("nav-sftp", icons.FolderOpen, m.NavSftp(), s.SFTPVisible(), s.ShowSFTP) }
-	}
+}
+
+// windowActions are the Tab bar's actions, as the original's: the control
+// panel, a quiet icon button opening the window opacity and theme, and
+// Settings. The language is in Settings, as the original's.
+func windowActions(c *ui.Context, s *state.State, m locales.Messages) layout.Actions {
+	actions := layout.Actions{SettingsLabel: m.NavSettings(), Settings: s.RequestSettings}
 	if content := s.QuickControls(); content != nil {
-		slots.Actions.ControlsLabel = m.NavControlPanel()
-		slots.Actions.Controls = func() { content(c) }
-		slots.Actions.ControlsOpen = s.QuickControlsOpen()
+		actions.ControlsLabel = m.NavControlPanel()
+		actions.Controls = func() { content(c) }
+		actions.ControlsOpen = s.QuickControlsOpen()
 	}
-	return slots
+	return actions
 }
 
 // brand heads the sidebar: the app's mark and name.
