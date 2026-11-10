@@ -353,14 +353,7 @@ func sidePanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 
 // sidePanelControls are the side panel's dock menu and close button.
 func sidePanelControls(c *ui.Context, s *state.State, m locales.Messages, tab model.TabID, dock state.PanelDock) {
-	icon := icons.PanelLeft
-	switch dock {
-	case state.DockRight:
-		icon = icons.PanelRight
-	case state.DockBottom:
-		icon = icons.PanelBottom
-	}
-	sidePanelButton(c, icon, m.SettingsSidePanelDock()).Menu(func(menu *ui.Menu) {
+	sidePanelButton(c, dockIcon(dock), m.SettingsSidePanelDock()).Menu(func(menu *ui.Menu) {
 		for _, option := range []struct {
 			dock  state.PanelDock
 			label string
@@ -377,6 +370,17 @@ func sidePanelControls(c *ui.Context, s *state.State, m locales.Messages, tab mo
 	if sidePanelButton(c, icons.X, m.SidePanelClose()).Clicked() {
 		s.CloseFiles(tab)
 	}
+}
+
+// dockIcon is the glyph of a side panel docked at dock.
+func dockIcon(dock state.PanelDock) string {
+	switch dock {
+	case state.DockRight:
+		return icons.PanelRight
+	case state.DockBottom:
+		return icons.PanelBottom
+	}
+	return icons.PanelLeft
 }
 
 // sideToolFace is a side panel tool's icon and name in the strip.

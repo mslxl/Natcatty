@@ -12,8 +12,8 @@ import (
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
 
-// TestLocalTerminalFilesButtonOpensTheSidePanel clicks the Files button in a
-// local terminal Pane's header, which opens the Tab's side panel.
+// TestLocalTerminalFilesButtonOpensTheSidePanel clicks the side panel button
+// in a local terminal Pane's header, which opens the Tab's side panel.
 func TestLocalTerminalFilesButtonOpensTheSidePanel(t *testing.T) {
 	service := appsession.NewService(multiFactory{})
 	t.Cleanup(service.CloseAll)
@@ -35,7 +35,7 @@ func TestLocalTerminalFilesButtonOpensTheSidePanel(t *testing.T) {
 	tt.Frame()
 	tt.Frame()
 	t.Logf("texts: %v", tt.Texts())
-	if err := tt.Click("Files (SFTP)"); err != nil {
+	if err := tt.Click("Toggle Side Panel"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()

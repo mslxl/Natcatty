@@ -66,8 +66,10 @@ type chromeModel struct {
 	GhostText string
 	// Hibernated reports that the Session has no live screen.
 	Hibernated bool
-	// FilesOpen reports that the Tab's SFTP panel is open.
+	// FilesOpen reports that the Tab's side panel is open; FilesIcon is its
+	// button's glyph.
 	FilesOpen bool
+	FilesIcon string
 }
 
 // ScreenNotice is the result of saving the terminal screen. It is a code, not
@@ -161,7 +163,8 @@ func screenBanner(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Th
 }
 
 // toolbar is the Session's controls in its Pane's header, as the original's
-// terminal toolbar: SFTP beside the terminal, the two splits, and the Session
+// terminal toolbar: the side panel (SFTP and the other tools) beside the
+// terminal, the two splits, and the Session
 // menu, which holds every other command (encoding, logging, YMODEM, the
 // browser, rename, and the Pane's lifetime). The header already names the
 // Pane, so nothing here repeats the title, the running command, or the
@@ -169,7 +172,11 @@ func screenBanner(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Th
 // them all inside its header.
 func toolbar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
 	if actions.ToggleFiles != nil {
-		files := kit.IconButtonWith(c, icons.FolderOpen, m.SessionFilesPanel(),
+		icon := model.FilesIcon
+		if icon == "" {
+			icon = icons.PanelLeft
+		}
+		files := kit.IconButtonWith(c, icon, m.SettingsBindingToggleSidePanel(),
 			kit.IconOptions{Role: kit.IconPane, On: model.FilesOpen})
 		if files.Clicked() {
 			actions.ToggleFiles()

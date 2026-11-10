@@ -363,6 +363,7 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 			if host, ok := paneFiles(s, info); ok {
 				tabID := ref.id
 				actions.FilesOpen = s.FilesOpen(tabID)
+				actions.FilesIcon = dockIcon(s.FilesDock())
 				actions.ToggleFiles = func() {
 					ref.focus(info.ID)
 					s.ToggleFiles(tabID, host, info.Label)
