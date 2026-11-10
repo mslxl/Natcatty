@@ -110,10 +110,13 @@ type PaneActions struct {
 	Close      func()
 	// Rename sets the Pane's Tab title to the trimmed, non-empty argument.
 	Rename func(title string)
-	// ToggleFiles opens or closes the Tab's SFTP panel on this Pane's Host;
-	// FilesOpen reports that it is open. Nil hides the toolbar's Files button.
+	// ToggleFiles opens or closes the Tab's side panel on this Pane's Host;
+	// FilesOpen reports that it is open. Nil hides the toolbar's side panel
+	// button. FilesIcon is that button's glyph, the panel's docked edge; empty
+	// draws the left one.
 	ToggleFiles func()
 	FilesOpen   bool
+	FilesIcon   string
 	// Title is the Pane's current title. MenuLabel is the accessible name of
 	// this Pane's Session menu, unique among the Panes of one window.
 	Title     string
@@ -643,6 +646,7 @@ func (s *Surface) chrome(c *ui.Context, snapshot appsession.Snapshot) (chromeMod
 		GhostText:        ghostText,
 		Hibernated:       hibernated,
 		FilesOpen:        s.paneActions.FilesOpen,
+		FilesIcon:        s.paneActions.FilesIcon,
 	}
 	var saveScreen, clearBuffer func()
 	if !hibernated && s.terminal != nil {
