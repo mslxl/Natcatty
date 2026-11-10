@@ -174,8 +174,8 @@ or more Panes and is shown as a single strip item.
 _Avoid_: session, window, pane
 
 **Pane**:
-One leaf of a Tab's recursive split tree, bound to one Session or file editor. A Tab
-with one Pane looks like a plain terminal tab.
+One leaf of a Tab's recursive split tree, bound to one content: a Session, a file
+editor, or a plugin View. A Tab with one Pane looks like a plain terminal tab.
 _Avoid_: split, terminal, tab
 
 **Transfer**:
@@ -207,13 +207,13 @@ Latch, drops the checkpoint, and makes a later Retry start over.
 _Avoid_: abort flag, stop flag
 
 **Sync Profile**:
-A configured cloud-sync target (Gist, Google Drive, OneDrive, WebDAV, S3, or a plugin
-provider) with its own credentials and strategy.
+A configured cloud-sync target (Gist, Google Drive, OneDrive, WebDAV, S3) with its
+own credentials and strategy.
 _Avoid_: account, backend
 
 **Vault**:
 The complete set of stored hosts, groups, keys, identities, snippets, notes, proxies,
-forwarding rules, and known hosts.
+forwarding rules, data profiles, and known hosts.
 _Avoid_: database, store
 
 **Export**:
@@ -242,3 +242,96 @@ _Avoid_: safety copy, pre-restore export
 Replacing every backed-up Vault family with one Local Backup's snapshot in a single
 transaction. A failed Restore leaves the current Vault unchanged.
 _Avoid_: import, sync down, rollback
+
+**Plugin**:
+An installed extension identified by an opaque Plugin ID, carrying a manifest,
+permissions, and code. A Plugin is either first-party (built into the app) or
+third-party (installed by the user).
+_Avoid_: addon, extension, module
+
+**Plugin Package**:
+The versioned artifact the user installs: a manifest, code, and assets, identified by
+Plugin ID and version. Package identity is not a running identity.
+_Avoid_: install, bundle, archive
+
+**Plugin Manifest**:
+The declarative description inside a Plugin Package: identity, version, compatibility,
+requested permissions, contributions, and catalogs. The host reads it before any code
+runs.
+_Avoid_: config, metadata, descriptor
+
+**Plugin Instance**:
+One running activation of a Plugin entry, with its own lifecycle, configuration, and
+grants. Stopping and restarting preserves configuration but not volatile state.
+_Avoid_: process, fiber, worker
+
+**Plugin Permission**:
+A user-granted, resource-scoped capability a Plugin Instance needs for a host service or
+contribution. Permissions are requested by the manifest and granted by the user; they
+are never ambient.
+_Avoid_: right, scope, access
+
+**Plugin Runtime Mode**:
+The engine a process uses for Plugin Instances: `compiler`, `interpreter` compatibility
+mode, or `unavailable` on an unsupported platform. The host records it in the startup
+log and exposes it to plugin diagnostics; interpreter mode never relaxes timeouts.
+_Avoid_: engine fallback, slow mode, degraded mode
+
+**Plugin Contribution**:
+A declared extension point a Plugin adds to the host, such as a command, menu item,
+keybinding, view, setting, language service, MCP tool, or provider. A contribution is
+declared in the manifest, not created at runtime.
+_Avoid_: hook, extension point, registration
+
+**View Contribution**:
+A Plugin Contribution describing a named view the host may present, including its
+allowed placements and whether it is singleton or multi-instance.
+_Avoid_: panel, widget, screen
+
+**View Instance**:
+One live presentation of a View Contribution for a fixed context. The same View Instance
+keeps its logical state when moved between placements; it is not recreated.
+_Avoid_: view, tab, window
+
+**View Surface**:
+The host container that shows a View Instance in one placement. Surfaces are owned by
+the host; a Plugin never creates or moves them directly.
+_Avoid_: host, container, mount
+
+**Placement**:
+Where a View Instance is shown: pane, tab, page, window, or aside. Placement is a
+property of the instance's current surface, not of the View Contribution's identity.
+_Avoid_: location, slot, position
+
+**Connection Provider**:
+A Plugin Contribution that opens a non-built-in protocol and returns a terminal byte
+stream. It is distinct from a Host and a Session, and authentication stays host-owned.
+_Avoid_: driver, protocol, transport
+
+**Data Provider**:
+A Plugin Contribution that opens non-terminal data connections and returns typed result
+envelopes. It is distinct from a Host, a Session, and a Connection Provider.
+_Avoid_: database driver, connector, adapter
+
+**Data Profile**:
+A saved, user-selected data-provider configuration: provider-defined fields, secret
+references into the Vault, and an access mode. It is distinct from a Host, a Session,
+a Data Connection, and a Data Provider.
+_Avoid_: connection string, data source, DSN
+
+**Plugin Data**:
+The host-opaque, schema-versioned namespace a Plugin owns on a Host or Data Profile. The
+host preserves, exports, backs up, restores, and syncs it verbatim without interpreting
+its fields; while the owning Plugin is not ACTIVE it is dormant and read-only.
+_Avoid_: custom fields, provider fields, extra metadata
+
+**Host Service**:
+A capability the host exposes to Plugin Instances through the runtime boundary, mediated
+by Plugin Permissions. Plugins never call each other directly.
+_Avoid_: API, SDK, syscall
+
+**Plugin Service**:
+A service a Plugin offers to other Plugin Instances through the host broker, declared by
+name and version and invoked only under an explicit grant. It is not a Host Service and
+never carries the host's authority.
+_Avoid_: API, RPC, endpoint
