@@ -17,6 +17,11 @@ requests; this file is the human-maintained changelog.
   OS-level VPN. A Provider that cannot carry datagrams fails the Session
   closed; Mosh never falls back to the host network.
 
+- Plugin runtime walking skeleton: a development plugin in
+  `NATCATTY_PLUGIN_DIR` loads from a `plugin.toml` manifest and a reactor WASM
+  module, then contributes commands, View-menu items, and keybindings.
+  Package installation and permission consent remain later work.
+
 ### Fixed
 
 - Restored GPL-3.0-or-later distribution compliance: a root `LICENSE` and

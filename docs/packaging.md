@@ -1,6 +1,6 @@
 # Packaging and release artifacts
 
-Natcatty builds its native artifacts with MyGo v0.6.0. `mygo.json` is the
+Natcatty builds its native artifacts with MyGo v0.7.4. `mygo.json` is the
 single source of the product name, identifier, version, and packaging
 configuration; `go tool mygo build` reads it directly.
 
@@ -206,11 +206,29 @@ commit of the pushed tag or the dispatched ref, and `validate` asserts that
 
 1. **validate** reads the version and pre-release flag from `mygo.json` with
    `nu scripts/release.nu`, refuses updater or signing environment variables,
-   and pins the release commit to `github.sha`.
-2. **build** runs on `macos-latest`, `windows-latest`, and `ubuntu-latest`,
-   writes `resources/SOURCE-OFFER.md` for the manifest version with
-   `go run ./internal/tools/sourceoffer`, builds with MyGo, renames every
-   release artifact to its canonical name with
+   checks the plugin runtime size budget with
+   `go run ./internal/tools/sizecheck`, and pins the release commit to
+   `github.sha`.
+2. **quality-gates** runs formatting, `go build ./...`, `go vet ./...`,
+   `go test ./internal/archtest` (the plugin-layer and WebView allowlist
+   rules), `go run ./sdk/idl/gen -check`, and the full `go test ./...` suite.
+3. **plugin-runtime** runs the full real-adapter contract suite on every
+   supported target: darwin/arm64, darwin/amd64, windows/amd64, linux/amd64,
+   and linux/arm64. That covers lifecycle, limits, traps, handles, streams,
+   host imports, and the engine smoke test on each slice. Each job verifies
+   its runner is the intended slice; the Intel job sets
+   `NATCATTY_PLUGIN_REQUIRE_COMPILER=1`, so the universal artifact's
+   darwin/amd64 compiler path has a recorded result.
+4. **plugin-conformance** runs the full `./sdk/...` conformance suite on
+   linux/amd64 and darwin/arm64. **language-sdks** builds and checks the C,
+   TinyGo, and Zig samples with the flake-pinned toolchains and sets
+   `NATCATTY_REQUIRE_LANGUAGE_SDKS=1`, so a missing pinned tool fails instead
+   of silently skipping.
+5. **build** depends on all five gates above, runs on `macos-latest`,
+   `windows-latest`, and `ubuntu-latest`, runs the real plugin runtime smoke
+   test on its native slice, writes `resources/SOURCE-OFFER.md` for the
+   manifest version with `go run ./internal/tools/sourceoffer`, builds with
+   MyGo, renames every release artifact to its canonical name with
    `nu scripts/release.nu rename-assets`, and removes MyGo's standalone Linux
    `install.sh`. Windows also gets the portable archive, built from the app
    directory without the Setup executable by
@@ -227,13 +245,13 @@ commit of the pushed tag or the dispatched ref, and `validate` asserts that
    - Linux: `dpkg-deb -f`/`-c` and `tar -tzf` must list the app, resources
      (including `CHANGELOG.md` and the legal documents), and platform transport
      clients.
-3. **checksums** downloads the platform artifacts, flattens the release set
+6. **checksums** downloads the platform artifacts, flattens the release set
    with `nu scripts/release.nu collect`, asserts the exact eight-file set, and
    generates one aggregate checksum manifest with relative names. Both the
    platform artifacts and the aggregate manifest are uploaded as workflow
    artifacts. It depends on `build`, so a failed build prevents the release set
    from being assembled.
-4. **publish** runs only for a pushed tag, depends on `validate`, `build`, and
+7. **publish** runs only for a pushed tag, depends on `validate`, `build`, and
    `checksums`, and is the only job with `contents: write`. Its condition is
    `success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')`;
    it never uses `if: always()`, so a failed or skipped prerequisite blocks
@@ -360,6 +378,62 @@ has no `updates` block, `macos.signingIdentity`, `macos.notarize`, or Windows
 signing configuration, and the workflow refuses those inputs and rejects
 `update-*.json`, `latest*.yml`, appcast files, and delta archives in the built
 artifacts.
+
+## Plugin runtime
+
+The plugin runtime is pure Go and does not change the artifact matrix or enable cgo
+(`CGO_ENABLED=0`). Every artifact ships both the wazero compiler and interpreter; no
+build tag strips either engine. Supported plugin platforms are macOS arm64, macOS amd64
+(the universal Intel slice, including Rosetta), Windows amd64, and Linux amd64/arm64.
+Windows arm64, Linux 386/armv7, and BSD build and run the rest of the app, but report
+plugins as unavailable instead of attempting a best-effort engine.
+
+The runtime uses `wazero.NewRuntimeConfig()` automatic compiler/interpreter selection
+and never forces the compiler. It shares one in-memory `wazero.NewCompilationCache()`
+across plugin instances, compiles lazily on activation, and writes no on-disk
+compilation cache. The macOS amd64 slice runs a bounded startup self-test that compiles
+and calls a tiny bundled module; when executable memory or the self-test fails, that
+slice uses the interpreter and marks the process as compatibility mode. Every other
+supported platform trusts wazero's own automatic fallback.
+
+The selected mode is written once to the startup log, for example
+`natcatty: plugin runtime: engine=compiler platform=darwin/arm64` or
+`natcatty: plugin runtime: engine=interpreter platform=darwin/amd64 compatibility=true ...`.
+The same status is exposed by the container for the plugin diagnostics view as
+`compiler`, `interpreter` (compatibility), or `unavailable`; the view's own tickets
+render it. Until that view lands, the startup log also prints the non-blocking notice.
+Interpreter mode is a supported degraded mode: every timeout keeps its normal value,
+and a deadline failure carries the compatibility hint. An unsupported platform reports
+the unavailable state and leaves the rest of the app working.
+
+`go test ./adapters/wasm -run TestRuntimeSmoke` is the real-engine smoke test: fixture
+lifecycle, memory cap, trap recovery, and host-import round trips. CI runs it on
+linux/amd64, linux/arm64, windows/amd64, macOS arm64, and macOS amd64 (an Intel runner
+that must also report the compiler). The full `./sdk/...` conformance suite runs on
+linux/amd64 and macOS arm64. The release workflow's `plugin-runtime` job runs the whole
+`./adapters/wasm` package, including the shared Runtime contract suite, on all five
+supported slices, and the release `build` job depends on that matrix plus the quality,
+conformance, and language-SDK gates; each build job also runs the smoke test on its
+native slice before packaging.
+
+The plugin runtime has a soft 10 MiB per-target growth budget. `go run
+./internal/tools/sizecheck` links a minimal program with and without the
+real `adapters/wasm` runtime for every supported target, reports the delta, and fails
+over budget unless run with `-justify <reason>`; the release validate job runs it
+without a justification. The probe constructs a runtime, so the linker keeps both the
+wazero compiler and interpreter reachable; a blank import or an unused constructor
+would be dead-code-eliminated and understate the cost. The measured growth is about
+4.19 MB on linux/arm64, 4.35 MB on darwin/arm64, 4.53 MB on linux/amd64, 4.65 MB on
+darwin/amd64, and 4.72 MB on windows/amd64, all under the 10 MiB budget. These figures
+cover the adapter and its host wiring as linked into the probe, not only vendored
+wazero, and should be remeasured when either changes.
+
+The current ad-hoc macOS build needs no additional entitlement: hardened runtime is not
+enabled, so the compiler can allocate executable memory. A future Developer ID or
+notarized build must add `com.apple.security.cs.allow-jit` and
+`com.apple.security.cs.allow-unsigned-executable-memory` and rerun the compiler smoke
+test on both universal slices. The release workflow continues to reject signing and
+notarization configuration until that build exists.
 
 ## Linux CJK fonts
 

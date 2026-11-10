@@ -13,3 +13,5 @@ as warnings.
 - `go tool mygo generate` must run after catalog changes; CI verifies no diff.
 - A Go test enforces identical key sets and matching argument names/kinds across locales.
 - MCP uses stable English protocol codes rather than localized display strings.
+- Plugin-provided strings are not part of these catalogs; they follow the plugin i18n
+  contract (ADR-0018) and ship as package assets.

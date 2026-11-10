@@ -15,6 +15,10 @@ UI state must be partitioned per window and the app-lock gate must wrap every wi
 
 **Consequences**:
 - Window-scoped state lives in `ui/<area>/state`; shared state stays in `application`.
-- Plugin view tabs are removed; editor tabs remain a separate namespace.
+- Editor tabs remain a separate namespace. Plugin views become tabs only through the
+  view placement model (ADR-0019): they share the work-tab strip under the
+  `view:<instanceId>` namespace and are not editor tabs; `page` is singleton per view.
+- A plugin `window` placement opens plugin-owned detached windows, not new root
+  surfaces. The main window's fixed root surface set (`vault`, `sftp`) is unchanged.
 - Tray on Linux degrades to a small native window because AppIndicator exposes a menu
   only.
