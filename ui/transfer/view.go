@@ -44,7 +44,7 @@ func View(s *transferstate.State) func(*ui.Context) {
 			if !sideBySide {
 				split = ui.Column(c)
 			}
-			split.Grow(1).FillWidth().MinHeight(0).MinWidth(0).Children(func() {
+			split.Grow(1).FillWidth().MinHeight(0).MinWidth(0).Gap(kit.PaneGap(c)).Children(func() {
 				pane(c, s, transferstate.Left, paneWidth, sideBySide, m, t)
 				pane(c, s, transferstate.Right, paneWidth, sideBySide, m, t)
 			})
@@ -65,7 +65,6 @@ func View(s *transferstate.State) func(*ui.Context) {
 }
 
 // pane is one side: its Tab bar, then the Tab's browser or the empty state.
-// The left (or top) pane draws the divider on its trailing edge.
 func pane(c *ui.Context, s *transferstate.State, side transferstate.Side, width float32,
 	sideBySide bool, m locales.Messages, t *ui.Theme) {
 	tab := s.Tab(side)
@@ -77,14 +76,9 @@ func pane(c *ui.Context, s *transferstate.State, side transferstate.Side, width 
 	} else {
 		el.FillWidth()
 	}
-	if side == transferstate.Left {
-		if sideBySide {
-			el.BorderWidth(0, 1, 0, 0)
-		} else {
-			el.BorderWidth(0, 0, 1, 0)
-		}
-		el.BorderColor(t.Border)
-	}
+	// The focus is a choice only while the other pane is open too.
+	kit.SplitPane(c, el, kit.SplitPaneOptions{First: side == transferstate.Left, Across: sideBySide,
+		Focused: s.Focused() == side && len(s.Pane(side.Other()).Tabs) > 0})
 	el.Children(func() {
 		if len(s.Pane(side).Tabs) > 0 {
 			tabBar(c, s, side, m, t)
@@ -95,13 +89,6 @@ func pane(c *ui.Context, s *transferstate.State, side transferstate.Side, width 
 			browser(c, s, side, tab, width, m, t)
 		}
 	})
-	// The focused pane carries an accent bar along its top edge, as a chosen
-	// tab does, while the other pane is open too and the focus is a choice.
-	if s.Focused() == side && len(s.Pane(side.Other()).Tabs) > 0 {
-		el.DrawOver(func(p *ui.Painter, r ui.Rect) {
-			p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W, H: 2}, t.Accent, 0)
-		})
-	}
 	if el.Clicked() || el.RightClicked() {
 		s.Focus(side)
 	}
@@ -228,7 +215,7 @@ func operationBar(c *ui.Context, s *transferstate.State, m locales.Messages, t *
 		return
 	}
 	ui.Row(c).FillWidth().Gap(8).Padding(6, 12).AlignItems(ui.Center).Shrink(0).
-		Background(kit.Muted(t)).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
+		Background(kit.ChromeFill(t)).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
 		text := operationLabel(m, op)
 		color := t.Text
 		if op.Err != nil {

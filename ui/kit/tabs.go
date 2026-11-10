@@ -38,6 +38,9 @@ type TabStripOptions struct {
 // add control was clicked.
 func TabStrip(c *ui.Context, role TabRole, o TabStripOptions, tabs func()) (added bool) {
 	t := c.Theme()
+	if role == TabPane && CurrentStyle().Native() {
+		return nativePaneStrip(c, o, tabs)
+	}
 	if role == TabPane {
 		height := o.Height
 		if height == 0 {
@@ -163,6 +166,9 @@ type TabResult struct {
 
 // Tab draws one tab of a TabStrip of role.
 func Tab(c *ui.Context, role TabRole, spec TabSpec) TabResult {
+	if role == TabPane && CurrentStyle().Native() {
+		return nativePaneTab(c, spec)
+	}
 	if role == TabPane {
 		return paneTab(c, spec)
 	}
@@ -264,6 +270,71 @@ func paneTab(c *ui.Context, spec TabSpec) TabResult {
 		}
 		if spec.Active {
 			ui.Box(c).Absolute().Left(0).Right(0).Bottom(0).Height(2).Background(t.Accent)
+		}
+	})
+	result.Clicked = el.Clicked()
+	if spec.ContextMenu != nil {
+		el.ContextMenu(spec.ContextMenu)
+	}
+	if spec.Active && spec.Reveal {
+		el.ScrollIntoView()
+	}
+	return result
+}
+
+// nativePaneStrip is a pane's Tabs in the macOS style: rounded cells apart
+// on the pane's own fill, above a hairline.
+func nativePaneStrip(c *ui.Context, o TabStripOptions, tabs func()) (added bool) {
+	height := o.Height
+	if height == 0 {
+		height = M(c).Bar.Tabs
+	}
+	Bar(c, BarTabs).Padding(0, 4).Gap(2).Children(func() {
+		strip := ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Height(height)
+		if o.Label != "" {
+			strip.Label(o.Label)
+		}
+		strip.Children(func() {
+			ui.Row(c).Height(height).Gap(M(c).Space.Hairline).AlignItems(ui.Center).Children(tabs)
+		})
+		if o.Add != "" {
+			added = IconButtonWith(c, icons.Plus, o.Add, IconOptions{Role: IconCard}).Clicked()
+		}
+	})
+	return added
+}
+
+// nativePaneTab is one of a nativePaneStrip's Tabs: the chosen one shaded,
+// as a sidebar row is.
+func nativePaneTab(c *ui.Context, spec TabSpec) TabResult {
+	t := c.Theme()
+	el := ui.Row(c).Height(M(c).Bar.Tabs-8).MinWidth(100).MaxWidth(180).Padding(0, 4, 0, 10).Gap(6).
+		Radius(M(c).Radius.Control).AlignItems(ui.Center).Cursor(ui.CursorPointer).Label(spec.Title)
+	if spec.Key != "" {
+		el.Key(spec.Key)
+	}
+	text, glyph := t.TextMuted, t.TextMuted
+	switch {
+	case spec.Active:
+		el.Background(t.Text.Alpha(0.08))
+		text, glyph = t.Text, t.Accent
+	case el.Hovered():
+		el.Background(t.Text.Alpha(0.04))
+		text = t.Text
+	}
+	result := TabResult{Element: el}
+	el.Children(func() {
+		tabLead(c, spec, M(c).Icon.Small, glyph)
+		ui.Text(c, spec.Title).FontSize(M(c).Font.Footnote).FontWeight(500).SingleLine().MinWidth(0).Grow(1).TextColor(text)
+		if spec.Close != "" {
+			closer := ui.ButtonBase(c).Label(spec.Close).Tooltip(spec.Close).
+				Size(18, 18).Radius(M(c).Radius.Pill).Justify(ui.Center).AlignItems(ui.Center).Shrink(0).
+				TextColor(t.TextMuted)
+			if closer.Hovered() {
+				closer.Background(t.Text.Alpha(0.1)).TextColor(t.Text)
+			}
+			closer.Children(func() { IconSized(c, icons.X, M(c).Icon.Small) })
+			result.Closed = closer.Clicked()
 		}
 	})
 	result.Clicked = el.Clicked()

@@ -27,6 +27,9 @@ type IconOptions struct {
 	Role IconRole
 	// On fills the button as pressed: a toggle whose panel is open.
 	On bool
+	// Selected marks the chosen one of a strip of tools: tinted with the
+	// accent in Classic, its glyph in the accent in the macOS style.
+	Selected bool
 	// Key keeps the button the same element when a control before it comes
 	// and goes.
 	Key string
@@ -80,6 +83,10 @@ func IconButtonWith(c *ui.Context, name, label string, options IconOptions) ui.E
 		return button
 	}
 	switch {
+	case options.Selected && CurrentStyle().Native():
+		button.Background(t.Text.Alpha(0.08)).TextColor(t.Accent)
+	case options.Selected:
+		button.Background(t.Accent.Alpha(0.24)).TextColor(t.Text)
 	case options.Role == IconBar && options.On:
 		// An open title bar toggle is shaded a little lighter than a press.
 		button.Background(t.Text.Alpha(0.1))
@@ -133,6 +140,14 @@ func Bar(c *ui.Context, role BarRole) ui.Element {
 	case BarStrip:
 		height, fill = heights.Strip, ui.Transparent
 	}
+	if CurrentStyle().Native() {
+		// A macOS bar is drawn on its pane's own fill, set off by the rule;
+		// a strip of rounded tabs needs none.
+		fill = ui.Transparent
+		if role == BarTabs {
+			return ui.Row(c).FillWidth().Height(height).AlignItems(ui.Center).Shrink(0)
+		}
+	}
 	bar := ui.Row(c).FillWidth().Height(height).AlignItems(ui.Center).Shrink(0).BorderColor(t.Border)
 	if fill != ui.Transparent {
 		bar.Background(fill)
@@ -143,6 +158,75 @@ func Bar(c *ui.Context, role BarRole) ui.Element {
 		bar.BorderWidth(1, 0, 0, 0)
 	}
 	return bar
+}
+
+// ChromeFill is the fill of a surface's own toolbar or status strip: a
+// muted band in Classic, none in the macOS style, whose strips sit on their
+// pane's fill.
+func ChromeFill(t *ui.Theme) ui.Color {
+	if CurrentStyle().Native() {
+		return ui.Transparent
+	}
+	return Muted(t)
+}
+
+// ChromeRule is the color of a rule inside a surface's toolbar: the
+// divider in Classic, none in the macOS style, whose toolbars run as one.
+func ChromeRule(t *ui.Theme) ui.Color {
+	if CurrentStyle().Native() {
+		return ui.Transparent
+	}
+	return t.Border
+}
+
+// PaneGap is the room between the panes of a SplitPane pair: Classic panes
+// share a rule, macOS cards stand apart.
+func PaneGap(c *ui.Context) float32 {
+	if CurrentStyle().Native() {
+		return M(c).Space.Medium
+	}
+	return 0
+}
+
+// SplitPaneOptions describe one pane of a pair SplitPane styles.
+type SplitPaneOptions struct {
+	// First is the leading (or top) pane, which draws Classic's rule.
+	First bool
+	// Across lays the pair side by side rather than stacked.
+	Across bool
+	// Focused marks the pane the keyboard acts on while the focus is a
+	// choice between the two.
+	Focused bool
+}
+
+// SplitPane styles one of two panes that share a surface, as the SFTP Tab's
+// file panes: Classic divides them with a rule and marks the focused one
+// with an accent bar along its top; the macOS style draws each as its own
+// rounded card, the focused one outlined in the accent.
+func SplitPane(c *ui.Context, pane ui.Element, o SplitPaneOptions) ui.Element {
+	t := c.Theme()
+	if CurrentStyle().Native() {
+		pane.Radius(M(c).Radius.Card).Background(Raised(t)).Border(1, t.Border).
+			Shadow(0, 1, 3, 0, CardShadow(t))
+		if o.Focused {
+			pane.BorderColor(t.Accent.Alpha(0.6))
+		}
+		return pane
+	}
+	if o.First {
+		if o.Across {
+			pane.BorderWidth(0, 1, 0, 0)
+		} else {
+			pane.BorderWidth(0, 0, 1, 0)
+		}
+		pane.BorderColor(t.Border)
+	}
+	if o.Focused {
+		pane.DrawOver(func(p *ui.Painter, r ui.Rect) {
+			p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W, H: 2}, t.Accent, 0)
+		})
+	}
+	return pane
 }
 
 // Badge is a small status capsule: a dot and a label in tone, over a tint of
@@ -170,4 +254,22 @@ func TitleBar(c *ui.Context, bar ui.Element, flush bool) ui.Element {
 		return bar.Background(t.Background)
 	}
 	return bar
+}
+
+// PaneFrame frames a terminal Pane of a split Tab. Classic outlines each
+// Pane, the focused one in the accent; the macOS style draws the Panes flush,
+// divided by the split's own line, and marks the focused one with an accent
+// rule along its top.
+func PaneFrame(c *ui.Context, pane ui.Element, focused bool) ui.Element {
+	t := c.Theme()
+	if !CurrentStyle().Native() {
+		if focused {
+			return pane.Border(1, t.Accent.Alpha(0.7))
+		}
+		return pane.Border(1, t.Border)
+	}
+	if focused {
+		return pane.BorderWidth(2, 0, 0, 0).BorderColor(t.Accent)
+	}
+	return pane.BorderWidth(2, 0, 0, 0).BorderColor(ui.Transparent)
 }

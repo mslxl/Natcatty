@@ -21,7 +21,7 @@ const maxCrumbs = 4
 // double-click turns into a path field, and the icon actions.
 func toolbar(c *ui.Context, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab,
 	m locales.Messages, t *ui.Theme) {
-	ui.Column(c).FillWidth().Shrink(0).Background(kit.Muted(t)).
+	ui.Column(c).FillWidth().Shrink(0).Background(kit.ChromeFill(t)).
 		BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 		ui.Row(c).FillWidth().Height(30).Padding(0, 8).Gap(2).AlignItems(ui.Center).Children(func() {
 			if tab.EditingPath {
@@ -31,7 +31,7 @@ func toolbar(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 			breadcrumb(c, s, side, tab, m, t)
 		})
 		ui.Row(c).FillWidth().Height(36).Padding(0, 6).Gap(2).AlignItems(ui.Center).
-			BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
+			BorderWidth(1, 0, 0, 0).BorderColor(kit.ChromeRule(t)).Children(func() {
 			actions(c, s, side, tab, m, t)
 		})
 	})

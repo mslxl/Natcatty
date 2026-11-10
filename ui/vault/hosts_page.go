@@ -66,38 +66,28 @@ func hostsToolbar(c *ui.Context, s *vaultstate.State, field func(), opts options
 		ui.Row(c).Grow(1).MinWidth(180).Children(field)
 		viewModeToggle(c, opts, layout, m, t)
 		sortSelect(c, opts, layout, m, t)
-		ui.Row(c).Gap(1).Shrink(0).AlignItems(ui.Center).Children(func() {
-			if kit.PrimaryButton(c, icons.Plus, m.VaultHostNew()).Clicked() {
-				s.BeginCreate()
+		if kit.PrimaryMenuButton(c, icons.Plus, m.VaultHostNew(), m.VaultMoreActions(), func(menu *ui.Menu) {
+			if menu.Item(m.VaultGroupNew()).Chosen() {
+				s.BeginCreateGroup()
 				c.Invalidate()
 			}
-			more := ui.ButtonBase(c).Label(m.VaultMoreActions()).Tooltip(m.VaultMoreActions()).
-				Size(28, kit.M(c).Control.Large).Radius(kit.M(c).Radius.Control).Justify(ui.Center).AlignItems(ui.Center).
-				Background(t.Accent).TextColor(t.AccentText)
-			if more.Hovered() {
-				more.Background(t.AccentHover)
+			menu.Separator()
+			if menu.Item(m.VaultImportTitle()).Chosen() {
+				s.BeginImport()
+				c.Invalidate()
 			}
-			more.Children(func() { kit.IconSized(c, icons.ChevronDown, kit.M(c).Icon.Medium) })
-			more.Menu(func(menu *ui.Menu) {
-				if menu.Item(m.VaultGroupNew()).Chosen() {
-					s.BeginCreateGroup()
-					c.Invalidate()
-				}
-				menu.Separator()
-				if menu.Item(m.VaultImportTitle()).Chosen() {
-					s.BeginImport()
-					c.Invalidate()
-				}
-				if menu.Item(m.VaultExportTitle()).Chosen() {
-					s.BeginExport()
-					c.Invalidate()
-				}
-				if menu.Item(m.VaultBackupOpen()).Chosen() {
-					s.BeginBackups()
-					c.Invalidate()
-				}
-			})
-		})
+			if menu.Item(m.VaultExportTitle()).Chosen() {
+				s.BeginExport()
+				c.Invalidate()
+			}
+			if menu.Item(m.VaultBackupOpen()).Chosen() {
+				s.BeginBackups()
+				c.Invalidate()
+			}
+		}) {
+			s.BeginCreate()
+			c.Invalidate()
+		}
 		if opts.localTerminal != nil {
 			if kit.SecondaryButton(c, icons.SquareTerminal, m.VaultLocalTerminal()).Clicked() {
 				opts.localTerminal()

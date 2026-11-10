@@ -421,7 +421,7 @@ func queueStrip(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui
 			active++
 		}
 	}
-	ui.Column(c).FillWidth().Shrink(0).Background(kit.Muted(t)).
+	ui.Column(c).FillWidth().Shrink(0).Background(kit.ChromeFill(t)).
 		BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
 		ui.Row(c).FillWidth().Height(30).Padding(0, 6, 0, 12).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Icon(c, icons.Lucide(icons.ArrowDownUp)).Size(13, 13).TextColor(t.TextMuted)
