@@ -56,10 +56,11 @@ func (s *State) refreshBroadcastState() {
 		}
 		for _, paneID := range tab.paneIDs() {
 			value := tab.panes[paneID]
-			if value == nil || value.session == nil {
+			session := value.session()
+			if session == nil {
 				continue
 			}
-			id := value.session.ID()
+			id := session.ID()
 			if present[id] {
 				continue
 			}
@@ -117,18 +118,18 @@ func (s *State) BroadcastSessions() []BroadcastSessionInfo {
 		focusedPane, focusedID := tab.focusedPane()
 		for _, paneID := range tab.paneIDs() {
 			value := tab.panes[paneID]
-			if value == nil || value.session == nil {
+			session := value.session()
+			if session == nil {
 				continue
 			}
-			id := value.session.ID()
-			running := value.session.Snapshot().Status == appsession.StatusRunning
+			id := session.ID()
+			running := session.Snapshot().Status == appsession.StatusRunning
 			if !running && !selected[id] && !hasStatuses[id] {
 				continue
 			}
 			info := BroadcastSessionInfo{
 				ID:        id,
 				Label:     s.connectionLabel(value),
-				Number:    value.descriptor.Number,
 				TabNumber: tab.Number,
 				// Only the active Tab holds terminal focus; every other Tab's
 				// own FocusPath is just where focus returns when selected.
@@ -136,6 +137,9 @@ func (s *State) BroadcastSessions() []BroadcastSessionInfo {
 					index == s.active && !s.vaultVisible,
 				Selected: selected[id],
 				Running:  running,
+			}
+			if descriptor := value.sessionDescriptor(); descriptor != nil {
+				info.Number = descriptor.Number
 			}
 			if hasStatuses[id] {
 				info.Status = statuses[id]
@@ -152,8 +156,9 @@ func (s *State) BroadcastSessions() []BroadcastSessionInfo {
 func (s *State) SessionByID(id model.SessionID) (*appsession.Session, bool) {
 	for _, tab := range s.tabs {
 		for _, value := range tab.panes {
-			if value != nil && value.session != nil && value.session.ID() == id {
-				return value.session, true
+			session := value.session()
+			if session != nil && session.ID() == id {
+				return session, true
 			}
 		}
 	}
@@ -167,10 +172,11 @@ func (s *State) FocusedSessionID() (model.SessionID, bool) {
 		return "", false
 	}
 	value, _ := tab.focusedPane()
-	if value == nil || value.session == nil {
+	session := value.session()
+	if session == nil {
 		return "", false
 	}
-	return value.session.ID(), true
+	return session.ID(), true
 }
 
 // FocusedHostID returns the Vault Host of the focused Session, or false for a

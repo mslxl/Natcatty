@@ -98,10 +98,15 @@ func (s *State) FocusLocal() bool {
 	for index, tab := range s.tabs {
 		for _, paneID := range tab.paneIDs() {
 			value := tab.panes[paneID]
-			if value == nil || value.pending || value.session == nil {
+			if value == nil {
 				continue
 			}
-			if value.descriptor.Kind == domainworkspace.SessionLocal {
+			session := value.session()
+			if value.pending || session == nil {
+				continue
+			}
+			if descriptor := value.sessionDescriptor(); descriptor != nil &&
+				descriptor.Kind == domainworkspace.SessionLocal {
 				s.focusPane(index, tab, paneID)
 				return true
 			}
@@ -110,8 +115,13 @@ func (s *State) FocusLocal() bool {
 	for _, tab := range s.detached {
 		for _, paneID := range tab.paneIDs() {
 			value := tab.panes[paneID]
-			if value == nil || value.pending || value.session == nil ||
-				value.descriptor.Kind != domainworkspace.SessionLocal {
+			if value == nil {
+				continue
+			}
+			session := value.session()
+			descriptor := value.sessionDescriptor()
+			if value.pending || session == nil || descriptor == nil ||
+				descriptor.Kind != domainworkspace.SessionLocal {
 				continue
 			}
 			if !s.ReattachDetachedTab(tab.ID) {
@@ -131,8 +141,8 @@ func (s *State) FocusLocal() bool {
 func (t *Tab) livePaneWithSession(id model.SessionID) (model.PaneID, bool) {
 	for _, paneID := range t.paneIDs() {
 		value := t.panes[paneID]
-		if value != nil && !value.pending && value.session != nil &&
-			value.session.ID() == id {
+		session := value.session()
+		if value != nil && !value.pending && session != nil && session.ID() == id {
 			return paneID, true
 		}
 	}
@@ -142,8 +152,10 @@ func (t *Tab) livePaneWithSession(id model.SessionID) (model.PaneID, bool) {
 func (t *Tab) livePaneWithHost(hostID model.HostID) (model.PaneID, bool) {
 	for _, paneID := range t.paneIDs() {
 		value := t.panes[paneID]
-		if value != nil && !value.pending && value.session != nil &&
-			value.descriptor.HostID == hostID {
+		session := value.session()
+		descriptor := value.sessionDescriptor()
+		if value != nil && !value.pending && session != nil &&
+			descriptor != nil && descriptor.HostID == hostID {
 			return paneID, true
 		}
 	}

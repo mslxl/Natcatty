@@ -62,8 +62,8 @@ func TestSplitTabTitleFollowsTheFocusedPaneAndCountsHosts(t *testing.T) {
 	}
 
 	// Two Panes on one Host are one connection, so no suffix appears.
-	state.tabs[0].panes["pane-b"].descriptor.HostID = "host-a"
-	state.tabs[0].panes["pane-b"].descriptor.Label = "web-02"
+	state.tabs[0].panes["pane-b"].sessionContent().descriptor.HostID = "host-a"
+	state.tabs[0].panes["pane-b"].sessionContent().descriptor.Label = "web-02"
 	if got, _, _ := state.TabLabel(0); got != "web-02" {
 		t.Fatalf("same-host tab title = %q, want no host suffix", got)
 	}
@@ -82,12 +82,12 @@ func splitTitleTestTab() *Tab {
 		Root:        root,
 		FocusPath:   domainworkspace.FocusPath(root, "pane-a"),
 		panes: map[model.PaneID]*pane{
-			"pane-a": {ID: "pane-a", descriptor: domainworkspace.SessionDescriptor{
+			"pane-a": newSessionPane("pane-a", domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionSSH, HostID: "host-a", Label: "web-01",
-			}},
-			"pane-b": {ID: "pane-b", descriptor: domainworkspace.SessionDescriptor{
+			}),
+			"pane-b": newSessionPane("pane-b", domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionSSH, HostID: "host-b", Label: "db-02",
-			}},
+			}),
 		},
 	}
 }
@@ -146,15 +146,15 @@ func TestMergingSinglePaneTabsComposesBothConnectionLabels(t *testing.T) {
 	}
 
 	// The composed title keeps following the Panes it names.
-	state.tabs[0].panes["pane-b"].descriptor.CustomName = "logs"
+	state.tabs[0].panes["pane-b"].sessionContent().descriptor.CustomName = "logs"
 	if got, _, _ := state.TabLabel(0); got != "web-01/logs" {
 		t.Fatalf("title after a Pane rename = %q, want the new label", got)
 	}
 
 	// Two Panes on one Host collapse to a single label.
-	state.tabs[0].panes["pane-b"].descriptor.CustomName = ""
-	state.tabs[0].panes["pane-b"].descriptor.HostID = "host-a"
-	state.tabs[0].panes["pane-b"].descriptor.Label = "web-01"
+	state.tabs[0].panes["pane-b"].sessionContent().descriptor.CustomName = ""
+	state.tabs[0].panes["pane-b"].sessionContent().descriptor.HostID = "host-a"
+	state.tabs[0].panes["pane-b"].sessionContent().descriptor.Label = "web-01"
 	if got, _, _ := state.TabLabel(0); got != "web-01" {
 		t.Fatalf("same-Host merged title = %q, want one label", got)
 	}
@@ -170,10 +170,10 @@ func singlePaneTestTab(id model.TabID, number int, paneID model.PaneID, label st
 		Root:        root,
 		FocusPath:   domainworkspace.FocusPath(root, paneID),
 		panes: map[model.PaneID]*pane{
-			paneID: {ID: paneID, descriptor: domainworkspace.SessionDescriptor{
+			paneID: newSessionPane(paneID, domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionSSH, HostID: model.HostID("host-" + string(paneID)),
 				Label: label,
-			}},
+			}),
 		},
 	}
 }
@@ -186,10 +186,10 @@ func TestPaneRenameNamesThatPaneNotTheFocusedOne(t *testing.T) {
 	if !state.RenamePane(0, "pane-b", "logs") {
 		t.Fatal("RenamePane failed")
 	}
-	if got := state.tabs[0].panes["pane-b"].descriptor.CustomName; got != "logs" {
+	if got := state.tabs[0].panes["pane-b"].sessionContent().descriptor.CustomName; got != "logs" {
 		t.Fatalf("renamed pane = %q, want %q", got, "logs")
 	}
-	if got := state.tabs[0].panes["pane-a"].descriptor.CustomName; got != "" {
+	if got := state.tabs[0].panes["pane-a"].sessionContent().descriptor.CustomName; got != "" {
 		t.Fatalf("focused pane was renamed to %q", got)
 	}
 	if state.RenamePane(0, "pane-b", "   ") {

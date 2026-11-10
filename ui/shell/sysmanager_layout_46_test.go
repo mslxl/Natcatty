@@ -181,8 +181,8 @@ func TestSysManagerTabsMenuOpensAtTheMinimumWindow(t *testing.T) {
 				name, left, right, rect)
 		}
 		openTabsMenuWithMouse(t, tester, label, name)
-		if got := len(tester.Menu()); got < 10 {
-			t.Fatalf("%s: the minimum-window menu has %d entries, want the seven tabs, a separator, and two moves: %q",
+		if got := len(tester.Menu()); got < 11 {
+			t.Fatalf("%s: the minimum-window menu has %d entries, want the eight tabs, a separator, and two moves: %q",
 				name, got, tester.Menu())
 		}
 		t.Logf("%s: Tabs button at %.0f,%.0f %.0fx%.0f; menu has %d entries",

@@ -18,15 +18,16 @@ func TestShowHostSamplesTheSessionsHostAndHideStops(t *testing.T) {
 	if !ok || start.host.ID != "beta" || state.HostID() != "beta" {
 		t.Fatalf("the side panel samples %+v (%v), Host %q, want beta", start, ok, state.HostID())
 	}
-	// Every frame asks again; only a different Host restarts sampling.
+	// The Host is captured when the tool opens. Every frame may ask again, but
+	// a later focus change must not retarget the side surface.
 	starts := len(service.starts)
 	state.ShowHost("beta")
 	if len(service.starts) != starts {
 		t.Fatalf("the same Host restarted sampling: %d starts, want %d", len(service.starts), starts)
 	}
 	state.ShowHost("alpha")
-	if start, _ := service.lastStart(); start.host.ID != "alpha" {
-		t.Fatalf("switching Session did not follow its Host: %+v", start)
+	if start, _ := service.lastStart(); start.host.ID != "beta" {
+		t.Fatalf("an open side panel followed another Host: %+v", start)
 	}
 
 	stops := service.stops
@@ -47,6 +48,9 @@ func TestShowHostNeverFallsBackToAnotherHost(t *testing.T) {
 	state.ShowHost("missing")
 	if state.HostID() != "" {
 		t.Fatalf("a Host missing from the Vault showed %q", state.HostID())
+	}
+	if len(service.starts) != 0 {
+		t.Fatalf("the side tool sampled another Host: %+v", service.starts)
 	}
 	tt := ui.NewTester(SideView(state), 360, 600)
 	tt.SetLocale("en")

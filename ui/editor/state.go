@@ -40,6 +40,13 @@ type State struct {
 	conflict *conflictPrompt
 	confirm  *confirmPrompt
 	failure  *failurePrompt
+
+	// language is the optional language-service router. It is set after
+	// construction by the app once the plugin manager exists.
+	language LanguageService
+	// languageSchedule arms the debounced redraw that makes published
+	// results visible. The default is real time; tests inject a clock.
+	languageSchedule languageScheduler
 }
 
 type document struct {
@@ -51,6 +58,9 @@ type document struct {
 	saving     bool
 	saveFailed bool
 	saved      bool
+	// language is the document's language binding, nil for a file with no
+	// language service.
+	language *documentLanguage
 }
 
 type conflictPrompt struct {
@@ -81,7 +91,10 @@ func WithRedrawRequest(fn func()) Option {
 // NewState builds the editor state.
 func NewState(service Service, options ...Option) *State {
 	ctx, cancel := context.WithCancel(context.Background())
-	state := &State{service: service, ctx: ctx, cancel: cancel}
+	state := &State{
+		service: service, ctx: ctx, cancel: cancel,
+		languageSchedule: realLanguageScheduler{},
+	}
 	for _, option := range options {
 		option(state)
 	}
@@ -362,6 +375,7 @@ func (s *State) closeDocument() {
 	if s.doc == nil {
 		return
 	}
+	s.closeLanguageDocument(s.doc)
 	id := s.doc.id
 	s.doc = nil
 	s.conflict = nil

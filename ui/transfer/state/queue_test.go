@@ -584,6 +584,12 @@ func TestQueueConflictPromptWaitsForAnOpenDialogToClose(t *testing.T) {
 	f.state.RequestNewFolder(Left)
 	f.state.Transfer(Left)
 	settle(t, f.state, "the Transfer to wait for its conflict", func() bool {
+		// The queue reports Attention before the state goroutine mirrors the
+		// snapshot and queues the prompt, so wait for the prompt itself;
+		// otherwise CloseDialog can run before there is anything to show next.
+		if len(f.state.promptQueue) == 0 {
+			return false
+		}
 		for _, task := range queue.Tasks() {
 			if task.Status == domainsftp.TaskAttention {
 				return true

@@ -68,10 +68,11 @@ func (g *inputGraph) session(t *testing.T, tab int) *appsession.Session {
 		t.Fatalf("tab %d missing", tab)
 	}
 	value, _ := tabValue.focusedPane()
-	if value == nil || value.session == nil {
+	session := value.session()
+	if session == nil {
 		t.Fatalf("tab %d has no Session", tab)
 	}
-	return value.session
+	return session
 }
 
 func mustTabID(t *testing.T, s *State, index int) model.TabID {
@@ -180,9 +181,10 @@ func TestBroadcastReportsAPeerThatClosedMidSession(t *testing.T) {
 	}
 	tab, _ := state.tabByID(mustTabID(t, state, 0))
 	value, _ := tab.focusedPane()
-	_ = value.session.Close()
+	session := value.session()
+	_ = session.Close()
 	select {
-	case <-value.session.Done():
+	case <-session.Done():
 	case <-time.After(2 * time.Second):
 		t.Fatal("the peer did not close")
 	}

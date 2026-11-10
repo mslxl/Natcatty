@@ -323,10 +323,11 @@ func telnetRestorePayload() domainworkspace.Payload {
 		}},
 		Panes: []domainworkspace.RestoredPane{{
 			ID: "pane-telnet",
-			Session: domainworkspace.SessionDescriptor{
-				Kind: domainworkspace.SessionTelnet, HostID: "host-telnet",
-				Hostname: "127.0.0.1", Port: 2323, Label: "telnet-fake",
-			},
+			PaneDescriptor: domainworkspace.NewSessionPaneDescriptor(
+				domainworkspace.SessionDescriptor{
+					Kind: domainworkspace.SessionTelnet, HostID: "host-telnet",
+					Hostname: "127.0.0.1", Port: 2323, Label: "telnet-fake",
+				}),
 		}},
 	}
 }

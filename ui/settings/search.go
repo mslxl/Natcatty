@@ -23,6 +23,7 @@ const (
 	AreaSync       Area = "sync"
 	AreaShortcuts  Area = "shortcuts"
 	AreaMCP        Area = "mcp"
+	AreaPlugins    Area = "plugins"
 	AreaAbout      Area = "about"
 )
 
@@ -30,7 +31,7 @@ const (
 func Areas() []Area {
 	return []Area{AreaAppearance, AreaTerminal, AreaTransport, AreaLayout, AreaSFTPEditor,
 		AreaLogs, AreaSystem, AreaSecurity, AreaSync, AreaShortcuts, AreaMCP,
-		AreaAbout}
+		AreaPlugins, AreaAbout}
 }
 
 // AreaTitle returns the localized area name.
@@ -58,6 +59,8 @@ func AreaTitle(m locales.Messages, area Area) string {
 		return m.SettingsAreaShortcuts()
 	case AreaMCP:
 		return m.SettingsAreaMCP()
+	case AreaPlugins:
+		return m.SettingsAreaPlugins()
 	case AreaAbout:
 		return m.SettingsAreaAbout()
 	default:
@@ -90,6 +93,8 @@ func AreaDescription(m locales.Messages, area Area) string {
 		return m.SettingsShortcutsDescription()
 	case AreaMCP:
 		return m.SettingsMCPDescription()
+	case AreaPlugins:
+		return m.SettingsPluginsDescription()
 	case AreaAbout:
 		return m.SettingsAboutDescription()
 	default:
@@ -231,6 +236,11 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaMCP, "", m.SettingsMCPApprovalTitle(), "approval prompt approve deny expiry")
 	add(AreaMCP, "", m.SettingsMCPApprove(), "approve accept")
 	add(AreaMCP, "", m.SettingsMCPDeny(), "deny reject")
+
+	add(AreaPlugins, "", m.SettingsPluginsInstallFromFile(),
+		"plugin install package natplug local file")
+	add(AreaPlugins, "", m.SettingsPluginsPermissions(),
+		"plugin permission consent scope enable disable revoke uninstall purge data")
 
 	add(AreaAbout, "", m.SettingsAboutLicenseTitle(),
 		"license gpl gnu copyright modification source corresponding third party notices about version")

@@ -510,21 +510,22 @@ func sysManagerContentBounds(width int) (left, right float32) {
 // sysManagerTabLabels names every visible tab in a locale.
 func sysManagerTabLabels(m locales.Messages) map[appsysmanager.Tab]string {
 	return map[appsysmanager.Tab]string{
-		appsysmanager.TabOverview:  m.SysManagerTabOverview(),
-		appsysmanager.TabProcesses: m.SysManagerTabProcesses(),
-		appsysmanager.TabPorts:     m.SysManagerTabPorts(),
-		appsysmanager.TabServices:  m.SysManagerTabServices(),
-		appsysmanager.TabTmux:      m.SysManagerTabTmux(),
-		appsysmanager.TabDocker:    m.SysManagerTabDocker(),
-		appsysmanager.TabGPU:       m.SysManagerTabGPU(),
+		appsysmanager.TabOverview:   m.SysManagerTabOverview(),
+		appsysmanager.TabProcesses:  m.SysManagerTabProcesses(),
+		appsysmanager.TabPorts:      m.SysManagerTabPorts(),
+		appsysmanager.TabServices:   m.SysManagerTabServices(),
+		appsysmanager.TabTmux:       m.SysManagerTabTmux(),
+		appsysmanager.TabDocker:     m.SysManagerTabDocker(),
+		appsysmanager.TabGPU:        m.SysManagerTabGPU(),
+		appsysmanager.TabExtensions: m.SysManagerTabExtensions(),
 	}
 }
 
 // TestSysManagerTabStripKeepsEveryTabInsideTheContentAtMinimumWindow renders
-// the real shell at the minimum window's 704x421 client with all seven tabs.
+// the real shell at the minimum window's 704x421 client with all eight tabs.
 // The strip overflows the 440-DIP content column, so it must scroll to the
-// chosen tab: every tab, including the last one (GPU), has to be whole and
-// inside the column while it is active, and no tab label may cross the
+// chosen tab: every tab, including the last one (Extensions), has to be whole
+// and inside the column while it is active, and no tab label may cross the
 // column's right edge.
 //
 // Independent acceptance at a2d30004 measured the English GPU tab at
@@ -538,8 +539,8 @@ func TestSysManagerTabStripKeepsEveryTabInsideTheContentAtMinimumWindow(t *testi
 			sysManagerMinimumHeight, locale, appsysmanager.TabOverview, 4)
 		labels := sysManagerTabLabels(m)
 		tabs := manager.Tabs()
-		if len(tabs) < 7 {
-			t.Fatalf("%s: visible tabs = %d, want the seven-tab strip: %v", locale, len(tabs), tabs)
+		if len(tabs) < 8 {
+			t.Fatalf("%s: visible tabs = %d, want the eight-tab strip: %v", locale, len(tabs), tabs)
 		}
 
 		// Natural label widths, measured where the strip is wide enough not

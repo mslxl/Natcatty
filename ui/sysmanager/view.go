@@ -147,21 +147,25 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 // refreshControls are the refresh interval, Refresh now, and the tab-layout
 // menu.
 func refreshControls(c *ui.Context, s *State, m locales.Messages) {
-	choices := make([]string, 0, len(domainpreferences.SysManagerIntervalChoices))
-	for _, seconds := range domainpreferences.SysManagerIntervalChoices {
-		choices = append(choices, m.SysManagerSeconds(seconds))
-	}
-	current := m.SysManagerSeconds(s.Interval())
-	chosen := current
-	ui.Select(c, &chosen, choices).Width(84).MinWidth(84).Label(m.SysManagerRefresh())
-	if chosen != current {
-		for index, label := range choices {
-			if label == chosen {
-				s.SetInterval(domainpreferences.SysManagerIntervalChoices[index])
-				break
-			}
+	// Extensions has no host sampler: every plugin section declares its own
+	// cadence, so a tab-level interval control would not change anything.
+	if s.Tab() != appsysmanager.TabExtensions {
+		choices := make([]string, 0, len(domainpreferences.SysManagerIntervalChoices))
+		for _, seconds := range domainpreferences.SysManagerIntervalChoices {
+			choices = append(choices, m.SysManagerSeconds(seconds))
 		}
-		c.Invalidate()
+		current := m.SysManagerSeconds(s.Interval())
+		chosen := current
+		ui.Select(c, &chosen, choices).Width(84).MinWidth(84).Label(m.SysManagerRefresh())
+		if chosen != current {
+			for index, label := range choices {
+				if label == chosen {
+					s.SetInterval(domainpreferences.SysManagerIntervalChoices[index])
+					break
+				}
+			}
+			c.Invalidate()
+		}
 	}
 	c.Key("sysmanager-refresh")
 	if kit.GhostButton(c, icons.RefreshCw, m.SysManagerRefreshNow()).Clicked() {
@@ -278,6 +282,8 @@ func tabLabel(m locales.Messages, tab appsysmanager.Tab) string {
 		return m.SysManagerTabDocker()
 	case appsysmanager.TabGPU:
 		return m.SysManagerTabGPU()
+	case appsysmanager.TabExtensions:
+		return m.SysManagerTabExtensions()
 	default:
 		return m.SysManagerTabOverview()
 	}
@@ -357,6 +363,8 @@ func tabContent(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		dockerContent(c, s, state, m, t)
 	case appsysmanager.TabGPU:
 		gpuContent(c, s, state, m, t)
+	case appsysmanager.TabExtensions:
+		extensionsContent(c, s, m, t)
 	}
 }
 
@@ -1121,6 +1129,19 @@ func confirmation(c *ui.Context, s *State, m locales.Messages) {
 
 func confirmationText(pending PendingAction, m locales.Messages) (string, string, string) {
 	switch pending.Kind {
+	case appsysmanager.ActionPanel:
+		action := pending.PanelActionLabel
+		if action == "" && pending.Panel != nil {
+			action = pending.Panel.ActionID
+		}
+		plugin := ""
+		if pending.Panel != nil {
+			plugin = pending.Panel.Plugin.Name
+			if plugin == "" {
+				plugin = pending.Panel.Plugin.ID
+			}
+		}
+		return action, m.SysManagerConfirmPanelAction(action, plugin, pending.PanelTarget), action
 	case appsysmanager.ActionServiceAction:
 		action := serviceActionText(pending.Action, m)
 		return action, m.SysManagerConfirmService(action, pending.Unit, pending.Command), action
@@ -1256,12 +1277,20 @@ func problemText(m locales.Messages, problem Problem) string {
 }
 
 func actionNotice(s *State, m locales.Messages) string {
+	panelAction := s.actionResult.Kind == appsysmanager.ActionPanel
+	label := s.panelActionLabel
 	if s.ActionBusy() {
 		result, _ := s.ActionResult()
 		command := result.Command
+		if panelAction {
+			command = label
+		}
 		if command == "" {
 			if pending, ok := s.Pending(); ok {
 				command = pending.Command
+				if panelAction {
+					command = pending.PanelActionLabel
+				}
 			}
 		}
 		return m.SysManagerActionRunning(command)
@@ -1271,6 +1300,9 @@ func actionNotice(s *State, m locales.Messages) string {
 	}
 	if err := s.ActionError(); err != nil {
 		if errors.Is(err, context.Canceled) {
+			if panelAction {
+				return m.SysManagerPanelActionCancelled()
+			}
 			return m.SysManagerActionCancelled()
 		}
 		var typed *appsysmanager.Error
@@ -1278,6 +1310,9 @@ func actionNotice(s *State, m locales.Messages) string {
 			return m.SysManagerActionPermission()
 		}
 		return m.SysManagerActionFailed()
+	}
+	if panelAction {
+		return m.SysManagerPanelActionSucceeded()
 	}
 	return m.SysManagerActionSucceeded(s.ActionCommand())
 }

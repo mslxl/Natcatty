@@ -11,11 +11,13 @@ import (
 	"time"
 
 	appsession "github.com/mslxl/natcatty/application/session"
+	appview "github.com/mslxl/natcatty/application/view"
 	"github.com/mslxl/natcatty/domain/model"
 	etmodel "github.com/mslxl/natcatty/domain/model/et"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainsessiontitle "github.com/mslxl/natcatty/domain/sessiontitle"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
@@ -25,6 +27,11 @@ import (
 // ErrUnknownSession reports a restored Pane descriptor this shell cannot
 // reopen.
 var ErrUnknownSession = errors.New("shell: unknown Session kind")
+
+// ErrUnavailablePane reports a restored Pane whose content kind this build
+// cannot show, such as a View or an unknown kind. The Pane stays in the layout
+// as a placeholder; it is not retried.
+var ErrUnavailablePane = errors.New("shell: Pane content unavailable")
 
 // etResumeCleanupTimeout bounds clearing one saved ET pair from the shell. The
 // store is local, so deletes are normally immediate; the bound keeps a stuck
@@ -54,8 +61,18 @@ type Tab struct {
 	panes     map[model.PaneID]*pane
 }
 
-type pane struct {
-	ID         model.PaneID
+// paneContent is the shell-side union of Pane contents. Session content owns
+// the live Session; View content will own a host-owned View instance. Only
+// Session content is constructed in this release.
+type paneContent interface {
+	kind() domainworkspace.PaneKind
+	// restore returns the kinded descriptor that rebuilds this content.
+	restore() domainworkspace.PaneDescriptor
+}
+
+// sessionContent is a Pane's terminal Session and its non-secret restore
+// descriptor. session is nil until the asynchronous open succeeds.
+type sessionContent struct {
 	descriptor domainworkspace.SessionDescriptor
 	session    *appsession.Session
 	surface    Surface
@@ -69,13 +86,139 @@ type pane struct {
 	titleSession *appsession.Session
 }
 
+func (c *sessionContent) kind() domainworkspace.PaneKind { return domainworkspace.PaneKindSession }
+
+func (c *sessionContent) restore() domainworkspace.PaneDescriptor {
+	return domainworkspace.NewSessionPaneDescriptor(c.descriptor)
+}
+
+// viewContent is a Pane's live View Instance and its bounded restore
+// descriptor. instance is nil only for a restored placeholder this build
+// cannot open; the placements work adds View restore.
+type viewContent struct {
+	instance   *appview.Instance
+	descriptor domainworkspace.ViewPaneDescriptor
+}
+
+func (c *viewContent) kind() domainworkspace.PaneKind { return domainworkspace.PaneKindView }
+
+func (c *viewContent) restore() domainworkspace.PaneDescriptor {
+	view := c.descriptor
+	if c.instance != nil && !c.instance.Closed() {
+		view = c.instance.Descriptor()
+	}
+	return domainworkspace.PaneDescriptor{Kind: domainworkspace.PaneKindView, View: &view}
+}
+
+type pane struct {
+	ID      model.PaneID
+	content paneContent
+	// unavailable preserves a restored View or unknown content kind. Such a
+	// Pane stays in the layout as an error placeholder and never opens.
+	unavailable *domainworkspace.PaneDescriptor
+	surface     Surface
+	err         error
+	pending     bool
+}
+
+func newSessionPane(id model.PaneID, descriptor domainworkspace.SessionDescriptor) *pane {
+	return &pane{ID: id, content: &sessionContent{descriptor: descriptor}}
+}
+
+func (p *pane) sessionContent() *sessionContent {
+	if p == nil {
+		return nil
+	}
+	content, _ := p.content.(*sessionContent)
+	return content
+}
+
+// viewContent returns the View content of this Pane, or nil for Session and
+// unavailable content.
+func (p *pane) viewContent() *viewContent {
+	if p == nil {
+		return nil
+	}
+	content, _ := p.content.(*viewContent)
+	return content
+}
+
+// session returns the live Session bound to this Pane, or nil for a Pane that
+// is still opening or holds non-Session content.
+func (p *pane) session() *appsession.Session {
+	if content := p.sessionContent(); content != nil {
+		return content.session
+	}
+	return nil
+}
+
+// sessionDescriptor returns the Session restore data, or nil for non-Session
+// content.
+func (p *pane) sessionDescriptor() *domainworkspace.SessionDescriptor {
+	if content := p.sessionContent(); content != nil {
+		return &content.descriptor
+	}
+	return nil
+}
+
+// restoreDescriptor returns the kinded descriptor persisted for this Pane.
+func (p *pane) restoreDescriptor() domainworkspace.PaneDescriptor {
+	if p == nil {
+		return domainworkspace.PaneDescriptor{}
+	}
+	if p.unavailable != nil {
+		return *p.unavailable
+	}
+	if p.content != nil {
+		return p.content.restore()
+	}
+	return domainworkspace.PaneDescriptor{}
+}
+
+// cloneForDuplicate copies one Pane into a duplicated Tab. A Session gets a
+// fresh ET resume key and opens again; an unavailable placeholder is copied
+// as-is without opening anything.
+func (p *pane) cloneForDuplicate(id model.PaneID) *pane {
+	if content := p.sessionContent(); content != nil {
+		clone := newSessionPane(id, withFreshResumeKey(content.descriptor))
+		clone.pending = true
+		return clone
+	}
+	if p.unavailable != nil {
+		descriptor := *p.unavailable
+		return &pane{ID: id, unavailable: &descriptor, err: ErrUnavailablePane}
+	}
+	if p.content != nil {
+		// A View Pane without a live instance has no opener; keep the duplicate
+		// as the same unavailable placeholder. Live View Panes are duplicated
+		// through the View registry before cloneTab copies a Tab.
+		descriptor := p.content.restore()
+		return &pane{ID: id, unavailable: &descriptor, err: ErrUnavailablePane}
+	}
+	return &pane{ID: id}
+}
+
+// contentKind reports the restored content kind for this Pane.
+func (p *pane) contentKind() domainworkspace.PaneKind {
+	if p == nil {
+		return ""
+	}
+	if p.unavailable != nil {
+		return p.unavailable.Kind
+	}
+	if p.content != nil {
+		return p.content.kind()
+	}
+	return ""
+}
+
 // TabOptions seeds a new Tab.
 type TabOptions struct {
 	Label          string
 	AutoTitle      bool
 	GeneratedTitle bool
 	Copy           int
-	Descriptor     domainworkspace.SessionDescriptor
+	Content        domainworkspace.PaneDescriptor
 }
 
 // TabInfo is the immutable Tab description the view renders.
@@ -94,11 +237,23 @@ type TabInfo struct {
 	Copy      int
 	Dirty     bool
 	Active    bool
+	// ViewInstanceID is set when the Tab's only content is a View Instance.
+	// The tab menu then offers the View duplicate rule instead of cloning the
+	// pane as an unavailable placeholder.
+	ViewInstanceID string
+	// ViewPlacement is the instance's current placement (Pane or Tab for a
+	// work Tab).
+	ViewPlacement domainplugin.Placement
+	// ViewMulti reports whether the View contribution allows duplicates.
+	ViewMulti bool
 }
 
 // PaneInfo is the immutable Pane description the view renders.
 type PaneInfo struct {
-	ID     model.PaneID
+	ID model.PaneID
+	// Kind is the content kind this Pane holds. A Pane this build cannot show
+	// reports its restored kind (often view or an unknown value) and Err.
+	Kind   domainworkspace.PaneKind
 	Number int
 	// Label is the Pane's connection label: its user rename or Host label.
 	Label string
@@ -108,6 +263,13 @@ type PaneInfo struct {
 	Pending bool
 	Err     error
 	Surface Surface
+	// ViewInstanceID is set for a live View Pane. The Pane menu uses it to
+	// move the same instance between placements, and to disable session-only
+	// commands that a View Pane cannot honour.
+	ViewInstanceID string
+	ViewPlacement  domainplugin.Placement
+	ViewPlacements []domainplugin.Placement
+	ViewMulti      bool
 }
 
 // DetachedTabInfo describes a Tab that left the main window and now belongs to
@@ -185,10 +347,20 @@ func withFreshResumeKey(descriptor domainworkspace.SessionDescriptor) domainwork
 func (s *State) newTab(opts TabOptions) *Tab {
 	number := s.nextTabNumber
 	s.nextTabNumber++
-	if opts.Descriptor.Number == 0 {
-		opts.Descriptor.Number = number
-	}
+	content := opts.Content.Normalized()
 	paneID := model.PaneID(newRuntimeID("pane-"))
+	value := &pane{ID: paneID}
+	if content.Kind == domainworkspace.PaneKindSession && content.Session != nil {
+		descriptor := *content.Session
+		if descriptor.Number == 0 {
+			descriptor.Number = number
+		}
+		value.content = &sessionContent{descriptor: descriptor}
+	} else {
+		stored := content
+		value.unavailable = &stored
+		value.err = ErrUnavailablePane
+	}
 	return &Tab{
 		ID:             model.TabID(newRuntimeID("tab-")),
 		Number:         number,
@@ -199,7 +371,7 @@ func (s *State) newTab(opts TabOptions) *Tab {
 		Copy:           opts.Copy,
 		Root:           domainworkspace.NewPaneNode(paneID),
 		panes: map[model.PaneID]*pane{
-			paneID: {ID: paneID, descriptor: opts.Descriptor},
+			paneID: value,
 		},
 	}
 }
@@ -219,8 +391,10 @@ func (t *Tab) attachOnlySession(session *appsession.Session, surface Surface) {
 		return
 	}
 	value := t.panes[ids[0]]
-	value.session = session
-	value.surface = surface
+	if content := value.sessionContent(); content != nil {
+		content.session = session
+		value.surface = surface
+	}
 }
 
 func (t *Tab) focusedPane() (*pane, model.PaneID) {
@@ -260,15 +434,42 @@ func (s *State) tabByID(id model.TabID) (*Tab, int) {
 	return nil, -1
 }
 
-// tabByAnyID finds a Tab in the main Workspace or in a detached window. Pane
-// outcomes use it so a Session opened for a duplicated-to-window Tab is
-// applied to the right owner.
+// tabByAnyID finds a Tab in the main Workspace or in a detached window.
 func (s *State) tabByAnyID(id model.TabID) (*Tab, int) {
 	if tab, index := s.tabByID(id); tab != nil {
 		return tab, index
 	}
 	for _, tab := range s.detached {
 		if tab.ID == id {
+			return tab, -1
+		}
+	}
+	return nil, -1
+}
+
+// tabByPaneID finds the Tab that owns a Pane in the main Workspace or in a
+// detached window. Pane ids are unique across every Tab, so a pane outcome
+// still reaches the right Pane after the Tab was renamed (view:<instanceId>
+// reconciliation) or the Pane moved to another container while its Session was
+// opening. Resolve by Pane identity, never by the Tab id captured at request
+// time: that id can be stale by the time the outcome is applied.
+func (s *State) tabByPaneID(paneID model.PaneID) (*Tab, int) {
+	if paneID == "" {
+		return nil, -1
+	}
+	for index, tab := range s.tabs {
+		if tab == nil || !domainworkspace.ContainsPane(tab.Root, paneID) {
+			continue
+		}
+		if _, ok := tab.panes[paneID]; ok {
+			return tab, index
+		}
+	}
+	for _, tab := range s.detached {
+		if tab == nil || !domainworkspace.ContainsPane(tab.Root, paneID) {
+			continue
+		}
+		if _, ok := tab.panes[paneID]; ok {
 			return tab, -1
 		}
 	}
@@ -366,7 +567,9 @@ func (s *State) renameTab(tab *Tab, title string) {
 }
 
 func (s *State) renamePane(tab *Tab, value *pane, title string) {
-	value.descriptor.CustomName = title
+	if content := value.sessionContent(); content != nil {
+		content.descriptor.CustomName = title
+	}
 	if !tab.AutoTitle && !tab.GeneratedTitle {
 		tab.Label = title
 	}
@@ -378,7 +581,7 @@ func (s *State) TabInfo(index int) (TabInfo, bool) {
 		return TabInfo{}, false
 	}
 	tab := s.tabs[index]
-	return TabInfo{
+	info := TabInfo{
 		ID:          tab.ID,
 		Number:      tab.Number,
 		TitleNumber: tab.TitleNumber,
@@ -387,8 +590,17 @@ func (s *State) TabInfo(index int) (TabInfo, bool) {
 		AutoTitle:   tab.AutoTitle,
 		Copy:        tab.Copy,
 		Dirty:       tab.Dirty,
-		Active:      index == s.active && !s.vaultVisible && !s.logsVisible,
-	}, true
+		Active:      index == s.active && !s.vaultVisible && !s.logsVisible && !s.PageVisible(),
+	}
+	if ids := tab.paneIDs(); len(ids) == 1 {
+		if content := tab.panes[ids[0]].viewContent(); content != nil && content.instance != nil {
+			contribution := content.instance.Contribution()
+			info.ViewInstanceID = content.instance.ID()
+			info.ViewPlacement = content.instance.Placement()
+			info.ViewMulti = contribution.Instances.Multi()
+		}
+	}
+	return info, true
 }
 
 // TabID returns the stable identity of the Tab at index.
@@ -437,6 +649,7 @@ func (s *State) SelectTab(index int) {
 	s.vaultVisible = false
 	s.logsVisible = false
 	s.sftpVisible = false
+	s.pageShown = ""
 	s.save()
 }
 
@@ -462,10 +675,11 @@ func (s *State) ActiveSnapshot() (appsession.Snapshot, bool) {
 		return appsession.Snapshot{}, false
 	}
 	value, _ := tab.focusedPane()
-	if value == nil || value.session == nil {
+	session := value.session()
+	if session == nil {
 		return appsession.Snapshot{}, false
 	}
-	return value.session.Snapshot(), true
+	return session.Snapshot(), true
 }
 
 // TabSnapshot returns the Session snapshot of the focused Pane in the Tab at
@@ -476,10 +690,11 @@ func (s *State) TabSnapshot(index int) (appsession.Snapshot, bool) {
 		return appsession.Snapshot{}, false
 	}
 	value, _ := s.tabs[index].focusedPane()
-	if value == nil || value.session == nil {
+	session := value.session()
+	if session == nil {
 		return appsession.Snapshot{}, false
 	}
-	return value.session.Snapshot(), true
+	return session.Snapshot(), true
 }
 
 // SetTabDirty marks or clears a Tab's activity indicator.
@@ -512,7 +727,8 @@ func (s *State) NoteSessionActivity(id model.SessionID) {
 func (s *State) applySessionActivity(id model.SessionID) {
 	for index, tab := range s.tabs {
 		for paneID, value := range tab.panes {
-			if value.session == nil || value.session.Snapshot().ID != id {
+			session := value.session()
+			if session == nil || session.Snapshot().ID != id {
 				continue
 			}
 			if index == s.active {
@@ -603,11 +819,16 @@ func (s *State) DuplicateTab(index int) error {
 	if index < 0 || index >= len(s.tabs) {
 		return ErrNoActiveTab
 	}
+	if view := onlyViewInstance(s.tabs[index]); view != nil {
+		// A View Tab follows the View duplicate rule: multi only, no state.
+		_, err := s.DuplicateView(view.ID(), view.Placement())
+		return err
+	}
 	if s.sessions == nil || s.surfaces == nil {
 		return ErrNoSessions
 	}
 	source := s.tabs[index]
-	copyTab, err := s.cloneTab(source)
+	copyTab, err := s.cloneTab(source, "")
 	if err != nil {
 		return err
 	}
@@ -622,7 +843,9 @@ func (s *State) DuplicateTab(index int) error {
 
 	for newID, value := range copyTab.panes {
 		// A duplicate opens where its source last was.
-		s.requestPaneOpen(copyTab.ID, newID, value.descriptor, true)
+		if descriptor := value.sessionDescriptor(); descriptor != nil {
+			s.requestPaneOpen(newID, *descriptor, true)
+		}
 	}
 	s.save()
 	s.RequestRedraw()
@@ -635,16 +858,23 @@ func (s *State) DuplicateTabToWindow(index int) error {
 	if index < 0 || index >= len(s.tabs) {
 		return ErrNoActiveTab
 	}
+	if view := onlyViewInstance(s.tabs[index]); view != nil {
+		// Copying to a Window is the duplicate rule with the Window target.
+		_, err := s.DuplicateView(view.ID(), domainplugin.PlacementWindow)
+		return err
+	}
 	if s.sessions == nil || s.surfaces == nil {
 		return ErrNoSessions
 	}
-	copyTab, err := s.cloneTab(s.tabs[index])
+	copyTab, err := s.cloneTab(s.tabs[index], domainplugin.PlacementWindow)
 	if err != nil {
 		return err
 	}
 	s.detached = append(s.detached, copyTab)
 	for newID, value := range copyTab.panes {
-		s.requestPaneOpen(copyTab.ID, newID, value.descriptor, true)
+		if descriptor := value.sessionDescriptor(); descriptor != nil {
+			s.requestPaneOpen(newID, *descriptor, true)
+		}
 	}
 	if s.onDetach != nil {
 		s.onDetach(copyTab.ID)
@@ -653,13 +883,112 @@ func (s *State) DuplicateTabToWindow(index int) error {
 	return nil
 }
 
-// cloneTab makes a fresh Tab with new Pane identities and pending Sessions.
-func (s *State) cloneTab(source *Tab) (*Tab, error) {
+// tabViewDuplicate plans one View Pane copy for a duplicated Tab.
+type tabViewDuplicate struct {
+	paneID model.PaneID
+	source *appview.Instance
+	target domainplugin.Placement
+}
+
+// tabViewDuplicates validates the View duplicate rule for every live View
+// Pane in source. A singleton anywhere in the Tab refuses the whole copy; a
+// multi-instance View must allow the target that its copy will record.
+func (s *State) tabViewDuplicates(source *Tab,
+	requested domainplugin.Placement) ([]tabViewDuplicate, error) {
+	var plans []tabViewDuplicate
+	for _, paneID := range source.paneIDs() {
+		value := source.panes[paneID]
+		if value == nil {
+			continue
+		}
+		content := value.viewContent()
+		if content == nil || content.instance == nil || content.instance.Closed() {
+			continue
+		}
+		instance := content.instance
+		if !instance.Contribution().Instances.Multi() {
+			return nil, fmt.Errorf("%w: %s", appview.ErrDuplicateSingleton, instance.ViewID())
+		}
+		target := requested
+		if target == "" {
+			switch instance.Placement() {
+			case domainplugin.PlacementPane, domainplugin.PlacementTab:
+				target = instance.Placement()
+			default:
+				// A View that lives in a work Tab is a Pane or a Tab; any
+				// other recorded value is stale and the copy lands as a Pane.
+				target = domainplugin.PlacementPane
+			}
+		}
+		if !instance.Contribution().Allows(target) {
+			return nil, fmt.Errorf("%w: %s for %s",
+				appview.ErrPlacementDenied, target, instance.ViewID())
+		}
+		plans = append(plans, tabViewDuplicate{paneID: paneID, source: instance, target: target})
+	}
+	return plans, nil
+}
+
+// duplicateTabViews creates the planned View copies and their surfaces. On a
+// failure it disposes everything it created, so a refused duplicate leaks no
+// instances or surfaces.
+func (s *State) duplicateTabViews(plans []tabViewDuplicate) (map[model.PaneID]*pane, error) {
+	if len(plans) == 0 {
+		return nil, nil
+	}
+	if s.views == nil || s.viewSurfaces == nil {
+		return nil, ErrNoViews
+	}
+	panes := make(map[model.PaneID]*pane, len(plans))
+	cleanup := func() {
+		for _, value := range panes {
+			if value.surface != nil {
+				value.surface.Close()
+			}
+			if content := value.viewContent(); content != nil && content.instance != nil {
+				_ = content.instance.Close()
+			}
+		}
+	}
+	for _, plan := range plans {
+		copied, err := s.views.Duplicate(plan.source.ID(), plan.target)
+		if err != nil {
+			cleanup()
+			return nil, err
+		}
+		surface, err := s.viewSurfaces(copied)
+		if err != nil {
+			_ = copied.Close()
+			cleanup()
+			return nil, err
+		}
+		descriptor := copied.Descriptor()
+		descriptor.Placement = workspacePlacement(plan.target)
+		panes[plan.paneID] = &pane{
+			content: &viewContent{instance: copied, descriptor: descriptor},
+			surface: surface,
+		}
+	}
+	return panes, nil
+}
+
+// cloneTab makes a fresh Tab with new Pane identities, duplicated View
+// Instances, and pending Sessions. viewTarget is the placement the copied
+// Views record; an empty target keeps the source's work-Tab placement.
+func (s *State) cloneTab(source *Tab, viewTarget domainplugin.Placement) (*Tab, error) {
+	viewPlans, err := s.tabViewDuplicates(source, viewTarget)
+	if err != nil {
+		return nil, err
+	}
 	mapping := make(map[model.PaneID]model.PaneID)
 	for _, id := range source.paneIDs() {
 		mapping[id] = model.PaneID(newRuntimeID("pane-"))
 	}
 	root, err := cloneTabTree(source.Root, mapping)
+	if err != nil {
+		return nil, err
+	}
+	viewPanes, err := s.duplicateTabViews(viewPlans)
 	if err != nil {
 		return nil, err
 	}
@@ -680,8 +1009,12 @@ func (s *State) cloneTab(source *Tab) (*Tab, error) {
 	}
 	s.nextTabNumber++
 	for oldID, newID := range mapping {
-		descriptor := withFreshResumeKey(source.panes[oldID].descriptor)
-		copyTab.panes[newID] = &pane{ID: newID, descriptor: descriptor, pending: true}
+		if value, ok := viewPanes[oldID]; ok {
+			value.ID = newID
+			copyTab.panes[newID] = value
+			continue
+		}
+		copyTab.panes[newID] = source.panes[oldID].cloneForDuplicate(newID)
 	}
 	copyTab.setFocus(mapping[mustFocusedID(source)])
 	return copyTab, nil
@@ -722,7 +1055,18 @@ func (s *State) DetachTab(index int) bool {
 	if index < 0 || index >= len(s.tabs) {
 		return false
 	}
+	if view := onlyViewInstance(s.tabs[index]); view != nil {
+		// Detaching a View Tab is a View move, so the registry records the
+		// Window placement and the same instance changes container.
+		return s.MoveView(view.ID(), domainplugin.PlacementWindow) == nil
+	}
 	tab := s.tabs[index]
+	// A mixed Tab can hold View Panes beside Sessions. Every live View moves
+	// to the Window placement atomically with the Tab, so pane menus and the
+	// saved descriptor never keep pointing at the old main-window placement.
+	if !s.detachTabViews(tab) {
+		return false
+	}
 	s.removeTabAt(index)
 	s.detached = append(s.detached, tab)
 	if s.onDetach != nil {
@@ -789,8 +1133,9 @@ func (s *State) DetachedTabExists(id model.TabID) bool {
 // detached Pane must find its own window rather than the main one.
 func (s *State) DetachedTabForSession(id model.SessionID) (model.TabID, bool) {
 	for _, tab := range s.detached {
-		for _, pane := range tab.panes {
-			if pane.session != nil && pane.session.ID() == id {
+		for _, value := range tab.panes {
+			session := value.session()
+			if session != nil && session.ID() == id {
 				return tab.ID, true
 			}
 		}
@@ -843,6 +1188,13 @@ func (s *State) ReattachDetachedTab(id model.TabID) bool {
 		if tab.ID != id {
 			continue
 		}
+		// Views that were shown in the window return to the work-Tab placement
+		// their container now expresses. A contribution that cannot accept it
+		// keeps the whole Tab in its window rather than recording a stale
+		// placement.
+		if !s.reattachTabViews(tab) {
+			return false
+		}
 		s.detached = append(s.detached[:index], s.detached[index+1:]...)
 		s.tabs = append(s.tabs, tab)
 		s.active = len(s.tabs) - 1
@@ -874,6 +1226,11 @@ func (s *State) DetachPane(tabIndex int, paneID model.PaneID) bool {
 	if !ok || !domainworkspace.ContainsPane(tab.Root, paneID) {
 		return false
 	}
+	if content := value.viewContent(); content != nil && content.instance != nil {
+		// A View Pane detach is the same View move; it keeps the instance and
+		// its surface instead of creating a placeholder window.
+		return s.MoveView(content.instance.ID(), domainplugin.PlacementWindow) == nil
+	}
 	if len(tab.paneIDs()) == 1 {
 		return s.DetachTab(tabIndex)
 	}
@@ -891,21 +1248,30 @@ func (s *State) DetachPane(tabIndex int, paneID model.PaneID) bool {
 	delete(tab.panes, paneID)
 	remainingFocus := domainworkspace.FocusAfterRemove(root, focusedID, paneID)
 	tab.FocusPath = domainworkspace.FocusPath(root, remainingFocus)
+	// A View left alone in the Tab records Tab and takes the canonical
+	// view:<instanceId> id; detaching its sibling Pane changed its container.
+	s.reconcileTabViewState(tab)
 
-	if !tab.AutoTitle && !tab.GeneratedTitle &&
-		value.descriptor.CustomName == "" && strings.TrimSpace(tab.Label) != "" {
+	if descriptor := value.sessionDescriptor(); descriptor != nil &&
+		!tab.AutoTitle && !tab.GeneratedTitle &&
+		descriptor.CustomName == "" && strings.TrimSpace(tab.Label) != "" {
 		// A legacy Tab-level rename has no Pane to carry it; keep the name on
 		// the Pane that leaves.
-		value.descriptor.CustomName = tab.Label
+		descriptor.CustomName = tab.Label
 	}
-	label := value.descriptor.Label
+	label := ""
+	titleNumber := 0
+	if descriptor := value.sessionDescriptor(); descriptor != nil {
+		label = descriptor.Label
+		titleNumber = descriptor.Number
+	}
 	number := s.nextTabNumber
 	s.nextTabNumber++
 	detachedRoot := domainworkspace.NewPaneNode(paneID)
 	detached := &Tab{
 		ID:          model.TabID(newRuntimeID("tab-")),
 		Number:      number,
-		TitleNumber: value.descriptor.Number,
+		TitleNumber: titleNumber,
 		Label:       label,
 		AutoTitle:   true,
 		Root:        detachedRoot,
@@ -1011,7 +1377,8 @@ func activePaneCountIn(tabs []*Tab) int {
 				count++
 				continue
 			}
-			if value.session != nil && value.session.Snapshot().Status == appsession.StatusRunning {
+			session := value.session()
+			if session != nil && session.Snapshot().Status == appsession.StatusRunning {
 				count++
 			}
 		}
@@ -1026,16 +1393,31 @@ func (s *State) paneInfo(tab *Tab, id model.PaneID) (PaneInfo, bool) {
 		return PaneInfo{}, false
 	}
 	focused, focusedID := tab.focusedPane()
-	return PaneInfo{
+	info := PaneInfo{
 		ID:      id,
-		Number:  value.descriptor.Number,
-		Label:   s.connectionLabel(value),
-		Title:   s.paneTitle(value),
+		Kind:    value.contentKind(),
 		Focused: id == focusedID && focused != nil,
 		Pending: value.pending,
 		Err:     value.err,
 		Surface: value.surface,
-	}, true
+	}
+	if descriptor := value.sessionDescriptor(); descriptor != nil {
+		info.Number = descriptor.Number
+		info.Label = s.connectionLabel(value)
+		info.Title = s.paneTitle(value)
+	} else if content := value.viewContent(); content != nil && content.instance != nil {
+		info.Label = content.instance.Title()
+		info.ViewInstanceID = content.instance.ID()
+		info.ViewPlacement = content.instance.Placement()
+		contribution := content.instance.Contribution()
+		info.ViewPlacements = contribution.Placements
+		info.ViewMulti = contribution.Instances.Multi()
+	} else {
+		// An unavailable placeholder has no title of its own; the Tab label
+		// keeps the Pane from rendering as a zero-numbered Session.
+		info.Label = tab.Label
+	}
+	return info, true
 }
 
 // titleMode returns the live Dynamic tab title setting.
@@ -1050,15 +1432,16 @@ func (s *State) titleMode() domainterminal.DynamicTabTitleMode {
 // up live, so a Vault rename reaches its open Tabs; the descriptor's snapshot
 // is the fallback when the Host is gone or the lookup is not wired.
 func (s *State) hostLabelFor(value *pane) string {
-	if value == nil {
+	descriptor := value.sessionDescriptor()
+	if descriptor == nil {
 		return ""
 	}
-	if value.descriptor.HostID != "" && s.hostLabel != nil {
-		if label, ok := s.hostLabel(value.descriptor.HostID); ok && strings.TrimSpace(label) != "" {
+	if descriptor.HostID != "" && s.hostLabel != nil {
+		if label, ok := s.hostLabel(descriptor.HostID); ok && strings.TrimSpace(label) != "" {
 			return label
 		}
 	}
-	return value.descriptor.Label
+	return descriptor.Label
 }
 
 // connectionLabel is a Pane's static name: the user's rename, else its current
@@ -1067,7 +1450,14 @@ func (s *State) connectionLabel(value *pane) string {
 	if value == nil {
 		return ""
 	}
-	return domainsessiontitle.ConnectionLabel(value.descriptor.CustomName, s.hostLabelFor(value))
+	if content := value.viewContent(); content != nil && content.instance != nil {
+		return content.instance.Title()
+	}
+	descriptor := value.sessionDescriptor()
+	if descriptor == nil {
+		return ""
+	}
+	return domainsessiontitle.ConnectionLabel(descriptor.CustomName, s.hostLabelFor(value))
 }
 
 // paneTitle resolves one Pane's header title from its connection label and the
@@ -1076,20 +1466,27 @@ func (s *State) paneTitle(value *pane) string {
 	if value == nil {
 		return ""
 	}
-	var dynamic string
-	if value.session != nil {
-		dynamic = value.session.Snapshot().Title
+	if content := value.viewContent(); content != nil && content.instance != nil {
+		return content.instance.Title()
 	}
-	if value.session != value.titleSession || dynamic != value.titleSeen {
-		value.agent = domainsessiontitle.AgentSession(value.agent, dynamic)
-		value.titleSeen = dynamic
-		value.titleSession = value.session
+	content := value.sessionContent()
+	if content == nil {
+		return ""
+	}
+	var dynamic string
+	if content.session != nil {
+		dynamic = content.session.Snapshot().Title
+	}
+	if content.session != content.titleSession || dynamic != content.titleSeen {
+		content.agent = domainsessiontitle.AgentSession(content.agent, dynamic)
+		content.titleSeen = dynamic
+		content.titleSession = content.session
 	}
 	return domainsessiontitle.Resolve(domainsessiontitle.Input{
-		CustomName:   value.descriptor.CustomName,
+		CustomName:   content.descriptor.CustomName,
 		HostLabel:    s.hostLabelFor(value),
 		DynamicTitle: dynamic,
-		Agent:        value.agent,
+		Agent:        content.agent,
 	}, s.titleMode())
 }
 
@@ -1166,19 +1563,26 @@ func (s *State) connectionKey(value *pane) string {
 	if value == nil {
 		return ""
 	}
-	if value.descriptor.HostID != "" {
-		return "host:" + string(value.descriptor.HostID)
+	if content := value.viewContent(); content != nil && content.instance != nil {
+		return "view:" + content.instance.ID()
 	}
-	switch value.descriptor.Kind {
+	descriptor := value.sessionDescriptor()
+	if descriptor == nil {
+		return ""
+	}
+	if descriptor.HostID != "" {
+		return "host:" + string(descriptor.HostID)
+	}
+	switch descriptor.Kind {
 	case domainworkspace.SessionLocal:
 		return "local"
 	case domainworkspace.SessionSerial:
-		if value.descriptor.Serial != nil {
-			return "serial:" + value.descriptor.Serial.Path
+		if descriptor.Serial != nil {
+			return "serial:" + descriptor.Serial.Path
 		}
 		return "serial"
 	default:
-		return "pane:" + value.descriptor.Label + "\x00" + value.descriptor.Hostname
+		return "pane:" + descriptor.Label + "\x00" + descriptor.Hostname
 	}
 }
 
@@ -1193,7 +1597,7 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 		return ErrNoSessions
 	}
 	value, focusedID := tab.focusedPane()
-	if value == nil {
+	if content := value.sessionContent(); content == nil {
 		return ErrNoActiveTab
 	}
 	newPaneID := model.PaneID(newRuntimeID("pane-"))
@@ -1204,18 +1608,16 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 		return err
 	}
 	tab.Root = root
-	descriptor := withFreshResumeKey(value.descriptor)
+	descriptor := withFreshResumeKey(value.sessionContent().descriptor)
 	// A new shell is not the Session the user renamed.
 	descriptor.CustomName = ""
-	tab.panes[newPaneID] = &pane{
-		ID:         newPaneID,
-		descriptor: descriptor,
-		pending:    true,
-	}
+	newPane := newSessionPane(newPaneID, descriptor)
+	newPane.pending = true
+	tab.panes[newPaneID] = newPane
 	tab.setFocus(newPaneID)
 	// The new Pane inherits the source Session's last known directory, as the
 	// original split did when it copied the shell's current cwd.
-	s.requestPaneOpen(tab.ID, newPaneID, descriptor, true)
+	s.requestPaneOpen(newPaneID, descriptor, true)
 	s.save()
 	s.RequestRedraw()
 	return nil
@@ -1254,6 +1656,11 @@ func (s *State) CloseFocusedPane() bool {
 	if next == "" {
 		return s.CloseTab(index)
 	}
+	// Closing a sibling Pane can leave a View alone in the Tab, which is the
+	// Tab placement rather than the split's Pane placement, and it can leave a
+	// Session-only Tab behind after a View was closed, which cannot keep the
+	// view: namespace.
+	s.reconcileTabViewState(tab)
 	tab.setFocus(next)
 	s.refreshBroadcastState()
 	s.save()
@@ -1356,6 +1763,97 @@ func (s *State) MoveTab(source, target model.TabID, after bool) bool {
 	return true
 }
 
+// viewPlacementTarget is one View Instance's placement after a pending Pane
+// move.
+type viewPlacementTarget struct {
+	instance *appview.Instance
+	target   domainplugin.Placement
+}
+
+// paneViewPlacements plans the placement every View a cross-Tab Pane move
+// affects records. sourcePaneID leaves source and lands in target, so both
+// Tabs are described in their post-move shape: a View left alone records Tab,
+// a View joining or staying in a split records Pane. The plan is rejected when
+// a View cannot live in its resulting container, which keeps the move atomic.
+func paneViewPlacements(source *Tab, sourcePaneID model.PaneID,
+	target *Tab, value *pane) ([]viewPlacementTarget, bool) {
+	sourceSingle := len(source.paneIDs())-1 == 1
+	var plan []viewPlacementTarget
+	appendInstance := func(instance *appview.Instance, single bool) bool {
+		targetPlacement, ok := workTabPlacement(instance, single)
+		if !ok {
+			return false
+		}
+		plan = append(plan, viewPlacementTarget{instance: instance, target: targetPlacement})
+		return true
+	}
+	for _, paneID := range source.paneIDs() {
+		if paneID == sourcePaneID {
+			continue
+		}
+		if instance := liveViewInstance(source.panes[paneID]); instance != nil {
+			if !appendInstance(instance, sourceSingle) {
+				return nil, false
+			}
+		}
+	}
+	// The target grows by one Pane, so it is always a split after the move.
+	for _, paneID := range target.paneIDs() {
+		if instance := liveViewInstance(target.panes[paneID]); instance != nil {
+			if !appendInstance(instance, false) {
+				return nil, false
+			}
+		}
+	}
+	if moved := liveViewInstance(value); moved != nil {
+		if !appendInstance(moved, false) {
+			return nil, false
+		}
+	}
+	return plan, true
+}
+
+// applyPaneViewPlacements records the planned placements in the registry. A
+// failed move rolls every already-applied one back, so the caller can leave
+// the layout untouched.
+func (s *State) applyPaneViewPlacements(plan []viewPlacementTarget) bool {
+	if len(plan) == 0 {
+		return true
+	}
+	if s.views == nil {
+		return false
+	}
+	type appliedMove struct {
+		instance *appview.Instance
+		previous domainplugin.Placement
+	}
+	applied := make([]appliedMove, 0, len(plan))
+	for _, move := range plan {
+		previous := move.instance.Placement()
+		if previous == move.target {
+			continue
+		}
+		if _, err := s.views.Move(move.instance.ID(), move.target); err != nil {
+			for index := len(applied) - 1; index >= 0; index-- {
+				_, _ = s.views.Move(applied[index].instance.ID(), applied[index].previous)
+			}
+			return false
+		}
+		applied = append(applied, appliedMove{instance: move.instance, previous: previous})
+	}
+	return true
+}
+
+// recordPaneViewPlacements updates the restore descriptor of every planned
+// View in the affected Tabs, so a saved Pane agrees with the registry.
+func recordPaneViewPlacements(tabs []*Tab, plan []viewPlacementTarget) {
+	for _, tab := range tabs {
+		for _, move := range plan {
+			setTabViewPlacement(tab, move.instance.ID(), move.target)
+		}
+	}
+}
+
 // MovePane moves a Pane beside another Pane. Within one Tab the Pane is
 // removed and reinserted; across Tabs the Pane changes owner. Dropping a Pane
 // on itself is rejected.
@@ -1403,6 +1901,14 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 	if err != nil {
 		return false
 	}
+	// A drag between a View Tab and a split changes the container each View
+	// lives in. Resolve and record those placements before touching the layout,
+	// so a contribution that cannot accept the destination refuses the whole
+	// move and the registry never disagrees with the shell.
+	plan, ok := paneViewPlacements(source, sourcePaneID, target, value)
+	if !ok || !s.applyPaneViewPlacements(plan) {
+		return false
+	}
 
 	delete(source.panes, sourcePaneID)
 	target.panes[sourcePaneID] = value
@@ -1432,7 +1938,13 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 		source.Root = sourceRoot
 		source.FocusPath = domainworkspace.FocusPath(sourceRoot, "")
 		s.active = targetIndex
+		// A source Tab named after the View that just left takes the identity
+		// of the View it still shows (or drops the view: namespace when only
+		// Sessions remain) instead of colliding with the new container the
+		// moved instance gets.
+		s.reconcileTabViewState(source)
 	}
+	recordPaneViewPlacements([]*Tab{source, target}, plan)
 	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
@@ -1482,11 +1994,12 @@ func (s *State) WorkspacePayload() domainworkspace.Payload {
 				continue
 			}
 			payload.Panes = append(payload.Panes, domainworkspace.RestoredPane{
-				ID:      id,
-				Session: value.descriptor,
+				ID:             id,
+				PaneDescriptor: value.restoreDescriptor(),
 			})
 		}
 	}
+	payload.Views = s.placementViews()
 	if len(payload.Tabs) == 0 {
 		payload.ActiveTab = -1
 	}
@@ -1507,15 +2020,19 @@ func (s *State) refreshWorkingDirectories() {
 	changed := false
 	for _, tab := range s.tabs {
 		for _, value := range tab.panes {
+			descriptor := value.sessionDescriptor()
+			if descriptor == nil {
+				continue
+			}
 			reporter, ok := value.surface.(interface{ Dir() string })
 			if !ok {
 				continue
 			}
 			dir := reporter.Dir()
-			if dir == "" || value.descriptor.Dir == dir {
+			if dir == "" || descriptor.Dir == dir {
 				continue
 			}
-			value.descriptor.Dir = dir
+			descriptor.Dir = dir
 			changed = true
 		}
 	}
@@ -1531,21 +2048,117 @@ func (s *State) save() {
 	_ = s.workspace.Save(context.Background(), s.WorkspacePayload())
 }
 
+// uniqueTabID returns want when it is unused, otherwise the first free
+// deterministic "want#n" suffix. An empty want gets a fresh runtime id; only
+// collision resolution has to be stable for a given payload.
+func uniqueTabID(want model.TabID, used map[model.TabID]bool) model.TabID {
+	if want == "" {
+		for {
+			candidate := model.TabID(newRuntimeID("tab-"))
+			if !used[candidate] {
+				return candidate
+			}
+		}
+	}
+	if !used[want] {
+		return want
+	}
+	for suffix := 2; ; suffix++ {
+		candidate := model.TabID(fmt.Sprintf("%s#%d", want, suffix))
+		if !used[candidate] {
+			return candidate
+		}
+	}
+}
+
+// uniqueRuntimeTabID resolves want against every Tab in the main window and in
+// detached windows. exclude is the Tab being renamed, whose current id must not
+// count as taken; pass nil when creating a new Tab.
+func (s *State) uniqueRuntimeTabID(want model.TabID, exclude *Tab) model.TabID {
+	used := make(map[model.TabID]bool, len(s.tabs)+len(s.detached))
+	for _, tab := range s.tabs {
+		if tab != exclude {
+			used[tab.ID] = true
+		}
+	}
+	for _, tab := range s.detached {
+		if tab != exclude {
+			used[tab.ID] = true
+		}
+	}
+	return uniqueTabID(want, used)
+}
+
+// uniqueRestoredTabID resolves want against the Tabs already restored into
+// the main window and every detached window.
+func (s *State) uniqueRestoredTabID(want model.TabID) model.TabID {
+	return s.uniqueRuntimeTabID(want, nil)
+}
+
+// assignRestoredTabIDs gives every restored Tab a truthful, unique identity. A
+// Tab showing exactly one live View is renamed after that instance, replacing
+// the stale stored id, whether or not Sessions share the Tab. The canonical
+// View ids are reserved first so a stored id on some other Tab cannot steal
+// one. Other Tabs keep a stored id only when it is truthful: a mixed Tab whose
+// stored view: id names none of its Views takes the first one's id, and a
+// Session-only Tab drops the view: namespace entirely. Later collisions get a
+// deterministic suffix.
+func assignRestoredTabIDs(tabs []*Tab) {
+	used := make(map[model.TabID]bool, len(tabs))
+	ids := make(map[*Tab]model.TabID, len(tabs))
+	for _, tab := range tabs {
+		if instances := tabViewInstances(tab); len(instances) == 1 {
+			id := uniqueTabID(viewTabID(instances[0]), used)
+			used[id] = true
+			ids[tab] = id
+		}
+	}
+	for _, tab := range tabs {
+		if _, ok := ids[tab]; ok {
+			continue
+		}
+		want := tab.ID
+		instances := tabViewInstances(tab)
+		if len(instances) > 1 {
+			// A mixed Tab may keep an id that still names one of its Views; a
+			// view: id left by the previous run names none of them and would
+			// mislead a later move.
+			if strings.HasPrefix(string(want), "view:") && !tabIDNamesView(want, instances) {
+				want = viewTabID(instances[0])
+			}
+		} else if strings.HasPrefix(string(want), "view:") {
+			// A Tab with no live View cannot keep the view: namespace.
+			want = ""
+		}
+		id := uniqueTabID(want, used)
+		used[id] = true
+		ids[tab] = id
+	}
+	for tab, id := range ids {
+		tab.ID = id
+	}
+}
+
 // Restore applies the stored Workspace layout. It is a no-op when persistence
 // is not configured, the payload is empty, or Tabs already exist. Panes open
 // asynchronously and appear when Flush applies their outcomes; output and
 // scrollback are not restored.
 func (s *State) Restore(ctx context.Context) {
-	if s.workspace == nil || len(s.tabs) > 0 || s.sessions == nil || s.surfaces == nil {
+	if s.workspace == nil || len(s.tabs) > 0 {
+		return
+	}
+	// A View-only Workspace restores without a terminal Session service.
+	if (s.sessions == nil || s.surfaces == nil) &&
+		(s.views == nil || s.viewSurfaces == nil) {
 		return
 	}
 	payload := s.workspace.Load(ctx)
-	if len(payload.Tabs) == 0 {
+	if len(payload.Tabs) == 0 && len(payload.Views) == 0 {
 		return
 	}
-	descriptors := make(map[model.PaneID]domainworkspace.SessionDescriptor, len(payload.Panes))
+	descriptors := make(map[model.PaneID]domainworkspace.PaneDescriptor, len(payload.Panes))
 	for _, value := range payload.Panes {
-		descriptors[value.ID] = value.Session
+		descriptors[value.ID] = value.PaneDescriptor
 	}
 
 	s.restoring = true
@@ -1580,31 +2193,75 @@ func (s *State) Restore(ctx context.Context) {
 		for _, id := range domainworkspace.CollectPaneIDs(root) {
 			descriptor, ok := descriptors[id]
 			if !ok {
+				// The sanitizer normally drops a leaf without content, but a
+				// direct restore must still start: keep the leaf as a
+				// placeholder rather than panicking or losing the layout.
+				descriptor = domainworkspace.PaneDescriptor{}
+			}
+			if descriptor.Normalized().Kind == domainworkspace.PaneKindView {
+				tab.panes[id] = s.restoreViewPane(id, descriptor)
 				continue
 			}
-			if descriptor.Kind == domainworkspace.SessionLocal {
-				descriptor.Dir = validLocalDir(descriptor.Dir)
+			session, ok := descriptor.SessionContent()
+			if !ok || !session.Valid() {
+				stored := descriptor
+				tab.panes[id] = &pane{
+					ID:          id,
+					unavailable: &stored,
+					err:         ErrUnavailablePane,
+				}
+				continue
 			}
-			if descriptor.Kind == domainworkspace.SessionET && descriptor.ResumeKey == "" {
+			if session.Kind == domainworkspace.SessionLocal {
+				session.Dir = validLocalDir(session.Dir)
+			}
+			if session.Kind == domainworkspace.SessionPlugin && !s.providerClaimed(session.Protocol) {
+				// The provider is missing or disabled. Keep the Pane as an
+				// unavailable placeholder and open nothing: no other transport
+				// may stand in for the provider.
+				stored := descriptor
+				tab.panes[id] = &pane{
+					ID:          id,
+					unavailable: &stored,
+					err:         ErrUnavailablePane,
+				}
+				continue
+			}
+			if session.Kind == domainworkspace.SessionET && session.ResumeKey == "" {
 				// A workspace written before ET resume keys existed still gets a
 				// locator, so this run's session becomes resumable too.
-				descriptor.ResumeKey = newETResumeKey()
+				session.ResumeKey = newETResumeKey()
 			}
-			if descriptor.Label == "" {
-				descriptor.Label = restored.Title
+			if session.Label == "" {
+				session.Label = restored.Title
 			}
-			if descriptor.Kind == domainworkspace.SessionLocal &&
-				strings.TrimSpace(descriptor.Label) == "" {
+			if session.Kind == domainworkspace.SessionLocal &&
+				strings.TrimSpace(session.Label) == "" {
 				// Local Sessions always have the original's fixed name, including
 				// ones restored from a payload written before Tabs carried it.
-				descriptor.Label = domainsessiontitle.LocalTerminalLabel
+				session.Label = domainsessiontitle.LocalTerminalLabel
 			}
-			tab.panes[id] = &pane{ID: id, descriptor: descriptor, pending: true}
+			value := newSessionPane(id, session)
+			value.pending = true
+			tab.panes[id] = value
 		}
 		tab.FocusPath = domainworkspace.SanitizeFocusPath(root, restored.FocusPath)
+		if ids := tab.paneIDs(); len(ids) == 1 && tab.Label == "" {
+			if content := tab.panes[ids[0]].viewContent(); content != nil {
+				tab.Label = viewTitle(content.instance)
+			}
+		}
 		s.tabs = append(s.tabs, tab)
 	}
+	// A View Tab must be named after the instance this run opened, not the id
+	// stored by the previous run. Resolve every id before RestorePlacements so
+	// a restored window callback never sees an id that later changes.
+	assignRestoredTabIDs(s.tabs)
+	s.RestorePlacements(payload.Views)
 	if len(s.tabs) == 0 {
+		// A Workspace may hold only Pages, Windows, and Asides.
+		s.active = -1
+		s.RequestRedraw()
 		return
 	}
 	s.active = payload.ActiveTab
@@ -1616,13 +2273,15 @@ func (s *State) Restore(ctx context.Context) {
 	s.logsVisible = false
 	for _, tab := range s.tabs {
 		for id, value := range tab.panes {
-			s.requestPaneOpen(tab.ID, id, value.descriptor, true)
+			if descriptor := value.sessionDescriptor(); descriptor != nil {
+				s.requestPaneOpen(id, *descriptor, true)
+			}
 		}
 	}
 	s.RequestRedraw()
 }
 
-func (s *State) requestPaneOpen(tabID model.TabID, paneID model.PaneID,
+func (s *State) requestPaneOpen(paneID model.PaneID,
 	descriptor domainworkspace.SessionDescriptor, restore bool) {
 	if s.sessions == nil {
 		return
@@ -1632,7 +2291,7 @@ func (s *State) requestPaneOpen(tabID model.TabID, paneID model.PaneID,
 		session, err := s.openDescriptor(ctx, descriptor)
 		s.mu.Lock()
 		s.paneOutcomes = append(s.paneOutcomes, paneOutcome{
-			tabID: tabID, paneID: paneID, session: session, restore: restore, err: err,
+			paneID: paneID, session: session, restore: restore, err: err,
 		})
 		s.mu.Unlock()
 		s.RequestRedraw()
@@ -1655,24 +2314,25 @@ func (s *State) RetryPane(tabID model.TabID, paneID model.PaneID) bool {
 	if !ok || !domainworkspace.ContainsPane(tab.Root, paneID) {
 		return false
 	}
-	// Only a failed Pane retries: a pending or live one already owns a Session
-	// or a dial, and retrying it would duplicate both.
-	if value.err == nil || value.pending || value.surface != nil {
+	// Only a failed Session Pane retries: a pending or live one already owns a
+	// Session or a dial, and a View or unknown placeholder has nothing to retry.
+	content := value.sessionContent()
+	if content == nil || value.err == nil || value.pending || value.surface != nil {
 		return false
 	}
-	if value.session != nil {
+	if content.session != nil {
 		s.closePane(value, false)
-		value.session = nil
+		content.session = nil
 	}
 	value.pending = true
 	value.err = nil
-	s.requestPaneOpen(tab.ID, paneID, value.descriptor, true)
+	s.requestPaneOpen(paneID, content.descriptor, true)
 	s.RequestRedraw()
 	return true
 }
 
 func (s *State) applyPaneOutcome(outcome paneOutcome) {
-	tab, _ := s.tabByAnyID(outcome.tabID)
+	tab, _ := s.tabByPaneID(outcome.paneID)
 	if tab == nil {
 		if outcome.session != nil {
 			_ = outcome.session.Close()
@@ -1681,6 +2341,15 @@ func (s *State) applyPaneOutcome(outcome paneOutcome) {
 	}
 	value, ok := tab.panes[outcome.paneID]
 	if !ok || !domainworkspace.ContainsPane(tab.Root, outcome.paneID) {
+		if outcome.session != nil {
+			_ = outcome.session.Close()
+		}
+		return
+	}
+	content := value.sessionContent()
+	if content == nil {
+		// The Pane no longer holds Session content; do not leak the Session its
+		// earlier open produced.
 		if outcome.session != nil {
 			_ = outcome.session.Close()
 		}
@@ -1698,12 +2367,12 @@ func (s *State) applyPaneOutcome(outcome paneOutcome) {
 		value.err = err
 		return
 	}
-	value.session = outcome.session
+	content.session = outcome.session
 	value.surface = surface
 	value.pending = false
 	value.err = nil
 	if outcome.restore {
-		restoreRemoteDirectory(outcome.session, value.descriptor)
+		restoreRemoteDirectory(outcome.session, content.descriptor)
 	}
 }
 
@@ -1792,7 +2461,11 @@ func (s *State) openDescriptor(ctx context.Context,
 			if !ok {
 				return nil, ErrHostUnavailable
 			}
-			plan := hostSessionTransport(host)
+			plan, err := hostSessionTransport(host)
+			if err != nil {
+				return nil, err
+			}
+			spec.Protocol = string(host.Protocol)
 			spec.HostID = host.ID
 			spec.Hostname = host.Hostname
 			spec.Port = host.Port
@@ -1838,6 +2511,31 @@ func (s *State) openDescriptor(ctx context.Context,
 		// Telnet keeps the manual Reconnect action but does not retry a
 		// dropped socket automatically.
 		spec.Reconnect = telnetReconnectPolicy()
+	case domainworkspace.SessionPlugin:
+		// A provider-backed Pane is reopened only through its own protocol.
+		// A missing provider fails closed here; the Session factory never
+		// falls back to a built-in transport.
+		if !s.providerClaimed(descriptor.Protocol) {
+			return nil, fmt.Errorf("%w: %q", appsession.ErrProviderUnavailable, descriptor.Protocol)
+		}
+		spec.Kind = appsession.KindPlugin
+		spec.Protocol = descriptor.Protocol
+		spec.Provider = descriptor.Provider
+		spec.Restore = append([]byte(nil), descriptor.Restore...)
+		spec.HostID = descriptor.HostID
+		spec.Hostname = descriptor.Hostname
+		spec.Port = descriptor.Port
+		spec.Username = descriptor.Username
+		spec.X11Forwarding = false
+		spec.AutoAttachTmux = false
+		if s.resolveHost != nil {
+			if host, ok := s.resolveHost(ctx, descriptor.HostID); ok {
+				spec.HostID = host.ID
+				spec.Hostname = host.Hostname
+				spec.Port = host.Port
+				spec.Username = host.Username
+			}
+		}
 	case domainworkspace.SessionSerial:
 		if descriptor.Serial == nil {
 			return nil, fmt.Errorf("%w: %q", ErrUnknownSession, descriptor.Kind)
@@ -1921,10 +2619,11 @@ func (s *State) closeDetachedSessions() bool {
 		}
 		for _, id := range tab.paneIDs() {
 			value := tab.panes[id]
-			if value == nil || value.session == nil {
+			session := value.session()
+			if session == nil {
 				continue
 			}
-			snapshot := value.session.Snapshot()
+			snapshot := session.Snapshot()
 			if snapshot.Status != appsession.StatusExited ||
 				snapshot.EndReason != appsession.EndReasonDetached {
 				continue
@@ -1947,6 +2646,10 @@ func (s *State) closeDetachedSessions() bool {
 			if next := domainworkspace.FocusAfterRemove(root, focusedID, id); next != "" {
 				tab.setFocus(next)
 			}
+			// The removed Pane can be the only Session beside a View, leaving
+			// that View alone in a work Tab: it records Tab and takes the
+			// canonical id, exactly as an explicit sibling close would.
+			s.reconcileTabViewState(tab)
 			changed = true
 		}
 	}
@@ -1971,19 +2674,32 @@ func (s *State) closePane(value *pane, preserve bool) {
 	if value.surface != nil {
 		value.surface.Close()
 	}
-	if value.session != nil {
+	if content := value.viewContent(); content != nil {
+		// Closing the last Pane showing a View disposes its instance. The
+		// surface has already released the plugin's node and listener handles.
+		if content.instance != nil {
+			_ = content.instance.Close()
+		}
+		return
+	}
+	content := value.sessionContent()
+	if content == nil {
+		// An unavailable placeholder owns no Session resources.
+		return
+	}
+	if content.session != nil {
 		if preserve {
-			_ = value.session.ClosePreservingResume()
+			_ = content.session.ClosePreservingResume()
 		} else {
-			_ = value.session.Close()
+			_ = content.session.Close()
 		}
 		return
 	}
 	// The Session never opened, so no transport can clear its saved pair. An
 	// explicit close still must not leave the secret behind; a preserve close
 	// (app quit) keeps it because the Pane is restored next run.
-	if !preserve && value.descriptor.Kind == domainworkspace.SessionET {
-		_ = s.discardETResume(value.descriptor.ResumeKey)
+	if !preserve && content.descriptor.Kind == domainworkspace.SessionET {
+		_ = s.discardETResume(content.descriptor.ResumeKey)
 	}
 }
 

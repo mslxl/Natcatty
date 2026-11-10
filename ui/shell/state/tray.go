@@ -81,10 +81,15 @@ func aggregateStatus(tab *Tab) TabStatus {
 }
 
 func paneStatus(pane *pane) TabStatus {
-	if pane.pending || pane.session == nil {
+	if pane.unavailable != nil {
+		// View and unknown content kinds are unavailable, not still connecting.
+		return TabDisconnected
+	}
+	session := pane.session()
+	if pane.pending || session == nil {
 		return TabConnecting
 	}
-	switch snapshot := pane.session.Snapshot(); {
+	switch snapshot := session.Snapshot(); {
 	case snapshot.Connection == appsession.ConnectionStatusError:
 		return TabDisconnected
 	case snapshot.Status == appsession.StatusExited:
@@ -115,19 +120,22 @@ func (s *State) SessionLabel(id model.SessionID) (string, bool) {
 
 func labelForSession(tab *Tab, id model.SessionID) (string, bool) {
 	for _, pane := range tab.panes {
-		if pane.session == nil || pane.session.ID() != id {
+		session := pane.session()
+		if session == nil || session.ID() != id {
 			continue
 		}
-		paneLabel := domainsessiontitle.ConnectionLabel(
-			pane.descriptor.CustomName, pane.descriptor.Label)
-		if len(tab.panes) > 1 && tab.Label != "" && paneLabel != "" {
-			return tab.Label + " · " + paneLabel, true
+		label := ""
+		if descriptor := pane.sessionDescriptor(); descriptor != nil {
+			label = domainsessiontitle.ConnectionLabel(descriptor.CustomName, descriptor.Label)
 		}
-		if paneLabel != "" {
-			return paneLabel, true
+		if len(tab.panes) > 1 && tab.Label != "" && label != "" {
+			return tab.Label + " · " + label, true
 		}
 		if tab.Label != "" {
 			return tab.Label, true
+		}
+		if label != "" {
+			return label, true
 		}
 		return "", true
 	}

@@ -59,19 +59,48 @@ type workspaceFactory struct {
 	specs      []appsession.StartSpec
 	transports []*fakeTransport
 	fail       func(appsession.StartSpec) error
+	// gate, when non-nil, holds every Open until it is closed. started
+	// announces each held Open so a test can rename a Tab while the Session
+	// open is still in flight.
+	gate    chan struct{}
+	started chan struct{}
 }
 
-func (f *workspaceFactory) Open(_ context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
+// holdOpens makes every subsequent Open announce itself on started and wait
+// for release. Close release to let them finish; opens after that pass
+// through immediately.
+func (f *workspaceFactory) holdOpens(started chan struct{}, release chan struct{}) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
+	f.gate = release
+	f.started = started
+	f.mu.Unlock()
+}
+
+func (f *workspaceFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
+	f.mu.Lock()
 	f.specs = append(f.specs, spec)
-	if f.fail != nil {
-		if err := f.fail(spec); err != nil {
+	fail := f.fail
+	gate, started := f.gate, f.started
+	f.mu.Unlock()
+	if fail != nil {
+		if err := fail(spec); err != nil {
 			return nil, err
 		}
 	}
+	if gate != nil {
+		if started != nil {
+			started <- struct{}{}
+		}
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	transport := newFakeTransport()
+	f.mu.Lock()
 	f.transports = append(f.transports, transport)
+	f.mu.Unlock()
 	return transport, nil
 }
 
@@ -171,6 +200,13 @@ func panesOf(t *testing.T, state *State, index int) []model.PaneID {
 		t.Fatalf("Tab %d does not exist", index)
 	}
 	return domainworkspace.CollectPaneIDs(root)
+}
+
+func restoredSessionPane(id string, descriptor domainworkspace.SessionDescriptor) domainworkspace.RestoredPane {
+	return domainworkspace.RestoredPane{
+		ID:             model.PaneID(id),
+		PaneDescriptor: domainworkspace.NewSessionPaneDescriptor(descriptor),
+	}
 }
 
 func TestSplitFocusedPaneBuildsRecursiveTreeAndFocus(t *testing.T) {
@@ -555,13 +591,13 @@ func TestRestoreDegradesMissingHostAndInvalidWorkingDirectory(t *testing.T) {
 			ID: "tab-restored", Number: 7, Root: root, FocusPath: []int{1},
 		}},
 		Panes: []domainworkspace.RestoredPane{
-			{ID: "pane-local", Session: domainworkspace.SessionDescriptor{
+			restoredSessionPane("pane-local", domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionLocal, Number: 7, Dir: invalidDir,
-			}},
-			{ID: "pane-ssh", Session: domainworkspace.SessionDescriptor{
+			}),
+			restoredSessionPane("pane-ssh", domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionSSH, Label: "gone",
 				HostID: "host-gone", Hostname: "gone.example.com", Port: 22,
-			}},
+			}),
 		},
 	}
 
@@ -590,6 +626,76 @@ func TestRestoreDegradesMissingHostAndInvalidWorkingDirectory(t *testing.T) {
 	}
 }
 
+// TestRestoreSanitizesUnsupportedPaneContent: a View or an unknown content
+// kind is kept in the split tree as an unavailable Pane. It opens no Session,
+// does not block the Workspace, and round-trips its kind on the next save.
+func TestRestoreSanitizesUnsupportedPaneContent(t *testing.T) {
+	root := domainworkspace.NewSplitNode("s1", domainworkspace.Vertical, 50,
+		domainworkspace.NewPaneNode("pane-session"),
+		domainworkspace.NewPaneNode("pane-view"))
+	root = domainworkspace.NewSplitNode("s2", domainworkspace.Vertical, 50,
+		root, domainworkspace.NewPaneNode("pane-unknown"))
+	payload := domainworkspace.Payload{
+		Version:   domainworkspace.PayloadVersion,
+		ActiveTab: 0,
+		Tabs: []domainworkspace.RestoredTab{{
+			ID: "tab-union", Number: 1, Root: root, FocusPath: []int{0, 0},
+		}},
+		Panes: []domainworkspace.RestoredPane{
+			restoredSessionPane("pane-session",
+				domainworkspace.SessionDescriptor{Kind: domainworkspace.SessionLocal}),
+			{ID: "pane-view", PaneDescriptor: domainworkspace.PaneDescriptor{
+				Kind: domainworkspace.PaneKindView,
+				View: &domainworkspace.ViewPaneDescriptor{ViewID: "acme.notes", ContextKey: "global"},
+			}},
+			{ID: "pane-unknown", PaneDescriptor: domainworkspace.PaneDescriptor{Kind: "future-kind"}},
+		},
+	}
+	graph := newWorkspaceGraph(t)
+	graph.repo.payload = payload
+	graph.state.Restore(context.Background())
+	graph.flushUntil(t, "the restored Session Pane", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, "pane-session")
+		return ok && info.Surface != nil && !info.Pending
+	})
+
+	if got := panesOf(t, graph.state, 0); len(got) != 3 {
+		t.Fatalf("restored panes = %v, want the full three-leaf layout", got)
+	}
+	if got := graph.factory.specCount(); got != 1 {
+		t.Fatalf("Session opens = %d, want only the Session Pane", got)
+	}
+	view, ok := graph.state.PaneInfoAt(0, "pane-view")
+	if !ok || view.Pending || view.Surface != nil || !errors.Is(view.Err, ErrUnavailablePane) ||
+		view.Kind != domainworkspace.PaneKindView {
+		t.Fatalf("View Pane = %+v, %v; want an unavailable View placeholder", view, ok)
+	}
+	unknown, ok := graph.state.PaneInfoAt(0, "pane-unknown")
+	if !ok || unknown.Pending || unknown.Surface != nil ||
+		!errors.Is(unknown.Err, ErrUnavailablePane) || unknown.Kind != "future-kind" {
+		t.Fatalf("unknown Pane = %+v, %v; want an unavailable placeholder", unknown, ok)
+	}
+	if graph.state.RetryPane(mustTabID(t, graph.state, 0), "pane-view") {
+		t.Fatal("RetryPane accepted an unavailable View Pane")
+	}
+	if summaries := graph.state.TabSummaries(); len(summaries) != 1 ||
+		summaries[0].Status != TabDisconnected {
+		t.Fatalf("tab summaries = %+v, want an unavailable (disconnected) Tab", summaries)
+	}
+
+	// The next save keeps the restored kinds so the placeholders stay stable.
+	saved := graph.state.WorkspacePayload()
+	kinds := make(map[model.PaneID]domainworkspace.PaneKind, len(saved.Panes))
+	for _, pane := range saved.Panes {
+		kinds[pane.ID] = pane.Kind
+	}
+	if kinds["pane-session"] != domainworkspace.PaneKindSession ||
+		kinds["pane-view"] != domainworkspace.PaneKindView ||
+		kinds["pane-unknown"] != "future-kind" {
+		t.Fatalf("saved pane kinds = %+v, want the restored union kinds", kinds)
+	}
+}
+
 func TestRestoreKeepsNumbersActiveTabAndFocus(t *testing.T) {
 	payload := domainworkspace.Payload{
 		Version:   domainworkspace.PayloadVersion,
@@ -599,8 +705,8 @@ func TestRestoreKeepsNumbersActiveTabAndFocus(t *testing.T) {
 			{ID: "tab-b", Number: 9, Root: domainworkspace.NewPaneNode("b1"), FocusPath: nil},
 		},
 		Panes: []domainworkspace.RestoredPane{
-			{ID: "a1", Session: domainworkspace.SessionDescriptor{Kind: domainworkspace.SessionLocal, Number: 4}},
-			{ID: "b1", Session: domainworkspace.SessionDescriptor{Kind: domainworkspace.SessionLocal, Number: 9}},
+			restoredSessionPane("a1", domainworkspace.SessionDescriptor{Kind: domainworkspace.SessionLocal, Number: 4}),
+			restoredSessionPane("b1", domainworkspace.SessionDescriptor{Kind: domainworkspace.SessionLocal, Number: 9}),
 		},
 	}
 	graph := newWorkspaceGraph(t)
@@ -695,13 +801,11 @@ func TestRestoreReopensATelnetPane(t *testing.T) {
 		Tabs: []domainworkspace.RestoredTab{{
 			ID: "tab-telnet", Number: 1, Root: domainworkspace.NewPaneNode("pane-telnet"),
 		}},
-		Panes: []domainworkspace.RestoredPane{{
-			ID: "pane-telnet",
-			Session: domainworkspace.SessionDescriptor{
+		Panes: []domainworkspace.RestoredPane{restoredSessionPane("pane-telnet",
+			domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionTelnet, HostID: "host-telnet",
 				Hostname: "console.local", Port: 23, Username: "admin", Label: "console",
-			},
-		}},
+			})},
 	}
 	graph := newWorkspaceGraph(t)
 	graph.hosts["host-telnet"] = domainvault.Host{
@@ -732,13 +836,11 @@ func TestRetryFailedPaneReopensTheSameDescriptor(t *testing.T) {
 		Tabs: []domainworkspace.RestoredTab{{
 			ID: "tab-telnet", Number: 1, Root: domainworkspace.NewPaneNode("pane-telnet"),
 		}},
-		Panes: []domainworkspace.RestoredPane{{
-			ID: "pane-telnet",
-			Session: domainworkspace.SessionDescriptor{
+		Panes: []domainworkspace.RestoredPane{restoredSessionPane("pane-telnet",
+			domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionTelnet, HostID: "host-telnet",
 				Hostname: "127.0.0.1", Port: 2323, Label: "telnet-fake",
-			},
-		}},
+			})},
 	}
 	graph := newWorkspaceGraph(t)
 	graph.hosts["host-telnet"] = domainvault.Host{
@@ -841,14 +943,12 @@ func TestRestoreReplaysTheRemoteWorkingDirectory(t *testing.T) {
 		Tabs: []domainworkspace.RestoredTab{{
 			ID: "tab-ssh", Number: 1, Root: domainworkspace.NewPaneNode("pane-ssh"),
 		}},
-		Panes: []domainworkspace.RestoredPane{{
-			ID: "pane-ssh",
-			Session: domainworkspace.SessionDescriptor{
+		Panes: []domainworkspace.RestoredPane{restoredSessionPane("pane-ssh",
+			domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionSSH, HostID: "host-1",
 				Hostname: "example.com", Port: 22, Username: "root",
 				Dir: "/srv/app dir",
-			},
-		}},
+			})},
 	}
 	graph := newWorkspaceGraph(t)
 	graph.hosts["host-1"] = domainvault.Host{
@@ -950,14 +1050,12 @@ func TestSplittingAnSSHPaneReplaysTheWorkingDirectory(t *testing.T) {
 		Tabs: []domainworkspace.RestoredTab{{
 			ID: "tab-ssh", Number: 1, Root: domainworkspace.NewPaneNode("pane-ssh"),
 		}},
-		Panes: []domainworkspace.RestoredPane{{
-			ID: "pane-ssh",
-			Session: domainworkspace.SessionDescriptor{
+		Panes: []domainworkspace.RestoredPane{restoredSessionPane("pane-ssh",
+			domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionSSH, HostID: "host-1",
 				Hostname: "example.com", Port: 22, Username: "root",
 				Dir: "/srv/app",
-			},
-		}},
+			})},
 	}
 	graph := newWorkspaceGraph(t)
 	graph.hosts["host-1"] = domainvault.Host{
@@ -999,13 +1097,11 @@ func TestRestoreReopensANetworkDevicePaneFromTheHostRecord(t *testing.T) {
 		Tabs: []domainworkspace.RestoredTab{{
 			ID: "tab-switch", Number: 1, Root: domainworkspace.NewPaneNode("pane-switch"),
 		}},
-		Panes: []domainworkspace.RestoredPane{{
-			ID: "pane-switch",
-			Session: domainworkspace.SessionDescriptor{
+		Panes: []domainworkspace.RestoredPane{restoredSessionPane("pane-switch",
+			domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionSSH, HostID: "host-switch",
 				Hostname: "switch.example.com", Port: 22, Username: "admin", Label: "switch",
-			},
-		}},
+			})},
 	}
 	graph := newWorkspaceGraph(t)
 	graph.hosts["host-switch"] = domainvault.Host{
@@ -1033,13 +1129,11 @@ func TestRestoreReopensMoshAndETPanesFromTheSavedHost(t *testing.T) {
 		Tabs: []domainworkspace.RestoredTab{{
 			ID: "tab-transports", Number: 1, Root: domainworkspace.NewPaneNode("pane-mosh"),
 		}},
-		Panes: []domainworkspace.RestoredPane{{
-			ID: "pane-mosh",
-			Session: domainworkspace.SessionDescriptor{
+		Panes: []domainworkspace.RestoredPane{restoredSessionPane("pane-mosh",
+			domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionMosh, HostID: "host-mosh",
 				Hostname: "stale.example", Port: 22, Username: "stale", Label: "roaming",
-			},
-		}},
+			})},
 	}
 	graph := newWorkspaceGraph(t)
 	graph.hosts["host-mosh"] = domainvault.Host{
@@ -1066,14 +1160,12 @@ func TestRestoreReopensMoshAndETPanesFromTheSavedHost(t *testing.T) {
 		Tabs: []domainworkspace.RestoredTab{{
 			ID: "tab-transports", Number: 1, Root: domainworkspace.NewPaneNode("pane-et"),
 		}},
-		Panes: []domainworkspace.RestoredPane{{
-			ID: "pane-et",
-			Session: domainworkspace.SessionDescriptor{
+		Panes: []domainworkspace.RestoredPane{restoredSessionPane("pane-et",
+			domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionET, HostID: "host-et",
 				Hostname: "stale.example", Port: 22, Username: "stale", Label: "et",
 				ResumeKey: "et-resume-retained",
-			},
-		}},
+			})},
 	}
 	graph = newWorkspaceGraph(t)
 	graph.hosts["host-et"] = domainvault.Host{
@@ -1111,13 +1203,11 @@ func TestRestoreGivesALegacyETPaneANewResumeKey(t *testing.T) {
 		Tabs: []domainworkspace.RestoredTab{{
 			ID: "tab-et", Number: 1, Root: domainworkspace.NewPaneNode("pane-et"),
 		}},
-		Panes: []domainworkspace.RestoredPane{{
-			ID: "pane-et",
-			Session: domainworkspace.SessionDescriptor{
+		Panes: []domainworkspace.RestoredPane{restoredSessionPane("pane-et",
+			domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionET, HostID: "host-et",
 				Hostname: "et.example.com", Port: 2022, Username: "bob", Label: "et",
-			},
-		}},
+			})},
 	}
 	graph.state.Restore(context.Background())
 	graph.flushUntil(t, "the restored ET Pane", func() bool {
@@ -1161,14 +1251,12 @@ func TestRestoreETPaneFallsBackWhenLegacyServerRefusesReattach(t *testing.T) {
 		Tabs: []domainworkspace.RestoredTab{{
 			ID: "tab-et", Number: 1, Root: domainworkspace.NewPaneNode("pane-et"),
 		}},
-		Panes: []domainworkspace.RestoredPane{{
-			ID: "pane-et",
-			Session: domainworkspace.SessionDescriptor{
+		Panes: []domainworkspace.RestoredPane{restoredSessionPane("pane-et",
+			domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionET, HostID: "host-et",
 				Hostname: "et.example.com", Port: 2022, Username: "bob", Label: "et",
 				ResumeKey: resumeKey,
-			},
-		}},
+			})},
 	}
 	graph.state.Restore(context.Background())
 	graph.flushUntil(t, "the fresh ET Pane after the legacy fallback", func() bool {
@@ -1212,14 +1300,12 @@ func TestFailedETPaneCloseClearsSavedCredentials(t *testing.T) {
 		Tabs: []domainworkspace.RestoredTab{{
 			ID: "tab-et", Number: 1, Root: domainworkspace.NewPaneNode("pane-et"),
 		}},
-		Panes: []domainworkspace.RestoredPane{{
-			ID: "pane-et",
-			Session: domainworkspace.SessionDescriptor{
+		Panes: []domainworkspace.RestoredPane{restoredSessionPane("pane-et",
+			domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionET, HostID: "host-et",
 				Hostname: "et.example.com", Port: 2022, Username: "bob", Label: "et",
 				ResumeKey: resumeKey,
-			},
-		}},
+			})},
 	}
 	graph.state.Restore(context.Background())
 	graph.flushUntil(t, "the failed ET Pane", func() bool {

@@ -8,6 +8,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 
 	"github.com/mslxl/natcatty/domain/model"
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	"github.com/mslxl/natcatty/ui/icons"
@@ -203,7 +204,8 @@ const tabRadius float32 = 6
 // surface rather than one of the root surfaces.
 func terminalVisible(s *state.State) bool {
 	return s.TabCount() > 0 && !s.VaultVisible() && !s.LogsVisible() &&
-		!s.MonitorVisible() && !s.SysManagerVisible() && !s.SFTPVisible()
+		!s.MonitorVisible() && !s.SysManagerVisible() && !s.SFTPVisible() &&
+		!s.PageVisible()
 }
 
 func tabInsertionStrip(c *ui.Context, s *state.State, t *ui.Theme, target model.TabID, after bool) {
@@ -265,17 +267,40 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 			c.Invalidate()
 		}
 		menu.Separator()
-		if menu.Item(m.TabDuplicate()).Chosen() {
-			_ = s.DuplicateTab(index)
-			c.Invalidate()
-		}
-		if menu.Item(m.TabCopyToNewWindow()).Chosen() {
-			_ = s.DuplicateTabToWindow(index)
-			c.Invalidate()
-		}
-		if menu.Item(m.TabDetach()).Chosen() {
-			s.DetachTab(index)
-			c.Invalidate()
+		if info.ViewInstanceID != "" {
+			// A View Tab follows the View duplicate rule: only a multi-instance
+			// View can be copied, and a copy never inherits state. Copying to a
+			// Window is the same rule with the Window placement.
+			canCopyToWindow := info.ViewMulti &&
+				s.ViewAllowsPlacement(info.ViewInstanceID, domainplugin.PlacementWindow)
+			if menu.Item(m.TabDuplicate()).Disabled(!info.ViewMulti).Chosen() {
+				if _, err := s.DuplicateView(info.ViewInstanceID, info.ViewPlacement); err == nil {
+					c.Invalidate()
+				}
+			}
+			if menu.Item(m.TabCopyToNewWindow()).Disabled(!canCopyToWindow).Chosen() {
+				if _, err := s.DuplicateView(info.ViewInstanceID, domainplugin.PlacementWindow); err == nil {
+					c.Invalidate()
+				}
+			}
+			if menu.Item(m.TabDetach()).Disabled(!s.ViewAllowsPlacement(info.ViewInstanceID, domainplugin.PlacementWindow)).Chosen() {
+				if err := s.DetachView(info.ViewInstanceID); err == nil {
+					c.Invalidate()
+				}
+			}
+		} else {
+			if menu.Item(m.TabDuplicate()).Chosen() {
+				_ = s.DuplicateTab(index)
+				c.Invalidate()
+			}
+			if menu.Item(m.TabCopyToNewWindow()).Chosen() {
+				_ = s.DuplicateTabToWindow(index)
+				c.Invalidate()
+			}
+			if menu.Item(m.TabDetach()).Chosen() {
+				s.DetachTab(index)
+				c.Invalidate()
+			}
 		}
 	}
 	body.ContextMenu(tabMenu)
@@ -562,13 +587,13 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		if !ref.managesPanes {
 			return
 		}
-		if info.Focused {
+		if info.Focused && (info.Kind == "" || info.Kind == domainworkspace.PaneKindSession) {
 			terminalToolbar(c, s, m, t)
 		}
 		if bar, ok := info.Surface.(interface{ Toolbar(*ui.Context) }); ok && info.Err == nil {
 			bar.Toolbar(c)
 		} else {
-			paneMenu(c, m, ref, info)
+			paneMenu(c, s, m, ref, info)
 		}
 		if tabControl(c, icons.X, m.CloseGlyph()).Clicked() {
 			ref.focus(info.ID)
@@ -578,24 +603,67 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	})
 }
 
-// paneMenu is the Pane commands of a Pane with no Session to hold them: one
-// that failed to open or is still connecting.
-func paneMenu(c *ui.Context, m locales.Messages, ref tabRef, info state.PaneInfo) {
+// paneMenu is the Pane commands. A View Pane gets the view menu: move the
+// same instance between its declared placements, duplicate only when the
+// contribution allows it, detach, and close. Session-only commands stay
+// visible but disabled, so a View Pane cannot host a terminal or split into
+// one. A failed or connecting Session Pane keeps the original menu.
+func paneMenu(c *ui.Context, s *state.State, m locales.Messages, ref tabRef, info state.PaneInfo) {
 	tabControl(c, icons.EllipsisVertical, m.PaneMenuGlyph()).Menu(func(menu *ui.Menu) {
-		if menu.Item(m.PaneSplitRight()).Chosen() {
-			ref.focus(info.ID)
-			_ = ref.splitRight()
-			c.Invalidate()
-		}
-		if menu.Item(m.PaneSplitDown()).Chosen() {
-			ref.focus(info.ID)
-			_ = ref.splitDown()
-			c.Invalidate()
-		}
-		menu.Separator()
-		if menu.Item(m.PaneDetach()).Chosen() {
-			if ref.detach(info.ID) {
+		if info.ViewInstanceID != "" {
+			menu.Item(m.PaneSplitRight()).Disabled(true)
+			menu.Item(m.PaneSplitDown()).Disabled(true)
+			menu.Separator()
+			for _, placement := range info.ViewPlacements {
+				if placement == info.ViewPlacement {
+					continue
+				}
+				if placement == domainplugin.PlacementPage && info.ViewMulti {
+					// Page is a singleton slot; a multi-instance view can never
+					// enter it, so the menu must not offer the move.
+					continue
+				}
+				label := viewPlacementLabel(m, placement)
+				if label == "" {
+					continue
+				}
+				if menu.Item(label).Chosen() {
+					if err := s.MoveView(info.ViewInstanceID, placement); err == nil {
+						c.Invalidate()
+					}
+				}
+			}
+			if info.ViewMulti {
+				if menu.Item(m.ViewDuplicate()).Chosen() {
+					if _, err := s.DuplicateView(info.ViewInstanceID, info.ViewPlacement); err == nil {
+						c.Invalidate()
+					}
+				}
+			}
+			menu.Separator()
+			if menu.Item(m.PaneDetach()).Disabled(
+				!s.ViewAllowsPlacement(info.ViewInstanceID, domainplugin.PlacementWindow)).Chosen() {
+				if err := s.DetachView(info.ViewInstanceID); err == nil {
+					c.Invalidate()
+				}
+			}
+		} else {
+			sessionPane := info.Kind == "" || info.Kind == domainworkspace.PaneKindSession
+			if menu.Item(m.PaneSplitRight()).Disabled(!sessionPane).Chosen() {
+				ref.focus(info.ID)
+				_ = ref.splitRight()
 				c.Invalidate()
+			}
+			if menu.Item(m.PaneSplitDown()).Disabled(!sessionPane).Chosen() {
+				ref.focus(info.ID)
+				_ = ref.splitDown()
+				c.Invalidate()
+			}
+			menu.Separator()
+			if menu.Item(m.PaneDetach()).Chosen() {
+				if ref.detach(info.ID) {
+					c.Invalidate()
+				}
 			}
 		}
 		menu.Separator()
@@ -605,6 +673,23 @@ func paneMenu(c *ui.Context, m locales.Messages, ref tabRef, info state.PaneInfo
 			c.Invalidate()
 		}
 	})
+}
+
+// viewPlacementLabel is a View Pane's Move-to label for one placement.
+func viewPlacementLabel(m locales.Messages, placement domainplugin.Placement) string {
+	switch placement {
+	case domainplugin.PlacementPane:
+		return m.ViewMovePane()
+	case domainplugin.PlacementTab:
+		return m.ViewMoveTab()
+	case domainplugin.PlacementPage:
+		return m.ViewMovePage()
+	case domainplugin.PlacementWindow:
+		return m.ViewMoveWindow()
+	case domainplugin.PlacementAside:
+		return m.ViewMoveAside()
+	}
+	return ""
 }
 
 // paneFiles reports what the Pane's Files button browses: its Host for an SSH
@@ -650,6 +735,10 @@ func paneTitle(m locales.Messages, info state.PaneInfo) string {
 	if info.Label != "" {
 		return info.Label
 	}
+	if info.Kind != "" && info.Kind != domainworkspace.PaneKindSession {
+		// A View or unknown placeholder has no Session number to name it.
+		return m.PaneOpenFailed()
+	}
 	return m.LocalSessionTab(info.Number)
 }
 
@@ -664,6 +753,14 @@ func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		retryable := true
 		if errors.Is(info.Err, state.ErrHostUnavailable) {
 			message = m.PaneHostMissing()
+			retryable = false
+		} else if errors.Is(info.Err, state.ErrUnavailablePane) {
+			// A View or unknown content kind cannot be opened by this build;
+			// retrying would only repeat the same outcome. A View explains that
+			// its contribution is missing instead of showing a Session failure.
+			if info.Kind == domainworkspace.PaneKindView {
+				message = m.ViewUnavailable()
+			}
 			retryable = false
 		} else if problem := uiconnection.ProblemTextFor(m, info.Err); problem != "" {
 			message = problem

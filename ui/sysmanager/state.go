@@ -16,6 +16,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsysmanager "github.com/mslxl/natcatty/application/sysmanager"
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
@@ -109,18 +110,29 @@ type PendingAction struct {
 	ContainerID   string
 	ContainerName string
 	DockerAction  appsysmanager.DockerAction
+	// Panel is the plugin action awaiting confirmation. PanelActionLabel and
+	// PanelTarget fill the confirmation that names the action, target, and
+	// plugin.
+	Panel            *domainplugin.PanelActionRequest
+	PanelActionLabel string
+	PanelTarget      string
 }
 
 // State is the System manager surface's window-scoped state. It is mutated on
 // the UI thread; sampler snapshots and action outcomes cross threads under mu.
 type State struct {
-	service  Service
-	extended ExtendedService
-	terminal TerminalOpener
-	hosts    Hosts
-	prefs    Preferences
-	redraw   func()
-	now      func() time.Time
+	service    Service
+	extended   ExtendedService
+	extensions Extensions
+	terminal   TerminalOpener
+	hosts      Hosts
+	prefs      Preferences
+	redraw     func()
+	now        func() time.Time
+
+	// surface is which host surface this state drives. The manager follows
+	// its selected Host; the side panel keeps the Host captured at open.
+	surface domainplugin.PanelSurface
 
 	hostItems []domainvault.Host
 	hostByID  map[string]domainvault.Host
@@ -146,12 +158,13 @@ type State struct {
 	loadErr  error
 	active   bool
 
-	pending      *PendingAction
-	actionCancel context.CancelFunc
-	actionBusy   bool
-	actionResult appsysmanager.ActionResult
-	actionErr    error
-	actionDone   bool
+	pending          *PendingAction
+	actionCancel     context.CancelFunc
+	actionBusy       bool
+	actionResult     appsysmanager.ActionResult
+	actionErr        error
+	actionDone       bool
+	panelActionLabel string
 
 	snapshot appsysmanager.Snapshot
 	table    ui.ListState
@@ -175,16 +188,18 @@ type State struct {
 	documentGen  uint64
 	docCancel    context.CancelFunc
 
-	mu          sync.Mutex
-	outcomes    []actionOutcome
-	docOutcomes []documentOutcome
-	unsubscribe func()
-	closed      bool
+	mu               sync.Mutex
+	outcomes         []actionOutcome
+	docOutcomes      []documentOutcome
+	unsubscribe      func()
+	panelUnsubscribe func()
+	closed           bool
 }
 
 type actionOutcome struct {
 	result appsysmanager.ActionResult
 	err    error
+	label  string
 }
 
 type documentOutcome struct {
@@ -223,6 +238,7 @@ func NewState(service Service, hosts Hosts, prefs Preferences, opts ...Option) *
 		prefs:    prefs,
 		now:      time.Now,
 		tab:      appsysmanager.TabOverview,
+		surface:  domainplugin.PanelSurfaceManager,
 		settings: domainpreferences.DefaultSysManager(),
 		hostByID: make(map[string]domainvault.Host),
 		selected: -1,
@@ -242,6 +258,9 @@ func NewState(service Service, hosts Hosts, prefs Preferences, opts ...Option) *
 			s.extended = extended
 		}
 	}
+	if s.extensions != nil {
+		s.panelUnsubscribe = s.extensions.Subscribe(func() { s.requestRedraw() })
+	}
 	return s
 }
 
@@ -256,9 +275,17 @@ func (s *State) Close() {
 	s.closed = true
 	unsubscribe := s.unsubscribe
 	s.unsubscribe = nil
+	panelUnsubscribe := s.panelUnsubscribe
+	s.panelUnsubscribe = nil
 	s.mu.Unlock()
 	if unsubscribe != nil {
 		unsubscribe()
+	}
+	if panelUnsubscribe != nil {
+		panelUnsubscribe()
+	}
+	if s.extensions != nil {
+		s.extensions.DeactivatePanel(s.surface)
 	}
 	s.CancelPending()
 	s.CloseDocument()
@@ -288,6 +315,9 @@ func (s *State) Deactivate() {
 	if s.service != nil {
 		s.service.Stop()
 	}
+	if s.extensions != nil {
+		s.extensions.DeactivatePanel(s.surface)
+	}
 	s.requestRedraw()
 }
 
@@ -314,14 +344,35 @@ func (s *State) reload() {
 	}
 	if _, ok := s.hostByID[s.hostID]; !ok {
 		s.hostID = ""
-		if len(items) > 0 {
+		// The side tool stays on the Host captured when it opened. A Host the
+		// Vault no longer has shows nothing instead of silently retargeting to
+		// the first Host in the list.
+		if s.surface != domainplugin.PanelSurfaceSide && len(items) > 0 {
 			s.hostID = string(items[0].ID)
 		}
 	}
 }
 
 func (s *State) startActive() {
-	if s.service == nil || !s.active {
+	if !s.active {
+		if s.extensions != nil {
+			s.extensions.DeactivatePanel(s.surface)
+		}
+		return
+	}
+	if s.tab == appsysmanager.TabExtensions {
+		// The host-owned tab never runs a remote command and never shares the
+		// built-in sampler. Leaving it stops the built-in tab within a tick.
+		if s.service != nil {
+			s.service.Stop()
+		}
+		s.syncExtensions()
+		return
+	}
+	if s.extensions != nil {
+		s.extensions.DeactivatePanel(s.surface)
+	}
+	if s.service == nil {
 		return
 	}
 	host, ok := s.CurrentHost()
@@ -365,10 +416,15 @@ func (s *State) Flush() {
 		s.actionDone = true
 		s.actionResult = outcome.result
 		s.actionErr = outcome.err
+		if outcome.label != "" {
+			s.panelActionLabel = outcome.label
+		}
 		if outcome.err == nil && s.service != nil {
 			// A successful signal or unit action changes the data the tab
 			// shows, so ask for a fresh sample instead of waiting a cadence.
-			s.service.Refresh()
+			if s.tab != appsysmanager.TabExtensions {
+				s.service.Refresh()
+			}
 		}
 	}
 	s.Prepare()
@@ -541,7 +597,9 @@ func (s *State) SetTabVisible(tab appsysmanager.Tab, visible bool) error {
 	}
 	s.settings = next
 	s.revealTab = true
-	if !s.ensureActiveVisible() {
+	if s.ensureActiveVisible() {
+		// Hiding the active tab moved to another tab, so start it and stop
+		// whatever the hidden tab was sampling.
 		s.startActive()
 	}
 	s.requestRedraw()
@@ -692,12 +750,20 @@ func (s *State) SetInterval(seconds int) {
 
 // Refresh asks for an immediate sample.
 func (s *State) Refresh() {
-	if s.service == nil {
-		return
-	}
 	if _, ok := s.CurrentHost(); !ok {
 		s.problem = ProblemNoHost
 		s.requestRedraw()
+		return
+	}
+	if s.tab == appsysmanager.TabExtensions {
+		if s.extensions != nil {
+			host, _ := s.CurrentHost()
+			s.extensions.RefreshPanel(s.surface, string(host.ID))
+		}
+		s.requestRedraw()
+		return
+	}
+	if s.service == nil {
 		return
 	}
 	s.service.Refresh()
@@ -1091,6 +1157,15 @@ func (s *State) ConfirmPending() {
 		return
 	}
 	s.pending = nil
+	if pending.Kind == appsysmanager.ActionPanel {
+		if pending.Panel == nil {
+			return
+		}
+		request := *pending.Panel
+		request.Confirmed = true
+		s.startPanelAction(request, pending.PanelActionLabel)
+		return
+	}
 	s.startAction(*pending)
 }
 

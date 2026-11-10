@@ -106,6 +106,32 @@ func documentView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 						Label("editor-content").
 						FillWidth().Grow(1).MinHeight(0).AutoFocus()
 				}
+				// The host renders provider results as plain data. Plugin text
+				// is shown verbatim in a bounded strip; the editor adds no
+				// markup, links, or HTML of its own.
+				s.SyncLanguage()
+				if items := s.Completions(); len(items) > 0 {
+					ui.Row(c).FillWidth().Gap(8).Children(func() {
+						for i, item := range items {
+							if i >= 6 {
+								break
+							}
+							ui.Text(c, item.Label).FontSize(11).SingleLine().
+								TextColor(t.TextMuted)
+						}
+					})
+				}
+				if diagnostics := s.Diagnostics(); len(diagnostics) > 0 {
+					ui.Column(c).FillWidth().Gap(2).Children(func() {
+						for i, diagnostic := range diagnostics {
+							if i >= 3 {
+								break
+							}
+							ui.Text(c, diagnostic.Message).FontSize(11).SingleLine().
+								TextColor(uitheme.DangerText(t))
+						}
+					})
+				}
 				switch {
 				case s.Saving():
 					ui.Text(c, m.SftpEditorSaving()).FontSize(11).TextColor(t.TextMuted)

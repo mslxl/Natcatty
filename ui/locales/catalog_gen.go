@@ -6852,6 +6852,82 @@ func (msgs Messages) PaneOpenFailed() string {
 	return Catalog.Format(msgs.locale, "paneOpenFailed", nil)
 }
 
+// ViewUnavailable says "This view is unavailable. The plugin that provides it is missing or failed to load."
+// in the language the app shows.
+//
+// Explains that a View contribution is unavailable, with the
+// placement-specific surface kept in place.
+func ViewUnavailable() string { return In(i18n.Locale()).ViewUnavailable() }
+
+// ViewUnavailable says "This view is unavailable. The plugin that provides it is missing or failed to load."
+// in the language of msgs.
+//
+// Explains that a View contribution is unavailable, with the
+// placement-specific surface kept in place.
+func (msgs Messages) ViewUnavailable() string {
+	return Catalog.Format(msgs.locale, "viewUnavailable", nil)
+}
+
+// ViewDuplicate says "Duplicate View"
+// in the language the app shows.
+func ViewDuplicate() string { return In(i18n.Locale()).ViewDuplicate() }
+
+// ViewDuplicate says "Duplicate View"
+// in the language of msgs.
+func (msgs Messages) ViewDuplicate() string {
+	return Catalog.Format(msgs.locale, "viewDuplicate", nil)
+}
+
+// ViewMovePane says "Move to Pane"
+// in the language the app shows.
+func ViewMovePane() string { return In(i18n.Locale()).ViewMovePane() }
+
+// ViewMovePane says "Move to Pane"
+// in the language of msgs.
+func (msgs Messages) ViewMovePane() string {
+	return Catalog.Format(msgs.locale, "viewMovePane", nil)
+}
+
+// ViewMoveTab says "Move to Tab"
+// in the language the app shows.
+func ViewMoveTab() string { return In(i18n.Locale()).ViewMoveTab() }
+
+// ViewMoveTab says "Move to Tab"
+// in the language of msgs.
+func (msgs Messages) ViewMoveTab() string {
+	return Catalog.Format(msgs.locale, "viewMoveTab", nil)
+}
+
+// ViewMovePage says "Move to Page"
+// in the language the app shows.
+func ViewMovePage() string { return In(i18n.Locale()).ViewMovePage() }
+
+// ViewMovePage says "Move to Page"
+// in the language of msgs.
+func (msgs Messages) ViewMovePage() string {
+	return Catalog.Format(msgs.locale, "viewMovePage", nil)
+}
+
+// ViewMoveWindow says "Move to Window"
+// in the language the app shows.
+func ViewMoveWindow() string { return In(i18n.Locale()).ViewMoveWindow() }
+
+// ViewMoveWindow says "Move to Window"
+// in the language of msgs.
+func (msgs Messages) ViewMoveWindow() string {
+	return Catalog.Format(msgs.locale, "viewMoveWindow", nil)
+}
+
+// ViewMoveAside says "Move to Side Panel"
+// in the language the app shows.
+func ViewMoveAside() string { return In(i18n.Locale()).ViewMoveAside() }
+
+// ViewMoveAside says "Move to Side Panel"
+// in the language of msgs.
+func (msgs Messages) ViewMoveAside() string {
+	return Catalog.Format(msgs.locale, "viewMoveAside", nil)
+}
+
 // PaneHostMissing says "The Host for this Session no longer exists."
 // in the language the app shows.
 func PaneHostMissing() string { return In(i18n.Locale()).PaneHostMissing() }
@@ -19946,6 +20022,162 @@ func (msgs Messages) SysManagerTabServices() string {
 	return Catalog.Format(msgs.locale, "sysManagerTabServices", nil)
 }
 
+// SysManagerTabExtensions says "Extensions"
+// in the language the app shows.
+func SysManagerTabExtensions() string { return In(i18n.Locale()).SysManagerTabExtensions() }
+
+// SysManagerTabExtensions says "Extensions"
+// in the language of msgs.
+func (msgs Messages) SysManagerTabExtensions() string {
+	return Catalog.Format(msgs.locale, "sysManagerTabExtensions", nil)
+}
+
+// SysManagerExtensionsEmptySection says "No data"
+// in the language the app shows.
+func SysManagerExtensionsEmptySection() string {
+	return In(i18n.Locale()).SysManagerExtensionsEmptySection()
+}
+
+// SysManagerExtensionsEmptySection says "No data"
+// in the language of msgs.
+func (msgs Messages) SysManagerExtensionsEmptySection() string {
+	return Catalog.Format(msgs.locale, "sysManagerExtensionsEmptySection", nil)
+}
+
+// SysManagerExtensionsSeries says "Series"
+// in the language the app shows.
+func SysManagerExtensionsSeries() string { return In(i18n.Locale()).SysManagerExtensionsSeries() }
+
+// SysManagerExtensionsSeries says "Series"
+// in the language of msgs.
+func (msgs Messages) SysManagerExtensionsSeries() string {
+	return Catalog.Format(msgs.locale, "sysManagerExtensionsSeries", nil)
+}
+
+// SysManagerExtensionsEmpty says "No plugin sections"
+// in the language the app shows.
+func SysManagerExtensionsEmpty() string { return In(i18n.Locale()).SysManagerExtensionsEmpty() }
+
+// SysManagerExtensionsEmpty says "No plugin sections"
+// in the language of msgs.
+func (msgs Messages) SysManagerExtensionsEmpty() string {
+	return Catalog.Format(msgs.locale, "sysManagerExtensionsEmpty", nil)
+}
+
+// SysManagerExtensionsByPlugin says "From {plugin}"
+// in the language the app shows.
+func SysManagerExtensionsByPlugin(plugin string) string {
+	return In(i18n.Locale()).SysManagerExtensionsByPlugin(plugin)
+}
+
+// SysManagerExtensionsByPlugin says "From {plugin}"
+// in the language of msgs.
+func (msgs Messages) SysManagerExtensionsByPlugin(plugin string) string {
+	return Catalog.Format(msgs.locale, "sysManagerExtensionsByPlugin", map[string]any{"plugin": plugin})
+}
+
+// SysManagerExtensionsLoading says "Loading…"
+// in the language the app shows.
+func SysManagerExtensionsLoading() string { return In(i18n.Locale()).SysManagerExtensionsLoading() }
+
+// SysManagerExtensionsLoading says "Loading…"
+// in the language of msgs.
+func (msgs Messages) SysManagerExtensionsLoading() string {
+	return Catalog.Format(msgs.locale, "sysManagerExtensionsLoading", nil)
+}
+
+// SysManagerExtensionsStale says "Stale"
+// in the language the app shows.
+func SysManagerExtensionsStale() string { return In(i18n.Locale()).SysManagerExtensionsStale() }
+
+// SysManagerExtensionsStale says "Stale"
+// in the language of msgs.
+func (msgs Messages) SysManagerExtensionsStale() string {
+	return Catalog.Format(msgs.locale, "sysManagerExtensionsStale", nil)
+}
+
+// SysManagerExtensionsError says "Unavailable"
+// in the language the app shows.
+func SysManagerExtensionsError() string { return In(i18n.Locale()).SysManagerExtensionsError() }
+
+// SysManagerExtensionsError says "Unavailable"
+// in the language of msgs.
+func (msgs Messages) SysManagerExtensionsError() string {
+	return Catalog.Format(msgs.locale, "sysManagerExtensionsError", nil)
+}
+
+// SysManagerExtensionsUnavailable says "Not available"
+// in the language the app shows.
+func SysManagerExtensionsUnavailable() string {
+	return In(i18n.Locale()).SysManagerExtensionsUnavailable()
+}
+
+// SysManagerExtensionsUnavailable says "Not available"
+// in the language of msgs.
+func (msgs Messages) SysManagerExtensionsUnavailable() string {
+	return Catalog.Format(msgs.locale, "sysManagerExtensionsUnavailable", nil)
+}
+
+// SysManagerExtensionsPermissionDenied says "Permission needed"
+// in the language the app shows.
+func SysManagerExtensionsPermissionDenied() string {
+	return In(i18n.Locale()).SysManagerExtensionsPermissionDenied()
+}
+
+// SysManagerExtensionsPermissionDenied says "Permission needed"
+// in the language of msgs.
+func (msgs Messages) SysManagerExtensionsPermissionDenied() string {
+	return Catalog.Format(msgs.locale, "sysManagerExtensionsPermissionDenied", nil)
+}
+
+// SysManagerExtensionsRejected says "{count} updates rejected"
+// in the language the app shows.
+func SysManagerExtensionsRejected(count string) string {
+	return In(i18n.Locale()).SysManagerExtensionsRejected(count)
+}
+
+// SysManagerExtensionsRejected says "{count} updates rejected"
+// in the language of msgs.
+func (msgs Messages) SysManagerExtensionsRejected(count string) string {
+	return Catalog.Format(msgs.locale, "sysManagerExtensionsRejected", map[string]any{"count": count})
+}
+
+// SysManagerConfirmPanelAction says "Run “{action}” from {plugin} on {target}?"
+// in the language the app shows.
+func SysManagerConfirmPanelAction(action string, plugin string, target string) string {
+	return In(i18n.Locale()).SysManagerConfirmPanelAction(action, plugin, target)
+}
+
+// SysManagerConfirmPanelAction says "Run “{action}” from {plugin} on {target}?"
+// in the language of msgs.
+func (msgs Messages) SysManagerConfirmPanelAction(action string, plugin string, target string) string {
+	return Catalog.Format(msgs.locale, "sysManagerConfirmPanelAction", map[string]any{"action": action, "plugin": plugin, "target": target})
+}
+
+// SysManagerPanelActionSucceeded says "Action completed"
+// in the language the app shows.
+func SysManagerPanelActionSucceeded() string {
+	return In(i18n.Locale()).SysManagerPanelActionSucceeded()
+}
+
+// SysManagerPanelActionSucceeded says "Action completed"
+// in the language of msgs.
+func (msgs Messages) SysManagerPanelActionSucceeded() string {
+	return Catalog.Format(msgs.locale, "sysManagerPanelActionSucceeded", nil)
+}
+
+// SysManagerPanelActionCancelled says "Action cancelled"
+// in the language the app shows.
+func SysManagerPanelActionCancelled() string {
+	return In(i18n.Locale()).SysManagerPanelActionCancelled()
+}
+
+// SysManagerPanelActionCancelled says "Action cancelled"
+// in the language of msgs.
+func (msgs Messages) SysManagerPanelActionCancelled() string {
+	return Catalog.Format(msgs.locale, "sysManagerPanelActionCancelled", nil)
+}
+
 // SysManagerStatusIdle says "Not loaded"
 // in the language the app shows.
 func SysManagerStatusIdle() string { return In(i18n.Locale()).SysManagerStatusIdle() }
@@ -24218,4 +24450,1340 @@ func SettingsAboutLegalReview() string { return In(i18n.Locale()).SettingsAboutL
 // in the language of msgs.
 func (msgs Messages) SettingsAboutLegalReview() string {
 	return Catalog.Format(msgs.locale, "settingsAboutLegalReview", nil)
+}
+
+// SettingsAreaPlugins says "Plugins"
+// in the language the app shows.
+func SettingsAreaPlugins() string { return In(i18n.Locale()).SettingsAreaPlugins() }
+
+// SettingsAreaPlugins says "Plugins"
+// in the language of msgs.
+func (msgs Messages) SettingsAreaPlugins() string {
+	return Catalog.Format(msgs.locale, "settingsAreaPlugins", nil)
+}
+
+// SettingsPluginsDescription says "Install local plugin packages, review their permissions, and enable, disable, or remove them."
+// in the language the app shows.
+func SettingsPluginsDescription() string { return In(i18n.Locale()).SettingsPluginsDescription() }
+
+// SettingsPluginsDescription says "Install local plugin packages, review their permissions, and enable, disable, or remove them."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDescription() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDescription", nil)
+}
+
+// SettingsPluginsEmpty says "No plugins are installed."
+// in the language the app shows.
+func SettingsPluginsEmpty() string { return In(i18n.Locale()).SettingsPluginsEmpty() }
+
+// SettingsPluginsEmpty says "No plugins are installed."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsEmpty() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsEmpty", nil)
+}
+
+// SettingsPluginsInstallFromFile says "Install from file…"
+// in the language the app shows.
+func SettingsPluginsInstallFromFile() string {
+	return In(i18n.Locale()).SettingsPluginsInstallFromFile()
+}
+
+// SettingsPluginsInstallFromFile says "Install from file…"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsInstallFromFile() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsInstallFromFile", nil)
+}
+
+// SettingsPluginsSelectHint says "Select a plugin to review its permissions and actions."
+// in the language the app shows.
+func SettingsPluginsSelectHint() string { return In(i18n.Locale()).SettingsPluginsSelectHint() }
+
+// SettingsPluginsSelectHint says "Select a plugin to review its permissions and actions."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSelectHint() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSelectHint", nil)
+}
+
+// SettingsPluginsRequired says "Required"
+// in the language the app shows.
+func SettingsPluginsRequired() string { return In(i18n.Locale()).SettingsPluginsRequired() }
+
+// SettingsPluginsRequired says "Required"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsRequired() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsRequired", nil)
+}
+
+// SettingsPluginsOptional says "Optional"
+// in the language the app shows.
+func SettingsPluginsOptional() string { return In(i18n.Locale()).SettingsPluginsOptional() }
+
+// SettingsPluginsOptional says "Optional"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsOptional() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsOptional", nil)
+}
+
+// SettingsPluginsSource says "Source: {source}"
+// in the language the app shows.
+func SettingsPluginsSource(source string) string {
+	return In(i18n.Locale()).SettingsPluginsSource(source)
+}
+
+// SettingsPluginsSource says "Source: {source}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSource(source string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSource", map[string]any{"source": source})
+}
+
+// SettingsPluginsSourceLocalFile says "Local file (unverified)"
+// in the language the app shows.
+func SettingsPluginsSourceLocalFile() string {
+	return In(i18n.Locale()).SettingsPluginsSourceLocalFile()
+}
+
+// SettingsPluginsSourceLocalFile says "Local file (unverified)"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSourceLocalFile() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSourceLocalFile", nil)
+}
+
+// SettingsPluginsSourceRegistry says "Registry"
+// in the language the app shows.
+func SettingsPluginsSourceRegistry() string { return In(i18n.Locale()).SettingsPluginsSourceRegistry() }
+
+// SettingsPluginsSourceRegistry says "Registry"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSourceRegistry() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSourceRegistry", nil)
+}
+
+// SettingsPluginsSourceDevelopment says "Development directory"
+// in the language the app shows.
+func SettingsPluginsSourceDevelopment() string {
+	return In(i18n.Locale()).SettingsPluginsSourceDevelopment()
+}
+
+// SettingsPluginsSourceDevelopment says "Development directory"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSourceDevelopment() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSourceDevelopment", nil)
+}
+
+// SettingsPluginsSourceBuiltIn says "Built in"
+// in the language the app shows.
+func SettingsPluginsSourceBuiltIn() string { return In(i18n.Locale()).SettingsPluginsSourceBuiltIn() }
+
+// SettingsPluginsSourceBuiltIn says "Built in"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSourceBuiltIn() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSourceBuiltIn", nil)
+}
+
+// SettingsPluginsStatusDisabled says "Disabled"
+// in the language the app shows.
+func SettingsPluginsStatusDisabled() string { return In(i18n.Locale()).SettingsPluginsStatusDisabled() }
+
+// SettingsPluginsStatusDisabled says "Disabled"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsStatusDisabled() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsStatusDisabled", nil)
+}
+
+// SettingsPluginsStatusActive says "Active"
+// in the language the app shows.
+func SettingsPluginsStatusActive() string { return In(i18n.Locale()).SettingsPluginsStatusActive() }
+
+// SettingsPluginsStatusActive says "Active"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsStatusActive() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsStatusActive", nil)
+}
+
+// SettingsPluginsStatusFailed says "Failed"
+// in the language the app shows.
+func SettingsPluginsStatusFailed() string { return In(i18n.Locale()).SettingsPluginsStatusFailed() }
+
+// SettingsPluginsStatusFailed says "Failed"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsStatusFailed() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsStatusFailed", nil)
+}
+
+// SettingsPluginsStatusPending says "Inactive"
+// in the language the app shows.
+func SettingsPluginsStatusPending() string { return In(i18n.Locale()).SettingsPluginsStatusPending() }
+
+// SettingsPluginsStatusPending says "Inactive"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsStatusPending() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsStatusPending", nil)
+}
+
+// SettingsPluginsStatusDevelopment says "Development"
+// in the language the app shows.
+func SettingsPluginsStatusDevelopment() string {
+	return In(i18n.Locale()).SettingsPluginsStatusDevelopment()
+}
+
+// SettingsPluginsStatusDevelopment says "Development"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsStatusDevelopment() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsStatusDevelopment", nil)
+}
+
+// SettingsPluginsVersion says "Version {version}"
+// in the language the app shows.
+func SettingsPluginsVersion(version string) string {
+	return In(i18n.Locale()).SettingsPluginsVersion(version)
+}
+
+// SettingsPluginsVersion says "Version {version}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsVersion(version string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsVersion", map[string]any{"version": version})
+}
+
+// SettingsPluginsPermissions says "Permissions"
+// in the language the app shows.
+func SettingsPluginsPermissions() string { return In(i18n.Locale()).SettingsPluginsPermissions() }
+
+// SettingsPluginsPermissions says "Permissions"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsPermissions() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsPermissions", nil)
+}
+
+// SettingsPluginsNoPermissions says "This plugin requests no permissions."
+// in the language the app shows.
+func SettingsPluginsNoPermissions() string { return In(i18n.Locale()).SettingsPluginsNoPermissions() }
+
+// SettingsPluginsNoPermissions says "This plugin requests no permissions."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsNoPermissions() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsNoPermissions", nil)
+}
+
+// SettingsPluginsScope says "Scope: {scope}"
+// in the language the app shows.
+func SettingsPluginsScope(scope string) string { return In(i18n.Locale()).SettingsPluginsScope(scope) }
+
+// SettingsPluginsScope says "Scope: {scope}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsScope(scope string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsScope", map[string]any{"scope": scope})
+}
+
+// SettingsPluginsScopeNone says "No resource scope"
+// in the language the app shows.
+func SettingsPluginsScopeNone() string { return In(i18n.Locale()).SettingsPluginsScopeNone() }
+
+// SettingsPluginsScopeNone says "No resource scope"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsScopeNone() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsScopeNone", nil)
+}
+
+// SettingsPluginsGranted says "Granted"
+// in the language the app shows.
+func SettingsPluginsGranted() string { return In(i18n.Locale()).SettingsPluginsGranted() }
+
+// SettingsPluginsGranted says "Granted"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsGranted() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsGranted", nil)
+}
+
+// SettingsPluginsScopePending says "Scope requested on first use"
+// in the language the app shows.
+func SettingsPluginsScopePending() string { return In(i18n.Locale()).SettingsPluginsScopePending() }
+
+// SettingsPluginsScopePending says "Scope requested on first use"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsScopePending() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsScopePending", nil)
+}
+
+// SettingsPluginsFirstUseBody says "This optional permission is requested on first use. Allowing it grants only the scope shown above; remembering the ch…"
+// in the language the app shows.
+func SettingsPluginsFirstUseBody() string { return In(i18n.Locale()).SettingsPluginsFirstUseBody() }
+
+// SettingsPluginsFirstUseBody says "This optional permission is requested on first use. Allowing it grants only the scope shown above; remembering the ch…"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsFirstUseBody() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsFirstUseBody", nil)
+}
+
+// SettingsPluginsRememberScope says "Remember for this scope"
+// in the language the app shows.
+func SettingsPluginsRememberScope() string { return In(i18n.Locale()).SettingsPluginsRememberScope() }
+
+// SettingsPluginsRememberScope says "Remember for this scope"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsRememberScope() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsRememberScope", nil)
+}
+
+// SettingsPluginsGrant says "Grant"
+// in the language the app shows.
+func SettingsPluginsGrant() string { return In(i18n.Locale()).SettingsPluginsGrant() }
+
+// SettingsPluginsGrant says "Grant"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsGrant() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsGrant", nil)
+}
+
+// SettingsPluginsDeny says "Deny"
+// in the language the app shows.
+func SettingsPluginsDeny() string { return In(i18n.Locale()).SettingsPluginsDeny() }
+
+// SettingsPluginsDeny says "Deny"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDeny() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDeny", nil)
+}
+
+// SettingsPluginsEnable says "Enable"
+// in the language the app shows.
+func SettingsPluginsEnable() string { return In(i18n.Locale()).SettingsPluginsEnable() }
+
+// SettingsPluginsEnable says "Enable"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsEnable() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsEnable", nil)
+}
+
+// SettingsPluginsDisable says "Disable"
+// in the language the app shows.
+func SettingsPluginsDisable() string { return In(i18n.Locale()).SettingsPluginsDisable() }
+
+// SettingsPluginsDisable says "Disable"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDisable() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDisable", nil)
+}
+
+// SettingsPluginsUninstall says "Uninstall"
+// in the language the app shows.
+func SettingsPluginsUninstall() string { return In(i18n.Locale()).SettingsPluginsUninstall() }
+
+// SettingsPluginsUninstall says "Uninstall"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsUninstall() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsUninstall", nil)
+}
+
+// SettingsPluginsPurgeData says "Purge data"
+// in the language the app shows.
+func SettingsPluginsPurgeData() string { return In(i18n.Locale()).SettingsPluginsPurgeData() }
+
+// SettingsPluginsPurgeData says "Purge data"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsPurgeData() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsPurgeData", nil)
+}
+
+// SettingsPluginsRevoke says "Revoke"
+// in the language the app shows.
+func SettingsPluginsRevoke() string { return In(i18n.Locale()).SettingsPluginsRevoke() }
+
+// SettingsPluginsRevoke says "Revoke"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsRevoke() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsRevoke", nil)
+}
+
+// SettingsPluginsConsentTitle says "Enable {name}?"
+// in the language the app shows.
+func SettingsPluginsConsentTitle(name string) string {
+	return In(i18n.Locale()).SettingsPluginsConsentTitle(name)
+}
+
+// SettingsPluginsConsentTitle says "Enable {name}?"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsConsentTitle(name string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsConsentTitle", map[string]any{"name": name})
+}
+
+// SettingsPluginsConsentBody says "Review each permission before enabling. A required permission you deny leaves the plugin inactive; optional permissio…"
+// in the language the app shows.
+func SettingsPluginsConsentBody() string { return In(i18n.Locale()).SettingsPluginsConsentBody() }
+
+// SettingsPluginsConsentBody says "Review each permission before enabling. A required permission you deny leaves the plugin inactive; optional permissio…"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsConsentBody() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsConsentBody", nil)
+}
+
+// SettingsPluginsConfirmEnable says "Allow and enable"
+// in the language the app shows.
+func SettingsPluginsConfirmEnable() string { return In(i18n.Locale()).SettingsPluginsConfirmEnable() }
+
+// SettingsPluginsConfirmEnable says "Allow and enable"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsConfirmEnable() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsConfirmEnable", nil)
+}
+
+// SettingsPluginsCancel says "Cancel"
+// in the language the app shows.
+func SettingsPluginsCancel() string { return In(i18n.Locale()).SettingsPluginsCancel() }
+
+// SettingsPluginsCancel says "Cancel"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsCancel() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsCancel", nil)
+}
+
+// SettingsPluginsUninstallTitle says "Remove {name}?"
+// in the language the app shows.
+func SettingsPluginsUninstallTitle(name string) string {
+	return In(i18n.Locale()).SettingsPluginsUninstallTitle(name)
+}
+
+// SettingsPluginsUninstallTitle says "Remove {name}?"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsUninstallTitle(name string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsUninstallTitle", map[string]any{"name": name})
+}
+
+// SettingsPluginsUninstallBody says "The package and its install record are removed. Plugin data is kept unless you choose to purge it."
+// in the language the app shows.
+func SettingsPluginsUninstallBody() string { return In(i18n.Locale()).SettingsPluginsUninstallBody() }
+
+// SettingsPluginsUninstallBody says "The package and its install record are removed. Plugin data is kept unless you choose to purge it."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsUninstallBody() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsUninstallBody", nil)
+}
+
+// SettingsPluginsConfirmUninstall says "Uninstall and keep data"
+// in the language the app shows.
+func SettingsPluginsConfirmUninstall() string {
+	return In(i18n.Locale()).SettingsPluginsConfirmUninstall()
+}
+
+// SettingsPluginsConfirmUninstall says "Uninstall and keep data"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsConfirmUninstall() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsConfirmUninstall", nil)
+}
+
+// SettingsPluginsConfirmPurge says "Uninstall and purge data"
+// in the language the app shows.
+func SettingsPluginsConfirmPurge() string { return In(i18n.Locale()).SettingsPluginsConfirmPurge() }
+
+// SettingsPluginsConfirmPurge says "Uninstall and purge data"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsConfirmPurge() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsConfirmPurge", nil)
+}
+
+// SettingsPluginsPurgeTitle says "Purge {name}'s data?"
+// in the language the app shows.
+func SettingsPluginsPurgeTitle(name string) string {
+	return In(i18n.Locale()).SettingsPluginsPurgeTitle(name)
+}
+
+// SettingsPluginsPurgeTitle says "Purge {name}'s data?"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsPurgeTitle(name string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsPurgeTitle", map[string]any{"name": name})
+}
+
+// SettingsPluginsPurgeBody says "The plugin stays installed. Its configuration and stored data are permanently deleted."
+// in the language the app shows.
+func SettingsPluginsPurgeBody() string { return In(i18n.Locale()).SettingsPluginsPurgeBody() }
+
+// SettingsPluginsPurgeBody says "The plugin stays installed. Its configuration and stored data are permanently deleted."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsPurgeBody() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsPurgeBody", nil)
+}
+
+// SettingsPluginsConfirmPurgeData says "Purge data"
+// in the language the app shows.
+func SettingsPluginsConfirmPurgeData() string {
+	return In(i18n.Locale()).SettingsPluginsConfirmPurgeData()
+}
+
+// SettingsPluginsConfirmPurgeData says "Purge data"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsConfirmPurgeData() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsConfirmPurgeData", nil)
+}
+
+// SettingsPluginsProblemInstall says "The package could not be installed."
+// in the language the app shows.
+func SettingsPluginsProblemInstall() string { return In(i18n.Locale()).SettingsPluginsProblemInstall() }
+
+// SettingsPluginsProblemInstall says "The package could not be installed."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsProblemInstall() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsProblemInstall", nil)
+}
+
+// SettingsPluginsProblemEnable says "The plugin could not be enabled."
+// in the language the app shows.
+func SettingsPluginsProblemEnable() string { return In(i18n.Locale()).SettingsPluginsProblemEnable() }
+
+// SettingsPluginsProblemEnable says "The plugin could not be enabled."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsProblemEnable() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsProblemEnable", nil)
+}
+
+// SettingsPluginsProblemAction says "The action could not be completed."
+// in the language the app shows.
+func SettingsPluginsProblemAction() string { return In(i18n.Locale()).SettingsPluginsProblemAction() }
+
+// SettingsPluginsProblemAction says "The action could not be completed."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsProblemAction() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsProblemAction", nil)
+}
+
+// SettingsPluginsReason says "Reason: {reason}"
+// in the language the app shows.
+func SettingsPluginsReason(reason string) string {
+	return In(i18n.Locale()).SettingsPluginsReason(reason)
+}
+
+// SettingsPluginsReason says "Reason: {reason}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsReason(reason string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsReason", map[string]any{"reason": reason})
+}
+
+// SettingsPluginsDevelopmentNote says "Loaded from a development directory. This is a path-scoped development source, not an installed package."
+// in the language the app shows.
+func SettingsPluginsDevelopmentNote() string {
+	return In(i18n.Locale()).SettingsPluginsDevelopmentNote()
+}
+
+// SettingsPluginsDevelopmentNote says "Loaded from a development directory. This is a path-scoped development source, not an installed package."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDevelopmentNote() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDevelopmentNote", nil)
+}
+
+// SettingsPluginsReasonPermissionDenied says "Required permission denied: {permission}"
+// in the language the app shows.
+func SettingsPluginsReasonPermissionDenied(permission string) string {
+	return In(i18n.Locale()).SettingsPluginsReasonPermissionDenied(permission)
+}
+
+// SettingsPluginsReasonPermissionDenied says "Required permission denied: {permission}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsReasonPermissionDenied(permission string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsReasonPermissionDenied", map[string]any{"permission": permission})
+}
+
+// SettingsPluginsReasonPermissionRevoked says "Required permission revoked: {permission}"
+// in the language the app shows.
+func SettingsPluginsReasonPermissionRevoked(permission string) string {
+	return In(i18n.Locale()).SettingsPluginsReasonPermissionRevoked(permission)
+}
+
+// SettingsPluginsReasonPermissionRevoked says "Required permission revoked: {permission}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsReasonPermissionRevoked(permission string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsReasonPermissionRevoked", map[string]any{"permission": permission})
+}
+
+// SettingsPluginsScopeSubtree says "Granting a directory includes every file beneath it."
+// in the language the app shows.
+func SettingsPluginsScopeSubtree() string { return In(i18n.Locale()).SettingsPluginsScopeSubtree() }
+
+// SettingsPluginsScopeSubtree says "Granting a directory includes every file beneath it."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsScopeSubtree() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsScopeSubtree", nil)
+}
+
+// SettingsPluginsRegistryTitle says "Registry"
+// in the language the app shows.
+func SettingsPluginsRegistryTitle() string { return In(i18n.Locale()).SettingsPluginsRegistryTitle() }
+
+// SettingsPluginsRegistryTitle says "Registry"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsRegistryTitle() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsRegistryTitle", nil)
+}
+
+// SettingsPluginsRegistrySearch says "Search the registry…"
+// in the language the app shows.
+func SettingsPluginsRegistrySearch() string { return In(i18n.Locale()).SettingsPluginsRegistrySearch() }
+
+// SettingsPluginsRegistrySearch says "Search the registry…"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsRegistrySearch() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsRegistrySearch", nil)
+}
+
+// SettingsPluginsRegistryEmpty says "No registry plugins match."
+// in the language the app shows.
+func SettingsPluginsRegistryEmpty() string { return In(i18n.Locale()).SettingsPluginsRegistryEmpty() }
+
+// SettingsPluginsRegistryEmpty says "No registry plugins match."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsRegistryEmpty() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsRegistryEmpty", nil)
+}
+
+// SettingsPluginsRegistryInstall says "Install"
+// in the language the app shows.
+func SettingsPluginsRegistryInstall() string {
+	return In(i18n.Locale()).SettingsPluginsRegistryInstall()
+}
+
+// SettingsPluginsRegistryInstall says "Install"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsRegistryInstall() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsRegistryInstall", nil)
+}
+
+// SettingsPluginsRegistryInstalled says "Installed {version}"
+// in the language the app shows.
+func SettingsPluginsRegistryInstalled(version string) string {
+	return In(i18n.Locale()).SettingsPluginsRegistryInstalled(version)
+}
+
+// SettingsPluginsRegistryInstalled says "Installed {version}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsRegistryInstalled(version string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsRegistryInstalled", map[string]any{"version": version})
+}
+
+// SettingsPluginsChannelStable says "Stable"
+// in the language the app shows.
+func SettingsPluginsChannelStable() string { return In(i18n.Locale()).SettingsPluginsChannelStable() }
+
+// SettingsPluginsChannelStable says "Stable"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsChannelStable() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsChannelStable", nil)
+}
+
+// SettingsPluginsChannelBeta says "Beta"
+// in the language the app shows.
+func SettingsPluginsChannelBeta() string { return In(i18n.Locale()).SettingsPluginsChannelBeta() }
+
+// SettingsPluginsChannelBeta says "Beta"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsChannelBeta() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsChannelBeta", nil)
+}
+
+// SettingsPluginsUseBeta says "Use beta releases"
+// in the language the app shows.
+func SettingsPluginsUseBeta() string { return In(i18n.Locale()).SettingsPluginsUseBeta() }
+
+// SettingsPluginsUseBeta says "Use beta releases"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsUseBeta() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsUseBeta", nil)
+}
+
+// SettingsPluginsAutomaticUpdates says "Install updates automatically"
+// in the language the app shows.
+func SettingsPluginsAutomaticUpdates() string {
+	return In(i18n.Locale()).SettingsPluginsAutomaticUpdates()
+}
+
+// SettingsPluginsAutomaticUpdates says "Install updates automatically"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsAutomaticUpdates() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsAutomaticUpdates", nil)
+}
+
+// SettingsPluginsUpdate says "Update"
+// in the language the app shows.
+func SettingsPluginsUpdate() string { return In(i18n.Locale()).SettingsPluginsUpdate() }
+
+// SettingsPluginsUpdate says "Update"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsUpdate() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsUpdate", nil)
+}
+
+// SettingsPluginsRollback says "Roll back"
+// in the language the app shows.
+func SettingsPluginsRollback() string { return In(i18n.Locale()).SettingsPluginsRollback() }
+
+// SettingsPluginsRollback says "Roll back"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsRollback() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsRollback", nil)
+}
+
+// SettingsPluginsUpdateTitle says "Update {name} to {version}?"
+// in the language the app shows.
+func SettingsPluginsUpdateTitle(name string, version string) string {
+	return In(i18n.Locale()).SettingsPluginsUpdateTitle(name, version)
+}
+
+// SettingsPluginsUpdateTitle says "Update {name} to {version}?"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsUpdateTitle(name string, version string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsUpdateTitle", map[string]any{"name": name, "version": version})
+}
+
+// SettingsPluginsUpdateBody says "Review the permission changes before updating. A new required permission keeps the plugin inactive until you grant it."
+// in the language the app shows.
+func SettingsPluginsUpdateBody() string { return In(i18n.Locale()).SettingsPluginsUpdateBody() }
+
+// SettingsPluginsUpdateBody says "Review the permission changes before updating. A new required permission keeps the plugin inactive until you grant it."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsUpdateBody() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsUpdateBody", nil)
+}
+
+// SettingsPluginsConfirmUpdate says "Update"
+// in the language the app shows.
+func SettingsPluginsConfirmUpdate() string { return In(i18n.Locale()).SettingsPluginsConfirmUpdate() }
+
+// SettingsPluginsConfirmUpdate says "Update"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsConfirmUpdate() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsConfirmUpdate", nil)
+}
+
+// SettingsPluginsRollbackTitle says "Roll back {name}?"
+// in the language the app shows.
+func SettingsPluginsRollbackTitle(name string) string {
+	return In(i18n.Locale()).SettingsPluginsRollbackTitle(name)
+}
+
+// SettingsPluginsRollbackTitle says "Roll back {name}?"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsRollbackTitle(name string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsRollbackTitle", map[string]any{"name": name})
+}
+
+// SettingsPluginsRollbackBody says "Restores the previous version and its permissions. The current version stays available for one more rollback."
+// in the language the app shows.
+func SettingsPluginsRollbackBody() string { return In(i18n.Locale()).SettingsPluginsRollbackBody() }
+
+// SettingsPluginsRollbackBody says "Restores the previous version and its permissions. The current version stays available for one more rollback."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsRollbackBody() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsRollbackBody", nil)
+}
+
+// SettingsPluginsConfirmRollback says "Roll back"
+// in the language the app shows.
+func SettingsPluginsConfirmRollback() string {
+	return In(i18n.Locale()).SettingsPluginsConfirmRollback()
+}
+
+// SettingsPluginsConfirmRollback says "Roll back"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsConfirmRollback() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsConfirmRollback", nil)
+}
+
+// SettingsPluginsPermissionChanges says "Permission changes"
+// in the language the app shows.
+func SettingsPluginsPermissionChanges() string {
+	return In(i18n.Locale()).SettingsPluginsPermissionChanges()
+}
+
+// SettingsPluginsPermissionChanges says "Permission changes"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsPermissionChanges() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsPermissionChanges", nil)
+}
+
+// SettingsPluginsNoPermissionChanges says "The permissions do not change."
+// in the language the app shows.
+func SettingsPluginsNoPermissionChanges() string {
+	return In(i18n.Locale()).SettingsPluginsNoPermissionChanges()
+}
+
+// SettingsPluginsNoPermissionChanges says "The permissions do not change."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsNoPermissionChanges() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsNoPermissionChanges", nil)
+}
+
+// SettingsPluginsDiffAdded says "Added"
+// in the language the app shows.
+func SettingsPluginsDiffAdded() string { return In(i18n.Locale()).SettingsPluginsDiffAdded() }
+
+// SettingsPluginsDiffAdded says "Added"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiffAdded() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiffAdded", nil)
+}
+
+// SettingsPluginsDiffRemoved says "Removed"
+// in the language the app shows.
+func SettingsPluginsDiffRemoved() string { return In(i18n.Locale()).SettingsPluginsDiffRemoved() }
+
+// SettingsPluginsDiffRemoved says "Removed"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiffRemoved() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiffRemoved", nil)
+}
+
+// SettingsPluginsDiffScope says "{permission}: scope changed from {before} to {after}"
+// in the language the app shows.
+func SettingsPluginsDiffScope(permission string, before string, after string) string {
+	return In(i18n.Locale()).SettingsPluginsDiffScope(permission, before, after)
+}
+
+// SettingsPluginsDiffScope says "{permission}: scope changed from {before} to {after}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiffScope(permission string, before string, after string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiffScope", map[string]any{"permission": permission, "before": before, "after": after})
+}
+
+// SettingsPluginsSourceChangeTitle says "Source changed for {name}"
+// in the language the app shows.
+func SettingsPluginsSourceChangeTitle(name string) string {
+	return In(i18n.Locale()).SettingsPluginsSourceChangeTitle(name)
+}
+
+// SettingsPluginsSourceChangeTitle says "Source changed for {name}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSourceChangeTitle(name string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSourceChangeTitle", map[string]any{"name": name})
+}
+
+// SettingsPluginsSourceChangeBody says "This plugin was previously installed from {previous}. Installing from {current} requires explicit confirmation."
+// in the language the app shows.
+func SettingsPluginsSourceChangeBody(previous string, current string) string {
+	return In(i18n.Locale()).SettingsPluginsSourceChangeBody(previous, current)
+}
+
+// SettingsPluginsSourceChangeBody says "This plugin was previously installed from {previous}. Installing from {current} requires explicit confirmation."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSourceChangeBody(previous string, current string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSourceChangeBody", map[string]any{"previous": previous, "current": current})
+}
+
+// SettingsPluginsConfirmSourceChange says "Install from the new source"
+// in the language the app shows.
+func SettingsPluginsConfirmSourceChange() string {
+	return In(i18n.Locale()).SettingsPluginsConfirmSourceChange()
+}
+
+// SettingsPluginsConfirmSourceChange says "Install from the new source"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsConfirmSourceChange() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsConfirmSourceChange", nil)
+}
+
+// SettingsPluginsWarningYanked says "This version is yanked: it is hidden from new installs but keeps running."
+// in the language the app shows.
+func SettingsPluginsWarningYanked() string { return In(i18n.Locale()).SettingsPluginsWarningYanked() }
+
+// SettingsPluginsWarningYanked says "This version is yanked: it is hidden from new installs but keeps running."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsWarningYanked() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsWarningYanked", nil)
+}
+
+// SettingsPluginsWarningDeprecated says "Deprecated version: {detail}"
+// in the language the app shows.
+func SettingsPluginsWarningDeprecated(detail string) string {
+	return In(i18n.Locale()).SettingsPluginsWarningDeprecated(detail)
+}
+
+// SettingsPluginsWarningDeprecated says "Deprecated version: {detail}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsWarningDeprecated(detail string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsWarningDeprecated", map[string]any{"detail": detail})
+}
+
+// SettingsPluginsWarningRevoked says "Revoked version: {detail}"
+// in the language the app shows.
+func SettingsPluginsWarningRevoked(detail string) string {
+	return In(i18n.Locale()).SettingsPluginsWarningRevoked(detail)
+}
+
+// SettingsPluginsWarningRevoked says "Revoked version: {detail}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsWarningRevoked(detail string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsWarningRevoked", map[string]any{"detail": detail})
+}
+
+// SettingsPluginsSettingsTitle says "Plugin settings"
+// in the language the app shows.
+func SettingsPluginsSettingsTitle() string { return In(i18n.Locale()).SettingsPluginsSettingsTitle() }
+
+// SettingsPluginsSettingsTitle says "Plugin settings"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSettingsTitle() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSettingsTitle", nil)
+}
+
+// SettingsPluginsSettingsSave says "Save"
+// in the language the app shows.
+func SettingsPluginsSettingsSave() string { return In(i18n.Locale()).SettingsPluginsSettingsSave() }
+
+// SettingsPluginsSettingsSave says "Save"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSettingsSave() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSettingsSave", nil)
+}
+
+// SettingsPluginsSettingsReset says "Reset to defaults"
+// in the language the app shows.
+func SettingsPluginsSettingsReset() string { return In(i18n.Locale()).SettingsPluginsSettingsReset() }
+
+// SettingsPluginsSettingsReset says "Reset to defaults"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSettingsReset() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSettingsReset", nil)
+}
+
+// SettingsPluginsSettingsInvalid says "This configuration is invalid. Fix the highlighted fields to activate the plugin."
+// in the language the app shows.
+func SettingsPluginsSettingsInvalid() string {
+	return In(i18n.Locale()).SettingsPluginsSettingsInvalid()
+}
+
+// SettingsPluginsSettingsInvalid says "This configuration is invalid. Fix the highlighted fields to activate the plugin."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSettingsInvalid() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSettingsInvalid", nil)
+}
+
+// SettingsPluginsSettingsVolatile says "Resets on every activation"
+// in the language the app shows.
+func SettingsPluginsSettingsVolatile() string {
+	return In(i18n.Locale()).SettingsPluginsSettingsVolatile()
+}
+
+// SettingsPluginsSettingsVolatile says "Resets on every activation"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSettingsVolatile() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSettingsVolatile", nil)
+}
+
+// SettingsPluginsSettingsProblem says "The settings could not be saved."
+// in the language the app shows.
+func SettingsPluginsSettingsProblem() string {
+	return In(i18n.Locale()).SettingsPluginsSettingsProblem()
+}
+
+// SettingsPluginsSettingsProblem says "The settings could not be saved."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSettingsProblem() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSettingsProblem", nil)
+}
+
+// SettingsPluginsSettingsDefault says "Default: {value}"
+// in the language the app shows.
+func SettingsPluginsSettingsDefault(value string) string {
+	return In(i18n.Locale()).SettingsPluginsSettingsDefault(value)
+}
+
+// SettingsPluginsSettingsDefault says "Default: {value}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSettingsDefault(value string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSettingsDefault", map[string]any{"value": value})
+}
+
+// SettingsPluginsSettingsEmpty says "This plugin declares no settings."
+// in the language the app shows.
+func SettingsPluginsSettingsEmpty() string { return In(i18n.Locale()).SettingsPluginsSettingsEmpty() }
+
+// SettingsPluginsSettingsEmpty says "This plugin declares no settings."
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsSettingsEmpty() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsSettingsEmpty", nil)
+}
+
+// SettingsPluginsDiagnosticsTitle says "Diagnostics"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsTitle() string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsTitle()
+}
+
+// SettingsPluginsDiagnosticsTitle says "Diagnostics"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsTitle() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsTitle", nil)
+}
+
+// SettingsPluginsDiagnosticsLifecycle says "Lifecycle: {state}"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsLifecycle(state string) string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsLifecycle(state)
+}
+
+// SettingsPluginsDiagnosticsLifecycle says "Lifecycle: {state}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsLifecycle(state string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsLifecycle", map[string]any{"state": state})
+}
+
+// SettingsPluginsDiagnosticsReason says "Reason: {reason}"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsReason(reason string) string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsReason(reason)
+}
+
+// SettingsPluginsDiagnosticsReason says "Reason: {reason}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsReason(reason string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsReason", map[string]any{"reason": reason})
+}
+
+// SettingsPluginsDiagnosticsMissing says "Missing injected services: {services}"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsMissing(services string) string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsMissing(services)
+}
+
+// SettingsPluginsDiagnosticsMissing says "Missing injected services: {services}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsMissing(services string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsMissing", map[string]any{"services": services})
+}
+
+// SettingsPluginsDiagnosticsConfig says "Configuration errors: {errors}"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsConfig(errors string) string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsConfig(errors)
+}
+
+// SettingsPluginsDiagnosticsConfig says "Configuration errors: {errors}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsConfig(errors string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsConfig", map[string]any{"errors": errors})
+}
+
+// SettingsPluginsDiagnosticsGrants says "Permission grants: {grants}"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsGrants(grants string) string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsGrants(grants)
+}
+
+// SettingsPluginsDiagnosticsGrants says "Permission grants: {grants}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsGrants(grants string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsGrants", map[string]any{"grants": grants})
+}
+
+// SettingsPluginsDiagnosticsNoGrants says "No permission grants"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsNoGrants() string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsNoGrants()
+}
+
+// SettingsPluginsDiagnosticsNoGrants says "No permission grants"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsNoGrants() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsNoGrants", nil)
+}
+
+// SettingsPluginsDiagnosticsEffects says "Host effects: {count}"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsEffects(count string) string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsEffects(count)
+}
+
+// SettingsPluginsDiagnosticsEffects says "Host effects: {count}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsEffects(count string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsEffects", map[string]any{"count": count})
+}
+
+// SettingsPluginsDiagnosticsMemory says "Memory: {used} of {max}"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsMemory(used string, max string) string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsMemory(used, max)
+}
+
+// SettingsPluginsDiagnosticsMemory says "Memory: {used} of {max}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsMemory(used string, max string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsMemory", map[string]any{"used": used, "max": max})
+}
+
+// SettingsPluginsDiagnosticsTimings says "Call timings"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsTimings() string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsTimings()
+}
+
+// SettingsPluginsDiagnosticsTimings says "Call timings"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsTimings() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsTimings", nil)
+}
+
+// SettingsPluginsDiagnosticsTiming says "{operation}: {count} calls, last {last}, max {max}"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsTiming(operation string, count string, last string, max string) string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsTiming(operation, count, last, max)
+}
+
+// SettingsPluginsDiagnosticsTiming says "{operation}: {count} calls, last {last}, max {max}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsTiming(operation string, count string, last string, max string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsTiming", map[string]any{"operation": operation, "count": count, "last": last, "max": max})
+}
+
+// SettingsPluginsDiagnosticsFaults says "Fault history"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsFaults() string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsFaults()
+}
+
+// SettingsPluginsDiagnosticsFaults says "Fault history"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsFaults() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsFaults", nil)
+}
+
+// SettingsPluginsDiagnosticsFault says "{time} {operation}: {reason}"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsFault(time_ string, operation string, reason string) string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsFault(time_, operation, reason)
+}
+
+// SettingsPluginsDiagnosticsFault says "{time} {operation}: {reason}"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsFault(time_ string, operation string, reason string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsFault", map[string]any{"time": time_, "operation": operation, "reason": reason})
+}
+
+// SettingsPluginsDiagnosticsNoFaults says "No faults"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsNoFaults() string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsNoFaults()
+}
+
+// SettingsPluginsDiagnosticsNoFaults says "No faults"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsNoFaults() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsNoFaults", nil)
+}
+
+// SettingsPluginsDiagnosticsLogs says "Recent logs"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsLogs() string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsLogs()
+}
+
+// SettingsPluginsDiagnosticsLogs says "Recent logs"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsLogs() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsLogs", nil)
+}
+
+// SettingsPluginsDiagnosticsRestarts says "Restarts: {manual} manual, {automatic} automatic"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsRestarts(manual string, automatic string) string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsRestarts(manual, automatic)
+}
+
+// SettingsPluginsDiagnosticsRestarts says "Restarts: {manual} manual, {automatic} automatic"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsRestarts(manual string, automatic string) string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsRestarts", map[string]any{"manual": manual, "automatic": automatic})
+}
+
+// SettingsPluginsDiagnosticsFiberTree says "Fiber tree"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsFiberTree() string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsFiberTree()
+}
+
+// SettingsPluginsDiagnosticsFiberTree says "Fiber tree"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsFiberTree() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsFiberTree", nil)
+}
+
+// SettingsPluginsDiagnosticsRestart says "Restart"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsRestart() string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsRestart()
+}
+
+// SettingsPluginsDiagnosticsRestart says "Restart"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsRestart() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsRestart", nil)
+}
+
+// SettingsPluginsDiagnosticsNoLogs says "No log lines"
+// in the language the app shows.
+func SettingsPluginsDiagnosticsNoLogs() string {
+	return In(i18n.Locale()).SettingsPluginsDiagnosticsNoLogs()
+}
+
+// SettingsPluginsDiagnosticsNoLogs says "No log lines"
+// in the language of msgs.
+func (msgs Messages) SettingsPluginsDiagnosticsNoLogs() string {
+	return Catalog.Format(msgs.locale, "settingsPluginsDiagnosticsNoLogs", nil)
+}
+
+// PluginTimeJustNow says "just now"
+// in the language the app shows.
+func PluginTimeJustNow() string { return In(i18n.Locale()).PluginTimeJustNow() }
+
+// PluginTimeJustNow says "just now"
+// in the language of msgs.
+func (msgs Messages) PluginTimeJustNow() string {
+	return Catalog.Format(msgs.locale, "pluginTimeJustNow", nil)
+}
+
+// PluginTimeSecondsAgo says "{count, plural, one {# second ago} other {# seconds ago}}"
+// in the language the app shows.
+func PluginTimeSecondsAgo(count int) string { return In(i18n.Locale()).PluginTimeSecondsAgo(count) }
+
+// PluginTimeSecondsAgo says "{count, plural, one {# second ago} other {# seconds ago}}"
+// in the language of msgs.
+func (msgs Messages) PluginTimeSecondsAgo(count int) string {
+	return Catalog.Format(msgs.locale, "pluginTimeSecondsAgo", map[string]any{"count": count})
+}
+
+// PluginTimeSecondsIn says "{count, plural, one {in # second} other {in # seconds}}"
+// in the language the app shows.
+func PluginTimeSecondsIn(count int) string { return In(i18n.Locale()).PluginTimeSecondsIn(count) }
+
+// PluginTimeSecondsIn says "{count, plural, one {in # second} other {in # seconds}}"
+// in the language of msgs.
+func (msgs Messages) PluginTimeSecondsIn(count int) string {
+	return Catalog.Format(msgs.locale, "pluginTimeSecondsIn", map[string]any{"count": count})
+}
+
+// PluginTimeMinutesAgo says "{count, plural, one {# minute ago} other {# minutes ago}}"
+// in the language the app shows.
+func PluginTimeMinutesAgo(count int) string { return In(i18n.Locale()).PluginTimeMinutesAgo(count) }
+
+// PluginTimeMinutesAgo says "{count, plural, one {# minute ago} other {# minutes ago}}"
+// in the language of msgs.
+func (msgs Messages) PluginTimeMinutesAgo(count int) string {
+	return Catalog.Format(msgs.locale, "pluginTimeMinutesAgo", map[string]any{"count": count})
+}
+
+// PluginTimeMinutesIn says "{count, plural, one {in # minute} other {in # minutes}}"
+// in the language the app shows.
+func PluginTimeMinutesIn(count int) string { return In(i18n.Locale()).PluginTimeMinutesIn(count) }
+
+// PluginTimeMinutesIn says "{count, plural, one {in # minute} other {in # minutes}}"
+// in the language of msgs.
+func (msgs Messages) PluginTimeMinutesIn(count int) string {
+	return Catalog.Format(msgs.locale, "pluginTimeMinutesIn", map[string]any{"count": count})
+}
+
+// PluginTimeHoursAgo says "{count, plural, one {# hour ago} other {# hours ago}}"
+// in the language the app shows.
+func PluginTimeHoursAgo(count int) string { return In(i18n.Locale()).PluginTimeHoursAgo(count) }
+
+// PluginTimeHoursAgo says "{count, plural, one {# hour ago} other {# hours ago}}"
+// in the language of msgs.
+func (msgs Messages) PluginTimeHoursAgo(count int) string {
+	return Catalog.Format(msgs.locale, "pluginTimeHoursAgo", map[string]any{"count": count})
+}
+
+// PluginTimeHoursIn says "{count, plural, one {in # hour} other {in # hours}}"
+// in the language the app shows.
+func PluginTimeHoursIn(count int) string { return In(i18n.Locale()).PluginTimeHoursIn(count) }
+
+// PluginTimeHoursIn says "{count, plural, one {in # hour} other {in # hours}}"
+// in the language of msgs.
+func (msgs Messages) PluginTimeHoursIn(count int) string {
+	return Catalog.Format(msgs.locale, "pluginTimeHoursIn", map[string]any{"count": count})
+}
+
+// PluginTimeDaysAgo says "{count, plural, one {# day ago} other {# days ago}}"
+// in the language the app shows.
+func PluginTimeDaysAgo(count int) string { return In(i18n.Locale()).PluginTimeDaysAgo(count) }
+
+// PluginTimeDaysAgo says "{count, plural, one {# day ago} other {# days ago}}"
+// in the language of msgs.
+func (msgs Messages) PluginTimeDaysAgo(count int) string {
+	return Catalog.Format(msgs.locale, "pluginTimeDaysAgo", map[string]any{"count": count})
+}
+
+// PluginTimeDaysIn says "{count, plural, one {in # day} other {in # days}}"
+// in the language the app shows.
+func PluginTimeDaysIn(count int) string { return In(i18n.Locale()).PluginTimeDaysIn(count) }
+
+// PluginTimeDaysIn says "{count, plural, one {in # day} other {in # days}}"
+// in the language of msgs.
+func (msgs Messages) PluginTimeDaysIn(count int) string {
+	return Catalog.Format(msgs.locale, "pluginTimeDaysIn", map[string]any{"count": count})
+}
+
+// PluginTimeMonthsAgo says "{count, plural, one {# month ago} other {# months ago}}"
+// in the language the app shows.
+func PluginTimeMonthsAgo(count int) string { return In(i18n.Locale()).PluginTimeMonthsAgo(count) }
+
+// PluginTimeMonthsAgo says "{count, plural, one {# month ago} other {# months ago}}"
+// in the language of msgs.
+func (msgs Messages) PluginTimeMonthsAgo(count int) string {
+	return Catalog.Format(msgs.locale, "pluginTimeMonthsAgo", map[string]any{"count": count})
+}
+
+// PluginTimeMonthsIn says "{count, plural, one {in # month} other {in # months}}"
+// in the language the app shows.
+func PluginTimeMonthsIn(count int) string { return In(i18n.Locale()).PluginTimeMonthsIn(count) }
+
+// PluginTimeMonthsIn says "{count, plural, one {in # month} other {in # months}}"
+// in the language of msgs.
+func (msgs Messages) PluginTimeMonthsIn(count int) string {
+	return Catalog.Format(msgs.locale, "pluginTimeMonthsIn", map[string]any{"count": count})
+}
+
+// PluginTimeYearsAgo says "{count, plural, one {# year ago} other {# years ago}}"
+// in the language the app shows.
+func PluginTimeYearsAgo(count int) string { return In(i18n.Locale()).PluginTimeYearsAgo(count) }
+
+// PluginTimeYearsAgo says "{count, plural, one {# year ago} other {# years ago}}"
+// in the language of msgs.
+func (msgs Messages) PluginTimeYearsAgo(count int) string {
+	return Catalog.Format(msgs.locale, "pluginTimeYearsAgo", map[string]any{"count": count})
+}
+
+// PluginTimeYearsIn says "{count, plural, one {in # year} other {in # years}}"
+// in the language the app shows.
+func PluginTimeYearsIn(count int) string { return In(i18n.Locale()).PluginTimeYearsIn(count) }
+
+// PluginTimeYearsIn says "{count, plural, one {in # year} other {in # years}}"
+// in the language of msgs.
+func (msgs Messages) PluginTimeYearsIn(count int) string {
+	return Catalog.Format(msgs.locale, "pluginTimeYearsIn", map[string]any{"count": count})
+}
+
+// PluginWebviewCrashed says "The plugin page crashed. Close and reopen the view to reload it."
+// in the language the app shows.
+func PluginWebviewCrashed() string { return In(i18n.Locale()).PluginWebviewCrashed() }
+
+// PluginWebviewCrashed says "The plugin page crashed. Close and reopen the view to reload it."
+// in the language of msgs.
+func (msgs Messages) PluginWebviewCrashed() string {
+	return Catalog.Format(msgs.locale, "pluginWebviewCrashed", nil)
+}
+
+// PluginWebviewEmbeddedUnavailable says "Embedded web view unavailable"
+// in the language the app shows.
+func PluginWebviewEmbeddedUnavailable() string {
+	return In(i18n.Locale()).PluginWebviewEmbeddedUnavailable()
+}
+
+// PluginWebviewEmbeddedUnavailable says "Embedded web view unavailable"
+// in the language of msgs.
+func (msgs Messages) PluginWebviewEmbeddedUnavailable() string {
+	return Catalog.Format(msgs.locale, "pluginWebviewEmbeddedUnavailable", nil)
+}
+
+// PluginWebviewUnavailable says "Web view unavailable"
+// in the language the app shows.
+func PluginWebviewUnavailable() string { return In(i18n.Locale()).PluginWebviewUnavailable() }
+
+// PluginWebviewUnavailable says "Web view unavailable"
+// in the language of msgs.
+func (msgs Messages) PluginWebviewUnavailable() string {
+	return Catalog.Format(msgs.locale, "pluginWebviewUnavailable", nil)
 }

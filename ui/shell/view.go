@@ -4,7 +4,9 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsession "github.com/mslxl/natcatty/application/session"
+	appview "github.com/mslxl/natcatty/application/view"
 	"github.com/mslxl/natcatty/domain/model"
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
@@ -194,6 +196,35 @@ func homeSidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme)
 					}
 				}
 				navItem(c, "nav-logs", icons.Activity, m.NavLogs(), s.LogsVisible(), s.ShowLogs)
+				// Plugin Pages are contribution-driven: the sidebar lists every
+				// registered View that declares the Page placement, including a
+				// restored page whose contribution has gone missing.
+				for _, page := range s.HomePages() {
+					viewID := page.ViewID
+					title := page.Title
+					if title == "" {
+						title = viewID
+					}
+					navItem(c, "nav-view-"+viewID, icons.AppWindow, title,
+						s.PageVisible() && s.ShownPageViewID() == viewID,
+						func() {
+							// An already-open page, including a restored page
+							// whose contribution is missing, is focused by its
+							// stored entry. Only a closed contribution page goes
+							// through OpenView.
+							if s.ShowPage(viewID) {
+								c.Invalidate()
+								return
+							}
+							_, err := s.OpenView(appview.OpenRequest{
+								ViewID:    viewID,
+								Placement: domainplugin.PlacementPage,
+							})
+							if err == nil {
+								c.Invalidate()
+							}
+						})
+				}
 			})
 		})
 
@@ -204,6 +235,17 @@ func homeSidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme)
 
 // homeSurface draws the home Tab's chosen page.
 func homeSurface(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	if s.PageVisible() {
+		info, _ := s.PageView(s.ShownPageViewID())
+		if info.Surface != nil {
+			info.Surface.View(c)
+			return
+		}
+		// A missing or unknown View keeps the page reachable and explains what
+		// is unavailable instead of blanking the Workspace.
+		placeholder(c, icons.AppWindow, info.Title, m.ViewUnavailable())
+		return
+	}
 	switch {
 	case s.LogsVisible():
 		if view := s.LogsView(); view != nil {
@@ -401,14 +443,14 @@ func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 // panel's dock and close at its end, and the chosen tool below.
 func sidePanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	tab model.TabID, dock state.PanelDock, tool func(*ui.Context)) {
+	chosen := s.SideTool(tab)
 	// The panel shares the terminal's background, as the original's, with a
 	// line under its strip.
 	ui.Column(c).Fill().MinWidth(0).Background(t.Background).Children(func() {
 		ui.Row(c).FillWidth().Height(36).Padding(0, 6).Gap(4).AlignItems(ui.Center).Shrink(0).
 			BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-			chosen := s.SideTool(tab)
 			for _, id := range s.SideTools(tab) {
-				icon, label := sideToolFace(m, id)
+				icon, label := sideToolFace(s, m, id)
 				// The strip changes with the target: a local Session has no
 				// System, so each button keeps its tool's identity.
 				c.Key("side-tool-" + string(id))
@@ -443,12 +485,22 @@ func sidePanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 				s.CloseFiles(tab)
 			}
 		})
-		ui.Column(c).FillWidth().Grow(1).MinHeight(0).Children(func() { tool(c) })
+		ui.Column(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
+			if s.SideViewUnavailable(chosen) {
+				placeholder(c, icons.AppWindow, s.SideViewLabel(chosen), m.ViewUnavailable())
+				return
+			}
+			tool(c)
+		})
 	})
 }
 
-// sideToolFace is a side panel tool's icon and name in the strip.
-func sideToolFace(m locales.Messages, id state.SideToolID) (string, string) {
+// sideToolFace is a side panel tool's icon and name in the strip. A View
+// contribution's title comes from its own declaration or instance.
+func sideToolFace(s *state.State, m locales.Messages, id state.SideToolID) (string, string) {
+	if label := s.SideViewLabel(id); label != "" {
+		return icons.AppWindow, label
+	}
 	switch id {
 	case state.SideScripts:
 		return icons.Zap, m.SidePanelScripts()

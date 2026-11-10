@@ -7,6 +7,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -14,10 +15,12 @@ import (
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
+	appview "github.com/mslxl/natcatty/application/view"
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	"github.com/mslxl/natcatty/domain/model"
 	domainetmodel "github.com/mslxl/natcatty/domain/model/et"
 	domoshmodel "github.com/mslxl/natcatty/domain/model/mosh"
+	protocolmodel "github.com/mslxl/natcatty/domain/model/protocol"
 	domainserial "github.com/mslxl/natcatty/domain/model/serial"
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
@@ -38,14 +41,22 @@ var ErrNoSessions = errors.New("shell: no session service")
 // ErrNoActiveTab reports a Pane action taken while no Tab is active.
 var ErrNoActiveTab = errors.New("shell: no active Tab")
 
+// ErrNoViews reports a shell that was not given a View service, so it cannot
+// open a View Pane.
+var ErrNoViews = errors.New("shell: no view service")
+
+// ErrViewNotPlaced reports a move or duplicate target that no container owns.
+// A live View Instance always belongs to exactly one of the five placements.
+var ErrViewNotPlaced = errors.New("shell: view instance has no placed surface")
+
 // ErrHostUnavailable reports a restored Pane whose Host is no longer in the
 // Vault. The Pane stays in the layout as an error surface so the user can see
 // which Session is missing; nothing is invented in its place.
 var ErrHostUnavailable = errors.New("shell: restored Host is unavailable")
 
-// Surface is the terminal surface a Pane shows. The UI owns it and the
-// application owns the transport beneath it; the shell only renders and closes
-// it.
+// Surface is the content surface a Pane shows: a terminal Session or a plugin
+// View. The UI owns it and the application owns the transport beneath it; the
+// shell only renders and closes it.
 type Surface interface {
 	View(c *ui.Context) ui.Element
 	Close()
@@ -61,6 +72,10 @@ type BrowserOpener interface {
 // SurfaceFactory builds the terminal surface for a Session. The app wires the
 // real MyGo terminal; tests wire a fake.
 type SurfaceFactory func(*appsession.Session) (Surface, error)
+
+// ViewSurfaceFactory builds the surface for a View Instance. The app wires the
+// native UI renderer over the plugin's live UI session; tests wire a fake.
+type ViewSurfaceFactory func(*appview.Instance) (Surface, error)
 
 // TerminalFontSetter is implemented by a Surface whose terminal can restyle
 // without being recreated. The Settings window uses it to apply the live
@@ -95,6 +110,11 @@ type TerminalCursorSetter interface {
 // reports false when the Host no longer exists.
 type HostResolver func(context.Context, model.HostID) (domainvault.Host, bool)
 
+// ProviderClaims reports whether a provider-owned Host protocol is claimed by
+// an enabled plugin. A missing claim fails closed: the shell never substitutes
+// a built-in transport for a provider-owned protocol.
+type ProviderClaims func(protocol string) bool
+
 // openOutcome is the result of an SSH connection started off the UI thread for
 // a new Tab. Outcome fields are written by the dial goroutine and applied on
 // the UI thread by Flush.
@@ -124,9 +144,12 @@ type StartupInput struct {
 func (i StartupInput) Empty() bool { return len(i.Chunks) == 0 }
 
 // paneOutcome is the result of opening the Session behind one Pane that
-// already exists in a Tab: a split, a duplicate, or a restore.
+// already exists in a Tab: a split, a duplicate, or a restore. It identifies
+// the Pane rather than its Tab because a Tab can be renamed while the open is
+// in flight: reconciling a View's placement re-identifies the Tab, and a Pane
+// can even move to another container before its Session arrives. Pane ids are
+// unique across every Tab, so they survive both changes.
 type paneOutcome struct {
-	tabID   model.TabID
 	paneID  model.PaneID
 	session *appsession.Session
 	// restore asks the Pane to reproduce its stored working directory after
@@ -203,8 +226,20 @@ type State struct {
 	requestRedraw    func()
 	sessions         *appsession.Service
 	surfaces         SurfaceFactory
-	trustPrompt      *sessionui.TrustPrompt
-	authPrompt       *sessionui.AuthPrompt
+	views            *appview.Registry
+	viewSurfaces     ViewSurfaceFactory
+	// providerClaims answers whether a provider-owned protocol is live. Nil
+	// keeps every provider-owned Host closed as unavailable.
+	providerClaims ProviderClaims
+	// pages holds open View Pages keyed by qualified view id. A Page is a
+	// singleton slot per view. pageShown is the page visible in the home area,
+	// empty while another home page or a work Tab is shown.
+	pages     map[string]*pageEntry
+	pageShown string
+	// asides holds View Instances placed in a side slot, keyed by instance id.
+	asides      map[string]*asideEntry
+	trustPrompt *sessionui.TrustPrompt
+	authPrompt  *sessionui.AuthPrompt
 	// etResumeStore lets the shell clear a saved ET credential pair when no
 	// live Session owns it any more: a restored reattach the server refuses as
 	// unsupported, or an ET Pane closed while its Session never opened. Nil
@@ -350,6 +385,31 @@ func WithSessions(service *appsession.Service, surfaces SurfaceFactory) Option {
 	return func(s *State) {
 		s.sessions = service
 		s.surfaces = surfaces
+	}
+}
+
+// WithProviderClaims supplies the live connection-provider claim set. Without
+// one, every provider-owned Host protocol fails closed as unavailable; the app
+// installs the host's claim lookup because it builds the plugin runtime after
+// the shell.
+func WithProviderClaims(claims ProviderClaims) Option {
+	return func(s *State) { s.providerClaims = claims }
+}
+
+// SetProviderClaims installs the live claim set after construction. The app
+// calls this once before the event loop starts.
+func (s *State) SetProviderClaims(claims ProviderClaims) {
+	if s != nil {
+		s.providerClaims = claims
+	}
+}
+
+// WithViews gives the shell the View registry and the factory that builds a
+// View Pane's surface. Without both, OpenView reports ErrNoViews.
+func WithViews(registry *appview.Registry, surfaces ViewSurfaceFactory) Option {
+	return func(s *State) {
+		s.views = registry
+		s.viewSurfaces = surfaces
 	}
 }
 
@@ -628,6 +688,10 @@ func (s *State) HomeVisible() bool {
 
 // ShowHome shows the home Tab at the page it showed last.
 func (s *State) ShowHome() {
+	if s.PageVisible() {
+		s.RequestRedraw()
+		return
+	}
 	switch s.home {
 	case HomeLogs:
 		s.ShowLogs()
@@ -648,6 +712,7 @@ func (s *State) ShowVault() {
 	s.vaultVisible = true
 	s.logsVisible = false
 	s.sftpVisible = false
+	s.pageShown = ""
 	s.RequestRedraw()
 }
 
@@ -668,6 +733,7 @@ func (s *State) ShowLogs() {
 	s.logsVisible = true
 	s.vaultVisible = false
 	s.sftpVisible = false
+	s.pageShown = ""
 	s.RequestRedraw()
 }
 
@@ -694,6 +760,7 @@ func (s *State) ShowSFTP() {
 	s.sftpVisible = true
 	s.vaultVisible = false
 	s.logsVisible = false
+	s.pageShown = ""
 	s.RequestRedraw()
 }
 
@@ -712,6 +779,7 @@ func (s *State) ShowMonitor() {
 	s.vaultVisible = false
 	s.logsVisible = false
 	s.sftpVisible = false
+	s.pageShown = ""
 	if s.monitorActivate != nil {
 		s.monitorActivate()
 	}
@@ -745,6 +813,7 @@ func (s *State) ShowSystemManager() {
 	s.vaultVisible = false
 	s.logsVisible = false
 	s.sftpVisible = false
+	s.pageShown = ""
 	if s.sysManagerActivate != nil {
 		s.sysManagerActivate()
 	}
@@ -780,10 +849,11 @@ func (s *State) NewTab() error {
 		return err
 	}
 
-	tab := s.newTab(TabOptions{AutoTitle: true, Descriptor: domainworkspace.SessionDescriptor{
-		Kind:  domainworkspace.SessionLocal,
-		Label: session.Label(),
-	}})
+	tab := s.newTab(TabOptions{AutoTitle: true, Content: domainworkspace.NewSessionPaneDescriptor(
+		domainworkspace.SessionDescriptor{
+			Kind:  domainworkspace.SessionLocal,
+			Label: session.Label(),
+		})})
 	tab.attachOnlySession(session, surface)
 	s.tabs = append(s.tabs, tab)
 	s.active = len(s.tabs) - 1
@@ -829,10 +899,15 @@ func (s *State) openHost(host domainvault.Host, startup StartupInput, browser bo
 	if label == "" {
 		label = host.Hostname
 	}
+	// Resolve the transport before marking the Host pending, so a protocol
+	// this build cannot open leaves no connecting label behind.
+	plan, err := s.hostSessionPlan(host)
+	if err != nil {
+		s.setProblem(err)
+		return err
+	}
 	s.setProblem(nil)
 	s.pending = append(s.pending, label)
-
-	plan := hostSessionTransport(host)
 	resumeKey := plan.newResumeKey()
 	// X11 forwarding requires both the Host preference and an explicit
 	// security acknowledgement, and exists only on SSH.
@@ -841,6 +916,7 @@ func (s *State) openHost(host domainvault.Host, startup StartupInput, browser bo
 	go func() {
 		session, err := s.sessions.Open(ctx, appsession.StartSpec{
 			Kind:           plan.kind,
+			Protocol:       string(host.Protocol),
 			Label:          label,
 			HostID:         host.ID,
 			Hostname:       host.Hostname,
@@ -855,24 +931,32 @@ func (s *State) openHost(host domainvault.Host, startup StartupInput, browser bo
 			ResumeKey:      resumeKey,
 			Reconnect:      plan.reconnect,
 		})
+		descriptor := domainworkspace.SessionDescriptor{
+			Kind:           plan.descriptor,
+			Label:          label,
+			HostID:         host.ID,
+			Hostname:       host.Hostname,
+			Port:           host.Port,
+			Username:       host.Username,
+			X11Forwarding:  x11,
+			AutoAttachTmux: plan.tmux,
+			ResumeKey:      resumeKey,
+		}
+		if session != nil && plan.kind == appsession.KindPlugin {
+			// Persist the provider's identity and its bounded opaque restore
+			// descriptor. The terminal's screen state never enters it.
+			descriptor.Provider = session.ProviderID()
+			descriptor.Protocol = session.ProviderProtocol()
+			descriptor.Restore = session.ProviderRestoreDescriptor()
+		}
 		s.mu.Lock()
 		s.outcomes = append(s.outcomes, openOutcome{
-			session: session,
-			label:   label,
-			browser: browser,
-			descriptor: domainworkspace.SessionDescriptor{
-				Kind:           plan.descriptor,
-				Label:          label,
-				HostID:         host.ID,
-				Hostname:       host.Hostname,
-				Port:           host.Port,
-				Username:       host.Username,
-				X11Forwarding:  x11,
-				AutoAttachTmux: plan.tmux,
-				ResumeKey:      resumeKey,
-			},
-			startup: startup,
-			err:     err,
+			session:    session,
+			label:      label,
+			browser:    browser,
+			descriptor: descriptor,
+			startup:    startup,
+			err:        err,
 		})
 		s.mu.Unlock()
 		s.RequestRedraw()
@@ -900,11 +984,21 @@ func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (mode
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	plan := hostSessionTransport(host)
+	plan, err := s.hostSessionPlan(host)
+	if err != nil {
+		// Flush records the problem on the UI thread, exactly like a failed
+		// background Host open.
+		s.mu.Lock()
+		s.outcomes = append(s.outcomes, openOutcome{label: label, err: err})
+		s.mu.Unlock()
+		s.RequestRedraw()
+		return "", err
+	}
 	resumeKey := plan.newResumeKey()
 	x11 := plan.kind == appsession.KindSSH && host.X11Enabled()
 	session, err := s.sessions.Open(ctx, appsession.StartSpec{
 		Kind:           plan.kind,
+		Protocol:       string(host.Protocol),
 		Label:          label,
 		HostID:         host.ID,
 		Hostname:       host.Hostname,
@@ -928,21 +1022,27 @@ func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (mode
 		s.RequestRedraw()
 		return "", err
 	}
+	descriptor := domainworkspace.SessionDescriptor{
+		Kind:           plan.descriptor,
+		Label:          label,
+		HostID:         host.ID,
+		Hostname:       host.Hostname,
+		Port:           host.Port,
+		Username:       host.Username,
+		X11Forwarding:  x11,
+		AutoAttachTmux: plan.tmux,
+		ResumeKey:      resumeKey,
+	}
+	if plan.kind == appsession.KindPlugin {
+		descriptor.Provider = session.ProviderID()
+		descriptor.Protocol = session.ProviderProtocol()
+		descriptor.Restore = session.ProviderRestoreDescriptor()
+	}
 	s.mu.Lock()
 	s.outcomes = append(s.outcomes, openOutcome{
-		session: session,
-		label:   label,
-		descriptor: domainworkspace.SessionDescriptor{
-			Kind:           plan.descriptor,
-			Label:          label,
-			HostID:         host.ID,
-			Hostname:       host.Hostname,
-			Port:           host.Port,
-			Username:       host.Username,
-			X11Forwarding:  x11,
-			AutoAttachTmux: plan.tmux,
-			ResumeKey:      resumeKey,
-		},
+		session:    session,
+		label:      label,
+		descriptor: descriptor,
 	})
 	s.mu.Unlock()
 	s.RequestRedraw()
@@ -973,50 +1073,92 @@ func (p hostTransportPlan) newResumeKey() string {
 	return ""
 }
 
-// hostSessionTransport maps a saved Host's protocol onto the Session
-// transport, its restore descriptor, and its reconnect policy. A Telnet Host
-// gets the Telnet endpoint and a policy that permits the manual Reconnect
-// action without automatically retrying a dropped socket, matching the
-// original's SSH-only auto-reconnect.
-func hostSessionTransport(host domainvault.Host) hostTransportPlan {
-	switch host.Protocol {
-	case domainvault.ProtocolLocal:
-		// A saved local-shell Host opens a shell on this machine, exactly like
-		// the original's local Hosts. Its label is the Tab's connection label.
-		return hostTransportPlan{
-			kind:       appsession.KindLocal,
-			descriptor: domainworkspace.SessionLocal,
+// providerClaimed reports whether a provider owns protocol in this build.
+func (s *State) providerClaimed(protocol string) bool {
+	return s.providerClaims != nil && s.providerClaims(protocol)
+}
+
+// hostSessionPlan selects the transport for a saved Host. A provider-owned
+// protocol takes the plugin kind when its provider is claimed, and fails closed
+// as unavailable otherwise; the shell never substitutes a built-in transport.
+func (s *State) hostSessionPlan(host domainvault.Host) (hostTransportPlan, error) {
+	id := protocolmodel.ID(host.Protocol)
+	if protocolmodel.ValidProviderID(id) {
+		if s.providerClaims != nil && s.providerClaims(string(id)) {
+			return hostTransportPlan{
+				kind:       appsession.KindPlugin,
+				descriptor: domainworkspace.SessionPlugin,
+			}, nil
 		}
-	case domainvault.ProtocolTelnet:
+		return hostTransportPlan{}, fmt.Errorf("%w: %q", appsession.ErrProviderUnavailable, id)
+	}
+	return hostSessionTransport(host)
+}
+
+// hostSessionTransport maps a saved Host's protocol onto the Session
+// transport, its restore descriptor, and its reconnect policy. The protocol is
+// resolved through the registry, so adding an alias for a built-in transport
+// needs no switch here. A provider-owned protocol with no registered provider
+// fails closed instead of falling back to SSH.
+func hostSessionTransport(host domainvault.Host) (hostTransportPlan, error) {
+	id := protocolmodel.ID(host.Protocol)
+	if id == "" {
+		// An unsaved or legacy Host without a protocol has always opened as
+		// SSH, matching NormalizeDraft's default.
+		id = protocolmodel.SSH
+	}
+	descriptor, ok := protocolmodel.Lookup(id)
+	if !ok {
+		if protocolmodel.ValidProviderID(id) {
+			return hostTransportPlan{}, fmt.Errorf("%w: %q", appsession.ErrProviderUnavailable, id)
+		}
+		return hostTransportPlan{}, fmt.Errorf("%w: %q", protocolmodel.ErrInvalidProtocol, id)
+	}
+
+	switch descriptor.Transport {
+	case protocolmodel.TransportTelnet:
+		// A Telnet Host gets the Telnet endpoint and a policy that permits the
+		// manual Reconnect action without automatically retrying a dropped
+		// socket, matching the original's SSH-only auto-reconnect.
 		cfg := domaintelnet.Config{Hostname: host.Hostname, Port: host.Port}.Normalized()
 		return hostTransportPlan{
 			kind:       appsession.KindTelnet,
 			descriptor: domainworkspace.SessionTelnet,
 			telnet:     &cfg,
 			reconnect:  telnetReconnectPolicy(),
-		}
-	case domainvault.ProtocolMosh:
+		}, nil
+	case protocolmodel.TransportMosh:
 		return hostTransportPlan{
 			kind:       appsession.KindMosh,
 			descriptor: domainworkspace.SessionMosh,
 			mosh:       moshConfig(host),
 			reconnect:  &appsession.ReconnectPolicy{},
-		}
-	case domainvault.ProtocolET:
+		}, nil
+	case protocolmodel.TransportET:
 		return hostTransportPlan{
 			kind:       appsession.KindET,
 			descriptor: domainworkspace.SessionET,
 			et:         etConfig(host),
 			reconnect:  &appsession.ReconnectPolicy{},
-		}
-	}
-	// A dropped SSH transport retries every five seconds under the original
-	// reason predicate. Local shells have no policy.
-	return hostTransportPlan{
-		kind:       appsession.KindSSH,
-		descriptor: domainworkspace.SessionSSH,
-		reconnect:  &appsession.ReconnectPolicy{},
-		tmux:       host.AutoAttachTmuxEnabled(),
+		}, nil
+	case protocolmodel.TransportLocal:
+		// A saved local-shell Host opens a shell on this machine, exactly like
+		// the original's local Hosts. Its label is the Tab's connection label.
+		return hostTransportPlan{
+			kind:       appsession.KindLocal,
+			descriptor: domainworkspace.SessionLocal,
+		}, nil
+	case protocolmodel.TransportSSH:
+		// A dropped SSH transport retries every five seconds under the
+		// original reason predicate.
+		return hostTransportPlan{
+			kind:       appsession.KindSSH,
+			descriptor: domainworkspace.SessionSSH,
+			reconnect:  &appsession.ReconnectPolicy{},
+			tmux:       host.AutoAttachTmuxEnabled(),
+		}, nil
+	default:
+		return hostTransportPlan{}, fmt.Errorf("%w: %q", protocolmodel.ErrInvalidProtocol, descriptor.Transport)
 	}
 }
 
@@ -1138,7 +1280,11 @@ func (s *State) Flush() {
 		number := s.nextTabNumber
 		descriptor := outcome.descriptor
 		descriptor.Number = number
-		tab := s.newTab(TabOptions{Label: outcome.label, AutoTitle: true, Descriptor: descriptor})
+		tab := s.newTab(TabOptions{
+			Label:     outcome.label,
+			AutoTitle: true,
+			Content:   domainworkspace.NewSessionPaneDescriptor(descriptor),
+		})
 		tab.attachOnlySession(outcome.session, surface)
 		if outcome.browser {
 			if opener, ok := surface.(BrowserOpener); ok {

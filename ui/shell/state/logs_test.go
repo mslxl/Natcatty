@@ -19,7 +19,7 @@ func TestFocusSessionSelectsTheTabAndPaneOwningTheSession(t *testing.T) {
 		t.Fatalf("second NewTab: %v", err)
 	}
 	first := graph.state.tabs[0]
-	firstID := first.panes[first.paneIDs()[0]].session.ID()
+	firstID := first.panes[first.paneIDs()[0]].session().ID()
 
 	graph.state.ShowLogs()
 	if !graph.state.FocusSession(firstID) {
@@ -39,7 +39,7 @@ func TestFocusSessionReattachesADetachedTab(t *testing.T) {
 		t.Fatalf("NewTab: %v", err)
 	}
 	tab := graph.state.tabs[0]
-	id := tab.panes[tab.paneIDs()[0]].session.ID()
+	id := tab.panes[tab.paneIDs()[0]].session().ID()
 	graph.state.DetachTab(0)
 	graph.state.ShowLogs()
 
@@ -71,7 +71,7 @@ func TestOpenHistoryTargetFocusesALiveHost(t *testing.T) {
 	}
 	tab := graph.state.tabs[0]
 	paneID := tab.paneIDs()[0]
-	sessionID := tab.panes[paneID].session.ID()
+	sessionID := tab.panes[paneID].session().ID()
 	graph.state.ShowLogs()
 
 	if err := graph.state.OpenHistoryTarget(sessionID, "host-1"); err != nil {
@@ -101,7 +101,7 @@ func TestOpenHistoryTargetOpensALocalTerminal(t *testing.T) {
 		t.Fatalf("tabs = %d, logs visible = %v", graph.state.TabCount(),
 			graph.state.LogsVisible())
 	}
-	if graph.state.tabs[0].panes[graph.state.tabs[0].paneIDs()[0]].session == nil {
+	if graph.state.tabs[0].panes[graph.state.tabs[0].paneIDs()[0]].session() == nil {
 		t.Fatal("the local Tab has no Session")
 	}
 }

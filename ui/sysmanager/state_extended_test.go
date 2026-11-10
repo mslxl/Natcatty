@@ -260,7 +260,7 @@ func TestTabVisibilityAndOrderPersist(t *testing.T) {
 	want := []appsysmanager.Tab{
 		appsysmanager.TabOverview, appsysmanager.TabProcesses, appsysmanager.TabPorts,
 		appsysmanager.TabServices, appsysmanager.TabDocker, appsysmanager.TabTmux,
-		appsysmanager.TabGPU,
+		appsysmanager.TabGPU, appsysmanager.TabExtensions,
 	}
 	if got := state.Tabs(); !sameTabList(got, want) {
 		t.Errorf("tabs after move = %v, want %v", got, want)

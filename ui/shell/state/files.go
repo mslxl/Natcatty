@@ -1,6 +1,9 @@
 package state
 
 import (
+	"sort"
+	"strings"
+
 	"github.com/egoist/mygo/ui"
 
 	appsession "github.com/mslxl/natcatty/application/session"
@@ -99,8 +102,13 @@ func WithSideTools(tools ...SideTool) Option {
 	}
 }
 
-// FilesAvailable reports whether Session Tabs can open the side panel.
-func (s *State) FilesAvailable() bool { return s.sftpToolAvailable() || len(s.sideTools) > 0 }
+// FilesAvailable reports whether Session Tabs can open the side panel. View
+// Contributions that declare the Aside placement make the panel available even
+// when no built-in tool exists.
+func (s *State) FilesAvailable() bool {
+	return s.sftpToolAvailable() || len(s.sideTools) > 0 ||
+		len(s.viewAsideContributions()) > 0 || len(s.asides) > 0
+}
 
 func (s *State) sftpToolAvailable() bool { return s.filesPanel != nil && s.filesPanel.View != nil }
 
@@ -121,7 +129,47 @@ func (s *State) SideTools(tab model.TabID) []SideToolID {
 		}
 		ids = append(ids, tool.ID)
 	}
+	// Contribution-driven View tools come after the built-ins. An already
+	// open instance for this target's context replaces its contribution entry
+	// so the strip shows one tool per view and context.
+	contextKey := asideContext(SideTarget{Host: target.host, Label: target.label})
+	for _, contribution := range s.viewAsideContributions() {
+		if s.asideForViewContext(contribution.ID, contextKey) != nil {
+			continue
+		}
+		ids = append(ids, viewToolID(contribution.ID))
+	}
+	keys := make([]string, 0, len(s.asides))
+	for instanceID := range s.asides {
+		keys = append(keys, instanceID)
+	}
+	sort.Strings(keys)
+	for _, instanceID := range keys {
+		entry := s.asides[instanceID]
+		if entry == nil || (entry.instance == nil && entry.unavailable == nil) {
+			continue
+		}
+		if entryContext(entry) != contextKey {
+			// An aside belongs to the explicit context it opened with; another
+			// Host's panel must not offer it.
+			continue
+		}
+		ids = append(ids, asideToolID(instanceID))
+	}
 	return ids
+}
+
+// asideForViewContext finds a live aside instance for one view and context.
+func (s *State) asideForViewContext(viewID, contextKey string) *asideEntry {
+	for _, entry := range s.asides {
+		if entry == nil || entry.instance == nil {
+			continue
+		}
+		if entry.instance.ViewID() == viewID && entry.instance.ContextKey() == contextKey {
+			return entry
+		}
+	}
+	return nil
 }
 
 // SideTool is the tool the Tab's panel shows: the one chosen last, or the
@@ -210,16 +258,20 @@ func (s *State) ToggleActiveFiles() bool {
 		return true
 	}
 	value, _ := tab.focusedPane()
-	if value == nil || value.session == nil {
+	session := value.session()
+	if session == nil {
 		return false
 	}
-	session := value.session
+	label := ""
+	if descriptor := value.sessionDescriptor(); descriptor != nil {
+		label = descriptor.Label
+	}
 	switch session.Snapshot().Kind {
 	case appsession.KindSSH:
 		if session.HostID() == "" {
 			return false
 		}
-		s.ToggleFiles(tab.ID, session.HostID(), value.descriptor.Label)
+		s.ToggleFiles(tab.ID, session.HostID(), label)
 	case appsession.KindLocal:
 		s.ToggleFiles(tab.ID, "", "")
 	default:
@@ -282,6 +334,23 @@ func (s *State) FilesView(tab model.TabID, width float32) func(*ui.Context) {
 	id := s.SideTool(tab)
 	s.sideDrawn = id
 	if id != SideSFTP {
+		if viewID, ok := strings.CutPrefix(string(id), "view:"); ok {
+			return s.viewAsideFace(viewID, SideTarget{Host: target.host, Label: target.label})
+		}
+		if instanceID, ok := strings.CutPrefix(string(id), "aside:"); ok {
+			if entry := s.asides[instanceID]; entry != nil {
+				if entry.surface != nil {
+					surface := entry.surface
+					return func(c *ui.Context) { surface.View(c) }
+				}
+				viewID := entry.descriptor.ViewID
+				if viewID == "" && entry.unavailable != nil {
+					viewID = entry.unavailable.ViewID
+				}
+				return unavailableViewFace(viewID)
+			}
+			return nil
+		}
 		for _, tool := range s.sideTools {
 			if tool.ID == id {
 				return tool.View(SideTarget{Host: target.host, Label: target.label}, width)

@@ -4,6 +4,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsysmanager "github.com/mslxl/natcatty/application/sysmanager"
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
@@ -11,27 +12,26 @@ import (
 )
 
 // ShowHost points the side panel's System tool at a Session's Host and starts
-// sampling it, as the original's System tool follows the Session it sits in.
-// A Host added to the Vault since the last load is found by reloading; a
-// Host the Vault lacks shows nothing rather than another Host.
+// sampling it. The Host is captured when the tool opens: while it stays open,
+// a later focus change does not retarget it. The side surface never follows
+// another Session's Host. A Host added to the Vault since the last load is
+// found by reloading; a Host the Vault lacks shows nothing rather than another
+// Host.
 func (s *State) ShowHost(id string) {
-	if s.active && id == s.sideHost {
+	if s.active {
 		return
 	}
+	s.surface = domainplugin.PanelSurfaceSide
 	s.sideHost = id
-	if !s.active {
-		s.hostID = id
-		s.Activate()
-	} else {
-		if _, ok := s.hostByID[id]; !ok {
-			s.reload()
-		}
-		s.SetHost(id)
-	}
+	s.hostID = id
+	s.Activate()
 	if s.hostID != id {
 		s.hostID = ""
 		if s.service != nil {
 			s.service.Stop()
+		}
+		if s.extensions != nil {
+			s.extensions.DeactivatePanel(s.surface)
 		}
 	}
 }
@@ -50,6 +50,7 @@ func (s *State) Hide() {
 // panel.
 func SideView(s *State) func(*ui.Context) {
 	s.compact = true
+	s.surface = domainplugin.PanelSurfaceSide
 	return func(c *ui.Context) {
 		s.Flush()
 		m := locales.In(c.Locale())
@@ -90,21 +91,23 @@ func SideView(s *State) func(*ui.Context) {
 // sideRefreshControls are the refresh interval and Refresh now, compact for
 // the side panel.
 func sideRefreshControls(c *ui.Context, s *State, m locales.Messages) {
-	choices := make([]string, 0, len(domainpreferences.SysManagerIntervalChoices))
-	for _, seconds := range domainpreferences.SysManagerIntervalChoices {
-		choices = append(choices, m.SysManagerSeconds(seconds))
-	}
-	current := m.SysManagerSeconds(s.Interval())
-	chosen := current
-	ui.Select(c, &chosen, choices).Width(76).MinWidth(76).Label(m.SysManagerRefresh())
-	if chosen != current {
-		for index, label := range choices {
-			if label == chosen {
-				s.SetInterval(domainpreferences.SysManagerIntervalChoices[index])
-				break
-			}
+	if s.Tab() != appsysmanager.TabExtensions {
+		choices := make([]string, 0, len(domainpreferences.SysManagerIntervalChoices))
+		for _, seconds := range domainpreferences.SysManagerIntervalChoices {
+			choices = append(choices, m.SysManagerSeconds(seconds))
 		}
-		c.Invalidate()
+		current := m.SysManagerSeconds(s.Interval())
+		chosen := current
+		ui.Select(c, &chosen, choices).Width(76).MinWidth(76).Label(m.SysManagerRefresh())
+		if chosen != current {
+			for index, label := range choices {
+				if label == chosen {
+					s.SetInterval(domainpreferences.SysManagerIntervalChoices[index])
+					break
+				}
+			}
+			c.Invalidate()
+		}
 	}
 	c.Key("sysmanager-side-refresh")
 	if kit.IconButton(c, icons.RefreshCw, m.SysManagerRefreshNow()).Clicked() {
