@@ -114,13 +114,14 @@ func workTabGap(c *ui.Context) float32 {
 }
 
 // workTabFill fills a Work tab: the chosen one with the surface's color in
-// Classic, a glass capsule in the macOS style; a hovered one with a tint.
+// Classic, a raised solid capsule in the macOS style, as a segmented
+// control's chosen segment; a hovered one with a tint.
 func workTabFill(c *ui.Context, tab ui.Element, active, hovered bool) {
 	t := c.Theme()
 	native := CurrentStyle().Native()
 	switch {
 	case active && native:
-		Fill(c, tab, SurfaceBar)
+		raisedFill(c, tab)
 	case active:
 		tab.Background(t.Background)
 	case hovered && native:

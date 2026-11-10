@@ -83,11 +83,8 @@ func Segmented(c *ui.Context, role SegmentedRole, chosen *int, label string, seg
 					button.Size(32, M(c).Control.Large-4).Radius(M(c).Radius.Pill)
 				}
 				switch {
-				case on && native && t.Dark:
-					// A dark surface is no lighter than the track under it.
-					button.Background(t.Text.Alpha(0.18)).TextColor(t.Text)
 				case on && native:
-					button.Background(t.Surface).TextColor(t.Text).Shadow(0, 1, 2, 0, CardShadow(t))
+					raisedFill(c, button).TextColor(t.Text)
 				case on:
 					button.Background(t.Accent).TextColor(t.AccentText)
 				case button.Hovered():
@@ -156,4 +153,15 @@ func ToolStrip(c *ui.Context, tools []Segment, chosen *int, label string, end fu
 		end()
 	})
 	return changed
+}
+
+// raisedFill fills el as the macOS style's chosen segment or Tab: the
+// surface lifted by a faint shadow, or in a dark theme, whose surface is no
+// lighter than the track under it, a shade of the text.
+func raisedFill(c *ui.Context, el ui.Element) ui.Element {
+	t := c.Theme()
+	if t.Dark {
+		return el.Background(t.Text.Alpha(0.18))
+	}
+	return el.Background(t.Surface).Shadow(0, 1, 2, 0, CardShadow(t))
 }
