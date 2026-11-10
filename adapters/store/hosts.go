@@ -6,6 +6,7 @@ import (
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
+	"github.com/mslxl/natcatty/domain/model/plugindata"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"gorm.io/gorm"
 )
@@ -72,14 +73,21 @@ func (s *Store) Get(ctx context.Context, id model.HostID) (domainvault.Host, err
 // Save inserts or replaces one Host aggregate. The indexed columns are
 // projections of the JSON fields and are written through the ORM together.
 func (s *Store) Save(ctx context.Context, host domainvault.Host) error {
+	host, quarantined, err := sanitizeHostPluginData(host)
+	if err != nil {
+		return fmt.Errorf("store: save Host: %w", err)
+	}
 	model, err := hostModel(host)
 	if err != nil {
 		return err
 	}
-	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
-		return upsertModel(tx, &model, "id",
+	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
+		if err := upsertModel(tx, &model, "id",
 			"label", "hostname", "port", "username", "protocol", "group_id",
-			"pinned", "order_key", "updated_at", "data")
+			"pinned", "order_key", "updated_at", "data"); err != nil {
+			return err
+		}
+		return saveQuarantines(tx, plugindata.RecordHost, string(host.ID), host.PluginData, quarantined)
 	}); err != nil {
 		return fmt.Errorf("store: save Host: %w", err)
 	}
@@ -91,10 +99,15 @@ func (s *Store) Save(ctx context.Context, host domainvault.Host) error {
 // the original, so no related record is cascaded.
 func (s *Store) Delete(ctx context.Context, id model.HostID) error {
 	var changed int64
-	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
 		var err error
 		changed, err = deleteModel(tx, &hostSchema{}, &hostSchema{ID: string(id)})
-		return err
+		if err != nil {
+			return err
+		}
+		return tx.Where("record_kind = ? AND record_id = ?",
+			string(plugindata.RecordHost), string(id)).
+			Delete(&pluginDataQuarantineSchema{}).Error
 	}); err != nil {
 		return fmt.Errorf("store: delete Host: %w", err)
 	}

@@ -14,17 +14,22 @@ import (
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainforward "github.com/mslxl/natcatty/domain/forwarding"
 	"github.com/mslxl/natcatty/domain/model"
+	"github.com/mslxl/natcatty/domain/model/plugindata"
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
 type fakeRecords struct {
-	hosts    []domainvault.Host
-	groups   []domainvault.Group
-	snippets []domainvault.Snippet
-	keys     []domainvault.Key
-	networks []domainvault.NetworkProfile
-	applied  []appsync.Payload
-	applyErr error
+	hosts        []domainvault.Host
+	groups       []domainvault.Group
+	snippets     []domainvault.Snippet
+	keys         []domainvault.Key
+	networks     []domainvault.NetworkProfile
+	dataProfiles []domainplugin.DataProfile
+	applied      []appsync.Payload
+	applyErr     error
+	diagnostics  []plugindata.Diagnostic
+	diagErr      error
 }
 
 func (r *fakeRecords) List(context.Context) ([]domainvault.Host, error) { return r.hosts, nil }
@@ -44,6 +49,9 @@ func (r *fakeRecords) ListNetworkProfiles(context.Context) ([]domainvault.Networ
 func (r *fakeRecords) ListForwardingRules(context.Context) ([]domainforward.Rule, error) {
 	return nil, nil
 }
+func (r *fakeRecords) ListDataProfiles(context.Context) ([]domainplugin.DataProfile, error) {
+	return r.dataProfiles, nil
+}
 func (r *fakeRecords) ListSnippets(context.Context) ([]domainvault.Snippet, error) {
 	return r.snippets, nil
 }
@@ -60,6 +68,12 @@ func (r *fakeRecords) ApplySync(_ context.Context, payload appsync.Payload) erro
 	}
 	r.applied = append(r.applied, payload)
 	return nil
+}
+func (r *fakeRecords) PluginDataDiagnostics(context.Context) ([]plugindata.Diagnostic, error) {
+	if r.diagErr != nil {
+		return nil, r.diagErr
+	}
+	return append([]plugindata.Diagnostic(nil), r.diagnostics...), nil
 }
 
 type fakeSecrets struct {

@@ -58,6 +58,9 @@ var vaultColumns = map[string][]string{
 	domainbackup.TableNoteGroups: {
 		"path", "order_key", "created_at", "updated_at", "data",
 	},
+	domainbackup.TableDataProfiles: {
+		"id", "provider", "label", "mode", "updated_at", "data",
+	},
 	domainbackup.TableSecrets: {
 		"entity_type", "entity_id", "field", "alg", "key_version",
 		"nonce", "ciphertext", "updated_at",
@@ -187,8 +190,16 @@ func (s *Store) Restore(ctx context.Context, snapshot domainbackup.Snapshot) err
 	if err := s.Validate(ctx, snapshot); err != nil {
 		return fmt.Errorf("%w: %v", appbackup.ErrIncompatibleSnapshot, err)
 	}
-	tables := make(map[string]domainbackup.Table, len(snapshot.Tables))
-	for _, table := range snapshot.Tables {
+	// Validate pluginData structurally before any Vault row is touched. An
+	// invalid namespace is quarantined individually, and a valid remainder above
+	// the record limit is quarantined deterministically largest-first rather
+	// than failing the restore. No plugin code runs at any point.
+	sanitized, quarantines, err := sanitizeSnapshotRecords(snapshot)
+	if err != nil {
+		return fmt.Errorf("%w: %v", appbackup.ErrIncompatibleSnapshot, err)
+	}
+	tables := make(map[string]domainbackup.Table, len(sanitized.Tables))
+	for _, table := range sanitized.Tables {
 		tables[table.Name] = table
 	}
 	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
@@ -209,7 +220,7 @@ func (s *Store) Restore(ctx context.Context, snapshot domainbackup.Snapshot) err
 				}
 			}
 		}
-		return nil
+		return recordQuarantines(tx, quarantines)
 	}); err != nil {
 		return fmt.Errorf("store: restore snapshot: %w", err)
 	}
@@ -242,6 +253,8 @@ func backupTableModel(table string) any {
 		return &noteSchema{}
 	case domainbackup.TableNoteGroups:
 		return &noteGroupSchema{}
+	case domainbackup.TableDataProfiles:
+		return &dataProfileSchema{}
 	case domainbackup.TableSecrets:
 		return &secretValueSchema{}
 	case domainbackup.TableCryptoKeys:

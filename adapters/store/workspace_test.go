@@ -25,13 +25,13 @@ func workspacePayload() domainworkspace.Payload {
 			FocusPath: []int{1},
 		}},
 		Panes: []domainworkspace.RestoredPane{
-			{ID: "p1", Session: domainworkspace.SessionDescriptor{
-				Kind: domainworkspace.SessionLocal, Number: 1, Dir: "/work",
-			}},
-			{ID: "p2", Session: domainworkspace.SessionDescriptor{
-				Kind: domainworkspace.SessionSSH, HostID: "host-1",
-				Hostname: "example.com", Port: 22, Username: "root", Label: "web",
-			}},
+			{ID: "p1", PaneDescriptor: domainworkspace.NewSessionPaneDescriptor(
+				domainworkspace.SessionDescriptor{Kind: domainworkspace.SessionLocal, Number: 1, Dir: "/work"})},
+			{ID: "p2", PaneDescriptor: domainworkspace.NewSessionPaneDescriptor(
+				domainworkspace.SessionDescriptor{
+					Kind: domainworkspace.SessionSSH, HostID: "host-1",
+					Hostname: "example.com", Port: 22, Username: "root", Label: "web",
+				})},
 		},
 	}
 }

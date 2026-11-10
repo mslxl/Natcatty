@@ -8,10 +8,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
+	"sync"
 
 	appsync "github.com/mslxl/natcatty/application/sync"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainforward "github.com/mslxl/natcatty/domain/forwarding"
+	"github.com/mslxl/natcatty/domain/model/plugindata"
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -23,12 +28,17 @@ type Records interface {
 	ListIdentities(ctx context.Context) ([]domainvault.Identity, error)
 	ListProxyProfiles(ctx context.Context) ([]domainvault.ProxyProfile, error)
 	ListNetworkProfiles(ctx context.Context) ([]domainvault.NetworkProfile, error)
+	ListDataProfiles(ctx context.Context) ([]domainplugin.DataProfile, error)
 	ListForwardingRules(ctx context.Context) ([]domainforward.Rule, error)
 	ListSnippets(ctx context.Context) ([]domainvault.Snippet, error)
 	ListSnippetPackages(ctx context.Context) ([]domainvault.SnippetPackage, error)
 	ListNotes(ctx context.Context) ([]domainvault.Note, error)
 	ListNoteGroups(ctx context.Context) ([]domainvault.NoteGroup, error)
 	ApplySync(ctx context.Context, payload appsync.Payload) error
+	// PluginDataDiagnostics reports the persisted quarantine rows this device
+	// holds. The sync report must surface namespaces an import rejected, not
+	// only unresolved secrets observed in memory.
+	PluginDataDiagnostics(ctx context.Context) ([]plugindata.Diagnostic, error)
 }
 
 // Secrets is the field-secret surface of *store.SecretStore.
@@ -52,9 +62,30 @@ type Vault struct {
 	records  Records
 	secrets  Secrets
 	settings Settings
+
+	pluginMu          sync.Mutex
+	pluginDiagnostics []plugindata.Diagnostic
 }
 
-var _ appsync.Vault = (*Vault)(nil)
+var (
+	_ appsync.Vault              = (*Vault)(nil)
+	_ appsync.PluginDataReporter = (*Vault)(nil)
+)
+
+// PluginDataDiagnostics reports the dormant provider namespaces the last
+// Snapshot or Apply observed. An unresolved secret reference marks its
+// namespaces dormant; the reference itself is never rewritten or emptied.
+func (v *Vault) PluginDataDiagnostics() []plugindata.Diagnostic {
+	v.pluginMu.Lock()
+	defer v.pluginMu.Unlock()
+	return append([]plugindata.Diagnostic(nil), v.pluginDiagnostics...)
+}
+
+func (v *Vault) setPluginDataDiagnostics(diagnostics []plugindata.Diagnostic) {
+	v.pluginMu.Lock()
+	v.pluginDiagnostics = append([]plugindata.Diagnostic(nil), diagnostics...)
+	v.pluginMu.Unlock()
+}
 
 // Option customizes a Vault adapter.
 type Option func(*Vault)
@@ -87,6 +118,7 @@ func (v *Vault) Snapshot(ctx context.Context) (appsync.Payload, error) {
 	}
 
 	var err error
+	var diagnostics []plugindata.Diagnostic
 	if payload.Hosts, err = v.records.List(ctx); err != nil {
 		return appsync.Payload{}, err
 	}
@@ -173,6 +205,34 @@ func (v *Vault) Snapshot(ctx context.Context) (appsync.Payload, error) {
 			return appsync.Payload{}, err
 		}
 	}
+	if payload.DataProfiles, err = v.records.ListDataProfiles(ctx); err != nil {
+		return appsync.Payload{}, err
+	}
+	for _, profile := range payload.DataProfiles {
+		add(profile.UpdatedAt.UnixMilli())
+		var unresolved []string
+		for field, raw := range profile.SecretRefs {
+			ref, parseErr := appvault.ParseDataProfileSecretRef(raw)
+			if parseErr != nil {
+				unresolved = append(unresolved, field)
+				continue
+			}
+			value, readErr := v.secrets.Get(ctx, ref)
+			if errors.Is(readErr, appvault.ErrSecretNotFound) {
+				unresolved = append(unresolved, field)
+				continue
+			}
+			if readErr != nil {
+				return appsync.Payload{}, fmt.Errorf(
+					"syncvault: read data profile secret %s: %w", field, readErr)
+			}
+			payload.Secrets = append(payload.Secrets, appsync.SecretValue{
+				EntityType: ref.EntityType, EntityID: ref.EntityID,
+				Field: ref.Field, Value: value,
+			})
+		}
+		diagnostics = append(diagnostics, unresolvedProfileDiagnostics(profile, unresolved)...)
+	}
 	if payload.PortForwardingRules, err = v.records.ListForwardingRules(ctx); err != nil {
 		return appsync.Payload{}, err
 	}
@@ -214,6 +274,11 @@ func (v *Vault) Snapshot(ctx context.Context) (appsync.Payload, error) {
 		payload.Settings = settings
 	}
 	payload.SyncedAt = newest
+	diagnostics, err = v.withStoredDiagnostics(ctx, diagnostics)
+	if err != nil {
+		return appsync.Payload{}, err
+	}
+	v.setPluginDataDiagnostics(diagnostics)
 	return payload, nil
 }
 
@@ -265,6 +330,63 @@ func networkSecretRefs(profile domainvault.NetworkProfile) []networkSecretRef {
 	return refs
 }
 
+// withStoredDiagnostics appends the quarantine rows persisted by the Store.
+// The sync report must include namespaces an earlier import quarantined even
+// when no secret is unresolved, and an apply must report the rows it just
+// wrote.
+func (v *Vault) withStoredDiagnostics(ctx context.Context,
+	diagnostics []plugindata.Diagnostic) ([]plugindata.Diagnostic, error) {
+
+	stored, err := v.records.PluginDataDiagnostics(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]plugindata.Diagnostic, 0, len(diagnostics)+len(stored))
+	out = append(out, diagnostics...)
+	out = append(out, stored...)
+	return out, nil
+}
+
+// unresolvedProfileDiagnostics marks every namespace of a profile dormant when
+// one of its secret references cannot be resolved. A profile with no namespaces
+// still reports the record itself so the sync report cannot hide the loss.
+func unresolvedProfileDiagnostics(profile domainplugin.DataProfile,
+	unresolved []string) []plugindata.Diagnostic {
+
+	if len(unresolved) == 0 {
+		return nil
+	}
+	sort.Strings(unresolved)
+	detail := plugindata.BoundText(strings.Join(unresolved, ","),
+		plugindata.MaxDiagnosticDetailBytes)
+	if len(profile.PluginData) == 0 {
+		pluginID, _ := domainplugin.PluginIDFromDataProviderID(profile.Provider)
+		return []plugindata.Diagnostic{{
+			RecordKind: plugindata.RecordDataProfile, RecordID: profile.ID,
+			PluginID: plugindata.BoundText(pluginID, plugindata.MaxDiagnosticPluginIDBytes),
+			State:    plugindata.StateDormant, Reason: plugindata.ReasonUnresolvedSecret,
+			Detail: detail,
+		}}
+	}
+	pluginIDs := make([]string, 0, len(profile.PluginData))
+	for pluginID := range profile.PluginData {
+		pluginIDs = append(pluginIDs, pluginID)
+	}
+	sort.Strings(pluginIDs)
+	diagnostics := make([]plugindata.Diagnostic, 0, len(pluginIDs))
+	for _, pluginID := range pluginIDs {
+		namespace := profile.PluginData[pluginID]
+		diagnostics = append(diagnostics, plugindata.Diagnostic{
+			RecordKind: plugindata.RecordDataProfile, RecordID: profile.ID,
+			PluginID:      plugindata.BoundText(pluginID, plugindata.MaxDiagnosticPluginIDBytes),
+			SchemaVersion: namespace.SchemaVersion,
+			Fields:        len(namespace.Fields), State: plugindata.StateDormant,
+			Reason: plugindata.ReasonUnresolvedSecret, Detail: detail,
+		})
+	}
+	return diagnostics
+}
+
 func (v *Vault) addSecret(ctx context.Context, payload *appsync.Payload, ref appvault.SecretRef) error {
 	value, err := v.secrets.Get(ctx, ref)
 	if errors.Is(err, appvault.ErrSecretNotFound) {
@@ -297,7 +419,7 @@ func (v *Vault) Apply(ctx context.Context, payload appsync.Payload) error {
 	// is nested inside a record that the apply replaces wholesale. Capture the
 	// local profiles first so a profile or peer the payload drops still has its
 	// ciphertext removed instead of becoming an orphan.
-	previousProfiles, err := v.records.ListNetworkProfiles(ctx)
+	previousNetworkProfiles, err := v.records.ListNetworkProfiles(ctx)
 	if err != nil {
 		return fmt.Errorf("syncvault: list local Network Profiles: %w", err)
 	}
@@ -306,7 +428,13 @@ func (v *Vault) Apply(ctx context.Context, payload appsync.Payload) error {
 	// instead of replacing them with an empty family.
 	preserveNetworkSecrets := payload.NetworkProfiles == nil
 	if preserveNetworkSecrets {
-		payload.NetworkProfiles = previousProfiles
+		payload.NetworkProfiles = previousNetworkProfiles
+	}
+	// Data Profile secrets are addressed by an opaque reference stored inside
+	// each record, so capture the local records before the apply replaces them.
+	previousDataProfiles, err := v.records.ListDataProfiles(ctx)
+	if err != nil {
+		return err
 	}
 	if err := v.records.ApplySync(ctx, payload); err != nil {
 		return err
@@ -324,7 +452,35 @@ func (v *Vault) Apply(ctx context.Context, payload appsync.Payload) error {
 		}
 		byRef[ref] = true
 	}
-	return v.clearStale(ctx, payload, byRef, previousProfiles, preserveNetworkSecrets)
+	var diagnostics []plugindata.Diagnostic
+	for _, profile := range payload.DataProfiles {
+		var unresolved []string
+		for field, raw := range profile.SecretRefs {
+			ref, parseErr := appvault.ParseDataProfileSecretRef(raw)
+			if parseErr != nil {
+				unresolved = append(unresolved, field)
+				continue
+			}
+			if byRef[ref] {
+				continue
+			}
+			if _, err := v.secrets.Get(ctx, ref); errors.Is(err, appvault.ErrSecretNotFound) {
+				unresolved = append(unresolved, field)
+			} else if err != nil {
+				return fmt.Errorf("syncvault: verify data profile secret %s: %w", field, err)
+			}
+		}
+		diagnostics = append(diagnostics, unresolvedProfileDiagnostics(profile, unresolved)...)
+	}
+	if err := v.clearStale(ctx, payload, byRef, previousNetworkProfiles, preserveNetworkSecrets, previousDataProfiles); err != nil {
+		return err
+	}
+	diagnostics, err = v.withStoredDiagnostics(ctx, diagnostics)
+	if err != nil {
+		return err
+	}
+	v.setPluginDataDiagnostics(diagnostics)
+	return nil
 }
 
 // clearStale deletes credential fields that an incoming record no longer
@@ -332,8 +488,10 @@ func (v *Vault) Apply(ctx context.Context, payload appsync.Payload) error {
 // the payload predates the family. Orphan rows for other entities absent from
 // the payload are left for a later cleanup: they are ciphertext and cannot be
 // addressed without listing the secret store.
-func (v *Vault) clearStale(ctx context.Context, payload appsync.Payload, byRef map[appvault.SecretRef]bool,
-	previousProfiles []domainvault.NetworkProfile, preserveNetworkSecrets bool) error {
+func (v *Vault) clearStale(ctx context.Context, payload appsync.Payload,
+	byRef map[appvault.SecretRef]bool,
+	previousNetworkProfiles []domainvault.NetworkProfile, preserveNetworkSecrets bool,
+	previousDataProfiles []domainplugin.DataProfile) error {
 	clear := func(ref appvault.SecretRef) error {
 		if byRef[ref] {
 			return nil
@@ -372,15 +530,40 @@ func (v *Vault) clearStale(ctx context.Context, payload appsync.Payload, byRef m
 	}
 	// A Network Profile that survived still needs any credential the payload
 	// did not carry removed, and a profile or peer that disappeared needs all
-	// of its ciphertext removed. previousProfiles is authoritative for the
-	// addresses that existed before the apply. A payload that predates the
+	// of its ciphertext removed. previousNetworkProfiles is authoritative for
+	// the addresses that existed before the apply. A payload that predates the
 	// family says nothing about these credentials, so keep them.
-	if preserveNetworkSecrets {
-		return nil
+	if !preserveNetworkSecrets {
+		for _, profile := range previousNetworkProfiles {
+			for _, secret := range networkSecretRefs(profile) {
+				if err := clear(secret.ref); err != nil {
+					return err
+				}
+			}
+		}
 	}
-	for _, profile := range previousProfiles {
-		for _, secret := range networkSecretRefs(profile) {
-			if err := clear(secret.ref); err != nil {
+	// A data profile still advertises every reference it wants retained. A
+	// reference the incoming record dropped is stale; a reference it kept is
+	// never deleted merely because this device cannot resolve it.
+	advertised := make(map[string]map[string]bool, len(payload.DataProfiles))
+	for _, profile := range payload.DataProfiles {
+		refs := make(map[string]bool, len(profile.SecretRefs))
+		for _, raw := range profile.SecretRefs {
+			refs[raw] = true
+		}
+		advertised[profile.ID] = refs
+	}
+	for _, previous := range previousDataProfiles {
+		retained := advertised[previous.ID]
+		for _, raw := range previous.SecretRefs {
+			if retained[raw] {
+				continue
+			}
+			ref, err := appvault.ParseDataProfileSecretRef(raw)
+			if err != nil {
+				continue
+			}
+			if err := clear(ref); err != nil {
 				return err
 			}
 		}

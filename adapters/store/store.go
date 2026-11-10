@@ -53,7 +53,9 @@ var (
 
 // schemaVersion identifies the AutoMigrate schema used by this build. It is
 // kept in backup metadata even though the schema is no longer migration-file
-// driven.
+// driven. Version 2 added network_profiles and data_profiles to the local
+// backup table set, so a version-1 backup is rejected rather than restored
+// without its profiles.
 const schemaVersion = 2
 
 // Open opens path, configures the connection, and applies the schema declared

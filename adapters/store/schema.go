@@ -180,6 +180,38 @@ type networkProfileSchema struct {
 
 func (networkProfileSchema) TableName() string { return "network_profiles" }
 
+// dataProfileSchema is one user-visible data profile. Secret fields are
+// references inside Data; their plaintext lives in secret_values keyed by the
+// data_profile entity type.
+type dataProfileSchema struct {
+	ID        string `gorm:"column:id;type:text;primaryKey;index:data_profiles_order,priority:3"`
+	Provider  string `gorm:"column:provider;type:text;not null;default:''"`
+	Label     string `gorm:"column:label;type:text;not null;index:data_profiles_order,priority:2,collate:nocase"`
+	Mode      string `gorm:"column:mode;type:text;not null;default:'';index:data_profiles_order,priority:1"`
+	UpdatedAt int64  `gorm:"column:updated_at;not null"`
+	Data      string `gorm:"column:data;type:text;not null"`
+}
+
+func (dataProfileSchema) TableName() string { return "data_profiles" }
+
+// pluginDataQuarantineSchema is the host-local, never-synced record of an
+// imported namespace that failed the structural subset. The namespace is not
+// written into the record; its bounded raw bytes stay here for diagnostics.
+type pluginDataQuarantineSchema struct {
+	RecordKind    string `gorm:"column:record_kind;type:text;not null;primaryKey"`
+	RecordID      string `gorm:"column:record_id;type:text;not null;primaryKey"`
+	PluginID      string `gorm:"column:plugin_id;type:text;not null;primaryKey"`
+	SchemaVersion int64  `gorm:"column:schema_version;not null;default:0"`
+	FieldCount    int64  `gorm:"column:field_count;not null;default:0"`
+	SizeBytes     int64  `gorm:"column:size_bytes;not null;default:0"`
+	Reason        string `gorm:"column:reason;type:text;not null;default:''"`
+	Detail        string `gorm:"column:detail;type:text;not null;default:''"`
+	Data          string `gorm:"column:data;type:text;not null;default:''"`
+	CreatedAt     int64  `gorm:"column:created_at;not null"`
+}
+
+func (pluginDataQuarantineSchema) TableName() string { return "plugin_data_quarantine" }
+
 type snippetSchema struct {
 	ID          string `gorm:"column:id;type:text;primaryKey;index:snippets_order,priority:3"`
 	Label       string `gorm:"column:label;type:text;not null;index:snippets_order,priority:2,collate:nocase"`
@@ -268,6 +300,8 @@ var schemaModels = []any{
 	&hostGroupSchema{},
 	&proxyProfileSchema{},
 	&networkProfileSchema{},
+	&dataProfileSchema{},
+	&pluginDataQuarantineSchema{},
 	&snippetSchema{},
 	&snippetPackageSchema{},
 	&noteSchema{},

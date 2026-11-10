@@ -1,12 +1,14 @@
 package store
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	domainforward "github.com/mslxl/natcatty/domain/forwarding"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -76,11 +78,30 @@ func deleteAll(tx *gorm.DB, model any) error {
 }
 
 func marshalData(value any, label string) (string, error) {
-	data, err := json.Marshal(value)
+	data, err := marshalNoEscape(value)
 	if err != nil {
 		return "", fmt.Errorf("store: encode %s: %w", label, err)
 	}
 	return string(data), nil
+}
+
+// marshalNoEscape encodes value as compact JSON without HTML escaping. The
+// aggregate records carry host-opaque json.RawMessage values; encoding/json's
+// default would expand '<', '>', and '&' to six-byte escapes, and a re-encode
+// of an already stored RawMessage cannot undo that. The stored form is the
+// canonical, unexpanded representation the size limits are measured on.
+func marshalNoEscape(value any) ([]byte, error) {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	data := buffer.Bytes()
+	if len(data) > 0 && data[len(data)-1] == '\n' {
+		data = data[:len(data)-1]
+	}
+	return append([]byte(nil), data...), nil
 }
 
 func decodeData(data, label string, value any) error {
@@ -223,6 +244,23 @@ func proxyProfileModel(profile domainvault.ProxyProfile) (proxyProfileSchema, er
 		ID: profile.ID, Label: profile.Label, Type: string(profile.Config.Type), Host: profile.Config.Host,
 		Port: int64(profile.Config.Port), OrderKey: profile.OrderKey,
 		CreatedAt: profile.CreatedAt.UnixMilli(), UpdatedAt: profile.UpdatedAt.UnixMilli(), Data: data,
+	}, nil
+}
+
+// dataProfileModel projects one provider-owned DataProfile onto its indexed
+// row. The aggregate JSON carries the full record, including its pluginData.
+func dataProfileModel(profile domainplugin.DataProfile) (dataProfileSchema, error) {
+	if err := domainplugin.ValidateDataProfile(profile); err != nil {
+		return dataProfileSchema{}, fmt.Errorf("store: save data profile: %w", err)
+	}
+	data, err := marshalData(profile, "data profile")
+	if err != nil {
+		return dataProfileSchema{}, err
+	}
+	return dataProfileSchema{
+		ID: profile.ID, Provider: profile.Provider, Label: profile.Label,
+		Mode: string(profile.Mode), UpdatedAt: profile.UpdatedAt.UnixMilli(),
+		Data: data,
 	}, nil
 }
 
