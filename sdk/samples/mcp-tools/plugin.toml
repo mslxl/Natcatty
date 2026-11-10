@@ -1,0 +1,80 @@
+manifest_version = 1
+id = "acme.mcp-tools"
+name = "MCP Tools Sample"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Sample C plugin contributing external MCP tools through the host's single MCP server."
+author = "Natcatty contributors"
+license = "GPL-3.0-only"
+
+[wasm]
+path = "plugin.wasm"
+# Regenerate with build.sh; the script prints the new value to put here.
+sha256 = "c18f48bed446c5b45c226107183722bc43f8ce3b57f658a51d6695d73d0c48e0"
+memory_max_mib = 64
+toolchain = "c"
+
+[permissions]
+required = ["mcp.tools"]
+
+[[contributions.mcp_tools]]
+name = "echo"
+title = "Echo"
+description = "Returns the supplied text through the plugin's MCP tool path."
+access = "read"
+target = "none"
+timeout = "short"
+
+[contributions.mcp_tools.input_schema]
+required = ["text"]
+
+[[contributions.mcp_tools.input_schema.properties]]
+name = "text"
+type = "string"
+description = "Text to echo back."
+
+[contributions.mcp_tools.output_schema]
+
+[[contributions.mcp_tools.output_schema.properties]]
+name = "tool"
+type = "string"
+description = "The tool that produced the result."
+
+[[contributions.mcp_tools.output_schema.properties]]
+name = "text"
+type = "string"
+description = "The echoed text."
+
+[[contributions.mcp_tools]]
+name = "write_note"
+title = "Write note"
+description = "A write-class tool used to exercise observer and confirm modes."
+access = "write"
+target = "none"
+timeout = "short"
+
+[[contributions.mcp_tools]]
+name = "echo_session"
+title = "Echo session"
+description = "A session-targeted tool; the host enforces the external MCP session scope."
+access = "read"
+target = "session"
+timeout = "short"
+
+[[contributions.mcp_tools]]
+name = "fail"
+title = "Fail"
+description = "Returns a typed guest tool error."
+access = "read"
+target = "none"
+timeout = "short"
+
+[[contributions.mcp_tools]]
+name = "slow"
+title = "Slow"
+description = "Reports progress, then blocks until the host cancels the call after its MCP client disconnects."
+access = "read"
+target = "none"
+timeout = "standard"

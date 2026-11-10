@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; connect-src 'self'; worker-src 'none'">
+  <title>Web View</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Sandboxed web View</h1>
+    <p id="origin"></p>
+    <p id="locale"></p>
+    <label for="name">Your name</label>
+    <input id="name" autocomplete="off" value="Ada">
+    <div class="actions">
+      <button id="greet" type="button">Ask the backend</button>
+      <button id="report" type="button">Report state</button>
+    </div>
+    <p id="result" role="status"></p>
+    <p class="hint">This page has no network access. The backend answers only
+      the greet and report methods declared in the manifest.</p>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

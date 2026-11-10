@@ -1,0 +1,15 @@
+# The committed sample is a freestanding core module, so it targets
+# wasm32-unknown-unknown. The pinned toolchain in this repository has no
+# prebuilt std for that target, hence build-std from the checked-out rust-src.
+[build]
+target = "wasm32-unknown-unknown"
+
+[target.wasm32-unknown-unknown]
+rustflags = [
+  "-C", "link-arg=--export-memory",
+  "-C", "link-arg=--max-memory=67108864",
+  "-C", "link-arg=--no-entry",
+]
+
+[unstable]
+build-std = ["std", "panic_abort"]

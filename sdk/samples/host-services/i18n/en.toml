@@ -1,0 +1,9 @@
+command_selftest = "Run host services self-test"
+command_poll = "Poll host service events"
+settings_greeting_label = "Greeting"
+settings_verbose_label = "Verbose"
+settings_session_note_label = "Session note"
+settings_session_note_description = "Never persisted; reset to its default on every activation."
+
+[meta]
+locale = "en"

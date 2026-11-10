@@ -1,0 +1,39 @@
+manifest_version = 1
+id = "acme.language-provider"
+name = "Language Provider Sample"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Sample C plugin contributing an editor language provider for SQL completion and diagnostics."
+author = "Natcatty contributors"
+license = "GPL-3.0-only"
+
+[wasm]
+path = "plugin.wasm"
+# Regenerate with build.sh; the script prints the new value to put here.
+sha256 = "7508e7d84c203a5e0ddfd796220f010455bf406f11e0bd4e7304c14974999595"
+memory_max_mib = 64
+toolchain = "c"
+
+[permissions]
+required = ["editor.language"]
+
+# The dotted contribution type `language.provider` is expressed as a nested
+# TOML table. The provider stacks over the built-in SQL layer; it never
+# replaces base highlighting.
+[[contributions.language.provider]]
+id = "sql-demo"
+languages = ["sql"]
+capabilities = [
+  "highlight",
+  "completion",
+  "diagnostics",
+  "formatting",
+  "hover",
+  "signature_help",
+  "navigation",
+  "code_actions",
+]
+priority = 10
+contexts = ["editor"]

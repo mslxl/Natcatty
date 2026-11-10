@@ -1,0 +1,27 @@
+manifest_version = 1
+id = "acme.hello-zig"
+name = "Acme Hello Zig"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Sample command plugin built with Zig over the generated C SDK bindings."
+author = "Natcatty contributors"
+license = "GPL-3.0-only"
+
+[wasm]
+path = "plugin.wasm"
+# Regenerate with build.sh; the script prints the new value to put here.
+sha256 = "d5ea8c93add39c49b41b54f9225c93b8826f7dbacce0ece4db067718fe73f442"
+memory_max_mib = 64
+toolchain = "zig"
+
+[permissions]
+required = ["commands"]
+optional = []
+
+[[contributions.commands]]
+id = "greet"
+title = "Say Hello"
+title_key = "command_greet"
+keywords = ["hello", "greet", "plugin"]

@@ -1,0 +1,48 @@
+:root {
+  color-scheme: light dark;
+  font: 15px/1.5 system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  padding: 20px;
+  background: Canvas;
+  color: CanvasText;
+}
+
+main {
+  max-width: 42rem;
+  margin: 0 auto;
+}
+
+h1 {
+  font-size: 1.25rem;
+}
+
+input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font: inherit;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+button {
+  font: inherit;
+  padding: 6px 12px;
+}
+
+.hint {
+  color: GrayText;
+  font-size: 0.9rem;
+}
+
+.embedded {
+  padding: 12px;
+}

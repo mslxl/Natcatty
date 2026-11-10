@@ -1,0 +1,31 @@
+manifest_version = 1
+id = "acme.hello"
+name = "Acme Hello"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Sample command plugin used by the fake host and development mode."
+author = "Natcatty contributors"
+license = "GPL-3.0-only"
+
+[wasm]
+path = "plugin.wasm"
+sha256 = "3a3fc1cf566d7e0fe8abf165e687360e1aef09b80ebb4c4efcc1f36aa69c5893"
+memory_max_mib = 64
+toolchain = "rust"
+
+[permissions]
+required = ["commands", "menus"]
+optional = []
+
+[[contributions.commands]]
+id = "greet"
+title = "Say Hello"
+title_key = "command_greet"
+keywords = ["hello", "greet", "plugin"]
+
+[[contributions.menus]]
+command = "greet"
+label = "Say Hello"
+label_key = "command_greet"

@@ -1,0 +1,47 @@
+manifest_version = 1
+id = "acme.webview-view"
+name = "Web View Sample"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Sample C plugin with a sandboxed web View and an embedded webview node. Both pages reach the backend only through the fixed greet and report bridge methods."
+author = "Natcatty contributors"
+license = "GPL-3.0-only"
+
+[wasm]
+path = "plugin.wasm"
+# Regenerate with build.sh; the script prints the new value to put here.
+sha256 = "584384a088299368936792b5529eb07d6b31fb124ad411660d2383f9723323e1"
+memory_max_mib = 64
+toolchain = "c"
+
+[permissions]
+required = ["views", "commands", "ui.webview"]
+# ui.native is optional so the sample has a denied path: without the grant the
+# embedded tree is never committed and the native View stays empty. The
+# standalone web View and both bridge allowlists still work.
+optional = ["ui.native"]
+
+[[contributions.commands]]
+id = "report"
+title = "Report web view state"
+title_key = "command_report"
+
+[[contributions.views]]
+id = "web"
+title = "Web View"
+title_key = "view_web_title"
+placements = ["pane"]
+instances = "singleton"
+surface = "webview"
+entry = "ui/index.html"
+bridge = ["greet", "report"]
+
+[[contributions.views]]
+id = "embed"
+title = "Embedded Web View"
+title_key = "view_embed_title"
+placements = ["pane"]
+instances = "singleton"
+bridge = ["greet", "report"]

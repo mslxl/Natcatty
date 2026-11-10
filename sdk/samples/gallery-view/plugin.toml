@@ -1,0 +1,33 @@
+manifest_version = 1
+id = "acme.gallery-view"
+name = "Gallery View Sample"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Sample C plugin that exercises the native widgets: a 50,000-row grid and a 250,000-item virtual list paged on demand, a graph, a plan graph, a canvas, rich text with links and selection, packaged assets, and a host-driven transition."
+author = "Natcatty contributors"
+license = "GPL-3.0-only"
+
+[wasm]
+path = "plugin.wasm"
+# Regenerate with build.sh; the script prints the new value to put here.
+sha256 = "1ea09e0ce0fd2a367ba971cf4b6fe405932889868332a9569fc46ccea98ad853"
+memory_max_mib = 64
+toolchain = "c"
+
+[permissions]
+required = ["views", "commands"]
+optional = ["ui.native"]
+
+[[contributions.commands]]
+id = "report"
+title = "Report gallery view state"
+title_key = "command_report"
+
+[[contributions.views]]
+id = "gallery"
+title = "Gallery"
+title_key = "view_title"
+placements = ["pane"]
+instances = "singleton"

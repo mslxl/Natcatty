@@ -1,0 +1,71 @@
+manifest_version = 1
+id = "acme.host-services"
+name = "Host Services Sample"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Sample C plugin demonstrating the baseline host services with allowed and denied permissions."
+author = "Natcatty contributors"
+license = "GPL-3.0-only"
+
+[wasm]
+path = "plugin.wasm"
+# Regenerate with build.sh; the script prints the new value to put here.
+sha256 = "3aca696518e5b6500078ce6f43793b0d8343e1b9e974c4848d99ea2d4db39c5b"
+memory_max_mib = 64
+toolchain = "c"
+
+[permissions]
+required = ["commands"]
+optional = [
+  "storage",
+  "clipboard.read",
+  "clipboard.write",
+  "notifications",
+  "events.subscribe",
+  "settings.read",
+]
+
+[permissions.scopes."events.subscribe"]
+event = "notification.action"
+
+[permissions.scopes."settings.read"]
+key = "app.locale"
+
+[settings]
+version = 1
+
+[[settings.fields]]
+key = "greeting"
+type = "string"
+label = "Greeting"
+label_key = "settings_greeting_label"
+default = "hello from plugin"
+
+[[settings.fields]]
+key = "verbose"
+type = "bool"
+label = "Verbose"
+label_key = "settings_verbose_label"
+default = false
+
+[[settings.fields]]
+key = "session_note"
+type = "string"
+label = "Session note"
+label_key = "settings_session_note_label"
+description = "Never persisted; reset to its default on every activation."
+description_key = "settings_session_note_description"
+default = "temporary"
+volatile = true
+
+[[contributions.commands]]
+id = "selftest"
+title = "Run host services self-test"
+title_key = "command_selftest"
+
+[[contributions.commands]]
+id = "poll"
+title = "Poll host service events"
+title_key = "command_poll"

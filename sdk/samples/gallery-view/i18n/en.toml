@@ -1,0 +1,5 @@
+command_report = "Report gallery view state"
+view_title = "Gallery"
+
+[meta]
+locale = "en"

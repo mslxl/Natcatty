@@ -1,0 +1,27 @@
+manifest_version = 1
+id = "acme.hello-tinygo"
+name = "Acme Hello TinyGo"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Sample command plugin built with the generated TinyGo SDK bindings."
+author = "Natcatty contributors"
+license = "GPL-3.0-only"
+
+[wasm]
+path = "plugin.wasm"
+# Regenerate with build.sh; the script prints the new value to put here.
+sha256 = "39cb1e9095778dfa70084c5a0d7c21cb8b064c18126fe63f87c26f73231e3b33"
+memory_max_mib = 64
+toolchain = "tinygo"
+
+[permissions]
+required = ["commands"]
+optional = []
+
+[[contributions.commands]]
+id = "greet"
+title = "Say Hello"
+title_key = "command_greet"
+keywords = ["hello", "greet", "plugin"]

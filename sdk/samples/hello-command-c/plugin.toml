@@ -1,0 +1,27 @@
+manifest_version = 1
+id = "acme.hello-c"
+name = "Acme Hello C"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Sample command plugin built with the generated C SDK bindings."
+author = "Natcatty contributors"
+license = "GPL-3.0-only"
+
+[wasm]
+path = "plugin.wasm"
+# Regenerate with build.sh; the script prints the new value to put here.
+sha256 = "f2982b9bd51295dfc443f6d7aaccd0ebaa8db9b1a6dc0a894631b42895160331"
+memory_max_mib = 64
+toolchain = "c"
+
+[permissions]
+required = ["commands"]
+optional = []
+
+[[contributions.commands]]
+id = "greet"
+title = "Say Hello"
+title_key = "command_greet"
+keywords = ["hello", "greet", "plugin"]

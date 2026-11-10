@@ -1,0 +1,49 @@
+manifest_version = 1
+id = "acme.workspace-services"
+name = "Workspace Services Sample"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Sample C plugin listing Hosts, observing a Session, and using a granted directory through the workspace host services."
+author = "Natcatty contributors"
+license = "GPL-3.0-only"
+
+[wasm]
+path = "plugin.wasm"
+# Regenerate with build.sh; the script prints the new value to put here.
+sha256 = "6245db1928f1b016ab5a5ec7e16c343c6c73a3fa403fb8d93efdee40cd3e0c8c"
+memory_max_mib = 64
+toolchain = "c"
+
+[permissions]
+required = ["commands"]
+optional = [
+  "hosts.read",
+  "sessions.read",
+  "terminal.observe",
+  "files.read",
+  "files.write",
+]
+
+[permissions.scopes."hosts.read"]
+host = "host-a"
+
+[permissions.scopes."sessions.read"]
+session = "session-1"
+
+[permissions.scopes."terminal.observe"]
+session = "session-1"
+
+# Tests replace this path with a real temporary directory before packaging.
+# A real installation names the user directory the plugin may reach.
+[permissions.scopes."files.read"]
+path = "/__NATCATTY_WORKSPACE__"
+
+[permissions.scopes."files.write"]
+path = "/__NATCATTY_WORKSPACE__"
+
+[[contributions.commands]]
+id = "selftest"
+title = "Run workspace services self-test"
+title_key = "command_selftest"

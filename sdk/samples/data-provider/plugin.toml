@@ -1,0 +1,35 @@
+manifest_version = 1
+id = "acme.data"
+name = "Sample Data Provider"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Sample C plugin serving one tabular data provider with typed queries, profile tests, transactions, metadata, plans, cancellation, and pooled connections."
+author = "Natcatty contributors"
+license = "GPL-3.0-only"
+
+[wasm]
+path = "plugin.wasm"
+# Regenerate with build.sh; the script prints the new value to put here.
+sha256 = "d8325dbcab2a2ddfe080bb1b6eb50535a6c84fbd046bae158a0fc80723a2464d"
+memory_max_mib = 64
+toolchain = "c"
+
+[permissions]
+required = ["provider.data"]
+
+# The plugin serves only its own data providers. The grant caps the access
+# mode a profile may select; the user's profile mode can never exceed it.
+[permissions.scopes."provider.data"]
+provider = "acme.data"
+access = "read-write"
+
+[[contributions.data_providers]]
+id = "warehouse"
+name = "Sample Warehouse"
+capabilities = { family = "tabular", features = ["transactions", "metadata", "mutations", "cancellation", "plans", "testing"], max_connections = 2 }
+profile_fields = [
+  { key = "endpoint", label = "Endpoint", kind = "text", required = true },
+  { key = "password", label = "Password", kind = "text", required = true, secret = true },
+]

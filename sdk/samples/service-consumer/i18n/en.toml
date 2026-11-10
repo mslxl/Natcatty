@@ -1,0 +1,6 @@
+command_status = "Report the service binding"
+command_providers = "List the visible providers of the injected service"
+command_selftest = "Run cross-plugin services self-test"
+
+[meta]
+locale = "en"

@@ -1,0 +1,45 @@
+manifest_version = 1
+id = "acme.loopback"
+name = "loopback Connection Provider Sample"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Sample C plugin owning x-acme-loopback and echoing Session bytes through the host-owned provider stream, authentication, and trust services."
+author = "Natcatty contributors"
+license = "GPL-3.0-only"
+
+[wasm]
+path = "plugin.wasm"
+# Regenerate with build.sh; the script prints the new value to put here.
+sha256 = "0a9ebf91808c07f4ab914678abf1a6adc9a6d71791d4fd67f55c3ab353feefa9"
+memory_max_mib = 64
+toolchain = "c"
+
+[permissions]
+required = ["provider.connection"]
+optional = ["auth.invoke", "trust.verify"]
+
+# The plugin serves only its own protocol. A scope naming another plugin is
+# rejected at install.
+[permissions.scopes."provider.connection"]
+provider = "acme.loopback"
+access = "full"
+
+# The sample Host. Authentication and trust stay host-owned: the guest sees a
+# challenge description and a verdict, never credential material or pins.
+[permissions.scopes."auth.invoke"]
+host = "host-1"
+
+[permissions.scopes."trust.verify"]
+host = "host-1"
+
+[[contributions.connections]]
+protocol = "x-acme-loopback"
+name = "loopback echo"
+host_fields = [
+  { key = "target", label = "Target", kind = "text", required = true },
+]
+capabilities = { resize = true, probe = true, signals = ["interrupt", "terminate"], max_sessions = 8, restore_state_max = 64 }
+auth_methods = ["none"]
+restore_schema = ["session"]

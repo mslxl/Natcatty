@@ -1,0 +1,36 @@
+manifest_version = 1
+id = "acme.counter-view"
+name = "Counter View Sample"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Sample C plugin with a native retained-tree View that accepts input and updates through atomic patches."
+author = "Natcatty contributors"
+license = "GPL-3.0-only"
+
+[wasm]
+path = "plugin.wasm"
+# Regenerate with build.sh; the script prints the new value to put here.
+sha256 = "5f7367962a268bb1bb78caac96b335826d4f002b8a37c65f6eb066d2e7c3ed30"
+memory_max_mib = 64
+toolchain = "c"
+
+[permissions]
+required = ["views", "commands"]
+# ui.native is optional so the sample has a real denied path: enabled without
+# this grant, every ui.apply/listen/poll returns status=denied and the host
+# tree stays empty.
+optional = ["ui.native"]
+
+[[contributions.commands]]
+id = "report"
+title = "Report counter view state"
+title_key = "command_report"
+
+[[contributions.views]]
+id = "counter"
+title = "Counter"
+title_key = "view_title"
+placements = ["pane", "tab", "page", "window", "aside"]
+instances = "singleton"

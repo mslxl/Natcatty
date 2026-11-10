@@ -1,0 +1,4 @@
+command_selftest = "Run workspace services self-test"
+
+[meta]
+locale = "en"

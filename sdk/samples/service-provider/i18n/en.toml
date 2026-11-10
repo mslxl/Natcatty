@@ -1,0 +1,4 @@
+command_callback = "Invoke the consumer-owned callback service"
+
+[meta]
+locale = "en"

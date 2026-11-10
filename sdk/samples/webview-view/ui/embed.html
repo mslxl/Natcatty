@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; connect-src 'self'; worker-src 'none'">
+  <title>Embedded Web View</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="embedded">
+  <main>
+    <h1>Embedded webview node</h1>
+    <p id="origin"></p>
+    <p id="locale"></p>
+    <button id="greet" type="button">Greet the backend</button>
+    <p id="result" role="status"></p>
+  </main>
+  <script src="embed.js"></script>
+</body>
+</html>

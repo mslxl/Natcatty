@@ -1,0 +1,64 @@
+manifest_version = 1
+id = "acme.service-consumer"
+name = "Cross-plugin Service Consumer Sample"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Sample C plugin consuming a cross-plugin service with streaming, events, and a consumer-owned callback."
+author = "Natcatty contributors"
+license = "GPL-3.0-only"
+
+[wasm]
+path = "plugin.wasm"
+# Regenerate with build.sh; the script prints the new value to put here.
+sha256 = "51cfdfcde0b6f9c3e42fb5df3621ff4d13868557e45cd605656f0e0862875b0d"
+memory_max_mib = 64
+toolchain = "c"
+
+[permissions]
+required = ["commands"]
+optional = ["services.invoke", "services.provide"]
+
+# The grant names the exact service and provider, a semver range, and the
+# write access class, which also covers the provider's read methods.
+[permissions.scopes."services.invoke"]
+service = "plugin.acme.service-provider.echo"
+provider = "acme.service-provider"
+version = "^1.0"
+access = "write"
+
+[permissions.scopes."services.provide"]
+service = "plugin.acme.service-consumer."
+access = "read"
+version = "^1.0"
+
+# Optional: the consumer starts unbound and reports service-missing until the
+# provider becomes active.
+[[inject]]
+service = "plugin.acme.service-provider.echo"
+version = "^1.0"
+optional = true
+
+[[provides]]
+service = "plugin.acme.service-consumer.callback"
+version = "1.0.0"
+access = "read"
+methods = [
+  { name = "ping", encoding = "json", args_schema = { type = "object", properties = { token = { type = "string" } }, required = ["token"] }, result_schema = { type = "object", properties = { token = { type = "string" }, consumer = { type = "string" } }, required = ["token", "consumer"] } },
+]
+
+[[contributions.commands]]
+id = "status"
+title = "Report the service binding"
+title_key = "command_status"
+
+[[contributions.commands]]
+id = "providers"
+title = "List the visible providers of the injected service"
+title_key = "command_providers"
+
+[[contributions.commands]]
+id = "selftest"
+title = "Run cross-plugin services self-test"
+title_key = "command_selftest"

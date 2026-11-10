@@ -1,0 +1,5 @@
+command_report = "Report counter view state"
+view_title = "Counter"
+
+[meta]
+locale = "en"

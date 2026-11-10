@@ -1,0 +1,68 @@
+manifest_version = 1
+id = "acme.service-provider"
+name = "Cross-plugin Service Provider Sample"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Sample C plugin providing a cross-plugin service with streaming, events, and dynamic registration."
+author = "Natcatty contributors"
+license = "GPL-3.0-only"
+
+[wasm]
+path = "plugin.wasm"
+# Regenerate with build.sh; the script prints the new value to put here.
+sha256 = "4b9a121171d7a784e8d3fcff5a7a1e3f8bae6544d4738dca1635b30bb32b0eb3"
+memory_max_mib = 64
+toolchain = "c"
+
+[permissions]
+required = ["commands"]
+optional = ["services.provide", "services.invoke"]
+
+# A provider registers only under its own namespace prefix. The version range
+# covers both the static echo service and the dynamic extra service.
+[permissions.scopes."services.provide"]
+service = "plugin.acme.service-provider."
+access = "read"
+version = "^1.0"
+
+# The provider consumes a service owned by the consumer sample.
+[permissions.scopes."services.invoke"]
+service = "plugin.acme.service-consumer.callback"
+provider = "acme.service-consumer"
+version = "^1.0"
+access = "read"
+
+[[inject]]
+service = "plugin.acme.service-consumer.callback"
+version = "^1.0"
+optional = true
+
+[[provides]]
+service = "plugin.acme.service-provider.echo"
+version = "1.2.0"
+access = "read"
+methods = [
+  { name = "echo", encoding = "json", args_schema = { type = "object", properties = { text = { type = "string" } }, required = ["text"] }, result_schema = { type = "object", properties = { text = { type = "string" } }, required = ["text"] } },
+  { name = "download", encoding = "json" },
+  { name = "upload", encoding = "json", access = "write" },
+  { name = "duplex", encoding = "json", access = "write" },
+  { name = "notify", encoding = "json" },
+  { name = "register_extra", encoding = "json" },
+  { name = "unregister_extra", encoding = "json" },
+]
+events = [
+  { name = "tick", encoding = "json", schema = { type = "object", properties = { kind = { type = "string" }, sequence = { type = "integer" } }, required = ["kind", "sequence"] } },
+]
+
+# Reserves the name for services.register at runtime; the guest publishes it
+# with its own method table.
+[[provides]]
+service = "plugin.acme.service-provider.extra"
+dynamic = true
+
+[[contributions.commands]]
+id = "callback"
+title = "Invoke the consumer-owned callback service"
+title_key = "command_callback"

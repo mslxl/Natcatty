@@ -1,0 +1,6 @@
+command_report = "Report web view state"
+view_web_title = "Web View"
+view_embed_title = "Embedded Web View"
+
+[meta]
+locale = "en"
