@@ -66,6 +66,7 @@ each module's own `LICENSE` file.
 
 | Module | Version | License | Copyright notice |
 | --- | --- | --- | --- |
+| `github.com/BurntSushi/toml` | v1.5.0 | MIT | Copyright (c) 2013 TOML authors |
 | `github.com/dustin/go-humanize` | v1.0.1 | MIT | Copyright (c) 2005-2008 Dustin Sallings |
 | `github.com/ebitengine/purego` | v0.11.1 | Apache-2.0 | Copyright The Ebitengine Authors (SPDX-FileCopyrightText in the source files) |
 | `github.com/egoist/mygo` | pinned in `go.mod` | MIT | Copyright (c) 2026 MyGo contributors |
@@ -80,8 +81,10 @@ each module's own `LICENSE` file.
 | `github.com/mattn/go-isatty` | v0.0.24 | MIT (Expat) | Copyright (c) Yasuhiro MATSUMOTO <mattn.jp@gmail.com> |
 | `github.com/pkg/sftp` | v1.13.11 | BSD-2-Clause | Copyright (c) 2013, Dave Cheney |
 | `github.com/remyoudompheng/bigfft` | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | Copyright (c) 2012 The Go Authors. All rights reserved. |
+| `github.com/tetratelabs/wazero` | v1.12.0 | Apache-2.0 | Copyright 2020-2023 wazero authors |
 | `golang.org/x/crypto` | v0.58.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
 | `golang.org/x/image` | v0.46.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `golang.org/x/net` | v0.60.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
 | `golang.org/x/sys` | v0.49.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
 | `golang.org/x/text` | v0.43.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
 | `google.golang.org/protobuf` | v1.36.12 | BSD-3-Clause | Copyright (c) 2018 The Go Authors. All rights reserved. |

@@ -13,10 +13,12 @@ go 1.27.3
 // tun/netstack ambiguity note and the replace directive below must be
 // re-checked against the new module graph.
 require (
-	github.com/egoist/mygo v0.6.0
+	github.com/BurntSushi/toml v1.6.0
+	github.com/egoist/mygo v0.7.4
 	github.com/glebarez/sqlite v1.11.0
 	github.com/kayrus/putty v1.0.5
 	github.com/pkg/sftp v1.13.11
+	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.46.0
 	golang.org/x/sys v0.49.0
