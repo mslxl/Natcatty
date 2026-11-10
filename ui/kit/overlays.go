@@ -91,14 +91,16 @@ func Popover(c *ui.Context, role PopoverRole, anchor ui.Element, open *bool, con
 
 // PopoverSurface paints el, a floating list the caller places itself, as
 // the autocomplete popup: the surface fill inside a rule of border. The
-// macOS style draws it on the overlay glass, rounded as a menu is rather
-// than as a sheet, so a short list keeps its text clear of the corners.
+// macOS style rounds it as a menu rather than as a sheet, so a short list
+// keeps its text clear of the corners, and keeps it solid: glass refracting
+// a terminal's text under a list this small only muddies it.
 func PopoverSurface(c *ui.Context, el ui.Element, border ui.Color) ui.Element {
+	t := c.Theme()
 	if CurrentStyle().Native() {
-		return Fill(c, el.Radius(M(c).Radius.Control), SurfaceOverlay).
-			Shadow(0, 4, 12, 0, CardShadow(c.Theme())).Clip()
+		return el.Background(t.Surface).Border(1, t.Border).Radius(M(c).Radius.Control).
+			Shadow(0, 4, 12, 0, CardShadow(t)).Clip()
 	}
-	return el.Background(c.Theme().Surface).Border(1, border).Clip()
+	return el.Background(t.Surface).Border(1, border).Clip()
 }
 
 // RowColors are the colors of a row's text, its secondary labels, and its
