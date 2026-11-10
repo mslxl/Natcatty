@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -52,7 +53,34 @@ func run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stderr, "natcatty-mcp: connected to Netcatty on %s:%d\n", discovery.Host, discovery.Port)
 
-	return mcp.NewServer(bridgeCaller{client: client}).Serve(ctx, stdin, stdout)
+	// Server-pushed notifications (progress and tools/list_changed) arrive on
+	// the reader goroutine while Serve may be writing a response. One locked
+	// writer keeps stdout's newline-delimited messages intact.
+	output := &lockedWriter{writer: stdout}
+	client.SetNotificationHandler(func(notification mcprpc.Notification) {
+		message := map[string]any{
+			"jsonrpc": "2.0",
+			"method":  notification.Method,
+		}
+		if len(notification.Params) > 0 {
+			message["params"] = json.RawMessage(notification.Params)
+		}
+		_ = mcprpc.WriteMessage(output, message)
+	})
+	return mcp.NewServer(bridgeCaller{client: client}).Serve(ctx, stdin, output)
+}
+
+// lockedWriter serializes writes from the reader goroutine and the protocol
+// loop onto the one stdout stream.
+type lockedWriter struct {
+	mu     sync.Mutex
+	writer io.Writer
+}
+
+func (w *lockedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writer.Write(p)
 }
 
 // resolveTarget prefers the explicit PORT/TOKEN launch overrides and otherwise
@@ -78,6 +106,11 @@ func resolveTarget() (mcprpc.Discovery, error) {
 type bridgeCaller struct {
 	client *mcprpc.Client
 }
+
+// Close lets the protocol server tear down the loopback connection as soon as
+// its client's stdin closes, so the app cancels an in-flight tool call instead
+// of waiting for it to finish.
+func (b bridgeCaller) Close() error { return b.client.Close() }
 
 func (b bridgeCaller) Call(ctx context.Context, method string, params map[string]any) (any, error) {
 	raw, err := b.client.Call(ctx, method, params)

@@ -4,16 +4,37 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/mslxl/natcatty/internal/adapters/mcprpc"
 	"github.com/mslxl/natcatty/internal/mcp/catalog"
 )
+
+// syncBuffer is a goroutine-safe stdout/stderr sink: run's protocol loop writes
+// while the test waits for its responses.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 // startAppBridge serves the app side of the authenticated loopback transport on
 // an already-bound listener, so a client dial cannot race readiness.
@@ -108,9 +129,30 @@ func TestRunAuthenticatesThenServesMCPOverStdio(t *testing.T) {
 		}),
 	}, "\n") + "\n"
 
-	var stdout, stderr bytes.Buffer
-	if err := run(context.Background(), strings.NewReader(input), &stdout, &stderr); err != nil {
-		t.Fatalf("run: %v\nstderr: %s", err, stderr.String())
+	// A real MCP client keeps stdin open until it has its responses; closing
+	// stdin is the disconnect signal that cancels outstanding work.
+	inputReader, inputWriter := io.Pipe()
+	var stdout, stderr syncBuffer
+	runDone := make(chan error, 1)
+	go func() { runDone <- run(context.Background(), inputReader, &stdout, &stderr) }()
+	if _, err := io.WriteString(inputWriter, input); err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for strings.Count(stdout.String(), "\n") < 3 {
+		if time.Now().After(deadline) {
+			t.Fatalf("responses did not arrive: %q\nstderr: %s", stdout.String(), stderr.String())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	_ = inputWriter.Close()
+	select {
+	case err := <-runDone:
+		if err != nil {
+			t.Fatalf("run: %v\nstderr: %s", err, stderr.String())
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("run did not exit after stdin closed\nstderr: %s", stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "connected to Netcatty") {
 		t.Fatalf("stderr = %q", stderr.String())
