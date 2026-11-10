@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"github.com/mslxl/natcatty/domain/model"
 	"sync"
 	"testing"
 
@@ -163,5 +164,21 @@ func TestOpenRefusesALegacyEncodingWithoutACodecFactory(t *testing.T) {
 		Encoding: domainterminal.EncodingGB18030,
 	}); err == nil {
 		t.Fatal("Open accepted GB18030 without a codec factory")
+	}
+}
+
+// A saved local-shell Host remembers its encoding as any saved Host does; an
+// unsaved local shell keeps the shared local scope.
+func TestASavedLocalHostKeepsItsOwnEncodingScope(t *testing.T) {
+	service := newTestService(&fakeFactory{transport: newFakeTransport()})
+	for hostID, want := range map[string]string{"host-local": "host:host-local", "": domainterminal.EncodingScopeLocal} {
+		session, err := service.Open(context.Background(), StartSpec{Kind: KindLocal, HostID: model.HostID(hostID)})
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		if got := session.EncodingScope(); got != want {
+			t.Fatalf("host %q: scope = %q, want %q", hostID, got, want)
+		}
+		_ = session.Close()
 	}
 }

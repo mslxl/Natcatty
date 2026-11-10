@@ -336,8 +336,8 @@ func sidePanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		chosen, tools := -1, make([]kit.Segment, len(ids))
 		for i, id := range ids {
 			icon, label := sideToolFace(m, id)
-			// The strip changes with the target: a local Session has no
-			// System, so each button keeps its tool's identity.
+			// Each button keys its tool's identity, so a tool's state
+			// follows it however the strip changes.
 			tools[i] = kit.Segment{Key: "side-tool-" + string(id), Label: label, Icon: icon}
 			if id == s.SideTool(tab) {
 				chosen = i

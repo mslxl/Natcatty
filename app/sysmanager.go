@@ -3,10 +3,13 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
+	"runtime"
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsysmanager "github.com/mslxl/natcatty/application/sysmanager"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	"github.com/mslxl/natcatty/platform/process"
 	uisysmanager "github.com/mslxl/natcatty/ui/sysmanager"
 )
 
@@ -14,7 +17,8 @@ import (
 // manager. Each sample or action opens a channel lease through Acquire, which
 // runs the same host-key verification, trust prompt, jump chain, proxy, and
 // algorithm policy a Session uses; no ps, ss, systemctl, or kill command can
-// run before the Host key is trusted.
+// run before the Host key is trusted. A local-shell Host, such as this
+// computer, runs the same commands in this computer's shell instead.
 type sysmanagerConnector struct {
 	routes      routeSource
 	connections *appconnection.Manager
@@ -23,6 +27,14 @@ type sysmanagerConnector struct {
 var _ appsysmanager.Connector = sysmanagerConnector{}
 
 func (c sysmanagerConnector) Open(ctx context.Context, host domainvault.Host) (appsysmanager.Connection, error) {
+	if host.Protocol == domainvault.ProtocolLocal {
+		if runtime.GOOS == "windows" {
+			// The commands are POSIX shell; cmd.exe cannot run them.
+			return nil, &appsysmanager.Error{Reason: appsysmanager.ReasonUnsupported,
+				Cause: errors.New("no POSIX shell on Windows")}
+		}
+		return localSystemConnection{}, nil
+	}
 	if c.connections == nil {
 		return nil, &appsysmanager.Error{Reason: appsysmanager.ReasonInternal,
 			Cause: errors.New("no connection manager")}
@@ -77,6 +89,48 @@ func (c *sysmanagerConnection) Exec(ctx context.Context, command string) (appsys
 }
 
 func (c *sysmanagerConnection) Close() error { return c.lease.Release() }
+
+// localSystemConnection runs the System manager's commands in this computer's
+// shell, as an SSH exec runs them on a Host.
+type localSystemConnection struct{}
+
+func (localSystemConnection) Exec(ctx context.Context, command string) (appsysmanager.ExecResult, error) {
+	result, err := process.Run(ctx, command)
+	if err != nil {
+		return appsysmanager.ExecResult{}, sysmanagerFailure(err)
+	}
+	return appsysmanager.ExecResult{
+		Stdout:      string(result.Stdout),
+		Stderr:      string(result.Stderr),
+		ExitCode:    result.ExitCode,
+		HasExitCode: true,
+	}, nil
+}
+
+func (localSystemConnection) Close() error { return nil }
+
+// thisComputerID names this computer among the System tool's Hosts. No Vault
+// Host has it: the Vault's IDs are generated.
+const thisComputerID = "local:this-computer"
+
+// thisComputer is the Host a local Session's System tool samples: this
+// computer's shell, labelled with its name.
+func thisComputer() domainvault.Host {
+	name, err := os.Hostname()
+	if err != nil || name == "" {
+		name = "localhost"
+	}
+	return domainvault.Host{ID: thisComputerID, Label: name, Protocol: domainvault.ProtocolLocal}
+}
+
+// withThisComputer lists this computer ahead of the Vault's Hosts, so the
+// side panel's System tool can show it for a local Session.
+type withThisComputer struct{ uisysmanager.Hosts }
+
+func (h withThisComputer) List(ctx context.Context) ([]domainvault.Host, error) {
+	hosts, err := h.Hosts.List(ctx)
+	return append([]domainvault.Host{thisComputer()}, hosts...), err
+}
 
 // sysmanagerFailure projects the connection layer's typed failures onto the
 // System manager's stable reasons. The view localizes a reason; a transport

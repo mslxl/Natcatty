@@ -216,15 +216,17 @@ func TestReconnectNowDialsImmediately(t *testing.T) {
 	}
 	_ = session.Close()
 
-	localService := reconnectTestService(&scriptedFactory{transports: []*scriptedTransport{newScriptedTransport()}})
-	local, err := localService.Open(context.Background(), StartSpec{Kind: KindLocal})
+	// A local shell restarts by hand as a remote one reconnects.
+	localFactory := &scriptedFactory{transports: []*scriptedTransport{newScriptedTransport(), newScriptedTransport()}}
+	local, err := reconnectTestService(localFactory).Open(context.Background(), StartSpec{Kind: KindLocal})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = local.Close() })
-	if local.CanReconnect() || local.ReconnectNow() {
-		t.Fatal("a local Session without a reconnect policy offered Reconnect")
+	if !local.CanReconnect() || !local.ReconnectNow() {
+		t.Fatal("a running local Session refused Reconnect")
 	}
+	waitForCondition(t, "the restarted local shell", func() bool { return localFactory.callCount() == 2 })
 
 	// A failed manual attempt must not turn into a zero-delay retry loop; it
 	// falls back to the policy interval for the next attempt.
@@ -664,5 +666,28 @@ func TestStaleTransportEndIsIgnoredAfterReconnect(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if snapshot := session.Snapshot(); snapshot.Status != StatusRunning || snapshot.Connection != ConnectionStatusActive {
 		t.Fatalf("snapshot = %+v after a stale end, want a running active Session", snapshot)
+	}
+}
+
+// A local shell that ends is not restarted on its own: only a remote
+// transport drops and comes back.
+func TestLocalSessionNeverRestartsOnItsOwn(t *testing.T) {
+	first := newScriptedTransport()
+	factory := &scriptedFactory{transports: []*scriptedTransport{first, newScriptedTransport()}}
+	session, err := reconnectTestService(factory).Open(context.Background(), StartSpec{Kind: KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.fail(End{Reason: EndReasonError})
+	waitForCondition(t, "the ended local Session", func() bool {
+		select {
+		case <-session.Done():
+			return true
+		default:
+			return false
+		}
+	})
+	if calls := factory.callCount(); calls != 1 {
+		t.Fatalf("factory calls = %d after the shell ended, want 1", calls)
 	}
 }

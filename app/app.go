@@ -785,7 +785,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	})
 	sideSystemState := uisysmanager.NewState(
 		sideSystemService,
-		vaultService,
+		withThisComputer{vaultService},
 		preferenceService,
 		uisysmanager.WithRedrawRequest(invalidate),
 		uisysmanager.WithTerminalOpener(func(host domainvault.Host, command string) error {
@@ -1153,10 +1153,17 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				// current transport and dials again without the policy delay.
 				sessionui.WithReconnect(func() { s.ReconnectNow() }, s.CanReconnect),
 			}
-			// Only an SSH Session with a saved Host has a route a browser can
-			// use. Local, serial, Telnet, Mosh, and ET Sessions leave the menu
-			// item disabled instead of offering a route that cannot exist.
-			if s.Snapshot().Kind == appsession.KindSSH && s.HostID() != "" {
+			// An SSH Session with a saved Host routes its browser through the
+			// Host, and a local Session reaches this computer directly. Serial,
+			// Telnet, Mosh, and ET Sessions leave the menu item disabled
+			// instead of offering a route that cannot exist.
+			switch {
+			case s.Snapshot().Kind == appsession.KindLocal:
+				options = append(options, sessionui.WithBrowser(
+					func(onClose func()) (sessionui.BrowserPanel, error) {
+						return openSessionBrowser(s, windows, localBrowserConnector{}, invalidate, onClose)
+					}))
+			case s.Snapshot().Kind == appsession.KindSSH && s.HostID() != "":
 				options = append(options, sessionui.WithBrowser(
 					func(onClose func()) (sessionui.BrowserPanel, error) {
 						return openSessionBrowser(s, windows, browserConnector{
@@ -1247,9 +1254,14 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			state.SideTool{ID: state.SideTheme, View: func(state.SideTarget, float32) func(*ui.Context) {
 				return themePanel.View()
 			}},
-			state.SideTool{ID: state.SideSystem, RemoteOnly: true,
+			state.SideTool{ID: state.SideSystem,
 				View: func(target state.SideTarget, _ float32) func(*ui.Context) {
-					sideSystemState.ShowHost(string(target.Host))
+					// A local Session's panel samples this computer.
+					host := string(target.Host)
+					if host == "" {
+						host = thisComputerID
+					}
+					sideSystemState.ShowHost(host)
 					return uisysmanager.SideView(sideSystemState)
 				},
 				Hide: sideSystemState.Hide},

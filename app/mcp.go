@@ -73,9 +73,26 @@ type mcpForwardingReader interface {
 	List(context.Context) ([]appforwarding.View, error)
 }
 
-// mcpTransferReader opens a remote filesystem for one saved Host.
+// mcpTransferReader opens a remote filesystem for one saved Host, or this
+// computer's.
 type mcpTransferReader interface {
 	OpenRemote(context.Context, model.HostID, string) (apptransfer.FileSystem, error)
+	OpenLocal(context.Context) (apptransfer.FileSystem, error)
+}
+
+// openSessionFiles opens the filesystem a Session's file tools work on: this
+// computer's for a local shell, as its Files panel browses, or its saved SSH
+// Host's over SFTP.
+func openSessionFiles(ctx context.Context, transfer mcpTransferReader,
+	description appsession.SessionDescription) (apptransfer.FileSystem, error) {
+	switch {
+	case description.Kind == appsession.KindLocal:
+		return transfer.OpenLocal(ctx)
+	case description.Kind == appsession.KindSSH && description.HostID != "":
+		return transfer.OpenRemote(ctx, description.HostID, description.Label)
+	}
+	return nil, fmt.Errorf("Session %q has no file transfer: it is neither a local shell nor an SSH session with a saved Host.",
+		description.ID)
 }
 
 // mcpReadBridge answers the external MCP transport's read RPCs.
@@ -467,8 +484,8 @@ func (b *mcpReadBridge) sftpHome(ctx context.Context, params map[string]any) map
 	})
 }
 
-// withRemoteFiles resolves a Session's saved Host and opens one remote
-// filesystem for the operation, closing it afterwards.
+// withRemoteFiles opens the Session's filesystem, its Host's or this
+// computer's, for the operation, closing it afterwards.
 func (b *mcpReadBridge) withRemoteFiles(ctx context.Context, params map[string]any,
 	action func(apptransfer.FileSystem) map[string]any) map[string]any {
 	sessionID := stringParam(params, "sessionId")
@@ -479,13 +496,10 @@ func (b *mcpReadBridge) withRemoteFiles(ctx context.Context, params map[string]a
 	if !ok {
 		return mcpFailure(fmt.Sprintf("Session %q was not found.", sessionID))
 	}
-	if description.Kind != appsession.KindSSH || description.HostID == "" {
-		return mcpFailure(fmt.Sprintf("Session %q is not an SSH session with file transfer.", sessionID))
-	}
 	if b.transfer == nil {
 		return mcpFailure("File transfer is not available in this build.")
 	}
-	files, err := b.transfer.OpenRemote(ctx, description.HostID, description.Label)
+	files, err := openSessionFiles(ctx, b.transfer, description)
 	if err != nil {
 		return mcpFailure(err.Error())
 	}
