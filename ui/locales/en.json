@@ -5033,7 +5033,7 @@
   "settingsAboutNoticesBody": "Licenses and copyright notices for MyGo, libghostty-vt, the Go modules, EternalTerminal, and other bundled components.",
   "settingsAboutUnavailable": "The legal documents are missing from this installation. Reinstall from a release artifact.",
   "settingsAboutLegalReview": "Distribution compliance is mechanically checked and remains pending human and legal review.",
-  "connectionHostAtuinDetected": "This Host runs Atuin. Netcatty prefers the Host's Atuin history and skips its own shell capture hook for this Host. Turn off \"Prefer the Host's Atuin history\" to use the Netcatty hook instead.",
+  "connectionHostAtuinDetected": "This Host runs Atuin. Netcatty imports its history read-only. Commands captured in this Session stay in memory for suggestions only and are not saved or synced by Netcatty.",
   "logsHostOrigin": "Origin: {origin}",
   "@logsHostOrigin": {
     "description": "The Host filter value for a captured origin with no local Host identity.",
@@ -5376,8 +5376,6 @@
   "@logsProblemInsertUnsafe": {
     "description": "Shown when a multi-line history command is refused because the shell did not enable bracketed paste."
   },
-  "settingsHistoryPreferHostAtuin": "Prefer the Host's Atuin history",
-  "settingsHistoryPreferHostAtuinDescription": "When a Host already runs Atuin, import its history read-only when the Session opens and skip the Netcatty capture hook. Turning this off uses the Netcatty hook and skips the import.",
   "settingsBindingHistorySearch": "Search global history",
   "@settingsBindingHistorySearch": {
     "description": "The Settings shortcut label for the global History search binding."
@@ -5394,8 +5392,6 @@
   "settingsAtuinAuthModeBearer": "Bearer token",
   "settingsAtuinAuthModeHint": "Session tokens use the Token header; Bearer tokens use Authorization: Bearer.",
   "settingsAtuinSyncInterval": "Sync interval (minutes)",
-  "settingsAtuinPreferHostAtuin": "Prefer Atuin on a Host",
-  "settingsAtuinPreferHostAtuinHint": "When the Host has Atuin, open its history instead of importing a transcript.",
   "settingsAtuinAccountTitle": "Atuin account",
   "settingsAtuinAccountDescription": "One account per install. The token and master key are kept only in this device's field-secret store and are never synced to the Vault cloud. The Atuin server sees record identifiers and metadata, but not command text, working directory, exit status, or origin.",
   "settingsAtuinStatus": "Status",

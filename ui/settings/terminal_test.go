@@ -122,10 +122,6 @@ func (t *fakeTerminal) SetHistoryCaptureHookEnabled(enabled bool) error {
 	return t.update(func(settings *domainterminal.Settings) { settings.HistoryCaptureHookEnabled = enabled })
 }
 
-func (t *fakeTerminal) SetHistoryPreferHostAtuin(enabled bool) error {
-	return t.update(func(settings *domainterminal.Settings) { settings.HistoryPreferHostAtuin = enabled })
-}
-
 func TestTerminalStateSavesEachSettingAndReportsFailure(t *testing.T) {
 	fake := newFakeTerminal()
 	state := NewTerminalState(fake)
@@ -205,10 +201,7 @@ func TestTerminalStateSavesEachSettingAndReportsFailure(t *testing.T) {
 	if !state.SetHistoryCaptureHookEnabled(false) || fake.settings.HistoryCaptureHookEnabled {
 		t.Fatal("the capture hook was not disabled")
 	}
-	if !state.SetHistoryPreferHostAtuin(false) || fake.settings.HistoryPreferHostAtuin {
-		t.Fatal("the Host Atuin preference was not disabled")
-	}
-	if state.Problem() || redraws != 22 {
+	if state.Problem() || redraws != 21 {
 		t.Fatalf("problem = %v, redraws = %d", state.Problem(), redraws)
 	}
 

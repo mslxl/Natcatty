@@ -15,6 +15,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
+	"github.com/mslxl/natcatty/ui/internal/styletest"
 	"github.com/mslxl/natcatty/ui/locales"
 	shellui "github.com/mslxl/natcatty/ui/shell"
 	shellstate "github.com/mslxl/natcatty/ui/shell/state"
@@ -204,23 +205,25 @@ var logsSizes = []struct{ width, height int }{{1100, 720}, {720, 480}}
 
 func TestLogsSurfaceIsReadableAndScrollableAtBothSizes(t *testing.T) {
 	m := locales.In("en")
-	for _, size := range logsSizes {
-		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
-			tt, _ := newProductionLogsView(t, size.width, size.height,
-				seededSource(), &fakeActions{})
+	styletest.Each(t, func(t *testing.T) {
+		for _, size := range logsSizes {
+			t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
+				tt, _ := newProductionLogsView(t, size.width, size.height,
+					seededSource(), &fakeActions{})
 
-			assertVisible(t, tt, m.LogsTitle(), size.width, size.height)
-			assertVisible(t, tt, m.LogsTabConnections(30), size.width, size.height)
-			assertVisible(t, tt, m.LogsOpenTerminal(), size.width, size.height)
-			assertVisible(t, tt, m.NavLogs(), size.width, size.height)
-			assertVisible(t, tt, m.NavSettings(), size.width, size.height)
-			assertNoHorizontalOverflow(t, tt, size.width, size.height)
+				assertVisible(t, tt, m.LogsTitle(), size.width, size.height)
+				assertVisible(t, tt, m.LogsTabConnections(30), size.width, size.height)
+				assertVisible(t, tt, m.LogsOpenTerminal(), size.width, size.height)
+				assertVisible(t, tt, m.NavLogs(), size.width, size.height)
+				assertVisible(t, tt, m.NavSettings(), size.width, size.height)
+				assertNoHorizontalOverflow(t, tt, size.width, size.height)
 
-			scrollToEnd(tt, size.width, size.height)
-			assertVisible(t, tt, "web-29", size.width, size.height)
-			assertNoHorizontalOverflow(t, tt, size.width, size.height)
-		})
-	}
+				scrollToEnd(tt, size.width, size.height)
+				assertVisible(t, tt, "web-29", size.width, size.height)
+				assertNoHorizontalOverflow(t, tt, size.width, size.height)
+			})
+		}
+	})
 }
 
 func TestNetworkProviderRowRendersItsPhaseAndHasNoTerminalAction(t *testing.T) {
@@ -306,32 +309,34 @@ func TestLogsFiltersUpdateTheRenderedRows(t *testing.T) {
 
 func TestHistoryTabRendersRowsAndOpensTheRelatedTerminal(t *testing.T) {
 	m := locales.In("en")
-	actions := &fakeActions{}
-	tt, state := newProductionLogsView(t, 1100, 720, seededSource(), actions)
-	state.SelectTab(TabHistory)
-	tt.Frame()
+	styletest.Each(t, func(t *testing.T) {
+		actions := &fakeActions{}
+		tt, state := newProductionLogsView(t, 1100, 720, seededSource(), actions)
+		state.SelectTab(TabHistory)
+		tt.Frame()
 
-	historyLabel := m.LogsTabHistory(30)
-	if err := tt.Click(historyLabel); err != nil {
-		t.Fatalf("click the history tab: %v", err)
-	}
-	tt.Frame()
-	if !textsContain(tt, "command-00 --run") {
-		t.Fatalf("history rows are not rendered, texts %q", tt.Texts())
-	}
-	if !textsContain(tt, m.LogsProvenanceThisDevice()) {
-		t.Fatalf("the history provenance is not rendered, texts %q", tt.Texts())
-	}
+		historyLabel := m.LogsTabHistory(30)
+		if err := tt.Click(historyLabel); err != nil {
+			t.Fatalf("click the history tab: %v", err)
+		}
+		tt.Frame()
+		if !textsContain(tt, "command-00 --run") {
+			t.Fatalf("history rows are not rendered, texts %q", tt.Texts())
+		}
+		if !textsContain(tt, m.LogsProvenanceThisDevice()) {
+			t.Fatalf("the history provenance is not rendered, texts %q", tt.Texts())
+		}
 
-	if err := tt.Click(m.LogsOpenTerminal()); err != nil {
-		t.Fatalf("click Open terminal: %v", err)
-	}
-	tt.Frame()
-	if len(actions.sessions) != 1 || actions.sessions[0] != "session-1" ||
-		actions.hosts[0] != "host-1" {
-		t.Fatalf("row action = %+v", actions)
-	}
-	assertNoHorizontalOverflow(t, tt, 1100, 720)
+		if err := tt.Click(m.LogsOpenTerminal()); err != nil {
+			t.Fatalf("click Open terminal: %v", err)
+		}
+		tt.Frame()
+		if len(actions.sessions) != 1 || actions.sessions[0] != "session-1" ||
+			actions.hosts[0] != "host-1" {
+			t.Fatalf("row action = %+v", actions)
+		}
+		assertNoHorizontalOverflow(t, tt, 1100, 720)
+	})
 }
 
 // TestHistoryRowsLabelAtuinImportAndSyncProvenance proves downloaded and

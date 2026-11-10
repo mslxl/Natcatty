@@ -461,7 +461,10 @@ func (s *Service) ImportHostAtuin(ctx context.Context, hostID string,
 		return result, err
 	}
 	result.Imported = len(pending)
-	s.notify()
+	// Imported rows are projections written outside the local capture path.
+	// Refreshing observers keeps the History surface current without asking
+	// the sync engine to upload a projection it must never send.
+	s.NotifyExternalChange()
 	return result, nil
 }
 

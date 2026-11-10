@@ -26,6 +26,18 @@ type atuinRemoteSource struct {
 
 var _ apphostatuin.RemoteSource = atuinRemoteSource{}
 
+// atuinProbeProtocol reports whether a saved Host's protocol can be probed over
+// its SSH bootstrap. SSH, Mosh, and ET Hosts all bootstrap over SSH, so the
+// separate read-only SFTP channel reaches the same files. Telnet has no SSH
+// bootstrap, so it cannot be probed and keeps the journaled capture path.
+func atuinProbeProtocol(protocol domainvault.Protocol) bool {
+	switch protocol {
+	case domainvault.ProtocolSSH, domainvault.ProtocolMosh, domainvault.ProtocolET:
+		return true
+	}
+	return false
+}
+
 func (s atuinRemoteSource) OpenReadOnly(ctx context.Context, hostID model.HostID) (apphostatuin.RemoteFiles, error) {
 	if s.opener == nil || s.opener.vault == nil {
 		return nil, errors.New("app: no Vault for the Atuin detection export")
@@ -34,7 +46,7 @@ func (s atuinRemoteSource) OpenReadOnly(ctx context.Context, hostID model.HostID
 	if err != nil {
 		return nil, err
 	}
-	if host.Protocol != domainvault.ProtocolSSH {
+	if !atuinProbeProtocol(host.Protocol) {
 		return nil, fmt.Errorf("app: %s Hosts have no SFTP detection channel", host.Protocol)
 	}
 	files, _, err := apptransfer.SelectRemote(ctx,
@@ -82,8 +94,12 @@ func (f atuinRemoteFiles) Close() error {
 }
 
 // atuinHostPolicy adapts the Host-Atuin service to the Session's pre-open
-// port. Only a saved SSH Host has a separate SFTP channel and an identity the
-// import checkpoint can be keyed on.
+// port. A saved SSH, Mosh, or ET Host has a separate SFTP channel over its SSH
+// bootstrap and an identity the import checkpoint can be keyed on. Telnet and
+// unsaved Hosts cannot be probed: they keep the journaled capture path, and an
+// SSH Session to the same machine can later import the same command. That
+// accepted residual duplicate window is shared with the read-only-channel
+// failure described in the hostatuin package doc.
 type atuinHostPolicy struct {
 	service *apphostatuin.Service
 }
@@ -96,9 +112,15 @@ func (p atuinHostPolicy) Probe(ctx context.Context, spec appsession.StartSpec) a
 		return appsession.HostAtuinProbe{}
 	}
 	result, probeErr := p.service.Probe(ctx, ref)
-	// A failed import still reports Present: the Host runs Atuin, so the
-	// capture hook stays skipped and a later Session retries the copy. Failed
-	// is surfaced to the Session so the failure is not silent.
+	return atuinProbeReport(result, probeErr)
+}
+
+// atuinProbeReport maps one Host-Atuin service result to the Session port. A
+// failed import still reports Present: the Host runs Atuin, so the capture hook
+// stays skipped and a later Session retries the copy. Failed only makes sense
+// together with Present and is surfaced to the Session so the failure is not
+// silent.
+func atuinProbeReport(result apphostatuin.ProbeResult, probeErr error) appsession.HostAtuinProbe {
 	return appsession.HostAtuinProbe{
 		Present: result.Present,
 		Failed:  result.Present && probeErr != nil,
@@ -121,10 +143,19 @@ func (p atuinHostPolicy) ImportAfterClose(spec appsession.StartSpec) {
 	p.service.ImportAfterClose(ref)
 }
 
-// hostRef reports whether spec names a saved SSH Host with an identity the
-// read-only channel can open and the import checkpoint can key on.
+// hostRef reports whether spec names a saved Host with an identity the
+// read-only channel can open and the import checkpoint can key on. SSH, Mosh,
+// and ET Sessions all bootstrap over SSH and can be probed; Telnet, Local, and
+// unsaved Sessions cannot, so they keep the journaled capture path. An SSH
+// Session to the same machine can later import a command those fallback
+// Sessions journaled; that is the accepted residual duplicate window.
 func (p atuinHostPolicy) hostRef(spec appsession.StartSpec) (apphostatuin.HostRef, bool) {
-	if p.service == nil || spec.Kind != appsession.KindSSH || spec.HostID == "" {
+	if p.service == nil || spec.HostID == "" {
+		return apphostatuin.HostRef{}, false
+	}
+	switch spec.Kind {
+	case appsession.KindSSH, appsession.KindMosh, appsession.KindET:
+	default:
 		return apphostatuin.HostRef{}, false
 	}
 	return atuinHostRef(spec), true
@@ -132,9 +163,12 @@ func (p atuinHostPolicy) hostRef(spec appsession.StartSpec) (apphostatuin.HostRe
 
 // atuinHistoryRecorder adapts the history service's import port to the
 // Host-Atuin service's recorder port. The adapter lives in the composition
-// root because an application package may not import another context.
+// root because an application package may not import another context. reload
+// refreshes the autocomplete view after an import writes rows, so a newly
+// imported command is suggestible without restarting the app.
 type atuinHistoryRecorder struct {
 	history *apphistory.Service
+	reload  func()
 }
 
 var _ apphostatuin.Recorder = atuinHistoryRecorder{}
@@ -147,6 +181,9 @@ func (r atuinHistoryRecorder) ImportHostAtuin(ctx context.Context, hostID string
 	result, err := r.history.ImportHostAtuin(ctx, hostID, rows, hostOrigin)
 	if err != nil {
 		return 0, err
+	}
+	if result.Imported > 0 && r.reload != nil {
+		r.reload()
 	}
 	return result.Imported, nil
 }

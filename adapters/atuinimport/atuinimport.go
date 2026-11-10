@@ -34,8 +34,10 @@ import (
 
 var (
 	// ErrUnknownSchema reports a database that is not an Atuin history
-	// database this build can read. Detection treats it as absence, so a
-	// foreign file at an Atuin path cannot suppress normal command capture.
+	// database this build can read. Detection keeps the Host Present when a
+	// regular candidate has this schema: the Netcatty capture hook stays
+	// skipped, the import checkpoint is preserved, and a later Session retries
+	// the copy instead of journaling commands the Host's Atuin may repeat.
 	ErrUnknownSchema = domainhistory.ErrUnknownAtuinSchema
 	// ErrInconsistent reports a copy SQLite rejects or considers damaged. The
 	// Host is never modified; a later Session retries the copy.

@@ -203,7 +203,7 @@ func TestCommandCompletionHookWritesOneRowAndAutocompleteReadsIt(t *testing.T) {
 	autocompleteService.Load(ctx)
 
 	started := time.Date(2026, 11, 7, 9, 30, 0, 0, time.Local)
-	hook := commandCompletionHook(autocompleteService, commandTestLocal)
+	hook := commandCompletionHook(autocompleteService, commandTestLocal, nil)
 	hook(appsession.CommandEvent{
 		SessionID: "session-1", Kind: appsession.KindLocal, Scope: "local",
 		HostLabel: "Local Terminal", Command: "git status", CWD: "/srv/app",

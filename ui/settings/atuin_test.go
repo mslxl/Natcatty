@@ -176,8 +176,8 @@ func TestAtuinPanelShowsStatusFingerprintAndNoCredential(t *testing.T) {
 // TestAtuinAccountCardOwnsTheIdentityAndSyncCardDoesNot proves the one
 // account reads as one card: the server address and username are inside the
 // Atuin account card, above its status row, beside the sign-in controls. The
-// Command History sync card keeps only the sync toggle, interval, and host
-// preference, and the page renders exactly one identity input for each.
+// Command History sync card keeps only the sync toggle and interval, and the
+// page renders exactly one identity input for each.
 func TestAtuinAccountCardOwnsTheIdentityAndSyncCardDoesNot(t *testing.T) {
 	account := &fakeHistoryAccount{status: atuinStatus(atuinmodel.KeyStateVerified)}
 	tester, _, state := atuinPanel(t, account, nil)
@@ -233,7 +233,6 @@ func TestAtuinAccountCardOwnsTheIdentityAndSyncCardDoesNot(t *testing.T) {
 	// the account title; none of them is an identity input.
 	for _, label := range []string{
 		m.SettingsAtuinSyncEnabled(), m.SettingsAtuinSyncInterval(),
-		m.SettingsAtuinPreferHostAtuin(),
 	} {
 		rect := find(label)
 		if rect.Y < syncTitle.Y || rect.Y+rect.H > accountTitle.Y+0.5 {
@@ -288,7 +287,7 @@ func TestAtuinAccountCardFollowsTheSyncToggle(t *testing.T) {
 		}
 		syncControls := []string{
 			m.SettingsAtuinSectionTitle(), m.SettingsAtuinSyncEnabled(),
-			m.SettingsAtuinSyncInterval(), m.SettingsAtuinPreferHostAtuin(),
+			m.SettingsAtuinSyncInterval(),
 		}
 		assertPresence := func(step string, present bool, labels []string) {
 			t.Helper()

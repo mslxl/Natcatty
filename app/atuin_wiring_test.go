@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -14,8 +15,11 @@ import (
 	"time"
 
 	historysync "github.com/mslxl/natcatty/application/historysync"
+	apphostatuin "github.com/mslxl/natcatty/application/hostatuin"
+	appsession "github.com/mslxl/natcatty/application/session"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
 // TestCompositionWiresTheProductionAtuinFactory parses the composition root
@@ -126,6 +130,171 @@ func TestCompositionWiresTheProductionAtuinFactory(t *testing.T) {
 	}
 	if !used {
 		t.Fatal("the app composition does not call newHistorySyncServices")
+	}
+}
+
+// TestCompositionWiresTheAutocompleteReload parses app.go and fails when the
+// production atuinHistoryRecorder literal omits reload, sets it to anything but
+// a function literal, or has a body that does not call
+// autocompleteService.Load. The end-to-end import test injects its own reload
+// closure, so this is what pins the production composition root.
+func TestCompositionWiresTheAutocompleteReload(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "app.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse app.go: %v", err)
+	}
+
+	var recorder *ast.CompositeLit
+	ast.Inspect(file, func(node ast.Node) bool {
+		literal, ok := node.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		ident, ok := literal.Type.(*ast.Ident)
+		if ok && ident.Name == "atuinHistoryRecorder" {
+			recorder = literal
+		}
+		return true
+	})
+	if recorder == nil {
+		t.Fatal("app.go has no atuinHistoryRecorder composite literal")
+	}
+	for _, element := range recorder.Elts {
+		field, ok := element.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		key, ok := field.Key.(*ast.Ident)
+		if !ok || key.Name != "reload" {
+			continue
+		}
+		literal, ok := field.Value.(*ast.FuncLit)
+		if !ok {
+			t.Fatal("the production atuinHistoryRecorder.reload is not a function literal")
+		}
+		// Only a call the closure executes counts. Inspecting the literal's
+		// top-level expression statements rejects a Load call buried in a nested
+		// literal that reload never invokes.
+		callsLoad := false
+		for _, statement := range literal.Body.List {
+			expression, ok := statement.(*ast.ExprStmt)
+			if !ok {
+				continue
+			}
+			call, ok := expression.X.(*ast.CallExpr)
+			if !ok {
+				continue
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || selector.Sel.Name != "Load" {
+				continue
+			}
+			if receiver, ok := selector.X.(*ast.Ident); ok && receiver.Name == "autocompleteService" {
+				callsLoad = true
+				break
+			}
+		}
+		if !callsLoad {
+			t.Fatal("the production atuinHistoryRecorder.reload does not call autocompleteService.Load")
+		}
+		return
+	}
+	t.Fatal("the production atuinHistoryRecorder literal does not set reload")
+}
+
+// TestAtuinProbeReportMapsServiceFailures pins the glue between the Host-Atuin
+// service result and the Session port: a failed probe keeps the Host present so
+// the hook stays skipped, and Failed is set only when the Host is present and
+// the probe returned an error.
+func TestAtuinProbeReportMapsServiceFailures(t *testing.T) {
+	probeErr := errors.New("unknown Atuin schema")
+	cases := []struct {
+		name   string
+		result apphostatuin.ProbeResult
+		err    error
+		want   appsession.HostAtuinProbe
+	}{
+		{
+			name: "absent with error",
+			err:  probeErr,
+			want: appsession.HostAtuinProbe{},
+		},
+		{
+			name:   "present without error",
+			result: apphostatuin.ProbeResult{Present: true, Imported: 3},
+			want:   appsession.HostAtuinProbe{Present: true},
+		},
+		{
+			name:   "present with error",
+			result: apphostatuin.ProbeResult{Present: true},
+			err:    probeErr,
+			want:   appsession.HostAtuinProbe{Present: true, Failed: true},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := atuinProbeReport(testCase.result, testCase.err); got != testCase.want {
+				t.Fatalf("atuinProbeReport(%+v, %v) = %+v, want %+v",
+					testCase.result, testCase.err, got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestAtuinHostPolicyHostRefCoversSSHBootstrappedHosts pins which Sessions can
+// be probed: saved SSH, Mosh, and ET Hosts bootstrap over SSH. Telnet, Local,
+// unnamed kinds, and unsaved Hosts keep the journaled capture path.
+func TestAtuinHostPolicyHostRefCoversSSHBootstrappedHosts(t *testing.T) {
+	policy := atuinHostPolicy{service: apphostatuin.New()}
+	cases := []struct {
+		name string
+		spec appsession.StartSpec
+		want bool
+	}{
+		{name: "ssh", spec: appsession.StartSpec{Kind: appsession.KindSSH, HostID: "host-1"}, want: true},
+		{name: "mosh", spec: appsession.StartSpec{Kind: appsession.KindMosh, HostID: "host-1"}, want: true},
+		{name: "et", spec: appsession.StartSpec{Kind: appsession.KindET, HostID: "host-1"}, want: true},
+		{name: "telnet", spec: appsession.StartSpec{Kind: appsession.KindTelnet, HostID: "host-1"}, want: false},
+		{name: "local", spec: appsession.StartSpec{Kind: appsession.KindLocal, HostID: "host-1"}, want: false},
+		{name: "empty kind", spec: appsession.StartSpec{HostID: "host-1"}, want: false},
+		{name: "empty host id", spec: appsession.StartSpec{Kind: appsession.KindSSH}, want: false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if _, ok := policy.hostRef(testCase.spec); ok != testCase.want {
+				t.Fatalf("hostRef(%+v) = %v, want %v", testCase.spec, ok, testCase.want)
+			}
+		})
+	}
+
+	withoutService := atuinHostPolicy{}
+	if _, ok := withoutService.hostRef(appsession.StartSpec{
+		Kind: appsession.KindSSH, HostID: "host-1",
+	}); ok {
+		t.Fatal("a policy without a service accepted a Host")
+	}
+}
+
+// TestAtuinProbeProtocolCoversSSHBootstrappedHosts pins the protocol gate used
+// by the read-only channel: SSH, Mosh, and ET bootstrap over SSH and can be
+// probed; Telnet and Local cannot.
+func TestAtuinProbeProtocolCoversSSHBootstrappedHosts(t *testing.T) {
+	cases := []struct {
+		protocol domainvault.Protocol
+		want     bool
+	}{
+		{protocol: domainvault.ProtocolSSH, want: true},
+		{protocol: domainvault.ProtocolMosh, want: true},
+		{protocol: domainvault.ProtocolET, want: true},
+		{protocol: domainvault.ProtocolTelnet, want: false},
+		{protocol: domainvault.ProtocolLocal, want: false},
+		{protocol: "", want: false},
+	}
+	for _, testCase := range cases {
+		if got := atuinProbeProtocol(testCase.protocol); got != testCase.want {
+			t.Errorf("atuinProbeProtocol(%q) = %v, want %v",
+				testCase.protocol, got, testCase.want)
+		}
 	}
 }
 

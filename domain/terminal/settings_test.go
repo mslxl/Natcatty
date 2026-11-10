@@ -1,7 +1,6 @@
 package terminal
 
 import (
-	"encoding/json"
 	"testing"
 )
 
@@ -24,9 +23,6 @@ func TestDefaults(t *testing.T) {
 	}
 	if !settings.HistoryCaptureHookEnabled {
 		t.Fatal("the history capture hook is off by default")
-	}
-	if !settings.HistoryPreferHostAtuin {
-		t.Fatal("the Host Atuin preference is off by default")
 	}
 }
 
@@ -121,15 +117,11 @@ func TestPortableTerminalSettingsKeepDeviceLocalState(t *testing.T) {
 	if !portable.HistoryCaptureHookEnabled {
 		t.Fatalf("the capture hook preference is not portable: %+v", portable)
 	}
-	if portable.HistoryPreferHostAtuin {
-		t.Fatalf("the device-local Host Atuin preference is portable: %+v", portable)
-	}
 
 	current := Defaults()
 	current.LogDirectory = "/home/me/logs"
 	current.Encodings = map[string]Encoding{"local": EncodingUTF8}
 	current.HistoryCaptureHookEnabled = false
-	current.HistoryPreferHostAtuin = true
 	merged := MergePortable(current, portable)
 	if merged.LogDirectory != "/home/me/logs" {
 		t.Fatalf("merged LogDirectory = %q, want the local value", merged.LogDirectory)
@@ -142,28 +134,5 @@ func TestPortableTerminalSettingsKeepDeviceLocalState(t *testing.T) {
 	}
 	if !merged.HistoryCaptureHookEnabled {
 		t.Fatalf("merged capture hook = %t, want the portable value", merged.HistoryCaptureHookEnabled)
-	}
-	if !merged.HistoryPreferHostAtuin {
-		t.Fatalf("merged Host Atuin preference = %t, want the local value", merged.HistoryPreferHostAtuin)
-	}
-}
-
-// The Host Atuin preference is device-local; the portable settings payload
-// must not carry it under either JSON spelling.
-func TestPortableTerminalSettingsOmitTheHostAtuinPreference(t *testing.T) {
-	settings := Defaults()
-	settings.HistoryPreferHostAtuin = true
-	data, err := json.Marshal(Portable(settings))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var document map[string]any
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []string{"HistoryPreferHostAtuin", "historyPreferHostAtuin"} {
-		if _, found := document[key]; found {
-			t.Fatalf("portable settings carry the device-local key %q: %s", key, data)
-		}
 	}
 }

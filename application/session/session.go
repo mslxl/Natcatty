@@ -276,8 +276,8 @@ const (
 	// 133/7 or typed input. It is never a connection failure.
 	NoticeCaptureHookUnavailable NoticeCode = "capture_hook_unavailable"
 	// NoticeHostAtuinDetected reports that the Host already runs Atuin.
-	// Netcatty prefers the Host's Atuin history and skipped its own capture
-	// hook, so the notice explains the Host-Atuin preference.
+	// Netcatty imports its history read-only and skips its own capture hook, so
+	// the notice explains why commands captured in this Session stay transient.
 	NoticeHostAtuinDetected NoticeCode = "host_atuin_detected"
 	// NoticeHostAtuinImportFailed reports that the Host runs Atuin but this
 	// read-only import attempt failed. The capture hook stays skipped and a
@@ -500,8 +500,9 @@ type CaptureHook interface {
 }
 
 // HostAtuinProbe reports the result of one Host-Atuin detection. Present means
-// the Host's own Atuin history is readable, so the Netcatty capture hook is
-// skipped.
+// the Host runs Atuin, so the Netcatty capture hook is skipped and completions
+// stay transient; Failed reports that detection or import could not complete
+// and the copy retries later.
 type HostAtuinProbe struct {
 	Present bool
 	// Failed reports that the Host has Atuin but this attempt could not read
@@ -513,7 +514,7 @@ type HostAtuinProbe struct {
 // HostAtuin is the optional Host-Atuin compatibility path. Probe runs on the
 // dialing goroutine before the capture hook and the terminal transport, over a
 // separate read-only file channel; it must never write the Host or run the
-// Atuin binary. MarkNoticed records and reports the one-time preference notice
+// Atuin binary. MarkNoticed records and reports the one-time Host-Atuin notice
 // after the Session opens, so a failed Open does not consume it.
 // ImportAfterClose runs once when a Session that skipped the hook ends, to pick
 // up rows Atuin wrote during the Session; it must not block teardown.
@@ -523,9 +524,10 @@ type HostAtuin interface {
 	ImportAfterClose(spec StartSpec)
 }
 
-// hostAtuinProbeTimeout bounds detection before the terminal opens. A slow
-// probe falls back to the Netcatty hook instead of delaying the Session
-// forever; a later Session retries.
+// hostAtuinProbeTimeout bounds detection before the terminal opens. A probe
+// that times out before any evidence is treated as absence, so the Netcatty
+// hook runs; after evidence the Host stays present, the hook stays skipped,
+// and the import-failure notice is shown. A later Session retries.
 const hostAtuinProbeTimeout = 15 * time.Second
 
 // ErrClosed reports an operation on a Session that has already ended.
@@ -873,7 +875,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 
 	// A Host that already runs Atuin is detected before the terminal opens,
 	// over a separate read-only channel. Present keeps the Netcatty capture
-	// hook out of the startup; MarkNoticed publishes the one-time preference
+	// hook out of the startup; MarkNoticed publishes the one-time Host-Atuin
 	// notice once the Session is live. The probe never fails an Open.
 	hostAtuinActive := false
 	hostAtuinFailed := false

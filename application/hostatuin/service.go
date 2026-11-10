@@ -5,20 +5,49 @@
 // command, and never writes to the Host: it only stats, reads, and copies the
 // database files and a few non-executed installation hints.
 //
-// Detection requires evidence that Atuin is installed: a config file, a known
-// binary path, or an ATUIN_HOME/XDG_DATA_HOME assignment in a shell profile.
-// A leftover history.db without any evidence is treated as absent, so a Host
+// Detection requires install evidence that Atuin is installed: a readable
+// config file, a known binary path, or an ATUIN_HOME/XDG_DATA_HOME assignment
+// in a shell profile. A regular candidate history database is a presence
+// candidate rather than evidence on its own: a clean check that finds a
+// leftover history.db without install evidence is conclusive absence, so a Host
 // that removed Atuin regains the normal capture hook instead of losing history
-// forever. Profile hints only see assignments saved in the usual profile
-// files; an ATUIN_HOME exported only in an interactive shell is not visible,
-// and an Atuin binary outside the known paths is not detected. Those Hosts
-// fall back to the capture hook rather than risk reading an arbitrary file.
-// Anything the copy cannot prove consistent is rejected and retried on a later
-// Session.
+// forever. A clean check that finds installation evidence but no
+// database is also conclusive absence; a database created later is picked up on
+// the next Session. Profile hints only see assignments saved in the usual
+// profile files; an ATUIN_HOME exported only in an interactive shell is not
+// visible, and an Atuin binary outside the known paths is not detected. Those
+// Hosts fall back to the capture hook rather than risk reading an arbitrary
+// file. Anything the copy cannot prove consistent is rejected and retried on a
+// later Session.
 //
-// A Host whose Atuin history is readable is reported as Present even when the
-// import fails. The Session then keeps the Netcatty capture hook skipped, and a
-// later Session retries the copy without advancing the import checkpoint.
+// Before any evidence, a check that cannot complete is treated as absence: a
+// false Present would permanently disable journaled history for a Host that
+// does not run Atuin. Ordinary shell profile failures are not evidence at all;
+// an oversized or unreadable generic profile is simply skipped. Once detection
+// has any evidence, every later failure is inconclusive rather than absent: a
+// non-not-exist Stat or Open error, a timeout, a copy or parse failure, or an
+// unknown schema keeps Present true and returns an error. The Session then
+// keeps the Netcatty capture hook skipped, captures commands transiently for
+// suggestions, shows the import-failed notice, and retries on a later Session.
+// Present false therefore means a conclusive absence, not merely a check that
+// failed.
+//
+// A conclusive-absence check relies on the SFTP server reporting a missing path
+// as SSH_FX_NO_SUCH_FILE, which pkg/sftp maps to fs.ErrNotExist. A
+// non-conforming server that answers a missing path with a generic failure
+// makes the check inconclusive: before any evidence that is treated as absence
+// under the pre-evidence policy above, and after evidence it keeps the Host
+// Present.
+//
+// One accepted residual window remains: if the read-only channel cannot be
+// opened at all, or its home directory cannot be read, before any evidence is
+// seen, the probe reports absence. A Host without SFTP is common, and treating
+// every channel failure as Atuin would disable persistent history for every
+// saved SSH Host without a read-only channel. The cost is that an intermittent
+// channel failure on a Host that also runs Atuin can journal a command that a
+// later successful probe imports again from the Host's own Atuin. The
+// alternative - suppressing persistent capture for every Host whose channel is
+// unavailable - is worse.
 package hostatuin
 
 import (
@@ -28,6 +57,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"path"
@@ -65,6 +95,11 @@ var (
 	// ErrCopyTooLarge reports a remote file that exceeds the per-attempt copy
 	// budget. It is rejected before any of it is written locally.
 	ErrCopyTooLarge = errors.New("hostatuin: Atuin copy exceeds the size limit")
+	// ErrProbeUnavailable reports that detection could not complete and the Host
+	// may or may not run Atuin. The probe still reports the Host Present so the
+	// Session captures transiently instead of journaling a command a later
+	// import could repeat.
+	ErrProbeUnavailable = errors.New("hostatuin: Atuin detection unavailable")
 )
 
 // HostRef is the Host context an import needs. It is deliberately small: the
@@ -102,7 +137,11 @@ type RemoteFiles interface {
 }
 
 // RemoteSource opens the separate read-only channel for a Host. The app
-// implements it with the SFTP file protocol; a Host without SFTP is absent.
+// implements it with the SFTP file protocol. A channel that cannot be opened
+// before any install evidence is seen is treated as absence: most saved SSH
+// Hosts do not provide SFTP, and treating every channel failure as Atuin would
+// disable persistent history for all of them. The package doc describes the
+// accepted duplicate window this leaves.
 type RemoteSource interface {
 	OpenReadOnly(context.Context, model.HostID) (RemoteFiles, error)
 }
@@ -121,8 +160,14 @@ type Recorder interface {
 	MarkHostAtuinNoticed(context.Context, string) (bool, error)
 }
 
-// ProbeResult reports one detection attempt. Present means the Host has a
-// readable Atuin history database, so the Netcatty capture hook is skipped.
+// ProbeResult reports one detection attempt. Present means the Host runs
+// Atuin, so the Netcatty capture hook is skipped and the Session captures
+// commands transiently. It stays true when detection or the import could not
+// complete after evidence was seen: a Stat/Open failure, a timeout, an
+// inconsistent copy, or an unknown schema. Present false means the check found
+// no usable evidence, so the normal capture hook runs; a pre-evidence check
+// failure is treated the same way and is the documented residual duplicate
+// window.
 type ProbeResult struct {
 	Present  bool
 	Imported int
@@ -150,12 +195,6 @@ func WithDatabase(database Database) Option {
 // WithRecorder supplies the journal writer.
 func WithRecorder(recorder Recorder) Option {
 	return func(s *Service) { s.recorder = recorder }
-}
-
-// WithPreference supplies the HistoryPreferHostAtuin setting. A nil predicate
-// keeps the preference on.
-func WithPreference(prefer func() bool) Option {
-	return func(s *Service) { s.prefer = prefer }
 }
 
 // WithTempDir replaces the private temporary-directory factory.
@@ -191,7 +230,6 @@ type Service struct {
 	remote        RemoteSource
 	database      Database
 	recorder      Recorder
-	prefer        func() bool
 	makeTempDir   func() (string, error)
 	timeout       time.Duration
 	maxTotalBytes int64
@@ -214,20 +252,19 @@ func New(opts ...Option) *Service {
 	return service
 }
 
-// Enabled reports whether the Host-Atuin preference is on and the service has
-// the ports it needs.
+// Enabled reports whether the service has the remote and database ports it
+// needs.
 func (s *Service) Enabled() bool {
-	if s == nil || s.remote == nil || s.database == nil {
-		return false
-	}
-	return s.prefer == nil || s.prefer()
+	return s != nil && s.remote != nil && s.database != nil
 }
 
 // Probe detects a Host's Atuin history and imports it. It runs before the
-// interactive terminal opens. A Host not using Atuin, or one whose separate
-// channel cannot be opened, reports Present false so the normal capture hook
-// is used. Once a database is found, Present stays true even when the copy or
-// import fails.
+// interactive terminal opens. A clean check that finds no Atuin evidence, or a
+// separate channel that cannot be opened before any evidence, reports Present
+// false so the normal capture hook is used. Once any evidence is seen, Present
+// stays true through every later failure - a Stat/Open error, a timeout, an
+// inconsistent copy, a parse failure, or an unknown schema - so the Session
+// captures transiently and a later Session retries.
 func (s *Service) Probe(ctx context.Context, ref HostRef) (ProbeResult, error) {
 	if !s.Enabled() || ref.ID == "" {
 		return ProbeResult{}, nil
@@ -255,7 +292,7 @@ func (s *Service) MarkNoticed(ctx context.Context, ref HostRef) bool {
 
 // Import copies and imports a Host's Atuin history without publishing a
 // notice. The Session calls it after its terminal closes to pick up rows Atuin
-// wrote during the Session. A Host no longer using the preference is skipped.
+// wrote during the Session.
 func (s *Service) Import(ctx context.Context, ref HostRef) (ImportResult, error) {
 	if !s.Enabled() || ref.ID == "" {
 		return ImportResult{}, nil
@@ -411,6 +448,12 @@ type readOutcome struct {
 // a later Session or leak a send.
 func (s *Service) read(ctx context.Context, ref HostRef) (snapshot, error) {
 	handle := &remoteHandle{}
+	// found is set as soon as any evidence is seen, including a regular
+	// candidate database. A deadline can fire after evidence but before
+	// detectionCandidates clears the flag on a conclusive-absence return;
+	// reporting Present in that window is the conservative choice because
+	// evidence was already seen, and it can only cost transient capture, never a
+	// journaled duplicate.
 	found := &atomic.Bool{}
 	done := make(chan readOutcome, 1)
 	go func() {
@@ -439,13 +482,27 @@ func (s *Service) read(ctx context.Context, ref HostRef) (snapshot, error) {
 }
 
 // readRemote opens the channel, decides whether the Host runs Atuin, and reads
-// the first candidate database that parses as an Atuin history. A failure
-// before a database is found is reported as absent; a failure after it is
-// found keeps Present true so the capture hook stays skipped.
+// the first candidate database that parses as an Atuin history. A detection
+// error is reported as Present true: after any evidence the Host may be running
+// Atuin, so the Session must capture transiently instead of journaling a command
+// a later import could repeat. Before any evidence, a check that cannot complete
+// - a channel that does not open, a home directory that cannot be read, or a
+// Stat/Open failure on an Atuin-specific path - is reported as absence. The
+// channel and home-directory cases are the documented residual duplicate
+// window: an intermittent channel failure on a Host that runs Atuin can journal
+// a row that a later import repeats, but treating every channel failure as
+// Atuin would disable persistent history for every saved SSH Host without SFTP.
+//
+// An unknown schema lets the remaining candidates be tried, and when none
+// parses the Host is still reported present with ErrUnknownAtuinSchema rather
+// than falling back to the Netcatty hook. A candidate that cannot be stat'ed
+// during this pass is likewise inconclusive and keeps the Host present.
 func (s *Service) readRemote(ctx context.Context, ref HostRef, handle *remoteHandle,
 	found *atomic.Bool) (snapshot, error) {
 	files, err := s.remote.OpenReadOnly(ctx, ref.ID)
 	if err != nil {
+		// Accepted residual window: a Host without SFTP is common, so a
+		// channel that never opens stays absent. See the package doc.
 		return snapshot{}, nil
 	}
 	if !handle.attach(files) {
@@ -458,55 +515,122 @@ func (s *Service) readRemote(ctx context.Context, ref HostRef, handle *remoteHan
 
 	root, err := files.Root(ctx)
 	if err != nil || root == "" {
+		// Same accepted window as an unopenable channel: absence before any
+		// install evidence is conclusive.
 		return snapshot{}, nil
 	}
 
-	candidates, installed := s.detectionCandidates(ctx, files, root)
+	candidates, installed, err := s.detectionCandidates(ctx, files, root, found)
+	if err != nil {
+		// Detection could not finish after (or while looking for) evidence.
+		// Keep the Host present so the hook stays skipped and a later Session
+		// retries.
+		return snapshot{Present: true}, errors.Join(ErrProbeUnavailable, err)
+	}
 	if !installed {
 		return snapshot{}, nil
 	}
+	unknownSchema := false
+	var statErr error
 	for _, candidate := range candidates {
 		info, err := files.Stat(ctx, candidate)
-		if err != nil || !info.Regular || info.Symlink {
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				// The check failed rather than proving absence; keep the
+				// other candidates and remember that this pass was
+				// inconclusive.
+				statErr = errors.Join(statErr, err)
+			}
 			continue
 		}
-		found.Store(true)
+		if !info.Regular || info.Symlink {
+			continue
+		}
 		dir, err := s.copy(ctx, files, candidate)
 		if err != nil {
+			if unknownSchema {
+				// An earlier candidate had an unknown schema; keep the
+				// fail-closed reason alongside this read failure.
+				return snapshot{Present: true},
+					errors.Join(domainhistory.ErrUnknownAtuinSchema, err)
+			}
 			return snapshot{Present: true}, err
 		}
 		rows, parseErr := s.readCopied(ctx, dir)
 		if parseErr != nil {
 			if errors.Is(parseErr, domainhistory.ErrUnknownAtuinSchema) {
 				// This is not an Atuin database this build understands. Try
-				// the next location; when none qualifies the Host is absent
-				// and the normal capture hook runs.
+				// the next location. If none parses, the Host still runs
+				// Atuin, so report it present and fail closed below: the
+				// Netcatty hook must not run next to the Host's own Atuin.
+				unknownSchema = true
 				continue
+			}
+			if unknownSchema {
+				return snapshot{Present: true},
+					errors.Join(domainhistory.ErrUnknownAtuinSchema, parseErr)
 			}
 			return snapshot{Present: true}, parseErr
 		}
 		return snapshot{Present: true, rows: rows}, nil
 	}
-	return snapshot{}, nil
+	if unknownSchema {
+		// At least one regular candidate database existed but none was a
+		// schema this build understands. Keeping the Host present skips the
+		// Netcatty hook and leaves the checkpoint for a later retry.
+		return snapshot{Present: true}, errors.Join(domainhistory.ErrUnknownAtuinSchema, statErr)
+	}
+	if statErr != nil {
+		// Detection saw a regular candidate but this pass could not check it.
+		return snapshot{Present: true}, errors.Join(ErrProbeUnavailable, statErr)
+	}
+	// Detection confirmed a regular candidate, so it can only have vanished
+	// without an error; that is still not proof the Host stopped running
+	// Atuin, so fail closed and retry.
+	return snapshot{Present: true},
+		fmt.Errorf("%w: the candidate database disappeared between detection and copy", ErrProbeUnavailable)
 }
 
-// detectionCandidates returns the database paths to try, in order, and whether
-// the Host shows non-executing evidence that Atuin is installed. Evidence is a
-// config file, a known binary path, or an ATUIN_HOME/XDG_DATA_HOME assignment
-// in a shell profile. A leftover history.db without any evidence is treated as
-// absent, so an uninstalled Atuin cannot suppress the capture hook forever.
-// Binary markers are checked last because they are only needed for a Host
-// whose database exists but whose config and profiles are silent.
+// detectionCandidates returns the database paths to try, in order, whether the
+// Host shows non-executing evidence that Atuin is installed, and an error when
+// the check could not complete. Install evidence is a readable Atuin config
+// file, an ATUIN_HOME/XDG_DATA_HOME assignment in a shell profile, or a known
+// binary path. A regular candidate database is a presence candidate, not
+// install evidence on its own: once one is found, a later inconclusive check
+// fails closed, but a clean check with no config, profile hint, or binary marker
+// treats the database as a stale leftover and returns absence, so an
+// uninstalled Atuin cannot suppress the capture hook forever. A clean check
+// that finds install evidence but no database is likewise conclusive absence.
+// Binary markers are checked last because they are only needed for a Host whose
+// database exists but whose config and profiles are silent.
+//
+// Ordinary shell profile failures are not evidence: an oversized, unreadable,
+// or otherwise failing generic profile is skipped silently, because a false
+// Present would permanently disable journaled history for a Host that does not
+// run Atuin. Other inconclusive checks - a non-not-exist Stat error on an Atuin
+// config file or a candidate database - are accumulated. Before any evidence,
+// such an error is still treated as conclusive absence and the found flag is
+// cleared. After evidence (found is true) it is returned so the caller keeps
+// the Host present instead of journaling a row a later import could repeat. A
+// timeout that lands after evidence but before the conclusive-absence clear
+// still reports Present; that conservative false-Present window is accepted
+// because evidence was already seen.
 func (s *Service) detectionCandidates(ctx context.Context, files RemoteFiles,
-	root string) ([]string, bool) {
+	root string, found *atomic.Bool) ([]string, bool, error) {
 	installed := false
 	explicit := ""
+	var checkErr error
 	for _, rel := range candidateConfigFiles {
-		data, ok := readSmallFile(ctx, files, homePath(root, rel), maxHintBytes)
+		data, ok, err := readSmallFile(ctx, files, homePath(root, rel), maxHintBytes)
+		if err != nil {
+			checkErr = errors.Join(checkErr, err)
+			continue
+		}
 		if !ok {
 			continue
 		}
 		installed = true
+		found.Store(true)
 		if explicit == "" {
 			explicit = configDatabasePath(data, root)
 		}
@@ -517,9 +641,13 @@ func (s *Service) detectionCandidates(ctx context.Context, files RemoteFiles,
 		// Atuin's db_path overrides its default data directory, so profile
 		// hints cannot change where the database lives.
 		candidates = append(candidates, explicit, path.Join(explicit, historyName))
-	} else if hints, ok := profileHints(ctx, files, root); ok {
-		installed = true
-		candidates = append(candidates, hints...)
+	} else {
+		hints, ok := profileHints(ctx, files, root)
+		if ok {
+			installed = true
+			found.Store(true)
+			candidates = append(candidates, hints...)
+		}
 	}
 	for _, rel := range candidateDataDirs {
 		candidates = append(candidates, path.Join(root, rel, historyName))
@@ -529,48 +657,100 @@ func (s *Service) detectionCandidates(ctx context.Context, files RemoteFiles,
 	present := false
 	for _, candidate := range candidates {
 		info, err := files.Stat(ctx, candidate)
-		if err == nil && info.Regular && !info.Symlink {
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				// The check failed rather than proving absence; try the
+				// remaining candidates and remember the inconclusive pass.
+				checkErr = errors.Join(checkErr, err)
+			}
+			continue
+		}
+		if info.Regular && !info.Symlink {
 			present = true
+			found.Store(true)
 			break
 		}
 	}
 	if !present {
-		return nil, false
+		if checkErr != nil && found.Load() {
+			return nil, false, checkErr
+		}
+		// No regular database. A clean check is conclusive absence whether or
+		// not install evidence was seen; after evidence, an inconclusive check
+		// stays fail-closed instead. Without evidence a check that could not
+		// complete is absence too, because a false Present would permanently
+		// disable journaled history for a Host that does not run Atuin. Clear
+		// the flag before returning so a timeout racing this return does not
+		// resurrect an absence as Present.
+		found.Store(false)
+		return nil, false, nil
 	}
 	if !installed {
 		for _, rel := range candidateBinaries {
 			info, err := files.Stat(ctx, homePath(root, rel))
-			if err == nil && info.Regular {
+			if err != nil {
+				if !errors.Is(err, fs.ErrNotExist) {
+					checkErr = errors.Join(checkErr, err)
+				}
+				continue
+			}
+			if info.Regular {
 				installed = true
+				found.Store(true)
 				break
 			}
 		}
 	}
 	if !installed {
-		return nil, false
+		if checkErr != nil && found.Load() {
+			return nil, false, checkErr
+		}
+		// A regular database exists, but no config, profile hint, or binary
+		// marks Atuin as installed: a leftover database without installation
+		// evidence is conclusive absence. After evidence, an inconclusive
+		// check stays fail-closed instead.
+		found.Store(false)
+		return nil, false, nil
 	}
-	return candidates, true
+	return candidates, true, nil
 }
 
 // readSmallFile reads at most limit bytes of a regular file. Dotfiles are
 // commonly symlinked, so a link is followed here; only the 64 KiB hint budget
-// is ever read. Absence, directories, oversized files, and read errors are all
-// reported as false: hint files never have authority.
-func readSmallFile(ctx context.Context, files RemoteFiles, name string, limit int64) ([]byte, bool) {
+// is ever read. A missing or non-regular file is conclusive absence for this
+// hint: found is false with no error. A permission, connection, or read error,
+// or a file larger than limit, is an inconclusive check and returns an error,
+// because detection could not prove the hint absent.
+func readSmallFile(ctx context.Context, files RemoteFiles, name string, limit int64) ([]byte, bool, error) {
 	info, err := files.Stat(ctx, name)
-	if err != nil || !info.Regular || info.Size > limit {
-		return nil, false
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("hostatuin: stat hint %s: %w", name, err)
+	}
+	if !info.Regular {
+		return nil, false, nil
+	}
+	if info.Size > limit {
+		return nil, false, fmt.Errorf("hostatuin: hint %s is larger than %d bytes", name, limit)
 	}
 	reader, err := files.Open(ctx, name)
 	if err != nil {
-		return nil, false
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("hostatuin: open hint %s: %w", name, err)
 	}
 	defer reader.Close()
 	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
-	if err != nil || int64(len(data)) > limit {
-		return nil, false
+	if err != nil {
+		return nil, false, fmt.Errorf("hostatuin: read hint %s: %w", name, err)
 	}
-	return data, true
+	if int64(len(data)) > limit {
+		return nil, false, fmt.Errorf("hostatuin: hint %s is larger than %d bytes", name, limit)
+	}
+	return data, true, nil
 }
 
 // configDatabasePath extracts a top-level db_path from an Atuin TOML config.
@@ -595,14 +775,18 @@ func configDatabasePath(data []byte, root string) string {
 }
 
 // profileHints returns database paths hinted by ATUIN_HOME or XDG_DATA_HOME
-// assignments in the Host's shell profiles, and whether any profile supplied
-// one. Profiles are only read for those two variables: nothing is executed and
-// the contents are never stored.
+// assignments in the Host's shell profiles and whether any profile supplied
+// one. Profiles are only hint sources: an oversized, unreadable, or otherwise
+// failing generic profile is skipped silently rather than making the Atuin
+// check inconclusive, because a false Present would permanently disable
+// journaled history for a Host that does not run Atuin. Profiles are read only
+// for those two variables: nothing is executed and the contents are never
+// stored.
 func profileHints(ctx context.Context, files RemoteFiles, root string) ([]string, bool) {
 	var paths []string
 	found := false
 	for _, rel := range candidateProfiles {
-		data, ok := readSmallFile(ctx, files, homePath(root, rel), maxHintBytes)
+		data, ok := readProfileHint(ctx, files, homePath(root, rel), maxHintBytes)
 		if !ok {
 			continue
 		}
@@ -631,6 +815,20 @@ func profileHints(ctx context.Context, files RemoteFiles, root string) ([]string
 		}
 	}
 	return paths, found
+}
+
+// readProfileHint reads at most limit bytes of a generic shell profile. These
+// profiles are only hint sources, so every read or size failure is swallowed:
+// a profile that cannot be read supplies no hint instead of making the Atuin
+// check inconclusive. A false Present would permanently disable journaled
+// history for a Host that does not run Atuin. Dotfiles are commonly symlinked,
+// so a link is followed here; the contents are never executed or stored.
+func readProfileHint(ctx context.Context, files RemoteFiles, name string, limit int64) ([]byte, bool) {
+	data, ok, err := readSmallFile(ctx, files, name, limit)
+	if err != nil {
+		return nil, false
+	}
+	return data, ok
 }
 
 // profileAssignment reads one plain shell assignment. Only `NAME=value` and
@@ -724,8 +922,10 @@ func (s *Service) readCopied(ctx context.Context, dir string) ([]domainhistory.A
 	return s.database.ReadHistory(ctx, filepath.Join(dir, historyName))
 }
 
-// fileState is one file's identity at one instant. A file that cannot be
-// stat'ed is an error; an optional side file that is absent is not.
+// fileState is one file's identity at one instant. Absent means the file
+// proved missing (fs.ErrNotExist), or that it is a directory or symlink; any
+// other Stat failure is an error, including on an optional WAL/SHM side file,
+// because an unchecked side file could hide committed rows.
 type fileState struct {
 	present bool
 	size    int64
@@ -737,11 +937,17 @@ func (f fileState) equal(other fileState) bool {
 		f.modTime.Equal(other.modTime)
 }
 
-// statState reads one optional file's identity. A directory or symlink counts
-// as absent: the importer never follows a link out of the Atuin directory.
+// statState reads one optional file's identity. A missing file is absent with
+// no error; any other Stat failure is returned so the caller can reject the
+// copy instead of silently skipping a side file. A directory or symlink also
+// counts as absent: the importer never follows a link out of the Atuin
+// directory.
 func statState(ctx context.Context, files RemoteFiles, name string) (fileState, error) {
 	info, err := files.Stat(ctx, name)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fileState{}, nil
+		}
 		return fileState{}, err
 	}
 	if !info.Regular || info.Symlink {
@@ -755,8 +961,11 @@ func statState(ctx context.Context, files RemoteFiles, name string) (fileState, 
 // read-only SQLite adapter expects; the remote database may have any name when
 // config.toml overrides db_path. All three identities are captured before and
 // after the whole copy; a change to any file means the three do not describe
-// one instant, so the snapshot is rejected and retried later. The WAL and SHM
-// headers must also agree. Only Stat and Open are ever called on the Host.
+// one instant, so the snapshot is rejected and retried later. A Stat failure
+// other than fs.ErrNotExist on any of the three files, including the optional
+// WAL and SHM side files, is also an inconsistent copy: skipping an unchecked
+// side file could import a partial snapshot. The WAL and SHM headers must also
+// agree. Only Stat and Open are ever called on the Host.
 //
 // Some SFTP servers report stat times at whole-second resolution, so a
 // same-size rewrite within one second can evade the identity comparison. The
@@ -782,7 +991,7 @@ func (s *Service) copy(ctx context.Context, files RemoteFiles, databasePath stri
 	before := make([]fileState, len(remoteNames))
 	for index, name := range remoteNames {
 		state, err := statState(ctx, files, name)
-		if err != nil && index == 0 {
+		if err != nil {
 			cleanup()
 			return "", fmt.Errorf("%w: stat %s: %v", ErrInconsistentCopy, name, err)
 		}
@@ -817,7 +1026,7 @@ func (s *Service) copy(ctx context.Context, files RemoteFiles, databasePath stri
 	// copy finished: the database, WAL, and SHM must still be one snapshot.
 	for index, name := range remoteNames {
 		state, err := statState(ctx, files, name)
-		if err != nil && index == 0 {
+		if err != nil {
 			cleanup()
 			return "", fmt.Errorf("%w: stat %s after copy: %v", ErrInconsistentCopy, name, err)
 		}

@@ -59,6 +59,9 @@ func TestSessionCompletionHookEmitsOnceOnD(t *testing.T) {
 	if event.CaptureTier != domainhistory.CaptureTierNativeOSC {
 		t.Fatalf("capture tier = %d, want Tier 2", event.CaptureTier)
 	}
+	if event.Transient {
+		t.Fatal("a Session without Host Atuin marked its completion transient")
+	}
 
 	// Later marks and the Session close must not produce a second event.
 	factory.transport.send("\x1b]133;D;0\x07")

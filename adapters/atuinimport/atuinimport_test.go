@@ -209,8 +209,9 @@ func TestReadHistoryRejectsAMissingFile(t *testing.T) {
 }
 
 // A stale file at an Atuin database path that is not SQLite at all must be
-// classified as unknown schema, so detection does not treat the Host as Atuin
-// forever and suppress the normal capture hook.
+// classified as unknown schema, so detection can keep the Host Present, skip
+// the Netcatty capture hook, preserve the checkpoint, and retry the copy on a
+// later Session instead of journaling commands the Host's Atuin may repeat.
 func TestReadHistoryClassifiesANonSQLiteFileAsUnknownSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "history.db")
 	if err := os.WriteFile(path, []byte("this is not a database"), 0o600); err != nil {

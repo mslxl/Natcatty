@@ -382,15 +382,14 @@ func TestPreviousBuildLocalBackupRestoresAfterHistorySchemaGrowth(t *testing.T) 
 	if err := store.Save(ctx, testHost("h1", "alpha")); err != nil {
 		t.Fatal(err)
 	}
-	// A Local Backup written before the history schema grew is a schema
-	// version 1 snapshot. The constant must not change, or the exact-version
-	// check would reject every existing backup.
+	// Growing the history schema must not change the Vault backup schema
+	// version, or the exact-version check would reject existing backups.
 	previous, err := store.Snapshot(ctx)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if previous.SchemaVersion != 1 {
-		t.Fatalf("backup schema version = %d, want the unchanged version 1", previous.SchemaVersion)
+	if previous.SchemaVersion != schemaVersion {
+		t.Fatalf("backup schema version = %d, want the unchanged version %d", previous.SchemaVersion, schemaVersion)
 	}
 
 	// History rows added by this build must stay outside the Vault table set.

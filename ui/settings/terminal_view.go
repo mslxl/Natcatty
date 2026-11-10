@@ -221,18 +221,12 @@ func renderPowerUxSection(c *ui.Context, state *TerminalState,
 func renderHistoryCaptureSection(c *ui.Context, state *TerminalState,
 	settings domainterminal.Settings, m locales.Messages, t *ui.Theme) {
 	ui.Text(c, m.SettingsHistoryCaptureHookTitle()).Bold()
-	ui.Text(c, m.SettingsHistoryCaptureHookDescription()).FontSize(12).TextColor(t.TextMuted)
+	ui.Text(c, m.SettingsHistoryCaptureHookDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	enabled := settings.HistoryCaptureHookEnabled
 	if ui.Checkbox(c, &enabled, m.SettingsHistoryCaptureHookEnabled()).Changed() {
 		state.SetHistoryCaptureHookEnabled(enabled)
 		c.Invalidate()
 	}
-	preferHostAtuin := settings.HistoryPreferHostAtuin
-	if ui.Checkbox(c, &preferHostAtuin, m.SettingsHistoryPreferHostAtuin()).Changed() {
-		state.SetHistoryPreferHostAtuin(preferHostAtuin)
-		c.Invalidate()
-	}
-	ui.Text(c, m.SettingsHistoryPreferHostAtuinDescription()).FontSize(12).TextColor(t.TextMuted)
 }
 
 // renderRetentionSection draws the Connection Log retention bounds. The count

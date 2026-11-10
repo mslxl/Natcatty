@@ -246,13 +246,6 @@ type Settings struct {
 	// raises command capture to Tier 1. It is portable and on by default. When
 	// it is off, Sessions fall back to native OSC 133/7 or typed input.
 	HistoryCaptureHookEnabled bool
-	// HistoryPreferHostAtuin imports a Host's existing Atuin history
-	// read-only at Session open and skips the Netcatty capture hook for that
-	// Host. It is device-local and on by default: the portable settings payload
-	// omits it, so Vault cloud sync never carries one device's choice to
-	// another. Turning it off ignores the Host's Atuin install and uses the
-	// Netcatty hook instead.
-	HistoryPreferHostAtuin bool `json:"-"`
 }
 
 // Portable returns the terminal settings that follow the user between
@@ -262,21 +255,15 @@ type Settings struct {
 func Portable(settings Settings) Settings {
 	settings.LogDirectory = ""
 	settings.Encodings = nil
-	// The Host Atuin preference is device-local and tagged out of JSON, so the
-	// portable payload cannot carry it. Clearing it here keeps a local copy of
-	// the struct honest about what travels.
-	settings.HistoryPreferHostAtuin = false
 	return settings
 }
 
 // MergePortable overlays a synced terminal document on the current one while
-// keeping the local log directory, the per-device last-used encodings, and the
-// device-local Host Atuin preference.
+// keeping the local log directory and the per-device last-used encodings.
 func MergePortable(current, portable Settings) Settings {
 	next := portable
 	next.LogDirectory = current.LogDirectory
 	next.Encodings = current.Encodings
-	next.HistoryPreferHostAtuin = current.HistoryPreferHostAtuin
 	return Normalize(next)
 }
 
@@ -323,7 +310,6 @@ func Defaults() Settings {
 		ConnectionLogRetentionDays:  0,
 
 		HistoryCaptureHookEnabled: true,
-		HistoryPreferHostAtuin:    true,
 	}
 }
 

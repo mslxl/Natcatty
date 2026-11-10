@@ -114,6 +114,52 @@ func TestHostAtuinPresentSkipsTheCaptureHookAndAnnouncesOnce(t *testing.T) {
 	}
 }
 
+// A Host-Atuin Session still captures typed commands for its own suggestions,
+// but marks the completion transient so the app never journals it.
+func TestHostAtuinSessionMarksCompletionsTransient(t *testing.T) {
+	factory := &fakeFactory{transport: newFakeTransport()}
+	events := make(chan CommandEvent, 4)
+	policy := &fakeHostAtuin{probe: HostAtuinProbe{Present: true}}
+	service := newTestService(factory,
+		WithHostAtuin(policy),
+		WithCommandCompletionHook(func(event CommandEvent) { events <- event }),
+	)
+	session, err := service.Open(context.Background(), StartSpec{
+		Kind: KindSSH, HostID: "host-1", Label: "web",
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	if _, err := session.TerminalConn().Write([]byte("git status\r")); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "typed input", func() bool { return factory.transport.input() == "git status\r" })
+	factory.transport.send("\x1b]133;D;0\x07")
+	_ = readOutput(t, session)
+	select {
+	case event := <-events:
+		if !event.Transient {
+			t.Fatalf("a Host-Atuin completion was not transient: %+v", event)
+		}
+		if event.Command != "git status" || event.Scope != "host:host-1" {
+			t.Fatalf("transient event = %+v", event)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the completion hook was not called")
+	}
+
+	// Exactly one event: a later mark does not emit a second completion.
+	factory.transport.send("\x1b]133;D;0\x07")
+	_ = readOutput(t, session)
+	select {
+	case extra := <-events:
+		t.Fatalf("a second completion was emitted: %+v", extra)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestHostAtuinAbsentKeepsTheCaptureHookAndPublishesNoNotice(t *testing.T) {
 	factory := &fakeFactory{transport: newFakeTransport()}
 	hookCalls := 0
@@ -122,8 +168,10 @@ func TestHostAtuinAbsentKeepsTheCaptureHookAndPublishesNoNotice(t *testing.T) {
 		spec.Command = []string{"/bin/hooked"}
 		return CaptureHookPlan{Spec: spec}, false
 	})
+	events := make(chan CommandEvent, 4)
 	policy := &fakeHostAtuin{}
-	service := newTestService(factory, WithCaptureHook(hook), WithHostAtuin(policy))
+	service := newTestService(factory, WithCaptureHook(hook), WithHostAtuin(policy),
+		WithCommandCompletionHook(func(event CommandEvent) { events <- event }))
 
 	session, err := service.Open(context.Background(), StartSpec{
 		Kind: KindSSH, HostID: "host-1", Command: []string{"/bin/sh"},
@@ -143,6 +191,23 @@ func TestHostAtuinAbsentKeepsTheCaptureHookAndPublishesNoNotice(t *testing.T) {
 	}
 	if policy.markCount() != 0 {
 		t.Fatalf("an absent Host consumed a notice mark: %d", policy.markCount())
+	}
+
+	// A Host without Atuin keeps the journaled capture path: its completion is
+	// not transient.
+	if _, err := session.TerminalConn().Write([]byte("git status\r")); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "typed input", func() bool { return factory.transport.input() == "git status\r" })
+	factory.transport.send("\x1b]133;D;0\x07")
+	_ = readOutput(t, session)
+	select {
+	case event := <-events:
+		if event.Transient {
+			t.Fatalf("an absent Host marked its completion transient: %+v", event)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the completion hook was not called")
 	}
 }
 
@@ -167,7 +232,7 @@ func TestHostAtuinAbsentHasNoPostSessionImport(t *testing.T) {
 }
 
 // A Host whose Atuin history could not be read keeps the hook skipped, shows
-// a warning, and does not consume the one-time preference notice.
+// a warning, and does not consume the one-time Host-Atuin notice.
 func TestHostAtuinImportFailurePublishesAWarningWithoutConsumingTheNotice(t *testing.T) {
 	factory := &fakeFactory{transport: newFakeTransport()}
 	hookCalls := 0
@@ -175,11 +240,13 @@ func TestHostAtuinImportFailurePublishesAWarningWithoutConsumingTheNotice(t *tes
 		hookCalls++
 		return CaptureHookPlan{Spec: spec}, false
 	})
+	events := make(chan CommandEvent, 4)
 	policy := &fakeHostAtuin{
 		probe: HostAtuinProbe{Present: true, Failed: true},
 		mark:  true,
 	}
-	service := newTestService(factory, WithCaptureHook(hook), WithHostAtuin(policy))
+	service := newTestService(factory, WithCaptureHook(hook), WithHostAtuin(policy),
+		WithCommandCompletionHook(func(event CommandEvent) { events <- event }))
 
 	session, err := service.Open(context.Background(), StartSpec{
 		Kind: KindSSH, HostID: "host-1", Label: "web",
@@ -197,6 +264,23 @@ func TestHostAtuinImportFailurePublishesAWarningWithoutConsumingTheNotice(t *tes
 	}
 	if policy.markCount() != 0 {
 		t.Fatalf("a failed import consumed the one-time notice: %d marks", policy.markCount())
+	}
+
+	// Present stays authoritative even when the import failed: the completion
+	// is still transient and never journaled.
+	if _, err := session.TerminalConn().Write([]byte("git status\r")); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "typed input", func() bool { return factory.transport.input() == "git status\r" })
+	factory.transport.send("\x1b]133;D;0\x07")
+	_ = readOutput(t, session)
+	select {
+	case event := <-events:
+		if !event.Transient {
+			t.Fatalf("a failed-import Host-Atuin completion was not transient: %+v", event)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the completion hook was not called")
 	}
 }
 

@@ -75,6 +75,49 @@ func TestSuggestionsRespectTheHistoryScope(t *testing.T) {
 	}
 }
 
+// SuggestionsInWith adds the Session's transient rows to the journal view
+// under the same scope, cwd, and ranking rules. The rows are never written
+// back: a plain SuggestionsIn call still sees only the journal.
+func TestSuggestionsInWithMergesTransientRowsWithoutTouchingTheJournal(t *testing.T) {
+	at := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	journal := &journalMemory{}
+	journal.entries = []domainhistory.Entry{journalEntryFor("git status", "host:a", at)}
+	config := defaultConfig()
+	service := NewService(journal, func() Config { return config })
+	service.Load(context.Background())
+	transient := []domainhistory.Entry{
+		journalEntryFor("git checkout", "host:a", at),
+		journalEntryFor("git push", "host:b", at),
+	}
+	texts := func(suggestions []Suggestion) map[string]int {
+		out := make(map[string]int, len(suggestions))
+		for _, suggestion := range suggestions {
+			out[suggestion.Text] = suggestion.Frequency
+		}
+		return out
+	}
+
+	hostA := texts(service.SuggestionsInWith("git", "host:a", "", transient))
+	if len(hostA) != 2 || hostA["git status"] != 1 || hostA["git checkout"] != 1 {
+		t.Fatalf("host:a suggestions = %+v, want the journal row and its transient row", hostA)
+	}
+	hostB := texts(service.SuggestionsInWith("git", "host:b", "", transient))
+	if len(hostB) != 1 || hostB["git push"] != 1 {
+		t.Fatalf("host:b suggestions = %+v, want only its own transient row", hostB)
+	}
+
+	config.Scope = domainterminal.AutocompleteHistoryGlobal
+	global := texts(service.SuggestionsInWith("git", "host:a", "", transient))
+	if len(global) != 3 {
+		t.Fatalf("global suggestions = %+v, want every row", global)
+	}
+
+	plain := texts(service.SuggestionsIn("git", "host:a", ""))
+	if len(plain) != 1 || plain["git status"] != 1 {
+		t.Fatalf("plain suggestions = %+v, want only the journal row", plain)
+	}
+}
+
 func TestSuggestionsHonorEnabledMinimumCharsAndLimit(t *testing.T) {
 	journal := &journalMemory{}
 	config := defaultConfig()
@@ -454,9 +497,9 @@ func TestLoadFailureKeepsThePreviousView(t *testing.T) {
 	}
 }
 
-// TestJournalIsTheOnlySuggestionSource pins the single-source behaviour: the
-// only rows that can surface are the journal's, and any row that is not in the
-// journal can never become a suggestion.
+// TestJournalIsTheOnlySuggestionSource pins the single-source behaviour of a
+// plain Suggestions call: without an explicit transient view, a row that is
+// not in the journal can never become a suggestion.
 func TestJournalIsTheOnlySuggestionSource(t *testing.T) {
 	journal := &journalMemory{}
 	journal.entries = []domainhistory.Entry{

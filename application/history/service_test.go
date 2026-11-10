@@ -1589,6 +1589,36 @@ func TestImportHostAtuinMapsRowsAndPreservesAtuinIDs(t *testing.T) {
 	}
 }
 
+// Imported rows are projections written outside the local capture path:
+// observers reload, but no upload is scheduled. A checkpoint-only re-import
+// writes nothing and therefore notifies nobody.
+func TestImportHostAtuinNotifiesObserversOnly(t *testing.T) {
+	store := &memoryStore{}
+	service := newTestService(store, Retention{})
+	var all, local int
+	unsubscribeAll := service.Subscribe(func() { all++ })
+	defer unsubscribeAll()
+	unsubscribeLocal := service.SubscribeLocal(func() { local++ })
+	defer unsubscribeLocal()
+
+	rows := []domainhistory.AtuinRow{
+		{ID: "first", Timestamp: at(9).UnixNano(), Command: "ls"},
+	}
+	if _, err := service.ImportHostAtuin(context.Background(), "host-1", rows, ""); err != nil {
+		t.Fatalf("ImportHostAtuin: %v", err)
+	}
+	if all != 1 || local != 0 {
+		t.Fatalf("after import: all = %d, local = %d; want 1 and 0", all, local)
+	}
+
+	if _, err := service.ImportHostAtuin(context.Background(), "host-1", rows, ""); err != nil {
+		t.Fatalf("repeated ImportHostAtuin: %v", err)
+	}
+	if all != 1 || local != 0 {
+		t.Fatalf("after a checkpoint-only import: all = %d, local = %d; want 1 and 0", all, local)
+	}
+}
+
 func TestImportHostAtuinSkipsCheckpointedRowsAndNeverDuplicates(t *testing.T) {
 	store := &memoryStore{}
 	service := newTestService(store, Retention{})

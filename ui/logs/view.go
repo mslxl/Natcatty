@@ -166,10 +166,10 @@ func problems(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		}
 	}
 	if count := s.Pruned(); count > 0 {
-		ui.Text(c, m.LogsPruned(count)).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.LogsPruned(count)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}
 	if count := s.DeletedEverywhere(); count > 0 {
-		ui.Text(c, m.LogsDeleteEverywhereDone(count)).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.LogsDeleteEverywhereDone(count)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}
 }
 
@@ -327,7 +327,7 @@ func pruneDialog(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 				c.Invalidate()
 			}
 		})
-		ui.Text(c, m.LogsPruneHint()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.LogsPruneHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		ui.Field(c, m.LogsSearch(), func() {
 			if ui.TextInput(c, &draft.Query).FillWidth().Changed() {
 				c.Invalidate()
@@ -385,13 +385,13 @@ func pruneDialog(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			}).Width(150)
 		})
 
-		ui.Text(c, m.LogsPrunePreview(s.PrunePreview())).FontSize(12)
+		ui.Text(c, m.LogsPrunePreview(s.PrunePreview())).FontSize(kit.M(c).Font.Footnote)
 		if s.PruneDateProblem() {
-			ui.Text(c, m.LogsProblemDate()).FontSize(12).
+			ui.Text(c, m.LogsProblemDate()).FontSize(kit.M(c).Font.Footnote).
 				TextColor(uitheme.DangerText(t))
 		}
 		if s.PruneLimitProblem() {
-			ui.Text(c, m.LogsPruneLimitProblem()).FontSize(12).
+			ui.Text(c, m.LogsPruneLimitProblem()).FontSize(kit.M(c).Font.Footnote).
 				TextColor(uitheme.DangerText(t))
 		}
 		ui.Row(c).FillWidth().Gap(8).Children(func() {
@@ -661,10 +661,10 @@ func exitBadge(c *ui.Context, m locales.Messages, t *ui.Theme, entry domainhisto
 			color = uitheme.DangerText(t)
 		}
 	}
-	badge := ui.Row(c).Gap(5).Padding(1, 7).Radius(999).AlignItems(ui.Center).
+	badge := ui.Row(c).Gap(5).Padding(1, 7).Radius(kit.M(c).Radius.Pill).AlignItems(ui.Center).
 		Background(color.Alpha(0.12)).Shrink(0)
 	badge.Children(func() {
-		ui.Text(c, text).FontSize(11).FontWeight(500).TextColor(color).NoWrap()
+		ui.Text(c, text).FontSize(kit.M(c).Font.Caption).FontWeight(500).TextColor(color).NoWrap()
 	})
 }
 
@@ -681,7 +681,7 @@ func historyDetail(c *ui.Context, s *State, entry domainhistory.Entry, m locales
 				c.Invalidate()
 			}
 		})
-		ui.Text(c, entry.Command).FontSize(13).Wrap()
+		ui.Text(c, entry.Command).FontSize(kit.M(c).Font.Callout).Wrap()
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 			kit.Pill(c, provenanceLabel(m, entry))
 			exitBadge(c, m, t, entry)
@@ -733,7 +733,7 @@ func historyMissingFields(c *ui.Context, m locales.Messages, entry domainhistory
 	}
 	for _, field := range missing {
 		ui.Text(c, m.LogsHistoryMissingField(field, reason)).
-			FontSize(12).TextColor(t.TextMuted).Wrap()
+			FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).Wrap()
 	}
 }
 
@@ -760,7 +760,7 @@ func historyMissingReason(m locales.Messages, entry domainhistory.Entry) string 
 // detailField renders one labelled capture field as one localized line, so the
 // label and its value stay together when the row wraps.
 func detailField(c *ui.Context, m locales.Messages, label, value string) {
-	ui.Text(c, m.LogsHistoryDetailField(label, value)).FontSize(12).Wrap()
+	ui.Text(c, m.LogsHistoryDetailField(label, value)).FontSize(kit.M(c).Font.Footnote).Wrap()
 }
 
 func detailValue(m locales.Messages, value string) string {

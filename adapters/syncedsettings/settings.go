@@ -240,10 +240,7 @@ func (s *Settings) Apply(ctx context.Context, documents map[string]json.RawMessa
 // decodeTerminalSettings decodes a synced terminal document. Documents
 // written before the capture hook switch omit its key; a plain decode would
 // read that as false and let a download turn a portable on-by-default setting
-// off, so the field is defaulted to on only when absent. The Host Atuin
-// preference is device-local: domain/terminal tags it out of the JSON payload
-// and MergePortable keeps the local value, so a remote document cannot change
-// it.
+// off, so the field is defaulted to on only when absent.
 func decodeTerminalSettings(raw json.RawMessage) (domainterminal.Settings, error) {
 	var settings domainterminal.Settings
 	if err := json.Unmarshal(raw, &settings); err != nil {
