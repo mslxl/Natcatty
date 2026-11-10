@@ -1,0 +1,32 @@
+manifest_version = 1
+id = "acme.hello"
+name = "Acme Hello"
+version = "1.0.0"
+plugin_api = "^0.1"
+abi = 1
+default_locale = "en"
+description = "Walking-skeleton development plugin."
+
+[wasm]
+path = "plugin.wasm"
+sha256 = "7997313ca70b4c0939bccb8390c8eff6463e04cb0a02068779930f8b479d766e"
+memory_max_mib = 64
+
+[permissions]
+required = ["commands", "menus", "keybindings"]
+optional = []
+
+[[contributions.commands]]
+id = "greet"
+title = "Say Hello"
+title_key = "command_greet"
+keywords = ["hello", "greet", "plugin"]
+
+[[contributions.menus]]
+command = "greet"
+label = "Say Hello"
+label_key = "command_greet"
+
+[[contributions.keybindings]]
+command = "greet"
+accelerator = "CmdOrCtrl+Alt+G"
