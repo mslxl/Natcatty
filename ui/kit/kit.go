@@ -80,6 +80,10 @@ func SecondaryButton(c *ui.Context, name, label string) ui.Element {
 	button := ui.ButtonBase(c).Label(label).Height(M(c).Control.Large).Padding(0, 12).Gap(6).
 		Radius(M(c).Radius.Button).AlignItems(ui.Center).TextColor(t.Text).
 		Background(Muted(t)).Shrink(0)
+	if CurrentStyle().Native() {
+		// A bordered capsule on the surface, as the popup buttons beside it.
+		button.Background(t.Surface).Border(1, t.Border)
+	}
 	switch {
 	case button.Pressed():
 		button.Background(Strong(t))
@@ -114,6 +118,53 @@ func PrimaryButton(c *ui.Context, name, label string) ui.Element {
 		ui.Text(c, label).SingleLine().FontWeight(500)
 	})
 	return button
+}
+
+// PrimaryMenuButton is a PrimaryButton joined to a chevron that opens menu,
+// named menuLabel: the main action and its related ones. It reports whether
+// the main action was clicked. Classic sets the chevron apart as its own
+// square; the macOS style joins the two in one capsule split by a hairline.
+func PrimaryMenuButton(c *ui.Context, name, label, menuLabel string, menu func(*ui.Menu)) bool {
+	t := c.Theme()
+	clicked := false
+	chevron := func(more ui.Element) {
+		if more.Pressed() {
+			more.Background(t.AccentPressed)
+		} else if more.Hovered() {
+			more.Background(t.AccentHover)
+		}
+		more.Children(func() { IconSized(c, icons.ChevronDown, M(c).Icon.Medium) })
+		more.Menu(menu)
+	}
+	if !CurrentStyle().Native() {
+		ui.Row(c).Gap(1).Shrink(0).AlignItems(ui.Center).Children(func() {
+			clicked = PrimaryButton(c, name, label).Clicked()
+			chevron(ui.ButtonBase(c).Label(menuLabel).Tooltip(menuLabel).
+				Size(28, M(c).Control.Large).Radius(M(c).Radius.Control).Justify(ui.Center).AlignItems(ui.Center).
+				Background(t.Accent).TextColor(t.AccentText))
+		})
+		return clicked
+	}
+	ui.Row(c).Height(M(c).Control.Large).Shrink(0).AlignItems(ui.Center).Radius(M(c).Radius.Pill).
+		Background(t.Accent).TextColor(t.AccentText).Clip().Children(func() {
+		main := ui.ButtonBase(c).Label(label).FillHeight().Padding(0, 10, 0, 14).Gap(6).AlignItems(ui.Center)
+		if main.Pressed() {
+			main.Background(t.AccentPressed)
+		} else if main.Hovered() {
+			main.Background(t.AccentHover)
+		}
+		main.Children(func() {
+			if name != "" {
+				Icon(c, name)
+			}
+			ui.Text(c, label).SingleLine().FontWeight(500)
+		})
+		clicked = main.Clicked()
+		ui.Box(c).Size(1, 16).Background(t.AccentText.Alpha(0.35)).Shrink(0)
+		chevron(ui.ButtonBase(c).Label(menuLabel).Tooltip(menuLabel).Width(30).FillHeight().
+			Padding(0, 4, 0, 0).Justify(ui.Center).AlignItems(ui.Center))
+	})
+	return clicked
 }
 
 // DangerButton is a destructive action's button.

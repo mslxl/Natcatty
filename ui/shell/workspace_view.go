@@ -16,7 +16,6 @@ import (
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
-	"github.com/mslxl/natcatty/ui/titlebar"
 )
 
 // tabRef binds the split renderer to either a main-window Tab or a detached
@@ -90,9 +89,8 @@ type workTabReveal struct {
 
 func newWorkTabReveal() *workTabReveal { return &workTabReveal{} }
 
-// workTabs renders the window's Tab bar, as the original's: the home Tab and
-// SFTP first, then the ordered terminal Tabs and the button that opens a new
-// one, and at the right the control panel and Settings. Each terminal Tab is a drag source; the
+// workTabs renders the ordered terminal Tabs in the window's Tab bar and the
+// button that opens a new one. Each terminal Tab is a drag source; the
 // thin gaps on either side of it are the insertion targets that light up
 // where a dropped Tab will land. A drop directly on a Tab inserts before it.
 func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, reveal *workTabReveal) {
@@ -116,64 +114,32 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 	reveal.reveal = false
 	terminal := terminalVisible(s)
 
-	// The bar keeps its height when the surface below needs room. Without
-	// Shrink(0) a Column under height pressure shrinks the first flexible
-	// child to nothing, hiding every Tab at the minimum window size.
-	// As the original's, the bar is a shade off the surface below and its
-	// Tabs sit on its floor: the chosen one takes the surface's own color and
-	// opens into it. The bar is the window's title bar too: its empty room
-	// drags the window, and its right end stays clear of the window controls.
-	left, right := titlebar.Insets(c, titlebar.Tabs)
-	bar := ui.Row(c).FillWidth().Height(topBarHeight).Shrink(0).Padding(0, 8+right, 0, 12+left).Gap(2)
-	kit.TitleBar(c, bar, terminal).DragWindow().Children(func() {
-		titlebar.DragStripe(c)
-		if kit.Tab(c, kit.TabWork, kit.TabSpec{Key: "tab-home", Icon: icons.LayoutGrid, Title: m.NavVault(), Fixed: true, Active: homeVisible(s)}).Clicked {
-			s.ShowHome()
-			c.Invalidate()
-		}
-		if s.SFTPTabShown() {
-			if kit.Tab(c, kit.TabWork, kit.TabSpec{Key: "tab-sftp", Icon: icons.FolderOpen, Title: m.NavSftp(), Fixed: true, Active: s.SFTPVisible()}).Clicked {
-				s.ShowSFTP()
-				c.Invalidate()
+	// The strip scrolls sideways at the minimum window width. Tabs keep a
+	// readable title width instead of shrinking or clipping the last Tab;
+	// every Tab stays reachable with the wheel, trackpad or keyboard.
+	added := kit.TabStrip(c, kit.TabWork, kit.TabStripOptions{
+		Label: m.WorkTabsLabel(), Height: topBarHeight, Add: m.MenuNewTab(),
+	}, func() {
+		for index := 0; index < s.TabCount(); index++ {
+			info, ok := s.TabInfo(index)
+			if !ok {
+				continue
 			}
-		} else if s.SFTPVisible() {
-			// Hiding the Tab while it is shown leaves for the Vault, as the
-			// original's; the Session panel still browses files.
-			s.ShowHome()
-			c.Invalidate()
-		}
-		ui.Box(c).Size(1, 16).Margin(0, 6).Background(t.Border).Shrink(0).AlignSelf(ui.Center)
-		// The strip scrolls sideways at the minimum window width. Tabs keep a
-		// readable title width instead of shrinking or clipping the last Tab;
-		// every Tab stays reachable with the wheel, trackpad or keyboard.
-		added := kit.TabStrip(c, kit.TabWork, kit.TabStripOptions{
-			Label: m.WorkTabsLabel(), Height: topBarHeight, Add: m.MenuNewTab(),
-		}, func() {
-			for index := 0; index < s.TabCount(); index++ {
-				info, ok := s.TabInfo(index)
-				if !ok {
-					continue
-				}
-				if !terminal {
-					info.Active = false
-				}
-				tabInsertionStrip(c, s, t, info.ID, false)
-				tabBody(c, s, m, t, index, info, revealActive && terminal)
-				tabInsertionStrip(c, s, t, info.ID, true)
+			if !terminal {
+				info.Active = false
 			}
-			for _, label := range s.PendingConnections() {
-				pendingTab(c, m, t, label)
-			}
-		})
-		if added {
-			_ = s.NewTab()
-			c.Invalidate()
+			tabInsertionStrip(c, s, t, info.ID, false)
+			tabBody(c, s, m, t, index, info, revealActive && terminal)
+			tabInsertionStrip(c, s, t, info.ID, true)
 		}
-		controlPanel(c, s, m)
-		if kit.IconButtonWith(c, icons.Settings, m.NavSettings(), kit.IconOptions{Role: kit.IconBar, Key: "bar-settings"}).Clicked() {
-			s.RequestSettings()
+		for _, label := range s.PendingConnections() {
+			pendingTab(c, m, t, label)
 		}
 	})
+	if added {
+		_ = s.NewTab()
+		c.Invalidate()
+	}
 }
 
 // tabRadius rounds a Tab's top corners, as the original's rounded-t-md.
@@ -423,10 +389,7 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 			// must be distinguishable by their titles.
 			pane.Label(m.PaneRegion(paneNumber))
 			if ref.split {
-				pane.Border(1, t.Border)
-				if info.Focused {
-					pane.Border(1, t.Accent.Alpha(0.7))
-				}
+				kit.PaneFrame(c, pane, info.Focused)
 			}
 			pane.Children(func() {
 				paneHeader(c, s, m, t, ref, info)

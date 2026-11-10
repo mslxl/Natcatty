@@ -6,6 +6,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
@@ -33,9 +34,14 @@ func TestControlPanelFitsAtMinimumClient(t *testing.T) {
 		if !ok || rect.W <= 0 || rect.H <= 0 {
 			t.Fatalf("the Tab bar lost the control panel: %+v present=%v: %v", rect, ok, tester.Texts())
 		}
-		if rect.X < -0.5 || rect.X+rect.W > width+0.5 ||
-			rect.Y < -0.5 || rect.Y+rect.H > topBarHeight+0.5 {
-			t.Fatalf("the control panel is clipped in the Tab bar at %dx%d: %+v", width, height, rect)
+		// Classic keeps it in the Tab bar; the macOS style at the sidebar's
+		// foot.
+		bottom, right := float32(topBarHeight), float32(width)
+		if kit.CurrentStyle().Native() {
+			bottom, right = height, sidebarWidth
+		}
+		if rect.X < -0.5 || rect.X+rect.W > right+0.5 || rect.Y < -0.5 || rect.Y+rect.H > bottom+0.5 {
+			t.Fatalf("the control panel is clipped at %dx%d: %+v", width, height, rect)
 		}
 		if err := tester.Click(label); err != nil {
 			t.Fatalf("the control panel is not clickable: %v", err)

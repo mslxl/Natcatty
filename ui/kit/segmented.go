@@ -52,6 +52,11 @@ func Segmented(c *ui.Context, role SegmentedRole, chosen *int, label string, seg
 	switch role {
 	case SegmentedIcons:
 		row.Gap(1).Shrink(0).AlignItems(ui.Center)
+		if CurrentStyle().Native() {
+			// A macOS segmented control: the choices on a sunken capsule,
+			// the chosen one raised.
+			row.Padding(2).Gap(2).Radius(M(c).Radius.Pill).Background(Subtle(t))
+		}
 	case SegmentedTrack:
 		row.Padding(2).Gap(2).Radius(M(c).Radius.Control).Background(Subtle(t))
 	case SegmentedFill:
@@ -72,7 +77,13 @@ func Segmented(c *ui.Context, role SegmentedRole, chosen *int, label string, seg
 			case SegmentedIcons:
 				button.Tooltip(segment.Label).Size(28, M(c).Control.Large).Radius(M(c).Radius.Control).
 					Justify(ui.Center).AlignItems(ui.Center)
+				native := CurrentStyle().Native()
+				if native {
+					button.Size(32, M(c).Control.Large-4).Radius(M(c).Radius.Pill)
+				}
 				switch {
+				case on && native:
+					button.Background(t.Surface).TextColor(t.Text).Shadow(0, 1, 2, 0, CardShadow(t))
 				case on:
 					button.Background(t.Accent).TextColor(t.AccentText)
 				case button.Hovered():

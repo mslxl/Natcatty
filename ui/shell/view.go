@@ -60,9 +60,20 @@ func View(s *state.State) func(*ui.Context) {
 		}
 		t := c.Theme()
 
-		layout.WindowFrame(c, layout.FrameOptions{Opaque: true, Vibrant: true},
-			func() { workTabs(c, s, m, t, reveal) },
-			func() { body(c, s, m, t) })
+		// Hiding the SFTP Tab while it is shown leaves for the Vault, as the
+		// original's; the Session panel still browses files.
+		if !s.SFTPTabShown() && s.SFTPVisible() {
+			s.ShowHome()
+			c.Invalidate()
+		}
+		sidebar := mainSidebar(c, s, m, t)
+		layout.MainLayout(c, layout.MainSlots{
+			HomeTabs: func() { homeTabs(c, s, m) },
+			Tabs:     func() { workTabs(c, s, m, t, reveal) },
+			Flush:    terminalVisible(s),
+			Sidebar:  sidebar,
+			Body:     func() { body(c, s, m, t, sidebar) },
+		})
 
 		if prompt := s.TrustPrompt(); prompt != nil {
 			sessionui.TrustView(prompt)(c)
@@ -96,7 +107,7 @@ func homeVisible(s *state.State) bool {
 }
 
 // body draws the chosen Tab's surface below the Tab bar.
-func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, sidebar layout.SidebarSlots) {
 	switch {
 	case terminalVisible(s):
 		activeTab(c, s, m, t)
@@ -113,7 +124,7 @@ func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 		})
 	default:
 		layout.HomeLayout(c, layout.HomeSlots{
-			Sidebar: func() { homeSidebar(c, s, m, t) },
+			Sidebar: func() { layout.Sidebar(c, sidebar) },
 			Notices: func() { notices(c, s, m, t) },
 			Content: func() { homeSurface(c, s, m, t) },
 		})
@@ -137,28 +148,19 @@ func placeholder(c *ui.Context, icon, title, description string) {
 	})
 }
 
-// homeSidebar is the home Tab's navigation, as the original's Vault sidebar:
-// the brand, the Vault's pages with monitoring, System manager, and Logs among
-// them, and Settings at the foot.
-func homeSidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Height(40).Padding(0, 8).Gap(10).AlignItems(ui.Center).Margin(0, 0, 8, 0).Children(func() {
-		if mark := s.BrandMark(); mark != nil {
-			ui.Image(c, mark).Size(28, 28).Shrink(0)
-		} else {
-			ui.Box(c).Size(28, 28).Radius(8).Background(t.Accent).Center().TextColor(t.AccentText).
-				Children(func() { kit.IconSized(c, icons.SquareTerminal, kit.M(c).Icon.Regular) })
+// mainSidebar is the window's navigation, as the original's Vault sidebar:
+// the brand, the Vault's pages with monitoring, System manager, and Logs
+// among them, SFTP where the style lists it, and the window's actions.
+func mainSidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) layout.SidebarSlots {
+	nav := func(key, icon, label string, active bool, show func()) {
+		if kit.NavItem(c, kit.NavHome, key, icon, label, active).Clicked() {
+			show()
+			c.Invalidate()
 		}
-		ui.Text(c, m.AppName()).FontSize(kit.M(c).Font.Title3).FontWeight(700).SingleLine()
-	})
-
-	// The list scrolls when the window is too short for every entry.
-	ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
-		kit.NavList(c, kit.NavHome, func() {
-			nav := func(key, icon, label string, active bool, show func()) {
-				if kit.NavItem(c, kit.NavHome, key, icon, label, active).Clicked() {
-					show()
-				}
-			}
+	}
+	slots := layout.SidebarSlots{
+		Brand: func() { brand(c, s, m, t) },
+		Pages: func() {
 			vaultPage := func(page section.Section) {
 				nav("nav-vault-"+string(page), vaultPageIcon(page), vaultPageLabel(m, page),
 					s.VaultVisible() && s.VaultSection() == page,
@@ -173,12 +175,44 @@ func homeSidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme)
 				}
 			}
 			nav("nav-logs", icons.Activity, m.NavLogs(), s.LogsVisible(), s.ShowLogs)
-		})
-	})
+		},
+		Actions: layout.Actions{SettingsLabel: m.NavSettings(), Settings: s.RequestSettings},
+	}
+	if s.SFTPTabShown() {
+		slots.Places = func() { nav("nav-sftp", icons.FolderOpen, m.NavSftp(), s.SFTPVisible(), s.ShowSFTP) }
+	}
+	if content := s.QuickControls(); content != nil {
+		slots.Actions.ControlsLabel = m.NavControlPanel()
+		slots.Actions.Controls = func() { content(c) }
+		slots.Actions.ControlsOpen = s.QuickControlsOpen()
+	}
+	return slots
+}
 
-	// Settings is a window rather than a surface, so it is never active.
-	if kit.NavItem(c, kit.NavHome, "nav-settings", icons.Settings, m.NavSettings(), false).Clicked() {
-		s.RequestSettings()
+// brand heads the sidebar: the app's mark and name.
+func brand(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).FillWidth().Height(40).Padding(0, 8).Gap(10).AlignItems(ui.Center).Margin(0, 0, 8, 0).Children(func() {
+		if mark := s.BrandMark(); mark != nil {
+			ui.Image(c, mark).Size(28, 28).Shrink(0)
+		} else {
+			ui.Box(c).Size(28, 28).Radius(8).Background(t.Accent).Center().TextColor(t.AccentText).
+				Children(func() { kit.IconSized(c, icons.SquareTerminal, kit.M(c).Icon.Regular) })
+		}
+		ui.Text(c, m.AppName()).FontSize(kit.M(c).Font.Title3).FontWeight(700).SingleLine()
+	})
+}
+
+// homeTabs are the Tab bar's fixed home and SFTP Tabs.
+func homeTabs(c *ui.Context, s *state.State, m locales.Messages) {
+	if kit.Tab(c, kit.TabWork, kit.TabSpec{Key: "tab-home", Icon: icons.LayoutGrid, Title: m.NavVault(), Fixed: true, Active: homeVisible(s)}).Clicked {
+		s.ShowHome()
+		c.Invalidate()
+	}
+	if s.SFTPTabShown() {
+		if kit.Tab(c, kit.TabWork, kit.TabSpec{Key: "tab-sftp", Icon: icons.FolderOpen, Title: m.NavSftp(), Fixed: true, Active: s.SFTPVisible()}).Clicked {
+			s.ShowSFTP()
+			c.Invalidate()
+		}
 	}
 }
 
@@ -254,23 +288,6 @@ func vaultPageLabel(m locales.Messages, page section.Section) string {
 	default:
 		return m.NavHosts()
 	}
-}
-
-// controlPanel is the Tab bar's control panel, as the original's: a quiet
-// icon button opening the window opacity and theme. The language is in
-// Settings, as the original's.
-func controlPanel(c *ui.Context, s *state.State, m locales.Messages) {
-	content := s.QuickControls()
-	if content == nil {
-		return
-	}
-	open := s.QuickControlsOpen()
-	button := kit.IconButtonWith(c, icons.SlidersHorizontal, m.NavControlPanel(), kit.IconOptions{Role: kit.IconBar, On: *open, Key: "bar-control-panel"})
-	if button.Clicked() {
-		*open = !*open
-		c.Invalidate()
-	}
-	kit.Popover(c, kit.PopoverPanel, button, open, func() { content(c) })
 }
 
 func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
@@ -386,14 +403,9 @@ func sideToolFace(m locales.Messages, id state.SideToolID) (string, string) {
 }
 
 // sidePanelButton is one of the strip's 28-DIP icon buttons; the active
-// tool is tinted with the accent.
+// tool is marked as selected.
 func sidePanelButton(c *ui.Context, icon, label string, active bool) ui.Element {
-	t := c.Theme()
-	button := kit.IconButtonWith(c, icon, label, kit.IconOptions{Role: kit.IconCard})
-	if active {
-		button.Background(t.Accent.Alpha(0.24)).TextColor(t.Text)
-	}
-	return button
+	return kit.IconButtonWith(c, icon, label, kit.IconOptions{Role: kit.IconCard, Selected: active})
 }
 
 // sessionTone is the color of a Session's status dot: green while it runs
