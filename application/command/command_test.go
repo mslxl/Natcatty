@@ -56,6 +56,31 @@ func TestRegisterRejectsDuplicateAndEmptyCommands(t *testing.T) {
 	}
 }
 
+func TestUnregisterRemovesTheCommand(t *testing.T) {
+	registry := NewRegistry()
+	handler := func(context.Context) error { return nil }
+	if err := registry.Register("plugin.acme.hello.greet", handler); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := registry.Unregister("plugin.acme.hello.greet"); err != nil {
+		t.Fatalf("Unregister: %v", err)
+	}
+	if registry.Has("plugin.acme.hello.greet") {
+		t.Fatal("the command is still registered")
+	}
+	err := registry.Dispatch(context.Background(), "plugin.acme.hello.greet")
+	var unknown *UnknownCommandError
+	if !errors.As(err, &unknown) {
+		t.Fatalf("Dispatch after Unregister = %v, want UnknownCommandError", err)
+	}
+	if err := registry.Unregister("plugin.acme.hello.greet"); err == nil {
+		t.Fatal("Unregister of an unknown command succeeded")
+	}
+	if err := registry.Register("plugin.acme.hello.greet", handler); err != nil {
+		t.Fatalf("Register after Unregister: %v", err)
+	}
+}
+
 func TestDispatchPropagatesHandlerError(t *testing.T) {
 	registry := NewRegistry()
 	want := errors.New("boom")

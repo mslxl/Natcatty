@@ -36,6 +36,31 @@ const (
 	CodeToolUnavailable ErrorCode = "mcp_tool_unavailable"
 	// CodeInvalidArgument reports a missing or malformed tool argument.
 	CodeInvalidArgument ErrorCode = "mcp_invalid_argument"
+	// CodePluginToolDenied reports the plugin-side gate: the plugin is
+	// installed and active but its mcp.tools permission is not granted.
+	CodePluginToolDenied ErrorCode = "mcp_plugin_tool_denied"
+	// CodePluginToolUnavailable reports a plugin tool that is not installed,
+	// is disabled, or is no longer declared.
+	CodePluginToolUnavailable ErrorCode = "mcp_plugin_tool_unavailable"
+	// CodePluginToolReloading reports a call during a plugin reload or while
+	// the fiber is leaving ACTIVE. It is retryable.
+	CodePluginToolReloading ErrorCode = "mcp_plugin_reloading"
+	// CodePluginToolBusy reports a full per-instance call queue. It is
+	// retryable.
+	CodePluginToolBusy ErrorCode = "mcp_plugin_tool_busy"
+	// CodePluginToolTimeout reports a call that exceeded its declared timeout
+	// class. It is retryable.
+	CodePluginToolTimeout ErrorCode = "mcp_plugin_tool_timeout"
+	// CodePluginToolCancelled reports a call cancelled because the client
+	// disconnected or the request was cancelled. It is retryable.
+	CodePluginToolCancelled ErrorCode = "mcp_plugin_tool_cancelled"
+	// CodePluginToolFailed reports a guest trap, crash, or guest-reported
+	// tool error.
+	CodePluginToolFailed ErrorCode = "mcp_plugin_tool_failed"
+	// CodePluginToolResultLimit reports a result above the 16 MiB bound.
+	CodePluginToolResultLimit ErrorCode = "mcp_plugin_tool_result_limit"
+	// CodePluginToolInvalidResult reports a malformed result envelope.
+	CodePluginToolInvalidResult ErrorCode = "mcp_plugin_tool_invalid_result"
 )
 
 // Error is a typed policy denial. Tool names the catalog tool whose call was
@@ -46,6 +71,10 @@ type Error struct {
 	Tool    string
 	Rule    string
 	Message string
+	// Retryable tells an automated client that the same call may succeed
+	// later without any operator action. It is set for reloading, busy,
+	// timeout, and cancellation failures, never for a policy denial.
+	Retryable bool
 }
 
 // Error implements the error interface.
@@ -77,6 +106,9 @@ func Result(err error) map[string]any {
 	}
 	if typed.Rule != "" {
 		result["rule"] = typed.Rule
+	}
+	if typed.Retryable {
+		result["retryable"] = true
 	}
 	return result
 }

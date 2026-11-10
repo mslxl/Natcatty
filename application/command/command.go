@@ -65,6 +65,23 @@ func (r *Registry) Register(id ID, handler Handler) error {
 	return nil
 }
 
+// Unregister removes the handler for id. Plugin unload uses it so a stale
+// invocation no longer reaches the guest. An unknown ID is an error, matching
+// Dispatch's typed behavior.
+func (r *Registry) Unregister(id ID) error {
+	if id == "" {
+		return ErrInvalidCommand
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.handlers[id]; !exists {
+		return &UnknownCommandError{ID: id}
+	}
+	delete(r.handlers, id)
+	return nil
+}
+
 // Dispatch runs the handler registered for id.
 func (r *Registry) Dispatch(ctx context.Context, id ID) error {
 	r.mu.RLock()
