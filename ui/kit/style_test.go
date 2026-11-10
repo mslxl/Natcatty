@@ -73,27 +73,30 @@ func contrastTo(a, b ui.Color) int {
 	return d(a.R, b.R) + d(a.G, b.G) + d(a.B, b.B)
 }
 
-func TestFillClearsTheWindowOverItsVibrancyOrPaintsItsBackground(t *testing.T) {
+// TestMacOSFillsTheWindowAndSidebarWithTheThemeOverAVibrancy keeps the
+// window's own colors: a system vibrancy follows the desktop's light or dark
+// mode, not the theme, so the macOS style never clears to it.
+func TestMacOSFillsTheWindowAndSidebarWithTheThemeOverAVibrancy(t *testing.T) {
 	SetStyle(MacOS)
 	t.Cleanup(func() { SetStyle(nil) })
-	under := ui.RGB(0, 255, 0)
 	theme := &ui.Theme{Background: ui.RGB(255, 0, 0), Surface: ui.RGB(0, 0, 255), Text: ui.RGB(0, 0, 0)}
-	for _, vibrant := range []bool{true, false} {
+	for _, tc := range []struct {
+		role SurfaceRole
+		want ui.Color
+	}{
+		{SurfaceWindow, theme.Background},
+		{SurfaceSidebar, theme.Surface},
+	} {
 		tt := ui.NewTester(func(c *ui.Context) {
 			c.SetTheme(theme)
-			c.Root().Background(under)
-			Fill(c, ui.Column(c).Size(40, 40), SurfaceWindow)
+			c.Root().Background(ui.RGB(0, 255, 0))
+			Fill(c, ui.Column(c).Size(40, 40), tc.role)
 		}, 80, 80)
-		tt.SetVibrancy(vibrant)
+		tt.SetVibrancy(true)
 		tt.Frame()
 		got := tt.Image().RGBAAt(20, 20)
-		want := theme.Background
-		if vibrant {
-			// Clear: what is under it shows.
-			want = under
-		}
-		if got.R != want.R || got.G != want.G || got.B != want.B {
-			t.Fatalf("vibrancy=%v: window pixel = %v, want %v", vibrant, got, want)
+		if got.R != tc.want.R || got.G != tc.want.G || got.B != tc.want.B || got.A != 255 {
+			t.Fatalf("role %d: pixel = %v, want the theme's %v", tc.role, got, tc.want)
 		}
 	}
 }

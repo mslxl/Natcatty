@@ -50,41 +50,33 @@ func TestWorkLayoutWithoutAPanelShowsOnlyThePanes(t *testing.T) {
 	}
 }
 
-// TestAVibrantMacOSWindowShowsItsMaterialBesideAnOpaquePage checks the
-// main window's frame over a vibrancy: the title bar is clear so the
-// window's material shows, while the page and a terminal stay opaque. A
-// Classic window, or one with no vibrancy, is opaque everywhere.
-func TestAVibrantMacOSWindowShowsItsMaterialBesideAnOpaquePage(t *testing.T) {
-	for _, tc := range []struct {
-		style   kit.Style
-		vibrant bool
-		clear   bool
-	}{
-		{kit.MacOS, true, true},
-		{kit.MacOS, false, false},
-		{kit.Classic, true, false},
-	} {
-		for _, work := range []bool{false, true} {
-			kit.SetStyle(tc.style)
-			tt := ui.NewTester(func(c *ui.Context) {
-				WindowFrame(c, FrameOptions{Opaque: true, Vibrant: true},
-					func() { ui.Row(c).FillWidth().Height(36) },
-					func() {
-						if work {
-							WorkLayout(c, WorkSlots{Panes: func() { ui.Text(c, "panes") }})
-							return
-						}
-						HomeLayout(c, HomeSlots{Sidebar: func() {}, Content: func() { ui.Text(c, "page") }})
-					})
-			}, 800, 600)
-			tt.SetVibrancy(tc.vibrant)
-			tt.Frame()
-			img := tt.Image()
-			if bar := img.RGBAAt(400, 18).A; (bar == 0) != tc.clear {
-				t.Errorf("%s vibrancy=%v: title bar alpha %d, want clear=%v", tc.style.ID(), tc.vibrant, bar, tc.clear)
-			}
-			if page := img.RGBAAt(500, 400).A; page != 255 {
-				t.Errorf("%s vibrancy=%v work=%v: page alpha %d, want opaque", tc.style.ID(), tc.vibrant, work, page)
+// TestTheMainWindowIsOpaqueInEveryStyleEvenOverAVibrancy checks the main
+// window's frame: the title bar, the home page, and a terminal take the
+// theme's colors in both styles, whether or not the window has a vibrancy.
+func TestTheMainWindowIsOpaqueInEveryStyleEvenOverAVibrancy(t *testing.T) {
+	for _, style := range []kit.Style{kit.MacOS, kit.Classic} {
+		for _, vibrant := range []bool{false, true} {
+			for _, work := range []bool{false, true} {
+				kit.SetStyle(style)
+				tt := ui.NewTester(func(c *ui.Context) {
+					WindowFrame(c, FrameOptions{Opaque: true, Vibrant: true},
+						func() { ui.Row(c).FillWidth().Height(36) },
+						func() {
+							if work {
+								WorkLayout(c, WorkSlots{Panes: func() { ui.Text(c, "panes") }})
+								return
+							}
+							HomeLayout(c, HomeSlots{Sidebar: func() {}, Content: func() { ui.Text(c, "page") }})
+						})
+				}, 800, 600)
+				tt.SetVibrancy(vibrant)
+				tt.Frame()
+				img := tt.Image()
+				for _, at := range [][2]int{{400, 18}, {100, 300}, {500, 400}} {
+					if a := img.RGBAAt(at[0], at[1]).A; a != 255 {
+						t.Errorf("%s vibrancy=%v work=%v: alpha %d at %v, want opaque", style.ID(), vibrant, work, a, at)
+					}
+				}
 			}
 		}
 	}

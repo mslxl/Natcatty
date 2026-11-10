@@ -14,6 +14,18 @@ import (
 // or a selected list row when the window has no focus.
 func Muted(t *ui.Theme) ui.Color { return t.Background.Mix(t.Text, 0.05) }
 
+// Raised is the fill of a panel that stands out from the page, as a grouped
+// form or the macOS style's sidebar: the theme's surface, or a shade where a
+// preset's surface is too close to the page's color to tell apart.
+func Raised(t *ui.Theme) ui.Color {
+	d := func(x, y uint8) int { return max(int(x)-int(y), int(y)-int(x)) }
+	s, b := t.Surface, t.Background
+	if d(s.R, b.R)+d(s.G, b.G)+d(s.B, b.B) < 16 {
+		return b.Mix(t.Text, 0.06)
+	}
+	return s
+}
+
 // Subtle is the fill of a hovered ghost control.
 func Subtle(t *ui.Theme) ui.Color { return t.Background.Mix(t.Text, 0.08) }
 

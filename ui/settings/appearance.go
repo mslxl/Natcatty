@@ -135,16 +135,8 @@ func presetPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t 
 		current := selected
 		sel := ui.SelectBase(c, &current)
 		preset, _ := findPreset(presets, selected)
-		sel.Trigger.Width(250).Height(32).Padding(4, 8).
-			Border(1, t.Border).Background(uitheme.PresetBackground(preset)).Children(func() {
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Box(c).Width(18).Height(18).Radius(3).
-					Background(uitheme.PresetBackground(preset)).
-					Border(1, t.TextMuted)
-				ui.Text(c, preset.Name).FontSize(kit.M(c).Font.Callout).
-					TextColor(uitheme.PresetForeground(preset))
-			})
-		})
+		kit.PreviewTrigger(c, sel.Trigger, preset.Name,
+			uitheme.PresetBackground(preset), uitheme.PresetForeground(preset))
 		sel.Popup(func(panel ui.Element) {
 			panel.Padding(4).Background(t.Surface).Border(1, t.Border)
 			ui.Scroll(c).Height(260).Width(280).Children(func() {
@@ -202,15 +194,8 @@ func accentPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t 
 				preset := preset
 				selected := settings.Appearance.AccentMode == domain.AccentCustom &&
 					strings.EqualFold(settings.Appearance.AccentColor, preset.HSL)
-				swatch := ui.Button(c, accentName(m, preset.Name)).Width(96).Height(28).
-					Background(uitheme.AccentColor(preset.HSL)).
-					TextColor(uitheme.AccentText(preset.HSL))
-				if selected {
-					swatch = swatch.Border(2, t.Text)
-				} else {
-					swatch = swatch.Border(1, t.Border)
-				}
-				if swatch.Clicked() {
+				if kit.Swatch(c, accentName(m, preset.Name), uitheme.AccentColor(preset.HSL),
+					uitheme.AccentText(preset.HSL), selected).Clicked() {
 					state.Update(func(s *domain.Settings) {
 						s.Appearance.AccentMode = domain.AccentCustom
 						s.Appearance.AccentColor = preset.HSL
@@ -263,24 +248,28 @@ func opacityPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t
 // with its artwork above its name. Without artwork the tiles show names only.
 func iconPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme,
 	settings domain.Settings) {
-	fieldRow(c, state, m, t, domain.FieldAppIcon, m.SettingsAppIcon(), func() {
-		ui.Text(c, iconVariantName(m, settings.Appearance.AppIcon)).
-			FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
-	})
-	ui.Column(c).Gap(6).FillWidth().Children(func() {
-		for _, group := range domaintheme.IconGroupOrder() {
-			ui.Text(c, iconGroupName(m, group)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
-			ui.Row(c).Wrap().Gap(6).FillWidth().Children(func() {
-				for _, variant := range domaintheme.IconVariantsInGroup(group) {
-					variant := variant
-					if iconTile(c, t, iconVariantName(m, variant.ID), state.iconThumb(variant.ID),
-						variant.ID == settings.Appearance.AppIcon).Clicked() {
-						state.Update(func(s *domain.Settings) { s.Appearance.AppIcon = variant.ID })
-						c.Invalidate()
+	kit.FormRowDetail(c, m.SettingsAppIcon(), func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, iconVariantName(m, settings.Appearance.AppIcon)).
+				FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+			resetField(c, state, m, domain.FieldAppIcon)
+		})
+	}, func() {
+		ui.Column(c).Gap(6).FillWidth().Children(func() {
+			for _, group := range domaintheme.IconGroupOrder() {
+				ui.Text(c, iconGroupName(m, group)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+				ui.Row(c).Wrap().Gap(6).FillWidth().Children(func() {
+					for _, variant := range domaintheme.IconVariantsInGroup(group) {
+						variant := variant
+						if iconTile(c, t, iconVariantName(m, variant.ID), state.iconThumb(variant.ID),
+							variant.ID == settings.Appearance.AppIcon).Clicked() {
+							state.Update(func(s *domain.Settings) { s.Appearance.AppIcon = variant.ID })
+							c.Invalidate()
+						}
 					}
-				}
-			})
-		}
+				})
+			}
+		})
 	})
 }
 

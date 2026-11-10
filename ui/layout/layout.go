@@ -123,12 +123,15 @@ func nativeHome(c *ui.Context, slots HomeSlots) {
 	})
 }
 
-// floatingSidebar is the macOS style's sidebar: a glass panel inset by
-// CardGap from the window's edges below top, width wide with the inset.
+// floatingSidebar is the macOS style's sidebar: a panel inset by CardGap
+// from the window's edges below top, width wide with the inset, lifted off
+// the window by a hairline and a soft shadow.
 func floatingSidebar(c *ui.Context, width, top, gap float32, children func()) {
+	t := c.Theme()
 	ui.Column(c).Width(width).FillHeight().Shrink(0).Padding(top, 0, CardGap, CardGap).Children(func() {
-		panel := ui.Column(c).Fill().MinHeight(0).Padding(8).Gap(gap).Radius(SidebarRadius).Clip()
-		kit.Fill(c, panel, kit.SurfaceSidebar).Children(children)
+		panel := ui.Column(c).Fill().MinHeight(0).Padding(8).Gap(gap).Radius(SidebarRadius).Clip().
+			Border(1, t.Border).Shadow(0, 1, 4, 0, ui.RGB(0, 0, 0).Alpha(0.06)).Background(kit.Raised(t))
+		panel.Children(children)
 	})
 }
 

@@ -104,7 +104,9 @@ func NavItemWith(c *ui.Context, role NavRole, key, icon, label string, active bo
 		item.Height(r.height)
 	}
 	strong, subtle := Strong(t), Subtle(t)
-	if role == NavSettings {
+	// Over the macOS style's raised sidebar a row is shaded from the panel's
+	// own fill rather than the page's.
+	if role == NavSettings || CurrentStyle().Native() {
 		strong, subtle = t.Text.Alpha(0.08), t.Text.Alpha(0.04)
 	}
 	switch {

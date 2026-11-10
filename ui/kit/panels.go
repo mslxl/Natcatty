@@ -208,12 +208,8 @@ func groupedForm(c *ui.Context, title, description string, body func()) ui.Eleme
 		}
 		// The group stands out from the page by its fill: the surface's,
 		// or a shade where a preset's surface is the page's own color.
-		fill := t.Surface
-		if fill == t.Background {
-			fill = Muted(t)
-		}
 		ui.Column(c).FillWidth().Radius(M(c).Radius.Card-4).Padding(groupPaddingY, groupPaddingX).
-			Background(fill).Children(func() {
+			Background(Raised(t)).Children(func() {
 			groupRows = append(groupRows, 0)
 			defer func() { groupRows = groupRows[:len(groupRows)-1] }()
 			ui.Form(c, body).FillWidth().Gap(groupGap)
@@ -279,4 +275,73 @@ func FormToggle(c *ui.Context, label string, value *bool, accessory func()) bool
 		}
 	})
 	return changed
+}
+
+// FormRowDetail is a FormRow whose summary sits beside its label and whose
+// detail, such as a gallery of choices, follows it: below the row in
+// Classic, under the summary in the macOS style's control column, so the
+// grouped form keeps its two columns.
+func FormRowDetail(c *ui.Context, label string, summary, detail func()) {
+	if !CurrentStyle().Native() {
+		FormRow(c, label, summary)
+		detail()
+		return
+	}
+	FormRow(c, label, func() {
+		ui.Column(c).Gap(8).FillWidth().MinWidth(0).Children(func() {
+			summary()
+			detail()
+		})
+	})
+}
+
+// Swatch is one choice of a color, named name: a labeled button in that
+// color in Classic, with text in its text color; a color dot in the macOS
+// style, as its accent picker, marked with a white dot when chosen.
+func Swatch(c *ui.Context, name string, color, text ui.Color, chosen bool) ui.Element {
+	t := c.Theme()
+	if !CurrentStyle().Native() {
+		swatch := ui.Button(c, name).Width(96).Height(28).Background(color).TextColor(text)
+		if chosen {
+			return swatch.Border(2, t.Text)
+		}
+		return swatch.Border(1, t.Border)
+	}
+	const size float32 = 20
+	swatch := ui.ButtonBase(c).Label(name).Tooltip(name).Size(size, size).Radius(M(c).Radius.Pill).
+		Background(color).Border(1, ui.RGB(0, 0, 0).Alpha(0.12)).Center().Shrink(0)
+	if swatch.Hovered() {
+		swatch.Border(2, color.Mix(t.Text, 0.3))
+	}
+	swatch.Children(func() {
+		if chosen {
+			ui.Box(c).Size(6, 6).Radius(M(c).Radius.Pill).Background(ui.RGB(255, 255, 255))
+		}
+	})
+	return swatch
+}
+
+// PreviewTrigger draws a popup's trigger that previews a palette: filled
+// with its background and named in its foreground in Classic; a plain popup
+// button with a dot of the background in the macOS style.
+func PreviewTrigger(c *ui.Context, trigger ui.Element, name string, background, foreground ui.Color) {
+	t := c.Theme()
+	if !CurrentStyle().Native() {
+		trigger.Width(250).Height(32).Padding(4, 8).Border(1, t.Border).Background(background).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Box(c).Width(18).Height(18).Radius(3).Background(background).Border(1, t.TextMuted)
+				ui.Text(c, name).FontSize(M(c).Font.Callout).TextColor(foreground)
+			})
+		})
+		return
+	}
+	trigger.Width(180).Height(M(c).Control.Regular).Padding(0, 8, 0, 10).Radius(M(c).Radius.Control).
+		Border(1, t.Border).Background(t.Surface).Children(func() {
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Size(14, 14).Radius(M(c).Radius.Pill).Background(background).
+				Border(1, t.Text.Alpha(0.2)).Shrink(0)
+			ui.Text(c, name).FontSize(M(c).Font.Body).TextColor(t.Text).SingleLine().Grow(1).MinWidth(0)
+			IconSized(c, icons.ChevronDown, M(c).Icon.Small).TextColor(t.TextMuted)
+		})
+	})
 }
