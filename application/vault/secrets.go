@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/mslxl/natcatty/domain/model"
 )
@@ -41,6 +42,10 @@ const (
 	EntityETSession      = "et_session"
 	EntityNetworkProfile = "network_profile"
 	EntityNetworkPeer    = "network_peer"
+	// EntityDataProfile stores provider-defined secret fields of one data
+	// profile. Profile records hold only the opaque reference; the plaintext
+	// never enters the profile JSON or a Host record.
+	EntityDataProfile = "data_profile"
 
 	FieldPassword            = "password"
 	FieldPassphrase          = "passphrase"
@@ -106,6 +111,33 @@ func NetworkProfileSecretRef(id string, field string) SecretRef {
 // is the peer's stable ID, as ADR-0010 requires.
 func NetworkPeerSecretRef(peerID string, field string) SecretRef {
 	return SecretRef{EntityType: EntityNetworkPeer, EntityID: peerID, Field: field}
+}
+
+const dataProfileSecretPrefix = "vault:data-profile:"
+
+// ErrSecretReferenceInvalid reports a reference this Vault did not produce.
+var ErrSecretReferenceInvalid = errors.New("vault: invalid secret reference")
+
+// DataProfileSecretRef returns the opaque reference a DataProfile record and
+// a provider namespace store for one secret field. The reference names the
+// profile and field only; it never carries a value.
+func DataProfileSecretRef(profileID, field string) string {
+	return dataProfileSecretPrefix + profileID + ":" + field
+}
+
+// ParseDataProfileSecretRef resolves an opaque DataProfile reference back to
+// the field-secret address. A foreign or malformed reference is rejected; the
+// caller keeps the reference rather than replacing it with an empty value.
+func ParseDataProfileSecretRef(raw string) (SecretRef, error) {
+	if !strings.HasPrefix(raw, dataProfileSecretPrefix) {
+		return SecretRef{}, ErrSecretReferenceInvalid
+	}
+	rest := strings.TrimPrefix(raw, dataProfileSecretPrefix)
+	profileID, field, ok := strings.Cut(rest, ":")
+	if !ok || profileID == "" || field == "" || strings.Contains(field, ":") {
+		return SecretRef{}, ErrSecretReferenceInvalid
+	}
+	return SecretRef{EntityType: EntityDataProfile, EntityID: profileID, Field: field}, nil
 }
 
 // FieldSecrets is the field-secret port the Vault consumes. The adapter owns

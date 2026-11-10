@@ -73,6 +73,10 @@ const (
 	KindMosh Kind = "mosh"
 	// KindET is an EternalTerminal Session using the in-process et client.
 	KindET Kind = "et"
+	// KindPlugin is a Session whose bytes come from a connection provider.
+	// The host still owns the terminal, dimensions, resize, authentication, and
+	// trust around the raw stream.
+	KindPlugin Kind = "plugin"
 )
 
 // Status is a Session's lifecycle state.
@@ -132,11 +136,39 @@ const (
 	EndReasonDisplaced EndReason = "displaced"
 )
 
+// ProviderStatus is the closed typed failure vocabulary a connection provider
+// maps onto a Session. It mirrors domain/plugin.ProviderErrorKind without
+// making the Session package depend on plugin internals.
+type ProviderStatus string
+
+const (
+	ProviderStatusAuthFailed     ProviderStatus = "auth-failed"
+	ProviderStatusUnreachable    ProviderStatus = "unreachable"
+	ProviderStatusHostKeyChanged ProviderStatus = "host-key-changed"
+	ProviderStatusProtocol       ProviderStatus = "protocol-error"
+	ProviderStatusTimeout        ProviderStatus = "timeout"
+	ProviderStatusCancelled      ProviderStatus = "cancelled"
+	ProviderStatusFaulted        ProviderStatus = "provider-faulted"
+)
+
+// ProviderFailure explains a typed provider end. Message is a short
+// provider-supplied explanation; it never carries stream or credential
+// content.
+type ProviderFailure struct {
+	Status   ProviderStatus
+	Provider string
+	Protocol string
+	Message  string
+}
+
 // End is a transport's final state.
 type End struct {
 	Reason      EndReason
 	ExitCode    int
 	HasExitCode bool
+	// ProviderFailure is non-nil when a connection provider ended the Session
+	// with a typed failure. It never carries terminal or payload content.
+	ProviderFailure *ProviderFailure
 }
 
 // EndReporter is implemented by transports that can classify why they
@@ -239,6 +271,9 @@ type Snapshot struct {
 	// transport and application state stayed alive. Resume reattaches one
 	// view with the captured screen.
 	Hibernated bool
+	// ProviderFailure is set when a connection provider ended the Session with
+	// a typed failure, including provider unload and a guest trap.
+	ProviderFailure *ProviderFailure
 }
 
 // NoticeCode classifies a non-fatal runtime notice.
@@ -329,6 +364,33 @@ func discardTransportResume(transport Transport) {
 	}
 }
 
+// InitialSizer is implemented by provider transports whose open result carries
+// the peer's initial dimensions. The Session publishes them instead of the
+// dimensions it requested when opening.
+type InitialSizer interface {
+	InitialSize() (cols, rows int)
+}
+
+// Signaler is implemented by provider transports that accept a declared signal
+// name. The host Session owns the terminal and never forwards a signal outside
+// the provider's capability set.
+type Signaler interface {
+	Signal(name string) error
+}
+
+// ProviderMetadata exposes the non-secret identity and restore state a
+// provider-backed Session persists. Nothing here contains terminal output,
+// credentials, or screen state.
+type ProviderMetadata interface {
+	ProviderID() string
+	Protocol() string
+	RestoreDescriptor() []byte
+}
+
+// ErrSignalUnsupported reports a Session whose transport cannot accept
+// signals.
+var ErrSignalUnsupported = errors.New("session: signals are not supported")
+
 // ScreenSizer is implemented by transports whose remote peer owns the screen
 // size (mosh). The handler is called from the transport before it makes bytes
 // encoded for that size available to Read, and it returns only after the live
@@ -345,7 +407,22 @@ type ScreenSizer interface {
 // the saved credential and Hostname, Port, and Username to reach the endpoint;
 // the other fields are ignored by that transport.
 type StartSpec struct {
-	Kind    Kind
+	Kind Kind
+	// Protocol is the Host protocol that requested the Session. A built-in
+	// protocol selects a Kind when Kind is empty; a provider-owned protocol
+	// resolves through the Session factory's provider registry. Empty keeps
+	// the Kind selection, which is what serial and restored Sessions use.
+	Protocol string
+	// Provider is the plugin ID that owns Protocol for a plugin-backed
+	// Session. It is informational and never used for resolution; the provider
+	// registry keyed by Protocol is authoritative.
+	Provider string
+	// ProviderConfig is the non-secret Host form values for a provider-owned
+	// protocol. The provider never receives credential values.
+	ProviderConfig []byte
+	// Restore is the provider's bounded opaque restore descriptor. It is
+	// bounded again at open; no terminal state or secret belongs here.
+	Restore []byte
 	Command []string
 	Dir     string
 	Env     []string
@@ -527,6 +604,12 @@ type Session struct {
 
 	onEnd    func(model.SessionID)
 	onChange func(Snapshot)
+
+	// providerID, protocol, and restoreDescriptor are the immutable non-secret
+	// provider metadata captured at open. They are read without a lock.
+	providerID        string
+	protocol          string
+	restoreDescriptor []byte
 }
 
 type commandKind uint8
@@ -537,6 +620,7 @@ const (
 	commandTransportOpen
 	commandTransportFailed
 	commandReconnectNow
+	commandSignal
 )
 
 type command struct {
@@ -547,6 +631,8 @@ type command struct {
 	transport  Transport
 	end        End
 	err        error
+	signal     string
+	result     chan error
 }
 
 // closeRequest is the Session's one explicit close. The command loop or
@@ -705,7 +791,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		spec.Rows = 24
 	}
 	if spec.EncodingScope == "" {
-		if (spec.Kind == KindSSH || spec.Kind == KindTelnet) && spec.HostID != "" {
+		if (spec.Kind == KindSSH || spec.Kind == KindTelnet || spec.Kind == KindPlugin) && spec.HostID != "" {
 			spec.EncodingScope = domainterminal.EncodingScopeHost(string(spec.HostID))
 		} else {
 			spec.EncodingScope = domainterminal.EncodingScopeLocal
@@ -748,6 +834,28 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 			EndedAt: time.Now(), Err: err,
 		})
 		return nil, err
+	}
+
+	// A provider's open result carries the initial dimensions. They replace
+	// the requested size for the first Snapshot, so the host terminal is sized
+	// from the peer's real stream rather than from the pre-open guess.
+	providerID, protocol := spec.Provider, spec.Protocol
+	restoreDescriptor := append([]byte(nil), spec.Restore...)
+	if metadata, ok := transport.(ProviderMetadata); ok {
+		if value := metadata.ProviderID(); value != "" {
+			providerID = value
+		}
+		if value := metadata.Protocol(); value != "" {
+			protocol = value
+		}
+		if value := metadata.RestoreDescriptor(); value != nil {
+			restoreDescriptor = append([]byte(nil), value...)
+		}
+	}
+	if sizer, ok := transport.(InitialSizer); ok {
+		if cols, rows := sizer.InitialSize(); cols > 0 && rows > 0 {
+			spec.Cols, spec.Rows = cols, rows
+		}
 	}
 
 	id := s.newID()
@@ -796,8 +904,11 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 			Rows:       spec.Rows,
 			Encoding:   spec.Encoding,
 		},
-		onEnd:    s.remove,
-		onChange: s.changed,
+		onEnd:             s.remove,
+		onChange:          s.changed,
+		providerID:        providerID,
+		protocol:          protocol,
+		restoreDescriptor: restoreDescriptor,
 	}
 	session.conn = newTerminalConn(session)
 	session.bindScreenSizer(transport)
@@ -856,7 +967,7 @@ func specLabel(spec StartSpec) string {
 		return spec.Label
 	}
 	switch spec.Kind {
-	case KindSSH, KindTelnet:
+	case KindSSH, KindTelnet, KindPlugin:
 		if spec.Hostname != "" {
 			return spec.Hostname
 		}
@@ -1149,6 +1260,39 @@ func (s *Session) Resize(cols, rows int) error {
 	}
 }
 
+// Signal asks a provider-backed transport to deliver one declared signal. The
+// command loop serializes it with resize, close, and transport replacement.
+func (s *Session) Signal(name string) error {
+	result := make(chan error, 1)
+	select {
+	case s.commands <- command{kind: commandSignal, signal: name, result: result}:
+	case <-s.done:
+		return ErrClosed
+	case <-s.ctx.Done():
+		return ErrClosed
+	}
+	select {
+	case err := <-result:
+		return err
+	case <-s.done:
+		return ErrClosed
+	case <-s.ctx.Done():
+		return ErrClosed
+	}
+}
+
+// ProviderID returns the plugin ID that served this Session, or "" for a
+// built-in transport.
+func (s *Session) ProviderID() string { return s.providerID }
+
+// ProviderProtocol returns the provider-owned protocol used to open this
+// Session, or "" for a built-in transport.
+func (s *Session) ProviderProtocol() string { return s.protocol }
+
+// ProviderRestoreDescriptor returns the bounded opaque restore state the
+// provider supplied at open. The caller must treat it as read-only.
+func (s *Session) ProviderRestoreDescriptor() []byte { return s.restoreDescriptor }
+
 // CanReconnect reports whether ReconnectNow can reopen the transport: the
 // Session has a reconnect policy and has not ended.
 func (s *Session) CanReconnect() bool {
@@ -1300,6 +1444,7 @@ func (s *Session) loop() {
 	code := -1
 	hasCode := false
 	reason := EndReason("")
+	var providerFailure *ProviderFailure
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -1337,6 +1482,7 @@ func (s *Session) loop() {
 					connection = connectionForEnd(cmd.end)
 					code, hasCode = cmd.end.ExitCode, cmd.end.HasExitCode
 					reason = cmd.end.Reason
+					providerFailure = cmd.end.ProviderFailure
 					goto finished
 				}
 				// Advance the generation before starting the dial so a second
@@ -1350,6 +1496,19 @@ func (s *Session) loop() {
 					snapshot.Connection = ConnectionStatusReconnecting
 				})
 				go s.reconnect(s.generation, false)
+			case commandSignal:
+				var err error
+				switch signaler := s.transport.(type) {
+				case nil:
+					err = ErrClosed
+				case Signaler:
+					err = signaler.Signal(cmd.signal)
+				default:
+					err = ErrSignalUnsupported
+				}
+				if cmd.result != nil {
+					cmd.result <- err
+				}
 			case commandReconnectNow:
 				if s.reopening || s.spec.Reconnect == nil {
 					continue
@@ -1378,6 +1537,7 @@ func (s *Session) loop() {
 				}
 				s.reopening = false
 				s.transport = cmd.transport
+				providerFailure = nil
 				s.bindScreenSizer(cmd.transport)
 				s.update(func(snapshot *Snapshot) {
 					snapshot.Connection = ConnectionStatusActive
@@ -1423,6 +1583,7 @@ finished:
 		snapshot.ExitCode = code
 		snapshot.HasExitCode = hasCode
 		snapshot.EndReason = reason
+		snapshot.ProviderFailure = providerFailure
 		snapshot.Logging = logging
 		// A takeover notice and the end of the displaced transport race:
 		// the notice channel closes as the transport ends, and the notice
@@ -1610,11 +1771,15 @@ func (s *Session) writeLoop(generation int, transport Transport, genDone <-chan 
 			return
 		case input := <-s.writeCh:
 			if _, err := transport.Write(input); err != nil {
+				// A failed write ends the transport just like a failed read:
+				// an EndReporter may carry a typed provider failure, so ask it
+				// instead of assuming a bare error. The read loop may win the
+				// race to report the same end; the first one is authoritative.
 				s.post(command{
 					kind:       commandTransportEnded,
 					generation: generation,
 					transport:  transport,
-					end:        End{Reason: EndReasonError},
+					end:        endOf(transport),
 				})
 				return
 			}

@@ -306,8 +306,18 @@ func payloadFromState(state domainsync.ConvergentState, settings map[string]json
 	if err != nil {
 		return Payload{}, err
 	}
+	// A v2 state written by another client (or persisted before this build's
+	// namespace validation) can carry one malformed pluginData namespace. The
+	// typed payload decode below fails the whole family on it. Quarantine each
+	// such namespace instead so the valid namespaces and every sibling record
+	// still materialize, and carry the diagnostics on the payload so an Apply
+	// persists them.
+	sanitized, rejected, err := sanitizeConvergentSnapshotPluginData(snapshot)
+	if err != nil {
+		return Payload{}, err
+	}
 	families := convergentFamilies()
-	raw, err := domainsync.RawSnapshotFor(snapshot, families)
+	raw, err := domainsync.RawSnapshotFor(sanitized, families)
 	if err != nil {
 		return Payload{}, err
 	}
@@ -321,7 +331,7 @@ func payloadFromState(state domainsync.ConvergentState, settings map[string]json
 			raw[family.Name] = json.RawMessage("[]")
 		}
 	}
-	if err := decorateGroupPayload(raw, snapshot); err != nil {
+	if err := decorateGroupPayload(raw, sanitized); err != nil {
 		return Payload{}, err
 	}
 	// Settings are materialized from the state. The historical settings
@@ -363,6 +373,10 @@ func payloadFromState(state domainsync.ConvergentState, settings map[string]json
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return Payload{}, err
 	}
+	if err := normalizeMaterializedPluginData(&payload); err != nil {
+		return Payload{}, err
+	}
+	payload.PluginDataQuarantines = rejected
 	payload.SyncedAt = now
 	return payload, nil
 }
@@ -592,6 +606,11 @@ type convergentRemote struct {
 	SchemaVersion int
 	Code          string
 	Detail        string
+	// PayloadMismatch reports that the inline payload does not agree with the
+	// sanitized CRDT state even though the two describe the same records once
+	// every pluginData spelling is stripped. The state wins, but the provider
+	// must be rewritten once with the canonical materialization.
+	PayloadMismatch bool
 }
 
 func (r convergentRemote) exists() bool { return r.Kind != convergentRemoteMissing }
@@ -713,14 +732,46 @@ func (s *Service) readConvergentRemote(ctx context.Context, token domainsync.Tok
 		base.Detail = err.Error()
 		return base, nextToken, nil
 	}
-	if err := domainsync.EnvelopeMatchesSnapshot(parsed.State, materialized); err != nil {
+	// Compare the envelope with the materialized payload after applying the
+	// same per-namespace quarantine rule to the state side. The payload decode
+	// already removed malformed namespaces individually; leaving them in the
+	// envelope view would make every sync of an otherwise valid replica fail
+	// with a permanent envelope mismatch and drop the valid siblings.
+	stateSnapshot, stateRejected, err := sanitizedStateSnapshot(parsed.State)
+	if err != nil {
 		base.Kind = convergentRemoteInvalid
-		base.Code = "envelope-materialized-mismatch"
+		base.Code = "damaged-envelope"
 		base.Detail = err.Error()
 		return base, nextToken, nil
 	}
+	if err := domainsync.EnvelopeMatchesSnapshot(parsed.State, materialized); err != nil {
+		// The sanitized state can still materialize exactly like the inline
+		// payload. Failing that, the two views may differ only in which
+		// duplicate pluginData spelling wins: the inline decode is
+		// document-ordered and the CRDT materializer is key-sorted. ADR 0011
+		// makes the sanitized CRDT state authoritative, and the repair below
+		// publishes a canonical replica, but any other difference still fails
+		// closed.
+		if !snapshotsEqual(stateSnapshot, materialized) {
+			if !snapshotsEqualIgnoringPluginData(stateSnapshot, materialized) {
+				base.Kind = convergentRemoteInvalid
+				base.Code = "envelope-materialized-mismatch"
+				base.Detail = err.Error()
+				return base, nextToken, nil
+			}
+			// The views agree on every Vault-owned field but not on the opaque
+			// pluginData property. Accept the sanitized state, and force one
+			// rewrite so the provider's inline copy becomes canonical too.
+			base.PayloadMismatch = true
+		}
+	}
+	// The inline payload decode and the envelope normalization can both reject
+	// a namespace. Keep both reports so an inline-payload-only quarantine is
+	// persisted and surfaced instead of being silently dropped.
+	base.Payload.PluginDataQuarantines = mergeRejectedPluginData(
+		base.Payload.PluginDataQuarantines, stateRejected)
 	base.State = &parsed.State
-	base.Materialized = materialized
+	base.Materialized = stateSnapshot
 	return base, nextToken, nil
 }
 
@@ -956,6 +1007,15 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 		plan.block("damaged-materialized-payload", err.Error())
 		return plan
 	}
+	// Some of the provider's rejected namespaces never entered the CRDT state:
+	// the payload decoder removes them before the state is read, and the
+	// envelope itself may be clean. payloadFromState can only report what the
+	// state materializes, so carry the provider decoder's diagnostics forward.
+	// Otherwise enabling v2 against such a replica would silently drop them.
+	if remote.exists() {
+		full.PluginDataQuarantines = mergeRejectedPluginData(
+			full.PluginDataQuarantines, remote.Payload.PluginDataQuarantines)
+	}
 	plan.Preview.CanInitialize = true
 	plan.State = &state
 	plan.Materialized = &full
@@ -1151,7 +1211,8 @@ func (s *Service) SetConvergentEnabled(ctx context.Context, enabled bool) (Conve
 		s.finishSync(ProblemLocal)
 		return plan.Preview, err
 	}
-	if !snapshotsEqual(localSnapshot, migratedSnapshot) {
+	if !snapshotsEqual(localSnapshot, migratedSnapshot) ||
+		len(plan.Materialized.PluginDataQuarantines) > 0 {
 		if err := s.vault.Apply(ctx, *plan.Materialized); err != nil {
 			s.finishSync(ProblemLocal)
 			return plan.Preview, err
@@ -1321,6 +1382,14 @@ func (s *Service) syncConvergent(
 	if err != nil {
 		return fail(convergentProblem(err), "blocked", err)
 	}
+	// A replica persisted by another writer may carry one malformed pluginData
+	// namespace. Repair the CRDT state up front so every later materialization
+	// in this run sees the quarantined view, and keep the rejected namespaces
+	// for the local quarantine table and the sync report.
+	state, _, quarantines, err := s.repairConvergentStatePluginData(state, config.DeviceID)
+	if err != nil {
+		return fail(convergentProblem(err), "blocked", err)
+	}
 	verified, err := s.loadVerifiedPayloadStrict(config)
 	if err != nil {
 		return fail(convergentProblem(err), "blocked", err)
@@ -1391,12 +1460,23 @@ func (s *Service) syncConvergent(
 	if err := remote.structuralError(); err != nil {
 		return fail(problemFor(err), "blocked", err)
 	}
+	quarantines = mergeRejectedPluginData(quarantines, remote.Payload.PluginDataQuarantines)
 	settings := chooseSettings(localOrNil(remote), verified, local)
 	state, remoteChanged, err := s.joinConvergentRemote(state, remote, verified, config, s.now().UnixMilli())
 	if err != nil {
 		info.Divergence = divergenceInfoFor(err)
 		return fail(convergentProblem(err), "diverged", err)
 	}
+	// The join merges the provider's raw state, including any malformed
+	// namespace it still carries. Repair the merged state before it is
+	// materialized or published, so the provider is rewritten with the
+	// quarantined view instead of the sync failing on an invalid payload.
+	state, repaired, rejected, err := s.repairConvergentStatePluginData(state, config.DeviceID)
+	if err != nil {
+		return fail(convergentProblem(err), "blocked", err)
+	}
+	stateChanged = stateChanged || repaired
+	quarantines = mergeRejectedPluginData(quarantines, rejected)
 
 	if strategy == domainsync.StrategyPreferLocal {
 		// Only write values that actually differ from the joined state. A
@@ -1421,6 +1501,8 @@ func (s *Service) syncConvergent(
 	if err != nil {
 		return fail(ProblemLocal, "failed", err)
 	}
+	outgoing.PluginDataQuarantines = mergeRejectedPluginData(
+		outgoing.PluginDataQuarantines, quarantines)
 	var baselinePtr, remotePtr *Payload
 	if verified != nil {
 		baselinePtr = verified
@@ -1481,6 +1563,7 @@ func (s *Service) syncConvergent(
 		if err := fresh.structuralError(); err != nil {
 			return fail(problemFor(err), "blocked", err)
 		}
+		quarantines = mergeRejectedPluginData(quarantines, fresh.Payload.PluginDataQuarantines)
 		if fresh.exists() {
 			settings = chooseSettings(&fresh.Payload, verified, local)
 			joined, _, joinErr := s.joinConvergentRemote(expected, fresh, verified, config, s.now().UnixMilli())
@@ -1492,11 +1575,28 @@ func (s *Service) syncConvergent(
 				expected = joined
 				remoteAffecting = true
 			}
+			repairedExpected, repaired, rejected, repairErr :=
+				s.repairConvergentStatePluginData(expected, config.DeviceID)
+			if repairErr != nil {
+				return fail(convergentProblem(repairErr), "blocked", repairErr)
+			}
+			if repaired {
+				expected = repairedExpected
+				remoteAffecting = true
+			}
+			quarantines = mergeRejectedPluginData(quarantines, rejected)
 		}
 
 		needsUpload := true
 		if fresh.Kind == convergentRemoteV2 && fresh.State != nil {
-			if roundSatisfied(round, expected, *fresh.State) && manifestsDominate(*fresh.State, expected) {
+			// A v2 replica whose inline payload carries a quarantined namespace
+			// is not satisfied even when its state matches: the provider must be
+			// rewritten with the quarantined materialization once, so the
+			// diagnostic is realized and a repeated sync is clean.
+			if roundSatisfied(round, expected, *fresh.State) &&
+				manifestsDominate(*fresh.State, expected) &&
+				len(fresh.Payload.PluginDataQuarantines) == 0 &&
+				!fresh.PayloadMismatch {
 				needsUpload = false
 				verifiedRemote = fresh
 			}
@@ -1528,6 +1628,7 @@ func (s *Service) syncConvergent(
 				if retryErr := retryRemote.structuralError(); retryErr != nil {
 					return fail(problemFor(retryErr), "blocked", retryErr)
 				}
+				quarantines = mergeRejectedPluginData(quarantines, retryRemote.Payload.PluginDataQuarantines)
 				if retryRemote.exists() {
 					joined, _, joinErr := s.joinConvergentRemote(expected, retryRemote, verified, config, s.now().UnixMilli())
 					if joinErr != nil {
@@ -1537,6 +1638,16 @@ func (s *Service) syncConvergent(
 						expected = joined
 						remoteAffecting = true
 					}
+					repairedRetry, repaired, rejected, repairErr :=
+						s.repairConvergentStatePluginData(expected, config.DeviceID)
+					if repairErr != nil {
+						return fail(convergentProblem(repairErr), "blocked", repairErr)
+					}
+					if repaired {
+						expected = repairedRetry
+						remoteAffecting = true
+					}
+					quarantines = mergeRejectedPluginData(quarantines, rejected)
 				}
 				content, encodeErr = s.encodeConvergentCloudPayload(expected, settings, config)
 				if encodeErr != nil {
@@ -1563,6 +1674,7 @@ func (s *Service) syncConvergent(
 			if readBackErr := readBack.structuralError(); readBackErr != nil {
 				return fail(problemFor(readBackErr), "blocked", readBackErr)
 			}
+			quarantines = mergeRejectedPluginData(quarantines, readBack.Payload.PluginDataQuarantines)
 			if readBack.Kind != convergentRemoteV2 || readBack.State == nil {
 				lastErr = fmt.Errorf("%w: provider did not return a v2 payload after the write", ErrConvergentDivergence)
 				s.markRoundOutcome(round, "retry")
@@ -1593,6 +1705,13 @@ func (s *Service) syncConvergent(
 			if !statesEqual(expected, joined) {
 				expected = joined
 				remoteAffecting = true
+				repairedExpected, _, rejected, repairErr :=
+					s.repairConvergentStatePluginData(expected, config.DeviceID)
+				if repairErr != nil {
+					return fail(convergentProblem(repairErr), "blocked", repairErr)
+				}
+				expected = repairedExpected
+				quarantines = mergeRejectedPluginData(quarantines, rejected)
 				lastErr = fmt.Errorf("%w: round %d discovered concurrent state", ErrConvergentDivergence, round)
 				s.markRoundOutcome(round, "retry")
 				continue
@@ -1631,12 +1750,17 @@ func (s *Service) syncConvergent(
 	if err != nil {
 		return fail(ProblemLocal, "failed", err)
 	}
+	finalPayload.PluginDataQuarantines = mergeRejectedPluginData(
+		finalPayload.PluginDataQuarantines, quarantines)
 	finalSnapshot, err := payloadSnapshot(finalPayload)
 	if err != nil {
 		return fail(ProblemLocal, "failed", err)
 	}
 	downloadApplied := false
-	if !snapshotsEqual(localSnapshot, finalSnapshot) {
+	// A quarantine must reach the host-local table even when the visible
+	// Vault already matches the quarantined materialization. Applying the
+	// identical payload persists the diagnostics and is idempotent.
+	if !snapshotsEqual(localSnapshot, finalSnapshot) || len(finalPayload.PluginDataQuarantines) > 0 {
 		if err := s.ensureProtectiveBackup(ctx); err != nil {
 			return fail(ProblemBackup, "failed", err)
 		}

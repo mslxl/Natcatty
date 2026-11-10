@@ -246,6 +246,13 @@ func (s *Service) exportDataset(ctx context.Context, opts ExportOptions) (vaulte
 		dataset.Hosts = append(dataset.Hosts, entry)
 	}
 
+	if s.dataProfiles != nil {
+		profiles, err := s.dataProfiles.ListProfiles(ctx)
+		if err != nil {
+			return dataset, 0, internal(err)
+		}
+		dataset.DataProfiles = profiles
+	}
 	if s.groups != nil {
 		groups, err := s.groups.ListGroups(ctx)
 		if err != nil {

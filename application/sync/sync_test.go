@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
 	domainsync "github.com/mslxl/natcatty/domain/sync"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
@@ -111,7 +112,10 @@ func clonePayload(p Payload) Payload {
 		SyncedAt:            p.SyncedAt,
 		Secrets:             append([]SecretValue(nil), p.Secrets...),
 		Groups:              append([]domainvault.Group(nil), p.Groups...),
+		DataProfiles:        append([]domainplugin.DataProfile(nil), p.DataProfiles...),
 		PortForwardingRules: p.PortForwardingRules,
+		PluginDataQuarantines: append([]RejectedPluginData(nil),
+			p.PluginDataQuarantines...),
 	}
 	if p.Settings != nil {
 		clone.Settings = make(map[string]json.RawMessage, len(p.Settings))

@@ -345,6 +345,9 @@ func (s *Service) resolveLocked(ctx context.Context, resolution Resolution, forc
 				s.fail(ProblemLocal)
 				return Result{Trigger: TriggerManual}, mergeErr
 			}
+			// The rebuilt payload drops host-local decoder quarantines; carry
+			// them so the store can persist every rejected namespace it kept.
+			merged.Payload.PluginDataQuarantines = remotePayload.PluginDataQuarantines
 			outgoing = merged.Payload
 		}
 		outgoing = s.prepareOutgoing(outgoing, base, &remotePayload, config.DeviceID)

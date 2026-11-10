@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
+	"github.com/mslxl/natcatty/domain/model/plugindata"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -111,6 +113,17 @@ func newFamilySource(t *testing.T) *familySource {
 		IdentityID: "ident-1", KeyID: "key-1", AuthMethod: domainvault.HostAuthKey,
 		RequiresMFA: true, ProxyProfileID: "proxy-1", LegacyAlgorithms: true,
 		SkipEcdsaHostKey: true, DeviceType: domainvault.DeviceTypeNetwork, OrderKey: 1000,
+		PluginData: plugindata.Map{
+			"acme.provider": {
+				SchemaVersion: 2,
+				Fields: map[string]json.RawMessage{
+					"profile": json.RawMessage(`{"label":"Prod <one>","count":3}`),
+				},
+				Extra: map[string]json.RawMessage{
+					"future": json.RawMessage(`{"kept":true}`),
+				},
+			},
+		},
 	}}
 	source.known.items = []domainconn.KnownHost{{
 		ID: "known-1", Hostname: "web1.example.test", Port: 2222,
@@ -258,6 +271,26 @@ func TestVaultJSONRoundTripRestoresEveryFamilyAndLink(t *testing.T) {
 	}
 	if !host.IsNetworkDevice() {
 		t.Fatalf("Host network device mode was not restored: %+v", host)
+	}
+	namespace, ok := host.PluginData["acme.provider"]
+	if !ok {
+		t.Fatalf("Host pluginData was not restored: %+v", host.PluginData)
+	}
+	if namespace.SchemaVersion != 2 {
+		t.Fatalf("pluginData schema version = %d, want 2", namespace.SchemaVersion)
+	}
+	var profile struct {
+		Label string `json:"label"`
+		Count int    `json:"count"`
+	}
+	if err := json.Unmarshal(namespace.Fields["profile"], &profile); err != nil {
+		t.Fatalf("pluginData profile field: %v", err)
+	}
+	if profile.Label != "Prod <one>" || profile.Count != 3 {
+		t.Fatalf("pluginData profile = %+v", profile)
+	}
+	if _, kept := namespace.Extra["future"]; !kept {
+		t.Fatalf("pluginData unknown namespace property was dropped: %+v", namespace.Extra)
 	}
 
 	if len(destination.keys.keys) != 1 {

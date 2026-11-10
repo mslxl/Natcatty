@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mslxl/natcatty/domain/model"
+	"github.com/mslxl/natcatty/domain/model/plugindata"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/domain/vaultimport"
 )
@@ -277,6 +278,12 @@ func (s *Service) PreviewImport(ctx context.Context, text string, opts PreviewIm
 			Selected:  true,
 		}
 		draft := draftFromRecord(record)
+		pluginData, dataIssues := importedPluginData(record)
+		draft.PluginData = pluginData
+		for _, item := range dataIssues {
+			preview.Issues = append(preview.Issues, item)
+			row.Issues = append(row.Issues, item)
+		}
 		if record.X11Forwarding && !record.X11WarningAcknowledged {
 			// Imported configuration cannot accept a security warning on the
 			// user's behalf, so forwarding is not enabled silently.
@@ -864,6 +871,39 @@ func (preview *ImportPreview) commitDraft(index int) (domainvault.Draft, bool) {
 	return preview.drafts[index], true
 }
 
+// importedPluginData decodes one Host's plugin data with the shared lenient
+// structural decoder. A malformed namespace is reported and omitted while
+// valid siblings are still imported. Unknown namespaces and field names
+// survive because the decoder never interprets them.
+func importedPluginData(record vaultimport.Record) (plugindata.Map, []vaultimport.Issue) {
+	if record.PluginData == nil {
+		return nil, nil
+	}
+	decoded, quarantined, err := plugindata.DecodeMapLenient(record.PluginData)
+	issues := make([]vaultimport.Issue, 0, len(quarantined)+1)
+	if err != nil {
+		issues = append(issues, vaultimport.Issue{
+			Severity: vaultimport.SeverityWarning,
+			Code:     vaultimport.IssueInvalidField,
+			Row:      record.Row,
+			Field:    "pluginData",
+			Detail:   plugindata.BoundText(err.Error(), plugindata.MaxDiagnosticDetailBytes),
+		})
+		return decoded, issues
+	}
+	for _, item := range quarantined {
+		issues = append(issues, vaultimport.Issue{
+			Severity: vaultimport.SeverityWarning,
+			Code:     vaultimport.IssueInvalidField,
+			Row:      record.Row,
+			Field:    "pluginData",
+			Value:    item.PluginID,
+			Detail:   string(item.Reason),
+		})
+	}
+	return decoded, issues
+}
+
 func draftFromRecord(record vaultimport.Record) domainvault.Draft {
 	draft := domainvault.Draft{
 		Label:            record.Label,
@@ -1018,6 +1058,7 @@ func (preview *ImportPreview) jumpChains(selected func(int) bool,
 
 func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 	return domainvault.Host{
+		CreatedBy:              draft.CreatedBy,
 		Label:                  draft.Label,
 		Hostname:               draft.Hostname,
 		Port:                   draft.Port,
@@ -1045,6 +1086,7 @@ func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 		SFTPSudo:               draft.SFTPSudo,
 		DeviceType:             draft.DeviceType,
 		AutoAttachTmux:         draft.AutoAttachTmux,
+		PluginData:             plugindata.Clone(draft.PluginData),
 		MoshServerPath:         draft.MoshServerPath,
 		ETPort:                 draft.ETPort,
 	}

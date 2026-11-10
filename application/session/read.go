@@ -48,6 +48,27 @@ func (s *Service) LiveIdentities() []LiveIdentity {
 	return identities
 }
 
+// Session returns one live Session. The host-service terminal port uses it to
+// open a read-only Observation and to request a manual reconnect; callers must
+// not retain it after the Session ends.
+func (s *Service) Session(id model.SessionID) (*Session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[id]
+	return session, ok
+}
+
+// Reconnect asks one live Session to retry its transport now. It reports
+// whether the request was accepted; a Session that cannot reconnect returns
+// false rather than blocking the caller.
+func (s *Service) Reconnect(id model.SessionID) bool {
+	session, ok := s.Session(id)
+	if !ok {
+		return false
+	}
+	return session.ReconnectNow()
+}
+
 // Describe returns one Session's projection. A Session that already ended is
 // not described.
 func (s *Service) Describe(id model.SessionID) (SessionDescription, bool) {

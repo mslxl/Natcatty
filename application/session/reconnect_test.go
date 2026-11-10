@@ -20,6 +20,7 @@ type scriptedTransport struct {
 
 	mu            sync.Mutex
 	written       bytes.Buffer
+	writeErr      error
 	resizes       [][2]int
 	preserveCalls int
 	discardCalls  int
@@ -68,7 +69,26 @@ func (t *scriptedTransport) Read(p []byte) (int, error) {
 func (t *scriptedTransport) Write(p []byte) (int, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.writeErr != nil {
+		return 0, t.writeErr
+	}
 	return t.written.Write(p)
+}
+
+// failWrite makes subsequent writes fail without ending the read side, so a
+// test can drive the write path in isolation.
+func (t *scriptedTransport) failWrite(err error) {
+	t.mu.Lock()
+	t.writeErr = err
+	t.mu.Unlock()
+}
+
+// setEnd publishes a classification without closing the read side, so the
+// transport is still running when only the write path fails.
+func (t *scriptedTransport) setEnd(end End) {
+	t.mu.Lock()
+	t.end = end
+	t.mu.Unlock()
 }
 
 func (t *scriptedTransport) Resize(cols, rows int) error {

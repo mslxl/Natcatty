@@ -9,7 +9,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mslxl/natcatty/domain/model/plugindata"
 	domainsync "github.com/mslxl/natcatty/domain/sync"
 )
 
@@ -359,6 +359,14 @@ type Vault interface {
 	Apply(ctx context.Context, payload Payload) error
 }
 
+// PluginDataReporter is an optional Vault capability. A Vault that carries
+// provider namespaces reports the ones the last Snapshot or Apply found
+// dormant, such as an unresolved data-profile secret reference. The marker
+// text and provider data never enter the report.
+type PluginDataReporter interface {
+	PluginDataDiagnostics() []plugindata.Diagnostic
+}
+
 // Config is the non-secret sync profile persisted beside the Vault.
 type Config struct {
 	Provider  string `json:"provider"`
@@ -448,6 +456,11 @@ type Result struct {
 	// convergence reports zero, which is how the UI and self-test prove
 	// idempotence.
 	Writes int
+	// PluginDataDiagnostics lists the provider namespaces the sync found
+	// dormant on this device. An unresolved secret reference appears here while
+	// its reference stays in the record; it is never written as plaintext or
+	// an empty value.
+	PluginDataDiagnostics []plugindata.Diagnostic `json:"pluginDataDiagnostics,omitempty"`
 }
 
 // Snapshot is the state the UI renders.
@@ -493,6 +506,9 @@ type Snapshot struct {
 	BackupsProblem Problem
 	// Convergent is the v2 enable/verification/divergence surface.
 	Convergent ConvergentInfo
+	// PluginDataDiagnostics reports provider namespaces that are dormant,
+	// newer than the active provider, or quarantined.
+	PluginDataDiagnostics []plugindata.Diagnostic `json:"pluginDataDiagnostics,omitempty"`
 }
 
 // Option customizes a Service.
@@ -872,34 +888,36 @@ func (s *Service) ClearPassword() {
 
 // Snapshot returns the current state.
 func (s *Service) Snapshot() Snapshot {
+	pluginData := s.pluginDataDiagnostics()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return Snapshot{
-		Connected:      s.config.Connected,
-		Provider:       NormalizeProvider(s.config.Provider),
-		Login:          s.config.Login,
-		AutoSync:       s.config.AutoSync,
-		Strategy:       domainsync.NormalizeStrategy(s.config.Strategy),
-		Status:         s.status,
-		Problem:        s.problem,
-		DeviceCode:     s.device,
-		LastSyncedAt:   s.config.LastSyncedAt,
-		LastAction:     s.lastAction,
-		HasPassword:    s.password != "",
-		WebDAVEndpoint: s.webdavEndpoint,
-		WebDAVAuthType: s.webdavAuthType,
-		WebDAVUsername: s.webdavUsername,
-		WebDAVInsecure: s.webdavInsecure,
-		S3Endpoint:     s.s3Endpoint,
-		S3Region:       s.s3Region,
-		S3Bucket:       s.s3Bucket,
-		S3Prefix:       s.s3Prefix,
-		S3Insecure:     s.s3Insecure,
-		Guard:          s.guard,
-		Conflict:       conflictInfoFor(s.config),
-		Backups:        append([]BackupInfo(nil), s.backupsList...),
-		BackupsProblem: s.backupsProblem,
-		Convergent:     s.convergent,
+		PluginDataDiagnostics: pluginData,
+		Connected:             s.config.Connected,
+		Provider:              NormalizeProvider(s.config.Provider),
+		Login:                 s.config.Login,
+		AutoSync:              s.config.AutoSync,
+		Strategy:              domainsync.NormalizeStrategy(s.config.Strategy),
+		Status:                s.status,
+		Problem:               s.problem,
+		DeviceCode:            s.device,
+		LastSyncedAt:          s.config.LastSyncedAt,
+		LastAction:            s.lastAction,
+		HasPassword:           s.password != "",
+		WebDAVEndpoint:        s.webdavEndpoint,
+		WebDAVAuthType:        s.webdavAuthType,
+		WebDAVUsername:        s.webdavUsername,
+		WebDAVInsecure:        s.webdavInsecure,
+		S3Endpoint:            s.s3Endpoint,
+		S3Region:              s.s3Region,
+		S3Bucket:              s.s3Bucket,
+		S3Prefix:              s.s3Prefix,
+		S3Insecure:            s.s3Insecure,
+		Guard:                 s.guard,
+		Conflict:              conflictInfoFor(s.config),
+		Backups:               append([]BackupInfo(nil), s.backupsList...),
+		BackupsProblem:        s.backupsProblem,
+		Convergent:            s.convergent,
 	}
 }
 
@@ -1591,7 +1609,19 @@ func (s *Service) sync(ctx context.Context, trigger Trigger, force bool) (Result
 		// There is no automatic force path, by construction.
 		force = false
 	}
-	return s.syncLocked(ctx, trigger, force)
+	result, err := s.syncLocked(ctx, trigger, force)
+	result.PluginDataDiagnostics = s.pluginDataDiagnostics()
+	return result, err
+}
+
+// pluginDataDiagnostics reads the adapter's dormant-namespace report when the
+// Vault provides one. A Vault without provider data has nothing to report.
+func (s *Service) pluginDataDiagnostics() []plugindata.Diagnostic {
+	reporter, ok := s.vault.(PluginDataReporter)
+	if !ok || reporter == nil {
+		return nil
+	}
+	return reporter.PluginDataDiagnostics()
 }
 
 func (s *Service) syncLocked(ctx context.Context, trigger Trigger, force bool) (Result, error) {
@@ -1849,6 +1879,11 @@ func (s *Service) mergeAndUpload(
 		s.finishSync(ProblemLocal)
 		return Result{Trigger: trigger}, err
 	}
+	// A merge rebuilds the payload from typed records, so it would otherwise
+	// drop the decoder's host-local quarantine entries. Carry them to Apply:
+	// the store clears each entry whose namespace the merged record now has,
+	// and persists the rest as diagnostics.
+	merged.Payload.PluginDataQuarantines = remotePayload.PluginDataQuarantines
 	outgoing := s.prepareOutgoing(merged.Payload, base, &remotePayload, config.DeviceID)
 	if blocked, result, guardErr := s.applyGuard(outgoing, base, &remotePayload, force, trigger); blocked {
 		return result, guardErr
@@ -2349,10 +2384,7 @@ func decodePayloadBytes(data []byte) (Payload, error) {
 	if len(data) == 0 {
 		return payload, fmt.Errorf("empty plaintext")
 	}
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return Payload{}, err
-	}
-	return payload, nil
+	return decodePayloadLenient(data)
 }
 
 // Signature is a stable hash of the payload used to detect local edits since

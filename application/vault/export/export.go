@@ -22,6 +22,7 @@ import (
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	"github.com/mslxl/natcatty/domain/markdown"
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/domain/vaultimport"
 )
@@ -140,6 +141,7 @@ type Dataset struct {
 	Identities      []domainvault.Identity
 	ProxyProfiles   []domainvault.ProxyProfile
 	NetworkProfiles []domainvault.NetworkProfile
+	DataProfiles    []domainplugin.DataProfile
 	KnownHosts      []domainconn.KnownHost
 	Snippets        []domainvault.Snippet
 	SnippetPackages []domainvault.SnippetPackage
@@ -211,20 +213,21 @@ func Export(d Dataset, format Format, opts Options) ([]byte, error) {
 // ---------------------------------------------------------------- JSON
 
 type jsonDocument struct {
-	Kind            string               `json:"kind"`
-	Version         int                  `json:"version"`
-	ExportedAt      string               `json:"exportedAt"`
-	Groups          []domainvault.Group  `json:"groups"`
-	Hosts           []jsonHost           `json:"hosts"`
-	Keys            []jsonKey            `json:"keys"`
-	Identities      []jsonIdentity       `json:"identities"`
-	ProxyProfiles   []jsonProxyProfile   `json:"proxyProfiles"`
-	NetworkProfiles []jsonNetworkProfile `json:"networkProfiles"`
-	KnownHosts      []jsonKnownHost      `json:"knownHosts"`
-	Snippets        []jsonSnippet        `json:"snippets"`
-	SnippetPackages []string             `json:"snippetPackages"`
-	Notes           []domainvault.Note   `json:"notes"`
-	NoteGroups      []string             `json:"noteGroups"`
+	Kind            string                     `json:"kind"`
+	Version         int                        `json:"version"`
+	ExportedAt      string                     `json:"exportedAt"`
+	Groups          []domainvault.Group        `json:"groups"`
+	Hosts           []jsonHost                 `json:"hosts"`
+	Keys            []jsonKey                  `json:"keys"`
+	Identities      []jsonIdentity             `json:"identities"`
+	ProxyProfiles   []jsonProxyProfile         `json:"proxyProfiles"`
+	NetworkProfiles []jsonNetworkProfile       `json:"networkProfiles"`
+	DataProfiles    []domainplugin.DataProfile `json:"dataProfiles,omitempty"`
+	KnownHosts      []jsonKnownHost            `json:"knownHosts"`
+	Snippets        []jsonSnippet              `json:"snippets"`
+	SnippetPackages []string                   `json:"snippetPackages"`
+	Notes           []domainvault.Note         `json:"notes"`
+	NoteGroups      []string                   `json:"noteGroups"`
 }
 
 // jsonIdentity adds the credential plaintext the domain Identity deliberately
@@ -367,6 +370,7 @@ func exportJSON(d Dataset, opts Options) ([]byte, error) {
 		}
 		document.Keys = append(document.Keys, entry)
 	}
+	document.DataProfiles = sortedDataProfiles(d.DataProfiles)
 	document.KnownHosts = knownHostDocuments(d.KnownHosts)
 
 	for _, host := range sortedHosts(d.Hosts) {
@@ -451,6 +455,14 @@ func networkProfileDocuments(profiles []domainvault.NetworkProfile,
 		}
 		out = append(out, entry)
 	}
+	return out
+}
+
+// sortedDataProfiles orders records by ID so the same Vault exports the same
+// bytes. pluginData travels verbatim as part of each profile.
+func sortedDataProfiles(profiles []domainplugin.DataProfile) []domainplugin.DataProfile {
+	out := append([]domainplugin.DataProfile(nil), profiles...)
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 

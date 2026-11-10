@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	domainforward "github.com/mslxl/natcatty/domain/forwarding"
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
+	domainsync "github.com/mslxl/natcatty/domain/sync"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -29,6 +31,7 @@ const (
 	entityProxyProfile   = "proxy_profile"
 	entityNetworkProfile = "network_profile"
 	entityNetworkPeer    = "network_peer"
+	entityDataProfile    = "data_profile"
 )
 
 // ConflictKind is the per-item conflict classification the original's change
@@ -157,6 +160,12 @@ func MergePayloads(base *Payload, local, remote Payload, opts MergeOptions) (Mer
 	if err != nil {
 		return MergeResult{}, err
 	}
+	dataProfiles, err := mergeFamily("dataProfiles", b.DataProfiles, local.DataProfiles, remote.DataProfiles,
+		func(v domainplugin.DataProfile) string { return v.ID },
+		local.SyncMeta, remote.SyncMeta, opts)
+	if err != nil {
+		return MergeResult{}, err
+	}
 	snippets, err := mergeFamily("snippets", b.Snippets, local.Snippets, remote.Snippets,
 		func(v domainvault.Snippet) string { return v.ID },
 		local.SyncMeta, remote.SyncMeta, opts)
@@ -203,6 +212,7 @@ func MergePayloads(base *Payload, local, remote Payload, opts MergeOptions) (Mer
 		{"identities", identities.counts},
 		{"proxyProfiles", proxies.counts},
 		{"networkProfiles", profiles.counts},
+		{"dataProfiles", dataProfiles.counts},
 		{"snippets", snippets.counts},
 		{"groups", groups.counts},
 		{"snippetPackages", packages.counts},
@@ -221,6 +231,7 @@ func MergePayloads(base *Payload, local, remote Payload, opts MergeOptions) (Mer
 		Identities:          identities.values,
 		ProxyProfiles:       proxies.values,
 		NetworkProfiles:     profiles.values,
+		DataProfiles:        dataProfiles.values,
 		Snippets:            snippets.values,
 		Groups:              groups.values,
 		SnippetPackages:     packages.values,
@@ -407,7 +418,13 @@ func mergeFamily[T any](
 	result.values = make([]T, 0, len(merged))
 	for _, rec := range merged {
 		var value T
-		data, err := json.Marshal(rec.fields)
+		// A merged field map carries host-opaque pluginData json.RawMessage
+		// values. encoding/json's default encoder would expand '<', '>', and
+		// '&' to six-byte escapes, and the expanded bytes would then be what
+		// the Vault stores, counts against the field/record limits, and
+		// eventually quarantines. Use the shared JSON.stringify-shaped encoder
+		// every other payload path uses so a provider value stays byte-stable.
+		data, err := domainsync.MarshalJSON(rec.fields)
 		if err != nil {
 			return familyResult[T]{}, fmt.Errorf("%w: encode %s %s: %v", ErrMerge, name, rec.id, err)
 		}
@@ -424,7 +441,12 @@ func decodeRecords[T any](values []T, key func(T) string) ([]record, map[string]
 	byID := make(map[string]record, len(values))
 	order := make(map[string]bool, len(values))
 	for _, value := range values {
-		data, err := json.Marshal(value)
+		// The typed Host/DataProfile marshals its pluginData json.RawMessage
+		// values through a custom marshaler, but the default encoder's
+		// compact pass re-escapes '<', '>', and '&' in that output. Decoding
+		// those expanded spellings would make every later comparison and
+		// merged output carry the six-byte form.
+		data, err := domainsync.MarshalJSON(value)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%w: encode entity: %v", ErrMerge, err)
 		}
@@ -453,7 +475,7 @@ func recordFingerprint(fields map[string]json.RawMessage) string {
 	for key, value := range fields {
 		canonical[key] = canonicalRaw(value)
 	}
-	data, err := json.Marshal(canonical)
+	data, err := domainsync.MarshalJSON(canonical)
 	if err != nil {
 		return ""
 	}
@@ -516,7 +538,7 @@ func canonicalRaw(raw json.RawMessage) json.RawMessage {
 	if err != nil {
 		return raw
 	}
-	data, err := json.Marshal(value)
+	data, err := domainsync.MarshalJSON(value)
 	if err != nil {
 		return raw
 	}
@@ -660,6 +682,11 @@ func payloadEntityIDs(payload Payload) map[string]bool {
 		profiles[i] = v.ID
 	}
 	add("networkProfiles", profiles...)
+	dataProfiles := make([]string, len(payload.DataProfiles))
+	for i, v := range payload.DataProfiles {
+		dataProfiles[i] = v.ID
+	}
+	add("dataProfiles", dataProfiles...)
 	snippets := make([]string, len(payload.Snippets))
 	for i, v := range payload.Snippets {
 		snippets[i] = v.ID
@@ -797,6 +824,7 @@ func filterSecretsToPayload(payload Payload, secrets []SecretValue) []SecretValu
 		entityIdentity:       "identities",
 		entityProxyProfile:   "proxyProfiles",
 		entityNetworkProfile: "networkProfiles",
+		entityDataProfile:    "dataProfiles",
 	}
 	// A WireGuard peer is nested inside its profile, so its Preshared Key is
 	// addressed by the stable peer id rather than by a top-level payload

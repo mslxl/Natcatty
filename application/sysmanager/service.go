@@ -31,6 +31,10 @@ const (
 	TabTmux      Tab = "tmux"
 	TabDocker    Tab = "docker"
 	TabGPU       Tab = "gpu"
+	// TabExtensions is the host-owned Extensions tab. It is not a remote
+	// sampler: its data comes from plugin sections, so this package never
+	// builds a command for it and never probes capabilities for it.
+	TabExtensions Tab = "extensions"
 )
 
 // Tabs lists ticket 45's core tabs in display order. Ticket 46 extends the
@@ -41,6 +45,24 @@ var Tabs = []Tab{TabOverview, TabProcesses, TabPorts, TabServices}
 // ExtendedTabs lists every tab in the original's default display order.
 var ExtendedTabs = []Tab{
 	TabOverview, TabProcesses, TabPorts, TabServices, TabTmux, TabDocker, TabGPU,
+	TabExtensions,
+}
+
+// SnapshotCollectors lists the built-in collectors the Host snapshot service
+// may run, in canonical order. Extensions is not one of them.
+var SnapshotCollectors = []Tab{
+	TabOverview, TabProcesses, TabPorts, TabServices, TabTmux, TabDocker, TabGPU,
+}
+
+// IsSnapshotCollector reports whether tab is one of the fixed collectors the
+// Host snapshot service exposes.
+func IsSnapshotCollector(tab Tab) bool {
+	for _, collector := range SnapshotCollectors {
+		if collector == tab {
+			return true
+		}
+	}
+	return false
 }
 
 // DefaultInterval returns the original's refresh cadence for tab: three
@@ -205,86 +227,86 @@ func (c Capabilities) Available(tab Tab) (bool, Reason) {
 
 // Overview is the summary fields the original showed for a Host.
 type Overview struct {
-	Hostname      string
-	OSName        string
-	KernelRelease string
-	UptimeSeconds float64
-	LoadAverage   []float64
-	Cores         int
+	Hostname      string    `json:"hostname"`
+	OSName        string    `json:"os_name"`
+	KernelRelease string    `json:"kernel_release"`
+	UptimeSeconds float64   `json:"uptime_seconds"`
+	LoadAverage   []float64 `json:"load_average"`
+	Cores         int       `json:"cores"`
 	// CPUPercent is NaN until a second Linux counter reading establishes a
 	// delta; macOS reports a direct percentage.
-	CPUPercent  float64
-	MemUsedMB   float64
-	MemTotalMB  float64
-	SwapUsedMB  float64
-	SwapTotalMB float64
-	DiskUsedGB  float64
-	DiskTotalGB float64
+	CPUPercent  float64 `json:"cpu_percent"`
+	MemUsedMB   float64 `json:"mem_used_mb"`
+	MemTotalMB  float64 `json:"mem_total_mb"`
+	SwapUsedMB  float64 `json:"swap_used_mb"`
+	SwapTotalMB float64 `json:"swap_total_mb"`
+	DiskUsedGB  float64 `json:"disk_used_gb"`
+	DiskTotalGB float64 `json:"disk_total_gb"`
 }
 
 // Process is one row of the process list.
 type Process struct {
-	PID        int
-	PPID       int
-	User       string
-	Stat       string
-	CPUPercent float64
-	MemPercent float64
-	RSSKB      int64
-	VSZKB      int64
-	Elapsed    string
-	Command    string
+	PID        int     `json:"pid"`
+	PPID       int     `json:"ppid"`
+	User       string  `json:"user"`
+	Stat       string  `json:"stat"`
+	CPUPercent float64 `json:"cpu_percent"`
+	MemPercent float64 `json:"mem_percent"`
+	RSSKB      int64   `json:"rss_kb"`
+	VSZKB      int64   `json:"vsz_kb"`
+	Elapsed    string  `json:"elapsed"`
+	Command    string  `json:"command"`
 }
 
 // Port is one listening socket. PID is zero when the collector could not
 // attribute it; ProcessName is then empty too.
 type Port struct {
-	Protocol    string
-	Address     string
-	Port        int
-	PID         int
-	ProcessName string
+	Protocol    string `json:"protocol"`
+	Address     string `json:"address"`
+	Port        int    `json:"port"`
+	PID         int    `json:"pid"`
+	ProcessName string `json:"process_name"`
 }
 
 // Unit is one systemd unit.
 type Unit struct {
-	Name        string
-	LoadState   string
-	ActiveState string
-	SubState    string
-	Description string
-	Scope       string
+	Name        string `json:"name"`
+	LoadState   string `json:"load_state"`
+	ActiveState string `json:"active_state"`
+	SubState    string `json:"sub_state"`
+	Description string `json:"description"`
+	Scope       string `json:"scope"`
 }
 
 // TmuxSession is one tmux session.
 type TmuxSession struct {
-	Name     string
-	Windows  int
-	Attached bool
+	Name     string `json:"name"`
+	Windows  int    `json:"windows"`
+	Attached bool   `json:"attached"`
 	// Created is the Unix creation timestamp; zero when the reply used the
 	// plain list format, which does not include it.
-	Created int64
+	Created int64 `json:"created"`
 }
 
 // Container is one Docker container from `docker ps -a`.
 type Container struct {
-	ID        string
-	Name      string
-	Image     string
-	State     string
-	Status    string
-	Ports     string
-	CreatedAt string
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Image     string `json:"image"`
+	State     string `json:"state"`
+	Status    string `json:"status"`
+	Ports     string `json:"ports"`
+	CreatedAt string `json:"created_at"`
 }
 
 // Image is one Docker image from `docker images`.
 type Image struct {
-	ID         string
-	Repository string
-	Tag        string
-	Size       string
-	CreatedAt  string
-	Digest     string
+	ID         string `json:"id"`
+	Repository string `json:"repository"`
+	Tag        string `json:"tag"`
+	Size       string `json:"size"`
+	CreatedAt  string `json:"created_at"`
+	Digest     string `json:"digest"`
 }
 
 // Name is the repository and tag as one display value. A dangling image has
@@ -302,25 +324,25 @@ func (i Image) Name() string {
 // GPUDevice is one NVIDIA device from nvidia-smi. A metric the driver does
 // not report is NaN, so the surface can render a dash instead of a zero.
 type GPUDevice struct {
-	Vendor             string
-	Index              int
-	UUID               string
-	Name               string
-	UtilizationPercent float64
-	MemoryUsedMB       float64
-	MemoryTotalMB      float64
-	TemperatureC       float64
-	PowerDrawW         float64
-	PowerLimitW        float64
-	FanPercent         float64
-	DriverVersion      string
+	Vendor             string  `json:"vendor"`
+	Index              int     `json:"index"`
+	UUID               string  `json:"uuid"`
+	Name               string  `json:"name"`
+	UtilizationPercent float64 `json:"utilization_percent"`
+	MemoryUsedMB       float64 `json:"memory_used_mb"`
+	MemoryTotalMB      float64 `json:"memory_total_mb"`
+	TemperatureC       float64 `json:"temperature_c"`
+	PowerDrawW         float64 `json:"power_draw_w"`
+	PowerLimitW        float64 `json:"power_limit_w"`
+	FanPercent         float64 `json:"fan_percent"`
+	DriverVersion      string  `json:"driver_version"`
 }
 
 // GPUInfo is one Host's accelerator inventory. An empty Devices slice is the
 // normal state on a Host without a GPU.
 type GPUInfo struct {
-	Devices       []GPUDevice
-	DriverVersion string
+	Devices       []GPUDevice `json:"devices"`
+	DriverVersion string      `json:"driver_version"`
 }
 
 // DocumentKind names a read-only Docker output view.
@@ -396,6 +418,9 @@ const (
 	ActionDockerRemove  ActionKind = "docker_remove"
 	ActionDockerInspect ActionKind = "docker_inspect"
 	ActionDockerLogs    ActionKind = "docker_logs"
+	// ActionPanel is one plugin action dispatched from its own Extensions
+	// section. The plugin performs the effect through its own permissions.
+	ActionPanel ActionKind = "panel"
 )
 
 // ActionResult reports the command that ran and its reply.
@@ -490,6 +515,9 @@ func (s *Service) Start(host domainvault.Host, tab Tab, interval time.Duration) 
 	}
 	if string(host.ID) == "" {
 		return ErrNoHost
+	}
+	if !IsSnapshotCollector(tab) {
+		return ErrPanelTab
 	}
 	if interval <= 0 {
 		interval = DefaultInterval(tab)
@@ -946,6 +974,11 @@ var ErrNoHost = errors.New("sysmanager: no Host")
 
 // ErrClosed is returned after Close.
 var ErrClosed = errors.New("sysmanager: service is closed")
+
+// ErrPanelTab is returned when the built-in sampler is asked for the
+// host-owned Extensions tab. That tab has no remote command and no
+// capability probe; its data comes from plugin sections.
+var ErrPanelTab = errors.New("sysmanager: the Extensions tab is not a remote sampler")
 
 // Valid reports whether value is a usable measurement.
 func Valid(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }

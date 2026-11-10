@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 
 	domainforward "github.com/mslxl/natcatty/domain/forwarding"
+	"github.com/mslxl/natcatty/domain/model/plugindata"
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -32,6 +34,10 @@ type Payload struct {
 	// nil as "no opinion" so a pre-family peer cannot delete local profiles,
 	// while [] propagates a deletion. Writers must always set a non-nil slice.
 	NetworkProfiles []domainvault.NetworkProfile `json:"networkProfiles"`
+	// DataProfiles carries provider-owned profile records. The record's
+	// pluginData map travels verbatim and secret fields stay references; their
+	// plaintext travels in Secrets like every other credential.
+	DataProfiles    []domainplugin.DataProfile   `json:"dataProfiles,omitempty"`
 	Snippets        []domainvault.Snippet        `json:"snippets"`
 	Groups          []domainvault.Group          `json:"groups"`
 	SnippetPackages []domainvault.SnippetPackage `json:"snippetPackages"`
@@ -57,6 +63,21 @@ type Payload struct {
 	SyncMeta *SyncMeta `json:"syncMeta,omitempty"`
 	// SyncedAt is the newest content timestamp.
 	SyncedAt int64 `json:"syncedAt"`
+
+	// PluginDataQuarantines carries namespaces that decoding this payload
+	// rejected. It is host-local diagnostic material: it is never encoded into
+	// the payload, never signed, and is written to the local quarantine table
+	// when the payload is applied so the sync report can surface it.
+	PluginDataQuarantines []RejectedPluginData `json:"-"`
+}
+
+// RejectedPluginData is one namespace or record-level pluginData container an
+// incoming payload could not accept. Quarantine carries the structural reason
+// and bounded raw diagnostic bytes; it is never merged back automatically.
+type RejectedPluginData struct {
+	Kind       plugindata.RecordKind
+	RecordID   string
+	Quarantine plugindata.Quarantine
 }
 
 // SyncMeta is the original's durable sync metadata. Only the parts this build
@@ -86,6 +107,7 @@ func (p Payload) HasData() bool {
 		len(p.Identities) > 0 ||
 		len(p.ProxyProfiles) > 0 ||
 		len(p.NetworkProfiles) > 0 ||
+		len(p.DataProfiles) > 0 ||
 		len(p.Groups) > 0 ||
 		len(p.PortForwardingRules) > 0 ||
 		len(p.Snippets) > 0 ||

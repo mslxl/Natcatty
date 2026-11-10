@@ -2,12 +2,14 @@ package vault
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/mslxl/natcatty/domain/model"
+	"github.com/mslxl/natcatty/domain/model/plugindata"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -242,5 +244,49 @@ func TestDeleteHostLeavesOtherHosts(t *testing.T) {
 	}
 	if err := service.Delete(context.Background(), first.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second Delete error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestUpdateHostPreservesPluginData(t *testing.T) {
+	repo := &fakeHosts{}
+	service := newTestService(t, repo)
+	created, err := service.Create(context.Background(), domainvault.Draft{
+		Label: "web", Hostname: "example.com", Username: "root",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerData := map[string]json.RawMessage{"name": json.RawMessage(`"ok"`)}
+	stored, err := repo.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.PluginData = plugindata.Map{
+		"acme.data": {SchemaVersion: 1, Fields: providerData},
+	}
+	if err := repo.Save(context.Background(), stored); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := service.Update(context.Background(), created.ID, domainvault.Draft{
+		Label: "web-2", Hostname: "example.org", Username: "admin",
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(updated.PluginData) != 1 ||
+		string(updated.PluginData["acme.data"].Fields["name"]) != `"ok"` {
+		t.Fatalf("Update dropped provider data: %+v", updated.PluginData)
+	}
+	persisted, err := repo.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted.PluginData) != 1 ||
+		string(persisted.PluginData["acme.data"].Fields["name"]) != `"ok"` {
+		t.Fatalf("persisted Host lost provider data: %+v", persisted.PluginData)
+	}
+	if updated.Label != "web-2" || updated.Hostname != "example.org" {
+		t.Fatalf("the ordinary edit was not applied: %+v", updated)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mslxl/natcatty/domain/model"
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -53,11 +54,24 @@ type Service struct {
 	applyBarrier        func(ctx context.Context) error
 	history             HistoryReader
 	themeSource         func() string
+	dataProfiles        DataProfileReader
 	// networkProfileChanged runs after a profile edit or deletion has been
 	// persisted. The composition root uses it to close that profile's runtime
 	// Provider and invalidate pooled Connections; the Vault itself owns no
 	// runtime state.
 	networkProfileChanged func(profileID string)
+}
+
+// DataProfileReader supplies provider-owned DataProfile records to an export.
+// It is read-only; an export never loads a provider or resolves a secret.
+type DataProfileReader interface {
+	ListProfiles(ctx context.Context) ([]domainplugin.DataProfile, error)
+}
+
+// WithDataProfiles gives the Service the records a JSON export carries
+// verbatim, including each record's pluginData map.
+func WithDataProfiles(reader DataProfileReader) Option {
+	return func(s *Service) { s.dataProfiles = reader }
 }
 
 // Option customizes a Service.
@@ -295,6 +309,8 @@ func (s *Service) Update(ctx context.Context, id model.HostID, draft domainvault
 		return domainvault.Host{}, err
 	}
 	updated := applyDraft(existing, normalized, groupID)
+	// Creation provenance is host-owned and survives an edit.
+	updated.CreatedBy = existing.CreatedBy
 	updated.UpdatedAt = s.now()
 
 	// Read every credential that a write will replace before writing any of
@@ -468,6 +484,9 @@ func applyDraft(host domainvault.Host, draft domainvault.Draft, groupID string) 
 	edited.GroupID = groupID
 	// Connection telemetry is not editable and must survive every save.
 	edited.LastConnectedAt = host.LastConnectedAt
+	// Plugin-defined fields are not part of the editable Draft. An ordinary
+	// Host edit must never delete or rewrite data owned by a plugin.
+	edited.PluginData = host.PluginData
 	if groupID == "" {
 		edited.Group = ""
 	}

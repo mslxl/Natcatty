@@ -3,6 +3,7 @@ package sync
 import (
 	"testing"
 
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -141,5 +142,31 @@ func TestTombstoneGuardDoesNotFireWhenAnyEntitySurvives(t *testing.T) {
 	outgoing := hostsPayload(1)
 	if finding := DetectDestructiveSync(outgoing, &reference, nil); finding.Suspicious() {
 		t.Fatalf("a surviving entity is not a tombstone sync: %+v", finding)
+	}
+}
+
+func dataProfilesPayload(count int) Payload {
+	profiles := make([]domainplugin.DataProfile, 0, count)
+	for index := 0; index < count; index++ {
+		profiles = append(profiles, mergeTestProfile(
+			string(rune('a'+index)), "Profile", nil))
+	}
+	return Payload{DataProfiles: profiles}
+}
+
+func TestTombstoneGuardProtectsDataProfiles(t *testing.T) {
+	reference := dataProfilesPayload(4)
+	finding := DetectDestructiveSync(Payload{}, &reference, nil)
+	if finding.Kind != GuardTombstone || finding.BaseCount != 4 || finding.Lost != 4 {
+		t.Fatalf("finding = %+v", finding)
+	}
+}
+
+func TestShrinkGuardProtectsDataProfiles(t *testing.T) {
+	reference := dataProfilesPayload(12)
+	finding := DetectDestructiveSync(dataProfilesPayload(2), &reference, nil)
+	if finding.Kind != GuardShrink || finding.EntityType != "dataProfiles" ||
+		finding.Lost != 10 {
+		t.Fatalf("finding = %+v", finding)
 	}
 }

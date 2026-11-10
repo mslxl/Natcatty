@@ -47,8 +47,9 @@ func TestServiceSanitizesWhatItLoadsAndSaves(t *testing.T) {
 		Root: domainworkspace.NewPaneNode("p"),
 	}}
 	valid.Panes = []domainworkspace.RestoredPane{{
-		ID:      "p",
-		Session: domainworkspace.SessionDescriptor{Kind: domainworkspace.SessionLocal},
+		ID: "p",
+		PaneDescriptor: domainworkspace.NewSessionPaneDescriptor(
+			domainworkspace.SessionDescriptor{Kind: domainworkspace.SessionLocal}),
 	}}
 	if err := service.Save(context.Background(), valid); err != nil {
 		t.Fatal(err)
