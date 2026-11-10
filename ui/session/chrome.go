@@ -274,7 +274,7 @@ func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *
 	visible := model.Suggestions[start : start+rows]
 	kit.PopoverSurface(c, ui.Column(c).Absolute().Left(placement.Left).Top(placement.PopupTop).
 		Width(placement.Width).Padding(autocompletePadding, 6).Gap(autocompleteRowGap), t.Accent).Children(func() {
-		ui.Row(c).FillWidth().Height(autocompleteHeaderHeight).Gap(6).
+		ui.Row(c).FillWidth().Height(autocompleteHeaderHeight).Gap(6).Padding(0, kit.PopoverInset(c)).
 			AlignItems(ui.Center).Children(func() {
 			ui.Text(c, m.SessionAutocompleteLabel()).FontSize(kit.M(c).Font.Caption2).Bold().
 				TextColor(t.TextMuted)
@@ -299,27 +299,24 @@ func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *
 			// accepted suggestion.
 			row := ui.Row(c).FillWidth().Height(autocompleteRowHeight).Padding(0, 4).
 				Gap(8).AlignItems(ui.Center).KeepFocus()
-			if selected {
-				row.Background(t.SurfaceHover)
-			}
+			colors := kit.PopoverRow(c, row, selected)
 			row.Children(func() {
 				marker := " "
-				markerColor := t.TextMuted
 				if selected {
-					marker, markerColor = "›", t.Accent
+					marker = "›"
 				}
-				ui.Text(c, marker).FontSize(kit.M(c).Font.Caption).TextColor(markerColor)
+				ui.Text(c, marker).FontSize(kit.M(c).Font.Caption).TextColor(colors.Marker)
 				command := ui.Text(c, display).FontSize(kit.M(c).Font.Caption2).SingleLine().
-					MinWidth(0).Grow(1).TextColor(t.Text)
+					MinWidth(0).Grow(1).TextColor(colors.Text)
 				if selected {
 					command.Bold()
 				}
 				if source != "" {
-					ui.Text(c, source).FontSize(9).SingleLine().TextColor(t.TextMuted)
+					ui.Text(c, source).FontSize(9).SingleLine().TextColor(colors.Muted)
 				}
 				if suggestion.Frequency > 1 {
 					ui.Text(c, m.SessionAutocompleteFrequency(suggestion.Frequency)).
-						FontSize(9).SingleLine().TextColor(t.TextMuted)
+						FontSize(9).SingleLine().TextColor(colors.Muted)
 				}
 			})
 			row.OnClick(func() {

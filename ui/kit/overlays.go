@@ -90,12 +90,54 @@ func Popover(c *ui.Context, role PopoverRole, anchor ui.Element, open *bool, con
 }
 
 // PopoverSurface paints el, a floating list the caller places itself, as
-// the autocomplete popup: the surface fill inside a rule of border.
+// the autocomplete popup: the surface fill inside a rule of border. The
+// macOS style draws it on the overlay glass, rounded as a menu is rather
+// than as a sheet, so a short list keeps its text clear of the corners.
 func PopoverSurface(c *ui.Context, el ui.Element, border ui.Color) ui.Element {
 	if CurrentStyle().Native() {
-		return overlaySurface(c, el, ui.Color{}, 0).Clip()
+		return Fill(c, el.Radius(M(c).Radius.Control), SurfaceOverlay).
+			Shadow(0, 4, 12, 0, CardShadow(c.Theme())).Clip()
 	}
 	return el.Background(c.Theme().Surface).Border(1, border).Clip()
+}
+
+// RowColors are the colors of a row's text, its secondary labels, and its
+// marker, as PopoverRow paints them.
+type RowColors struct {
+	Text, Muted, Marker ui.Color
+}
+
+// PopoverRow paints a row of a PopoverSurface list and returns the colors
+// to draw its contents in. Classic shades the selected row; the macOS style
+// fills it with the accent, rounded, as a menu's highlighted item.
+func PopoverRow(c *ui.Context, row ui.Element, selected bool) RowColors {
+	t := c.Theme()
+	colors := RowColors{Text: t.Text, Muted: t.TextMuted, Marker: t.TextMuted}
+	native := CurrentStyle().Native()
+	if native {
+		row.Radius(M(c).Radius.Small)
+	}
+	switch {
+	case selected && native:
+		row.Background(t.Accent)
+		return RowColors{Text: t.AccentText, Muted: t.AccentText.Alpha(0.8), Marker: t.AccentText}
+	case selected:
+		row.Background(t.SurfaceHover)
+		colors.Marker = t.Accent
+	case native && row.Hovered():
+		row.Background(t.Text.Alpha(0.06))
+	}
+	return colors
+}
+
+// PopoverInset is the room a PopoverSurface list's header keeps at its
+// sides, level with its rows' text: none in Classic, a row's padding in the
+// macOS style.
+func PopoverInset(c *ui.Context) float32 {
+	if CurrentStyle().Native() {
+		return 4
+	}
+	return 0
 }
 
 // overlaySurface fills a floating panel: in Classic with fill inside a rule
