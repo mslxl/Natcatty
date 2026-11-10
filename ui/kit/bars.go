@@ -80,6 +80,12 @@ func IconButtonWith(c *ui.Context, name, label string, options IconOptions) ui.E
 		return button
 	}
 	switch {
+	case options.Role == IconBar && options.On:
+		// An open title bar toggle is shaded a little lighter than a press.
+		button.Background(t.Text.Alpha(0.1))
+		if button.Hovered() || button.Pressed() {
+			button.TextColor(t.Text)
+		}
 	case options.On || button.Pressed():
 		button.Background(t.Text.Alpha(0.12)).TextColor(t.Text)
 	case button.Hovered():
@@ -149,12 +155,14 @@ func Badge(c *ui.Context, tone ui.Color, text string) ui.Element {
 	})
 }
 
-// TitleBarFill fills the window's title bar, which the work Tabs share. In
-// Classic it is a shade off the surface below; in the macOS style it is
-// clear over the window's material, or the surface's own color when flush
-// with it, as over a terminal.
-func TitleBarFill(c *ui.Context, bar ui.Element, flush bool) ui.Element {
+// TitleBar styles the window's title bar, which the work Tabs share: it
+// lines its children up as the work Tabs and fills it. In Classic it is a
+// shade off the surface below; in the macOS style it is clear over the
+// window's material, or the surface's own color when flush with it, as over
+// a terminal.
+func TitleBar(c *ui.Context, bar ui.Element, flush bool) ui.Element {
 	t := c.Theme()
+	bar.AlignItems(workTabAlign())
 	if !CurrentStyle().Native() {
 		return bar.Background(Muted(t))
 	}

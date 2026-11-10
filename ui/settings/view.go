@@ -305,34 +305,34 @@ func areaIcon(area Area) string {
 	return icons.Settings
 }
 
-// areaTint is the color of an area's icon tile in the macOS style's
-// sidebar, from the system palette, as System Settings colors its panes.
-func areaTint(area Area) ui.Color {
+// areaTint is the tint of an area's icon tile in the macOS style's sidebar,
+// as System Settings colors its panes.
+func areaTint(area Area) kit.Tint {
 	switch area {
 	case AreaAppearance:
-		return ui.RGB(175, 82, 222) // purple
+		return kit.TintPurple
 	case AreaTerminal:
-		return ui.RGB(72, 72, 74) // graphite
+		return kit.TintGraphite
 	case AreaTransport:
-		return ui.RGB(0, 122, 255) // blue
+		return kit.TintBlue
 	case AreaLayout:
-		return ui.RGB(88, 86, 214) // indigo
+		return kit.TintIndigo
 	case AreaSFTPEditor:
-		return ui.RGB(48, 176, 199) // teal
+		return kit.TintTeal
 	case AreaLogs:
-		return ui.RGB(162, 132, 94) // brown
+		return kit.TintBrown
 	case AreaSystem:
-		return ui.RGB(142, 142, 147) // gray
+		return kit.TintGray
 	case AreaSecurity:
-		return ui.RGB(255, 59, 48) // red
+		return kit.TintRed
 	case AreaSync:
-		return ui.RGB(50, 173, 230) // cyan
+		return kit.TintCyan
 	case AreaShortcuts:
-		return ui.RGB(255, 149, 0) // orange
+		return kit.TintOrange
 	case AreaMCP:
-		return ui.RGB(52, 199, 89) // green
+		return kit.TintGreen
 	}
-	return ui.RGB(142, 142, 147)
+	return kit.TintGray
 }
 
 // sidebar is the original's nav column: the search at its top, then the

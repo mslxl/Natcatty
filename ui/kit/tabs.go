@@ -67,10 +67,9 @@ func TabStrip(c *ui.Context, role TabRole, o TabStripOptions, tabs func()) (adde
 	if height == 0 {
 		height = M(c).Bar.Title
 	}
-	// Classic tabs sit on the bar's floor; macOS capsules are centered in it.
-	align, addMargin := ui.End, [4]float32{0, 0, 4, 4}
+	align, addMargin := workTabAlign(), [4]float32{0, 0, 4, 4}
 	if CurrentStyle().Native() {
-		align, addMargin = ui.Center, [4]float32{0, 0, 0, 4}
+		addMargin = [4]float32{0, 0, 0, 4}
 	}
 	ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Height(height).Label(o.Label).Children(func() {
 		ui.Row(c).Height(height).AlignItems(align).Gap(workTabGap(c)).Children(func() {
@@ -82,6 +81,15 @@ func TabStrip(c *ui.Context, role TabRole, o TabStripOptions, tabs func()) (adde
 		})
 	})
 	return added
+}
+
+// workTabAlign is where Work tabs sit in their bar: Classic tabs on its
+// floor, macOS capsules centered in it.
+func workTabAlign() ui.Align {
+	if CurrentStyle().Native() {
+		return ui.Center
+	}
+	return ui.End
 }
 
 // workTabShape rounds a Work tab: the top corners in Classic, so the chosen

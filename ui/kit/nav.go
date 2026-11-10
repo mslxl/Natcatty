@@ -48,7 +48,42 @@ func NavList(c *ui.Context, role NavRole, items func()) {
 // NavItem is one entry of a navigation column: a glyph and a label, muted
 // until it is hovered or is the visible page.
 func NavItem(c *ui.Context, role NavRole, key, icon, label string, active bool) ui.Element {
-	return NavItemWith(c, role, key, icon, label, active, ui.Color{})
+	return NavItemWith(c, role, key, icon, label, active, TintNone)
+}
+
+// Tint names a color from the system palette that a NavSettings item's icon
+// tile takes in the macOS style, as System Settings colors its panes.
+type Tint int
+
+const (
+	// TintNone draws the bare glyph.
+	TintNone Tint = iota
+	TintPurple
+	TintGraphite
+	TintBlue
+	TintIndigo
+	TintTeal
+	TintBrown
+	TintGray
+	TintRed
+	TintCyan
+	TintOrange
+	TintGreen
+)
+
+// tintColors are the macOS system palette's colors for each Tint.
+var tintColors = map[Tint]ui.Color{
+	TintPurple:   ui.RGB(175, 82, 222),
+	TintGraphite: ui.RGB(72, 72, 74),
+	TintBlue:     ui.RGB(0, 122, 255),
+	TintIndigo:   ui.RGB(88, 86, 214),
+	TintTeal:     ui.RGB(48, 176, 199),
+	TintBrown:    ui.RGB(162, 132, 94),
+	TintGray:     ui.RGB(142, 142, 147),
+	TintRed:      ui.RGB(255, 59, 48),
+	TintCyan:     ui.RGB(50, 173, 230),
+	TintOrange:   ui.RGB(255, 149, 0),
+	TintGreen:    ui.RGB(52, 199, 89),
 }
 
 // navTile is the side of a NavSettings item's colored icon tile in the
@@ -56,9 +91,8 @@ func NavItem(c *ui.Context, role NavRole, key, icon, label string, active bool) 
 const navTile float32 = 22
 
 // NavItemWith is a NavItem whose glyph the macOS style shows on a tile of
-// tint, as System Settings' sidebar does; Classic ignores the tint, and a
-// zero tint draws the bare glyph.
-func NavItemWith(c *ui.Context, role NavRole, key, icon, label string, active bool, tint ui.Color) ui.Element {
+// tint, as System Settings' sidebar does; Classic ignores the tint.
+func NavItemWith(c *ui.Context, role NavRole, key, icon, label string, active bool, tint Tint) ui.Element {
 	if role == NavSettings && CurrentStyle().Native() {
 		return tiledNavItem(c, key, icon, label, active, tint)
 	}
@@ -224,7 +258,7 @@ func (o SearchOptions) clear(query *string) {
 
 // tiledNavItem is a macOS Settings sidebar row: the glyph white on a rounded
 // tile of tint, and the label; the chosen row is filled with the accent.
-func tiledNavItem(c *ui.Context, key, icon, label string, active bool, tint ui.Color) ui.Element {
+func tiledNavItem(c *ui.Context, key, icon, label string, active bool, tint Tint) ui.Element {
 	t := c.Theme()
 	item := ui.ButtonBase(c).Key(key).Label(label).FillWidth().MinWidth(0).Padding(5, 8).Gap(8).
 		Radius(M(c).Radius.Control).Justify(ui.Start).AlignItems(ui.Center).TextColor(t.Text)
@@ -236,8 +270,8 @@ func tiledNavItem(c *ui.Context, key, icon, label string, active bool, tint ui.C
 	}
 	item.Children(func() {
 		tile := ui.Box(c).Size(navTile, navTile).Radius(6).Center().Shrink(0)
-		if tint.A > 0 {
-			tile.Background(tint).TextColor(ui.RGB(255, 255, 255))
+		if color, ok := tintColors[tint]; ok {
+			tile.Background(color).TextColor(ui.RGB(255, 255, 255))
 		}
 		tile.Children(func() { IconSized(c, icon, M(c).Icon.Small+1) })
 		ui.Text(c, label).FontSize(M(c).Font.Body).SingleLine().MinWidth(0).Shrink(1)
