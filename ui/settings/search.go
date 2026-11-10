@@ -224,8 +224,6 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 		"auth", "token", "session", "bearer")
 	atuin(domain.FieldHistorySyncInterval, m.SettingsAtuinSyncInterval(),
 		"interval", "minutes", "schedule")
-	atuin(domain.FieldHistoryPreferHostAtuin, m.SettingsAtuinPreferHostAtuin(),
-		"host", "prefer")
 	atuin("", m.SettingsAtuinSectionTitle(), "section")
 	atuin("", m.SettingsAtuinAccountTitle(), "account", "sign in", "master key")
 	atuin("", m.SettingsAtuinKeyTitle(), "master key", "key", "encryption")

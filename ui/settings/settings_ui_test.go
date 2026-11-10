@@ -119,7 +119,7 @@ func TestSearchIndexReachesTheAtuinHistorySettings(t *testing.T) {
 		return []string{
 			m.SettingsAtuinSyncEnabled(), m.SettingsAtuinAddress(),
 			m.SettingsAtuinUsername(), m.SettingsAtuinAuthMode(),
-			m.SettingsAtuinSyncInterval(), m.SettingsAtuinPreferHostAtuin(),
+			m.SettingsAtuinSyncInterval(),
 			m.SettingsAtuinSectionTitle(), m.SettingsAtuinAccountTitle(),
 			m.SettingsAtuinKeyTitle(),
 		}
@@ -180,7 +180,7 @@ func TestSearchIndexReachesTheAtuinHistorySettings(t *testing.T) {
 	for _, field := range []domain.Field{
 		domain.FieldHistorySyncEnabled, domain.FieldHistorySyncAddress,
 		domain.FieldHistoryUsername, domain.FieldHistoryAuthMode,
-		domain.FieldHistorySyncInterval, domain.FieldHistoryPreferHostAtuin,
+		domain.FieldHistorySyncInterval,
 	} {
 		if !fields[field] {
 			t.Errorf("query %q does not index %s", "atuin", field)

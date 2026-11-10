@@ -251,15 +251,6 @@ func (s *Service) SetHistoryCaptureHookEnabled(enabled bool) error {
 	})
 }
 
-// SetHistoryPreferHostAtuin imports a Host's existing Atuin history read-only
-// and skips the Netcatty hook for that Host. It applies to Sessions opened
-// after the change.
-func (s *Service) SetHistoryPreferHostAtuin(enabled bool) error {
-	return s.Update(func(settings *domainterminal.Settings) {
-		settings.HistoryPreferHostAtuin = enabled
-	})
-}
-
 // SetConnectionLogRetention sets how many connection logs are kept. Zero
 // keeps every log.
 func (s *Service) SetConnectionLogRetention(count, days int) error {

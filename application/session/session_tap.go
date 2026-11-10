@@ -103,19 +103,23 @@ func (s *Session) handleInput(data []byte, source bool) (forwarded []byte, chang
 // hook reported the command, 2 for native OSC 133/7, and 3 for typed input
 // plus prompt detection.
 type CommandEvent struct {
-	SessionID   model.SessionID
-	Scope       string
-	HostID      model.HostID
-	HostLabel   string
-	Kind        Kind
-	Hostname    string
-	Username    string
-	Command     string
-	CWD         string
-	Shell       string
-	StartedAt   time.Time
-	FinishedAt  time.Time
-	ExitCode    int
+	SessionID  model.SessionID
+	Scope      string
+	HostID     model.HostID
+	HostLabel  string
+	Kind       Kind
+	Hostname   string
+	Username   string
+	Command    string
+	CWD        string
+	Shell      string
+	StartedAt  time.Time
+	FinishedAt time.Time
+	ExitCode   int
+	// Transient is true when the Session chose the Host-Atuin path. The app
+	// must keep the completion in memory for suggestions and never persist or
+	// sync it: the Host's Atuin database is the only authority for this Host.
+	Transient   bool
 	HasExitCode bool
 	CaptureTier int
 }
@@ -150,6 +154,7 @@ func (s *Session) publishCommandCompletion(capture capturedCommand) {
 		StartedAt:   capture.startedAt,
 		FinishedAt:  capture.finishedAt,
 		ExitCode:    capture.exitCode,
+		Transient:   s.hostAtuinActive,
 		HasExitCode: capture.hasExitCode,
 		CaptureTier: capture.captureTier,
 	})

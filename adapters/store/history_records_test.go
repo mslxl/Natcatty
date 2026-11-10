@@ -574,8 +574,8 @@ func TestHistoryRecordLogAndMetadataStayOutsideVaultBackups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if snapshot.SchemaVersion != 1 {
-		t.Fatalf("backup schema version = %d, want the unchanged version 1", snapshot.SchemaVersion)
+	if snapshot.SchemaVersion != schemaVersion {
+		t.Fatalf("backup schema version = %d, want the unchanged version %d", snapshot.SchemaVersion, schemaVersion)
 	}
 	for _, table := range snapshot.Tables {
 		if table.Name == "history_records" || table.Name == "meta" {

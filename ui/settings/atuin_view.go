@@ -9,14 +9,15 @@ import (
 	historysync "github.com/mslxl/natcatty/application/historysync"
 	atuinmodel "github.com/mslxl/natcatty/domain/model/atuin"
 	domain "github.com/mslxl/natcatty/domain/preferences"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // historySyncSettingsSection renders the device-local sync controls. The
 // account identity lives in the Atuin account card, so this card keeps only
-// the sync toggle, interval, and host preference. None of these fields
-// travels in the portable settings document or the Vault.
+// the sync toggle and interval. None of these fields travels in the portable
+// settings document or the Vault.
 func historySyncSettingsSection(c *ui.Context, state *PreferencesState, atuin *AtuinState,
 	m locales.Messages, t *ui.Theme) {
 	if state == nil {
@@ -38,10 +39,6 @@ func historySyncSettingsSection(c *ui.Context, state *PreferencesState, atuin *A
 				c.Invalidate()
 			}
 		})
-		checkboxRow(c, state, m, domain.FieldHistoryPreferHostAtuin,
-			m.SettingsAtuinPreferHostAtuin(), settings.History.PreferHostAtuin,
-			func(s *domain.Settings, value bool) { s.History.PreferHostAtuin = value })
-		ui.Text(c, m.SettingsAtuinPreferHostAtuinHint()).FontSize(11).TextColor(t.TextMuted)
 		if atuin != nil {
 			atuin.SyncHistory(state.Settings().History)
 		}
@@ -63,7 +60,7 @@ func atuinIdentityFields(c *ui.Context, state *PreferencesState, m locales.Messa
 			c.Invalidate()
 		}
 	})
-	ui.Text(c, m.SettingsAtuinAddressHint()).FontSize(11).TextColor(t.TextMuted)
+	ui.Text(c, m.SettingsAtuinAddressHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 	fieldRow(c, state, m, t, domain.FieldHistoryUsername, m.SettingsAtuinUsername(), func() {
 		if ui.TextInput(c, state.Field(domain.FieldHistoryUsername)).Width(240).Changed() {
 			state.Update(func(s *domain.Settings) {
@@ -96,12 +93,12 @@ func atuinAccountSection(c *ui.Context, state *AtuinState, prefs *PreferencesSta
 		atuinIdentityFields(c, prefs, m, t)
 		atuinStatusRow(c, state, m, t)
 		if problem := state.Problem(); problem != AtuinProblemNone {
-			ui.Text(c, atuinProblemText(m, problem)).FontSize(12).TextColor(uitheme.DangerText(t))
+			ui.Text(c, atuinProblemText(m, problem)).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 		}
 		atuinDetailsControl(c, state, m, t)
 		if status.KeyFingerprint != "" {
 			ui.Text(c, m.SettingsAtuinKeyFingerprint(status.KeyFingerprint)).
-				FontSize(12).TextColor(t.TextMuted)
+				FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		}
 
 		atuinLoginControls(c, state, prefs, m, t)
@@ -116,21 +113,21 @@ func atuinStatusRow(c *ui.Context, state *AtuinState, m locales.Messages, t *ui.
 	if status.ServerVersion != "" {
 		text += " · " + m.SettingsAtuinServerVersion(status.ServerVersion)
 	}
-	ui.Text(c, text).FontSize(13).FontWeight(500)
+	ui.Text(c, text).FontSize(kit.M(c).Font.Callout).FontWeight(500)
 	if status.AccountID != "" {
-		ui.Text(c, m.SettingsAtuinAccountID(status.AccountID)).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsAtuinAccountID(status.AccountID)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 	}
 	if !status.LastSyncAt.IsZero() {
 		ui.Text(c, m.SettingsAtuinLastSync(atuinSyncTime(status.LastSyncAt))).
-			FontSize(11).TextColor(t.TextMuted)
+			FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 	}
 	if status.PendingUploads > 0 {
 		ui.Text(c, m.SettingsAtuinPendingUploads(strconv.Itoa(status.PendingUploads))).
-			FontSize(11).TextColor(t.TextMuted)
+			FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 	}
 	if !status.NextRetryAt.IsZero() {
 		ui.Text(c, m.SettingsAtuinNextRetry(atuinSyncTime(status.NextRetryAt))).
-			FontSize(11).TextColor(uitheme.WarningText(t))
+			FontSize(kit.M(c).Font.Caption).TextColor(uitheme.WarningText(t))
 	}
 }
 
@@ -152,27 +149,27 @@ func atuinDetailsControl(c *ui.Context, state *AtuinState, m locales.Messages, t
 		return
 	}
 	diagnostics := state.Diagnostics()
-	ui.Column(c).FillWidth().Padding(10).Gap(4).Radius(6).Background(t.Surface).Children(func() {
-		ui.Text(c, m.SettingsAtuinDetailsTitle()).FontSize(12).Bold()
-		ui.Text(c, m.SettingsAtuinDetailsHint()).FontSize(11).TextColor(t.TextMuted)
+	ui.Column(c).FillWidth().Padding(10).Gap(4).Radius(kit.M(c).Radius.Control).Background(t.Surface).Children(func() {
+		ui.Text(c, m.SettingsAtuinDetailsTitle()).FontSize(kit.M(c).Font.Footnote).Bold()
+		ui.Text(c, m.SettingsAtuinDetailsHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		ui.Text(c, m.SettingsAtuinDetailsState(atuinStatusText(m,
-			historysync.Status{State: diagnostics.State}))).FontSize(11)
+			historysync.Status{State: diagnostics.State}))).FontSize(kit.M(c).Font.Caption)
 		if diagnostics.Problem != AtuinProblemNone {
 			ui.Text(c, m.SettingsAtuinDetailsProblem(
-				atuinProblemText(m, diagnostics.Problem))).FontSize(11)
+				atuinProblemText(m, diagnostics.Problem))).FontSize(kit.M(c).Font.Caption)
 		}
 		if diagnostics.ServerVersion != "" {
-			ui.Text(c, m.SettingsAtuinDetailsServer(diagnostics.ServerVersion)).FontSize(11)
+			ui.Text(c, m.SettingsAtuinDetailsServer(diagnostics.ServerVersion)).FontSize(kit.M(c).Font.Caption)
 		}
 		if !diagnostics.LastSyncAt.IsZero() {
 			ui.Text(c, m.SettingsAtuinDetailsLastSync(
-				atuinSyncTime(diagnostics.LastSyncAt))).FontSize(11)
+				atuinSyncTime(diagnostics.LastSyncAt))).FontSize(kit.M(c).Font.Caption)
 		}
 		ui.Text(c, m.SettingsAtuinDetailsPending(
-			strconv.Itoa(diagnostics.PendingUploads))).FontSize(11)
+			strconv.Itoa(diagnostics.PendingUploads))).FontSize(kit.M(c).Font.Caption)
 		if !diagnostics.NextRetryAt.IsZero() {
 			ui.Text(c, m.SettingsAtuinDetailsNextRetry(
-				atuinSyncTime(diagnostics.NextRetryAt))).FontSize(11)
+				atuinSyncTime(diagnostics.NextRetryAt))).FontSize(kit.M(c).Font.Caption)
 		}
 	})
 }
@@ -211,7 +208,7 @@ func atuinLoginControls(c *ui.Context, state *AtuinState, prefs *PreferencesStat
 					c.Invalidate()
 				}
 			})
-			ui.Text(c, m.SettingsAtuinAuthModeHint()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SettingsAtuinAuthModeHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		}
 	} else {
 		ui.Field(c, m.SettingsAtuinPassword(), func() {
@@ -241,7 +238,7 @@ func atuinLoginControls(c *ui.Context, state *AtuinState, prefs *PreferencesStat
 			}
 		}
 		if !status.Configured {
-			ui.Text(c, m.SettingsAtuinNotSignedIn()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, m.SettingsAtuinNotSignedIn()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		}
 	})
 }
@@ -253,8 +250,8 @@ func atuinLoginControls(c *ui.Context, state *AtuinState, prefs *PreferencesStat
 // action.
 func atuinKeyControls(c *ui.Context, state *AtuinState, m locales.Messages, t *ui.Theme) {
 	status := state.Status()
-	ui.Text(c, m.SettingsAtuinKeyTitle()).FontSize(15).Bold()
-	ui.Text(c, m.SettingsAtuinKeyPurpose()).FontSize(12).TextColor(t.TextMuted)
+	ui.Text(c, m.SettingsAtuinKeyTitle()).FontSize(kit.M(c).Font.Headline).Bold()
+	ui.Text(c, m.SettingsAtuinKeyPurpose()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 
 	// Verified, unverified, and mismatched keys are all stored; the editor is
 	// opt-in. None and missing have no usable key, so the editor is visible.
@@ -269,7 +266,7 @@ func atuinKeyControls(c *ui.Context, state *AtuinState, m locales.Messages, t *u
 	confirming := state.AskingKeyChange() || state.AskingForget() || state.AskingLogout()
 
 	if editing && !confirming {
-		ui.Text(c, m.SettingsAtuinKeyDescription()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsAtuinKeyDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		ui.Field(c, m.SettingsAtuinMasterKey(), func() {
 			ui.TextInput(c, state.MasterKey()).Password().Width(380)
 		})
@@ -328,7 +325,7 @@ func atuinKeyControls(c *ui.Context, state *AtuinState, m locales.Messages, t *u
 	switch status.KeyState {
 	case atuinmodel.KeyStateUnverified:
 		if status.KeyConfirmed {
-			ui.Text(c, m.SettingsAtuinKeyConfirmed()).FontSize(12).TextColor(uitheme.WarningText(t))
+			ui.Text(c, m.SettingsAtuinKeyConfirmed()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.WarningText(t))
 		} else {
 			atuinWarning(c, m.SettingsAtuinKeyUnverifiedTitle(), m.SettingsAtuinKeyUnverifiedBody(),
 				t, func() {
@@ -339,13 +336,13 @@ func atuinKeyControls(c *ui.Context, state *AtuinState, m locales.Messages, t *u
 				})
 		}
 	case atuinmodel.KeyStateVerified:
-		ui.Text(c, m.SettingsAtuinKeyVerified()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsAtuinKeyVerified()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	case atuinmodel.KeyStateMismatch:
-		ui.Text(c, m.SettingsAtuinProblemKeyMismatch()).FontSize(12).TextColor(uitheme.DangerText(t))
+		ui.Text(c, m.SettingsAtuinProblemKeyMismatch()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 	case atuinmodel.KeyStateMissing:
 		atuinWarning(c, m.SettingsAtuinKeyMissingTitle(), m.SettingsAtuinKeyMissingBody(), t, nil)
 	case atuinmodel.KeyStateNone:
-		ui.Text(c, m.SettingsAtuinNoKey()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsAtuinNoKey()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	}
 }
 
@@ -372,10 +369,10 @@ func atuinSessionControls(c *ui.Context, state *AtuinState, m locales.Messages, 
 }
 
 func atuinWarning(c *ui.Context, title, body string, t *ui.Theme, actions func()) {
-	ui.Column(c).FillWidth().Padding(12).Gap(6).Radius(6).Background(t.Surface).
+	ui.Column(c).FillWidth().Padding(12).Gap(6).Radius(kit.M(c).Radius.Control).Background(t.Surface).
 		Border(1, t.Warning).Children(func() {
-		ui.Text(c, title).FontSize(13).Bold().TextColor(uitheme.WarningText(t))
-		ui.Text(c, body).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, title).FontSize(kit.M(c).Font.Callout).Bold().TextColor(uitheme.WarningText(t))
+		ui.Text(c, body).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		if actions != nil {
 			ui.Row(c).Gap(8).Children(actions)
 		}

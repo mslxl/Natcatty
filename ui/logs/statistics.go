@@ -58,21 +58,21 @@ func historyStatistics(c *ui.Context, s *State, m locales.Messages, t *ui.Theme)
 		})
 
 		ui.Column(c).FillWidth().Gap(2).Children(func() {
-			ui.Text(c, m.LogsStatisticsTopCommands()).FontSize(13).Bold()
+			ui.Text(c, m.LogsStatisticsTopCommands()).FontSize(kit.M(c).Font.Callout).Bold()
 			for _, command := range stats.TopCommands {
 				ui.Text(c, m.LogsStatisticsRow(command.Command, command.Count)).
-					FontSize(12).SingleLine()
+					FontSize(kit.M(c).Font.Footnote).SingleLine()
 			}
 		})
 
 		ui.Column(c).FillWidth().Gap(2).Children(func() {
-			ui.Text(c, m.LogsStatisticsTopCwds()).FontSize(13).Bold()
+			ui.Text(c, m.LogsStatisticsTopCwds()).FontSize(kit.M(c).Font.Callout).Bold()
 			if len(stats.TopCwds) == 0 {
 				statisticNote(c, m.LogsStatisticsNoCwds(), t)
 			}
 			for _, cwd := range stats.TopCwds {
 				ui.Text(c, m.LogsStatisticsRow(cwd.CWD, cwd.Count)).
-					FontSize(12).SingleLine()
+					FontSize(kit.M(c).Font.Footnote).SingleLine()
 			}
 		})
 
@@ -85,10 +85,10 @@ func historyStatistics(c *ui.Context, s *State, m locales.Messages, t *ui.Theme)
 
 		hostLabels := statisticsHostLabels(m, stats.Hosts)
 		ui.Column(c).FillWidth().Gap(2).Children(func() {
-			ui.Text(c, m.LogsStatisticsHosts()).FontSize(13).Bold()
+			ui.Text(c, m.LogsStatisticsHosts()).FontSize(kit.M(c).Font.Callout).Bold()
 			for index, host := range stats.Hosts {
 				ui.Text(c, m.LogsStatisticsRow(hostLabels[index], host.Count)).
-					FontSize(12).SingleLine()
+					FontSize(kit.M(c).Font.Footnote).SingleLine()
 			}
 		})
 	})
@@ -96,13 +96,13 @@ func historyStatistics(c *ui.Context, s *State, m locales.Messages, t *ui.Theme)
 
 // statisticValue renders one summary measurement.
 func statisticValue(c *ui.Context, text string) {
-	ui.Text(c, text).FontSize(12)
+	ui.Text(c, text).FontSize(kit.M(c).Font.Footnote)
 }
 
 // statisticNote renders the explanation under a measurement, so a missing or
 // excluded value is never mistaken for a measured zero.
 func statisticNote(c *ui.Context, text string, t *ui.Theme) {
-	ui.Text(c, text).FontSize(11).TextColor(t.TextMuted)
+	ui.Text(c, text).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 }
 
 // statisticsHostLabel names one Host/origin group with the recorded label when

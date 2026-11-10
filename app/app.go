@@ -436,6 +436,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		},
 	)
 	autocompleteService.Load(context.Background())
+	// A Host-Atuin Session captures commands transiently: they feed this
+	// Session's suggestions from memory and never reach the journal.
+	transientRegistry := newTransientCommands()
 
 	// The packaged smoke scopes OS credential-store entries to a per-profile
 	// service. The store is still the platform keychain, but an isolated run
@@ -710,9 +713,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	hostAtuinService := apphostatuin.New(
 		apphostatuin.WithRemote(atuinRemoteSource{opener: remoteOpener}),
 		apphostatuin.WithDatabase(adapteratuinimport.Reader{}),
-		apphostatuin.WithRecorder(atuinHistoryRecorder{history: historyService}),
-		apphostatuin.WithPreference(func() bool {
-			return terminalService.Settings().HistoryPreferHostAtuin
+		apphostatuin.WithRecorder(atuinHistoryRecorder{
+			history: historyService,
+			// Newly imported Host rows become suggestions without a restart.
+			reload: func() { autocompleteService.Load(context.Background()) },
 		}),
 	)
 	transferService := apptransfer.NewService(
@@ -945,9 +949,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			}),
 		)),
 		// A Host that already runs Atuin is detected before the terminal
-		// opens. When the preference is on, its history is imported read-only
-		// and the Netcatty hook is skipped for that Session; turning the
-		// preference off uses the hook and skips the import.
+		// opens. Its history is imported read-only and the Netcatty hook is
+		// skipped for that Session. The tap still captures typed commands as
+		// transient suggestions that are never journaled or synced.
 		appsession.WithHostAtuin(atuinHostPolicy{service: hostAtuinService}),
 		// A new Session inherits the encoding remembered for its Host, or the
 		// global default. The terminal surface applies live changes and
@@ -994,9 +998,11 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// A command reaches history only when it finishes or its Session ends.
 		// RecordEntry updates autocomplete's aggregation and forwards the same
 		// per-execution row to the shared history journal, so one event is
-		// persisted exactly once and autocomplete reads the same row.
+		// persisted exactly once and autocomplete reads the same row. A
+		// transient Host-Atuin capture stays in memory for suggestions only.
 		appsession.WithCommandCompletionHook(
-			commandCompletionHook(autocompleteService, resolveCommandLocalIdentity())),
+			commandCompletionHook(autocompleteService, resolveCommandLocalIdentity(),
+				transientRegistry)),
 		// A BEL marks the Session active, matching the original's tab badge.
 		// The notification mode is applied separately by the notification hook.
 		appsession.WithBellHook(func(id model.SessionID) {
@@ -1177,6 +1183,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			return host.Label, true
 		}),
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
+			// Transient commands end with their Session. Watch is idempotent
+			// because this factory may run more than once for one Session.
+			transientRegistry.Watch(s.ID(), s.Done())
 			options := []sessionui.Option{
 				sessionui.WithLogDefaults(func() appsession.LogOptions {
 					return terminalLogDefaults(s.Label())
@@ -1191,7 +1200,12 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				}),
 				// Suggestions and counters read Settings on each frame, so a
 				// Settings change applies to open Sessions without reopening.
-				sessionui.WithSuggestions(autocompleteService.SuggestionsIn,
+				// A Host-Atuin Session adds its transient memory rows, which
+				// are suggestible under its own captured scope.
+				sessionui.WithSuggestions(func(input, scope, cwd string) []autocomplete.Suggestion {
+					return autocompleteService.SuggestionsInWith(input, scope, cwd,
+						transientRegistry.Entries(s.ID()))
+				},
 					func() (bool, bool) {
 						current := terminalService.Settings()
 						return current.AutocompletePopupMenu, current.AutocompleteGhostText
@@ -1947,9 +1961,19 @@ func historyRemoteUserAgent() string {
 
 // commandCompletionHook turns one completed Session command into exactly one
 // journal row. The row goes through autocomplete.RecordEntry, which is the
-// existing single write path to the history journal.
-func commandCompletionHook(service *autocomplete.Service, local commandLocalIdentity) func(appsession.CommandEvent) {
+// existing single write path to the history journal. A transient completion,
+// which is every command in a Host-Atuin Session, is kept only in the bounded
+// per-Session memory buffer: it is never journaled, creates no record, and is
+// never uploaded.
+func commandCompletionHook(service *autocomplete.Service,
+	local commandLocalIdentity, transient *transientCommands) func(appsession.CommandEvent) {
 	return func(event appsession.CommandEvent) {
+		if event.Transient {
+			if transient != nil {
+				transient.Remember(event.SessionID, commandEntryFromEvent(event, local))
+			}
+			return
+		}
 		if service == nil {
 			return
 		}

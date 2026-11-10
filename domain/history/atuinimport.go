@@ -14,8 +14,10 @@ import (
 var ErrInvalidAtuinRow = errors.New("history: invalid Atuin row")
 
 // ErrUnknownAtuinSchema reports a file that is not an Atuin history database
-// this build can read. Detection treats it as absence, so a foreign or stale
-// SQLite database at an Atuin path cannot suppress normal command capture.
+// this build can read. Detection keeps the Host Present when a regular
+// candidate has this schema: the Netcatty capture hook stays skipped, the
+// import checkpoint is preserved, and a later Session retries the copy instead
+// of journaling commands the Host's Atuin may later repeat.
 var ErrUnknownAtuinSchema = errors.New("history: unknown Atuin history schema")
 
 // AtuinRow is one row read from a Host's read-only Atuin history database.

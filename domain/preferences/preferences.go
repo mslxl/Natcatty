@@ -313,21 +313,12 @@ type History struct {
 	Username            string              `json:"username"`
 	AuthMode            atuinmodel.AuthMode `json:"authMode"`
 	SyncIntervalMinutes int                 `json:"syncIntervalMinutes"`
-	// PreferHostAtuin keeps an Atuin install on a Host authoritative: the
-	// capture hook is skipped and the Host database is imported read-only.
-	PreferHostAtuin bool `json:"preferHostAtuin"`
 }
 
 // NormalizeHistory returns a usable device-local history configuration. A
 // zero interval from a document written before the field existed gets the
 // default, not the one-minute minimum.
 func NormalizeHistory(history History) History {
-	if history == (History{}) {
-		// An older document has no history section. PreferHostAtuin defaults
-		// to true; an explicit false is saved with the rest of the normalized
-		// section and is therefore not mistaken for an absent one.
-		history.PreferHostAtuin = true
-	}
 	history.SyncAddress = strings.TrimSpace(history.SyncAddress)
 	if history.SyncAddress == "" {
 		history.SyncAddress = DefaultHistorySyncAddress
@@ -374,7 +365,7 @@ type Settings struct {
 	Logs       Logs       `json:"logs"`
 	// History is device-local. It is deliberately absent from
 	// PortableSettings, so Vault cloud sync never carries an account address,
-	// username, auth mode, interval, or the Host-Atuin preference.
+	// username, auth mode, or interval.
 	History    History    `json:"history"`
 	Sync       Sync       `json:"sync"`
 	Security   Security   `json:"security"`
@@ -518,7 +509,6 @@ func Defaults() Settings {
 			Username:            "",
 			AuthMode:            atuinmodel.AuthModeSession,
 			SyncIntervalMinutes: DefaultHistorySyncIntervalMinutes,
-			PreferHostAtuin:     true,
 		},
 		Sync:     Sync{Enabled: false, AutoSync: false, ConflictStrategy: SyncNewest, Provider: ""},
 		Security: Security{ConfirmCloseSessions: true, ConfirmDestructive: true},
@@ -732,7 +722,6 @@ const (
 	FieldHistoryUsername              Field = "history.username"
 	FieldHistoryAuthMode              Field = "history.authMode"
 	FieldHistorySyncInterval          Field = "history.syncIntervalMinutes"
-	FieldHistoryPreferHostAtuin       Field = "history.preferHostAtuin"
 )
 
 // Fields returns every resettable field in Settings-window order.
@@ -753,7 +742,7 @@ func Fields() []Field {
 		FieldDefaultOpener,
 		FieldSSHDebug,
 		FieldHistorySyncEnabled, FieldHistorySyncAddress, FieldHistoryUsername,
-		FieldHistoryAuthMode, FieldHistorySyncInterval, FieldHistoryPreferHostAtuin,
+		FieldHistoryAuthMode, FieldHistorySyncInterval,
 		FieldSyncEnabled, FieldSyncAutoSync, FieldSyncConflictStrategy,
 		FieldSyncProvider,
 		FieldConfirmCloseSessions, FieldConfirmDestructive,
@@ -781,8 +770,7 @@ func GroupOf(field Field) (Group, bool) {
 		FieldDefaultOpener:
 		return GroupSFTPEditor, true
 	case FieldSSHDebug, FieldHistorySyncEnabled, FieldHistorySyncAddress,
-		FieldHistoryUsername, FieldHistoryAuthMode, FieldHistorySyncInterval,
-		FieldHistoryPreferHostAtuin:
+		FieldHistoryUsername, FieldHistoryAuthMode, FieldHistorySyncInterval:
 		return GroupLogs, true
 	case FieldSyncEnabled, FieldSyncAutoSync, FieldSyncConflictStrategy,
 		FieldSyncProvider:
@@ -885,8 +873,6 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.History.AuthMode = defaults.History.AuthMode
 	case FieldHistorySyncInterval:
 		settings.History.SyncIntervalMinutes = defaults.History.SyncIntervalMinutes
-	case FieldHistoryPreferHostAtuin:
-		settings.History.PreferHostAtuin = defaults.History.PreferHostAtuin
 	case FieldSyncEnabled:
 		settings.Sync.Enabled = defaults.Sync.Enabled
 	case FieldSyncAutoSync:

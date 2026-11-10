@@ -368,7 +368,7 @@ func TestSettingsAreasShowFieldLabels(t *testing.T) {
 			{AreaLogs, func(m locales.Messages) []string {
 				return []string{
 					m.SettingsAtuinSectionTitle(), m.SettingsAtuinSyncEnabled(),
-					m.SettingsAtuinSyncInterval(), m.SettingsAtuinPreferHostAtuin(),
+					m.SettingsAtuinSyncInterval(),
 					m.SettingsAtuinAccountTitle(), m.SettingsAtuinAddress(),
 					m.SettingsAtuinUsername(), m.SettingsAtuinKeyTitle(),
 					m.SettingsSSHDebug(),

@@ -32,7 +32,6 @@ type Terminal interface {
 	SetKeywordHighlightRules([]domainterminal.KeywordHighlightRule) error
 	SetConnectionLogRetention(count, days int) error
 	SetHistoryCaptureHookEnabled(bool) error
-	SetHistoryPreferHostAtuin(bool) error
 }
 
 // terminalResetter is implemented by the application service. Keeping it
@@ -270,12 +269,6 @@ func (s *TerminalState) SetKeywordHighlightRuleEnabled(id string, enabled bool) 
 // hook.
 func (s *TerminalState) SetHistoryCaptureHookEnabled(enabled bool) bool {
 	return s.apply(func() error { return s.terminal.SetHistoryCaptureHookEnabled(enabled) })
-}
-
-// SetHistoryPreferHostAtuin chooses between a Host's own Atuin history and the
-// Netcatty capture hook. New Sessions apply the choice.
-func (s *TerminalState) SetHistoryPreferHostAtuin(enabled bool) bool {
-	return s.apply(func() error { return s.terminal.SetHistoryPreferHostAtuin(enabled) })
 }
 
 // SetConnectionLogRetention stores how many connection logs are kept and for

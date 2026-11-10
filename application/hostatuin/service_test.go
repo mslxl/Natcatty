@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -29,6 +30,14 @@ type fakeFile struct {
 	size *int64
 }
 
+// statErrAfter fails Stat calls for one path once it has been called more than
+// after times, so a test can let detection see a candidate and then make the
+// copy pass fail.
+type statErrAfter struct {
+	after int
+	err   error
+}
+
 // fakeRemoteFiles records every read-only operation. It deliberately has no
 // write or execute operation: the importer's port cannot ask for one.
 type fakeRemoteFiles struct {
@@ -42,6 +51,24 @@ type fakeRemoteFiles struct {
 	// simulating Atuin writing a file while the copy is in flight.
 	changingPath  string
 	changingAfter int
+	// statErrs fails every Stat of a path, modelling a permission or
+	// connection error.
+	statErrs map[string]error
+	// statErrAfter fails a path after a number of successful Stat calls,
+	// modelling a candidate that becomes unreadable between detection and the
+	// copy.
+	statErrAfter map[string]statErrAfter
+	// openErrs fails every Open of a path, modelling a hint that cannot be
+	// read.
+	openErrs map[string]error
+	// statBlockPath stalls Stat until Close, modelling an SFTP call that does
+	// not observe the deadline. statBlockAfter lets the detection pass succeed
+	// before the copy pass blocks.
+	statBlockPath  string
+	statBlockAfter int
+	statBlock      chan struct{}
+	statEntered    chan struct{}
+	statReturned   chan struct{}
 	// openBlockPath stalls Open until Close, modelling an SFTP call that does
 	// not observe the deadline.
 	openBlockPath string
@@ -62,34 +89,65 @@ func (f *fakeRemoteFiles) Root(context.Context) (string, error) {
 
 func (f *fakeRemoteFiles) Stat(_ context.Context, name string) (FileInfo, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.stats = append(f.stats, name)
 	if f.statCalls == nil {
 		f.statCalls = make(map[string]int)
 	}
 	f.statCalls[name]++
+	calls := f.statCalls[name]
+	if err := f.statErrs[name]; err != nil {
+		f.mu.Unlock()
+		return FileInfo{}, err
+	}
+	if failure, ok := f.statErrAfter[name]; ok && calls > failure.after {
+		f.mu.Unlock()
+		return FileInfo{}, failure.err
+	}
 	file, ok := f.files[name]
+	// Every test Host is an installed Atuin Host unless it opts out via
+	// noInstall. The marker is a real stat the detector must see.
+	marker := !f.noInstall && name == path.Join(f.root, ".local/bin/atuin")
+	blocked := f.statBlock
+	entered := f.statEntered
+	returned := f.statReturned
+	shouldBlock := f.statBlockPath == name && blocked != nil && calls > f.statBlockAfter
+	var info FileInfo
+	if ok {
+		size := int64(len(file.content))
+		if file.size != nil {
+			size = *file.size
+		}
+		info = FileInfo{Size: size, ModTime: file.modTime, Regular: file.regular, Symlink: file.symlink}
+		threshold := f.changingAfter
+		if threshold == 0 {
+			// Detection and the candidate re-stat account for the first stats;
+			// four makes the pre-open stat the first changed one.
+			threshold = 4
+		}
+		if name == f.changingPath && calls >= threshold {
+			info.ModTime = info.ModTime.Add(time.Second)
+		}
+	}
+	f.mu.Unlock()
+
+	if shouldBlock {
+		if entered != nil {
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+		}
+		<-blocked
+		if returned != nil {
+			close(returned)
+		}
+		return FileInfo{}, errors.New("channel closed")
+	}
 	if !ok {
-		// Every test Host is an installed Atuin Host unless it opts out via
-		// noInstall. The marker is a real stat the detector must see.
-		if !f.noInstall && name == path.Join(f.root, ".local/bin/atuin") {
+		if marker {
 			return FileInfo{Size: 1, Regular: true}, nil
 		}
 		return FileInfo{}, os.ErrNotExist
-	}
-	size := int64(len(file.content))
-	if file.size != nil {
-		size = *file.size
-	}
-	info := FileInfo{Size: size, ModTime: file.modTime, Regular: file.regular, Symlink: file.symlink}
-	threshold := f.changingAfter
-	if threshold == 0 {
-		// Detection and the candidate re-stat account for the first stats;
-		// four makes the pre-open stat the first changed one.
-		threshold = 4
-	}
-	if name == f.changingPath && f.statCalls[name] >= threshold {
-		info.ModTime = info.ModTime.Add(time.Second)
 	}
 	return info, nil
 }
@@ -98,12 +156,17 @@ func (f *fakeRemoteFiles) Open(_ context.Context, name string) (io.ReadCloser, e
 	f.mu.Lock()
 	f.opens = append(f.opens, name)
 	file, ok := f.files[name]
+	openErr := f.openErrs[name]
 	blocked := f.openBlock
 	entered := f.openEntered
 	returned := f.openReturned
+	shouldBlock := f.openBlockPath == name && blocked != nil
 	f.mu.Unlock()
 
-	if f.openBlockPath == name && blocked != nil {
+	if openErr != nil {
+		return nil, openErr
+	}
+	if shouldBlock {
 		if entered != nil {
 			select {
 			case entered <- struct{}{}:
@@ -127,9 +190,14 @@ func (f *fakeRemoteFiles) Close() error {
 	f.closed++
 	block := f.openBlock
 	f.openBlock = nil
+	statBlock := f.statBlock
+	f.statBlock = nil
 	f.mu.Unlock()
 	if block != nil {
 		close(block)
+	}
+	if statBlock != nil {
+		close(statBlock)
 	}
 	return nil
 }
@@ -159,12 +227,15 @@ func (s *fakeRemoteSource) OpenReadOnly(_ context.Context, hostID model.HostID) 
 // fakeDatabase returns the rows the copied database would hold and records the
 // side files the copy produced beside the main database.
 type fakeDatabase struct {
-	rows      []domainhistory.AtuinRow
-	err       error
-	calls     int
-	dirs      []string
-	copied    map[string][]byte
-	copiedSet bool
+	rows []domainhistory.AtuinRow
+	err  error
+	// errsByCall overrides err for the first calls, letting a test model one
+	// unreadable candidate followed by a readable one.
+	errsByCall []error
+	calls      int
+	dirs       []string
+	copied     map[string][]byte
+	copiedSet  bool
 }
 
 func (d *fakeDatabase) ReadHistory(_ context.Context, databasePath string) ([]domainhistory.AtuinRow, error) {
@@ -173,6 +244,13 @@ func (d *fakeDatabase) ReadHistory(_ context.Context, databasePath string) ([]do
 	d.dirs = append(d.dirs, dir)
 	if d.err != nil {
 		return nil, d.err
+	}
+	if len(d.errsByCall) > 0 {
+		err := d.errsByCall[0]
+		d.errsByCall = d.errsByCall[1:]
+		if err != nil {
+			return nil, err
+		}
 	}
 	d.copied = make(map[string][]byte)
 	for _, name := range []string{historyName, walName, shmName} {
@@ -398,6 +476,10 @@ func TestProbeWithoutADatabaseIsAbsentAndDoesNotImport(t *testing.T) {
 	}
 }
 
+// A saved Host without SFTP must keep the normal capture hook: a channel that
+// never opens is the accepted residual window, because treating every channel
+// failure as Atuin would disable persistent history for every Host without
+// SFTP. Once any install evidence is seen, every later failure is Present.
 func TestProbeWithoutAReadOnlyChannelIsAbsent(t *testing.T) {
 	openError := errors.New("sftp unavailable")
 	source := &fakeRemoteSource{err: openError}
@@ -413,6 +495,196 @@ func TestProbeWithoutAReadOnlyChannelIsAbsent(t *testing.T) {
 	}
 	if len(recorder.importCalls()) != 0 {
 		t.Fatal("an unreadable Host was imported")
+	}
+}
+
+// A candidate the detection pass saw can become unreadable before the copy
+// pass. That is not proof the Host stopped running Atuin: Probe must stay
+// Present and return ErrProbeUnavailable so the Session captures transiently.
+func TestProbeKeepsPresentWhenACandidateStatFailsAfterDetection(t *testing.T) {
+	const historyPath = "/home/me/.atuin/data/history.db"
+	files := &fakeRemoteFiles{
+		root: "/home/me",
+		statErrAfter: map[string]statErrAfter{
+			historyPath: {after: 1, err: fs.ErrPermission},
+		},
+		files: map[string]*fakeFile{
+			historyPath: {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
+		},
+	}
+	database := &fakeDatabase{rows: []domainhistory.AtuinRow{testRow("id-1", 100, "ls")}}
+	recorder := &fakeRecorder{}
+	service := testService(&fakeRemoteSource{files: files}, database, recorder)
+
+	result, err := service.Probe(context.Background(), testRef)
+	if !result.Present {
+		t.Fatal("an inconclusive candidate Stat erased the Host's Atuin presence")
+	}
+	if !errors.Is(err, ErrProbeUnavailable) || !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("error = %v, want ErrProbeUnavailable and fs.ErrPermission", err)
+	}
+	if database.calls != 0 || len(recorder.importCalls()) != 0 {
+		t.Fatalf("an unreadable candidate was imported: db=%d imports=%d",
+			database.calls, len(recorder.importCalls()))
+	}
+}
+
+// A config hint that cannot be checked is inconclusive once the Host shows
+// other evidence: a regular candidate database exists but no binary marker
+// rescues the installation check. Probe must stay Present and not import.
+func TestProbeKeepsPresentWhenAConfigCannotBeRead(t *testing.T) {
+	const configPath = "/home/me/.config/atuin/config.toml"
+	const historyPath = "/home/me/.atuin/data/history.db"
+	for name, configure := range map[string]func(*fakeRemoteFiles){
+		"stat": func(files *fakeRemoteFiles) {
+			files.statErrs = map[string]error{configPath: fs.ErrPermission}
+		},
+		"open": func(files *fakeRemoteFiles) {
+			files.openErrs = map[string]error{configPath: fs.ErrPermission}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := &fakeRemoteFiles{
+				root:      "/home/me",
+				noInstall: true,
+				files: map[string]*fakeFile{
+					configPath:  {content: []byte("x"), regular: true},
+					historyPath: {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
+				},
+			}
+			configure(files)
+			database := &fakeDatabase{rows: []domainhistory.AtuinRow{testRow("id-1", 100, "ls")}}
+			recorder := &fakeRecorder{}
+			service := testService(&fakeRemoteSource{files: files}, database, recorder)
+
+			result, err := service.Probe(context.Background(), testRef)
+			if !result.Present {
+				t.Fatal("an unreadable config erased the Host's Atuin presence")
+			}
+			if !errors.Is(err, ErrProbeUnavailable) || !errors.Is(err, fs.ErrPermission) {
+				t.Fatalf("error = %v, want ErrProbeUnavailable and fs.ErrPermission", err)
+			}
+			if database.calls != 0 || len(recorder.importCalls()) != 0 {
+				t.Fatalf("an unreadable config still imported: db=%d imports=%d",
+					database.calls, len(recorder.importCalls()))
+			}
+		})
+	}
+}
+
+// Generic shell profiles are only hint sources. An oversized ~/.bashrc and an
+// unreadable ~/.zshrc must not turn a Host with no Atuin evidence into Present:
+// a false Present would permanently disable journaled history for a Host that
+// does not run Atuin. The probe must be a conclusive absence and import
+// nothing.
+func TestProbeTreatsOversizedAndUnreadableProfilesAsNoHint(t *testing.T) {
+	const bashrc = "/home/me/.bashrc"
+	const zshrc = "/home/me/.zshrc"
+	oversized := int64(maxHintBytes + 1)
+	files := &fakeRemoteFiles{
+		root:      "/home/me",
+		noInstall: true,
+		statErrs:  map[string]error{zshrc: fs.ErrPermission},
+		files: map[string]*fakeFile{
+			bashrc: {content: []byte("export PATH=$HOME/bin:$PATH\n"), size: &oversized, regular: true},
+		},
+	}
+	database := &fakeDatabase{}
+	recorder := &fakeRecorder{}
+	service := testService(&fakeRemoteSource{files: files}, database, recorder)
+
+	result, err := service.Probe(context.Background(), testRef)
+	if err != nil || result != (ProbeResult{}) {
+		t.Fatalf("Probe = %+v, %v, want conclusive absence", result, err)
+	}
+	if database.calls != 0 || len(recorder.importCalls()) != 0 {
+		t.Fatalf("a profile-only Host imported: db=%d imports=%d",
+			database.calls, len(recorder.importCalls()))
+	}
+}
+
+// A non-not-exist Stat error on either optional side file must reject the copy
+// rather than silently import a partial snapshot that bypasses the WAL/SHM salt
+// check. The Host stays Present and no checkpoint advances.
+func TestProbeRejectsStatErrorsOnSideFiles(t *testing.T) {
+	const historyPath = "/home/me/.atuin/data/history.db"
+	for _, suffix := range []string{"-wal", "-shm"} {
+		t.Run(suffix, func(t *testing.T) {
+			files := &fakeRemoteFiles{
+				root:     "/home/me",
+				statErrs: map[string]error{historyPath + suffix: fs.ErrPermission},
+				files: map[string]*fakeFile{
+					historyPath: {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
+				},
+			}
+			database := &fakeDatabase{rows: []domainhistory.AtuinRow{testRow("id-1", 100, "ls")}}
+			recorder := &fakeRecorder{}
+			service := testService(&fakeRemoteSource{files: files}, database, recorder)
+
+			result, err := service.Probe(context.Background(), testRef)
+			if !result.Present {
+				t.Fatalf("a side-file Stat failure erased the Host's Atuin presence: %+v, %v",
+					result, err)
+			}
+			if !errors.Is(err, ErrInconsistentCopy) {
+				t.Fatalf("error = %v, want ErrInconsistentCopy", err)
+			}
+			if database.calls != 0 || len(recorder.importCalls()) != 0 {
+				t.Fatalf("a partial snapshot was imported: db=%d imports=%d",
+					database.calls, len(recorder.importCalls()))
+			}
+		})
+	}
+}
+
+// Evidence seen, candidate not yet confirmed: the detection pass sees a
+// readable config, then the candidate Stat stalls past the deadline. Close
+// must unblock the Stat, and the probe must stay Present because evidence was
+// already found.
+func TestProbeDeadlineKeepsPresentWhenACandidateStatStalls(t *testing.T) {
+	const historyPath = "/home/me/.atuin/data/history.db"
+	files := &fakeRemoteFiles{
+		root:           "/home/me",
+		statBlockPath:  historyPath,
+		statBlockAfter: 1,
+		statBlock:      make(chan struct{}),
+		statEntered:    make(chan struct{}, 1),
+		statReturned:   make(chan struct{}),
+		files: map[string]*fakeFile{
+			"/home/me/.config/atuin/config.toml": {content: []byte("x"), regular: true},
+			historyPath:                          {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
+		},
+	}
+	service := testService(&fakeRemoteSource{files: files}, &fakeDatabase{}, &fakeRecorder{},
+		WithTimeout(50*time.Millisecond))
+
+	start := time.Now()
+	result, err := service.Probe(context.Background(), testRef)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("a stalled candidate Stat completed without an error")
+	}
+	if !result.Present {
+		t.Fatal("a stalled candidate Stat erased the evidence-seen presence")
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("the probe took %v, want a bounded attempt", elapsed)
+	}
+	select {
+	case <-files.statEntered:
+	default:
+		t.Fatal("the fake Stat never started")
+	}
+	select {
+	case <-files.statReturned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the stalled Stat did not return after the channel closed")
+	}
+	files.mu.Lock()
+	closed := files.closed
+	files.mu.Unlock()
+	if closed != 1 {
+		t.Fatalf("the channel was closed %d times, want 1", closed)
 	}
 }
 
@@ -478,30 +750,6 @@ func TestProbeFailsClosedWhenTheCopiedDatabaseIsUnreadable(t *testing.T) {
 	}
 	if len(recorder.importCalls()) != 0 {
 		t.Fatal("an unreadable copy was imported")
-	}
-}
-
-func TestPreferenceOffSkipsDetectionAndImport(t *testing.T) {
-	source := &fakeRemoteSource{files: &fakeRemoteFiles{root: "/home/me"}}
-	database := &fakeDatabase{}
-	recorder := &fakeRecorder{}
-	service := testService(source, database, recorder, WithPreference(func() bool { return false }))
-
-	if service.Enabled() {
-		t.Fatal("the service is enabled with the preference off")
-	}
-	result, err := service.Probe(context.Background(), testRef)
-	if err != nil || result != (ProbeResult{}) {
-		t.Fatalf("Probe = %+v, %v", result, err)
-	}
-	if source.opened != 0 || database.calls != 0 {
-		t.Fatalf("preference off still detected: source=%d db=%d", source.opened, database.calls)
-	}
-	if imported, err := service.Import(context.Background(), testRef); err != nil || imported != (ImportResult{}) {
-		t.Fatalf("Import = %+v, %v", imported, err)
-	}
-	if len(recorder.importCalls()) != 0 || recorder.noticeCount() != 0 {
-		t.Fatal("preference off still imported or announced")
 	}
 }
 
@@ -890,9 +1138,10 @@ func TestProbeUsesTheDatabasePathFromAConfig(t *testing.T) {
 	}
 }
 
-// An unknown Atuin schema is not imported and is not treated as a reason to
-// skip the capture hook: the Host falls back to the normal hook.
-func TestProbeTreatsAnUnknownSchemaAsAbsent(t *testing.T) {
+// An unknown Atuin schema is not imported, but the Host stays present: the
+// Netcatty hook must not run next to a Host's own Atuin, and a later Session
+// retries from the same checkpoint.
+func TestProbeFailsClosedOnAnUnknownSchema(t *testing.T) {
 	const historyPath = "/home/me/.atuin/data/history.db"
 	files := &fakeRemoteFiles{
 		root: "/home/me",
@@ -905,11 +1154,80 @@ func TestProbeTreatsAnUnknownSchemaAsAbsent(t *testing.T) {
 	service := testService(&fakeRemoteSource{files: files}, database, recorder)
 
 	result, err := service.Probe(context.Background(), testRef)
-	if err != nil || result != (ProbeResult{}) {
-		t.Fatalf("Probe = %+v, %v, want absent", result, err)
+	if !errors.Is(err, domainhistory.ErrUnknownAtuinSchema) {
+		t.Fatalf("error = %v, want ErrUnknownAtuinSchema", err)
+	}
+	if !result.Present {
+		t.Fatal("an unknown schema erased the Host's Atuin presence")
 	}
 	if len(recorder.importCalls()) != 0 {
 		t.Fatal("an unknown schema was imported")
+	}
+}
+
+// An unknown schema at the first candidate does not stop detection: the next
+// regular candidate is tried, and a readable one is imported.
+func TestProbeTriesTheNextCandidateAfterAnUnknownSchema(t *testing.T) {
+	const primary = "/home/me/.atuin/data/history.db"
+	const legacy = "/home/me/.local/share/atuin/history.db"
+	files := &fakeRemoteFiles{
+		root: "/home/me",
+		files: map[string]*fakeFile{
+			primary: {content: []byte("newer"), modTime: time.Unix(100, 0), regular: true},
+			legacy:  {content: []byte("legacy"), modTime: time.Unix(99, 0), regular: true},
+		},
+	}
+	database := &fakeDatabase{
+		errsByCall: []error{domainhistory.ErrUnknownAtuinSchema, nil},
+		rows:       []domainhistory.AtuinRow{testRow("id-1", 100, "ls")},
+	}
+	recorder := &fakeRecorder{}
+	service := testService(&fakeRemoteSource{files: files}, database, recorder)
+
+	result, err := service.Probe(context.Background(), testRef)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if !result.Present || result.Imported != 1 {
+		t.Fatalf("result = %+v, want an import from the readable candidate", result)
+	}
+	if database.calls != 2 {
+		t.Fatalf("database reads = %d, want 2", database.calls)
+	}
+	if len(recorder.importCalls()) != 1 {
+		t.Fatalf("imports = %d, want 1", len(recorder.importCalls()))
+	}
+}
+
+// When an unknown schema is followed by a candidate whose read fails, the Host
+// stays present and the unknown schema remains the fail-closed reason while the
+// later error is preserved for diagnosis.
+func TestProbeKeepsUnknownSchemaWhenALaterCandidateFailsToRead(t *testing.T) {
+	const primary = "/home/me/.atuin/data/history.db"
+	const legacy = "/home/me/.local/share/atuin/history.db"
+	files := &fakeRemoteFiles{
+		root: "/home/me",
+		files: map[string]*fakeFile{
+			primary: {content: []byte("newer"), modTime: time.Unix(100, 0), regular: true},
+			legacy:  {content: []byte("legacy"), modTime: time.Unix(99, 0), regular: true},
+		},
+	}
+	database := &fakeDatabase{
+		errsByCall: []error{domainhistory.ErrUnknownAtuinSchema, ErrInconsistentCopy},
+	}
+	recorder := &fakeRecorder{}
+	service := testService(&fakeRemoteSource{files: files}, database, recorder)
+
+	result, err := service.Probe(context.Background(), testRef)
+	if !errors.Is(err, domainhistory.ErrUnknownAtuinSchema) ||
+		!errors.Is(err, ErrInconsistentCopy) {
+		t.Fatalf("error = %v, want both ErrUnknownAtuinSchema and ErrInconsistentCopy", err)
+	}
+	if !result.Present {
+		t.Fatal("a mixed candidate failure erased the Host's Atuin presence")
+	}
+	if len(recorder.importCalls()) != 0 {
+		t.Fatal("a failed candidate set was imported")
 	}
 }
 

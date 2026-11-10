@@ -161,7 +161,7 @@ func (p *HistoryPanel) row(c *ui.Context, m locales.Messages, t *ui.Theme, entry
 	if p.state.PendingDeleteEntry() == entry.ID {
 		ui.Row(c).FillWidth().Gap(8).Padding(4, 4, 4, 8).
 			AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.LogsDeleteConfirm()).Grow(1).FontSize(11).
+			ui.Text(c, m.LogsDeleteConfirm()).Grow(1).FontSize(kit.M(c).Font.Caption).
 				TextColor(t.Danger)
 			if ui.Button(c, m.LogsCancel()).Clicked() {
 				p.state.CancelDeleteEntry()

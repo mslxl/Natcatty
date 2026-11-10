@@ -22,9 +22,6 @@ func TestHistorySettingsDefaults(t *testing.T) {
 	if history.SyncIntervalMinutes != DefaultHistorySyncIntervalMinutes {
 		t.Errorf("interval = %d, want %d", history.SyncIntervalMinutes, DefaultHistorySyncIntervalMinutes)
 	}
-	if !history.PreferHostAtuin {
-		t.Error("PreferHostAtuin is off by default")
-	}
 }
 
 func TestNormalizeHistorySettings(t *testing.T) {
@@ -33,7 +30,6 @@ func TestNormalizeHistorySettings(t *testing.T) {
 	settings.History.Username = "  alice  "
 	settings.History.AuthMode = "unknown"
 	settings.History.SyncIntervalMinutes = 0
-	settings.History.PreferHostAtuin = false
 	normalized := Normalize(settings)
 	if normalized.History.SyncAddress != "https://atuin.example.test/base/" {
 		t.Errorf("address = %q", normalized.History.SyncAddress)
@@ -48,10 +44,6 @@ func TestNormalizeHistorySettings(t *testing.T) {
 		t.Errorf("zero interval = %d, want default %d",
 			normalized.History.SyncIntervalMinutes, DefaultHistorySyncIntervalMinutes)
 	}
-	if normalized.History.PreferHostAtuin {
-		t.Error("an explicit false preference was replaced by the default")
-	}
-
 	normalized.History.SyncIntervalMinutes = 500
 	if got := Normalize(normalized).History.SyncIntervalMinutes; got != MaxHistorySyncIntervalMinutes {
 		t.Errorf("high interval = %d, want %d", got, MaxHistorySyncIntervalMinutes)
@@ -70,7 +62,6 @@ func TestPortableStripsHistoryAccountSettings(t *testing.T) {
 		Username:            "alice",
 		AuthMode:            atuinmodel.AuthModeBearer,
 		SyncIntervalMinutes: 15,
-		PreferHostAtuin:     false,
 	}
 	portable := Portable(settings)
 	encoded, err := json.Marshal(portable)
@@ -100,16 +91,16 @@ func TestHistorySettingsResetWithTheLogsGroup(t *testing.T) {
 		Username:            "alice",
 		AuthMode:            atuinmodel.AuthModeBearer,
 		SyncIntervalMinutes: 15,
-		PreferHostAtuin:     false,
 	}
 	reset := ResetGroup(settings, GroupLogs)
 	if reset.History != Defaults().History {
 		t.Errorf("history group = %+v, want defaults", reset.History)
 	}
 
-	reset = ResetField(settings, FieldHistoryPreferHostAtuin)
-	if !reset.History.PreferHostAtuin {
-		t.Error("PreferHostAtuin was not reset")
+	reset = ResetField(settings, FieldHistorySyncInterval)
+	if reset.History.SyncIntervalMinutes != DefaultHistorySyncIntervalMinutes {
+		t.Errorf("interval = %d, want default %d",
+			reset.History.SyncIntervalMinutes, DefaultHistorySyncIntervalMinutes)
 	}
 	if reset.History.SyncAddress != "http://127.0.0.1:8888" {
 		t.Error("resetting one field changed another")

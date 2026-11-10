@@ -125,11 +125,15 @@ type rankedSuggestion struct {
 // concurrent use: the reader goroutine records commands while the UI asks for
 // suggestions.
 type Service struct {
-	mu      sync.Mutex
-	journal Journal
-	config  func() Config
-	now     func() time.Time
-	entries []aggregatedEntry
+	mu sync.Mutex
+	// journalMu serializes journal I/O between Load and RecordEntry so a
+	// snapshot cannot overwrite a completion recorded concurrently. Journal
+	// implementations must not call back into the Service from Load or Record.
+	journalMu sync.Mutex
+	journal   Journal
+	config    func() Config
+	now       func() time.Time
+	entries   []aggregatedEntry
 }
 
 // NewService builds a Service over the Command History journal. config must be
@@ -156,6 +160,10 @@ func (s *Service) Load(ctx context.Context) {
 	if s.journal == nil {
 		return
 	}
+	// Hold journalMu across the read and the replacement so a completion
+	// recorded while the snapshot is in flight is not overwritten.
+	s.journalMu.Lock()
+	defer s.journalMu.Unlock()
 	entries, err := s.journal.Load(ctx)
 	if err != nil {
 		return
@@ -255,6 +263,8 @@ func (s *Service) RecordEntry(entry domainhistory.Entry) {
 
 	at := entry.RecordedAt
 	cwd := strings.TrimSpace(entry.CWD)
+	s.journalMu.Lock()
+	defer s.journalMu.Unlock()
 	s.mu.Lock()
 	updated := make([]aggregatedEntry, len(s.entries))
 	copy(updated, s.entries)
@@ -304,6 +314,16 @@ func (s *Service) Suggestions(input, scope string) []Suggestion {
 // before word-prefix and substring matches, then frequency, then recency, with
 // a current-directory bonus and the command text as tie-breaks.
 func (s *Service) SuggestionsIn(input, scope, cwd string) []Suggestion {
+	return s.SuggestionsInWith(input, scope, cwd, nil)
+}
+
+// SuggestionsInWith is SuggestionsIn over the journal plus extra transient
+// rows. A Host-Atuin Session passes its in-memory commands here so they are
+// suggestible without ever being journaled. The extra rows are aggregated the
+// same way and filtered by the same enabled, minimum-length, scope, and limit
+// rules; they are never written back to the service's view and never reach the
+// journal.
+func (s *Service) SuggestionsInWith(input, scope, cwd string, extra []domainhistory.Entry) []Suggestion {
 	config := s.normalizedConfig()
 	if !config.Enabled {
 		return nil
@@ -320,6 +340,9 @@ func (s *Service) SuggestionsIn(input, scope, cwd string) []Suggestion {
 	entries := make([]aggregatedEntry, len(s.entries))
 	copy(entries, s.entries)
 	s.mu.Unlock()
+	// aggregate returns a fresh slice; appending it leaves the service's own
+	// view untouched.
+	entries = append(entries, aggregate(extra)...)
 
 	lowered := strings.ToLower(input)
 	cwd = strings.TrimSpace(cwd)
