@@ -130,6 +130,9 @@ jobs:
           go tool mygo generate
           git diff --exit-code -- ui/locales
 
+      - name: Verify plugin IDL bindings are committed
+        run: go run ./sdk/idl/gen -check
+
       - name: Cross-compile supported targets
         run: |
           set -euo pipefail
@@ -137,6 +140,31 @@ jobs:
             GOOS="${target%/*}" GOARCH="${target#*/}" go build ./...
             echo "cross-compiled $target"
           done
+          # Unsupported plugin targets still build and report plugins
+          # unavailable at runtime.
+          for target in windows/arm64 linux/386; do
+            GOOS="${target%/*}" GOARCH="${target#*/}" go build ./...
+            echo "cross-compiled unsupported plugin target $target"
+          done
+
+      - name: Verify both wazero engines are linked
+        # The compiler and interpreter must both survive the build; a build
+        # tag or import change that strips one would make the macOS Intel
+        # fallback or the Windows policy fallback impossible.
+        run: |
+          set -euo pipefail
+          dependencies="$(go list -deps ./adapters/wasm)"
+          for engine in wazero/internal/engine/interpreter wazero/internal/engine/wazevo; do
+            if ! printf '%s\n' "$dependencies" | grep -Fq "$engine"; then
+              echo "the wazero engine $engine is not linked" >&2
+              exit 1
+            fi
+            echo "linked $engine"
+          done
+
+      - name: Check the wazero size budget
+        if: runner.os == 'Linux'
+        run: go run ./internal/tools/sizecheck
 
   race:
     name: race (linux)
@@ -225,3 +253,153 @@ jobs:
       - name: Launch the app and await window readiness (macOS and Windows)
         if: runner.os != 'Linux'
         run: go test -tags launchsmoke ./app -run TestLaunchSmoke -count=1 -v
+
+  plugin-runtime:
+    name: plugin runtime smoke (${{ matrix.platform }})
+    strategy:
+      # A failure on one slice must not hide another slice's result.
+      fail-fast: false
+      matrix:
+        include:
+          # macOS runs both universal slices. The arm64 slice runs natively on
+          # an arm64 runner; the Intel slice uses an Intel runner, so the
+          # darwin/amd64 compiler self-test is a recorded CI result rather
+          # than an emulation guess. NATCATTY_PLUGIN_REQUIRE_COMPILER=1 makes
+          # that slice fail instead of silently shipping interpreter-only.
+          - platform: darwin/arm64
+            os: macos-15
+            require_compiler: "0"
+          - platform: darwin/amd64
+            os: macos-15-intel
+            require_compiler: "1"
+          - platform: windows/amd64
+            os: windows-latest
+            require_compiler: "0"
+          - platform: linux/amd64
+            os: ubuntu-latest
+            require_compiler: "0"
+          - platform: linux/arm64
+            os: ubuntu-24.04-arm
+            require_compiler: "0"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      CGO_ENABLED: "0"
+      NATCATTY_PLUGIN_REQUIRE_COMPILER: ${{ matrix.require_compiler }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify the runner is the intended slice
+        run: |
+          set -euo pipefail
+          got="$(go env GOOS)/$(go env GOARCH)"
+          if [ "$got" != "${{ matrix.platform }}" ]; then
+            echo "runner builds for $got, expected ${{ matrix.platform }}" >&2
+            exit 1
+          fi
+          echo "running the $got slice"
+
+      - name: Run the real runtime smoke test
+        # Fixture lifecycle, memory cap, trap recovery, and a host-import
+        # round trip through the real wazero adapter. The engine mode is
+        # printed by the test and checked against the slice requirement.
+        run: go test ./adapters/wasm -run 'TestRuntimeSmoke|TestRuntimeStatusReportsTheEngine' -count=1 -v
+
+  plugin-conformance:
+    name: plugin conformance (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The full conformance suite runs on linux/amd64 and macOS arm64;
+          # the other targets run the smoke suite above.
+          - platform: linux/amd64
+            os: ubuntu-latest
+          - platform: darwin/arm64
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run the full plugin conformance suite
+        run: go test ./sdk/... -count=1 -v
+
+  language-sdks:
+    name: language SDKs (linux)
+    # C, TinyGo, and Zig are built with the toolchains the flake pins
+    # (TinyGo 0.43.0, Zig 0.16.0, clang/LLD 21.1.8, binaryen 133), so this job
+    # uses nix develop instead of the runner's host binaries.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      # The sample build test must fail, not skip, when a pinned tool is
+      # missing from the dev shell.
+      NATCATTY_REQUIRE_LANGUAGE_SDKS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Report the pinned toolchain versions
+        run: |
+          nix develop --command bash -lc '
+            go version
+            tinygo version
+            zig version
+            clang --version | head -n1
+            wasm-ld --version
+            wasm-opt --version
+          '
+
+      - name: Build the C sample
+        run: nix develop --command bash -lc 'go run ./cmd/natcatty-plugin build ./sdk/samples/hello-command-c'
+
+      - name: Build the TinyGo sample
+        run: nix develop --command bash -lc 'go run ./cmd/natcatty-plugin build ./sdk/samples/hello-command-tinygo'
+
+      - name: Build the Zig sample
+        run: nix develop --command bash -lc 'go run ./cmd/natcatty-plugin build ./sdk/samples/hello-command-zig'
+
+      - name: Check every language sample
+        run: |
+          for language in c tinygo zig; do
+            nix develop --command bash -lc \
+              "go run ./cmd/natcatty-plugin check ./sdk/samples/hello-command-$language"
+          done
+
+      - name: Build, check, run, and dev every language sample from source
+        run: nix develop --command bash -lc 'go test ./sdk/samples -run TestLanguage -count=1 -v'
+
+      - name: Verify generated language bindings are committed
+        run: nix develop --command bash -lc 'go run ./sdk/idl/gen -check'

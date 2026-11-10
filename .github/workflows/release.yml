@@ -53,6 +53,12 @@ jobs:
       - name: Set up Nushell
         uses: ./.github/actions/setup-nu
 
+      - name: Check the wazero size budget
+        # The runtime adds both engines to every artifact. Growth over 10 MiB
+        # per target fails closed; a maintainer can record an accepted
+        # exception by running the same command with -justify.
+        run: go run ./internal/tools/sizecheck
+
       - name: Read the release version from mygo.json
         id: tag
         env:
@@ -102,9 +108,208 @@ jobs:
           fi
           echo "release commit ${RELEASE_SHA}"
 
+  quality-gates:
+    name: quality gates (architecture, IDL, full suite)
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed for:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Check architecture and the WebView allowlist
+        run: go test ./internal/archtest -count=1
+
+      - name: Verify plugin IDL bindings are committed
+        run: go run ./sdk/idl/gen -check
+
+      - name: Run the full test suite
+        run: go test ./... -count=1
+
+  plugin-runtime:
+    name: plugin runtime smoke (${{ matrix.platform }})
+    needs: validate
+    strategy:
+      # A failure on one slice must not hide another slice's result.
+      fail-fast: false
+      matrix:
+        include:
+          # Every supported target runs the real-adapter contract suite,
+          # including the engine smoke test. The macOS Intel runner also
+          # requires the compiler, so a release cannot ship the universal
+          # Intel slice interpreter-only.
+          - platform: darwin/arm64
+            os: macos-15
+            require_compiler: "0"
+          - platform: darwin/amd64
+            os: macos-15-intel
+            require_compiler: "1"
+          - platform: windows/amd64
+            os: windows-latest
+            require_compiler: "0"
+          - platform: linux/amd64
+            os: ubuntu-latest
+            require_compiler: "0"
+          - platform: linux/arm64
+            os: ubuntu-24.04-arm
+            require_compiler: "0"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      CGO_ENABLED: "0"
+      NATCATTY_PLUGIN_REQUIRE_COMPILER: ${{ matrix.require_compiler }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify the runner is the intended slice
+        run: |
+          set -euo pipefail
+          got="$(go env GOOS)/$(go env GOARCH)"
+          if [ "$got" != "${{ matrix.platform }}" ]; then
+            echo "runner builds for $got, expected ${{ matrix.platform }}" >&2
+            exit 1
+          fi
+          echo "running the $got slice"
+
+      - name: Run the real runtime contract suite
+        run: go test ./adapters/wasm -count=1 -v
+
+  plugin-conformance:
+    name: plugin conformance (${{ matrix.platform }})
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The full SDK/contract conformance suite runs on the two targets
+          # that CI also checks in depth; the runtime matrix above covers
+          # every supported slice.
+          - platform: linux/amd64
+            os: ubuntu-latest
+          - platform: darwin/arm64
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run the full plugin conformance suite
+        run: go test ./sdk/... -count=1 -v
+
+  language-sdks:
+    name: language SDKs (linux)
+    needs: validate
+    # The C, TinyGo, and Zig samples build with the flake-pinned toolchains.
+    # A missing pinned tool fails the job (NATCATTY_REQUIRE_LANGUAGE_SDKS=1);
+    # nothing here silently skips.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      NATCATTY_REQUIRE_LANGUAGE_SDKS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Report the pinned toolchain versions
+        run: |
+          nix develop --command bash -lc '
+            go version
+            tinygo version
+            zig version
+            clang --version | head -n1
+            wasm-ld --version
+            wasm-opt --version
+          '
+
+      - name: Build the C sample
+        run: nix develop --command bash -lc 'go run ./cmd/natcatty-plugin build ./sdk/samples/hello-command-c'
+
+      - name: Build the TinyGo sample
+        run: nix develop --command bash -lc 'go run ./cmd/natcatty-plugin build ./sdk/samples/hello-command-tinygo'
+
+      - name: Build the Zig sample
+        run: nix develop --command bash -lc 'go run ./cmd/natcatty-plugin build ./sdk/samples/hello-command-zig'
+
+      - name: Check every language sample
+        run: |
+          for language in c tinygo zig; do
+            nix develop --command bash -lc \
+              "go run ./cmd/natcatty-plugin check ./sdk/samples/hello-command-$language"
+          done
+
+      - name: Build, check, run, and dev every language sample from source
+        run: nix develop --command bash -lc 'go test ./sdk/samples -run TestLanguage -count=1 -v'
+
+      - name: Verify generated language bindings are committed
+        run: nix develop --command bash -lc 'go run ./sdk/idl/gen -check'
+
   build:
     name: build (${{ matrix.artifact }})
-    needs: validate
+    needs:
+      - validate
+      - quality-gates
+      - plugin-runtime
+      - plugin-conformance
+      - language-sdks
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     defaults:
@@ -140,6 +345,11 @@ jobs:
 
       - name: Set up Nushell
         uses: ./.github/actions/setup-nu
+
+      - name: Run the plugin runtime smoke test
+        # Native slice only; the CI plugin-runtime matrix covers the other
+        # supported targets and both macOS slices.
+        run: go test ./adapters/wasm -run TestRuntimeSmoke -count=1 -v
 
       - name: Write the Corresponding Source offer into the resources
         run: |
