@@ -1,0 +1,303 @@
+package idl
+
+import (
+	_ "embed"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// RustStubPath is the committed Rust stub constants file, relative to the
+// module root. It is generated from stub.json so the in-language Rust mock and
+// the CLI fake host answer from one definition instead of drifting apart.
+const RustStubPath = "sdk/rust/src/stub_gen.rs"
+
+//go:embed stub.json
+var stubSource []byte
+
+// Stub is the shared service-test fixture definition. Both the Go fake host
+// and the generated Rust mock consume it.
+type Stub struct {
+	// Version is the stub schema version, not the ABI version.
+	Version int `json:"version"`
+	// ClockStartNS is the first virtual time the mock reports.
+	ClockStartNS int64 `json:"clock_start_ns"`
+	// ClockStepNS advances the virtual clock on every now_ns call.
+	ClockStepNS int64 `json:"clock_step_ns"`
+	// RandomSeed selects the deterministic random byte stream.
+	RandomSeed uint64 `json:"random_seed"`
+	// Outputs are written through output_write during a mock run.
+	Outputs []string `json:"outputs"`
+	// Responses maps "service.method" to a response payload. A payload with
+	// the "b64:" prefix is base64 binary; every other value is UTF-8.
+	Responses map[string]string `json:"responses"`
+}
+
+// StubSource returns the raw shared stub definition.
+func StubSource() []byte { return stubSource }
+
+// StubDefinition parses and validates the shared stub definition against the
+// current IDL. It always returns the embedded definition; an invalid embedded
+// file is a build defect, not a caller error.
+func StubDefinition() (Stub, error) {
+	var stub Stub
+	decoder := json.NewDecoder(strings.NewReader(string(stubSource)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&stub); err != nil {
+		return Stub{}, fmt.Errorf("idl: parse stub.json: %w", err)
+	}
+	if err := stub.validate(); err != nil {
+		return Stub{}, err
+	}
+	return stub, nil
+}
+
+func (s Stub) validate() error {
+	if s.Version != 1 {
+		return fmt.Errorf("idl: stub.json version %d is not supported", s.Version)
+	}
+	definition, err := Parse()
+	if err != nil {
+		return err
+	}
+	keys := make([]string, 0, len(s.Responses))
+	for key := range s.Responses {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		serviceName, methodName, ok := strings.Cut(key, ".")
+		if !ok || serviceName == "" || methodName == "" {
+			return fmt.Errorf("idl: stub response %q must be service.method", key)
+		}
+		service, found := serviceByName(definition, serviceName)
+		if !found {
+			return fmt.Errorf("idl: stub response %q names an unknown service", key)
+		}
+		methodFound := false
+		for _, method := range service.Methods {
+			if method.Name == methodName {
+				methodFound = true
+				break
+			}
+		}
+		if !methodFound {
+			return fmt.Errorf("idl: stub response %q names an unknown method", key)
+		}
+		if _, err := s.Response(serviceName, methodName); err != nil {
+			return fmt.Errorf("idl: stub response %q: %w", key, err)
+		}
+	}
+	return nil
+}
+
+// Response returns the stub payload for one service method. The returned slice
+// is a fresh copy.
+func (s Stub) Response(serviceName, methodName string) ([]byte, error) {
+	value, ok := s.Responses[serviceName+"."+methodName]
+	if !ok {
+		return nil, fmt.Errorf("no stub response for %s.%s", serviceName, methodName)
+	}
+	if strings.HasPrefix(value, "b64:") {
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(value, "b64:"))
+		if err != nil {
+			return nil, fmt.Errorf("decode base64 payload: %w", err)
+		}
+		return decoded, nil
+	}
+	return []byte(value), nil
+}
+
+// ResponseByID resolves a response by the numeric method id used on the wire.
+func (s Stub) ResponseByID(serviceName string, methodID uint32) ([]byte, error) {
+	definition, err := Parse()
+	if err != nil {
+		return nil, err
+	}
+	service, ok := serviceByName(definition, serviceName)
+	if !ok {
+		return nil, fmt.Errorf("unknown service %q", serviceName)
+	}
+	for _, method := range service.Methods {
+		if method.ID == methodID {
+			return s.Response(serviceName, method.Name)
+		}
+	}
+	return nil, fmt.Errorf("unknown method %d for service %q", methodID, serviceName)
+}
+
+// Keys returns the sorted "service.method" keys so callers and tests have a
+// stable iteration order.
+func (s Stub) Keys() []string {
+	keys := make([]string, 0, len(s.Responses))
+	for key := range s.Responses {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func serviceByName(definition *Definition, name string) (Service, bool) {
+	for _, service := range definition.Services {
+		if service.Name == name {
+			return service, true
+		}
+	}
+	return Service{}, false
+}
+
+// GenerateRustStub renders the Rust constants consumed by the reference SDK's
+// in-language mock. Method ids are resolved from the IDL so the Rust side
+// never depends on a second ID table.
+func (d *Definition) GenerateRustStub(stub Stub) ([]byte, error) {
+	var out strings.Builder
+	fmt.Fprintf(&out, "// Code generated by sdk/idl/gen from sdk/idl/natcatty_v1.idl and sdk/idl/stub.json; DO NOT EDIT.\n\n")
+	fmt.Fprintf(&out, "//! Shared service-test fixture data for the in-language Rust mock.\n\n")
+	fmt.Fprintf(&out, "pub const STUB_VERSION: u32 = %d;\n", stub.Version)
+	fmt.Fprintf(&out, "pub const CLOCK_START_NS: i64 = %d;\n", stub.ClockStartNS)
+	fmt.Fprintf(&out, "pub const CLOCK_STEP_NS: i64 = %d;\n", stub.ClockStepNS)
+	fmt.Fprintf(&out, "pub const RANDOM_SEED: u64 = %d;\n", stub.RandomSeed)
+	fmt.Fprintf(&out, "pub const OUTPUTS: &[&[u8]] = &[\n")
+	for _, output := range stub.Outputs {
+		fmt.Fprintf(&out, "    %s,\n", rustByteString([]byte(output)))
+	}
+	fmt.Fprintf(&out, "];\n\n")
+	fmt.Fprintf(&out, "/// One shared stub payload keyed by service name and wire method id.\n")
+	fmt.Fprintf(&out, "const RESPONSES: &[(&str, u32, &[u8])] = &[\n")
+	for _, key := range stub.Keys() {
+		serviceName, methodName, _ := strings.Cut(key, ".")
+		service, ok := serviceByName(d, serviceName)
+		if !ok {
+			return nil, fmt.Errorf("stub service %q not in IDL", serviceName)
+		}
+		var methodID uint32
+		found := false
+		for _, method := range service.Methods {
+			if method.Name == methodName {
+				methodID = method.ID
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("stub method %q not in IDL service %q", methodName, serviceName)
+		}
+		payload, err := stub.Response(serviceName, methodName)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(&out, "    (%q, %d, %s),\n", serviceName, methodID, rustByteString(payload))
+	}
+	fmt.Fprintf(&out, "];\n\n")
+	fmt.Fprintf(&out, "/// Returns the shared stub payload for one service call.\n")
+	fmt.Fprintf(&out, "pub fn service_response(service: &str, method_id: u32) -> Option<&'static [u8]> {\n")
+	fmt.Fprintf(&out, "    for (name, id, payload) in RESPONSES {\n")
+	fmt.Fprintf(&out, "        if *name == service && *id == method_id {\n")
+	fmt.Fprintf(&out, "            return Some(payload);\n")
+	fmt.Fprintf(&out, "        }\n    }\n    None\n}\n\n")
+	fmt.Fprintf(&out, "/// Returns every `(service, method id)` pair with a shared stub response.\n")
+	fmt.Fprintf(&out, "pub fn stubbed_calls() -> impl Iterator<Item = (&'static str, u32)> {\n")
+	fmt.Fprintf(&out, "    RESPONSES.iter().map(|(name, id, _)| (*name, *id))\n")
+	fmt.Fprintf(&out, "}\n\n")
+	fmt.Fprintf(&out, "/// Every IDL service method, used to describe a missing shared stub.\n")
+	fmt.Fprintf(&out, "const METHODS: &[(&str, u32, &str)] = &[\n")
+	for _, service := range d.Services {
+		for _, method := range service.Methods {
+			fmt.Fprintf(&out, "    (%q, %d, %q),\n", service.Name, method.ID, method.Name)
+		}
+	}
+	fmt.Fprintf(&out, "];\n\n")
+	fmt.Fprintf(&out, "/// Returns the transport-OK not-found envelope the Go fake host returns\n")
+	fmt.Fprintf(&out, "/// when the shared stub has no response for a call. The IDL method table\n")
+	fmt.Fprintf(&out, "/// below keeps the message taxonomy in step, and both test suites assert\n")
+	fmt.Fprintf(&out, "/// the exact bytes so an undefined stub cannot diverge between hosts.\n")
+	fmt.Fprintf(&out, "pub fn absent_response(service: &str, method_id: u32) -> Vec<u8> {\n")
+	fmt.Fprintf(&out, "    let known_service = METHODS.iter().any(|(name, _, _)| *name == service);\n")
+	fmt.Fprintf(&out, "    let message = if !known_service {\n")
+	fmt.Fprintf(&out, "        format!(\"unknown service {:?}\", service)\n")
+	fmt.Fprintf(&out, "    } else if let Some((_, _, method)) = METHODS\n")
+	fmt.Fprintf(&out, "        .iter()\n")
+	fmt.Fprintf(&out, "        .find(|(name, id, _)| *name == service && *id == method_id)\n")
+	fmt.Fprintf(&out, "    {\n")
+	fmt.Fprintf(&out, "        format!(\"no stub response for {service}.{method}\")\n")
+	fmt.Fprintf(&out, "    } else {\n")
+	fmt.Fprintf(&out, "        format!(\"unknown method {method_id} for service {service:?}\")\n")
+	fmt.Fprintf(&out, "    };\n")
+	fmt.Fprintf(&out, "    format!(\"{{\\\"code\\\":\\\"not-found\\\",\\\"message\\\":{}}}\", json_string(&message))\n")
+	fmt.Fprintf(&out, "        .into_bytes()\n")
+	fmt.Fprintf(&out, "}\n\n")
+	fmt.Fprintf(&out, "/// Escapes one string exactly as Go's encoding/json escapes a string.\n")
+	fmt.Fprintf(&out, "fn json_string(value: &str) -> String {\n")
+	fmt.Fprintf(&out, "    let mut out = String::with_capacity(value.len() + 2);\n")
+	fmt.Fprintf(&out, "    out.push('\"');\n")
+	fmt.Fprintf(&out, "    for c in value.chars() {\n")
+	fmt.Fprintf(&out, "        match c {\n")
+	fmt.Fprintf(&out, "            '\"' => out.push_str(\"\\\\\\\"\"),\n")
+	fmt.Fprintf(&out, "            '\\\\' => out.push_str(\"\\\\\\\\\"),\n")
+	fmt.Fprintf(&out, "            '\\n' => out.push_str(\"\\\\n\"),\n")
+	fmt.Fprintf(&out, "            '\\r' => out.push_str(\"\\\\r\"),\n")
+	fmt.Fprintf(&out, "            '\\t' => out.push_str(\"\\\\t\"),\n")
+	fmt.Fprintf(&out, "            '<' => out.push_str(\"\\\\u003c\"),\n")
+	fmt.Fprintf(&out, "            '>' => out.push_str(\"\\\\u003e\"),\n")
+	fmt.Fprintf(&out, "            '&' => out.push_str(\"\\\\u0026\"),\n")
+	fmt.Fprintf(&out, "            '\\u{2028}' => out.push_str(\"\\\\u2028\"),\n")
+	fmt.Fprintf(&out, "            '\\u{2029}' => out.push_str(\"\\\\u2029\"),\n")
+	fmt.Fprintf(&out, "            c if (c as u32) < 0x20 => out.push_str(&format!(\"\\\\u{:04x}\", c as u32)),\n")
+	fmt.Fprintf(&out, "            c => out.push(c),\n")
+	fmt.Fprintf(&out, "        }\n")
+	fmt.Fprintf(&out, "    }\n")
+	fmt.Fprintf(&out, "    out.push('\"');\n")
+	fmt.Fprintf(&out, "    out\n")
+	fmt.Fprintf(&out, "}\n")
+	return []byte(out.String()), nil
+}
+
+// rustByteString renders bytes as a Rust byte-string literal. Non-ASCII or
+// control-heavy payloads fall back to a numeric array so the generated file
+// always compiles.
+func rustByteString(data []byte) string {
+	printable := true
+	for _, b := range data {
+		if b < 0x20 && b != '\n' && b != '\t' || b >= 0x7f {
+			printable = false
+			break
+		}
+	}
+	if printable {
+		return "b" + rustQuote(string(data))
+	}
+	var out strings.Builder
+	out.WriteString("&[")
+	for i, b := range data {
+		if i > 0 {
+			out.WriteString(", ")
+		}
+		fmt.Fprintf(&out, "%d", b)
+	}
+	out.WriteString("]")
+	return out.String()
+}
+
+func rustQuote(value string) string {
+	var out strings.Builder
+	out.WriteByte('"')
+	for _, r := range value {
+		switch r {
+		case '\\', '"':
+			out.WriteByte('\\')
+			out.WriteRune(r)
+		case '\n':
+			out.WriteString("\\n")
+		case '\t':
+			out.WriteString("\\t")
+		case '\r':
+			out.WriteString("\\r")
+		default:
+			out.WriteRune(r)
+		}
+	}
+	out.WriteByte('"')
+	return out.String()
+}

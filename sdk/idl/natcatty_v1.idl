@@ -1,0 +1,835 @@
+// Natcatty plugin ABI, major version 1.
+//
+// This file is the single source of truth for the guest exports and host
+// imports the runtime speaks. Regenerate the checked-in bindings with:
+//
+//     go run ./sdk/idl/gen
+//
+// The `abi` integer matches the manifest's `abi` field. A breaking wire change
+// is a new file with a new major; a minor change only adds declarations and
+// keeps every existing name and signature.
+
+idl "natcatty" {
+  // 1.1.0 added service modules only. 1.2.0 added the optional
+  // host-to-guest language-service exports, the matching host imports, and
+  // the System panel service. 1.3.0 is the union of those two independent
+  // 1.2.0 additions. 1.4.0 adds the two host imports a plugin uses to answer
+  // an external MCP tool call. A guest receives one dispatch command with
+  // {"kind":"mcp_tool_call","requestId":N,"tool":"plugin.<id>.<tool>",
+  // "arguments":{...}} and replies with mcp_tool_result; mcp_tool_progress is
+  // optional and forwards notifications/progress to the MCP client. 1.5.0
+  // adds the native UI service and its closed enum vocabulary. 1.6.0 adds the
+  // workspace host-service modules (files, hosts, sessions, terminal). 1.7.0
+  // adds the cross-plugin service broker: the services host module, the
+  // service_respond host import, and the optional service_request guest
+  // export. 1.8.0 adds the data-oriented native widgets:
+  // data_grid/data_column/data_row, graph/graph_node/graph_edge,
+  // plan_graph/plan_node, canvas/canvas_shape, their property ids, and the
+  // CanvasShape and PlanStatus enums. A grid may declare a row count far
+  // above the rows in one patch; the host renders a virtual window and asks
+  // for the missing rows with an item_request event whose Index is the first
+  // missing row and Width is how many are missing. 1.9.0 adds the
+  // permission-free i18n service: locale and direction, translation with the
+  // plugin fallback chain, a generation-tagged effective catalog, host number,
+  // date, and relative-time formatting, and CLDR plural categories. 1.10.0 is
+  // the union of that 1.9.0 i18n surface with the external-access host-service
+  // modules (network, auth, trust, vault): host-brokered dialing with pinned
+  // DNS, in-band TLS upgrade, SSH via_host tunneling, host-owned
+  // authentication and trust verification, and short-lived secret leases.
+  // Both branches independently used 1.9.0; the merged line must not reuse
+  // that number, so the union takes 1.10.0. 1.11.0 adds rich content:
+  // rich_text/text_span nodes for formatted spans and links, virtual_list/
+  // virtual_item nodes with a pull item provider, packaged font and image
+  // asset ids, host-driven property transitions with the Ease enum, and their
+  // property ids. Asset properties accept only packaged asset ids; a remote
+  // URL or a path escaping the package rejects the batch. 1.12.0 is the union
+  // of that rich-content surface with the optional connection-provider
+  // surface: the provider_request guest export, the ProviderMethod enum, and
+  // the provider_respond, provider_cancelled, provider_input_read,
+  // provider_input_credit, provider_output_write, and provider_output_credit
+  // host imports. A provider supplies a raw byte stream and never terminal
+  // state; the host pumps it through bounded queues and 64 KiB chunks. Both
+  // branches independently used 1.11.0, so the union takes 1.12.0. 1.13.0
+  // adds the sandboxed webview surface: the webview node kind for an embedded
+  // page, the webview event kind carrying a WebviewHandle and a JSON bridge
+  // envelope in Text/Related, and ui.webview_respond for the backend's reply
+  // to one page bridge request (handle u64, request u64, status u32, payload
+  // string). A page has no permission principal of its own: every request is
+  // checked against the page that sent it and the View's fixed method
+  // allowlist, then delivered to the plugin backend that owns the surface.
+  // A webview-only plugin subscribes to the session-wide webview event with
+  // ui.webview and polls the event queue with that grant when it does not
+  // also hold ui.native. 1.14.0 is the union of that webview surface with the
+  // optional data-provider surface: the data_provider_request guest export,
+  // the DataProviderMethod enum, and the data_provider_respond and
+  // data_provider_cancelled host imports. A data provider answers typed query,
+  // fetch, command, transaction, metadata, and plan calls with one closed JSON
+  // result envelope; the host enforces access modes, batch limits, budgets,
+  // and cancellation. 1.15.0 adds the native UI status and operation enums
+  // every generated binding needs, and service_response_len: the host's
+  // service call returns only a transport status, so the guest reads the
+  // number of bytes copied into its response buffer through this import.
+  // Every earlier name, signature, and numeric value is unchanged, so the
+  // wire ABI major stays 1.
+  version "1.15.0"
+  abi 1
+
+  // Host log severity. The numeric values are part of the wire contract.
+  enum LogLevel : i32 {
+    debug = 0
+    info = 1
+    warn = 2
+    error = 3
+  }
+
+  // Editor language-service capability passed to a provider. The numeric
+  // values are part of the wire contract and match the closed capability set
+  // in domain/plugin.
+  enum LanguageKind : i32 {
+    highlight = 1
+    completion = 2
+    diagnostics = 3
+    formatting = 4
+    hover = 5
+    signature_help = 6
+    navigation = 7
+    code_actions = 8
+  }
+
+  // Transport-level result of one service call. Service-level failures such
+  // as denied, not-found, conflict, invalid, and limit travel in the response
+  // envelope; these values describe the call itself.
+  enum ServiceStatus : i32 {
+    ok = 0
+    invalid = -1
+    limit = -2
+    cancelled = -3
+    deadline = -4
+    trap = -5
+    unavailable = -6
+  }
+
+  // Connection-provider methods carried by the optional provider_request
+  // export. The host sends one method id with an opaque JSON payload and the
+  // guest answers through provider_respond while the call is in flight. The
+  // numeric values are part of the wire contract.
+  enum ProviderMethod : i32 {
+    describe = 1
+    validate = 2
+    probe = 3
+    open = 4
+    resize = 5
+    signal = 6
+    close = 7
+    // pump tells the guest that input bytes or output credit for one stream
+    // are available. It is host-initiated and carries no terminal state.
+    pump = 8
+  }
+
+  // Data-provider methods carried by the optional data_provider_request
+  // export. The host sends one method id with an opaque JSON payload and the
+  // guest answers through data_provider_respond while the call is in flight.
+  // The numeric values are part of the wire contract. open establishes a
+  // connection or runs a profile test; query starts a typed result stream and
+  // fetch continues it; cancel asks the guest to stop and report delivered
+  // rows as partial. begin/commit/rollback, metadata, and plan are optional
+  // features the provider declares.
+  enum DataProviderMethod : i32 {
+    open = 1
+    close = 2
+    ping = 3
+    capabilities = 4
+    query = 5
+    fetch = 6
+    cancel = 7
+    command = 8
+    begin = 9
+    commit = 10
+    rollback = 11
+    metadata = 12
+    plan = 13
+  }
+
+  // --- Native UI ABI (1.5.0) ---
+  //
+  // The native UI wire payloads are binary and length-prefixed. These enums
+  // are the closed vocabulary shared by the guest and the host tree model:
+  // numeric values are part of the wire contract and must match
+  // domain/nativeui. Nodes are identified by a u32 guest id inside a batch
+  // until the host has issued a generation-tagged NodeHandle.
+
+  // Core v1 widget kinds.
+  enum NodeKind : i32 {
+    container = 0
+    text = 1
+    button = 2
+    input = 3
+    checkbox = 4
+    radio = 5
+    select = 6
+    slider = 7
+    progress = 8
+    badge = 9
+    divider = 10
+    image = 11
+    list = 12
+    table = 13
+    tree = 14
+    tabs = 15
+    tooltip = 16
+    dialog = 17
+    menu = 18
+    toast = 19
+    // Data surfaces (1.8.0). A data column and row are children of a
+    // data_grid; a row names its absolute display index, so the grid can
+    // render a sparse window of a large set. Graph edges reference graph
+    // nodes with the from/to properties. Plan nodes form a tree and carry
+    // their own annotations. Canvas shapes are local drawing primitives.
+    data_grid = 20
+    data_column = 21
+    data_row = 22
+    graph = 23
+    graph_node = 24
+    graph_edge = 25
+    plan_graph = 26
+    plan_node = 27
+    canvas = 28
+    canvas_shape = 29
+    // Rich content (1.11.0). A rich_text paragraph contains text_span
+    // children; a span may name a link and a packaged font asset. A
+    // virtual_list declares an item count far above the item nodes in one
+    // patch and pulls the visible window through item_request, whose Index is
+    // the first missing item and Width is how many are missing. Each
+    // virtual_item names its absolute display index with item_index.
+    rich_text = 30
+    text_span = 31
+    virtual_list = 32
+    virtual_item = 33
+    // Embedded webview (1.13.0). A webview node has no children and names a
+    // packaged HTML entry under ui/ with src. The host owns its size, focus,
+    // visibility, and IME; its page shares the plugin sandbox origin and the
+    // View's fixed bridge allowlist.
+    webview = 34
+  }
+
+  // Closed property ids. Each kind accepts a fixed subset; unknown or
+  // out-of-kind properties reject the whole batch.
+  enum PropID : i32 {
+    layout = 1
+    gap = 2
+    padding_start = 3
+    padding_end = 4
+    padding_top = 5
+    padding_bottom = 6
+    margin_start = 7
+    margin_end = 8
+    margin_top = 9
+    margin_bottom = 10
+    width = 11
+    height = 12
+    grow = 13
+    hidden = 14
+    disabled = 15
+    focusable = 16
+    tab_index = 17
+    label = 18
+    role = 19
+    labelled_by = 20
+    key_capture = 21
+    value = 22
+    placeholder = 23
+    read_only = 24
+    multiline = 25
+    checked = 26
+    selected = 27
+    min = 28
+    max = 29
+    tooltip = 30
+    background_token = 31
+    text_token = 32
+    border_token = 33
+    radius = 34
+    font_size = 35
+    font_weight = 36
+    opacity = 37
+    src = 38
+    alt = 39
+    columns = 40
+    expanded = 41
+    // Data-surface properties (1.8.0).
+    sort_column = 42
+    sort_descending = 43
+    row_count = 44
+    row_index = 45
+    sortable = 46
+    from = 47
+    to = 48
+    directed = 49
+    x = 50
+    y = 51
+    stroke_token = 52
+    fill_token = 53
+    line_width = 54
+    shape = 55
+    annotation = 56
+    cost = 57
+    plan_status = 58
+    // Rich-content properties (1.11.0). src and font_asset accept only a
+    // packaged asset id: a relative path without a scheme, query, fragment,
+    // backslash, absolute prefix, or parent traversal. item_count/item_index
+    // drive the virtual list. transition_ms and transition_ease enable a
+    // host-driven property transition; the host respects reduced motion.
+    link = 59
+    italic = 60
+    underline = 61
+    strikethrough = 62
+    font_asset = 63
+    item_count = 64
+    item_index = 65
+    transition_ms = 66
+    transition_ease = 67
+  }
+
+  // The type tag of one property value. A set_prop op carries every scalar
+  // field and the tag selects the meaningful one.
+  enum PropValueKind : i32 {
+    bool = 0
+    int = 1
+    float = 2
+    string = 3
+    ref = 4
+  }
+
+  // Result of one native UI binary call. Permission denials and validation
+  // failures travel in the payload because the UI methods carry no JSON
+  // envelope. The numeric values match domain/nativeui and are part of the
+  // wire contract.
+  enum UIStatus : i32 {
+    ok = 0
+    invalid = 1
+    limit = 2
+    denied = 3
+    stale_handle = 4
+    unavailable = 5
+    closed = 6
+  }
+
+  // Patch operation tag in one native UI batch. The payload layout follows
+  // this tag, so the numeric values are part of the wire contract.
+  enum UIOpKind : i32 {
+    create = 0
+    destroy = 1
+    insert = 2
+    move = 3
+    set_prop = 4
+    set_text = 5
+    set_children = 6
+  }
+
+  // Closed event set. Events are queued by the host and delivered only
+  // through poll; the host never calls the guest synchronously.
+  enum EventKind : i32 {
+    click = 0
+    double_click = 1
+    context_menu = 2
+    change = 3
+    input = 4
+    submit = 5
+    focus = 6
+    blur = 7
+    key_down = 8
+    key_up = 9
+    scroll = 10
+    selection = 11
+    resize = 12
+    drag = 13
+    drop = 14
+    hover = 15
+    item_request = 16
+    animation_end = 17
+    webview = 18
+    locale_changed = 19
+    theme_changed = 20
+  }
+
+  // Key vocabulary the host routes to native views.
+  enum Key : i32 {
+    unknown = 0
+    tab = 1
+    enter = 2
+    escape = 3
+    space = 4
+    backspace = 5
+    delete = 6
+    left = 7
+    right = 8
+    up = 9
+    down = 10
+    home = 11
+    end = 12
+    page_up = 13
+    page_down = 14
+    insert = 15
+    f1 = 16
+    f2 = 17
+    f3 = 18
+    f4 = 19
+    f5 = 20
+    f6 = 21
+    f7 = 22
+    f8 = 23
+    f9 = 24
+    f10 = 25
+    f11 = 26
+    f12 = 27
+    a = 28
+    b = 29
+    c = 30
+    d = 31
+    e = 32
+    f = 33
+    g = 34
+    h = 35
+    i = 36
+    j = 37
+    k = 38
+    l = 39
+    m = 40
+    n = 41
+    o = 42
+    p = 43
+    q = 44
+    r = 45
+    s = 46
+    t = 47
+    u = 48
+    v = 49
+    w = 50
+    x = 51
+    y = 52
+    z = 53
+    digit0 = 54
+    digit1 = 55
+    digit2 = 56
+    digit3 = 57
+    digit4 = 58
+    digit5 = 59
+    digit6 = 60
+    digit7 = 61
+    digit8 = 62
+    digit9 = 63
+    minus = 64
+    equal = 65
+    comma = 66
+    period = 67
+    slash = 68
+    semicolon = 69
+    quote = 70
+    bracket_left = 71
+    bracket_right = 72
+    backslash = 73
+    grave = 74
+  }
+
+  // Accessibility roles a node declares.
+  enum Role : i32 {
+    none = 0
+    button = 1
+    text = 2
+    heading = 3
+    text_field = 4
+    checkbox = 5
+    radio = 6
+    slider = 7
+    progress = 8
+    list = 9
+    list_item = 10
+    table = 11
+    tree = 12
+    tab = 13
+    tab_list = 14
+    dialog = 15
+    menu = 16
+    menu_item = 17
+    image = 18
+    tooltip = 19
+    status = 20
+  }
+
+  // Semantic theme tokens. The host resolves the actual colors and re-reads
+  // them on theme change.
+  enum Token : i32 {
+    background = 0
+    surface = 1
+    surface_hover = 2
+    surface_pressed = 3
+    border = 4
+    text = 5
+    text_muted = 6
+    accent = 7
+    accent_text = 8
+    danger = 9
+    warning = 10
+    success = 11
+    selection = 12
+    focus = 13
+    inverse = 14
+    inverse_text = 15
+  }
+
+  // Layout direction of a container's children.
+  enum Layout : i32 {
+    row = 0
+    column = 1
+    box = 2
+    grid = 3
+  }
+
+  // Drawing primitive of one canvas_shape child. Rect, line, ellipse, and
+  // text use the shape's x, y, width, and height; image also uses src and alt.
+  enum CanvasShape : i32 {
+    rect = 0
+    line = 1
+    ellipse = 2
+    text = 3
+    image = 4
+  }
+
+  // Status of one plan_node in a plan_graph.
+  enum PlanStatus : i32 {
+    none = 0
+    running = 1
+    done = 2
+    failed = 3
+    skipped = 4
+  }
+
+  // Easing of one host-driven property transition.
+  enum Ease : i32 {
+    linear = 0
+    ease_in = 1
+    ease_out = 2
+    ease_in_out = 3
+  }
+
+  // A copy-in/copy-out guest memory range. The host never retains a guest
+  // memory view past the call boundary.
+  record GuestRange {
+    ptr: u32
+    len: u32
+  }
+
+  // A generation-tagged host-owned resource. The low 32 bits are the table
+  // slot and the high 32 bits are the generation.
+  handle Handle : u64
+
+  // Native UI resources. Each is generation tagged and invalidated when its
+  // tree, listener, or asset no longer exists.
+  handle NodeHandle : u64
+  handle ListenerHandle : u64
+  handle ImageHandle : u64
+  handle FontHandle : u64
+  handle WebviewHandle : u64
+
+  // Host module imports. Only these functions may appear in an imported
+  // function table in v1.
+  host "natcatty_host_v1" {
+    abi_version() -> i32
+    log(level: LogLevel, ptr: u32, len: u32)
+    now_ns() -> i64
+    random_get(ptr: u32, len: u32) -> i32
+    output_write(ptr: u32, len: u32) -> i32
+    // A provider returns the result of one language request. The host accepts
+    // exactly one response per request id and copies the payload immediately.
+    language_respond(request_id: u64, ptr: u32, len: u32) -> i32
+    // A provider may poll for cooperative cancellation during a request.
+    language_cancelled(request_id: u64) -> i32
+
+    // Result of one mcp_tool_call command. The payload is the UTF-8 JSON or
+    // opaque-bytes result the host maps to MCP content. Returns 0 on
+    // acceptance; a negative value reports an unknown, stale, oversized, or
+    // malformed reply. The host never retains the guest range.
+    mcp_tool_result(request_id: u32, ptr: u32, len: u32) -> i32
+
+    // Optional progress for one in-flight mcp_tool_call. The host forwards
+    // it as notifications/progress and never records the message in audit.
+    mcp_tool_progress(request_id: u32, progress: u32, message_ptr: u32, message_len: u32) -> i32
+
+    // A provider returns the result of one cross-plugin service request. The
+    // host accepts exactly one response per request id and copies the payload
+    // immediately; the payload is the broker's closed result envelope.
+    service_respond(request_id: u64, ptr: u32, len: u32) -> i32
+
+    // The number of response bytes the host copied in the last successful
+    // service call (one natcatty:svc/<name>_v1 call) on this instance. A
+    // service call returns only a transport status, so a typed binding reads
+    // this immediately after a zero status; any later call resets it.
+    service_response_len() -> u32
+
+    // A connection provider returns the result of one provider_request. The
+    // host accepts exactly one response per request id and copies the payload
+    // immediately. The payload is the provider's JSON result envelope.
+    provider_respond(request_id: u64, ptr: u32, len: u32) -> i32
+    // A provider polls for cooperative cancellation of its in-flight request.
+    // Cancelling open releases a half-open connection; the host never uses
+    // the guest range here.
+    provider_cancelled(request_id: u64) -> i32
+    // Stream data movement. The guest reads input and writes output in bounded
+    // chunks; the host owns both queues, the terminal, and the screen. A
+    // negative return reports unknown stream, closed stream, malformed range,
+    // or no output credit; input_read returns the byte count it copied.
+    provider_input_read(stream: u32, ptr: u32, capacity: u32) -> i32
+    provider_input_credit(stream: u32) -> i32
+    provider_output_write(stream: u32, ptr: u32, len: u32) -> i32
+    provider_output_credit(stream: u32) -> i32
+
+    // A data provider returns the result of one data_provider_request. The
+    // host accepts exactly one response per request id and copies the payload
+    // immediately. The payload is the provider's closed JSON result envelope;
+    // it never carries credential content or host-owned tunnel material.
+    data_provider_respond(request_id: u64, ptr: u32, len: u32) -> i32
+    // A data provider polls for cooperative cancellation of its in-flight
+    // query, fetch, command, or profile test. The host never uses the guest
+    // range here.
+    data_provider_cancelled(request_id: u64) -> i32
+  }
+
+  // Host services. Every service is a separate import module exporting one
+  // call(method_id, req_ptr, req_len, resp_ptr, resp_cap) -> i32 entry.
+  // Method ids are stable within the _v1 module; adding a method never
+  // changes an existing import.
+  service "storage" {
+    method get = 1
+    method set = 2
+    method delete = 3
+    method list = 4
+  }
+
+  service "clipboard" {
+    method read = 1
+    method write = 2
+  }
+
+  service "notifications" {
+    method post = 1
+    method dismiss = 2
+  }
+
+  service "events" {
+    method subscribe = 1
+    method poll = 2
+    method unsubscribe = 3
+  }
+
+  service "settings" {
+    method read = 1
+  }
+
+  // The purpose-built System panel surface. snapshot returns the normalized
+  // output of the host's fixed collectors for one Host; update publishes one
+  // descriptor payload for a statically declared section.
+  service "systempanel" {
+    method snapshot = 1
+    method update = 2
+  }
+
+  // The permission-free i18n service. Request bodies and responses are JSON
+  // envelopes like the other baseline services. translate keys off the host
+  // locale and the package catalogs; catalog returns the whole effective
+  // translation table with a generation that advances on every locale change,
+  // so the SDK can cache translations instead of calling per string. number,
+  // date, and relative_time always use the host locale; v1 has no per-plugin
+  // locale override. plural returns the CLDR cardinal category of a count.
+  service "i18n" {
+    method locale = 1
+    method direction = 2
+    method translate = 3
+    method catalog = 4
+    method number = 5
+    method date = 6
+    method relative_time = 7
+    method plural = 8
+  }
+
+  // Native UI. Requests and responses are the binary length-prefixed payloads
+  // described above; each method returns a status envelope. apply, listen,
+  // unlisten, and poll are the ticket 11 core and never carry JSON. apply
+  // requires ui.native. listen for a native tree event requires ui.native;
+  // listen for the session-wide webview event requires ui.webview. unlisten
+  // and poll use ui.native when the plugin holds it, otherwise ui.webview, so
+  // a webview-only plugin can drain the webview event pipeline. Methods 1-7
+  // are the view-management surface reserved for the placements work and are
+  // not served yet.
+  service "ui" {
+    method open_view = 1
+    method close = 2
+    method focus = 3
+    method restore = 4
+    method dialog = 5
+    method theme = 6
+    method locale = 7
+    method apply = 8
+    method listen = 9
+    method unlisten = 10
+    method poll = 11
+    // Ends one page bridge request. The request is a WebviewReply:
+    // handle u64 (the event's related handle), request u64, status u32, and
+    // payload string. The page never calls this method directly.
+    method webview_respond = 12
+  }
+
+  // Local file access is confined to the preopens the host mounts from the
+  // plugin's granted directory scopes. The service adds random-access range
+  // reads and writes plus advisory locking on top of those roots.
+  service "files" {
+    method open = 1
+    method read = 2
+    method write = 3
+    method truncate = 4
+    method sync = 5
+    method stat = 6
+    method rename = 7
+    method unlink = 8
+    method close = 9
+    method lock = 10
+    method unlock = 11
+    method preopens = 12
+    method list = 13
+    // Remote operations require the Host-scoped files.remote.read and
+    // files.remote.write permissions and never leave the granted Host.
+    method remote_list = 14
+    method remote_stat = 15
+    method remote_read = 16
+    method remote_write = 17
+    method remote_rename = 18
+    method remote_delete = 19
+    method remote_mkdir = 20
+  }
+
+  // Hosts are resource-scoped by opaque Host ID. Read covers list/get and
+  // test; write covers create/update/import.
+  service "hosts" {
+    method list = 1
+    method get = 2
+    method create = 3
+    method update = 4
+    method import = 5
+    method test = 6
+  }
+
+  // Sessions are resource-scoped by opaque Session ID. Provider-created and
+  // fiber-created Sessions carry no per-session grant; the Host scope bounds
+  // them.
+  service "sessions" {
+    method list = 1
+    method get = 2
+    method connect = 3
+    method reconnect = 4
+    method disconnect = 5
+  }
+
+  // Terminal observe is a lossy, read-only tap. Write and info are separately
+  // scoped and never grant filesystem or network access.
+  service "terminal" {
+    method observe = 1
+    method read = 2
+    method close = 3
+    method write = 4
+    method info = 5
+  }
+
+  // The cross-plugin service broker. Consumers call a provider through
+  // invoke, stream_open, subscribe, register, unregister, providers, status,
+  // or emit. Request and response payloads are the broker's JSON envelopes;
+  // method ids are stable within this module.
+  service "services" {
+    method invoke = 1
+    method stream_open = 2
+    method stream_read = 3
+    method stream_write = 4
+    method stream_close = 5
+    method subscribe = 6
+    method poll = 7
+    method unsubscribe = 8
+    method register = 9
+    method unregister = 10
+    method providers = 11
+    method status = 12
+    method emit = 13
+  }
+
+  // External network access is host-brokered. dial validates the exact
+  // endpoint scope, resolves the name once, pins the resolved IP, and returns
+  // a connection handle. read and write carry payloads as bounded chunks with
+  // a credit window; shutdown half-closes one direction; close releases the
+  // connection. tls_upgrade performs at most one in-band upgrade on the same
+  // connection with host-owned SNI, ALPN, CA policy, and hostname
+  // verification. UDP is not offered.
+  service "network" {
+    method dial = 1
+    method read = 2
+    method write = 3
+    method shutdown = 4
+    method close = 5
+    method tls_upgrade = 6
+  }
+
+  // Authentication is host-owned. A plugin may begin, respond to, or cancel a
+  // flow, but never supplies or receives credential plaintext.
+  service "auth" {
+    method begin = 1
+    method respond = 2
+    method cancel = 3
+  }
+
+  // Trust verification is host-owned. verify classifies SSH host keys, TLS
+  // certificates, and custom fingerprints as trusted, unknown, changed, or
+  // revoked. Unknown material prompts the host; changed material blocks and
+  // the plugin cannot override the verdict.
+  service "trust" {
+    method verify = 1
+  }
+
+  // Vault metadata and host-executed descriptors are scoped reads. A
+  // guest-deliverable secret is issued as a short-lived lease bound to the
+  // Host, the fiber, and the permission; issue, read, and release are audited
+  // without content.
+  service "vault" {
+    method metadata = 1
+    method fields = 2
+    method lease_issue = 3
+    method lease_read = 4
+    method lease_release = 5
+  }
+
+  // Guest exports. The reactor has no _start and no thread entry points.
+  guest "natcatty" {
+    export abi_version "natcatty_abi_version" () -> i32
+    export init "natcatty_init" () -> i32
+    export dispatch "natcatty_dispatch" (command_ptr: u32, command_len: u32) -> i32
+    export poll "natcatty_poll" () -> i32
+    export shutdown "natcatty_shutdown" () -> i32
+    optional export alloc "natcatty_alloc" (size: u32) -> u32
+    optional export scratch "natcatty_scratch" () -> u32
+    // Language providers implement these two optional exports. A module that
+    // declares a language.provider contribution must implement request; cancel
+    // is best-effort and may be omitted.
+    optional export language_request "natcatty_language_request" (request_id: u64, kind: LanguageKind, ptr: u32, len: u32) -> i32
+    optional export language_cancel "natcatty_language_cancel" (request_id: u64) -> i32
+    // A cross-plugin service provider implements this optional export. The
+    // payload is the broker request envelope; the provider answers through the
+    // service_respond host import while the call is in flight. A module that
+    // declares provides must implement it.
+    optional export service_request "natcatty_service_request" (request_id: u64, ptr: u32, len: u32) -> i32
+    // A connection provider implements this optional export. The host sends
+    // one provider method and an opaque JSON payload; the provider answers
+    // through provider_respond while the call is in flight. A module that
+    // declares a connection contribution must implement it.
+    optional export provider_request "natcatty_provider_request" (request_id: u64, method: ProviderMethod, ptr: u32, len: u32) -> i32
+    // A data provider implements this optional export. The host sends one data
+    // method and an opaque JSON payload; the provider answers through
+    // data_provider_respond while the call is in flight. A module that
+    // declares a data provider contribution must implement it.
+    optional export data_provider_request "natcatty_data_provider_request" (request_id: u64, method: DataProviderMethod, ptr: u32, len: u32) -> i32
+  }
+}

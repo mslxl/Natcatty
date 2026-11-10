@@ -1,0 +1,10 @@
+[package]
+name = "natcatty-plugin-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Generated Rust bindings for the Natcatty plugin ABI"
+license = "GPL-3.0-only"
+publish = false
+
+[lib]
+path = "src/lib.rs"
