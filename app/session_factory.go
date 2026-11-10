@@ -13,6 +13,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
+	protocolmodel "github.com/mslxl/natcatty/domain/model/protocol"
 	"github.com/mslxl/natcatty/domain/model/tmux"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -55,6 +56,10 @@ type transportFactory struct {
 	// test or MCP caller that supplies no global preferences keeps the
 	// configuration as written.
 	preferences preferenceSource
+	// providers resolves plugin-owned protocols before the built-in Kind
+	// routing. It is empty in this build; the Connection Provider ticket
+	// registers its factories here.
+	providers *appsession.ProviderRegistry
 	// tmuxNotices deduplicates fallback notices per Host: a missing tmux is
 	// announced once, not on every reconnect.
 	tmuxNotices *tmux.NoticeState
@@ -80,14 +85,49 @@ func (f *transportFactory) withPreferences(preferences preferenceSource) *transp
 	return f
 }
 
+// withProviders attaches the registry of plugin-owned protocol factories. The
+// composition root may share it with the plugin runtime; a nil registry keeps
+// an empty one, so provider protocols fail closed.
+func (f *transportFactory) withProviders(providers *appsession.ProviderRegistry) *transportFactory {
+	if providers != nil {
+		f.providers = providers
+	}
+	return f
+}
+
 func newTransportFactory(local, serial, telnet appsession.Factory, manager *appconnection.Manager, routes routeSource) *transportFactory {
 	return &transportFactory{
 		local: local, serial: serial, telnet: telnet, manager: manager, routes: routes,
+		providers:   appsession.NewProviderRegistry(),
 		tmuxNotices: tmux.NewNoticeState(),
 	}
 }
 
 func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
+	// A provider-owned protocol resolves before the built-in Kind routing, so
+	// adding a provider needs no case below. A built-in protocol with no Kind
+	// gets its Kind from the registry, keeping selection in one place.
+	if spec.Protocol != "" {
+		id := protocolmodel.ID(spec.Protocol)
+		if providers := f.providers; providers != nil {
+			if provider, ok := providers.Resolve(id); ok {
+				return provider.Open(ctx, spec)
+			}
+		}
+		descriptor, ok := protocolmodel.Lookup(id)
+		if !ok {
+			if protocolmodel.ValidProviderID(id) {
+				// The provider is missing or disabled. Failing closed is the
+				// contract: never fall back to local or another transport.
+				return nil, fmt.Errorf("%w: %q", appsession.ErrProviderUnavailable, id)
+			}
+			return nil, fmt.Errorf("%w: %q", protocolmodel.ErrInvalidProtocol, id)
+		}
+		if spec.Kind == "" {
+			spec.Kind = appsession.Kind(descriptor.Transport)
+		}
+	}
+
 	switch spec.Kind {
 	case appsession.KindSSH:
 		// Handled below: an SSH transport owns a Connection lease.
@@ -111,6 +151,11 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 			return nil, errors.New("app: no in-process EternalTerminal client")
 		}
 		return f.etInProcess.Open(ctx, spec)
+	case appsession.KindPlugin:
+		// A plugin-backed Session reaches this point only when its protocol did
+		// not resolve to a validated provider. Never fall back to a built-in
+		// transport, even when the local factory is available.
+		return nil, fmt.Errorf("%w: %q", appsession.ErrProviderUnavailable, spec.Protocol)
 	default:
 		return f.local.Open(ctx, spec)
 	}

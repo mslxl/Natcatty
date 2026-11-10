@@ -879,7 +879,18 @@ type externalMCP struct {
 	discoveryPath string
 	port          int
 	token         string
+	server        *mcprpc.Server
 	closeOnce     sync.Once
+}
+
+// NotifyAll pushes one notification to every connected MCP stdio process.
+// Plugin tool registration changes use it to send tools/list_changed. A
+// listener that failed to start has no server and silently drops the notice.
+func (e *externalMCP) NotifyAll(method string, params any) {
+	if e == nil || e.server == nil {
+		return
+	}
+	e.server.Broadcast(method, params)
 }
 
 // externalMCPOption customizes the listener without changing the ticket-56
@@ -954,6 +965,7 @@ func startExternalMCP(parent context.Context, bridge *mcpReadBridge,
 	}
 	return &externalMCP{
 		cancel: cancel, done: done, discoveryPath: discoveryPath, port: port, token: token,
+		server: server,
 	}, nil
 }
 

@@ -29,10 +29,12 @@ func (p *sandboxPage) SetWindowOpenHandler(fn func(mygo.WindowOpenRequest) *mygo
 //   - the gateway prefers 127.0.0.2, which is loopback but outside the
 //     localhost/127.0.0.1/::1 hosts MyGo's development bridge auto-trusts.
 //     macOS assigns only 127.0.0.1, so there the gateway falls back to it
-//     (GatewayFallbackLoopbackHost); the app registers no MyGo bindings, so
-//     even a development-trusted origin can reach no product API;
+//     (GatewayFallbackLoopbackHost); the app registers no plugin Go bindings
+//     (the plugin bridge is a same-origin HTTP endpoint gated by CallerPage),
+//     so even a development-trusted origin can reach no product API;
 //   - permissions are denied and window.open returns no window options;
-//   - there are no app-level MyGo bindings for it to call.
+//   - the host browser page keeps the host's default session: it shares no
+//     session with a plugin page.
 func TestBrowserPageCannotCallProductAPIs(t *testing.T) {
 	options := browserPageOptions()
 	if options.PreloadScript != "" {
@@ -43,6 +45,9 @@ func TestBrowserPageCannotCallProductAPIs(t *testing.T) {
 	}
 	if options.DevTools != mygo.DevToolsDisabled {
 		t.Fatalf("browser page DevTools = %v, want disabled", options.DevTools)
+	}
+	if options.Session != nil {
+		t.Fatal("browser page left the host's default session")
 	}
 
 	gatewayURL, err := url.Parse("http://" + appbrowser.GatewayLoopbackHost + ":41873/")

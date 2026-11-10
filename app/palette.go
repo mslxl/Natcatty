@@ -25,6 +25,7 @@ type palette struct {
 	shell    func() *state.State
 	registry func() *command.Registry
 	bindings *appkeybindings.Service
+	plugins  *pluginSurface
 }
 
 // records returns the source for one mode. The Quick Switcher lists every
@@ -162,7 +163,10 @@ type commandSpec struct {
 	category string
 	// binding is the catalog binding whose effective chord the palette shows,
 	// or "" when the command has no single chord.
-	binding  string
+	binding string
+	// chord is a plugin contribution's literal accelerator, already in menu
+	// notation. It wins over binding when set.
+	chord    string
 	keywords []string
 }
 
@@ -264,7 +268,7 @@ func (p *palette) commands(m locales.Messages) []appsearch.Record {
 	ids := registry.IDs()
 	byCategory := make(map[string][]appsearch.Record, len(commandCategories))
 	for _, id := range ids {
-		spec, ok := commandPresentation(m, id)
+		spec, ok := p.commandSpec(id, m)
 		if !ok {
 			continue
 		}
@@ -279,7 +283,7 @@ func (p *palette) commands(m locales.Messages) []appsearch.Record {
 			ID:       string(id),
 			Title:    spec.title,
 			Group:    spec.category,
-			Shortcut: p.shortcut(spec.binding),
+			Shortcut: p.shortcut(spec),
 			Fields:   fields,
 		})
 	}
@@ -290,13 +294,34 @@ func (p *palette) commands(m locales.Messages) []appsearch.Record {
 	return records
 }
 
-// shortcut renders the effective chord of a binding, with the catalog's
-// spaced notation collapsed to the compact form the palette shows.
-func (p *palette) shortcut(id string) string {
-	if p.bindings == nil || id == "" {
+// commandSpec returns the presentation for one registered command. Plugin
+// contributions carry their own title, keywords, and accelerator; built-in
+// commands come from the static presentation table.
+func (p *palette) commandSpec(id command.ID, m locales.Messages) (commandSpec, bool) {
+	if p.plugins != nil {
+		if plugin, ok := p.plugins.Presentation(id); ok {
+			return commandSpec{
+				title:    plugin.title,
+				category: uisearch.CategoryApp,
+				chord:    plugin.chord,
+				keywords: append(plugin.keywords, "plugin", plugin.owner),
+			}, true
+		}
+	}
+	return commandPresentation(m, id)
+}
+
+// shortcut renders the effective chord of a binding or a plugin
+// accelerator, with the catalog's spaced notation collapsed to the compact
+// form the palette shows.
+func (p *palette) shortcut(spec commandSpec) string {
+	if spec.chord != "" {
+		return strings.ReplaceAll(spec.chord, " + ", "+")
+	}
+	if p.bindings == nil || spec.binding == "" {
 		return ""
 	}
-	chord := p.bindings.Chord(id, p.bindings.Scheme())
+	chord := p.bindings.Chord(spec.binding, p.bindings.Scheme())
 	if chord == "" || chord == domain.Disabled {
 		return ""
 	}

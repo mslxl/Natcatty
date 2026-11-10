@@ -6,6 +6,9 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+
+	domainnativeui "github.com/mslxl/natcatty/domain/nativeui"
+	"github.com/mslxl/natcatty/ui/pluginview"
 )
 
 // acceleratorBinding is one menu shortcut the native window handles. It is
@@ -87,6 +90,98 @@ func bindShortcuts(c *ui.Context, shortcuts []keyShortcut) {
 		shortcut := shortcut
 		c.OnShortcut(shortcut.mods, shortcut.key, shortcut.run)
 	}
+}
+
+// The native UI environment names a host shortcut with one opaque token per
+// window table entry. A plugin view reports the token back through its command
+// runner, which resolves it against the live tables; a token is stable while
+// the binding exists, so a rebuild never runs a different command.
+const (
+	menuShortcutPrefix      = "menu:"
+	menuChordShortcutPrefix = "menu-chord:"
+	bindingShortcutPrefix   = "binding:"
+)
+
+func shortcutChordToken(mods ui.Modifiers, key ui.Key) string {
+	return strconv.FormatUint(uint64(mods), 10) + ":" + strconv.FormatUint(uint64(key), 10)
+}
+
+// HostShortcuts returns the live window shortcut table as the native UI
+// environment describes it. Menu accelerators come first, exactly as
+// bindAccelerators registers them, and a chord bound twice is listed once, so
+// a plugin view sees the action the window would actually run.
+func (m *windowManager) HostShortcuts() []domainnativeui.Shortcut {
+	if m == nil {
+		return nil
+	}
+	seen := make(map[string]bool, len(m.accelerators)+len(m.shortcuts))
+	shortcuts := make([]domainnativeui.Shortcut, 0, len(m.accelerators)+len(m.shortcuts))
+	add := func(mods ui.Modifiers, key ui.Key, command string) {
+		chord := shortcutChordToken(mods, key)
+		if seen[chord] {
+			return
+		}
+		shortcut, ok := pluginview.NativeShortcut(mods, key, command)
+		if !ok {
+			return
+		}
+		seen[chord] = true
+		shortcuts = append(shortcuts, shortcut)
+	}
+	for _, binding := range m.accelerators {
+		if binding.item == nil {
+			continue
+		}
+		command := menuChordShortcutPrefix + shortcutChordToken(binding.mods, binding.key)
+		if binding.item.ID != "" {
+			command = menuShortcutPrefix + binding.item.ID
+		}
+		add(binding.mods, binding.key, command)
+	}
+	for _, shortcut := range m.shortcuts {
+		if shortcut.run == nil {
+			continue
+		}
+		add(shortcut.mods, shortcut.key, bindingShortcutPrefix+shortcutChordToken(shortcut.mods, shortcut.key))
+	}
+	return shortcuts
+}
+
+// RunHostShortcut runs the action one environment token names. It is the
+// plugin view's command runner, so a host shortcut that reaches a view runs
+// the same action a window accelerator would. An unknown token reports false.
+func (m *windowManager) RunHostShortcut(command string) bool {
+	if m == nil {
+		return false
+	}
+	switch {
+	case strings.HasPrefix(command, menuShortcutPrefix):
+		id := strings.TrimPrefix(command, menuShortcutPrefix)
+		for _, binding := range m.accelerators {
+			if binding.item != nil && binding.item.ID == id && binding.item.Click != nil {
+				binding.item.Click(binding.item, nil)
+				return true
+			}
+		}
+	case strings.HasPrefix(command, menuChordShortcutPrefix):
+		chord := strings.TrimPrefix(command, menuChordShortcutPrefix)
+		for _, binding := range m.accelerators {
+			if binding.item != nil && binding.item.Click != nil &&
+				shortcutChordToken(binding.mods, binding.key) == chord {
+				binding.item.Click(binding.item, nil)
+				return true
+			}
+		}
+	case strings.HasPrefix(command, bindingShortcutPrefix):
+		chord := strings.TrimPrefix(command, bindingShortcutPrefix)
+		for _, shortcut := range m.shortcuts {
+			if shortcut.run != nil && shortcutChordToken(shortcut.mods, shortcut.key) == chord {
+				shortcut.run()
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // parseAccelerator reads the menu's Electron-style accelerator string. It

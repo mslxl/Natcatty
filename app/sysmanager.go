@@ -5,7 +5,9 @@ import (
 	"errors"
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
+	appplugin "github.com/mslxl/natcatty/application/plugin"
 	appsysmanager "github.com/mslxl/natcatty/application/sysmanager"
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	uisysmanager "github.com/mslxl/natcatty/ui/sysmanager"
 )
@@ -128,6 +130,42 @@ func sysmanagerFailure(err error) error {
 		reason = appsysmanager.ReasonTimeout
 	}
 	return &appsysmanager.Error{Reason: reason, Cause: err}
+}
+
+// systemPanelSnapshotSource serves the System panel's Host snapshot service.
+// It resolves the Host through the Vault and runs only the fixed built-in
+// collector templates; the plugin cannot name a command. It is a dedicated
+// service, so its lease never races the System manager's own sampler.
+type systemPanelSnapshotSource struct {
+	service *appsysmanager.Service
+	host    func(context.Context, string) (domainvault.Host, error)
+}
+
+var _ appplugin.PanelSnapshotSource = systemPanelSnapshotSource{}
+
+func (s systemPanelSnapshotSource) CollectPanelSnapshot(ctx context.Context, hostID string,
+	collectors []domainplugin.PanelCollector) (domainplugin.PanelSnapshot, error) {
+	if s.service == nil {
+		return domainplugin.PanelSnapshot{}, errors.New("sysmanager: no snapshot service")
+	}
+	host, err := s.host(ctx, hostID)
+	if err != nil {
+		return domainplugin.PanelSnapshot{}, err
+	}
+	tabs := make([]appsysmanager.Tab, 0, len(collectors))
+	for _, collector := range collectors {
+		tabs = append(tabs, appsysmanager.Tab(collector))
+	}
+	result, err := s.service.CollectSnapshot(ctx, host, tabs)
+	if err != nil {
+		return domainplugin.PanelSnapshot{}, err
+	}
+	return domainplugin.PanelSnapshot{
+		HostID:     hostID,
+		SampledAt:  result.SampledAt,
+		Collectors: result.Collectors,
+		Skipped:    result.Skipped,
+	}, nil
 }
 
 // closeSystemManager stops sampling, cancels actions, and releases the

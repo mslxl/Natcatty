@@ -115,9 +115,10 @@ type mcpPolicyHandler struct {
 	// mu guards the late write-executor attachment. The loopback listener can
 	// serve a call before app startup finishes constructing the shell-backed
 	// executor, so every read of writes/jobs takes this lock.
-	mu     sync.RWMutex
-	jobs   mcpJobSessions
-	writes *mcpWriteExecutor
+	mu      sync.RWMutex
+	jobs    mcpJobSessions
+	writes  *mcpWriteExecutor
+	plugins *mcpPluginTools
 }
 
 func newMCPPolicyHandler(bridge *mcpReadBridge, policy *appmcp.Service,
@@ -149,6 +150,21 @@ func (h *mcpPolicyHandler) jobSessions() mcpJobSessions {
 	return h.jobs
 }
 
+// attachPluginTools installs the plugin tool registry. The plugin manager is
+// built after the MCP listener, so the handler starts without it and the list
+// is empty until startup finishes.
+func (h *mcpPolicyHandler) attachPluginTools(tools *mcpPluginTools) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.plugins = tools
+}
+
+func (h *mcpPolicyHandler) pluginTools() *mcpPluginTools {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.plugins
+}
+
 // Handle is the mcprpc handler. Every call is forced through the policy before
 // any read runs or any action starts.
 func (h *mcpPolicyHandler) Handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
@@ -158,12 +174,21 @@ func (h *mcpPolicyHandler) Handle(ctx context.Context, method string, params jso
 			return nil, fmt.Errorf("external MCP: invalid params for %s: %w", method, err)
 		}
 	}
+	client := mcpClientLabel(stringParam(arguments, "_mcpClient"))
+	delete(arguments, "_mcpClient")
+	// Plugin tools use the same authenticated connection but a separate
+	// registry. They are intercepted before the catalog lookup because their
+	// names are not catalog tools.
+	switch method {
+	case mcprpc.MethodPluginToolList:
+		return h.pluginToolList(), nil
+	case mcprpc.MethodPluginToolCall:
+		return h.pluginToolCall(ctx, arguments, client), nil
+	}
 	tool, known := catalog.ByRPCMethod(method)
 	if !known {
 		return nil, fmt.Errorf("external MCP: unknown method %s", method)
 	}
-	client := mcpClientLabel(stringParam(arguments, "_mcpClient"))
-	delete(arguments, "_mcpClient")
 	requested, err := appmcp.RequestedScopeFrom(arguments)
 	if err != nil {
 		return mcpPolicyFailure(err, tool.Name), nil
@@ -274,7 +299,7 @@ func (h *mcpPolicyHandler) describeTarget(ctx context.Context, toolName string, 
 		}
 		return target
 	}
-	for _, key := range []string{"noteId", "snippetId", "scriptId", "ruleId", "tunnelId", "runId"} {
+	for _, key := range []string{"noteId", "snippetId", "scriptId", "ruleId", "tunnelId", "runId", "profileId"} {
 		if value := stringParam(arguments, key); value != "" {
 			return appmcp.Target{Display: value}
 		}

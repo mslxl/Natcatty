@@ -29,6 +29,12 @@ import (
 	adapterslaunch "github.com/mslxl/natcatty/adapters/launch"
 	"github.com/mslxl/natcatty/adapters/localpty"
 	adapteronedrive "github.com/mslxl/natcatty/adapters/onedrive"
+	adapterpluginaudit "github.com/mslxl/natcatty/adapters/pluginaudit"
+	adapterplugini18n "github.com/mslxl/natcatty/adapters/plugini18n"
+	adapterplugininstall "github.com/mslxl/natcatty/adapters/plugininstall"
+	adapterpluginmanifest "github.com/mslxl/natcatty/adapters/pluginmanifest"
+	adapterpluginpackage "github.com/mslxl/natcatty/adapters/pluginpackage"
+	adapterpluginsettings "github.com/mslxl/natcatty/adapters/pluginsettings"
 	adapters3 "github.com/mslxl/natcatty/adapters/s3"
 	adapterserial "github.com/mslxl/natcatty/adapters/serial"
 	adaptersftp "github.com/mslxl/natcatty/adapters/sftp"
@@ -41,6 +47,7 @@ import (
 	adapterstnet "github.com/mslxl/natcatty/adapters/telnet"
 	"github.com/mslxl/natcatty/adapters/textcodec"
 	adapterbackup "github.com/mslxl/natcatty/adapters/vaultbackup"
+	adapterwasm "github.com/mslxl/natcatty/adapters/wasm"
 	adapterwebdav "github.com/mslxl/natcatty/adapters/webdav"
 	appapplock "github.com/mslxl/natcatty/application/applock"
 	"github.com/mslxl/natcatty/application/autocomplete"
@@ -53,6 +60,7 @@ import (
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
 	appmcp "github.com/mslxl/natcatty/application/mcp"
 	appmonitor "github.com/mslxl/natcatty/application/monitor"
+	appplugin "github.com/mslxl/natcatty/application/plugin"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appsync "github.com/mslxl/natcatty/application/sync"
@@ -62,18 +70,22 @@ import (
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	appbackup "github.com/mslxl/natcatty/application/vaultbackup"
+	appview "github.com/mslxl/natcatty/application/view"
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	domainkeybindings "github.com/mslxl/natcatty/domain/keybindings"
 	"github.com/mslxl/natcatty/domain/model"
 	domainserial "github.com/mslxl/natcatty/domain/model/serial"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
+	domainnativeui "github.com/mslxl/natcatty/domain/nativeui"
+	domainplugin "github.com/mslxl/natcatty/domain/plugin"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	"github.com/mslxl/natcatty/internal/adapters/mcprpc"
 	platformsecrets "github.com/mslxl/natcatty/platform/secrets"
+	pluginsample "github.com/mslxl/natcatty/plugins/sample"
 	uiapplock "github.com/mslxl/natcatty/ui/applock"
 	editorui "github.com/mslxl/natcatty/ui/editor"
 	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
@@ -181,6 +193,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	var vaultState *vaultstate.State
 	var syncState *settings.SyncState
 	var registry *command.Registry
+	var pluginSurfaceState *pluginSurface
+	var pluginManager *appplugin.Manager
+	var pluginDevelopmentCancel context.CancelFunc
+	var pluginSettingsState *settings.PluginsState
 	var currentMenu *mygo.Menu
 	var historyService *apphistory.Service
 	var logsState *logsui.State
@@ -189,6 +205,19 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	var desktopCtl *desktopController
 	var ready bool
 	var focusRequested bool
+
+	// The plugin sandbox scheme is process-wide and must exist before any
+	// window is created: MyGo snapshots custom schemes when a window starts.
+	// The handler resolves the manager lazily, so a window opened before
+	// plugin restore still serves nothing rather than another plugin's assets.
+	// Plugin pages are untrusted and reach the host only through the
+	// same-origin bridge endpoint, so no MyGo binding is registered.
+	webviewRouter := newPluginWebviewRouter()
+	webviewPort := newMygoWebviewPort(webviewRouter)
+	if err := installPluginWebviewScheme(func() *appplugin.Manager { return pluginManager },
+		webviewRouter); err != nil {
+		return err
+	}
 
 	// A later launch hands its command line to the running instance and exits.
 	// Focus the existing main window and open any Host target it carried; a
@@ -503,6 +532,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			return err
 		}),
 		appvault.WithHistoryReader(historyService),
+		// A JSON export carries provider-owned profile records verbatim,
+		// including each record's pluginData map. The export never loads a
+		// provider or resolves a secret reference.
+		appvault.WithDataProfiles(store.NewDataProfiles(database)),
 	)
 
 	// Cloud sync: the Vault adapter reads the SQLite records and decrypts field
@@ -761,11 +794,36 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		routes:      routes,
 		connections: connections,
 	})
+	// The System panel coordinator owns the host-owned Extensions tab shared by
+	// the manager page and the side tool. Its snapshot service is a separate
+	// sampler over the same fixed collector templates, so opening a plugin
+	// section never disturbs a built-in tab's lease.
+	panelSnapshotService := appsysmanager.NewService(sysmanagerConnector{
+		routes:      routes,
+		connections: connections,
+	})
+	systemPanel := appplugin.NewSystemPanel(appplugin.PanelDeps{
+		Source: systemPanelSnapshotSource{
+			service: panelSnapshotService,
+			host: func(ctx context.Context, id string) (domainvault.Host, error) {
+				return vaultService.Get(ctx, model.HostID(id))
+			},
+		},
+		// Snapshot sections follow the same configured collector cadence as
+		// the built-in System tabs. Reading the preferences on every call
+		// makes an interval change take effect without restarting the panel.
+		Cadence: func(collector domainplugin.PanelCollector) time.Duration {
+			seconds := preferenceService.Settings().SysManager.Interval(
+				domainpreferences.SysManagerTab(collector))
+			return time.Duration(seconds) * time.Second
+		},
+	})
 	sysManagerState := uisysmanager.NewState(
 		sysManagerService,
 		vaultService,
 		preferenceService,
 		uisysmanager.WithRedrawRequest(invalidate),
+		uisysmanager.WithExtensions(systemPanel),
 		// tmux attach opens a terminal Tab against the same Host and sends
 		// the attach command once the Session is connected.
 		uisysmanager.WithTerminalOpener(func(host domainvault.Host, command string) error {
@@ -787,6 +845,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		vaultService,
 		preferenceService,
 		uisysmanager.WithRedrawRequest(invalidate),
+		uisysmanager.WithExtensions(systemPanel),
 		uisysmanager.WithTerminalOpener(func(host domainvault.Host, command string) error {
 			if shellState == nil {
 				return errors.New("sysmanager: the shell is not ready")
@@ -866,6 +925,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		}
 	}
 
+	// One provider registry is shared by the Session factory and the plugin
+	// runtime: protocol resolution and claim ownership stay the same set.
+	providerRegistry := appsession.NewProviderRegistry()
 	sessions = appsession.NewService(newTransportFactory(
 		localpty.Factory{}, adapterserial.Factory{},
 		newTelnetFactory(adapterstnet.Factory{}, routes, networkProviders), connections, routes,
@@ -876,7 +938,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			Routes:   routes,
 			Sessions: adapteret.SecretSessionStore{Secrets: secretStore},
 		},
-	).withPreferences(preferenceService),
+	).withPreferences(preferenceService).withProviders(providerRegistry),
 		// Automatic logging starts with the Session, as the original's
 		// configured log did. An empty directory keeps it off.
 		appsession.WithAutoLogging(func(spec appsession.StartSpec) *appsession.LogOptions {
@@ -1076,6 +1138,11 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		return shellState != nil && shellState.SendToFocused(command, run)
 	})
 	themePanel := settings.NewThemePanel(themesState, preferenceService)
+	// The View registry is shared by the plugin surface (which registers each
+	// View Contribution) and the shell (which opens a Pane for one). The
+	// surface factory resolves the plugin's live native UI session lazily,
+	// because the plugin manager is created after the shell.
+	pluginViewRegistry := appview.NewRegistry()
 	shellState = state.NewState(
 		state.WithLocaleRequest(func(tag string) {
 			mygo.App.SetLocale(tag)
@@ -1107,6 +1174,45 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				return "", false
 			}
 			return host.Label, true
+		}),
+		state.WithViews(pluginViewRegistry, func(instance *appview.Instance) (state.Surface, error) {
+			return newPluginViewSurface(instance,
+				func() *appplugin.Manager { return pluginManager },
+				pluginViewHost{
+					// The environment follows the live accelerator tables, so a
+					// plugin view knows every chord the window would claim.
+					Environment: pluginViewEnvironment(func() []domainnativeui.Shortcut {
+						if windows == nil {
+							return nil
+						}
+						return windows.HostShortcuts()
+					}),
+					// A host shortcut routed to the view runs the same action
+					// the window accelerator would.
+					RunCommand: func(command string) {
+						if windows != nil {
+							windows.RunHostShortcut(command)
+						}
+					},
+					Poll: pluginViewPoll(func() *appplugin.Manager { return pluginManager }, instance.ViewID()),
+					// One UISession serves every View of a plugin (ticket 11).
+					// The session may only reset when this was the plugin's last
+					// live instance, so closing one multi-instance View cannot
+					// tear down another's tree.
+					ResetOnClose: func() bool {
+						return !anotherInstanceOfSamePluginLive(pluginViewRegistry, instance)
+					},
+					// Standalone webview Views and embedded nodes live in the
+					// main window's native surface. A nil window keeps them
+					// unavailable during headless startup.
+					Window: func() any {
+						if windows == nil {
+							return nil
+						}
+						return windows.Main()
+					},
+				},
+				invalidate)
 		}),
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
 			options := []sessionui.Option{
@@ -1307,6 +1413,201 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			windows.FocusMain()
 		}
 	})
+	// Plugin contributions share the same command registry as built-ins, and
+	// their menu and shortcut effects are rebuilt by setMenu below. The manager
+	// owns local installation, enable/disable consent, revocation, the
+	// append-only audit writer, and development-directory loading. Installed
+	// plugins are restored and NATCATTY_PLUGIN_DIR is loaded once the app is
+	// ready.
+	pluginSurfaceState = newPluginSurface(registry)
+	pluginSurfaceState.SetViewRegistry(pluginViewRegistry)
+	pluginSurfaceState.SetViewOpener(func(viewID string) error {
+		if shellState == nil {
+			return state.ErrNoViews
+		}
+		// The menu opens the view where it declares it can live. Pane stays the
+		// default, but a Pane-less contribution uses its first usable placement,
+		// and a multi-instance view never picks the singleton Page slot.
+		placement := domainplugin.PlacementPane
+		if contribution, ok := pluginViewRegistry.Contribution(viewID); ok &&
+			!contribution.Allows(domainplugin.PlacementPane) {
+			placement = contribution.Placements[0]
+			if contribution.Instances.Multi() {
+				for _, candidate := range contribution.Placements {
+					if candidate != domainplugin.PlacementPage {
+						placement = candidate
+						break
+					}
+				}
+			}
+		}
+		_, err := shellState.OpenView(appview.OpenRequest{
+			ViewID: viewID, Placement: placement,
+		})
+		return err
+	})
+	pluginAudit, err := adapterpluginaudit.Open(adapterpluginaudit.Options{
+		Directory: filepath.Join(userData, "plugin-audit"),
+	})
+	if err != nil {
+		return err
+	}
+	// The connection-provider host owns protocol claims and the per-fiber
+	// stream instance; the registrar publishes each activated protocol into
+	// the same Session registry the transport factory resolves.
+	connectionProviders := appplugin.NewProviderHost(appplugin.ProviderHostOptions{
+		Audit: pluginAudit,
+	})
+	connectionProviderRegistrar := &connectionProviderRegistrar{registry: providerRegistry}
+	// Data profiles are user-visible records distinct from Hosts and
+	// Sessions. Provider-defined secret fields live in the Vault; the record
+	// carries only opaque references. The host owns operation-class
+	// enforcement, pooled connections, interactive budgets, and audit.
+	dataProviders := appplugin.NewDataProviderHost(appplugin.DataHostOptions{
+		Audit:    pluginAudit,
+		Profiles: store.NewDataProfiles(database),
+		Secrets:  store.NewDataProfileSecrets(secretStore),
+	})
+	// The shell consults the live claim set before opening a provider-owned
+	// Host or restoring a plugin Pane. A missing claim is an unavailable
+	// placeholder, never a different transport.
+	if shellState != nil {
+		shellState.SetProviderClaims(connectionProviders.Claimed)
+	}
+	// Provider-data namespaces live on Hosts and DataProfiles. The host resolves
+	// their read-only/dormant state from live fiber state, never by loading
+	// plugin code, and the manager includes its diagnostics in the plugin panel.
+	pluginDataHost := appplugin.NewPluginDataHost(
+		database,
+		appplugin.PluginDataStateSourceFunc(func(ctx context.Context) (map[string]appplugin.PluginDataProviderState, error) {
+			if pluginManager == nil {
+				return map[string]appplugin.PluginDataProviderState{}, nil
+			}
+			return pluginManager.PluginDataProviderStates(ctx)
+		}),
+		appplugin.WithPluginDataSecrets(store.NewDataProfileSecrets(secretStore)),
+	)
+	pluginStore := adapterplugininstall.Open(userData)
+	// The MCP tool registry is the one place plugin tools become visible. It
+	// is created before the manager because the manager's container publishes
+	// declarations into it, and it resolves the manager lazily for authority
+	// and fiber state.
+	pluginMCPToolsState := newMCPPluginTools(func() *appplugin.Manager { return pluginManager })
+	pluginManager = appplugin.NewManager(
+		adapterwasm.NewRuntime(),
+		adapterpluginmanifest.Source{},
+		pluginSurfaceState,
+		adapterpluginpackage.New(adapterwasm.Validator{}),
+		pluginStore,
+		// First-party plugins track the app version and persist their enabled
+		// flag beside the install layout; their code ships with the app.
+		appplugin.WithAppVersion(version),
+		appplugin.WithBuiltinStateStore(pluginStore),
+		appplugin.WithMCPToolRegistrar(pluginMCPToolsState),
+		appplugin.WithManagerConnectionProviders(connectionProviders, connectionProviderRegistrar),
+		appplugin.WithManagerDataProviders(dataProviders),
+		// An explicit uninstall-purge or Purge data action also clears the
+		// plugin's namespaces. Plain uninstall keeps them.
+		appplugin.WithPluginDataPurger(database),
+		appplugin.WithManagerPluginDataDiagnostics(pluginDataHost),
+		appplugin.WithMCPToolsChanged(func() {
+			if externalMCPServer != nil {
+				externalMCPServer.NotifyAll(mcprpc.NotificationToolsListChanged, nil)
+			}
+		}),
+		appplugin.WithRegistry(openPluginRegistry()),
+		appplugin.WithTrustStore(pluginStore),
+		appplugin.WithPreferencesStore(pluginStore),
+		appplugin.WithManagerFeedback(pluginSurfaceState.ShowFeedback),
+		// Guest log lines are diagnostic output, bounded by the container's
+		// per-fiber rate limit, so they go to stderr rather than a dialog.
+		appplugin.WithManagerLogf(func(ref appplugin.PluginRef, level appplugin.LogLevel,
+			message string) {
+			fmt.Fprintf(os.Stderr, "natcatty: plugin %s %s: %s\n", ref.ID, level, message)
+		}),
+		appplugin.WithAudit(pluginAudit),
+		// The append-only audit log is host-owned. Mark it reserved so a file
+		// grant that happens to cover the app data directory can never reach
+		// it through files.*.
+		appplugin.WithReservedPaths(filepath.Join(userData, "plugin-audit")),
+		appplugin.WithConfigStore(adapterpluginsettings.Open(pluginStore.DataDir)),
+		appplugin.WithServiceDataDir(pluginStore.DataDir),
+		appplugin.WithClipboard(pluginClipboard{}),
+		appplugin.WithNotificationSink(&pluginNotificationSink{
+			manager: func() *appplugin.Manager { return pluginManager },
+			locale:  mygo.App.Locale,
+		}),
+		appplugin.WithHostSettings(pluginHostSettings{
+			locale:  mygo.App.Locale,
+			version: version,
+		}),
+		// The same coordinator the two System surfaces draw; the manager binds
+		// it to the live plugin fibers and routes systempanel through it.
+		appplugin.WithSystemPanel(systemPanel),
+		// Workspace services share the Vault, session manager, and transfer
+		// service with the first-party UI. Authorization stays in the plugin
+		// authority; these adapters only execute an already-authorized call.
+		appplugin.WithHostCatalog(newPluginHostCatalog(vaultService)),
+		appplugin.WithSessionCatalog(newPluginSessionCatalog(sessions,
+			func(ctx context.Context, hostID model.HostID) (model.SessionID, error) {
+				if shellState == nil {
+					return "", errors.New("plugin sessions: the shell is not available")
+				}
+				host, err := vaultService.Get(ctx, hostID)
+				if err != nil {
+					return "", err
+				}
+				return shellState.OpenHostForMCP(ctx, host)
+			})),
+		appplugin.WithTerminal(newPluginTerminalCatalog(sessions)),
+		appplugin.WithRemoteFiles(newPluginRemoteFiles(transferService)),
+		// Catalogs are package assets loaded by the shared install-time
+		// parser. The host locale and formatter drive display-time resolution;
+		// a locale change updates them in place without reloading a fiber.
+		appplugin.WithPluginCatalogSource(adapterplugini18n.Source{}),
+		appplugin.WithLocale(mygo.App.Locale()),
+		appplugin.WithLocaleFormatter(pluginLocaleFormatter{}),
+		// External access is host-brokered. The plugin package enforces exact
+		// endpoint scopes, field classes, leases, and audit; these adapters
+		// perform the host-owned dial, trust, authentication, and Vault reads.
+		appplugin.WithNetworkBroker(newPluginNetworkBroker(vaultService, routes, connections)),
+		appplugin.WithExternalTrust(
+			newPluginTrustPins(database, vaultService,
+				filepath.Join(userData, "plugin-trust-pins.json")),
+			newPluginTrustConfirmer(trustPrompt, vaultService),
+		),
+		appplugin.WithAuthBroker(newPluginAuthBroker(vaultService)),
+		appplugin.WithVaultFields(newPluginVaultFields(vaultService)),
+		// The plugin webview sandbox. The port creates only the platform
+		// page; origin, CSP, bridge verification, and lifecycle stay in the
+		// application layer. DevTools follow the development build flag.
+		appplugin.WithWebviewPort(webviewPort),
+		appplugin.WithWebviewDevTools(mygo.IsDev()),
+	)
+	pluginSurfaceState.SetLocalizer(pluginManager.Localize)
+	pluginViewRegistry.SetLocalizer(func(owner appview.Owner, key, literal string) string {
+		if pluginManager == nil {
+			return literal
+		}
+		return pluginManager.Localize(pluginRefFromOwner(owner), key, literal)
+	})
+	// The editor consumes one provider-neutral language router; the plugin
+	// manager owns provider registration, routing, debounce, and isolation.
+	editorState.SetLanguage(pluginManager.Language())
+	pluginSettingsState = settings.NewPluginsState(
+		newAppPluginService(pluginManager, mygo.App.Locale))
+	// The MCP policy handler is built before the plugin manager (the listener
+	// starts early); attach the one registry now that it exists.
+	mcpHandler.attachPluginTools(pluginMCPToolsState)
+	paletteSource.plugins = pluginSurfaceState
+	// Record the selected engine once at startup. Interpreter compatibility
+	// mode is a supported degraded mode, and an unsupported platform leaves
+	// the rest of the app working; the same status feeds plugin diagnostics.
+	pluginStatus := pluginManager.Container().RuntimeStatus()
+	fmt.Fprintln(os.Stderr, pluginRuntimeStartupLine(pluginStatus))
+	if notice := pluginStatus.Notice(); notice != "" {
+		fmt.Fprintln(os.Stderr, "natcatty: "+notice)
+	}
 
 	// The About and Licenses area reads the GPL text, the modification notice,
 	// and the third-party notices that ship beside the executable. The source
@@ -1333,6 +1634,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				Search:       searchState,
 				Sync:         syncState,
 				MCP:          mcpSettingsState,
+				Plugins:      pluginSettingsState,
 				Licenses:     licensesState,
 			})
 		},
@@ -1443,12 +1745,17 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// same menu the OS shows, so the labels stay truthful and follow the
 	// active keyboard scheme.
 	setMenu := func(tag string) {
-		currentMenu = BuildMenuWithBindings(registry, tag,
-			menuBindingSource{service: keybindingService})
+		currentMenu = BuildMenuWithContributions(registry, tag,
+			menuBindingSource{service: keybindingService}, pluginSurfaceState.MenuItems())
 		mygo.App.SetMenu(currentMenu)
 		windows.SetAccelerators(MenuAccelerators(currentMenu))
-		windows.SetShortcuts(dispatcher.Shortcuts())
+		windows.SetShortcuts(append(dispatcher.Shortcuts(), pluginSurfaceState.Shortcuts()...))
 	}
+	pluginSurfaceState.SetChangeHook(func() {
+		if mygo.App.IsReady() {
+			setMenu(mygo.App.Locale())
+		}
+	})
 	// A binding change rebuilds both tables and repaints every window. New
 	// terminals read the new terminal bindings; open terminals keep the table
 	// MyGo captured when their terminal was created.
@@ -1460,6 +1767,22 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// A Session's end may run on any goroutine; Invalidate is safe from
 	// any goroutine and asks for the frame that shows the new status.
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
+		// Stop the development-directory watcher before unloading plugins so a
+		// file edit cannot race app shutdown.
+		if pluginDevelopmentCancel != nil {
+			pluginDevelopmentCancel()
+			pluginDevelopmentCancel = nil
+		}
+		// Unload plugins first: every contribution disposer removes a menu
+		// item, shortcut, or command before the windows go away.
+		if pluginManager != nil {
+			_ = pluginManager.Close(context.Background())
+			// Audit drops are reported, never silently discarded. Close has
+			// flushed the writer, so this is the final count.
+			if dropped := pluginManager.AuditDropped(); dropped > 0 {
+				fmt.Fprintf(os.Stderr, "natcatty: plugin audit dropped %d events\n", dropped)
+			}
+		}
 		shellState.Persist()
 		// Stop accepting external MCP calls before the services they read are
 		// torn down, then remove the discovery pointer if it is still ours.
@@ -1472,6 +1795,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// actions and samplers before the manager closes every transport.
 		closeSystemManager(sysManagerState, sysManagerService)
 		closeSystemManager(sideSystemState, sideSystemService)
+		panelSnapshotService.Close()
 		desktopCtl.Shutdown()
 		// Stop the queue before the surface closes the Tab filesystems its
 		// rows are still reading and writing.
@@ -1503,6 +1827,36 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 
 	mygo.App.WhenReady(func() {
 		desktopService.RefreshAutoStart()
+		// Built-ins register before restore so their contributions and service
+		// provisions exist while installed and development plugins activate. A
+		// failure is confined to its own fiber and never aborts app startup.
+		if err := pluginManager.RegisterBuiltin(context.Background(), appplugin.Builtin{
+			Manifest: pluginsample.Manifest,
+			Setup:    pluginsample.Setup,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "natcatty: built-in plugin %s: %v\n",
+				pluginsample.Manifest.ID, err)
+		}
+		if err := pluginManager.Restore(context.Background()); err != nil {
+			fmt.Fprintf(os.Stderr, "natcatty: restore plugins: %v\n", err)
+		}
+		if dir := strings.TrimSpace(os.Getenv("NATCATTY_PLUGIN_DIR")); dir != "" {
+			if _, err := pluginManager.LoadDevelopment(context.Background(), dir); err != nil {
+				fmt.Fprintf(os.Stderr, "natcatty: development plugin %s: %v\n", dir, err)
+			}
+		}
+		// Watch the loaded development directories: one manifest or module
+		// change performs exactly one container reload. The watcher stops on
+		// quit before the manager tears its fibers down.
+		watchCtx, cancelWatch := context.WithCancel(context.Background())
+		pluginDevelopmentCancel = cancelWatch
+		go pluginManager.WatchDevelopment(watchCtx, 0, func(err error) {
+			fmt.Fprintf(os.Stderr, "natcatty: development reload: %v\n", err)
+		})
+		// Automatic updates are off by default. When the persisted preference
+		// is on, run one pass off the UI thread after restore; updates that need
+		// consent or a source-change confirmation are skipped for review.
+		go runAutomaticPluginUpdates(pluginManager)
 		setMenu(mygo.App.Locale())
 		// Start is asynchronous, so launch never waits on a network handshake.
 		forwardingManager.AutoStart(context.Background())
@@ -1587,6 +1941,14 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		}
 
 		mygo.App.OnLocaleChanged(func(tag string) {
+			// Plugin surfaces re-resolve their *_key strings and native views
+			// receive locale_changed; no Plugin Instance reloads. Refresh the
+			// View tab labels before window titles read them, then invalidate
+			// every window so settings labels re-render too.
+			pluginManager.SetLocale(tag)
+			pluginSurfaceState.RefreshLocale()
+			shellState.RefreshViewTitles()
+			pluginSettingsState.RefreshLocalizedText()
 			windows.ApplyLocale()
 			setMenu(tag)
 			desktopCtl.SyncNow()

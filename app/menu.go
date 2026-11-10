@@ -35,17 +35,26 @@ type MenuBindings interface {
 // Call it again when the language changes: custom labels and the checked
 // language item are part of the template.
 func BuildMenu(registry *command.Registry, tag string) *mygo.Menu {
-	return buildMenu(registry, tag, nil)
+	return buildMenu(registry, tag, nil, nil)
 }
 
 // BuildMenuWithBindings builds the menu with accelerators from the active
 // keyboard-binding scheme. A nil bindings uses the platform defaults.
 func BuildMenuWithBindings(registry *command.Registry, tag string,
 	bindings MenuBindings) *mygo.Menu {
-	return buildMenu(registry, tag, bindings)
+	return buildMenu(registry, tag, bindings, nil)
 }
 
-func buildMenu(registry *command.Registry, tag string, bindings MenuBindings) *mygo.Menu {
+// BuildMenuWithContributions adds plugin menu contributions to the View menu,
+// after the language submenu. A nil or empty pluginItems leaves the menu as
+// BuildMenuWithBindings would build it.
+func BuildMenuWithContributions(registry *command.Registry, tag string,
+	bindings MenuBindings, pluginItems []*mygo.MenuItem) *mygo.Menu {
+	return buildMenu(registry, tag, bindings, pluginItems)
+}
+
+func buildMenu(registry *command.Registry, tag string, bindings MenuBindings,
+	pluginItems []*mygo.MenuItem) *mygo.Menu {
 	m := locales.In(tag)
 	dispatch := func(id command.ID) func(*mygo.MenuItem, *mygo.Window) {
 		return func(*mygo.MenuItem, *mygo.Window) {
@@ -169,73 +178,78 @@ func buildMenu(registry *command.Registry, tag string, bindings MenuBindings) *m
 		})
 	}
 
+	viewItems := []*mygo.MenuItem{
+		{
+			ID:          "menu.splitRight",
+			Label:       m.PaneSplitRight(),
+			Accelerator: accelerator("menu.splitRight", "split-vertical", "CmdOrCtrl+Shift+E"),
+			Click:       dispatch(command.SplitPaneRight),
+		},
+		{
+			ID:          "menu.splitDown",
+			Label:       m.PaneSplitDown(),
+			Accelerator: accelerator("menu.splitDown", "split-horizontal", "CmdOrCtrl+Shift+D"),
+			Click:       dispatch(command.SplitPaneDown),
+		},
+		{
+			ID:          "menu.closePane",
+			Label:       m.PaneClose(),
+			Accelerator: accelerator("menu.closePane", "close-session", "CmdOrCtrl+Shift+W"),
+			Click:       dispatch(command.ClosePane),
+		},
+		{
+			ID:    "menu.detachPane",
+			Label: m.PaneDetach(),
+			Click: dispatch(command.DetachPane),
+		},
+		mygo.Separator(),
+		{
+			ID:    "menu.monitor",
+			Label: m.NavMonitor(),
+			Click: dispatch(command.OpenMonitor),
+		},
+		{
+			ID:    "menu.sysmanager",
+			Label: m.NavSysManager(),
+			Click: dispatch(command.OpenSystemManager),
+		},
+		mygo.Separator(),
+		{
+			ID:          "menu.focusLeft",
+			Label:       m.PaneFocusLeft(),
+			Accelerator: focusAccelerator("Left", "CmdOrCtrl+Alt+Left"),
+			Click:       dispatch(command.FocusPaneLeft),
+		},
+		{
+			ID:          "menu.focusRight",
+			Label:       m.PaneFocusRight(),
+			Accelerator: focusAccelerator("Right", "CmdOrCtrl+Alt+Right"),
+			Click:       dispatch(command.FocusPaneRight),
+		},
+		{
+			ID:          "menu.focusUp",
+			Label:       m.PaneFocusUp(),
+			Accelerator: focusAccelerator("Up", "CmdOrCtrl+Alt+Up"),
+			Click:       dispatch(command.FocusPaneUp),
+		},
+		{
+			ID:          "menu.focusDown",
+			Label:       m.PaneFocusDown(),
+			Accelerator: focusAccelerator("Down", "CmdOrCtrl+Alt+Down"),
+			Click:       dispatch(command.FocusPaneDown),
+		},
+		mygo.Separator(),
+		{Label: m.NavLanguage(), Submenu: languageItems},
+	}
+	if len(pluginItems) > 0 {
+		viewItems = append(viewItems, pluginItems...)
+	}
+
 	return mygo.NewMenu([]*mygo.MenuItem{
 		{Role: mygo.RoleAppMenu},
 		{Label: m.MenuFile(), Submenu: fileItems},
 		{Role: mygo.RoleEditMenu},
-		{Label: m.MenuView(), Submenu: []*mygo.MenuItem{
-			{
-				ID:          "menu.splitRight",
-				Label:       m.PaneSplitRight(),
-				Accelerator: accelerator("menu.splitRight", "split-vertical", "CmdOrCtrl+Shift+E"),
-				Click:       dispatch(command.SplitPaneRight),
-			},
-			{
-				ID:          "menu.splitDown",
-				Label:       m.PaneSplitDown(),
-				Accelerator: accelerator("menu.splitDown", "split-horizontal", "CmdOrCtrl+Shift+D"),
-				Click:       dispatch(command.SplitPaneDown),
-			},
-			{
-				ID:          "menu.closePane",
-				Label:       m.PaneClose(),
-				Accelerator: accelerator("menu.closePane", "close-session", "CmdOrCtrl+Shift+W"),
-				Click:       dispatch(command.ClosePane),
-			},
-			{
-				ID:    "menu.detachPane",
-				Label: m.PaneDetach(),
-				Click: dispatch(command.DetachPane),
-			},
-			mygo.Separator(),
-			{
-				ID:    "menu.monitor",
-				Label: m.NavMonitor(),
-				Click: dispatch(command.OpenMonitor),
-			},
-			{
-				ID:    "menu.sysmanager",
-				Label: m.NavSysManager(),
-				Click: dispatch(command.OpenSystemManager),
-			},
-			mygo.Separator(),
-			{
-				ID:          "menu.focusLeft",
-				Label:       m.PaneFocusLeft(),
-				Accelerator: focusAccelerator("Left", "CmdOrCtrl+Alt+Left"),
-				Click:       dispatch(command.FocusPaneLeft),
-			},
-			{
-				ID:          "menu.focusRight",
-				Label:       m.PaneFocusRight(),
-				Accelerator: focusAccelerator("Right", "CmdOrCtrl+Alt+Right"),
-				Click:       dispatch(command.FocusPaneRight),
-			},
-			{
-				ID:          "menu.focusUp",
-				Label:       m.PaneFocusUp(),
-				Accelerator: focusAccelerator("Up", "CmdOrCtrl+Alt+Up"),
-				Click:       dispatch(command.FocusPaneUp),
-			},
-			{
-				ID:          "menu.focusDown",
-				Label:       m.PaneFocusDown(),
-				Accelerator: focusAccelerator("Down", "CmdOrCtrl+Alt+Down"),
-				Click:       dispatch(command.FocusPaneDown),
-			},
-			mygo.Separator(),
-			{Label: m.NavLanguage(), Submenu: languageItems},
-		}},
+		{Label: m.MenuView(), Submenu: viewItems},
 		{Role: mygo.RoleWindowMenu},
 	})
 }

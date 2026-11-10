@@ -6,6 +6,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"github.com/mslxl/natcatty/application/command"
@@ -15,6 +16,7 @@ import (
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainbackup "github.com/mslxl/natcatty/domain/vaultbackup"
 	"github.com/mslxl/natcatty/ui/locales"
+	"github.com/mslxl/natcatty/ui/pluginview"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	vaultui "github.com/mslxl/natcatty/ui/vault"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
@@ -112,6 +114,76 @@ func TestMenuAcceleratorsComeFromTheMenu(t *testing.T) {
 	backups.item.Click(backups.item, nil)
 	if len(dispatched) != 1 || dispatched[0] != command.OpenBackups {
 		t.Fatalf("dispatched = %v, want [%s]", dispatched, command.OpenBackups)
+	}
+}
+
+// TestHostShortcutsDescribeAndRunTheWindowTable proves the environment table
+// the plugin view receives names every shortcut the window binds, gives a
+// chord bound twice to the menu accelerator as window binding does, and that
+// each token runs exactly the action that chord runs in the window.
+func TestHostShortcutsDescribeAndRunTheWindowTable(t *testing.T) {
+	windows := newWindowManager(nil, nil, nil, nil, nil, nil)
+	menuRuns, otherRuns := 0, 0
+	menu := mygo.NewMenu([]*mygo.MenuItem{
+		{
+			ID:          "menu.hostShortcutTest",
+			Label:       "Save",
+			Accelerator: "CmdOrCtrl+S",
+			Click:       func(*mygo.MenuItem, *mygo.Window) { menuRuns++ },
+		},
+		{
+			// No ID: the token has to fall back to the chord.
+			Label:       "Palette",
+			Accelerator: "CmdOrCtrl+Shift+P",
+			Click:       func(*mygo.MenuItem, *mygo.Window) { menuRuns += 10 },
+		},
+	})
+	windows.SetAccelerators(MenuAccelerators(menu))
+	windows.SetShortcuts([]keyShortcut{
+		// The menu accelerator owns Cmd+S and Cmd+Shift+P: the binding
+		// must not shadow it in the table the guest sees.
+		{mods: ui.Cmd, key: ui.KeyS, run: func() { otherRuns += 100 }},
+		{mods: ui.Cmd | ui.Shift, key: ui.KeyP, run: func() { otherRuns += 200 }},
+		{mods: ui.Cmd | ui.Shift, key: ui.KeyX, run: func() { otherRuns++ }},
+	})
+
+	shortcuts := windows.HostShortcuts()
+	if len(shortcuts) != 3 {
+		t.Fatalf("host shortcuts = %+v, want the two menu accelerators and one binding", shortcuts)
+	}
+	cases := []struct {
+		name    string
+		mods    ui.Modifiers
+		key     ui.Key
+		command string
+	}{
+		{"menu id", ui.Cmd, ui.KeyS, "menu:menu.hostShortcutTest"},
+		{"menu chord", ui.Cmd | ui.Shift, ui.KeyP, "menu-chord:" + shortcutChordToken(ui.Cmd|ui.Shift, ui.KeyP)},
+		{"binding", ui.Cmd | ui.Shift, ui.KeyX, "binding:" + shortcutChordToken(ui.Cmd|ui.Shift, ui.KeyX)},
+	}
+	for i, test := range cases {
+		want, ok := pluginview.NativeShortcut(test.mods, test.key, test.command)
+		if !ok {
+			t.Fatalf("%s: the chord does not convert", test.name)
+		}
+		if shortcuts[i] != want {
+			t.Fatalf("%s shortcut = %+v, want %+v", test.name, shortcuts[i], want)
+		}
+		if !windows.RunHostShortcut(shortcuts[i].Command) {
+			t.Fatalf("%s: RunHostShortcut(%q) reported false", test.name, shortcuts[i].Command)
+		}
+	}
+	if menuRuns != 11 || otherRuns != 1 {
+		t.Fatalf("menu runs = %d, other runs = %d", menuRuns, otherRuns)
+	}
+	if windows.RunHostShortcut("menu:menu.missing") {
+		t.Fatal("an unknown menu token ran")
+	}
+	if windows.RunHostShortcut("other:anything") {
+		t.Fatal("an unknown token ran")
+	}
+	if runs := windows.HostShortcuts(); len(runs) != 3 {
+		t.Fatalf("a second read changed the table: %+v", runs)
 	}
 }
 
