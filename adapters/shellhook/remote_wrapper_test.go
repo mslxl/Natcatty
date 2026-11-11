@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -37,6 +38,12 @@ type remoteRun struct {
 
 func runRemoteWrapper(t *testing.T, shellName string, useFake bool) (remoteRun, string, string, string) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		// The POSIX remote wrapper runs under /bin/sh and installs POSIX
+		// shell files; Windows has no /bin/sh. The PowerShell wrapper is the
+		// Windows equivalent and has its own real-shell tests.
+		t.Skip("the POSIX remote wrapper needs /bin/sh, which Windows does not provide")
+	}
 	root := t.TempDir()
 	bin := filepath.Join(root, "bin")
 	if err := os.MkdirAll(bin, 0o700); err != nil {

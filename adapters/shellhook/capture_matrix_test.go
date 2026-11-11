@@ -842,6 +842,9 @@ func matrixSpecEnv(values map[string]string, home string) []string {
 }
 
 func normalizeMatrixValue(value, shellPath, home, hookDir string) string {
+	// A %q-quoted Windows path doubles every backslash. Collapse the quoting
+	// before matching the paths below, which carry single separators.
+	value = strings.ReplaceAll(value, `\\`, `\`)
 	value = strings.ReplaceAll(value, hookDir, "<hook-dir>")
 	value = strings.ReplaceAll(value, home, "<home>")
 	value = strings.ReplaceAll(value, shellPath, "<shell>")

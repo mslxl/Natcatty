@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -36,6 +37,19 @@ func availableShells() map[string]string {
 		shells["fish"] = fish
 	}
 	return shells
+}
+
+// requirePOSIXLocalShell skips a real-shell test on Windows. The planner
+// deliberately installs no local hook there for zsh, bash, fish, nushell, or
+// xonsh (only the PowerShell session script), and a POSIX shell reports its
+// cwd as an MSYS path that these tests compare against Windows paths. The
+// planned POSIX hooks still run on Windows through TestCaptureMatrix, which
+// pins each host platform.
+func requirePOSIXLocalShell(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the local POSIX shell hook is not installed on Windows; TestCaptureMatrix covers the POSIX plans")
+	}
 }
 
 // unsetShellIntegrationEnv clears the integration variables a developer's own
@@ -269,6 +283,34 @@ func (p *shellProcess) typeLine(t *testing.T, line string) {
 	}
 }
 
+// waitExited waits for the process to exit, then closes the PTY so Read drains
+// the remaining output and returns EOF, and waits for readLoop to record it.
+// Windows ConPTY returns EOF from Read only after Close, so waiting for the
+// closed flag while the process has already exited would hang there.
+func (p *shellProcess) waitExited(t *testing.T, what string) string {
+	t.Helper()
+	select {
+	case <-p.terminal.Exited():
+	case <-time.After(20 * time.Second):
+		output, _ := p.snapshot()
+		t.Fatalf("timed out waiting for %s; output: %q", what, output)
+	}
+	_ = p.terminal.Close()
+	deadline := time.NewTimer(20 * time.Second)
+	defer deadline.Stop()
+	for {
+		output, closed := p.snapshot()
+		if closed {
+			return output
+		}
+		select {
+		case <-p.notify:
+		case <-deadline.C:
+			t.Fatalf("timed out draining %s; output: %q", what, output)
+		}
+	}
+}
+
 func decodeBase64URL(value string) (string, bool) {
 	for _, encoding := range []*base64.Encoding{base64.RawURLEncoding, base64.URLEncoding} {
 		if decoded, err := encoding.DecodeString(value); err == nil {
@@ -351,6 +393,7 @@ func loginArgs(shellPath string) []string {
 
 func localPlan(t *testing.T, shellPath string, extraEnv []string) appsession.CaptureHookPlan {
 	t.Helper()
+	requirePOSIXLocalShell(t)
 	plan, failed := NewPlanner(WithDefaultShell(func() (string, error) {
 		return shellPath, nil
 	})).Plan(appsession.StartSpec{Kind: appsession.KindLocal, Dir: t.TempDir(), Env: extraEnv})
@@ -465,6 +508,7 @@ func (p *shellProcess) snapshotString() string {
 // emits the private sequence, and the tap publishes exactly one Tier 1
 // completion per command with the shell's own command, cwd, and exit code.
 func TestRealShellSessionCapturesTierOneEndToEnd(t *testing.T) {
+	requirePOSIXLocalShell(t)
 	shells := availableShells()
 	if len(shells) == 0 {
 		t.Skip("no zsh, bash, or fish available")
@@ -652,6 +696,7 @@ func nuStartupEnv(t *testing.T, home string) []string {
 // and its pre_prompt hook has LAST_EXIT_CODE, so one Tier 1 row per command
 // carries every captured field while the user's own config still runs first.
 func TestRealNushellSessionCapturesTierOneEndToEnd(t *testing.T) {
+	requirePOSIXLocalShell(t)
 	path := nushellPath(t)
 	for _, key := range []string{
 		"ATUIN_SESSION", "STARSHIP_SHELL", "STARSHIP_SESSION_KEY",
@@ -838,6 +883,7 @@ func unsetXonshHookEnv(t *testing.T) {
 // and finish time, so every command is one Tier 1 row while the user's rc.d
 // startup still runs first.
 func TestRealXonshSessionCapturesTierOneEndToEnd(t *testing.T) {
+	requirePOSIXLocalShell(t)
 	path := xonshPath(t)
 	for _, key := range []string{
 		"ATUIN_SESSION", "STARSHIP_SHELL", "STARSHIP_SESSION_KEY",
@@ -978,6 +1024,7 @@ func TestRealXonshSessionCapturesTierOneEndToEnd(t *testing.T) {
 // is finalized at Session close with no exit or finish. The row must still be
 // captured exactly once.
 func TestRealXonshWithoutHookKeepsNativeFallback(t *testing.T) {
+	requirePOSIXLocalShell(t)
 	path := xonshPath(t)
 	for _, key := range []string{
 		"ATUIN_SESSION", "STARSHIP_SHELL", "STARSHIP_SESSION_KEY",
@@ -1076,6 +1123,7 @@ func TestRealXonshWithoutHookKeepsNativeFallback(t *testing.T) {
 // Tier 2, with the cwd and finish the shell reports. The exit code is whatever
 // nushell's native D carries; the test records the observed fidelity.
 func TestRealNushellWithoutHookKeepsNativeCapture(t *testing.T) {
+	requirePOSIXLocalShell(t)
 	path := nushellPath(t)
 	for _, key := range []string{
 		"ATUIN_SESSION", "STARSHIP_SHELL", "STARSHIP_SESSION_KEY",
@@ -1359,6 +1407,7 @@ func TestRealFishPrivateModeStaysUncaptured(t *testing.T) {
 // typed Enter a continuation rather than a partial command, and the shell
 // reports the whole logical command exactly once.
 func TestRealShellSessionCapturesMultilineCommandsOnce(t *testing.T) {
+	requirePOSIXLocalShell(t)
 	shells := availableShells()
 	if len(shells) == 0 {
 		t.Skip("no zsh, bash, or fish available")
@@ -1445,6 +1494,7 @@ func openLocalSession(t *testing.T, name, path, home, workDir string,
 	ready func(*appsession.Service, *appsession.Session) bool,
 	prepare func(home string), extraEnv ...string) (*appsession.Service, *appsession.Session, <-chan appsession.CommandEvent) {
 	t.Helper()
+	requirePOSIXLocalShell(t)
 	for _, key := range []string{
 		"ATUIN_SESSION", "STARSHIP_SHELL", "STARSHIP_SESSION_KEY",
 		"ITERM_SHELL_INTEGRATION_INSTALLED", "NETCATTY_HOOK",
@@ -1676,6 +1726,7 @@ func TestRealNestedShellFallsBackToTypedCapture(t *testing.T) {
 // tentative; Session close must finalize it once with an unknown finish rather
 // than lose it.
 func TestRealZshWithoutEncoderKeepsTheTypedFallback(t *testing.T) {
+	requirePOSIXLocalShell(t)
 	path, available := availableShells()["zsh"]
 	if !available {
 		t.Skip("zsh is not available")
@@ -1883,6 +1934,7 @@ func countEvents(events []appsession.CommandEvent, command string) []appsession.
 // The shell's own prompt marks must not publish a fallback row; exactly one
 // Tier 1 row arrives when the hook reports the command.
 func TestRealShellSessionCapturesAnEarlyCommandOnce(t *testing.T) {
+	requirePOSIXLocalShell(t)
 	shells := availableShells()
 	if len(shells) == 0 {
 		t.Skip("no zsh, bash, or fish available")
@@ -2403,6 +2455,7 @@ func TestRealShellSkipsWhenAnIntegrationIsActive(t *testing.T) {
 // the tap starts the command from the typed Enter, and zsh's own recognizable
 // prompt finishes it at Tier 3 with a measured duration but no cwd or exit.
 func TestRealTierThreeFallbackCapturesTypedInput(t *testing.T) {
+	requirePOSIXLocalShell(t)
 	zsh, ok := availableShells()["zsh"]
 	if !ok {
 		t.Skip("zsh is not available")

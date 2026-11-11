@@ -2,8 +2,10 @@ package shellhook
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -82,9 +84,10 @@ func TestPlanLocalNushellInstallsTheHook(t *testing.T) {
 		t.Fatalf("nushell plan = failed %t, expected %t", failed, plan.HookExpected)
 	}
 	command := plan.Spec.Command
+	quotedHook := fmt.Sprintf("source %q", filepath.Join(dir, "hook.nu"))
 	if len(command) != 4 || command[0] != "/opt/homebrew/bin/nu" || command[1] != "-l" ||
-		command[2] != "-e" || command[3] != `source "`+filepath.Join(dir, "hook.nu")+`"` {
-		t.Fatalf("command = %v", command)
+		command[2] != "-e" || command[3] != quotedHook {
+		t.Fatalf("command = %v, want the quoted hook %q", command, quotedHook)
 	}
 	hook, err := os.ReadFile(filepath.Join(dir, "hook.nu"))
 	if err != nil {
@@ -116,7 +119,7 @@ func TestPlanLocalExplicitNushellKeepsItsArguments(t *testing.T) {
 		command[2] != "-e" {
 		t.Fatalf("command = %v, want the user's -i before the hook -e", command)
 	}
-	if !strings.Contains(command[3], filepath.Join(dir, "hook.nu")) {
+	if !strings.Contains(command[3], fmt.Sprintf("%q", filepath.Join(dir, "hook.nu"))) {
 		t.Fatalf("command = %v", command)
 	}
 }
@@ -138,7 +141,11 @@ func TestPlanLocalXonshInstallsTheHook(t *testing.T) {
 	if len(plan.Spec.Command) != 0 {
 		t.Fatalf("the default xonsh command was changed: %v", plan.Spec.Command)
 	}
-	wantRC := "/etc/xonsh/rc.d:/session/config/xonsh/rc.d:" + dir
+	wantRC := strings.Join([]string{
+		filepath.Join("/etc", "xonsh", "rc.d"),
+		filepath.Join("/session/config", "xonsh", "rc.d"),
+		dir,
+	}, string(os.PathListSeparator))
 	if !containsEnv(plan.Spec, "XONSHRC_DIR", wantRC) {
 		t.Fatalf("XONSHRC_DIR was not appended: %v", plan.Spec.Env)
 	}
@@ -168,7 +175,7 @@ func TestPlanLocalXonshAppendsToAnExplicitRCDir(t *testing.T) {
 	if failed {
 		t.Fatal("the xonsh plan reported a failure")
 	}
-	if !containsEnv(plan.Spec, "XONSHRC_DIR", "/srv/xonsh/rc.d:"+dir) {
+	if !containsEnv(plan.Spec, "XONSHRC_DIR", "/srv/xonsh/rc.d"+string(os.PathListSeparator)+dir) {
 		t.Fatalf("the explicit XONSHRC_DIR was not preserved: %v", plan.Spec.Env)
 	}
 }
@@ -213,11 +220,14 @@ func TestPlanLocalSkipsNonInteractiveNushellAndXonsh(t *testing.T) {
 }
 
 // planWith runs the planner with a real session-scoped temporary directory and
-// returns the plan plus the directory for assertions.
+// returns the plan plus the directory for assertions. Most tests assert the
+// POSIX startup scripts, so the default platform is a POSIX host even when the
+// test binary runs on Windows; an explicit WithPlatform still wins.
 func planWith(t *testing.T, spec appsession.StartSpec, opts ...Option) (appsession.CaptureHookPlan, bool, string) {
 	t.Helper()
 	dir := t.TempDir()
 	created := false
+	opts = append([]Option{WithPlatform("linux")}, opts...)
 	opts = append(opts, WithTempDir(func() (string, error) {
 		created = true
 		return dir, nil
@@ -293,6 +303,7 @@ func TestPlanReportsWhetherTheHookIsExpected(t *testing.T) {
 	})
 	t.Run("failed install", func(t *testing.T) {
 		plan, failed := NewPlanner(
+			WithPlatform("linux"),
 			WithDefaultShell(func() (string, error) { return "/bin/zsh", nil }),
 			WithTempDir(func() (string, error) { return "", errors.New("no directory") }),
 		).Plan(appsession.StartSpec{Kind: appsession.KindLocal})
@@ -428,7 +439,8 @@ func TestPlanLocalZshUsesASessionZDOTDIR(t *testing.T) {
 		if err != nil {
 			t.Fatalf("startup file %s: %v", name, err)
 		}
-		if info.Mode().Perm() != 0o600 {
+		// Windows does not keep POSIX permission bits on a new file.
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 			t.Fatalf("%s mode = %o, want 600", name, info.Mode().Perm())
 		}
 	}
@@ -498,8 +510,10 @@ func TestPlanLocalBashReplacesLoginWithTheHookRC(t *testing.T) {
 	if !strings.Contains(body, "__netcatty_bashrc_sourced=1") {
 		t.Fatal("the profile's own .bashrc source is not detected")
 	}
-	if info, err := os.Stat(rcPath); err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("bashrc mode = %v, err = %v", info, err)
+	if info, err := os.Stat(rcPath); err != nil {
+		t.Fatalf("stat bashrc: %v", err)
+	} else if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("bashrc mode = %o, want 600", info.Mode().Perm())
 	}
 }
 
@@ -676,6 +690,7 @@ func TestPlanLocalSkipsAnUnsupportedDefaultShell(t *testing.T) {
 func TestPlanLocalReportsATemporaryDirectoryFailureSoftly(t *testing.T) {
 	spec := appsession.StartSpec{Kind: appsession.KindLocal, Env: []string{"KEEP=1"}}
 	plan, failed := NewPlanner(
+		WithPlatform("linux"),
 		WithDefaultShell(func() (string, error) { return "/bin/zsh", nil }),
 		WithTempDir(func() (string, error) { return "", os.ErrPermission }),
 	).Plan(spec)
@@ -692,6 +707,7 @@ func TestPlanLocalReportsAWriteFailureSoftly(t *testing.T) {
 	dir := filepath.Join(root, "missing")
 	spec := appsession.StartSpec{Kind: appsession.KindLocal}
 	plan, failed := NewPlanner(
+		WithPlatform("linux"),
 		WithDefaultShell(func() (string, error) { return "/bin/zsh", nil }),
 		WithTempDir(func() (string, error) { return dir, nil }),
 	).Plan(spec)
