@@ -22698,6 +22698,150 @@ func (msgs Messages) SysManagerOverviewNetworkDetail(rx string, tx string) strin
 	return Catalog.Format(msgs.locale, "sysManagerOverviewNetworkDetail", map[string]any{"rx": rx, "tx": tx})
 }
 
+// SysManagerOverviewCard says "{name} card"
+// in the language the app shows.
+//
+// The accessible name of one Overview metric card, naming the metric.
+func SysManagerOverviewCard(name string) string {
+	return In(i18n.Locale()).SysManagerOverviewCard(name)
+}
+
+// SysManagerOverviewCard says "{name} card"
+// in the language of msgs.
+//
+// The accessible name of one Overview metric card, naming the metric.
+func (msgs Messages) SysManagerOverviewCard(name string) string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewCard", map[string]any{"name": name})
+}
+
+// SysManagerOverviewGauge says "{name} gauge"
+// in the language the app shows.
+//
+// The accessible name of a metric card's gauge.
+func SysManagerOverviewGauge(name string) string {
+	return In(i18n.Locale()).SysManagerOverviewGauge(name)
+}
+
+// SysManagerOverviewGauge says "{name} gauge"
+// in the language of msgs.
+//
+// The accessible name of a metric card's gauge.
+func (msgs Messages) SysManagerOverviewGauge(name string) string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewGauge", map[string]any{"name": name})
+}
+
+// SysManagerOverviewHistory says "{name} history"
+// in the language the app shows.
+//
+// The accessible name of a metric card's sparkline.
+func SysManagerOverviewHistory(name string) string {
+	return In(i18n.Locale()).SysManagerOverviewHistory(name)
+}
+
+// SysManagerOverviewHistory says "{name} history"
+// in the language of msgs.
+//
+// The accessible name of a metric card's sparkline.
+func (msgs Messages) SysManagerOverviewHistory(name string) string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewHistory", map[string]any{"name": name})
+}
+
+// SysManagerOverviewLine says "{name} line"
+// in the language the app shows.
+//
+// The accessible name of the Disk I/O row.
+func SysManagerOverviewLine(name string) string {
+	return In(i18n.Locale()).SysManagerOverviewLine(name)
+}
+
+// SysManagerOverviewLine says "{name} line"
+// in the language of msgs.
+//
+// The accessible name of the Disk I/O row.
+func (msgs Messages) SysManagerOverviewLine(name string) string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewLine", map[string]any{"name": name})
+}
+
+// SysManagerOverviewPills says "{name} pills"
+// in the language the app shows.
+//
+// The accessible name of the Overview's information pills.
+func SysManagerOverviewPills(name string) string {
+	return In(i18n.Locale()).SysManagerOverviewPills(name)
+}
+
+// SysManagerOverviewPills says "{name} pills"
+// in the language of msgs.
+//
+// The accessible name of the Overview's information pills.
+func (msgs Messages) SysManagerOverviewPills(name string) string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewPills", map[string]any{"name": name})
+}
+
+// SysManagerOverviewGrid says "{name} grid"
+// in the language the app shows.
+//
+// The accessible name of the per-core grid.
+func SysManagerOverviewGrid(name string) string {
+	return In(i18n.Locale()).SysManagerOverviewGrid(name)
+}
+
+// SysManagerOverviewGrid says "{name} grid"
+// in the language of msgs.
+//
+// The accessible name of the per-core grid.
+func (msgs Messages) SysManagerOverviewGrid(name string) string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewGrid", map[string]any{"name": name})
+}
+
+// SysManagerOverviewUsage says "{name} usage"
+// in the language the app shows.
+//
+// The accessible name of one usage bar, naming what it measures.
+func SysManagerOverviewUsage(name string) string {
+	return In(i18n.Locale()).SysManagerOverviewUsage(name)
+}
+
+// SysManagerOverviewUsage says "{name} usage"
+// in the language of msgs.
+//
+// The accessible name of one usage bar, naming what it measures.
+func (msgs Messages) SysManagerOverviewUsage(name string) string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewUsage", map[string]any{"name": name})
+}
+
+// SysManagerOverviewList says "{name} list"
+// in the language the app shows.
+//
+// The accessible name of one Overview section's list.
+func SysManagerOverviewList(name string) string {
+	return In(i18n.Locale()).SysManagerOverviewList(name)
+}
+
+// SysManagerOverviewList says "{name} list"
+// in the language of msgs.
+//
+// The accessible name of one Overview section's list.
+func (msgs Messages) SysManagerOverviewList(name string) string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewList", map[string]any{"name": name})
+}
+
+// SysManagerOverviewMemoryBar says "{name} memory"
+// in the language the app shows.
+//
+// The accessible name of a process's memory bar.
+func SysManagerOverviewMemoryBar(name string) string {
+	return In(i18n.Locale()).SysManagerOverviewMemoryBar(name)
+}
+
+// SysManagerOverviewMemoryBar says "{name} memory"
+// in the language of msgs.
+//
+// The accessible name of a process's memory bar.
+func (msgs Messages) SysManagerOverviewMemoryBar(name string) string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewMemoryBar", map[string]any{"name": name})
+}
+
 // SysManagerOverviewDiskIO says "Disk I/O"
 // in the language the app shows.
 func SysManagerOverviewDiskIO() string { return In(i18n.Locale()).SysManagerOverviewDiskIO() }

@@ -122,19 +122,15 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		// button, and the tab-layout menu left them no room at the 704-DIP
 		// client: acceptance at a2d30004 measured the English Latency text 42
 		// DIPs past the client. They may shrink with an ellipsis rather than
-		// push either edge out.
-		if state.Status == appsysmanager.StatusLive {
-			if at := overviewSampledAt(state); !at.IsZero() {
-				age := s.now().Sub(at)
-				if age < 2*time.Second {
-					age = 0
-				}
-				ui.Text(c, m.SysManagerUpdatedSeconds(int(age/time.Second))).
+		// push either edge out. The age belongs to the Stats Sample, so it
+		// stays visible with cached cards while a refresh is failing; latency
+		// still names only a live round trip.
+		if age := overviewSampleAge(s, state, m); age != "" {
+			ui.Text(c, age).
+				FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine().Shrink(1).MinWidth(0)
+			if state.Status == appsysmanager.StatusLive && state.Latency > 0 {
+				ui.Text(c, m.SysManagerLatency()+" "+m.SysManagerLatencyValue(int(state.Latency/time.Millisecond))).
 					FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine().Shrink(1).MinWidth(0)
-				if state.Latency > 0 {
-					ui.Text(c, m.SysManagerLatency()+" "+m.SysManagerLatencyValue(int(state.Latency/time.Millisecond))).
-						FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine().Shrink(1).MinWidth(0)
-				}
 			}
 		}
 	})
@@ -1386,14 +1382,14 @@ func overviewMetricCard(c *ui.Context, m locales.Messages, t *ui.Theme,
 	} else {
 		card.FillWidth()
 	}
-	card.Label(data.Label + " card").Children(func() {
+	card.Label(m.SysManagerOverviewCard(data.Label)).Children(func() {
 		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 			kit.IconSized(c, data.Icon, kit.M(c).Icon.Medium)
 			ui.Text(c, data.Label).FontSize(kit.M(c).Font.Callout).Bold()
 		})
 		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
 			kit.Gauge(c, data.Gauge, kit.GaugeOptions{
-				Size: 58, Tone: data.Tone, Label: data.Label + " gauge",
+				Size: 58, Tone: data.Tone, Label: m.SysManagerOverviewGauge(data.Label),
 			})
 			ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
 				ui.Text(c, data.Value).FontSize(kit.M(c).Font.LargeTitle).
@@ -1404,7 +1400,7 @@ func overviewMetricCard(c *ui.Context, m locales.Messages, t *ui.Theme,
 		})
 		kit.Sparkline(c, data.History, kit.SparklineOptions{
 			Height: 34, Max: data.Max, Tone: data.Tone,
-			Label: data.Label + " history",
+			Label: m.SysManagerOverviewHistory(data.Label),
 		})
 	})
 }
@@ -1417,7 +1413,7 @@ func overviewDiskIOLine(c *ui.Context, data appsysmanager.Overview,
 		" · " + m.SysManagerOverviewWrite() + " " + rateText(data.DiskWriteBps)
 	ui.Row(c).FillWidth().Gap(8).Wrap().AlignItems(ui.Center).Padding(8, 10).
 		Radius(t.Radius).Background(t.Surface).
-		Label(m.SysManagerOverviewDiskIO() + " line").Children(func() {
+		Label(m.SysManagerOverviewLine(m.SysManagerOverviewDiskIO())).Children(func() {
 		ui.Text(c, m.SysManagerOverviewDiskIO()).FontSize(kit.M(c).Font.Caption).
 			TextColor(t.TextMuted).SingleLine()
 		ui.Text(c, value).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
@@ -1430,7 +1426,7 @@ func overviewPills(c *ui.Context, state appsysmanager.TabState,
 	m locales.Messages, t *ui.Theme) {
 	data := state.Overview
 	ui.Row(c).FillWidth().Gap(6).Wrap().AlignItems(ui.Center).
-		Label(m.SysManagerOverviewInfo() + " pills").Children(func() {
+		Label(m.SysManagerOverviewPills(m.SysManagerOverviewInfo())).Children(func() {
 		kit.InfoPill(c, m.SysManagerOverviewLoad(), loadText(data.LoadAverage, m))
 		kit.InfoPill(c, m.SysManagerOverviewUptime(), uptimeText(data.UptimeSeconds, m))
 		kit.InfoPill(c, m.SysManagerOverviewSystem(), blank(data.OSName, m))
@@ -1465,15 +1461,15 @@ func overviewCores(c *ui.Context, data appsysmanager.Overview,
 			return
 		}
 		ui.Scroll(c).FillWidth().MaxHeight(overviewCoresHeight).
-			Label(m.SysManagerOverviewCoresSection() + " grid").Children(func() {
+			Label(m.SysManagerOverviewGrid(m.SysManagerOverviewCoresSection())).Children(func() {
 			ui.Column(c).FillWidth().Gap(6).Children(func() {
 				for index := 0; index < len(data.CPUPerCore); index += 2 {
 					first := data.CPUPerCore[index]
 					ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Start).Children(func() {
-						overviewCoreCell(c, "C"+strconv.Itoa(index+1), first.Percent, t)
+						overviewCoreCell(c, m, "C"+strconv.Itoa(index+1), first.Percent, t)
 						if index+1 < len(data.CPUPerCore) {
 							second := data.CPUPerCore[index+1]
-							overviewCoreCell(c, "C"+strconv.Itoa(index+2), second.Percent, t)
+							overviewCoreCell(c, m, "C"+strconv.Itoa(index+2), second.Percent, t)
 						} else {
 							ui.Column(c).Grow(1).MinWidth(0)
 						}
@@ -1487,7 +1483,7 @@ func overviewCores(c *ui.Context, data appsysmanager.Overview,
 // overviewCoresHeight caps the per-core grid, after which it scrolls.
 const overviewCoresHeight float32 = 260
 
-func overviewCoreCell(c *ui.Context, label string, percent float64, t *ui.Theme) {
+func overviewCoreCell(c *ui.Context, m locales.Messages, label string, percent float64, t *ui.Theme) {
 	ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, label).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
@@ -1495,7 +1491,7 @@ func overviewCoreCell(c *ui.Context, label string, percent float64, t *ui.Theme)
 			ui.Text(c, percentText(percent)).FontSize(kit.M(c).Font.Caption).SingleLine()
 		})
 		kit.ResourceBar(c, percent, kit.ResourceBarOptions{
-			Height: 4, Label: label + " usage",
+			Height: 4, Label: m.SysManagerOverviewUsage(label),
 		})
 	})
 }
@@ -1521,7 +1517,7 @@ func overviewDisks(c *ui.Context, data appsysmanager.Overview,
 			return
 		}
 		ui.Column(c).FillWidth().Gap(6).
-			Label(m.SysManagerOverviewDisksSection() + " list").Children(func() {
+			Label(m.SysManagerOverviewList(m.SysManagerOverviewDisksSection())).Children(func() {
 			for _, disk := range data.Disks {
 				percent, _ := finitePercent(disk.UsedGB, disk.TotalGB, disk.Percent)
 				mount := blank(disk.MountPoint, m)
@@ -1533,7 +1529,7 @@ func overviewDisks(c *ui.Context, data appsysmanager.Overview,
 							FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
 					})
 					kit.ResourceBar(c, percent, kit.ResourceBarOptions{
-						Height: 4, Label: mount + " usage",
+						Height: 4, Label: m.SysManagerOverviewUsage(mount),
 					})
 				})
 			}
@@ -1553,7 +1549,7 @@ func overviewInterfaces(c *ui.Context, data appsysmanager.Overview,
 			return
 		}
 		ui.Column(c).FillWidth().Gap(6).
-			Label(m.SysManagerOverviewNetworkSection() + " list").Children(func() {
+			Label(m.SysManagerOverviewList(m.SysManagerOverviewNetworkSection())).Children(func() {
 			limit := min(5, len(data.Interfaces))
 			for index := 0; index < limit; index++ {
 				iface := data.Interfaces[index]
@@ -1585,7 +1581,7 @@ func overviewProcesses(c *ui.Context, data appsysmanager.Overview,
 			return
 		}
 		ui.Column(c).FillWidth().Gap(6).
-			Label(m.SysManagerOverviewProcessesSection() + " list").Children(func() {
+			Label(m.SysManagerOverviewList(m.SysManagerOverviewProcessesSection())).Children(func() {
 			limit := min(5, len(data.TopProcesses))
 			for index := 0; index < limit; index++ {
 				process := data.TopProcesses[index]
@@ -1600,7 +1596,7 @@ func overviewProcesses(c *ui.Context, data appsysmanager.Overview,
 					ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 						ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 							kit.ResourceBar(c, process.MemPercent, kit.ResourceBarOptions{
-								Height: 4, Label: command + " memory",
+								Height: 4, Label: m.SysManagerOverviewMemoryBar(command),
 							})
 						})
 						ui.Text(c, percentText(process.MemPercent)).
@@ -1670,6 +1666,11 @@ func memoryDetail(used, total float64, m locales.Messages) string {
 	return m.SysManagerOverviewUsedOf(memoryText(used), memoryText(total))
 }
 
+// The quantity helpers (memoryText, storageText, byteCount, rateText, and
+// percentText) deliberately keep their unit symbols (GB, MB, TB, KiB, MiB,
+// GiB, TiB, B, /s, %) and the em-dash unknown marker locale-invariant: the
+// Overview formatting contract renders the same numeric strings in every
+// locale. Localized text comes from the catalog, never from these formatters.
 func memoryText(mb float64) string {
 	if !known(mb) {
 		return "—"
@@ -1951,6 +1952,26 @@ func overviewSampledAt(state appsysmanager.TabState) time.Time {
 	return state.At
 }
 
+// overviewSampleAge is the localized age of the Stats Sample behind the
+// Overview, or "" when no sample exists. The age is a property of the sample,
+// not of the status, so a cached sample keeps it beside a failed refresh. A
+// live Tab without an Overview sample, such as Processes, still reports when
+// its snapshot was read from the state time.
+func overviewSampleAge(s *State, state appsysmanager.TabState, m locales.Messages) string {
+	if !overviewHasSample(state) && state.Status != appsysmanager.StatusLive {
+		return ""
+	}
+	at := overviewSampledAt(state)
+	if at.IsZero() {
+		return ""
+	}
+	age := s.now().Sub(at)
+	if age < 2*time.Second {
+		age = 0
+	}
+	return m.SysManagerUpdatedSeconds(int(age / time.Second))
+}
+
 func percent(value float64) string {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return "—"
@@ -1958,6 +1979,8 @@ func percent(value float64) string {
 	return fmt.Sprintf("%.1f%%", value)
 }
 
+// percentText follows the locale-invariant quantity convention documented
+// above memoryText.
 func percentText(value float64) string {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return "—"
@@ -1981,7 +2004,7 @@ func ratio(value, total float64) float64 {
 
 func usedText(used, total, divisor float64, m locales.Messages) string {
 	if total <= 0 {
-		return "—"
+		return m.SysManagerUnknown()
 	}
 	return m.SysManagerOverviewUsedOf(sizeText(used, divisor), sizeText(total, divisor))
 }

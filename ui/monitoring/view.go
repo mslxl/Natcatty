@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/egoist/mygo/ui/chart"
 
 	domainmonitor "github.com/mslxl/natcatty/domain/monitor"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
@@ -354,50 +353,34 @@ func metricBlock(c *ui.Context, t *ui.Theme, label string, value float64, sub st
 		ui.Text(c, percentText(value)).FontSize(kit.M(c).Font.LargeTitle).FontWeight(600).
 			TextColor(toneColor(t, domainmonitor.ToneForPercent(value), t.Text)).SingleLine()
 		ui.Text(c, sub).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted).SingleLine()
-		trend(c, t, points, pick, scale, color, 56).Margin(4, 0, 0, 0)
+		trend(c, points, pick, scale, color, 56).Margin(4, 0, 0, 0)
 	})
 }
 
 // trend draws a metric's recent values over faint gridlines, ending in a dot
-// at the latest reading.
-func trend(c *ui.Context, t *ui.Theme, points []domainmonitor.Point,
+// at the latest reading. The kit's Sparkline owns the geometry; monitoring
+// supplies its series color, the caller's scale, and the samples' times.
+func trend(c *ui.Context, points []domainmonitor.Point,
 	pick func(domainmonitor.Point) float64, scale float64, color ui.Color, height float32) ui.Element {
-	return ui.Box(c).FillWidth().Height(height).Draw(func(p *ui.Painter, r ui.Rect) {
-		grid := t.Border.Alpha(0.7)
-		for line := 0; line <= 2; line++ {
-			y := r.Y + r.H*float32(line)/2
-			for x := r.X; x < r.X+r.W; x += 6 {
-				p.Line(x, y, minf(x+3, r.X+r.W), y, 1, grid)
-			}
-		}
-		if len(points) < 2 || scale <= 0 {
-			return
-		}
-		xs := make([]float32, len(points))
-		ys := make([]float32, len(points))
-		start := points[0].At
-		span := points[len(points)-1].At.Sub(start)
-		last := -1
-		for index, point := range points {
-			if span > 0 {
-				xs[index] = float32(point.At.Sub(start)) / float32(span)
-			}
-			value := pick(point)
-			if !domainmonitor.Valid(value) {
-				ys[index] = float32(math.NaN())
-				continue
-			}
-			ys[index] = float32(math.Max(0, math.Min(1, value/scale)))
-			last = index
-		}
-		p.FillPath(chart.Area(r, xs, nil, ys, chart.CurveMonotone), color.Alpha(0.14))
-		p.StrokePath(chart.Line(r, xs, ys, chart.CurveMonotone), 1.5, color)
-		if last >= 0 {
-			x := r.X + xs[last]*r.W
-			y := r.Y + r.H*(1-ys[last])
-			p.FillPath(new(ui.Path).Circle(x, y, 3), color)
-		}
-	})
+	opts := kit.SparklineOptions{
+		Height:    height,
+		Max:       scale,
+		Gridlines: true,
+		EndDot:    true,
+		Color:     color,
+		NoInset:   true,
+	}
+	if len(points) < 2 || scale <= 0 {
+		return kit.Sparkline(c, nil, opts)
+	}
+	values := make([]float64, len(points))
+	times := make([]time.Time, len(points))
+	for index, point := range points {
+		values[index] = pick(point)
+		times[index] = point.At
+	}
+	opts.Times = times
+	return kit.Sparkline(c, values, opts)
 }
 
 // partitions lists up to limit mounts with their usage bars; limit 0 lists
@@ -669,7 +652,7 @@ func listMetric(c *ui.Context, t *ui.Theme, value float64, points []domainmonito
 		ui.Text(c, percentText(value)).FontSize(kit.M(c).Font.Footnote).FontWeight(500).Width(46).NoWrap().
 			TextColor(toneColor(t, domainmonitor.ToneForPercent(value), t.Text))
 		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
-			trend(c, t, chartPoints(points, started, panel.Range, now), pick, 100, color, 24)
+			trend(c, chartPoints(points, started, panel.Range, now), pick, 100, color, 24)
 		})
 	})
 }
@@ -1081,13 +1064,6 @@ func orDash(value string) string {
 		return "--"
 	}
 	return value
-}
-
-func minf(a, b float32) float32 {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func problemText(m locales.Messages, problem Problem) string {

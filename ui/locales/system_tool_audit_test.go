@@ -11,7 +11,10 @@ import (
 // The System Tool effort added or changed these catalog keys. The audit is
 // scoped to them on purpose: the catalogs already carry unrelated legacy keys,
 // and this test must fail when a key one of the new surfaces reads exists in
-// only some languages.
+// only some languages. Across the six groups below they hold 131 unique keys.
+// The Side Panel group alone holds six tool ids: sidePanelSystem,
+// sidePanelSystemNoHost, sidePanelScripts, sidePanelHistory, sidePanelTheme,
+// and sidePanelNotes.
 var systemToolAuditGroups = map[string][]string{
 	"Overview": {
 		"sysManagerOverviewCPU",
@@ -21,6 +24,15 @@ var systemToolAuditGroups = map[string][]string{
 		"sysManagerOverviewCores",
 		"sysManagerOverviewUsedOf",
 		"sysManagerOverviewNetworkDetail",
+		"sysManagerOverviewCard",
+		"sysManagerOverviewGauge",
+		"sysManagerOverviewHistory",
+		"sysManagerOverviewLine",
+		"sysManagerOverviewPills",
+		"sysManagerOverviewGrid",
+		"sysManagerOverviewUsage",
+		"sysManagerOverviewList",
+		"sysManagerOverviewMemoryBar",
 		"sysManagerOverviewCoresSection",
 		"sysManagerOverviewDisksSection",
 		"sysManagerOverviewNetworkSection",
@@ -141,6 +153,8 @@ var systemToolAuditGroups = map[string][]string{
 		"sysManagerFilterInactive",
 		"sysManagerPpid",
 	},
+	// Six Side Panel tool ids: the System tool, its no-Host state, and the four
+	// peer tools whose strip labels render beside it.
 	"Side Panel System Tool": {
 		"sidePanelSystem",
 		"sidePanelSystemNoHost",
@@ -189,6 +203,46 @@ func TestSystemToolSurfaceKeysAreLocalized(t *testing.T) {
 				t.Errorf("%s catalog has an empty System Tool message for %q", tag, key)
 			}
 		}
+	}
+}
+
+// TestSystemToolOverviewAccessibilitySuffixesAreLocalized proves the nine
+// Overview accessibility-label suffixes are whole catalog messages, so a
+// translated surface does not append an English fragment to a localized name.
+func TestSystemToolOverviewAccessibilitySuffixesAreLocalized(t *testing.T) {
+	en, zh := In("en"), In("zh-CN")
+	const name = "CPU"
+	cases := []struct {
+		key  string
+		en   string
+		zhCN string
+	}{
+		{"sysManagerOverviewCard", en.SysManagerOverviewCard(name), zh.SysManagerOverviewCard(name)},
+		{"sysManagerOverviewGauge", en.SysManagerOverviewGauge(name), zh.SysManagerOverviewGauge(name)},
+		{"sysManagerOverviewHistory", en.SysManagerOverviewHistory(name), zh.SysManagerOverviewHistory(name)},
+		{"sysManagerOverviewLine", en.SysManagerOverviewLine(name), zh.SysManagerOverviewLine(name)},
+		{"sysManagerOverviewPills", en.SysManagerOverviewPills(name), zh.SysManagerOverviewPills(name)},
+		{"sysManagerOverviewGrid", en.SysManagerOverviewGrid(name), zh.SysManagerOverviewGrid(name)},
+		{"sysManagerOverviewUsage", en.SysManagerOverviewUsage(name), zh.SysManagerOverviewUsage(name)},
+		{"sysManagerOverviewList", en.SysManagerOverviewList(name), zh.SysManagerOverviewList(name)},
+		{"sysManagerOverviewMemoryBar", en.SysManagerOverviewMemoryBar(name), zh.SysManagerOverviewMemoryBar(name)},
+	}
+	for _, c := range cases {
+		if !strings.Contains(c.en, name) {
+			t.Errorf("%s drops the element name %q from the English label %q", c.key, name, c.en)
+		}
+		if !strings.Contains(c.zhCN, name) {
+			t.Errorf("%s drops the element name %q from the zh-CN label %q", c.key, name, c.zhCN)
+		}
+		if c.en == c.zhCN {
+			t.Errorf("%s is not translated: en and zh-CN both say %q", c.key, c.en)
+		}
+	}
+	if got := en.SysManagerOverviewCard(name); got != "CPU card" {
+		t.Errorf("en card label = %q, want %q", got, "CPU card")
+	}
+	if got := zh.SysManagerOverviewCard(name); got == "CPU card" || strings.Contains(got, "card") {
+		t.Errorf("zh-CN card label = %q, want a translated suffix rather than the English word", got)
 	}
 }
 

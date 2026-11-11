@@ -14,6 +14,12 @@ import (
 // Tool's content. The tab strip measures against the width inside it.
 const sidePadding float32 = 8
 
+// sideAgeMinWidth is the narrowest panel that shows the Stats Sample age in
+// the status row. Below it -- notably at the 280-DIP minimum -- the status,
+// age, interval, and Refresh cannot share the single row without truncating
+// one of them, so the age is omitted there; the normal 360-DIP panel shows it.
+const sideAgeMinWidth float32 = 320
+
 // ShowHost points the side panel's System tool at a Session's Host and starts
 // sampling it, as the original's System tool follows the Session it sits in.
 // A Host added to the Vault since the last load is found by reloading; a
@@ -81,6 +87,14 @@ func SideView(s *State, width float32) func(*ui.Context) {
 				}
 				ui.Box(c).Size(7, 7).Radius(4).Background(dot).Shrink(0)
 				ui.Text(c, text).FontSize(kit.M(c).Font.Footnote).TextColor(color).SingleLine().Grow(1).MinWidth(0)
+				// The sample age stays beside any status, cached samples
+				// included, but only where the row has room for it.
+				if width >= sideAgeMinWidth {
+					if age := overviewSampleAge(s, state, m); age != "" {
+						ui.Text(c, age).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).
+							SingleLine().Shrink(1).MinWidth(0)
+					}
+				}
 				sideRefreshControls(c, s, m)
 			})
 			if problem := problemText(m, s.Problem()); problem != "" {

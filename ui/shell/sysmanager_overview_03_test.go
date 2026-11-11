@@ -243,27 +243,31 @@ func TestSysManagerOverviewFullContentEverywhere(t *testing.T) {
 						},
 					}
 					for _, card := range cards {
-						rect := overviewFind(t, h.tester, name, card.label+" card")
+						rect := overviewFind(t, h.tester, name, m.SysManagerOverviewCard(card.label))
 						if rect.X < left-0.5 || rect.X+rect.W > right+0.5 {
 							t.Fatalf("%s: the %s card %+v is outside the surface %.0f..%.0f",
 								name, card.label, rect, left, right)
 						}
 						overviewExpectInside(t, h.tester, name, card.value, rect)
 						overviewExpectInside(t, h.tester, name, card.detail, rect)
-						overviewExpectInside(t, h.tester, name, card.label+" gauge", rect)
-						overviewExpectInside(t, h.tester, name, card.label+" history", rect)
+						overviewExpectInside(t, h.tester, name,
+							m.SysManagerOverviewGauge(card.label), rect)
+						overviewExpectInside(t, h.tester, name,
+							m.SysManagerOverviewHistory(card.label), rect)
 					}
 
 					// The disk I/O line sits below the cards and uses one binary
 					// rate convention with the network.
-					overviewPresent(t, h.tester, name, m.SysManagerOverviewDiskIO()+" line")
+					overviewPresent(t, h.tester, name,
+						m.SysManagerOverviewLine(m.SysManagerOverviewDiskIO()))
 					overviewPresent(t, h.tester, name,
 						m.SysManagerOverviewRead()+" 10.0 KiB/s · "+
 							m.SysManagerOverviewWrite()+" 10.0 KiB/s")
 
 					// Six pills: Load, Uptime, System, Kernel, Swap, and the
 					// stats-command round trip labeled Latency. Hostname is not one.
-					overviewPresent(t, h.tester, name, m.SysManagerOverviewInfo()+" pills")
+					overviewPresent(t, h.tester, name,
+						m.SysManagerOverviewPills(m.SysManagerOverviewInfo()))
 					for _, pill := range []struct{ label, value string }{
 						{m.SysManagerOverviewLoad(), "3.50 3.00 2.00"},
 						{m.SysManagerOverviewUptime(), m.SysManagerDurationDays(1, 1)},
@@ -282,21 +286,28 @@ func TestSysManagerOverviewFullContentEverywhere(t *testing.T) {
 
 					// Every per-core value is in the C1..Cn grid, whose header is
 					// load[0] over the core count, clamped to 0–100.
-					overviewPresent(t, h.tester, name, m.SysManagerOverviewCoresSection()+" grid")
+					overviewPresent(t, h.tester, name,
+						m.SysManagerOverviewGrid(m.SysManagerOverviewCoresSection()))
 					overviewPresent(t, h.tester, name, "88%")
-					for _, text := range []string{"C1 usage", "C4 usage", "100%", "25%", "0%"} {
+					for _, text := range []string{
+						m.SysManagerOverviewUsage("C1"), m.SysManagerOverviewUsage("C4"),
+						"100%", "25%", "0%",
+					} {
 						overviewPresent(t, h.tester, name, text)
 					}
 
 					// Every kept mount, including two mounts on one capacity,
 					// keeps its own row; the card aggregate counted it once.
-					overviewPresent(t, h.tester, name, m.SysManagerOverviewDisksSection()+" list")
+					overviewPresent(t, h.tester, name,
+						m.SysManagerOverviewList(m.SysManagerOverviewDisksSection()))
 					for _, text := range []string{
 						m.SysManagerOverviewUsedOf("10 GB", "40 GB"),
 						m.SysManagerOverviewUsedOf("30 GB", "60 GB"),
 						m.SysManagerOverviewUsedOf("20 GB", "80 GB"),
 						"/", "/data", "/home",
-						"/ usage", "/data usage", "/home usage",
+						m.SysManagerOverviewUsage("/"),
+						m.SysManagerOverviewUsage("/data"),
+						m.SysManagerOverviewUsage("/home"),
 					} {
 						overviewPresent(t, h.tester, name, text)
 					}
@@ -304,7 +315,7 @@ func TestSysManagerOverviewFullContentEverywhere(t *testing.T) {
 					// The first five interfaces carry cumulative counters and
 					// rates; the sixth is not drawn.
 					overviewPresent(t, h.tester, name,
-						m.SysManagerOverviewNetworkSection()+" list")
+						m.SysManagerOverviewList(m.SysManagerOverviewNetworkSection()))
 					for _, text := range []string{"eth0", "eth1", "wlan0", "enp0s3", "dummy0"} {
 						overviewPresent(t, h.tester, name, text)
 					}
@@ -317,7 +328,7 @@ func TestSysManagerOverviewFullContentEverywhere(t *testing.T) {
 					// The top five rows come from the Stats Sample's own list,
 					// sorted by memory, and the sixth is not drawn.
 					overviewPresent(t, h.tester, name,
-						m.SysManagerOverviewProcessesSection()+" list")
+						m.SysManagerOverviewList(m.SysManagerOverviewProcessesSection()))
 					for _, text := range []string{
 						"java", "postgres", "node", "dockerd", "sshd",
 						"22%", m.SysManagerPid() + " 222",
@@ -391,13 +402,14 @@ func TestSysManagerOverviewMacOSGaps(t *testing.T) {
 					h.tester.Frame()
 
 					m := locales.In(locale)
-					overviewPresent(t, h.tester, name, m.SysManagerOverviewCPU()+" card")
+					overviewPresent(t, h.tester, name,
+						m.SysManagerOverviewCard(m.SysManagerOverviewCPU()))
 					overviewPresent(t, h.tester, name, "37%")
 					overviewPresent(t, h.tester, name, m.SysManagerOverviewCores(8))
 					overviewPresent(t, h.tester, name, m.SysManagerOverviewNoData())
-					overviewMissing(t, h.tester, name, "C1 usage")
+					overviewMissing(t, h.tester, name, m.SysManagerOverviewUsage("C1"))
 					overviewPresent(t, h.tester, name,
-						m.SysManagerOverviewDiskIO()+" line")
+						m.SysManagerOverviewLine(m.SysManagerOverviewDiskIO()))
 					overviewPresent(t, h.tester, name,
 						m.SysManagerOverviewRead()+" — · "+m.SysManagerOverviewWrite()+" —")
 					overviewPresent(t, h.tester, name, m.SysManagerLatencyValue(0))
@@ -476,10 +488,10 @@ func TestSysManagerOverviewCardsBreakAtThreeHundredTwenty(t *testing.T) {
 					newOverviewTransport(overviewMacReply))
 				overviewWaitState(t, h, "the live sample", overviewLive)
 				m := locales.In("en")
-				cpuLabel := m.SysManagerOverviewCPU() + " card"
-				memoryLabel := m.SysManagerOverviewMemory() + " card"
-				diskLabel := m.SysManagerOverviewDisk() + " card"
-				networkLabel := m.SysManagerOverviewNetwork() + " card"
+				cpuLabel := m.SysManagerOverviewCard(m.SysManagerOverviewCPU())
+				memoryLabel := m.SysManagerOverviewCard(m.SysManagerOverviewMemory())
+				diskLabel := m.SysManagerOverviewCard(m.SysManagerOverviewDisk())
+				networkLabel := m.SysManagerOverviewCard(m.SysManagerOverviewNetwork())
 
 				if surface == overviewFullPage {
 					// The full page always uses the same two-by-two layout; its
@@ -537,7 +549,7 @@ func TestSysManagerOverviewLiveRatesSurviveTabSwitches(t *testing.T) {
 					// Overview's cards are gone.
 					h.manager.SetTab(appsysmanager.TabProcesses)
 					overviewFrameUntil(t, h.tester, "the Processes tab", func() bool {
-						_, present := h.tester.Find(m.SysManagerOverviewCPU() + " card")
+						_, present := h.tester.Find(m.SysManagerOverviewCard(m.SysManagerOverviewCPU()))
 						return !present
 					})
 
@@ -557,8 +569,11 @@ func TestSysManagerOverviewLiveRatesSurviveTabSwitches(t *testing.T) {
 							h.tester.HasText("0%") &&
 							overviewMetricDashValues(h.tester) == 0
 					})
-					for _, text := range []string{"C1 usage", "C3 usage", "C4 usage",
-						"100%", "25%", "0%", diskLine, networkDetail} {
+					for _, text := range []string{
+						m.SysManagerOverviewUsage("C1"), m.SysManagerOverviewUsage("C3"),
+						m.SysManagerOverviewUsage("C4"),
+						"100%", "25%", "0%", diskLine, networkDetail,
+					} {
 						overviewPresent(t, h.tester, name, text)
 					}
 					overviewExpectNoMetricDash(t, h.tester, name, "after the tab switch")
@@ -568,7 +583,7 @@ func TestSysManagerOverviewLiveRatesSurviveTabSwitches(t *testing.T) {
 						// frame and the hidden System Tool stops sampling.
 						h.shell.CloseFiles(h.tab)
 						overviewFrameUntil(t, h.tester, "the side panel to close", func() bool {
-							_, present := h.tester.Find(m.SysManagerOverviewCPU() + " card")
+							_, present := h.tester.Find(m.SysManagerOverviewCard(m.SysManagerOverviewCPU()))
 							return !present
 						})
 
@@ -582,7 +597,7 @@ func TestSysManagerOverviewLiveRatesSurviveTabSwitches(t *testing.T) {
 							t.Fatal("the side panel did not reopen")
 						}
 						overviewFrameUntil(t, h.tester, "the reopened side panel", func() bool {
-							_, present := h.tester.Find(m.SysManagerOverviewCPU() + " card")
+							_, present := h.tester.Find(m.SysManagerOverviewCard(m.SysManagerOverviewCPU()))
 							return present
 						})
 						h.manager.Refresh()
@@ -601,7 +616,7 @@ func TestSysManagerOverviewLiveRatesSurviveTabSwitches(t *testing.T) {
 						}
 						h.tester.Frame()
 						overviewPresent(t, h.tester, name,
-							m.SysManagerOverviewDiskIO()+" line")
+							m.SysManagerOverviewLine(m.SysManagerOverviewDiskIO()))
 						// The reopened Refresh sees the same counters spread
 						// over the 20 seconds since the last Overview sample.
 						// Network rates are halved; disk I/O has two steps of
@@ -610,8 +625,11 @@ func TestSysManagerOverviewLiveRatesSurviveTabSwitches(t *testing.T) {
 							m.SysManagerOverviewWrite() + " 10.0 KiB/s"
 						reopenedNetworkDetail := m.SysManagerOverviewNetworkDetail(
 							"29.3 KiB/s", "34.2 KiB/s")
-						for _, text := range []string{"C1 usage", "C3 usage", "C4 usage",
-							"100%", "25%", "0%", reopenedDiskLine, reopenedNetworkDetail} {
+						for _, text := range []string{
+							m.SysManagerOverviewUsage("C1"), m.SysManagerOverviewUsage("C3"),
+							m.SysManagerOverviewUsage("C4"),
+							"100%", "25%", "0%", reopenedDiskLine, reopenedNetworkDetail,
+						} {
 							overviewPresent(t, h.tester, name, text)
 						}
 						overviewExpectNoMetricDash(t, h.tester, name,
@@ -657,9 +675,9 @@ func TestSysManagerOverviewToneThresholdsMatchTheKit(t *testing.T) {
 					label string
 					tone  kit.GaugeTone
 				}{
-					{"/ usage", kit.GaugeDanger},
-					{"/data usage", kit.GaugeWarning},
-					{"/home usage", kit.GaugeAccent},
+					{locales.In("en").SysManagerOverviewUsage("/"), kit.GaugeDanger},
+					{locales.In("en").SysManagerOverviewUsage("/data"), kit.GaugeWarning},
+					{locales.In("en").SysManagerOverviewUsage("/home"), kit.GaugeAccent},
 				}
 				// Scroll the surface that owns the disk rows: the whole page,
 				// or the side panel at its own width.
@@ -717,7 +735,7 @@ func TestSysManagerOverviewCoreGridScrollsAtItsCap(t *testing.T) {
 				}
 				h.tester.Frame()
 				m := locales.In("en")
-				label := m.SysManagerOverviewCoresSection() + " grid"
+				label := m.SysManagerOverviewGrid(m.SysManagerOverviewCoresSection())
 				grid, ok := h.tester.Find(label)
 				if !ok || grid.H <= 0 {
 					// The grid starts below the side panel's viewport; scroll
@@ -735,13 +753,13 @@ func TestSysManagerOverviewCoreGridScrollsAtItsCap(t *testing.T) {
 				if grid.H > 260+1 {
 					t.Fatalf("%s: the core grid is %.0f DIP high, want at most 260", name, grid.H)
 				}
-				c1 := overviewFind(t, h.tester, name, "C1 usage")
-				c2 := overviewFind(t, h.tester, name, "C2 usage")
+				c1 := overviewFind(t, h.tester, name, m.SysManagerOverviewUsage("C1"))
+				c2 := overviewFind(t, h.tester, name, m.SysManagerOverviewUsage("C2"))
 				if c2.X < c1.X+c1.W-1 || c2.Y < c1.Y-1 || c2.Y > c1.Y+1 {
 					t.Fatalf("%s: C2 at %+v is not the second column of C1's row %+v",
 						name, c2, c1)
 				}
-				c3 := overviewFind(t, h.tester, name, "C3 usage")
+				c3 := overviewFind(t, h.tester, name, m.SysManagerOverviewUsage("C3"))
 				if c3.Y < c1.Y+c1.H-1 || c3.X > c1.X+1 {
 					t.Fatalf("%s: C3 at %+v does not start the next two-column row below %+v",
 						name, c3, c1)
@@ -750,7 +768,7 @@ func TestSysManagerOverviewCoreGridScrollsAtItsCap(t *testing.T) {
 				// one downward scroll inside it.
 				h.tester.Scroll(grid.X+grid.W/2, grid.Y+grid.H/2, 0, 400)
 				overviewFrameUntil(t, h.tester, "the last core after scrolling", func() bool {
-					_, ok := h.tester.Find("C32 usage")
+					_, ok := h.tester.Find(m.SysManagerOverviewUsage("C32"))
 					return ok
 				})
 				overviewPresent(t, h.tester, name, m.SysManagerOverviewCores(32))

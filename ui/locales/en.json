@@ -4842,6 +4842,96 @@
       }
     }
   },
+  "sysManagerOverviewCard": "{name} card",
+  "@sysManagerOverviewCard": {
+    "description": "The accessible name of one Overview metric card, naming the metric.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "CPU"
+      }
+    }
+  },
+  "sysManagerOverviewGauge": "{name} gauge",
+  "@sysManagerOverviewGauge": {
+    "description": "The accessible name of a metric card's gauge.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "CPU"
+      }
+    }
+  },
+  "sysManagerOverviewHistory": "{name} history",
+  "@sysManagerOverviewHistory": {
+    "description": "The accessible name of a metric card's sparkline.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "CPU"
+      }
+    }
+  },
+  "sysManagerOverviewLine": "{name} line",
+  "@sysManagerOverviewLine": {
+    "description": "The accessible name of the Disk I/O row.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Disk I/O"
+      }
+    }
+  },
+  "sysManagerOverviewPills": "{name} pills",
+  "@sysManagerOverviewPills": {
+    "description": "The accessible name of the Overview's information pills.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Info"
+      }
+    }
+  },
+  "sysManagerOverviewGrid": "{name} grid",
+  "@sysManagerOverviewGrid": {
+    "description": "The accessible name of the per-core grid.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "CPU cores"
+      }
+    }
+  },
+  "sysManagerOverviewUsage": "{name} usage",
+  "@sysManagerOverviewUsage": {
+    "description": "The accessible name of one usage bar, naming what it measures.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "C1"
+      }
+    }
+  },
+  "sysManagerOverviewList": "{name} list",
+  "@sysManagerOverviewList": {
+    "description": "The accessible name of one Overview section's list.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Disks"
+      }
+    }
+  },
+  "sysManagerOverviewMemoryBar": "{name} memory",
+  "@sysManagerOverviewMemoryBar": {
+    "description": "The accessible name of a process's memory bar.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "postgres"
+      }
+    }
+  },
   "sysManagerOverviewDiskIO": "Disk I/O",
   "sysManagerOverviewRead": "Read",
   "sysManagerOverviewWrite": "Write",

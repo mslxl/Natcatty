@@ -483,7 +483,7 @@ func TestSysManagerOverviewLiveCPUCardEverywhere(t *testing.T) {
 					}
 
 					m := locales.In(locale)
-					card := overviewFind(t, h.tester, name, m.SysManagerOverviewCPU()+" card")
+					card := overviewFind(t, h.tester, name, m.SysManagerOverviewCard(m.SysManagerOverviewCPU()))
 					left, right := overviewSurfaceBounds(overviewWidth, surface)
 					if card.X < left-0.5 || card.X+card.W > right+0.5 {
 						t.Fatalf("%s: the CPU card %.0f..%.0f is outside the surface %.0f..%.0f: %+v",
@@ -492,8 +492,8 @@ func TestSysManagerOverviewLiveCPUCardEverywhere(t *testing.T) {
 					for _, text := range []string{
 						"37%",
 						m.SysManagerOverviewCores(8),
-						m.SysManagerOverviewCPU() + " gauge",
-						m.SysManagerOverviewCPU() + " history",
+						m.SysManagerOverviewGauge(m.SysManagerOverviewCPU()),
+						m.SysManagerOverviewHistory(m.SysManagerOverviewCPU()),
 					} {
 						rect := overviewFind(t, h.tester, name, text)
 						if !overviewInside(card, rect) {
@@ -552,7 +552,7 @@ func overviewBlockingCases() []overviewBlockingCase {
 			},
 			verify: func(t *testing.T, h *overviewHarness, m locales.Messages, name string) {
 				overviewFind(t, h.tester, name, m.SysManagerOverviewLoading())
-				overviewMissing(t, h.tester, name, m.SysManagerOverviewCPU()+" card")
+				overviewMissing(t, h.tester, name, m.SysManagerOverviewCard(m.SysManagerOverviewCPU()))
 				overviewMissing(t, h.tester, name, "0%")
 				overviewMissing(t, h.tester, name, m.SysManagerRetry())
 			},
@@ -569,7 +569,7 @@ func overviewBlockingCases() []overviewBlockingCase {
 				overviewFind(t, h.tester, name, m.SysManagerStatusEmpty())
 				overviewFind(t, h.tester, name, m.SysManagerReasonNoData())
 				overviewFind(t, h.tester, name, m.SysManagerRetry())
-				overviewMissing(t, h.tester, name, m.SysManagerOverviewCPU()+" card")
+				overviewMissing(t, h.tester, name, m.SysManagerOverviewCard(m.SysManagerOverviewCPU()))
 				overviewMissing(t, h.tester, name, "0%")
 			},
 		},
@@ -588,7 +588,7 @@ func overviewBlockingCases() []overviewBlockingCase {
 				overviewFind(t, h.tester, name, m.SysManagerStatusError())
 				overviewFind(t, h.tester, name, m.SysManagerReasonNetwork())
 				overviewFind(t, h.tester, name, m.SysManagerRetry())
-				overviewMissing(t, h.tester, name, m.SysManagerOverviewCPU()+" card")
+				overviewMissing(t, h.tester, name, m.SysManagerOverviewCard(m.SysManagerOverviewCPU()))
 				overviewMissing(t, h.tester, name, "0%")
 			},
 		},
@@ -604,7 +604,7 @@ func overviewBlockingCases() []overviewBlockingCase {
 				overviewFind(t, h.tester, name, m.SysManagerStatusUnsupported())
 				overviewFind(t, h.tester, name, m.SysManagerReasonOS())
 				overviewMissing(t, h.tester, name, m.SysManagerRetry())
-				overviewMissing(t, h.tester, name, m.SysManagerOverviewCPU()+" card")
+				overviewMissing(t, h.tester, name, m.SysManagerOverviewCard(m.SysManagerOverviewCPU()))
 			},
 		},
 		{
@@ -620,7 +620,7 @@ func overviewBlockingCases() []overviewBlockingCase {
 				overviewFind(t, h.tester, name, m.SysManagerStatusUnavailable())
 				overviewFind(t, h.tester, name, m.SysManagerReasonNoExec())
 				overviewMissing(t, h.tester, name, m.SysManagerRetry())
-				overviewMissing(t, h.tester, name, m.SysManagerOverviewCPU()+" card")
+				overviewMissing(t, h.tester, name, m.SysManagerOverviewCard(m.SysManagerOverviewCPU()))
 				if opens, _, _ := h.transport.counts(); opens != 0 {
 					t.Fatalf("%s: a Telnet Host opened %d transports, want none", name, opens)
 				}
@@ -642,7 +642,7 @@ func overviewBlockingCases() []overviewBlockingCase {
 				overviewFind(t, h.tester, name, m.SysManagerStatusUnavailable())
 				overviewFind(t, h.tester, name, m.SysManagerReasonNoExec())
 				overviewMissing(t, h.tester, name, m.SysManagerRetry())
-				overviewMissing(t, h.tester, name, m.SysManagerOverviewCPU()+" card")
+				overviewMissing(t, h.tester, name, m.SysManagerOverviewCard(m.SysManagerOverviewCPU()))
 				if commands := h.transport.received(); len(commands) != 0 {
 					t.Fatalf("%s: a single-channel Host ran %d exec commands, want none: %q",
 						name, len(commands), commands)
@@ -719,7 +719,7 @@ func TestSysManagerOverviewCachedCardsSurviveAFailedRefreshEverywhere(t *testing
 					}
 
 					m := locales.In(locale)
-					card := overviewFind(t, h.tester, name, m.SysManagerOverviewCPU()+" card")
+					card := overviewFind(t, h.tester, name, m.SysManagerOverviewCard(m.SysManagerOverviewCPU()))
 					overviewFind(t, h.tester, name, "37%")
 					overviewFind(t, h.tester, name, m.SysManagerReasonNetwork())
 					retry := overviewFind(t, h.tester, name, m.SysManagerRetry())
@@ -777,7 +777,7 @@ func TestSysManagerOverviewUnknownCPUAndDeltaEverywhere(t *testing.T) {
 					}
 
 					m := locales.In(locale)
-					card := overviewFind(t, h.tester, name, m.SysManagerOverviewCPU()+" card")
+					card := overviewFind(t, h.tester, name, m.SysManagerOverviewCard(m.SysManagerOverviewCPU()))
 					dash := overviewFind(t, h.tester, name, m.SysManagerUnknown())
 					if !overviewInside(card, dash) {
 						t.Fatalf("%s: the unknown CPU dash %+v is outside the card %+v",
@@ -785,8 +785,8 @@ func TestSysManagerOverviewUnknownCPUAndDeltaEverywhere(t *testing.T) {
 					}
 					overviewMissing(t, h.tester, name, "0%")
 					overviewFind(t, h.tester, name, m.SysManagerOverviewCores(2))
-					overviewFind(t, h.tester, name, m.SysManagerOverviewCPU()+" gauge")
-					overviewFind(t, h.tester, name, m.SysManagerOverviewCPU()+" history")
+					overviewFind(t, h.tester, name, m.SysManagerOverviewGauge(m.SysManagerOverviewCPU()))
+					overviewFind(t, h.tester, name, m.SysManagerOverviewHistory(m.SysManagerOverviewCPU()))
 					if history := h.manager.CPUHistory(); len(history) != 0 {
 						t.Fatalf("%s: history for an unknown CPU = %v, want none", name, history)
 					}
@@ -859,6 +859,89 @@ func TestSysManagerOverviewStatusAgeComesFromSampledAt(t *testing.T) {
 						name, statsCalls)
 				}
 			})
+		}
+	}
+}
+
+// TestSysManagerOverviewSidePanelSampleAge proves the side panel's status row
+// carries the Stats Sample age wherever the panel has room for it: the
+// 280-DIP minimum leaves the row to the status, interval, and Refresh, while
+// the normal 360-DIP panel shows the age beside the status, in both Interface
+// Styles and en and zh-CN.
+func TestSysManagerOverviewSidePanelSampleAge(t *testing.T) {
+	const normalWidth float32 = 360
+	for _, style := range overviewStyles {
+		for _, locale := range overviewLocales {
+			name := fmt.Sprintf("side-panel/%s/%s", style.name, locale)
+			t.Run(name, func(t *testing.T) {
+				overviewUseStyle(t, style.style)
+				h := newOverviewHarness(t, overviewSidePanel, locale,
+					newOverviewTransport(overviewDarwin37Reply))
+				overviewWaitState(t, h, "the live sample", overviewLive)
+				m := locales.In(locale)
+				age := m.SysManagerUpdatedSeconds(int(overviewSampleAge / time.Second))
+
+				// The default harness pins the 280-DIP minimum, where the age is
+				// omitted rather than crowding the row.
+				overviewMissing(t, h.tester, name, age)
+
+				*h.shell.FilesWidth(overviewWidth) = normalWidth
+				bounds := ui.Rect{X: 0, Y: 0, W: normalWidth, H: overviewHeight}
+				overviewFrameUntil(t, h.tester, "the normal panel's sample age", func() bool {
+					rect, ok := h.tester.Find(age)
+					return ok && rect.W > 0 && rect.H > 0 && overviewInside(bounds, rect)
+				})
+				status := overviewFind(t, h.tester, name, m.SysManagerStatusLive())
+				ageRect := overviewFind(t, h.tester, name, age)
+				if ageRect.Y < status.Y-1 || ageRect.Y+ageRect.H > status.Y+status.H+1 {
+					t.Fatalf("%s: the age %+v is not on the status row %+v", name, ageRect, status)
+				}
+			})
+		}
+	}
+}
+
+// TestSysManagerOverviewCachedErrorKeepsSampleAge proves a failed refresh with
+// a cached Stats Sample keeps the sample's age beside the inline reason, on
+// the full page and in the normal-width side panel, in en and zh-CN.
+func TestSysManagerOverviewCachedErrorKeepsSampleAge(t *testing.T) {
+	const normalWidth float32 = 360
+	for _, surface := range overviewSurfaces {
+		for _, style := range overviewStyles {
+			for _, locale := range overviewLocales {
+				name := fmt.Sprintf("%s/%s/%s", surface, style.name, locale)
+				t.Run(name, func(t *testing.T) {
+					overviewUseStyle(t, style.style)
+					transport := newOverviewTransport(overviewDarwin37Reply)
+					h := newOverviewHarness(t, surface, locale, transport)
+					overviewWaitState(t, h, "the live sample", overviewLive)
+
+					transport.setExecError(&hoststats.Error{
+						Reason: hoststats.ReasonNetwork,
+						Cause:  errors.New("connection reset"),
+					})
+					h.clock.Advance(5 * time.Second)
+					h.manager.Refresh()
+					overviewWaitState(t, h, "the cached inline error", func(state appsysmanager.TabState) bool {
+						return state.Status == appsysmanager.StatusError &&
+							!state.Stats.SampledAt.IsZero()
+					})
+
+					m := locales.In(locale)
+					overviewFind(t, h.tester, name, m.SysManagerReasonNetwork())
+					overviewFind(t, h.tester, name,
+						m.SysManagerOverviewCard(m.SysManagerOverviewCPU()))
+					if surface == overviewSidePanel {
+						*h.shell.FilesWidth(overviewWidth) = normalWidth
+					}
+					// The age names the cached sample, not the failed refresh.
+					age := m.SysManagerUpdatedSeconds(int(overviewSampleAge / time.Second))
+					overviewFrameUntil(t, h.tester, "the cached sample's age", func() bool {
+						rect, ok := h.tester.Find(age)
+						return ok && rect.W > 0 && rect.H > 0
+					})
+				})
+			}
 		}
 	}
 }

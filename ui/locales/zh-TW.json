@@ -3212,6 +3212,96 @@
       }
     }
   },
+  "sysManagerOverviewCard": "{name}卡片",
+  "@sysManagerOverviewCard": {
+    "description": "The accessible name of one Overview metric card, naming the metric.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "CPU"
+      }
+    }
+  },
+  "sysManagerOverviewGauge": "{name}儀表",
+  "@sysManagerOverviewGauge": {
+    "description": "The accessible name of a metric card's gauge.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "CPU"
+      }
+    }
+  },
+  "sysManagerOverviewHistory": "{name}歷史",
+  "@sysManagerOverviewHistory": {
+    "description": "The accessible name of a metric card's sparkline.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "CPU"
+      }
+    }
+  },
+  "sysManagerOverviewLine": "{name}列",
+  "@sysManagerOverviewLine": {
+    "description": "The accessible name of the Disk I/O row.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "磁碟 I/O"
+      }
+    }
+  },
+  "sysManagerOverviewPills": "{name}資訊",
+  "@sysManagerOverviewPills": {
+    "description": "The accessible name of the Overview's information pills.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "資訊"
+      }
+    }
+  },
+  "sysManagerOverviewGrid": "{name}網格",
+  "@sysManagerOverviewGrid": {
+    "description": "The accessible name of the per-core grid.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "CPU 核心"
+      }
+    }
+  },
+  "sysManagerOverviewUsage": "{name}使用率",
+  "@sysManagerOverviewUsage": {
+    "description": "The accessible name of one usage bar, naming what it measures.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "C1"
+      }
+    }
+  },
+  "sysManagerOverviewList": "{name}清單",
+  "@sysManagerOverviewList": {
+    "description": "The accessible name of one Overview section's list.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "磁碟"
+      }
+    }
+  },
+  "sysManagerOverviewMemoryBar": "{name}記憶體",
+  "@sysManagerOverviewMemoryBar": {
+    "description": "The accessible name of a process's memory bar.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "postgres"
+      }
+    }
+  },
   "sysManagerOverviewDiskIO": "磁碟 I/O",
   "sysManagerOverviewRead": "讀取",
   "sysManagerOverviewWrite": "寫入",

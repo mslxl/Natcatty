@@ -24,3 +24,8 @@ pre-1.0 MyGo churn at the edge, at the cost of slightly more interface declarati
   depend on it, while `domain` and `application` may not.
 - `cmd/natcatty-mcp` and `internal/mcp` form a separate process boundary and must
   not import `application`; they communicate through `internal/adapters/mcprpc`.
+- A narrow, UI-free application package may be shared by several application
+  contexts when the spec makes it their single source of truth;
+  `application/hoststats` is shared by `application/monitor` and
+  `application/sysmanager`. The architecture test names each such package
+  explicitly rather than allowing application-to-application imports in general.
