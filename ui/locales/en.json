@@ -4191,6 +4191,7 @@
   "sysManagerHost": "Host",
   "sysManagerRefresh": "Refresh",
   "sysManagerRefreshNow": "Refresh now",
+  "sysManagerRetry": "Retry",
   "sysManagerSeconds": "{seconds}s",
   "@sysManagerSeconds": {
     "description": "The refresh interval in seconds.",
@@ -4210,6 +4211,7 @@
   "sysManagerStatusLive": "Live",
   "sysManagerStatusLogin": "Sign in",
   "sysManagerStatusError": "Error",
+  "sysManagerStatusEmpty": "No data",
   "sysManagerStatusUnsupported": "Unsupported",
   "sysManagerStatusUnavailable": "Unavailable",
   "sysManagerReasonHostKey": "Host key not trusted",
@@ -4221,6 +4223,9 @@
   "sysManagerReasonInternal": "System manager error",
   "sysManagerReasonUnsupported": "Connection unsupported",
   "sysManagerReasonPermission": "Permission denied",
+  "sysManagerReasonNoExec": "This Host has no exec channel for system data.",
+  "sysManagerReasonNoData": "The Host returned no system data.",
+  "sysManagerReasonMissingCommand": "A command needed for system data is not available on this Host.",
   "sysManagerReasonMissingProcesses": "ps and top are not available on this Host.",
   "sysManagerReasonMissingPorts": "ss, netstat, and lsof are not available on this Host.",
   "sysManagerReasonMissingSystemctl": "systemctl is not available on this Host.",
@@ -4283,6 +4288,14 @@
   "sysManagerPortHint": "Select a listening port to signal its owner.",
   "sysManagerServiceHint": "Select a unit to start, stop, or restart it.",
   "sysManagerPid": "PID",
+  "sysManagerPpid": "PPID",
+  "sysManagerRunningOnly": "Running only",
+  "sysManagerFilterAll": "All",
+  "sysManagerFilterTCP": "TCP",
+  "sysManagerFilterUDP": "UDP",
+  "sysManagerFilterRunning": "Running",
+  "sysManagerFilterFailed": "Failed",
+  "sysManagerFilterInactive": "Inactive",
   "sysManagerUser": "User",
   "sysManagerCPU": "CPU",
   "sysManagerMemory": "MEM",
@@ -4472,6 +4485,7 @@
   "sysManagerOverviewSwap": "Swap",
   "sysManagerOverviewDisk": "Disk",
   "sysManagerOverviewEmpty": "No system overview data yet.",
+  "sysManagerOverviewLoading": "Loading system overview…",
   "sysManagerOverviewUsedOf": "{used} / {total}",
   "@sysManagerOverviewUsedOf": {
     "description": "A used amount beside its total.",
@@ -4537,6 +4551,51 @@
   "sysManagerMoveTabRight": "Move tab right",
   "@sysManagerMoveTabRight": {
     "description": "Moves the active tab one place toward the end.",
+    "placeholders": {}
+  },
+  "sysManagerSystemTabs": "System tabs",
+  "@sysManagerSystemTabs": {
+    "description": "The accessible label of the System manager's tab strip.",
+    "placeholders": {}
+  },
+  "sysManagerShowTab": "Show",
+  "@sysManagerShowTab": {
+    "description": "Shows a hidden tab in the tab strip.",
+    "placeholders": {}
+  },
+  "sysManagerCollapseTab": "Collapse",
+  "@sysManagerCollapseTab": {
+    "description": "Collapses a tab so it appears in the Collapsed tabs menu.",
+    "placeholders": {}
+  },
+  "sysManagerHideTab": "Hide",
+  "@sysManagerHideTab": {
+    "description": "Hides a tab from the tab strip and the Collapsed tabs menu.",
+    "placeholders": {}
+  },
+  "sysManagerMoveTabEarlier": "Move earlier",
+  "@sysManagerMoveTabEarlier": {
+    "description": "Moves the active tab one place toward the front.",
+    "placeholders": {}
+  },
+  "sysManagerMoveTabLater": "Move later",
+  "@sysManagerMoveTabLater": {
+    "description": "Moves the active tab one place toward the end.",
+    "placeholders": {}
+  },
+  "sysManagerResetLayout": "Reset layout",
+  "@sysManagerResetLayout": {
+    "description": "Restores the tab order and shows every tab.",
+    "placeholders": {}
+  },
+  "sysManagerCollapsedTabs": "Collapsed tabs",
+  "@sysManagerCollapsedTabs": {
+    "description": "The heading of the menu listing collapsed tabs.",
+    "placeholders": {}
+  },
+  "sysManagerMoreTabs": "More tabs",
+  "@sysManagerMoreTabs": {
+    "description": "The label of the trigger opening the Collapsed tabs menu.",
     "placeholders": {}
   },
   "sysManagerTabTmux": "tmux",
@@ -4767,6 +4826,35 @@
   "sysManagerOverviewResources": "Resources",
   "sysManagerPortOwnerUnknown": "Unknown process",
   "sysManagerOverviewCoresLabel": "Cores",
+  "sysManagerOverviewNetwork": "Network",
+  "sysManagerOverviewNetworkSection": "Network interfaces",
+  "sysManagerOverviewNetworkDetail": "RX {rx} · TX {tx}",
+  "@sysManagerOverviewNetworkDetail": {
+    "description": "The Network card's receive and transmit rates.",
+    "placeholders": {
+      "rx": {
+        "type": "String",
+        "example": "1.2 MiB/s"
+      },
+      "tx": {
+        "type": "String",
+        "example": "300 KiB/s"
+      }
+    }
+  },
+  "sysManagerOverviewDiskIO": "Disk I/O",
+  "sysManagerOverviewRead": "Read",
+  "sysManagerOverviewWrite": "Write",
+  "sysManagerOverviewRX": "RX",
+  "sysManagerOverviewTX": "TX",
+  "sysManagerOverviewNoData": "No data",
+  "sysManagerOverviewNoDiskData": "No disk data",
+  "sysManagerOverviewNoInterfaceData": "No interface data",
+  "sysManagerOverviewNoProcessData": "No process data",
+  "sysManagerOverviewCoresSection": "CPU cores",
+  "sysManagerOverviewDisksSection": "Disks",
+  "sysManagerOverviewProcessesSection": "Top processes",
+  "sysManagerOverviewInfo": "Info",
   "vaultHostMoshServerPath": "mosh-server path",
   "vaultHostMoshServerPathHint": "Remote mosh-server binary. Leave blank to use the Host's PATH.",
   "vaultHostMoshRestrictionHint": "Mosh Sessions cannot use jump Hosts or proxies.",

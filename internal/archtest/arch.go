@@ -53,7 +53,7 @@ func checkImport(pkg, imp string) string {
 		case "domain":
 			// Ports and use cases speak the shared domain model.
 		case "application":
-			if !sameApplicationContext(pkg, imported) {
+			if !sameApplicationContext(pkg, imported) && !sharedApplicationPackages[imported] {
 				return "application may import only domain and its own context's ports"
 			}
 		default:
@@ -96,6 +96,13 @@ func packageLayer(pkg string) string {
 		return pkg[:i]
 	}
 	return pkg
+}
+
+// sharedApplicationPackages are application packages every context may use.
+// They carry shared rules, not use-case state or consumer-owned ports, so the
+// one-source requirement they satisfy does not create a context dependency.
+var sharedApplicationPackages = map[string]bool{
+	"application/hoststats": true,
 }
 
 // sameApplicationContext reports whether two application packages belong to

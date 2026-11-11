@@ -10,6 +10,10 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
+// sidePadding is the inset between the side panel's edge and the System
+// Tool's content. The tab strip measures against the width inside it.
+const sidePadding float32 = 8
+
 // ShowHost points the side panel's System tool at a Session's Host and starts
 // sampling it, as the original's System tool follows the Session it sits in.
 // A Host added to the Vault since the last load is found by reloading; a
@@ -17,6 +21,9 @@ import (
 func (s *State) ShowHost(id string) {
 	if s.active && id == s.sideHost {
 		return
+	}
+	if s.hostID != id {
+		s.resetHistory()
 	}
 	s.sideHost = id
 	if !s.active {
@@ -45,25 +52,27 @@ func (s *State) Hide() {
 }
 
 // SideView is the System tool of a Session's side panel: the System manager
-// for the Session's own Host, so it has no Host picker. The status and the
-// refresh controls sit above the tabs, which scroll sideways in the narrow
-// panel.
-func SideView(s *State) func(*ui.Context) {
+// for the Session's own Host, so it has no Host picker. width is the panel's
+// width in DIPs; the status, interval, and Refresh sit above the tabs, which
+// measure the panel's inner width so they can drop their labels together or
+// scroll at the narrowest panel.
+func SideView(s *State, width float32) func(*ui.Context) {
 	s.compact = true
+	innerWidth := max(0, width-2*sidePadding)
 	return func(c *ui.Context) {
 		s.Flush()
 		m := locales.In(c.Locale())
 		t := c.Theme()
 
-		ui.Column(c).Fill().MinWidth(0).Padding(8).Gap(surfaceGap).Children(func() {
+		ui.Column(c).Fill().MinWidth(0).Padding(sidePadding).Gap(surfaceGap).Children(func() {
 			if _, ok := s.CurrentHost(); !ok || s.HostID() == "" {
 				emptyState(c, m.SidePanelSystemNoHost(), t)
 				return
 			}
 			state := s.TabState(s.Tab())
 			// One row however narrow the panel: the status, the interval, and
-			// Refresh as an icon. The tab layout stays on the System manager
-			// page, which owns it.
+			// Refresh as an icon. The tab layout and the Collapsed Tabs menu
+			// follow the tabs in the strip below.
 			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
 				text, color := statusText(m, state, t)
 				dot := color
@@ -80,8 +89,8 @@ func SideView(s *State) func(*ui.Context) {
 			if notice := actionNotice(s, m); notice != "" {
 				ui.Text(c, notice).FontSize(kit.M(c).Font.Footnote).TextColor(actionNoticeColor(s, t))
 			}
-			tabs(c, s, m)
-			tabContent(c, s, m, t)
+			tabs(c, s, m, innerWidth)
+			tabContent(c, s, m, t, width)
 		})
 		confirmation(c, s, m)
 	}

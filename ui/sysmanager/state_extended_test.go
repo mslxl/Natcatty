@@ -278,11 +278,11 @@ func TestTabVisibilityAndOrderPersist(t *testing.T) {
 	}
 	state.SetTab(appsysmanager.TabDocker)
 
-	// Hiding the active tab moves to the first visible one.
+	// Hiding the active tab moves to the nearest visible one.
 	if err := state.SetTabVisible(appsysmanager.TabDocker, false); err != nil {
 		t.Fatalf("hide active tab: %v", err)
 	}
-	if state.Tab() != appsysmanager.TabOverview {
+	if state.Tab() != appsysmanager.TabServices {
 		t.Errorf("active tab after hiding it = %q", state.Tab())
 	}
 	if err := state.SetTabVisible(appsysmanager.TabOverview, false); err != nil {

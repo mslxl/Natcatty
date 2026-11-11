@@ -2561,6 +2561,7 @@
   "sysManagerHost": "Host",
   "sysManagerRefresh": "Actualizar",
   "sysManagerRefreshNow": "Actualizar ahora",
+  "sysManagerRetry": "Reintentar",
   "sysManagerSeconds": "{seconds} s",
   "@sysManagerSeconds": {
     "description": "The refresh interval in seconds.",
@@ -2580,6 +2581,7 @@
   "sysManagerStatusLive": "En vivo",
   "sysManagerStatusLogin": "Iniciar sesión",
   "sysManagerStatusError": "Error",
+  "sysManagerStatusEmpty": "Sin datos",
   "sysManagerStatusUnsupported": "No compatible",
   "sysManagerStatusUnavailable": "No disponible",
   "sysManagerReasonHostKey": "Clave del Host no confiable",
@@ -2591,6 +2593,9 @@
   "sysManagerReasonInternal": "Error del administrador del sistema",
   "sysManagerReasonUnsupported": "Conexión no compatible",
   "sysManagerReasonPermission": "Permiso denegado",
+  "sysManagerReasonNoExec": "Este Host no tiene un canal exec para los datos del sistema.",
+  "sysManagerReasonNoData": "El Host no devolvió datos del sistema.",
+  "sysManagerReasonMissingCommand": "Falta en este Host un comando necesario para los datos del sistema.",
   "sysManagerReasonMissingProcesses": "ps y top no están disponibles en este Host.",
   "sysManagerReasonMissingPorts": "ss, netstat y lsof no están disponibles en este Host.",
   "sysManagerReasonMissingSystemctl": "systemctl no está disponible en este Host.",
@@ -2653,6 +2658,14 @@
   "sysManagerPortHint": "Selecciona un puerto en escucha para señalizar su proceso.",
   "sysManagerServiceHint": "Selecciona una unidad para iniciarla, detenerla o reiniciarla.",
   "sysManagerPid": "PID",
+  "sysManagerPpid": "PPID",
+  "sysManagerRunningOnly": "Solo en ejecución",
+  "sysManagerFilterAll": "Todos",
+  "sysManagerFilterTCP": "TCP",
+  "sysManagerFilterUDP": "UDP",
+  "sysManagerFilterRunning": "En ejecución",
+  "sysManagerFilterFailed": "Fallido",
+  "sysManagerFilterInactive": "Inactivo",
   "sysManagerUser": "Usuario",
   "sysManagerCPU": "CPU",
   "sysManagerMemory": "MEM",
@@ -2842,6 +2855,7 @@
   "sysManagerOverviewSwap": "Swap",
   "sysManagerOverviewDisk": "Disco",
   "sysManagerOverviewEmpty": "Aún no hay datos del resumen del sistema.",
+  "sysManagerOverviewLoading": "Cargando el resumen del sistema…",
   "sysManagerOverviewUsedOf": "{used} / {total}",
   "@sysManagerOverviewUsedOf": {
     "description": "A used amount beside its total.",
@@ -2907,6 +2921,51 @@
   "sysManagerMoveTabRight": "Mover pestaña a la derecha",
   "@sysManagerMoveTabRight": {
     "description": "Moves the active tab one place toward the end.",
+    "placeholders": {}
+  },
+  "sysManagerSystemTabs": "Pestañas del sistema",
+  "@sysManagerSystemTabs": {
+    "description": "The accessible label of the System manager's tab strip.",
+    "placeholders": {}
+  },
+  "sysManagerShowTab": "Mostrar",
+  "@sysManagerShowTab": {
+    "description": "Shows a hidden tab in the tab strip.",
+    "placeholders": {}
+  },
+  "sysManagerCollapseTab": "Contraer",
+  "@sysManagerCollapseTab": {
+    "description": "Collapses a tab so it appears in the Collapsed tabs menu.",
+    "placeholders": {}
+  },
+  "sysManagerHideTab": "Ocultar",
+  "@sysManagerHideTab": {
+    "description": "Hides a tab from the tab strip and the Collapsed tabs menu.",
+    "placeholders": {}
+  },
+  "sysManagerMoveTabEarlier": "Mover antes",
+  "@sysManagerMoveTabEarlier": {
+    "description": "Moves the active tab one place toward the front.",
+    "placeholders": {}
+  },
+  "sysManagerMoveTabLater": "Mover después",
+  "@sysManagerMoveTabLater": {
+    "description": "Moves the active tab one place toward the end.",
+    "placeholders": {}
+  },
+  "sysManagerResetLayout": "Restablecer diseño",
+  "@sysManagerResetLayout": {
+    "description": "Restores the tab order and shows every tab.",
+    "placeholders": {}
+  },
+  "sysManagerCollapsedTabs": "Pestañas contraídas",
+  "@sysManagerCollapsedTabs": {
+    "description": "The heading of the menu listing collapsed tabs.",
+    "placeholders": {}
+  },
+  "sysManagerMoreTabs": "Más pestañas",
+  "@sysManagerMoreTabs": {
+    "description": "The label of the trigger opening the Collapsed tabs menu.",
     "placeholders": {}
   },
   "sysManagerTabTmux": "tmux",
@@ -3137,6 +3196,35 @@
   "sysManagerOverviewResources": "Recursos",
   "sysManagerPortOwnerUnknown": "Proceso desconocido",
   "sysManagerOverviewCoresLabel": "Núcleos",
+  "sysManagerOverviewNetwork": "Red",
+  "sysManagerOverviewNetworkSection": "Interfaces de red",
+  "sysManagerOverviewNetworkDetail": "RX {rx} · TX {tx}",
+  "@sysManagerOverviewNetworkDetail": {
+    "description": "The Network card's receive and transmit rates.",
+    "placeholders": {
+      "rx": {
+        "type": "String",
+        "example": "1.2 MiB/s"
+      },
+      "tx": {
+        "type": "String",
+        "example": "300 KiB/s"
+      }
+    }
+  },
+  "sysManagerOverviewDiskIO": "E/S de disco",
+  "sysManagerOverviewRead": "Lectura",
+  "sysManagerOverviewWrite": "Escritura",
+  "sysManagerOverviewRX": "RX",
+  "sysManagerOverviewTX": "TX",
+  "sysManagerOverviewNoData": "Sin datos",
+  "sysManagerOverviewNoDiskData": "Sin datos de disco",
+  "sysManagerOverviewNoInterfaceData": "Sin datos de interfaces",
+  "sysManagerOverviewNoProcessData": "Sin datos de procesos",
+  "sysManagerOverviewCoresSection": "Núcleos de CPU",
+  "sysManagerOverviewDisksSection": "Discos",
+  "sysManagerOverviewProcessesSection": "Procesos principales",
+  "sysManagerOverviewInfo": "Información",
   "vaultHostMoshServerPath": "Ruta de mosh-server",
   "vaultHostMoshServerPathHint": "Binario remoto de mosh-server. Déjalo vacío para usar el PATH del Host.",
   "vaultHostMoshRestrictionHint": "Las sesiones Mosh no pueden usar Hosts de salto ni proxies.",

@@ -2561,6 +2561,7 @@
   "sysManagerHost": "主機",
   "sysManagerRefresh": "重新整理間隔",
   "sysManagerRefreshNow": "立即重新整理",
+  "sysManagerRetry": "重試",
   "sysManagerSeconds": "{seconds} 秒",
   "@sysManagerSeconds": {
     "description": "The refresh interval in seconds.",
@@ -2580,6 +2581,7 @@
   "sysManagerStatusLive": "已連線",
   "sysManagerStatusLogin": "登入",
   "sysManagerStatusError": "錯誤",
+  "sysManagerStatusEmpty": "無資料",
   "sysManagerStatusUnsupported": "不支援",
   "sysManagerStatusUnavailable": "無法使用",
   "sysManagerReasonHostKey": "主機金鑰未受信任",
@@ -2591,6 +2593,9 @@
   "sysManagerReasonInternal": "系統管理員錯誤",
   "sysManagerReasonUnsupported": "不支援此連線",
   "sysManagerReasonPermission": "權限遭到拒絕",
+  "sysManagerReasonNoExec": "此主機沒有可用於系統資料的 exec 通道。",
+  "sysManagerReasonNoData": "主機未傳回系統資料。",
+  "sysManagerReasonMissingCommand": "此主機缺少系統資料所需的命令。",
   "sysManagerReasonMissingProcesses": "此主機上沒有 ps 和 top。",
   "sysManagerReasonMissingPorts": "此主機上沒有 ss、netstat 和 lsof。",
   "sysManagerReasonMissingSystemctl": "此主機上沒有 systemctl。",
@@ -2653,6 +2658,14 @@
   "sysManagerPortHint": "選擇一個監聽連接埠以向其程序傳送訊號。",
   "sysManagerServiceHint": "選擇一個單元以啟動、停止或重新啟動。",
   "sysManagerPid": "PID",
+  "sysManagerPpid": "PPID",
+  "sysManagerRunningOnly": "僅執行中",
+  "sysManagerFilterAll": "全部",
+  "sysManagerFilterTCP": "TCP",
+  "sysManagerFilterUDP": "UDP",
+  "sysManagerFilterRunning": "執行中",
+  "sysManagerFilterFailed": "失敗",
+  "sysManagerFilterInactive": "未活動",
   "sysManagerUser": "使用者",
   "sysManagerCPU": "CPU",
   "sysManagerMemory": "記憶體",
@@ -2842,6 +2855,7 @@
   "sysManagerOverviewSwap": "置換空間",
   "sysManagerOverviewDisk": "磁碟",
   "sysManagerOverviewEmpty": "尚無系統概覽資料。",
+  "sysManagerOverviewLoading": "正在載入系統概覽…",
   "sysManagerOverviewUsedOf": "{used} / {total}",
   "@sysManagerOverviewUsedOf": {
     "description": "A used amount beside its total.",
@@ -2907,6 +2921,51 @@
   "sysManagerMoveTabRight": "向右移動分頁",
   "@sysManagerMoveTabRight": {
     "description": "Moves the active tab one place toward the end.",
+    "placeholders": {}
+  },
+  "sysManagerSystemTabs": "系統分頁",
+  "@sysManagerSystemTabs": {
+    "description": "The accessible label of the System manager's tab strip.",
+    "placeholders": {}
+  },
+  "sysManagerShowTab": "顯示",
+  "@sysManagerShowTab": {
+    "description": "Shows a hidden tab in the tab strip.",
+    "placeholders": {}
+  },
+  "sysManagerCollapseTab": "收合",
+  "@sysManagerCollapseTab": {
+    "description": "Collapses a tab so it appears in the Collapsed tabs menu.",
+    "placeholders": {}
+  },
+  "sysManagerHideTab": "隱藏",
+  "@sysManagerHideTab": {
+    "description": "Hides a tab from the tab strip and the Collapsed tabs menu.",
+    "placeholders": {}
+  },
+  "sysManagerMoveTabEarlier": "往前移動",
+  "@sysManagerMoveTabEarlier": {
+    "description": "Moves the active tab one place toward the front.",
+    "placeholders": {}
+  },
+  "sysManagerMoveTabLater": "往後移動",
+  "@sysManagerMoveTabLater": {
+    "description": "Moves the active tab one place toward the end.",
+    "placeholders": {}
+  },
+  "sysManagerResetLayout": "重設版面配置",
+  "@sysManagerResetLayout": {
+    "description": "Restores the tab order and shows every tab.",
+    "placeholders": {}
+  },
+  "sysManagerCollapsedTabs": "已收合的分頁",
+  "@sysManagerCollapsedTabs": {
+    "description": "The heading of the menu listing collapsed tabs.",
+    "placeholders": {}
+  },
+  "sysManagerMoreTabs": "更多分頁",
+  "@sysManagerMoreTabs": {
+    "description": "The label of the trigger opening the Collapsed tabs menu.",
     "placeholders": {}
   },
   "sysManagerTabTmux": "tmux",
@@ -3137,6 +3196,35 @@
   "sysManagerOverviewResources": "資源",
   "sysManagerPortOwnerUnknown": "未知程序",
   "sysManagerOverviewCoresLabel": "核心",
+  "sysManagerOverviewNetwork": "網路",
+  "sysManagerOverviewNetworkSection": "網路介面",
+  "sysManagerOverviewNetworkDetail": "接收 {rx} · 傳送 {tx}",
+  "@sysManagerOverviewNetworkDetail": {
+    "description": "The Network card's receive and transmit rates.",
+    "placeholders": {
+      "rx": {
+        "type": "String",
+        "example": "1.2 MiB/s"
+      },
+      "tx": {
+        "type": "String",
+        "example": "300 KiB/s"
+      }
+    }
+  },
+  "sysManagerOverviewDiskIO": "磁碟 I/O",
+  "sysManagerOverviewRead": "讀取",
+  "sysManagerOverviewWrite": "寫入",
+  "sysManagerOverviewRX": "接收",
+  "sysManagerOverviewTX": "傳送",
+  "sysManagerOverviewNoData": "無資料",
+  "sysManagerOverviewNoDiskData": "無磁碟資料",
+  "sysManagerOverviewNoInterfaceData": "無介面資料",
+  "sysManagerOverviewNoProcessData": "無處理程序資料",
+  "sysManagerOverviewCoresSection": "CPU 核心",
+  "sysManagerOverviewDisksSection": "磁碟",
+  "sysManagerOverviewProcessesSection": "佔用最高的處理程序",
+  "sysManagerOverviewInfo": "資訊",
   "vaultHostMoshServerPath": "mosh-server 路徑",
   "vaultHostMoshServerPathHint": "遠端 mosh-server 執行檔。留空則使用主機的 PATH。",
   "vaultHostMoshRestrictionHint": "Mosh 工作階段不支援跳板主機或 Proxy。",

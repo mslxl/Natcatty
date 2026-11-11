@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/mslxl/natcatty/application/hoststats"
 )
 
 // The command templates mirror the original Electron system-manager bridge.
@@ -71,49 +73,10 @@ func servicesCommand() string {
 		`printf "%s\n" "__NC_SERVICES_END__"`
 }
 
-// overviewCommand reports the original's summary fields. Linux reads /proc
-// and df; macOS uses sysctl, ps, vm_stat, and df. Both emit one labelled line
-// so one parser serves them.
-func overviewCommand() string {
-	return `ostype=$(uname -s 2>/dev/null || echo Unknown); ` +
-		`if [ "$ostype" = "Darwin" ]; then ` + darwinOverview + `; ` +
-		`elif [ "$ostype" = "Linux" ]; then ` + linuxOverview + `; ` +
-		`else printf "MODE:unsupported|OS:%s\n" "$ostype"; fi`
-}
-
-const linuxOverview = `host=$(hostname 2>/dev/null || uname -n 2>/dev/null); ` +
-	`osname=$(awk -F= '/^PRETTY_NAME=/{gsub(/"/,"",$2);print $2;exit}' /etc/os-release 2>/dev/null); ` +
-	`[ -n "$osname" ] || osname=$(uname -s 2>/dev/null); ` +
-	`kernel=$(uname -r 2>/dev/null); ` +
-	`uptime=$(awk '{printf "%.0f",$1}' /proc/uptime 2>/dev/null); ` +
-	`load=$(awk '{print $1" "$2" "$3}' /proc/loadavg 2>/dev/null); ` +
-	`cores=$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null); ` +
-	`cpuraw=$(awk '/^cpu /{t=0;for(i=2;i<=NF;i++)t+=$i;printf "%d %d",t,$5}' /proc/stat 2>/dev/null); ` +
-	`mem=$(awk '/^MemTotal:/{t=$2}/^MemFree:/{f=$2}/^Buffers:/{b=$2}/^Cached:/{c=$2}/^SReclaimable:/{s=$2}END{if(t>0)printf "%d %d",(t-f-b-c-s)/1024,t/1024}' /proc/meminfo 2>/dev/null); ` +
-	`swap=$(awk '/^SwapTotal:/{t=$2}/^SwapFree:/{f=$2}END{if(t>0)printf "%d %d",(t-f)/1024,t/1024}' /proc/meminfo 2>/dev/null); ` +
-	`disk=$(df -Pk / 2>/dev/null | awk 'NR==2{printf "%.1f %.1f",$3/1048576,$2/1048576}'); ` +
-	`printf "MODE:linux|HOST:%s|OS:%s|KERNEL:%s|UPTIME:%s|LOAD:%s|CORES:%s|CPURAW:%s|MEM:%s|SWAP:%s|DISK:%s\n" ` +
-	`"$host" "$osname" "$kernel" "$uptime" "$load" "$cores" "$cpuraw" "$mem" "$swap" "$disk"`
-
-const darwinOverview = `host=$(hostname 2>/dev/null || uname -n 2>/dev/null); ` +
-	`osname=$(printf "%s %s" "$(sw_vers -productName 2>/dev/null)" "$(sw_vers -productVersion 2>/dev/null)" | sed 's/[[:space:]]*$//'); ` +
-	`kernel=$(uname -r 2>/dev/null); ` +
-	`bootsec=$(sysctl -n kern.boottime 2>/dev/null | awk -F'[ ,]+' '{for(i=1;i<=NF;i++){if($i=="sec"){print $(i+2);exit}}}'); ` +
-	`nowsec=$(date +%s 2>/dev/null || echo "0"); ` +
-	`uptime=$(awk -v n="$nowsec" -v b="$bootsec" 'BEGIN{if(n>0&&b>0)printf "%.0f",n-b}'); ` +
-	`load=$(sysctl -n vm.loadavg 2>/dev/null | tr -d '{}'); ` +
-	`cores=$(sysctl -n hw.logicalcpu 2>/dev/null || echo "1"); ` +
-	`cpuraw=$(ps -A -o %cpu= 2>/dev/null | awk '{s+=$1} END{printf "%.0f",s}'); ` +
-	`pagesize=$(sysctl -n hw.pagesize 2>/dev/null || echo "4096"); ` +
-	`memsize=$(sysctl -n hw.memsize 2>/dev/null || echo "0"); ` +
-	`mem=$(vm_stat 2>/dev/null | awk -v ps="$pagesize" -v total="$memsize" '/^Pages free:/{gsub(/[^0-9]/,"",$NF);free=$NF+0} /^Pages speculative:/{gsub(/[^0-9]/,"",$NF);spec=$NF+0} /^Pages inactive:/{gsub(/[^0-9]/,"",$NF);inact=$NF+0} /^Pages purgeable:/{gsub(/[^0-9]/,"",$NF);purg=$NF+0} END{used=int((total-(free+spec+inact+purg)*ps)/1048576); t=int(total/1048576); if(total>0)printf "%d %d",used,t}'); ` +
-	`swapraw=$(sysctl vm.swapusage 2>/dev/null); ` +
-	`swaptotal=$(echo "$swapraw" | awk '{for(i=1;i<=NF;i++){if($i=="total"&&$(i+1)=="="){v=$(i+2);m=1;if(v~/G/)m=1024;gsub(/[MmGg]/,"",v);st=v*m}};printf "%.0f",st+0}'); ` +
-	`swapused=$(echo "$swapraw" | awk '{for(i=1;i<=NF;i++){if($i=="used"&&$(i+1)=="="){v=$(i+2);m=1;if(v~/G/)m=1024;gsub(/[MmGg]/,"",v);su=v*m}};printf "%.0f",su+0}'); ` +
-	`swap="$swapused $swaptotal"; ` +
-	`disk=$(df -kP / 2>/dev/null | awk 'NR==2{printf "%.1f %.1f",$3/1048576,$2/1048576}'); ` +
-	`printf "MODE:darwin|HOST:%s|OS:%s|KERNEL:%s|UPTIME:%s|LOAD:%s|CORES:%s|CPURAW:%s|MEM:%s|SWAP:%s|DISK:%s\n" ` +
-	`"$host" "$osname" "$kernel" "$uptime" "$load" "$cores" "$cpuraw" "$mem" "$swap" "$disk"`
+// overviewCommand returns the shared Host Stats Sample command. The
+// monitoring surface sends the same template, so the Overview and the monitor
+// read one command and one parser.
+func overviewCommand() string { return hoststats.StatsCommand() }
 
 // tmuxSessionsCommand lists sessions with the original's tab-separated
 // fields, falling back to the plain list on an older tmux. A missing server

@@ -20546,6 +20546,16 @@ func (msgs Messages) SysManagerRefreshNow() string {
 	return Catalog.Format(msgs.locale, "sysManagerRefreshNow", nil)
 }
 
+// SysManagerRetry says "Retry"
+// in the language the app shows.
+func SysManagerRetry() string { return In(i18n.Locale()).SysManagerRetry() }
+
+// SysManagerRetry says "Retry"
+// in the language of msgs.
+func (msgs Messages) SysManagerRetry() string {
+	return Catalog.Format(msgs.locale, "sysManagerRetry", nil)
+}
+
 // SysManagerSeconds says "{seconds}s"
 // in the language the app shows.
 //
@@ -20648,6 +20658,16 @@ func SysManagerStatusError() string { return In(i18n.Locale()).SysManagerStatusE
 // in the language of msgs.
 func (msgs Messages) SysManagerStatusError() string {
 	return Catalog.Format(msgs.locale, "sysManagerStatusError", nil)
+}
+
+// SysManagerStatusEmpty says "No data"
+// in the language the app shows.
+func SysManagerStatusEmpty() string { return In(i18n.Locale()).SysManagerStatusEmpty() }
+
+// SysManagerStatusEmpty says "No data"
+// in the language of msgs.
+func (msgs Messages) SysManagerStatusEmpty() string {
+	return Catalog.Format(msgs.locale, "sysManagerStatusEmpty", nil)
 }
 
 // SysManagerStatusUnsupported says "Unsupported"
@@ -20758,6 +20778,38 @@ func SysManagerReasonPermission() string { return In(i18n.Locale()).SysManagerRe
 // in the language of msgs.
 func (msgs Messages) SysManagerReasonPermission() string {
 	return Catalog.Format(msgs.locale, "sysManagerReasonPermission", nil)
+}
+
+// SysManagerReasonNoExec says "This Host has no exec channel for system data."
+// in the language the app shows.
+func SysManagerReasonNoExec() string { return In(i18n.Locale()).SysManagerReasonNoExec() }
+
+// SysManagerReasonNoExec says "This Host has no exec channel for system data."
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonNoExec() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonNoExec", nil)
+}
+
+// SysManagerReasonNoData says "The Host returned no system data."
+// in the language the app shows.
+func SysManagerReasonNoData() string { return In(i18n.Locale()).SysManagerReasonNoData() }
+
+// SysManagerReasonNoData says "The Host returned no system data."
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonNoData() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonNoData", nil)
+}
+
+// SysManagerReasonMissingCommand says "A command needed for system data is not available on this Host."
+// in the language the app shows.
+func SysManagerReasonMissingCommand() string {
+	return In(i18n.Locale()).SysManagerReasonMissingCommand()
+}
+
+// SysManagerReasonMissingCommand says "A command needed for system data is not available on this Host."
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonMissingCommand() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonMissingCommand", nil)
 }
 
 // SysManagerReasonMissingProcesses says "ps and top are not available on this Host."
@@ -21044,6 +21096,86 @@ func SysManagerPid() string { return In(i18n.Locale()).SysManagerPid() }
 // in the language of msgs.
 func (msgs Messages) SysManagerPid() string {
 	return Catalog.Format(msgs.locale, "sysManagerPid", nil)
+}
+
+// SysManagerPpid says "PPID"
+// in the language the app shows.
+func SysManagerPpid() string { return In(i18n.Locale()).SysManagerPpid() }
+
+// SysManagerPpid says "PPID"
+// in the language of msgs.
+func (msgs Messages) SysManagerPpid() string {
+	return Catalog.Format(msgs.locale, "sysManagerPpid", nil)
+}
+
+// SysManagerRunningOnly says "Running only"
+// in the language the app shows.
+func SysManagerRunningOnly() string { return In(i18n.Locale()).SysManagerRunningOnly() }
+
+// SysManagerRunningOnly says "Running only"
+// in the language of msgs.
+func (msgs Messages) SysManagerRunningOnly() string {
+	return Catalog.Format(msgs.locale, "sysManagerRunningOnly", nil)
+}
+
+// SysManagerFilterAll says "All"
+// in the language the app shows.
+func SysManagerFilterAll() string { return In(i18n.Locale()).SysManagerFilterAll() }
+
+// SysManagerFilterAll says "All"
+// in the language of msgs.
+func (msgs Messages) SysManagerFilterAll() string {
+	return Catalog.Format(msgs.locale, "sysManagerFilterAll", nil)
+}
+
+// SysManagerFilterTCP says "TCP"
+// in the language the app shows.
+func SysManagerFilterTCP() string { return In(i18n.Locale()).SysManagerFilterTCP() }
+
+// SysManagerFilterTCP says "TCP"
+// in the language of msgs.
+func (msgs Messages) SysManagerFilterTCP() string {
+	return Catalog.Format(msgs.locale, "sysManagerFilterTCP", nil)
+}
+
+// SysManagerFilterUDP says "UDP"
+// in the language the app shows.
+func SysManagerFilterUDP() string { return In(i18n.Locale()).SysManagerFilterUDP() }
+
+// SysManagerFilterUDP says "UDP"
+// in the language of msgs.
+func (msgs Messages) SysManagerFilterUDP() string {
+	return Catalog.Format(msgs.locale, "sysManagerFilterUDP", nil)
+}
+
+// SysManagerFilterRunning says "Running"
+// in the language the app shows.
+func SysManagerFilterRunning() string { return In(i18n.Locale()).SysManagerFilterRunning() }
+
+// SysManagerFilterRunning says "Running"
+// in the language of msgs.
+func (msgs Messages) SysManagerFilterRunning() string {
+	return Catalog.Format(msgs.locale, "sysManagerFilterRunning", nil)
+}
+
+// SysManagerFilterFailed says "Failed"
+// in the language the app shows.
+func SysManagerFilterFailed() string { return In(i18n.Locale()).SysManagerFilterFailed() }
+
+// SysManagerFilterFailed says "Failed"
+// in the language of msgs.
+func (msgs Messages) SysManagerFilterFailed() string {
+	return Catalog.Format(msgs.locale, "sysManagerFilterFailed", nil)
+}
+
+// SysManagerFilterInactive says "Inactive"
+// in the language the app shows.
+func SysManagerFilterInactive() string { return In(i18n.Locale()).SysManagerFilterInactive() }
+
+// SysManagerFilterInactive says "Inactive"
+// in the language of msgs.
+func (msgs Messages) SysManagerFilterInactive() string {
+	return Catalog.Format(msgs.locale, "sysManagerFilterInactive", nil)
 }
 
 // SysManagerUser says "User"
@@ -21578,6 +21710,16 @@ func (msgs Messages) SysManagerOverviewEmpty() string {
 	return Catalog.Format(msgs.locale, "sysManagerOverviewEmpty", nil)
 }
 
+// SysManagerOverviewLoading says "Loading system overview…"
+// in the language the app shows.
+func SysManagerOverviewLoading() string { return In(i18n.Locale()).SysManagerOverviewLoading() }
+
+// SysManagerOverviewLoading says "Loading system overview…"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewLoading() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewLoading", nil)
+}
+
 // SysManagerOverviewUsedOf says "{used} / {total}"
 // in the language the app shows.
 //
@@ -21682,6 +21824,132 @@ func SysManagerMoveTabRight() string { return In(i18n.Locale()).SysManagerMoveTa
 // Moves the active tab one place toward the end.
 func (msgs Messages) SysManagerMoveTabRight() string {
 	return Catalog.Format(msgs.locale, "sysManagerMoveTabRight", nil)
+}
+
+// SysManagerSystemTabs says "System tabs"
+// in the language the app shows.
+//
+// The accessible label of the System manager's tab strip.
+func SysManagerSystemTabs() string { return In(i18n.Locale()).SysManagerSystemTabs() }
+
+// SysManagerSystemTabs says "System tabs"
+// in the language of msgs.
+//
+// The accessible label of the System manager's tab strip.
+func (msgs Messages) SysManagerSystemTabs() string {
+	return Catalog.Format(msgs.locale, "sysManagerSystemTabs", nil)
+}
+
+// SysManagerShowTab says "Show"
+// in the language the app shows.
+//
+// Shows a hidden tab in the tab strip.
+func SysManagerShowTab() string { return In(i18n.Locale()).SysManagerShowTab() }
+
+// SysManagerShowTab says "Show"
+// in the language of msgs.
+//
+// Shows a hidden tab in the tab strip.
+func (msgs Messages) SysManagerShowTab() string {
+	return Catalog.Format(msgs.locale, "sysManagerShowTab", nil)
+}
+
+// SysManagerCollapseTab says "Collapse"
+// in the language the app shows.
+//
+// Collapses a tab so it appears in the Collapsed tabs menu.
+func SysManagerCollapseTab() string { return In(i18n.Locale()).SysManagerCollapseTab() }
+
+// SysManagerCollapseTab says "Collapse"
+// in the language of msgs.
+//
+// Collapses a tab so it appears in the Collapsed tabs menu.
+func (msgs Messages) SysManagerCollapseTab() string {
+	return Catalog.Format(msgs.locale, "sysManagerCollapseTab", nil)
+}
+
+// SysManagerHideTab says "Hide"
+// in the language the app shows.
+//
+// Hides a tab from the tab strip and the Collapsed tabs menu.
+func SysManagerHideTab() string { return In(i18n.Locale()).SysManagerHideTab() }
+
+// SysManagerHideTab says "Hide"
+// in the language of msgs.
+//
+// Hides a tab from the tab strip and the Collapsed tabs menu.
+func (msgs Messages) SysManagerHideTab() string {
+	return Catalog.Format(msgs.locale, "sysManagerHideTab", nil)
+}
+
+// SysManagerMoveTabEarlier says "Move earlier"
+// in the language the app shows.
+//
+// Moves the active tab one place toward the front.
+func SysManagerMoveTabEarlier() string { return In(i18n.Locale()).SysManagerMoveTabEarlier() }
+
+// SysManagerMoveTabEarlier says "Move earlier"
+// in the language of msgs.
+//
+// Moves the active tab one place toward the front.
+func (msgs Messages) SysManagerMoveTabEarlier() string {
+	return Catalog.Format(msgs.locale, "sysManagerMoveTabEarlier", nil)
+}
+
+// SysManagerMoveTabLater says "Move later"
+// in the language the app shows.
+//
+// Moves the active tab one place toward the end.
+func SysManagerMoveTabLater() string { return In(i18n.Locale()).SysManagerMoveTabLater() }
+
+// SysManagerMoveTabLater says "Move later"
+// in the language of msgs.
+//
+// Moves the active tab one place toward the end.
+func (msgs Messages) SysManagerMoveTabLater() string {
+	return Catalog.Format(msgs.locale, "sysManagerMoveTabLater", nil)
+}
+
+// SysManagerResetLayout says "Reset layout"
+// in the language the app shows.
+//
+// Restores the tab order and shows every tab.
+func SysManagerResetLayout() string { return In(i18n.Locale()).SysManagerResetLayout() }
+
+// SysManagerResetLayout says "Reset layout"
+// in the language of msgs.
+//
+// Restores the tab order and shows every tab.
+func (msgs Messages) SysManagerResetLayout() string {
+	return Catalog.Format(msgs.locale, "sysManagerResetLayout", nil)
+}
+
+// SysManagerCollapsedTabs says "Collapsed tabs"
+// in the language the app shows.
+//
+// The heading of the menu listing collapsed tabs.
+func SysManagerCollapsedTabs() string { return In(i18n.Locale()).SysManagerCollapsedTabs() }
+
+// SysManagerCollapsedTabs says "Collapsed tabs"
+// in the language of msgs.
+//
+// The heading of the menu listing collapsed tabs.
+func (msgs Messages) SysManagerCollapsedTabs() string {
+	return Catalog.Format(msgs.locale, "sysManagerCollapsedTabs", nil)
+}
+
+// SysManagerMoreTabs says "More tabs"
+// in the language the app shows.
+//
+// The label of the trigger opening the Collapsed tabs menu.
+func SysManagerMoreTabs() string { return In(i18n.Locale()).SysManagerMoreTabs() }
+
+// SysManagerMoreTabs says "More tabs"
+// in the language of msgs.
+//
+// The label of the trigger opening the Collapsed tabs menu.
+func (msgs Messages) SysManagerMoreTabs() string {
+	return Catalog.Format(msgs.locale, "sysManagerMoreTabs", nil)
 }
 
 // SysManagerTabTmux says "tmux"
@@ -22390,6 +22658,184 @@ func SysManagerOverviewCoresLabel() string { return In(i18n.Locale()).SysManager
 // in the language of msgs.
 func (msgs Messages) SysManagerOverviewCoresLabel() string {
 	return Catalog.Format(msgs.locale, "sysManagerOverviewCoresLabel", nil)
+}
+
+// SysManagerOverviewNetwork says "Network"
+// in the language the app shows.
+func SysManagerOverviewNetwork() string { return In(i18n.Locale()).SysManagerOverviewNetwork() }
+
+// SysManagerOverviewNetwork says "Network"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewNetwork() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewNetwork", nil)
+}
+
+// SysManagerOverviewNetworkSection says "Network interfaces"
+// in the language the app shows.
+func SysManagerOverviewNetworkSection() string {
+	return In(i18n.Locale()).SysManagerOverviewNetworkSection()
+}
+
+// SysManagerOverviewNetworkSection says "Network interfaces"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewNetworkSection() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewNetworkSection", nil)
+}
+
+// SysManagerOverviewNetworkDetail says "RX {rx} · TX {tx}"
+// in the language the app shows.
+//
+// The Network card's receive and transmit rates.
+func SysManagerOverviewNetworkDetail(rx string, tx string) string {
+	return In(i18n.Locale()).SysManagerOverviewNetworkDetail(rx, tx)
+}
+
+// SysManagerOverviewNetworkDetail says "RX {rx} · TX {tx}"
+// in the language of msgs.
+//
+// The Network card's receive and transmit rates.
+func (msgs Messages) SysManagerOverviewNetworkDetail(rx string, tx string) string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewNetworkDetail", map[string]any{"rx": rx, "tx": tx})
+}
+
+// SysManagerOverviewDiskIO says "Disk I/O"
+// in the language the app shows.
+func SysManagerOverviewDiskIO() string { return In(i18n.Locale()).SysManagerOverviewDiskIO() }
+
+// SysManagerOverviewDiskIO says "Disk I/O"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewDiskIO() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewDiskIO", nil)
+}
+
+// SysManagerOverviewRead says "Read"
+// in the language the app shows.
+func SysManagerOverviewRead() string { return In(i18n.Locale()).SysManagerOverviewRead() }
+
+// SysManagerOverviewRead says "Read"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewRead() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewRead", nil)
+}
+
+// SysManagerOverviewWrite says "Write"
+// in the language the app shows.
+func SysManagerOverviewWrite() string { return In(i18n.Locale()).SysManagerOverviewWrite() }
+
+// SysManagerOverviewWrite says "Write"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewWrite() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewWrite", nil)
+}
+
+// SysManagerOverviewRX says "RX"
+// in the language the app shows.
+func SysManagerOverviewRX() string { return In(i18n.Locale()).SysManagerOverviewRX() }
+
+// SysManagerOverviewRX says "RX"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewRX() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewRX", nil)
+}
+
+// SysManagerOverviewTX says "TX"
+// in the language the app shows.
+func SysManagerOverviewTX() string { return In(i18n.Locale()).SysManagerOverviewTX() }
+
+// SysManagerOverviewTX says "TX"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewTX() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewTX", nil)
+}
+
+// SysManagerOverviewNoData says "No data"
+// in the language the app shows.
+func SysManagerOverviewNoData() string { return In(i18n.Locale()).SysManagerOverviewNoData() }
+
+// SysManagerOverviewNoData says "No data"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewNoData() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewNoData", nil)
+}
+
+// SysManagerOverviewNoDiskData says "No disk data"
+// in the language the app shows.
+func SysManagerOverviewNoDiskData() string { return In(i18n.Locale()).SysManagerOverviewNoDiskData() }
+
+// SysManagerOverviewNoDiskData says "No disk data"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewNoDiskData() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewNoDiskData", nil)
+}
+
+// SysManagerOverviewNoInterfaceData says "No interface data"
+// in the language the app shows.
+func SysManagerOverviewNoInterfaceData() string {
+	return In(i18n.Locale()).SysManagerOverviewNoInterfaceData()
+}
+
+// SysManagerOverviewNoInterfaceData says "No interface data"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewNoInterfaceData() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewNoInterfaceData", nil)
+}
+
+// SysManagerOverviewNoProcessData says "No process data"
+// in the language the app shows.
+func SysManagerOverviewNoProcessData() string {
+	return In(i18n.Locale()).SysManagerOverviewNoProcessData()
+}
+
+// SysManagerOverviewNoProcessData says "No process data"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewNoProcessData() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewNoProcessData", nil)
+}
+
+// SysManagerOverviewCoresSection says "CPU cores"
+// in the language the app shows.
+func SysManagerOverviewCoresSection() string {
+	return In(i18n.Locale()).SysManagerOverviewCoresSection()
+}
+
+// SysManagerOverviewCoresSection says "CPU cores"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewCoresSection() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewCoresSection", nil)
+}
+
+// SysManagerOverviewDisksSection says "Disks"
+// in the language the app shows.
+func SysManagerOverviewDisksSection() string {
+	return In(i18n.Locale()).SysManagerOverviewDisksSection()
+}
+
+// SysManagerOverviewDisksSection says "Disks"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewDisksSection() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewDisksSection", nil)
+}
+
+// SysManagerOverviewProcessesSection says "Top processes"
+// in the language the app shows.
+func SysManagerOverviewProcessesSection() string {
+	return In(i18n.Locale()).SysManagerOverviewProcessesSection()
+}
+
+// SysManagerOverviewProcessesSection says "Top processes"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewProcessesSection() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewProcessesSection", nil)
+}
+
+// SysManagerOverviewInfo says "Info"
+// in the language the app shows.
+func SysManagerOverviewInfo() string { return In(i18n.Locale()).SysManagerOverviewInfo() }
+
+// SysManagerOverviewInfo says "Info"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewInfo() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewInfo", nil)
 }
 
 // VaultHostMoshServerPath says "mosh-server path"

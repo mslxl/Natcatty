@@ -16,6 +16,7 @@ import (
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
+	"github.com/mslxl/natcatty/ui/layout"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -45,8 +46,8 @@ func View(s *State) func(*ui.Context) {
 				emptyState(c, m.SysManagerNoHostSelected(), t)
 				return
 			}
-			tabs(c, s, m)
-			tabContent(c, s, m, t)
+			tabs(c, s, m, layout.HomeContentWidth(c, true))
+			tabContent(c, s, m, t, layout.HomeContentWidth(c, true))
 		})
 		confirmation(c, s, m)
 	}
@@ -122,16 +123,18 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		// client: acceptance at a2d30004 measured the English Latency text 42
 		// DIPs past the client. They may shrink with an ellipsis rather than
 		// push either edge out.
-		if state.Status == appsysmanager.StatusLive && !state.At.IsZero() {
-			age := s.now().Sub(state.At)
-			if age < 2*time.Second {
-				age = 0
-			}
-			ui.Text(c, m.SysManagerUpdatedSeconds(int(age/time.Second))).
-				FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine().Shrink(1).MinWidth(0)
-			if state.Latency > 0 {
-				ui.Text(c, m.SysManagerLatency()+" "+m.SysManagerLatencyValue(int(state.Latency/time.Millisecond))).
+		if state.Status == appsysmanager.StatusLive {
+			if at := overviewSampledAt(state); !at.IsZero() {
+				age := s.now().Sub(at)
+				if age < 2*time.Second {
+					age = 0
+				}
+				ui.Text(c, m.SysManagerUpdatedSeconds(int(age/time.Second))).
 					FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine().Shrink(1).MinWidth(0)
+				if state.Latency > 0 {
+					ui.Text(c, m.SysManagerLatency()+" "+m.SysManagerLatencyValue(int(state.Latency/time.Millisecond))).
+						FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine().Shrink(1).MinWidth(0)
+				}
 			}
 		}
 	})
@@ -144,8 +147,8 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	}
 }
 
-// refreshControls are the refresh interval, Refresh now, and the tab-layout
-// menu.
+// refreshControls are the refresh interval and Refresh now. The tab layout
+// lives in the strip's trailing controls, beside the tabs it arranges.
 func refreshControls(c *ui.Context, s *State, m locales.Messages) {
 	choices := make([]string, 0, len(domainpreferences.SysManagerIntervalChoices))
 	for _, seconds := range domainpreferences.SysManagerIntervalChoices {
@@ -168,12 +171,13 @@ func refreshControls(c *ui.Context, s *State, m locales.Messages) {
 		s.Refresh()
 		c.Invalidate()
 	}
-	tabsMenu(c, s, m)
 }
 
-// tabsMenu exposes the persisted tab layout: show or hide a tab, and move the
-// active tab in the strip. Every change is saved by the preferences group, so
-// it survives a restart.
+// tabsMenu exposes the persisted tab layout: each tab can be shown, collapsed,
+// or hidden; the active tab moves among the visible tabs; and Reset layout
+// restores the seven-tab default. Every change is saved by the preferences
+// group, so it survives a restart and reaches the other surface. The overview
+// is always shown and its collapse and hide choices are disabled.
 func tabsMenu(c *ui.Context, s *State, m locales.Messages) {
 	// Key the button before it is built. Element.Key on a menu button rereads
 	// its identity after the menu's build was already registered for the
@@ -181,24 +185,81 @@ func tabsMenu(c *ui.Context, s *State, m locales.Messages) {
 	// label, yet clicking it opened nothing.
 	c.Key("sysmanager-tabs-layout")
 	kit.IconButton(c, icons.Columns, m.SysManagerTabsLayout()).Menu(func(menu *ui.Menu) {
-		for _, tab := range s.AllTabs() {
-			if menu.Item(tabLabel(m, tab)).
-				Checked(s.TabVisible(tab)).
-				Disabled(tab == appsysmanager.TabOverview).
-				Chosen() {
-				_ = s.SetTabVisible(tab, !s.TabVisible(tab))
-			}
+		for _, entry := range tabLayoutEntries(s) {
+			tab := entry.Tab
+			menu.Submenu(tabLabel(m, tab), func(sub *ui.Menu) {
+				if sub.Item(m.SysManagerShowTab()).Checked(entry.ShowChecked).Disabled(entry.ShowDisabled).Chosen() {
+					_ = s.SetTabVisible(tab, true)
+				}
+				if sub.Item(m.SysManagerCollapseTab()).Checked(entry.CollapseChecked).Disabled(entry.CollapseDisabled).Chosen() {
+					_ = s.SetTabCollapsed(tab, true)
+				}
+				if sub.Item(m.SysManagerHideTab()).Checked(entry.HideChecked).Disabled(entry.HideDisabled).Chosen() {
+					_ = s.SetTabVisible(tab, false)
+				}
+			})
 		}
 		menu.Separator()
 		index := s.TabIndex()
-		if menu.Item(m.SysManagerMoveTabLeft()).Disabled(index <= 0).Chosen() {
+		if menu.Item(m.SysManagerMoveTabEarlier()).Disabled(index <= 0).Chosen() {
 			s.MoveTab(-1)
 		}
-		if menu.Item(m.SysManagerMoveTabRight()).
+		if menu.Item(m.SysManagerMoveTabLater()).
 			Disabled(index >= len(s.Tabs())-1).Chosen() {
 			s.MoveTab(1)
 		}
+		menu.Separator()
+		if menu.Item(m.SysManagerResetLayout()).Chosen() {
+			s.ResetLayout()
+		}
 	})
+}
+
+// collapsedTabsMenu is the System Tab Strip's collapse-only overflow. It
+// lists exactly the Collapsed Tabs, and draws nothing at all when there are
+// none, so the strip never shows an empty collapse affordance. Choosing one
+// returns it to the visible strip and activates it.
+func collapsedTabsMenu(c *ui.Context, s *State, m locales.Messages) {
+	collapsed := s.Collapsed()
+	items := make([]kit.OverflowItem, 0, len(collapsed))
+	for _, tab := range collapsed {
+		items = append(items, kit.OverflowItem{
+			Key: string(tab), Label: tabLabel(m, tab), Icon: TabIcon(tab),
+		})
+	}
+	c.Key("sysmanager-collapsed-tabs")
+	kit.OverflowMenu(c, items, &s.collapsedOpen, kit.OverflowMenuOptions{
+		Label: m.SysManagerMoreTabs(),
+		Title: m.SysManagerCollapsedTabs(),
+		Icon:  icons.Ellipsis,
+	}, func(key string) {
+		_ = s.ShowCollapsedTab(appsysmanager.Tab(key))
+	})
+}
+
+// TabIcon maps each System Tab to the Lucide glyph the strip draws. It is the
+// mapping seam the shell layout tests assert: a headless tester cannot see an
+// icon's path, so the strip's decoration is checked here together with the
+// tab's accessible label and tooltip.
+// Docker has no Container glyph in the set, so it takes the deliberate
+// archive/layers mark for stacked images and containers.
+func TabIcon(tab appsysmanager.Tab) string {
+	switch tab {
+	case appsysmanager.TabProcesses:
+		return icons.List
+	case appsysmanager.TabPorts:
+		return icons.Network
+	case appsysmanager.TabServices:
+		return icons.Settings
+	case appsysmanager.TabTmux:
+		return icons.Terminal
+	case appsysmanager.TabDocker:
+		return icons.Archive
+	case appsysmanager.TabGPU:
+		return icons.Cpu
+	default:
+		return icons.Activity
+	}
 }
 
 func hostOptions(s *State) ([]string, map[string]string) {
@@ -220,33 +281,26 @@ func hostOptions(s *State) ([]string, map[string]string) {
 	return labels, byLabel
 }
 
-// tabStripHeight is the height of the scrolling tab strip: a tab's line plus
-// the tab padding.
-const tabStripHeight float32 = 32
-
-// tabStripBarRoom is the room under the tabs for the strip's scroll bar,
-// which shows while the pointer is over the strip and would otherwise cover
-// the labels.
-const tabStripBarRoom float32 = 10
-
-// tabs renders the tab strip. Seven tabs need more width than the 440-DIP
-// content column at the minimum window, so the strip scrolls sideways like the
-// shell's work-Tab strip and the browser panel's tab strip. The active tab is
-// scrolled fully into view when it changes or the window narrows, so its label
-// and hit target are never cut at either edge; inactive tabs clip at the
-// viewport edge as in the shell's strip.
-func tabs(c *ui.Context, s *State, m locales.Messages) {
+// tabs renders the System Tab Strip. The strip measures its whole labeled
+// form against width, trailing layout and Collapsed Tabs controls included;
+// when it does not fit, every tab turns icon-only at once. At the side panel's
+// narrowest width even that form scrolls, so the strip reveals the active tab
+// wholly and keeps the trailing controls outside the scroll. The layout menu
+// and the Collapsed Tabs menu follow the visible tabs.
+func tabs(c *ui.Context, s *State, m locales.Messages, width float32) {
 	visible := s.Tabs()
-	labels := make([]string, 0, len(visible))
+	items := make([]kit.IconTabItem, 0, len(visible))
 	for _, tab := range visible {
-		labels = append(labels, tabLabel(m, tab))
+		items = append(items, kit.IconTabItem{
+			Key: string(tab), Label: tabLabel(m, tab), Icon: TabIcon(tab),
+		})
 	}
 	index := s.TabIndex()
 	chosen := index
 	// A resize changes the room the strip has for its tabs. Reveal the active
 	// tab again so one chosen at a wide window does not stay half cut after
 	// the user narrows the window.
-	if width, _ := c.Size(); width > 0 {
+	if width > 0 {
 		if s.stripWidth > 0 && width != s.stripWidth {
 			s.revealTab = true
 		}
@@ -255,8 +309,26 @@ func tabs(c *ui.Context, s *State, m locales.Messages) {
 	reveal := s.revealTab
 	s.revealTab = false
 
-	ui.ScrollHorizontal(c).FillWidth().Height(tabStripHeight+tabStripBarRoom).Padding(0, 0, tabStripBarRoom, 0).
-		Shrink(0).Children(func() { kit.UnderlineTabs(c, &chosen, labels, reveal) })
+	control := kit.M(c).Control.Regular
+	trailingWidth := control
+	if len(s.Collapsed()) > 0 {
+		trailingWidth += kit.M(c).Space.Small + control
+	}
+	kit.IconTabs(c, items, &chosen, kit.IconTabsOptions{
+		Label:         m.SysManagerSystemTabs(),
+		Width:         width,
+		Reveal:        reveal,
+		TrailingWidth: trailingWidth,
+		Trailing: func() {
+			// Both controls share one trailing row: the outer strip lays out
+			// one trailing child, and the layout button and Collapsed Tabs
+			// trigger keep their own gap however many are shown.
+			ui.Row(c).Gap(kit.M(c).Space.Small).AlignItems(ui.Center).Shrink(0).Children(func() {
+				tabsMenu(c, s, m)
+				collapsedTabsMenu(c, s, m)
+			})
+		},
+	})
 
 	if chosen != index && chosen >= 0 && chosen < len(visible) {
 		s.SetTab(visible[chosen])
@@ -283,15 +355,11 @@ func tabLabel(m locales.Messages, tab appsysmanager.Tab) string {
 	}
 }
 
-func tabContent(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
+func tabContent(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width float32) {
 	state := s.TabState(s.Tab())
 	switch s.Tab() {
 	case appsysmanager.TabOverview:
-		if state.Status != appsysmanager.StatusLive || state.Overview.Hostname == "" {
-			statusPanel(c, s, state, m, t)
-			return
-		}
-		overview(c, state.Overview, m, t)
+		overviewTab(c, s, state, m, t, width)
 	case appsysmanager.TabProcesses:
 		if state.Status != appsysmanager.StatusLive {
 			statusPanel(c, s, state, m, t)
@@ -801,18 +869,80 @@ func gpuFanText(device appsysmanager.GPUDevice) string {
 
 func toolbar(c *ui.Context, s *State, m locales.Messages, t *ui.Theme,
 	placeholder, summary string) {
-	ui.Row(c).FillWidth().Gap(8).Children(func() {
+	ui.Row(c).FillWidth().Gap(8).Wrap().AlignItems(ui.Center).Children(func() {
 		query := s.search
-		ui.SearchField(c, &query).Placeholder(placeholder).Grow(1).MinWidth(120)
+		ui.SearchField(c, &query).Placeholder(placeholder).Label(placeholder).Grow(1).MinWidth(120)
 		if query != s.search {
 			s.SetSearch(query)
 			c.Invalidate()
 		}
+		filterControls(c, s, m)
 		ui.Text(c, summary).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).NoWrap()
 		// The content's right edge sits under the window edge in a narrow
 		// window; the reserve keeps the last summary character whole.
 		ui.Column(c).Width(12)
 	})
+}
+
+// filterControls draws the active list tab's narrowing controls beside its
+// search: the running-only checkbox for Processes and the protocol or state
+// segments for Ports and Services. Every control starts on the choice that
+// keeps the full list. The toolbar wraps them below the search when the
+// surface is too narrow to hold the row.
+func filterControls(c *ui.Context, s *State, m locales.Messages) {
+	switch s.Tab() {
+	case appsysmanager.TabProcesses:
+		running := s.ProcessRunningOnly()
+		c.Key("sysmanager-process-running-only")
+		if ui.Checkbox(c, &running, m.SysManagerRunningOnly()).Changed() {
+			s.SetProcessRunningOnly(running)
+			c.Invalidate()
+		}
+	case appsysmanager.TabPorts:
+		filters := []appsysmanager.PortFilter{
+			appsysmanager.PortFilterAll,
+			appsysmanager.PortFilterTCP,
+			appsysmanager.PortFilterUDP,
+		}
+		chosen := 0
+		for i, filter := range filters {
+			if filter == s.PortFilter() {
+				chosen = i
+			}
+		}
+		segments := []kit.Segment{
+			{Key: "sysmanager-ports-all", Label: m.SysManagerFilterAll()},
+			{Key: "sysmanager-ports-tcp", Label: m.SysManagerFilterTCP()},
+			{Key: "sysmanager-ports-udp", Label: m.SysManagerFilterUDP()},
+		}
+		if kit.Segmented(c, kit.SegmentedTrack, &chosen, m.SysManagerProtocol(), segments) {
+			s.SetPortFilter(filters[chosen])
+			c.Invalidate()
+		}
+	case appsysmanager.TabServices:
+		filters := []appsysmanager.ServiceFilter{
+			appsysmanager.ServiceFilterAll,
+			appsysmanager.ServiceFilterRunning,
+			appsysmanager.ServiceFilterFailed,
+			appsysmanager.ServiceFilterInactive,
+		}
+		chosen := 0
+		for i, filter := range filters {
+			if filter == s.ServiceFilter() {
+				chosen = i
+			}
+		}
+		segments := []kit.Segment{
+			{Key: "sysmanager-services-all", Label: m.SysManagerFilterAll()},
+			{Key: "sysmanager-services-running", Label: m.SysManagerFilterRunning()},
+			{Key: "sysmanager-services-failed", Label: m.SysManagerFilterFailed()},
+			{Key: "sysmanager-services-inactive", Label: m.SysManagerFilterInactive()},
+		}
+		if kit.Segmented(c, kit.SegmentedTrack, &chosen, m.SysManagerState(), segments) {
+			s.SetServiceFilter(filters[chosen])
+			c.Invalidate()
+		}
+	}
 }
 
 func emptyText(total int, none, noMatches string) string {
@@ -836,11 +966,12 @@ func statusPanel(c *ui.Context, s *State, state appsysmanager.TabState, m locale
 			ui.Text(c, reason).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		}
 		if state.Status == appsysmanager.StatusIdle ||
-			state.Status == appsysmanager.StatusConnecting {
+			state.Status == appsysmanager.StatusConnecting ||
+			!statusRetryable(state) {
 			return
 		}
 		c.Key("sysmanager-retry")
-		if kit.SecondaryButton(c, icons.RefreshCw, m.SysManagerRefreshNow()).Clicked() {
+		if kit.SecondaryButton(c, icons.RefreshCw, m.SysManagerRetry()).Clicked() {
 			s.Refresh()
 			c.Invalidate()
 		}
@@ -850,6 +981,7 @@ func statusPanel(c *ui.Context, s *State, state appsysmanager.TabState, m locale
 func processTable(c *ui.Context, s *State, rows []appsysmanager.Process, m locales.Messages) {
 	columns := []ui.TableColumn{
 		{Title: m.SysManagerPid(), ID: "pid", Width: 56, MinWidth: 44, Align: ui.End, Sortable: true},
+		{Title: m.SysManagerPpid(), ID: "ppid", Width: 56, MinWidth: 44, Align: ui.End},
 		{Title: m.SysManagerUser(), ID: "user", Width: 76, MinWidth: 56, Sortable: true},
 		{Title: m.SysManagerCPU(), ID: "cpu", Width: 76, MinWidth: 64, Align: ui.End, Sortable: true},
 		{Title: m.SysManagerMemory(), ID: "mem", Width: 56, MinWidth: 48, Align: ui.End, Sortable: true},
@@ -866,12 +998,14 @@ func processTable(c *ui.Context, s *State, rows []appsysmanager.Process, m local
 		case 0:
 			ui.Text(c, strconv.Itoa(process.PID)).FontSize(kit.M(c).Font.Footnote)
 		case 1:
-			ui.Text(c, process.User).FontSize(kit.M(c).Font.Footnote).SingleLine()
+			ui.Text(c, strconv.Itoa(process.PPID)).FontSize(kit.M(c).Font.Footnote)
 		case 2:
-			ui.Text(c, percent(process.CPUPercent)).FontSize(kit.M(c).Font.Footnote)
+			ui.Text(c, process.User).FontSize(kit.M(c).Font.Footnote).SingleLine()
 		case 3:
-			ui.Text(c, percent(process.MemPercent)).FontSize(kit.M(c).Font.Footnote)
+			ui.Text(c, percent(process.CPUPercent)).FontSize(kit.M(c).Font.Footnote)
 		case 4:
+			ui.Text(c, percent(process.MemPercent)).FontSize(kit.M(c).Font.Footnote)
+		case 5:
 			ui.Text(c, process.Command).FontSize(kit.M(c).Font.Footnote).SingleLine()
 		}
 	}).Grow(1).MinHeight(0).FillWidth()
@@ -1018,20 +1152,27 @@ func serviceActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	actionBar(c, func() {
 		ui.Text(c, m.SysManagerSelectedService(unit.Name, scope)).
 			FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).Grow(1).SingleLine()
-		if kit.SecondaryButton(c, "", m.SysManagerStart()).Key("sysmanager-service-start").Clicked() {
-			request(s, s.RequestServiceAction(unit.Name, appsysmanager.ServiceStart,
-				appsysmanager.Scope(unit.Scope)))
-			c.Invalidate()
-		}
-		if kit.SecondaryButton(c, "", m.SysManagerStop()).Key("sysmanager-service-stop").Clicked() {
-			request(s, s.RequestServiceAction(unit.Name, appsysmanager.ServiceStop,
-				appsysmanager.Scope(unit.Scope)))
-			c.Invalidate()
-		}
-		if kit.SecondaryButton(c, "", m.SysManagerRestart()).Key("sysmanager-service-restart").Clicked() {
-			request(s, s.RequestServiceAction(unit.Name, appsysmanager.ServiceRestart,
-				appsysmanager.Scope(unit.Scope)))
-			c.Invalidate()
+		for _, action := range unit.Actions() {
+			switch action {
+			case appsysmanager.ServiceStart:
+				if kit.SecondaryButton(c, "", m.SysManagerStart()).Key("sysmanager-service-start").Clicked() {
+					request(s, s.RequestServiceAction(unit.Name, appsysmanager.ServiceStart,
+						appsysmanager.Scope(unit.Scope)))
+					c.Invalidate()
+				}
+			case appsysmanager.ServiceStop:
+				if kit.SecondaryButton(c, "", m.SysManagerStop()).Key("sysmanager-service-stop").Clicked() {
+					request(s, s.RequestServiceAction(unit.Name, appsysmanager.ServiceStop,
+						appsysmanager.Scope(unit.Scope)))
+					c.Invalidate()
+				}
+			case appsysmanager.ServiceRestart:
+				if kit.SecondaryButton(c, "", m.SysManagerRestart()).Key("sysmanager-service-restart").Clicked() {
+					request(s, s.RequestServiceAction(unit.Name, appsysmanager.ServiceRestart,
+						appsysmanager.Scope(unit.Scope)))
+					c.Invalidate()
+				}
+			}
 		}
 	})
 }
@@ -1042,64 +1183,554 @@ func request(s *State, err error) {
 	}
 }
 
-func overview(c *ui.Context, data appsysmanager.Overview, m locales.Messages, t *ui.Theme) {
-	ui.Scroll(c).Grow(1).MinHeight(0).FillWidth().Children(func() {
-		// The cards stack where two do not fit, as in a Session's side panel.
-		ui.Row(c).FillWidth().Gap(10).Wrap().AlignItems(ui.Start).Children(func() {
-			systemCard(c, data, m, t)
-			resourceCard(c, data, m, t)
-		})
+// overviewTab chooses what the Overview draws from its five states. A
+// successful or cached Stats Sample keeps the cards visible; a first
+// collection shows a spinner; an empty answer, a blocking failure, and an
+// unavailable Host show their typed reason instead of inventing a zero card.
+func overviewTab(c *ui.Context, s *State, state appsysmanager.TabState,
+	m locales.Messages, t *ui.Theme, width float32) {
+	if overviewHasSample(state) {
+		overview(c, s, state, m, t, width)
+		return
+	}
+	switch state.Status {
+	case appsysmanager.StatusIdle, appsysmanager.StatusConnecting:
+		overviewLoading(c, m, t)
+	default:
+		overviewBlocking(c, s, state, m, t)
+	}
+}
+
+// overviewHasSample reports whether a Stats Sample is behind the Overview.
+// Samples from the shared collector always carry SampledAt; the Overview
+// fields are the fallback for a surface driven by an older snapshot.
+func overviewHasSample(state appsysmanager.TabState) bool {
+	if !state.Stats.SampledAt.IsZero() {
+		return true
+	}
+	return state.Status == appsysmanager.StatusLive &&
+		(state.Overview.Hostname != "" || state.Overview.Cores > 0)
+}
+
+// overviewRetryable reports whether a manual retry can change this state.
+// A missing command, an unsupported operating system, and a single-channel or
+// exec-less Host will answer the same way until the Host changes, so they show
+// their reason without a Retry. A transient failure, an empty answer, and a
+// refused sign-in may be fixed and retried.
+func overviewRetryable(status appsysmanager.Status) bool {
+	switch status {
+	case appsysmanager.StatusError, appsysmanager.StatusEmpty, appsysmanager.StatusLogin:
+		return true
+	default:
+		return false
+	}
+}
+
+// statusRetryable reports whether Retry can change a non-Overview tab's
+// panel. A missing command, an unsupported system, a Host without exec, and a
+// permission refusal answer the same way until the Host changes, so they show
+// their reason without a Retry. A stopped Docker daemon may be started, and a
+// transient failure or empty answer may be fixed and retried.
+func statusRetryable(state appsysmanager.TabState) bool {
+	switch state.Reason {
+	case appsysmanager.ReasonMissingCommand, appsysmanager.ReasonMissingProcesses,
+		appsysmanager.ReasonMissingPorts, appsysmanager.ReasonMissingSystemctl,
+		appsysmanager.ReasonMissingTmux, appsysmanager.ReasonMissingDocker,
+		appsysmanager.ReasonNoExec, appsysmanager.ReasonOS,
+		appsysmanager.ReasonUnsupported, appsysmanager.ReasonPermission:
+		return false
+	case appsysmanager.ReasonDockerDaemon:
+		return true
+	}
+	return overviewRetryable(state.Status)
+}
+
+func overviewLoading(c *ui.Context, m locales.Messages, t *ui.Theme) {
+	ui.Column(c).Grow(1).MinHeight(0).FillWidth().AlignItems(ui.Center).
+		Justify(ui.Center).Gap(8).Children(func() {
+		ui.Spinner(c).Size(18, 18).Label(m.SysManagerOverviewLoading())
+		ui.Text(c, m.SysManagerOverviewLoading()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 	})
 }
 
-func systemCard(c *ui.Context, data appsysmanager.Overview, m locales.Messages, t *ui.Theme) {
-	ui.Column(c).Grow(1).MinWidth(150).Padding(10).Gap(5).Background(t.Surface).Radius(t.Radius).Children(func() {
-		ui.Text(c, m.SysManagerOverviewSystem()).FontSize(kit.M(c).Font.Callout).Bold()
-		field(c, m.SysManagerOverviewHostname(), blank(data.Hostname, m), t)
-		field(c, m.SysManagerOverviewOS(), blank(data.OSName, m), t)
-		field(c, m.SysManagerOverviewKernel(), blank(data.KernelRelease, m), t)
-		field(c, m.SysManagerOverviewUptime(), uptimeText(data.UptimeSeconds, m), t)
-		field(c, m.SysManagerOverviewLoad(), loadText(data.LoadAverage, m), t)
-		field(c, m.SysManagerOverviewCoresLabel(), coresText(data.Cores, m), t)
-	})
-}
-
-func resourceCard(c *ui.Context, data appsysmanager.Overview, m locales.Messages, t *ui.Theme) {
-	memRatio := ratio(data.MemUsedMB, data.MemTotalMB)
-	swapRatio := ratio(data.SwapUsedMB, data.SwapTotalMB)
-	diskRatio := ratio(data.DiskUsedGB, data.DiskTotalGB)
-	ui.Column(c).Grow(1).MinWidth(150).Padding(10).Gap(5).Background(t.Surface).Radius(t.Radius).Children(func() {
-		ui.Text(c, m.SysManagerOverviewResources()).FontSize(kit.M(c).Font.Callout).Bold()
-		metric(c, m.SysManagerOverviewCPU(), percentText(data.CPUPercent),
-			ratio(data.CPUPercent, 100), t)
-		metric(c, m.SysManagerOverviewMemory(),
-			usedText(data.MemUsedMB, data.MemTotalMB, 1024, m), memRatio, t)
-		metric(c, m.SysManagerOverviewSwap(),
-			usedText(data.SwapUsedMB, data.SwapTotalMB, 1024, m), swapRatio, t)
-		metric(c, m.SysManagerOverviewDisk(),
-			usedText(data.DiskUsedGB, data.DiskTotalGB, 1, m), diskRatio, t)
-	})
-}
-
-func metric(c *ui.Context, label, value string, ratio float64, t *ui.Theme) {
-	ui.Column(c).FillWidth().Gap(2).Children(func() {
-		ui.Row(c).FillWidth().Gap(6).Children(func() {
-			ui.Text(c, label).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
-			ui.Column(c).Grow(1)
-			ui.Text(c, value).FontSize(kit.M(c).Font.Caption).NoWrap()
-		})
-		if ratio >= 0 {
-			ui.Progress(c, ratio).Grow(1)
+// overviewBlocking shows a reason when no card can be drawn. Retry appears
+// only for states a retry can change.
+func overviewBlocking(c *ui.Context, s *State, state appsysmanager.TabState,
+	m locales.Messages, t *ui.Theme) {
+	text, color := statusText(m, state, t)
+	ui.Column(c).Grow(1).MinHeight(0).FillWidth().AlignItems(ui.Center).
+		Justify(ui.Center).Gap(6).Children(func() {
+		ui.Text(c, text).FontSize(kit.M(c).Font.Body).Bold().TextColor(color)
+		if reason := reasonText(m, state.Reason); reason != "" {
+			ui.Text(c, reason).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+		}
+		if overviewRetryable(state.Status) {
+			overviewRetry(c, s, m)
 		}
 	})
 }
 
-func field(c *ui.Context, label, value string, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(6).Children(func() {
-		ui.Text(c, label).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).NoWrap()
-		ui.Column(c).Grow(1)
-		ui.Text(c, value).FontSize(kit.M(c).Font.Caption).NoWrap()
+func overviewRetry(c *ui.Context, s *State, m locales.Messages) {
+	c.Key("sysmanager-overview-retry")
+	if kit.SecondaryButton(c, icons.RefreshCw, m.SysManagerRetry()).Clicked() {
+		s.Refresh()
+		c.Invalidate()
+	}
+}
+
+func overview(c *ui.Context, s *State, state appsysmanager.TabState,
+	m locales.Messages, t *ui.Theme, width float32) {
+	data := state.Overview
+	ui.Scroll(c).Grow(1).MinHeight(0).FillWidth().Children(func() {
+		ui.Column(c).FillWidth().Gap(10).Children(func() {
+			if state.Status != appsysmanager.StatusLive {
+				overviewInlineNotice(c, s, state, m, t)
+			}
+			overviewCards(c, s, data, m, t, width)
+			overviewDiskIOLine(c, data, m, t)
+			overviewPills(c, state, m, t)
+			overviewCores(c, data, m, t)
+			overviewDisks(c, data, m, t)
+			overviewInterfaces(c, data, m, t)
+			overviewProcesses(c, data, m, t)
+		})
 	})
+}
+
+// overviewCards lays the four metric cards out two by two at 320 DIP and
+// wider, and in one column below it. Both surfaces use the same information
+// architecture; extra width goes to the cards, not to another layout.
+func overviewCards(c *ui.Context, s *State, data appsysmanager.Overview,
+	m locales.Messages, t *ui.Theme, width float32) {
+	cards := []func(grow bool){
+		func(grow bool) {
+			overviewMetricCard(c, m, t, grow, overviewCardData{
+				Label: m.SysManagerOverviewCPU(), Icon: icons.Cpu,
+				Value:  percentText(data.CPUPercent),
+				Detail: coresText(data.Cores, m),
+				Gauge:  data.CPUPercent, Tone: kit.ToneForPercent(data.CPUPercent),
+				History: s.CPUHistory(), Max: 100,
+			})
+		},
+		func(grow bool) {
+			memory := knownPercent(data.MemUsedMB, data.MemTotalMB)
+			overviewMetricCard(c, m, t, grow, overviewCardData{
+				Label: m.SysManagerOverviewMemory(), Icon: icons.MemoryStick,
+				Value:  percentText(memory),
+				Detail: memoryDetail(data.MemUsedMB, data.MemTotalMB, m),
+				Gauge:  memory, Tone: kit.ToneForPercent(memory),
+				History: s.MemoryHistory(), Max: 100,
+			})
+		},
+		func(grow bool) {
+			disk := overviewDiskPercent(data)
+			overviewMetricCard(c, m, t, grow, overviewCardData{
+				Label: m.SysManagerOverviewDisk(), Icon: icons.HardDrive,
+				Value:  percentText(disk),
+				Detail: storageDetail(data.DiskUsedGB, data.DiskTotalGB, m),
+				Gauge:  disk, Tone: kit.ToneForPercent(disk),
+				History: s.DiskHistory(), Max: 100,
+			})
+		},
+		func(grow bool) {
+			total := overviewNetworkTotal(data)
+			gauge := kit.NetworkGaugePercent(total)
+			overviewMetricCard(c, m, t, grow, overviewCardData{
+				Label: m.SysManagerOverviewNetwork(), Icon: icons.Network,
+				Value: rateText(total),
+				Detail: m.SysManagerOverviewNetworkDetail(
+					rateText(data.NetworkRxBps), rateText(data.NetworkTxBps)),
+				Gauge: gauge, Tone: kit.ToneForPercent(gauge),
+				History: s.NetworkHistory(), Max: 0,
+			})
+		},
+	}
+	if width < overviewTwoColumnWidth {
+		for _, card := range cards {
+			card(false)
+		}
+		return
+	}
+	for index := 0; index < len(cards); index += 2 {
+		first, second := cards[index], cards[index+1]
+		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
+			first(true)
+			second(true)
+		})
+	}
+}
+
+// overviewTwoColumnWidth is the narrowest surface that still holds the four
+// cards in two columns.
+const overviewTwoColumnWidth float32 = 320
+
+// overviewCardData is the content of one metric card, shared by all four so
+// their value, detail, gauge, and sparkline rows stay aligned.
+type overviewCardData struct {
+	Label   string
+	Icon    string
+	Value   string
+	Detail  string
+	Gauge   float64
+	Tone    kit.GaugeTone
+	History []float64
+	Max     float64
+}
+
+func overviewMetricCard(c *ui.Context, m locales.Messages, t *ui.Theme,
+	grow bool, data overviewCardData) {
+	card := ui.Column(c).MinWidth(0).Padding(10).Gap(6).
+		Background(t.Surface).Radius(t.Radius)
+	if grow {
+		card.Grow(1)
+	} else {
+		card.FillWidth()
+	}
+	card.Label(data.Label + " card").Children(func() {
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+			kit.IconSized(c, data.Icon, kit.M(c).Icon.Medium)
+			ui.Text(c, data.Label).FontSize(kit.M(c).Font.Callout).Bold()
+		})
+		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+			kit.Gauge(c, data.Gauge, kit.GaugeOptions{
+				Size: 58, Tone: data.Tone, Label: data.Label + " gauge",
+			})
+			ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
+				ui.Text(c, data.Value).FontSize(kit.M(c).Font.LargeTitle).
+					FontWeight(600).TextColor(kit.GaugeColor(t, data.Tone)).SingleLine()
+				ui.Text(c, data.Detail).FontSize(kit.M(c).Font.Caption).
+					TextColor(t.TextMuted).SingleLine()
+			})
+		})
+		kit.Sparkline(c, data.History, kit.SparklineOptions{
+			Height: 34, Max: data.Max, Tone: data.Tone,
+			Label: data.Label + " history",
+		})
+	})
+}
+
+// overviewDiskIOLine is the read and write rate under the cards. When the
+// Host reports neither, as macOS does, the value is "—" rather than a zero.
+func overviewDiskIOLine(c *ui.Context, data appsysmanager.Overview,
+	m locales.Messages, t *ui.Theme) {
+	value := m.SysManagerOverviewRead() + " " + rateText(data.DiskReadBps) +
+		" · " + m.SysManagerOverviewWrite() + " " + rateText(data.DiskWriteBps)
+	ui.Row(c).FillWidth().Gap(8).Wrap().AlignItems(ui.Center).Padding(8, 10).
+		Radius(t.Radius).Background(t.Surface).
+		Label(m.SysManagerOverviewDiskIO() + " line").Children(func() {
+		ui.Text(c, m.SysManagerOverviewDiskIO()).FontSize(kit.M(c).Font.Caption).
+			TextColor(t.TextMuted).SingleLine()
+		ui.Text(c, value).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
+	})
+}
+
+// overviewPills are the six identity and health facts. The Hostname stays in
+// the surface's header, not as a seventh pill.
+func overviewPills(c *ui.Context, state appsysmanager.TabState,
+	m locales.Messages, t *ui.Theme) {
+	data := state.Overview
+	ui.Row(c).FillWidth().Gap(6).Wrap().AlignItems(ui.Center).
+		Label(m.SysManagerOverviewInfo() + " pills").Children(func() {
+		kit.InfoPill(c, m.SysManagerOverviewLoad(), loadText(data.LoadAverage, m))
+		kit.InfoPill(c, m.SysManagerOverviewUptime(), uptimeText(data.UptimeSeconds, m))
+		kit.InfoPill(c, m.SysManagerOverviewSystem(), blank(data.OSName, m))
+		kit.InfoPill(c, m.SysManagerOverviewKernel(), blank(data.KernelRelease, m))
+		kit.InfoPill(c, m.SysManagerOverviewSwap(),
+			memoryDetail(data.SwapUsedMB, data.SwapTotalMB, m))
+		kit.InfoPill(c, m.SysManagerLatency(), overviewLatencyText(state, m))
+	})
+}
+
+func overviewLatencyText(state appsysmanager.TabState, m locales.Messages) string {
+	if state.Stats.SampledAt.IsZero() {
+		return m.SysManagerUnknown()
+	}
+	latency := state.Stats.LatencyMS
+	if !known(latency) || latency < 0 {
+		return m.SysManagerUnknown()
+	}
+	return m.SysManagerLatencyValue(int(latency))
+}
+
+// overviewCores lists every per-core reading as C1..Cn in a two-column grid.
+// The grid scrolls inside its 260-DIP cap. macOS has no per-core reading, so
+// its section says "No data" rather than inventing an even split.
+func overviewCores(c *ui.Context, data appsysmanager.Overview,
+	m locales.Messages, t *ui.Theme) {
+	ui.Column(c).FillWidth().Gap(4).Children(func() {
+		kit.SectionHeader(c, kit.SectionCards, icons.Cpu,
+			m.SysManagerOverviewCoresSection(), overviewLoadText(data, m))
+		if len(data.CPUPerCore) == 0 {
+			kit.EmptyHint(c, m.SysManagerOverviewNoData())
+			return
+		}
+		ui.Scroll(c).FillWidth().MaxHeight(overviewCoresHeight).
+			Label(m.SysManagerOverviewCoresSection() + " grid").Children(func() {
+			ui.Column(c).FillWidth().Gap(6).Children(func() {
+				for index := 0; index < len(data.CPUPerCore); index += 2 {
+					first := data.CPUPerCore[index]
+					ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Start).Children(func() {
+						overviewCoreCell(c, "C"+strconv.Itoa(index+1), first.Percent, t)
+						if index+1 < len(data.CPUPerCore) {
+							second := data.CPUPerCore[index+1]
+							overviewCoreCell(c, "C"+strconv.Itoa(index+2), second.Percent, t)
+						} else {
+							ui.Column(c).Grow(1).MinWidth(0)
+						}
+					})
+				}
+			})
+		})
+	})
+}
+
+// overviewCoresHeight caps the per-core grid, after which it scrolls.
+const overviewCoresHeight float32 = 260
+
+func overviewCoreCell(c *ui.Context, label string, percent float64, t *ui.Theme) {
+	ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, label).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
+			ui.Column(c).Grow(1)
+			ui.Text(c, percentText(percent)).FontSize(kit.M(c).Font.Caption).SingleLine()
+		})
+		kit.ResourceBar(c, percent, kit.ResourceBarOptions{
+			Height: 4, Label: label + " usage",
+		})
+	})
+}
+
+// overviewLoadText is the CPU-cores header's one-minute load as a percentage
+// of the core count, clamped to 0–100, or "No data" when either is unknown.
+func overviewLoadText(data appsysmanager.Overview, m locales.Messages) string {
+	if len(data.CPUPerCore) == 0 || len(data.LoadAverage) == 0 ||
+		data.Cores <= 0 || !known(data.LoadAverage[0]) {
+		return m.SysManagerOverviewNoData()
+	}
+	return percentText(min(100, max(0, data.LoadAverage[0]/float64(data.Cores)*100)))
+}
+
+// overviewDisks lists every kept mount with its usage.
+func overviewDisks(c *ui.Context, data appsysmanager.Overview,
+	m locales.Messages, t *ui.Theme) {
+	ui.Column(c).FillWidth().Gap(4).Children(func() {
+		kit.SectionHeader(c, kit.SectionCards, icons.HardDrive,
+			m.SysManagerOverviewDisksSection(), "")
+		if len(data.Disks) == 0 {
+			kit.EmptyHint(c, m.SysManagerOverviewNoDiskData())
+			return
+		}
+		ui.Column(c).FillWidth().Gap(6).
+			Label(m.SysManagerOverviewDisksSection() + " list").Children(func() {
+			for _, disk := range data.Disks {
+				percent, _ := finitePercent(disk.UsedGB, disk.TotalGB, disk.Percent)
+				mount := blank(disk.MountPoint, m)
+				ui.Column(c).FillWidth().Gap(2).Children(func() {
+					ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, mount).FontSize(kit.M(c).Font.Caption).Bold().
+							Grow(1).MinWidth(0).SingleLine()
+						ui.Text(c, storageDetail(disk.UsedGB, disk.TotalGB, m)).
+							FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
+					})
+					kit.ResourceBar(c, percent, kit.ResourceBarOptions{
+						Height: 4, Label: mount + " usage",
+					})
+				})
+			}
+		})
+	})
+}
+
+// overviewInterfaces lists the first five interfaces with their cumulative
+// counters and current rates.
+func overviewInterfaces(c *ui.Context, data appsysmanager.Overview,
+	m locales.Messages, t *ui.Theme) {
+	ui.Column(c).FillWidth().Gap(4).Children(func() {
+		kit.SectionHeader(c, kit.SectionCards, icons.Network,
+			m.SysManagerOverviewNetworkSection(), "")
+		if len(data.Interfaces) == 0 {
+			kit.EmptyHint(c, m.SysManagerOverviewNoInterfaceData())
+			return
+		}
+		ui.Column(c).FillWidth().Gap(6).
+			Label(m.SysManagerOverviewNetworkSection() + " list").Children(func() {
+			limit := min(5, len(data.Interfaces))
+			for index := 0; index < limit; index++ {
+				iface := data.Interfaces[index]
+				ui.Column(c).FillWidth().Gap(1).Children(func() {
+					ui.Text(c, blank(iface.Name, m)).FontSize(kit.M(c).Font.Caption).
+						Bold().SingleLine()
+					ui.Text(c, m.SysManagerOverviewRX()+" "+byteCount(float64(iface.RxBytes))+
+						" · "+rateText(iface.RxBps)).FontSize(kit.M(c).Font.Caption).
+						TextColor(t.TextMuted).SingleLine()
+					ui.Text(c, m.SysManagerOverviewTX()+" "+byteCount(float64(iface.TxBytes))+
+						" · "+rateText(iface.TxBps)).FontSize(kit.M(c).Font.Caption).
+						TextColor(t.TextMuted).SingleLine()
+				})
+			}
+		})
+	})
+}
+
+// overviewProcesses lists the first five rows of the Stats Sample's own
+// memory-ordered top list. It never reads the Processes System Tab's full ps
+// list.
+func overviewProcesses(c *ui.Context, data appsysmanager.Overview,
+	m locales.Messages, t *ui.Theme) {
+	ui.Column(c).FillWidth().Gap(4).Children(func() {
+		kit.SectionHeader(c, kit.SectionCards, icons.ListTree,
+			m.SysManagerOverviewProcessesSection(), "")
+		if len(data.TopProcesses) == 0 {
+			kit.EmptyHint(c, m.SysManagerOverviewNoProcessData())
+			return
+		}
+		ui.Column(c).FillWidth().Gap(6).
+			Label(m.SysManagerOverviewProcessesSection() + " list").Children(func() {
+			limit := min(5, len(data.TopProcesses))
+			for index := 0; index < limit; index++ {
+				process := data.TopProcesses[index]
+				command := blank(process.Command, m)
+				ui.Column(c).FillWidth().Gap(2).Children(func() {
+					ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, command).FontSize(kit.M(c).Font.Caption).Bold().
+							Grow(1).MinWidth(0).SingleLine()
+						ui.Text(c, m.SysManagerPid()+" "+pidText(process.PID)).
+							FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
+					})
+					ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+						ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+							kit.ResourceBar(c, process.MemPercent, kit.ResourceBarOptions{
+								Height: 4, Label: command + " memory",
+							})
+						})
+						ui.Text(c, percentText(process.MemPercent)).
+							FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
+					})
+				})
+			}
+		})
+	})
+}
+
+// overviewDiskPercent is the Disk card's aggregate percentage: the projected
+// aggregate, or the used/total pair when an older snapshot carries only the
+// capacities.
+func overviewDiskPercent(data appsysmanager.Overview) float64 {
+	if percent, ok := finitePercent(data.DiskUsedGB, data.DiskTotalGB, data.DiskPercent); ok {
+		return percent
+	}
+	return data.DiskPercent
+}
+
+// finitePercent prefers a used/total pair and falls back to an explicit
+// percent. It reports false when neither can form a value.
+func finitePercent(used, total, percent float64) (float64, bool) {
+	if value := knownPercent(used, total); known(value) {
+		return value, true
+	}
+	if known(percent) {
+		return percent, true
+	}
+	return math.NaN(), false
+}
+
+// overviewNetworkTotal is the Network card's primary value: RX plus TX bytes
+// per second, unknown when either rate is unknown.
+func overviewNetworkTotal(data appsysmanager.Overview) float64 {
+	if !known(data.NetworkRxBps) || !known(data.NetworkTxBps) {
+		return math.NaN()
+	}
+	return data.NetworkRxBps + data.NetworkTxBps
+}
+
+// overviewInlineNotice keeps cached cards visible above a failed refresh and
+// offers the retry that asks the collector for a fresh sample.
+func overviewInlineNotice(c *ui.Context, s *State, state appsysmanager.TabState,
+	m locales.Messages, t *ui.Theme) {
+	reason := reasonText(m, state.Reason)
+	if reason == "" {
+		reason, _ = statusText(m, state, t)
+	}
+	if reason == "" {
+		return
+	}
+	kit.Notice(c, icons.TriangleAlert, uitheme.DangerText(t), reason, func() {
+		if overviewRetryable(state.Status) {
+			overviewRetry(c, s, m)
+		}
+	})
+}
+
+// memoryDetail is a memory quantity's used and total, in MB or GB. An
+// unknown pair is "—", never a zero.
+func memoryDetail(used, total float64, m locales.Messages) string {
+	if !known(used) || !known(total) || total <= 0 {
+		return m.SysManagerUnknown()
+	}
+	return m.SysManagerOverviewUsedOf(memoryText(used), memoryText(total))
+}
+
+func memoryText(mb float64) string {
+	if !known(mb) {
+		return "—"
+	}
+	if mb >= 1024 {
+		return fmt.Sprintf("%.1f GB", mb/1024)
+	}
+	if mb == math.Trunc(mb) {
+		return fmt.Sprintf("%.0f MB", mb)
+	}
+	return fmt.Sprintf("%.1f MB", mb)
+}
+
+// storageDetail is a storage quantity's used and total, in GB or TB, with
+// zero or one decimal.
+func storageDetail(used, total float64, m locales.Messages) string {
+	if !known(used) || !known(total) || total <= 0 {
+		return m.SysManagerUnknown()
+	}
+	return m.SysManagerOverviewUsedOf(storageText(used), storageText(total))
+}
+
+func storageText(gb float64) string {
+	if !known(gb) {
+		return "—"
+	}
+	if gb >= 1024 {
+		return fmt.Sprintf("%.1f TB", gb/1024)
+	}
+	if gb == math.Trunc(gb) {
+		return fmt.Sprintf("%.0f GB", gb)
+	}
+	return fmt.Sprintf("%.1f GB", gb)
+}
+
+// byteCount is one binary byte unit for counters and transfers. It is the
+// single convention shared by the Network card, the interfaces, and the disk
+// I/O line.
+func byteCount(bytes float64) string {
+	if !known(bytes) {
+		return "—"
+	}
+	switch {
+	case bytes >= 1<<40:
+		return fmt.Sprintf("%.1f TiB", bytes/(1<<40))
+	case bytes >= 1<<30:
+		return fmt.Sprintf("%.1f GiB", bytes/(1<<30))
+	case bytes >= 1<<20:
+		return fmt.Sprintf("%.1f MiB", bytes/(1<<20))
+	case bytes >= 1<<10:
+		return fmt.Sprintf("%.1f KiB", bytes/(1<<10))
+	default:
+		return fmt.Sprintf("%.0f B", bytes)
+	}
+}
+
+func rateText(value float64) string {
+	if !known(value) {
+		return "—"
+	}
+	return byteCount(value) + "/s"
 }
 
 func confirmation(c *ui.Context, s *State, m locales.Messages) {
@@ -1187,6 +1818,8 @@ func statusText(m locales.Messages, state appsysmanager.TabState, t *ui.Theme) (
 		return m.SysManagerStatusLogin(), uitheme.DangerText(t)
 	case appsysmanager.StatusError:
 		return m.SysManagerStatusError(), uitheme.DangerText(t)
+	case appsysmanager.StatusEmpty:
+		return m.SysManagerStatusEmpty(), t.TextMuted
 	case appsysmanager.StatusUnsupported:
 		return m.SysManagerStatusUnsupported(), t.TextMuted
 	case appsysmanager.StatusUnavailable:
@@ -1216,6 +1849,12 @@ func reasonText(m locales.Messages, reason appsysmanager.Reason) string {
 		return m.SysManagerReasonUnsupported()
 	case appsysmanager.ReasonPermission:
 		return m.SysManagerReasonPermission()
+	case appsysmanager.ReasonNoExec:
+		return m.SysManagerReasonNoExec()
+	case appsysmanager.ReasonNoData:
+		return m.SysManagerReasonNoData()
+	case appsysmanager.ReasonMissingCommand:
+		return m.SysManagerReasonMissingCommand()
 	case appsysmanager.ReasonMissingProcesses:
 		return m.SysManagerReasonMissingProcesses()
 	case appsysmanager.ReasonMissingPorts:
@@ -1300,6 +1939,16 @@ func scopeText(m locales.Messages, scope string) string {
 	default:
 		return m.SysManagerScopeSystem()
 	}
+}
+
+// overviewSampledAt is the age the status row must report: when the counters
+// were read, not when the surface last learned a state change. An older
+// snapshot without a sample time falls back to its state time.
+func overviewSampledAt(state appsysmanager.TabState) time.Time {
+	if !state.Stats.SampledAt.IsZero() {
+		return state.Stats.SampledAt
+	}
+	return state.At
 }
 
 func percent(value float64) string {

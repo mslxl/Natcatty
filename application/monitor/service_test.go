@@ -7,9 +7,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/mslxl/natcatty/application/hoststats"
 	"github.com/mslxl/natcatty/domain/model"
 	domainmonitor "github.com/mslxl/natcatty/domain/monitor"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -30,7 +32,8 @@ func TestParseStatsReadsEveryMetricLabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseStats: %v", err)
 	}
-	sample, _ := parsed.sample(samplerState{}, time.Unix(100, 0), 20*time.Millisecond)
+	shared, _ := parsed.Sample(samplerState{}, time.Unix(100, 0), 20*time.Millisecond)
+	sample := domainSample(shared)
 	if !math.IsNaN(sample.CPU) {
 		t.Errorf("first CPU sample = %v, want NaN until a delta exists", sample.CPU)
 	}
@@ -78,7 +81,7 @@ func TestParseStatsSecondSampleUsesCounters(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Unix(100, 0)
-	_, previous := first.sample(samplerState{}, start, 10*time.Millisecond)
+	_, previous := first.Sample(samplerState{}, start, 10*time.Millisecond)
 
 	second, err := parseStats("NC_LATENCY_MARK|CPURAW:1200 440|CORES:2|" +
 		"PERCORERAW:600:220,600:220|MEMINFO:8000 2000 500 1000 0 0|" +
@@ -86,7 +89,8 @@ func TestParseStatsSecondSampleUsesCounters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sample, _ := second.sample(previous, start.Add(2*time.Second), 10*time.Millisecond)
+	shared, _ := second.Sample(previous, start.Add(2*time.Second), 10*time.Millisecond)
+	sample := domainSample(shared)
 	if sample.CPU != 80 {
 		t.Errorf("cpu = %v, want 80", sample.CPU)
 	}
@@ -105,7 +109,8 @@ func TestParseStatsMacOSDirectCPU(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sample, _ := parsed.sample(samplerState{}, time.Unix(0, 0), 0)
+	shared, _ := parsed.Sample(samplerState{}, time.Unix(0, 0), 0)
+	sample := domainSample(shared)
 	if sample.CPU != 37 {
 		t.Errorf("cpu = %v", sample.CPU)
 	}
@@ -223,6 +228,79 @@ func updatesFor(service *Service) chan struct{} {
 		}
 	})
 	return updates
+}
+
+// steppingClock advances on every read so a test can tell the collection
+// time from a later UI state-change time.
+type steppingClock struct {
+	mu   sync.Mutex
+	now  time.Time
+	step time.Duration
+}
+
+func (c *steppingClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	value := c.now
+	c.now = c.now.Add(c.step)
+	return value
+}
+
+// TestSampleTimeIsCollectionTimeNotStateChangeTime proves the sample carries
+// when the counters were read, while the Host state carries when the UI
+// learned about the latest result. A later failure moves only the state time.
+func TestSampleTimeIsCollectionTimeNotStateChangeTime(t *testing.T) {
+	clock := &steppingClock{now: time.Unix(1_700_000_000, 0), step: time.Second}
+	release := make(chan struct{})
+	var statsCalls atomic.Int64
+	connection := newFakeConnection(func(ctx context.Context, command string) (ExecResult, error) {
+		if strings.HasPrefix(command, "disks=$(") {
+			return ExecResult{Stdout: linuxDiskOutput}, nil
+		}
+		if statsCalls.Add(1) == 1 {
+			return ExecResult{Stdout: linuxStatsOutput}, nil
+		}
+		select {
+		case <-release:
+			return ExecResult{}, errors.New("connection reset")
+		case <-ctx.Done():
+			return ExecResult{}, ctx.Err()
+		}
+	})
+	connector := &fakeConnector{open: func(context.Context, domainvault.Host) (Connection, error) {
+		return connection, nil
+	}}
+	service := NewService(connector, WithClock(clock.Now),
+		WithStatsCollector(hoststats.NewCollector(
+			monitorStatsConnector{connector: connector},
+			hoststats.WithClock(clock.Now), hoststats.WithCacheTTL(0))))
+	defer service.Close()
+	updates := updatesFor(service)
+
+	if err := service.Start("panel-a", []domainvault.Host{host("h1")}, 20*time.Millisecond); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	await(t, updates, func() bool {
+		return service.Snapshot().Hosts["h1"].Status == domainmonitor.StatusLive
+	})
+	live := service.Snapshot().Hosts["h1"]
+	sampledAt := live.Sample.At
+	if sampledAt.IsZero() || sampledAt.Equal(live.At) {
+		t.Fatalf("SampledAt %v and the state-change At %v must be distinct", sampledAt, live.At)
+	}
+
+	close(release)
+	await(t, updates, func() bool {
+		state := service.Snapshot().Hosts["h1"]
+		return state.Status == domainmonitor.StatusError && state.At.After(live.At)
+	})
+	after := service.Snapshot().Hosts["h1"]
+	if !after.Sample.At.Equal(sampledAt) {
+		t.Errorf("SampledAt moved to %v on a state-only update; want %v", after.Sample.At, sampledAt)
+	}
+	if !after.At.After(sampledAt) {
+		t.Errorf("state-change At %v did not advance past SampledAt %v", after.At, sampledAt)
+	}
 }
 
 func host(id string) domainvault.Host {

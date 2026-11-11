@@ -56,6 +56,7 @@ import (
 	apphistory "github.com/mslxl/natcatty/application/history"
 	historysync "github.com/mslxl/natcatty/application/historysync"
 	apphostatuin "github.com/mslxl/natcatty/application/hostatuin"
+	apphoststats "github.com/mslxl/natcatty/application/hoststats"
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
 	appmcp "github.com/mslxl/natcatty/application/mcp"
 	appmonitor "github.com/mslxl/natcatty/application/monitor"
@@ -777,14 +778,23 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		uiforwarding.WithRedrawRequest(invalidate),
 	)
 
-	// Monitoring samples Hosts through the same Connection Manager and route
-	// source as a Session, so a Host's key must be trusted before its first
-	// metric command. The surface starts and stops sampling as it becomes
-	// visible; the service owns every sampler goroutine.
-	monitorService := appmonitor.NewService(monitorConnector{
+	// One Host Stats collector samples a Host at most once inside its cache
+	// window, so Monitoring and both System surfaces share one command, one
+	// parser, and one set of counters. The first consumer to demand a Host
+	// starts its poll; the last to stop ends it.
+	hostStatsCollector := apphoststats.NewCollector(hostStatsConnector{
 		routes:      routes,
 		connections: connections,
 	})
+
+	// Monitoring samples Hosts through the same Connection Manager and route
+	// source as a Session, so a Host's key must be trusted before its first
+	// metric command. The surface starts and stops sampling as it becomes
+	// visible; the service owns the collector demand, not a second sampler.
+	monitorService := appmonitor.NewService(monitorConnector{
+		routes:      routes,
+		connections: connections,
+	}, appmonitor.WithStatsCollector(hostStatsCollector))
 	monitorState := uimonitoring.NewState(
 		monitorService,
 		vaultService,
@@ -805,7 +815,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	sysManagerService := appsysmanager.NewService(sysmanagerConnector{
 		routes:      routes,
 		connections: connections,
-	})
+	}, appsysmanager.WithStatsCollector(hostStatsCollector))
 	sysManagerState := uisysmanager.NewState(
 		sysManagerService,
 		vaultService,
@@ -821,12 +831,14 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			return shellState.OpenHostWithStartup(host, state.StartupInput{Chunks: preview.Chunks})
 		}),
 	)
-	// The side panel's System tool samples the Session's own Host, so it has
-	// a sampler apart from the System manager page's, which keeps its own.
+	// The side panel's System tool samples the Session's own Host. It shares
+	// the collector with the System manager page, so switching between the
+	// side panel and the full page keeps the Host's counters and cache, and
+	// the two surfaces never run two samplers for the same Host.
 	sideSystemService := appsysmanager.NewService(sysmanagerConnector{
 		routes:      routes,
 		connections: connections,
-	})
+	}, appsysmanager.WithStatsCollector(hostStatsCollector))
 	sideSystemState := uisysmanager.NewState(
 		sideSystemService,
 		withThisComputer{vaultService},
@@ -1337,14 +1349,14 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				return themePanel.View()
 			}},
 			state.SideTool{ID: state.SideSystem,
-				View: func(target state.SideTarget, _ float32) func(*ui.Context) {
+				View: func(target state.SideTarget, width float32) func(*ui.Context) {
 					// A local Session's panel samples this computer.
 					host := string(target.Host)
 					if host == "" {
 						host = thisComputerID
 					}
 					sideSystemState.ShowHost(host)
-					return uisysmanager.SideView(sideSystemState)
+					return uisysmanager.SideView(sideSystemState, width)
 				},
 				Hide: sideSystemState.Hide},
 			state.SideTool{ID: state.SideNotes, View: func(state.SideTarget, float32) func(*ui.Context) {
@@ -1577,6 +1589,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// actions and samplers before the manager closes every transport.
 		closeSystemManager(sysManagerState, sysManagerService)
 		closeSystemManager(sideSystemState, sideSystemService)
+		// The two services share one collector. Both have released their
+		// demands above, so closing it only stops the remaining poll loops;
+		// every channel lease was already released with its service.
+		hostStatsCollector.Close()
 		desktopCtl.Shutdown()
 		// Stop the queue before the surface closes the Tab filesystems its
 		// rows are still reading and writing.

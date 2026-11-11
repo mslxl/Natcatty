@@ -2561,6 +2561,7 @@
   "sysManagerHost": "Хост",
   "sysManagerRefresh": "Обновить",
   "sysManagerRefreshNow": "Обновить сейчас",
+  "sysManagerRetry": "Повторить",
   "sysManagerSeconds": "{seconds} с",
   "@sysManagerSeconds": {
     "description": "The refresh interval in seconds.",
@@ -2580,6 +2581,7 @@
   "sysManagerStatusLive": "В сети",
   "sysManagerStatusLogin": "Войти",
   "sysManagerStatusError": "Ошибка",
+  "sysManagerStatusEmpty": "Нет данных",
   "sysManagerStatusUnsupported": "Не поддерживается",
   "sysManagerStatusUnavailable": "Недоступно",
   "sysManagerReasonHostKey": "Ключ хоста не доверен",
@@ -2591,6 +2593,9 @@
   "sysManagerReasonInternal": "Ошибка системного менеджера",
   "sysManagerReasonUnsupported": "Подключение не поддерживается",
   "sysManagerReasonPermission": "Доступ запрещён",
+  "sysManagerReasonNoExec": "У этого хоста нет канала exec для системных данных.",
+  "sysManagerReasonNoData": "Хост не вернул системные данные.",
+  "sysManagerReasonMissingCommand": "На этом хосте нет команды, необходимой для системных данных.",
   "sysManagerReasonMissingProcesses": "ps и top недоступны на этом хосте.",
   "sysManagerReasonMissingPorts": "ss, netstat и lsof недоступны на этом хосте.",
   "sysManagerReasonMissingSystemctl": "systemctl недоступен на этом хосте.",
@@ -2653,6 +2658,14 @@
   "sysManagerPortHint": "Выберите порт, чтобы отправить сигнал его процессу.",
   "sysManagerServiceHint": "Выберите модуль, чтобы запустить, остановить или перезапустить его.",
   "sysManagerPid": "PID",
+  "sysManagerPpid": "PPID",
+  "sysManagerRunningOnly": "Только выполняющиеся",
+  "sysManagerFilterAll": "Все",
+  "sysManagerFilterTCP": "TCP",
+  "sysManagerFilterUDP": "UDP",
+  "sysManagerFilterRunning": "Выполняется",
+  "sysManagerFilterFailed": "Ошибка",
+  "sysManagerFilterInactive": "Неактивно",
   "sysManagerUser": "Пользователь",
   "sysManagerCPU": "ЦП",
   "sysManagerMemory": "Память",
@@ -2842,6 +2855,7 @@
   "sysManagerOverviewSwap": "Подкачка",
   "sysManagerOverviewDisk": "Диск",
   "sysManagerOverviewEmpty": "Данных обзора системы пока нет.",
+  "sysManagerOverviewLoading": "Загрузка обзора системы…",
   "sysManagerOverviewUsedOf": "{used} / {total}",
   "@sysManagerOverviewUsedOf": {
     "description": "A used amount beside its total.",
@@ -2907,6 +2921,51 @@
   "sysManagerMoveTabRight": "Переместить вкладку вправо",
   "@sysManagerMoveTabRight": {
     "description": "Moves the active tab one place toward the end.",
+    "placeholders": {}
+  },
+  "sysManagerSystemTabs": "Вкладки системы",
+  "@sysManagerSystemTabs": {
+    "description": "The accessible label of the System manager's tab strip.",
+    "placeholders": {}
+  },
+  "sysManagerShowTab": "Показать",
+  "@sysManagerShowTab": {
+    "description": "Shows a hidden tab in the tab strip.",
+    "placeholders": {}
+  },
+  "sysManagerCollapseTab": "Свернуть",
+  "@sysManagerCollapseTab": {
+    "description": "Collapses a tab so it appears in the Collapsed tabs menu.",
+    "placeholders": {}
+  },
+  "sysManagerHideTab": "Скрыть",
+  "@sysManagerHideTab": {
+    "description": "Hides a tab from the tab strip and the Collapsed tabs menu.",
+    "placeholders": {}
+  },
+  "sysManagerMoveTabEarlier": "Переместить раньше",
+  "@sysManagerMoveTabEarlier": {
+    "description": "Moves the active tab one place toward the front.",
+    "placeholders": {}
+  },
+  "sysManagerMoveTabLater": "Переместить позже",
+  "@sysManagerMoveTabLater": {
+    "description": "Moves the active tab one place toward the end.",
+    "placeholders": {}
+  },
+  "sysManagerResetLayout": "Сбросить макет",
+  "@sysManagerResetLayout": {
+    "description": "Restores the tab order and shows every tab.",
+    "placeholders": {}
+  },
+  "sysManagerCollapsedTabs": "Свёрнутые вкладки",
+  "@sysManagerCollapsedTabs": {
+    "description": "The heading of the menu listing collapsed tabs.",
+    "placeholders": {}
+  },
+  "sysManagerMoreTabs": "Ещё вкладки",
+  "@sysManagerMoreTabs": {
+    "description": "The label of the trigger opening the Collapsed tabs menu.",
     "placeholders": {}
   },
   "sysManagerTabTmux": "tmux",
@@ -3137,6 +3196,35 @@
   "sysManagerOverviewResources": "Ресурсы",
   "sysManagerPortOwnerUnknown": "Процесс неизвестен",
   "sysManagerOverviewCoresLabel": "Ядра",
+  "sysManagerOverviewNetwork": "Сеть",
+  "sysManagerOverviewNetworkSection": "Сетевые интерфейсы",
+  "sysManagerOverviewNetworkDetail": "Приём {rx} · Передача {tx}",
+  "@sysManagerOverviewNetworkDetail": {
+    "description": "The Network card's receive and transmit rates.",
+    "placeholders": {
+      "rx": {
+        "type": "String",
+        "example": "1.2 MiB/s"
+      },
+      "tx": {
+        "type": "String",
+        "example": "300 KiB/s"
+      }
+    }
+  },
+  "sysManagerOverviewDiskIO": "Дисковый ввод-вывод",
+  "sysManagerOverviewRead": "Чтение",
+  "sysManagerOverviewWrite": "Запись",
+  "sysManagerOverviewRX": "Приём",
+  "sysManagerOverviewTX": "Передача",
+  "sysManagerOverviewNoData": "Нет данных",
+  "sysManagerOverviewNoDiskData": "Нет данных о дисках",
+  "sysManagerOverviewNoInterfaceData": "Нет данных об интерфейсах",
+  "sysManagerOverviewNoProcessData": "Нет данных о процессах",
+  "sysManagerOverviewCoresSection": "Ядра CPU",
+  "sysManagerOverviewDisksSection": "Диски",
+  "sysManagerOverviewProcessesSection": "Главные процессы",
+  "sysManagerOverviewInfo": "Сведения",
   "vaultHostMoshServerPath": "Путь к mosh-server",
   "vaultHostMoshServerPathHint": "Удалённый двоичный файл mosh-server. Оставьте пустым, чтобы использовать PATH хоста.",
   "vaultHostMoshRestrictionHint": "Сеансы Mosh не поддерживают промежуточные хосты и прокси.",

@@ -2561,6 +2561,7 @@
   "sysManagerHost": "主机",
   "sysManagerRefresh": "刷新间隔",
   "sysManagerRefreshNow": "立即刷新",
+  "sysManagerRetry": "重试",
   "sysManagerSeconds": "{seconds} 秒",
   "@sysManagerSeconds": {
     "description": "The refresh interval in seconds.",
@@ -2580,6 +2581,7 @@
   "sysManagerStatusLive": "已连接",
   "sysManagerStatusLogin": "登录",
   "sysManagerStatusError": "错误",
+  "sysManagerStatusEmpty": "无数据",
   "sysManagerStatusUnsupported": "不支持",
   "sysManagerStatusUnavailable": "不可用",
   "sysManagerReasonHostKey": "主机密钥未信任",
@@ -2591,6 +2593,9 @@
   "sysManagerReasonInternal": "系统管理器错误",
   "sysManagerReasonUnsupported": "不支持此连接",
   "sysManagerReasonPermission": "权限被拒绝",
+  "sysManagerReasonNoExec": "此主机没有可用于系统数据的 exec 通道。",
+  "sysManagerReasonNoData": "主机未返回系统数据。",
+  "sysManagerReasonMissingCommand": "此主机缺少系统数据所需的命令。",
   "sysManagerReasonMissingProcesses": "此主机上没有 ps 和 top。",
   "sysManagerReasonMissingPorts": "此主机上没有 ss、netstat 和 lsof。",
   "sysManagerReasonMissingSystemctl": "此主机上没有 systemctl。",
@@ -2653,6 +2658,14 @@
   "sysManagerPortHint": "选择一个监听端口以向其进程发送信号。",
   "sysManagerServiceHint": "选择一个单元以启动、停止或重启。",
   "sysManagerPid": "PID",
+  "sysManagerPpid": "PPID",
+  "sysManagerRunningOnly": "仅运行中",
+  "sysManagerFilterAll": "全部",
+  "sysManagerFilterTCP": "TCP",
+  "sysManagerFilterUDP": "UDP",
+  "sysManagerFilterRunning": "运行中",
+  "sysManagerFilterFailed": "失败",
+  "sysManagerFilterInactive": "未活动",
   "sysManagerUser": "用户",
   "sysManagerCPU": "CPU",
   "sysManagerMemory": "内存",
@@ -2842,6 +2855,7 @@
   "sysManagerOverviewSwap": "交换",
   "sysManagerOverviewDisk": "磁盘",
   "sysManagerOverviewEmpty": "尚无系统概览数据。",
+  "sysManagerOverviewLoading": "正在加载系统概览…",
   "sysManagerOverviewUsedOf": "{used} / {total}",
   "@sysManagerOverviewUsedOf": {
     "description": "A used amount beside its total.",
@@ -2907,6 +2921,51 @@
   "sysManagerMoveTabRight": "向右移动标签页",
   "@sysManagerMoveTabRight": {
     "description": "Moves the active tab one place toward the end.",
+    "placeholders": {}
+  },
+  "sysManagerSystemTabs": "系统标签页",
+  "@sysManagerSystemTabs": {
+    "description": "The accessible label of the System manager's tab strip.",
+    "placeholders": {}
+  },
+  "sysManagerShowTab": "显示",
+  "@sysManagerShowTab": {
+    "description": "Shows a hidden tab in the tab strip.",
+    "placeholders": {}
+  },
+  "sysManagerCollapseTab": "收起",
+  "@sysManagerCollapseTab": {
+    "description": "Collapses a tab so it appears in the Collapsed tabs menu.",
+    "placeholders": {}
+  },
+  "sysManagerHideTab": "隐藏",
+  "@sysManagerHideTab": {
+    "description": "Hides a tab from the tab strip and the Collapsed tabs menu.",
+    "placeholders": {}
+  },
+  "sysManagerMoveTabEarlier": "向前移动",
+  "@sysManagerMoveTabEarlier": {
+    "description": "Moves the active tab one place toward the front.",
+    "placeholders": {}
+  },
+  "sysManagerMoveTabLater": "向后移动",
+  "@sysManagerMoveTabLater": {
+    "description": "Moves the active tab one place toward the end.",
+    "placeholders": {}
+  },
+  "sysManagerResetLayout": "重置布局",
+  "@sysManagerResetLayout": {
+    "description": "Restores the tab order and shows every tab.",
+    "placeholders": {}
+  },
+  "sysManagerCollapsedTabs": "已收起的标签页",
+  "@sysManagerCollapsedTabs": {
+    "description": "The heading of the menu listing collapsed tabs.",
+    "placeholders": {}
+  },
+  "sysManagerMoreTabs": "更多标签页",
+  "@sysManagerMoreTabs": {
+    "description": "The label of the trigger opening the Collapsed tabs menu.",
     "placeholders": {}
   },
   "sysManagerTabTmux": "tmux",
@@ -3137,6 +3196,35 @@
   "sysManagerOverviewResources": "资源",
   "sysManagerPortOwnerUnknown": "未知进程",
   "sysManagerOverviewCoresLabel": "核心",
+  "sysManagerOverviewNetwork": "网络",
+  "sysManagerOverviewNetworkSection": "网络接口",
+  "sysManagerOverviewNetworkDetail": "接收 {rx} · 发送 {tx}",
+  "@sysManagerOverviewNetworkDetail": {
+    "description": "The Network card's receive and transmit rates.",
+    "placeholders": {
+      "rx": {
+        "type": "String",
+        "example": "1.2 MiB/s"
+      },
+      "tx": {
+        "type": "String",
+        "example": "300 KiB/s"
+      }
+    }
+  },
+  "sysManagerOverviewDiskIO": "磁盘 I/O",
+  "sysManagerOverviewRead": "读取",
+  "sysManagerOverviewWrite": "写入",
+  "sysManagerOverviewRX": "接收",
+  "sysManagerOverviewTX": "发送",
+  "sysManagerOverviewNoData": "无数据",
+  "sysManagerOverviewNoDiskData": "无磁盘数据",
+  "sysManagerOverviewNoInterfaceData": "无接口数据",
+  "sysManagerOverviewNoProcessData": "无进程数据",
+  "sysManagerOverviewCoresSection": "CPU 核心",
+  "sysManagerOverviewDisksSection": "磁盘",
+  "sysManagerOverviewProcessesSection": "占用最高的进程",
+  "sysManagerOverviewInfo": "信息",
   "vaultHostMoshServerPath": "mosh-server 路径",
   "vaultHostMoshServerPathHint": "远程 mosh-server 可执行文件。留空则使用主机的 PATH。",
   "vaultHostMoshRestrictionHint": "Mosh 会话不支持跳板主机或代理。",

@@ -7,6 +7,7 @@ package sysmanager
 import (
 	"context"
 	"errors"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -139,12 +140,21 @@ type State struct {
 	stripWidth float32
 	// compact marks the side panel's System tool, whose tables keep only the
 	// columns its narrow width holds.
-	compact  bool
-	settings domainpreferences.SysManager
-	search   string
-	problem  Problem
-	loadErr  error
-	active   bool
+	compact bool
+	// collapsedOpen is the Collapsed Tabs menu's open state. The strip closes
+	// it when there are no Collapsed Tabs.
+	collapsedOpen bool
+	settings      domainpreferences.SysManager
+	search        string
+	// processRunningOnly, portFilter, and serviceFilter narrow their tabs
+	// independently of the shared search. Their zero values keep every row,
+	// which is the default view.
+	processRunningOnly bool
+	portFilter         appsysmanager.PortFilter
+	serviceFilter      appsysmanager.ServiceFilter
+	problem            Problem
+	loadErr            error
+	active             bool
 
 	pending      *PendingAction
 	actionCancel context.CancelFunc
@@ -154,6 +164,11 @@ type State struct {
 	actionDone   bool
 
 	snapshot appsysmanager.Snapshot
+	// history holds one 24-sample trend per metric card for the current Host
+	// on this surface. It is UI state: it survives System Tab switches, clears
+	// when the Host changes, and is never persisted or shared with another
+	// surface. The shared collector keeps the deltas continuous instead.
+	history  metricHistories
 	table    ui.ListState
 	sort     ui.SortOrder
 	selected int
@@ -180,6 +195,18 @@ type State struct {
 	docOutcomes []documentOutcome
 	unsubscribe func()
 	closed      bool
+}
+
+// metricHistories is one Host's sparkline trends on this surface. observedAt
+// is the newest Stats Sample applied to all four metrics, so a cached sample
+// reused across frames never adds a duplicate point to any card.
+type metricHistories struct {
+	host       string
+	observedAt time.Time
+	cpu        []float64
+	memory     []float64
+	disk       []float64
+	network    []float64
 }
 
 type actionOutcome struct {
@@ -275,6 +302,9 @@ func (s *State) Activate() {
 	s.revealTab = true
 	s.clearFinishedAction()
 	s.reload()
+	// Another surface may have hidden or collapsed the tab this one shows,
+	// since its last activation; the shared layout decides what is visible.
+	s.ensureActiveVisible()
 	s.startActive()
 	s.requestRedraw()
 }
@@ -317,6 +347,7 @@ func (s *State) reload() {
 		if len(items) > 0 {
 			s.hostID = string(items[0].ID)
 		}
+		s.resetHistory()
 	}
 }
 
@@ -335,11 +366,16 @@ func (s *State) startActive() {
 	}
 }
 
+// cpuHistoryLimit is how many successful samples every card's sparkline
+// keeps.
+const cpuHistoryLimit = 24
+
 // Flush copies the service's runtime snapshot and applies completed action
 // outcomes. The view calls it every frame.
 func (s *State) Flush() {
 	if s.service != nil {
 		s.snapshot = s.service.Snapshot()
+		s.observeHistory()
 	}
 	s.mu.Lock()
 	outcomes := s.outcomes
@@ -372,6 +408,90 @@ func (s *State) Flush() {
 		}
 	}
 	s.Prepare()
+}
+
+// CPUHistory returns the CPU card's trend for the current Host on this
+// surface, oldest first. A caller may not mutate the returned slice.
+func (s *State) CPUHistory() []float64 {
+	return append([]float64(nil), s.history.cpu...)
+}
+
+// MemoryHistory returns the Memory card's used/total percent trend.
+func (s *State) MemoryHistory() []float64 {
+	return append([]float64(nil), s.history.memory...)
+}
+
+// DiskHistory returns the Disk card's aggregate percent trend.
+func (s *State) DiskHistory() []float64 {
+	return append([]float64(nil), s.history.disk...)
+}
+
+// NetworkHistory returns the Network card's combined RX+TX bytes-per-second
+// trend.
+func (s *State) NetworkHistory() []float64 {
+	return append([]float64(nil), s.history.network...)
+}
+
+// resetHistory clears every trend, as a Host change does: one Host's samples
+// never draw under another Host's card.
+func (s *State) resetHistory() {
+	s.history = metricHistories{}
+}
+
+// observeHistory appends one successful, known reading per metric while the
+// Overview is the visible tab. A cached sample reused across frames carries
+// the same SampledAt, so it never adds a duplicate point. A metric the sample
+// leaves unknown is skipped without stopping the other cards.
+func (s *State) observeHistory() {
+	if !s.active || s.tab != appsysmanager.TabOverview {
+		return
+	}
+	if s.history.host != s.hostID {
+		s.resetHistory()
+		s.history.host = s.hostID
+	}
+	state := s.snapshot.Tabs[appsysmanager.TabOverview]
+	if state.Status != appsysmanager.StatusLive {
+		return
+	}
+	sampledAt := state.Stats.SampledAt
+	if sampledAt.IsZero() || !sampledAt.After(s.history.observedAt) {
+		return
+	}
+	s.history.observedAt = sampledAt
+	s.history.cpu = appendTrend(s.history.cpu, state.Stats.CPU)
+	s.history.memory = appendTrend(s.history.memory,
+		knownPercent(state.Stats.MemUsedMB, state.Stats.MemTotalMB))
+	s.history.disk = appendTrend(s.history.disk, state.Stats.DiskPercent)
+	if known(state.Stats.NetworkRxBps) && known(state.Stats.NetworkTxBps) {
+		s.history.network = appendTrend(s.history.network,
+			state.Stats.NetworkRxBps+state.Stats.NetworkTxBps)
+	}
+}
+
+// appendTrend adds one known sample and keeps the newest historyLimit points.
+func appendTrend(values []float64, value float64) []float64 {
+	if !known(value) {
+		return values
+	}
+	values = append(values, value)
+	if len(values) > cpuHistoryLimit {
+		values = values[len(values)-cpuHistoryLimit:]
+	}
+	return values
+}
+
+// knownPercent maps a used/total pair onto 0–100, or NaN when the pair cannot
+// form a percentage.
+func knownPercent(used, total float64) float64 {
+	if !known(used) || !known(total) || total <= 0 {
+		return math.NaN()
+	}
+	return min(100, max(0, used/total*100))
+}
+
+func known(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 // Prepare rebuilds the current tab's displayed rows. Call it once per frame
@@ -459,6 +579,7 @@ func (s *State) SetHost(id string) {
 	s.hostID = id
 	s.selected = -1
 	s.problem = ProblemNone
+	s.resetHistory()
 	s.closeDocument()
 	s.clearFinishedAction()
 	s.startActive()
@@ -492,6 +613,23 @@ func (s *State) TabVisible(tab appsysmanager.Tab) bool {
 	return s.settings.Visible(domainpreferences.SysManagerTab(tab))
 }
 
+// TabCollapsed reports whether tab is a Collapsed Tab: out of the strip but
+// kept in the Collapsed Tabs menu.
+func (s *State) TabCollapsed(tab appsysmanager.Tab) bool {
+	return s.settings.IsCollapsed(domainpreferences.SysManagerTab(tab))
+}
+
+// Collapsed returns the Collapsed Tabs in their saved order for the strip's
+// Collapsed Tabs menu.
+func (s *State) Collapsed() []appsysmanager.Tab {
+	collapsed := s.settings.Collapsed()
+	tabs := make([]appsysmanager.Tab, 0, len(collapsed))
+	for _, tab := range collapsed {
+		tabs = append(tabs, appsysmanager.Tab(tab))
+	}
+	return tabs
+}
+
 // TabIndex returns the active tab's position in the visible strip.
 func (s *State) TabIndex() int {
 	for index, candidate := range s.Tabs() {
@@ -517,6 +655,7 @@ func (s *State) SetTab(tab appsysmanager.Tab) {
 		return
 	}
 	s.revealTab = true
+	s.collapsedOpen = false
 	s.tab = tab
 	s.selected = -1
 	s.search = ""
@@ -532,7 +671,9 @@ func (s *State) SetTab(tab appsysmanager.Tab) {
 // SetTabVisible shows or hides a tab and persists the layout. Hiding the
 // active tab moves to the nearest visible one; the overview cannot be hidden.
 func (s *State) SetTabVisible(tab appsysmanager.Tab, visible bool) error {
-	if s.TabVisible(tab) == visible {
+	// Hiding a Collapsed Tab changes it too: it leaves the Collapsed Tabs
+	// menu for the hidden set, even though it already was out of the strip.
+	if s.TabVisible(tab) == visible && (visible || !s.TabCollapsed(tab)) {
 		return nil
 	}
 	next := s.settings.WithTabHidden(domainpreferences.SysManagerTab(tab), !visible)
@@ -541,15 +682,67 @@ func (s *State) SetTabVisible(tab appsysmanager.Tab, visible bool) error {
 	}
 	s.settings = next
 	s.revealTab = true
-	if !s.ensureActiveVisible() {
+	if s.ensureActiveVisible() {
 		s.startActive()
 	}
 	s.requestRedraw()
 	return nil
 }
 
-// MoveTab moves the active tab one place earlier (delta < 0) or later in the
-// persisted order. A move past either edge changes nothing.
+// SetTabCollapsed removes tab from the visible strip while keeping it in the
+// Collapsed Tabs menu, or returns it to the strip. The overview cannot be
+// collapsed. Collapsing the active tab moves to the nearest visible one.
+func (s *State) SetTabCollapsed(tab appsysmanager.Tab, collapsed bool) error {
+	if s.TabCollapsed(tab) == collapsed {
+		return nil
+	}
+	next := s.settings.WithTabCollapsed(domainpreferences.SysManagerTab(tab), collapsed)
+	if !s.saveLayout(next) {
+		return errors.New("sysmanager: could not save the tab layout")
+	}
+	s.settings = next
+	s.revealTab = true
+	if s.ensureActiveVisible() {
+		s.startActive()
+	}
+	s.requestRedraw()
+	return nil
+}
+
+// ShowCollapsedTab returns a Collapsed Tab to the visible strip and activates
+// it, as choosing it from the Collapsed Tabs menu does.
+func (s *State) ShowCollapsedTab(tab appsysmanager.Tab) error {
+	if !s.TabCollapsed(tab) {
+		return nil
+	}
+	if err := s.SetTabCollapsed(tab, false); err != nil {
+		return err
+	}
+	s.SetTab(tab)
+	return nil
+}
+
+// ResetLayout restores the seven-tab default order with no Hidden or
+// Collapsed Tabs, keeping every refresh interval.
+func (s *State) ResetLayout() bool {
+	next := s.settings.ResetTabLayout()
+	if !s.saveLayout(next) {
+		return false
+	}
+	s.settings = next
+	s.revealTab = true
+	s.collapsedOpen = false
+	if s.ensureActiveVisible() {
+		s.startActive()
+	}
+	s.requestRedraw()
+	return true
+}
+
+// MoveTab moves the active tab one place earlier (delta < 0) or later among
+// the visible tabs, and persists its new position in the full tab order. A
+// move past either end of the visible strip changes nothing, so a Hidden or
+// Collapsed Tab between neighbors never swallows a move.
 func (s *State) MoveTab(delta int) bool {
 	if delta == 0 {
 		return false
@@ -561,7 +754,36 @@ func (s *State) MoveTab(delta int) bool {
 	next := s.settings
 	changed := false
 	for range absInt(delta) {
-		moved := next.MoveTab(domainpreferences.SysManagerTab(s.tab), step)
+		visible := next.VisibleTabs()
+		from := -1
+		for index, tab := range visible {
+			if tab == domainpreferences.SysManagerTab(s.tab) {
+				from = index
+				break
+			}
+		}
+		if from < 0 {
+			break
+		}
+		to := from + step
+		if to < 0 || to >= len(visible) {
+			break
+		}
+		order := next.Order()
+		fromOrder, toOrder := -1, -1
+		for index, tab := range order {
+			switch tab {
+			case domainpreferences.SysManagerTab(s.tab):
+				fromOrder = index
+			case visible[to]:
+				toOrder = index
+			}
+		}
+		if fromOrder < 0 || toOrder < 0 || fromOrder == toOrder {
+			break
+		}
+		order[fromOrder], order[toOrder] = order[toOrder], order[fromOrder]
+		moved := next.WithTabOrder(order)
 		if sameTabOrder(moved.Order(), next.Order()) {
 			break
 		}
@@ -597,14 +819,40 @@ func (s *State) saveLayout(next domainpreferences.SysManager) bool {
 	return true
 }
 
-// ensureActiveVisible moves the active tab to the first visible tab when it
-// was hidden and reports whether it moved.
+// ensureActiveVisible moves the active tab to its nearest visible neighbor
+// when it was hidden or collapsed, and reports whether it moved. Distance is
+// counted in the full tab order; a tie chooses the earlier tab.
 func (s *State) ensureActiveVisible() bool {
 	if s.TabVisible(s.tab) {
 		return false
 	}
-	tabs := s.Tabs()
-	s.tab = tabs[0]
+	order := s.settings.Order()
+	at := -1
+	for index, tab := range order {
+		if appsysmanager.Tab(tab) == s.tab {
+			at = index
+			break
+		}
+	}
+	replacement, found := appsysmanager.TabOverview, false
+	for distance := 1; at >= 0 && distance < len(order) && !found; distance++ {
+		for _, index := range []int{at - distance, at + distance} {
+			if index < 0 || index >= len(order) {
+				continue
+			}
+			candidate := appsysmanager.Tab(order[index])
+			if s.TabVisible(candidate) {
+				replacement, found = candidate, true
+				break
+			}
+		}
+	}
+	if !found {
+		if tabs := s.Tabs(); len(tabs) > 0 {
+			replacement = tabs[0]
+		}
+	}
+	s.tab = replacement
 	s.selected = -1
 	s.search = ""
 	s.closeDocument()
@@ -651,6 +899,46 @@ func (s *State) SetSearch(value string) {
 		return
 	}
 	s.search = value
+	s.Prepare()
+	s.requestRedraw()
+}
+
+// ProcessRunningOnly returns whether the Processes tab keeps only rows whose
+// state begins with R.
+func (s *State) ProcessRunningOnly() bool { return s.processRunningOnly }
+
+// SetProcessRunningOnly toggles the Processes tab's running-only filter.
+func (s *State) SetProcessRunningOnly(value bool) {
+	if value == s.processRunningOnly {
+		return
+	}
+	s.processRunningOnly = value
+	s.Prepare()
+	s.requestRedraw()
+}
+
+// PortFilter returns the Ports tab's protocol filter.
+func (s *State) PortFilter() appsysmanager.PortFilter { return s.portFilter }
+
+// SetPortFilter narrows the Ports tab to one protocol.
+func (s *State) SetPortFilter(filter appsysmanager.PortFilter) {
+	if filter == s.portFilter {
+		return
+	}
+	s.portFilter = filter
+	s.Prepare()
+	s.requestRedraw()
+}
+
+// ServiceFilter returns the Services tab's state filter.
+func (s *State) ServiceFilter() appsysmanager.ServiceFilter { return s.serviceFilter }
+
+// SetServiceFilter narrows the Services tab to one unit state.
+func (s *State) SetServiceFilter(filter appsysmanager.ServiceFilter) {
+	if filter == s.serviceFilter {
+		return
+	}
+	s.serviceFilter = filter
 	s.Prepare()
 	s.requestRedraw()
 }
@@ -1189,13 +1477,7 @@ func (s *State) DisplayProcesses() []appsysmanager.Process { return s.processRow
 
 func (s *State) prepareProcesses(query string) []appsysmanager.Process {
 	state := s.TabState(appsysmanager.TabProcesses)
-	rows := make([]appsysmanager.Process, 0, len(state.Processes))
-	for _, process := range state.Processes {
-		if query != "" && !processMatches(process, query) {
-			continue
-		}
-		rows = append(rows, process)
-	}
+	rows := appsysmanager.FilterProcesses(state.Processes, query, s.processRunningOnly)
 	order := s.sort
 	column := order.Column
 	if column == "" {
@@ -1249,39 +1531,12 @@ func compareFloat(left, right float64) int {
 	}
 }
 
-func processMatches(process appsysmanager.Process, query string) bool {
-	fields := []string{strconv.Itoa(process.PID), process.User, process.Stat, process.Command}
-	for _, field := range fields {
-		if strings.Contains(strings.ToLower(field), query) {
-			return true
-		}
-	}
-	return false
-}
-
 // DisplayPorts returns the active Host's listening sockets after search.
 func (s *State) DisplayPorts() []appsysmanager.Port { return s.portRows }
 
 func (s *State) preparePorts(query string) []appsysmanager.Port {
 	state := s.TabState(appsysmanager.TabPorts)
-	rows := make([]appsysmanager.Port, 0, len(state.Ports))
-	for _, port := range state.Ports {
-		if query != "" {
-			fields := []string{strconv.Itoa(port.Port), port.Protocol, port.Address,
-				port.ProcessName, strconv.Itoa(port.PID)}
-			matched := false
-			for _, field := range fields {
-				if strings.Contains(strings.ToLower(field), query) {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
-		}
-		rows = append(rows, port)
-	}
+	rows := appsysmanager.FilterPorts(state.Ports, query, s.portFilter)
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].Port != rows[j].Port {
 			return rows[i].Port < rows[j].Port
@@ -1297,25 +1552,7 @@ func (s *State) DisplayServices() []appsysmanager.Unit { return s.serviceRows }
 
 func (s *State) prepareServices(query string) []appsysmanager.Unit {
 	state := s.TabState(appsysmanager.TabServices)
-	rows := make([]appsysmanager.Unit, 0, len(state.Services))
-	for _, unit := range state.Services {
-		if query != "" {
-			fields := []string{unit.Name, unit.Description, unit.Scope,
-				unit.ActiveState, unit.SubState}
-			matched := false
-			for _, field := range fields {
-				if strings.Contains(strings.ToLower(field), query) {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
-		}
-		rows = append(rows, unit)
-	}
-	return rows
+	return appsysmanager.FilterServices(state.Services, query, s.serviceFilter)
 }
 
 // SelectRow chooses a displayed row for the action bar, or -1 to clear it.

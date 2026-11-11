@@ -56,5 +56,5 @@ func TestRenderSideUITour(t *testing.T) {
 	service.snapshot = demoSnapshot()
 	state := newTestState(service, newFakePreferences())
 	state.ShowHost("alpha")
-	renderSide(t, "system", SideView(state), nil)
+	renderSide(t, "system", SideView(state, 360), nil)
 }

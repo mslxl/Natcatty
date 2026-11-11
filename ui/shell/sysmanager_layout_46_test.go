@@ -11,6 +11,7 @@ import (
 
 	appsysmanager "github.com/mslxl/natcatty/application/sysmanager"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uisysmanager "github.com/mslxl/natcatty/ui/sysmanager"
 )
@@ -32,16 +33,18 @@ const (
 // changes are read back from the shared preferences store by a second surface
 // that models a restart.
 
-// sysManagerTabsMenuItems is the menu a user sees: one checkable row per known
-// tab in canonical order, a separator, then the two move commands.
+// sysManagerTabsMenuItems is the menu a user sees: one submenu per known tab
+// in canonical order, then a separator, the two move commands, another
+// separator, and Reset layout.
 func sysManagerTabsMenuItems(m locales.Messages,
 	manager *uisysmanager.State) []string {
 	labels := sysManagerTabLabels(m)
-	items := make([]string, 0, len(manager.AllTabs())+3)
+	items := make([]string, 0, len(manager.AllTabs())+6)
 	for _, tab := range manager.AllTabs() {
 		items = append(items, labels[tab])
 	}
-	items = append(items, "-", m.SysManagerMoveTabLeft(), m.SysManagerMoveTabRight())
+	items = append(items, "-", m.SysManagerMoveTabEarlier(), m.SysManagerMoveTabLater(),
+		"-", m.SysManagerResetLayout())
 	return items
 }
 
@@ -67,6 +70,7 @@ func TestSysManagerTabsMenuTogglesAndMovesThroughTheUI(t *testing.T) {
 		name := locale + " tabs menu"
 		menuLabel := m.SysManagerTabsLayout()
 		tabLabels := sysManagerTabLabels(m)
+		leftEdge, rightEdge := sysManagerContentBounds(sysManagerMinimumWidth)
 
 		// The mouse opens the persisted layout menu, with every tab entry
 		// (GPU included) and the two move commands.
@@ -81,9 +85,70 @@ func TestSysManagerTabsMenuTogglesAndMovesThroughTheUI(t *testing.T) {
 				name, len(manager.AllTabs()), got)
 		}
 
-		// Choosing the GPU entry hides the tab through the UI and saves it.
-		if err := tester.ChooseMenuItem(tabLabels[appsysmanager.TabGPU]); err != nil {
-			t.Fatalf("%s: choose the GPU entry: %v", name, err)
+		// Collapse Docker through the layout menu: it leaves the strip and
+		// appears in the Collapsed Tabs trigger's popover, which choosing it
+		// returns to the strip and activates.
+		openTabsMenuWithMouse(t, tester, menuLabel, name+" collapse")
+		if err := tester.ChooseMenuItem(tabLabels[appsysmanager.TabDocker], m.SysManagerCollapseTab()); err != nil {
+			t.Fatalf("%s: choose Docker > Collapse: %v", name, err)
+		}
+		tester.Frame()
+		if !manager.TabCollapsed(appsysmanager.TabDocker) ||
+			manager.TabVisible(appsysmanager.TabDocker) {
+			t.Fatalf("%s: collapsing Docker left visible=%v collapsed=%v: %v",
+				name, manager.TabVisible(appsysmanager.TabDocker),
+				manager.TabCollapsed(appsysmanager.TabDocker), manager.Tabs())
+		}
+		if tester.HasText(tabLabels[appsysmanager.TabDocker]) {
+			t.Fatalf("%s: the collapsed Docker tab stayed in the strip: %v",
+				name, tester.Texts())
+		}
+		more, ok := tester.Find(m.SysManagerMoreTabs())
+		if !ok {
+			t.Fatalf("%s: collapsing Docker drew no Collapsed Tabs trigger: %v",
+				name, tester.Texts())
+		}
+		if more.X < leftEdge || more.X+more.W > rightEdge {
+			t.Fatalf("%s: the Collapsed Tabs trigger crosses the content column %.0f..%.0f: %+v",
+				name, leftEdge, rightEdge, more)
+		}
+		if err := tester.Click(m.SysManagerMoreTabs()); err != nil {
+			t.Fatalf("%s: open the Collapsed Tabs menu: %v", name, err)
+		}
+		tester.Frame()
+		if !tester.HasText(m.SysManagerCollapsedTabs()) {
+			t.Fatalf("%s: the Collapsed Tabs menu lacks its title: %v", name, tester.Texts())
+		}
+		if err := tester.Click(tabLabels[appsysmanager.TabDocker]); err != nil {
+			t.Fatalf("%s: choose the collapsed Docker tab: %v", name, err)
+		}
+		tester.Frame()
+		if manager.Tab() != appsysmanager.TabDocker ||
+			!manager.TabVisible(appsysmanager.TabDocker) ||
+			manager.TabCollapsed(appsysmanager.TabDocker) {
+			t.Fatalf("%s: choosing collapsed Docker left tab=%s visible=%v collapsed=%v",
+				name, manager.Tab(), manager.TabVisible(appsysmanager.TabDocker),
+				manager.TabCollapsed(appsysmanager.TabDocker))
+		}
+		if _, ok := tester.Find(m.SysManagerMoreTabs()); ok {
+			t.Fatalf("%s: the trigger stayed after the Collapsed Tabs menu emptied: %v",
+				name, tester.Texts())
+		}
+		// Collapse it again so the restart below reads the persisted menu.
+		openTabsMenuWithMouse(t, tester, menuLabel, name+" collapse again")
+		if err := tester.ChooseMenuItem(tabLabels[appsysmanager.TabDocker], m.SysManagerCollapseTab()); err != nil {
+			t.Fatalf("%s: choose Docker > Collapse again: %v", name, err)
+		}
+		tester.Frame()
+		if !manager.TabCollapsed(appsysmanager.TabDocker) {
+			t.Fatalf("%s: the second collapse was not saved: %v", name, manager.Collapsed())
+		}
+
+		// Choosing Hide on the GPU submenu hides the tab through the UI and
+		// saves it.
+		openTabsMenuWithMouse(t, tester, menuLabel, name+" hide")
+		if err := tester.ChooseMenuItem(tabLabels[appsysmanager.TabGPU], m.SysManagerHideTab()); err != nil {
+			t.Fatalf("%s: choose GPU > Hide: %v", name, err)
 		}
 		tester.Frame()
 		if manager.TabVisible(appsysmanager.TabGPU) {
@@ -118,19 +183,29 @@ func TestSysManagerTabsMenuTogglesAndMovesThroughTheUI(t *testing.T) {
 		// Move the active tmux tab one place left through the menu.
 		manager.SetTab(appsysmanager.TabTmux)
 		tester.Frame()
+		tmuxBefore, ok := tester.Find(tabLabels[appsysmanager.TabTmux])
+		if !ok || tmuxBefore.W <= 0 {
+			t.Fatalf("%s: tmux is not rendered before Move Earlier: %v",
+				name, tester.Texts())
+		}
 		before := persistedTabOrder(prefs)
 		openTabsMenuWithMouse(t, tester, menuLabel, name+" move")
-		if err := tester.ChooseMenuItem(m.SysManagerMoveTabLeft()); err != nil {
-			t.Fatalf("%s: choose Move Left: %v", name, err)
+		if err := tester.ChooseMenuItem(m.SysManagerMoveTabEarlier()); err != nil {
+			t.Fatalf("%s: choose Move Earlier: %v", name, err)
 		}
 		tester.Frame()
 		after := persistedTabOrder(prefs)
 		if !movedLeft(before, after, string(domainpreferences.SysManagerTmux)) {
-			t.Fatalf("%s: Move Left moved %q to %q", name, before, after)
+			t.Fatalf("%s: Move Earlier moved %q to %q", name, before, after)
 		}
 		if got := slices.Index(manager.Tabs(), appsysmanager.TabTmux); got != 3 {
-			t.Fatalf("%s: after Move Left tmux sits at %d, want 3: %v",
+			t.Fatalf("%s: after Move Earlier tmux sits at %d, want 3: %v",
 				name, got, manager.Tabs())
+		}
+		tmuxAfter, ok := tester.Find(tabLabels[appsysmanager.TabTmux])
+		if !ok || tmuxAfter.W <= 0 || tmuxAfter.X >= tmuxBefore.X {
+			t.Fatalf("%s: Move Earlier left tmux at x%.0f, want it left of x%.0f: %v",
+				name, tmuxAfter.X, tmuxBefore.X, tester.Texts())
 		}
 
 		// A second surface over the same preferences is the restart: the
@@ -144,6 +219,20 @@ func TestSysManagerTabsMenuTogglesAndMovesThroughTheUI(t *testing.T) {
 		}
 		if restarted.HasText(tabLabels[appsysmanager.TabGPU]) {
 			t.Fatalf("%s: the restarted strip shows the hidden GPU tab: %v",
+				name, restarted.Texts())
+		}
+		if !restartedManager.TabCollapsed(appsysmanager.TabDocker) ||
+			restartedManager.TabVisible(appsysmanager.TabDocker) {
+			t.Fatalf("%s: the restart lost the collapsed Docker tab: visible=%v collapsed=%v",
+				name, restartedManager.TabVisible(appsysmanager.TabDocker),
+				restartedManager.TabCollapsed(appsysmanager.TabDocker))
+		}
+		if restarted.HasText(tabLabels[appsysmanager.TabDocker]) {
+			t.Fatalf("%s: the restarted strip shows the collapsed Docker tab: %v",
+				name, restarted.Texts())
+		}
+		if _, ok := restarted.Find(m.SysManagerMoreTabs()); !ok {
+			t.Fatalf("%s: the restarted surface lost the Collapsed Tabs trigger: %v",
 				name, restarted.Texts())
 		}
 		if got := slices.Index(restartedManager.Tabs(), appsysmanager.TabTmux); got != 3 {
@@ -181,8 +270,8 @@ func TestSysManagerTabsMenuOpensAtTheMinimumWindow(t *testing.T) {
 				name, left, right, rect)
 		}
 		openTabsMenuWithMouse(t, tester, label, name)
-		if got := len(tester.Menu()); got < 10 {
-			t.Fatalf("%s: the minimum-window menu has %d entries, want the seven tabs, a separator, and two moves: %q",
+		if got := len(tester.Menu()); got < 12 {
+			t.Fatalf("%s: the minimum-window menu has %d entries, want seven tab submenus, two separators, two moves, and Reset layout: %q",
 				name, got, tester.Menu())
 		}
 		t.Logf("%s: Tabs button at %.0f,%.0f %.0fx%.0f; menu has %d entries",
@@ -424,6 +513,116 @@ func TestSysManagerGPUAndHeaderFitTheContentAtMinimumWindow(t *testing.T) {
 			t.Logf("%s: %s at %.0f,%.0f %.0fx%.0f", name, node.what,
 				rect.X, rect.Y, rect.W, rect.H)
 		}
+	}
+}
+
+// TestSysManagerCollapsedTabsTriggerFollowsVisibleTabsInBothStyles proves the
+// trailing controls never cover a visible tab: at the minimum client and at a
+// wide window, in both Interface Styles, the Collapsed Tabs trigger starts at
+// or after the right edge of the last visible tab and after the layout button.
+func TestSysManagerCollapsedTabsTriggerFollowsVisibleTabsInBothStyles(t *testing.T) {
+	for _, style := range []struct {
+		name  string
+		style kit.Style
+	}{{"classic", kit.Classic}, {"macos", kit.MacOS}} {
+		t.Run(style.name, func(t *testing.T) {
+			kit.SetStyle(style.style)
+			t.Cleanup(func() { kit.SetStyle(nil) })
+			for _, width := range []int{sysManagerMinimumWidth, 1100} {
+				tester, manager := newSysManagerLayoutTester(t, width,
+					sysManagerMinimumHeight, "en", appsysmanager.TabOverview, 4)
+				m := locales.In("en")
+				labels := sysManagerTabLabels(m)
+				if err := manager.SetTabCollapsed(appsysmanager.TabTmux, true); err != nil {
+					t.Fatalf("%s at %d: collapse tmux: %v", style.name, width, err)
+				}
+				if err := manager.SetTabCollapsed(appsysmanager.TabGPU, true); err != nil {
+					t.Fatalf("%s at %d: collapse GPU: %v", style.name, width, err)
+				}
+				tester.Frame()
+				name := fmt.Sprintf("%s at %d", style.name, width)
+				trigger, ok := tester.Find(m.SysManagerMoreTabs())
+				if !ok || trigger.W <= 0 {
+					t.Fatalf("%s: the Collapsed Tabs trigger is missing: %v",
+						name, tester.Texts())
+				}
+				layout, ok := tester.Find(m.SysManagerTabsLayout())
+				if !ok || layout.W <= 0 {
+					t.Fatalf("%s: the layout button is missing: %v", name, tester.Texts())
+				}
+				lastRight := float32(0)
+				for _, tab := range manager.Tabs() {
+					rect, ok := tester.Find(labels[tab])
+					if !ok || rect.W <= 0 {
+						t.Fatalf("%s: visible tab %s is missing: %v", name, tab, tester.Texts())
+					}
+					if right := rect.X + rect.W; right > lastRight {
+						lastRight = right
+					}
+				}
+				if trigger.X < lastRight-0.5 {
+					t.Fatalf("%s: the Collapsed Tabs trigger at x%.0f starts before the last visible tab ending at x%.0f: %v",
+						name, trigger.X, lastRight, tester.Texts())
+				}
+				if trigger.X < layout.X+layout.W-0.5 {
+					t.Fatalf("%s: the Collapsed Tabs trigger at x%.0f does not follow the layout button ending at x%.0f",
+						name, trigger.X, layout.X+layout.W)
+				}
+				left, right := sysManagerContentBounds(width)
+				if trigger.X < left-0.5 || trigger.X+trigger.W > right+0.5 {
+					t.Fatalf("%s: the Collapsed Tabs trigger crosses the content column %.0f..%.0f: %+v",
+						name, left, right, trigger)
+				}
+			}
+		})
+	}
+}
+
+// TestSysManagerStripEntriesOpenTmuxAndDockerViews proves the tmux and Docker
+// strip entries are more than labels: clicking each one activates that tab and
+// renders its existing view with live fixture content. The overview's System
+// card is not the destination here; the tmux sessions and Docker containers
+// are the observable content of their own tabs.
+func TestSysManagerStripEntriesOpenTmuxAndDockerViews(t *testing.T) {
+	for _, style := range []struct {
+		name  string
+		style kit.Style
+	}{{"classic", kit.Classic}, {"macos", kit.MacOS}} {
+		t.Run(style.name, func(t *testing.T) {
+			kit.SetStyle(style.style)
+			t.Cleanup(func() { kit.SetStyle(nil) })
+			tester, manager := newSysManagerLayoutTester(t, 1100, 600, "en",
+				appsysmanager.TabOverview, 4)
+			m := locales.In("en")
+			labels := sysManagerTabLabels(m)
+			cases := []struct {
+				tab     appsysmanager.Tab
+				hint    string
+				content string
+			}{
+				{appsysmanager.TabTmux, m.SysManagerSessionHint(), "session-00"},
+				{appsysmanager.TabDocker, m.SysManagerContainerHint(), "container-00"},
+			}
+			for _, test := range cases {
+				name := style.name + " " + string(test.tab)
+				if err := tester.Click(labels[test.tab]); err != nil {
+					t.Fatalf("%s: click the %s strip entry: %v", name, test.tab, err)
+				}
+				tester.Frame()
+				if manager.Tab() != test.tab {
+					t.Fatalf("%s: clicking the strip entry chose tab %s: %v",
+						name, manager.Tab(), tester.Texts())
+				}
+				if !tester.HasText(test.hint) {
+					t.Fatalf("%s: the %s view's hint %q is not rendered: %v",
+						name, test.tab, test.hint, tester.Texts())
+				}
+				if !tester.HasText(test.content) {
+					t.Fatalf("%s: the %s view's fixture content %q is not rendered: %v",
+						name, test.tab, test.content, tester.Texts())
+				}
+			}
+		})
 	}
 }
 

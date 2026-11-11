@@ -15,6 +15,8 @@ import (
 	"github.com/mslxl/natcatty/domain/model"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	uisysmanager "github.com/mslxl/natcatty/ui/sysmanager"
@@ -520,88 +522,156 @@ func sysManagerTabLabels(m locales.Messages) map[appsysmanager.Tab]string {
 	}
 }
 
-// TestSysManagerTabStripKeepsEveryTabInsideTheContentAtMinimumWindow renders
-// the real shell at the minimum window's 704x421 client with all seven tabs.
-// The strip overflows the 440-DIP content column, so it must scroll to the
-// chosen tab: every tab, including the last one (GPU), has to be whole and
-// inside the column while it is active, and no tab label may cross the
-// column's right edge.
-//
-// Independent acceptance at a2d30004 measured the English GPU tab at
-// 718,190 51x34, a right edge of 769: 53 DIPs past the content column and 37
-// past the client. The plain Tab row had no scroll container.
-func TestSysManagerTabStripKeepsEveryTabInsideTheContentAtMinimumWindow(t *testing.T) {
-	left, right := sysManagerContentBounds(sysManagerMinimumWidth)
+// sysManagerExactTexts counts exact text or accessible-label entries: a
+// labeled tab contributes its accessible name and its drawn label, while an
+// icon-only tab contributes only its accessible name.
+func sysManagerExactTexts(tester *ui.Tester, want string) int {
+	count := 0
+	for _, text := range tester.Texts() {
+		if text == want {
+			count++
+		}
+	}
+	return count
+}
+
+// TestSysManagerTabStripCompactsAtTheMinimumWindow proves the full-page strip
+// shows the labeled form at a wide window and drops every label together at
+// the 704x421 client, where the seven labeled tabs and their controls no
+// longer fit. Each compact tab stays a reachable square wholly inside the
+// content column, so every tab remains choosable.
+func TestSysManagerTabStripCompactsAtTheMinimumWindow(t *testing.T) {
 	for _, locale := range []string{"en", "zh-CN"} {
 		m := locales.In(locale)
-		tester, manager := newSysManagerLayoutTester(t, sysManagerMinimumWidth,
+		tester, manager := newSysManagerLayoutTester(t, 1100,
 			sysManagerMinimumHeight, locale, appsysmanager.TabOverview, 4)
 		labels := sysManagerTabLabels(m)
-		tabs := manager.Tabs()
-		if len(tabs) < 7 {
-			t.Fatalf("%s: visible tabs = %d, want the seven-tab strip: %v", locale, len(tabs), tabs)
-		}
 
-		// Natural label widths, measured where the strip is wide enough not
-		// to scroll; a narrower frame that cuts a label is caught below.
-		tester.SetSize(1100, sysManagerMinimumHeight)
-		tester.Frame()
-		natural := make(map[appsysmanager.Tab]float32, len(tabs))
-		for _, tab := range tabs {
-			manager.SetTab(tab)
-			tester.Frame()
+		// Wide: every tab draws its label beside its icon and its accessible
+		// name stays available, so a tab is wider than a compact square.
+		wideLeft, wideRight := sysManagerContentBounds(1100)
+		for _, tab := range manager.Tabs() {
 			rect, ok := tester.Find(labels[tab])
 			if !ok || rect.W <= 0 {
-				t.Fatalf("%s: label %q of %s is not rendered: %v",
-					locale, labels[tab], tab, tester.Texts())
+				t.Fatalf("%s: wide tab %s is not rendered: %v", locale, tab, tester.Texts())
 			}
-			natural[tab] = rect.W
+			if rect.W <= 40 {
+				t.Fatalf("%s: wide tab %s is %.0f DIPs wide, want its drawn label: %v",
+					locale, tab, rect.W, tester.Texts())
+			}
+			if got := sysManagerExactTexts(tester, labels[tab]); got < 2 {
+				t.Fatalf("%s: wide tab %s has %d texts, want its accessible name and label: %v",
+					locale, tab, got, tester.Texts())
+			}
+			if rect.X < wideLeft-0.5 || rect.X+rect.W > wideRight+0.5 {
+				t.Fatalf("%s: wide tab %s crosses the content column %.0f..%.0f: %+v",
+					locale, tab, wideLeft, wideRight, rect)
+			}
+		}
+		if _, ok := tester.Find(m.SysManagerSystemTabs()); !ok {
+			t.Fatalf("%s: the strip's accessible label is missing: %v",
+				locale, tester.Texts())
 		}
 
+		// Narrow: the labeled strip does not fit, so every tab keeps only its
+		// accessible name and draws a compact square.
 		tester.SetSize(sysManagerMinimumWidth, sysManagerMinimumHeight)
 		tester.Frame()
-		for _, tab := range tabs {
+		left, right := sysManagerContentBounds(sysManagerMinimumWidth)
+		for _, tab := range manager.Tabs() {
 			manager.SetTab(tab)
 			tester.Frame()
-			name := fmt.Sprintf("%s %s", locale, tab)
+			name := fmt.Sprintf("%s %s at %d", locale, tab, sysManagerMinimumWidth)
 			rect, ok := tester.Find(labels[tab])
 			if !ok || rect.W <= 0 {
-				t.Fatalf("%s: the active tab's label %q is not rendered: %v",
-					name, labels[tab], tester.Texts())
+				t.Fatalf("%s: compact tab is not rendered: %v", name, tester.Texts())
+			}
+			if got := sysManagerExactTexts(tester, labels[tab]); got < 1 {
+				t.Fatalf("%s: compact tab lost its accessible name: %v", name, tester.Texts())
+			}
+			if rect.W > 40 {
+				t.Fatalf("%s: compact tab is %.0f DIPs wide, wider than an icon-only tab: %+v",
+					name, rect.W, rect)
 			}
 			if rect.X < left-0.5 || rect.X+rect.W > right+0.5 {
-				t.Fatalf("%s: the active tab's label %q is outside the content column %.0f..%.0f: %+v",
-					name, labels[tab], left, right, rect)
+				t.Fatalf("%s: compact tab is outside the content column %.0f..%.0f: %+v",
+					name, left, right, rect)
 			}
-			if rect.W < natural[tab]-0.5 {
-				t.Fatalf("%s: the active tab's label %q is clipped to %.1f of %.1f DIPs: %+v",
-					name, labels[tab], rect.W, natural[tab], rect)
-			}
-			t.Logf("%s: active tab %q at %.0f,%.0f %.0fx%.0f (natural width %.1f, content %.0f..%.0f)",
-				name, labels[tab], rect.X, rect.Y, rect.W, rect.H, natural[tab], left, right)
-			// A neighbour that is partly scrolled out must stop at the
-			// viewport edge rather than run past the content column.
-			for _, other := range tabs {
-				neighbour, ok := tester.Find(labels[other])
-				if !ok || neighbour.W <= 0 {
-					continue
-				}
-				if neighbour.X < left-0.5 || neighbour.X+neighbour.W > right+0.5 {
-					t.Fatalf("%s: while %s is active, %q crosses the content column %.0f..%.0f: %+v",
-						name, tab, labels[other], left, right, neighbour)
-				}
-			}
+			t.Logf("%s: compact tab at %.0f,%.0f %.0fx%.0f (content %.0f..%.0f)",
+				name, rect.X, rect.Y, rect.W, rect.H, left, right)
 		}
 	}
 }
 
-// TestSysManagerTabStripRevealsTheActiveTabAfterTheWindowNarrows proves the
-// strip re-reveals its active tab when the window shrinks, not only when the
-// user picks a tab. A tab chosen while the window is wide must stay whole when
-// the window is restored to the minimum size, so the width change alone has to
-// scroll it back into view.
-func TestSysManagerTabStripRevealsTheActiveTabAfterTheWindowNarrows(t *testing.T) {
-	left, right := sysManagerContentBounds(sysManagerMinimumWidth)
+// TestSysManagerTabStripExposesTooltipsAndMappedIcons proves the seven tabs in
+// the real shell keep their icon and tooltip in both forms and both Interface
+// Styles. A headless tester cannot inspect a drawn icon's path: MyGo icons are
+// decoration invisible to assistive technology and carry no label. The icon is
+// therefore asserted at the widget's mapping seam (uisysmanager.TabIcon), while
+// the tab's accessible name and its hover tooltip are observed in the rendered
+// surface. Every tab must expose both, so an icon-only tab can still be named.
+func TestSysManagerTabStripExposesTooltipsAndMappedIcons(t *testing.T) {
+	wantIcons := map[appsysmanager.Tab]string{
+		appsysmanager.TabOverview:  icons.Activity,
+		appsysmanager.TabProcesses: icons.List,
+		appsysmanager.TabPorts:     icons.Network,
+		appsysmanager.TabServices:  icons.Settings,
+		appsysmanager.TabTmux:      icons.Terminal,
+		appsysmanager.TabDocker:    icons.Archive,
+		appsysmanager.TabGPU:       icons.Cpu,
+	}
+	for _, style := range []struct {
+		name  string
+		style kit.Style
+	}{{"classic", kit.Classic}, {"macos", kit.MacOS}} {
+		t.Run(style.name, func(t *testing.T) {
+			kit.SetStyle(style.style)
+			t.Cleanup(func() { kit.SetStyle(nil) })
+			for _, width := range []int{1100, sysManagerMinimumWidth} {
+				tester, manager := newSysManagerLayoutTester(t, width,
+					sysManagerMinimumHeight, "en", appsysmanager.TabOverview, 4)
+				m := locales.In("en")
+				labels := sysManagerTabLabels(m)
+				if got := len(manager.Tabs()); got != len(wantIcons) {
+					t.Fatalf("%s at %d: the strip has %d tabs, want seven: %v",
+						style.name, width, got, manager.Tabs())
+				}
+				if _, ok := tester.Find(m.SysManagerSystemTabs()); !ok {
+					t.Fatalf("%s at %d: the strip's accessible label is missing: %v",
+						style.name, width, tester.Texts())
+				}
+				for _, tab := range manager.Tabs() {
+					name := fmt.Sprintf("%s at %d %s", style.name, width, tab)
+					label := labels[tab]
+					rect, ok := tester.Find(label)
+					if !ok || rect.W <= 0 || rect.H <= 0 {
+						t.Fatalf("%s: the tab's accessible name is missing: %v",
+							name, tester.Texts())
+					}
+					if got := uisysmanager.TabIcon(tab); got != wantIcons[tab] {
+						t.Fatalf("%s: the tab maps to icon %q, want %q",
+							name, got, wantIcons[tab])
+					}
+					before := sysManagerExactTexts(tester, label)
+					tester.Move(rect.X+rect.W/2, rect.Y+rect.H/2)
+					tester.Frame()
+					tester.Advance(time.Second)
+					tester.Frame()
+					if after := sysManagerExactTexts(tester, label); after <= before {
+						t.Fatalf("%s: hovering the tab showed no tooltip for %q: %v",
+							name, label, tester.Texts())
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestSysManagerTabStripKeepsItsActiveTabWhenTheWindowNarrows proves the strip
+// re-renders in icon-only form when the window shrinks, not only when the user
+// picks a tab, and that the active tab stays the same and wholly inside the
+// content column.
+func TestSysManagerTabStripKeepsItsActiveTabWhenTheWindowNarrows(t *testing.T) {
 	for _, locale := range []string{"en", "zh-CN"} {
 		m := locales.In(locale)
 		labels := sysManagerTabLabels(m)
@@ -609,9 +679,10 @@ func TestSysManagerTabStripRevealsTheActiveTabAfterTheWindowNarrows(t *testing.T
 			locale, appsysmanager.TabOverview, 4)
 		manager.SetTab(appsysmanager.TabGPU)
 		tester.Frame()
-		natural, ok := tester.Find(labels[appsysmanager.TabGPU])
-		if !ok || natural.W <= 0 {
-			t.Fatalf("%s: the GPU label is not rendered at 1100: %v", locale, tester.Texts())
+		wide, ok := tester.Find(labels[appsysmanager.TabGPU])
+		if !ok || wide.W <= 40 {
+			t.Fatalf("%s: the wide active GPU tab is not labeled: %v (%+v)",
+				locale, tester.Texts(), wide)
 		}
 
 		tester.SetSize(sysManagerMinimumWidth, sysManagerMinimumHeight)
@@ -620,21 +691,26 @@ func TestSysManagerTabStripRevealsTheActiveTabAfterTheWindowNarrows(t *testing.T
 			t.Fatalf("%s: the narrow window changed the active tab to %s",
 				locale, manager.Tab())
 		}
+		left, right := sysManagerContentBounds(sysManagerMinimumWidth)
 		rect, ok := tester.Find(labels[appsysmanager.TabGPU])
 		if !ok || rect.W <= 0 {
-			t.Fatalf("%s: the active GPU label is not rendered after narrowing: %v",
+			t.Fatalf("%s: the active GPU tab is not rendered after narrowing: %v",
 				locale, tester.Texts())
 		}
 		if rect.X < left-0.5 || rect.X+rect.W > right+0.5 {
-			t.Fatalf("%s: after the window narrowed the active GPU label is outside the content column %.0f..%.0f: %+v",
+			t.Fatalf("%s: after the window narrowed the active GPU tab is outside the content column %.0f..%.0f: %+v",
 				locale, left, right, rect)
 		}
-		if rect.W < natural.W-0.5 {
-			t.Fatalf("%s: after the window narrowed the active GPU label is clipped to %.1f of %.1f DIPs: %+v",
-				locale, rect.W, natural.W, rect)
+		if rect.W > 40 {
+			t.Fatalf("%s: after the window narrowed the active GPU tab is still %.0f DIPs wide, want icon-only: %+v",
+				locale, rect.W, rect)
 		}
-		t.Logf("%s: after 1100 -> 704 the active GPU label is %.0f,%.0f %.0fx%.0f (natural %.1f, content %.0f..%.0f)",
-			locale, rect.X, rect.Y, rect.W, rect.H, natural.W, left, right)
+		if got := sysManagerExactTexts(tester, labels[appsysmanager.TabGPU]); got < 1 {
+			t.Fatalf("%s: after the window narrowed the active GPU tab lost its accessible name: %v",
+				locale, tester.Texts())
+		}
+		t.Logf("%s: after 1100 -> 704 the active GPU tab is %.0f,%.0f %.0fx%.0f (content %.0f..%.0f)",
+			locale, rect.X, rect.Y, rect.W, rect.H, left, right)
 	}
 }
 

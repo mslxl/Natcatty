@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mslxl/natcatty/application/hoststats"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
@@ -36,13 +37,18 @@ func TestParseCapabilitiesReadsOnlyLineAnchoredMarkers(t *testing.T) {
 }
 
 func TestParseOverviewReadsLinuxAndDarwinFields(t *testing.T) {
-	linux := "MODE:linux|HOST:web-1|OS:Debian 12|KERNEL:6.1|UPTIME:86400|" +
-		"LOAD:0.50 0.40 0.30|CORES:8|CPURAW:1000 500|MEM:2048 8192|SWAP:128 1024|DISK:12.5 100.0"
-	sample, err := parseOverview(linux)
+	linux := "MODE:linux|CPURAW:1000 500|CORES:8|" +
+		"PERCORERAW:cpu0:500:250,cpu1:500:250|" +
+		"MEMINFO:8192 6144 0 0 1024 896|" +
+		"HOST:web-1|OS:Debian 12|KERNEL:6.1|UPTIME:86400|" +
+		"LOAD:0.50 0.40 0.30|" +
+		"DISKS:/:12.500000:100.000000:12:fs=ext4:/dev/sda1"
+	first, sample, previous, err := parseOverview(linux, hoststats.State{},
+		time.Unix(100, 0), 20*time.Millisecond)
 	if err != nil {
 		t.Fatalf("parse linux overview: %v", err)
 	}
-	overview := sample.overview
+	overview := first
 	if overview.Hostname != "web-1" || overview.OSName != "Debian 12" ||
 		overview.KernelRelease != "6.1" || overview.UptimeSeconds != 86400 ||
 		overview.Cores != 8 {
@@ -56,26 +62,34 @@ func TestParseOverviewReadsLinuxAndDarwinFields(t *testing.T) {
 		overview.DiskUsedGB != 12.5 || overview.DiskTotalGB != 100 {
 		t.Errorf("capacity fields = %+v", overview)
 	}
-	if cpu := sample.cpuPercent(overviewCounters{}); !math.IsNaN(cpu) {
-		t.Errorf("first Linux CPU = %v, want NaN before a delta", cpu)
+	if !math.IsNaN(overview.CPUPercent) {
+		t.Errorf("first Linux CPU = %v, want NaN before a delta", overview.CPUPercent)
 	}
-	sample.cpuTotal = 1200
-	sample.cpuIdle = 550
-	if cpu := sample.cpuPercent(overviewCounters{mode: "linux", total: 1000, idle: 500}); cpu != 75 {
-		t.Errorf("derived CPU = %v, want 75", cpu)
+	if !sample.SampledAt.Equal(time.Unix(100, 0)) || sample.LatencyMS != 20 {
+		t.Errorf("sample timing = %v/%v, want the collection time and latency",
+			sample.SampledAt, sample.LatencyMS)
+	}
+	derived, _, _, err := parseOverview("MODE:linux|CPURAW:1200 550|HOST:web-1",
+		previous, time.Unix(102, 0), 10*time.Millisecond)
+	if err != nil {
+		t.Fatalf("parse second linux overview: %v", err)
+	}
+	if derived.CPUPercent != 75 {
+		t.Errorf("derived CPU = %v, want 75", derived.CPUPercent)
 	}
 
-	darwin := "MODE:darwin|HOST:mac|OS:macOS 14.0|KERNEL:23.0|UPTIME:3600|" +
-		"LOAD:1.00 0.50 0.25|CORES:4|CPURAW:120|MEM:4096 16384|SWAP:0 0|DISK:20.0 494.4"
-	sample, err = parseOverview(darwin)
+	darwin := "MODE:darwin|CPU:30|CORES:4|MEMINFO:16384 12288 0 0 0 0|" +
+		"HOST:mac|OS:macOS 14.0|KERNEL:23.0|UPTIME:3600|LOAD:1.00 0.50 0.25"
+	direct, _, _, err := parseOverview(darwin, hoststats.State{}, time.Unix(0, 0), 0)
 	if err != nil {
 		t.Fatalf("parse darwin overview: %v", err)
 	}
-	if cpu := sample.cpuPercent(overviewCounters{}); cpu != 30 {
-		t.Errorf("darwin CPU = %v, want 30", cpu)
+	if direct.CPUPercent != 30 {
+		t.Errorf("darwin CPU = %v, want 30", direct.CPUPercent)
 	}
 
-	if _, err := parseOverview("MODE:unsupported|OS:FreeBSD\n"); err == nil {
+	if _, _, _, err := parseOverview("MODE:unsupported|OS:FreeBSD\n",
+		hoststats.State{}, time.Unix(0, 0), 0); err == nil {
 		t.Error("an unsupported OS produced no typed error")
 	} else {
 		var typed *Error
@@ -83,7 +97,7 @@ func TestParseOverviewReadsLinuxAndDarwinFields(t *testing.T) {
 			t.Errorf("unsupported OS error = %v, want reason os", err)
 		}
 	}
-	if _, err := parseOverview("nothing here\n"); err == nil {
+	if _, _, _, err := parseOverview("nothing here\n", hoststats.State{}, time.Unix(0, 0), 0); err == nil {
 		t.Error("an unrecognizable overview reply produced no typed error")
 	}
 }
@@ -392,12 +406,26 @@ func fakeHost(id string) domainvault.Host {
 	return domainvault.Host{ID: model.HostID(id), Label: id, Hostname: id + ".test"}
 }
 
+// fastStatsCollector gives a test the shared collector policy without the
+// production cache window: the collector still owns the Stats Sample command,
+// parser, counters, and failure cutoff, while the test can observe several
+// samples without waiting four seconds.
+func fastStatsCollector(connector Connector, now func() time.Time) *hoststats.Collector {
+	return hoststats.NewCollector(
+		sysmanagerStatsConnector{connector: connector},
+		hoststats.WithClock(now),
+		hoststats.WithCacheTTL(0),
+	)
+}
+
 const (
 	fakeProbeAll = "__NC_OS=Linux\n__NC_HAS_ps=1\n__NC_HAS_top=1\n__NC_HAS_ss=1\n" +
 		"__NC_HAS_netstat=1\n__NC_HAS_lsof=1\n__NC_HAS_systemctl=1\n"
-	fakeOverview = "MODE:linux|HOST:fake-host|OS:Debian 12|KERNEL:6.1|UPTIME:7200|" +
-		"LOAD:0.10 0.20 0.30|CORES:4|CPURAW:%d %d|MEM:2048 8192|SWAP:0 1024|DISK:10.0 40.0"
-	fakeProcesses = "  1     0 root Ss 0.0 0.1 1234 5678 1-00:00:00 /sbin/init\n" +
+	fakeOverview = "MODE:linux|CPURAW:%d %d|CORES:4|" +
+		"MEMINFO:8192 6144 0 0 1024 896|HOST:fake-host|OS:Debian 12|KERNEL:6.1|" +
+		"UPTIME:7200|LOAD:0.10 0.20 0.30"
+	fakeDiskOutput = "DISKS:/:10.000000:40.000000:25:fs=ext4:/dev/sda1"
+	fakeProcesses  = "  1     0 root Ss 0.0 0.1 1234 5678 1-00:00:00 /sbin/init\n" +
 		" 42     1 app  R  5.0 1.2 2048 4096 00:01:00 worker"
 	fakePorts = "__NC_PORTS_BEGIN__\n__NC_SS__\n" +
 		`tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=123,fd=3))` +
@@ -420,6 +448,8 @@ func fakeExec(overviewCall *sampleCounter) func(domainvault.Host, string) (ExecR
 		switch {
 		case command == probeCommand():
 			return ExecResult{Stdout: fakeProbeAll}, nil
+		case command == hoststats.DiskCommand():
+			return ExecResult{Stdout: fakeDiskOutput}, nil
 		case strings.Contains(command, "PRETTY_NAME"):
 			return ExecResult{Stdout: sprintfOverview(overviewCall.next())}, nil
 		case strings.Contains(command, "ps -eo"):
@@ -454,11 +484,80 @@ func intString(value int) string {
 	return string(digits)
 }
 
+// steppingClock advances on every read so a test can tell the collection
+// time from a later UI state-change time.
+type steppingClock struct {
+	mu   sync.Mutex
+	now  time.Time
+	step time.Duration
+}
+
+func (c *steppingClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	value := c.now
+	c.now = c.now.Add(c.step)
+	return value
+}
+
+// TestOverviewSampledAtSurvivesLaterStateChanges proves the overview reports
+// when the Stats Sample was collected, not when the UI last changed. A failed
+// refresh moves the tab's state time but leaves the sample time intact.
+func TestOverviewSampledAtSurvivesLaterStateChanges(t *testing.T) {
+	clock := &steppingClock{now: time.Unix(1_700_000_000, 0), step: time.Second}
+	const darwinReply = "MODE:darwin|CPU:37|CORES:8|" +
+		"MEMINFO:16384 12288 0 0 1024 0|HOST:mac|UPTIME:99"
+	var statsCalls atomic.Int64
+	connector := newFakeConnector()
+	connector.exec = func(_ domainvault.Host, command string) (ExecResult, error) {
+		switch {
+		case command == probeCommand():
+			return ExecResult{Stdout: "__NC_OS=Darwin\n"}, nil
+		case statsCalls.Add(1) == 1:
+			return ExecResult{Stdout: darwinReply}, nil
+		default:
+			return ExecResult{}, errors.New("connection lost")
+		}
+	}
+	collector := fastStatsCollector(connector, clock.Now)
+	t.Cleanup(collector.Close)
+	service := NewService(connector, WithClock(clock.Now), WithStatsCollector(collector))
+	defer service.Close()
+
+	if err := service.Start(fakeHost("clock"), TabOverview, time.Hour); err != nil {
+		t.Fatalf("start overview: %v", err)
+	}
+	waitFor(t, 3*time.Second, "a live overview sample", func() bool {
+		return service.Snapshot().Tabs[TabOverview].Status == StatusLive
+	})
+	live := service.Snapshot().Tabs[TabOverview]
+	sampledAt := live.Stats.SampledAt
+	if sampledAt.IsZero() || sampledAt.Equal(live.At) {
+		t.Fatalf("SampledAt %v and the state-change At %v must be distinct", sampledAt, live.At)
+	}
+
+	service.Refresh()
+	waitFor(t, 3*time.Second, "a failed refresh to change the tab state", func() bool {
+		state := service.Snapshot().Tabs[TabOverview]
+		return state.Status == StatusError && state.At.After(live.At)
+	})
+	after := service.Snapshot().Tabs[TabOverview]
+	if !after.Stats.SampledAt.Equal(sampledAt) {
+		t.Errorf("SampledAt moved to %v on a state-only update; want %v",
+			after.Stats.SampledAt, sampledAt)
+	}
+	if !after.At.After(sampledAt) {
+		t.Errorf("state-change At %v did not advance past SampledAt %v", after.At, sampledAt)
+	}
+}
+
 func TestServiceSamplesEveryTabAndHonorsTheInterval(t *testing.T) {
 	connector := newFakeConnector()
 	overviewCalls := &sampleCounter{}
 	connector.exec = fakeExec(overviewCalls)
-	service := NewService(connector)
+	collector := fastStatsCollector(connector, nil)
+	t.Cleanup(collector.Close)
+	service := NewService(connector, WithStatsCollector(collector))
 	defer service.Close()
 
 	host := fakeHost("alpha")
@@ -658,7 +757,9 @@ func TestServiceCloseCancelsSampling(t *testing.T) {
 	connector := newFakeConnector()
 	overviewCalls := &sampleCounter{}
 	connector.exec = fakeExec(overviewCalls)
-	service := NewService(connector)
+	collector := fastStatsCollector(connector, nil)
+	t.Cleanup(collector.Close)
+	service := NewService(connector, WithStatsCollector(collector))
 
 	if err := service.Start(fakeHost("stop"), TabOverview, 10*time.Millisecond); err != nil {
 		t.Fatalf("start: %v", err)
@@ -668,6 +769,7 @@ func TestServiceCloseCancelsSampling(t *testing.T) {
 	})
 	service.Close()
 	service.Wait()
+	collector.Close()
 	after := len(connector.commands("stop"))
 	// Observe a bounded window with a deadline; a closed sampler must not
 	// add a command in it.

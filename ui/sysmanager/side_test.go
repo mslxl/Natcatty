@@ -48,7 +48,7 @@ func TestShowHostNeverFallsBackToAnotherHost(t *testing.T) {
 	if state.HostID() != "" {
 		t.Fatalf("a Host missing from the Vault showed %q", state.HostID())
 	}
-	tt := ui.NewTester(SideView(state), 360, 600)
+	tt := ui.NewTester(SideView(state, 360), 360, 600)
 	tt.SetLocale("en")
 	tt.Frame()
 	if !tt.HasText(locales.In("en").SidePanelSystemNoHost()) {
@@ -62,13 +62,31 @@ func TestSideViewShowsTheTabsWithoutAHostPicker(t *testing.T) {
 	service.snapshot = demoSnapshot()
 	state := newTestState(service, newFakePreferences())
 	state.ShowHost("alpha")
-	tt := ui.NewTester(SideView(state), 360, 600)
+	tt := ui.NewTester(SideView(state, 360), 360, 600)
 	tt.SetLocale("en")
 	tt.Frame()
 	for _, want := range []string{m.SysManagerTabOverview(), m.SysManagerTabProcesses(), m.SysManagerRefreshNow()} {
 		if !tt.HasText(want) {
 			t.Errorf("the System tool lacks %q, texts %q", want, tt.Texts())
 		}
+	}
+	// The 360-DIP side panel cannot hold the labeled strip, so every tab is a
+	// compact icon with its label as its accessible name and tooltip.
+	for _, tab := range state.Tabs() {
+		rect, ok := tt.Find(tabLabel(m, tab))
+		if !ok || rect.W <= 0 {
+			t.Fatalf("the side strip lacks tab %s: %v", tab, tt.Texts())
+		}
+		if rect.W > 40 {
+			t.Errorf("side tab %s is %.0f DIPs wide, want icon-only: %+v", tab, rect.W, rect)
+		}
+	}
+	// The status, interval, and Refresh stay above the strip.
+	if !tt.HasText(m.SysManagerStatusLive()) {
+		t.Errorf("the System tool lacks its status text, texts %q", tt.Texts())
+	}
+	if _, ok := tt.Find(m.SysManagerRefresh()); !ok {
+		t.Errorf("the System tool lacks its refresh interval, texts %q", tt.Texts())
 	}
 	if tt.HasText(m.SysManagerTitle()) || tt.HasText("Beta") {
 		t.Errorf("the System tool shows the page's title or Host picker, texts %q", tt.Texts())
@@ -81,7 +99,7 @@ func TestSideViewTablesKeepTheColumnsThePanelHolds(t *testing.T) {
 	service.snapshot = demoSnapshot()
 	state := newTestState(service, newFakePreferences())
 	state.ShowHost("alpha")
-	tt := ui.NewTester(SideView(state), 280, 600)
+	tt := ui.NewTester(SideView(state, 280), 280, 600)
 	tt.SetLocale("en")
 	tt.Frame()
 	if err := tt.Click(m.SysManagerTabProcesses()); err != nil {

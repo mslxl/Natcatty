@@ -76,6 +76,29 @@ type HomeSlots struct {
 	Content func()
 }
 
+// HomeContentWidth returns the width a page drawn by HomeLayout's Content
+// slot has at the window's current width. A surface that must choose a
+// compact form before layout runs, as an icon-only tab strip, measures
+// against it.
+func HomeContentWidth(c *ui.Context, hasSidebar bool) float32 {
+	width, _ := c.Size()
+	if width <= 0 {
+		return 0
+	}
+	if hasSidebar {
+		width -= SidebarWidth
+	}
+	if kit.CurrentStyle().Native() {
+		return max(0, width-2*ShellPadding)
+	}
+	if hasSidebar {
+		// The sidebar leaves the card's left inset to the row; the card
+		// then takes its right inset, its outline, and its own padding.
+		return max(0, width-CardGap-2*(CardPadding+CardBorder))
+	}
+	return max(0, width-2*(CardGap+CardPadding+CardBorder))
+}
+
 // HomeLayout is the main window's page body: the sidebar, and the raised,
 // rounded card the page draws in. The macOS style floats the sidebar, inset
 // on glass, beside the page drawn flush, with no card.

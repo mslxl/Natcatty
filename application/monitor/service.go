@@ -3,10 +3,12 @@ package monitor
 import (
 	"context"
 	"errors"
-	"strings"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/mslxl/natcatty/application/hoststats"
 	domainmonitor "github.com/mslxl/natcatty/domain/monitor"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
@@ -26,12 +28,31 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
+// WithStatsCollector injects the shared Host Stats collector. Without it, a
+// Service with a Connector creates a private collector, so a standalone use
+// still has the one Host Stats path.
+func WithStatsCollector(collector *hoststats.Collector) Option {
+	return func(s *Service) {
+		if collector != nil {
+			s.collector = collector
+		}
+	}
+}
+
+var monitorConsumers atomic.Uint64
+
 // Service samples demanded Hosts off the UI thread and publishes snapshots.
-// Start and Stop are called on the UI thread; sampling goroutines mutate only
-// under the service lock.
+// Start and Stop are called on the UI thread; state changes happen only under
+// the service lock. Sampling itself belongs to the shared Host Stats
+// collector, so the monitoring surface and the System Tool share one reading.
 type Service struct {
 	connector Connector
 	now       func() time.Time
+
+	collector         *hoststats.Collector
+	ownsCollector     bool
+	collectorConsumer string
+	unsubscribe       func()
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -41,16 +62,13 @@ type Service struct {
 	panels    map[string]*panelDemand
 	listeners map[int]func()
 	nextID    int
-	nextGen   uint64
 	closed    bool
 	runs      sync.WaitGroup
 }
 
 type hostEntry struct {
 	state    domainmonitor.HostState
-	cancel   context.CancelFunc
 	interval time.Duration
-	gen      uint64
 }
 
 type panelDemand struct {
@@ -73,6 +91,17 @@ func NewService(connector Connector, opts ...Option) *Service {
 	}
 	for _, opt := range opts {
 		opt(service)
+	}
+	if service.collector == nil && connector != nil {
+		service.collector = hoststats.NewCollector(
+			monitorStatsConnector{connector: connector},
+			hoststats.WithClock(service.now),
+		)
+		service.ownsCollector = true
+	}
+	if service.collector != nil {
+		service.collectorConsumer = fmt.Sprintf("monitor-%d", monitorConsumers.Add(1))
+		service.unsubscribe = service.collector.Watch(service.observe)
 	}
 	return service
 }
@@ -99,7 +128,7 @@ func (s *Service) Subscribe(fn func()) func() {
 // panel replaces its demand. A projected demand above the 256-Host cap is
 // refused without changing anything.
 func (s *Service) Start(panelID string, hosts []domainvault.Host, interval time.Duration) error {
-	if s.connector == nil {
+	if s.connector == nil && s.collector == nil {
 		return ErrNoConnector
 	}
 	if panelID == "" {
@@ -163,7 +192,8 @@ func (s *Service) StopAll() {
 }
 
 // Close stops sampling and releases every transport. It is safe to call more
-// than once.
+// than once. A collector injected from outside keeps running for its other
+// consumers.
 func (s *Service) Close() {
 	s.mu.Lock()
 	if s.closed {
@@ -171,19 +201,28 @@ func (s *Service) Close() {
 		return
 	}
 	s.closed = true
-	entries := make([]*hostEntry, 0, len(s.hosts))
-	for _, entry := range s.hosts {
-		entries = append(entries, entry)
+	hostIDs := make([]string, 0, len(s.hosts))
+	for id := range s.hosts {
+		hostIDs = append(hostIDs, id)
 	}
 	s.hosts = make(map[string]*hostEntry)
 	s.panels = make(map[string]*panelDemand)
 	s.listeners = make(map[int]func())
 	s.mu.Unlock()
 
-	s.cancel()
-	for _, entry := range entries {
-		entry.cancel()
+	if s.unsubscribe != nil {
+		s.unsubscribe()
+		s.unsubscribe = nil
 	}
+	if s.collector != nil {
+		for _, id := range hostIDs {
+			s.collector.Stop(s.collectorConsumer, id)
+		}
+		if s.ownsCollector {
+			s.collector.Close()
+		}
+	}
+	s.cancel()
 }
 
 // Snapshot returns an immutable copy of the current state.
@@ -208,7 +247,9 @@ func (s *Service) Snapshot() domainmonitor.Snapshot {
 	return snapshot
 }
 
-// reconcile starts, stops, and re-cadences host samplers to match demand.
+// reconcile aligns the collector's demands with the panels. The collector
+// owns the sampling loops; this method only adds, moves, and removes consumer
+// demands.
 func (s *Service) reconcile() {
 	type demand struct {
 		host     domainvault.Host
@@ -225,178 +266,132 @@ func (s *Service) reconcile() {
 			}
 		}
 	}
-	var toStop []*hostEntry
-	for id, entry := range s.hosts {
-		want, ok := demanded[id]
-		if !ok || want.interval != entry.interval {
-			toStop = append(toStop, entry)
-			delete(s.hosts, id)
-		}
-	}
-	var toStart []struct {
-		ctx      context.Context
+	var toStop []string
+	type startDemand struct {
 		host     domainvault.Host
 		interval time.Duration
-		gen      uint64
 	}
-	for id, want := range demanded {
-		if _, ok := s.hosts[id]; ok {
+	var toStart []startDemand
+	for id, entry := range s.hosts {
+		want, ok := demanded[id]
+		if !ok {
+			toStop = append(toStop, id)
+			delete(s.hosts, id)
 			continue
 		}
-		ctx, cancel := context.WithCancel(s.ctx)
-		s.nextGen++
+		if want.interval != entry.interval {
+			entry.interval = want.interval
+			toStart = append(toStart, startDemand{host: want.host, interval: want.interval})
+		}
+	}
+	for id, want := range demanded {
+		if _, exists := s.hosts[id]; exists {
+			continue
+		}
 		entry := &hostEntry{
+			interval: want.interval,
 			state: domainmonitor.HostState{
 				HostID: id,
 				Status: domainmonitor.StatusQueued,
 				At:     s.now(),
 			},
-			cancel:   cancel,
-			interval: want.interval,
-			gen:      s.nextGen,
+		}
+		if observation, ok := s.collector.Observation(id); ok {
+			applyObservation(entry, observation)
 		}
 		s.hosts[id] = entry
-		toStart = append(toStart, struct {
-			ctx      context.Context
-			host     domainvault.Host
-			interval time.Duration
-			gen      uint64
-		}{ctx: ctx, host: want.host, interval: want.interval, gen: entry.gen})
+		toStart = append(toStart, startDemand{host: want.host, interval: want.interval})
 	}
 	s.mu.Unlock()
 
-	for _, entry := range toStop {
-		entry.cancel()
+	for _, id := range toStop {
+		s.collector.Stop(s.collectorConsumer, id)
 	}
 	for _, start := range toStart {
-		s.runs.Add(1)
-		go s.runHost(start.ctx, start.host, start.interval, start.gen)
+		s.collector.Start(s.collectorConsumer, start.host, start.interval)
 	}
 }
 
-func (s *Service) runHost(ctx context.Context, host domainvault.Host, interval time.Duration, gen uint64) {
-	defer s.runs.Done()
-
-	var (
-		connection Connection
-		previous   samplerState
-		failures   int
-	)
-	defer func() { closeConnection(&connection) }()
-
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-		err := s.sampleOnce(ctx, host, gen, &connection, &previous)
-		if ctx.Err() != nil {
-			return
-		}
-		delay := interval
-		if err != nil {
-			reason := failureReason(err)
-			if reason == ReasonCancelled {
-				return
-			}
-			failures++
-			status := domainmonitor.StatusError
-			switch reason {
-			case ReasonHostKey, ReasonAuth:
-				status = domainmonitor.StatusLogin
-			case ReasonOS, ReasonUnsupported:
-				status = domainmonitor.StatusUnsupported
-			default:
-				if failures >= 2 {
-					status = domainmonitor.StatusUnavailable
-				}
-			}
-			s.update(string(host.ID), gen, func(state *domainmonitor.HostState) {
-				state.Status = status
-				state.Reason = reason
-				state.Detail = err.Error()
-				state.At = s.now()
-			})
-			if status == domainmonitor.StatusLogin ||
-				status == domainmonitor.StatusUnsupported {
-				// A rejected trust decision or an unsupported OS needs the
-				// user; retrying would only re-prompt or spin.
-				return
-			}
-			multiplier := 1 << min(failures, 3)
-			if multiplier > 6 {
-				multiplier = 6
-			}
-			delay = interval * time.Duration(multiplier)
-		} else {
-			failures = 0
-		}
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-	}
-}
-
-// sampleOnce opens the transport when needed and publishes one measurement.
-func (s *Service) sampleOnce(ctx context.Context, host domainvault.Host, gen uint64,
-	connection *Connection, previous *samplerState) error {
-	if *connection == nil {
-		s.update(string(host.ID), gen, func(state *domainmonitor.HostState) {
-			state.Status = domainmonitor.StatusConnecting
-			state.Reason = ReasonNone
-			state.Detail = ""
-			state.At = s.now()
-		})
-		opened, err := s.connector.Open(ctx, host)
-		if err != nil {
-			return err
-		}
-		*connection = opened
-	}
-	started := s.now()
-	result, err := (*connection).Exec(ctx, statsCommand())
-	latency := s.now().Sub(started)
-	if err != nil {
-		closeConnection(connection)
-		return err
-	}
-	output := result.Stdout
-	if containsMetric(output, "CPURAW:") {
-		if disk, diskErr := (*connection).Exec(ctx, diskCommand()); diskErr == nil {
-			output += "|" + disk.Stdout
-		}
-	}
-	parsed, err := parseStats(output)
-	if err != nil {
-		return err
-	}
-	at := started.Add(latency)
-	sample, next := parsed.sample(*previous, at, latency)
-	*previous = next
-	s.update(string(host.ID), gen, func(state *domainmonitor.HostState) {
-		state.Status = domainmonitor.StatusLive
-		state.Reason = ReasonNone
-		state.Detail = ""
-		state.At = at
-		state.Sample = sample
-		state.Points = domainmonitor.AppendPoint(state.Points, sample)
-	})
-	return nil
-}
-
-func (s *Service) update(hostID string, gen uint64, change func(*domainmonitor.HostState)) {
+// observe folds one collector observation into the monitoring surface.
+func (s *Service) observe(observation hoststats.Observation) {
 	s.mu.Lock()
-	entry, ok := s.hosts[hostID]
-	if !ok || entry.gen != gen {
+	if s.closed {
 		s.mu.Unlock()
 		return
 	}
-	change(&entry.state)
+	entry, ok := s.hosts[observation.HostID]
+	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	applyObservation(entry, observation)
 	s.mu.Unlock()
 	s.notify()
+}
+
+func applyObservation(entry *hostEntry, observation hoststats.Observation) {
+	status, reason := monitorStatus(observation)
+	entry.state.Status = status
+	entry.state.Reason = reason
+	entry.state.Detail = observation.Detail
+	entry.state.At = observation.At
+	if !observation.HasSample {
+		return
+	}
+	sample := domainSample(observation.Sample)
+	if entry.state.Sample.At.IsZero() || !entry.state.Sample.At.Equal(sample.At) {
+		entry.state.Sample = sample
+		entry.state.Points = domainmonitor.AppendPoint(entry.state.Points, sample)
+		return
+	}
+	entry.state.Sample = sample
+}
+
+func monitorStatus(observation hoststats.Observation) (domainmonitor.Status, Reason) {
+	reason := monitorReason(observation.Reason)
+	switch observation.Status {
+	case hoststats.StatusLive:
+		return domainmonitor.StatusLive, ReasonNone
+	case hoststats.StatusConnecting:
+		return domainmonitor.StatusConnecting, ReasonNone
+	case hoststats.StatusEmpty:
+		return domainmonitor.StatusUnsupported, ReasonUnsupported
+	case hoststats.StatusLogin:
+		return domainmonitor.StatusLogin, reason
+	case hoststats.StatusUnsupported:
+		return domainmonitor.StatusUnsupported, reason
+	case hoststats.StatusUnavailable:
+		return domainmonitor.StatusUnavailable, reason
+	case hoststats.StatusError:
+		if observation.Failures >= 2 {
+			return domainmonitor.StatusUnavailable, reason
+		}
+		return domainmonitor.StatusError, reason
+	default:
+		return domainmonitor.StatusQueued, ReasonNone
+	}
+}
+
+func monitorReason(reason hoststats.Reason) Reason {
+	switch reason {
+	case hoststats.ReasonHostKey:
+		return ReasonHostKey
+	case hoststats.ReasonAuth:
+		return ReasonAuth
+	case hoststats.ReasonNetwork:
+		return ReasonNetwork
+	case hoststats.ReasonTimeout:
+		return ReasonTimeout
+	case hoststats.ReasonOS:
+		return ReasonOS
+	case hoststats.ReasonCancelled:
+		return ReasonCancelled
+	case hoststats.ReasonUnsupported, hoststats.ReasonEmpty, hoststats.ReasonNoExec,
+		hoststats.ReasonPermission, hoststats.ReasonMissingCommand:
+		return ReasonUnsupported
+	default:
+		return ReasonInternal
+	}
 }
 
 func (s *Service) notify() {
@@ -409,31 +404,6 @@ func (s *Service) notify() {
 	for _, listener := range listeners {
 		listener()
 	}
-}
-
-func closeConnection(connection *Connection) {
-	if connection != nil && *connection != nil {
-		_ = (*connection).Close()
-		*connection = nil
-	}
-}
-
-func failureReason(err error) Reason {
-	var typed *Error
-	if errors.As(err, &typed) {
-		return typed.Reason
-	}
-	if errors.Is(err, context.Canceled) {
-		return ReasonCancelled
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return ReasonTimeout
-	}
-	return ReasonInternal
-}
-
-func containsMetric(output, label string) bool {
-	return strings.Contains(output, label)
 }
 
 func uniqueHosts(hosts []domainvault.Host) []domainvault.Host {

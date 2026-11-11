@@ -15,8 +15,11 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/mslxl/natcatty/application/hoststats"
+	domainmonitor "github.com/mslxl/natcatty/domain/monitor"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -65,6 +68,9 @@ const (
 	StatusConnecting Status = "connecting"
 	// StatusLive is a tab whose last sample succeeded.
 	StatusLive Status = "live"
+	// StatusEmpty is a tab whose command answered but produced no usable
+	// sample. The Host is reachable, so the tab may retry.
+	StatusEmpty Status = "empty"
 	// StatusLogin is a Host whose credentials or host key were refused.
 	StatusLogin Status = "login"
 	// StatusError is a recoverable failure; the tab retries.
@@ -96,6 +102,9 @@ const (
 	ReasonMissingTmux      Reason = "missing_tmux"
 	ReasonMissingDocker    Reason = "missing_docker"
 	ReasonDockerDaemon     Reason = "docker_daemon"
+	ReasonNoExec           Reason = "no_exec"
+	ReasonNoData           Reason = "no_data"
+	ReasonMissingCommand   Reason = "missing_command"
 )
 
 // Error is a typed application failure. The surface maps Reason to a
@@ -213,13 +222,37 @@ type Overview struct {
 	Cores         int
 	// CPUPercent is NaN until a second Linux counter reading establishes a
 	// delta; macOS reports a direct percentage.
-	CPUPercent  float64
-	MemUsedMB   float64
-	MemTotalMB  float64
-	SwapUsedMB  float64
-	SwapTotalMB float64
+	CPUPercent float64
+	// CPUPerCore is the per-processor delta, aligned by kernel core name. It
+	// is empty on macOS, which has no per-core reading.
+	CPUPerCore []hoststats.Core
+
+	MemUsedMB    float64
+	MemTotalMB   float64
+	MemFreeMB    float64
+	MemBuffersMB float64
+	MemCachedMB  float64
+	SwapUsedMB   float64
+	SwapTotalMB  float64
+
+	// Disks is every kept mount after the shared filtering and capacity-key
+	// deduplication. DiskUsedGB, DiskTotalGB, and DiskPercent are their
+	// aggregate, falling back to the root mount when the aggregate is empty.
+	Disks       []domainmonitor.Disk
 	DiskUsedGB  float64
 	DiskTotalGB float64
+	DiskPercent float64
+
+	DiskReadBps  float64
+	DiskWriteBps float64
+
+	NetworkRxBps float64
+	NetworkTxBps float64
+	Interfaces   []hoststats.Interface
+
+	// TopProcesses is the stats command's own memory-ordered list; it is not
+	// the Processes System Tab's full ps list.
+	TopProcesses []hoststats.Process
 }
 
 // Process is one row of the process list.
@@ -341,13 +374,16 @@ type DockerDocument struct {
 
 // TabState is one tab's latest sample and status.
 type TabState struct {
-	Tab        Tab
-	Status     Status
-	Reason     Reason
-	Detail     string
-	At         time.Time
-	Latency    time.Duration
-	Overview   Overview
+	Tab      Tab
+	Status   Status
+	Reason   Reason
+	Detail   string
+	At       time.Time
+	Latency  time.Duration
+	Overview Overview
+	// Stats carries the shared Host Stats Sample behind Overview, including
+	// its own SampledAt and the fields the monitoring surface also reads.
+	Stats      hoststats.Sample
 	Processes  []Process
 	Ports      []Port
 	Services   []Unit
@@ -420,12 +456,32 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
+// WithStatsCollector injects the shared Host Stats collector. The Overview
+// tab reads from it, so the monitoring surface and the System Tool share one
+// cached sample, counters, and failure policy. Without it, a Service with a
+// Connector creates a private collector.
+func WithStatsCollector(collector *hoststats.Collector) Option {
+	return func(s *Service) {
+		if collector != nil {
+			s.collector = collector
+		}
+	}
+}
+
+var sysmanagerConsumers atomic.Uint64
+
 // Service samples one Host's active tab off the UI thread and runs confirmed
 // actions. Start, Stop, Refresh, and Snapshot are called on the UI thread;
 // sampling and action goroutines publish through the lock.
 type Service struct {
 	connector Connector
 	now       func() time.Time
+
+	collector         *hoststats.Collector
+	ownsCollector     bool
+	collectorConsumer string
+	collectorHost     string
+	unsubscribe       func()
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -460,6 +516,17 @@ func NewService(connector Connector, opts ...Option) *Service {
 	for _, opt := range opts {
 		opt(service)
 	}
+	if service.collector == nil && connector != nil {
+		service.collector = hoststats.NewCollector(
+			sysmanagerStatsConnector{connector: connector},
+			hoststats.WithClock(service.now),
+		)
+		service.ownsCollector = true
+	}
+	if service.collector != nil {
+		service.collectorConsumer = fmt.Sprintf("sysmanager-%d", sysmanagerConsumers.Add(1))
+		service.unsubscribe = service.collector.Watch(service.observeOverview)
+	}
 	return service
 }
 
@@ -485,7 +552,7 @@ func (s *Service) Subscribe(fn func()) func() {
 // Host change clears the cached tab data so one Host's rows never show under
 // another. An interval at or below zero uses tab's default.
 func (s *Service) Start(host domainvault.Host, tab Tab, interval time.Duration) error {
-	if s.connector == nil {
+	if s.connector == nil && s.collector == nil {
 		return ErrNoConnector
 	}
 	if string(host.ID) == "" {
@@ -494,12 +561,13 @@ func (s *Service) Start(host domainvault.Host, tab Tab, interval time.Duration) 
 	if interval <= 0 {
 		interval = DefaultInterval(tab)
 	}
+	id := string(host.ID)
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return ErrClosed
 	}
-	if string(s.host.ID) != string(host.ID) {
+	if string(s.host.ID) != id {
 		// A Host switch must never show the previous Host's rows under the
 		// new name, and its capability probe does not carry over.
 		s.tabs = make(map[Tab]TabState)
@@ -509,8 +577,50 @@ func (s *Service) Start(host domainvault.Host, tab Tab, interval time.Duration) 
 	s.host = host
 	s.active = tab
 	s.interval = interval
-	s.restartLocked()
+	previousCollectorHost := s.collectorHost
+	s.collectorHost = ""
+	if tab != TabOverview {
+		s.restartLocked()
+		s.mu.Unlock()
+		if previousCollectorHost != "" && s.collector != nil {
+			s.collector.Stop(s.collectorConsumer, previousCollectorHost)
+		}
+		s.notify()
+		return nil
+	}
+
+	// The Overview tab reads the shared collector, so it owns no sampling
+	// goroutine, capability probe, or delta counters of its own.
+	if s.runCancel != nil {
+		s.runCancel()
+		s.runCancel = nil
+	}
+	s.gen++
+	state, ok := s.tabs[tab]
+	if !ok {
+		state = TabState{Tab: tab, Status: StatusConnecting, Reason: ReasonNone, At: s.now()}
+	} else if state.Status != StatusLive && state.Status != StatusEmpty {
+		// Keep a live or empty sample visible while the retry runs.
+		state.Status = StatusConnecting
+		state.Reason = ReasonNone
+		state.Detail = ""
+		state.At = s.now()
+	}
+	if s.collector != nil {
+		if observation, cached := s.collector.Observation(id); cached {
+			applyOverviewObservation(&state, observation)
+		}
+	}
+	s.tabs[tab] = state
+	s.collectorHost = id
 	s.mu.Unlock()
+
+	if previousCollectorHost != "" && previousCollectorHost != id && s.collector != nil {
+		s.collector.Stop(s.collectorConsumer, previousCollectorHost)
+	}
+	if s.collector != nil {
+		s.collector.Start(s.collectorConsumer, host, interval)
+	}
 	s.notify()
 	return nil
 }
@@ -522,14 +632,28 @@ func (s *Service) Stop() {
 		s.runCancel()
 		s.runCancel = nil
 	}
+	hostID := s.collectorHost
+	s.collectorHost = ""
 	s.mu.Unlock()
+	if hostID != "" && s.collector != nil {
+		s.collector.Stop(s.collectorConsumer, hostID)
+	}
 }
 
-// Refresh restarts the active tab immediately.
+// Refresh restarts the active tab immediately. The Overview tab asks the
+// shared collector, so a refresh inside the cache window re-renders the cached
+// sample without a command.
 func (s *Service) Refresh() {
 	s.mu.Lock()
 	if s.closed || string(s.host.ID) == "" {
 		s.mu.Unlock()
+		return
+	}
+	if s.active == TabOverview && s.collector != nil {
+		hostID := string(s.host.ID)
+		s.mu.Unlock()
+		s.collector.Refresh(hostID)
+		s.notify()
 		return
 	}
 	s.restartLocked()
@@ -568,7 +692,8 @@ func (s *Service) restartLocked() {
 }
 
 // Close stops sampling, cancels actions, and releases listeners. It is safe
-// to call more than once.
+// to call more than once. A collector injected from outside keeps running for
+// its other consumers.
 func (s *Service) Close() {
 	s.mu.Lock()
 	if s.closed {
@@ -580,8 +705,21 @@ func (s *Service) Close() {
 		s.runCancel()
 		s.runCancel = nil
 	}
+	hostID := s.collectorHost
+	s.collectorHost = ""
 	s.listeners = make(map[int]func())
 	s.mu.Unlock()
+
+	if s.unsubscribe != nil {
+		s.unsubscribe()
+		s.unsubscribe = nil
+	}
+	if hostID != "" && s.collector != nil {
+		s.collector.Stop(s.collectorConsumer, hostID)
+	}
+	if s.ownsCollector && s.collector != nil {
+		s.collector.Close()
+	}
 	s.cancel()
 }
 
@@ -604,6 +742,11 @@ func (s *Service) Snapshot() Snapshot {
 		state.Images = append([]Image(nil), state.Images...)
 		state.GPU.Devices = append([]GPUDevice(nil), state.GPU.Devices...)
 		state.Overview.LoadAverage = append([]float64(nil), state.Overview.LoadAverage...)
+		state.Stats.CPUPerCore = append([]hoststats.Core{}, state.Stats.CPUPerCore...)
+		state.Stats.Disks = append([]domainmonitor.Disk{}, state.Stats.Disks...)
+		state.Stats.Interfaces = append([]hoststats.Interface{}, state.Stats.Interfaces...)
+		state.Stats.TopProcesses = append([]hoststats.Process{}, state.Stats.TopProcesses...)
+		state.Stats.LoadAverage = append([]float64{}, state.Stats.LoadAverage...)
 		snapshot.Tabs[tab] = state
 	}
 	return snapshot
@@ -614,7 +757,6 @@ func (s *Service) run(ctx context.Context, host domainvault.Host, tab Tab, inter
 
 	var (
 		connection Connection
-		previous   overviewCounters
 		failures   int
 	)
 	defer func() { closeConnection(&connection) }()
@@ -623,7 +765,7 @@ func (s *Service) run(ctx context.Context, host domainvault.Host, tab Tab, inter
 		if ctx.Err() != nil {
 			return
 		}
-		stop, err := s.sampleOnce(ctx, host, tab, gen, &connection, &previous)
+		stop, err := s.sampleOnce(ctx, host, tab, gen, &connection)
 		if ctx.Err() != nil {
 			return
 		}
@@ -653,9 +795,14 @@ func (s *Service) run(ctx context.Context, host domainvault.Host, tab Tab, inter
 }
 
 // sampleOnce ensures trust and capabilities, then publishes one tab sample.
-// stop reports a terminal state that retrying cannot change.
+// stop reports a terminal state that retrying cannot change. The Overview tab
+// never reaches this loop: it reads the shared Host Stats collector.
 func (s *Service) sampleOnce(ctx context.Context, host domainvault.Host, tab Tab, gen uint64,
-	connection *Connection, previous *overviewCounters) (bool, error) {
+	connection *Connection) (bool, error) {
+	if tab == TabOverview {
+		return true, &Error{Reason: ReasonInternal,
+			Cause: errors.New("sysmanager: Overview samples through the shared collector")}
+	}
 	if *connection == nil {
 		s.update(string(host.ID), tab, gen, func(state *TabState) {
 			state.Status = StatusConnecting
@@ -702,22 +849,6 @@ func (s *Service) sampleOnce(ctx context.Context, host domainvault.Host, tab Tab
 	}
 
 	switch tab {
-	case TabOverview:
-		sample, parseErr := parseOverview(result.Stdout)
-		if parseErr != nil {
-			return s.fail(string(host.ID), tab, gen, parseErr)
-		}
-		overview := sample.overview
-		overview.CPUPercent = sample.cpuPercent(*previous)
-		*previous = sample.counters()
-		s.update(string(host.ID), tab, gen, func(state *TabState) {
-			state.Status = StatusLive
-			state.Reason = ReasonNone
-			state.Detail = ""
-			state.At = s.now()
-			state.Latency = latency
-			state.Overview = overview
-		})
 	case TabProcesses:
 		processes, parseErr := parseProcesses(result.Stdout)
 		if parseErr != nil {
@@ -872,6 +1003,90 @@ func (s *Service) update(hostID string, tab Tab, gen uint64, change func(*TabSta
 	s.tabs[tab] = state
 	s.mu.Unlock()
 	s.notify()
+}
+
+// observeOverview folds one shared collector observation into the Overview
+// tab. An event for a Host that is no longer active (a Stop or a Host switch
+// racing the collector) is ignored.
+func (s *Service) observeOverview(observation hoststats.Observation) {
+	s.mu.Lock()
+	if s.closed || s.active != TabOverview || string(s.host.ID) != observation.HostID {
+		s.mu.Unlock()
+		return
+	}
+	state := s.tabs[TabOverview]
+	applyOverviewObservation(&state, observation)
+	s.tabs[TabOverview] = state
+	s.mu.Unlock()
+	s.notify()
+}
+
+// applyOverviewObservation maps the collector's status and retained sample
+// onto the tab state. A failed collection keeps the last Stats Sample so the
+// surface can show cached cards with an inline error.
+func applyOverviewObservation(state *TabState, observation hoststats.Observation) {
+	status, reason := overviewStatus(observation)
+	state.Status = status
+	state.Reason = reason
+	state.Detail = observation.Detail
+	state.At = observation.At
+	if !observation.HasSample {
+		return
+	}
+	state.Stats = observation.Sample
+	state.Overview = overviewFromSample(observation.Sample)
+	state.Latency = time.Duration(observation.Sample.LatencyMS * float64(time.Millisecond))
+}
+
+func overviewStatus(observation hoststats.Observation) (Status, Reason) {
+	reason := overviewReason(observation.Reason)
+	switch observation.Status {
+	case hoststats.StatusLive:
+		return StatusLive, ReasonNone
+	case hoststats.StatusConnecting:
+		return StatusConnecting, ReasonNone
+	case hoststats.StatusEmpty:
+		return StatusEmpty, ReasonNoData
+	case hoststats.StatusLogin:
+		return StatusLogin, reason
+	case hoststats.StatusUnsupported:
+		return StatusUnsupported, reason
+	case hoststats.StatusUnavailable:
+		return StatusUnavailable, reason
+	case hoststats.StatusError:
+		return StatusError, reason
+	default:
+		return StatusIdle, ReasonNone
+	}
+}
+
+func overviewReason(reason hoststats.Reason) Reason {
+	switch reason {
+	case hoststats.ReasonHostKey:
+		return ReasonHostKey
+	case hoststats.ReasonAuth:
+		return ReasonAuth
+	case hoststats.ReasonNetwork:
+		return ReasonNetwork
+	case hoststats.ReasonTimeout:
+		return ReasonTimeout
+	case hoststats.ReasonOS:
+		return ReasonOS
+	case hoststats.ReasonCancelled:
+		return ReasonCancelled
+	case hoststats.ReasonPermission:
+		return ReasonPermission
+	case hoststats.ReasonNoExec:
+		return ReasonNoExec
+	case hoststats.ReasonMissingCommand:
+		return ReasonMissingCommand
+	case hoststats.ReasonEmpty:
+		return ReasonNoData
+	case hoststats.ReasonUnsupported:
+		return ReasonUnsupported
+	default:
+		return ReasonInternal
+	}
 }
 
 func (s *Service) notify() {

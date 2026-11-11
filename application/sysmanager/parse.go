@@ -3,12 +3,15 @@ package sysmanager
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/mslxl/natcatty/application/hoststats"
+	domainmonitor "github.com/mslxl/natcatty/domain/monitor"
 )
 
 // parseCapabilities reads the line-anchored probe markers. Line anchoring
@@ -58,123 +61,78 @@ func normalizeOS(raw string) string {
 	}
 }
 
-// overviewSample is one parsed overview reply plus the raw CPU counters the
-// next reply derives a percentage from.
-type overviewSample struct {
-	overview Overview
-	mode     string
-	cpuTotal float64
-	cpuIdle  float64
+// parseOverview reads the shared Host Stats Sample reply and projects it onto
+// the Overview surface's fields, keeping the CPU delta in the shared State.
+func parseOverview(stdout string, previous hoststats.State, sampledAt time.Time,
+	latency time.Duration) (Overview, hoststats.Sample, hoststats.State, error) {
+	parsed, err := hoststats.Parse(stdout)
+	if err != nil {
+		return Overview{}, hoststats.Sample{}, previous, overviewError(err)
+	}
+	sample, next := parsed.Sample(previous, sampledAt, latency)
+	return overviewFromSample(sample), sample, next, nil
 }
 
-func (s overviewSample) counters() overviewCounters {
-	return overviewCounters{mode: s.mode, total: s.cpuTotal, idle: s.cpuIdle}
+// overviewError preserves the System Tool's existing typed reason for a reply
+// it cannot read.
+func overviewError(err error) error {
+	cause := errors.New("overview: no usable Stats Sample")
+	var typed *hoststats.Error
+	if errors.As(err, &typed) && typed.Cause != nil {
+		cause = typed.Cause
+	}
+	return &Error{Reason: ReasonOS, Cause: cause}
 }
 
-// overviewCounters is the previous CPU reading a service keeps per run.
-type overviewCounters struct {
-	mode  string
-	total float64
-	idle  float64
-}
-
-// cpuPercent derives Linux CPU utilization from the counter delta. macOS
-// reports a direct ps percentage, divided by the logical core count.
-func (s overviewSample) cpuPercent(previous overviewCounters) float64 {
-	if s.mode == "darwin" {
-		cores := s.overview.Cores
-		if cores <= 0 {
-			cores = 1
-		}
-		return clampPercent(s.cpuTotal / float64(cores))
+// overviewFromSample maps the shared fields without changing their meaning.
+// The disk card uses the sample's local-capacity aggregate and falls back to
+// the root mount only when no aggregate could be formed.
+func overviewFromSample(sample hoststats.Sample) Overview {
+	overview := Overview{
+		Hostname:      sample.Hostname,
+		OSName:        sample.OSName,
+		KernelRelease: sample.KernelRelease,
+		UptimeSeconds: sample.UptimeSeconds,
+		LoadAverage:   append([]float64{}, sample.LoadAverage...),
+		Cores:         sample.Cores,
+		CPUPercent:    sample.CPU,
+		CPUPerCore:    append([]hoststats.Core{}, sample.CPUPerCore...),
+		MemUsedMB:     sample.MemUsedMB,
+		MemTotalMB:    sample.MemTotalMB,
+		MemFreeMB:     sample.MemFreeMB,
+		MemBuffersMB:  sample.MemBuffersMB,
+		MemCachedMB:   sample.MemCachedMB,
+		SwapUsedMB:    sample.SwapUsedMB,
+		SwapTotalMB:   sample.SwapTotalMB,
+		Disks:         append([]domainmonitor.Disk{}, sample.Disks...),
+		DiskUsedGB:    sample.DiskUsedGB,
+		DiskTotalGB:   sample.DiskTotalGB,
+		DiskPercent:   sample.DiskPercent,
+		DiskReadBps:   sample.DiskReadBps,
+		DiskWriteBps:  sample.DiskWriteBps,
+		NetworkRxBps:  sample.NetworkRxBps,
+		NetworkTxBps:  sample.NetworkTxBps,
+		Interfaces:    append([]hoststats.Interface{}, sample.Interfaces...),
+		TopProcesses:  append([]hoststats.Process{}, sample.TopProcesses...),
 	}
-	if previous.mode != "linux" || previous.total <= 0 {
-		return math.NaN()
-	}
-	totalDelta := s.cpuTotal - previous.total
-	idleDelta := s.cpuIdle - previous.idle
-	if totalDelta <= 0 {
-		return math.NaN()
-	}
-	return clampPercent(100 * (totalDelta - idleDelta) / totalDelta)
-}
-
-func clampPercent(value float64) float64 {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return math.NaN()
-	}
-	if value < 0 {
-		return 0
-	}
-	if value > 100 {
-		return 100
-	}
-	return value
-}
-
-// parseOverview reads the single labelled line both OS commands emit.
-func parseOverview(stdout string) (overviewSample, error) {
-	var sample overviewSample
-	sample.overview.CPUPercent = math.NaN()
-	line := firstMarkerLine(stdout, "MODE:")
-	if line == "" {
-		return sample, &Error{Reason: ReasonOS,
-			Cause: errors.New("overview: no MODE label in the reply")}
-	}
-	labels := parseLabels(line)
-	sample.mode = strings.ToLower(labels["MODE"])
-	if sample.mode == "unsupported" {
-		return sample, &Error{Reason: ReasonOS,
-			Cause: fmt.Errorf("overview: unsupported operating system %q", labels["OS"])}
-	}
-	if sample.mode != "linux" && sample.mode != "darwin" {
-		return sample, &Error{Reason: ReasonOS,
-			Cause: fmt.Errorf("overview: unknown mode %q", sample.mode)}
-	}
-	sample.overview = Overview{
-		Hostname:      labels["HOST"],
-		OSName:        labels["OS"],
-		KernelRelease: labels["KERNEL"],
-		UptimeSeconds: parseFloat(labels["UPTIME"]),
-		LoadAverage:   parseFloatList(labels["LOAD"], 3),
-		Cores:         parseInt(labels["CORES"]),
-		CPUPercent:    math.NaN(),
-	}
-	sample.overview.MemUsedMB, sample.overview.MemTotalMB = parsePair(labels["MEM"])
-	sample.overview.SwapUsedMB, sample.overview.SwapTotalMB = parsePair(labels["SWAP"])
-	sample.overview.DiskUsedGB, sample.overview.DiskTotalGB = parsePair(labels["DISK"])
-	if raw := strings.Fields(labels["CPURAW"]); len(raw) >= 2 {
-		sample.cpuTotal = parseFloat(raw[0])
-		sample.cpuIdle = parseFloat(raw[1])
-	} else if len(raw) == 1 {
-		// macOS emits one direct percentage.
-		sample.cpuTotal = parseFloat(raw[0])
-	}
-	return sample, nil
-}
-
-// parseLabels splits "LABEL:value|LABEL:value" without splitting inside a
-// value: only the first colon of each field is the separator.
-func parseLabels(line string) map[string]string {
-	labels := make(map[string]string, 12)
-	for _, field := range strings.Split(line, "|") {
-		index := strings.IndexByte(field, ':')
-		if index <= 0 {
-			continue
-		}
-		labels[strings.ToUpper(strings.TrimSpace(field[:index]))] = strings.TrimSpace(field[index+1:])
-	}
-	return labels
-}
-
-func firstMarkerLine(stdout, prefix string) string {
-	for _, line := range strings.Split(stdout, "\n") {
-		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
-		if strings.HasPrefix(line, prefix) {
-			return line
+	if diskAggregateMissing(overview.DiskUsedGB, overview.DiskTotalGB) {
+		for _, disk := range overview.Disks {
+			if disk.MountPoint != "/" {
+				continue
+			}
+			overview.DiskUsedGB = disk.UsedGB
+			overview.DiskTotalGB = disk.TotalGB
+			overview.DiskPercent = disk.Percent
+			break
 		}
 	}
-	return ""
+	return overview
+}
+
+// diskAggregateMissing reports whether the shared aggregate could not be
+// formed. A real aggregate always has a positive total; an unknown one is NaN.
+func diskAggregateMissing(usedGB, totalGB float64) bool {
+	return math.IsNaN(usedGB) || math.IsNaN(totalGB) || totalGB <= 0
 }
 
 func parseFloat(value string) float64 {
@@ -195,30 +153,6 @@ func parseInt(value string) int {
 		return 0
 	}
 	return parsed
-}
-
-func parseFloatList(value string, limit int) []float64 {
-	fields := strings.Fields(value)
-	out := make([]float64, 0, len(fields))
-	for _, field := range fields {
-		parsed := parseFloat(field)
-		if math.IsNaN(parsed) {
-			continue
-		}
-		out = append(out, parsed)
-		if len(out) == limit {
-			break
-		}
-	}
-	return out
-}
-
-func parsePair(value string) (float64, float64) {
-	fields := strings.Fields(value)
-	if len(fields) < 2 {
-		return math.NaN(), math.NaN()
-	}
-	return parseFloat(fields[0]), parseFloat(fields[1])
 }
 
 var (

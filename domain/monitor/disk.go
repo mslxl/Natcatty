@@ -16,9 +16,7 @@ func AggregateDisks(disks []Disk) (usedGB, totalGB, percent float64) {
 			disk.UsedGB < 0 || disk.TotalGB <= 0 {
 			continue
 		}
-		if isNetworkOrFuseFilesystemType(disk.FilesystemType) ||
-			(disk.FilesystemType == "" || disk.FilesystemType == "-") &&
-				isNetworkOrFuseCapacityKey(disk.CapacityKey) {
+		if IsRemoteOrFuseDisk(disk) {
 			continue
 		}
 		identity := strings.TrimSpace(disk.CapacityKey)
@@ -46,6 +44,16 @@ func AggregateDisks(disks []Disk) (usedGB, totalGB, percent float64) {
 		percent = 100
 	}
 	return usedGB, totalGB, percent
+}
+
+// IsRemoteOrFuseDisk reports whether disk's capacity is a network or FUSE
+// mount, whose quota is not local block capacity.
+func IsRemoteOrFuseDisk(disk Disk) bool {
+	if isNetworkOrFuseFilesystemType(disk.FilesystemType) {
+		return true
+	}
+	return (disk.FilesystemType == "" || disk.FilesystemType == "-") &&
+		isNetworkOrFuseCapacityKey(disk.CapacityKey)
 }
 
 func isNetworkOrFuseFilesystemType(filesystemType string) bool {

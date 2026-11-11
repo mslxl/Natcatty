@@ -342,3 +342,43 @@ scale, translucency, and layout. Classic is the original's shadcn look; macOS is
 macOS Liquid Glass look. It is independent of the color preset, which decides colors
 only, and it is device-local: sync never carries it.
 _Avoid_: theme, skin, UI mode
+
+**Side Panel Tool**:
+An entry in the Terminal side panel's tool strip that can be switched to while the
+Terminal stays visible. The System Tool is a Side Panel Tool.
+_Avoid_: sidebar tab, panel, plugin
+
+**System Tool**:
+The Side Panel Tool that reports a Host's live system state: an Overview, processes,
+ports, services, tmux, Docker, and GPU.
+_Avoid_: system monitor, system panel, system info
+
+**System Tab**:
+One view inside the System Tool. The System Tool has seven: Overview, Processes, Ports,
+Services, tmux, Docker, and GPU.
+_Avoid_: system page, subtab
+
+**System Tab Strip**:
+The icon strip that selects a System Tab inside the System Tool. It is distinct from
+the Terminal side panel's tool strip.
+_Avoid_: tab bar, toolbar
+
+**Hidden Tab**:
+A System Tab the user explicitly removed from the System Tab Strip; it appears in
+neither the visible strip nor the Collapsed Tabs menu, and Show restores it.
+_Avoid_: collapsed tab, overflow tab
+
+**Collapsed Tab**:
+A System Tab the user explicitly removed from the System Tab Strip while keeping it
+reachable in the strip's Collapsed Tabs menu. A Collapsed Tab is not a Hidden Tab.
+_Avoid_: hidden tab, overflow tab
+
+**Overview**:
+The System Tab that summarizes a Host's CPU, memory, disk, network, load, uptime, and
+top processes.
+_Avoid_: dashboard, summary, home
+
+**Stats Sample**:
+One normalized collection of Host metrics, produced by the shared Host stats collector
+and read by the Overview, the System Tabs, and the monitoring surface.
+_Avoid_: metrics snapshot, metrics dump
