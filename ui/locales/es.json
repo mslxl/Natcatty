@@ -3389,6 +3389,7 @@
   "windowMaximize": "Maximizar",
   "windowRestore": "Restaurar",
   "windowClose": "Cerrar",
+  "dropdownHide": "Ocultar panel",
   "settingsAreaAbout": "Acerca de y licencias",
   "settingsAboutDescription": "Versión, copyright, texto de la licencia, código fuente correspondiente y avisos de terceros.",
   "settingsAboutVersion": "Versión {version}",

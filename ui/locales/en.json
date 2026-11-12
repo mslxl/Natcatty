@@ -5019,6 +5019,10 @@
   "windowMaximize": "Maximize",
   "windowRestore": "Restore",
   "windowClose": "Close",
+  "dropdownHide": "Hide panel",
+  "@dropdownHide": {
+    "description": "The Dropdown Panel's hide button, which hides the panel without closing it."
+  },
   "settingsAreaAbout": "About & Licenses",
   "settingsAboutDescription": "Version, copyright, license text, corresponding source, and third-party notices.",
   "settingsAboutVersion": "Version {version}",

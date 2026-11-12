@@ -163,6 +163,16 @@ func (c *desktopController) Shutdown() {
 	c.trayAttempted = false
 }
 
+// HandleHotkey is the global hotkey's callback. Ticket 12 routes the four
+// Hotkey Modes here; until then the one mode is the Dropdown Panel, which the
+// key toggles. It runs on the UI thread.
+func (c *desktopController) HandleHotkey() {
+	c.mu.Lock()
+	c.toggles++
+	c.mu.Unlock()
+	c.windows.ToggleDropdown()
+}
+
 // ToggleMain shows, focuses, or hides the main window, as the original global
 // hotkey did. It runs on the UI thread.
 func (c *desktopController) ToggleMain() {

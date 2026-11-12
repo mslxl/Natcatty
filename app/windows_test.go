@@ -49,9 +49,11 @@ func (w *fakeWindow) Show() {
 func (w *fakeWindow) Hide() {
 	w.shown = false
 	w.focused = false
+	w.events = append(w.events, "hide")
 }
 func (w *fakeWindow) Focus() {
 	w.focused = true
+	w.events = append(w.events, "focus")
 }
 func (w *fakeWindow) IsFocused() bool { return w.focused && !w.destroyed }
 func (w *fakeWindow) Close() {
@@ -265,6 +267,12 @@ func TestWindowOptionsMapPanelHiddenAndKeepStateKeyOptIn(t *testing.T) {
 	if !options.Panel || !options.Hidden {
 		t.Fatalf("panel=%v hidden=%v, want both set", options.Panel, options.Hidden)
 	}
+	if !options.AlwaysOnTop {
+		t.Fatal("a Panel must float over other applications and full-screen Spaces")
+	}
+	if !options.DisableResize || !options.DisableMove {
+		t.Fatal("v1 does not let the user drag or resize the dropdown")
+	}
 	if options.StateKey != "" {
 		t.Fatalf("StateKey = %q, want empty: bounds persistence stays opt-in", options.StateKey)
 	}
@@ -282,6 +290,12 @@ func TestWindowOptionsMapPanelHiddenAndKeepStateKeyOptIn(t *testing.T) {
 	})
 	if persisted.StateKey != "main" {
 		t.Fatalf("StateKey = %q, want the explicit key passed through", persisted.StateKey)
+	}
+	if persisted.AlwaysOnTop {
+		t.Fatal("an ordinary window became always-on-top")
+	}
+	if persisted.DisableResize || persisted.DisableMove {
+		t.Fatal("an ordinary window lost its drag and resize behavior")
 	}
 }
 
