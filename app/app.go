@@ -91,6 +91,7 @@ import (
 	serialui "github.com/mslxl/natcatty/ui/serial"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/settings"
+	"github.com/mslxl/natcatty/ui/shell"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	uisysmanager "github.com/mslxl/natcatty/ui/sysmanager"
 	transferui "github.com/mslxl/natcatty/ui/transfer"
@@ -1433,6 +1434,12 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		},
 		func() string { return mygo.App.Locale() },
 	)
+	// The main window's root view is a provider, beside the Settings one, so a
+	// later render-ownership route can change what the window shows without
+	// recreating the native window.
+	windows.SetMainContentProvider(func() func(*ui.Context) {
+		return shell.View(shellState)
+	})
 	// The tray owns show/hide, recent Hosts, active Port Forwarding Rules, and
 	// quit. Close-to-tray asks the current settings live.
 	desktopCtl = newDesktopController(

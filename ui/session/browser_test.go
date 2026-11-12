@@ -70,6 +70,25 @@ func TestSessionMenuOpensTheBrowserAndItsCloseReturnsTheTerminal(t *testing.T) {
 	}
 }
 
+func TestBrowserOpenReportsWhetherThePanelIsMounted(t *testing.T) {
+	surface := newActionSurface(t, WithBrowser(func(func()) (BrowserPanel, error) {
+		return &fakeBrowserPanel{}, nil
+	}))
+	if surface.BrowserOpen() {
+		t.Fatal("a fresh Session reports an open browser")
+	}
+	if err := surface.OpenBrowser(); err != nil {
+		t.Fatalf("OpenBrowser: %v", err)
+	}
+	if !surface.BrowserOpen() {
+		t.Fatal("an open browser is not reported")
+	}
+	surface.Close()
+	if surface.BrowserOpen() {
+		t.Fatal("closing the Session left its browser reported open")
+	}
+}
+
 func TestSessionCloseClosesAnOpenBrowser(t *testing.T) {
 	panel := &fakeBrowserPanel{}
 	surface := newActionSurface(t, WithBrowser(func(func()) (BrowserPanel, error) {

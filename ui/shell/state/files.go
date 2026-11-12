@@ -50,6 +50,30 @@ type filesTarget struct {
 	label string
 }
 
+// RenderOwner names the window that renders a shell surface this frame. The
+// main window and the dropdown can both draw a Tab, but side-frame bookkeeping
+// is kept per owner so one renderer's finish cannot stop a tool another
+// renderer is still showing.
+type RenderOwner string
+
+const (
+	// RenderOwnerMain is the main window. It is also the default for callers
+	// that predate owner-scoped bookkeeping.
+	RenderOwnerMain RenderOwner = "main"
+	// RenderOwnerDropdown is the dropdown panel: the Quake workspace or the
+	// main shell's follow/topdown view.
+	RenderOwnerDropdown RenderOwner = "dropdown"
+)
+
+// renderOwner normalizes the empty owner to the main window, so the original
+// single-renderer calls keep their behavior.
+func renderOwner(owner RenderOwner) RenderOwner {
+	if owner == "" {
+		return RenderOwnerMain
+	}
+	return owner
+}
+
 // SideToolID names one of the side panel's tools, in the original's terms.
 type SideToolID string
 
@@ -143,18 +167,54 @@ func (s *State) SetSideTool(tab model.TabID, id SideToolID) {
 	s.redraw()
 }
 
-// FinishSideFrame tells the tool drawn the frame before that it is no longer
-// drawn: its Tab closed the panel, chose another tool, or stopped showing.
-// The shell calls it once at the end of every frame.
+// FinishSideFrame tells the tool the main window drew the frame before that it
+// is no longer drawn: its Tab closed the panel, chose another tool, or stopped
+// showing. It is FinishSideFrameFor for the main renderer.
 func (s *State) FinishSideFrame() {
-	if s.sideLast != "" && s.sideLast != s.sideDrawn {
-		for _, tool := range s.sideTools {
-			if tool.ID == s.sideLast && tool.Hide != nil {
-				tool.Hide()
+	s.FinishSideFrameFor(RenderOwnerMain)
+}
+
+// FinishSideFrameFor tells the tool a renderer drew the frame before that it
+// stopped drawing, unless another renderer is still drawing it. The shell
+// calls it once at the end of every frame of the renderer that owns the
+// surface. Keeping the bookkeeping per owner is what lets the main window and
+// a follow view coexist without one stopping the other's live tool.
+func (s *State) FinishSideFrameFor(owner RenderOwner) {
+	owner = renderOwner(owner)
+	last := s.sideLast[owner]
+	drawn := s.sideDrawn[owner]
+	delete(s.sideDrawn, owner)
+	if s.sideLast == nil {
+		s.sideLast = map[RenderOwner]SideToolID{}
+	}
+	s.sideLast[owner] = drawn
+	if last == "" || last == drawn || s.sideToolDrawnByOther(owner, last) {
+		return
+	}
+	if s.sideHidden[last] {
+		return
+	}
+	for _, tool := range s.sideTools {
+		if tool.ID == last && tool.Hide != nil {
+			if s.sideHidden == nil {
+				s.sideHidden = map[SideToolID]bool{}
 			}
+			s.sideHidden[last] = true
+			tool.Hide()
 		}
 	}
-	s.sideLast, s.sideDrawn = s.sideDrawn, ""
+}
+
+// sideToolDrawnByOther reports whether another renderer draws id in this
+// frame. A tool shared by the two windows therefore stays alive until the
+// last one stops drawing it.
+func (s *State) sideToolDrawnByOther(owner RenderOwner, id SideToolID) bool {
+	for other, drawn := range s.sideDrawn {
+		if other != owner && drawn == id {
+			return true
+		}
+	}
+	return false
 }
 
 // FilesOpen reports whether the Tab shows the SFTP panel.
@@ -264,16 +324,33 @@ func (s *State) FilesRatio() *float32 {
 	return &s.filesRatio
 }
 
-// FilesView returns the tool the Tab's side panel shows, about width DIPs
-// wide and pointed at the Tab's target, or nil when the Tab's panel is
-// closed.
+// FilesView returns the tool the Tab's side panel shows for the main window,
+// about width DIPs wide and pointed at the Tab's target, or nil when the Tab's
+// panel is closed. It is FilesViewFor for the main renderer.
 func (s *State) FilesView(tab model.TabID, width float32) func(*ui.Context) {
+	return s.FilesViewFor(RenderOwnerMain, tab, width)
+}
+
+// FilesViewFor returns the tool the Tab's side panel shows for the renderer
+// owner, about width DIPs wide and pointed at the Tab's target, or nil when
+// the Tab's panel is closed. Painting the tool records it as drawn by owner,
+// so FinishSideFrameFor only stops it after the last renderer stops drawing
+// it. The chosen tool and the panel's target stay shared: background follows
+// the Tab, not the window that draws it.
+func (s *State) FilesViewFor(owner RenderOwner, tab model.TabID, width float32) func(*ui.Context) {
 	target, open := s.filesOpen[tab]
 	if !open || !s.FilesAvailable() {
 		return nil
 	}
+	owner = renderOwner(owner)
 	id := s.SideTool(tab)
-	s.sideDrawn = id
+	if s.sideDrawn == nil {
+		s.sideDrawn = map[RenderOwner]SideToolID{}
+	}
+	s.sideDrawn[owner] = id
+	// Drawing the tool again makes it live after an earlier stop, so the next
+	// time it leaves the screen it is told once more.
+	delete(s.sideHidden, id)
 	if id != SideSFTP {
 		for _, tool := range s.sideTools {
 			if tool.ID == id {

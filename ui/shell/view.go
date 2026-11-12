@@ -47,18 +47,7 @@ func View(s *state.State) func(*ui.Context) {
 	// when it changes or the window is resized.
 	reveal := newWorkTabReveal()
 	return func(c *ui.Context) {
-		// Connections complete off the UI thread; applying them here keeps
-		// every Tab mutation on this thread.
-		s.Flush()
-
-		m := locales.In(c.Locale())
-		// While a terminal is shown the window takes its scheme's colors, as
-		// the original's active chrome theme, so the Tab bar, the Pane
-		// headers, and the side panel read as one surface with the terminal.
-		if preset, ok := s.TerminalTheme(); ok && terminalVisible(s) {
-			c.SetTheme(uitheme.Chrome(c.Theme(), preset))
-		}
-		t := c.Theme()
+		m, t := shellPreamble(c, s, func() bool { return terminalVisible(s) })
 
 		// Hiding the SFTP Tab while it is shown leaves for the Vault, as the
 		// original's; the Session panel still browses files.
@@ -94,8 +83,29 @@ func View(s *state.State) func(*ui.Context) {
 		}
 		// A side panel tool no longer drawn, such as System sampling a Host,
 		// stops once the frame is done.
-		s.FinishSideFrame()
+		s.FinishSideFrameFor(state.RenderOwnerMain)
 	}
+}
+
+// shellPreamble is the per-frame work every shell renderer must run exactly
+// once: it applies connection outcomes queued off the UI thread and, while a
+// terminal is the frame's surface, takes the terminal scheme's chrome colors.
+// The main view and a second renderer such as the follow view call it, so the
+// side effects cannot diverge. terminal is evaluated after Flush, so a Tab
+// attached by this frame already colors the window. It returns the localized
+// messages and the theme the renderer draws with.
+func shellPreamble(c *ui.Context, s *state.State, terminal func() bool) (locales.Messages, *ui.Theme) {
+	// Connections complete off the UI thread; applying them here keeps every
+	// Tab mutation on this thread.
+	s.Flush()
+	m := locales.In(c.Locale())
+	// While a terminal is shown the window takes its scheme's colors, as the
+	// original's active chrome theme, so the Tab bar, the Pane headers, and
+	// the side panel read as one surface with the terminal.
+	if preset, ok := s.TerminalTheme(); ok && (terminal == nil || terminal()) {
+		c.SetTheme(uitheme.Chrome(c.Theme(), preset))
+	}
+	return m, c.Theme()
 }
 
 // homeVisible reports whether the home Tab is the chosen one. With no work
@@ -279,7 +289,18 @@ func vaultPageLabel(m locales.Messages, page section.Section) string {
 	}
 }
 
+// activeTab draws the active Tab with the main window's Pane commands.
 func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	activeTabBody(c, s, m, t, mainTabRef(s, s.ActiveTab()))
+}
+
+// activeTabBody draws one Tab's split tree, the side panel beside it, and the
+// notices above them. It is the one renderer shared by the main window and a
+// second shell renderer such as the follow view, so neither duplicates the
+// split or side panel logic. ref carries the commands that renderer is
+// allowed to wire: the main window's ref manages Panes, while a read-only ref
+// only looks up, focuses, renames, and retries them.
+func activeTabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ref tabRef) {
 	slots := layout.WorkSlots{Top: func() {
 		notices(c, s, m, t)
 		terminalPanels(c, s, m, t)
@@ -291,9 +312,8 @@ func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 			}
 		}
 	}}
-	if root, focus, ok := s.TabTree(s.ActiveTab()); ok {
+	if root, focus, ok := ref.tree(); ok {
 		ordinal := 0
-		ref := mainTabRef(s, s.ActiveTab())
 		ref.split = !root.IsPane()
 		ref.status = activeStatus(s, m, t)
 		slots.Panes = func() { paneTree(c, s, m, t, ref, root, focus, &ordinal) }
@@ -303,7 +323,7 @@ func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 		if dock != state.DockBottom {
 			width = *s.FilesWidth(window)
 		}
-		if files := s.FilesView(ref.id, width); files != nil {
+		if files := s.FilesViewFor(ref.owner, ref.id, width); files != nil {
 			tabID := ref.id
 			slots.Panel = func() { sidePanel(c, s, m, t, tabID, dock, files) }
 			slots.Dock = layoutDock(dock)
