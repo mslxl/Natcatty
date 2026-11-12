@@ -63,6 +63,14 @@ type BrowserOpener interface {
 	OpenBrowser() error
 }
 
+// BrowserShown is implemented by a Surface whose browser panel is open. The
+// panel owns a native webview that cannot be mounted in a second window, so a
+// follow or topdown renderer checks this and draws a neutral placeholder
+// instead of rendering the Surface elsewhere.
+type BrowserShown interface {
+	BrowserOpen() bool
+}
+
 // SurfaceFactory builds the terminal surface for a Session. The app wires the
 // real MyGo terminal; tests wire a fake.
 type SurfaceFactory func(*appsession.Session) (Surface, error)
@@ -182,13 +190,18 @@ type State struct {
 	filesShown *filesTarget
 	filesRatio float32
 	filesWidth float32
-	// sideTools are the side panel's tools besides SFTP and sideChosen each
-	// Tab's chosen one. sideDrawn is the tool drawn this frame and sideLast
-	// the one drawn the frame before, so a tool that stops drawing can rest.
+	// sideTools are the side panel's tools besides SFTP. sideChosen holds each
+	// Tab's chosen one. sideDrawn and sideLast are per renderer: the tool a
+	// renderer drew this frame and the one it drew the frame before, so a
+	// tool that stops drawing in one window can rest only once no renderer
+	// shows it. sideHidden remembers tools already told to rest until a
+	// renderer draws them again, so the last two renderers stopping in one
+	// frame hide a tool once, not twice.
 	sideTools  []SideTool
 	sideChosen map[model.TabID]SideToolID
-	sideDrawn  SideToolID
-	sideLast   SideToolID
+	sideDrawn  map[RenderOwner]SideToolID
+	sideLast   map[RenderOwner]SideToolID
+	sideHidden map[SideToolID]bool
 	// monitorVisible shows the Host monitoring surface. activate starts the
 	// active panel and deactivate stops sampling when another surface shows.
 	monitorVisible    bool

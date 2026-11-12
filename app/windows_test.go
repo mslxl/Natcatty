@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"slices"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/settings"
 	"github.com/mslxl/natcatty/ui/shell/state"
+	"github.com/mslxl/natcatty/ui/titlebar"
 )
 
 // fakeWindow is a hostWindow whose close follows the same contract as the
@@ -32,11 +34,18 @@ type fakeWindow struct {
 	opacity       float64
 	vibrancy      mygo.Vibrancy
 	icon          []byte
+	bounds        windowBounds
 	minimized     bool
 	maximized     bool
+	// events records the host calls that matter for ordering assertions.
+	events []string
 }
 
-func (w *fakeWindow) Show() { w.shown = true }
+func (w *fakeWindow) Show() {
+	w.shown = true
+	w.events = append(w.events, "show")
+}
+
 func (w *fakeWindow) Hide() {
 	w.shown = false
 	w.focused = false
@@ -60,6 +69,16 @@ func (w *fakeWindow) Close() {
 func (w *fakeWindow) Invalidate()       { w.invalidations++ }
 func (w *fakeWindow) IsDestroyed() bool { return w.destroyed }
 func (w *fakeWindow) IsVisible() bool   { return w.shown && !w.destroyed }
+func (w *fakeWindow) SetBounds(bounds windowBounds) {
+	w.bounds = bounds
+	w.events = append(w.events, "set-bounds")
+}
+func (w *fakeWindow) Bounds() windowBounds { return w.bounds }
+func (w *fakeWindow) Blur() {
+	if w.hooks.OnBlur != nil {
+		w.hooks.OnBlur()
+	}
+}
 func (w *fakeWindow) SetTitle(title string) {
 	w.title = title
 }
@@ -78,7 +97,7 @@ type fakeWindowHost struct {
 }
 
 func (h *fakeWindowHost) Create(spec windowSpec, hooks windowHooks) hostWindow {
-	window := &fakeWindow{spec: spec, hooks: hooks, title: spec.Title}
+	window := &fakeWindow{spec: spec, hooks: hooks, title: spec.Title, events: []string{"create"}}
 	h.windows = append(h.windows, window)
 	return window
 }
@@ -226,6 +245,225 @@ func render(window *fakeWindow) *ui.Tester {
 	tester.SetLocale("en")
 	tester.Frame()
 	return tester
+}
+
+// TestWindowOptionsMapPanelHiddenAndKeepStateKeyOptIn proves the native host
+// maps Panel and Hidden into its options, and that a Panel spec never acquires
+// geometry persistence from its Key or Bounds: only StateKey opts in.
+func TestWindowOptionsMapPanelHiddenAndKeepStateKeyOptIn(t *testing.T) {
+	bounds := windowBounds{X: 12, Y: 34, Width: 900, Height: 400}
+	options := windowOptions(windowSpec{
+		Key:     "dropdown",
+		Title:   "Quake",
+		Panel:   true,
+		Hidden:  true,
+		Bounds:  &bounds,
+		Width:   900,
+		Height:  400,
+		Content: func(*ui.Context) {},
+	})
+	if !options.Panel || !options.Hidden {
+		t.Fatalf("panel=%v hidden=%v, want both set", options.Panel, options.Hidden)
+	}
+	if options.StateKey != "" {
+		t.Fatalf("StateKey = %q, want empty: bounds persistence stays opt-in", options.StateKey)
+	}
+	if options.Width != 900 || options.Height != 400 {
+		t.Fatalf("size = %dx%d, want 900x400", options.Width, options.Height)
+	}
+	if !options.Frameless {
+		t.Fatal("a Panel is frameless so its content draws the window chrome")
+	}
+
+	persisted := windowOptions(windowSpec{
+		Key:      "main",
+		StateKey: "main",
+		Content:  func(*ui.Context) {},
+	})
+	if persisted.StateKey != "main" {
+		t.Fatalf("StateKey = %q, want the explicit key passed through", persisted.StateKey)
+	}
+}
+
+// TestWindowOptionsKeepPanelsFramelessWhereNativeControlsApply covers macOS:
+// ordinary windows keep their traffic lights over a hidden title bar, but a
+// Panel has no native controls at all.
+func TestWindowOptionsKeepPanelsFramelessWhereNativeControlsApply(t *testing.T) {
+	previous := titlebar.NativeControls
+	titlebar.NativeControls = true
+	t.Cleanup(func() { titlebar.NativeControls = previous })
+
+	content := func(*ui.Context) {}
+	panel := windowOptions(windowSpec{
+		Key: "dropdown", Panel: true, Chrome: titlebar.Tabs, Content: content,
+	})
+	if !panel.Frameless || panel.TitleBarStyle != "" || panel.TrafficLightPosition != nil {
+		t.Fatalf("Panel options = %+v, want frameless with no native controls", panel)
+	}
+	main := windowOptions(windowSpec{
+		Key: "main", Chrome: titlebar.Tabs, Content: content,
+	})
+	if main.Frameless || main.TitleBarStyle != mygo.TitleBarHidden || main.TrafficLightPosition == nil {
+		t.Fatalf("main options = %+v, want a hidden native title bar", main)
+	}
+}
+
+// nativeWindowFake records the hooks a native host registers.
+type nativeWindowFake struct {
+	onFocus  func()
+	onClose  func(*mygo.CloseEvent)
+	onClosed func()
+	onBlur   func()
+}
+
+func (w *nativeWindowFake) OnFocus(fn func()) func() { w.onFocus = fn; return func() {} }
+func (w *nativeWindowFake) OnClose(fn func(*mygo.CloseEvent)) func() {
+	w.onClose = fn
+	return func() {}
+}
+func (w *nativeWindowFake) OnClosed(fn func()) func() { w.onClosed = fn; return func() {} }
+func (w *nativeWindowFake) OnBlur(fn func()) func()   { w.onBlur = fn; return func() {} }
+
+// TestWindowHooksWireFocusCloseAndBlur proves the native host maps every hook,
+// including the new OnBlur, and keeps the close-request veto.
+func TestWindowHooksWireFocusCloseAndBlur(t *testing.T) {
+	native := &nativeWindowFake{}
+	focused, blurred, closed := 0, 0, 0
+	allowClose := false
+	wireWindowHooks(native, windowHooks{
+		OnFocus:        func() { focused++ },
+		OnBlur:         func() { blurred++ },
+		OnCloseRequest: func() bool { return allowClose },
+		OnClosed:       func() { closed++ },
+	})
+	if native.onFocus == nil || native.onBlur == nil || native.onClose == nil || native.onClosed == nil {
+		t.Fatal("a hook was not registered on the native window")
+	}
+
+	native.onFocus()
+	native.onBlur()
+	event := &mygo.CloseEvent{}
+	native.onClose(event)
+	if focused != 1 || blurred != 1 {
+		t.Fatalf("focus=%d blur=%d, want one each", focused, blurred)
+	}
+	if !event.DefaultPrevented() {
+		t.Fatal("a refused close was not prevented")
+	}
+	allowClose = true
+	event = &mygo.CloseEvent{}
+	native.onClose(event)
+	if event.DefaultPrevented() {
+		t.Fatal("an allowed close was prevented")
+	}
+	native.onClosed()
+	if closed != 1 {
+		t.Fatalf("closed = %d, want 1", closed)
+	}
+}
+
+// TestHiddenWindowIsPositionedBeforeItIsShown covers the dropdown ordering:
+// creation leaves the window hidden, its bounds are set, and only then may the
+// caller show it.
+func TestHiddenWindowIsPositionedBeforeItIsShown(t *testing.T) {
+	graph := newWindowGraph(t, nil)
+	bounds := windowBounds{X: 24, Y: 48, Width: 900, Height: 400}
+	blurs := 0
+	window := graph.manager.create(windowSpec{
+		Key:     "dropdown",
+		Title:   "Quake",
+		Panel:   true,
+		Hidden:  true,
+		Bounds:  &bounds,
+		Width:   900,
+		Height:  400,
+		Content: func(*ui.Context) {},
+	}, windowHooks{OnBlur: func() { blurs++ }})
+	fake, ok := window.(*fakeWindow)
+	if !ok {
+		t.Fatalf("window = %T, want the fake", window)
+	}
+	if fake.shown {
+		t.Fatal("a hidden window was shown at creation")
+	}
+	if got := window.Bounds(); got != bounds {
+		t.Fatalf("bounds = %+v, want %+v", got, bounds)
+	}
+	window.Show()
+	want := []string{"create", "set-bounds", "show"}
+	if !slices.Equal(fake.events, want) {
+		t.Fatalf("window events = %v, want %v", fake.events, want)
+	}
+	fake.Blur()
+	if blurs != 1 {
+		t.Fatalf("blur hook ran %d times, want 1", blurs)
+	}
+}
+
+// TestPanelWindowsFollowAppearanceButDoNotKeepTheAppAlive covers the single
+// window enumeration: a panel takes the shared opacity, icon, invalidation,
+// and locale redraws, yet a live hidden panel is not a window that blocks
+// quit.
+func TestPanelWindowsFollowAppearanceButDoNotKeepTheAppAlive(t *testing.T) {
+	graph := newWindowGraph(t, nil)
+	main := graph.manager.OpenMain()
+	panel := graph.manager.create(windowSpec{
+		Key:     "dropdown",
+		Title:   "Quake",
+		Panel:   true,
+		Hidden:  true,
+		Content: func(*ui.Context) {},
+	}, windowHooks{})
+	graph.manager.panels = append(graph.manager.panels, panel)
+
+	graph.manager.SetOpacity(0.35)
+	graph.manager.SetIconProvider(func() []byte { return []byte("icon") })
+	graph.manager.InvalidateAll()
+	graph.manager.ApplyLocale()
+
+	fake := panel.(*fakeWindow)
+	if fake.opacity != 0.35 {
+		t.Fatalf("panel opacity = %v, want the live setting", fake.opacity)
+	}
+	if string(fake.icon) != "icon" {
+		t.Fatalf("panel icon = %q, want the live icon", fake.icon)
+	}
+	if fake.invalidations < 2 {
+		t.Fatalf("panel invalidations = %d, want the shared redraws", fake.invalidations)
+	}
+	if fake.title != "Quake" {
+		t.Fatalf("panel title = %q, want no locale retitle", fake.title)
+	}
+
+	main.Close()
+	if !graph.manager.noWindowsLeft() {
+		t.Fatal("a live hidden panel counted as a window left")
+	}
+	if !graph.manager.Quitting() {
+		t.Fatal("closing the last counted window did not mark the quit")
+	}
+	if panel.IsDestroyed() {
+		t.Fatal("the panel was destroyed with the main window")
+	}
+}
+
+// TestMainWindowContentComesFromTheInjectedProvider proves the main window's
+// root view is a provider, so a later render-ownership route can swap it
+// without recreating the window.
+func TestMainWindowContentComesFromTheInjectedProvider(t *testing.T) {
+	graph := newWindowGraph(t, nil)
+	graph.manager.SetMainContentProvider(func() func(*ui.Context) {
+		return func(c *ui.Context) { ui.Text(c, "main-route") }
+	})
+	graph.manager.OpenMain()
+	window := graph.host.last()
+	if window == nil || window.spec.Content == nil {
+		t.Fatal("OpenMain created no content")
+	}
+	tester := render(window)
+	if !tester.HasText("main-route") {
+		t.Fatalf("main content = %v, want the injected provider", tester.Texts())
+	}
 }
 
 // TestEveryWindowIsGatedAndLockUnlockPropagates proves that the main, Settings,

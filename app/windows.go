@@ -13,6 +13,12 @@ import (
 	"github.com/mslxl/natcatty/ui/titlebar"
 )
 
+// windowBounds is a window's screen rectangle in DIPs.
+type windowBounds struct {
+	X, Y          int
+	Width, Height int
+}
+
 // windowSpec describes a native window the composition root asks the host to
 // create. Content is already wrapped in the App Lock gate.
 type windowSpec struct {
@@ -25,15 +31,27 @@ type windowSpec struct {
 	MinHeight int
 	// Chrome is the window's title bar style. On macOS it places the traffic
 	// lights level with that title bar.
-	Chrome  titlebar.Style
+	Chrome titlebar.Style
+	// Panel asks for a non-activating, always-on-top panel: it floats over
+	// other apps and full-screen Spaces, stays out of the taskbar and the app
+	// switcher, and draws no native window controls.
+	Panel bool
+	// Hidden creates the window without showing it, so the caller can position
+	// it with Bounds before its first Show.
+	Hidden bool
+	// Bounds is the initial screen rectangle. Nil keeps the host's default
+	// placement. It is applied after creation and before any Show. Bounds does
+	// not imply a StateKey: geometry persistence stays opt-in.
+	Bounds  *windowBounds
 	Content func(*ui.Context)
 }
 
 // windowHooks are the events the composition root handles. OnCloseRequest
 // reports whether the close may proceed; the host cancels the close when it
-// returns false.
+// returns false. OnBlur runs when the window loses focus.
 type windowHooks struct {
 	OnFocus        func()
+	OnBlur         func()
 	OnCloseRequest func() bool
 	OnClosed       func()
 }
@@ -49,6 +67,10 @@ type hostWindow interface {
 	IsDestroyed() bool
 	IsVisible() bool
 	IsFocused() bool
+	// SetBounds places and sizes the window. A hidden window can be positioned
+	// before it is first shown.
+	SetBounds(windowBounds)
+	Bounds() windowBounds
 	SetTitle(string)
 	SetOpacity(float64)
 	SetVibrancy(mygo.Vibrancy)
@@ -98,6 +120,19 @@ func (nativeConfirmer) Confirm(prompt closePrompt) bool {
 type mygoWindowHost struct{}
 
 func (mygoWindowHost) Create(spec windowSpec, hooks windowHooks) hostWindow {
+	window := mygo.NewWindow(windowOptions(spec))
+	wireWindowHooks(window, hooks)
+	return mygoHostWindow{Window: window}
+}
+
+// windowOptions maps a windowSpec to MyGo's creation options. It is separate
+// from Create so the mapping, including the absence of an implicit StateKey,
+// is testable without a native window. Panel windows are always frameless
+// because they draw their own chrome and have no native controls. Initial
+// Bounds is applied with hostWindow.SetBounds by windowManager.create instead
+// of creation coordinates: MyGo centers a window whose X and Y are both zero,
+// which would misplace a top-left dropdown.
+func windowOptions(spec windowSpec) mygo.WindowOptions {
 	// Every window draws its own title bar, as the original's: no native
 	// caption or menu bar. Elsewhere the window is frameless and the content
 	// draws the window controls too (see withFrame); on macOS the title bar is
@@ -110,15 +145,31 @@ func (mygoWindowHost) Create(spec windowSpec, hooks windowHooks) hostWindow {
 		MinWidth:  spec.MinWidth,
 		MinHeight: spec.MinHeight,
 		StateKey:  spec.StateKey,
+		Panel:     spec.Panel,
+		Hidden:    spec.Hidden,
 		Frameless: true,
 		Content:   ui.View(spec.Content),
 	}
-	if titlebar.NativeControls {
+	if titlebar.NativeControls && !spec.Panel {
 		options.Frameless = false
 		options.TitleBarStyle = mygo.TitleBarHidden
 		options.TrafficLightPosition = trafficLights(spec.Chrome)
 	}
-	window := mygo.NewWindow(options)
+	return options
+}
+
+// nativeWindow is the hook surface of *mygo.Window. Create wires the
+// composition root's hooks onto it; tests drive a fake instead of a native
+// window.
+type nativeWindow interface {
+	OnFocus(func()) (off func())
+	OnClose(func(*mygo.CloseEvent)) (off func())
+	OnClosed(func()) (off func())
+	OnBlur(func()) (off func())
+}
+
+// wireWindowHooks subscribes the composition root's hooks on a native window.
+func wireWindowHooks(window nativeWindow, hooks windowHooks) {
 	if hooks.OnFocus != nil {
 		window.OnFocus(hooks.OnFocus)
 	}
@@ -130,8 +181,26 @@ func (mygoWindowHost) Create(spec windowSpec, hooks windowHooks) hostWindow {
 	if hooks.OnClosed != nil {
 		window.OnClosed(hooks.OnClosed)
 	}
-	return window
+	if hooks.OnBlur != nil {
+		window.OnBlur(hooks.OnBlur)
+	}
 }
+
+// mygoHostWindow adapts *mygo.Window to the manager's bounds type.
+type mygoHostWindow struct{ *mygo.Window }
+
+func (w mygoHostWindow) SetBounds(bounds windowBounds) {
+	w.Window.SetBounds(mygo.Rectangle{
+		X: bounds.X, Y: bounds.Y, Width: bounds.Width, Height: bounds.Height,
+	})
+}
+
+func (w mygoHostWindow) Bounds() windowBounds {
+	rect := w.Window.Bounds()
+	return windowBounds{X: rect.X, Y: rect.Y, Width: rect.Width, Height: rect.Height}
+}
+
+var _ hostWindow = mygoHostWindow{}
 
 // trafficLights places the macOS window controls so they sit centered on the
 // title bar the content draws: the Tab bar, a detached terminal's bar, or the
@@ -154,6 +223,7 @@ type windowManager struct {
 	confirmer       dialogConfirmer
 	gate            *uiapplock.Gate
 	state           *state.State
+	mainContent     func() func(*ui.Context)
 	settingsContent func() func(*ui.Context)
 	locale          func() string
 	// closeToTray asks whether a main-window close should hide the window
@@ -181,10 +251,14 @@ type windowManager struct {
 	confirmPolicy func() bool
 	// onFocus runs after any window gains focus, beside the App Lock activity
 	// record. The sync engine uses it for its debounced focus trigger.
-	onFocus    func()
-	main       hostWindow
-	settings   hostWindow
-	detached   map[model.TabID]hostWindow
+	onFocus  func()
+	main     hostWindow
+	settings hostWindow
+	detached map[model.TabID]hostWindow
+	// panels are auxiliary native windows that follow the shared appearance
+	// and invalidation paths but never keep the application alive. The
+	// Dropdown Panel of the later tickets is the first one.
+	panels     []hostWindow
 	forceClose map[string]bool
 	quitting   bool
 	// mainFocuses counts FocusMain calls so the desktop test can observe that
@@ -228,21 +302,78 @@ func (m *windowManager) SetOpacity(value float64) {
 	m.SyncStyle()
 }
 
+// managedWindow is one entry of the manager's single window enumeration. A
+// new window kind joins here once; every shared per-window operation walks
+// this list, so a kind never needs its own appearance, redraw, locale, or
+// quit-count loop. counts reports whether an open window keeps the
+// application alive when it is the last one; title resolves the OS title a
+// locale change writes, and nil leaves the title alone.
+type managedWindow struct {
+	window hostWindow
+	counts bool
+	title  func(locales.Messages) string
+}
+
+// windows returns every window the manager owns. This is the one place a new
+// window kind is added: everything that applies to all windows, or that
+// decides what keeps the app alive, derives from this list.
+func (m *windowManager) windows() []managedWindow {
+	windows := make([]managedWindow, 0, 2+len(m.detached)+len(m.panels))
+	windows = append(windows,
+		managedWindow{
+			window: m.main,
+			counts: true,
+			title:  func(messages locales.Messages) string { return messages.AppName() },
+		},
+		managedWindow{
+			window: m.settings,
+			counts: true,
+			title:  func(messages locales.Messages) string { return messages.NavSettings() },
+		},
+	)
+	for tabID, window := range m.detached {
+		id := tabID
+		windows = append(windows, managedWindow{
+			window: window,
+			counts: true,
+			title: func(messages locales.Messages) string {
+				info, ok := m.state.DetachedTabInfo(id)
+				if !ok {
+					return ""
+				}
+				return shell.DetachedTitle(messages, info)
+			},
+		})
+	}
+	for _, window := range m.panels {
+		// A panel never keeps the app alive, and it draws no OS title.
+		windows = append(windows, managedWindow{window: window, counts: false})
+	}
+	return windows
+}
+
 // each runs fn on every open window.
 func (m *windowManager) each(fn func(hostWindow)) {
-	for _, window := range append([]hostWindow{m.main, m.settings}, m.detachedWindows()...) {
-		if window != nil && !window.IsDestroyed() {
-			fn(window)
+	for _, managed := range m.windows() {
+		if managed.window != nil && !managed.window.IsDestroyed() {
+			fn(managed.window)
 		}
 	}
 }
 
-func (m *windowManager) detachedWindows() []hostWindow {
-	windows := make([]hostWindow, 0, len(m.detached))
-	for _, window := range m.detached {
-		windows = append(windows, window)
+// create opens a host window and applies the manager's shared appearance. A
+// spec with Bounds is positioned before it can be shown: MyGo creates Hidden
+// windows invisibly, so the first Show lands at the requested rectangle with
+// no flash at a stale position.
+func (m *windowManager) create(spec windowSpec, hooks windowHooks) hostWindow {
+	window := m.host.Create(spec, hooks)
+	if spec.Bounds != nil {
+		window.SetBounds(*spec.Bounds)
 	}
-	return windows
+	m.applyOpacity(window)
+	m.applyVibrancy(window)
+	m.applyIcon(window)
+	return window
 }
 
 // currentStyle is the live Interface Style.
@@ -277,6 +408,23 @@ func (m *windowManager) SyncStyle() {
 // its root, before the App Lock gate builds anything.
 func (m *windowManager) SetThemeProvider(fn func() *ui.Theme) { m.theme = fn }
 
+// SetMainContentProvider installs the root view of the main window. The
+// provider is resolved when the window is created; the function it returns
+// runs every frame, so render ownership can change without recreating the
+// window. Nil falls back to the plain shell view.
+func (m *windowManager) SetMainContentProvider(fn func() func(*ui.Context)) {
+	m.mainContent = fn
+}
+
+func (m *windowManager) mainView() func(*ui.Context) {
+	if m.mainContent != nil {
+		if content := m.mainContent(); content != nil {
+			return content
+		}
+	}
+	return shell.View(m.state)
+}
+
 // SetStyleProvider sets how each window resolves the Interface Style.
 func (m *windowManager) SetStyleProvider(fn func() kit.Style) { m.style = fn }
 
@@ -294,16 +442,7 @@ func (m *windowManager) applyIconEverywhere() {
 	if data == nil {
 		return
 	}
-	apply := func(window hostWindow) {
-		if window != nil && !window.IsDestroyed() {
-			_ = window.SetIcon(data)
-		}
-	}
-	apply(m.main)
-	apply(m.settings)
-	for _, window := range m.detached {
-		apply(window)
-	}
+	m.each(func(window hostWindow) { _ = window.SetIcon(data) })
 }
 
 func (m *windowManager) currentIcon() []byte {
@@ -442,14 +581,15 @@ func (m *windowManager) OpenMain() hostWindow {
 		return m.main
 	}
 	// The content is inside the gate: while App Lock is closed no window
-	// builds anything.
-	gated := withFrame(titlebar.Tabs, func() hostWindow { return m.main }, m.wrap(shell.View(m.state)))
+	// builds anything. The view is a provider so a later render-ownership
+	// route can change what the main window shows without recreating it.
+	gated := withFrame(titlebar.Tabs, func() hostWindow { return m.main }, m.wrap(m.mainView()))
 	// withAccelerators binds at the root context, before the gate builds its
 	// container, so MyGo registers window shortcuts. Inside the gate they
 	// would become element-scoped and fail from the Vault view with no
 	// terminal focus.
 	content := m.withTheme(m.withAccelerators(gated))
-	m.main = m.host.Create(windowSpec{
+	m.main = m.create(windowSpec{
 		Key:       "main",
 		Title:     m.messages().AppName(),
 		StateKey:  "main",
@@ -474,9 +614,6 @@ func (m *windowManager) OpenMain() hostWindow {
 			m.markQuittingIfNoWindows()
 		},
 	})
-	m.applyOpacity(m.main)
-	m.applyVibrancy(m.main)
-	m.applyIcon(m.main)
 	return m.main
 }
 
@@ -503,7 +640,7 @@ func (m *windowManager) OpenSettings() {
 	if m.settingsContent == nil {
 		return
 	}
-	m.settings = m.host.Create(windowSpec{
+	m.settings = m.create(windowSpec{
 		Key:       "settings",
 		Title:     m.messages().NavSettings(),
 		StateKey:  "settings",
@@ -517,9 +654,6 @@ func (m *windowManager) OpenSettings() {
 		OnFocus:  m.recordActivity,
 		OnClosed: func() { m.settings = nil; m.markQuittingIfNoWindows() },
 	})
-	m.applyOpacity(m.settings)
-	m.applyVibrancy(m.settings)
-	m.applyIcon(m.settings)
 }
 
 // OpenDetached creates the window that owns one detached Tab. Every window,
@@ -535,7 +669,7 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 		return
 	}
 	content := m.detachedContent(tabID)
-	m.detached[tabID] = m.host.Create(windowSpec{
+	m.detached[tabID] = m.create(windowSpec{
 		Key:       "detached:" + string(tabID),
 		Title:     shell.DetachedTitle(m.messages(), info),
 		Width:     900,
@@ -560,9 +694,6 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 			m.markQuittingIfNoWindows()
 		},
 	})
-	m.applyOpacity(m.detached[tabID])
-	m.applyVibrancy(m.detached[tabID])
-	m.applyIcon(m.detached[tabID])
 }
 
 // ReattachClose closes a detached window after its Tab moved back into the
@@ -674,16 +805,14 @@ func (m *windowManager) recordActivity() {
 	}
 }
 
-// noWindowsLeft reports whether every application window has closed.
+// noWindowsLeft reports whether every window that keeps the application alive
+// has closed. A panel does not count, so a hidden dropdown cannot block quit.
 func (m *windowManager) noWindowsLeft() bool {
-	if m.main != nil && !m.main.IsDestroyed() {
-		return false
-	}
-	if m.settings != nil && !m.settings.IsDestroyed() {
-		return false
-	}
-	for _, window := range m.detached {
-		if window != nil && !window.IsDestroyed() {
+	for _, managed := range m.windows() {
+		if !managed.counts {
+			continue
+		}
+		if managed.window != nil && !managed.window.IsDestroyed() {
 			return false
 		}
 	}
@@ -717,36 +846,22 @@ func (m *windowManager) SecondInstance() hostWindow {
 // InvalidateAll redraws every window, so a lock or unlock propagates to all of
 // them.
 func (m *windowManager) InvalidateAll() {
-	invalidate := func(window hostWindow) {
-		if window != nil && !window.IsDestroyed() {
-			window.Invalidate()
-		}
-	}
-	invalidate(m.main)
-	invalidate(m.settings)
-	for _, window := range m.detached {
-		invalidate(window)
-	}
+	m.each(func(window hostWindow) { window.Invalidate() })
 }
 
-// ApplyLocale updates every window title after a language change.
+// ApplyLocale updates every window title after a language change and redraws
+// each window so the new strings are built.
 func (m *windowManager) ApplyLocale() {
 	messages := m.messages()
-	if m.main != nil && !m.main.IsDestroyed() {
-		m.main.SetTitle(messages.AppName())
-		m.main.Invalidate()
-	}
-	if m.settings != nil && !m.settings.IsDestroyed() {
-		m.settings.SetTitle(messages.NavSettings())
-		m.settings.Invalidate()
-	}
-	for tabID, window := range m.detached {
-		if window == nil || window.IsDestroyed() {
+	for _, managed := range m.windows() {
+		if managed.window == nil || managed.window.IsDestroyed() {
 			continue
 		}
-		if info, ok := m.state.DetachedTabInfo(tabID); ok {
-			window.SetTitle(shell.DetachedTitle(messages, info))
+		if managed.title != nil {
+			if title := managed.title(messages); title != "" {
+				managed.window.SetTitle(title)
+			}
 		}
-		window.Invalidate()
+		managed.window.Invalidate()
 	}
 }
