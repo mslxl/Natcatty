@@ -24730,6 +24730,22 @@ func (msgs Messages) WindowClose() string {
 	return Catalog.Format(msgs.locale, "windowClose", nil)
 }
 
+// DropdownHide says "Hide panel"
+// in the language the app shows.
+//
+// The Dropdown Panel's hide button, which hides the panel without closing
+// it.
+func DropdownHide() string { return In(i18n.Locale()).DropdownHide() }
+
+// DropdownHide says "Hide panel"
+// in the language of msgs.
+//
+// The Dropdown Panel's hide button, which hides the panel without closing
+// it.
+func (msgs Messages) DropdownHide() string {
+	return Catalog.Format(msgs.locale, "dropdownHide", nil)
+}
+
 // SettingsAreaAbout says "About & Licenses"
 // in the language the app shows.
 func SettingsAreaAbout() string { return In(i18n.Locale()).SettingsAreaAbout() }

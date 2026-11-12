@@ -1,11 +1,14 @@
 package app
 
 import (
+	"math"
+
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"github.com/mslxl/natcatty/domain/model"
 	uiapplock "github.com/mslxl/natcatty/ui/applock"
+	"github.com/mslxl/natcatty/ui/dropdown"
 	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell"
@@ -17,6 +20,28 @@ import (
 type windowBounds struct {
 	X, Y          int
 	Width, Height int
+}
+
+// dropdownHeightPercent is the default share of the work area the Dropdown
+// Panel covers, the Quake mode's default.
+const dropdownHeightPercent = 50
+
+// dropdownMinHeight is the smallest readable Quake dropdown. The actual
+// height also clamps to a shorter work area.
+const dropdownMinHeight = 120
+
+// dropdownFallbackWorkArea is the last-resort rectangle when the platform
+// reports no displays at all. It keeps the Panel constructible with a usable
+// size.
+var dropdownFallbackWorkArea = windowBounds{Width: 1280, Height: 800}
+
+// screenProbe is the display seam the Dropdown Panel positions itself
+// against. MyGo's Screen module implements it; tests supply a fake so they
+// can move the pointer between displays without a real screen.
+type screenProbe interface {
+	CursorScreenPoint() mygo.Point
+	DisplayNearestPoint(mygo.Point) mygo.Display
+	PrimaryDisplay() mygo.Display
 }
 
 // windowSpec describes a native window the composition root asks the host to
@@ -150,6 +175,12 @@ func windowOptions(spec windowSpec) mygo.WindowOptions {
 		Frameless: true,
 		Content:   ui.View(spec.Content),
 	}
+	// A Panel floats over the windows of every app, above full-screen apps
+	// too. The composition root positions it from the pointer's work area
+	// before each show; v1 does not let the user drag or resize it.
+	options.AlwaysOnTop = spec.Panel
+	options.DisableResize = spec.Panel
+	options.DisableMove = spec.Panel
 	if titlebar.NativeControls && !spec.Panel {
 		options.Frameless = false
 		options.TitleBarStyle = mygo.TitleBarHidden
@@ -257,8 +288,22 @@ type windowManager struct {
 	detached map[model.TabID]hostWindow
 	// panels are auxiliary native windows that follow the shared appearance
 	// and invalidation paths but never keep the application alive. The
-	// Dropdown Panel of the later tickets is the first one.
-	panels     []hostWindow
+	// Dropdown Panel is the first one.
+	panels []hostWindow
+	// dropdown is the singleton Dropdown Panel. It is created on its first
+	// show and only hidden afterwards until quit.
+	dropdown hostWindow
+	// dropdownContent supplies the Panel's routed view. The provider is
+	// resolved once at creation; the returned function runs every frame.
+	dropdownContent func() func(*ui.Context)
+	// dropdownHeight is the live visible-height calculation in DIPs. The
+	// default uses half the work area.
+	dropdownHeight func(windowBounds) int
+	// dropdownClosing lets the Panel's close request proceed during quit;
+	// otherwise every close request only hides it.
+	dropdownClosing bool
+	// screen reports the displays and pointer. Nil reads MyGo's live screen.
+	screen     screenProbe
 	forceClose map[string]bool
 	quitting   bool
 	// mainFocuses counts FocusMain calls so the desktop test can observe that
@@ -705,6 +750,205 @@ func (m *windowManager) ReattachClose(tabID model.TabID) {
 	}
 }
 
+// SetScreenProvider installs the display seam the Dropdown Panel positions
+// itself against. Nil reads MyGo's live displays.
+func (m *windowManager) SetScreenProvider(screen screenProbe) { m.screen = screen }
+
+// SetDropdownContentProvider installs the Panel's routed content. The
+// provider is resolved once when the Panel is created; the function it
+// returns runs every frame, so later content routing does not recreate the
+// native window. Nil leaves the neutral placeholder.
+func (m *windowManager) SetDropdownContentProvider(fn func() func(*ui.Context)) {
+	m.dropdownContent = fn
+}
+
+// SetDropdownHeightProvider installs the live visible-height calculation in
+// DIPs for a work area. Nil keeps the default half height; the height
+// settings replace it.
+func (m *windowManager) SetDropdownHeightProvider(fn func(windowBounds) int) {
+	m.dropdownHeight = fn
+}
+
+// DropdownVisible reports whether the Dropdown Panel is on screen.
+func (m *windowManager) DropdownVisible() bool {
+	return m.dropdown != nil && !m.dropdown.IsDestroyed() && m.dropdown.IsVisible()
+}
+
+// ToggleDropdown shows the Dropdown Panel, or hides it when it is visible.
+func (m *windowManager) ToggleDropdown() {
+	if m.DropdownVisible() {
+		m.HideDropdown()
+		return
+	}
+	m.ShowDropdown()
+}
+
+// ShowDropdown creates the singleton Panel on its first use and shows it.
+// Every show re-reads the pointer and recomputes the display, work area, and
+// bounds before Show, so a moved pointer, a changed work area, or a removed
+// display is honored. The Panel has no StateKey: MyGo never restores stale
+// bounds for it.
+func (m *windowManager) ShowDropdown() {
+	bounds := m.dropdownBounds()
+	window := m.dropdown
+	if window == nil || window.IsDestroyed() {
+		window = m.createDropdown(bounds)
+	} else {
+		window.SetBounds(bounds)
+	}
+	window.Show()
+	window.Focus()
+}
+
+// HideDropdown hides the Panel without destroying it, so the next show reuses
+// the same native window and its content state.
+func (m *windowManager) HideDropdown() {
+	if m.dropdown == nil || m.dropdown.IsDestroyed() {
+		return
+	}
+	m.dropdown.Hide()
+}
+
+// ShutdownDropdown hides and destroys the Panel for quit. It answers the
+// close request instead of vetoing it, and never prompts, so quitting cannot
+// block on the Panel or leave a native window behind.
+func (m *windowManager) ShutdownDropdown() {
+	window := m.dropdown
+	if window == nil || window.IsDestroyed() {
+		return
+	}
+	m.dropdownClosing = true
+	window.Hide()
+	window.Close()
+}
+
+// createDropdown creates the hidden Panel at bounds and registers it with the
+// shared window enumeration. Hidden means the window is created invisibly and
+// its bounds are applied before the first Show, so it never flashes at a stale
+// position.
+func (m *windowManager) createDropdown(bounds windowBounds) hostWindow {
+	var window hostWindow
+	window = m.create(windowSpec{
+		Key:     "dropdown",
+		Title:   m.messages().AppName(),
+		Panel:   true,
+		Hidden:  true,
+		Bounds:  &bounds,
+		Width:   bounds.Width,
+		Height:  bounds.Height,
+		Content: m.dropdownView(),
+	}, windowHooks{
+		OnFocus: m.recordActivity,
+		// Blur is also the platform's "click outside" signal; both hide the
+		// Panel and neither destroys it.
+		OnBlur: m.HideDropdown,
+		// Escape reaches a MyGo Panel as a close request. It hides the Panel
+		// instead of closing it, unless the application is quitting. MyGo's
+		// quit sequence closes every window before OnWillQuit runs, so the
+		// already-confirmed quit has to answer the close here: a veto would
+		// abort the quit and leave the process alive with no main window.
+		OnCloseRequest: func() bool {
+			if m.dropdownClosing || m.quitting {
+				return true
+			}
+			m.HideDropdown()
+			return false
+		},
+		// A destroyed dropdown leaves neither the manager's field nor the
+		// window enumeration behind, and it never counts toward quit.
+		OnClosed: func() {
+			m.dropdownClosing = false
+			m.forgetDropdown(window)
+		},
+	})
+	m.dropdown = window
+	m.panels = append(m.panels, window)
+	return window
+}
+
+// forgetDropdown clears a destroyed Panel from the manager.
+func (m *windowManager) forgetDropdown(window hostWindow) {
+	if m.dropdown == window {
+		m.dropdown = nil
+	}
+	for index, panel := range m.panels {
+		if panel != window {
+			continue
+		}
+		m.panels = append(m.panels[:index], m.panels[index+1:]...)
+		break
+	}
+}
+
+// dropdownView is the Panel's root content: the shared theme and shortcut
+// preamble, the dropdown frame with its hide button, then the routed content
+// behind the one App Lock gate. The frame sits outside the gate, as every
+// window's controls do, so the Panel can be hidden while locked.
+func (m *windowManager) dropdownView() func(*ui.Context) {
+	content := dropdown.Placeholder
+	if m.dropdownContent != nil {
+		if provided := m.dropdownContent(); provided != nil {
+			content = provided
+		}
+	}
+	return m.withTheme(m.withAccelerators(dropdown.View(m.HideDropdown, m.wrap(content))))
+}
+
+// dropdownBounds is the Panel's rectangle: the work area's top-left corner,
+// its full width, and the configured height.
+func (m *windowManager) dropdownBounds() windowBounds {
+	workArea := m.dropdownWorkArea()
+	return windowBounds{
+		X:      workArea.X,
+		Y:      workArea.Y,
+		Width:  workArea.Width,
+		Height: m.dropdownHeightFor(workArea),
+	}
+}
+
+// dropdownWorkArea picks the work area of the display under the pointer and
+// falls back to the primary display when the platform cannot name one. It is
+// recomputed for every show.
+func (m *windowManager) dropdownWorkArea() windowBounds {
+	screen := m.screen
+	if screen == nil {
+		screen = mygo.Screen
+	}
+	display := screen.DisplayNearestPoint(screen.CursorScreenPoint())
+	if !hasWorkArea(display.WorkArea) {
+		display = screen.PrimaryDisplay()
+	}
+	area := display.WorkArea
+	if !hasWorkArea(area) {
+		return dropdownFallbackWorkArea
+	}
+	return windowBounds{X: area.X, Y: area.Y, Width: area.Width, Height: area.Height}
+}
+
+func hasWorkArea(area mygo.Rectangle) bool {
+	return area.Width > 0 && area.Height > 0
+}
+
+// dropdownHeightFor clamps the visible height to [minimum, work area height].
+// A work area shorter than the minimum uses its own height.
+func (m *windowManager) dropdownHeightFor(workArea windowBounds) int {
+	height := int(math.Round(float64(workArea.Height) * dropdownHeightPercent / 100))
+	if m.dropdownHeight != nil {
+		height = m.dropdownHeight(workArea)
+	}
+	minimum := dropdownMinHeight
+	if workArea.Height < minimum {
+		minimum = workArea.Height
+	}
+	if height < minimum {
+		height = minimum
+	}
+	if height > workArea.Height {
+		height = workArea.Height
+	}
+	return height
+}
+
 // RequestDetachedClose handles the detached view's close action with the same
 // intent prompt as the native window close button.
 func (m *windowManager) RequestDetachedClose(tabID model.TabID) {
@@ -822,9 +1066,15 @@ func (m *windowManager) noWindowsLeft() bool {
 // markQuittingIfNoWindows records that the user approved closing the last
 // application window, so the quit sequence that follows does not ask again.
 func (m *windowManager) markQuittingIfNoWindows() {
-	if m.noWindowsLeft() {
-		m.quitting = true
+	if !m.noWindowsLeft() {
+		return
 	}
+	m.quitting = true
+	// MyGo's own quit trigger is "no window left", and a created Panel stays
+	// in that list even while hidden. The Panel never keeps the app alive, so
+	// destroy it here; otherwise closing the last counted window would leave
+	// the process running with no visible window and never reach OnWillQuit.
+	m.ShutdownDropdown()
 }
 
 // FocusMain brings the main window forward, creating it if it was closed.

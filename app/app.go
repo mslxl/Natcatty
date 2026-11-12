@@ -1572,6 +1572,12 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// A Session's end may run on any goroutine; Invalidate is safe from
 	// any goroutine and asks for the frame that shows the new status.
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
+		// The Dropdown Panel is not a window that keeps the app alive, so it
+		// may still be open at quit. Hide and destroy it first; it never
+		// prompts and must not outlive the event loop.
+		if windows != nil {
+			windows.ShutdownDropdown()
+		}
 		shellState.Persist()
 		// Stop accepting external MCP calls before the services they read are
 		// torn down, then remove the discovery pointer if it is still ours.
@@ -1624,7 +1630,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// The tray appears before launch targets so any deep link or
 		// command-line Host opens into a running shell.
 		desktopCtl.MarkReady()
-		if err := desktopService.Apply(desktopCtl.ToggleMain); err != nil {
+		if err := desktopService.Apply(desktopCtl.HandleHotkey); err != nil {
 			// Another application may own the accelerator. The failure is
 			// reported in Settings; the app keeps working.
 			desktopState.RefreshProblem()

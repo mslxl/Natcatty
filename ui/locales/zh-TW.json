@@ -3389,6 +3389,7 @@
   "windowMaximize": "最大化",
   "windowRestore": "還原",
   "windowClose": "關閉",
+  "dropdownHide": "隱藏面板",
   "settingsAreaAbout": "關於與授權",
   "settingsAboutDescription": "版本、版權、授權條款文字、對應原始碼與第三方聲明。",
   "settingsAboutVersion": "版本 {version}",

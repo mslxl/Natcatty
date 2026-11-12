@@ -3389,6 +3389,7 @@
   "windowMaximize": "Развернуть",
   "windowRestore": "Восстановить",
   "windowClose": "Закрыть",
+  "dropdownHide": "Скрыть панель",
   "settingsAreaAbout": "О программе и лицензии",
   "settingsAboutDescription": "Версия, авторские права, текст лицензии, соответствующий исходный код и уведомления третьих сторон.",
   "settingsAboutVersion": "Версия {version}",

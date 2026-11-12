@@ -147,6 +147,12 @@ func newDesktopTestController(t *testing.T) (*desktopController, *windowGraph,
 	*fakeTrayBackend, *testDesktopRepository, *testHotkeys, *testNotifier, *recordingOpener) {
 	t.Helper()
 	graph := newWindowGraph(t, nil)
+	// The Dropdown Panel asks for the pointer and displays; keep tests off
+	// the real screen.
+	graph.manager.SetScreenProvider(&fakeScreen{
+		cursor:   mygo.Point{X: 400, Y: 300},
+		displays: []mygo.Display{primaryDisplay()},
+	})
 	graph.manager.OpenMain()
 	repository := &testDesktopRepository{settings: appdesktop.Defaults("windows")}
 	hotkeys := &testHotkeys{}
@@ -499,6 +505,40 @@ func TestGlobalHotkeyRegistrationDrivesTheToggle(t *testing.T) {
 	}
 	if controller.ToggleCount() != 2 {
 		t.Fatalf("toggles = %d", controller.ToggleCount())
+	}
+}
+
+// TestGlobalHotkeyTogglesTheDropdownPanel wires the real registration seam:
+// the registered accelerator callback is HandleHotkey, and unless ticket 12
+// routes the modes, that toggles the one Dropdown Panel.
+func TestGlobalHotkeyTogglesTheDropdownPanel(t *testing.T) {
+	controller, graph, _, _, hotkeys, _, _ := newDesktopTestController(t)
+	if err := controller.service.Apply(controller.HandleHotkey); err != nil {
+		t.Fatal(err)
+	}
+	var callback func()
+	for _, registered := range hotkeys.registered {
+		callback = registered
+	}
+	if callback == nil {
+		t.Fatalf("registered accelerators = %+v, want one", hotkeys.registered)
+	}
+
+	callback()
+	window := graph.manager.dropdown
+	if window == nil || !window.IsVisible() {
+		t.Fatal("the hotkey did not show the Dropdown Panel")
+	}
+	callback()
+	if window.IsVisible() {
+		t.Fatal("a second hotkey press did not hide the Dropdown Panel")
+	}
+	callback()
+	if graph.manager.dropdown != window || !window.IsVisible() {
+		t.Fatal("the third press did not reuse and show the same Panel")
+	}
+	if controller.ToggleCount() != 3 {
+		t.Fatalf("toggles = %d, want 3", controller.ToggleCount())
 	}
 }
 
