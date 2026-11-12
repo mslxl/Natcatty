@@ -118,7 +118,7 @@ func newDesktopController(windows *windowManager, shellState *state.State,
 	vault *vaultstate.State, forwarding *appforwarding.Manager,
 	service *appdesktop.Service, backends trayBackend, locale func() string,
 	quit func()) *desktopController {
-	return &desktopController{
+	controller := &desktopController{
 		windows:           windows,
 		shell:             shellState,
 		vault:             vault,
@@ -132,6 +132,13 @@ func newDesktopController(windows *windowManager, shellState *state.State,
 		sessions:          make(map[model.SessionID]observedSession),
 		forwardingFailure: make(map[model.ForwardingRuleID]bool),
 	}
+	if service != nil {
+		// The service owns registration and persistence; the controller owns
+		// the windows. A successful mode change must retire a Panel that was
+		// showing the previous mode.
+		service.OnHotkeyModeChange(controller.HandleHotkeyModeChange)
+	}
+	return controller
 }
 
 // MarkReady releases launch work queued before the main window existed, then
@@ -163,14 +170,41 @@ func (c *desktopController) Shutdown() {
 	c.trayAttempted = false
 }
 
-// HandleHotkey is the global hotkey's callback. Ticket 12 routes the four
-// Hotkey Modes here; until then the one mode is the Dropdown Panel, which the
-// key toggles. It runs on the UI thread.
+// HandleHotkey is the global hotkey's callback. The current Hotkey Mode
+// decides what the one registered accelerator does: none is a no-op, toggle
+// raises or hides the main window, and both dropdown modes toggle the single
+// Dropdown Panel. It runs on the UI thread.
 func (c *desktopController) HandleHotkey() {
-	c.mu.Lock()
-	c.toggles++
-	c.mu.Unlock()
-	c.windows.ToggleDropdown()
+	if c.service == nil {
+		return
+	}
+	switch c.service.Settings().HotkeyMode {
+	case appdesktop.HotkeyModeNone:
+		// The accelerator is unregistered in none mode. A callback that still
+		// arrives, for example from a registration that raced the change, must
+		// not move a window.
+		return
+	case appdesktop.HotkeyModeToggle:
+		c.ToggleMain()
+	case appdesktop.HotkeyModeQuake, appdesktop.HotkeyModeTopdown:
+		c.mu.Lock()
+		c.toggles++
+		c.mu.Unlock()
+		c.windows.ToggleDropdown()
+	}
+}
+
+// HandleHotkeyModeChange retires a visible Dropdown Panel when the global
+// shortcut changes meaning: the open Panel belongs to the previous mode, and
+// the next press must open the new mode instead of re-showing stale content.
+// Hiding is also where a follow/top-down ownership transfer restores the main
+// window. It runs on the UI thread, after the new mode is saved.
+func (c *desktopController) HandleHotkeyModeChange(appdesktop.HotkeyMode) {
+	if c.windows == nil {
+		return
+	}
+	c.windows.HideDropdown()
+	c.windows.InvalidateAll()
 }
 
 // ToggleMain shows, focuses, or hides the main window, as the original global

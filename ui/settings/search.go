@@ -229,6 +229,11 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	atuin("", m.SettingsAtuinKeyTitle(), "master key", "key", "encryption")
 
 	add(AreaSystem, "", m.SettingsHotkeyTitle(), "global hotkey toggle window")
+	add(AreaSystem, "", m.SettingsHotkeyMode(), "hotkey mode action none toggle quake topdown top-down dropdown")
+	add(AreaSystem, "", m.SettingsHotkeyModeNone(), "hotkey none no action disable release accelerator")
+	add(AreaSystem, "", m.SettingsHotkeyModeToggle(), "hotkey toggle main window show hide")
+	add(AreaSystem, "", m.SettingsHotkeyModeQuake(), "hotkey quake dropdown terminal console")
+	add(AreaSystem, "", m.SettingsHotkeyModeTopdown(), "hotkey topdown top-down dropdown full window shell")
 	add(AreaSystem, "", m.SettingsAutostartTitle(), "launch login autostart")
 	add(AreaSystem, "", m.SettingsShowTrayIcon(), "tray icon")
 	add(AreaSystem, "", m.SettingsCloseToTray(), "close to tray")

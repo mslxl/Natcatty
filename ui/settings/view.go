@@ -951,9 +951,36 @@ func hotkeySection(c *ui.Context, state *DesktopState, settings desktop.Settings
 			ui.Text(c, m.SettingsHotkeyUnsupported()).TextColor(t.TextMuted)
 			return
 		}
-		enabled := settings.GlobalHotkeyEnabled
-		if ui.Checkbox(c, &enabled, m.SettingsHotkeyEnabled()).Changed() {
-			state.SetGlobalHotkeyEnabled(enabled)
+		mode := string(settings.HotkeyMode)
+		modeChanged := false
+		kit.FormRow(c, m.SettingsHotkeyMode(), func() {
+			ui.RadioGroup(c, func() {
+				if ui.Radio(c, &mode, string(desktop.HotkeyModeNone),
+					m.SettingsHotkeyModeNone()).Changed() {
+					modeChanged = true
+				}
+				if ui.Radio(c, &mode, string(desktop.HotkeyModeToggle),
+					m.SettingsHotkeyModeToggle()).Changed() {
+					modeChanged = true
+				}
+				// The Dropdown Panel is not available on every platform. Both
+				// dropdown modes stay visible but disabled with a reason, so
+				// none and toggle remain reachable.
+				if ui.Radio(c, &mode, string(desktop.HotkeyModeQuake),
+					m.SettingsHotkeyModeQuake()).Disabled(!caps.Dropdown).Changed() {
+					modeChanged = true
+				}
+				if ui.Radio(c, &mode, string(desktop.HotkeyModeTopdown),
+					m.SettingsHotkeyModeTopdown()).Disabled(!caps.Dropdown).Changed() {
+					modeChanged = true
+				}
+			}).Label(m.SettingsHotkeyMode())
+		})
+		if !caps.Dropdown {
+			ui.Text(c, m.SettingsHotkeyModeUnsupported()).TextColor(t.TextMuted)
+		}
+		if modeChanged {
+			state.SetHotkeyMode(desktop.HotkeyMode(mode))
 			c.Invalidate()
 		}
 		kit.FormRow(c, m.SettingsHotkeyAccelerator(), func() {

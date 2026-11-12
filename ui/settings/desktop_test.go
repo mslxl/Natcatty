@@ -19,6 +19,7 @@ type fakeDesktop struct {
 	closeTray  []bool
 	deepLinks  []bool
 	hotkey     []string
+	modes      []desktop.HotkeyMode
 	autoStart  []bool
 	notified   map[desktop.Event]bool
 	resetCalls int
@@ -28,7 +29,8 @@ func newFakeDesktop() *fakeDesktop {
 	return &fakeDesktop{
 		settings: desktop.Defaults("windows"),
 		caps: desktop.Capabilities{
-			Tray: true, Notifications: true, AutoStart: true, GlobalHotkey: true,
+			Tray: true, Notifications: true, AutoStart: true,
+			GlobalHotkey: true, Dropdown: true,
 		},
 		notified: map[desktop.Event]bool{},
 	}
@@ -56,11 +58,12 @@ func (f *fakeDesktop) SetCloseToTray(enabled bool) error {
 	return nil
 }
 
-func (f *fakeDesktop) SetGlobalHotkeyEnabled(enabled bool) error {
+func (f *fakeDesktop) SetHotkeyMode(mode desktop.HotkeyMode) error {
 	if f.err != nil {
 		return f.err
 	}
-	f.settings.GlobalHotkeyEnabled = enabled
+	f.modes = append(f.modes, mode)
+	f.settings.HotkeyMode = mode
 	return nil
 }
 
@@ -166,6 +169,140 @@ func TestDesktopStateShowsRegistrationFailureAtLoad(t *testing.T) {
 	state := NewDesktopState(fake)
 	if state.Problem() != DesktopProblemHotkey {
 		t.Fatalf("problem = %q", state.Problem())
+	}
+}
+
+// TestHotkeySectionShowsFourModesAndDropsTheEnabledCheckbox pins the new
+// control: the old on/off checkbox is gone and the four modes are all shown.
+func TestHotkeySectionShowsFourModesAndDropsTheEnabledCheckbox(t *testing.T) {
+	fake := newFakeDesktop()
+	state := NewDesktopState(fake)
+	tester := ui.NewTester(viewAt(AreaSystem, Config{Lock: NewAppLockState(&fakeAppLock{}), Desktop: state}), 1100, 720)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	m := locales.In("en")
+	for _, label := range []string{
+		m.SettingsHotkeyMode(), m.SettingsHotkeyModeNone(),
+		m.SettingsHotkeyModeToggle(), m.SettingsHotkeyModeQuake(),
+		m.SettingsHotkeyModeTopdown(),
+	} {
+		if !tester.HasText(label) {
+			t.Fatalf("the hotkey section does not show %q: %v", label, tester.Texts())
+		}
+	}
+	if tester.HasText("Enable global hotkey") {
+		t.Fatalf("the removed enable checkbox is still rendered: %v", tester.Texts())
+	}
+}
+
+// TestHotkeyModeRadiosApplyTheSelectedMode drives the actual radios, including
+// a switch back and forth, so each selection reaches the service.
+func TestHotkeyModeRadiosApplyTheSelectedMode(t *testing.T) {
+	fake := newFakeDesktop()
+	state := NewDesktopState(fake)
+	tester := ui.NewTester(viewAt(AreaSystem, Config{Lock: NewAppLockState(&fakeAppLock{}), Desktop: state}), 1100, 720)
+	tester.SetLocale("en")
+	tester.Frame()
+	m := locales.In("en")
+
+	if err := tester.Click(m.SettingsHotkeyModeNone()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if len(fake.modes) != 1 || fake.modes[0] != desktop.HotkeyModeNone {
+		t.Fatalf("modes = %v after clicking none", fake.modes)
+	}
+
+	if err := tester.Click(m.SettingsHotkeyModeToggle()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if len(fake.modes) != 2 || fake.modes[1] != desktop.HotkeyModeToggle {
+		t.Fatalf("modes = %v after clicking toggle", fake.modes)
+	}
+
+	if err := tester.Click(m.SettingsHotkeyModeTopdown()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if len(fake.modes) != 3 || fake.modes[2] != desktop.HotkeyModeTopdown {
+		t.Fatalf("modes = %v after clicking topdown", fake.modes)
+	}
+}
+
+// TestHotkeyModeFailureKeepsTheOldSelectionAndShowsTheProblem covers the
+// registration failure path: the service rejects the change, the inline
+// problem appears, and the old mode stays selected.
+func TestHotkeyModeFailureKeepsTheOldSelectionAndShowsTheProblem(t *testing.T) {
+	fake := newFakeDesktop()
+	state := NewDesktopState(fake)
+	tester := ui.NewTester(viewAt(AreaSystem, Config{Lock: NewAppLockState(&fakeAppLock{}), Desktop: state}), 1100, 720)
+	tester.SetLocale("en")
+	tester.Frame()
+	m := locales.In("en")
+
+	fake.err = desktop.ErrHotkey
+	if err := tester.Click(m.SettingsHotkeyModeTopdown()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if state.Problem() != DesktopProblemHotkey {
+		t.Fatalf("problem = %q, want the hotkey problem", state.Problem())
+	}
+	if fake.settings.HotkeyMode != desktop.HotkeyModeQuake {
+		t.Fatalf("mode = %q after a failed change", fake.settings.HotkeyMode)
+	}
+	if !tester.HasText(m.SettingsHotkeyProblem()) {
+		t.Fatalf("the inline hotkey problem is missing: %v", tester.Texts())
+	}
+}
+
+// TestUnsupportedDropdownDisablesOnlyTheDropdownModes proves a host without
+// Panel support hides the reason and keeps none and toggle usable.
+func TestUnsupportedDropdownDisablesOnlyTheDropdownModes(t *testing.T) {
+	fake := newFakeDesktop()
+	fake.caps.Dropdown = false
+	state := NewDesktopState(fake)
+	tester := ui.NewTester(viewAt(AreaSystem, Config{Lock: NewAppLockState(&fakeAppLock{}), Desktop: state}), 1100, 720)
+	tester.SetLocale("en")
+	tester.Frame()
+	m := locales.In("en")
+
+	if !tester.HasText(m.SettingsHotkeyModeUnsupported()) {
+		t.Fatalf("the unsupported reason is missing: %v", tester.Texts())
+	}
+	if err := tester.Click(m.SettingsHotkeyModeQuake()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if len(fake.modes) != 0 {
+		t.Fatalf("a disabled quake mode was applied: %v", fake.modes)
+	}
+	if err := tester.Click(m.SettingsHotkeyModeNone()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if len(fake.modes) != 1 || fake.modes[0] != desktop.HotkeyModeNone {
+		t.Fatalf("none was not usable without Dropdown support: %v", fake.modes)
+	}
+}
+
+// TestHotkeyModesAreSearchable reaches the mode controls through Settings
+// search in the source language.
+func TestHotkeyModesAreSearchable(t *testing.T) {
+	hits := SearchIndex(locales.In("en"))
+	for _, query := range []string{"quake", "topdown", "top-down", "no action"} {
+		found := false
+		for _, hit := range FilterHits(hits, query) {
+			if hit.Area == AreaSystem {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("query %q does not reach the system area", query)
+		}
 	}
 }
 
