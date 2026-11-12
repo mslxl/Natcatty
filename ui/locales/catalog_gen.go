@@ -7168,14 +7168,64 @@ func (msgs Messages) SettingsHotkeyDescription() string {
 	return Catalog.Format(msgs.locale, "settingsHotkeyDescription", nil)
 }
 
-// SettingsHotkeyEnabled says "Enable global hotkey"
+// SettingsHotkeyMode says "Hotkey action"
 // in the language the app shows.
-func SettingsHotkeyEnabled() string { return In(i18n.Locale()).SettingsHotkeyEnabled() }
+func SettingsHotkeyMode() string { return In(i18n.Locale()).SettingsHotkeyMode() }
 
-// SettingsHotkeyEnabled says "Enable global hotkey"
+// SettingsHotkeyMode says "Hotkey action"
 // in the language of msgs.
-func (msgs Messages) SettingsHotkeyEnabled() string {
-	return Catalog.Format(msgs.locale, "settingsHotkeyEnabled", nil)
+func (msgs Messages) SettingsHotkeyMode() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyMode", nil)
+}
+
+// SettingsHotkeyModeNone says "Do nothing"
+// in the language the app shows.
+func SettingsHotkeyModeNone() string { return In(i18n.Locale()).SettingsHotkeyModeNone() }
+
+// SettingsHotkeyModeNone says "Do nothing"
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyModeNone() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyModeNone", nil)
+}
+
+// SettingsHotkeyModeToggle says "Show or hide the main window"
+// in the language the app shows.
+func SettingsHotkeyModeToggle() string { return In(i18n.Locale()).SettingsHotkeyModeToggle() }
+
+// SettingsHotkeyModeToggle says "Show or hide the main window"
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyModeToggle() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyModeToggle", nil)
+}
+
+// SettingsHotkeyModeQuake says "Quake dropdown terminal"
+// in the language the app shows.
+func SettingsHotkeyModeQuake() string { return In(i18n.Locale()).SettingsHotkeyModeQuake() }
+
+// SettingsHotkeyModeQuake says "Quake dropdown terminal"
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyModeQuake() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyModeQuake", nil)
+}
+
+// SettingsHotkeyModeTopdown says "Top-down full window"
+// in the language the app shows.
+func SettingsHotkeyModeTopdown() string { return In(i18n.Locale()).SettingsHotkeyModeTopdown() }
+
+// SettingsHotkeyModeTopdown says "Top-down full window"
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyModeTopdown() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyModeTopdown", nil)
+}
+
+// SettingsHotkeyModeUnsupported says "Dropdown modes are not available on this system."
+// in the language the app shows.
+func SettingsHotkeyModeUnsupported() string { return In(i18n.Locale()).SettingsHotkeyModeUnsupported() }
+
+// SettingsHotkeyModeUnsupported says "Dropdown modes are not available on this system."
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyModeUnsupported() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyModeUnsupported", nil)
 }
 
 // SettingsHotkeyAccelerator says "Toggle window shortcut"

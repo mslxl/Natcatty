@@ -12,7 +12,7 @@ type Desktop interface {
 	HotkeyProblem() error
 	SetShowTrayIcon(show bool) error
 	SetCloseToTray(enabled bool) error
-	SetGlobalHotkeyEnabled(enabled bool) error
+	SetHotkeyMode(mode desktop.HotkeyMode) error
 	SetToggleWindowHotkey(accelerator string) error
 	ResetToggleHotkey() error
 	SetAutoStart(enabled bool) error
@@ -97,9 +97,10 @@ func (s *DesktopState) SetSSHDeepLinks(enabled bool) bool {
 	return s.apply(func() error { return s.desktop.SetSSHDeepLinks(enabled) })
 }
 
-// SetGlobalHotkeyEnabled turns the global shortcut on or off.
-func (s *DesktopState) SetGlobalHotkeyEnabled(enabled bool) bool {
-	return s.apply(func() error { return s.desktop.SetGlobalHotkeyEnabled(enabled) })
+// SetHotkeyMode changes what the global shortcut does. A registration failure
+// rolls the service back and surfaces as the inline hotkey problem.
+func (s *DesktopState) SetHotkeyMode(mode desktop.HotkeyMode) bool {
+	return s.apply(func() error { return s.desktop.SetHotkeyMode(mode) })
 }
 
 // SetAutoStart changes the OS login item.

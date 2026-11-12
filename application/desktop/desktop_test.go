@@ -11,8 +11,11 @@ import (
 
 func TestDefaultsPreserveOriginalValues(t *testing.T) {
 	windows := Defaults("windows")
-	if !windows.ShowTrayIcon || !windows.CloseToTray || !windows.GlobalHotkeyEnabled {
+	if !windows.ShowTrayIcon || !windows.CloseToTray {
 		t.Fatalf("tray defaults = %+v", windows)
+	}
+	if windows.HotkeyMode != HotkeyModeQuake {
+		t.Fatalf("hotkey mode = %q, want the Quake default", windows.HotkeyMode)
 	}
 	if windows.ToggleWindowHotkey != "Ctrl + `" {
 		t.Fatalf("windows hotkey = %q", windows.ToggleWindowHotkey)
@@ -36,6 +39,9 @@ func TestNormalizeTreatsVersionZeroAsDefaults(t *testing.T) {
 	if !settings.ShowTrayIcon || settings.Version != SettingsVersion {
 		t.Fatalf("normalized = %+v", settings)
 	}
+	if settings.HotkeyMode != HotkeyModeQuake {
+		t.Fatalf("an old record loaded hotkey mode %q, want quake", settings.HotkeyMode)
+	}
 
 	settings = Normalize(Settings{Version: 1, ToggleWindowHotkey: "  "}, "windows")
 	if settings.ToggleWindowHotkey != "Ctrl + `" {
@@ -48,6 +54,47 @@ func TestNormalizeTreatsVersionZeroAsDefaults(t *testing.T) {
 	}
 	if settings.ToggleWindowHotkey != "Ctrl+Shift+Space" {
 		t.Fatalf("hotkey = %q", settings.ToggleWindowHotkey)
+	}
+}
+
+func TestNormalizeRevertsUnknownValuesToDefaults(t *testing.T) {
+	settings := Normalize(Settings{
+		Version:            1,
+		HotkeyMode:         HotkeyMode("bogus"),
+		ToggleWindowHotkey: "Ctrl+Shift+Space",
+	}, "windows")
+	if settings.HotkeyMode != DefaultHotkeyMode {
+		t.Fatalf("unknown mode = %q, want %q", settings.HotkeyMode, DefaultHotkeyMode)
+	}
+	if settings.Version != SettingsVersion {
+		t.Fatalf("version = %d, want %d: this change must not bump it", settings.Version, SettingsVersion)
+	}
+
+	for _, mode := range []HotkeyMode{HotkeyModeNone, HotkeyModeToggle, HotkeyModeQuake, HotkeyModeTopdown} {
+		if !mode.Valid() {
+			t.Errorf("%q is not valid", mode)
+		}
+	}
+	if HotkeyModeNone.RegistersHotkey() {
+		t.Error("none claims the accelerator")
+	}
+	for _, mode := range []HotkeyMode{HotkeyModeToggle, HotkeyModeQuake, HotkeyModeTopdown} {
+		if !mode.RegistersHotkey() {
+			t.Errorf("%q does not claim the accelerator", mode)
+		}
+	}
+}
+
+func TestDropdownSupportIsExplicitPerPlatform(t *testing.T) {
+	for _, goos := range []string{"darwin", "windows", "linux"} {
+		if !DropdownSupported(goos) {
+			t.Errorf("DropdownSupported(%q) = false", goos)
+		}
+	}
+	for _, goos := range []string{"", "js", "android", "freebsd"} {
+		if DropdownSupported(goos) {
+			t.Errorf("DropdownSupported(%q) = true", goos)
+		}
 	}
 }
 
@@ -240,11 +287,18 @@ func (r *fakeRepository) Save(_ context.Context, settings Settings) error {
 type fakeHotkeys struct {
 	registered map[string]func()
 	fail       map[string]error
-	order      []string
+	// failOnce fails the next registration of a key and forgets it, so a
+	// rollback retry can succeed.
+	failOnce map[string]error
+	order    []string
 }
 
 func (h *fakeHotkeys) Register(accelerator string, fn func()) error {
 	if err := h.fail[accelerator]; err != nil {
+		return err
+	}
+	if err := h.failOnce[accelerator]; err != nil {
+		delete(h.failOnce, accelerator)
 		return err
 	}
 	if h.registered == nil {
@@ -291,7 +345,7 @@ func (n *fakeNotifier) Notify(notification Notification) error {
 func serviceForTest(t *testing.T) (*Service, *fakeRepository, *fakeHotkeys, *fakeAutoLauncher, *fakeNotifier) {
 	t.Helper()
 	repository := &fakeRepository{settings: Defaults("windows")}
-	hotkeys := &fakeHotkeys{fail: map[string]error{}}
+	hotkeys := &fakeHotkeys{fail: map[string]error{}, failOnce: map[string]error{}}
 	auto := &fakeAutoLauncher{supported: true}
 	notifier := &fakeNotifier{supported: true}
 	service := NewService(repository, hotkeys, auto, notifier, WithGOOS("windows"))
@@ -366,11 +420,147 @@ func TestServiceHotkeyRegistrationAndRollback(t *testing.T) {
 		t.Fatal("the previous shortcut was not restored")
 	}
 
-	if err := service.SetGlobalHotkeyEnabled(false); err != nil {
+	if err := service.SetHotkeyMode(HotkeyModeNone); err != nil {
 		t.Fatal(err)
 	}
 	if service.RegisteredHotkey() != "" || len(hotkeys.registered) != 0 {
 		t.Fatalf("registered = %q %+v", service.RegisteredHotkey(), hotkeys.registered)
+	}
+}
+
+func TestServiceHotkeyModeRegistersExactlyOneAccelerator(t *testing.T) {
+	service, repository, hotkeys, _, _ := serviceForTest(t)
+	fired := 0
+	if err := service.Apply(func() { fired++ }); err != nil {
+		t.Fatal(err)
+	}
+	if len(hotkeys.registered) != 1 {
+		t.Fatalf("registered = %+v, want exactly one accelerator", hotkeys.registered)
+	}
+	if service.RegisteredHotkey() != "Ctrl + `" {
+		t.Fatalf("registered = %q", service.RegisteredHotkey())
+	}
+	hotkeys.registered["Ctrl + `"]()
+	if fired != 1 {
+		t.Fatalf("the mode callback ran %d times", fired)
+	}
+
+	for _, mode := range []HotkeyMode{HotkeyModeToggle, HotkeyModeQuake, HotkeyModeTopdown} {
+		if err := service.SetHotkeyMode(mode); err != nil {
+			t.Fatalf("SetHotkeyMode(%q): %v", mode, err)
+		}
+		if len(hotkeys.registered) != 1 {
+			t.Fatalf("mode %q registered %+v, want exactly one accelerator", mode, hotkeys.registered)
+		}
+		if service.RegisteredHotkey() != "Ctrl + `" {
+			t.Fatalf("mode %q registered = %q", mode, service.RegisteredHotkey())
+		}
+		if service.Settings().HotkeyMode != mode {
+			t.Fatalf("settings mode = %q, want %q", service.Settings().HotkeyMode, mode)
+		}
+	}
+
+	if err := service.SetHotkeyMode(HotkeyModeNone); err != nil {
+		t.Fatal(err)
+	}
+	if len(hotkeys.registered) != 0 || service.RegisteredHotkey() != "" {
+		t.Fatalf("none left %+v registered", hotkeys.registered)
+	}
+	if last := repository.saves[len(repository.saves)-1]; last.HotkeyMode != HotkeyModeNone {
+		t.Fatalf("saved mode = %q, want none", last.HotkeyMode)
+	}
+}
+
+func TestServiceHotkeyModeRejectsUnknownValues(t *testing.T) {
+	service, repository, hotkeys, _, _ := serviceForTest(t)
+	if err := service.Apply(func() {}); err != nil {
+		t.Fatal(err)
+	}
+	savesBefore := len(repository.saves)
+
+	err := service.SetHotkeyMode(HotkeyMode("bogus"))
+	if KindOf(err) != KindValidation {
+		t.Fatalf("error = %v, want a validation error", err)
+	}
+	if service.Settings().HotkeyMode != HotkeyModeQuake {
+		t.Fatalf("mode = %q, want the previous quake", service.Settings().HotkeyMode)
+	}
+	if len(repository.saves) != savesBefore {
+		t.Fatal("an invalid mode was persisted")
+	}
+	if len(hotkeys.registered) != 1 {
+		t.Fatalf("registered = %+v, want the previous accelerator kept", hotkeys.registered)
+	}
+}
+
+func TestServiceHotkeyModeRollsBackAndRestoresTheOldAccelerator(t *testing.T) {
+	service, _, hotkeys, _, _ := serviceForTest(t)
+	if err := service.Apply(func() {}); err != nil {
+		t.Fatal(err)
+	}
+	modes := 0
+	service.OnHotkeyModeChange(func(HotkeyMode) { modes++ })
+
+	hotkeys.failOnce["Ctrl + `"] = errors.New("already taken once")
+	err := service.SetHotkeyMode(HotkeyModeTopdown)
+	if !errors.Is(err, ErrHotkey) {
+		t.Fatalf("error = %v, want ErrHotkey", err)
+	}
+	if service.Settings().HotkeyMode != HotkeyModeQuake {
+		t.Fatalf("mode = %q after a failed change", service.Settings().HotkeyMode)
+	}
+	if modes != 0 {
+		t.Fatalf("the mode listener ran %d times for a failed change", modes)
+	}
+	if _, ok := hotkeys.registered["Ctrl + `"]; !ok {
+		t.Fatalf("the old accelerator was not restored: %+v", hotkeys.registered)
+	}
+	if service.RegisteredHotkey() != "Ctrl + `" {
+		t.Fatalf("registered = %q", service.RegisteredHotkey())
+	}
+	if service.HotkeyProblem() == nil {
+		t.Fatal("the registration failure was not recorded for the Settings page")
+	}
+
+	// A later successful change clears the problem and notifies once.
+	delete(hotkeys.fail, "Ctrl + `")
+	if err := service.SetHotkeyMode(HotkeyModeTopdown); err != nil {
+		t.Fatal(err)
+	}
+	if modes != 1 {
+		t.Fatalf("the mode listener ran %d times, want 1", modes)
+	}
+	if service.HotkeyProblem() != nil {
+		t.Fatalf("hotkey problem = %v after success", service.HotkeyProblem())
+	}
+}
+
+func TestServiceNoneModeDoesNotRegisterAToggleHotkeyChange(t *testing.T) {
+	service, _, hotkeys, _, _ := serviceForTest(t)
+	if err := service.SetHotkeyMode(HotkeyModeNone); err != nil {
+		t.Fatal(err)
+	}
+	hotkeys.fail["Ctrl+Shift+Space"] = errors.New("taken")
+	if err := service.SetToggleWindowHotkey("Ctrl+Shift+Space"); err != nil {
+		t.Fatalf("changing the shortcut in none mode: %v", err)
+	}
+	if len(hotkeys.registered) != 0 {
+		t.Fatalf("none mode registered %+v", hotkeys.registered)
+	}
+	if service.Settings().ToggleWindowHotkey != "Ctrl+Shift+Space" {
+		t.Fatalf("shortcut = %q", service.Settings().ToggleWindowHotkey)
+	}
+}
+
+func TestServiceCapabilitiesReportDropdownSupport(t *testing.T) {
+	repository := &fakeRepository{settings: Defaults("windows")}
+	service := NewService(repository, &fakeHotkeys{fail: map[string]error{}}, nil, nil, WithGOOS("windows"))
+	if !service.Capabilities().Dropdown {
+		t.Fatal("windows does not report Dropdown support")
+	}
+	service = NewService(repository, &fakeHotkeys{fail: map[string]error{}}, nil, nil, WithGOOS("plan9"))
+	if service.Capabilities().Dropdown {
+		t.Fatal("plan9 reports Dropdown support")
 	}
 }
 

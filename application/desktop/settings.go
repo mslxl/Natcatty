@@ -1,6 +1,6 @@
 // Package desktop holds the use cases behind the operating-system integration:
 // tray and close-to-tray behavior, deep links and command-line Host targets,
-// notifications, the global toggle hotkey, and launch-at-login autostart. It
+// notifications, the global hotkey modes, and launch-at-login autostart. It
 // depends only on consumer-owned ports, so the composition root can supply
 // MyGo, fakes, or a headless host.
 package desktop
@@ -11,6 +11,45 @@ import "strings"
 // this version predates the feature (or is an empty object), so it loads as
 // defaults instead of turning every switch off.
 const SettingsVersion = 1
+
+// HotkeyMode is what the global shortcut does when pressed. The zero value is
+// not a mode: records without the field normalize to the Quake default.
+type HotkeyMode string
+
+const (
+	// HotkeyModeNone releases the accelerator to the system: nothing is
+	// registered, so another application may claim it.
+	HotkeyModeNone HotkeyMode = "none"
+	// HotkeyModeToggle shows, focuses, or hides the main window, the original
+	// behavior.
+	HotkeyModeToggle HotkeyMode = "toggle"
+	// HotkeyModeQuake toggles the Dropdown Panel with the Quake terminal
+	// Workspace.
+	HotkeyModeQuake HotkeyMode = "quake"
+	// HotkeyModeTopdown toggles the Dropdown Panel with the full application
+	// shell.
+	HotkeyModeTopdown HotkeyMode = "topdown"
+)
+
+// DefaultHotkeyMode is the mode a new or pre-field record loads with.
+const DefaultHotkeyMode = HotkeyModeQuake
+
+// Valid reports whether mode is one of the four modes the settings and service
+// understand. An unknown value from disk normalizes to DefaultHotkeyMode; a
+// setter rejects it.
+func (m HotkeyMode) Valid() bool {
+	switch m {
+	case HotkeyModeNone, HotkeyModeToggle, HotkeyModeQuake, HotkeyModeTopdown:
+		return true
+	}
+	return false
+}
+
+// RegistersHotkey reports whether mode claims the global accelerator. None
+// returns it to the system, so no callback is registered at all.
+func (m HotkeyMode) RegistersHotkey() bool {
+	return m != HotkeyModeNone
+}
 
 // Settings is the persisted desktop integration configuration. The original
 // app stored these values under separate keys; the rewrite keeps one versioned
@@ -24,11 +63,12 @@ type Settings struct {
 	// CloseToTray hides the main window instead of closing it while the tray
 	// icon is available. It defaults to true, as in the original app.
 	CloseToTray bool `json:"closeToTray"`
-	// GlobalHotkeyEnabled turns the system-wide toggle shortcut on or off.
-	GlobalHotkeyEnabled bool `json:"globalHotkeyEnabled"`
-	// ToggleWindowHotkey is the accelerator that shows, focuses, or hides the
-	// main window. The display default is the original's "Ctrl + `" outside
-	// macOS and "⌃ + `" on macOS.
+	// HotkeyMode selects what the global shortcut does. It defaults to the
+	// Quake dropdown. The old globalHotkeyEnabled key is intentionally gone:
+	// JSON decoding ignores it and an old record loads the default mode.
+	HotkeyMode HotkeyMode `json:"hotkeyMode"`
+	// ToggleWindowHotkey is the accelerator the mode above claims. The display
+	// default is the original's "Ctrl + `" outside macOS and "⌃ + `" on macOS.
 	ToggleWindowHotkey string `json:"toggleWindowHotkey"`
 	// AutoStart is the last known launch-at-login state. The operating system
 	// remains the source of truth and the service re-reads it on load.
@@ -50,6 +90,9 @@ type Capabilities struct {
 	Notifications bool
 	AutoStart     bool
 	GlobalHotkey  bool
+	// Dropdown reports whether the host can show the Quake and top-down
+	// Dropdown Panel modes. None and toggle remain usable when it is false.
+	Dropdown bool
 }
 
 // Event identifies an application event that can produce a notification.
@@ -78,7 +121,7 @@ func Defaults(goos string) Settings {
 		Version:                SettingsVersion,
 		ShowTrayIcon:           true,
 		CloseToTray:            true,
-		GlobalHotkeyEnabled:    true,
+		HotkeyMode:             DefaultHotkeyMode,
 		ToggleWindowHotkey:     DefaultToggleHotkey(goos),
 		AutoStart:              false,
 		SSHDeepLinks:           true,
@@ -86,6 +129,17 @@ func Defaults(goos string) Settings {
 		NotifyConnectionFailed: true,
 		NotifyForwardingFailed: true,
 	}
+}
+
+// DropdownSupported reports whether goos can host the Dropdown Panel. MyGo
+// implements panel windows on the three desktop platforms; every other target
+// still compiles and runs, but Quake and top-down stay disabled there.
+func DropdownSupported(goos string) bool {
+	switch goos {
+	case "darwin", "windows", "linux":
+		return true
+	}
+	return false
 }
 
 // DefaultToggleHotkey returns the original platform default as a display
@@ -99,12 +153,16 @@ func DefaultToggleHotkey(goos string) string {
 
 // Normalize returns settings with the required defaults and trims the hotkey.
 // A zero Version means the record was not written by this feature, so the
-// defaults are returned.
+// defaults are returned. An unknown or missing hotkey mode falls back to the
+// Quake default without touching any other desktop setting.
 func Normalize(settings Settings, goos string) Settings {
 	if settings.Version == 0 {
 		return Defaults(goos)
 	}
 	settings.Version = SettingsVersion
+	if !settings.HotkeyMode.Valid() {
+		settings.HotkeyMode = DefaultHotkeyMode
+	}
 	settings.ToggleWindowHotkey = strings.TrimSpace(settings.ToggleWindowHotkey)
 	if settings.ToggleWindowHotkey == "" {
 		settings.ToggleWindowHotkey = DefaultToggleHotkey(goos)
