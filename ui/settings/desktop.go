@@ -1,6 +1,9 @@
 package settings
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/mslxl/natcatty/application/desktop"
 )
 
@@ -14,6 +17,11 @@ type Desktop interface {
 	SetCloseToTray(enabled bool) error
 	SetHotkeyMode(mode desktop.HotkeyMode) error
 	SetQuakeSource(source desktop.QuakeSource) error
+	SetQuakeHeight(value int, unit desktop.HeightUnit) error
+	SetTopdownHeight(value int, unit desktop.HeightUnit) error
+	SetHideOnBlur(enabled bool) error
+	SetHideOnEscape(enabled bool) error
+	SetHideOnClickOutside(enabled bool) error
 	SetToggleWindowHotkey(accelerator string) error
 	ResetToggleHotkey() error
 	SetAutoStart(enabled bool) error
@@ -30,13 +38,28 @@ const (
 	DesktopProblemUnsupported DesktopProblem = "unsupported"
 	DesktopProblemSave        DesktopProblem = "save"
 	DesktopProblemApply       DesktopProblem = "apply"
+	// DesktopProblemHeight reports a dropdown height that is not a number or
+	// is outside its unit's accepted range. The height section renders it
+	// inline; the value is not persisted.
+	DesktopProblemHeight DesktopProblem = "height"
 )
+
+// HeightDraft is the editable text and unit of one dropdown height. The text
+// stays a string so an invalid entry stays visible beside its error instead
+// of silently snapping to a bound; a successful apply replaces it with the
+// persisted value.
+type HeightDraft struct {
+	Value string
+	Unit  desktop.HeightUnit
+}
 
 // DesktopState owns the Settings window's desktop integration form. It is
 // mutated only on the UI thread.
 type DesktopState struct {
 	desktop       Desktop
 	hotkey        string
+	quakeHeight   HeightDraft
+	topdownHeight HeightDraft
 	problem       DesktopProblem
 	requestRedraw func()
 }
@@ -53,7 +76,13 @@ func WithDesktopRedrawRequest(fn func()) DesktopOption {
 // registration failure immediately, so an unsupported default is visible
 // instead of silently ignored.
 func NewDesktopState(service Desktop, opts ...DesktopOption) *DesktopState {
-	state := &DesktopState{desktop: service, hotkey: service.Settings().ToggleWindowHotkey}
+	settings := service.Settings()
+	state := &DesktopState{
+		desktop:       service,
+		hotkey:        settings.ToggleWindowHotkey,
+		quakeHeight:   newHeightDraft(settings.QuakeHeight, desktop.DefaultQuakeHeight, settings.QuakeHeightUnit),
+		topdownHeight: newHeightDraft(settings.TopdownHeight, desktop.DefaultTopdownHeight, settings.TopdownHeightUnit),
+	}
 	for _, opt := range opts {
 		opt(state)
 	}
@@ -61,6 +90,27 @@ func NewDesktopState(service Desktop, opts ...DesktopOption) *DesktopState {
 		state.problem = desktopProblemFor(err)
 	}
 	return state
+}
+
+// newHeightDraft builds the editable field from persisted settings. A missing
+// or invalid value falls back to the mode's default so the input never starts
+// on a number the service would reject.
+func newHeightDraft(value, fallback int, unit desktop.HeightUnit) HeightDraft {
+	if !unit.Valid() {
+		unit = desktop.DefaultHeightUnit
+	}
+	if value <= 0 {
+		value = fallback
+	}
+	if minimum, maximum, ok := desktop.HeightBounds(unit); ok {
+		if value < minimum {
+			value = minimum
+		}
+		if value > maximum {
+			value = maximum
+		}
+	}
+	return HeightDraft{Value: strconv.Itoa(value), Unit: unit}
 }
 
 // Settings returns the current persisted settings.
@@ -111,6 +161,61 @@ func (s *DesktopState) SetQuakeSource(source desktop.QuakeSource) bool {
 	return s.apply(func() error { return s.desktop.SetQuakeSource(source) })
 }
 
+// QuakeHeight returns the editable Quake height.
+func (s *DesktopState) QuakeHeight() *HeightDraft { return &s.quakeHeight }
+
+// TopdownHeight returns the editable top-down height.
+func (s *DesktopState) TopdownHeight() *HeightDraft { return &s.topdownHeight }
+
+// ApplyQuakeHeight validates the typed value with the chosen unit and
+// persists it. An unparsable or out-of-range entry sets DesktopProblemHeight
+// and changes nothing, so the invalid text stays visible for correction.
+func (s *DesktopState) ApplyQuakeHeight() bool {
+	if !s.applyHeight(&s.quakeHeight, s.desktop.SetQuakeHeight) {
+		return false
+	}
+	settings := s.desktop.Settings()
+	s.quakeHeight = newHeightDraft(settings.QuakeHeight, desktop.DefaultQuakeHeight, settings.QuakeHeightUnit)
+	return true
+}
+
+// ApplyTopdownHeight is ApplyQuakeHeight for the top-down mode.
+func (s *DesktopState) ApplyTopdownHeight() bool {
+	if !s.applyHeight(&s.topdownHeight, s.desktop.SetTopdownHeight) {
+		return false
+	}
+	settings := s.desktop.Settings()
+	s.topdownHeight = newHeightDraft(settings.TopdownHeight, desktop.DefaultTopdownHeight, settings.TopdownHeightUnit)
+	return true
+}
+
+func (s *DesktopState) applyHeight(draft *HeightDraft, set func(int, desktop.HeightUnit) error) bool {
+	value, err := strconv.Atoi(strings.TrimSpace(draft.Value))
+	if err != nil {
+		s.problem = DesktopProblemHeight
+		s.redraw()
+		return false
+	}
+	return s.apply(func() error { return set(value, draft.Unit) })
+}
+
+// SetHideOnBlur toggles hiding the Dropdown Panel when it loses focus.
+func (s *DesktopState) SetHideOnBlur(enabled bool) bool {
+	return s.apply(func() error { return s.desktop.SetHideOnBlur(enabled) })
+}
+
+// SetHideOnEscape toggles hiding the Dropdown Panel on Escape.
+func (s *DesktopState) SetHideOnEscape(enabled bool) bool {
+	return s.apply(func() error { return s.desktop.SetHideOnEscape(enabled) })
+}
+
+// SetHideOnClickOutside toggles hiding the Dropdown Panel when the user clicks
+// outside it. On platforms without a separate click-outside signal the blur
+// switch governs the shared gesture.
+func (s *DesktopState) SetHideOnClickOutside(enabled bool) bool {
+	return s.apply(func() error { return s.desktop.SetHideOnClickOutside(enabled) })
+}
+
 // SetAutoStart changes the OS login item.
 func (s *DesktopState) SetAutoStart(enabled bool) bool {
 	return s.apply(func() error { return s.desktop.SetAutoStart(enabled) })
@@ -159,6 +264,9 @@ func desktopProblemFor(err error) DesktopProblem {
 		return DesktopProblemHotkey
 	case desktop.KindAutoStart:
 		return DesktopProblemApply
+	case desktop.KindValidation:
+		// The only validating controls in this form are the height fields.
+		return DesktopProblemHeight
 	default:
 		return DesktopProblemSave
 	}

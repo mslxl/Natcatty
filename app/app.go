@@ -1470,6 +1470,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		func() appdesktop.QuakeSource {
 			return desktopService.Settings().QuakeSource
 		},
+		func() appdesktop.Settings {
+			return desktopService.Settings()
+		},
 		func() {
 			// Follow mode's Open main window action returns the surfaces
 			// instead of copying them: hide the Panel, then show and focus the

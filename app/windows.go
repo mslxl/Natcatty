@@ -6,6 +6,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	appdesktop "github.com/mslxl/natcatty/application/desktop"
 	"github.com/mslxl/natcatty/domain/model"
 	uiapplock "github.com/mslxl/natcatty/ui/applock"
 	"github.com/mslxl/natcatty/ui/dropdown"
@@ -22,17 +23,14 @@ type windowBounds struct {
 	Width, Height int
 }
 
-// dropdownHeightPercent is the default share of the work area the Dropdown
-// Panel covers, the Quake mode's default.
-const dropdownHeightPercent = 50
-
-// topdownHeightPercent is the top-down mode's default share of the work area.
-// The complete shell needs more room than the Quake terminal.
-const topdownHeightPercent = 80
-
 // dropdownMinHeight is the smallest readable Quake dropdown. The actual
 // height also clamps to a shorter work area.
 const dropdownMinHeight = 120
+
+// topdownMinHeight is the smallest useful top-down dropdown: the complete
+// application shell needs far more room than the Quake terminal. Like the
+// Quake minimum, a shorter work area wins.
+const topdownMinHeight = 480
 
 // dropdownFallbackWorkArea is the last-resort rectangle when the platform
 // reports no displays at all. It keeps the Panel constructible with a usable
@@ -315,6 +313,12 @@ type windowManager struct {
 	// dropdownHeight is the live visible-height calculation in DIPs. The
 	// default uses half the work area.
 	dropdownHeight func(windowBounds) int
+	// dropdownHideOnBlur and dropdownHideOnEscape gate the two hide signals
+	// MyGo reports. Nil keeps the original behavior (hide on either). The
+	// click-outside gesture has no separate signal here: it is the blur
+	// signal, so HideOnBlur is its gate too; see Settings.HideOnClickOutside.
+	dropdownHideOnBlur   func() bool
+	dropdownHideOnEscape func() bool
 	// dropdownOwnsRender reports whether the currently routed dropdown mode
 	// and content source take the main Workspace's surfaces. Follow and
 	// top-down do; Quake's own Workspace does not.
@@ -814,9 +818,26 @@ func (m *windowManager) SetDropdownDismissHandler(fn func() bool) {
 
 // SetDropdownHeightProvider installs the live visible-height calculation in
 // DIPs for a work area. Nil keeps the default half height; the height
-// settings replace it.
+// settings replace it. It is asked on every show, so a changed height takes
+// effect the next time the Panel appears.
 func (m *windowManager) SetDropdownHeightProvider(fn func(windowBounds) int) {
 	m.dropdownHeight = fn
+}
+
+// SetDropdownHideOnBlurProvider installs the live blur-hide switch. Blur is
+// also the only click-outside signal MyGo reports, so this switch gates that
+// gesture too; the platform note lives on Settings.HideOnClickOutside. Nil
+// keeps the original behavior (hide on blur).
+func (m *windowManager) SetDropdownHideOnBlurProvider(fn func() bool) {
+	m.dropdownHideOnBlur = fn
+}
+
+// SetDropdownHideOnEscapeProvider installs the live Escape-hide switch. Nil
+// keeps the original behavior (Escape hides the Panel). An Escape that is
+// switched off is still answered: the close request is vetoed without hiding
+// or destroying the Panel.
+func (m *windowManager) SetDropdownHideOnEscapeProvider(fn func() bool) {
+	m.dropdownHideOnEscape = fn
 }
 
 // SetDropdownOwnershipProvider installs the rule that says whether the current
@@ -978,8 +999,17 @@ func (m *windowManager) createDropdown(bounds windowBounds) hostWindow {
 	}, windowHooks{
 		OnFocus: m.recordActivity,
 		// Blur is also the platform's "click outside" signal; both hide the
-		// Panel and neither destroys it.
-		OnBlur: m.HideDropdown,
+		// Panel and neither destroys it. The switch is read live, so turning
+		// the trigger off keeps an already-open Panel visible when it loses
+		// focus. With no separate mouse signal, clicking outside shares this
+		// gate: turning it off makes the click-outside trigger unavailable
+		// too, as the Settings note explains.
+		OnBlur: func() {
+			if m.dropdownHideOnBlur != nil && !m.dropdownHideOnBlur() {
+				return
+			}
+			m.HideDropdown()
+		},
 		// Escape reaches a MyGo Panel as a close request. It hides the Panel
 		// instead of closing it, unless the application is quitting. MyGo's
 		// quit sequence closes every window before OnWillQuit runs, so the
@@ -994,6 +1024,9 @@ func (m *windowManager) createDropdown(bounds windowBounds) hostWindow {
 			// locked App Lock gate replaces the content with the lock screen,
 			// so no flyout is on screen then.
 			if m.dropdownDismiss != nil && m.dropdownContentRendered() && m.dropdownDismiss() {
+				return false
+			}
+			if m.dropdownHideOnEscape != nil && !m.dropdownHideOnEscape() {
 				return false
 			}
 			m.HideDropdown()
@@ -1098,7 +1131,7 @@ func percentHeight(workArea windowBounds, percent int) int {
 // dropdownHeightFor clamps the visible height to [minimum, work area height].
 // A work area shorter than the minimum uses its own height.
 func (m *windowManager) dropdownHeightFor(workArea windowBounds) int {
-	height := percentHeight(workArea, dropdownHeightPercent)
+	height := percentHeight(workArea, appdesktop.DefaultQuakeHeight)
 	if m.dropdownHeight != nil {
 		height = m.dropdownHeight(workArea)
 	}

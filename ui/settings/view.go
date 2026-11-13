@@ -923,6 +923,7 @@ func desktopSections(c *ui.Context, state *DesktopState, m locales.Messages, t *
 	settings := state.Settings()
 	autostartSection(c, state, settings, caps, m, t)
 	hotkeySection(c, state, settings, caps, m, t)
+	dropdownSection(c, state, settings, caps, m, t)
 	traySection(c, state, settings, caps, m, t)
 	deepLinkSection(c, state, settings, m, t)
 	notificationSection(c, state, settings, caps, m, t)
@@ -1025,6 +1026,75 @@ func hotkeySection(c *ui.Context, state *DesktopState, settings desktop.Settings
 			ui.Text(c, m.SettingsHotkeyProblem()).TextColor(uitheme.DangerText(t))
 		}
 	})
+}
+
+// dropdownSection controls the Dropdown Panel's geometry and its hide
+// triggers. It is its own card: the heights only make sense for the two
+// dropdown modes, and the three hide switches apply to both of them.
+func dropdownSection(c *ui.Context, state *DesktopState, settings desktop.Settings,
+	caps desktop.Capabilities, m locales.Messages, t *ui.Theme) {
+	if !caps.Dropdown {
+		return
+	}
+	section(c, m.SettingsDropdownBehaviorTitle(), m.SettingsDropdownBehaviorDescription(), t, func() {
+		heightRow(c, state.QuakeHeight(), m.SettingsDropdownQuakeHeight(), state.ApplyQuakeHeight, m)
+		heightRow(c, state.TopdownHeight(), m.SettingsDropdownTopdownHeight(), state.ApplyTopdownHeight, m)
+		hideToggle(c, settings.HideOnBlur, m.SettingsDropdownHideOnBlur(), state.SetHideOnBlur)
+		hideToggle(c, settings.HideOnEscape, m.SettingsDropdownHideOnEscape(), state.SetHideOnEscape)
+		hideToggle(c, settings.HideOnClickOutside, m.SettingsDropdownHideOnClickOutside(), state.SetHideOnClickOutside)
+		// Platforms without a separate click-outside event report it as a
+		// focus loss, so the blur switch is the shared gate. The user needs to
+		// know turning blur off also turns this trigger off.
+		ui.Text(c, m.SettingsDropdownClickOutsideNote()).FontSize(kit.M(c).Font.Footnote).
+			TextColor(t.TextMuted).MaxWidth(560)
+		if state.Problem() == DesktopProblemHeight {
+			ui.Text(c, m.SettingsDropdownHeightInvalid()).TextColor(uitheme.DangerText(t))
+		}
+	})
+}
+
+// heightRow pairs the numeric height with its unit. The value stays editable
+// as text so an out-of-range entry can stay on screen beside the validation
+// error instead of being silently clamped by a NumberInput.
+func heightRow(c *ui.Context, draft *HeightDraft, label string, apply func() bool, m locales.Messages) {
+	kit.FormRow(c, label, func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			if ui.TextInput(c, &draft.Value).Width(90).Changed() {
+				apply()
+				c.Invalidate()
+			}
+			labels, values := heightUnitOptions(m)
+			selected := labels[indexOfHeightUnits(values, draft.Unit)]
+			if ui.Select(c, &selected, labels).Width(150).Changed() {
+				draft.Unit = values[indexOf(labels, selected)]
+				apply()
+				c.Invalidate()
+			}
+		})
+	})
+}
+
+// hideToggle is one checkbox that writes a hide switch immediately.
+func hideToggle(c *ui.Context, value bool, label string, set func(bool) bool) {
+	enabled := value
+	if ui.Checkbox(c, &enabled, label).Changed() {
+		set(enabled)
+		c.Invalidate()
+	}
+}
+
+func heightUnitOptions(m locales.Messages) ([]string, []desktop.HeightUnit) {
+	return []string{m.SettingsDropdownUnitPercent(), m.SettingsDropdownUnitPixels()},
+		[]desktop.HeightUnit{desktop.HeightUnitPercent, desktop.HeightUnitPX}
+}
+
+func indexOfHeightUnits(values []desktop.HeightUnit, value desktop.HeightUnit) int {
+	for index, candidate := range values {
+		if candidate == value {
+			return index
+		}
+	}
+	return 0
 }
 
 func traySection(c *ui.Context, state *DesktopState, settings desktop.Settings,

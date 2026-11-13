@@ -44,6 +44,22 @@ func (s *DesktopStore) Load(ctx context.Context) (desktop.Settings, error) {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return desktop.Settings{}, nil
 	}
+	// The hide switches default to true, but a plain struct decode turns a
+	// missing key into false and Normalize cannot tell that apart from a user
+	// who explicitly saved false. Probe the raw object for the three keys and
+	// overlay the default only where the record predates them.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err == nil {
+		if _, ok := fields["hideOnBlur"]; !ok {
+			settings.HideOnBlur = true
+		}
+		if _, ok := fields["hideOnEscape"]; !ok {
+			settings.HideOnEscape = true
+		}
+		if _, ok := fields["hideOnClickOutside"]; !ok {
+			settings.HideOnClickOutside = true
+		}
+	}
 	return settings, nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	appdesktop "github.com/mslxl/natcatty/application/desktop"
 	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 )
@@ -227,6 +228,158 @@ func TestDropdownClampsItsHeightToTheWorkArea(t *testing.T) {
 	graph.manager.ToggleDropdown()
 	if got := dropdownWindow(t, graph).bounds.Height; got != 120 {
 		t.Fatalf("height = %d, want the 120 DIP minimum", got)
+	}
+}
+
+// TestDropdownHeightUsesTheConfiguredUnitAndModeMinimum pins the geometry
+// settings end to end: percent and pixel values reach the Panel, each mode
+// has its own setting, a changed value applies on the next show rather than
+// resizing the open Panel, and the Quake/top-down minimums clamp a small
+// configured height.
+func TestDropdownHeightUsesTheConfiguredUnitAndModeMinimum(t *testing.T) {
+	q := newQuakeGraph(t)
+	graph := q.windowGraph
+	// The fake primary work area is 1040 DIPs high.
+
+	q.settings.QuakeHeight, q.settings.QuakeHeightUnit = 300, appdesktop.HeightUnitPX
+	graph.manager.ToggleDropdown()
+	if got := dropdownWindow(t, graph).bounds.Height; got != 300 {
+		t.Fatalf("quake pixel height = %d, want 300", got)
+	}
+	graph.manager.ToggleDropdown()
+
+	q.settings.QuakeHeight, q.settings.QuakeHeightUnit = 25, appdesktop.HeightUnitPercent
+	graph.manager.ToggleDropdown()
+	if got := dropdownWindow(t, graph).bounds.Height; got != 260 {
+		t.Fatalf("quake percent height = %d, want 25%% of 1040", got)
+	}
+	graph.manager.ToggleDropdown()
+
+	// A tiny configured percentage still leaves the Quake minimum.
+	q.settings.QuakeHeight, q.settings.QuakeHeightUnit = 10, appdesktop.HeightUnitPercent
+	graph.manager.ToggleDropdown()
+	if got := dropdownWindow(t, graph).bounds.Height; got != 120 {
+		t.Fatalf("quake minimum height = %d, want 120", got)
+	}
+	graph.manager.ToggleDropdown()
+
+	// Top-down has its own setting and a larger minimum.
+	q.mode = appdesktop.HotkeyModeTopdown
+	q.settings.TopdownHeight, q.settings.TopdownHeightUnit = 50, appdesktop.HeightUnitPX
+	graph.manager.ToggleDropdown()
+	if got := dropdownWindow(t, graph).bounds.Height; got != 480 {
+		t.Fatalf("topdown minimum height = %d, want 480", got)
+	}
+	graph.manager.ToggleDropdown()
+
+	q.settings.TopdownHeight, q.settings.TopdownHeightUnit = 80, appdesktop.HeightUnitPercent
+	graph.manager.ToggleDropdown()
+	if got := dropdownWindow(t, graph).bounds.Height; got != 832 {
+		t.Fatalf("topdown percent height = %d, want 80%% of 1040", got)
+	}
+}
+
+// TestDropdownHeightOnAShortWorkAreaUsesTheWorkAreaHeight proves the
+// mode-specific minimum never exceeds a smaller work area: both modes take
+// the whole work area instead of overflowing it.
+func TestDropdownHeightOnAShortWorkAreaUsesTheWorkAreaHeight(t *testing.T) {
+	q := newQuakeGraph(t)
+	graph := q.windowGraph
+	graph.manager.SetScreenProvider(&fakeScreen{displays: []mygo.Display{{
+		ID:       9,
+		Primary:  true,
+		Bounds:   mygo.Rectangle{Width: 800, Height: 300},
+		WorkArea: mygo.Rectangle{Width: 800, Height: 300},
+	}}})
+
+	q.settings.QuakeHeight, q.settings.QuakeHeightUnit = 10, appdesktop.HeightUnitPercent
+	graph.manager.ToggleDropdown()
+	if got := dropdownWindow(t, graph).bounds.Height; got != 120 {
+		t.Fatalf("quake short-work-area height = %d, want 120", got)
+	}
+	graph.manager.ToggleDropdown()
+
+	q.mode = appdesktop.HotkeyModeTopdown
+	q.settings.TopdownHeight, q.settings.TopdownHeightUnit = 10, appdesktop.HeightUnitPercent
+	graph.manager.ToggleDropdown()
+	if got := dropdownWindow(t, graph).bounds.Height; got != 300 {
+		t.Fatalf("topdown short-work-area height = %d, want the 300 DIP work area", got)
+	}
+}
+
+// TestDropdownHideSwitchDisablesBlur covers the blur trigger switch: with it
+// off, losing focus leaves the Panel visible; with it on, blur hides without
+// destroying the window.
+func TestDropdownHideSwitchDisablesBlur(t *testing.T) {
+	q := newQuakeGraph(t)
+	graph := q.windowGraph
+
+	q.settings.HideOnBlur = false
+	graph.manager.ToggleDropdown()
+	window := dropdownWindow(t, graph)
+	window.Blur()
+	if !window.shown {
+		t.Fatal("turning off the blur trigger did not keep the Panel visible")
+	}
+
+	q.settings.HideOnBlur = true
+	window.Blur()
+	if window.shown {
+		t.Fatal("turning the blur trigger back on did not hide the Panel")
+	}
+	if window.destroyed {
+		t.Fatal("blur destroyed the Panel")
+	}
+}
+
+// TestDropdownHideSwitchDisablesEscape covers the Escape trigger switch: with
+// it off, the close request is vetoed without hiding; with it on, it hides
+// without destroying.
+func TestDropdownHideSwitchDisablesEscape(t *testing.T) {
+	q := newQuakeGraph(t)
+	graph := q.windowGraph
+
+	q.settings.HideOnEscape = false
+	graph.manager.ToggleDropdown()
+	window := dropdownWindow(t, graph)
+	window.Close()
+	if !window.shown {
+		t.Fatal("turning off the Escape trigger did not keep the Panel visible")
+	}
+	if window.destroyed {
+		t.Fatal("the vetoed Escape destroyed the Panel")
+	}
+
+	q.settings.HideOnEscape = true
+	window.Close()
+	if window.shown {
+		t.Fatal("turning the Escape trigger back on did not hide the Panel")
+	}
+	if window.destroyed {
+		t.Fatal("Escape destroyed the Panel")
+	}
+}
+
+// TestConfiguredDropdownHeightFallsBackOnIncompleteRecords guards the
+// defensive path used when settings never passed through the service: a zero
+// height or unknown unit takes the mode default instead of collapsing the
+// Panel.
+func TestConfiguredDropdownHeightFallsBackOnIncompleteRecords(t *testing.T) {
+	workArea := windowBounds{Width: 1920, Height: 1000}
+	empty := appdesktop.Settings{}
+	if got := configuredDropdownHeight(empty, false, workArea); got != 500 {
+		t.Fatalf("empty quake settings height = %d, want the 50%% default", got)
+	}
+	if got := configuredDropdownHeight(empty, true, workArea); got != 800 {
+		t.Fatalf("empty topdown settings height = %d, want the 80%% default", got)
+	}
+
+	bogus := appdesktop.Settings{
+		QuakeHeight:     300,
+		QuakeHeightUnit: appdesktop.HeightUnit("bogus"),
+	}
+	if got := configuredDropdownHeight(bogus, false, workArea); got != 500 {
+		t.Fatalf("unknown unit height = %d, want the 50%% default", got)
 	}
 }
 

@@ -347,6 +347,71 @@ func (s *Service) SetQuakeSource(source QuakeSource) error {
 	return nil
 }
 
+// SetQuakeHeight changes the Quake dropdown's configured height. The value
+// and unit are validated together: an unknown unit or a value outside that
+// unit's accepted range is a validation error and changes nothing. A valid
+// pair is persisted and applies to the next dropdown show.
+func (s *Service) SetQuakeHeight(value int, unit HeightUnit) error {
+	if err := ValidateHeight(value, unit); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previousValue, previousUnit := s.settings.QuakeHeight, s.settings.QuakeHeightUnit
+	s.settings.QuakeHeight, s.settings.QuakeHeightUnit = value, unit
+	if err := s.saveLocked(); err != nil {
+		s.settings.QuakeHeight, s.settings.QuakeHeightUnit = previousValue, previousUnit
+		return err
+	}
+	return nil
+}
+
+// SetTopdownHeight changes the top-down dropdown's configured height. It
+// validates the pair exactly as SetQuakeHeight does.
+func (s *Service) SetTopdownHeight(value int, unit HeightUnit) error {
+	if err := ValidateHeight(value, unit); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previousValue, previousUnit := s.settings.TopdownHeight, s.settings.TopdownHeightUnit
+	s.settings.TopdownHeight, s.settings.TopdownHeightUnit = value, unit
+	if err := s.saveLocked(); err != nil {
+		s.settings.TopdownHeight, s.settings.TopdownHeightUnit = previousValue, previousUnit
+		return err
+	}
+	return nil
+}
+
+// SetHideOnBlur persists whether losing focus hides the Dropdown Panel.
+func (s *Service) SetHideOnBlur(enabled bool) error {
+	return s.setHideSwitch(&s.settings.HideOnBlur, enabled)
+}
+
+// SetHideOnEscape persists whether Escape hides the Dropdown Panel.
+func (s *Service) SetHideOnEscape(enabled bool) error {
+	return s.setHideSwitch(&s.settings.HideOnEscape, enabled)
+}
+
+// SetHideOnClickOutside persists whether clicking outside hides the Dropdown
+// Panel. On platforms that report that gesture as a focus loss it shares the
+// blur signal; see Settings.HideOnClickOutside.
+func (s *Service) SetHideOnClickOutside(enabled bool) error {
+	return s.setHideSwitch(&s.settings.HideOnClickOutside, enabled)
+}
+
+func (s *Service) setHideSwitch(field *bool, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := *field
+	*field = enabled
+	if err := s.saveLocked(); err != nil {
+		*field = previous
+		return err
+	}
+	return nil
+}
+
 // SetToggleWindowHotkey changes the accelerator, registering it before the
 // value is persisted. On failure the previous shortcut stays active.
 func (s *Service) SetToggleWindowHotkey(accelerator string) error {

@@ -114,6 +114,203 @@ func TestQuakeSourceDefaultsToOwnAndUnknownValuesNormalize(t *testing.T) {
 	}
 }
 
+// TestDropdownGeometryDefaults pins the new dropdown behavior defaults:
+// Quake at half the work area, top-down at 80%, both in percent, and all
+// three hide triggers on.
+func TestDropdownGeometryDefaults(t *testing.T) {
+	settings := Defaults("windows")
+	if settings.QuakeHeight != 50 || settings.QuakeHeightUnit != HeightUnitPercent {
+		t.Fatalf("quake geometry = %d %q, want 50 percent", settings.QuakeHeight, settings.QuakeHeightUnit)
+	}
+	if settings.TopdownHeight != 80 || settings.TopdownHeightUnit != HeightUnitPercent {
+		t.Fatalf("topdown geometry = %d %q, want 80 percent", settings.TopdownHeight, settings.TopdownHeightUnit)
+	}
+	if !settings.HideOnBlur || !settings.HideOnEscape || !settings.HideOnClickOutside {
+		t.Fatalf("hide defaults = blur %v escape %v outside %v, want all true",
+			settings.HideOnBlur, settings.HideOnEscape, settings.HideOnClickOutside)
+	}
+}
+
+// TestNormalizeDropdownGeometry pins the defensive rules for persisted
+// records: missing fields take the defaults, unknown units return to percent,
+// out-of-range values clamp, other values survive, and the version stays 1.
+func TestNormalizeDropdownGeometry(t *testing.T) {
+	missing := Normalize(Settings{Version: 1, ShowTrayIcon: false}, "windows")
+	if missing.QuakeHeight != DefaultQuakeHeight || missing.QuakeHeightUnit != DefaultHeightUnit {
+		t.Fatalf("missing quake geometry = %d %q", missing.QuakeHeight, missing.QuakeHeightUnit)
+	}
+	if missing.TopdownHeight != DefaultTopdownHeight || missing.TopdownHeightUnit != DefaultHeightUnit {
+		t.Fatalf("missing topdown geometry = %d %q", missing.TopdownHeight, missing.TopdownHeightUnit)
+	}
+	if missing.Version != SettingsVersion {
+		t.Fatalf("version = %d, want %d", missing.Version, SettingsVersion)
+	}
+	if missing.ShowTrayIcon {
+		t.Fatal("normalizing the geometry changed an unrelated setting")
+	}
+
+	unknown := Normalize(Settings{
+		Version:           1,
+		QuakeHeight:       40,
+		QuakeHeightUnit:   HeightUnit("bogus"),
+		TopdownHeight:     70,
+		TopdownHeightUnit: HeightUnit("bogus"),
+	}, "windows")
+	if unknown.QuakeHeightUnit != DefaultHeightUnit || unknown.TopdownHeightUnit != DefaultHeightUnit {
+		t.Fatalf("unknown units = %q %q", unknown.QuakeHeightUnit, unknown.TopdownHeightUnit)
+	}
+	if unknown.QuakeHeight != 40 || unknown.TopdownHeight != 70 {
+		t.Fatalf("valid heights changed: %+v", unknown)
+	}
+
+	clampedPercent := Normalize(Settings{Version: 1, QuakeHeight: 5, TopdownHeight: 200,
+		QuakeHeightUnit: HeightUnitPercent, TopdownHeightUnit: HeightUnitPercent}, "windows")
+	if clampedPercent.QuakeHeight != MinPercentHeight || clampedPercent.TopdownHeight != MaxPercentHeight {
+		t.Fatalf("percent clamps = %d/%d", clampedPercent.QuakeHeight, clampedPercent.TopdownHeight)
+	}
+	clampedPixels := Normalize(Settings{Version: 1, QuakeHeight: 50, TopdownHeight: 20000,
+		QuakeHeightUnit: HeightUnitPX, TopdownHeightUnit: HeightUnitPX}, "windows")
+	if clampedPixels.QuakeHeight != MinPixelHeight || clampedPixels.TopdownHeight != MaxPixelHeight {
+		t.Fatalf("pixel clamps = %d/%d", clampedPixels.QuakeHeight, clampedPixels.TopdownHeight)
+	}
+	// A missing height with an explicit pixel unit still has to end up inside
+	// the pixel range; the percent default alone would be an invalid 50 px.
+	missingPixel := Normalize(Settings{Version: 1, QuakeHeightUnit: HeightUnitPX}, "windows")
+	if missingPixel.QuakeHeight != MinPixelHeight {
+		t.Fatalf("missing pixel height = %d, want the pixel minimum", missingPixel.QuakeHeight)
+	}
+
+	// Normalize must not overwrite an explicit false; only the storage layer
+	// can tell a missing key from the stored value.
+	explicitOff := Normalize(Settings{Version: 1}, "windows")
+	explicitOff.HideOnBlur, explicitOff.HideOnEscape, explicitOff.HideOnClickOutside = false, false, false
+	normalized := Normalize(explicitOff, "windows")
+	if normalized.HideOnBlur || normalized.HideOnEscape || normalized.HideOnClickOutside {
+		t.Fatalf("Normalize turned an explicit false back on: %+v", normalized)
+	}
+}
+
+// TestHeightValidation pins the two accepted ranges and rejects unknown
+// units, matching the setters.
+func TestHeightValidation(t *testing.T) {
+	for _, test := range []struct {
+		value int
+		unit  HeightUnit
+		ok    bool
+	}{
+		{10, HeightUnitPercent, true},
+		{100, HeightUnitPercent, true},
+		{9, HeightUnitPercent, false},
+		{101, HeightUnitPercent, false},
+		{120, HeightUnitPX, true},
+		{10000, HeightUnitPX, true},
+		{119, HeightUnitPX, false},
+		{10001, HeightUnitPX, false},
+		{50, HeightUnit("bogus"), false},
+	} {
+		err := ValidateHeight(test.value, test.unit)
+		if (err == nil) != test.ok {
+			t.Errorf("ValidateHeight(%d, %q) = %v, want ok=%v", test.value, test.unit, err, test.ok)
+		}
+		if err != nil && KindOf(err) != KindValidation {
+			t.Errorf("ValidateHeight(%d, %q) kind = %q, want validation", test.value, test.unit, KindOf(err))
+		}
+	}
+}
+
+// TestServiceHeightSettersPersistAndRejectOutOfRange covers the setters: a
+// valid pair persists, while an out-of-range value or unknown unit is a
+// validation error that leaves the previous pair and saves untouched.
+func TestServiceHeightSettersPersistAndRejectOutOfRange(t *testing.T) {
+	service, repository, _, _, _ := serviceForTest(t)
+
+	if err := service.SetQuakeHeight(30, HeightUnitPercent); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetTopdownHeight(600, HeightUnitPX); err != nil {
+		t.Fatal(err)
+	}
+	settings := service.Settings()
+	if settings.QuakeHeight != 30 || settings.QuakeHeightUnit != HeightUnitPercent {
+		t.Fatalf("quake = %d %q", settings.QuakeHeight, settings.QuakeHeightUnit)
+	}
+	if settings.TopdownHeight != 600 || settings.TopdownHeightUnit != HeightUnitPX {
+		t.Fatalf("topdown = %d %q", settings.TopdownHeight, settings.TopdownHeightUnit)
+	}
+	if last := repository.saves[len(repository.saves)-1]; last.TopdownHeight != 600 {
+		t.Fatalf("persisted topdown height = %d", last.TopdownHeight)
+	}
+
+	savesBefore := len(repository.saves)
+	for _, test := range []struct {
+		name  string
+		value int
+		unit  HeightUnit
+	}{
+		{"percent below", 9, HeightUnitPercent},
+		{"percent above", 101, HeightUnitPercent},
+		{"pixel below", 119, HeightUnitPX},
+		{"pixel above", 10001, HeightUnitPX},
+		{"unknown unit", 50, HeightUnit("bogus")},
+	} {
+		if err := service.SetQuakeHeight(test.value, test.unit); KindOf(err) != KindValidation {
+			t.Errorf("%s: error = %v, want validation", test.name, err)
+		}
+	}
+	if service.Settings().QuakeHeight != 30 || service.Settings().QuakeHeightUnit != HeightUnitPercent {
+		t.Fatalf("a rejected value changed quake geometry: %+v", service.Settings())
+	}
+	if len(repository.saves) != savesBefore {
+		t.Fatalf("rejected values were persisted: %d saves", len(repository.saves)-savesBefore)
+	}
+}
+
+// TestServiceHideSwitchesPersist covers the three independent switches,
+// including an explicit false surviving the save.
+func TestServiceHideSwitchesPersist(t *testing.T) {
+	service, repository, _, _, _ := serviceForTest(t)
+
+	if err := service.SetHideOnBlur(false); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetHideOnEscape(false); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetHideOnClickOutside(false); err != nil {
+		t.Fatal(err)
+	}
+	settings := service.Settings()
+	if settings.HideOnBlur || settings.HideOnEscape || settings.HideOnClickOutside {
+		t.Fatalf("hide switches = %+v, want all false", settings)
+	}
+	if last := repository.saves[len(repository.saves)-1]; last.HideOnBlur ||
+		last.HideOnEscape || last.HideOnClickOutside {
+		t.Fatalf("persisted hide switches = %+v", last)
+	}
+
+	// Each switch is independent: turning one back on leaves the others off.
+	if err := service.SetHideOnEscape(true); err != nil {
+		t.Fatal(err)
+	}
+	settings = service.Settings()
+	if settings.HideOnBlur || !settings.HideOnEscape || settings.HideOnClickOutside {
+		t.Fatalf("independent switch state = %+v", settings)
+	}
+}
+
+// TestServiceHideSwitchRollsBackOnSaveFailure proves a failed save restores
+// the previous value instead of leaving memory ahead of disk.
+func TestServiceHideSwitchRollsBackOnSaveFailure(t *testing.T) {
+	service, repository, _, _, _ := serviceForTest(t)
+	repository.saveErr = errors.New("disk full")
+	if err := service.SetHideOnBlur(false); err == nil {
+		t.Fatal("a failed save was reported as success")
+	}
+	if !service.Settings().HideOnBlur {
+		t.Fatal("the hide switch did not roll back after a failed save")
+	}
+}
+
 func TestDropdownSupportIsExplicitPerPlatform(t *testing.T) {
 	for _, goos := range []string{"darwin", "windows", "linux"} {
 		if !DropdownSupported(goos) {
