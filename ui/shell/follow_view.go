@@ -9,16 +9,18 @@ import (
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
 
-// FollowOption customizes the Dropdown Panel's follow renderer.
+// FollowOption customizes the Dropdown Panel's shell renderers, FollowView
+// and TopdownView.
 type FollowOption func(*followOptions)
 
 type followOptions struct {
 	openMain func()
 }
 
-// WithFollowOpenMain installs the action behind the empty states' "Open main
-// window" button. The app wires it to hide the Panel and raise the main
-// window, so the borrowed Workspace returns to its owner.
+// WithFollowOpenMain installs the action behind the "Open main window" button
+// of the follow and top-down routes. The app wires it to hide the Panel and
+// raise the main window, so a borrowed or blocked Workspace view can return to
+// its owner.
 func WithFollowOpenMain(fn func()) FollowOption {
 	return func(o *followOptions) { o.openMain = fn }
 }
@@ -82,6 +84,38 @@ func followEmpty(c *ui.Context, m locales.Messages, icon, title, description str
 			}
 		})
 	})
+}
+
+// TopdownView renders the complete main shell in the Dropdown Panel's
+// top-down route: the same Tab bar, home sidebar, Vault, SFTP, terminal Tabs,
+// and global overlays the main window draws, from the same shell state. It is
+// not a second application; only the rendering window changes.
+//
+// The renderer runs the shell's per-frame preamble itself, because the main
+// window renders a neutral placeholder while the Panel owns the surfaces:
+// Flush and FinishSideFrame therefore execute exactly once, under the dropdown
+// owner. The Pane commands remain the window's own, since the main window is
+// hidden and the Panel is the only place the user can act on the Workspace.
+//
+// A Session whose browser panel is open owns a native webview MyGo cannot
+// mount in a second window. That Tab renders the neutral browser placeholder
+// and offers the main window instead; the browser is never closed on the
+// user's behalf.
+func TopdownView(s *state.State, opts ...FollowOption) func(*ui.Context) {
+	options := followOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	reveal := newWorkTabReveal()
+	return func(c *ui.Context) {
+		m, t := shellPreamble(c, s, func() bool { return terminalVisible(s) })
+		if s.ActiveBrowserOpen() {
+			followEmpty(c, m, icons.Globe, m.FollowBrowserTitle(), m.FollowBrowserDescription(), options.openMain)
+		} else {
+			shellLayout(c, s, m, t, state.RenderOwnerDropdown, reveal)
+		}
+		s.FinishSideFrameFor(state.RenderOwnerDropdown)
+	}
 }
 
 // FollowBar draws the mini Tab strip in the Panel's top bar. It is selection

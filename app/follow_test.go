@@ -309,11 +309,11 @@ func TestFollowModeEmptyWorkspaceOffersTheMainWindow(t *testing.T) {
 	}
 }
 
-// TestTopdownModeTransfersOwnershipWithAPlaceholder covers this ticket's
-// share of top-down mode: it moves the surfaces so the main window does not
-// render them twice, while its own renderer is still a later ticket. It must
-// not activate a Quake workspace.
-func TestTopdownModeTransfersOwnershipWithAPlaceholder(t *testing.T) {
+// TestTopdownModeTransfersOwnershipWithoutAQuakeWorkspace covers the shared
+// ownership transfer from the follow ticket: top-down hides the main window
+// and renders the Workspace surfaces itself, and it must not activate a Quake
+// workspace. The full top-down rendering is covered by topdown_test.go.
+func TestTopdownModeTransfersOwnershipWithoutAQuakeWorkspace(t *testing.T) {
 	q := newQuakeGraph(t)
 	installMainShellView(q)
 	q.mode = appdesktop.HotkeyModeTopdown
@@ -332,8 +332,11 @@ func TestTopdownModeTransfersOwnershipWithAPlaceholder(t *testing.T) {
 		t.Fatal("top-down did not transfer the Workspace surfaces")
 	}
 	tester := render(dropdown)
-	if tester.HasText("terminal") || tester.HasText("main-alpha") {
-		t.Fatalf("top-down rendered a Workspace instead of its placeholder: %v", tester.Texts())
+	if !tester.HasText("main-alpha") || !tester.HasText("terminal") {
+		t.Fatalf("top-down did not render the main shell: %v", tester.Texts())
+	}
+	if got := followTextCount(render(main).Texts(), "terminal"); got != 0 {
+		t.Fatalf("the hidden main window rendered the Workspace Surface %d times", got)
 	}
 	if q.opener.opens != 0 || q.quake.TabCount() != 0 {
 		t.Fatalf("top-down started a Quake workspace: %d opens, %d Tabs",

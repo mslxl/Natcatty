@@ -26,6 +26,10 @@ type windowBounds struct {
 // Panel covers, the Quake mode's default.
 const dropdownHeightPercent = 50
 
+// topdownHeightPercent is the top-down mode's default share of the work area.
+// The complete shell needs more room than the Quake terminal.
+const topdownHeightPercent = 80
+
 // dropdownMinHeight is the smallest readable Quake dropdown. The actual
 // height also clamps to a shorter work area.
 const dropdownMinHeight = 120
@@ -1086,10 +1090,15 @@ func hasWorkArea(area mygo.Rectangle) bool {
 	return area.Width > 0 && area.Height > 0
 }
 
+// percentHeight returns percent of the work area's height in DIPs.
+func percentHeight(workArea windowBounds, percent int) int {
+	return int(math.Round(float64(workArea.Height) * float64(percent) / 100))
+}
+
 // dropdownHeightFor clamps the visible height to [minimum, work area height].
 // A work area shorter than the minimum uses its own height.
 func (m *windowManager) dropdownHeightFor(workArea windowBounds) int {
-	height := int(math.Round(float64(workArea.Height) * dropdownHeightPercent / 100))
+	height := percentHeight(workArea, dropdownHeightPercent)
 	if m.dropdownHeight != nil {
 		height = m.dropdownHeight(workArea)
 	}

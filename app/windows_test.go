@@ -127,6 +127,9 @@ type windowGraph struct {
 	state     *state.State
 	service   *appsession.Service
 	confirmer *recordingConfirmer
+	// shellSurfaces are the wiring surfaces the shell's Session factory built,
+	// in creation order, so a window test can inspect what the renderer saw.
+	shellSurfaces []*wiringSurface
 }
 
 // newWindowGraph mirrors the composition root's wiring: one shell state whose
@@ -151,7 +154,9 @@ func newWindowGraphWithOutput(t *testing.T, gate *uiapplock.Gate, output chan []
 	}
 	graph.state = state.NewState(
 		state.WithSessions(service, func(*appsession.Session) (state.Surface, error) {
-			return &wiringSurface{}, nil
+			surface := &wiringSurface{}
+			graph.shellSurfaces = append(graph.shellSurfaces, surface)
+			return surface, nil
 		}),
 		state.WithDetachHandler(func(id model.TabID) {
 			graph.manager.OpenDetached(id)

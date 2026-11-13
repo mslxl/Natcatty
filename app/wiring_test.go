@@ -10,6 +10,7 @@ import (
 
 	"github.com/mslxl/natcatty/application/command"
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
@@ -49,11 +50,31 @@ func (f *wiringFactory) Open(context.Context, appsession.StartSpec) (appsession.
 }
 
 // wiringSurface is non-empty so distinct surfaces have distinct pointers;
-// Go may give distinct zero-size values the same address.
-type wiringSurface struct{ id int }
+// Go may give distinct zero-size values the same address. It records the live
+// theme, Interface Style, and focus requests the rendering window saw, so a
+// window test can prove which renderer drew the Surface and that a rebuilt
+// frame asks for the keyboard again.
+type wiringSurface struct {
+	id              int
+	focuses         int
+	style           kit.Style
+	themeBackground ui.Color
+}
 
-func (wiringSurface) View(c *ui.Context) ui.Element { return ui.Text(c, "terminal").Fill() }
-func (wiringSurface) Close()                        {}
+func (w *wiringSurface) View(c *ui.Context) ui.Element {
+	w.style = kit.CurrentStyle()
+	w.themeBackground = c.Theme().Background
+	return ui.Text(c, "terminal").Fill()
+}
+
+func (w *wiringSurface) ViewFocused(c *ui.Context, focused bool) ui.Element {
+	if focused {
+		w.focuses++
+	}
+	return w.View(c)
+}
+
+func (w *wiringSurface) Close() {}
 
 func newWiringState(t *testing.T) *state.State {
 	t.Helper()

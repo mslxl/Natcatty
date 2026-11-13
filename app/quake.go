@@ -62,9 +62,14 @@ func (s quakeHostSource) Hosts() []domainvault.Host {
 //
 // Quake with source own renders its private workspace and leaves the main
 // window visible. Quake with source follow renders the main Workspace's active
-// Tab in the Panel and transfers the Surface ownership to it. Top-down mode
-// transfers ownership too; its own renderer lands with a later ticket, so it
-// shows the neutral placeholder. Other modes keep the placeholder.
+// Tab in the Panel and transfers the Surface ownership to it. Top-down renders
+// the complete main shell in the Panel and always transfers ownership; the
+// main window then draws only its neutral placeholder. Other modes keep the
+// placeholder.
+//
+// The Panel's default height is mode-specific: Quake takes half the work area
+// and top-down takes 80%, until the geometry settings replace the percentage
+// with their configured value.
 func wireDropdownQuake(windows *windowManager, state *quakeui.State, shellState *shellstate.State,
 	mode func() appdesktop.HotkeyMode, source func() appdesktop.QuakeSource, openMain func()) {
 	if windows == nil || state == nil {
@@ -72,10 +77,11 @@ func wireDropdownQuake(windows *windowManager, state *quakeui.State, shellState 
 	}
 	quakeBar := quakeui.Bar(state)
 	quakeView := quakeui.View(state)
-	var followBar, followView func(*ui.Context)
+	var followBar, followView, topdownView func(*ui.Context)
 	if shellState != nil {
 		followBar = shell.FollowBar(shellState)
 		followView = shell.FollowView(shellState, shell.WithFollowOpenMain(openMain))
+		topdownView = shell.TopdownView(shellState, shell.WithFollowOpenMain(openMain))
 	}
 	// sourceOrDefault keeps old wiring that predates the setting on the own
 	// workspace, which was the only Quake renderer.
@@ -91,6 +97,19 @@ func wireDropdownQuake(windows *windowManager, state *quakeui.State, shellState 
 	quakeFollow := func() bool {
 		return mode() == appdesktop.HotkeyModeQuake && sourceOrDefault() == appdesktop.QuakeSourceFollow
 	}
+	topdown := func() bool {
+		return mode() == appdesktop.HotkeyModeTopdown
+	}
+	// The top-down shell needs the whole work area's height budget; Quake's
+	// compact terminal keeps its half-height default. Both are clamped to the
+	// work area by the window manager.
+	windows.SetDropdownHeightProvider(func(workArea windowBounds) int {
+		percent := dropdownHeightPercent
+		if topdown() {
+			percent = topdownHeightPercent
+		}
+		return percentHeight(workArea, percent)
+	})
 	windows.SetDropdownShowHook(func() {
 		if !quakeOwn() {
 			return
@@ -125,12 +144,14 @@ func wireDropdownQuake(windows *windowManager, state *quakeui.State, shellState 
 				quakeView(c)
 			case quakeFollow() && followView != nil:
 				followView(c)
+			case topdown() && topdownView != nil:
+				topdownView(c)
 			default:
 				dropdown.Placeholder(c)
 			}
 		}
 	})
 	windows.SetDropdownOwnershipProvider(func() bool {
-		return mode() == appdesktop.HotkeyModeTopdown || quakeFollow()
+		return topdown() || quakeFollow()
 	})
 }

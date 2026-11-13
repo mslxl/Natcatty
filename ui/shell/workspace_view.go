@@ -52,11 +52,15 @@ type tabRef struct {
 	status paneStatus
 }
 
-func mainTabRef(s *state.State, tabIndex int) tabRef {
+// mainTabRef binds the split renderer to a Tab in the window that owns it. A
+// window renderer holds the full Pane commands; owner scopes the side panel's
+// per-renderer bookkeeping, so the main window and the Dropdown Panel's
+// top-down route never stop each other's live tool.
+func mainTabRef(owner state.RenderOwner, s *state.State, tabIndex int) tabRef {
 	id, _ := s.TabID(tabIndex)
 	return tabRef{
 		id:    id,
-		owner: state.RenderOwnerMain,
+		owner: owner,
 		tree:  func() (*domainworkspace.Node, []int, bool) { return s.TabTree(tabIndex) },
 		pane:  func(id model.PaneID) (state.PaneInfo, bool) { return s.PaneInfoAt(tabIndex, id) },
 		setRatio: func(id model.SplitID, ratio float32) bool {

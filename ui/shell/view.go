@@ -42,48 +42,65 @@ const (
 // surface. Only the home Tab has a sidebar, so a terminal gets the whole
 // window.
 func View(s *state.State) func(*ui.Context) {
+	return shellView(state.RenderOwnerMain, s)
+}
+
+// shellView is the full shell layout rendered by owner. The main window uses
+// RenderOwnerMain. The Dropdown Panel's top-down route wraps it in TopdownView
+// with RenderOwnerDropdown, so the per-frame preamble, the side-frame
+// bookkeeping, and the side panel's tool lifetime all match the window that
+// actually draws the frame.
+func shellView(owner state.RenderOwner, s *state.State) func(*ui.Context) {
 	// The work Tab strip scrolls sideways at the minimum window. This tracker
 	// belongs to this window's content function, so the active Tab is revealed
 	// when it changes or the window is resized.
 	reveal := newWorkTabReveal()
 	return func(c *ui.Context) {
 		m, t := shellPreamble(c, s, func() bool { return terminalVisible(s) })
-
-		// Hiding the SFTP Tab while it is shown leaves for the Vault, as the
-		// original's; the Session panel still browses files.
-		if !s.SFTPTabShown() && s.SFTPVisible() {
-			s.ShowHome()
-			c.Invalidate()
-		}
-		layout.MainLayout(c, layout.MainSlots{
-			HomeTabs: func() { homeTabs(c, s, m) },
-			Tabs:     func() { workTabs(c, s, m, t, reveal) },
-			Flush:    terminalVisible(s),
-			Body:     func() { body(c, s, m, t) },
-		})
-
-		if prompt := s.TrustPrompt(); prompt != nil {
-			sessionui.TrustView(prompt)(c)
-		}
-		if prompt := s.AuthPrompt(); prompt != nil {
-			sessionui.AuthPromptModal(prompt)(c)
-		}
-		if serial := s.SerialView(); serial != nil {
-			serial(c)
-		}
-		// The editor sits above the work surfaces so a remote-change conflict
-		// from an external edit is visible wherever the user is.
-		if editor := s.EditorView(); editor != nil {
-			editor(c)
-		}
-		// The Quick Switcher sits above every surface, including a prompt, so
-		// its chord works wherever the focus is.
-		if search := s.SearchState(); search != nil {
-			uisearch.Overlay(search)(c)
-		}
+		shellLayout(c, s, m, t, owner, reveal)
 		// A side panel tool no longer drawn, such as System sampling a Host,
-		// stops once the frame is done.
-		s.FinishSideFrameFor(state.RenderOwnerMain)
+		// stops once the frame is done. FinishSideFrameFor is per renderer, so
+		// this call cannot stop a tool another window still draws.
+		s.FinishSideFrameFor(owner)
+	}
+}
+
+// shellLayout draws the shell below the preamble: the Tab bar, the chosen
+// surface, and every global overlay above it. It runs the per-frame Flush
+// through shellPreamble only, so both renderers execute it exactly once.
+func shellLayout(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
+	owner state.RenderOwner, reveal *workTabReveal) {
+	// Hiding the SFTP Tab while it is shown leaves for the Vault, as the
+	// original's; the Session panel still browses files.
+	if !s.SFTPTabShown() && s.SFTPVisible() {
+		s.ShowHome()
+		c.Invalidate()
+	}
+	layout.MainLayout(c, layout.MainSlots{
+		HomeTabs: func() { homeTabs(c, s, m) },
+		Tabs:     func() { workTabs(c, s, m, t, reveal) },
+		Flush:    terminalVisible(s),
+		Body:     func() { body(c, s, m, t, owner) },
+	})
+
+	if prompt := s.TrustPrompt(); prompt != nil {
+		sessionui.TrustView(prompt)(c)
+	}
+	if prompt := s.AuthPrompt(); prompt != nil {
+		sessionui.AuthPromptModal(prompt)(c)
+	}
+	if serial := s.SerialView(); serial != nil {
+		serial(c)
+	}
+	// The editor sits above the work surfaces so a remote-change conflict
+	// from an external edit is visible wherever the user is.
+	if editor := s.EditorView(); editor != nil {
+		editor(c)
+	}
+	// The Quick Switcher sits above every surface, including a prompt, so
+	// its chord works wherever the focus is.
+	if search := s.SearchState(); search != nil {
+		uisearch.Overlay(search)(c)
 	}
 }
 
@@ -115,10 +132,10 @@ func homeVisible(s *state.State) bool {
 }
 
 // body draws the chosen Tab's surface below the Tab bar.
-func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, owner state.RenderOwner) {
 	switch {
 	case terminalVisible(s):
-		activeTab(c, s, m, t)
+		activeTab(c, s, m, t, owner)
 	case s.SFTPVisible():
 		layout.HomeLayout(c, layout.HomeSlots{
 			Notices: func() { notices(c, s, m, t) },
@@ -289,9 +306,12 @@ func vaultPageLabel(m locales.Messages, page section.Section) string {
 	}
 }
 
-// activeTab draws the active Tab with the main window's Pane commands.
-func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
-	activeTabBody(c, s, m, t, mainTabRef(s, s.ActiveTab()))
+// activeTab draws the active Tab with the window's Pane commands. The owner
+// scopes the side panel's per-renderer bookkeeping; the top-down renderer
+// draws the same commands from the Dropdown Panel, where it is the only
+// window rendering the Workspace.
+func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, owner state.RenderOwner) {
+	activeTabBody(c, s, m, t, mainTabRef(owner, s, s.ActiveTab()))
 }
 
 // activeTabBody draws one Tab's split tree, the side panel beside it, and the
