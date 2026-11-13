@@ -87,6 +87,7 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 	logsui "github.com/mslxl/natcatty/ui/logs"
 	uimonitoring "github.com/mslxl/natcatty/ui/monitoring"
+	quakeui "github.com/mslxl/natcatty/ui/quake"
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	serialui "github.com/mslxl/natcatty/ui/serial"
 	sessionui "github.com/mslxl/natcatty/ui/session"
@@ -182,6 +183,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	var editorState *editorui.State
 	var associationsState *settings.AssociationsState
 	var shellState *state.State
+	var quakeState *quakeui.State
 	var preferencesState *settings.PreferencesState
 	var shortcutsState *settings.ShortcutsState
 	var searchState *settings.SearchState
@@ -1152,6 +1154,85 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		return shellState != nil && shellState.SendToFocused(command, run)
 	})
 	themePanel := settings.NewThemePanel(themesState, preferenceService)
+	// newSessionSurface builds the one MyGo terminal surface every Session
+	// uses. The main shell and the Quake workspace share it, so Command
+	// History, cwd, notifications, theme, font, cursor, and terminal behavior
+	// are identical in both windows.
+	newSessionSurface := func(s *appsession.Session) (*sessionui.Surface, error) {
+		// Transient commands end with their Session. Watch is idempotent
+		// because this factory may run more than once for one Session.
+		transientRegistry.Watch(s.ID(), s.Done())
+		options := []sessionui.Option{
+			sessionui.WithLogDefaults(func() appsession.LogOptions {
+				return terminalLogDefaults(s.Label())
+			}),
+			sessionui.WithRedraw(invalidate),
+			sessionui.WithPastePolicy(terminalService.PasteConfirmation),
+			sessionui.WithDropAction(func() domainterminal.DropAction {
+				return terminalService.Settings().DropAction
+			}),
+			sessionui.WithEncodingChange(func(encoding domainterminal.Encoding) {
+				_ = terminalService.SetEncodingFor(s.EncodingScope(), encoding)
+			}),
+			// Suggestions and counters read Settings on each frame, so a
+			// Settings change applies to open Sessions without reopening.
+			// A Host-Atuin Session adds its transient memory rows, which
+			// are suggestible under its own captured scope.
+			sessionui.WithSuggestions(func(input, scope, cwd string) []autocomplete.Suggestion {
+				return autocompleteService.SuggestionsInWith(input, scope, cwd,
+					transientRegistry.Entries(s.ID()))
+			},
+				func() (bool, bool) {
+					current := terminalService.Settings()
+					return current.AutocompletePopupMenu, current.AutocompleteGhostText
+				}),
+			sessionui.WithAutocompleteDelay(func() int {
+				return terminalService.Settings().AutocompleteDebounceMs
+			}),
+			// The terminal font and its catalog bindings are read when a
+			// terminal is created; an Appearance change restyles open
+			// terminals through the state setters.
+			sessionui.WithTerminalFont(func() terminal.Font {
+				appearance := preferenceService.Settings().Appearance
+				return terminal.Font{
+					Family: domainpreferences.TerminalFontFamily(appearance.TerminalFontFamily),
+					Size:   float32(appearance.TerminalFontSize),
+				}
+			}),
+			sessionui.WithTerminalCursor(func() (domainpreferences.CursorStyle, bool) {
+				appearance := preferenceService.Settings().Appearance
+				return appearance.TerminalCursorStyle, !appearance.TerminalCursorSteady
+			}),
+			sessionui.WithTerminalTheme(currentTerminalTheme),
+			sessionui.WithTerminalKeybinds(func() []terminal.Keybind {
+				return terminalKeybinds(keybindingService)
+			}),
+			// Reconnect is the original's manual retry: it abandons the
+			// current transport and dials again without the policy delay.
+			sessionui.WithReconnect(func() { s.ReconnectNow() }, s.CanReconnect),
+		}
+		// An SSH Session with a saved Host routes its browser through the
+		// Host, and a local Session reaches this computer directly. Serial,
+		// Telnet, Mosh, and ET Sessions leave the menu item disabled
+		// instead of offering a route that cannot exist.
+		switch {
+		case s.Snapshot().Kind == appsession.KindLocal:
+			options = append(options, sessionui.WithBrowser(
+				func(onClose func()) (sessionui.BrowserPanel, error) {
+					return openSessionBrowser(s, windows, localBrowserConnector{}, invalidate, onClose)
+				}))
+		case s.Snapshot().Kind == appsession.KindSSH && s.HostID() != "":
+			options = append(options, sessionui.WithBrowser(
+				func(onClose func()) (sessionui.BrowserPanel, error) {
+					return openSessionBrowser(s, windows, browserConnector{
+						vault:       vaultService,
+						routes:      routes,
+						connections: connections,
+					}, invalidate, onClose)
+				}))
+		}
+		return sessionui.New(s, options...)
+	}
 	shellState = state.NewState(
 		state.WithLocaleRequest(func(tag string) {
 			mygo.App.SetLocale(tag)
@@ -1184,79 +1265,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			return host.Label, true
 		}),
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
-			// Transient commands end with their Session. Watch is idempotent
-			// because this factory may run more than once for one Session.
-			transientRegistry.Watch(s.ID(), s.Done())
-			options := []sessionui.Option{
-				sessionui.WithLogDefaults(func() appsession.LogOptions {
-					return terminalLogDefaults(s.Label())
-				}),
-				sessionui.WithRedraw(invalidate),
-				sessionui.WithPastePolicy(terminalService.PasteConfirmation),
-				sessionui.WithDropAction(func() domainterminal.DropAction {
-					return terminalService.Settings().DropAction
-				}),
-				sessionui.WithEncodingChange(func(encoding domainterminal.Encoding) {
-					_ = terminalService.SetEncodingFor(s.EncodingScope(), encoding)
-				}),
-				// Suggestions and counters read Settings on each frame, so a
-				// Settings change applies to open Sessions without reopening.
-				// A Host-Atuin Session adds its transient memory rows, which
-				// are suggestible under its own captured scope.
-				sessionui.WithSuggestions(func(input, scope, cwd string) []autocomplete.Suggestion {
-					return autocompleteService.SuggestionsInWith(input, scope, cwd,
-						transientRegistry.Entries(s.ID()))
-				},
-					func() (bool, bool) {
-						current := terminalService.Settings()
-						return current.AutocompletePopupMenu, current.AutocompleteGhostText
-					}),
-				sessionui.WithAutocompleteDelay(func() int {
-					return terminalService.Settings().AutocompleteDebounceMs
-				}),
-				// The terminal font and its catalog bindings are read when a
-				// terminal is created; an Appearance change restyles open
-				// terminals through State.SetTerminalFont.
-				sessionui.WithTerminalFont(func() terminal.Font {
-					appearance := preferenceService.Settings().Appearance
-					return terminal.Font{
-						Family: domainpreferences.TerminalFontFamily(appearance.TerminalFontFamily),
-						Size:   float32(appearance.TerminalFontSize),
-					}
-				}),
-				sessionui.WithTerminalCursor(func() (domainpreferences.CursorStyle, bool) {
-					appearance := preferenceService.Settings().Appearance
-					return appearance.TerminalCursorStyle, !appearance.TerminalCursorSteady
-				}),
-				sessionui.WithTerminalTheme(currentTerminalTheme),
-				sessionui.WithTerminalKeybinds(func() []terminal.Keybind {
-					return terminalKeybinds(keybindingService)
-				}),
-				// Reconnect is the original's manual retry: it abandons the
-				// current transport and dials again without the policy delay.
-				sessionui.WithReconnect(func() { s.ReconnectNow() }, s.CanReconnect),
-			}
-			// An SSH Session with a saved Host routes its browser through the
-			// Host, and a local Session reaches this computer directly. Serial,
-			// Telnet, Mosh, and ET Sessions leave the menu item disabled
-			// instead of offering a route that cannot exist.
-			switch {
-			case s.Snapshot().Kind == appsession.KindLocal:
-				options = append(options, sessionui.WithBrowser(
-					func(onClose func()) (sessionui.BrowserPanel, error) {
-						return openSessionBrowser(s, windows, localBrowserConnector{}, invalidate, onClose)
-					}))
-			case s.Snapshot().Kind == appsession.KindSSH && s.HostID() != "":
-				options = append(options, sessionui.WithBrowser(
-					func(onClose func()) (sessionui.BrowserPanel, error) {
-						return openSessionBrowser(s, windows, browserConnector{
-							vault:       vaultService,
-							routes:      routes,
-							connections: connections,
-						}, invalidate, onClose)
-					}))
-			}
-			return sessionui.New(s, options...)
+			return newSessionSurface(s)
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState),
 			// The Hosts page's view and sort switches are this device's
@@ -1434,6 +1443,26 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		},
 		func() string { return mygo.App.Locale() },
 	)
+	// The Dropdown Panel's Quake workspace is separate from the main shell's
+	// Workspace: its Tabs never enter the main Tab strip, and the Panel is
+	// created lazily on the first hotkey press. Its state is memory-only.
+	quakeState = quakeui.NewState(
+		quakeSessionOpener{sessions: sessions},
+		func(s *appsession.Session) (quakeui.Surface, error) {
+			return newSessionSurface(s)
+		},
+		quakeui.WithRedraw(invalidate),
+		// Closing the last Quake Tab hides the Panel; the next show creates a
+		// fresh local Shell.
+		quakeui.WithEmpty(func() {
+			if windows != nil {
+				windows.HideDropdown()
+			}
+		}),
+	)
+	wireDropdownQuake(windows, quakeState, func() appdesktop.HotkeyMode {
+		return desktopService.Settings().HotkeyMode
+	})
 	// The main window's root view is a provider, beside the Settings one, so a
 	// later render-ownership route can change what the window shows without
 	// recreating the native window.
@@ -1509,12 +1538,30 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				float32(current.Appearance.TerminalFontSize))
 			shellState.SetTerminalCursor(current.Appearance.TerminalCursorStyle,
 				!current.Appearance.TerminalCursorSteady)
+		}
+		// Quake terminals are open Session surfaces too: a live font, cursor,
+		// or scheme change must reach them without reopening the Panel.
+		if quakeState != nil {
+			quakeState.SetTerminalFont(domainpreferences.TerminalFontFamily(current.Appearance.TerminalFontFamily),
+				float32(current.Appearance.TerminalFontSize))
+			quakeState.SetTerminalCursor(current.Appearance.TerminalCursorStyle,
+				!current.Appearance.TerminalCursorSteady)
+		}
+		if shellState != nil || quakeState != nil {
 			// currentTerminalTheme reads Theme.IsDark, which panics before
 			// App.Run; the initial preference apply below happens before the
 			// event loop starts. WhenReady also schedules immediately after
 			// startup, so later appearance changes still apply the theme at
 			// once.
-			applyTerminalTheme := func() { shellState.SetTerminalTheme(currentTerminalTheme()) }
+			applyTerminalTheme := func() {
+				theme := currentTerminalTheme()
+				if shellState != nil {
+					shellState.SetTerminalTheme(theme)
+				}
+				if quakeState != nil {
+					quakeState.SetTerminalTheme(theme)
+				}
+			}
 			if mygo.App.IsReady() {
 				applyTerminalTheme()
 			} else {
@@ -1531,6 +1578,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	mygo.Theme.OnUpdated(func() {
 		if shellState != nil {
 			shellState.SetTerminalTheme(currentTerminalTheme())
+		}
+		if quakeState != nil {
+			quakeState.SetTerminalTheme(currentTerminalTheme())
 		}
 		invalidate()
 	})
@@ -1577,6 +1627,12 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// prompts and must not outlive the event loop.
 		if windows != nil {
 			windows.ShutdownDropdown()
+		}
+		// Quake Tabs own live local Shells; end them before the shared
+		// Session service and the connections below. The Panel is already
+		// hidden, so this path never asks it to hide again.
+		if quakeState != nil {
+			quakeState.Shutdown()
 		}
 		shellState.Persist()
 		// Stop accepting external MCP calls before the services they read are
