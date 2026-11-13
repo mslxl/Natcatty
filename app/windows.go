@@ -296,6 +296,14 @@ type windowManager struct {
 	// dropdownContent supplies the Panel's routed view. The provider is
 	// resolved once at creation; the returned function runs every frame.
 	dropdownContent func() func(*ui.Context)
+	// dropdownBar supplies the routed view's own top-bar items, drawn beside
+	// the frame's hide button in the same row. It is resolved once at
+	// creation, like dropdownContent.
+	dropdownBar func() func(*ui.Context)
+	// dropdownShow runs before the Panel is created or shown. The composition
+	// root uses it to activate the routed workspace so its first frame already
+	// has content.
+	dropdownShow func()
 	// dropdownHeight is the live visible-height calculation in DIPs. The
 	// default uses half the work area.
 	dropdownHeight func(windowBounds) int
@@ -762,6 +770,21 @@ func (m *windowManager) SetDropdownContentProvider(fn func() func(*ui.Context)) 
 	m.dropdownContent = fn
 }
 
+// SetDropdownBarProvider installs the Panel's routed top-bar items. The
+// provider is resolved once when the Panel is created; the function it returns
+// runs every frame, so switching Tabs changes the strip without recreating the
+// native window. Nil leaves the bar's leading space empty.
+func (m *windowManager) SetDropdownBarProvider(fn func() func(*ui.Context)) {
+	m.dropdownBar = fn
+}
+
+// SetDropdownShowHook installs the work the composition root runs before the
+// Panel is created or shown. The Quake workspace creates its first local Shell
+// here, so the Panel's first frame already has content.
+func (m *windowManager) SetDropdownShowHook(fn func()) {
+	m.dropdownShow = fn
+}
+
 // SetDropdownHeightProvider installs the live visible-height calculation in
 // DIPs for a work area. Nil keeps the default half height; the height
 // settings replace it.
@@ -786,9 +809,13 @@ func (m *windowManager) ToggleDropdown() {
 // ShowDropdown creates the singleton Panel on its first use and shows it.
 // Every show re-reads the pointer and recomputes the display, work area, and
 // bounds before Show, so a moved pointer, a changed work area, or a removed
-// display is honored. The Panel has no StateKey: MyGo never restores stale
-// bounds for it.
+// display is honored. The show hook runs first, so the routed workspace exists
+// before the content function is resolved. The Panel has no StateKey: MyGo
+// never restores stale bounds for it.
 func (m *windowManager) ShowDropdown() {
+	if m.dropdownShow != nil {
+		m.dropdownShow()
+	}
 	bounds := m.dropdownBounds()
 	window := m.dropdown
 	if window == nil || window.IsDestroyed() {
@@ -881,9 +908,10 @@ func (m *windowManager) forgetDropdown(window hostWindow) {
 }
 
 // dropdownView is the Panel's root content: the shared theme and shortcut
-// preamble, the dropdown frame with its hide button, then the routed content
-// behind the one App Lock gate. The frame sits outside the gate, as every
-// window's controls do, so the Panel can be hidden while locked.
+// preamble, the dropdown frame with its hide button and routed bar, then the
+// routed content behind the one App Lock gate. The frame sits outside the
+// gate, as every window's controls do, so the Panel can be hidden while
+// locked.
 func (m *windowManager) dropdownView() func(*ui.Context) {
 	content := dropdown.Placeholder
 	if m.dropdownContent != nil {
@@ -891,7 +919,11 @@ func (m *windowManager) dropdownView() func(*ui.Context) {
 			content = provided
 		}
 	}
-	return m.withTheme(m.withAccelerators(dropdown.View(m.HideDropdown, m.wrap(content))))
+	var bar func(*ui.Context)
+	if m.dropdownBar != nil {
+		bar = m.dropdownBar()
+	}
+	return m.withTheme(m.withAccelerators(dropdown.View(m.HideDropdown, bar, m.wrap(content))))
 }
 
 // dropdownBounds is the Panel's rectangle: the work area's top-left corner,

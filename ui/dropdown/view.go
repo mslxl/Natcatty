@@ -12,9 +12,12 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
-// View puts the panel's frame around content. The frame stays outside the
-// shared App Lock gate, so the hide button works while the content is locked.
-func View(onHide func(), content func(*ui.Context)) func(*ui.Context) {
+// View puts the panel's frame around bar and content. bar draws the routed
+// content's own top-bar items, such as the Quake tab strip, in the same row as
+// the hide button; nil leaves the leading space empty. The frame stays outside
+// the shared App Lock gate, so the hide button works while the content is
+// locked.
+func View(onHide func(), bar, content func(*ui.Context)) func(*ui.Context) {
 	return func(c *ui.Context) {
 		t := c.Theme()
 		m := locales.In(c.Locale())
@@ -27,7 +30,11 @@ func View(onHide func(), content func(*ui.Context)) func(*ui.Context) {
 			ui.Row(c).FillWidth().Height(kit.M(c).Bar.Title).Shrink(0).
 				Padding(0, kit.M(c).Space.XSmall, 0, kit.M(c).Space.Large).
 				AlignItems(ui.Center).Children(func() {
-				ui.Column(c).Grow(1)
+				if bar != nil {
+					ui.Column(c).Grow(1).MinWidth(0).Children(func() { bar(c) })
+				} else {
+					ui.Column(c).Grow(1)
+				}
 				if kit.IconButtonWith(c, icons.X, m.DropdownHide(), kit.IconOptions{
 					Role: kit.IconCard,
 					Key:  "dropdown-hide",
