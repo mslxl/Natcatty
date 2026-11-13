@@ -13,6 +13,7 @@ type Desktop interface {
 	SetShowTrayIcon(show bool) error
 	SetCloseToTray(enabled bool) error
 	SetHotkeyMode(mode desktop.HotkeyMode) error
+	SetQuakeSource(source desktop.QuakeSource) error
 	SetToggleWindowHotkey(accelerator string) error
 	ResetToggleHotkey() error
 	SetAutoStart(enabled bool) error
@@ -101,6 +102,13 @@ func (s *DesktopState) SetSSHDeepLinks(enabled bool) bool {
 // rolls the service back and surfaces as the inline hotkey problem.
 func (s *DesktopState) SetHotkeyMode(mode desktop.HotkeyMode) bool {
 	return s.apply(func() error { return s.desktop.SetHotkeyMode(mode) })
+}
+
+// SetQuakeSource selects what the Quake dropdown renders: its own Workspace
+// or the main window's active Tab. The app retires a visible Panel so the
+// render ownership is restored under the new route.
+func (s *DesktopState) SetQuakeSource(source desktop.QuakeSource) bool {
+	return s.apply(func() error { return s.desktop.SetQuakeSource(source) })
 }
 
 // SetAutoStart changes the OS login item.

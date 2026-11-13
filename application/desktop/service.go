@@ -66,6 +66,10 @@ type Service struct {
 	// onModeChange is notified after a hotkey mode change has been applied and
 	// saved. The composition root uses it to retire the Dropdown Panel.
 	onModeChange func(HotkeyMode)
+	// onSourceChange is notified after a Quake content-source change has been
+	// saved. The composition root uses it to retire the Dropdown Panel so the
+	// main window's render ownership is restored under the new route.
+	onSourceChange func(QuakeSource)
 	// registered is the accelerator currently claimed from Hotkeys.
 	registered string
 	// hotkeyProblem is the last registration failure, surfaced in Settings.
@@ -104,6 +108,16 @@ func (s *Service) OnHotkeyModeChange(fn func(HotkeyMode)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onModeChange = fn
+}
+
+// OnQuakeSourceChange installs the listener called after a Quake content
+// source change has been saved. The composition root uses it to hide a Panel
+// that was rendering the previous source and restore the main window. It
+// replaces any previous listener and may be nil.
+func (s *Service) OnQuakeSourceChange(fn func(QuakeSource)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onSourceChange = fn
 }
 
 // SetTraySupported records whether the native tray could be created. The
@@ -306,6 +320,29 @@ func (s *Service) SetHotkeyMode(mode HotkeyMode) error {
 	s.mu.Unlock()
 	if listener != nil {
 		listener(mode)
+	}
+	return nil
+}
+
+// SetQuakeSource selects what the Quake dropdown renders. It persists the
+// value and, only after a successful save, announces it. An unknown source is
+// a validation error and changes nothing.
+func (s *Service) SetQuakeSource(source QuakeSource) error {
+	if !source.Valid() {
+		return &Error{Kind: KindValidation, Cause: fmt.Errorf("unknown quake source %q", source)}
+	}
+	s.mu.Lock()
+	previous := s.settings.QuakeSource
+	s.settings.QuakeSource = source
+	if err := s.saveLocked(); err != nil {
+		s.settings.QuakeSource = previous
+		s.mu.Unlock()
+		return err
+	}
+	listener := s.onSourceChange
+	s.mu.Unlock()
+	if listener != nil {
+		listener(source)
 	}
 	return nil
 }

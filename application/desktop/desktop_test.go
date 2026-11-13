@@ -85,6 +85,35 @@ func TestNormalizeRevertsUnknownValuesToDefaults(t *testing.T) {
 	}
 }
 
+// TestQuakeSourceDefaultsToOwnAndUnknownValuesNormalize pins the content
+// source contract: a new or pre-field record follows the Quake Workspace, and
+// an unrecognized stored value returns to that default without touching any
+// other desktop setting.
+func TestQuakeSourceDefaultsToOwnAndUnknownValuesNormalize(t *testing.T) {
+	if got := Defaults("windows").QuakeSource; got != QuakeSourceOwn {
+		t.Fatalf("default source = %q, want own", got)
+	}
+	if got := Normalize(Settings{Version: 1}, "windows").QuakeSource; got != QuakeSourceOwn {
+		t.Fatalf("missing source = %q, want own", got)
+	}
+	settings := Normalize(Settings{
+		Version:      1,
+		QuakeSource:  QuakeSource("bogus"),
+		ShowTrayIcon: true,
+	}, "windows")
+	if settings.QuakeSource != DefaultQuakeSource {
+		t.Fatalf("unknown source = %q, want %q", settings.QuakeSource, DefaultQuakeSource)
+	}
+	if !settings.ShowTrayIcon {
+		t.Fatal("normalizing the source changed an unrelated desktop setting")
+	}
+	for _, source := range []QuakeSource{QuakeSourceOwn, QuakeSourceFollow} {
+		if !source.Valid() {
+			t.Errorf("%q is not valid", source)
+		}
+	}
+}
+
 func TestDropdownSupportIsExplicitPerPlatform(t *testing.T) {
 	for _, goos := range []string{"darwin", "windows", "linux"} {
 		if !DropdownSupported(goos) {
@@ -549,6 +578,46 @@ func TestServiceNoneModeDoesNotRegisterAToggleHotkeyChange(t *testing.T) {
 	}
 	if service.Settings().ToggleWindowHotkey != "Ctrl+Shift+Space" {
 		t.Fatalf("shortcut = %q", service.Settings().ToggleWindowHotkey)
+	}
+}
+
+// TestServiceQuakeSourcePersistsAndRejectsUnknown covers the source setter:
+// a valid source is saved and announced, and an unknown one is a validation
+// error that changes nothing.
+func TestServiceQuakeSourcePersistsAndRejectsUnknown(t *testing.T) {
+	service, repository, _, _, _ := serviceForTest(t)
+	var changed []QuakeSource
+	service.OnQuakeSourceChange(func(source QuakeSource) {
+		changed = append(changed, source)
+	})
+
+	if err := service.SetQuakeSource(QuakeSourceFollow); err != nil {
+		t.Fatal(err)
+	}
+	if service.Settings().QuakeSource != QuakeSourceFollow {
+		t.Fatalf("source = %q, want follow", service.Settings().QuakeSource)
+	}
+	if len(repository.saves) == 0 ||
+		repository.saves[len(repository.saves)-1].QuakeSource != QuakeSourceFollow {
+		t.Fatalf("persisted source = %+v, want follow", repository.saves)
+	}
+	if len(changed) != 1 || changed[0] != QuakeSourceFollow {
+		t.Fatalf("source listener = %v, want one follow", changed)
+	}
+
+	savesBefore := len(repository.saves)
+	err := service.SetQuakeSource(QuakeSource("bogus"))
+	if KindOf(err) != KindValidation {
+		t.Fatalf("error = %v, want a validation error", err)
+	}
+	if service.Settings().QuakeSource != QuakeSourceFollow {
+		t.Fatalf("source = %q after a rejected value", service.Settings().QuakeSource)
+	}
+	if len(repository.saves) != savesBefore {
+		t.Fatal("an invalid source was persisted")
+	}
+	if len(changed) != 1 {
+		t.Fatalf("the source listener ran %d times for a rejected value", len(changed))
 	}
 }
 

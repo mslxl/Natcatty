@@ -128,6 +128,58 @@ func TestDesktopStoreIgnoresTheLegacyHotkeySwitch(t *testing.T) {
 	}
 }
 
+// TestDesktopStoreQuakeSourceDefaultsAndRoundTrips pins the source field's
+// no-migration rule: an old record without it loads as own, an explicit follow
+// survives a save/load cycle, and an unknown stored value normalizes to own.
+func TestDesktopStoreQuakeSourceDefaultsAndRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "desktop-settings.json")
+	store := OpenDesktop(path)
+
+	legacy := "{\"version\": 1, \"showTrayIcon\": true, \"toggleWindowHotkey\": \"Ctrl + `\"}"
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := desktop.Normalize(loaded, "windows").QuakeSource; got != desktop.QuakeSourceOwn {
+		t.Fatalf("legacy source = %q, want own", got)
+	}
+
+	settings := desktop.Defaults("windows")
+	settings.QuakeSource = desktop.QuakeSourceFollow
+	if err := store.Save(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = store.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := desktop.Normalize(loaded, "windows"); got != settings {
+		t.Fatalf("round trip = %+v, want %+v", got, settings)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"quakeSource": "follow"`) {
+		t.Fatalf("the source was not persisted:\n%s", data)
+	}
+
+	unknown := `{"version": 1, "quakeSource": "bogus", "showTrayIcon": true}`
+	if err := os.WriteFile(path, []byte(unknown), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = store.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := desktop.Normalize(loaded, "windows").QuakeSource; got != desktop.QuakeSourceOwn {
+		t.Fatalf("unknown source = %q, want own", got)
+	}
+}
+
 // TestDesktopStoreRoundTripsEveryHotkeyMode ensures explicit modes survive a
 // save/load cycle, including none, without version migration.
 func TestDesktopStoreRoundTripsEveryHotkeyMode(t *testing.T) {

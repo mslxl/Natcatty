@@ -307,6 +307,16 @@ type windowManager struct {
 	// dropdownHeight is the live visible-height calculation in DIPs. The
 	// default uses half the work area.
 	dropdownHeight func(windowBounds) int
+	// dropdownOwnsRender reports whether the currently routed dropdown mode
+	// and content source take the main Workspace's surfaces. Follow and
+	// top-down do; Quake's own Workspace does not.
+	dropdownOwnsRender func() bool
+	// renderOwner is the window that renders the shell surfaces this frame.
+	// The manager keeps the invariant that at most one window draws a Surface.
+	renderOwner state.RenderOwner
+	// mainVisibleBeforeDropdown remembers whether showing the dropdown hid a
+	// visible main window, so hiding it restores only that state.
+	mainVisibleBeforeDropdown bool
 	// dropdownClosing lets the Panel's close request proceed during quit;
 	// otherwise every close request only hides it.
 	dropdownClosing bool
@@ -331,6 +341,7 @@ func newWindowManager(host windowHost, confirmer dialogConfirmer, gate *uiapploc
 		locale:          locale,
 		detached:        make(map[model.TabID]hostWindow),
 		forceClose:      make(map[string]bool),
+		renderOwner:     state.RenderOwnerMain,
 	}
 }
 
@@ -792,6 +803,79 @@ func (m *windowManager) SetDropdownHeightProvider(fn func(windowBounds) int) {
 	m.dropdownHeight = fn
 }
 
+// SetDropdownOwnershipProvider installs the rule that says whether the current
+// dropdown route renders the main Workspace's Surfaces. Follow and top-down
+// do; Quake's own Workspace does not. The provider is read when the Panel is
+// shown, so a route change applies to the next show without wiring new
+// content.
+func (m *windowManager) SetDropdownOwnershipProvider(fn func() bool) {
+	m.dropdownOwnsRender = fn
+}
+
+// DropdownOwnsMain reports whether the Dropdown Panel currently renders the
+// main Workspace's Surfaces. The main window renders a neutral placeholder
+// while it is true, so one Surface is never drawn by two windows at once.
+func (m *windowManager) DropdownOwnsMain() bool {
+	return m.renderOwner == state.RenderOwnerDropdown
+}
+
+// syncRenderOwnership moves the Workspace surfaces to the window that the
+// routed dropdown mode names. Transferring hides a visible main window and
+// remembers that it was visible; keeping the ownership leaves it alone.
+func (m *windowManager) syncRenderOwnership() {
+	if m.dropdownOwnsRender != nil && m.dropdownOwnsRender() {
+		m.transferToDropdown()
+		return
+	}
+	m.restoreMainOwnership(true)
+}
+
+// transferToDropdown gives the Dropdown Panel the Workspace surfaces for the
+// first time. The main window is hidden rather than destroyed, so showing it
+// again later is cheap and its native content is never rebuilt.
+func (m *windowManager) transferToDropdown() {
+	if m.renderOwner == state.RenderOwnerDropdown {
+		return
+	}
+	m.renderOwner = state.RenderOwnerDropdown
+	m.mainVisibleBeforeDropdown = m.main != nil && !m.main.IsDestroyed() && m.main.IsVisible()
+	if m.mainVisibleBeforeDropdown {
+		m.main.Hide()
+	}
+	m.invalidateRenderWindows()
+}
+
+// restoreMainOwnership returns the Workspace surfaces to the main window. It
+// shows the main window again only when showing the Panel hid it; a main
+// window the user had already hidden stays hidden, so hiding the Panel never
+// pops a window the user put away. show is false for shutdown paths that must
+// not resurrect a window during quit.
+func (m *windowManager) restoreMainOwnership(show bool) {
+	if m.renderOwner != state.RenderOwnerDropdown {
+		return
+	}
+	m.renderOwner = state.RenderOwnerMain
+	wasVisible := m.mainVisibleBeforeDropdown
+	m.mainVisibleBeforeDropdown = false
+	if show && wasVisible && m.main != nil && !m.main.IsDestroyed() {
+		m.main.Show()
+		m.main.Focus()
+	}
+	m.invalidateRenderWindows()
+}
+
+// invalidateRenderWindows redraws both windows after ownership moved, so the
+// losing window drops the Surfaces on its next frame and the gaining one
+// paints them.
+func (m *windowManager) invalidateRenderWindows() {
+	if m.main != nil && !m.main.IsDestroyed() {
+		m.main.Invalidate()
+	}
+	if m.dropdown != nil && !m.dropdown.IsDestroyed() {
+		m.dropdown.Invalidate()
+	}
+}
+
 // DropdownVisible reports whether the Dropdown Panel is on screen.
 func (m *windowManager) DropdownVisible() bool {
 	return m.dropdown != nil && !m.dropdown.IsDestroyed() && m.dropdown.IsVisible()
@@ -816,6 +900,11 @@ func (m *windowManager) ShowDropdown() {
 	if m.dropdownShow != nil {
 		m.dropdownShow()
 	}
+	// Move the Workspace surfaces before the first frame is built, so a follow
+	// or top-down Panel paints them and the main window paints its placeholder
+	// for the same frame. The decision is read live; a source change made this
+	// show is already reflected without rewiring the Panel.
+	m.syncRenderOwnership()
 	bounds := m.dropdownBounds()
 	window := m.dropdown
 	if window == nil || window.IsDestroyed() {
@@ -828,12 +917,13 @@ func (m *windowManager) ShowDropdown() {
 }
 
 // HideDropdown hides the Panel without destroying it, so the next show reuses
-// the same native window and its content state.
+// the same native window and its content state. When the Panel had taken the
+// Workspace surfaces, hiding it returns them to the main window first.
 func (m *windowManager) HideDropdown() {
-	if m.dropdown == nil || m.dropdown.IsDestroyed() {
-		return
+	if m.dropdown != nil && !m.dropdown.IsDestroyed() {
+		m.dropdown.Hide()
 	}
-	m.dropdown.Hide()
+	m.restoreMainOwnership(true)
 }
 
 // ShutdownDropdown hides and destroys the Panel for quit. It answers the
@@ -846,6 +936,11 @@ func (m *windowManager) ShutdownDropdown() {
 	}
 	m.dropdownClosing = true
 	window.Hide()
+	// Quit destroys the Panel without showing anything: the surfaces go back
+	// to the main window only for whatever frame remains, never by popping a
+	// window open during shutdown.
+	m.renderOwner = state.RenderOwnerMain
+	m.mainVisibleBeforeDropdown = false
 	window.Close()
 }
 
@@ -882,10 +977,13 @@ func (m *windowManager) createDropdown(bounds windowBounds) hostWindow {
 			return false
 		},
 		// A destroyed dropdown leaves neither the manager's field nor the
-		// window enumeration behind, and it never counts toward quit.
+		// window enumeration behind, and it never counts toward quit. If it is
+		// destroyed while the application keeps running it must not leave the
+		// Workspace surfaces owned by a window that no longer exists.
 		OnClosed: func() {
 			m.dropdownClosing = false
 			m.forgetDropdown(window)
+			m.restoreMainOwnership(!m.quitting)
 		},
 	})
 	m.dropdown = window

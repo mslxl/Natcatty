@@ -983,6 +983,31 @@ func hotkeySection(c *ui.Context, state *DesktopState, settings desktop.Settings
 			state.SetHotkeyMode(desktop.HotkeyMode(mode))
 			c.Invalidate()
 		}
+		if caps.Dropdown {
+			// What the Quake dropdown shows. Own is the Quake Workspace; follow
+			// borrows the main window's active Tab for rendering, which resizes
+			// the live terminal to the Panel.
+			source := string(settings.QuakeSource)
+			sourceChanged := false
+			kit.FormRow(c, m.SettingsQuakeSource(), func() {
+				ui.RadioGroup(c, func() {
+					if ui.Radio(c, &source, string(desktop.QuakeSourceOwn),
+						m.SettingsQuakeSourceOwn()).Changed() {
+						sourceChanged = true
+					}
+					if ui.Radio(c, &source, string(desktop.QuakeSourceFollow),
+						m.SettingsQuakeSourceFollow()).Changed() {
+						sourceChanged = true
+					}
+				}).Label(m.SettingsQuakeSource())
+			})
+			if sourceChanged {
+				state.SetQuakeSource(desktop.QuakeSource(source))
+				c.Invalidate()
+			}
+			ui.Text(c, m.SettingsQuakeSourceResizeNote()).FontSize(kit.M(c).Font.Footnote).
+				TextColor(t.TextMuted).MaxWidth(560)
+		}
 		kit.FormRow(c, m.SettingsHotkeyAccelerator(), func() {
 			ui.TextInput(c, state.Hotkey()).Width(220)
 		})
