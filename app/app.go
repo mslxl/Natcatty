@@ -1460,14 +1460,36 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			}
 		}),
 	)
-	wireDropdownQuake(windows, quakeState, func() appdesktop.HotkeyMode {
-		return desktopService.Settings().HotkeyMode
-	})
+	wireDropdownQuake(windows, quakeState, shellState,
+		func() appdesktop.HotkeyMode {
+			return desktopService.Settings().HotkeyMode
+		},
+		func() appdesktop.QuakeSource {
+			return desktopService.Settings().QuakeSource
+		},
+		func() {
+			// Follow mode's Open main window action returns the surfaces
+			// instead of copying them: hide the Panel, then show and focus the
+			// main window that owns the Workspace again.
+			windows.HideDropdown()
+			windows.FocusMain()
+		},
+	)
 	// The main window's root view is a provider, beside the Settings one, so a
 	// later render-ownership route can change what the window shows without
-	// recreating the native window.
+	// recreating the native window. While the Dropdown Panel renders the
+	// Workspace surfaces (follow or top-down), the main window keeps its native
+	// window and draws only a neutral placeholder, so no Surface is rendered
+	// by two windows in the same frame.
+	mainShellView := shell.View(shellState)
 	windows.SetMainContentProvider(func() func(*ui.Context) {
-		return shell.View(shellState)
+		return func(c *ui.Context) {
+			if windows.DropdownOwnsMain() {
+				shell.MainPlaceholder(c)
+				return
+			}
+			mainShellView(c)
+		}
 	})
 	// The tray owns show/hide, recent Hosts, active Port Forwarding Rules, and
 	// quit. Close-to-tray asks the current settings live.

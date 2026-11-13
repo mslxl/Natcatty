@@ -20,6 +20,7 @@ type fakeDesktop struct {
 	deepLinks  []bool
 	hotkey     []string
 	modes      []desktop.HotkeyMode
+	sources    []desktop.QuakeSource
 	autoStart  []bool
 	notified   map[desktop.Event]bool
 	resetCalls int
@@ -64,6 +65,15 @@ func (f *fakeDesktop) SetHotkeyMode(mode desktop.HotkeyMode) error {
 	}
 	f.modes = append(f.modes, mode)
 	f.settings.HotkeyMode = mode
+	return nil
+}
+
+func (f *fakeDesktop) SetQuakeSource(source desktop.QuakeSource) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.sources = append(f.sources, source)
+	f.settings.QuakeSource = source
 	return nil
 }
 
@@ -293,6 +303,65 @@ func TestUnsupportedDropdownDisablesOnlyTheDropdownModes(t *testing.T) {
 func TestHotkeyModesAreSearchable(t *testing.T) {
 	hits := SearchIndex(locales.In("en"))
 	for _, query := range []string{"quake", "topdown", "top-down", "no action"} {
+		found := false
+		for _, hit := range FilterHits(hits, query) {
+			if hit.Area == AreaSystem {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("query %q does not reach the system area", query)
+		}
+	}
+}
+
+// TestQuakeSourceRadiosApplyTheSelectedSource drives the own/follow selector
+// and pins the resize explanation the user needs before choosing follow.
+func TestQuakeSourceRadiosApplyTheSelectedSource(t *testing.T) {
+	fake := newFakeDesktop()
+	state := NewDesktopState(fake)
+	tester := ui.NewTester(viewAt(AreaSystem, Config{Lock: NewAppLockState(&fakeAppLock{}), Desktop: state}), 1100, 720)
+	tester.SetLocale("en")
+	tester.Frame()
+	m := locales.In("en")
+
+	for _, label := range []string{
+		m.SettingsQuakeSource(),
+		m.SettingsQuakeSourceOwn(),
+		m.SettingsQuakeSourceFollow(),
+		m.SettingsQuakeSourceResizeNote(),
+	} {
+		if !tester.HasText(label) {
+			t.Fatalf("the Quake source controls do not show %q: %v", label, tester.Texts())
+		}
+	}
+	if fake.settings.QuakeSource != desktop.QuakeSourceOwn {
+		t.Fatalf("initial source = %q, want own", fake.settings.QuakeSource)
+	}
+
+	if err := tester.Click(m.SettingsQuakeSourceFollow()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if len(fake.sources) != 1 || fake.sources[0] != desktop.QuakeSourceFollow {
+		t.Fatalf("sources = %v after clicking follow", fake.sources)
+	}
+
+	if err := tester.Click(m.SettingsQuakeSourceOwn()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if len(fake.sources) != 2 || fake.sources[1] != desktop.QuakeSourceOwn {
+		t.Fatalf("sources = %v after clicking own", fake.sources)
+	}
+}
+
+// TestQuakeSourceIsSearchable reaches the source control by its content and by
+// the follow wording.
+func TestQuakeSourceIsSearchable(t *testing.T) {
+	hits := SearchIndex(locales.In("en"))
+	for _, query := range []string{"quake source", "content source", "follow"} {
 		found := false
 		for _, hit := range FilterHits(hits, query) {
 			if hit.Area == AreaSystem {

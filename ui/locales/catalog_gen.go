@@ -7228,6 +7228,106 @@ func (msgs Messages) SettingsHotkeyModeUnsupported() string {
 	return Catalog.Format(msgs.locale, "settingsHotkeyModeUnsupported", nil)
 }
 
+// SettingsQuakeSource says "Quake content source"
+// in the language the app shows.
+func SettingsQuakeSource() string { return In(i18n.Locale()).SettingsQuakeSource() }
+
+// SettingsQuakeSource says "Quake content source"
+// in the language of msgs.
+func (msgs Messages) SettingsQuakeSource() string {
+	return Catalog.Format(msgs.locale, "settingsQuakeSource", nil)
+}
+
+// SettingsQuakeSourceOwn says "Quake's own workspace"
+// in the language the app shows.
+func SettingsQuakeSourceOwn() string { return In(i18n.Locale()).SettingsQuakeSourceOwn() }
+
+// SettingsQuakeSourceOwn says "Quake's own workspace"
+// in the language of msgs.
+func (msgs Messages) SettingsQuakeSourceOwn() string {
+	return Catalog.Format(msgs.locale, "settingsQuakeSourceOwn", nil)
+}
+
+// SettingsQuakeSourceFollow says "Follow the main window"
+// in the language the app shows.
+func SettingsQuakeSourceFollow() string { return In(i18n.Locale()).SettingsQuakeSourceFollow() }
+
+// SettingsQuakeSourceFollow says "Follow the main window"
+// in the language of msgs.
+func (msgs Messages) SettingsQuakeSourceFollow() string {
+	return Catalog.Format(msgs.locale, "settingsQuakeSourceFollow", nil)
+}
+
+// SettingsQuakeSourceResizeNote says "Following resizes the terminal to the dropdown size; scrollback may reflow."
+// in the language the app shows.
+func SettingsQuakeSourceResizeNote() string { return In(i18n.Locale()).SettingsQuakeSourceResizeNote() }
+
+// SettingsQuakeSourceResizeNote says "Following resizes the terminal to the dropdown size; scrollback may reflow."
+// in the language of msgs.
+func (msgs Messages) SettingsQuakeSourceResizeNote() string {
+	return Catalog.Format(msgs.locale, "settingsQuakeSourceResizeNote", nil)
+}
+
+// FollowTabsLabel says "Workspace tabs"
+// in the language the app shows.
+func FollowTabsLabel() string { return In(i18n.Locale()).FollowTabsLabel() }
+
+// FollowTabsLabel says "Workspace tabs"
+// in the language of msgs.
+func (msgs Messages) FollowTabsLabel() string {
+	return Catalog.Format(msgs.locale, "followTabsLabel", nil)
+}
+
+// FollowOpenMain says "Open main window"
+// in the language the app shows.
+func FollowOpenMain() string { return In(i18n.Locale()).FollowOpenMain() }
+
+// FollowOpenMain says "Open main window"
+// in the language of msgs.
+func (msgs Messages) FollowOpenMain() string {
+	return Catalog.Format(msgs.locale, "followOpenMain", nil)
+}
+
+// FollowEmptyTitle says "No terminal in the active tab"
+// in the language the app shows.
+func FollowEmptyTitle() string { return In(i18n.Locale()).FollowEmptyTitle() }
+
+// FollowEmptyTitle says "No terminal in the active tab"
+// in the language of msgs.
+func (msgs Messages) FollowEmptyTitle() string {
+	return Catalog.Format(msgs.locale, "followEmptyTitle", nil)
+}
+
+// FollowEmptyDescription says "The active tab is not a terminal. Open the main window to keep working."
+// in the language the app shows.
+func FollowEmptyDescription() string { return In(i18n.Locale()).FollowEmptyDescription() }
+
+// FollowEmptyDescription says "The active tab is not a terminal. Open the main window to keep working."
+// in the language of msgs.
+func (msgs Messages) FollowEmptyDescription() string {
+	return Catalog.Format(msgs.locale, "followEmptyDescription", nil)
+}
+
+// FollowBrowserTitle says "The browser panel is open"
+// in the language the app shows.
+func FollowBrowserTitle() string { return In(i18n.Locale()).FollowBrowserTitle() }
+
+// FollowBrowserTitle says "The browser panel is open"
+// in the language of msgs.
+func (msgs Messages) FollowBrowserTitle() string {
+	return Catalog.Format(msgs.locale, "followBrowserTitle", nil)
+}
+
+// FollowBrowserDescription says "A host browser can only be shown in the main window. Open the main window to use it."
+// in the language the app shows.
+func FollowBrowserDescription() string { return In(i18n.Locale()).FollowBrowserDescription() }
+
+// FollowBrowserDescription says "A host browser can only be shown in the main window. Open the main window to use it."
+// in the language of msgs.
+func (msgs Messages) FollowBrowserDescription() string {
+	return Catalog.Format(msgs.locale, "followBrowserDescription", nil)
+}
+
 // SettingsHotkeyAccelerator says "Toggle window shortcut"
 // in the language the app shows.
 func SettingsHotkeyAccelerator() string { return In(i18n.Locale()).SettingsHotkeyAccelerator() }

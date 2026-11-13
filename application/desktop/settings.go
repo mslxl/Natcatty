@@ -34,6 +34,34 @@ const (
 // DefaultHotkeyMode is the mode a new or pre-field record loads with.
 const DefaultHotkeyMode = HotkeyModeQuake
 
+// QuakeSource selects what the Quake Dropdown Panel shows: the Quake
+// Workspace it owns, or the main window's active Tab borrowed temporarily for
+// rendering. The zero value is not a source: records without the field
+// normalize to Own.
+type QuakeSource string
+
+const (
+	// QuakeSourceOwn shows the Dropdown Panel's own flat terminal Workspace.
+	QuakeSourceOwn QuakeSource = "own"
+	// QuakeSourceFollow follows the main window's active Tab. The Tab stays in
+	// the main Workspace; only the window that renders it changes.
+	QuakeSourceFollow QuakeSource = "follow"
+)
+
+// DefaultQuakeSource is the source a new or pre-field record loads with.
+const DefaultQuakeSource = QuakeSourceOwn
+
+// Valid reports whether source is one of the two sources the settings and
+// service understand. An unknown value from disk normalizes to
+// DefaultQuakeSource; a setter rejects it.
+func (s QuakeSource) Valid() bool {
+	switch s {
+	case QuakeSourceOwn, QuakeSourceFollow:
+		return true
+	}
+	return false
+}
+
 // Valid reports whether mode is one of the four modes the settings and service
 // understand. An unknown value from disk normalizes to DefaultHotkeyMode; a
 // setter rejects it.
@@ -67,6 +95,9 @@ type Settings struct {
 	// Quake dropdown. The old globalHotkeyEnabled key is intentionally gone:
 	// JSON decoding ignores it and an old record loads the default mode.
 	HotkeyMode HotkeyMode `json:"hotkeyMode"`
+	// QuakeSource selects what the Quake dropdown renders: its own Workspace
+	// or the main window's active Tab. It defaults to own.
+	QuakeSource QuakeSource `json:"quakeSource"`
 	// ToggleWindowHotkey is the accelerator the mode above claims. The display
 	// default is the original's "Ctrl + `" outside macOS and "⌃ + `" on macOS.
 	ToggleWindowHotkey string `json:"toggleWindowHotkey"`
@@ -122,6 +153,7 @@ func Defaults(goos string) Settings {
 		ShowTrayIcon:           true,
 		CloseToTray:            true,
 		HotkeyMode:             DefaultHotkeyMode,
+		QuakeSource:            DefaultQuakeSource,
 		ToggleWindowHotkey:     DefaultToggleHotkey(goos),
 		AutoStart:              false,
 		SSHDeepLinks:           true,
@@ -162,6 +194,9 @@ func Normalize(settings Settings, goos string) Settings {
 	settings.Version = SettingsVersion
 	if !settings.HotkeyMode.Valid() {
 		settings.HotkeyMode = DefaultHotkeyMode
+	}
+	if !settings.QuakeSource.Valid() {
+		settings.QuakeSource = DefaultQuakeSource
 	}
 	settings.ToggleWindowHotkey = strings.TrimSpace(settings.ToggleWindowHotkey)
 	if settings.ToggleWindowHotkey == "" {

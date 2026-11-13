@@ -137,6 +137,11 @@ func newDesktopController(windows *windowManager, shellState *state.State,
 		// the windows. A successful mode change must retire a Panel that was
 		// showing the previous mode.
 		service.OnHotkeyModeChange(controller.HandleHotkeyModeChange)
+		// Changing the Quake source changes what the open Panel renders and,
+		// in follow mode, which window owns the Workspace surfaces. Retiring
+		// the Panel re-routes from a clean state instead of leaving the main
+		// window hidden under a stale ownership transfer.
+		service.OnQuakeSourceChange(controller.HandleQuakeSourceChange)
 	}
 	return controller
 }
@@ -200,6 +205,19 @@ func (c *desktopController) HandleHotkey() {
 // Hiding is also where a follow/top-down ownership transfer restores the main
 // window. It runs on the UI thread, after the new mode is saved.
 func (c *desktopController) HandleHotkeyModeChange(appdesktop.HotkeyMode) {
+	if c.windows == nil {
+		return
+	}
+	c.windows.HideDropdown()
+	c.windows.InvalidateAll()
+}
+
+// HandleQuakeSourceChange retires a visible Dropdown Panel when the Quake
+// content source changes. Follow mode moves the Workspace surfaces into the
+// Panel, so a live switch must not leave the main window hidden or the Panel
+// rendering the previous source's content. It runs on the UI thread, after the
+// new source is saved.
+func (c *desktopController) HandleQuakeSourceChange(appdesktop.QuakeSource) {
 	if c.windows == nil {
 		return
 	}

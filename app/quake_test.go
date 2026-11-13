@@ -56,6 +56,7 @@ type quakeGraph struct {
 	opener   *graphQuakeOpener
 	surfaces []*quakeTestSurface
 	mode     appdesktop.HotkeyMode
+	source   appdesktop.QuakeSource
 }
 
 func newQuakeGraph(t *testing.T) *quakeGraph {
@@ -67,6 +68,7 @@ func newQuakeGraph(t *testing.T) *quakeGraph {
 		windowGraph: graph,
 		opener:      &graphQuakeOpener{service: graph.service},
 		mode:        appdesktop.HotkeyModeQuake,
+		source:      appdesktop.QuakeSourceOwn,
 	}
 	q.quake = quakeui.NewState(q.opener, func(*appsession.Session) (quakeui.Surface, error) {
 		surface := &quakeTestSurface{id: len(q.surfaces) + 1}
@@ -77,7 +79,14 @@ func newQuakeGraph(t *testing.T) *quakeGraph {
 		quakeui.WithEmpty(func() { graph.manager.HideDropdown() }),
 	)
 	t.Cleanup(q.quake.Shutdown)
-	wireDropdownQuake(graph.manager, q.quake, func() appdesktop.HotkeyMode { return q.mode })
+	wireDropdownQuake(graph.manager, q.quake, graph.state,
+		func() appdesktop.HotkeyMode { return q.mode },
+		func() appdesktop.QuakeSource { return q.source },
+		func() {
+			graph.manager.HideDropdown()
+			graph.manager.FocusMain()
+		},
+	)
 	return q
 }
 
