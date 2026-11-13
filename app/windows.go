@@ -304,6 +304,10 @@ type windowManager struct {
 	// root uses it to activate the routed workspace so its first frame already
 	// has content.
 	dropdownShow func()
+	// dropdownDismiss handles a Panel close request before the Panel hides. An
+	// open flyout inside the Panel, such as the Quake Host picker, consumes the
+	// first Escape; the next one hides the Panel. Nil always hides.
+	dropdownDismiss func() bool
 	// dropdownHeight is the live visible-height calculation in DIPs. The
 	// default uses half the work area.
 	dropdownHeight func(windowBounds) int
@@ -796,6 +800,14 @@ func (m *windowManager) SetDropdownShowHook(fn func()) {
 	m.dropdownShow = fn
 }
 
+// SetDropdownDismissHandler installs the work that consumes a Panel close
+// request before the Panel hides. The Quake Host picker uses it so the first
+// Escape closes the picker and the next hides the Panel. Nil keeps the old
+// behavior: every close request hides.
+func (m *windowManager) SetDropdownDismissHandler(fn func() bool) {
+	m.dropdownDismiss = fn
+}
+
 // SetDropdownHeightProvider installs the live visible-height calculation in
 // DIPs for a work area. Nil keeps the default half height; the height
 // settings replace it.
@@ -973,6 +985,13 @@ func (m *windowManager) createDropdown(bounds windowBounds) hostWindow {
 			if m.dropdownClosing || m.quitting {
 				return true
 			}
+			// An open flyout inside the Panel gets the first close request,
+			// so Escape dismisses the Host picker before the Panel hides. A
+			// locked App Lock gate replaces the content with the lock screen,
+			// so no flyout is on screen then.
+			if m.dropdownDismiss != nil && m.dropdownContentRendered() && m.dropdownDismiss() {
+				return false
+			}
 			m.HideDropdown()
 			return false
 		},
@@ -1003,6 +1022,14 @@ func (m *windowManager) forgetDropdown(window hostWindow) {
 		m.panels = append(m.panels[:index], m.panels[index+1:]...)
 		break
 	}
+}
+
+// dropdownContentRendered reports whether the Panel's routed content is built.
+// The shared App Lock gate replaces every window's content with the lock
+// screen while closed, so a flyout inside the content is not on screen then
+// and must not consume a close request.
+func (m *windowManager) dropdownContentRendered() bool {
+	return m.gate == nil || !m.gate.Locked()
 }
 
 // dropdownView is the Panel's root content: the shared theme and shortcut

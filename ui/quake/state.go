@@ -7,12 +7,15 @@ package quake
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/egoist/mygo/ui"
 
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/domain/model"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
 // ErrNoSessions reports a Quake workspace without a Session opener or surface
@@ -53,10 +56,18 @@ type TerminalThemeSetter interface {
 }
 
 // SessionOpener opens the Session a Quake Tab shows. The app implements it
-// over the shared Session service; tests substitute a fake. Host Tabs arrive
-// in the follow-up ticket, so v1 only needs the local Shell.
+// over the shared Session service, so a Quake Tab has the same transport,
+// logging, Command History, and notification path as a main-window Tab;
+// tests substitute a fake.
 type SessionOpener interface {
 	OpenLocal() (*appsession.Session, error)
+	OpenHost(domainvault.Host) (*appsession.Session, error)
+}
+
+// HostSource lists the saved Hosts a Host picker offers. The app backs it
+// with the Vault; tests provide a fake, so the view never reads storage.
+type HostSource interface {
+	Hosts() []domainvault.Host
 }
 
 // SurfaceFactory builds the terminal surface for a Session. The app wires the
@@ -64,10 +75,12 @@ type SessionOpener interface {
 type SurfaceFactory func(*appsession.Session) (Surface, error)
 
 // Tab is one Quake Tab's live state. Label carries a Host label for a remote
-// Tab; a local Shell leaves it empty and the view names it by Number.
+// Tab; a local Shell leaves it empty and the view names it by Number. HostID
+// is the saved Host a remote Tab opened, or empty for a local Shell.
 type Tab struct {
 	Number  int
 	Label   string
+	HostID  model.HostID
 	Session *appsession.Session
 	Surface Surface
 }
@@ -77,6 +90,7 @@ type TabInfo struct {
 	Index  int
 	Number int
 	Label  string
+	HostID model.HostID
 	Active bool
 }
 
@@ -89,11 +103,18 @@ type State struct {
 	// empty is called after the last Tab closes, so the app can hide the
 	// Panel. The next Activate creates a new local Shell.
 	empty func()
+	// hosts backs the Host picker. A nil source leaves the picker with the
+	// local Shell entry and an empty Host list.
+	hosts HostSource
 	tabs  []Tab
 	// active is the index of the active Tab, or -1 when there is none.
 	active int
 	// nextNumber names local Tabs the way the main shell does, starting at 1.
 	nextNumber int
+	// pickerOpen is the Host picker's visible state and pickerQuery its
+	// filter. Both are transient and never persist.
+	pickerOpen  bool
+	pickerQuery string
 	// problem is the last failed open, for the view to explain.
 	problem error
 }
@@ -107,6 +128,10 @@ func WithRedraw(fn func()) Option { return func(s *State) { s.redraw = fn } }
 // WithEmpty sets the function called when the last Tab closes. The app wires
 // it to the Dropdown Panel's hide action.
 func WithEmpty(fn func()) Option { return func(s *State) { s.empty = fn } }
+
+// WithHosts installs the saved Hosts the Host picker lists. It is read live,
+// so a Vault edit shows on the next frame without rebuilding the Panel.
+func WithHosts(source HostSource) Option { return func(s *State) { s.hosts = source } }
 
 // NewState returns an empty Quake workspace. The first Activate opens the
 // local Shell; a new State never restores a previous run's Tabs.
@@ -122,6 +147,9 @@ func NewState(opener SessionOpener, surfaces SurfaceFactory, opts ...Option) *St
 // local Shell when it is empty. The Panel's show path calls it; because it is
 // idempotent, hiding and showing the Panel keeps the same Session and Surface.
 func (s *State) Activate() error {
+	// A show starts with no transient flyout open. A picker left open when the
+	// Panel was hidden must not reappear over a freshly shown workspace.
+	s.ClosePicker()
 	if len(s.tabs) > 0 {
 		return nil
 	}
@@ -130,11 +158,38 @@ func (s *State) Activate() error {
 
 // AddLocalTab opens another local Shell Tab and makes it active.
 func (s *State) AddLocalTab() error {
-	if s.opener == nil || s.surfaces == nil {
+	return s.openTab("", "", func() (*appsession.Session, error) {
+		if s.opener == nil {
+			return nil, ErrNoSessions
+		}
+		return s.opener.OpenLocal()
+	})
+}
+
+// AddHostTab opens a Host in a new Quake Tab and makes it active. The Tab
+// carries the Host's label, so the strip marks which Host it connects to. The
+// Session is opened through the same SessionOpener port as the local Shell.
+func (s *State) AddHostTab(host domainvault.Host) error {
+	return s.openTab(hostTabLabel(host), host.ID, func() (*appsession.Session, error) {
+		if s.opener == nil {
+			return nil, ErrNoSessions
+		}
+		return s.opener.OpenHost(host)
+	})
+}
+
+// openTab is the one Tab-opening path: it resolves the Session through open,
+// builds its surface, appends the Tab, and makes it active. A failed open
+// records the problem for the view and leaves the Tab list unchanged.
+func (s *State) openTab(label string, hostID model.HostID, open func() (*appsession.Session, error)) error {
+	if s.surfaces == nil {
 		return ErrNoSessions
 	}
+	// Choosing an entry dismisses the picker even when the open fails, so the
+	// error is visible in the body instead of behind the flyout.
+	s.ClosePicker()
 	s.problem = nil
-	session, err := s.opener.OpenLocal()
+	session, err := open()
 	if err != nil {
 		s.problem = err
 		s.requestRedraw()
@@ -149,6 +204,8 @@ func (s *State) AddLocalTab() error {
 	}
 	s.tabs = append(s.tabs, Tab{
 		Number:  s.nextNumber,
+		Label:   label,
+		HostID:  hostID,
 		Session: session,
 		Surface: surface,
 	})
@@ -158,6 +215,76 @@ func (s *State) AddLocalTab() error {
 	return nil
 }
 
+// hostTabLabel names a remote Tab. A Host without a label is shown by its
+// address; a malformed Host with neither falls back to the empty label, and
+// the view then names the Tab by its number like a local Shell.
+func hostTabLabel(host domainvault.Host) string {
+	if label := strings.TrimSpace(host.Label); label != "" {
+		return label
+	}
+	return strings.TrimSpace(host.Hostname)
+}
+
+// Hosts returns the saved Hosts the picker lists, in Vault order. It is empty
+// when no Host source is wired.
+func (s *State) Hosts() []domainvault.Host {
+	if s.hosts == nil {
+		return nil
+	}
+	return s.hosts.Hosts()
+}
+
+// PickerOpen reports whether the Host picker is showing.
+func (s *State) PickerOpen() bool { return s.pickerOpen }
+
+// Query returns the Host picker's current filter text.
+func (s *State) Query() string { return s.pickerQuery }
+
+// OpenPicker shows the Host picker with an empty filter.
+func (s *State) OpenPicker() {
+	if s.pickerOpen && s.pickerQuery == "" {
+		return
+	}
+	s.pickerOpen = true
+	s.pickerQuery = ""
+	s.requestRedraw()
+}
+
+// ClosePicker hides the Host picker without touching the Tabs. It is a no-op
+// when the picker is already closed.
+func (s *State) ClosePicker() {
+	if !s.pickerOpen && s.pickerQuery == "" {
+		return
+	}
+	s.pickerOpen = false
+	s.pickerQuery = ""
+	s.requestRedraw()
+}
+
+// TogglePicker shows or hides the Host picker.
+func (s *State) TogglePicker() {
+	if s.pickerOpen {
+		s.ClosePicker()
+		return
+	}
+	s.OpenPicker()
+}
+
+// DismissOverlay handles a close request aimed at the Panel before the Panel
+// itself hides. It closes the Host picker and reports true when it consumed
+// the request, so the first Escape dismisses the picker and the next one
+// hides the Panel.
+func (s *State) DismissOverlay() bool {
+	if !s.pickerOpen {
+		return false
+	}
+	s.ClosePicker()
+	return true
+}
+
+// QueryPtr is the Host picker's filter text for the view's search field.
+func (s *State) QueryPtr() *string { return &s.pickerQuery }
+
 // Tabs returns the current Tab descriptions in workspace order.
 func (s *State) Tabs() []TabInfo {
 	tabs := make([]TabInfo, len(s.tabs))
@@ -166,6 +293,7 @@ func (s *State) Tabs() []TabInfo {
 			Index:  index,
 			Number: tab.Number,
 			Label:  tab.Label,
+			HostID: tab.HostID,
 			Active: index == s.active,
 		}
 	}
@@ -243,6 +371,8 @@ func (s *State) Shutdown() {
 	}
 	s.tabs = nil
 	s.active = -1
+	s.pickerOpen = false
+	s.pickerQuery = ""
 }
 
 // SetTerminalFont applies a live font change to every open Quake terminal.

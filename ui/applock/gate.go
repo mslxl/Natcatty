@@ -65,6 +65,15 @@ func NewGate(service *appaplock.Service, opts ...Option) *Gate {
 	return gate
 }
 
+// Locked reports whether the gate is closed, so wrapped content is replaced by
+// the lock screen and is not built. A gate without a service is never locked.
+func (g *Gate) Locked() bool {
+	if g == nil || g.service == nil {
+		return false
+	}
+	return g.service.Snapshot().Locked
+}
+
 // RecordActivity postpones the idle lock. It is for input the content views
 // handle without passing through the gate, such as a window gaining focus.
 func (g *Gate) RecordActivity() {

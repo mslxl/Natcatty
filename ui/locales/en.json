@@ -1417,6 +1417,26 @@
   "followEmptyDescription": "The active tab is not a terminal. Open the main window to keep working.",
   "followBrowserTitle": "The browser panel is open",
   "followBrowserDescription": "A host browser can only be shown in the main window. Open the main window to use it.",
+  "quakeHostPicker": "Connect to Host",
+  "@quakeHostPicker": {
+    "description": "The Quake top bar's Host picker button and the picker's title."
+  },
+  "quakeNewLocalShell": "New local Shell",
+  "@quakeNewLocalShell": {
+    "description": "The Host picker entry that opens a local Shell Tab in the Quake workspace."
+  },
+  "quakeHostsLabel": "Hosts",
+  "@quakeHostsLabel": {
+    "description": "The section label over the saved Hosts in the Quake Host picker."
+  },
+  "quakeNoHosts": "No saved Hosts",
+  "@quakeNoHosts": {
+    "description": "The Quake Host picker's empty state when the Vault has no Hosts."
+  },
+  "quakeNoMatchingHosts": "No matching Hosts",
+  "@quakeNoMatchingHosts": {
+    "description": "The Quake Host picker's empty state when the search filter matches no Host."
+  },
   "settingsHotkeyAccelerator": "Toggle window shortcut",
   "settingsHotkeyApply": "Apply",
   "settingsHotkeyReset": "Reset",

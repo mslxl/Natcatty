@@ -7,15 +7,17 @@ import (
 
 	appdesktop "github.com/mslxl/natcatty/application/desktop"
 	appsession "github.com/mslxl/natcatty/application/session"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/dropdown"
 	quakeui "github.com/mslxl/natcatty/ui/quake"
 	"github.com/mslxl/natcatty/ui/shell"
 	shellstate "github.com/mslxl/natcatty/ui/shell/state"
+	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
 // quakeSessionOpener adapts the shared Session service to the Quake
-// workspace's consumer-owned port. A local Shell opened here uses the same
-// transport, logging, Command History, and notification path as the main
+// workspace's consumer-owned port. A local Shell or Host opened here uses the
+// same transport, logging, Command History, and notification path as the main
 // shell.
 type quakeSessionOpener struct {
 	sessions *appsession.Service
@@ -26,6 +28,31 @@ func (o quakeSessionOpener) OpenLocal() (*appsession.Session, error) {
 		return nil, quakeui.ErrNoSessions
 	}
 	return o.sessions.OpenLocal(context.Background())
+}
+
+// OpenHost starts the Session a remote Quake Tab shows. It builds the same
+// StartSpec the main shell uses, so protocol mapping, capture hooks, tmux
+// attachment, and reconnect behavior do not fork between the windows.
+func (o quakeSessionOpener) OpenHost(host domainvault.Host) (*appsession.Session, error) {
+	if o.sessions == nil {
+		return nil, quakeui.ErrNoSessions
+	}
+	return o.sessions.Open(context.Background(), shellstate.HostSessionSpec(host))
+}
+
+// quakeHostSource adapts the Vault's listed Hosts to the Quake Host picker's
+// consumer-owned port. It reads the effective list, so Host Group defaults
+// and Proxy Profiles reach the connection exactly as the Vault list shows
+// them.
+type quakeHostSource struct {
+	vault *vaultstate.State
+}
+
+func (s quakeHostSource) Hosts() []domainvault.Host {
+	if s.vault == nil {
+		return nil
+	}
+	return s.vault.EffectiveItems()
 }
 
 // wireDropdownQuake routes the Dropdown Panel by Hotkey Mode and Quake Source.
@@ -72,6 +99,14 @@ func wireDropdownQuake(windows *windowManager, state *quakeui.State, shellState 
 		// mode must not create a Quake workspace: its content is the main
 		// Workspace, which the user already owns.
 		_ = state.Activate()
+	})
+	// The first close request (an Escape the page leaves unhandled) dismisses
+	// the Host picker; the next one hides the Panel. Only the own route draws
+	// the picker: a picker left open before a mode or source switch is not on
+	// screen in the follow, top-down, or placeholder routes, so their first
+	// Escape must hide the Panel instead of being consumed.
+	windows.SetDropdownDismissHandler(func() bool {
+		return quakeOwn() && state.DismissOverlay()
 	})
 	windows.SetDropdownBarProvider(func() func(*ui.Context) {
 		return func(c *ui.Context) {

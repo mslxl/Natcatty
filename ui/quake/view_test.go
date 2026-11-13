@@ -43,18 +43,22 @@ type viewFixture struct {
 	state    *State
 	opener   *testOpener
 	surfaces []*viewSurface
+	hosts    *testHostSource
 }
 
 func newViewFixture(t *testing.T) *viewFixture {
 	t.Helper()
 	service := appsession.NewService(&testFactory{})
 	t.Cleanup(service.CloseAll)
-	fixture := &viewFixture{opener: &testOpener{service: service}}
+	fixture := &viewFixture{
+		opener: &testOpener{service: service},
+		hosts:  &testHostSource{hosts: hostsForTest()},
+	}
 	fixture.state = NewState(fixture.opener, func(*appsession.Session) (Surface, error) {
 		surface := &viewSurface{name: fmt.Sprintf("surface-%d", len(fixture.surfaces)+1)}
 		fixture.surfaces = append(fixture.surfaces, surface)
 		return surface, nil
-	})
+	}, WithHosts(fixture.hosts))
 	t.Cleanup(fixture.state.Shutdown)
 	return fixture
 }
@@ -245,5 +249,181 @@ func TestViewShowsAProblemWhenTheShellCannotOpen(t *testing.T) {
 	tester := renderPanel(t, state, 800, 400)
 	if !tester.HasText(locales.In("en").PaneOpenFailed()) {
 		t.Fatalf("the panel did not explain the failed local Shell: %v", tester.Texts())
+	}
+}
+
+// openPicker clicks the bar's Host button and renders the flyout.
+func openPicker(t *testing.T, tester *ui.Tester, state *State) {
+	t.Helper()
+	if err := tester.Click(locales.In("en").QuakeHostPicker()); err != nil {
+		t.Fatalf("clicking the Host picker: %v", err)
+	}
+	tester.Frame()
+	if !state.PickerOpen() {
+		t.Fatalf("the Host picker did not open: %v", tester.Texts())
+	}
+}
+
+// TestHostPickerListsLocalShellAndVaultHosts covers the picker's contents:
+// the local Shell entry and every saved Host, each with its label.
+func TestHostPickerListsLocalShellAndVaultHosts(t *testing.T) {
+	fixture := newViewFixture(t)
+	state := fixture.state
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	m := locales.In("en")
+	tester := renderPanel(t, state, 800, 400)
+	openPicker(t, tester, state)
+
+	for _, want := range []string{m.QuakeNewLocalShell(), m.QuakeHostsLabel(), "Alpha", "Beta", "alpha.example"} {
+		if !tester.HasText(want) {
+			t.Fatalf("the picker is missing %q: %v", want, tester.Texts())
+		}
+	}
+}
+
+// TestSelectingAHostOpensALabelledRemoteTab covers a Host selection: the Tab
+// carries the Host label, the shared opener receives that Host, and the
+// picker closes.
+func TestSelectingAHostOpensALabelledRemoteTab(t *testing.T) {
+	fixture := newViewFixture(t)
+	state := fixture.state
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	tester := renderPanel(t, state, 800, 400)
+	openPicker(t, tester, state)
+
+	if err := tester.Click("Beta"); err != nil {
+		t.Fatalf("clicking the Beta Host: %v", err)
+	}
+	tester.Frame()
+	if state.PickerOpen() {
+		t.Fatal("selecting a Host left the picker open")
+	}
+	if len(fixture.opener.hostOpens) != 1 || fixture.opener.hostOpens[0].ID != "host-beta" {
+		t.Fatalf("opener Hosts = %+v, want Beta", fixture.opener.hostOpens)
+	}
+	tabs := state.Tabs()
+	if len(tabs) != 2 || tabs[1].Label != "Beta" || tabs[1].HostID != "host-beta" {
+		t.Fatalf("Tabs = %+v, want a Beta Host Tab", tabs)
+	}
+	if state.ActiveIndex() != 1 {
+		t.Fatalf("active = %d, want the new Host Tab", state.ActiveIndex())
+	}
+	if !tester.HasText("surface-2") {
+		t.Fatalf("the Host Tab's terminal is not mounted: %v", tester.Texts())
+	}
+	if tester.HasText("Alpha") {
+		t.Fatalf("an unselected Host stayed in the picker: %v", tester.Texts())
+	}
+}
+
+// TestSelectingLocalShellFromThePickerOpensALocalTab covers the picker's
+// local Shell entry: it opens another local Tab through the same opener.
+func TestSelectingLocalShellFromThePickerOpensALocalTab(t *testing.T) {
+	fixture := newViewFixture(t)
+	state := fixture.state
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	tester := renderPanel(t, state, 800, 400)
+	openPicker(t, tester, state)
+
+	if err := tester.Click(locales.In("en").QuakeNewLocalShell()); err != nil {
+		t.Fatalf("clicking the local Shell entry: %v", err)
+	}
+	tester.Frame()
+	if fixture.opener.opens != 2 {
+		t.Fatalf("local opens = %d, want two local Shells", fixture.opener.opens)
+	}
+	if len(fixture.opener.hostOpens) != 0 {
+		t.Fatalf("the local entry opened Hosts: %+v", fixture.opener.hostOpens)
+	}
+	tabs := state.Tabs()
+	if len(tabs) != 2 || tabs[1].Label != "" {
+		t.Fatalf("Tabs = %+v, want a second local Tab", tabs)
+	}
+	if !tester.HasText("surface-2") {
+		t.Fatalf("the new local Tab's terminal is not mounted: %v", tester.Texts())
+	}
+}
+
+// TestEscapeClosesThePickerWithoutHidingTheTerminal proves the first Escape
+// is the picker's: it closes the flyout, leaves the Tab workspace untouched,
+// and keeps the active terminal mounted.
+func TestEscapeClosesThePickerWithoutHidingTheTerminal(t *testing.T) {
+	fixture := newViewFixture(t)
+	state := fixture.state
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	tester := renderPanel(t, state, 800, 400)
+	openPicker(t, tester, state)
+
+	tester.Key(0, ui.KeyEscape)
+	tester.Frame()
+	if state.PickerOpen() {
+		t.Fatalf("Escape did not close the picker: %v", tester.Texts())
+	}
+	if state.TabCount() != 1 || state.ActiveIndex() != 0 {
+		t.Fatalf("Escape changed the workspace: %d Tabs, active %d", state.TabCount(), state.ActiveIndex())
+	}
+	if !tester.HasText("surface-1") {
+		t.Fatalf("Escape hid the active terminal: %v", tester.Texts())
+	}
+	if tester.HasText(locales.In("en").QuakeNewLocalShell()) {
+		t.Fatalf("the closed picker still renders: %v", tester.Texts())
+	}
+}
+
+// TestClickingInsideThePickerKeepsThePanelOpen proves a press on the flyout's
+// own content is not an outside press: the picker and the workspace stay.
+func TestClickingInsideThePickerKeepsThePanelOpen(t *testing.T) {
+	fixture := newViewFixture(t)
+	state := fixture.state
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	tester := renderPanel(t, state, 800, 400)
+	openPicker(t, tester, state)
+
+	if err := tester.Click(locales.In("en").QuakeHostsLabel()); err != nil {
+		t.Fatalf("clicking inside the picker: %v", err)
+	}
+	tester.Frame()
+	if !state.PickerOpen() {
+		t.Fatal("a press inside the picker closed it")
+	}
+	if state.TabCount() != 1 || !tester.HasText("surface-1") {
+		t.Fatalf("a press inside the picker changed the workspace: %d Tabs", state.TabCount())
+	}
+	if !tester.HasText(locales.In("en").QuakeNewLocalShell()) {
+		t.Fatalf("the picker disappeared after an inside press: %v", tester.Texts())
+	}
+}
+
+// TestPickerSearchFiltersHosts covers the picker's search field: typing
+// narrows the Host list without touching the workspace.
+func TestPickerSearchFiltersHosts(t *testing.T) {
+	fixture := newViewFixture(t)
+	state := fixture.state
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	tester := renderPanel(t, state, 800, 400)
+	openPicker(t, tester, state)
+
+	tester.Type("beta")
+	tester.Frame()
+	if !tester.HasText("Beta") {
+		t.Fatalf("the matching Host disappeared: %v", tester.Texts())
+	}
+	if tester.HasText("Alpha") {
+		t.Fatalf("the non-matching Host stayed: %v", tester.Texts())
+	}
+	if state.TabCount() != 1 {
+		t.Fatalf("typing in the picker changed the Tabs: %d", state.TabCount())
 	}
 }
