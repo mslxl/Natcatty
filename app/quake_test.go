@@ -72,6 +72,10 @@ type quakeGraph struct {
 	surfaces []*quakeTestSurface
 	mode     appdesktop.HotkeyMode
 	source   appdesktop.QuakeSource
+	// settings carries the dropdown geometry and hide switches; the mode and
+	// source fields above stay authoritative for routing, as the app's
+	// service does.
+	settings appdesktop.Settings
 	hosts    []domainvault.Host
 }
 
@@ -94,6 +98,7 @@ func newQuakeGraphWithGate(t *testing.T, gate *uiapplock.Gate) *quakeGraph {
 		opener:      &graphQuakeOpener{service: graph.service},
 		mode:        appdesktop.HotkeyModeQuake,
 		source:      appdesktop.QuakeSourceOwn,
+		settings:    appdesktop.Defaults("windows"),
 	}
 	q.quake = quakeui.NewState(q.opener, func(*appsession.Session) (quakeui.Surface, error) {
 		surface := &quakeTestSurface{id: len(q.surfaces) + 1}
@@ -108,6 +113,12 @@ func newQuakeGraphWithGate(t *testing.T, gate *uiapplock.Gate) *quakeGraph {
 	wireDropdownQuake(graph.manager, q.quake, graph.state,
 		func() appdesktop.HotkeyMode { return q.mode },
 		func() appdesktop.QuakeSource { return q.source },
+		func() appdesktop.Settings {
+			current := q.settings
+			current.HotkeyMode = q.mode
+			current.QuakeSource = q.source
+			return current
+		},
 		func() {
 			graph.manager.HideDropdown()
 			graph.manager.FocusMain()

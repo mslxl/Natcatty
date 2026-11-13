@@ -68,10 +68,11 @@ func (s quakeHostSource) Hosts() []domainvault.Host {
 // placeholder.
 //
 // The Panel's default height is mode-specific: Quake takes half the work area
-// and top-down takes 80%, until the geometry settings replace the percentage
-// with their configured value.
+// and top-down takes 80%. Both are replaced by the configured height and unit
+// from the dropdown settings, and recomputed on every show.
 func wireDropdownQuake(windows *windowManager, state *quakeui.State, shellState *shellstate.State,
-	mode func() appdesktop.HotkeyMode, source func() appdesktop.QuakeSource, openMain func()) {
+	mode func() appdesktop.HotkeyMode, source func() appdesktop.QuakeSource,
+	settings func() appdesktop.Settings, openMain func()) {
 	if windows == nil || state == nil {
 		return
 	}
@@ -100,15 +101,27 @@ func wireDropdownQuake(windows *windowManager, state *quakeui.State, shellState 
 	topdown := func() bool {
 		return mode() == appdesktop.HotkeyModeTopdown
 	}
+	// currentSettings keeps the geometry and hide switches live: the settings
+	// page writes them while the Panel may already exist, and every show asks
+	// again. A nil provider keeps the defaults, so old test wiring behaves as
+	// it did.
+	currentSettings := func() appdesktop.Settings {
+		if settings == nil {
+			return appdesktop.Defaults("")
+		}
+		return settings()
+	}
 	// The top-down shell needs the whole work area's height budget; Quake's
 	// compact terminal keeps its half-height default. Both are clamped to the
-	// work area by the window manager.
+	// work area and their mode-specific minimum by configuredDropdownHeight.
 	windows.SetDropdownHeightProvider(func(workArea windowBounds) int {
-		percent := dropdownHeightPercent
-		if topdown() {
-			percent = topdownHeightPercent
-		}
-		return percentHeight(workArea, percent)
+		return configuredDropdownHeight(currentSettings(), topdown(), workArea)
+	})
+	windows.SetDropdownHideOnBlurProvider(func() bool {
+		return currentSettings().HideOnBlur
+	})
+	windows.SetDropdownHideOnEscapeProvider(func() bool {
+		return currentSettings().HideOnEscape
 	})
 	windows.SetDropdownShowHook(func() {
 		if !quakeOwn() {
@@ -154,4 +167,43 @@ func wireDropdownQuake(windows *windowManager, state *quakeui.State, shellState 
 	windows.SetDropdownOwnershipProvider(func() bool {
 		return topdown() || quakeFollow()
 	})
+}
+
+// configuredDropdownHeight turns the persisted height and unit into the
+// Panel's visible height for workArea. Percentages round to whole DIPs; pixel
+// values pass through. The result is clamped to the mode's minimum (120 for
+// Quake, 480 for top-down) and to the work area itself, so a work area
+// shorter than the minimum uses its own height. A record that somehow still
+// carries a zero height or an unknown unit falls back to the mode's default,
+// matching the defensive clamp in the settings layer.
+func configuredDropdownHeight(settings appdesktop.Settings, topdown bool, workArea windowBounds) int {
+	value, unit := settings.QuakeHeight, settings.QuakeHeightUnit
+	fallback, minimum := appdesktop.DefaultQuakeHeight, dropdownMinHeight
+	if topdown {
+		value, unit = settings.TopdownHeight, settings.TopdownHeightUnit
+		fallback, minimum = appdesktop.DefaultTopdownHeight, topdownMinHeight
+	}
+	if !unit.Valid() {
+		// An unknown unit makes the stored number meaningless; use the whole
+		// mode default rather than reading it as percent.
+		unit = appdesktop.DefaultHeightUnit
+		value = fallback
+	}
+	if value <= 0 {
+		value = fallback
+	}
+	height := value
+	if unit == appdesktop.HeightUnitPercent {
+		height = percentHeight(workArea, value)
+	}
+	if workArea.Height < minimum {
+		minimum = workArea.Height
+	}
+	if height < minimum {
+		height = minimum
+	}
+	if height > workArea.Height {
+		height = workArea.Height
+	}
+	return height
 }

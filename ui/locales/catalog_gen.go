@@ -7268,6 +7268,122 @@ func (msgs Messages) SettingsQuakeSourceResizeNote() string {
 	return Catalog.Format(msgs.locale, "settingsQuakeSourceResizeNote", nil)
 }
 
+// SettingsDropdownBehaviorTitle says "Dropdown behavior"
+// in the language the app shows.
+func SettingsDropdownBehaviorTitle() string { return In(i18n.Locale()).SettingsDropdownBehaviorTitle() }
+
+// SettingsDropdownBehaviorTitle says "Dropdown behavior"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownBehaviorTitle() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownBehaviorTitle", nil)
+}
+
+// SettingsDropdownBehaviorDescription says "Heights and hide triggers for the Quake and top-down dropdowns."
+// in the language the app shows.
+func SettingsDropdownBehaviorDescription() string {
+	return In(i18n.Locale()).SettingsDropdownBehaviorDescription()
+}
+
+// SettingsDropdownBehaviorDescription says "Heights and hide triggers for the Quake and top-down dropdowns."
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownBehaviorDescription() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownBehaviorDescription", nil)
+}
+
+// SettingsDropdownQuakeHeight says "Quake height"
+// in the language the app shows.
+func SettingsDropdownQuakeHeight() string { return In(i18n.Locale()).SettingsDropdownQuakeHeight() }
+
+// SettingsDropdownQuakeHeight says "Quake height"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownQuakeHeight() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownQuakeHeight", nil)
+}
+
+// SettingsDropdownTopdownHeight says "Top-down height"
+// in the language the app shows.
+func SettingsDropdownTopdownHeight() string { return In(i18n.Locale()).SettingsDropdownTopdownHeight() }
+
+// SettingsDropdownTopdownHeight says "Top-down height"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownTopdownHeight() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownTopdownHeight", nil)
+}
+
+// SettingsDropdownUnitPercent says "Percent (%)"
+// in the language the app shows.
+func SettingsDropdownUnitPercent() string { return In(i18n.Locale()).SettingsDropdownUnitPercent() }
+
+// SettingsDropdownUnitPercent says "Percent (%)"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownUnitPercent() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownUnitPercent", nil)
+}
+
+// SettingsDropdownUnitPixels says "Pixels (px)"
+// in the language the app shows.
+func SettingsDropdownUnitPixels() string { return In(i18n.Locale()).SettingsDropdownUnitPixels() }
+
+// SettingsDropdownUnitPixels says "Pixels (px)"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownUnitPixels() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownUnitPixels", nil)
+}
+
+// SettingsDropdownHeightInvalid says "Enter a height of 10–100% or 120–10000 px."
+// in the language the app shows.
+func SettingsDropdownHeightInvalid() string { return In(i18n.Locale()).SettingsDropdownHeightInvalid() }
+
+// SettingsDropdownHeightInvalid says "Enter a height of 10–100% or 120–10000 px."
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownHeightInvalid() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownHeightInvalid", nil)
+}
+
+// SettingsDropdownHideOnBlur says "Hide when the dropdown loses focus"
+// in the language the app shows.
+func SettingsDropdownHideOnBlur() string { return In(i18n.Locale()).SettingsDropdownHideOnBlur() }
+
+// SettingsDropdownHideOnBlur says "Hide when the dropdown loses focus"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownHideOnBlur() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownHideOnBlur", nil)
+}
+
+// SettingsDropdownHideOnEscape says "Hide on Escape"
+// in the language the app shows.
+func SettingsDropdownHideOnEscape() string { return In(i18n.Locale()).SettingsDropdownHideOnEscape() }
+
+// SettingsDropdownHideOnEscape says "Hide on Escape"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownHideOnEscape() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownHideOnEscape", nil)
+}
+
+// SettingsDropdownHideOnClickOutside says "Hide when clicking outside"
+// in the language the app shows.
+func SettingsDropdownHideOnClickOutside() string {
+	return In(i18n.Locale()).SettingsDropdownHideOnClickOutside()
+}
+
+// SettingsDropdownHideOnClickOutside says "Hide when clicking outside"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownHideOnClickOutside() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownHideOnClickOutside", nil)
+}
+
+// SettingsDropdownClickOutsideNote says "On systems without a separate click-outside signal, clicking outside is reported as losing focus. Turning the focus t…"
+// in the language the app shows.
+func SettingsDropdownClickOutsideNote() string {
+	return In(i18n.Locale()).SettingsDropdownClickOutsideNote()
+}
+
+// SettingsDropdownClickOutsideNote says "On systems without a separate click-outside signal, clicking outside is reported as losing focus. Turning the focus t…"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownClickOutsideNote() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownClickOutsideNote", nil)
+}
+
 // FollowTabsLabel says "Workspace tabs"
 // in the language the app shows.
 func FollowTabsLabel() string { return In(i18n.Locale()).FollowTabsLabel() }
