@@ -10,6 +10,8 @@ import (
 
 	appdesktop "github.com/mslxl/natcatty/application/desktop"
 	appsession "github.com/mslxl/natcatty/application/session"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
+	uiapplock "github.com/mslxl/natcatty/ui/applock"
 	"github.com/mslxl/natcatty/ui/locales"
 	quakeui "github.com/mslxl/natcatty/ui/quake"
 )
@@ -39,13 +41,26 @@ func (s *quakeTestSurface) Close() { s.closes++ }
 // service. It counts opens because the first-show contract is exactly "one
 // local Shell, reused until the workspace empties".
 type graphQuakeOpener struct {
-	service *appsession.Service
-	opens   int
+	service   *appsession.Service
+	opens     int
+	hostOpens []domainvault.Host
 }
 
 func (o *graphQuakeOpener) OpenLocal() (*appsession.Session, error) {
 	o.opens++
 	return o.service.OpenLocal(context.Background())
+}
+
+func (o *graphQuakeOpener) OpenHost(host domainvault.Host) (*appsession.Session, error) {
+	o.hostOpens = append(o.hostOpens, host)
+	return o.service.Open(context.Background(), appsession.StartSpec{
+		Kind:     appsession.KindSSH,
+		Label:    host.Label,
+		HostID:   host.ID,
+		Hostname: host.Hostname,
+		Port:     host.Port,
+		Username: host.Username,
+	})
 }
 
 // quakeGraph is a window graph with the composition root's Quake wiring
@@ -57,11 +72,21 @@ type quakeGraph struct {
 	surfaces []*quakeTestSurface
 	mode     appdesktop.HotkeyMode
 	source   appdesktop.QuakeSource
+	hosts    []domainvault.Host
 }
+
+// Hosts implements the Quake Host picker's consumer-owned port with the
+// graph's fake Host list.
+func (q *quakeGraph) Hosts() []domainvault.Host { return q.hosts }
 
 func newQuakeGraph(t *testing.T) *quakeGraph {
 	t.Helper()
-	graph := newWindowGraph(t, nil)
+	return newQuakeGraphWithGate(t, nil)
+}
+
+func newQuakeGraphWithGate(t *testing.T, gate *uiapplock.Gate) *quakeGraph {
+	t.Helper()
+	graph := newWindowGraph(t, gate)
 	screen := &fakeScreen{cursor: mygo.Point{X: 400, Y: 300}, displays: []mygo.Display{primaryDisplay()}}
 	graph.manager.SetScreenProvider(screen)
 	q := &quakeGraph{
@@ -75,6 +100,7 @@ func newQuakeGraph(t *testing.T) *quakeGraph {
 		q.surfaces = append(q.surfaces, surface)
 		return surface, nil
 	},
+		quakeui.WithHosts(q),
 		quakeui.WithRedraw(func() { graph.manager.InvalidateAll() }),
 		quakeui.WithEmpty(func() { graph.manager.HideDropdown() }),
 	)
@@ -263,5 +289,243 @@ func TestDropdownQuakeRoutesLiveAndKeepsItsWorkspaceAcrossModes(t *testing.T) {
 	}
 	if tester := render(window); !tester.HasText(locales.In("en").LocalSessionTab(1)) {
 		t.Fatalf("quake mode did not route the Quake workspace after the switch: %v", tester.Texts())
+	}
+}
+
+// quakeTestHosts returns two saved Hosts for the Host picker.
+func quakeTestHosts() []domainvault.Host {
+	return []domainvault.Host{
+		{ID: "host-alpha", Label: "Alpha", Hostname: "alpha.example", Port: 22, Username: "ops"},
+		{ID: "host-beta", Label: "Beta", Hostname: "beta.example", Port: 2222, Username: "root"},
+	}
+}
+
+// TestDropdownQuakeHostPickerOpensAHostTabAndLeavesTheMainWorkspaceUntouched
+// covers a Host selection through the real Panel route: the shared opener is
+// used, the Tab is labelled by its Host, and the main Workspace keeps its Tab
+// order and Session.
+func TestDropdownQuakeHostPickerOpensAHostTabAndLeavesTheMainWorkspaceUntouched(t *testing.T) {
+	q := newQuakeGraph(t)
+	graph := q.windowGraph
+	q.hosts = quakeTestHosts()
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatalf("main NewTab: %v", err)
+	}
+	mainTab := graph.state.ActiveTab()
+	mainSnapshot, _ := graph.state.ActiveSnapshot()
+
+	graph.manager.ToggleDropdown()
+	window := dropdownWindow(t, graph)
+	tester := render(window)
+	m := locales.In("en")
+	if err := tester.Click(m.QuakeHostPicker()); err != nil {
+		t.Fatalf("opening the Host picker: %v", err)
+	}
+	tester.Frame()
+	if !q.quake.PickerOpen() {
+		t.Fatalf("the Host picker did not open: %v", tester.Texts())
+	}
+	if !tester.HasText("Beta") {
+		t.Fatalf("the picker lists no saved Hosts: %v", tester.Texts())
+	}
+	if err := tester.Click("Beta"); err != nil {
+		t.Fatalf("selecting the Beta Host: %v", err)
+	}
+	tester.Frame()
+
+	if len(q.opener.hostOpens) != 1 || q.opener.hostOpens[0].ID != "host-beta" {
+		t.Fatalf("shared opener Hosts = %+v, want Beta", q.opener.hostOpens)
+	}
+	if q.quake.TabCount() != 2 {
+		t.Fatalf("Quake Tabs = %d, want the local Shell and the Host", q.quake.TabCount())
+	}
+	tabs := q.quake.Tabs()
+	if tabs[1].Label != "Beta" || tabs[1].HostID != "host-beta" {
+		t.Fatalf("the Host Tab = %+v, want Beta", tabs[1])
+	}
+	if !window.shown {
+		t.Fatal("selecting a Host hid the Panel")
+	}
+	if !tester.HasText("Beta") || !tester.HasText("quake-terminal-2") {
+		t.Fatalf("the Host Tab or its terminal is missing: %v", tester.Texts())
+	}
+
+	if graph.state.TabCount() != 1 || graph.state.ActiveTab() != mainTab {
+		t.Fatalf("the main Workspace changed: %d Tabs, active %d",
+			graph.state.TabCount(), graph.state.ActiveTab())
+	}
+	after, _ := graph.state.ActiveSnapshot()
+	if after.ID != mainSnapshot.ID {
+		t.Fatalf("the main active Session changed: %+v, want %s", after.ID, mainSnapshot.ID)
+	}
+}
+
+// TestDropdownQuakeEscapeClosesThePickerBeforeThePanel pins the Escape order:
+// the first request dismisses the open picker and keeps the Panel visible,
+// and only the next one hides the Panel. A press inside the picker never
+// hides the Panel.
+func TestDropdownQuakeEscapeClosesThePickerBeforeThePanel(t *testing.T) {
+	q := newQuakeGraph(t)
+	graph := q.windowGraph
+	q.hosts = quakeTestHosts()
+	graph.manager.ToggleDropdown()
+	window := dropdownWindow(t, graph)
+	tester := render(window)
+	m := locales.In("en")
+
+	if err := tester.Click(m.QuakeHostPicker()); err != nil {
+		t.Fatalf("opening the Host picker: %v", err)
+	}
+	tester.Frame()
+	if !q.quake.PickerOpen() {
+		t.Fatal("the Host picker did not open")
+	}
+
+	// The first Escape, as the window receives it when the page leaves it
+	// unhandled, closes the picker and does not hide the Panel.
+	window.Close()
+	if q.quake.PickerOpen() {
+		t.Fatal("the first Escape left the picker open")
+	}
+	if !window.shown {
+		t.Fatal("the first Escape hid the Panel instead of closing the picker")
+	}
+	if q.quake.TabCount() != 1 {
+		t.Fatalf("cancelling the picker changed the Tabs: %d", q.quake.TabCount())
+	}
+
+	// The second Escape hides the same Panel without destroying it.
+	window.Close()
+	if window.shown {
+		t.Fatal("the second Escape did not hide the Panel")
+	}
+	if window.destroyed {
+		t.Fatal("the Escape close request destroyed the Panel")
+	}
+
+	// Re-open the Panel and the picker. Pressing inside the picker keeps both
+	// it and the Panel open.
+	graph.manager.ToggleDropdown()
+	tester = render(window)
+	if err := tester.Click(m.QuakeHostPicker()); err != nil {
+		t.Fatalf("re-opening the Host picker: %v", err)
+	}
+	tester.Frame()
+	if err := tester.Click(m.QuakeHostsLabel()); err != nil {
+		t.Fatalf("pressing inside the picker: %v", err)
+	}
+	tester.Frame()
+	if !q.quake.PickerOpen() {
+		t.Fatal("a press inside the picker closed it")
+	}
+	if !window.shown {
+		t.Fatal("a press inside the picker hid the Panel")
+	}
+	if q.quake.TabCount() != 1 {
+		t.Fatalf("a press inside the picker changed the Tabs: %d", q.quake.TabCount())
+	}
+
+	// The view's own Escape closes the picker without hiding the Panel, which
+	// is the path a focused picker takes.
+	tester.Key(0, ui.KeyEscape)
+	tester.Frame()
+	if q.quake.PickerOpen() {
+		t.Fatal("the picker's Escape did not close it")
+	}
+	if !window.shown {
+		t.Fatal("the picker's Escape hid the Panel")
+	}
+}
+
+// TestDropdownQuakeEscapeHidesThePanelWhenTheRouteHasNoPicker pins the
+// cross-mode close order: a picker left open when the Panel hid without
+// dismissing it is not rendered by the follow or top-down route, so the first
+// Escape must hide the Panel instead of being consumed by an invisible picker.
+func TestDropdownQuakeEscapeHidesThePanelWhenTheRouteHasNoPicker(t *testing.T) {
+	routes := []struct {
+		name  string
+		apply func(*quakeGraph)
+	}{
+		{name: "follow source", apply: func(q *quakeGraph) { q.source = appdesktop.QuakeSourceFollow }},
+		{name: "topdown mode", apply: func(q *quakeGraph) { q.mode = appdesktop.HotkeyModeTopdown }},
+	}
+	for _, route := range routes {
+		t.Run(route.name, func(t *testing.T) {
+			q := newQuakeGraph(t)
+			graph := q.windowGraph
+			q.hosts = quakeTestHosts()
+
+			graph.manager.ToggleDropdown()
+			window := dropdownWindow(t, graph)
+			q.quake.OpenPicker()
+			if !q.quake.PickerOpen() {
+				t.Fatal("the Host picker did not open")
+			}
+
+			// Blur and the hotkey hide the Panel without cancelling its
+			// flyouts, leaving the picker open in the Quake state.
+			graph.manager.HideDropdown()
+			if !q.quake.PickerOpen() {
+				t.Fatal("hiding the Panel closed the Host picker")
+			}
+
+			route.apply(q)
+			graph.manager.ShowDropdown()
+			if !window.shown {
+				t.Fatal("the Panel did not show in the switched route")
+			}
+
+			// The switched route renders no picker, so this Escape is the
+			// Panel's own close request.
+			window.Close()
+			if window.shown {
+				t.Fatal("the first Escape was swallowed by a picker that is not rendered in this route")
+			}
+			if window.destroyed {
+				t.Fatal("the Escape close request destroyed the Panel")
+			}
+
+			// Returning to the own route starts without the stale picker.
+			q.mode = appdesktop.HotkeyModeQuake
+			q.source = appdesktop.QuakeSourceOwn
+			graph.manager.ShowDropdown()
+			if q.quake.PickerOpen() {
+				t.Fatal("the stale picker reappeared over the own workspace")
+			}
+			if tester := render(window); !tester.HasText(locales.In("en").LocalSessionTab(1)) {
+				t.Fatalf("the own route did not render its workspace: %v", tester.Texts())
+			}
+		})
+	}
+}
+
+// TestDropdownQuakeEscapeHidesAPanelLockedOverAnOpenPicker proves a picker
+// hidden behind the App Lock screen does not consume the first Escape: the
+// gate replaces the Quake content with the lock screen, so the Panel's own
+// close request must hide it.
+func TestDropdownQuakeEscapeHidesAPanelLockedOverAnOpenPicker(t *testing.T) {
+	var q *quakeGraph
+	gate := lockedGate(t, func() {
+		if q != nil {
+			q.manager.InvalidateAll()
+		}
+	})
+	q = newQuakeGraphWithGate(t, gate)
+	graph := q.windowGraph
+	q.hosts = quakeTestHosts()
+
+	graph.manager.ToggleDropdown()
+	window := dropdownWindow(t, graph)
+	q.quake.OpenPicker()
+	if !q.quake.PickerOpen() {
+		t.Fatal("the Host picker did not open")
+	}
+
+	window.Close()
+	if window.shown {
+		t.Fatal("the first Escape was swallowed by a picker hidden behind the App Lock screen")
+	}
+	if window.destroyed {
+		t.Fatal("the Escape close request destroyed the Panel")
 	}
 }

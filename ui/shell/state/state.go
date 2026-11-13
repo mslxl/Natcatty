@@ -850,28 +850,11 @@ func (s *State) openHost(host domainvault.Host, startup StartupInput, browser bo
 	s.pending = append(s.pending, label)
 
 	plan := hostSessionTransport(host)
-	resumeKey := plan.newResumeKey()
-	// X11 forwarding requires both the Host preference and an explicit
-	// security acknowledgement, and exists only on SSH.
-	x11 := plan.kind == appsession.KindSSH && host.X11Enabled()
+	spec := HostSessionSpec(host)
+	resumeKey, x11 := spec.ResumeKey, spec.X11Forwarding
 	ctx := s.ctx
 	go func() {
-		session, err := s.sessions.Open(ctx, appsession.StartSpec{
-			Kind:           plan.kind,
-			Label:          label,
-			HostID:         host.ID,
-			Hostname:       host.Hostname,
-			Port:           host.Port,
-			Username:       host.Username,
-			X11Forwarding:  x11,
-			NetworkDevice:  plan.kind == appsession.KindSSH && host.IsNetworkDevice(),
-			AutoAttachTmux: plan.tmux,
-			Telnet:         plan.telnet,
-			Mosh:           plan.mosh,
-			ET:             plan.et,
-			ResumeKey:      resumeKey,
-			Reconnect:      plan.reconnect,
-		})
+		session, err := s.sessions.Open(ctx, spec)
 		s.mu.Lock()
 		s.outcomes = append(s.outcomes, openOutcome{
 			session: session,
@@ -918,24 +901,9 @@ func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (mode
 		ctx = context.Background()
 	}
 	plan := hostSessionTransport(host)
-	resumeKey := plan.newResumeKey()
-	x11 := plan.kind == appsession.KindSSH && host.X11Enabled()
-	session, err := s.sessions.Open(ctx, appsession.StartSpec{
-		Kind:           plan.kind,
-		Label:          label,
-		HostID:         host.ID,
-		Hostname:       host.Hostname,
-		Port:           host.Port,
-		Username:       host.Username,
-		X11Forwarding:  x11,
-		NetworkDevice:  plan.kind == appsession.KindSSH && host.IsNetworkDevice(),
-		AutoAttachTmux: plan.tmux,
-		Telnet:         plan.telnet,
-		Mosh:           plan.mosh,
-		ET:             plan.et,
-		ResumeKey:      resumeKey,
-		Reconnect:      plan.reconnect,
-	})
+	spec := HostSessionSpec(host)
+	resumeKey, x11 := spec.ResumeKey, spec.X11Forwarding
+	session, err := s.sessions.Open(ctx, spec)
 	if err != nil {
 		// Flush clears the pending label and records the problem on the UI
 		// thread, exactly like a failed background Host open.
@@ -964,6 +932,35 @@ func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (mode
 	s.mu.Unlock()
 	s.RequestRedraw()
 	return session.ID(), nil
+}
+
+// HostSessionSpec maps a saved Host onto the shared Session service's start
+// spec under the same protocol, capture, tmux, and reconnect rules the main
+// shell uses. A window-scoped workspace that opens a Host without adding a
+// main Tab (the Dropdown Panel's Quake workspace) uses it, so both paths keep
+// one transport mapping.
+func HostSessionSpec(host domainvault.Host) appsession.StartSpec {
+	label := host.Label
+	if label == "" {
+		label = host.Hostname
+	}
+	plan := hostSessionTransport(host)
+	return appsession.StartSpec{
+		Kind:           plan.kind,
+		Label:          label,
+		HostID:         host.ID,
+		Hostname:       host.Hostname,
+		Port:           host.Port,
+		Username:       host.Username,
+		X11Forwarding:  plan.kind == appsession.KindSSH && host.X11Enabled(),
+		NetworkDevice:  plan.kind == appsession.KindSSH && host.IsNetworkDevice(),
+		AutoAttachTmux: plan.tmux,
+		Telnet:         plan.telnet,
+		Mosh:           plan.mosh,
+		ET:             plan.et,
+		ResumeKey:      plan.newResumeKey(),
+		Reconnect:      plan.reconnect,
+	}
 }
 
 // hostTransportPlan is the transport, restore descriptor kind, endpoint, and

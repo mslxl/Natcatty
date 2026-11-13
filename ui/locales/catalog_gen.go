@@ -7328,6 +7328,80 @@ func (msgs Messages) FollowBrowserDescription() string {
 	return Catalog.Format(msgs.locale, "followBrowserDescription", nil)
 }
 
+// QuakeHostPicker says "Connect to Host"
+// in the language the app shows.
+//
+// The Quake top bar's Host picker button and the picker's title.
+func QuakeHostPicker() string { return In(i18n.Locale()).QuakeHostPicker() }
+
+// QuakeHostPicker says "Connect to Host"
+// in the language of msgs.
+//
+// The Quake top bar's Host picker button and the picker's title.
+func (msgs Messages) QuakeHostPicker() string {
+	return Catalog.Format(msgs.locale, "quakeHostPicker", nil)
+}
+
+// QuakeNewLocalShell says "New local Shell"
+// in the language the app shows.
+//
+// The Host picker entry that opens a local Shell Tab in the Quake
+// workspace.
+func QuakeNewLocalShell() string { return In(i18n.Locale()).QuakeNewLocalShell() }
+
+// QuakeNewLocalShell says "New local Shell"
+// in the language of msgs.
+//
+// The Host picker entry that opens a local Shell Tab in the Quake
+// workspace.
+func (msgs Messages) QuakeNewLocalShell() string {
+	return Catalog.Format(msgs.locale, "quakeNewLocalShell", nil)
+}
+
+// QuakeHostsLabel says "Hosts"
+// in the language the app shows.
+//
+// The section label over the saved Hosts in the Quake Host picker.
+func QuakeHostsLabel() string { return In(i18n.Locale()).QuakeHostsLabel() }
+
+// QuakeHostsLabel says "Hosts"
+// in the language of msgs.
+//
+// The section label over the saved Hosts in the Quake Host picker.
+func (msgs Messages) QuakeHostsLabel() string {
+	return Catalog.Format(msgs.locale, "quakeHostsLabel", nil)
+}
+
+// QuakeNoHosts says "No saved Hosts"
+// in the language the app shows.
+//
+// The Quake Host picker's empty state when the Vault has no Hosts.
+func QuakeNoHosts() string { return In(i18n.Locale()).QuakeNoHosts() }
+
+// QuakeNoHosts says "No saved Hosts"
+// in the language of msgs.
+//
+// The Quake Host picker's empty state when the Vault has no Hosts.
+func (msgs Messages) QuakeNoHosts() string {
+	return Catalog.Format(msgs.locale, "quakeNoHosts", nil)
+}
+
+// QuakeNoMatchingHosts says "No matching Hosts"
+// in the language the app shows.
+//
+// The Quake Host picker's empty state when the search filter matches no
+// Host.
+func QuakeNoMatchingHosts() string { return In(i18n.Locale()).QuakeNoMatchingHosts() }
+
+// QuakeNoMatchingHosts says "No matching Hosts"
+// in the language of msgs.
+//
+// The Quake Host picker's empty state when the search filter matches no
+// Host.
+func (msgs Messages) QuakeNoMatchingHosts() string {
+	return Catalog.Format(msgs.locale, "quakeNoMatchingHosts", nil)
+}
+
 // SettingsHotkeyAccelerator says "Toggle window shortcut"
 // in the language the app shows.
 func SettingsHotkeyAccelerator() string { return In(i18n.Locale()).SettingsHotkeyAccelerator() }

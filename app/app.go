@@ -1451,6 +1451,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		func(s *appsession.Session) (quakeui.Surface, error) {
 			return newSessionSurface(s)
 		},
+		// The Host picker reads the Vault's effective Host list live, so a
+		// renamed Host or an edited group default shows on the next frame.
+		quakeui.WithHosts(quakeHostSource{vault: vaultState}),
 		quakeui.WithRedraw(invalidate),
 		// Closing the last Quake Tab hides the Panel; the next show creates a
 		// fresh local Shell.

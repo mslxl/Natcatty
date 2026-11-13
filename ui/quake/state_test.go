@@ -13,6 +13,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
 // testTransport keeps a Session alive until the test closes it. It is the
@@ -57,11 +58,15 @@ func (f *testFactory) Open(context.Context, appsession.StartSpec) (appsession.Tr
 
 // testOpener is the consumer-owned SessionOpener port as the app implements
 // it: it opens through the shared Session service. It counts opens so a test
-// can prove hiding and showing the panel never starts a second shell.
+// can prove hiding and showing the panel never starts a second shell, and it
+// records the Host each remote Tab opened so the label and lifecycle remain
+// observable.
 type testOpener struct {
-	service *appsession.Service
-	opens   int
-	err     error
+	service   *appsession.Service
+	opens     int
+	err       error
+	hostOpens []domainvault.Host
+	hostErr   error
 }
 
 func (o *testOpener) OpenLocal() (*appsession.Session, error) {
@@ -71,6 +76,29 @@ func (o *testOpener) OpenLocal() (*appsession.Session, error) {
 	}
 	return o.service.OpenLocal(context.Background())
 }
+
+func (o *testOpener) OpenHost(host domainvault.Host) (*appsession.Session, error) {
+	o.hostOpens = append(o.hostOpens, host)
+	if o.hostErr != nil {
+		return nil, o.hostErr
+	}
+	return o.service.Open(context.Background(), appsession.StartSpec{
+		Kind:     appsession.KindSSH,
+		Label:    host.Label,
+		HostID:   host.ID,
+		Hostname: host.Hostname,
+		Port:     host.Port,
+		Username: host.Username,
+	})
+}
+
+// testHostSource is the consumer-owned HostSource port: a fixed list a test
+// controls.
+type testHostSource struct {
+	hosts []domainvault.Host
+}
+
+func (s *testHostSource) Hosts() []domainvault.Host { return s.hosts }
 
 // recordingSurface records what the state asked of it.
 type recordingSurface struct {
@@ -448,5 +476,179 @@ func TestTerminalSettingsReachEverySurface(t *testing.T) {
 		if surface.cursorStyle != domainpreferences.CursorBar || surface.cursorBlink {
 			t.Fatalf("surface %d cursor = %q blink=%v, want bar without blink", index, surface.cursorStyle, surface.cursorBlink)
 		}
+	}
+}
+
+// hostsForTest returns two saved Hosts with distinct labels and endpoints.
+func hostsForTest() []domainvault.Host {
+	return []domainvault.Host{
+		{ID: "host-alpha", Label: "Alpha", Hostname: "alpha.example", Port: 22, Username: "ops"},
+		{ID: "host-beta", Label: "Beta", Hostname: "beta.example", Port: 2222, Username: "root"},
+	}
+}
+
+// TestPickerListsVaultHostsAndCancelLeavesTabsUntouched covers the picker's
+// contents and the cancel contract: opening and closing it changes neither the
+// Tab list nor the active Tab.
+func TestPickerListsVaultHostsAndCancelLeavesTabsUntouched(t *testing.T) {
+	state, _, _ := newTestState(t)
+	source := &testHostSource{hosts: hostsForTest()}
+	state.hosts = source
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	before := state.Tabs()
+	active := state.ActiveIndex()
+
+	if got := state.Hosts(); len(got) != 2 || got[0].ID != "host-alpha" || got[1].ID != "host-beta" {
+		t.Fatalf("Hosts() = %+v, want the source's two Hosts", got)
+	}
+	state.OpenPicker()
+	if !state.PickerOpen() {
+		t.Fatal("OpenPicker did not open the picker")
+	}
+	state.ClosePicker()
+	if state.PickerOpen() {
+		t.Fatal("ClosePicker left the picker open")
+	}
+	if state.ActiveIndex() != active || len(state.Tabs()) != len(before) {
+		t.Fatalf("cancelling changed the workspace: active %d, %d Tabs", state.ActiveIndex(), state.TabCount())
+	}
+	for index := range before {
+		if state.Tabs()[index].Label != before[index].Label || state.Tabs()[index].Active != before[index].Active {
+			t.Fatalf("Tab %d changed after cancel: %+v, want %+v", index, state.Tabs()[index], before[index])
+		}
+	}
+}
+
+// TestAddHostTabOpensThroughTheSharedOpenerAndLabelsTheTab covers a Host
+// selection: the opener receives the Host, the new Tab carries its label and
+// identity, and it becomes active.
+func TestAddHostTabOpensThroughTheSharedOpenerAndLabelsTheTab(t *testing.T) {
+	state, opener, _ := newTestState(t)
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	host := hostsForTest()[1]
+
+	if err := state.AddHostTab(host); err != nil {
+		t.Fatalf("AddHostTab: %v", err)
+	}
+	if len(opener.hostOpens) != 1 || opener.hostOpens[0].ID != host.ID {
+		t.Fatalf("opener Hosts = %+v, want the selected Host", opener.hostOpens)
+	}
+	if state.TabCount() != 2 {
+		t.Fatalf("Tabs = %d, want the local Shell and the Host", state.TabCount())
+	}
+	tabs := state.Tabs()
+	if tabs[1].Label != "Beta" || tabs[1].HostID != host.ID {
+		t.Fatalf("Host Tab = %+v, want label Beta and the Host identity", tabs[1])
+	}
+	if state.ActiveIndex() != 1 || !tabs[1].Active {
+		t.Fatalf("active = %d, want the new Host Tab", state.ActiveIndex())
+	}
+	tabsAfter := state.Tabs()
+	if tabsAfter[0].Label != "" || tabsAfter[0].HostID != "" {
+		t.Fatalf("the local Tab was labelled as a Host: %+v", tabsAfter[0])
+	}
+}
+
+// TestRemoteTabsSelectAndClose proves remote Tabs switch like local ones, end
+// their own Session and Surface on close, and hide the Panel when the last one
+// closes.
+func TestRemoteTabsSelectAndClose(t *testing.T) {
+	state, opener, factory := newTestState(t)
+	hides := 0
+	state.empty = func() { hides++ }
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	hosts := hostsForTest()
+	if err := state.AddHostTab(hosts[0]); err != nil {
+		t.Fatalf("first AddHostTab: %v", err)
+	}
+	if err := state.AddHostTab(hosts[1]); err != nil {
+		t.Fatalf("second AddHostTab: %v", err)
+	}
+	if len(opener.hostOpens) != 2 || len(factory.transports) != 3 {
+		t.Fatalf("Host opens = %d, transports = %d, want two Hosts and three Sessions",
+			len(opener.hostOpens), len(factory.transports))
+	}
+	alphaTransport, betaTransport := factory.transports[1], factory.transports[2]
+	alphaSurface := state.tabs[1].Surface.(*recordingSurface)
+
+	// Switching to a remote Tab changes only the active index.
+	state.SelectTab(1)
+	if state.ActiveIndex() != 1 || state.Tabs()[1].Label != "Alpha" {
+		t.Fatalf("selecting the remote Tab left active %d", state.ActiveIndex())
+	}
+
+	// Closing it ends its Session and Surface, not the other remote Tab's.
+	if !state.CloseTab(1) {
+		t.Fatal("CloseTab reported no change for a remote Tab")
+	}
+	if alphaSurface.closed != 1 {
+		t.Fatalf("closed remote Surface closes = %d, want 1", alphaSurface.closed)
+	}
+	waitTransportClosed(t, alphaTransport)
+	if transportClosed(betaTransport) {
+		t.Fatal("closing the Alpha Tab ended the Beta Session")
+	}
+	if state.TabCount() != 2 || state.Tabs()[1].Label != "Beta" {
+		t.Fatalf("closing one remote Tab left %d Tabs: %+v", state.TabCount(), state.Tabs())
+	}
+
+	// Closing the last remote Tab and then the local one hides the Panel.
+	if !state.CloseTab(1) {
+		t.Fatal("CloseTab reported no change for the last remote Tab")
+	}
+	if !state.CloseTab(0) {
+		t.Fatal("CloseTab reported no change for the local Tab")
+	}
+	if hides != 1 {
+		t.Fatalf("hide requests = %d, want the last close to hide the Panel", hides)
+	}
+}
+
+// TestDismissOverlayClosesThePickerFirst proves the close-request order: the
+// first request closes an open picker and reports consumption, the next one is
+// the Panel's own.
+func TestDismissOverlayClosesThePickerFirst(t *testing.T) {
+	state, _, _ := newTestState(t)
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	state.OpenPicker()
+
+	if !state.DismissOverlay() {
+		t.Fatal("the first close request did not consume an open picker")
+	}
+	if state.PickerOpen() {
+		t.Fatal("the first close request left the picker open")
+	}
+	if state.TabCount() != 1 {
+		t.Fatalf("dismissing the picker changed the Tabs: %d", state.TabCount())
+	}
+	if state.DismissOverlay() {
+		t.Fatal("the second close request was consumed with no overlay open")
+	}
+}
+
+// TestFailedHostOpenSurfacesAProblemAndAddsNoTab covers a Host that cannot
+// connect: the Tab list stays unchanged and the view can explain the failure.
+func TestFailedHostOpenSurfacesAProblemAndAddsNoTab(t *testing.T) {
+	state, opener, _ := newTestState(t)
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	opener.hostErr = errors.New("no route to Host")
+	if err := state.AddHostTab(hostsForTest()[0]); err == nil {
+		t.Fatal("AddHostTab hid a failed Host Session")
+	}
+	if state.TabCount() != 1 {
+		t.Fatalf("a failed Host open left %d Tabs, want the original local Shell", state.TabCount())
+	}
+	if state.Problem() == nil {
+		t.Fatal("a failed Host open recorded no problem for the view")
 	}
 }

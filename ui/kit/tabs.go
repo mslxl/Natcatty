@@ -31,6 +31,10 @@ type TabStripOptions struct {
 	Height float32
 	// Add names the control that opens a new tab; empty leaves it out.
 	Add string
+	// Trailing draws one control after the Tab strip and the add control, as
+	// the Quake bar's Host picker. It draws a shrink-wrapped control; the
+	// strip takes the remaining width.
+	Trailing func()
 }
 
 // TabStrip lays out a row of tabs drawn by tabs, which scrolls sideways when
@@ -53,6 +57,9 @@ func TabStrip(c *ui.Context, role TabRole, o TabStripOptions, tabs func()) (adde
 			}
 			strip.Children(func() { ui.Row(c).Height(height).Children(tabs) })
 			if o.Add == "" {
+				if o.Trailing != nil {
+					o.Trailing()
+				}
 				return
 			}
 			add := ui.ButtonBase(c).Label(o.Add).Tooltip(o.Add).
@@ -63,6 +70,9 @@ func TabStrip(c *ui.Context, role TabRole, o TabStripOptions, tabs func()) (adde
 			}
 			add.Children(func() { IconSized(c, icons.Plus, M(c).Icon.Medium) })
 			added = add.Clicked()
+			if o.Trailing != nil {
+				o.Trailing()
+			}
 		})
 		return added
 	}
@@ -308,6 +318,9 @@ func nativePaneStrip(c *ui.Context, o TabStripOptions, tabs func()) (added bool)
 		})
 		if o.Add != "" {
 			added = IconButtonWith(c, icons.Plus, o.Add, IconOptions{Role: IconCard}).Clicked()
+		}
+		if o.Trailing != nil {
+			o.Trailing()
 		}
 	})
 	return added
