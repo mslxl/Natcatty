@@ -2,6 +2,7 @@ package sessionui
 
 import (
 	"io"
+	"strings"
 	"sync"
 
 	"github.com/egoist/mygo/plugins/terminal"
@@ -42,6 +43,16 @@ type terminalFlow struct {
 	bellSize    appview.Size
 	bellQueue   []appview.Bell
 	bellBacklog [][]byte
+
+	// boundary tracks shell integration prompt/command marks on the same
+	// private terminal mirror used for exact BEL positions. The latest prompt
+	// run is therefore identified by its terminal row, independently of the
+	// prompt's text.
+	boundary           osc133BoundaryScanner
+	promptRow          int
+	promptRowKnown     bool
+	promptSize         appview.Size
+	commandSincePrompt bool
 }
 
 func newTerminalFlow(session *appsession.Session, redraw func()) *terminalFlow {
@@ -135,8 +146,24 @@ func (s *terminalFlow) setCols(cols int) {
 		}
 		s.bellSize = appview.Size{Cols: cols, Rows: rows}
 		s.bellTerm.Resize(cols, rows)
+		s.promptSize = s.bellSize
 	}
 	s.bellMu.Unlock()
+}
+
+// promptBoundary returns the screen row where the current shell prompt run
+// starts. The row is meaningful only while the mirror has the same dimensions
+// as the visible terminal.
+func (s *terminalFlow) promptBoundary(size appview.Size) (int, bool) {
+	if s == nil {
+		return 0, false
+	}
+	s.bellMu.Lock()
+	defer s.bellMu.Unlock()
+	if !s.promptRowKnown || s.promptSize != size {
+		return 0, false
+	}
+	return s.promptRow, true
 }
 
 // bindBellTracker attaches the exact-BEL cursor mirror to the visible terminal.
@@ -165,6 +192,10 @@ func (s *terminalFlow) bindBellTracker(term *terminal.Terminal) {
 	oldConn := s.bellConn
 	s.bellTerm, s.bellConn = tracker, conn
 	s.bellSize = appview.Size{Cols: cols, Rows: rows}
+	s.promptSize = s.bellSize
+	s.promptRow = 0
+	s.promptRowKnown = false
+	s.commandSincePrompt = false
 	backlog := s.bellBacklog
 	s.bellBacklog = nil
 	s.bellMu.Unlock()
@@ -192,6 +223,15 @@ func (s *terminalFlow) feedBell(data []byte) {
 		s.bellBacklog = append(s.bellBacklog, append([]byte(nil), data...))
 		return
 	}
+	s.boundary.feed(data, func(chunk []byte, marker string) {
+		s.feedBellChunk(chunk)
+		if marker != "" {
+			s.recordOSC133(marker)
+		}
+	})
+}
+
+func (s *terminalFlow) feedBellChunk(data []byte) {
 	for len(data) > 0 {
 		i := s.bellScanner.Next(data)
 		if i < 0 {
@@ -206,6 +246,104 @@ func (s *terminalFlow) feedBell(data []byte) {
 		}
 		s.bellQueue = append(s.bellQueue, appview.Bell{Fired: true, Col: col, Row: row})
 		data = data[i+1:]
+	}
+}
+
+// recordOSC133 consumes a complete OSC 133 payload (the leading "133;" is
+// included) after the mirror has replayed it, so CursorCell observes the exact
+// row at which the marker occurred.
+func (s *terminalFlow) recordOSC133(marker string) {
+	if !strings.HasPrefix(marker, "133;") || s.bellTerm == nil {
+		return
+	}
+	sub, args, _ := strings.Cut(strings.TrimPrefix(marker, "133;"), ";")
+	switch sub {
+	case "C":
+		s.commandSincePrompt = true
+	case "B":
+		_, row, ok := appview.CursorCell(s.bellTerm.Snapshot(), s.bellSize)
+		if !ok {
+			return
+		}
+		if s.commandSincePrompt || !s.promptRowKnown || row < s.promptRow {
+			s.promptRow = row
+		}
+		s.promptRowKnown = true
+		s.promptSize = s.bellSize
+		s.commandSincePrompt = false
+	case "D":
+		// D ends a command, but the next B decides whether a new prompt starts
+		// a fresh live run or extends the run of empty prompts.
+		_ = args
+	}
+}
+
+// osc133BoundaryScanner splits a byte stream at complete OSC 133 markers while
+// preserving parser state across reads. Marker bytes do not move the terminal
+// cursor, so the callback can query the mirror immediately after each segment.
+type osc133BoundaryScanner struct {
+	state   byte
+	payload []byte
+}
+
+const (
+	osc133Ground byte = iota
+	osc133Esc
+	osc133OSC
+	osc133OSCEsc
+)
+
+func (s *osc133BoundaryScanner) reset() {
+	s.state = osc133Ground
+	s.payload = s.payload[:0]
+}
+
+func (s *osc133BoundaryScanner) feed(data []byte, emit func([]byte, string)) {
+	start := 0
+	for i, c := range data {
+		var marker string
+		switch s.state {
+		case osc133Ground:
+			if c == 0x1b {
+				s.state = osc133Esc
+			}
+		case osc133Esc:
+			if c == ']' {
+				s.state = osc133OSC
+				s.payload = s.payload[:0]
+			} else if c != 0x1b {
+				s.state = osc133Ground
+			}
+		case osc133OSC:
+			switch c {
+			case 0x07:
+				marker = string(s.payload)
+				s.reset()
+			case 0x1b:
+				s.state = osc133OSCEsc
+			default:
+				if len(s.payload) < 256 {
+					s.payload = append(s.payload, c)
+				}
+			}
+		case osc133OSCEsc:
+			if c == '\\' {
+				marker = string(s.payload)
+				s.reset()
+			} else {
+				if len(s.payload) < 256 {
+					s.payload = append(s.payload, 0x1b, c)
+				}
+				s.state = osc133OSC
+			}
+		}
+		if marker != "" && strings.HasPrefix(marker, "133;") {
+			emit(data[start:i+1], marker)
+			start = i + 1
+		}
+	}
+	if start < len(data) {
+		emit(data[start:], "")
 	}
 }
 

@@ -14378,6 +14378,40 @@ func (msgs Messages) SettingsHistoryCaptureHookEnabled() string {
 	return Catalog.Format(msgs.locale, "settingsHistoryCaptureHookEnabled", nil)
 }
 
+// SettingsRawTerminalModeTitle says "Raw terminal mode"
+// in the language the app shows.
+func SettingsRawTerminalModeTitle() string { return In(i18n.Locale()).SettingsRawTerminalModeTitle() }
+
+// SettingsRawTerminalModeTitle says "Raw terminal mode"
+// in the language of msgs.
+func (msgs Messages) SettingsRawTerminalModeTitle() string {
+	return Catalog.Format(msgs.locale, "settingsRawTerminalModeTitle", nil)
+}
+
+// SettingsRawTerminalModeDescription says "Show every shell as one raw terminal screen and hide Lens history blocks."
+// in the language the app shows.
+func SettingsRawTerminalModeDescription() string {
+	return In(i18n.Locale()).SettingsRawTerminalModeDescription()
+}
+
+// SettingsRawTerminalModeDescription says "Show every shell as one raw terminal screen and hide Lens history blocks."
+// in the language of msgs.
+func (msgs Messages) SettingsRawTerminalModeDescription() string {
+	return Catalog.Format(msgs.locale, "settingsRawTerminalModeDescription", nil)
+}
+
+// SettingsRawTerminalModeEnabled says "Use raw terminal mode for all shells"
+// in the language the app shows.
+func SettingsRawTerminalModeEnabled() string {
+	return In(i18n.Locale()).SettingsRawTerminalModeEnabled()
+}
+
+// SettingsRawTerminalModeEnabled says "Use raw terminal mode for all shells"
+// in the language of msgs.
+func (msgs Messages) SettingsRawTerminalModeEnabled() string {
+	return Catalog.Format(msgs.locale, "settingsRawTerminalModeEnabled", nil)
+}
+
 // SettingsSyncTitle says "Sync & Cloud"
 // in the language the app shows.
 func SettingsSyncTitle() string { return In(i18n.Locale()).SettingsSyncTitle() }

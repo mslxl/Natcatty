@@ -1231,6 +1231,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				sessionui.WithTerminalKeybinds(func() []terminal.Keybind {
 					return terminalKeybinds(keybindingService)
 				}),
+				sessionui.WithRawTerminal(func() bool {
+					return terminalService.Settings().RawTerminalMode
+				}),
 				// Reconnect is the original's manual retry: it abandons the
 				// current transport and dials again without the policy delay.
 				sessionui.WithReconnect(func() { s.ReconnectNow() }, s.CanReconnect),

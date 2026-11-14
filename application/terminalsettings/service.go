@@ -251,6 +251,13 @@ func (s *Service) SetHistoryCaptureHookEnabled(enabled bool) error {
 	})
 }
 
+// SetRawTerminalMode enables or disables the global raw terminal display.
+func (s *Service) SetRawTerminalMode(enabled bool) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.RawTerminalMode = enabled
+	})
+}
+
 // SetConnectionLogRetention sets how many connection logs are kept. Zero
 // keeps every log.
 func (s *Service) SetConnectionLogRetention(count, days int) error {

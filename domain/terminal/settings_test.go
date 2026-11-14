@@ -24,6 +24,9 @@ func TestDefaults(t *testing.T) {
 	if !settings.HistoryCaptureHookEnabled {
 		t.Fatal("the history capture hook is off by default")
 	}
+	if settings.RawTerminalMode {
+		t.Fatal("raw terminal mode is on by default")
+	}
 }
 
 func TestNormalizeDynamicTabTitleMode(t *testing.T) {
