@@ -46,6 +46,14 @@ func View(s *state.State) func(*ui.Context) {
 	// belongs to this window's content function, so the active Tab is revealed
 	// when it changes or the window is resized.
 	reveal := newWorkTabReveal()
+	var (
+		lastFocusKey struct {
+			tab     model.TabID
+			pane    model.PaneID
+			visible bool
+		}
+		focusEpoch uint64
+	)
 	return func(c *ui.Context) {
 		// Connections complete off the UI thread; applying them here keeps
 		// every Tab mutation on this thread.
@@ -59,6 +67,17 @@ func View(s *state.State) func(*ui.Context) {
 			c.SetTheme(uitheme.Chrome(c.Theme(), preset))
 		}
 		t := c.Theme()
+		activeID, _ := s.TabID(s.ActiveTab())
+		activePane, _ := s.FocusedPaneID(s.ActiveTab())
+		focusKey := struct {
+			tab     model.TabID
+			pane    model.PaneID
+			visible bool
+		}{activeID, activePane, terminalVisible(s)}
+		if focusKey != lastFocusKey {
+			lastFocusKey = focusKey
+			focusEpoch++
+		}
 
 		// Hiding the SFTP Tab while it is shown leaves for the Vault, as the
 		// original's; the Session panel still browses files.
@@ -70,7 +89,7 @@ func View(s *state.State) func(*ui.Context) {
 			HomeTabs: func() { homeTabs(c, s, m) },
 			Tabs:     func() { workTabs(c, s, m, t, reveal) },
 			Flush:    terminalVisible(s),
-			Body:     func() { body(c, s, m, t) },
+			Body:     func() { body(c, s, m, t, focusEpoch) },
 		})
 
 		if prompt := s.TrustPrompt(); prompt != nil {
@@ -105,10 +124,10 @@ func homeVisible(s *state.State) bool {
 }
 
 // body draws the chosen Tab's surface below the Tab bar.
-func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, focusEpoch uint64) {
 	switch {
 	case terminalVisible(s):
-		activeTab(c, s, m, t)
+		activeTab(c, s, m, t, focusEpoch)
 	case s.SFTPVisible():
 		layout.HomeLayout(c, layout.HomeSlots{
 			Notices: func() { notices(c, s, m, t) },
@@ -279,7 +298,7 @@ func vaultPageLabel(m locales.Messages, page section.Section) string {
 	}
 }
 
-func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, focusEpoch uint64) {
 	slots := layout.WorkSlots{Top: func() {
 		notices(c, s, m, t)
 		terminalPanels(c, s, m, t)
@@ -293,7 +312,7 @@ func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	}}
 	if root, focus, ok := s.TabTree(s.ActiveTab()); ok {
 		ordinal := 0
-		ref := mainTabRef(s, s.ActiveTab())
+		ref := mainTabRef(s, s.ActiveTab(), focusEpoch)
 		ref.split = !root.IsPane()
 		ref.status = activeStatus(s, m, t)
 		slots.Panes = func() { paneTree(c, s, m, t, ref, root, focus, &ordinal) }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -252,6 +253,10 @@ func TestResumedTerminalTakesTheKeyboardWithoutAClick(t *testing.T) {
 
 	tester.Type("before")
 	eventually(t, func() bool { return strings.Contains(transport.Input(), "before") })
+	tester.Type("second")
+	if !waitFor(t, func() bool { return strings.Contains(transport.Input(), "beforesecond") }) {
+		t.Fatalf("second input after the first never reached the transport: %q", transport.Input())
+	}
 
 	if !surface.Hibernate() {
 		t.Fatal("Hibernate returned false")
@@ -266,6 +271,266 @@ func TestResumedTerminalTakesTheKeyboardWithoutAClick(t *testing.T) {
 	tester.Type("after")
 	if !waitFor(t, func() bool { return strings.Contains(transport.Input(), "after") }) {
 		t.Fatalf("input after Resume never reached the transport: %q", transport.Input())
+	}
+}
+
+func TestFirstPhysicalInputReachesANewTerminal(t *testing.T) {
+	surface, transport := newScriptedSurface(t)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, true) }, 900, 600)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	tester.TypeKey(0, ui.KeyE, "e")
+	if !waitFor(t, func() bool { return strings.Contains(transport.Input(), "e") }) {
+		t.Fatalf("first physical input never reached the transport: %q", transport.Input())
+	}
+}
+
+func TestClickingTheBlankTerminalAreaKeepsInputFocused(t *testing.T) {
+	surface, transport := newScriptedSurface(t)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, true) }, 900, 600)
+	tester.SetLocale("en")
+	surface.terminal.Feed([]byte("PS C:\\Users\\tester> "))
+	tester.Frame()
+
+	terminal, ok := tester.Find("Terminal")
+	if !ok {
+		t.Fatalf("the terminal is not in the frame: %v", tester.Texts())
+	}
+	// The prompt is near the top of the live screen. The click is deliberately
+	// in the large blank area below it, matching the desktop failure where the
+	// old content-sized input node did not receive the pointer.
+	tester.ClickAt(terminal.X+terminal.W/2, terminal.Y+terminal.H*0.75)
+	tester.TypeKey(0, ui.KeyE, "echo blank-area")
+	if !waitFor(t, func() bool {
+		return strings.Contains(transport.Input(), "echo blank-area")
+	}) {
+		t.Fatalf("input after clicking the blank terminal area never reached the transport: %q", transport.Input())
+	}
+}
+
+func TestTerminalUsesTheOrdinaryKeyInputPath(t *testing.T) {
+	surface, _ := newScriptedSurface(t)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, true) }, 900, 600)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	if active, noIME := tester.TextInputActive(); active || noIME {
+		t.Fatalf("terminal installed a native text-input client: active=%v noIME=%v", active, noIME)
+	}
+}
+
+func TestFirstPhysicalInputBeforeTheNextFrameReachesANewTerminal(t *testing.T) {
+	surface, transport := newScriptedSurface(t)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, true) }, 900, 600)
+	tester.SetLocale("en")
+
+	tester.TypeKey(0, ui.KeyE, "e")
+	if !waitFor(t, func() bool { return strings.Contains(transport.Input(), "e") }) {
+		t.Fatalf("first physical input before the next frame never reached the transport: %q", transport.Input())
+	}
+}
+
+func TestFirstPhysicalInputReachesATerminalWithAnExistingLensBlock(t *testing.T) {
+	surface, transport := newScriptedSurface(t)
+	transport.emit("\x1b]1337;NetcattyExec;powershell;Qzpcd29yaw;ZWNobyBvbmU\x07")
+	transport.emit("\x1b]133;C\x07one output\r\n\x1b]133;D;0\x07")
+	waitForTerminalBlock(t, surface, 1)
+
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, true) }, 900, 600)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	tester.TypeKey(0, ui.KeyE, "e")
+	if !waitFor(t, func() bool { return strings.Contains(transport.Input(), "e") }) {
+		t.Fatalf("first physical input with an existing Lens block never reached the transport: %q", transport.Input())
+	}
+}
+
+func TestTerminalKeepsInputAfterTheScreenFlowChanges(t *testing.T) {
+	surface, transport := newScriptedSurface(t)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, true) }, 900, 600)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	tester.TypeKey(0, ui.KeyO, "one")
+	if !waitFor(t, func() bool { return strings.Contains(transport.Input(), "one") }) {
+		t.Fatalf("first input never reached the transport: %q", transport.Input())
+	}
+	// Shell echo/output changes the replayed flow between two keystrokes.
+	transport.emit("one\r\n")
+	waitScreenContains(t, surface, "one")
+	tester.Frame()
+
+	tester.TypeKey(0, ui.KeyT, "two")
+	if !waitFor(t, func() bool { return strings.Contains(transport.Input(), "onetwo") }) {
+		t.Fatalf("second input after the flow changed never reached the transport: %q", transport.Input())
+	}
+}
+
+func TestTerminalKeepsInputAfterALensBlockAppears(t *testing.T) {
+	surface, transport := newScriptedSurface(t)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, true) }, 900, 600)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	tester.TypeKey(0, ui.KeyO, "one")
+	if !waitFor(t, func() bool { return strings.Contains(transport.Input(), "one") }) {
+		t.Fatalf("first input never reached the transport: %q", transport.Input())
+	}
+	// This is the real Terminal transition: the shell marks a command, emits its
+	// output, and closes it. The finished block is inserted before the live
+	// terminal on the next frame.
+	transport.emit("\x1b]1337;NetcattyExec;powershell;Qzpcd29yaw;ZWNobyBvbmU\x07")
+	transport.emit("\x1b]133;C\x07one output\r\n\x1b]133;D;0\x07")
+	waitForTerminalBlock(t, surface, 1)
+	tester.Frame()
+
+	tester.TypeKey(0, ui.KeyT, "two")
+	if !waitFor(t, func() bool { return strings.Contains(transport.Input(), "onetwo") }) {
+		t.Fatalf("second input after a Lens block appeared never reached the transport: %q", transport.Input())
+	}
+}
+
+func TestLensFlowChangeRequestsOneShotTerminalFocusRecovery(t *testing.T) {
+	surface, transport := newScriptedSurface(t)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, true) }, 900, 600)
+	tester.SetLocale("en")
+	tester.Frame()
+	initial := surface.focusRequests
+	if initial == 0 {
+		t.Fatal("the initial focused terminal did not request focus")
+	}
+
+	transport.emit("\x1b]1337;NetcattyExec;powershell;Qzpcd29yaw;ZWNobyBvbmU\x07")
+	transport.emit("\x1b]133;C\x07one output\r\n\x1b]133;D;0\x07")
+	waitForTerminalBlock(t, surface, 1)
+	tester.Frame()
+	if surface.focusRequests <= initial {
+		t.Fatalf("Lens flow insertion did not request one-shot focus recovery: initial=%d now=%d",
+			initial, surface.focusRequests)
+	}
+}
+
+func TestTerminalFocusSurvivesSeveralIdleSeconds(t *testing.T) {
+	surface, _ := newScriptedSurface(t)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, true) }, 900, 600)
+	tester.SetLocale("en")
+	tester.Frame()
+	if !surface.terminalLiveFocused {
+		t.Fatal("the new terminal did not own focus on its first frame")
+	}
+
+	var losses int
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
+		tester.Frame()
+		if !surface.terminalLiveFocused {
+			losses++
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if losses != 0 {
+		t.Fatalf("terminal lost focus on %d idle frames", losses)
+	}
+}
+
+func TestTerminalRetriesInitialFocusUntilWindowFocusSettles(t *testing.T) {
+	surface, _ := newScriptedSurface(t)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, true) }, 900, 600)
+	tester.SetLocale("en")
+
+	// Opening a Local Terminal can coincide with the native window finishing
+	// its focus transition from the Vault button. The first Focus request is
+	// therefore allowed to run while the window is still unfocused.
+	tester.SetFocused(false)
+	tester.Frame()
+	if !surface.terminalLiveFocused {
+		t.Fatal("terminal did not retain logical ownership while the test window was unfocused")
+	}
+	initial := surface.focusRequests
+	if initial < 2 {
+		t.Fatalf("the initial focus transition did not retry: requests=%d", initial)
+	}
+
+	tester.SetFocused(true)
+	tester.Frame()
+	if !surface.terminalLiveFocused {
+		t.Fatal("terminal did not acquire focus after the window focused")
+	}
+	if surface.focusRequests > 5 {
+		t.Fatalf("focus retry was not bounded: requests=%d", surface.focusRequests)
+	}
+}
+
+func TestWindowBlurKeepsLogicalTerminalOwnerForRestore(t *testing.T) {
+	surface, _ := newScriptedSurface(t)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, true) }, 900, 600)
+	tester.SetLocale("en")
+	tester.Frame()
+	if !surface.terminalLiveFocused {
+		t.Fatal("terminal did not own logical focus before the blur")
+	}
+
+	tester.SetFocused(false)
+	tester.Frame()
+	if !surface.terminalLiveFocused {
+		t.Fatal("native blur incorrectly erased logical terminal ownership")
+	}
+
+	surface.focusPending = false
+	surface.focusRetryFrames = 0
+	surface.NotifyWindowFocus()
+	if !surface.focusPending || surface.focusRetryFrames != 4 {
+		t.Fatalf("window restore did not recover the owner after blur: pending=%v retries=%d",
+			surface.focusPending, surface.focusRetryFrames)
+	}
+}
+
+func TestNotifyWindowFocusRestoresOnlyTheTerminalOwner(t *testing.T) {
+	surface, _ := newScriptedSurface(t)
+	surface.focusManaged = true
+	surface.focused = true
+	surface.terminalLiveFocused = true
+
+	surface.NotifyWindowFocus()
+	if !surface.focusPending || surface.focusRetryFrames != 4 {
+		t.Fatalf("window focus did not schedule bounded terminal recovery: pending=%v retries=%d",
+			surface.focusPending, surface.focusRetryFrames)
+	}
+
+	surface.focusPending = false
+	surface.focusRetryFrames = 0
+	surface.terminalLiveFocused = false // Compose or another control owns focus.
+	surface.NotifyWindowFocus()
+	if surface.focusPending || surface.focusRetryFrames != 0 {
+		t.Fatalf("window focus stole focus from another control: pending=%v retries=%d",
+			surface.focusPending, surface.focusRetryFrames)
+	}
+}
+
+func TestTerminalKeepsInputAfterManyLensBlocksArrive(t *testing.T) {
+	surface, transport := newScriptedSurface(t)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, true) }, 900, 600)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	tester.TypeKey(0, ui.KeyO, "seed")
+	if !waitFor(t, func() bool { return strings.Contains(transport.Input(), "seed") }) {
+		t.Fatalf("seed input never reached the transport: %q", transport.Input())
+	}
+	for i := 0; i < 24; i++ {
+		transport.emit("\x1b]1337;NetcattyExec;powershell;Qzpcd29yaw;ZWNobyBibG9jaw\x07")
+		transport.emit("\x1b]133;C\x07lens output\r\n\x1b]133;D;0\x07")
+		waitForTerminalBlock(t, surface, i+1)
+		tester.Frame()
+	}
+
+	tester.TypeKey(0, ui.KeyF, "final")
+	if !waitFor(t, func() bool {
+		return strings.Contains(transport.Input(), "seedfinal")
+	}) {
+		t.Fatalf("input stopped after many Lens blocks: %q", transport.Input())
 	}
 }
 

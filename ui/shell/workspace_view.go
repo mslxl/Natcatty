@@ -21,10 +21,11 @@ import (
 // tabRef binds the split renderer to either a main-window Tab or a detached
 // Tab. The renderer asks it for Pane state and hands back focus and resize.
 type tabRef struct {
-	id       model.TabID
-	pane     func(model.PaneID) (state.PaneInfo, bool)
-	setRatio func(model.SplitID, float32) bool
-	focus    func(model.PaneID) bool
+	id         model.TabID
+	focusEpoch uint64
+	pane       func(model.PaneID) (state.PaneInfo, bool)
+	setRatio   func(model.SplitID, float32) bool
+	focus      func(model.PaneID) bool
 	// managesPanes marks a Tab whose window owns Pane commands, drag/drop, and
 	// Pane close. A detached window holds one Tab and has no split commands
 	// yet.
@@ -43,10 +44,11 @@ type tabRef struct {
 	status paneStatus
 }
 
-func mainTabRef(s *state.State, tabIndex int) tabRef {
+func mainTabRef(s *state.State, tabIndex int, focusEpoch uint64) tabRef {
 	id, _ := s.TabID(tabIndex)
 	return tabRef{
 		id:           id,
+		focusEpoch:   focusEpoch,
 		pane:         func(id model.PaneID) (state.PaneInfo, bool) { return s.PaneInfoAt(tabIndex, id) },
 		setRatio:     func(id model.SplitID, ratio float32) bool { return s.SetSplitRatio(tabIndex, id, ratio) },
 		focus:        func(id model.PaneID) bool { return s.FocusPaneID(tabIndex, id) },
@@ -597,6 +599,9 @@ func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	case info.Surface != nil:
 		// The focused Pane's terminal takes the keyboard; every other Pane
 		// renders without asking for it, so a split cannot steal the focus.
+		if setter, ok := info.Surface.(state.FocusEpochSetter); ok {
+			setter.SetFocusEpoch(ref.focusEpoch)
+		}
 		if target, ok := info.Surface.(state.FocusedSurface); ok {
 			target.ViewFocused(c, info.Focused)
 			return
