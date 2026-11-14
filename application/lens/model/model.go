@@ -218,6 +218,16 @@ func (s *Store) LastID() int {
 	return s.blocks[len(s.blocks)-1].ID
 }
 
+// HasRunning reports whether the terminal tap currently owns an unfinished
+// command block. A shell integration handshake from a child interactive shell
+// uses this to retire the parent shell-launch command before the child starts
+// reporting its own commands.
+func (s *Store) HasRunning() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cur != nil
+}
+
 // Snapshot returns a copy of the block list. The caller may replace a Block, its
 // ID/Raw/Status fields, Cmd.Args and Progress without touching the store (Args and
 // Progress are deep-copied). The lens view (Native/State) and the Raw string are

@@ -632,10 +632,22 @@
       ],
       "wantEnv": {
         "NETCATTY_HOOK_START": "1",
-        "NETCATTY_HOOK_STATE": "<hook-dir>/hook-loaded"
+        "NETCATTY_HOOK_STATE": "<hook-dir>/hook-loaded",
+        "NETCATTY_HOOK_FILE": "<hook-dir>/hook.ps1",
+        "NETCATTY_CHILD_BASHRC": "<hook-dir>/child-bashrc",
+        "NETCATTY_CHILD_SH_ENV": "<hook-dir>/child-sh-env",
+        "NETCATTY_CHILD_WRAPPER_DIR": "<hook-dir>",
+        "NETCATTY_CHILD_CMD_INIT": "<hook-dir>/cmd-init.cmd"
       },
       "wantFiles": {
-        "hook.ps1": "1337;NetcattyExec;powershell"
+        "hook.ps1": "1337;NetcattyExec;powershell",
+        "child-bashrc": "NETCATTY_HOOK",
+        "child-sh-env": "133;B",
+        "cmd-init.cmd": "NETCATTY_CHILD_WRAPPER_DIR",
+        "pwsh.cmd": "NETCATTY_HOOK_FILE",
+        "powershell.cmd": "NETCATTY_HOOK_FILE",
+        "bash.cmd": "NETCATTY_CHILD_BASHRC",
+        "sh.cmd": "NETCATTY_CHILD_BASHRC"
       },
       "verification": "observed",
       "observedPlatforms": [

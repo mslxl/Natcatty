@@ -100,3 +100,25 @@ func TestTapKeepsITerm1337FileOutsideNatcattyCapture(t *testing.T) {
 		t.Fatalf("OSC notifications = %#v, want 1337 File notification", hooks.osc)
 	}
 }
+
+func TestTapRetiresParentBlockWhenAHookedChildShellStarts(t *testing.T) {
+	store := model.NewStore(nil)
+	tap := New(store).WithCols(80)
+	tap.Feed([]byte("\x1b]133;C;pwsh\x07"))
+	tap.Feed([]byte("child banner\r\n"))
+	tap.Feed([]byte("\x1b]1337;NetcattyHook;powershell\x07"))
+	if blocks := store.Snapshot(); len(blocks) != 1 || !blocks[0].Exited {
+		t.Fatalf("parent block = %+v, want one finished block", blocks)
+	}
+	tap.Feed([]byte("\x1b]133;C;Get-ChildItem\x07Name\r\n\x1b]133;D;0\x07"))
+	blocks := store.Snapshot()
+	if len(blocks) != 2 {
+		t.Fatalf("blocks = %+v, want parent and child", blocks)
+	}
+	if blocks[1].Cmd.Typed != "Get-ChildItem" || !blocks[1].Exited {
+		t.Fatalf("child block = %+v", blocks[1])
+	}
+	if blocks[1].Raw != "Name\n" {
+		t.Fatalf("child raw = %q", blocks[1].Raw)
+	}
+}

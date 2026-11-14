@@ -311,6 +311,24 @@ func (t *Tap) dispatchOSC() {
 	t.escActive = false
 	switch code {
 	case "1337":
+		// A child shell that installed the Natcatty hook announces the same
+		// handshake as the parent. The Lens store has one active block, so
+		// retire the parent shell-launch command at the child prompt before
+		// accepting the child's first OSC 133;C. This keeps the child output
+		// in its own block without guessing from prompt text. The Session
+		// capture tap has its own nested-shell state; this is only the UI Lens
+		// boundary.
+		if shell, ok := parseNetcattyHook(rest); ok && t.store.HasRunning() {
+			t.flushLine()
+			t.store.End(0)
+			t.inCommand = false
+			t.rowsModel = nil
+			t.rowsOut = t.rowsOut[:0]
+			t.line = t.line[:0]
+			t.ansi = t.ansi[:0]
+			t.col = 0
+			_ = shell
+		}
 		if cwd, typed, ok := parseNetcattyExec(rest); ok {
 			if t.escActive && t.escStart >= 0 && t.escStart <= len(t.ansi) {
 				t.ansi = t.ansi[:t.escStart]
@@ -425,6 +443,18 @@ func parseNetcattyExec(rest string) (cwd, command string, ok bool) {
 		return "", "", false
 	}
 	return string(cwdBytes), string(commandBytes), true
+}
+
+func parseNetcattyHook(rest string) (string, bool) {
+	const prefix = "NetcattyHook;"
+	if !strings.HasPrefix(rest, prefix) {
+		return "", false
+	}
+	shell := rest[len(prefix):]
+	if !validHookShell(shell) {
+		return "", false
+	}
+	return shell, true
 }
 
 func decodeBase64URL(value string) ([]byte, error) {

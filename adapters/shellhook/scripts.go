@@ -127,6 +127,7 @@ else
   precmd_functions+=(__netcatty_precmd)
   preexec_functions+=(__netcatty_preexec)
 fi
+
 export NETCATTY_HOOK=1
 `
 
@@ -189,7 +190,7 @@ fi
 // bashHookScript appends to PROMPT_COMMAND and to the bash-preexec arrays when
 // they exist, and otherwise chains an existing DEBUG trap. It never replaces a
 // user mechanism.
-const bashHookScript = `if [ -n "${NETCATTY_HOOK:-}" ]; then
+const bashHookScript = `if [ -n "${NETCATTY_HOOK:-}" ] && [ "${NETCATTY_CHILD_HOOK:-}" != "1" ]; then
   if ! declare -F __netcatty_precmd >/dev/null 2>&1; then
     printf "\033]1337;NetcattyHookSkip;bash\007"
   fi
@@ -273,6 +274,11 @@ __netcatty_preexec() {
       __nc_line=${BASH_COMMAND:-}
     fi
   fi
+  case "$__nc_line" in
+    __netcatty_*)
+      return 0
+      ;;
+  esac
   if [ -z "$__nc_line" ]; then
     return 0
   fi
@@ -340,8 +346,160 @@ else
       ;;
   esac
 fi
+
+# A PowerShell-launched child bash keeps the same session-local startup
+# contract. Define the same interactive wrappers here so a user can continue
+# into pwsh, bash, sh, or cmd.exe without losing the hook at the next shell
+# boundary. These functions exist only in a child shell; a top-level bash
+# remains unchanged apart from the capture hook itself.
+if [ "${NETCATTY_CHILD_HOOK:-}" = "1" ]; then
+  __netcatty_child_path() {
+    case "${1-}" in
+      [A-Za-z]:\\*)
+        if command -v cygpath >/dev/null 2>&1; then
+          command cygpath -u "$1"
+          return
+        fi
+        ;;
+    esac
+    printf '%s\n' "${1-}"
+  }
+  __netcatty_child_interactive() {
+    local __nc_arg __nc_name
+    for __nc_arg in "$@"; do
+      __nc_name=${__nc_arg,,}
+      case "$__nc_name" in
+        -c|--command|-f|--file|-encodedcommand|-ec|-noninteractive|-noni)
+          return 1
+          ;;
+        -command:*|-file:*|-encodedcommand:*)
+          return 1
+          ;;
+      esac
+    done
+    return 0
+  }
+  if [ -n "${NETCATTY_PWSH_PATH:-}" ]; then
+    pwsh() {
+      local __nc_path
+      __nc_path=$(__netcatty_child_path "$NETCATTY_PWSH_PATH")
+      if ! __netcatty_child_interactive "$@"; then
+        command "$__nc_path" "$@"
+        return $?
+      fi
+      NETCATTY_CHILD_HOOK=1 NETCATTY_HOOK_START=1 \
+        command "$__nc_path" "$@" -NoLogo -NoExit -ExecutionPolicy Bypass -File "$NETCATTY_HOOK_FILE"
+    }
+  fi
+  if [ -n "${NETCATTY_POWERSHELL_PATH:-}" ]; then
+    powershell() {
+      local __nc_path
+      __nc_path=$(__netcatty_child_path "$NETCATTY_POWERSHELL_PATH")
+      if ! __netcatty_child_interactive "$@"; then
+        command "$__nc_path" "$@"
+        return $?
+      fi
+      NETCATTY_CHILD_HOOK=1 NETCATTY_HOOK_START=1 \
+        command "$__nc_path" "$@" -NoLogo -NoExit -ExecutionPolicy Bypass -File "$NETCATTY_HOOK_FILE"
+    }
+  fi
+  if [ -n "${NETCATTY_BASH_PATH:-}" ] && [ -n "${NETCATTY_CHILD_BASHRC:-}" ]; then
+    bash() {
+      local __nc_path
+      __nc_path=$(__netcatty_child_path "$NETCATTY_BASH_PATH")
+      if ! __netcatty_child_interactive "$@"; then
+        command "$__nc_path" "$@"
+        return $?
+      fi
+      NETCATTY_CHILD_HOOK=1 NETCATTY_HOOK_START=1 \
+        command "$__nc_path" --rcfile "$NETCATTY_CHILD_BASHRC" "$@" -i
+    }
+  fi
+  if [ -n "${NETCATTY_SH_PATH:-}" ] && [ -n "${NETCATTY_CHILD_BASHRC:-}" ]; then
+    sh() {
+      local __nc_path
+      __nc_path=$(__netcatty_child_path "$NETCATTY_SH_PATH")
+      if ! __netcatty_child_interactive "$@"; then
+        command "$__nc_path" "$@"
+        return $?
+      fi
+      NETCATTY_CHILD_HOOK=1 NETCATTY_HOOK_START=1 \
+        command "$__nc_path" --rcfile "$NETCATTY_CHILD_BASHRC" "$@" -i
+    }
+  fi
+  if [ -n "${NETCATTY_CMD_PATH:-}" ] && [ -n "${NETCATTY_CHILD_CMD_INIT:-}" ]; then
+    cmd() {
+      local __nc_path
+      __nc_path=$(__netcatty_child_path "$NETCATTY_CMD_PATH")
+      if [ "$#" -gt 0 ]; then
+        command "$__nc_path" "$@"
+        return $?
+      fi
+      NETCATTY_CHILD_HOOK=1 NETCATTY_HOOK_START=1 \
+        command "$__nc_path" /K "$NETCATTY_CHILD_CMD_INIT"
+    }
+  fi
+fi
+
 export NETCATTY_HOOK=1
 `
+
+// posixStartupScript is the child-shell fallback for sh-compatible shells.
+// POSIX sh has no pre-execution hook, so it can publish prompt/cwd boundaries
+// but cannot report the exact typed command. Git Bash's sh.exe is bash and is
+// upgraded by the wrapper to child-bashrc; a genuine POSIX sh remains raw.
+func posixStartupScript() string {
+	return `__netcatty_prompt() {
+  printf '\033]133;D;%s\007' "$?"
+  printf '\033]133;A\007'
+  printf '\033]7;file://%s%s\007' "${HOSTNAME:-localhost}" "$PWD"
+  printf '\033]133;B\007'
+}
+PS1='$(__netcatty_prompt)$ '
+`
+}
+
+// writeWindowsChildWrappers writes session-local commands used by the hooked
+// PowerShell's child-shell functions and by cmd.exe's PATH bootstrap. They
+// never replace files in the user's PATH and disappear with the Session's
+// capture-hook directory.
+func writeWindowsChildWrappers(dir string) error {
+	files := map[string]string{
+		"cmd-init.cmd": `@echo off
+set "PATH=%NETCATTY_CHILD_WRAPPER_DIR%;%PATH%"
+`,
+		"pwsh.cmd": `@echo off
+set "NETCATTY_CHILD_HOOK=1"
+set "NETCATTY_HOOK_START=1"
+"%NETCATTY_PWSH_PATH%" %* -NoLogo -NoExit -ExecutionPolicy Bypass -File "%NETCATTY_HOOK_FILE%"
+exit /b %ERRORLEVEL%
+`,
+		"powershell.cmd": `@echo off
+set "NETCATTY_CHILD_HOOK=1"
+set "NETCATTY_HOOK_START=1"
+"%NETCATTY_POWERSHELL_PATH%" %* -NoLogo -NoExit -ExecutionPolicy Bypass -File "%NETCATTY_HOOK_FILE%"
+exit /b %ERRORLEVEL%
+`,
+		"bash.cmd": `@echo off
+set "NETCATTY_CHILD_HOOK=1"
+set "NETCATTY_HOOK_START=1"
+"%NETCATTY_BASH_PATH%" --rcfile "%NETCATTY_CHILD_BASHRC%" %* -i
+exit /b %ERRORLEVEL%
+`,
+		"sh.cmd": `@echo off
+set "NETCATTY_CHILD_HOOK=1"
+set "NETCATTY_HOOK_START=1"
+"%NETCATTY_SH_PATH%" --rcfile "%NETCATTY_CHILD_BASHRC%" %* -i
+exit /b %ERRORLEVEL%
+`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o700); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // fishHookText adds fish event handlers. Adding a second handler for
 // fish_preexec, fish_postexec, and fish_prompt preserves the user's handlers;
