@@ -82,7 +82,7 @@ func TestReadOnlyTabRefRendersTheActiveBodyWithoutWorkspaceCommands(t *testing.T
 	if !ok {
 		t.Fatal("the active Tab has no read-only reference")
 	}
-	ref := readOnlyTabRef(state.RenderOwnerDropdown, tab)
+	ref := readOnlyTabRef(state.RenderOwnerDropdown, tab, 0)
 	if ref.owner != state.RenderOwnerDropdown {
 		t.Fatalf("ref owner = %q, want the dropdown renderer", ref.owner)
 	}

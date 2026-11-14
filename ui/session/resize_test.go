@@ -85,7 +85,7 @@ func TestMoshScreenSizeReachesMyGo(t *testing.T) {
 	eventually(t, func() bool {
 		tester.Frame()
 		cols, rows := surface.terminal.Size()
-		return cols == 101 && rows == 37
+		return cols == 101 && rows == 37 && surface.flow.tap.Cols() == 101
 	})
 	select {
 	case <-resized:
@@ -98,6 +98,7 @@ func TestMoshScreenSizeReachesMyGo(t *testing.T) {
 		tester.Frame()
 		cols, rows := surface.terminal.Size()
 		return cols == 101 && rows == 37 &&
+			surface.flow.tap.Cols() == 101 &&
 			strings.Contains(surface.terminal.Text(), "frame-at-101x37")
 	})
 }

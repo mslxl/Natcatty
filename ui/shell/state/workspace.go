@@ -2253,6 +2253,34 @@ func (s *State) SetTerminalFont(family string, size float32) {
 	}
 }
 
+// NotifyWindowFocus tells open Surfaces that their native window gained focus.
+// Each Surface decides whether it owned the terminal before the blur and, if
+// so, requests one bounded focus recovery pass.
+func (s *State) NotifyWindowFocus() {
+	if s == nil {
+		return
+	}
+	notify := func(tab *Tab) {
+		if tab == nil {
+			return
+		}
+		for _, pane := range tab.panes {
+			if pane == nil {
+				continue
+			}
+			if notifier, ok := pane.surface.(WindowFocusNotifier); ok {
+				notifier.NotifyWindowFocus()
+			}
+		}
+	}
+	for _, tab := range s.tabs {
+		notify(tab)
+	}
+	for _, tab := range s.detached {
+		notify(tab)
+	}
+}
+
 // SetTerminalCursor applies a cursor shape and blink preference to every open
 // terminal in the main and detached windows. A Surface that cannot change live
 // is left alone; a new Session reads the setting when its terminal is created.

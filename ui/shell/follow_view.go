@@ -41,9 +41,10 @@ func FollowView(s *state.State, opts ...FollowOption) func(*ui.Context) {
 	for _, opt := range opts {
 		opt(&options)
 	}
+	focus := &focusEpochTracker{}
 	return func(c *ui.Context) {
 		m, t := shellPreamble(c, s, func() bool { return terminalVisible(s) })
-		followBody(c, s, m, t, options.openMain)
+		followBody(c, s, m, t, options.openMain, focus.next(s))
 		s.FinishSideFrameFor(state.RenderOwnerDropdown)
 	}
 }
@@ -51,7 +52,8 @@ func FollowView(s *state.State, opts ...FollowOption) func(*ui.Context) {
 // followBody draws the current follow surface. It is separate so the one
 // FinishSideFrameFor call above runs for every branch, including the empty
 // states.
-func followBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, openMain func()) {
+func followBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
+	openMain func(), focusEpoch uint64) {
 	if !terminalVisible(s) {
 		followEmpty(c, m, icons.SquareTerminal, m.FollowEmptyTitle(), m.FollowEmptyDescription(), openMain)
 		return
@@ -68,7 +70,7 @@ func followBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, 
 		followEmpty(c, m, icons.SquareTerminal, m.FollowEmptyTitle(), m.FollowEmptyDescription(), openMain)
 		return
 	}
-	activeTabBody(c, s, m, t, readOnlyTabRef(state.RenderOwnerDropdown, tab))
+	activeTabBody(c, s, m, t, readOnlyTabRef(state.RenderOwnerDropdown, tab, focusEpoch))
 }
 
 // followEmpty centers a placeholder and, when the app supplied the action,
@@ -107,12 +109,13 @@ func TopdownView(s *state.State, opts ...FollowOption) func(*ui.Context) {
 		opt(&options)
 	}
 	reveal := newWorkTabReveal()
+	focus := &focusEpochTracker{}
 	return func(c *ui.Context) {
 		m, t := shellPreamble(c, s, func() bool { return terminalVisible(s) })
 		if s.ActiveBrowserOpen() {
 			followEmpty(c, m, icons.Globe, m.FollowBrowserTitle(), m.FollowBrowserDescription(), options.openMain)
 		} else {
-			shellLayout(c, s, m, t, state.RenderOwnerDropdown, reveal)
+			shellLayout(c, s, m, t, state.RenderOwnerDropdown, reveal, focus.next(s))
 		}
 		s.FinishSideFrameFor(state.RenderOwnerDropdown)
 	}

@@ -91,6 +91,19 @@ type FocusedSurface interface {
 	ViewFocused(c *ui.Context, focused bool) ui.Element
 }
 
+// FocusEpochSetter lets a Surface reset its retained live-terminal identity
+// when its Tab is shown again after another Tab was active.
+type FocusEpochSetter interface {
+	SetFocusEpoch(uint64)
+}
+
+// WindowFocusNotifier lets a Surface restore its live terminal input after
+// the native window regains focus. The notification is edge-triggered by the
+// window host, so a terminal does not need to call Focus on every frame.
+type WindowFocusNotifier interface {
+	NotifyWindowFocus()
+}
+
 // TerminalThemeSetter is implemented by a Surface whose terminal can recolor
 // without being recreated. The Settings window uses it to apply a color scheme
 // to open Sessions.

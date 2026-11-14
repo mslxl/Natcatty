@@ -25,15 +25,34 @@ import (
 type typingTransport struct {
 	mu      sync.Mutex
 	written bytes.Buffer
+	output  chan []byte
 	closed  chan struct{}
 	once    sync.Once
 }
 
 func newTypingTransport() *typingTransport {
-	return &typingTransport{closed: make(chan struct{})}
+	return &typingTransport{
+		output: make(chan []byte, 64),
+		closed: make(chan struct{}),
+	}
 }
 
-func (t *typingTransport) Read([]byte) (int, error) { <-t.closed; return 0, io.EOF }
+func (t *typingTransport) Read(p []byte) (int, error) {
+	select {
+	case data := <-t.output:
+		n := copy(p, data)
+		if n < len(data) {
+			select {
+			case t.output <- data[n:]:
+			case <-t.closed:
+				return n, nil
+			}
+		}
+		return n, nil
+	case <-t.closed:
+		return 0, io.EOF
+	}
+}
 
 func (t *typingTransport) Write(p []byte) (int, error) {
 	t.mu.Lock()
@@ -54,6 +73,13 @@ func (t *typingTransport) input() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.written.String()
+}
+
+func (t *typingTransport) emit(text string) {
+	select {
+	case t.output <- []byte(text):
+	case <-t.closed:
+	}
 }
 
 // typingFactory hands out one recording transport per opened Session, in the
@@ -130,7 +156,7 @@ func TestNewTabTerminalTakesTheKeyboardWithoutAClick(t *testing.T) {
 
 	// No click and no explicit focus request: the terminal already has the
 	// keyboard.
-	tester.Type("echo hello")
+	tester.TypeKey(0, ui.KeyE, "echo hello")
 	if !eventuallyInput(t, tester, factory.at(0), "echo hello") {
 		t.Fatalf("typed input never reached the new Tab's Session: %q", factory.at(0).input())
 	}
@@ -204,6 +230,80 @@ func TestTabSwitchRestoresTheTerminalKeyboard(t *testing.T) {
 	}
 	if strings.Contains(factory.at(1).input(), "back") {
 		t.Fatalf("input for the re-shown first Tab reached the second Tab: %q", factory.at(1).input())
+	}
+}
+
+// TestTerminalInputSurvivesDelayedOutputAndTabSwitches reproduces the exact
+// timing reported by the desktop app: a new Local Terminal is usable for a
+// moment, asynchronous shell/Lens output arrives and causes redraws, a second
+// Terminal is opened, and input is tried before and after switching between
+// the two Tabs. Every keystroke must still reach the active Session.
+func TestTerminalInputSurvivesDelayedOutputAndTabSwitches(t *testing.T) {
+	factory := &typingFactory{}
+	st := newTypingState(t, factory)
+	if err := st.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	waitForRealSurfaces(t, st, 1)
+
+	tester := ui.NewTester(View(st), 1100, 720)
+	tester.SetLocale("en")
+	tester.Frame()
+	tester.TypeKey(0, ui.KeyO, "one")
+	if !eventuallyInput(t, tester, factory.at(0), "one") {
+		t.Fatalf("first Terminal did not accept initial input: %q", factory.at(0).input())
+	}
+
+	// Simulate the shell's prompt/output and Tern's Lens protocol arriving
+	// after the first frame, while the user leaves the Tab untouched.
+	factory.at(0).emit("\x1b]1337;NetcattyExec;powershell;Qzpcd29yaw;ZWNobyBvbmU\x07")
+	factory.at(0).emit("\x1b]133;C\x07one output\r\n\x1b]133;D;0\x07")
+	pumpFrames(tester, 500*time.Millisecond)
+	tester.TypeKey(0, ui.KeyT, "two")
+	if !eventuallyInput(t, tester, factory.at(0), "onetwo") {
+		t.Fatalf("Terminal 1 stopped accepting input after delayed Lens output: %q", factory.at(0).input())
+	}
+
+	if err := st.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	waitForRealSurfaces(t, st, 2)
+	tester.Frame()
+	tester.TypeKey(0, ui.KeyN, "new")
+	if !eventuallyInput(t, tester, factory.at(1), "new") {
+		t.Fatalf("new Terminal stopped accepting its first input: %q", factory.at(1).input())
+	}
+
+	// The second terminal gets output a little later, which is the window in
+	// which the reported bug makes its input stop working.
+	factory.at(1).emit("\x1b]1337;NetcattyExec;powershell;Qzpcd29yaw;ZWNobyBuZXc=\x07")
+	factory.at(1).emit("\x1b]133;C\x07new output\r\n\x1b]133;D;0\x07")
+	pumpFrames(tester, 750*time.Millisecond)
+	tester.TypeKey(0, ui.KeyE, "again")
+	if !eventuallyInput(t, tester, factory.at(1), "newagain") {
+		t.Fatalf("new Terminal stopped accepting input after delayed output: %q", factory.at(1).input())
+	}
+
+	st.SelectTab(0)
+	tester.Frame()
+	tester.TypeKey(0, ui.KeyB, "back")
+	if !eventuallyInput(t, tester, factory.at(0), "onetwoback") {
+		t.Fatalf("old Terminal stopped accepting input after switching back: %q", factory.at(0).input())
+	}
+
+	st.SelectTab(1)
+	tester.Frame()
+	tester.TypeKey(0, ui.KeyF, "final")
+	if !eventuallyInput(t, tester, factory.at(1), "newagainfinal") {
+		t.Fatalf("new Terminal stopped accepting input after switching forward: %q", factory.at(1).input())
+	}
+}
+
+func pumpFrames(tester *ui.Tester, duration time.Duration) {
+	deadline := time.Now().Add(duration)
+	for time.Now().Before(deadline) {
+		tester.Frame()
+		time.Sleep(time.Millisecond)
 	}
 }
 
