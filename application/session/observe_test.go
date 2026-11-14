@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mslxl/natcatty/domain/model"
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 )
 
 // readObservation reads until want appears or the deadline expires. The
@@ -99,6 +100,39 @@ func TestObserverSnapshotMatchesTheOwnerAndReceivesFeed(t *testing.T) {
 
 	transport.send("second line\r\n")
 	readObservation(t, observation, "second line")
+}
+
+func TestObserverAndLensOutputSeeTheSameDecodedStream(t *testing.T) {
+	transport := newFakeTransport()
+	codec := &recordingCodec{}
+	service := newTestService(&fakeFactory{transport: transport},
+		WithCodecFactory(func(domainterminal.Encoding) Codec { return codec }))
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), StartSpec{Kind: KindSSH, Encoding: domainterminal.EncodingUTF8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	var observed bytes.Buffer
+	remove := session.SubscribeOutput(func(data []byte) { observed.Write(data) })
+	t.Cleanup(remove)
+	transport.send("remote-output\r\n")
+	eventually(t, "decoded observer stream", func() bool {
+		return observed.String() == "decoded:remote-output\r\n"
+	})
+	observation, err := session.Observe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = observation.Close() })
+	if got := string(observation.Screen().Data); got != "decoded:remote-output\r\n" {
+		t.Fatalf("observer replay = %q, want decoded stream", got)
+	}
+	decoded, _, _ := codec.snapshot()
+	if len(decoded) == 0 || string(decoded[0]) != "remote-output\r\n" {
+		t.Fatalf("codec input = %q, want remote bytes", decoded)
+	}
 }
 
 // TestObserverCannotWriteOrConsumeTheLiveView proves an observer is not a
