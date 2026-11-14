@@ -9,3 +9,7 @@ myeasylog.log
 
 # Throwaway profile of a development build (mygo.IsDev)
 .natcatty-test/
+
+# Windows ConPTY release assets are downloaded during the build.
+resources/winconpty/*.dll
+resources/winconpty/*.exe
