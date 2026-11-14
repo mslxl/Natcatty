@@ -284,6 +284,9 @@ func (s *Session) emitOutput(p []byte) {
 // clear with the owning screen instead of resurrecting cleared scrollback from
 // the bounded history.
 func (s *Session) ClearBuffer() {
+	s.outputObserverMu.Lock()
+	s.outputReplay = snapshotBuffer{}
+	s.outputObserverMu.Unlock()
 	s.emitOutput([]byte("\x1b[3J"))
 }
 

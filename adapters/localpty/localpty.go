@@ -145,6 +145,20 @@ func environment(extra []string) []string {
 
 	set("TERM", "xterm-256color")
 	set("COLORTERM", "truecolor")
+	set("TERM_PROGRAM", "Natcatty")
+	set("NATCATTY_LENSES", "1")
+	// Keep command output parseable for Natcatty's command-lens renderer:
+	// disable interactive pagers and force line-oriented build progress.
+	set("PAGER", "cat")
+	set("GIT_PAGER", "cat")
+	set("GH_PAGER", "cat")
+	set("MANPAGER", "cat")
+	set("SYSTEMD_PAGER", "cat")
+	set("AWS_PAGER", "")
+	set("BAT_PAGING", "never")
+	set("PSQL_PAGER", "cat")
+	set("BUILDKIT_PROGRESS", "plain")
+	set("CLICOLOR", "1")
 	if runtime.GOOS != "windows" && !hasLocale(get("LANG"), get("LC_ALL"), get("LC_CTYPE")) {
 		set("LANG", "en_US.UTF-8")
 	}

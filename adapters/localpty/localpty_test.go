@@ -13,6 +13,36 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 )
 
+func TestEnvironmentIncludesTerminalLensHints(t *testing.T) {
+	values := make(map[string]string)
+	for _, entry := range environment(nil) {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	for key, want := range map[string]string{
+		"TERM":              "xterm-256color",
+		"COLORTERM":         "truecolor",
+		"TERM_PROGRAM":      "Natcatty",
+		"NATCATTY_LENSES":   "1",
+		"PAGER":             "cat",
+		"GIT_PAGER":         "cat",
+		"GH_PAGER":          "cat",
+		"MANPAGER":          "cat",
+		"SYSTEMD_PAGER":     "cat",
+		"AWS_PAGER":         "",
+		"BAT_PAGING":        "never",
+		"PSQL_PAGER":        "cat",
+		"BUILDKIT_PROGRESS": "plain",
+		"CLICOLOR":          "1",
+	} {
+		if got := values[key]; got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+}
+
 // TestLocalShellProducesOutputAndExitStatus is the adapter integration seam:
 // it proves a real pseudo-terminal carries output and reports exit.
 func TestLocalShellProducesOutputAndExitStatus(t *testing.T) {

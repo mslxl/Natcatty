@@ -634,6 +634,18 @@ type Session struct {
 	rawMu     sync.Mutex
 	rawFeed   *rawOutputFeed
 
+	// outputMu guards observers that receive the decoded terminal stream in
+	// the same order as the live terminal. UI features such as command lenses
+	// subscribe here without consuming the Session's one TerminalConn reader.
+	outputObserverMu sync.Mutex
+	outputObservers  map[uint64]func([]byte)
+	nextOutputID     uint64
+	// outputReplay keeps the bounded decoded stream needed to reconstruct a
+	// command-lens surface created after a Session has already produced output.
+	// It is separate from replay, which contains the tap-filtered screen bytes
+	// intended for terminal replay and observers.
+	outputReplay snapshotBuffer
+
 	// internalMu guards internalMarkers. Every wrapper this Session types
 	// carries an unguessable marker; the shell hook captures the wrapper line
 	// exactly like user input, so a completion carrying a marker belongs to
@@ -2004,6 +2016,11 @@ func (s *Session) readLoop(generation int, transport Transport) {
 		if n > 0 {
 			now := time.Now()
 			decoded := s.decodeOutput(buffer[:n])
+			// Observers such as the command-lens surface see the complete
+			// decoded stream while the Session still owns ordering. They do
+			// not consume the bytes; TerminalConn continues to receive them
+			// through the existing tap path below.
+			s.publishOutput(decoded)
 			// A running raw command sees the transport output before the tap:
 			// its completion detection must not depend on prompt tracking or
 			// history effects.
