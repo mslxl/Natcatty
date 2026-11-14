@@ -5,13 +5,16 @@ import (
 	"encoding/base64"
 	"io"
 	"math"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
 
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/ui/terminal/appview"
 )
 
 // terminalFlowTransport is a controllable Session transport. It lets these
@@ -65,6 +68,40 @@ func waitForTerminalBlock(t *testing.T, surface *Surface, want int) {
 	t.Fatalf("timed out waiting for %d block(s); got %d", want, len(surface.flow.store.Snapshot()))
 }
 
+func TestTerminalFlowTracksPromptRowsWithoutPromptText(t *testing.T) {
+	flow := &terminalFlow{}
+	term, err := terminal.New(terminal.Options{Conn: newTerminalFlowTransport(), Scrollback: -1})
+	if err != nil {
+		t.Skipf("the terminal plugin is unavailable here: %v", err)
+	}
+	defer func() { _ = term.Close() }()
+	term.Resize(40, 8)
+	flow.bindBellTracker(term)
+
+	// The prompt deliberately contains no conventional shell marker. OSC 133;B
+	// is the boundary, and the visible text is arbitrary.
+	flow.feedBell([]byte("\x1b]133;A\x07\x1b]133;B\x07⟦session=alpha⟧ "))
+	row, ok := flow.promptBoundary(appview.Size{Cols: 40, Rows: 8})
+	if !ok || row != 0 {
+		t.Fatalf("first prompt boundary = (%d, %t), want (0, true)", row, ok)
+	}
+
+	// An empty Enter redraws another arbitrary prompt. The live run must still
+	// begin at the first prompt row, without inspecting its text.
+	flow.feedBell([]byte("\r\n\x1b]133;A\x07\x1b]133;B\x07⟦session=beta⟧ "))
+	row, ok = flow.promptBoundary(appview.Size{Cols: 40, Rows: 8})
+	if !ok || row != 0 {
+		t.Fatalf("empty-prompt run boundary = (%d, %t), want (0, true)", row, ok)
+	}
+
+	// A real command starts a fresh run after its completion marker.
+	flow.feedBell([]byte("\r\n\x1b]133;C\x07result\r\n\x1b]133;D;0\x07\r\n\x1b]133;A\x07\x1b]133;B\x07⟦session=gamma⟧ "))
+	row, ok = flow.promptBoundary(appview.Size{Cols: 40, Rows: 8})
+	if !ok || row != 4 {
+		t.Fatalf("post-command prompt boundary = (%d, %t), want (4, true)", row, ok)
+	}
+}
+
 func TestTerminalSurfaceBuildsFinishedBlockWithoutMutatingTerminalState(t *testing.T) {
 	transport := newTerminalFlowTransport()
 	service := appsession.NewService(terminalFlowFactory{transport: transport})
@@ -107,9 +144,12 @@ func TestTerminalSurfaceBuildsFinishedBlockWithoutMutatingTerminalState(t *testi
 	texts := tester.Texts()
 	count := 0
 	for _, text := range texts {
-		if text == "file.txt" {
+		if strings.Contains(text, "file.txt") {
 			count++
 		}
+	}
+	if count == 0 {
+		t.Fatalf("finished output was hidden above the live viewport: %v", texts)
 	}
 	if count > 1 {
 		t.Fatalf("finished output was rendered more than once: %v", texts)

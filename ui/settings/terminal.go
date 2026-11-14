@@ -33,6 +33,7 @@ type Terminal interface {
 	SetConnectionLogRetention(count, days int) error
 	SetHistoryCaptureHookEnabled(bool) error
 	SetLegacyAlgorithms(bool) error
+	SetRawTerminalMode(bool) error
 }
 
 // terminalResetter is implemented by the application service. Keeping it
@@ -276,6 +277,11 @@ func (s *TerminalState) SetHistoryCaptureHookEnabled(enabled bool) bool {
 // algorithm list. A saved Host keeps its own per-Host setting.
 func (s *TerminalState) SetLegacyAlgorithms(enabled bool) bool {
 	return s.apply(func() error { return s.terminal.SetLegacyAlgorithms(enabled) })
+}
+
+// SetRawTerminalMode toggles the global raw terminal display.
+func (s *TerminalState) SetRawTerminalMode(enabled bool) bool {
+	return s.apply(func() error { return s.terminal.SetRawTerminalMode(enabled) })
 }
 
 // SetConnectionLogRetention stores how many connection logs are kept and for

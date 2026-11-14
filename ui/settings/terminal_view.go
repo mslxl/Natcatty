@@ -88,6 +88,14 @@ func terminalSection(c *ui.Context, state *TerminalState, prefs *PreferencesStat
 			c.Invalidate()
 		}
 
+		ui.Text(c, m.SettingsRawTerminalModeTitle()).Bold()
+		ui.Text(c, m.SettingsRawTerminalModeDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+		rawTerminal := settings.RawTerminalMode
+		if ui.Checkbox(c, &rawTerminal, m.SettingsRawTerminalModeEnabled()).Changed() {
+			state.SetRawTerminalMode(rawTerminal)
+			c.Invalidate()
+		}
+
 		renderPowerUxSection(c, state, settings, m, t)
 		renderRetentionSection(c, state, settings, m, t)
 

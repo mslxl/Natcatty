@@ -251,6 +251,9 @@ type Settings struct {
 	// per-Host setting. A saved Host always uses its own value, so this
 	// preference never widens a saved Host's offer. It is off by default.
 	LegacyAlgorithms bool
+	// RawTerminalMode renders every Session as one raw terminal screen and
+	// bypasses Lens history blocks. It is off by default.
+	RawTerminalMode bool
 }
 
 // Portable returns the terminal settings that follow the user between
@@ -315,6 +318,7 @@ func Defaults() Settings {
 		ConnectionLogRetentionDays:  0,
 
 		HistoryCaptureHookEnabled: true,
+		RawTerminalMode:           false,
 	}
 }
 

@@ -91,13 +91,14 @@ func Pane(c *ui.Context, store *model.Store, engine *lens.Engine, term *terminal
 		// the focusable element and the next key appears to be lost.
 		col := ui.Column(c).Gap(6).Padding(10).FillHeight()
 		col.Children(func() {
+			renderHistory := tail.PromptRowKnown
 			for i := range blocks {
 				// A command that is still running lives in the terminal: its output is
 				// the live screen below, so a cell for it would show the same bytes
 				// twice. Terminal swaps the cell in when the command ends, which is what
 				// ClearOnExit does here (the screen is emptied as the flow gains the
 				// cell).
-				if !blocks[i].Exited {
+				if !blocks[i].Exited || !renderHistory {
 					continue
 				}
 				// The live grid sits `livePad` inside its rounded background; a
@@ -110,7 +111,7 @@ func Pane(c *ui.Context, store *model.Store, engine *lens.Engine, term *terminal
 					blockview.RenderCommand(c, store, engine, &blocks[i], onCopy)
 				})
 			}
-			Live(c, term, size, images, followState, ripple, bell, tail, cursor, theme, viewportHeight, hooks)
+			Live(c, term, size, images, followState, ripple, bell, tail, cursor, theme, viewportHeight, renderHistory && len(blocks) > 0, hooks)
 		})
 	})
 	return s.Label("Terminal")
@@ -161,7 +162,7 @@ var ReduceMotion = func(c *ui.Context) bool { return c.Preferences().ReduceMotio
 // it: typing is translated into bytes the program reads. follow is the flow's
 // following state: a wheel towards the start detaches it, so the place the reader
 // scrolled to stays put (see Follow).
-func Live(c *ui.Context, term *terminal.Terminal, size Size, images []lens.Image, follow *Follow, ripple *effects.Ripple, bell Bell, tail Tail, cursor Cursor, theme *terminal.Theme, viewportHeight float32, hooks Hooks) {
+func Live(c *ui.Context, term *terminal.Terminal, size Size, images []lens.Image, follow *Follow, ripple *effects.Ripple, bell Bell, tail Tail, cursor Cursor, theme *terminal.Theme, viewportHeight float32, hasHistory bool, hooks Hooks) {
 	if term == nil {
 		return
 	}
@@ -228,7 +229,16 @@ func Live(c *ui.Context, term *terminal.Terminal, size Size, images []lens.Image
 	if key == nil {
 		key = term
 	}
-	outer := ui.Column(c.Key(key)).Gap(0).FillWidth().Grow(1).MinHeight(viewportHeight).Background(bg).Radius(4).Padding(livePad)
+	// Grow fills the space left after finished command rows. Keeping a fixed
+	// viewport minimum when history blocks precede it makes the live grid consume
+	// another full viewport; the unified scroll then pins to the live tail and
+	// hides those blocks above the fold. An empty flow still gets the minimum so
+	// clicking its blank area focuses the terminal, while a populated flow lets
+	// the live child grow into the space that remains after its history.
+	outer := ui.Column(c.Key(key)).Gap(0).FillWidth().Grow(1).Background(bg).Radius(4).Padding(livePad)
+	if !hasHistory {
+		outer.MinHeight(viewportHeight)
+	}
 	if hooks.Drag != nil {
 		hooks.Drag(outer.FileDragOver())
 	}
@@ -407,11 +417,15 @@ func lastContentRow(lines [][]ui.Span, cursorRow int) int {
 
 // Tail says which part of the terminal belongs to the live area: Terminal turns a
 // finished command's rows into its block, so the pane must not draw them again.
-// Prompt is the prompt the shell prints; Running is the command whose output is
-// still streaming ("" when nothing runs).
+// PromptRow is supplied by the shell integration; Running is the command whose
+// output is still streaming ("" when nothing runs).
 type Tail struct {
-	Prompt  string
 	Running string
+	// PromptRow is the screen row where the shell's current prompt run starts.
+	// It comes from the shell integration's OSC 133;B boundary, so arbitrary
+	// prompt text does not need to be inspected.
+	PromptRow      int
+	PromptRowKnown bool
 }
 
 // tailFrom is the first screen row the live area shows: the prompt line when idle,
@@ -431,35 +445,30 @@ func tailFrom(lines [][]ui.Span, cursorRow int, tail Tail) int {
 	if cursorRow < 0 {
 		return 0
 	}
-	// The search starts at the bottom of the screen, not at the cursor: after a
-	// command ends the shell paints the next prompt below where the line editor left
-	// the cursor, and searching up from the cursor would stop at the finished
-	// command's own echo line and draw it under its block.
-	look := func(needle string, prefix bool) int {
+	// Without an exact shell-integration boundary, the terminal is rendered as
+	// one raw screen. Cropping it would require guessing from prompt text and
+	// can hide real rows or duplicate Lens history.
+	if !tail.PromptRowKnown {
+		return 0
+	}
+	if tail.Running != "" {
 		for i := len(lines) - 1; i >= 0; i-- {
-			t := strings.TrimRight(at(i), " ")
-			if prefix {
-				if strings.HasPrefix(t, needle) {
-					return i
-				}
-				continue
-			}
-			if needle != "" && strings.Contains(t, needle) {
+			if strings.Contains(strings.TrimRight(at(i), " "), tail.Running) {
 				return i
 			}
 		}
-		return -1
 	}
-	if tail.Running != "" {
-		if i := look(tail.Running, false); i >= 0 {
-			return i
+	// A shell integration can tell us the prompt boundary without exposing the
+	// prompt text at all. Prompts may contain timestamps, colors, random IDs, or
+	// no conventional marker.
+	if tail.PromptRowKnown {
+		if row := tail.PromptRow; row >= 0 && row < len(lines) {
+			return row
 		}
 	}
-	if tail.Prompt != "" {
-		if i := look(tail.Prompt, true); i >= 0 {
-			return i
-		}
-	}
+	// Without an exact OSC 133 prompt boundary there is no safe way to infer
+	// which rows belong to the live shell. Keep the terminal cursor row as the
+	// conservative boundary; never inspect or guess from prompt text.
 	return cursorRow
 }
 

@@ -93,6 +93,9 @@ type Options struct {
 	// terminal. MyGo applies them at construction, and an unbound default chord
 	// is cleared so a Settings override is authoritative for new Sessions.
 	Keybinds func() []terminal.Keybind
+	// RawTerminal reports the global raw terminal display mode. It is read
+	// while rendering so a setting change applies to every open Session.
+	RawTerminal func() bool
 	// View is an already claimed live connection. Resume supplies the
 	// ResumedView that replays the hibernated screen; nil claims the
 	// Session's one live view with AttachView.
@@ -257,6 +260,11 @@ func WithTerminalTheme(fn func() domaintheme.TerminalTheme) Option {
 // resolves a terminal's bindings when it is created.
 func WithTerminalKeybinds(fn func() []terminal.Keybind) Option {
 	return func(options *Options) { options.Keybinds = fn }
+}
+
+// WithRawTerminal supplies the global raw terminal display mode.
+func WithRawTerminal(fn func() bool) Option {
+	return func(options *Options) { options.RawTerminal = fn }
 }
 
 // WithView binds the Surface to a connection the caller already claimed. A
@@ -917,7 +925,14 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 		s.flowCount, s.flowLastID, s.flowLastExit = len(blocks), lastID, lastExited
 		images := s.flow.imagesSnapshot()
 		terminalTheme := s.terminalTheme()
-		tail := appview.Tail{Prompt: lensmodel.PromptText(s.session.Snapshot().CWD)}
+		promptRow, promptRowKnown := s.flow.promptBoundary(appview.Size{Cols: cols, Rows: rows})
+		if s.options.RawTerminal != nil && s.options.RawTerminal() {
+			promptRow, promptRowKnown = 0, false
+		}
+		tail := appview.Tail{
+			PromptRow:      promptRow,
+			PromptRowKnown: promptRowKnown,
+		}
 		for _, block := range blocks {
 			if block.Exited {
 				continue

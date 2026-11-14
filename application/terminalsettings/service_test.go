@@ -83,6 +83,19 @@ func TestSetDynamicTabTitleMode(t *testing.T) {
 	}
 }
 
+func TestSetRawTerminalMode(t *testing.T) {
+	service := NewService(&fakeStore{})
+	if service.Settings().RawTerminalMode {
+		t.Fatal("raw terminal mode is enabled by default")
+	}
+	if err := service.SetRawTerminalMode(true); err != nil {
+		t.Fatal(err)
+	}
+	if !service.Settings().RawTerminalMode {
+		t.Fatal("raw terminal mode was not enabled")
+	}
+}
+
 func TestFailedSaveKeepsThePreviousValue(t *testing.T) {
 	store := &fakeStore{}
 	service := NewService(store)
