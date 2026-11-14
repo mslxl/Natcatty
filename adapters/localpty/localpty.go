@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mslxl/natcatty/application/lens/integration"
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/platform/pty"
 )
@@ -30,16 +31,35 @@ func (Factory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.
 		return nil, err
 	}
 
-	path, args, err := command(spec)
-	if err != nil {
-		return nil, err
+	env := environment(spec.Env)
+	var path string
+	var args []string
+	if len(spec.Command) == 0 {
+		// The default Local Terminal owns the interactive shell, so install the
+		// same OSC 133/7 integration used by the Lens capture path. Explicit
+		// commands are left untouched: callers use those for one-shot scripts,
+		// fixtures, and shells that provide their own integration.
+		path, args, env = integration.Shell(nil, env)
+		if path == "" {
+			var err error
+			path, args, err = command(spec)
+			if err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		var err error
+		path, args, err = command(spec)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	terminal, err := pty.Start(pty.Options{
 		Path: path,
 		Args: args,
 		Dir:  workingDir(spec.Dir),
-		Env:  environment(spec.Env),
+		Env:  env,
 		Cols: spec.Cols,
 		Rows: spec.Rows,
 	})
