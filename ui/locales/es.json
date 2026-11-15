@@ -2001,7 +2001,7 @@
   "settingsHistoryCaptureHookEnabled": "Instalar el gancho de captura del shell",
   "settingsRawTerminalModeTitle": "Modo de terminal Lens",
   "settingsRawTerminalModeDescription": "Usa bloques de comandos Lens de forma predeterminada. Desactívalo para mostrar cada shell como una sola pantalla de terminal sin formato.",
-  "settingsRawTerminalModeEnabled": "Usar Lens para todos los shells (Beta)",
+  "settingsRawTerminalModeEnabled": "Usar Lens para todos los shells",
   "settingsSyncTitle": "Sincronización y nube",
   "settingsSyncDescription": "Sincroniza el Vault cifrado mediante tu proveedor de nube. La contraseña maestra nunca sale de este dispositivo.",
   "settingsSyncSecurityNote": "El proveedor puede ver los metadatos del Vault, como el nombre del dispositivo, la versión de la aplicación y las marcas de tiempo. Los registros y las credenciales del Vault permanecen cifrados.",

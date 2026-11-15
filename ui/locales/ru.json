@@ -2001,7 +2001,7 @@
   "settingsHistoryCaptureHookEnabled": "Установить перехватчик оболочки",
   "settingsRawTerminalModeTitle": "Режим терминала Lens",
   "settingsRawTerminalModeDescription": "По умолчанию используются блоки команд Lens. Отключите этот режим, чтобы показывать каждую оболочку как один необработанный экран терминала.",
-  "settingsRawTerminalModeEnabled": "Использовать Lens для всех оболочек (Beta)",
+  "settingsRawTerminalModeEnabled": "Использовать Lens для всех оболочек",
   "settingsSyncTitle": "Синхронизация и облако",
   "settingsSyncDescription": "Синхронизируйте зашифрованное хранилище через облачный провайдер. Мастер-пароль никогда не покидает это устройство.",
   "settingsSyncSecurityNote": "Провайдер видит метаданные хранилища: имя устройства, версию приложения и метки времени. Записи и учётные данные хранилища остаются зашифрованными.",
