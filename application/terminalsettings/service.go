@@ -251,7 +251,8 @@ func (s *Service) SetHistoryCaptureHookEnabled(enabled bool) error {
 	})
 }
 
-// SetRawTerminalMode enables or disables the global raw terminal display.
+// SetRawTerminalMode controls the inverse of the Lens terminal switch:
+// true disables Lens blocks and shows the raw terminal screen.
 func (s *Service) SetRawTerminalMode(enabled bool) error {
 	return s.Update(func(settings *domainterminal.Settings) {
 		settings.RawTerminalMode = enabled

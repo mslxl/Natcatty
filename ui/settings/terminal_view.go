@@ -73,9 +73,9 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 
 		ui.Text(c, m.SettingsRawTerminalModeTitle()).Bold()
 		ui.Text(c, m.SettingsRawTerminalModeDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
-		rawTerminal := settings.RawTerminalMode
-		if ui.Checkbox(c, &rawTerminal, m.SettingsRawTerminalModeEnabled()).Changed() {
-			state.SetRawTerminalMode(rawTerminal)
+		lensTerminal := !settings.RawTerminalMode
+		if ui.Checkbox(c, &lensTerminal, m.SettingsRawTerminalModeEnabled()).Changed() {
+			state.SetRawTerminalMode(!lensTerminal)
 			c.Invalidate()
 		}
 

@@ -14378,35 +14378,35 @@ func (msgs Messages) SettingsHistoryCaptureHookEnabled() string {
 	return Catalog.Format(msgs.locale, "settingsHistoryCaptureHookEnabled", nil)
 }
 
-// SettingsRawTerminalModeTitle says "Raw terminal mode"
+// SettingsRawTerminalModeTitle says "Lens terminal mode"
 // in the language the app shows.
 func SettingsRawTerminalModeTitle() string { return In(i18n.Locale()).SettingsRawTerminalModeTitle() }
 
-// SettingsRawTerminalModeTitle says "Raw terminal mode"
+// SettingsRawTerminalModeTitle says "Lens terminal mode"
 // in the language of msgs.
 func (msgs Messages) SettingsRawTerminalModeTitle() string {
 	return Catalog.Format(msgs.locale, "settingsRawTerminalModeTitle", nil)
 }
 
-// SettingsRawTerminalModeDescription says "Show every shell as one raw terminal screen and hide Lens history blocks."
+// SettingsRawTerminalModeDescription says "Use Lens command blocks by default. Turn this off to show each shell as one raw terminal screen."
 // in the language the app shows.
 func SettingsRawTerminalModeDescription() string {
 	return In(i18n.Locale()).SettingsRawTerminalModeDescription()
 }
 
-// SettingsRawTerminalModeDescription says "Show every shell as one raw terminal screen and hide Lens history blocks."
+// SettingsRawTerminalModeDescription says "Use Lens command blocks by default. Turn this off to show each shell as one raw terminal screen."
 // in the language of msgs.
 func (msgs Messages) SettingsRawTerminalModeDescription() string {
 	return Catalog.Format(msgs.locale, "settingsRawTerminalModeDescription", nil)
 }
 
-// SettingsRawTerminalModeEnabled says "Use raw terminal mode for all shells"
+// SettingsRawTerminalModeEnabled says "Use Lens for all shells (Beta)"
 // in the language the app shows.
 func SettingsRawTerminalModeEnabled() string {
 	return In(i18n.Locale()).SettingsRawTerminalModeEnabled()
 }
 
-// SettingsRawTerminalModeEnabled says "Use raw terminal mode for all shells"
+// SettingsRawTerminalModeEnabled says "Use Lens for all shells (Beta)"
 // in the language of msgs.
 func (msgs Messages) SettingsRawTerminalModeEnabled() string {
 	return Catalog.Format(msgs.locale, "settingsRawTerminalModeEnabled", nil)

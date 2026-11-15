@@ -86,7 +86,7 @@ func TestSetDynamicTabTitleMode(t *testing.T) {
 func TestSetRawTerminalMode(t *testing.T) {
 	service := NewService(&fakeStore{})
 	if service.Settings().RawTerminalMode {
-		t.Fatal("raw terminal mode is enabled by default")
+		t.Fatal("Lens terminal mode is not enabled by default")
 	}
 	if err := service.SetRawTerminalMode(true); err != nil {
 		t.Fatal(err)

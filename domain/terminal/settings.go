@@ -247,7 +247,8 @@ type Settings struct {
 	// it is off, Sessions fall back to native OSC 133/7 or typed input.
 	HistoryCaptureHookEnabled bool
 	// RawTerminalMode renders every Session as one raw terminal screen and
-	// bypasses Lens history blocks. It is off by default.
+	// bypasses Lens history blocks. It is off by default, so Lens mode is on
+	// by default.
 	RawTerminalMode bool
 }
 
