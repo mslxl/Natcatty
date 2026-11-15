@@ -497,18 +497,61 @@ func (c *desktopController) HandleNotificationClick(request appdesktop.Notificat
 // that is no longer open falls back to the main window, so a stale
 // notification never does nothing.
 func (c *desktopController) FocusSession(id model.SessionID) {
-	if c.quake != nil && c.quake.FocusSession(id) {
-		if c.windows != nil {
-			c.windows.ShowDropdown()
-			c.windows.InvalidateAll()
+	if c.quake != nil {
+		if tab, ok := c.quake.TabForSession(id); ok {
+			c.showQuakeTab(tab.Index)
+			return
 		}
-		return
 	}
 	if c.shell != nil && c.shell.FocusSession(id) {
 		c.ShowMain()
 		return
 	}
 	c.ShowMain()
+}
+
+// showQuakeTab selects a Quake Tab and presents the workspace that draws it.
+// Only the quake + own route renders the Quake workspace, so a route that
+// would show the placeholder or the main shell is switched explicitly; a
+// route that cannot be switched refuses the reveal and raises the main window
+// instead of opening a Panel that cannot show the selected Session.
+func (c *desktopController) showQuakeTab(index int) {
+	if c.quake == nil || c.windows == nil {
+		return
+	}
+	c.quake.SelectTab(index)
+	if !c.ensureQuakeRoute() {
+		c.ShowMain()
+		return
+	}
+	c.windows.ShowDropdown()
+	c.windows.InvalidateAll()
+}
+
+// ensureQuakeRoute makes the live Hotkey Mode and Quake Source render the Quake
+// workspace. It is called only from a user action that names a Quake Tab, so
+// switching the route is the explicit choice that makes that Tab visible.
+func (c *desktopController) ensureQuakeRoute() bool {
+	if c.service == nil {
+		return true
+	}
+	settings := c.service.Settings()
+	if settings.HotkeyMode == appdesktop.HotkeyModeQuake && settings.QuakeSource == appdesktop.QuakeSourceOwn {
+		return true
+	}
+	if settings.HotkeyMode != appdesktop.HotkeyModeQuake {
+		if err := c.service.SetHotkeyMode(appdesktop.HotkeyModeQuake); err != nil {
+			c.setProblem(err.Error())
+			return false
+		}
+	}
+	if c.service.Settings().QuakeSource != appdesktop.QuakeSourceOwn {
+		if err := c.service.SetQuakeSource(appdesktop.QuakeSourceOwn); err != nil {
+			c.setProblem(err.Error())
+			return false
+		}
+	}
+	return true
 }
 
 // NoteForwarding observes manager events on the manager's dispatch goroutine.
@@ -734,7 +777,9 @@ func (c *desktopController) BuildTrayMenu() *mygo.Menu {
 // trayTabs builds the Session list: the main Window's Tabs first, then the
 // Dropdown Panel's Quake Tabs with a source marker. Choosing a main Tab raises
 // the main window; choosing a Quake Tab shows the Dropdown Panel and selects
-// the Tab, so the session list never pretends the two Workspaces are one.
+// the Tab, switching the route first when the live mode or source does not
+// render the Quake workspace. This way the session list never pretends the two
+// Workspaces are one, and a Quake row never opens an empty Panel.
 func (c *desktopController) trayTabs(m locales.Messages) []*mygo.MenuItem {
 	var items []*mygo.MenuItem
 	if c.shell != nil {
@@ -771,12 +816,10 @@ func (c *desktopController) trayTabs(m locales.Messages) []*mygo.MenuItem {
 				Click: func(*mygo.MenuItem, *mygo.Window) {
 					// Selecting first keeps the Panel's show hook from opening a
 					// fresh local Shell: the workspace already has the Tab the
-					// user chose.
-					c.quake.SelectTab(index)
-					if c.windows != nil {
-						c.windows.ShowDropdown()
-						c.windows.InvalidateAll()
-					}
+					// user chose. showQuakeTab also switches a route that does not
+					// render the Quake workspace, so the click never opens an
+					// empty Panel.
+					c.showQuakeTab(index)
 				},
 			})
 		}

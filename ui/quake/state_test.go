@@ -426,6 +426,24 @@ func TestSurfaceFailureClosesTheSession(t *testing.T) {
 	waitTransportClosed(t, factory.transports[0])
 }
 
+// flushUntil applies completed Host opens until condition holds. Dialing runs
+// off the UI thread, so a test waits for the outcome instead of assuming
+// AddHostTab finished synchronously.
+func flushUntil(t *testing.T, state *State, what string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		state.Flush()
+		if condition() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func transportClosed(t *testTransport) bool {
 	select {
 	case <-t.closed:
@@ -534,6 +552,9 @@ func TestAddHostTabOpensThroughTheSharedOpenerAndLabelsTheTab(t *testing.T) {
 	if err := state.AddHostTab(host); err != nil {
 		t.Fatalf("AddHostTab: %v", err)
 	}
+	// The connection runs off the UI thread and its Tab appears on the next
+	// Flush.
+	flushUntil(t, state, "the Host Tab", func() bool { return state.TabCount() == 2 })
 	if len(opener.hostOpens) != 1 || opener.hostOpens[0].ID != host.ID {
 		t.Fatalf("opener Hosts = %+v, want the selected Host", opener.hostOpens)
 	}
@@ -570,35 +591,67 @@ func TestRemoteTabsSelectAndClose(t *testing.T) {
 	if err := state.AddHostTab(hosts[1]); err != nil {
 		t.Fatalf("second AddHostTab: %v", err)
 	}
+	flushUntil(t, state, "both Host Tabs", func() bool { return state.TabCount() == 3 })
 	if len(opener.hostOpens) != 2 || len(factory.transports) != 3 {
 		t.Fatalf("Host opens = %d, transports = %d, want two Hosts and three Sessions",
 			len(opener.hostOpens), len(factory.transports))
 	}
-	alphaTransport, betaTransport := factory.transports[1], factory.transports[2]
-	alphaSurface := state.tabs[1].Surface.(*recordingSurface)
+	// Host opens complete off the UI thread, so the two Tabs may append in
+	// either completion order. Find Alpha by label rather than assuming it.
+	alphaIndex, betaIndex := -1, -1
+	for _, tab := range state.Tabs() {
+		switch tab.Label {
+		case "Alpha":
+			alphaIndex = tab.Index
+		case "Beta":
+			betaIndex = tab.Index
+		}
+	}
+	if alphaIndex < 0 || betaIndex < 0 {
+		t.Fatalf("the Host Tabs are missing: %+v", state.Tabs())
+	}
+	alphaSurface := state.tabs[alphaIndex].Surface.(*recordingSurface)
 
-	// Switching to a remote Tab changes only the active index.
-	state.SelectTab(1)
-	if state.ActiveIndex() != 1 || state.Tabs()[1].Label != "Alpha" {
+	// Switching to Alpha changes only the active index.
+	state.SelectTab(alphaIndex)
+	if state.ActiveIndex() != alphaIndex || state.Tabs()[alphaIndex].Label != "Alpha" {
 		t.Fatalf("selecting the remote Tab left active %d", state.ActiveIndex())
 	}
 
 	// Closing it ends its Session and Surface, not the other remote Tab's.
-	if !state.CloseTab(1) {
+	if !state.CloseTab(alphaIndex) {
 		t.Fatal("CloseTab reported no change for a remote Tab")
 	}
 	if alphaSurface.closed != 1 {
 		t.Fatalf("closed remote Surface closes = %d, want 1", alphaSurface.closed)
 	}
-	waitTransportClosed(t, alphaTransport)
-	if transportClosed(betaTransport) {
-		t.Fatal("closing the Alpha Tab ended the Beta Session")
+	// Exactly one Host transport ends; the other Host still owns a Session.
+	// Closing a Session ends its transport asynchronously.
+	hostTransports := factory.transports[1:]
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		closed := 0
+		for _, transport := range hostTransports {
+			if transportClosed(transport) {
+				closed++
+			}
+		}
+		if closed == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("closing Alpha closed %d Host transports, want 1", closed)
+		}
+		time.Sleep(time.Millisecond)
 	}
-	if state.TabCount() != 2 || state.Tabs()[1].Label != "Beta" {
+	if state.TabCount() != 2 {
 		t.Fatalf("closing one remote Tab left %d Tabs: %+v", state.TabCount(), state.Tabs())
 	}
+	if remaining := state.Tabs()[1]; remaining.Label != "Beta" {
+		t.Fatalf("the remaining remote Tab = %+v, want Beta", remaining)
+	}
 
-	// Closing the last remote Tab and then the local one hides the Panel.
+	// Closing the remaining remote Tab and then the local one hides the Panel.
 	if !state.CloseTab(1) {
 		t.Fatal("CloseTab reported no change for the last remote Tab")
 	}
@@ -636,21 +689,47 @@ func TestDismissOverlayClosesThePickerFirst(t *testing.T) {
 
 // TestFailedHostOpenSurfacesAProblemAndAddsNoTab covers a Host that cannot
 // connect: the Tab list stays unchanged and the view can explain the failure.
+// The failure arrives asynchronously, so it is applied by Flush.
 func TestFailedHostOpenSurfacesAProblemAndAddsNoTab(t *testing.T) {
 	state, opener, _ := newTestState(t)
 	if err := state.Activate(); err != nil {
 		t.Fatalf("Activate: %v", err)
 	}
 	opener.hostErr = errors.New("no route to Host")
-	if err := state.AddHostTab(hostsForTest()[0]); err == nil {
-		t.Fatal("AddHostTab hid a failed Host Session")
+	if err := state.AddHostTab(hostsForTest()[0]); err != nil {
+		t.Fatalf("AddHostTab reported a configuration error: %v", err)
 	}
+	flushUntil(t, state, "the failed Host open", func() bool { return state.Problem() != nil })
 	if state.TabCount() != 1 {
 		t.Fatalf("a failed Host open left %d Tabs, want the original local Shell", state.TabCount())
 	}
-	if state.Problem() == nil {
-		t.Fatal("a failed Host open recorded no problem for the view")
+}
+
+// TestFailedHostSurfaceClosesTheSession covers the async Host path's surface
+// failure: the connected Session is closed instead of leaking, and no broken
+// Tab is appended.
+func TestFailedHostSurfaceClosesTheSession(t *testing.T) {
+	factory := &testFactory{}
+	service := appsession.NewService(factory)
+	t.Cleanup(service.CloseAll)
+	opener := &testOpener{service: service}
+	wantErr := errors.New("no terminal")
+	state := NewState(opener, func(*appsession.Session) (Surface, error) {
+		return nil, wantErr
+	})
+	t.Cleanup(state.Shutdown)
+
+	if err := state.AddHostTab(hostsForTest()[0]); err != nil {
+		t.Fatalf("AddHostTab: %v", err)
 	}
+	flushUntil(t, state, "the surface failure", func() bool { return state.Problem() != nil })
+	if !errors.Is(state.Problem(), wantErr) {
+		t.Fatalf("Problem() = %v, want %v", state.Problem(), wantErr)
+	}
+	if state.TabCount() != 0 {
+		t.Fatalf("a failed Host surface left %d Tabs", state.TabCount())
+	}
+	waitTransportClosed(t, factory.transports[0])
 }
 
 // TestTabAtAndTabForSessionLocateTheSameTabs proves the integration seam the
@@ -664,6 +743,7 @@ func TestTabAtAndTabForSessionLocateTheSameTabs(t *testing.T) {
 	if err := state.AddHostTab(hostsForTest()[0]); err != nil {
 		t.Fatalf("AddHostTab: %v", err)
 	}
+	flushUntil(t, state, "the Host Tab", func() bool { return state.TabCount() == 2 })
 	first, ok := state.TabAt(0)
 	if !ok || first.Session == nil || first.Surface == nil {
 		t.Fatal("TabAt(0) did not return the first live Tab")

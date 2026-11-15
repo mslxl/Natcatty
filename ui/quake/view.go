@@ -27,6 +27,10 @@ const hostPickerMaxHeight float32 = 320
 // content is locked.
 func Bar(s *State) func(*ui.Context) {
 	return func(c *ui.Context) {
+		// A Host connection may have finished since the last frame. Applying it
+		// here keeps Tab mutation on the UI thread and lets this frame draw the
+		// new Tab immediately.
+		s.Flush()
 		m := locales.In(c.Locale())
 		// Click actions are applied after the strip is built: closing a Tab
 		// would shift the indexes of the entries still being drawn.
@@ -216,6 +220,9 @@ func filterHosts(hosts []domainvault.Host, query string) []domainvault.Host {
 // failed first show explains itself instead of leaving an empty Panel.
 func View(s *State) func(*ui.Context) {
 	return func(c *ui.Context) {
+		// Apply completed Host opens before drawing the active Tab. The bar also
+		// flushes; the second call in one frame is a no-op.
+		s.Flush()
 		tab, ok := s.Active()
 		if !ok {
 			if s.Problem() != nil {

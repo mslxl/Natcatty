@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -75,6 +76,23 @@ func renderPanel(t *testing.T, state *State, width, height int) *ui.Tester {
 	tester.SetLocale("en")
 	tester.Frame()
 	return tester
+}
+
+// renderUntil renders frames until condition holds. A Host connection finishes
+// off the UI thread, so its Tab appears when a later frame flushes the outcome.
+func renderUntil(t *testing.T, tester *ui.Tester, what string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		tester.Frame()
+		if condition() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s: %v", what, tester.Texts())
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // TestBarListsTabsAndSelectsTheClickedOne covers the compact top bar: one
@@ -298,7 +316,9 @@ func TestSelectingAHostOpensALabelledRemoteTab(t *testing.T) {
 	if err := tester.Click("Beta"); err != nil {
 		t.Fatalf("clicking the Beta Host: %v", err)
 	}
-	tester.Frame()
+	// The Host dial runs off the UI thread; the next frame that flushes its
+	// outcome mounts the Tab.
+	renderUntil(t, tester, "the Beta Host Tab", func() bool { return state.TabCount() == 2 })
 	if state.PickerOpen() {
 		t.Fatal("selecting a Host left the picker open")
 	}

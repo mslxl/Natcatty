@@ -30,6 +30,11 @@ func newDesktopQuakeController(t *testing.T) (*desktopController, *quakeGraph, *
 	controller := newDesktopController(q.manager, q.state, q.quake, nil, nil, service,
 		backend, func() string { return "en" }, func() {})
 	controller.opener = &recordingOpener{}
+	// The production composition root feeds the same Settings into both the
+	// controller and the Panel's route wiring; mirror that so a route switch
+	// made by a click reaches the Panel.
+	q.routeMode = func() appdesktop.HotkeyMode { return service.Settings().HotkeyMode }
+	q.routeSource = func() appdesktop.QuakeSource { return service.Settings().QuakeSource }
 	controller.MarkReady()
 	t.Cleanup(func() { controller.Shutdown() })
 	return controller, q, backend, notifier
@@ -73,6 +78,8 @@ func TestTrayListsQuakeTabsWithSourceAndSelectsThem(t *testing.T) {
 	if err := q.quake.AddHostTab(quakeTestHosts()[0]); err != nil {
 		t.Fatalf("AddHostTab: %v", err)
 	}
+	// Host dialing is asynchronous; wait for the Tab before the tray reads it.
+	waitForQuakeTabCount(t, q, 2)
 	// Leave the first Tab active so the click has to move the selection.
 	q.quake.SelectTab(0)
 	if err := q.state.NewTab(); err != nil {
@@ -187,6 +194,140 @@ func TestNotificationsResolveBothWorkspacesAndRouteClicks(t *testing.T) {
 	}
 	if q.state.ActiveTab() != 1 {
 		t.Fatalf("main notification click selected Tab %d, want 1", q.state.ActiveTab())
+	}
+}
+
+// TestQuakeClicksSwitchToARenderableRoute covers every Hotkey Mode and Quake
+// Source the tray and notification routes can run under. Only quake + own
+// draws the Quake workspace, so a Quake row or notification must switch the
+// route explicitly instead of opening the placeholder or the main shell.
+func TestQuakeClicksSwitchToARenderableRoute(t *testing.T) {
+	routes := []struct {
+		name   string
+		mode   appdesktop.HotkeyMode
+		source appdesktop.QuakeSource
+	}{
+		{name: "none mode", mode: appdesktop.HotkeyModeNone, source: appdesktop.QuakeSourceOwn},
+		{name: "toggle mode", mode: appdesktop.HotkeyModeToggle, source: appdesktop.QuakeSourceOwn},
+		{name: "follow source", mode: appdesktop.HotkeyModeQuake, source: appdesktop.QuakeSourceFollow},
+		{name: "topdown mode", mode: appdesktop.HotkeyModeTopdown, source: appdesktop.QuakeSourceOwn},
+	}
+	actions := []struct {
+		name string
+		run  func(*testing.T, *desktopController, *quakeGraph, *fakeTrayBackend, model.SessionID)
+	}{
+		{
+			name: "tray row",
+			run: func(t *testing.T, _ *desktopController, _ *quakeGraph, backend *fakeTrayBackend, _ model.SessionID) {
+				m := locales.In("en")
+				marker := "[" + m.TrayQuakeSource() + "]"
+				clickTrayItemPrefix(t, backend.surfaces[0].menu, marker+" "+m.LocalSessionTab(2))
+			},
+		},
+		{
+			name: "notification click",
+			run: func(t *testing.T, controller *desktopController, _ *quakeGraph, _ *fakeTrayBackend, id model.SessionID) {
+				controller.HandleNotificationClick(appdesktop.Notification{Session: string(id)})
+			},
+		},
+	}
+	for _, route := range routes {
+		for _, action := range actions {
+			t.Run(route.name+"/"+action.name, func(t *testing.T) {
+				controller, q, backend, _ := newDesktopQuakeController(t)
+				if err := controller.service.SetHotkeyMode(route.mode); err != nil {
+					t.Fatalf("SetHotkeyMode(%q): %v", route.mode, err)
+				}
+				if err := controller.service.SetQuakeSource(route.source); err != nil {
+					t.Fatalf("SetQuakeSource(%q): %v", route.source, err)
+				}
+				if err := q.quake.Activate(); err != nil {
+					t.Fatalf("Activate: %v", err)
+				}
+				if err := q.quake.AddLocalTab(); err != nil {
+					t.Fatalf("AddLocalTab: %v", err)
+				}
+				q.quake.SelectTab(0)
+				target, ok := q.quake.TabAt(1)
+				if !ok || target.Session == nil {
+					t.Fatal("the second Quake Tab has no Session")
+				}
+				controller.SyncNow()
+
+				action.run(t, controller, q, backend, target.Session.ID())
+
+				settings := controller.service.Settings()
+				if settings.HotkeyMode != appdesktop.HotkeyModeQuake || settings.QuakeSource != appdesktop.QuakeSourceOwn {
+					t.Fatalf("route = %q/%q after the click, want quake/own",
+						settings.HotkeyMode, settings.QuakeSource)
+				}
+				if !q.manager.DropdownVisible() {
+					t.Fatal("the Quake click did not show the Dropdown Panel")
+				}
+				if q.quake.ActiveIndex() != 1 {
+					t.Fatalf("the Quake click selected Tab %d, want 1", q.quake.ActiveIndex())
+				}
+				window := dropdownWindow(t, q.windowGraph)
+				tester := render(window)
+				m := locales.In("en")
+				if !tester.HasText(m.LocalSessionTab(2)) || !tester.HasText("quake-terminal-2") {
+					t.Fatalf("the Panel did not render the selected Quake Tab: %v", tester.Texts())
+				}
+			})
+		}
+	}
+}
+
+// TestQuakeClickRefusesWhenTheRouteCannotBeSwitched proves a failed mode
+// change does not open a Panel that cannot render the selected Session: the
+// click falls back to the main window instead.
+func TestQuakeClickRefusesWhenTheRouteCannotBeSwitched(t *testing.T) {
+	q := newQuakeGraph(t)
+	q.manager.OpenMain()
+	repository := &testDesktopRepository{settings: appdesktop.Defaults("windows")}
+	// Start in toggle mode with a registrar that refuses the global shortcut
+	// claim, so switching to quake mode fails and rolls back.
+	repository.settings.HotkeyMode = appdesktop.HotkeyModeToggle
+	service := appdesktop.NewService(repository, &testHotkeys{fail: true},
+		&testAutoLauncher{supported: true}, &testNotifier{}, appdesktop.WithGOOS("windows"))
+	if err := service.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	backend := &fakeTrayBackend{}
+	controller := newDesktopController(q.manager, q.state, q.quake, nil, nil, service,
+		backend, func() string { return "en" }, func() {})
+	controller.opener = &recordingOpener{}
+	q.routeMode = func() appdesktop.HotkeyMode { return service.Settings().HotkeyMode }
+	q.routeSource = func() appdesktop.QuakeSource { return service.Settings().QuakeSource }
+	controller.MarkReady()
+	t.Cleanup(func() { controller.Shutdown() })
+
+	if err := q.quake.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if err := q.quake.AddLocalTab(); err != nil {
+		t.Fatalf("AddLocalTab: %v", err)
+	}
+	q.quake.SelectTab(0)
+	controller.SyncNow()
+	m := locales.In("en")
+	marker := "[" + m.TrayQuakeSource() + "]"
+	clickTrayItemPrefix(t, backend.surfaces[0].menu, marker+" "+m.LocalSessionTab(2))
+
+	if q.manager.DropdownVisible() {
+		t.Fatal("a refused route switch opened a Dropdown Panel that cannot render the Tab")
+	}
+	if got := service.Settings().HotkeyMode; got != appdesktop.HotkeyModeToggle {
+		t.Fatalf("the failed mode change was not rolled back: %q", got)
+	}
+	if !q.manager.Main().IsVisible() || !q.manager.Main().IsFocused() {
+		t.Fatal("a refused Quake click did not raise the main window")
+	}
+	if q.quake.ActiveIndex() != 1 {
+		t.Fatalf("the Quake click selected Tab %d, want 1", q.quake.ActiveIndex())
+	}
+	if controller.LastProblem() == "" {
+		t.Fatal("the refused route switch recorded no problem")
 	}
 }
 
