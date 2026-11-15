@@ -11,6 +11,16 @@ requests; this file is the human-maintained changelog.
 
 ### Added
 
+- The global shortcut has four user-selectable Hotkey Modes: release it to the
+  system, toggle the main window as before, pull down a Quake terminal, or
+  pull down the complete application. Quake is the default. The Dropdown
+  Panel opens on the display under the pointer at the work area's full width,
+  with configurable percent or pixel heights (50% for Quake, 80% for
+  top-down) and independent hide-on-blur, hide-on-Escape, and
+  hide-on-click-outside switches. The Quake dropdown keeps its own local Shell
+  and Host Tabs while hidden; Follow Mode can instead render the main
+  window's active Tab without moving or reordering it, and hides and restores
+  the main window around the Panel.
 - Mosh Sessions can use a Network Profile. The in-process Mosh client carries
   both its SSH bootstrap and its UDP flow through the selected Network
   Provider, so Mosh works over Tailscale Net and WireGuard Net without an
@@ -29,6 +39,10 @@ requests; this file is the human-maintained changelog.
 
 ### Changed
 
+- Settings → System → Global Hotkey is now the four-mode choice above. The old
+  enable checkbox and the stored `globalHotkeyEnabled` value were removed; an
+  old record loads with Quake as the default and no migration, while tray,
+  notification, and deep-link settings keep their values.
 - Mosh and EternalTerminal always use their in-process clients. The global and
   per-Host client choice, its release default and parity-gate policy, the
   settings provenance/migration machinery, the bundled-client retention

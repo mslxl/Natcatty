@@ -170,7 +170,7 @@ func newDesktopTestController(t *testing.T) (*desktopController, *windowGraph,
 		t.Fatal(err)
 	}
 	backend := &fakeTrayBackend{}
-	controller := newDesktopController(graph.manager, graph.state, nil, nil, service,
+	controller := newDesktopController(graph.manager, graph.state, nil, nil, nil, service,
 		backend, func() string { return "en" }, func() {})
 	opener := &recordingOpener{}
 	controller.opener = opener

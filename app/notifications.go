@@ -14,10 +14,11 @@ import (
 
 // nativeNotifier turns typed desktop events into localized MyGo
 // notifications. MyGo registers the click handler with the system; clicking a
-// notification raises the main window.
+// notification hands the request to the composition root, which raises the
+// window and Tab that own the Session.
 type nativeNotifier struct {
 	locale  func() string
-	onClick func()
+	onClick func(appdesktop.Notification)
 }
 
 func (n *nativeNotifier) Supported() bool {
@@ -51,7 +52,10 @@ func (n *nativeNotifier) Notify(request appdesktop.Notification) error {
 		Group: "natcatty",
 	})
 	if n.onClick != nil {
-		notification.OnClick(n.onClick)
+		// Capture this request: a later notification has its own Session and
+		// must not inherit the first click's route.
+		request := request
+		notification.OnClick(func() { n.onClick(request) })
 	}
 	return notification.Show()
 }

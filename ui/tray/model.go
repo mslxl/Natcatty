@@ -20,6 +20,18 @@ const (
 	TabDisconnected TabStatus = "disconnected"
 )
 
+// TabSource marks which Workspace a tray Tab row comes from. The main
+// window's Workspace rows are unmarked; a Quake Workspace row carries the
+// source marker so the same Host name is unambiguous in one menu.
+type TabSource string
+
+const (
+	// TabSourceMain is a Tab owned by the main window's Workspace.
+	TabSourceMain TabSource = "main"
+	// TabSourceQuake is a Tab owned by the Dropdown Panel's Quake Workspace.
+	TabSourceQuake TabSource = "quake"
+)
+
 // Tab is one tray entry for a Workspace Tab. TabIndex is -1 for a detached
 // Tab. A Tab may host several Sessions; Status aggregates their transport
 // state.
@@ -30,6 +42,10 @@ type Tab struct {
 	Number   int
 	Label    string
 	Status   TabStatus
+	// Source says which Workspace owns the Tab. The zero value is treated as
+	// the main window, so callers that predate the Quake Workspace keep the
+	// original line.
+	Source TabSource
 }
 
 // Rule is one tray Port Forwarding Rule entry.
@@ -43,7 +59,8 @@ type Rule struct {
 	Status     string
 }
 
-// TabText is the localized menu line for a Tab.
+// TabText is the localized menu line for a Tab. A Quake Tab is prefixed with
+// the source marker; a main-window Tab stays unmarked, as it always was.
 func TabText(m locales.Messages, tab Tab) string {
 	label := tab.Label
 	if label == "" {
@@ -56,7 +73,11 @@ func TabText(m locales.Messages, tab Tab) string {
 	case TabDisconnected:
 		status = m.TrayStatusDisconnected()
 	}
-	return fmt.Sprintf("%s — %s", label, status)
+	line := fmt.Sprintf("%s — %s", label, status)
+	if tab.Source == TabSourceQuake {
+		return fmt.Sprintf("[%s] %s", m.TrayQuakeSource(), line)
+	}
+	return line
 }
 
 // RuleText is the localized menu line for a Port Forwarding Rule. Status is

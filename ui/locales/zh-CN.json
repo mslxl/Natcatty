@@ -990,6 +990,7 @@
   "trayStatusInactive": "未活动",
   "trayStatusError": "错误",
   "trayRuleUnnamed": "未命名规则",
+  "trayQuakeSource": "Quake",
   "notificationSessionEndedTitle": "会话已结束",
   "notificationSessionEndedBody": "{target} 已结束。",
   "@notificationSessionEndedBody": {

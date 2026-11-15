@@ -8,6 +8,13 @@ UI state must be partitioned per window and the app-lock gate must wrap every wi
 
 **Status**: accepted
 
+**Amended by [ADR-0021](0021-dropdown-panel-and-four-mode-hotkey.md)**: a
+fourth native window kind, the Dropdown Panel, is added beside the main,
+settings, and detached windows. It is not a detached window and does not own
+the main Workspace: Follow Mode and top-down only borrow its rendering, while
+Quake own mode gives the Panel a memory-only Workspace of its own. The
+window-scoped state rule and the one shared App Lock gate below still hold.
+
 **Considered Options**:
 - A single-window app with an in-window settings page: simpler state, but breaks
   existing detach/settings workflows and persisted layout expectations.

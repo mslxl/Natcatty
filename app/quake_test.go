@@ -22,6 +22,10 @@ type quakeTestSurface struct {
 	id      int
 	focuses int
 	closes  int
+	// closeCheck runs before the close is counted. A quit-order test installs
+	// it to observe whether the Panel was already destroyed.
+	closeCheck   func() bool
+	closeCheckOK bool
 }
 
 func (s *quakeTestSurface) View(c *ui.Context) ui.Element {
@@ -35,7 +39,12 @@ func (s *quakeTestSurface) ViewFocused(c *ui.Context, focused bool) ui.Element {
 	return s.View(c)
 }
 
-func (s *quakeTestSurface) Close() { s.closes++ }
+func (s *quakeTestSurface) Close() {
+	s.closes++
+	if s.closeCheck != nil {
+		s.closeCheckOK = s.closeCheck()
+	}
+}
 
 // graphQuakeOpener is the Quake SessionOpener over the graph's shared Session
 // service. It counts opens because the first-show contract is exactly "one
@@ -124,6 +133,9 @@ func newQuakeGraphWithGate(t *testing.T, gate *uiapplock.Gate) *quakeGraph {
 			graph.manager.FocusMain()
 		},
 	)
+	// Quake Sessions count toward quit intent, exactly as the composition root
+	// wires them.
+	graph.manager.SetQuakeSessionCount(q.quake.SessionCount)
 	return q
 }
 

@@ -990,6 +990,7 @@
   "trayStatusInactive": "Неактивно",
   "trayStatusError": "Ошибка",
   "trayRuleUnnamed": "Правило без названия",
+  "trayQuakeSource": "Quake",
   "notificationSessionEndedTitle": "Сеанс завершён",
   "notificationSessionEndedBody": "{target} завершён.",
   "@notificationSessionEndedBody": {
