@@ -261,9 +261,12 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		autoLauncher{},
 		&nativeNotifier{
 			locale: func() string { return mygo.App.Locale() },
-			onClick: func() {
-				if windows != nil {
-					windows.FocusMain()
+			// The request carries the Session the event belongs to, so a click
+			// lands on the window and Tab that own it: the main window for a
+			// shell Session, the Dropdown Panel for a Quake Session.
+			onClick: func(request appdesktop.Notification) {
+				if desktopCtl != nil {
+					desktopCtl.HandleNotificationClick(request)
 				}
 			},
 		},
@@ -1019,7 +1022,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		}),
 		// The app applies the notification mode and window focus before
 		// showing an OS notification.
-		appsession.WithNotificationHook(func(_ model.SessionID, notification appsession.TerminalNotification) {
+		appsession.WithNotificationHook(func(id model.SessionID, notification appsession.TerminalNotification) {
 			mode := terminalService.Settings().OSCNotifications
 			deliverProgramNotification(mode, notification, func() bool {
 				if mainWindow == nil || mainWindow.IsDestroyed() {
@@ -1027,6 +1030,12 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				}
 				return mainWindow.IsVisible() && mainWindow.IsFocused()
 			}, func() {
+				// A Quake Session's OSC notification must land on the Panel,
+				// exactly as a tray or desktop-notification click does.
+				if desktopCtl != nil {
+					desktopCtl.FocusSession(id)
+					return
+				}
 				if windows != nil {
 					windows.FocusMain()
 				}
@@ -1454,7 +1463,16 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// The Host picker reads the Vault's effective Host list live, so a
 		// renamed Host or an edited group default shows on the next frame.
 		quakeui.WithHosts(quakeHostSource{vault: vaultState}),
-		quakeui.WithRedraw(invalidate),
+		// Quake Tabs appear in the tray's Session list, so a new, renamed, or
+		// closed Tab rebuilds it as well as repainting the Panel. The
+		// controller is assigned after this state; the closure resolves it
+		// lazily.
+		quakeui.WithRedraw(func() {
+			invalidate()
+			if desktopCtl != nil {
+				desktopCtl.ScheduleSync()
+			}
+		}),
 		// Closing the last Quake Tab hides the Panel; the next show creates a
 		// fresh local Shell.
 		quakeui.WithEmpty(func() {
@@ -1500,11 +1518,14 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// The tray owns show/hide, recent Hosts, active Port Forwarding Rules, and
 	// quit. Close-to-tray asks the current settings live.
 	desktopCtl = newDesktopController(
-		windows, shellState, vaultState, forwardingManager, desktopService,
-		mygoTrayBackend{},
+		windows, shellState, quakeState, vaultState, forwardingManager,
+		desktopService, mygoTrayBackend{},
 		func() string { return mygo.App.Locale() },
 		mygo.App.Quit,
 	)
+	// Quake Sessions end on quit beside the shell's; the quit prompt counts
+	// them so the user is asked once about every Session.
+	windows.SetQuakeSessionCount(quakeState.SessionCount)
 	windows.SetCloseToTray(desktopCtl.HideOnClose)
 	// Regaining focus asks the sync engine for a debounced run. Every window
 	// reports focus through the same hook, so a detached Session works too.
@@ -1651,17 +1672,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// any goroutine and asks for the frame that shows the new status.
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
 		// The Dropdown Panel is not a window that keeps the app alive, so it
-		// may still be open at quit. Hide and destroy it first; it never
-		// prompts and must not outlive the event loop.
-		if windows != nil {
-			windows.ShutdownDropdown()
-		}
-		// Quake Tabs own live local Shells; end them before the shared
-		// Session service and the connections below. The Panel is already
-		// hidden, so this path never asks it to hide again.
-		if quakeState != nil {
-			quakeState.Shutdown()
-		}
+		// may still be open at quit. Tear it down and close the Quake Sessions
+		// before the shared shell and connection teardown below.
+		shutdownDropdownWorkspace(windows, quakeState)
 		shellState.Persist()
 		// Stop accepting external MCP calls before the services they read are
 		// torn down, then remove the discovery pointer if it is still ours.
@@ -1723,11 +1736,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		desktopCtl.HandleLaunchArgs(os.Args[1:])
 
 		// A login launch starts quietly in the tray, as the original did,
-		// but only when there is a tray icon to reopen the window from.
-		if mygo.App.WasOpenedAtLogin() && desktopService.Settings().ShowTrayIcon &&
-			desktopService.Capabilities().Tray && mainWindow.IsVisible() {
-			mainWindow.Hide()
-		}
+		// but only when there is a tray icon to reopen the window from. It
+		// never displays the Dropdown Panel.
+		desktopCtl.HandleLoginLaunch(mygo.App.WasOpenedAtLogin())
 
 		// Terminal widgets consume their own input, so the gate never sees
 		// keystrokes typed there. A Session change (including the echo of
@@ -2199,6 +2210,20 @@ func appliedSnapshotRefresh(state func() *vaultstate.State) func() {
 		if s := state(); s != nil {
 			s.InvalidateLists()
 		}
+	}
+}
+
+// shutdownDropdownWorkspace is the first half of app shutdown: the Dropdown
+// Panel is hidden and destroyed, then every Quake Tab's Surface and Session is
+// closed. Hiding the Panel first means Quake shutdown never asks it to hide
+// again, and no native Panel survives into the shell and connection teardown
+// that follows in OnWillQuit.
+func shutdownDropdownWorkspace(windows *windowManager, quake *quakeui.State) {
+	if windows != nil {
+		windows.ShutdownDropdown()
+	}
+	if quake != nil {
+		quake.Shutdown()
 	}
 }
 

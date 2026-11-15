@@ -1483,6 +1483,10 @@
   "trayStatusInactive": "Inactive",
   "trayStatusError": "Error",
   "trayRuleUnnamed": "Untitled rule",
+  "trayQuakeSource": "Quake",
+  "@trayQuakeSource": {
+    "description": "The source marker on a system-tray Session row that belongs to the Quake Dropdown Panel's own workspace."
+  },
   "notificationSessionEndedTitle": "Session ended",
   "notificationSessionEndedBody": "{target} has ended.",
   "@notificationSessionEndedBody": {

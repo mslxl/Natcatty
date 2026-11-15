@@ -832,11 +832,12 @@ func TestServiceCapabilitiesReportDropdownSupport(t *testing.T) {
 
 func TestServiceNotificationsRespectTogglesAndSupport(t *testing.T) {
 	service, repository, _, _, notifier := serviceForTest(t)
-	if err := service.Notify(Notification{Event: EventSessionEnded, Target: "box"}); err != nil {
+	if err := service.Notify(Notification{Event: EventSessionEnded, Target: "box", Session: "s1"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(notifier.notified) != 1 || notifier.notified[0].Target != "box" {
-		t.Fatalf("notified = %+v", notifier.notified)
+	if len(notifier.notified) != 1 || notifier.notified[0].Target != "box" ||
+		notifier.notified[0].Session != "s1" {
+		t.Fatalf("notified = %+v, want the Session identity preserved for click routing", notifier.notified)
 	}
 	if err := service.SetNotification(EventSessionEnded, false); err != nil {
 		t.Fatal(err)

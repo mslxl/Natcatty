@@ -652,3 +652,94 @@ func TestFailedHostOpenSurfacesAProblemAndAddsNoTab(t *testing.T) {
 		t.Fatal("a failed Host open recorded no problem for the view")
 	}
 }
+
+// TestTabAtAndTabForSessionLocateTheSameTabs proves the integration seam the
+// tray and notification routing use: index lookup exposes the live Tab, and
+// Session lookup returns the TabInfo for the Tab that owns it.
+func TestTabAtAndTabForSessionLocateTheSameTabs(t *testing.T) {
+	state, _, _ := newTestState(t)
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if err := state.AddHostTab(hostsForTest()[0]); err != nil {
+		t.Fatalf("AddHostTab: %v", err)
+	}
+	first, ok := state.TabAt(0)
+	if !ok || first.Session == nil || first.Surface == nil {
+		t.Fatal("TabAt(0) did not return the first live Tab")
+	}
+	info, ok := state.TabForSession(first.Session.ID())
+	if !ok {
+		t.Fatal("TabForSession did not find the first Tab")
+	}
+	if info.Index != 0 || info.Number != first.Number || info.Label != first.Label {
+		t.Fatalf("TabForSession = %+v, want the first Tab", info)
+	}
+	if _, ok := state.TabForSession("missing"); ok {
+		t.Fatal("TabForSession found a Tab for an unknown Session")
+	}
+	if _, ok := state.TabAt(-1); ok {
+		t.Fatal("TabAt(-1) returned a Tab")
+	}
+	if _, ok := state.TabAt(state.TabCount()); ok {
+		t.Fatal("TabAt past the end returned a Tab")
+	}
+}
+
+// TestFocusSessionSelectsOnlyTheOwningTab covers a notification click for a
+// Quake Session: the Tab that owns it becomes active and no other Tab moves.
+func TestFocusSessionSelectsOnlyTheOwningTab(t *testing.T) {
+	state, _, _ := newTestState(t)
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	first, _ := state.Active()
+	if err := state.AddLocalTab(); err != nil {
+		t.Fatalf("AddLocalTab: %v", err)
+	}
+	if state.ActiveIndex() != 1 {
+		t.Fatalf("active = %d, want the new second Tab", state.ActiveIndex())
+	}
+	if !state.FocusSession(first.Session.ID()) {
+		t.Fatal("FocusSession did not find the first Tab's Session")
+	}
+	if state.ActiveIndex() != 0 {
+		t.Fatalf("active = %d after FocusSession, want the first Tab", state.ActiveIndex())
+	}
+	if state.TabCount() != 2 {
+		t.Fatalf("FocusSession changed the Tab list: %d", state.TabCount())
+	}
+	if state.FocusSession("missing") {
+		t.Fatal("FocusSession found an unknown Session")
+	}
+}
+
+// TestSessionCountCountsOnlyLiveTabs covers the quit count: a running Quake
+// Session is counted, and Shutdown (which closes every Tab) drops the count to
+// zero.
+func TestSessionCountCountsOnlyLiveTabs(t *testing.T) {
+	state, _, _ := newTestState(t)
+	if state.SessionCount() != 0 {
+		t.Fatalf("a new workspace counts %d Sessions", state.SessionCount())
+	}
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if err := state.AddLocalTab(); err != nil {
+		t.Fatalf("AddLocalTab: %v", err)
+	}
+	if got := state.SessionCount(); got != 2 {
+		t.Fatalf("SessionCount = %d, want 2 running local Shells", got)
+	}
+	state.SelectTab(0)
+	if !state.CloseTab(0) {
+		t.Fatal("CloseTab reported no change for the first Tab")
+	}
+	if got := state.SessionCount(); got != 1 {
+		t.Fatalf("SessionCount = %d after closing a Tab, want 1", got)
+	}
+	state.Shutdown()
+	if state.SessionCount() != 0 {
+		t.Fatalf("Shutdown left %d counted Sessions", state.SessionCount())
+	}
+}

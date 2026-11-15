@@ -315,6 +315,64 @@ func (s *State) Active() (Tab, bool) {
 	return s.tabs[s.active], true
 }
 
+// TabAt returns the live Tab at index, including its Session and Surface. The
+// tray reads it to report a Quake Tab's connection state, which TabInfo does
+// not carry.
+func (s *State) TabAt(index int) (Tab, bool) {
+	if index < 0 || index >= len(s.tabs) {
+		return Tab{}, false
+	}
+	return s.tabs[index], true
+}
+
+// TabForSession returns the Tab that owns id. Notification clicks use it to
+// locate a Quake Session when the notification carries only the Session
+// identity, not the Tab index.
+func (s *State) TabForSession(id model.SessionID) (TabInfo, bool) {
+	if id == "" {
+		return TabInfo{}, false
+	}
+	for index, tab := range s.tabs {
+		if tab.Session == nil || tab.Session.ID() != id {
+			continue
+		}
+		return TabInfo{
+			Index:  index,
+			Number: tab.Number,
+			Label:  tab.Label,
+			HostID: tab.HostID,
+			Active: index == s.active,
+		}, true
+	}
+	return TabInfo{}, false
+}
+
+// FocusSession makes the Tab that owns id active and reports whether one did.
+// It is the notification-click half of the workspace integration: it never
+// opens, closes, or reorders a Tab.
+func (s *State) FocusSession(id model.SessionID) bool {
+	tab, ok := s.TabForSession(id)
+	if !ok {
+		return false
+	}
+	s.SelectTab(tab.Index)
+	return true
+}
+
+// SessionCount returns the running Sessions in the Quake workspace. A Tab
+// whose Session ended or was closed does not count, matching the main shell's
+// quit count. The quit prompt adds it so a live Quake Session is never
+// discarded without the user's confirmation.
+func (s *State) SessionCount() int {
+	count := 0
+	for _, tab := range s.tabs {
+		if tab.Session != nil && tab.Session.Snapshot().Status == appsession.StatusRunning {
+			count++
+		}
+	}
+	return count
+}
+
 // SelectTab makes the Tab at index active. An out-of-range index is a no-op.
 func (s *State) SelectTab(index int) {
 	if index < 0 || index >= len(s.tabs) || index == s.active {

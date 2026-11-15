@@ -237,6 +237,11 @@ const (
 type Notification struct {
 	Event  Event
 	Target string
+	// Session is the opaque identity of the Session the event belongs to. The
+	// composition root uses it to route the notification's click to the window
+	// and Tab that own the Session; this package never interprets it. It is
+	// empty for an event that is not tied to a Session.
+	Session string
 }
 
 // Defaults returns the original app's defaults for goos.

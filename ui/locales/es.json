@@ -990,6 +990,7 @@
   "trayStatusInactive": "Inactiva",
   "trayStatusError": "Error",
   "trayRuleUnnamed": "Regla sin título",
+  "trayQuakeSource": "Quake",
   "notificationSessionEndedTitle": "Sesión finalizada",
   "notificationSessionEndedBody": "{target} ha finalizado.",
   "@notificationSessionEndedBody": {

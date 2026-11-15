@@ -282,6 +282,11 @@ type windowManager struct {
 	// confirmPolicy asks the Security preference whether closing Sessions
 	// needs a confirmation. Nil keeps the original behavior (always ask).
 	confirmPolicy func() bool
+	// quakeSessionCount reports the Dropdown Panel's live Quake Sessions. Quit
+	// intent counts them beside the shell's Sessions, so a Quake Tab cannot be
+	// discarded without the user's confirmation. Nil means the build has no
+	// Quake Workspace.
+	quakeSessionCount func() int
 	// onFocus runs after any window gains focus, beside the App Lock activity
 	// record. The sync engine uses it for its debounced focus trigger.
 	onFocus  func()
@@ -1195,14 +1200,26 @@ func (m *windowManager) allowDetachedClose(tabID model.TabID) bool {
 	return m.confirmSessions(m.state.ActiveSessionCountDetached(tabID), false)
 }
 
+// SetQuakeSessionCount installs the live count of the Dropdown Panel's Quake
+// Sessions. Quit intent adds it to the shell's count; nil leaves the count
+// unchanged for windows wired without a Quake Workspace.
+func (m *windowManager) SetQuakeSessionCount(fn func() int) {
+	m.quakeSessionCount = fn
+}
+
 // ConfirmQuit handles application quit intent once. It reports whether the
 // quit may proceed and remembers the decision for the window closes that
-// follow.
+// follow. The count includes the Quake Workspace's Sessions: quitting ends
+// them too, so the user is asked once about every Session that will end.
 func (m *windowManager) ConfirmQuit() bool {
 	if m.quitting {
 		return true
 	}
-	if m.confirmSessions(m.state.ActiveSessionCount(), true) {
+	count := m.state.ActiveSessionCount()
+	if m.quakeSessionCount != nil {
+		count += m.quakeSessionCount()
+	}
+	if m.confirmSessions(count, true) {
 		m.quitting = true
 		return true
 	}
@@ -1286,8 +1303,11 @@ func (m *windowManager) FocusMain() {
 
 // SecondInstance is what the single-instance callback does when a later
 // launch hands over: raise the existing main window, or recreate it when it
-// was closed. It returns the window it raised.
+// was closed. A handover is a startup route, so an open Dropdown Panel is
+// hidden first and the main window becomes the window in front. It returns
+// the window it raised.
 func (m *windowManager) SecondInstance() hostWindow {
+	m.HideDropdown()
 	m.FocusMain()
 	return m.main
 }

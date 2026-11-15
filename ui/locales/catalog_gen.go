@@ -7876,6 +7876,22 @@ func (msgs Messages) TrayRuleUnnamed() string {
 	return Catalog.Format(msgs.locale, "trayRuleUnnamed", nil)
 }
 
+// TrayQuakeSource says "Quake"
+// in the language the app shows.
+//
+// The source marker on a system-tray Session row that belongs to the Quake
+// Dropdown Panel's own workspace.
+func TrayQuakeSource() string { return In(i18n.Locale()).TrayQuakeSource() }
+
+// TrayQuakeSource says "Quake"
+// in the language of msgs.
+//
+// The source marker on a system-tray Session row that belongs to the Quake
+// Dropdown Panel's own workspace.
+func (msgs Messages) TrayQuakeSource() string {
+	return Catalog.Format(msgs.locale, "trayQuakeSource", nil)
+}
+
 // NotificationSessionEndedTitle says "Session ended"
 // in the language the app shows.
 func NotificationSessionEndedTitle() string { return In(i18n.Locale()).NotificationSessionEndedTitle() }
