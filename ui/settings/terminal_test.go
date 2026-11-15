@@ -395,7 +395,7 @@ func TestTerminalSettingsShowThePowerUxControls(t *testing.T) {
 	}
 }
 
-func TestTerminalSettingsToggleRawTerminalMode(t *testing.T) {
+func TestTerminalSettingsToggleLensTerminalMode(t *testing.T) {
 	fake := newFakeTerminal()
 	state := NewTerminalState(fake)
 	tester := ui.NewTester(viewAt(AreaTerminal, Config{
@@ -405,14 +405,14 @@ func TestTerminalSettingsToggleRawTerminalMode(t *testing.T) {
 	tester.Frame()
 	m := locales.In("en")
 	if fake.settings.RawTerminalMode {
-		t.Fatal("raw terminal mode is on by default")
+		t.Fatal("Lens terminal mode is not on by default")
 	}
 	if err := tester.Click(m.SettingsRawTerminalModeEnabled()); err != nil {
 		t.Fatal(err)
 	}
 	tester.Frame()
 	if !fake.settings.RawTerminalMode {
-		t.Fatal("raw terminal mode checkbox did not reach the service")
+		t.Fatal("turning off Lens terminal mode did not enable raw terminal mode")
 	}
 }
 

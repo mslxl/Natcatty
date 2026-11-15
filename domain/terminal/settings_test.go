@@ -25,7 +25,7 @@ func TestDefaults(t *testing.T) {
 		t.Fatal("the history capture hook is off by default")
 	}
 	if settings.RawTerminalMode {
-		t.Fatal("raw terminal mode is on by default")
+		t.Fatal("Lens terminal mode is not on by default")
 	}
 }
 

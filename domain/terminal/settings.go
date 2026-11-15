@@ -252,7 +252,8 @@ type Settings struct {
 	// preference never widens a saved Host's offer. It is off by default.
 	LegacyAlgorithms bool
 	// RawTerminalMode renders every Session as one raw terminal screen and
-	// bypasses Lens history blocks. It is off by default.
+	// bypasses Lens history blocks. It is off by default, so Lens mode is on
+	// by default.
 	RawTerminalMode bool
 }
 
