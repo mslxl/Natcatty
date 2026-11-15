@@ -1860,7 +1860,7 @@
   "settingsHistoryCaptureHookEnabled": "安装 shell 捕获钩子",
   "settingsRawTerminalModeTitle": "Lens 终端模式",
   "settingsRawTerminalModeDescription": "默认使用 Lens 命令块。关闭后，每个 shell 都以一个完整的原始终端显示。",
-  "settingsRawTerminalModeEnabled": "对所有 shell 使用 Lens（Beta）",
+  "settingsRawTerminalModeEnabled": "对所有 shell 使用 Lens",
   "settingsSyncTitle": "同步与云",
   "settingsSyncDescription": "通过云服务提供商同步加密的保管库。主密码绝不会离开此设备。",
   "settingsSyncSecurityNote": "服务提供商可以看到保管库的元数据，例如设备名称、应用版本和时间戳。保管库记录和凭据始终保持加密。",

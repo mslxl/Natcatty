@@ -14400,13 +14400,13 @@ func (msgs Messages) SettingsRawTerminalModeDescription() string {
 	return Catalog.Format(msgs.locale, "settingsRawTerminalModeDescription", nil)
 }
 
-// SettingsRawTerminalModeEnabled says "Use Lens for all shells (Beta)"
+// SettingsRawTerminalModeEnabled says "Use Lens for all shells"
 // in the language the app shows.
 func SettingsRawTerminalModeEnabled() string {
 	return In(i18n.Locale()).SettingsRawTerminalModeEnabled()
 }
 
-// SettingsRawTerminalModeEnabled says "Use Lens for all shells (Beta)"
+// SettingsRawTerminalModeEnabled says "Use Lens for all shells"
 // in the language of msgs.
 func (msgs Messages) SettingsRawTerminalModeEnabled() string {
 	return Catalog.Format(msgs.locale, "settingsRawTerminalModeEnabled", nil)

@@ -4,6 +4,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
+	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
@@ -74,10 +75,14 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 		ui.Text(c, m.SettingsRawTerminalModeTitle()).Bold()
 		ui.Text(c, m.SettingsRawTerminalModeDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		lensTerminal := !settings.RawTerminalMode
-		if ui.Checkbox(c, &lensTerminal, m.SettingsRawTerminalModeEnabled()).Changed() {
-			state.SetRawTerminalMode(!lensTerminal)
-			c.Invalidate()
-		}
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			changed := ui.Checkbox(c, &lensTerminal, m.SettingsRawTerminalModeEnabled()).Changed()
+			kit.IconSized(c, icons.WandSparkles, 14).TextColor(t.Accent).Tooltip("Beta")
+			if changed {
+				state.SetRawTerminalMode(!lensTerminal)
+				c.Invalidate()
+			}
+		})
 
 		renderPowerUxSection(c, state, settings, m, t)
 		renderRetentionSection(c, state, settings, m, t)
