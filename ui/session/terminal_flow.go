@@ -51,6 +51,7 @@ type terminalFlow struct {
 	boundary           osc133BoundaryScanner
 	promptRow          int
 	promptRowKnown     bool
+	promptAfterCommand bool
 	promptSize         appview.Size
 	commandSincePrompt bool
 }
@@ -131,24 +132,43 @@ func (s *terminalFlow) clear() {
 	s.imageMu.Unlock()
 }
 
+func (s *terminalFlow) setSize(cols, rows int) {
+	if s == nil || cols <= 0 || rows <= 0 {
+		return
+	}
+	if s.tap != nil {
+		s.tapMu.Lock()
+		s.tap.SetCols(cols)
+		s.tapMu.Unlock()
+	}
+	s.bellMu.Lock()
+	if s.bellTerm != nil {
+		if s.bellSize.Cols != cols || s.bellSize.Rows != rows {
+			s.bellTerm.Resize(cols, rows)
+			s.bellSize = appview.Size{Cols: cols, Rows: rows}
+			s.promptSize = s.bellSize
+			if s.promptRowKnown && s.promptRow >= rows {
+				s.promptRow = rows - 1
+			}
+		}
+	}
+	s.bellMu.Unlock()
+}
+
 func (s *terminalFlow) setCols(cols int) {
 	if s == nil || cols <= 0 {
 		return
 	}
-	s.tapMu.Lock()
-	s.tap.SetCols(cols)
-	s.tapMu.Unlock()
 	s.bellMu.Lock()
+	rows := 0
 	if s.bellTerm != nil {
-		rows := s.bellSize.Rows
-		if rows <= 0 {
-			_, rows = s.bellTerm.Size()
-		}
-		s.bellSize = appview.Size{Cols: cols, Rows: rows}
-		s.bellTerm.Resize(cols, rows)
-		s.promptSize = s.bellSize
+		rows = s.bellSize.Rows
 	}
 	s.bellMu.Unlock()
+	if rows <= 0 {
+		rows = 24
+	}
+	s.setSize(cols, rows)
 }
 
 // promptBoundary returns the screen row where the current shell prompt run
@@ -164,6 +184,15 @@ func (s *terminalFlow) promptBoundary(size appview.Size) (int, bool) {
 		return 0, false
 	}
 	return s.promptRow, true
+}
+
+func (s *terminalFlow) promptBoundaryAfterCommand() bool {
+	if s == nil {
+		return false
+	}
+	s.bellMu.Lock()
+	defer s.bellMu.Unlock()
+	return s.promptAfterCommand
 }
 
 // bindBellTracker attaches the exact-BEL cursor mirror to the visible terminal.
@@ -195,6 +224,7 @@ func (s *terminalFlow) bindBellTracker(term *terminal.Terminal) {
 	s.promptSize = s.bellSize
 	s.promptRow = 0
 	s.promptRowKnown = false
+	s.promptAfterCommand = false
 	s.commandSincePrompt = false
 	backlog := s.bellBacklog
 	s.bellBacklog = nil
@@ -265,11 +295,13 @@ func (s *terminalFlow) recordOSC133(marker string) {
 		if !ok {
 			return
 		}
-		if s.commandSincePrompt || !s.promptRowKnown || row < s.promptRow {
+		afterCommand := s.commandSincePrompt
+		if afterCommand || !s.promptRowKnown || row < s.promptRow {
 			s.promptRow = row
 		}
 		s.promptRowKnown = true
 		s.promptSize = s.bellSize
+		s.promptAfterCommand = afterCommand
 		s.commandSincePrompt = false
 	case "D":
 		// D ends a command, but the next B decides whether a new prompt starts

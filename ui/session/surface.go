@@ -836,7 +836,7 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 			}
 		}
 		cols, rows := s.terminal.Size()
-		s.flow.setCols(cols)
+		s.flow.setSize(cols, rows)
 		blocks := s.flow.store.Snapshot()
 		lastID, lastExited := -1, false
 		if len(blocks) > 0 {
@@ -863,8 +863,9 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 			promptRow, promptRowKnown = 0, false
 		}
 		tail := appview.Tail{
-			PromptRow:      promptRow,
-			PromptRowKnown: promptRowKnown,
+			PromptRow:          promptRow,
+			PromptRowKnown:     promptRowKnown,
+			PromptAfterCommand: s.flow.promptBoundaryAfterCommand(),
 		}
 		for _, block := range blocks {
 			if block.Exited {
