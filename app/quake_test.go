@@ -83,9 +83,13 @@ type quakeGraph struct {
 	source   appdesktop.QuakeSource
 	// settings carries the dropdown geometry and hide switches; the mode and
 	// source fields above stay authoritative for routing, as the app's
-	// service does.
-	settings appdesktop.Settings
-	hosts    []domainvault.Host
+	// service does. routeMode and routeSource, when set, replace them so an
+	// integration test can drive the wiring from the same desktop service the
+	// controller reads.
+	settings    appdesktop.Settings
+	hosts       []domainvault.Host
+	routeMode   func() appdesktop.HotkeyMode
+	routeSource func() appdesktop.QuakeSource
 }
 
 // Hosts implements the Quake Host picker's consumer-owned port with the
@@ -95,6 +99,17 @@ func (q *quakeGraph) Hosts() []domainvault.Host { return q.hosts }
 func newQuakeGraph(t *testing.T) *quakeGraph {
 	t.Helper()
 	return newQuakeGraphWithGate(t, nil)
+}
+
+// waitForQuakeTabCount applies completed Host opens until the workspace holds
+// want Tabs. Host dialing is asynchronous, so tests wait on the real outcome
+// with a hard timeout instead of assuming the click completed.
+func waitForQuakeTabCount(t *testing.T, q *quakeGraph, want int) {
+	t.Helper()
+	waitFor(t, "the Quake Tabs", func() bool {
+		q.quake.Flush()
+		return q.quake.TabCount() == want
+	})
 }
 
 func newQuakeGraphWithGate(t *testing.T, gate *uiapplock.Gate) *quakeGraph {
@@ -120,8 +135,18 @@ func newQuakeGraphWithGate(t *testing.T, gate *uiapplock.Gate) *quakeGraph {
 	)
 	t.Cleanup(q.quake.Shutdown)
 	wireDropdownQuake(graph.manager, q.quake, graph.state,
-		func() appdesktop.HotkeyMode { return q.mode },
-		func() appdesktop.QuakeSource { return q.source },
+		func() appdesktop.HotkeyMode {
+			if q.routeMode != nil {
+				return q.routeMode()
+			}
+			return q.mode
+		},
+		func() appdesktop.QuakeSource {
+			if q.routeSource != nil {
+				return q.routeSource()
+			}
+			return q.source
+		},
 		func() appdesktop.Settings {
 			current := q.settings
 			current.HotkeyMode = q.mode
@@ -354,6 +379,8 @@ func TestDropdownQuakeHostPickerOpensAHostTabAndLeavesTheMainWorkspaceUntouched(
 	if err := tester.Click("Beta"); err != nil {
 		t.Fatalf("selecting the Beta Host: %v", err)
 	}
+	// The Host dial runs off the UI thread; the Panel's next frame applies it.
+	waitForQuakeTabCount(t, q, 2)
 	tester.Frame()
 
 	if len(q.opener.hostOpens) != 1 || q.opener.hostOpens[0].ID != "host-beta" {
@@ -522,10 +549,11 @@ func TestDropdownQuakeEscapeHidesThePanelWhenTheRouteHasNoPicker(t *testing.T) {
 	}
 }
 
-// TestDropdownQuakeEscapeHidesAPanelLockedOverAnOpenPicker proves a picker
-// hidden behind the App Lock screen does not consume the first Escape: the
-// gate replaces the Quake content with the lock screen, so the Panel's own
-// close request must hide it.
+// TestDropdownQuakeEscapeHidesAPanelLockedOverAnOpenPicker proves the routed
+// bar is behind the shared App Lock gate: while locked, an open picker is not
+// drawn at all (its Tab strip and Host list are hidden with the content), so
+// it cannot consume the first Escape. Only the frame's hide button stays
+// visible, and the Panel's own close request must hide it.
 func TestDropdownQuakeEscapeHidesAPanelLockedOverAnOpenPicker(t *testing.T) {
 	var q *quakeGraph
 	gate := lockedGate(t, func() {
@@ -542,6 +570,23 @@ func TestDropdownQuakeEscapeHidesAPanelLockedOverAnOpenPicker(t *testing.T) {
 	q.quake.OpenPicker()
 	if !q.quake.PickerOpen() {
 		t.Fatal("the Host picker did not open")
+	}
+
+	// The lock screen replaces routed content, and the gated bar draws nothing:
+	// no Tab label, picker, or saved Host list is exposed. The frame's hide
+	// control remains usable.
+	m := locales.In("en")
+	tester := render(window)
+	if !tester.HasText(m.AppLockUnlock()) {
+		t.Fatalf("the locked Panel did not show the lock screen: %v", tester.Texts())
+	}
+	if !tester.HasText(m.DropdownHide()) {
+		t.Fatalf("the locked Panel lost its hide button: %v", tester.Texts())
+	}
+	for _, hidden := range []string{m.LocalSessionTab(1), m.QuakeHostPicker(), "Alpha", "Beta", "alpha.example"} {
+		if tester.HasText(hidden) {
+			t.Fatalf("the locked Panel exposed routed bar text %q: %v", hidden, tester.Texts())
+		}
 	}
 
 	window.Close()

@@ -618,6 +618,20 @@ func (m *windowManager) wrap(content func(*ui.Context)) func(*ui.Context) {
 	}
 }
 
+// wrapChrome gates a window's shared chrome, such as the Dropdown Panel's
+// routed bar. While locked the chrome renders nothing; the content slot draws
+// the one lock screen, so chrome that shares a row with the frame's own
+// controls does not paint a second one.
+func (m *windowManager) wrapChrome(content func(*ui.Context)) func(*ui.Context) {
+	return func(c *ui.Context) {
+		if m.gate == nil {
+			content(c)
+			return
+		}
+		m.gate.WrapChrome(content)(c)
+	}
+}
+
 // detachedContent is the content of a detached Tab's window: the Tab's view
 // behind the same shared App Lock gate as every other window.
 func (m *windowManager) detachedContent(tabID model.TabID) func(*ui.Context) {
@@ -732,8 +746,11 @@ func (m *windowManager) OpenSettings() {
 		Chrome:    titlebar.Dialog,
 		Content:   m.withTheme(withFrame(titlebar.Dialog, func() hostWindow { return m.settings }, m.wrap(m.settingsContent()))),
 	}, windowHooks{
-		OnFocus:  m.recordActivity,
-		OnClosed: func() { m.settings = nil; m.markQuittingIfNoWindows() },
+		OnFocus: m.recordActivity,
+		// Settings owns no Sessions, but closing the last counted window quits
+		// and would end the Quake Workspace's live Sessions.
+		OnCloseRequest: func() bool { return m.allowQuakeClose(m.settings) },
+		OnClosed:       func() { m.settings = nil; m.markQuittingIfNoWindows() },
 	})
 }
 
@@ -1066,10 +1083,10 @@ func (m *windowManager) forgetDropdown(window hostWindow) {
 	}
 }
 
-// dropdownContentRendered reports whether the Panel's routed content is built.
-// The shared App Lock gate replaces every window's content with the lock
-// screen while closed, so a flyout inside the content is not on screen then
-// and must not consume a close request.
+// dropdownContentRendered reports whether the Panel's routed content and bar
+// are built. The shared App Lock gate replaces the content with the lock
+// screen and skips the routed bar while closed, so a flyout inside either is
+// not on screen then and must not consume a close request.
 func (m *windowManager) dropdownContentRendered() bool {
 	return m.gate == nil || !m.gate.Locked()
 }
@@ -1078,7 +1095,9 @@ func (m *windowManager) dropdownContentRendered() bool {
 // preamble, the dropdown frame with its hide button and routed bar, then the
 // routed content behind the one App Lock gate. The frame sits outside the
 // gate, as every window's controls do, so the Panel can be hidden while
-// locked.
+// locked. The routed bar is gated like content: the Quake tab strip and Host
+// picker expose Session and Host names, so locking hides them while the frame
+// and its hide button stay usable.
 func (m *windowManager) dropdownView() func(*ui.Context) {
 	content := dropdown.Placeholder
 	if m.dropdownContent != nil {
@@ -1088,7 +1107,9 @@ func (m *windowManager) dropdownView() func(*ui.Context) {
 	}
 	var bar func(*ui.Context)
 	if m.dropdownBar != nil {
-		bar = m.dropdownBar()
+		if provided := m.dropdownBar(); provided != nil {
+			bar = m.wrapChrome(provided)
+		}
 	}
 	return m.withTheme(m.withAccelerators(dropdown.View(m.HideDropdown, bar, m.wrap(content))))
 }
@@ -1179,7 +1200,14 @@ func (m *windowManager) allowMainClose() bool {
 		// alive in the tray.
 		return false
 	}
-	return m.confirmSessions(m.state.ActiveSessionCountMain(), false)
+	count := m.state.ActiveSessionCountMain()
+	// Closing the last counted window quits, and quitting also ends the Quake
+	// Workspace's Sessions. They belong in this one close confirmation even
+	// though they live outside the main Workspace.
+	if m.closingLastCountedWindow(m.main) {
+		count += m.quakeSessionCountValue()
+	}
+	return m.confirmSessions(count, false)
 }
 
 // SetCloseToTray installs the tray-hiding policy. The window manager asks it
@@ -1197,7 +1225,47 @@ func (m *windowManager) allowDetachedClose(tabID model.TabID) bool {
 	if m.quitting || m.forceClose[key] {
 		return true
 	}
-	return m.confirmSessions(m.state.ActiveSessionCountDetached(tabID), false)
+	count := m.state.ActiveSessionCountDetached(tabID)
+	// A detached window that is the last counted one ends the app and its
+	// Quake Sessions too.
+	if m.closingLastCountedWindow(m.detached[tabID]) {
+		count += m.quakeSessionCountValue()
+	}
+	return m.confirmSessions(count, false)
+}
+
+// allowQuakeClose handles a counted window that owns no Sessions of its own,
+// such as Settings. Closing the last such window quits, which also ends the
+// live Quake Sessions, so that close still asks about them.
+func (m *windowManager) allowQuakeClose(window hostWindow) bool {
+	if m.quitting || !m.closingLastCountedWindow(window) {
+		return true
+	}
+	return m.confirmSessions(m.quakeSessionCountValue(), false)
+}
+
+// closingLastCountedWindow reports whether closing window leaves no counted
+// window open, which makes that close the application's quit trigger.
+func (m *windowManager) closingLastCountedWindow(window hostWindow) bool {
+	for _, managed := range m.windows() {
+		if !managed.counts || managed.window == nil || managed.window.IsDestroyed() {
+			continue
+		}
+		if managed.window == window {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// quakeSessionCountValue reads the live Quake Session count, or zero when the
+// build has no Quake Workspace.
+func (m *windowManager) quakeSessionCountValue() int {
+	if m.quakeSessionCount == nil {
+		return 0
+	}
+	return m.quakeSessionCount()
 }
 
 // SetQuakeSessionCount installs the live count of the Dropdown Panel's Quake

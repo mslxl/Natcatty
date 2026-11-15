@@ -14,9 +14,10 @@ import (
 
 // View puts the panel's frame around bar and content. bar draws the routed
 // content's own top-bar items, such as the Quake tab strip, in the same row as
-// the hide button; nil leaves the leading space empty. The frame stays outside
-// the shared App Lock gate, so the hide button works while the content is
-// locked.
+// the hide button; nil leaves the leading space empty. The caller supplies bar
+// already behind the shared App Lock gate (see applock.Gate.WrapChrome), so
+// locking hides routed labels while the frame and its hide button stay usable.
+// The content slot also receives the gate, which draws the one lock screen.
 func View(onHide func(), bar, content func(*ui.Context)) func(*ui.Context) {
 	return func(c *ui.Context) {
 		t := c.Theme()

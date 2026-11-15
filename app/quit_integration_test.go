@@ -76,6 +76,93 @@ func TestQuitTearsDownTheDropdownBeforeQuakeSessions(t *testing.T) {
 	})
 }
 
+// TestClosingTheLastWindowConfirmsLiveQuakeSessions proves closing the last
+// counted window cannot silently end live Quake Sessions. The close prompt is
+// the same one the app asks for its own Sessions, with the Quake count added.
+func TestClosingTheLastWindowConfirmsLiveQuakeSessions(t *testing.T) {
+	q := newQuakeGraph(t)
+	q.manager.OpenMain()
+	if err := q.quake.Activate(); err != nil {
+		t.Fatalf("quake Activate: %v", err)
+	}
+	if err := q.quake.AddLocalTab(); err != nil {
+		t.Fatalf("quake AddLocalTab: %v", err)
+	}
+	if q.state.ActiveSessionCountMain() != 0 || q.quake.SessionCount() != 2 {
+		t.Fatalf("session counts = main %d, quake %d; want zero and two",
+			q.state.ActiveSessionCountMain(), q.quake.SessionCount())
+	}
+
+	main := q.manager.Main()
+	main.Close()
+	if main.IsDestroyed() {
+		t.Fatal("closing the last window discarded two live Quake Sessions without confirmation")
+	}
+	if len(q.confirmer.prompts) != 1 {
+		t.Fatalf("close prompts = %d, want one", len(q.confirmer.prompts))
+	}
+	if got, want := q.confirmer.prompts[0].Message, locales.In("en").CloseWindowMessage(2); got != want {
+		t.Fatalf("close prompt = %q, want %q", got, want)
+	}
+	if q.manager.Quitting() {
+		t.Fatal("a cancelled close marked the quit")
+	}
+
+	q.confirmer.answer = true
+	main.Close()
+	if !main.IsDestroyed() {
+		t.Fatal("an approved close did not destroy the last window")
+	}
+	if !q.manager.Quitting() {
+		t.Fatal("an approved last-window close did not mark the quit")
+	}
+}
+
+// TestClosingSettingsAsTheLastWindowConfirmsLiveQuakeSessions covers the other
+// last-window kind: Settings owns no Sessions, but closing it still quits and
+// ends the live Quake Sessions.
+func TestClosingSettingsAsTheLastWindowConfirmsLiveQuakeSessions(t *testing.T) {
+	q := newQuakeGraph(t)
+	q.manager.OpenMain()
+	q.manager.OpenSettings()
+	if err := q.quake.Activate(); err != nil {
+		t.Fatalf("quake Activate: %v", err)
+	}
+	if err := q.quake.AddLocalTab(); err != nil {
+		t.Fatalf("quake AddLocalTab: %v", err)
+	}
+
+	// The main window is not last while Settings is open, so its close needs
+	// no Quake count and leaves the Quake Sessions running.
+	q.confirmer.answer = true
+	q.manager.Main().Close()
+	if len(q.confirmer.prompts) != 0 {
+		t.Fatalf("closing the main window beside Settings asked a prompt: %+v", q.confirmer.prompts)
+	}
+	if q.manager.Quitting() {
+		t.Fatal("closing the main window beside Settings marked the quit")
+	}
+
+	settings := q.manager.settings
+	q.confirmer.answer = false
+	settings.Close()
+	if settings.IsDestroyed() {
+		t.Fatal("closing the last window (Settings) discarded the Quake Sessions without confirmation")
+	}
+	if len(q.confirmer.prompts) != 1 {
+		t.Fatalf("settings close prompts = %d, want one", len(q.confirmer.prompts))
+	}
+	if got, want := q.confirmer.prompts[0].Message, locales.In("en").CloseWindowMessage(2); got != want {
+		t.Fatalf("settings close prompt = %q, want %q", got, want)
+	}
+
+	q.confirmer.answer = true
+	settings.Close()
+	if !settings.IsDestroyed() || !q.manager.Quitting() {
+		t.Fatal("an approved settings close did not quit")
+	}
+}
+
 // TestQuakeLocalShellJoinsTheSharedSessionService proves the Quake workspace
 // opens its local Shell through the same Session service as the main window.
 // Command History, cwd forwarding, and the notification hook are attached to

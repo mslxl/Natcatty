@@ -8,6 +8,7 @@ package quake
 import (
 	"errors"
 	"strings"
+	"sync"
 
 	"github.com/egoist/mygo/ui"
 
@@ -94,8 +95,10 @@ type TabInfo struct {
 	Active bool
 }
 
-// State is one Dropdown Panel's Quake workspace. It is mutated on the UI
-// thread only.
+// State is one Dropdown Panel's Quake workspace. The Tab list is mutated on
+// the UI thread only. A Host open runs off that thread, as the main shell's
+// does, and queues its outcome for the next Flush; the queue is the only
+// state a connection goroutine touches, under mu.
 type State struct {
 	opener   SessionOpener
 	surfaces SurfaceFactory
@@ -117,6 +120,23 @@ type State struct {
 	pickerQuery string
 	// problem is the last failed open, for the view to explain.
 	problem error
+	// mu guards the pending Host opens handed over by connection goroutines.
+	// The rest of the state stays UI-thread-only.
+	mu sync.Mutex
+	// pendingHosts holds completed Host opens that Flush has not applied yet.
+	pendingHosts []hostOpen
+	// closed reports that Shutdown ran, so a Host open that finishes later
+	// closes its Session instead of attaching an orphaned Tab.
+	closed bool
+}
+
+// hostOpen is one Host connection that finished off the UI thread. Flush builds
+// its Surface and appends its Tab, or records its error for the view.
+type hostOpen struct {
+	label   string
+	hostID  model.HostID
+	session *appsession.Session
+	err     error
 }
 
 // Option customizes a State.
@@ -169,18 +189,91 @@ func (s *State) AddLocalTab() error {
 // AddHostTab opens a Host in a new Quake Tab and makes it active. The Tab
 // carries the Host's label, so the strip marks which Host it connects to. The
 // Session is opened through the same SessionOpener port as the local Shell.
+//
+// Dialing, host-key verification, and password authentication can wait on the
+// network or on the user's trust decision, so they run on their own goroutine,
+// as the main shell's Host open does. The outcome is applied by the next Frame
+// through Flush; a failed connection records the problem instead of appending
+// a Tab. This function therefore reports only the configuration error (no
+// opener or surface factory), never the connection result.
 func (s *State) AddHostTab(host domainvault.Host) error {
-	return s.openTab(hostTabLabel(host), host.ID, func() (*appsession.Session, error) {
-		if s.opener == nil {
-			return nil, ErrNoSessions
+	if s.opener == nil || s.surfaces == nil {
+		return ErrNoSessions
+	}
+	// Choosing a Host dismisses the picker even when the open fails, so the
+	// error is visible in the body instead of behind the flyout.
+	s.ClosePicker()
+	s.problem = nil
+	label := hostTabLabel(host)
+	go func() {
+		session, err := s.opener.OpenHost(host)
+		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			if session != nil {
+				_ = session.Close()
+			}
+			return
 		}
-		return s.opener.OpenHost(host)
-	})
+		s.pendingHosts = append(s.pendingHosts, hostOpen{
+			label:   label,
+			hostID:  host.ID,
+			session: session,
+			err:     err,
+		})
+		s.mu.Unlock()
+		// A new connection outcome needs the frame that shows its Tab.
+		s.requestRedraw()
+	}()
+	return nil
 }
 
-// openTab is the one Tab-opening path: it resolves the Session through open,
+// Flush applies Host opens that finished since the last frame. The view calls
+// it on the UI thread before rendering, so the Tab list and its Surfaces are
+// still built and mutated only there. It is idempotent, so the bar and the
+// body may both call it in one frame.
+func (s *State) Flush() {
+	s.mu.Lock()
+	outcomes := s.pendingHosts
+	s.pendingHosts = nil
+	closed := s.closed
+	s.mu.Unlock()
+
+	for _, outcome := range outcomes {
+		if closed {
+			if outcome.session != nil {
+				_ = outcome.session.Close()
+			}
+			continue
+		}
+		if outcome.err != nil {
+			s.problem = outcome.err
+			continue
+		}
+		surface, err := s.surfaces(outcome.session)
+		if err != nil {
+			_ = outcome.session.Close()
+			s.problem = err
+			continue
+		}
+		s.tabs = append(s.tabs, Tab{
+			Number:  s.nextNumber,
+			Label:   outcome.label,
+			HostID:  outcome.hostID,
+			Session: outcome.session,
+			Surface: surface,
+		})
+		s.nextNumber++
+		s.active = len(s.tabs) - 1
+		s.problem = nil
+	}
+}
+
+// openTab is the local Tab-opening path: it resolves the Session through open,
 // builds its surface, appends the Tab, and makes it active. A failed open
-// records the problem for the view and leaves the Tab list unchanged.
+// records the problem for the view and leaves the Tab list unchanged. Host
+// opens cannot use it because their connection must not block the UI thread;
+// see AddHostTab and Flush.
 func (s *State) openTab(label string, hostID model.HostID, open func() (*appsession.Session, error)) error {
 	if s.surfaces == nil {
 		return ErrNoSessions
@@ -417,8 +510,20 @@ func (s *State) CloseTab(index int) bool {
 func (s *State) Problem() error { return s.problem }
 
 // Shutdown closes every Tab's Surface and Session without hiding the Panel.
-// The app calls it on quit, after the Panel has been hidden or destroyed.
+// The app calls it on quit, after the Panel has been hidden or destroyed. A
+// Host open still dialing closes its Session when it finishes instead of
+// attaching a Tab after the workspace is gone.
 func (s *State) Shutdown() {
+	s.mu.Lock()
+	s.closed = true
+	pending := s.pendingHosts
+	s.pendingHosts = nil
+	s.mu.Unlock()
+	for _, outcome := range pending {
+		if outcome.session != nil {
+			_ = outcome.session.Close()
+		}
+	}
 	for _, tab := range s.tabs {
 		if tab.Surface != nil {
 			tab.Surface.Close()
