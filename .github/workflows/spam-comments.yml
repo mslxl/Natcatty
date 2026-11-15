@@ -1,0 +1,83 @@
+name: spam-comments
+
+on:
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  hide-spam:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout filter rules
+        uses: actions/checkout@v7
+
+      - name: Hide suspected malware spam
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const path = require('node:path');
+            const { detectSpamComment } = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/spam-comment-filter.cjs')
+            );
+
+            const comment = context.payload.comment || {};
+            const issue = context.payload.issue || {};
+            const login = (comment.user && comment.user.login) || 'unknown';
+            const result = detectSpamComment({
+              body: comment.body || '',
+              authorAssociation: comment.author_association,
+              userType: comment.user && comment.user.type,
+              commentAuthor: comment.user && comment.user.login,
+              issueAuthor: issue.user && issue.user.login,
+            });
+
+            core.info(JSON.stringify(result, null, 2));
+
+            if (!result.spam) {
+              core.info('Comment did not match the risky-download spam filter.');
+              return;
+            }
+
+            const matchedUrl = result.matchedUrls.join(', ');
+            if (!comment.node_id) {
+              core.setFailed(
+                `Comment ${comment.id} by @${login} on #${issue.number} matched ${matchedUrl} but has no node_id.`
+              );
+              return;
+            }
+
+            try {
+              await github.graphql(
+                `mutation($input: MinimizeCommentInput!) {
+                  minimizeComment(input: $input) {
+                    minimizedComment {
+                      isMinimized
+                    }
+                  }
+                }`,
+                {
+                  input: {
+                    subjectId: comment.node_id,
+                    classifier: 'SPAM',
+                  },
+                }
+              );
+            } catch (error) {
+              const message = String((error && error.message) || error);
+              if (/already minimized/i.test(message)) {
+                core.info(
+                  `Comment ${comment.id} by @${login} on #${issue.number} is already minimized. Matched URL: ${matchedUrl}`
+                );
+                return;
+              }
+              throw error;
+            }
+
+            core.notice(
+              `Hid comment ${comment.id} by @${login} on #${issue.number} as spam. Matched URL: ${matchedUrl}`
+            );
