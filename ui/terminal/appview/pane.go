@@ -179,6 +179,13 @@ func Live(c *ui.Context, term *terminal.Terminal, size Size, images []lens.Image
 	showCursor := cursor.Blink == false || time.Now().UnixMilli()/500%2 == 0
 	c.AnimationFrame()
 	frame := ScreenFrameWithCursorTheme(term, size, showCursor, cursor, theme)
+	if hasHistory && tail.PromptRowKnown && tail.PromptAfterCommand &&
+		tail.Running == "" && frame.CursorRow > tail.PromptRow {
+		// The terminal snapshot includes scrollback. After a completed command
+		// scrolls the prompt below the recorded marker, the cursor's current
+		// absolute row is the exact live prompt boundary.
+		tail.PromptRow = frame.CursorRow
+	}
 	from := tailFrom(frame.Lines, frame.CursorRow, tail)
 	lines, cursorRow := frame.Lines[from:], frame.CursorRow-from
 	// The screen is always as tall as the grid, but the live area is only as tall as
@@ -424,8 +431,9 @@ type Tail struct {
 	// PromptRow is the screen row where the shell's current prompt run starts.
 	// It comes from the shell integration's OSC 133;B boundary, so arbitrary
 	// prompt text does not need to be inspected.
-	PromptRow      int
-	PromptRowKnown bool
+	PromptRow          int
+	PromptRowKnown     bool
+	PromptAfterCommand bool
 }
 
 // tailFrom is the first screen row the live area shows: the prompt line when idle,

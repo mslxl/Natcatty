@@ -102,6 +102,26 @@ func TestTerminalFlowTracksPromptRowsWithoutPromptText(t *testing.T) {
 	}
 }
 
+func TestTerminalFlowKeepsPromptBoundaryWhenPaneResizes(t *testing.T) {
+	flow := &terminalFlow{}
+	term, err := terminal.New(terminal.Options{Conn: newTerminalFlowTransport(), Scrollback: -1})
+	if err != nil {
+		t.Skipf("the terminal plugin is unavailable here: %v", err)
+	}
+	defer func() { _ = term.Close() }()
+	term.Resize(40, 8)
+	flow.bindBellTracker(term)
+	flow.feedBell([]byte("\x1b]133;A\x07\x1b]133;B\x07prompt> "))
+
+	// In the real Pane, inserting a finished Lens block changes the live
+	// terminal's row count. The OSC 133 boundary remains authoritative across
+	// that resize and must continue to let the Pane render the block.
+	flow.setSize(40, 4)
+	if row, ok := flow.promptBoundary(appview.Size{Cols: 40, Rows: 4}); !ok || row != 0 {
+		t.Fatalf("resized prompt boundary = (%d, %t), want (0, true)", row, ok)
+	}
+}
+
 func TestTerminalSurfaceBuildsFinishedBlockWithoutMutatingTerminalState(t *testing.T) {
 	transport := newTerminalFlowTransport()
 	service := appsession.NewService(terminalFlowFactory{transport: transport})
@@ -135,6 +155,7 @@ func TestTerminalSurfaceBuildsFinishedBlockWithoutMutatingTerminalState(t *testi
 	if got := surface.terminal.Text(); got == "" {
 		t.Fatal("finished output was removed from the shell terminal; mygo-flow keeps the shell state intact")
 	}
+	surface.flow.setSize(40, 4)
 
 	tester := ui.NewTester(func(c *ui.Context) {
 		surfaceFrame(c, surface, true)
