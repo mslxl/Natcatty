@@ -1901,6 +1901,8 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultBackupProblemProtective()
 	case vaultstate.ProblemBackupCorrupt:
 		return m.VaultBackupProblemCorrupt()
+	case vaultstate.ProblemBackupKeyMismatch:
+		return m.VaultBackupProblemKeyMismatch()
 	case vaultstate.ProblemBackupUnavailable:
 		return m.VaultBackupUnavailable()
 	case vaultstate.ProblemBackupClear:

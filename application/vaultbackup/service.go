@@ -75,8 +75,13 @@ var (
 	ErrNotFound = errors.New("vaultbackup: backup not found")
 	// ErrIncompatibleSnapshot reports a backup this build cannot restore.
 	ErrIncompatibleSnapshot = errors.New("vaultbackup: incompatible snapshot")
-	// ErrCorrupt reports a backup whose payload fails verification.
+	// ErrCorrupt reports a backup whose decrypted payload fails verification.
 	ErrCorrupt = errors.New("vaultbackup: backup failed verification")
+	// ErrDecrypt reports a backup whose ciphertext cannot be opened with this
+	// machine's backup key. AES-GCM authenticates the ciphertext, so a key
+	// from another machine and a damaged payload are indistinguishable here;
+	// the UI must offer both explanations rather than blaming data loss.
+	ErrDecrypt = errors.New("vaultbackup: backup cannot be decrypted with this machine's key")
 )
 
 // ProtectiveBackupError reports that a destructive operation was aborted

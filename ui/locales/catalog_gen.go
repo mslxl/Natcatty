@@ -12450,6 +12450,16 @@ func (msgs Messages) VaultBackupIntro() string {
 	return Catalog.Format(msgs.locale, "vaultBackupIntro", nil)
 }
 
+// VaultBackupPortability says "Backups are encrypted with a key stored on this machine. The folder alone is not portable: another machine needs that…"
+// in the language the app shows.
+func VaultBackupPortability() string { return In(i18n.Locale()).VaultBackupPortability() }
+
+// VaultBackupPortability says "Backups are encrypted with a key stored on this machine. The folder alone is not portable: another machine needs that…"
+// in the language of msgs.
+func (msgs Messages) VaultBackupPortability() string {
+	return Catalog.Format(msgs.locale, "vaultBackupPortability", nil)
+}
+
 // VaultBackupRetentionLabel says "Backups to keep"
 // in the language the app shows.
 func VaultBackupRetentionLabel() string { return In(i18n.Locale()).VaultBackupRetentionLabel() }
@@ -12780,6 +12790,16 @@ func VaultBackupProblemCorrupt() string { return In(i18n.Locale()).VaultBackupPr
 // in the language of msgs.
 func (msgs Messages) VaultBackupProblemCorrupt() string {
 	return Catalog.Format(msgs.locale, "vaultBackupProblemCorrupt", nil)
+}
+
+// VaultBackupProblemKeyMismatch says "This backup cannot be decrypted with this machine's key. It was probably written on another machine or under a differ…"
+// in the language the app shows.
+func VaultBackupProblemKeyMismatch() string { return In(i18n.Locale()).VaultBackupProblemKeyMismatch() }
+
+// VaultBackupProblemKeyMismatch says "This backup cannot be decrypted with this machine's key. It was probably written on another machine or under a differ…"
+// in the language of msgs.
+func (msgs Messages) VaultBackupProblemKeyMismatch() string {
+	return Catalog.Format(msgs.locale, "vaultBackupProblemKeyMismatch", nil)
 }
 
 // VaultBackupProblemClear says "Could not delete the backups."
@@ -16134,6 +16154,28 @@ func SettingsSyncBackupsDescription() string {
 // in the language of msgs.
 func (msgs Messages) SettingsSyncBackupsDescription() string {
 	return Catalog.Format(msgs.locale, "settingsSyncBackupsDescription", nil)
+}
+
+// SettingsSyncBackupsPortability says "Local restore points are encrypted with a key stored on this machine. Copying the backup folder to another machine is…"
+// in the language the app shows.
+func SettingsSyncBackupsPortability() string {
+	return In(i18n.Locale()).SettingsSyncBackupsPortability()
+}
+
+// SettingsSyncBackupsPortability says "Local restore points are encrypted with a key stored on this machine. Copying the backup folder to another machine is…"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupsPortability() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupsPortability", nil)
+}
+
+// SettingsSyncBackupKeyMismatch says "This backup cannot be decrypted with this machine's key. It was probably created on another machine or under a differ…"
+// in the language the app shows.
+func SettingsSyncBackupKeyMismatch() string { return In(i18n.Locale()).SettingsSyncBackupKeyMismatch() }
+
+// SettingsSyncBackupKeyMismatch says "This backup cannot be decrypted with this machine's key. It was probably created on another machine or under a differ…"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupKeyMismatch() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupKeyMismatch", nil)
 }
 
 // SettingsSyncBackupsRefresh says "Refresh backups"

@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsync "github.com/mslxl/natcatty/application/sync"
+	appbackup "github.com/mslxl/natcatty/application/vaultbackup"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainsync "github.com/mslxl/natcatty/domain/sync"
 	"github.com/mslxl/natcatty/ui/kit"
@@ -2137,6 +2138,10 @@ func syncBackupsPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapshot
 	ui.Column(c).Gap(6).Children(func() {
 		ui.Text(c, m.SettingsSyncBackupsTitle()).FontSize(kit.M(c).Font.Footnote).Bold()
 		ui.Text(c, m.SettingsSyncBackupsDescription()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+		// The list mixes local restore points with cloud copies, but only the
+		// local ones live in the keychain-encrypted folder. Say so before any
+		// Restore button, because a copied folder alone cannot be restored.
+		ui.Text(c, m.SettingsSyncBackupsPortability()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		// Refresh backups is pinned in syncActionsPinnedBar so it stays
 		// visible even when the list is long.
 		if snapshot.BackupsProblem != appsync.ProblemNone {
@@ -2226,7 +2231,13 @@ func syncStatus(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m lo
 		return
 	}
 	if err := state.Err(); err != nil {
-		// Worker errors carry typed sentinels; never render Go error text.
+		// Worker errors carry typed sentinels; never render Go error text. A
+		// local restore under another machine's key is the one failure the
+		// generic vocabulary would misrepresent, so name it explicitly.
+		if errors.Is(err, appbackup.ErrDecrypt) {
+			ui.Text(c, m.SettingsSyncBackupKeyMismatch()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
+			return
+		}
 		text := syncProblemTextFor(m, provider, syncProblemForError(err))
 		if text == "" {
 			text = m.SettingsSyncOperationFailed()

@@ -146,6 +146,7 @@ const (
 	ProblemBackupRestore            Problem = "backup_restore"
 	ProblemBackupProtective         Problem = "backup_protective"
 	ProblemBackupCorrupt            Problem = "backup_corrupt"
+	ProblemBackupKeyMismatch        Problem = "backup_key_mismatch"
 	ProblemBackupUnavailable        Problem = "backup_unavailable"
 	ProblemBackupClear              Problem = "backup_clear"
 	ProblemFileProtocol             Problem = "file_protocol"
