@@ -158,6 +158,35 @@ func TestSSHInputCompatibilityLeavesProgrammaticInputAlone(t *testing.T) {
 	}
 }
 
+// TestSSHInputCompatibilityLeavesBracketedPasteAlone proves the modes apply to
+// Enter and Backspace keys, not to text a terminal pasted into the line
+// editor: a pasted carriage return or DEL is content, not a keystroke.
+func TestSSHInputCompatibilityLeavesBracketedPasteAlone(t *testing.T) {
+	session, transport := openInputCompatibilitySession(t, modelterminal.InputCompatibility{
+		Newline:     modelterminal.NewlineCRLF,
+		Backspace:   modelterminal.BackspaceCtrlH,
+		LineEditing: modelterminal.LineEditingByte,
+	})
+	const paste = "\x1b[200~one\r\ntwo\x7f中\x1b[201~"
+	// After the paste, typed keys translate again. The tracked line was
+	// cleared by the marker, so one Backspace sends one erase byte.
+	typeAndWait(t, session, transport, []string{paste, "\r", "\x7f"},
+		paste+"\r\n\x08")
+}
+
+// TestSSHInputCompatibilityRecognizesSplitPasteMarkers proves the scanner
+// survives a terminal write boundary inside either marker.
+func TestSSHInputCompatibilityRecognizesSplitPasteMarkers(t *testing.T) {
+	session, transport := openInputCompatibilitySession(t, modelterminal.InputCompatibility{
+		Newline:     modelterminal.NewlineCRLF,
+		Backspace:   modelterminal.BackspaceCtrlH,
+		LineEditing: modelterminal.LineEditingByte,
+	})
+	typeAndWait(t, session, transport,
+		[]string{"\x1b[20", "0~x\r\x1b[20", "1~", "\r"},
+		"\x1b[200~x\r\x1b[201~\r\n")
+}
+
 // TestSSHInputCompatibilityAppliesToEachBroadcastTarget proves a target's own
 // mode governs its bytes even when the input was typed in another Session.
 func TestSSHInputCompatibilityAppliesToEachBroadcastTarget(t *testing.T) {
