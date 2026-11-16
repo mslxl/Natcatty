@@ -17,9 +17,9 @@ type Groups interface {
 	CreateGroup(ctx context.Context, draft domainvault.GroupDraft) (domainvault.Group, error)
 	UpdateGroup(ctx context.Context, path string, draft domainvault.GroupDraft) (domainvault.Group, error)
 	DeleteGroup(ctx context.Context, path string) error
-	AssignHostGroup(ctx context.Context, id model.HostID, groupPath string) error
 	// AssignHostsGroup moves several Hosts in one all-or-nothing operation.
-	AssignHostsGroup(ctx context.Context, ids []model.HostID, groupPath string) error
+	// groupID is the resolved stable group identity, "" for the Vault root.
+	AssignHostsGroup(ctx context.Context, ids []model.HostID, groupID string) error
 }
 
 // ProxyProfiles is the Proxy Profile use-case seam.
@@ -332,12 +332,6 @@ func (s *State) ConfirmDeleteGroup() error {
 	return nil
 }
 
-// MoveHostToGroup moves one Host into a group, or to the Vault root when path
-// is empty. Drag and drop calls this; the Host keeps every other field.
-func (s *State) MoveHostToGroup(id model.HostID, path string) bool {
-	return s.MoveHostsToGroup([]model.HostID{id}, path)
-}
-
 // MoveHostsToGroup moves every Host in a marquee selection into a group, or to
 // the Vault root when path is empty. The drop is one assignment: an unknown
 // group or a failed write leaves every Host where it was. The selection is
@@ -410,29 +404,6 @@ func (s *State) BeginMarquee(additive bool) {
 		s.selected = ""
 	}
 	s.redraw()
-}
-
-// MarqueeOver adds a Host the box touches to the selection. The last Host
-// touched is the lead for single-Host actions. It reports whether the
-// selection changed.
-func (s *State) MarqueeOver(id model.HostID) bool {
-	if !s.marqueeActive {
-		return false
-	}
-	_, ok := s.find(id)
-	if !ok {
-		return false
-	}
-	changed := !s.chosen[id] || s.selected != id
-	if s.chosen == nil {
-		s.chosen = map[model.HostID]bool{}
-	}
-	s.chosen[id] = true
-	s.selected = id
-	if changed {
-		s.redraw()
-	}
-	return changed
 }
 
 // SweepMarquee sets an in-flight box selection to every Host the rectangle
@@ -909,8 +880,12 @@ func (s *State) GroupProxyProfileSource() (InheritedValueSource, string, string)
 // Host's own hops, the Host Group default, or nothing. The returned IDs are in
 // connection order, first hop closest to the client.
 func (s *State) HostJumpChainSource() (InheritedValueSource, string, []model.HostID) {
-	if ids := s.hostChain.IDs(); len(ids) > 0 {
-		return InheritedValueSourceRecord, "", ids
+	// A non-nil chain is the Host's own value, even when it holds no hops: an
+	// explicit empty chain means "direct", and ApplyGroupDefaults will not
+	// inherit over it. Reading it as "no own chain" would show a group chain
+	// the session never uses.
+	if s.hostChain != nil {
+		return InheritedValueSourceRecord, "", s.hostChain.IDs()
 	}
 	if domainvault.Protocol(s.form.Protocol) == domainvault.ProtocolLocal {
 		return InheritedValueSourceNone, "", nil
@@ -919,7 +894,7 @@ func (s *State) HostJumpChainSource() (InheritedValueSource, string, []model.Hos
 	if chain := domainvault.ResolveGroupDefaults(s.groupItems, group).HostChain; chain != nil {
 		return InheritedValueSourceInherited,
 			s.groupDefaultOwner(group, func(g domainvault.Group) bool {
-				return len(g.HostChain.IDs()) > 0
+				return g.HostChain != nil
 			}), chain.IDs()
 	}
 	return InheritedValueSourceNone, "", nil
@@ -928,14 +903,16 @@ func (s *State) HostJumpChainSource() (InheritedValueSource, string, []model.Hos
 // GroupJumpChainSource reports the Host Group editor's effective jump chain:
 // the group's own hops, an ancestor's default, or nothing.
 func (s *State) GroupJumpChainSource() (InheritedValueSource, string, []model.HostID) {
-	if len(s.groupForm.HostChain.IDs()) > 0 {
+	// As on a Host, a non-nil empty chain is the group's explicit "direct",
+	// which wins over an ancestor's hops.
+	if s.groupForm.HostChain != nil {
 		return InheritedValueSourceRecord, "", s.groupForm.HostChain.IDs()
 	}
 	parent := domainvault.ParentGroupPath(s.groupForm.Path)
 	if chain := domainvault.ResolveGroupDefaults(s.groupItems, parent).HostChain; chain != nil {
 		return InheritedValueSourceInherited,
 			s.groupDefaultOwner(parent, func(g domainvault.Group) bool {
-				return len(g.HostChain.IDs()) > 0
+				return g.HostChain != nil
 			}), chain.IDs()
 	}
 	return InheritedValueSourceNone, "", nil
