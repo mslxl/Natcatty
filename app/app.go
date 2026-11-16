@@ -956,7 +956,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			Routes:   routes,
 			Sessions: adapteret.SecretSessionStore{Secrets: secretStore},
 		},
-	).withPreferences(preferenceService),
+	).withPreferences(preferenceService).withTerminalSettings(terminalService),
 		// Automatic logging starts with the Session, as the original's
 		// configured log did. An empty directory keeps it off.
 		appsession.WithAutoLogging(func(spec appsession.StartSpec) *appsession.LogOptions {

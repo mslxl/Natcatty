@@ -1596,6 +1596,9 @@
   "settingsKeywordHighlightRuleDebug": "Debug",
   "settingsKeywordHighlightRuleIPMAC": "URL, IP & MAC",
   "settingsKeywordHighlightRuleUnixPath": "Unix paths",
+  "settingsLegacyAlgorithmsTitle": "Legacy SSH algorithms",
+  "settingsLegacyAlgorithmsDescription": "Offer older ciphers, key exchanges, and host-key types to Unsaved Hosts. A saved Host uses its own algorithm settings.",
+  "settingsLegacyAlgorithmsEnabled": "Use legacy algorithms for Unsaved Hosts",
   "settingsTerminalSaveFailed": "The terminal settings could not be saved.",
   "@sessionCommandRunning": {
     "description": "The command line that is running.",

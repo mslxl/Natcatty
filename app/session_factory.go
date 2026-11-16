@@ -19,6 +19,7 @@ import (
 	"github.com/mslxl/natcatty/domain/model"
 	"github.com/mslxl/natcatty/domain/model/tmux"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -61,6 +62,13 @@ type preferenceSource interface {
 	Settings() domainpreferences.Settings
 }
 
+// terminalSettingsSource reads the terminal behavior group. The factory reads
+// only the Unsaved Host legacy-algorithm opt-in from it; a saved Host's own
+// algorithm settings always win.
+type terminalSettingsSource interface {
+	Settings() domainterminal.Settings
+}
+
 // transportFactory routes a Session to the local PTY adapter, the serial
 // adapter, the Telnet adapter, or an SSH Connection. The SSH path acquires a
 // lease for the Session's lifetime and releases it when the transport closes,
@@ -80,6 +88,10 @@ type transportFactory struct {
 	// test or MCP caller that supplies no global preferences keeps the
 	// configuration as written.
 	preferences preferenceSource
+	// terminalSettings supplies the Unsaved Host legacy-algorithm opt-in. It
+	// is optional so a test can build the factory without the settings
+	// service; a missing source means the opt-in is off.
+	terminalSettings terminalSettingsSource
 	// tmuxNotices deduplicates fallback notices per Host: a missing tmux is
 	// announced once, not on every reconnect.
 	tmuxNotices *tmux.NoticeState
@@ -139,6 +151,12 @@ func (f *transportFactory) withPreferences(preferences preferenceSource) *transp
 	return f
 }
 
+// withTerminalSettings supplies the Unsaved Host legacy-algorithm opt-in.
+func (f *transportFactory) withTerminalSettings(settings terminalSettingsSource) *transportFactory {
+	f.terminalSettings = settings
+	return f
+}
+
 func newTransportFactory(local, serial, telnet appsession.Factory, manager *appconnection.Manager, routes routeSource) *transportFactory {
 	return &transportFactory{
 		local: local, serial: serial, telnet: telnet, manager: manager, routes: routes,
@@ -179,7 +197,13 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 	}
 
 	var route appconnection.Route
-	if f.routes != nil {
+	switch {
+	case spec.HostID == "":
+		// An Unsaved Host has no saved backing, so there is no jump chain,
+		// proxy, or Network Profile to resolve. Its only algorithm setting is
+		// the terminal-wide legacy opt-in.
+		route = f.unsavedHostRoute()
+	case f.routes != nil:
 		resolved, err := f.routes.Route(ctx, spec.HostID)
 		if err != nil {
 			return nil, err
@@ -970,6 +994,23 @@ func (r vaultRoutes) proxy(ctx context.Context, host domainvault.Host) (*appconn
 		return nil, routeError(fmt.Errorf("proxy password for Host %s: %w", host.ID, err))
 	}
 	return proxy, nil
+}
+
+// unsavedHostRoute is the route for an Unsaved Host. It has no Vault record,
+// so it carries no jump chain, proxy, or Network Profile; the terminal-wide
+// opt-in is the only algorithm setting it can have. The config fingerprint
+// includes that opt-in so changing it never reuses a parked transport built
+// with the other policy.
+func (f *transportFactory) unsavedHostRoute() appconnection.Route {
+	legacy := false
+	if f.terminalSettings != nil {
+		legacy = f.terminalSettings.Settings().LegacyAlgorithms
+	}
+	host := domainvault.Host{LegacyAlgorithms: legacy}
+	return appconnection.Route{
+		Algorithms:        algorithmPolicy(host),
+		ConfigFingerprint: configFingerprint(host, "unsaved"),
+	}
 }
 
 // algorithmPolicy maps a Host's advanced SSH settings onto the transport's

@@ -16,6 +16,7 @@ import (
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
 	telnetmodel "github.com/mslxl/natcatty/domain/model/telnet"
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -1056,6 +1057,120 @@ func TestVaultRoutesFallBackToTheTargetProxyWithoutAFirstHopProxy(t *testing.T) 
 	if route.Proxy == nil || route.Proxy.Type != appconnection.ProxyCommand ||
 		route.Proxy.Command != "ssh -W %h:%p bastion" {
 		t.Fatalf("proxy = %+v", route.Proxy)
+	}
+}
+
+// factoryTerminalSettings is the terminal settings seam the factory reads for
+// an Unsaved Host's legacy-algorithm opt-in.
+type factoryTerminalSettings struct {
+	legacy bool
+}
+
+func (f factoryTerminalSettings) Settings() domainterminal.Settings {
+	return domainterminal.Settings{LegacyAlgorithms: f.legacy}
+}
+
+// TestUnsavedHostUsesTheTerminalLegacyAlgorithmPreference proves an Unsaved
+// Host has no Vault route to resolve and takes the terminal-wide opt-in
+// instead. With the preference off the pinned route carries no legacy
+// algorithms, so a server that requires one fails at negotiation.
+func TestUnsavedHostUsesTheTerminalLegacyAlgorithmPreference(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		legacy bool
+	}{
+		{"opt-in offers the legacy list", true},
+		{"off fails closed", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &factoryClient{terminal: &factoryTerminal{}}
+			dialer := &factoryDialer{client: client}
+			manager := appconnection.NewManager(dialer,
+				vaultPasswords{vault: factoryPasswords{value: "pw"}}, &factoryKnownHosts{})
+			t.Cleanup(manager.CloseAll)
+			// The Vault holds no record for an Unsaved Host. Resolving a
+			// route by its empty ID would fail, so a successful Open also
+			// proves the factory did not ask the Vault.
+			routes := vaultRoutes{vault: &fakeRouteVault{
+				hosts:   map[model.HostID]domainvault.Host{},
+				secrets: map[string]string{},
+			}}
+			factory := newTransportFactory(&factoryLocal{}, nil, nil, manager, routes).
+				withTerminalSettings(factoryTerminalSettings{legacy: test.legacy})
+
+			transport, err := factory.Open(context.Background(), appsession.StartSpec{
+				Kind: appsession.KindSSH, Hostname: "typed.example.com", Port: 2222,
+				Username: "root", Cols: 100, Rows: 30,
+			})
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			if got := dialer.request.Algorithms.Legacy; got != test.legacy {
+				t.Fatalf("legacy algorithms = %v, want %v", got, test.legacy)
+			}
+			if dialer.request.Algorithms.SkipECDSAHostKey ||
+				len(dialer.request.Algorithms.Ciphers) != 0 ||
+				len(dialer.request.Algorithms.KeyExchanges) != 0 ||
+				len(dialer.request.Algorithms.MACs) != 0 ||
+				len(dialer.request.Algorithms.HostKeys) != 0 {
+				t.Fatalf("unsaved algorithms = %+v, want only the legacy opt-in",
+					dialer.request.Algorithms)
+			}
+			if len(dialer.request.Jumps) != 0 || dialer.request.Proxy != nil ||
+				dialer.request.Network != nil {
+				t.Fatalf("unsaved request = %+v, want no jumps, proxy, or Network Profile",
+					dialer.request)
+			}
+			if err := transport.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+		})
+	}
+}
+
+// TestSavedHostKeepsItsOwnLegacyAlgorithmSetting proves the terminal-wide
+// opt-in never reaches a Host that has a saved backing.
+func TestSavedHostKeepsItsOwnLegacyAlgorithmSetting(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		hostLegacy   bool
+		globalLegacy bool
+	}{
+		{"a Host opt-in wins over the global off", true, false},
+		{"a Host default wins over the global on", false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &factoryClient{terminal: &factoryTerminal{}}
+			dialer := &factoryDialer{client: client}
+			manager := appconnection.NewManager(dialer,
+				vaultPasswords{vault: factoryPasswords{value: "pw"}}, &factoryKnownHosts{})
+			t.Cleanup(manager.CloseAll)
+			routes := vaultRoutes{vault: &fakeRouteVault{
+				hosts: map[model.HostID]domainvault.Host{
+					"saved": {
+						ID: "saved", Hostname: "saved.example.com", Port: 22, Username: "root",
+						LegacyAlgorithms: test.hostLegacy,
+					},
+				},
+				secrets: map[string]string{},
+			}}
+			factory := newTransportFactory(&factoryLocal{}, nil, nil, manager, routes).
+				withTerminalSettings(factoryTerminalSettings{legacy: test.globalLegacy})
+
+			transport, err := factory.Open(context.Background(), appsession.StartSpec{
+				Kind: appsession.KindSSH, HostID: "saved", Hostname: "saved.example.com",
+				Port: 22, Username: "root", Cols: 100, Rows: 30,
+			})
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			if got := dialer.request.Algorithms.Legacy; got != test.hostLegacy {
+				t.Fatalf("legacy algorithms = %v, want the saved Host's %v", got, test.hostLegacy)
+			}
+			if err := transport.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+		})
 	}
 }
 

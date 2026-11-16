@@ -8806,6 +8806,40 @@ func (msgs Messages) SettingsKeywordHighlightRuleUnixPath() string {
 	return Catalog.Format(msgs.locale, "settingsKeywordHighlightRuleUnixPath", nil)
 }
 
+// SettingsLegacyAlgorithmsTitle says "Legacy SSH algorithms"
+// in the language the app shows.
+func SettingsLegacyAlgorithmsTitle() string { return In(i18n.Locale()).SettingsLegacyAlgorithmsTitle() }
+
+// SettingsLegacyAlgorithmsTitle says "Legacy SSH algorithms"
+// in the language of msgs.
+func (msgs Messages) SettingsLegacyAlgorithmsTitle() string {
+	return Catalog.Format(msgs.locale, "settingsLegacyAlgorithmsTitle", nil)
+}
+
+// SettingsLegacyAlgorithmsDescription says "Offer older ciphers, key exchanges, and host-key types to Unsaved Hosts. A saved Host uses its own algorithm settings."
+// in the language the app shows.
+func SettingsLegacyAlgorithmsDescription() string {
+	return In(i18n.Locale()).SettingsLegacyAlgorithmsDescription()
+}
+
+// SettingsLegacyAlgorithmsDescription says "Offer older ciphers, key exchanges, and host-key types to Unsaved Hosts. A saved Host uses its own algorithm settings."
+// in the language of msgs.
+func (msgs Messages) SettingsLegacyAlgorithmsDescription() string {
+	return Catalog.Format(msgs.locale, "settingsLegacyAlgorithmsDescription", nil)
+}
+
+// SettingsLegacyAlgorithmsEnabled says "Use legacy algorithms for Unsaved Hosts"
+// in the language the app shows.
+func SettingsLegacyAlgorithmsEnabled() string {
+	return In(i18n.Locale()).SettingsLegacyAlgorithmsEnabled()
+}
+
+// SettingsLegacyAlgorithmsEnabled says "Use legacy algorithms for Unsaved Hosts"
+// in the language of msgs.
+func (msgs Messages) SettingsLegacyAlgorithmsEnabled() string {
+	return Catalog.Format(msgs.locale, "settingsLegacyAlgorithmsEnabled", nil)
+}
+
 // SettingsTerminalSaveFailed says "The terminal settings could not be saved."
 // in the language the app shows.
 func SettingsTerminalSaveFailed() string { return In(i18n.Locale()).SettingsTerminalSaveFailed() }
