@@ -246,16 +246,20 @@ func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.
 		Hostname:          spec.Hostname,
 		Port:              spec.Port,
 		Username:          spec.Username,
+		Password:          spec.Password,
 		Jumps:             route.Jumps,
 		Proxy:             route.Proxy,
 		Network:           route.Network,
 		Algorithms:        route.Algorithms,
 		ConfigFingerprint: route.ConfigFingerprint,
 		LeaseKind:         appconnection.LeaseShell,
-		Keepalive:         &appconnection.DefaultKeepalive,
-		X11Forwarding:     spec.X11Forwarding,
-		X11Display:        spec.X11Display,
-		OnX11Notice:       onX11Notice,
+		// A target with no saved Host (Quick Connect) must not share or park a
+		// transport: another unsaved target could carry different credentials.
+		Dedicated:     spec.HostID == "",
+		Keepalive:     &appconnection.DefaultKeepalive,
+		X11Forwarding: spec.X11Forwarding,
+		X11Display:    spec.X11Display,
+		OnX11Notice:   onX11Notice,
 	}
 	for attempt := 0; ; attempt++ {
 		lease, err := f.manager.Acquire(ctx, request)
@@ -824,6 +828,11 @@ type vaultRoutes struct {
 }
 
 func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.Route, error) {
+	// An unsaved target (Quick Connect) has no Host record to read a chain or
+	// Network Profile from. The app-wide default proxy still applies.
+	if id == "" {
+		return r.routeWithoutHost(ctx)
+	}
 	if r.vault == nil {
 		return appconnection.Route{}, routeError(errors.New("app: no Vault for route resolution"))
 	}
@@ -874,6 +883,20 @@ func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.
 	}
 	route.Network = network
 	return route, nil
+}
+
+// routeWithoutHost resolves the route of a target that has no saved Host. Only
+// the app-wide default proxy applies: there is no chain, Host proxy, or
+// Network Profile to read, and a default profile deleted since the preference
+// was written restores a direct connection.
+func (r vaultRoutes) routeWithoutHost(ctx context.Context) (appconnection.Route, error) {
+	// An empty Host selects no Host or Group proxy, so resolveProxy falls
+	// through to the app-wide default.
+	proxy, err := r.resolveProxy(ctx, domainvault.Host{})
+	if err != nil {
+		return appconnection.Route{}, err
+	}
+	return appconnection.Route{Proxy: proxy}, nil
 }
 
 // NetworkRouteForHost resolves only the target Host's effective Network

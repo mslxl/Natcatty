@@ -800,6 +800,160 @@ func (msgs Messages) MenuNewTab() string {
 	return Catalog.Format(msgs.locale, "menuNewTab", nil)
 }
 
+// MenuQuickConnect says "Quick Connect"
+// in the language the app shows.
+func MenuQuickConnect() string { return In(i18n.Locale()).MenuQuickConnect() }
+
+// MenuQuickConnect says "Quick Connect"
+// in the language of msgs.
+func (msgs Messages) MenuQuickConnect() string {
+	return Catalog.Format(msgs.locale, "menuQuickConnect", nil)
+}
+
+// QuickConnectDescription says "Open a Session without saving a Host to the Vault."
+// in the language the app shows.
+func QuickConnectDescription() string { return In(i18n.Locale()).QuickConnectDescription() }
+
+// QuickConnectDescription says "Open a Session without saving a Host to the Vault."
+// in the language of msgs.
+func (msgs Messages) QuickConnectDescription() string {
+	return Catalog.Format(msgs.locale, "quickConnectDescription", nil)
+}
+
+// QuickConnectProtocol says "Protocol"
+// in the language the app shows.
+func QuickConnectProtocol() string { return In(i18n.Locale()).QuickConnectProtocol() }
+
+// QuickConnectProtocol says "Protocol"
+// in the language of msgs.
+func (msgs Messages) QuickConnectProtocol() string {
+	return Catalog.Format(msgs.locale, "quickConnectProtocol", nil)
+}
+
+// QuickConnectAddress says "Address"
+// in the language the app shows.
+func QuickConnectAddress() string { return In(i18n.Locale()).QuickConnectAddress() }
+
+// QuickConnectAddress says "Address"
+// in the language of msgs.
+func (msgs Messages) QuickConnectAddress() string {
+	return Catalog.Format(msgs.locale, "quickConnectAddress", nil)
+}
+
+// QuickConnectAddressPlaceholder says "host or IP address"
+// in the language the app shows.
+func QuickConnectAddressPlaceholder() string {
+	return In(i18n.Locale()).QuickConnectAddressPlaceholder()
+}
+
+// QuickConnectAddressPlaceholder says "host or IP address"
+// in the language of msgs.
+func (msgs Messages) QuickConnectAddressPlaceholder() string {
+	return Catalog.Format(msgs.locale, "quickConnectAddressPlaceholder", nil)
+}
+
+// QuickConnectPort says "Port"
+// in the language the app shows.
+func QuickConnectPort() string { return In(i18n.Locale()).QuickConnectPort() }
+
+// QuickConnectPort says "Port"
+// in the language of msgs.
+func (msgs Messages) QuickConnectPort() string {
+	return Catalog.Format(msgs.locale, "quickConnectPort", nil)
+}
+
+// QuickConnectUsername says "Username"
+// in the language the app shows.
+func QuickConnectUsername() string { return In(i18n.Locale()).QuickConnectUsername() }
+
+// QuickConnectUsername says "Username"
+// in the language of msgs.
+func (msgs Messages) QuickConnectUsername() string {
+	return Catalog.Format(msgs.locale, "quickConnectUsername", nil)
+}
+
+// QuickConnectPassword says "Password"
+// in the language the app shows.
+func QuickConnectPassword() string { return In(i18n.Locale()).QuickConnectPassword() }
+
+// QuickConnectPassword says "Password"
+// in the language of msgs.
+func (msgs Messages) QuickConnectPassword() string {
+	return Catalog.Format(msgs.locale, "quickConnectPassword", nil)
+}
+
+// QuickConnectAddressRequired says "Enter an address."
+// in the language the app shows.
+func QuickConnectAddressRequired() string { return In(i18n.Locale()).QuickConnectAddressRequired() }
+
+// QuickConnectAddressRequired says "Enter an address."
+// in the language of msgs.
+func (msgs Messages) QuickConnectAddressRequired() string {
+	return Catalog.Format(msgs.locale, "quickConnectAddressRequired", nil)
+}
+
+// QuickConnectPortInvalid says "Enter a port between 1 and 65535."
+// in the language the app shows.
+func QuickConnectPortInvalid() string { return In(i18n.Locale()).QuickConnectPortInvalid() }
+
+// QuickConnectPortInvalid says "Enter a port between 1 and 65535."
+// in the language of msgs.
+func (msgs Messages) QuickConnectPortInvalid() string {
+	return Catalog.Format(msgs.locale, "quickConnectPortInvalid", nil)
+}
+
+// QuickConnectUnavailable says "Sessions are unavailable."
+// in the language the app shows.
+func QuickConnectUnavailable() string { return In(i18n.Locale()).QuickConnectUnavailable() }
+
+// QuickConnectUnavailable says "Sessions are unavailable."
+// in the language of msgs.
+func (msgs Messages) QuickConnectUnavailable() string {
+	return Catalog.Format(msgs.locale, "quickConnectUnavailable", nil)
+}
+
+// QuickConnectDiscardTitle says "Discard quick connect?"
+// in the language the app shows.
+func QuickConnectDiscardTitle() string { return In(i18n.Locale()).QuickConnectDiscardTitle() }
+
+// QuickConnectDiscardTitle says "Discard quick connect?"
+// in the language of msgs.
+func (msgs Messages) QuickConnectDiscardTitle() string {
+	return Catalog.Format(msgs.locale, "quickConnectDiscardTitle", nil)
+}
+
+// QuickConnectDiscardDescription says "The details you typed are not saved anywhere."
+// in the language the app shows.
+func QuickConnectDiscardDescription() string {
+	return In(i18n.Locale()).QuickConnectDiscardDescription()
+}
+
+// QuickConnectDiscardDescription says "The details you typed are not saved anywhere."
+// in the language of msgs.
+func (msgs Messages) QuickConnectDiscardDescription() string {
+	return Catalog.Format(msgs.locale, "quickConnectDiscardDescription", nil)
+}
+
+// QuickConnectDiscard says "Discard"
+// in the language the app shows.
+func QuickConnectDiscard() string { return In(i18n.Locale()).QuickConnectDiscard() }
+
+// QuickConnectDiscard says "Discard"
+// in the language of msgs.
+func (msgs Messages) QuickConnectDiscard() string {
+	return Catalog.Format(msgs.locale, "quickConnectDiscard", nil)
+}
+
+// QuickConnectKeepEditing says "Keep editing"
+// in the language the app shows.
+func QuickConnectKeepEditing() string { return In(i18n.Locale()).QuickConnectKeepEditing() }
+
+// QuickConnectKeepEditing says "Keep editing"
+// in the language of msgs.
+func (msgs Messages) QuickConnectKeepEditing() string {
+	return Catalog.Format(msgs.locale, "quickConnectKeepEditing", nil)
+}
+
 // MenuCloseTab says "Close Tab"
 // in the language the app shows.
 func MenuCloseTab() string { return In(i18n.Locale()).MenuCloseTab() }

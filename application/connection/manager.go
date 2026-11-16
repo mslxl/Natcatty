@@ -28,7 +28,10 @@ import (
 )
 
 // Request describes an endpoint to connect to. Credentials are deliberately
-// absent: the Manager reads the saved password through PasswordSource.
+// absent from persisted state: the Manager reads the saved password through
+// PasswordSource. Password is the one exception, a one-shot credential for a
+// target with no saved Host (Quick Connect); it stays in memory and takes
+// precedence over the saved credential sources.
 //
 // Jumps, when present, are full endpoints reached before the target, ordered
 // first = closest to the client. Proxy applies to the first endpoint only.
@@ -37,6 +40,10 @@ type Request struct {
 	Hostname string
 	Port     int
 	Username string
+	// Password is a one-shot plaintext credential for a target that has no
+	// saved Host record. Empty resolves credentials through AuthSource or
+	// PasswordSource. It is never persisted, logged, or cached.
+	Password string
 	Jumps    []Hop
 	Proxy    *Proxy
 	// Network selects the Network Profile used for the first endpoint. Nil
@@ -693,6 +700,15 @@ func targetHop(req Request) Hop {
 // AuthSource, it preserves the ticket 06 behavior of using the saved password
 // and offering password plus keyboard-interactive.
 func (m *Manager) authPlan(ctx context.Context, req Request) (AuthPlan, error) {
+	// A one-shot credential belongs to a target that has no saved Host, so no
+	// AuthSource can resolve it. It is offered as password authentication.
+	if req.Password != "" {
+		return BuildAuthPlan(AuthSpec{
+			Username: req.Username,
+			Mode:     AuthModePassword,
+			Password: req.Password,
+		}), nil
+	}
 	if m.authSource != nil {
 		plan, err := m.authSource.AuthPlan(ctx, req)
 		if err != nil {

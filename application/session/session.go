@@ -408,6 +408,12 @@ type StartSpec struct {
 	Hostname       string
 	Port           int
 	Username       string
+	// Password is a one-shot credential for an SSH target with no saved Host,
+	// such as Quick Connect. It is memory-only: it is never persisted in the
+	// Workspace or the Vault, and a reconnect reuses the value the Session
+	// already holds. Empty asks the transport to resolve the Host's saved
+	// credentials.
+	Password string
 	// X11Forwarding requests X11 forwarding for this SSH Session when the Host
 	// has it enabled and acknowledged. The transport factory turns it into a
 	// non-pooled Connection.

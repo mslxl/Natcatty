@@ -176,6 +176,7 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 		_ = s.NewTab()
 		c.Invalidate()
 	}
+	quickConnectButton(c, s, m)
 }
 
 // tabRadius rounds a Tab's top corners, as the original's rounded-t-md.

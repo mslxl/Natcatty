@@ -315,6 +315,10 @@ type State struct {
 	// target the app could not open. It is set and read on the UI thread.
 	desktopNotice DesktopNotice
 
+	// quickConnect is the tab bar's quick-connect dialog. It opens an Unsaved
+	// Host Session and never writes to the Vault.
+	quickConnect quickConnectState
+
 	// searchState is the Quick Switcher and command palette overlay. A nil
 	// state leaves the chords and the overlay out, which test shells use.
 	searchState *uisearch.State
@@ -851,6 +855,13 @@ func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput)
 // openHost is the one connection path: OpenHost, OpenHostWithStartup, and
 // OpenHostBrowser differ only in what they do once the Tab is attached.
 func (s *State) openHost(host domainvault.Host, startup StartupInput, browser bool) error {
+	return s.openHostWithPassword(host, startup, browser, "")
+}
+
+// openHostWithPassword is openHost plus a one-shot password for a target that
+// has no saved Host, as Quick Connect does. The password stays in memory: it is
+// passed to the Session but never stored in the workspace descriptor.
+func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput, browser bool, password string) error {
 	if s.sessions == nil || s.surfaces == nil {
 		return ErrNoSessions
 	}
@@ -863,6 +874,9 @@ func (s *State) openHost(host domainvault.Host, startup StartupInput, browser bo
 
 	plan := hostSessionTransport(host)
 	spec := HostSessionSpec(host)
+	// The one-shot password is never stored in the workspace descriptor; it
+	// only travels into this Session's StartSpec.
+	spec.Password = password
 	resumeKey, x11 := spec.ResumeKey, spec.X11Forwarding
 	ctx := s.ctx
 	go func() {

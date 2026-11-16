@@ -67,10 +67,14 @@ type fakeFactory struct {
 	transport *fakeTransport
 	err       error
 	spec      appsession.StartSpec
+	// opens counts the dials, so a test can tell a reconnect from the first
+	// connection.
+	opens int
 }
 
 func (f *fakeFactory) Open(_ context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
 	f.spec = spec
+	f.opens++
 	if f.err != nil {
 		return nil, f.err
 	}
