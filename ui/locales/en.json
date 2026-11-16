@@ -4940,6 +4940,7 @@
   "settingsSyncConvergentConflictFieldPresence": "record presence",
   "settingsSyncConvergentConflictValues": "This device: {local} · Cloud: {remote}",
   "settingsSyncConvergentConflictValueMissing": "not set",
+  "settingsSyncConvergentConflictValuePresent": "present",
   "settingsSyncConvergentConflictValueHidden": "hidden",
   "settingsSyncConvergentKeepLocalAll": "Keep this device for all",
   "settingsSyncConvergentKeepRemoteAll": "Keep the cloud copy for all",

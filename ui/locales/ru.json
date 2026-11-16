@@ -3292,6 +3292,7 @@
   "settingsSyncConvergentConflictFieldPresence": "наличие записи",
   "settingsSyncConvergentConflictValues": "Это устройство: {local} · Облако: {remote}",
   "settingsSyncConvergentConflictValueMissing": "не задано",
+  "settingsSyncConvergentConflictValuePresent": "есть",
   "settingsSyncConvergentConflictValueHidden": "скрыто",
   "settingsSyncConvergentKeepLocalAll": "Оставить это устройство для всех",
   "settingsSyncConvergentKeepRemoteAll": "Оставить облачную копию для всех",

@@ -3292,6 +3292,7 @@
   "settingsSyncConvergentConflictFieldPresence": "記錄存在狀態",
   "settingsSyncConvergentConflictValues": "此裝置：{local} · 雲端：{remote}",
   "settingsSyncConvergentConflictValueMissing": "未設定",
+  "settingsSyncConvergentConflictValuePresent": "存在",
   "settingsSyncConvergentConflictValueHidden": "已隱藏",
   "settingsSyncConvergentKeepLocalAll": "全部保留此裝置",
   "settingsSyncConvergentKeepRemoteAll": "全部保留雲端副本",

@@ -10,6 +10,7 @@ import (
 
 	appsync "github.com/mslxl/natcatty/application/sync"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
+	domainsync "github.com/mslxl/natcatty/domain/sync"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
@@ -583,13 +584,21 @@ func TestSyncConvergentMigrationListsAndResolvesConflicts(t *testing.T) {
 		RemotePresent: true,
 		Secret:        true,
 	}
+	presence := appsync.ConvergentMigrationConflict{
+		Family:        "hosts",
+		EntityID:      "host-2",
+		Field:         domainsync.PresenceField,
+		Register:      domainsync.RegisterIdentity("hosts", "host-2", domainsync.PresenceField),
+		LocalPresent:  true,
+		RemotePresent: false,
+	}
 	service.snapshot.Convergent = appsync.ConvergentInfo{
 		Phase:         "blocked",
-		ConflictCount: 2,
+		ConflictCount: 3,
 		Migration: &appsync.ConvergentMigrationPreview{
 			SchemaVersion:  2,
-			ConflictCount:  2,
-			Conflicts:      []appsync.ConvergentMigrationConflict{label, secret},
+			ConflictCount:  3,
+			Conflicts:      []appsync.ConvergentMigrationConflict{label, presence, secret},
 			BlockedReasons: []appsync.ConvergentBlockedReason{{Code: "conflicts-unresolved"}},
 		},
 	}
@@ -607,9 +616,11 @@ func TestSyncConvergentMigrationListsAndResolvesConflicts(t *testing.T) {
 	viewport := layout.Content.Bounds(context)
 
 	for _, want := range []string{
-		m.SettingsSyncConvergentConflictsTitle("2"),
+		m.SettingsSyncConvergentConflictsTitle("3"),
 		m.SettingsSyncConvergentConflictEntry(m.SearchSectionHost(), "host-1", "label"),
 		m.SettingsSyncConvergentConflictValues("This device name", "Cloud name"),
+		m.SettingsSyncConvergentConflictEntry(m.SearchSectionHost(), "host-2", m.SettingsSyncConvergentConflictFieldPresence()),
+		m.SettingsSyncConvergentConflictValues(m.SettingsSyncConvergentConflictValuePresent(), m.SettingsSyncConvergentConflictValueMissing()),
 		m.SettingsSyncConvergentConflictEntry(m.SettingsSyncEntityUnknown(), "host-1/password", "value"),
 		m.SettingsSyncConvergentConflictValues(m.SettingsSyncConvergentConflictValueHidden(), m.SettingsSyncConvergentConflictValueHidden()),
 	} {

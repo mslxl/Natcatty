@@ -203,4 +203,52 @@ func TestConvergentMigrationConflictValuesHideSecrets(t *testing.T) {
 	if list[0].Secret || string(list[0].LocalValue) != `"local"` || string(list[0].RemoteValue) != `"remote"` {
 		t.Fatalf("plain conflict = %+v", list[0])
 	}
+
+	// A credential-like word in a value is still a value, not a key: a Host
+	// labeled "tokenizer" must stay readable.
+	tokenizer := domainsync.ConvergentSnapshot{Families: map[string][]domainsync.ConvergentRecord{
+		"hosts": {{ID: "host-1", Value: json.RawMessage(`{"label":"tokenizer"}`)}},
+	}}
+	list = convergentMigrationConflictList(plain, tokenizer, tokenizer)
+	if list[0].Secret || string(list[0].LocalValue) != `"tokenizer"` {
+		t.Fatalf("value-only marker hid a plain value: %+v", list[0])
+	}
+
+	// A credential-like key at any depth still hides the values.
+	nested := []domainsync.ConvergentConflict{{
+		Family:   "hosts",
+		EntityID: "host-1",
+		Field:    "advanced",
+		Register: domainsync.RegisterIdentity("hosts", "host-1", "advanced"),
+	}}
+	credentialed := domainsync.ConvergentSnapshot{Families: map[string][]domainsync.ConvergentRecord{
+		"hosts": {{ID: "host-1", Value: json.RawMessage(`{"advanced":{"password":"hunter2"}}`)}},
+	}}
+	list = convergentMigrationConflictList(nested, credentialed, credentialed)
+	if len(list) != 1 || !list[0].Secret || len(list[0].LocalValue) != 0 {
+		t.Fatalf("nested credential key was exposed: %+v", list)
+	}
+}
+
+// TestConvergentMigrationExplicitEnableDropsEarlierChoices checks that choices
+// from an abandoned attempt cannot silently resolve a conflict the user is
+// shown again from scratch.
+func TestConvergentMigrationExplicitEnableDropsEarlierChoices(t *testing.T) {
+	service, _, _, _, _ := migrationFieldConflictFixture(t)
+
+	preview, err := service.ResolveConvergentMigrationConflict(context.Background(), ConvergentConflictResolution{
+		Register: domainsync.RegisterIdentity("hosts", "h1", "label"),
+		Side:     ConvergentConflictKeepLocal,
+	})
+	if !errors.Is(err, ErrConvergentMigration) || len(preview.Conflicts) != 1 {
+		t.Fatalf("partial resolution = %+v, %v", preview, err)
+	}
+
+	preview, err = service.SetConvergentEnabled(context.Background(), true)
+	if !errors.Is(err, ErrConvergentMigration) {
+		t.Fatalf("fresh enable error = %v", err)
+	}
+	if len(preview.Conflicts) != 2 {
+		t.Fatalf("fresh enable kept earlier choices: %+v", preview.Conflicts)
+	}
 }

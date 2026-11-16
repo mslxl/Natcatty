@@ -29,7 +29,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 
 	domainsync "github.com/mslxl/natcatty/domain/sync"
@@ -1063,7 +1062,9 @@ func resolveConvergentMigrationConflicts(
 		}
 		value, present := snapshotRegisterValue(snapshot, conflict.Family, conflict.EntityID, conflict.Field)
 		if conflict.Field == domainsync.PresenceField {
-			value = json.RawMessage("true")
+			// Presence only records existence, so the chosen value is true even
+			// when the chosen side is the deletion.
+			value = convergentPresenceValue
 		}
 		next, err := domainsync.ResolveConvergentRegister(state, conflict.Family, conflict.EntityID, conflict.Field, value, !present, node, now)
 		if err != nil {
@@ -1082,7 +1083,7 @@ func snapshotRegisterValue(snapshot domainsync.ConvergentSnapshot, family, id, f
 			continue
 		}
 		if field == domainsync.PresenceField {
-			return json.RawMessage("true"), true
+			return convergentPresenceValue, true
 		}
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(record.Value, &fields); err != nil {
@@ -1094,10 +1095,17 @@ func snapshotRegisterValue(snapshot domainsync.ConvergentSnapshot, family, id, f
 	return nil, false
 }
 
-// convergentSecretPattern mirrors the upstream redaction rule: a value whose
-// field name or nested key looks like a credential is never rendered in the
-// migration surface.
-var convergentSecretPattern = regexp.MustCompile(`(?i)password|passphrase|privatekey|private_key|secret|token|api[_-]?key|access[_-]?key`)
+// convergentSecretMarkers mirror the MCP approval-summary redaction rule: a
+// register whose field name or whose JSON keys look like a credential is never
+// rendered in the migration surface. Only names are matched, never string
+// values, so a Host labeled "tokenizer" stays visible.
+var convergentSecretMarkers = []string{
+	"password", "passphrase", "secret", "token", "privatekey", "private_key",
+	"apikey", "api_key", "access_key", "accesskey", "credential", "content",
+}
+
+// convergentPresenceValue is the only value a presence register stores.
+var convergentPresenceValue = json.RawMessage("true")
 
 // convergentMigrationConflictList turns the CRDT conflict descriptors into the
 // preview's per-field list, attaching the value each side would keep.
@@ -1131,13 +1139,47 @@ func convergentMigrationConflictList(
 	return list
 }
 
-func convergentConflictIsSecret(family, field string, values ...json.RawMessage) bool {
-	if family == "secrets" || convergentSecretPattern.MatchString(field) {
+func convergentConflictIsSecret(family, field string, localValue, remoteValue json.RawMessage) bool {
+	if family == "secrets" || convergentNameIsSecret(field) {
 		return true
 	}
-	for _, value := range values {
-		if convergentSecretPattern.Match(value) {
+	return convergentValueNamesSecret(localValue) || convergentValueNamesSecret(remoteValue)
+}
+
+func convergentNameIsSecret(name string) bool {
+	lower := strings.ToLower(name)
+	for _, marker := range convergentSecretMarkers {
+		if strings.Contains(lower, marker) {
 			return true
+		}
+	}
+	return false
+}
+
+// convergentValueNamesSecret walks a record's JSON structure looking for
+// credential-like keys. String values are never scanned: a label that happens
+// to say "tokenizer" is not a credential.
+func convergentValueNamesSecret(value json.RawMessage) bool {
+	var decoded any
+	if err := json.Unmarshal(value, &decoded); err != nil {
+		return false
+	}
+	return convergentJSONNamesSecret(decoded)
+}
+
+func convergentJSONNamesSecret(node any) bool {
+	switch typed := node.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if convergentNameIsSecret(key) || convergentJSONNamesSecret(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if convergentJSONNamesSecret(child) {
+				return true
+			}
 		}
 	}
 	return false
@@ -1149,7 +1191,19 @@ func convergentConflictIsSecret(family, field string, values ...json.RawMessage)
 
 // SetConvergentEnabled enables v2 (running the fail-closed migration when this
 // is the first time) or pauses an initialized replica. It never downgrades.
+// An explicit enable starts a fresh migration attempt, so choices made while
+// resolving an earlier attempt are dropped rather than silently applied to a
+// conflict the user is no longer looking at.
 func (s *Service) SetConvergentEnabled(ctx context.Context, enabled bool) (ConvergentMigrationPreview, error) {
+	if enabled {
+		s.clearMigrationResolutions()
+	}
+	return s.setConvergentEnabled(ctx, enabled)
+}
+
+// setConvergentEnabled is the planning path shared with the resolution
+// methods, which must keep the choices recorded so far.
+func (s *Service) setConvergentEnabled(ctx context.Context, enabled bool) (ConvergentMigrationPreview, error) {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 
@@ -1397,7 +1451,7 @@ func (s *Service) ResolveConvergentMigrationConflict(ctx context.Context, resolu
 		(resolution.Side != ConvergentConflictKeepLocal && resolution.Side != ConvergentConflictKeepRemote) {
 		return ConvergentMigrationPreview{}, fmt.Errorf("%w: invalid conflict resolution", ErrConvergentMigration)
 	}
-	preview, err := s.SetConvergentEnabled(ctx, true)
+	preview, err := s.setConvergentEnabled(ctx, true)
 	if err == nil {
 		return preview, nil
 	}
@@ -1408,7 +1462,7 @@ func (s *Service) ResolveConvergentMigrationConflict(ctx context.Context, resolu
 		return preview, fmt.Errorf("%w: conflict %q no longer exists", ErrConvergentMigration, resolution.Register)
 	}
 	s.recordMigrationResolution(resolution.Register, resolution.Side)
-	return s.SetConvergentEnabled(ctx, true)
+	return s.setConvergentEnabled(ctx, true)
 }
 
 // ResolveConvergentMigrationConflicts is the bulk default: it applies the same
@@ -1417,7 +1471,7 @@ func (s *Service) ResolveConvergentMigrationConflicts(ctx context.Context, side 
 	if side != ConvergentConflictKeepLocal && side != ConvergentConflictKeepRemote {
 		return ConvergentMigrationPreview{}, fmt.Errorf("%w: invalid conflict side", ErrConvergentMigration)
 	}
-	preview, err := s.SetConvergentEnabled(ctx, true)
+	preview, err := s.setConvergentEnabled(ctx, true)
 	if err == nil {
 		return preview, nil
 	}
@@ -1430,7 +1484,7 @@ func (s *Service) ResolveConvergentMigrationConflicts(ctx context.Context, side 
 	for _, conflict := range preview.Conflicts {
 		s.recordMigrationResolution(conflict.Register, side)
 	}
-	return s.SetConvergentEnabled(ctx, true)
+	return s.setConvergentEnabled(ctx, true)
 }
 
 func convergentPreviewHasConflict(preview ConvergentMigrationPreview, register string) bool {

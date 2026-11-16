@@ -3292,6 +3292,7 @@
   "settingsSyncConvergentConflictFieldPresence": "presencia del registro",
   "settingsSyncConvergentConflictValues": "Este dispositivo: {local} · Nube: {remote}",
   "settingsSyncConvergentConflictValueMissing": "sin definir",
+  "settingsSyncConvergentConflictValuePresent": "presente",
   "settingsSyncConvergentConflictValueHidden": "oculto",
   "settingsSyncConvergentKeepLocalAll": "Mantener este dispositivo para todos",
   "settingsSyncConvergentKeepRemoteAll": "Mantener la copia en la nube para todos",

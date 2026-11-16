@@ -24066,6 +24066,18 @@ func (msgs Messages) SettingsSyncConvergentConflictValueMissing() string {
 	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictValueMissing", nil)
 }
 
+// SettingsSyncConvergentConflictValuePresent says "present"
+// in the language the app shows.
+func SettingsSyncConvergentConflictValuePresent() string {
+	return In(i18n.Locale()).SettingsSyncConvergentConflictValuePresent()
+}
+
+// SettingsSyncConvergentConflictValuePresent says "present"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentConflictValuePresent() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictValuePresent", nil)
+}
+
 // SettingsSyncConvergentConflictValueHidden says "hidden"
 // in the language the app shows.
 func SettingsSyncConvergentConflictValueHidden() string {

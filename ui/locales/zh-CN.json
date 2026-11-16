@@ -3292,6 +3292,7 @@
   "settingsSyncConvergentConflictFieldPresence": "记录存在状态",
   "settingsSyncConvergentConflictValues": "此设备：{local} · 云端：{remote}",
   "settingsSyncConvergentConflictValueMissing": "未设置",
+  "settingsSyncConvergentConflictValuePresent": "存在",
   "settingsSyncConvergentConflictValueHidden": "已隐藏",
   "settingsSyncConvergentKeepLocalAll": "全部保留此设备",
   "settingsSyncConvergentKeepRemoteAll": "全部保留云端副本",

@@ -1944,8 +1944,8 @@ func syncConvergentConflictRow(c *ui.Context, state *SyncState, conflict appsync
 			syncEntityLabel(conflict.Family, m), conflict.EntityID, field,
 		)).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 		ui.Text(c, m.SettingsSyncConvergentConflictValues(
-			convergentConflictValueText(conflict.LocalValue, conflict.LocalPresent, conflict.Secret, m),
-			convergentConflictValueText(conflict.RemoteValue, conflict.RemotePresent, conflict.Secret, m),
+			convergentConflictValueText(conflict.Field, conflict.LocalValue, conflict.LocalPresent, conflict.Secret, m),
+			convergentConflictValueText(conflict.Field, conflict.RemoteValue, conflict.RemotePresent, conflict.Secret, m),
 		)).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			if kit.SecondaryButton(c, "", m.SettingsSyncConflictUseLocal()).Disabled(state.Busy()).Clicked() {
@@ -1961,14 +1961,17 @@ func syncConvergentConflictRow(c *ui.Context, state *SyncState, conflict appsync
 }
 
 // convergentConflictValueText renders one side's value for the conflict list.
-// The raw JSON string is shown without quotes; complex values are abbreviated
-// so one long document cannot crowd out the choices.
-func convergentConflictValueText(value json.RawMessage, present, secret bool, m locales.Messages) string {
+// A presence register reports existence rather than the literal true. The raw
+// JSON string is shown without quotes; complex values are abbreviated so one
+// long document cannot crowd out the choices.
+func convergentConflictValueText(field string, value json.RawMessage, present, secret bool, m locales.Messages) string {
 	switch {
 	case secret:
 		return m.SettingsSyncConvergentConflictValueHidden()
 	case !present:
 		return m.SettingsSyncConvergentConflictValueMissing()
+	case field == domainsync.PresenceField:
+		return m.SettingsSyncConvergentConflictValuePresent()
 	}
 	text := strings.TrimSpace(string(value))
 	var decoded string
