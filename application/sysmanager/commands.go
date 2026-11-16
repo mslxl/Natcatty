@@ -89,11 +89,12 @@ const linuxOverview = `host=$(hostname 2>/dev/null || uname -n 2>/dev/null); ` +
 	`load=$(awk '{print $1" "$2" "$3}' /proc/loadavg 2>/dev/null); ` +
 	`cores=$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null); ` +
 	`cpuraw=$(awk '/^cpu /{t=0;for(i=2;i<=NF;i++)t+=$i;printf "%d %d",t,$5}' /proc/stat 2>/dev/null); ` +
+	`percore=$(awk '/^cpu[0-9]+ /{t=0;for(i=2;i<=NF;i++)t+=$i;printf "%s%d:%d",(n++?",":""),t,$5}' /proc/stat 2>/dev/null); ` +
 	`mem=$(awk '/^MemTotal:/{t=$2}/^MemFree:/{f=$2}/^Buffers:/{b=$2}/^Cached:/{c=$2}/^SReclaimable:/{s=$2}END{if(t>0)printf "%d %d",(t-f-b-c-s)/1024,t/1024}' /proc/meminfo 2>/dev/null); ` +
 	`swap=$(awk '/^SwapTotal:/{t=$2}/^SwapFree:/{f=$2}END{if(t>0)printf "%d %d",(t-f)/1024,t/1024}' /proc/meminfo 2>/dev/null); ` +
 	`disk=$(df -Pk / 2>/dev/null | awk 'NR==2{printf "%.1f %.1f",$3/1048576,$2/1048576}'); ` +
-	`printf "MODE:linux|HOST:%s|OS:%s|KERNEL:%s|UPTIME:%s|LOAD:%s|CORES:%s|CPURAW:%s|MEM:%s|SWAP:%s|DISK:%s\n" ` +
-	`"$host" "$osname" "$kernel" "$uptime" "$load" "$cores" "$cpuraw" "$mem" "$swap" "$disk"`
+	`printf "MODE:linux|HOST:%s|OS:%s|KERNEL:%s|UPTIME:%s|LOAD:%s|CORES:%s|CPURAW:%s|PERCORERAW:%s|MEM:%s|SWAP:%s|DISK:%s\n" ` +
+	`"$host" "$osname" "$kernel" "$uptime" "$load" "$cores" "$cpuraw" "$percore" "$mem" "$swap" "$disk"`
 
 const darwinOverview = `host=$(hostname 2>/dev/null || uname -n 2>/dev/null); ` +
 	`osname=$(printf "%s %s" "$(sw_vers -productName 2>/dev/null)" "$(sw_vers -productVersion 2>/dev/null)" | sed 's/[[:space:]]*$//'); ` +

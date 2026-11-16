@@ -26,6 +26,10 @@ import (
 // the window chrome take their space.
 const surfaceGap float32 = 4
 
+// coreListMaxHeight bounds the per-core list so a many-core Host keeps the
+// rest of the resource card in view; the list scrolls past this height.
+const coreListMaxHeight float32 = 240
+
 // View returns the System manager surface. It is one flex column that takes
 // the height its parent leaves, so the list of every tab can scroll above its
 // pinned action bar instead of running past the window at the minimum size.
@@ -1072,6 +1076,7 @@ func resourceCard(c *ui.Context, data appsysmanager.Overview, m locales.Messages
 		ui.Text(c, m.SysManagerOverviewResources()).FontSize(kit.M(c).Font.Callout).Bold()
 		metric(c, m.SysManagerOverviewCPU(), percentText(data.CPUPercent),
 			ratio(data.CPUPercent, 100), t)
+		coreMetrics(c, data.CPUPerCore, t)
 		metric(c, m.SysManagerOverviewMemory(),
 			usedText(data.MemUsedMB, data.MemTotalMB, 1024, m), memRatio, t)
 		metric(c, m.SysManagerOverviewSwap(),
@@ -1081,17 +1086,43 @@ func resourceCard(c *ui.Context, data appsysmanager.Overview, m locales.Messages
 	})
 }
 
+// coreMetrics lists every reported core as its own row. The list scrolls
+// inside a bounded height so a many-core Host does not push the rest of the
+// card out of view. Each row is keyed by its core, so it keeps its state when
+// an unrelated sample updates the card.
+func coreMetrics(c *ui.Context, values []float64, t *ui.Theme) {
+	if len(values) == 0 {
+		return
+	}
+	m := kit.M(c)
+	ui.Scroll(c).FillWidth().MaxHeight(coreListMaxHeight).Children(func() {
+		ui.Column(c).FillWidth().GapY(m.Space.XSmall).Children(func() {
+			for index, value := range values {
+				ui.Column(c).Key(fmt.Sprintf("sysmanager-core-%d", index)).
+					FillWidth().Children(func() {
+					metricBody(c, fmt.Sprintf("C%d", index+1), percentText(value),
+						ratio(value, 100), t)
+				})
+			}
+		})
+	})
+}
+
 func metric(c *ui.Context, label, value string, ratio float64, t *ui.Theme) {
 	ui.Column(c).FillWidth().Gap(2).Children(func() {
-		ui.Row(c).FillWidth().Gap(6).Children(func() {
-			ui.Text(c, label).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
-			ui.Column(c).Grow(1)
-			ui.Text(c, value).FontSize(kit.M(c).Font.Caption).NoWrap()
-		})
-		if ratio >= 0 {
-			ui.Progress(c, ratio).Grow(1)
-		}
+		metricBody(c, label, value, ratio, t)
 	})
+}
+
+func metricBody(c *ui.Context, label, value string, ratio float64, t *ui.Theme) {
+	ui.Row(c).FillWidth().Gap(6).Children(func() {
+		ui.Text(c, label).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+		ui.Column(c).Grow(1)
+		ui.Text(c, value).FontSize(kit.M(c).Font.Caption).NoWrap()
+	})
+	if ratio >= 0 {
+		ui.Progress(c, ratio).Grow(1)
+	}
 }
 
 func field(c *ui.Context, label, value string, t *ui.Theme) {

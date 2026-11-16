@@ -99,6 +99,35 @@ func TestParseStatsSecondSampleUsesCounters(t *testing.T) {
 	}
 }
 
+func TestParseStatsExposesEveryPerCoreReading(t *testing.T) {
+	coreList := func(total, idle int) string {
+		entries := make([]string, 8)
+		for index := range entries {
+			entries[index] = strconv.Itoa(total) + ":" + strconv.Itoa(idle)
+		}
+		return strings.Join(entries, ",")
+	}
+	first, err := parseStats("CPURAW:1600 800|CORES:8|PERCORERAW:" + coreList(200, 100))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, previous := first.sample(samplerState{}, time.Unix(0, 0), 0)
+
+	second, err := parseStats("CPURAW:1600 800|CORES:8|PERCORERAW:" + coreList(400, 150))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sample, _ := second.sample(previous, time.Unix(1, 0), 0)
+	if len(sample.CPUPerCore) != 8 {
+		t.Fatalf("per-core readings = %d, want one per reported core", len(sample.CPUPerCore))
+	}
+	for index, value := range sample.CPUPerCore {
+		if value != 75 {
+			t.Errorf("core %d = %v, want 75", index+1, value)
+		}
+	}
+}
+
 func TestParseStatsMacOSDirectCPU(t *testing.T) {
 	parsed, err := parseStats("NC_LATENCY_MARK|CPU:37|CORES:8|" +
 		"MEMINFO:16384 4096 0 6144 2048 1024|DISKS:/:20.000000:100.000000:20:apfs:disk3s1|" +
