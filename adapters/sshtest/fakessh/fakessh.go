@@ -67,6 +67,11 @@ type Options struct {
 	// ServerVersion overrides the SSH identification line, so a test can model
 	// a device whose software token requires single-channel operation.
 	ServerVersion string
+	// HostKey replaces the generated server key. A test that opens several
+	// transports to the "same" server passes one signer to every instance, so
+	// host-key pinning sees a stable identity; a test that models a changed
+	// server key passes a different one.
+	HostKey ssh.Signer
 }
 
 // X11Request is one recorded x11-req session request.
@@ -142,13 +147,16 @@ type Server struct {
 // returns before the handshake completes so a synchronous transport such as
 // net.Pipe's client end can dial.
 func Start(conn net.Conn, options Options) (*Server, error) {
-	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	signer, err := ssh.NewSignerFromKey(privateKey)
-	if err != nil {
-		return nil, err
+	signer := options.HostKey
+	if signer == nil {
+		_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		signer, err = ssh.NewSignerFromKey(privateKey)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	server := &Server{

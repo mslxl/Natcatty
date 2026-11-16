@@ -68,6 +68,17 @@ type Request struct {
 	// so closing a browser cannot disturb a Session and two browsers on one
 	// Host never share network state.
 	Dedicated bool
+	// AcceptedHostKeys are host keys the caller already accepted on another
+	// transport for this route. A companion dial pins them as pre-trusted so
+	// the same hosts are not prompted a second time. They are matched by
+	// hostname, port, key type, and fingerprint, so a different key still
+	// fails or prompts.
+	AcceptedHostKeys []domainconn.Key
+	// HostKeyUnattended rejects an untrusted or changed host key instead of
+	// asking. A background companion dial must never open a prompt the user
+	// did not start; it fails with KindHostKey so the owner can ask for a
+	// reconnect instead.
+	HostKeyUnattended bool
 	// X11Forwarding requests X11 forwarding on the connection's shell. X11
 	// transports never enter the general reuse pool.
 	X11Forwarding bool
@@ -530,6 +541,11 @@ func (m *Manager) dial(ctx context.Context, req Request, endpoint endpointConfig
 	if err != nil {
 		return nil, err
 	}
+	// A companion dial inherits the host identities its owner already accepted
+	// on another transport. They are pinned by hostname, port, key type, and
+	// fingerprint, so they trust exactly the keys that were seen, not the whole
+	// endpoint.
+	known = append(known, acceptedKnownHosts(req.AcceptedHostKeys)...)
 
 	total := len(req.Jumps) + 1
 	type endpointPlan struct {
@@ -569,8 +585,18 @@ func (m *Manager) dial(ctx context.Context, req Request, endpoint endpointConfig
 	}
 
 	succeeded := make([]string, total)
+	// accepted collects every key the handshake trusted, in hop order. A
+	// later companion dial replays it instead of prompting for the same hosts.
+	accepted := make([]domainconn.Key, 0, total)
+	var acceptedMu sync.Mutex
 	verify := func(verifyCtx context.Context, key domainconn.Key) error {
-		return m.verifyHostKey(verifyCtx, key, known)
+		if err := m.verifyHostKey(verifyCtx, key, known, req.HostKeyUnattended); err != nil {
+			return err
+		}
+		acceptedMu.Lock()
+		accepted = append(accepted, key)
+		acceptedMu.Unlock()
+		return nil
 	}
 	username := func(plan AuthPlan, fallback string) string {
 		if plan.Username != "" {
@@ -665,8 +691,31 @@ func (m *Manager) dial(ctx context.Context, req Request, endpoint endpointConfig
 		}
 	}
 	conn := newPooledConnection(client, endpoint, m)
+	conn.acceptedHostKeys = accepted
 	conn.startKeepalive(endpoint.keepalive, func() { m.pool.discard(conn, "keepalive") })
 	return conn, nil
+}
+
+// acceptedKnownHosts turns keys accepted on another transport into Known Host
+// records for classification. They are not persisted: the caller's trust was
+// for that live route, and the dedicated dial only needs to avoid asking the
+// same question twice. An empty ID keeps them from being mistaken for stored
+// records.
+func acceptedKnownHosts(keys []domainconn.Key) []domainconn.KnownHost {
+	if len(keys) == 0 {
+		return nil
+	}
+	records := make([]domainconn.KnownHost, 0, len(keys))
+	for _, key := range keys {
+		records = append(records, domainconn.KnownHost{
+			Hostname:    key.Hostname,
+			Port:        key.Port,
+			KeyType:     key.KeyType,
+			PublicKey:   key.PublicKey,
+			Fingerprint: key.Fingerprint,
+		})
+	}
+	return records
 }
 
 // requestForHop turns a jump Hop into the Request an AuthSource consumes.
@@ -785,13 +834,19 @@ func (m *Manager) knownHosts(ctx context.Context) ([]domainconn.KnownHost, error
 
 // verifyHostKey classifies the live key and asks the user when the key is not
 // already trusted. Trust upserts the Known Host before authentication starts.
-func (m *Manager) verifyHostKey(ctx context.Context, key domainconn.Key, known []domainconn.KnownHost) error {
+// An unattended dial never prompts: an untrusted or changed key fails closed
+// with ErrHostKeyUnverified so its owner can tell the user to reconnect.
+func (m *Manager) verifyHostKey(ctx context.Context, key domainconn.Key, known []domainconn.KnownHost, unattended bool) error {
 	classified := domainconn.Classify(known, key.Hostname, key.Port, key.KeyType, key.Fingerprint)
 	if classified.PublicKey == "" {
 		classified.PublicKey = key.PublicKey
 	}
 	if classified.Status == domainconn.StatusTrusted {
 		return nil
+	}
+	if unattended {
+		return hostKeyError(fmt.Errorf("%w: %s:%d %s", ErrHostKeyUnverified,
+			key.Hostname, key.Port, key.KeyType))
 	}
 	if m.prompter == nil {
 		return hostKeyError(ErrHostKeyRejected)
@@ -897,6 +952,10 @@ type Connection struct {
 	idle      bool
 	idleSince time.Time
 	endpoint  endpointConfig
+	// acceptedHostKeys records the keys this transport trusted during its
+	// handshake, pinned to the hop they arrived on. A companion dial replays
+	// them so the same hosts are not prompted again.
+	acceptedHostKeys []domainconn.Key
 	// allowIdlePark is false for single-channel, X11, and vendor bastions
 	// that cannot host a later shell.
 	allowIdlePark bool
