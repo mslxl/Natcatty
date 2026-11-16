@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -385,6 +386,77 @@ func TestVaultJSONRoundTripRestoresEveryFamilyAndLink(t *testing.T) {
 	if !containsNoteGroup(destination.notes.groups, "Ops") ||
 		!containsNoteGroup(destination.notes.groups, "Ops/Config") {
 		t.Fatalf("Note Groups = %+v", destination.notes.groups)
+	}
+}
+
+// TestVaultJSONRoundTripPreservesCertificateAuthorityAnchor covers the flag
+// the portable family document used to drop: an imported CA trust anchor
+// matched trust but rendered as a presented key. The ordinary record must keep
+// omitting the field, so its JSON stays byte-identical.
+func TestVaultJSONRoundTripPreservesCertificateAuthorityAnchor(t *testing.T) {
+	ctx := context.Background()
+	source := newFamilySource(t)
+	source.known.items[0].IsCertificateAuthority = true
+	source.known.items = append(source.known.items, domainconn.KnownHost{
+		ID: "known-2", Hostname: "other.example.test", Port: 22,
+		KeyType: "ssh-ed25519", PublicKey: "ssh-ed25519 AAAA other",
+		Fingerprint: "SHA256:plain", DiscoveredAt: fixedFamilyTime(),
+		LastSeen: fixedFamilyTime(),
+	})
+	exported, err := source.service.ExportVault(ctx, ExportOptions{
+		Format: ExportJSON, ExportedAt: fixedFamilyTime(),
+	})
+	if err != nil {
+		t.Fatalf("ExportVault: %v", err)
+	}
+
+	var document struct {
+		KnownHosts []map[string]json.RawMessage `json:"knownHosts"`
+	}
+	if err := json.Unmarshal(exported.Content, &document); err != nil {
+		t.Fatalf("export is not JSON: %v", err)
+	}
+	byHost := make(map[string]map[string]json.RawMessage, len(document.KnownHosts))
+	for _, record := range document.KnownHosts {
+		var hostname string
+		if err := json.Unmarshal(record["hostname"], &hostname); err != nil {
+			t.Fatalf("hostname: %v", err)
+		}
+		byHost[hostname] = record
+	}
+	if raw, ok := byHost["web1.example.test"]["isCertificateAuthority"]; !ok || string(raw) != "true" {
+		t.Fatalf("CA anchor export = %s, want isCertificateAuthority true",
+			byHost["web1.example.test"]["isCertificateAuthority"])
+	}
+	if raw, ok := byHost["other.example.test"]["isCertificateAuthority"]; ok {
+		t.Fatalf("ordinary key export carries isCertificateAuthority = %s", raw)
+	}
+
+	destination := newDestination(t)
+	preview, err := destination.service.PreviewImport(ctx, string(exported.Content),
+		PreviewImportOptions{FileName: "netcatty-vault.json"})
+	if err != nil {
+		t.Fatalf("PreviewImport: %v", err)
+	}
+	if _, err := destination.service.CommitImport(ctx, preview, ImportCommitOptions{}); err != nil {
+		t.Fatalf("CommitImport: %v", err)
+	}
+	if len(destination.known.items) != 2 {
+		t.Fatalf("restored Known Hosts = %+v", destination.known.items)
+	}
+	for _, record := range destination.known.items {
+		switch record.Hostname {
+		case "web1.example.test":
+			if !record.IsCertificateAuthority {
+				t.Fatalf("CA anchor lost its flag: %+v", record)
+			}
+		case "other.example.test":
+			if record.IsCertificateAuthority {
+				t.Fatalf("ordinary key became a CA anchor: %+v", record)
+			}
+		default:
+			t.Fatalf("unexpected Known Host: %+v", record)
+		}
 	}
 }
 
