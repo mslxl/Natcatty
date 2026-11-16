@@ -71,14 +71,14 @@ upstream  https://github.com/binaricat/Netcatty.git # the Electron project
 
    `MERGE_HEAD` survives this, so the next commit is still a merge commit.
 
-6. Adopt only the explicitly chosen files, for example the generic workflows:
+6. Adopt only explicitly chosen files. In the current sync the set was empty:
+   every upstream workflow (including `grokbot-issue-relay.yml` and
+   `spam-comments.yml`) is skipped, because the fork uses neither integration
+   and has its own Go CI. When a file is chosen, check it out from upstream:
 
    ```
-   git checkout upstream/main -- .github/workflows/grokbot-issue-relay.yml \
-                                .github/workflows/spam-comments.yml
+   git checkout upstream/main -- <path> [<path> ...]
    ```
-
-   Do not take `build.yml` / `test.yml`; the Go repo has its own CI.
 
 7. Commit, then verify.
 
