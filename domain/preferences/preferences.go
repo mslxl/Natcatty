@@ -5,6 +5,7 @@ package preferences
 
 import (
 	"math"
+	"net"
 	"runtime"
 	"strings"
 
@@ -26,6 +27,10 @@ const (
 	GroupTransport  Group = "transport"
 	GroupMonitor    Group = "monitor"
 	GroupSysManager Group = "sysManager"
+	// GroupExternalMCP owns the device-local Streamable HTTP endpoint. It is
+	// not listed in Groups because the MCP surface renders it beside the
+	// permission mode rather than in the generic preferences form.
+	GroupExternalMCP Group = "externalMcp"
 )
 
 // Groups returns every group in Settings-window order. GroupMonitor owns
@@ -367,6 +372,60 @@ type Security struct {
 	ConfirmDestructive   bool `json:"confirmDestructive"`
 }
 
+// ExternalMCP is the optional Streamable HTTP endpoint for the external MCP
+// server. It is device-local: a bind address and port name this machine, and
+// the endpoint is off until the user enables it.
+type ExternalMCP struct {
+	HTTPEnabled         bool   `json:"httpEnabled"`
+	HTTPPort            int    `json:"httpPort"`
+	HTTPAllowCustomBind bool   `json:"httpAllowCustomBind"`
+	HTTPListenAddress   string `json:"httpListenAddress"`
+	HTTPClientHost      string `json:"httpClientHost"`
+}
+
+const (
+	// DefaultExternalMCPHTTPPort matches the original endpoint's default.
+	DefaultExternalMCPHTTPPort = 47391
+	// MinExternalMCPHTTPPort keeps the endpoint out of privileged ports.
+	MinExternalMCPHTTPPort = 1024
+	// MaxExternalMCPHTTPPort is the highest TCP port.
+	MaxExternalMCPHTTPPort = 65535
+	// DefaultExternalMCPHTTPListenAddress keeps the endpoint on loopback.
+	DefaultExternalMCPHTTPListenAddress = "127.0.0.1"
+)
+
+// EffectiveHTTPListenAddress is the bind address the transport uses. A custom
+// address applies only when the user explicitly allows a non-default bind.
+func (e ExternalMCP) EffectiveHTTPListenAddress() string {
+	if e.HTTPAllowCustomBind {
+		if address := strings.TrimSpace(e.HTTPListenAddress); address != "" {
+			return address
+		}
+	}
+	return DefaultExternalMCPHTTPListenAddress
+}
+
+// NormalizeExternalMCP repairs an unusable endpoint configuration. The
+// transport is still off after normalization; only an explicit enable turns
+// it on.
+func NormalizeExternalMCP(group ExternalMCP) ExternalMCP {
+	if group.HTTPPort < MinExternalMCPHTTPPort || group.HTTPPort > MaxExternalMCPHTTPPort {
+		group.HTTPPort = DefaultExternalMCPHTTPPort
+	}
+	group.HTTPListenAddress = strings.TrimSpace(group.HTTPListenAddress)
+	if group.HTTPListenAddress != "localhost" && net.ParseIP(group.HTTPListenAddress) == nil {
+		group.HTTPListenAddress = DefaultExternalMCPHTTPListenAddress
+	}
+	group.HTTPClientHost = strings.TrimSpace(group.HTTPClientHost)
+	if group.HTTPClientHost != "" {
+		address := net.ParseIP(group.HTTPClientHost)
+		if address == nil || group.HTTPClientHost == "0.0.0.0" || group.HTTPClientHost == "::" {
+			group.HTTPClientHost = ""
+		}
+	}
+	return group
+}
+
 // Transport holds the Mosh client's display settings. Both transports use
 // their in-process clients, so there is no client implementation to choose.
 type Transport struct {
@@ -384,12 +443,13 @@ type Settings struct {
 	// History is device-local. It is deliberately absent from
 	// PortableSettings, so Vault cloud sync never carries an account address,
 	// username, auth mode, or interval.
-	History    History    `json:"history"`
-	Sync       Sync       `json:"sync"`
-	Security   Security   `json:"security"`
-	Transport  Transport  `json:"transport"`
-	Monitor    Monitor    `json:"monitor"`
-	SysManager SysManager `json:"sysManager"`
+	History     History     `json:"history"`
+	Sync        Sync        `json:"sync"`
+	Security    Security    `json:"security"`
+	Transport   Transport   `json:"transport"`
+	Monitor     Monitor     `json:"monitor"`
+	SysManager  SysManager  `json:"sysManager"`
+	ExternalMCP ExternalMCP `json:"externalMcp"`
 }
 
 // PortableSettings is the subset of Settings that follows the user between
@@ -535,6 +595,13 @@ func Defaults() Settings {
 		},
 		Monitor:    DefaultMonitor(),
 		SysManager: DefaultSysManager(),
+		ExternalMCP: ExternalMCP{
+			// The HTTP endpoint is opt-in; a fresh profile exposes MCP over
+			// stdio only, as the original did.
+			HTTPEnabled:       false,
+			HTTPPort:          DefaultExternalMCPHTTPPort,
+			HTTPListenAddress: DefaultExternalMCPHTTPListenAddress,
+		},
 	}
 }
 
@@ -624,6 +691,7 @@ func Normalize(settings Settings) Settings {
 		settings.Transport.MoshPredictionDisplay.Normalized()
 	settings.Monitor = NormalizeMonitor(settings.Monitor)
 	settings.SysManager = NormalizeSysManager(settings.SysManager)
+	settings.ExternalMCP = NormalizeExternalMCP(settings.ExternalMCP)
 	return settings
 }
 
@@ -682,6 +750,8 @@ func ResetGroup(settings Settings, group Group) Settings {
 		settings.Monitor = defaults.Monitor
 	case GroupSysManager:
 		settings.SysManager = defaults.SysManager
+	case GroupExternalMCP:
+		settings.ExternalMCP = defaults.ExternalMCP
 	}
 	return settings
 }
