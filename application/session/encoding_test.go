@@ -6,6 +6,7 @@ import (
 	"github.com/mslxl/natcatty/domain/model"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 )
@@ -34,6 +35,13 @@ func (c *recordingCodec) Encode(p []byte) []byte {
 	defer c.mu.Unlock()
 	c.encoded = append(c.encoded, append([]byte(nil), p...))
 	return append([]byte("encoded:"), p...)
+}
+
+func (c *recordingCodec) EncodedWidth(r rune) int {
+	if size := utf8.RuneLen(r); size > 0 {
+		return size
+	}
+	return 1
 }
 
 func (c *recordingCodec) SetEncoding(encoding domainterminal.Encoding) bool {
