@@ -318,6 +318,58 @@ func TestInheritedX11IsShownButNotSavedAsAnExplicitChoice(t *testing.T) {
 	}
 }
 
+// TestSwitchingProtocolToSSHReappliesInheritedX11 proves the X11 control and
+// its source label agree after a protocol change. A non-SSH Host hides the
+// control and clears the displayed value, so switching back to SSH must
+// re-resolve the group default rather than leave an unchecked box labelled
+// inherited.
+func TestSwitchingProtocolToSSHReappliesInheritedX11(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "host-1", Label: "web", Hostname: "example.com",
+		Protocol: domainvault.ProtocolTelnet, Group: "prod",
+	}}}
+	groups := &effectiveGroups{items: []domainvault.Group{{
+		Path: "prod", Protocol: domainvault.ProtocolSSH,
+		X11Forwarding: true, X11WarningAcknowledged: true,
+	}}}
+	state := NewState(repo, WithGroups(groups), WithRedrawRequest(func() {}))
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit failed")
+	}
+	if form := state.Form(); form.X11Forwarding || form.X11Inherited {
+		t.Fatalf("a Telnet Host shows X11: %+v", form)
+	}
+
+	state.SetHostProtocol(string(domainvault.ProtocolSSH))
+	form := state.Form()
+	if !form.X11Forwarding || !form.X11WarningAcknowledged || !form.X11Inherited {
+		t.Fatalf("switching to SSH did not show the inherited X11: %+v", form)
+	}
+	if form.X11ForwardingSet {
+		t.Fatal("the inherited value was marked as the Host's own")
+	}
+	if source, _, _ := state.HostX11Source(); source != InheritedValueSourceInherited {
+		t.Fatalf("HostX11Source = %q, want inherited", source)
+	}
+
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if len(repo.updated) != 1 {
+		t.Fatalf("updates = %d, want 1", len(repo.updated))
+	}
+	saved := repo.updated[0]
+	if saved.X11Forwarding || saved.X11WarningAcknowledged || saved.X11ForwardingSet {
+		t.Fatalf("saving the displayed inheritance wrote an explicit choice: %+v", saved)
+	}
+	if effective, _ := state.EffectiveHost("host-1"); !effective.X11Enabled() {
+		t.Fatalf("effective Host = %+v, want it to inherit X11", effective)
+	}
+}
+
 func TestX11IsRejectedOutsideSSH(t *testing.T) {
 	repo := &fakeHosts{}
 	state, _ := newTestState(t, repo)

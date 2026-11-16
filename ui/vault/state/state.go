@@ -935,6 +935,15 @@ func (s *State) SetHostProtocol(protocol string) {
 	if protocol != string(domainvault.ProtocolET) {
 		s.form.ETPort = ""
 	}
+	if domainvault.Protocol(protocol) == domainvault.ProtocolSSH {
+		// X11 becomes visible again with this protocol. Re-resolve the Host
+		// Group's default so the checkbox shows the value a Session would use
+		// instead of staying at the off the hidden control left behind.
+		s.inheritHostX11(domainvault.Host{
+			Group:    s.form.Group,
+			Protocol: domainvault.ProtocolSSH,
+		})
+	}
 	if !domainvault.Protocol(protocol).UsesSSHAuth() {
 		s.form.IdentityID = ""
 		s.form.KeyID = ""
