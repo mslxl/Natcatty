@@ -1,6 +1,10 @@
 package session
 
-import domainterminal "github.com/mslxl/natcatty/domain/terminal"
+import (
+	"unicode/utf8"
+
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
+)
 
 // Codec converts one Session's transport bytes to UTF-8 and its terminal input
 // back to the wire encoding. Implementations retain an incomplete multibyte
@@ -10,6 +14,10 @@ type Codec interface {
 	Decode([]byte) []byte
 	Encode([]byte) []byte
 	SetEncoding(domainterminal.Encoding) bool
+	// EncodedWidth returns how many wire bytes r occupies in the current
+	// encoding, without changing any encoder state. A byte-oriented line editor
+	// needs it to erase one wire byte per Backspace.
+	EncodedWidth(r rune) int
 }
 
 // CodecFactory builds the Codec for a Session's initial encoding. The
@@ -24,6 +32,15 @@ func (identityCodec) Decode(p []byte) []byte { return p }
 func (identityCodec) Encode(p []byte) []byte { return p }
 func (identityCodec) SetEncoding(encoding domainterminal.Encoding) bool {
 	return encoding == domainterminal.EncodingUTF8
+}
+
+// EncodedWidth is the UTF-8 length of r. An invalid rune still occupies one
+// replacement byte.
+func (identityCodec) EncodedWidth(r rune) int {
+	if size := utf8.RuneLen(r); size > 0 {
+		return size
+	}
+	return 1
 }
 
 // Encoding returns the Session's current wire encoding.

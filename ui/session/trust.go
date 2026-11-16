@@ -171,7 +171,17 @@ func TrustView(p *TrustPrompt) func(*ui.Context) {
 				}
 				ui.Text(c, title).FontSize(kit.M(c).Font.Title).Bold().TextColor(uitheme.DangerText(t))
 				ui.Text(c, body).TextColor(t.TextMuted)
-				ui.Text(c, m.HostKeyPromptFingerprint(key.KeyType, key.Fingerprint)).FontSize(kit.M(c).Font.Footnote)
+				fingerprint := m.HostKeyPromptFingerprint(key.KeyType, key.Fingerprint)
+				if key.IsHostCertificate && key.Fingerprint != "" {
+					fingerprint = m.HostKeyPromptCertificateFingerprint(key.KeyType, key.Fingerprint)
+				}
+				ui.Text(c, fingerprint).FontSize(kit.M(c).Font.Footnote)
+				// Trusting a host certificate delegates to its signing CA in the
+				// Vault, so the prompt must name that CA before the user agrees.
+				if key.IsHostCertificate && key.CertificateCAFingerprint != "" {
+					ui.Text(c, m.HostKeyPromptCertificateAuthority(key.CertificateCAType, key.CertificateCAFingerprint)).
+						FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+				}
 				if key.Status == domainconn.StatusChanged && key.ExpectedFingerprint != "" {
 					ui.Text(c, m.HostKeyPromptExpected(key.ExpectedFingerprint)).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 					ui.Text(c, m.HostKeyPromptChangedHint()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))

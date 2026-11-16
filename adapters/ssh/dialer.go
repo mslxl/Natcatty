@@ -343,6 +343,20 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 		}
 	}
 
+	// Host-key verification after the handshake runs on every key exchange, so
+	// it cannot use the handshake-scoped context: that one is canceled as soon
+	// as the initial handshake returns. This context lives as long as the
+	// transport and is canceled when the client closes, which releases a trust
+	// prompt queued by a rekey. It is deliberately not derived from the dial
+	// context: the caller's attempt may end while the connection stays open.
+	connCtx, cancelConn := context.WithCancel(context.Background())
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			cancelConn()
+		}
+	}()
+
 	for i, ep := range endpoints {
 		label := ep.label
 		if label == "" {
@@ -375,7 +389,7 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 		reportChain(req, total, i+1, label, appconnection.ChainAuthenticating, nil)
 
 		versioned := &versionRecorder{Conn: raw}
-		client, remoteVersion, err := d.handshake(ctx, versioned, ep)
+		client, remoteVersion, err := d.handshake(ctx, connCtx, versioned, ep)
 		if err != nil {
 			_ = raw.Close()
 			closeChain()
@@ -393,6 +407,7 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 		client:        final,
 		ancestors:     clients[:len(clients)-1],
 		remoteVersion: versions[len(versions)-1],
+		cancel:        cancelConn,
 	}
 	if req.X11 != nil {
 		bridge, err := newX11Bridge(final, req.X11, d.x11Local)
@@ -406,6 +421,7 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 	// the connection pool's liveness check sees a transport that died while
 	// no channel operation was in flight.
 	go client.watchDeath()
+	handedOff = true
 	return client, nil
 }
 
@@ -463,7 +479,7 @@ func (d *Dialer) openForward(ctx context.Context, previous *xssh.Client, ep endp
 
 // handshake verifies the host key, authenticates, and returns the client. raw
 // is closed by the caller on failure.
-func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xssh.Client, string, error) {
+func (d *Dialer) handshake(ctx context.Context, connCtx context.Context, raw net.Conn, ep endpoint) (*xssh.Client, string, error) {
 	port := ep.portOr22()
 	address := net.JoinHostPort(ep.hostname, strconv.Itoa(port))
 
@@ -472,6 +488,19 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 	// user decision is released when the authentication deadline expires.
 	authCtx, cancelAuth := context.WithCancel(ctx)
 	defer cancelAuth()
+
+	// The first key exchange must be released by the handshake deadline, but a
+	// later rekey outlives this call. The callback therefore reads the current
+	// context: authCtx until the handshake succeeds, then the connection-scoped
+	// connCtx. Without the switch a changed key on rekey would immediately see a
+	// canceled context and report a cancellation instead of prompting.
+	verifyMu := sync.RWMutex{}
+	verifyCtx := context.Context(authCtx)
+	currentVerifyCtx := func() context.Context {
+		verifyMu.RLock()
+		defer verifyMu.RUnlock()
+		return verifyCtx
+	}
 
 	plan := ep.auth
 	if plan.Password == "" {
@@ -509,7 +538,7 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 			if err != nil {
 				return err
 			}
-			return guard.verifyKey(authCtx, blob, ep.verify, described)
+			return guard.verifyKey(currentVerifyCtx(), blob, ep.verify, described)
 		},
 		HostKeyAlgorithms: offer.hostKeys,
 		Config: xssh.Config{
@@ -557,6 +586,11 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 				ep.onAuth(candidate)
 			}
 		}
+		// From here on the transport owns further key exchanges. Verify them
+		// against the connection lifetime instead of this handshake's context.
+		verifyMu.Lock()
+		verifyCtx = connCtx
+		verifyMu.Unlock()
 		return xssh.NewClient(result.conn, result.chans, result.reqs), versionOf(raw), nil
 	case <-timer.C:
 		return nil, "", abort(&appconnection.Error{

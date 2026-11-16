@@ -18,10 +18,13 @@ import (
 // moved. A bracketed paste is inserted literally by the remote line editor, so
 // its payload bypasses every translation: only the markers are recognized.
 type inputTranslator struct {
-	mu      sync.Mutex
-	compat  modelterminal.InputCompatibility
-	widths  []int
-	pending []byte
+	mu     sync.Mutex
+	compat modelterminal.InputCompatibility
+	widths []int
+	// encodedWidth reports the wire width of a rune in the Session's current
+	// encoding. A byte-oriented line editor erases wire bytes, not UTF-8 bytes.
+	encodedWidth func(rune) int
+	pending      []byte
 	// pasteScan and pasteParams recognize the bracketed-paste markers, which
 	// may arrive split across writes.
 	pasteScan   pasteScanState
@@ -41,12 +44,12 @@ const (
 
 // newInputTranslator returns nil when the modes leave every byte unchanged, so
 // a default Host pays no allocation or state.
-func newInputTranslator(compat modelterminal.InputCompatibility) *inputTranslator {
+func newInputTranslator(compat modelterminal.InputCompatibility, encodedWidth func(rune) int) *inputTranslator {
 	compat = compat.Normalize()
 	if compat.IsDefault() {
 		return nil
 	}
-	return &inputTranslator{compat: compat}
+	return &inputTranslator{compat: compat, encodedWidth: encodedWidth}
 }
 
 // reset drops the local line state. A reconnected transport starts a new
@@ -164,8 +167,11 @@ func (t *inputTranslator) clearLine() {
 	t.pending = t.pending[:0]
 }
 
-// track records how many UTF-8 bytes the last character occupies. A character
-// split across two writes is completed by the next call.
+// track records how many wire bytes the last character occupies. A character
+// split across two writes is completed by the next call. The wire width comes
+// from the Session's codec, so a GBK session counts two bytes for a CJK
+// character rather than its three UTF-8 bytes. Without a codec the UTF-8 length
+// is already the wire length.
 func (t *inputTranslator) track(b byte) {
 	switch {
 	case b >= 0x20 && b < 0x7f:
@@ -174,8 +180,14 @@ func (t *inputTranslator) track(b byte) {
 	case b >= 0x80:
 		t.pending = append(t.pending, b)
 		if utf8.FullRune(t.pending) {
-			_, size := utf8.DecodeRune(t.pending)
-			t.widths = append(t.widths, size)
+			r, size := utf8.DecodeRune(t.pending)
+			width := size
+			if t.encodedWidth != nil {
+				if wire := t.encodedWidth(r); wire > 0 {
+					width = wire
+				}
+			}
+			t.widths = append(t.widths, width)
 			t.pending = t.pending[:0]
 		}
 	default:

@@ -2722,6 +2722,24 @@ func (msgs Messages) VaultKnownHostTrusted() string {
 	return Catalog.Format(msgs.locale, "vaultKnownHostTrusted", nil)
 }
 
+// VaultKnownHostCertificateAuthority says "CA anchor"
+// in the language the app shows.
+//
+// Marks a Known Host record whose fingerprint is the signing CA of a host
+// certificate, not a presented key.
+func VaultKnownHostCertificateAuthority() string {
+	return In(i18n.Locale()).VaultKnownHostCertificateAuthority()
+}
+
+// VaultKnownHostCertificateAuthority says "CA anchor"
+// in the language of msgs.
+//
+// Marks a Known Host record whose fingerprint is the signing CA of a host
+// certificate, not a presented key.
+func (msgs Messages) VaultKnownHostCertificateAuthority() string {
+	return Catalog.Format(msgs.locale, "vaultKnownHostCertificateAuthority", nil)
+}
+
 // VaultKnownHostRemove says "Remove trust"
 // in the language the app shows.
 func VaultKnownHostRemove() string { return In(i18n.Locale()).VaultKnownHostRemove() }
@@ -5158,6 +5176,40 @@ func HostKeyPromptFingerprint(keyType string, fingerprint string) string {
 // The live host key's type and SHA-256 fingerprint.
 func (msgs Messages) HostKeyPromptFingerprint(keyType string, fingerprint string) string {
 	return Catalog.Format(msgs.locale, "hostKeyPromptFingerprint", map[string]any{"keyType": keyType, "fingerprint": fingerprint})
+}
+
+// HostKeyPromptCertificateFingerprint says "Certificate fingerprint ({keyType}): {fingerprint}"
+// in the language the app shows.
+//
+// The presented host certificate's type and SHA-256 fingerprint.
+func HostKeyPromptCertificateFingerprint(keyType string, fingerprint string) string {
+	return In(i18n.Locale()).HostKeyPromptCertificateFingerprint(keyType, fingerprint)
+}
+
+// HostKeyPromptCertificateFingerprint says "Certificate fingerprint ({keyType}): {fingerprint}"
+// in the language of msgs.
+//
+// The presented host certificate's type and SHA-256 fingerprint.
+func (msgs Messages) HostKeyPromptCertificateFingerprint(keyType string, fingerprint string) string {
+	return Catalog.Format(msgs.locale, "hostKeyPromptCertificateFingerprint", map[string]any{"keyType": keyType, "fingerprint": fingerprint})
+}
+
+// HostKeyPromptCertificateAuthority says "Issued by certificate authority ({keyType}): {fingerprint}"
+// in the language the app shows.
+//
+// The CA that signed the presented host certificate: trusting the
+// certificate delegates trust to this CA.
+func HostKeyPromptCertificateAuthority(keyType string, fingerprint string) string {
+	return In(i18n.Locale()).HostKeyPromptCertificateAuthority(keyType, fingerprint)
+}
+
+// HostKeyPromptCertificateAuthority says "Issued by certificate authority ({keyType}): {fingerprint}"
+// in the language of msgs.
+//
+// The CA that signed the presented host certificate: trusting the
+// certificate delegates trust to this CA.
+func (msgs Messages) HostKeyPromptCertificateAuthority(keyType string, fingerprint string) string {
+	return Catalog.Format(msgs.locale, "hostKeyPromptCertificateAuthority", map[string]any{"keyType": keyType, "fingerprint": fingerprint})
 }
 
 // HostKeyPromptExpected says "Previously trusted fingerprint: {fingerprint}"

@@ -572,6 +572,10 @@
   },
   "vaultKnownHostsEmpty": "No Known Hosts yet. Trusted host keys appear after a connection.",
   "vaultKnownHostTrusted": "Trusted",
+  "vaultKnownHostCertificateAuthority": "CA anchor",
+  "@vaultKnownHostCertificateAuthority": {
+    "description": "Marks a Known Host record whose fingerprint is the signing CA of a host certificate, not a presented key."
+  },
   "vaultKnownHostRemove": "Remove trust",
   "vaultKnownHostRemoveConfirm": "Remove trust for {endpoint}? The next connection will ask again.",
   "@vaultKnownHostRemoveConfirm": {
@@ -1016,6 +1020,34 @@
   "hostKeyPromptFingerprint": "{keyType} fingerprint: {fingerprint}",
   "@hostKeyPromptFingerprint": {
     "description": "The live host key's type and SHA-256 fingerprint.",
+    "placeholders": {
+      "keyType": {
+        "type": "String",
+        "example": "ssh-ed25519"
+      },
+      "fingerprint": {
+        "type": "String",
+        "example": "uqlUaJEm3yLsW7r4i4a5I0LgW5jDcMKWYoNA/8Nn0Eo"
+      }
+    }
+  },
+  "hostKeyPromptCertificateFingerprint": "Certificate fingerprint ({keyType}): {fingerprint}",
+  "@hostKeyPromptCertificateFingerprint": {
+    "description": "The presented host certificate's type and SHA-256 fingerprint.",
+    "placeholders": {
+      "keyType": {
+        "type": "String",
+        "example": "ssh-ed25519-cert-v01@openssh.com"
+      },
+      "fingerprint": {
+        "type": "String",
+        "example": "uqlUaJEm3yLsW7r4i4a5I0LgW5jDcMKWYoNA/8Nn0Eo"
+      }
+    }
+  },
+  "hostKeyPromptCertificateAuthority": "Issued by certificate authority ({keyType}): {fingerprint}",
+  "@hostKeyPromptCertificateAuthority": {
+    "description": "The CA that signed the presented host certificate: trusting the certificate delegates trust to this CA.",
     "placeholders": {
       "keyType": {
         "type": "String",

@@ -120,7 +120,40 @@ func TestNewKnownHostFromKeyRecordsTheTrustDecision(t *testing.T) {
 		known.PublicKey != "ssh-ed25519 AAAA" {
 		t.Fatalf("KnownHost = %+v", known)
 	}
+	if known.IsCertificateAuthority {
+		t.Fatalf("a plain host key was marked as a CA anchor: %+v", known)
+	}
 	if !known.DiscoveredAt.Equal(when) || !known.LastSeen.Equal(when) {
 		t.Fatalf("timestamps = %v / %v, want %v", known.DiscoveredAt, known.LastSeen, when)
+	}
+}
+
+// A host certificate is persisted as its signing CA so a renewal keeps the
+// trust decision. The record must say it is a CA anchor: the Known Hosts view
+// otherwise shows a CA fingerprint as if it were the key the host presented.
+func TestNewKnownHostFromAHostCertificateRecordsTheCertificateAuthority(t *testing.T) {
+	when := time.Unix(1700000000, 0).UTC()
+	key := Key{
+		Hostname: "example.com", Port: 22,
+		KeyType: "host-cert", Fingerprint: "cert-blob",
+		PublicKey:                 "host-cert AAAA",
+		IsHostCertificate:         true,
+		CertificateKeyType:        "ssh-key",
+		CertificateKeyFingerprint: "key-blob",
+		CertificateKeyPublicKey:   "ssh-key AAAAkey",
+		CertificateCAType:         "ssh-key",
+		CertificateCAFingerprint:  "SHA256:ca-blob=",
+		CertificateCAPublicKey:    "ssh-key AAAAca",
+	}
+	known := NewKnownHost("kh-1", key, when)
+	if known.KeyType != "ssh-key" || known.Fingerprint != "ca-blob" ||
+		known.PublicKey != "ssh-key AAAAca" {
+		t.Fatalf("persisted record = %+v, want the signing CA", known)
+	}
+	if !known.IsCertificateAuthority {
+		t.Fatalf("persisted record = %+v, want IsCertificateAuthority", known)
+	}
+	if got := ClassifyKey([]KnownHost{known}, key); got.Status != StatusTrusted {
+		t.Fatalf("Status = %q, want the CA record to trust its certificate", got.Status)
 	}
 }

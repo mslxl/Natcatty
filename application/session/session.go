@@ -31,8 +31,8 @@ import (
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	"github.com/mslxl/natcatty/domain/model/serial"
 	telnetmodel "github.com/mslxl/natcatty/domain/model/telnet"
-	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	modelterminal "github.com/mslxl/natcatty/domain/model/terminal"
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 )
 
 // Flow-control watermarks, in bytes of output pending in TerminalConn.
@@ -881,7 +881,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	}
 	var inputTranslator *inputTranslator
 	if spec.Kind == KindSSH {
-		inputTranslator = newInputTranslator(spec.InputCompatibility)
+		inputTranslator = newInputTranslator(spec.InputCompatibility, codec.EncodedWidth)
 	}
 
 	// A Host that already runs Atuin is detected before the terminal opens,
