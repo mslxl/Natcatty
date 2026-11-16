@@ -152,6 +152,15 @@ type HostChain struct {
 	HostIDs []model.HostID `json:"hostIds"`
 }
 
+// IDs returns a copy of the chain's hop IDs, or nil when the chain is nil or
+// empty. It makes an optional chain safe to read without a nil check.
+func (c *HostChain) IDs() []model.HostID {
+	if c == nil || len(c.HostIDs) == 0 {
+		return nil
+	}
+	return append([]model.HostID(nil), c.HostIDs...)
+}
+
 // AlgorithmOverrides is a Host's advanced SSH algorithm selection. A non-empty
 // category replaces the transport's offer for that category. The JSON names
 // mirror the original's algorithm shape.
@@ -686,17 +695,8 @@ func validateFields(draft Draft) error {
 		return validation(FieldNotes, RuleInvalid)
 	}
 
-	if draft.HostChain != nil {
-		if len(draft.HostChain.HostIDs) > maxHostChainLength {
-			return validation(FieldChain, RuleTooLong)
-		}
-		seen := make(map[model.HostID]bool, len(draft.HostChain.HostIDs))
-		for _, id := range draft.HostChain.HostIDs {
-			if strings.TrimSpace(string(id)) == "" || seen[id] {
-				return validation(FieldChain, RuleInvalid)
-			}
-			seen[id] = true
-		}
+	if err := validateHostChain(draft.HostChain); err != nil {
+		return err
 	}
 
 	if err := validateProxy(draft.Proxy); err != nil {
@@ -771,6 +771,26 @@ func validateProxy(proxy *ProxyConfig) error {
 		}
 	default:
 		return validation(FieldProxy, RuleUnsupported)
+	}
+	return nil
+}
+
+// validateHostChain rejects a chain a save cannot keep: more hops than a
+// session supports, or a blank or duplicate hop. It is shared by the Host and
+// Host Group drafts so both editors agree.
+func validateHostChain(chain *HostChain) error {
+	if chain == nil {
+		return nil
+	}
+	if len(chain.HostIDs) > maxHostChainLength {
+		return validation(FieldChain, RuleTooLong)
+	}
+	seen := make(map[model.HostID]bool, len(chain.HostIDs))
+	for _, id := range chain.HostIDs {
+		if strings.TrimSpace(string(id)) == "" || seen[id] {
+			return validation(FieldChain, RuleInvalid)
+		}
+		seen[id] = true
 	}
 	return nil
 }

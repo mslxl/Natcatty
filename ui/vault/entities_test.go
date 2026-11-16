@@ -336,6 +336,8 @@ func applyEntityGroupDraft(group *domainvault.Group, draft domainvault.GroupDraf
 	group.UseSSHAgent = draft.UseSSHAgent
 	group.RequiresMFA = draft.RequiresMFA
 	group.ProxyProfileID = draft.ProxyProfileID
+	group.NetworkProfileID = draft.NetworkProfileID
+	group.HostChain = domainvault.CloneHostChain(draft.HostChain)
 }
 
 type entityProxies struct {
@@ -1017,6 +1019,118 @@ func TestHostPortBlankInheritsTheGroupPortInTheEditor(t *testing.T) {
 	}
 	if !textsContain(tt, "10.0.0.1:2222") {
 		t.Fatalf("the list lost the inherited port, texts %q", tt.Texts())
+	}
+}
+
+// TestHostDetailsShowInheritedGroupProxyProfileAndJumpHosts is ticket 29: the
+// Host editor resolves the group's Proxy Profile and jump chain and labels
+// them inherited, and a Host-level value replaces each label.
+func TestHostDetailsShowInheritedGroupProxyProfileAndJumpHosts(t *testing.T) {
+	m := locales.In("en")
+	state, hosts, groups, proxies, _, tt := newProductionEntityView(t, 1000, 1600)
+	proxies.items = []domainvault.ProxyProfile{
+		{ID: "proxy-1", Label: "office"},
+		{ID: "proxy-2", Label: "lab"},
+	}
+	hosts.items = append(hosts.items,
+		domainvault.Host{ID: "bastion", Label: "bastion-1", Hostname: "10.0.0.2",
+			Port: 22, Protocol: domainvault.ProtocolSSH},
+		domainvault.Host{ID: "edge", Label: "edge-1", Hostname: "10.0.0.3",
+			Port: 22, Protocol: domainvault.ProtocolSSH},
+	)
+	groups.items = []domainvault.Group{{
+		Path:           "prod",
+		ProxyProfileID: "proxy-1",
+		HostChain:      &domainvault.HostChain{HostIDs: []model.HostID{"bastion"}},
+	}}
+	hosts.items[0].Group = "prod"
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit failed")
+	}
+	tt.Frame()
+	if !tt.HasText(m.VaultHostJumpHosts()) {
+		t.Fatalf("the Host editor lost the jump Hosts row, texts %q", tt.Texts())
+	}
+	if inherited := m.VaultNetworkProfileInherited("prod", "office"); !textsContain(tt, inherited) {
+		t.Fatalf("the inherited Proxy Profile is not labelled %q, texts %q", inherited, tt.Texts())
+	}
+	if inherited := m.VaultNetworkProfileInherited("prod", "bastion-1"); !textsContain(tt, inherited) {
+		t.Fatalf("the inherited jump chain is not labelled %q, texts %q", inherited, tt.Texts())
+	}
+
+	// A Host-level Proxy Profile and chain replace both inherited labels.
+	state.CancelEdit()
+	hosts.items[0].ProxyProfileID = "proxy-2"
+	hosts.items[0].HostChain = &domainvault.HostChain{HostIDs: []model.HostID{"edge"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit failed")
+	}
+	tt.Frame()
+	if textsContain(tt, m.VaultNetworkProfileInherited("prod", "office")) ||
+		textsContain(tt, m.VaultNetworkProfileInherited("prod", "bastion-1")) {
+		t.Fatalf("a Host-level value kept an inherited label, texts %q", tt.Texts())
+	}
+	if !showsExactly(tt, m.VaultNetworkProfileSourceHost()) {
+		t.Fatalf("the Host's own values are not labelled as its own, texts %q", tt.Texts())
+	}
+	if !tt.HasText("edge-1") {
+		t.Fatalf("the Host's own jump chain is not rendered, texts %q", tt.Texts())
+	}
+}
+
+// TestGroupEditorSetsTheJumpChainDefault proves the group editor is where a
+// jump chain is edited: checking a Host saves it on the group, and a member
+// Host with no chain of its own resolves it.
+func TestGroupEditorSetsTheJumpChainDefault(t *testing.T) {
+	m := locales.In("en")
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1000, 1400)
+	hosts.items = append(hosts.items, domainvault.Host{
+		ID: "bastion", Label: "bastion-1", Hostname: "10.0.0.2",
+		Port: 22, Protocol: domainvault.ProtocolSSH,
+	})
+	groups.items = []domainvault.Group{{Path: "prod", Protocol: domainvault.ProtocolSSH}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEditGroup("prod") {
+		t.Fatal("BeginEditGroup failed")
+	}
+	tt.Frame()
+	if !tt.HasText(m.VaultHostJumpHosts()) {
+		t.Fatalf("the Host Group editor has no jump Hosts default, texts %q", tt.Texts())
+	}
+	if err := tt.Click("bastion-1"); err != nil {
+		t.Fatalf("check bastion-1: %v", err)
+	}
+	tt.Frame()
+	if !state.GroupJumpHostSelected("bastion") {
+		t.Fatalf("the checked Host is not in the group chain: %+v", state.GroupForm().HostChain)
+	}
+	if err := state.SaveGroup(); err != nil {
+		t.Fatalf("SaveGroup: %v", err)
+	}
+	if len(groups.items) != 1 || groups.items[0].HostChain == nil ||
+		len(groups.items[0].HostChain.HostIDs) != 1 ||
+		groups.items[0].HostChain.HostIDs[0] != "bastion" {
+		t.Fatalf("saved group chain = %+v", groups.items)
+	}
+
+	hosts.items[0].Group = "prod"
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	effective, ok := state.EffectiveHost("host-1")
+	if !ok || effective.HostChain == nil || len(effective.HostChain.HostIDs) != 1 ||
+		effective.HostChain.HostIDs[0] != "bastion" {
+		t.Fatalf("effective chain = %+v, want the group's bastion", effective.HostChain)
 	}
 }
 

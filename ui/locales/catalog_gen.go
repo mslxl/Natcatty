@@ -1340,6 +1340,36 @@ func (msgs Messages) VaultNetworkProfileInherited(path string, label string) str
 	return Catalog.Format(msgs.locale, "vaultNetworkProfileInherited", map[string]any{"path": path, "label": label})
 }
 
+// VaultHostJumpHosts says "Jump Hosts"
+// in the language the app shows.
+func VaultHostJumpHosts() string { return In(i18n.Locale()).VaultHostJumpHosts() }
+
+// VaultHostJumpHosts says "Jump Hosts"
+// in the language of msgs.
+func (msgs Messages) VaultHostJumpHosts() string {
+	return Catalog.Format(msgs.locale, "vaultHostJumpHosts", nil)
+}
+
+// VaultHostJumpHostsHint says "Listed first to last, closest to the client."
+// in the language the app shows.
+func VaultHostJumpHostsHint() string { return In(i18n.Locale()).VaultHostJumpHostsHint() }
+
+// VaultHostJumpHostsHint says "Listed first to last, closest to the client."
+// in the language of msgs.
+func (msgs Messages) VaultHostJumpHostsHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostJumpHostsHint", nil)
+}
+
+// VaultGroupJumpHostsHint says "Member Hosts inherit this chain unless they configure their own. Hops follow the order they were checked."
+// in the language the app shows.
+func VaultGroupJumpHostsHint() string { return In(i18n.Locale()).VaultGroupJumpHostsHint() }
+
+// VaultGroupJumpHostsHint says "Member Hosts inherit this chain unless they configure their own. Hops follow the order they were checked."
+// in the language of msgs.
+func (msgs Messages) VaultGroupJumpHostsHint() string {
+	return Catalog.Format(msgs.locale, "vaultGroupJumpHostsHint", nil)
+}
+
 // VaultProxyListTitle says "Proxy Profiles ({count})"
 // in the language the app shows.
 //

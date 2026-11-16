@@ -369,6 +369,81 @@ func TestNetworkProfileReferenceFollowsProxyProfileMergingRules(t *testing.T) {
 	}
 }
 
+func TestGroupJumpChainDefaultIsInheritedAsOneValue(t *testing.T) {
+	groups := []Group{
+		{Path: "prod", HostChain: &HostChain{HostIDs: []model.HostID{"bastion"}}},
+		{Path: "prod/web", HostChain: &HostChain{HostIDs: []model.HostID{"edge", "bastion"}}},
+		{Path: "prod/db"},
+	}
+	child := ResolveGroupDefaults(groups, "prod/web")
+	if chain := child.HostChain; chain == nil || len(chain.HostIDs) != 2 ||
+		chain.HostIDs[0] != "edge" || chain.HostIDs[1] != "bastion" {
+		t.Fatalf("child chain = %+v, want the child's edge then bastion", chain)
+	}
+	sibling := ResolveGroupDefaults(groups, "prod/db")
+	if chain := sibling.HostChain; chain == nil || len(chain.HostIDs) != 1 ||
+		chain.HostIDs[0] != "bastion" {
+		t.Fatalf("sibling chain = %+v, want the parent's bastion", chain)
+	}
+
+	// A Host's own hops replace the inherited chain whole.
+	own := ApplyGroupDefaults(Host{
+		Protocol:  ProtocolSSH,
+		HostChain: &HostChain{HostIDs: []model.HostID{"own-hop"}},
+	}, child)
+	if chain := own.HostChain; chain == nil || len(chain.HostIDs) != 1 ||
+		chain.HostIDs[0] != "own-hop" {
+		t.Fatalf("own chain = %+v, want only own-hop", chain)
+	}
+	inherited := ApplyGroupDefaults(Host{Protocol: ProtocolSSH}, child)
+	if chain := inherited.HostChain; chain == nil || len(chain.HostIDs) != 2 {
+		t.Fatalf("inherited chain = %+v, want the group's two hops", chain)
+	}
+	// The resolved chain must not alias the group's stored slice.
+	inherited.HostChain.HostIDs[0] = "mutated"
+	if groups[1].HostChain.HostIDs[0] != "edge" {
+		t.Fatal("ApplyGroupDefaults aliased the group's chain slice")
+	}
+	if local := ApplyGroupDefaults(Host{Protocol: ProtocolLocal}, child); local.HostChain != nil {
+		t.Fatalf("a Local shell inherited a jump chain: %+v", local.HostChain)
+	}
+}
+
+func TestNormalizeGroupDraftNormalizesAndValidatesTheJumpChain(t *testing.T) {
+	draft, err := NormalizeGroupDraft(GroupDraft{
+		Path:      " prod/web ",
+		HostChain: &HostChain{HostIDs: []model.HostID{" edge ", "bastion"}},
+	})
+	if err != nil {
+		t.Fatalf("NormalizeGroupDraft: %v", err)
+	}
+	if chain := draft.HostChain; chain == nil || chain.HostIDs[0] != "edge" {
+		t.Fatalf("chain = %+v, want trimmed hops", chain)
+	}
+	empty, err := NormalizeGroupDraft(GroupDraft{
+		Path: "prod", HostChain: &HostChain{},
+	})
+	if err != nil {
+		t.Fatalf("NormalizeGroupDraft with an empty chain: %v", err)
+	}
+	if empty.HostChain != nil {
+		t.Fatalf("empty chain = %+v, want nil to inherit", empty.HostChain)
+	}
+	for _, hops := range [][]model.HostID{
+		{"bastion", "bastion"},
+		{""},
+	} {
+		_, err := NormalizeGroupDraft(GroupDraft{
+			Path: "prod", HostChain: &HostChain{HostIDs: hops},
+		})
+		var invalid *ValidationError
+		if !groupAsValidation(err, &invalid) ||
+			invalid.Field != FieldChain || invalid.Rule != RuleInvalid {
+			t.Fatalf("chain %v error = %v, want chain/invalid", hops, err)
+		}
+	}
+}
+
 func groupAsValidation(err error, target **ValidationError) bool {
 	invalid, ok := err.(*ValidationError)
 	if ok {

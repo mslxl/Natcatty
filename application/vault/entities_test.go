@@ -199,6 +199,7 @@ func TestCreateGroupNormalizesAndPersists(t *testing.T) {
 		Username:       " deploy ",
 		Port:           2222,
 		ProxyProfileID: " proxy-1 ",
+		HostChain:      &domainvault.HostChain{HostIDs: []model.HostID{" bastion "}},
 	})
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
@@ -206,6 +207,10 @@ func TestCreateGroupNormalizesAndPersists(t *testing.T) {
 	if group.Path != "prod/web" || group.Username != "deploy" ||
 		group.Port != 2222 || group.ProxyProfileID != "proxy-1" {
 		t.Fatalf("group = %+v", group)
+	}
+	if chain := group.HostChain; chain == nil || len(chain.HostIDs) != 1 ||
+		chain.HostIDs[0] != "bastion" {
+		t.Fatalf("group chain = %+v, want the trimmed bastion hop", group.HostChain)
 	}
 	// The parent level is created first, so it takes the first order slot.
 	if group.OrderKey != 2000 {

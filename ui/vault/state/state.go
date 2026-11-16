@@ -908,6 +908,9 @@ func (s *State) SetGroupProtocol(protocol string) {
 		s.groupForm.AuthMethod = ""
 		s.groupForm.UseSSHAgent = false
 		s.groupForm.RequiresMFA = false
+		// A jump chain carries an SSH session, so a hidden chain control must
+		// not keep hops Save would persist.
+		s.groupForm.HostChain = nil
 	}
 }
 

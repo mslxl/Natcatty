@@ -197,6 +197,9 @@
   "vaultNetworkProfileSourceHost": "Set on this Host",
   "vaultNetworkProfileSourceHostGroup": "Set on this Host Group",
   "vaultNetworkProfileInherited": "Inherited from {path} ({label})",
+  "vaultHostJumpHosts": "Jump Hosts",
+  "vaultHostJumpHostsHint": "Listed first to last, closest to the client.",
+  "vaultGroupJumpHostsHint": "Member Hosts inherit this chain unless they configure their own. Hops follow the order they were checked.",
   "vaultProxyListTitle": "Proxy Profiles ({count})",
   "@vaultProxyListTitle": {
     "description": "The Vault's Proxy Profile list heading and its profile count.",

@@ -46,10 +46,13 @@ type Group struct {
 	ProxyProfileID   string              `json:"proxyProfileId,omitempty"`
 	// NetworkProfileID is the group's default Network Profile. A member Host's
 	// own reference wins; with neither, the Host has no Network Route.
-	NetworkProfileID string    `json:"networkProfileId,omitempty"`
-	OrderKey         int64     `json:"orderKey"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	NetworkProfileID string `json:"networkProfileId,omitempty"`
+	// HostChain is the group's default jump chain. A member Host that lists
+	// its own hops wins as a whole; a Host with no chain uses this one.
+	HostChain *HostChain `json:"hostChain,omitempty"`
+	OrderKey  int64      `json:"orderKey"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
 }
 
 // GroupDraft is the editable part of a Host Group.
@@ -69,6 +72,7 @@ type GroupDraft struct {
 	Algorithms       *AlgorithmOverrides
 	ProxyProfileID   string
 	NetworkProfileID string
+	HostChain        *HostChain
 }
 
 // NormalizeGroupDraft trims and canonicalizes a Host Group's input and returns
@@ -83,6 +87,7 @@ func NormalizeGroupDraft(draft GroupDraft) (GroupDraft, error) {
 	draft.KeyID = model.KeyID(strings.TrimSpace(string(draft.KeyID)))
 	draft.ProxyProfileID = strings.TrimSpace(draft.ProxyProfileID)
 	draft.NetworkProfileID = strings.TrimSpace(draft.NetworkProfileID)
+	draft.HostChain = normalizeHostChain(draft.HostChain)
 	draft.Algorithms = normalizeAlgorithms(draft.Algorithms)
 	// A blank protocol inherits from the parent group, so only an explicit
 	// non-SSH protocol drops defaults its members would never read.
@@ -130,6 +135,9 @@ func NormalizeGroupDraft(draft GroupDraft) (GroupDraft, error) {
 	if err := validateText(FieldNetworkProfile, draft.NetworkProfileID, maxLabelLength, false); err != nil {
 		return GroupDraft{}, err
 	}
+	if err := validateHostChain(draft.HostChain); err != nil {
+		return GroupDraft{}, err
+	}
 	return draft, nil
 }
 
@@ -149,6 +157,7 @@ func (g Group) Defaults() GroupDefaults {
 		Algorithms:       CloneAlgorithms(g.Algorithms),
 		ProxyProfileID:   g.ProxyProfileID,
 		NetworkProfileID: g.NetworkProfileID,
+		HostChain:        CloneHostChain(g.HostChain),
 	}
 }
 
@@ -168,6 +177,7 @@ type GroupDefaults struct {
 	Algorithms       *AlgorithmOverrides
 	ProxyProfileID   string
 	NetworkProfileID string
+	HostChain        *HostChain
 }
 
 // ResolveGroupDefaults merges the group configs along a Host Group path. The
@@ -254,6 +264,11 @@ func mergeGroupDefaults(merged *GroupDefaults, defaults GroupDefaults) {
 	}
 	if defaults.NetworkProfileID != "" {
 		merged.NetworkProfileID = defaults.NetworkProfileID
+	}
+	// A chain is one value: a group that sets hops replaces the inherited
+	// chain whole, so every hop still names a Host the same level chose.
+	if defaults.HostChain != nil {
+		merged.HostChain = CloneHostChain(defaults.HostChain)
 	}
 }
 
@@ -391,6 +406,11 @@ func ApplyGroupDefaults(host Host, defaults GroupDefaults) Host {
 
 	if effective.Protocol == ProtocolLocal {
 		return effective
+	}
+	// A jump chain is one value: the Host's own hops replace the group's
+	// chain whole, and a Host with no chain inherits the group's.
+	if effective.HostChain == nil {
+		effective.HostChain = CloneHostChain(defaults.HostChain)
 	}
 	// A Host that already owns an Identity must not gain another level's
 	// username or key, and a Host that owns manual credentials must not gain

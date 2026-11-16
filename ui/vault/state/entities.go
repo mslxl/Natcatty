@@ -135,6 +135,9 @@ type GroupForm struct {
 	RequiresMFA      bool
 	ProxyProfileID   string
 	NetworkProfileID string
+	// HostChain is the group's default jump chain. Its hops are edited as
+	// checkboxes; ToggleGroupJumpHost keeps their order.
+	HostChain        *domainvault.HostChain
 	LegacyAlgorithms bool
 	SkipEcdsaHostKey bool
 	Algorithms       *domainvault.AlgorithmOverrides
@@ -223,6 +226,7 @@ func (s *State) BeginEditGroup(path string) bool {
 		RequiresMFA:      group.RequiresMFA,
 		ProxyProfileID:   group.ProxyProfileID,
 		NetworkProfileID: group.NetworkProfileID,
+		HostChain:        domainvault.CloneHostChain(group.HostChain),
 		LegacyAlgorithms: group.LegacyAlgorithms,
 		SkipEcdsaHostKey: group.SkipEcdsaHostKey,
 		Algorithms:       domainvault.CloneAlgorithms(group.Algorithms),
@@ -476,6 +480,19 @@ func (s *State) ProxyProfileByID(id string) (domainvault.ProxyProfile, bool) {
 		}
 	}
 	return domainvault.ProxyProfile{}, false
+}
+
+// ProxyProfileLabel returns a profile's display label, or the raw reference
+// when the profile no longer exists, so an editor can show a dangling soft
+// reference instead of pretending nothing is selected.
+func (s *State) ProxyProfileLabel(id string) string {
+	if id == "" {
+		return ""
+	}
+	if profile, ok := s.ProxyProfileByID(id); ok {
+		return profile.Label
+	}
+	return id
 }
 
 // EditingProxyProfile reports whether the Proxy Profile editor is open.
@@ -769,10 +786,195 @@ func (s *State) groupDraft() (domainvault.GroupDraft, Problem) {
 		RequiresMFA:      s.groupForm.RequiresMFA,
 		ProxyProfileID:   s.groupForm.ProxyProfileID,
 		NetworkProfileID: s.groupForm.NetworkProfileID,
+		HostChain:        domainvault.CloneHostChain(s.groupForm.HostChain),
 		LegacyAlgorithms: s.groupForm.LegacyAlgorithms,
 		SkipEcdsaHostKey: s.groupForm.SkipEcdsaHostKey,
 		Algorithms:       domainvault.CloneAlgorithms(s.groupForm.Algorithms),
 	}, ProblemNone
+}
+
+// InheritedValueSource names where an editor's effective value comes from.
+// The editors show the resolved value read-only and point at its owner, so an
+// inherited Host Group default is never mistaken for the record's own value.
+type InheritedValueSource string
+
+const (
+	// InheritedValueSourceNone means neither the record nor an ancestor sets
+	// the value.
+	InheritedValueSourceNone InheritedValueSource = ""
+	// InheritedValueSourceRecord means the record being edited holds the
+	// value: the Host's own selection or the edited Host Group's default.
+	InheritedValueSourceRecord InheritedValueSource = "record"
+	// InheritedValueSourceInherited means the value comes from a Host Group:
+	// a Host's group, or an ancestor of the edited Host Group.
+	InheritedValueSourceInherited InheritedValueSource = "inherited"
+)
+
+// HostProxyProfileSource reports the Host editor's effective Proxy Profile:
+// the Host's own reference, the Host Group default, or nothing. A manual Proxy
+// already owns the route, so the group profile would not be used and is not
+// reported as inherited.
+func (s *State) HostProxyProfileSource() (InheritedValueSource, string, string) {
+	if id := strings.TrimSpace(s.form.ProxyProfileID); id != "" {
+		return InheritedValueSourceRecord, "", id
+	}
+	if s.proxy != nil ||
+		domainvault.Protocol(s.form.Protocol) == domainvault.ProtocolLocal {
+		return InheritedValueSourceNone, "", ""
+	}
+	group := domainvault.NormalizeGroup(s.form.Group)
+	if id := domainvault.ResolveGroupDefaults(s.groupItems, group).ProxyProfileID; id != "" {
+		return InheritedValueSourceInherited,
+			s.groupDefaultOwner(group, func(g domainvault.Group) bool {
+				return g.ProxyProfileID != ""
+			}), id
+	}
+	return InheritedValueSourceNone, "", ""
+}
+
+// GroupProxyProfileSource reports the Host Group editor's effective Proxy
+// Profile: the group's own reference, an ancestor's default, or nothing.
+func (s *State) GroupProxyProfileSource() (InheritedValueSource, string, string) {
+	if id := strings.TrimSpace(s.groupForm.ProxyProfileID); id != "" {
+		return InheritedValueSourceRecord, "", id
+	}
+	parent := domainvault.ParentGroupPath(s.groupForm.Path)
+	if id := domainvault.ResolveGroupDefaults(s.groupItems, parent).ProxyProfileID; id != "" {
+		return InheritedValueSourceInherited,
+			s.groupDefaultOwner(parent, func(g domainvault.Group) bool {
+				return g.ProxyProfileID != ""
+			}), id
+	}
+	return InheritedValueSourceNone, "", ""
+}
+
+// HostJumpChainSource reports the Host editor's effective jump chain: the
+// Host's own hops, the Host Group default, or nothing. The returned IDs are in
+// connection order, first hop closest to the client.
+func (s *State) HostJumpChainSource() (InheritedValueSource, string, []model.HostID) {
+	if ids := s.hostChain.IDs(); len(ids) > 0 {
+		return InheritedValueSourceRecord, "", ids
+	}
+	if domainvault.Protocol(s.form.Protocol) == domainvault.ProtocolLocal {
+		return InheritedValueSourceNone, "", nil
+	}
+	group := domainvault.NormalizeGroup(s.form.Group)
+	if chain := domainvault.ResolveGroupDefaults(s.groupItems, group).HostChain; chain != nil {
+		return InheritedValueSourceInherited,
+			s.groupDefaultOwner(group, func(g domainvault.Group) bool {
+				return len(g.HostChain.IDs()) > 0
+			}), chain.IDs()
+	}
+	return InheritedValueSourceNone, "", nil
+}
+
+// GroupJumpChainSource reports the Host Group editor's effective jump chain:
+// the group's own hops, an ancestor's default, or nothing.
+func (s *State) GroupJumpChainSource() (InheritedValueSource, string, []model.HostID) {
+	if len(s.groupForm.HostChain.IDs()) > 0 {
+		return InheritedValueSourceRecord, "", s.groupForm.HostChain.IDs()
+	}
+	parent := domainvault.ParentGroupPath(s.groupForm.Path)
+	if chain := domainvault.ResolveGroupDefaults(s.groupItems, parent).HostChain; chain != nil {
+		return InheritedValueSourceInherited,
+			s.groupDefaultOwner(parent, func(g domainvault.Group) bool {
+				return len(g.HostChain.IDs()) > 0
+			}), chain.IDs()
+	}
+	return InheritedValueSourceNone, "", nil
+}
+
+// groupDefaultOwner returns the deepest group at or above path whose defaults
+// hold the value selected by holds. Every inheritance source uses it so an
+// inherited value names the same owner regardless of which default it is.
+func (s *State) groupDefaultOwner(path string, holds func(domainvault.Group) bool) string {
+	owner := ""
+	for _, ancestor := range domainvault.GroupAncestors(path) {
+		for _, group := range s.groupItems {
+			if group.Path == ancestor && holds(group) {
+				owner = ancestor
+				break
+			}
+		}
+	}
+	return owner
+}
+
+// HostLabel returns a Host's display label, or the raw reference when the Host
+// is no longer listed, so a dangling jump hop stays visible.
+func (s *State) HostLabel(id model.HostID) string {
+	if id == "" {
+		return ""
+	}
+	for _, host := range s.items {
+		if host.ID == id {
+			if host.Label != "" {
+				return host.Label
+			}
+			return string(host.ID)
+		}
+	}
+	return string(id)
+}
+
+// JumpHostLabels returns the display labels of a chain's hops in order.
+func (s *State) JumpHostLabels(ids []model.HostID) []string {
+	labels := make([]string, 0, len(ids))
+	for _, id := range ids {
+		labels = append(labels, s.HostLabel(id))
+	}
+	return labels
+}
+
+// JumpHostCandidates lists the Hosts that can serve as a jump hop, in Vault
+// order. Only SSH-family endpoints can carry a session; a Local shell, Telnet,
+// or another transport would never be dialed as a hop.
+func (s *State) JumpHostCandidates() []domainvault.Host {
+	out := make([]domainvault.Host, 0, len(s.items))
+	for _, host := range s.items {
+		if host.Protocol == "" || host.Protocol.UsesSSHAuth() {
+			out = append(out, host)
+		}
+	}
+	return out
+}
+
+// GroupJumpHostSelected reports whether the Host Group editor's own chain
+// lists the Host.
+func (s *State) GroupJumpHostSelected(id model.HostID) bool {
+	for _, candidate := range s.groupForm.HostChain.IDs() {
+		if candidate == id {
+			return true
+		}
+	}
+	return false
+}
+
+// ToggleGroupJumpHost adds a Host to the Host Group editor's chain or removes
+// it. A newly checked Host goes last, so the chain reflects the order hops
+// were chosen: first is closest to the client.
+func (s *State) ToggleGroupJumpHost(id model.HostID) {
+	if id == "" {
+		return
+	}
+	next := make([]model.HostID, 0, len(s.groupForm.HostChain.IDs())+1)
+	found := false
+	for _, candidate := range s.groupForm.HostChain.IDs() {
+		if candidate == id {
+			found = true
+			continue
+		}
+		next = append(next, candidate)
+	}
+	if !found {
+		next = append(next, id)
+	}
+	if len(next) == 0 {
+		s.groupForm.HostChain = nil
+	} else {
+		s.groupForm.HostChain = &domainvault.HostChain{HostIDs: next}
+	}
+	s.redraw()
 }
 
 func (s *State) proxyDraft() (domainvault.ProxyProfileDraft, Problem) {
