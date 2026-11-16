@@ -83,8 +83,13 @@ func (s *Session) handleInput(data []byte, source bool) (forwarded []byte, chang
 	if transfer != nil && s.onTransfer != nil {
 		s.onTransfer(s.id, *transfer)
 	}
-	if source && len(forwarded) > 0 && s.onInput != nil {
-		s.onInput(s.id, forwarded)
+	if source && len(forwarded) > 0 {
+		// Typed input is a takeover, except for the naked Enter that wakes a
+		// silent serial console before its first prompt.
+		s.userInputAutoLogin(forwarded)
+		if s.onInput != nil {
+			s.onInput(s.id, forwarded)
+		}
 	}
 	// Encode only the bytes that leave the Session. The tap, input hook, and
 	// broadcast fan-out above operate on the user's UTF-8 text.

@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mslxl/natcatty/application/session/autologin"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	"github.com/mslxl/natcatty/domain/model"
 	etmodel "github.com/mslxl/natcatty/domain/model/et"
@@ -451,6 +452,10 @@ type StartSpec struct {
 	// is required when Kind is KindTelnet and ignored by every other
 	// transport.
 	Telnet *telnetmodel.Config
+	// AutoLogin, when non-nil, answers a Serial or Telnet console's login and
+	// password prompts. It is ignored by every other transport, which
+	// authenticates before its shell exists.
+	AutoLogin *autologin.Options
 	// Mosh carries a Mosh Session's bootstrap settings. It is required when
 	// Kind is KindMosh and ignored by every other transport.
 	Mosh *moshmodel.Config
@@ -645,6 +650,13 @@ type Session struct {
 	startupMu         sync.Mutex
 	startupPending    bool
 	startupGeneration int
+
+	// autoLoginMu guards the console detector for the current transport
+	// generation. It is replaced on reconnect and disarmed when the transport
+	// ends, so a stale prompt can never write to a replacement connection.
+	autoLoginMu         sync.Mutex
+	autoLogin           *autologin.Engine
+	autoLoginGeneration int
 
 	// cwdProbeMu guards the optional local-shell working-directory probe and
 	// its cache. A consumer asks for the value; a finished command or a shell
@@ -1040,6 +1052,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	session.commandReady.Store(spec.Kind == KindLocal)
 	// A Host startup command waits for the first output of this connection.
 	session.armStartupCommand(session.generation)
+	session.armAutoLogin(session.generation, transport)
 
 	s.mu.Lock()
 	if s.closing {
@@ -1693,6 +1706,7 @@ func (s *Session) loop() {
 				s.generation++
 				s.reopening = true
 				s.commandReady.Store(false)
+				s.cancelAutoLogin()
 				close(s.genDone)
 				s.genDone = make(chan struct{})
 				s.update(func(snapshot *Snapshot) {
@@ -1708,6 +1722,7 @@ func (s *Session) loop() {
 				s.generation++
 				s.reopening = true
 				s.commandReady.Store(false)
+				s.cancelAutoLogin()
 				close(s.genDone)
 				s.genDone = make(chan struct{})
 				if s.transport != nil {
@@ -1734,8 +1749,10 @@ func (s *Session) loop() {
 				}
 				s.bindScreenSizer(cmd.transport)
 				s.bindCWDProbe(cmd.transport)
-				// Every reconnect gets its own one-shot startup command.
+				// Every reconnect gets its own one-shot startup command and a
+				// fresh detector for the console's new boot.
 				s.armStartupCommand(cmd.generation)
+				s.armAutoLogin(cmd.generation, cmd.transport)
 				s.update(func(snapshot *Snapshot) {
 					snapshot.Connection = ConnectionStatusActive
 					snapshot.Notice = nil
@@ -1768,6 +1785,7 @@ finished:
 	close(s.genDone)
 	s.stopActivityTimer()
 	s.stopPromptTimer()
+	s.cancelAutoLogin()
 	s.conn.finish()
 	s.closeObservations()
 	if s.transport != nil {
@@ -1884,6 +1902,7 @@ func (s *Session) readLoop(generation int, transport Transport) {
 			// its completion detection must not depend on prompt tracking or
 			// history effects.
 			s.publishRawOutput(decoded)
+			s.feedAutoLogin(generation, string(decoded))
 			output, effects := s.tap.observe(decoded, now)
 			if len(output) > 0 {
 				s.writeLog(logOutput(output))
@@ -1922,8 +1941,12 @@ func (s *Session) readLoop(generation int, transport Transport) {
 			// remote resize may proceed without overtaking them.
 			s.conn.noteTransportRead(n)
 			// The shell has produced its first output for this connection,
-			// so the Host startup command may now be typed.
-			s.maybeRunStartupCommand(generation, transport)
+			// so the Host startup command may now be typed. While auto-login
+			// is still answering prompts, the command would land on a login
+			// prompt, so it waits for the detector to finish.
+			if s.autoLoginAllowsStartup(generation) {
+				s.maybeRunStartupCommand(generation, transport)
+			}
 		}
 		if err != nil {
 			s.flushHighlightCarry()
