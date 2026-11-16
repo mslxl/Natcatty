@@ -13,6 +13,7 @@ import (
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
+	modelterminal "github.com/mslxl/natcatty/domain/model/terminal"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainbackup "github.com/mslxl/natcatty/domain/vaultbackup"
@@ -1220,6 +1221,66 @@ func securityKeyStatus(c *ui.Context, s *vaultstate.State, m locales.Messages, t
 	}
 }
 
+// newlineOptions maps the Enter key's wire sequence to its localized labels.
+// The default is the first entry, so an unrecognized saved value shows as
+// Default instead of an empty selection.
+func newlineOptions(m locales.Messages) ([]string, []modelterminal.NewlineMode) {
+	return []string{
+		m.VaultHostNewlineDefault(),
+		m.VaultHostNewlineLF(),
+		m.VaultHostNewlineCRLF(),
+	}, []modelterminal.NewlineMode{
+		modelterminal.NewlineCR,
+		modelterminal.NewlineLF,
+		modelterminal.NewlineCRLF,
+	}
+}
+
+// backspaceOptions maps the Backspace key's wire byte to its localized labels.
+func backspaceOptions(m locales.Messages) ([]string, []modelterminal.BackspaceMode) {
+	return []string{
+		m.VaultHostBackspaceDefault(),
+		m.VaultHostBackspaceCtrlH(),
+	}, []modelterminal.BackspaceMode{
+		modelterminal.BackspaceDEL,
+		modelterminal.BackspaceCtrlH,
+	}
+}
+
+// lineEditingOptions maps how Backspace counts characters to its labels.
+func lineEditingOptions(m locales.Messages) ([]string, []modelterminal.LineEditingMode) {
+	return []string{
+		m.VaultHostLineEditingDefault(),
+		m.VaultHostLineEditingByte(),
+	}, []modelterminal.LineEditingMode{
+		modelterminal.LineEditingCharacter,
+		modelterminal.LineEditingByte,
+	}
+}
+
+// optionLabel returns the label for current, or the first label when current
+// is not one of the options.
+func optionLabel[T comparable](labels []string, values []T, current T) string {
+	for index, candidate := range values {
+		if candidate == current {
+			return labels[index]
+		}
+	}
+	return labels[0]
+}
+
+// optionValue returns the value for label, or the first value when label is
+// not one of the options.
+func optionValue[T comparable](values []T, labels []string, label string) T {
+	for index, candidate := range labels {
+		if candidate == label {
+			return values[index]
+		}
+	}
+	var zero T
+	return zero
+}
+
 // summaryRow lays the Host's summary out as separate wrapped tokens. No token
 // is a bare separator, so a narrow window never starts a line with "·".
 func summaryRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locales.Messages, t *ui.Theme) {
@@ -1462,6 +1523,32 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				ui.Checkbox(c, &form.AutoAttachTmux, m.VaultHostAutoAttachTmux()).
 					Disabled(form.NetworkDevice)
 				ui.Text(c, m.VaultHostAutoAttachTmuxHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+				ui.Text(c, m.VaultHostInputCompatibility()).Bold()
+				ui.Text(c, m.VaultHostInputCompatibilityHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+				newlineLabels, newlineModes := newlineOptions(m)
+				newlineLabel := optionLabel(newlineLabels, newlineModes, modelterminal.NewlineMode(form.NewlineMode))
+				kit.FormRow(c, m.VaultHostNewlineMode(), func() {
+					if ui.Select(c, &newlineLabel, newlineLabels).Width(260).Changed() {
+						form.NewlineMode = string(optionValue(newlineModes, newlineLabels, newlineLabel))
+						c.Invalidate()
+					}
+				})
+				backspaceLabels, backspaceModes := backspaceOptions(m)
+				backspaceLabel := optionLabel(backspaceLabels, backspaceModes, modelterminal.BackspaceMode(form.BackspaceMode))
+				kit.FormRow(c, m.VaultHostBackspaceMode(), func() {
+					if ui.Select(c, &backspaceLabel, backspaceLabels).Width(260).Changed() {
+						form.BackspaceMode = string(optionValue(backspaceModes, backspaceLabels, backspaceLabel))
+						c.Invalidate()
+					}
+				})
+				lineEditingLabels, lineEditingModes := lineEditingOptions(m)
+				lineEditingLabel := optionLabel(lineEditingLabels, lineEditingModes, modelterminal.LineEditingMode(form.LineEditingMode))
+				kit.FormRow(c, m.VaultHostLineEditingMode(), func() {
+					if ui.Select(c, &lineEditingLabel, lineEditingLabels).Width(260).Changed() {
+						form.LineEditingMode = string(optionValue(lineEditingModes, lineEditingLabels, lineEditingLabel))
+						c.Invalidate()
+					}
+				})
 			}
 			if form.Protocol == string(domainvault.ProtocolMosh) {
 				kit.FormRow(c, m.VaultHostMoshServerPath(), func() {

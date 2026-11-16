@@ -958,8 +958,11 @@ func HostSessionSpec(host domainvault.Host) appsession.StartSpec {
 		Telnet:         plan.telnet,
 		Mosh:           plan.mosh,
 		ET:             plan.et,
-		ResumeKey:      plan.newResumeKey(),
-		Reconnect:      plan.reconnect,
+		// Input compatibility is local-only: the Session translates typed keys
+		// before they reach this transport.
+		InputCompatibility: host.InputCompatibility(),
+		ResumeKey:          plan.newResumeKey(),
+		Reconnect:          plan.reconnect,
 	}
 }
 

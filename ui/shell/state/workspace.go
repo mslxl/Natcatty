@@ -1771,6 +1771,7 @@ func (s *State) openDescriptor(ctx context.Context,
 			spec.X11Forwarding = host.X11Enabled()
 			spec.NetworkDevice = host.IsNetworkDevice()
 			spec.AutoAttachTmux = host.AutoAttachTmuxEnabled()
+			spec.InputCompatibility = host.InputCompatibility()
 			spec.Dir = ""
 		}
 		spec.Reconnect = &appsession.ReconnectPolicy{}

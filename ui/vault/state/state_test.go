@@ -8,6 +8,7 @@ import (
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
+	modelterminal "github.com/mslxl/natcatty/domain/model/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -62,6 +63,9 @@ func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainva
 		Algorithms:             domainvault.CloneAlgorithms(normalized.Algorithms),
 		DeviceType:             normalized.DeviceType,
 		AutoAttachTmux:         normalized.AutoAttachTmux,
+		NewlineMode:            normalized.NewlineMode,
+		BackspaceMode:          normalized.BackspaceMode,
+		LineEditingMode:        normalized.LineEditingMode,
 		MoshServerPath:         normalized.MoshServerPath,
 		ETPort:                 normalized.ETPort,
 		OrderKey:               int64(f.nextID) * 1000,
@@ -106,6 +110,9 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.Algorithms = domainvault.CloneAlgorithms(normalized.Algorithms)
 		host.DeviceType = normalized.DeviceType
 		host.AutoAttachTmux = normalized.AutoAttachTmux
+		host.NewlineMode = normalized.NewlineMode
+		host.BackspaceMode = normalized.BackspaceMode
+		host.LineEditingMode = normalized.LineEditingMode
 		host.MoshServerPath = normalized.MoshServerPath
 		host.ETPort = normalized.ETPort
 		f.items[i] = host
@@ -180,6 +187,77 @@ func TestCreateFlowSavesAndReloads(t *testing.T) {
 	}
 	if state.HostCount() != 1 {
 		t.Fatalf("Hosts after Save = %d, want 1", state.HostCount())
+	}
+}
+
+func TestHostDetailsRoundTripsInputCompatibility(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+	state.BeginCreate()
+	form := state.Form()
+	form.Label = "legacy-shell"
+	form.Hostname = "example.com"
+	form.Username = "root"
+	form.NewlineMode = string(modelterminal.NewlineCRLF)
+	form.BackspaceMode = string(modelterminal.BackspaceCtrlH)
+	form.LineEditingMode = string(modelterminal.LineEditingByte)
+
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if len(repo.created) != 1 {
+		t.Fatalf("created drafts = %d, want 1", len(repo.created))
+	}
+	created := repo.created[0]
+	if created.NewlineMode != modelterminal.NewlineCRLF ||
+		created.BackspaceMode != modelterminal.BackspaceCtrlH ||
+		created.LineEditingMode != modelterminal.LineEditingByte {
+		t.Fatalf("created draft input modes = %q/%q/%q, want crlf/ctrl-h/byte",
+			created.NewlineMode, created.BackspaceMode, created.LineEditingMode)
+	}
+	saved := state.Items()[0]
+	if saved.NewlineMode != modelterminal.NewlineCRLF ||
+		saved.BackspaceMode != modelterminal.BackspaceCtrlH ||
+		saved.LineEditingMode != modelterminal.LineEditingByte {
+		t.Fatalf("saved Host input modes = %q/%q/%q, want crlf/ctrl-h/byte",
+			saved.NewlineMode, saved.BackspaceMode, saved.LineEditingMode)
+	}
+
+	if !state.BeginEdit(saved.ID) {
+		t.Fatal("BeginEdit failed")
+	}
+	restored := state.Form()
+	if restored.NewlineMode != string(modelterminal.NewlineCRLF) ||
+		restored.BackspaceMode != string(modelterminal.BackspaceCtrlH) ||
+		restored.LineEditingMode != string(modelterminal.LineEditingByte) {
+		t.Fatalf("editor input modes = %q/%q/%q, want crlf/ctrl-h/byte",
+			restored.NewlineMode, restored.BackspaceMode, restored.LineEditingMode)
+	}
+}
+
+func TestHostDetailsClearsInputCompatibilityWhenLeavingSSH(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+	state.BeginCreate()
+	form := state.Form()
+	form.Label = "local-shell"
+	form.Protocol = string(domainvault.ProtocolLocal)
+	form.NewlineMode = string(modelterminal.NewlineLF)
+	form.BackspaceMode = string(modelterminal.BackspaceCtrlH)
+	form.LineEditingMode = string(modelterminal.LineEditingByte)
+
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if len(repo.created) != 1 {
+		t.Fatalf("created drafts = %d, want 1", len(repo.created))
+	}
+	saved := state.Items()[0]
+	if saved.NewlineMode != modelterminal.NewlineCR ||
+		saved.BackspaceMode != modelterminal.BackspaceDEL ||
+		saved.LineEditingMode != modelterminal.LineEditingCharacter {
+		t.Fatalf("non-SSH Host input modes = %q/%q/%q, want defaults",
+			saved.NewlineMode, saved.BackspaceMode, saved.LineEditingMode)
 	}
 }
 

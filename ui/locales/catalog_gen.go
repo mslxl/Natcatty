@@ -5784,6 +5784,128 @@ func (msgs Messages) VaultHostAutoAttachTmuxHint() string {
 	return Catalog.Format(msgs.locale, "vaultHostAutoAttachTmuxHint", nil)
 }
 
+// VaultHostInputCompatibility says "Terminal behavior"
+// in the language the app shows.
+func VaultHostInputCompatibility() string { return In(i18n.Locale()).VaultHostInputCompatibility() }
+
+// VaultHostInputCompatibility says "Terminal behavior"
+// in the language of msgs.
+func (msgs Messages) VaultHostInputCompatibility() string {
+	return Catalog.Format(msgs.locale, "vaultHostInputCompatibility", nil)
+}
+
+// VaultHostInputCompatibilityHint says "Only affects keys typed in a plain SSH session. Leave Default unless the remote shell misreads Enter or Backspace."
+// in the language the app shows.
+func VaultHostInputCompatibilityHint() string {
+	return In(i18n.Locale()).VaultHostInputCompatibilityHint()
+}
+
+// VaultHostInputCompatibilityHint says "Only affects keys typed in a plain SSH session. Leave Default unless the remote shell misreads Enter or Backspace."
+// in the language of msgs.
+func (msgs Messages) VaultHostInputCompatibilityHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostInputCompatibilityHint", nil)
+}
+
+// VaultHostNewlineMode says "Enter key"
+// in the language the app shows.
+func VaultHostNewlineMode() string { return In(i18n.Locale()).VaultHostNewlineMode() }
+
+// VaultHostNewlineMode says "Enter key"
+// in the language of msgs.
+func (msgs Messages) VaultHostNewlineMode() string {
+	return Catalog.Format(msgs.locale, "vaultHostNewlineMode", nil)
+}
+
+// VaultHostNewlineDefault says "Default (carriage return)"
+// in the language the app shows.
+func VaultHostNewlineDefault() string { return In(i18n.Locale()).VaultHostNewlineDefault() }
+
+// VaultHostNewlineDefault says "Default (carriage return)"
+// in the language of msgs.
+func (msgs Messages) VaultHostNewlineDefault() string {
+	return Catalog.Format(msgs.locale, "vaultHostNewlineDefault", nil)
+}
+
+// VaultHostNewlineLF says "Line feed"
+// in the language the app shows.
+func VaultHostNewlineLF() string { return In(i18n.Locale()).VaultHostNewlineLF() }
+
+// VaultHostNewlineLF says "Line feed"
+// in the language of msgs.
+func (msgs Messages) VaultHostNewlineLF() string {
+	return Catalog.Format(msgs.locale, "vaultHostNewlineLF", nil)
+}
+
+// VaultHostNewlineCRLF says "Carriage return and line feed"
+// in the language the app shows.
+func VaultHostNewlineCRLF() string { return In(i18n.Locale()).VaultHostNewlineCRLF() }
+
+// VaultHostNewlineCRLF says "Carriage return and line feed"
+// in the language of msgs.
+func (msgs Messages) VaultHostNewlineCRLF() string {
+	return Catalog.Format(msgs.locale, "vaultHostNewlineCRLF", nil)
+}
+
+// VaultHostBackspaceMode says "Backspace key"
+// in the language the app shows.
+func VaultHostBackspaceMode() string { return In(i18n.Locale()).VaultHostBackspaceMode() }
+
+// VaultHostBackspaceMode says "Backspace key"
+// in the language of msgs.
+func (msgs Messages) VaultHostBackspaceMode() string {
+	return Catalog.Format(msgs.locale, "vaultHostBackspaceMode", nil)
+}
+
+// VaultHostBackspaceDefault says "Default (DEL)"
+// in the language the app shows.
+func VaultHostBackspaceDefault() string { return In(i18n.Locale()).VaultHostBackspaceDefault() }
+
+// VaultHostBackspaceDefault says "Default (DEL)"
+// in the language of msgs.
+func (msgs Messages) VaultHostBackspaceDefault() string {
+	return Catalog.Format(msgs.locale, "vaultHostBackspaceDefault", nil)
+}
+
+// VaultHostBackspaceCtrlH says "Ctrl-H"
+// in the language the app shows.
+func VaultHostBackspaceCtrlH() string { return In(i18n.Locale()).VaultHostBackspaceCtrlH() }
+
+// VaultHostBackspaceCtrlH says "Ctrl-H"
+// in the language of msgs.
+func (msgs Messages) VaultHostBackspaceCtrlH() string {
+	return Catalog.Format(msgs.locale, "vaultHostBackspaceCtrlH", nil)
+}
+
+// VaultHostLineEditingMode says "Line editing"
+// in the language the app shows.
+func VaultHostLineEditingMode() string { return In(i18n.Locale()).VaultHostLineEditingMode() }
+
+// VaultHostLineEditingMode says "Line editing"
+// in the language of msgs.
+func (msgs Messages) VaultHostLineEditingMode() string {
+	return Catalog.Format(msgs.locale, "vaultHostLineEditingMode", nil)
+}
+
+// VaultHostLineEditingDefault says "Default (per character)"
+// in the language the app shows.
+func VaultHostLineEditingDefault() string { return In(i18n.Locale()).VaultHostLineEditingDefault() }
+
+// VaultHostLineEditingDefault says "Default (per character)"
+// in the language of msgs.
+func (msgs Messages) VaultHostLineEditingDefault() string {
+	return Catalog.Format(msgs.locale, "vaultHostLineEditingDefault", nil)
+}
+
+// VaultHostLineEditingByte says "Byte at a time"
+// in the language the app shows.
+func VaultHostLineEditingByte() string { return In(i18n.Locale()).VaultHostLineEditingByte() }
+
+// VaultHostLineEditingByte says "Byte at a time"
+// in the language of msgs.
+func (msgs Messages) VaultHostLineEditingByte() string {
+	return Catalog.Format(msgs.locale, "vaultHostLineEditingByte", nil)
+}
+
 // VaultHostFileProtocol says "File protocol"
 // in the language the app shows.
 func VaultHostFileProtocol() string { return In(i18n.Locale()).VaultHostFileProtocol() }
