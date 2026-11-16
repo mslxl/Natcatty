@@ -1007,6 +1007,14 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// Tier 1. It contains no binary, reads the user's startup files without
 		// editing them, and is skipped when the setting is off or the transport
 		// owns shell startup.
+		// The custom shell is resolved before the capture hook plans, so a
+		// restored, split, or retried local Session starts the configured
+		// shell too. The Tab action still passes its own resolver through
+		// state.WithLocalShell for the visible missing-path warning.
+		appsession.WithLocalShell(func() []string {
+			command, _ := preferenceService.Settings().Appearance.LocalShell.Command(appsession.LocalShellExists)
+			return command
+		}),
 		appsession.WithCaptureHook(shellhook.NewPlanner(
 			shellhook.WithEnabled(func() bool {
 				return terminalService.Settings().HistoryCaptureHookEnabled

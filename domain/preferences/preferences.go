@@ -245,14 +245,13 @@ type LocalShell struct {
 	Args string `json:"args,omitempty"`
 }
 
-// Normalized trims the path and drops arguments that cannot mean anything
-// without one. Arguments keep their exact bytes, since quoting and an empty
-// argument are meaningful to a shell.
+// Normalized trims the path but keeps the argument draft even while the path
+// is still empty. The Settings editor saves after every keystroke, and the
+// user may type arguments before the path; dropping the draft then would erase
+// them on the next save before the path arrives. Command ignores the draft
+// until a path is set, so it still asks for the OS login shell.
 func (shell LocalShell) Normalized() LocalShell {
 	shell.Path = strings.TrimSpace(shell.Path)
-	if shell.Path == "" {
-		return LocalShell{}
-	}
 	return shell
 }
 

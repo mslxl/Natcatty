@@ -258,6 +258,38 @@ func TestLocalShellPreferenceRoundTrips(t *testing.T) {
 	}
 }
 
+// TestLocalShellKeepsAnArgumentDraftBeforeItsPath proves arguments typed
+// before the path survive every save. Normalization used to drop the whole
+// LocalShell when Path was empty, so the Settings editor erased the draft on
+// the next keystroke.
+func TestLocalShellKeepsAnArgumentDraftBeforeItsPath(t *testing.T) {
+	settings := Defaults()
+	settings.Appearance.LocalShell = LocalShell{Args: `-l --color=always "a b"`}
+
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loaded Settings
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		t.Fatal(err)
+	}
+	normalized := Normalize(loaded)
+	if got := normalized.Appearance.LocalShell.Args; got != settings.Appearance.LocalShell.Args {
+		t.Fatalf("argument draft = %q after a save, want %q", got, settings.Appearance.LocalShell.Args)
+	}
+	// The draft is inert until a path exists: the OS login shell still starts.
+	if command, fallback := normalized.Appearance.LocalShell.Command(nil); command != nil || fallback {
+		t.Fatalf("empty-path Command = %v/%v, want the OS login shell", command, fallback)
+	}
+	// Setting the path later starts the shell with the preserved arguments.
+	normalized.Appearance.LocalShell.Path = "/opt/zsh"
+	if command, fallback := normalized.Appearance.LocalShell.Command(nil); fallback ||
+		!reflect.DeepEqual(command, []string{"/opt/zsh", "-l", "--color=always", "a b"}) {
+		t.Fatalf("Command = %v/%v, want the path with the preserved arguments", command, fallback)
+	}
+}
+
 func TestLocalShellCommandFallsBackWhenThePathIsMissing(t *testing.T) {
 	shell := LocalShell{Path: " /opt/zsh ", Args: `-l --flag "a b"`}
 	command, fallback := shell.Command(func(path string) bool { return path == "/opt/zsh" })

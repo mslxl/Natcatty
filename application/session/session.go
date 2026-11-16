@@ -707,8 +707,12 @@ type Service struct {
 	highlightPolicy     func() (bool, []domainterminal.KeywordHighlightRule)
 	captureHook         CaptureHook
 	hostAtuin           HostAtuin
-	mu                  sync.Mutex
-	sessions            map[model.SessionID]*Session
+	// localShell resolves the configured custom shell for a local Session. It
+	// runs before the capture-hook planner so the hook wraps the user's shell
+	// instead of the OS login shell; nil keeps the OS default.
+	localShell func() []string
+	mu         sync.Mutex
+	sessions   map[model.SessionID]*Session
 	// captureNotices records the Host whose capture-hook failure was already
 	// announced, so a reconnect loop does not repeat the capability notice.
 	captureNotices map[string]bool
@@ -802,6 +806,17 @@ func WithHostAtuin(policy HostAtuin) Option {
 	return func(s *Service) { s.hostAtuin = policy }
 }
 
+// WithLocalShell resolves the configured custom shell argv for a local
+// Session. It is read before the capture-hook planner so a planned hook wraps
+// the user's shell rather than the OS login shell. The resolver returns nil
+// when no custom shell is configured, or when the configured path is missing
+// (the caller keeps the visible fallback warning). An explicit StartSpec
+// command always wins; this only fills a local Session that named none, which
+// is the workspace restore, split, and retry path.
+func WithLocalShell(resolve func() []string) Option {
+	return func(s *Service) { s.localShell = resolve }
+}
+
 // WithConnectionHook receives one event per completed connection attempt. The
 // app records it as a connection log. The hook runs on the dialing goroutine,
 // before a successful Session joins the Service.
@@ -890,6 +905,17 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		cancel()
 		hostAtuinActive = probe.Present
 		hostAtuinFailed = probe.Failed
+	}
+
+	// Resolve the custom shell for a local Session before the capture hook
+	// plans. The planner rewrites the interactive shell's startup into
+	// spec.Command; resolving afterwards (the transport factory's fallback)
+	// would see a non-empty command and keep the OS login shell. An explicit
+	// StartSpec command, such as the Tab button's, still wins.
+	if spec.Kind == KindLocal && len(spec.Command) == 0 && s.localShell != nil {
+		if command := s.localShell(); len(command) > 0 {
+			spec.Command = command
+		}
 	}
 
 	// The capture hook rewrites the startup before the transport opens: local
