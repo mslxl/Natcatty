@@ -19,6 +19,7 @@ import (
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainsessiontitle "github.com/mslxl/natcatty/domain/sessiontitle"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 )
 
@@ -1841,6 +1842,12 @@ func (s *State) openDescriptor(ctx context.Context,
 		// Telnet keeps the manual Reconnect action but does not retry a
 		// dropped socket automatically.
 		spec.Reconnect = telnetReconnectPolicy()
+		// The descriptor still names the Host, so the resolver can read its
+		// saved login even when the Vault lookup above found nothing new.
+		s.attachAutoLogin(ctx, &spec, domainvault.Host{
+			ID: descriptor.HostID, Hostname: spec.Hostname,
+			Port: spec.Port, Username: spec.Username,
+		}, "")
 	case domainworkspace.SessionSerial:
 		if descriptor.Serial == nil {
 			return nil, fmt.Errorf("%w: %q", ErrUnknownSession, descriptor.Kind)
@@ -1849,6 +1856,7 @@ func (s *State) openDescriptor(ctx context.Context,
 		serialConfig := descriptor.Serial.Normalized()
 		spec.Serial = &serialConfig
 		spec.Label = descriptor.Label
+		s.attachAutoLogin(ctx, &spec, domainvault.Host{}, "")
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownSession, descriptor.Kind)
 	}

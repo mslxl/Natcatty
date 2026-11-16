@@ -1,8 +1,10 @@
 package serial
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -222,5 +224,67 @@ func TestPortNameMatchesTheOriginalSerialLabels(t *testing.T) {
 		if got := PortName(path); got != want {
 			t.Fatalf("PortName(%q) = %q, want %q", path, got, want)
 		}
+	}
+}
+
+// TestLegacyConfigDecodesWithoutAutoLogin keeps an older workspace payload,
+// written before auto-login existed, decodable and openable unchanged.
+func TestLegacyConfigDecodesWithoutAutoLogin(t *testing.T) {
+	const legacy = `{"path":"COM3","baudRate":115200,"dataBits":8,"stopBits":1,"parity":"none","flowControl":"none"}`
+	var cfg Config
+	if err := json.Unmarshal([]byte(legacy), &cfg); err != nil {
+		t.Fatalf("decode legacy config: %v", err)
+	}
+	if cfg.AutoLogin != nil {
+		t.Fatalf("legacy config invented auto-login: %+v", cfg.AutoLogin)
+	}
+	if err := cfg.Normalized().Validate(); err != nil {
+		t.Fatalf("legacy config is not openable: %v", err)
+	}
+}
+
+// TestAutoLoginRoundTripsWithoutAPassword proves the persisted profile keeps
+// its username, rules, attempt limit, and secret-presence flag while carrying
+// no password field at all.
+func TestAutoLoginRoundTripsWithoutAPassword(t *testing.T) {
+	cfg := Config{
+		Path: "  /dev/ttyUSB0  ", BaudRate: 115200,
+		AutoLogin: &AutoLogin{
+			Enabled:     true,
+			Username:    " admin ",
+			PasswordSet: true,
+			MaxAttempts: 2,
+			Replies: []AutoLoginReply{
+				{Expect: " Are you sure ", Respond: " yes "},
+				{Expect: "  ", Respond: "dropped"},
+			},
+		},
+	}.Normalized()
+
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if strings.Contains(string(encoded), `"password"`) {
+		t.Fatalf("encoded profile names a password field: %s", encoded)
+	}
+	var decoded Config
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	profile := decoded.AutoLogin
+	if profile == nil || !profile.Enabled || profile.Username != "admin" ||
+		!profile.PasswordSet || profile.MaxAttempts != 2 {
+		t.Fatalf("decoded profile = %+v", profile)
+	}
+	wantReplies := []AutoLoginReply{{Expect: "Are you sure", Respond: "yes"}}
+	if !slices.Equal(profile.Replies, wantReplies) {
+		t.Fatalf("decoded replies = %+v, want %+v", profile.Replies, wantReplies)
+	}
+	if got, want := cfg.SecretProfileID(), "/dev/ttyUSB0"; got != want {
+		t.Fatalf("SecretProfileID = %q, want %q", got, want)
+	}
+	if SecretEntityType != "serial_profile" || SecretFieldPassword != "password" {
+		t.Fatalf("secret names changed: %q %q", SecretEntityType, SecretFieldPassword)
 	}
 }

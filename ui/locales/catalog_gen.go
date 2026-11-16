@@ -5010,6 +5010,100 @@ func (msgs Messages) SerialFlowRTSCTS() string {
 	return Catalog.Format(msgs.locale, "serialFlowRTSCTS", nil)
 }
 
+// SerialAutoLoginEnabled says "Auto-login after connecting"
+// in the language the app shows.
+func SerialAutoLoginEnabled() string { return In(i18n.Locale()).SerialAutoLoginEnabled() }
+
+// SerialAutoLoginEnabled says "Auto-login after connecting"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginEnabled() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginEnabled", nil)
+}
+
+// SerialAutoLoginHint says "Answer the console's login and password prompts from this profile. The password is kept in the encrypted vault secret…"
+// in the language the app shows.
+func SerialAutoLoginHint() string { return In(i18n.Locale()).SerialAutoLoginHint() }
+
+// SerialAutoLoginHint says "Answer the console's login and password prompts from this profile. The password is kept in the encrypted vault secret…"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginHint() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginHint", nil)
+}
+
+// SerialAutoLoginUsername says "Username"
+// in the language the app shows.
+func SerialAutoLoginUsername() string { return In(i18n.Locale()).SerialAutoLoginUsername() }
+
+// SerialAutoLoginUsername says "Username"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginUsername() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginUsername", nil)
+}
+
+// SerialAutoLoginPassword says "Password"
+// in the language the app shows.
+func SerialAutoLoginPassword() string { return In(i18n.Locale()).SerialAutoLoginPassword() }
+
+// SerialAutoLoginPassword says "Password"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginPassword() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginPassword", nil)
+}
+
+// SerialAutoLoginPasswordPlaceholder says "Leave blank to keep the saved password"
+// in the language the app shows.
+func SerialAutoLoginPasswordPlaceholder() string {
+	return In(i18n.Locale()).SerialAutoLoginPasswordPlaceholder()
+}
+
+// SerialAutoLoginPasswordPlaceholder says "Leave blank to keep the saved password"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginPasswordPlaceholder() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginPasswordPlaceholder", nil)
+}
+
+// SerialAutoLoginForgetPassword says "Forget saved password"
+// in the language the app shows.
+func SerialAutoLoginForgetPassword() string { return In(i18n.Locale()).SerialAutoLoginForgetPassword() }
+
+// SerialAutoLoginForgetPassword says "Forget saved password"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginForgetPassword() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginForgetPassword", nil)
+}
+
+// SerialAutoLoginAttempts says "Login attempts"
+// in the language the app shows.
+func SerialAutoLoginAttempts() string { return In(i18n.Locale()).SerialAutoLoginAttempts() }
+
+// SerialAutoLoginAttempts says "Login attempts"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginAttempts() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginAttempts", nil)
+}
+
+// SerialAutoLoginReplies says "Expect / reply rules"
+// in the language the app shows.
+func SerialAutoLoginReplies() string { return In(i18n.Locale()).SerialAutoLoginReplies() }
+
+// SerialAutoLoginReplies says "Expect / reply rules"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginReplies() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginReplies", nil)
+}
+
+// SerialAutoLoginRepliesPlaceholder says "expect => reply, one per line"
+// in the language the app shows.
+func SerialAutoLoginRepliesPlaceholder() string {
+	return In(i18n.Locale()).SerialAutoLoginRepliesPlaceholder()
+}
+
+// SerialAutoLoginRepliesPlaceholder says "expect => reply, one per line"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginRepliesPlaceholder() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginRepliesPlaceholder", nil)
+}
+
 // SerialConnect says "Connect"
 // in the language the app shows.
 func SerialConnect() string { return In(i18n.Locale()).SerialConnect() }

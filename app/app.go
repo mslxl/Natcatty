@@ -61,6 +61,7 @@ import (
 	appmonitor "github.com/mslxl/natcatty/application/monitor"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/application/session/autologin"
 	appsync "github.com/mslxl/natcatty/application/sync"
 	appsysmanager "github.com/mslxl/natcatty/application/sysmanager"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
@@ -1185,6 +1186,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			return shellState.OpenSerial(cfg)
 		},
 		serialui.WithRedraw(invalidate),
+		serialui.WithSecretStore(serialSecrets{store: secretStore}),
 	)
 	// The side panel's Scripts, History, Theme, and Notes read the states of
 	// the pages they mirror; each keeps its own search.
@@ -1314,6 +1316,16 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		}),
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
 			return newSessionSurface(s)
+		}),
+		// A serial Session's saved profile and a Telnet Host's Vault login
+		// become the console's expect engine. The password is read from the
+		// encrypted field-secret store on the open goroutine and never enters
+		// a workspace descriptor.
+		state.WithSerialAutoLogin(func(ctx context.Context, cfg domainserial.Config) *autologin.Options {
+			return serialAutoLoginOptions(ctx, serialSecrets{store: secretStore}, cfg)
+		}),
+		state.WithTelnetAutoLogin(func(ctx context.Context, host domainvault.Host, password string) *autologin.Options {
+			return telnetAutoLoginOptions(ctx, vaultService, host, password)
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState),
 			// The Hosts page's view and sort switches are this device's

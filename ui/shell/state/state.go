@@ -14,6 +14,7 @@ import (
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/application/session/autologin"
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	"github.com/mslxl/natcatty/domain/model"
 	domainetmodel "github.com/mslxl/natcatty/domain/model/et"
@@ -243,6 +244,13 @@ type State struct {
 	// workspace persists layout changes and supplies the restore payload.
 	workspace   *appworkspace.Service
 	resolveHost HostResolver
+	// serialAutoLogin resolves a serial profile's expect engine options from
+	// its saved credentials. Nil leaves auto-login off.
+	serialAutoLogin func(context.Context, domainserial.Config) *autologin.Options
+	// telnetAutoLogin resolves a Telnet Host's expect engine options from its
+	// saved credentials and the one-shot password of a Quick Connect. Nil
+	// leaves auto-login off.
+	telnetAutoLogin func(context.Context, domainvault.Host, string) *autologin.Options
 	// dynamicTabTitleMode is the live Dynamic tab title setting. Nil keeps the
 	// default: dynamic titles for every Session.
 	dynamicTabTitleMode func() domainterminal.DynamicTabTitleMode
@@ -372,6 +380,22 @@ func WithSessions(service *appsession.Service, surfaces SurfaceFactory) Option {
 		s.sessions = service
 		s.surfaces = surfaces
 	}
+}
+
+// WithSerialAutoLogin gives the shell the resolver that turns a serial
+// profile's stored credentials into an expect engine. The resolver reads the
+// password from the app's encrypted field-secret store; it returns nil when
+// auto-login is off. Without it, serial Sessions open without automation.
+func WithSerialAutoLogin(resolve func(context.Context, domainserial.Config) *autologin.Options) Option {
+	return func(s *State) { s.serialAutoLogin = resolve }
+}
+
+// WithTelnetAutoLogin gives the shell the resolver that turns a Telnet Host's
+// Vault login into an expect engine. password is the one-shot credential of a
+// Quick Connect, or "" for a saved Host. It returns nil when the Host has no
+// login to replay.
+func WithTelnetAutoLogin(resolve func(context.Context, domainvault.Host, string) *autologin.Options) Option {
+	return func(s *State) { s.telnetAutoLogin = resolve }
 }
 
 // ETResumeStore removes a saved ET session pair from the secret store. The app
@@ -880,6 +904,7 @@ func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput
 	resumeKey, x11 := spec.ResumeKey, spec.X11Forwarding
 	ctx := s.ctx
 	go func() {
+		s.attachAutoLogin(ctx, &spec, host, password)
 		session, err := s.sessions.Open(ctx, spec)
 		s.mu.Lock()
 		s.outcomes = append(s.outcomes, openOutcome{
@@ -929,6 +954,7 @@ func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (mode
 	plan := hostSessionTransport(host)
 	spec := HostSessionSpec(host)
 	resumeKey, x11 := spec.ResumeKey, spec.X11Forwarding
+	s.attachAutoLogin(ctx, &spec, host, "")
 	session, err := s.sessions.Open(ctx, spec)
 	if err != nil {
 		// Flush clears the pending label and records the problem on the UI
@@ -1094,6 +1120,24 @@ func telnetReconnectPolicy() *appsession.ReconnectPolicy {
 	}
 }
 
+// attachAutoLogin fills the expect engine for a console transport. A serial
+// profile carries its own non-secret rules; a Telnet Host reuses its Vault
+// login. Every other Kind authenticates before its shell exists and ignores
+// the field. A resolver that finds nothing leaves auto-login off rather than
+// failing the connection.
+func (s *State) attachAutoLogin(ctx context.Context, spec *appsession.StartSpec, host domainvault.Host, password string) {
+	switch spec.Kind {
+	case appsession.KindSerial:
+		if s.serialAutoLogin != nil && spec.Serial != nil {
+			spec.AutoLogin = s.serialAutoLogin(ctx, *spec.Serial)
+		}
+	case appsession.KindTelnet:
+		if s.telnetAutoLogin != nil {
+			spec.AutoLogin = s.telnetAutoLogin(ctx, host, password)
+		}
+	}
+}
+
 // OpenSerial opens a serial Session without blocking the UI thread. The
 // configuration is validated before the background open, so a malformed port
 // or an unsupported setting returns the typed error to the dialog that asked.
@@ -1114,11 +1158,13 @@ func (s *State) OpenSerial(cfg domainserial.Config) error {
 	ctx := s.ctx
 	go func() {
 		serialConfig := normalized
-		session, err := s.sessions.Open(ctx, appsession.StartSpec{
+		spec := appsession.StartSpec{
 			Kind:   appsession.KindSerial,
 			Label:  label,
 			Serial: &serialConfig,
-		})
+		}
+		s.attachAutoLogin(ctx, &spec, domainvault.Host{}, "")
+		session, err := s.sessions.Open(ctx, spec)
 		s.mu.Lock()
 		s.outcomes = append(s.outcomes, openOutcome{
 			session: session,
