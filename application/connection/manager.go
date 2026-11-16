@@ -569,8 +569,21 @@ func (m *Manager) dial(ctx context.Context, req Request, endpoint endpointConfig
 	}
 
 	succeeded := make([]string, total)
+	accepted := &hostKeyAcceptance{}
 	verify := func(verifyCtx context.Context, key domainconn.Key) error {
-		return m.verifyHostKey(verifyCtx, key, known)
+		// x/crypto/ssh runs the verifier again on every key exchange. The Known
+		// Host snapshot above is fixed for this dial, so a key trusted earlier in
+		// this Connection is remembered here and a rekey presenting it answers
+		// without prompting again. A different key is not remembered and still
+		// verifies (and can fail closed).
+		if accepted.has(key) {
+			return nil
+		}
+		if err := m.verifyHostKey(verifyCtx, key, known); err != nil {
+			return err
+		}
+		accepted.add(key)
+		return nil
 	}
 	username := func(plan AuthPlan, fallback string) string {
 		if plan.Username != "" {
@@ -781,6 +794,36 @@ func (m *Manager) knownHosts(ctx context.Context) ([]domainconn.KnownHost, error
 		return nil, internalError(err)
 	}
 	return known, nil
+}
+
+// hostKeyAcceptance remembers the keys trusted for the lifetime of one
+// Connection. The Known Host snapshot is read once per dial, so without this a
+// key the user trusted on the first key exchange would prompt again on rekey.
+// It is scoped by hostname, port, and fingerprint so a different endpoint (or a
+// changed key) is always verified.
+type hostKeyAcceptance struct {
+	mu   sync.Mutex
+	seen map[string]struct{}
+}
+
+func hostKeyAcceptanceKey(key domainconn.Key) string {
+	return fmt.Sprintf("%s\x00%d\x00%s", key.Hostname, key.Port, key.Fingerprint)
+}
+
+func (a *hostKeyAcceptance) has(key domainconn.Key) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_, ok := a.seen[hostKeyAcceptanceKey(key)]
+	return ok
+}
+
+func (a *hostKeyAcceptance) add(key domainconn.Key) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.seen == nil {
+		a.seen = make(map[string]struct{})
+	}
+	a.seen[hostKeyAcceptanceKey(key)] = struct{}{}
 }
 
 // verifyHostKey classifies the live key and asks the user when the key is not

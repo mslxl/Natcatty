@@ -67,6 +67,46 @@ type Options struct {
 	// ServerVersion overrides the SSH identification line, so a test can model
 	// a device whose software token requires single-channel operation.
 	ServerVersion string
+	// RekeyThreshold forces a key re-exchange after this many bytes cross the
+	// server's transport. Zero keeps the library default. The minimum the
+	// transport honors is 256 bytes; a test writes more than the threshold to
+	// make the server initiate a rekey mid-session.
+	RekeyThreshold uint64
+}
+
+// fixtureSigner presents one of two host keys and counts signatures. Every key
+// exchange costs exactly one signature, so the count proves a rekey happened.
+type fixtureSigner struct {
+	mu    sync.Mutex
+	keys  []ssh.Signer
+	index int
+	signs int
+}
+
+func (s *fixtureSigner) PublicKey() ssh.PublicKey {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.keys[s.index].PublicKey()
+}
+
+func (s *fixtureSigner) Sign(reader io.Reader, data []byte) (*ssh.Signature, error) {
+	s.mu.Lock()
+	signer := s.keys[s.index]
+	s.signs++
+	s.mu.Unlock()
+	return signer.Sign(reader, data)
+}
+
+func (s *fixtureSigner) rotate() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.index = (s.index + 1) % len(s.keys)
+}
+
+func (s *fixtureSigner) signatures() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.signs
 }
 
 // X11Request is one recorded x11-req session request.
@@ -106,6 +146,7 @@ type Server struct {
 	conn        net.Conn
 	config      *ssh.ServerConfig
 	signer      ssh.Signer
+	hostSigner  *fixtureSigner
 	done        chan struct{}
 	closeOnce   sync.Once
 	forwardDial func(host string, port int) (net.Conn, error)
@@ -150,10 +191,21 @@ func Start(conn net.Conn, options Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A second key lets a test rotate the host key between rekeys.
+	_, rotatedKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	rotatedSigner, err := ssh.NewSignerFromKey(rotatedKey)
+	if err != nil {
+		return nil, err
+	}
+	hostSigner := &fixtureSigner{keys: []ssh.Signer{signer, rotatedSigner}}
 
 	server := &Server{
 		conn:            conn,
 		signer:          signer,
+		hostSigner:      hostSigner,
 		done:            make(chan struct{}),
 		forwardDial:     options.ForwardDial,
 		remoteListeners: map[string]net.Listener{},
@@ -240,13 +292,16 @@ func Start(conn net.Conn, options Options) (*Server, error) {
 		}
 	}
 
-	server.config.AddHostKey(signer)
+	server.config.AddHostKey(hostSigner)
 	if options.ServerVersion != "" {
 		server.config.ServerVersion = options.ServerVersion
 	}
 	server.config.Ciphers = options.Ciphers
 	server.config.KeyExchanges = options.KeyExchanges
 	server.config.MACs = options.MACs
+	if options.RekeyThreshold > 0 {
+		server.config.RekeyThreshold = options.RekeyThreshold
+	}
 
 	go server.serve()
 	return server, nil
@@ -259,6 +314,23 @@ func (s *Server) Fingerprint() string {
 
 // KeyType is the server host key algorithm.
 func (s *Server) KeyType() string { return s.signer.PublicKey().Type() }
+
+// RotateHostKey switches to the fixture's second host key. A rekey after this
+// presents different key material, modelling a server whose key changed.
+func (s *Server) RotateHostKey() { s.hostSigner.rotate() }
+
+// CurrentFingerprint is the SHA-256 fingerprint of the host key the fixture
+// presents right now, which differs from Fingerprint after RotateHostKey.
+func (s *Server) CurrentFingerprint() string {
+	return domainconn.Fingerprint(s.hostSigner.PublicKey().Marshal())
+}
+
+// CurrentKeyType is the type of the host key the fixture presents right now.
+func (s *Server) CurrentKeyType() string { return s.hostSigner.PublicKey().Type() }
+
+// HostKeySignatures counts host-key signatures, one per key exchange. More than
+// one proves the transport rekeyed.
+func (s *Server) HostKeySignatures() int { return s.hostSigner.signatures() }
 
 // PublicKey is the server host key in "keytype base64" form.
 func (s *Server) PublicKey() string {

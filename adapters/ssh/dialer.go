@@ -206,6 +206,35 @@ func (e endpoint) address() string {
 	return net.JoinHostPort(e.hostname, strconv.Itoa(e.portOr22()))
 }
 
+// keyExchangeGuard answers the host-key callback for one Connection. The first
+// key it sees is checked through the application's verifier; a later key
+// exchange (rekey) that presents that same key is answered synchronously with
+// nil and never reaches the user again. A different key is not remembered, so
+// a mid-session key change still verifies, prompts, and can fail closed.
+type keyExchangeGuard struct {
+	mu       sync.Mutex
+	accepted []byte
+}
+
+// verifyKey reports whether blob is the key already accepted for this
+// connection, and otherwise runs the application verifier before remembering
+// it. It is safe to call from concurrent key exchanges.
+func (g *keyExchangeGuard) verifyKey(ctx context.Context, blob []byte, verify func(context.Context, domainconn.Key) error, key domainconn.Key) error {
+	g.mu.Lock()
+	unchanged := len(g.accepted) > 0 && bytes.Equal(g.accepted, blob)
+	g.mu.Unlock()
+	if unchanged {
+		return nil
+	}
+	if err := verify(ctx, key); err != nil {
+		return err
+	}
+	g.mu.Lock()
+	g.accepted = append(g.accepted[:0], blob...)
+	g.mu.Unlock()
+	return nil
+}
+
 func endpointsFor(req appconnection.DialRequest) []endpoint {
 	endpoints := make([]endpoint, 0, len(req.Jumps)+1)
 	for _, hop := range req.Jumps {
@@ -423,6 +452,7 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 	if err != nil {
 		return nil, "", err
 	}
+	guard := &keyExchangeGuard{}
 	config := &xssh.ClientConfig{
 		User:         ep.username,
 		AuthCallback: machine.Next,
@@ -431,7 +461,7 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 				return &appconnection.Error{Kind: appconnection.KindHostKey, Cause: appconnection.ErrHostKeyRejected}
 			}
 			blob := key.Marshal()
-			return ep.verify(authCtx, domainconn.Key{
+			return guard.verifyKey(authCtx, blob, ep.verify, domainconn.Key{
 				Hostname:    ep.hostname,
 				Port:        port,
 				KeyType:     key.Type(),
