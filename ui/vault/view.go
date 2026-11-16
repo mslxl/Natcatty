@@ -1277,8 +1277,7 @@ func optionValue[T comparable](values []T, labels []string, label string) T {
 			return values[index]
 		}
 	}
-	var zero T
-	return zero
+	return values[0]
 }
 
 // summaryRow lays the Host's summary out as separate wrapped tokens. No token

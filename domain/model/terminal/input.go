@@ -57,15 +57,6 @@ func (m NewlineMode) Sequence() []byte {
 	}
 }
 
-// Valid reports whether the mode is one the application knows.
-func (m NewlineMode) Valid() bool {
-	switch m {
-	case NewlineCR, NewlineLF, NewlineCRLF:
-		return true
-	}
-	return false
-}
-
 // NormalizeNewlineMode falls back to the bare-CR default.
 func NormalizeNewlineMode(m NewlineMode) NewlineMode {
 	switch m {
@@ -95,15 +86,6 @@ func (m BackspaceMode) Byte() byte {
 	return 0x7f
 }
 
-// Valid reports whether the mode is one the application knows.
-func (m BackspaceMode) Valid() bool {
-	switch m {
-	case BackspaceDEL, BackspaceCtrlH:
-		return true
-	}
-	return false
-}
-
 // NormalizeBackspaceMode falls back to DEL.
 func NormalizeBackspaceMode(m BackspaceMode) BackspaceMode {
 	if m == BackspaceCtrlH {
@@ -127,15 +109,6 @@ const (
 	// completely on a byte-oriented editor.
 	LineEditingByte LineEditingMode = "byte"
 )
-
-// Valid reports whether the mode is one the application knows.
-func (m LineEditingMode) Valid() bool {
-	switch m {
-	case LineEditingCharacter, LineEditingByte:
-		return true
-	}
-	return false
-}
 
 // NormalizeLineEditingMode falls back to character-oriented deletion.
 func NormalizeLineEditingMode(m LineEditingMode) LineEditingMode {
