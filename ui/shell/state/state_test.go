@@ -188,6 +188,33 @@ func TestNewTabOpensALocalShellSessionAndSurface(t *testing.T) {
 	}
 }
 
+func TestNewTabWithShellStartsTheNamedProgram(t *testing.T) {
+	graph := newTestGraph(t)
+
+	if err := graph.state.NewTabWithShell("pwsh.exe"); err != nil {
+		t.Fatalf("NewTabWithShell: %v", err)
+	}
+	if graph.state.TabCount() != 1 || graph.state.ActiveTab() != 0 {
+		t.Fatalf("tabs = %d, active = %d, want 1 and 0", graph.state.TabCount(), graph.state.ActiveTab())
+	}
+	if spec := graph.factory.spec; spec.Kind != appsession.KindLocal ||
+		len(spec.Command) != 1 || spec.Command[0] != "pwsh.exe" {
+		t.Fatalf("start spec = %+v, want a local Session running pwsh.exe", spec)
+	}
+}
+
+func TestNewTabWithShellFailureAppendsNoTab(t *testing.T) {
+	graph := newTestGraph(t)
+	graph.factory.err = errors.New("no such shell")
+
+	if err := graph.state.NewTabWithShell("missing.exe"); err == nil {
+		t.Fatal("a failed shell start reported no error")
+	}
+	if graph.state.TabCount() != 0 {
+		t.Fatalf("a failed shell start left %d tabs", graph.state.TabCount())
+	}
+}
+
 func TestNewTabAppendsAndClosesActiveTab(t *testing.T) {
 	graph := newTestGraph(t)
 

@@ -446,6 +446,37 @@ func TestDeepLinkAndCommandLineOpenTargetsOnce(t *testing.T) {
 	}
 }
 
+func TestLaunchArgsOpenALocalTerminalShellInTheRunningWindow(t *testing.T) {
+	controller, graph, _, _, _, _, _ := newDesktopTestController(t)
+	controller.opener = shellTargetOpener{shell: graph.state}
+
+	// A cold start's command line opens one local Tab.
+	controller.HandleLaunchArgs([]string{"--open-terminal-shell", "pwsh.exe"})
+	if got := graph.state.TabCount(); got != 1 {
+		t.Fatalf("tabs = %d after --open-terminal-shell, want 1", got)
+	}
+	snapshot, ok := graph.state.ActiveSnapshot()
+	if !ok || snapshot.Kind != appsession.KindLocal {
+		t.Fatalf("active snapshot = %+v, %v; want a local Session", snapshot, ok)
+	}
+
+	// A second instance hands its command line to the running window and
+	// exits; the Tab opens here.
+	controller.HandleLaunchArgs([]string{"--open-terminal-shell=/bin/zsh"})
+	if got := graph.state.TabCount(); got != 2 {
+		t.Fatalf("tabs = %d after a handed-over shell, want 2", got)
+	}
+
+	// A malformed shell must not open an empty Tab.
+	controller.HandleLaunchArgs([]string{"--open-terminal-shell"})
+	if got := graph.state.TabCount(); got != 2 {
+		t.Fatalf("a malformed shell opened a Tab: tabs = %d", got)
+	}
+	if notice := controller.shell.DesktopNotice(); notice != shellstate.DesktopNoticeInvalidTarget {
+		t.Fatalf("invalid shell notice = %q", notice)
+	}
+}
+
 func TestSessionAndForwardingNotificationsFireOnTransitions(t *testing.T) {
 	controller, _, _, _, _, notifier, _ := newDesktopTestController(t)
 	id := model.SessionID("s1")

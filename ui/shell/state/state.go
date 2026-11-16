@@ -782,12 +782,24 @@ func (s *State) leaveSystemManager() {
 
 // NewTab opens a local shell Session, builds its terminal surface, appends it
 // as a work Tab, and makes it active.
-func (s *State) NewTab() error {
+func (s *State) NewTab() error { return s.NewTabWithShell("") }
+
+// NewTabWithShell opens a local terminal Tab with a chosen shell, as
+// --open-terminal-shell does. An empty shell uses the platform default;
+// otherwise it is a program name or executable path. A failed shell start
+// returns the error without appending an empty Tab.
+func (s *State) NewTabWithShell(shell string) error {
 	if s.sessions == nil || s.surfaces == nil {
 		return ErrNoSessions
 	}
 	s.setProblem(nil)
-	session, err := s.sessions.OpenLocal(context.Background())
+	var session *appsession.Session
+	var err error
+	if shell == "" {
+		session, err = s.sessions.OpenLocal(context.Background())
+	} else {
+		session, err = s.sessions.OpenLocalShell(context.Background(), shell)
+	}
 	if err != nil {
 		return err
 	}

@@ -1082,6 +1082,20 @@ func (s *Service) OpenLocal(ctx context.Context) (*Session, error) {
 	return s.Open(ctx, StartSpec{Kind: KindLocal, Label: "Local Terminal"})
 }
 
+// OpenLocalShell opens a named local shell in a new Session. shell is a
+// program name resolved on PATH or an executable path; empty falls back to
+// the platform default through OpenLocal.
+func (s *Service) OpenLocalShell(ctx context.Context, shell string) (*Session, error) {
+	if shell == "" {
+		return s.OpenLocal(ctx)
+	}
+	return s.Open(ctx, StartSpec{
+		Kind:    KindLocal,
+		Label:   "Local Terminal",
+		Command: []string{shell},
+	})
+}
+
 // Label names the Session for logging. It is the Host label the shell opened,
 // or "Local Terminal" for a local shell.
 func (s *Session) Label() string { return specLabel(s.spec) }

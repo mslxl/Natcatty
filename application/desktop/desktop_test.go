@@ -444,6 +444,39 @@ func TestParseCommandLine(t *testing.T) {
 		t.Fatalf("telnet targets = %+v problems = %v", targets, problems)
 	}
 
+	// --open-terminal-shell opens a local Tab. Its operand must become the
+	// shell, never a Host, in either the separate or =value form.
+	targets, problems = ParseCommandLine([]string{"--open-terminal-shell", "pwsh.exe"})
+	if len(problems) != 0 || len(targets) != 1 {
+		t.Fatalf("open-terminal targets = %+v problems = %v", targets, problems)
+	}
+	if targets[0].Kind != TargetLocalShell || targets[0].Shell != "pwsh.exe" {
+		t.Fatalf("open-terminal target = %+v", targets[0])
+	}
+	targets, problems = ParseCommandLine([]string{"--open-terminal-shell=/bin/zsh", "real.example"})
+	if len(problems) != 0 || len(targets) != 2 {
+		t.Fatalf("mixed targets = %+v problems = %v", targets, problems)
+	}
+	if targets[0].Kind != TargetLocalShell || targets[0].Shell != "/bin/zsh" ||
+		targets[1].Kind != TargetSSH || targets[1].Hostname != "real.example" {
+		t.Fatalf("mixed targets = %+v", targets)
+	}
+	// A quoted executable path keeps its spaces and loses the quotes.
+	targets, problems = ParseCommandLine([]string{`--open-terminal-shell="C:\Program Files\PowerShell\7\pwsh.exe"`})
+	if len(problems) != 0 || len(targets) != 1 || targets[0].Shell != `C:\Program Files\PowerShell\7\pwsh.exe` {
+		t.Fatalf("quoted shell targets = %+v problems = %v", targets, problems)
+	}
+	// A missing or empty shell must be a problem, not a default-shell Tab.
+	if _, problems = ParseCommandLine([]string{"--open-terminal-shell"}); len(problems) == 0 {
+		t.Fatal("a dangling --open-terminal-shell produced no problem")
+	}
+	if _, problems = ParseCommandLine([]string{"--open-terminal-shell="}); len(problems) == 0 {
+		t.Fatal("an empty --open-terminal-shell produced no problem")
+	}
+	if targets, problems = ParseCommandLine([]string{"--open-terminal-shell", "--open-terminal-shell=pwsh"}); len(problems) == 0 || len(targets) != 1 {
+		t.Fatalf("a shell flag swallowed the next flag: targets = %+v problems = %v", targets, problems)
+	}
+
 	targets, _ = ParseCommandLine([]string{`C:\Users\me\notes.txt`, "real.example"})
 	if len(targets) != 1 || targets[0].Hostname != "real.example" {
 		t.Fatalf("a file path became a Host: %+v", targets)
