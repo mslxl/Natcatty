@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/mslxl/natcatty/domain/model"
+	modelterminal "github.com/mslxl/natcatty/domain/model/terminal"
 )
 
 // Protocol is the connection protocol a Host uses. Serial and network-device
@@ -266,6 +267,13 @@ type Host struct {
 	// tmux session. It is opt-in, off by default, and meaningful only for
 	// ProtocolSSH: another protocol and network-device mode clear it.
 	AutoAttachTmux bool `json:"autoAttachTmux,omitempty"`
+	// NewlineMode, BackspaceMode, and LineEditingMode translate typed Enter
+	// and Backspace keys locally before the Session writes them. The zero
+	// value of each is today's behavior, so an old record needs no migration.
+	// They are meaningful only for ProtocolSSH; another protocol clears them.
+	NewlineMode     modelterminal.NewlineMode     `json:"newlineBehavior,omitempty"`
+	BackspaceMode   modelterminal.BackspaceMode   `json:"backspaceBehavior,omitempty"`
+	LineEditingMode modelterminal.LineEditingMode `json:"lineEditingBehavior,omitempty"`
 	// MoshServerPath overrides the remote mosh-server binary for a Mosh Host.
 	// Empty uses the remote PATH. It is kept only for ProtocolMosh.
 	MoshServerPath string `json:"moshServerPath,omitempty"`
@@ -333,6 +341,11 @@ type Draft struct {
 	// AutoAttachTmux keeps the SSH login shell in a deterministic tmux
 	// session. It is cleared for another protocol and for network-device mode.
 	AutoAttachTmux bool
+	// NewlineMode, BackspaceMode, and LineEditingMode translate typed Enter
+	// and Backspace keys. Each zero value preserves today's bytes.
+	NewlineMode     modelterminal.NewlineMode
+	BackspaceMode   modelterminal.BackspaceMode
+	LineEditingMode modelterminal.LineEditingMode
 	// MoshServerPath overrides the remote mosh-server binary. It is kept only
 	// for ProtocolMosh.
 	MoshServerPath string
@@ -455,6 +468,17 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 		// a vendor CLI have no such shell, so a hidden control must not leave
 		// the preference on the Host record.
 		draft.AutoAttachTmux = false
+	}
+	draft.NewlineMode = modelterminal.NormalizeNewlineMode(draft.NewlineMode)
+	draft.BackspaceMode = modelterminal.NormalizeBackspaceMode(draft.BackspaceMode)
+	draft.LineEditingMode = modelterminal.NormalizeLineEditingMode(draft.LineEditingMode)
+	if draft.Protocol != ProtocolSSH {
+		// The translation is defined for SSH keyboard input. Telnet, Local,
+		// Mosh, and ET keep their own input behavior, so a Host that switched
+		// protocol must not carry a mode its Session never applies.
+		draft.NewlineMode = modelterminal.NewlineCR
+		draft.BackspaceMode = modelterminal.BackspaceDEL
+		draft.LineEditingMode = modelterminal.LineEditingCharacter
 	}
 	draft.MoshServerPath = strings.TrimSpace(draft.MoshServerPath)
 	if draft.Protocol != ProtocolMosh {
@@ -616,6 +640,21 @@ func (h Host) IsNetworkDevice() bool {
 // speaks a vendor CLI, and mosh/ET have their own session persistence.
 func (h Host) AutoAttachTmuxEnabled() bool {
 	return h.AutoAttachTmux && h.Protocol == ProtocolSSH && !h.IsNetworkDevice()
+}
+
+// InputCompatibility reports the Enter/Backspace translation this Host
+// selects. Only an SSH Host has one; every other protocol returns the default,
+// which leaves input byte-identical to today. An unknown stored value also
+// falls back to the default rather than changing the bytes sent.
+func (h Host) InputCompatibility() modelterminal.InputCompatibility {
+	if h.Protocol != ProtocolSSH {
+		return modelterminal.InputCompatibility{}
+	}
+	return modelterminal.InputCompatibility{
+		Newline:     h.NewlineMode,
+		Backspace:   h.BackspaceMode,
+		LineEditing: h.LineEditingMode,
+	}.Normalize()
 }
 
 func validateFields(draft Draft) error {

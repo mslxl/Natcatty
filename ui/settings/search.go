@@ -176,6 +176,8 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaTerminal, "", m.SettingsPasteProtection(), "paste protection multiline warning")
 	add(AreaTerminal, "", m.SettingsPasteMinLines(), "paste protection threshold lines")
 	add(AreaTerminal, "", m.SettingsDropAction(), "drag drop file insert upload")
+	add(AreaTerminal, "", m.SettingsLegacyAlgorithmsTitle(),
+		"legacy algorithms ssh unsaved host ciphers key exchange host key")
 	add(AreaTerminal, "", m.SettingsAutocompleteTitle(), "autocomplete completion suggestions")
 	add(AreaTerminal, "", m.SettingsAutocompleteEnabled(), "autocomplete enabled")
 	add(AreaTerminal, "", m.SettingsAutocompletePopupMenu(), "autocomplete popup menu")

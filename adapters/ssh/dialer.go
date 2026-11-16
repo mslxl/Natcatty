@@ -206,6 +206,79 @@ func (e endpoint) address() string {
 	return net.JoinHostPort(e.hostname, strconv.Itoa(e.portOr22()))
 }
 
+// keyExchangeGuard answers the host-key callback for one Connection. The first
+// key it sees is checked through the application's verifier; a later key
+// exchange (rekey) that presents that same key is answered synchronously with
+// nil and never reaches the user again. A different key is not remembered, so
+// a mid-session key change still verifies, prompts, and can fail closed.
+type keyExchangeGuard struct {
+	mu       sync.Mutex
+	accepted []byte
+}
+
+// verifyKey reports whether blob is the key already accepted for this
+// connection, and otherwise runs the application verifier before remembering
+// it. It is safe to call from concurrent key exchanges.
+func (g *keyExchangeGuard) verifyKey(ctx context.Context, blob []byte, verify func(context.Context, domainconn.Key) error, key domainconn.Key) error {
+	g.mu.Lock()
+	unchanged := len(g.accepted) > 0 && bytes.Equal(g.accepted, blob)
+	g.mu.Unlock()
+	if unchanged {
+		return nil
+	}
+	if err := verify(ctx, key); err != nil {
+		return err
+	}
+	g.mu.Lock()
+	g.accepted = append(g.accepted[:0], blob...)
+	g.mu.Unlock()
+	return nil
+}
+
+// describeHostKey turns a live server key into the domain key the application
+// verifies. An OpenSSH host certificate is validated here - host certificate
+// type, principal, validity, and CA signature - because a forged or expired
+// certificate must fail closed instead of prompting. A valid certificate also
+// carries its embedded key and signing CA so the Vault can match either of them
+// across a renewal that changes only the certificate blob.
+func describeHostKey(hostname string, port int, key xssh.PublicKey) (domainconn.Key, error) {
+	blob := key.Marshal()
+	described := domainconn.Key{
+		Hostname:    hostname,
+		Port:        port,
+		KeyType:     key.Type(),
+		Fingerprint: domainconn.Fingerprint(blob),
+		PublicKey:   domainconn.PublicKey(key.Type(), blob),
+	}
+	certificate, ok := key.(*xssh.Certificate)
+	if !ok {
+		return described, nil
+	}
+	if certificate.CertType != xssh.HostCert {
+		return described, &appconnection.Error{
+			Kind:  appconnection.KindHostKey,
+			Cause: fmt.Errorf("%w: certificate type %d is not a host certificate", appconnection.ErrHostKeyRejected, certificate.CertType),
+		}
+	}
+	checker := &xssh.CertChecker{}
+	if err := checker.CheckCert(hostname, certificate); err != nil {
+		return described, &appconnection.Error{
+			Kind:  appconnection.KindHostKey,
+			Cause: fmt.Errorf("%w: %v", appconnection.ErrHostKeyRejected, err),
+		}
+	}
+	keyBlob := certificate.Key.Marshal()
+	caBlob := certificate.SignatureKey.Marshal()
+	described.IsHostCertificate = true
+	described.CertificateKeyType = certificate.Key.Type()
+	described.CertificateKeyFingerprint = domainconn.Fingerprint(keyBlob)
+	described.CertificateKeyPublicKey = domainconn.PublicKey(certificate.Key.Type(), keyBlob)
+	described.CertificateCAType = certificate.SignatureKey.Type()
+	described.CertificateCAFingerprint = domainconn.Fingerprint(caBlob)
+	described.CertificateCAPublicKey = domainconn.PublicKey(certificate.SignatureKey.Type(), caBlob)
+	return described, nil
+}
+
 func endpointsFor(req appconnection.DialRequest) []endpoint {
 	endpoints := make([]endpoint, 0, len(req.Jumps)+1)
 	for _, hop := range req.Jumps {
@@ -423,6 +496,7 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 	if err != nil {
 		return nil, "", err
 	}
+	guard := &keyExchangeGuard{}
 	config := &xssh.ClientConfig{
 		User:         ep.username,
 		AuthCallback: machine.Next,
@@ -431,13 +505,11 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 				return &appconnection.Error{Kind: appconnection.KindHostKey, Cause: appconnection.ErrHostKeyRejected}
 			}
 			blob := key.Marshal()
-			return ep.verify(authCtx, domainconn.Key{
-				Hostname:    ep.hostname,
-				Port:        port,
-				KeyType:     key.Type(),
-				Fingerprint: domainconn.Fingerprint(blob),
-				PublicKey:   domainconn.PublicKey(key.Type(), blob),
-			})
+			described, err := describeHostKey(ep.hostname, port, key)
+			if err != nil {
+				return err
+			}
+			return guard.verifyKey(authCtx, blob, ep.verify, described)
 		},
 		HostKeyAlgorithms: offer.hostKeys,
 		Config: xssh.Config{

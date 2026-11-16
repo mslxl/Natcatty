@@ -118,6 +118,10 @@ func (t *fakeTerminal) SetConnectionLogRetention(count, days int) error {
 	})
 }
 
+func (t *fakeTerminal) SetLegacyAlgorithms(enabled bool) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.LegacyAlgorithms = enabled })
+}
+
 func (t *fakeTerminal) SetHistoryCaptureHookEnabled(enabled bool) error {
 	return t.update(func(settings *domainterminal.Settings) { settings.HistoryCaptureHookEnabled = enabled })
 }

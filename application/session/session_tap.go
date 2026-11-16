@@ -58,9 +58,11 @@ func (s *Session) AcknowledgeActivity() {
 
 // handleInput passes input through the tap. source is true for input typed in
 // this Session's own terminal: only that input is observed by the input hook,
-// so a broadcast delivery cannot recursively fan out again. gated reports that
-// an active transfer consumed the input.
-func (s *Session) handleInput(data []byte, source bool) (forwarded []byte, changed bool, gated bool) {
+// so a broadcast delivery cannot recursively fan out again. translate is true
+// for keyboard input, including a broadcast target's copy, and false for an
+// explicit insertion. gated reports that an active transfer consumed the
+// input.
+func (s *Session) handleInput(data []byte, source, translate bool) (forwarded []byte, changed bool, gated bool) {
 	now := time.Now()
 	forwarded, changed, started, completions, transfer := s.tap.handleInput(data, now)
 	// The tap returns no bytes only while a transfer consumes normal input.
@@ -84,6 +86,12 @@ func (s *Session) handleInput(data []byte, source bool) (forwarded []byte, chang
 	}
 	if source && len(forwarded) > 0 && s.onInput != nil {
 		s.onInput(s.id, forwarded)
+	}
+	// The Host's input compatibility applies to keyboard input only, after
+	// the tap and the broadcast hook observed the user's bytes. Programmatic
+	// insertion already carries the bytes its caller chose.
+	if translate && len(forwarded) > 0 {
+		forwarded = s.inputTranslator.translate(forwarded)
 	}
 	// Encode only the bytes that leave the Session. The tap, input hook, and
 	// broadcast fan-out above operate on the user's UTF-8 text.

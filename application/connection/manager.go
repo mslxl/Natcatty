@@ -569,8 +569,21 @@ func (m *Manager) dial(ctx context.Context, req Request, endpoint endpointConfig
 	}
 
 	succeeded := make([]string, total)
+	accepted := &hostKeyAcceptance{}
 	verify := func(verifyCtx context.Context, key domainconn.Key) error {
-		return m.verifyHostKey(verifyCtx, key, known)
+		// x/crypto/ssh runs the verifier again on every key exchange. The Known
+		// Host snapshot above is fixed for this dial, so a key trusted earlier in
+		// this Connection is remembered here and a rekey presenting it answers
+		// without prompting again. A different key is not remembered and still
+		// verifies (and can fail closed).
+		if accepted.has(key) {
+			return nil
+		}
+		if err := m.verifyHostKey(verifyCtx, key, known); err != nil {
+			return err
+		}
+		accepted.add(key)
+		return nil
 	}
 	username := func(plan AuthPlan, fallback string) string {
 		if plan.Username != "" {
@@ -783,10 +796,52 @@ func (m *Manager) knownHosts(ctx context.Context) ([]domainconn.KnownHost, error
 	return known, nil
 }
 
+// hostKeyAcceptance remembers the keys trusted for the lifetime of one
+// Connection. The Known Host snapshot is read once per dial, so without this a
+// key the user trusted on the first key exchange would prompt again on rekey.
+// It is scoped by hostname, port, and fingerprint so a different endpoint (or a
+// changed key) is always verified.
+type hostKeyAcceptance struct {
+	mu   sync.Mutex
+	seen map[string]struct{}
+}
+
+func hostKeyAcceptanceKey(key domainconn.Key) string {
+	fingerprint := key.Fingerprint
+	// An OpenSSH host certificate is identified by its stable trust anchor so a
+	// renewal inside one Connection does not look like a changed key.
+	if key.IsHostCertificate {
+		if key.CertificateCAFingerprint != "" {
+			fingerprint = key.CertificateCAFingerprint
+		} else if key.CertificateKeyFingerprint != "" {
+			fingerprint = key.CertificateKeyFingerprint
+		}
+	}
+	return fmt.Sprintf("%s\x00%d\x00%s", key.Hostname, key.Port, fingerprint)
+}
+
+func (a *hostKeyAcceptance) has(key domainconn.Key) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_, ok := a.seen[hostKeyAcceptanceKey(key)]
+	return ok
+}
+
+func (a *hostKeyAcceptance) add(key domainconn.Key) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.seen == nil {
+		a.seen = make(map[string]struct{})
+	}
+	a.seen[hostKeyAcceptanceKey(key)] = struct{}{}
+}
+
 // verifyHostKey classifies the live key and asks the user when the key is not
-// already trusted. Trust upserts the Known Host before authentication starts.
+// already trusted. A host certificate matches a Known Host under its embedded
+// key or signing CA, so renewal does not prompt; an unknown CA or key still
+// does. Trust upserts the Known Host before authentication starts.
 func (m *Manager) verifyHostKey(ctx context.Context, key domainconn.Key, known []domainconn.KnownHost) error {
-	classified := domainconn.Classify(known, key.Hostname, key.Port, key.KeyType, key.Fingerprint)
+	classified := domainconn.ClassifyKey(known, key)
 	if classified.PublicKey == "" {
 		classified.PublicKey = key.PublicKey
 	}

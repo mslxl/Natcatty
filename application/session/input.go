@@ -109,7 +109,7 @@ func (s *Service) SendInput(targets []model.SessionID, data []byte) SendResult {
 			delivery.Status = DeliveryMissing
 			delivery.Err = ErrClosed
 		default:
-			delivery.Status, delivery.Err = sessions[index].deliver(data)
+			delivery.Status, delivery.Err = sessions[index].deliver(data, true)
 		}
 		result.Deliveries = append(result.Deliveries, delivery)
 	}
@@ -122,7 +122,7 @@ func (s *Service) SendInput(targets []model.SessionID, data []byte) SendResult {
 // pass the tap, which ignores a bracketed paste's contents. It reports whether
 // the Session accepted them.
 func (s *Session) InsertInput(data []byte) bool {
-	status, err := s.deliver(data)
+	status, err := s.deliver(data, false)
 	return err == nil && status == DeliveryDelivered
 }
 
@@ -179,8 +179,9 @@ func (s *Service) SendChunksUntil(ctx context.Context, targets []model.SessionID
 // deliver queues data for this Session's transport without going through the
 // terminal duplex, so broadcast input never triggers the typed-input hook that
 // started it. The tap still observes the bytes for command tracking and the
-// transfer gate.
-func (s *Session) deliver(data []byte) (DeliveryStatus, error) {
+// transfer gate. typed marks a broadcast copy of keyboard input, which passes
+// the target Host's own input compatibility; an explicit insertion does not.
+func (s *Session) deliver(data []byte, typed bool) (DeliveryStatus, error) {
 	select {
 	case <-s.done:
 		return DeliveryFailed, ErrClosed
@@ -188,7 +189,7 @@ func (s *Session) deliver(data []byte) (DeliveryStatus, error) {
 		return DeliveryFailed, ErrClosed
 	default:
 	}
-	forwarded, _, gated := s.handleInput(data, false)
+	forwarded, _, gated := s.handleInput(data, false, typed)
 	if gated {
 		return DeliveryGated, nil
 	}

@@ -1056,6 +1056,9 @@ func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 		SFTPSudo:               draft.SFTPSudo,
 		DeviceType:             draft.DeviceType,
 		AutoAttachTmux:         draft.AutoAttachTmux,
+		NewlineMode:            draft.NewlineMode,
+		BackspaceMode:          draft.BackspaceMode,
+		LineEditingMode:        draft.LineEditingMode,
 		MoshServerPath:         draft.MoshServerPath,
 		ETPort:                 draft.ETPort,
 	}

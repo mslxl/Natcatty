@@ -290,7 +290,7 @@ func (c *TerminalConn) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	forwarded, _, _ := c.session.handleInput(p, true)
+	forwarded, _, _ := c.session.handleInput(p, true, true)
 	if len(forwarded) == 0 {
 		select {
 		case <-c.session.done:

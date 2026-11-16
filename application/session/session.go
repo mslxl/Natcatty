@@ -32,6 +32,7 @@ import (
 	"github.com/mslxl/natcatty/domain/model/serial"
 	telnetmodel "github.com/mslxl/natcatty/domain/model/telnet"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
+	modelterminal "github.com/mslxl/natcatty/domain/model/terminal"
 )
 
 // Flow-control watermarks, in bytes of output pending in TerminalConn.
@@ -424,6 +425,11 @@ type StartSpec struct {
 	// commands then use RawExec: they are written to the existing PTY as-is,
 	// without a shell wrapper or completion markers, and report no exit code.
 	NetworkDevice bool
+	// InputCompatibility translates typed Enter and Backspace keys before
+	// they reach the wire. It applies only to KindSSH; every other transport
+	// keeps its own input behavior. The zero value is byte-identical to
+	// today.
+	InputCompatibility modelterminal.InputCompatibility
 	// Serial carries a serial Session's port and framing. It is required when
 	// Kind is KindSerial and ignored by every other transport.
 	Serial *serial.Config
@@ -585,6 +591,7 @@ type Session struct {
 	hostAtuinActive bool
 	codec           Codec
 	highlighter     *domainterminal.Highlighter
+	inputTranslator *inputTranslator
 
 	// rawExecMu serializes programmatic commands on the one interactive PTY.
 	// rawMu guards the single raw-output subscriber that a running command
@@ -872,6 +879,10 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	if codec == nil {
 		return nil, fmt.Errorf("session: codec factory returned nil for %q", spec.Encoding)
 	}
+	var inputTranslator *inputTranslator
+	if spec.Kind == KindSSH {
+		inputTranslator = newInputTranslator(spec.InputCompatibility)
+	}
 
 	// A Host that already runs Atuin is detected before the terminal opens,
 	// over a separate read-only channel. Present keeps the Netcatty capture
@@ -966,6 +977,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		hostAtuin:           s.hostAtuin,
 		hostAtuinActive:     hostAtuinActive,
 		codec:               codec,
+		inputTranslator:     inputTranslator,
 		highlighter:         domainterminal.NewHighlighter(highlightEnabled, highlightRules),
 		genDone:             make(chan struct{}),
 		writeCh:             make(chan []byte, s.writeDepth),
@@ -1776,6 +1788,9 @@ func (s *Session) reconnect(generation int, immediate bool) {
 		}
 		transport, err := s.factory.Open(s.ctx, s.spec)
 		if err == nil {
+			// A new transport starts a new remote line, so the input
+			// translator must not delete bytes from the previous one.
+			s.inputTranslator.reset()
 			s.post(command{kind: commandTransportOpen, generation: generation, transport: transport})
 			return
 		}

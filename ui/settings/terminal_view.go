@@ -123,6 +123,14 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 			}
 		})
 
+		ui.Text(c, m.SettingsLegacyAlgorithmsTitle()).Bold()
+		ui.Text(c, m.SettingsLegacyAlgorithmsDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+		legacyAlgorithms := settings.LegacyAlgorithms
+		if ui.Checkbox(c, &legacyAlgorithms, m.SettingsLegacyAlgorithmsEnabled()).Changed() {
+			state.SetLegacyAlgorithms(legacyAlgorithms)
+			c.Invalidate()
+		}
+
 		if state.Problem() {
 			ui.Text(c, m.SettingsTerminalSaveFailed()).TextColor(uitheme.DangerText(t)).FontSize(kit.M(c).Font.Footnote)
 		}

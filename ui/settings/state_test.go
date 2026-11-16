@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	applock "github.com/mslxl/natcatty/application/applock"
@@ -150,6 +151,31 @@ func TestLockNowAsksForAManualLock(t *testing.T) {
 	}
 	if lock.lockCause != applock.ReasonManual {
 		t.Fatalf("reason = %q, want manual", lock.lockCause)
+	}
+}
+
+// TestTerminalStateStoresTheUnsavedHostLegacyAlgorithmPreference proves the
+// terminal form writes the one opt-in an Unsaved Host can carry.
+func TestTerminalStateStoresTheUnsavedHostLegacyAlgorithmPreference(t *testing.T) {
+	terminal := newFakeTerminal()
+	state := NewTerminalState(terminal)
+	if state.Settings().LegacyAlgorithms {
+		t.Fatal("the Unsaved Host legacy-algorithm preference defaulted to on")
+	}
+
+	if !state.SetLegacyAlgorithms(true) {
+		t.Fatalf("SetLegacyAlgorithms failed: problem=%v", state.Problem())
+	}
+	if !terminal.settings.LegacyAlgorithms || !state.Settings().LegacyAlgorithms {
+		t.Fatal("the Unsaved Host legacy-algorithm preference was not stored")
+	}
+
+	terminal.err = errors.New("disk full")
+	if state.SetLegacyAlgorithms(false) {
+		t.Fatal("SetLegacyAlgorithms reported success after a save failure")
+	}
+	if !state.Problem() {
+		t.Fatal("a failed save was not reported")
 	}
 }
 

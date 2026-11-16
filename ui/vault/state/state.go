@@ -18,6 +18,7 @@ import (
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
+	modelterminal "github.com/mslxl/natcatty/domain/model/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainbackup "github.com/mslxl/natcatty/domain/vaultbackup"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
@@ -211,6 +212,12 @@ type Form struct {
 	// AutoAttachTmux keeps the SSH login shell in a deterministic tmux
 	// session. It is offered only for SSH Hosts that run a normal shell.
 	AutoAttachTmux bool
+	// NewlineMode, BackspaceMode, and LineEditingMode select the local
+	// Enter/Backspace translation for an SSH Host. An empty value is the
+	// default and preserves today's bytes.
+	NewlineMode     string
+	BackspaceMode   string
+	LineEditingMode string
 	// MoshServerPath overrides the remote mosh-server binary for a Mosh Host.
 	MoshServerPath string
 	// ETPort is the EternalTerminal server port text for an ET Host. It stays a
@@ -818,6 +825,9 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		SFTPSudo:               host.SFTPSudo,
 		NetworkDevice:          host.IsNetworkDevice(),
 		AutoAttachTmux:         host.AutoAttachTmux,
+		NewlineMode:            string(host.NewlineMode),
+		BackspaceMode:          string(host.BackspaceMode),
+		LineEditingMode:        string(host.LineEditingMode),
 		MoshServerPath:         host.MoshServerPath,
 		ETPort:                 etPortText(host),
 	}
@@ -1225,6 +1235,9 @@ func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 		SFTPSudo:               host.SFTPSudo,
 		DeviceType:             host.DeviceType,
 		AutoAttachTmux:         host.AutoAttachTmux,
+		NewlineMode:            host.NewlineMode,
+		BackspaceMode:          host.BackspaceMode,
+		LineEditingMode:        host.LineEditingMode,
 		MoshServerPath:         host.MoshServerPath,
 		ETPort:                 host.ETPort,
 	}
@@ -1291,6 +1304,9 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		SFTPSudo:         s.form.SFTPSudo,
 		DeviceType:       formDeviceType(s.form.NetworkDevice, s.form.Protocol),
 		AutoAttachTmux:   formAutoAttachTmux(s.form.AutoAttachTmux, s.form.NetworkDevice, s.form.Protocol),
+		NewlineMode:      modelterminal.NewlineMode(s.form.NewlineMode),
+		BackspaceMode:    modelterminal.BackspaceMode(s.form.BackspaceMode),
+		LineEditingMode:  modelterminal.LineEditingMode(s.form.LineEditingMode),
 		MoshServerPath:   s.form.MoshServerPath,
 		ETPort:           etPort,
 	}, ProblemNone
