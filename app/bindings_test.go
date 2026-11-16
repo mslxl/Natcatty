@@ -274,7 +274,7 @@ func TestDispatcherRunsRealActionsAndLeavesTerminalChordsAlone(t *testing.T) {
 	}
 
 	// An unavailable binding never reaches the dispatcher.
-	if _, err := service.SetBinding("toggle-pane-zoom", domain.SchemePC, "Ctrl + Alt + Z", nil); err != nil {
+	if _, err := service.SetBinding("search-terminal", domain.SchemePC, "Ctrl + Alt + Z", nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, shortcut := range dispatcher.Shortcuts() {
@@ -421,13 +421,13 @@ func TestTerminalKeybindsFollowOverridesAndClearOldDefaults(t *testing.T) {
 }
 
 func TestUnavailableCatalogEntriesKeepTheirLabels(t *testing.T) {
-	for _, id := range []string{"search-terminal", "toggle-pane-zoom", "paste-selection"} {
+	for _, id := range []string{"search-terminal", "paste-selection"} {
 		if catalogBindingAvailable(id) {
 			t.Errorf("%s is marked available", id)
 		}
 	}
 	for _, id := range []string{
-		"new-tab", "copy", "open-settings", "broadcast",
+		"new-tab", "copy", "open-settings", "broadcast", "toggle-pane-zoom",
 		"open-sftp", "sftp-copy", "sftp-cut", "sftp-paste", "sftp-rename",
 		"sftp-delete", "sftp-refresh", "sftp-new-folder", "sftp-open", "sftp-go-parent",
 	} {

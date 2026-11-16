@@ -108,7 +108,7 @@ func TestRemovePaneDoesNotMutateTheInputTree(t *testing.T) {
 	}
 }
 
-func TestMoveWithinPreservesTheSourcePane(t *testing.T) {
+func TestMovePanePreservesTheSourcePane(t *testing.T) {
 	root, err := SplitAt(pane("p1"), "p1", "p2", "s1", SideRight)
 	if err != nil {
 		t.Fatal(err)
@@ -118,9 +118,9 @@ func TestMoveWithinPreservesTheSourcePane(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	moved, err := MoveWithin(root, "p3", "p1", "s3", SideLeft)
+	moved, err := MovePane(root, "p3", "p1", "s3", SideLeft)
 	if err != nil {
-		t.Fatalf("MoveWithin: %v", err)
+		t.Fatalf("MovePane: %v", err)
 	}
 	if got, want := CollectPaneIDs(moved), []model.PaneID{"p3", "p1", "p2"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("panes = %v, want %v", got, want)
@@ -130,19 +130,51 @@ func TestMoveWithinPreservesTheSourcePane(t *testing.T) {
 	}
 }
 
-func TestMoveWithinRejectsDroppingAPaneOntoItselfOrAnUnknownTarget(t *testing.T) {
+func TestMovePaneRejectsDroppingAPaneOntoItselfOrAnUnknownTarget(t *testing.T) {
 	root, err := SplitAt(pane("p1"), "p1", "p2", "s1", SideRight)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := MoveWithin(root, "p1", "p1", "s2", SideLeft); !errors.Is(err, ErrSamePane) {
+	if _, err := MovePane(root, "p1", "p1", "s2", SideLeft); !errors.Is(err, ErrSamePane) {
 		t.Fatalf("self drop error = %v, want ErrSamePane", err)
 	}
-	if _, err := MoveWithin(root, "p1", "missing", "s2", SideLeft); !errors.Is(err, ErrPaneNotFound) {
+	if _, err := MovePane(root, "p1", "missing", "s2", SideLeft); !errors.Is(err, ErrPaneNotFound) {
 		t.Fatalf("unknown target error = %v, want ErrPaneNotFound", err)
 	}
-	if _, err := MoveWithin(root, "missing", "p1", "s2", SideLeft); !errors.Is(err, ErrPaneNotFound) {
+	if _, err := MovePane(root, "missing", "p1", "s2", SideLeft); !errors.Is(err, ErrPaneNotFound) {
 		t.Fatalf("unknown source error = %v, want ErrPaneNotFound", err)
+	}
+}
+
+// TestMovePaneLeavesTheTreeUnchangedWhenTheTargetClosedMidDrag pins the stale
+// drop guard: the source is pruned only after every target check passes.
+func TestMovePaneLeavesTheTreeUnchangedWhenTheTargetClosedMidDrag(t *testing.T) {
+	root, err := SplitAt(pane("p1"), "p1", "p2", "s1", SideRight)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err = SplitAt(root, "p2", "p3", "s2", SideBottom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := Clone(root)
+
+	closed, err := RemovePane(root, "p3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MovePane(closed, "p1", "p3", "s3", SideLeft); !errors.Is(err, ErrPaneNotFound) {
+		t.Fatalf("stale target error = %v, want ErrPaneNotFound", err)
+	}
+	if got := CollectPaneIDs(root); !reflect.DeepEqual(got, []model.PaneID{"p1", "p2", "p3"}) {
+		t.Fatalf("input tree changed to %v after a stale drop", got)
+	}
+	if !reflect.DeepEqual(root, before) {
+		t.Fatal("a rejected drop mutated the input tree")
+	}
+	// The surviving tree still holds the source, so a second valid drop works.
+	if _, err := MovePane(closed, "p1", "p2", "s3", SideLeft); err != nil {
+		t.Fatalf("valid drop after a stale one: %v", err)
 	}
 }
 

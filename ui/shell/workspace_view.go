@@ -44,6 +44,9 @@ type tabRef struct {
 	detach       func(model.PaneID) bool
 	rename       func(model.PaneID, string) bool
 	retry        func(model.PaneID) bool
+	// magnified reports the Tab's zoomed Pane, or "". While set, the Tree
+	// renders that Pane alone; its hidden members show no drop zones.
+	magnified func() model.PaneID
 	// split marks a Tab with more than one Pane: only then does the focused
 	// Pane need an outline to tell it apart.
 	split bool
@@ -77,7 +80,8 @@ func mainTabRef(owner state.RenderOwner, s *state.State, tabIndex int) tabRef {
 		rename: func(paneID model.PaneID, title string) bool {
 			return s.RenamePane(tabIndex, paneID, title)
 		},
-		retry: func(paneID model.PaneID) bool { return s.RetryPane(id, paneID) },
+		retry:     func(paneID model.PaneID) bool { return s.RetryPane(id, paneID) },
+		magnified: func() model.PaneID { return s.MagnifiedPaneID(tabIndex) },
 	}
 }
 
@@ -321,6 +325,15 @@ func composeTabTitle(m locales.Messages, label string, number int) string {
 func paneTree(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ref tabRef, node *domainworkspace.Node, focus []int, ordinal *int) {
 	if node == nil {
 		return
+	}
+	// A magnified Pane fills its Tab alone. The other members still exist in
+	// the tree and in their Sessions; they are only hidden, so no drop zone
+	// or focus target for them is drawn.
+	if ref.magnified != nil {
+		if ID := ref.magnified(); ID != "" {
+			paneView(c, s, m, t, ref, ID, ordinal)
+			return
+		}
 	}
 	if node.IsPane() {
 		paneView(c, s, m, t, ref, node.PaneID, ordinal)

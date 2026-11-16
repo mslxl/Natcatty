@@ -256,10 +256,15 @@ func removePane(n *Node, target model.PaneID) (*Node, bool) {
 	return &clone, true
 }
 
-// MoveWithin moves source beside target inside one Tab. Dropping a pane onto
-// itself is rejected; the source subtree is a leaf, so it cannot contain the
-// target.
-func MoveWithin(root *Node, source, target model.PaneID, splitID model.SplitID, side Side) (*Node, error) {
+// MovePane moves source beside target inside one Tab. The side chooses the
+// before (left/top) or after (right/bottom) slot; moving into another Tab is
+// the shell's MovePaneToTab. Dropping a pane onto itself is rejected; the
+// source is a leaf, so it cannot contain the target.
+//
+// Every check runs before the source is pruned. A drop whose target is no
+// longer in the tree, such as one that closed mid-drag, returns
+// ErrPaneNotFound and leaves the input tree unchanged.
+func MovePane(root *Node, source, target model.PaneID, splitID model.SplitID, side Side) (*Node, error) {
 	if !side.Valid() {
 		return nil, ErrInvalidSide
 	}

@@ -47,8 +47,12 @@ type Tab struct {
 	// membership until the user renames the Tab.
 	GeneratedTitle bool
 	// Copy counts duplicate generations: 0 is the original, 1 the first copy.
-	Copy      int
-	Dirty     bool
+	Copy  int
+	Dirty bool
+	// Magnified is the Pane currently zoomed to fill the whole Tab, or "".
+	// While set, the Tab's other member Panes are hidden and accept no drops.
+	// Magnification is a view state: it is not part of the saved Workspace.
+	Magnified model.PaneID
 	Root      *domainworkspace.Node
 	FocusPath []int
 	panes     map[model.PaneID]*pane
@@ -241,6 +245,13 @@ func (t *Tab) focusedPane() (*pane, model.PaneID) {
 func (t *Tab) setFocus(paneID model.PaneID) {
 	if path := domainworkspace.PathTo(t.Root, paneID); path != nil {
 		t.FocusPath = append([]int{}, path...)
+	}
+}
+
+// clearStaleMagnification ends magnification when its Pane left the tree.
+func (t *Tab) clearStaleMagnification() {
+	if t.Magnified != "" && !domainworkspace.ContainsPane(t.Root, t.Magnified) {
+		t.Magnified = ""
 	}
 }
 
@@ -1221,6 +1232,49 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 	return nil
 }
 
+// TogglePaneZoom magnifies the focused Pane to fill its Tab, or restores the
+// split when it is already magnified. It reports false without an active Pane.
+func (s *State) TogglePaneZoom() bool {
+	tab, _ := s.activeTab()
+	if tab == nil {
+		return false
+	}
+	_, focusedID := tab.focusedPane()
+	if focusedID == "" {
+		return false
+	}
+	if tab.Magnified == focusedID {
+		tab.Magnified = ""
+	} else {
+		tab.Magnified = focusedID
+	}
+	s.RequestRedraw()
+	return true
+}
+
+// MagnifiedPaneID returns the zoomed Pane of the Tab at index, or "".
+func (s *State) MagnifiedPaneID(index int) model.PaneID {
+	if index < 0 || index >= len(s.tabs) {
+		return ""
+	}
+	return s.tabs[index].Magnified
+}
+
+// SetMagnifiedPane zooms paneID in the Tab at index, or restores the split
+// when paneID is empty. It reports false for a Pane outside the Tab.
+func (s *State) SetMagnifiedPane(index int, paneID model.PaneID) bool {
+	if index < 0 || index >= len(s.tabs) {
+		return false
+	}
+	tab := s.tabs[index]
+	if paneID != "" && !domainworkspace.ContainsPane(tab.Root, paneID) {
+		return false
+	}
+	tab.Magnified = paneID
+	s.RequestRedraw()
+	return true
+}
+
 // SplitRight splits the focused Pane into left and right halves.
 func (s *State) SplitRight() error { return s.SplitFocusedPane(domainworkspace.SideRight) }
 
@@ -1251,6 +1305,7 @@ func (s *State) CloseFocusedPane() bool {
 	s.closePane(value, false)
 	delete(tab.panes, focusedID)
 	tab.Root = root
+	tab.clearStaleMagnification()
 	if next == "" {
 		return s.CloseTab(index)
 	}
@@ -1373,14 +1428,26 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 	if !ok || !domainworkspace.ContainsPane(source.Root, sourcePaneID) {
 		return false
 	}
-	if !domainworkspace.ContainsPane(target.Root, targetPaneID) {
+	// An empty Tab has no target Pane. Dropping into it adopts the source as
+	// its root, mirroring RemovePane's recovery of a lone Pane.
+	emptyTarget := len(target.paneIDs()) == 0 || target.Root == nil
+	if !emptyTarget && !domainworkspace.ContainsPane(target.Root, targetPaneID) {
+		return false
+	}
+	// A magnified Tab shows only its zoomed Pane. Every other member is hidden
+	// and neither accepts a drop nor starts a drag, so a stale drag value from
+	// before the zoom cannot rearrange the hidden layout.
+	if source.Magnified != "" && source.Magnified != sourcePaneID {
+		return false
+	}
+	if target.Magnified != "" && target.Magnified != targetPaneID {
 		return false
 	}
 
 	sourcePanes := len(source.paneIDs())
 	targetPanes := len(target.paneIDs())
 	if source == target {
-		root, err := domainworkspace.MoveWithin(
+		root, err := domainworkspace.MovePane(
 			source.Root, sourcePaneID, targetPaneID,
 			model.SplitID(newRuntimeID("split-")), side)
 		if err != nil {
@@ -1397,17 +1464,24 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 	if err != nil {
 		return false
 	}
-	targetRoot, err := domainworkspace.SplitAt(
-		target.Root, targetPaneID, sourcePaneID,
-		model.SplitID(newRuntimeID("split-")), side)
-	if err != nil {
-		return false
+	var targetRoot *domainworkspace.Node
+	if emptyTarget {
+		targetRoot = domainworkspace.NewPaneNode(sourcePaneID)
+	} else {
+		var err error
+		targetRoot, err = domainworkspace.SplitAt(
+			target.Root, targetPaneID, sourcePaneID,
+			model.SplitID(newRuntimeID("split-")), side)
+		if err != nil {
+			return false
+		}
 	}
 
 	delete(source.panes, sourcePaneID)
 	target.panes[sourcePaneID] = value
 	target.Root = targetRoot
 	target.setFocus(sourcePaneID)
+	source.clearStaleMagnification()
 	if sourcePanes == 1 && targetPanes == 1 {
 		// Dragging one single-Pane Tab onto another merges them into a Tab
 		// named after both connections in tree order, as the original's
@@ -1453,7 +1527,7 @@ func (s *State) MovePaneToTab(sourceTabID model.TabID, sourcePaneID model.PaneID
 		return false
 	}
 	_, focusedID := target.focusedPane()
-	if focusedID == "" {
+	if focusedID == "" && len(target.paneIDs()) > 0 {
 		return false
 	}
 	return s.MovePane(sourceTabID, sourcePaneID, targetTabID, focusedID, domainworkspace.SideRight)
@@ -1944,6 +2018,7 @@ func (s *State) closeDetachedSessions() bool {
 			s.closePane(value, false)
 			delete(tab.panes, id)
 			tab.Root = root
+			tab.clearStaleMagnification()
 			if next := domainworkspace.FocusAfterRemove(root, focusedID, id); next != "" {
 				tab.setFocus(next)
 			}

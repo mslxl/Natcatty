@@ -90,6 +90,40 @@ func TestShellRendersRecursiveSplitPanes(t *testing.T) {
 	}
 }
 
+// TestShellRendersOnlyTheMagnifiedPane pins the view side of the magnified
+// guard: hidden members draw no surface and therefore no drop zone.
+func TestShellRendersOnlyTheMagnifiedPane(t *testing.T) {
+	graph := newWorkspaceViewGraph(t)
+	tt := ui.NewTester(View(graph.state), 900, 600)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.waitForSurfaces(t, 2)
+	root, _, _ := graph.state.TabTree(0)
+	panes := domainworkspace.CollectPaneIDs(root)
+	if len(panes) != 2 {
+		t.Fatalf("panes = %v, want 2", panes)
+	}
+
+	if !graph.state.SetMagnifiedPane(0, panes[0]) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+	tt.Frame()
+	if got := countText(tt.Texts(), "terminal-surface"); got != 1 {
+		t.Fatalf("terminal surfaces = %d while magnified, want 1", got)
+	}
+	if !graph.state.SetMagnifiedPane(0, "") {
+		t.Fatal("clearing the zoom failed")
+	}
+	tt.Frame()
+	if got := countText(tt.Texts(), "terminal-surface"); got != 2 {
+		t.Fatalf("terminal surfaces = %d after restoring the split, want 2", got)
+	}
+}
+
 func TestShellPaneMenuSplitsAndCloses(t *testing.T) {
 	graph := newWorkspaceViewGraph(t)
 	tt := ui.NewTester(View(graph.state), 900, 600)

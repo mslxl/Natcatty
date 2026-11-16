@@ -21,8 +21,6 @@ import (
 // have. They keep their row and override controls in Settings but are never
 // dispatched, so a key can never run a different action than its label says.
 var unavailableBindings = map[string]bool{
-	"toggle-pane-zoom": true,
-
 	"port-forwarding": true,
 	"new-workspace":   true,
 	"snippets":        true,
@@ -348,6 +346,8 @@ func (d *bindingDispatcher) action(id string) (func(int), bool) {
 		}, true
 	case "toggle-side-panel":
 		return func(int) { d.shell.ToggleActiveFiles() }, true
+	case "toggle-pane-zoom":
+		return func(int) { d.shell.TogglePaneZoom() }, true
 	case "history-search":
 		if d.logs == nil {
 			return nil, false
