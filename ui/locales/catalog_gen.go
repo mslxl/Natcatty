@@ -9208,6 +9208,46 @@ func (msgs Messages) ComposeTargetBroadcast(count int) string {
 	return Catalog.Format(msgs.locale, "composeTargetBroadcast", map[string]any{"count": count})
 }
 
+// ComposeTargetCustom says "Compose: {count, plural, one {# Session} other {# Sessions}}"
+// in the language the app shows.
+func ComposeTargetCustom(count int) string { return In(i18n.Locale()).ComposeTargetCustom(count) }
+
+// ComposeTargetCustom says "Compose: {count, plural, one {# Session} other {# Sessions}}"
+// in the language of msgs.
+func (msgs Messages) ComposeTargetCustom(count int) string {
+	return Catalog.Format(msgs.locale, "composeTargetCustom", map[string]any{"count": count})
+}
+
+// ComposeTargetNone says "No compose targets"
+// in the language the app shows.
+func ComposeTargetNone() string { return In(i18n.Locale()).ComposeTargetNone() }
+
+// ComposeTargetNone says "No compose targets"
+// in the language of msgs.
+func (msgs Messages) ComposeTargetNone() string {
+	return Catalog.Format(msgs.locale, "composeTargetNone", nil)
+}
+
+// ComposeTargetFollow says "Follow broadcast or focused Session"
+// in the language the app shows.
+func ComposeTargetFollow() string { return In(i18n.Locale()).ComposeTargetFollow() }
+
+// ComposeTargetFollow says "Follow broadcast or focused Session"
+// in the language of msgs.
+func (msgs Messages) ComposeTargetFollow() string {
+	return Catalog.Format(msgs.locale, "composeTargetFollow", nil)
+}
+
+// ComposeTargetsDiverged says "Compose targets differ from the broadcast selection."
+// in the language the app shows.
+func ComposeTargetsDiverged() string { return In(i18n.Locale()).ComposeTargetsDiverged() }
+
+// ComposeTargetsDiverged says "Compose targets differ from the broadcast selection."
+// in the language of msgs.
+func (msgs Messages) ComposeTargetsDiverged() string {
+	return Catalog.Format(msgs.locale, "composeTargetsDiverged", nil)
+}
+
 // ComposeSending says "Sending…"
 // in the language the app shows.
 func ComposeSending() string { return In(i18n.Locale()).ComposeSending() }

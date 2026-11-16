@@ -76,6 +76,16 @@ func (s *State) refreshBroadcastState() {
 			removed++
 		}
 	}
+	// An explicit compose target that left the main window is pruned the same
+	// way: it must never stay a hidden recipient. If nothing explicit remains,
+	// compose follows the default again.
+	composeRemoved := 0
+	for id := range s.composeTargets {
+		if !present[id] {
+			delete(s.composeTargets, id)
+			composeRemoved++
+		}
+	}
 	targets := make([]model.SessionID, 0, len(order))
 	for _, id := range order {
 		if s.broadcastTargets[id] {
@@ -84,14 +94,30 @@ func (s *State) refreshBroadcastState() {
 	}
 	s.broadcastSessions = present
 	s.broadcastTargetIDs = targets
+	s.mainSessionIDs = order
 	if removed > 0 {
 		s.broadcastNotice += removed
 		// Results and per-Session statuses described the old target set.
 		s.broadcastResult = appsession.SendResult{}
+		if !s.composeExplicit {
+			// Compose was following the default, so its previous result
+			// described a set that no longer exists.
+			s.composeResult = appsession.SendResult{}
+			if s.composeBroadcast {
+				// Stop a composed broadcast before its next line so a Session
+				// that just left the main window receives no further chunks.
+				s.cancelComposeSendLocked()
+			}
+		}
+	}
+	if composeRemoved > 0 {
+		s.composeNotice += composeRemoved
 		s.composeResult = appsession.SendResult{}
-		if s.composeBroadcast {
-			// Stop a composed broadcast before its next line so a Session
-			// that just left the main window receives no further chunks.
+		if len(s.composeTargets) == 0 {
+			s.composeExplicit = false
+		}
+		if s.composeSending {
+			// The captured chunk target list still names the pruned Session.
 			s.cancelComposeSendLocked()
 		}
 	}
@@ -246,9 +272,12 @@ func (s *State) SetBroadcastTarget(id model.SessionID, selected bool) {
 		delete(s.broadcastTargets, id)
 	}
 	// A target-set change makes the previous delivery and compose results
-	// stale, and answers any notice about removed targets.
+	// stale, and answers any notice about removed targets. An explicitly
+	// chosen compose set did not change, so its result stays meaningful.
 	s.broadcastResult = appsession.SendResult{}
-	s.composeResult = appsession.SendResult{}
+	if !s.composeExplicit {
+		s.composeResult = appsession.SendResult{}
+	}
 	s.broadcastNotice = 0
 	s.inputMu.Unlock()
 	s.refreshBroadcastState()
@@ -308,7 +337,10 @@ func (s *State) StartBroadcast() bool {
 	s.inputMu.Lock()
 	s.broadcasting = true
 	s.broadcastResult = appsession.SendResult{}
-	s.composeResult = appsession.SendResult{}
+	if !s.composeExplicit {
+		// Compose follows the default, which just became the broadcast set.
+		s.composeResult = appsession.SendResult{}
+	}
 	s.broadcastNotice = 0
 	s.inputMu.Unlock()
 	s.RequestRedraw()
@@ -323,14 +355,18 @@ func (s *State) StopBroadcast() {
 	changed := s.broadcasting
 	s.broadcasting = false
 	if changed {
-		// Compose now targets the focused Session rather than the old
-		// broadcast set, so its previous result no longer describes Send.
-		s.composeResult = appsession.SendResult{}
-		if s.composeBroadcast {
-			// Stop reaches an in-flight composed broadcast too: it cancels
-			// before the next line instead of letting the remaining chunks
-			// through.
-			s.cancelComposeSendLocked()
+		// An explicitly chosen compose set did not follow the broadcast latch,
+		// so stopping broadcast leaves its targets and result alone.
+		if !s.composeExplicit {
+			// Compose now targets the focused Session rather than the old
+			// broadcast set, so its previous result no longer describes Send.
+			s.composeResult = appsession.SendResult{}
+			if s.composeBroadcast {
+				// Stop reaches an in-flight composed broadcast too: it cancels
+				// before the next line instead of letting the remaining chunks
+				// through.
+				s.cancelComposeSendLocked()
+			}
 		}
 	}
 	s.inputMu.Unlock()
@@ -495,13 +531,13 @@ func (s *State) ComposePreview() appsession.ComposePreview {
 	return appsession.TransformCompose(s.composeDraft, s.composeOptionsLocked())
 }
 
-// ComposeTargets reports where Send would deliver: the active broadcast set,
-// or the focused Session.
-func (s *State) ComposeTargets() (ids []model.SessionID, broadcast bool) {
-	s.refreshBroadcastState()
+// defaultComposeTargets is what Send delivers without an explicit compose
+// choice: the broadcast set while broadcasting, else the focused Session.
+// broadcast reports whether the set comes from the broadcast latch.
+func (s *State) defaultComposeTargets() (ids []model.SessionID, broadcast bool) {
 	s.inputMu.Lock()
 	broadcasting := s.broadcasting
-	selected := s.selectedBroadcastTargetIDsLocked()
+	selected := append([]model.SessionID(nil), s.broadcastTargetIDs...)
 	s.inputMu.Unlock()
 	if broadcasting {
 		return selected, true
@@ -510,6 +546,134 @@ func (s *State) ComposeTargets() (ids []model.SessionID, broadcast bool) {
 		return []model.SessionID{id}, false
 	}
 	return nil, false
+}
+
+// ComposeTargets reports where Send would deliver. An explicit choice in the
+// compose bar wins; without one the default is the broadcast set while
+// broadcasting, else the focused Session, which keeps the old behavior.
+// broadcast reports whether the recipients are the broadcast latch's set, so
+// only that case mirrors the delivery into the broadcast panel.
+func (s *State) ComposeTargets() (ids []model.SessionID, broadcast bool) {
+	s.refreshBroadcastState()
+	s.inputMu.Lock()
+	explicit := s.composeExplicit
+	if explicit {
+		ids = make([]model.SessionID, 0, len(s.composeTargets))
+		for _, id := range s.mainSessionIDs {
+			if s.composeTargets[id] {
+				ids = append(ids, id)
+			}
+		}
+	}
+	s.inputMu.Unlock()
+	if explicit {
+		return ids, false
+	}
+	return s.defaultComposeTargets()
+}
+
+// ComposeTargetExplicit reports whether the compose bar holds a target choice
+// of its own rather than following the broadcast/focus default.
+func (s *State) ComposeTargetExplicit() bool {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	return s.composeExplicit
+}
+
+// ComposeTargetSelected reports whether id is one of the effective compose
+// recipients, which is what the compose target menu checks.
+func (s *State) ComposeTargetSelected(id model.SessionID) bool {
+	ids, _ := s.ComposeTargets()
+	for _, target := range ids {
+		if target == id {
+			return true
+		}
+	}
+	return false
+}
+
+// SetComposeTarget selects or deselects one Session for Compose. The first
+// choice seeds the explicit set from what Send would deliver now, so refining
+// a default (dropping A from an A+B broadcast) keeps the other recipients.
+// It never changes the toolbar broadcast selection.
+func (s *State) SetComposeTarget(id model.SessionID, selected bool) {
+	if id == "" {
+		return
+	}
+	current, _ := s.ComposeTargets()
+	s.inputMu.Lock()
+	if !s.composeExplicit {
+		s.composeTargets = make(map[model.SessionID]bool, len(current))
+		for _, target := range current {
+			s.composeTargets[target] = true
+		}
+		s.composeExplicit = true
+	}
+	if selected {
+		s.composeTargets[id] = true
+	} else {
+		delete(s.composeTargets, id)
+	}
+	s.composeResult = appsession.SendResult{}
+	s.composeNotice = 0
+	s.inputMu.Unlock()
+	s.RequestRedraw()
+}
+
+// ResetComposeTargets drops the explicit choice so Compose follows the
+// broadcast/focus default again.
+func (s *State) ResetComposeTargets() {
+	s.inputMu.Lock()
+	s.composeTargets = make(map[model.SessionID]bool)
+	s.composeExplicit = false
+	s.composeResult = appsession.SendResult{}
+	s.composeNotice = 0
+	s.inputMu.Unlock()
+	s.RequestRedraw()
+}
+
+// ComposeTargetDiverges reports that an explicit compose set differs from the
+// active broadcast selection. The bar shows it so a toolbar broadcast change
+// is visibly not rewriting the chosen recipients. Without an active
+// broadcast the focused Session is not a set worth warning about: the user
+// chose the recipients deliberately.
+func (s *State) ComposeTargetDiverges() bool {
+	if !s.ComposeTargetExplicit() {
+		return false
+	}
+	s.inputMu.Lock()
+	broadcasting := s.broadcasting
+	s.inputMu.Unlock()
+	if !broadcasting {
+		return false
+	}
+	ids, _ := s.ComposeTargets()
+	return !sameSessionSet(ids, s.BroadcastTargets())
+}
+
+// ComposeNotice returns how many explicit compose targets left the main
+// window in the latest structural change, so pruning is never silent.
+func (s *State) ComposeNotice() int {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	return s.composeNotice
+}
+
+// sameSessionSet compares two recipient lists without regard to order.
+func sameSessionSet(left, right []model.SessionID) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	seen := make(map[model.SessionID]bool, len(left))
+	for _, id := range left {
+		seen[id] = true
+	}
+	for _, id := range right {
+		if !seen[id] {
+			return false
+		}
+	}
+	return true
 }
 
 // ComposeSending reports a line-by-line send still in progress.
@@ -526,9 +690,10 @@ func (s *State) ComposeResult() (appsession.SendResult, bool) {
 	return s.composeResult, len(s.composeResult.Deliveries) > 0
 }
 
-// SendCompose sends the bound draft to the focused Session, or to the
-// broadcast target set while broadcast is active. It reports whether the send
-// was accepted (a non-empty transformed draft with at least one target), not
+// SendCompose sends the bound draft to the compose bar's target set: an
+// explicit choice when one was made, otherwise the broadcast set while
+// broadcasting or the focused Session. It reports whether the send was
+// accepted (a non-empty transformed draft with at least one target), not
 // whether every target delivered. The draft clears when the send is accepted,
 // as the original compose bar cleared its field immediately; the per-target
 // result reports partial failure afterwards.
@@ -562,10 +727,13 @@ func (s *State) sendCompose() bool {
 		s.inputMu.Unlock()
 		return false
 	}
-	broadcasting := s.broadcasting
-	var targets []model.SessionID
-	if broadcasting {
-		targets = s.selectedBroadcastTargetIDsLocked()
+	s.inputMu.Unlock()
+
+	// Send follows the compose bar's own target set. The broadcast latch only
+	// supplies the default when the bar holds no explicit choice.
+	targets, broadcasting := s.ComposeTargets()
+	if len(targets) == 0 {
+		return false
 	}
 	lineByLine := preview.LineMode == appsession.ComposeLineByLine
 	chunks := preview.Chunks
@@ -573,16 +741,6 @@ func (s *State) sendCompose() bool {
 		chunks = chunks[:1]
 	}
 	async := lineByLine && len(chunks) > 1
-	s.inputMu.Unlock()
-
-	if !broadcasting {
-		if id, ok := s.FocusedSessionID(); ok {
-			targets = []model.SessionID{id}
-		}
-	}
-	if len(targets) == 0 {
-		return false
-	}
 
 	s.inputMu.Lock()
 	s.composeDraft = ""

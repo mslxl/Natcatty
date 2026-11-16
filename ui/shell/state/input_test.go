@@ -352,6 +352,135 @@ func TestStoppingBroadcastCancelsTheRemainingComposedLines(t *testing.T) {
 	}
 }
 
+// TestComposeTargetChoiceOverridesBroadcast proves the compose bar's own
+// target set wins over the broadcast latch: with A+B broadcasting, dropping A
+// in compose sends only to B.
+func TestComposeTargetChoiceOverridesBroadcast(t *testing.T) {
+	graph := newInputGraph(t, 3)
+	state := graph.state
+	a, b := graph.sessionID(t, 0), graph.sessionID(t, 1)
+	state.OpenBroadcastPanel()
+	if !state.StartBroadcast() {
+		t.Fatal("broadcast did not start")
+	}
+	state.OpenCompose()
+
+	targets, broadcast := state.ComposeTargets()
+	if !broadcast || !sameSessionSet(targets, []model.SessionID{a, b}) {
+		t.Fatalf("default compose targets = %v broadcast = %v, want the A+B broadcast set",
+			targets, broadcast)
+	}
+
+	// The first choice refines the default: deselecting A leaves only B.
+	state.SetComposeTarget(a, false)
+	targets, broadcast = state.ComposeTargets()
+	if broadcast || len(targets) != 1 || targets[0] != b {
+		t.Fatalf("chosen compose targets = %v broadcast = %v, want only %q", targets, broadcast, b)
+	}
+	if !state.ComposeTargetExplicit() {
+		t.Fatal("the compose choice is not marked explicit")
+	}
+	if !state.ComposeTargetDiverges() {
+		t.Fatal("the chosen set differs from the broadcast selection but the bar sees no divergence")
+	}
+
+	state.SetComposeDraft("only b")
+	if !state.SendCompose() {
+		t.Fatal("compose send failed")
+	}
+	waitTransportInput(t, graph.factory.transport(1), "only b\r")
+	time.Sleep(20 * time.Millisecond)
+	if got := graph.factory.transport(0).inputString(); got != "" {
+		t.Fatalf("the deselected broadcast target received %q", got)
+	}
+	if got := graph.factory.transport(2).inputString(); got != "" {
+		t.Fatalf("the focused Session received %q", got)
+	}
+	// The explicit set is not the broadcast set, so the broadcast panel's
+	// result must not acquire this delivery.
+	if _, ok := state.BroadcastResult(); ok {
+		t.Fatal("a compose send to an explicit set reported as broadcast input")
+	}
+}
+
+// TestBroadcastChangeDoesNotRewriteExplicitComposeTargets covers the toolbar
+// side of the split: changing the broadcast selection afterwards leaves the
+// compose choice (and where Send delivers) alone, and the bar reports the
+// divergence until the user chooses to follow the default again.
+func TestBroadcastChangeDoesNotRewriteExplicitComposeTargets(t *testing.T) {
+	graph := newInputGraph(t, 3)
+	state := graph.state
+	a, b := graph.sessionID(t, 0), graph.sessionID(t, 1)
+	state.OpenBroadcastPanel()
+	if !state.StartBroadcast() {
+		t.Fatal("broadcast did not start")
+	}
+	state.OpenCompose()
+	state.SetComposeTarget(a, false) // explicit B only
+
+	// The toolbar broadcast flips to A only. The compose set stays B.
+	state.SetBroadcastTarget(b, false)
+	state.SetBroadcastTarget(a, true)
+	targets, _ := state.ComposeTargets()
+	if len(targets) != 1 || targets[0] != b {
+		t.Fatalf("compose targets after the broadcast change = %v, want only %q", targets, b)
+	}
+	if !state.ComposeTargetDiverges() {
+		t.Fatal("the bar does not report the divergence")
+	}
+
+	state.SetComposeDraft("still b")
+	if !state.SendCompose() {
+		t.Fatal("compose send failed")
+	}
+	waitTransportInput(t, graph.factory.transport(1), "still b\r")
+	time.Sleep(20 * time.Millisecond)
+	if got := graph.factory.transport(0).inputString(); got != "" {
+		t.Fatalf("the new broadcast target received %q", got)
+	}
+
+	// Following the default again adopts the current broadcast set.
+	state.ResetComposeTargets()
+	if state.ComposeTargetExplicit() || state.ComposeTargetDiverges() {
+		t.Fatal("following the default still marks an explicit choice/divergence")
+	}
+	targets, _ = state.ComposeTargets()
+	if len(targets) != 1 || targets[0] != a {
+		t.Fatalf("compose targets after reset = %v, want the broadcast target %q", targets, a)
+	}
+}
+
+// TestDetachingAnExplicitComposeTargetPrunesIt proves a compose choice is
+// bounded by the main window: a target that leaves stops receiving and the
+// bar says so, without falling back to the default while another choice
+// remains.
+func TestDetachingAnExplicitComposeTargetPrunesIt(t *testing.T) {
+	graph := newInputGraph(t, 3)
+	state := graph.state
+	a, b := graph.sessionID(t, 0), graph.sessionID(t, 1)
+	state.OpenBroadcastPanel()
+	if !state.StartBroadcast() {
+		t.Fatal("broadcast did not start")
+	}
+	state.OpenCompose()
+	state.SetComposeTarget(a, false) // explicit B
+	state.SetComposeTarget(a, true)  // explicit A+B
+	if !state.DetachTab(0) {
+		t.Fatal("detach failed")
+	}
+	targets, broadcast := state.ComposeTargets()
+	if broadcast || len(targets) != 1 || targets[0] != b {
+		t.Fatalf("compose targets after detach = %v broadcast = %v, want only %q",
+			targets, broadcast, b)
+	}
+	if !state.ComposeTargetExplicit() {
+		t.Fatal("one explicit target remains but the choice was dropped")
+	}
+	if got := state.ComposeNotice(); got != 1 {
+		t.Fatalf("compose removal notice = %d, want 1", got)
+	}
+}
+
 func TestBroadcastCannotStartWithOnlyTheFocusedSource(t *testing.T) {
 	graph := newInputGraph(t, 2)
 	state := graph.state

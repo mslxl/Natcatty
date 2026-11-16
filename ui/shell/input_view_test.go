@@ -593,3 +593,56 @@ func TestDenseBroadcastComposeKeepsTabStripAtMinimumSize(t *testing.T) {
 	assertInputInside(t, tester, 704, 421, m.ComposeSend())
 	assertInputInside(t, tester, 704, 421, m.ComposeCancel())
 }
+
+// TestComposeTargetMenuRendersTheChosenSet proves the compose bar exposes the
+// target choice: the default label follows the broadcast latch, choosing one
+// peer in the menu splits the set, and the bar shows both the new target and
+// the divergence instead of silently rewriting it.
+func TestComposeTargetMenuRendersTheChosenSet(t *testing.T) {
+	graph := newInputGraph(t)
+	state := graph.state
+	state.OpenBroadcastPanel()
+	if !state.StartBroadcast() {
+		t.Fatal("broadcast did not start")
+	}
+	state.OpenCompose()
+	tester := ui.NewTester(View(state), 1084, 661)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	m := locales.In("en")
+	if !tester.HasText(m.ComposeTargetBroadcast(2)) {
+		t.Fatalf("the compose target does not follow broadcast: %v", tester.Texts())
+	}
+	if err := tester.Click(m.ComposeTargetBroadcast(2)); err != nil {
+		t.Fatalf("open the compose target menu: %v", err)
+	}
+	if menu := tester.Menu(); !containsText(menu, "Tab 1") || !containsText(menu, "Tab 2") {
+		t.Fatalf("compose target menu = %v, want both broadcast peers", menu)
+	}
+	if err := tester.ChooseMenuItem("Tab 1"); err != nil {
+		t.Fatalf("choose only Tab 2: %v", err)
+	}
+	tester.Frame()
+
+	if !tester.HasText(m.ComposeTargetCustom(1)) {
+		t.Fatalf("the compose bar does not show the chosen target: %v", tester.Texts())
+	}
+	if !tester.HasText(m.ComposeTargetsDiverged()) {
+		t.Fatalf("the compose bar does not show the divergence: %v", tester.Texts())
+	}
+	targets, broadcast := state.ComposeTargets()
+	if broadcast || len(targets) != 1 || targets[0] != graph.sessions[1].ID() {
+		t.Fatalf("compose targets = %v broadcast = %v, want only Tab 2 (%q)",
+			targets, broadcast, graph.sessions[1].ID())
+	}
+}
+
+func containsText(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}

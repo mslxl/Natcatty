@@ -298,8 +298,12 @@ type State struct {
 	broadcastTargets     map[model.SessionID]bool
 	broadcastSessions    map[model.SessionID]bool
 	broadcastTargetIDs   []model.SessionID
+	mainSessionIDs       []model.SessionID
 	broadcastResult      appsession.SendResult
 	broadcastNotice      int
+	composeTargets       map[model.SessionID]bool
+	composeExplicit      bool
+	composeNotice        int
 	composeOpen          bool
 	composeDraft         string
 	composeTrim          bool
@@ -531,6 +535,7 @@ func NewState(opts ...Option) *State {
 		active: -1, nextTabNumber: 1, vaultVisible: true, vaultSection: section.Hosts, ctx: ctx, cancel: cancel,
 		broadcastTargets:  make(map[model.SessionID]bool),
 		broadcastSessions: make(map[model.SessionID]bool),
+		composeTargets:    make(map[model.SessionID]bool),
 		composeLineMode:   appsession.ComposePaste,
 	}
 	for _, opt := range opts {

@@ -254,11 +254,26 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 	body := func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, m.ComposeTitle()).FontSize(kit.M(c).Font.Callout).Bold()
-			// At the minimum width the target and result stay on one line:
-			// the compact target label truncates rather than wrapping the
-			// header into a ragged block above Cancel.
-			ui.Text(c, composeTargetText(s, m)).FontSize(kit.M(c).Font.Caption).
-				TextColor(t.TextMuted).SingleLine()
+			// The target is a menu button: its label is what Send would
+			// deliver to now, and the menu is where the compose-specific set
+			// is chosen. It never edits the toolbar broadcast selection.
+			inputButton(c, composeTargetText(s, m)).Menu(func(menu *ui.Menu) {
+				if menu.Item(m.ComposeTargetFollow()).Checked(!s.ComposeTargetExplicit()).Chosen() {
+					s.ResetComposeTargets()
+					c.Invalidate()
+				}
+				menu.Separator()
+				for _, info := range s.BroadcastSessions() {
+					if !info.Running {
+						continue
+					}
+					selected := s.ComposeTargetSelected(info.ID)
+					if menu.Item(sessionTitle(m, info)).Checked(selected).Chosen() {
+						s.SetComposeTarget(info.ID, !selected)
+						c.Invalidate()
+					}
+				}
+			})
 			if result, ok := s.ComposeResult(); ok {
 				ui.Text(c, composeResultText(m, result)).FontSize(kit.M(c).Font.Caption).
 					TextColor(summaryColor(result, t)).SingleLine()
@@ -269,6 +284,15 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 				c.Invalidate()
 			}
 		})
+
+		if s.ComposeTargetDiverges() {
+			ui.Text(c, m.ComposeTargetsDiverged()).FontSize(kit.M(c).Font.Caption).
+				TextColor(uitheme.WarningText(t))
+		}
+		if notice := s.ComposeNotice(); notice > 0 {
+			ui.Text(c, m.BroadcastTargetsRemoved(notice)).FontSize(kit.M(c).Font.Caption).
+				TextColor(uitheme.WarningText(t))
+		}
 
 		area := ui.TextArea(c, s.ComposeDraft()).FillWidth().Height(draftHeight).
 			Placeholder(m.ComposePlaceholder()).Label(m.ComposePlaceholder())
@@ -358,6 +382,12 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 
 func composeTargetText(s *state.State, m locales.Messages) string {
 	ids, broadcast := s.ComposeTargets()
+	if s.ComposeTargetExplicit() {
+		if len(ids) == 0 {
+			return m.ComposeTargetNone()
+		}
+		return m.ComposeTargetCustom(len(ids))
+	}
 	if broadcast {
 		return m.ComposeTargetBroadcast(len(ids))
 	}
