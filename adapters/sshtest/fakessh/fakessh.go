@@ -72,6 +72,13 @@ type Options struct {
 	// transport honors is 256 bytes; a test writes more than the threshold to
 	// make the server initiate a rekey mid-session.
 	RekeyThreshold uint64
+	// HostCertificateAuthority, when set, makes the fixture present an OpenSSH
+	// host certificate for its own host key, signed by this CA. The certificate
+	// has host type and the principals in HostCertificatePrincipals.
+	HostCertificateAuthority ssh.Signer
+	// HostCertificatePrincipals configures the certificate principals. It
+	// defaults to example.com, matching the hostname the adapter tests dial.
+	HostCertificatePrincipals []string
 }
 
 // fixtureSigner presents one of two host keys and counts signatures. Every key
@@ -147,6 +154,7 @@ type Server struct {
 	config      *ssh.ServerConfig
 	signer      ssh.Signer
 	hostSigner  *fixtureSigner
+	certificate *ssh.Certificate
 	done        chan struct{}
 	closeOnce   sync.Once
 	forwardDial func(host string, port int) (net.Conn, error)
@@ -200,12 +208,37 @@ func Start(conn net.Conn, options Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	hostSigner := &fixtureSigner{keys: []ssh.Signer{signer, rotatedSigner}}
+	presented := ssh.Signer(signer)
+	var certificate *ssh.Certificate
+	if options.HostCertificateAuthority != nil {
+		principals := options.HostCertificatePrincipals
+		if len(principals) == 0 {
+			principals = []string{"example.com"}
+		}
+		certificate = &ssh.Certificate{
+			Key:             signer.PublicKey(),
+			KeyId:           "fakessh-host",
+			CertType:        ssh.HostCert,
+			ValidPrincipals: principals,
+			ValidAfter:      0,
+			ValidBefore:     ssh.CertTimeInfinity,
+		}
+		if err := certificate.SignCert(rand.Reader, options.HostCertificateAuthority); err != nil {
+			return nil, err
+		}
+		certSigner, err := ssh.NewCertSigner(certificate, signer)
+		if err != nil {
+			return nil, err
+		}
+		presented = certSigner
+	}
+	hostSigner := &fixtureSigner{keys: []ssh.Signer{presented, rotatedSigner}}
 
 	server := &Server{
 		conn:            conn,
 		signer:          signer,
 		hostSigner:      hostSigner,
+		certificate:     certificate,
 		done:            make(chan struct{}),
 		forwardDial:     options.ForwardDial,
 		remoteListeners: map[string]net.Listener{},
@@ -314,6 +347,10 @@ func (s *Server) Fingerprint() string {
 
 // KeyType is the server host key algorithm.
 func (s *Server) KeyType() string { return s.signer.PublicKey().Type() }
+
+// Certificate returns the host certificate the fixture presents, or nil when
+// it presents a plain host key.
+func (s *Server) Certificate() *ssh.Certificate { return s.certificate }
 
 // RotateHostKey switches to the fixture's second host key. A rekey after this
 // presents different key material, modelling a server whose key changed.

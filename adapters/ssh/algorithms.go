@@ -45,6 +45,15 @@ var (
 	// RSA is offered only with the SHA-2 signature algorithms. ssh-rsa
 	// (SHA-1) and ssh-dss are never proposed.
 	defaultHostKeys = []string{
+		// Host certificates. Naming an explicit HostKeyAlgorithms list disables
+		// x/crypto/ssh's certificate defaults, so a certificate-only bastion has
+		// no common algorithm unless the certificate forms are offered here.
+		xssh.CertAlgoED25519v01,
+		xssh.CertAlgoECDSA256v01,
+		xssh.CertAlgoECDSA384v01,
+		xssh.CertAlgoECDSA521v01,
+		xssh.CertAlgoRSASHA512v01,
+		xssh.CertAlgoRSASHA256v01,
 		"ssh-ed25519",
 		"ecdsa-sha2-nistp256",
 		"ecdsa-sha2-nistp384",
@@ -90,6 +99,11 @@ var (
 	}
 
 	legacyHostKeys = []string{
+		// The legacy SHA-1 certificate forms join their plain keys only when a
+		// Host opts in; the modern certificate forms above already cover
+		// certificate-only servers.
+		xssh.CertAlgoRSAv01,
+		xssh.InsecureCertAlgoDSAv01,
 		"ssh-rsa",
 		"ssh-dss",
 	}

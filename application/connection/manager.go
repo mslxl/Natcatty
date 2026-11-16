@@ -807,7 +807,17 @@ type hostKeyAcceptance struct {
 }
 
 func hostKeyAcceptanceKey(key domainconn.Key) string {
-	return fmt.Sprintf("%s\x00%d\x00%s", key.Hostname, key.Port, key.Fingerprint)
+	fingerprint := key.Fingerprint
+	// An OpenSSH host certificate is identified by its stable trust anchor so a
+	// renewal inside one Connection does not look like a changed key.
+	if key.IsHostCertificate {
+		if key.CertificateCAFingerprint != "" {
+			fingerprint = key.CertificateCAFingerprint
+		} else if key.CertificateKeyFingerprint != "" {
+			fingerprint = key.CertificateKeyFingerprint
+		}
+	}
+	return fmt.Sprintf("%s\x00%d\x00%s", key.Hostname, key.Port, fingerprint)
 }
 
 func (a *hostKeyAcceptance) has(key domainconn.Key) bool {
@@ -827,9 +837,11 @@ func (a *hostKeyAcceptance) add(key domainconn.Key) {
 }
 
 // verifyHostKey classifies the live key and asks the user when the key is not
-// already trusted. Trust upserts the Known Host before authentication starts.
+// already trusted. A host certificate matches a Known Host under its embedded
+// key or signing CA, so renewal does not prompt; an unknown CA or key still
+// does. Trust upserts the Known Host before authentication starts.
 func (m *Manager) verifyHostKey(ctx context.Context, key domainconn.Key, known []domainconn.KnownHost) error {
-	classified := domainconn.Classify(known, key.Hostname, key.Port, key.KeyType, key.Fingerprint)
+	classified := domainconn.ClassifyKey(known, key)
 	if classified.PublicKey == "" {
 		classified.PublicKey = key.PublicKey
 	}
