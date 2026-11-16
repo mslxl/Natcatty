@@ -28,6 +28,21 @@ const (
 // and autocomplete read the same rows, so there is no second source to label.
 const SourceHistory = "history"
 
+// SourceSnippet names Vault Snippet rows in a Suggestion. Snippets are only
+// offered at a program input prompt, where the shell line editor is not the
+// target and a saved answer is more useful than a past command.
+const SourceSnippet = "snippet"
+
+// Snippet is one Vault Snippet offered at a program input prompt. Command is
+// what acceptance inserts; Label is what the popup shows. Tags and Package
+// are optional context for the popup.
+type Snippet struct {
+	Label   string   `json:"label,omitempty"`
+	Command string   `json:"command"`
+	Tags    []string `json:"tags,omitempty"`
+	Package string   `json:"package,omitempty"`
+}
+
 // Suggestion is one row the popup can show. Text is what Tab inserts; Display
 // is what the popup draws.
 type Suggestion struct {
@@ -78,6 +93,17 @@ func WithClock(clock func() time.Time) Option {
 func WithCommandDescriptions(describe func(command string) string) Option {
 	return func(service *Service) {
 		service.describe = describe
+	}
+}
+
+// WithSnippets gives the service the Vault's current Snippets. The function
+// is called on each program-prompt request, so an edit, import, or delete
+// applies without rebuilding the service. A nil function offers no snippets.
+// The app supplies the Vault state here; the application layer does not read
+// Vault storage itself.
+func WithSnippets(snippets func() []Snippet) Option {
+	return func(service *Service) {
+		service.snippets = snippets
 	}
 }
 
@@ -146,6 +172,7 @@ type Service struct {
 	config    func() Config
 	now       func() time.Time
 	describe  func(command string) string
+	snippets  func() []Snippet
 	entries   []aggregatedEntry
 }
 
@@ -337,6 +364,24 @@ func (s *Service) SuggestionsIn(input, scope, cwd string) []Suggestion {
 // rules; they are never written back to the service's view and never reach the
 // journal.
 func (s *Service) SuggestionsInWith(input, scope, cwd string, extra []domainhistory.Entry) []Suggestion {
+	return s.suggestions(input, scope, cwd, PromptShell, extra)
+}
+
+// SuggestionsAtPrompt is SuggestionsInWith for a tracked prompt kind. At a
+// program input prompt the Vault Snippets whose label or command matches the
+// text join the journal rows; at a shell prompt the source is history only.
+// Snippet rows come first so the limit cannot hide every saved answer behind
+// frequent commands, and a row whose text is already offered by history is
+// not duplicated. Snippet acceptance uses the same insertion seam as a
+// history row, so the bracketed-paste safeguard still applies to a multi-line
+// Snippet.
+func (s *Service) SuggestionsAtPrompt(input, scope, cwd string, kind PromptKind,
+	extra []domainhistory.Entry) []Suggestion {
+	return s.suggestions(input, scope, cwd, kind, extra)
+}
+
+func (s *Service) suggestions(input, scope, cwd string, kind PromptKind,
+	extra []domainhistory.Entry) []Suggestion {
 	config := s.normalizedConfig()
 	if !config.Enabled {
 		return nil
@@ -399,27 +444,100 @@ func (s *Service) SuggestionsInWith(input, scope, cwd string, extra []domainhist
 		add(candidate)
 	}
 
-	if len(ranked) == 0 {
+	snippetRows := s.snippetSuggestions(lowered, kind)
+
+	if len(ranked) == 0 && len(snippetRows) == 0 {
 		return nil
 	}
 	sort.SliceStable(ranked, func(i, j int) bool {
 		return betterSuggestion(ranked[i], ranked[j])
 	})
 	limit := config.MaxSuggestions
-	if len(ranked) < limit {
-		limit = len(ranked)
-	}
-	result := make([]Suggestion, 0, limit)
-	for _, candidate := range ranked[:limit] {
-		suggestion := candidate.suggestion
-		// Annotate only after ranking: Description is not part of the sort key
-		// or the packed Score, so a catalog can never reorder the rows.
-		if s.describe != nil {
-			suggestion.Description = s.describe(suggestion.Text)
+	result := make([]Suggestion, 0, min(limit, len(ranked)+len(snippetRows)))
+	seen := make(map[string]bool, len(ranked)+len(snippetRows))
+	addResult := func(suggestion Suggestion) {
+		if seen[suggestion.Text] {
+			return
 		}
+		seen[suggestion.Text] = true
 		result = append(result, suggestion)
 	}
+	// Program-prompt Snippets lead so the limit cannot hide them behind the
+	// journal. Otherwise the ranking order is untouched.
+	for _, suggestion := range snippetRows {
+		if len(result) >= limit {
+			break
+		}
+		addResult(suggestion)
+	}
+	for _, candidate := range ranked {
+		if len(result) >= limit {
+			break
+		}
+		suggestion := candidate.suggestion
+		// Annotate only after ranking: Description is not part of the sort key
+		// or the packed Score, so a catalog can never reorder the rows. Snippet
+		// rows carry Vault-provided context instead of a command description.
+		if s.describe != nil && suggestion.Source == SourceHistory {
+			suggestion.Description = s.describe(suggestion.Text)
+		}
+		addResult(suggestion)
+	}
 	return result
+}
+
+// snippetSuggestions lists the Vault Snippets that match the typed query at
+// a program input prompt. A Snippet matches when the query is a prefix or
+// word prefix of its command or label, or occurs in either. The Vault's own
+// order is kept so the list is stable between frames. A Snippet without a
+// command is ignored, and Snippet commands are bounded like history rows.
+func (s *Service) snippetSuggestions(loweredInput string, kind PromptKind) []Suggestion {
+	if kind != PromptProgram || s.snippets == nil {
+		return nil
+	}
+	snippets := s.snippets()
+	result := make([]Suggestion, 0, len(snippets))
+	seen := make(map[string]bool, len(snippets))
+	for _, snippet := range snippets {
+		command := strings.TrimSpace(snippet.Command)
+		if command == "" || len(command) > maxCommandLength || seen[command] {
+			continue
+		}
+		label := strings.TrimSpace(snippet.Label)
+		match := matchRank(strings.ToLower(command), loweredInput)
+		if labelMatch := matchRank(strings.ToLower(label), loweredInput); labelMatch > match {
+			match = labelMatch
+		}
+		if match == 0 {
+			continue
+		}
+		display := label
+		if display == "" {
+			display = firstLine(command)
+		}
+		description := ""
+		if len(snippet.Tags) > 0 {
+			description = strings.Join(snippet.Tags, ", ")
+		}
+		seen[command] = true
+		result = append(result, Suggestion{
+			Text:        command,
+			Display:     display,
+			Description: description,
+			Source:      SourceSnippet,
+			Score:       suggestionScore(match, 0, time.Time{}, false),
+		})
+	}
+	return result
+}
+
+// firstLine is the command's first line, so a multi-line Snippet still has a
+// short display row in the popup.
+func firstLine(text string) string {
+	if index := strings.IndexByte(text, '\n'); index >= 0 {
+		return text[:index]
+	}
+	return text
 }
 
 // betterSuggestion orders two candidates by the documented ranking tuple. It

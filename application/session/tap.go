@@ -146,6 +146,9 @@ type tapState struct {
 	Title   string
 	Command CommandState
 	Input   string
+	// InputCursor is the cursor's rune offset within Input. It is where the
+	// next typed character goes and what an accepted suggestion may replace.
+	InputCursor int
 	// HookActive reports that the session-scoped Netcatty hook has emitted an
 	// authoritative event for this Session, so capture can reach Tier 1.
 	HookActive bool
@@ -264,8 +267,15 @@ type terminalTap struct {
 	// the nested shell, not the Session shell, so they are not used to raise
 	// the inner commands above the typed fallback. The outer hook's next
 	// handshake clears it and restores Tier 1.
-	nestedShell  string
-	inputBuffer  string
+	nestedShell string
+	inputBuffer string
+	// inputCursor is the cursor's position in inputBuffer, counted in runes.
+	// The tap tracks the line editor's cursor keys, home/end, kill-line, and
+	// insertions at the cursor so an accepted suggestion can replace only the
+	// text left of the cursor and leave the rest of the line untouched.
+	// Without this the tap would only know the line's bytes, not where the
+	// user is editing.
+	inputCursor  int
 	inputPending []byte
 	inputEscape  inputState
 	// inputCSIParams holds the parameter bytes of the CSI sequence being
@@ -1913,6 +1923,10 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 						t.inputPaste = false
 					}
 				}
+				// Cursor keys and home/end move the line editor's cursor;
+				// tracking them keeps the accepted-suggestion erase boundary
+				// and the typed line in agreement.
+				t.applyInputCSI(value)
 				t.inputEscape = inputPlain
 				t.inputCSIParams = t.inputCSIParams[:0]
 			case value >= 0x30 && value <= 0x3f:
@@ -1943,6 +1957,7 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 			t.inputPending = nil
 		case 0x03:
 			t.inputBuffer = ""
+			t.inputCursor = 0
 			t.inputPending = nil
 			// Ctrl+C never emits by itself: the shell may still report an exit
 			// code such as 130, or a prompt fallback or Session close may
@@ -1955,20 +1970,36 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 				t.command.FinishedAt = now
 			}
 			changed = true
-		case 0x15:
-			t.inputBuffer = ""
+		case 0x01: // Ctrl+A: beginning of line
 			t.inputPending = nil
+			t.inputCursor = 0
 			changed = true
+		case 0x05: // Ctrl+E: end of line
+			t.inputPending = nil
+			t.inputCursor = t.inputRuneLength()
+			changed = true
+		case 0x0b: // Ctrl+K: kill to the end of the line
+			t.inputPending = nil
+			if end := t.inputByteOffset(t.inputCursor); end < len(t.inputBuffer) {
+				t.inputBuffer = t.inputBuffer[:end]
+				changed = true
+			}
+		case 0x15: // Ctrl+U: kill to the beginning of the line
+			t.inputPending = nil
+			if start := t.inputByteOffset(t.inputCursor); start > 0 {
+				t.inputBuffer = t.inputBuffer[start:]
+				t.inputCursor = 0
+				changed = true
+			}
 		case 0x7f, 0x08:
 			t.inputPending = nil
-			if t.inputBuffer != "" {
-				_, size := utf8.DecodeLastRuneInString(t.inputBuffer)
-				t.inputBuffer = t.inputBuffer[:len(t.inputBuffer)-size]
+			if t.deleteInputRuneBeforeCursor() {
 				changed = true
 			}
 		case '\r', '\n':
 			command := strings.TrimSpace(t.inputBuffer)
 			t.inputBuffer = ""
+			t.inputCursor = 0
 			t.inputPending = nil
 			if t.hookActive {
 				// The installed hook's private preexec sequence is the only
@@ -2048,8 +2079,107 @@ func (t *terminalTap) appendInputText(text []byte) bool {
 	if len(t.inputBuffer)+len(text) > 4096 {
 		return false
 	}
-	t.inputBuffer += string(text)
+	// Typed text goes in at the cursor: the line editor inserts there, not at
+	// the end, after the user has moved the cursor.
+	offset := t.inputByteOffset(t.inputCursor)
+	t.inputBuffer = t.inputBuffer[:offset] + string(text) + t.inputBuffer[offset:]
+	t.inputCursor += utf8.RuneCount(text)
 	return true
+}
+
+// inputRuneLength is the typed line's length in runes, the unit the cursor
+// and the line editor's erase keystroke use.
+func (t *terminalTap) inputRuneLength() int {
+	return utf8.RuneCountInString(t.inputBuffer)
+}
+
+// inputByteOffset converts a rune offset in inputBuffer to a byte offset.
+func (t *terminalTap) inputByteOffset(runes int) int {
+	if runes <= 0 {
+		return 0
+	}
+	count := 0
+	for offset := range t.inputBuffer {
+		if count == runes {
+			return offset
+		}
+		count++
+	}
+	return len(t.inputBuffer)
+}
+
+// moveInputCursor moves the tracked line-editor cursor by runes and clamps it
+// to the line. The terminal receives the same key, so this only mirrors the
+// editor's state.
+func (t *terminalTap) moveInputCursor(delta int) {
+	t.inputCursor += delta
+	if t.inputCursor < 0 {
+		t.inputCursor = 0
+	}
+	if length := t.inputRuneLength(); t.inputCursor > length {
+		t.inputCursor = length
+	}
+}
+
+// deleteInputRuneBeforeCursor removes the rune to the left of the cursor, the
+// operation Backspace performs.
+func (t *terminalTap) deleteInputRuneBeforeCursor() bool {
+	if t.inputCursor <= 0 {
+		return false
+	}
+	start := t.inputByteOffset(t.inputCursor - 1)
+	_, size := utf8.DecodeRuneInString(t.inputBuffer[start:])
+	t.inputBuffer = t.inputBuffer[:start] + t.inputBuffer[start+size:]
+	t.inputCursor--
+	return true
+}
+
+// deleteInputRuneAtCursor removes the rune under the cursor, the operation
+// the Delete key performs.
+func (t *terminalTap) deleteInputRuneAtCursor() bool {
+	if t.inputCursor >= t.inputRuneLength() {
+		return false
+	}
+	start := t.inputByteOffset(t.inputCursor)
+	_, size := utf8.DecodeRuneInString(t.inputBuffer[start:])
+	t.inputBuffer = t.inputBuffer[:start] + t.inputBuffer[start+size:]
+	return true
+}
+
+// applyInputCSI mirrors the cursor-editing control sequences a line editor
+// understands. Other sequences, including the bracketed-paste markers, leave
+// the tracked cursor alone.
+func (t *terminalTap) applyInputCSI(final byte) {
+	params := t.inputCSIParams
+	switch final {
+	case 'D':
+		t.moveInputCursor(-1)
+	case 'C':
+		t.moveInputCursor(1)
+	case 'H':
+		t.inputCursor = 0
+	case 'F':
+		t.inputCursor = t.inputRuneLength()
+	case '~':
+		switch firstCSIParameter(params) {
+		case "1", "7":
+			t.inputCursor = 0
+		case "4", "8":
+			t.inputCursor = t.inputRuneLength()
+		case "3":
+			t.deleteInputRuneAtCursor()
+		}
+	}
+}
+
+// firstCSIParameter is the first numeric parameter of a CSI sequence, for the
+// "~"-terminated keys where the number selects the key.
+func firstCSIParameter(params []byte) string {
+	end := 0
+	for end < len(params) && params[end] >= '0' && params[end] <= '9' {
+		end++
+	}
+	return string(params[:end])
 }
 
 // cancelTransfer aborts the gate from the UI. Protocol bytes after it are no
@@ -2087,6 +2217,7 @@ func (t *terminalTap) state(now time.Time) tapState {
 		Title:          t.title,
 		Command:        t.command,
 		Input:          t.inputBuffer,
+		InputCursor:    t.inputCursor,
 		HookActive:     t.hookActive,
 		BracketedPaste: t.bracketedPaste,
 		Busy:           t.busyLocked(now),

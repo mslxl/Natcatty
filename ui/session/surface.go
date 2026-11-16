@@ -58,6 +58,10 @@ type Options struct {
 	// working directory the shell last reported with OSC 7, used for the
 	// current-directory ranking bonus. Nil leaves autocomplete off.
 	Suggest func(input, scope, cwd string) []autocomplete.Suggestion
+	// SuggestAtPrompt is Suggest with the tracked prompt kind: program is true
+	// when a non-shell program is waiting for ordinary input, where the Vault
+	// Snippets join the journal rows. Nil uses Suggest for every prompt.
+	SuggestAtPrompt func(input, scope, cwd string, program bool) []autocomplete.Suggestion
 	// AutocompleteDisplay reports whether the popup and ghost hint are shown.
 	AutocompleteDisplay func() (popup, ghost bool)
 	// AutocompleteDelay is the debounce in milliseconds before suggestions are
@@ -198,6 +202,15 @@ func WithSuggestions(suggest func(input, scope, cwd string) []autocomplete.Sugge
 	}
 }
 
+// WithPromptSuggestions supplies the provider used at a tracked prompt: it
+// receives whether a non-shell program is waiting for input, so it can add
+// Vault Snippets there while leaving shell completions history-only.
+func WithPromptSuggestions(suggest func(input, scope, cwd string, program bool) []autocomplete.Suggestion) Option {
+	return func(options *Options) {
+		options.SuggestAtPrompt = suggest
+	}
+}
+
 // WithAutocompleteDelay supplies the debounce applied after the typed line
 // changes.
 func WithAutocompleteDelay(fn func() int) Option {
@@ -298,11 +311,16 @@ type Surface struct {
 	suggestionIndex     int
 	suggestionInput     string
 	suggestionLocale    string
+	suggestionProgram   bool
 	suggestionPending   time.Time
 	suggestionDismissed bool
 	suggestionTimer     *time.Timer
 	showAutocomplete    bool
 	showGhost           bool
+	// programPrompt reports that the last refresh found a non-shell program
+	// waiting for ordinary input. Acceptance uses it to replace only the typed
+	// query instead of the whole shell line.
+	programPrompt bool
 }
 
 // New connects a MyGo terminal to session's TerminalConn. It returns an error

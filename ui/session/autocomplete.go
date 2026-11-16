@@ -1,8 +1,8 @@
 package sessionui
 
 import (
+	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
 
@@ -13,14 +13,25 @@ import (
 // runs once per frame, so the popup follows the Session's input buffer rather
 // than duplicating terminal key handling. Suggestions are suppressed while a
 // command runs: Tab must reach vim, less, and other full-screen programs even
-// when the typed text matches history. Dismissing the popup keeps it hidden
-// until the input changes again.
+// when the typed text matches history. A program input prompt (a colon-label
+// read such as "Email: ") is the exception: the program is waiting for typed
+// text, so history and Vault Snippets may be offered there. Dismissing the
+// popup keeps it hidden until the input changes again.
 func (s *Surface) refreshSuggestions(input, cwd string, commandRunning bool) {
 	popup, ghost := false, false
 	if s.options.AutocompleteDisplay != nil {
 		popup, ghost = s.options.AutocompleteDisplay()
 	}
-	if s.options.Suggest == nil || (!popup && !ghost) || commandRunning {
+	program := s.atProgramPrompt(input, commandRunning)
+	if program != s.suggestionProgram {
+		// Entering or leaving a program prompt changes the source set, so the
+		// cached rows are re-asked even when the typed text is unchanged.
+		s.suggestionProgram = program
+		s.suggestions = nil
+		s.suggestionIndex = 0
+	}
+	s.programPrompt = program
+	if s.options.Suggest == nil || (!popup && !ghost) || (commandRunning && !program) {
 		s.suggestions = nil
 		s.suggestionIndex = 0
 		s.suggestionInput = input
@@ -66,7 +77,12 @@ func (s *Surface) refreshSuggestions(input, cwd string, commandRunning bool) {
 		// Read under the same scope the capture pipeline writes: a saved Host,
 		// an unsaved Host with its captured origin, a serial port, or local.
 		// The cwd is the shell's last OSC 7 value for the ranking bonus.
-		matches := s.options.Suggest(input, s.session.HistoryScope(), cwd)
+		var matches []autocomplete.Suggestion
+		if s.options.SuggestAtPrompt != nil {
+			matches = s.options.SuggestAtPrompt(input, s.session.HistoryScope(), cwd, program)
+		} else {
+			matches = s.options.Suggest(input, s.session.HistoryScope(), cwd)
+		}
 		filtered := make([]autocomplete.Suggestion, 0, len(matches))
 		for _, suggestion := range matches {
 			if suggestion.Text != input {
@@ -80,6 +96,24 @@ func (s *Surface) refreshSuggestions(input, cwd string, commandRunning bool) {
 	}
 	s.showAutocomplete = popup && len(s.suggestions) > 0
 	s.showGhost = ghost && len(s.suggestions) > 0
+}
+
+// atProgramPrompt reports whether the terminal's last visible line has the
+// shape of a non-shell program's input prompt. The command must be running:
+// a shell's own PS1 cannot match the allowlist, but requiring a running
+// command also keeps a normal prompt that merely mentions "Email:" out of
+// this path. Only the prompt text matters, so an un-echoed keystroke does not
+// hide it.
+func (s *Surface) atProgramPrompt(input string, commandRunning bool) bool {
+	if !commandRunning || input == "" || s.terminal == nil {
+		return false
+	}
+	text := s.terminal.Text()
+	line := text
+	if index := strings.LastIndexByte(text, '\n'); index >= 0 {
+		line = text[index+1:]
+	}
+	return autocomplete.ProgramInputPrompt(line)
 }
 
 // handleAutocompleteKey runs before MyGo encodes a key, so Tab can replace the
@@ -121,19 +155,24 @@ func (s *Surface) handleAutocompleteKey(mods ui.Modifiers, key ui.Key) bool {
 	return true
 }
 
-// acceptSuggestion replaces the typed line with the suggestion through
+// acceptSuggestion replaces the typed text with the suggestion through
 // insertTextReplacing, the safe insertion seam the side panel also uses. The
-// line is cleared with one Backspace (DEL) per character rather than Ctrl+U:
-// PSReadLine binds Ctrl+U to Undo, so PowerShell rendered the raw byte and
-// merged the suggestion into the typed text ("git s^Ugit stash", #18).
-// Backspace is the one erase every target understands — readline, zle, and
-// PSReadLine all delete the character to its left — and the Session's tap
-// counts the same runes, so the tracked line stays aligned with the shell's.
-// The erases and the replacement are queued as one write only after the
-// sanitizer and bracketed-paste check, so a multi-line suggestion (for
-// example a row synced from another device) is pasted into the editor instead
-// of being executed, and without DEC 2004 it is refused with the typed prefix
-// left intact. No Tab byte and no submit is ever sent.
+// text to erase is counted from the tracked cursor, never from the line's
+// length: at a shell line start it is the whole typed line, after another
+// word it is just the current word, and mid-line it is only the prefix left
+// of the cursor, so the rest of the line is never truncated. At a program
+// input prompt the typed text is a query, so only the query word is replaced.
+// The erases are Backspace (DEL) rather than Ctrl+U: PSReadLine binds Ctrl+U
+// to Undo, so PowerShell rendered the raw byte and merged the suggestion into
+// the typed text ("git s^Ugit stash", #18). Backspace is the one erase every
+// target understands — readline, zle, and PSReadLine all delete the character
+// to its left — and the Session's tap counts the same runes, so the tracked
+// line stays aligned with the shell's. The erases and the replacement are
+// queued as one write only after the sanitizer and bracketed-paste check, so
+// a multi-line suggestion (for example a snippet or a row synced from another
+// device) is pasted into the editor instead of being executed, and without
+// DEC 2004 it is refused with the typed prefix left intact. No Tab byte and no
+// submit is ever sent.
 func (s *Surface) acceptSuggestion(index int) {
 	if index < 0 || index >= len(s.suggestions) {
 		return
@@ -142,8 +181,9 @@ func (s *Surface) acceptSuggestion(index int) {
 	if text == "" {
 		return
 	}
-	input := s.session.Snapshot().Input
-	eraseCount := utf8.RuneCountInString(input)
+	snapshot := s.session.Snapshot()
+	input := snapshot.Input
+	eraseCount := autocomplete.AcceptEraseCount(input, snapshot.InputCursor, s.programPrompt)
 	if err := s.insertTextReplacing(eraseCount, text); err != nil {
 		// Nothing reached the shell, so keep the popup and the typed line:
 		// the user can still see, copy, or insert the row another way.

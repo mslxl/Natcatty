@@ -476,6 +476,25 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		autocomplete.WithCommandDescriptions(func(command string) string {
 			return locales.CommandDescription(locales.In(i18n.Locale()), command)
 		}),
+		// Snippets are read lazily from the Vault state, which is built later
+		// and reloaded after storage opens. At a program input prompt the
+		// autocomplete popup offers them beside the journal rows.
+		autocomplete.WithSnippets(func() []autocomplete.Snippet {
+			if vaultState == nil {
+				return nil
+			}
+			snippets := vaultState.Snippets()
+			result := make([]autocomplete.Snippet, 0, len(snippets))
+			for _, snippet := range snippets {
+				result = append(result, autocomplete.Snippet{
+					Label:   snippet.Label,
+					Command: snippet.Command,
+					Tags:    append([]string(nil), snippet.Tags...),
+					Package: snippet.Package,
+				})
+			}
+			return result
+		}),
 	)
 	autocompleteService.Load(context.Background())
 	// A Host-Atuin Session captures commands transiently: they feed this
@@ -1236,6 +1255,17 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 					current := terminalService.Settings()
 					return current.AutocompletePopupMenu, current.AutocompleteGhostText
 				}),
+			// At a program input prompt the Vault Snippets join the rows;
+			// the same transient commands still apply. The shell prompt
+			// path above stays history-only.
+			sessionui.WithPromptSuggestions(func(input, scope, cwd string, program bool) []autocomplete.Suggestion {
+				kind := autocomplete.PromptShell
+				if program {
+					kind = autocomplete.PromptProgram
+				}
+				return autocompleteService.SuggestionsAtPrompt(input, scope, cwd, kind,
+					transientRegistry.Entries(s.ID()))
+			}),
 			sessionui.WithAutocompleteDelay(func() int {
 				return terminalService.Settings().AutocompleteDebounceMs
 			}),

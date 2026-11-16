@@ -681,6 +681,181 @@ func TestAutocompletePopupShowsAndRelocalizesDescriptions(t *testing.T) {
 	}
 }
 
+// startProgramPromptSession opens a local Session, submits a command so the
+// command is running, and waits for output that looks like a program's input
+// prompt. The terminal has no program echo in these tests, so the prompt and
+// the typed query are all the popup has to go on.
+func startProgramPromptSession(t *testing.T, prompt string, optionList ...Option) (*Surface, *appsession.Session, *scriptedTransport, *ui.Tester) {
+	t.Helper()
+	transport := newScriptedTransport()
+	service := appsession.NewService(scriptedFactory{transport: transport})
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindLocal})
+	if err != nil {
+		t.Fatalf("open Session: %v", err)
+	}
+	options := append([]Option{WithRedraw(func() {})}, optionList...)
+	surface, err := New(session, options...)
+	if err != nil {
+		t.Fatalf("New surface: %v", err)
+	}
+	t.Cleanup(surface.Close)
+	tester := surfaceTester(surface)
+	tester.Frame()
+	tester.ClickAt(450, 520)
+	tester.Type("read input")
+	tester.Key(0, ui.KeyEnter)
+	if !waitFor(t, func() bool {
+		snapshot := session.Snapshot()
+		return snapshot.Command.Running && snapshot.Input == ""
+	}) {
+		t.Fatalf("the command did not start: %+v", session.Snapshot().Command)
+	}
+	transport.emit(prompt)
+	if !waitFor(t, func() bool { return strings.Contains(surface.ScreenText(), strings.TrimSpace(prompt)) }) {
+		t.Fatalf("the program prompt did not reach the screen: %q", surface.ScreenText())
+	}
+	return surface, session, transport, tester
+}
+
+// TestAutocompleteOffersSnippetsAtProgramPrompt proves a Vault Snippet joins
+// the popup while a program's read prompt is waiting, and Tab inserts its
+// command into the line editor at the cursor.
+func TestAutocompleteOffersSnippetsAtProgramPrompt(t *testing.T) {
+	requests := make(chan bool, 8)
+	surface, session, transport, tester := startProgramPromptSession(t, "Email: ",
+		WithSuggestions(func(input, scope, cwd string) []autocomplete.Suggestion {
+			return nil
+		}, func() (bool, bool) { return true, false }),
+		WithPromptSuggestions(func(input, scope, cwd string, program bool) []autocomplete.Suggestion {
+			requests <- program
+			if !program || input != "wo" {
+				return nil
+			}
+			return []autocomplete.Suggestion{{
+				Text: "work@example.com", Display: "Work email",
+				Source: autocomplete.SourceSnippet,
+			}}
+		}),
+	)
+	// Frames while the command was being typed asked the shell provider; only
+	// the request after the query is the program-prompt one under test.
+	for len(requests) > 0 {
+		<-requests
+	}
+	tester.Type("wo")
+	if !waitFor(t, func() bool { return session.Snapshot().Input == "wo" }) {
+		t.Fatalf("typed input = %q", session.Snapshot().Input)
+	}
+	tester.Frame()
+	select {
+	case program := <-requests:
+		if !program {
+			t.Fatal("the provider was not told this is a program prompt")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the prompt suggestion provider was not called")
+	}
+	rows := surface.SuggestionRows()
+	if len(rows) != 1 || rows[0].Source != autocomplete.SourceSnippet ||
+		rows[0].Text != "work@example.com" {
+		t.Fatalf("popup rows = %+v, want the snippet", rows)
+	}
+	if !tester.HasText("Work email") {
+		t.Fatalf("the popup does not show the snippet label: %v", tester.Texts())
+	}
+
+	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
+		t.Fatal("Tab was not taken with a snippet available")
+	}
+	if !waitFor(t, func() bool {
+		return strings.Contains(transport.Input(), "\x7f\x7fwork@example.com")
+	}) {
+		t.Fatalf("accepted input = %q", transport.Input())
+	}
+	if strings.Contains(transport.Input(), "\x15") {
+		t.Fatalf("Ctrl+U reached the transport: %q", transport.Input())
+	}
+}
+
+// TestAutocompleteMidLineAcceptanceKeepsTheSuffix proves the acceptance erase
+// stops at the tracked cursor. With the cursor between "wo" and "r", only the
+// two characters left of it are erased; the suffix stays on the line.
+func TestAutocompleteMidLineAcceptanceKeepsTheSuffix(t *testing.T) {
+	surface, session, transport, tester := startProgramPromptSession(t, "Email: ",
+		WithSuggestions(func(input, scope, cwd string) []autocomplete.Suggestion {
+			return nil
+		}, func() (bool, bool) { return true, false }),
+		WithPromptSuggestions(func(input, scope, cwd string, program bool) []autocomplete.Suggestion {
+			return []autocomplete.Suggestion{{
+				Text: "work@example.com", Display: "Work email",
+				Source: autocomplete.SourceSnippet,
+			}}
+		}),
+	)
+	tester.Type("wor")
+	if !waitFor(t, func() bool { return session.Snapshot().Input == "wor" }) {
+		t.Fatalf("typed input = %q", session.Snapshot().Input)
+	}
+	// The left arrow moves the line editor's cursor between "wo" and "r".
+	if !session.InsertInput([]byte("\x1b[D")) {
+		t.Fatal("the left arrow was refused")
+	}
+	if !waitFor(t, func() bool { return session.Snapshot().InputCursor == 2 }) {
+		t.Fatalf("tracked cursor = %d, want 2", session.Snapshot().InputCursor)
+	}
+	tester.Frame()
+	before := strings.Count(transport.Input(), "\x7f")
+	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
+		t.Fatal("Tab was not taken with a snippet available")
+	}
+	if !waitFor(t, func() bool {
+		return strings.Count(transport.Input(), "\x7f") == before+2
+	}) {
+		t.Fatalf("acceptance erased %d characters, want only the 2 left of the cursor: %q",
+			strings.Count(transport.Input(), "\x7f")-before, transport.Input())
+	}
+}
+
+// TestAutocompleteRefusesUnsafeMultilineSnippetAtProgramPrompt keeps the
+// existing bracket-paste safeguard at a program prompt: without DEC 2004 the
+// multi-line Snippet is not typed, so nothing is sent and the typed query
+// stays in the editor.
+func TestAutocompleteRefusesUnsafeMultilineSnippetAtProgramPrompt(t *testing.T) {
+	const command = "first line\nsecond line"
+	surface, session, transport, tester := startProgramPromptSession(t, "Email: ",
+		WithSuggestions(func(input, scope, cwd string) []autocomplete.Suggestion {
+			return nil
+		}, func() (bool, bool) { return true, false }),
+		WithPromptSuggestions(func(input, scope, cwd string, program bool) []autocomplete.Suggestion {
+			return []autocomplete.Suggestion{{
+				Text: command, Display: "Two lines", Source: autocomplete.SourceSnippet,
+			}}
+		}),
+	)
+	tester.Type("wo")
+	if !waitFor(t, func() bool { return session.Snapshot().Input == "wo" }) {
+		t.Fatalf("typed input = %q", session.Snapshot().Input)
+	}
+	tester.Frame()
+	if len(surface.SuggestionRows()) != 1 {
+		t.Fatalf("popup rows = %+v, want the multiline snippet", surface.SuggestionRows())
+	}
+	before := transport.Input()
+	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
+		t.Fatal("Tab was not taken with a snippet available")
+	}
+	if got := transport.Input(); got != before {
+		t.Fatalf("Tab sent unsafe bytes: %q", got)
+	}
+	if session.Snapshot().Input != "wo" {
+		t.Fatalf("Tab changed the tracked line to %q", session.Snapshot().Input)
+	}
+	if err := surface.insertTextReplacing(2, command); !errors.Is(err, ErrInsertUnsafe) {
+		t.Fatalf("insertTextReplacing error = %v, want ErrInsertUnsafe", err)
+	}
+}
+
 func waitFor(t *testing.T, condition func() bool) bool {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

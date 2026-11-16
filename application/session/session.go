@@ -219,6 +219,10 @@ type Snapshot struct {
 	// Input is the line being typed but not yet submitted. Autocomplete reads
 	// it without reaching into the terminal's screen buffer.
 	Input string
+	// InputCursor is the cursor's rune offset within Input. It mirrors the
+	// line editor's cursor so an accepted suggestion replaces only the text
+	// left of it and leaves the rest of the line intact.
+	InputCursor int
 	// Busy reports recent output, a running command, or an active transfer.
 	Busy bool
 	// LastActivity is when terminal output last arrived.
@@ -1409,6 +1413,7 @@ func (s *Session) Snapshot() Snapshot {
 	snapshot.Title = state.Title
 	snapshot.Command = state.Command
 	snapshot.Input = state.Input
+	snapshot.InputCursor = state.InputCursor
 	snapshot.Busy = state.Busy
 	snapshot.LastActivity = state.LastActivity
 	snapshot.Transfer = state.Transfer

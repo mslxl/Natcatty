@@ -593,6 +593,48 @@ func TestSendToFocusedWithoutRunUsesTheSafeInsertionPath(t *testing.T) {
 	}
 }
 
+// TestSnippetInsertionKeepsTheLineEditorTextAndSafety mirrors the
+// autocomplete snippet acceptance at the shell seam: inserting a snippet
+// never submits a line, never clears text the terminal holds to the right of
+// its cursor (InsertText only writes at the cursor), and a multi-line snippet
+// at a target without bracketed paste is refused with ErrInsertUnsafe rather
+// than typed as several lines.
+func TestSnippetInsertionKeepsTheLineEditorTextAndSafety(t *testing.T) {
+	graph := newTestGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatalf("NewTab: %v", err)
+	}
+
+	const command = "work@example.com"
+	if !graph.state.SendToFocused(command, false) {
+		t.Fatal("the single-line snippet insertion was refused")
+	}
+	if len(graph.surface.inserted) != 1 || graph.surface.inserted[0] != command {
+		t.Fatalf("inserted = %+v, want the snippet command unchanged", graph.surface.inserted)
+	}
+	graph.factory.transport.mu.Lock()
+	input := append([]byte(nil), graph.factory.transport.input...)
+	graph.factory.transport.mu.Unlock()
+	if len(input) != 0 {
+		t.Fatalf("the snippet insertion reached the shell as input: %q", input)
+	}
+
+	const multiline = "first line\nsecond line"
+	graph.surface.insertErr = sessionui.ErrInsertUnsafe
+	if graph.state.SendToFocused(multiline, false) {
+		t.Fatal("the refused multi-line snippet was accepted")
+	}
+	if len(graph.surface.inserted) != 1 {
+		t.Fatalf("the refused snippet reached the surface: %+v", graph.surface.inserted)
+	}
+	graph.factory.transport.mu.Lock()
+	input = append([]byte(nil), graph.factory.transport.input...)
+	graph.factory.transport.mu.Unlock()
+	if len(input) != 0 {
+		t.Fatalf("the refused snippet reached the shell: %q", input)
+	}
+}
+
 func TestOpenHostCarriesTheNetworkDeviceModeOnlyForSSH(t *testing.T) {
 	graph := newTestGraph(t)
 	host := domainvault.Host{
