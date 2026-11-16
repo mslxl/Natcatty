@@ -182,7 +182,12 @@ func (t *inputTranslator) track(b byte) {
 		if utf8.FullRune(t.pending) {
 			r, size := utf8.DecodeRune(t.pending)
 			width := size
-			if t.encodedWidth != nil {
+			// An invalid source byte decodes as (RuneError, 1), but the wire
+			// carries that byte itself (or one replacement byte), not the
+			// three-byte UTF-8 encoding of U+FFFD. Ask the codec only for a
+			// genuine rune; a real U+FFFD decodes with size 3 and still counts
+			// its encoded width.
+			if invalidSourceByte := r == utf8.RuneError && size == 1; !invalidSourceByte && t.encodedWidth != nil {
 				if wire := t.encodedWidth(r); wire > 0 {
 					width = wire
 				}

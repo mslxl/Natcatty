@@ -16,7 +16,9 @@ type Codec interface {
 	SetEncoding(domainterminal.Encoding) bool
 	// EncodedWidth returns how many wire bytes r occupies in the current
 	// encoding, without changing any encoder state. A byte-oriented line editor
-	// needs it to erase one wire byte per Backspace.
+	// needs it to erase one wire byte per Backspace. Callers ask it only about
+	// a valid rune; an invalid source byte is always one wire byte, because
+	// neither UTF-8 nor a legacy encoder can expand it beyond one byte.
 	EncodedWidth(r rune) int
 }
 
