@@ -582,7 +582,12 @@ func TestSyncConvergentMigrationListsAndResolvesConflicts(t *testing.T) {
 		Register:      "secrets\x00host-1/password\x00value",
 		LocalPresent:  true,
 		RemotePresent: true,
-		Secret:        true,
+		// A blocked preview never carries these values; set them here so the
+		// leak assertion below would actually catch a surface that printed a
+		// secret-marked conflict's raw sides.
+		LocalValue:  json.RawMessage(`"local-hunter2"`),
+		RemoteValue: json.RawMessage(`"cloud-hunter2"`),
+		Secret:      true,
 	}
 	presence := appsync.ConvergentMigrationConflict{
 		Family:        "hosts",
@@ -626,8 +631,13 @@ func TestSyncConvergentMigrationListsAndResolvesConflicts(t *testing.T) {
 	} {
 		scrollSettingsTo(t, tester, want, w, h, viewport)
 	}
-	if tester.HasText(`Cloud name"`) || tester.HasText("secret") {
-		t.Fatalf("raw conflict values leaked: %q", tester.Texts())
+	for _, leaked := range []string{
+		`Cloud name"`, "local-hunter2", "cloud-hunter2",
+		`"local-hunter2"`, `"cloud-hunter2"`, "secret",
+	} {
+		if tester.HasText(leaked) {
+			t.Fatalf("raw conflict value %q leaked: %q", leaked, tester.Texts())
+		}
 	}
 
 	if _, ok := tester.Find(m.SettingsSyncConflictUseLocal()); !ok {
