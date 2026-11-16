@@ -19,6 +19,13 @@ belongs to at most one group through `Host.GroupID`; `Host.Group` is the
 derived path used for display and for the portable payload.
 _Avoid_: folder, category
 
+**Host TOTP**:
+A Host's time-based one-time-password authenticator, stored as a canonical
+`otpauth://totp/...` URI in the Vault field secret store. The Host record carries only
+`HasTOTP`. The keyboard-interactive handler may answer one recognized verification-code
+prompt with the current code; the secret and generated codes are never logged.
+_Avoid_: MFA secret, 2FA token, OTP password
+
 **Backing**:
 The tree a transfer pane reads and writes. Two panes share a Backing exactly when
 they address the same tree - one local device, or one Host - even when they are
