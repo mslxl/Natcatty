@@ -37,9 +37,10 @@ func TestHostStartupCommandRunsOncePerConnectionAndReplaysOnReconnect(t *testing
 		return strings.Count(first.input(), "echo ready\r") == 1
 	})
 
-	// Later output on the same connection must not replay it.
+	// Later output on the same connection must not replay it. The burst ends on
+	// another prompt, so only the one-shot mark keeps it from running again.
 	before := session.Snapshot().LastActivity
-	first.output <- []byte("more output\r\n")
+	first.output <- []byte("more output\r\n$ ")
 	waitForCondition(t, "the next output burst", func() bool {
 		return session.Snapshot().LastActivity.After(before)
 	})
@@ -63,7 +64,7 @@ func TestHostStartupCommandRunsOncePerConnectionAndReplaysOnReconnect(t *testing
 	})
 
 	before = session.Snapshot().LastActivity
-	second.output <- []byte("more after reconnect\r\n")
+	second.output <- []byte("more after reconnect\r\n$ ")
 	waitForCondition(t, "the next output after reconnect", func() bool {
 		return session.Snapshot().LastActivity.After(before)
 	})
@@ -83,7 +84,7 @@ func TestHostStartupCommandRunsOncePerConnectionAndReplaysOnReconnect(t *testing
 		return strings.Count(third.input(), "echo ready\r") == 1
 	})
 	before = session.Snapshot().LastActivity
-	third.output <- []byte("more after the second reconnect\r\n")
+	third.output <- []byte("more after the second reconnect\r\n$ ")
 	waitForCondition(t, "the next output after the second reconnect", func() bool {
 		return session.Snapshot().LastActivity.After(before)
 	})
