@@ -2166,6 +2166,7 @@
   "sftpConnecting": "Conectando…",
   "sftpNewTab": "Nueva pestaña",
   "sftpDuplicateTab": "Duplicar pestaña",
+  "sftpDuplicateEntry": "Duplicar",
   "sftpCloseTab": "Cerrar pestaña",
   "sftpUp": "Subir",
   "sftpRefresh": "Actualizar",

@@ -2166,6 +2166,7 @@
   "sftpConnecting": "Подключение…",
   "sftpNewTab": "Новая вкладка",
   "sftpDuplicateTab": "Дублировать вкладку",
+  "sftpDuplicateEntry": "Дублировать",
   "sftpCloseTab": "Закрыть вкладку",
   "sftpUp": "Вверх",
   "sftpRefresh": "Обновить",

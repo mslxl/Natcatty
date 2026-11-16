@@ -325,6 +325,9 @@ func rowMenu(menu *ui.Menu, s *transferstate.State, side transferstate.Side, tab
 	if menu.Item(m.SftpOpen()).Disabled(!one).Chosen() {
 		s.Open(side, entry)
 	}
+	if menu.Item(m.SftpDuplicateEntry()).Disabled(!transferstate.CanDuplicate(tab)).Chosen() {
+		s.DuplicateSelection(side)
+	}
 	if menu.Item(m.SftpCopyToOtherPane()).Disabled(other == nil || other.FS == nil).Chosen() {
 		s.Transfer(side)
 	}

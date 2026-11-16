@@ -2166,6 +2166,7 @@
   "sftpConnecting": "正在連線…",
   "sftpNewTab": "新增標籤頁",
   "sftpDuplicateTab": "複製標籤頁",
+  "sftpDuplicateEntry": "建立副本",
   "sftpCloseTab": "關閉標籤頁",
   "sftpUp": "上一層",
   "sftpRefresh": "重新整理",

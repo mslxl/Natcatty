@@ -3366,6 +3366,10 @@
   "@sftpDuplicateTab": {
     "description": "The action that duplicates the active tab."
   },
+  "sftpDuplicateEntry": "Duplicate",
+  "@sftpDuplicateEntry": {
+    "description": "The action that copies the selected files or folders beside themselves."
+  },
   "sftpCloseTab": "Close tab",
   "@sftpCloseTab": {
     "description": "The action that closes the active tab."

@@ -2166,6 +2166,7 @@
   "sftpConnecting": "正在连接…",
   "sftpNewTab": "新建标签页",
   "sftpDuplicateTab": "复制标签页",
+  "sftpDuplicateEntry": "创建副本",
   "sftpCloseTab": "关闭标签页",
   "sftpUp": "上一级",
   "sftpRefresh": "刷新",

@@ -17672,6 +17672,20 @@ func (msgs Messages) SftpDuplicateTab() string {
 	return Catalog.Format(msgs.locale, "sftpDuplicateTab", nil)
 }
 
+// SftpDuplicateEntry says "Duplicate"
+// in the language the app shows.
+//
+// The action that copies the selected files or folders beside themselves.
+func SftpDuplicateEntry() string { return In(i18n.Locale()).SftpDuplicateEntry() }
+
+// SftpDuplicateEntry says "Duplicate"
+// in the language of msgs.
+//
+// The action that copies the selected files or folders beside themselves.
+func (msgs Messages) SftpDuplicateEntry() string {
+	return Catalog.Format(msgs.locale, "sftpDuplicateEntry", nil)
+}
+
 // SftpCloseTab says "Close tab"
 // in the language the app shows.
 //
