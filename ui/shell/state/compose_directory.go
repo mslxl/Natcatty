@@ -58,12 +58,16 @@ func WithComposeDirectory(source ComposeDirectorySource) Option {
 // exceeds this window is reported instead of holding the picker open.
 const composeDirectoryTimeout = 15 * time.Second
 
-// The listing protocol prefixes the resolved path and each entry type so the
-// parser never guesses at a file name.
+// The listing protocol is a stream of NUL-terminated records. A NUL cannot
+// occur in a POSIX or Windows file name, so no name can spoof a record: the
+// type is the record's first byte and the name is every byte after it,
+// including newlines and a name that itself starts with a marker. The old
+// newline protocol treated "__d__name" or a name containing a newline as a
+// fabricated entry.
 const (
-	composeDirectoryPathPrefix      = "__D__"
-	composeDirectoryEntryPrefix     = "__d__"
-	composeDirectoryFilePrefix      = "__f__"
+	composeDirectoryPathRecord      = 'P'
+	composeDirectoryEntryRecord     = 'D'
+	composeDirectoryFileRecord      = 'F'
 	composeDirectoryListingMaxBytes = 1 << 20
 )
 
@@ -77,6 +81,11 @@ var errComposeDirectoryNoPath = errors.New("compose directory: the listing did n
 // errComposeDirectoryListingFailed reports a listing command that exited with
 // a status. Its output is the shell's error, not a directory.
 var errComposeDirectoryListingFailed = errors.New("compose directory: the listing command failed")
+
+// errComposeDirectoryListingTooLarge reports a listing whose output filled the
+// capture cap. The cap keeps the newest bytes, so the leading path record is
+// gone; parsing the tail would show part of a directory as if it were whole.
+var errComposeDirectoryListingTooLarge = errors.New("compose directory: the listing is too large")
 
 // OpenComposeDirectory shows the picker for the focused Session.
 func (s *State) OpenComposeDirectory() bool {
@@ -122,6 +131,9 @@ func (s *State) RefreshComposeDirectory() {
 		s.inputMu.Unlock()
 		return
 	}
+	// The UI thread owns composeDirectoryTyped; a finished listing only left a
+	// pending copy. Apply it here, before the view binds the editor.
+	s.applyComposeDirectoryPendingLocked()
 	id := s.composeDirectorySession
 	s.inputMu.Unlock()
 
@@ -184,6 +196,7 @@ func (s *State) closeComposeDirectoryLocked() {
 	s.composeDirectoryUnknown = false
 	s.composeDirectoryRequested = ""
 	s.composeDirectorySession = ""
+	s.composeDirectoryPendingTyped = ""
 }
 
 // ComposeDirectoryOpen reports whether the picker is showing.
@@ -200,7 +213,9 @@ func (s *State) ComposeDirectoryPath() string {
 	return s.composeDirectoryPath
 }
 
-// ComposeDirectoryTyped returns the path editor for binding.
+// ComposeDirectoryTyped returns the path editor for binding. Only the UI
+// thread may read or write the returned string; a background listing hands its
+// result over through RefreshComposeDirectory instead of touching it.
 func (s *State) ComposeDirectoryTyped() *string {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
@@ -289,6 +304,9 @@ func (s *State) ConfirmComposeDirectory() bool {
 		s.inputMu.Unlock()
 		return false
 	}
+	// Drain a finished listing so Insert sees the resolved path even when the
+	// click arrives before the next Refresh.
+	s.applyComposeDirectoryPendingLocked()
 	path := strings.TrimSpace(s.composeDirectoryTyped)
 	if path == "" || path == s.composeDirectoryRequested {
 		path = s.composeDirectoryPath
@@ -389,17 +407,31 @@ func (s *State) listComposeDirectory(ctx context.Context, seq uint64, session *a
 		s.composeDirectoryFailed = false
 		s.composeDirectoryUnsupported = false
 		s.composeDirectoryPath = listing.Path
-		// Never overwrite text typed while the listing was in flight. The
-		// editor keeps the user's input; the resolved directory is shown
-		// separately beside it.
-		if strings.TrimSpace(s.composeDirectoryTyped) == "" ||
-			s.composeDirectoryTyped == s.composeDirectoryRequested {
-			s.composeDirectoryTyped = listing.Path
-		}
+		// The TextInput binds composeDirectoryTyped directly, so this goroutine
+		// must not write it: the UI thread owns it. Leave the resolved path for
+		// applyComposeDirectoryPendingLocked, which runs on the UI thread and
+		// decides whether the user's typed text wins.
+		s.composeDirectoryPendingTyped = listing.Path
 		s.composeDirectoryEntries = append([]ComposeDirectoryEntry(nil), listing.Entries...)
 	}
 	s.inputMu.Unlock()
 	s.RequestRedraw()
+}
+
+// applyComposeDirectoryPendingLocked copies a finished listing's resolved path
+// into the editor. The caller holds inputMu and runs on the UI thread, the only
+// writer of composeDirectoryTyped. Text typed while the listing was in flight
+// wins; the editor is left alone unless it is empty or still holds the request.
+func (s *State) applyComposeDirectoryPendingLocked() {
+	pending := s.composeDirectoryPendingTyped
+	if pending == "" {
+		return
+	}
+	s.composeDirectoryPendingTyped = ""
+	if strings.TrimSpace(s.composeDirectoryTyped) == "" ||
+		s.composeDirectoryTyped == s.composeDirectoryRequested {
+		s.composeDirectoryTyped = pending
+	}
 }
 
 func (s *State) composeDirectoryLister() ComposeDirectoryLister {
@@ -453,6 +485,11 @@ func listComposeDirectory(ctx context.Context, session *appsession.Session, path
 	if result.HasExitCode && result.ExitCode != 0 {
 		return ComposeDirectoryListing{}, errComposeDirectoryListingFailed
 	}
+	if result.Truncated {
+		// The capture kept the newest bytes, so the leading path record is
+		// already gone. Report a failure instead of parsing a partial listing.
+		return ComposeDirectoryListing{}, errComposeDirectoryListingTooLarge
+	}
 	return parseComposeDirectoryOutput(result.Stdout)
 }
 
@@ -460,17 +497,27 @@ func listComposeDirectory(ctx context.Context, session *appsession.Session, path
 // fish, and the unknown shell family SSH uses). cd runs in the wrapper's
 // subshell, so the Session's own directory never changes. PWD is printed so a
 // relative or symlinked request resolves to the directory actually listed.
+//
+// The loop emits the same NUL-record protocol as the parser: P then the
+// resolved path, and one D or F record per entry. Globs never run a program,
+// so a listing cannot execute anything from the directory it reads.
 func posixDirectoryCommand(requested string) string {
 	directory := `"$HOME"`
 	if requested != "" {
 		directory = singleQuotePOSIX(requested)
 	}
-	return "cd -- " + directory + " && printf '" + composeDirectoryPathPrefix + "%s\\n' \"$PWD\" && " +
-		"env LC_ALL=C ls -1ApL -- .\n"
+	return "cd -- " + directory + " && printf 'P%s\\000' \"$PWD\" && " +
+		"for __nc_entry in .[!.]* ..?* *; do " +
+		"if [ -e \"$__nc_entry\" ] || [ -L \"$__nc_entry\" ]; then " +
+		"if [ -d \"$__nc_entry\" ]; then __nc_type=D; else __nc_type=F; fi; " +
+		"printf '%s%s\\000' \"$__nc_type\" \"$__nc_entry\"; " +
+		"fi; done\n"
 }
 
 // powershellDirectoryCommand lists a directory without changing the Session's
-// location: Resolve-Path and Get-ChildItem both take a literal path.
+// location: Resolve-Path and Get-ChildItem both take a literal path. It writes
+// the NUL-record protocol to the console stream so a name containing a newline
+// or a marker prefix cannot be misread.
 func powershellDirectoryCommand(requested string) string {
 	target := "$HOME"
 	if requested != "" {
@@ -478,37 +525,35 @@ func powershellDirectoryCommand(requested string) string {
 	}
 	return "$__ncPath = " + target + "; " +
 		"$__ncResolved = (Resolve-Path -LiteralPath $__ncPath -ErrorAction Stop).ProviderPath; " +
-		"Write-Output ('" + composeDirectoryPathPrefix + "' + $__ncResolved); " +
+		"[Console]::Out.Write('P' + $__ncResolved + [char]0); " +
 		"Get-ChildItem -LiteralPath $__ncResolved -Force | ForEach-Object { " +
-		"if ($_.PSIsContainer) { Write-Output ('" + composeDirectoryEntryPrefix + "' + $_.Name) } " +
-		"else { Write-Output ('" + composeDirectoryFilePrefix + "' + $_.Name) } }\n"
+		"if ($_.PSIsContainer) { $__ncType = 'D' } else { $__ncType = 'F' }; " +
+		"[Console]::Out.Write($__ncType + $_.Name + [char]0) }\n"
 }
 
-// parseComposeDirectoryOutput reads the marker protocol and the POSIX ls
-// output. Directories come first, then names, so the picker is stable across
-// shells.
+// parseComposeDirectoryOutput reads the NUL-record listing. The first record
+// must be the resolved path; every later D/F record is one entry. Unknown
+// records are ignored rather than guessed at, so no name can inject an entry.
 func parseComposeDirectoryOutput(output string) (ComposeDirectoryListing, error) {
 	listing := ComposeDirectoryListing{}
-	for _, line := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
-		line = strings.TrimSuffix(line, "\r")
-		switch {
-		case strings.HasPrefix(line, composeDirectoryPathPrefix):
-			listing.Path = strings.TrimPrefix(line, composeDirectoryPathPrefix)
-		case strings.HasPrefix(line, composeDirectoryEntryPrefix):
+	seenPath := false
+	for _, record := range strings.Split(output, "\x00") {
+		if record == "" {
+			continue
+		}
+		switch record[0] {
+		case composeDirectoryPathRecord:
+			if !seenPath {
+				listing.Path = record[1:]
+				seenPath = true
+			}
+		case composeDirectoryEntryRecord:
 			listing.Entries = append(listing.Entries, ComposeDirectoryEntry{
-				Name: strings.TrimPrefix(line, composeDirectoryEntryPrefix), Directory: true,
+				Name: record[1:], Directory: true,
 			})
-		case strings.HasPrefix(line, composeDirectoryFilePrefix):
+		case composeDirectoryFileRecord:
 			listing.Entries = append(listing.Entries, ComposeDirectoryEntry{
-				Name: strings.TrimPrefix(line, composeDirectoryFilePrefix),
-			})
-		case line == "":
-			// The listing command's own line ends and prompt residue are blank.
-		default:
-			// POSIX ls marks a directory with a trailing slash.
-			directory := strings.HasSuffix(line, "/")
-			listing.Entries = append(listing.Entries, ComposeDirectoryEntry{
-				Name: strings.TrimSuffix(line, "/"), Directory: directory,
+				Name: record[1:],
 			})
 		}
 	}

@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -15,12 +16,14 @@ import (
 // fakeComposeDirectory is the picker's Session state and lister seam. Tests
 // change cwd and live under the lock, then refresh the picker.
 type fakeComposeDirectory struct {
-	mu       sync.Mutex
-	cwd      string
-	live     bool
-	err      error
-	listings map[string]ComposeDirectoryListing
-	requests []string
+	mu          sync.Mutex
+	cwd         string
+	live        bool
+	err         error
+	listings    map[string]ComposeDirectoryListing
+	requests    []string
+	listBegin   chan struct{}
+	listRelease chan struct{}
 }
 
 func newFakeComposeDirectory(cwd string) *fakeComposeDirectory {
@@ -35,14 +38,22 @@ func (f *fakeComposeDirectory) Session(model.SessionID) (string, bool) {
 
 func (f *fakeComposeDirectory) List(_ context.Context, session *appsession.Session, path string) (ComposeDirectoryListing, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.requests = append(f.requests, path)
-	if f.err != nil {
-		return ComposeDirectoryListing{}, f.err
-	}
+	err := f.err
 	listing, ok := f.listings[path]
 	if !ok {
 		listing = ComposeDirectoryListing{Path: path}
+	}
+	begin, release := f.listBegin, f.listRelease
+	f.mu.Unlock()
+	if begin != nil {
+		close(begin)
+	}
+	if release != nil {
+		<-release
+	}
+	if err != nil {
+		return ComposeDirectoryListing{}, err
 	}
 	return listing, nil
 }
@@ -100,10 +111,13 @@ func openComposeDirectoryPicker(t *testing.T, source *fakeComposeDirectory) (*in
 }
 
 // waitComposeDirectory waits on the picker's real state with a hard deadline.
+// It calls RefreshComposeDirectory like the view does, so a finished listing's
+// pending resolved path reaches the bound editor on this (UI) goroutine.
 func waitComposeDirectory(t *testing.T, state *State, wantPath string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
+		state.RefreshComposeDirectory()
 		if state.ComposeDirectoryPath() == wantPath && !state.ComposeDirectoryLoading() {
 			return
 		}
@@ -279,8 +293,69 @@ func TestComposeDirectoryConfirmingAFileEntryUsesItsFullPath(t *testing.T) {
 	}
 }
 
+// TestComposeDirectoryListingLeavesTheBoundEditorToTheUIThread proves a
+// finished listing never writes the string the TextInput binds directly. It
+// leaves the resolved path in the pending field, and RefreshComposeDirectory
+// applies it on the UI thread. The listing goroutine used to write the bound
+// string under inputMu, which the UI thread reads and writes without that lock.
+func TestComposeDirectoryListingLeavesTheBoundEditorToTheUIThread(t *testing.T) {
+	source := newFakeComposeDirectory("/requested")
+	source.addListing("/requested", "/resolved")
+	began := make(chan struct{})
+	release := make(chan struct{})
+	source.listBegin, source.listRelease = began, release
+	graph, _ := openComposeDirectoryPicker(t, source)
+
+	select {
+	case <-began:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the listing did not start")
+	}
+	typed := graph.state.ComposeDirectoryTyped()
+	*typed = "" // the user cleared the editor while the listing was in flight
+
+	// The TextInput reads the bound string without inputMu. Keep such a reader
+	// running across completion so `go test -race` reports any listing-goroutine
+	// write to the same string. The reader stops before Refresh writes it.
+	stop := make(chan struct{})
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = *typed
+				runtime.Gosched()
+			}
+		}
+	}()
+	close(release)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for graph.state.ComposeDirectoryPath() != "/resolved" || graph.state.ComposeDirectoryLoading() {
+		if !time.Now().Before(deadline) {
+			t.Fatalf("listing did not finish: path %q loading %v",
+				graph.state.ComposeDirectoryPath(), graph.state.ComposeDirectoryLoading())
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	close(stop)
+	<-readerDone
+
+	if got := *typed; got != "" {
+		t.Fatalf("the listing goroutine wrote the bound editor: %q", got)
+	}
+	graph.state.RefreshComposeDirectory()
+	if got := *typed; got != "/resolved" {
+		t.Fatalf("Refresh did not apply the resolved path: %q", got)
+	}
+}
+
 func TestParseComposeDirectoryOutputOrdersDirectoriesFirst(t *testing.T) {
-	listing, err := parseComposeDirectoryOutput("__D__/srv\nsrc/\nmain.go\n__f__.hidden\n__d__docs\n")
+	listing, err := parseComposeDirectoryOutput(
+		"P/srv\x00Dsrc\x00Ddocs\x00Fmain.go\x00F.hidden\x00")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,6 +373,40 @@ func TestParseComposeDirectoryOutputOrdersDirectoriesFirst(t *testing.T) {
 	}
 	if _, err := parseComposeDirectoryOutput("no marker\n"); err == nil {
 		t.Fatal("a listing without a path was accepted")
+	}
+}
+
+// TestParseComposeDirectoryOutputCannotBeSpoofedByAName proves marker text and
+// newlines inside a name stay part of that name. The old newline protocol read
+// "__d__docs" as a directory record and a newline inside a name as two entries.
+func TestParseComposeDirectoryOutputCannotBeSpoofedByAName(t *testing.T) {
+	listing, err := parseComposeDirectoryOutput(
+		"P/srv\x00D__D__evil\x00F__d__dir\x00F__f__file\x00Fline\nbreak\x00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ComposeDirectoryEntry{
+		{Name: "__D__evil", Directory: true},
+		{Name: "__d__dir"},
+		{Name: "__f__file"},
+		{Name: "line\nbreak"},
+	}
+	if !reflect.DeepEqual(listing.Entries, want) {
+		t.Fatalf("entries = %+v, want %+v", listing.Entries, want)
+	}
+	// An unknown record cannot supply the required resolved path.
+	if _, err := parseComposeDirectoryOutput("__D__not-a-path\x00"); err == nil {
+		t.Fatal("an unknown record was accepted as the resolved path")
+	}
+}
+
+func TestComposeDirectoryCommandsUseTheRecordProtocol(t *testing.T) {
+	if got := posixDirectoryCommand("/srv/app"); !strings.Contains(got, `printf 'P%s\000'`) ||
+		!strings.Contains(got, `printf '%s%s\000'`) {
+		t.Fatalf("POSIX command does not emit NUL records: %q", got)
+	}
+	if got := powershellDirectoryCommand(`C:\app`); !strings.Contains(got, "[char]0") {
+		t.Fatalf("PowerShell command does not emit NUL records: %q", got)
 	}
 }
 

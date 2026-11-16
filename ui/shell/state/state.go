@@ -331,21 +331,26 @@ type State struct {
 	// The compose directory picker. Listings run off the UI thread and write
 	// these fields under inputMu; composeDirectorySeq makes a superseded or
 	// canceled listing unable to replace a newer one.
-	composeDirectory            ComposeDirectorySource
-	composeDirectoryOpen        bool
-	composeDirectorySession     model.SessionID
-	composeDirectoryShell       string
-	composeDirectoryTracked     string
-	composeDirectoryPath        string
-	composeDirectoryTyped       string
-	composeDirectoryRequested   string
-	composeDirectoryEntries     []ComposeDirectoryEntry
-	composeDirectoryUnknown     bool
-	composeDirectoryLoading     bool
-	composeDirectoryFailed      bool
-	composeDirectoryUnsupported bool
-	composeDirectorySeq         uint64
-	composeDirectoryCancel      context.CancelFunc
+	composeDirectory        ComposeDirectorySource
+	composeDirectoryOpen    bool
+	composeDirectorySession model.SessionID
+	composeDirectoryShell   string
+	composeDirectoryTracked string
+	composeDirectoryPath    string
+	composeDirectoryTyped   string
+	// composeDirectoryPendingTyped is the resolved path a finished listing
+	// wants the editor to show. The listing goroutine writes only this field;
+	// the UI thread copies it into composeDirectoryTyped, which is the string
+	// the TextInput binds directly and never shares with another goroutine.
+	composeDirectoryPendingTyped string
+	composeDirectoryRequested    string
+	composeDirectoryEntries      []ComposeDirectoryEntry
+	composeDirectoryUnknown      bool
+	composeDirectoryLoading      bool
+	composeDirectoryFailed       bool
+	composeDirectoryUnsupported  bool
+	composeDirectorySeq          uint64
+	composeDirectoryCancel       context.CancelFunc
 
 	// desktopNotice is a non-blocking message for a deep-link or command-line
 	// target the app could not open. It is set and read on the UI thread.
