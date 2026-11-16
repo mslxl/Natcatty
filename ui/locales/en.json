@@ -1536,6 +1536,8 @@
   "sessionLoggingPath": "Log: {path}",
   "sessionLoggingFailed": "The Session log could not be written.",
   "sessionLoggingNoDirectory": "Choose a log folder in Settings.",
+  "sessionLoggingOpen": "Open log file",
+  "sessionLoggingNoFile": "No log file for this Session yet.",
   "sessionLogFormatText": "Text",
   "sessionLogFormatRaw": "Raw",
   "sessionLogFormatHTML": "HTML",

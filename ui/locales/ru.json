@@ -1040,6 +1040,8 @@
   "sessionLoggingPath": "Журнал: {path}",
   "sessionLoggingFailed": "Не удалось записать журнал сеанса.",
   "sessionLoggingNoDirectory": "Выберите папку журналов в настройках.",
+  "sessionLoggingOpen": "Открыть файл журнала",
+  "sessionLoggingNoFile": "У этого сеанса ещё нет файла журнала.",
   "sessionLogFormatText": "Текст",
   "sessionLogFormatRaw": "Необработанный",
   "sessionLogFormatHTML": "HTML",

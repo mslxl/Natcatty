@@ -8152,6 +8152,26 @@ func (msgs Messages) SessionLoggingNoDirectory() string {
 	return Catalog.Format(msgs.locale, "sessionLoggingNoDirectory", nil)
 }
 
+// SessionLoggingOpen says "Open log file"
+// in the language the app shows.
+func SessionLoggingOpen() string { return In(i18n.Locale()).SessionLoggingOpen() }
+
+// SessionLoggingOpen says "Open log file"
+// in the language of msgs.
+func (msgs Messages) SessionLoggingOpen() string {
+	return Catalog.Format(msgs.locale, "sessionLoggingOpen", nil)
+}
+
+// SessionLoggingNoFile says "No log file for this Session yet."
+// in the language the app shows.
+func SessionLoggingNoFile() string { return In(i18n.Locale()).SessionLoggingNoFile() }
+
+// SessionLoggingNoFile says "No log file for this Session yet."
+// in the language of msgs.
+func (msgs Messages) SessionLoggingNoFile() string {
+	return Catalog.Format(msgs.locale, "sessionLoggingNoFile", nil)
+}
+
 // SessionLogFormatText says "Text"
 // in the language the app shows.
 func SessionLogFormatText() string { return In(i18n.Locale()).SessionLogFormatText() }

@@ -1040,6 +1040,8 @@
   "sessionLoggingPath": "日誌：{path}",
   "sessionLoggingFailed": "無法寫入工作階段日誌。",
   "sessionLoggingNoDirectory": "請在設定中選擇日誌資料夾。",
+  "sessionLoggingOpen": "開啟日誌檔",
+  "sessionLoggingNoFile": "此工作階段尚無日誌檔。",
   "sessionLogFormatText": "文字",
   "sessionLogFormatRaw": "原始",
   "sessionLogFormatHTML": "HTML",

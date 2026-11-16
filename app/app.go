@@ -1209,6 +1209,11 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			sessionui.WithLogDefaults(func() appsession.LogOptions {
 				return terminalLogDefaults(s.Label())
 			}),
+			// The log path is a local file the app already owns; the
+			// platform launcher opens it with the associated application.
+			sessionui.WithLogOpener(func(path string) {
+				_ = adapterslaunch.New().OpenSystem(context.Background(), path)
+			}),
 			sessionui.WithRedraw(invalidate),
 			sessionui.WithPastePolicy(terminalService.PasteConfirmation),
 			sessionui.WithDropAction(func() domainterminal.DropAction {

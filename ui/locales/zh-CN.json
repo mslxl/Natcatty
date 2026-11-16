@@ -1040,6 +1040,8 @@
   "sessionLoggingPath": "日志：{path}",
   "sessionLoggingFailed": "无法写入会话日志。",
   "sessionLoggingNoDirectory": "请在设置中选择日志文件夹。",
+  "sessionLoggingOpen": "打开日志文件",
+  "sessionLoggingNoFile": "此会话还没有日志文件。",
   "sessionLogFormatText": "文本",
   "sessionLogFormatRaw": "原始",
   "sessionLogFormatHTML": "HTML",

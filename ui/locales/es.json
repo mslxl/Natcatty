@@ -1040,6 +1040,8 @@
   "sessionLoggingPath": "Registro: {path}",
   "sessionLoggingFailed": "No se pudo escribir el registro de la sesión.",
   "sessionLoggingNoDirectory": "Elige una carpeta de registros en Ajustes.",
+  "sessionLoggingOpen": "Abrir archivo de registro",
+  "sessionLoggingNoFile": "Esta sesión aún no tiene archivo de registro.",
   "sessionLogFormatText": "Texto",
   "sessionLogFormatRaw": "Sin formato",
   "sessionLogFormatHTML": "HTML",
