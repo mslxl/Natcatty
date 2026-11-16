@@ -2243,6 +2243,7 @@
   "sftpOpenTooLarge": "此文件太大，内部编辑器无法打开（上限 10 MB）。",
   "sftpEditorTitle": "编辑 {name}",
   "sftpEditorSave": "保存",
+  "sftpEditorHighlight": "语法高亮",
   "sftpEditorClose": "关闭",
   "sftpEditorSaving": "正在保存…",
   "sftpEditorSaved": "已保存到远程文件。",

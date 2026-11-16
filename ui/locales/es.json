@@ -2243,6 +2243,7 @@
   "sftpOpenTooLarge": "Este archivo es demasiado grande para el editor interno (límite de 10 MB).",
   "sftpEditorTitle": "Editar {name}",
   "sftpEditorSave": "Guardar",
+  "sftpEditorHighlight": "Resaltado",
   "sftpEditorClose": "Cerrar",
   "sftpEditorSaving": "Guardando…",
   "sftpEditorSaved": "Guardado en el archivo remoto.",

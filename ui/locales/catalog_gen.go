@@ -18698,6 +18698,20 @@ func (msgs Messages) SftpEditorSave() string {
 	return Catalog.Format(msgs.locale, "sftpEditorSave", nil)
 }
 
+// SftpEditorHighlight says "Highlight"
+// in the language the app shows.
+//
+// The editor's switch that turns syntax highlighting on or off.
+func SftpEditorHighlight() string { return In(i18n.Locale()).SftpEditorHighlight() }
+
+// SftpEditorHighlight says "Highlight"
+// in the language of msgs.
+//
+// The editor's switch that turns syntax highlighting on or off.
+func (msgs Messages) SftpEditorHighlight() string {
+	return Catalog.Format(msgs.locale, "sftpEditorHighlight", nil)
+}
+
 // SftpEditorClose says "Close"
 // in the language the app shows.
 func SftpEditorClose() string { return In(i18n.Locale()).SftpEditorClose() }

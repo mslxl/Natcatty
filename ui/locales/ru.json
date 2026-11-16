@@ -2243,6 +2243,7 @@
   "sftpOpenTooLarge": "Этот файл слишком велик для внутреннего редактора (ограничение 10 МБ).",
   "sftpEditorTitle": "Изменить {name}",
   "sftpEditorSave": "Сохранить",
+  "sftpEditorHighlight": "Подсветка",
   "sftpEditorClose": "Закрыть",
   "sftpEditorSaving": "Сохранение…",
   "sftpEditorSaved": "Сохранено в удалённый файл.",
