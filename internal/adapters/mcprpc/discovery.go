@@ -5,8 +5,9 @@
 // 127.0.0.1. The first message on every connection must be
 // {"method":"auth/verify","params":{"token":"..."}}; anything else, or a wrong
 // token, receives -32001 and the connection closes. Once authenticated, a
-// dispatch failure returns -32000. Buffers are capped at 10 MiB and connected
-// clients are never re-established automatically.
+// dispatch failure returns -32000. Buffers are capped at 10 MiB. Client never
+// redials; the external bridge opts into one reconnect per call through
+// ReconnectingClient, which re-reads discovery before redialing.
 //
 // The package is a process-boundary adapter: it imports no application, UI, or
 // MyGo package.
