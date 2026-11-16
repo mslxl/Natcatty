@@ -159,6 +159,25 @@ func TestTrustViewShowsDistinctUnknownAndChangedPrompts(t *testing.T) {
 			decision: appconnection.PromptDecision{Trust: true, Persist: true},
 		},
 		{
+			name: "host certificate",
+			key: domainconn.Key{
+				Hostname: "example.com", KeyType: "host-cert", Fingerprint: "cert-blob",
+				Status:             domainconn.StatusUnknown,
+				IsHostCertificate:  true,
+				CertificateKeyType: "ssh-key", CertificateKeyFingerprint: "key-blob",
+				CertificateCAType: "ssh-key", CertificateCAFingerprint: "ca-blob",
+			},
+			// The Vault records the CA, not the certificate blob, so the prompt
+			// must name both before the user delegates trust to that CA.
+			wants: []string{
+				"Unknown host key",
+				"Certificate fingerprint (host-cert): cert-blob",
+				"Issued by certificate authority (ssh-key): ca-blob",
+			},
+			rejects:  []string{"host-cert fingerprint: cert-blob"},
+			decision: appconnection.PromptDecision{Trust: true, Persist: true},
+		},
+		{
 			name: "changed",
 			key: domainconn.Key{
 				Hostname: "example.com", KeyType: "ssh-ed25519", Fingerprint: "live",

@@ -68,11 +68,16 @@ type KnownHost struct {
 	PublicKey string
 	// Fingerprint is SHA-256 base64 without padding; it is the ground truth
 	// for matching. PublicKey is display and import metadata.
-	Fingerprint       string
-	DiscoveredAt      time.Time
-	LastSeen          time.Time
-	ConvertedToHostID string
-	Order             int64
+	Fingerprint string
+	// IsCertificateAuthority marks a record whose KeyType and Fingerprint are
+	// the signing CA of a host certificate, not a presented key. The user
+	// approved the certificate while delegating trust to this CA, so the
+	// Known Hosts view must say so instead of showing it as a plain key.
+	IsCertificateAuthority bool
+	DiscoveredAt           time.Time
+	LastSeen               time.Time
+	ConvertedToHostID      string
+	Order                  int64
 }
 
 // normalizeFingerprint removes the display prefix and base64 padding so stored
@@ -126,11 +131,13 @@ func NewKnownHost(id string, key Key, when time.Time) KnownHost {
 	keyType := key.KeyType
 	publicKey := key.PublicKey
 	fingerprint := key.Fingerprint
+	certificateAuthority := false
 	if key.IsHostCertificate {
 		if key.CertificateCAFingerprint != "" {
 			keyType = key.CertificateCAType
 			publicKey = key.CertificateCAPublicKey
 			fingerprint = key.CertificateCAFingerprint
+			certificateAuthority = true
 		} else if key.CertificateKeyFingerprint != "" {
 			keyType = key.CertificateKeyType
 			publicKey = key.CertificateKeyPublicKey
@@ -138,14 +145,15 @@ func NewKnownHost(id string, key Key, when time.Time) KnownHost {
 		}
 	}
 	return KnownHost{
-		ID:           id,
-		Hostname:     normalizeHostname(key.Hostname),
-		Port:         portOr22(key.Port),
-		KeyType:      keyType,
-		PublicKey:    publicKey,
-		Fingerprint:  normalizeFingerprint(fingerprint),
-		DiscoveredAt: when,
-		LastSeen:     when,
+		ID:                     id,
+		Hostname:               normalizeHostname(key.Hostname),
+		Port:                   portOr22(key.Port),
+		KeyType:                keyType,
+		PublicKey:              publicKey,
+		Fingerprint:            normalizeFingerprint(fingerprint),
+		IsCertificateAuthority: certificateAuthority,
+		DiscoveredAt:           when,
+		LastSeen:               when,
 	}
 }
 

@@ -786,7 +786,11 @@ func knownHostRow(c *ui.Context, s *vaultstate.State, record domainconn.KnownHos
 	kit.ListRow(c).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, net.JoinHostPort(record.Hostname, strconv.Itoa(record.Port))).Bold()
-			ui.Text(c, record.KeyType+" · "+record.Fingerprint).
+			detail := record.KeyType + " · " + record.Fingerprint
+			if record.IsCertificateAuthority {
+				detail = m.VaultKnownHostCertificateAuthority() + " · " + detail
+			}
+			ui.Text(c, detail).
 				FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		})
 		ui.Text(c, m.VaultKnownHostTrusted()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)

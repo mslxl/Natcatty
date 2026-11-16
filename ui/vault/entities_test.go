@@ -1220,6 +1220,41 @@ func TestKnownHostsRefreshWhenATrustDecisionIsPersisted(t *testing.T) {
 	}
 }
 
+func TestKnownHostsMarkCertificateAuthorityAnchors(t *testing.T) {
+	m := locales.In("en")
+	state, _, _, _, known, tt := newProductionEntityView(t, 1100, 720)
+	known.items = []domainconn.KnownHost{
+		{
+			ID: "kh-ca", Hostname: "example.com", Port: 22,
+			KeyType: "ssh-ed25519", Fingerprint: "ca-fingerprint",
+			IsCertificateAuthority: true,
+		},
+		{
+			ID: "kh-key", Hostname: "other.example.com", Port: 22,
+			KeyType: "ssh-ed25519", Fingerprint: "plain-fingerprint",
+		},
+	}
+	state.InvalidateKnownHosts()
+	tt.Frame()
+
+	// A CA anchor is not the key the host presented, so the row must name it
+	// instead of showing the CA fingerprint as a plain key.
+	caRow := m.VaultKnownHostCertificateAuthority() + " · ssh-ed25519 · ca-fingerprint"
+	if !showsExactly(tt, caRow) {
+		t.Fatalf("the CA anchor row does not show %q, texts %q", caRow, tt.Texts())
+	}
+	if showsExactly(tt, "ssh-ed25519 · ca-fingerprint") {
+		t.Fatalf("the CA anchor row looks like a presented key, texts %q", tt.Texts())
+	}
+	// An ordinary key record keeps its unwrapped rendering.
+	if !showsExactly(tt, "ssh-ed25519 · plain-fingerprint") {
+		t.Fatalf("the plain key row is not rendered as before, texts %q", tt.Texts())
+	}
+	if showsExactly(tt, m.VaultKnownHostCertificateAuthority()+" · ssh-ed25519 · plain-fingerprint") {
+		t.Fatalf("a plain key was marked as a CA anchor, texts %q", tt.Texts())
+	}
+}
+
 func TestOpeningAGroupShowsOnlyItsHostsAt720x480(t *testing.T) {
 	m := locales.In("en")
 	state, hosts, groups, _, _, tt := newProductionEntityView(t, 720, 480)
