@@ -780,3 +780,51 @@ func TestAutoAttachTmuxIsKeptOnlyForPlainSSHHosts(t *testing.T) {
 		t.Fatal("network-device mode kept autoAttachTmux")
 	}
 }
+
+func TestNormalizeDraftCanonicalizesATOTPInput(t *testing.T) {
+	secret := totpBase32.EncodeToString(rfcSHA1Seed)
+	draft, err := NormalizeDraft(Draft{
+		Hostname: "example.test",
+		TOTP:     "  " + strings.ToLower(secret) + "  ",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if !strings.HasPrefix(draft.TOTP, "otpauth://totp/") {
+		t.Fatalf("TOTP = %q, want a canonical otpauth URI", draft.TOTP)
+	}
+	parsed, err := ParseTOTP(draft.TOTP)
+	if err != nil {
+		t.Fatalf("canonical TOTP does not parse: %v", err)
+	}
+	if parsed.Algorithm() != TOTPAlgorithmSHA1 || parsed.Digits() != 6 || parsed.Period() != 30 {
+		t.Fatalf("defaults = %s/%d/%d", parsed.Algorithm(), parsed.Digits(), parsed.Period())
+	}
+}
+
+func TestNormalizeDraftRejectsAnInvalidTOTPInput(t *testing.T) {
+	_, err := NormalizeDraft(Draft{Hostname: "example.test", TOTP: "not a secret"})
+	var validation *ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("error = %v, want *ValidationError", err)
+	}
+	if validation.Field != FieldTOTP || validation.Rule != RuleInvalid {
+		t.Fatalf("validation = %+v", validation)
+	}
+}
+
+func TestNormalizeDraftClearsTOTPForNonSSHProtocols(t *testing.T) {
+	secret := totpBase32.EncodeToString(rfcSHA1Seed)
+	draft, err := NormalizeDraft(Draft{
+		Hostname:  "example.test",
+		Protocol:  ProtocolTelnet,
+		TOTP:      secret,
+		ClearTOTP: true,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if draft.TOTP != "" || draft.ClearTOTP {
+		t.Fatalf("non-SSH draft kept TOTP=%q clear=%v", draft.TOTP, draft.ClearTOTP)
+	}
+}

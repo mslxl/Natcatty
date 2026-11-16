@@ -207,6 +207,9 @@ type Host struct {
 	// HasPassword reports that an encrypted password exists for this Host.
 	// The ciphertext lives in secret_values, never in this record.
 	HasPassword bool `json:"hasPassword,omitempty"`
+	// HasTOTP reports that an encrypted TOTP authenticator URI exists for this
+	// Host. As with HasPassword, only the marker lives on the record.
+	HasTOTP bool `json:"hasTotp,omitempty"`
 	// IdentityID selects a reusable Identity. An empty value means the Host
 	// authenticates on its own.
 	IdentityID model.IdentityID `json:"identityId,omitempty"`
@@ -340,6 +343,14 @@ type Draft struct {
 	// into the field-secret store; it is never copied onto Host or written
 	// to the JSON tail. An empty value on Update keeps the stored password.
 	Password string
+	// TOTP is plaintext form input: an otpauth://totp URI or a raw Base32
+	// secret. NormalizeDraft canonicalizes it to a URI; the Vault encrypts it
+	// into the field-secret store. An empty value on Update keeps the stored
+	// authenticator unless ClearTOTP is set.
+	TOTP string
+	// ClearTOTP explicitly removes a stored TOTP authenticator. It wins over a
+	// submitted TOTP value.
+	ClearTOTP bool
 }
 
 // Field names the part of a Host a validation error concerns.
@@ -362,8 +373,10 @@ const (
 	FieldPrivateKey  Field = "private_key"
 	FieldPassphrase  Field = "passphrase"
 	FieldCertificate Field = "certificate"
-	FieldChain       Field = "chain"
-	FieldProxy       Field = "proxy"
+	// FieldTOTP names the Host's TOTP authenticator input.
+	FieldTOTP  Field = "totp"
+	FieldChain Field = "chain"
+	FieldProxy Field = "proxy"
 	// FieldNetworkProfile names a Network Profile configuration. A Network
 	// Profile editor has one form, so its Kind-specific rules share one field.
 	FieldNetworkProfile Field = "network_profile"
@@ -461,6 +474,11 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 		draft.AuthMethod = HostAuthAuto
 		draft.UseSSHAgent = false
 		draft.RequiresMFA = false
+		// A TOTP authenticator answers SSH keyboard-interactive prompts. A
+		// protocol without SSH auth must not save one, and a stored value is
+		// left alone unless the draft explicitly clears it.
+		draft.TOTP = ""
+		draft.ClearTOTP = false
 	}
 	draft.Label = strings.TrimSpace(draft.Label)
 	draft.Hostname = strings.TrimSpace(draft.Hostname)
@@ -468,6 +486,11 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	draft.Group = NormalizeGroup(draft.Group)
 	draft.Notes = strings.TrimSpace(draft.Notes)
 	draft.Tags = normalizeTags(draft.Tags)
+	normalizedTOTP, err := normalizeTOTPDraft(draft)
+	if err != nil {
+		return Draft{}, err
+	}
+	draft.TOTP = normalizedTOTP
 	draft.HostChain = normalizeHostChain(draft.HostChain)
 	draft.Proxy = normalizeProxy(draft.Proxy)
 	draft.ProxyProfileID = strings.TrimSpace(draft.ProxyProfileID)
@@ -488,6 +511,23 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 		return Draft{}, err
 	}
 	return draft, nil
+}
+
+// normalizeTOTPDraft canonicalizes the TOTP form input. An empty field keeps
+// any stored authenticator, and ClearTOTP wins over a submitted value.
+func normalizeTOTPDraft(draft Draft) (string, error) {
+	if draft.ClearTOTP {
+		return "", nil
+	}
+	input := strings.TrimSpace(draft.TOTP)
+	if input == "" {
+		return "", nil
+	}
+	canonical, err := NormalizeTOTP(input)
+	if err != nil {
+		return "", &ValidationError{Field: FieldTOTP, Rule: RuleInvalid}
+	}
+	return canonical, nil
 }
 
 // NormalizeGroup canonicalizes a Host Group path: slash-separated segments,

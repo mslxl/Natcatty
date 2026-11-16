@@ -151,6 +151,8 @@ const (
 	ProblemFileProtocol             Problem = "file_protocol"
 	ProblemSudoUnsupported          Problem = "sftp_sudo_unsupported"
 	ProblemETPort                   Problem = "et_port"
+	ProblemTOTP                     Problem = "totp"
+	ProblemTOTPImage                Problem = "totp_image"
 )
 
 // Form is the editable text of one Host. Port stays a string so a malformed
@@ -173,6 +175,15 @@ type Form struct {
 	// HasPassword mirrors the Host's non-secret credential flag for the
 	// editor hint.
 	HasPassword bool
+	// TOTP is plaintext form input: an otpauth://totp URI or a raw Base32
+	// secret. Saving canonicalizes it into the Vault's secure field. Leaving it
+	// blank keeps the stored authenticator unless ClearTOTP is set.
+	TOTP string
+	// HasTOTP mirrors the Host's non-secret authenticator flag for the editor
+	// hint.
+	HasTOTP bool
+	// ClearTOTP removes the stored authenticator on Save. It wins over TOTP.
+	ClearTOTP bool
 	// IdentityID, KeyID, AuthMethod, UseSSHAgent, and RequiresMFA select how
 	// the Host authenticates. They hold references, never credential material.
 	IdentityID  string
@@ -345,6 +356,7 @@ type State struct {
 
 	imports        Imports
 	importPicker   ImportPicker
+	totpPicker     TOTPQRPicker
 	importActive   bool
 	importPreview  *appvault.ImportPreview
 	importName     string
@@ -789,9 +801,10 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		Tags:     strings.Join(host.Tags, ", "),
 		Notes:    host.Notes,
 		Pinned:   host.Pinned,
-		// The stored password is never loaded into the form. Leaving the
-		// field blank keeps the existing encrypted value.
+		// The stored password and authenticator are never loaded into the
+		// form. Leaving the fields blank keeps the existing encrypted values.
 		HasPassword:            host.HasPassword,
+		HasTOTP:                host.HasTOTP,
 		IdentityID:             string(host.IdentityID),
 		KeyID:                  string(host.KeyID),
 		AuthMethod:             string(host.AuthMethod),
@@ -836,6 +849,9 @@ func (s *State) BeginDuplicate(id model.HostID, suffix string) bool {
 	// A copy has no credential of its own: the source's encrypted values are
 	// keyed by its ID and are never inherited.
 	s.form.HasPassword = false
+	s.form.TOTP = ""
+	s.form.HasTOTP = false
+	s.form.ClearTOTP = false
 	if s.proxy != nil {
 		s.proxy = domainvault.CloneProxy(s.proxy)
 		s.proxy.Password = ""
@@ -1253,6 +1269,8 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		Notes:                  s.form.Notes,
 		Pinned:                 s.form.Pinned,
 		Password:               s.form.Password,
+		TOTP:                   s.form.TOTP,
+		ClearTOTP:              s.form.ClearTOTP,
 		IdentityID:             model.IdentityID(s.form.IdentityID),
 		KeyID:                  model.KeyID(s.form.KeyID),
 		AuthMethod:             domainvault.HostAuthMethod(s.form.AuthMethod),
@@ -1394,6 +1412,8 @@ func problemForValidation(invalid *domainvault.ValidationError) Problem {
 		return ProblemETPort
 	case domainvault.FieldSFTPSudo:
 		return ProblemSudoUnsupported
+	case domainvault.FieldTOTP:
+		return ProblemTOTP
 	case domainvault.FieldSnippet, domainvault.FieldSnippetCommand:
 		return ProblemSnippet
 	case domainvault.FieldSnippetPackage:

@@ -258,6 +258,43 @@ func TestApplyStoresIncomingSecretsAndClearsStaleOnes(t *testing.T) {
 	}
 }
 
+func TestSnapshotAndApplyCarryTheHostTOTP(t *testing.T) {
+	const uri = "otpauth://totp/Acme:root?secret=JBSWY3DPEHPK3PXP"
+	ref := appvault.HostSecretRef(model.HostID("host-1"), appvault.FieldTOTP)
+	records := &fakeRecords{hosts: []domainvault.Host{{
+		ID: "host-1", Label: "h", Hostname: "h", Port: 22,
+		Protocol: domainvault.ProtocolSSH, HasTOTP: true,
+	}}}
+	source := &fakeSecrets{mode: appvault.SecretModeOS, values: map[appvault.SecretRef]string{ref: uri}}
+	payload, err := New(records, source).Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Secrets) != 1 || payload.Secrets[0].Field != appvault.FieldTOTP ||
+		payload.Secrets[0].Value != uri {
+		t.Fatalf("snapshot secrets = %+v", payload.Secrets)
+	}
+
+	target := &fakeSecrets{mode: appvault.SecretModeOS, values: map[appvault.SecretRef]string{
+		ref: "stale",
+	}}
+	if err := New(&fakeRecords{}, target).Apply(context.Background(), payload); err != nil {
+		t.Fatal(err)
+	}
+	if target.values[ref] != uri {
+		t.Fatalf("applied TOTP = %q", target.values[ref])
+	}
+
+	payload.Hosts[0].HasTOTP = false
+	payload.Secrets = nil
+	if err := New(&fakeRecords{}, target).Apply(context.Background(), payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := target.values[ref]; ok {
+		t.Fatal("the TOTP survived a payload that dropped its marker")
+	}
+}
+
 type fakeSettings struct {
 	snapshot map[string]json.RawMessage
 	applied  map[string]json.RawMessage

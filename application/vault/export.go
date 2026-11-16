@@ -127,6 +127,9 @@ func omittedSecrets(dataset vaultexport.Dataset, format ExportFormat, includeSec
 			if host.Host.Proxy != nil && host.Host.Proxy.HasPassword {
 				count++
 			}
+			if host.Host.HasTOTP {
+				count++
+			}
 		}
 		return count
 	}
@@ -240,6 +243,14 @@ func (s *Service) exportDataset(ctx context.Context, opts ExportOptions) (vaulte
 					unreadable++
 				} else {
 					entry.ProxyPassword = value
+				}
+			}
+			if host.HasTOTP {
+				value, readErr := s.Secret(ctx, host.ID, FieldTOTP)
+				if readErr != nil {
+					unreadable++
+				} else {
+					entry.TOTP = value
 				}
 			}
 		}

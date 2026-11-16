@@ -111,6 +111,9 @@ type Host struct {
 	KeyPath       string
 	Passphrase    string
 	ProxyPassword string
+	// TOTP is the Host authenticator URI plaintext. It is populated only for a
+	// destructive export and is credential material.
+	TOTP string
 }
 
 // Key pairs an SSH Key with its decrypted material.
@@ -292,6 +295,9 @@ type jsonHost struct {
 	KeyPath    string `json:"keyPath,omitempty"`
 	Passphrase string `json:"passphrase,omitempty"`
 	Proxy      string `json:"proxy,omitempty"`
+	// TOTP carries the authenticator URI only in a destructive export. The
+	// embedded Host still serializes its HasTOTP marker.
+	TOTP string `json:"totp,omitempty"`
 }
 
 type jsonKey struct {
@@ -372,6 +378,7 @@ func exportJSON(d Dataset, opts Options) ([]byte, error) {
 		entry := jsonHost{Host: host.Host}
 		if opts.IncludeSecrets {
 			entry.Password = host.Password
+			entry.TOTP = host.TOTP
 		}
 		entry.KeyPath = vaultimport.EncodeMarkedField(host.KeyPath, vaultimport.MarkerKeyPath)
 		if opts.IncludeSecrets {

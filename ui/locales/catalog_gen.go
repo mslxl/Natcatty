@@ -4000,6 +4000,86 @@ func (msgs Messages) VaultHostPasswordHint() string {
 	return Catalog.Format(msgs.locale, "vaultHostPasswordHint", nil)
 }
 
+// VaultHostTOTP says "TOTP"
+// in the language the app shows.
+func VaultHostTOTP() string { return In(i18n.Locale()).VaultHostTOTP() }
+
+// VaultHostTOTP says "TOTP"
+// in the language of msgs.
+func (msgs Messages) VaultHostTOTP() string {
+	return Catalog.Format(msgs.locale, "vaultHostTOTP", nil)
+}
+
+// VaultHostTOTPHint says "Paste an otpauth:// URI or a Base32 secret. It is stored encrypted and never shown again."
+// in the language the app shows.
+func VaultHostTOTPHint() string { return In(i18n.Locale()).VaultHostTOTPHint() }
+
+// VaultHostTOTPHint says "Paste an otpauth:// URI or a Base32 secret. It is stored encrypted and never shown again."
+// in the language of msgs.
+func (msgs Messages) VaultHostTOTPHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostTOTPHint", nil)
+}
+
+// VaultHostTOTPKeep says "A TOTP authenticator is stored. Leave blank to keep it."
+// in the language the app shows.
+func VaultHostTOTPKeep() string { return In(i18n.Locale()).VaultHostTOTPKeep() }
+
+// VaultHostTOTPKeep says "A TOTP authenticator is stored. Leave blank to keep it."
+// in the language of msgs.
+func (msgs Messages) VaultHostTOTPKeep() string {
+	return Catalog.Format(msgs.locale, "vaultHostTOTPKeep", nil)
+}
+
+// VaultHostTOTPPlaceholder says "otpauth://totp/... or Base32 secret"
+// in the language the app shows.
+func VaultHostTOTPPlaceholder() string { return In(i18n.Locale()).VaultHostTOTPPlaceholder() }
+
+// VaultHostTOTPPlaceholder says "otpauth://totp/... or Base32 secret"
+// in the language of msgs.
+func (msgs Messages) VaultHostTOTPPlaceholder() string {
+	return Catalog.Format(msgs.locale, "vaultHostTOTPPlaceholder", nil)
+}
+
+// VaultHostTOTPImportQR says "Import QR image"
+// in the language the app shows.
+func VaultHostTOTPImportQR() string { return In(i18n.Locale()).VaultHostTOTPImportQR() }
+
+// VaultHostTOTPImportQR says "Import QR image"
+// in the language of msgs.
+func (msgs Messages) VaultHostTOTPImportQR() string {
+	return Catalog.Format(msgs.locale, "vaultHostTOTPImportQR", nil)
+}
+
+// VaultHostTOTPRemove says "Remove stored authenticator"
+// in the language the app shows.
+func VaultHostTOTPRemove() string { return In(i18n.Locale()).VaultHostTOTPRemove() }
+
+// VaultHostTOTPRemove says "Remove stored authenticator"
+// in the language of msgs.
+func (msgs Messages) VaultHostTOTPRemove() string {
+	return Catalog.Format(msgs.locale, "vaultHostTOTPRemove", nil)
+}
+
+// VaultProblemTOTP says "Enter a valid otpauth://totp URI or Base32 secret."
+// in the language the app shows.
+func VaultProblemTOTP() string { return In(i18n.Locale()).VaultProblemTOTP() }
+
+// VaultProblemTOTP says "Enter a valid otpauth://totp URI or Base32 secret."
+// in the language of msgs.
+func (msgs Messages) VaultProblemTOTP() string {
+	return Catalog.Format(msgs.locale, "vaultProblemTOTP", nil)
+}
+
+// VaultProblemTOTPImage says "The image could not be read, or it contains no TOTP QR code."
+// in the language the app shows.
+func VaultProblemTOTPImage() string { return In(i18n.Locale()).VaultProblemTOTPImage() }
+
+// VaultProblemTOTPImage says "The image could not be read, or it contains no TOTP QR code."
+// in the language of msgs.
+func (msgs Messages) VaultProblemTOTPImage() string {
+	return Catalog.Format(msgs.locale, "vaultProblemTOTPImage", nil)
+}
+
 // VaultProblemSecretField says "The password could not be stored."
 // in the language the app shows.
 func VaultProblemSecretField() string { return In(i18n.Locale()).VaultProblemSecretField() }

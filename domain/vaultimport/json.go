@@ -44,7 +44,10 @@ type jsonHost struct {
 	Passphrase string `json:"passphrase"`
 	Proxy      string `json:"proxy"`
 	Password   string `json:"password"`
-	KeyID      string `json:"keyId"`
+	// TOTP is the Host authenticator URI. It is present only in a destructive
+	// export.
+	TOTP  string `json:"totp"`
+	KeyID string `json:"keyId"`
 	// IdentityID, AuthMethod, UseSSHAgent, RequiresMFA, and the advanced
 	// options round-trip the Host's authentication and negotiation policy.
 	IdentityID             string          `json:"identityId"`
@@ -244,6 +247,7 @@ func parseJSON(text string) Result {
 			Tags:                   append([]string(nil), source.Tags...),
 			Notes:                  source.Notes,
 			Password:               source.Password,
+			TOTP:                   source.TOTP,
 			Pinned:                 source.Pinned,
 			IdentityID:             strings.TrimSpace(source.IdentityID),
 			KeyID:                  strings.TrimSpace(source.KeyID),
