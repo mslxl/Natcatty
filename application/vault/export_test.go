@@ -2,6 +2,8 @@ package vault
 
 import (
 	"context"
+	"encoding/csv"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +11,7 @@ import (
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	"github.com/mslxl/natcatty/domain/vaultimport"
 )
 
 var fixedExportTime = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
@@ -179,6 +182,97 @@ func TestCSVExportRoundTripsThroughImport(t *testing.T) {
 	keys, err := importer.ListKeys(context.Background())
 	if err != nil || len(keys) != 1 || keys[0].Label != "id" {
 		t.Fatalf("imported Keys = %+v, %v", keys, err)
+	}
+}
+
+// TestCSVExportAppliesGroupJumpChainDefaults proves a Host with no own chain
+// writes the chain its Group default supplies. The CSV row must carry the same
+// ProxyJump cell a Host-owned chain would, with no issue, and importing the
+// file must restore the two hops as the Host's own chain. JSON keeps carrying
+// the group record itself, so only the CSV path resolves the default.
+func TestCSVExportAppliesGroupJumpChainDefaults(t *testing.T) {
+	service, hosts, groups, _, _ := newImportService(t)
+	groups.items = []domainvault.Group{{
+		Path: "Prod",
+		HostChain: &domainvault.HostChain{
+			HostIDs: []model.HostID{"jump-1", "jump-2"},
+		},
+	}}
+	hosts.hosts = []domainvault.Host{
+		{ID: "jump-1", Label: "bastion", Hostname: "bastion.example.test",
+			Protocol: domainvault.ProtocolSSH},
+		{ID: "jump-2", Label: "edge", Hostname: "edge.example.test", Port: 2222,
+			Protocol: domainvault.ProtocolSSH},
+		{ID: "client", Label: "client", Hostname: "client.example.test",
+			Protocol: domainvault.ProtocolSSH, Group: "Prod"},
+	}
+
+	export, err := service.ExportVault(context.Background(), ExportOptions{
+		Format: ExportCSV, ExportedAt: fixedExportTime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(export.Issues) != 0 {
+		t.Fatalf("a group-inherited chain produced issues: %+v", export.Issues)
+	}
+
+	records, err := csv.NewReader(strings.NewReader(
+		string(export.Content))).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	columns := make(map[string]int, len(records[0]))
+	for index, name := range records[0] {
+		columns[name] = index
+	}
+	var proxyJump string
+	for _, row := range records[1:] {
+		if row[columns["Hostname/IP"]] == "client.example.test" {
+			proxyJump = vaultimport.DecodeMarkedField(row[columns["ProxyJump"]],
+				vaultimport.MarkerProxyJump)
+		}
+	}
+	if proxyJump != "bastion.example.test,edge.example.test:2222" {
+		t.Fatalf("ProxyJump = %q, want the Group's two hops", proxyJump)
+	}
+	// The stored Host must still have no own chain; only the exported row
+	// resolves the default.
+	if hosts.hosts[2].HostChain != nil {
+		t.Fatalf("the export mutated the stored Host: %+v", hosts.hosts[2])
+	}
+
+	_, importedHosts, _, _, importStore := newImportService(t)
+	var restored int
+	importer := NewService(importedHosts,
+		WithGroups(importStore.groups),
+		WithImportStore(importStore),
+		WithIDGenerator(func() model.HostID {
+			restored++
+			return model.HostID("restored-" + strconv.Itoa(restored))
+		}),
+	)
+	preview, err := importer.PreviewImport(context.Background(), string(export.Content),
+		PreviewImportOptions{Format: "csv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Issues) != 0 {
+		t.Fatalf("import issues: %+v", preview.Issues)
+	}
+	if _, err := importer.CommitImport(context.Background(), preview, ImportCommitOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	byLabel := make(map[string]domainvault.Host, len(importedHosts.hosts))
+	for _, host := range importedHosts.hosts {
+		byLabel[host.Label] = host
+	}
+	chain := byLabel["client"].HostChain
+	if chain == nil || len(chain.HostIDs) != 2 {
+		t.Fatalf("imported chain = %+v, want two hops", chain)
+	}
+	if chain.HostIDs[0] != byLabel["bastion"].ID || chain.HostIDs[1] != byLabel["edge"].ID {
+		t.Fatalf("imported hops = %v, want bastion then edge", chain.HostIDs)
 	}
 }
 

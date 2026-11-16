@@ -233,12 +233,28 @@ func (s *Service) exportDataset(ctx context.Context, opts ExportOptions) (vaulte
 	for _, key := range keys {
 		keyExportByID[key.Key.ID] = key
 	}
+	// Groups are loaded before the Hosts so the CSV path can resolve the
+	// defaults a Host inherits. JSON already carries the group records, so its
+	// Host rows keep the stored values unchanged.
+	var groups []domainvault.Group
+	if s.groups != nil {
+		groups, err = s.groups.ListGroups(ctx)
+		if err != nil {
+			return dataset, 0, internal(err)
+		}
+		dataset.Groups = groups
+	}
 	for _, host := range hosts {
 		if len(selected) > 0 && !selected[host.ID] {
 			continue
 		}
-		entry := vaultexport.Host{Host: host}
-		if key, ok := keyExportByID[host.KeyID]; ok {
+		exported := host
+		if opts.Format == ExportCSV {
+			exported = domainvault.ApplyGroupDefaults(host,
+				domainvault.ResolveGroupDefaults(groups, host.Group))
+		}
+		entry := vaultexport.Host{Host: exported}
+		if key, ok := keyExportByID[exported.KeyID]; ok {
 			entry.KeyPath = key.Key.FilePath
 			entry.Passphrase = key.Passphrase
 		}
@@ -263,13 +279,6 @@ func (s *Service) exportDataset(ctx context.Context, opts ExportOptions) (vaulte
 		dataset.Hosts = append(dataset.Hosts, entry)
 	}
 
-	if s.groups != nil {
-		groups, err := s.groups.ListGroups(ctx)
-		if err != nil {
-			return dataset, 0, internal(err)
-		}
-		dataset.Groups = groups
-	}
 	if s.identities != nil {
 		identities, err := s.identities.ListIdentities(ctx)
 		if err != nil {
