@@ -166,6 +166,18 @@ func TestStaleStartupReadinessNeverTypesIntoTheNextConnection(t *testing.T) {
 	session.startupReadinessElapsed(oldGeneration)
 	session.maybeRunStartupCommand(oldGeneration, first)
 
+	// The synchronous state is the discriminator: a stale callback must leave
+	// the live generation's pending command and transport untouched. (The write
+	// itself happens on a goroutine, so checking the transport immediately
+	// would race.)
+	session.startupMu.Lock()
+	pending, generation, armedTransport := session.startupPending,
+		session.startupGeneration, session.startupTransport
+	session.startupMu.Unlock()
+	if !pending || generation != oldGeneration+1 || armedTransport != second {
+		t.Fatalf("a stale readiness callback disarmed the live generation: "+
+			"pending=%v generation=%d", pending, generation)
+	}
 	if got := first.input(); got != "" {
 		t.Fatalf("a stale generation typed into the old transport: %q", got)
 	}
