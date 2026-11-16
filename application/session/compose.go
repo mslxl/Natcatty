@@ -57,6 +57,31 @@ func (p ComposePreview) Bytes() int {
 // Empty reports that the draft produced nothing to send.
 func (p ComposePreview) Empty() bool { return len(p.Chunks) == 0 }
 
+// Bracketed-paste markers, as the pexpect-compatible shells define them.
+const (
+	bracketedPasteStart = "\x1b[200~"
+	bracketedPasteEnd   = "\x1b[201~"
+)
+
+// PasteData returns the bytes one target receives in Paste mode. A multiline
+// draft whose peer advertises bracketed paste travels as one paste: the body
+// stays between the markers and the submit carriage return follows them, so
+// no inner newline runs a command. A single-line draft, a line-by-line send, or
+// a peer that asked for the mode to stay off keeps the raw path.
+func (p ComposePreview) PasteData(bracketed bool) []byte {
+	if p.LineMode != ComposePaste || p.Text == "" {
+		return nil
+	}
+	body := p.Text
+	if bracketed && strings.Contains(body, "\n") {
+		body = bracketedPasteStart + body + bracketedPasteEnd
+	}
+	if p.AutoRun {
+		body += "\r"
+	}
+	return []byte(body)
+}
+
 // PreviewText renders Text with control characters visible, so the preview
 // shows what Escape decoding and line joining produced.
 func (p ComposePreview) PreviewText() string {

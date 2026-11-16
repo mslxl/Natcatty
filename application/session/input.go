@@ -116,6 +116,45 @@ func (s *Service) SendInput(targets []model.SessionID, data []byte) SendResult {
 	return result
 }
 
+// SendCompose sends one Paste-mode compose draft to exactly targets. Each
+// target's own peer state decides the encoding: a Session whose program has
+// enabled bracketed paste receives a multiline draft as one paste followed by
+// the submit key, while a Session without the mode receives the raw lines and
+// the submit key. A single-line draft is never wrapped. Bytes reports the
+// unwrapped submission, so the compose result stays comparable across peers
+// with different encodings.
+func (s *Service) SendCompose(targets []model.SessionID, preview ComposePreview) SendResult {
+	result := SendResult{Bytes: len(preview.PasteData(false))}
+	if len(targets) == 0 || preview.Empty() {
+		return SendResult{}
+	}
+
+	s.mu.Lock()
+	sessions := make([]*Session, len(targets))
+	for index, id := range targets {
+		sessions[index] = s.sessions[id]
+	}
+	s.mu.Unlock()
+
+	seen := make(map[model.SessionID]bool, len(targets))
+	for index, id := range targets {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		delivery := Delivery{SessionID: id}
+		if sessions[index] == nil {
+			delivery.Status = DeliveryMissing
+			delivery.Err = ErrClosed
+		} else {
+			payload := preview.PasteData(sessions[index].BracketedPaste())
+			delivery.Status, delivery.Err = sessions[index].deliver(payload)
+		}
+		result.Deliveries = append(result.Deliveries, delivery)
+	}
+	return result
+}
+
 // InsertInput queues bytes in this Session's transport as an explicit
 // insertion, not as keyboard input: the input hook does not observe it, so
 // Insert into one Session never fans out to broadcast targets. The bytes still

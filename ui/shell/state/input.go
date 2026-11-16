@@ -606,7 +606,15 @@ func (s *State) sendCompose() bool {
 		}()
 		return true
 	}
-	result := s.sessions.SendInput(targets, chunks[0])
+	// Paste mode lets each target's peer state decide whether a multiline
+	// draft travels as one bracketed paste. A single line-by-line chunk keeps
+	// the raw path.
+	var result appsession.SendResult
+	if preview.LineMode == appsession.ComposePaste {
+		result = s.sessions.SendCompose(targets, preview)
+	} else {
+		result = s.sessions.SendInput(targets, chunks[0])
+	}
 	s.finishCompose(0, result)
 	return true
 }

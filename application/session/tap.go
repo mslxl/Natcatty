@@ -148,13 +148,15 @@ type tapState struct {
 	Input   string
 	// HookActive reports that the session-scoped Netcatty hook has emitted an
 	// authoritative event for this Session, so capture can reach Tier 1.
-	HookActive   bool
-	Busy         bool
-	LastActivity time.Time
-	Notification *TerminalNotification
-	Clipboard    *ClipboardEvent
-	Transfer     TransferState
-	Stats        Stats
+	HookActive bool
+	// BracketedPaste reports that the peer enabled DECSET 2004.
+	BracketedPaste bool
+	Busy           bool
+	LastActivity   time.Time
+	Notification   *TerminalNotification
+	Clipboard      *ClipboardEvent
+	Transfer       TransferState
+	Stats          Stats
 }
 
 // activityWindow is how long output keeps the activity indicator lit after
@@ -273,7 +275,11 @@ type terminalTap struct {
 	// paste. The shell inserts them into its line editor literally, so the
 	// tap must not treat their newlines as Enter.
 	inputPaste bool
-	lastOutput time.Time
+	// bracketedPaste reports that the peer last enabled DECSET 2004 and has
+	// not disabled it since. A compose submission wraps multiline text in the
+	// paste markers only while this is true.
+	bracketedPaste bool
+	lastOutput     time.Time
 	// outputSinceStart marks that text output arrived after the current
 	// command started. The prompt fallback must ignore the previous command's
 	// prompt still sitting in the tail.
@@ -421,6 +427,10 @@ func (t *terminalTap) observe(data []byte, now time.Time) ([]byte, tapEffects) {
 			if !complete {
 				t.carryIncomplete(now, &output)
 				goto done
+			}
+			if enabled, ok := bracketedPasteMode(t.buffer[:end]); ok && enabled != t.bracketedPaste {
+				t.bracketedPaste = enabled
+				effects.Changed = true
 			}
 			output = append(output, t.buffer[:end]...)
 			t.buffer = t.buffer[end:]
@@ -588,6 +598,22 @@ func nextTapSpecial(data []byte) int {
 
 func isPartialPrefix(data, marker []byte) bool {
 	return len(data) < len(marker) && bytes.Equal(data, marker[:len(data)])
+}
+
+// bracketedPasteMode recognizes the DECSET 2004 enable and disable controls
+// (ESC [ ? 2 0 0 4 h | l) in one complete output sequence.
+func bracketedPasteMode(sequence []byte) (enabled, ok bool) {
+	if len(sequence) != 8 || sequence[1] != '[' || sequence[2] != '?' ||
+		!bytes.Equal(sequence[3:7], []byte("2004")) {
+		return false, false
+	}
+	switch sequence[7] {
+	case 'h':
+		return true, true
+	case 'l':
+		return false, true
+	}
+	return false, false
 }
 
 // escapeEnd returns the length of the escape sequence starting at data[0],
@@ -2057,15 +2083,16 @@ func (t *terminalTap) state(now time.Time) tapState {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	state := tapState{
-		CWD:          t.cwd,
-		Title:        t.title,
-		Command:      t.command,
-		Input:        t.inputBuffer,
-		HookActive:   t.hookActive,
-		Busy:         t.busyLocked(now),
-		LastActivity: t.lastOutput,
-		Transfer:     t.transfer,
-		Stats:        t.stats,
+		CWD:            t.cwd,
+		Title:          t.title,
+		Command:        t.command,
+		Input:          t.inputBuffer,
+		HookActive:     t.hookActive,
+		BracketedPaste: t.bracketedPaste,
+		Busy:           t.busyLocked(now),
+		LastActivity:   t.lastOutput,
+		Transfer:       t.transfer,
+		Stats:          t.stats,
 	}
 	if t.notification != nil {
 		copyNotification := *t.notification

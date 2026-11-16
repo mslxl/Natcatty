@@ -1376,6 +1376,15 @@ func (s *Session) ID() model.SessionID { return s.id }
 // has no Host and reports "".
 func (s *Session) HostID() model.HostID { return s.spec.HostID }
 
+// BracketedPaste reports whether the peer last enabled DECSET 2004. The
+// compose bar uses it to wrap multiline submissions in one paste.
+func (s *Session) BracketedPaste() bool {
+	if s == nil || s.tap == nil {
+		return false
+	}
+	return s.tap.state(time.Now()).BracketedPaste
+}
+
 // Done is closed once the Session has ended, its final snapshot is published,
 // and its Service has unregistered it. After Done fires, input addressed to the
 // Session by ID reports DeliveryMissing rather than DeliveryFailed.
