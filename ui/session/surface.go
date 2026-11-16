@@ -418,6 +418,9 @@ func (s *Surface) attach(conn io.ReadWriteCloser) error {
 			return true
 		},
 		OnKey: s.handleTerminalKey,
+		// Printed archive names underline and Command+click fills their
+		// extraction command. Returning false leaves URLs to MyGo.
+		OpenLink: s.openArchiveLink,
 	}
 	term, err := terminal.New(options)
 	if err != nil {
