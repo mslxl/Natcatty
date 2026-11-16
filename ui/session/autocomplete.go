@@ -47,6 +47,13 @@ func (s *Surface) refreshSuggestions(input, cwd string, commandRunning bool) {
 			s.suggestionTimer = time.AfterFunc(time.Duration(delay)*time.Millisecond, s.redraw)
 		}
 	}
+	if s.locale != s.suggestionLocale {
+		// The service fills Description from the live locale's catalog, so the
+		// cached rows are re-asked after a language switch; the text itself is
+		// unchanged and the ranking stays the same.
+		s.suggestionLocale = s.locale
+		s.suggestions = nil
+	}
 	if delay > 0 && time.Since(s.suggestionPending) < time.Duration(delay)*time.Millisecond {
 		s.showAutocomplete = false
 		s.showGhost = false

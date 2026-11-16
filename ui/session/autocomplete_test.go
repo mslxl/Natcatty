@@ -627,6 +627,60 @@ func TestSurfaceAutocompletePopupFloatsAboveThePrompt(t *testing.T) {
 	}
 }
 
+// TestAutocompletePopupShowsAndRelocalizesDescriptions proves the catalog
+// annotation reaches the popup, and that a language switch invalidates the
+// cached rows so the description follows the rest of the UI without reopening
+// the Session.
+func TestAutocompletePopupShowsAndRelocalizesDescriptions(t *testing.T) {
+	transport := newRecordingTransport()
+	service := appsession.NewService(recordingFactory{transport: transport})
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	description := locales.In("en").CommandDescriptionLs()
+	surface, err := New(session,
+		WithRedraw(func() {}),
+		WithSuggestions(func(input, _, _ string) []autocomplete.Suggestion {
+			return []autocomplete.Suggestion{
+				{Text: input + " -la", Description: description, Source: "history"},
+			}
+		}, func() (bool, bool) { return true, false }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(surface.Close)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+	tester.ClickAt(360, 420)
+	tester.Type("ls")
+	if !waitFor(t, func() bool { return session.Snapshot().Input == "ls" }) {
+		t.Fatalf("typed input = %q", session.Snapshot().Input)
+	}
+	tester.Frame()
+	tester.Frame()
+	if !tester.HasText(description) {
+		t.Fatalf("the popup did not show %q: %v", description, tester.Texts())
+	}
+
+	// A live language switch re-asks the service, whose callback reads the new
+	// locale; the popup shows the translated text without a new keystroke.
+	description = locales.In("zh-TW").CommandDescriptionLs()
+	tester.SetLocale("zh-TW")
+	tester.Frame()
+	tester.Frame()
+	rows := surface.SuggestionRows()
+	if len(rows) != 1 || rows[0].Description != description {
+		t.Fatalf("cached rows after the language switch = %+v, want %q", rows, description)
+	}
+	if !tester.HasText(description) {
+		t.Fatalf("the popup did not relocalize to %q: %v", description, tester.Texts())
+	}
+}
+
 func waitFor(t *testing.T, condition func() bool) bool {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

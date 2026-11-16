@@ -27115,3 +27115,303 @@ func SettingsAtuinDetailsNextRetry(time_ string) string {
 func (msgs Messages) SettingsAtuinDetailsNextRetry(time_ string) string {
 	return Catalog.Format(msgs.locale, "settingsAtuinDetailsNextRetry", map[string]any{"time": time_})
 }
+
+// CommandDescriptionLs says "List directory contents"
+// in the language the app shows.
+func CommandDescriptionLs() string { return In(i18n.Locale()).CommandDescriptionLs() }
+
+// CommandDescriptionLs says "List directory contents"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionLs() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionLs", nil)
+}
+
+// CommandDescriptionCd says "Change the current directory"
+// in the language the app shows.
+func CommandDescriptionCd() string { return In(i18n.Locale()).CommandDescriptionCd() }
+
+// CommandDescriptionCd says "Change the current directory"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionCd() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionCd", nil)
+}
+
+// CommandDescriptionPwd says "Print the working directory"
+// in the language the app shows.
+func CommandDescriptionPwd() string { return In(i18n.Locale()).CommandDescriptionPwd() }
+
+// CommandDescriptionPwd says "Print the working directory"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionPwd() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionPwd", nil)
+}
+
+// CommandDescriptionCat says "Print files to standard output"
+// in the language the app shows.
+func CommandDescriptionCat() string { return In(i18n.Locale()).CommandDescriptionCat() }
+
+// CommandDescriptionCat says "Print files to standard output"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionCat() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionCat", nil)
+}
+
+// CommandDescriptionCp says "Copy files and directories"
+// in the language the app shows.
+func CommandDescriptionCp() string { return In(i18n.Locale()).CommandDescriptionCp() }
+
+// CommandDescriptionCp says "Copy files and directories"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionCp() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionCp", nil)
+}
+
+// CommandDescriptionMv says "Move or rename files and directories"
+// in the language the app shows.
+func CommandDescriptionMv() string { return In(i18n.Locale()).CommandDescriptionMv() }
+
+// CommandDescriptionMv says "Move or rename files and directories"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionMv() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionMv", nil)
+}
+
+// CommandDescriptionRm says "Remove files and directories"
+// in the language the app shows.
+func CommandDescriptionRm() string { return In(i18n.Locale()).CommandDescriptionRm() }
+
+// CommandDescriptionRm says "Remove files and directories"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionRm() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionRm", nil)
+}
+
+// CommandDescriptionMkdir says "Create directories"
+// in the language the app shows.
+func CommandDescriptionMkdir() string { return In(i18n.Locale()).CommandDescriptionMkdir() }
+
+// CommandDescriptionMkdir says "Create directories"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionMkdir() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionMkdir", nil)
+}
+
+// CommandDescriptionFind says "Search for files in a directory tree"
+// in the language the app shows.
+func CommandDescriptionFind() string { return In(i18n.Locale()).CommandDescriptionFind() }
+
+// CommandDescriptionFind says "Search for files in a directory tree"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionFind() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionFind", nil)
+}
+
+// CommandDescriptionGrep says "Search text for lines matching a pattern"
+// in the language the app shows.
+func CommandDescriptionGrep() string { return In(i18n.Locale()).CommandDescriptionGrep() }
+
+// CommandDescriptionGrep says "Search text for lines matching a pattern"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionGrep() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionGrep", nil)
+}
+
+// CommandDescriptionSed says "Edit text with a stream editor"
+// in the language the app shows.
+func CommandDescriptionSed() string { return In(i18n.Locale()).CommandDescriptionSed() }
+
+// CommandDescriptionSed says "Edit text with a stream editor"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionSed() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionSed", nil)
+}
+
+// CommandDescriptionAwk says "Process text field by field"
+// in the language the app shows.
+func CommandDescriptionAwk() string { return In(i18n.Locale()).CommandDescriptionAwk() }
+
+// CommandDescriptionAwk says "Process text field by field"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionAwk() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionAwk", nil)
+}
+
+// CommandDescriptionSort says "Sort lines of text"
+// in the language the app shows.
+func CommandDescriptionSort() string { return In(i18n.Locale()).CommandDescriptionSort() }
+
+// CommandDescriptionSort says "Sort lines of text"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionSort() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionSort", nil)
+}
+
+// CommandDescriptionHead says "Print the first lines of a file"
+// in the language the app shows.
+func CommandDescriptionHead() string { return In(i18n.Locale()).CommandDescriptionHead() }
+
+// CommandDescriptionHead says "Print the first lines of a file"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionHead() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionHead", nil)
+}
+
+// CommandDescriptionTail says "Print the last lines of a file"
+// in the language the app shows.
+func CommandDescriptionTail() string { return In(i18n.Locale()).CommandDescriptionTail() }
+
+// CommandDescriptionTail says "Print the last lines of a file"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionTail() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionTail", nil)
+}
+
+// CommandDescriptionChmod says "Change file permissions"
+// in the language the app shows.
+func CommandDescriptionChmod() string { return In(i18n.Locale()).CommandDescriptionChmod() }
+
+// CommandDescriptionChmod says "Change file permissions"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionChmod() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionChmod", nil)
+}
+
+// CommandDescriptionPs says "List running processes"
+// in the language the app shows.
+func CommandDescriptionPs() string { return In(i18n.Locale()).CommandDescriptionPs() }
+
+// CommandDescriptionPs says "List running processes"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionPs() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionPs", nil)
+}
+
+// CommandDescriptionKill says "Send a signal to a process"
+// in the language the app shows.
+func CommandDescriptionKill() string { return In(i18n.Locale()).CommandDescriptionKill() }
+
+// CommandDescriptionKill says "Send a signal to a process"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionKill() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionKill", nil)
+}
+
+// CommandDescriptionDf says "Show filesystem disk usage"
+// in the language the app shows.
+func CommandDescriptionDf() string { return In(i18n.Locale()).CommandDescriptionDf() }
+
+// CommandDescriptionDf says "Show filesystem disk usage"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionDf() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionDf", nil)
+}
+
+// CommandDescriptionTar says "Archive files into a tar file"
+// in the language the app shows.
+func CommandDescriptionTar() string { return In(i18n.Locale()).CommandDescriptionTar() }
+
+// CommandDescriptionTar says "Archive files into a tar file"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionTar() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionTar", nil)
+}
+
+// CommandDescriptionSsh says "Connect to a remote host over SSH"
+// in the language the app shows.
+func CommandDescriptionSsh() string { return In(i18n.Locale()).CommandDescriptionSsh() }
+
+// CommandDescriptionSsh says "Connect to a remote host over SSH"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionSsh() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionSsh", nil)
+}
+
+// CommandDescriptionCurl says "Transfer data from a URL"
+// in the language the app shows.
+func CommandDescriptionCurl() string { return In(i18n.Locale()).CommandDescriptionCurl() }
+
+// CommandDescriptionCurl says "Transfer data from a URL"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionCurl() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionCurl", nil)
+}
+
+// CommandDescriptionGit says "Track and manage source changes"
+// in the language the app shows.
+func CommandDescriptionGit() string { return In(i18n.Locale()).CommandDescriptionGit() }
+
+// CommandDescriptionGit says "Track and manage source changes"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionGit() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionGit", nil)
+}
+
+// CommandDescriptionMake says "Build targets from a Makefile"
+// in the language the app shows.
+func CommandDescriptionMake() string { return In(i18n.Locale()).CommandDescriptionMake() }
+
+// CommandDescriptionMake says "Build targets from a Makefile"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionMake() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionMake", nil)
+}
+
+// CommandDescriptionSudo says "Run a command as another user"
+// in the language the app shows.
+func CommandDescriptionSudo() string { return In(i18n.Locale()).CommandDescriptionSudo() }
+
+// CommandDescriptionSudo says "Run a command as another user"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionSudo() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionSudo", nil)
+}
+
+// CommandDescriptionMan says "Show a command's manual page"
+// in the language the app shows.
+func CommandDescriptionMan() string { return In(i18n.Locale()).CommandDescriptionMan() }
+
+// CommandDescriptionMan says "Show a command's manual page"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionMan() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionMan", nil)
+}
+
+// CommandDescriptionVim says "Edit text in the terminal"
+// in the language the app shows.
+func CommandDescriptionVim() string { return In(i18n.Locale()).CommandDescriptionVim() }
+
+// CommandDescriptionVim says "Edit text in the terminal"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionVim() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionVim", nil)
+}
+
+// CommandDescriptionEcho says "Print text to standard output"
+// in the language the app shows.
+func CommandDescriptionEcho() string { return In(i18n.Locale()).CommandDescriptionEcho() }
+
+// CommandDescriptionEcho says "Print text to standard output"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionEcho() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionEcho", nil)
+}
+
+// CommandDescriptionDocker says "Build and run containers"
+// in the language the app shows.
+func CommandDescriptionDocker() string { return In(i18n.Locale()).CommandDescriptionDocker() }
+
+// CommandDescriptionDocker says "Build and run containers"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionDocker() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionDocker", nil)
+}
+
+// CommandDescriptionSystemctl says "Control systemd services"
+// in the language the app shows.
+func CommandDescriptionSystemctl() string { return In(i18n.Locale()).CommandDescriptionSystemctl() }
+
+// CommandDescriptionSystemctl says "Control systemd services"
+// in the language of msgs.
+func (msgs Messages) CommandDescriptionSystemctl() string {
+	return Catalog.Format(msgs.locale, "commandDescriptionSystemctl", nil)
+}

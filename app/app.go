@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
 
@@ -469,6 +470,12 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				Scope:          current.AutocompleteHistoryScope,
 			}
 		},
+		// The catalog annotates rows after ranking, never reorders them. It is
+		// looked up through the live locale, so a language switch changes the
+		// next annotation without rebuilding the service.
+		autocomplete.WithCommandDescriptions(func(command string) string {
+			return locales.CommandDescription(locales.In(i18n.Locale()), command)
+		}),
 	)
 	autocompleteService.Load(context.Background())
 	// A Host-Atuin Session captures commands transiently: they feed this

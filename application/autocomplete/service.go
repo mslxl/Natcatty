@@ -69,6 +69,18 @@ func WithClock(clock func() time.Time) Option {
 	}
 }
 
+// WithCommandDescriptions annotates a suggestion with a one-line description
+// of the command it starts with. The function receives the suggestion text and
+// returns "" when the command has no description. It runs after ranking, so
+// the catalog can never change which rows appear or their order; the app
+// passes the live locale's catalog here, so a language switch applies to the
+// next request. A nil function leaves every suggestion without a description.
+func WithCommandDescriptions(describe func(command string) string) Option {
+	return func(service *Service) {
+		service.describe = describe
+	}
+}
+
 // aggregatedEntry is one scope/command pair derived from the journal. It is
 // the in-memory view autocomplete ranks; the journal stays authoritative.
 type aggregatedEntry struct {
@@ -133,6 +145,7 @@ type Service struct {
 	journal   Journal
 	config    func() Config
 	now       func() time.Time
+	describe  func(command string) string
 	entries   []aggregatedEntry
 }
 
@@ -398,7 +411,13 @@ func (s *Service) SuggestionsInWith(input, scope, cwd string, extra []domainhist
 	}
 	result := make([]Suggestion, 0, limit)
 	for _, candidate := range ranked[:limit] {
-		result = append(result, candidate.suggestion)
+		suggestion := candidate.suggestion
+		// Annotate only after ranking: Description is not part of the sort key
+		// or the packed Score, so a catalog can never reorder the rows.
+		if s.describe != nil {
+			suggestion.Description = s.describe(suggestion.Text)
+		}
+		result = append(result, suggestion)
 	}
 	return result
 }

@@ -291,10 +291,13 @@ type Surface struct {
 	observation *appsession.Observation
 
 	// Autocomplete state, refreshed once per frame from the Session's typed
-	// line.
+	// line. locale is the frame's language; a change invalidates the cached
+	// suggestions so their descriptions follow a live language switch.
+	locale              string
 	suggestions         []autocomplete.Suggestion
 	suggestionIndex     int
 	suggestionInput     string
+	suggestionLocale    string
 	suggestionPending   time.Time
 	suggestionDismissed bool
 	suggestionTimer     *time.Timer
@@ -569,6 +572,7 @@ func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
 		return s.browser.View(c)
 	}
 	m := locales.In(c.Locale())
+	s.locale = c.Locale()
 	t := c.Theme()
 	snapshot := s.session.Snapshot()
 	s.refreshSuggestions(snapshot.Input, snapshot.CWD, snapshot.Command.Running)
