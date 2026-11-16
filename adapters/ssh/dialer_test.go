@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -213,6 +214,140 @@ func TestCancelledDialIsTyped(t *testing.T) {
 		VerifyHostKey: acceptEveryKey,
 	})
 	assertKind(t, err, appconnection.KindCancelled)
+}
+
+// hintRecordingConn records the transport latency hints the dialer applies.
+type hintRecordingConn struct {
+	net.Conn
+	mu    sync.Mutex
+	hints []bool
+	err   error
+}
+
+func (c *hintRecordingConn) SetNoDelay(enabled bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.hints = append(c.hints, enabled)
+	return c.err
+}
+
+func (c *hintRecordingConn) recordedHints() []bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]bool(nil), c.hints...)
+}
+
+// TestDialDisablesNagleOnTheTCPTransport is acceptance bullet one: a TCP dial
+// asks the transport to send small SSH/SFTP packets immediately.
+func TestDialDisablesNagleOnTheTCPTransport(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+
+	servers := make(chan *fakessh.Server, 1)
+	serverErrs := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			serverErrs <- err
+			return
+		}
+		server, err := fakessh.Start(conn, fakessh.Options{Password: "s3cret"})
+		if err != nil {
+			_ = conn.Close()
+			serverErrs <- err
+			return
+		}
+		servers <- server
+	}()
+
+	var recorder *hintRecordingConn
+	dialer := NewDialer(
+		WithDialFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+			if err != nil {
+				return nil, err
+			}
+			recorder = &hintRecordingConn{Conn: conn}
+			return recorder, nil
+		}),
+		WithTimeouts(2*time.Second, 2*time.Second),
+	)
+	port := listener.Addr().(*net.TCPAddr).Port
+	client, err := dialer.Dial(context.Background(), appconnection.DialRequest{
+		Hostname: "127.0.0.1", Port: port, Username: "root", Password: "s3cret",
+		VerifyHostKey: acceptEveryKey,
+	})
+	if err != nil {
+		t.Fatalf("Dial over TCP: %v", err)
+	}
+	defer client.Close()
+
+	select {
+	case server := <-servers:
+		defer server.Close()
+	case err := <-serverErrs:
+		t.Fatalf("fake SSH server: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the fake SSH server did not start")
+	}
+	if recorder == nil {
+		t.Fatal("the dial function was not called")
+	}
+	if hints := recorder.recordedHints(); len(hints) != 1 || !hints[0] {
+		t.Fatalf("SetNoDelay calls = %v, want exactly [true]", hints)
+	}
+}
+
+// TestDialAcceptsTransportsThatCannotSetNoDelay is acceptance bullet two: a
+// transport with no SetNoDelay method, and one that rejects the hint, still
+// dial. Serial, named-pipe, ProxyCommand, and in-process transports take this
+// path.
+func TestDialAcceptsTransportsThatCannotSetNoDelay(t *testing.T) {
+	cases := map[string]func(net.Conn) net.Conn{
+		"no method": func(conn net.Conn) net.Conn { return plainConn{Conn: conn} },
+		"rejected hint": func(conn net.Conn) net.Conn {
+			return &hintRecordingConn{Conn: conn, err: errors.New("option unsupported")}
+		},
+	}
+	for name, wrap := range cases {
+		t.Run(name, func(t *testing.T) {
+			clientConn, serverConn := fakessh.Pipe()
+			server, err := fakessh.Start(serverConn, fakessh.Options{Password: "s3cret"})
+			if err != nil {
+				_ = clientConn.Close()
+				_ = serverConn.Close()
+				t.Fatalf("fakessh.Start: %v", err)
+			}
+			defer func() {
+				_ = server.Close()
+				_ = clientConn.Close()
+			}()
+
+			dialer := NewDialer(
+				WithDialFunc(func(context.Context, string, string) (net.Conn, error) {
+					return wrap(clientConn), nil
+				}),
+				WithTimeouts(2*time.Second, 2*time.Second),
+			)
+			client, err := dialer.Dial(context.Background(), appconnection.DialRequest{
+				Hostname: "example.com", Port: 22, Username: "root", Password: "s3cret",
+				VerifyHostKey: acceptEveryKey,
+			})
+			if err != nil {
+				t.Fatalf("Dial with a non-TCP transport: %v", err)
+			}
+			_ = client.Close()
+		})
+	}
+}
+
+// plainConn hides any optional methods on the wrapped transport, the way a
+// serial device or named pipe exposes only net.Conn.
+type plainConn struct {
+	net.Conn
 }
 
 func assertKind(t *testing.T, err error, want appconnection.Kind) {
