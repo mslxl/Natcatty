@@ -1037,6 +1037,7 @@ func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 		HostChain:              domainvault.CloneHostChain(draft.HostChain),
 		Proxy:                  domainvault.CloneProxy(draft.Proxy),
 		ProxyProfileID:         draft.ProxyProfileID,
+		DirectProxy:            draft.DirectProxy,
 		NetworkProfileID:       draft.NetworkProfileID,
 		LegacyAlgorithms:       draft.LegacyAlgorithms,
 		SkipEcdsaHostKey:       draft.SkipEcdsaHostKey,

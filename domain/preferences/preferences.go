@@ -375,12 +375,29 @@ type Transport struct {
 	MoshPredictionDisplay moshmodel.PredictionDisplay `json:"moshPredictionDisplay"`
 }
 
+// Proxy is the connection default used when neither a Host nor its Host
+// Group selects a proxy. It is portable, so a synced settings document carries
+// the same default to the user's other devices.
+type Proxy struct {
+	// DefaultProfileID names a saved Proxy Profile. Empty means a direct
+	// connection when nothing else selects a proxy.
+	DefaultProfileID string `json:"defaultProfileId,omitempty"`
+}
+
+// DefaultProxyProfileID returns the normalized app-wide proxy selection.
+func (settings Settings) DefaultProxyProfileID() string {
+	return strings.TrimSpace(settings.Proxy.DefaultProfileID)
+}
+
 // Settings is the whole persisted preference document.
 type Settings struct {
 	Appearance Appearance `json:"appearance"`
 	Layout     Layout     `json:"layout"`
 	SFTPEditor SFTPEditor `json:"sftpEditor"`
 	Logs       Logs       `json:"logs"`
+	// Proxy is the app-wide connection default, below Host and Host Group
+	// selections in precedence.
+	Proxy Proxy `json:"proxy"`
 	// History is device-local. It is deliberately absent from
 	// PortableSettings, so Vault cloud sync never carries an account address,
 	// username, auth mode, or interval.
@@ -402,6 +419,7 @@ type PortableSettings struct {
 	Layout     Layout     `json:"layout"`
 	SFTPEditor SFTPEditor `json:"sftpEditor"`
 	Logs       Logs       `json:"logs"`
+	Proxy      Proxy      `json:"proxy"`
 	Security   Security   `json:"security"`
 	Monitor    Monitor    `json:"monitor"`
 	SysManager SysManager `json:"sysManager"`
@@ -425,6 +443,7 @@ func Portable(settings Settings) PortableSettings {
 		Layout:     layout,
 		SFTPEditor: editor,
 		Logs:       settings.Logs,
+		Proxy:      settings.Proxy,
 		Security:   settings.Security,
 		Monitor:    settings.Monitor,
 		SysManager: settings.SysManager,
@@ -446,6 +465,7 @@ func MergePortable(current Settings, portable PortableSettings) Settings {
 	next.SFTPEditor.DefaultOpener = current.SFTPEditor.DefaultOpener
 	next.SFTPEditor.FileAssociations = current.SFTPEditor.FileAssociations
 	next.Logs = portable.Logs
+	next.Proxy = portable.Proxy
 	next.Security = portable.Security
 	next.Monitor = portable.Monitor
 	next.SysManager = portable.SysManager
@@ -624,6 +644,7 @@ func Normalize(settings Settings) Settings {
 		settings.Transport.MoshPredictionDisplay.Normalized()
 	settings.Monitor = NormalizeMonitor(settings.Monitor)
 	settings.SysManager = NormalizeSysManager(settings.SysManager)
+	settings.Proxy.DefaultProfileID = strings.TrimSpace(settings.Proxy.DefaultProfileID)
 	return settings
 }
 

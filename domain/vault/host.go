@@ -144,6 +144,10 @@ type ProxyConfig struct {
 	Password string `json:"-"`
 	// HasPassword reports that an encrypted proxy password exists.
 	HasPassword bool `json:"hasPassword,omitempty"`
+	// ProfileID marks a config materialized from a saved Proxy Profile. It is
+	// resolved state, never persisted: the Host stores the reference in
+	// ProxyProfileID instead.
+	ProfileID string `json:"-"`
 }
 
 // HostChain is a jump chain, ordered first = closest to the client. The final
@@ -236,6 +240,10 @@ type Host struct {
 	// ProxyProfileID selects a saved Proxy Profile. A manual Proxy wins over a
 	// profile; an empty reference means the Host has no proxy of its own.
 	ProxyProfileID string `json:"proxyProfileId,omitempty"`
+	// DirectProxy forces a direct connection and stops Host Group and app-wide
+	// proxy inheritance. It wins over a manual Proxy and a ProxyProfileID; a
+	// zero value means inherit.
+	DirectProxy bool `json:"directProxy,omitempty"`
 	// NetworkProfileID selects a saved Network Profile for the first endpoint
 	// of this Host's route. An empty reference inherits the Host Group's
 	// selection; with no group default the Host has no Network Route and
@@ -312,6 +320,9 @@ type Draft struct {
 	// deleting a profile clears it on every Host and Host Group, but a record
 	// written by an older version may still hold an unknown identifier.
 	ProxyProfileID string
+	// DirectProxy forces a direct connection and stops inheritance. It is
+	// cleared with the proxy selection it overrides.
+	DirectProxy bool
 	// NetworkProfileID selects a saved Network Profile. It is a soft reference
 	// resolved like ProxyProfileID: a Host's own value wins over its Host
 	// Group's default, and deleting the profile clears both.
@@ -471,6 +482,12 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	draft.HostChain = normalizeHostChain(draft.HostChain)
 	draft.Proxy = normalizeProxy(draft.Proxy)
 	draft.ProxyProfileID = strings.TrimSpace(draft.ProxyProfileID)
+	if draft.DirectProxy {
+		// An explicit direct choice is not a configuration: keeping a manual
+		// proxy or profile here would make the editor show two selections.
+		draft.Proxy = nil
+		draft.ProxyProfileID = ""
+	}
 	draft.NetworkProfileID = strings.TrimSpace(draft.NetworkProfileID)
 	draft.Algorithms = normalizeAlgorithms(draft.Algorithms)
 	// Disabling X11 drops the acknowledgement, so re-enabling it always asks

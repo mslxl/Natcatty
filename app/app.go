@@ -738,7 +738,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// The Vault starts from the database. A read failure leaves the surface
 	// empty and shows the localized internal-error message rather than
 	// preventing the app from starting.
-	routes := vaultRoutes{vault: vaultService}
+	routes := vaultRoutes{vault: vaultService, preferences: preferenceService}
 
 	// SFTP reuses the Vault's routes and the same connection manager as a
 	// terminal Session. The local pane and the global bookmark file belong to

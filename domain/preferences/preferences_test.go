@@ -37,6 +37,39 @@ func TestSessionRestoreIsOptIn(t *testing.T) {
 	}
 }
 
+// TestGlobalDefaultProxyIsNormalizedPortableAndMergeable covers the app-wide
+// proxy preference: a saved profile id is trimmed, travels with synced
+// settings, and an empty value means no default.
+func TestGlobalDefaultProxyIsNormalizedPortableAndMergeable(t *testing.T) {
+	settings := Defaults()
+	if got := settings.DefaultProxyProfileID(); got != "" {
+		t.Fatalf("default proxy = %q, want none", got)
+	}
+
+	settings.Proxy.DefaultProfileID = "  proxy-1  "
+	normalized := Normalize(settings)
+	if got := normalized.DefaultProxyProfileID(); got != "proxy-1" {
+		t.Fatalf("normalized default proxy = %q, want proxy-1", got)
+	}
+
+	portable := Portable(normalized)
+	if portable.Proxy.DefaultProfileID != "proxy-1" {
+		t.Fatalf("Portable dropped the default proxy: %+v", portable.Proxy)
+	}
+	remote := portable
+	remote.Proxy.DefaultProfileID = "proxy-2"
+	merged := MergePortable(normalized, remote)
+	if got := merged.DefaultProxyProfileID(); got != "proxy-2" {
+		t.Fatalf("MergePortable default proxy = %q, want proxy-2", got)
+	}
+
+	off := portable
+	off.Proxy.DefaultProfileID = ""
+	if got := MergePortable(normalized, off).DefaultProxyProfileID(); got != "" {
+		t.Fatalf("turning the default off left %q", got)
+	}
+}
+
 func TestNormalizeClampsAndValidates(t *testing.T) {
 	settings := Settings{
 		Appearance: Appearance{

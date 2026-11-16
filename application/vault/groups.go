@@ -266,6 +266,9 @@ func (s *Service) resolveEffective(ctx context.Context, host domainvault.Host) (
 		switch {
 		case err == nil:
 			effective.Proxy = domainvault.CloneProxy(&profile.Config)
+			// Mark the origin so route resolution can tell a saved profile
+			// from a manual Host proxy.
+			effective.Proxy.ProfileID = profile.ID
 			if profile.Config.HasPassword {
 				password, secretErr := s.secretOrEmpty(ctx,
 					ProxyProfileSecretRef(profile.ID, FieldProxyPassword))
@@ -374,6 +377,7 @@ func groupFromDraft(group domainvault.Group, draft domainvault.GroupDraft) domai
 	group.SkipEcdsaHostKey = draft.SkipEcdsaHostKey
 	group.Algorithms = domainvault.CloneAlgorithms(draft.Algorithms)
 	group.ProxyProfileID = draft.ProxyProfileID
+	group.DirectProxy = draft.DirectProxy
 	group.NetworkProfileID = draft.NetworkProfileID
 	return group
 }
