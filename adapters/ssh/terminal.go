@@ -258,8 +258,11 @@ func (c *sshClient) watchDeath() {
 	c.dead = true
 	c.mu.Unlock()
 	// A prompt queued for a rekey on this transport has no connection left to
-	// authorize; release it so it cannot linger until its own timeout.
-	c.cancel()
+	// authorize; release it so it cannot linger until its own timeout. A
+	// transport without a verification context has no cancel function.
+	if c.cancel != nil {
+		c.cancel()
+	}
 }
 
 // RemoteVersion returns the server's full SSH identification line (for

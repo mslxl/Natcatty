@@ -348,14 +348,18 @@ type FamilyWireGuardPeer struct {
 
 // FamilyKnownHost is one recorded host-key trust decision.
 type FamilyKnownHost struct {
-	Hostname          string
-	Port              int
-	KeyType           string
-	PublicKey         string
-	Fingerprint       string
-	DiscoveredAt      time.Time
-	LastSeen          time.Time
-	ConvertedToHostID string
+	Hostname    string
+	Port        int
+	KeyType     string
+	PublicKey   string
+	Fingerprint string
+	// IsCertificateAuthority marks the record as the signing CA of a host
+	// certificate rather than the presented key. It is display metadata for
+	// the Known Hosts view; trust matching still uses Fingerprint alone.
+	IsCertificateAuthority bool
+	DiscoveredAt           time.Time
+	LastSeen               time.Time
+	ConvertedToHostID      string
 }
 
 // HasData reports whether the family carries any record. A document may be a

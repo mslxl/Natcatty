@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -75,5 +76,55 @@ func TestTerminalCloseDuringAWriteDoesNotRace(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close did not abort the parked write")
+	}
+}
+
+// waitOnlyConn is an ssh.Conn whose Wait returns immediately. It lets the
+// death watcher be driven without a network transport.
+type waitOnlyConn struct{}
+
+func (waitOnlyConn) User() string                                           { return "test" }
+func (waitOnlyConn) SessionID() []byte                                      { return nil }
+func (waitOnlyConn) ClientVersion() []byte                                  { return nil }
+func (waitOnlyConn) ServerVersion() []byte                                  { return nil }
+func (waitOnlyConn) RemoteAddr() net.Addr                                   { return nil }
+func (waitOnlyConn) LocalAddr() net.Addr                                    { return nil }
+func (waitOnlyConn) SendRequest(string, bool, []byte) (bool, []byte, error) { return false, nil, nil }
+func (waitOnlyConn) OpenChannel(string, []byte) (xssh.Channel, <-chan *xssh.Request, error) {
+	return nil, nil, nil
+}
+func (waitOnlyConn) Close() error { return nil }
+func (waitOnlyConn) Wait() error  { return nil }
+
+func newDeathClient(cancel context.CancelFunc) *sshClient {
+	channels := make(chan xssh.NewChannel)
+	close(channels)
+	requests := make(chan *xssh.Request)
+	close(requests)
+	return &sshClient{client: xssh.NewClient(waitOnlyConn{}, channels, requests), cancel: cancel}
+}
+
+// TestWatchDeathToleratesANilCancel covers the latent panic: a client built
+// without a host-key verification context has no cancel function, and the
+// peer's transport may still end. Recording that death must not call nil.
+func TestWatchDeathToleratesANilCancel(t *testing.T) {
+	client := newDeathClient(nil)
+	client.watchDeath()
+	if client.Alive() {
+		t.Fatal("the client is still alive after watchDeath")
+	}
+}
+
+// TestWatchDeathReleasesTheVerificationContext proves the rekey-prompt
+// cancellation still runs when a cancel function is installed.
+func TestWatchDeathReleasesTheVerificationContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := newDeathClient(cancel)
+	client.watchDeath()
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("watchDeath did not cancel the verification context")
 	}
 }

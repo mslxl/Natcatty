@@ -153,14 +153,17 @@ type jsonWireGuardPeer struct {
 }
 
 type jsonKnownHost struct {
-	Hostname          string    `json:"hostname"`
-	Port              int       `json:"port"`
-	KeyType           string    `json:"keyType"`
-	PublicKey         string    `json:"publicKey"`
-	Fingerprint       string    `json:"fingerprint"`
-	DiscoveredAt      time.Time `json:"discoveredAt"`
-	LastSeen          time.Time `json:"lastSeen"`
-	ConvertedToHostID string    `json:"convertedToHostId"`
+	Hostname    string `json:"hostname"`
+	Port        int    `json:"port"`
+	KeyType     string `json:"keyType"`
+	PublicKey   string `json:"publicKey"`
+	Fingerprint string `json:"fingerprint"`
+	// IsCertificateAuthority distinguishes a signing CA trust anchor from a
+	// presented key so the Known Hosts view keeps that rendering after import.
+	IsCertificateAuthority bool      `json:"isCertificateAuthority,omitempty"`
+	DiscoveredAt           time.Time `json:"discoveredAt"`
+	LastSeen               time.Time `json:"lastSeen"`
+	ConvertedToHostID      string    `json:"convertedToHostId"`
 }
 
 type jsonSnippet struct {
@@ -380,7 +383,8 @@ func familyFromJSON(document jsonDocument) *Family {
 		family.KnownHosts = append(family.KnownHosts, FamilyKnownHost{
 			Hostname: known.Hostname, Port: known.Port, KeyType: known.KeyType,
 			PublicKey: known.PublicKey, Fingerprint: known.Fingerprint,
-			DiscoveredAt: known.DiscoveredAt, LastSeen: known.LastSeen,
+			IsCertificateAuthority: known.IsCertificateAuthority,
+			DiscoveredAt:           known.DiscoveredAt, LastSeen: known.LastSeen,
 			ConvertedToHostID: known.ConvertedToHostID,
 		})
 	}

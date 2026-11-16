@@ -307,14 +307,18 @@ type jsonKey struct {
 }
 
 type jsonKnownHost struct {
-	Hostname          string    `json:"hostname"`
-	Port              int       `json:"port"`
-	KeyType           string    `json:"keyType"`
-	PublicKey         string    `json:"publicKey,omitempty"`
-	Fingerprint       string    `json:"fingerprint"`
-	DiscoveredAt      time.Time `json:"discoveredAt"`
-	LastSeen          time.Time `json:"lastSeen"`
-	ConvertedToHostID string    `json:"convertedToHostId,omitempty"`
+	Hostname    string `json:"hostname"`
+	Port        int    `json:"port"`
+	KeyType     string `json:"keyType"`
+	PublicKey   string `json:"publicKey,omitempty"`
+	Fingerprint string `json:"fingerprint"`
+	// IsCertificateAuthority marks a signing CA recorded as a trust anchor
+	// rather than a presented key. It is omitted for an ordinary key, so the
+	// common document stays byte-identical.
+	IsCertificateAuthority bool      `json:"isCertificateAuthority,omitempty"`
+	DiscoveredAt           time.Time `json:"discoveredAt"`
+	LastSeen               time.Time `json:"lastSeen"`
+	ConvertedToHostID      string    `json:"convertedToHostId,omitempty"`
 }
 
 type jsonSnippet struct {
@@ -1038,14 +1042,15 @@ func knownHostDocuments(items []domainconn.KnownHost) []jsonKnownHost {
 	})
 	for _, host := range sorted {
 		out = append(out, jsonKnownHost{
-			Hostname:          host.Hostname,
-			Port:              host.Port,
-			KeyType:           host.KeyType,
-			PublicKey:         host.PublicKey,
-			Fingerprint:       host.Fingerprint,
-			DiscoveredAt:      host.DiscoveredAt,
-			LastSeen:          host.LastSeen,
-			ConvertedToHostID: host.ConvertedToHostID,
+			Hostname:               host.Hostname,
+			Port:                   host.Port,
+			KeyType:                host.KeyType,
+			PublicKey:              host.PublicKey,
+			Fingerprint:            host.Fingerprint,
+			IsCertificateAuthority: host.IsCertificateAuthority,
+			DiscoveredAt:           host.DiscoveredAt,
+			LastSeen:               host.LastSeen,
+			ConvertedToHostID:      host.ConvertedToHostID,
 		})
 	}
 	return out

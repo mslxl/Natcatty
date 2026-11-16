@@ -401,6 +401,30 @@ func (f *entityKnownHosts) ListKnownHosts(context.Context) ([]domainconn.KnownHo
 	return append([]domainconn.KnownHost(nil), f.items...), nil
 }
 
+// importOnlyHosts is the minimal HostRepository a Known-Hosts-only export and
+// import needs; it stores no Hosts.
+type importOnlyHosts struct{}
+
+func (importOnlyHosts) List(context.Context) ([]domainvault.Host, error) { return nil, nil }
+func (importOnlyHosts) Get(context.Context, model.HostID) (domainvault.Host, error) {
+	return domainvault.Host{}, appvault.ErrNotFound
+}
+func (importOnlyHosts) Save(context.Context, domainvault.Host) error { return nil }
+func (importOnlyHosts) Delete(context.Context, model.HostID) error   { return nil }
+
+// UpsertKnownHost is the import write path the Vault service detects.
+func (f *entityKnownHosts) UpsertKnownHost(_ context.Context, record domainconn.KnownHost) error {
+	for index, existing := range f.items {
+		if existing.Hostname == record.Hostname && existing.Port == record.Port &&
+			existing.KeyType == record.KeyType {
+			f.items[index] = record
+			return nil
+		}
+	}
+	f.items = append(f.items, record)
+	return nil
+}
+
 func (f *entityKnownHosts) DeleteKnownHost(_ context.Context, id string) error {
 	for i, record := range f.items {
 		if record.ID == id {
@@ -1252,6 +1276,59 @@ func TestKnownHostsMarkCertificateAuthorityAnchors(t *testing.T) {
 	}
 	if showsExactly(tt, m.VaultKnownHostCertificateAuthority()+" · ssh-ed25519 · plain-fingerprint") {
 		t.Fatalf("a plain key was marked as a CA anchor, texts %q", tt.Texts())
+	}
+}
+
+// TestKnownHostsStayCAAnchorsAfterExportImport is the end-to-end regression:
+// a CA trust anchor exported and re-imported through the production JSON path
+// must still render as a CA anchor, while an ordinary key keeps its plain row.
+func TestKnownHostsStayCAAnchorsAfterExportImport(t *testing.T) {
+	ctx := context.Background()
+	m := locales.In("en")
+	sourceKnown := &entityKnownHosts{items: []domainconn.KnownHost{
+		{
+			ID: "kh-ca", Hostname: "example.com", Port: 22,
+			KeyType: "ssh-ed25519", Fingerprint: "ca-fingerprint",
+			PublicKey: "ssh-ed25519 AAAA ca", IsCertificateAuthority: true,
+		},
+		{
+			ID: "kh-key", Hostname: "other.example.com", Port: 22,
+			KeyType: "ssh-ed25519", Fingerprint: "plain-fingerprint",
+			PublicKey: "ssh-ed25519 AAAA key",
+		},
+	}}
+	source := appvault.NewService(importOnlyHosts{}, appvault.WithKnownHosts(sourceKnown))
+	exported, err := source.ExportVault(ctx, appvault.ExportOptions{Format: appvault.ExportJSON})
+	if err != nil {
+		t.Fatalf("ExportVault: %v", err)
+	}
+
+	destinationKnown := &entityKnownHosts{}
+	destination := appvault.NewService(importOnlyHosts{},
+		appvault.WithKnownHosts(destinationKnown))
+	preview, err := destination.PreviewImport(ctx, string(exported.Content),
+		appvault.PreviewImportOptions{FileName: "netcatty-vault.json"})
+	if err != nil {
+		t.Fatalf("PreviewImport: %v", err)
+	}
+	if _, err := destination.CommitImport(ctx, preview, appvault.ImportCommitOptions{}); err != nil {
+		t.Fatalf("CommitImport: %v", err)
+	}
+
+	state, _, _, _, known, tt := newProductionEntityView(t, 1100, 720)
+	known.items = destinationKnown.items
+	state.InvalidateKnownHosts()
+	tt.Frame()
+
+	caRow := m.VaultKnownHostCertificateAuthority() + " · ssh-ed25519 · ca-fingerprint"
+	if !showsExactly(tt, caRow) {
+		t.Fatalf("the imported CA anchor does not render as %q, texts %q", caRow, tt.Texts())
+	}
+	if showsExactly(tt, "ssh-ed25519 · ca-fingerprint") {
+		t.Fatalf("the imported CA anchor looks like a presented key, texts %q", tt.Texts())
+	}
+	if !showsExactly(tt, "ssh-ed25519 · plain-fingerprint") {
+		t.Fatalf("the imported ordinary key is not rendered as before, texts %q", tt.Texts())
 	}
 }
 
