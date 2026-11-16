@@ -10,6 +10,7 @@ import (
 	"time"
 
 	domainhistory "github.com/mslxl/natcatty/domain/history"
+	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/domain/vaultimport"
 )
@@ -70,12 +71,67 @@ func testDataset() Dataset {
 
 func exportFor(t *testing.T, format Format, opts Options) []byte {
 	t.Helper()
+	return exportDatasetFor(t, testDataset(), format, opts)
+}
+
+func exportDatasetFor(t *testing.T, d Dataset, format Format, opts Options) []byte {
+	t.Helper()
 	opts.ExportedAt = stamp
-	content, err := Export(testDataset(), format, opts)
+	content, err := Export(d, format, opts)
 	if err != nil {
 		t.Fatalf("export %s: %v", format, err)
 	}
 	return content
+}
+
+// jumpDataset is three SSH Hosts where Client reaches the network through
+// Edge, which reaches it through Bastion.
+func jumpDataset() Dataset {
+	return Dataset{Hosts: []Host{
+		{Host: domainvault.Host{
+			ID: "bastion", Label: "Bastion", Hostname: "bastion.example.test",
+			Port: 22, Username: "ops", Protocol: domainvault.ProtocolSSH, OrderKey: 1000,
+		}},
+		{Host: domainvault.Host{
+			ID: "edge", Label: "Edge", Hostname: "edge.example.test",
+			Port: 2200, Username: "deploy", Protocol: domainvault.ProtocolSSH, OrderKey: 2000,
+			HostChain: &domainvault.HostChain{HostIDs: []model.HostID{"bastion"}},
+		}},
+		{Host: domainvault.Host{
+			ID: "client", Label: "Client", Hostname: "client.example.test",
+			Port: 22, Protocol: domainvault.ProtocolSSH, OrderKey: 3000,
+			HostChain: &domainvault.HostChain{
+				HostIDs: []model.HostID{"edge", "bastion"},
+			},
+		}},
+	}}
+}
+
+// csvCell finds the exported row for one Hostname and returns its value in the
+// named column.
+func csvCell(t *testing.T, rows [][]string, hostname, column string) string {
+	t.Helper()
+	columnAt := func(name string) int {
+		for index, header := range rows[0] {
+			if header == name {
+				return index
+			}
+		}
+		t.Fatalf("no %q column in %v", name, rows[0])
+		return -1
+	}
+	hostIdx := columnAt("Hostname/IP")
+	columnIdx := columnAt(column)
+	for _, row := range rows[1:] {
+		if hostIdx < len(row) && row[hostIdx] == hostname {
+			if columnIdx >= len(row) {
+				return ""
+			}
+			return row[columnIdx]
+		}
+	}
+	t.Fatalf("no exported row for %q", hostname)
+	return ""
 }
 
 func TestCSVUsesHeaderMarkedFieldsAndGuards(t *testing.T) {
@@ -135,6 +191,84 @@ func TestCSVWithoutSecretsOmitsCredentials(t *testing.T) {
 	}
 	if !strings.Contains(csvText, "id_ed25519") {
 		t.Fatal("key path should still be exported")
+	}
+}
+
+// TestCSVWritesAProxyJumpChainBeforeLocalShell pins the column position and
+// the OpenSSH hop shape: port 22 is omitted and the first hop is closest to
+// the client.
+func TestCSVWritesAProxyJumpChainBeforeLocalShell(t *testing.T) {
+	rows, issues := vaultimport.ParseCSV(
+		string(exportDatasetFor(t, jumpDataset(), FormatCSV, Options{})))
+	if len(issues) != 0 {
+		t.Fatalf("CSV parse issues = %+v", issues)
+	}
+	jumpIdx, shellIdx := -1, -1
+	for index, header := range rows[0] {
+		switch header {
+		case "ProxyJump":
+			jumpIdx = index
+		case "LocalShell":
+			shellIdx = index
+		}
+	}
+	if jumpIdx < 0 || shellIdx != jumpIdx+1 {
+		t.Fatalf("ProxyJump must sit immediately before LocalShell: %v", rows[0])
+	}
+	if got := csvCell(t, rows, "client.example.test", "ProxyJump"); got !=
+		"deploy@edge.example.test:2200,ops@bastion.example.test" {
+		t.Fatalf("client ProxyJump = %q", got)
+	}
+	if got := csvCell(t, rows, "bastion.example.test", "ProxyJump"); got != "" {
+		t.Fatalf("a Host without a chain wrote %q", got)
+	}
+}
+
+// TestCSVRoundTripsATwoHopJumpChain proves an export imports back as the same
+// chain, both for the client and for an intermediate hop.
+func TestCSVRoundTripsATwoHopJumpChain(t *testing.T) {
+	csvText := string(exportDatasetFor(t, jumpDataset(), FormatCSV, Options{}))
+	parsed := vaultimport.Parse(vaultimport.FormatCSV, csvText, vaultimport.Options{})
+	if len(parsed.Issues) != 0 {
+		t.Fatalf("issues = %+v", parsed.Issues)
+	}
+	if len(parsed.Records) != 3 {
+		t.Fatalf("records = %d: %+v", len(parsed.Records), parsed.Records)
+	}
+	client := parsed.Records[2]
+	if client.Hostname != "client.example.test" || len(client.JumpRefs) != 2 {
+		t.Fatalf("client = %+v", client)
+	}
+	if got := parsed.Records[client.JumpRefs[0]].Hostname; got != "edge.example.test" {
+		t.Fatalf("first hop = %q, want Edge", got)
+	}
+	if got := parsed.Records[client.JumpRefs[1]].Hostname; got != "bastion.example.test" {
+		t.Fatalf("second hop = %q, want Bastion", got)
+	}
+	if refs := parsed.Records[1].JumpRefs; len(refs) != 1 || refs[0] != 0 {
+		t.Fatalf("edge JumpRefs = %v, want [0]", refs)
+	}
+}
+
+// TestCSVOmitsAChainWithAnUnrepresentableHop proves a chain is written whole
+// or not at all: a telnet hop cannot carry a session, so the client keeps an
+// empty cell instead of a shortened chain.
+func TestCSVOmitsAChainWithAnUnrepresentableHop(t *testing.T) {
+	dataset := jumpDataset()
+	dataset.Hosts = append(dataset.Hosts, Host{Host: domainvault.Host{
+		ID: "telnet", Label: "Telnet", Hostname: "telnet.example.test",
+		Port: 23, Protocol: domainvault.ProtocolTelnet, OrderKey: 4000,
+	}})
+	dataset.Hosts[2].Host.HostChain = &domainvault.HostChain{
+		HostIDs: []model.HostID{"edge", "telnet"},
+	}
+	rows, issues := vaultimport.ParseCSV(
+		string(exportDatasetFor(t, dataset, FormatCSV, Options{})))
+	if len(issues) != 0 {
+		t.Fatalf("CSV parse issues = %+v", issues)
+	}
+	if got := csvCell(t, rows, "client.example.test", "ProxyJump"); got != "" {
+		t.Fatalf("a partly representable chain was written as %q", got)
 	}
 }
 

@@ -491,6 +491,7 @@
   "vaultImportIssuePasswordUnmatched": "无法将已保存的密码匹配到主机。",
   "vaultImportIssueDuplicateInFile": "该端点与前面的行重复。",
   "vaultImportIssueInvalidJump": "ProxyJump 目标未声明，已添加内联主机。",
+  "vaultImportIssueUnresolvedJump": "此文件中未声明 ProxyJump 目标，因此已跳过该主机。",
   "vaultImportIssueCyclicJump": "已移除 ProxyJump 循环。",
   "vaultImportIssueKeyUnreadable": "无法读取引用的密钥文件。",
   "vaultImportIssuePassphraseConflict": "密钥已加密，但未提供可用的密码短语。",

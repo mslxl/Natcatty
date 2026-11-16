@@ -1109,7 +1109,8 @@ func sortedGroupPaths(groups map[string]bool) []string {
 func rejectedImportRow(code vaultimport.IssueCode) bool {
 	switch code {
 	case vaultimport.IssueInvalidHostname, vaultimport.IssueUnsupportedProtocol,
-		vaultimport.IssueMissingHostname, vaultimport.IssueUnsupportedEntry:
+		vaultimport.IssueMissingHostname, vaultimport.IssueUnsupportedEntry,
+		vaultimport.IssueUnresolvedJump:
 		return true
 	default:
 		return false

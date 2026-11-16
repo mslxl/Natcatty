@@ -491,6 +491,7 @@
   "vaultImportIssuePasswordUnmatched": "No se pudo asociar una contraseña guardada a un Host.",
   "vaultImportIssueDuplicateInFile": "Este destino repite una fila anterior.",
   "vaultImportIssueInvalidJump": "Un destino ProxyJump no está declarado; se añadió un Host en línea.",
+  "vaultImportIssueUnresolvedJump": "Un destino ProxyJump no está declarado en este archivo, así que se omitió el Host.",
   "vaultImportIssueCyclicJump": "Se eliminó un ciclo de ProxyJump.",
   "vaultImportIssueKeyUnreadable": "No se pudo leer el archivo de clave indicado.",
   "vaultImportIssuePassphraseConflict": "La clave está cifrada y no se proporcionó una frase de contraseña válida.",

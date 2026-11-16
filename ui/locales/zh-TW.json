@@ -491,6 +491,7 @@
   "vaultImportIssuePasswordUnmatched": "無法將已儲存的密碼對應到主機。",
   "vaultImportIssueDuplicateInFile": "此端點與前面的列重複。",
   "vaultImportIssueInvalidJump": "ProxyJump 目標未宣告，已新增內嵌主機。",
+  "vaultImportIssueUnresolvedJump": "此檔案中未宣告 ProxyJump 目標，因此已略過該主機。",
   "vaultImportIssueCyclicJump": "已移除 ProxyJump 循環。",
   "vaultImportIssueKeyUnreadable": "無法讀取引用的金鑰檔案。",
   "vaultImportIssuePassphraseConflict": "金鑰已加密，但未提供可用的密碼短語。",

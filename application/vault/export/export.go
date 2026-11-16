@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
@@ -475,7 +476,7 @@ func Header() []string { return vaultimport.CSVHeader() }
 // is guarded.
 const (
 	csvPasswordColumn   = 8
-	csvLocalShellColumn = 11
+	csvLocalShellColumn = 13
 )
 
 func exportCSV(d Dataset, opts Options) ([]byte, error) {
@@ -485,6 +486,12 @@ func exportCSV(d Dataset, opts Options) ([]byte, error) {
 	out.WriteString("\xef\xbb\xbf")
 	out.WriteString(strings.Join(Header(), ","))
 	out.WriteString("\r\n")
+	// A jump chain is written as Host references, so the whole Host set must be
+	// known before the first row is serialized.
+	hostsByID := make(map[string]domainvault.Host, len(d.Hosts))
+	for _, host := range d.Hosts {
+		hostsByID[string(host.Host.ID)] = host.Host
+	}
 	for _, host := range sortedHosts(d.Hosts) {
 		password, passphrase := "", ""
 		if opts.IncludeSecrets {
@@ -496,6 +503,8 @@ func exportCSV(d Dataset, opts Options) ([]byte, error) {
 				FormatProxy(*host.Host.Proxy, host.ProxyPassword, opts.IncludeSecrets),
 				vaultimport.MarkerProxy)
 		}
+		proxyJump := vaultimport.EncodeMarkedField(
+			formatCSVProxyJump(host.Host, hostsByID), vaultimport.MarkerProxyJump)
 		row := []string{
 			host.Host.Group,
 			host.Host.Label,
@@ -509,6 +518,7 @@ func exportCSV(d Dataset, opts Options) ([]byte, error) {
 			vaultimport.EncodeMarkedField(host.KeyPath, vaultimport.MarkerKeyPath),
 			vaultimport.EncodeMarkedField(passphrase, vaultimport.MarkerPassphrase),
 			proxy,
+			proxyJump,
 			"",
 		}
 		for index, value := range row {
@@ -549,6 +559,90 @@ func FormatProxy(proxy domainvault.ProxyConfig, password string, includeSecrets 
 		host = "[" + host + "]"
 	}
 	return scheme + "://" + auth + host + ":" + strconv.Itoa(proxy.Port)
+}
+
+// formatCSVProxyJump renders a Host's jump chain as an OpenSSH ProxyJump
+// value: [user@]host[:port] hops, comma separated, first hop closest to the
+// client. An empty cell means no chain. A chain is omitted entirely when a hop
+// is missing from the export or cannot be represented, so a shortened list is
+// never written back as if it were the whole chain.
+func formatCSVProxyJump(host domainvault.Host, hostsByID map[string]domainvault.Host) string {
+	if host.HostChain == nil || len(host.HostChain.HostIDs) == 0 {
+		return ""
+	}
+	hops := make([]string, 0, len(host.HostChain.HostIDs))
+	for _, id := range host.HostChain.HostIDs {
+		hop, found := hostsByID[string(id)]
+		if !found {
+			return ""
+		}
+		formatted, ok := formatCSVProxyJumpHop(hop)
+		if !ok {
+			return ""
+		}
+		hops = append(hops, formatted)
+	}
+	return strings.Join(hops, ",")
+}
+
+// formatCSVProxyJumpHop writes one hop. Port 22 is omitted, IPv6 addresses are
+// bracketed, and a value that would break the comma-separated cell is refused.
+func formatCSVProxyJumpHop(host domainvault.Host) (string, bool) {
+	if !canServeAsSSHJump(host.Protocol) {
+		return "", false
+	}
+	username := strings.TrimSpace(host.Username)
+	hostname := strings.TrimSpace(host.Hostname)
+	if len(hostname) >= 2 && strings.HasPrefix(hostname, "[") &&
+		strings.HasSuffix(hostname, "]") {
+		hostname = hostname[1 : len(hostname)-1]
+	}
+	if hostname == "" || unsafeCSVJumpField(username) || unsafeCSVJumpField(hostname) {
+		return "", false
+	}
+	port := host.Port
+	if port == 0 {
+		port = 22
+	}
+	if port < 1 || port > 65535 {
+		return "", false
+	}
+	hostPart := hostname
+	if strings.Contains(hostname, ":") {
+		hostPart = "[" + hostname + "]"
+	}
+	hop := hostPart
+	if username != "" {
+		hop = username + "@" + hostPart
+	}
+	if port != 22 {
+		hop += ":" + strconv.Itoa(port)
+	}
+	return hop, true
+}
+
+// canServeAsSSHJump reports whether a Host's transport can be dialed as a jump
+// hop. Mosh and ET bootstrap over SSH; telnet, local shells, and network
+// devices cannot carry a chained session.
+func canServeAsSSHJump(protocol domainvault.Protocol) bool {
+	switch protocol {
+	case "", domainvault.ProtocolSSH, domainvault.ProtocolMosh, domainvault.ProtocolET:
+		return true
+	default:
+		return false
+	}
+}
+
+// unsafeCSVJumpField reports a value that would be split by the hop separators
+// or would change the ProxyJump grammar.
+func unsafeCSVJumpField(value string) bool {
+	for _, r := range value {
+		if unicode.IsSpace(r) || unicode.IsControl(r) ||
+			r == ',' || r == '#' || r == '@' {
+			return true
+		}
+	}
+	return false
 }
 
 // formatHostname brackets a bare IPv6 address so the port separator stays

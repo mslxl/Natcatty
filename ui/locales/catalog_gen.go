@@ -3856,6 +3856,18 @@ func (msgs Messages) VaultImportIssueInvalidJump() string {
 	return Catalog.Format(msgs.locale, "vaultImportIssueInvalidJump", nil)
 }
 
+// VaultImportIssueUnresolvedJump says "A ProxyJump target is not declared in this file, so the Host was skipped."
+// in the language the app shows.
+func VaultImportIssueUnresolvedJump() string {
+	return In(i18n.Locale()).VaultImportIssueUnresolvedJump()
+}
+
+// VaultImportIssueUnresolvedJump says "A ProxyJump target is not declared in this file, so the Host was skipped."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueUnresolvedJump() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueUnresolvedJump", nil)
+}
+
 // VaultImportIssueCyclicJump says "A ProxyJump cycle was removed."
 // in the language the app shows.
 func VaultImportIssueCyclicJump() string { return In(i18n.Locale()).VaultImportIssueCyclicJump() }

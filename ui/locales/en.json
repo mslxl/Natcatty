@@ -837,6 +837,7 @@
   "vaultImportIssuePasswordUnmatched": "A saved password could not be matched to a Host.",
   "vaultImportIssueDuplicateInFile": "This endpoint repeats an earlier row.",
   "vaultImportIssueInvalidJump": "A ProxyJump target is not declared; an inline Host was added.",
+  "vaultImportIssueUnresolvedJump": "A ProxyJump target is not declared in this file, so the Host was skipped.",
   "vaultImportIssueCyclicJump": "A ProxyJump cycle was removed.",
   "vaultImportIssueKeyUnreadable": "The referenced key file could not be read.",
   "vaultImportIssuePassphraseConflict": "The key is encrypted but no usable passphrase was provided.",

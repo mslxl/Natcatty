@@ -491,6 +491,7 @@
   "vaultImportIssuePasswordUnmatched": "Не удалось сопоставить сохранённый пароль с хостом.",
   "vaultImportIssueDuplicateInFile": "Эта конечная точка повторяет предыдущую строку.",
   "vaultImportIssueInvalidJump": "Цель ProxyJump не объявлена; добавлен встроенный хост.",
+  "vaultImportIssueUnresolvedJump": "Цель ProxyJump не объявлена в этом файле, поэтому хост пропущен.",
   "vaultImportIssueCyclicJump": "Цикл ProxyJump удалён.",
   "vaultImportIssueKeyUnreadable": "Не удалось прочитать указанный файл ключа.",
   "vaultImportIssuePassphraseConflict": "Ключ зашифрован, но подходящая парольная фраза не указана.",
