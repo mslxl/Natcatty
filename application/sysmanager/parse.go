@@ -1216,29 +1216,34 @@ func splitKubernetesSection(text string) (body, failure string) {
 // decodeJSONAfterBanner skips a kubectl banner such as a bracketed warning
 // before the JSON document. Trying each opening brace keeps an occasional
 // nested brace from ending the search at the first one. A warning that happens
-// to be JSON-shaped must not shadow the real document, so a candidate is only
-// accepted when it carries the payload's required top-level key; the first
-// JSON document that unmarshals at all remains the fallback.
+// to be JSON-shaped must not shadow the real document, so the body is decoded
+// as a stream of successive JSON values and only the value carrying the
+// payload's required top-level key is accepted. The warning may precede or
+// follow the list: neither a successful decode nor extra trailing data makes it
+// the answer. When no value carries the key, the reply is a parse failure
+// rather than a silently empty inventory.
 func decodeJSONAfterBanner(text string, target any, requiredKey string) error {
 	trimmed := strings.TrimSpace(text)
-	var fallback []byte
 	for offset := 0; offset < len(trimmed); offset++ {
 		if trimmed[offset] != '{' && trimmed[offset] != '[' {
 			continue
 		}
-		candidate := []byte(trimmed[offset:])
-		if err := json.Unmarshal(candidate, target); err != nil {
-			continue
-		}
-		if requiredKey == "" || jsonObjectHasKey(candidate, requiredKey) {
-			return nil
-		}
-		if fallback == nil {
-			fallback = append([]byte(nil), candidate...)
+		decoder := json.NewDecoder(strings.NewReader(trimmed[offset:]))
+		for {
+			var candidate json.RawMessage
+			if err := decoder.Decode(&candidate); err != nil {
+				// End of the decodable stream: text after the last value is a
+				// banner or a malformed tail, not another document.
+				break
+			}
+			if requiredKey != "" && !jsonObjectHasKey(candidate, requiredKey) {
+				continue
+			}
+			return json.Unmarshal(candidate, target)
 		}
 	}
-	if fallback != nil {
-		return json.Unmarshal(fallback, target)
+	if requiredKey != "" {
+		return fmt.Errorf("no JSON document with top-level key %q", requiredKey)
 	}
 	return errors.New("no JSON document")
 }

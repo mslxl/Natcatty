@@ -248,36 +248,103 @@ func TestParseKubernetesListReadsPodsAndNamespaces(t *testing.T) {
 	}
 }
 
-// A kubectl warning can itself be a JSON object. The decoder must scan past
-// that object rather than treat its successful unmarshal as the list.
+// A kubectl warning can itself be a JSON object. The decoder must read the
+// section as successive JSON values and choose the one carrying "items",
+// whether the warning precedes or follows the list. A successful decode alone
+// is not the answer: the body {"items":[...]}\n{"component":...} used to leave
+// the trailing warning as the fallback and report an empty, error-free
+// inventory.
 func TestParseKubernetesListSkipsJSONShapedWarnings(t *testing.T) {
-	stdout := markerKubernetesBegin + "\n" +
-		markerKubernetesNamespaces + "\n" +
-		`{"component":"kubelet","warning":"namespaces banner"}` + "\n" +
-		`{"apiVersion":"v1","items":[{"metadata":{"name":"default"}},` +
-		`{"metadata":{"name":"team-a"}}]}` + "\n" +
-		markerKubernetesNamespacesEnd + "\n" +
-		markerKubernetesPods + "\n" +
-		`{"level":"warning","message":"pods banner"}` + "\n" +
-		`{"apiVersion":"v1","items":[{"metadata":{"name":"web-0",` +
-		`"namespace":"team-a","creationTimestamp":"2025-10-01T10:00:00Z"},` +
-		`"spec":{"containers":[{"name":"app"}]},"status":{"phase":"Running"}}]}` + "\n" +
-		markerKubernetesPodsEnd + "\n" + markerKubernetesEnd + "\n"
+	const (
+		namespaceWarning  = `{"component":"kubelet","warning":"namespaces banner"}`
+		namespaceWarning2 = `{"kind":"Warning","message":"another namespaces banner"}`
+		podWarning        = `{"level":"warning","message":"pods banner"}`
+		podWarning2       = `{"kind":"Warning","message":"another pods banner"}`
+		namespaceList     = `{"apiVersion":"v1","items":[{"metadata":{"name":"default"}},` +
+			`{"metadata":{"name":"team-a"}}]}`
+		podList = `{"apiVersion":"v1","items":[` +
+			`{"metadata":{"name":"web-0","namespace":"team-a",` +
+			`"creationTimestamp":"2025-10-01T10:00:00Z"},` +
+			`"spec":{"containers":[{"name":"app"}]},"status":{"phase":"Running"}},` +
+			`{"metadata":{"name":"job-0","namespace":"team-a",` +
+			`"creationTimestamp":"2025-09-30T10:00:00Z"},` +
+			`"spec":{"containers":[{"name":"worker"}]},"status":{"phase":"Succeeded"}}]}`
+	)
+
+	build := func(namespaces, pods []string) string {
+		return markerKubernetesBegin + "\n" +
+			markerKubernetesNamespaces + "\n" +
+			strings.Join(namespaces, "\n") + "\n" +
+			markerKubernetesNamespacesEnd + "\n" +
+			markerKubernetesPods + "\n" +
+			strings.Join(pods, "\n") + "\n" +
+			markerKubernetesPodsEnd + "\n" + markerKubernetesEnd + "\n"
+	}
+
+	tests := []struct {
+		name       string
+		namespaces []string
+		pods       []string
+		wantErr    bool
+	}{
+		{
+			name:       "warning before each list",
+			namespaces: []string{namespaceWarning, namespaceList},
+			pods:       []string{podWarning, podList},
+		},
+		{
+			name:       "list before trailing warning",
+			namespaces: []string{namespaceList, namespaceWarning},
+			pods:       []string{podList, podWarning},
+		},
+		{
+			name:       "list before multiple trailing warnings",
+			namespaces: []string{namespaceList, namespaceWarning, namespaceWarning2},
+			pods:       []string{podList, podWarning, podWarning2},
+		},
+		{
+			name:       "namespaces have no list",
+			namespaces: []string{namespaceWarning, namespaceWarning2},
+			pods:       []string{podList},
+			wantErr:    true,
+		},
+		{
+			name:       "pods have no list",
+			namespaces: []string{namespaceList},
+			pods:       []string{podWarning, podWarning2},
+			wantErr:    true,
+		},
+	}
 
 	now := time.Date(2025, 10, 1, 12, 0, 0, 0, time.UTC)
-	inventory, err := parseKubernetesList(stdout, now)
-	if err != nil {
-		t.Fatalf("parse kubernetes list: %v", err)
-	}
-	if len(inventory.Namespaces) != 2 || inventory.Namespaces[0] != "default" ||
-		inventory.Namespaces[1] != "team-a" {
-		t.Errorf("namespaces = %v, want the list after the warning", inventory.Namespaces)
-	}
-	if len(inventory.Pods) != 1 || inventory.Pods[0].Name != "web-0" {
-		t.Errorf("pods = %+v, want the list after the warning", inventory.Pods)
-	}
-	if inventory.Namespace != "team-a" {
-		t.Errorf("effective namespace = %q, want team-a", inventory.Namespace)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			inventory, err := parseKubernetesList(build(test.namespaces, test.pods), now)
+			if test.wantErr {
+				if !hasReason(err, ReasonInternal) {
+					t.Fatalf("error = %v, want an internal parse failure "+
+						"when no value carries items", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parse kubernetes list: %v", err)
+			}
+			if len(inventory.Namespaces) != 2 ||
+				inventory.Namespaces[0] != "default" ||
+				inventory.Namespaces[1] != "team-a" {
+				t.Errorf("namespaces = %v, want the two listed namespaces",
+					inventory.Namespaces)
+			}
+			if len(inventory.Pods) != 2 ||
+				inventory.Pods[0].Name != "web-0" ||
+				inventory.Pods[1].Name != "job-0" {
+				t.Errorf("pods = %+v, want the two listed pods", inventory.Pods)
+			}
+			if inventory.Namespace != "team-a" {
+				t.Errorf("effective namespace = %q, want team-a", inventory.Namespace)
+			}
+		})
 	}
 }
 
@@ -384,6 +451,84 @@ func TestServiceSamplesTheSelectedContainerRuntime(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("commands = %v, want podman ps", connector.commands("podman-only"))
+	}
+}
+
+// The surface's switcher only helps if the service it calls actually restarts.
+// A Host with two detected engines whose docker daemon is stopped must leave
+// the unavailable docker sample and start sampling the working engine; this
+// drives the real Service, so a UI fake cannot stand in for the restart.
+func TestServiceRestartsSamplingWhenTheFailingRuntimeIsSwitched(t *testing.T) {
+	connector := newFakeConnector()
+	connector.exec = func(_ domainvault.Host, command string) (ExecResult, error) {
+		switch {
+		case command == probeCommand():
+			return ExecResult{Stdout: "__NC_OS=Linux\n__NC_HAS_docker=1\n__NC_HAS_podman=1\n"}, nil
+		case strings.Contains(command, "docker ps -a"):
+			return ExecResult{Stdout: "__NC_DOCKER_BEGIN__\n__NC_DOCKER_CONTAINERS__\n" +
+				"__NC_DOCKER_ERROR_BEGIN__\nCannot connect to the Docker daemon at " +
+				"unix:///var/run/docker.sock. Is the docker daemon running?\n" +
+				"__NC_DOCKER_ERROR_END__\n__NC_DOCKER_IMAGES__\n__NC_DOCKER_END__\n"}, nil
+		case strings.Contains(command, "podman ps -a"):
+			return ExecResult{Stdout: fakeDockerList}, nil
+		default:
+			return ExecResult{HasExitCode: true}, nil
+		}
+	}
+	service := NewService(connector)
+	defer service.Close()
+	host := fakeHost("docker-stopped-podman-live")
+	id := string(host.ID)
+
+	// The initial selection is docker: it samples and the daemon is down.
+	if err := service.Start(host, TabDocker, 20*time.Millisecond); err != nil {
+		t.Fatalf("start docker: %v", err)
+	}
+	waitStatus(t, service, TabDocker, StatusUnavailable)
+	if reason := service.Snapshot().Tabs[TabDocker].Reason; reason != ReasonDockerDaemon {
+		t.Fatalf("docker reason = %q, want docker_daemon", reason)
+	}
+	if got := service.ContainerRuntime(); got != RuntimeDocker {
+		t.Fatalf("service runtime = %q, want docker before the switch", got)
+	}
+	before := len(connector.commands(id))
+
+	service.SetContainerRuntime(RuntimePodman)
+
+	// restartLocked clears the failed docker sample synchronously, so the tab
+	// is connecting (or already live) with the new engine as soon as the
+	// switch returns, never still showing the unavailable docker state.
+	restarted := service.Snapshot()
+	if restarted.ContainerRuntime != RuntimePodman {
+		t.Fatalf("runtime after switching = %q, want podman", restarted.ContainerRuntime)
+	}
+	if status := restarted.Tabs[TabDocker].Status; status != StatusConnecting && status != StatusLive {
+		t.Fatalf("docker status after switching = %q, want connecting or live", status)
+	}
+	if reason := restarted.Tabs[TabDocker].Reason; reason != ReasonNone {
+		t.Errorf("docker reason after switching = %q, want none", reason)
+	}
+
+	waitStatus(t, service, TabDocker, StatusLive)
+	live := service.Snapshot().Tabs[TabDocker]
+	if len(live.Containers) != 2 || len(live.Images) != 2 {
+		t.Errorf("podman sample = %d containers, %d images; want the live podman list",
+			len(live.Containers), len(live.Images))
+	}
+
+	// Only the new engine may run after the switch.
+	sawPodman := false
+	for _, command := range connector.commands(id)[before:] {
+		if strings.Contains(command, "docker ps -a") {
+			t.Errorf("the restarted sample still ran docker: %q", command)
+		}
+		if strings.Contains(command, "podman ps -a") {
+			sawPodman = true
+		}
+	}
+	if !sawPodman {
+		t.Errorf("commands after the switch = %v, want a podman sample",
+			connector.commands(id)[before:])
 	}
 }
 
