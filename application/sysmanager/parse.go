@@ -1160,7 +1160,7 @@ func parseKubernetesList(stdout string, now time.Time) (Kubernetes, error) {
 		}
 	} else if strings.TrimSpace(namespacesBody) != "" {
 		var list kubeNamespaceListJSON
-		if err := decodeJSONAfterBanner(namespacesBody, &list); err != nil {
+		if err := decodeJSONAfterBanner(namespacesBody, &list, "items"); err != nil {
 			return inventory, &Error{Reason: ReasonInternal,
 				Cause: fmt.Errorf("kubectl: parse namespaces: %w", err)}
 		}
@@ -1178,7 +1178,7 @@ func parseKubernetesList(stdout string, now time.Time) (Kubernetes, error) {
 	}
 	if strings.TrimSpace(podsBody) != "" {
 		var list kubePodListJSON
-		if err := decodeJSONAfterBanner(podsBody, &list); err != nil {
+		if err := decodeJSONAfterBanner(podsBody, &list, "items"); err != nil {
 			return inventory, &Error{Reason: ReasonInternal,
 				Cause: fmt.Errorf("kubectl: parse pods: %w", err)}
 		}
@@ -1215,18 +1215,44 @@ func splitKubernetesSection(text string) (body, failure string) {
 
 // decodeJSONAfterBanner skips a kubectl banner such as a bracketed warning
 // before the JSON document. Trying each opening brace keeps an occasional
-// nested brace from ending the search at the first one.
-func decodeJSONAfterBanner(text string, target any) error {
+// nested brace from ending the search at the first one. A warning that happens
+// to be JSON-shaped must not shadow the real document, so a candidate is only
+// accepted when it carries the payload's required top-level key; the first
+// JSON document that unmarshals at all remains the fallback.
+func decodeJSONAfterBanner(text string, target any, requiredKey string) error {
 	trimmed := strings.TrimSpace(text)
+	var fallback []byte
 	for offset := 0; offset < len(trimmed); offset++ {
 		if trimmed[offset] != '{' && trimmed[offset] != '[' {
 			continue
 		}
-		if err := json.Unmarshal([]byte(trimmed[offset:]), target); err == nil {
+		candidate := []byte(trimmed[offset:])
+		if err := json.Unmarshal(candidate, target); err != nil {
+			continue
+		}
+		if requiredKey == "" || jsonObjectHasKey(candidate, requiredKey) {
 			return nil
 		}
+		if fallback == nil {
+			fallback = append([]byte(nil), candidate...)
+		}
+	}
+	if fallback != nil {
+		return json.Unmarshal(fallback, target)
 	}
 	return errors.New("no JSON document")
+}
+
+// jsonObjectHasKey reports whether raw is a JSON object with key at its top
+// level. The Kubernetes list payloads both use "items"; a warning object that
+// merely parses as JSON does not.
+func jsonObjectHasKey(raw []byte, key string) bool {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return false
+	}
+	_, ok := object[key]
+	return ok
 }
 
 func kubePod(pod kubePodJSON, now time.Time) Pod {

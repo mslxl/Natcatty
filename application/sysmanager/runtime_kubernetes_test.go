@@ -248,6 +248,39 @@ func TestParseKubernetesListReadsPodsAndNamespaces(t *testing.T) {
 	}
 }
 
+// A kubectl warning can itself be a JSON object. The decoder must scan past
+// that object rather than treat its successful unmarshal as the list.
+func TestParseKubernetesListSkipsJSONShapedWarnings(t *testing.T) {
+	stdout := markerKubernetesBegin + "\n" +
+		markerKubernetesNamespaces + "\n" +
+		`{"component":"kubelet","warning":"namespaces banner"}` + "\n" +
+		`{"apiVersion":"v1","items":[{"metadata":{"name":"default"}},` +
+		`{"metadata":{"name":"team-a"}}]}` + "\n" +
+		markerKubernetesNamespacesEnd + "\n" +
+		markerKubernetesPods + "\n" +
+		`{"level":"warning","message":"pods banner"}` + "\n" +
+		`{"apiVersion":"v1","items":[{"metadata":{"name":"web-0",` +
+		`"namespace":"team-a","creationTimestamp":"2025-10-01T10:00:00Z"},` +
+		`"spec":{"containers":[{"name":"app"}]},"status":{"phase":"Running"}}]}` + "\n" +
+		markerKubernetesPodsEnd + "\n" + markerKubernetesEnd + "\n"
+
+	now := time.Date(2025, 10, 1, 12, 0, 0, 0, time.UTC)
+	inventory, err := parseKubernetesList(stdout, now)
+	if err != nil {
+		t.Fatalf("parse kubernetes list: %v", err)
+	}
+	if len(inventory.Namespaces) != 2 || inventory.Namespaces[0] != "default" ||
+		inventory.Namespaces[1] != "team-a" {
+		t.Errorf("namespaces = %v, want the list after the warning", inventory.Namespaces)
+	}
+	if len(inventory.Pods) != 1 || inventory.Pods[0].Name != "web-0" {
+		t.Errorf("pods = %+v, want the list after the warning", inventory.Pods)
+	}
+	if inventory.Namespace != "team-a" {
+		t.Errorf("effective namespace = %q, want team-a", inventory.Namespace)
+	}
+}
+
 func TestParseKubernetesListMapsFailuresToTypedReasons(t *testing.T) {
 	namespacesForbidden := markerKubernetesBegin + "\n" +
 		markerKubernetesNamespaces + "\n" + markerKubernetesError + "\n" +
@@ -522,5 +555,48 @@ func TestServiceSamplesKubernetesInTheSelectedNamespace(t *testing.T) {
 	}
 	if after := len(connector.commands("kube")); after != before {
 		t.Errorf("an invalid namespace ran %d command(s)", after-before)
+	}
+}
+
+// The namespace list can succeed while the pods list for the selected
+// namespace is refused. The listed namespaces must survive into the degraded
+// state: the surface uses them to offer another namespace instead of retrying
+// the forbidden one forever.
+func TestServiceKeepsListedNamespacesWhenPodsAreForbidden(t *testing.T) {
+	forbidden := markerKubernetesBegin + "\n" +
+		markerKubernetesNamespaces + "\n" +
+		`{"items":[{"metadata":{"name":"default"}},{"metadata":{"name":"team-a"}}]}` + "\n" +
+		markerKubernetesNamespacesEnd + "\n" +
+		markerKubernetesPods + "\n" + markerKubernetesError + "\n" +
+		"Error from server (Forbidden): pods is forbidden\n" +
+		markerKubernetesPodsEnd + "\n" + markerKubernetesEnd + "\n"
+	connector := newFakeConnector()
+	connector.exec = func(_ domainvault.Host, command string) (ExecResult, error) {
+		switch {
+		case command == probeCommand():
+			return ExecResult{Stdout: "__NC_OS=Linux\n__NC_HAS_kubectl=1\n"}, nil
+		case strings.Contains(command, markerKubernetesBegin):
+			return ExecResult{Stdout: forbidden}, nil
+		default:
+			return ExecResult{HasExitCode: true}, nil
+		}
+	}
+	service := NewService(connector)
+	defer service.Close()
+	host := fakeHost("kube-forbidden")
+
+	if err := service.Start(host, TabKubernetes, 20*time.Millisecond); err != nil {
+		t.Fatalf("start kubernetes: %v", err)
+	}
+	waitStatus(t, service, TabKubernetes, StatusUnavailable)
+
+	state := service.Snapshot().Tabs[TabKubernetes]
+	if state.Reason != ReasonKubernetesForbidden {
+		t.Errorf("reason = %q, want kubernetes_forbidden", state.Reason)
+	}
+	if len(state.Kubernetes.Namespaces) != 2 || state.Kubernetes.Namespaces[0] != "default" ||
+		state.Kubernetes.Namespaces[1] != "team-a" {
+		t.Errorf("namespaces = %v, want the names successfully listed before the refusal",
+			state.Kubernetes.Namespaces)
 	}
 }
