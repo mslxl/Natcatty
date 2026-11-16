@@ -56,6 +56,20 @@ func defaultRow(c *ui.Context, prefs *PreferencesState, state *AssociationsState
 }
 
 func associationsList(c *ui.Context, state *AssociationsState, m locales.Messages) {
+	// The confirmation is drawn before the empty hint, so a pending removal
+	// stays cancellable even if the list lost its last row meanwhile.
+	if pending := state.PendingRemove(); pending != "" {
+		cancelled, confirmed := kit.ConfirmBar(c, m.SettingsAssociationRemoveConfirm(pending), nil,
+			m.SettingsCancel(), m.VaultHostDelete())
+		if cancelled {
+			state.CancelRemove()
+			c.Invalidate()
+		}
+		if confirmed {
+			state.ConfirmRemove()
+			c.Invalidate()
+		}
+	}
 	list := state.Associations()
 	if len(list) == 0 {
 		ui.Text(c, m.SettingsAssociationEmpty()).FontSize(kit.M(c).Font.Footnote).TextColor(c.Theme().TextMuted)
@@ -72,7 +86,7 @@ func associationsList(c *ui.Context, state *AssociationsState, m locales.Message
 				c.Invalidate()
 			}
 			if kit.GhostButton(c, "", m.SettingsAssociationRemove()).Clicked() {
-				state.Remove(association.Extension)
+				state.RequestRemove(association.Extension)
 				c.Invalidate()
 			}
 		})

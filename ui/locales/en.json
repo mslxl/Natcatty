@@ -3065,6 +3065,7 @@
   "settingsAssociationSave": "Save association",
   "settingsAssociationEdit": "Edit",
   "settingsAssociationRemove": "Remove",
+  "settingsAssociationRemoveConfirm": "Remove the .{extension} association? Files with this extension will open with the default opener.",
   "settingsAssociationEditing": "Editing .{extension}",
   "settingsAssociationEmpty": "No file associations yet.",
   "settingsAssociationInvalid": "Enter a file extension such as txt.",

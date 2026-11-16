@@ -1901,6 +1901,7 @@
   "settingsAssociationSave": "儲存關聯",
   "settingsAssociationEdit": "編輯",
   "settingsAssociationRemove": "移除",
+  "settingsAssociationRemoveConfirm": "移除 .{extension} 關聯？此副檔名的檔案將使用預設開啟方式。",
   "settingsAssociationEditing": "正在編輯 .{extension}",
   "settingsAssociationEmpty": "尚無檔案關聯。",
   "settingsAssociationInvalid": "請輸入副檔名，例如 txt。",

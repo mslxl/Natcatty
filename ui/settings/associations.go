@@ -33,6 +33,10 @@ type AssociationsState struct {
 	application domain.ExternalApplication
 	editing     string
 	problem     AssociationProblem
+	// pendingRemove is the extension awaiting delete confirmation. The list
+	// keeps the row until the user confirms, so a stray click cannot delete a
+	// configured opener.
+	pendingRemove string
 }
 
 // AssociationsOption customizes an AssociationsState.
@@ -180,8 +184,45 @@ func (s *AssociationsState) CancelEdit() {
 	s.redrawState()
 }
 
-// Remove deletes one association.
-func (s *AssociationsState) Remove(extension string) bool {
+// RequestRemove asks to delete one association. The association stays in the
+// list until ConfirmRemove, and CancelRemove closes the confirmation without
+// touching it.
+func (s *AssociationsState) RequestRemove(extension string) bool {
+	extension = domain.NormalizeExtension(extension)
+	if extension == "" {
+		return false
+	}
+	s.pendingRemove = extension
+	s.redrawState()
+	return true
+}
+
+// PendingRemove returns the extension awaiting delete confirmation, or "".
+func (s *AssociationsState) PendingRemove() string { return s.pendingRemove }
+
+// CancelRemove closes the delete confirmation and keeps the association.
+func (s *AssociationsState) CancelRemove() {
+	if s.pendingRemove == "" {
+		return
+	}
+	s.pendingRemove = ""
+	s.redrawState()
+}
+
+// ConfirmRemove deletes the association awaiting confirmation. The pending
+// mark is cleared whatever the save outcome, so a failed save does not leave a
+// confirmation bar inviting a second attempt against stale text.
+func (s *AssociationsState) ConfirmRemove() bool {
+	extension := s.pendingRemove
+	if extension == "" {
+		return false
+	}
+	s.pendingRemove = ""
+	return s.remove(extension)
+}
+
+// remove deletes one association now.
+func (s *AssociationsState) remove(extension string) bool {
 	extension = domain.NormalizeExtension(extension)
 	if extension == "" {
 		return false
@@ -265,6 +306,10 @@ func (s *AssociationsState) resetForm() {
 	s.application = domain.ExternalApplication{}
 	s.editing = ""
 	s.problem = AssociationProblemNone
+	// A save can replace the extension a confirmation was about (an edit that
+	// renames or rewrites it), so the pending deletion belongs to the old row
+	// and must not outlive this form.
+	s.pendingRemove = ""
 }
 
 func (s *AssociationsState) redrawState() {

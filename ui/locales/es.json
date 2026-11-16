@@ -1901,6 +1901,7 @@
   "settingsAssociationSave": "Guardar asociación",
   "settingsAssociationEdit": "Editar",
   "settingsAssociationRemove": "Quitar",
+  "settingsAssociationRemoveConfirm": "¿Quitar la asociación .{extension}? Los archivos con esta extensión se abrirán con la apertura predeterminada.",
   "settingsAssociationEditing": "Editando .{extension}",
   "settingsAssociationEmpty": "Aún no hay asociaciones de archivos.",
   "settingsAssociationInvalid": "Introduce una extensión de archivo, como txt.",

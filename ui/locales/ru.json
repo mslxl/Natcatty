@@ -1901,6 +1901,7 @@
   "settingsAssociationSave": "Сохранить связь",
   "settingsAssociationEdit": "Изменить",
   "settingsAssociationRemove": "Удалить",
+  "settingsAssociationRemoveConfirm": "Удалить связь .{extension}? Файлы с этим расширением будут открываться способом по умолчанию.",
   "settingsAssociationEditing": "Изменение .{extension}",
   "settingsAssociationEmpty": "Связей файлов пока нет.",
   "settingsAssociationInvalid": "Введите расширение файла, например txt.",

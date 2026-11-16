@@ -14840,6 +14840,18 @@ func (msgs Messages) SettingsAssociationRemove() string {
 	return Catalog.Format(msgs.locale, "settingsAssociationRemove", nil)
 }
 
+// SettingsAssociationRemoveConfirm says "Remove the .{extension} association? Files with this extension will open with the default opener."
+// in the language the app shows.
+func SettingsAssociationRemoveConfirm(extension string) string {
+	return In(i18n.Locale()).SettingsAssociationRemoveConfirm(extension)
+}
+
+// SettingsAssociationRemoveConfirm says "Remove the .{extension} association? Files with this extension will open with the default opener."
+// in the language of msgs.
+func (msgs Messages) SettingsAssociationRemoveConfirm(extension string) string {
+	return Catalog.Format(msgs.locale, "settingsAssociationRemoveConfirm", map[string]any{"extension": extension})
+}
+
 // SettingsAssociationEditing says "Editing .{extension}"
 // in the language the app shows.
 func SettingsAssociationEditing(extension string) string {

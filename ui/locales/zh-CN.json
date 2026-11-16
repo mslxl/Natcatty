@@ -1901,6 +1901,7 @@
   "settingsAssociationSave": "保存关联",
   "settingsAssociationEdit": "编辑",
   "settingsAssociationRemove": "移除",
+  "settingsAssociationRemoveConfirm": "移除 .{extension} 关联？此扩展名的文件将使用默认打开方式。",
   "settingsAssociationEditing": "正在编辑 .{extension}",
   "settingsAssociationEmpty": "尚无文件关联。",
   "settingsAssociationInvalid": "请输入文件扩展名，例如 txt。",
