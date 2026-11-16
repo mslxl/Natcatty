@@ -374,7 +374,7 @@ func list(c *ui.Context, s *vaultstate.State, opts options,
 			return
 		}
 		if page.Shows(section.Hosts) {
-			hostsPage(c, s, opts, at, m, t)
+			hostsPage(c, s, opts, at, m, t, scroll)
 		}
 		if page.Shows(section.Keychain) {
 			keySection(c, s, m, t)
