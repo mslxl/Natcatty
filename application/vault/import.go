@@ -706,6 +706,7 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 		host.CreatedAt = now
 		host.UpdatedAt = now
 		host.HasPassword = draft.Password != "" && s.SecretMode() != SecretModeSession
+		host.HasTOTP = draft.TOTP != "" && s.SecretMode() != SecretModeSession
 		if host.Proxy != nil {
 			host.Proxy.HasPassword = draft.Proxy != nil &&
 				draft.Proxy.Password != "" && s.SecretMode() != SecretModeSession
@@ -748,7 +749,8 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 	for _, item := range pending {
 		needsPassword := item.draft.Password != ""
 		needsProxy := item.draft.Proxy != nil && item.draft.Proxy.Password != ""
-		if (needsPassword || needsProxy) && s.secrets == nil {
+		needsTOTP := item.draft.TOTP != ""
+		if (needsPassword || needsProxy || needsTOTP) && s.secrets == nil {
 			return result, unsupported(ErrSecretsUnavailable)
 		}
 	}
@@ -764,6 +766,14 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 		if item.draft.Proxy != nil && item.draft.Proxy.Password != "" {
 			ref := HostSecretRef(item.host.ID, FieldProxyPassword)
 			if err := s.secrets.Set(ctx, ref, item.draft.Proxy.Password); err != nil {
+				rollback()
+				return result, secretError(err)
+			}
+			written = append(written, ref)
+		}
+		if item.draft.TOTP != "" {
+			ref := HostSecretRef(item.host.ID, FieldTOTP)
+			if err := s.secrets.Set(ctx, ref, item.draft.TOTP); err != nil {
 				rollback()
 				return result, secretError(err)
 			}
@@ -881,6 +891,7 @@ func draftFromRecord(record vaultimport.Record) domainvault.Draft {
 		UseSSHAgent:      record.UseSSHAgent,
 		RequiresMFA:      record.RequiresMFA,
 		Password:         record.Password,
+		TOTP:             record.TOTP,
 		ProxyProfileID:   record.ProxyProfileID,
 		NetworkProfileID: record.NetworkProfileID,
 		LegacyAlgorithms: record.LegacyAlgorithms,

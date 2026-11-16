@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base32"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -164,6 +165,57 @@ func TestDeleteRemovesTheStoredTOTP(t *testing.T) {
 	}
 	if _, ok := secrets.values[HostSecretRef(created.ID, FieldTOTP)]; ok {
 		t.Fatal("the TOTP survived deleting its Host")
+	}
+}
+
+func TestUpdateToANonSSHProtocolRemovesTheStoredTOTP(t *testing.T) {
+	repo := &fakeHosts{}
+	secrets := newFakeSecrets()
+	service := newSecretService(t, repo, secrets)
+	created, err := service.Create(context.Background(), domainvault.Draft{
+		Hostname: "example.com", TOTP: testTOTPSecret(),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	updated, err := service.Update(context.Background(), created.ID, domainvault.Draft{
+		Hostname: "example.com", Protocol: domainvault.ProtocolTelnet,
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.HasTOTP {
+		t.Fatal("a Telnet Host still advertises an authenticator")
+	}
+	if _, ok := secrets.values[HostSecretRef(created.ID, FieldTOTP)]; ok {
+		t.Fatal("the TOTP ciphertext survived the switch away from SSH")
+	}
+}
+
+func TestSetSecretRejectsAMalformedTOTPWithoutTouchingTheMarker(t *testing.T) {
+	repo := &fakeHosts{}
+	secrets := newFakeSecrets()
+	service := newSecretService(t, repo, secrets)
+	host, err := service.Create(context.Background(), domainvault.Draft{Hostname: "example.com"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	err = service.SetSecret(context.Background(), host.ID, FieldTOTP, "not a base32 secret!")
+	var typed *Error
+	if !errors.As(err, &typed) || typed.Kind != KindValidation {
+		t.Fatalf("SetSecret error = %v, want a validation error", err)
+	}
+	if _, ok := secrets.values[HostSecretRef(host.ID, FieldTOTP)]; ok {
+		t.Fatal("a malformed TOTP reached the secret store")
+	}
+	loaded, err := service.Get(context.Background(), host.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if loaded.HasTOTP {
+		t.Fatal("a rejected TOTP set the marker")
 	}
 }
 

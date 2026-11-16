@@ -16,6 +16,8 @@ import (
 
 var stamp = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 
+const testTOTPURI = "otpauth://totp/Acme:deploy?secret=JBSWY3DPEHPK3PXP"
+
 func testDataset() Dataset {
 	return Dataset{
 		Groups: []domainvault.Group{{Path: "Acme/Prod", OrderKey: 1000}},
@@ -26,7 +28,8 @@ func testDataset() Dataset {
 					Port: 2222, Username: "deploy", Protocol: domainvault.ProtocolSSH,
 					Group: "Acme/Prod", Tags: []string{"web", "prod"},
 					Notes: "line1\r\nline2, \"quoted\"", OrderKey: 2000,
-					KeyID: "k1",
+					KeyID:   "k1",
+					HasTOTP: true,
 					Proxy: &domainvault.ProxyConfig{
 						Type: domainvault.ProxySOCKS5, Host: "127.0.0.1", Port: 1080,
 						Username: "proxyuser", HasPassword: true,
@@ -34,6 +37,7 @@ func testDataset() Dataset {
 				},
 				Password: "p@ss,1", KeyPath: "=C:/keys/id_ed25519",
 				Passphrase: "pa ss", ProxyPassword: "p@ss",
+				TOTP: testTOTPURI,
 			},
 			{
 				Host: domainvault.Host{
@@ -166,15 +170,20 @@ func TestJSONRoundTripsThroughImporter(t *testing.T) {
 	if parsed.Records[1].KeyMaterial != "PRIVATE" || parsed.Records[1].Passphrase != "pa ss" {
 		t.Fatalf("inline key lost: %+v", parsed.Records[1])
 	}
+	if parsed.Records[1].TOTP != testTOTPURI {
+		t.Fatalf("TOTP lost: %+v", parsed.Records[1])
+	}
 }
 
 func TestJSONWithoutSecretsOmitsKeyMaterial(t *testing.T) {
 	document := string(exportFor(t, FormatJSON, Options{}))
-	if strings.Contains(document, "PRIVATE") || strings.Contains(document, `"password"`) {
+	if strings.Contains(document, "PRIVATE") || strings.Contains(document, `"password"`) ||
+		strings.Contains(document, `"totp"`) {
 		t.Fatalf("secret leaked:\n%s", document)
 	}
 	parsed := vaultimport.Parse(vaultimport.FormatNetcattyJSON, document, vaultimport.Options{})
-	if len(parsed.Records) != 2 || parsed.Records[1].KeyMaterial != "" {
+	if len(parsed.Records) != 2 || parsed.Records[1].KeyMaterial != "" ||
+		parsed.Records[1].TOTP != "" {
 		t.Fatalf("non-destructive parse = %+v", parsed.Records)
 	}
 }

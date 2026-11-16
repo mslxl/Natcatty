@@ -324,8 +324,9 @@ func (s *Service) Update(ctx context.Context, id model.HostID, draft domainvault
 	if err != nil {
 		return domainvault.Host{}, err
 	}
-	// A new authenticator or an explicit clear both replace the stored one.
-	totpReplaced := normalized.TOTP != "" || normalized.ClearTOTP
+	// A new authenticator, an explicit clear, or a protocol that no longer
+	// authenticates over SSH replaces the stored one.
+	totpReplaced := normalized.TOTP != "" || normalized.ClearTOTP || !normalized.Protocol.UsesSSHAuth()
 	previousTOTP, err := s.readSecret(ctx, existing.ID, FieldTOTP, totpReplaced)
 	if err != nil {
 		return domainvault.Host{}, err
@@ -387,7 +388,9 @@ func (s *Service) Update(ctx context.Context, id model.HostID, draft domainvault
 		if s.SecretMode() != SecretModeSession {
 			updated.HasTOTP = true
 		}
-	case normalized.ClearTOTP:
+	case normalized.ClearTOTP || !normalized.Protocol.UsesSSHAuth():
+		// A non-SSH protocol never reads an authenticator. NormalizeDraft drops
+		// the input, so remove any secret the Host stored under SSH as well.
 		if s.secrets != nil {
 			if err := s.secrets.Delete(ctx, HostSecretRef(updated.ID, FieldTOTP)); err != nil &&
 				!errors.Is(err, ErrSecretNotFound) {

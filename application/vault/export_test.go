@@ -42,7 +42,8 @@ func exportService(t *testing.T) *Service {
 		ID: "h1", Label: "=Web", Hostname: "10.0.0.1", Port: 22,
 		Username: "root", Protocol: domainvault.ProtocolSSH, Group: "Prod",
 		Tags: []string{"web"}, Notes: "notes", OrderKey: 1000, HasPassword: true,
-		KeyID: "k1",
+		HasTOTP: true,
+		KeyID:   "k1",
 	}
 	hosts.hosts = append(hosts.hosts, host)
 	key := domainvault.Key{
@@ -52,6 +53,8 @@ func exportService(t *testing.T) *Service {
 	}
 	keys.keys = append(keys.keys, key)
 	secrets.values[HostSecretRef("h1", FieldPassword)] = "secret"
+	secrets.values[HostSecretRef("h1", FieldTOTP)] =
+		"otpauth://totp/Acme:root?algorithm=SHA1&digits=6&issuer=Acme&period=30&secret=JBSWY3DPEHPK3PXP"
 	secrets.values[KeySecretRef("k1", FieldPrivateKey)] = "PRIVATE"
 	return service
 }
@@ -213,6 +216,13 @@ func TestJSONExportRoundTripsThroughImport(t *testing.T) {
 	}
 	if !hosts.hosts[0].HasPassword || hosts.hosts[0].KeyID == "" {
 		t.Fatalf("password=%v key=%q", hosts.hosts[0].HasPassword, hosts.hosts[0].KeyID)
+	}
+	if !hosts.hosts[0].HasTOTP {
+		t.Fatal("TOTP marker did not survive the JSON round trip")
+	}
+	if totp := secrets.values[HostSecretRef(hosts.hosts[0].ID, FieldTOTP)]; totp !=
+		"otpauth://totp/Acme:root?algorithm=SHA1&digits=6&issuer=Acme&period=30&secret=JBSWY3DPEHPK3PXP" {
+		t.Fatalf("TOTP = %q", totp)
 	}
 }
 

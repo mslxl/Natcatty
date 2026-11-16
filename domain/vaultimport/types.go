@@ -168,6 +168,8 @@ type Record struct {
 	Notes    string
 	// Password is credential plaintext in memory only.
 	Password string
+	// TOTP is a Host's authenticator URI or Base32 secret in memory only.
+	TOTP string
 	// KeyPath and Passphrase feed the SSH Key importer. They are never
 	// written onto a Host record.
 	KeyPath    string

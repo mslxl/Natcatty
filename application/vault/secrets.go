@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/mslxl/natcatty/domain/model"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
 // SecretMode says how the field-secret store protects credentials. The UI
@@ -174,6 +175,15 @@ func (s *Service) SetSecret(ctx context.Context, id model.HostID, field, value s
 	}
 	if !hostField(field) {
 		return invalidField(field)
+	}
+	if field == FieldTOTP && value != "" {
+		// Keep the stored value canonical so the marker never advertises an
+		// input the auth machine cannot generate a code from.
+		normalizedValue, err := domainvault.NormalizeTOTP(value)
+		if err != nil {
+			return invalid(err)
+		}
+		value = normalizedValue
 	}
 
 	if value == "" {
