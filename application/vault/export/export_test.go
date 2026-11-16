@@ -40,6 +40,8 @@ func testDataset() Dataset {
 					ID: "h1", Label: "Web", Hostname: "web.example.test",
 					Port: 22, Username: "root", Protocol: domainvault.ProtocolTelnet,
 					Tags: []string{"edge"}, OrderKey: 1000,
+					StartupCommand: "cd /srv\n./run --watch",
+					DirectProxy:    true,
 				},
 			},
 		},
@@ -165,6 +167,17 @@ func TestJSONRoundTripsThroughImporter(t *testing.T) {
 	}
 	if parsed.Records[1].KeyMaterial != "PRIVATE" || parsed.Records[1].Passphrase != "pa ss" {
 		t.Fatalf("inline key lost: %+v", parsed.Records[1])
+	}
+	// The portable document carries the startup command (newlines included)
+	// and an explicit direct-proxy choice; the importer Record must represent
+	// both instead of dropping them.
+	if !strings.Contains(string(document), `"startupCommand"`) ||
+		!strings.Contains(string(document), `"directProxy": true`) {
+		t.Fatalf("document does not carry startupCommand/directProxy:\n%s", document)
+	}
+	host := parsed.Records[0]
+	if host.StartupCommand != "cd /srv\n./run --watch" || !host.DirectProxy {
+		t.Fatalf("startup command / direct proxy lost: %+v", host)
 	}
 }
 

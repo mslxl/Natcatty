@@ -206,10 +206,14 @@ type Record struct {
 	RequiresMFA            bool
 	X11WarningAcknowledged bool
 	ProxyProfileID         string
+	DirectProxy            bool
 	NetworkProfileID       string
 	LegacyAlgorithms       bool
 	SkipEcdsaHostKey       bool
 	Algorithms             *Algorithms
+	// StartupCommand is typed once after the Session is ready. A portable
+	// export carries it and an import must not silently drop it.
+	StartupCommand string
 	// DeviceType is the original Host Details "Network Device Mode" value.
 	// Empty is an ordinary SSH Host.
 	DeviceType string
