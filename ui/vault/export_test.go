@@ -40,14 +40,23 @@ func (f *fakeExportWriter) Save(name string, _ []byte) (string, error) {
 }
 
 func exportView(t *testing.T) (*vaultstate.State, *ui.Tester, *fakeExportWriter) {
+	return exportViewWith(t, nil)
+}
+
+// exportViewWith is exportView plus a hook that can seed the fake export
+// result before the view is built, so a test can drive the outcome banner.
+func exportViewWith(t *testing.T, setup func(*fakeExports)) (*vaultstate.State, *ui.Tester, *fakeExportWriter) {
 	t.Helper()
 	writer := &fakeExportWriter{}
-	var exports fakeExports
+	exports := &fakeExports{}
+	if setup != nil {
+		setup(exports)
+	}
 	state := vaultstate.NewState(&fakeHosts{items: []domainvault.Host{{
 		ID: "h1", Label: "Web", Hostname: "web.example.test", Port: 22,
 		Protocol: domainvault.ProtocolSSH,
 	}}},
-		vaultstate.WithExports(&exports),
+		vaultstate.WithExports(exports),
 		vaultstate.WithExportWriter(writer),
 		vaultstate.WithRedrawRequest(func() {}),
 	)
@@ -125,6 +134,34 @@ func TestExportPanelWarnsAndConfirmsPlaintextSecrets(t *testing.T) {
 	}
 	if !tester.HasText(m.VaultExportDone("C:/Exports/export.json", len("content"))) {
 		t.Fatalf("the outcome banner is missing: %v", tester.Texts())
+	}
+}
+
+// TestExportOutcomeRendersJumpHopWarnings proves the per-row issue a CSV
+// export reports reaches the user: the banner names the Host and the hop the
+// format had to drop instead of quietly writing a shorter chain.
+func TestExportOutcomeRendersJumpHopWarnings(t *testing.T) {
+	state, tester, writer := exportViewWith(t, func(exports *fakeExports) {
+		exports.result.Issues = []appvault.ExportIssue{{
+			Host: "Web", Code: appvault.ExportIssueJumpHopMissing, Hop: "jump-1",
+		}}
+	})
+	m := locales.In("en")
+	state.BeginExport()
+	tester.Frame()
+	if err := tester.Click(m.VaultExportExport()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if writer.writes != 1 {
+		t.Fatalf("writes = %d, want one", writer.writes)
+	}
+	outcome, ok := state.ExportOutcome()
+	if !ok || len(outcome.Issues) != 1 {
+		t.Fatalf("outcome = %+v, ok = %v", outcome, ok)
+	}
+	if want := m.VaultExportJumpHopMissing("Web", "jump-1"); !tester.HasText(want) {
+		t.Fatalf("the jump-hop warning %q is not rendered: %v", want, tester.Texts())
 	}
 }
 
