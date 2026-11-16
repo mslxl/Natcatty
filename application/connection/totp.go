@@ -26,8 +26,8 @@ var totpExcludedPromptText = regexp.MustCompile(
 
 // TOTPAutoAnswer returns the code that answers req when the Host has a TOTP
 // authenticator and the server asks exactly one authenticator question. at is
-// the current time; a code that would expire within two seconds is replaced by
-// the next step's code.
+// the current time; a code that would expire within the step's tail (two
+// seconds, capped at half the period) is replaced by the next step's code.
 //
 // It reports false for every other round, including a malformed or absent
 // secret, so the caller falls back to asking the user. Neither the secret nor
