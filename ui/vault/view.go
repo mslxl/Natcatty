@@ -1453,6 +1453,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					ui.Text(c, m.VaultHostX11Warning()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 					ui.Checkbox(c, &form.X11WarningAcknowledged, m.VaultHostX11Acknowledge())
 				}
+				hostX11SourceLine(c, s, m, t)
 				if ui.Checkbox(c, &form.NetworkDevice, m.VaultHostNetworkDevice()).Changed() {
 					if form.NetworkDevice {
 						// A vendor CLI has no login shell for tmux to wrap.
@@ -1693,6 +1694,19 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 					securityKeyStatus(c, s, m, t)
 				}
 				ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
+				// The X11 default follows the same rules as the Host editor:
+				// turning it off clears the acknowledgement so re-enabling it
+				// asks the user to accept the warning again.
+				if ui.Checkbox(c, &form.X11Forwarding, m.VaultHostX11Forwarding()).Changed() {
+					if !form.X11Forwarding {
+						form.X11WarningAcknowledged = false
+					}
+					c.Invalidate()
+				}
+				if form.X11Forwarding {
+					ui.Text(c, m.VaultHostX11Warning()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
+					ui.Checkbox(c, &form.X11WarningAcknowledged, m.VaultHostX11Acknowledge())
+				}
 			}
 		})
 

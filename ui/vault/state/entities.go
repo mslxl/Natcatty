@@ -141,6 +141,10 @@ type GroupForm struct {
 	LegacyAlgorithms bool
 	SkipEcdsaHostKey bool
 	Algorithms       *domainvault.AlgorithmOverrides
+	// X11Forwarding and X11WarningAcknowledged are the group's X11 default for
+	// member SSH Hosts. A member Host that owns an X11 choice keeps it.
+	X11Forwarding          bool
+	X11WarningAcknowledged bool
 }
 
 // ProxyForm is the editable text of one Proxy Profile.
@@ -212,24 +216,26 @@ func (s *State) BeginEditGroup(path string) bool {
 	s.closeEditors()
 	s.editingGroup = true
 	s.groupForm = GroupForm{
-		ID:               group.ID,
-		OriginalPath:     group.Path,
-		Path:             group.Path,
-		Notes:            group.Notes,
-		Username:         group.Username,
-		Port:             groupPortText(group),
-		Protocol:         string(group.Protocol),
-		AuthMethod:       string(group.AuthMethod),
-		IdentityID:       string(group.IdentityID),
-		KeyID:            string(group.KeyID),
-		UseSSHAgent:      group.UseSSHAgent,
-		RequiresMFA:      group.RequiresMFA,
-		ProxyProfileID:   group.ProxyProfileID,
-		NetworkProfileID: group.NetworkProfileID,
-		HostChain:        domainvault.CloneHostChain(group.HostChain),
-		LegacyAlgorithms: group.LegacyAlgorithms,
-		SkipEcdsaHostKey: group.SkipEcdsaHostKey,
-		Algorithms:       domainvault.CloneAlgorithms(group.Algorithms),
+		ID:                     group.ID,
+		OriginalPath:           group.Path,
+		Path:                   group.Path,
+		Notes:                  group.Notes,
+		Username:               group.Username,
+		Port:                   groupPortText(group),
+		Protocol:               string(group.Protocol),
+		AuthMethod:             string(group.AuthMethod),
+		IdentityID:             string(group.IdentityID),
+		KeyID:                  string(group.KeyID),
+		UseSSHAgent:            group.UseSSHAgent,
+		RequiresMFA:            group.RequiresMFA,
+		ProxyProfileID:         group.ProxyProfileID,
+		NetworkProfileID:       group.NetworkProfileID,
+		HostChain:              domainvault.CloneHostChain(group.HostChain),
+		LegacyAlgorithms:       group.LegacyAlgorithms,
+		SkipEcdsaHostKey:       group.SkipEcdsaHostKey,
+		Algorithms:             domainvault.CloneAlgorithms(group.Algorithms),
+		X11Forwarding:          group.X11Forwarding,
+		X11WarningAcknowledged: group.X11WarningAcknowledged,
 	}
 	s.problem = ProblemNone
 	s.redraw()
@@ -774,22 +780,24 @@ func (s *State) groupDraft() (domainvault.GroupDraft, Problem) {
 		port = parsed
 	}
 	return domainvault.GroupDraft{
-		Path:             s.groupForm.Path,
-		Notes:            s.groupForm.Notes,
-		Username:         s.groupForm.Username,
-		Port:             port,
-		Protocol:         domainvault.Protocol(s.groupForm.Protocol),
-		AuthMethod:       domainvault.HostAuthMethod(s.groupForm.AuthMethod),
-		IdentityID:       model.IdentityID(s.groupForm.IdentityID),
-		KeyID:            model.KeyID(s.groupForm.KeyID),
-		UseSSHAgent:      s.groupForm.UseSSHAgent,
-		RequiresMFA:      s.groupForm.RequiresMFA,
-		ProxyProfileID:   s.groupForm.ProxyProfileID,
-		NetworkProfileID: s.groupForm.NetworkProfileID,
-		HostChain:        domainvault.CloneHostChain(s.groupForm.HostChain),
-		LegacyAlgorithms: s.groupForm.LegacyAlgorithms,
-		SkipEcdsaHostKey: s.groupForm.SkipEcdsaHostKey,
-		Algorithms:       domainvault.CloneAlgorithms(s.groupForm.Algorithms),
+		Path:                   s.groupForm.Path,
+		Notes:                  s.groupForm.Notes,
+		Username:               s.groupForm.Username,
+		Port:                   port,
+		Protocol:               domainvault.Protocol(s.groupForm.Protocol),
+		AuthMethod:             domainvault.HostAuthMethod(s.groupForm.AuthMethod),
+		IdentityID:             model.IdentityID(s.groupForm.IdentityID),
+		KeyID:                  model.KeyID(s.groupForm.KeyID),
+		UseSSHAgent:            s.groupForm.UseSSHAgent,
+		RequiresMFA:            s.groupForm.RequiresMFA,
+		ProxyProfileID:         s.groupForm.ProxyProfileID,
+		NetworkProfileID:       s.groupForm.NetworkProfileID,
+		HostChain:              domainvault.CloneHostChain(s.groupForm.HostChain),
+		LegacyAlgorithms:       s.groupForm.LegacyAlgorithms,
+		SkipEcdsaHostKey:       s.groupForm.SkipEcdsaHostKey,
+		Algorithms:             domainvault.CloneAlgorithms(s.groupForm.Algorithms),
+		X11Forwarding:          s.groupForm.X11Forwarding,
+		X11WarningAcknowledged: s.groupForm.X11WarningAcknowledged && s.groupForm.X11Forwarding,
 	}, ProblemNone
 }
 
@@ -882,6 +890,32 @@ func (s *State) GroupJumpChainSource() (InheritedValueSource, string, []model.Ho
 			}), chain.IDs()
 	}
 	return InheritedValueSourceNone, "", nil
+}
+
+// HostX11Source reports the Host editor's effective X11 preference: the
+// Host's own explicit choice, the Host Group default, or nothing. The value is
+// effective only for plain SSH; another transport never inherits it. An
+// explicit Host off is a record value, not an inheritance.
+func (s *State) HostX11Source() (InheritedValueSource, string, bool) {
+	if s.form.X11ForwardingSet {
+		return InheritedValueSourceRecord, "", s.form.X11Forwarding
+	}
+	group := domainvault.NormalizeGroup(s.form.Group)
+	defaults := domainvault.ResolveGroupDefaults(s.groupItems, group)
+	protocol := domainvault.Protocol(s.form.Protocol)
+	if protocol == "" {
+		protocol = defaults.Protocol
+	}
+	if protocol == "" {
+		protocol = domainvault.ProtocolSSH
+	}
+	if protocol == domainvault.ProtocolSSH && defaults.X11Enabled() {
+		return InheritedValueSourceInherited,
+			s.groupDefaultOwner(group, func(g domainvault.Group) bool {
+				return g.X11Forwarding && g.X11WarningAcknowledged
+			}), true
+	}
+	return InheritedValueSourceNone, "", false
 }
 
 // groupDefaultOwner returns the deepest group at or above path whose defaults

@@ -1340,6 +1340,16 @@ func (msgs Messages) VaultNetworkProfileInherited(path string, label string) str
 	return Catalog.Format(msgs.locale, "vaultNetworkProfileInherited", map[string]any{"path": path, "label": label})
 }
 
+// VaultX11Inherited says "Inherited from {path}"
+// in the language the app shows.
+func VaultX11Inherited(path string) string { return In(i18n.Locale()).VaultX11Inherited(path) }
+
+// VaultX11Inherited says "Inherited from {path}"
+// in the language of msgs.
+func (msgs Messages) VaultX11Inherited(path string) string {
+	return Catalog.Format(msgs.locale, "vaultX11Inherited", map[string]any{"path": path})
+}
+
 // VaultHostJumpHosts says "Jump Hosts"
 // in the language the app shows.
 func VaultHostJumpHosts() string { return In(i18n.Locale()).VaultHostJumpHosts() }

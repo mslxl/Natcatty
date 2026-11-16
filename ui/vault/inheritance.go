@@ -40,6 +40,18 @@ func groupProxyProfileSourceLine(c *ui.Context, s *vaultstate.State, m locales.M
 	}
 }
 
+// hostX11SourceLine labels an X11 preference that the Host editor shows but
+// the Host does not own: the checkbox reflects the Host Group's default, so
+// the user can tell an inherited value from a Host-level one.
+func hostX11SourceLine(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	source, path, _ := s.HostX11Source()
+	if source != vaultstate.InheritedValueSourceInherited {
+		return
+	}
+	ui.Text(c, m.VaultX11Inherited(path)).
+		FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+}
+
 // hostJumpHostsField renders the effective jump chain read-only. A Host does
 // not edit routing here: its own chain wins whole, otherwise the Host Group's
 // default applies, and editing stays on that group.

@@ -125,6 +125,7 @@
   "vaultNetworkProfileSourceHost": "在此主機上設定",
   "vaultNetworkProfileSourceHostGroup": "在此主機群組上設定",
   "vaultNetworkProfileInherited": "繼承自 {path}（{label}）",
+  "vaultX11Inherited": "繼承自 {path}",
   "vaultHostJumpHosts": "跳板主機",
   "vaultHostJumpHostsHint": "依由近到遠排列，第一項最靠近用戶端。",
   "vaultGroupJumpHostsHint": "成員主機會繼承此鏈，除非它們設定自己的鏈。跳板依勾選順序排列。",

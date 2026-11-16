@@ -230,11 +230,19 @@ type Host struct {
 	// RequiresMFA prefers keyboard-interactive before password or key probing.
 	RequiresMFA bool `json:"requiresMfa,omitempty"`
 	// X11Forwarding requests X11 forwarding for SSH Sessions on this Host. It
-	// is off by default and requires X11WarningAcknowledged.
+	// is off by default and requires X11WarningAcknowledged. When
+	// X11ForwardingSet is false the value is unset and the Host Group's X11
+	// default fills it in.
 	X11Forwarding bool `json:"x11Forwarding,omitempty"`
 	// X11WarningAcknowledged records that the user accepted the X11 security
 	// warning. It is meaningful only while X11Forwarding is true.
 	X11WarningAcknowledged bool `json:"x11WarningAcknowledged,omitempty"`
+	// X11ForwardingSet records that the user made an explicit X11 choice on
+	// this Host. It makes an explicit off distinguishable from "inherit the
+	// group's value", which a plain false cannot express once groups have an
+	// X11 default. A true X11Forwarding implies ownership even without it, so
+	// records written before group inheritance keep working.
+	X11ForwardingSet bool `json:"x11ForwardingSet,omitempty"`
 	// HostChain lists the jump Host references used before this Host. It is an
 	// ordered reference list, not an existence guarantee: a deleted jump Host
 	// remains dangling, as in the original's non-cascading Vault.
@@ -311,8 +319,11 @@ type Draft struct {
 	RequiresMFA bool
 	// X11Forwarding and X11WarningAcknowledged enable X11 forwarding. The
 	// acknowledgement must be set before the preference can be saved.
+	// X11ForwardingSet records an explicit off, which must override a Host
+	// Group default instead of inheriting it.
 	X11Forwarding          bool
 	X11WarningAcknowledged bool
+	X11ForwardingSet       bool
 	// HostChain and Proxy configure the route to this Host. Proxy.Password is
 	// plaintext form input; the Vault encrypts it into the field-secret store.
 	HostChain *HostChain
@@ -552,6 +563,7 @@ func (h Host) Validate() error {
 		UseSSHAgent:            h.UseSSHAgent,
 		X11Forwarding:          h.X11Forwarding,
 		X11WarningAcknowledged: h.X11WarningAcknowledged,
+		X11ForwardingSet:       h.X11ForwardingSet,
 		HostChain:              h.HostChain,
 		Proxy:                  h.Proxy,
 		ProxyProfileID:         h.ProxyProfileID,

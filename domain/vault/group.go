@@ -50,9 +50,14 @@ type Group struct {
 	// HostChain is the group's default jump chain. A member Host that lists
 	// its own hops wins as a whole; a Host with no chain uses this one.
 	HostChain *HostChain `json:"hostChain,omitempty"`
-	OrderKey  int64      `json:"orderKey"`
-	CreatedAt time.Time  `json:"createdAt"`
-	UpdatedAt time.Time  `json:"updatedAt"`
+	// X11Forwarding and X11WarningAcknowledged are the group's X11 default.
+	// Only SSH Sessions read them; a member Host that owns an X11 preference
+	// (including an explicit off) wins over this pair.
+	X11Forwarding          bool      `json:"x11Forwarding,omitempty"`
+	X11WarningAcknowledged bool      `json:"x11WarningAcknowledged,omitempty"`
+	OrderKey               int64     `json:"orderKey"`
+	CreatedAt              time.Time `json:"createdAt"`
+	UpdatedAt              time.Time `json:"updatedAt"`
 }
 
 // GroupDraft is the editable part of a Host Group.
@@ -73,6 +78,11 @@ type GroupDraft struct {
 	ProxyProfileID   string
 	NetworkProfileID string
 	HostChain        *HostChain
+	// X11Forwarding and X11WarningAcknowledged are the group's X11 default.
+	// A member Host that owns an X11 preference, including an explicit off,
+	// keeps it.
+	X11Forwarding          bool
+	X11WarningAcknowledged bool
 }
 
 // NormalizeGroupDraft trims and canonicalizes a Host Group's input and returns
@@ -97,6 +107,8 @@ func NormalizeGroupDraft(draft GroupDraft) (GroupDraft, error) {
 		draft.AuthMethod = ""
 		draft.UseSSHAgent = false
 		draft.RequiresMFA = false
+		draft.X11Forwarding = false
+		draft.X11WarningAcknowledged = false
 	}
 
 	if draft.Path == "" {
@@ -138,6 +150,17 @@ func NormalizeGroupDraft(draft GroupDraft) (GroupDraft, error) {
 	if err := validateHostChain(draft.HostChain); err != nil {
 		return GroupDraft{}, err
 	}
+	// X11 forwarding builds on SSH, and it can only be turned on for members
+	// that have seen the warning. A group whose protocol is blank inherits the
+	// protocol, so the check is deferred to ApplyGroupDefaults.
+	if draft.X11Forwarding {
+		if draft.Protocol != "" && draft.Protocol != ProtocolSSH {
+			return GroupDraft{}, validation(FieldX11, RuleUnsupported)
+		}
+		if !draft.X11WarningAcknowledged {
+			return GroupDraft{}, validation(FieldX11, RuleAcknowledgementRequired)
+		}
+	}
 	return draft, nil
 }
 
@@ -158,6 +181,11 @@ func (g Group) Defaults() GroupDefaults {
 		ProxyProfileID:   g.ProxyProfileID,
 		NetworkProfileID: g.NetworkProfileID,
 		HostChain:        CloneHostChain(g.HostChain),
+		X11Forwarding:    g.X11Forwarding,
+		// A group cannot turn forwarding on without the acknowledgement, but a
+		// hand-edited payload might; pairing them here keeps the effective value
+		// unusable rather than opening a session the user never accepted.
+		X11WarningAcknowledged: g.X11Forwarding && g.X11WarningAcknowledged,
 	}
 }
 
@@ -178,6 +206,15 @@ type GroupDefaults struct {
 	ProxyProfileID   string
 	NetworkProfileID string
 	HostChain        *HostChain
+	// X11Forwarding and X11WarningAcknowledged are effective only when both
+	// are set: forwarding without the acknowledgement is not usable.
+	X11Forwarding          bool
+	X11WarningAcknowledged bool
+}
+
+// X11Enabled reports whether the resolved defaults turn X11 forwarding on.
+func (d GroupDefaults) X11Enabled() bool {
+	return d.X11Forwarding && d.X11WarningAcknowledged
 }
 
 // ResolveGroupDefaults merges the group configs along a Host Group path. The
@@ -269,6 +306,14 @@ func mergeGroupDefaults(merged *GroupDefaults, defaults GroupDefaults) {
 	// chain whole, so every hop still names a Host the same level chose.
 	if defaults.HostChain != nil {
 		merged.HostChain = CloneHostChain(defaults.HostChain)
+	}
+	// X11 is one preference, so the nearest group that turns it on wins. A
+	// child cannot turn a parent's forwarding off, because a stored false is
+	// indistinguishable from "unset" in the payload; a Host that wants off owns
+	// an explicit off value of its own.
+	if defaults.X11Enabled() {
+		merged.X11Forwarding = true
+		merged.X11WarningAcknowledged = true
 	}
 }
 
@@ -441,6 +486,17 @@ func ApplyGroupDefaults(host Host, defaults GroupDefaults) Host {
 	}
 	if effective.Protocol == "" {
 		effective.Protocol = defaults.Protocol
+	}
+	// X11 is a tri-state preference: a Host that owns one (including an
+	// explicit off) keeps it, and an unset Host inherits the group's. It only
+	// applies to a plain SSH Session, since the other protocols cannot carry
+	// the forwarding channel. An empty protocol is the legacy SSH default.
+	hostOwnsX11 := effective.X11ForwardingSet || effective.X11Forwarding
+	if (effective.Protocol == ProtocolSSH || effective.Protocol == "") &&
+		!hostOwnsX11 && defaults.X11Enabled() {
+		effective.X11Forwarding = true
+		effective.X11WarningAcknowledged = true
+		effective.X11ForwardingSet = true
 	}
 	if !effective.UseSSHAgent {
 		effective.UseSSHAgent = defaults.UseSSHAgent

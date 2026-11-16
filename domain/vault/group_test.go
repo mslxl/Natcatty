@@ -524,3 +524,89 @@ func TestResolveGroupTreeIsDeterministicForConflicts(t *testing.T) {
 		t.Fatalf("dangling and self-parent paths = %q, %q", paths["e"], paths["f"])
 	}
 }
+
+// Ticket 48: a Host Group's X11 default applies to member SSH Hosts. The
+// nearest group that sets it wins, and a Host that owns an explicit off keeps
+// that off instead of inheriting the group's on.
+func TestGroupDefaultsInheritX11Forwarding(t *testing.T) {
+	groups := []Group{
+		{Path: "prod", X11Forwarding: true, X11WarningAcknowledged: true},
+		{Path: "prod/web"},
+	}
+	defaults := ResolveGroupDefaults(groups, "prod/web")
+	if !defaults.X11Enabled() {
+		t.Fatalf("defaults = %+v, want the ancestor's X11 forwarding", defaults)
+	}
+
+	unset := ApplyGroupDefaults(Host{Protocol: ProtocolSSH, Group: "prod/web"}, defaults)
+	if !unset.X11Enabled() {
+		t.Fatalf("unset Host = %+v, want inherited X11 forwarding", unset)
+	}
+	if !unset.X11ForwardingSet {
+		t.Fatal("the inherited value must resolve exactly as an owned on would")
+	}
+
+	// An explicit off is a Host value, so it wins over the group default.
+	off := ApplyGroupDefaults(Host{
+		Protocol: ProtocolSSH, Group: "prod/web",
+		X11Forwarding: false, X11ForwardingSet: true,
+	}, defaults)
+	if off.X11Enabled() || !off.X11ForwardingSet {
+		t.Fatalf("explicit off = %+v, want the Host's off to win", off)
+	}
+
+	// A stored true predates the marker but still means the user chose it.
+	legacyOn := ApplyGroupDefaults(Host{
+		Protocol: ProtocolSSH, X11Forwarding: true, X11WarningAcknowledged: true,
+	}, GroupDefaults{})
+	if !legacyOn.X11Enabled() {
+		t.Fatalf("legacy on = %+v, want it preserved without a group", legacyOn)
+	}
+
+	// X11 runs over SSH only: another transport never inherits it.
+	mosh := ApplyGroupDefaults(Host{Protocol: ProtocolMosh, Group: "prod/web"}, defaults)
+	if mosh.X11Forwarding || mosh.X11ForwardingSet {
+		t.Fatalf("Mosh Host inherited X11: %+v", mosh)
+	}
+	local := ApplyGroupDefaults(Host{Protocol: ProtocolLocal, Group: "prod/web"}, defaults)
+	if local.X11Forwarding || local.X11ForwardingSet {
+		t.Fatalf("Local shell inherited X11: %+v", local)
+	}
+}
+
+func TestGroupX11ForwardingRequiresSSHAndAcknowledgement(t *testing.T) {
+	if _, err := NormalizeGroupDraft(GroupDraft{
+		Path: "prod", Protocol: ProtocolSSH, X11Forwarding: true,
+	}); err == nil {
+		t.Fatal("a group turned X11 on without the acknowledgement")
+	} else {
+		var invalid *ValidationError
+		if !errors.As(err, &invalid) || invalid.Field != FieldX11 ||
+			invalid.Rule != RuleAcknowledgementRequired {
+			t.Fatalf("error = %v, want FieldX11 acknowledgement required", err)
+		}
+	}
+	// An explicit non-SSH protocol has no X11 control, so the default is
+	// dropped rather than saved where no member could use it.
+	telnet, err := NormalizeGroupDraft(GroupDraft{
+		Path: "prod", Protocol: ProtocolTelnet,
+		X11Forwarding: true, X11WarningAcknowledged: true,
+	})
+	if err != nil || telnet.X11Forwarding || telnet.X11WarningAcknowledged {
+		t.Fatalf("Telnet group draft = %+v, %v; want X11 dropped", telnet, err)
+	}
+	draft, err := NormalizeGroupDraft(GroupDraft{
+		Path: "prod", Protocol: ProtocolSSH,
+		X11Forwarding: true, X11WarningAcknowledged: true,
+	})
+	if err != nil || !draft.X11Forwarding || !draft.X11WarningAcknowledged {
+		t.Fatalf("valid group draft = %+v, %v", draft, err)
+	}
+	// A group with a blank protocol inherits SSH and may set the default; the
+	// transport check happens when the member Host resolves it.
+	if _, err := NormalizeGroupDraft(GroupDraft{
+		Path: "prod", X11Forwarding: true, X11WarningAcknowledged: true,
+	}); err != nil {
+		t.Fatalf("blank-protocol group rejected X11: %v", err)
+	}
+}

@@ -1034,6 +1034,7 @@ func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 		RequiresMFA:            draft.RequiresMFA,
 		X11Forwarding:          draft.X11Forwarding,
 		X11WarningAcknowledged: draft.X11WarningAcknowledged,
+		X11ForwardingSet:       draft.X11ForwardingSet,
 		HostChain:              domainvault.CloneHostChain(draft.HostChain),
 		Proxy:                  domainvault.CloneProxy(draft.Proxy),
 		ProxyProfileID:         draft.ProxyProfileID,

@@ -125,6 +125,7 @@
   "vaultNetworkProfileSourceHost": "Definido en este host",
   "vaultNetworkProfileSourceHostGroup": "Definido en este grupo de hosts",
   "vaultNetworkProfileInherited": "Heredado de {path} ({label})",
+  "vaultX11Inherited": "Heredado de {path}",
   "vaultHostJumpHosts": "Hosts de salto",
   "vaultHostJumpHostsHint": "Se listan del primero al último, el más cercano al cliente.",
   "vaultGroupJumpHostsHint": "Los Hosts miembros heredan esta cadena salvo que configuren la suya. Los saltos siguen el orden en que se marcaron.",

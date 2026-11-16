@@ -99,6 +99,7 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.RequiresMFA = normalized.RequiresMFA
 		host.X11Forwarding = normalized.X11Forwarding
 		host.X11WarningAcknowledged = normalized.X11WarningAcknowledged
+		host.X11ForwardingSet = normalized.X11ForwardingSet
 		host.HostChain = domainvault.CloneHostChain(normalized.HostChain)
 		host.Proxy = domainvault.CloneProxy(normalized.Proxy)
 		host.LegacyAlgorithms = normalized.LegacyAlgorithms
@@ -254,6 +255,66 @@ func TestDisablingX11ClearsTheAcknowledgement(t *testing.T) {
 	}
 	if state.Problem() != ProblemX11Acknowledged {
 		t.Fatalf("Problem = %q, want %q", state.Problem(), ProblemX11Acknowledged)
+	}
+}
+
+// Ticket 48: opening a Host that leaves X11 unset shows the Host Group's
+// default, and saving without touching it leaves the Host unowned so it keeps
+// following the group. A toggle becomes the Host's own value, including off.
+func TestInheritedX11IsShownButNotSavedAsAnExplicitChoice(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "host-1", Label: "web", Hostname: "example.com",
+		Protocol: domainvault.ProtocolSSH, Group: "prod",
+	}}}
+	groups := &effectiveGroups{items: []domainvault.Group{{
+		Path: "prod", Protocol: domainvault.ProtocolSSH,
+		X11Forwarding: true, X11WarningAcknowledged: true,
+	}}}
+	state := NewState(repo, WithGroups(groups), WithRedrawRequest(func() {}))
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit failed")
+	}
+	form := state.Form()
+	if !form.X11Forwarding || !form.X11WarningAcknowledged || !form.X11Inherited {
+		t.Fatalf("form = %+v, want the inherited X11 on", form)
+	}
+	if form.X11ForwardingSet {
+		t.Fatal("the inherited value was marked as the Host's own")
+	}
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if len(repo.updated) != 1 {
+		t.Fatalf("updates = %d, want 1", len(repo.updated))
+	}
+	saved := repo.updated[0]
+	if saved.X11Forwarding || saved.X11WarningAcknowledged || saved.X11ForwardingSet {
+		t.Fatalf("saving the displayed inheritance wrote an explicit choice: %+v", saved)
+	}
+	if effective, _ := state.EffectiveHost("host-1"); !effective.X11Enabled() {
+		t.Fatalf("effective Host = %+v, want it to keep inheriting X11", effective)
+	}
+
+	// An explicit toggle is the Host's own value, even when it turns the
+	// group's default off.
+	state.BeginEdit("host-1")
+	state.SetX11Forwarding(false)
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save explicit off: %v", err)
+	}
+	if len(repo.updated) != 2 {
+		t.Fatalf("updates = %d, want 2", len(repo.updated))
+	}
+	off := repo.updated[1]
+	if off.X11Forwarding || !off.X11ForwardingSet {
+		t.Fatalf("explicit off draft = %+v, want an owned off", off)
+	}
+	if effective, _ := state.EffectiveHost("host-1"); effective.X11Enabled() {
+		t.Fatalf("effective Host = %+v, want the explicit off to win", effective)
 	}
 }
 

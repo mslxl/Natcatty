@@ -185,6 +185,12 @@ type Form struct {
 	// and requires X11WarningAcknowledged before the Host validates.
 	X11Forwarding          bool
 	X11WarningAcknowledged bool
+	// X11ForwardingSet records that the editor holds the Host's own X11
+	// choice. While false the checkbox shows the Host Group's effective value
+	// and saving does not turn that inherited value into an explicit choice.
+	// X11Inherited marks that the shown value came from the group.
+	X11ForwardingSet bool
+	X11Inherited     bool
 	// ProxyProfileID selects a saved Proxy Profile. A manually configured
 	// Proxy still wins; an empty reference means no profile is selected.
 	ProxyProfileID string
@@ -813,12 +819,15 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		NetworkProfileID:       host.NetworkProfileID,
 		X11Forwarding:          host.X11Forwarding,
 		X11WarningAcknowledged: host.X11WarningAcknowledged,
-		FileProtocol:           string(domainvault.NormalizeFileProtocol(host.SFTPFileProtocol)),
-		SFTPSudo:               host.SFTPSudo,
-		NetworkDevice:          host.IsNetworkDevice(),
-		AutoAttachTmux:         host.AutoAttachTmux,
-		MoshServerPath:         host.MoshServerPath,
-		ETPort:                 etPortText(host),
+		// A stored true is an explicit preference even on records written
+		// before the marker existed; a stored false alone means "unset".
+		X11ForwardingSet: host.X11ForwardingSet || host.X11Forwarding,
+		FileProtocol:     string(domainvault.NormalizeFileProtocol(host.SFTPFileProtocol)),
+		SFTPSudo:         host.SFTPSudo,
+		NetworkDevice:    host.IsNetworkDevice(),
+		AutoAttachTmux:   host.AutoAttachTmux,
+		MoshServerPath:   host.MoshServerPath,
+		ETPort:           etPortText(host),
 	}
 	s.hostChain = domainvault.CloneHostChain(host.HostChain)
 	s.proxy = domainvault.CloneProxy(host.Proxy)
@@ -831,8 +840,34 @@ func (s *State) BeginEdit(id model.HostID) bool {
 	if host.Protocol == domainvault.ProtocolLocal {
 		s.form.Port = ""
 	}
+	s.inheritHostX11(host)
 	s.redraw()
 	return true
+}
+
+// inheritHostX11 fills the editor with the Host Group's X11 default when the
+// Host has no explicit choice of its own. The form shows the effective value
+// so the checkbox matches what a Session would do, while X11ForwardingSet
+// stays false: saving an untouched form must not turn the inheritance into an
+// explicit choice.
+func (s *State) inheritHostX11(host domainvault.Host) {
+	if s.form.X11ForwardingSet {
+		return
+	}
+	defaults := domainvault.ResolveGroupDefaults(s.groupItems, host.Group)
+	protocol := host.Protocol
+	if protocol == "" {
+		protocol = defaults.Protocol
+	}
+	if protocol == "" {
+		protocol = domainvault.ProtocolSSH
+	}
+	if protocol != domainvault.ProtocolSSH || !defaults.X11Enabled() {
+		return
+	}
+	s.form.X11Forwarding = true
+	s.form.X11WarningAcknowledged = true
+	s.form.X11Inherited = true
 }
 
 // BeginDuplicate opens the Host editor with a copy of a listed Host. Identity,
@@ -860,11 +895,15 @@ func (s *State) BeginDuplicate(id model.HostID, suffix string) bool {
 	return true
 }
 
-// SetX11Forwarding updates the editor's X11 preference. Turning X11 off
-// clears the security acknowledgement, so re-enabling it requires the user to
-// acknowledge the warning again.
+// SetX11Forwarding updates the editor's X11 preference. Any call records an
+// explicit Host choice, including an explicit off, so it wins over a Host
+// Group default instead of inheriting it. Turning X11 off clears the security
+// acknowledgement, so re-enabling it requires the user to acknowledge the
+// warning again.
 func (s *State) SetX11Forwarding(enabled bool) {
 	s.form.X11Forwarding = enabled
+	s.form.X11ForwardingSet = true
+	s.form.X11Inherited = false
 	if !enabled {
 		s.form.X11WarningAcknowledged = false
 	}
@@ -877,7 +916,13 @@ func (s *State) SetX11Forwarding(enabled bool) {
 func (s *State) SetHostProtocol(protocol string) {
 	s.form.Protocol = protocol
 	if protocol != string(domainvault.ProtocolSSH) {
-		s.SetX11Forwarding(false)
+		// X11 has no control on another protocol, so neither a shown value nor
+		// an inherited one may survive Save. Ownership is dropped too: the
+		// preference was never a choice the user could see.
+		s.form.X11Forwarding = false
+		s.form.X11WarningAcknowledged = false
+		s.form.X11ForwardingSet = false
+		s.form.X11Inherited = false
 		s.form.FileProtocol = string(domainvault.FileProtocolAuto)
 		s.form.SFTPSudo = false
 		s.form.NetworkDevice = false
@@ -909,6 +954,9 @@ func (s *State) SetGroupProtocol(protocol string) {
 		s.groupForm.AuthMethod = ""
 		s.groupForm.UseSSHAgent = false
 		s.groupForm.RequiresMFA = false
+		// X11 runs over SSH, and its controls are hidden for another protocol.
+		s.groupForm.X11Forwarding = false
+		s.groupForm.X11WarningAcknowledged = false
 		// A jump chain carries an SSH session, so a hidden chain control must
 		// not keep hops Save would persist.
 		s.groupForm.HostChain = nil
@@ -1218,6 +1266,7 @@ func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 		RequiresMFA:            host.RequiresMFA,
 		X11Forwarding:          host.X11Forwarding,
 		X11WarningAcknowledged: host.X11WarningAcknowledged,
+		X11ForwardingSet:       host.X11ForwardingSet || host.X11Forwarding,
 		HostChain:              domainvault.CloneHostChain(host.HostChain),
 		Proxy:                  domainvault.CloneProxy(host.Proxy),
 		ProxyProfileID:         host.ProxyProfileID,
@@ -1262,6 +1311,12 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		}
 	}
 
+	// An enabled X11 value is an explicit Host choice even when a form was
+	// filled without the ownership flag; only an explicit off needs the
+	// marker to avoid being read as "inherit the group default". A value the
+	// editor only displayed from the group is not saved at all, so the Host
+	// keeps following the group.
+	inheritedX11 := s.form.X11Inherited && !s.form.X11ForwardingSet
 	return domainvault.Draft{
 		Label:                  s.form.Label,
 		Hostname:               s.form.Hostname,
@@ -1278,8 +1333,9 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		AuthMethod:             domainvault.HostAuthMethod(s.form.AuthMethod),
 		UseSSHAgent:            s.form.UseSSHAgent,
 		RequiresMFA:            s.form.RequiresMFA,
-		X11Forwarding:          s.form.X11Forwarding,
-		X11WarningAcknowledged: s.form.X11WarningAcknowledged,
+		X11Forwarding:          s.form.X11Forwarding && !inheritedX11,
+		X11WarningAcknowledged: s.form.X11WarningAcknowledged && s.form.X11Forwarding && !inheritedX11,
+		X11ForwardingSet:       s.form.X11ForwardingSet || (s.form.X11Forwarding && !inheritedX11),
 		// The editor does not expose routing yet. Round-trip the saved chain
 		// and proxy so editing another field cannot erase them.
 		HostChain:        domainvault.CloneHostChain(s.hostChain),

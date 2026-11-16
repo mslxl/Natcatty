@@ -338,6 +338,8 @@ func applyEntityGroupDraft(group *domainvault.Group, draft domainvault.GroupDraf
 	group.ProxyProfileID = draft.ProxyProfileID
 	group.NetworkProfileID = draft.NetworkProfileID
 	group.HostChain = domainvault.CloneHostChain(draft.HostChain)
+	group.X11Forwarding = draft.X11Forwarding
+	group.X11WarningAcknowledged = draft.X11WarningAcknowledged
 }
 
 type entityProxies struct {
