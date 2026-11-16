@@ -26,13 +26,19 @@ const DefaultAttempts = 3
 const tailLimit = 2048
 
 var (
-	ansiPattern    = regexp.MustCompile(`\x1b([@-Z\\_-]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(\x07|\x1b\\))`)
-	lastLogin      = regexp.MustCompile(`(^|[\s(\[])(last|previous)\s+login(\s*[:：>])?\s*$`)
-	usernamePrompt = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(user\s*name|username|login|logon|account|userid|user\s*id|user|用户名|帐号|账号|登录|登入)(\s*[:：>])?\s*$`)
-	passwordPrompt = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(password|passwd|passcode|passphrase|pass\s*phrase|pin|密码|口令)(\s*[:：>])?\s*$`)
-	continuePrompt = regexp.MustCompile(`(?i)(press|hit)\s+([<\[(]?\s*)?(return|enter|any\s+key|space)\b(\s*[>\]\)])?.*(continue|get\s+started|start|begin|started)?\.?\s*$`)
-	commandPrompt  = regexp.MustCompile(`[$#>]\s*$`)
-	wakeOnly       = regexp.MustCompile(`^[\r\n]+$`)
+	ansiPattern = regexp.MustCompile(`\x1b([@-Z\\_-]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(\x07|\x1b\\))`)
+	// credentialBanner recognizes a MOTD or login banner that happens to
+	// contain a credential word, such as "Last login: user". Such a line must
+	// not consume an attempt or answer like a prompt: the real "login:" often
+	// follows it on the next line. The patterns are deliberately about banner
+	// phrasing ("last login", "password expires") so a bare "login:" or
+	// "Password:" prompt is still answered.
+	credentialBanner = regexp.MustCompile(`(?i)(^|[^a-z0-9])((last|previous|failed|successful)\s+(login|logon)|(last|previous)\s+password|password\s+(expires?|expired|will\s+expire|change\s+required)|change\s+your\s+password)`)
+	usernamePrompt   = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(user\s*name|username|login|logon|account|userid|user\s*id|user|用户名|帐号|账号|登录|登入)(\s*[:：>])?\s*$`)
+	passwordPrompt   = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(password|passwd|passcode|passphrase|pass\s*phrase|pin|密码|口令)(\s*[:：>])?\s*$`)
+	continuePrompt   = regexp.MustCompile(`(?i)(press|hit)\s+([<\[(]?\s*)?(return|enter|any\s+key|space)\b(\s*[>\]\)])?.*(continue|get\s+started|start|begin|started)?\.?\s*$`)
+	commandPrompt    = regexp.MustCompile(`[$#>]\s*$`)
+	wakeOnly         = regexp.MustCompile(`^[\r\n]+$`)
 )
 
 // Reply is one user-configured expect/reply pair. Expect is matched against
@@ -80,7 +86,10 @@ type Engine struct {
 	pending   [][]byte
 }
 
-// New returns a detector armed when at least one credential is configured.
+// New returns a detector armed when any credential or expect/reply rule is
+// configured. A replies-only profile is a valid automation on its own: a
+// console that asks a custom question and has no login prompt still needs its
+// answer.
 func New(options Options) *Engine {
 	maxAttempts := options.MaxAttempts
 	if maxAttempts <= 0 {
@@ -95,8 +104,19 @@ func New(options Options) *Engine {
 		write:       options.Write,
 		fired:       make([]bool, len(options.Replies)),
 	}
-	engine.active = engine.username != "" || engine.hasPassword
+	engine.active = engine.username != "" || engine.hasPassword || hasReply(engine.replies)
 	return engine
+}
+
+// hasReply reports whether at least one rule can match. An empty Expect is
+// inert and is ignored by matchReply.
+func hasReply(replies []Reply) bool {
+	for _, reply := range replies {
+		if strings.TrimSpace(reply.Expect) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Active reports whether the detector can still answer a prompt.
@@ -151,6 +171,17 @@ func (e *Engine) UserInput(data []byte) {
 	e.active = false
 }
 
+// Takeover disarms the detector for input that did not come from this
+// Session's own keyboard, such as a broadcast or an inserted snippet. Unlike
+// UserInput it never treats a naked Enter as a harmless wake: bytes delivered
+// by those routes are deliberate, so they always transfer control to the user.
+func (e *Engine) Takeover() {
+	e.mu.Lock()
+	e.active = false
+	e.pending = nil
+	e.mu.Unlock()
+}
+
 // Cancel disarms the detector without writing anything, as when its Session is
 // closed or replaced by a reconnect.
 func (e *Engine) Cancel() {
@@ -182,7 +213,7 @@ func (e *Engine) advance() {
 		if window == "" {
 			return
 		}
-		if (e.sentUser || e.sentPass) && isCommandPrompt(e.tail) {
+		if (e.sentUser || e.sentPass || e.firedAny()) && isCommandPrompt(e.tail) {
 			e.active = false
 			e.completed = true
 			return
@@ -250,6 +281,18 @@ func (e *Engine) beginAttempt() bool {
 	}
 	e.attempts++
 	return true
+}
+
+// firedAny reports that at least one custom rule answered. It lets a
+// replies-only profile complete when the console reaches its command prompt,
+// exactly as a credential login does.
+func (e *Engine) firedAny() bool {
+	for _, fired := range e.fired {
+		if fired {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) matchReply(window string) int {
@@ -326,7 +369,7 @@ func isContinuePrompt(text string) bool {
 
 func isUsernamePrompt(text string) bool {
 	line := lastPromptLine(text)
-	if lastLogin.MatchString(line) {
+	if credentialBanner.MatchString(line) {
 		return false
 	}
 	return usernamePrompt.MatchString(line)
@@ -341,7 +384,7 @@ func isCommandPrompt(text string) bool {
 	if line == "" || len(line) > 200 {
 		return false
 	}
-	if lastLogin.MatchString(line) || usernamePrompt.MatchString(line) ||
+	if credentialBanner.MatchString(line) || usernamePrompt.MatchString(line) ||
 		passwordPrompt.MatchString(line) || continuePrompt.MatchString(line) {
 		return false
 	}
@@ -360,7 +403,7 @@ func hasUsernamePromptBeforePassword(text string) bool {
 		return false
 	}
 	for _, line := range lines[:lastPassword] {
-		if !lastLogin.MatchString(line) && usernamePrompt.MatchString(line) {
+		if !credentialBanner.MatchString(line) && usernamePrompt.MatchString(line) {
 			return true
 		}
 	}

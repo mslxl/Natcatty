@@ -60,6 +60,17 @@ func (s *Session) userInputAutoLogin(data []byte) {
 	}
 }
 
+// takeoverAutoLogin disarms the detector for input that did not come from this
+// Session's own keyboard, such as a broadcast or an inserted snippet.
+func (s *Session) takeoverAutoLogin() {
+	s.autoLoginMu.Lock()
+	engine := s.autoLogin
+	s.autoLoginMu.Unlock()
+	if engine != nil {
+		engine.Takeover()
+	}
+}
+
 // autoLoginAllowsStartup reports whether this generation may type its Host
 // startup command. The command waits until the saved login succeeded, so it
 // is never typed into a login or password prompt. A detector that stopped at

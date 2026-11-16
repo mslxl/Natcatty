@@ -83,11 +83,17 @@ func (s *Session) handleInput(data []byte, source bool) (forwarded []byte, chang
 	if transfer != nil && s.onTransfer != nil {
 		s.onTransfer(s.id, *transfer)
 	}
-	if source && len(forwarded) > 0 {
-		// Typed input is a takeover, except for the naked Enter that wakes a
-		// silent serial console before its first prompt.
-		s.userInputAutoLogin(forwarded)
-		if s.onInput != nil {
+	if len(forwarded) > 0 {
+		// Any input that reaches the console can take over from the detector.
+		// Typed input keeps the wake-Enter exemption; input delivered by a
+		// broadcast or an inserted snippet is deliberate, so it always
+		// disarms. Only the engine's own replies bypass handleInput.
+		if source {
+			s.userInputAutoLogin(forwarded)
+		} else {
+			s.takeoverAutoLogin()
+		}
+		if source && s.onInput != nil {
 			s.onInput(s.id, forwarded)
 		}
 	}

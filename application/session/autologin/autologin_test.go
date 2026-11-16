@@ -139,6 +139,67 @@ func TestConfiguredExpectRepliesAnswerCustomPrompts(t *testing.T) {
 	assertWrites(t, recorder, "yes\r", "console\r", "admin\r")
 }
 
+// TestLastLoginBannerDoesNotConsumeAnAttempt covers a console that prints
+// "Last login: user" before its real prompt. The banner ends in a word the
+// username matcher would otherwise accept, and with a one-attempt limit it
+// must not answer or disarm before "login:" arrives.
+func TestLastLoginBannerDoesNotConsumeAnAttempt(t *testing.T) {
+	engine, recorder := newTestEngine(Options{
+		Username: "admin", Password: "secret", MaxAttempts: 1,
+	})
+
+	engine.Feed("Last login: user\r\n")
+	if !engine.Active() {
+		t.Fatal("the login banner disarmed the detector")
+	}
+	assertWrites(t, recorder)
+
+	engine.Feed("login: ")
+	engine.Feed("\r\nPassword: ")
+	if !engine.Active() {
+		t.Fatal("the one-attempt detector disarmed before the real prompt")
+	}
+	assertWrites(t, recorder, "admin\r", "secret\r")
+
+	// A banner after the credentials must not pass for the shell prompt.
+	engine.Feed("\r\nLast login: admin from 10.0.0.5\r\n")
+	if engine.Completed() || !engine.Active() {
+		t.Fatal("the banner completed the detector before a command prompt")
+	}
+	engine.Feed("$ ")
+	if !engine.Completed() {
+		t.Fatal("the command prompt did not complete the detector")
+	}
+}
+
+// TestRepliesOnlyProfileArmsTheDetector makes a custom expect/reply rule a
+// complete automation on its own, with no username or password saved.
+func TestRepliesOnlyProfileArmsTheDetector(t *testing.T) {
+	engine, recorder := newTestEngine(Options{
+		Replies: []Reply{{Expect: "Site code:", Respond: "lab-1"}},
+	})
+
+	if !engine.Active() {
+		t.Fatal("a replies-only profile did not arm the detector")
+	}
+	engine.Feed("Site code: ")
+	assertWrites(t, recorder, "lab-1\r")
+}
+
+// TestTakeoverDisarmsWithoutWaitingForAWrite proves a takeover from a
+// broadcast or an inserted command stops the detector immediately, even when
+// it would otherwise treat the bytes as a harmless wake Enter.
+func TestTakeoverDisarmsWithoutWaitingForAWrite(t *testing.T) {
+	engine, recorder := newTestEngine(Options{Username: "admin", Password: "secret"})
+
+	engine.Takeover()
+	if engine.Active() {
+		t.Fatal("a takeover left the detector armed")
+	}
+	engine.Feed("login: \r\nPassword: ")
+	assertWrites(t, recorder)
+}
+
 func TestAnswersBothPromptsFromOneChunk(t *testing.T) {
 	engine, recorder := newTestEngine(Options{Username: "admin", Password: "secret"})
 	engine.Feed("Username: \r\nPassword: ")
