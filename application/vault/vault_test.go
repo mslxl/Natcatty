@@ -16,6 +16,9 @@ type fakeHosts struct {
 	hosts   []domainvault.Host
 	saves   int
 	saveErr error
+	// failSaveAt fails exactly the nth Save, 1-based, and lets later writes
+	// through, so a rollback can be observed.
+	failSaveAt int
 }
 
 func (f *fakeHosts) List(context.Context) ([]domainvault.Host, error) {
@@ -35,6 +38,9 @@ func (f *fakeHosts) Save(_ context.Context, host domainvault.Host) error {
 	f.saves++
 	if f.saveErr != nil {
 		return f.saveErr
+	}
+	if f.failSaveAt > 0 && f.saves == f.failSaveAt {
+		return errors.New("write failed")
 	}
 	for i, existing := range f.hosts {
 		if existing.ID == host.ID {

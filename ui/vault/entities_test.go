@@ -245,7 +245,13 @@ func (f *entityGroups) DeleteGroup(_ context.Context, id string) error {
 	return nil
 }
 
-func (f *entityGroups) AssignHostGroup(_ context.Context, id model.HostID, groupID string) error {
+func (f *entityGroups) AssignHostGroup(ctx context.Context, id model.HostID, groupID string) error {
+	return f.AssignHostsGroup(ctx, []model.HostID{id}, groupID)
+}
+
+// AssignHostsGroup mirrors the application service: every Host is resolved
+// before any changes, so a missing one leaves the Vault's membership alone.
+func (f *entityGroups) AssignHostsGroup(_ context.Context, ids []model.HostID, groupID string) error {
 	group := domainvault.Group{}
 	if groupID != "" {
 		var ok bool
@@ -254,13 +260,19 @@ func (f *entityGroups) AssignHostGroup(_ context.Context, id model.HostID, group
 			return &appvault.Error{Kind: appvault.KindValidation}
 		}
 	}
-	host, ok := f.hosts.find(id)
-	if !ok {
-		return appvault.ErrNotFound
+	found := make([]domainvault.Host, 0, len(ids))
+	for _, id := range ids {
+		host, ok := f.hosts.find(id)
+		if !ok {
+			return appvault.ErrNotFound
+		}
+		found = append(found, host)
 	}
-	host.GroupID = groupID
-	host.Group = group.Path
-	f.hosts.replace(host)
+	for _, host := range found {
+		host.GroupID = groupID
+		host.Group = group.Path
+		f.hosts.replace(host)
+	}
 	return nil
 }
 
@@ -1724,6 +1736,131 @@ func TestDraggingAHostOutOfItsGroupUsesTheRootTargetOrTheBreadcrumb(t *testing.T
 	dragOnto(t, tt, "web-1", m.VaultAllHosts())
 	if hosts.items[0].Group != "" {
 		t.Fatalf("Host Group after dropping on the breadcrumb = %q, want root", hosts.items[0].Group)
+	}
+}
+
+// rectOf is the laid-out rectangle of the one text or label that reads text.
+func rectOf(t *testing.T, tt *ui.Tester, text string) ui.Rect {
+	t.Helper()
+	rect, ok := tt.Find(text)
+	if !ok {
+		t.Fatalf("%q missing, texts %q", text, tt.Texts())
+	}
+	return rect
+}
+
+// marqueeFrom presses the Hosts section heading, whose bar takes no press of
+// its own, and moves far enough to start the background drag. It leaves the
+// pointer pressed, mid-marquee.
+func marqueeFrom(t *testing.T, tt *ui.Tester) (x, y float32) {
+	t.Helper()
+	heading := rectOf(t, tt, "Host Groups (1)")
+	x, y = heading.X+heading.W/2, heading.Y+heading.H/2
+	tt.Press(x, y)
+	tt.Frame()
+	tt.Move(x+8, y+8)
+	tt.Frame()
+	return x, y
+}
+
+// TestMarqueeSweepsEveryHostItPassesAndTheSelectionDropsTogether proves the
+// box selection and the all-or-nothing drop: dragging from the page background
+// over two Hosts chooses both, and dropping that selection on a Host Group
+// moves both in one drop.
+func TestMarqueeSweepsEveryHostItPassesAndTheSelectionDropsTogether(t *testing.T) {
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1400, 900)
+	hosts.items = []domainvault.Host{
+		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+	}
+	groups.items = []domainvault.Group{{Path: "prod"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	group := rectOf(t, tt, "prod")
+	alpha := rectOf(t, tt, "alpha")
+	beta := rectOf(t, tt, "beta")
+
+	marqueeFrom(t, tt)
+	if !state.MarqueeActive() {
+		t.Fatalf("dragging the page background started no marquee, texts %q", tt.Texts())
+	}
+	tt.Move(alpha.X+alpha.W/2, alpha.Y+alpha.H/2)
+	tt.Frame()
+	tt.Move(beta.X+beta.W/2, beta.Y+beta.H/2)
+	tt.Frame()
+	if !state.Chosen("host-1") || !state.Chosen("host-2") || state.ChosenCount() != 2 {
+		t.Fatalf("the sweep chose %v, want both Hosts", state.SelectedHostIDs())
+	}
+
+	tt.Move(group.X+group.W/2, group.Y+group.H/2)
+	tt.Frame()
+	tt.Release(group.X+group.W/2, group.Y+group.H/2)
+	tt.Frame()
+
+	if hosts.items[0].GroupID != groups.items[0].ID || hosts.items[1].GroupID != groups.items[0].ID {
+		t.Fatalf("Groups after the drop = %q and %q, want both in %q",
+			hosts.items[0].GroupID, hosts.items[1].GroupID, groups.items[0].ID)
+	}
+	if state.ChosenCount() != 0 {
+		t.Fatalf("the selection survives the drop: %v", state.SelectedHostIDs())
+	}
+	if state.MarqueeActive() {
+		t.Fatal("the marquee stays active after the drop")
+	}
+}
+
+// TestEscapeCancelsAMarqueeAndReleasingOutsideAGroupMovesNothing proves a
+// cancelled or misplaced box drop leaves Host Group membership alone.
+func TestEscapeCancelsAMarqueeAndReleasingOutsideAGroupMovesNothing(t *testing.T) {
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1400, 900)
+	hosts.items = []domainvault.Host{{
+		ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
+		Protocol: domainvault.ProtocolSSH,
+	}}
+	groups.items = []domainvault.Group{{Path: "prod"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	group := rectOf(t, tt, "prod")
+	alpha := rectOf(t, tt, "alpha")
+
+	// Releasing over the page background is not a drop on a Group.
+	startX, startY := marqueeFrom(t, tt)
+	tt.Move(alpha.X+alpha.W/2, alpha.Y+alpha.H/2)
+	tt.Frame()
+	if !state.Chosen("host-1") {
+		t.Fatalf("the sweep chose %v, want host-1", state.SelectedHostIDs())
+	}
+	tt.Release(startX, startY)
+	tt.Frame()
+	if hosts.items[0].GroupID != "" {
+		t.Fatalf("a release outside a Group moved the Host into %q", hosts.items[0].GroupID)
+	}
+
+	// Escape cancels the drag: releasing over the Group afterwards changes
+	// nothing.
+	marqueeFrom(t, tt)
+	tt.Move(alpha.X+alpha.W/2, alpha.Y+alpha.H/2)
+	tt.Frame()
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	tt.Move(group.X+group.W/2, group.Y+group.H/2)
+	tt.Frame()
+	tt.Release(group.X+group.W/2, group.Y+group.H/2)
+	tt.Frame()
+
+	if hosts.items[0].GroupID != "" {
+		t.Fatalf("a cancelled drag moved the Host into %q", hosts.items[0].GroupID)
+	}
+	if state.MarqueeActive() {
+		t.Fatal("Escape left the marquee active")
 	}
 }
 

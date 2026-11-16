@@ -18,6 +18,8 @@ type Groups interface {
 	UpdateGroup(ctx context.Context, path string, draft domainvault.GroupDraft) (domainvault.Group, error)
 	DeleteGroup(ctx context.Context, path string) error
 	AssignHostGroup(ctx context.Context, id model.HostID, groupPath string) error
+	// AssignHostsGroup moves several Hosts in one all-or-nothing operation.
+	AssignHostsGroup(ctx context.Context, ids []model.HostID, groupPath string) error
 }
 
 // ProxyProfiles is the Proxy Profile use-case seam.
@@ -34,14 +36,69 @@ type KnownHosts interface {
 	DeleteKnownHost(ctx context.Context, id string) error
 }
 
-// DragItem is the value a Host row drags. A Host Group row, or the Vault root,
-// accepts it and moves the Host there.
+// DragItem is the value a Host card or row drags. A Host Group row, or the
+// Vault root, accepts it and moves every Host it carries. HostID is the Host
+// the pointer pressed, so a receiver can lead with it; HostIDs is the whole
+// marquee selection when the pressed Host is part of one.
 type DragItem struct {
-	HostID model.HostID
+	HostID  model.HostID
+	HostIDs []model.HostID
 }
 
 // HostDrag returns the drag payload for one Host.
-func HostDrag(id model.HostID) DragItem { return DragItem{HostID: id} }
+func HostDrag(id model.HostID) DragItem { return DragItem{HostID: id, HostIDs: []model.HostID{id}} }
+
+// HostsDrag returns the drag payload for a marquee selection, the pressed Host
+// first so a drop can report the same lead the user grabbed.
+func HostsDrag(pressed model.HostID, ids []model.HostID) DragItem {
+	ordered := make([]model.HostID, 0, len(ids)+1)
+	ordered = append(ordered, pressed)
+	for _, id := range ids {
+		if id != pressed {
+			ordered = append(ordered, id)
+		}
+	}
+	return DragItem{HostID: pressed, HostIDs: ordered}
+}
+
+// Hosts returns every Host the drag carries, the pressed Host included. A
+// payload built before multi-selection carried only HostID.
+func (d DragItem) Hosts() []model.HostID {
+	if len(d.HostIDs) > 0 {
+		return d.HostIDs
+	}
+	if d.HostID != "" {
+		return []model.HostID{d.HostID}
+	}
+	return nil
+}
+
+// DragPayload is what a drop target that moves Hosts accepts: a Host card or
+// row drag (DragItem) or the box selection swept from the page background
+// (MarqueeDrag). Both answer with the Hosts the drop moves.
+type DragPayload interface {
+	DropHosts() []model.HostID
+}
+
+// DropHosts returns the Hosts a Host drag moves.
+func (d DragItem) DropHosts() []model.HostID { return d.Hosts() }
+
+// MarqueeDrag is the value the Hosts page background drags while the pointer
+// sweeps a selection box over the Hosts. Host cards and rows accept it and add
+// themselves to the selection. Swept reads the selection at drop time, since
+// the box grows after the press that started it.
+type MarqueeDrag struct {
+	Swept func() []model.HostID
+}
+
+// DropHosts returns the Hosts the box selected. A receiver that is not a Group
+// never asks, so dropping the box outside a Group moves nothing.
+func (m MarqueeDrag) DropHosts() []model.HostID {
+	if m.Swept == nil {
+		return nil
+	}
+	return m.Swept()
+}
 
 // WithGroups gives the Vault surface Host Group management and defaults.
 func WithGroups(groups Groups) Option {
@@ -268,6 +325,14 @@ func (s *State) ConfirmDeleteGroup() error {
 // MoveHostToGroup moves one Host into a group, or to the Vault root when path
 // is empty. Drag and drop calls this; the Host keeps every other field.
 func (s *State) MoveHostToGroup(id model.HostID, path string) bool {
+	return s.MoveHostsToGroup([]model.HostID{id}, path)
+}
+
+// MoveHostsToGroup moves every Host in a marquee selection into a group, or to
+// the Vault root when path is empty. The drop is one assignment: an unknown
+// group or a failed write leaves every Host where it was. The selection is
+// cleared only after the Vault reloads without the move.
+func (s *State) MoveHostsToGroup(ids []model.HostID, path string) bool {
 	if s.groups == nil {
 		s.problem = ProblemInternal
 		s.redraw()
@@ -283,7 +348,7 @@ func (s *State) MoveHostToGroup(id model.HostID, path string) bool {
 		}
 		groupID = group.ID
 	}
-	if err := s.groups.AssignHostGroup(context.Background(), id, groupID); err != nil {
+	if err := s.groups.AssignHostsGroup(context.Background(), ids, groupID); err != nil {
 		s.problem = problemFor(err)
 		s.redraw()
 		return false
@@ -292,9 +357,109 @@ func (s *State) MoveHostToGroup(id model.HostID, path string) bool {
 		s.redraw()
 		return false
 	}
+	s.clearSelection()
 	s.problem = ProblemNone
 	s.redraw()
 	return true
+}
+
+// Chosen reports whether a Host is in the marquee selection.
+func (s *State) Chosen(id model.HostID) bool { return s.chosen[id] }
+
+// ChosenCount returns how many Hosts the marquee selection holds.
+func (s *State) ChosenCount() int { return len(s.chosen) }
+
+// SelectedHostIDs returns the marquee selection in Vault list order, so a drop
+// applies Hosts in the order the user sees them.
+func (s *State) SelectedHostIDs() []model.HostID {
+	ids := make([]model.HostID, 0, len(s.chosen))
+	for _, host := range s.items {
+		if s.chosen[host.ID] {
+			ids = append(ids, host.ID)
+		}
+	}
+	return ids
+}
+
+// BeginMarquee starts a box selection. Additive keeps the current selection,
+// as a modifier press does; otherwise the box replaces it. Repeated calls
+// while the drag lasts change nothing.
+func (s *State) BeginMarquee(additive bool) {
+	if s.marqueeActive {
+		return
+	}
+	s.marqueeActive = true
+	s.marqueeBase = make(map[model.HostID]bool, len(s.chosen))
+	for id := range s.chosen {
+		s.marqueeBase[id] = true
+	}
+	s.marqueeBaseSelected = s.selected
+	if !additive {
+		s.chosen = nil
+		s.selected = ""
+	}
+	s.redraw()
+}
+
+// MarqueeOver adds a Host the box touches to the selection. The last Host
+// touched is the lead for single-Host actions. It reports whether the
+// selection changed.
+func (s *State) MarqueeOver(id model.HostID) bool {
+	if !s.marqueeActive {
+		return false
+	}
+	_, ok := s.find(id)
+	if !ok {
+		return false
+	}
+	changed := !s.chosen[id] || s.selected != id
+	if s.chosen == nil {
+		s.chosen = map[model.HostID]bool{}
+	}
+	s.chosen[id] = true
+	s.selected = id
+	if changed {
+		s.redraw()
+	}
+	return changed
+}
+
+// MarqueeActive reports whether a box selection drag is in progress.
+func (s *State) MarqueeActive() bool { return s.marqueeActive }
+
+// EndMarquee finishes a box selection, keeping what it chose.
+func (s *State) EndMarquee() {
+	if !s.marqueeActive {
+		return
+	}
+	s.marqueeActive = false
+	s.marqueeBase = nil
+	s.marqueeBaseSelected = ""
+	s.redraw()
+}
+
+// CancelMarquee abandons a box selection, restoring the selection it started
+// from.
+func (s *State) CancelMarquee() {
+	if !s.marqueeActive {
+		return
+	}
+	s.chosen = s.marqueeBase
+	s.selected = s.marqueeBaseSelected
+	s.marqueeActive = false
+	s.marqueeBase = nil
+	s.marqueeBaseSelected = ""
+	s.redraw()
+}
+
+// ClearSelection empties the marquee selection.
+func (s *State) ClearSelection() {
+	s.clearSelection()
+	s.redraw()
+}
+
+func (s *State) clearSelection() {
+	s.chosen = nil
 }
 
 // ProxyProfiles returns the listed Proxy Profiles in repository order.

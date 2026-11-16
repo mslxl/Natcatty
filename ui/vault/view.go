@@ -511,11 +511,11 @@ func groupSummary(s *vaultstate.State, group domainvault.Group, m locales.Messag
 func rootDropTarget(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
 	row := ui.Row(c).FillWidth().Gap(10).Padding(8, 10).Margin(8, 0, 0, 0).Radius(kit.M(c).Radius.Control).
 		Border(1, t.Border).AlignItems(ui.Center).TextColor(t.TextMuted)
-	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
+	if _, over := ui.DragOver[vaultstate.DragPayload](row); over {
 		row.Background(t.Accent.Alpha(0.08)).Border(2, t.Accent)
 	}
-	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && drag.HostID != "" {
-		s.MoveHostToGroup(drag.HostID, "")
+	if drag, dropped := ui.Drop[vaultstate.DragPayload](row); dropped && len(drag.DropHosts()) > 0 {
+		s.MoveHostsToGroup(drag.DropHosts(), "")
 		c.Invalidate()
 	}
 	row.Children(func() {

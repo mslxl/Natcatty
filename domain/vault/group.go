@@ -352,6 +352,33 @@ func MaterializeHostGroup(host Host, groups []Group) Host {
 	return host
 }
 
+// AssignHostsGroup returns copies of hosts whose Host Group is groupID, or the
+// Vault root when groupID is empty. Every Host is checked before any is
+// returned, so a drop that names the same Host twice or carries a Host with no
+// identity fails as a whole and the caller never applies half of it. Other
+// fields, including credentials, are preserved.
+func AssignHostsGroup(hosts []Host, groupID string, at time.Time) ([]Host, error) {
+	if len(hosts) == 0 {
+		return nil, nil
+	}
+	seen := make(map[model.HostID]struct{}, len(hosts))
+	assigned := make([]Host, len(hosts))
+	for index, host := range hosts {
+		if host.ID == "" {
+			return nil, validation(FieldGroup, RuleRequired)
+		}
+		if _, duplicate := seen[host.ID]; duplicate {
+			return nil, validation(FieldGroup, RuleInvalid)
+		}
+		seen[host.ID] = struct{}{}
+		host.GroupID = groupID
+		host.Group = ""
+		host.UpdatedAt = at
+		assigned[index] = host
+	}
+	return assigned, nil
+}
+
 // ApplyGroupDefaults fills a Host's unset connection settings from its group's
 // effective defaults. The Host's own value wins, as in the original Vault.
 // Local shells never inherit remote credentials or SSH transport settings.

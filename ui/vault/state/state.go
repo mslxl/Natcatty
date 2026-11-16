@@ -244,6 +244,15 @@ type State struct {
 	backupProblem       Problem
 	backupAfterRestore  func()
 	selected            model.HostID
+	// chosen is the marquee selection. It holds more than one Host while a
+	// box drag sweeps the page; selected stays the lead for single-Host
+	// actions such as Export Selected.
+	chosen map[model.HostID]bool
+	// marqueeActive is set from a box drag's start to its end, and
+	// marqueeBase is the selection to put back if the drag is cancelled.
+	marqueeActive       bool
+	marqueeBase         map[model.HostID]bool
+	marqueeBaseSelected model.HostID
 	editing             bool
 	form                Form
 	problem             Problem
@@ -637,8 +646,10 @@ func (s *State) TestProblemError(id model.HostID) error {
 func (s *State) Select(id model.HostID) {
 	if _, ok := s.find(id); ok {
 		s.selected = id
+		s.chosen = map[model.HostID]bool{id: true}
 	} else {
 		s.selected = ""
+		s.chosen = nil
 	}
 	s.redraw()
 }
@@ -1024,6 +1035,11 @@ func (s *State) load() error {
 	if s.selected != "" {
 		if _, ok := s.find(s.selected); !ok {
 			s.selected = ""
+		}
+	}
+	for id := range s.chosen {
+		if _, ok := s.find(id); !ok {
+			delete(s.chosen, id)
 		}
 	}
 	if s.keys != nil {

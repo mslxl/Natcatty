@@ -181,6 +181,15 @@ func sortSelect(c *ui.Context, opts options, layout domainpreferences.Layout, m 
 // hostsPage draws the Vault's Hosts page in the mode the user chose: cards,
 // rows, or the whole group tree.
 func hostsPage(c *ui.Context, s *vaultstate.State, opts options, at *browse, m locales.Messages, t *ui.Theme) {
+	page := ui.Column(c).FillWidth().
+		Drag(vaultstate.MarqueeDrag{Swept: s.SelectedHostIDs})
+	hostsMarquee(page, c, s)
+	page.Children(func() {
+		hostsPageContent(c, s, opts, at, m, t)
+	})
+}
+
+func hostsPageContent(c *ui.Context, s *vaultstate.State, opts options, at *browse, m locales.Messages, t *ui.Theme) {
 	layout := opts.layout()
 	sections, ungrouped := groupSections(s)
 	// A group renamed or deleted elsewhere takes the page back to the top.
@@ -197,6 +206,34 @@ func hostsPage(c *ui.Context, s *vaultstate.State, opts options, at *browse, m l
 		return
 	}
 	browsedRoot(c, s, opts, at, m, t, layout, sections, ungrouped)
+}
+
+// hostsMarquee makes the Hosts page background a marquee drag source. A press
+// lands on the page only where no card, row, or input under it takes the press,
+// so dragging empty space sweeps a selection over the Hosts it passes.
+func hostsMarquee(page ui.Element, c *ui.Context, s *vaultstate.State) {
+	dragging := page.Dragging()
+	if dragging && !s.MarqueeActive() {
+		s.BeginMarquee(c.Modifiers()&(ui.Cmd|ui.Shift|ui.Ctrl) != 0)
+	}
+	if !dragging && s.MarqueeActive() {
+		// The release keeps what the box chose; Escape cancels the drag in
+		// the framework, which ends it without a drop the same way.
+		s.EndMarquee()
+	}
+	if page.Clicked() {
+		// A press of the background with no drag clears the box selection.
+		s.ClearSelection()
+	}
+}
+
+// hostDragPayload is what a Host card or row drags: the whole marquee
+// selection when the Host is part of it, else just that Host.
+func hostDragPayload(s *vaultstate.State, id model.HostID) vaultstate.DragItem {
+	if s.Chosen(id) {
+		return vaultstate.HostsDrag(id, s.SelectedHostIDs())
+	}
+	return vaultstate.HostDrag(id)
 }
 
 // browsedRoot draws the Vault root: the Pinned and Recently Connected
@@ -487,8 +524,8 @@ func hostDropTarget(c *ui.Context, s *vaultstate.State, row ui.Element, path str
 	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
 		row.Border(1, t.Accent).Background(t.Accent.Alpha(0.08))
 	}
-	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && drag.HostID != "" {
-		s.MoveHostToGroup(drag.HostID, path)
+	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && len(drag.Hosts()) > 0 {
+		s.MoveHostsToGroup(drag.Hosts(), path)
 		c.Invalidate()
 	}
 }
@@ -718,8 +755,8 @@ func breadcrumb(c *ui.Context, s *vaultstate.State, at *browse, m locales.Messag
 	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
 		row.Border(1, t.Accent)
 	}
-	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && drag.HostID != "" {
-		s.MoveHostToGroup(drag.HostID, "")
+	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && len(drag.Hosts()) > 0 {
+		s.MoveHostsToGroup(drag.Hosts(), "")
 		c.Invalidate()
 	}
 	row.Children(func() {
@@ -779,11 +816,11 @@ func cardShell(c *ui.Context, t *ui.Theme, key string) ui.Element {
 func groupCard(c *ui.Context, s *vaultstate.State, section hostGroupSection, at *browse,
 	m locales.Messages, t *ui.Theme) {
 	card := cardShell(c, t, "group-"+section.path)
-	if _, over := ui.DragOver[vaultstate.DragItem](card); over {
+	if _, over := ui.DragOver[vaultstate.DragPayload](card); over {
 		card.Border(1, t.Accent).Background(t.Accent.Alpha(0.08))
 	}
-	if drag, dropped := ui.Drop[vaultstate.DragItem](card); dropped && drag.HostID != "" {
-		s.MoveHostToGroup(drag.HostID, section.path)
+	if drag, dropped := ui.Drop[vaultstate.DragPayload](card); dropped && len(drag.DropHosts()) > 0 {
+		s.MoveHostsToGroup(drag.DropHosts(), section.path)
 		c.Invalidate()
 	}
 	open := func() {
@@ -816,7 +853,10 @@ func groupCard(c *ui.Context, s *vaultstate.State, section hostGroupSection, at 
 func hostCard(c *ui.Context, s *vaultstate.State, opts options, host domainvault.Host, at *browse,
 	m locales.Messages, t *ui.Theme, layout domainpreferences.Layout) {
 	card := cardShell(c, t, "host-"+string(host.ID)).Tooltip(strings.Join(hostSummary(s, host, m), "  ·  "))
-	card.Drag(vaultstate.HostDrag(host.ID))
+	if _, over := ui.DragOver[vaultstate.MarqueeDrag](card); over {
+		s.MarqueeOver(host.ID)
+	}
+	card.Drag(hostDragPayload(s, host.ID))
 	hovered := card.Hovered()
 	if card.Dragging() {
 		at.dragging = true
@@ -829,6 +869,9 @@ func hostCard(c *ui.Context, s *vaultstate.State, opts options, host domainvault
 	activateHost(c, s, host, at, layout, card)
 	if host.Pinned {
 		card.Border(1, t.Accent.Alpha(0.4))
+	}
+	if s.Chosen(host.ID) {
+		card.Border(1, t.Accent).Background(t.Accent.Alpha(0.08))
 	}
 	card.ContextMenu(hostActions(s, opts, host, m, c))
 	card.Children(func() {
@@ -862,7 +905,13 @@ func hostRow(c *ui.Context, s *vaultstate.State, opts options, host domainvault.
 	if at.focused == host.ID && layout.HostClickBehavior == domainpreferences.HostClickSelect {
 		row.Border(1, t.Accent)
 	}
-	row.Drag(vaultstate.HostDrag(host.ID))
+	if _, over := ui.DragOver[vaultstate.MarqueeDrag](row); over {
+		s.MarqueeOver(host.ID)
+	}
+	if s.Chosen(host.ID) {
+		row.Border(1, t.Accent).Background(t.Accent.Alpha(0.08))
+	}
+	row.Drag(hostDragPayload(s, host.ID))
 	if row.Dragging() {
 		at.dragging = true
 	}

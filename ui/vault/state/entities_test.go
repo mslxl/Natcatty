@@ -32,6 +32,10 @@ func (f *effectiveGroups) DeleteGroup(context.Context, string) error { return ni
 
 func (f *effectiveGroups) AssignHostGroup(context.Context, model.HostID, string) error { return nil }
 
+func (f *effectiveGroups) AssignHostsGroup(context.Context, []model.HostID, string) error {
+	return nil
+}
+
 // effectiveProxies implements the Proxy Profile use-case seam for the
 // connection tests; only ListProxyProfiles takes part.
 type effectiveProxies struct {
@@ -184,5 +188,66 @@ func TestKnownHostsReloadOnlyWhenMarkedStale(t *testing.T) {
 	state.FlushKnownHosts()
 	if state.KnownHostCount() != 1 {
 		t.Fatalf("Known Hosts after a no-op flush = %d, want 1", state.KnownHostCount())
+	}
+}
+
+// TestMarqueeSweepKeepsEveryHostItTouchedAndCancelRestoresTheSelection proves
+// the box selection is a state machine of its own: a sweep adds Hosts in Vault
+// order, ending keeps them, an additive sweep builds on them, and Escape puts
+// back the selection the drag started from.
+func TestMarqueeSweepKeepsEveryHostItTouchedAndCancelRestoresTheSelection(t *testing.T) {
+	hosts := &fakeHosts{items: []domainvault.Host{
+		{ID: "host-1", Label: "alpha"}, {ID: "host-2", Label: "beta"},
+		{ID: "host-3", Label: "gamma"},
+	}}
+	state := NewState(hosts)
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	state.Select("host-3")
+
+	// A plain sweep starts empty, whatever was selected before.
+	state.BeginMarquee(false)
+	if !state.MarqueeActive() {
+		t.Fatal("BeginMarquee did not start a marquee")
+	}
+	if state.ChosenCount() != 0 || state.Chosen("host-3") {
+		t.Fatalf("a plain sweep started with %v, want no Hosts", state.SelectedHostIDs())
+	}
+	state.MarqueeOver("host-2")
+	state.MarqueeOver("host-1")
+	if !state.Chosen("host-1") || !state.Chosen("host-2") || state.ChosenCount() != 2 {
+		t.Fatalf("swept Hosts = %v, want host-1 and host-2", state.SelectedHostIDs())
+	}
+	// The drop uses Vault order, not the order the pointer touched them.
+	if got := state.SelectedHostIDs(); len(got) != 2 || got[0] != "host-1" || got[1] != "host-2" {
+		t.Fatalf("SelectedHostIDs = %v, want Vault order", got)
+	}
+	state.EndMarquee()
+	if state.MarqueeActive() || state.ChosenCount() != 2 {
+		t.Fatalf("ending the sweep left active=%v chosen=%d, want the two kept",
+			state.MarqueeActive(), state.ChosenCount())
+	}
+
+	// An additive sweep keeps what was already chosen and can be cancelled.
+	state.BeginMarquee(true)
+	state.MarqueeOver("host-3")
+	if state.ChosenCount() != 3 {
+		t.Fatalf("an additive sweep chose %d Hosts, want 3", state.ChosenCount())
+	}
+	state.CancelMarquee()
+	if state.ChosenCount() != 2 || state.Chosen("host-3") {
+		t.Fatalf("Escape left %v, want the sweep cancelled", state.SelectedHostIDs())
+	}
+	if state.MarqueeActive() {
+		t.Fatal("Escape left the marquee active")
+	}
+
+	// A non-additive sweep cancelled restores the selection it began with.
+	state.BeginMarquee(false)
+	state.MarqueeOver("host-3")
+	state.CancelMarquee()
+	if got := state.SelectedHostIDs(); len(got) != 2 || got[0] != "host-1" || got[1] != "host-2" {
+		t.Fatalf("Escape restored %v, want the selection the sweep began with", got)
 	}
 }

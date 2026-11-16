@@ -169,7 +169,7 @@ func (f *fakeKnownHosts) DeleteKnownHost(_ context.Context, id string) error {
 	return ErrNotFound
 }
 
-func newEntityService(t *testing.T, hosts *fakeHosts, groups *fakeGroups,
+func newEntityService(t *testing.T, hosts HostRepository, groups *fakeGroups,
 	proxies *fakeProxies, known *fakeKnownHosts) *Service {
 	t.Helper()
 	var ids int
@@ -303,6 +303,86 @@ func TestAssignHostGroupMovesOneHostAndRejectsAnUnknownGroup(t *testing.T) {
 	}
 	if repo.hosts[0].GroupID != "" {
 		t.Fatalf("GroupID = %q, want the Vault root", repo.hosts[0].GroupID)
+	}
+}
+
+// A drop of several Hosts is one assignment: every Host moves, an unknown Host
+// or group leaves every Host where it was, and a failed write rolls back the
+// Hosts already stored.
+func TestAssignHostsGroupIsOneAllOrNothingOperation(t *testing.T) {
+	repo := &fakeHosts{hosts: []domainvault.Host{
+		{ID: "host-1", Label: "web-1", Hostname: "10.0.0.1", GroupID: "g-dev"},
+		{ID: "host-2", Label: "web-2", Hostname: "10.0.0.2"},
+	}}
+	groups := &fakeGroups{items: []domainvault.Group{
+		{ID: "g-prod", Name: "prod", Path: "prod"},
+		{ID: "g-dev", Name: "dev", Path: "dev"},
+	}}
+	service := newEntityService(t, repo, groups, &fakeProxies{}, &fakeKnownHosts{})
+
+	if err := service.AssignHostsGroup(context.Background(), []model.HostID{"host-1", "host-2"}, "g-prod"); err != nil {
+		t.Fatalf("AssignHostsGroup: %v", err)
+	}
+	if repo.hosts[0].GroupID != "g-prod" || repo.hosts[1].GroupID != "g-prod" {
+		t.Fatalf("memberships = %q/%q, want both g-prod", repo.hosts[0].GroupID, repo.hosts[1].GroupID)
+	}
+
+	// A missing member is refused before any write.
+	repo.hosts[0].GroupID, repo.hosts[1].GroupID = "g-dev", ""
+	repo.saves = 0
+	missing := []model.HostID{"host-1", "ghost"}
+	if err := service.AssignHostsGroup(context.Background(), missing, "g-prod"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing Host error = %v, want ErrNotFound", err)
+	}
+	if repo.hosts[0].GroupID != "g-dev" || repo.hosts[1].GroupID != "" || repo.saves != 0 {
+		t.Fatalf("a missing member half-applied: memberships %q/%q after %d saves",
+			repo.hosts[0].GroupID, repo.hosts[1].GroupID, repo.saves)
+	}
+
+	// A write that fails midway restores the Hosts written before it.
+	repo.saves, repo.failSaveAt = 0, 2
+	if err := service.AssignHostsGroup(context.Background(), []model.HostID{"host-1", "host-2"}, "g-prod"); err == nil {
+		t.Fatal("AssignHostsGroup reported success after a failed write")
+	}
+	repo.failSaveAt = 0
+	if repo.hosts[0].GroupID != "g-dev" || repo.hosts[1].GroupID != "" {
+		t.Fatalf("a failed drop half-applied: memberships %q/%q",
+			repo.hosts[0].GroupID, repo.hosts[1].GroupID)
+	}
+}
+
+// batchHosts records the one transactional write a batch-capable repository
+// receives instead of individual Save calls.
+type batchHosts struct {
+	*fakeHosts
+	batches [][]domainvault.Host
+}
+
+func (b *batchHosts) SaveHosts(_ context.Context, hosts []domainvault.Host) error {
+	b.batches = append(b.batches, append([]domainvault.Host(nil), hosts...))
+	for _, host := range hosts {
+		if err := b.fakeHosts.Save(context.Background(), host); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestAssignHostsGroupUsesOneTransactionalWriteWhenTheRepositoryOffersIt(t *testing.T) {
+	repo := &batchHosts{fakeHosts: &fakeHosts{hosts: []domainvault.Host{
+		{ID: "host-1", Label: "web-1"}, {ID: "host-2", Label: "web-2"},
+	}}}
+	groups := &fakeGroups{items: []domainvault.Group{{ID: "g-prod", Name: "prod", Path: "prod"}}}
+	service := newEntityService(t, repo, groups, &fakeProxies{}, &fakeKnownHosts{})
+
+	if err := service.AssignHostsGroup(context.Background(), []model.HostID{"host-1", "host-2"}, "g-prod"); err != nil {
+		t.Fatalf("AssignHostsGroup: %v", err)
+	}
+	if len(repo.batches) != 1 || len(repo.batches[0]) != 2 {
+		t.Fatalf("batches = %+v, want one write of two Hosts", repo.batches)
+	}
+	if repo.hosts[0].GroupID != "g-prod" || repo.hosts[1].GroupID != "g-prod" {
+		t.Fatalf("memberships = %q/%q", repo.hosts[0].GroupID, repo.hosts[1].GroupID)
 	}
 }
 

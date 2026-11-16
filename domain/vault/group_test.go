@@ -1,10 +1,68 @@
 package vault
 
 import (
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/mslxl/natcatty/domain/model"
 )
+
+// Assigning several Hosts at once is the drop of a marquee selection: every
+// Host gets the group, keeps its own fields, and an invalid member fails the
+// whole assignment instead of half-applying it.
+func TestAssignHostsGroupAssignsEveryHostOrNone(t *testing.T) {
+	at := time.Unix(1700000000, 0).UTC()
+	hosts := []Host{
+		{ID: "host-1", Label: "web-1", Hostname: "10.0.0.1", GroupID: "old", Group: "dev"},
+		{ID: "host-2", Label: "web-2", Hostname: "10.0.0.2", Username: "deploy"},
+	}
+	assigned, err := AssignHostsGroup(hosts, "g-prod", at)
+	if err != nil {
+		t.Fatalf("AssignHostsGroup: %v", err)
+	}
+	if len(assigned) != len(hosts) {
+		t.Fatalf("assigned %d Hosts, want %d", len(assigned), len(hosts))
+	}
+	for index, host := range assigned {
+		if host.GroupID != "g-prod" || host.Group != "" {
+			t.Fatalf("Host %d membership = %q/%q, want the group ID only", index, host.GroupID, host.Group)
+		}
+		if !host.UpdatedAt.Equal(at) {
+			t.Fatalf("Host %d UpdatedAt = %v, want %v", index, host.UpdatedAt, at)
+		}
+	}
+	if assigned[1].Username != "deploy" || assigned[0].Hostname != "10.0.0.1" {
+		t.Fatalf("assignment changed other Host fields: %+v", assigned)
+	}
+	if hosts[0].GroupID != "old" || hosts[1].GroupID != "" {
+		t.Fatalf("assignment mutated its input: %+v", hosts)
+	}
+
+	root, err := AssignHostsGroup(hosts, "", at)
+	if err != nil {
+		t.Fatalf("AssignHostsGroup root: %v", err)
+	}
+	if root[0].GroupID != "" || root[1].GroupID != "" {
+		t.Fatalf("root assignment left a group: %+v", root)
+	}
+}
+
+func TestAssignHostsGroupRejectsAHostWithoutIdentityOrADuplicate(t *testing.T) {
+	at := time.Unix(1700000000, 0).UTC()
+	if _, err := AssignHostsGroup([]Host{{Label: "no id"}}, "g-prod", at); err == nil {
+		t.Fatal("AssignHostsGroup accepted a Host with no identity")
+	} else {
+		var invalid *ValidationError
+		if !errors.As(err, &invalid) || invalid.Field != FieldGroup {
+			t.Fatalf("error = %v, want a FieldGroup validation error", err)
+		}
+	}
+	duplicate := []Host{{ID: "host-1"}, {ID: "host-1"}}
+	if _, err := AssignHostsGroup(duplicate, "g-prod", at); err == nil {
+		t.Fatal("AssignHostsGroup accepted the same Host twice")
+	}
+}
 
 func TestNormalizeGroupDraftDropsSSHDefaultsOnlyForExplicitNonSSHProtocols(t *testing.T) {
 	// A group that explicitly selects Telnet never reads its members' SSH
