@@ -209,7 +209,12 @@ func RegisterIdentity(family, id, field string) string {
 	return family + "\x00" + id + "\x00" + field
 }
 
-const presenceField = "<presence>"
+// PresenceField is the register name of an entity's existence register. The
+// angle brackets keep it disjoint from every JSON field name, so callers can
+// address presence and field registers uniformly.
+const PresenceField = "<presence>"
+
+const presenceField = PresenceField
 
 // ---------------------------------------------------------------------------
 // Version vectors, dots, and clocks
@@ -2513,6 +2518,51 @@ func ConvergentConflictCount(state ConvergentState) int {
 		return 0
 	}
 	return len(conflicts)
+}
+
+// ResolveConvergentRegister replaces one contested register with a single
+// chosen value or tombstone. The write observes every retained candidate, so
+// the choice causally dominates both sides and a stale branch cannot
+// reintroduce the conflict. field is a JSON field name or PresenceField; a
+// presence choice carries value true. The caller decides which value wins; the
+// CRDT only records the decision.
+func ResolveConvergentRegister(state ConvergentState, family, id, field string, value json.RawMessage, tombstone bool, node string, now int64) (ConvergentState, error) {
+	if err := ValidateConvergentState(state); err != nil {
+		return ConvergentState{}, err
+	}
+	clone, err := NormalizeConvergentState(state)
+	if err != nil {
+		return ConvergentState{}, err
+	}
+	entity, exists := getEntity(clone, family, id)
+	if !exists {
+		return ConvergentState{}, fmt.Errorf("%w: %s/%s does not exist", ErrConvergentInvalid, family, id)
+	}
+	registerID := RegisterIdentity(family, id, field)
+	register := entity.Fields[field]
+	if field == presenceField {
+		register = entity.Presence
+	}
+	writer := &stateWriter{state: clone, node: node, now: now}
+	written, err := writer.write(registerID, register, value, tombstone)
+	if err != nil {
+		return ConvergentState{}, err
+	}
+	if field == presenceField {
+		entity.Presence = written
+	} else {
+		if entity.Fields == nil {
+			entity.Fields = map[string]MultiValueRegister{}
+		}
+		entity.Fields[field] = written
+	}
+	entity.Version = DerivedEntityVersion(entity)
+	setEntity(clone, family, id, entity)
+	clone = writer.state
+	if err := ValidateConvergentState(clone); err != nil {
+		return ConvergentState{}, err
+	}
+	return clone, nil
 }
 
 // ConvergentEntityHashes returns one canonical hash per entity, keyed by

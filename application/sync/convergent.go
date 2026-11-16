@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	domainsync "github.com/mslxl/natcatty/domain/sync"
@@ -81,18 +82,54 @@ type ConvergentBlockedReason struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// ConvergentConflictSide names the side of a contested field that wins when
+// the user resolves a migration conflict.
+type ConvergentConflictSide string
+
+const (
+	// ConvergentConflictKeepLocal keeps this device's Vault value.
+	ConvergentConflictKeepLocal ConvergentConflictSide = "local"
+	// ConvergentConflictKeepRemote keeps the provider's materialized value.
+	ConvergentConflictKeepRemote ConvergentConflictSide = "remote"
+)
+
+// ConvergentConflictResolution is one per-field choice. Register is the
+// stable register identity carried by ConvergentMigrationConflict.
+type ConvergentConflictResolution struct {
+	Register string                 `json:"register"`
+	Side     ConvergentConflictSide `json:"side"`
+}
+
+// ConvergentMigrationConflict is one contested register listed in a blocked
+// migration. LocalValue and RemoteValue are the values the two sides would
+// keep; they are withheld for secret-bearing registers (Secret is true) so a
+// credential never reaches the settings surface.
+type ConvergentMigrationConflict struct {
+	Family        string          `json:"family"`
+	EntityID      string          `json:"entityId"`
+	Field         string          `json:"field"`
+	Register      string          `json:"register"`
+	LocalPresent  bool            `json:"localPresent"`
+	RemotePresent bool            `json:"remotePresent"`
+	LocalValue    json.RawMessage `json:"localValue,omitempty"`
+	RemoteValue   json.RawMessage `json:"remoteValue,omitempty"`
+	Secret        bool            `json:"secret,omitempty"`
+}
+
 // ConvergentMigrationPreview is what the UI shows before enabling v2 and when
 // enablement is refused. The cloud bytes are untouched when CanInitialize is
-// false.
+// false. Conflicts lists every contested register so the user can resolve them
+// field by field; the migration stays blocked until none remain.
 type ConvergentMigrationPreview struct {
-	SchemaVersion         int                       `json:"schemaVersion"`
-	CanInitialize         bool                      `json:"canInitialize"`
-	AlreadyInitialized    bool                      `json:"alreadyInitialized,omitempty"`
-	ProviderSchemaVersion int                       `json:"providerSchemaVersion"`
-	LocalSchemaVersion    int                       `json:"localSchemaVersion"`
-	EntityCount           int                       `json:"entityCount"`
-	ConflictCount         int                       `json:"conflictCount"`
-	BlockedReasons        []ConvergentBlockedReason `json:"blockedReasons,omitempty"`
+	SchemaVersion         int                           `json:"schemaVersion"`
+	CanInitialize         bool                          `json:"canInitialize"`
+	AlreadyInitialized    bool                          `json:"alreadyInitialized,omitempty"`
+	ProviderSchemaVersion int                           `json:"providerSchemaVersion"`
+	LocalSchemaVersion    int                           `json:"localSchemaVersion"`
+	EntityCount           int                           `json:"entityCount"`
+	ConflictCount         int                           `json:"conflictCount"`
+	Conflicts             []ConvergentMigrationConflict `json:"conflicts,omitempty"`
+	BlockedReasons        []ConvergentBlockedReason     `json:"blockedReasons,omitempty"`
 }
 
 // ConvergentDivergenceInfo is the actionable divergence report. Values are
@@ -740,6 +777,10 @@ type convergentMigrationInput struct {
 	LocalSnapshot  domainsync.ConvergentSnapshot
 	LegacyBaseline *Payload
 	Remote         convergentRemote
+	// Resolutions records the user's per-field keep-local/keep-remote choices.
+	// They are applied inside planning, before the conflict gate, so the
+	// chosen values travel through the ordinary migration materialization.
+	Resolutions map[string]ConvergentConflictSide
 }
 
 type convergentPlan struct {
@@ -772,6 +813,15 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 		return plan
 	}
 	localSnapshot := input.LocalSnapshot
+	// Remote values shown in the conflict list come from the provider's
+	// materialized winner. A v1 provider has no envelope, so its payload is
+	// converted the same way the merge converted it.
+	remoteSnapshot := input.Remote.Materialized
+	if input.Remote.Kind == convergentRemoteV1 {
+		if snapshot, err := payloadSnapshot(input.Remote.Payload); err == nil {
+			remoteSnapshot = snapshot
+		}
+	}
 	options := MergeOptions{PreserveDeletions: domainsync.IsPreserveDeletionsStrategy(input.Strategy)}
 
 	var state domainsync.ConvergentState
@@ -937,7 +987,34 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 		plan.block("damaged-envelope", err.Error())
 		return plan
 	}
+	if len(conflicts) > 0 && len(input.Resolutions) > 0 {
+		// A resolution is a real causal write, not a UI override: the chosen
+		// side dominates every retained candidate inside the merged state.
+		state, err = resolveConvergentMigrationConflicts(state, conflicts, input.Resolutions, localSnapshot, remoteSnapshot, input.DeviceID, input.Now)
+		if err != nil {
+			plan.block("conflict-resolution-failed", err.Error())
+			return plan
+		}
+		if conflicts, err = domainsync.ConvergentConflicts(state); err != nil {
+			plan.block("damaged-envelope", err.Error())
+			return plan
+		}
+		if len(conflicts) == 0 {
+			// The chosen values must reach the materialized Vault and the
+			// provider copy, not just the CRDT state.
+			materialized, err = payloadFromState(state, settings, input.Now, input.DeviceID)
+			if err != nil {
+				plan.block("damaged-materialized-payload", err.Error())
+				return plan
+			}
+			if materializedSnapshot, err = payloadSnapshot(materialized); err != nil {
+				plan.block("damaged-materialized-payload", err.Error())
+				return plan
+			}
+		}
+	}
 	plan.Preview.ConflictCount = len(conflicts)
+	plan.Preview.Conflicts = convergentMigrationConflictList(conflicts, localSnapshot, remoteSnapshot)
 	if len(conflicts) > 0 {
 		plan.block("conflicts-unresolved", fmt.Sprintf("%d contested registers", len(conflicts)))
 		return plan
@@ -961,6 +1038,109 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 	plan.Materialized = &full
 	plan.Settings = settings
 	return plan
+}
+
+// resolveConvergentMigrationConflicts applies the user's per-field choices to
+// contested registers. Only registers that are currently listed are touched,
+// so a stale resolution left from an earlier attempt cannot silently change a
+// field the user never saw.
+func resolveConvergentMigrationConflicts(
+	state domainsync.ConvergentState,
+	conflicts []domainsync.ConvergentConflict,
+	resolutions map[string]ConvergentConflictSide,
+	localSnapshot, remoteSnapshot domainsync.ConvergentSnapshot,
+	node string,
+	now int64,
+) (domainsync.ConvergentState, error) {
+	for _, conflict := range conflicts {
+		side, chosen := resolutions[conflict.Register]
+		if !chosen {
+			continue
+		}
+		snapshot := localSnapshot
+		if side == ConvergentConflictKeepRemote {
+			snapshot = remoteSnapshot
+		}
+		value, present := snapshotRegisterValue(snapshot, conflict.Family, conflict.EntityID, conflict.Field)
+		if conflict.Field == domainsync.PresenceField {
+			value = json.RawMessage("true")
+		}
+		next, err := domainsync.ResolveConvergentRegister(state, conflict.Family, conflict.EntityID, conflict.Field, value, !present, node, now)
+		if err != nil {
+			return domainsync.ConvergentState{}, err
+		}
+		state = next
+	}
+	return state, nil
+}
+
+// snapshotRegisterValue reads one register's materialized value out of a v1
+// snapshot. A presence register reports true when the entity is visible.
+func snapshotRegisterValue(snapshot domainsync.ConvergentSnapshot, family, id, field string) (json.RawMessage, bool) {
+	for _, record := range snapshot.Families[family] {
+		if record.ID != id {
+			continue
+		}
+		if field == domainsync.PresenceField {
+			return json.RawMessage("true"), true
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(record.Value, &fields); err != nil {
+			return nil, false
+		}
+		value, exists := fields[field]
+		return value, exists
+	}
+	return nil, false
+}
+
+// convergentSecretPattern mirrors the upstream redaction rule: a value whose
+// field name or nested key looks like a credential is never rendered in the
+// migration surface.
+var convergentSecretPattern = regexp.MustCompile(`(?i)password|passphrase|privatekey|private_key|secret|token|api[_-]?key|access[_-]?key`)
+
+// convergentMigrationConflictList turns the CRDT conflict descriptors into the
+// preview's per-field list, attaching the value each side would keep.
+func convergentMigrationConflictList(
+	conflicts []domainsync.ConvergentConflict,
+	localSnapshot, remoteSnapshot domainsync.ConvergentSnapshot,
+) []ConvergentMigrationConflict {
+	if len(conflicts) == 0 {
+		return nil
+	}
+	list := make([]ConvergentMigrationConflict, 0, len(conflicts))
+	for _, conflict := range conflicts {
+		localValue, localPresent := snapshotRegisterValue(localSnapshot, conflict.Family, conflict.EntityID, conflict.Field)
+		remoteValue, remotePresent := snapshotRegisterValue(remoteSnapshot, conflict.Family, conflict.EntityID, conflict.Field)
+		entry := ConvergentMigrationConflict{
+			Family:        conflict.Family,
+			EntityID:      conflict.EntityID,
+			Field:         conflict.Field,
+			Register:      conflict.Register,
+			LocalPresent:  localPresent,
+			RemotePresent: remotePresent,
+		}
+		if convergentConflictIsSecret(conflict.Family, conflict.Field, localValue, remoteValue) {
+			entry.Secret = true
+		} else {
+			entry.LocalValue = localValue
+			entry.RemoteValue = remoteValue
+		}
+		list = append(list, entry)
+	}
+	return list
+}
+
+func convergentConflictIsSecret(family, field string, values ...json.RawMessage) bool {
+	if family == "secrets" || convergentSecretPattern.MatchString(field) {
+		return true
+	}
+	for _, value := range values {
+		if convergentSecretPattern.Match(value) {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
@@ -1059,6 +1239,7 @@ func (s *Service) SetConvergentEnabled(ctx context.Context, enabled bool) (Conve
 		if err := s.saveConvergentConfig(config); err != nil {
 			return ConvergentMigrationPreview{}, err
 		}
+		s.clearMigrationResolutions()
 		s.setConvergentInfo(convergentInfoFor(config))
 		return ConvergentMigrationPreview{
 			SchemaVersion:      domainsync.ConvergentSchemaVersion,
@@ -1110,6 +1291,7 @@ func (s *Service) SetConvergentEnabled(ctx context.Context, enabled bool) (Conve
 		LocalSnapshot:  localSnapshot,
 		LegacyBaseline: baseline,
 		Remote:         remote,
+		Resolutions:    s.migrationResolutionChoices(),
 	})
 	if !plan.Preview.CanInitialize || plan.State == nil || plan.Materialized == nil {
 		info := convergentInfoFor(config)
@@ -1192,6 +1374,7 @@ func (s *Service) SetConvergentEnabled(ctx context.Context, enabled bool) (Conve
 		s.finishSync(ProblemLocal)
 		return plan.Preview, err
 	}
+	s.clearMigrationResolutions()
 	info.Phase = "verifying"
 	info.SchemaVersion = domainsync.ConvergentSchemaVersion
 	info.Enabled = true
@@ -1202,6 +1385,89 @@ func (s *Service) SetConvergentEnabled(ctx context.Context, enabled bool) (Conve
 	}
 	plan.Preview.CanInitialize = true
 	return plan.Preview, nil
+}
+
+// ResolveConvergentMigrationConflict records one per-field choice and retries
+// the migration. The first call re-lists the conflicts, rejects a register
+// that is no longer contested, then re-plans with every choice made in this
+// process. Migration completes only when no conflict remains; otherwise the
+// returned preview lists the rest.
+func (s *Service) ResolveConvergentMigrationConflict(ctx context.Context, resolution ConvergentConflictResolution) (ConvergentMigrationPreview, error) {
+	if resolution.Register == "" ||
+		(resolution.Side != ConvergentConflictKeepLocal && resolution.Side != ConvergentConflictKeepRemote) {
+		return ConvergentMigrationPreview{}, fmt.Errorf("%w: invalid conflict resolution", ErrConvergentMigration)
+	}
+	preview, err := s.SetConvergentEnabled(ctx, true)
+	if err == nil {
+		return preview, nil
+	}
+	if !errors.Is(err, ErrConvergentMigration) {
+		return preview, err
+	}
+	if !convergentPreviewHasConflict(preview, resolution.Register) {
+		return preview, fmt.Errorf("%w: conflict %q no longer exists", ErrConvergentMigration, resolution.Register)
+	}
+	s.recordMigrationResolution(resolution.Register, resolution.Side)
+	return s.SetConvergentEnabled(ctx, true)
+}
+
+// ResolveConvergentMigrationConflicts is the bulk default: it applies the same
+// side to every currently listed field conflict, then retries migration.
+func (s *Service) ResolveConvergentMigrationConflicts(ctx context.Context, side ConvergentConflictSide) (ConvergentMigrationPreview, error) {
+	if side != ConvergentConflictKeepLocal && side != ConvergentConflictKeepRemote {
+		return ConvergentMigrationPreview{}, fmt.Errorf("%w: invalid conflict side", ErrConvergentMigration)
+	}
+	preview, err := s.SetConvergentEnabled(ctx, true)
+	if err == nil {
+		return preview, nil
+	}
+	if !errors.Is(err, ErrConvergentMigration) {
+		return preview, err
+	}
+	if len(preview.Conflicts) == 0 {
+		return preview, err
+	}
+	for _, conflict := range preview.Conflicts {
+		s.recordMigrationResolution(conflict.Register, side)
+	}
+	return s.SetConvergentEnabled(ctx, true)
+}
+
+func convergentPreviewHasConflict(preview ConvergentMigrationPreview, register string) bool {
+	for _, conflict := range preview.Conflicts {
+		if conflict.Register == register {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) recordMigrationResolution(register string, side ConvergentConflictSide) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.migrationResolutions == nil {
+		s.migrationResolutions = map[string]ConvergentConflictSide{}
+	}
+	s.migrationResolutions[register] = side
+}
+
+func (s *Service) migrationResolutionChoices() map[string]ConvergentConflictSide {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.migrationResolutions) == 0 {
+		return nil
+	}
+	choices := make(map[string]ConvergentConflictSide, len(s.migrationResolutions))
+	for register, side := range s.migrationResolutions {
+		choices[register] = side
+	}
+	return choices
+}
+
+func (s *Service) clearMigrationResolutions() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.migrationResolutions = nil
 }
 
 // strictLegacyBaseline reads the v1 merge anchor without silently falling back

@@ -24006,6 +24006,102 @@ func (msgs Messages) SettingsSyncConvergentReasonUnknown() string {
 	return Catalog.Format(msgs.locale, "settingsSyncConvergentReasonUnknown", nil)
 }
 
+// SettingsSyncConvergentConflictsTitle says "{count} fields conflict"
+// in the language the app shows.
+func SettingsSyncConvergentConflictsTitle(count string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentConflictsTitle(count)
+}
+
+// SettingsSyncConvergentConflictsTitle says "{count} fields conflict"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentConflictsTitle(count string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictsTitle", map[string]any{"count": count})
+}
+
+// SettingsSyncConvergentConflictEntry says "{family} {id}: {field}"
+// in the language the app shows.
+func SettingsSyncConvergentConflictEntry(family string, id string, field string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentConflictEntry(family, id, field)
+}
+
+// SettingsSyncConvergentConflictEntry says "{family} {id}: {field}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentConflictEntry(family string, id string, field string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictEntry", map[string]any{"family": family, "id": id, "field": field})
+}
+
+// SettingsSyncConvergentConflictFieldPresence says "record presence"
+// in the language the app shows.
+func SettingsSyncConvergentConflictFieldPresence() string {
+	return In(i18n.Locale()).SettingsSyncConvergentConflictFieldPresence()
+}
+
+// SettingsSyncConvergentConflictFieldPresence says "record presence"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentConflictFieldPresence() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictFieldPresence", nil)
+}
+
+// SettingsSyncConvergentConflictValues says "This device: {local} · Cloud: {remote}"
+// in the language the app shows.
+func SettingsSyncConvergentConflictValues(local string, remote string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentConflictValues(local, remote)
+}
+
+// SettingsSyncConvergentConflictValues says "This device: {local} · Cloud: {remote}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentConflictValues(local string, remote string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictValues", map[string]any{"local": local, "remote": remote})
+}
+
+// SettingsSyncConvergentConflictValueMissing says "not set"
+// in the language the app shows.
+func SettingsSyncConvergentConflictValueMissing() string {
+	return In(i18n.Locale()).SettingsSyncConvergentConflictValueMissing()
+}
+
+// SettingsSyncConvergentConflictValueMissing says "not set"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentConflictValueMissing() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictValueMissing", nil)
+}
+
+// SettingsSyncConvergentConflictValueHidden says "hidden"
+// in the language the app shows.
+func SettingsSyncConvergentConflictValueHidden() string {
+	return In(i18n.Locale()).SettingsSyncConvergentConflictValueHidden()
+}
+
+// SettingsSyncConvergentConflictValueHidden says "hidden"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentConflictValueHidden() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictValueHidden", nil)
+}
+
+// SettingsSyncConvergentKeepLocalAll says "Keep this device for all"
+// in the language the app shows.
+func SettingsSyncConvergentKeepLocalAll() string {
+	return In(i18n.Locale()).SettingsSyncConvergentKeepLocalAll()
+}
+
+// SettingsSyncConvergentKeepLocalAll says "Keep this device for all"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentKeepLocalAll() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentKeepLocalAll", nil)
+}
+
+// SettingsSyncConvergentKeepRemoteAll says "Keep the cloud copy for all"
+// in the language the app shows.
+func SettingsSyncConvergentKeepRemoteAll() string {
+	return In(i18n.Locale()).SettingsSyncConvergentKeepRemoteAll()
+}
+
+// SettingsSyncConvergentKeepRemoteAll says "Keep the cloud copy for all"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentKeepRemoteAll() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentKeepRemoteAll", nil)
+}
+
 // SettingsSyncConvergentDivergenceTitle says "Replicas diverged"
 // in the language the app shows.
 func SettingsSyncConvergentDivergenceTitle() string {

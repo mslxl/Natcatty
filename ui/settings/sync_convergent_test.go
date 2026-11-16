@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -18,9 +19,11 @@ import (
 type fakeConvergentSyncService struct {
 	*fakeSyncService
 
-	convergentCalls []bool
-	restores        int
-	convergentErr   error
+	convergentCalls     []bool
+	restores            int
+	convergentErr       error
+	conflictResolutions []appsync.ConvergentConflictResolution
+	bulkResolutions     []appsync.ConvergentConflictSide
 }
 
 func newFakeConvergentSyncService() *fakeConvergentSyncService {
@@ -63,6 +66,26 @@ func (f *fakeConvergentSyncService) SetConvergentEnabled(_ context.Context, enab
 		CanInitialize:      true,
 		AlreadyInitialized: true,
 	}, nil
+}
+
+func (f *fakeConvergentSyncService) ResolveConvergentMigrationConflict(_ context.Context, resolution appsync.ConvergentConflictResolution) (appsync.ConvergentMigrationPreview, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.conflictResolutions = append(f.conflictResolutions, resolution)
+	if f.convergentErr != nil {
+		return appsync.ConvergentMigrationPreview{}, f.convergentErr
+	}
+	return appsync.ConvergentMigrationPreview{SchemaVersion: 2}, nil
+}
+
+func (f *fakeConvergentSyncService) ResolveConvergentMigrationConflicts(_ context.Context, side appsync.ConvergentConflictSide) (appsync.ConvergentMigrationPreview, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bulkResolutions = append(f.bulkResolutions, side)
+	if f.convergentErr != nil {
+		return appsync.ConvergentMigrationPreview{}, f.convergentErr
+	}
+	return appsync.ConvergentMigrationPreview{SchemaVersion: 2}, nil
 }
 
 func (f *fakeConvergentSyncService) RestoreLastVerified(context.Context) (appsync.Result, error) {
@@ -532,6 +555,94 @@ func TestSyncConvergentActionsStayPinnedAboveTheScroll(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestSyncConvergentMigrationListsAndResolvesConflicts drives ticket 66's
+// surface: the blocked preview lists every contested field with both values,
+// a per-field choice reaches the service, and the bulk default does too.
+func TestSyncConvergentMigrationListsAndResolvesConflicts(t *testing.T) {
+	m := locales.In("en")
+	service := newFakeConvergentSyncService()
+	label := appsync.ConvergentMigrationConflict{
+		Family:        "hosts",
+		EntityID:      "host-1",
+		Field:         "label",
+		Register:      "hosts\x00host-1\x00label",
+		LocalPresent:  true,
+		RemotePresent: true,
+		LocalValue:    json.RawMessage(`"This device name"`),
+		RemoteValue:   json.RawMessage(`"Cloud name"`),
+	}
+	secret := appsync.ConvergentMigrationConflict{
+		Family:        "secrets",
+		EntityID:      "host-1/password",
+		Field:         "value",
+		Register:      "secrets\x00host-1/password\x00value",
+		LocalPresent:  true,
+		RemotePresent: true,
+		Secret:        true,
+	}
+	service.snapshot.Convergent = appsync.ConvergentInfo{
+		Phase:         "blocked",
+		ConflictCount: 2,
+		Migration: &appsync.ConvergentMigrationPreview{
+			SchemaVersion:  2,
+			ConflictCount:  2,
+			Conflicts:      []appsync.ConvergentMigrationConflict{label, secret},
+			BlockedReasons: []appsync.ConvergentBlockedReason{{Code: "conflicts-unresolved"}},
+		},
+	}
+	state := NewSyncState(service)
+	var layout viewLayout
+	var context *ui.Context
+	view := viewAtWithLayout(AreaSync, Config{Sync: state}, &layout)
+	const w, h = 1100, 720
+	tester := ui.NewTester(func(c *ui.Context) {
+		context = c
+		view(c)
+	}, w, h)
+	tester.SetLocale("en")
+	tester.Frame()
+	viewport := layout.Content.Bounds(context)
+
+	for _, want := range []string{
+		m.SettingsSyncConvergentConflictsTitle("2"),
+		m.SettingsSyncConvergentConflictEntry(m.SearchSectionHost(), "host-1", "label"),
+		m.SettingsSyncConvergentConflictValues("This device name", "Cloud name"),
+		m.SettingsSyncConvergentConflictEntry(m.SettingsSyncEntityUnknown(), "host-1/password", "value"),
+		m.SettingsSyncConvergentConflictValues(m.SettingsSyncConvergentConflictValueHidden(), m.SettingsSyncConvergentConflictValueHidden()),
+	} {
+		scrollSettingsTo(t, tester, want, w, h, viewport)
+	}
+	if tester.HasText(`Cloud name"`) || tester.HasText("secret") {
+		t.Fatalf("raw conflict values leaked: %q", tester.Texts())
+	}
+
+	if _, ok := tester.Find(m.SettingsSyncConflictUseLocal()); !ok {
+		scrollSettingsTo(t, tester, m.SettingsSyncConflictUseLocal(), w, h, viewport)
+	}
+	if err := tester.Click(m.SettingsSyncConflictUseLocal()); err != nil {
+		t.Fatal(err)
+	}
+	waitSyncIdle(t, state)
+	service.mu.Lock()
+	resolutions := append([]appsync.ConvergentConflictResolution(nil), service.conflictResolutions...)
+	service.mu.Unlock()
+	if len(resolutions) != 1 || resolutions[0].Register != label.Register || resolutions[0].Side != appsync.ConvergentConflictKeepLocal {
+		t.Fatalf("per-field resolutions = %+v", resolutions)
+	}
+
+	tester.Frame()
+	if err := tester.Click(m.SettingsSyncConvergentKeepRemoteAll()); err != nil {
+		t.Fatal(err)
+	}
+	waitSyncIdle(t, state)
+	service.mu.Lock()
+	bulk := append([]appsync.ConvergentConflictSide(nil), service.bulkResolutions...)
+	service.mu.Unlock()
+	if len(bulk) != 1 || bulk[0] != appsync.ConvergentConflictKeepRemote {
+		t.Fatalf("bulk resolutions = %+v", bulk)
 	}
 }
 

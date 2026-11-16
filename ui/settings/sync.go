@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -85,6 +86,8 @@ type DestructiveSyncService interface {
 // the ticket 49-54 surface unchanged; the production service implements it.
 type ConvergentSyncService interface {
 	SetConvergentEnabled(ctx context.Context, enabled bool) (appsync.ConvergentMigrationPreview, error)
+	ResolveConvergentMigrationConflict(ctx context.Context, resolution appsync.ConvergentConflictResolution) (appsync.ConvergentMigrationPreview, error)
+	ResolveConvergentMigrationConflicts(ctx context.Context, side appsync.ConvergentConflictSide) (appsync.ConvergentMigrationPreview, error)
 	RestoreLastVerified(ctx context.Context) (appsync.Result, error)
 }
 
@@ -1024,6 +1027,54 @@ func (s *SyncState) SetConvergentEnabled(enabled bool) {
 	}()
 }
 
+// ResolveConvergentMigrationConflict keeps one side of one contested field and
+// re-runs the migration preview; the migration completes only once the last
+// field is resolved.
+func (s *SyncState) ResolveConvergentMigrationConflict(register string, side appsync.ConvergentConflictSide) {
+	service, ok := s.service.(ConvergentSyncService)
+	if !ok || s.busy || register == "" {
+		return
+	}
+	s.busy = true
+	s.lastErr = nil
+	state := s
+	go func() {
+		_, err := service.ResolveConvergentMigrationConflict(state.ctx, appsync.ConvergentConflictResolution{
+			Register: register,
+			Side:     side,
+		})
+		state.post(func() {
+			state.busy = false
+			state.lastErr = err
+			if err == nil {
+				state.requestBackups()
+			}
+		})
+	}()
+}
+
+// ResolveConvergentMigrationConflicts is the bulk default: one side for every
+// contested field.
+func (s *SyncState) ResolveConvergentMigrationConflicts(side appsync.ConvergentConflictSide) {
+	service, ok := s.service.(ConvergentSyncService)
+	if !ok || s.busy {
+		return
+	}
+	s.busy = true
+	s.lastErr = nil
+	state := s
+	go func() {
+		_, err := service.ResolveConvergentMigrationConflicts(state.ctx, side)
+		state.post(func() {
+			state.busy = false
+			state.lastErr = err
+			if err == nil {
+				state.requestBackups()
+			}
+		})
+	}()
+}
+
 // RestoreLastVerified applies the last provider-verified materialized copy
 // locally behind a protective backup. It never writes the provider and never
 // mutates the CRDT replica, so it is safe during divergence.
@@ -1614,7 +1665,10 @@ func syncConvergentPinnedBar(c *ui.Context, state *SyncState, snapshot appsync.S
 	showResume := phase == "paused"
 	showPause := info.Enabled && phase != "paused" && phase != "diverged" && phase != "blocked"
 	showDivergence := phase == "diverged"
-	if !showEnable && !showResume && !showPause && !showDivergence {
+	// A blocked migration with listed field conflicts can be completed with a
+	// single side for every field; the per-field rows stay in the report.
+	showBulkResolve := phase == "blocked" && info.Migration != nil && len(info.Migration.Conflicts) > 0
+	if !showEnable && !showResume && !showPause && !showDivergence && !showBulkResolve {
 		return
 	}
 	ui.Row(c).FillWidth().Height(syncConvergentBarHeight).
@@ -1636,6 +1690,16 @@ func syncConvergentPinnedBar(c *ui.Context, state *SyncState, snapshot appsync.S
 			if showPause {
 				if kit.SecondaryButton(c, "", m.SettingsSyncConvergentPause()).Disabled(state.Busy()).Clicked() {
 					state.SetConvergentEnabled(false)
+					c.Invalidate()
+				}
+			}
+			if showBulkResolve {
+				if kit.SecondaryButton(c, "", m.SettingsSyncConvergentKeepLocalAll()).Disabled(state.Busy()).Clicked() {
+					state.ResolveConvergentMigrationConflicts(appsync.ConvergentConflictKeepLocal)
+					c.Invalidate()
+				}
+				if kit.SecondaryButton(c, "", m.SettingsSyncConvergentKeepRemoteAll()).Disabled(state.Busy()).Clicked() {
+					state.ResolveConvergentMigrationConflicts(appsync.ConvergentConflictKeepRemote)
 					c.Invalidate()
 				}
 			}
@@ -1857,7 +1921,69 @@ func syncConvergentMigrationBlocked(c *ui.Context, state *SyncState, info appsyn
 		for _, reason := range preview.BlockedReasons {
 			ui.Text(c, convergentReasonName(reason.Code, m)).FontSize(kit.M(c).Font.Caption).TextColor(syncDangerTextColor(t))
 		}
+		if len(preview.Conflicts) > 0 {
+			ui.Text(c, m.SettingsSyncConvergentConflictsTitle(strconv.Itoa(len(preview.Conflicts)))).
+				FontSize(kit.M(c).Font.Footnote).Bold().TextColor(t.Text)
+			for _, conflict := range preview.Conflicts {
+				syncConvergentConflictRow(c, state, conflict, m, t)
+			}
+		}
 	}
+}
+
+// syncConvergentConflictRow lists one contested field with the value each side
+// would keep and the two per-field choices. Register values are never written
+// to disk and secret-bearing registers render as hidden.
+func syncConvergentConflictRow(c *ui.Context, state *SyncState, conflict appsync.ConvergentMigrationConflict, m locales.Messages, t *ui.Theme) {
+	field := conflict.Field
+	if field == domainsync.PresenceField {
+		field = m.SettingsSyncConvergentConflictFieldPresence()
+	}
+	ui.Column(c).FillWidth().Padding(6).Gap(4).Background(t.Surface).Border(1, t.Border).Children(func() {
+		ui.Text(c, m.SettingsSyncConvergentConflictEntry(
+			syncEntityLabel(conflict.Family, m), conflict.EntityID, field,
+		)).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
+		ui.Text(c, m.SettingsSyncConvergentConflictValues(
+			convergentConflictValueText(conflict.LocalValue, conflict.LocalPresent, conflict.Secret, m),
+			convergentConflictValueText(conflict.RemoteValue, conflict.RemotePresent, conflict.Secret, m),
+		)).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			if kit.SecondaryButton(c, "", m.SettingsSyncConflictUseLocal()).Disabled(state.Busy()).Clicked() {
+				state.ResolveConvergentMigrationConflict(conflict.Register, appsync.ConvergentConflictKeepLocal)
+				c.Invalidate()
+			}
+			if kit.SecondaryButton(c, "", m.SettingsSyncConflictUseRemote()).Disabled(state.Busy()).Clicked() {
+				state.ResolveConvergentMigrationConflict(conflict.Register, appsync.ConvergentConflictKeepRemote)
+				c.Invalidate()
+			}
+		})
+	})
+}
+
+// convergentConflictValueText renders one side's value for the conflict list.
+// The raw JSON string is shown without quotes; complex values are abbreviated
+// so one long document cannot crowd out the choices.
+func convergentConflictValueText(value json.RawMessage, present, secret bool, m locales.Messages) string {
+	switch {
+	case secret:
+		return m.SettingsSyncConvergentConflictValueHidden()
+	case !present:
+		return m.SettingsSyncConvergentConflictValueMissing()
+	}
+	text := strings.TrimSpace(string(value))
+	var decoded string
+	if err := json.Unmarshal(value, &decoded); err == nil {
+		text = decoded
+	}
+	if text == "" {
+		return m.SettingsSyncConvergentConflictValueMissing()
+	}
+	const limit = 60
+	runes := []rune(text)
+	if len(runes) > limit {
+		text = string(runes[:limit]) + "…"
+	}
+	return text
 }
 
 // syncConvergentDivergence offers only the safe actions: inspect the
