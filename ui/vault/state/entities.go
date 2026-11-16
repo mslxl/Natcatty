@@ -77,6 +77,7 @@ type GroupForm struct {
 	UseSSHAgent      bool
 	RequiresMFA      bool
 	ProxyProfileID   string
+	DirectProxy      bool
 	NetworkProfileID string
 	LegacyAlgorithms bool
 	SkipEcdsaHostKey bool
@@ -165,6 +166,7 @@ func (s *State) BeginEditGroup(path string) bool {
 		UseSSHAgent:      group.UseSSHAgent,
 		RequiresMFA:      group.RequiresMFA,
 		ProxyProfileID:   group.ProxyProfileID,
+		DirectProxy:      group.DirectProxy,
 		NetworkProfileID: group.NetworkProfileID,
 		LegacyAlgorithms: group.LegacyAlgorithms,
 		SkipEcdsaHostKey: group.SkipEcdsaHostKey,
@@ -603,6 +605,7 @@ func (s *State) groupDraft() (domainvault.GroupDraft, Problem) {
 		UseSSHAgent:      s.groupForm.UseSSHAgent,
 		RequiresMFA:      s.groupForm.RequiresMFA,
 		ProxyProfileID:   s.groupForm.ProxyProfileID,
+		DirectProxy:      s.groupForm.DirectProxy,
 		NetworkProfileID: s.groupForm.NetworkProfileID,
 		LegacyAlgorithms: s.groupForm.LegacyAlgorithms,
 		SkipEcdsaHostKey: s.groupForm.SkipEcdsaHostKey,

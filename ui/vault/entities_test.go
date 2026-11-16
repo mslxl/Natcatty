@@ -131,12 +131,14 @@ func applyEntityDraft(host *domainvault.Host, draft domainvault.Draft) {
 	host.Tags = draft.Tags
 	host.Notes = draft.Notes
 	host.Pinned = draft.Pinned
+	host.StartupCommand = draft.StartupCommand
 	host.IdentityID = draft.IdentityID
 	host.KeyID = draft.KeyID
 	host.AuthMethod = draft.AuthMethod
 	host.UseSSHAgent = draft.UseSSHAgent
 	host.RequiresMFA = draft.RequiresMFA
 	host.ProxyProfileID = draft.ProxyProfileID
+	host.DirectProxy = draft.DirectProxy
 }
 
 type entityGroups struct {
@@ -324,6 +326,7 @@ func applyEntityGroupDraft(group *domainvault.Group, draft domainvault.GroupDraf
 	group.UseSSHAgent = draft.UseSSHAgent
 	group.RequiresMFA = draft.RequiresMFA
 	group.ProxyProfileID = draft.ProxyProfileID
+	group.DirectProxy = draft.DirectProxy
 }
 
 type entityProxies struct {
@@ -671,6 +674,107 @@ func TestVaultHostEditorSelectsAProxyProfile(t *testing.T) {
 	}
 	if len(hosts.items) != 1 || hosts.items[0].ProxyProfileID != "" {
 		t.Fatalf("Host after profile delete = %+v, want the reference cleared", hosts.items)
+	}
+}
+
+func TestVaultHostEditorSelectsExplicitDirectProxy(t *testing.T) {
+	m := locales.In("en")
+	state, hosts, _, proxies, _, tt := newEntityView(t)
+	proxies.items = []domainvault.ProxyProfile{{
+		ID: "proxy-1", Label: "office",
+		Config: domainvault.ProxyConfig{
+			Type: domainvault.ProxySOCKS5, Host: "socks.example.com", Port: 1080,
+		},
+	}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	state.BeginEdit("host-1")
+	tt.Frame()
+	if !tt.HasText(m.VaultProxyDirect()) {
+		t.Fatalf("Host editor has no Direct (no proxy) choice, texts %q", tt.Texts())
+	}
+	if err := tt.Click(m.VaultProxyDirect()); err != nil {
+		t.Fatalf("click %s: %v", m.VaultProxyDirect(), err)
+	}
+	tt.Frame()
+	if !state.Form().DirectProxy || state.Form().ProxyProfileID != "" {
+		t.Fatalf("form = direct %t profile %q, want an explicit direct choice",
+			state.Form().DirectProxy, state.Form().ProxyProfileID)
+	}
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save Host: %v", err)
+	}
+	tt.Frame()
+	if !hosts.items[0].DirectProxy || hosts.items[0].ProxyProfileID != "" {
+		t.Fatalf("stored Host = %+v, want the direct choice persisted", hosts.items[0])
+	}
+}
+
+// TestVaultHostEditorTypesAMultiLineStartupCommand is the ticket 50
+// long-text defect: the domain keeps newlines in a startup command, so the
+// editor must be a multi-line control. Typing a two-line script into the
+// focused field and saving must round-trip both lines; a single-line input
+// would drop the newline.
+func TestVaultHostEditorTypesAMultiLineStartupCommand(t *testing.T) {
+	m := locales.In("en")
+	state, hosts, _, _, _, tt := newEntityView(t)
+	state.BeginEdit("host-1")
+	tt.Frame()
+	// A click on the row label focuses the control without moving the caret.
+	if _, ok := tt.Find(m.VaultHostStartupCommand()); !ok {
+		scrollToEnd(tt, 1400, 1200)
+	}
+	if err := tt.Click(m.VaultHostStartupCommand()); err != nil {
+		t.Fatalf("focus the Startup Command field: %v", err)
+	}
+	tt.Frame()
+	if !tt.Focused(m.VaultHostStartupCommand()) {
+		t.Fatalf("the Startup Command field did not take the focus")
+	}
+	const script = "cd /srv\n./run --watch"
+	tt.Type(script)
+	tt.Frame()
+	if got := state.Form().StartupCommand; got != script {
+		t.Fatalf("typed StartupCommand = %q, want both lines", got)
+	}
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save Host: %v", err)
+	}
+	tt.Frame()
+	if got := hosts.items[0].StartupCommand; got != script {
+		t.Fatalf("stored StartupCommand = %q, want both lines", got)
+	}
+}
+
+func TestVaultGroupEditorSelectsExplicitDirectProxy(t *testing.T) {
+	m := locales.In("en")
+	state, _, groups, _, _, tt := newEntityView(t)
+	groups.items = []domainvault.Group{{ID: "group-1", Path: "prod"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEditGroup("prod") {
+		t.Fatalf("BeginEditGroup rejected a listed Group")
+	}
+	tt.Frame()
+	if !tt.HasText(m.VaultProxyDirect()) {
+		t.Fatalf("Group editor has no Direct (no proxy) choice, texts %q", tt.Texts())
+	}
+	if err := tt.Click(m.VaultProxyDirect()); err != nil {
+		t.Fatalf("click %s: %v", m.VaultProxyDirect(), err)
+	}
+	tt.Frame()
+	if !state.GroupForm().DirectProxy || state.GroupForm().ProxyProfileID != "" {
+		t.Fatalf("group form = direct %t profile %q, want an explicit direct choice",
+			state.GroupForm().DirectProxy, state.GroupForm().ProxyProfileID)
+	}
+	if err := state.SaveGroup(); err != nil {
+		t.Fatalf("SaveGroup: %v", err)
+	}
+	tt.Frame()
+	if !groups.items[0].DirectProxy || groups.items[0].ProxyProfileID != "" {
+		t.Fatalf("stored Group = %+v, want the direct choice persisted", groups.items[0])
 	}
 }
 
