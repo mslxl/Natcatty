@@ -22768,6 +22768,218 @@ func (msgs Messages) SysManagerOverviewCoresLabel() string {
 	return Catalog.Format(msgs.locale, "sysManagerOverviewCoresLabel", nil)
 }
 
+// SysManagerTabKubernetes says "Kubernetes"
+// in the language the app shows.
+func SysManagerTabKubernetes() string { return In(i18n.Locale()).SysManagerTabKubernetes() }
+
+// SysManagerTabKubernetes says "Kubernetes"
+// in the language of msgs.
+func (msgs Messages) SysManagerTabKubernetes() string {
+	return Catalog.Format(msgs.locale, "sysManagerTabKubernetes", nil)
+}
+
+// SysManagerRuntime says "Runtime"
+// in the language the app shows.
+func SysManagerRuntime() string { return In(i18n.Locale()).SysManagerRuntime() }
+
+// SysManagerRuntime says "Runtime"
+// in the language of msgs.
+func (msgs Messages) SysManagerRuntime() string {
+	return Catalog.Format(msgs.locale, "sysManagerRuntime", nil)
+}
+
+// SysManagerRuntimeDocker says "Docker"
+// in the language the app shows.
+func SysManagerRuntimeDocker() string { return In(i18n.Locale()).SysManagerRuntimeDocker() }
+
+// SysManagerRuntimeDocker says "Docker"
+// in the language of msgs.
+func (msgs Messages) SysManagerRuntimeDocker() string {
+	return Catalog.Format(msgs.locale, "sysManagerRuntimeDocker", nil)
+}
+
+// SysManagerRuntimePodman says "Podman"
+// in the language the app shows.
+func SysManagerRuntimePodman() string { return In(i18n.Locale()).SysManagerRuntimePodman() }
+
+// SysManagerRuntimePodman says "Podman"
+// in the language of msgs.
+func (msgs Messages) SysManagerRuntimePodman() string {
+	return Catalog.Format(msgs.locale, "sysManagerRuntimePodman", nil)
+}
+
+// SysManagerRuntimeNerdctl says "nerdctl"
+// in the language the app shows.
+func SysManagerRuntimeNerdctl() string { return In(i18n.Locale()).SysManagerRuntimeNerdctl() }
+
+// SysManagerRuntimeNerdctl says "nerdctl"
+// in the language of msgs.
+func (msgs Messages) SysManagerRuntimeNerdctl() string {
+	return Catalog.Format(msgs.locale, "sysManagerRuntimeNerdctl", nil)
+}
+
+// SysManagerNamespace says "Namespace"
+// in the language the app shows.
+func SysManagerNamespace() string { return In(i18n.Locale()).SysManagerNamespace() }
+
+// SysManagerNamespace says "Namespace"
+// in the language of msgs.
+func (msgs Messages) SysManagerNamespace() string {
+	return Catalog.Format(msgs.locale, "sysManagerNamespace", nil)
+}
+
+// SysManagerSearchPods says "Search pods…"
+// in the language the app shows.
+func SysManagerSearchPods() string { return In(i18n.Locale()).SysManagerSearchPods() }
+
+// SysManagerSearchPods says "Search pods…"
+// in the language of msgs.
+func (msgs Messages) SysManagerSearchPods() string {
+	return Catalog.Format(msgs.locale, "sysManagerSearchPods", nil)
+}
+
+// SysManagerPodsCount says "{count, plural, one {# pod} other {# pods}}"
+// in the language the app shows.
+func SysManagerPodsCount(count int) string { return In(i18n.Locale()).SysManagerPodsCount(count) }
+
+// SysManagerPodsCount says "{count, plural, one {# pod} other {# pods}}"
+// in the language of msgs.
+func (msgs Messages) SysManagerPodsCount(count int) string {
+	return Catalog.Format(msgs.locale, "sysManagerPodsCount", map[string]any{"count": count})
+}
+
+// SysManagerNoPods says "No pods."
+// in the language the app shows.
+func SysManagerNoPods() string { return In(i18n.Locale()).SysManagerNoPods() }
+
+// SysManagerNoPods says "No pods."
+// in the language of msgs.
+func (msgs Messages) SysManagerNoPods() string {
+	return Catalog.Format(msgs.locale, "sysManagerNoPods", nil)
+}
+
+// SysManagerPod says "Pod"
+// in the language the app shows.
+func SysManagerPod() string { return In(i18n.Locale()).SysManagerPod() }
+
+// SysManagerPod says "Pod"
+// in the language of msgs.
+func (msgs Messages) SysManagerPod() string {
+	return Catalog.Format(msgs.locale, "sysManagerPod", nil)
+}
+
+// SysManagerRestarts says "Restarts"
+// in the language the app shows.
+func SysManagerRestarts() string { return In(i18n.Locale()).SysManagerRestarts() }
+
+// SysManagerRestarts says "Restarts"
+// in the language of msgs.
+func (msgs Messages) SysManagerRestarts() string {
+	return Catalog.Format(msgs.locale, "sysManagerRestarts", nil)
+}
+
+// SysManagerAge says "Age"
+// in the language the app shows.
+func SysManagerAge() string { return In(i18n.Locale()).SysManagerAge() }
+
+// SysManagerAge says "Age"
+// in the language of msgs.
+func (msgs Messages) SysManagerAge() string {
+	return Catalog.Format(msgs.locale, "sysManagerAge", nil)
+}
+
+// SysManagerPodHint says "Select a pod to open a terminal in it."
+// in the language the app shows.
+func SysManagerPodHint() string { return In(i18n.Locale()).SysManagerPodHint() }
+
+// SysManagerPodHint says "Select a pod to open a terminal in it."
+// in the language of msgs.
+func (msgs Messages) SysManagerPodHint() string {
+	return Catalog.Format(msgs.locale, "sysManagerPodHint", nil)
+}
+
+// SysManagerSelectedPod says "{namespace}/{name} · {status}"
+// in the language the app shows.
+func SysManagerSelectedPod(namespace string, name string, status string) string {
+	return In(i18n.Locale()).SysManagerSelectedPod(namespace, name, status)
+}
+
+// SysManagerSelectedPod says "{namespace}/{name} · {status}"
+// in the language of msgs.
+func (msgs Messages) SysManagerSelectedPod(namespace string, name string, status string) string {
+	return Catalog.Format(msgs.locale, "sysManagerSelectedPod", map[string]any{"namespace": namespace, "name": name, "status": status})
+}
+
+// SysManagerOpenTerminal says "Open terminal"
+// in the language the app shows.
+func SysManagerOpenTerminal() string { return In(i18n.Locale()).SysManagerOpenTerminal() }
+
+// SysManagerOpenTerminal says "Open terminal"
+// in the language of msgs.
+func (msgs Messages) SysManagerOpenTerminal() string {
+	return Catalog.Format(msgs.locale, "sysManagerOpenTerminal", nil)
+}
+
+// SysManagerReasonMissingContainerRuntime says "No container runtime (Docker, Podman, or nerdctl) is available on this Host."
+// in the language the app shows.
+func SysManagerReasonMissingContainerRuntime() string {
+	return In(i18n.Locale()).SysManagerReasonMissingContainerRuntime()
+}
+
+// SysManagerReasonMissingContainerRuntime says "No container runtime (Docker, Podman, or nerdctl) is available on this Host."
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonMissingContainerRuntime() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonMissingContainerRuntime", nil)
+}
+
+// SysManagerReasonContainerDaemon says "The container engine's daemon is not reachable."
+// in the language the app shows.
+func SysManagerReasonContainerDaemon() string {
+	return In(i18n.Locale()).SysManagerReasonContainerDaemon()
+}
+
+// SysManagerReasonContainerDaemon says "The container engine's daemon is not reachable."
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonContainerDaemon() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonContainerDaemon", nil)
+}
+
+// SysManagerReasonMissingKubectl says "kubectl is not available on this Host."
+// in the language the app shows.
+func SysManagerReasonMissingKubectl() string {
+	return In(i18n.Locale()).SysManagerReasonMissingKubectl()
+}
+
+// SysManagerReasonMissingKubectl says "kubectl is not available on this Host."
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonMissingKubectl() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonMissingKubectl", nil)
+}
+
+// SysManagerReasonKubernetesForbidden says "The cluster refused access to Kubernetes resources."
+// in the language the app shows.
+func SysManagerReasonKubernetesForbidden() string {
+	return In(i18n.Locale()).SysManagerReasonKubernetesForbidden()
+}
+
+// SysManagerReasonKubernetesForbidden says "The cluster refused access to Kubernetes resources."
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonKubernetesForbidden() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonKubernetesForbidden", nil)
+}
+
+// SysManagerReasonClusterUnreachable says "The Kubernetes cluster did not answer."
+// in the language the app shows.
+func SysManagerReasonClusterUnreachable() string {
+	return In(i18n.Locale()).SysManagerReasonClusterUnreachable()
+}
+
+// SysManagerReasonClusterUnreachable says "The Kubernetes cluster did not answer."
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonClusterUnreachable() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonClusterUnreachable", nil)
+}
+
 // VaultHostMoshServerPath says "mosh-server path"
 // in the language the app shows.
 func VaultHostMoshServerPath() string { return In(i18n.Locale()).VaultHostMoshServerPath() }

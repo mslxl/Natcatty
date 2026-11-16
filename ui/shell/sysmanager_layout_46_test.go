@@ -32,13 +32,17 @@ const (
 // changes are read back from the shared preferences store by a second surface
 // that models a restart.
 
-// sysManagerTabsMenuItems is the menu a user sees: one checkable row per known
-// tab in canonical order, a separator, then the two move commands.
+// sysManagerTabsMenuItems is the menu a user sees: one checkable row per
+// supported tab in canonical order, a separator, then the two move commands.
+// A tab the Host cannot support (Kubernetes without kubectl) is not offered.
 func sysManagerTabsMenuItems(m locales.Messages,
 	manager *uisysmanager.State) []string {
 	labels := sysManagerTabLabels(m)
 	items := make([]string, 0, len(manager.AllTabs())+3)
 	for _, tab := range manager.AllTabs() {
+		if !manager.TabAvailable(tab) && tab != manager.Tab() {
+			continue
+		}
 		items = append(items, labels[tab])
 	}
 	items = append(items, "-", m.SysManagerMoveTabLeft(), m.SysManagerMoveTabRight())

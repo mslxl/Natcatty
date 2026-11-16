@@ -10,24 +10,25 @@ func TestSysManagerIntervalsDefaultAndNormalize(t *testing.T) {
 	if defaults.OverviewInterval != 3 || defaults.ProcessesInterval != 3 ||
 		defaults.PortsInterval != 3 || defaults.ServicesInterval != 5 ||
 		defaults.TmuxInterval != 3 || defaults.DockerInterval != 5 ||
-		defaults.GPUInterval != 3 {
+		defaults.KubernetesInterval != 5 || defaults.GPUInterval != 3 {
 		t.Fatalf("defaults = %+v", defaults)
 	}
 
 	broken := SysManager{
-		OverviewInterval:  0,
-		ProcessesInterval: 7,
-		PortsInterval:     -1,
-		ServicesInterval:  10,
-		TmuxInterval:      30,
-		DockerInterval:    2,
-		GPUInterval:       11,
+		OverviewInterval:   0,
+		ProcessesInterval:  7,
+		PortsInterval:      -1,
+		ServicesInterval:   10,
+		TmuxInterval:       30,
+		DockerInterval:     2,
+		KubernetesInterval: 11,
+		GPUInterval:        11,
 	}
 	got := NormalizeSysManager(broken)
 	if got.OverviewInterval != 3 || got.ProcessesInterval != 3 ||
 		got.PortsInterval != 3 || got.ServicesInterval != 10 ||
 		got.TmuxInterval != 30 || got.DockerInterval != 2 ||
-		got.GPUInterval != 3 {
+		got.KubernetesInterval != 5 || got.GPUInterval != 3 {
 		t.Errorf("normalized = %+v", got)
 	}
 }
@@ -67,7 +68,7 @@ func TestSysManagerTabOrderAndVisibilityNormalize(t *testing.T) {
 	got := NormalizeSysManager(broken)
 	want := []SysManagerTab{
 		SysManagerGPU, SysManagerProcesses, SysManagerOverview, SysManagerPorts,
-		SysManagerServices, SysManagerTmux, SysManagerDocker,
+		SysManagerServices, SysManagerTmux, SysManagerDocker, SysManagerKubernetes,
 	}
 	if !reflect.DeepEqual(got.Order(), want) {
 		t.Errorf("normalized order = %v, want %v", got.Order(), want)
@@ -87,7 +88,7 @@ func TestSysManagerTabLayoutReadsAndWritesOnlyTheRequestedTab(t *testing.T) {
 	moved := manager.MoveTab(SysManagerDocker, -1)
 	want := []SysManagerTab{
 		SysManagerOverview, SysManagerProcesses, SysManagerPorts, SysManagerServices,
-		SysManagerDocker, SysManagerTmux, SysManagerGPU,
+		SysManagerDocker, SysManagerTmux, SysManagerKubernetes, SysManagerGPU,
 	}
 	if !reflect.DeepEqual(moved.Order(), want) {
 		t.Fatalf("moved order = %v", moved.Order())
