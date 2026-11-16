@@ -2097,6 +2097,7 @@
   "settingsBindingSnippets": "Открыть фрагменты",
   "settingsBindingBroadcast": "Переключить режим трансляции",
   "settingsBindingToggleSidePanel": "Переключить боковую панель",
+  "settingsBindingToggleHostList": "Переключить список хостов",
   "settingsBindingOpenSettings": "Открыть настройки",
   "settingsBindingToggleOpacity": "Переключить прозрачность окна",
   "settingsBindingSFTPCopy": "Копировать файлы",

@@ -53,6 +53,27 @@ type options struct {
 	// clipboard; tests inject a recorder, because the platform clipboard needs
 	// a running main loop.
 	copyText func(string)
+	// hostListChord resolves the host-list toggle for the active scheme and
+	// the user's overrides, hostListToggle shows or hides the Vault, and
+	// hostListFocus reports whether the list should take the keyboard this
+	// frame. The chord is registered on the list itself, so the search field
+	// above it keeps the key for typing.
+	hostListChord  func() (ui.Modifiers, ui.Key, bool)
+	hostListToggle func() bool
+	hostListFocus  func() bool
+}
+
+// WithHostListToggle installs the host-list toggle on the list. The shortcut
+// is scoped to the list's focus subtree rather than the whole Vault, so a
+// focused text field keeps the chord. focus is asked once after the chord
+// shows the list, which lets the same chord hide it again.
+func WithHostListToggle(chord func() (ui.Modifiers, ui.Key, bool),
+	toggle func() bool, focus func() bool) Option {
+	return func(o *options) {
+		o.hostListChord = chord
+		o.hostListToggle = toggle
+		o.hostListFocus = focus
+	}
 }
 
 // WithClipboard overrides where the Host actions write copied text.
@@ -368,7 +389,22 @@ func list(c *ui.Context, s *vaultstate.State, opts options,
 
 	// Reserve the overlay scroll bar's gutter so a row's last action does not
 	// run under it, as the Settings viewport does.
-	ui.Scroll(c).Grow(1).PaddingEnd(scrollbarGutter(t)).TrackScroll(scroll).Children(func() {
+	listView := ui.Scroll(c).Grow(1).PaddingEnd(scrollbarGutter(t)).TrackScroll(scroll)
+	// The host-list chord is scoped to the list: a list row has focus when
+	// the user is browsing hosts, while the search field and the editors are
+	// text fields outside this subtree and keep the chord for typing.
+	if opts.hostListChord != nil {
+		if mods, key, ok := opts.hostListChord(); ok && opts.hostListToggle != nil {
+			listView.OnShortcut(mods, key, func() { opts.hostListToggle() })
+		}
+	}
+	// After the chord shows the Vault, the list takes the keyboard so the
+	// same chord can hide it. A one-shot request, not a steady frame focus,
+	// leaves the search field and rows their own focus.
+	if opts.hostListFocus != nil && opts.hostListFocus() {
+		listView.Focus()
+	}
+	listView.Children(func() {
 		if strings.TrimSpace(search.Query()) != "" {
 			vaultSearchResults(c, search, m, t)
 			return

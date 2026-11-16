@@ -16936,6 +16936,16 @@ func (msgs Messages) SettingsBindingToggleSidePanel() string {
 	return Catalog.Format(msgs.locale, "settingsBindingToggleSidePanel", nil)
 }
 
+// SettingsBindingToggleHostList says "Toggle Host List"
+// in the language the app shows.
+func SettingsBindingToggleHostList() string { return In(i18n.Locale()).SettingsBindingToggleHostList() }
+
+// SettingsBindingToggleHostList says "Toggle Host List"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingToggleHostList() string {
+	return Catalog.Format(msgs.locale, "settingsBindingToggleHostList", nil)
+}
+
 // SettingsBindingOpenSettings says "Open Settings"
 // in the language the app shows.
 func SettingsBindingOpenSettings() string { return In(i18n.Locale()).SettingsBindingOpenSettings() }

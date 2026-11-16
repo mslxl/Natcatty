@@ -3261,6 +3261,7 @@
   "settingsBindingSnippets": "Open Snippets",
   "settingsBindingBroadcast": "Switch the Broadcast Mode",
   "settingsBindingToggleSidePanel": "Toggle Side Panel",
+  "settingsBindingToggleHostList": "Toggle Host List",
   "settingsBindingOpenSettings": "Open Settings",
   "settingsBindingToggleOpacity": "Toggle Window Transparency",
   "settingsBindingSFTPCopy": "Copy Files",

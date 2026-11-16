@@ -433,6 +433,16 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 			}
 			pane := ui.Column(c).Grow(1).FillHeight().MinWidth(0).
 				Background(t.Background).Clip()
+			// The host-list chord lives on the Pane's focus subtree, not at
+			// window scope, so the compose bar's text field and the Vault's
+			// search field keep it for typing. A scoped handler also wins over
+			// the Backups menu accelerator when the terminal has the keyboard.
+			// Detached windows leave the main Vault alone.
+			if ref.managesPanes {
+				if mods, key, ok := s.HostListChord(); ok {
+					pane.OnShortcut(mods, key, func() { s.ToggleHostList() })
+				}
+			}
 			// Naming the Pane region gives assistive technology and the
 			// layout tests the Pane's exact box. Several Panes in one window
 			// must be distinguishable by their titles.

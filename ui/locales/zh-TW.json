@@ -2097,6 +2097,7 @@
   "settingsBindingSnippets": "開啟程式碼片段",
   "settingsBindingBroadcast": "切換廣播模式",
   "settingsBindingToggleSidePanel": "切換側面板",
+  "settingsBindingToggleHostList": "切換主機列表",
   "settingsBindingOpenSettings": "開啟設定",
   "settingsBindingToggleOpacity": "切換視窗透明度",
   "settingsBindingSFTPCopy": "複製檔案",

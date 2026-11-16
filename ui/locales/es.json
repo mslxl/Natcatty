@@ -2097,6 +2097,7 @@
   "settingsBindingSnippets": "Abrir fragmentos",
   "settingsBindingBroadcast": "Cambiar el modo de difusión",
   "settingsBindingToggleSidePanel": "Alternar el panel lateral",
+  "settingsBindingToggleHostList": "Alternar lista de hosts",
   "settingsBindingOpenSettings": "Abrir los ajustes",
   "settingsBindingToggleOpacity": "Alternar la transparencia de la ventana",
   "settingsBindingSFTPCopy": "Copiar archivos",

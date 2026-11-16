@@ -204,6 +204,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	var associationsState *settings.AssociationsState
 	var shellState *state.State
 	var quakeState *quakeui.State
+	// dispatcher is built after the shell state, whose surfaces resolve the
+	// host-list chord through it. The closure below only runs during frames.
+	var dispatcher *bindingDispatcher
 	var preferencesState *settings.PreferencesState
 	var shortcutsState *settings.ShortcutsState
 	var searchState *settings.SearchState
@@ -1334,6 +1337,12 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// frame that shows the new tab strip or Vault placeholder. Every
 		// window redraws so a lock or unlock propagates.
 		state.WithRedrawRequest(invalidate),
+		// The host-list toggle is registered by the terminal Panes and the
+		// Vault list, not at window scope, so text fields keep the chord. The
+		// dispatcher resolves the live binding and the user's overrides.
+		state.WithHostListChord(func() (ui.Modifiers, ui.Key, bool) {
+			return dispatcher.hostListChord()
+		}),
 		// Tab titles follow the shell-reported OSC 0/2 title according to the
 		// live setting, and a Host rename reaches its already-open Tabs.
 		state.WithDynamicTabTitleMode(func() domainterminal.DynamicTabTitleMode {
@@ -1386,6 +1395,25 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				}
 				return shellState.VaultSection()
 			}),
+			// The host list registers the toggle on its own focus subtree, so
+			// the search field above it keeps the chord for typing. Showing
+			// the Vault through the chord also asks the list for the keyboard,
+			// which makes the same chord hide it again without a click.
+			vaultui.WithHostListToggle(
+				func() (ui.Modifiers, ui.Key, bool) { return dispatcher.hostListChord() },
+				func() bool {
+					if shellState == nil {
+						return false
+					}
+					return shellState.ToggleHostList()
+				},
+				func() bool {
+					if shellState == nil {
+						return false
+					}
+					return shellState.ConsumeHostListFocus()
+				},
+			),
 			vaultui.WithLocalTerminal(func() {
 				if shellState != nil {
 					_ = shellState.NewTab()
@@ -1715,7 +1743,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		invalidate()
 	})
 
-	dispatcher := &bindingDispatcher{
+	dispatcher = &bindingDispatcher{
 		service:   keybindingService,
 		shell:     shellState,
 		search:    overlayState,

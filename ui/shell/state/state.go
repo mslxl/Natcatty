@@ -172,6 +172,13 @@ type State struct {
 	vaultVisible  bool
 	// vaultSection is the Vault page the sidebar chose.
 	vaultSection section.Section
+	// hostListChord resolves the catalog's host-list toggle for the active
+	// scheme and the user's overrides. The shell registers it on the terminal
+	// Pane and the Vault list rather than at window scope, so a focused text
+	// field keeps the chord. hostListFocusPending asks the Vault list to take
+	// the keyboard after the chord shows it, so the same chord can hide it.
+	hostListChord        func() (ui.Modifiers, ui.Key, bool)
+	hostListFocusPending bool
 	// home is the page of the home Tab shown last: the Vault, Logs,
 	// monitoring, or System manager. Choosing the home Tab returns to it.
 	home        HomePage
@@ -662,6 +669,56 @@ func (s *State) ShowHome() {
 	default:
 		s.ShowVault()
 	}
+}
+
+// WithHostListChord supplies the host-list toggle's effective chord. The app
+// resolves it through the dispatcher, so a user rebind reaches the surfaces
+// that register it.
+func WithHostListChord(chord func() (ui.Modifiers, ui.Key, bool)) Option {
+	return func(s *State) { s.hostListChord = chord }
+}
+
+// HostListChord returns the effective host-list chord, if the app wired one.
+func (s *State) HostListChord() (ui.Modifiers, ui.Key, bool) {
+	if s.hostListChord == nil {
+		return 0, 0, false
+	}
+	return s.hostListChord()
+}
+
+// ToggleHostList shows the Vault's Host list, or returns to the active work
+// Tab when the list is already showing. It is the host-list binding's action
+// in the Go port, where the Vault is the host list surface. Hiding needs a
+// work Tab to return to; with none the Vault stays, as the only surface there
+// is. It reports whether the visible surface changed.
+func (s *State) ToggleHostList() bool {
+	if s.vaultVisible {
+		if s.TabCount() == 0 {
+			return false
+		}
+		s.vaultVisible = false
+		s.logsVisible = false
+		s.sftpVisible = false
+		s.hostListFocusPending = false
+		s.RequestRedraw()
+		return true
+	}
+	s.vaultSection = section.Hosts
+	// Set the focus request before showing the Vault: the frame the show
+	// schedules must already know the list takes the keyboard, so the chord
+	// can hide the Vault on its next press.
+	s.hostListFocusPending = true
+	s.ShowVault()
+	return true
+}
+
+// ConsumeHostListFocus reports whether the Vault list should take the
+// keyboard this frame. ToggleHostList asks for it when the chord shows the
+// list, so pressing the chord again hides it without a click.
+func (s *State) ConsumeHostListFocus() bool {
+	pending := s.hostListFocusPending
+	s.hostListFocusPending = false
+	return pending
 }
 
 // ShowVault makes the Vault the visible surface.
