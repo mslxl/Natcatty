@@ -1394,6 +1394,18 @@
     }
   },
   "quitConfirmConfirm": "Quit",
+  "quitTransferTitle": "Quit Natcatty?",
+  "quitTransferMessage": "{count, plural, one {# Transfer is still unfinished. Quit anyway?} other {# Transfers are still unfinished. Quit anyway?}}",
+  "@quitTransferMessage": {
+    "description": "The quit intent prompt naming how many unfinished Transfers the quit would abandon.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitTransferUnknown": "Unfinished Transfers could not be checked. Quit anyway?",
   "settingsTrayTitle": "System Tray",
   "settingsTrayDescription": "Keep Natcatty in the notification area.",
   "settingsShowTrayIcon": "Show tray icon",

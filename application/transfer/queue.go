@@ -348,6 +348,22 @@ func (q *Queue) Tasks() []domainsftp.Task {
 	return out
 }
 
+// CountUnfinished counts the rows a quit would abandon: every Transfer whose
+// status is not terminal. An unknown status is an error rather than a guess,
+// so a quit guard fails closed and asks the user.
+func CountUnfinished(tasks []domainsftp.Task) (int, error) {
+	count := 0
+	for _, task := range tasks {
+		if !task.Status.Valid() {
+			return 0, fmt.Errorf("transfer queue: task %q has unknown status %q", task.ID, task.Status)
+		}
+		if !task.Terminal() {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // Task returns one row.
 func (q *Queue) Task(id domainsftp.TaskID) (domainsftp.Task, bool) {
 	if q == nil {

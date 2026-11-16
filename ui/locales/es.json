@@ -916,6 +916,18 @@
     }
   },
   "quitConfirmConfirm": "Salir",
+  "quitTransferTitle": "¿Salir de Natcatty?",
+  "quitTransferMessage": "{count, plural, one {# transferencia sigue sin terminar. ¿Salir de todos modos?} many {# de transferencias siguen sin terminar. ¿Salir de todos modos?} other {# transferencias siguen sin terminar. ¿Salir de todos modos?}}",
+  "@quitTransferMessage": {
+    "description": "El mensaje de confirmación al salir que indica cuántas transferencias sin terminar se abandonarían.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitTransferUnknown": "No se pudieron comprobar las transferencias sin terminar. ¿Salir de todos modos?",
   "settingsTrayTitle": "Bandeja del sistema",
   "settingsTrayDescription": "Mantén Natcatty en el área de notificación.",
   "settingsShowTrayIcon": "Mostrar icono en la bandeja",

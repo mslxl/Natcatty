@@ -916,6 +916,18 @@
     }
   },
   "quitConfirmConfirm": "退出",
+  "quitTransferTitle": "退出 Natcatty？",
+  "quitTransferMessage": "{count, plural, other {还有 # 个传输未完成。仍要退出吗？}}",
+  "@quitTransferMessage": {
+    "description": "退出确认提示，说明将放弃多少个未完成的传输。",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitTransferUnknown": "无法检查未完成的传输。仍要退出吗？",
   "settingsTrayTitle": "系统托盘",
   "settingsTrayDescription": "将 Natcatty 保留在通知区域。",
   "settingsShowTrayIcon": "显示托盘图标",

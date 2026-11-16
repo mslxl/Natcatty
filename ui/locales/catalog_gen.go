@@ -7098,6 +7098,42 @@ func (msgs Messages) QuitConfirmConfirm() string {
 	return Catalog.Format(msgs.locale, "quitConfirmConfirm", nil)
 }
 
+// QuitTransferTitle says "Quit Natcatty?"
+// in the language the app shows.
+func QuitTransferTitle() string { return In(i18n.Locale()).QuitTransferTitle() }
+
+// QuitTransferTitle says "Quit Natcatty?"
+// in the language of msgs.
+func (msgs Messages) QuitTransferTitle() string {
+	return Catalog.Format(msgs.locale, "quitTransferTitle", nil)
+}
+
+// QuitTransferMessage says "{count, plural, one {# Transfer is still unfinished. Quit anyway?} other {# Transfers are still unfinished. Quit anyw…"
+// in the language the app shows.
+//
+// The quit intent prompt naming how many unfinished Transfers the quit
+// would abandon.
+func QuitTransferMessage(count int) string { return In(i18n.Locale()).QuitTransferMessage(count) }
+
+// QuitTransferMessage says "{count, plural, one {# Transfer is still unfinished. Quit anyway?} other {# Transfers are still unfinished. Quit anyw…"
+// in the language of msgs.
+//
+// The quit intent prompt naming how many unfinished Transfers the quit
+// would abandon.
+func (msgs Messages) QuitTransferMessage(count int) string {
+	return Catalog.Format(msgs.locale, "quitTransferMessage", map[string]any{"count": count})
+}
+
+// QuitTransferUnknown says "Unfinished Transfers could not be checked. Quit anyway?"
+// in the language the app shows.
+func QuitTransferUnknown() string { return In(i18n.Locale()).QuitTransferUnknown() }
+
+// QuitTransferUnknown says "Unfinished Transfers could not be checked. Quit anyway?"
+// in the language of msgs.
+func (msgs Messages) QuitTransferUnknown() string {
+	return Catalog.Format(msgs.locale, "quitTransferUnknown", nil)
+}
+
 // SettingsTrayTitle says "System Tray"
 // in the language the app shows.
 func SettingsTrayTitle() string { return In(i18n.Locale()).SettingsTrayTitle() }

@@ -916,6 +916,18 @@
     }
   },
   "quitConfirmConfirm": "結束",
+  "quitTransferTitle": "結束 Natcatty？",
+  "quitTransferMessage": "{count, plural, other {還有 # 個傳輸未完成。仍要結束嗎？}}",
+  "@quitTransferMessage": {
+    "description": "結束確認提示，說明將放棄多少個未完成的傳輸。",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitTransferUnknown": "無法檢查未完成的傳輸。仍要結束嗎？",
   "settingsTrayTitle": "系統匣",
   "settingsTrayDescription": "將 Natcatty 保留在通知區域。",
   "settingsShowTrayIcon": "顯示匣圖示",

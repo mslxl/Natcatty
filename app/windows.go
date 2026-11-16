@@ -128,6 +128,13 @@ type dialogConfirmer interface {
 	Confirm(closePrompt) bool
 }
 
+// transferQuitGuard reports how many Transfers a quit would abandon. It is
+// consulted live at quit time; an error means the state could not be read, so
+// the quit asks rather than quits silently.
+type transferQuitGuard interface {
+	UnfinishedTransfers() (int, error)
+}
+
 // nativeConfirmer shows a MyGo native warning dialog.
 type nativeConfirmer struct{}
 
@@ -287,6 +294,9 @@ type windowManager struct {
 	// discarded without the user's confirmation. Nil means the build has no
 	// Quake Workspace.
 	quakeSessionCount func() int
+	// transferGuard counts unfinished Transfers at quit time. Nil leaves the
+	// quit guard off, as for hosts without a Transfer queue.
+	transferGuard transferQuitGuard
 	// onFocus runs after any window gains focus, beside the App Lock activity
 	// record. The sync engine uses it for its debounced focus trigger.
 	onFocus  func()
@@ -537,6 +547,12 @@ func (m *windowManager) currentIcon() []byte {
 // returns false, closing Sessions skips the dialog.
 func (m *windowManager) SetSessionConfirmation(enabled func() bool) {
 	m.confirmPolicy = enabled
+}
+
+// SetTransferGuard installs the unfinished-Transfer check the quit runs after
+// the Session confirmation. A nil guard skips the check.
+func (m *windowManager) SetTransferGuard(guard transferQuitGuard) {
+	m.transferGuard = guard
 }
 
 func (m *windowManager) applyIcon(window hostWindow) {
@@ -1277,8 +1293,12 @@ func (m *windowManager) SetQuakeSessionCount(fn func() int) {
 
 // ConfirmQuit handles application quit intent once. It reports whether the
 // quit may proceed and remembers the decision for the window closes that
+<<<<<<< HEAD
 // follow. The count includes the Quake Workspace's Sessions: quitting ends
 // them too, so the user is asked once about every Session that will end.
+// Unfinished Transfers are asked about after the Session confirmation;
+// declining either question leaves the application running and the Transfers
+// untouched.
 func (m *windowManager) ConfirmQuit() bool {
 	if m.quitting {
 		return true
@@ -1287,11 +1307,14 @@ func (m *windowManager) ConfirmQuit() bool {
 	if m.quakeSessionCount != nil {
 		count += m.quakeSessionCount()
 	}
-	if m.confirmSessions(count, true) {
-		m.quitting = true
-		return true
+	if !m.confirmSessions(count, true) {
+		return false
 	}
-	return false
+	if !m.confirmTransfers() {
+		return false
+	}
+	m.quitting = true
+	return true
 }
 
 // Quitting reports whether quit intent is already confirmed.
@@ -1320,6 +1343,35 @@ func (m *windowManager) confirmSessions(count int, quitting bool) bool {
 		prompt.Title = messages.QuitConfirmTitle()
 		prompt.Message = messages.QuitConfirmMessage(count)
 		prompt.Confirm = messages.QuitConfirmConfirm()
+	}
+	return m.confirmer.Confirm(prompt)
+}
+
+// confirmTransfers asks before quitting while a Transfer is unfinished. A
+// state the guard cannot read is asked about too: the quit must never drop a
+// Transfer silently. Declining leaves the queue exactly as it was, and the
+// persisted rows keep their next-start downgrade path.
+func (m *windowManager) confirmTransfers() bool {
+	if m.transferGuard == nil {
+		return true
+	}
+	count, err := m.transferGuard.UnfinishedTransfers()
+	if err == nil && count <= 0 {
+		return true
+	}
+	if m.confirmer == nil {
+		return false
+	}
+	messages := m.messages()
+	prompt := closePrompt{
+		Title:   messages.QuitTransferTitle(),
+		Confirm: messages.QuitConfirmConfirm(),
+		Cancel:  messages.CloseWindowCancel(),
+	}
+	if err != nil {
+		prompt.Message = messages.QuitTransferUnknown()
+	} else {
+		prompt.Message = messages.QuitTransferMessage(count)
 	}
 	return m.confirmer.Confirm(prompt)
 }

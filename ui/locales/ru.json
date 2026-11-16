@@ -916,6 +916,18 @@
     }
   },
   "quitConfirmConfirm": "Выйти",
+  "quitTransferTitle": "Выйти из Natcatty?",
+  "quitTransferMessage": "{count, plural, one {# передача ещё не завершена. Всё равно выйти?} few {# передачи ещё не завершены. Всё равно выйти?} many {# передач ещё не завершено. Всё равно выйти?} other {# передачи ещё не завершены. Всё равно выйти?}}",
+  "@quitTransferMessage": {
+    "description": "Запрос подтверждения выхода с числом незавершённых передач, которые будут прерваны.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitTransferUnknown": "Не удалось проверить незавершённые передачи. Всё равно выйти?",
   "settingsTrayTitle": "Системный трей",
   "settingsTrayDescription": "Держите Natcatty в области уведомлений.",
   "settingsShowTrayIcon": "Показывать значок в трее",

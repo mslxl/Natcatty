@@ -1587,6 +1587,8 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	windows.SetSessionConfirmation(func() bool {
 		return preferenceService.Settings().Security.ConfirmCloseSessions
 	})
+	// A quit with unfinished Transfers asks first, after the Session prompt.
+	windows.SetTransferGuard(transferState)
 
 	// currentTerminalTheme resolves the scheme terminals draw with: the one
 	// matched to the active UI preset while the terminal follows the app,
