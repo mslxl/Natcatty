@@ -83,7 +83,7 @@ func TestAppendPointKeepsTheRetentionWindowAndCap(t *testing.T) {
 	}
 	points = AppendPoint(points, Sample{At: now.Add(time.Second),
 		CPU: math.NaN(), Memory: math.NaN(), Disk: math.NaN(),
-		Rx: math.NaN(), Tx: math.NaN(), GPU: math.NaN()})
+		Rx: math.NaN(), Tx: math.NaN()})
 	if len(points) != 1 {
 		t.Fatalf("an all-unknown sample was appended: %+v", points)
 	}

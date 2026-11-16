@@ -15,10 +15,11 @@ package monitor
 // command from shifting the labels.
 const latencyMarker = "NC_LATENCY_MARK"
 
-// gpuAssignment samples NVIDIA utilization and VRAM best-effort. A Host
-// without nvidia-smi, or without timeout, reports an empty GPU and the UI
-// hides the metric.
-const gpuAssignment = `gpustat=$(gpucsv=$(timeout -s KILL 2 nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,name --format=csv,noheader,nounits 2>/dev/null) && printf '%s\n' "$gpucsv" | awk -F', *' 'NF >= 4 {g++; if($1 ~ /^[0-9]+$/) {n++; u+=$1} if($2 ~ /^[0-9]+$/) {mu+=$2; uc++} if($3 ~ /^[0-9]+$/) {mt+=$3; tc++} if(name=="") name=$4} END{if(n>0) printf "%.0f %s %s %s", u/n, (uc==g ? sprintf("%.0f",mu) : "N/A"), (tc==g ? sprintf("%.0f",mt) : "N/A"), name}' 2>/dev/null || echo "")`
+// gpuAssignment samples one line per NVIDIA device, comma separated, with
+// utilization, VRAM used, VRAM total, and the device name. A Host without
+// nvidia-smi, or without timeout, reports an empty GPU and the UI hides the
+// metric.
+const gpuAssignment = `gpustat=$(gpucsv=$(timeout -s KILL 2 nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,name --format=csv,noheader,nounits 2>/dev/null) && printf '%s\n' "$gpucsv" | awk -F', *' 'NF >= 4 {u=$1; mu=$2; mt=$3; name=$4; for(i=5;i<=NF;i++) name=name ", " $i; if(u !~ /^[0-9]+$/) u="N/A"; if(mu !~ /^[0-9]+$/) mu="N/A"; if(mt !~ /^[0-9]+$/) mt="N/A"; printf "%s %s %s %s,", u, mu, mt, name}' 2>/dev/null | sed 's/,$//' || echo "")`
 
 // macOSStatsCommand mirrors the original: a fast ps-based CPU estimate, memory
 // pages from vm_stat, swap from sysctl, root and /Volumes capacities from

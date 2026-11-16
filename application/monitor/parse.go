@@ -66,10 +66,7 @@ type parsedStats struct {
 	swapFree      float64
 	disks         []domainmonitor.Disk
 	network       []netCounters
-	gpu           float64
-	gpuName       string
-	gpuMemUsed    float64
-	gpuMemTotal   float64
+	gpus          []domainmonitor.GPU
 	uptimeSeconds float64
 	loadAverage   []float64
 }
@@ -83,10 +80,7 @@ type samplerState struct {
 
 func newParsedStats() parsedStats {
 	return parsedStats{
-		directCPU:   math.NaN(),
-		gpu:         math.NaN(),
-		gpuMemUsed:  math.NaN(),
-		gpuMemTotal: math.NaN(),
+		directCPU: math.NaN(),
 	}
 }
 
@@ -266,30 +260,40 @@ func parseDisks(text string) []domainmonitor.Disk {
 
 func parseGPU(parsed *parsedStats, part string) {
 	// The label may arrive as "GPU:..." or after another label without its
-	// own delimiter, as in the original parser.
+	// own delimiter, as in the original parser. Entries are comma separated,
+	// each with utilization, used MB, total MB, and the remaining words as
+	// the device name.
 	index := strings.Index(part, "GPU:")
 	if index < 0 {
 		return
 	}
-	fields := strings.Fields(part[index+4:])
-	if len(fields) == 0 {
-		return
-	}
-	if value, ok := parseFloat(fields[0]); ok {
-		parsed.gpu = clamp(value, 0, 100)
-	}
-	if len(fields) > 1 {
-		if value, ok := parseFloat(fields[1]); ok {
-			parsed.gpuMemUsed = value
+	for _, entry := range strings.Split(part[index+4:], ",") {
+		fields := strings.Fields(entry)
+		if len(fields) == 0 {
+			continue
 		}
-	}
-	if len(fields) > 2 {
-		if value, ok := parseFloat(fields[2]); ok {
-			parsed.gpuMemTotal = value
+		gpu := domainmonitor.GPU{
+			Utilization: math.NaN(),
+			MemUsedMB:   math.NaN(),
+			MemTotalMB:  math.NaN(),
 		}
-	}
-	if len(fields) > 3 {
-		parsed.gpuName = strings.Join(fields[3:], " ")
+		if value, ok := parseFloat(fields[0]); ok {
+			gpu.Utilization = clamp(value, 0, 100)
+		}
+		if len(fields) > 1 {
+			if value, ok := parseFloat(fields[1]); ok {
+				gpu.MemUsedMB = value
+			}
+		}
+		if len(fields) > 2 {
+			if value, ok := parseFloat(fields[2]); ok {
+				gpu.MemTotalMB = value
+			}
+		}
+		if len(fields) > 3 {
+			gpu.Name = strings.Join(fields[3:], " ")
+		}
+		parsed.gpus = append(parsed.gpus, gpu)
 	}
 }
 
@@ -317,10 +321,7 @@ func (p parsedStats) sample(previous samplerState, at time.Time, latency time.Du
 		Rx:            math.NaN(),
 		Tx:            math.NaN(),
 		Latency:       latency.Seconds() * 1000,
-		GPU:           p.gpu,
-		GPUName:       p.gpuName,
-		GPUMemUsedMB:  p.gpuMemUsed,
-		GPUMemTotalMB: p.gpuMemTotal,
+		GPUs:          p.gpus,
 		Hostname:      p.hostname,
 		OSName:        p.osName,
 		KernelRelease: p.kernelRelease,

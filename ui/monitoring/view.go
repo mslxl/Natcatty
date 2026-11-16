@@ -705,17 +705,25 @@ func detail(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 			metricBlock(c, t, m.MonitoringMemory(), unknownUnless(ready, sample.Memory), memorySub(ready, sample),
 				points, func(p domainmonitor.Point) float64 { return p.Memory }, 100, uitheme.SeriesMemory)
 		})
-		if ready && domainmonitor.Valid(sample.GPU) {
-			kit.FormGroup(c, m.MonitoringGpu(), func() {
-				if sample.GPUName != "" {
-					ui.Text(c, sample.GPUName).FontSize(kit.M(c).Font.Footnote).SingleLine()
+		if ready {
+			// One group per device: a single-GPU Host looks exactly as before,
+			// and a multi-GPU Host gets a distinct row for each.
+			for index, gpu := range sample.GPUs {
+				title := m.MonitoringGpu()
+				if len(sample.GPUs) > 1 {
+					title = m.MonitoringGpu() + " " + strconv.Itoa(index+1)
 				}
-				resourceBar(c, t, m.MonitoringGpuUtil(), sample.GPU, "")
-				if sample.GPUMemTotalMB > 0 {
-					resourceBar(c, t, m.MonitoringGpuMemory(), sample.GPUMemUsedMB/sample.GPUMemTotalMB*100,
-						mbText(sample.GPUMemUsedMB)+" / "+mbText(sample.GPUMemTotalMB))
-				}
-			})
+				kit.FormGroup(c, title, func() {
+					if gpu.Name != "" {
+						ui.Text(c, gpu.Name).FontSize(kit.M(c).Font.Footnote).SingleLine()
+					}
+					resourceBar(c, t, m.MonitoringGpuUtil(), gpu.Utilization, "")
+					if gpu.MemTotalMB > 0 {
+						resourceBar(c, t, m.MonitoringGpuMemory(), gpu.MemUsedMB/gpu.MemTotalMB*100,
+							mbText(gpu.MemUsedMB)+" / "+mbText(gpu.MemTotalMB))
+					}
+				})
+			}
 		}
 		kit.FormGroup(c, m.MonitoringNetwork(), func() {
 			infoRow(c, t, m.MonitoringDownload(), rateText(unknownUnless(ready, sample.Rx)))

@@ -96,17 +96,39 @@ type Sample struct {
 	Tx float64
 	// Latency is the metric command's round trip in milliseconds.
 	Latency float64
-	// GPU is NVIDIA utilization in percent, NaN when unavailable.
-	GPU           float64
-	GPUName       string
-	GPUMemUsedMB  float64
-	GPUMemTotalMB float64
+	// GPUs is one entry per NVIDIA device. It is empty when unavailable, and
+	// a single-device Host keeps exactly one entry.
+	GPUs []GPU
 	// Host identity reported by the Host itself.
 	Hostname      string
 	OSName        string
 	KernelRelease string
 	UptimeSeconds float64
 	LoadAverage   []float64
+}
+
+// GPU is one NVIDIA device's reading. An unavailable metric is NaN, as on
+// Sample.
+type GPU struct {
+	// Utilization is the device utilization in percent.
+	Utilization float64
+	// MemUsedMB and MemTotalMB are the device's video memory figures.
+	MemUsedMB  float64
+	MemTotalMB float64
+	// Name is the device name reported by nvidia-smi, possibly empty.
+	Name string
+}
+
+// GPUUtilization returns the busiest device's utilization for the single
+// trend line, or NaN when no device reports one.
+func GPUUtilization(sample Sample) float64 {
+	value := math.NaN()
+	for _, gpu := range sample.GPUs {
+		if Valid(gpu.Utilization) && (!Valid(value) || gpu.Utilization > value) {
+			value = gpu.Utilization
+		}
+	}
+	return value
 }
 
 // Disk is one mounted filesystem's usage.
@@ -256,7 +278,7 @@ func IsStale(state HostState, interval time.Duration, now time.Time) bool {
 // retention and keeping at most MaxPoints.
 func AppendPoint(points []Point, sample Sample) []Point {
 	if !Valid(sample.CPU) && !Valid(sample.Memory) && !Valid(sample.Disk) &&
-		!Valid(sample.Rx) && !Valid(sample.Tx) && !Valid(sample.GPU) {
+		!Valid(sample.Rx) && !Valid(sample.Tx) && !Valid(GPUUtilization(sample)) {
 		return points
 	}
 	cutoff := sample.At.Add(-HistoryRetention)
@@ -267,7 +289,7 @@ func AppendPoint(points []Point, sample Sample) []Point {
 		Disk:    sample.Disk,
 		Rx:      sample.Rx,
 		Tx:      sample.Tx,
-		GPU:     sample.GPU,
+		GPU:     GPUUtilization(sample),
 		Latency: sample.Latency,
 	})
 	first := 0

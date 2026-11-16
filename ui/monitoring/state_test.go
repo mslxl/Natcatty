@@ -153,7 +153,8 @@ func liveSnapshot(now time.Time, hosts ...domainvault.Host) domainmonitor.Snapsh
 	for index, host := range hosts {
 		sample := domainmonitor.Sample{
 			At: now, CPU: 42 + float64(index), Memory: 33, Disk: 51,
-			Rx: 1 << 20, Tx: 4096, Latency: 12, GPU: 35,
+			Rx: 1 << 20, Tx: 4096, Latency: 12,
+			GPUs: []domainmonitor.GPU{{Utilization: 35}},
 		}
 		snapshot.Hosts[string(host.ID)] = domainmonitor.HostState{
 			HostID: string(host.ID),
@@ -484,6 +485,53 @@ func TestViewRendersListChartsEditorAndNarrowWindow(t *testing.T) {
 	tester.Frame()
 	if !tester.HasText(locales.In("zh-CN").MonitoringStatusLive()) {
 		t.Errorf("zh-CN list missing; texts: %v", tester.Texts())
+	}
+}
+
+// TestStateKeepsAndRendersEveryGPU is the two-GPU view contract: the state
+// exposes both devices and the detail panel gives each one its own row.
+func TestStateKeepsAndRendersEveryGPU(t *testing.T) {
+	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	hosts := []domainvault.Host{testHost("h1", "Alpha", "alpha.example", "prod", "web")}
+	prefs := newFakePrefs(domainpreferences.Monitor{
+		Panels: []domainpreferences.MonitorPanel{{
+			ID: "ops", Name: "Operations", HostIDs: []string{"h1"},
+			View: domainpreferences.MonitorViewList, Interval: 5,
+			Range: 30, Sort: domainpreferences.MonitorSortManual,
+		}},
+	})
+	service := newFakeService()
+	service.snapshot = liveSnapshot(now, hosts...)
+	service.snapshot.Running["ops"] = true
+	service.snapshot.StartedAt["ops"] = now.Add(-time.Minute)
+	state := service.snapshot.Hosts["h1"]
+	state.Sample.GPUs = []domainmonitor.GPU{
+		{Utilization: 42, MemUsedMB: 1024, MemTotalMB: 8192, Name: "NVIDIA GeForce RTX 4090"},
+		{Utilization: 18, MemUsedMB: 512, MemTotalMB: 40960, Name: "NVIDIA A100-SXM4-40GB"},
+	}
+	service.snapshot.Hosts["h1"] = state
+
+	monitorState := NewState(service, &fakeHosts{items: hosts}, prefs, nil,
+		WithClock(func() time.Time { return now }))
+	defer monitorState.Close()
+	monitorState.Activate()
+	monitorState.Start()
+	monitorState.Flush()
+
+	if got := monitorState.HostState("h1").Sample.GPUs; len(got) != 2 {
+		t.Fatalf("state kept %d GPUs, want 2: %+v", len(got), got)
+	}
+
+	tester := ui.NewTester(View(monitorState), 1100, 720)
+	tester.SetLocale("en")
+	monitorState.OpenDetail("h1")
+	tester.Frame()
+	for _, want := range []string{
+		"NVIDIA GeForce RTX 4090", "NVIDIA A100-SXM4-40GB", "42.0%", "18.0%",
+	} {
+		if !tester.HasText(want) {
+			t.Errorf("the detail panel does not show %q; texts: %v", want, tester.Texts())
+		}
 	}
 }
 
