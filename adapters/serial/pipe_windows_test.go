@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
+	appsession "github.com/mslxl/natcatty/application/session"
 	domainserial "github.com/mslxl/natcatty/domain/model/serial"
 )
 
@@ -211,5 +212,77 @@ func TestClosingANamedPipeSettlesAPendingRead(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close did not settle the pending Read within 5s")
+	}
+}
+
+// TestPipeServerDisconnectEndsTheSessionAsAnError covers a crashed console:
+// the server closes its pipe handle while the Session is reading. That is a
+// device failure, not the user hanging up, so the Read reports an error other
+// than io.EOF and End() carries exit code 1.
+func TestPipeServerDisconnectEndsTheSessionAsAnError(t *testing.T) {
+	name := uniquePipeName()
+	handle := createPipeServer(t, name)
+	handleClosed := false
+	defer func() {
+		if !handleClosed {
+			_ = windows.CloseHandle(handle)
+		}
+	}()
+	connected := make(chan error, 1)
+	go func() {
+		err := windows.ConnectNamedPipe(handle, nil)
+		if err != nil && !errors.Is(err, windows.ERROR_PIPE_CONNECTED) {
+			connected <- fmt.Errorf("connect: %w", err)
+			return
+		}
+		connected <- nil
+	}()
+
+	conn, err := Factory{}.Open(context.Background(), serialSpec(testPipeConfig(name)))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+	select {
+	case err := <-connected:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the pipe server never accepted the client")
+	}
+
+	if err := windows.CloseHandle(handle); err != nil {
+		t.Fatalf("close server pipe: %v", err)
+	}
+	handleClosed = true
+
+	result := make(chan error, 1)
+	go func() {
+		_, readErr := conn.Read(make([]byte, 8))
+		result <- readErr
+	}()
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("Read after a server disconnect returned no error")
+		}
+		if errors.Is(err, io.EOF) {
+			t.Fatalf("server disconnect = %v, want a device failure rather than a clean EOF", err)
+		}
+		if !errors.Is(err, errPipeDisconnected) {
+			t.Fatalf("server disconnect = %v, want errPipeDisconnected", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the server disconnect never settled the pending Read")
+	}
+
+	reporter, ok := conn.(appsession.EndReporter)
+	if !ok {
+		t.Fatal("the serial transport does not classify its end")
+	}
+	end := reporter.End()
+	if end.Reason != appsession.EndReasonError || !end.HasExitCode || end.ExitCode != 1 {
+		t.Fatalf("End() = %+v, want an error exit 1 after a server disconnect", end)
 	}
 }

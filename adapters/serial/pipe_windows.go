@@ -14,6 +14,15 @@ import (
 // driver failure, not a clean pipe end.
 var errPipeWait = errors.New("serial: named pipe wait failed")
 
+// errPipeDisconnected reports a pipe server that went away without this
+// Session closing the pipe. Windows named pipes have no clean end-of-stream
+// marker: a server closing its handle surfaces as ERROR_BROKEN_PIPE,
+// ERROR_PIPE_NOT_CONNECTED, or ERROR_NO_DATA. Those mean the console process
+// crashed or exited, so they are device failures (the Session ends with exit
+// code 1), matching a COM port that disappears. Only Close marks the user's own
+// hangup, and that path returns io.EOF with the transport's closed flag set.
+var errPipeDisconnected = errors.New("serial: named pipe disconnected")
+
 // openNamedPipe opens a local Windows named pipe as a byte stream. A pipe has
 // no DCB or COMMTIMEOUTS; the overlapped wait below supplies the same bounded
 // read cadence and close behavior as a COM port. Open failures stay raw so the
@@ -143,15 +152,21 @@ func (p *pipePort) cancel(overlapped *windows.Overlapped) {
 	_ = windows.GetOverlappedResult(p.handle, overlapped, &done, true)
 }
 
-// classify maps a closed port, an aborted operation, or a disconnected server
-// to a clean EOF, as the COM port read loop does after Close.
+// classify maps a close this Session initiated to a clean EOF. A server
+// disconnect is a device failure: a pipe has no orderly EOF, so the broken-pipe
+// family means the console process is gone.
 func (p *pipePort) classify(n int, err error) (int, error) {
-	if err != nil && (p.isClosed() ||
-		errors.Is(err, windows.ERROR_OPERATION_ABORTED) ||
-		errors.Is(err, windows.ERROR_BROKEN_PIPE) ||
-		errors.Is(err, windows.ERROR_PIPE_NOT_CONNECTED) ||
-		errors.Is(err, windows.ERROR_NO_DATA)) {
+	if err == nil {
+		return n, nil
+	}
+	if p.isClosed() {
 		return n, io.EOF
+	}
+	if errors.Is(err, windows.ERROR_BROKEN_PIPE) ||
+		errors.Is(err, windows.ERROR_PIPE_NOT_CONNECTED) ||
+		errors.Is(err, windows.ERROR_NO_DATA) ||
+		errors.Is(err, windows.ERROR_OPERATION_ABORTED) {
+		return n, errPipeDisconnected
 	}
 	return n, err
 }
