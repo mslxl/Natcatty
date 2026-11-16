@@ -42,10 +42,13 @@ const (
 	EntityNetworkProfile = "network_profile"
 	EntityNetworkPeer    = "network_peer"
 
-	FieldPassword            = "password"
-	FieldPassphrase          = "passphrase"
-	FieldPrivateKey          = "private_key"
-	FieldProxyPassword       = "proxy_password"
+	FieldPassword      = "password"
+	FieldPassphrase    = "passphrase"
+	FieldPrivateKey    = "private_key"
+	FieldProxyPassword = "proxy_password"
+	// FieldTOTP stores a Host's canonical otpauth://totp URI. Like every other
+	// value here it is credential material: the URI embeds the shared secret.
+	FieldTOTP                = "totp"
 	FieldETSessionID         = "session_id"
 	FieldETSessionKey        = "session_passkey"
 	FieldNetworkAuthKey      = "network_auth_key"
@@ -196,6 +199,9 @@ func (s *Service) SetSecret(ctx context.Context, id model.HostID, field, value s
 			host.Proxy.HasPassword = value != ""
 			changed = true
 		}
+	case FieldTOTP:
+		host.HasTOTP = value != ""
+		changed = true
 	}
 	if changed {
 		host.UpdatedAt = s.now()
@@ -269,7 +275,7 @@ func (s *Service) UseSessionSecrets(ctx context.Context) error {
 
 // hostField accepts the Host fields the Vault encrypts.
 func hostField(field string) bool {
-	return field == FieldPassword || field == FieldPassphrase || field == FieldProxyPassword
+	return field == FieldPassword || field == FieldPassphrase || field == FieldProxyPassword || field == FieldTOTP
 }
 
 func invalidField(field string) error {

@@ -1384,6 +1384,33 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 			}).Description(passwordHint)
 
 			if domainvault.Protocol(form.Protocol).UsesSSHAuth() {
+				totpHint := m.VaultHostTOTPHint()
+				if form.HasTOTP && !form.ClearTOTP {
+					totpHint = m.VaultHostTOTPKeep()
+				}
+				kit.FormRow(c, m.VaultHostTOTP(), func() {
+					// The secret is plaintext only while the editor is open. It is
+					// never loaded back from storage and never rendered again.
+					ui.TextInput(c, &form.TOTP).
+						Password().
+						Placeholder(m.VaultHostTOTPPlaceholder())
+				}).Description(totpHint)
+				ui.Row(c).Gap(8).Children(func() {
+					if ui.Button(c, m.VaultHostTOTPImportQR()).Clicked() {
+						s.ChooseTOTPQRCode()
+						c.Invalidate()
+					}
+					if form.HasTOTP {
+						if ui.Checkbox(c, &form.ClearTOTP, m.VaultHostTOTPRemove()).Changed() {
+							if form.ClearTOTP {
+								// A removal decision must not be undone by a stale
+								// value left in the secret field.
+								form.TOTP = ""
+							}
+							c.Invalidate()
+						}
+					}
+				})
 				ui.Text(c, m.VaultHostAuthSection()).Bold()
 				kit.FormRow(c, m.VaultHostIdentity(), func() {
 					ui.RadioGroup(c, func() {
@@ -1847,6 +1874,10 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultProblemSudoUnsupported()
 	case vaultstate.ProblemETPort:
 		return m.VaultProblemETPort()
+	case vaultstate.ProblemTOTP:
+		return m.VaultProblemTOTP()
+	case vaultstate.ProblemTOTPImage:
+		return m.VaultProblemTOTPImage()
 	case vaultstate.ProblemSnippet:
 		return m.VaultSnippetProblem()
 	case vaultstate.ProblemSnippetPackage:

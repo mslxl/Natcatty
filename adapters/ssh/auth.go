@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	xssh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -43,6 +44,9 @@ type authMachine struct {
 	kiSuccess    int
 	passwordOK   bool
 	kiAutofilled bool
+	// totpAutofilled bounds the Host's authenticator to one answer per
+	// connection. A rejected code falls back to the user instead of resending.
+	totpAutofilled bool
 
 	// skFailure is the typed reason a security key could not be used (the agent
 	// is absent, or the device missed its deadline). It is returned only when no
@@ -428,12 +432,16 @@ func (m *authMachine) recordActionableSecurityKeyFailure(err error) {
 // challenge runs one keyboard-interactive round. A single password-looking
 // non-echo prompt is auto-filled with the saved password, unless a password or
 // keyboard-interactive factor already succeeded, or the prompt looks like an
-// OTP/MFA request.
+// OTP/MFA request. A single authenticator prompt is answered with the Host's
+// current TOTP code, once per connection.
 func (m *authMachine) challenge(name, instruction string, questions []string, echos []bool) ([]string, error) {
 	if m.prompter == nil {
 		return nil, authFailure(appconnection.ErrPromptUnavailable)
 	}
 	if answers, ok := m.autoFill(questions, echos); ok {
+		return answers, nil
+	}
+	if answers, ok := m.autoFillTOTP(name, instruction, questions, echos); ok {
 		return answers, nil
 	}
 
@@ -490,6 +498,36 @@ func (m *authMachine) autoFill(questions []string, echos []bool) ([]string, bool
 	}
 	m.kiAutofilled = true
 	return []string{m.plan.Password}, true
+}
+
+// autoFillTOTP answers one authenticator question with the Host's current
+// code. It answers at most once per connection and leaves every other round,
+// including a prompt that mentions another delivery channel, to the user. The
+// secret and the code are never logged.
+func (m *authMachine) autoFillTOTP(name, instruction string, questions []string, echos []bool) ([]string, bool) {
+	if m.totpAutofilled || strings.TrimSpace(m.plan.TOTPSecret) == "" {
+		return nil, false
+	}
+	prompts := make([]appconnection.KeyboardInteractivePrompt, len(questions))
+	for i, question := range questions {
+		echo := true
+		if i < len(echos) {
+			echo = echos[i]
+		}
+		prompts[i] = appconnection.KeyboardInteractivePrompt{Text: question, Echo: echo}
+	}
+	code, ok := appconnection.TOTPAutoAnswer(m.plan.TOTPSecret, appconnection.KeyboardInteractiveRequest{
+		Hostname:    m.hostname,
+		Username:    m.plan.Username,
+		Name:        name,
+		Instruction: instruction,
+		Prompts:     prompts,
+	}, time.Now())
+	if !ok {
+		return nil, false
+	}
+	m.totpAutofilled = true
+	return []string{code}, true
 }
 
 func (m *authMachine) classifyPromptError(err error) error {

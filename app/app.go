@@ -903,6 +903,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		vaultstate.WithImports(vaultService),
 		vaultstate.WithImportPicker(importFilePicker{locale: func() string { return mygo.App.Locale() }}),
 		vaultstate.WithWireGuardConfPicker(wireguardConfPicker{locale: func() string { return mygo.App.Locale() }}),
+		vaultstate.WithTOTPQRPicker(totpQRPicker{locale: func() string { return mygo.App.Locale() }}),
 		vaultstate.WithExports(vaultService),
 		vaultstate.WithExportWriter(noteFileWriter{}),
 		vaultstate.WithBackups(backupService),

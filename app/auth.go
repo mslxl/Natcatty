@@ -63,6 +63,7 @@ func (a vaultAuthSource) AuthPlan(ctx context.Context, req appconnection.Request
 		Password:    resolved.Password,
 		UseAgent:    resolved.Selection.UseSSHAgent,
 		RequiresMFA: resolved.Selection.RequiresMFA,
+		TOTPSecret:  resolved.TOTP,
 	}
 	if spec.Mode == appconnection.AuthModeAuto && a.defaults != nil {
 		spec.DefaultKeys = a.defaults.DefaultKeys()
