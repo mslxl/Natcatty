@@ -169,14 +169,43 @@ func TestCheckSupportReturnsATypedUnsupportedError(t *testing.T) {
 }
 
 func TestValidPortPathAcceptsTheOriginalForms(t *testing.T) {
-	for _, path := range []string{"/dev/ttyS0", "/dev/pts/4", "COM1", "com12", `\\.\COM7`} {
+	for _, path := range []string{"/dev/ttyS0", "/dev/pts/4", "COM1", "com12", `\\.\COM7`,
+		`\\.\pipe\vm-console`, `\\.\pipe\console with spaces`, `\\?\pipe\vm-console`} {
 		if !ValidPortPath(path) {
 			t.Fatalf("ValidPortPath(%q) = false", path)
 		}
 	}
-	for _, path := range []string{"", "COM", "COMx", "/tmp/port", "ttyS0"} {
+	for _, path := range []string{"", "COM", "COMx", "/tmp/port", "ttyS0",
+		`\\server\pipe\vm-console`, `\\.\pipe\`, `\\.\pipe`} {
 		if ValidPortPath(path) {
 			t.Fatalf("ValidPortPath(%q) = true", path)
+		}
+	}
+}
+
+// TestNamedPipeEndpointsAreWindowsOnly keeps a pipe path a valid serial form
+// for the saved-port list while rejecting it on a platform that cannot open
+// one, and accepts framing the pipe ignores.
+func TestNamedPipeEndpointsAreWindowsOnly(t *testing.T) {
+	windowsCaps := CapabilitiesFor("windows")
+	linuxCaps := CapabilitiesFor("linux")
+	for _, path := range []string{`\\.\pipe\vm-console`, `\\.\pipe\console with spaces`, `\\?\pipe\vm-console`} {
+		if !IsNamedPipePath(path) {
+			t.Fatalf("IsNamedPipePath(%q) = false", path)
+		}
+		cfg := (Config{Path: path, BaudRate: 500000, DataBits: 8,
+			StopBits: StopBitsOneAndHalf, Parity: ParityMark, FlowControl: FlowRTSCTS}).Normalized()
+		if err := CheckSupport(cfg, windowsCaps); err != nil {
+			t.Fatalf("CheckSupport(%q, windows) = %v, want supported", path, err)
+		}
+		if err := CheckSupport(cfg, linuxCaps); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("CheckSupport(%q, linux) = %v, want ErrUnsupported", path, err)
+		}
+	}
+
+	for _, path := range []string{`\\server\pipe\vm-console`, `\\.\pipe\`, "pipe\\vm-console"} {
+		if IsNamedPipePath(path) {
+			t.Fatalf("IsNamedPipePath(%q) = true, want a local pipe only", path)
 		}
 	}
 }

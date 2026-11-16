@@ -12,7 +12,6 @@ package serial
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -57,7 +56,15 @@ func (f Factory) Open(ctx context.Context, spec appsession.StartSpec) (appsessio
 
 	port, err := f.openPort(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("serial: open %s: %w", cfg.Path, err)
+		// A canceled open is the caller's decision, not a device failure.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		var openErr *domainserial.OpenError
+		if errors.As(err, &openErr) {
+			return nil, err
+		}
+		return nil, &domainserial.OpenError{Path: cfg.Path, Err: err}
 	}
 	if err := ctx.Err(); err != nil {
 		_ = port.Close()

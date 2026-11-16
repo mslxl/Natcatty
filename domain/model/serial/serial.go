@@ -214,7 +214,7 @@ func (c Config) Validate() error {
 	}
 	if !ValidPortPath(c.Path) {
 		return &ValidationError{Field: "port", Value: c.Path,
-			Reason: "must be a /dev/ path or a COM port"}
+			Reason: "must be a /dev/ path, a COM port, or a Windows named pipe"}
 	}
 	if c.BaudRate < MinBaudRate || c.BaudRate > MaxBaudRate {
 		return &ValidationError{Field: "baudRate", Value: strconv.Itoa(c.BaudRate),
@@ -242,17 +242,28 @@ func (c Config) Validate() error {
 var (
 	comPortPattern       = regexp.MustCompile(`^COM[0-9]+$`)
 	windowsDevicePattern = regexp.MustCompile(`^\\\\\.\\COM[0-9]+$`)
+	// A local Windows named pipe: \\.\pipe\name or \\?\pipe\name. Remote UNC
+	// paths are not serial consoles and stay invalid.
+	namedPipePattern = regexp.MustCompile(`(?i)^\\\\[.?]\\pipe\\[^\r\n\x00]+$`)
 )
 
+// IsNamedPipePath reports whether path names a local Windows named pipe. The
+// original used a VM's pipe as a console, so the name may contain spaces.
+func IsNamedPipePath(path string) bool {
+	return namedPipePattern.MatchString(strings.TrimSpace(path))
+}
+
 // ValidPortPath reports whether path is a form the original accepted: a Unix
-// device below /dev/, a COM port, or a Windows raw-device path. Validation is
-// deliberately platform-independent; whether the device exists is decided by
-// the open call, and a pseudo-terminal path is a valid /dev/ path.
+// device below /dev/, a COM port, a Windows raw-device path, or a Windows
+// named pipe. Validation is deliberately platform-independent; whether the
+// device exists is decided by the open call, and whether the platform can open
+// a pipe is decided by CheckSupport.
 func ValidPortPath(path string) bool {
 	path = strings.TrimSpace(path)
 	return strings.HasPrefix(path, "/dev/") ||
 		comPortPattern.MatchString(strings.ToUpper(path)) ||
-		windowsDevicePattern.MatchString(strings.ToUpper(path))
+		windowsDevicePattern.MatchString(strings.ToUpper(path)) ||
+		IsNamedPipePath(path)
 }
 
 // PortName returns the short display name of a port, as the original derived
@@ -280,6 +291,28 @@ type PortInfo struct {
 	PNPID        string `json:"pnpId,omitempty"`
 	Type         string `json:"type,omitempty"`
 }
+
+// ErrOpen reports a well-formed port the platform could not open. It is
+// distinct from a configuration mistake and from an unsupported setting: the
+// input is valid, but the device or its server could not be reached.
+var ErrOpen = errors.New("serial: cannot open port")
+
+// OpenError carries the path and the operating-system failure. The original
+// surfaced the driver message while keeping the failure class separate.
+type OpenError struct {
+	Path string
+	Err  error
+}
+
+func (e *OpenError) Error() string {
+	return fmt.Sprintf("serial: open %q: %v", e.Path, e.Err)
+}
+
+// Unwrap exposes the platform error for errors.Is and errors.As.
+func (e *OpenError) Unwrap() error { return e.Err }
+
+// Is makes errors.Is(err, ErrOpen) true for every open failure.
+func (e *OpenError) Is(target error) bool { return target == ErrOpen }
 
 // ErrUnsupported reports a setting or platform the serial transport cannot
 // serve. It is distinct from ErrInvalidConfig: the input is well formed, but
