@@ -369,6 +369,11 @@ func (s *State) SubmitDialog() {
 		})
 	case DialogArchive:
 		tab := dialog.Tab
+		if tab == nil || tab.FS == nil {
+			s.dialog = nil
+			s.notice = "error:" + string(apptransfer.KindUnsupported)
+			break
+		}
 		request := apptransfer.ArchiveRequest{
 			Directory: tab.Path,
 			Name:      dialog.Draft,
@@ -381,7 +386,7 @@ func (s *State) SubmitDialog() {
 			return
 		}
 		creator, ok := tab.FS.(apptransfer.ArchiveCreator)
-		if !ok {
+		if !ok || !apptransfer.CanCreateArchive(tab.FS) {
 			s.dialog = nil
 			s.notice = "error:" + string(apptransfer.KindUnsupported)
 			break

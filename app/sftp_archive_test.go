@@ -95,6 +95,34 @@ func remotePOSIXPath(root string) string {
 	return "/" + slash
 }
 
+// TestCreateArchiveIsUnavailableOnASingleChannelHost covers the wiring the
+// action must respect: a single-channel Host opens SFTP without an executor, so
+// the pane reports no archive capability even though its type implements
+// ArchiveCreator. Without the capability check the menu offered an operation
+// that could only fail as unsupported.
+func TestCreateArchiveIsUnavailableOnASingleChannelHost(t *testing.T) {
+	fixture := newSFTPFixture(t, sftpFixtureOptions{serverVersion: "SSH-2.0-TERM-SSHD"})
+	terminal := fixture.acquireTerminal(t)
+	defer terminal.Release()
+
+	files, err := fixture.openRemote()
+	if err != nil {
+		t.Fatalf("OpenRemote: %v", err)
+	}
+	defer files.Close()
+
+	capable, ok := files.(apptransfer.ArchiveCapability)
+	if !ok {
+		t.Fatal("the SFTP filesystem does not report an archive capability")
+	}
+	if capable.CanArchive() {
+		t.Fatal("a single-channel pane advertises Create Archive without an executor")
+	}
+	if apptransfer.CanCreateArchive(files) {
+		t.Fatal("the shared gate offers Create Archive on a single-channel pane")
+	}
+}
+
 // TestCreateArchiveWritesBesideTheFolderAndListsIt is the acceptance path: a
 // folder becomes name.tar.gz beside itself, on the remote exec path, and a
 // fresh listing shows it.
@@ -109,6 +137,9 @@ func TestCreateArchiveWritesBesideTheFolderAndListsIt(t *testing.T) {
 	creator, ok := files.(apptransfer.ArchiveCreator)
 	if !ok {
 		t.Fatal("the SFTP filesystem does not expose archive creation")
+	}
+	if capable, ok := files.(apptransfer.ArchiveCapability); !ok || !capable.CanArchive() {
+		t.Fatal("a normal SFTP pane does not advertise archive creation")
 	}
 	root, err := files.Root(fixture.ctx)
 	if err != nil {

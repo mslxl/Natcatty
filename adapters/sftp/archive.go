@@ -12,13 +12,42 @@ import (
 )
 
 // Remote runs the archive command over an exec channel on the same Connection
-// as its SFTP subsystem. A single-channel Host or a fake without an executor
-// leaves the capability off.
-var _ apptransfer.ArchiveCreator = (*Remote)(nil)
+// as its SFTP subsystem. It implements ArchiveCreator in every mode so a call
+// can classify a missing transport, but CanArchive reports false when no
+// executor is attached, which is how a single-channel Host stays unavailable.
+var (
+	_ apptransfer.ArchiveCreator    = (*Remote)(nil)
+	_ apptransfer.ArchiveCapability = (*Remote)(nil)
+)
 
 // SCP already owns an exec capability for every operation, so archive
 // creation needs no extra transport.
-var _ apptransfer.ArchiveCreator = (*SCP)(nil)
+var (
+	_ apptransfer.ArchiveCreator    = (*SCP)(nil)
+	_ apptransfer.ArchiveCapability = (*SCP)(nil)
+)
+
+// CanArchive reports whether this pane has the exec channel the archive
+// command needs. A single-channel Host leaves the executor off.
+func (r *Remote) CanArchive() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return !r.closed && r.exec != nil
+}
+
+// CanArchive reports whether SCP mode can run the archive command. NewSCP
+// refuses a nil executor, so every live SCP pane has one.
+func (s *SCP) CanArchive() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.closed && s.exec != nil
+}
 
 // CreateArchive builds the archive beside its sources on the remote host.
 func (r *Remote) CreateArchive(ctx context.Context, request apptransfer.ArchiveRequest) error {

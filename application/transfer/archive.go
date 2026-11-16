@@ -98,10 +98,33 @@ type ArchivePlan struct {
 }
 
 // ArchiveCreator is an optional FileSystem capability. A filesystem that can
-// run commands on the host implements it; the local pane and a single-channel
-// Host leave it out, and the Create Archive action is then unavailable.
+// run commands on the host implements it. The local pane does not, and the
+// Create Archive action is then unavailable.
 type ArchiveCreator interface {
 	CreateArchive(ctx context.Context, request ArchiveRequest) error
+}
+
+// ArchiveCapability lets a filesystem report whether its transport can run an
+// archive command right now. It exists because the type assertion alone is not
+// enough: a remote pane may implement ArchiveCreator in every mode while its
+// executor is absent (a single-channel Host), where CreateArchive can only
+// return KindUnsupported. A filesystem that does not implement this interface
+// keeps the historical meaning of implementing ArchiveCreator.
+type ArchiveCapability interface {
+	CanArchive() bool
+}
+
+// CanCreateArchive reports whether fs can run a Create Archive operation. The
+// context menu and the prompt's submit path both gate on it, so a pane whose
+// transport cannot archive never offers an operation that must fail.
+func CanCreateArchive(fs FileSystem) bool {
+	if _, ok := fs.(ArchiveCreator); !ok {
+		return false
+	}
+	if capable, ok := fs.(ArchiveCapability); ok {
+		return capable.CanArchive()
+	}
+	return true
 }
 
 // PlanArchive validates a request and turns its sources into relative paths.

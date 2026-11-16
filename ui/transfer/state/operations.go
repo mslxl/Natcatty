@@ -839,13 +839,13 @@ func CanDuplicate(tab *Tab) bool {
 
 // CanArchive reports whether the pane can run an archive command. A local or
 // single-channel filesystem has no exec capability, and a read-only pane
-// cannot write the result.
+// cannot write the result. The filesystem decides the capability; a bare type
+// assertion would advertise the action on a pane whose executor is absent.
 func CanArchive(tab *Tab) bool {
 	if tab == nil || tab.FS == nil || apptransfer.ReadOnly(tab.FS) {
 		return false
 	}
-	_, ok := tab.FS.(apptransfer.ArchiveCreator)
-	return ok
+	return apptransfer.CanCreateArchive(tab.FS)
 }
 
 // DuplicateSelection copies the focused pane's selection inside the folder
