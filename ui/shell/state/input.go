@@ -468,6 +468,7 @@ func (s *State) OpenCompose() {
 func (s *State) CloseCompose() {
 	s.inputMu.Lock()
 	s.cancelComposeSendLocked()
+	s.closeComposeDirectoryLocked()
 	s.composeOpen = false
 	s.composeDraft = ""
 	s.composeBroadcast = false

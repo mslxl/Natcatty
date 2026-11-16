@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/domain/model"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
@@ -65,6 +66,54 @@ func assertInputInside(t *testing.T, tester *ui.Tester, width, height int, text 
 // shell renders the active broadcast banner, target rows with per-Session
 // status, and the compose preview inside 1100x720 and 720x480 without row
 // overlap.
+// fakeDirectorySource opens the picker at home for a Session that has not
+// reported OSC 7 yet.
+type fakeDirectorySource struct{ cwd string }
+
+func (f fakeDirectorySource) Session(model.SessionID) (string, bool) { return f.cwd, true }
+
+func (f fakeDirectorySource) List(_ context.Context, _ *appsession.Session, path string) (state.ComposeDirectoryListing, error) {
+	if path == "" {
+		return state.ComposeDirectoryListing{Path: "/home/me"}, nil
+	}
+	return state.ComposeDirectoryListing{Path: path}, nil
+}
+
+// TestComposeDirectoryPickerShowsTheHomeFallback proves the unknown-CWD
+// explanation is visible in the rendered compose bar, not only in state.
+func TestComposeDirectoryPickerShowsTheHomeFallback(t *testing.T) {
+	graph := newTestGraph(t, state.WithComposeDirectory(state.ComposeDirectorySource{
+		List:    fakeDirectorySource{}.List,
+		Session: fakeDirectorySource{}.Session,
+	}))
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	graph.state.Flush()
+	graph.state.OpenCompose()
+	if !graph.state.OpenComposeDirectoryFor(graph.sessions[0].ID()) {
+		t.Fatal("the picker did not open")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for graph.state.ComposeDirectoryPath() != "/home/me" {
+		if !time.Now().Before(deadline) {
+			t.Fatalf("picker path = %q", graph.state.ComposeDirectoryPath())
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	tester := ui.NewTester(View(graph.state), 1100, 900)
+	tester.SetLocale("en")
+	tester.Frame()
+	m := locales.In("en")
+	if !tester.HasText(m.ComposeDirectoryTitle()) {
+		t.Fatalf("the picker is not rendered: %v", tester.Texts())
+	}
+	if !tester.HasText(m.ComposeDirectoryUnknownCWD()) {
+		t.Fatalf("the home fallback is not explained: %v", tester.Texts())
+	}
+}
+
 func TestBroadcastAndComposeFitAtDefaultAndMinimumSizes(t *testing.T) {
 	m := locales.In("en")
 	for _, size := range [][2]int{{1084, 661}, {704, 421}} {

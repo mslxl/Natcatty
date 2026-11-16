@@ -1707,6 +1707,17 @@
   "composeSending": "Sending…",
   "composeSent": "Sent to {delivered, plural, one {# Session} other {# Sessions}}",
   "composeFailed": "Compose was not delivered",
+  "composeDirectoryButton": "Directory",
+  "composeDirectoryTitle": "Insert a path",
+  "composeDirectoryPathLabel": "Path",
+  "composeDirectoryHint": "Insert a path into the draft without running it.",
+  "composeDirectoryUnsupported": "This shell cannot list directories. Type a path and insert it instead.",
+  "composeDirectoryInsert": "Insert",
+  "composeDirectoryUp": "Up",
+  "composeDirectoryUnknownCWD": "This Session has not reported its working directory, so the picker starts at home.",
+  "composeDirectoryLoading": "Loading…",
+  "composeDirectoryFailed": "Could not list this directory.",
+  "composeDirectoryEmpty": "This directory is empty.",
   "@broadcastButtonActive": {
     "description": "The broadcast button while broadcasting is active.",
     "placeholders": {

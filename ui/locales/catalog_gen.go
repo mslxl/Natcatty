@@ -9376,6 +9376,116 @@ func (msgs Messages) ComposeFailed() string {
 	return Catalog.Format(msgs.locale, "composeFailed", nil)
 }
 
+// ComposeDirectoryButton says "Directory"
+// in the language the app shows.
+func ComposeDirectoryButton() string { return In(i18n.Locale()).ComposeDirectoryButton() }
+
+// ComposeDirectoryButton says "Directory"
+// in the language of msgs.
+func (msgs Messages) ComposeDirectoryButton() string {
+	return Catalog.Format(msgs.locale, "composeDirectoryButton", nil)
+}
+
+// ComposeDirectoryTitle says "Insert a path"
+// in the language the app shows.
+func ComposeDirectoryTitle() string { return In(i18n.Locale()).ComposeDirectoryTitle() }
+
+// ComposeDirectoryTitle says "Insert a path"
+// in the language of msgs.
+func (msgs Messages) ComposeDirectoryTitle() string {
+	return Catalog.Format(msgs.locale, "composeDirectoryTitle", nil)
+}
+
+// ComposeDirectoryPathLabel says "Path"
+// in the language the app shows.
+func ComposeDirectoryPathLabel() string { return In(i18n.Locale()).ComposeDirectoryPathLabel() }
+
+// ComposeDirectoryPathLabel says "Path"
+// in the language of msgs.
+func (msgs Messages) ComposeDirectoryPathLabel() string {
+	return Catalog.Format(msgs.locale, "composeDirectoryPathLabel", nil)
+}
+
+// ComposeDirectoryHint says "Insert a path into the draft without running it."
+// in the language the app shows.
+func ComposeDirectoryHint() string { return In(i18n.Locale()).ComposeDirectoryHint() }
+
+// ComposeDirectoryHint says "Insert a path into the draft without running it."
+// in the language of msgs.
+func (msgs Messages) ComposeDirectoryHint() string {
+	return Catalog.Format(msgs.locale, "composeDirectoryHint", nil)
+}
+
+// ComposeDirectoryUnsupported says "This shell cannot list directories. Type a path and insert it instead."
+// in the language the app shows.
+func ComposeDirectoryUnsupported() string { return In(i18n.Locale()).ComposeDirectoryUnsupported() }
+
+// ComposeDirectoryUnsupported says "This shell cannot list directories. Type a path and insert it instead."
+// in the language of msgs.
+func (msgs Messages) ComposeDirectoryUnsupported() string {
+	return Catalog.Format(msgs.locale, "composeDirectoryUnsupported", nil)
+}
+
+// ComposeDirectoryInsert says "Insert"
+// in the language the app shows.
+func ComposeDirectoryInsert() string { return In(i18n.Locale()).ComposeDirectoryInsert() }
+
+// ComposeDirectoryInsert says "Insert"
+// in the language of msgs.
+func (msgs Messages) ComposeDirectoryInsert() string {
+	return Catalog.Format(msgs.locale, "composeDirectoryInsert", nil)
+}
+
+// ComposeDirectoryUp says "Up"
+// in the language the app shows.
+func ComposeDirectoryUp() string { return In(i18n.Locale()).ComposeDirectoryUp() }
+
+// ComposeDirectoryUp says "Up"
+// in the language of msgs.
+func (msgs Messages) ComposeDirectoryUp() string {
+	return Catalog.Format(msgs.locale, "composeDirectoryUp", nil)
+}
+
+// ComposeDirectoryUnknownCWD says "This Session has not reported its working directory, so the picker starts at home."
+// in the language the app shows.
+func ComposeDirectoryUnknownCWD() string { return In(i18n.Locale()).ComposeDirectoryUnknownCWD() }
+
+// ComposeDirectoryUnknownCWD says "This Session has not reported its working directory, so the picker starts at home."
+// in the language of msgs.
+func (msgs Messages) ComposeDirectoryUnknownCWD() string {
+	return Catalog.Format(msgs.locale, "composeDirectoryUnknownCWD", nil)
+}
+
+// ComposeDirectoryLoading says "Loading…"
+// in the language the app shows.
+func ComposeDirectoryLoading() string { return In(i18n.Locale()).ComposeDirectoryLoading() }
+
+// ComposeDirectoryLoading says "Loading…"
+// in the language of msgs.
+func (msgs Messages) ComposeDirectoryLoading() string {
+	return Catalog.Format(msgs.locale, "composeDirectoryLoading", nil)
+}
+
+// ComposeDirectoryFailed says "Could not list this directory."
+// in the language the app shows.
+func ComposeDirectoryFailed() string { return In(i18n.Locale()).ComposeDirectoryFailed() }
+
+// ComposeDirectoryFailed says "Could not list this directory."
+// in the language of msgs.
+func (msgs Messages) ComposeDirectoryFailed() string {
+	return Catalog.Format(msgs.locale, "composeDirectoryFailed", nil)
+}
+
+// ComposeDirectoryEmpty says "This directory is empty."
+// in the language the app shows.
+func ComposeDirectoryEmpty() string { return In(i18n.Locale()).ComposeDirectoryEmpty() }
+
+// ComposeDirectoryEmpty says "This directory is empty."
+// in the language of msgs.
+func (msgs Messages) ComposeDirectoryEmpty() string {
+	return Catalog.Format(msgs.locale, "composeDirectoryEmpty", nil)
+}
+
 // SessionMenuLabel says "Session menu"
 // in the language the app shows.
 func SessionMenuLabel() string { return In(i18n.Locale()).SessionMenuLabel() }
