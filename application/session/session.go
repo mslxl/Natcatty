@@ -642,14 +642,18 @@ type Session struct {
 	// ready by construction.
 	commandReady atomic.Bool
 
-	// startupMu guards the one-shot Host startup command. It is armed for each
-	// transport generation and disarmed before the command is queued, so an
-	// output burst can never replay it within one connection. The generation
-	// keeps a late read from the abandoned transport from firing the new
-	// connection's command.
-	startupMu         sync.Mutex
-	startupPending    bool
-	startupGeneration int
+	// startupMu guards the one-shot Host startup command and the prompt
+	// readiness that releases it. It is armed for each transport generation and
+	// disarmed before the command is queued, so an output burst can never replay
+	// it within one connection. The generation keeps a late read or timer from
+	// the abandoned transport from firing the new connection's command.
+	startupMu               sync.Mutex
+	startupPending          bool
+	startupGeneration       int
+	startupTransport        Transport
+	startupTail             []byte
+	startupTimer            *time.Timer
+	startupReadinessTimeout time.Duration
 
 	// autoLoginMu guards the console detector for the current transport
 	// generation. It is replaced on reconnect and disarmed when the transport
@@ -743,21 +747,22 @@ type Service struct {
 	onChange   func(Snapshot)
 	// autoLog decides whether a new Session starts logging. Nil disables
 	// automatic logs; the user can still start one from the Session surface.
-	autoLog             func(StartSpec) *LogOptions
-	clipboardPolicy     func() domainterminal.ClipboardAccess
-	encodingPolicy      func(StartSpec) domainterminal.Encoding
-	codecFactory        CodecFactory
-	onNotification      func(model.SessionID, TerminalNotification)
-	onTransfer          func(model.SessionID, TransferState)
-	onInput             func(model.SessionID, []byte)
-	onCommandCompletion func(CommandEvent)
-	onBell              func(model.SessionID)
-	onConnection        func(ConnectionEvent)
-	highlightPolicy     func() (bool, []domainterminal.KeywordHighlightRule)
-	captureHook         CaptureHook
-	hostAtuin           HostAtuin
-	mu                  sync.Mutex
-	sessions            map[model.SessionID]*Session
+	autoLog                 func(StartSpec) *LogOptions
+	startupReadinessTimeout time.Duration
+	clipboardPolicy         func() domainterminal.ClipboardAccess
+	encodingPolicy          func(StartSpec) domainterminal.Encoding
+	codecFactory            CodecFactory
+	onNotification          func(model.SessionID, TerminalNotification)
+	onTransfer              func(model.SessionID, TransferState)
+	onInput                 func(model.SessionID, []byte)
+	onCommandCompletion     func(CommandEvent)
+	onBell                  func(model.SessionID)
+	onConnection            func(ConnectionEvent)
+	highlightPolicy         func() (bool, []domainterminal.KeywordHighlightRule)
+	captureHook             CaptureHook
+	hostAtuin               HostAtuin
+	mu                      sync.Mutex
+	sessions                map[model.SessionID]*Session
 	// captureNotices records the Host whose capture-hook failure was already
 	// announced, so a reconnect loop does not repeat the capability notice.
 	captureNotices map[string]bool
@@ -794,6 +799,18 @@ func WithAutoLogging(fn func(StartSpec) *LogOptions) Option {
 // WithClipboardPolicy supplies the OSC 52 policy read when a Session opens.
 // SetClipboardPolicy applies later Settings changes to live Sessions. Nil
 // keeps the original write-only default.
+// WithStartupReadinessTimeout bounds how long a Host startup command waits for
+// output that looks like a shell prompt. A device that never prints a
+// recognized prompt still receives its command after this timeout; zero keeps
+// the default. It exists for a slow console and for tests.
+func WithStartupReadinessTimeout(timeout time.Duration) Option {
+	return func(s *Service) {
+		if timeout > 0 {
+			s.startupReadinessTimeout = timeout
+		}
+	}
+}
+
 func WithClipboardPolicy(fn func() domainterminal.ClipboardAccess) Option {
 	return func(s *Service) { s.clipboardPolicy = fn }
 }
@@ -1008,29 +1025,30 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		highlightEnabled, highlightRules = s.highlightPolicy()
 	}
 	session := &Session{
-		id:                  id,
-		ctx:                 sessionCtx,
-		cancel:              cancel,
-		transport:           transport,
-		factory:             s.factory,
-		spec:                spec,
-		tap:                 tap,
-		clipboardAccess:     policy,
-		captureCleanup:      captureCleanup,
-		hostAtuin:           s.hostAtuin,
-		hostAtuinActive:     hostAtuinActive,
-		codec:               codec,
-		highlighter:         domainterminal.NewHighlighter(highlightEnabled, highlightRules),
-		genDone:             make(chan struct{}),
-		writeCh:             make(chan []byte, s.writeDepth),
-		commands:            make(chan command, 16),
-		closeCh:             make(chan struct{}, 1),
-		done:                make(chan struct{}),
-		onNotification:      s.onNotification,
-		onTransfer:          s.onTransfer,
-		onInput:             s.onInput,
-		onCommandCompletion: s.onCommandCompletion,
-		onBell:              s.onBell,
+		id:                      id,
+		ctx:                     sessionCtx,
+		cancel:                  cancel,
+		transport:               transport,
+		factory:                 s.factory,
+		spec:                    spec,
+		startupReadinessTimeout: s.startupReadinessTimeout,
+		tap:                     tap,
+		clipboardAccess:         policy,
+		captureCleanup:          captureCleanup,
+		hostAtuin:               s.hostAtuin,
+		hostAtuinActive:         hostAtuinActive,
+		codec:                   codec,
+		highlighter:             domainterminal.NewHighlighter(highlightEnabled, highlightRules),
+		genDone:                 make(chan struct{}),
+		writeCh:                 make(chan []byte, s.writeDepth),
+		commands:                make(chan command, 16),
+		closeCh:                 make(chan struct{}, 1),
+		done:                    make(chan struct{}),
+		onNotification:          s.onNotification,
+		onTransfer:              s.onTransfer,
+		onInput:                 s.onInput,
+		onCommandCompletion:     s.onCommandCompletion,
+		onBell:                  s.onBell,
 		snapshot: Snapshot{
 			ID:         id,
 			Kind:       spec.Kind,
@@ -1050,8 +1068,8 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	// finish its startup (a ForceCommand bash -i included) before it can read a
 	// wrapper, so the first command probes readiness first.
 	session.commandReady.Store(spec.Kind == KindLocal)
-	// A Host startup command waits for the first output of this connection.
-	session.armStartupCommand(session.generation)
+	// A Host startup command waits for this connection's shell prompt.
+	session.armStartupCommand(session.generation, transport)
 	session.armAutoLogin(session.generation, transport)
 
 	s.mu.Lock()
@@ -1706,6 +1724,7 @@ func (s *Session) loop() {
 				s.generation++
 				s.reopening = true
 				s.commandReady.Store(false)
+				s.stopStartupTimer()
 				s.cancelAutoLogin()
 				close(s.genDone)
 				s.genDone = make(chan struct{})
@@ -1722,6 +1741,7 @@ func (s *Session) loop() {
 				s.generation++
 				s.reopening = true
 				s.commandReady.Store(false)
+				s.stopStartupTimer()
 				s.cancelAutoLogin()
 				close(s.genDone)
 				s.genDone = make(chan struct{})
@@ -1751,7 +1771,7 @@ func (s *Session) loop() {
 				s.bindCWDProbe(cmd.transport)
 				// Every reconnect gets its own one-shot startup command and a
 				// fresh detector for the console's new boot.
-				s.armStartupCommand(cmd.generation)
+				s.armStartupCommand(cmd.generation, cmd.transport)
 				s.armAutoLogin(cmd.generation, cmd.transport)
 				s.update(func(snapshot *Snapshot) {
 					snapshot.Connection = ConnectionStatusActive
@@ -1785,6 +1805,7 @@ finished:
 	close(s.genDone)
 	s.stopActivityTimer()
 	s.stopPromptTimer()
+	s.stopStartupTimer()
 	s.cancelAutoLogin()
 	s.conn.finish()
 	s.closeObservations()
@@ -1903,6 +1924,7 @@ func (s *Session) readLoop(generation int, transport Transport) {
 			// history effects.
 			s.publishRawOutput(decoded)
 			s.feedAutoLogin(generation, string(decoded))
+			s.observeStartupOutput(generation, decoded)
 			output, effects := s.tap.observe(decoded, now)
 			if len(output) > 0 {
 				s.writeLog(logOutput(output))
@@ -1940,9 +1962,9 @@ func (s *Session) readLoop(generation int, transport Transport) {
 			// The bytes are now in the backlog (or filtered out); a pending
 			// remote resize may proceed without overtaking them.
 			s.conn.noteTransportRead(n)
-			// The shell has produced its first output for this connection,
-			// so the Host startup command may now be typed. While auto-login
-			// is still answering prompts, the command would land on a login
+			// The shell has produced output for this connection. The startup
+			// command is typed once that output ends on a prompt; while
+			// auto-login is still answering prompts it would land on a login
 			// prompt, so it waits for the detector to finish.
 			if s.autoLoginAllowsStartup(generation) {
 				s.maybeRunStartupCommand(generation, transport)
