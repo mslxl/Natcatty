@@ -217,6 +217,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	var logsState *logsui.State
 	var sessions *appsession.Service
 	var externalMCPServer *externalMCP
+	var externalMCPHTTPServer *externalMCPHTTP
 	var desktopCtl *desktopController
 	var ready bool
 	var focusRequested bool
@@ -1112,6 +1113,19 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			fmt.Fprintln(os.Stderr, "natcatty: external MCP:", err)
 		}
 	}
+	// The optional Streamable HTTP endpoint reuses the loopback transport's
+	// bearer token and the same policy handler. It is disabled until the
+	// preferences enable it, so a default profile opens no HTTP listener.
+	if !options.packagedSmoke {
+		externalMCPHTTPServer = newExternalMCPHTTP(mcpHandler, func() string {
+			if externalMCPServer == nil {
+				return ""
+			}
+			return externalMCPServer.token
+		}, func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, format+"\n", args...)
+		})
+	}
 	// The Workspace restores Tabs, splits, and working directories at startup
 	// and persists them after every structural change. Output is never stored.
 	workspaceService := appworkspace.NewService(database.Workspace())
@@ -1574,6 +1588,8 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	windows.SetSessionConfirmation(func() bool {
 		return preferenceService.Settings().Security.ConfirmCloseSessions
 	})
+	// A quit with unfinished Transfers asks first, after the Session prompt.
+	windows.SetTransferGuard(transferState)
 
 	// currentTerminalTheme resolves the scheme terminals draw with: the one
 	// matched to the active UI preset while the terminal follows the app,
@@ -1621,6 +1637,13 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			mygo.App.WhenReady(func() {
 				_ = mygo.App.Dock.SetIcon(icon)
 			})
+		}
+		// The MCP endpoint follows its preference without a restart. An
+		// unchanged configuration is a no-op inside the transport.
+		if externalMCPHTTPServer != nil {
+			if err := externalMCPHTTPServer.Apply(current.ExternalMCP); err != nil {
+				fmt.Fprintln(os.Stderr, "natcatty:", err)
+			}
 		}
 		if shellState != nil {
 			shellState.SetTerminalFont(domainpreferences.TerminalFontFamily(current.Appearance.TerminalFontFamily),
@@ -1718,6 +1741,8 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		shellState.Persist()
 		// Stop accepting external MCP calls before the services they read are
 		// torn down, then remove the discovery pointer if it is still ours.
+		// The HTTP listener goes first because it shares the same handler.
+		externalMCPHTTPServer.Close()
 		externalMCPServer.Close()
 		closeForwarding(forwardingManager, forwardingState)
 		// Monitoring leases are connection channels; release them before the

@@ -939,6 +939,18 @@
     }
   },
   "quitConfirmConfirm": "退出",
+  "quitTransferTitle": "退出 Natcatty？",
+  "quitTransferMessage": "{count, plural, other {还有 # 个传输未完成。仍要退出吗？}}",
+  "@quitTransferMessage": {
+    "description": "退出确认提示，说明将放弃多少个未完成的传输。",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitTransferUnknown": "无法检查未完成的传输。仍要退出吗？",
   "settingsTrayTitle": "系统托盘",
   "settingsTrayDescription": "将 Natcatty 保留在通知区域。",
   "settingsShowTrayIcon": "显示托盘图标",
@@ -2192,6 +2204,13 @@
   "sftpConnecting": "正在连接…",
   "sftpNewTab": "新建标签页",
   "sftpDuplicateTab": "复制标签页",
+  "sftpDuplicateEntry": "创建副本",
+  "sftpCreateArchive": "创建压缩包",
+  "sftpArchiveLabel": "压缩包名称",
+  "sftpArchiveFormat": "格式",
+  "sftpArchiveTarGz": "tar.gz",
+  "sftpArchiveZip": "zip",
+  "sftpInvalidArchiveName": "请输入以 .tar.gz 或 .zip 结尾的文件名。",
   "sftpCloseTab": "关闭标签页",
   "sftpUp": "上一级",
   "sftpRefresh": "刷新",
@@ -2262,6 +2281,7 @@
   "sftpOpenTooLarge": "此文件太大，内部编辑器无法打开（上限 10 MB）。",
   "sftpEditorTitle": "编辑 {name}",
   "sftpEditorSave": "保存",
+  "sftpEditorHighlight": "语法高亮",
   "sftpEditorClose": "关闭",
   "sftpEditorSaving": "正在保存…",
   "sftpEditorSaved": "已保存到远程文件。",
@@ -2290,6 +2310,7 @@
   "sftpErrorInvalidName": "该名称不允许。",
   "sftpErrorInvalidMode": "该权限模式无效。",
   "sftpErrorUnsupported": "该操作不可用。",
+  "sftpErrorToolMissing": "远程主机未安装压缩工具。",
   "sftpErrorCancelled": "操作已取消。",
   "sftpErrorConnection": "连接失败。",
   "sftpErrorTooLarge": "所选内容过大，无法一次操作。",

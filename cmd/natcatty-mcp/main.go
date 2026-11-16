@@ -35,24 +35,47 @@ func main() {
 
 // run is main's testable body.
 func run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) error {
-	discovery, err := resolveTarget()
-	if err != nil {
-		return err
-	}
+	// The external bridge is the one transport that reconnects: a long-lived
+	// MCP client outlives an app restart, so every lost socket re-reads the
+	// discovery file and authenticates again before the call is retried.
+	client := mcprpc.NewReconnectingClient(func(ctx context.Context) (*mcprpc.Client, error) {
+		return connect(ctx, stderr)
+	})
 
 	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
 	defer cancel()
-	client, err := mcprpc.Dial(connectCtx, discovery.Host, discovery.Port)
-	if err != nil {
+	if err := client.Connect(connectCtx); err != nil {
 		return err
 	}
 	defer client.Close()
-	if err := client.Verify(connectCtx, discovery.Token); err != nil {
-		return fmt.Errorf("external MCP: authenticate with the app: %w", err)
-	}
-	fmt.Fprintf(stderr, "natcatty-mcp: connected to Netcatty on %s:%d\n", discovery.Host, discovery.Port)
 
 	return mcp.NewServer(bridgeCaller{client: client}).Serve(ctx, stdin, stdout)
+}
+
+// connect resolves the current app target and authenticates one connection. It
+// resolves on every call so a restarted app's new port and token are picked up.
+// Each attempt is bounded by connectTimeout when the caller's context has no
+// deadline of its own.
+func connect(ctx context.Context, stderr io.Writer) (*mcprpc.Client, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, connectTimeout)
+		defer cancel()
+	}
+	discovery, err := resolveTarget()
+	if err != nil {
+		return nil, err
+	}
+	client, err := mcprpc.Dial(ctx, discovery.Host, discovery.Port)
+	if err != nil {
+		return nil, err
+	}
+	if err := client.Verify(ctx, discovery.Token); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("external MCP: authenticate with the app: %w", err)
+	}
+	fmt.Fprintf(stderr, "natcatty-mcp: connected to Netcatty on %s:%d\n", discovery.Host, discovery.Port)
+	return client, nil
 }
 
 // resolveTarget prefers the explicit PORT/TOKEN launch overrides and otherwise
@@ -74,9 +97,15 @@ func resolveTarget() (mcprpc.Discovery, error) {
 	return discovery, nil
 }
 
+// rpcCaller is the transport surface the MCP layer needs. It accepts both the
+// fail-fast Client and the reconnecting external bridge.
+type rpcCaller interface {
+	Call(ctx context.Context, method string, params any) (json.RawMessage, error)
+}
+
 // bridgeCaller forwards one tool call to the app and decodes its JSON result.
 type bridgeCaller struct {
-	client *mcprpc.Client
+	client rpcCaller
 }
 
 func (b bridgeCaller) Call(ctx context.Context, method string, params map[string]any) (any, error) {

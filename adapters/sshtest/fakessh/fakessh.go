@@ -79,6 +79,11 @@ type Options struct {
 	// HostCertificatePrincipals configures the certificate principals. It
 	// defaults to example.com, matching the hostname the adapter tests dial.
 	HostCertificatePrincipals []string
+	// HostKey replaces the generated server key. A test that opens several
+	// transports to the "same" server passes one signer to every instance, so
+	// host-key pinning sees a stable identity; a test that models a changed
+	// server key passes a different one.
+	HostKey ssh.Signer
 }
 
 // fixtureSigner presents one of two host keys and counts signatures. Every key
@@ -191,13 +196,16 @@ type Server struct {
 // returns before the handshake completes so a synchronous transport such as
 // net.Pipe's client end can dial.
 func Start(conn net.Conn, options Options) (*Server, error) {
-	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	signer, err := ssh.NewSignerFromKey(privateKey)
-	if err != nil {
-		return nil, err
+	signer := options.HostKey
+	if signer == nil {
+		_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		signer, err = ssh.NewSignerFromKey(privateKey)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// A second key lets a test rotate the host key between rekeys.
 	_, rotatedKey, err := ed25519.GenerateKey(rand.Reader)

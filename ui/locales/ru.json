@@ -939,6 +939,18 @@
     }
   },
   "quitConfirmConfirm": "Выйти",
+  "quitTransferTitle": "Выйти из Natcatty?",
+  "quitTransferMessage": "{count, plural, one {# передача ещё не завершена. Всё равно выйти?} few {# передачи ещё не завершены. Всё равно выйти?} many {# передач ещё не завершено. Всё равно выйти?} other {# передачи ещё не завершены. Всё равно выйти?}}",
+  "@quitTransferMessage": {
+    "description": "Запрос подтверждения выхода с числом незавершённых передач, которые будут прерваны.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitTransferUnknown": "Не удалось проверить незавершённые передачи. Всё равно выйти?",
   "settingsTrayTitle": "Системный трей",
   "settingsTrayDescription": "Держите Natcatty в области уведомлений.",
   "settingsShowTrayIcon": "Показывать значок в трее",
@@ -2192,6 +2204,13 @@
   "sftpConnecting": "Подключение…",
   "sftpNewTab": "Новая вкладка",
   "sftpDuplicateTab": "Дублировать вкладку",
+  "sftpDuplicateEntry": "Дублировать",
+  "sftpCreateArchive": "Создать архив",
+  "sftpArchiveLabel": "Имя архива",
+  "sftpArchiveFormat": "Формат",
+  "sftpArchiveTarGz": "tar.gz",
+  "sftpArchiveZip": "zip",
+  "sftpInvalidArchiveName": "Введите имя файла с расширением .tar.gz или .zip.",
   "sftpCloseTab": "Закрыть вкладку",
   "sftpUp": "Вверх",
   "sftpRefresh": "Обновить",
@@ -2262,6 +2281,7 @@
   "sftpOpenTooLarge": "Этот файл слишком велик для внутреннего редактора (ограничение 10 МБ).",
   "sftpEditorTitle": "Изменить {name}",
   "sftpEditorSave": "Сохранить",
+  "sftpEditorHighlight": "Подсветка",
   "sftpEditorClose": "Закрыть",
   "sftpEditorSaving": "Сохранение…",
   "sftpEditorSaved": "Сохранено в удалённый файл.",
@@ -2290,6 +2310,7 @@
   "sftpErrorInvalidName": "Это имя недопустимо.",
   "sftpErrorInvalidMode": "Этот режим прав недопустим.",
   "sftpErrorUnsupported": "Эта операция недоступна.",
+  "sftpErrorToolMissing": "На удалённом хосте не установлена программа архивации.",
   "sftpErrorCancelled": "Операция отменена.",
   "sftpErrorConnection": "Соединение не удалось.",
   "sftpErrorTooLarge": "Выбор слишком велик для одной операции.",

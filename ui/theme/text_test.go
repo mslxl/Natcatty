@@ -62,6 +62,31 @@ func TestDangerAndWarningTextClearTheBodyContrastTarget(t *testing.T) {
 	}
 }
 
+// TestSuccessTextClearsTheBodyContrastTarget keeps syntax strings, painted
+// with SuccessText, readable on every appearance preset. The green token is
+// tuned for meters and falls below the body-text target on light fills.
+func TestSuccessTextClearsTheBodyContrastTarget(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		dark    bool
+		presets []domaintheme.Preset
+	}{
+		{"light", false, domaintheme.LightPresets()},
+		{"dark", true, domaintheme.DarkPresets()},
+	} {
+		for _, preset := range test.presets {
+			uiTheme := UI(test.dark, preset, Options{})
+			text := SuccessText(uiTheme)
+			if ratio := contrast(text, uiTheme.Background); ratio < MinimumTextContrast {
+				t.Errorf("%s preset %s: success text on the background = %.2f:1", test.name, preset.ID, ratio)
+			}
+			if ratio := contrast(text, uiTheme.Surface); ratio < MinimumTextContrast {
+				t.Errorf("%s preset %s: success text on the surface = %.2f:1", test.name, preset.ID, ratio)
+			}
+		}
+	}
+}
+
 // TestAccentBodyTextClearsTheBodyContrastTarget keeps accent-colored body text
 // (the developer self-test overlay title and PASS label) readable on every
 // appearance preset. The Snow accent is #0088ff, which measures 3.52:1 on

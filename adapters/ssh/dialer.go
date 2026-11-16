@@ -385,6 +385,7 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 			reportChain(req, total, i+1, label, appconnection.ChainError, annotated)
 			return nil, annotated
 		}
+		disableNagle(raw)
 		reportChain(req, total, i+1, label, appconnection.ChainTCPConnected, nil)
 		reportChain(req, total, i+1, label, appconnection.ChainAuthenticating, nil)
 
@@ -423,6 +424,25 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 	go client.watchDeath()
 	handedOff = true
 	return client, nil
+}
+
+// noDelayConn is the latency hint a TCP transport exposes. Serial devices,
+// named pipes, ProxyCommand processes, jump-host channels, and the in-process
+// test pipe are not TCP and do not implement it.
+type noDelayConn interface {
+	SetNoDelay(bool) error
+}
+
+// disableNagle asks a TCP transport to send small SSH packets immediately. With
+// Nagle on, a second SFTP request behind an unacknowledged one waits for the
+// peer's delayed ACK, adding tens or hundreds of milliseconds to every
+// round trip. The hint is best-effort: a non-TCP transport is skipped and a
+// transport that rejects the option still carries the session, because latency
+// is not worth refusing a working connection.
+func disableNagle(conn net.Conn) {
+	if setter, ok := conn.(noDelayConn); ok {
+		_ = setter.SetNoDelay(true)
+	}
 }
 
 func reportChain(req appconnection.DialRequest, total, index int, label string, status appconnection.ChainStatus, err error) {

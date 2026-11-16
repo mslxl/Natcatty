@@ -939,6 +939,18 @@
     }
   },
   "quitConfirmConfirm": "Salir",
+  "quitTransferTitle": "¿Salir de Natcatty?",
+  "quitTransferMessage": "{count, plural, one {# transferencia sigue sin terminar. ¿Salir de todos modos?} many {# de transferencias siguen sin terminar. ¿Salir de todos modos?} other {# transferencias siguen sin terminar. ¿Salir de todos modos?}}",
+  "@quitTransferMessage": {
+    "description": "El mensaje de confirmación al salir que indica cuántas transferencias sin terminar se abandonarían.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitTransferUnknown": "No se pudieron comprobar las transferencias sin terminar. ¿Salir de todos modos?",
   "settingsTrayTitle": "Bandeja del sistema",
   "settingsTrayDescription": "Mantén Natcatty en el área de notificación.",
   "settingsShowTrayIcon": "Mostrar icono en la bandeja",
@@ -2192,6 +2204,13 @@
   "sftpConnecting": "Conectando…",
   "sftpNewTab": "Nueva pestaña",
   "sftpDuplicateTab": "Duplicar pestaña",
+  "sftpDuplicateEntry": "Duplicar",
+  "sftpCreateArchive": "Crear archivo",
+  "sftpArchiveLabel": "Nombre del archivo",
+  "sftpArchiveFormat": "Formato",
+  "sftpArchiveTarGz": "tar.gz",
+  "sftpArchiveZip": "zip",
+  "sftpInvalidArchiveName": "Introduce un nombre de archivo que termine en .tar.gz o .zip.",
   "sftpCloseTab": "Cerrar pestaña",
   "sftpUp": "Subir",
   "sftpRefresh": "Actualizar",
@@ -2262,6 +2281,7 @@
   "sftpOpenTooLarge": "Este archivo es demasiado grande para el editor interno (límite de 10 MB).",
   "sftpEditorTitle": "Editar {name}",
   "sftpEditorSave": "Guardar",
+  "sftpEditorHighlight": "Resaltado",
   "sftpEditorClose": "Cerrar",
   "sftpEditorSaving": "Guardando…",
   "sftpEditorSaved": "Guardado en el archivo remoto.",
@@ -2290,6 +2310,7 @@
   "sftpErrorInvalidName": "Ese nombre no está permitido.",
   "sftpErrorInvalidMode": "Ese modo de permisos no es válido.",
   "sftpErrorUnsupported": "Esa operación no está disponible.",
+  "sftpErrorToolMissing": "El host remoto no tiene instalada la herramienta de archivo.",
   "sftpErrorCancelled": "La operación se canceló.",
   "sftpErrorConnection": "La conexión falló.",
   "sftpErrorTooLarge": "La selección es demasiado grande para una operación.",

@@ -10,6 +10,7 @@ import (
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	appvault "github.com/mslxl/natcatty/application/vault"
+	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
@@ -97,7 +98,7 @@ func (o *sftpRemoteOpener) connect(ctx context.Context, hostID model.HostID) (ap
 			return nil, err
 		}
 	}
-	lease, err := o.manager.Acquire(ctx, appconnection.Request{
+	request := appconnection.Request{
 		HostID:            host.ID,
 		Hostname:          host.Hostname,
 		Port:              host.Port,
@@ -109,11 +110,14 @@ func (o *sftpRemoteOpener) connect(ctx context.Context, hostID model.HostID) (ap
 		ConfigFingerprint: route.ConfigFingerprint,
 		LeaseKind:         appconnection.LeaseChannel,
 		Keepalive:         &appconnection.DefaultKeepalive,
-	})
+	}
+	lease, err := o.manager.Acquire(ctx, request)
 	if err != nil {
 		return nil, err
 	}
 	return &sftpRemoteSession{
+		opener:  o,
+		request: request,
 		lease:   lease,
 		backing: "remote:" + string(hostID),
 	}, nil
@@ -123,6 +127,10 @@ func (o *sftpRemoteOpener) connect(ctx context.Context, hostID model.HostID) (ap
 // opens transfer lease ownership to the filesystem; a failure leaves it with
 // the session until the selector decides whether to fall back or discard.
 type sftpRemoteSession struct {
+	// opener and request let a single-channel peer open an independent
+	// transport with the exact dial profile the terminal used.
+	opener  *sftpRemoteOpener
+	request appconnection.Request
 	lease   *appconnection.Lease
 	backing string
 
@@ -130,8 +138,43 @@ type sftpRemoteSession struct {
 	handed bool
 }
 
+var _ apptransfer.DedicatedRemoteSession = (*sftpRemoteSession)(nil)
+
 func (s *sftpRemoteSession) SingleChannel() bool { return s.lease.SingleChannel() }
 func (s *sftpRemoteSession) Reused() bool        { return s.lease.Reused() }
+
+// AcceptedHostIdentities returns the keys this transport trusted. The
+// companion dial pins them so the user is not asked to trust the same hosts
+// twice.
+func (s *sftpRemoteSession) AcceptedHostIdentities() []domainconn.Key {
+	return s.lease.AcceptedHostIdentities()
+}
+
+// DialDedicated opens a second Connection with the terminal's dial profile.
+// Dedicated keeps it out of the shared pool, so no other lease can borrow the
+// one channel the peer allows and closing the pane cannot disturb the
+// terminal. The inherited host keys are replayed as pre-trusted and an
+// untrusted key fails closed instead of prompting: the user did not start this
+// dial, so the owning Transfer reports that the terminal must reconnect.
+func (s *sftpRemoteSession) DialDedicated(ctx context.Context, accepted []domainconn.Key) (apptransfer.RemoteSession, error) {
+	if s.opener == nil || s.opener.manager == nil {
+		return nil, errors.New("app: no SSH connection manager")
+	}
+	request := s.request
+	request.Dedicated = true
+	request.AcceptedHostKeys = append([]domainconn.Key(nil), accepted...)
+	request.HostKeyUnattended = true
+	lease, err := s.opener.manager.Acquire(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	return &sftpRemoteSession{
+		opener:  s.opener,
+		request: request,
+		lease:   lease,
+		backing: s.backing,
+	}, nil
+}
 
 // OpenSFTP opens the SFTP subsystem. A refused subsystem leaves the transport
 // healthy so auto mode can still probe SCP on it.

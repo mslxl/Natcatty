@@ -7352,6 +7352,42 @@ func (msgs Messages) QuitConfirmConfirm() string {
 	return Catalog.Format(msgs.locale, "quitConfirmConfirm", nil)
 }
 
+// QuitTransferTitle says "Quit Natcatty?"
+// in the language the app shows.
+func QuitTransferTitle() string { return In(i18n.Locale()).QuitTransferTitle() }
+
+// QuitTransferTitle says "Quit Natcatty?"
+// in the language of msgs.
+func (msgs Messages) QuitTransferTitle() string {
+	return Catalog.Format(msgs.locale, "quitTransferTitle", nil)
+}
+
+// QuitTransferMessage says "{count, plural, one {# Transfer is still unfinished. Quit anyway?} other {# Transfers are still unfinished. Quit anyw…"
+// in the language the app shows.
+//
+// The quit intent prompt naming how many unfinished Transfers the quit
+// would abandon.
+func QuitTransferMessage(count int) string { return In(i18n.Locale()).QuitTransferMessage(count) }
+
+// QuitTransferMessage says "{count, plural, one {# Transfer is still unfinished. Quit anyway?} other {# Transfers are still unfinished. Quit anyw…"
+// in the language of msgs.
+//
+// The quit intent prompt naming how many unfinished Transfers the quit
+// would abandon.
+func (msgs Messages) QuitTransferMessage(count int) string {
+	return Catalog.Format(msgs.locale, "quitTransferMessage", map[string]any{"count": count})
+}
+
+// QuitTransferUnknown says "Unfinished Transfers could not be checked. Quit anyway?"
+// in the language the app shows.
+func QuitTransferUnknown() string { return In(i18n.Locale()).QuitTransferUnknown() }
+
+// QuitTransferUnknown says "Unfinished Transfers could not be checked. Quit anyway?"
+// in the language of msgs.
+func (msgs Messages) QuitTransferUnknown() string {
+	return Catalog.Format(msgs.locale, "quitTransferUnknown", nil)
+}
+
 // SettingsTrayTitle says "System Tray"
 // in the language the app shows.
 func SettingsTrayTitle() string { return In(i18n.Locale()).SettingsTrayTitle() }
@@ -17960,6 +17996,104 @@ func (msgs Messages) SftpDuplicateTab() string {
 	return Catalog.Format(msgs.locale, "sftpDuplicateTab", nil)
 }
 
+// SftpDuplicateEntry says "Duplicate"
+// in the language the app shows.
+//
+// The action that copies the selected files or folders beside themselves.
+func SftpDuplicateEntry() string { return In(i18n.Locale()).SftpDuplicateEntry() }
+
+// SftpDuplicateEntry says "Duplicate"
+// in the language of msgs.
+//
+// The action that copies the selected files or folders beside themselves.
+func (msgs Messages) SftpDuplicateEntry() string {
+	return Catalog.Format(msgs.locale, "sftpDuplicateEntry", nil)
+}
+
+// SftpCreateArchive says "Create archive"
+// in the language the app shows.
+//
+// The action that packs the selection into an archive beside it.
+func SftpCreateArchive() string { return In(i18n.Locale()).SftpCreateArchive() }
+
+// SftpCreateArchive says "Create archive"
+// in the language of msgs.
+//
+// The action that packs the selection into an archive beside it.
+func (msgs Messages) SftpCreateArchive() string {
+	return Catalog.Format(msgs.locale, "sftpCreateArchive", nil)
+}
+
+// SftpArchiveLabel says "Archive name"
+// in the language the app shows.
+//
+// The create-archive prompt's field label.
+func SftpArchiveLabel() string { return In(i18n.Locale()).SftpArchiveLabel() }
+
+// SftpArchiveLabel says "Archive name"
+// in the language of msgs.
+//
+// The create-archive prompt's field label.
+func (msgs Messages) SftpArchiveLabel() string {
+	return Catalog.Format(msgs.locale, "sftpArchiveLabel", nil)
+}
+
+// SftpArchiveFormat says "Format"
+// in the language the app shows.
+//
+// The create-archive prompt's format chooser.
+func SftpArchiveFormat() string { return In(i18n.Locale()).SftpArchiveFormat() }
+
+// SftpArchiveFormat says "Format"
+// in the language of msgs.
+//
+// The create-archive prompt's format chooser.
+func (msgs Messages) SftpArchiveFormat() string {
+	return Catalog.Format(msgs.locale, "sftpArchiveFormat", nil)
+}
+
+// SftpArchiveTarGz says "tar.gz"
+// in the language the app shows.
+//
+// The gzip tarball format choice.
+func SftpArchiveTarGz() string { return In(i18n.Locale()).SftpArchiveTarGz() }
+
+// SftpArchiveTarGz says "tar.gz"
+// in the language of msgs.
+//
+// The gzip tarball format choice.
+func (msgs Messages) SftpArchiveTarGz() string {
+	return Catalog.Format(msgs.locale, "sftpArchiveTarGz", nil)
+}
+
+// SftpArchiveZip says "zip"
+// in the language the app shows.
+//
+// The zip format choice.
+func SftpArchiveZip() string { return In(i18n.Locale()).SftpArchiveZip() }
+
+// SftpArchiveZip says "zip"
+// in the language of msgs.
+//
+// The zip format choice.
+func (msgs Messages) SftpArchiveZip() string {
+	return Catalog.Format(msgs.locale, "sftpArchiveZip", nil)
+}
+
+// SftpInvalidArchiveName says "Enter a file name ending with .tar.gz or .zip."
+// in the language the app shows.
+//
+// The validation error for an archive name without the selected extension.
+func SftpInvalidArchiveName() string { return In(i18n.Locale()).SftpInvalidArchiveName() }
+
+// SftpInvalidArchiveName says "Enter a file name ending with .tar.gz or .zip."
+// in the language of msgs.
+//
+// The validation error for an archive name without the selected extension.
+func (msgs Messages) SftpInvalidArchiveName() string {
+	return Catalog.Format(msgs.locale, "sftpInvalidArchiveName", nil)
+}
+
 // SftpCloseTab says "Close tab"
 // in the language the app shows.
 //
@@ -18888,6 +19022,20 @@ func (msgs Messages) SftpEditorSave() string {
 	return Catalog.Format(msgs.locale, "sftpEditorSave", nil)
 }
 
+// SftpEditorHighlight says "Highlight"
+// in the language the app shows.
+//
+// The editor's switch that turns syntax highlighting on or off.
+func SftpEditorHighlight() string { return In(i18n.Locale()).SftpEditorHighlight() }
+
+// SftpEditorHighlight says "Highlight"
+// in the language of msgs.
+//
+// The editor's switch that turns syntax highlighting on or off.
+func (msgs Messages) SftpEditorHighlight() string {
+	return Catalog.Format(msgs.locale, "sftpEditorHighlight", nil)
+}
+
 // SftpEditorClose says "Close"
 // in the language the app shows.
 func SftpEditorClose() string { return In(i18n.Locale()).SftpEditorClose() }
@@ -19224,6 +19372,20 @@ func SftpErrorUnsupported() string { return In(i18n.Locale()).SftpErrorUnsupport
 // The error shown for an unavailable operation.
 func (msgs Messages) SftpErrorUnsupported() string {
 	return Catalog.Format(msgs.locale, "sftpErrorUnsupported", nil)
+}
+
+// SftpErrorToolMissing says "The remote host does not have the archive tool installed."
+// in the language the app shows.
+//
+// The error shown when the remote host lacks tar or zip.
+func SftpErrorToolMissing() string { return In(i18n.Locale()).SftpErrorToolMissing() }
+
+// SftpErrorToolMissing says "The remote host does not have the archive tool installed."
+// in the language of msgs.
+//
+// The error shown when the remote host lacks tar or zip.
+func (msgs Messages) SftpErrorToolMissing() string {
+	return Catalog.Format(msgs.locale, "sftpErrorToolMissing", nil)
 }
 
 // SftpErrorCancelled says "The operation was cancelled."

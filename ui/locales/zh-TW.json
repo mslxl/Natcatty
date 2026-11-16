@@ -939,6 +939,18 @@
     }
   },
   "quitConfirmConfirm": "結束",
+  "quitTransferTitle": "結束 Natcatty？",
+  "quitTransferMessage": "{count, plural, other {還有 # 個傳輸未完成。仍要結束嗎？}}",
+  "@quitTransferMessage": {
+    "description": "結束確認提示，說明將放棄多少個未完成的傳輸。",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitTransferUnknown": "無法檢查未完成的傳輸。仍要結束嗎？",
   "settingsTrayTitle": "系統匣",
   "settingsTrayDescription": "將 Natcatty 保留在通知區域。",
   "settingsShowTrayIcon": "顯示匣圖示",
@@ -2192,6 +2204,13 @@
   "sftpConnecting": "正在連線…",
   "sftpNewTab": "新增標籤頁",
   "sftpDuplicateTab": "複製標籤頁",
+  "sftpDuplicateEntry": "建立副本",
+  "sftpCreateArchive": "建立壓縮檔",
+  "sftpArchiveLabel": "壓縮檔名稱",
+  "sftpArchiveFormat": "格式",
+  "sftpArchiveTarGz": "tar.gz",
+  "sftpArchiveZip": "zip",
+  "sftpInvalidArchiveName": "請輸入以 .tar.gz 或 .zip 結尾的檔案名稱。",
   "sftpCloseTab": "關閉標籤頁",
   "sftpUp": "上一層",
   "sftpRefresh": "重新整理",
@@ -2262,6 +2281,7 @@
   "sftpOpenTooLarge": "此檔案太大，內部編輯器無法開啟（上限 10 MB）。",
   "sftpEditorTitle": "編輯 {name}",
   "sftpEditorSave": "儲存",
+  "sftpEditorHighlight": "語法高亮",
   "sftpEditorClose": "關閉",
   "sftpEditorSaving": "正在儲存…",
   "sftpEditorSaved": "已儲存到遠端檔案。",
@@ -2290,6 +2310,7 @@
   "sftpErrorInvalidName": "不允許該名稱。",
   "sftpErrorInvalidMode": "該權限模式無效。",
   "sftpErrorUnsupported": "該操作無法使用。",
+  "sftpErrorToolMissing": "遠端主機未安裝壓縮工具。",
   "sftpErrorCancelled": "操作已取消。",
   "sftpErrorConnection": "連線失敗。",
   "sftpErrorTooLarge": "選取的內容過大，無法一次操作。",

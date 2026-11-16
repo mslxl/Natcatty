@@ -1446,6 +1446,18 @@
     }
   },
   "quitConfirmConfirm": "Quit",
+  "quitTransferTitle": "Quit Natcatty?",
+  "quitTransferMessage": "{count, plural, one {# Transfer is still unfinished. Quit anyway?} other {# Transfers are still unfinished. Quit anyway?}}",
+  "@quitTransferMessage": {
+    "description": "The quit intent prompt naming how many unfinished Transfers the quit would abandon.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitTransferUnknown": "Unfinished Transfers could not be checked. Quit anyway?",
   "settingsTrayTitle": "System Tray",
   "settingsTrayDescription": "Keep Natcatty in the notification area.",
   "settingsShowTrayIcon": "Show tray icon",
@@ -3421,6 +3433,34 @@
   "@sftpDuplicateTab": {
     "description": "The action that duplicates the active tab."
   },
+  "sftpDuplicateEntry": "Duplicate",
+  "@sftpDuplicateEntry": {
+    "description": "The action that copies the selected files or folders beside themselves."
+  },
+  "sftpCreateArchive": "Create archive",
+  "@sftpCreateArchive": {
+    "description": "The action that packs the selection into an archive beside it."
+  },
+  "sftpArchiveLabel": "Archive name",
+  "@sftpArchiveLabel": {
+    "description": "The create-archive prompt's field label."
+  },
+  "sftpArchiveFormat": "Format",
+  "@sftpArchiveFormat": {
+    "description": "The create-archive prompt's format chooser."
+  },
+  "sftpArchiveTarGz": "tar.gz",
+  "@sftpArchiveTarGz": {
+    "description": "The gzip tarball format choice."
+  },
+  "sftpArchiveZip": "zip",
+  "@sftpArchiveZip": {
+    "description": "The zip format choice."
+  },
+  "sftpInvalidArchiveName": "Enter a file name ending with .tar.gz or .zip.",
+  "@sftpInvalidArchiveName": {
+    "description": "The validation error for an archive name without the selected extension."
+  },
   "sftpCloseTab": "Close tab",
   "@sftpCloseTab": {
     "description": "The action that closes the active tab."
@@ -3665,6 +3705,10 @@
   "sftpOpenTooLarge": "This file is too large for the internal editor (10 MB limit).",
   "sftpEditorTitle": "Edit {name}",
   "sftpEditorSave": "Save",
+  "sftpEditorHighlight": "Highlight",
+  "@sftpEditorHighlight": {
+    "description": "The editor's switch that turns syntax highlighting on or off."
+  },
   "sftpEditorClose": "Close",
   "sftpEditorSaving": "Saving…",
   "sftpEditorSaved": "Saved to the remote file.",
@@ -3762,6 +3806,10 @@
   "sftpErrorUnsupported": "That operation is not available.",
   "@sftpErrorUnsupported": {
     "description": "The error shown for an unavailable operation."
+  },
+  "sftpErrorToolMissing": "The remote host does not have the archive tool installed.",
+  "@sftpErrorToolMissing": {
+    "description": "The error shown when the remote host lacks tar or zip."
   },
   "sftpErrorCancelled": "The operation was cancelled.",
   "@sftpErrorCancelled": {
