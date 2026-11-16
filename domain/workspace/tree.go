@@ -131,6 +131,11 @@ var (
 	ErrSamePane = errors.New("workspace: a pane cannot be moved onto itself")
 	// ErrInvalidSide reports an unknown insertion side.
 	ErrInvalidSide = errors.New("workspace: invalid insertion side")
+	// ErrStaleTarget reports a move whose target pane left the tree before
+	// the drop landed. It is distinct from ErrPaneNotFound so a drop zone can
+	// tell a stale drag target from a malformed request; either way the source
+	// is left untouched.
+	ErrStaleTarget = errors.New("workspace: the drop target is no longer in the tree")
 )
 
 // WithSplitRatio returns a copy of root in which splitID takes ratio. It
@@ -263,7 +268,7 @@ func removePane(n *Node, target model.PaneID) (*Node, bool) {
 //
 // Every check runs before the source is pruned. A drop whose target is no
 // longer in the tree, such as one that closed mid-drag, returns
-// ErrPaneNotFound and leaves the input tree unchanged.
+// ErrStaleTarget and leaves the input tree unchanged.
 func MovePane(root *Node, source, target model.PaneID, splitID model.SplitID, side Side) (*Node, error) {
 	if !side.Valid() {
 		return nil, ErrInvalidSide
@@ -271,8 +276,11 @@ func MovePane(root *Node, source, target model.PaneID, splitID model.SplitID, si
 	if source == target {
 		return nil, ErrSamePane
 	}
-	if !ContainsPane(root, source) || !ContainsPane(root, target) {
+	if !ContainsPane(root, source) {
 		return nil, ErrPaneNotFound
+	}
+	if !ContainsPane(root, target) {
+		return nil, ErrStaleTarget
 	}
 	pruned, err := RemovePane(root, source)
 	if err != nil {

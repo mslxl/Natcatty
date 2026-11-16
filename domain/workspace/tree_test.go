@@ -138,8 +138,11 @@ func TestMovePaneRejectsDroppingAPaneOntoItselfOrAnUnknownTarget(t *testing.T) {
 	if _, err := MovePane(root, "p1", "p1", "s2", SideLeft); !errors.Is(err, ErrSamePane) {
 		t.Fatalf("self drop error = %v, want ErrSamePane", err)
 	}
-	if _, err := MovePane(root, "p1", "missing", "s2", SideLeft); !errors.Is(err, ErrPaneNotFound) {
-		t.Fatalf("unknown target error = %v, want ErrPaneNotFound", err)
+	// A target the caller believed was in the tree is stale, not a missing
+	// source, so a drop UI can tell "the pane closed" from "the drag began
+	// on nothing".
+	if _, err := MovePane(root, "p1", "missing", "s2", SideLeft); !errors.Is(err, ErrStaleTarget) {
+		t.Fatalf("unknown target error = %v, want ErrStaleTarget", err)
 	}
 	if _, err := MovePane(root, "missing", "p1", "s2", SideLeft); !errors.Is(err, ErrPaneNotFound) {
 		t.Fatalf("unknown source error = %v, want ErrPaneNotFound", err)
@@ -163,8 +166,11 @@ func TestMovePaneLeavesTheTreeUnchangedWhenTheTargetClosedMidDrag(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := MovePane(closed, "p1", "p3", "s3", SideLeft); !errors.Is(err, ErrPaneNotFound) {
-		t.Fatalf("stale target error = %v, want ErrPaneNotFound", err)
+	// The stale target must be reported as such, not as a generic missing
+	// pane. Delete the target check and SplitAt reports ErrPaneNotFound after
+	// pruning the source, which this assertion rejects.
+	if _, err := MovePane(closed, "p1", "p3", "s3", SideLeft); !errors.Is(err, ErrStaleTarget) {
+		t.Fatalf("stale target error = %v, want ErrStaleTarget", err)
 	}
 	if got := CollectPaneIDs(root); !reflect.DeepEqual(got, []model.PaneID{"p1", "p2", "p3"}) {
 		t.Fatalf("input tree changed to %v after a stale drop", got)

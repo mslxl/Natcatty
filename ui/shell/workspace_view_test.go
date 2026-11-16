@@ -124,6 +124,44 @@ func TestShellRendersOnlyTheMagnifiedPane(t *testing.T) {
 	}
 }
 
+// TestShellShowsTheSiblingAfterDetachingTheMagnifiedPane pins the rendered
+// side of the stale-zoom defect: after the zoomed Pane leaves the Tab, the
+// surviving member still draws its surface and the Tab body is not blank.
+func TestShellShowsTheSiblingAfterDetachingTheMagnifiedPane(t *testing.T) {
+	graph := newWorkspaceViewGraph(t)
+	tt := ui.NewTester(View(graph.state), 900, 600)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.waitForSurfaces(t, 2)
+	root, _, _ := graph.state.TabTree(0)
+	panes := domainworkspace.CollectPaneIDs(root)
+	if len(panes) != 2 {
+		t.Fatalf("panes = %v, want 2", panes)
+	}
+
+	if !graph.state.SetMagnifiedPane(0, panes[0]) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+	tt.Frame()
+	if got := countText(tt.Texts(), "terminal-surface"); got != 1 {
+		t.Fatalf("terminal surfaces = %d while magnified, want 1", got)
+	}
+	if !graph.state.DetachPane(0, panes[0]) {
+		t.Fatal("DetachPane failed")
+	}
+	tt.Frame()
+	if got := countText(tt.Texts(), "terminal-surface"); got != 1 {
+		t.Fatalf("terminal surfaces = %d after detaching the zoomed Pane, want the sibling", got)
+	}
+	if graph.state.MagnifiedPaneID(0) != "" {
+		t.Fatal("the detached Pane is still reported as magnified")
+	}
+}
+
 func TestShellPaneMenuSplitsAndCloses(t *testing.T) {
 	graph := newWorkspaceViewGraph(t)
 	tt := ui.NewTester(View(graph.state), 900, 600)

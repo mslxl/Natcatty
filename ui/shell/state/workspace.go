@@ -900,6 +900,11 @@ func (s *State) DetachPane(tabIndex int, paneID model.PaneID) bool {
 	}
 	tab.Root = root
 	delete(tab.panes, paneID)
+	// Detaching the zoomed Pane (or any member while another is zoomed) must
+	// not leave Magnified pointing at a Pane that is no longer in the tree:
+	// the view would render nothing and the surviving members would still be
+	// hidden behind a stale zoom.
+	tab.clearStaleMagnification()
 	remainingFocus := domainworkspace.FocusAfterRemove(root, focusedID, paneID)
 	tab.FocusPath = domainworkspace.FocusPath(root, remainingFocus)
 
@@ -1223,6 +1228,10 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 		descriptor: descriptor,
 		pending:    true,
 	}
+	// Zoom is a view onto the split, not a separate layout. Splitting the
+	// zoomed Pane restores the split so the new Pane is visible; leaving the
+	// zoom set would focus a hidden member and show only the source Pane.
+	tab.Magnified = ""
 	tab.setFocus(newPaneID)
 	// The new Pane inherits the source Session's last known directory, as the
 	// original split did when it copied the shell's current cwd.
@@ -1271,6 +1280,11 @@ func (s *State) SetMagnifiedPane(index int, paneID model.PaneID) bool {
 		return false
 	}
 	tab.Magnified = paneID
+	// The zoomed Pane is the only visible member, so it must also hold focus.
+	// Otherwise the keyboard and compose target would stay on a hidden Pane.
+	if paneID != "" {
+		tab.setFocus(paneID)
+	}
 	s.RequestRedraw()
 	return true
 }
@@ -1325,6 +1339,12 @@ func (s *State) FocusPaneID(index int, paneID model.PaneID) bool {
 	if !domainworkspace.ContainsPane(tab.Root, paneID) {
 		return false
 	}
+	// While a Pane is magnified the other members are hidden. Focusing one of
+	// them would move the keyboard, the compose target, and the Pane chrome
+	// onto something the user cannot see.
+	if tab.Magnified != "" && tab.Magnified != paneID {
+		return false
+	}
 	tab.setFocus(paneID)
 	s.save()
 	s.RequestRedraw()
@@ -1350,6 +1370,12 @@ func (s *State) SetSplitRatio(index int, splitID model.SplitID, ratio float32) b
 func (s *State) FocusPane(direction domainworkspace.FocusDirection) bool {
 	tab, _ := s.activeTab()
 	if tab == nil {
+		return false
+	}
+	// A magnified Pane is the only visible member. Directional focus would
+	// land on a hidden Pane, so it stays put until the zoom is cleared; the
+	// user reaches the other members by restoring the split first.
+	if tab.Magnified != "" {
 		return false
 	}
 	_, focusedID := tab.focusedPane()
@@ -1411,38 +1437,77 @@ func (s *State) MoveTab(source, target model.TabID, after bool) bool {
 	return true
 }
 
-// MovePane moves a Pane beside another Pane. Within one Tab the Pane is
-// removed and reinserted; across Tabs the Pane changes owner. Dropping a Pane
-// on itself is rejected.
-func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
-	targetTabID model.TabID, targetPaneID model.PaneID, side domainworkspace.Side) bool {
+// paneMovePlan is a validated Pane rearrange. It is the single place the drop
+// guards run: an unknown Pane, a Pane dropped on itself, a stale target that
+// closed mid-drag, and a hidden member of a magnified Tab are all rejected
+// before any state changes.
+type paneMovePlan struct {
+	source, target           *Tab
+	sourceIndex, targetIndex int
+	value                    *pane
+	emptyTarget              bool
+}
+
+func (s *State) paneMovePlan(sourceTabID model.TabID, sourcePaneID model.PaneID,
+	targetTabID model.TabID, targetPaneID model.PaneID) (paneMovePlan, bool) {
 	if sourcePaneID == targetPaneID {
-		return false
+		return paneMovePlan{}, false
 	}
 	source, sourceIndex := s.tabByID(sourceTabID)
 	target, targetIndex := s.tabByID(targetTabID)
 	if source == nil || target == nil {
-		return false
+		return paneMovePlan{}, false
 	}
 	value, ok := source.panes[sourcePaneID]
 	if !ok || !domainworkspace.ContainsPane(source.Root, sourcePaneID) {
-		return false
+		return paneMovePlan{}, false
 	}
 	// An empty Tab has no target Pane. Dropping into it adopts the source as
 	// its root, mirroring RemovePane's recovery of a lone Pane.
 	emptyTarget := len(target.paneIDs()) == 0 || target.Root == nil
 	if !emptyTarget && !domainworkspace.ContainsPane(target.Root, targetPaneID) {
-		return false
+		return paneMovePlan{}, false
 	}
 	// A magnified Tab shows only its zoomed Pane. Every other member is hidden
 	// and neither accepts a drop nor starts a drag, so a stale drag value from
 	// before the zoom cannot rearrange the hidden layout.
 	if source.Magnified != "" && source.Magnified != sourcePaneID {
-		return false
+		return paneMovePlan{}, false
 	}
 	if target.Magnified != "" && target.Magnified != targetPaneID {
+		return paneMovePlan{}, false
+	}
+	return paneMovePlan{
+		source: source, target: target,
+		sourceIndex: sourceIndex, targetIndex: targetIndex,
+		value: value, emptyTarget: emptyTarget,
+	}, true
+}
+
+// CanMovePane reports whether MovePane would accept this drop. A drop zone
+// calls it while the drag is live, so a target that closed mid-drag is
+// rejected (and the source is never pruned) before the drop lands.
+func (s *State) CanMovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
+	targetTabID model.TabID, targetPaneID model.PaneID, side domainworkspace.Side) bool {
+	if !side.Valid() {
 		return false
 	}
+	_, ok := s.paneMovePlan(sourceTabID, sourcePaneID, targetTabID, targetPaneID)
+	return ok
+}
+
+// MovePane moves a Pane beside another Pane. Within one Tab the Pane is
+// removed and reinserted; across Tabs the Pane changes owner. Dropping a Pane
+// on itself is rejected.
+func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
+	targetTabID model.TabID, targetPaneID model.PaneID, side domainworkspace.Side) bool {
+	plan, ok := s.paneMovePlan(sourceTabID, sourcePaneID, targetTabID, targetPaneID)
+	if !ok || !side.Valid() {
+		return false
+	}
+	source, target := plan.source, plan.target
+	sourceIndex, targetIndex := plan.sourceIndex, plan.targetIndex
+	value, emptyTarget := plan.value, plan.emptyTarget
 
 	sourcePanes := len(source.paneIDs())
 	targetPanes := len(target.paneIDs())
@@ -1480,7 +1545,14 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 	delete(source.panes, sourcePaneID)
 	target.panes[sourcePaneID] = value
 	target.Root = targetRoot
-	target.setFocus(sourcePaneID)
+	// The drop may land on a magnified Tab. Its zoomed Pane stays the only
+	// visible member, so focus follows the zoom rather than the hidden Pane
+	// that was just inserted.
+	if target.Magnified != "" {
+		target.setFocus(target.Magnified)
+	} else {
+		target.setFocus(sourcePaneID)
+	}
 	source.clearStaleMagnification()
 	if sourcePanes == 1 && targetPanes == 1 {
 		// Dragging one single-Pane Tab onto another merges them into a Tab
