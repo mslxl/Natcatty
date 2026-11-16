@@ -256,7 +256,14 @@ func TestRekeyWithAChangedHostKeyRejectedFailsClosed(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the transport kept serving after the user rejected the changed key")
 	}
-	if lease.Alive() {
-		t.Fatal("the lease still reports a live transport after rejection")
+	// The read failure and the manager's death observation are ordered by the
+	// pool's own bookkeeping, so wait for the lease to notice rather than
+	// assuming the signal implies the state change has already landed.
+	deadline := time.Now().Add(5 * time.Second)
+	for lease.Alive() {
+		if time.Now().After(deadline) {
+			t.Fatal("the lease still reports a live transport after rejection")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
