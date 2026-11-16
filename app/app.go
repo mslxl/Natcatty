@@ -1800,10 +1800,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			shellState.NoteSessionActivity(snapshot.ID)
 			windows.InvalidateAll()
 			desktopCtl.NoteSession(snapshot)
-			// OSC 7 is the only source of a shell's working directory. The
-			// surface decides whether follow-cwd is on and whether this
-			// Session's Host has a pane; reporting here costs nothing when it
-			// is off.
+			// OSC 7, or a local shell's probed process directory, is the
+			// source of a Session's working directory. The surface decides
+			// whether follow-cwd is on and whether this Session's Host has a
+			// pane; reporting here costs nothing when it is off.
 			forwardTerminalCwd(sessions, transferState, snapshot)
 			forwardTerminalCwd(sessions, filesState, snapshot)
 			// A Session replaced under the same Host (host re-open, tab

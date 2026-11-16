@@ -78,6 +78,7 @@ func (s *Session) handleInput(data []byte, source bool) (forwarded []byte, chang
 	// so concurrent input, output, and close cannot produce a second event.
 	for _, completion := range completions {
 		s.publishCommandCompletion(completion)
+		s.invalidateCWDProbe()
 	}
 	if transfer != nil && s.onTransfer != nil {
 		s.onTransfer(s.id, *transfer)
@@ -160,7 +161,7 @@ func (s *Session) publishCommandCompletion(capture capturedCommand) {
 	})
 }
 
-func (s *Session) publishTap(now time.Time) {
+func (s *Session) publishTap(now time.Time) tapState {
 	state := s.tap.state(now)
 	s.update(func(snapshot *Snapshot) {
 		snapshot.CWD = state.CWD
@@ -174,6 +175,7 @@ func (s *Session) publishTap(now time.Time) {
 		snapshot.Clipboard = state.Clipboard
 		snapshot.Stats = state.Stats
 	})
+	return state
 }
 
 // scheduleActivityClear publishes Busy=false once output has been quiet for
@@ -237,6 +239,7 @@ func (s *Session) schedulePromptRecheck() {
 		if completion := s.tap.resolvePrompt(now); completion != nil {
 			s.publishTap(now)
 			s.publishCommandCompletion(*completion)
+			s.invalidateCWDProbe()
 		}
 	})
 	s.mu.Unlock()

@@ -210,7 +210,9 @@ type Snapshot struct {
 	// Notice is the most recent non-fatal runtime problem, such as a local X11
 	// display that could not be reached. It is nil when there is none.
 	Notice *Notice
-	// CWD is the working directory the shell reported with OSC 7, or "".
+	// CWD is the working directory the shell reported with OSC 7, or for a
+	// local shell that never reports it, the probed process directory. It is
+	// empty when neither source knows.
 	CWD string
 	// Title is the terminal title from OSC 0/2, or "".
 	Title string
@@ -310,6 +312,14 @@ type Transport interface {
 // Network transports need not implement it.
 type ExitWaiter interface {
 	Wait() (int, error)
+}
+
+// CWDProbe is implemented by a local transport that can read the shell
+// process's working directory. It is the fallback when the shell never
+// reports OSC 7. A remote transport leaves it unimplemented, so its cwd stays
+// unknown rather than being read from this machine.
+type CWDProbe interface {
+	WorkingDirectory() (string, error)
 }
 
 // CaptureHookExpectedReporter is implemented by transports that decide after
@@ -612,6 +622,15 @@ type Session struct {
 	// be swallowed by a line editor that is still aborting. A local shell is
 	// ready by construction.
 	commandReady atomic.Bool
+
+	// cwdProbeMu guards the optional local-shell working-directory probe and
+	// its cache. A consumer asks for the value; a finished command or a shell
+	// prompt marks it stale, so the next ask reads the process again.
+	cwdProbeMu    sync.Mutex
+	cwdProbe      CWDProbe
+	cwdProbeValue string
+	cwdProbeValid bool
+	cwdProbeStale bool
 
 	// outputMu orders rendered output against hibernate/resume. replay holds
 	// the bounded screen snapshot, feeds holds the observers, and the live
@@ -991,6 +1010,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	}
 	session.conn = newTerminalConn(session)
 	session.bindScreenSizer(transport)
+	session.bindCWDProbe(transport)
 	// A local PTY is attached to a live shell at Open; a remote shell has to
 	// finish its startup (a ForceCommand bash -i included) before it can read a
 	// wrapper, so the first command probes readiness first.
@@ -1363,10 +1383,17 @@ func (s *Service) remove(id model.SessionID) {
 func (s *Service) changed(snapshot Snapshot) {
 	s.mu.Lock()
 	hook := s.onChange
+	session := s.sessions[snapshot.ID]
 	s.mu.Unlock()
-	if hook != nil {
-		hook(snapshot)
+	if hook == nil {
+		return
 	}
+	if session != nil {
+		// Change consumers see the same cwd a Snapshot would, so follow-cwd
+		// works for a local shell that never reports OSC 7.
+		session.fillProbedCWD(&snapshot)
+	}
+	hook(snapshot)
 }
 
 // ID returns the Session's stable runtime identifier.
@@ -1397,6 +1424,9 @@ func (s *Session) Snapshot() Snapshot {
 	snapshot.PendingBytes, snapshot.Paused = s.conn.stats()
 	state := s.tap.state(now)
 	snapshot.CWD = state.CWD
+	if snapshot.CWD == "" && snapshot.Kind == KindLocal {
+		snapshot.CWD = s.probedCWD()
+	}
 	snapshot.Title = state.Title
 	snapshot.Command = state.Command
 	snapshot.Input = state.Input
@@ -1664,6 +1694,7 @@ func (s *Session) loop() {
 					s.tap.withdrawCaptureHook()
 				}
 				s.bindScreenSizer(cmd.transport)
+				s.bindCWDProbe(cmd.transport)
 				s.update(func(snapshot *Snapshot) {
 					snapshot.Connection = ConnectionStatusActive
 					snapshot.Notice = nil
@@ -1818,13 +1849,21 @@ func (s *Session) readLoop(generation int, transport Transport) {
 				s.highlightChunk(output)
 			}
 			if effects.Changed {
-				s.publishTap(now)
+				state := s.publishTap(now)
+				if len(output) > 0 && !state.Command.Running {
+					// A prompt or shell-initiated output can follow a cd.
+					// Cache until the next such burst; a running command's
+					// output rarely moves the shell's own directory.
+					s.invalidateCWDProbe()
+				}
 				s.scheduleActivityClear()
 			}
 			// observe returned after releasing the tap lock, so completions are
 			// published outside it. Each command is finalized once.
 			for _, completion := range effects.Completions {
 				s.publishCommandCompletion(completion)
+				// Prompt return is the canonical cwd change point.
+				s.invalidateCWDProbe()
 			}
 			if effects.PromptRecheck {
 				s.schedulePromptRecheck()
