@@ -4183,6 +4183,23 @@
     }
   },
   "monitoringDiskCapacityUnknown": "Capacity unavailable",
+  "monitoringDiskIO": "Disk I/O",
+  "monitoringDiskRead": "Read",
+  "monitoringDiskWrite": "Write",
+  "monitoringPartitionAlert": "Partition usage above {percent}%: {mounts}",
+  "@monitoringPartitionAlert": {
+    "description": "A warning listing the partitions above the capacity threshold.",
+    "placeholders": {
+      "percent": {
+        "type": "String",
+        "example": "80"
+      },
+      "mounts": {
+        "type": "String",
+        "example": "Alpha: /var"
+      }
+    }
+  },
   "monitoringNetwork": "Network",
   "monitoringDownload": "Download",
   "monitoringUpload": "Upload",

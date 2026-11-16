@@ -20494,6 +20494,52 @@ func (msgs Messages) MonitoringDiskCapacityUnknown() string {
 	return Catalog.Format(msgs.locale, "monitoringDiskCapacityUnknown", nil)
 }
 
+// MonitoringDiskIO says "Disk I/O"
+// in the language the app shows.
+func MonitoringDiskIO() string { return In(i18n.Locale()).MonitoringDiskIO() }
+
+// MonitoringDiskIO says "Disk I/O"
+// in the language of msgs.
+func (msgs Messages) MonitoringDiskIO() string {
+	return Catalog.Format(msgs.locale, "monitoringDiskIO", nil)
+}
+
+// MonitoringDiskRead says "Read"
+// in the language the app shows.
+func MonitoringDiskRead() string { return In(i18n.Locale()).MonitoringDiskRead() }
+
+// MonitoringDiskRead says "Read"
+// in the language of msgs.
+func (msgs Messages) MonitoringDiskRead() string {
+	return Catalog.Format(msgs.locale, "monitoringDiskRead", nil)
+}
+
+// MonitoringDiskWrite says "Write"
+// in the language the app shows.
+func MonitoringDiskWrite() string { return In(i18n.Locale()).MonitoringDiskWrite() }
+
+// MonitoringDiskWrite says "Write"
+// in the language of msgs.
+func (msgs Messages) MonitoringDiskWrite() string {
+	return Catalog.Format(msgs.locale, "monitoringDiskWrite", nil)
+}
+
+// MonitoringPartitionAlert says "Partition usage above {percent}%: {mounts}"
+// in the language the app shows.
+//
+// A warning listing the partitions above the capacity threshold.
+func MonitoringPartitionAlert(percent string, mounts string) string {
+	return In(i18n.Locale()).MonitoringPartitionAlert(percent, mounts)
+}
+
+// MonitoringPartitionAlert says "Partition usage above {percent}%: {mounts}"
+// in the language of msgs.
+//
+// A warning listing the partitions above the capacity threshold.
+func (msgs Messages) MonitoringPartitionAlert(percent string, mounts string) string {
+	return Catalog.Format(msgs.locale, "monitoringPartitionAlert", map[string]any{"percent": percent, "mounts": mounts})
+}
+
 // MonitoringNetwork says "Network"
 // in the language the app shows.
 func MonitoringNetwork() string { return In(i18n.Locale()).MonitoringNetwork() }

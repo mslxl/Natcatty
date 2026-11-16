@@ -2535,6 +2535,23 @@
     }
   },
   "monitoringDiskCapacityUnknown": "暂无容量读数",
+  "monitoringDiskIO": "磁盘 I/O",
+  "monitoringDiskRead": "读取",
+  "monitoringDiskWrite": "写入",
+  "monitoringPartitionAlert": "分区使用率超过 {percent}%：{mounts}",
+  "@monitoringPartitionAlert": {
+    "description": "A warning listing the partitions above the capacity threshold.",
+    "placeholders": {
+      "percent": {
+        "type": "String",
+        "example": "80"
+      },
+      "mounts": {
+        "type": "String",
+        "example": "Alpha: /var"
+      }
+    }
+  },
   "monitoringNetwork": "网络",
   "monitoringDownload": "下载",
   "monitoringUpload": "上传",

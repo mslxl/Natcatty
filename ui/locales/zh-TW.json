@@ -2535,6 +2535,23 @@
     }
   },
   "monitoringDiskCapacityUnknown": "暫無容量讀數",
+  "monitoringDiskIO": "磁碟 I/O",
+  "monitoringDiskRead": "讀取",
+  "monitoringDiskWrite": "寫入",
+  "monitoringPartitionAlert": "分割區使用率超過 {percent}%：{mounts}",
+  "@monitoringPartitionAlert": {
+    "description": "A warning listing the partitions above the capacity threshold.",
+    "placeholders": {
+      "percent": {
+        "type": "String",
+        "example": "80"
+      },
+      "mounts": {
+        "type": "String",
+        "example": "Alpha: /var"
+      }
+    }
+  },
   "monitoringNetwork": "網路",
   "monitoringDownload": "下載",
   "monitoringUpload": "上傳",

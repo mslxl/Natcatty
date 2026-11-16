@@ -85,11 +85,13 @@ type Sample struct {
 	SwapUsedMB  float64
 	SwapTotalMB float64
 	// Disk is the aggregate local capacity in percent. Disks carries each
-	// mount.
+	// mount, and DiskIO one entry per physical device where the remote OS
+	// reports it.
 	Disk        float64
 	DiskUsedGB  float64
 	DiskTotalGB float64
 	Disks       []Disk
+	DiskIO      []DiskIO
 	// Network rates are bytes per second across physical interfaces. They are
 	// NaN until a second reading establishes a delta.
 	Rx float64
@@ -129,6 +131,31 @@ func GPUUtilization(sample Sample) float64 {
 		}
 	}
 	return value
+}
+
+// DiskAlertPercent is the partition-capacity threshold. A mount above it is
+// surfaced as an alert; the bars keep their own warning and danger tones.
+const DiskAlertPercent = 80.0
+
+// DiskIO is one physical block device's throughput. Rates are NaN until a
+// second sample establishes the counter delta, matching Rx and Tx.
+type DiskIO struct {
+	// Device is the kernel's whole-device name, such as sda or nvme0n1.
+	Device string
+	// ReadBytesPerSecond and WriteBytesPerSecond are the device's throughput.
+	ReadBytesPerSecond  float64
+	WriteBytesPerSecond float64
+}
+
+// DiskAlerts lists the mounts above DiskAlertPercent, in the order reported.
+func DiskAlerts(disks []Disk) []Disk {
+	var alerts []Disk
+	for _, disk := range disks {
+		if Valid(disk.Percent) && disk.Percent > DiskAlertPercent {
+			alerts = append(alerts, disk)
+		}
+	}
+	return alerts
 }
 
 // Disk is one mounted filesystem's usage.

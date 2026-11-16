@@ -2535,6 +2535,23 @@
     }
   },
   "monitoringDiskCapacityUnknown": "Capacidad no disponible",
+  "monitoringDiskIO": "E/S de disco",
+  "monitoringDiskRead": "Lectura",
+  "monitoringDiskWrite": "Escritura",
+  "monitoringPartitionAlert": "Uso de partición por encima del {percent} %: {mounts}",
+  "@monitoringPartitionAlert": {
+    "description": "A warning listing the partitions above the capacity threshold.",
+    "placeholders": {
+      "percent": {
+        "type": "String",
+        "example": "80"
+      },
+      "mounts": {
+        "type": "String",
+        "example": "Alpha: /var"
+      }
+    }
+  },
   "monitoringNetwork": "Red",
   "monitoringDownload": "Descarga",
   "monitoringUpload": "Subida",
