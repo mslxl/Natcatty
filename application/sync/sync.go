@@ -661,9 +661,10 @@ type Service struct {
 	backupsProblem Problem
 	convergent     ConvergentInfo
 	// migrationResolutions holds this process's per-field choices for a blocked
-	// migration. It is deliberately not persisted: the register address names
-	// Vault entities, and a restarted process simply lists the conflicts again.
-	migrationResolutions map[string]ConvergentConflictSide
+	// migration, tagged with the conflict attempt they were made against. It is
+	// deliberately not persisted: the register address names Vault entities,
+	// and a restarted process simply lists the conflicts again.
+	migrationResolutions map[string]convergentMigrationResolution
 
 	// WebDAV connection state. The secrets stay in the token store; these are
 	// the non-secret fields the setup form prefills.

@@ -22,7 +22,18 @@ func migrationFieldConflictFixture(t *testing.T) (*Service, *fakeRemote, *fakeVa
 	base := payloadWithHosts(host("h1", "Base", "base.example"))
 	vault.set(base)
 	establishAnchor(t, service, remote, base)
+	merged := migrationConflictedState(t, "From B")
+	content := convergentContentForState(t, merged, 9000, "device-a")
+	installRemoteContent(t, remote, content, 9000)
+	return service, remote, vault, configs, content
+}
 
+// migrationConflictedState builds the provider v2 state the migration fixture
+// installs: one device changed the label, another the hostname, both from the
+// same base. remoteLabel is the label the remote side keeps.
+func migrationConflictedState(t *testing.T, remoteLabel string) domainsync.ConvergentState {
+	t.Helper()
+	base := payloadWithHosts(host("h1", "Base", "base.example"))
 	baseSnapshot, err := payloadSnapshot(base)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +46,7 @@ func migrationFieldConflictFixture(t *testing.T) (*Service, *fakeRemote, *fakeVa
 	if err != nil {
 		t.Fatal(err)
 	}
-	sideB, err := payloadSnapshot(payloadWithHosts(host("h1", "From B", "b.example")))
+	sideB, err := payloadSnapshot(payloadWithHosts(host("h1", remoteLabel, "b.example")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,9 +62,7 @@ func migrationFieldConflictFixture(t *testing.T) (*Service, *fakeRemote, *fakeVa
 	if err != nil {
 		t.Fatal(err)
 	}
-	content := convergentContentForState(t, merged, 9000, "device-a")
-	installRemoteContent(t, remote, content, 9000)
-	return service, remote, vault, configs, content
+	return merged
 }
 
 func conflictForField(t *testing.T, preview ConvergentMigrationPreview, field string) ConvergentMigrationConflict {
@@ -250,5 +259,46 @@ func TestConvergentMigrationExplicitEnableDropsEarlierChoices(t *testing.T) {
 	}
 	if len(preview.Conflicts) != 2 {
 		t.Fatalf("fresh enable kept earlier choices: %+v", preview.Conflicts)
+	}
+}
+
+// TestConvergentMigrationAbandonedAttemptDropsChoiceWhenRemoteChanged covers an
+// abandoned attempt without an explicit re-enable: the user chooses one field,
+// leaves the migration blocked, and the provider's value for that field
+// changes before they come back and resolve the other field. The old choice
+// must not silently dominate the new remote value.
+func TestConvergentMigrationAbandonedAttemptDropsChoiceWhenRemoteChanged(t *testing.T) {
+	service, remote, _, _, _ := migrationFieldConflictFixture(t)
+
+	// First attempt: keep the local label, leaving the hostname contested.
+	preview, err := service.ResolveConvergentMigrationConflict(context.Background(), ConvergentConflictResolution{
+		Register: domainsync.RegisterIdentity("hosts", "h1", "label"),
+		Side:     ConvergentConflictKeepLocal,
+	})
+	if !errors.Is(err, ErrConvergentMigration) || len(preview.Conflicts) != 1 {
+		t.Fatalf("partial resolution = %+v, %v", preview, err)
+	}
+	if preview.Conflicts[0].Field != "hostname" {
+		t.Fatalf("remaining conflict = %+v", preview.Conflicts[0])
+	}
+
+	// The attempt is abandoned. The provider now carries a different label.
+	changed := convergentContentForState(t, migrationConflictedState(t, "Changed B"), 10000, "device-a")
+	installRemoteContent(t, remote, changed, 10000)
+
+	// Second attempt: resolve the hostname. The stale label choice belongs to
+	// the earlier value set, so it must not ride along and complete the merge.
+	preview, err = service.ResolveConvergentMigrationConflict(context.Background(), ConvergentConflictResolution{
+		Register: domainsync.RegisterIdentity("hosts", "h1", "hostname"),
+		Side:     ConvergentConflictKeepRemote,
+	})
+	if !errors.Is(err, ErrConvergentMigration) {
+		t.Fatalf("stale label choice completed the migration: %+v, %v", preview, err)
+	}
+	if preview.CanInitialize || len(preview.Conflicts) != 1 || preview.Conflicts[0].Field != "label" {
+		t.Fatalf("remaining conflict = %+v", preview.Conflicts)
+	}
+	if got := string(preview.Conflicts[0].RemoteValue); got != `"Changed B"` {
+		t.Fatalf("remote label = %s, want the changed value", got)
 	}
 }

@@ -129,6 +129,10 @@ type ConvergentMigrationPreview struct {
 	ConflictCount         int                           `json:"conflictCount"`
 	Conflicts             []ConvergentMigrationConflict `json:"conflicts,omitempty"`
 	BlockedReasons        []ConvergentBlockedReason     `json:"blockedReasons,omitempty"`
+	// attempt fingerprints the contested registers this plan found before any
+	// recorded choice was applied. A choice is only valid while a later plan
+	// meets the same fingerprint; a changed side value makes it stale.
+	attempt string
 }
 
 // ConvergentDivergenceInfo is the actionable divergence report. Values are
@@ -776,10 +780,20 @@ type convergentMigrationInput struct {
 	LocalSnapshot  domainsync.ConvergentSnapshot
 	LegacyBaseline *Payload
 	Remote         convergentRemote
-	// Resolutions records the user's per-field keep-local/keep-remote choices.
-	// They are applied inside planning, before the conflict gate, so the
-	// chosen values travel through the ordinary migration materialization.
-	Resolutions map[string]ConvergentConflictSide
+	// Resolutions records the user's per-field keep-local/keep-remote choices,
+	// each tagged with the conflict set it was made against. They are applied
+	// inside planning, before the conflict gate, so the chosen values travel
+	// through the ordinary migration materialization. A choice from an earlier
+	// attempt is ignored.
+	Resolutions map[string]convergentMigrationResolution
+}
+
+// convergentMigrationResolution is one in-flight per-field choice. Attempt
+// identifies the conflict set the user saw; a changed value on either side
+// changes the attempt and retires the choice.
+type convergentMigrationResolution struct {
+	Side    ConvergentConflictSide
+	Attempt string
 }
 
 type convergentPlan struct {
@@ -986,10 +1000,17 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 		plan.block("damaged-envelope", err.Error())
 		return plan
 	}
-	if len(conflicts) > 0 && len(input.Resolutions) > 0 {
+	// Every choice is tied to the exact contested values it was made against.
+	// A plan that finds a different value set starts a new attempt, so a choice
+	// for a field the user has not seen again is ignored instead of silently
+	// dominating the new remote value.
+	attempt := convergentConflictAttempt(conflicts, localSnapshot, remoteSnapshot)
+	plan.Preview.attempt = attempt
+	resolutions := liveConvergentResolutions(input.Resolutions, attempt)
+	if len(conflicts) > 0 && len(resolutions) > 0 {
 		// A resolution is a real causal write, not a UI override: the chosen
 		// side dominates every retained candidate inside the merged state.
-		state, err = resolveConvergentMigrationConflicts(state, conflicts, input.Resolutions, localSnapshot, remoteSnapshot, input.DeviceID, input.Now)
+		state, err = resolveConvergentMigrationConflicts(state, conflicts, resolutions, localSnapshot, remoteSnapshot, input.DeviceID, input.Now)
 		if err != nil {
 			plan.block("conflict-resolution-failed", err.Error())
 			return plan
@@ -1037,6 +1058,52 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 	plan.Materialized = &full
 	plan.Settings = settings
 	return plan
+}
+
+// convergentConflictAttempt fingerprints the contested values the user is
+// shown. A resolution is scoped to this fingerprint: when either side's value
+// or presence changes, the old choice no longer matches and is dropped.
+func convergentConflictAttempt(
+	conflicts []domainsync.ConvergentConflict,
+	local, remote domainsync.ConvergentSnapshot,
+) string {
+	if len(conflicts) == 0 {
+		return ""
+	}
+	hash := sha256.New()
+	for _, conflict := range conflicts {
+		for _, part := range []string{conflict.Family, conflict.EntityID, conflict.Field, conflict.Register} {
+			fmt.Fprintf(hash, "%d:%s", len(part), part)
+		}
+		localValue, localPresent := snapshotRegisterValue(local, conflict.Family, conflict.EntityID, conflict.Field)
+		remoteValue, remotePresent := snapshotRegisterValue(remote, conflict.Family, conflict.EntityID, conflict.Field)
+		for _, value := range []json.RawMessage{localValue, remoteValue} {
+			fmt.Fprintf(hash, "|%d:", len(value))
+			hash.Write(value)
+		}
+		fmt.Fprintf(hash, "|%t%t", localPresent, remotePresent)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// liveConvergentResolutions keeps only the choices recorded against the
+// attempt currently on screen. Choices made for a different value set are
+// dropped rather than applied to a field the user no longer sees.
+func liveConvergentResolutions(
+	recorded map[string]convergentMigrationResolution,
+	attempt string,
+) map[string]ConvergentConflictSide {
+	if len(recorded) == 0 || attempt == "" {
+		return nil
+	}
+	live := make(map[string]ConvergentConflictSide, len(recorded))
+	for register, choice := range recorded {
+		if choice.Attempt != attempt {
+			continue
+		}
+		live[register] = choice.Side
+	}
+	return live
 }
 
 // resolveConvergentMigrationConflicts applies the user's per-field choices to
@@ -1461,7 +1528,7 @@ func (s *Service) ResolveConvergentMigrationConflict(ctx context.Context, resolu
 	if !convergentPreviewHasConflict(preview, resolution.Register) {
 		return preview, fmt.Errorf("%w: conflict %q no longer exists", ErrConvergentMigration, resolution.Register)
 	}
-	s.recordMigrationResolution(resolution.Register, resolution.Side)
+	s.recordMigrationResolution(resolution.Register, resolution.Side, preview.attempt)
 	return s.setConvergentEnabled(ctx, true)
 }
 
@@ -1482,7 +1549,7 @@ func (s *Service) ResolveConvergentMigrationConflicts(ctx context.Context, side 
 		return preview, err
 	}
 	for _, conflict := range preview.Conflicts {
-		s.recordMigrationResolution(conflict.Register, side)
+		s.recordMigrationResolution(conflict.Register, side, preview.attempt)
 	}
 	return s.setConvergentEnabled(ctx, true)
 }
@@ -1496,24 +1563,24 @@ func convergentPreviewHasConflict(preview ConvergentMigrationPreview, register s
 	return false
 }
 
-func (s *Service) recordMigrationResolution(register string, side ConvergentConflictSide) {
+func (s *Service) recordMigrationResolution(register string, side ConvergentConflictSide, attempt string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.migrationResolutions == nil {
-		s.migrationResolutions = map[string]ConvergentConflictSide{}
+		s.migrationResolutions = map[string]convergentMigrationResolution{}
 	}
-	s.migrationResolutions[register] = side
+	s.migrationResolutions[register] = convergentMigrationResolution{Side: side, Attempt: attempt}
 }
 
-func (s *Service) migrationResolutionChoices() map[string]ConvergentConflictSide {
+func (s *Service) migrationResolutionChoices() map[string]convergentMigrationResolution {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.migrationResolutions) == 0 {
 		return nil
 	}
-	choices := make(map[string]ConvergentConflictSide, len(s.migrationResolutions))
-	for register, side := range s.migrationResolutions {
-		choices[register] = side
+	choices := make(map[string]convergentMigrationResolution, len(s.migrationResolutions))
+	for register, choice := range s.migrationResolutions {
+		choices[register] = choice
 	}
 	return choices
 }
