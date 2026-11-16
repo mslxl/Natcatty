@@ -1056,6 +1056,8 @@
   "sessionClipboardDeny": "Denegar",
   "settingsTerminalTitle": "Terminal",
   "settingsTerminalDescription": "Registro de sesiones y comportamiento de los programas del terminal.",
+  "settingsTerminalShiftEnter": "Mayús+Intro envía ESC+CR",
+  "settingsTerminalShiftEnterDescription": "Envía Escape e Intro, la secuencia heredada de Alt+Intro que la mayoría de programas TUI leen como salto de línea en lugar de envío. Si se desactiva, Mayús+Intro usa la codificación del propio terminal.",
   "settingsTerminalLoggingTitle": "Registro de sesiones",
   "settingsTerminalLoggingDescription": "Guarda la salida de las sesiones en una carpeta que elijas.",
   "settingsLogEnabled": "Registrar automáticamente las sesiones nuevas",

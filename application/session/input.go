@@ -80,6 +80,18 @@ func WithInputHook(fn func(model.SessionID, []byte)) Option {
 	return func(s *Service) { s.onInput = fn }
 }
 
+// ShiftEnterNewlineData is what a Shift+Enter press sends when the terminal
+// newline preference is on. ESC CR is the legacy Alt+Enter sequence: readline,
+// zle, and most TUI CLIs read it as a literal newline rather than a submit.
+// With the preference off, nil leaves the key to the terminal's own encoding,
+// which is how every other Enter variant is encoded.
+func ShiftEnterNewlineData(newline bool) []byte {
+	if !newline {
+		return nil
+	}
+	return []byte{0x1b, '\r'}
+}
+
 // SendInput sends data to exactly targets, preserving their order and
 // deduplicating repeated IDs. Each target is queued independently and
 // without blocking, so one saturated Session cannot stall the others. The

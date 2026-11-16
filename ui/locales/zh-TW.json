@@ -1056,6 +1056,8 @@
   "sessionClipboardDeny": "拒絕",
   "settingsTerminalTitle": "終端機",
   "settingsTerminalDescription": "工作階段日誌和終端程式行為。",
+  "settingsTerminalShiftEnter": "Shift+Enter 傳送 ESC+CR",
+  "settingsTerminalShiftEnterDescription": "傳送 Escape 和 Enter（舊式 Alt+Enter 序列），多數 TUI 程式將其視為換行而不是提交。關閉後，Shift+Enter 使用終端自身的編碼。",
   "settingsTerminalLoggingTitle": "工作階段日誌",
   "settingsTerminalLoggingDescription": "將工作階段輸出寫入你選擇的資料夾。",
   "settingsLogEnabled": "自動記錄新工作階段",

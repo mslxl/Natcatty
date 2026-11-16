@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sync"
@@ -269,6 +270,18 @@ func TestSendChunksUntilStopsBeforeTheNextChunk(t *testing.T) {
 	}
 	time.Sleep(250 * time.Millisecond)
 	waitForInput(t, factory.transport("target-0"), "one\r")
+}
+
+// TestShiftEnterNewlineDataEncodesEscCR pins the input encoding: the
+// preference on sends exactly ESC CR, and off returns nil so the terminal
+// encodes Shift+Enter as it does every other Enter variant.
+func TestShiftEnterNewlineDataEncodesEscCR(t *testing.T) {
+	if got, want := ShiftEnterNewlineData(true), []byte{0x1b, '\r'}; !bytes.Equal(got, want) {
+		t.Errorf("Shift+Enter data = %q, want %q", got, want)
+	}
+	if got := ShiftEnterNewlineData(false); got != nil {
+		t.Errorf("Shift+Enter data with the preference off = %q, want nil", got)
+	}
 }
 
 func TestSendChunksUntilCanceledBeforeTheFirstChunkSendsNothing(t *testing.T) {

@@ -8328,6 +8328,28 @@ func (msgs Messages) SettingsTerminalDescription() string {
 	return Catalog.Format(msgs.locale, "settingsTerminalDescription", nil)
 }
 
+// SettingsTerminalShiftEnter says "Shift+Enter sends ESC+CR"
+// in the language the app shows.
+func SettingsTerminalShiftEnter() string { return In(i18n.Locale()).SettingsTerminalShiftEnter() }
+
+// SettingsTerminalShiftEnter says "Shift+Enter sends ESC+CR"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalShiftEnter() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalShiftEnter", nil)
+}
+
+// SettingsTerminalShiftEnterDescription says "Send Escape and Enter, the legacy Alt+Enter sequence most TUI programs read as a newline instead of a submit. Turning…"
+// in the language the app shows.
+func SettingsTerminalShiftEnterDescription() string {
+	return In(i18n.Locale()).SettingsTerminalShiftEnterDescription()
+}
+
+// SettingsTerminalShiftEnterDescription says "Send Escape and Enter, the legacy Alt+Enter sequence most TUI programs read as a newline instead of a submit. Turning…"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalShiftEnterDescription() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalShiftEnterDescription", nil)
+}
+
 // SettingsTerminalLoggingTitle says "Session logging"
 // in the language the app shows.
 func SettingsTerminalLoggingTitle() string { return In(i18n.Locale()).SettingsTerminalLoggingTitle() }

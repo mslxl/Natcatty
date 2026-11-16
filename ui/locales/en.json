@@ -1552,6 +1552,8 @@
   "sessionClipboardDeny": "Deny",
   "settingsTerminalTitle": "Terminal",
   "settingsTerminalDescription": "Session logging and terminal program behavior.",
+  "settingsTerminalShiftEnter": "Shift+Enter sends ESC+CR",
+  "settingsTerminalShiftEnterDescription": "Send Escape and Enter, the legacy Alt+Enter sequence most TUI programs read as a newline instead of a submit. Turning this off leaves Shift+Enter to the terminal's own encoding.",
   "settingsTerminalLoggingTitle": "Session logging",
   "settingsTerminalLoggingDescription": "Write Session output to a folder you choose.",
   "settingsLogEnabled": "Log new Sessions automatically",

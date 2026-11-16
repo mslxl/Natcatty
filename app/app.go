@@ -1246,6 +1246,11 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				appearance := preferenceService.Settings().Appearance
 				return appearance.TerminalCursorStyle, !appearance.TerminalCursorSteady
 			}),
+			// Shift+Enter is read on each press, so toggling the Settings
+			// preference applies to open terminals without reopening them.
+			sessionui.WithShiftEnterNewline(func() bool {
+				return !preferenceService.Settings().Appearance.TerminalShiftEnterPlain
+			}),
 			sessionui.WithTerminalTheme(currentTerminalTheme),
 			sessionui.WithTerminalKeybinds(func() []terminal.Keybind {
 				return terminalKeybinds(keybindingService)

@@ -166,6 +166,7 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaLayout, domain.FieldSidePanelDock, m.SettingsSidePanelDock(), "side panel dock")
 
 	add(AreaTerminal, "", m.SettingsTerminalLoggingTitle(), "logging log directory format timestamps output")
+	add(AreaTerminal, "", m.SettingsTerminalShiftEnter(), "shift enter newline esc cr alt enter encoding")
 	add(AreaTerminal, "", m.SettingsLogEnabled(), "logging enabled save output")
 	add(AreaTerminal, "", m.SettingsLogDirectory(), "log directory path")
 	add(AreaTerminal, "", m.SettingsLogFormat(), "log format text html")

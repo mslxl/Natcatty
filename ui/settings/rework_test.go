@@ -345,8 +345,9 @@ func TestSettingsAreasShowFieldLabels(t *testing.T) {
 			}},
 			{AreaTerminal, func(m locales.Messages) []string {
 				return []string{
-					m.SettingsLogDirectory(), m.SettingsLogFormat(), m.SettingsOSC52Title(),
-					m.SettingsTerminalEncoding(), m.SettingsPasteMinLines(), m.SettingsDropAction(),
+					m.SettingsTerminalShiftEnter(), m.SettingsLogDirectory(), m.SettingsLogFormat(),
+					m.SettingsOSC52Title(), m.SettingsTerminalEncoding(), m.SettingsPasteMinLines(),
+					m.SettingsDropAction(),
 				}
 			}},
 			{AreaLayout, func(m locales.Messages) []string {

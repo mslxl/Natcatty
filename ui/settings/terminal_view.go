@@ -3,15 +3,30 @@ package settings
 import (
 	"github.com/egoist/mygo/ui"
 
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
-func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t *ui.Theme) {
+func terminalSection(c *ui.Context, state *TerminalState, prefs *PreferencesState,
+	m locales.Messages, t *ui.Theme) {
 	settings := state.Settings()
 	sectionBody(c, t, func() {
+		if prefs != nil {
+			// Shift+Enter is a Terminal preference even though the typed
+			// document keeps it beside the terminal appearance fields, so the
+			// row is edited here through the preferences service.
+			shiftEnter := !prefs.Settings().Appearance.TerminalShiftEnterPlain
+			checkboxRow(c, prefs, m, domainpreferences.FieldTerminalShiftEnter,
+				m.SettingsTerminalShiftEnter(), shiftEnter, func(s *domainpreferences.Settings, value bool) {
+					s.Appearance.TerminalShiftEnterPlain = !value
+				})
+			ui.Text(c, m.SettingsTerminalShiftEnterDescription()).
+				FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+		}
+
 		ui.Text(c, m.SettingsTerminalLoggingTitle()).Bold()
 		ui.Text(c, m.SettingsTerminalLoggingDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 

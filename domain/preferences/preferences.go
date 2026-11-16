@@ -259,6 +259,12 @@ type Appearance struct {
 	// inverted so a document written before the field existed, which has no
 	// value, keeps the original's blinking default.
 	TerminalCursorSteady bool `json:"terminalCursorSteady"`
+	// TerminalShiftEnterPlain leaves Shift+Enter to the terminal's own
+	// encoding instead of sending ESC CR. It is stored inverted so a document
+	// written before the field existed, which has no value, keeps the default:
+	// ESC CR is the legacy Alt+Enter sequence that readline, zle, and most TUI
+	// CLIs read as a literal newline rather than a submit.
+	TerminalShiftEnterPlain bool `json:"terminalShiftEnterPlain"`
 }
 
 // Layout group.
@@ -706,6 +712,7 @@ const (
 	FieldTerminalFontSize             Field = "appearance.terminalFontSize"
 	FieldTerminalCursorStyle          Field = "appearance.terminalCursorStyle"
 	FieldTerminalCursorBlink          Field = "appearance.terminalCursorBlink"
+	FieldTerminalShiftEnter           Field = "appearance.terminalShiftEnter"
 	FieldShowHostTreeSidebar          Field = "layout.showHostTreeSidebar"
 	FieldShowSFTPTab                  Field = "layout.showSftpTab"
 	FieldShowRecentHosts              Field = "layout.showRecentHosts"
@@ -749,6 +756,7 @@ func Fields() []Field {
 		FieldAccentColor, FieldAppIcon, FieldUIFont,
 		FieldWindowOpacity, FieldInterfaceStyle, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
 		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink,
+		FieldTerminalShiftEnter,
 		FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
 		FieldShowOnlyUngroupedHostsInRoot, FieldHostClickBehavior,
 		FieldTabBarPosition, FieldShellOnlyTabNumberShortcuts,
@@ -774,7 +782,8 @@ func GroupOf(field Field) (Group, bool) {
 	case FieldThemeMode, FieldLightTheme, FieldDarkTheme, FieldAccentMode,
 		FieldAccentColor, FieldAppIcon, FieldUIFont,
 		FieldWindowOpacity, FieldInterfaceStyle, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
-		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink:
+		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink,
+		FieldTerminalShiftEnter:
 		return GroupAppearance, true
 	case FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
 		FieldShowOnlyUngroupedHostsInRoot, FieldHostClickBehavior,
@@ -837,6 +846,8 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.Appearance.TerminalCursorStyle = defaults.Appearance.TerminalCursorStyle
 	case FieldTerminalCursorBlink:
 		settings.Appearance.TerminalCursorSteady = defaults.Appearance.TerminalCursorSteady
+	case FieldTerminalShiftEnter:
+		settings.Appearance.TerminalShiftEnterPlain = defaults.Appearance.TerminalShiftEnterPlain
 	case FieldShowHostTreeSidebar:
 		settings.Layout.ShowHostTreeSidebar = defaults.Layout.ShowHostTreeSidebar
 	case FieldShowSFTPTab:

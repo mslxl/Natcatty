@@ -70,6 +70,10 @@ type Options struct {
 	// app applies a Settings change to open terminals through
 	// SetTerminalCursor; a new terminal reads it here.
 	Cursor func() (domainpreferences.CursorStyle, bool)
+	// ShiftEnterNewline reports whether Shift+Enter sends ESC CR instead of
+	// the terminal's own encoding. It is read on each key press, so a Settings
+	// change applies to an open terminal.
+	ShiftEnterNewline func() bool
 	// Theme reads the live terminal color scheme. The app applies a Settings
 	// change to open terminals through SetTerminalTheme; a new terminal reads
 	// it here.
@@ -209,6 +213,12 @@ func WithTerminalFont(fn func() terminal.Font) Option {
 // terminal uses.
 func WithTerminalCursor(fn func() (domainpreferences.CursorStyle, bool)) Option {
 	return func(options *Options) { options.Cursor = fn }
+}
+
+// WithShiftEnterNewline supplies the live Shift+Enter encoding preference. A
+// nil reader leaves Shift+Enter to MyGo's own encoding.
+func WithShiftEnterNewline(fn func() bool) Option {
+	return func(options *Options) { options.ShiftEnterNewline = fn }
 }
 
 // WithTerminalTheme supplies the live terminal color scheme a new terminal
@@ -386,7 +396,7 @@ func (s *Surface) attach(conn io.ReadWriteCloser) error {
 			s.requestPaste(string(text))
 			return true
 		},
-		OnKey: s.handleAutocompleteKey,
+		OnKey: s.handleTerminalKey,
 	}
 	term, err := terminal.New(options)
 	if err != nil {
@@ -399,6 +409,25 @@ func (s *Surface) attach(conn io.ReadWriteCloser) error {
 	}
 	s.terminal = term
 	return nil
+}
+
+// handleTerminalKey runs before MyGo encodes a key. Shift+Enter is taken only
+// when the Settings preference asks for the legacy ESC CR newline; every other
+// key, including plain Enter and Shift+Enter with the preference off, falls
+// through to MyGo's own encoding. The autocomplete popup follows.
+func (s *Surface) handleTerminalKey(mods ui.Modifiers, key ui.Key) bool {
+	if mods == ui.Shift && key == ui.KeyEnter {
+		newline := s.options.ShiftEnterNewline != nil && s.options.ShiftEnterNewline()
+		if data := appsession.ShiftEnterNewlineData(newline); data != nil {
+			if s.terminal != nil {
+				// Send keeps the escape sequence in order with the text
+				// typed around it, as the chosen key's encoding would have.
+				s.terminal.Send(data)
+			}
+			return true
+		}
+	}
+	return s.handleAutocompleteKey(mods, key)
 }
 
 func (s *Surface) terminalFont() terminal.Font {

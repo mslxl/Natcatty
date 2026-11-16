@@ -1056,6 +1056,8 @@
   "sessionClipboardDeny": "Запретить",
   "settingsTerminalTitle": "Терминал",
   "settingsTerminalDescription": "Журналирование сеансов и поведение программ терминала.",
+  "settingsTerminalShiftEnter": "Shift+Enter отправляет ESC+CR",
+  "settingsTerminalShiftEnterDescription": "Отправляет Escape и Enter — устаревшую последовательность Alt+Enter, которую большинство TUI-программ читают как перевод строки, а не отправку. Если выключить, Shift+Enter использует собственную кодировку терминала.",
   "settingsTerminalLoggingTitle": "Журналирование сеансов",
   "settingsTerminalLoggingDescription": "Записывать вывод сеансов в выбранную папку.",
   "settingsLogEnabled": "Автоматически журналировать новые сеансы",

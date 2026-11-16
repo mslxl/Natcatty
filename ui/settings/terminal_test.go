@@ -461,3 +461,39 @@ func TestTerminalSettingsInteractionUpdatesTheService(t *testing.T) {
 		t.Fatalf("OSC 52 policy = %q, want prompt", fake.settings.OSC52)
 	}
 }
+
+// TestTerminalSettingsToggleShiftEnter proves the Terminal area edits the
+// Shift+Enter preference: it is on by default (ESC CR) and clicking the row
+// stores the plain-carriage-return choice.
+func TestTerminalSettingsToggleShiftEnter(t *testing.T) {
+	fakeTerminalSettings := newFakeTerminal()
+	preferences := newFakePreferences()
+	tester := ui.NewTester(viewAt(AreaTerminal, Config{
+		Lock:        NewAppLockState(&fakeAppLock{}),
+		Preferences: NewPreferencesState(preferences),
+		Terminal:    NewTerminalState(fakeTerminalSettings),
+	}), 1100, 900)
+	tester.SetLocale("en")
+	tester.Frame()
+	m := locales.In("en")
+	if !tester.HasText(m.SettingsTerminalShiftEnter()) {
+		t.Fatalf("the Shift+Enter setting is not rendered: %v", tester.Texts())
+	}
+	if preferences.settings.Appearance.TerminalShiftEnterPlain {
+		t.Fatal("Shift+Enter is not ESC CR by default")
+	}
+	if err := tester.Click(m.SettingsTerminalShiftEnter()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if !preferences.settings.Appearance.TerminalShiftEnterPlain {
+		t.Fatal("the Shift+Enter checkbox did not reach the preferences service")
+	}
+	if err := tester.Click(m.SettingsTerminalShiftEnter()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if preferences.settings.Appearance.TerminalShiftEnterPlain {
+		t.Fatal("clicking again did not restore the ESC CR default")
+	}
+}

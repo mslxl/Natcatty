@@ -157,6 +157,36 @@ func TestCursorFieldsResetIndependently(t *testing.T) {
 	}
 }
 
+// TestShiftEnterDefaultsToEscCR pins the default: Shift+Enter sends ESC CR
+// (the legacy Alt+Enter encoding). The field is stored inverted, so a settings
+// document written before it existed keeps that default.
+func TestShiftEnterDefaultsToEscCR(t *testing.T) {
+	if got := Defaults().Appearance.TerminalShiftEnterPlain; got {
+		t.Error("Shift+Enter leaves the key to the terminal by default")
+	}
+	var older Appearance
+	if older.TerminalShiftEnterPlain {
+		t.Error("an appearance document without the field asks for the plain encoding")
+	}
+	if group, ok := GroupOf(FieldTerminalShiftEnter); !ok || group != GroupAppearance {
+		t.Errorf("GroupOf(%q) = %q, %v", FieldTerminalShiftEnter, group, ok)
+	}
+}
+
+func TestShiftEnterPreferenceResetsAlone(t *testing.T) {
+	settings := Defaults()
+	settings.Appearance.TerminalShiftEnterPlain = true
+	settings.Appearance.TerminalCursorSteady = true
+
+	reset := ResetField(settings, FieldTerminalShiftEnter)
+	if reset.Appearance.TerminalShiftEnterPlain {
+		t.Error("the ESC CR default was not restored")
+	}
+	if !reset.Appearance.TerminalCursorSteady {
+		t.Error("resetting Shift+Enter touched the cursor setting")
+	}
+}
+
 func TestEveryFieldBelongsToAGroup(t *testing.T) {
 	seen := make(map[Field]bool)
 	for _, group := range Groups() {
@@ -185,8 +215,8 @@ func TestEveryFieldBelongsToAGroup(t *testing.T) {
 			t.Errorf("field %q has unknown group %q", field, group)
 		}
 	}
-	if len(seen) != 49 {
-		t.Errorf("fields = %d, want 49", len(seen))
+	if len(seen) != 50 {
+		t.Errorf("fields = %d, want 50", len(seen))
 	}
 }
 
