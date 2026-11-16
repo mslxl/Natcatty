@@ -77,7 +77,8 @@ type Operation struct {
 // contents. Such an operation has no byte or file totals to show.
 func (o Operation) Metadata() bool {
 	switch o.Kind {
-	case domainsftp.OpMkdir, domainsftp.OpCreateFile, domainsftp.OpRename, domainsftp.OpChmod:
+	case domainsftp.OpMkdir, domainsftp.OpCreateFile, domainsftp.OpRename, domainsftp.OpChmod,
+		domainsftp.OpArchive:
 		return true
 	}
 	return false
@@ -834,6 +835,17 @@ func (s *State) DropPane(side Side, targetDir string, payload *DragPayload) {
 // filesystem that accepts writes.
 func CanDuplicate(tab *Tab) bool {
 	return tab != nil && tab.FS != nil && !apptransfer.ReadOnly(tab.FS)
+}
+
+// CanArchive reports whether the pane can run an archive command. A local or
+// single-channel filesystem has no exec capability, and a read-only pane
+// cannot write the result.
+func CanArchive(tab *Tab) bool {
+	if tab == nil || tab.FS == nil || apptransfer.ReadOnly(tab.FS) {
+		return false
+	}
+	_, ok := tab.FS.(apptransfer.ArchiveCreator)
+	return ok
 }
 
 // DuplicateSelection copies the focused pane's selection inside the folder

@@ -133,6 +133,8 @@ func errorKindText(m locales.Messages, kind apptransfer.ErrorKind) string {
 		return m.SftpCopyIntoSelf()
 	case apptransfer.KindUnsupported:
 		return m.SftpErrorUnsupported()
+	case apptransfer.KindToolMissing:
+		return m.SftpErrorToolMissing()
 	case apptransfer.KindCancelled:
 		return m.SftpErrorCancelled()
 	case apptransfer.KindConnection:

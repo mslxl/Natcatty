@@ -30,13 +30,15 @@ const (
 	OpCreateFile OperationKind = "create-file"
 	// OpChmod changes permission bits.
 	OpChmod OperationKind = "chmod"
+	// OpArchive creates an archive beside its sources.
+	OpArchive OperationKind = "archive"
 )
 
 // Valid reports whether the kind is one the application knows.
 func (k OperationKind) Valid() bool {
 	switch k {
 	case OpCopy, OpMove, OpUpload, OpDownload, OpDelete, OpRename, OpMkdir,
-		OpCreateFile, OpChmod:
+		OpCreateFile, OpChmod, OpArchive:
 		return true
 	}
 	return false

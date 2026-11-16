@@ -81,6 +81,8 @@ func dialogTitle(m locales.Messages, dialog *transferstate.Dialog) string {
 		return m.SftpRenameTitle()
 	case transferstate.DialogChmod:
 		return m.SftpPermissionsTitle()
+	case transferstate.DialogArchive:
+		return m.SftpCreateArchive()
 	case transferstate.DialogHostPicker:
 		return m.SftpConnectTitle()
 	}
@@ -97,6 +99,8 @@ func dialogLabel(m locales.Messages, dialog *transferstate.Dialog) string {
 		return m.SftpRenameLabel()
 	case transferstate.DialogChmod:
 		return m.SftpPermissionsLabel()
+	case transferstate.DialogArchive:
+		return m.SftpArchiveLabel()
 	}
 	return ""
 }
@@ -109,17 +113,43 @@ func inputDialog(c *ui.Context, s *transferstate.State, dialog *transferstate.Di
 	// already clamped to the window.
 	input.Width(min(360, dialogWidth-2*dialogPadding))
 	submitted := input.Submitted()
+	if dialog.Kind == transferstate.DialogArchive {
+		format := dialog.ArchiveFormat
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.SftpArchiveFormat()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+			choices := []struct {
+				format apptransfer.ArchiveFormat
+				label  string
+			}{
+				{apptransfer.ArchiveTarGz, m.SftpArchiveTarGz()},
+				{apptransfer.ArchiveZip, m.SftpArchiveZip()},
+			}
+			for _, choice := range choices {
+				button := ui.Button(c, choice.label)
+				if format == choice.format {
+					button.Background(t.Accent).TextColor(t.AccentText)
+				}
+				if button.Clicked() {
+					s.SetDialogArchiveFormat(choice.format)
+				}
+			}
+		})
+	}
 	if dialog.Err != "" {
 		message := m.SftpInvalidName()
 		if dialog.Err == "invalid-mode" {
 			message = m.SftpInvalidMode()
+		}
+		if dialog.Err == "invalid-archive-name" {
+			message = m.SftpInvalidArchiveName()
 		}
 		ui.Text(c, message).FontSize(kit.M(c).Font.Caption).TextColor(uitheme.DangerText(t))
 	}
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Column(c).Grow(1)
 		confirmLabel := m.SftpCreate()
-		if dialog.Kind != transferstate.DialogNewFolder && dialog.Kind != transferstate.DialogNewFile {
+		if dialog.Kind != transferstate.DialogNewFolder && dialog.Kind != transferstate.DialogNewFile &&
+			dialog.Kind != transferstate.DialogArchive {
 			confirmLabel = m.SftpApply()
 		}
 		confirm := ui.PrimaryButton(c, confirmLabel)

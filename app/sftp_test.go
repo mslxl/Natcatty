@@ -49,6 +49,9 @@ type sftpDialNetwork struct {
 	// fail makes one dial fail, so lifecycle errors can be injected without a
 	// second network implementation.
 	fail map[int]error
+	// missingArchiveTool makes the fake exec handler answer like a host
+	// without tar, so the typed tool-missing failure can be exercised.
+	missingArchiveTool bool
 
 	mu      sync.Mutex
 	dials   int
@@ -75,6 +78,7 @@ func (n *sftpDialNetwork) dial(context.Context, string, string) (net.Conn, error
 	instance, err := fakessh.Start(server, fakessh.Options{
 		ServerVersion: n.serverVersion,
 		HostKey:       signer,
+		Exec:          n.execCommand,
 		Subsystems: map[string]func(xssh.Channel){
 			"sftp": func(channel xssh.Channel) {
 				session, err := sftp.NewServer(channel, sftp.WithServerWorkingDirectory(root))

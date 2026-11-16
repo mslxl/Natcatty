@@ -3370,6 +3370,30 @@
   "@sftpDuplicateEntry": {
     "description": "The action that copies the selected files or folders beside themselves."
   },
+  "sftpCreateArchive": "Create archive",
+  "@sftpCreateArchive": {
+    "description": "The action that packs the selection into an archive beside it."
+  },
+  "sftpArchiveLabel": "Archive name",
+  "@sftpArchiveLabel": {
+    "description": "The create-archive prompt's field label."
+  },
+  "sftpArchiveFormat": "Format",
+  "@sftpArchiveFormat": {
+    "description": "The create-archive prompt's format chooser."
+  },
+  "sftpArchiveTarGz": "tar.gz",
+  "@sftpArchiveTarGz": {
+    "description": "The gzip tarball format choice."
+  },
+  "sftpArchiveZip": "zip",
+  "@sftpArchiveZip": {
+    "description": "The zip format choice."
+  },
+  "sftpInvalidArchiveName": "Enter a file name ending with .tar.gz or .zip.",
+  "@sftpInvalidArchiveName": {
+    "description": "The validation error for an archive name without the selected extension."
+  },
   "sftpCloseTab": "Close tab",
   "@sftpCloseTab": {
     "description": "The action that closes the active tab."
@@ -3711,6 +3735,10 @@
   "sftpErrorUnsupported": "That operation is not available.",
   "@sftpErrorUnsupported": {
     "description": "The error shown for an unavailable operation."
+  },
+  "sftpErrorToolMissing": "The remote host does not have the archive tool installed.",
+  "@sftpErrorToolMissing": {
+    "description": "The error shown when the remote host lacks tar or zip."
   },
   "sftpErrorCancelled": "The operation was cancelled.",
   "@sftpErrorCancelled": {
