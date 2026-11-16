@@ -1,17 +1,50 @@
 package app
 
 import (
+	"math"
+
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	appdesktop "github.com/mslxl/natcatty/application/desktop"
 	"github.com/mslxl/natcatty/domain/model"
 	uiapplock "github.com/mslxl/natcatty/ui/applock"
+	"github.com/mslxl/natcatty/ui/dropdown"
 	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	"github.com/mslxl/natcatty/ui/titlebar"
 )
+
+// windowBounds is a window's screen rectangle in DIPs.
+type windowBounds struct {
+	X, Y          int
+	Width, Height int
+}
+
+// dropdownMinHeight is the smallest readable Quake dropdown. The actual
+// height also clamps to a shorter work area.
+const dropdownMinHeight = 120
+
+// topdownMinHeight is the smallest useful top-down dropdown: the complete
+// application shell needs far more room than the Quake terminal. Like the
+// Quake minimum, a shorter work area wins.
+const topdownMinHeight = 480
+
+// dropdownFallbackWorkArea is the last-resort rectangle when the platform
+// reports no displays at all. It keeps the Panel constructible with a usable
+// size.
+var dropdownFallbackWorkArea = windowBounds{Width: 1280, Height: 800}
+
+// screenProbe is the display seam the Dropdown Panel positions itself
+// against. MyGo's Screen module implements it; tests supply a fake so they
+// can move the pointer between displays without a real screen.
+type screenProbe interface {
+	CursorScreenPoint() mygo.Point
+	DisplayNearestPoint(mygo.Point) mygo.Display
+	PrimaryDisplay() mygo.Display
+}
 
 // windowSpec describes a native window the composition root asks the host to
 // create. Content is already wrapped in the App Lock gate.
@@ -25,15 +58,27 @@ type windowSpec struct {
 	MinHeight int
 	// Chrome is the window's title bar style. On macOS it places the traffic
 	// lights level with that title bar.
-	Chrome  titlebar.Style
+	Chrome titlebar.Style
+	// Panel asks for a non-activating, always-on-top panel: it floats over
+	// other apps and full-screen Spaces, stays out of the taskbar and the app
+	// switcher, and draws no native window controls.
+	Panel bool
+	// Hidden creates the window without showing it, so the caller can position
+	// it with Bounds before its first Show.
+	Hidden bool
+	// Bounds is the initial screen rectangle. Nil keeps the host's default
+	// placement. It is applied after creation and before any Show. Bounds does
+	// not imply a StateKey: geometry persistence stays opt-in.
+	Bounds  *windowBounds
 	Content func(*ui.Context)
 }
 
 // windowHooks are the events the composition root handles. OnCloseRequest
 // reports whether the close may proceed; the host cancels the close when it
-// returns false.
+// returns false. OnBlur runs when the window loses focus.
 type windowHooks struct {
 	OnFocus        func()
+	OnBlur         func()
 	OnCloseRequest func() bool
 	OnClosed       func()
 }
@@ -49,6 +94,10 @@ type hostWindow interface {
 	IsDestroyed() bool
 	IsVisible() bool
 	IsFocused() bool
+	// SetBounds places and sizes the window. A hidden window can be positioned
+	// before it is first shown.
+	SetBounds(windowBounds)
+	Bounds() windowBounds
 	SetTitle(string)
 	SetOpacity(float64)
 	SetVibrancy(mygo.Vibrancy)
@@ -98,6 +147,19 @@ func (nativeConfirmer) Confirm(prompt closePrompt) bool {
 type mygoWindowHost struct{}
 
 func (mygoWindowHost) Create(spec windowSpec, hooks windowHooks) hostWindow {
+	window := mygo.NewWindow(windowOptions(spec))
+	wireWindowHooks(window, hooks)
+	return mygoHostWindow{Window: window}
+}
+
+// windowOptions maps a windowSpec to MyGo's creation options. It is separate
+// from Create so the mapping, including the absence of an implicit StateKey,
+// is testable without a native window. Panel windows are always frameless
+// because they draw their own chrome and have no native controls. Initial
+// Bounds is applied with hostWindow.SetBounds by windowManager.create instead
+// of creation coordinates: MyGo centers a window whose X and Y are both zero,
+// which would misplace a top-left dropdown.
+func windowOptions(spec windowSpec) mygo.WindowOptions {
 	// Every window draws its own title bar, as the original's: no native
 	// caption or menu bar. Elsewhere the window is frameless and the content
 	// draws the window controls too (see withFrame); on macOS the title bar is
@@ -110,15 +172,37 @@ func (mygoWindowHost) Create(spec windowSpec, hooks windowHooks) hostWindow {
 		MinWidth:  spec.MinWidth,
 		MinHeight: spec.MinHeight,
 		StateKey:  spec.StateKey,
+		Panel:     spec.Panel,
+		Hidden:    spec.Hidden,
 		Frameless: true,
 		Content:   ui.View(spec.Content),
 	}
-	if titlebar.NativeControls {
+	// A Panel floats over the windows of every app, above full-screen apps
+	// too. The composition root positions it from the pointer's work area
+	// before each show; v1 does not let the user drag or resize it.
+	options.AlwaysOnTop = spec.Panel
+	options.DisableResize = spec.Panel
+	options.DisableMove = spec.Panel
+	if titlebar.NativeControls && !spec.Panel {
 		options.Frameless = false
 		options.TitleBarStyle = mygo.TitleBarHidden
 		options.TrafficLightPosition = trafficLights(spec.Chrome)
 	}
-	window := mygo.NewWindow(options)
+	return options
+}
+
+// nativeWindow is the hook surface of *mygo.Window. Create wires the
+// composition root's hooks onto it; tests drive a fake instead of a native
+// window.
+type nativeWindow interface {
+	OnFocus(func()) (off func())
+	OnClose(func(*mygo.CloseEvent)) (off func())
+	OnClosed(func()) (off func())
+	OnBlur(func()) (off func())
+}
+
+// wireWindowHooks subscribes the composition root's hooks on a native window.
+func wireWindowHooks(window nativeWindow, hooks windowHooks) {
 	if hooks.OnFocus != nil {
 		window.OnFocus(hooks.OnFocus)
 	}
@@ -130,8 +214,26 @@ func (mygoWindowHost) Create(spec windowSpec, hooks windowHooks) hostWindow {
 	if hooks.OnClosed != nil {
 		window.OnClosed(hooks.OnClosed)
 	}
-	return window
+	if hooks.OnBlur != nil {
+		window.OnBlur(hooks.OnBlur)
+	}
 }
+
+// mygoHostWindow adapts *mygo.Window to the manager's bounds type.
+type mygoHostWindow struct{ *mygo.Window }
+
+func (w mygoHostWindow) SetBounds(bounds windowBounds) {
+	w.Window.SetBounds(mygo.Rectangle{
+		X: bounds.X, Y: bounds.Y, Width: bounds.Width, Height: bounds.Height,
+	})
+}
+
+func (w mygoHostWindow) Bounds() windowBounds {
+	rect := w.Window.Bounds()
+	return windowBounds{X: rect.X, Y: rect.Y, Width: rect.Width, Height: rect.Height}
+}
+
+var _ hostWindow = mygoHostWindow{}
 
 // trafficLights places the macOS window controls so they sit centered on the
 // title bar the content draws: the Tab bar, a detached terminal's bar, or the
@@ -154,6 +256,7 @@ type windowManager struct {
 	confirmer       dialogConfirmer
 	gate            *uiapplock.Gate
 	state           *state.State
+	mainContent     func() func(*ui.Context)
 	settingsContent func() func(*ui.Context)
 	locale          func() string
 	// closeToTray asks whether a main-window close should hide the window
@@ -179,12 +282,63 @@ type windowManager struct {
 	// confirmPolicy asks the Security preference whether closing Sessions
 	// needs a confirmation. Nil keeps the original behavior (always ask).
 	confirmPolicy func() bool
+	// quakeSessionCount reports the Dropdown Panel's live Quake Sessions. Quit
+	// intent counts them beside the shell's Sessions, so a Quake Tab cannot be
+	// discarded without the user's confirmation. Nil means the build has no
+	// Quake Workspace.
+	quakeSessionCount func() int
 	// onFocus runs after any window gains focus, beside the App Lock activity
 	// record. The sync engine uses it for its debounced focus trigger.
-	onFocus    func()
-	main       hostWindow
-	settings   hostWindow
-	detached   map[model.TabID]hostWindow
+	onFocus  func()
+	main     hostWindow
+	settings hostWindow
+	detached map[model.TabID]hostWindow
+	// panels are auxiliary native windows that follow the shared appearance
+	// and invalidation paths but never keep the application alive. The
+	// Dropdown Panel is the first one.
+	panels []hostWindow
+	// dropdown is the singleton Dropdown Panel. It is created on its first
+	// show and only hidden afterwards until quit.
+	dropdown hostWindow
+	// dropdownContent supplies the Panel's routed view. The provider is
+	// resolved once at creation; the returned function runs every frame.
+	dropdownContent func() func(*ui.Context)
+	// dropdownBar supplies the routed view's own top-bar items, drawn beside
+	// the frame's hide button in the same row. It is resolved once at
+	// creation, like dropdownContent.
+	dropdownBar func() func(*ui.Context)
+	// dropdownShow runs before the Panel is created or shown. The composition
+	// root uses it to activate the routed workspace so its first frame already
+	// has content.
+	dropdownShow func()
+	// dropdownDismiss handles a Panel close request before the Panel hides. An
+	// open flyout inside the Panel, such as the Quake Host picker, consumes the
+	// first Escape; the next one hides the Panel. Nil always hides.
+	dropdownDismiss func() bool
+	// dropdownHeight is the live visible-height calculation in DIPs. The
+	// default uses half the work area.
+	dropdownHeight func(windowBounds) int
+	// dropdownHideOnBlur and dropdownHideOnEscape gate the two hide signals
+	// MyGo reports. Nil keeps the original behavior (hide on either). The
+	// click-outside gesture has no separate signal here: it is the blur
+	// signal, so HideOnBlur is its gate too; see Settings.HideOnClickOutside.
+	dropdownHideOnBlur   func() bool
+	dropdownHideOnEscape func() bool
+	// dropdownOwnsRender reports whether the currently routed dropdown mode
+	// and content source take the main Workspace's surfaces. Follow and
+	// top-down do; Quake's own Workspace does not.
+	dropdownOwnsRender func() bool
+	// renderOwner is the window that renders the shell surfaces this frame.
+	// The manager keeps the invariant that at most one window draws a Surface.
+	renderOwner state.RenderOwner
+	// mainVisibleBeforeDropdown remembers whether showing the dropdown hid a
+	// visible main window, so hiding it restores only that state.
+	mainVisibleBeforeDropdown bool
+	// dropdownClosing lets the Panel's close request proceed during quit;
+	// otherwise every close request only hides it.
+	dropdownClosing bool
+	// screen reports the displays and pointer. Nil reads MyGo's live screen.
+	screen     screenProbe
 	forceClose map[string]bool
 	quitting   bool
 	// mainFocuses counts FocusMain calls so the desktop test can observe that
@@ -204,6 +358,7 @@ func newWindowManager(host windowHost, confirmer dialogConfirmer, gate *uiapploc
 		locale:          locale,
 		detached:        make(map[model.TabID]hostWindow),
 		forceClose:      make(map[string]bool),
+		renderOwner:     state.RenderOwnerMain,
 	}
 }
 
@@ -228,21 +383,78 @@ func (m *windowManager) SetOpacity(value float64) {
 	m.SyncStyle()
 }
 
+// managedWindow is one entry of the manager's single window enumeration. A
+// new window kind joins here once; every shared per-window operation walks
+// this list, so a kind never needs its own appearance, redraw, locale, or
+// quit-count loop. counts reports whether an open window keeps the
+// application alive when it is the last one; title resolves the OS title a
+// locale change writes, and nil leaves the title alone.
+type managedWindow struct {
+	window hostWindow
+	counts bool
+	title  func(locales.Messages) string
+}
+
+// windows returns every window the manager owns. This is the one place a new
+// window kind is added: everything that applies to all windows, or that
+// decides what keeps the app alive, derives from this list.
+func (m *windowManager) windows() []managedWindow {
+	windows := make([]managedWindow, 0, 2+len(m.detached)+len(m.panels))
+	windows = append(windows,
+		managedWindow{
+			window: m.main,
+			counts: true,
+			title:  func(messages locales.Messages) string { return messages.AppName() },
+		},
+		managedWindow{
+			window: m.settings,
+			counts: true,
+			title:  func(messages locales.Messages) string { return messages.NavSettings() },
+		},
+	)
+	for tabID, window := range m.detached {
+		id := tabID
+		windows = append(windows, managedWindow{
+			window: window,
+			counts: true,
+			title: func(messages locales.Messages) string {
+				info, ok := m.state.DetachedTabInfo(id)
+				if !ok {
+					return ""
+				}
+				return shell.DetachedTitle(messages, info)
+			},
+		})
+	}
+	for _, window := range m.panels {
+		// A panel never keeps the app alive, and it draws no OS title.
+		windows = append(windows, managedWindow{window: window, counts: false})
+	}
+	return windows
+}
+
 // each runs fn on every open window.
 func (m *windowManager) each(fn func(hostWindow)) {
-	for _, window := range append([]hostWindow{m.main, m.settings}, m.detachedWindows()...) {
-		if window != nil && !window.IsDestroyed() {
-			fn(window)
+	for _, managed := range m.windows() {
+		if managed.window != nil && !managed.window.IsDestroyed() {
+			fn(managed.window)
 		}
 	}
 }
 
-func (m *windowManager) detachedWindows() []hostWindow {
-	windows := make([]hostWindow, 0, len(m.detached))
-	for _, window := range m.detached {
-		windows = append(windows, window)
+// create opens a host window and applies the manager's shared appearance. A
+// spec with Bounds is positioned before it can be shown: MyGo creates Hidden
+// windows invisibly, so the first Show lands at the requested rectangle with
+// no flash at a stale position.
+func (m *windowManager) create(spec windowSpec, hooks windowHooks) hostWindow {
+	window := m.host.Create(spec, hooks)
+	if spec.Bounds != nil {
+		window.SetBounds(*spec.Bounds)
 	}
-	return windows
+	m.applyOpacity(window)
+	m.applyVibrancy(window)
+	m.applyIcon(window)
+	return window
 }
 
 // currentStyle is the live Interface Style.
@@ -277,6 +489,23 @@ func (m *windowManager) SyncStyle() {
 // its root, before the App Lock gate builds anything.
 func (m *windowManager) SetThemeProvider(fn func() *ui.Theme) { m.theme = fn }
 
+// SetMainContentProvider installs the root view of the main window. The
+// provider is resolved when the window is created; the function it returns
+// runs every frame, so render ownership can change without recreating the
+// window. Nil falls back to the plain shell view.
+func (m *windowManager) SetMainContentProvider(fn func() func(*ui.Context)) {
+	m.mainContent = fn
+}
+
+func (m *windowManager) mainView() func(*ui.Context) {
+	if m.mainContent != nil {
+		if content := m.mainContent(); content != nil {
+			return content
+		}
+	}
+	return shell.View(m.state)
+}
+
 // SetStyleProvider sets how each window resolves the Interface Style.
 func (m *windowManager) SetStyleProvider(fn func() kit.Style) { m.style = fn }
 
@@ -294,16 +523,7 @@ func (m *windowManager) applyIconEverywhere() {
 	if data == nil {
 		return
 	}
-	apply := func(window hostWindow) {
-		if window != nil && !window.IsDestroyed() {
-			_ = window.SetIcon(data)
-		}
-	}
-	apply(m.main)
-	apply(m.settings)
-	for _, window := range m.detached {
-		apply(window)
-	}
+	m.each(func(window hostWindow) { _ = window.SetIcon(data) })
 }
 
 func (m *windowManager) currentIcon() []byte {
@@ -398,6 +618,20 @@ func (m *windowManager) wrap(content func(*ui.Context)) func(*ui.Context) {
 	}
 }
 
+// wrapChrome gates a window's shared chrome, such as the Dropdown Panel's
+// routed bar. While locked the chrome renders nothing; the content slot draws
+// the one lock screen, so chrome that shares a row with the frame's own
+// controls does not paint a second one.
+func (m *windowManager) wrapChrome(content func(*ui.Context)) func(*ui.Context) {
+	return func(c *ui.Context) {
+		if m.gate == nil {
+			content(c)
+			return
+		}
+		m.gate.WrapChrome(content)(c)
+	}
+}
+
 // detachedContent is the content of a detached Tab's window: the Tab's view
 // behind the same shared App Lock gate as every other window.
 func (m *windowManager) detachedContent(tabID model.TabID) func(*ui.Context) {
@@ -442,14 +676,15 @@ func (m *windowManager) OpenMain() hostWindow {
 		return m.main
 	}
 	// The content is inside the gate: while App Lock is closed no window
-	// builds anything.
-	gated := withFrame(titlebar.Tabs, func() hostWindow { return m.main }, m.wrap(shell.View(m.state)))
+	// builds anything. The view is a provider so a later render-ownership
+	// route can change what the main window shows without recreating it.
+	gated := withFrame(titlebar.Tabs, func() hostWindow { return m.main }, m.wrap(m.mainView()))
 	// withAccelerators binds at the root context, before the gate builds its
 	// container, so MyGo registers window shortcuts. Inside the gate they
 	// would become element-scoped and fail from the Vault view with no
 	// terminal focus.
 	content := m.withTheme(m.withAccelerators(gated))
-	m.main = m.host.Create(windowSpec{
+	m.main = m.create(windowSpec{
 		Key:       "main",
 		Title:     m.messages().AppName(),
 		StateKey:  "main",
@@ -474,9 +709,6 @@ func (m *windowManager) OpenMain() hostWindow {
 			m.markQuittingIfNoWindows()
 		},
 	})
-	m.applyOpacity(m.main)
-	m.applyVibrancy(m.main)
-	m.applyIcon(m.main)
 	return m.main
 }
 
@@ -503,7 +735,7 @@ func (m *windowManager) OpenSettings() {
 	if m.settingsContent == nil {
 		return
 	}
-	m.settings = m.host.Create(windowSpec{
+	m.settings = m.create(windowSpec{
 		Key:       "settings",
 		Title:     m.messages().NavSettings(),
 		StateKey:  "settings",
@@ -514,12 +746,12 @@ func (m *windowManager) OpenSettings() {
 		Chrome:    titlebar.Dialog,
 		Content:   m.withTheme(withFrame(titlebar.Dialog, func() hostWindow { return m.settings }, m.wrap(m.settingsContent()))),
 	}, windowHooks{
-		OnFocus:  m.recordActivity,
-		OnClosed: func() { m.settings = nil; m.markQuittingIfNoWindows() },
+		OnFocus: m.recordActivity,
+		// Settings owns no Sessions, but closing the last counted window quits
+		// and would end the Quake Workspace's live Sessions.
+		OnCloseRequest: func() bool { return m.allowQuakeClose(m.settings) },
+		OnClosed:       func() { m.settings = nil; m.markQuittingIfNoWindows() },
 	})
-	m.applyOpacity(m.settings)
-	m.applyVibrancy(m.settings)
-	m.applyIcon(m.settings)
 }
 
 // OpenDetached creates the window that owns one detached Tab. Every window,
@@ -535,7 +767,7 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 		return
 	}
 	content := m.detachedContent(tabID)
-	m.detached[tabID] = m.host.Create(windowSpec{
+	m.detached[tabID] = m.create(windowSpec{
 		Key:       "detached:" + string(tabID),
 		Title:     shell.DetachedTitle(m.messages(), info),
 		Width:     900,
@@ -560,9 +792,6 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 			m.markQuittingIfNoWindows()
 		},
 	})
-	m.applyOpacity(m.detached[tabID])
-	m.applyVibrancy(m.detached[tabID])
-	m.applyIcon(m.detached[tabID])
 }
 
 // ReattachClose closes a detached window after its Tab moved back into the
@@ -572,6 +801,377 @@ func (m *windowManager) ReattachClose(tabID model.TabID) {
 	if window := m.detached[tabID]; window != nil && !window.IsDestroyed() {
 		window.Close()
 	}
+}
+
+// SetScreenProvider installs the display seam the Dropdown Panel positions
+// itself against. Nil reads MyGo's live displays.
+func (m *windowManager) SetScreenProvider(screen screenProbe) { m.screen = screen }
+
+// SetDropdownContentProvider installs the Panel's routed content. The
+// provider is resolved once when the Panel is created; the function it
+// returns runs every frame, so later content routing does not recreate the
+// native window. Nil leaves the neutral placeholder.
+func (m *windowManager) SetDropdownContentProvider(fn func() func(*ui.Context)) {
+	m.dropdownContent = fn
+}
+
+// SetDropdownBarProvider installs the Panel's routed top-bar items. The
+// provider is resolved once when the Panel is created; the function it returns
+// runs every frame, so switching Tabs changes the strip without recreating the
+// native window. Nil leaves the bar's leading space empty.
+func (m *windowManager) SetDropdownBarProvider(fn func() func(*ui.Context)) {
+	m.dropdownBar = fn
+}
+
+// SetDropdownShowHook installs the work the composition root runs before the
+// Panel is created or shown. The Quake workspace creates its first local Shell
+// here, so the Panel's first frame already has content.
+func (m *windowManager) SetDropdownShowHook(fn func()) {
+	m.dropdownShow = fn
+}
+
+// SetDropdownDismissHandler installs the work that consumes a Panel close
+// request before the Panel hides. The Quake Host picker uses it so the first
+// Escape closes the picker and the next hides the Panel. Nil keeps the old
+// behavior: every close request hides.
+func (m *windowManager) SetDropdownDismissHandler(fn func() bool) {
+	m.dropdownDismiss = fn
+}
+
+// SetDropdownHeightProvider installs the live visible-height calculation in
+// DIPs for a work area. Nil keeps the default half height; the height
+// settings replace it. It is asked on every show, so a changed height takes
+// effect the next time the Panel appears.
+func (m *windowManager) SetDropdownHeightProvider(fn func(windowBounds) int) {
+	m.dropdownHeight = fn
+}
+
+// SetDropdownHideOnBlurProvider installs the live blur-hide switch. Blur is
+// also the only click-outside signal MyGo reports, so this switch gates that
+// gesture too; the platform note lives on Settings.HideOnClickOutside. Nil
+// keeps the original behavior (hide on blur).
+func (m *windowManager) SetDropdownHideOnBlurProvider(fn func() bool) {
+	m.dropdownHideOnBlur = fn
+}
+
+// SetDropdownHideOnEscapeProvider installs the live Escape-hide switch. Nil
+// keeps the original behavior (Escape hides the Panel). An Escape that is
+// switched off is still answered: the close request is vetoed without hiding
+// or destroying the Panel.
+func (m *windowManager) SetDropdownHideOnEscapeProvider(fn func() bool) {
+	m.dropdownHideOnEscape = fn
+}
+
+// SetDropdownOwnershipProvider installs the rule that says whether the current
+// dropdown route renders the main Workspace's Surfaces. Follow and top-down
+// do; Quake's own Workspace does not. The provider is read when the Panel is
+// shown, so a route change applies to the next show without wiring new
+// content.
+func (m *windowManager) SetDropdownOwnershipProvider(fn func() bool) {
+	m.dropdownOwnsRender = fn
+}
+
+// DropdownOwnsMain reports whether the Dropdown Panel currently renders the
+// main Workspace's Surfaces. The main window renders a neutral placeholder
+// while it is true, so one Surface is never drawn by two windows at once.
+func (m *windowManager) DropdownOwnsMain() bool {
+	return m.renderOwner == state.RenderOwnerDropdown
+}
+
+// syncRenderOwnership moves the Workspace surfaces to the window that the
+// routed dropdown mode names. Transferring hides a visible main window and
+// remembers that it was visible; keeping the ownership leaves it alone.
+func (m *windowManager) syncRenderOwnership() {
+	if m.dropdownOwnsRender != nil && m.dropdownOwnsRender() {
+		m.transferToDropdown()
+		return
+	}
+	m.restoreMainOwnership(true)
+}
+
+// transferToDropdown gives the Dropdown Panel the Workspace surfaces for the
+// first time. The main window is hidden rather than destroyed, so showing it
+// again later is cheap and its native content is never rebuilt.
+func (m *windowManager) transferToDropdown() {
+	if m.renderOwner == state.RenderOwnerDropdown {
+		return
+	}
+	m.renderOwner = state.RenderOwnerDropdown
+	m.mainVisibleBeforeDropdown = m.main != nil && !m.main.IsDestroyed() && m.main.IsVisible()
+	if m.mainVisibleBeforeDropdown {
+		m.main.Hide()
+	}
+	m.invalidateRenderWindows()
+}
+
+// restoreMainOwnership returns the Workspace surfaces to the main window. It
+// shows the main window again only when showing the Panel hid it; a main
+// window the user had already hidden stays hidden, so hiding the Panel never
+// pops a window the user put away. show is false for shutdown paths that must
+// not resurrect a window during quit.
+func (m *windowManager) restoreMainOwnership(show bool) {
+	if m.renderOwner != state.RenderOwnerDropdown {
+		return
+	}
+	m.renderOwner = state.RenderOwnerMain
+	wasVisible := m.mainVisibleBeforeDropdown
+	m.mainVisibleBeforeDropdown = false
+	if show && wasVisible && m.main != nil && !m.main.IsDestroyed() {
+		m.main.Show()
+		m.main.Focus()
+	}
+	m.invalidateRenderWindows()
+}
+
+// invalidateRenderWindows redraws both windows after ownership moved, so the
+// losing window drops the Surfaces on its next frame and the gaining one
+// paints them.
+func (m *windowManager) invalidateRenderWindows() {
+	if m.main != nil && !m.main.IsDestroyed() {
+		m.main.Invalidate()
+	}
+	if m.dropdown != nil && !m.dropdown.IsDestroyed() {
+		m.dropdown.Invalidate()
+	}
+}
+
+// DropdownVisible reports whether the Dropdown Panel is on screen.
+func (m *windowManager) DropdownVisible() bool {
+	return m.dropdown != nil && !m.dropdown.IsDestroyed() && m.dropdown.IsVisible()
+}
+
+// ToggleDropdown shows the Dropdown Panel, or hides it when it is visible.
+func (m *windowManager) ToggleDropdown() {
+	if m.DropdownVisible() {
+		m.HideDropdown()
+		return
+	}
+	m.ShowDropdown()
+}
+
+// ShowDropdown creates the singleton Panel on its first use and shows it.
+// Every show re-reads the pointer and recomputes the display, work area, and
+// bounds before Show, so a moved pointer, a changed work area, or a removed
+// display is honored. The show hook runs first, so the routed workspace exists
+// before the content function is resolved. The Panel has no StateKey: MyGo
+// never restores stale bounds for it.
+func (m *windowManager) ShowDropdown() {
+	if m.dropdownShow != nil {
+		m.dropdownShow()
+	}
+	// Move the Workspace surfaces before the first frame is built, so a follow
+	// or top-down Panel paints them and the main window paints its placeholder
+	// for the same frame. The decision is read live; a source change made this
+	// show is already reflected without rewiring the Panel.
+	m.syncRenderOwnership()
+	bounds := m.dropdownBounds()
+	window := m.dropdown
+	if window == nil || window.IsDestroyed() {
+		window = m.createDropdown(bounds)
+	} else {
+		window.SetBounds(bounds)
+	}
+	window.Show()
+	window.Focus()
+}
+
+// HideDropdown hides the Panel without destroying it, so the next show reuses
+// the same native window and its content state. When the Panel had taken the
+// Workspace surfaces, hiding it returns them to the main window first.
+func (m *windowManager) HideDropdown() {
+	if m.dropdown != nil && !m.dropdown.IsDestroyed() {
+		m.dropdown.Hide()
+	}
+	m.restoreMainOwnership(true)
+}
+
+// ShutdownDropdown hides and destroys the Panel for quit. It answers the
+// close request instead of vetoing it, and never prompts, so quitting cannot
+// block on the Panel or leave a native window behind.
+func (m *windowManager) ShutdownDropdown() {
+	window := m.dropdown
+	if window == nil || window.IsDestroyed() {
+		return
+	}
+	m.dropdownClosing = true
+	window.Hide()
+	// Quit destroys the Panel without showing anything: the surfaces go back
+	// to the main window only for whatever frame remains, never by popping a
+	// window open during shutdown.
+	m.renderOwner = state.RenderOwnerMain
+	m.mainVisibleBeforeDropdown = false
+	window.Close()
+}
+
+// createDropdown creates the hidden Panel at bounds and registers it with the
+// shared window enumeration. Hidden means the window is created invisibly and
+// its bounds are applied before the first Show, so it never flashes at a stale
+// position.
+func (m *windowManager) createDropdown(bounds windowBounds) hostWindow {
+	var window hostWindow
+	window = m.create(windowSpec{
+		Key:     "dropdown",
+		Title:   m.messages().AppName(),
+		Panel:   true,
+		Hidden:  true,
+		Bounds:  &bounds,
+		Width:   bounds.Width,
+		Height:  bounds.Height,
+		Content: m.dropdownView(),
+	}, windowHooks{
+		OnFocus: m.recordActivity,
+		// Blur is also the platform's "click outside" signal; both hide the
+		// Panel and neither destroys it. The switch is read live, so turning
+		// the trigger off keeps an already-open Panel visible when it loses
+		// focus. With no separate mouse signal, clicking outside shares this
+		// gate: turning it off makes the click-outside trigger unavailable
+		// too, as the Settings note explains.
+		OnBlur: func() {
+			if m.dropdownHideOnBlur != nil && !m.dropdownHideOnBlur() {
+				return
+			}
+			m.HideDropdown()
+		},
+		// Escape reaches a MyGo Panel as a close request. It hides the Panel
+		// instead of closing it, unless the application is quitting. MyGo's
+		// quit sequence closes every window before OnWillQuit runs, so the
+		// already-confirmed quit has to answer the close here: a veto would
+		// abort the quit and leave the process alive with no main window.
+		OnCloseRequest: func() bool {
+			if m.dropdownClosing || m.quitting {
+				return true
+			}
+			// An open flyout inside the Panel gets the first close request,
+			// so Escape dismisses the Host picker before the Panel hides. A
+			// locked App Lock gate replaces the content with the lock screen,
+			// so no flyout is on screen then.
+			if m.dropdownDismiss != nil && m.dropdownContentRendered() && m.dropdownDismiss() {
+				return false
+			}
+			if m.dropdownHideOnEscape != nil && !m.dropdownHideOnEscape() {
+				return false
+			}
+			m.HideDropdown()
+			return false
+		},
+		// A destroyed dropdown leaves neither the manager's field nor the
+		// window enumeration behind, and it never counts toward quit. If it is
+		// destroyed while the application keeps running it must not leave the
+		// Workspace surfaces owned by a window that no longer exists.
+		OnClosed: func() {
+			m.dropdownClosing = false
+			m.forgetDropdown(window)
+			m.restoreMainOwnership(!m.quitting)
+		},
+	})
+	m.dropdown = window
+	m.panels = append(m.panels, window)
+	return window
+}
+
+// forgetDropdown clears a destroyed Panel from the manager.
+func (m *windowManager) forgetDropdown(window hostWindow) {
+	if m.dropdown == window {
+		m.dropdown = nil
+	}
+	for index, panel := range m.panels {
+		if panel != window {
+			continue
+		}
+		m.panels = append(m.panels[:index], m.panels[index+1:]...)
+		break
+	}
+}
+
+// dropdownContentRendered reports whether the Panel's routed content and bar
+// are built. The shared App Lock gate replaces the content with the lock
+// screen and skips the routed bar while closed, so a flyout inside either is
+// not on screen then and must not consume a close request.
+func (m *windowManager) dropdownContentRendered() bool {
+	return m.gate == nil || !m.gate.Locked()
+}
+
+// dropdownView is the Panel's root content: the shared theme and shortcut
+// preamble, the dropdown frame with its hide button and routed bar, then the
+// routed content behind the one App Lock gate. The frame sits outside the
+// gate, as every window's controls do, so the Panel can be hidden while
+// locked. The routed bar is gated like content: the Quake tab strip and Host
+// picker expose Session and Host names, so locking hides them while the frame
+// and its hide button stay usable.
+func (m *windowManager) dropdownView() func(*ui.Context) {
+	content := dropdown.Placeholder
+	if m.dropdownContent != nil {
+		if provided := m.dropdownContent(); provided != nil {
+			content = provided
+		}
+	}
+	var bar func(*ui.Context)
+	if m.dropdownBar != nil {
+		if provided := m.dropdownBar(); provided != nil {
+			bar = m.wrapChrome(provided)
+		}
+	}
+	return m.withTheme(m.withAccelerators(dropdown.View(m.HideDropdown, bar, m.wrap(content))))
+}
+
+// dropdownBounds is the Panel's rectangle: the work area's top-left corner,
+// its full width, and the configured height.
+func (m *windowManager) dropdownBounds() windowBounds {
+	workArea := m.dropdownWorkArea()
+	return windowBounds{
+		X:      workArea.X,
+		Y:      workArea.Y,
+		Width:  workArea.Width,
+		Height: m.dropdownHeightFor(workArea),
+	}
+}
+
+// dropdownWorkArea picks the work area of the display under the pointer and
+// falls back to the primary display when the platform cannot name one. It is
+// recomputed for every show.
+func (m *windowManager) dropdownWorkArea() windowBounds {
+	screen := m.screen
+	if screen == nil {
+		screen = mygo.Screen
+	}
+	display := screen.DisplayNearestPoint(screen.CursorScreenPoint())
+	if !hasWorkArea(display.WorkArea) {
+		display = screen.PrimaryDisplay()
+	}
+	area := display.WorkArea
+	if !hasWorkArea(area) {
+		return dropdownFallbackWorkArea
+	}
+	return windowBounds{X: area.X, Y: area.Y, Width: area.Width, Height: area.Height}
+}
+
+func hasWorkArea(area mygo.Rectangle) bool {
+	return area.Width > 0 && area.Height > 0
+}
+
+// percentHeight returns percent of the work area's height in DIPs.
+func percentHeight(workArea windowBounds, percent int) int {
+	return int(math.Round(float64(workArea.Height) * float64(percent) / 100))
+}
+
+// dropdownHeightFor clamps the visible height to [minimum, work area height].
+// A work area shorter than the minimum uses its own height.
+func (m *windowManager) dropdownHeightFor(workArea windowBounds) int {
+	height := percentHeight(workArea, appdesktop.DefaultQuakeHeight)
+	if m.dropdownHeight != nil {
+		height = m.dropdownHeight(workArea)
+	}
+	minimum := dropdownMinHeight
+	if workArea.Height < minimum {
+		minimum = workArea.Height
+	}
+	if height < minimum {
+		height = minimum
+	}
+	if height > workArea.Height {
+		height = workArea.Height
+	}
+	return height
 }
 
 // RequestDetachedClose handles the detached view's close action with the same
@@ -600,7 +1200,14 @@ func (m *windowManager) allowMainClose() bool {
 		// alive in the tray.
 		return false
 	}
-	return m.confirmSessions(m.state.ActiveSessionCountMain(), false)
+	count := m.state.ActiveSessionCountMain()
+	// Closing the last counted window quits, and quitting also ends the Quake
+	// Workspace's Sessions. They belong in this one close confirmation even
+	// though they live outside the main Workspace.
+	if m.closingLastCountedWindow(m.main) {
+		count += m.quakeSessionCountValue()
+	}
+	return m.confirmSessions(count, false)
 }
 
 // SetCloseToTray installs the tray-hiding policy. The window manager asks it
@@ -618,17 +1225,69 @@ func (m *windowManager) allowDetachedClose(tabID model.TabID) bool {
 	if m.quitting || m.forceClose[key] {
 		return true
 	}
-	return m.confirmSessions(m.state.ActiveSessionCountDetached(tabID), false)
+	count := m.state.ActiveSessionCountDetached(tabID)
+	// A detached window that is the last counted one ends the app and its
+	// Quake Sessions too.
+	if m.closingLastCountedWindow(m.detached[tabID]) {
+		count += m.quakeSessionCountValue()
+	}
+	return m.confirmSessions(count, false)
+}
+
+// allowQuakeClose handles a counted window that owns no Sessions of its own,
+// such as Settings. Closing the last such window quits, which also ends the
+// live Quake Sessions, so that close still asks about them.
+func (m *windowManager) allowQuakeClose(window hostWindow) bool {
+	if m.quitting || !m.closingLastCountedWindow(window) {
+		return true
+	}
+	return m.confirmSessions(m.quakeSessionCountValue(), false)
+}
+
+// closingLastCountedWindow reports whether closing window leaves no counted
+// window open, which makes that close the application's quit trigger.
+func (m *windowManager) closingLastCountedWindow(window hostWindow) bool {
+	for _, managed := range m.windows() {
+		if !managed.counts || managed.window == nil || managed.window.IsDestroyed() {
+			continue
+		}
+		if managed.window == window {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// quakeSessionCountValue reads the live Quake Session count, or zero when the
+// build has no Quake Workspace.
+func (m *windowManager) quakeSessionCountValue() int {
+	if m.quakeSessionCount == nil {
+		return 0
+	}
+	return m.quakeSessionCount()
+}
+
+// SetQuakeSessionCount installs the live count of the Dropdown Panel's Quake
+// Sessions. Quit intent adds it to the shell's count; nil leaves the count
+// unchanged for windows wired without a Quake Workspace.
+func (m *windowManager) SetQuakeSessionCount(fn func() int) {
+	m.quakeSessionCount = fn
 }
 
 // ConfirmQuit handles application quit intent once. It reports whether the
 // quit may proceed and remembers the decision for the window closes that
-// follow.
+// follow. The count includes the Quake Workspace's Sessions: quitting ends
+// them too, so the user is asked once about every Session that will end.
 func (m *windowManager) ConfirmQuit() bool {
 	if m.quitting {
 		return true
 	}
-	if m.confirmSessions(m.state.ActiveSessionCount(), true) {
+	count := m.state.ActiveSessionCount()
+	if m.quakeSessionCount != nil {
+		count += m.quakeSessionCount()
+	}
+	if m.confirmSessions(count, true) {
 		m.quitting = true
 		return true
 	}
@@ -674,16 +1333,14 @@ func (m *windowManager) recordActivity() {
 	}
 }
 
-// noWindowsLeft reports whether every application window has closed.
+// noWindowsLeft reports whether every window that keeps the application alive
+// has closed. A panel does not count, so a hidden dropdown cannot block quit.
 func (m *windowManager) noWindowsLeft() bool {
-	if m.main != nil && !m.main.IsDestroyed() {
-		return false
-	}
-	if m.settings != nil && !m.settings.IsDestroyed() {
-		return false
-	}
-	for _, window := range m.detached {
-		if window != nil && !window.IsDestroyed() {
+	for _, managed := range m.windows() {
+		if !managed.counts {
+			continue
+		}
+		if managed.window != nil && !managed.window.IsDestroyed() {
 			return false
 		}
 	}
@@ -693,9 +1350,15 @@ func (m *windowManager) noWindowsLeft() bool {
 // markQuittingIfNoWindows records that the user approved closing the last
 // application window, so the quit sequence that follows does not ask again.
 func (m *windowManager) markQuittingIfNoWindows() {
-	if m.noWindowsLeft() {
-		m.quitting = true
+	if !m.noWindowsLeft() {
+		return
 	}
+	m.quitting = true
+	// MyGo's own quit trigger is "no window left", and a created Panel stays
+	// in that list even while hidden. The Panel never keeps the app alive, so
+	// destroy it here; otherwise closing the last counted window would leave
+	// the process running with no visible window and never reach OnWillQuit.
+	m.ShutdownDropdown()
 }
 
 // FocusMain brings the main window forward, creating it if it was closed.
@@ -708,8 +1371,11 @@ func (m *windowManager) FocusMain() {
 
 // SecondInstance is what the single-instance callback does when a later
 // launch hands over: raise the existing main window, or recreate it when it
-// was closed. It returns the window it raised.
+// was closed. A handover is a startup route, so an open Dropdown Panel is
+// hidden first and the main window becomes the window in front. It returns
+// the window it raised.
 func (m *windowManager) SecondInstance() hostWindow {
+	m.HideDropdown()
 	m.FocusMain()
 	return m.main
 }
@@ -717,36 +1383,22 @@ func (m *windowManager) SecondInstance() hostWindow {
 // InvalidateAll redraws every window, so a lock or unlock propagates to all of
 // them.
 func (m *windowManager) InvalidateAll() {
-	invalidate := func(window hostWindow) {
-		if window != nil && !window.IsDestroyed() {
-			window.Invalidate()
-		}
-	}
-	invalidate(m.main)
-	invalidate(m.settings)
-	for _, window := range m.detached {
-		invalidate(window)
-	}
+	m.each(func(window hostWindow) { window.Invalidate() })
 }
 
-// ApplyLocale updates every window title after a language change.
+// ApplyLocale updates every window title after a language change and redraws
+// each window so the new strings are built.
 func (m *windowManager) ApplyLocale() {
 	messages := m.messages()
-	if m.main != nil && !m.main.IsDestroyed() {
-		m.main.SetTitle(messages.AppName())
-		m.main.Invalidate()
-	}
-	if m.settings != nil && !m.settings.IsDestroyed() {
-		m.settings.SetTitle(messages.NavSettings())
-		m.settings.Invalidate()
-	}
-	for tabID, window := range m.detached {
-		if window == nil || window.IsDestroyed() {
+	for _, managed := range m.windows() {
+		if managed.window == nil || managed.window.IsDestroyed() {
 			continue
 		}
-		if info, ok := m.state.DetachedTabInfo(tabID); ok {
-			window.SetTitle(shell.DetachedTitle(messages, info))
+		if managed.title != nil {
+			if title := managed.title(messages); title != "" {
+				managed.window.SetTitle(title)
+			}
 		}
-		window.Invalidate()
+		managed.window.Invalidate()
 	}
 }

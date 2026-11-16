@@ -9,7 +9,6 @@ import (
 	"github.com/mslxl/natcatty/ui/layout"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell/state"
-	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // DetachedView renders one detached Tab in its own window: the Tab's split
@@ -19,8 +18,10 @@ import (
 func DetachedView(s *state.State, tabID model.TabID) func(*ui.Context) {
 	return func(c *ui.Context) {
 		// Session opens started by a copy-to-window outcome finish off the UI
-		// thread; applying them here keeps every Tab mutation on this thread.
-		s.Flush()
+		// thread; the shared preamble applies them here so every Tab mutation
+		// stays on this thread. A detached window shows terminals only, so it
+		// always takes the terminal scheme's colors.
+		m, t := shellPreamble(c, s, func() bool { return true })
 
 		info, ok := s.DetachedTabInfo(tabID)
 		if !ok {
@@ -28,14 +29,6 @@ func DetachedView(s *state.State, tabID model.TabID) func(*ui.Context) {
 			// composition root closes this window; render nothing meanwhile.
 			return
 		}
-
-		m := locales.In(c.Locale())
-		// The window shows terminals only, so it takes their scheme's colors
-		// as the main window's chrome does.
-		if preset, ok := s.TerminalTheme(); ok {
-			c.SetTheme(uitheme.Chrome(c.Theme(), preset))
-		}
-		t := c.Theme()
 
 		layout.DetachedLayout(c, DetachedTitle(m, info), func() {
 			if kit.IconButtonWith(c, icons.LogIn, m.DetachedMoveToMain(), kit.IconOptions{Role: kit.IconCard, Key: "detached-move-main"}).Clicked() {

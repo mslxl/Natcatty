@@ -42,60 +42,87 @@ const (
 // surface. Only the home Tab has a sidebar, so a terminal gets the whole
 // window.
 func View(s *state.State) func(*ui.Context) {
+	return shellView(state.RenderOwnerMain, s)
+}
+
+// shellView is the full shell layout rendered by owner. The main window uses
+// RenderOwnerMain. The Dropdown Panel's top-down route wraps it in TopdownView
+// with RenderOwnerDropdown, so the per-frame preamble, the side-frame
+// bookkeeping, and the side panel's tool lifetime all match the window that
+// actually draws the frame.
+func shellView(owner state.RenderOwner, s *state.State) func(*ui.Context) {
 	// The work Tab strip scrolls sideways at the minimum window. This tracker
 	// belongs to this window's content function, so the active Tab is revealed
 	// when it changes or the window is resized.
 	reveal := newWorkTabReveal()
 	return func(c *ui.Context) {
-		// Connections complete off the UI thread; applying them here keeps
-		// every Tab mutation on this thread.
-		s.Flush()
-
-		m := locales.In(c.Locale())
-		// While a terminal is shown the window takes its scheme's colors, as
-		// the original's active chrome theme, so the Tab bar, the Pane
-		// headers, and the side panel read as one surface with the terminal.
-		if preset, ok := s.TerminalTheme(); ok && terminalVisible(s) {
-			c.SetTheme(uitheme.Chrome(c.Theme(), preset))
-		}
-		t := c.Theme()
-
-		// Hiding the SFTP Tab while it is shown leaves for the Vault, as the
-		// original's; the Session panel still browses files.
-		if !s.SFTPTabShown() && s.SFTPVisible() {
-			s.ShowHome()
-			c.Invalidate()
-		}
-		layout.MainLayout(c, layout.MainSlots{
-			HomeTabs: func() { homeTabs(c, s, m) },
-			Tabs:     func() { workTabs(c, s, m, t, reveal) },
-			Flush:    terminalVisible(s),
-			Body:     func() { body(c, s, m, t) },
-		})
-
-		if prompt := s.TrustPrompt(); prompt != nil {
-			sessionui.TrustView(prompt)(c)
-		}
-		if prompt := s.AuthPrompt(); prompt != nil {
-			sessionui.AuthPromptModal(prompt)(c)
-		}
-		if serial := s.SerialView(); serial != nil {
-			serial(c)
-		}
-		// The editor sits above the work surfaces so a remote-change conflict
-		// from an external edit is visible wherever the user is.
-		if editor := s.EditorView(); editor != nil {
-			editor(c)
-		}
-		// The Quick Switcher sits above every surface, including a prompt, so
-		// its chord works wherever the focus is.
-		if search := s.SearchState(); search != nil {
-			uisearch.Overlay(search)(c)
-		}
+		m, t := shellPreamble(c, s, func() bool { return terminalVisible(s) })
+		shellLayout(c, s, m, t, owner, reveal)
 		// A side panel tool no longer drawn, such as System sampling a Host,
-		// stops once the frame is done.
-		s.FinishSideFrame()
+		// stops once the frame is done. FinishSideFrameFor is per renderer, so
+		// this call cannot stop a tool another window still draws.
+		s.FinishSideFrameFor(owner)
 	}
+}
+
+// shellLayout draws the shell below the preamble: the Tab bar, the chosen
+// surface, and every global overlay above it. It runs the per-frame Flush
+// through shellPreamble only, so both renderers execute it exactly once.
+func shellLayout(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
+	owner state.RenderOwner, reveal *workTabReveal) {
+	// Hiding the SFTP Tab while it is shown leaves for the Vault, as the
+	// original's; the Session panel still browses files.
+	if !s.SFTPTabShown() && s.SFTPVisible() {
+		s.ShowHome()
+		c.Invalidate()
+	}
+	layout.MainLayout(c, layout.MainSlots{
+		HomeTabs: func() { homeTabs(c, s, m) },
+		Tabs:     func() { workTabs(c, s, m, t, reveal) },
+		Flush:    terminalVisible(s),
+		Body:     func() { body(c, s, m, t, owner) },
+	})
+
+	if prompt := s.TrustPrompt(); prompt != nil {
+		sessionui.TrustView(prompt)(c)
+	}
+	if prompt := s.AuthPrompt(); prompt != nil {
+		sessionui.AuthPromptModal(prompt)(c)
+	}
+	if serial := s.SerialView(); serial != nil {
+		serial(c)
+	}
+	// The editor sits above the work surfaces so a remote-change conflict
+	// from an external edit is visible wherever the user is.
+	if editor := s.EditorView(); editor != nil {
+		editor(c)
+	}
+	// The Quick Switcher sits above every surface, including a prompt, so
+	// its chord works wherever the focus is.
+	if search := s.SearchState(); search != nil {
+		uisearch.Overlay(search)(c)
+	}
+}
+
+// shellPreamble is the per-frame work every shell renderer must run exactly
+// once: it applies connection outcomes queued off the UI thread and, while a
+// terminal is the frame's surface, takes the terminal scheme's chrome colors.
+// The main view and a second renderer such as the follow view call it, so the
+// side effects cannot diverge. terminal is evaluated after Flush, so a Tab
+// attached by this frame already colors the window. It returns the localized
+// messages and the theme the renderer draws with.
+func shellPreamble(c *ui.Context, s *state.State, terminal func() bool) (locales.Messages, *ui.Theme) {
+	// Connections complete off the UI thread; applying them here keeps every
+	// Tab mutation on this thread.
+	s.Flush()
+	m := locales.In(c.Locale())
+	// While a terminal is shown the window takes its scheme's colors, as the
+	// original's active chrome theme, so the Tab bar, the Pane headers, and
+	// the side panel read as one surface with the terminal.
+	if preset, ok := s.TerminalTheme(); ok && (terminal == nil || terminal()) {
+		c.SetTheme(uitheme.Chrome(c.Theme(), preset))
+	}
+	return m, c.Theme()
 }
 
 // homeVisible reports whether the home Tab is the chosen one. With no work
@@ -105,10 +132,10 @@ func homeVisible(s *state.State) bool {
 }
 
 // body draws the chosen Tab's surface below the Tab bar.
-func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, owner state.RenderOwner) {
 	switch {
 	case terminalVisible(s):
-		activeTab(c, s, m, t)
+		activeTab(c, s, m, t, owner)
 	case s.SFTPVisible():
 		layout.HomeLayout(c, layout.HomeSlots{
 			Notices: func() { notices(c, s, m, t) },
@@ -279,7 +306,21 @@ func vaultPageLabel(m locales.Messages, page section.Section) string {
 	}
 }
 
-func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+// activeTab draws the active Tab with the window's Pane commands. The owner
+// scopes the side panel's per-renderer bookkeeping; the top-down renderer
+// draws the same commands from the Dropdown Panel, where it is the only
+// window rendering the Workspace.
+func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, owner state.RenderOwner) {
+	activeTabBody(c, s, m, t, mainTabRef(owner, s, s.ActiveTab()))
+}
+
+// activeTabBody draws one Tab's split tree, the side panel beside it, and the
+// notices above them. It is the one renderer shared by the main window and a
+// second shell renderer such as the follow view, so neither duplicates the
+// split or side panel logic. ref carries the commands that renderer is
+// allowed to wire: the main window's ref manages Panes, while a read-only ref
+// only looks up, focuses, renames, and retries them.
+func activeTabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ref tabRef) {
 	slots := layout.WorkSlots{Top: func() {
 		notices(c, s, m, t)
 		terminalPanels(c, s, m, t)
@@ -291,9 +332,8 @@ func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 			}
 		}
 	}}
-	if root, focus, ok := s.TabTree(s.ActiveTab()); ok {
+	if root, focus, ok := ref.tree(); ok {
 		ordinal := 0
-		ref := mainTabRef(s, s.ActiveTab())
 		ref.split = !root.IsPane()
 		ref.status = activeStatus(s, m, t)
 		slots.Panes = func() { paneTree(c, s, m, t, ref, root, focus, &ordinal) }
@@ -303,7 +343,7 @@ func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 		if dock != state.DockBottom {
 			width = *s.FilesWidth(window)
 		}
-		if files := s.FilesView(ref.id, width); files != nil {
+		if files := s.FilesViewFor(ref.owner, ref.id, width); files != nil {
 			tabID := ref.id
 			slots.Panel = func() { sidePanel(c, s, m, t, tabID, dock, files) }
 			slots.Dock = layoutDock(dock)

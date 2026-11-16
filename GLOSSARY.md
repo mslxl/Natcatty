@@ -255,9 +255,56 @@ A read-only view of a Session's bounded screen snapshot and later output, fed to
 shadow terminal without claiming the Session's one live view.
 _Avoid_: mirror, duplicate view, second terminal
 
+**Render Owner**:
+The one window that renders a shell Surface in a frame: `main` or `dropdown`.
+While the Dropdown Panel owns rendering, the main window draws a neutral
+placeholder, so a Session's one live view is never mounted twice. Render
+ownership is a per-frame routing choice, not a Session lifecycle state: it
+does not Hibernate or detach the Session and does not move Tabs. It is not an
+Observer either: the owner draws the live Surface, not a read-only snapshot.
+_Avoid_: focus owner, active window, control owner
+
+**Hotkey Mode**:
+The user-selected action of the global shortcut: `none` releases the
+accelerator to the system, `toggle` shows or hides the main window, `quake`
+toggles the Dropdown Panel's terminal, and `topdown` toggles the Dropdown Panel
+showing the complete application shell. Quake is the default. It replaces the
+old enable flag; one `ToggleWindowHotkey` accelerator serves every mode that
+registers.
+_Avoid_: hotkey action, global hotkey switch, shortcut mode
+
+**Dropdown Panel**:
+The frameless, always-on-top, non-activating native Panel that shows the Quake
+Workspace or the main shell. It is a singleton created lazily on its first
+show and hidden rather than destroyed, with no persisted geometry and no
+natural window controls. It is not a detached window and not a Tab, and it
+never counts as a window that keeps the application alive.
+_Avoid_: dropdown window, Quake window, popup window
+
+**Quake Workspace**:
+The Dropdown Panel's own flat terminal Workspace in Quake own mode: an ordered
+list of Tabs, one Session and Surface each, with no split Panes and no disk
+persistence. Each Tab carries an ordinary Session from the shared Session
+service, so history, notifications, and logging behave like any other Session.
+It is window-scoped state separate from the main Workspace, and its Tabs never
+enter the main Tab strip. "Persistent" here means across hiding, showing, and
+mode switches, not across an application restart.
+_Avoid_: dropdown Workspace, second Workspace, Quake Tabs
+
+**Follow Mode**:
+The Quake source that renders the main Workspace's active Tab in the Dropdown
+Panel. The Tab stays in the main Workspace: Follow Mode changes only which
+window renders it, never its order, active index, split tree, or Session
+ownership, and it never calls Detach, Hibernate, or Resume. The terminal is
+resized to the Panel while shown, so scrollback may reflow.
+_Avoid_: mirror mode, duplicate view, second terminal
+
 **Workspace**:
-The persisted ordered Tabs and split layout of one window, independent of the live
-Sessions it currently displays. Detached windows have their own Workspace.
+The ordered Tabs and split layout of one window, independent of the live
+Sessions it currently displays. The main window and detached windows have their
+own persisted Workspace. The Dropdown Panel owns the memory-only Quake
+Workspace in Quake own mode and otherwise renders the main window's Workspace
+without owning it.
 _Avoid_: layout, arrangement
 
 **Tab**:

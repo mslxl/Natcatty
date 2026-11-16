@@ -65,6 +65,15 @@ func NewGate(service *appaplock.Service, opts ...Option) *Gate {
 	return gate
 }
 
+// Locked reports whether the gate is closed, so wrapped content is replaced by
+// the lock screen and is not built. A gate without a service is never locked.
+func (g *Gate) Locked() bool {
+	if g == nil || g.service == nil {
+		return false
+	}
+	return g.service.Snapshot().Locked
+}
+
 // RecordActivity postpones the idle lock. It is for input the content views
 // handle without passing through the gate, such as a window gaining focus.
 func (g *Gate) RecordActivity() {
@@ -92,15 +101,36 @@ func (g *Gate) Lock() error {
 }
 
 // Wrap renders content behind the gate. While the gate is closed, content is
-// not built at all.
+// not built at all and the one lock screen takes its place.
 func (g *Gate) Wrap(content func(*ui.Context)) func(*ui.Context) {
+	return g.wrap(content, true)
+}
+
+// WrapChrome renders a window's shared chrome, such as a tab strip or a
+// toolbar, behind the gate. While the gate is closed the chrome is not built
+// and renders nothing: the lock screen belongs to the content slot, so a
+// window whose chrome shares a row with controls that must stay usable does
+// not draw a second lock screen inside it.
+func (g *Gate) WrapChrome(content func(*ui.Context)) func(*ui.Context) {
+	return g.wrap(content, false)
+}
+
+// wrap is the one gate implementation. drawLockScreen says whether a closed
+// gate paints the lock screen here or leaves it to the content slot.
+func (g *Gate) wrap(content func(*ui.Context), drawLockScreen bool) func(*ui.Context) {
 	return func(c *ui.Context) {
+		if g == nil {
+			content(c)
+			return
+		}
 		if g.service != nil {
 			if g.service.LockIfIdle(g.now()) {
 				g.requestRedraw()
 			}
 			if g.service.Snapshot().Locked {
-				g.lockScreen(c)
+				if drawLockScreen {
+					g.lockScreen(c)
+				}
 				return
 			}
 			// Wake at the idle deadline. After keeps the earliest requested

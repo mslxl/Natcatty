@@ -1401,7 +1401,53 @@
   "settingsTrayUnsupported": "The system tray is not available on this system.",
   "settingsHotkeyTitle": "Global Hotkey",
   "settingsHotkeyDescription": "Show, focus, or hide Natcatty from anywhere.",
-  "settingsHotkeyEnabled": "Enable global hotkey",
+  "settingsHotkeyMode": "Hotkey action",
+  "settingsHotkeyModeNone": "Do nothing",
+  "settingsHotkeyModeToggle": "Show or hide the main window",
+  "settingsHotkeyModeQuake": "Quake dropdown terminal",
+  "settingsHotkeyModeTopdown": "Top-down full window",
+  "settingsHotkeyModeUnsupported": "Dropdown modes are not available on this system.",
+  "settingsQuakeSource": "Quake content source",
+  "settingsQuakeSourceOwn": "Quake's own workspace",
+  "settingsQuakeSourceFollow": "Follow the main window",
+  "settingsQuakeSourceResizeNote": "Following resizes the terminal to the dropdown size; scrollback may reflow.",
+  "settingsDropdownBehaviorTitle": "Dropdown behavior",
+  "settingsDropdownBehaviorDescription": "Heights and hide triggers for the Quake and top-down dropdowns.",
+  "settingsDropdownQuakeHeight": "Quake height",
+  "settingsDropdownTopdownHeight": "Top-down height",
+  "settingsDropdownUnitPercent": "Percent (%)",
+  "settingsDropdownUnitPixels": "Pixels (px)",
+  "settingsDropdownHeightInvalid": "Enter a height of 10–100% or 120–10000 px.",
+  "settingsDropdownHideOnBlur": "Hide when the dropdown loses focus",
+  "settingsDropdownHideOnEscape": "Hide on Escape",
+  "settingsDropdownHideOnClickOutside": "Hide when clicking outside",
+  "settingsDropdownClickOutsideNote": "On systems without a separate click-outside signal, clicking outside is reported as losing focus. Turning the focus trigger off disables this trigger too.",
+  "followTabsLabel": "Workspace tabs",
+  "followOpenMain": "Open main window",
+  "followEmptyTitle": "No terminal in the active tab",
+  "followEmptyDescription": "The active tab is not a terminal. Open the main window to keep working.",
+  "followBrowserTitle": "The browser panel is open",
+  "followBrowserDescription": "A host browser can only be shown in the main window. Open the main window to use it.",
+  "quakeHostPicker": "Connect to Host",
+  "@quakeHostPicker": {
+    "description": "The Quake top bar's Host picker button and the picker's title."
+  },
+  "quakeNewLocalShell": "New local Shell",
+  "@quakeNewLocalShell": {
+    "description": "The Host picker entry that opens a local Shell Tab in the Quake workspace."
+  },
+  "quakeHostsLabel": "Hosts",
+  "@quakeHostsLabel": {
+    "description": "The section label over the saved Hosts in the Quake Host picker."
+  },
+  "quakeNoHosts": "No saved Hosts",
+  "@quakeNoHosts": {
+    "description": "The Quake Host picker's empty state when the Vault has no Hosts."
+  },
+  "quakeNoMatchingHosts": "No matching Hosts",
+  "@quakeNoMatchingHosts": {
+    "description": "The Quake Host picker's empty state when the search filter matches no Host."
+  },
   "settingsHotkeyAccelerator": "Toggle window shortcut",
   "settingsHotkeyApply": "Apply",
   "settingsHotkeyReset": "Reset",
@@ -1437,6 +1483,10 @@
   "trayStatusInactive": "Inactive",
   "trayStatusError": "Error",
   "trayRuleUnnamed": "Untitled rule",
+  "trayQuakeSource": "Quake",
+  "@trayQuakeSource": {
+    "description": "The source marker on a system-tray Session row that belongs to the Quake Dropdown Panel's own workspace."
+  },
   "notificationSessionEndedTitle": "Session ended",
   "notificationSessionEndedBody": "{target} has ended.",
   "@notificationSessionEndedBody": {
@@ -5019,6 +5069,10 @@
   "windowMaximize": "Maximize",
   "windowRestore": "Restore",
   "windowClose": "Close",
+  "dropdownHide": "Hide panel",
+  "@dropdownHide": {
+    "description": "The Dropdown Panel's hide button, which hides the panel without closing it."
+  },
   "settingsAreaAbout": "About & Licenses",
   "settingsAboutDescription": "Version, copyright, license text, corresponding source, and third-party notices.",
   "settingsAboutVersion": "Version {version}",

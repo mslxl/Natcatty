@@ -60,9 +60,16 @@ type Service struct {
 	settings Settings
 	caps     Capabilities
 
-	// toggle is the production window-toggle action. It is invoked on the UI
-	// thread by the hotkey callback.
+	// toggle is the production hotkey action. It is invoked on the UI thread
+	// by the hotkey callback.
 	toggle func()
+	// onModeChange is notified after a hotkey mode change has been applied and
+	// saved. The composition root uses it to retire the Dropdown Panel.
+	onModeChange func(HotkeyMode)
+	// onSourceChange is notified after a Quake content-source change has been
+	// saved. The composition root uses it to retire the Dropdown Panel so the
+	// main window's render ownership is restored under the new route.
+	onSourceChange func(QuakeSource)
 	// registered is the accelerator currently claimed from Hotkeys.
 	registered string
 	// hotkeyProblem is the last registration failure, surfaced in Settings.
@@ -88,8 +95,29 @@ func NewService(repo Repository, hotkeys Hotkeys, auto AutoLauncher, notifier No
 		Tray:         true,
 		AutoStart:    auto != nil && auto.Supported(),
 		GlobalHotkey: hotkeys != nil,
+		Dropdown:     DropdownSupported(service.goos),
 	}
 	return service
+}
+
+// OnHotkeyModeChange installs the listener called after a hotkey mode change
+// has been applied and saved. The composition root uses it to hide the
+// Dropdown Panel when the shortcut changes meaning. It replaces any previous
+// listener and may be nil.
+func (s *Service) OnHotkeyModeChange(fn func(HotkeyMode)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onModeChange = fn
+}
+
+// OnQuakeSourceChange installs the listener called after a Quake content
+// source change has been saved. The composition root uses it to hide a Panel
+// that was rendering the previous source and restore the main window. It
+// replaces any previous listener and may be nil.
+func (s *Service) OnQuakeSourceChange(fn func(QuakeSource)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onSourceChange = fn
 }
 
 // SetTraySupported records whether the native tray could be created. The
@@ -177,9 +205,9 @@ func (s *Service) RegisteredHotkey() string {
 	return s.registered
 }
 
-// Apply registers or removes the global toggle hotkey. Call it once at
-// startup after Load, and again only through the setters. toggle runs on the
-// UI thread when the accelerator is pressed.
+// Apply registers or removes the global hotkey for the current mode. Call it
+// once at startup after Load, and again only through the setters. toggle runs
+// on the UI thread when the accelerator is pressed.
 func (s *Service) Apply(toggle func()) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -255,23 +283,130 @@ func (s *Service) SetNotification(event Event, enabled bool) error {
 	return nil
 }
 
-// SetGlobalHotkeyEnabled turns the global shortcut on or off.
-func (s *Service) SetGlobalHotkeyEnabled(enabled bool) error {
-	if s.hotkey == nil {
-		return ErrUnsupported
+// SetHotkeyMode changes what the global shortcut does. A mode that claims the
+// accelerator registers it before the value is persisted; none unregisters it
+// and leaves no callback behind. On a registration failure the previous mode
+// and its accelerator are restored and KindHotkey is returned. A successful
+// change is announced to OnHotkeyModeChange after it is saved.
+func (s *Service) SetHotkeyMode(mode HotkeyMode) error {
+	if !mode.Valid() {
+		return &Error{Kind: KindValidation, Cause: fmt.Errorf("unknown hotkey mode %q", mode)}
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	previous := s.settings.GlobalHotkeyEnabled
-	s.settings.GlobalHotkeyEnabled = enabled
+	if mode.RegistersHotkey() && s.hotkey == nil {
+		s.mu.Unlock()
+		return ErrUnsupported
+	}
+	previous := s.settings.HotkeyMode
+	previousRegistered := s.registered
+	s.settings.HotkeyMode = mode
 	if err := s.applyHotkeyLocked(); err != nil {
-		s.settings.GlobalHotkeyEnabled = previous
-		_ = s.applyHotkeyLocked()
+		s.settings.HotkeyMode = previous
+		s.hotkeyProblem = err
+		// applyHotkeyLocked already released the old accelerator; claim it
+		// again so the previous mode keeps working until the user fixes the
+		// new shortcut.
+		s.restoreRegisteredLocked(previousRegistered)
+		s.mu.Unlock()
 		return err
 	}
 	if err := s.saveLocked(); err != nil {
-		s.settings.GlobalHotkeyEnabled = previous
+		s.settings.HotkeyMode = previous
 		_ = s.applyHotkeyLocked()
+		s.mu.Unlock()
+		return err
+	}
+	listener := s.onModeChange
+	s.mu.Unlock()
+	if listener != nil {
+		listener(mode)
+	}
+	return nil
+}
+
+// SetQuakeSource selects what the Quake dropdown renders. It persists the
+// value and, only after a successful save, announces it. An unknown source is
+// a validation error and changes nothing.
+func (s *Service) SetQuakeSource(source QuakeSource) error {
+	if !source.Valid() {
+		return &Error{Kind: KindValidation, Cause: fmt.Errorf("unknown quake source %q", source)}
+	}
+	s.mu.Lock()
+	previous := s.settings.QuakeSource
+	s.settings.QuakeSource = source
+	if err := s.saveLocked(); err != nil {
+		s.settings.QuakeSource = previous
+		s.mu.Unlock()
+		return err
+	}
+	listener := s.onSourceChange
+	s.mu.Unlock()
+	if listener != nil {
+		listener(source)
+	}
+	return nil
+}
+
+// SetQuakeHeight changes the Quake dropdown's configured height. The value
+// and unit are validated together: an unknown unit or a value outside that
+// unit's accepted range is a validation error and changes nothing. A valid
+// pair is persisted and applies to the next dropdown show.
+func (s *Service) SetQuakeHeight(value int, unit HeightUnit) error {
+	if err := ValidateHeight(value, unit); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previousValue, previousUnit := s.settings.QuakeHeight, s.settings.QuakeHeightUnit
+	s.settings.QuakeHeight, s.settings.QuakeHeightUnit = value, unit
+	if err := s.saveLocked(); err != nil {
+		s.settings.QuakeHeight, s.settings.QuakeHeightUnit = previousValue, previousUnit
+		return err
+	}
+	return nil
+}
+
+// SetTopdownHeight changes the top-down dropdown's configured height. It
+// validates the pair exactly as SetQuakeHeight does.
+func (s *Service) SetTopdownHeight(value int, unit HeightUnit) error {
+	if err := ValidateHeight(value, unit); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previousValue, previousUnit := s.settings.TopdownHeight, s.settings.TopdownHeightUnit
+	s.settings.TopdownHeight, s.settings.TopdownHeightUnit = value, unit
+	if err := s.saveLocked(); err != nil {
+		s.settings.TopdownHeight, s.settings.TopdownHeightUnit = previousValue, previousUnit
+		return err
+	}
+	return nil
+}
+
+// SetHideOnBlur persists whether losing focus hides the Dropdown Panel.
+func (s *Service) SetHideOnBlur(enabled bool) error {
+	return s.setHideSwitch(&s.settings.HideOnBlur, enabled)
+}
+
+// SetHideOnEscape persists whether Escape hides the Dropdown Panel.
+func (s *Service) SetHideOnEscape(enabled bool) error {
+	return s.setHideSwitch(&s.settings.HideOnEscape, enabled)
+}
+
+// SetHideOnClickOutside persists whether clicking outside hides the Dropdown
+// Panel. On platforms that report that gesture as a focus loss it shares the
+// blur signal; see Settings.HideOnClickOutside.
+func (s *Service) SetHideOnClickOutside(enabled bool) error {
+	return s.setHideSwitch(&s.settings.HideOnClickOutside, enabled)
+}
+
+func (s *Service) setHideSwitch(field *bool, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := *field
+	*field = enabled
+	if err := s.saveLocked(); err != nil {
+		*field = previous
 		return err
 	}
 	return nil
@@ -297,10 +432,8 @@ func (s *Service) SetToggleWindowHotkey(accelerator string) error {
 		s.hotkeyProblem = err
 		// applyHotkeyLocked already unregistered the old accelerator; a
 		// best-effort re-registration keeps the old shortcut working.
-		if previousRegistered != "" && s.settings.GlobalHotkeyEnabled {
-			if regErr := s.hotkey.Register(previousRegistered, s.fireToggle); regErr == nil {
-				s.registered = previousRegistered
-			}
+		if s.settings.HotkeyMode.RegistersHotkey() {
+			s.restoreRegisteredLocked(previousRegistered)
 		}
 		return err
 	}
@@ -362,15 +495,21 @@ func (s *Service) Notify(notification Notification) error {
 	return notifier.Notify(notification)
 }
 
-// applyHotkeyLocked unregisters the old accelerator and claims the new one.
+// applyHotkeyLocked unregisters the old accelerator and, for every mode but
+// none, claims the configured one. None leaves nothing registered, so the
+// accelerator returns to the system instead of an empty callback holding it.
 func (s *Service) applyHotkeyLocked() error {
-	if s.registered != "" {
+	if s.registered != "" && s.hotkey != nil {
 		s.hotkey.Unregister(s.registered)
 		s.registered = ""
 	}
 	s.hotkeyProblem = nil
-	if !s.settings.GlobalHotkeyEnabled {
+	if !s.settings.HotkeyMode.RegistersHotkey() {
 		return nil
+	}
+	if s.hotkey == nil {
+		s.hotkeyProblem = ErrUnsupported
+		return s.hotkeyProblem
 	}
 	accelerator := Accelerator(s.settings.ToggleWindowHotkey)
 	if accelerator == "" {
@@ -383,6 +522,17 @@ func (s *Service) applyHotkeyLocked() error {
 	}
 	s.registered = accelerator
 	return nil
+}
+
+// restoreRegisteredLocked re-claims an accelerator a failed apply released,
+// so a rejected change does not leave the old mode dead until restart.
+func (s *Service) restoreRegisteredLocked(accelerator string) {
+	if accelerator == "" || s.hotkey == nil {
+		return
+	}
+	if err := s.hotkey.Register(accelerator, s.fireToggle); err == nil {
+		s.registered = accelerator
+	}
 }
 
 // fireToggle runs the registered callback without holding the service lock.

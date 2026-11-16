@@ -81,6 +81,7 @@ func (f *fakeFactory) Open(_ context.Context, spec appsession.StartSpec) (appses
 type fakeSurface struct {
 	closed        bool
 	browserOpened bool
+	browserOpen   bool
 	fontFamily    string
 	fontSize      float32
 	theme         domaintheme.TerminalTheme
@@ -102,6 +103,10 @@ func (f *fakeSurface) OpenBrowser() error {
 	f.browserOpened = true
 	return nil
 }
+
+// BrowserOpen makes the fake a BrowserShown, so a shell test can prove the
+// placeholder decision reads the focused Pane's browser state.
+func (f *fakeSurface) BrowserOpen() bool { return f.browserOpen }
 
 func (f *fakeSurface) SetTerminalFont(family string, size float32) {
 	f.fontFamily, f.fontSize = family, size

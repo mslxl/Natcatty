@@ -17,6 +17,7 @@ import (
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/locales"
+	quakeui "github.com/mslxl/natcatty/ui/quake"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	uistry "github.com/mslxl/natcatty/ui/tray"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
@@ -81,8 +82,12 @@ type observedSession struct {
 // desktopController wires the desktop use cases to the shell, the forwarding
 // manager, and the native tray. Callbacks run on the UI thread unless noted.
 type desktopController struct {
-	windows    *windowManager
+	windows *windowManager
+	// shell is the main window's Workspace. quake is the Dropdown Panel's own
+	// Workspace; it may be nil in a build or test without the Panel, in which
+	// case the tray and notifications only see the main Workspace.
 	shell      *state.State
+	quake      *quakeui.State
 	vault      *vaultstate.State
 	forwarding *appforwarding.Manager
 	service    *appdesktop.Service
@@ -115,12 +120,14 @@ type desktopController struct {
 // newDesktopController wires the production integration. quit goes through
 // the same quit-intent path as the application menu.
 func newDesktopController(windows *windowManager, shellState *state.State,
-	vault *vaultstate.State, forwarding *appforwarding.Manager,
+	quakeState *quakeui.State, vault *vaultstate.State,
+	forwarding *appforwarding.Manager,
 	service *appdesktop.Service, backends trayBackend, locale func() string,
 	quit func()) *desktopController {
-	return &desktopController{
+	controller := &desktopController{
 		windows:           windows,
 		shell:             shellState,
+		quake:             quakeState,
 		vault:             vault,
 		forwarding:        forwarding,
 		service:           service,
@@ -132,6 +139,18 @@ func newDesktopController(windows *windowManager, shellState *state.State,
 		sessions:          make(map[model.SessionID]observedSession),
 		forwardingFailure: make(map[model.ForwardingRuleID]bool),
 	}
+	if service != nil {
+		// The service owns registration and persistence; the controller owns
+		// the windows. A successful mode change must retire a Panel that was
+		// showing the previous mode.
+		service.OnHotkeyModeChange(controller.HandleHotkeyModeChange)
+		// Changing the Quake source changes what the open Panel renders and,
+		// in follow mode, which window owns the Workspace surfaces. Retiring
+		// the Panel re-routes from a clean state instead of leaving the main
+		// window hidden under a stale ownership transfer.
+		service.OnQuakeSourceChange(controller.HandleQuakeSourceChange)
+	}
+	return controller
 }
 
 // MarkReady releases launch work queued before the main window existed, then
@@ -163,6 +182,56 @@ func (c *desktopController) Shutdown() {
 	c.trayAttempted = false
 }
 
+// HandleHotkey is the global hotkey's callback. The current Hotkey Mode
+// decides what the one registered accelerator does: none is a no-op, toggle
+// raises or hides the main window, and both dropdown modes toggle the single
+// Dropdown Panel. It runs on the UI thread.
+func (c *desktopController) HandleHotkey() {
+	if c.service == nil {
+		return
+	}
+	switch c.service.Settings().HotkeyMode {
+	case appdesktop.HotkeyModeNone:
+		// The accelerator is unregistered in none mode. A callback that still
+		// arrives, for example from a registration that raced the change, must
+		// not move a window.
+		return
+	case appdesktop.HotkeyModeToggle:
+		c.ToggleMain()
+	case appdesktop.HotkeyModeQuake, appdesktop.HotkeyModeTopdown:
+		c.mu.Lock()
+		c.toggles++
+		c.mu.Unlock()
+		c.windows.ToggleDropdown()
+	}
+}
+
+// HandleHotkeyModeChange retires a visible Dropdown Panel when the global
+// shortcut changes meaning: the open Panel belongs to the previous mode, and
+// the next press must open the new mode instead of re-showing stale content.
+// Hiding is also where a follow/top-down ownership transfer restores the main
+// window. It runs on the UI thread, after the new mode is saved.
+func (c *desktopController) HandleHotkeyModeChange(appdesktop.HotkeyMode) {
+	if c.windows == nil {
+		return
+	}
+	c.windows.HideDropdown()
+	c.windows.InvalidateAll()
+}
+
+// HandleQuakeSourceChange retires a visible Dropdown Panel when the Quake
+// content source changes. Follow mode moves the Workspace surfaces into the
+// Panel, so a live switch must not leave the main window hidden or the Panel
+// rendering the previous source's content. It runs on the UI thread, after the
+// new source is saved.
+func (c *desktopController) HandleQuakeSourceChange(appdesktop.QuakeSource) {
+	if c.windows == nil {
+		return
+	}
+	c.windows.HideDropdown()
+	c.windows.InvalidateAll()
+}
+
 // ToggleMain shows, focuses, or hides the main window, as the original global
 // hotkey did. It runs on the UI thread.
 func (c *desktopController) ToggleMain() {
@@ -182,11 +251,40 @@ func (c *desktopController) ToggleMain() {
 	window.Focus()
 }
 
-// ShowMain raises the main window. Tray actions call it before opening their
-// target.
+// ShowMain raises the main window. Tray actions and deep links call it before
+// opening their target: an open Dropdown Panel is hidden first, so the main
+// window is the only window presenting the Workspace.
 func (c *desktopController) ShowMain() {
+	if c.windows == nil {
+		return
+	}
+	c.windows.HideDropdown()
 	c.windows.FocusMain()
 	c.windows.InvalidateAll()
+}
+
+// HandleLoginLaunch applies a login start. When the system opened the app at
+// login and there is a tray icon to reopen it from, the main window starts
+// hidden and no Dropdown Panel is left on screen. Any other launch keeps the
+// normal visible main window. It runs on the UI thread after readiness.
+func (c *desktopController) HandleLoginLaunch(openedAtLogin bool) {
+	if !openedAtLogin || c.windows == nil {
+		return
+	}
+	settings := c.service.Settings()
+	if !settings.ShowTrayIcon || !c.service.Capabilities().Tray {
+		return
+	}
+	main := c.windows.Main()
+	if main == nil || main.IsDestroyed() {
+		return
+	}
+	// A login launch never displays the Panel. Hide one that a queued launch
+	// target opened, then put the main window away in the tray.
+	c.windows.HideDropdown()
+	if main.IsVisible() {
+		main.Hide()
+	}
 }
 
 // HideOnClose reports whether closing the main window should hide it to the
@@ -328,9 +426,13 @@ func (c *desktopController) NoteSession(snapshot appsession.Snapshot) {
 	if !seen {
 		return
 	}
-	label, _ := c.shell.SessionLabel(snapshot.ID)
+	label, _ := c.sessionLabel(snapshot.ID)
 	notify := func(event appdesktop.Event) {
-		_ = c.service.Notify(appdesktop.Notification{Event: event, Target: label})
+		_ = c.service.Notify(appdesktop.Notification{
+			Event:   event,
+			Target:  label,
+			Session: string(snapshot.ID),
+		})
 	}
 	failed := snapshot.Connection == appsession.ConnectionStatusError &&
 		previous.connection != appsession.ConnectionStatusError
@@ -348,6 +450,108 @@ func (c *desktopController) NoteSession(snapshot appsession.Snapshot) {
 		notify(appdesktop.EventSessionEnded)
 		c.ScheduleSync()
 	}
+}
+
+// sessionLabel resolves a Session's display label from the Workspace that
+// owns it. The main Workspace is checked first; the Quake Workspace owns its
+// own Tabs, and a local Quake Shell has no stored label, so it is named the
+// way its Tab strip names it.
+func (c *desktopController) sessionLabel(id model.SessionID) (string, bool) {
+	if c.shell != nil {
+		if label, ok := c.shell.SessionLabel(id); ok {
+			return label, true
+		}
+	}
+	if c.quake != nil {
+		if tab, ok := c.quake.TabForSession(id); ok {
+			return c.quakeTabLabel(tab), true
+		}
+	}
+	return "", false
+}
+
+// quakeTabLabel names a Quake Tab for the tray and notifications. A remote Tab
+// carries its Host label; a local Shell falls back to the numbered local name
+// the Quake Tab strip draws.
+func (c *desktopController) quakeTabLabel(tab quakeui.TabInfo) string {
+	if label := strings.TrimSpace(tab.Label); label != "" {
+		return label
+	}
+	return c.messages().LocalSessionTab(tab.Number)
+}
+
+// HandleNotificationClick routes a clicked desktop notification. A Session
+// event opens the window that owns the Session and selects its Tab; a
+// Quake Session opens the Dropdown Panel, while a main or detached Session
+// raises the main window. An event without a Session raises the main window,
+// which is the original behavior.
+func (c *desktopController) HandleNotificationClick(request appdesktop.Notification) {
+	if request.Session != "" {
+		c.FocusSession(model.SessionID(request.Session))
+		return
+	}
+	c.ShowMain()
+}
+
+// FocusSession raises the window that owns id and selects its Tab. A Session
+// that is no longer open falls back to the main window, so a stale
+// notification never does nothing.
+func (c *desktopController) FocusSession(id model.SessionID) {
+	if c.quake != nil {
+		if tab, ok := c.quake.TabForSession(id); ok {
+			c.showQuakeTab(tab.Index)
+			return
+		}
+	}
+	if c.shell != nil && c.shell.FocusSession(id) {
+		c.ShowMain()
+		return
+	}
+	c.ShowMain()
+}
+
+// showQuakeTab selects a Quake Tab and presents the workspace that draws it.
+// Only the quake + own route renders the Quake workspace, so a route that
+// would show the placeholder or the main shell is switched explicitly; a
+// route that cannot be switched refuses the reveal and raises the main window
+// instead of opening a Panel that cannot show the selected Session.
+func (c *desktopController) showQuakeTab(index int) {
+	if c.quake == nil || c.windows == nil {
+		return
+	}
+	c.quake.SelectTab(index)
+	if !c.ensureQuakeRoute() {
+		c.ShowMain()
+		return
+	}
+	c.windows.ShowDropdown()
+	c.windows.InvalidateAll()
+}
+
+// ensureQuakeRoute makes the live Hotkey Mode and Quake Source render the Quake
+// workspace. It is called only from a user action that names a Quake Tab, so
+// switching the route is the explicit choice that makes that Tab visible.
+func (c *desktopController) ensureQuakeRoute() bool {
+	if c.service == nil {
+		return true
+	}
+	settings := c.service.Settings()
+	if settings.HotkeyMode == appdesktop.HotkeyModeQuake && settings.QuakeSource == appdesktop.QuakeSourceOwn {
+		return true
+	}
+	if settings.HotkeyMode != appdesktop.HotkeyModeQuake {
+		if err := c.service.SetHotkeyMode(appdesktop.HotkeyModeQuake); err != nil {
+			c.setProblem(err.Error())
+			return false
+		}
+	}
+	if c.service.Settings().QuakeSource != appdesktop.QuakeSourceOwn {
+		if err := c.service.SetQuakeSource(appdesktop.QuakeSourceOwn); err != nil {
+			c.setProblem(err.Error())
+			return false
+		}
+	}
+	return true
 }
 
 // NoteForwarding observes manager events on the manager's dispatch goroutine.
@@ -516,25 +720,11 @@ func (c *desktopController) BuildTrayMenu() *mygo.Menu {
 		mygo.Separator(),
 		{Label: m.TraySessions(), Disabled: true},
 	}
-	tabs := c.shell.TabSummaries()
+	tabs := c.trayTabs(m)
 	if len(tabs) == 0 {
 		items = append(items, &mygo.MenuItem{Label: m.TrayNoSessions(), Disabled: true})
 	} else {
-		for _, tab := range tabs {
-			tab := tab
-			items = append(items, &mygo.MenuItem{
-				Label: uistry.TabText(m, uistry.Tab{Number: tab.Number, Label: tab.Label, Status: uistry.TabStatus(tab.Status)}),
-				Click: func(*mygo.MenuItem, *mygo.Window) {
-					c.ShowMain()
-					if tab.Detached {
-						c.windows.OpenDetached(tab.TabID)
-						return
-					}
-					c.shell.SelectTab(tab.TabIndex)
-					c.windows.InvalidateAll()
-				},
-			})
-		}
+		items = append(items, tabs...)
 	}
 
 	items = append(items, mygo.Separator(), &mygo.MenuItem{Label: m.TrayForwarding(), Disabled: true})
@@ -582,6 +772,80 @@ func (c *desktopController) BuildTrayMenu() *mygo.Menu {
 		},
 	})
 	return mygo.NewMenu(items)
+}
+
+// trayTabs builds the Session list: the main Window's Tabs first, then the
+// Dropdown Panel's Quake Tabs with a source marker. Choosing a main Tab raises
+// the main window; choosing a Quake Tab shows the Dropdown Panel and selects
+// the Tab, switching the route first when the live mode or source does not
+// render the Quake workspace. This way the session list never pretends the two
+// Workspaces are one, and a Quake row never opens an empty Panel.
+func (c *desktopController) trayTabs(m locales.Messages) []*mygo.MenuItem {
+	var items []*mygo.MenuItem
+	if c.shell != nil {
+		for _, tab := range c.shell.TabSummaries() {
+			tab := tab
+			items = append(items, &mygo.MenuItem{
+				Label: uistry.TabText(m, uistry.Tab{
+					Number: tab.Number,
+					Label:  tab.Label,
+					Status: uistry.TabStatus(tab.Status),
+				}),
+				Click: func(*mygo.MenuItem, *mygo.Window) {
+					c.ShowMain()
+					if tab.Detached {
+						c.windows.OpenDetached(tab.TabID)
+						return
+					}
+					c.shell.SelectTab(tab.TabIndex)
+					c.windows.InvalidateAll()
+				},
+			})
+		}
+	}
+	if c.quake != nil {
+		for index, tab := range c.quake.Tabs() {
+			index, tab := index, tab
+			items = append(items, &mygo.MenuItem{
+				Label: uistry.TabText(m, uistry.Tab{
+					Number: tab.Number,
+					Label:  c.quakeTabLabel(tab),
+					Status: c.quakeTabStatus(index),
+					Source: uistry.TabSourceQuake,
+				}),
+				Click: func(*mygo.MenuItem, *mygo.Window) {
+					// Selecting first keeps the Panel's show hook from opening a
+					// fresh local Shell: the workspace already has the Tab the
+					// user chose. showQuakeTab also switches a route that does not
+					// render the Quake workspace, so the click never opens an
+					// empty Panel.
+					c.showQuakeTab(index)
+				},
+			})
+		}
+	}
+	return items
+}
+
+// quakeTabStatus aggregates the transport state of the Quake Tab at index the
+// same way the shell's tray rows do: an error or an ended Session outranks a
+// dial in progress.
+func (c *desktopController) quakeTabStatus(index int) uistry.TabStatus {
+	tab, ok := c.quake.TabAt(index)
+	if !ok || tab.Session == nil {
+		return uistry.TabDisconnected
+	}
+	switch snapshot := tab.Session.Snapshot(); {
+	case snapshot.Connection == appsession.ConnectionStatusError:
+		return uistry.TabDisconnected
+	case snapshot.Status == appsession.StatusExited:
+		return uistry.TabDisconnected
+	case snapshot.Connection == appsession.ConnectionStatusConnecting,
+		snapshot.Connection == appsession.ConnectionStatusReconnecting:
+		return uistry.TabConnecting
+	default:
+		return uistry.TabConnected
+	}
 }
 
 // forwardingRules maps the manager's runtime snapshot into tray entries.

@@ -7168,14 +7168,354 @@ func (msgs Messages) SettingsHotkeyDescription() string {
 	return Catalog.Format(msgs.locale, "settingsHotkeyDescription", nil)
 }
 
-// SettingsHotkeyEnabled says "Enable global hotkey"
+// SettingsHotkeyMode says "Hotkey action"
 // in the language the app shows.
-func SettingsHotkeyEnabled() string { return In(i18n.Locale()).SettingsHotkeyEnabled() }
+func SettingsHotkeyMode() string { return In(i18n.Locale()).SettingsHotkeyMode() }
 
-// SettingsHotkeyEnabled says "Enable global hotkey"
+// SettingsHotkeyMode says "Hotkey action"
 // in the language of msgs.
-func (msgs Messages) SettingsHotkeyEnabled() string {
-	return Catalog.Format(msgs.locale, "settingsHotkeyEnabled", nil)
+func (msgs Messages) SettingsHotkeyMode() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyMode", nil)
+}
+
+// SettingsHotkeyModeNone says "Do nothing"
+// in the language the app shows.
+func SettingsHotkeyModeNone() string { return In(i18n.Locale()).SettingsHotkeyModeNone() }
+
+// SettingsHotkeyModeNone says "Do nothing"
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyModeNone() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyModeNone", nil)
+}
+
+// SettingsHotkeyModeToggle says "Show or hide the main window"
+// in the language the app shows.
+func SettingsHotkeyModeToggle() string { return In(i18n.Locale()).SettingsHotkeyModeToggle() }
+
+// SettingsHotkeyModeToggle says "Show or hide the main window"
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyModeToggle() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyModeToggle", nil)
+}
+
+// SettingsHotkeyModeQuake says "Quake dropdown terminal"
+// in the language the app shows.
+func SettingsHotkeyModeQuake() string { return In(i18n.Locale()).SettingsHotkeyModeQuake() }
+
+// SettingsHotkeyModeQuake says "Quake dropdown terminal"
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyModeQuake() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyModeQuake", nil)
+}
+
+// SettingsHotkeyModeTopdown says "Top-down full window"
+// in the language the app shows.
+func SettingsHotkeyModeTopdown() string { return In(i18n.Locale()).SettingsHotkeyModeTopdown() }
+
+// SettingsHotkeyModeTopdown says "Top-down full window"
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyModeTopdown() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyModeTopdown", nil)
+}
+
+// SettingsHotkeyModeUnsupported says "Dropdown modes are not available on this system."
+// in the language the app shows.
+func SettingsHotkeyModeUnsupported() string { return In(i18n.Locale()).SettingsHotkeyModeUnsupported() }
+
+// SettingsHotkeyModeUnsupported says "Dropdown modes are not available on this system."
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyModeUnsupported() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyModeUnsupported", nil)
+}
+
+// SettingsQuakeSource says "Quake content source"
+// in the language the app shows.
+func SettingsQuakeSource() string { return In(i18n.Locale()).SettingsQuakeSource() }
+
+// SettingsQuakeSource says "Quake content source"
+// in the language of msgs.
+func (msgs Messages) SettingsQuakeSource() string {
+	return Catalog.Format(msgs.locale, "settingsQuakeSource", nil)
+}
+
+// SettingsQuakeSourceOwn says "Quake's own workspace"
+// in the language the app shows.
+func SettingsQuakeSourceOwn() string { return In(i18n.Locale()).SettingsQuakeSourceOwn() }
+
+// SettingsQuakeSourceOwn says "Quake's own workspace"
+// in the language of msgs.
+func (msgs Messages) SettingsQuakeSourceOwn() string {
+	return Catalog.Format(msgs.locale, "settingsQuakeSourceOwn", nil)
+}
+
+// SettingsQuakeSourceFollow says "Follow the main window"
+// in the language the app shows.
+func SettingsQuakeSourceFollow() string { return In(i18n.Locale()).SettingsQuakeSourceFollow() }
+
+// SettingsQuakeSourceFollow says "Follow the main window"
+// in the language of msgs.
+func (msgs Messages) SettingsQuakeSourceFollow() string {
+	return Catalog.Format(msgs.locale, "settingsQuakeSourceFollow", nil)
+}
+
+// SettingsQuakeSourceResizeNote says "Following resizes the terminal to the dropdown size; scrollback may reflow."
+// in the language the app shows.
+func SettingsQuakeSourceResizeNote() string { return In(i18n.Locale()).SettingsQuakeSourceResizeNote() }
+
+// SettingsQuakeSourceResizeNote says "Following resizes the terminal to the dropdown size; scrollback may reflow."
+// in the language of msgs.
+func (msgs Messages) SettingsQuakeSourceResizeNote() string {
+	return Catalog.Format(msgs.locale, "settingsQuakeSourceResizeNote", nil)
+}
+
+// SettingsDropdownBehaviorTitle says "Dropdown behavior"
+// in the language the app shows.
+func SettingsDropdownBehaviorTitle() string { return In(i18n.Locale()).SettingsDropdownBehaviorTitle() }
+
+// SettingsDropdownBehaviorTitle says "Dropdown behavior"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownBehaviorTitle() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownBehaviorTitle", nil)
+}
+
+// SettingsDropdownBehaviorDescription says "Heights and hide triggers for the Quake and top-down dropdowns."
+// in the language the app shows.
+func SettingsDropdownBehaviorDescription() string {
+	return In(i18n.Locale()).SettingsDropdownBehaviorDescription()
+}
+
+// SettingsDropdownBehaviorDescription says "Heights and hide triggers for the Quake and top-down dropdowns."
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownBehaviorDescription() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownBehaviorDescription", nil)
+}
+
+// SettingsDropdownQuakeHeight says "Quake height"
+// in the language the app shows.
+func SettingsDropdownQuakeHeight() string { return In(i18n.Locale()).SettingsDropdownQuakeHeight() }
+
+// SettingsDropdownQuakeHeight says "Quake height"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownQuakeHeight() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownQuakeHeight", nil)
+}
+
+// SettingsDropdownTopdownHeight says "Top-down height"
+// in the language the app shows.
+func SettingsDropdownTopdownHeight() string { return In(i18n.Locale()).SettingsDropdownTopdownHeight() }
+
+// SettingsDropdownTopdownHeight says "Top-down height"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownTopdownHeight() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownTopdownHeight", nil)
+}
+
+// SettingsDropdownUnitPercent says "Percent (%)"
+// in the language the app shows.
+func SettingsDropdownUnitPercent() string { return In(i18n.Locale()).SettingsDropdownUnitPercent() }
+
+// SettingsDropdownUnitPercent says "Percent (%)"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownUnitPercent() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownUnitPercent", nil)
+}
+
+// SettingsDropdownUnitPixels says "Pixels (px)"
+// in the language the app shows.
+func SettingsDropdownUnitPixels() string { return In(i18n.Locale()).SettingsDropdownUnitPixels() }
+
+// SettingsDropdownUnitPixels says "Pixels (px)"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownUnitPixels() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownUnitPixels", nil)
+}
+
+// SettingsDropdownHeightInvalid says "Enter a height of 10–100% or 120–10000 px."
+// in the language the app shows.
+func SettingsDropdownHeightInvalid() string { return In(i18n.Locale()).SettingsDropdownHeightInvalid() }
+
+// SettingsDropdownHeightInvalid says "Enter a height of 10–100% or 120–10000 px."
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownHeightInvalid() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownHeightInvalid", nil)
+}
+
+// SettingsDropdownHideOnBlur says "Hide when the dropdown loses focus"
+// in the language the app shows.
+func SettingsDropdownHideOnBlur() string { return In(i18n.Locale()).SettingsDropdownHideOnBlur() }
+
+// SettingsDropdownHideOnBlur says "Hide when the dropdown loses focus"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownHideOnBlur() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownHideOnBlur", nil)
+}
+
+// SettingsDropdownHideOnEscape says "Hide on Escape"
+// in the language the app shows.
+func SettingsDropdownHideOnEscape() string { return In(i18n.Locale()).SettingsDropdownHideOnEscape() }
+
+// SettingsDropdownHideOnEscape says "Hide on Escape"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownHideOnEscape() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownHideOnEscape", nil)
+}
+
+// SettingsDropdownHideOnClickOutside says "Hide when clicking outside"
+// in the language the app shows.
+func SettingsDropdownHideOnClickOutside() string {
+	return In(i18n.Locale()).SettingsDropdownHideOnClickOutside()
+}
+
+// SettingsDropdownHideOnClickOutside says "Hide when clicking outside"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownHideOnClickOutside() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownHideOnClickOutside", nil)
+}
+
+// SettingsDropdownClickOutsideNote says "On systems without a separate click-outside signal, clicking outside is reported as losing focus. Turning the focus t…"
+// in the language the app shows.
+func SettingsDropdownClickOutsideNote() string {
+	return In(i18n.Locale()).SettingsDropdownClickOutsideNote()
+}
+
+// SettingsDropdownClickOutsideNote says "On systems without a separate click-outside signal, clicking outside is reported as losing focus. Turning the focus t…"
+// in the language of msgs.
+func (msgs Messages) SettingsDropdownClickOutsideNote() string {
+	return Catalog.Format(msgs.locale, "settingsDropdownClickOutsideNote", nil)
+}
+
+// FollowTabsLabel says "Workspace tabs"
+// in the language the app shows.
+func FollowTabsLabel() string { return In(i18n.Locale()).FollowTabsLabel() }
+
+// FollowTabsLabel says "Workspace tabs"
+// in the language of msgs.
+func (msgs Messages) FollowTabsLabel() string {
+	return Catalog.Format(msgs.locale, "followTabsLabel", nil)
+}
+
+// FollowOpenMain says "Open main window"
+// in the language the app shows.
+func FollowOpenMain() string { return In(i18n.Locale()).FollowOpenMain() }
+
+// FollowOpenMain says "Open main window"
+// in the language of msgs.
+func (msgs Messages) FollowOpenMain() string {
+	return Catalog.Format(msgs.locale, "followOpenMain", nil)
+}
+
+// FollowEmptyTitle says "No terminal in the active tab"
+// in the language the app shows.
+func FollowEmptyTitle() string { return In(i18n.Locale()).FollowEmptyTitle() }
+
+// FollowEmptyTitle says "No terminal in the active tab"
+// in the language of msgs.
+func (msgs Messages) FollowEmptyTitle() string {
+	return Catalog.Format(msgs.locale, "followEmptyTitle", nil)
+}
+
+// FollowEmptyDescription says "The active tab is not a terminal. Open the main window to keep working."
+// in the language the app shows.
+func FollowEmptyDescription() string { return In(i18n.Locale()).FollowEmptyDescription() }
+
+// FollowEmptyDescription says "The active tab is not a terminal. Open the main window to keep working."
+// in the language of msgs.
+func (msgs Messages) FollowEmptyDescription() string {
+	return Catalog.Format(msgs.locale, "followEmptyDescription", nil)
+}
+
+// FollowBrowserTitle says "The browser panel is open"
+// in the language the app shows.
+func FollowBrowserTitle() string { return In(i18n.Locale()).FollowBrowserTitle() }
+
+// FollowBrowserTitle says "The browser panel is open"
+// in the language of msgs.
+func (msgs Messages) FollowBrowserTitle() string {
+	return Catalog.Format(msgs.locale, "followBrowserTitle", nil)
+}
+
+// FollowBrowserDescription says "A host browser can only be shown in the main window. Open the main window to use it."
+// in the language the app shows.
+func FollowBrowserDescription() string { return In(i18n.Locale()).FollowBrowserDescription() }
+
+// FollowBrowserDescription says "A host browser can only be shown in the main window. Open the main window to use it."
+// in the language of msgs.
+func (msgs Messages) FollowBrowserDescription() string {
+	return Catalog.Format(msgs.locale, "followBrowserDescription", nil)
+}
+
+// QuakeHostPicker says "Connect to Host"
+// in the language the app shows.
+//
+// The Quake top bar's Host picker button and the picker's title.
+func QuakeHostPicker() string { return In(i18n.Locale()).QuakeHostPicker() }
+
+// QuakeHostPicker says "Connect to Host"
+// in the language of msgs.
+//
+// The Quake top bar's Host picker button and the picker's title.
+func (msgs Messages) QuakeHostPicker() string {
+	return Catalog.Format(msgs.locale, "quakeHostPicker", nil)
+}
+
+// QuakeNewLocalShell says "New local Shell"
+// in the language the app shows.
+//
+// The Host picker entry that opens a local Shell Tab in the Quake
+// workspace.
+func QuakeNewLocalShell() string { return In(i18n.Locale()).QuakeNewLocalShell() }
+
+// QuakeNewLocalShell says "New local Shell"
+// in the language of msgs.
+//
+// The Host picker entry that opens a local Shell Tab in the Quake
+// workspace.
+func (msgs Messages) QuakeNewLocalShell() string {
+	return Catalog.Format(msgs.locale, "quakeNewLocalShell", nil)
+}
+
+// QuakeHostsLabel says "Hosts"
+// in the language the app shows.
+//
+// The section label over the saved Hosts in the Quake Host picker.
+func QuakeHostsLabel() string { return In(i18n.Locale()).QuakeHostsLabel() }
+
+// QuakeHostsLabel says "Hosts"
+// in the language of msgs.
+//
+// The section label over the saved Hosts in the Quake Host picker.
+func (msgs Messages) QuakeHostsLabel() string {
+	return Catalog.Format(msgs.locale, "quakeHostsLabel", nil)
+}
+
+// QuakeNoHosts says "No saved Hosts"
+// in the language the app shows.
+//
+// The Quake Host picker's empty state when the Vault has no Hosts.
+func QuakeNoHosts() string { return In(i18n.Locale()).QuakeNoHosts() }
+
+// QuakeNoHosts says "No saved Hosts"
+// in the language of msgs.
+//
+// The Quake Host picker's empty state when the Vault has no Hosts.
+func (msgs Messages) QuakeNoHosts() string {
+	return Catalog.Format(msgs.locale, "quakeNoHosts", nil)
+}
+
+// QuakeNoMatchingHosts says "No matching Hosts"
+// in the language the app shows.
+//
+// The Quake Host picker's empty state when the search filter matches no
+// Host.
+func QuakeNoMatchingHosts() string { return In(i18n.Locale()).QuakeNoMatchingHosts() }
+
+// QuakeNoMatchingHosts says "No matching Hosts"
+// in the language of msgs.
+//
+// The Quake Host picker's empty state when the search filter matches no
+// Host.
+func (msgs Messages) QuakeNoMatchingHosts() string {
+	return Catalog.Format(msgs.locale, "quakeNoMatchingHosts", nil)
 }
 
 // SettingsHotkeyAccelerator says "Toggle window shortcut"
@@ -7534,6 +7874,22 @@ func TrayRuleUnnamed() string { return In(i18n.Locale()).TrayRuleUnnamed() }
 // in the language of msgs.
 func (msgs Messages) TrayRuleUnnamed() string {
 	return Catalog.Format(msgs.locale, "trayRuleUnnamed", nil)
+}
+
+// TrayQuakeSource says "Quake"
+// in the language the app shows.
+//
+// The source marker on a system-tray Session row that belongs to the Quake
+// Dropdown Panel's own workspace.
+func TrayQuakeSource() string { return In(i18n.Locale()).TrayQuakeSource() }
+
+// TrayQuakeSource says "Quake"
+// in the language of msgs.
+//
+// The source marker on a system-tray Session row that belongs to the Quake
+// Dropdown Panel's own workspace.
+func (msgs Messages) TrayQuakeSource() string {
+	return Catalog.Format(msgs.locale, "trayQuakeSource", nil)
 }
 
 // NotificationSessionEndedTitle says "Session ended"
@@ -24728,6 +25084,22 @@ func WindowClose() string { return In(i18n.Locale()).WindowClose() }
 // in the language of msgs.
 func (msgs Messages) WindowClose() string {
 	return Catalog.Format(msgs.locale, "windowClose", nil)
+}
+
+// DropdownHide says "Hide panel"
+// in the language the app shows.
+//
+// The Dropdown Panel's hide button, which hides the panel without closing
+// it.
+func DropdownHide() string { return In(i18n.Locale()).DropdownHide() }
+
+// DropdownHide says "Hide panel"
+// in the language of msgs.
+//
+// The Dropdown Panel's hide button, which hides the panel without closing
+// it.
+func (msgs Messages) DropdownHide() string {
+	return Catalog.Format(msgs.locale, "dropdownHide", nil)
 }
 
 // SettingsAreaAbout says "About & Licenses"
