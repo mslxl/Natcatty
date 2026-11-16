@@ -193,6 +193,8 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 
 	add(AreaTransport, domain.FieldMoshPredictionDisplay, m.SettingsMoshPredictionDisplay(),
 		"mosh prediction local echo adaptive always never latency")
+	add(AreaTransport, domain.FieldDefaultProxy, m.SettingsDefaultProxy(),
+		"proxy default app-wide profile direct no proxy")
 
 	add(AreaSFTPEditor, domain.FieldDoubleClickBehavior, m.SettingsDoubleClickBehavior(), "double click open transfer")
 	add(AreaSFTPEditor, domain.FieldAutoSync, m.SettingsAutoSync(), "sync directories")
