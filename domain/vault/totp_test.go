@@ -2,6 +2,7 @@ package vault
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -237,6 +238,62 @@ func TestNextTOTPCodeWaitsOutTheLastTwoSeconds(t *testing.T) {
 	}
 	if early != current {
 		t.Fatalf("code at 15s = %q, want the current step %q", early, current)
+	}
+}
+
+// TestNextTOTPCodeScalesTheTailToThePeriod pins the next-step threshold at
+// min(2s, period/2). A short period must still answer with the current step;
+// only a genuine crossing of the threshold (remaining <= tail) uses the next.
+func TestNextTOTPCodeScalesTheTailToThePeriod(t *testing.T) {
+	secret := totpBase32.EncodeToString(rfcSHA1Seed)
+	cases := []struct {
+		name     string
+		period   int
+		unix     int64
+		wantNext bool
+	}{
+		{"period 1 keeps the current step", 1, 100, false},
+		{"period 2 keeps the current step at the start", 2, 100, false},
+		{"period 2 boundary at half the period returns the next step", 2, 101, true},
+		{"period 30 keeps the current step well before the tail", 30, 15, false},
+		{"period 30 keeps the current step just above the tail", 30, 27, false},
+		{"period 30 boundary at two seconds returns the next step", 30, 28, true},
+		{"period 30 inside the tail returns the next step", 30, 29, true},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			parsed, err := ParseTOTP("otpauth://totp/A?secret=" + secret +
+				"&period=" + strconv.Itoa(test.period))
+			if err != nil {
+				t.Fatalf("ParseTOTP: %v", err)
+			}
+			at := time.Unix(test.unix, 0)
+			code, err := NextTOTPCode(parsed, at)
+			if err != nil {
+				t.Fatalf("NextTOTPCode: %v", err)
+			}
+			step := int64(test.period)
+			stepStart := at.Unix() / step * step
+			current, err := parsed.Code(time.Unix(stepStart, 0))
+			if err != nil {
+				t.Fatalf("current code: %v", err)
+			}
+			next, err := parsed.Code(time.Unix(stepStart+step, 0))
+			if err != nil {
+				t.Fatalf("next code: %v", err)
+			}
+			if current == next {
+				t.Fatalf("fixture is ambiguous: current and next code are both %q", current)
+			}
+			want := current
+			if test.wantNext {
+				want = next
+			}
+			if code != want {
+				t.Fatalf("code at %ds (period %ds) = %q, want %q (current %q, next %q)",
+					test.unix, test.period, code, want, current, next)
+			}
+		})
 	}
 }
 

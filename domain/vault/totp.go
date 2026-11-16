@@ -239,12 +239,20 @@ func GenerateTOTP(secret []byte, algorithm TOTPAlgorithm, digits, period int, at
 }
 
 // NextTOTPCode returns the code for the step that starts after the current one
-// when less than two seconds of the current step remain. A code generated a
-// moment before it expires would otherwise be rejected by the server.
+// when the current step is nearly over. A code generated a moment before it
+// expires would otherwise be rejected by the server.
+//
+// The tail is two seconds, but never more than half the period: a 1-second
+// authenticator always has only one second left, so a fixed two-second tail
+// would always answer with the next step instead of the current one.
 func NextTOTPCode(parsed TOTP, at time.Time) (string, error) {
 	period := time.Duration(parsed.period) * time.Second
 	if period <= 0 {
 		return "", totpError(TOTPReasonInvalidPeriod)
+	}
+	tail := 2 * time.Second
+	if half := period / 2; half < tail {
+		tail = half
 	}
 	stepSeconds := int64(parsed.period)
 	intoSeconds := at.Unix() % stepSeconds
@@ -252,7 +260,7 @@ func NextTOTPCode(parsed TOTP, at time.Time) (string, error) {
 		intoSeconds += stepSeconds
 	}
 	remaining := period - time.Duration(intoSeconds)*time.Second
-	if remaining <= 2*time.Second {
+	if remaining <= tail {
 		return parsed.Code(at.Add(remaining))
 	}
 	return parsed.Code(at)
