@@ -1550,6 +1550,8 @@
   },
   "vaultExportUnreadable": "{count, plural, one {No se pudo leer # credencial y se omitió.} many {No se pudieron leer # credenciales y se omitieron.} other {No se pudieron leer # credenciales y se omitieron.}}",
   "vaultExportOmitted": "{count, plural, one {Se omitió # credencial guardada; activa los secretos para incluirla.} many {Se omitieron # credenciales guardadas; activa los secretos para incluirlas.} other {Se omitieron # credenciales guardadas; activa los secretos para incluirlas.}}",
+  "vaultExportJumpHopMissing": "La cadena de salto de {host} se omitió del CSV: el salto {hop} no forma parte de esta exportación.",
+  "vaultExportJumpHopUnrepresentable": "La cadena de salto de {host} se omitió del CSV: el salto {hop} no se puede escribir como salto SSH.",
   "@vaultExportUnreadable": {
     "description": "Credentials that could not be decrypted and were left out.",
     "placeholders": {

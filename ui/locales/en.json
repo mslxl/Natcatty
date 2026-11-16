@@ -2714,6 +2714,34 @@
   },
   "vaultExportUnreadable": "{count, plural, one {# credential could not be read and was left out.} other {# credentials could not be read and were left out.}}",
   "vaultExportOmitted": "{count, plural, one {# stored credential was left out; enable secrets to include it.} other {# stored credentials were left out; enable secrets to include them.}}",
+  "vaultExportJumpHopMissing": "Jump chain for {host} was left out of the CSV: hop {hop} is not part of this export.",
+  "vaultExportJumpHopUnrepresentable": "Jump chain for {host} was left out of the CSV: hop {hop} cannot be written as an SSH jump.",
+  "@vaultExportJumpHopMissing": {
+    "description": "A CSV export dropped a Host's jump chain because a hop was not in the export.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "Client"
+      },
+      "hop": {
+        "type": "String",
+        "example": "Bastion"
+      }
+    }
+  },
+  "@vaultExportJumpHopUnrepresentable": {
+    "description": "A CSV export dropped a Host's jump chain because a hop cannot be represented as an SSH jump.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "Client"
+      },
+      "hop": {
+        "type": "String",
+        "example": "Telnet"
+      }
+    }
+  },
   "@vaultExportUnreadable": {
     "description": "Credentials that could not be decrypted and were left out.",
     "placeholders": {

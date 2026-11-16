@@ -1550,6 +1550,8 @@
   },
   "vaultExportUnreadable": "{count, plural, other {有 # 個憑證無法讀取，已省略。}}",
   "vaultExportOmitted": "{count, plural, other {已省略 # 個已儲存的認證；啟用密鑰匯出以包含它們。}}",
+  "vaultExportJumpHopMissing": "{host} 的跳板鏈未寫入 CSV：跳板 {hop} 不在本次匯出中。",
+  "vaultExportJumpHopUnrepresentable": "{host} 的跳板鏈未寫入 CSV：跳板 {hop} 無法作為 SSH 跳板寫入。",
   "@vaultExportUnreadable": {
     "description": "Credentials that could not be decrypted and were left out.",
     "placeholders": {

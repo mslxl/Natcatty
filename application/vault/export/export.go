@@ -182,29 +182,66 @@ func (o Options) exportedAt() string {
 
 // Export renders d in format.
 func Export(d Dataset, format Format, opts Options) ([]byte, error) {
+	content, _, err := ExportWithIssues(d, format, opts)
+	return content, err
+}
+
+// IssueCode names why one row lost data the file cannot carry. It is data for
+// the localized message, never display text.
+type IssueCode string
+
+const (
+	// IssueJumpHopMissing means a Host's jump chain named a Host that is not
+	// part of this export.
+	IssueJumpHopMissing IssueCode = "jump_hop_missing"
+	// IssueJumpHopUnrepresentable means one hop cannot be written as an
+	// OpenSSH ProxyJump target (for example a telnet Host or an address that
+	// would break the comma-separated grammar).
+	IssueJumpHopUnrepresentable IssueCode = "jump_hop_unrepresentable"
+)
+
+// Issue is a non-fatal export warning tied to one row. The export is still
+// written, but the named field is empty or absent. Host names the row and Hop
+// names the jump Host that could not be carried.
+type Issue struct {
+	Host string
+	Code IssueCode
+	Hop  string
+}
+
+// ExportWithIssues renders d in format and reports every row that had to drop
+// data the format cannot represent. Export is the same call for callers that
+// only need the bytes.
+func ExportWithIssues(d Dataset, format Format, opts Options) ([]byte, []Issue, error) {
 	switch format {
 	case FormatJSON:
-		return exportJSON(d, opts)
+		content, err := exportJSON(d, opts)
+		return content, nil, err
 	case FormatCSV:
 		return exportCSV(d, opts)
 	case FormatSnippets:
-		return exportSnippets(d, opts)
+		content, err := exportSnippets(d, opts)
+		return content, nil, err
 	case FormatNotesMarkdown:
-		return exportNotesMarkdown(d), nil
+		return exportNotesMarkdown(d), nil, nil
 	case FormatNotesHTML:
-		return exportNotesHTML(d, opts), nil
+		return exportNotesHTML(d, opts), nil, nil
 	case FormatNotesZIP:
-		return exportNotesZIP(d)
+		content, err := exportNotesZIP(d)
+		return content, nil, err
 	case FormatKeys:
-		return exportKeys(d, opts)
+		content, err := exportKeys(d, opts)
+		return content, nil, err
 	case FormatThemes:
-		return exportThemes(d, opts)
+		content, err := exportThemes(d, opts)
+		return content, nil, err
 	case FormatLogsJSON:
-		return exportLogsJSON(d, opts)
+		content, err := exportLogsJSON(d, opts)
+		return content, nil, err
 	case FormatLogsCSV:
-		return exportLogsCSV(d), nil
+		return exportLogsCSV(d), nil, nil
 	default:
-		return nil, fmt.Errorf("vaultexport: unknown format %q", format)
+		return nil, nil, fmt.Errorf("vaultexport: unknown format %q", format)
 	}
 }
 
@@ -479,8 +516,9 @@ const (
 	csvLocalShellColumn = 13
 )
 
-func exportCSV(d Dataset, opts Options) ([]byte, error) {
+func exportCSV(d Dataset, opts Options) ([]byte, []Issue, error) {
 	var out strings.Builder
+	var issues []Issue
 	// The original Electron exporter wrote a UTF-8 BOM so spreadsheet tools
 	// read non-ASCII labels correctly. The importer strips it in Detect.
 	out.WriteString("\xef\xbb\xbf")
@@ -503,8 +541,13 @@ func exportCSV(d Dataset, opts Options) ([]byte, error) {
 				FormatProxy(*host.Host.Proxy, host.ProxyPassword, opts.IncludeSecrets),
 				vaultimport.MarkerProxy)
 		}
-		proxyJump := vaultimport.EncodeMarkedField(
-			formatCSVProxyJump(host.Host, hostsByID), vaultimport.MarkerProxyJump)
+		jumpValue, jumpCode, hop := formatCSVProxyJump(host.Host, hostsByID)
+		proxyJump := vaultimport.EncodeMarkedField(jumpValue, vaultimport.MarkerProxyJump)
+		if jumpCode != "" {
+			issues = append(issues, Issue{
+				Host: exportHostName(host.Host), Code: jumpCode, Hop: hop,
+			})
+		}
 		row := []string{
 			host.Host.Group,
 			host.Host.Label,
@@ -532,7 +575,16 @@ func exportCSV(d Dataset, opts Options) ([]byte, error) {
 		}
 		out.WriteString("\r\n")
 	}
-	return []byte(out.String()), nil
+	return []byte(out.String()), issues, nil
+}
+
+// exportHostName names one exported Host in a warning, falling back to the
+// stable ID when the label is empty.
+func exportHostName(host domainvault.Host) string {
+	if label := strings.TrimSpace(host.Label); label != "" {
+		return label
+	}
+	return string(host.ID)
 }
 
 // FormatProxy renders a proxy in the CSV proxy representation. The password
@@ -565,24 +617,25 @@ func FormatProxy(proxy domainvault.ProxyConfig, password string, includeSecrets 
 // value: [user@]host[:port] hops, comma separated, first hop closest to the
 // client. An empty cell means no chain. A chain is omitted entirely when a hop
 // is missing from the export or cannot be represented, so a shortened list is
-// never written back as if it were the whole chain.
-func formatCSVProxyJump(host domainvault.Host, hostsByID map[string]domainvault.Host) string {
+// never written back as if it were the whole chain. An omitted chain also
+// returns the reason and the offending hop so the caller can warn.
+func formatCSVProxyJump(host domainvault.Host, hostsByID map[string]domainvault.Host) (string, IssueCode, string) {
 	if host.HostChain == nil || len(host.HostChain.HostIDs) == 0 {
-		return ""
+		return "", "", ""
 	}
 	hops := make([]string, 0, len(host.HostChain.HostIDs))
 	for _, id := range host.HostChain.HostIDs {
 		hop, found := hostsByID[string(id)]
 		if !found {
-			return ""
+			return "", IssueJumpHopMissing, string(id)
 		}
 		formatted, ok := formatCSVProxyJumpHop(hop)
 		if !ok {
-			return ""
+			return "", IssueJumpHopUnrepresentable, exportHostName(hop)
 		}
 		hops = append(hops, formatted)
 	}
-	return strings.Join(hops, ",")
+	return strings.Join(hops, ","), "", ""
 }
 
 // formatCSVProxyJumpHop writes one hop. Port 22 is omitted, IPv6 addresses are

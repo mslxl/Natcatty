@@ -12258,6 +12258,42 @@ func (msgs Messages) VaultExportOmitted(count int) string {
 	return Catalog.Format(msgs.locale, "vaultExportOmitted", map[string]any{"count": count})
 }
 
+// VaultExportJumpHopMissing says "Jump chain for {host} was left out of the CSV: hop {hop} is not part of this export."
+// in the language the app shows.
+//
+// A CSV export dropped a Host's jump chain because a hop was not in the
+// export.
+func VaultExportJumpHopMissing(host string, hop string) string {
+	return In(i18n.Locale()).VaultExportJumpHopMissing(host, hop)
+}
+
+// VaultExportJumpHopMissing says "Jump chain for {host} was left out of the CSV: hop {hop} is not part of this export."
+// in the language of msgs.
+//
+// A CSV export dropped a Host's jump chain because a hop was not in the
+// export.
+func (msgs Messages) VaultExportJumpHopMissing(host string, hop string) string {
+	return Catalog.Format(msgs.locale, "vaultExportJumpHopMissing", map[string]any{"host": host, "hop": hop})
+}
+
+// VaultExportJumpHopUnrepresentable says "Jump chain for {host} was left out of the CSV: hop {hop} cannot be written as an SSH jump."
+// in the language the app shows.
+//
+// A CSV export dropped a Host's jump chain because a hop cannot be
+// represented as an SSH jump.
+func VaultExportJumpHopUnrepresentable(host string, hop string) string {
+	return In(i18n.Locale()).VaultExportJumpHopUnrepresentable(host, hop)
+}
+
+// VaultExportJumpHopUnrepresentable says "Jump chain for {host} was left out of the CSV: hop {hop} cannot be written as an SSH jump."
+// in the language of msgs.
+//
+// A CSV export dropped a Host's jump chain because a hop cannot be
+// represented as an SSH jump.
+func (msgs Messages) VaultExportJumpHopUnrepresentable(host string, hop string) string {
+	return Catalog.Format(msgs.locale, "vaultExportJumpHopUnrepresentable", map[string]any{"host": host, "hop": hop})
+}
+
 // VaultExportDismiss says "Dismiss"
 // in the language the app shows.
 func VaultExportDismiss() string { return In(i18n.Locale()).VaultExportDismiss() }

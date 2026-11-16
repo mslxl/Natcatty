@@ -76,12 +76,18 @@ func exportFor(t *testing.T, format Format, opts Options) []byte {
 
 func exportDatasetFor(t *testing.T, d Dataset, format Format, opts Options) []byte {
 	t.Helper()
+	content, _ := exportDatasetForWithIssues(t, d, format, opts)
+	return content
+}
+
+func exportDatasetForWithIssues(t *testing.T, d Dataset, format Format, opts Options) ([]byte, []Issue) {
+	t.Helper()
 	opts.ExportedAt = stamp
-	content, err := Export(d, format, opts)
+	content, issues, err := ExportWithIssues(d, format, opts)
 	if err != nil {
 		t.Fatalf("export %s: %v", format, err)
 	}
-	return content
+	return content, issues
 }
 
 // jumpDataset is three SSH Hosts where Client reaches the network through
@@ -198,8 +204,11 @@ func TestCSVWithoutSecretsOmitsCredentials(t *testing.T) {
 // the OpenSSH hop shape: port 22 is omitted and the first hop is closest to
 // the client.
 func TestCSVWritesAProxyJumpChainBeforeLocalShell(t *testing.T) {
-	rows, issues := vaultimport.ParseCSV(
-		string(exportDatasetFor(t, jumpDataset(), FormatCSV, Options{})))
+	content, warnings := exportDatasetForWithIssues(t, jumpDataset(), FormatCSV, Options{})
+	if len(warnings) != 0 {
+		t.Fatalf("a fully representable chain warned: %+v", warnings)
+	}
+	rows, issues := vaultimport.ParseCSV(string(content))
 	if len(issues) != 0 {
 		t.Fatalf("CSV parse issues = %+v", issues)
 	}
@@ -252,7 +261,8 @@ func TestCSVRoundTripsATwoHopJumpChain(t *testing.T) {
 
 // TestCSVOmitsAChainWithAnUnrepresentableHop proves a chain is written whole
 // or not at all: a telnet hop cannot carry a session, so the client keeps an
-// empty cell instead of a shortened chain.
+// empty cell instead of a shortened chain, and the export names the Host and
+// the hop that were dropped.
 func TestCSVOmitsAChainWithAnUnrepresentableHop(t *testing.T) {
 	dataset := jumpDataset()
 	dataset.Hosts = append(dataset.Hosts, Host{Host: domainvault.Host{
@@ -262,13 +272,42 @@ func TestCSVOmitsAChainWithAnUnrepresentableHop(t *testing.T) {
 	dataset.Hosts[2].Host.HostChain = &domainvault.HostChain{
 		HostIDs: []model.HostID{"edge", "telnet"},
 	}
-	rows, issues := vaultimport.ParseCSV(
-		string(exportDatasetFor(t, dataset, FormatCSV, Options{})))
+	content, warnings := exportDatasetForWithIssues(t, dataset, FormatCSV, Options{})
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %+v, want one unrepresentable-hop warning", warnings)
+	}
+	if want := (Issue{Host: "Client", Code: IssueJumpHopUnrepresentable, Hop: "Telnet"}); warnings[0] != want {
+		t.Fatalf("warning = %+v, want %+v", warnings[0], want)
+	}
+	rows, issues := vaultimport.ParseCSV(string(content))
 	if len(issues) != 0 {
 		t.Fatalf("CSV parse issues = %+v", issues)
 	}
 	if got := csvCell(t, rows, "client.example.test", "ProxyJump"); got != "" {
 		t.Fatalf("a partly representable chain was written as %q", got)
+	}
+}
+
+// TestCSVWarnsAboutAJumpHopMissingFromTheExport proves a chain referencing a
+// Host outside the selected export is reported, not silently blanked.
+func TestCSVWarnsAboutAJumpHopMissingFromTheExport(t *testing.T) {
+	dataset := jumpDataset()
+	dataset.Hosts[2].Host.HostChain = &domainvault.HostChain{
+		HostIDs: []model.HostID{"edge", "ghost"},
+	}
+	content, warnings := exportDatasetForWithIssues(t, dataset, FormatCSV, Options{})
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %+v, want one missing-hop warning", warnings)
+	}
+	if want := (Issue{Host: "Client", Code: IssueJumpHopMissing, Hop: "ghost"}); warnings[0] != want {
+		t.Fatalf("warning = %+v, want %+v", warnings[0], want)
+	}
+	rows, issues := vaultimport.ParseCSV(string(content))
+	if len(issues) != 0 {
+		t.Fatalf("CSV parse issues = %+v", issues)
+	}
+	if got := csvCell(t, rows, "client.example.test", "ProxyJump"); got != "" {
+		t.Fatalf("a chain with a missing hop was written as %q", got)
 	}
 }
 

@@ -47,6 +47,9 @@ type ExportOutcome struct {
 	// Omitted counts stored credentials left out because IncludeSecrets was
 	// off. The banner names the count so an incomplete file is never silent.
 	Omitted int
+	// Issues reports rows that were written without a field the format cannot
+	// carry, such as a jump chain with an unrepresentable hop.
+	Issues []appvault.ExportIssue
 }
 
 // ExportOpen reports whether the export panel is showing.
@@ -204,7 +207,7 @@ func (s *State) Export(title string) error {
 	}
 	s.exportOutcome = &ExportOutcome{
 		Path: path, Bytes: len(export.Content), Unreadable: export.UnreadableSecrets,
-		Omitted: export.OmittedSecrets,
+		Omitted: export.OmittedSecrets, Issues: export.Issues,
 	}
 	s.closeExport()
 	s.redraw()
