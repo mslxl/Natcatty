@@ -1,6 +1,10 @@
 package preferences
 
-import "testing"
+import (
+	"encoding/json"
+	"reflect"
+	"testing"
+)
 
 func TestDefaultsMatchTheOriginal(t *testing.T) {
 	got := Defaults()
@@ -215,8 +219,73 @@ func TestEveryFieldBelongsToAGroup(t *testing.T) {
 			t.Errorf("field %q has unknown group %q", field, group)
 		}
 	}
-	if len(seen) != 50 {
-		t.Errorf("fields = %d, want 50", len(seen))
+	if len(seen) != 52 {
+		t.Errorf("fields = %d, want 52", len(seen))
+	}
+}
+
+// TestLocalShellPreferenceRoundTrips proves the path and its arguments survive
+// the stored document, and that the device-local value follows the local
+// machine rather than a synced one.
+func TestLocalShellPreferenceRoundTrips(t *testing.T) {
+	settings := Defaults()
+	settings.Appearance.LocalShell = LocalShell{
+		Path: "/opt/custom shell/bin/zsh",
+		Args: `-l "arg with space" "quote\"inside"`,
+	}
+
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loaded Settings
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		t.Fatal(err)
+	}
+	if got := Normalize(loaded).Appearance.LocalShell; !reflect.DeepEqual(got, settings.Appearance.LocalShell) {
+		t.Fatalf("round-trip LocalShell = %+v, want %+v", got, settings.Appearance.LocalShell)
+	}
+
+	portable := Portable(settings)
+	if !reflect.DeepEqual(portable.Appearance.LocalShell, LocalShell{}) {
+		t.Fatalf("portable LocalShell = %+v, want it stripped", portable.Appearance.LocalShell)
+	}
+	current := Defaults()
+	current.Appearance.LocalShell = LocalShell{Path: `C:\Program Files\PowerShell\7\pwsh.exe`}
+	merged := MergePortable(current, portable)
+	if merged.Appearance.LocalShell.Path != current.Appearance.LocalShell.Path {
+		t.Fatalf("merged LocalShell = %+v, want the local value", merged.Appearance.LocalShell)
+	}
+}
+
+func TestLocalShellCommandFallsBackWhenThePathIsMissing(t *testing.T) {
+	shell := LocalShell{Path: " /opt/zsh ", Args: `-l --flag "a b"`}
+	command, fallback := shell.Command(func(path string) bool { return path == "/opt/zsh" })
+	if fallback || !reflect.DeepEqual(command, []string{"/opt/zsh", "-l", "--flag", "a b"}) {
+		t.Fatalf("Command = %v/%v, want the configured shell", command, fallback)
+	}
+
+	command, fallback = shell.Command(func(string) bool { return false })
+	if !fallback || command != nil {
+		t.Fatalf("missing path Command = %v/%v, want a fallback with no command", command, fallback)
+	}
+
+	// An empty path asks for the OS login shell and is not a fallback.
+	if command, fallback = (LocalShell{Args: "-l"}).Command(nil); command != nil || fallback {
+		t.Fatalf("empty path Command = %v/%v", command, fallback)
+	}
+}
+
+func TestLocalShellArgumentsParseAndFormat(t *testing.T) {
+	args := []string{"-l", "arg with space", `quote"inside`, `back\slash`, "", "plain"}
+	formatted := FormatArgs(args)
+	parsed := ParseArgs(formatted)
+	if !reflect.DeepEqual(parsed, args) {
+		t.Fatalf("ParseArgs(FormatArgs(%q)) = %q", args, parsed)
+	}
+	if got := ParseArgs(`--flag 'a b' "c \"d\""`); !reflect.DeepEqual(got,
+		[]string{"--flag", "a b", `c "d"`}) {
+		t.Fatalf("ParseArgs = %q", got)
 	}
 }
 

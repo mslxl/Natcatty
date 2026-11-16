@@ -1358,6 +1358,11 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			}
 			return host.Label, true
 		}),
+		// A local Tab starts the custom shell when one is configured and
+		// usable, and warns when the configured path is gone.
+		state.WithLocalShell(func() ([]string, bool) {
+			return preferenceService.Settings().Appearance.LocalShell.Command(appsession.LocalShellExists)
+		}),
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
 			return newSessionSurface(s)
 		}),

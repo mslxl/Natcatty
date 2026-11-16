@@ -102,16 +102,36 @@ type testGraph struct {
 	sessions  []*appsession.Session
 }
 
-func newTestGraph(t *testing.T) *testGraph {
+func newTestGraph(t *testing.T, opts ...state.Option) *testGraph {
 	t.Helper()
 	graph := &testGraph{transport: newFakeTransport()}
 	service := appsession.NewService(&fakeFactory{transport: graph.transport})
 	t.Cleanup(service.CloseAll)
-	graph.state = state.NewState(state.WithSessions(service, func(session *appsession.Session) (state.Surface, error) {
+	options := []state.Option{state.WithSessions(service, func(session *appsession.Session) (state.Surface, error) {
 		graph.sessions = append(graph.sessions, session)
 		return fakeSurface{}, nil
-	}))
+	})}
+	options = append(options, opts...)
+	graph.state = state.NewState(options...)
 	return graph
+}
+
+// TestShellShowsTheLocalShellFallbackAfterOpeningATab proves the missing-path
+// warning a local Tab raises is visible in the window rather than only in
+// state.
+func TestShellShowsTheLocalShellFallbackAfterOpeningATab(t *testing.T) {
+	graph := newTestGraph(t, state.WithLocalShell(func() ([]string, bool) {
+		return nil, true
+	}))
+	tester := ui.NewTester(View(graph.state), 900, 600)
+	tester.SetLocale("en")
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatalf("NewTab: %v", err)
+	}
+	tester.Frame()
+	if !tester.HasText(locales.In("en").CustomShellUnavailable()) {
+		t.Fatalf("the shell does not show the local-shell fallback: %v", tester.Texts())
+	}
 }
 
 // TestShellLayoutFitsAtDefaultAndMinimumSizes proves the responsive layout:
@@ -280,9 +300,16 @@ func TestShellShowsDesktopTargetNotice(t *testing.T) {
 		t.Fatalf("the shell does not show the invalid-target notice: %v", tt.Texts())
 	}
 
+	shellState.SetDesktopNotice(state.DesktopNoticeLocalShellFallback)
+	tt.Frame()
+	if !tt.HasText(locales.In("en").CustomShellUnavailable()) {
+		t.Fatalf("the shell does not show the local-shell fallback: %v", tt.Texts())
+	}
+
 	shellState.SetDesktopNotice(state.DesktopNoticeNone)
 	tt.Frame()
-	if tt.HasText(locales.In("en").DeepLinkProblemInvalid()) {
+	if tt.HasText(locales.In("en").DeepLinkProblemInvalid()) ||
+		tt.HasText(locales.In("en").CustomShellUnavailable()) {
 		t.Fatalf("the notice did not clear: %v", tt.Texts())
 	}
 }

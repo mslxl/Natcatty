@@ -229,6 +229,117 @@ func DefaultInterfaceStyle(goos string) InterfaceStyle {
 	return InterfaceClassic
 }
 
+// LocalShell is the program a new local Session starts instead of the OS
+// login shell. An empty Path asks the platform for its login shell, and an
+// empty Args starts the program without arguments.
+//
+// Args is stored exactly as the user typed it and parsed when a Session
+// opens. Storing argv instead would force the Settings editor to re-render
+// every keystroke through quote normalization, which loses a trailing space
+// and an unclosed quote while they are still being typed.
+//
+// The value is device-local: a path names a program installed on one machine,
+// so Portable strips it and MergePortable keeps the local choice.
+type LocalShell struct {
+	Path string `json:"path,omitempty"`
+	Args string `json:"args,omitempty"`
+}
+
+// Normalized trims the path and drops arguments that cannot mean anything
+// without one. Arguments keep their exact bytes, since quoting and an empty
+// argument are meaningful to a shell.
+func (shell LocalShell) Normalized() LocalShell {
+	shell.Path = strings.TrimSpace(shell.Path)
+	if shell.Path == "" {
+		return LocalShell{}
+	}
+	return shell
+}
+
+// Command returns the argv a local Session starts. exists reports whether a
+// configured path names a program the OS can start; it must resolve the path
+// without running the program. A nil exists skips the check.
+//
+// An empty path returns nil and false: the OS login shell. A configured path
+// that does not exist returns nil and true, so the caller opens the OS login
+// shell and can warn that the choice was ignored.
+func (shell LocalShell) Command(exists func(string) bool) ([]string, bool) {
+	shell = shell.Normalized()
+	if shell.Path == "" {
+		return nil, false
+	}
+	if exists != nil && !exists(shell.Path) {
+		return nil, true
+	}
+	return append([]string{shell.Path}, ParseArgs(shell.Args)...), false
+}
+
+// ParseArgs splits a Settings-window argument string into argv words. Single
+// and double quotes group spaces, a backslash escapes the next character, and
+// a quoted empty word ("") is kept. It never invokes a shell.
+func ParseArgs(raw string) []string {
+	var args []string
+	var word strings.Builder
+	started := false
+	var quote byte
+	for i := 0; i < len(raw); i++ {
+		ch := raw[i]
+		if quote != 0 {
+			switch {
+			case ch == quote:
+				quote = 0
+			case ch == '\\' && quote == '"' && i+1 < len(raw):
+				i++
+				word.WriteByte(raw[i])
+			default:
+				word.WriteByte(ch)
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
+			started = true
+		case '\\':
+			if i+1 < len(raw) {
+				i++
+				word.WriteByte(raw[i])
+			} else {
+				word.WriteByte(ch)
+			}
+			started = true
+		case ' ', '\t', '\n', '\r':
+			if started {
+				args = append(args, word.String())
+				word.Reset()
+				started = false
+			}
+		default:
+			word.WriteByte(ch)
+			started = true
+		}
+	}
+	if started {
+		args = append(args, word.String())
+	}
+	return args
+}
+
+// FormatArgs renders args so ParseArgs reads them back unchanged. A word is
+// quoted only when it contains whitespace, a quote, or a backslash.
+func FormatArgs(args []string) string {
+	parts := make([]string, len(args))
+	escaper := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	for i, arg := range args {
+		if arg != "" && !strings.ContainsAny(arg, " \t\n\r\"'\\") {
+			parts[i] = arg
+			continue
+		}
+		parts[i] = `"` + escaper.Replace(arg) + `"`
+	}
+	return strings.Join(parts, " ")
+}
+
 // Appearance group.
 type Appearance struct {
 	ThemeMode     ThemeMode  `json:"themeMode"`
@@ -265,6 +376,9 @@ type Appearance struct {
 	// ESC CR is the legacy Alt+Enter sequence that readline, zle, and most TUI
 	// CLIs read as a literal newline rather than a submit.
 	TerminalShiftEnterPlain bool `json:"terminalShiftEnterPlain"`
+	// LocalShell replaces the OS login shell for local Sessions. It is
+	// device-local and stripped from the synced document.
+	LocalShell LocalShell `json:"localShell"`
 }
 
 // Layout group.
@@ -418,6 +532,8 @@ func Portable(settings Settings) PortableSettings {
 	appearance := settings.Appearance
 	appearance.AppIcon = ""
 	appearance.InterfaceStyle = ""
+	// A shell path names a program installed on this device.
+	appearance.LocalShell = LocalShell{}
 	editor := settings.SFTPEditor
 	editor.DefaultOpener = Opener{}
 	editor.FileAssociations = nil
@@ -445,6 +561,7 @@ func MergePortable(current Settings, portable PortableSettings) Settings {
 	next.Appearance = portable.Appearance
 	next.Appearance.AppIcon = current.Appearance.AppIcon
 	next.Appearance.InterfaceStyle = current.Appearance.InterfaceStyle
+	next.Appearance.LocalShell = current.Appearance.LocalShell
 	next.Layout = portable.Layout
 	next.Layout.HostViewMode = current.Layout.HostViewMode
 	next.Layout.HostSortMode = current.Layout.HostSortMode
@@ -582,6 +699,7 @@ func Normalize(settings Settings) Settings {
 	if !settings.Appearance.TerminalCursorStyle.Valid() {
 		settings.Appearance.TerminalCursorStyle = defaults.Appearance.TerminalCursorStyle
 	}
+	settings.Appearance.LocalShell = settings.Appearance.LocalShell.Normalized()
 
 	if !settings.Layout.HostViewMode.Valid() {
 		settings.Layout.HostViewMode = defaults.Layout.HostViewMode
@@ -713,6 +831,8 @@ const (
 	FieldTerminalCursorStyle          Field = "appearance.terminalCursorStyle"
 	FieldTerminalCursorBlink          Field = "appearance.terminalCursorBlink"
 	FieldTerminalShiftEnter           Field = "appearance.terminalShiftEnter"
+	FieldLocalShell                   Field = "appearance.localShell"
+	FieldLocalShellArgs               Field = "appearance.localShellArgs"
 	FieldShowHostTreeSidebar          Field = "layout.showHostTreeSidebar"
 	FieldShowSFTPTab                  Field = "layout.showSftpTab"
 	FieldShowRecentHosts              Field = "layout.showRecentHosts"
@@ -756,7 +876,7 @@ func Fields() []Field {
 		FieldAccentColor, FieldAppIcon, FieldUIFont,
 		FieldWindowOpacity, FieldInterfaceStyle, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
 		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink,
-		FieldTerminalShiftEnter,
+		FieldTerminalShiftEnter, FieldLocalShell, FieldLocalShellArgs,
 		FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
 		FieldShowOnlyUngroupedHostsInRoot, FieldHostClickBehavior,
 		FieldTabBarPosition, FieldShellOnlyTabNumberShortcuts,
@@ -783,7 +903,7 @@ func GroupOf(field Field) (Group, bool) {
 		FieldAccentColor, FieldAppIcon, FieldUIFont,
 		FieldWindowOpacity, FieldInterfaceStyle, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
 		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink,
-		FieldTerminalShiftEnter:
+		FieldTerminalShiftEnter, FieldLocalShell, FieldLocalShellArgs:
 		return GroupAppearance, true
 	case FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
 		FieldShowOnlyUngroupedHostsInRoot, FieldHostClickBehavior,
@@ -848,6 +968,12 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.Appearance.TerminalCursorSteady = defaults.Appearance.TerminalCursorSteady
 	case FieldTerminalShiftEnter:
 		settings.Appearance.TerminalShiftEnterPlain = defaults.Appearance.TerminalShiftEnterPlain
+	case FieldLocalShell:
+		// Resetting the path also clears its arguments: arguments without a
+		// program are meaningless.
+		settings.Appearance.LocalShell = defaults.Appearance.LocalShell
+	case FieldLocalShellArgs:
+		settings.Appearance.LocalShell.Args = defaults.Appearance.LocalShell.Args
 	case FieldShowHostTreeSidebar:
 		settings.Layout.ShowHostTreeSidebar = defaults.Layout.ShowHostTreeSidebar
 	case FieldShowSFTPTab:

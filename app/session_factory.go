@@ -172,7 +172,7 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		}
 		return f.etInProcess.Open(ctx, spec)
 	default:
-		return f.local.Open(ctx, spec)
+		return f.local.Open(ctx, f.withLocalShell(spec))
 	}
 	if f.manager == nil {
 		return nil, errors.New("app: no SSH connection manager")
@@ -195,6 +195,20 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		terminal: terminal, lease: lease, notices: notices,
 		tmuxAttached: attached, captureHookExpected: hookExpected, hookWithdrawn: hookWithdrawn,
 	}, nil
+}
+
+// withLocalShell copies the configured custom shell into a local Session's
+// start command. An explicit command wins, and an absent or unusable path
+// leaves the command empty so the transport opens the OS login shell. This is
+// the path every local open takes, including an MCP-created Session and the
+// command line's --open-terminal-shell.
+func (f *transportFactory) withLocalShell(spec appsession.StartSpec) appsession.StartSpec {
+	if spec.Kind != appsession.KindLocal || len(spec.Command) > 0 || f.preferences == nil {
+		return spec
+	}
+	command, _ := f.preferences.Settings().Appearance.LocalShell.Command(appsession.LocalShellExists)
+	spec.Command = command
+	return spec
 }
 
 // withMoshPreferences copies the persisted prediction choice into a Mosh

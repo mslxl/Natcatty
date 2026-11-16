@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1062,8 +1063,23 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 
 // OpenLocal opens the platform's local shell in a new Session.
 func (s *Service) OpenLocal(ctx context.Context) (*Session, error) {
+	return s.OpenLocalCommand(ctx, nil)
+}
+
+// OpenLocalCommand opens a local Session with an explicit command line. An
+// empty command asks the transport for the platform's login shell. The caller
+// resolves a configured custom shell; this method only carries it through.
+func (s *Service) OpenLocalCommand(ctx context.Context, command []string) (*Session, error) {
 	// The original names local Session logs "Local Terminal".
-	return s.Open(ctx, StartSpec{Kind: KindLocal, Label: "Local Terminal"})
+	return s.Open(ctx, StartSpec{Kind: KindLocal, Label: "Local Terminal", Command: command})
+}
+
+// LocalShellExists reports whether path names a program the OS can start. It
+// resolves PATH but never runs the program, so a custom-shell preference can
+// be checked before a Session opens.
+func LocalShellExists(path string) bool {
+	_, err := exec.LookPath(path)
+	return err == nil
 }
 
 // Label names the Session for logging. It is the Host label the shell opened,

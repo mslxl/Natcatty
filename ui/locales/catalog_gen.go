@@ -8004,6 +8004,16 @@ func (msgs Messages) DeepLinkProblemUnsupported() string {
 	return Catalog.Format(msgs.locale, "deepLinkProblemUnsupported", nil)
 }
 
+// CustomShellUnavailable says "The custom shell could not be found; opened the OS login shell."
+// in the language the app shows.
+func CustomShellUnavailable() string { return In(i18n.Locale()).CustomShellUnavailable() }
+
+// CustomShellUnavailable says "The custom shell could not be found; opened the OS login shell."
+// in the language of msgs.
+func (msgs Messages) CustomShellUnavailable() string {
+	return Catalog.Format(msgs.locale, "customShellUnavailable", nil)
+}
+
 // SessionActivityBusy says "Terminal activity"
 // in the language the app shows.
 func SessionActivityBusy() string { return In(i18n.Locale()).SessionActivityBusy() }
@@ -8348,6 +8358,90 @@ func SettingsTerminalShiftEnterDescription() string {
 // in the language of msgs.
 func (msgs Messages) SettingsTerminalShiftEnterDescription() string {
 	return Catalog.Format(msgs.locale, "settingsTerminalShiftEnterDescription", nil)
+}
+
+// SettingsLocalShellTitle says "Local shell"
+// in the language the app shows.
+func SettingsLocalShellTitle() string { return In(i18n.Locale()).SettingsLocalShellTitle() }
+
+// SettingsLocalShellTitle says "Local shell"
+// in the language of msgs.
+func (msgs Messages) SettingsLocalShellTitle() string {
+	return Catalog.Format(msgs.locale, "settingsLocalShellTitle", nil)
+}
+
+// SettingsLocalShellDescription says "The program a new local terminal starts. Leave it empty to use the OS login shell."
+// in the language the app shows.
+func SettingsLocalShellDescription() string { return In(i18n.Locale()).SettingsLocalShellDescription() }
+
+// SettingsLocalShellDescription says "The program a new local terminal starts. Leave it empty to use the OS login shell."
+// in the language of msgs.
+func (msgs Messages) SettingsLocalShellDescription() string {
+	return Catalog.Format(msgs.locale, "settingsLocalShellDescription", nil)
+}
+
+// SettingsLocalShellPath says "Shell path"
+// in the language the app shows.
+func SettingsLocalShellPath() string { return In(i18n.Locale()).SettingsLocalShellPath() }
+
+// SettingsLocalShellPath says "Shell path"
+// in the language of msgs.
+func (msgs Messages) SettingsLocalShellPath() string {
+	return Catalog.Format(msgs.locale, "settingsLocalShellPath", nil)
+}
+
+// SettingsLocalShellArguments says "Arguments"
+// in the language the app shows.
+func SettingsLocalShellArguments() string { return In(i18n.Locale()).SettingsLocalShellArguments() }
+
+// SettingsLocalShellArguments says "Arguments"
+// in the language of msgs.
+func (msgs Messages) SettingsLocalShellArguments() string {
+	return Catalog.Format(msgs.locale, "settingsLocalShellArguments", nil)
+}
+
+// SettingsLocalShellArgumentsDescription says "Separate arguments with spaces. Quote an argument that contains spaces; a backslash escapes a quote."
+// in the language the app shows.
+func SettingsLocalShellArgumentsDescription() string {
+	return In(i18n.Locale()).SettingsLocalShellArgumentsDescription()
+}
+
+// SettingsLocalShellArgumentsDescription says "Separate arguments with spaces. Quote an argument that contains spaces; a backslash escapes a quote."
+// in the language of msgs.
+func (msgs Messages) SettingsLocalShellArgumentsDescription() string {
+	return Catalog.Format(msgs.locale, "settingsLocalShellArgumentsDescription", nil)
+}
+
+// SettingsLocalShellResolved says "Resolved shell"
+// in the language the app shows.
+func SettingsLocalShellResolved() string { return In(i18n.Locale()).SettingsLocalShellResolved() }
+
+// SettingsLocalShellResolved says "Resolved shell"
+// in the language of msgs.
+func (msgs Messages) SettingsLocalShellResolved() string {
+	return Catalog.Format(msgs.locale, "settingsLocalShellResolved", nil)
+}
+
+// SettingsLocalShellOsDefault says "OS login shell"
+// in the language the app shows.
+func SettingsLocalShellOsDefault() string { return In(i18n.Locale()).SettingsLocalShellOsDefault() }
+
+// SettingsLocalShellOsDefault says "OS login shell"
+// in the language of msgs.
+func (msgs Messages) SettingsLocalShellOsDefault() string {
+	return Catalog.Format(msgs.locale, "settingsLocalShellOsDefault", nil)
+}
+
+// SettingsLocalShellMissing says "Not found: {path}. The OS login shell will be used."
+// in the language the app shows.
+func SettingsLocalShellMissing(path string) string {
+	return In(i18n.Locale()).SettingsLocalShellMissing(path)
+}
+
+// SettingsLocalShellMissing says "Not found: {path}. The OS login shell will be used."
+// in the language of msgs.
+func (msgs Messages) SettingsLocalShellMissing(path string) string {
+	return Catalog.Format(msgs.locale, "settingsLocalShellMissing", map[string]any{"path": path})
 }
 
 // SettingsTerminalLoggingTitle says "Session logging"

@@ -494,6 +494,8 @@ func desktopNoticeText(m locales.Messages, notice state.DesktopNotice) string {
 		return m.DeepLinkProblemInvalid()
 	case state.DesktopNoticeUnsupportedTarget:
 		return m.DeepLinkProblemUnsupported()
+	case state.DesktopNoticeLocalShellFallback:
+		return m.CustomShellUnavailable()
 	}
 	return ""
 }

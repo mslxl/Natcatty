@@ -238,9 +238,13 @@ type State struct {
 	requestSettings  func()
 	requestRedraw    func()
 	sessions         *appsession.Service
-	surfaces         SurfaceFactory
-	trustPrompt      *sessionui.TrustPrompt
-	authPrompt       *sessionui.AuthPrompt
+	// localShell resolves the custom shell a local Session starts: the argv
+	// and whether the configured path was unusable, so the OS login shell
+	// opened instead. Nil asks the OS directly.
+	localShell  func() (command []string, fallback bool)
+	surfaces    SurfaceFactory
+	trustPrompt *sessionui.TrustPrompt
+	authPrompt  *sessionui.AuthPrompt
 	// etResumeStore lets the shell clear a saved ET credential pair when no
 	// live Session owns it any more: a restored reattach the server refuses as
 	// unsupported, or an ET Pane closed while its Session never opened. Nil
@@ -381,6 +385,14 @@ func WithSessions(service *appsession.Service, surfaces SurfaceFactory) Option {
 		s.sessions = service
 		s.surfaces = surfaces
 	}
+}
+
+// WithLocalShell supplies the custom shell for local Sessions. command is the
+// argv to start; fallback reports that the configured program was unusable,
+// so the OS login shell opens and the shell warns. Without this option a local
+// Tab asks the transport for the OS login shell.
+func WithLocalShell(resolve func() (command []string, fallback bool)) Option {
+	return func(s *State) { s.localShell = resolve }
 }
 
 // ETResumeStore removes a saved ET session pair from the secret store. The app
@@ -584,9 +596,10 @@ func (s *State) setProblem(err error) {
 type DesktopNotice string
 
 const (
-	DesktopNoticeNone              DesktopNotice = ""
-	DesktopNoticeInvalidTarget     DesktopNotice = "invalid_target"
-	DesktopNoticeUnsupportedTarget DesktopNotice = "unsupported_target"
+	DesktopNoticeNone               DesktopNotice = ""
+	DesktopNoticeInvalidTarget      DesktopNotice = "invalid_target"
+	DesktopNoticeUnsupportedTarget  DesktopNotice = "unsupported_target"
+	DesktopNoticeLocalShellFallback DesktopNotice = "local_shell_fallback"
 )
 
 // SetDesktopNotice records the banner code. Passing DesktopNoticeNone clears
@@ -851,7 +864,21 @@ func (s *State) NewTab() error {
 		return ErrNoSessions
 	}
 	s.setProblem(nil)
-	session, err := s.sessions.OpenLocal(context.Background())
+	var command []string
+	if s.localShell != nil {
+		// A new local Tab re-reads the preference. Clear only this feature's
+		// fallback so a fixed path stops warning without hiding an unrelated
+		// deep-link problem.
+		if s.DesktopNotice() == DesktopNoticeLocalShellFallback {
+			s.SetDesktopNotice(DesktopNoticeNone)
+		}
+		var fallback bool
+		command, fallback = s.localShell()
+		if fallback {
+			s.SetDesktopNotice(DesktopNoticeLocalShellFallback)
+		}
+	}
+	session, err := s.sessions.OpenLocalCommand(context.Background(), command)
 	if err != nil {
 		return err
 	}
