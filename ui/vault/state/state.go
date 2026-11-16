@@ -258,6 +258,7 @@ type State struct {
 	// marqueeActive is set from a box drag's start to its end, and
 	// marqueeBase is the selection to put back if the drag is cancelled.
 	marqueeActive       bool
+	marqueeAdditive     bool
 	marqueeBase         map[model.HostID]bool
 	marqueeBaseSelected model.HostID
 	editing             bool

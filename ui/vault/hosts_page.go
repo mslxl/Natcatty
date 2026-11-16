@@ -54,6 +54,23 @@ type browse struct {
 	// collapsed holds the group paths the tree view collapsed. A path missing
 	// from it is expanded, so a fresh Vault shows its contents.
 	collapsed map[string]bool
+	// hostBounds holds the window rectangle each rendered Host card or row
+	// occupied in the previous frame, keyed by Host. The marquee intersects
+	// the pointer rectangle with these, so a Host between two pointer samples
+	// is still selected.
+	hostBounds map[model.HostID]ui.Rect
+	// pressSet records the window point where the current background press
+	// began, which is the marquee's anchor.
+	pressSet             bool
+	pressX, pressY       float32
+	marqueeAnchorX       float32
+	marqueeAnchorY       float32
+	marqueeRect          ui.Rect
+	marqueeRectAvailable bool
+	// marqueeSwept accumulates every Host a box has enclosed during the
+	// current drag, so moving the pointer back over already-swept Hosts does
+	// not drop them from the selection.
+	marqueeSwept map[model.HostID]bool
 }
 
 // hostsToolbar is the Hosts page's top row, as the original's: the search
@@ -181,12 +198,27 @@ func sortSelect(c *ui.Context, opts options, layout domainpreferences.Layout, m 
 // hostsPage draws the Vault's Hosts page in the mode the user chose: cards,
 // rows, or the whole group tree.
 func hostsPage(c *ui.Context, s *vaultstate.State, opts options, at *browse, m locales.Messages, t *ui.Theme) {
+	// The bounds only describe Hosts this frame rendered; a Host moved off the
+	// page must not stay sweepable at a stale rectangle.
+	at.hostBounds = make(map[model.HostID]ui.Rect)
 	page := ui.Column(c).FillWidth().
 		Drag(vaultstate.MarqueeDrag{Swept: s.SelectedHostIDs})
-	hostsMarquee(page, c, s)
+	page.DrawOver(func(p *ui.Painter, box ui.Rect) {
+		if !at.marqueeRectAvailable {
+			return
+		}
+		// The page's box is the selection's only visible extent, even when
+		// the pointer leaves it.
+		p.Clip(box, 0, func() {
+			p.Fill(at.marqueeRect, t.Accent.Alpha(0.12), 2)
+			p.Stroke(at.marqueeRect, t.Accent, 2, 1)
+		})
+	})
+	// Children record each Host's bounds before the sweep reads them.
 	page.Children(func() {
 		hostsPageContent(c, s, opts, at, m, t)
 	})
+	hostsMarquee(page, c, s, at)
 }
 
 func hostsPageContent(c *ui.Context, s *vaultstate.State, opts options, at *browse, m locales.Messages, t *ui.Theme) {
@@ -210,21 +242,98 @@ func hostsPageContent(c *ui.Context, s *vaultstate.State, opts options, at *brow
 
 // hostsMarquee makes the Hosts page background a marquee drag source. A press
 // lands on the page only where no card, row, or input under it takes the press,
-// so dragging empty space sweeps a selection over the Hosts it passes.
-func hostsMarquee(page ui.Element, c *ui.Context, s *vaultstate.State) {
+// so dragging empty space sweeps a rectangle over the Hosts it encloses.
+func hostsMarquee(page ui.Element, c *ui.Context, s *vaultstate.State, at *browse) {
+	localX, localY, _ := page.PointerPosition()
+	pointerX, pointerY := page.LocalToWindow(localX, localY)
 	dragging := page.Dragging()
-	if dragging && !s.MarqueeActive() {
-		s.BeginMarquee(c.Modifiers()&(ui.Cmd|ui.Shift|ui.Ctrl) != 0)
+
+	// The press point is the box's fixed corner. It arrives on the press frame,
+	// before the pointer has moved far enough to start the drag.
+	if page.Pressed() && !dragging && !s.MarqueeActive() {
+		if !at.pressSet {
+			at.pressSet, at.pressX, at.pressY = true, pointerX, pointerY
+		}
 	}
+	if !page.Pressed() {
+		at.pressSet = false
+	}
+
+	if dragging && !s.MarqueeActive() {
+		anchorX, anchorY := at.pressX, at.pressY
+		if !at.pressSet {
+			// A drag can begin on a frame the press was not observed; the first
+			// pointer sample is the best anchor then.
+			anchorX, anchorY = pointerX, pointerY
+		}
+		s.BeginMarquee(c.Modifiers()&(ui.Cmd|ui.Shift|ui.Ctrl) != 0)
+		at.marqueeAnchorX, at.marqueeAnchorY = anchorX, anchorY
+		at.marqueeSwept = make(map[model.HostID]bool)
+	}
+
+	// A sweep only grows while the drag is live. The release frame runs the
+	// drop first, which clears the selection; sweeping after it would put the
+	// moved Hosts back.
+	if s.MarqueeActive() && dragging {
+		left, right := at.marqueeAnchorX, pointerX
+		if right < left {
+			left, right = right, left
+		}
+		top, bottom := at.marqueeAnchorY, pointerY
+		if bottom < top {
+			top, bottom = bottom, top
+		}
+		at.marqueeRect = ui.Rect{X: left, Y: top, W: right - left, H: bottom - top}
+		at.marqueeRectAvailable = true
+		if at.marqueeSwept == nil {
+			at.marqueeSwept = make(map[model.HostID]bool)
+		}
+		for _, id := range at.hostsInside(s, at.marqueeRect) {
+			at.marqueeSwept[id] = true
+		}
+		ids := make([]model.HostID, 0, len(at.marqueeSwept))
+		for id := range at.marqueeSwept {
+			ids = append(ids, id)
+		}
+		s.SweepMarquee(ids)
+	}
+
 	if !dragging && s.MarqueeActive() {
-		// The release keeps what the box chose; Escape cancels the drag in
-		// the framework, which ends it without a drop the same way.
-		s.EndMarquee()
+		if page.Pressed() {
+			// Escape cancels the framework drag while the pointer is still
+			// held; a release ends it. Only the cancellation restores the
+			// selection the sweep started from.
+			s.CancelMarquee()
+		} else {
+			// The release keeps what the box chose.
+			s.EndMarquee()
+		}
+		at.marqueeRectAvailable = false
+		at.marqueeSwept = nil
+		at.pressSet = false
 	}
 	if page.Clicked() {
 		// A press of the background with no drag clears the box selection.
 		s.ClearSelection()
 	}
+}
+
+// hostsInside returns the Hosts whose rendered rectangle intersects box. It
+// walks the Vault's own order so the swept selection is deterministic.
+func (at *browse) hostsInside(s *vaultstate.State, box ui.Rect) []model.HostID {
+	ids := make([]model.HostID, 0, len(at.hostBounds))
+	for _, host := range s.EffectiveItems() {
+		if bounds, ok := at.hostBounds[host.ID]; ok && rectsIntersect(box, bounds) {
+			ids = append(ids, host.ID)
+		}
+	}
+	return ids
+}
+
+// rectsIntersect reports whether two rectangles share any area.
+func rectsIntersect(a, b ui.Rect) bool {
+	return a.W > 0 && a.H > 0 && b.W > 0 && b.H > 0 &&
+		a.X < b.X+b.W && b.X < a.X+a.W && a.Y < b.Y+b.H && b.Y < a.Y+a.H
 }
 
 // hostDragPayload is what a Host card or row drags: the whole marquee
@@ -853,9 +962,7 @@ func groupCard(c *ui.Context, s *vaultstate.State, section hostGroupSection, at 
 func hostCard(c *ui.Context, s *vaultstate.State, opts options, host domainvault.Host, at *browse,
 	m locales.Messages, t *ui.Theme, layout domainpreferences.Layout) {
 	card := cardShell(c, t, "host-"+string(host.ID)).Tooltip(strings.Join(hostSummary(s, host, m), "  ·  "))
-	if _, over := ui.DragOver[vaultstate.MarqueeDrag](card); over {
-		s.MarqueeOver(host.ID)
-	}
+	at.hostBounds[host.ID] = card.Bounds()
 	card.Drag(hostDragPayload(s, host.ID))
 	hovered := card.Hovered()
 	if card.Dragging() {
@@ -905,9 +1012,7 @@ func hostRow(c *ui.Context, s *vaultstate.State, opts options, host domainvault.
 	if at.focused == host.ID && layout.HostClickBehavior == domainpreferences.HostClickSelect {
 		row.Border(1, t.Accent)
 	}
-	if _, over := ui.DragOver[vaultstate.MarqueeDrag](row); over {
-		s.MarqueeOver(host.ID)
-	}
+	at.hostBounds[host.ID] = row.Bounds()
 	if s.Chosen(host.ID) {
 		row.Border(1, t.Accent).Background(t.Accent.Alpha(0.08))
 	}

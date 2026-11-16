@@ -1930,54 +1930,153 @@ func TestMarqueeSweepsEveryHostItPassesAndTheSelectionDropsTogether(t *testing.T
 	}
 }
 
-// TestEscapeCancelsAMarqueeAndReleasingOutsideAGroupMovesNothing proves a
-// cancelled or misplaced box drop leaves Host Group membership alone.
-func TestEscapeCancelsAMarqueeAndReleasingOutsideAGroupMovesNothing(t *testing.T) {
+// TestMarqueeEnclosesHostsThePointerNeverCrossed proves the box, not the
+// pointer path, decides the selection: both Hosts sit inside the final
+// rectangle, but neither pointer sample landed on either card.
+func TestMarqueeEnclosesHostsThePointerNeverCrossed(t *testing.T) {
 	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1400, 900)
-	hosts.items = []domainvault.Host{{
-		ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
-		Protocol: domainvault.ProtocolSSH,
-	}}
+	hosts.items = []domainvault.Host{
+		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+	}
 	groups.items = []domainvault.Group{{Path: "prod"}}
 	if err := state.Reload(); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	tt.Frame()
 
+	heading := rectOf(t, tt, "Host Groups (1)")
+	alpha := rectOf(t, tt, "alpha")
+	beta := rectOf(t, tt, "beta")
+	if beta.X <= alpha.X {
+		t.Fatalf("the Host cards are not laid out left to right: alpha %+v, beta %+v", alpha, beta)
+	}
+
+	// Press on the section heading, above the cards and at its left edge, then
+	// cross the heading band to the far right and descend past the cards. No
+	// pointer sample touches a Host, and the final rectangle encloses both.
+	anchorX, anchorY := heading.X+2, heading.Y+heading.H/2
+	tt.Press(anchorX, anchorY)
+	tt.Frame()
+	right := float32(1400 - 30)
+	tt.Move(right, anchorY)
+	tt.Frame()
+	if state.ChosenCount() != 0 {
+		t.Fatalf("a box above the cards chose %v", state.SelectedHostIDs())
+	}
+	tt.Move(right, beta.Y+beta.H+90)
+	tt.Frame()
+
+	if !state.Chosen("host-1") || !state.Chosen("host-2") || state.ChosenCount() != 2 {
+		t.Fatalf("the enclosing box chose %v, want both off-path Hosts", state.SelectedHostIDs())
+	}
+	if !state.MarqueeActive() {
+		t.Fatal("the enclosing box did not keep the marquee active")
+	}
+	tt.Release(anchorX, anchorY)
+	tt.Frame()
+}
+
+// TestMarqueeEscapeRestoresThePresweepSelection proves Escape cancels the
+// in-flight sweep and puts back the selection it replaced, and that a later
+// single-Host drag carries only the intended Host.
+func TestMarqueeEscapeRestoresThePresweepSelection(t *testing.T) {
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1400, 900)
+	hosts.items = []domainvault.Host{
+		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+	}
+	groups.items = []domainvault.Group{{Path: "prod"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	heading := rectOf(t, tt, "Host Groups (1)")
 	group := rectOf(t, tt, "prod")
 	alpha := rectOf(t, tt, "alpha")
-
-	// Releasing over the page background is not a drop on a Group.
-	startX, startY := marqueeFrom(t, tt)
-	tt.Move(alpha.X+alpha.W/2, alpha.Y+alpha.H/2)
-	tt.Frame()
-	if !state.Chosen("host-1") {
-		t.Fatalf("the sweep chose %v, want host-1", state.SelectedHostIDs())
-	}
-	tt.Release(startX, startY)
-	tt.Frame()
-	if hosts.items[0].GroupID != "" {
-		t.Fatalf("a release outside a Group moved the Host into %q", hosts.items[0].GroupID)
+	beta := rectOf(t, tt, "beta")
+	if beta.X <= alpha.X {
+		t.Fatalf("the Host cards are not laid out left to right: alpha %+v, beta %+v", alpha, beta)
 	}
 
-	// Escape cancels the drag: releasing over the Group afterwards changes
-	// nothing.
-	marqueeFrom(t, tt)
+	// First sweep chooses alpha only and ends, leaving it selected.
+	anchorX, anchorY := heading.X+2, heading.Y+heading.H/2
+	tt.Press(anchorX, anchorY)
+	tt.Frame()
 	tt.Move(alpha.X+alpha.W/2, alpha.Y+alpha.H/2)
 	tt.Frame()
+	if !state.Chosen("host-1") || state.Chosen("host-2") {
+		t.Fatalf("the first sweep chose %v, want alpha alone", state.SelectedHostIDs())
+	}
+	tt.Release(anchorX, anchorY)
+	tt.Frame()
+	if !state.Chosen("host-1") || state.Chosen("host-2") {
+		t.Fatalf("the first sweep did not survive its release: %v", state.SelectedHostIDs())
+	}
+
+	// The second, non-additive sweep starts left of beta and touches only beta:
+	// alpha disappears from the in-flight selection even though Escape restores
+	// it.
+	secondX, secondY := beta.X-20, heading.Y+heading.H/2
+	tt.Press(secondX, secondY)
+	tt.Frame()
+	tt.Move(beta.X+beta.W/2, beta.Y+beta.H/2)
+	tt.Frame()
+	if !state.Chosen("host-2") || state.Chosen("host-1") || state.ChosenCount() != 1 {
+		t.Fatalf("the replacing sweep chose %v, want beta alone", state.SelectedHostIDs())
+	}
+
+	// Escape abandons the sweep and restores the pre-sweep selection.
 	tt.Key(0, ui.KeyEscape)
 	tt.Frame()
-	tt.Move(group.X+group.W/2, group.Y+group.H/2)
-	tt.Frame()
-	tt.Release(group.X+group.W/2, group.Y+group.H/2)
-	tt.Frame()
-
-	if hosts.items[0].GroupID != "" {
-		t.Fatalf("a cancelled drag moved the Host into %q", hosts.items[0].GroupID)
+	if state.Chosen("host-2") {
+		t.Fatalf("the swept Host survived Escape: %v", state.SelectedHostIDs())
+	}
+	if !state.Chosen("host-1") || state.ChosenCount() != 1 {
+		t.Fatalf("Escape did not restore alpha: %v", state.SelectedHostIDs())
 	}
 	if state.MarqueeActive() {
 		t.Fatal("Escape left the marquee active")
 	}
+
+	// Releasing over the Group after the cancellation changes nothing.
+	tt.Move(group.X+group.W/2, group.Y+group.H/2)
+	tt.Frame()
+	tt.Release(group.X+group.W/2, group.Y+group.H/2)
+	tt.Frame()
+	if hostGroup(hosts, "host-1") != "" || hostGroup(hosts, "host-2") != "" {
+		t.Fatalf("a cancelled drag moved Hosts into %q and %q",
+			hostGroup(hosts, "host-1"), hostGroup(hosts, "host-2"))
+	}
+
+	// A subsequent drag payload carries the intended Host alone, and dropping
+	// it moves only that Host.
+	payload := hostDragPayload(state, "host-1")
+	if got := payload.Hosts(); len(got) != 1 || got[0] != "host-1" {
+		t.Fatalf("the drag after Escape carries %v, want host-1 alone", got)
+	}
+	dragOnto(t, tt, "alpha", "prod")
+	if hostGroup(hosts, "host-1") != groups.items[0].ID {
+		t.Fatalf("the intended Host was not moved: %q", hostGroup(hosts, "host-1"))
+	}
+	if hostGroup(hosts, "host-2") != "" {
+		t.Fatalf("the cancelled sweep's Host moved into %q", hostGroup(hosts, "host-2"))
+	}
+}
+
+// hostGroup returns one fake Host's group ID.
+func hostGroup(hosts *entityHosts, id model.HostID) string {
+	for _, host := range hosts.items {
+		if host.ID == id {
+			return host.GroupID
+		}
+	}
+	return ""
 }
 
 func TestHostCardDetailHasNoOrphanSeparatorsAt720x480(t *testing.T) {

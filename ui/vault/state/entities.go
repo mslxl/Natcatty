@@ -399,6 +399,7 @@ func (s *State) BeginMarquee(additive bool) {
 		return
 	}
 	s.marqueeActive = true
+	s.marqueeAdditive = additive
 	s.marqueeBase = make(map[model.HostID]bool, len(s.chosen))
 	for id := range s.chosen {
 		s.marqueeBase[id] = true
@@ -434,6 +435,52 @@ func (s *State) MarqueeOver(id model.HostID) bool {
 	return changed
 }
 
+// SweepMarquee sets an in-flight box selection to every Host the rectangle
+// encloses, not just the Host under the pointer. Additive drags keep the
+// selection they started from. It reports whether the selection changed.
+func (s *State) SweepMarquee(ids []model.HostID) bool {
+	if !s.marqueeActive {
+		return false
+	}
+	next := make(map[model.HostID]bool, len(s.marqueeBase)+len(ids))
+	if s.marqueeAdditive {
+		for id, on := range s.marqueeBase {
+			if on {
+				next[id] = true
+			}
+		}
+	}
+	for _, id := range ids {
+		if _, ok := s.find(id); ok {
+			next[id] = true
+		}
+	}
+	if len(next) == 0 {
+		next = nil
+	}
+	lead := model.HostID("")
+	for _, host := range s.items {
+		if next[host.ID] {
+			lead = host.ID
+		}
+	}
+	changed := lead != s.selected || len(next) != len(s.chosen)
+	if !changed {
+		for id := range next {
+			if !s.chosen[id] {
+				changed = true
+				break
+			}
+		}
+	}
+	s.chosen = next
+	s.selected = lead
+	if changed {
+		s.redraw()
+	}
+	return changed
+}
+
 // MarqueeActive reports whether a box selection drag is in progress.
 func (s *State) MarqueeActive() bool { return s.marqueeActive }
 
@@ -443,6 +490,7 @@ func (s *State) EndMarquee() {
 		return
 	}
 	s.marqueeActive = false
+	s.marqueeAdditive = false
 	s.marqueeBase = nil
 	s.marqueeBaseSelected = ""
 	s.redraw()
@@ -457,6 +505,7 @@ func (s *State) CancelMarquee() {
 	s.chosen = s.marqueeBase
 	s.selected = s.marqueeBaseSelected
 	s.marqueeActive = false
+	s.marqueeAdditive = false
 	s.marqueeBase = nil
 	s.marqueeBaseSelected = ""
 	s.redraw()
