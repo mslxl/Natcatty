@@ -4,20 +4,22 @@ package preferences
 type SysManagerTab string
 
 const (
-	SysManagerOverview  SysManagerTab = "overview"
-	SysManagerProcesses SysManagerTab = "processes"
-	SysManagerPorts     SysManagerTab = "ports"
-	SysManagerServices  SysManagerTab = "services"
-	SysManagerTmux      SysManagerTab = "tmux"
-	SysManagerDocker    SysManagerTab = "docker"
-	SysManagerGPU       SysManagerTab = "gpu"
+	SysManagerOverview   SysManagerTab = "overview"
+	SysManagerProcesses  SysManagerTab = "processes"
+	SysManagerPorts      SysManagerTab = "ports"
+	SysManagerServices   SysManagerTab = "services"
+	SysManagerTmux       SysManagerTab = "tmux"
+	SysManagerDocker     SysManagerTab = "docker"
+	SysManagerKubernetes SysManagerTab = "kubernetes"
+	SysManagerGPU        SysManagerTab = "gpu"
 )
 
 // SysManagerTabs lists every known tab in the original's default display
-// order. The first four are ticket 45's core; tmux, Docker, and GPU follow.
+// order. The first four are ticket 45's core; tmux, Docker, Kubernetes, and
+// GPU follow. Kubernetes is offered only on a Host whose probe found kubectl.
 var SysManagerTabs = []SysManagerTab{
 	SysManagerOverview, SysManagerProcesses, SysManagerPorts, SysManagerServices,
-	SysManagerTmux, SysManagerDocker, SysManagerGPU,
+	SysManagerTmux, SysManagerDocker, SysManagerKubernetes, SysManagerGPU,
 }
 
 // SysManagerLockedTabs lists tabs the user cannot hide. The overview stays
@@ -29,27 +31,29 @@ var SysManagerLockedTabs = []SysManagerTab{SysManagerOverview}
 var SysManagerIntervalChoices = []int{1, 2, 3, 5, 10, 30, 60}
 
 // The original refreshed overview, processes, ports, tmux, and GPU every
-// three seconds and services and the Docker list every five.
+// three seconds and services, the Docker list, and Kubernetes every five.
 const (
-	DefaultSysManagerOverviewInterval  = 3
-	DefaultSysManagerProcessesInterval = 3
-	DefaultSysManagerPortsInterval     = 3
-	DefaultSysManagerServicesInterval  = 5
-	DefaultSysManagerTmuxInterval      = 3
-	DefaultSysManagerDockerInterval    = 5
-	DefaultSysManagerGPUInterval       = 3
+	DefaultSysManagerOverviewInterval   = 3
+	DefaultSysManagerProcessesInterval  = 3
+	DefaultSysManagerPortsInterval      = 3
+	DefaultSysManagerServicesInterval   = 5
+	DefaultSysManagerTmuxInterval       = 3
+	DefaultSysManagerDockerInterval     = 5
+	DefaultSysManagerKubernetesInterval = 5
+	DefaultSysManagerGPUInterval        = 3
 )
 
 // SysManager is the persisted system-manager configuration. Runtime samples
 // and the selected Host never live here.
 type SysManager struct {
-	OverviewInterval  int `json:"overviewInterval"`
-	ProcessesInterval int `json:"processesInterval"`
-	PortsInterval     int `json:"portsInterval"`
-	ServicesInterval  int `json:"servicesInterval"`
-	TmuxInterval      int `json:"tmuxInterval"`
-	DockerInterval    int `json:"dockerInterval"`
-	GPUInterval       int `json:"gpuInterval"`
+	OverviewInterval   int `json:"overviewInterval"`
+	ProcessesInterval  int `json:"processesInterval"`
+	PortsInterval      int `json:"portsInterval"`
+	ServicesInterval   int `json:"servicesInterval"`
+	TmuxInterval       int `json:"tmuxInterval"`
+	DockerInterval     int `json:"dockerInterval"`
+	KubernetesInterval int `json:"kubernetesInterval"`
+	GPUInterval        int `json:"gpuInterval"`
 	// TabOrder lists every known tab in display order. NormalizeSysManager
 	// guarantees each known tab appears exactly once.
 	TabOrder []string `json:"tabOrder"`
@@ -62,15 +66,16 @@ type SysManager struct {
 // layout.
 func DefaultSysManager() SysManager {
 	return SysManager{
-		OverviewInterval:  DefaultSysManagerOverviewInterval,
-		ProcessesInterval: DefaultSysManagerProcessesInterval,
-		PortsInterval:     DefaultSysManagerPortsInterval,
-		ServicesInterval:  DefaultSysManagerServicesInterval,
-		TmuxInterval:      DefaultSysManagerTmuxInterval,
-		DockerInterval:    DefaultSysManagerDockerInterval,
-		GPUInterval:       DefaultSysManagerGPUInterval,
-		TabOrder:          sysManagerTabStrings(SysManagerTabs),
-		HiddenTabs:        []string{},
+		OverviewInterval:   DefaultSysManagerOverviewInterval,
+		ProcessesInterval:  DefaultSysManagerProcessesInterval,
+		PortsInterval:      DefaultSysManagerPortsInterval,
+		ServicesInterval:   DefaultSysManagerServicesInterval,
+		TmuxInterval:       DefaultSysManagerTmuxInterval,
+		DockerInterval:     DefaultSysManagerDockerInterval,
+		KubernetesInterval: DefaultSysManagerKubernetesInterval,
+		GPUInterval:        DefaultSysManagerGPUInterval,
+		TabOrder:           sysManagerTabStrings(SysManagerTabs),
+		HiddenTabs:         []string{},
 	}
 }
 
@@ -90,6 +95,8 @@ func NormalizeSysManager(manager SysManager) SysManager {
 		manager.TmuxInterval, DefaultSysManagerTmuxInterval)
 	manager.DockerInterval = normalizeSysManagerInterval(
 		manager.DockerInterval, DefaultSysManagerDockerInterval)
+	manager.KubernetesInterval = normalizeSysManagerInterval(
+		manager.KubernetesInterval, DefaultSysManagerKubernetesInterval)
 	manager.GPUInterval = normalizeSysManagerInterval(
 		manager.GPUInterval, DefaultSysManagerGPUInterval)
 	manager.TabOrder = sysManagerTabStrings(normalizeSysManagerOrder(manager.TabOrder))
@@ -112,6 +119,8 @@ func (m SysManager) Interval(tab SysManagerTab) int {
 		return m.TmuxInterval
 	case SysManagerDocker:
 		return m.DockerInterval
+	case SysManagerKubernetes:
+		return m.KubernetesInterval
 	case SysManagerGPU:
 		return m.GPUInterval
 	default:
@@ -134,6 +143,8 @@ func (m SysManager) WithInterval(tab SysManagerTab, seconds int) SysManager {
 		m.TmuxInterval = seconds
 	case SysManagerDocker:
 		m.DockerInterval = seconds
+	case SysManagerKubernetes:
+		m.KubernetesInterval = seconds
 	case SysManagerGPU:
 		m.GPUInterval = seconds
 	}

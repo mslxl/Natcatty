@@ -84,21 +84,28 @@ func (s *Service) TmuxKill(ctx context.Context, host domainvault.Host, name stri
 	return s.execute(ctx, host, ActionTmuxKill, command)
 }
 
-// DockerContainerAction validates the target, opens a trusted lease, and
-// starts, stops, or force-removes the container. It is called only after the
-// surface's confirmation is accepted.
-func (s *Service) DockerContainerAction(ctx context.Context, host domainvault.Host,
-	id string, action DockerAction) (ActionResult, error) {
+// ContainerAction validates the target, opens a trusted lease, and starts,
+// stops, or force-removes the container through the selected engine. It is
+// called only after the surface's confirmation is accepted.
+func (s *Service) ContainerAction(ctx context.Context, host domainvault.Host,
+	runtime ContainerRuntime, id string, action DockerAction) (ActionResult, error) {
 	kind, ok := dockerActionKind(action)
 	if !ok {
 		return ActionResult{Command: ""}, &Error{Reason: ReasonInternal,
 			Cause: errors.New("sysmanager: invalid container action")}
 	}
-	command, err := DockerActionCommand(id, action)
+	command, err := ContainerActionCommand(runtime, id, action)
 	if err != nil {
 		return ActionResult{Kind: kind}, err
 	}
 	return s.execute(ctx, host, kind, command)
+}
+
+// DockerContainerAction is the Docker-only form kept for callers and tests
+// that predate the runtime switcher.
+func (s *Service) DockerContainerAction(ctx context.Context, host domainvault.Host,
+	id string, action DockerAction) (ActionResult, error) {
+	return s.ContainerAction(ctx, host, RuntimeDocker, id, action)
 }
 
 func dockerActionKind(action DockerAction) (ActionKind, bool) {
@@ -114,11 +121,12 @@ func dockerActionKind(action DockerAction) (ActionKind, bool) {
 	}
 }
 
-// DockerInspect returns the container's inspect JSON, indented and bounded.
-func (s *Service) DockerInspect(ctx context.Context, host domainvault.Host,
-	id string) (DockerDocument, error) {
+// ContainerInspect returns the container's inspect JSON, indented and
+// bounded.
+func (s *Service) ContainerInspect(ctx context.Context, host domainvault.Host,
+	runtime ContainerRuntime, id string) (DockerDocument, error) {
 	document := DockerDocument{Kind: DocumentInspect, ContainerID: id}
-	command, err := DockerInspectCommand(id)
+	command, err := ContainerInspectCommand(runtime, id)
 	if err != nil {
 		return document, err
 	}
@@ -131,13 +139,19 @@ func (s *Service) DockerInspect(ctx context.Context, host domainvault.Host,
 	return document, nil
 }
 
-// DockerLogs returns a bounded, non-following log tail. docker writes
+// DockerInspect is the Docker-only form.
+func (s *Service) DockerInspect(ctx context.Context, host domainvault.Host,
+	id string) (DockerDocument, error) {
+	return s.ContainerInspect(ctx, host, RuntimeDocker, id)
+}
+
+// ContainerLogs returns a bounded, non-following log tail. The engine writes
 // container stdout and stderr on separate streams, so both are kept in the
 // document in that order.
-func (s *Service) DockerLogs(ctx context.Context, host domainvault.Host,
-	id string, tail int) (DockerDocument, error) {
+func (s *Service) ContainerLogs(ctx context.Context, host domainvault.Host,
+	runtime ContainerRuntime, id string, tail int) (DockerDocument, error) {
 	document := DockerDocument{Kind: DocumentLogs, ContainerID: id}
-	command, err := DockerLogsCommand(id, tail)
+	command, err := ContainerLogsCommand(runtime, id, tail)
 	if err != nil {
 		return document, err
 	}
@@ -154,6 +168,12 @@ func (s *Service) DockerLogs(ctx context.Context, host domainvault.Host,
 	}
 	document.Text, document.Truncated = boundDockerDocument(text)
 	return document, nil
+}
+
+// DockerLogs is the Docker-only form.
+func (s *Service) DockerLogs(ctx context.Context, host domainvault.Host,
+	id string, tail int) (DockerDocument, error) {
+	return s.ContainerLogs(ctx, host, RuntimeDocker, id, tail)
 }
 
 // indentJSON pretty-prints an inspect reply; an unparseable reply is shown as

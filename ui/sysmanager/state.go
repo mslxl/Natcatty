@@ -39,12 +39,17 @@ type Service interface {
 type ExtendedService interface {
 	TmuxCreate(ctx context.Context, host domainvault.Host, name string) (appsysmanager.ActionResult, error)
 	TmuxKill(ctx context.Context, host domainvault.Host, name string) (appsysmanager.ActionResult, error)
-	DockerContainerAction(ctx context.Context, host domainvault.Host,
-		id string, action appsysmanager.DockerAction) (appsysmanager.ActionResult, error)
-	DockerInspect(ctx context.Context, host domainvault.Host,
-		id string) (appsysmanager.DockerDocument, error)
-	DockerLogs(ctx context.Context, host domainvault.Host,
-		id string, tail int) (appsysmanager.DockerDocument, error)
+	ContainerAction(ctx context.Context, host domainvault.Host,
+		runtime appsysmanager.ContainerRuntime, id string,
+		action appsysmanager.DockerAction) (appsysmanager.ActionResult, error)
+	ContainerInspect(ctx context.Context, host domainvault.Host,
+		runtime appsysmanager.ContainerRuntime, id string) (appsysmanager.DockerDocument, error)
+	ContainerLogs(ctx context.Context, host domainvault.Host,
+		runtime appsysmanager.ContainerRuntime, id string, tail int) (appsysmanager.DockerDocument, error)
+	// SetContainerRuntime selects the engine the Docker tab samples.
+	SetContainerRuntime(runtime appsysmanager.ContainerRuntime)
+	// SetKubernetesNamespace selects the namespace the Kubernetes tab lists.
+	SetKubernetesNamespace(namespace string) error
 }
 
 // TerminalOpener opens a Session Tab against host and delivers command to it.
@@ -109,6 +114,8 @@ type PendingAction struct {
 	ContainerID   string
 	ContainerName string
 	DockerAction  appsysmanager.DockerAction
+	// Runtime is the container engine the confirmed command runs through.
+	Runtime appsysmanager.ContainerRuntime
 }
 
 // State is the System manager surface's window-scoped state. It is mutated on
@@ -165,6 +172,13 @@ type State struct {
 	sessionRows   []appsysmanager.TmuxSession
 	containerRows []appsysmanager.Container
 	imageRows     []appsysmanager.Image
+	podRows       []appsysmanager.Pod
+
+	// containerRuntime is the engine the user chose; empty means the first
+	// engine detected on the Host. kubernetesNamespace is empty until the
+	// user picks one, which lets the Host's kubeconfig choose.
+	containerRuntime    appsysmanager.ContainerRuntime
+	kubernetesNamespace string
 
 	tmuxName     string
 	dockerView   int
@@ -341,6 +355,7 @@ func (s *State) Flush() {
 	if s.service != nil {
 		s.snapshot = s.service.Snapshot()
 	}
+	s.reconcileScope()
 	s.mu.Lock()
 	outcomes := s.outcomes
 	s.outcomes = nil
@@ -374,6 +389,48 @@ func (s *State) Flush() {
 	s.Prepare()
 }
 
+// reconcileScope aligns the service's sampling scope with the active Host's
+// probe. The probe is authoritative about which engines and tools exist, so a
+// runtime the Host lacks is replaced by the first one it has, and the
+// Kubernetes tab disappears when kubectl is absent.
+func (s *State) reconcileScope() {
+	if s.snapshot.CapabilitiesHost != s.hostID {
+		return
+	}
+	runtimes := s.snapshot.Capabilities.ContainerRuntimes()
+	effective := s.containerRuntime
+	if !containsContainerRuntime(runtimes, effective) {
+		effective = ""
+		if len(runtimes) > 0 {
+			effective = runtimes[0]
+		}
+	}
+	if effective == "" {
+		effective = appsysmanager.RuntimeDocker
+	}
+	if s.extended != nil && effective != s.snapshot.ContainerRuntime {
+		s.extended.SetContainerRuntime(effective)
+	}
+	s.snapshot.ContainerRuntime = effective
+	if s.tab == appsysmanager.TabKubernetes && !s.snapshot.Capabilities.HasKubectl {
+		s.tab = appsysmanager.TabOverview
+		s.selected = -1
+		s.search = ""
+		s.closeDocument()
+		s.startActive()
+	}
+}
+
+func containsContainerRuntime(runtimes []appsysmanager.ContainerRuntime,
+	runtime appsysmanager.ContainerRuntime) bool {
+	for _, candidate := range runtimes {
+		if candidate == runtime {
+			return true
+		}
+	}
+	return false
+}
+
 // Prepare rebuilds the current tab's displayed rows. Call it once per frame
 // before rendering, after Flush and after a search or sort change.
 func (s *State) Prepare() {
@@ -384,6 +441,7 @@ func (s *State) Prepare() {
 	s.sessionRows = s.prepareSessions(query)
 	s.containerRows = s.prepareContainers(query)
 	s.imageRows = s.prepareImages(query)
+	s.podRows = s.preparePods(query)
 	switch s.tab {
 	case appsysmanager.TabProcesses:
 		if s.selected >= len(s.processRows) {
@@ -407,6 +465,10 @@ func (s *State) Prepare() {
 			limit = len(s.imageRows)
 		}
 		if s.selected >= limit {
+			s.selected = -1
+		}
+	case appsysmanager.TabKubernetes:
+		if s.selected >= len(s.podRows) {
 			s.selected = -1
 		}
 	}
@@ -459,6 +521,10 @@ func (s *State) SetHost(id string) {
 	s.hostID = id
 	s.selected = -1
 	s.problem = ProblemNone
+	// The engine choice and namespace belong to one Host. Clearing the engine
+	// lets the new Host's probe choose the first one it actually has.
+	s.containerRuntime = ""
+	s.kubernetesNamespace = ""
 	s.closeDocument()
 	s.clearFinishedAction()
 	s.startActive()
@@ -473,12 +539,18 @@ func (s *State) AllTabs() []appsysmanager.Tab {
 	return append([]appsysmanager.Tab(nil), appsysmanager.ExtendedTabs...)
 }
 
-// Tabs returns the visible tabs in the persisted order.
+// Tabs returns the visible tabs in the persisted order. A tab the active Host
+// cannot support is dropped; the Kubernetes tab stays while it is active so a
+// just-started probe does not make the strip and the body disagree.
 func (s *State) Tabs() []appsysmanager.Tab {
 	visible := s.settings.VisibleTabs()
 	tabs := make([]appsysmanager.Tab, 0, len(visible))
 	for _, tab := range visible {
-		tabs = append(tabs, appsysmanager.Tab(tab))
+		candidate := appsysmanager.Tab(tab)
+		if !s.TabAvailable(candidate) && candidate != s.tab {
+			continue
+		}
+		tabs = append(tabs, candidate)
 	}
 	if len(tabs) == 0 {
 		return []appsysmanager.Tab{appsysmanager.TabOverview}
@@ -487,9 +559,26 @@ func (s *State) Tabs() []appsysmanager.Tab {
 }
 
 // TabVisible reports whether tab is shown in the strip. The overview is
-// always visible.
+// always visible; a tab the active Host cannot support is not.
 func (s *State) TabVisible(tab appsysmanager.Tab) bool {
+	if !s.TabAvailable(tab) && tab != s.tab {
+		return false
+	}
 	return s.settings.Visible(domainpreferences.SysManagerTab(tab))
+}
+
+// TabAvailable reports whether tab can be offered for the active Host.
+// Kubernetes is offered only once the probe has seen kubectl, which is how the
+// original hides the tab for a Host without it. The other tabs stay in the
+// strip and report their own unavailable state, as before.
+func (s *State) TabAvailable(tab appsysmanager.Tab) bool {
+	if tab != appsysmanager.TabKubernetes {
+		return true
+	}
+	if s.snapshot.CapabilitiesHost != s.hostID {
+		return false
+	}
+	return s.snapshot.Capabilities.HasKubectl
 }
 
 // TabIndex returns the active tab's position in the visible strip.
@@ -896,13 +985,15 @@ func (s *State) AttachSession(session string) error {
 	return nil
 }
 
-// RequestDockerAction prepares a container start, stop, or force-remove.
+// RequestDockerAction prepares a container start, stop, or force-remove on the
+// selected engine.
 func (s *State) RequestDockerAction(container appsysmanager.Container,
 	action appsysmanager.DockerAction) error {
 	if s.actionBusy {
 		return errors.New("sysmanager: an action is already running")
 	}
-	command, err := appsysmanager.DockerActionCommand(container.ID, action)
+	runtime := s.ContainerRuntime()
+	command, err := appsysmanager.ContainerActionCommand(runtime, container.ID, action)
 	if err != nil {
 		return err
 	}
@@ -920,6 +1011,7 @@ func (s *State) RequestDockerAction(container appsysmanager.Container,
 		ContainerID:   container.ID,
 		ContainerName: containerDisplayName(container),
 		DockerAction:  action,
+		Runtime:       runtime,
 		Command:       command,
 	}
 	s.actionDone = false
@@ -985,12 +1077,14 @@ func (s *State) loadDockerDocument(kind appsysmanager.DocumentKind,
 		s.requestRedraw()
 		return errNoExtendedService
 	}
+	runtime := s.ContainerRuntime()
 	var err error
 	switch kind {
 	case appsysmanager.DocumentInspect:
-		_, err = appsysmanager.DockerInspectCommand(container.ID)
+		_, err = appsysmanager.ContainerInspectCommand(runtime, container.ID)
 	default:
-		_, err = appsysmanager.DockerLogsCommand(container.ID, appsysmanager.DefaultDockerLogTail)
+		_, err = appsysmanager.ContainerLogsCommand(runtime, container.ID,
+			appsysmanager.DefaultDockerLogTail)
 	}
 	if err != nil {
 		return err
@@ -1014,9 +1108,9 @@ func (s *State) loadDockerDocument(kind appsysmanager.DocumentKind,
 		var document appsysmanager.DockerDocument
 		var loadErr error
 		if kind == appsysmanager.DocumentInspect {
-			document, loadErr = extended.DockerInspect(ctx, host, id)
+			document, loadErr = extended.ContainerInspect(ctx, host, runtime, id)
 		} else {
-			document, loadErr = extended.DockerLogs(ctx, host, id,
+			document, loadErr = extended.ContainerLogs(ctx, host, runtime, id,
 				appsysmanager.DefaultDockerLogTail)
 		}
 		cancel()
@@ -1137,7 +1231,8 @@ func (s *State) startAction(pending PendingAction) {
 			case appsysmanager.ActionTmuxKill:
 				result, err = extended.TmuxKill(ctx, pending.Host, pending.Session)
 			default:
-				result, err = extended.DockerContainerAction(ctx, pending.Host,
+				result, err = extended.ContainerAction(ctx, pending.Host,
+					appsysmanager.NormalizeContainerRuntime(pending.Runtime),
 					pending.ContainerID, pending.DockerAction)
 			}
 		default:
@@ -1452,6 +1547,163 @@ func (s *State) SelectedImage() (appsysmanager.Image, bool) {
 	return s.imageRows[s.selected], true
 }
 
+// DisplayPods returns the Kubernetes pods after search.
+func (s *State) DisplayPods() []appsysmanager.Pod { return s.podRows }
+
+func (s *State) preparePods(query string) []appsysmanager.Pod {
+	state := s.TabState(appsysmanager.TabKubernetes)
+	rows := make([]appsysmanager.Pod, 0, len(state.Kubernetes.Pods))
+	for _, pod := range state.Kubernetes.Pods {
+		if query != "" {
+			fields := []string{pod.Name, pod.Namespace, pod.Status, pod.Age}
+			fields = append(fields, pod.Containers...)
+			matched := false
+			for _, field := range fields {
+				if strings.Contains(strings.ToLower(field), query) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		rows = append(rows, pod)
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if left, right := strings.ToLower(rows[i].Namespace), strings.ToLower(rows[j].Namespace); left != right {
+			return left < right
+		}
+		return strings.ToLower(rows[i].Name) < strings.ToLower(rows[j].Name)
+	})
+	return rows
+}
+
+// KubernetesNamespaces returns the namespaces the last sample listed. A
+// cluster that forbids listing them leaves this empty while pods still load.
+func (s *State) KubernetesNamespaces() []string {
+	return append([]string(nil), s.TabState(appsysmanager.TabKubernetes).Kubernetes.Namespaces...)
+}
+
+// KubernetesNamespace returns the selected namespace; empty means the Host's
+// kubeconfig decides. When no choice is stored, the sample's pod namespace is
+// shown so the switcher reflects what kubectl actually listed.
+func (s *State) KubernetesNamespace() string {
+	if s.kubernetesNamespace != "" {
+		return s.kubernetesNamespace
+	}
+	return s.TabState(appsysmanager.TabKubernetes).Kubernetes.Namespace
+}
+
+// SetKubernetesNamespace selects the namespace to list. An empty value returns
+// to the Host's kubeconfig choice.
+func (s *State) SetKubernetesNamespace(namespace string) error {
+	if namespace == s.kubernetesNamespace {
+		return nil
+	}
+	if s.extended == nil {
+		s.problem = ProblemInternal
+		s.requestRedraw()
+		return errNoExtendedService
+	}
+	if err := s.extended.SetKubernetesNamespace(namespace); err != nil {
+		return err
+	}
+	s.kubernetesNamespace = namespace
+	s.selected = -1
+	s.closeDocument()
+	s.requestRedraw()
+	return nil
+}
+
+// SelectedPod returns the pod the table has chosen.
+func (s *State) SelectedPod() (appsysmanager.Pod, bool) {
+	if s.selected < 0 || s.selected >= len(s.podRows) {
+		return appsysmanager.Pod{}, false
+	}
+	return s.podRows[s.selected], true
+}
+
+// AttachPod opens a terminal Tab executing into the pod's first running
+// container. The command is built here so the terminal receives one validated
+// line; kubectl reads the Host's own kubeconfig, so no credential is stored.
+func (s *State) AttachPod(pod appsysmanager.Pod) error {
+	command, err := appsysmanager.KubectlExecCommand(pod.Namespace, pod.Name,
+		pod.TerminalContainer())
+	if err != nil {
+		s.problem = ProblemActionData
+		s.requestRedraw()
+		return err
+	}
+	host, err := s.actionHost()
+	if err != nil {
+		return err
+	}
+	if s.terminal == nil {
+		s.problem = ProblemAttach
+		s.requestRedraw()
+		return errors.New("sysmanager: no terminal opener")
+	}
+	if err := s.terminal(host, command); err != nil {
+		s.problem = ProblemAttach
+		s.requestRedraw()
+		return err
+	}
+	if s.problem == ProblemAttach {
+		s.problem = ProblemNone
+	}
+	s.requestRedraw()
+	return nil
+}
+
+// AvailableContainerRuntimes returns the engines the switcher offers, taken
+// from the active Host's probe. Before that probe replies it offers the
+// engine the service is sampling, so the control never shows an empty list.
+func (s *State) AvailableContainerRuntimes() []appsysmanager.ContainerRuntime {
+	if s.snapshot.CapabilitiesHost == s.hostID {
+		if runtimes := s.snapshot.Capabilities.ContainerRuntimes(); len(runtimes) > 0 {
+			return runtimes
+		}
+	}
+	if s.snapshot.ContainerRuntime != "" {
+		return []appsysmanager.ContainerRuntime{s.snapshot.ContainerRuntime}
+	}
+	return []appsysmanager.ContainerRuntime{appsysmanager.RuntimeDocker}
+}
+
+// ContainerRuntime returns the engine the Docker tab samples: the user's
+// choice when the Host has it, otherwise the Host's first detected engine.
+func (s *State) ContainerRuntime() appsysmanager.ContainerRuntime {
+	runtimes := s.AvailableContainerRuntimes()
+	if containsContainerRuntime(runtimes, s.containerRuntime) {
+		return s.containerRuntime
+	}
+	if len(runtimes) > 0 {
+		return runtimes[0]
+	}
+	return appsysmanager.RuntimeDocker
+}
+
+// SetContainerRuntime switches the Docker tab to another engine. The cached
+// list, the selection, and any open document belong to the previous engine.
+func (s *State) SetContainerRuntime(runtime appsysmanager.ContainerRuntime) {
+	runtime = appsysmanager.NormalizeContainerRuntime(runtime)
+	if !containsContainerRuntime(s.AvailableContainerRuntimes(), runtime) {
+		return
+	}
+	if runtime == s.ContainerRuntime() && runtime == s.snapshot.ContainerRuntime {
+		return
+	}
+	s.containerRuntime = runtime
+	if s.extended != nil {
+		s.extended.SetContainerRuntime(runtime)
+	}
+	s.snapshot.ContainerRuntime = runtime
+	s.selected = -1
+	s.closeDocument()
+	s.requestRedraw()
+}
+
 func (s *State) rowKey(row int) any {
 	switch s.tab {
 	case appsysmanager.TabProcesses:
@@ -1479,6 +1731,11 @@ func (s *State) rowKey(row int) any {
 			}
 		} else if row >= 0 && row < len(s.containerRows) {
 			return "c:" + s.containerRows[row].ID
+		}
+	case appsysmanager.TabKubernetes:
+		if row >= 0 && row < len(s.podRows) {
+			pod := s.podRows[row]
+			return "k:" + pod.Namespace + "/" + pod.Name
 		}
 	}
 	return row
@@ -1510,6 +1767,10 @@ func (s *State) rowLabel(row int) string {
 			}
 		} else if row >= 0 && row < len(s.containerRows) {
 			return containerDisplayName(s.containerRows[row])
+		}
+	case appsysmanager.TabKubernetes:
+		if row >= 0 && row < len(s.podRows) {
+			return s.podRows[row].Name
 		}
 	}
 	return ""

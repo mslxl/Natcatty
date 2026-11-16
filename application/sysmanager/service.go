@@ -24,13 +24,14 @@ import (
 type Tab string
 
 const (
-	TabOverview  Tab = "overview"
-	TabProcesses Tab = "processes"
-	TabPorts     Tab = "ports"
-	TabServices  Tab = "services"
-	TabTmux      Tab = "tmux"
-	TabDocker    Tab = "docker"
-	TabGPU       Tab = "gpu"
+	TabOverview   Tab = "overview"
+	TabProcesses  Tab = "processes"
+	TabPorts      Tab = "ports"
+	TabServices   Tab = "services"
+	TabTmux       Tab = "tmux"
+	TabDocker     Tab = "docker"
+	TabKubernetes Tab = "kubernetes"
+	TabGPU        Tab = "gpu"
 )
 
 // Tabs lists ticket 45's core tabs in display order. Ticket 46 extends the
@@ -38,16 +39,19 @@ const (
 // self-test and its callers enumerate exactly what they cover.
 var Tabs = []Tab{TabOverview, TabProcesses, TabPorts, TabServices}
 
-// ExtendedTabs lists every tab in the original's default display order.
+// ExtendedTabs lists every tab in the original's default display order. The
+// Kubernetes tab is detected separately and is offered only when kubectl is
+// present on the Host.
 var ExtendedTabs = []Tab{
-	TabOverview, TabProcesses, TabPorts, TabServices, TabTmux, TabDocker, TabGPU,
+	TabOverview, TabProcesses, TabPorts, TabServices, TabTmux, TabDocker,
+	TabKubernetes, TabGPU,
 }
 
 // DefaultInterval returns the original's refresh cadence for tab: three
 // seconds for overview, processes, ports, tmux, and GPU, and five for
-// services and the Docker list.
+// services, the container list, and Kubernetes.
 func DefaultInterval(tab Tab) time.Duration {
-	if tab == TabServices || tab == TabDocker {
+	if tab == TabServices || tab == TabDocker || tab == TabKubernetes {
 		return 5 * time.Second
 	}
 	return 3 * time.Second
@@ -96,6 +100,18 @@ const (
 	ReasonMissingTmux      Reason = "missing_tmux"
 	ReasonMissingDocker    Reason = "missing_docker"
 	ReasonDockerDaemon     Reason = "docker_daemon"
+	// ReasonMissingContainerRuntime is a Host with none of docker, podman, or
+	// nerdctl installed.
+	ReasonMissingContainerRuntime Reason = "missing_container_runtime"
+	// ReasonContainerDaemon is an unreachable podman or nerdctl daemon.
+	ReasonContainerDaemon Reason = "container_daemon"
+	ReasonMissingKubectl  Reason = "missing_kubectl"
+	// ReasonKubernetesForbidden is a cluster that refused a list without a
+	// transport or authentication failure.
+	ReasonKubernetesForbidden Reason = "kubernetes_forbidden"
+	// ReasonClusterUnreachable is a kubeconfig context whose API server did
+	// not answer.
+	ReasonClusterUnreachable Reason = "cluster_unreachable"
 )
 
 // Error is a typed application failure. The surface maps Reason to a
@@ -153,6 +169,9 @@ type Capabilities struct {
 	HasSystemctl bool
 	HasTmux      bool
 	HasDocker    bool
+	HasPodman    bool
+	HasNerdctl   bool
+	HasKubectl   bool
 	HasNvidiaSmi bool
 	HasNpuSmi    bool
 }
@@ -187,10 +206,17 @@ func (c Capabilities) Available(tab Tab) (bool, Reason) {
 		}
 		return false, ReasonMissingTmux
 	case TabDocker:
-		if c.HasDocker {
+		// Any detected container engine keeps the tab; a Host with only
+		// Docker behaves exactly as it did before the runtime switcher.
+		if len(c.ContainerRuntimes()) > 0 {
 			return true, ReasonNone
 		}
-		return false, ReasonMissingDocker
+		return false, ReasonMissingContainerRuntime
+	case TabKubernetes:
+		if c.HasKubectl {
+			return true, ReasonNone
+		}
+		return false, ReasonMissingKubectl
 	case TabGPU:
 		// A Host without a GPU is a normal, live empty state rather than an
 		// unavailable tab; only an operating system this probe cannot read
@@ -299,6 +325,44 @@ func (i Image) Name() string {
 	return i.ID
 }
 
+// Pod is one Kubernetes pod from `kubectl get pods -o json`. The Host's own
+// kubeconfig supplies the cluster; the manager stores no cluster credential.
+type Pod struct {
+	Name       string
+	Namespace  string
+	Status     string
+	Restarts   int
+	Age        string
+	Containers []string
+	// RunningContainers lists the containers with a running state, in the
+	// pod's declared order. The first one is the terminal target.
+	RunningContainers []string
+}
+
+// TerminalContainer returns the container a terminal should exec into: the
+// first running container, otherwise the pod's first declared container. An
+// empty result lets kubectl choose its default.
+func (p Pod) TerminalContainer() string {
+	if len(p.RunningContainers) > 0 {
+		return p.RunningContainers[0]
+	}
+	if len(p.Containers) > 0 {
+		return p.Containers[0]
+	}
+	return ""
+}
+
+// Kubernetes is one Host's pod inventory and namespace scope. An empty
+// Namespaces slice can mean the cluster forbids listing them; Pods still
+// carries the current namespace's rows.
+type Kubernetes struct {
+	Namespaces []string
+	Pods       []Pod
+	// Namespace is the namespace the listed pods belong to; empty when no
+	// pod reported one, in which case the Host's kubeconfig decides.
+	Namespace string
+}
+
 // GPUDevice is one NVIDIA device from nvidia-smi. A metric the driver does
 // not report is NaN, so the surface can render a dash instead of a zero.
 type GPUDevice struct {
@@ -354,16 +418,22 @@ type TabState struct {
 	Sessions   []TmuxSession
 	Containers []Container
 	Images     []Image
+	Kubernetes Kubernetes
 	GPU        GPUInfo
 }
 
 // Snapshot is the service's publication to the surface. Slices and maps are
 // copies; a reader may not mutate service state.
 type Snapshot struct {
-	HostID       string
-	Active       Tab
-	Capabilities Capabilities
-	Tabs         map[Tab]TabState
+	HostID string
+	Active Tab
+	// CapabilitiesHost names the Host the cached probe belongs to. A surface
+	// uses it to tell an unprobed Host from one that genuinely lacks a tool.
+	CapabilitiesHost    string
+	Capabilities        Capabilities
+	ContainerRuntime    ContainerRuntime
+	KubernetesNamespace string
+	Tabs                map[Tab]TabState
 }
 
 // ServiceAction is a systemd unit action the manager may run.
@@ -436,6 +506,8 @@ type Service struct {
 	interval  time.Duration
 	caps      Capabilities
 	capsHost  string
+	runtime   ContainerRuntime
+	namespace string
 	tabs      map[Tab]TabState
 	runCancel context.CancelFunc
 	gen       uint64
@@ -454,6 +526,7 @@ func NewService(connector Connector, opts ...Option) *Service {
 		now:       time.Now,
 		ctx:       ctx,
 		cancel:    cancel,
+		runtime:   RuntimeDocker,
 		tabs:      make(map[Tab]TabState),
 		listeners: make(map[int]func()),
 	}
@@ -505,6 +578,9 @@ func (s *Service) Start(host domainvault.Host, tab Tab, interval time.Duration) 
 		s.tabs = make(map[Tab]TabState)
 		s.caps = Capabilities{}
 		s.capsHost = ""
+		// Namespaces and contexts belong to one cluster; the next sample
+		// resolves them from the new Host's kubeconfig.
+		s.namespace = ""
 	}
 	s.host = host
 	s.active = tab
@@ -513,6 +589,73 @@ func (s *Service) Start(host domainvault.Host, tab Tab, interval time.Duration) 
 	s.mu.Unlock()
 	s.notify()
 	return nil
+}
+
+// SetContainerRuntime selects the container engine the Docker tab samples and
+// the confirmed actions run. An unknown value falls back to Docker. A Host
+// without the selected engine is degraded by its own probe, not by a silent
+// substitution here.
+func (s *Service) SetContainerRuntime(runtime ContainerRuntime) {
+	runtime = NormalizeContainerRuntime(runtime)
+	s.mu.Lock()
+	if s.closed || s.runtime == runtime {
+		s.mu.Unlock()
+		return
+	}
+	s.runtime = runtime
+	// The cached list belongs to the previous engine.
+	delete(s.tabs, TabDocker)
+	restart := s.active == TabDocker && string(s.host.ID) != ""
+	if restart {
+		s.restartLocked()
+	}
+	s.mu.Unlock()
+	if restart {
+		s.notify()
+	}
+}
+
+// ContainerRuntime returns the selected container engine.
+func (s *Service) ContainerRuntime() ContainerRuntime {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return NormalizeContainerRuntime(s.runtime)
+}
+
+// SetKubernetesNamespace selects the namespace the Kubernetes tab lists. An
+// empty value lets kubectl use the namespace from the Host's kubeconfig.
+func (s *Service) SetKubernetesNamespace(namespace string) error {
+	if namespace != "" {
+		safe, err := sanitizeKubernetesNamespace(namespace)
+		if err != nil {
+			return err
+		}
+		namespace = safe
+	}
+	s.mu.Lock()
+	if s.closed || s.namespace == namespace {
+		s.mu.Unlock()
+		return nil
+	}
+	s.namespace = namespace
+	delete(s.tabs, TabKubernetes)
+	restart := s.active == TabKubernetes && string(s.host.ID) != ""
+	if restart {
+		s.restartLocked()
+	}
+	s.mu.Unlock()
+	if restart {
+		s.notify()
+	}
+	return nil
+}
+
+// KubernetesNamespace returns the selected namespace; empty means the Host's
+// kubeconfig decides it.
+func (s *Service) KubernetesNamespace() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.namespace
 }
 
 // Stop ends sampling but keeps the cached samples for the next activation.
@@ -590,10 +733,13 @@ func (s *Service) Snapshot() Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	snapshot := Snapshot{
-		HostID:       string(s.host.ID),
-		Active:       s.active,
-		Capabilities: s.caps,
-		Tabs:         make(map[Tab]TabState, len(s.tabs)),
+		HostID:              string(s.host.ID),
+		Active:              s.active,
+		CapabilitiesHost:    s.capsHost,
+		Capabilities:        s.caps,
+		ContainerRuntime:    NormalizeContainerRuntime(s.runtime),
+		KubernetesNamespace: s.namespace,
+		Tabs:                make(map[Tab]TabState, len(s.tabs)),
 	}
 	for tab, state := range s.tabs {
 		state.Processes = append([]Process(nil), state.Processes...)
@@ -602,6 +748,14 @@ func (s *Service) Snapshot() Snapshot {
 		state.Sessions = append([]TmuxSession(nil), state.Sessions...)
 		state.Containers = append([]Container(nil), state.Containers...)
 		state.Images = append([]Image(nil), state.Images...)
+		state.Kubernetes.Namespaces = append([]string(nil), state.Kubernetes.Namespaces...)
+		state.Kubernetes.Pods = append([]Pod(nil), state.Kubernetes.Pods...)
+		for index := range state.Kubernetes.Pods {
+			state.Kubernetes.Pods[index].Containers =
+				append([]string(nil), state.Kubernetes.Pods[index].Containers...)
+			state.Kubernetes.Pods[index].RunningContainers =
+				append([]string(nil), state.Kubernetes.Pods[index].RunningContainers...)
+		}
 		state.GPU.Devices = append([]GPUDevice(nil), state.GPU.Devices...)
 		state.Overview.LoadAverage = append([]float64(nil), state.Overview.LoadAverage...)
 		snapshot.Tabs[tab] = state
@@ -688,7 +842,11 @@ func (s *Service) sampleOnce(ctx context.Context, host domainvault.Host, tab Tab
 		return true, nil
 	}
 
-	command := commandFor(tab)
+	runtime, namespace := s.sampleScope()
+	command, err := commandFor(tab, runtime, namespace)
+	if err != nil {
+		return s.fail(string(host.ID), tab, gen, err)
+	}
 	started := s.now()
 	result, err := (*connection).Exec(ctx, command)
 	latency := s.now().Sub(started)
@@ -771,7 +929,7 @@ func (s *Service) sampleOnce(ctx context.Context, host domainvault.Host, tab Tab
 			state.Sessions = sessions
 		})
 	case TabDocker:
-		containers, images, parseErr := parseDockerList(result.Stdout)
+		containers, images, parseErr := parseContainerList(result.Stdout, runtime)
 		if parseErr != nil {
 			return s.fail(string(host.ID), tab, gen, parseErr)
 		}
@@ -783,6 +941,19 @@ func (s *Service) sampleOnce(ctx context.Context, host domainvault.Host, tab Tab
 			state.Latency = latency
 			state.Containers = containers
 			state.Images = images
+		})
+	case TabKubernetes:
+		inventory, parseErr := parseKubernetesList(result.Stdout, s.now())
+		if parseErr != nil {
+			return s.fail(string(host.ID), tab, gen, parseErr)
+		}
+		s.update(string(host.ID), tab, gen, func(state *TabState) {
+			state.Status = StatusLive
+			state.Reason = ReasonNone
+			state.Detail = ""
+			state.At = s.now()
+			state.Latency = latency
+			state.Kubernetes = inventory
 		})
 	case TabGPU:
 		info, parseErr := parseGPU(result.Stdout)
@@ -801,6 +972,25 @@ func (s *Service) sampleOnce(ctx context.Context, host domainvault.Host, tab Tab
 	return false, nil
 }
 
+// sampleScope returns the container engine and Kubernetes namespace the next
+// sample must use. Both are set on the UI thread, so the sampler takes one
+// consistent pair.
+func (s *Service) sampleScope() (ContainerRuntime, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	runtime := NormalizeContainerRuntime(s.runtime)
+	// The probe decides which engines exist. Until the surface has pushed the
+	// effective choice, a Host whose first engine is podman or nerdctl must not
+	// run a Docker command and flash a false daemon error. A stored choice wins
+	// when the probe found it; otherwise the first detected engine is used.
+	if s.capsHost == string(s.host.ID) && !s.caps.Offers(runtime) &&
+		len(s.caps.ContainerRuntimes()) > 0 {
+		runtime = s.caps.FirstContainerRuntime()
+		s.runtime = runtime
+	}
+	return runtime, s.namespace
+}
+
 // fail records a typed failure and reports whether the run must stop.
 func (s *Service) fail(hostID string, tab Tab, gen uint64, err error) (bool, error) {
 	reason := failureReason(err)
@@ -813,13 +1003,17 @@ func (s *Service) fail(hostID string, tab Tab, gen uint64, err error) (bool, err
 		status = StatusLogin
 		stop = true
 	case ReasonOS, ReasonMissingProcesses, ReasonMissingPorts, ReasonMissingSystemctl,
-		ReasonMissingTmux, ReasonMissingDocker, ReasonDockerDaemon, ReasonPermission:
+		ReasonMissingTmux, ReasonMissingDocker, ReasonDockerDaemon, ReasonPermission,
+		ReasonMissingContainerRuntime, ReasonContainerDaemon, ReasonMissingKubectl,
+		ReasonKubernetesForbidden:
 		status = StatusUnavailable
 		if reason == ReasonOS {
 			status = StatusUnsupported
 		}
 		stop = true
-	case ReasonTimeout, ReasonNetwork:
+	case ReasonTimeout, ReasonNetwork, ReasonClusterUnreachable:
+		// A cluster that did not answer may come back; keep sampling so the
+		// tab recovers without the user reopening it.
 		status = StatusError
 	default:
 		status = StatusError
@@ -919,11 +1113,17 @@ func commandFailure(result ExecResult, fallback string) error {
 		strings.Contains(lower, "is the docker daemon running"),
 		strings.Contains(lower, "error during connect"):
 		reason = ReasonDockerDaemon
+	case isContainerDaemon(detail):
+		reason = ReasonContainerDaemon
 	case strings.Contains(lower, "command not found"),
 		strings.Contains(lower, "no such file or directory"):
 		switch {
 		case strings.Contains(lower, "docker"):
 			reason = ReasonMissingDocker
+		case strings.Contains(lower, "podman"), strings.Contains(lower, "nerdctl"):
+			reason = ReasonMissingContainerRuntime
+		case strings.Contains(lower, "kubectl"):
+			reason = ReasonMissingKubectl
 		case strings.Contains(lower, "tmux"):
 			reason = ReasonMissingTmux
 		}
