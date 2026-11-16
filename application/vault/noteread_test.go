@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -113,7 +114,7 @@ func TestReadNoteExcerptValidatesTheOriginalBounds(t *testing.T) {
 		{"negative offset", map[string]any{"offset": float64(-1)}, ErrNoteOffset},
 		{"maxChars too small", map[string]any{"maxChars": float64(1)}, ErrNoteMaxChars},
 		{"maxChars not a number", map[string]any{"maxChars": "10"}, ErrNoteMaxChars},
-		{"empty query", map[string]any{"query": ""}, ErrNoteQuery},
+		{"query not a string", map[string]any{"query": float64(1)}, ErrNoteQuery},
 		{"long query", map[string]any{"query": strings.Repeat("q", MaxNoteQueryChars+1)}, ErrNoteQuery},
 		{"changed note", map[string]any{"expectedUpdatedAt": "2020-01-01T00:00:00.000Z"}, ErrNoteChanged},
 	}
@@ -129,6 +130,37 @@ func TestReadNoteExcerptValidatesTheOriginalBounds(t *testing.T) {
 		"expectedUpdatedAt": FormatVaultTime(note.UpdatedAt),
 	}); err != nil {
 		t.Fatalf("matching expectedUpdatedAt failed: %v", err)
+	}
+}
+
+// TestReadNoteExcerptTreatsAnEmptyQueryAsOmitted is the ticket 30 regression:
+// clients that serialize an unset query as "" must get the unfiltered read,
+// while whitespace is still the literal search the original implies.
+func TestReadNoteExcerptTreatsAnEmptyQueryAsOmitted(t *testing.T) {
+	note := testNote("alpha beta")
+	omitted, err := ReadNoteExcerpt(note, map[string]any{"maxChars": float64(5)})
+	if err != nil {
+		t.Fatalf("read without query: %v", err)
+	}
+	empty, err := ReadNoteExcerpt(note, map[string]any{
+		"query": "", "maxChars": float64(5),
+	})
+	if err != nil {
+		t.Fatalf("read with an empty query: %v", err)
+	}
+	if !reflect.DeepEqual(empty, omitted) {
+		t.Fatalf("empty query = %+v, want the omitted result %+v", empty, omitted)
+	}
+	if empty.QuerySent || empty.MatchOffset != nil {
+		t.Fatalf("empty query was treated as a search: %+v", empty)
+	}
+
+	whitespace, err := ReadNoteExcerpt(note, map[string]any{"query": "   "})
+	if err != nil {
+		t.Fatalf("whitespace query: %v", err)
+	}
+	if !whitespace.QuerySent || whitespace.MatchOffset == nil || *whitespace.MatchOffset != -1 {
+		t.Fatalf("whitespace query = %+v, want a literal search with no match", whitespace)
 	}
 }
 

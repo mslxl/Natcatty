@@ -85,11 +85,15 @@ func ReadNoteExcerpt(note domainvault.Note, params map[string]any) (NoteExcerpt,
 	querySent := false
 	if raw, present := params["query"]; present {
 		text, ok := raw.(string)
-		if !ok || UTF16Length(text) == 0 || UTF16Length(text) > MaxNoteQueryChars {
+		if !ok || UTF16Length(text) > MaxNoteQueryChars {
 			return NoteExcerpt{}, ErrNoteQuery
 		}
-		query = text
-		querySent = true
+		// A client that serializes an unset field as "" means no query, not an
+		// invalid one. A whitespace-only string is still a literal search.
+		if text != "" {
+			query = text
+			querySent = true
+		}
 	}
 
 	if raw, present := params["expectedUpdatedAt"]; present {
