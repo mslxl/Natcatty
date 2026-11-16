@@ -1753,6 +1753,18 @@ func (s *State) openDescriptor(ctx context.Context,
 	switch descriptor.Kind {
 	case domainworkspace.SessionLocal:
 		spec.Kind = appsession.KindLocal
+		// A saved Local Host is still a Host record: restore its association
+		// and run its startup command after the shell is ready. A Local shell
+		// does not depend on the Host's endpoint, so a record deleted since the
+		// workspace was saved degrades to a plain local shell instead of an
+		// error surface.
+		spec.HostID = descriptor.HostID
+		if s.resolveHost != nil && descriptor.HostID != "" {
+			if host, ok := s.resolveHost(ctx, descriptor.HostID); ok {
+				spec.HostID = host.ID
+				spec.StartupCommand = host.StartupCommand
+			}
+		}
 	case domainworkspace.SessionSSH:
 		spec.Kind = appsession.KindSSH
 		spec.HostID = descriptor.HostID
