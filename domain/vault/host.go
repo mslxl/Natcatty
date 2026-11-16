@@ -41,6 +41,9 @@ const (
 	maxTagLength      = 64
 	maxTagCount       = 64
 	maxNotesLength    = 64 << 10
+	// maxStartupCommandLength bounds the command typed into every new
+	// connection. It is generous for a small multi-line setup script.
+	maxStartupCommandLength = 16 << 10
 	// maxKeyMaterialLength bounds a private key or certificate before it is
 	// handed to the field-secret store.
 	maxKeyMaterialLength = 256 << 10
@@ -208,6 +211,9 @@ type Host struct {
 	Tags    []string `json:"tags"`
 	Notes   string   `json:"notes,omitempty"`
 	Pinned  bool     `json:"pinned"`
+	// StartupCommand is typed once after a Session to this Host is ready and
+	// replayed after every reconnect. Empty means none.
+	StartupCommand string `json:"startupCommand,omitempty"`
 	// HasPassword reports that an encrypted password exists for this Host.
 	// The ciphertext lives in secret_values, never in this record.
 	HasPassword bool `json:"hasPassword,omitempty"`
@@ -301,6 +307,9 @@ type Draft struct {
 	Tags     []string
 	Notes    string
 	Pinned   bool
+	// StartupCommand is typed after the shell is ready and after every
+	// reconnect. Empty means none.
+	StartupCommand string
 	// IdentityID, KeyID, AuthMethod, UseSSHAgent, and RequiresMFA select how
 	// the Host authenticates. They carry references only, never material.
 	IdentityID  model.IdentityID
@@ -388,6 +397,8 @@ const (
 	// settings a validation error concerns.
 	FieldMoshServerPath Field = "mosh_server_path"
 	FieldETPort         Field = "et_port"
+	// FieldStartupCommand names the command replayed on every connection.
+	FieldStartupCommand Field = "startup_command"
 	// FieldSnippet, FieldSnippetCommand, and FieldSnippetPackage name the
 	// parts of a Snippet a validation error concerns.
 	FieldSnippet        Field = "snippet"
@@ -478,6 +489,7 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	draft.Username = strings.TrimSpace(draft.Username)
 	draft.Group = NormalizeGroup(draft.Group)
 	draft.Notes = strings.TrimSpace(draft.Notes)
+	draft.StartupCommand = strings.TrimSpace(draft.StartupCommand)
 	draft.Tags = normalizeTags(draft.Tags)
 	draft.HostChain = normalizeHostChain(draft.HostChain)
 	draft.Proxy = normalizeProxy(draft.Proxy)
@@ -555,6 +567,7 @@ func (h Host) Validate() error {
 		Group:                  h.Group,
 		Tags:                   h.Tags,
 		Notes:                  h.Notes,
+		StartupCommand:         h.StartupCommand,
 		AuthMethod:             h.AuthMethod,
 		RequiresMFA:            h.RequiresMFA,
 		UseSSHAgent:            h.UseSSHAgent,
@@ -701,6 +714,12 @@ func validateFields(draft Draft) error {
 	}
 	if strings.ContainsRune(draft.Notes, 0) {
 		return validation(FieldNotes, RuleInvalid)
+	}
+	if len(draft.StartupCommand) > maxStartupCommandLength {
+		return validation(FieldStartupCommand, RuleTooLong)
+	}
+	if strings.ContainsRune(draft.StartupCommand, 0) {
+		return validation(FieldStartupCommand, RuleInvalid)
 	}
 
 	if draft.HostChain != nil {

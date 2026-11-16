@@ -1768,6 +1768,7 @@ func (s *State) openDescriptor(ctx context.Context,
 			spec.Hostname = host.Hostname
 			spec.Port = host.Port
 			spec.Username = host.Username
+			spec.StartupCommand = host.StartupCommand
 			spec.X11Forwarding = host.X11Enabled()
 			spec.NetworkDevice = host.IsNetworkDevice()
 			spec.AutoAttachTmux = host.AutoAttachTmuxEnabled()
@@ -1797,6 +1798,7 @@ func (s *State) openDescriptor(ctx context.Context,
 			spec.Hostname = host.Hostname
 			spec.Port = host.Port
 			spec.Username = host.Username
+			spec.StartupCommand = host.StartupCommand
 			spec.Mosh = plan.mosh
 			spec.ET = plan.et
 			spec.Dir = ""
@@ -1832,6 +1834,7 @@ func (s *State) openDescriptor(ctx context.Context,
 			spec.Hostname = host.Hostname
 			spec.Port = host.Port
 			spec.Username = host.Username
+			spec.StartupCommand = host.StartupCommand
 		}
 		telnetConfig := domaintelnet.Config{Hostname: spec.Hostname, Port: spec.Port}.Normalized()
 		spec.Telnet = &telnetConfig

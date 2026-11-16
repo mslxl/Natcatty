@@ -249,6 +249,8 @@
   "vaultHostTags": "標籤",
   "vaultHostTagsHint": "用逗號分隔標籤。",
   "vaultHostNotes": "筆記",
+  "vaultHostStartupCommand": "啟動命令",
+  "vaultHostStartupCommandHint": "每次連線（包括重新連線）時，在 Shell 就緒後執行一次。留空表示不執行。",
   "vaultHostPinned": "釘選此主機",
   "vaultHostCredentialsNote": "密碼在儲存前會加密。",
   "vaultHostDeleteConfirm": "刪除主機「{label}」？此操作無法復原。",

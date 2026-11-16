@@ -960,6 +960,7 @@ func HostSessionSpec(host domainvault.Host) appsession.StartSpec {
 	return appsession.StartSpec{
 		Kind:           plan.kind,
 		Label:          label,
+		StartupCommand: host.StartupCommand,
 		HostID:         host.ID,
 		Hostname:       host.Hostname,
 		Port:           host.Port,

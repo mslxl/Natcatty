@@ -167,6 +167,9 @@ type Form struct {
 	Tags     string
 	Notes    string
 	Pinned   bool
+	// StartupCommand is typed once after the Session is ready and replayed
+	// after every reconnect.
+	StartupCommand string
 	// Password is plaintext form input. It is submitted to the application
 	// service, never rendered back and never stored on the Host record.
 	Password string
@@ -779,16 +782,17 @@ func (s *State) BeginEdit(id model.HostID) bool {
 	s.problem = ProblemNone
 	s.pendingDelete = ""
 	s.form = Form{
-		ID:       host.ID,
-		Label:    host.Label,
-		Hostname: host.Hostname,
-		Port:     hostPortText(host),
-		Username: host.Username,
-		Protocol: string(host.Protocol),
-		Group:    host.Group,
-		Tags:     strings.Join(host.Tags, ", "),
-		Notes:    host.Notes,
-		Pinned:   host.Pinned,
+		ID:             host.ID,
+		Label:          host.Label,
+		Hostname:       host.Hostname,
+		Port:           hostPortText(host),
+		Username:       host.Username,
+		Protocol:       string(host.Protocol),
+		Group:          host.Group,
+		Tags:           strings.Join(host.Tags, ", "),
+		Notes:          host.Notes,
+		Pinned:         host.Pinned,
+		StartupCommand: host.StartupCommand,
 		// The stored password is never loaded into the form. Leaving the
 		// field blank keeps the existing encrypted value.
 		HasPassword:            host.HasPassword,
@@ -1191,6 +1195,7 @@ func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 		Tags:                   host.Tags,
 		Notes:                  host.Notes,
 		Pinned:                 pinned,
+		StartupCommand:         host.StartupCommand,
 		IdentityID:             host.IdentityID,
 		KeyID:                  host.KeyID,
 		AuthMethod:             host.AuthMethod,
@@ -1252,6 +1257,7 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		Tags:                   tags,
 		Notes:                  s.form.Notes,
 		Pinned:                 s.form.Pinned,
+		StartupCommand:         s.form.StartupCommand,
 		Password:               s.form.Password,
 		IdentityID:             model.IdentityID(s.form.IdentityID),
 		KeyID:                  model.KeyID(s.form.KeyID),

@@ -249,6 +249,8 @@
   "vaultHostTags": "Etiquetas",
   "vaultHostTagsHint": "Separa las etiquetas con comas.",
   "vaultHostNotes": "Notas",
+  "vaultHostStartupCommand": "Comando de inicio",
+  "vaultHostStartupCommandHint": "Se escribe una vez cuando el shell está listo en cada conexión, incluidas las reconexiones. Déjalo vacío para no usar ninguno.",
   "vaultHostPinned": "Fijar este host",
   "vaultHostCredentialsNote": "Las contraseñas se cifran antes de guardarse.",
   "vaultHostDeleteConfirm": "¿Eliminar el host «{label}»? No se puede deshacer.",

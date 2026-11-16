@@ -1027,6 +1027,7 @@ func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 		Tags:                   append([]string(nil), draft.Tags...),
 		Notes:                  draft.Notes,
 		Pinned:                 draft.Pinned,
+		StartupCommand:         draft.StartupCommand,
 		IdentityID:             draft.IdentityID,
 		KeyID:                  draft.KeyID,
 		AuthMethod:             draft.AuthMethod,

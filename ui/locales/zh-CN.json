@@ -249,6 +249,8 @@
   "vaultHostTags": "标签",
   "vaultHostTagsHint": "用逗号分隔标签。",
   "vaultHostNotes": "笔记",
+  "vaultHostStartupCommand": "启动命令",
+  "vaultHostStartupCommandHint": "每次连接（包括重新连接）时，在 Shell 就绪后执行一次。留空表示不执行。",
   "vaultHostPinned": "固定此主机",
   "vaultHostCredentialsNote": "密码在保存前会加密。",
   "vaultHostDeleteConfirm": "删除主机“{label}”？此操作无法撤销。",

@@ -249,6 +249,8 @@
   "vaultHostTags": "Метки",
   "vaultHostTagsHint": "Разделяйте метки запятыми.",
   "vaultHostNotes": "Заметки",
+  "vaultHostStartupCommand": "Команда запуска",
+  "vaultHostStartupCommandHint": "Вводится один раз после готовности оболочки при каждом подключении, включая переподключения. Оставьте пустым, чтобы не использовать.",
   "vaultHostPinned": "Закрепить этот хост",
   "vaultHostCredentialsNote": "Пароли шифруются перед сохранением.",
   "vaultHostDeleteConfirm": "Удалить хост «{label}»? Это действие нельзя отменить.",

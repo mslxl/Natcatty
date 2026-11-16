@@ -586,6 +586,8 @@
   "vaultHostTags": "Tags",
   "vaultHostTagsHint": "Separate tags with commas.",
   "vaultHostNotes": "Notes",
+  "vaultHostStartupCommand": "Startup command",
+  "vaultHostStartupCommandHint": "Typed once after the shell is ready on every connection, including reconnects. Leave empty for none.",
   "vaultHostPinned": "Pin this Host",
   "vaultHostCredentialsNote": "Passwords are encrypted before they are saved.",
   "vaultHostDeleteConfirm": "Delete Host “{label}”? This cannot be undone.",

@@ -2778,6 +2778,26 @@ func (msgs Messages) VaultHostNotes() string {
 	return Catalog.Format(msgs.locale, "vaultHostNotes", nil)
 }
 
+// VaultHostStartupCommand says "Startup command"
+// in the language the app shows.
+func VaultHostStartupCommand() string { return In(i18n.Locale()).VaultHostStartupCommand() }
+
+// VaultHostStartupCommand says "Startup command"
+// in the language of msgs.
+func (msgs Messages) VaultHostStartupCommand() string {
+	return Catalog.Format(msgs.locale, "vaultHostStartupCommand", nil)
+}
+
+// VaultHostStartupCommandHint says "Typed once after the shell is ready on every connection, including reconnects. Leave empty for none."
+// in the language the app shows.
+func VaultHostStartupCommandHint() string { return In(i18n.Locale()).VaultHostStartupCommandHint() }
+
+// VaultHostStartupCommandHint says "Typed once after the shell is ready on every connection, including reconnects. Leave empty for none."
+// in the language of msgs.
+func (msgs Messages) VaultHostStartupCommandHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostStartupCommandHint", nil)
+}
+
 // VaultHostPinned says "Pin this Host"
 // in the language the app shows.
 func VaultHostPinned() string { return In(i18n.Locale()).VaultHostPinned() }

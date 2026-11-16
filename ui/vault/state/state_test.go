@@ -48,6 +48,7 @@ func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainva
 		Tags:                   normalized.Tags,
 		Notes:                  normalized.Notes,
 		Pinned:                 normalized.Pinned,
+		StartupCommand:         normalized.StartupCommand,
 		IdentityID:             normalized.IdentityID,
 		KeyID:                  normalized.KeyID,
 		AuthMethod:             normalized.AuthMethod,
@@ -92,6 +93,7 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.Tags = normalized.Tags
 		host.Notes = normalized.Notes
 		host.Pinned = normalized.Pinned
+		host.StartupCommand = normalized.StartupCommand
 		host.IdentityID = normalized.IdentityID
 		host.KeyID = normalized.KeyID
 		host.AuthMethod = normalized.AuthMethod
@@ -363,6 +365,40 @@ func TestEditPopulatesTheFormAndUpdatesTheSameHost(t *testing.T) {
 	}
 	if state.Items()[0].Label != "web-2" {
 		t.Fatalf("Label = %q, want web-2", state.Items()[0].Label)
+	}
+}
+
+func TestHostDetailsRoundTripsTheStartupCommand(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "host-1", Label: "web", Hostname: "example.com", Port: 22,
+		Username: "root", Protocol: domainvault.ProtocolSSH,
+		StartupCommand: "echo ready",
+	}}}
+	state, _ := newTestState(t, repo)
+	if err := state.Reload(); err != nil {
+		t.Fatal(err)
+	}
+
+	state.BeginEdit("host-1")
+	if got := state.Form().StartupCommand; got != "echo ready" {
+		t.Fatalf("Form().StartupCommand = %q, want the Host's command", got)
+	}
+	state.Form().StartupCommand = "  uptime  "
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if len(repo.updated) != 1 {
+		t.Fatalf("updated drafts = %d, want 1", len(repo.updated))
+	}
+	normalized, err := domainvault.NormalizeDraft(repo.updated[0])
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if normalized.StartupCommand != "uptime" {
+		t.Fatalf("StartupCommand = %q, want uptime", normalized.StartupCommand)
+	}
+	if got := state.Items()[0].StartupCommand; got != "uptime" {
+		t.Fatalf("StartupCommand = %q, want uptime", got)
 	}
 }
 

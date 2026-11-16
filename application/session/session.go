@@ -399,11 +399,15 @@ type StartSpec struct {
 	Rows    int
 	// Label names the Session for logging (usually the Host label). Empty
 	// falls back to "session".
-	Label    string
-	HostID   model.HostID
-	Hostname string
-	Port     int
-	Username string
+	Label string
+	// StartupCommand, when non-empty, is typed once after the shell produces
+	// its first output on each connection, and replayed after every reconnect.
+	// It travels as ordinary input, so the shell's own line editor handles it.
+	StartupCommand string
+	HostID         model.HostID
+	Hostname       string
+	Port           int
+	Username       string
 	// X11Forwarding requests X11 forwarding for this SSH Session when the Host
 	// has it enabled and acknowledged. The transport factory turns it into a
 	// non-pooled Connection.
@@ -567,6 +571,10 @@ type Session struct {
 	closeCh chan struct{}
 	writeCh chan []byte
 	done    chan struct{}
+	// writeMu serializes transport writes between the write loop and the
+	// one-shot startup command, so their bytes never interleave inside a
+	// chunk.
+	writeMu sync.Mutex
 
 	// remoteScreen reports that the transport receives its authoritative
 	// screen size from the peer. The UI sets MyGo's ResizeByConn option and
@@ -622,6 +630,15 @@ type Session struct {
 	// be swallowed by a line editor that is still aborting. A local shell is
 	// ready by construction.
 	commandReady atomic.Bool
+
+	// startupMu guards the one-shot Host startup command. It is armed for each
+	// transport generation and disarmed before the command is queued, so an
+	// output burst can never replay it within one connection. The generation
+	// keeps a late read from the abandoned transport from firing the new
+	// connection's command.
+	startupMu         sync.Mutex
+	startupPending    bool
+	startupGeneration int
 
 	// cwdProbeMu guards the optional local-shell working-directory probe and
 	// its cache. A consumer asks for the value; a finished command or a shell
@@ -1015,6 +1032,8 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	// finish its startup (a ForceCommand bash -i included) before it can read a
 	// wrapper, so the first command probes readiness first.
 	session.commandReady.Store(spec.Kind == KindLocal)
+	// A Host startup command waits for the first output of this connection.
+	session.armStartupCommand(session.generation)
 
 	s.mu.Lock()
 	if s.closing {
@@ -1709,6 +1728,8 @@ func (s *Session) loop() {
 				}
 				s.bindScreenSizer(cmd.transport)
 				s.bindCWDProbe(cmd.transport)
+				// Every reconnect gets its own one-shot startup command.
+				s.armStartupCommand(cmd.generation)
 				s.update(func(snapshot *Snapshot) {
 					snapshot.Connection = ConnectionStatusActive
 					snapshot.Notice = nil
@@ -1894,6 +1915,9 @@ func (s *Session) readLoop(generation int, transport Transport) {
 			// The bytes are now in the backlog (or filtered out); a pending
 			// remote resize may proceed without overtaking them.
 			s.conn.noteTransportRead(n)
+			// The shell has produced its first output for this connection,
+			// so the Host startup command may now be typed.
+			s.maybeRunStartupCommand(generation, transport)
 		}
 		if err != nil {
 			s.flushHighlightCarry()
@@ -1972,7 +1996,10 @@ func (s *Session) writeLoop(generation int, transport Transport, genDone <-chan 
 		case <-genDone:
 			return
 		case input := <-s.writeCh:
-			if _, err := transport.Write(input); err != nil {
+			s.writeMu.Lock()
+			_, err := transport.Write(input)
+			s.writeMu.Unlock()
+			if err != nil {
 				s.post(command{
 					kind:       commandTransportEnded,
 					generation: generation,
