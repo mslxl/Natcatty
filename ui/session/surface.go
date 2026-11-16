@@ -867,6 +867,12 @@ func (s *Surface) openBrowserAction() func() {
 	return func() { _ = s.OpenBrowser() }
 }
 
+// BrowserOpen reports whether the Session is showing its browser panel. The
+// panel owns a native page that cannot be mounted in a second window, so a
+// follow or topdown renderer checks this before choosing a neutral
+// placeholder instead of rendering the Surface elsewhere.
+func (s *Surface) BrowserOpen() bool { return s.browser != nil }
+
 // OpenBrowser opens the Session's browser panel. It is idempotent, and the
 // terminal keeps running behind the panel. The app supplies the opener, which
 // claims a fresh dedicated Host tunnel and creates the window's pages.

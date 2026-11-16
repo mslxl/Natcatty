@@ -23,6 +23,24 @@ func TestTabTextLocalizesFallbacksAndStatus(t *testing.T) {
 	}
 }
 
+// TestTabTextMarksTheQuakeSource proves a Quake Workspace row is
+// distinguishable from a main-window row with the same label, so a user can
+// tell which window a Session lives in.
+func TestTabTextMarksTheQuakeSource(t *testing.T) {
+	m := locales.In("en")
+	mainLine := TabText(m, Tab{Label: "web-1", Status: TabConnected, Source: TabSourceMain})
+	quakeLine := TabText(m, Tab{Label: "web-1", Status: TabConnected, Source: TabSourceQuake})
+	if strings.Contains(mainLine, m.TrayQuakeSource()) {
+		t.Fatalf("a main-window row carries the Quake marker: %q", mainLine)
+	}
+	if !strings.Contains(quakeLine, m.TrayQuakeSource()) || !strings.Contains(quakeLine, "web-1") {
+		t.Fatalf("a Quake row lacks the source marker: %q", quakeLine)
+	}
+	if quakeLine == mainLine {
+		t.Fatal("main and Quake rows are indistinguishable")
+	}
+}
+
 func TestRuleTextMarksDirectionAndStatus(t *testing.T) {
 	m := locales.In("en")
 	rule := Rule{Direction: "L", Label: "db", LocalPort: 5432, RemoteHost: "db.internal", RemotePort: 5432, Status: "active"}

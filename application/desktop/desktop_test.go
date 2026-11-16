@@ -11,8 +11,11 @@ import (
 
 func TestDefaultsPreserveOriginalValues(t *testing.T) {
 	windows := Defaults("windows")
-	if !windows.ShowTrayIcon || !windows.CloseToTray || !windows.GlobalHotkeyEnabled {
+	if !windows.ShowTrayIcon || !windows.CloseToTray {
 		t.Fatalf("tray defaults = %+v", windows)
+	}
+	if windows.HotkeyMode != HotkeyModeQuake {
+		t.Fatalf("hotkey mode = %q, want the Quake default", windows.HotkeyMode)
 	}
 	if windows.ToggleWindowHotkey != "Ctrl + `" {
 		t.Fatalf("windows hotkey = %q", windows.ToggleWindowHotkey)
@@ -36,6 +39,9 @@ func TestNormalizeTreatsVersionZeroAsDefaults(t *testing.T) {
 	if !settings.ShowTrayIcon || settings.Version != SettingsVersion {
 		t.Fatalf("normalized = %+v", settings)
 	}
+	if settings.HotkeyMode != HotkeyModeQuake {
+		t.Fatalf("an old record loaded hotkey mode %q, want quake", settings.HotkeyMode)
+	}
 
 	settings = Normalize(Settings{Version: 1, ToggleWindowHotkey: "  "}, "windows")
 	if settings.ToggleWindowHotkey != "Ctrl + `" {
@@ -48,6 +54,273 @@ func TestNormalizeTreatsVersionZeroAsDefaults(t *testing.T) {
 	}
 	if settings.ToggleWindowHotkey != "Ctrl+Shift+Space" {
 		t.Fatalf("hotkey = %q", settings.ToggleWindowHotkey)
+	}
+}
+
+func TestNormalizeRevertsUnknownValuesToDefaults(t *testing.T) {
+	settings := Normalize(Settings{
+		Version:            1,
+		HotkeyMode:         HotkeyMode("bogus"),
+		ToggleWindowHotkey: "Ctrl+Shift+Space",
+	}, "windows")
+	if settings.HotkeyMode != DefaultHotkeyMode {
+		t.Fatalf("unknown mode = %q, want %q", settings.HotkeyMode, DefaultHotkeyMode)
+	}
+	if settings.Version != SettingsVersion {
+		t.Fatalf("version = %d, want %d: this change must not bump it", settings.Version, SettingsVersion)
+	}
+
+	for _, mode := range []HotkeyMode{HotkeyModeNone, HotkeyModeToggle, HotkeyModeQuake, HotkeyModeTopdown} {
+		if !mode.Valid() {
+			t.Errorf("%q is not valid", mode)
+		}
+	}
+	if HotkeyModeNone.RegistersHotkey() {
+		t.Error("none claims the accelerator")
+	}
+	for _, mode := range []HotkeyMode{HotkeyModeToggle, HotkeyModeQuake, HotkeyModeTopdown} {
+		if !mode.RegistersHotkey() {
+			t.Errorf("%q does not claim the accelerator", mode)
+		}
+	}
+}
+
+// TestQuakeSourceDefaultsToOwnAndUnknownValuesNormalize pins the content
+// source contract: a new or pre-field record follows the Quake Workspace, and
+// an unrecognized stored value returns to that default without touching any
+// other desktop setting.
+func TestQuakeSourceDefaultsToOwnAndUnknownValuesNormalize(t *testing.T) {
+	if got := Defaults("windows").QuakeSource; got != QuakeSourceOwn {
+		t.Fatalf("default source = %q, want own", got)
+	}
+	if got := Normalize(Settings{Version: 1}, "windows").QuakeSource; got != QuakeSourceOwn {
+		t.Fatalf("missing source = %q, want own", got)
+	}
+	settings := Normalize(Settings{
+		Version:      1,
+		QuakeSource:  QuakeSource("bogus"),
+		ShowTrayIcon: true,
+	}, "windows")
+	if settings.QuakeSource != DefaultQuakeSource {
+		t.Fatalf("unknown source = %q, want %q", settings.QuakeSource, DefaultQuakeSource)
+	}
+	if !settings.ShowTrayIcon {
+		t.Fatal("normalizing the source changed an unrelated desktop setting")
+	}
+	for _, source := range []QuakeSource{QuakeSourceOwn, QuakeSourceFollow} {
+		if !source.Valid() {
+			t.Errorf("%q is not valid", source)
+		}
+	}
+}
+
+// TestDropdownGeometryDefaults pins the new dropdown behavior defaults:
+// Quake at half the work area, top-down at 80%, both in percent, and all
+// three hide triggers on.
+func TestDropdownGeometryDefaults(t *testing.T) {
+	settings := Defaults("windows")
+	if settings.QuakeHeight != 50 || settings.QuakeHeightUnit != HeightUnitPercent {
+		t.Fatalf("quake geometry = %d %q, want 50 percent", settings.QuakeHeight, settings.QuakeHeightUnit)
+	}
+	if settings.TopdownHeight != 80 || settings.TopdownHeightUnit != HeightUnitPercent {
+		t.Fatalf("topdown geometry = %d %q, want 80 percent", settings.TopdownHeight, settings.TopdownHeightUnit)
+	}
+	if !settings.HideOnBlur || !settings.HideOnEscape || !settings.HideOnClickOutside {
+		t.Fatalf("hide defaults = blur %v escape %v outside %v, want all true",
+			settings.HideOnBlur, settings.HideOnEscape, settings.HideOnClickOutside)
+	}
+}
+
+// TestNormalizeDropdownGeometry pins the defensive rules for persisted
+// records: missing fields take the defaults, unknown units return to percent,
+// out-of-range values clamp, other values survive, and the version stays 1.
+func TestNormalizeDropdownGeometry(t *testing.T) {
+	missing := Normalize(Settings{Version: 1, ShowTrayIcon: false}, "windows")
+	if missing.QuakeHeight != DefaultQuakeHeight || missing.QuakeHeightUnit != DefaultHeightUnit {
+		t.Fatalf("missing quake geometry = %d %q", missing.QuakeHeight, missing.QuakeHeightUnit)
+	}
+	if missing.TopdownHeight != DefaultTopdownHeight || missing.TopdownHeightUnit != DefaultHeightUnit {
+		t.Fatalf("missing topdown geometry = %d %q", missing.TopdownHeight, missing.TopdownHeightUnit)
+	}
+	if missing.Version != SettingsVersion {
+		t.Fatalf("version = %d, want %d", missing.Version, SettingsVersion)
+	}
+	if missing.ShowTrayIcon {
+		t.Fatal("normalizing the geometry changed an unrelated setting")
+	}
+
+	unknown := Normalize(Settings{
+		Version:           1,
+		QuakeHeight:       40,
+		QuakeHeightUnit:   HeightUnit("bogus"),
+		TopdownHeight:     70,
+		TopdownHeightUnit: HeightUnit("bogus"),
+	}, "windows")
+	if unknown.QuakeHeightUnit != DefaultHeightUnit || unknown.TopdownHeightUnit != DefaultHeightUnit {
+		t.Fatalf("unknown units = %q %q", unknown.QuakeHeightUnit, unknown.TopdownHeightUnit)
+	}
+	if unknown.QuakeHeight != 40 || unknown.TopdownHeight != 70 {
+		t.Fatalf("valid heights changed: %+v", unknown)
+	}
+
+	clampedPercent := Normalize(Settings{Version: 1, QuakeHeight: 5, TopdownHeight: 200,
+		QuakeHeightUnit: HeightUnitPercent, TopdownHeightUnit: HeightUnitPercent}, "windows")
+	if clampedPercent.QuakeHeight != MinPercentHeight || clampedPercent.TopdownHeight != MaxPercentHeight {
+		t.Fatalf("percent clamps = %d/%d", clampedPercent.QuakeHeight, clampedPercent.TopdownHeight)
+	}
+	clampedPixels := Normalize(Settings{Version: 1, QuakeHeight: 50, TopdownHeight: 20000,
+		QuakeHeightUnit: HeightUnitPX, TopdownHeightUnit: HeightUnitPX}, "windows")
+	if clampedPixels.QuakeHeight != MinPixelHeight || clampedPixels.TopdownHeight != MaxPixelHeight {
+		t.Fatalf("pixel clamps = %d/%d", clampedPixels.QuakeHeight, clampedPixels.TopdownHeight)
+	}
+	// A missing height with an explicit pixel unit still has to end up inside
+	// the pixel range; the percent default alone would be an invalid 50 px.
+	missingPixel := Normalize(Settings{Version: 1, QuakeHeightUnit: HeightUnitPX}, "windows")
+	if missingPixel.QuakeHeight != MinPixelHeight {
+		t.Fatalf("missing pixel height = %d, want the pixel minimum", missingPixel.QuakeHeight)
+	}
+
+	// Normalize must not overwrite an explicit false; only the storage layer
+	// can tell a missing key from the stored value.
+	explicitOff := Normalize(Settings{Version: 1}, "windows")
+	explicitOff.HideOnBlur, explicitOff.HideOnEscape, explicitOff.HideOnClickOutside = false, false, false
+	normalized := Normalize(explicitOff, "windows")
+	if normalized.HideOnBlur || normalized.HideOnEscape || normalized.HideOnClickOutside {
+		t.Fatalf("Normalize turned an explicit false back on: %+v", normalized)
+	}
+}
+
+// TestHeightValidation pins the two accepted ranges and rejects unknown
+// units, matching the setters.
+func TestHeightValidation(t *testing.T) {
+	for _, test := range []struct {
+		value int
+		unit  HeightUnit
+		ok    bool
+	}{
+		{10, HeightUnitPercent, true},
+		{100, HeightUnitPercent, true},
+		{9, HeightUnitPercent, false},
+		{101, HeightUnitPercent, false},
+		{120, HeightUnitPX, true},
+		{10000, HeightUnitPX, true},
+		{119, HeightUnitPX, false},
+		{10001, HeightUnitPX, false},
+		{50, HeightUnit("bogus"), false},
+	} {
+		err := ValidateHeight(test.value, test.unit)
+		if (err == nil) != test.ok {
+			t.Errorf("ValidateHeight(%d, %q) = %v, want ok=%v", test.value, test.unit, err, test.ok)
+		}
+		if err != nil && KindOf(err) != KindValidation {
+			t.Errorf("ValidateHeight(%d, %q) kind = %q, want validation", test.value, test.unit, KindOf(err))
+		}
+	}
+}
+
+// TestServiceHeightSettersPersistAndRejectOutOfRange covers the setters: a
+// valid pair persists, while an out-of-range value or unknown unit is a
+// validation error that leaves the previous pair and saves untouched.
+func TestServiceHeightSettersPersistAndRejectOutOfRange(t *testing.T) {
+	service, repository, _, _, _ := serviceForTest(t)
+
+	if err := service.SetQuakeHeight(30, HeightUnitPercent); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetTopdownHeight(600, HeightUnitPX); err != nil {
+		t.Fatal(err)
+	}
+	settings := service.Settings()
+	if settings.QuakeHeight != 30 || settings.QuakeHeightUnit != HeightUnitPercent {
+		t.Fatalf("quake = %d %q", settings.QuakeHeight, settings.QuakeHeightUnit)
+	}
+	if settings.TopdownHeight != 600 || settings.TopdownHeightUnit != HeightUnitPX {
+		t.Fatalf("topdown = %d %q", settings.TopdownHeight, settings.TopdownHeightUnit)
+	}
+	if last := repository.saves[len(repository.saves)-1]; last.TopdownHeight != 600 {
+		t.Fatalf("persisted topdown height = %d", last.TopdownHeight)
+	}
+
+	savesBefore := len(repository.saves)
+	for _, test := range []struct {
+		name  string
+		value int
+		unit  HeightUnit
+	}{
+		{"percent below", 9, HeightUnitPercent},
+		{"percent above", 101, HeightUnitPercent},
+		{"pixel below", 119, HeightUnitPX},
+		{"pixel above", 10001, HeightUnitPX},
+		{"unknown unit", 50, HeightUnit("bogus")},
+	} {
+		if err := service.SetQuakeHeight(test.value, test.unit); KindOf(err) != KindValidation {
+			t.Errorf("%s: error = %v, want validation", test.name, err)
+		}
+	}
+	if service.Settings().QuakeHeight != 30 || service.Settings().QuakeHeightUnit != HeightUnitPercent {
+		t.Fatalf("a rejected value changed quake geometry: %+v", service.Settings())
+	}
+	if len(repository.saves) != savesBefore {
+		t.Fatalf("rejected values were persisted: %d saves", len(repository.saves)-savesBefore)
+	}
+}
+
+// TestServiceHideSwitchesPersist covers the three independent switches,
+// including an explicit false surviving the save.
+func TestServiceHideSwitchesPersist(t *testing.T) {
+	service, repository, _, _, _ := serviceForTest(t)
+
+	if err := service.SetHideOnBlur(false); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetHideOnEscape(false); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetHideOnClickOutside(false); err != nil {
+		t.Fatal(err)
+	}
+	settings := service.Settings()
+	if settings.HideOnBlur || settings.HideOnEscape || settings.HideOnClickOutside {
+		t.Fatalf("hide switches = %+v, want all false", settings)
+	}
+	if last := repository.saves[len(repository.saves)-1]; last.HideOnBlur ||
+		last.HideOnEscape || last.HideOnClickOutside {
+		t.Fatalf("persisted hide switches = %+v", last)
+	}
+
+	// Each switch is independent: turning one back on leaves the others off.
+	if err := service.SetHideOnEscape(true); err != nil {
+		t.Fatal(err)
+	}
+	settings = service.Settings()
+	if settings.HideOnBlur || !settings.HideOnEscape || settings.HideOnClickOutside {
+		t.Fatalf("independent switch state = %+v", settings)
+	}
+}
+
+// TestServiceHideSwitchRollsBackOnSaveFailure proves a failed save restores
+// the previous value instead of leaving memory ahead of disk.
+func TestServiceHideSwitchRollsBackOnSaveFailure(t *testing.T) {
+	service, repository, _, _, _ := serviceForTest(t)
+	repository.saveErr = errors.New("disk full")
+	if err := service.SetHideOnBlur(false); err == nil {
+		t.Fatal("a failed save was reported as success")
+	}
+	if !service.Settings().HideOnBlur {
+		t.Fatal("the hide switch did not roll back after a failed save")
+	}
+}
+
+func TestDropdownSupportIsExplicitPerPlatform(t *testing.T) {
+	for _, goos := range []string{"darwin", "windows", "linux"} {
+		if !DropdownSupported(goos) {
+			t.Errorf("DropdownSupported(%q) = false", goos)
+		}
+	}
+	for _, goos := range []string{"", "js", "android", "freebsd"} {
+		if DropdownSupported(goos) {
+			t.Errorf("DropdownSupported(%q) = true", goos)
+		}
 	}
 }
 
@@ -240,11 +513,18 @@ func (r *fakeRepository) Save(_ context.Context, settings Settings) error {
 type fakeHotkeys struct {
 	registered map[string]func()
 	fail       map[string]error
-	order      []string
+	// failOnce fails the next registration of a key and forgets it, so a
+	// rollback retry can succeed.
+	failOnce map[string]error
+	order    []string
 }
 
 func (h *fakeHotkeys) Register(accelerator string, fn func()) error {
 	if err := h.fail[accelerator]; err != nil {
+		return err
+	}
+	if err := h.failOnce[accelerator]; err != nil {
+		delete(h.failOnce, accelerator)
 		return err
 	}
 	if h.registered == nil {
@@ -291,7 +571,7 @@ func (n *fakeNotifier) Notify(notification Notification) error {
 func serviceForTest(t *testing.T) (*Service, *fakeRepository, *fakeHotkeys, *fakeAutoLauncher, *fakeNotifier) {
 	t.Helper()
 	repository := &fakeRepository{settings: Defaults("windows")}
-	hotkeys := &fakeHotkeys{fail: map[string]error{}}
+	hotkeys := &fakeHotkeys{fail: map[string]error{}, failOnce: map[string]error{}}
 	auto := &fakeAutoLauncher{supported: true}
 	notifier := &fakeNotifier{supported: true}
 	service := NewService(repository, hotkeys, auto, notifier, WithGOOS("windows"))
@@ -366,7 +646,7 @@ func TestServiceHotkeyRegistrationAndRollback(t *testing.T) {
 		t.Fatal("the previous shortcut was not restored")
 	}
 
-	if err := service.SetGlobalHotkeyEnabled(false); err != nil {
+	if err := service.SetHotkeyMode(HotkeyModeNone); err != nil {
 		t.Fatal(err)
 	}
 	if service.RegisteredHotkey() != "" || len(hotkeys.registered) != 0 {
@@ -374,13 +654,190 @@ func TestServiceHotkeyRegistrationAndRollback(t *testing.T) {
 	}
 }
 
-func TestServiceNotificationsRespectTogglesAndSupport(t *testing.T) {
-	service, repository, _, _, notifier := serviceForTest(t)
-	if err := service.Notify(Notification{Event: EventSessionEnded, Target: "box"}); err != nil {
+func TestServiceHotkeyModeRegistersExactlyOneAccelerator(t *testing.T) {
+	service, repository, hotkeys, _, _ := serviceForTest(t)
+	fired := 0
+	if err := service.Apply(func() { fired++ }); err != nil {
 		t.Fatal(err)
 	}
-	if len(notifier.notified) != 1 || notifier.notified[0].Target != "box" {
-		t.Fatalf("notified = %+v", notifier.notified)
+	if len(hotkeys.registered) != 1 {
+		t.Fatalf("registered = %+v, want exactly one accelerator", hotkeys.registered)
+	}
+	if service.RegisteredHotkey() != "Ctrl + `" {
+		t.Fatalf("registered = %q", service.RegisteredHotkey())
+	}
+	hotkeys.registered["Ctrl + `"]()
+	if fired != 1 {
+		t.Fatalf("the mode callback ran %d times", fired)
+	}
+
+	for _, mode := range []HotkeyMode{HotkeyModeToggle, HotkeyModeQuake, HotkeyModeTopdown} {
+		if err := service.SetHotkeyMode(mode); err != nil {
+			t.Fatalf("SetHotkeyMode(%q): %v", mode, err)
+		}
+		if len(hotkeys.registered) != 1 {
+			t.Fatalf("mode %q registered %+v, want exactly one accelerator", mode, hotkeys.registered)
+		}
+		if service.RegisteredHotkey() != "Ctrl + `" {
+			t.Fatalf("mode %q registered = %q", mode, service.RegisteredHotkey())
+		}
+		if service.Settings().HotkeyMode != mode {
+			t.Fatalf("settings mode = %q, want %q", service.Settings().HotkeyMode, mode)
+		}
+	}
+
+	if err := service.SetHotkeyMode(HotkeyModeNone); err != nil {
+		t.Fatal(err)
+	}
+	if len(hotkeys.registered) != 0 || service.RegisteredHotkey() != "" {
+		t.Fatalf("none left %+v registered", hotkeys.registered)
+	}
+	if last := repository.saves[len(repository.saves)-1]; last.HotkeyMode != HotkeyModeNone {
+		t.Fatalf("saved mode = %q, want none", last.HotkeyMode)
+	}
+}
+
+func TestServiceHotkeyModeRejectsUnknownValues(t *testing.T) {
+	service, repository, hotkeys, _, _ := serviceForTest(t)
+	if err := service.Apply(func() {}); err != nil {
+		t.Fatal(err)
+	}
+	savesBefore := len(repository.saves)
+
+	err := service.SetHotkeyMode(HotkeyMode("bogus"))
+	if KindOf(err) != KindValidation {
+		t.Fatalf("error = %v, want a validation error", err)
+	}
+	if service.Settings().HotkeyMode != HotkeyModeQuake {
+		t.Fatalf("mode = %q, want the previous quake", service.Settings().HotkeyMode)
+	}
+	if len(repository.saves) != savesBefore {
+		t.Fatal("an invalid mode was persisted")
+	}
+	if len(hotkeys.registered) != 1 {
+		t.Fatalf("registered = %+v, want the previous accelerator kept", hotkeys.registered)
+	}
+}
+
+func TestServiceHotkeyModeRollsBackAndRestoresTheOldAccelerator(t *testing.T) {
+	service, _, hotkeys, _, _ := serviceForTest(t)
+	if err := service.Apply(func() {}); err != nil {
+		t.Fatal(err)
+	}
+	modes := 0
+	service.OnHotkeyModeChange(func(HotkeyMode) { modes++ })
+
+	hotkeys.failOnce["Ctrl + `"] = errors.New("already taken once")
+	err := service.SetHotkeyMode(HotkeyModeTopdown)
+	if !errors.Is(err, ErrHotkey) {
+		t.Fatalf("error = %v, want ErrHotkey", err)
+	}
+	if service.Settings().HotkeyMode != HotkeyModeQuake {
+		t.Fatalf("mode = %q after a failed change", service.Settings().HotkeyMode)
+	}
+	if modes != 0 {
+		t.Fatalf("the mode listener ran %d times for a failed change", modes)
+	}
+	if _, ok := hotkeys.registered["Ctrl + `"]; !ok {
+		t.Fatalf("the old accelerator was not restored: %+v", hotkeys.registered)
+	}
+	if service.RegisteredHotkey() != "Ctrl + `" {
+		t.Fatalf("registered = %q", service.RegisteredHotkey())
+	}
+	if service.HotkeyProblem() == nil {
+		t.Fatal("the registration failure was not recorded for the Settings page")
+	}
+
+	// A later successful change clears the problem and notifies once.
+	delete(hotkeys.fail, "Ctrl + `")
+	if err := service.SetHotkeyMode(HotkeyModeTopdown); err != nil {
+		t.Fatal(err)
+	}
+	if modes != 1 {
+		t.Fatalf("the mode listener ran %d times, want 1", modes)
+	}
+	if service.HotkeyProblem() != nil {
+		t.Fatalf("hotkey problem = %v after success", service.HotkeyProblem())
+	}
+}
+
+func TestServiceNoneModeDoesNotRegisterAToggleHotkeyChange(t *testing.T) {
+	service, _, hotkeys, _, _ := serviceForTest(t)
+	if err := service.SetHotkeyMode(HotkeyModeNone); err != nil {
+		t.Fatal(err)
+	}
+	hotkeys.fail["Ctrl+Shift+Space"] = errors.New("taken")
+	if err := service.SetToggleWindowHotkey("Ctrl+Shift+Space"); err != nil {
+		t.Fatalf("changing the shortcut in none mode: %v", err)
+	}
+	if len(hotkeys.registered) != 0 {
+		t.Fatalf("none mode registered %+v", hotkeys.registered)
+	}
+	if service.Settings().ToggleWindowHotkey != "Ctrl+Shift+Space" {
+		t.Fatalf("shortcut = %q", service.Settings().ToggleWindowHotkey)
+	}
+}
+
+// TestServiceQuakeSourcePersistsAndRejectsUnknown covers the source setter:
+// a valid source is saved and announced, and an unknown one is a validation
+// error that changes nothing.
+func TestServiceQuakeSourcePersistsAndRejectsUnknown(t *testing.T) {
+	service, repository, _, _, _ := serviceForTest(t)
+	var changed []QuakeSource
+	service.OnQuakeSourceChange(func(source QuakeSource) {
+		changed = append(changed, source)
+	})
+
+	if err := service.SetQuakeSource(QuakeSourceFollow); err != nil {
+		t.Fatal(err)
+	}
+	if service.Settings().QuakeSource != QuakeSourceFollow {
+		t.Fatalf("source = %q, want follow", service.Settings().QuakeSource)
+	}
+	if len(repository.saves) == 0 ||
+		repository.saves[len(repository.saves)-1].QuakeSource != QuakeSourceFollow {
+		t.Fatalf("persisted source = %+v, want follow", repository.saves)
+	}
+	if len(changed) != 1 || changed[0] != QuakeSourceFollow {
+		t.Fatalf("source listener = %v, want one follow", changed)
+	}
+
+	savesBefore := len(repository.saves)
+	err := service.SetQuakeSource(QuakeSource("bogus"))
+	if KindOf(err) != KindValidation {
+		t.Fatalf("error = %v, want a validation error", err)
+	}
+	if service.Settings().QuakeSource != QuakeSourceFollow {
+		t.Fatalf("source = %q after a rejected value", service.Settings().QuakeSource)
+	}
+	if len(repository.saves) != savesBefore {
+		t.Fatal("an invalid source was persisted")
+	}
+	if len(changed) != 1 {
+		t.Fatalf("the source listener ran %d times for a rejected value", len(changed))
+	}
+}
+
+func TestServiceCapabilitiesReportDropdownSupport(t *testing.T) {
+	repository := &fakeRepository{settings: Defaults("windows")}
+	service := NewService(repository, &fakeHotkeys{fail: map[string]error{}}, nil, nil, WithGOOS("windows"))
+	if !service.Capabilities().Dropdown {
+		t.Fatal("windows does not report Dropdown support")
+	}
+	service = NewService(repository, &fakeHotkeys{fail: map[string]error{}}, nil, nil, WithGOOS("plan9"))
+	if service.Capabilities().Dropdown {
+		t.Fatal("plan9 reports Dropdown support")
+	}
+}
+
+func TestServiceNotificationsRespectTogglesAndSupport(t *testing.T) {
+	service, repository, _, _, notifier := serviceForTest(t)
+	if err := service.Notify(Notification{Event: EventSessionEnded, Target: "box", Session: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifier.notified) != 1 || notifier.notified[0].Target != "box" ||
+		notifier.notified[0].Session != "s1" {
+		t.Fatalf("notified = %+v, want the Session identity preserved for click routing", notifier.notified)
 	}
 	if err := service.SetNotification(EventSessionEnded, false); err != nil {
 		t.Fatal(err)

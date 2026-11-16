@@ -60,11 +60,18 @@ func (r *testDesktopRepository) Save(_ context.Context, settings appdesktop.Sett
 type testHotkeys struct {
 	registered map[string]func()
 	fail       bool
+	// failOnce fails the next registration only, so a rollback retry can
+	// succeed the way a transient system registration failure can.
+	failOnce bool
 }
 
 func (h *testHotkeys) Register(accelerator string, fn func()) error {
 	if h.fail {
 		return errors.New("taken")
+	}
+	if h.failOnce {
+		h.failOnce = false
+		return errors.New("taken once")
 	}
 	if h.registered == nil {
 		h.registered = map[string]func(){}
@@ -147,6 +154,12 @@ func newDesktopTestController(t *testing.T) (*desktopController, *windowGraph,
 	*fakeTrayBackend, *testDesktopRepository, *testHotkeys, *testNotifier, *recordingOpener) {
 	t.Helper()
 	graph := newWindowGraph(t, nil)
+	// The Dropdown Panel asks for the pointer and displays; keep tests off
+	// the real screen.
+	graph.manager.SetScreenProvider(&fakeScreen{
+		cursor:   mygo.Point{X: 400, Y: 300},
+		displays: []mygo.Display{primaryDisplay()},
+	})
 	graph.manager.OpenMain()
 	repository := &testDesktopRepository{settings: appdesktop.Defaults("windows")}
 	hotkeys := &testHotkeys{}
@@ -157,7 +170,7 @@ func newDesktopTestController(t *testing.T) (*desktopController, *windowGraph,
 		t.Fatal(err)
 	}
 	backend := &fakeTrayBackend{}
-	controller := newDesktopController(graph.manager, graph.state, nil, nil, service,
+	controller := newDesktopController(graph.manager, graph.state, nil, nil, nil, service,
 		backend, func() string { return "en" }, func() {})
 	opener := &recordingOpener{}
 	controller.opener = opener
@@ -499,6 +512,197 @@ func TestGlobalHotkeyRegistrationDrivesTheToggle(t *testing.T) {
 	}
 	if controller.ToggleCount() != 2 {
 		t.Fatalf("toggles = %d", controller.ToggleCount())
+	}
+}
+
+// TestGlobalHotkeyTogglesTheDropdownPanel wires the real registration seam:
+// the registered accelerator callback is HandleHotkey, and the default Quake
+// mode makes it toggle the one Dropdown Panel.
+func TestGlobalHotkeyTogglesTheDropdownPanel(t *testing.T) {
+	controller, graph, _, _, hotkeys, _, _ := newDesktopTestController(t)
+	if err := controller.service.Apply(controller.HandleHotkey); err != nil {
+		t.Fatal(err)
+	}
+	var callback func()
+	for _, registered := range hotkeys.registered {
+		callback = registered
+	}
+	if callback == nil {
+		t.Fatalf("registered accelerators = %+v, want one", hotkeys.registered)
+	}
+
+	callback()
+	window := graph.manager.dropdown
+	if window == nil || !window.IsVisible() {
+		t.Fatal("the hotkey did not show the Dropdown Panel")
+	}
+	callback()
+	if window.IsVisible() {
+		t.Fatal("a second hotkey press did not hide the Dropdown Panel")
+	}
+	callback()
+	if graph.manager.dropdown != window || !window.IsVisible() {
+		t.Fatal("the third press did not reuse and show the same Panel")
+	}
+	if controller.ToggleCount() != 3 {
+		t.Fatalf("toggles = %d, want 3", controller.ToggleCount())
+	}
+}
+
+// registeredHotkeyCallback returns the one accelerator callback the fake
+// registrar holds.
+func registeredHotkeyCallback(t *testing.T, hotkeys *testHotkeys) func() {
+	t.Helper()
+	if len(hotkeys.registered) != 1 {
+		t.Fatalf("registered accelerators = %+v, want exactly one", hotkeys.registered)
+	}
+	for _, callback := range hotkeys.registered {
+		return callback
+	}
+	return nil
+}
+
+// TestGlobalHotkeyDispatchesByHotkeyMode drives the real registration seam
+// through all four modes: quake and topdown toggle the Panel, toggle moves the
+// main window, and none unregisters so a stale callback is a no-op.
+func TestGlobalHotkeyDispatchesByHotkeyMode(t *testing.T) {
+	controller, graph, _, _, hotkeys, _, _ := newDesktopTestController(t)
+	if err := controller.service.Apply(controller.HandleHotkey); err != nil {
+		t.Fatal(err)
+	}
+	if got := controller.service.Settings().HotkeyMode; got != appdesktop.HotkeyModeQuake {
+		t.Fatalf("default mode = %q, want quake", got)
+	}
+	callback := registeredHotkeyCallback(t, hotkeys)
+
+	callback()
+	if !graph.manager.DropdownVisible() {
+		t.Fatal("quake mode did not show the Dropdown Panel")
+	}
+	callback()
+	if graph.manager.DropdownVisible() {
+		t.Fatal("a second quake press did not hide the Dropdown Panel")
+	}
+
+	if err := controller.service.SetHotkeyMode(appdesktop.HotkeyModeToggle); err != nil {
+		t.Fatal(err)
+	}
+	callback = registeredHotkeyCallback(t, hotkeys)
+	main := graph.manager.Main()
+	main.Show()
+	main.Focus()
+	callback()
+	if main.IsVisible() {
+		t.Fatal("toggle mode did not hide the focused main window")
+	}
+	callback()
+	if !main.IsVisible() {
+		t.Fatal("toggle mode did not show the main window again")
+	}
+	if graph.manager.DropdownVisible() {
+		t.Fatal("toggle mode opened the Dropdown Panel")
+	}
+
+	if err := controller.service.SetHotkeyMode(appdesktop.HotkeyModeTopdown); err != nil {
+		t.Fatal(err)
+	}
+	callback = registeredHotkeyCallback(t, hotkeys)
+	callback()
+	if !graph.manager.DropdownVisible() {
+		t.Fatal("topdown mode did not show the Dropdown Panel")
+	}
+	callback()
+	if graph.manager.DropdownVisible() {
+		t.Fatal("a second topdown press did not hide the Dropdown Panel")
+	}
+
+	if err := controller.service.SetHotkeyMode(appdesktop.HotkeyModeNone); err != nil {
+		t.Fatal(err)
+	}
+	if len(hotkeys.registered) != 0 {
+		t.Fatalf("none left %+v registered", hotkeys.registered)
+	}
+	before := controller.ToggleCount()
+	callback()
+	if controller.ToggleCount() != before {
+		t.Fatalf("none ran a toggle: %d -> %d", before, controller.ToggleCount())
+	}
+	if graph.manager.DropdownVisible() {
+		t.Fatal("none opened the Dropdown Panel")
+	}
+}
+
+// TestHotkeyModeChangeHidesTheOpenDropdown proves a mode switch retires a
+// visible Panel rather than leaving the old mode's content on screen, and the
+// main window stays available.
+func TestHotkeyModeChangeHidesTheOpenDropdown(t *testing.T) {
+	controller, graph, _, _, _, _, _ := newDesktopTestController(t)
+
+	// The fake host creates the main window hidden; production starts it
+	// visible, so show it before checking that a mode change leaves it alone.
+	graph.manager.Main().Show()
+	graph.manager.ToggleDropdown()
+	if !graph.manager.DropdownVisible() {
+		t.Fatal("the Dropdown Panel did not open")
+	}
+	if err := controller.service.SetHotkeyMode(appdesktop.HotkeyModeToggle); err != nil {
+		t.Fatal(err)
+	}
+	if graph.manager.DropdownVisible() {
+		t.Fatal("switching to toggle left the Dropdown Panel open")
+	}
+	if main := graph.manager.Main(); main == nil || !main.IsVisible() {
+		t.Fatal("the main window is not visible after leaving quake")
+	}
+
+	if err := controller.service.SetHotkeyMode(appdesktop.HotkeyModeQuake); err != nil {
+		t.Fatal(err)
+	}
+	graph.manager.ToggleDropdown()
+	if !graph.manager.DropdownVisible() {
+		t.Fatal("quake did not reopen the Dropdown Panel")
+	}
+	if err := controller.service.SetHotkeyMode(appdesktop.HotkeyModeTopdown); err != nil {
+		t.Fatal(err)
+	}
+	if graph.manager.DropdownVisible() {
+		t.Fatal("switching quake to topdown left the old content open")
+	}
+}
+
+// TestHotkeyModeRegistrationFailureRollsBack keeps the old mode and shortcut
+// live when the system refuses the registration: the visible panel stays up
+// and the accelerator still toggles it.
+func TestHotkeyModeRegistrationFailureRollsBack(t *testing.T) {
+	controller, graph, _, _, hotkeys, _, _ := newDesktopTestController(t)
+	if err := controller.service.Apply(controller.HandleHotkey); err != nil {
+		t.Fatal(err)
+	}
+	graph.manager.ToggleDropdown()
+	if !graph.manager.DropdownVisible() {
+		t.Fatal("the Dropdown Panel did not open")
+	}
+
+	hotkeys.failOnce = true
+	err := controller.service.SetHotkeyMode(appdesktop.HotkeyModeTopdown)
+	if !errors.Is(err, appdesktop.ErrHotkey) {
+		t.Fatalf("error = %v, want ErrHotkey", err)
+	}
+	if got := controller.service.Settings().HotkeyMode; got != appdesktop.HotkeyModeQuake {
+		t.Fatalf("mode = %q after a failed change, want quake", got)
+	}
+	if controller.service.HotkeyProblem() == nil {
+		t.Fatal("the registration failure is not visible to Settings")
+	}
+	if len(hotkeys.registered) != 1 {
+		t.Fatalf("the old accelerator was not restored: %+v", hotkeys.registered)
+	}
+	if !graph.manager.DropdownVisible() {
+		t.Fatal("a rejected mode change hid the Dropdown Panel")
+	}
+	registeredHotkeyCallback(t, hotkeys)()
+	if graph.manager.DropdownVisible() {
+		t.Fatal("the restored accelerator no longer toggles the Panel")
 	}
 }
 

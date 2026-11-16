@@ -61,6 +61,95 @@ func TestSideToolsWithoutSFTPStillOpenThePanel(t *testing.T) {
 	}
 }
 
+// Side-frame bookkeeping is per renderer: the main window and the dropdown
+// can draw the same tool, and neither may hide it while the other still draws
+// it. It is hidden exactly once, when the last renderer stops.
+func TestSideFrameBookkeepingIsIsolatedPerRenderer(t *testing.T) {
+	probe := &sideProbe{}
+	s := NewState(WithFilesPanel((&filesProbe{}).panel()),
+		WithSideTools(probe.tool(SideSystem, true)))
+	s.ToggleFiles("tab", "h1", "Host one")
+	s.SetSideTool("tab", SideSystem)
+
+	// Frame 1: the main window draws System.
+	s.FilesViewFor(RenderOwnerMain, "tab", 300)
+	s.FinishSideFrameFor(RenderOwnerMain)
+	if probe.hidden != 0 {
+		t.Fatalf("System was hidden while the main window drew it: %d", probe.hidden)
+	}
+
+	// Frame 2: both renderers draw the same tool. Neither finish may stop it
+	// for the other.
+	s.FilesViewFor(RenderOwnerMain, "tab", 300)
+	s.FilesViewFor(RenderOwnerDropdown, "tab", 300)
+	s.FinishSideFrameFor(RenderOwnerMain)
+	s.FinishSideFrameFor(RenderOwnerDropdown)
+	if probe.hidden != 0 {
+		t.Fatalf("a renderer hid the tool another drew: %d", probe.hidden)
+	}
+
+	// Frame 3: only the dropdown draws. The main window has stopped, but its
+	// finish must still see the dropdown's draw and leave the tool alone.
+	s.FilesViewFor(RenderOwnerDropdown, "tab", 300)
+	s.FinishSideFrameFor(RenderOwnerMain)
+	s.FinishSideFrameFor(RenderOwnerDropdown)
+	if probe.hidden != 0 {
+		t.Fatalf("the main window hid System while the dropdown drew it: %d", probe.hidden)
+	}
+
+	// Frame 4: the last renderer stops drawing it. The tool stops exactly once.
+	s.FinishSideFrameFor(RenderOwnerDropdown)
+	if probe.hidden != 1 {
+		t.Fatalf("System was hidden %d times after the last renderer stopped, want 1", probe.hidden)
+	}
+	s.FinishSideFrameFor(RenderOwnerMain)
+	if probe.hidden != 1 {
+		t.Fatalf("System was hidden again: %d", probe.hidden)
+	}
+}
+
+// When both renderers stop showing a tool in the same frame, its Hide runs
+// once rather than once per renderer.
+func TestSideFrameHidesOnceWhenBothRenderersStopTogether(t *testing.T) {
+	probe := &sideProbe{}
+	s := NewState(WithFilesPanel((&filesProbe{}).panel()),
+		WithSideTools(probe.tool(SideSystem, true)))
+	s.ToggleFiles("tab", "h1", "Host one")
+	s.SetSideTool("tab", SideSystem)
+
+	s.FilesViewFor(RenderOwnerMain, "tab", 300)
+	s.FilesViewFor(RenderOwnerDropdown, "tab", 300)
+	s.FinishSideFrameFor(RenderOwnerMain)
+	s.FinishSideFrameFor(RenderOwnerDropdown)
+
+	// The next frame draws nothing in either renderer.
+	s.FinishSideFrameFor(RenderOwnerMain)
+	s.FinishSideFrameFor(RenderOwnerDropdown)
+	if probe.hidden != 1 {
+		t.Fatalf("System was hidden %d times, want exactly 1", probe.hidden)
+	}
+}
+
+// The default files path keeps the main window's bookkeeping, so callers that
+// do not name a renderer behave exactly as before.
+func TestDefaultSideFrameBookkeepingIsTheMainRenderer(t *testing.T) {
+	probe := &sideProbe{}
+	s := NewState(WithFilesPanel((&filesProbe{}).panel()),
+		WithSideTools(probe.tool(SideSystem, true)))
+	s.ToggleFiles("tab", "h1", "Host one")
+	s.SetSideTool("tab", SideSystem)
+
+	s.FilesView("tab", 300)
+	s.FinishSideFrame()
+	if probe.hidden != 0 {
+		t.Fatal("the default renderer hid a tool it still draws")
+	}
+	s.FinishSideFrameFor(RenderOwnerMain)
+	if probe.hidden != 1 {
+		t.Fatalf("default FinishSideFrame and FinishSideFrameFor(main) disagreed: %d", probe.hidden)
+	}
+}
+
 func TestEachTabRemembersItsToolAndAHiddenToolIsTold(t *testing.T) {
 	probe := &sideProbe{}
 	s := NewState(WithFilesPanel((&filesProbe{}).panel()),

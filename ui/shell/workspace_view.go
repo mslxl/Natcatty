@@ -18,16 +18,25 @@ import (
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
-// tabRef binds the split renderer to either a main-window Tab or a detached
-// Tab. The renderer asks it for Pane state and hands back focus and resize.
+// tabRef binds the split renderer to either a main-window Tab, a detached
+// Tab, or the main Workspace's active Tab seen through ReadOnlyTab. The
+// renderer asks it for the tree and Pane state and hands back focus and
+// resize.
 type tabRef struct {
-	id       model.TabID
-	pane     func(model.PaneID) (state.PaneInfo, bool)
+	id model.TabID
+	// owner is the renderer this ref belongs to. Side-frame bookkeeping is
+	// per owner, so the main window and a second renderer cannot stop each
+	// other's live tool.
+	owner state.RenderOwner
+	tree  func() (*domainworkspace.Node, []int, bool)
+	pane  func(model.PaneID) (state.PaneInfo, bool)
+	// setRatio is nil for a read-only ref: the renderer still draws the split
+	// tree but cannot change the Workspace's ratios.
 	setRatio func(model.SplitID, float32) bool
 	focus    func(model.PaneID) bool
 	// managesPanes marks a Tab whose window owns Pane commands, drag/drop, and
-	// Pane close. A detached window holds one Tab and has no split commands
-	// yet.
+	// Pane close. A detached window and a read-only follow renderer hold no
+	// split or close commands.
 	managesPanes bool
 	splitRight   func() error
 	splitDown    func() error
@@ -43,12 +52,20 @@ type tabRef struct {
 	status paneStatus
 }
 
-func mainTabRef(s *state.State, tabIndex int) tabRef {
+// mainTabRef binds the split renderer to a Tab in the window that owns it. A
+// window renderer holds the full Pane commands; owner scopes the side panel's
+// per-renderer bookkeeping, so the main window and the Dropdown Panel's
+// top-down route never stop each other's live tool.
+func mainTabRef(owner state.RenderOwner, s *state.State, tabIndex int) tabRef {
 	id, _ := s.TabID(tabIndex)
 	return tabRef{
-		id:           id,
-		pane:         func(id model.PaneID) (state.PaneInfo, bool) { return s.PaneInfoAt(tabIndex, id) },
-		setRatio:     func(id model.SplitID, ratio float32) bool { return s.SetSplitRatio(tabIndex, id, ratio) },
+		id:    id,
+		owner: owner,
+		tree:  func() (*domainworkspace.Node, []int, bool) { return s.TabTree(tabIndex) },
+		pane:  func(id model.PaneID) (state.PaneInfo, bool) { return s.PaneInfoAt(tabIndex, id) },
+		setRatio: func(id model.SplitID, ratio float32) bool {
+			return s.SetSplitRatio(tabIndex, id, ratio)
+		},
 		focus:        func(id model.PaneID) bool { return s.FocusPaneID(tabIndex, id) },
 		managesPanes: true,
 		splitRight:   s.SplitRight,
@@ -64,9 +81,28 @@ func mainTabRef(s *state.State, tabIndex int) tabRef {
 	}
 }
 
+// readOnlyTabRef binds the split renderer to a Tab through a ReadOnlyTab. A
+// second renderer uses it to draw the main Workspace's active Tab with only
+// the non-destructive commands: Pane lookup, focus, rename, and retry. Split,
+// close, detach, drag/drop, and ratio writes are left unwired, so the
+// renderer cannot change the Workspace's Tab order, active index, or split
+// tree.
+func readOnlyTabRef(owner state.RenderOwner, tab state.ReadOnlyTab) tabRef {
+	return tabRef{
+		id:     tab.ID(),
+		owner:  owner,
+		tree:   tab.Tree,
+		pane:   tab.PaneInfo,
+		focus:  tab.FocusPane,
+		rename: tab.RenamePane,
+		retry:  tab.RetryPane,
+	}
+}
+
 func detachedTabRef(s *state.State, tabID model.TabID) tabRef {
 	return tabRef{
 		id:       tabID,
+		tree:     func() (*domainworkspace.Node, []int, bool) { return s.DetachedTabTree(tabID) },
 		pane:     func(id model.PaneID) (state.PaneInfo, bool) { return s.DetachedPaneInfoAt(tabID, id) },
 		setRatio: func(id model.SplitID, ratio float32) bool { return s.SetDetachedSplitRatio(tabID, id, ratio) },
 		focus:    func(id model.PaneID) bool { return s.FocusDetachedPaneID(tabID, id) },
@@ -304,7 +340,7 @@ func paneTree(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 	} else {
 		split = ui.SplitPercent(c, &ratio, first, second)
 	}
-	if split.Changed() {
+	if split.Changed() && ref.setRatio != nil {
 		ref.setRatio(splitID, ratio)
 	}
 	split.Fill()

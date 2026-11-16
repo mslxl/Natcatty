@@ -87,10 +87,12 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 	logsui "github.com/mslxl/natcatty/ui/logs"
 	uimonitoring "github.com/mslxl/natcatty/ui/monitoring"
+	quakeui "github.com/mslxl/natcatty/ui/quake"
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	serialui "github.com/mslxl/natcatty/ui/serial"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/settings"
+	"github.com/mslxl/natcatty/ui/shell"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	uisysmanager "github.com/mslxl/natcatty/ui/sysmanager"
 	transferui "github.com/mslxl/natcatty/ui/transfer"
@@ -181,6 +183,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	var editorState *editorui.State
 	var associationsState *settings.AssociationsState
 	var shellState *state.State
+	var quakeState *quakeui.State
 	var preferencesState *settings.PreferencesState
 	var shortcutsState *settings.ShortcutsState
 	var searchState *settings.SearchState
@@ -258,9 +261,12 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		autoLauncher{},
 		&nativeNotifier{
 			locale: func() string { return mygo.App.Locale() },
-			onClick: func() {
-				if windows != nil {
-					windows.FocusMain()
+			// The request carries the Session the event belongs to, so a click
+			// lands on the window and Tab that own it: the main window for a
+			// shell Session, the Dropdown Panel for a Quake Session.
+			onClick: func(request appdesktop.Notification) {
+				if desktopCtl != nil {
+					desktopCtl.HandleNotificationClick(request)
 				}
 			},
 		},
@@ -1016,7 +1022,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		}),
 		// The app applies the notification mode and window focus before
 		// showing an OS notification.
-		appsession.WithNotificationHook(func(_ model.SessionID, notification appsession.TerminalNotification) {
+		appsession.WithNotificationHook(func(id model.SessionID, notification appsession.TerminalNotification) {
 			mode := terminalService.Settings().OSCNotifications
 			deliverProgramNotification(mode, notification, func() bool {
 				if mainWindow == nil || mainWindow.IsDestroyed() {
@@ -1024,6 +1030,12 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				}
 				return mainWindow.IsVisible() && mainWindow.IsFocused()
 			}, func() {
+				// A Quake Session's OSC notification must land on the Panel,
+				// exactly as a tray or desktop-notification click does.
+				if desktopCtl != nil {
+					desktopCtl.FocusSession(id)
+					return
+				}
 				if windows != nil {
 					windows.FocusMain()
 				}
@@ -1151,6 +1163,85 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		return shellState != nil && shellState.SendToFocused(command, run)
 	})
 	themePanel := settings.NewThemePanel(themesState, preferenceService)
+	// newSessionSurface builds the one MyGo terminal surface every Session
+	// uses. The main shell and the Quake workspace share it, so Command
+	// History, cwd, notifications, theme, font, cursor, and terminal behavior
+	// are identical in both windows.
+	newSessionSurface := func(s *appsession.Session) (*sessionui.Surface, error) {
+		// Transient commands end with their Session. Watch is idempotent
+		// because this factory may run more than once for one Session.
+		transientRegistry.Watch(s.ID(), s.Done())
+		options := []sessionui.Option{
+			sessionui.WithLogDefaults(func() appsession.LogOptions {
+				return terminalLogDefaults(s.Label())
+			}),
+			sessionui.WithRedraw(invalidate),
+			sessionui.WithPastePolicy(terminalService.PasteConfirmation),
+			sessionui.WithDropAction(func() domainterminal.DropAction {
+				return terminalService.Settings().DropAction
+			}),
+			sessionui.WithEncodingChange(func(encoding domainterminal.Encoding) {
+				_ = terminalService.SetEncodingFor(s.EncodingScope(), encoding)
+			}),
+			// Suggestions and counters read Settings on each frame, so a
+			// Settings change applies to open Sessions without reopening.
+			// A Host-Atuin Session adds its transient memory rows, which
+			// are suggestible under its own captured scope.
+			sessionui.WithSuggestions(func(input, scope, cwd string) []autocomplete.Suggestion {
+				return autocompleteService.SuggestionsInWith(input, scope, cwd,
+					transientRegistry.Entries(s.ID()))
+			},
+				func() (bool, bool) {
+					current := terminalService.Settings()
+					return current.AutocompletePopupMenu, current.AutocompleteGhostText
+				}),
+			sessionui.WithAutocompleteDelay(func() int {
+				return terminalService.Settings().AutocompleteDebounceMs
+			}),
+			// The terminal font and its catalog bindings are read when a
+			// terminal is created; an Appearance change restyles open
+			// terminals through the state setters.
+			sessionui.WithTerminalFont(func() terminal.Font {
+				appearance := preferenceService.Settings().Appearance
+				return terminal.Font{
+					Family: domainpreferences.TerminalFontFamily(appearance.TerminalFontFamily),
+					Size:   float32(appearance.TerminalFontSize),
+				}
+			}),
+			sessionui.WithTerminalCursor(func() (domainpreferences.CursorStyle, bool) {
+				appearance := preferenceService.Settings().Appearance
+				return appearance.TerminalCursorStyle, !appearance.TerminalCursorSteady
+			}),
+			sessionui.WithTerminalTheme(currentTerminalTheme),
+			sessionui.WithTerminalKeybinds(func() []terminal.Keybind {
+				return terminalKeybinds(keybindingService)
+			}),
+			// Reconnect is the original's manual retry: it abandons the
+			// current transport and dials again without the policy delay.
+			sessionui.WithReconnect(func() { s.ReconnectNow() }, s.CanReconnect),
+		}
+		// An SSH Session with a saved Host routes its browser through the
+		// Host, and a local Session reaches this computer directly. Serial,
+		// Telnet, Mosh, and ET Sessions leave the menu item disabled
+		// instead of offering a route that cannot exist.
+		switch {
+		case s.Snapshot().Kind == appsession.KindLocal:
+			options = append(options, sessionui.WithBrowser(
+				func(onClose func()) (sessionui.BrowserPanel, error) {
+					return openSessionBrowser(s, windows, localBrowserConnector{}, invalidate, onClose)
+				}))
+		case s.Snapshot().Kind == appsession.KindSSH && s.HostID() != "":
+			options = append(options, sessionui.WithBrowser(
+				func(onClose func()) (sessionui.BrowserPanel, error) {
+					return openSessionBrowser(s, windows, browserConnector{
+						vault:       vaultService,
+						routes:      routes,
+						connections: connections,
+					}, invalidate, onClose)
+				}))
+		}
+		return sessionui.New(s, options...)
+	}
 	shellState = state.NewState(
 		state.WithLocaleRequest(func(tag string) {
 			mygo.App.SetLocale(tag)
@@ -1183,79 +1274,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			return host.Label, true
 		}),
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
-			// Transient commands end with their Session. Watch is idempotent
-			// because this factory may run more than once for one Session.
-			transientRegistry.Watch(s.ID(), s.Done())
-			options := []sessionui.Option{
-				sessionui.WithLogDefaults(func() appsession.LogOptions {
-					return terminalLogDefaults(s.Label())
-				}),
-				sessionui.WithRedraw(invalidate),
-				sessionui.WithPastePolicy(terminalService.PasteConfirmation),
-				sessionui.WithDropAction(func() domainterminal.DropAction {
-					return terminalService.Settings().DropAction
-				}),
-				sessionui.WithEncodingChange(func(encoding domainterminal.Encoding) {
-					_ = terminalService.SetEncodingFor(s.EncodingScope(), encoding)
-				}),
-				// Suggestions and counters read Settings on each frame, so a
-				// Settings change applies to open Sessions without reopening.
-				// A Host-Atuin Session adds its transient memory rows, which
-				// are suggestible under its own captured scope.
-				sessionui.WithSuggestions(func(input, scope, cwd string) []autocomplete.Suggestion {
-					return autocompleteService.SuggestionsInWith(input, scope, cwd,
-						transientRegistry.Entries(s.ID()))
-				},
-					func() (bool, bool) {
-						current := terminalService.Settings()
-						return current.AutocompletePopupMenu, current.AutocompleteGhostText
-					}),
-				sessionui.WithAutocompleteDelay(func() int {
-					return terminalService.Settings().AutocompleteDebounceMs
-				}),
-				// The terminal font and its catalog bindings are read when a
-				// terminal is created; an Appearance change restyles open
-				// terminals through State.SetTerminalFont.
-				sessionui.WithTerminalFont(func() terminal.Font {
-					appearance := preferenceService.Settings().Appearance
-					return terminal.Font{
-						Family: domainpreferences.TerminalFontFamily(appearance.TerminalFontFamily),
-						Size:   float32(appearance.TerminalFontSize),
-					}
-				}),
-				sessionui.WithTerminalCursor(func() (domainpreferences.CursorStyle, bool) {
-					appearance := preferenceService.Settings().Appearance
-					return appearance.TerminalCursorStyle, !appearance.TerminalCursorSteady
-				}),
-				sessionui.WithTerminalTheme(currentTerminalTheme),
-				sessionui.WithTerminalKeybinds(func() []terminal.Keybind {
-					return terminalKeybinds(keybindingService)
-				}),
-				// Reconnect is the original's manual retry: it abandons the
-				// current transport and dials again without the policy delay.
-				sessionui.WithReconnect(func() { s.ReconnectNow() }, s.CanReconnect),
-			}
-			// An SSH Session with a saved Host routes its browser through the
-			// Host, and a local Session reaches this computer directly. Serial,
-			// Telnet, Mosh, and ET Sessions leave the menu item disabled
-			// instead of offering a route that cannot exist.
-			switch {
-			case s.Snapshot().Kind == appsession.KindLocal:
-				options = append(options, sessionui.WithBrowser(
-					func(onClose func()) (sessionui.BrowserPanel, error) {
-						return openSessionBrowser(s, windows, localBrowserConnector{}, invalidate, onClose)
-					}))
-			case s.Snapshot().Kind == appsession.KindSSH && s.HostID() != "":
-				options = append(options, sessionui.WithBrowser(
-					func(onClose func()) (sessionui.BrowserPanel, error) {
-						return openSessionBrowser(s, windows, browserConnector{
-							vault:       vaultService,
-							routes:      routes,
-							connections: connections,
-						}, invalidate, onClose)
-					}))
-			}
-			return sessionui.New(s, options...)
+			return newSessionSurface(s)
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState),
 			// The Hosts page's view and sort switches are this device's
@@ -1433,14 +1452,80 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		},
 		func() string { return mygo.App.Locale() },
 	)
+	// The Dropdown Panel's Quake workspace is separate from the main shell's
+	// Workspace: its Tabs never enter the main Tab strip, and the Panel is
+	// created lazily on the first hotkey press. Its state is memory-only.
+	quakeState = quakeui.NewState(
+		quakeSessionOpener{sessions: sessions},
+		func(s *appsession.Session) (quakeui.Surface, error) {
+			return newSessionSurface(s)
+		},
+		// The Host picker reads the Vault's effective Host list live, so a
+		// renamed Host or an edited group default shows on the next frame.
+		quakeui.WithHosts(quakeHostSource{vault: vaultState}),
+		// Quake Tabs appear in the tray's Session list, so a new, renamed, or
+		// closed Tab rebuilds it as well as repainting the Panel. The
+		// controller is assigned after this state; the closure resolves it
+		// lazily.
+		quakeui.WithRedraw(func() {
+			invalidate()
+			if desktopCtl != nil {
+				desktopCtl.ScheduleSync()
+			}
+		}),
+		// Closing the last Quake Tab hides the Panel; the next show creates a
+		// fresh local Shell.
+		quakeui.WithEmpty(func() {
+			if windows != nil {
+				windows.HideDropdown()
+			}
+		}),
+	)
+	wireDropdownQuake(windows, quakeState, shellState,
+		func() appdesktop.HotkeyMode {
+			return desktopService.Settings().HotkeyMode
+		},
+		func() appdesktop.QuakeSource {
+			return desktopService.Settings().QuakeSource
+		},
+		func() appdesktop.Settings {
+			return desktopService.Settings()
+		},
+		func() {
+			// Follow mode's Open main window action returns the surfaces
+			// instead of copying them: hide the Panel, then show and focus the
+			// main window that owns the Workspace again.
+			windows.HideDropdown()
+			windows.FocusMain()
+		},
+	)
+	// The main window's root view is a provider, beside the Settings one, so a
+	// later render-ownership route can change what the window shows without
+	// recreating the native window. While the Dropdown Panel renders the
+	// Workspace surfaces (follow or top-down), the main window keeps its native
+	// window and draws only a neutral placeholder, so no Surface is rendered
+	// by two windows in the same frame.
+	mainShellView := shell.View(shellState)
+	windows.SetMainContentProvider(func() func(*ui.Context) {
+		return func(c *ui.Context) {
+			if windows.DropdownOwnsMain() {
+				shell.MainPlaceholder(c)
+				return
+			}
+			mainShellView(c)
+		}
+	})
 	// The tray owns show/hide, recent Hosts, active Port Forwarding Rules, and
 	// quit. Close-to-tray asks the current settings live.
 	desktopCtl = newDesktopController(
-		windows, shellState, vaultState, forwardingManager, desktopService,
-		mygoTrayBackend{},
+		windows, shellState, quakeState, vaultState, forwardingManager,
+		desktopService, mygoTrayBackend{},
 		func() string { return mygo.App.Locale() },
 		mygo.App.Quit,
 	)
+	// Quake Sessions end on quit beside the shell's; the quit prompt counts
+	// them so the user is asked once about every Session.
+	windows.SetQuakeSessionCount(quakeState.SessionCount)
 	windows.SetCloseToTray(desktopCtl.HideOnClose)
 	// Regaining focus asks the sync engine for a debounced run. Every window
 	// reports focus through the same hook, so a detached Session works too.
@@ -1502,12 +1587,30 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				float32(current.Appearance.TerminalFontSize))
 			shellState.SetTerminalCursor(current.Appearance.TerminalCursorStyle,
 				!current.Appearance.TerminalCursorSteady)
+		}
+		// Quake terminals are open Session surfaces too: a live font, cursor,
+		// or scheme change must reach them without reopening the Panel.
+		if quakeState != nil {
+			quakeState.SetTerminalFont(domainpreferences.TerminalFontFamily(current.Appearance.TerminalFontFamily),
+				float32(current.Appearance.TerminalFontSize))
+			quakeState.SetTerminalCursor(current.Appearance.TerminalCursorStyle,
+				!current.Appearance.TerminalCursorSteady)
+		}
+		if shellState != nil || quakeState != nil {
 			// currentTerminalTheme reads Theme.IsDark, which panics before
 			// App.Run; the initial preference apply below happens before the
 			// event loop starts. WhenReady also schedules immediately after
 			// startup, so later appearance changes still apply the theme at
 			// once.
-			applyTerminalTheme := func() { shellState.SetTerminalTheme(currentTerminalTheme()) }
+			applyTerminalTheme := func() {
+				theme := currentTerminalTheme()
+				if shellState != nil {
+					shellState.SetTerminalTheme(theme)
+				}
+				if quakeState != nil {
+					quakeState.SetTerminalTheme(theme)
+				}
+			}
 			if mygo.App.IsReady() {
 				applyTerminalTheme()
 			} else {
@@ -1524,6 +1627,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	mygo.Theme.OnUpdated(func() {
 		if shellState != nil {
 			shellState.SetTerminalTheme(currentTerminalTheme())
+		}
+		if quakeState != nil {
+			quakeState.SetTerminalTheme(currentTerminalTheme())
 		}
 		invalidate()
 	})
@@ -1565,6 +1671,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// A Session's end may run on any goroutine; Invalidate is safe from
 	// any goroutine and asks for the frame that shows the new status.
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
+		// The Dropdown Panel is not a window that keeps the app alive, so it
+		// may still be open at quit. Tear it down and close the Quake Sessions
+		// before the shared shell and connection teardown below.
+		shutdownDropdownWorkspace(windows, quakeState)
 		shellState.Persist()
 		// Stop accepting external MCP calls before the services they read are
 		// torn down, then remove the discovery pointer if it is still ours.
@@ -1617,7 +1727,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// The tray appears before launch targets so any deep link or
 		// command-line Host opens into a running shell.
 		desktopCtl.MarkReady()
-		if err := desktopService.Apply(desktopCtl.ToggleMain); err != nil {
+		if err := desktopService.Apply(desktopCtl.HandleHotkey); err != nil {
 			// Another application may own the accelerator. The failure is
 			// reported in Settings; the app keeps working.
 			desktopState.RefreshProblem()
@@ -1626,11 +1736,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		desktopCtl.HandleLaunchArgs(os.Args[1:])
 
 		// A login launch starts quietly in the tray, as the original did,
-		// but only when there is a tray icon to reopen the window from.
-		if mygo.App.WasOpenedAtLogin() && desktopService.Settings().ShowTrayIcon &&
-			desktopService.Capabilities().Tray && mainWindow.IsVisible() {
-			mainWindow.Hide()
-		}
+		// but only when there is a tray icon to reopen the window from. It
+		// never displays the Dropdown Panel.
+		desktopCtl.HandleLoginLaunch(mygo.App.WasOpenedAtLogin())
 
 		// Terminal widgets consume their own input, so the gate never sees
 		// keystrokes typed there. A Session change (including the echo of
@@ -2102,6 +2210,20 @@ func appliedSnapshotRefresh(state func() *vaultstate.State) func() {
 		if s := state(); s != nil {
 			s.InvalidateLists()
 		}
+	}
+}
+
+// shutdownDropdownWorkspace is the first half of app shutdown: the Dropdown
+// Panel is hidden and destroyed, then every Quake Tab's Surface and Session is
+// closed. Hiding the Panel first means Quake shutdown never asks it to hide
+// again, and no native Panel survives into the shell and connection teardown
+// that follows in OnWillQuit.
+func shutdownDropdownWorkspace(windows *windowManager, quake *quakeui.State) {
+	if windows != nil {
+		windows.ShutdownDropdown()
+	}
+	if quake != nil {
+		quake.Shutdown()
 	}
 }
 
