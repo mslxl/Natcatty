@@ -2,10 +2,40 @@ package state
 
 import (
 	"context"
+	"time"
 
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/domain/model"
 )
+
+// ComposeConnection is the seam compose uses to inspect a target's connection,
+// ask it to dial again, and wait until it can take input. A nil field falls
+// back to the live Session in the main window; tests supply fakes so a
+// reconnect can be observed without a transport.
+type ComposeConnection struct {
+	// Status reports the target's lifecycle and transport state.
+	Status func(model.SessionID) (appsession.Status, appsession.ConnectionStatus, bool)
+	// Reconnect requests an immediate retry. It reports whether the request
+	// was accepted.
+	Reconnect func(model.SessionID) bool
+	// Ready reports that the target can receive input again.
+	Ready func(model.SessionID) bool
+}
+
+// WithComposeConnection replaces the live-Session connection seam used by a
+// compose submit. Fields left nil still read the live Session.
+func WithComposeConnection(seam ComposeConnection) Option {
+	return func(s *State) { s.composeConnection = seam }
+}
+
+// composeReconnectTimeout is the longest a compose submit waits for a
+// disconnected target before leaving the draft in the bar for another try.
+const composeReconnectTimeout = 30 * time.Second
+
+// composeReconnectPoll is the readiness poll cadence. Every iteration reads
+// the target's real connection state and the deadline ends the wait, so this
+// is not a fixed-delay synchronization.
+const composeReconnectPoll = 20 * time.Millisecond
 
 // BroadcastSessionInfo describes one Session that can receive broadcast input.
 // Label is the Pane's label; an empty label means a local Session whose title
@@ -454,9 +484,10 @@ func (s *State) cancelComposeSendLocked() {
 		s.composeCancel()
 		s.composeCancel = nil
 	}
-	if s.composeSending {
+	if s.composeSending || s.composeReconnecting {
 		s.composeSeq++
 		s.composeSending = false
+		s.composeReconnecting = false
 	}
 	s.composeBroadcast = false
 }
@@ -676,11 +707,20 @@ func sameSessionSet(left, right []model.SessionID) bool {
 	return true
 }
 
-// ComposeSending reports a line-by-line send still in progress.
+// ComposeSending reports a send still in progress: the line-by-line sender or
+// a queued send that has just been released by a reconnect.
 func (s *State) ComposeSending() bool {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
 	return s.composeSending
+}
+
+// ComposeReconnecting reports that a submit is waiting for a disconnected
+// target to come back. The draft stays in the editor during this wait.
+func (s *State) ComposeReconnecting() bool {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	return s.composeReconnecting
 }
 
 // ComposeResult returns the most recent compose delivery, if any.
@@ -690,51 +730,79 @@ func (s *State) ComposeResult() (appsession.SendResult, bool) {
 	return s.composeResult, len(s.composeResult.Deliveries) > 0
 }
 
+// composeSendOutcome distinguishes a rejected submit from one accepted now and
+// one accepted but waiting for a reconnect. Only the first two clear the
+// editor; a queued submit keeps the composed text visible.
+type composeSendOutcome int
+
+const (
+	composeSendRejected composeSendOutcome = iota
+	composeSendAccepted
+	composeSendQueued
+)
+
 // SendCompose sends the bound draft to the compose bar's target set: an
 // explicit choice when one was made, otherwise the broadcast set while
 // broadcasting or the focused Session. It reports whether the send was
 // accepted (a non-empty transformed draft with at least one target), not
-// whether every target delivered. The draft clears when the send is accepted,
-// as the original compose bar cleared its field immediately; the per-target
-// result reports partial failure afterwards.
+// whether every target delivered. A disconnected target is reconnected first;
+// the send is accepted then but delivered when it is ready. The draft clears
+// when the send is accepted, as the original compose bar cleared its field
+// immediately, except while a reconnect is pending so the text is not lost.
 func (s *State) SendCompose() bool {
-	return s.sendCompose()
+	return s.sendCompose() != composeSendRejected
 }
 
 // SendComposeDraft sends editor text that may be ahead of the bound draft.
 // OnTextKey sees the text typed with the key before the next frame writes the
 // bound value, so Enter must send what the key carries. It reports whether the
-// send was accepted, which lets the caller clear the editor.
+// editor should clear now: a reconnect wait keeps the text in place, and the
+// send path clears it once the target is ready.
 func (s *State) SendComposeDraft(draft string) bool {
 	s.inputMu.Lock()
 	s.composeDraft = draft
 	s.inputMu.Unlock()
-	return s.sendCompose()
+	return s.sendCompose() == composeSendAccepted
 }
 
-func (s *State) sendCompose() bool {
+func (s *State) sendCompose() composeSendOutcome {
 	if s.sessions == nil {
-		return false
+		return composeSendRejected
 	}
 	s.refreshBroadcastState()
 	s.inputMu.Lock()
-	if s.composeSending {
+	if s.composeSending || s.composeReconnecting {
 		s.inputMu.Unlock()
-		return false
+		return composeSendRejected
 	}
 	preview := appsession.TransformCompose(s.composeDraft, s.composeOptionsLocked())
 	if preview.Empty() {
 		s.inputMu.Unlock()
-		return false
+		return composeSendRejected
 	}
+	draft := s.composeDraft
 	s.inputMu.Unlock()
 
 	// Send follows the compose bar's own target set. The broadcast latch only
 	// supplies the default when the bar holds no explicit choice.
 	targets, broadcasting := s.ComposeTargets()
 	if len(targets) == 0 {
-		return false
+		return composeSendRejected
 	}
+
+	// A target that is still connecting is not sent to yet: the bytes would be
+	// gated or lost. Request an immediate retry where the Session allows one,
+	// then hold the draft until every waiting target can take input.
+	if waiting := s.composeReconnectTargets(targets); len(waiting) > 0 {
+		return s.queueComposeAfterReconnect(targets, waiting, preview, broadcasting, draft)
+	}
+
+	s.dispatchComposeNow(targets, preview, broadcasting)
+	return composeSendAccepted
+}
+
+// dispatchComposeNow sends a direct compose submit and clears the draft.
+func (s *State) dispatchComposeNow(targets []model.SessionID, preview appsession.ComposePreview, broadcasting bool) {
 	lineByLine := preview.LineMode == appsession.ComposeLineByLine
 	chunks := preview.Chunks
 	if !lineByLine {
@@ -758,11 +826,8 @@ func (s *State) sendCompose() bool {
 	s.inputMu.Unlock()
 
 	if async {
-		go func() {
-			result := s.sessions.SendChunksUntil(ctx, targets, chunks, appsession.ComposeLineDelay)
-			s.finishCompose(seq, result)
-		}()
-		return true
+		go s.sendComposedChunks(ctx, seq, targets, preview)
+		return
 	}
 	// Paste mode lets each target's peer state decide whether a multiline
 	// draft travels as one bracketed paste. A single line-by-line chunk keeps
@@ -774,6 +839,201 @@ func (s *State) sendCompose() bool {
 		result = s.sessions.SendInput(targets, chunks[0])
 	}
 	s.finishCompose(0, result)
+}
+
+// composeWaitTarget is one disconnected recipient. The Session pointer is
+// resolved on the UI thread before the wait starts, so the polling goroutine
+// never reads the Tabs.
+type composeWaitTarget struct {
+	id      model.SessionID
+	session *appsession.Session
+}
+
+// composeReconnectTargets requests an immediate retry for each running target
+// whose transport is not active and returns the ones the submit must wait for.
+// A target already reconnecting is waited for without a second request. An
+// active target is never touched, so a busy but connected Session keeps its
+// old behavior.
+func (s *State) composeReconnectTargets(targets []model.SessionID) []composeWaitTarget {
+	var waiting []composeWaitTarget
+	for _, id := range targets {
+		target := composeWaitTarget{id: id}
+		if session, ok := s.SessionByID(id); ok {
+			target.session = session
+		}
+		status, connection, ok := s.composeWaitStatus(target)
+		if !ok || status != appsession.StatusRunning {
+			continue
+		}
+		switch connection {
+		case appsession.ConnectionStatusActive:
+			continue
+		case appsession.ConnectionStatusReconnecting:
+			waiting = append(waiting, target)
+		default:
+			if s.composeWaitReconnect(target) {
+				waiting = append(waiting, target)
+			}
+		}
+	}
+	return waiting
+}
+
+// queueComposeAfterReconnect records the captured draft and dispatches it only
+// after every waiting target is ready. The composed text stays in the editor
+// for the whole wait, so surfacing the reconnect never loses it.
+func (s *State) queueComposeAfterReconnect(targets []model.SessionID, waiting []composeWaitTarget, preview appsession.ComposePreview, broadcasting bool, draft string) composeSendOutcome {
+	s.inputMu.Lock()
+	if s.composeSending || s.composeReconnecting {
+		s.inputMu.Unlock()
+		return composeSendRejected
+	}
+	seq := s.composeSeq + 1
+	s.composeSeq = seq
+	ctx, cancel := context.WithCancel(context.Background())
+	s.composeCancel = cancel
+	s.composeReconnecting = true
+	s.composeBroadcast = broadcasting
+	s.inputMu.Unlock()
+	s.RequestRedraw()
+
+	go s.waitForComposeConnection(ctx, seq, targets, waiting, preview, broadcasting, draft)
+	return composeSendQueued
+}
+
+// waitForComposeConnection waits on the real transport state with a hard
+// deadline. Cancellation (Escape, Close, StopBroadcast) ends it without a
+// result.
+func (s *State) waitForComposeConnection(ctx context.Context, seq uint64, targets []model.SessionID, waiting []composeWaitTarget, preview appsession.ComposePreview, broadcasting bool, draft string) {
+	deadline := time.Now().Add(composeReconnectTimeout)
+	ticker := time.NewTicker(composeReconnectPoll)
+	defer ticker.Stop()
+	for {
+		if s.composeTargetsReady(waiting) {
+			break
+		}
+		if !s.composeWaitPossible(waiting) || !time.Now().Before(deadline) {
+			s.abandonComposeReconnect(seq)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+	s.dispatchQueuedCompose(ctx, seq, targets, preview, broadcasting, draft)
+}
+
+// dispatchQueuedCompose sends the captured submit after the wait. Only the
+// captured text is sent; text typed while waiting is left in the editor.
+func (s *State) dispatchQueuedCompose(ctx context.Context, seq uint64, targets []model.SessionID, preview appsession.ComposePreview, broadcasting bool, draft string) {
+	s.inputMu.Lock()
+	if seq != s.composeSeq || !s.composeOpen || ctx.Err() != nil {
+		s.inputMu.Unlock()
+		return
+	}
+	if s.composeDraft == draft {
+		s.composeDraft = ""
+	}
+	s.composeReconnecting = false
+	s.composeCancel = nil
+	// Hold the re-entry guard until the queued bytes are handed to the
+	// Sessions, so a second Enter cannot duplicate them.
+	s.composeSending = true
+	s.composeBroadcast = broadcasting
+	s.inputMu.Unlock()
+	s.RequestRedraw()
+
+	s.sendComposedChunks(ctx, seq, targets, preview)
+}
+
+// abandonComposeReconnect ends an unsuccessful wait. The draft stays in the
+// editor so the user can retry once the Session is back.
+func (s *State) abandonComposeReconnect(seq uint64) {
+	s.inputMu.Lock()
+	if seq != s.composeSeq || !s.composeOpen {
+		s.inputMu.Unlock()
+		return
+	}
+	s.composeReconnecting = false
+	s.composeCancel = nil
+	s.inputMu.Unlock()
+	s.RequestRedraw()
+}
+
+// sendComposedChunks is the off-UI-thread send for a queue released by a
+// reconnect. The context stops a line-by-line draft before its next line.
+func (s *State) sendComposedChunks(ctx context.Context, seq uint64, targets []model.SessionID, preview appsession.ComposePreview) {
+	var result appsession.SendResult
+	switch {
+	case preview.LineMode == appsession.ComposeLineByLine:
+		result = s.sessions.SendChunksUntil(ctx, targets, preview.Chunks, appsession.ComposeLineDelay)
+	case ctx.Err() != nil:
+		// Canceled after the wait: deliver nothing.
+	case preview.LineMode == appsession.ComposePaste:
+		result = s.sessions.SendCompose(targets, preview)
+	case len(preview.Chunks) > 0:
+		result = s.sessions.SendInput(targets, preview.Chunks[0])
+	}
+	s.finishCompose(seq, result)
+}
+
+// composeWaitStatus reads one waiting target's lifecycle and transport state.
+// The test seam wins; otherwise the already-resolved Session supplies both.
+func (s *State) composeWaitStatus(target composeWaitTarget) (appsession.Status, appsession.ConnectionStatus, bool) {
+	if s.composeConnection.Status != nil {
+		return s.composeConnection.Status(target.id)
+	}
+	if target.session == nil {
+		return "", "", false
+	}
+	snapshot := target.session.Snapshot()
+	return snapshot.Status, snapshot.Connection, true
+}
+
+// composeWaitReconnect asks one target to dial again immediately.
+func (s *State) composeWaitReconnect(target composeWaitTarget) bool {
+	if s.composeConnection.Reconnect != nil {
+		return s.composeConnection.Reconnect(target.id)
+	}
+	if target.session == nil {
+		return false
+	}
+	return target.session.ReconnectNow()
+}
+
+// composeWaitReady reports that one target can receive input again.
+func (s *State) composeWaitReady(target composeWaitTarget) bool {
+	if s.composeConnection.Ready != nil {
+		return s.composeConnection.Ready(target.id)
+	}
+	if target.session == nil {
+		return false
+	}
+	snapshot := target.session.Snapshot()
+	return snapshot.Status == appsession.StatusRunning && snapshot.Connection == appsession.ConnectionStatusActive
+}
+
+func (s *State) composeTargetsReady(targets []composeWaitTarget) bool {
+	for _, target := range targets {
+		if !s.composeWaitReady(target) {
+			return false
+		}
+	}
+	return true
+}
+
+// composeWaitPossible reports that every target still exists and is running.
+// A target that ended during the wait cannot become ready, so the submit
+// stops early instead of waiting for the deadline.
+func (s *State) composeWaitPossible(targets []composeWaitTarget) bool {
+	for _, target := range targets {
+		status, _, ok := s.composeWaitStatus(target)
+		if !ok || status != appsession.StatusRunning {
+			return false
+		}
+	}
 	return true
 }
 

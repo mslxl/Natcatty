@@ -310,6 +310,8 @@ type State struct {
 	composeDecodeEscapes bool
 	composeLineMode      appsession.ComposeLineMode
 	composeSending       bool
+	composeReconnecting  bool
+	composeConnection    ComposeConnection
 	composeBroadcast     bool
 	composeResult        appsession.SendResult
 	composeSeq           uint64

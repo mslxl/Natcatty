@@ -37,16 +37,18 @@ type inputGraph struct {
 	factory *inputFactory
 }
 
-func newInputGraph(t *testing.T, tabs int) *inputGraph {
+func newInputGraph(t *testing.T, tabs int, options ...Option) *inputGraph {
 	t.Helper()
 	graph := &inputGraph{factory: &inputFactory{}}
 	service := appsession.NewService(graph.factory)
 	t.Cleanup(service.CloseAll)
-	graph.state = NewState(
+	all := []Option{
 		WithSessions(service, func(*appsession.Session) (Surface, error) {
 			return &fakeSurface{}, nil
 		}),
-	)
+	}
+	all = append(all, options...)
+	graph.state = NewState(all...)
 	for index := 0; index < tabs; index++ {
 		if err := graph.state.NewTab(); err != nil {
 			t.Fatalf("open tab %d: %v", index, err)
@@ -226,6 +228,135 @@ func TestComposeTransformsTheDraftAndSendsToTheFocusedSession(t *testing.T) {
 	if !ok || result.DeliveredCount() != 1 {
 		t.Fatalf("compose result = %+v", result)
 	}
+}
+
+// composeReconnectSeam is a fake connection: it records retries and stays
+// unavailable until the test reports the target is active again.
+type composeReconnectSeam struct {
+	mu         sync.Mutex
+	status     appsession.Status
+	connection appsession.ConnectionStatus
+	retries    int
+}
+
+func (s *composeReconnectSeam) Status(model.SessionID) (appsession.Status, appsession.ConnectionStatus, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.status, s.connection, true
+}
+
+func (s *composeReconnectSeam) Reconnect(model.SessionID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retries++
+	s.connection = appsession.ConnectionStatusReconnecting
+	return true
+}
+
+func (s *composeReconnectSeam) Ready(model.SessionID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.status == appsession.StatusRunning && s.connection == appsession.ConnectionStatusActive
+}
+
+func (s *composeReconnectSeam) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.retries
+}
+
+func (s *composeReconnectSeam) becomeActive() {
+	s.mu.Lock()
+	s.status = appsession.StatusRunning
+	s.connection = appsession.ConnectionStatusActive
+	s.mu.Unlock()
+}
+
+// TestComposeEnterReconnectsThenSends proves Enter on a disconnected target
+// requests the retry, keeps the composed text while the transport is down, and
+// dispatches the captured text once the Session is active again.
+func TestComposeEnterReconnectsThenSends(t *testing.T) {
+	seam := &composeReconnectSeam{status: appsession.StatusRunning, connection: appsession.ConnectionStatusError}
+	graph := newInputGraph(t, 1, WithComposeConnection(ComposeConnection{
+		Status:    seam.Status,
+		Reconnect: seam.Reconnect,
+		Ready:     seam.Ready,
+	}))
+	state := graph.state
+	state.OpenCompose()
+	state.SetComposeDraft("echo hello")
+
+	if state.SendComposeDraft("echo hello") {
+		t.Fatal("the editor cleared while the target was reconnecting")
+	}
+	if draft := *state.ComposeDraft(); draft != "echo hello" {
+		t.Fatalf("draft during reconnect = %q, want the composed text kept", draft)
+	}
+	if !state.ComposeReconnecting() {
+		t.Fatal("compose does not report the reconnect wait")
+	}
+	if got := seam.count(); got != 1 {
+		t.Fatalf("reconnects = %d, want one request", got)
+	}
+	if got := graph.factory.transport(0).inputString(); got != "" {
+		t.Fatalf("input was delivered before the target was ready: %q", got)
+	}
+
+	seam.becomeActive()
+	waitTransportInput(t, graph.factory.transport(0), "echo hello\r")
+	waitFor(t, "the queued compose to finish", func() bool {
+		_, reported := state.ComposeResult()
+		return reported && !state.ComposeReconnecting() && *state.ComposeDraft() == ""
+	})
+	result, ok := state.ComposeResult()
+	if !ok || result.DeliveredCount() != 1 {
+		t.Fatalf("compose result = %+v", result)
+	}
+}
+
+// A Session already reconnecting is waited for, not retried again.
+func TestComposeWaitsForAnAlreadyReconnectingTarget(t *testing.T) {
+	seam := &composeReconnectSeam{status: appsession.StatusRunning, connection: appsession.ConnectionStatusReconnecting}
+	graph := newInputGraph(t, 1, WithComposeConnection(ComposeConnection{
+		Status:    seam.Status,
+		Reconnect: seam.Reconnect,
+		Ready:     seam.Ready,
+	}))
+	state := graph.state
+	state.OpenCompose()
+
+	if state.SendComposeDraft("echo back") {
+		t.Fatal("the editor cleared during the wait")
+	}
+	if got := seam.count(); got != 0 {
+		t.Fatalf("reconnects = %d, want no second request", got)
+	}
+	seam.becomeActive()
+	waitTransportInput(t, graph.factory.transport(0), "echo back\r")
+}
+
+// A connected target sends immediately even when it is busy: only a transport
+// that is not active may trigger a reconnect.
+func TestComposeConnectedTargetIsNeverReconnected(t *testing.T) {
+	seam := &composeReconnectSeam{status: appsession.StatusRunning, connection: appsession.ConnectionStatusActive}
+	graph := newInputGraph(t, 1, WithComposeConnection(ComposeConnection{
+		Status:    seam.Status,
+		Reconnect: seam.Reconnect,
+		Ready:     seam.Ready,
+	}))
+	state := graph.state
+	state.OpenCompose()
+
+	if !state.SendComposeDraft("echo now") {
+		t.Fatal("a connected target refused the send")
+	}
+	if state.ComposeReconnecting() {
+		t.Fatal("a connected target entered the reconnect wait")
+	}
+	if got := seam.count(); got != 0 {
+		t.Fatalf("reconnects = %d, want none", got)
+	}
+	waitTransportInput(t, graph.factory.transport(0), "echo now\r")
 }
 
 func TestComposeSendsToTheBroadcastSetAndAppliesEscapesAndTrim(t *testing.T) {

@@ -41,8 +41,15 @@ func inputCheckbox(c *ui.Context, value *bool, label string) ui.Element {
 // draft, previews the original transformations, and sends to the focused
 // Session or the broadcast set.
 func terminalToolbar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
-	if s.ComposeOpen() && s.ComposeSending() {
-		ui.Text(c, m.ComposeSending()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
+	if s.ComposeOpen() {
+		// A pending reconnect is surfaced before a send starts; the draft
+		// stays in the editor until the target is ready.
+		switch {
+		case s.ComposeReconnecting():
+			ui.Text(c, m.ConnectionStatusReconnecting()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
+		case s.ComposeSending():
+			ui.Text(c, m.ComposeSending()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
+		}
 	}
 	broadcastLabel := m.BroadcastButton()
 	if s.Broadcasting() {
@@ -357,7 +364,7 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 			ui.Column(c).Grow(1)
 			targets, _ := s.ComposeTargets()
 			send := inputPrimaryButton(c, m.ComposeSend()).
-				Disabled(preview.Empty() || len(targets) == 0 || s.ComposeSending())
+				Disabled(preview.Empty() || len(targets) == 0 || s.ComposeSending() || s.ComposeReconnecting())
 			if send.Clicked() {
 				s.SendCompose()
 				c.Invalidate()
