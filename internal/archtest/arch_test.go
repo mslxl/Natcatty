@@ -195,7 +195,7 @@ func webViewUses(t *testing.T, root string) []string {
 		}
 		if entry.IsDir() {
 			switch entry.Name() {
-			case ".git", "build", ".mygo", "node_modules":
+			case ".git", "build", ".mygo", "node_modules", "third_party":
 				return filepath.SkipDir
 			}
 			return nil
@@ -244,7 +244,7 @@ func TestProductionSourcesNeverReferenceTheStoreDeleteEndpoint(t *testing.T) {
 		}
 		if entry.IsDir() {
 			switch entry.Name() {
-			case ".git", "build", ".mygo", "node_modules":
+			case ".git", "build", ".mygo", "node_modules", "third_party":
 				return filepath.SkipDir
 			}
 			return nil

@@ -18,3 +18,9 @@ domain/vaultimport/testdata/** -text -eol
 *.png binary
 *.ico binary
 *.icns binary
+
+# The MyGo patch set is applied with git apply and run by sh; keep the
+# patches, scripts, and justfile LF on Windows checkouts too.
+*.patch text eol=lf
+*.sh text eol=lf
+justfile text eol=lf

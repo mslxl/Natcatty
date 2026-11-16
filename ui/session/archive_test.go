@@ -10,6 +10,16 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 )
 
+// surfaceFrameTop is the toolbar height surfaceFrame puts above the terminal,
+// so a link rectangle, which HoveredLink reports relative to the view, maps
+// back to window DIPs.
+const surfaceFrameTop = 30
+
+// archiveFlushMarker is written through the terminal's own input queue after a
+// click. InsertInput and that queue share one FIFO, so once the marker arrives
+// every fill queued by the click has arrived too.
+const archiveFlushMarker = "archive-test-flush"
+
 func newArchiveSurface(t *testing.T) (*Surface, *recordingTransport) {
 	t.Helper()
 	transport := newRecordingTransport()
@@ -27,27 +37,55 @@ func newArchiveSurface(t *testing.T) (*Surface, *recordingTransport) {
 	return surface, transport
 }
 
-// clickArchive finds the printed name by asking the widget through its own
-// link state: a Command+click on a link fills the command and leaves the hover
-// marked. The probe does not assume fonts or padding; the pointer condition is
-// the same one a user's hover and click satisfy.
-func clickArchive(t *testing.T, tester *ui.Tester, surface *Surface, transport *recordingTransport, want, command string) (float32, float32) {
+// archiveLinkPoint finds the printed name through MyGo's own link state and
+// returns the center of the rectangle the widget reports. The terminal's Move
+// helper cannot hold a modifier (it resets the held state on each move), so
+// the probe is a Command-click; the test feeds the name at the start of row 0,
+// where the first cell-sized step lands and the scan stops. MyGo fills the
+// command on that one click, so callers that need a second click wait for the
+// fill first. The rectangle is in view coordinates; surfaceFrameTop maps it to
+// window DIPs.
+func archiveLinkPoint(t *testing.T, tester *ui.Tester, surface *Surface, want string) (float32, float32) {
 	t.Helper()
-	for y := float32(30); y < 120; y += 4 {
-		for x := float32(2); x < 200; x += 4 {
-			tester.ClickAtWith(ui.Cmd, x, y)
-			if transport.input() != command {
-				continue
-			}
-			link, path, at := surface.terminal.HoveredLink()
-			if link != want || !path || at.W <= 0 {
-				t.Fatalf("click on %q left hover %q path %v rect %+v", want, link, path, at)
-			}
-			return x, y
+	const firstRowY = surfaceFrameTop + 4
+	for x := float32(2); x < 300; x += 2 {
+		tester.ClickAtWith(ui.Cmd, x, firstRowY)
+		link, path, at := surface.terminal.HoveredLink()
+		if link != want {
+			continue
 		}
+		if !path || at.W <= 0 || at.H <= 0 {
+			t.Fatalf("link %q has path %v rect %+v", want, path, at)
+		}
+		return at.X + at.W/2, surfaceFrameTop + at.Y + at.H/2
 	}
-	t.Fatalf("no clickable link %q on the terminal", want)
+	t.Fatalf("no Command-clickable link %q on the first row", want)
 	return 0, 0
+}
+
+// waitArchiveTransport waits until the transport holds want. A fill is queued
+// to the Session's write goroutine, so an immediate read races the writer.
+func waitArchiveTransport(t *testing.T, transport *recordingTransport, want string) string {
+	t.Helper()
+	got := ""
+	if !waitFor(t, func() bool { got = transport.input(); return got == want }) {
+		t.Fatalf("transport input = %q, want %q", got, want)
+	}
+	return got
+}
+
+// flushArchiveInput queues marker behind whatever the click path queued and
+// waits for it to be written. The FIFO orders the marker after any archive
+// command, so the negative assertions are condition waits on a real event, not
+// sleeps.
+func flushArchiveInput(t *testing.T, surface *Surface, transport *recordingTransport, marker string) string {
+	t.Helper()
+	surface.terminal.Send([]byte(marker))
+	got := ""
+	if !waitFor(t, func() bool { got = transport.input(); return strings.Contains(got, marker) }) {
+		t.Fatalf("the flush marker never reached the transport: %q", got)
+	}
+	return got
 }
 
 // The reporting gate reads the emulator's own mode state, and a later reset of
@@ -60,6 +98,7 @@ func TestMouseReportingEnabledReadsTheVTSnapshot(t *testing.T) {
 		{"", false},
 		{"plain text", false},
 		{"\x1b[?1000h", true},
+		{"\x1b[?1001h", true},
 		{"\x1b[?1002h\x1b[?1006h", true},
 		{"\x1b[?9h\x1b[?9l", false},
 		{"\x1b[?1000h\x1b[?1002l", true},
@@ -81,33 +120,48 @@ func TestArchiveNameHoverAndClickFillsTheCommand(t *testing.T) {
 	tester.SetLocale("en")
 	tester.Frame()
 
+	archiveLinkPoint(t, tester, surface, "release.tar.gz")
 	want := "tar -xzf 'release.tar.gz'"
-	clickArchive(t, tester, surface, transport, "release.tar.gz", want)
-	if got := transport.input(); got != want {
-		t.Fatalf("click filled %q, want %q", got, want)
-	}
-	if strings.ContainsAny(transport.input(), "\r\n") {
-		t.Fatalf("the filled command was submitted: %q", transport.input())
+	got := waitArchiveTransport(t, transport, want)
+	if strings.ContainsAny(got, "\r\n") {
+		t.Fatalf("the filled command was submitted: %q", got)
 	}
 }
 
-// While a program takes the mouse, the click is the program's report and no
-// archive command is filled.
-func TestArchiveClickDoesNothingWhileTheProgramTakesTheMouse(t *testing.T) {
+// While a program takes the mouse, the click is the program's mouse report:
+// the fork suppresses the link, so nothing is filled and the program receives
+// the press it asked for.
+func TestArchiveClickIsForwardedWhileTheProgramTakesTheMouse(t *testing.T) {
 	surface, transport := newArchiveSurface(t)
 	surface.terminal.Feed([]byte("release.tar.gz\r\n$ "))
 	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
 	tester.SetLocale("en")
 	tester.Frame()
-	command := "tar -xzf 'release.tar.gz'"
-	x, y := clickArchive(t, tester, surface, transport, "release.tar.gz", command)
-	before := transport.input()
 
+	x, y := archiveLinkPoint(t, tester, surface, "release.tar.gz")
+	command := "tar -xzf 'release.tar.gz'"
+	// The probe's click filled the command once. Wait for that fill so the
+	// baseline below is stable before tracking takes the pointer.
+	waitArchiveTransport(t, transport, command)
+
+	// 1002 is button-event tracking, 1006 makes the report SGR-encoded.
 	surface.terminal.Feed([]byte("\x1b[?1002h\x1b[?1006h"))
 	tester.Frame()
+	before := transport.input()
 	tester.ClickAtWith(ui.Cmd, x, y)
-	if got := transport.input(); got != before || strings.Count(got, command) != 1 {
-		t.Fatalf("a reporting program received the archive command: %q", got)
+
+	if link, path, at := surface.terminal.HoveredLink(); link != "" || path || at.W != 0 {
+		t.Fatalf("mouse tracking still offered link %q path %v rect %+v", link, path, at)
+	}
+	added := ""
+	if !waitFor(t, func() bool {
+		added = strings.TrimPrefix(transport.input(), before)
+		return strings.Contains(added, "\x1b[<")
+	}) {
+		t.Fatalf("Command+click was not reported to the program: %q", added)
+	}
+	if strings.Count(transport.input(), command) != 1 {
+		t.Fatalf("a mouse-tracking program received the archive command: %q", transport.input())
 	}
 }
 
@@ -118,15 +172,19 @@ func TestArchiveClickDoesNothingWhileSelecting(t *testing.T) {
 	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
 	tester.SetLocale("en")
 	tester.Frame()
+
+	x, y := archiveLinkPoint(t, tester, surface, "release.tar.gz")
 	command := "tar -xzf 'release.tar.gz'"
-	x, y := clickArchive(t, tester, surface, transport, "release.tar.gz", command)
+	// The probe's click filled the command once.
+	waitArchiveTransport(t, transport, command)
 
 	tester.Press(x, y)
 	tester.Move(x+40, y)
 	tester.ClickAtWith(ui.Cmd, x, y)
 	tester.Release(x+40, y)
-	if got := transport.input(); strings.Count(got, command) != 1 {
-		t.Fatalf("a selection took the archive command: %q", got)
+	got := flushArchiveInput(t, surface, transport, archiveFlushMarker)
+	if strings.Count(got, command) != 1 {
+		t.Fatalf("a selection filled the archive command again: %q", got)
 	}
 }
 
@@ -143,17 +201,20 @@ func TestArchiveFillWaitsForThePromptAndIgnoresOtherLinks(t *testing.T) {
 	if !waitFor(t, func() bool { return surface.session.Snapshot().Command.Running }) {
 		t.Fatal("the command did not start")
 	}
-	before := transport.input()
+
 	if !surface.openArchiveLink("release.tar.gz") {
 		t.Fatal("an archive was not recognized while a command ran")
 	}
-	if after := transport.input(); after != before {
-		t.Fatalf("a running command got %q", strings.TrimPrefix(after, before))
+	got := flushArchiveInput(t, surface, transport, archiveFlushMarker+"-running")
+	if strings.Contains(got, "tar -xzf") {
+		t.Fatalf("a running command got an archive fill: %q", got)
 	}
+
 	if surface.openArchiveLink("notes.txt") {
 		t.Fatal("a non-archive path was handled as an archive")
 	}
-	if after := transport.input(); after != before {
-		t.Fatalf("a non-archive changed the input: %q", strings.TrimPrefix(after, before))
+	got = flushArchiveInput(t, surface, transport, archiveFlushMarker+"-other")
+	if strings.Contains(got, "tar -xzf") {
+		t.Fatalf("a non-archive changed the input: %q", got)
 	}
 }

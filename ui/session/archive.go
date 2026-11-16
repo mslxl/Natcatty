@@ -12,10 +12,16 @@ import (
 // through to MyGo's own handling.
 //
 // MyGo checks the link before it offers the press to a program that takes the
-// mouse, so the reporting state is checked here as well: while a program has
-// mouse tracking on, the click leaves the line editor alone. The press itself
-// is still consumed by MyGo's link layer before the program, which is why the
-// ticket records that part as a widget limitation.
+// mouse. The fork in third_party/mygo suppresses the link while tracking is
+// on, so the click reaches the program as a mouse report; the reporting state
+// is checked here as well for a press that was already pending when tracking
+// started. The click leaves the line editor alone in either case.
+//
+// The command is inserted at the line editor's cursor, like typed text, and
+// does not clear what the user already typed: this path has no reliable erase
+// seam, and clearing input from a click would lose a draft. MyGo's own
+// affordance is Command (Control elsewhere); the tests drive that same
+// modifier rather than inventing a Netcatty-only gesture.
 func (s *Surface) openArchiveLink(link string) bool {
 	command, ok := domainterminal.ArchiveExtractCommand(link)
 	if !ok {
@@ -32,9 +38,9 @@ func (s *Surface) openArchiveLink(link string) bool {
 }
 
 // mouseTrackingModes are the DEC private modes that make a program take the
-// pointer: X10, normal, button-event, and any-event reporting. The encoding
-// modes (1005, 1006, 1015, 1016) only change how a report is written.
-var mouseTrackingModes = []string{"9", "1000", "1002", "1003"}
+// pointer: X10, normal, highlight, button-event, and any-event reporting. The
+// encoding modes (1005, 1006, 1015, 1016) only change how a report is written.
+var mouseTrackingModes = []string{"9", "1000", "1001", "1002", "1003"}
 
 // mouseReportingEnabled reads the last DEC private-mode state from a terminal
 // snapshot. It mirrors bracketedPasteEnabled: the emulator's own VT replay is

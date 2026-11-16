@@ -1,0 +1,9 @@
+name: Prepare MyGo
+description: Initialize the MyGo submodule and apply the local patches.
+
+runs:
+  using: composite
+  steps:
+    - name: Apply MyGo patches
+      shell: bash
+      run: scripts/apply-mygo-patches.sh
