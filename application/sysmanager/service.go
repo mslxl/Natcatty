@@ -945,6 +945,15 @@ func (s *Service) sampleOnce(ctx context.Context, host domainvault.Host, tab Tab
 	case TabKubernetes:
 		inventory, parseErr := parseKubernetesList(result.Stdout, s.now())
 		if parseErr != nil {
+			// The namespace list can succeed while the selected namespace's
+			// pods list is refused. Keep the namespaces that were listed so the
+			// degraded state can still offer another namespace instead of
+			// retrying the same forbidden request forever.
+			if len(inventory.Namespaces) > 0 {
+				s.update(string(host.ID), tab, gen, func(state *TabState) {
+					state.Kubernetes.Namespaces = inventory.Namespaces
+				})
+			}
 			return s.fail(string(host.ID), tab, gen, parseErr)
 		}
 		s.update(string(host.ID), tab, gen, func(state *TabState) {

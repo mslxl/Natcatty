@@ -358,13 +358,26 @@ func tabContent(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		}
 		tmuxContent(c, s, state, m, t)
 	case appsysmanager.TabDocker:
+		// The toolbar stays up in a degraded state: when the selected engine's
+		// daemon is stopped, the runtime switcher must remain reachable so the
+		// user can choose another detected engine instead of retrying forever.
+		dockerToolbar(c, s, m, state.Status == appsysmanager.StatusLive)
 		if state.Status != appsysmanager.StatusLive {
 			statusPanel(c, s, state, m, t)
 			return
 		}
-		dockerContent(c, s, state, m, t)
+		if s.DockerView() == 1 {
+			dockerImages(c, s, state, m, t)
+			return
+		}
+		dockerContainers(c, s, state, m, t)
 	case appsysmanager.TabKubernetes:
 		if state.Status != appsysmanager.StatusLive {
+			// A successful namespace list followed by a refused pods list is
+			// terminal for sampling, but the listed namespaces remain valid:
+			// keep the selector so the user can pick another namespace rather
+			// than only retrying the forbidden one.
+			kubernetesNamespaceSelector(c, s, m)
 			statusPanel(c, s, state, m, t)
 			return
 		}
@@ -471,15 +484,27 @@ func sessionActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	})
 }
 
-func dockerContent(c *ui.Context, s *State, state appsysmanager.TabState,
-	m locales.Messages, t *ui.Theme) {
-	view := s.DockerView()
-	chosen := view
+// dockerToolbar renders the Containers/Images switch while the tab is live and
+// the runtime switcher whenever the probe found more than one engine. The
+// switcher is drawn in a degraded state too, which is the only way out of a
+// selected engine whose daemon is stopped.
+func dockerToolbar(c *ui.Context, s *State, m locales.Messages, live bool) {
 	runtimes := s.AvailableContainerRuntimes()
+	if !live && len(runtimes) < 2 {
+		return
+	}
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-		kit.Segmented(c, kit.SegmentedText, &chosen, m.SysManagerDockerView(), []kit.Segment{
-			{Label: m.SysManagerContainers()}, {Label: m.SysManagerImages()},
-		})
+		if live {
+			view := s.DockerView()
+			chosen := view
+			kit.Segmented(c, kit.SegmentedText, &chosen, m.SysManagerDockerView(), []kit.Segment{
+				{Label: m.SysManagerContainers()}, {Label: m.SysManagerImages()},
+			})
+			if chosen != view {
+				s.SetDockerView(chosen)
+				c.Invalidate()
+			}
+		}
 		// A Host with one engine behaves as it did before the switcher: no
 		// control is shown. Only the engines the probe actually found are
 		// offered, so selecting one can never target a missing binary.
@@ -504,16 +529,6 @@ func dockerContent(c *ui.Context, s *State, state appsysmanager.TabState,
 			}
 		}
 	})
-	if chosen != view {
-		s.SetDockerView(chosen)
-		c.Invalidate()
-		view = chosen
-	}
-	if view == 1 {
-		dockerImages(c, s, state, m, t)
-		return
-	}
-	dockerContainers(c, s, state, m, t)
 }
 
 func runtimeLabel(m locales.Messages, runtime appsysmanager.ContainerRuntime) string {
@@ -676,24 +691,7 @@ func dockerImages(c *ui.Context, s *State, state appsysmanager.TabState,
 func kubernetesContent(c *ui.Context, s *State, state appsysmanager.TabState,
 	m locales.Messages, t *ui.Theme) {
 	listTab(c, func() {
-		namespaces := s.KubernetesNamespaces()
-		current := s.KubernetesNamespace()
-		if len(namespaces) > 0 {
-			options := append([]string(nil), namespaces...)
-			if current != "" && !slices.Contains(options, current) {
-				options = append([]string{current}, options...)
-			}
-			picked := current
-			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Select(c, &picked, options).Width(170).MinWidth(120).
-					Label(m.SysManagerNamespace())
-				ui.Column(c).Grow(1)
-			})
-			if picked != current {
-				_ = s.SetKubernetesNamespace(picked)
-				c.Invalidate()
-			}
-		}
+		kubernetesNamespaceSelector(c, s, m)
 		toolbar(c, s, m, t, m.SysManagerSearchPods(),
 			m.SysManagerPodsCount(len(s.DisplayPods())))
 		rows := s.DisplayPods()
@@ -705,6 +703,31 @@ func kubernetesContent(c *ui.Context, s *State, state appsysmanager.TabState,
 		kubernetesTable(c, s, rows, m, t)
 		kubernetesActions(c, s, m, t)
 	})
+}
+
+// kubernetesNamespaceSelector offers the namespaces the last successful list
+// returned. It is rendered outside the live content too, so a forbidden pods
+// list cannot dead-end the tab on one namespace.
+func kubernetesNamespaceSelector(c *ui.Context, s *State, m locales.Messages) {
+	namespaces := s.KubernetesNamespaces()
+	if len(namespaces) == 0 {
+		return
+	}
+	current := s.KubernetesNamespace()
+	options := append([]string(nil), namespaces...)
+	if current != "" && !slices.Contains(options, current) {
+		options = append([]string{current}, options...)
+	}
+	picked := current
+	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Select(c, &picked, options).Width(170).MinWidth(120).
+			Label(m.SysManagerNamespace())
+		ui.Column(c).Grow(1)
+	})
+	if picked != current {
+		_ = s.SetKubernetesNamespace(picked)
+		c.Invalidate()
+	}
 }
 
 func kubernetesTable(c *ui.Context, s *State, rows []appsysmanager.Pod,

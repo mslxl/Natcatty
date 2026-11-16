@@ -100,6 +100,17 @@ func (f *fakeExtendedService) SetContainerRuntime(runtime appsysmanager.Containe
 	f.mu.Lock()
 	f.runtimes = append(f.runtimes, runtime)
 	f.mu.Unlock()
+	// Mirror the real service: the cached Docker sample belongs to the previous
+	// engine, so switching discards it and shows a fresh sample connecting.
+	f.fakeService.mu.Lock()
+	f.snapshot.ContainerRuntime = runtime
+	if f.snapshot.Active == appsysmanager.TabDocker {
+		f.snapshot.Tabs[appsysmanager.TabDocker] = appsysmanager.TabState{
+			Tab: appsysmanager.TabDocker, Status: appsysmanager.StatusConnecting,
+			At: time.Now(),
+		}
+	}
+	f.fakeService.mu.Unlock()
 }
 
 func (f *fakeExtendedService) SetKubernetesNamespace(namespace string) error {
