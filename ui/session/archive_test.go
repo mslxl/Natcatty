@@ -165,6 +165,56 @@ func TestArchiveClickIsForwardedWhileTheProgramTakesTheMouse(t *testing.T) {
 	}
 }
 
+// DEC 1001 (highlight tracking) is a mode the C parser drops, so the fork
+// records it itself. A program that asks only for 1001 still takes the mouse:
+// the click is reported to it and the archive command is not filled. The
+// sequence is split across two feeds to pin the fork's carry across reads.
+// Resetting 1001 gives the link back.
+func TestArchiveClickIsForwardedUnderHighlightTracking(t *testing.T) {
+	surface, transport := newArchiveSurface(t)
+	surface.terminal.Feed([]byte("release.tar.gz\r\n$ "))
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	x, y := archiveLinkPoint(t, tester, surface, "release.tar.gz")
+	command := "tar -xzf 'release.tar.gz'"
+	// The probe's click filled the command once; wait for it before the
+	// baseline below, as the other reporting test does.
+	waitArchiveTransport(t, transport, command)
+
+	// 1001 is split mid-parameter. 1006 makes the report SGR-encoded, so its
+	// presence proves the fork fed the synthetic tracking mode to the encoder.
+	surface.terminal.Feed([]byte("\x1b[?10"))
+	surface.terminal.Feed([]byte("01h\x1b[?1006h"))
+	tester.Frame()
+	before := transport.input()
+	tester.ClickAtWith(ui.Cmd, x, y)
+
+	if link, path, at := surface.terminal.HoveredLink(); link != "" || path || at.W != 0 {
+		t.Fatalf("highlight tracking still offered link %q path %v rect %+v", link, path, at)
+	}
+	added := ""
+	if !waitFor(t, func() bool {
+		added = strings.TrimPrefix(transport.input(), before)
+		return strings.Contains(added, "\x1b[<")
+	}) {
+		t.Fatalf("Command+click under 1001 was not reported to the program: %q", added)
+	}
+	if strings.Count(transport.input(), command) != 1 {
+		t.Fatalf("a 1001 program received the archive command: %q", transport.input())
+	}
+
+	// 1001 off: the link is the terminal's again.
+	surface.terminal.Feed([]byte("\x1b[?1001l\x1b[?1006l"))
+	tester.Frame()
+	tester.ClickAtWith(ui.Cmd, x, y)
+	got := flushArchiveInput(t, surface, transport, archiveFlushMarker+"-1001-off")
+	if strings.Count(got, command) != 2 {
+		t.Fatalf("with 1001 off the click did not fill the command again: %q", got)
+	}
+}
+
 // A drag that is selecting keeps the archive link from taking the press.
 func TestArchiveClickDoesNothingWhileSelecting(t *testing.T) {
 	surface, transport := newArchiveSurface(t)
