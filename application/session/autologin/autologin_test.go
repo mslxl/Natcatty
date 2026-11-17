@@ -370,6 +370,11 @@ func TestPasswordPromptForms(t *testing.T) {
 		{name: "input password", feeds: []string{"Input Password"}},
 		{name: "input password colon", feeds: []string{"Input Password: "}},
 		{name: "chinese", feeds: []string{"输入密码"}},
+		{name: "enter password", feeds: []string{"Enter password:"}},
+		{name: "enter password without terminator", feeds: []string{"Enter password"}},
+		// Prefix prose on the same line must not turn a real prompt into a
+		// notice: the management-verb window stops at the comma.
+		{name: "prefix prose", feeds: []string{"To set up this device, enter password:"}},
 		{name: "enter your password", feeds: []string{"Enter your password: "}},
 		{name: "please enter your password", feeds: []string{"Please enter your password: "}},
 		{name: "type your password", feeds: []string{"Type your password:"}},
@@ -385,6 +390,106 @@ func TestPasswordPromptForms(t *testing.T) {
 			}
 			assertWrites(t, recorder, password+"\r")
 		})
+	}
+}
+
+// TestPasswordManagementNoticeDoesNotConsumeTheOnlyAttempt is the regression
+// guard for the optional prompt terminator: a password-management notice that
+// ends at the word "password" (with no article, or with an adjective, menu
+// numbering, or prefix prose) used to look like a prompt and spend the saved
+// credential. Each notice must leave the detector armed with zero attempts so
+// the following real "Password:" is still answered.
+func TestPasswordManagementNoticeDoesNotConsumeTheOnlyAttempt(t *testing.T) {
+	const password = "secret"
+	notices := []string{
+		// Management verb with no article before the credential word.
+		"Change Password",
+		"Reset Password",
+		"Forgot Password",
+		"Update Password",
+		"Set Password",
+		"Create Password",
+		"Choose Password",
+		"Recover Password",
+		"Rotate Password",
+		// Adjectives between the verb and the credential word.
+		"Set a new password",
+		"Please create a new password",
+		"Please create a strong password",
+		// Menu numbering and prefix prose.
+		"2. Change password",
+		"Press 1 to reset password",
+		"1) Reset password",
+		"Your account is locked. Reset password",
+		// Credential word first, management vocabulary after it.
+		"Your password will expire in 30 days",
+		"Password policy",
+		"Password reset/update",
+		// Security notices.
+		"Never share your password",
+		"Do not reveal your password",
+		"Never share your password:",
+		"Your password expires in 30 days",
+		"Contact IT to reset your password",
+	}
+	for _, notice := range notices {
+		t.Run(notice, func(t *testing.T) {
+			engine, recorder := newTestEngine(Options{
+				Password: password, PasswordSet: true, MaxAttempts: 1,
+			})
+
+			engine.Feed(notice + "\r\n")
+			assertWrites(t, recorder)
+			if !engine.Active() {
+				t.Fatal("the notice disarmed the detector")
+			}
+			if engine.attempts != 0 {
+				t.Fatalf("attempts = %d, want 0 after a notice", engine.attempts)
+			}
+
+			engine.Feed("Password: ")
+			assertWrites(t, recorder, password+"\r")
+			if engine.attempts != 1 {
+				t.Fatalf("attempts = %d, want 1 after the real prompt", engine.attempts)
+			}
+		})
+	}
+}
+
+// TestPasswordBannerVocabulary pins the notice vocabulary that the prompt form
+// alone cannot distinguish. Some notices ("Password policy", "Your password
+// will expire in 30 days") do not end at the credential word, so the engine
+// would never answer them; keeping them rejected is defense in depth for a
+// console whose phrasing puts the credential word last. The same pattern must
+// not match any real prompt form.
+func TestPasswordBannerVocabulary(t *testing.T) {
+	notices := []string{
+		"Your password will expire in 30 days",
+		"Password policy",
+		"Password reset/update",
+		"Your password expires in 30 days",
+		"Your password has been reset",
+		"Password must be changed",
+		"Password Expired",
+		"Password change required",
+	}
+	for _, notice := range notices {
+		if !passwordBanner.MatchString(notice) {
+			t.Errorf("passwordBanner did not reject the notice %q", notice)
+		}
+	}
+
+	prompts := []string{
+		"Password:", "password:", "Password for user:", "Enter password:",
+		"Enter your password:", "Please enter your password:", "Type your password:",
+		"Your password:", "Input Password", "输入密码", "Password",
+		"New password:", "Enter a new password:", "Please enter password",
+		"To set up this device, enter password:",
+	}
+	for _, prompt := range prompts {
+		if passwordBanner.MatchString(prompt) {
+			t.Errorf("passwordBanner rejected the real prompt %q", prompt)
+		}
 	}
 }
 

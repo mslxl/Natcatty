@@ -35,15 +35,26 @@ var (
 	// "Password:" prompt is still answered.
 	credentialBanner = regexp.MustCompile(`(?i)(^|[^a-z0-9])((last|previous|failed|successful)\s+(login|logon)|(last|previous)\s+password|password\s+(expires?|expired|will\s+expire|change\s+required)|change\s+your\s+password)`)
 	// passwordBanner recognizes a MOTD or security notice that merely mentions
-	// a password, such as "Never share your password" or "Your password
-	// expires in 30 days". Answering one of those would spend an attempt before
-	// the console asked for anything. The words are notice vocabulary; a real
-	// prompt is an imperative form ("Password:", "Input Password", "Enter your
-	// password:") without them. The bare possessive "your password" is not
-	// notice vocabulary on its own: "Your password:" is a real prompt, while a
-	// password-management verb in front of it ("Reset your password") is a
-	// notice.
-	passwordBanner = regexp.MustCompile(`(?i)(never|do\s+not|don'?t|re-?veal|disclos|share|(reset|update|set|create|choose|change|forgot(?:ten)?|recover|rotate)\s+(your|a|the)\s+password|password\s+(expiry|expiration|expires?|expired|reset|update|policy|change\s+required))`)
+	// a password, such as "Never share your password", "Change Password", or
+	// "Your password expires in 30 days". Answering one of those would spend an
+	// attempt before the console asked for anything.
+	//
+	// Now that the prompt terminator is optional, a notice that ends at the
+	// credential word ("Reset Password", "Set a new password") is otherwise
+	// indistinguishable from a bare prompt. The filter therefore rejects a
+	// management verb within a bounded window of the credential word in either
+	// order: a verb before it ("Reset Password", "Press 1 to reset password")
+	// or after it ("Password reset/update", "password will expire"). The window
+	// stops at sentence and prompt punctuation, so prefix prose such as
+	// "To set up this device, enter password:" does not reach across a comma.
+	//
+	// The words are notice vocabulary; a real prompt is an imperative form
+	// ("Password:", "Input Password", "Enter your password:") whose verb is
+	// enter/type/input, none of which is a management verb. The bare possessive
+	// "your password" is not notice vocabulary on its own: "Your password:" is
+	// a real prompt, while a management verb near it ("Reset your password") is
+	// a notice.
+	passwordBanner = regexp.MustCompile(`(?i)(never|do\s+not|don'?t|re-?veal|disclos|share|(?:reset|update|set|create|choose|change|forgot(?:ten)?|recover|rotate|expir\w*)\b[^.,;:!?>：\r\n]{0,40}?password|password\b[^.,;:!?>：\r\n]{0,40}?(?:reset|update|expir\w*|policy|change))`)
 	usernamePrompt = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(user\s*name|username|login|logon|account|userid|user\s*id|user|用户名|帐号|账号|登录|登入)(\s*[:：>])?\s*$`)
 	// passwordPrompt matches a real password form. The terminator is optional,
 	// as in the original detector: consoles print "Password:", "Password for
