@@ -63,7 +63,10 @@ func (f *fakeTransport) Close() error {
 	return nil
 }
 
+// fakeFactory records the start specs a graph dials. A reconnect goroutine can
+// call Open while a test inspects the record, so every field is guarded.
 type fakeFactory struct {
+	mu        sync.Mutex
 	transport *fakeTransport
 	err       error
 	spec      appsession.StartSpec
@@ -73,12 +76,35 @@ type fakeFactory struct {
 }
 
 func (f *fakeFactory) Open(_ context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.spec = spec
 	f.opens++
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.transport, nil
+}
+
+// lastSpec returns the most recent dial's spec as a race-free snapshot.
+func (f *fakeFactory) lastSpec() appsession.StartSpec {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.spec
+}
+
+// openCount returns the number of dials.
+func (f *fakeFactory) openCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.opens
+}
+
+// setError changes the next dial's failure.
+func (f *fakeFactory) setError(err error) {
+	f.mu.Lock()
+	f.err = err
+	f.mu.Unlock()
 }
 
 // fakeSurface stands in for the MyGo terminal the UI owns.
@@ -201,7 +227,7 @@ func TestNewTabWithShellStartsTheNamedProgram(t *testing.T) {
 	if graph.state.TabCount() != 1 || graph.state.ActiveTab() != 0 {
 		t.Fatalf("tabs = %d, active = %d, want 1 and 0", graph.state.TabCount(), graph.state.ActiveTab())
 	}
-	if spec := graph.factory.spec; spec.Kind != appsession.KindLocal ||
+	if spec := graph.factory.lastSpec(); spec.Kind != appsession.KindLocal ||
 		len(spec.Command) != 1 || spec.Command[0] != "pwsh.exe" {
 		t.Fatalf("start spec = %+v, want a local Session running pwsh.exe", spec)
 	}
@@ -209,7 +235,7 @@ func TestNewTabWithShellStartsTheNamedProgram(t *testing.T) {
 
 func TestNewTabWithShellFailureAppendsNoTab(t *testing.T) {
 	graph := newTestGraph(t)
-	graph.factory.err = errors.New("no such shell")
+	graph.factory.setError(errors.New("no such shell"))
 
 	if err := graph.state.NewTabWithShell("missing.exe"); err == nil {
 		t.Fatal("a failed shell start reported no error")
@@ -400,14 +426,14 @@ func TestOpenHostAddsAnSSHTabOnTheNextFlush(t *testing.T) {
 		graph.state.Flush()
 		return graph.state.TabCount() == 1
 	})
-	if got := graph.factory.spec; got.Kind != appsession.KindSSH || got.HostID != "host-1" ||
+	if got := graph.factory.lastSpec(); got.Kind != appsession.KindSSH || got.HostID != "host-1" ||
 		got.Hostname != "example.com" || got.Port != 2222 || got.Username != "root" {
 		t.Fatalf("factory spec = %+v, want the Host's SSH target", got)
 	}
-	if graph.factory.spec.Reconnect == nil {
+	if graph.factory.lastSpec().Reconnect == nil {
 		t.Fatal("SSH Sessions do not carry the reconnect policy")
 	}
-	if graph.factory.spec.X11Forwarding {
+	if graph.factory.lastSpec().X11Forwarding {
 		t.Fatal("X11 forwarding was requested without a Host preference")
 	}
 	if pending := graph.state.PendingConnections(); len(pending) != 0 {
@@ -445,7 +471,7 @@ func TestOpenHostOpensATelnetHostWithTheTelnetTransport(t *testing.T) {
 		return graph.state.TabCount() == 1
 	})
 
-	spec := graph.factory.spec
+	spec := graph.factory.lastSpec()
 	if spec.Kind != appsession.KindTelnet {
 		t.Fatalf("factory kind = %q, want %q", spec.Kind, appsession.KindTelnet)
 	}
@@ -482,17 +508,17 @@ func TestOpenHostCarriesTheAcknowledgedX11Preference(t *testing.T) {
 		graph.state.Flush()
 		return graph.state.TabCount() == 1
 	})
-	if !graph.factory.spec.X11Forwarding {
-		t.Fatalf("factory spec X11 = %v, want enabled", graph.factory.spec.X11Forwarding)
+	if !graph.factory.lastSpec().X11Forwarding {
+		t.Fatalf("factory spec X11 = %v, want enabled", graph.factory.lastSpec().X11Forwarding)
 	}
 }
 
 func TestOpenHostReportsATypedConnectionProblemWithoutATab(t *testing.T) {
 	graph := newTestGraph(t)
-	graph.factory.err = &appconnection.Error{
+	graph.factory.setError(&appconnection.Error{
 		Kind:  appconnection.KindAuth,
 		Cause: appconnection.ErrAuthentication,
-	}
+	})
 
 	if err := graph.state.OpenHost(domainvault.Host{
 		ID: "host-1", Hostname: "example.com", Port: 22,
@@ -638,7 +664,7 @@ func TestOpenHostCarriesTheNetworkDeviceModeOnlyForSSH(t *testing.T) {
 		graph.state.Flush()
 		return graph.state.TabCount() == 1
 	})
-	if !graph.factory.spec.NetworkDevice {
+	if !graph.factory.lastSpec().NetworkDevice {
 		t.Fatal("the network device mode did not reach the Session")
 	}
 
@@ -655,7 +681,7 @@ func TestOpenHostCarriesTheNetworkDeviceModeOnlyForSSH(t *testing.T) {
 		other.state.Flush()
 		return other.state.TabCount() == 1
 	})
-	if other.factory.spec.NetworkDevice {
+	if other.factory.lastSpec().NetworkDevice {
 		t.Fatal("the network device mode reached a Telnet Session")
 	}
 }
@@ -675,7 +701,7 @@ func TestOpenHostOpensAMoshHostWithTheMoshTransport(t *testing.T) {
 		return graph.state.TabCount() == 1
 	})
 
-	spec := graph.factory.spec
+	spec := graph.factory.lastSpec()
 	if spec.Kind != appsession.KindMosh {
 		t.Fatalf("factory kind = %q, want %q", spec.Kind, appsession.KindMosh)
 	}
@@ -707,7 +733,7 @@ func TestOpenHostOpensAnETHostWithTheETTransport(t *testing.T) {
 		return graph.state.TabCount() == 1
 	})
 
-	spec := graph.factory.spec
+	spec := graph.factory.lastSpec()
 	if spec.Kind != appsession.KindET {
 		t.Fatalf("factory kind = %q, want %q", spec.Kind, appsession.KindET)
 	}

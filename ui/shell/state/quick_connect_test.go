@@ -37,7 +37,7 @@ func TestQuickConnectOpensAnUnsavedHostSession(t *testing.T) {
 		graph.state.Flush()
 		return graph.state.TabCount() == 1
 	})
-	spec := graph.factory.spec
+	spec := graph.factory.lastSpec()
 	if spec.Kind != appsession.KindSSH || spec.HostID != "" {
 		t.Fatalf("factory spec = %+v, want an SSH Session with no saved Host", spec)
 	}
@@ -71,8 +71,8 @@ func TestQuickConnectOpensAnUnsavedHostSession(t *testing.T) {
 	if !graph.sessions[0].ReconnectNow() {
 		t.Fatal("the quick-connect Session refused an immediate reconnect")
 	}
-	waitFor(t, "the redial", func() bool { return graph.factory.opens == 2 })
-	if got := graph.factory.spec; got.HostID != "" || got.Password != "s3cret" {
+	waitFor(t, "the redial", func() bool { return graph.factory.openCount() == 2 })
+	if got := graph.factory.lastSpec(); got.HostID != "" || got.Password != "s3cret" {
 		t.Fatalf("reconnect spec = %+v, want the same unsaved Host and typed password", got)
 	}
 }
@@ -93,7 +93,7 @@ func TestQuickConnectTelnetSkipsSSHCredentials(t *testing.T) {
 		graph.state.Flush()
 		return graph.state.TabCount() == 1
 	})
-	spec := graph.factory.spec
+	spec := graph.factory.lastSpec()
 	if spec.Kind != appsession.KindTelnet || spec.HostID != "" {
 		t.Fatalf("factory spec = %+v, want a Telnet Session with no saved Host", spec)
 	}
