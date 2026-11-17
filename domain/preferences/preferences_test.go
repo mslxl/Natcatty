@@ -231,6 +231,12 @@ func TestDefaultProxyPreferenceResetsWithTheTransportGroup(t *testing.T) {
 	if group, ok := GroupOf(FieldDefaultProxy); !ok || group != GroupTransport {
 		t.Fatalf("FieldDefaultProxy group = %q, %v; want %q", group, ok, GroupTransport)
 	}
+	// The internal field id mirrors the persisted JSON path, so search and
+	// reset stay traceable to the document. The persisted key itself is
+	// unchanged.
+	if got := string(FieldDefaultProxy); got != "proxy.defaultProfileId" {
+		t.Fatalf("FieldDefaultProxy id = %q, want the JSON path proxy.defaultProfileId", got)
+	}
 	reset := ResetField(settings, FieldDefaultProxy)
 	if reset.Proxy.DefaultProfileID != "" {
 		t.Errorf("default proxy = %q after reset, want direct", reset.Proxy.DefaultProfileID)

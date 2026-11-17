@@ -759,7 +759,7 @@ const (
 	FieldConfirmCloseSessions         Field = "security.confirmCloseSessions"
 	FieldConfirmDestructive           Field = "security.confirmDestructive"
 	FieldMoshPredictionDisplay        Field = "transport.moshPredictionDisplay"
-	FieldDefaultProxy                 Field = "transport.defaultProxyProfileId"
+	FieldDefaultProxy                 Field = "proxy.defaultProfileId"
 	FieldHistorySyncEnabled           Field = "history.syncEnabled"
 	FieldHistorySyncAddress           Field = "history.syncAddress"
 	FieldHistoryUsername              Field = "history.username"
