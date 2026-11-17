@@ -24,11 +24,13 @@ package sync
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	domainsync "github.com/mslxl/natcatty/domain/sync"
@@ -93,10 +95,24 @@ const (
 )
 
 // ConvergentConflictResolution is one per-field choice. Register is the
-// stable register identity carried by ConvergentMigrationConflict.
+// stable register identity carried by ConvergentMigrationConflict, and
+// Fingerprint is that conflict's value identity as it was rendered. The choice
+// applies only while the freshly planned conflict still carries the same
+// fingerprint; a value change on either side retires it instead of silently
+// resolving a conflict the user never saw.
 type ConvergentConflictResolution struct {
-	Register string                 `json:"register"`
-	Side     ConvergentConflictSide `json:"side"`
+	Register    string                 `json:"register"`
+	Fingerprint string                 `json:"fingerprint"`
+	Side        ConvergentConflictSide `json:"side"`
+}
+
+// ConvergentConflictExpectation is the identity of one conflict the user saw.
+// Bulk actions carry one per rendered row so the service can verify the whole
+// set before recording any choice: if any row changed, the action applies
+// none rather than resolving a conflict with a value nobody approved.
+type ConvergentConflictExpectation struct {
+	Register    string `json:"register"`
+	Fingerprint string `json:"fingerprint"`
 }
 
 // ConvergentMigrationConflict is one contested register listed in a blocked
@@ -104,10 +120,16 @@ type ConvergentConflictResolution struct {
 // keep; they are withheld for secret-bearing registers (Secret is true) so a
 // credential never reaches the settings surface.
 type ConvergentMigrationConflict struct {
-	Family        string          `json:"family"`
-	EntityID      string          `json:"entityId"`
-	Field         string          `json:"field"`
-	Register      string          `json:"register"`
+	Family   string `json:"family"`
+	EntityID string `json:"entityId"`
+	Field    string `json:"field"`
+	Register string `json:"register"`
+	// Fingerprint identifies this conflict's local and remote values and
+	// presence. It is stable across unrelated preview changes and invalidates
+	// when either side changes, so a resolution can be bound to exactly the
+	// conflict the user saw. Secret values contribute only through the
+	// process-salted hash and are never exposed.
+	Fingerprint   string          `json:"fingerprint"`
 	LocalPresent  bool            `json:"localPresent"`
 	RemotePresent bool            `json:"remotePresent"`
 	LocalValue    json.RawMessage `json:"localValue,omitempty"`
@@ -1060,9 +1082,47 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 	return plan
 }
 
+// convergentFingerprintSalt keeps the value fingerprints from becoming an
+// offline verifier for concealed secret values. It is process-local, which is
+// sufficient because migration resolutions are process-local too: a fingerprint
+// only has to stay stable for as long as the preview it was rendered with.
+var convergentFingerprintSalt = func() []byte {
+	salt := make([]byte, 32)
+	if _, err := rand.Read(salt); err != nil {
+		// A deterministic fallback would make hidden credential values
+		// guessable from the rendered fingerprint; fail closed instead.
+		panic("sync: cannot read entropy for conflict fingerprints: " + err.Error())
+	}
+	return salt
+}()
+
+// convergentConflictFingerprint identifies one conflict by its address and the
+// exact local and remote values and presence the user is shown. Unrelated
+// preview changes leave it untouched; a change on either side invalidates it.
+func convergentConflictFingerprint(
+	conflict domainsync.ConvergentConflict,
+	local, remote domainsync.ConvergentSnapshot,
+) string {
+	hash := sha256.New()
+	hash.Write(convergentFingerprintSalt)
+	for _, part := range []string{conflict.Family, conflict.EntityID, conflict.Field, conflict.Register} {
+		fmt.Fprintf(hash, "%d:%s", len(part), part)
+	}
+	localValue, localPresent := snapshotRegisterValue(local, conflict.Family, conflict.EntityID, conflict.Field)
+	remoteValue, remotePresent := snapshotRegisterValue(remote, conflict.Family, conflict.EntityID, conflict.Field)
+	for _, value := range []json.RawMessage{localValue, remoteValue} {
+		fmt.Fprintf(hash, "|%d:", len(value))
+		hash.Write(value)
+	}
+	fmt.Fprintf(hash, "|%t%t", localPresent, remotePresent)
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
 // convergentConflictAttempt fingerprints the contested values the user is
 // shown. A resolution is scoped to this fingerprint: when either side's value
-// or presence changes, the old choice no longer matches and is dropped.
+// or presence changes anywhere in the set, old choices no longer match and are
+// dropped. Per-conflict fingerprints are sorted so a stable conflict set keeps
+// the same attempt regardless of enumeration order.
 func convergentConflictAttempt(
 	conflicts []domainsync.ConvergentConflict,
 	local, remote domainsync.ConvergentSnapshot,
@@ -1070,18 +1130,15 @@ func convergentConflictAttempt(
 	if len(conflicts) == 0 {
 		return ""
 	}
-	hash := sha256.New()
+	fingerprints := make([]string, 0, len(conflicts))
 	for _, conflict := range conflicts {
-		for _, part := range []string{conflict.Family, conflict.EntityID, conflict.Field, conflict.Register} {
-			fmt.Fprintf(hash, "%d:%s", len(part), part)
-		}
-		localValue, localPresent := snapshotRegisterValue(local, conflict.Family, conflict.EntityID, conflict.Field)
-		remoteValue, remotePresent := snapshotRegisterValue(remote, conflict.Family, conflict.EntityID, conflict.Field)
-		for _, value := range []json.RawMessage{localValue, remoteValue} {
-			fmt.Fprintf(hash, "|%d:", len(value))
-			hash.Write(value)
-		}
-		fmt.Fprintf(hash, "|%t%t", localPresent, remotePresent)
+		fingerprints = append(fingerprints, convergentConflictFingerprint(conflict, local, remote))
+	}
+	sort.Strings(fingerprints)
+	hash := sha256.New()
+	hash.Write(convergentFingerprintSalt)
+	for _, fingerprint := range fingerprints {
+		fmt.Fprintf(hash, "%d:%s", len(fingerprint), fingerprint)
 	}
 	return hex.EncodeToString(hash.Sum(nil))
 }
@@ -1189,9 +1246,10 @@ func convergentMigrationConflictList(
 		remoteValue, remotePresent := snapshotRegisterValue(remoteSnapshot, conflict.Family, conflict.EntityID, conflict.Field)
 		entry := ConvergentMigrationConflict{
 			Family:        conflict.Family,
-			EntityID:      conflict.EntityID,
+			EntityID:      convergentConflictDisplayID(conflict.EntityID),
 			Field:         conflict.Field,
 			Register:      conflict.Register,
+			Fingerprint:   convergentConflictFingerprint(conflict, localSnapshot, remoteSnapshot),
 			LocalPresent:  localPresent,
 			RemotePresent: remotePresent,
 		}
@@ -1204,6 +1262,27 @@ func convergentMigrationConflictList(
 		list = append(list, entry)
 	}
 	return list
+}
+
+// convergentConflictDisplayID makes a composite entity ID printable. The
+// secrets family keys records on {entityType, entityId, field} joined by the
+// unit separator, so the raw ID carries control bytes that must never reach the
+// settings surface. The raw identity remains internal: Register is the
+// resolution identity and is left untouched.
+func convergentConflictDisplayID(entityID string) string {
+	var builder strings.Builder
+	builder.Grow(len(entityID))
+	for _, character := range entityID {
+		switch {
+		case character == '\x1f':
+			builder.WriteByte('/')
+		case character < 0x20 || character == 0x7f:
+			// Drop remaining control characters rather than render them.
+		default:
+			builder.WriteRune(character)
+		}
+	}
+	return builder.String()
 }
 
 func convergentConflictIsSecret(family, field string, localValue, remoteValue json.RawMessage) bool {
@@ -1509,12 +1588,12 @@ func (s *Service) setConvergentEnabled(ctx context.Context, enabled bool) (Conve
 }
 
 // ResolveConvergentMigrationConflict records one per-field choice and retries
-// the migration. The first call re-lists the conflicts, rejects a register
-// that is no longer contested, then re-plans with every choice made in this
-// process. Migration completes only when no conflict remains; otherwise the
-// returned preview lists the rest.
+// the migration. The fresh plan must still list the same register with the
+// same value fingerprint the user saw; otherwise the choice is not recorded,
+// the migration does not complete, and the refreshed preview says the conflict
+// changed so the user can review it again.
 func (s *Service) ResolveConvergentMigrationConflict(ctx context.Context, resolution ConvergentConflictResolution) (ConvergentMigrationPreview, error) {
-	if resolution.Register == "" ||
+	if resolution.Register == "" || resolution.Fingerprint == "" ||
 		(resolution.Side != ConvergentConflictKeepLocal && resolution.Side != ConvergentConflictKeepRemote) {
 		return ConvergentMigrationPreview{}, fmt.Errorf("%w: invalid conflict resolution", ErrConvergentMigration)
 	}
@@ -1525,18 +1604,31 @@ func (s *Service) ResolveConvergentMigrationConflict(ctx context.Context, resolu
 	if !errors.Is(err, ErrConvergentMigration) {
 		return preview, err
 	}
-	if !convergentPreviewHasConflict(preview, resolution.Register) {
-		return preview, fmt.Errorf("%w: conflict %q no longer exists", ErrConvergentMigration, resolution.Register)
+	conflict, listed := convergentPreviewConflict(preview, resolution.Register)
+	if !listed || conflict.Fingerprint != resolution.Fingerprint {
+		return s.reportMigrationConflictChanged(preview, resolution.Register)
 	}
 	s.recordMigrationResolution(resolution.Register, resolution.Side, preview.attempt)
 	return s.setConvergentEnabled(ctx, true)
 }
 
-// ResolveConvergentMigrationConflicts is the bulk default: it applies the same
-// side to every currently listed field conflict, then retries migration.
-func (s *Service) ResolveConvergentMigrationConflicts(ctx context.Context, side ConvergentConflictSide) (ConvergentMigrationPreview, error) {
+// ResolveConvergentMigrationConflicts is the bulk action for the remaining
+// conflicts: it applies the same side to every register the user saw, then
+// retries migration. The whole action is verified before any choice is
+// recorded; if any expected fingerprint no longer matches the fresh plan,
+// nothing is applied. Registers already resolved field by field stay as the
+// user chose them and are not part of the rendered remaining list.
+func (s *Service) ResolveConvergentMigrationConflicts(ctx context.Context, side ConvergentConflictSide, expected []ConvergentConflictExpectation) (ConvergentMigrationPreview, error) {
 	if side != ConvergentConflictKeepLocal && side != ConvergentConflictKeepRemote {
 		return ConvergentMigrationPreview{}, fmt.Errorf("%w: invalid conflict side", ErrConvergentMigration)
+	}
+	if len(expected) == 0 {
+		return ConvergentMigrationPreview{}, fmt.Errorf("%w: no conflicts to resolve", ErrConvergentMigration)
+	}
+	for _, want := range expected {
+		if want.Register == "" || want.Fingerprint == "" {
+			return ConvergentMigrationPreview{}, fmt.Errorf("%w: invalid conflict expectation", ErrConvergentMigration)
+		}
 	}
 	preview, err := s.setConvergentEnabled(ctx, true)
 	if err == nil {
@@ -1548,19 +1640,55 @@ func (s *Service) ResolveConvergentMigrationConflicts(ctx context.Context, side 
 	if len(preview.Conflicts) == 0 {
 		return preview, err
 	}
-	for _, conflict := range preview.Conflicts {
-		s.recordMigrationResolution(conflict.Register, side, preview.attempt)
+	// Verify every row before recording anything: a bulk action that saw a
+	// changed row must apply none, never the subset that happens to still
+	// match.
+	for _, want := range expected {
+		conflict, listed := convergentPreviewConflict(preview, want.Register)
+		if !listed || conflict.Fingerprint != want.Fingerprint {
+			return s.reportMigrationConflictChanged(preview, want.Register)
+		}
+	}
+	for _, want := range expected {
+		s.recordMigrationResolution(want.Register, side, preview.attempt)
 	}
 	return s.setConvergentEnabled(ctx, true)
 }
 
-func convergentPreviewHasConflict(preview ConvergentMigrationPreview, register string) bool {
-	for _, conflict := range preview.Conflicts {
-		if conflict.Register == register {
-			return true
+// reportMigrationConflictChanged keeps the refusal visible: it refreshes the
+// blocked preview with the new values, appends an explicit changed-conflict
+// reason, and raises a typed problem. No choice is recorded and no provider or
+// local write happens before the user reviews the new rows.
+func (s *Service) reportMigrationConflictChanged(preview ConvergentMigrationPreview, register string) (ConvergentMigrationPreview, error) {
+	reasons := append([]ConvergentBlockedReason(nil), preview.BlockedReasons...)
+	changed := false
+	for _, reason := range reasons {
+		if reason.Code == "conflict-changed" {
+			changed = true
+			break
 		}
 	}
-	return false
+	if !changed {
+		reasons = append(reasons, ConvergentBlockedReason{Code: "conflict-changed"})
+	}
+	preview.BlockedReasons = reasons
+	preview.CanInitialize = false
+	s.mergeConvergentInfo(func(info *ConvergentInfo) {
+		info.Phase = "blocked"
+		info.Migration = &preview
+		info.ConflictCount = preview.ConflictCount
+	})
+	s.finishSync(ProblemConvergentConflictChanged)
+	return preview, fmt.Errorf("%w: conflict %q changed since it was shown", ErrConvergentConflictChanged, register)
+}
+
+func convergentPreviewConflict(preview ConvergentMigrationPreview, register string) (ConvergentMigrationConflict, bool) {
+	for _, conflict := range preview.Conflicts {
+		if conflict.Register == register {
+			return conflict, true
+		}
+	}
+	return ConvergentMigrationConflict{}, false
 }
 
 func (s *Service) recordMigrationResolution(register string, side ConvergentConflictSide, attempt string) {

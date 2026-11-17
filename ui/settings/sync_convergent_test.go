@@ -25,6 +25,7 @@ type fakeConvergentSyncService struct {
 	convergentErr       error
 	conflictResolutions []appsync.ConvergentConflictResolution
 	bulkResolutions     []appsync.ConvergentConflictSide
+	bulkExpectations    [][]appsync.ConvergentConflictExpectation
 }
 
 func newFakeConvergentSyncService() *fakeConvergentSyncService {
@@ -79,10 +80,11 @@ func (f *fakeConvergentSyncService) ResolveConvergentMigrationConflict(_ context
 	return appsync.ConvergentMigrationPreview{SchemaVersion: 2}, nil
 }
 
-func (f *fakeConvergentSyncService) ResolveConvergentMigrationConflicts(_ context.Context, side appsync.ConvergentConflictSide) (appsync.ConvergentMigrationPreview, error) {
+func (f *fakeConvergentSyncService) ResolveConvergentMigrationConflicts(_ context.Context, side appsync.ConvergentConflictSide, expected []appsync.ConvergentConflictExpectation) (appsync.ConvergentMigrationPreview, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.bulkResolutions = append(f.bulkResolutions, side)
+	f.bulkExpectations = append(f.bulkExpectations, append([]appsync.ConvergentConflictExpectation(nil), expected...))
 	if f.convergentErr != nil {
 		return appsync.ConvergentMigrationPreview{}, f.convergentErr
 	}
@@ -570,6 +572,7 @@ func TestSyncConvergentMigrationListsAndResolvesConflicts(t *testing.T) {
 		EntityID:      "host-1",
 		Field:         "label",
 		Register:      "hosts\x00host-1\x00label",
+		Fingerprint:   "fingerprint-host-label",
 		LocalPresent:  true,
 		RemotePresent: true,
 		LocalValue:    json.RawMessage(`"This device name"`),
@@ -580,6 +583,7 @@ func TestSyncConvergentMigrationListsAndResolvesConflicts(t *testing.T) {
 		EntityID:      "host-1/password",
 		Field:         "value",
 		Register:      "secrets\x00host-1/password\x00value",
+		Fingerprint:   "fingerprint-secret-value",
 		LocalPresent:  true,
 		RemotePresent: true,
 		// A blocked preview never carries these values; set them here so the
@@ -594,6 +598,7 @@ func TestSyncConvergentMigrationListsAndResolvesConflicts(t *testing.T) {
 		EntityID:      "host-2",
 		Field:         domainsync.PresenceField,
 		Register:      domainsync.RegisterIdentity("hosts", "host-2", domainsync.PresenceField),
+		Fingerprint:   "fingerprint-host-presence",
 		LocalPresent:  true,
 		RemotePresent: false,
 	}
@@ -653,6 +658,9 @@ func TestSyncConvergentMigrationListsAndResolvesConflicts(t *testing.T) {
 	if len(resolutions) != 1 || resolutions[0].Register != label.Register || resolutions[0].Side != appsync.ConvergentConflictKeepLocal {
 		t.Fatalf("per-field resolutions = %+v", resolutions)
 	}
+	if resolutions[0].Fingerprint != label.Fingerprint {
+		t.Fatalf("per-field resolution fingerprint = %q, want the rendered %q", resolutions[0].Fingerprint, label.Fingerprint)
+	}
 
 	tester.Frame()
 	if err := tester.Click(m.SettingsSyncConvergentKeepRemoteAll()); err != nil {
@@ -661,9 +669,36 @@ func TestSyncConvergentMigrationListsAndResolvesConflicts(t *testing.T) {
 	waitSyncIdle(t, state)
 	service.mu.Lock()
 	bulk := append([]appsync.ConvergentConflictSide(nil), service.bulkResolutions...)
+	expectations := append([][]appsync.ConvergentConflictExpectation(nil), service.bulkExpectations...)
 	service.mu.Unlock()
 	if len(bulk) != 1 || bulk[0] != appsync.ConvergentConflictKeepRemote {
 		t.Fatalf("bulk resolutions = %+v", bulk)
+	}
+	if len(expectations) != 1 || len(expectations[0]) != 3 {
+		t.Fatalf("bulk expectations = %+v", expectations)
+	}
+	for index, rendered := range []appsync.ConvergentMigrationConflict{label, presence, secret} {
+		got := expectations[0][index]
+		if got.Register != rendered.Register || got.Fingerprint != rendered.Fingerprint {
+			t.Fatalf("bulk expectation %d = %+v, want register %q fingerprint %q", index, got, rendered.Register, rendered.Fingerprint)
+		}
+	}
+}
+
+// TestSyncConvergentConflictChangedIsVisible maps the typed changed-conflict
+// refusal onto a localized message instead of raw Go error text.
+func TestSyncConvergentConflictChangedIsVisible(t *testing.T) {
+	if got := syncProblemForError(appsync.ErrConvergentConflictChanged); got != appsync.ProblemConvergentConflictChanged {
+		t.Fatalf("problem = %q, want %q", got, appsync.ProblemConvergentConflictChanged)
+	}
+	for _, language := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
+		m := locales.In(language)
+		if m.SettingsSyncProblemConvergentConflictChanged() == "" || m.SettingsSyncConvergentReasonChanged() == "" {
+			t.Fatalf("%s has empty changed-conflict messages", language)
+		}
+		if m.SettingsSyncConvergentKeepRemoteAll() == m.SettingsSyncConvergentKeepLocalAll() {
+			t.Fatalf("%s bulk labels are identical", language)
+		}
 	}
 }
 

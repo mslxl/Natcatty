@@ -122,7 +122,7 @@ func (f *fakeActionsConvergentService) ResolveConvergentMigrationConflict(_ cont
 	return appsync.ConvergentMigrationPreview{SchemaVersion: 2}, nil
 }
 
-func (f *fakeActionsConvergentService) ResolveConvergentMigrationConflicts(_ context.Context, side appsync.ConvergentConflictSide) (appsync.ConvergentMigrationPreview, error) {
+func (f *fakeActionsConvergentService) ResolveConvergentMigrationConflicts(_ context.Context, side appsync.ConvergentConflictSide, _ []appsync.ConvergentConflictExpectation) (appsync.ConvergentMigrationPreview, error) {
 	f.mu.Lock()
 	f.bulkResolutions = append(f.bulkResolutions, side)
 	f.mu.Unlock()

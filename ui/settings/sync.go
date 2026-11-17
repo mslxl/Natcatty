@@ -87,7 +87,7 @@ type DestructiveSyncService interface {
 type ConvergentSyncService interface {
 	SetConvergentEnabled(ctx context.Context, enabled bool) (appsync.ConvergentMigrationPreview, error)
 	ResolveConvergentMigrationConflict(ctx context.Context, resolution appsync.ConvergentConflictResolution) (appsync.ConvergentMigrationPreview, error)
-	ResolveConvergentMigrationConflicts(ctx context.Context, side appsync.ConvergentConflictSide) (appsync.ConvergentMigrationPreview, error)
+	ResolveConvergentMigrationConflicts(ctx context.Context, side appsync.ConvergentConflictSide, expected []appsync.ConvergentConflictExpectation) (appsync.ConvergentMigrationPreview, error)
 	RestoreLastVerified(ctx context.Context) (appsync.Result, error)
 }
 
@@ -1029,10 +1029,11 @@ func (s *SyncState) SetConvergentEnabled(enabled bool) {
 
 // ResolveConvergentMigrationConflict keeps one side of one contested field and
 // re-runs the migration preview; the migration completes only once the last
-// field is resolved.
-func (s *SyncState) ResolveConvergentMigrationConflict(register string, side appsync.ConvergentConflictSide) {
+// field is resolved. The fingerprint is the one rendered with the row, so the
+// service can refuse a choice whose conflict changed in the meantime.
+func (s *SyncState) ResolveConvergentMigrationConflict(register, fingerprint string, side appsync.ConvergentConflictSide) {
 	service, ok := s.service.(ConvergentSyncService)
-	if !ok || s.busy || register == "" {
+	if !ok || s.busy || register == "" || fingerprint == "" {
 		return
 	}
 	s.busy = true
@@ -1040,8 +1041,9 @@ func (s *SyncState) ResolveConvergentMigrationConflict(register string, side app
 	state := s
 	go func() {
 		_, err := service.ResolveConvergentMigrationConflict(state.ctx, appsync.ConvergentConflictResolution{
-			Register: register,
-			Side:     side,
+			Register:    register,
+			Fingerprint: fingerprint,
+			Side:        side,
 		})
 		state.post(func() {
 			state.busy = false
@@ -1053,18 +1055,22 @@ func (s *SyncState) ResolveConvergentMigrationConflict(register string, side app
 	}()
 }
 
-// ResolveConvergentMigrationConflicts is the bulk default: one side for every
-// contested field.
-func (s *SyncState) ResolveConvergentMigrationConflicts(side appsync.ConvergentConflictSide) {
+// ResolveConvergentMigrationConflicts is the bulk action for the conflicts
+// still listed: one side for every rendered row. The expectations are captured
+// from the rows the user actually saw; the service applies the action only
+// while all of their fingerprints still match, and applies none if any
+// changed. Choices already made field by field are not part of that list and
+// are preserved.
+func (s *SyncState) ResolveConvergentMigrationConflicts(side appsync.ConvergentConflictSide, expected []appsync.ConvergentConflictExpectation) {
 	service, ok := s.service.(ConvergentSyncService)
-	if !ok || s.busy {
+	if !ok || s.busy || len(expected) == 0 {
 		return
 	}
 	s.busy = true
 	s.lastErr = nil
 	state := s
 	go func() {
-		_, err := service.ResolveConvergentMigrationConflicts(state.ctx, side)
+		_, err := service.ResolveConvergentMigrationConflicts(state.ctx, side, expected)
 		state.post(func() {
 			state.busy = false
 			state.lastErr = err
@@ -1073,6 +1079,19 @@ func (s *SyncState) ResolveConvergentMigrationConflicts(side appsync.ConvergentC
 			}
 		})
 	}()
+}
+
+// convergentConflictExpectations captures the identity of each rendered
+// conflict row for a bulk action.
+func convergentConflictExpectations(conflicts []appsync.ConvergentMigrationConflict) []appsync.ConvergentConflictExpectation {
+	expected := make([]appsync.ConvergentConflictExpectation, 0, len(conflicts))
+	for _, conflict := range conflicts {
+		expected = append(expected, appsync.ConvergentConflictExpectation{
+			Register:    conflict.Register,
+			Fingerprint: conflict.Fingerprint,
+		})
+	}
+	return expected
 }
 
 // RestoreLastVerified applies the last provider-verified materialized copy
@@ -1694,12 +1713,13 @@ func syncConvergentPinnedBar(c *ui.Context, state *SyncState, snapshot appsync.S
 				}
 			}
 			if showBulkResolve {
+				expected := convergentConflictExpectations(info.Migration.Conflicts)
 				if kit.SecondaryButton(c, "", m.SettingsSyncConvergentKeepLocalAll()).Disabled(state.Busy()).Clicked() {
-					state.ResolveConvergentMigrationConflicts(appsync.ConvergentConflictKeepLocal)
+					state.ResolveConvergentMigrationConflicts(appsync.ConvergentConflictKeepLocal, expected)
 					c.Invalidate()
 				}
 				if kit.SecondaryButton(c, "", m.SettingsSyncConvergentKeepRemoteAll()).Disabled(state.Busy()).Clicked() {
-					state.ResolveConvergentMigrationConflicts(appsync.ConvergentConflictKeepRemote)
+					state.ResolveConvergentMigrationConflicts(appsync.ConvergentConflictKeepRemote, expected)
 					c.Invalidate()
 				}
 			}
@@ -1949,11 +1969,11 @@ func syncConvergentConflictRow(c *ui.Context, state *SyncState, conflict appsync
 		)).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			if kit.SecondaryButton(c, "", m.SettingsSyncConflictUseLocal()).Disabled(state.Busy()).Clicked() {
-				state.ResolveConvergentMigrationConflict(conflict.Register, appsync.ConvergentConflictKeepLocal)
+				state.ResolveConvergentMigrationConflict(conflict.Register, conflict.Fingerprint, appsync.ConvergentConflictKeepLocal)
 				c.Invalidate()
 			}
 			if kit.SecondaryButton(c, "", m.SettingsSyncConflictUseRemote()).Disabled(state.Busy()).Clicked() {
-				state.ResolveConvergentMigrationConflict(conflict.Register, appsync.ConvergentConflictKeepRemote)
+				state.ResolveConvergentMigrationConflict(conflict.Register, conflict.Fingerprint, appsync.ConvergentConflictKeepRemote)
 				c.Invalidate()
 			}
 		})
@@ -2142,6 +2162,8 @@ func convergentReasonName(code string, m locales.Messages) string {
 		return m.SettingsSyncConvergentReasonNoBaseline()
 	case "legacy-conflict", "conflicts-unresolved", "legacy-merge-failed", "pending-conflict":
 		return m.SettingsSyncConvergentReasonConflict()
+	case "conflict-changed":
+		return m.SettingsSyncConvergentReasonChanged()
 	case "shrunk-vault":
 		return m.SettingsSyncConvergentReasonShrink()
 	case "empty-vault":
@@ -2471,6 +2493,8 @@ func syncProblemText(m locales.Messages, problem appsync.Problem) string {
 		return m.SettingsSyncProblemBackup()
 	case appsync.ProblemConvergentMigration:
 		return m.SettingsSyncProblemConvergentMigration()
+	case appsync.ProblemConvergentConflictChanged:
+		return m.SettingsSyncProblemConvergentConflictChanged()
 	case appsync.ProblemConvergentDivergence:
 		return m.SettingsSyncProblemConvergentDivergence()
 	case appsync.ProblemConvergentCorrupt:
@@ -2531,6 +2555,8 @@ func syncProblemForError(err error) appsync.Problem {
 		return appsync.ProblemRateLimited
 	case errors.Is(err, appsync.ErrNetwork):
 		return appsync.ProblemNetwork
+	case errors.Is(err, appsync.ErrConvergentConflictChanged):
+		return appsync.ProblemConvergentConflictChanged
 	case errors.Is(err, appsync.ErrConvergentMigration):
 		return appsync.ProblemConvergentMigration
 	case errors.Is(err, appsync.ErrConvergentDivergence):

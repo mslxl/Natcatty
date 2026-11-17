@@ -23994,6 +23994,18 @@ func (msgs Messages) SettingsSyncConvergentReasonConflict() string {
 	return Catalog.Format(msgs.locale, "settingsSyncConvergentReasonConflict", nil)
 }
 
+// SettingsSyncConvergentReasonChanged says "One or more conflicts changed since they were shown. Nothing was applied; review the updated values and choose again."
+// in the language the app shows.
+func SettingsSyncConvergentReasonChanged() string {
+	return In(i18n.Locale()).SettingsSyncConvergentReasonChanged()
+}
+
+// SettingsSyncConvergentReasonChanged says "One or more conflicts changed since they were shown. Nothing was applied; review the updated values and choose again."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentReasonChanged() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentReasonChanged", nil)
+}
+
 // SettingsSyncConvergentReasonShrink says "The migration would shrink the Vault beyond the destructive-sync guard."
 // in the language the app shows.
 func SettingsSyncConvergentReasonShrink() string {
@@ -24126,25 +24138,25 @@ func (msgs Messages) SettingsSyncConvergentConflictValueHidden() string {
 	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictValueHidden", nil)
 }
 
-// SettingsSyncConvergentKeepLocalAll says "Keep this device for all"
+// SettingsSyncConvergentKeepLocalAll says "Keep this device for remaining conflicts"
 // in the language the app shows.
 func SettingsSyncConvergentKeepLocalAll() string {
 	return In(i18n.Locale()).SettingsSyncConvergentKeepLocalAll()
 }
 
-// SettingsSyncConvergentKeepLocalAll says "Keep this device for all"
+// SettingsSyncConvergentKeepLocalAll says "Keep this device for remaining conflicts"
 // in the language of msgs.
 func (msgs Messages) SettingsSyncConvergentKeepLocalAll() string {
 	return Catalog.Format(msgs.locale, "settingsSyncConvergentKeepLocalAll", nil)
 }
 
-// SettingsSyncConvergentKeepRemoteAll says "Keep the cloud copy for all"
+// SettingsSyncConvergentKeepRemoteAll says "Keep the cloud copy for remaining conflicts"
 // in the language the app shows.
 func SettingsSyncConvergentKeepRemoteAll() string {
 	return In(i18n.Locale()).SettingsSyncConvergentKeepRemoteAll()
 }
 
-// SettingsSyncConvergentKeepRemoteAll says "Keep the cloud copy for all"
+// SettingsSyncConvergentKeepRemoteAll says "Keep the cloud copy for remaining conflicts"
 // in the language of msgs.
 func (msgs Messages) SettingsSyncConvergentKeepRemoteAll() string {
 	return Catalog.Format(msgs.locale, "settingsSyncConvergentKeepRemoteAll", nil)
@@ -24382,6 +24394,18 @@ func SettingsSyncProblemConvergentMigration() string {
 // in the language of msgs.
 func (msgs Messages) SettingsSyncProblemConvergentMigration() string {
 	return Catalog.Format(msgs.locale, "settingsSyncProblemConvergentMigration", nil)
+}
+
+// SettingsSyncProblemConvergentConflictChanged says "A conflict changed while you were deciding. Nothing was applied; review the updated values and choose again."
+// in the language the app shows.
+func SettingsSyncProblemConvergentConflictChanged() string {
+	return In(i18n.Locale()).SettingsSyncProblemConvergentConflictChanged()
+}
+
+// SettingsSyncProblemConvergentConflictChanged says "A conflict changed while you were deciding. Nothing was applied; review the updated values and choose again."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemConvergentConflictChanged() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemConvergentConflictChanged", nil)
 }
 
 // SettingsSyncProblemConvergentDivergence says "Convergent replicas diverged. No automatic overwrite was made."
