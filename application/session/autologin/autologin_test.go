@@ -356,6 +356,16 @@ func TestPasswordPromptForms(t *testing.T) {
 		{name: "ansi", feeds: []string{"\x1b[1mPassword:\x1b[0m "}},
 		{name: "split reads", feeds: []string{"Pass", "word: "}},
 		{name: "bare word", feeds: []string{"Password"}},
+		// The original detector's terminator is optional: vendor consoles
+		// print the credential word at the end of an imperative sentence, with
+		// no punctuation at all (Kylin V10 "Input Password", issue #1293).
+		{name: "input password", feeds: []string{"Input Password"}},
+		{name: "input password colon", feeds: []string{"Input Password: "}},
+		{name: "chinese", feeds: []string{"输入密码"}},
+		{name: "enter your password", feeds: []string{"Enter your password: "}},
+		{name: "please enter your password", feeds: []string{"Please enter your password: "}},
+		{name: "type your password", feeds: []string{"Type your password:"}},
+		{name: "your password", feeds: []string{"Your password: "}},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -440,4 +450,66 @@ func TestWakeEnterAfterABannerFollowingAPasswordIsATakeover(t *testing.T) {
 	if engine.Active() {
 		t.Fatal("a bare Enter after a password was treated as a wake")
 	}
+}
+
+// TestDefaultAttemptsIsThree pins the literal default. The behavior test above
+// derives its expectation from DefaultAttempts, so moving the constant would
+// move the expectation with it; this guard keeps the original limit observable.
+func TestDefaultAttemptsIsThree(t *testing.T) {
+	if DefaultAttempts != 3 {
+		t.Fatalf("DefaultAttempts = %d, want the original limit 3", DefaultAttempts)
+	}
+}
+
+// TestDisarmDuringEmitDropsTheRemainingAnswers covers the interleaving between
+// Feed draining its queue and writing it: a takeover or cancel from inside the
+// first write must stop the answers that were already drained. Without a
+// takeover epoch the second queued line is still written after the disarm.
+func TestDisarmDuringEmitDropsTheRemainingAnswers(t *testing.T) {
+	cases := []struct {
+		name   string
+		disarm func(*Engine)
+	}{
+		{name: "takeover", disarm: (*Engine).Takeover},
+		{name: "cancel", disarm: (*Engine).Cancel},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var engine *Engine
+			var writes []string
+			engine = New(Options{
+				Username: "admin", Password: "secret", MaxAttempts: 1,
+				Write: func(line []byte) {
+					writes = append(writes, string(line))
+					testCase.disarm(engine)
+				},
+			})
+
+			engine.Feed("login: \r\nPassword: ")
+			if len(writes) != 1 || writes[0] != "admin\r" {
+				t.Fatalf("writes = %q, want only the first answer", writes)
+			}
+		})
+	}
+}
+
+// TestCancelDropsQueuedAnswers is the Cancel counterpart of
+// TestTakeoverDropsQueuedAnswers. Removing Cancel's clearing assignment leaves
+// the seeded queue observable.
+func TestCancelDropsQueuedAnswers(t *testing.T) {
+	engine, recorder := newTestEngine(Options{Username: "admin", Password: "secret"})
+	engine.mu.Lock()
+	engine.pending = [][]byte{[]byte("admin\r"), []byte("secret\r")}
+	engine.mu.Unlock()
+
+	engine.Cancel()
+
+	engine.mu.Lock()
+	pending := engine.pending
+	engine.mu.Unlock()
+	if pending != nil {
+		t.Fatalf("Cancel left %d queued writes", len(pending))
+	}
+	engine.Feed("login: \r\nPassword: ")
+	assertWrites(t, recorder)
 }

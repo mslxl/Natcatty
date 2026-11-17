@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mslxl/natcatty/application/session/autologin"
 	"github.com/mslxl/natcatty/domain/model"
@@ -50,6 +51,45 @@ func TestSerialAutoLoginAnswersTheDevicePrompts(t *testing.T) {
 	if got := transport.input(); got != "admin\rsecret\r" {
 		t.Fatalf("input = %q, want only the two credential lines", got)
 	}
+}
+
+// TestSerialAutoLoginRearmsOnReconnect proves a replacement transport gets its
+// own detector: the failure cancels the first generation, and the console that
+// comes back is answered again. Removing the armAutoLogin call from the
+// commandTransportOpen handler leaves the new prompt unanswered.
+func TestSerialAutoLoginRearmsOnReconnect(t *testing.T) {
+	first := newScriptedTransport()
+	second := newScriptedTransport()
+	factory := &scriptedFactory{transports: []*scriptedTransport{first, second}}
+	service := reconnectTestService(factory)
+	session, err := service.Open(context.Background(), StartSpec{
+		Kind:      KindSerial,
+		AutoLogin: &autologin.Options{Username: "admin", Password: "secret"},
+		Reconnect: &ReconnectPolicy{Delay: 20 * time.Millisecond},
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	first.output <- []byte("login: ")
+	waitForCondition(t, "the first generation login", func() bool {
+		return first.input() == "admin\r"
+	})
+
+	first.fail(End{Reason: EndReasonError})
+	waitForCondition(t, "the replacement transport", func() bool {
+		return factory.callCount() == 2 && session.Snapshot().Connection == ConnectionStatusActive
+	})
+
+	second.output <- []byte("login: ")
+	waitForCondition(t, "the re-armed username", func() bool {
+		return second.input() == "admin\r"
+	})
+	second.output <- []byte("\r\nPassword: ")
+	waitForCondition(t, "the re-armed password", func() bool {
+		return second.input() == "admin\rsecret\r"
+	})
 }
 
 // TestSerialAutoLoginStaysArmedAfterAWakeEnter covers a silent console: the

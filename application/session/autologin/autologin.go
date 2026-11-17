@@ -38,15 +38,19 @@ var (
 	// a password, such as "Never share your password" or "Your password
 	// expires in 30 days". Answering one of those would spend an attempt before
 	// the console asked for anything. The words are notice vocabulary; a real
-	// prompt is an imperative form ("Password:") without them.
-	passwordBanner = regexp.MustCompile(`(?i)(never|do\s+not|don'?t|re-?veal|disclos|share|your\s+password|password\s+(expiry|expiration|expires?|expired|will\s+expire|change\s+required))`)
+	// prompt is an imperative form ("Password:", "Input Password", "Enter your
+	// password:") without them. The bare possessive "your password" is not
+	// notice vocabulary on its own: "Your password:" is a real prompt.
+	passwordBanner = regexp.MustCompile(`(?i)(never|do\s+not|don'?t|re-?veal|disclos|share|password\s+(expiry|expiration|expires?|expired|will\s+expire|change\s+required))`)
 	usernamePrompt = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(user\s*name|username|login|logon|account|userid|user\s*id|user|用户名|帐号|账号|登录|登入)(\s*[:：>])?\s*$`)
-	// passwordPrompt matches a real password form that ends at the credential
-	// word with a prompt terminator: "Password:", "password:", or
-	// "Password for user:". A sentence with the word in the middle ("Do not
+	// passwordPrompt matches a real password form. The terminator is optional,
+	// as in the original detector: consoles print "Password:", "Password for
+	// user:", and bare forms such as Kylin V10's "Input Password" or the
+	// Chinese "输入密码". A sentence with the word in the middle ("Do not
 	// reveal your password") fails to match because it does not end at the
-	// terminator.
-	passwordPrompt = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(password|passwd|passcode|passphrase|pass\s*phrase|pin|密码|口令)(\s+for\s+[^\s:：>]+)?\s*[:：>]\s*$`)
+	// credential word, and the banner filter above rejects notices that do end
+	// there.
+	passwordPrompt = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(password|passwd|passcode|passphrase|pass\s*phrase|pin|密码|口令)(\s+for\s+[^\s:：>]+)?\s*[:：>]?\s*$`)
 	// barePasswordPrompt matches a console that prints the word alone, with no
 	// punctuation. It is kept separate so the sentence filter above cannot be
 	// bypassed by a colon appended to a notice.
@@ -99,6 +103,11 @@ type Engine struct {
 	active    bool
 	completed bool
 	pending   [][]byte
+	// epoch advances on every takeover or cancel. Feed drains pending under
+	// the lock and writes outside it, so an answer already drained must be
+	// checked against the epoch again before each write: a disarm that lands
+	// between the drain and the write still stops the rest of the queue.
+	epoch uint64
 }
 
 // New returns a detector armed when any credential or expect/reply rule is
@@ -163,8 +172,9 @@ func (e *Engine) Feed(text string) {
 	e.append(text)
 	e.advance()
 	pending := e.drain()
+	epoch := e.epoch
 	e.mu.Unlock()
-	e.emit(pending)
+	e.emit(pending, epoch)
 }
 
 // UserInput reports bytes the user typed in this Session. A naked Enter or
@@ -194,6 +204,7 @@ func (e *Engine) Takeover() {
 	e.mu.Lock()
 	e.active = false
 	e.pending = nil
+	e.epoch++
 	e.mu.Unlock()
 }
 
@@ -203,6 +214,7 @@ func (e *Engine) Cancel() {
 	e.mu.Lock()
 	e.active = false
 	e.pending = nil
+	e.epoch++
 	e.mu.Unlock()
 }
 
@@ -347,11 +359,22 @@ func (e *Engine) drain() [][]byte {
 	return pending
 }
 
-func (e *Engine) emit(pending [][]byte) {
+// emit writes the answers drained by one Feed. It re-checks the takeover epoch
+// before every write: a Takeover or Cancel that lands after the drain (even
+// from inside an earlier write's callback) discards the rest of the queue.
+// The lock is not held across write because write may call back into the
+// engine, so the check and the write are separate steps.
+func (e *Engine) emit(pending [][]byte, epoch uint64) {
 	if e.write == nil {
 		return
 	}
 	for _, line := range pending {
+		e.mu.Lock()
+		current := e.epoch == epoch
+		e.mu.Unlock()
+		if !current {
+			return
+		}
 		e.write(line)
 	}
 }

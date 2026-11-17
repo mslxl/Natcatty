@@ -89,6 +89,29 @@ func TestCompositionWiresSerialAndTelnetAutoLogin(t *testing.T) {
 		if !callsResolver {
 			t.Errorf("state.%s does not call %s", selector.Sel.Name, resolver)
 		}
+		// Calling the resolver is not enough: the closure must hand its result
+		// to the shell. A body that calls it for effect and returns nil disables
+		// auto-login while still passing the call check above.
+		returnsResolver := false
+		ast.Inspect(literal.Body, func(node ast.Node) bool {
+			ret, ok := node.(*ast.ReturnStmt)
+			if !ok {
+				return true
+			}
+			for _, result := range ret.Results {
+				call, ok := result.(*ast.CallExpr)
+				if !ok {
+					continue
+				}
+				if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == resolver {
+					returnsResolver = true
+				}
+			}
+			return true
+		})
+		if !returnsResolver {
+			t.Errorf("state.%s does not return the result of %s", selector.Sel.Name, resolver)
+		}
 	}
 	for option := range resolvers {
 		if !found[option] {
