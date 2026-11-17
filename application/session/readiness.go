@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // startupTailLimit bounds the retained output used to recognize a prompt. A
@@ -27,14 +28,22 @@ var (
 	// continuePrompt recognizes "press Enter to continue" banners, which often
 	// end in punctuation a prompt check might otherwise accept.
 	continuePrompt = regexp.MustCompile(`(?i)(press|hit)\s+.*(return|enter|any\s+key|space).*(continue|get\s+started|start|begin)?\.?\s*$`)
-	// lastLogin recognizes the "Last login: ..." line many systems print
-	// immediately before the shell prompt when the timestamp is omitted.
-	lastLogin = regexp.MustCompile(`(?i)(^|[\s(\[])(last|previous)\s+login(\s*[:：>])?\s*$`)
+	// lastLogin recognizes a "Last login: ..." line, with or without a
+	// timestamp. It is a pre-shell marker: a banner or MOTD may follow it, and
+	// none of that output is readiness.
+	lastLogin = regexp.MustCompile(`(?i)(^|[\s(\[])(last|previous)\s+login\b`)
 	// shellPrompt accepts a last line that ends in a shell or device
 	// terminator: "$", "#", "%", or a bare "Router>". The ">" form requires a
 	// single token so HTML or prose banners ending in ">" are not mistaken for
 	// a prompt.
 	shellPrompt = regexp.MustCompile(`^[$#%]\s*$|^[^\s<>]+[$#%]\s*$|^[^\s<>]+>\s*$`)
+	// progressPercent recognizes the token of a boot/progress line such as
+	// "100%" or "87.5%". It ends in a shell-like "%" but is never a prompt.
+	progressPercent = regexp.MustCompile(`^[0-9]+([.,][0-9]+)?$`)
+	// currencyCode recognizes a bare currency token such as "US$" or "HK$".
+	// It ends in a shell-like "$" but is a price or banner fragment, not a
+	// prompt.
+	currencyCode = regexp.MustCompile(`^[A-Z]{2,4}$`)
 )
 
 // startupPromptReady reports whether the retained output ends on a line that
@@ -43,7 +52,10 @@ var (
 // pre-shell message cannot release the startup command too early. The bounded
 // fallback covers a genuine prompt the heuristic does not recognize.
 func startupPromptReady(tail string) bool {
-	line := lastOutputLine(tail)
+	return startupPromptLineReady(lastOutputLine(tail))
+}
+
+func startupPromptLineReady(line string) bool {
 	if line == "" || len(line) > 256 {
 		return false
 	}
@@ -51,7 +63,76 @@ func startupPromptReady(tail string) bool {
 		lastLogin.MatchString(line) {
 		return false
 	}
-	return shellPrompt.MatchString(line)
+	return plausibleShellPrompt(line)
+}
+
+// plausibleShellPrompt rejects a line that matches shellPrompt's shape but is
+// boot or banner output: a pure-punctuation "->", a "100%" progress line, or
+// a "US$" price. These lines appear before a login banner, so releasing on
+// them would type the startup command into the next login prompt. A genuine
+// prompt keeps at least one letter or digit before its terminator.
+func plausibleShellPrompt(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" || !shellPrompt.MatchString(line) {
+		return false
+	}
+	terminator := line[len(line)-1]
+	prefix := line[:len(line)-1]
+	if prefix == "" {
+		// A bare "$", "#", or "%" is a legitimate root/user prompt.
+		return true
+	}
+	if !containsWordRune(prefix) {
+		// "->", "==>", "###": punctuation-only fragments, not prompts.
+		return false
+	}
+	if progressPercent.MatchString(prefix) {
+		// "100%", "87.5%".
+		return false
+	}
+	if terminator == '$' && currencyCode.MatchString(prefix) {
+		// "US$", "HK$".
+		return false
+	}
+	return true
+}
+
+func containsWordRune(text string) bool {
+	for _, r := range text {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
+			return true
+		}
+	}
+	return false
+}
+
+// startupPreShellVisible reports whether the retained output still shows a
+// pre-shell prompt or banner after the last recognized shell prompt: a login,
+// username, or password prompt, a press-Enter notice, or a last-login/MOTD
+// line. The bounded fallback consults it so a device that never reaches its
+// shell is left alone instead of having the startup command typed into the
+// login. A markerless MOTD cannot be told apart from a device prompt the
+// heuristic does not recognize; that remains the fallback's reason to exist.
+func startupPreShellVisible(tail string) bool {
+	tail = ansiSequence.ReplaceAllString(tail, "")
+	tail = strings.ReplaceAll(tail, "\r", "\n")
+	lines := strings.Split(tail, "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		line := strings.TrimRight(lines[index], " \t\v\f")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if startupPromptLineReady(line) {
+			// The console reached a real prompt after any banner; reading the
+			// banner again would suppress a legitimate startup command.
+			return false
+		}
+		if loginPrompt.MatchString(line) || continuePrompt.MatchString(line) ||
+			lastLogin.MatchString(line) {
+			return true
+		}
+	}
+	return false
 }
 
 // lastOutputLine returns the last non-empty line of output after stripping

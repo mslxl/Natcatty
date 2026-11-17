@@ -654,6 +654,7 @@ type Session struct {
 	startupTail             []byte
 	startupTimer            *time.Timer
 	startupReadinessTimeout time.Duration
+	startupSchedule         func(time.Duration, func()) *time.Timer
 
 	// autoLoginMu guards the console detector for the current transport
 	// generation. It is replaced on reconnect and disarmed when the transport
@@ -749,20 +750,24 @@ type Service struct {
 	// automatic logs; the user can still start one from the Session surface.
 	autoLog                 func(StartSpec) *LogOptions
 	startupReadinessTimeout time.Duration
-	clipboardPolicy         func() domainterminal.ClipboardAccess
-	encodingPolicy          func(StartSpec) domainterminal.Encoding
-	codecFactory            CodecFactory
-	onNotification          func(model.SessionID, TerminalNotification)
-	onTransfer              func(model.SessionID, TransferState)
-	onInput                 func(model.SessionID, []byte)
-	onCommandCompletion     func(CommandEvent)
-	onBell                  func(model.SessionID)
-	onConnection            func(ConnectionEvent)
-	highlightPolicy         func() (bool, []domainterminal.KeywordHighlightRule)
-	captureHook             CaptureHook
-	hostAtuin               HostAtuin
-	mu                      sync.Mutex
-	sessions                map[model.SessionID]*Session
+	// startupSchedule replaces the readiness fallback timer. It is nil in
+	// production; tests inject it to observe the default bound and fire it
+	// without waiting.
+	startupSchedule     func(time.Duration, func()) *time.Timer
+	clipboardPolicy     func() domainterminal.ClipboardAccess
+	encodingPolicy      func(StartSpec) domainterminal.Encoding
+	codecFactory        CodecFactory
+	onNotification      func(model.SessionID, TerminalNotification)
+	onTransfer          func(model.SessionID, TransferState)
+	onInput             func(model.SessionID, []byte)
+	onCommandCompletion func(CommandEvent)
+	onBell              func(model.SessionID)
+	onConnection        func(ConnectionEvent)
+	highlightPolicy     func() (bool, []domainterminal.KeywordHighlightRule)
+	captureHook         CaptureHook
+	hostAtuin           HostAtuin
+	mu                  sync.Mutex
+	sessions            map[model.SessionID]*Session
 	// captureNotices records the Host whose capture-hook failure was already
 	// announced, so a reconnect loop does not repeat the capability notice.
 	captureNotices map[string]bool
@@ -799,6 +804,10 @@ func WithAutoLogging(fn func(StartSpec) *LogOptions) Option {
 // WithClipboardPolicy supplies the OSC 52 policy read when a Session opens.
 // SetClipboardPolicy applies later Settings changes to live Sessions. Nil
 // keeps the original write-only default.
+func WithClipboardPolicy(fn func() domainterminal.ClipboardAccess) Option {
+	return func(s *Service) { s.clipboardPolicy = fn }
+}
+
 // WithStartupReadinessTimeout bounds how long a Host startup command waits for
 // output that looks like a shell prompt. A device that never prints a
 // recognized prompt still receives its command after this timeout; zero keeps
@@ -811,8 +820,12 @@ func WithStartupReadinessTimeout(timeout time.Duration) Option {
 	}
 }
 
-func WithClipboardPolicy(fn func() domainterminal.ClipboardAccess) Option {
-	return func(s *Service) { s.clipboardPolicy = fn }
+// withStartupReadinessScheduler replaces the fallback timer. Tests use it to
+// assert the production default bound and to fire the callback deterministically.
+// The callback must not run synchronously: callers hold startupMu while
+// scheduling, and the callback locks it.
+func withStartupReadinessScheduler(schedule func(time.Duration, func()) *time.Timer) Option {
+	return func(s *Service) { s.startupSchedule = schedule }
 }
 
 // WithEncodingResolver supplies the initial encoding when a StartSpec does
@@ -1032,6 +1045,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		factory:                 s.factory,
 		spec:                    spec,
 		startupReadinessTimeout: s.startupReadinessTimeout,
+		startupSchedule:         s.startupSchedule,
 		tap:                     tap,
 		clipboardAccess:         policy,
 		captureCleanup:          captureCleanup,

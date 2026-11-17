@@ -19,10 +19,19 @@ func (s *Session) armStartupCommand(generation int, transport Transport) {
 	if s.startupTimer != nil {
 		s.startupTimer.Stop()
 	}
-	s.startupTimer = time.AfterFunc(s.startupTimeout(), func() {
-		s.startupReadinessElapsed(generation)
-	})
+	s.startupTimer = s.scheduleStartupFallback(generation)
 	s.startupMu.Unlock()
+}
+
+// scheduleStartupFallback starts the bounded readiness timer. Callers hold
+// startupMu. The scheduler is injected only by tests, which use it to observe
+// the production default bound and fire it deterministically.
+func (s *Session) scheduleStartupFallback(generation int) *time.Timer {
+	fire := func() { s.startupReadinessElapsed(generation) }
+	if s.startupSchedule != nil {
+		return s.startupSchedule(s.startupTimeout(), fire)
+	}
+	return time.AfterFunc(s.startupTimeout(), fire)
 }
 
 // startupTimeout returns the configured readiness fallback, or the default.
@@ -49,9 +58,7 @@ func (s *Session) observeStartupOutput(generation int, decoded []byte) {
 	if s.startupTimer == nil {
 		// A fallback that fired while auto-login was still answering prompts
 		// left the command pending; the next output restarts the bound.
-		s.startupTimer = time.AfterFunc(s.startupTimeout(), func() {
-			s.startupReadinessElapsed(generation)
-		})
+		s.startupTimer = s.scheduleStartupFallback(generation)
 	}
 }
 
@@ -79,7 +86,11 @@ func (s *Session) maybeRunStartupCommand(generation int, transport Transport) {
 
 // startupReadinessElapsed is the bounded fallback. It never fires into an
 // unfinished auto-login; a later output rearms the bound if the detector is
-// still running.
+// still running. Before typing, it consults the same pre-shell classifiers as
+// the prompt path: if the retained output shows a login/password prompt, a
+// press-Enter notice, or a last-login/MOTD banner, the command is left unsent
+// and the wait is disarmed. A device that never reached its shell therefore
+// stays untouched instead of receiving the command as a login name.
 func (s *Session) startupReadinessElapsed(generation int) {
 	if !s.autoLoginAllowsStartup(generation) {
 		s.startupMu.Lock()
@@ -91,6 +102,13 @@ func (s *Session) startupReadinessElapsed(generation int) {
 	}
 	s.startupMu.Lock()
 	if !s.startupPending || s.startupGeneration != generation {
+		s.startupMu.Unlock()
+		return
+	}
+	if startupPreShellVisible(string(s.startupTail)) {
+		// Leave the command unsent and disarm deterministically. A manual
+		// login after the bound reaches the shell with no surprise command.
+		s.disarmStartupLocked()
 		s.startupMu.Unlock()
 		return
 	}
