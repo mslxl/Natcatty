@@ -2,8 +2,10 @@ package state
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,17 +60,23 @@ func WithComposeDirectory(source ComposeDirectorySource) Option {
 // exceeds this window is reported instead of holding the picker open.
 const composeDirectoryTimeout = 15 * time.Second
 
-// The listing protocol is a stream of NUL-terminated records. A NUL cannot
-// occur in a POSIX or Windows file name, so no name can spoof a record: the
-// type is the record's first byte and the name is every byte after it,
-// including newlines and a name that itself starts with a marker. The old
-// newline protocol treated "__d__name" or a name containing a newline as a
-// fabricated entry.
+// The listing protocol is one ASCII frame on the wire:
+//
+//	~<nonce>~B<8 hex byte length><hex payload>~<nonce>~Z
+//
+// The nonce is unique per request. The payload is the NUL-framed stream (a P
+// record with the resolved path, then a D or F record per entry), so the
+// terminal never carries a NUL, a newline, or a raw file name: everything but
+// the fixed sentinel is hex. A name cannot spoof a record because it is decoded
+// only after the frame length has been checked. The sentinel cannot occur in
+// the payload because '~' is not a hex digit.
 const (
 	composeDirectoryPathRecord      = 'P'
 	composeDirectoryEntryRecord     = 'D'
 	composeDirectoryFileRecord      = 'F'
 	composeDirectoryListingMaxBytes = 1 << 20
+	composeDirectoryFrameBegin      = "B"
+	composeDirectoryFrameEnd        = "Z"
 )
 
 // errComposeDirectoryUnsupported reports a Session whose shell cannot list a
@@ -86,6 +94,11 @@ var errComposeDirectoryListingFailed = errors.New("compose directory: the listin
 // capture cap. The cap keeps the newest bytes, so the leading path record is
 // gone; parsing the tail would show part of a directory as if it were whole.
 var errComposeDirectoryListingTooLarge = errors.New("compose directory: the listing is too large")
+
+// errComposeDirectoryCorrupt reports a frame whose length or hex is damaged,
+// as a ConPTY wrap can leave it if the healer cannot identify the artifact.
+// Guessing would show part of a listing as if it were whole.
+var errComposeDirectoryCorrupt = errors.New("compose directory: the listing frame is damaged")
 
 // OpenComposeDirectory shows the picker for the focused Session.
 func (s *State) OpenComposeDirectory() bool {
@@ -308,11 +321,12 @@ func (s *State) ConfirmComposeDirectory() bool {
 	// click arrives before the next Refresh.
 	s.applyComposeDirectoryPendingLocked()
 	path := strings.TrimSpace(s.composeDirectoryTyped)
-	if path == "" || path == s.composeDirectoryRequested {
-		path = s.composeDirectoryPath
-	}
 	if path == "" {
-		path = s.composeDirectoryTyped
+		// The editor was cleared; confirm the directory being browsed.
+		// A path still equal to the request is the user's own choice: while a
+		// listing is in flight, or after it failed, composeDirectoryPath is
+		// the previous directory and must not stand in for it.
+		path = s.composeDirectoryPath
 	}
 	shell := s.composeDirectoryShell
 	ok := s.confirmComposeDirectoryLocked(path, shell)
@@ -372,6 +386,10 @@ func (s *State) requestComposeDirectory(path string) {
 	s.composeDirectoryUnsupported = false
 	s.composeDirectoryRequested = path
 	s.composeDirectoryEntries = nil
+	// A resolved path left by the previous listing belongs to the directory the
+	// user has just left. Applying it after this request starts would overwrite
+	// the new path, which still equals the request the apply tests for.
+	s.composeDirectoryPendingTyped = ""
 	id := s.composeDirectorySession
 	s.inputMu.Unlock()
 
@@ -467,14 +485,15 @@ func listComposeDirectory(ctx context.Context, session *appsession.Session, path
 	if session == nil {
 		return ComposeDirectoryListing{}, appsession.ErrCommandClosed
 	}
+	nonce := newRuntimeID("ncdir")
 	var command string
 	switch session.ShellKind() {
 	case "powershell":
-		command = powershellDirectoryCommand(path)
+		command = powershellDirectoryCommand(path, nonce)
 	case "raw", "cmd":
 		return ComposeDirectoryListing{}, errComposeDirectoryUnsupported
 	default:
-		command = posixDirectoryCommand(path)
+		command = posixDirectoryCommand(path, nonce)
 	}
 	result, err := session.Command(ctx, command, appsession.CommandOptions{
 		Timeout: composeDirectoryTimeout, MaxOutputBytes: composeDirectoryListingMaxBytes,
@@ -490,74 +509,181 @@ func listComposeDirectory(ctx context.Context, session *appsession.Session, path
 		// already gone. Report a failure instead of parsing a partial listing.
 		return ComposeDirectoryListing{}, errComposeDirectoryListingTooLarge
 	}
-	return parseComposeDirectoryOutput(result.Stdout)
+	return parseComposeDirectoryOutput(result.Stdout, nonce)
 }
 
-// posixDirectoryCommand lists a directory in a POSIX-like shell (bash, zsh,
-// fish, and the unknown shell family SSH uses). cd runs in the wrapper's
-// subshell, so the Session's own directory never changes. PWD is printed so a
-// relative or symlinked request resolves to the directory actually listed.
+// posixDirectoryCommand lists a directory through a non-interactive POSIX
+// shell. The command runs under the Session's own shell, which may be zsh,
+// fish, nushell or xonsh: `sh -c` makes the script's globs, `cd` and `printf`
+// POSIX regardless. Without it, zsh's NOMATCH aborts the unmatched `. [!.].*`
+// globs and a non-POSIX shell does not expand them at all.
 //
-// The loop emits the same NUL-record protocol as the parser: P then the
-// resolved path, and one D or F record per entry. Globs never run a program,
-// so a listing cannot execute anything from the directory it reads.
-func posixDirectoryCommand(requested string) string {
+// The script builds the NUL-framed record stream locally and pipes it through
+// od, so the terminal carries only hex: no NUL, newline or raw name reaches the
+// line protocol. cd runs in the command's subshell, so the Session's own
+// directory never changes. PWD is printed so a relative or symlinked request
+// resolves to the directory actually listed.
+func posixDirectoryCommand(requested, nonce string) string {
 	directory := `"$HOME"`
 	if requested != "" {
 		directory = singleQuotePOSIX(requested)
 	}
-	return "cd -- " + directory + " && printf 'P%s\\000' \"$PWD\" && " +
-		"for __nc_entry in .[!.]* ..?* *; do " +
-		"if [ -e \"$__nc_entry\" ] || [ -L \"$__nc_entry\" ]; then " +
-		"if [ -d \"$__nc_entry\" ]; then __nc_type=D; else __nc_type=F; fi; " +
-		"printf '%s%s\\000' \"$__nc_type\" \"$__nc_entry\"; " +
-		"fi; done\n"
+	begin := composeDirectoryMarker(nonce, composeDirectoryFrameBegin)
+	end := composeDirectoryMarker(nonce, composeDirectoryFrameEnd)
+	script := strings.Join([]string{
+		"__nc_dir=" + directory,
+		`case $__nc_dir in -*) __nc_dir=./$__nc_dir ;; esac`,
+		`cd "$__nc_dir" || exit 1`,
+		`__nc_hex=$({`,
+		`printf 'P%s\0' "$PWD"`,
+		`for __nc_entry in .[!.]* ..?* *; do`,
+		`if [ -e "$__nc_entry" ] || [ -L "$__nc_entry" ]; then`,
+		`if [ -d "$__nc_entry" ]; then __nc_type=D; else __nc_type=F; fi`,
+		`printf '%s%s\0' "$__nc_type" "$__nc_entry"`,
+		`fi`,
+		`done`,
+		`} | od -A n -v -t x1 | tr -d ' \n') || exit 1`,
+		`printf '` + begin + `%08x%s` + end + `' "$((${#__nc_hex} / 2))" "$__nc_hex"`,
+	}, "\n")
+	return "sh -c " + singleQuotePOSIX(script)
 }
 
 // powershellDirectoryCommand lists a directory without changing the Session's
-// location: Resolve-Path and Get-ChildItem both take a literal path. It writes
-// the NUL-record protocol to the console stream so a name containing a newline
-// or a marker prefix cannot be misread.
-func powershellDirectoryCommand(requested string) string {
+// location: Resolve-Path and Get-ChildItem both take a literal path. It builds
+// the NUL-framed stream in memory and writes one hex frame, so Console's text
+// stream carries no NUL and a name containing a newline or a marker prefix
+// cannot be misread. The single write also keeps the frame short enough for
+// ConPTY not to hard-wrap it.
+func powershellDirectoryCommand(requested, nonce string) string {
 	target := "$HOME"
 	if requested != "" {
 		target = "'" + strings.ReplaceAll(requested, "'", "''") + "'"
 	}
+	begin := composeDirectoryMarker(nonce, composeDirectoryFrameBegin)
+	end := composeDirectoryMarker(nonce, composeDirectoryFrameEnd)
 	return "$__ncPath = " + target + "; " +
 		"$__ncResolved = (Resolve-Path -LiteralPath $__ncPath -ErrorAction Stop).ProviderPath; " +
-		"[Console]::Out.Write('P' + $__ncResolved + [char]0); " +
+		"$__ncText = [Text.StringBuilder]::new(); " +
+		"[void]$__ncText.Append('P').Append($__ncResolved).Append([char]0); " +
 		"Get-ChildItem -LiteralPath $__ncResolved -Force | ForEach-Object { " +
 		"if ($_.PSIsContainer) { $__ncType = 'D' } else { $__ncType = 'F' }; " +
-		"[Console]::Out.Write($__ncType + $_.Name + [char]0) }\n"
+		"[void]$__ncText.Append($__ncType).Append($_.Name).Append([char]0) }; " +
+		"$__ncBytes = [Text.Encoding]::UTF8.GetBytes($__ncText.ToString()); " +
+		"$__ncHex = [BitConverter]::ToString($__ncBytes).Replace('-', '').ToLowerInvariant(); " +
+		"[Console]::Out.Write('" + begin + "' + ('{0:x8}' -f $__ncBytes.Length) + $__ncHex + '" + end + "')"
 }
 
-// parseComposeDirectoryOutput reads the NUL-record listing. The first record
-// must be the resolved path; every later D/F record is one entry. Unknown
-// records are ignored rather than guessed at, so no name can inject an entry.
-func parseComposeDirectoryOutput(output string) (ComposeDirectoryListing, error) {
+// composeDirectoryMarker is one end of the frame's sentinel.
+func composeDirectoryMarker(nonce, final string) string {
+	return "~" + nonce + "~" + final
+}
+
+// healComposeDirectoryWraps removes ConPTY's hard-wrap artifact. When the
+// console wraps a long line it writes CR, LF, a cursor-position CSI and a copy
+// of the cell at the margin; the command collector has already removed the CR
+// and the CSI, leaving LF and a duplicated character. The frame is ASCII hex
+// and the scripts write no LF, so every LF here is that artifact. Dropping it
+// and the duplicate beside it reconnects the hex; the frame's length check
+// rejects anything the healer could not identify.
+func healComposeDirectoryWraps(output string) string {
+	if !strings.ContainsRune(output, '\n') && !strings.ContainsRune(output, '\r') {
+		return output
+	}
+	healed := make([]byte, 0, len(output))
+	for index := 0; index < len(output); index++ {
+		switch output[index] {
+		case '\r':
+			// The collector removes these; tolerate a caller that did not.
+		case '\n':
+			if len(healed) > 0 && index+1 < len(output) && healed[len(healed)-1] == output[index+1] {
+				index++
+			}
+		default:
+			healed = append(healed, output[index])
+		}
+	}
+	return string(healed)
+}
+
+// parseComposeDirectoryOutput reads the hex frame. The typed command's echo
+// can contain the sentinel text, so a frame that does not validate is skipped
+// and the next sentinel is tried; the real listing is the one with a matching
+// length and end marker. Unknown or malformed records fail the listing rather
+// than becoming a guessed path.
+func parseComposeDirectoryOutput(output, nonce string) (ComposeDirectoryListing, error) {
+	healed := healComposeDirectoryWraps(output)
+	begin := composeDirectoryMarker(nonce, composeDirectoryFrameBegin)
+	end := composeDirectoryMarker(nonce, composeDirectoryFrameEnd)
+	lastErr := errComposeDirectoryNoPath
+	for search := 0; ; {
+		index := strings.Index(healed[search:], begin)
+		if index < 0 {
+			return ComposeDirectoryListing{}, lastErr
+		}
+		start := search + index + len(begin)
+		endIndex := strings.Index(healed[start:], end)
+		if endIndex < 0 {
+			return ComposeDirectoryListing{}, errComposeDirectoryCorrupt
+		}
+		listing, err := decodeComposeDirectoryFrame(healed[start : start+endIndex])
+		if err == nil {
+			return listing, nil
+		}
+		lastErr = err
+		search = start
+	}
+}
+
+// decodeComposeDirectoryFrame checks the length prefix and decodes the payload
+// into the resolved path and entries.
+func decodeComposeDirectoryFrame(body string) (ComposeDirectoryListing, error) {
+	if len(body) < 8 {
+		return ComposeDirectoryListing{}, errComposeDirectoryCorrupt
+	}
+	declared, err := strconv.ParseUint(body[:8], 16, 32)
+	if err != nil {
+		return ComposeDirectoryListing{}, errComposeDirectoryCorrupt
+	}
+	encoded := body[8:]
+	if uint64(len(encoded)) != declared*2 {
+		return ComposeDirectoryListing{}, errComposeDirectoryCorrupt
+	}
+	raw, err := hex.DecodeString(encoded)
+	if err != nil {
+		return ComposeDirectoryListing{}, errComposeDirectoryCorrupt
+	}
 	listing := ComposeDirectoryListing{}
 	seenPath := false
-	for _, record := range strings.Split(output, "\x00") {
+	for _, record := range strings.Split(string(raw), "\x00") {
 		if record == "" {
 			continue
 		}
 		switch record[0] {
 		case composeDirectoryPathRecord:
-			if !seenPath {
-				listing.Path = record[1:]
-				seenPath = true
+			if seenPath || len(record) == 1 {
+				return ComposeDirectoryListing{}, errComposeDirectoryCorrupt
 			}
+			listing.Path = record[1:]
+			seenPath = true
 		case composeDirectoryEntryRecord:
+			if !seenPath || len(record) == 1 {
+				return ComposeDirectoryListing{}, errComposeDirectoryCorrupt
+			}
 			listing.Entries = append(listing.Entries, ComposeDirectoryEntry{
 				Name: record[1:], Directory: true,
 			})
 		case composeDirectoryFileRecord:
+			if !seenPath || len(record) == 1 {
+				return ComposeDirectoryListing{}, errComposeDirectoryCorrupt
+			}
 			listing.Entries = append(listing.Entries, ComposeDirectoryEntry{
 				Name: record[1:],
 			})
+		default:
+			return ComposeDirectoryListing{}, errComposeDirectoryCorrupt
 		}
 	}
-	if listing.Path == "" {
+	if !seenPath || listing.Path == "" {
 		return ComposeDirectoryListing{}, errComposeDirectoryNoPath
 	}
 	sort.SliceStable(listing.Entries, func(i, j int) bool {

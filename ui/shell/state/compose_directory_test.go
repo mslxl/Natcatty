@@ -2,6 +2,9 @@ package state
 
 import (
 	"context"
+	"encoding/hex"
+	"errors"
+	"fmt"
 	"reflect"
 	"runtime"
 	"strings"
@@ -277,6 +280,106 @@ func TestComposeDirectoryConfirmsTheBrowsedDirectoryWhenTheEditorIsEmpty(t *test
 	}
 }
 
+// TestComposeDirectoryConfirmUsesTheRequestedPathWhileAListingIsInFlight pins
+// the confirm fallback: with the editor still holding the path just requested,
+// the previous listing's directory must not stand in for it.
+func TestComposeDirectoryConfirmUsesTheRequestedPathWhileAListingIsInFlight(t *testing.T) {
+	source := newFakeComposeDirectory("/srv/app")
+	source.add("/srv/app")
+	graph, _ := openComposeDirectoryPicker(t, source)
+	waitComposeDirectory(t, graph.state, "/srv/app")
+
+	began := make(chan struct{})
+	release := make(chan struct{})
+	source.mu.Lock()
+	source.listBegin, source.listRelease = began, release
+	source.mu.Unlock()
+
+	graph.state.NavigateComposeDirectory("src")
+	select {
+	case <-began:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the listing did not start")
+	}
+	if got := *graph.state.ComposeDirectoryTyped(); got != "/srv/app/src" {
+		t.Fatalf("typed path = %q before confirming, want the requested directory", got)
+	}
+	if got := graph.state.ComposeDirectoryPath(); got != "/srv/app" {
+		t.Fatalf("browsed path = %q before confirming, want the previous listing", got)
+	}
+	graph.state.SetComposeDraft("cd ")
+	if !graph.state.ConfirmComposeDirectory() {
+		t.Fatal("confirming the path failed")
+	}
+	close(release)
+	if got := *graph.state.ComposeDraft(); got != "cd /srv/app/src" {
+		t.Fatalf("draft = %q, want the requested directory", got)
+	}
+}
+
+// TestComposeDirectoryConfirmUsesTheTypedPathAfterAFailedListing pins the
+// other half: a failed listing leaves the editor on the path the user chose,
+// and confirming keeps it instead of reverting to the last success.
+func TestComposeDirectoryConfirmUsesTheTypedPathAfterAFailedListing(t *testing.T) {
+	source := newFakeComposeDirectory("/srv/app")
+	source.add("/srv/app")
+	graph, _ := openComposeDirectoryPicker(t, source)
+	waitComposeDirectory(t, graph.state, "/srv/app")
+
+	source.setErr(errors.New("no such directory"))
+	graph.state.NavigateComposeDirectory("missing")
+	waitFor(t, "the failed listing to finish", func() bool {
+		return !graph.state.ComposeDirectoryLoading()
+	})
+	if !graph.state.ComposeDirectoryFailed() {
+		t.Fatal("the listing did not report a failure")
+	}
+	graph.state.SetComposeDraft("cd ")
+	if !graph.state.ConfirmComposeDirectory() {
+		t.Fatal("confirming the typed path failed")
+	}
+	if got := *graph.state.ComposeDraft(); got != "cd /srv/app/missing" {
+		t.Fatalf("draft = %q, want the typed path", got)
+	}
+}
+
+// TestComposeDirectoryConfirmIgnoresAnUnappliedListingFromBefore proves the
+// confirm path cannot resurrect a directory the user has just left. A listing
+// can finish between frames, leaving its resolved path pending until the next
+// Refresh. If the user navigates first, the editor still equals the new
+// request, which is exactly the test that would let the old path win.
+func TestComposeDirectoryConfirmIgnoresAnUnappliedListingFromBefore(t *testing.T) {
+	source := newFakeComposeDirectory("/srv/app")
+	source.add("/srv/app")
+	graph, _ := openComposeDirectoryPicker(t, source)
+	// Finish the first listing without calling Refresh, so its resolved path is
+	// still pending when the navigation starts.
+	waitFor(t, "the first listing to finish", func() bool {
+		return !graph.state.ComposeDirectoryLoading()
+	})
+
+	began := make(chan struct{})
+	release := make(chan struct{})
+	source.mu.Lock()
+	source.listBegin, source.listRelease = began, release
+	source.mu.Unlock()
+	graph.state.NavigateComposeDirectory("src")
+	select {
+	case <-began:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the listing did not start")
+	}
+
+	graph.state.SetComposeDraft("cd ")
+	if !graph.state.ConfirmComposeDirectory() {
+		t.Fatal("confirming the path failed")
+	}
+	close(release)
+	if got := *graph.state.ComposeDraft(); got != "cd /srv/app/src" {
+		t.Fatalf("draft = %q, want the directory the user navigated to", got)
+	}
+}
+
 // TestComposeDirectoryConfirmingAFileEntryUsesItsFullPath proves a file row
 // inserts the entry joined to the browsed directory.
 func TestComposeDirectoryConfirmingAFileEntryUsesItsFullPath(t *testing.T) {
@@ -353,9 +456,21 @@ func TestComposeDirectoryListingLeavesTheBoundEditorToTheUIThread(t *testing.T) 
 	}
 }
 
+// composeDirectoryTestFrame builds the wire frame the listing scripts emit.
+func composeDirectoryTestFrame(nonce string, records ...string) string {
+	raw := strings.Join(records, "\x00")
+	if raw != "" {
+		raw += "\x00"
+	}
+	return composeDirectoryMarker(nonce, composeDirectoryFrameBegin) +
+		fmt.Sprintf("%08x", len(raw)) + hex.EncodeToString([]byte(raw)) +
+		composeDirectoryMarker(nonce, composeDirectoryFrameEnd)
+}
+
 func TestParseComposeDirectoryOutputOrdersDirectoriesFirst(t *testing.T) {
-	listing, err := parseComposeDirectoryOutput(
-		"P/srv\x00Dsrc\x00Ddocs\x00Fmain.go\x00F.hidden\x00")
+	const nonce = "ncdir-test-1"
+	listing, err := parseComposeDirectoryOutput(composeDirectoryTestFrame(nonce,
+		"P/srv", "Dsrc", "Ddocs", "Fmain.go", "F.hidden"), nonce)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,42 +486,158 @@ func TestParseComposeDirectoryOutputOrdersDirectoriesFirst(t *testing.T) {
 	if !reflect.DeepEqual(listing.Entries, want) {
 		t.Fatalf("entries = %+v, want %+v", listing.Entries, want)
 	}
-	if _, err := parseComposeDirectoryOutput("no marker\n"); err == nil {
+	if _, err := parseComposeDirectoryOutput("no marker\n", nonce); err == nil {
 		t.Fatal("a listing without a path was accepted")
 	}
 }
 
-// TestParseComposeDirectoryOutputCannotBeSpoofedByAName proves marker text and
-// newlines inside a name stay part of that name. The old newline protocol read
-// "__d__docs" as a directory record and a newline inside a name as two entries.
+// TestParseComposeDirectoryOutputCannotBeSpoofedByAName proves marker text,
+// sentinels, newlines, quotes and control bytes inside a name stay part of
+// that name: they are hex-encoded, and records split only on the decoded NUL.
 func TestParseComposeDirectoryOutputCannotBeSpoofedByAName(t *testing.T) {
-	listing, err := parseComposeDirectoryOutput(
-		"P/srv\x00D__D__evil\x00F__d__dir\x00F__f__file\x00Fline\nbreak\x00")
+	const nonce = "ncdir-test-2"
+	names := []string{
+		"__D__evil",
+		"__d__dir",
+		"__f__file",
+		"line\nbreak",
+		"~" + nonce + "~B00000000~" + nonce + "~Z",
+		"quote'name",
+		"tab\tname",
+		"ctrl\x01name",
+		" spaced ",
+	}
+	records := []string{"P/srv", "D__D__evil"}
+	for _, name := range names[1:] {
+		records = append(records, "F"+name)
+	}
+	listing, err := parseComposeDirectoryOutput(composeDirectoryTestFrame(nonce, records...), nonce)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []ComposeDirectoryEntry{
-		{Name: "__D__evil", Directory: true},
-		{Name: "__d__dir"},
-		{Name: "__f__file"},
-		{Name: "line\nbreak"},
+	// The parser lists directories first and then names case-insensitively, so
+	// compare membership rather than insertion order.
+	got := map[string]bool{}
+	for _, entry := range listing.Entries {
+		if _, seen := got[entry.Name]; seen {
+			t.Fatalf("duplicate entry %q", entry.Name)
+		}
+		got[entry.Name] = entry.Directory
 	}
-	if !reflect.DeepEqual(listing.Entries, want) {
-		t.Fatalf("entries = %+v, want %+v", listing.Entries, want)
+	want := map[string]bool{"__D__evil": true}
+	for _, name := range names[1:] {
+		want[name] = false
 	}
-	// An unknown record cannot supply the required resolved path.
-	if _, err := parseComposeDirectoryOutput("__D__not-a-path\x00"); err == nil {
-		t.Fatal("an unknown record was accepted as the resolved path")
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("entries = %+v, want %+v", got, want)
 	}
 }
 
-func TestComposeDirectoryCommandsUseTheRecordProtocol(t *testing.T) {
-	if got := posixDirectoryCommand("/srv/app"); !strings.Contains(got, `printf 'P%s\000'`) ||
-		!strings.Contains(got, `printf '%s%s\000'`) {
-		t.Fatalf("POSIX command does not emit NUL records: %q", got)
+// TestParseComposeDirectoryOutputRejectsDamagedFrames proves a frame that does
+// not add up fails the listing instead of yielding a partial path or name.
+func TestParseComposeDirectoryOutputRejectsDamagedFrames(t *testing.T) {
+	const nonce = "ncdir-test-3"
+	valid := composeDirectoryTestFrame(nonce, "P/srv", "Fmain.go")
+	begin := composeDirectoryMarker(nonce, composeDirectoryFrameBegin)
+	end := composeDirectoryMarker(nonce, composeDirectoryFrameEnd)
+	body := strings.TrimSuffix(strings.TrimPrefix(valid, begin), end)
+	cases := map[string]string{
+		"missing end":  begin + body,
+		"short length": begin + "00000000" + body[8:] + end,
+		"long length":  begin + fmt.Sprintf("%08x", len(body)/2+1) + body[8:] + end,
+		"odd hex":      begin + body[:len(body)-1] + end,
+		"missing path": composeDirectoryTestFrame(nonce, "Fmain.go"),
+		"unknown type": composeDirectoryTestFrame(nonce, "P/srv", "Xname"),
+		"two paths":    composeDirectoryTestFrame(nonce, "P/srv", "P/other"),
+		"empty name":   composeDirectoryTestFrame(nonce, "P/srv", "D"),
+		"path after":   composeDirectoryTestFrame(nonce, "Fmain.go", "P/srv"),
 	}
-	if got := powershellDirectoryCommand(`C:\app`); !strings.Contains(got, "[char]0") {
-		t.Fatalf("PowerShell command does not emit NUL records: %q", got)
+	for name, output := range cases {
+		if _, err := parseComposeDirectoryOutput(output, nonce); err == nil {
+			t.Errorf("%s: damaged frame was accepted", name)
+		}
+	}
+}
+
+// TestParseComposeDirectoryOutputHealsConPTYWraps feeds the artifact ConPTY
+// leaves after the collector strips ANSI and CR: a newline plus a copy of the
+// character at the margin. The hex must reconnect exactly.
+func TestParseComposeDirectoryOutputHealsConPTYWraps(t *testing.T) {
+	const nonce = "ncdir-test-4"
+	frame := composeDirectoryTestFrame(nonce, "P/srv", "Fmain.go", "Dsrc")
+	for _, at := range []int{10, len(frame) / 3, len(frame) / 2, len(frame) - 3} {
+		wrapped := frame[:at+1] + "\n" + string(frame[at]) + frame[at+1:]
+		listing, err := parseComposeDirectoryOutput(wrapped, nonce)
+		if err != nil {
+			t.Fatalf("wrap at %d: %v", at, err)
+		}
+		if listing.Path != "/srv" || len(listing.Entries) != 2 {
+			t.Fatalf("wrap at %d: listing = %+v", at, listing)
+		}
+	}
+	// A wrap without the duplicated cell (a different console) only adds the
+	// newline; dropping it is enough.
+	wrapped := frame[:10] + "\n" + frame[10:]
+	if _, err := parseComposeDirectoryOutput(wrapped, nonce); err != nil {
+		t.Fatalf("bare newline: %v", err)
+	}
+}
+
+// TestParseComposeDirectoryOutputPrefersTheValidatedFrame proves the typed
+// command's echoed sentinel text cannot shadow the real listing.
+func TestParseComposeDirectoryOutputPrefersTheValidatedFrame(t *testing.T) {
+	const nonce = "ncdir-test-5"
+	echo := composeDirectoryMarker(nonce, composeDirectoryFrameBegin) + "%08x%s" +
+		composeDirectoryMarker(nonce, composeDirectoryFrameEnd)
+	frame := composeDirectoryTestFrame(nonce, "P/srv", "Fmain.go")
+	listing, err := parseComposeDirectoryOutput(echo+frame, nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listing.Path != "/srv" || len(listing.Entries) != 1 {
+		t.Fatalf("listing = %+v", listing)
+	}
+}
+
+func TestComposeDirectoryCommandsUseTheHexFrameProtocol(t *testing.T) {
+	const nonce = "ncdir-test-6"
+	begin := composeDirectoryMarker(nonce, composeDirectoryFrameBegin)
+	end := composeDirectoryMarker(nonce, composeDirectoryFrameEnd)
+	posix := posixDirectoryCommand("/srv/app", nonce)
+	if !strings.HasPrefix(posix, "sh -c '") {
+		t.Fatalf("POSIX command does not run under sh: %q", posix)
+	}
+	for _, want := range []string{
+		"od -A n -v -t x1",
+		// The whole script is single-quoted for the outer sh, so single quotes
+		// inside it are escaped; look for the unquoted payload fragments.
+		`P%s\0`,
+		`%s%s\0`,
+		`cd "$__nc_dir"`,
+		begin + "%08x%s" + end,
+	} {
+		if !strings.Contains(posix, want) {
+			t.Fatalf("POSIX command lacks %q: %q", want, posix)
+		}
+	}
+	if strings.HasSuffix(posix, "\n") || strings.HasSuffix(posix, "\r") {
+		t.Fatalf("POSIX command ends with a newline: %q", posix)
+	}
+
+	powershell := powershellDirectoryCommand(`C:\app`, nonce)
+	for _, want := range []string{
+		"[Text.StringBuilder]::new()",
+		"[BitConverter]::ToString",
+		"-f $__ncBytes.Length",
+		begin,
+		end,
+	} {
+		if !strings.Contains(powershell, want) {
+			t.Fatalf("PowerShell command lacks %q: %q", want, powershell)
+		}
+	}
+	if strings.HasSuffix(powershell, "\n") || strings.HasSuffix(powershell, "\r") {
+		t.Fatalf("PowerShell command ends with a newline: %q", powershell)
 	}
 }
 
@@ -444,10 +675,11 @@ func TestComposeDirectoryPathHelpers(t *testing.T) {
 }
 
 func TestComposeDirectoryCommandsQuoteThePath(t *testing.T) {
-	if got := posixDirectoryCommand("/srv/my app"); !strings.Contains(got, "cd -- '/srv/my app'") {
-		t.Fatalf("POSIX command = %q", got)
+	const nonce = "ncdir-test-7"
+	if got := posixDirectoryCommand("/srv/my app", nonce); !strings.Contains(got, "/srv/my app") {
+		t.Fatalf("POSIX command lost the path: %q", got)
 	}
-	if got := powershellDirectoryCommand(`C:\it's here`); !strings.Contains(got, `'C:\it''s here'`) {
+	if got := powershellDirectoryCommand(`C:\it's here`, nonce); !strings.Contains(got, `'C:\it''s here'`) {
 		t.Fatalf("PowerShell command = %q", got)
 	}
 	if got := quoteComposeDirectoryPath("/srv/plain", "posix"); got != "/srv/plain" {
