@@ -25,6 +25,7 @@ func TestStartupPromptReadyRejectsPreShellOutput(t *testing.T) {
 		{"punctuation banner", "### "},
 		{"currency US", "US$ "},
 		{"currency HK", "HK$ "},
+		{"MOTD token", "MOTD>"},
 		{"empty", ""},
 	}
 	for _, tc := range cases {
@@ -79,6 +80,9 @@ func TestStartupPreShellVisible(t *testing.T) {
 		{"last login", "Last login: Mon Nov 16 09:00:00 2026\r\n", true},
 		{"last login then MOTD", "Last login: Mon Nov 16 09:00:00 2026\r\nWelcome to Ubuntu 24.04 LTS\r\n\r\n", true},
 		{"previous login", "Previous login: yesterday\r\n", true},
+		{"welcome banner", "Welcome to the lab switch\r\n\r\n", true},
+		{"authorized users notice", "Authorized users only.\r\n", true},
+		{"MOTD token", "MOTD>\r\n", true},
 		{"booting", "booting...\r\n", false},
 		{"shell prompt", "deploy@web:~$ ", false},
 		{"shell prompt after banner", "Last login: Mon Nov 16 09:00:00 2026\r\n\r\n$ ", false},

@@ -32,6 +32,9 @@ var (
 	// timestamp. It is a pre-shell marker: a banner or MOTD may follow it, and
 	// none of that output is readiness.
 	lastLogin = regexp.MustCompile(`(?i)(^|[\s(\[])(last|previous)\s+login\b`)
+	// bannerText recognizes the opening line of a login notice or MOTD. Such a
+	// banner is pre-shell output even when no login prompt has arrived yet.
+	bannerText = regexp.MustCompile(`(?i)\b(welcome to|authorized (users|access) only|message of the day|motd)\b`)
 	// shellPrompt accepts a last line that ends in a shell or device
 	// terminator: "$", "#", "%", or a bare "Router>". The ">" form requires a
 	// single token so HTML or prose banners ending in ">" are not mistaken for
@@ -60,7 +63,7 @@ func startupPromptLineReady(line string) bool {
 		return false
 	}
 	if loginPrompt.MatchString(line) || continuePrompt.MatchString(line) ||
-		lastLogin.MatchString(line) {
+		lastLogin.MatchString(line) || bannerText.MatchString(line) {
 		return false
 	}
 	return plausibleShellPrompt(line)
@@ -128,7 +131,7 @@ func startupPreShellVisible(tail string) bool {
 			return false
 		}
 		if loginPrompt.MatchString(line) || continuePrompt.MatchString(line) ||
-			lastLogin.MatchString(line) {
+			lastLogin.MatchString(line) || bannerText.MatchString(line) {
 			return true
 		}
 	}

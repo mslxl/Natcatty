@@ -124,6 +124,91 @@ func expectNoStartupWrite(t *testing.T, writes <-chan string, command string, wi
 	}
 }
 
+// preShellReadinessCases are the console lines the startup command must never
+// be typed into, plus one genuine prompt as the control.
+func preShellReadinessCases() []struct {
+	name string
+	tail string
+} {
+	return []struct {
+		name string
+		tail string
+	}{
+		{"login", "Welcome to the lab switch\r\n\r\nlogin: "},
+		{"username", "Username: "},
+		{"password", "Password: "},
+		{"press enter", "\r\nPress Enter to continue..."},
+		{"last login", "Last login: Mon Nov 16 09:00:00 2026\r\n"},
+		{"motd", "Welcome to the lab switch\r\n\r\n"},
+	}
+}
+
+// TestPromptPathWaitsForEveryPreShellForm feeds each pre-shell line through the
+// read loop; none releases the command, and a later genuine prompt does.
+func TestPromptPathWaitsForEveryPreShellForm(t *testing.T) {
+	for _, tc := range preShellReadinessCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := newWriteSignallingTransport()
+			session := openStartupSafetySession(t, transport, StartSpec{
+				Kind:           KindSSH,
+				StartupCommand: "show status",
+			})
+
+			before := session.Snapshot().LastActivity
+			transport.output <- []byte(tc.tail)
+			waitForCondition(t, "the pre-shell output", func() bool {
+				return session.Snapshot().LastActivity.After(before)
+			})
+			expectNoStartupWrite(t, transport.writes, "show status", 150*time.Millisecond)
+
+			transport.output <- []byte("\r\n$ ")
+			waitForCondition(t, "the startup command at the real prompt", func() bool {
+				return strings.Contains(transport.input(), "show status\r")
+			})
+		})
+	}
+}
+
+// TestFallbackLeavesEveryPreShellFormUnsent fires the bounded fallback with
+// each pre-shell line retained and proves it disarms without writing. The
+// genuine-prompt control releases the command.
+func TestFallbackLeavesEveryPreShellFormUnsent(t *testing.T) {
+	for _, tc := range preShellReadinessCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			scheduler := &manualStartupScheduler{}
+			transport := newWriteSignallingTransport()
+			session := openStartupSafetySession(t, transport, StartSpec{
+				Kind:           KindSSH,
+				StartupCommand: "show status",
+			}, withStartupReadinessScheduler(scheduler.schedule))
+
+			transport.output <- []byte(tc.tail)
+			waitForCondition(t, "the pre-shell output in the tail", func() bool {
+				return startupTailHas(session, strings.TrimSpace(tc.tail))
+			})
+
+			scheduler.fireFirst()
+			if !startupWaitDisarmed(session) {
+				t.Fatal("the fallback left the command armed over pre-shell output")
+			}
+			expectNoStartupWrite(t, transport.writes, "show status", 150*time.Millisecond)
+		})
+	}
+
+	t.Run("genuine prompt", func(t *testing.T) {
+		transport := newWriteSignallingTransport()
+		openStartupSafetySession(t, transport, StartSpec{
+			Kind:           KindSSH,
+			StartupCommand: "show status",
+		})
+
+		transport.output <- []byte("deploy@web:~$ ")
+		waitForCondition(t, "the startup command at the real prompt", func() bool {
+			return strings.Contains(transport.input(), "show status\r")
+		})
+	})
+}
+
 // TestBoundedFallbackDoesNotTypeIntoAPersistentLoginPrompt is the ticket 50
 // regression: a real (shortened) fallback bound must not type the Host startup
 // command into a Telnet login prompt that persisted past the bound.
