@@ -4,6 +4,7 @@ package state
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -192,4 +193,59 @@ func checkComposeDirectoryRealPath(t *testing.T, got, want string) {
 	if !strings.EqualFold(filepath.Clean(got), filepath.Clean(want)) {
 		t.Fatalf("resolved path = %q, want %q (%v)", got, want, gotErr)
 	}
+}
+
+// TestComposeDirectorySweepsTheFrameLength is the regression for the ConPTY
+// end-marker padding boundary. The console pads the exit-marker row with
+// spaces before it repositions the cursor, and whether it does depends on
+// where the hex frame leaves the marker row. The sweep varies the entry count,
+// and so the frame length, across the alignments that used to time out: odd
+// counts in the original reproduction failed every time. Each listing has a
+// short deadline so a regression fails the suite instead of holding it for the
+// production 15-second timeout.
+func TestComposeDirectorySweepsTheFrameLength(t *testing.T) {
+	session := composeDirectoryRealSession(t, nil)
+	for entries := 1; entries <= 30; entries++ {
+		dir := t.TempDir()
+		for index := 0; index < entries; index++ {
+			name := fmt.Sprintf("entry-%02d-%s.txt", index, strings.Repeat("x", 8))
+			if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		listing, err := listComposeDirectory(ctx, session, dir)
+		cancel()
+		if err != nil {
+			t.Fatalf("listing %d entries in %q: %v", entries, dir, err)
+		}
+		if len(listing.Entries) != entries {
+			t.Fatalf("listing %d entries returned %d", entries, len(listing.Entries))
+		}
+	}
+}
+
+// TestComposeDirectoryListsTheSystemDriveRoot reproduces the exact listing
+// that failed: a real PowerShell session listing the root of the system drive.
+// Its entry count lands on the padding boundary that made every attempt time
+// out at the production deadline.
+func TestComposeDirectoryListsTheSystemDriveRoot(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the root listing reproduction is Windows-specific")
+	}
+	session := composeDirectoryRealSession(t, nil)
+	root := os.Getenv("SystemDrive") + `\`
+	if root == `\` {
+		root = `C:\`
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	listing, err := listComposeDirectory(ctx, session, root)
+	if err != nil {
+		t.Fatalf("listing %q: %v", root, err)
+	}
+	if len(listing.Entries) == 0 {
+		t.Fatalf("listing %q returned no entries", root)
+	}
+	checkComposeDirectoryRealPath(t, listing.Path, root)
 }

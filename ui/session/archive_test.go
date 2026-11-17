@@ -215,6 +215,47 @@ func TestArchiveClickIsForwardedUnderHighlightTracking(t *testing.T) {
 	}
 }
 
+// A DEC mouse mode split across reads must still reach the emulator's parser
+// while 1001 is on. The fork used to inject its synthetic 1000 as raw VT bytes
+// after every feed, aborting the partial sequence: the program's 1002 was lost,
+// the fork still suppressed the link, and the click became a dead click that
+// neither filled the command nor reached the program.
+func TestArchiveClickIsForwardedAfterASplitMouseMode(t *testing.T) {
+	surface, transport := newArchiveSurface(t)
+	surface.terminal.Feed([]byte("release.tar.gz\r\n$ "))
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	x, y := archiveLinkPoint(t, tester, surface, "release.tar.gz")
+	command := "tar -xzf 'release.tar.gz'"
+	waitArchiveTransport(t, transport, command)
+
+	// 1001 turns the synthetic mode on; the 1002 sequence is then split so the
+	// C parser holds a partial CSI across the next feed. 1006 makes the report
+	// SGR-encoded, which proves the encoder read the parser's real 1002.
+	surface.terminal.Feed([]byte("\x1b[?1001h"))
+	surface.terminal.Feed([]byte("\x1b[?1002"))
+	surface.terminal.Feed([]byte("h\x1b[?1006h"))
+	tester.Frame()
+	before := transport.input()
+	tester.ClickAtWith(ui.Cmd, x, y)
+
+	if link, path, at := surface.terminal.HoveredLink(); link != "" || path || at.W != 0 {
+		t.Fatalf("mouse tracking still offered link %q path %v rect %+v", link, path, at)
+	}
+	added := ""
+	if !waitFor(t, func() bool {
+		added = strings.TrimPrefix(transport.input(), before)
+		return strings.Contains(added, "\x1b[<")
+	}) {
+		t.Fatalf("a split 1002 left the click dead: %q", added)
+	}
+	if strings.Count(transport.input(), command) != 1 {
+		t.Fatalf("a mouse-tracking program received the archive command: %q", transport.input())
+	}
+}
+
 // A drag that is selecting keeps the archive link from taking the press.
 func TestArchiveClickDoesNothingWhileSelecting(t *testing.T) {
 	surface, transport := newArchiveSurface(t)

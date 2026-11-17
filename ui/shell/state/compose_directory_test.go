@@ -456,6 +456,39 @@ func TestComposeDirectoryListingLeavesTheBoundEditorToTheUIThread(t *testing.T) 
 	}
 }
 
+// TestComposeDirectoryTypedTextWinsOverAFinishedListing pins the other half of
+// the pending apply: text the user types while a listing is in flight is not
+// replaced when the listing resolves. Only an empty editor, or one still
+// holding the requested path, takes the resolved path.
+func TestComposeDirectoryTypedTextWinsOverAFinishedListing(t *testing.T) {
+	source := newFakeComposeDirectory("/requested")
+	source.addListing("/requested", "/resolved")
+	began := make(chan struct{})
+	release := make(chan struct{})
+	source.listBegin, source.listRelease = began, release
+	graph, _ := openComposeDirectoryPicker(t, source)
+
+	waitFor(t, "the listing to start", func() bool {
+		select {
+		case <-began:
+			return true
+		default:
+			return false
+		}
+	})
+	typed := graph.state.ComposeDirectoryTyped()
+	*typed = "/home/user/other" // the user kept typing while the listing ran
+	close(release)
+
+	waitFor(t, "the listing to finish", func() bool {
+		return graph.state.ComposeDirectoryPath() == "/resolved" && !graph.state.ComposeDirectoryLoading()
+	})
+	graph.state.RefreshComposeDirectory()
+	if got := *typed; got != "/home/user/other" {
+		t.Fatalf("the finished listing replaced the typed text: %q", got)
+	}
+}
+
 // composeDirectoryTestFrame builds the wire frame the listing scripts emit.
 func composeDirectoryTestFrame(nonce string, records ...string) string {
 	raw := strings.Join(records, "\x00")
