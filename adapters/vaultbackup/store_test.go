@@ -166,7 +166,7 @@ func TestAtomicWriteLeavesNoPartialFile(t *testing.T) {
 	}
 }
 
-func TestReadDetectsTamperedCiphertext(t *testing.T) {
+func TestReadReportsTamperedCiphertextAsADecryptFailure(t *testing.T) {
 	store, dir, _ := openTestStore(t)
 	ctx := context.Background()
 	if _, err := store.Save(ctx, saveInput("backup-1", 1_700_000_000_000, "h1")); err != nil {
@@ -186,8 +186,36 @@ func TestReadDetectsTamperedCiphertext(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.Read(ctx, "backup-1"); !errors.Is(err, appbackup.ErrCorrupt) {
-		t.Fatalf("Read = %v, want ErrCorrupt", err)
+	// GCM authentication covers the ciphertext, so tampering and a foreign key
+	// fail at the same step. The typed error says "cannot decrypt" rather than
+	// blaming a format the user might try to repair.
+	if _, _, err := store.Read(ctx, "backup-1"); !errors.Is(err, appbackup.ErrDecrypt) {
+		t.Fatalf("Read = %v, want ErrDecrypt", err)
+	}
+}
+
+// TestReadReportsAnotherMachinesKeyAsADecryptFailure is the ticket 31
+// regression: moving the backup folder to a machine whose keychain holds a
+// different key must surface the typed decrypt failure, not a generic one.
+func TestReadReportsAnotherMachinesKeyAsADecryptFailure(t *testing.T) {
+	store, dir, _ := openTestStore(t)
+	ctx := context.Background()
+	if _, err := store.Save(ctx, saveInput("backup-1", 1_700_000_000_000, "h1")); err != nil {
+		t.Fatal(err)
+	}
+
+	otherKeys := newMemSecrets()
+	otherKeys.mu.Lock()
+	otherKeys.values[keyName] = []byte(strings.Repeat("\x01", keyBytes))
+	otherKeys.mu.Unlock()
+	other := Open(dir, otherKeys)
+
+	_, _, err := other.Read(ctx, "backup-1")
+	if !errors.Is(err, appbackup.ErrDecrypt) {
+		t.Fatalf("Read = %v, want ErrDecrypt", err)
+	}
+	if errors.Is(err, appbackup.ErrCorrupt) {
+		t.Fatalf("Read = %v, a foreign key must not claim corruption", err)
 	}
 }
 

@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"fmt"
+	"image"
 	"io"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/locales"
 	shellui "github.com/mslxl/natcatty/ui/shell"
@@ -245,7 +247,9 @@ func (f *entityGroups) DeleteGroup(_ context.Context, id string) error {
 	return nil
 }
 
-func (f *entityGroups) AssignHostGroup(_ context.Context, id model.HostID, groupID string) error {
+// AssignHostsGroup mirrors the application service: every Host is resolved
+// before any changes, so a missing one leaves the Vault's membership alone.
+func (f *entityGroups) AssignHostsGroup(_ context.Context, ids []model.HostID, groupID string) error {
 	group := domainvault.Group{}
 	if groupID != "" {
 		var ok bool
@@ -254,13 +258,19 @@ func (f *entityGroups) AssignHostGroup(_ context.Context, id model.HostID, group
 			return &appvault.Error{Kind: appvault.KindValidation}
 		}
 	}
-	host, ok := f.hosts.find(id)
-	if !ok {
-		return appvault.ErrNotFound
+	found := make([]domainvault.Host, 0, len(ids))
+	for _, id := range ids {
+		host, ok := f.hosts.find(id)
+		if !ok {
+			return appvault.ErrNotFound
+		}
+		found = append(found, host)
 	}
-	host.GroupID = groupID
-	host.Group = group.Path
-	f.hosts.replace(host)
+	for _, host := range found {
+		host.GroupID = groupID
+		host.Group = group.Path
+		f.hosts.replace(host)
+	}
 	return nil
 }
 
@@ -324,6 +334,10 @@ func applyEntityGroupDraft(group *domainvault.Group, draft domainvault.GroupDraf
 	group.UseSSHAgent = draft.UseSSHAgent
 	group.RequiresMFA = draft.RequiresMFA
 	group.ProxyProfileID = draft.ProxyProfileID
+	group.NetworkProfileID = draft.NetworkProfileID
+	group.HostChain = domainvault.CloneHostChain(draft.HostChain)
+	group.X11Forwarding = draft.X11Forwarding
+	group.X11WarningAcknowledged = draft.X11WarningAcknowledged
 }
 
 type entityProxies struct {
@@ -480,7 +494,7 @@ func (entitySurface) Close()                        {}
 // sidebar and, because the shell opens one work Tab, the tab strip the app
 // also shows over the Vault. The Vault therefore gets the same content width
 // and height it gets in the production window instead of the full window.
-func newProductionTester(t *testing.T, state *vaultstate.State, width, height int) *ui.Tester {
+func newProductionTester(t *testing.T, state *vaultstate.State, width, height int, options ...Option) *ui.Tester {
 	t.Helper()
 	service := appsession.NewService(entityFactory{})
 	t.Cleanup(service.CloseAll)
@@ -488,7 +502,7 @@ func newProductionTester(t *testing.T, state *vaultstate.State, width, height in
 		shellstate.WithSessions(service, func(*appsession.Session) (shellstate.Surface, error) {
 			return entitySurface{}, nil
 		}),
-		shellstate.WithVault(View(state)),
+		shellstate.WithVault(View(state, options...)),
 	)
 	if err := shell.NewTab(); err != nil {
 		t.Fatalf("open a work Tab for the production chrome: %v", err)
@@ -513,6 +527,13 @@ func newEntityView(t *testing.T) (*vaultstate.State, *entityHosts, *entityGroups
 // sized tests see the real content column rather than the whole window.
 func newProductionEntityView(t *testing.T, width, height int) (*vaultstate.State, *entityHosts, *entityGroups, *entityProxies, *entityKnownHosts, *ui.Tester) {
 	t.Helper()
+	return newProductionEntityViewWith(t, width, height)
+}
+
+// newProductionEntityViewWith is newProductionEntityView with extra Vault
+// options, such as a layout that fixes the Host view mode.
+func newProductionEntityViewWith(t *testing.T, width, height int, extra ...Option) (*vaultstate.State, *entityHosts, *entityGroups, *entityProxies, *entityKnownHosts, *ui.Tester) {
+	t.Helper()
 	hosts := &entityHosts{items: []domainvault.Host{{
 		ID: "host-1", Label: "web-1", Hostname: "10.0.0.1", Port: 22,
 		Protocol: domainvault.ProtocolSSH,
@@ -529,7 +550,7 @@ func newProductionEntityView(t *testing.T, width, height int) (*vaultstate.State
 	if err := state.Reload(); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
-	tt := newProductionTester(t, state, width, height)
+	tt := newProductionTester(t, state, width, height, extra...)
 	return state, hosts, groups, proxies, known, tt
 }
 
@@ -1029,6 +1050,118 @@ func TestHostPortBlankInheritsTheGroupPortInTheEditor(t *testing.T) {
 	}
 	if !textsContain(tt, "10.0.0.1:2222") {
 		t.Fatalf("the list lost the inherited port, texts %q", tt.Texts())
+	}
+}
+
+// TestHostDetailsShowInheritedGroupProxyProfileAndJumpHosts is ticket 29: the
+// Host editor resolves the group's Proxy Profile and jump chain and labels
+// them inherited, and a Host-level value replaces each label.
+func TestHostDetailsShowInheritedGroupProxyProfileAndJumpHosts(t *testing.T) {
+	m := locales.In("en")
+	state, hosts, groups, proxies, _, tt := newProductionEntityView(t, 1000, 1600)
+	proxies.items = []domainvault.ProxyProfile{
+		{ID: "proxy-1", Label: "office"},
+		{ID: "proxy-2", Label: "lab"},
+	}
+	hosts.items = append(hosts.items,
+		domainvault.Host{ID: "bastion", Label: "bastion-1", Hostname: "10.0.0.2",
+			Port: 22, Protocol: domainvault.ProtocolSSH},
+		domainvault.Host{ID: "edge", Label: "edge-1", Hostname: "10.0.0.3",
+			Port: 22, Protocol: domainvault.ProtocolSSH},
+	)
+	groups.items = []domainvault.Group{{
+		Path:           "prod",
+		ProxyProfileID: "proxy-1",
+		HostChain:      &domainvault.HostChain{HostIDs: []model.HostID{"bastion"}},
+	}}
+	hosts.items[0].Group = "prod"
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit failed")
+	}
+	tt.Frame()
+	if !tt.HasText(m.VaultHostJumpHosts()) {
+		t.Fatalf("the Host editor lost the jump Hosts row, texts %q", tt.Texts())
+	}
+	if inherited := m.VaultNetworkProfileInherited("prod", "office"); !textsContain(tt, inherited) {
+		t.Fatalf("the inherited Proxy Profile is not labelled %q, texts %q", inherited, tt.Texts())
+	}
+	if inherited := m.VaultNetworkProfileInherited("prod", "bastion-1"); !textsContain(tt, inherited) {
+		t.Fatalf("the inherited jump chain is not labelled %q, texts %q", inherited, tt.Texts())
+	}
+
+	// A Host-level Proxy Profile and chain replace both inherited labels.
+	state.CancelEdit()
+	hosts.items[0].ProxyProfileID = "proxy-2"
+	hosts.items[0].HostChain = &domainvault.HostChain{HostIDs: []model.HostID{"edge"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit failed")
+	}
+	tt.Frame()
+	if textsContain(tt, m.VaultNetworkProfileInherited("prod", "office")) ||
+		textsContain(tt, m.VaultNetworkProfileInherited("prod", "bastion-1")) {
+		t.Fatalf("a Host-level value kept an inherited label, texts %q", tt.Texts())
+	}
+	if !showsExactly(tt, m.VaultNetworkProfileSourceHost()) {
+		t.Fatalf("the Host's own values are not labelled as its own, texts %q", tt.Texts())
+	}
+	if !tt.HasText("edge-1") {
+		t.Fatalf("the Host's own jump chain is not rendered, texts %q", tt.Texts())
+	}
+}
+
+// TestGroupEditorSetsTheJumpChainDefault proves the group editor is where a
+// jump chain is edited: checking a Host saves it on the group, and a member
+// Host with no chain of its own resolves it.
+func TestGroupEditorSetsTheJumpChainDefault(t *testing.T) {
+	m := locales.In("en")
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1000, 1400)
+	hosts.items = append(hosts.items, domainvault.Host{
+		ID: "bastion", Label: "bastion-1", Hostname: "10.0.0.2",
+		Port: 22, Protocol: domainvault.ProtocolSSH,
+	})
+	groups.items = []domainvault.Group{{Path: "prod", Protocol: domainvault.ProtocolSSH}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEditGroup("prod") {
+		t.Fatal("BeginEditGroup failed")
+	}
+	tt.Frame()
+	if !tt.HasText(m.VaultHostJumpHosts()) {
+		t.Fatalf("the Host Group editor has no jump Hosts default, texts %q", tt.Texts())
+	}
+	if err := tt.Click("bastion-1"); err != nil {
+		t.Fatalf("check bastion-1: %v", err)
+	}
+	tt.Frame()
+	if !state.GroupJumpHostSelected("bastion") {
+		t.Fatalf("the checked Host is not in the group chain: %+v", state.GroupForm().HostChain)
+	}
+	if err := state.SaveGroup(); err != nil {
+		t.Fatalf("SaveGroup: %v", err)
+	}
+	if len(groups.items) != 1 || groups.items[0].HostChain == nil ||
+		len(groups.items[0].HostChain.HostIDs) != 1 ||
+		groups.items[0].HostChain.HostIDs[0] != "bastion" {
+		t.Fatalf("saved group chain = %+v", groups.items)
+	}
+
+	hosts.items[0].Group = "prod"
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	effective, ok := state.EffectiveHost("host-1")
+	if !ok || effective.HostChain == nil || len(effective.HostChain.HostIDs) != 1 ||
+		effective.HostChain.HostIDs[0] != "bastion" {
+		t.Fatalf("effective chain = %+v, want the group's bastion", effective.HostChain)
 	}
 }
 
@@ -1837,6 +1970,641 @@ func TestDraggingAHostOutOfItsGroupUsesTheRootTargetOrTheBreadcrumb(t *testing.T
 	if hosts.items[0].Group != "" {
 		t.Fatalf("Host Group after dropping on the breadcrumb = %q, want root", hosts.items[0].Group)
 	}
+}
+
+// rectOf is the laid-out rectangle of the one text or label that reads text.
+func rectOf(t *testing.T, tt *ui.Tester, text string) ui.Rect {
+	t.Helper()
+	rect, ok := tt.Find(text)
+	if !ok {
+		t.Fatalf("%q missing, texts %q", text, tt.Texts())
+	}
+	return rect
+}
+
+// marqueeFrom presses the Hosts section heading, whose bar takes no press of
+// its own, and moves far enough to start the background drag. It leaves the
+// pointer pressed, mid-marquee.
+func marqueeFrom(t *testing.T, tt *ui.Tester) (x, y float32) {
+	t.Helper()
+	heading := rectOf(t, tt, "Host Groups (1)")
+	x, y = heading.X+heading.W/2, heading.Y+heading.H/2
+	tt.Press(x, y)
+	tt.Frame()
+	tt.Move(x+8, y+8)
+	tt.Frame()
+	return x, y
+}
+
+// TestMarqueeSweepsEveryHostItPassesAndTheSelectionDropsTogether proves the
+// box selection and the all-or-nothing drop: dragging from the page background
+// over two Hosts chooses both, and dropping that selection on a Host Group
+// moves both in one drop.
+func TestMarqueeSweepsEveryHostItPassesAndTheSelectionDropsTogether(t *testing.T) {
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1400, 900)
+	hosts.items = []domainvault.Host{
+		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+	}
+	groups.items = []domainvault.Group{{Path: "prod"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	group := rectOf(t, tt, "prod")
+	alpha := rectOf(t, tt, "alpha")
+	beta := rectOf(t, tt, "beta")
+
+	marqueeFrom(t, tt)
+	if !state.MarqueeActive() {
+		t.Fatalf("dragging the page background started no marquee, texts %q", tt.Texts())
+	}
+	tt.Move(alpha.X+alpha.W/2, alpha.Y+alpha.H/2)
+	tt.Frame()
+	tt.Move(beta.X+beta.W/2, beta.Y+beta.H/2)
+	tt.Frame()
+	if !state.Chosen("host-1") || !state.Chosen("host-2") || state.ChosenCount() != 2 {
+		t.Fatalf("the sweep chose %v, want both Hosts", state.SelectedHostIDs())
+	}
+
+	tt.Move(group.X+group.W/2, group.Y+group.H/2)
+	tt.Frame()
+	tt.Release(group.X+group.W/2, group.Y+group.H/2)
+	tt.Frame()
+
+	if hosts.items[0].GroupID != groups.items[0].ID || hosts.items[1].GroupID != groups.items[0].ID {
+		t.Fatalf("Groups after the drop = %q and %q, want both in %q",
+			hosts.items[0].GroupID, hosts.items[1].GroupID, groups.items[0].ID)
+	}
+	if state.ChosenCount() != 0 {
+		t.Fatalf("the selection survives the drop: %v", state.SelectedHostIDs())
+	}
+	if state.MarqueeActive() {
+		t.Fatal("the marquee stays active after the drop")
+	}
+}
+
+// hostViewLayout returns a layout pointer that fixes the Host view mode; the
+// production harness otherwise uses the default grid.
+func hostViewLayout(mode domainpreferences.HostViewMode) *domainpreferences.Layout {
+	layout := domainpreferences.Defaults().Layout
+	layout.HostViewMode = mode
+	return &layout
+}
+
+// layoutOption renders the Vault with the layout the test owns.
+func layoutOption(layout *domainpreferences.Layout) Option {
+	return WithLayout(
+		func() domainpreferences.Layout { return *layout },
+		func(change func(*domainpreferences.Layout)) { change(layout) },
+	)
+}
+
+// marqueeFromHeading presses the background at a section heading, which takes
+// no press of its own, and moves far enough to start the background drag.
+func marqueeFromHeading(t *testing.T, tt *ui.Tester, headingText string) {
+	t.Helper()
+	heading := rectOf(t, tt, headingText)
+	x, y := heading.X+2, heading.Y+heading.H/2
+	tt.Press(x, y)
+	tt.Frame()
+	tt.Move(x+8, y+8)
+	tt.Frame()
+}
+
+// sweepOver moves the held pointer onto each named Host in turn, growing the
+// box over it.
+func sweepOver(t *testing.T, tt *ui.Tester, labels ...string) {
+	t.Helper()
+	for _, label := range labels {
+		rect := rectOf(t, tt, label)
+		tt.Move(rect.X+rect.W/2, rect.Y+rect.H/2)
+		tt.Frame()
+	}
+}
+
+// releaseOn moves the held pointer onto the named target and releases it
+// there, completing the drop.
+func releaseOn(t *testing.T, tt *ui.Tester, targetText string) {
+	t.Helper()
+	target := rectOf(t, tt, targetText)
+	tt.Move(target.X+target.W/2, target.Y+target.H/2)
+	tt.Frame()
+	tt.Release(target.X+target.W/2, target.Y+target.H/2)
+	tt.Frame()
+}
+
+// assertMoved reports whether both Hosts landed in groupID.
+func assertMoved(t *testing.T, hosts *entityHosts, groupID string) {
+	t.Helper()
+	if hosts.items[0].GroupID != groupID || hosts.items[1].GroupID != groupID {
+		t.Fatalf("Groups after the drop = %q and %q, want both %q",
+			hosts.items[0].GroupID, hosts.items[1].GroupID, groupID)
+	}
+}
+
+// TestMarqueeDropsTwoHostsOnAGroupRowInListView proves a group row in the
+// list view accepts the box selection, not only a single Host drag: the exact
+// type assertion the row used to make rejected the marquee payload.
+func TestMarqueeDropsTwoHostsOnAGroupRowInListView(t *testing.T) {
+	m := locales.In("en")
+	layout := hostViewLayout(domainpreferences.HostViewList)
+	state, hosts, groups, _, _, tt := newProductionEntityViewWith(t, 1400, 900, layoutOption(layout))
+	hosts.items = []domainvault.Host{
+		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+	}
+	groups.items = []domainvault.Group{{Path: "prod"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	marqueeFromHeading(t, tt, m.VaultGroupListTitle(1))
+	sweepOver(t, tt, "alpha", "beta")
+	if state.ChosenCount() != 2 {
+		t.Fatalf("the sweep chose %v, want both Hosts", state.SelectedHostIDs())
+	}
+	releaseOn(t, tt, "prod")
+
+	assertMoved(t, hosts, groups.items[0].ID)
+	if state.ChosenCount() != 0 || state.MarqueeActive() {
+		t.Fatalf("the drop left chosen=%v active=%v", state.SelectedHostIDs(), state.MarqueeActive())
+	}
+}
+
+// TestMarqueeDropsTwoHostsOnAGroupRowInTreeView proves the tree's group row
+// accepts the box selection as well as a single Host drag.
+func TestMarqueeDropsTwoHostsOnAGroupRowInTreeView(t *testing.T) {
+	m := locales.In("en")
+	layout := hostViewLayout(domainpreferences.HostViewTree)
+	state, hosts, groups, _, _, tt := newProductionEntityViewWith(t, 1400, 900, layoutOption(layout))
+	hosts.items = []domainvault.Host{
+		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+	}
+	groups.items = []domainvault.Group{{Path: "prod"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	marqueeFromHeading(t, tt, m.VaultHostListTitle(2))
+	sweepOver(t, tt, "alpha", "beta")
+	if state.ChosenCount() != 2 {
+		t.Fatalf("the sweep chose %v, want both Hosts", state.SelectedHostIDs())
+	}
+	releaseOn(t, tt, "prod")
+
+	assertMoved(t, hosts, groups.items[0].ID)
+	if state.ChosenCount() != 0 || state.MarqueeActive() {
+		t.Fatalf("the drop left chosen=%v active=%v", state.SelectedHostIDs(), state.MarqueeActive())
+	}
+}
+
+// TestMarqueeDropsTwoHostsOnTheBreadcrumb proves the breadcrumb takes the box
+// selection out of every group, not only a single Host drag.
+func TestMarqueeDropsTwoHostsOnTheBreadcrumb(t *testing.T) {
+	m := locales.In("en")
+	layout := hostViewLayout(domainpreferences.HostViewList)
+	state, hosts, groups, _, _, tt := newProductionEntityViewWith(t, 1400, 900, layoutOption(layout))
+	hosts.items = []domainvault.Host{
+		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "prod"},
+		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "prod"},
+	}
+	groups.items = []domainvault.Group{{Path: "prod"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click("prod"); err != nil {
+		t.Fatalf("open the group: %v", err)
+	}
+	tt.Frame()
+	if _, ok := tt.Find("alpha"); !ok {
+		t.Fatalf("alpha is not listed under prod: %v", tt.Texts())
+	}
+	if _, ok := tt.Find("beta"); !ok {
+		t.Fatalf("beta is not listed under prod: %v", tt.Texts())
+	}
+
+	marqueeFromHeading(t, tt, m.VaultHostListTitle(2))
+	sweepOver(t, tt, "alpha", "beta")
+	if state.ChosenCount() != 2 {
+		t.Fatalf("the sweep chose %v, want both Hosts", state.SelectedHostIDs())
+	}
+	releaseOn(t, tt, m.VaultAllHosts())
+
+	assertMoved(t, hosts, "")
+	if state.ChosenCount() != 0 || state.MarqueeActive() {
+		t.Fatalf("the drop left chosen=%v active=%v", state.SelectedHostIDs(), state.MarqueeActive())
+	}
+}
+
+// TestMarqueeDropsTwoGroupedHostsOnTheRootTarget proves the Vault root row,
+// shown while the box is active, accepts the box selection. The default
+// layout lists grouped Hosts at the root too, so sweeping them there and
+// dropping on the root row takes both out of their group.
+func TestMarqueeDropsTwoGroupedHostsOnTheRootTarget(t *testing.T) {
+	m := locales.In("en")
+	layout := hostViewLayout(domainpreferences.HostViewList)
+	state, hosts, groups, _, _, tt := newProductionEntityViewWith(t, 1400, 900, layoutOption(layout))
+	hosts.items = []domainvault.Host{
+		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "prod"},
+		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "prod"},
+	}
+	groups.items = []domainvault.Group{{Path: "prod"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	if _, ok := tt.Find(m.VaultGroupUngrouped()); ok {
+		t.Fatalf("the root target is shown with no drag: %v", tt.Texts())
+	}
+	marqueeFromHeading(t, tt, m.VaultHostListTitle(2))
+	sweepOver(t, tt, "alpha", "beta")
+	if state.ChosenCount() != 2 {
+		t.Fatalf("the sweep chose %v, want both Hosts", state.SelectedHostIDs())
+	}
+	releaseOn(t, tt, m.VaultGroupUngrouped())
+
+	assertMoved(t, hosts, "")
+	if state.ChosenCount() != 0 || state.MarqueeActive() {
+		t.Fatalf("the drop left chosen=%v active=%v", state.SelectedHostIDs(), state.MarqueeActive())
+	}
+}
+
+// diffPixels counts the pixels in r whose RGBA value differs between the two
+// frames.
+func diffPixels(a, b *image.RGBA, r image.Rectangle) int {
+	changed := 0
+	r = r.Intersect(a.Bounds()).Intersect(b.Bounds())
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			if a.RGBAAt(x, y) != b.RGBAAt(x, y) {
+				changed++
+			}
+		}
+	}
+	return changed
+}
+
+// TestMarqueeDragPaintsNoPageGhost proves starting a box selection on the page
+// background no longer drags a translucent copy of the whole page. The page is
+// still the drag source (the marquee payload must reach a drop target), so the
+// framework would paint the source element under the pointer. The page arms the
+// drag only while it is not already dragging, leaving the ghost without an
+// element to copy. The probe band is toolbar space above the page: a ghost
+// shifted up by the pointer delta would paint page cards there.
+func TestMarqueeDragPaintsNoPageGhost(t *testing.T) {
+	m := locales.In("en")
+	state, hosts, _, _, _, tt := newProductionEntityViewWith(t, 1400, 900)
+	hosts.items = []domainvault.Host{
+		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+	}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	heading := rectOf(t, tt, m.VaultHostListTitle(2))
+	// The pointer target sits in the toolbar, far from the probe band, so its
+	// hover state is identical in both frames.
+	targetX, targetY := heading.X+300, float32(20)
+	tt.Move(targetX, targetY)
+	tt.Frame()
+	baseline := tt.Image()
+
+	pressX, pressY := heading.X+2, heading.Y+heading.H/2
+	tt.Press(pressX, pressY)
+	tt.Frame()
+	// Start the drag with a small move inside the page, as a user would; a
+	// first move that already leaves the page would lose the press anchor.
+	tt.Move(pressX+8, pressY+8)
+	tt.Frame()
+	tt.Move(targetX, targetY)
+	tt.Frame()
+	if !state.MarqueeActive() {
+		t.Fatalf("the press did not start a box selection: %v", state.SelectedHostIDs())
+	}
+	dragged := tt.Image()
+	// A ghost shifted by the pointer delta would paint page cards over the
+	// toolbar, right of the pointer. Stay above the page's own top edge, which
+	// the root drop target's row moves when the drag starts.
+	ghostBand := image.Rect(560, 40, 900, int(heading.Y)-20)
+	if ghost := diffPixels(baseline, dragged, ghostBand); ghost != 0 {
+		t.Fatalf("%d pixels of the page ghost appeared over the toolbar in %v", ghost, ghostBand)
+	}
+
+	// The marquee itself is still painted inside the page: the fix suppresses
+	// the drag preview, not the selection rectangle. The pointer is above the
+	// page, so no Host is selected and only the rectangle can change pixels.
+	rectBand := image.Rect(int(pressX)+8, int(heading.Y), int(targetX)-8, int(pressY))
+	if rect := diffPixels(baseline, dragged, rectBand); rect == 0 {
+		t.Fatalf("the marquee rectangle is not painted inside %v", rectBand)
+	}
+	tt.Release(targetX, targetY)
+	tt.Frame()
+}
+
+// TestMarqueeEnclosesHostsThePointerNeverCrossed proves the box, not the
+// pointer path, decides the selection: both Hosts sit inside the final
+// rectangle, but neither pointer sample landed on either card.
+func TestMarqueeEnclosesHostsThePointerNeverCrossed(t *testing.T) {
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1400, 900)
+	hosts.items = []domainvault.Host{
+		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+	}
+	groups.items = []domainvault.Group{{Path: "prod"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	heading := rectOf(t, tt, "Host Groups (1)")
+	alpha := rectOf(t, tt, "alpha")
+	beta := rectOf(t, tt, "beta")
+	if beta.X <= alpha.X {
+		t.Fatalf("the Host cards are not laid out left to right: alpha %+v, beta %+v", alpha, beta)
+	}
+
+	// Press on the section heading, above the cards and at its left edge, then
+	// cross the heading band to the far right and descend past the cards. No
+	// pointer sample touches a Host, and the final rectangle encloses both.
+	anchorX, anchorY := heading.X+2, heading.Y+heading.H/2
+	tt.Press(anchorX, anchorY)
+	tt.Frame()
+	right := float32(1400 - 30)
+	tt.Move(right, anchorY)
+	tt.Frame()
+	if state.ChosenCount() != 0 {
+		t.Fatalf("a box above the cards chose %v", state.SelectedHostIDs())
+	}
+	tt.Move(right, beta.Y+beta.H+90)
+	tt.Frame()
+
+	if !state.Chosen("host-1") || !state.Chosen("host-2") || state.ChosenCount() != 2 {
+		t.Fatalf("the enclosing box chose %v, want both off-path Hosts", state.SelectedHostIDs())
+	}
+	if !state.MarqueeActive() {
+		t.Fatal("the enclosing box did not keep the marquee active")
+	}
+	tt.Release(anchorX, anchorY)
+	tt.Frame()
+}
+
+// TestMarqueeEscapeRestoresThePresweepSelection proves Escape cancels the
+// in-flight sweep and puts back the selection it replaced, and that a later
+// single-Host drag carries only the intended Host.
+func TestMarqueeEscapeRestoresThePresweepSelection(t *testing.T) {
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1400, 900)
+	hosts.items = []domainvault.Host{
+		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+	}
+	groups.items = []domainvault.Group{{Path: "prod"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	heading := rectOf(t, tt, "Host Groups (1)")
+	group := rectOf(t, tt, "prod")
+	alpha := rectOf(t, tt, "alpha")
+	beta := rectOf(t, tt, "beta")
+	if beta.X <= alpha.X {
+		t.Fatalf("the Host cards are not laid out left to right: alpha %+v, beta %+v", alpha, beta)
+	}
+
+	// First sweep chooses alpha only and ends, leaving it selected.
+	anchorX, anchorY := heading.X+2, heading.Y+heading.H/2
+	tt.Press(anchorX, anchorY)
+	tt.Frame()
+	tt.Move(alpha.X+alpha.W/2, alpha.Y+alpha.H/2)
+	tt.Frame()
+	if !state.Chosen("host-1") || state.Chosen("host-2") {
+		t.Fatalf("the first sweep chose %v, want alpha alone", state.SelectedHostIDs())
+	}
+	tt.Release(anchorX, anchorY)
+	tt.Frame()
+	if !state.Chosen("host-1") || state.Chosen("host-2") {
+		t.Fatalf("the first sweep did not survive its release: %v", state.SelectedHostIDs())
+	}
+
+	// The second, non-additive sweep starts left of beta and touches only beta:
+	// alpha disappears from the in-flight selection even though Escape restores
+	// it.
+	secondX, secondY := beta.X-20, heading.Y+heading.H/2
+	tt.Press(secondX, secondY)
+	tt.Frame()
+	tt.Move(beta.X+beta.W/2, beta.Y+beta.H/2)
+	tt.Frame()
+	if !state.Chosen("host-2") || state.Chosen("host-1") || state.ChosenCount() != 1 {
+		t.Fatalf("the replacing sweep chose %v, want beta alone", state.SelectedHostIDs())
+	}
+
+	// Escape abandons the sweep and restores the pre-sweep selection.
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if state.Chosen("host-2") {
+		t.Fatalf("the swept Host survived Escape: %v", state.SelectedHostIDs())
+	}
+	if !state.Chosen("host-1") || state.ChosenCount() != 1 {
+		t.Fatalf("Escape did not restore alpha: %v", state.SelectedHostIDs())
+	}
+	if state.MarqueeActive() {
+		t.Fatal("Escape left the marquee active")
+	}
+
+	// Releasing over the Group after the cancellation changes nothing.
+	tt.Move(group.X+group.W/2, group.Y+group.H/2)
+	tt.Frame()
+	tt.Release(group.X+group.W/2, group.Y+group.H/2)
+	tt.Frame()
+	if hostGroup(hosts, "host-1") != "" || hostGroup(hosts, "host-2") != "" {
+		t.Fatalf("a cancelled drag moved Hosts into %q and %q",
+			hostGroup(hosts, "host-1"), hostGroup(hosts, "host-2"))
+	}
+
+	// A subsequent drag payload carries the intended Host alone, and dropping
+	// it moves only that Host.
+	payload := hostDragPayload(state, "host-1")
+	if got := payload.Hosts(); len(got) != 1 || got[0] != "host-1" {
+		t.Fatalf("the drag after Escape carries %v, want host-1 alone", got)
+	}
+	dragOnto(t, tt, "alpha", "prod")
+	if hostGroup(hosts, "host-1") != groups.items[0].ID {
+		t.Fatalf("the intended Host was not moved: %q", hostGroup(hosts, "host-1"))
+	}
+	if hostGroup(hosts, "host-2") != "" {
+		t.Fatalf("the cancelled sweep's Host moved into %q", hostGroup(hosts, "host-2"))
+	}
+}
+
+// TestMarqueeEscapeOutsideThePageRestoresThePresweepSelection proves Escape
+// cancels the sweep wherever the pointer is. Pressed reports only inside the
+// page, so a pointer over the toolbar used to be taken for a release and the
+// swept selection survived.
+func TestMarqueeEscapeOutsideThePageRestoresThePresweepSelection(t *testing.T) {
+	m := locales.In("en")
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1400, 900)
+	hosts.items = []domainvault.Host{
+		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+	}
+	groups.items = []domainvault.Group{{Path: "prod"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	heading := rectOf(t, tt, m.VaultGroupListTitle(1))
+	alpha := rectOf(t, tt, "alpha")
+	beta := rectOf(t, tt, "beta")
+	group := rectOf(t, tt, "prod")
+	toolbar := rectOf(t, tt, m.VaultHostNew())
+
+	// First sweep chooses alpha and ends, leaving it selected.
+	anchorX, anchorY := heading.X+2, heading.Y+heading.H/2
+	tt.Press(anchorX, anchorY)
+	tt.Frame()
+	tt.Move(alpha.X+alpha.W/2, alpha.Y+alpha.H/2)
+	tt.Frame()
+	tt.Release(anchorX, anchorY)
+	tt.Frame()
+	if !state.Chosen("host-1") || state.Chosen("host-2") {
+		t.Fatalf("the base sweep chose %v, want alpha", state.SelectedHostIDs())
+	}
+
+	// The second, non-additive sweep touches only beta, then the pointer leaves
+	// the page for the toolbar while the press stays held.
+	secondX, secondY := beta.X-20, heading.Y+heading.H/2
+	tt.Press(secondX, secondY)
+	tt.Frame()
+	tt.Move(beta.X+beta.W/2, beta.Y+beta.H/2)
+	tt.Frame()
+	if !state.Chosen("host-2") || state.Chosen("host-1") {
+		t.Fatalf("the replacing sweep chose %v, want beta alone", state.SelectedHostIDs())
+	}
+	tt.Move(toolbar.X+toolbar.W/2, toolbar.Y+toolbar.H/2)
+	tt.Frame()
+	if !state.MarqueeActive() || !state.Chosen("host-2") {
+		t.Fatalf("leaving the page ended the sweep: active=%v chosen=%v",
+			state.MarqueeActive(), state.SelectedHostIDs())
+	}
+
+	// Escape from the toolbar abandons the sweep and restores alpha.
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if state.Chosen("host-2") {
+		t.Fatalf("the swept Host survived Escape: %v", state.SelectedHostIDs())
+	}
+	if !state.Chosen("host-1") || state.ChosenCount() != 1 {
+		t.Fatalf("Escape did not restore alpha: %v", state.SelectedHostIDs())
+	}
+	if state.MarqueeActive() {
+		t.Fatal("Escape left the marquee active")
+	}
+
+	// Releasing over the Group after the cancellation moves nothing.
+	tt.Move(group.X+group.W/2, group.Y+group.H/2)
+	tt.Frame()
+	tt.Release(group.X+group.W/2, group.Y+group.H/2)
+	tt.Frame()
+	if hostGroup(hosts, "host-1") != "" || hostGroup(hosts, "host-2") != "" {
+		t.Fatalf("a cancelled drag moved Hosts into %q and %q",
+			hostGroup(hosts, "host-1"), hostGroup(hosts, "host-2"))
+	}
+
+	// The next payload carries only the intended Host.
+	payload := hostDragPayload(state, "host-1")
+	if got := payload.Hosts(); len(got) != 1 || got[0] != "host-1" {
+		t.Fatalf("the drag after Escape carries %v, want host-1 alone", got)
+	}
+}
+
+// TestMarqueeFollowsTheListAsItScrolls proves the sweep compares the box
+// against where the rows are now, not where the previous frame laid them out:
+// scrolling one row moves the next Host into the box in the same frame.
+func TestMarqueeFollowsTheListAsItScrolls(t *testing.T) {
+	m := locales.In("en")
+	layout := hostViewLayout(domainpreferences.HostViewList)
+	state, hosts, groups, _, _, tt := newProductionEntityViewWith(t, 1400, 600, layoutOption(layout))
+	hosts.items = nil
+	for i := 1; i <= 24; i++ {
+		hosts.items = append(hosts.items, domainvault.Host{
+			ID: model.HostID("host-" + strconv.Itoa(i)), Label: "h" + strconv.Itoa(i),
+			Hostname: "10.0.0." + strconv.Itoa(i), Port: 22,
+			Protocol: domainvault.ProtocolSSH,
+		})
+	}
+	groups.items = []domainvault.Group{{Path: "prod"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	heading := rectOf(t, tt, m.VaultHostListTitle(24))
+	first := rectOf(t, tt, "h1")
+	second := rectOf(t, tt, "h2")
+	pitch := second.Y - first.Y
+	if pitch <= 0 {
+		t.Fatalf("the rows are not stacked: h1 %+v, h2 %+v", first, second)
+	}
+
+	// Start the box above the list, then move it onto the first row only.
+	anchorX, anchorY := heading.X+2, heading.Y+heading.H/2
+	pointerX, pointerY := first.X+first.W/2, first.Y+first.H/2
+	tt.Press(anchorX, anchorY)
+	tt.Frame()
+	tt.Move(anchorX+8, anchorY+8)
+	tt.Frame()
+	tt.Move(pointerX, pointerY)
+	tt.Frame()
+	if !state.Chosen("host-1") || state.Chosen("host-2") {
+		t.Fatalf("the box chose %v, want only the first row", state.SelectedHostIDs())
+	}
+
+	// Scrolling one row brings h2 into the box. The pointer does not move, so
+	// only the scroll-corrected bounds can see it.
+	tt.Scroll(pointerX, pointerY, 0, pitch)
+	if !state.Chosen("host-2") {
+		t.Fatalf("the scrolled-into-view Host was not swept: %v", state.SelectedHostIDs())
+	}
+	tt.Release(pointerX, pointerY)
+	tt.Frame()
+}
+
+// hostGroup returns one fake Host's group ID.
+func hostGroup(hosts *entityHosts, id model.HostID) string {
+	for _, host := range hosts.items {
+		if host.ID == id {
+			return host.GroupID
+		}
+	}
+	return ""
 }
 
 func TestHostCardDetailHasNoOrphanSeparatorsAt720x480(t *testing.T) {

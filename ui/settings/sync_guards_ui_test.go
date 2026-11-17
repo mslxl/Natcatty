@@ -3,12 +3,14 @@ package settings
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
 
 	appsync "github.com/mslxl/natcatty/application/sync"
+	appbackup "github.com/mslxl/natcatty/application/vaultbackup"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
@@ -29,6 +31,7 @@ type fakeDestructiveSyncService struct {
 	forcePushes    int
 	resolutions    []appsync.Resolution
 	backupRestores []backupRestoreCall
+	restoreErr     error
 }
 
 func newFakeDestructiveSyncService() *fakeDestructiveSyncService {
@@ -68,9 +71,9 @@ func (f *fakeDestructiveSyncService) LoadBackups(context.Context) error {
 
 func (f *fakeDestructiveSyncService) RestoreBackup(_ context.Context, source appsync.BackupSource, id string) error {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.backupRestores = append(f.backupRestores, backupRestoreCall{source, id})
-	f.mu.Unlock()
-	return nil
+	return f.restoreErr
 }
 
 func (f *fakeDestructiveSyncService) RestoreGuard(context.Context) (appsync.Result, error) {
@@ -325,5 +328,35 @@ func TestSyncSurfaceRestoresTheFirstListedBackup(t *testing.T) {
 	fake.mu.Unlock()
 	if len(restores) != 1 || restores[0].source != appsync.BackupSourceRemote || restores[0].id != "remote-1" {
 		t.Fatalf("backup restores = %v", restores)
+	}
+}
+
+// TestSyncBackupsPanelExplainsPortabilityAndKeyMismatch is ticket 31's UI
+// contract: the folder warning is visible before any restore, and a backup
+// that needs another machine's key is named instead of the generic failure.
+func TestSyncBackupsPanelExplainsPortabilityAndKeyMismatch(t *testing.T) {
+	fake := newFakeDestructiveSyncService()
+	fake.restoreErr = fmt.Errorf("%w: cipher: message authentication failed", appbackup.ErrDecrypt)
+	state := NewSyncState(fake)
+	tester := ui.NewTester(viewAt(AreaSync, Config{Sync: state}), 1100, 1600)
+	tester.SetLocale("en")
+	tester.Frame()
+	waitSyncIdle(t, state)
+	tester.Frame()
+	m := locales.In("en")
+
+	if !tester.HasText(m.SettingsSyncBackupsPortability()) {
+		t.Fatalf("the Backups panel has no portability warning: %v", tester.Texts())
+	}
+
+	state.RestoreBackup(appsync.BackupSourceLocal, "local-1")
+	waitSyncIdle(t, state)
+	tester.Frame()
+
+	if !tester.HasText(m.SettingsSyncBackupKeyMismatch()) {
+		t.Fatalf("the decrypt failure was not explained: %v", tester.Texts())
+	}
+	if tester.HasText(m.SettingsSyncOperationFailed()) {
+		t.Fatal("the decrypt failure fell back to the generic operation error")
 	}
 }

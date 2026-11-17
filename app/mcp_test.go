@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -329,6 +330,20 @@ func TestMCPVaultReadToolsProjectTheOriginalShapes(t *testing.T) {
 		map[string]any{"noteId": "n1", "query": "absent"}))
 	if value, present := unmatched["matchOffset"]; !present || value != nil {
 		t.Fatalf("unmatched matchOffset = %v (present %v), want null", value, present)
+	}
+	// An unset query serialized as "" must read exactly like an omitted one.
+	emptyQuery := mustOK(t, callMap(t, bridge, "public/vault/notes/get",
+		map[string]any{"noteId": "n1", "query": ""}))
+	if !reflect.DeepEqual(emptyQuery, read) {
+		t.Fatalf("empty query = %v, want the unfiltered read %v", emptyQuery, read)
+	}
+	if _, present := emptyQuery["matchOffset"]; present {
+		t.Fatalf("an empty query reported a match: %v", emptyQuery)
+	}
+	whitespaceQuery := mustOK(t, callMap(t, bridge, "public/vault/notes/get",
+		map[string]any{"noteId": "n1", "query": "   "}))
+	if value, present := whitespaceQuery["matchOffset"]; !present || value != nil {
+		t.Fatalf("whitespace matchOffset = %v (present %v), want a null match", value, present)
 	}
 	invalid := callMap(t, bridge, "public/vault/notes/get",
 		map[string]any{"noteId": "n1", "maxChars": 1})

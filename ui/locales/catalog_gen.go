@@ -1340,6 +1340,46 @@ func (msgs Messages) VaultNetworkProfileInherited(path string, label string) str
 	return Catalog.Format(msgs.locale, "vaultNetworkProfileInherited", map[string]any{"path": path, "label": label})
 }
 
+// VaultX11Inherited says "Inherited from {path}"
+// in the language the app shows.
+func VaultX11Inherited(path string) string { return In(i18n.Locale()).VaultX11Inherited(path) }
+
+// VaultX11Inherited says "Inherited from {path}"
+// in the language of msgs.
+func (msgs Messages) VaultX11Inherited(path string) string {
+	return Catalog.Format(msgs.locale, "vaultX11Inherited", map[string]any{"path": path})
+}
+
+// VaultHostJumpHosts says "Jump Hosts"
+// in the language the app shows.
+func VaultHostJumpHosts() string { return In(i18n.Locale()).VaultHostJumpHosts() }
+
+// VaultHostJumpHosts says "Jump Hosts"
+// in the language of msgs.
+func (msgs Messages) VaultHostJumpHosts() string {
+	return Catalog.Format(msgs.locale, "vaultHostJumpHosts", nil)
+}
+
+// VaultHostJumpHostsHint says "Listed first to last, closest to the client."
+// in the language the app shows.
+func VaultHostJumpHostsHint() string { return In(i18n.Locale()).VaultHostJumpHostsHint() }
+
+// VaultHostJumpHostsHint says "Listed first to last, closest to the client."
+// in the language of msgs.
+func (msgs Messages) VaultHostJumpHostsHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostJumpHostsHint", nil)
+}
+
+// VaultGroupJumpHostsHint says "Member Hosts inherit this chain unless they configure their own. Hops follow the order they were checked."
+// in the language the app shows.
+func VaultGroupJumpHostsHint() string { return In(i18n.Locale()).VaultGroupJumpHostsHint() }
+
+// VaultGroupJumpHostsHint says "Member Hosts inherit this chain unless they configure their own. Hops follow the order they were checked."
+// in the language of msgs.
+func (msgs Messages) VaultGroupJumpHostsHint() string {
+	return Catalog.Format(msgs.locale, "vaultGroupJumpHostsHint", nil)
+}
+
 // VaultProxyListTitle says "Proxy Profiles ({count})"
 // in the language the app shows.
 //
@@ -3872,6 +3912,18 @@ func VaultImportIssueInvalidJump() string { return In(i18n.Locale()).VaultImport
 // in the language of msgs.
 func (msgs Messages) VaultImportIssueInvalidJump() string {
 	return Catalog.Format(msgs.locale, "vaultImportIssueInvalidJump", nil)
+}
+
+// VaultImportIssueUnresolvedJump says "A ProxyJump target is not declared in this file, so the Host was skipped."
+// in the language the app shows.
+func VaultImportIssueUnresolvedJump() string {
+	return In(i18n.Locale()).VaultImportIssueUnresolvedJump()
+}
+
+// VaultImportIssueUnresolvedJump says "A ProxyJump target is not declared in this file, so the Host was skipped."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueUnresolvedJump() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueUnresolvedJump", nil)
 }
 
 // VaultImportIssueCyclicJump says "A ProxyJump cycle was removed."
@@ -12530,6 +12582,42 @@ func (msgs Messages) VaultExportOmitted(count int) string {
 	return Catalog.Format(msgs.locale, "vaultExportOmitted", map[string]any{"count": count})
 }
 
+// VaultExportJumpHopMissing says "Jump chain for {host} was left out of the CSV: hop {hop} is not part of this export."
+// in the language the app shows.
+//
+// A CSV export dropped a Host's jump chain because a hop was not in the
+// export.
+func VaultExportJumpHopMissing(host string, hop string) string {
+	return In(i18n.Locale()).VaultExportJumpHopMissing(host, hop)
+}
+
+// VaultExportJumpHopMissing says "Jump chain for {host} was left out of the CSV: hop {hop} is not part of this export."
+// in the language of msgs.
+//
+// A CSV export dropped a Host's jump chain because a hop was not in the
+// export.
+func (msgs Messages) VaultExportJumpHopMissing(host string, hop string) string {
+	return Catalog.Format(msgs.locale, "vaultExportJumpHopMissing", map[string]any{"host": host, "hop": hop})
+}
+
+// VaultExportJumpHopUnrepresentable says "Jump chain for {host} was left out of the CSV: hop {hop} cannot be written as an SSH jump."
+// in the language the app shows.
+//
+// A CSV export dropped a Host's jump chain because a hop cannot be
+// represented as an SSH jump.
+func VaultExportJumpHopUnrepresentable(host string, hop string) string {
+	return In(i18n.Locale()).VaultExportJumpHopUnrepresentable(host, hop)
+}
+
+// VaultExportJumpHopUnrepresentable says "Jump chain for {host} was left out of the CSV: hop {hop} cannot be written as an SSH jump."
+// in the language of msgs.
+//
+// A CSV export dropped a Host's jump chain because a hop cannot be
+// represented as an SSH jump.
+func (msgs Messages) VaultExportJumpHopUnrepresentable(host string, hop string) string {
+	return Catalog.Format(msgs.locale, "vaultExportJumpHopUnrepresentable", map[string]any{"host": host, "hop": hop})
+}
+
 // VaultExportDismiss says "Dismiss"
 // in the language the app shows.
 func VaultExportDismiss() string { return In(i18n.Locale()).VaultExportDismiss() }
@@ -12730,6 +12818,16 @@ func VaultBackupIntro() string { return In(i18n.Locale()).VaultBackupIntro() }
 // in the language of msgs.
 func (msgs Messages) VaultBackupIntro() string {
 	return Catalog.Format(msgs.locale, "vaultBackupIntro", nil)
+}
+
+// VaultBackupPortability says "Backups are encrypted with a key stored on this machine. The folder alone is not portable: another machine needs that…"
+// in the language the app shows.
+func VaultBackupPortability() string { return In(i18n.Locale()).VaultBackupPortability() }
+
+// VaultBackupPortability says "Backups are encrypted with a key stored on this machine. The folder alone is not portable: another machine needs that…"
+// in the language of msgs.
+func (msgs Messages) VaultBackupPortability() string {
+	return Catalog.Format(msgs.locale, "vaultBackupPortability", nil)
 }
 
 // VaultBackupRetentionLabel says "Backups to keep"
@@ -13062,6 +13160,16 @@ func VaultBackupProblemCorrupt() string { return In(i18n.Locale()).VaultBackupPr
 // in the language of msgs.
 func (msgs Messages) VaultBackupProblemCorrupt() string {
 	return Catalog.Format(msgs.locale, "vaultBackupProblemCorrupt", nil)
+}
+
+// VaultBackupProblemKeyMismatch says "This backup cannot be decrypted with this machine's key. It was probably written on another machine or under a differ…"
+// in the language the app shows.
+func VaultBackupProblemKeyMismatch() string { return In(i18n.Locale()).VaultBackupProblemKeyMismatch() }
+
+// VaultBackupProblemKeyMismatch says "This backup cannot be decrypted with this machine's key. It was probably written on another machine or under a differ…"
+// in the language of msgs.
+func (msgs Messages) VaultBackupProblemKeyMismatch() string {
+	return Catalog.Format(msgs.locale, "vaultBackupProblemKeyMismatch", nil)
 }
 
 // VaultBackupProblemClear says "Could not delete the backups."
@@ -16416,6 +16524,28 @@ func SettingsSyncBackupsDescription() string {
 // in the language of msgs.
 func (msgs Messages) SettingsSyncBackupsDescription() string {
 	return Catalog.Format(msgs.locale, "settingsSyncBackupsDescription", nil)
+}
+
+// SettingsSyncBackupsPortability says "Local restore points are encrypted with a key stored on this machine. Copying the backup folder to another machine is…"
+// in the language the app shows.
+func SettingsSyncBackupsPortability() string {
+	return In(i18n.Locale()).SettingsSyncBackupsPortability()
+}
+
+// SettingsSyncBackupsPortability says "Local restore points are encrypted with a key stored on this machine. Copying the backup folder to another machine is…"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupsPortability() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupsPortability", nil)
+}
+
+// SettingsSyncBackupKeyMismatch says "This backup cannot be decrypted with this machine's key. It was probably created on another machine or under a differ…"
+// in the language the app shows.
+func SettingsSyncBackupKeyMismatch() string { return In(i18n.Locale()).SettingsSyncBackupKeyMismatch() }
+
+// SettingsSyncBackupKeyMismatch says "This backup cannot be decrypted with this machine's key. It was probably created on another machine or under a differ…"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupKeyMismatch() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupKeyMismatch", nil)
 }
 
 // SettingsSyncBackupsRefresh says "Refresh backups"
@@ -24526,6 +24656,18 @@ func (msgs Messages) SettingsSyncConvergentReasonConflict() string {
 	return Catalog.Format(msgs.locale, "settingsSyncConvergentReasonConflict", nil)
 }
 
+// SettingsSyncConvergentReasonChanged says "One or more conflicts changed since they were shown. Nothing was applied; review the updated values and choose again."
+// in the language the app shows.
+func SettingsSyncConvergentReasonChanged() string {
+	return In(i18n.Locale()).SettingsSyncConvergentReasonChanged()
+}
+
+// SettingsSyncConvergentReasonChanged says "One or more conflicts changed since they were shown. Nothing was applied; review the updated values and choose again."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentReasonChanged() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentReasonChanged", nil)
+}
+
 // SettingsSyncConvergentReasonShrink says "The migration would shrink the Vault beyond the destructive-sync guard."
 // in the language the app shows.
 func SettingsSyncConvergentReasonShrink() string {
@@ -24572,6 +24714,114 @@ func SettingsSyncConvergentReasonUnknown() string {
 // in the language of msgs.
 func (msgs Messages) SettingsSyncConvergentReasonUnknown() string {
 	return Catalog.Format(msgs.locale, "settingsSyncConvergentReasonUnknown", nil)
+}
+
+// SettingsSyncConvergentConflictsTitle says "{count} fields conflict"
+// in the language the app shows.
+func SettingsSyncConvergentConflictsTitle(count string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentConflictsTitle(count)
+}
+
+// SettingsSyncConvergentConflictsTitle says "{count} fields conflict"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentConflictsTitle(count string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictsTitle", map[string]any{"count": count})
+}
+
+// SettingsSyncConvergentConflictEntry says "{family} {id}: {field}"
+// in the language the app shows.
+func SettingsSyncConvergentConflictEntry(family string, id string, field string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentConflictEntry(family, id, field)
+}
+
+// SettingsSyncConvergentConflictEntry says "{family} {id}: {field}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentConflictEntry(family string, id string, field string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictEntry", map[string]any{"family": family, "id": id, "field": field})
+}
+
+// SettingsSyncConvergentConflictFieldPresence says "record presence"
+// in the language the app shows.
+func SettingsSyncConvergentConflictFieldPresence() string {
+	return In(i18n.Locale()).SettingsSyncConvergentConflictFieldPresence()
+}
+
+// SettingsSyncConvergentConflictFieldPresence says "record presence"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentConflictFieldPresence() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictFieldPresence", nil)
+}
+
+// SettingsSyncConvergentConflictValues says "This device: {local} · Cloud: {remote}"
+// in the language the app shows.
+func SettingsSyncConvergentConflictValues(local string, remote string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentConflictValues(local, remote)
+}
+
+// SettingsSyncConvergentConflictValues says "This device: {local} · Cloud: {remote}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentConflictValues(local string, remote string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictValues", map[string]any{"local": local, "remote": remote})
+}
+
+// SettingsSyncConvergentConflictValueMissing says "not set"
+// in the language the app shows.
+func SettingsSyncConvergentConflictValueMissing() string {
+	return In(i18n.Locale()).SettingsSyncConvergentConflictValueMissing()
+}
+
+// SettingsSyncConvergentConflictValueMissing says "not set"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentConflictValueMissing() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictValueMissing", nil)
+}
+
+// SettingsSyncConvergentConflictValuePresent says "present"
+// in the language the app shows.
+func SettingsSyncConvergentConflictValuePresent() string {
+	return In(i18n.Locale()).SettingsSyncConvergentConflictValuePresent()
+}
+
+// SettingsSyncConvergentConflictValuePresent says "present"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentConflictValuePresent() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictValuePresent", nil)
+}
+
+// SettingsSyncConvergentConflictValueHidden says "hidden"
+// in the language the app shows.
+func SettingsSyncConvergentConflictValueHidden() string {
+	return In(i18n.Locale()).SettingsSyncConvergentConflictValueHidden()
+}
+
+// SettingsSyncConvergentConflictValueHidden says "hidden"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentConflictValueHidden() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentConflictValueHidden", nil)
+}
+
+// SettingsSyncConvergentKeepLocalAll says "Keep this device for remaining conflicts"
+// in the language the app shows.
+func SettingsSyncConvergentKeepLocalAll() string {
+	return In(i18n.Locale()).SettingsSyncConvergentKeepLocalAll()
+}
+
+// SettingsSyncConvergentKeepLocalAll says "Keep this device for remaining conflicts"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentKeepLocalAll() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentKeepLocalAll", nil)
+}
+
+// SettingsSyncConvergentKeepRemoteAll says "Keep the cloud copy for remaining conflicts"
+// in the language the app shows.
+func SettingsSyncConvergentKeepRemoteAll() string {
+	return In(i18n.Locale()).SettingsSyncConvergentKeepRemoteAll()
+}
+
+// SettingsSyncConvergentKeepRemoteAll says "Keep the cloud copy for remaining conflicts"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentKeepRemoteAll() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentKeepRemoteAll", nil)
 }
 
 // SettingsSyncConvergentDivergenceTitle says "Replicas diverged"
@@ -24806,6 +25056,18 @@ func SettingsSyncProblemConvergentMigration() string {
 // in the language of msgs.
 func (msgs Messages) SettingsSyncProblemConvergentMigration() string {
 	return Catalog.Format(msgs.locale, "settingsSyncProblemConvergentMigration", nil)
+}
+
+// SettingsSyncProblemConvergentConflictChanged says "A conflict changed while you were deciding. Nothing was applied; review the updated values and choose again."
+// in the language the app shows.
+func SettingsSyncProblemConvergentConflictChanged() string {
+	return In(i18n.Locale()).SettingsSyncProblemConvergentConflictChanged()
+}
+
+// SettingsSyncProblemConvergentConflictChanged says "A conflict changed while you were deciding. Nothing was applied; review the updated values and choose again."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemConvergentConflictChanged() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemConvergentConflictChanged", nil)
 }
 
 // SettingsSyncProblemConvergentDivergence says "Convergent replicas diverged. No automatic overwrite was made."

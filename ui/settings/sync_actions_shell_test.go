@@ -90,8 +90,10 @@ func lastBackupText(m locales.Messages, service SyncService) string {
 // are rendered together.
 type fakeActionsConvergentService struct {
 	*fakeDestructiveSyncService
-	convergentCalls []bool
-	restores        int
+	convergentCalls     []bool
+	restores            int
+	conflictResolutions []appsync.ConvergentConflictResolution
+	bulkResolutions     []appsync.ConvergentConflictSide
 }
 
 func newFakeActionsConvergentService() *fakeActionsConvergentService {
@@ -111,6 +113,20 @@ func (f *fakeActionsConvergentService) SetConvergentEnabled(_ context.Context, e
 	f.convergentCalls = append(f.convergentCalls, enabled)
 	f.mu.Unlock()
 	return appsync.ConvergentMigrationPreview{SchemaVersion: 2, AlreadyInitialized: true}, nil
+}
+
+func (f *fakeActionsConvergentService) ResolveConvergentMigrationConflict(_ context.Context, resolution appsync.ConvergentConflictResolution) (appsync.ConvergentMigrationPreview, error) {
+	f.mu.Lock()
+	f.conflictResolutions = append(f.conflictResolutions, resolution)
+	f.mu.Unlock()
+	return appsync.ConvergentMigrationPreview{SchemaVersion: 2}, nil
+}
+
+func (f *fakeActionsConvergentService) ResolveConvergentMigrationConflicts(_ context.Context, side appsync.ConvergentConflictSide, _ []appsync.ConvergentConflictExpectation) (appsync.ConvergentMigrationPreview, error) {
+	f.mu.Lock()
+	f.bulkResolutions = append(f.bulkResolutions, side)
+	f.mu.Unlock()
+	return appsync.ConvergentMigrationPreview{SchemaVersion: 2}, nil
 }
 
 func (f *fakeActionsConvergentService) RestoreLastVerified(context.Context) (appsync.Result, error) {

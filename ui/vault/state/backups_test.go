@@ -238,6 +238,7 @@ func TestFailedRestoreMapsTheCauseAndKeepsTheVault(t *testing.T) {
 	}{
 		{"protective", &appbackup.ProtectiveBackupError{Cause: errors.New("disk")}, ProblemBackupProtective},
 		{"corrupt", appbackup.ErrCorrupt, ProblemBackupCorrupt},
+		{"decrypt", appbackup.ErrDecrypt, ProblemBackupKeyMismatch},
 		{"incompatible", appbackup.ErrIncompatibleSnapshot, ProblemBackupCorrupt},
 		{"unavailable", appbackup.ErrEncryptionUnavailable, ProblemBackupUnavailable},
 		{"restore", errors.New("constraint"), ProblemBackupRestore},

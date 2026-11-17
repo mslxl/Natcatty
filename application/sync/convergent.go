@@ -24,11 +24,13 @@ package sync
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	domainsync "github.com/mslxl/natcatty/domain/sync"
@@ -81,18 +83,78 @@ type ConvergentBlockedReason struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// ConvergentConflictSide names the side of a contested field that wins when
+// the user resolves a migration conflict.
+type ConvergentConflictSide string
+
+const (
+	// ConvergentConflictKeepLocal keeps this device's Vault value.
+	ConvergentConflictKeepLocal ConvergentConflictSide = "local"
+	// ConvergentConflictKeepRemote keeps the provider's materialized value.
+	ConvergentConflictKeepRemote ConvergentConflictSide = "remote"
+)
+
+// ConvergentConflictResolution is one per-field choice. Register is the
+// stable register identity carried by ConvergentMigrationConflict, and
+// Fingerprint is that conflict's value identity as it was rendered. The choice
+// applies only while the freshly planned conflict still carries the same
+// fingerprint; a value change on either side retires it instead of silently
+// resolving a conflict the user never saw.
+type ConvergentConflictResolution struct {
+	Register    string                 `json:"register"`
+	Fingerprint string                 `json:"fingerprint"`
+	Side        ConvergentConflictSide `json:"side"`
+}
+
+// ConvergentConflictExpectation is the identity of one conflict the user saw.
+// Bulk actions carry one per rendered row so the service can verify the whole
+// set before recording any choice: if any row changed, the action applies
+// none rather than resolving a conflict with a value nobody approved.
+type ConvergentConflictExpectation struct {
+	Register    string `json:"register"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+// ConvergentMigrationConflict is one contested register listed in a blocked
+// migration. LocalValue and RemoteValue are the values the two sides would
+// keep; they are withheld for secret-bearing registers (Secret is true) so a
+// credential never reaches the settings surface.
+type ConvergentMigrationConflict struct {
+	Family   string `json:"family"`
+	EntityID string `json:"entityId"`
+	Field    string `json:"field"`
+	Register string `json:"register"`
+	// Fingerprint identifies this conflict's local and remote values and
+	// presence. It is stable across unrelated preview changes and invalidates
+	// when either side changes, so a resolution can be bound to exactly the
+	// conflict the user saw. Secret values contribute only through the
+	// process-salted hash and are never exposed.
+	Fingerprint   string          `json:"fingerprint"`
+	LocalPresent  bool            `json:"localPresent"`
+	RemotePresent bool            `json:"remotePresent"`
+	LocalValue    json.RawMessage `json:"localValue,omitempty"`
+	RemoteValue   json.RawMessage `json:"remoteValue,omitempty"`
+	Secret        bool            `json:"secret,omitempty"`
+}
+
 // ConvergentMigrationPreview is what the UI shows before enabling v2 and when
 // enablement is refused. The cloud bytes are untouched when CanInitialize is
-// false.
+// false. Conflicts lists every contested register so the user can resolve them
+// field by field; the migration stays blocked until none remain.
 type ConvergentMigrationPreview struct {
-	SchemaVersion         int                       `json:"schemaVersion"`
-	CanInitialize         bool                      `json:"canInitialize"`
-	AlreadyInitialized    bool                      `json:"alreadyInitialized,omitempty"`
-	ProviderSchemaVersion int                       `json:"providerSchemaVersion"`
-	LocalSchemaVersion    int                       `json:"localSchemaVersion"`
-	EntityCount           int                       `json:"entityCount"`
-	ConflictCount         int                       `json:"conflictCount"`
-	BlockedReasons        []ConvergentBlockedReason `json:"blockedReasons,omitempty"`
+	SchemaVersion         int                           `json:"schemaVersion"`
+	CanInitialize         bool                          `json:"canInitialize"`
+	AlreadyInitialized    bool                          `json:"alreadyInitialized,omitempty"`
+	ProviderSchemaVersion int                           `json:"providerSchemaVersion"`
+	LocalSchemaVersion    int                           `json:"localSchemaVersion"`
+	EntityCount           int                           `json:"entityCount"`
+	ConflictCount         int                           `json:"conflictCount"`
+	Conflicts             []ConvergentMigrationConflict `json:"conflicts,omitempty"`
+	BlockedReasons        []ConvergentBlockedReason     `json:"blockedReasons,omitempty"`
+	// attempt fingerprints the contested registers this plan found before any
+	// recorded choice was applied. A choice is only valid while a later plan
+	// meets the same fingerprint; a changed side value makes it stale.
+	attempt string
 }
 
 // ConvergentDivergenceInfo is the actionable divergence report. Values are
@@ -740,6 +802,20 @@ type convergentMigrationInput struct {
 	LocalSnapshot  domainsync.ConvergentSnapshot
 	LegacyBaseline *Payload
 	Remote         convergentRemote
+	// Resolutions records the user's per-field keep-local/keep-remote choices,
+	// each tagged with the conflict set it was made against. They are applied
+	// inside planning, before the conflict gate, so the chosen values travel
+	// through the ordinary migration materialization. A choice from an earlier
+	// attempt is ignored.
+	Resolutions map[string]convergentMigrationResolution
+}
+
+// convergentMigrationResolution is one in-flight per-field choice. Attempt
+// identifies the conflict set the user saw; a changed value on either side
+// changes the attempt and retires the choice.
+type convergentMigrationResolution struct {
+	Side    ConvergentConflictSide
+	Attempt string
 }
 
 type convergentPlan struct {
@@ -772,6 +848,15 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 		return plan
 	}
 	localSnapshot := input.LocalSnapshot
+	// Remote values shown in the conflict list come from the provider's
+	// materialized winner. A v1 provider has no envelope, so its payload is
+	// converted the same way the merge converted it.
+	remoteSnapshot := input.Remote.Materialized
+	if input.Remote.Kind == convergentRemoteV1 {
+		if snapshot, err := payloadSnapshot(input.Remote.Payload); err == nil {
+			remoteSnapshot = snapshot
+		}
+	}
 	options := MergeOptions{PreserveDeletions: domainsync.IsPreserveDeletionsStrategy(input.Strategy)}
 
 	var state domainsync.ConvergentState
@@ -937,7 +1022,41 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 		plan.block("damaged-envelope", err.Error())
 		return plan
 	}
+	// Every choice is tied to the exact contested values it was made against.
+	// A plan that finds a different value set starts a new attempt, so a choice
+	// for a field the user has not seen again is ignored instead of silently
+	// dominating the new remote value.
+	attempt := convergentConflictAttempt(conflicts, localSnapshot, remoteSnapshot)
+	plan.Preview.attempt = attempt
+	resolutions := liveConvergentResolutions(input.Resolutions, attempt)
+	if len(conflicts) > 0 && len(resolutions) > 0 {
+		// A resolution is a real causal write, not a UI override: the chosen
+		// side dominates every retained candidate inside the merged state.
+		state, err = resolveConvergentMigrationConflicts(state, conflicts, resolutions, localSnapshot, remoteSnapshot, input.DeviceID, input.Now)
+		if err != nil {
+			plan.block("conflict-resolution-failed", err.Error())
+			return plan
+		}
+		if conflicts, err = domainsync.ConvergentConflicts(state); err != nil {
+			plan.block("damaged-envelope", err.Error())
+			return plan
+		}
+		if len(conflicts) == 0 {
+			// The chosen values must reach the materialized Vault and the
+			// provider copy, not just the CRDT state.
+			materialized, err = payloadFromState(state, settings, input.Now, input.DeviceID)
+			if err != nil {
+				plan.block("damaged-materialized-payload", err.Error())
+				return plan
+			}
+			if materializedSnapshot, err = payloadSnapshot(materialized); err != nil {
+				plan.block("damaged-materialized-payload", err.Error())
+				return plan
+			}
+		}
+	}
 	plan.Preview.ConflictCount = len(conflicts)
+	plan.Preview.Conflicts = convergentMigrationConflictList(conflicts, localSnapshot, remoteSnapshot)
 	if len(conflicts) > 0 {
 		plan.block("conflicts-unresolved", fmt.Sprintf("%d contested registers", len(conflicts)))
 		return plan
@@ -963,13 +1082,274 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 	return plan
 }
 
+// convergentFingerprintSalt keeps the value fingerprints from becoming an
+// offline verifier for concealed secret values. It is process-local, which is
+// sufficient because migration resolutions are process-local too: a fingerprint
+// only has to stay stable for as long as the preview it was rendered with.
+var convergentFingerprintSalt = func() []byte {
+	salt := make([]byte, 32)
+	if _, err := rand.Read(salt); err != nil {
+		// A deterministic fallback would make hidden credential values
+		// guessable from the rendered fingerprint; fail closed instead.
+		panic("sync: cannot read entropy for conflict fingerprints: " + err.Error())
+	}
+	return salt
+}()
+
+// convergentConflictFingerprint identifies one conflict by its address and the
+// exact local and remote values and presence the user is shown. Unrelated
+// preview changes leave it untouched; a change on either side invalidates it.
+func convergentConflictFingerprint(
+	conflict domainsync.ConvergentConflict,
+	local, remote domainsync.ConvergentSnapshot,
+) string {
+	hash := sha256.New()
+	hash.Write(convergentFingerprintSalt)
+	for _, part := range []string{conflict.Family, conflict.EntityID, conflict.Field, conflict.Register} {
+		fmt.Fprintf(hash, "%d:%s", len(part), part)
+	}
+	localValue, localPresent := snapshotRegisterValue(local, conflict.Family, conflict.EntityID, conflict.Field)
+	remoteValue, remotePresent := snapshotRegisterValue(remote, conflict.Family, conflict.EntityID, conflict.Field)
+	for _, value := range []json.RawMessage{localValue, remoteValue} {
+		fmt.Fprintf(hash, "|%d:", len(value))
+		hash.Write(value)
+	}
+	fmt.Fprintf(hash, "|%t%t", localPresent, remotePresent)
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// convergentConflictAttempt fingerprints the contested values the user is
+// shown. A resolution is scoped to this fingerprint: when either side's value
+// or presence changes anywhere in the set, old choices no longer match and are
+// dropped. Per-conflict fingerprints are sorted so a stable conflict set keeps
+// the same attempt regardless of enumeration order.
+func convergentConflictAttempt(
+	conflicts []domainsync.ConvergentConflict,
+	local, remote domainsync.ConvergentSnapshot,
+) string {
+	if len(conflicts) == 0 {
+		return ""
+	}
+	fingerprints := make([]string, 0, len(conflicts))
+	for _, conflict := range conflicts {
+		fingerprints = append(fingerprints, convergentConflictFingerprint(conflict, local, remote))
+	}
+	sort.Strings(fingerprints)
+	hash := sha256.New()
+	hash.Write(convergentFingerprintSalt)
+	for _, fingerprint := range fingerprints {
+		fmt.Fprintf(hash, "%d:%s", len(fingerprint), fingerprint)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// liveConvergentResolutions keeps only the choices recorded against the
+// attempt currently on screen. Choices made for a different value set are
+// dropped rather than applied to a field the user no longer sees.
+func liveConvergentResolutions(
+	recorded map[string]convergentMigrationResolution,
+	attempt string,
+) map[string]ConvergentConflictSide {
+	if len(recorded) == 0 || attempt == "" {
+		return nil
+	}
+	live := make(map[string]ConvergentConflictSide, len(recorded))
+	for register, choice := range recorded {
+		if choice.Attempt != attempt {
+			continue
+		}
+		live[register] = choice.Side
+	}
+	return live
+}
+
+// resolveConvergentMigrationConflicts applies the user's per-field choices to
+// contested registers. Only registers that are currently listed are touched,
+// so a stale resolution left from an earlier attempt cannot silently change a
+// field the user never saw.
+func resolveConvergentMigrationConflicts(
+	state domainsync.ConvergentState,
+	conflicts []domainsync.ConvergentConflict,
+	resolutions map[string]ConvergentConflictSide,
+	localSnapshot, remoteSnapshot domainsync.ConvergentSnapshot,
+	node string,
+	now int64,
+) (domainsync.ConvergentState, error) {
+	for _, conflict := range conflicts {
+		side, chosen := resolutions[conflict.Register]
+		if !chosen {
+			continue
+		}
+		snapshot := localSnapshot
+		if side == ConvergentConflictKeepRemote {
+			snapshot = remoteSnapshot
+		}
+		value, present := snapshotRegisterValue(snapshot, conflict.Family, conflict.EntityID, conflict.Field)
+		if conflict.Field == domainsync.PresenceField {
+			// Presence only records existence, so the chosen value is true even
+			// when the chosen side is the deletion.
+			value = convergentPresenceValue
+		}
+		next, err := domainsync.ResolveConvergentRegister(state, conflict.Family, conflict.EntityID, conflict.Field, value, !present, node, now)
+		if err != nil {
+			return domainsync.ConvergentState{}, err
+		}
+		state = next
+	}
+	return state, nil
+}
+
+// snapshotRegisterValue reads one register's materialized value out of a v1
+// snapshot. A presence register reports true when the entity is visible.
+func snapshotRegisterValue(snapshot domainsync.ConvergentSnapshot, family, id, field string) (json.RawMessage, bool) {
+	for _, record := range snapshot.Families[family] {
+		if record.ID != id {
+			continue
+		}
+		if field == domainsync.PresenceField {
+			return convergentPresenceValue, true
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(record.Value, &fields); err != nil {
+			return nil, false
+		}
+		value, exists := fields[field]
+		return value, exists
+	}
+	return nil, false
+}
+
+// convergentSecretMarkers mirror the MCP approval-summary redaction rule: a
+// register whose field name or whose JSON keys look like a credential is never
+// rendered in the migration surface. Only names are matched, never string
+// values, so a Host labeled "tokenizer" stays visible.
+var convergentSecretMarkers = []string{
+	"password", "passphrase", "secret", "token", "privatekey", "private_key",
+	"apikey", "api_key", "access_key", "accesskey", "credential", "content",
+}
+
+// convergentPresenceValue is the only value a presence register stores.
+var convergentPresenceValue = json.RawMessage("true")
+
+// convergentMigrationConflictList turns the CRDT conflict descriptors into the
+// preview's per-field list, attaching the value each side would keep.
+func convergentMigrationConflictList(
+	conflicts []domainsync.ConvergentConflict,
+	localSnapshot, remoteSnapshot domainsync.ConvergentSnapshot,
+) []ConvergentMigrationConflict {
+	if len(conflicts) == 0 {
+		return nil
+	}
+	list := make([]ConvergentMigrationConflict, 0, len(conflicts))
+	for _, conflict := range conflicts {
+		localValue, localPresent := snapshotRegisterValue(localSnapshot, conflict.Family, conflict.EntityID, conflict.Field)
+		remoteValue, remotePresent := snapshotRegisterValue(remoteSnapshot, conflict.Family, conflict.EntityID, conflict.Field)
+		entry := ConvergentMigrationConflict{
+			Family:        conflict.Family,
+			EntityID:      convergentConflictDisplayID(conflict.EntityID),
+			Field:         conflict.Field,
+			Register:      conflict.Register,
+			Fingerprint:   convergentConflictFingerprint(conflict, localSnapshot, remoteSnapshot),
+			LocalPresent:  localPresent,
+			RemotePresent: remotePresent,
+		}
+		if convergentConflictIsSecret(conflict.Family, conflict.Field, localValue, remoteValue) {
+			entry.Secret = true
+		} else {
+			entry.LocalValue = localValue
+			entry.RemoteValue = remoteValue
+		}
+		list = append(list, entry)
+	}
+	return list
+}
+
+// convergentConflictDisplayID makes a composite entity ID printable. The
+// secrets family keys records on {entityType, entityId, field} joined by the
+// unit separator, so the raw ID carries control bytes that must never reach the
+// settings surface. The raw identity remains internal: Register is the
+// resolution identity and is left untouched.
+func convergentConflictDisplayID(entityID string) string {
+	var builder strings.Builder
+	builder.Grow(len(entityID))
+	for _, character := range entityID {
+		switch {
+		case character == '\x1f':
+			builder.WriteByte('/')
+		case character < 0x20 || character == 0x7f:
+			// Drop remaining control characters rather than render them.
+		default:
+			builder.WriteRune(character)
+		}
+	}
+	return builder.String()
+}
+
+func convergentConflictIsSecret(family, field string, localValue, remoteValue json.RawMessage) bool {
+	if family == "secrets" || convergentNameIsSecret(field) {
+		return true
+	}
+	return convergentValueNamesSecret(localValue) || convergentValueNamesSecret(remoteValue)
+}
+
+func convergentNameIsSecret(name string) bool {
+	lower := strings.ToLower(name)
+	for _, marker := range convergentSecretMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// convergentValueNamesSecret walks a record's JSON structure looking for
+// credential-like keys. String values are never scanned: a label that happens
+// to say "tokenizer" is not a credential.
+func convergentValueNamesSecret(value json.RawMessage) bool {
+	var decoded any
+	if err := json.Unmarshal(value, &decoded); err != nil {
+		return false
+	}
+	return convergentJSONNamesSecret(decoded)
+}
+
+func convergentJSONNamesSecret(node any) bool {
+	switch typed := node.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if convergentNameIsSecret(key) || convergentJSONNamesSecret(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if convergentJSONNamesSecret(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ---------------------------------------------------------------------------
 // Enable / pause / restore
 // ---------------------------------------------------------------------------
 
 // SetConvergentEnabled enables v2 (running the fail-closed migration when this
 // is the first time) or pauses an initialized replica. It never downgrades.
+// An explicit enable starts a fresh migration attempt, so choices made while
+// resolving an earlier attempt are dropped rather than silently applied to a
+// conflict the user is no longer looking at.
 func (s *Service) SetConvergentEnabled(ctx context.Context, enabled bool) (ConvergentMigrationPreview, error) {
+	if enabled {
+		s.clearMigrationResolutions()
+	}
+	return s.setConvergentEnabled(ctx, enabled)
+}
+
+// setConvergentEnabled is the planning path shared with the resolution
+// methods, which must keep the choices recorded so far.
+func (s *Service) setConvergentEnabled(ctx context.Context, enabled bool) (ConvergentMigrationPreview, error) {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 
@@ -1059,6 +1439,7 @@ func (s *Service) SetConvergentEnabled(ctx context.Context, enabled bool) (Conve
 		if err := s.saveConvergentConfig(config); err != nil {
 			return ConvergentMigrationPreview{}, err
 		}
+		s.clearMigrationResolutions()
 		s.setConvergentInfo(convergentInfoFor(config))
 		return ConvergentMigrationPreview{
 			SchemaVersion:      domainsync.ConvergentSchemaVersion,
@@ -1110,6 +1491,7 @@ func (s *Service) SetConvergentEnabled(ctx context.Context, enabled bool) (Conve
 		LocalSnapshot:  localSnapshot,
 		LegacyBaseline: baseline,
 		Remote:         remote,
+		Resolutions:    s.migrationResolutionChoices(),
 	})
 	if !plan.Preview.CanInitialize || plan.State == nil || plan.Materialized == nil {
 		info := convergentInfoFor(config)
@@ -1192,6 +1574,7 @@ func (s *Service) SetConvergentEnabled(ctx context.Context, enabled bool) (Conve
 		s.finishSync(ProblemLocal)
 		return plan.Preview, err
 	}
+	s.clearMigrationResolutions()
 	info.Phase = "verifying"
 	info.SchemaVersion = domainsync.ConvergentSchemaVersion
 	info.Enabled = true
@@ -1202,6 +1585,138 @@ func (s *Service) SetConvergentEnabled(ctx context.Context, enabled bool) (Conve
 	}
 	plan.Preview.CanInitialize = true
 	return plan.Preview, nil
+}
+
+// ResolveConvergentMigrationConflict records one per-field choice and retries
+// the migration. The fresh plan must still list the same register with the
+// same value fingerprint the user saw; otherwise the choice is not recorded,
+// the migration does not complete, and the refreshed preview says the conflict
+// changed so the user can review it again.
+func (s *Service) ResolveConvergentMigrationConflict(ctx context.Context, resolution ConvergentConflictResolution) (ConvergentMigrationPreview, error) {
+	if resolution.Register == "" || resolution.Fingerprint == "" ||
+		(resolution.Side != ConvergentConflictKeepLocal && resolution.Side != ConvergentConflictKeepRemote) {
+		return ConvergentMigrationPreview{}, fmt.Errorf("%w: invalid conflict resolution", ErrConvergentMigration)
+	}
+	preview, err := s.setConvergentEnabled(ctx, true)
+	if err == nil {
+		return preview, nil
+	}
+	if !errors.Is(err, ErrConvergentMigration) {
+		return preview, err
+	}
+	conflict, listed := convergentPreviewConflict(preview, resolution.Register)
+	if !listed || conflict.Fingerprint != resolution.Fingerprint {
+		return s.reportMigrationConflictChanged(preview, resolution.Register)
+	}
+	s.recordMigrationResolution(resolution.Register, resolution.Side, preview.attempt)
+	return s.setConvergentEnabled(ctx, true)
+}
+
+// ResolveConvergentMigrationConflicts is the bulk action for the remaining
+// conflicts: it applies the same side to every register the user saw, then
+// retries migration. The whole action is verified before any choice is
+// recorded; if any expected fingerprint no longer matches the fresh plan,
+// nothing is applied. Registers already resolved field by field stay as the
+// user chose them and are not part of the rendered remaining list.
+func (s *Service) ResolveConvergentMigrationConflicts(ctx context.Context, side ConvergentConflictSide, expected []ConvergentConflictExpectation) (ConvergentMigrationPreview, error) {
+	if side != ConvergentConflictKeepLocal && side != ConvergentConflictKeepRemote {
+		return ConvergentMigrationPreview{}, fmt.Errorf("%w: invalid conflict side", ErrConvergentMigration)
+	}
+	if len(expected) == 0 {
+		return ConvergentMigrationPreview{}, fmt.Errorf("%w: no conflicts to resolve", ErrConvergentMigration)
+	}
+	for _, want := range expected {
+		if want.Register == "" || want.Fingerprint == "" {
+			return ConvergentMigrationPreview{}, fmt.Errorf("%w: invalid conflict expectation", ErrConvergentMigration)
+		}
+	}
+	preview, err := s.setConvergentEnabled(ctx, true)
+	if err == nil {
+		return preview, nil
+	}
+	if !errors.Is(err, ErrConvergentMigration) {
+		return preview, err
+	}
+	if len(preview.Conflicts) == 0 {
+		return preview, err
+	}
+	// Verify every row before recording anything: a bulk action that saw a
+	// changed row must apply none, never the subset that happens to still
+	// match.
+	for _, want := range expected {
+		conflict, listed := convergentPreviewConflict(preview, want.Register)
+		if !listed || conflict.Fingerprint != want.Fingerprint {
+			return s.reportMigrationConflictChanged(preview, want.Register)
+		}
+	}
+	for _, want := range expected {
+		s.recordMigrationResolution(want.Register, side, preview.attempt)
+	}
+	return s.setConvergentEnabled(ctx, true)
+}
+
+// reportMigrationConflictChanged keeps the refusal visible: it refreshes the
+// blocked preview with the new values, appends an explicit changed-conflict
+// reason, and raises a typed problem. No choice is recorded and no provider or
+// local write happens before the user reviews the new rows.
+func (s *Service) reportMigrationConflictChanged(preview ConvergentMigrationPreview, register string) (ConvergentMigrationPreview, error) {
+	reasons := append([]ConvergentBlockedReason(nil), preview.BlockedReasons...)
+	changed := false
+	for _, reason := range reasons {
+		if reason.Code == "conflict-changed" {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		reasons = append(reasons, ConvergentBlockedReason{Code: "conflict-changed"})
+	}
+	preview.BlockedReasons = reasons
+	preview.CanInitialize = false
+	s.mergeConvergentInfo(func(info *ConvergentInfo) {
+		info.Phase = "blocked"
+		info.Migration = &preview
+		info.ConflictCount = preview.ConflictCount
+	})
+	s.finishSync(ProblemConvergentConflictChanged)
+	return preview, fmt.Errorf("%w: conflict %q changed since it was shown", ErrConvergentConflictChanged, register)
+}
+
+func convergentPreviewConflict(preview ConvergentMigrationPreview, register string) (ConvergentMigrationConflict, bool) {
+	for _, conflict := range preview.Conflicts {
+		if conflict.Register == register {
+			return conflict, true
+		}
+	}
+	return ConvergentMigrationConflict{}, false
+}
+
+func (s *Service) recordMigrationResolution(register string, side ConvergentConflictSide, attempt string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.migrationResolutions == nil {
+		s.migrationResolutions = map[string]convergentMigrationResolution{}
+	}
+	s.migrationResolutions[register] = convergentMigrationResolution{Side: side, Attempt: attempt}
+}
+
+func (s *Service) migrationResolutionChoices() map[string]convergentMigrationResolution {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.migrationResolutions) == 0 {
+		return nil
+	}
+	choices := make(map[string]convergentMigrationResolution, len(s.migrationResolutions))
+	for register, choice := range s.migrationResolutions {
+		choices[register] = choice
+	}
+	return choices
+}
+
+func (s *Service) clearMigrationResolutions() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.migrationResolutions = nil
 }
 
 // strictLegacyBaseline reads the v1 merge anchor without silently falling back

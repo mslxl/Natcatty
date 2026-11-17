@@ -222,6 +222,70 @@ func (s *Service) AssignHostGroup(ctx context.Context, hostID model.HostID, grou
 	return nil
 }
 
+// AssignHostsGroup moves several Hosts into a Host Group in one operation, or
+// to the Vault root when groupID is empty. Every Host is resolved before any
+// is written: a missing Host or an unknown group leaves the Vault untouched, so
+// a partially failed drop never half-applies. A repository implementing
+// HostBatchSaver writes them in one transaction; otherwise a failed write
+// restores the Hosts already stored.
+func (s *Service) AssignHostsGroup(ctx context.Context, hostIDs []model.HostID, groupID string) error {
+	if s.groups == nil {
+		return unsupported(ErrGroupsUnavailable)
+	}
+	if groupID != "" {
+		groups, err := s.ListGroups(ctx)
+		if err != nil {
+			return err
+		}
+		if _, found := domainvault.GroupByID(groups, groupID); !found {
+			return invalid(&domainvault.ValidationError{
+				Field: domainvault.FieldGroup, Rule: domainvault.RuleInvalid,
+			})
+		}
+	}
+	originals := make([]domainvault.Host, 0, len(hostIDs))
+	seen := make(map[model.HostID]struct{}, len(hostIDs))
+	for _, id := range hostIDs {
+		if _, duplicate := seen[id]; duplicate {
+			continue
+		}
+		seen[id] = struct{}{}
+		host, err := s.repo.Get(ctx, id)
+		if errors.Is(err, ErrNotFound) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return internal(err)
+		}
+		originals = append(originals, host)
+	}
+	assigned, err := domainvault.AssignHostsGroup(originals, groupID, s.now())
+	if err != nil {
+		return invalid(err)
+	}
+	if len(assigned) == 0 {
+		return nil
+	}
+	if batch, ok := s.repo.(HostBatchSaver); ok {
+		if err := batch.SaveHosts(ctx, assigned); err != nil {
+			return internal(err)
+		}
+		return nil
+	}
+	for index, host := range assigned {
+		if err := s.repo.Save(ctx, host); err != nil {
+			// Restore what this drop already wrote. The repository offers no
+			// transaction here, so this best-effort rollback keeps a failed
+			// write from leaving the selection half-assigned.
+			for restored := 0; restored < index; restored++ {
+				_ = s.repo.Save(ctx, originals[restored])
+			}
+			return internal(err)
+		}
+	}
+	return nil
+}
+
 // EffectiveHost returns a Host with its group defaults applied and its Proxy
 // Profile materialized. The stored Host is unchanged; the connection path uses
 // this resolved view.
@@ -375,6 +439,9 @@ func groupFromDraft(group domainvault.Group, draft domainvault.GroupDraft) domai
 	group.Algorithms = domainvault.CloneAlgorithms(draft.Algorithms)
 	group.ProxyProfileID = draft.ProxyProfileID
 	group.NetworkProfileID = draft.NetworkProfileID
+	group.HostChain = domainvault.CloneHostChain(draft.HostChain)
+	group.X11Forwarding = draft.X11Forwarding
+	group.X11WarningAcknowledged = draft.X11WarningAcknowledged
 	return group
 }
 

@@ -69,6 +69,13 @@ func (s *Store) Get(ctx context.Context, id model.HostID) (domainvault.Host, err
 	return hosts[0], nil
 }
 
+// hostColumns are the indexed projections a Host write keeps current beside
+// the JSON aggregate in data.
+var hostColumns = []string{
+	"label", "hostname", "port", "username", "protocol", "group_id",
+	"pinned", "order_key", "updated_at", "data",
+}
+
 // Save inserts or replaces one Host aggregate. The indexed columns are
 // projections of the JSON fields and are written through the ORM together.
 func (s *Store) Save(ctx context.Context, host domainvault.Host) error {
@@ -77,13 +84,38 @@ func (s *Store) Save(ctx context.Context, host domainvault.Host) error {
 		return err
 	}
 	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
-		return upsertModel(tx, &model, "id",
-			"label", "hostname", "port", "username", "protocol", "group_id",
-			"pinned", "order_key", "updated_at", "data")
+		return upsertModel(tx, &model, "id", hostColumns...)
 	}); err != nil {
 		return fmt.Errorf("store: save Host: %w", err)
 	}
 	s.vaultChanged()
+	return nil
+}
+
+// SaveHosts writes several Host aggregates in one transaction, so a multi-Host
+// group assignment either lands whole or not at all.
+func (s *Store) SaveHosts(ctx context.Context, hosts []domainvault.Host) error {
+	models := make([]hostSchema, len(hosts))
+	for index, host := range hosts {
+		model, err := hostModel(host)
+		if err != nil {
+			return err
+		}
+		models[index] = model
+	}
+	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
+		for index := range models {
+			if err := upsertModel(tx, &models[index], "id", hostColumns...); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("store: save Hosts: %w", err)
+	}
+	if len(models) > 0 {
+		s.vaultChanged()
+	}
 	return nil
 }
 

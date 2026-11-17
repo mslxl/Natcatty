@@ -227,6 +227,8 @@ func backupProblemFor(err error) Problem {
 	switch {
 	case errors.Is(err, appbackup.ErrEncryptionUnavailable):
 		return ProblemBackupUnavailable
+	case errors.Is(err, appbackup.ErrDecrypt):
+		return ProblemBackupKeyMismatch
 	case errors.Is(err, appbackup.ErrCorrupt), errors.Is(err, appbackup.ErrIncompatibleSnapshot):
 		return ProblemBackupCorrupt
 	}

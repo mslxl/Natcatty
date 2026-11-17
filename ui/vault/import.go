@@ -354,6 +354,8 @@ func importIssueMessage(m locales.Messages, code vaultimport.IssueCode) string {
 		return m.VaultImportIssueDuplicateInFile()
 	case vaultimport.IssueInvalidJump:
 		return m.VaultImportIssueInvalidJump()
+	case vaultimport.IssueUnresolvedJump:
+		return m.VaultImportIssueUnresolvedJump()
 	case vaultimport.IssueCyclicJump:
 		return m.VaultImportIssueCyclicJump()
 	case vaultimport.IssueKeyUnreadable:

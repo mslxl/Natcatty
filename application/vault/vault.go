@@ -24,6 +24,13 @@ type HostRepository interface {
 	Delete(ctx context.Context, id model.HostID) error
 }
 
+// HostBatchSaver is the optional transactional extension of HostRepository.
+// A repository that implements it writes a whole drop in one transaction, so a
+// multi-Host group assignment cannot half-apply.
+type HostBatchSaver interface {
+	SaveHosts(ctx context.Context, hosts []domainvault.Host) error
+}
+
 // Service implements the Vault use cases.
 type Service struct {
 	repo                HostRepository

@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
@@ -184,29 +185,66 @@ func (o Options) exportedAt() string {
 
 // Export renders d in format.
 func Export(d Dataset, format Format, opts Options) ([]byte, error) {
+	content, _, err := ExportWithIssues(d, format, opts)
+	return content, err
+}
+
+// IssueCode names why one row lost data the file cannot carry. It is data for
+// the localized message, never display text.
+type IssueCode string
+
+const (
+	// IssueJumpHopMissing means a Host's jump chain named a Host that is not
+	// part of this export.
+	IssueJumpHopMissing IssueCode = "jump_hop_missing"
+	// IssueJumpHopUnrepresentable means one hop cannot be written as an
+	// OpenSSH ProxyJump target (for example a telnet Host or an address that
+	// would break the comma-separated grammar).
+	IssueJumpHopUnrepresentable IssueCode = "jump_hop_unrepresentable"
+)
+
+// Issue is a non-fatal export warning tied to one row. The export is still
+// written, but the named field is empty or absent. Host names the row and Hop
+// names the jump Host that could not be carried.
+type Issue struct {
+	Host string
+	Code IssueCode
+	Hop  string
+}
+
+// ExportWithIssues renders d in format and reports every row that had to drop
+// data the format cannot represent. Export is the same call for callers that
+// only need the bytes.
+func ExportWithIssues(d Dataset, format Format, opts Options) ([]byte, []Issue, error) {
 	switch format {
 	case FormatJSON:
-		return exportJSON(d, opts)
+		content, err := exportJSON(d, opts)
+		return content, nil, err
 	case FormatCSV:
 		return exportCSV(d, opts)
 	case FormatSnippets:
-		return exportSnippets(d, opts)
+		content, err := exportSnippets(d, opts)
+		return content, nil, err
 	case FormatNotesMarkdown:
-		return exportNotesMarkdown(d), nil
+		return exportNotesMarkdown(d), nil, nil
 	case FormatNotesHTML:
-		return exportNotesHTML(d, opts), nil
+		return exportNotesHTML(d, opts), nil, nil
 	case FormatNotesZIP:
-		return exportNotesZIP(d)
+		content, err := exportNotesZIP(d)
+		return content, nil, err
 	case FormatKeys:
-		return exportKeys(d, opts)
+		content, err := exportKeys(d, opts)
+		return content, nil, err
 	case FormatThemes:
-		return exportThemes(d, opts)
+		content, err := exportThemes(d, opts)
+		return content, nil, err
 	case FormatLogsJSON:
-		return exportLogsJSON(d, opts)
+		content, err := exportLogsJSON(d, opts)
+		return content, nil, err
 	case FormatLogsCSV:
-		return exportLogsCSV(d), nil
+		return exportLogsCSV(d), nil, nil
 	default:
-		return nil, fmt.Errorf("vaultexport: unknown format %q", format)
+		return nil, nil, fmt.Errorf("vaultexport: unknown format %q", format)
 	}
 }
 
@@ -486,16 +524,23 @@ func Header() []string { return vaultimport.CSVHeader() }
 // is guarded.
 const (
 	csvPasswordColumn   = 8
-	csvLocalShellColumn = 11
+	csvLocalShellColumn = 13
 )
 
-func exportCSV(d Dataset, opts Options) ([]byte, error) {
+func exportCSV(d Dataset, opts Options) ([]byte, []Issue, error) {
 	var out strings.Builder
+	var issues []Issue
 	// The original Electron exporter wrote a UTF-8 BOM so spreadsheet tools
 	// read non-ASCII labels correctly. The importer strips it in Detect.
 	out.WriteString("\xef\xbb\xbf")
 	out.WriteString(strings.Join(Header(), ","))
 	out.WriteString("\r\n")
+	// A jump chain is written as Host references, so the whole Host set must be
+	// known before the first row is serialized.
+	hostsByID := make(map[string]domainvault.Host, len(d.Hosts))
+	for _, host := range d.Hosts {
+		hostsByID[string(host.Host.ID)] = host.Host
+	}
 	for _, host := range sortedHosts(d.Hosts) {
 		password, passphrase := "", ""
 		if opts.IncludeSecrets {
@@ -506,6 +551,13 @@ func exportCSV(d Dataset, opts Options) ([]byte, error) {
 			proxy = vaultimport.EncodeMarkedField(
 				FormatProxy(*host.Host.Proxy, host.ProxyPassword, opts.IncludeSecrets),
 				vaultimport.MarkerProxy)
+		}
+		jumpValue, jumpCode, hop := formatCSVProxyJump(host.Host, hostsByID)
+		proxyJump := vaultimport.EncodeMarkedField(jumpValue, vaultimport.MarkerProxyJump)
+		if jumpCode != "" {
+			issues = append(issues, Issue{
+				Host: exportHostName(host.Host), Code: jumpCode, Hop: hop,
+			})
 		}
 		row := []string{
 			host.Host.Group,
@@ -520,6 +572,7 @@ func exportCSV(d Dataset, opts Options) ([]byte, error) {
 			vaultimport.EncodeMarkedField(host.KeyPath, vaultimport.MarkerKeyPath),
 			vaultimport.EncodeMarkedField(passphrase, vaultimport.MarkerPassphrase),
 			proxy,
+			proxyJump,
 			"",
 		}
 		for index, value := range row {
@@ -533,7 +586,16 @@ func exportCSV(d Dataset, opts Options) ([]byte, error) {
 		}
 		out.WriteString("\r\n")
 	}
-	return []byte(out.String()), nil
+	return []byte(out.String()), issues, nil
+}
+
+// exportHostName names one exported Host in a warning, falling back to the
+// stable ID when the label is empty.
+func exportHostName(host domainvault.Host) string {
+	if label := strings.TrimSpace(host.Label); label != "" {
+		return label
+	}
+	return string(host.ID)
 }
 
 // FormatProxy renders a proxy in the CSV proxy representation. The password
@@ -560,6 +622,91 @@ func FormatProxy(proxy domainvault.ProxyConfig, password string, includeSecrets 
 		host = "[" + host + "]"
 	}
 	return scheme + "://" + auth + host + ":" + strconv.Itoa(proxy.Port)
+}
+
+// formatCSVProxyJump renders a Host's jump chain as an OpenSSH ProxyJump
+// value: [user@]host[:port] hops, comma separated, first hop closest to the
+// client. An empty cell means no chain. A chain is omitted entirely when a hop
+// is missing from the export or cannot be represented, so a shortened list is
+// never written back as if it were the whole chain. An omitted chain also
+// returns the reason and the offending hop so the caller can warn.
+func formatCSVProxyJump(host domainvault.Host, hostsByID map[string]domainvault.Host) (string, IssueCode, string) {
+	if host.HostChain == nil || len(host.HostChain.HostIDs) == 0 {
+		return "", "", ""
+	}
+	hops := make([]string, 0, len(host.HostChain.HostIDs))
+	for _, id := range host.HostChain.HostIDs {
+		hop, found := hostsByID[string(id)]
+		if !found {
+			return "", IssueJumpHopMissing, string(id)
+		}
+		formatted, ok := formatCSVProxyJumpHop(hop)
+		if !ok {
+			return "", IssueJumpHopUnrepresentable, exportHostName(hop)
+		}
+		hops = append(hops, formatted)
+	}
+	return strings.Join(hops, ","), "", ""
+}
+
+// formatCSVProxyJumpHop writes one hop. Port 22 is omitted, IPv6 addresses are
+// bracketed, and a value that would break the comma-separated cell is refused.
+func formatCSVProxyJumpHop(host domainvault.Host) (string, bool) {
+	if !canServeAsSSHJump(host.Protocol) {
+		return "", false
+	}
+	username := strings.TrimSpace(host.Username)
+	hostname := strings.TrimSpace(host.Hostname)
+	if len(hostname) >= 2 && strings.HasPrefix(hostname, "[") &&
+		strings.HasSuffix(hostname, "]") {
+		hostname = hostname[1 : len(hostname)-1]
+	}
+	if hostname == "" || unsafeCSVJumpField(username) || unsafeCSVJumpField(hostname) {
+		return "", false
+	}
+	port := host.Port
+	if port == 0 {
+		port = 22
+	}
+	if port < 1 || port > 65535 {
+		return "", false
+	}
+	hostPart := hostname
+	if strings.Contains(hostname, ":") {
+		hostPart = "[" + hostname + "]"
+	}
+	hop := hostPart
+	if username != "" {
+		hop = username + "@" + hostPart
+	}
+	if port != 22 {
+		hop += ":" + strconv.Itoa(port)
+	}
+	return hop, true
+}
+
+// canServeAsSSHJump reports whether a Host's transport can be dialed as a jump
+// hop. Mosh and ET bootstrap over SSH; telnet, local shells, and network
+// devices cannot carry a chained session.
+func canServeAsSSHJump(protocol domainvault.Protocol) bool {
+	switch protocol {
+	case "", domainvault.ProtocolSSH, domainvault.ProtocolMosh, domainvault.ProtocolET:
+		return true
+	default:
+		return false
+	}
+}
+
+// unsafeCSVJumpField reports a value that would be split by the hop separators
+// or would change the ProxyJump grammar.
+func unsafeCSVJumpField(value string) bool {
+	for _, r := range value {
+		if unicode.IsSpace(r) || unicode.IsControl(r) ||
+			r == ',' || r == '#' || r == '@' {
+			return true
+		}
+	}
+	return false
 }
 
 // formatHostname brackets a bare IPv6 address so the port separator stays

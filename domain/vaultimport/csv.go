@@ -17,6 +17,7 @@ const (
 	MarkerKeyPath    = "__netcatty_csv_keypath_v1__:"
 	MarkerPassphrase = "__netcatty_csv_passphrase_v1__:"
 	MarkerProxy      = "__netcatty_csv_proxy_v1__:"
+	MarkerProxyJump  = "__netcatty_csv_proxyjump_v1__:"
 	MarkerLocalShell = "__netcatty_csv_localshell_v1__:"
 )
 
@@ -24,7 +25,8 @@ const (
 // additional columns; export writes this exact order.
 var csvHeader = []string{
 	"Groups", "Label", "Tags", "Notes", "Hostname/IP", "Protocol",
-	"Port", "Username", "Password", "KeyPath", "Passphrase", "Proxy", "LocalShell",
+	"Port", "Username", "Password", "KeyPath", "Passphrase", "Proxy", "ProxyJump",
+	"LocalShell",
 }
 
 // CSVHeader returns a copy of the canonical header.
@@ -408,6 +410,7 @@ func parseCSV(text string) Result {
 	keyPathIdx := findExactHeader(headers, "keypath", "key path", "identityfile", "identity file")
 	passphraseIdx := findExactHeader(headers, "passphrase", "keypassphrase", "key passphrase")
 	proxyIdx := findExactHeader(headers, "proxy", "proxyserver", "proxy server")
+	proxyJumpIdx := findExactHeader(headers, "proxyjump")
 	localShellIdx := findExactHeader(headers, "localshell", "local shell")
 	passwordIdx := findExactHeader(headers, "password", "pass", "passwd")
 	if passwordIdx < 0 {
@@ -421,6 +424,7 @@ func parseCSV(text string) Result {
 	}
 
 	seen := make(map[string]bool)
+	pendingChains := make(map[int]string)
 	for index := 1; index < len(rows); index++ {
 		row := rows[index]
 		rowNumber := index + 1
@@ -508,6 +512,14 @@ func parseCSV(text string) Result {
 				record.Proxy = proxy
 			}
 		}
+		if raw := strings.TrimSpace(cell(row, proxyJumpIdx)); raw != "" {
+			// A jump chain names Hosts in the same file; binding happens after
+			// every row is known, in resolveCSVJumps.
+			if value := strings.TrimSpace(DecodeMarkedField(raw, MarkerProxyJump)); value != "" &&
+				!strings.EqualFold(value, "none") {
+				pendingChains[len(result.Records)-1] = value
+			}
+		}
 		if raw := strings.TrimSpace(cell(row, localShellIdx)); raw != "" {
 			// The legacy format carries local-shell configuration in a marked
 			// field, but the native Host model does not store that
@@ -524,6 +536,7 @@ func parseCSV(text string) Result {
 		}
 		seen[key] = true
 	}
+	resolveCSVJumps(&result, pendingChains)
 	if len(result.Records) == 0 && !hasError(result.Issues) {
 		result.Issues = append(result.Issues, issue(IssueNothingParsed, 0, "", ""))
 	}

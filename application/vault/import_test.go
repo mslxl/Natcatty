@@ -124,6 +124,45 @@ func TestPreviewImportReportsConflictsDuplicatesAndInvalidRows(t *testing.T) {
 	}
 }
 
+// TestPreviewImportRejectsAProxyJumpRowItCannotResolve proves a CSV row naming
+// an unknown jump Host becomes a per-row error, is counted invalid, and leaves
+// no partial Host behind after a commit.
+func TestPreviewImportRejectsAProxyJumpRowItCannotResolve(t *testing.T) {
+	service, hosts, _, _, _ := newImportService(t)
+	const text = "Groups,Label,Hostname,Protocol,Port,Username,ProxyJump\r\n" +
+		"Prod,Bastion,bastion.example.test,ssh,22,ops,\r\n" +
+		"Prod,Client,client.example.test,ssh,22,,\"bastion.example.test,ghost.example.test\"\r\n"
+	preview, err := service.PreviewImport(context.Background(), text, PreviewImportOptions{})
+	if err != nil {
+		t.Fatalf("PreviewImport: %v", err)
+	}
+	if len(preview.Rows) != 1 || preview.Rows[0].Hostname != "bastion.example.test" {
+		t.Fatalf("rows = %+v", preview.Rows)
+	}
+	if preview.Counts != (ImportCounts{Total: 2, New: 1, Invalid: 1, Selected: 1}) {
+		t.Fatalf("counts = %+v", preview.Counts)
+	}
+	found := false
+	for _, item := range preview.Issues {
+		if item.Code == vaultimport.IssueUnresolvedJump && item.Row == 3 {
+			found = true
+			if item.Severity != vaultimport.SeverityError {
+				t.Fatalf("issue severity = %q", item.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("missing unresolved jump issue: %+v", preview.Issues)
+	}
+
+	if _, err := service.CommitImport(context.Background(), preview, ImportCommitOptions{}); err != nil {
+		t.Fatalf("CommitImport: %v", err)
+	}
+	if len(hosts.hosts) != 1 || hosts.hosts[0].Hostname != "bastion.example.test" {
+		t.Fatalf("committed hosts = %+v", hosts.hosts)
+	}
+}
+
 func TestCommitImportIsChunkedAndPersistsThroughSecrets(t *testing.T) {
 	service, hosts, groups, secrets, store := newImportService(t)
 	seedConflict(t, hosts)

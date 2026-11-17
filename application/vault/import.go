@@ -1045,6 +1045,7 @@ func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 		RequiresMFA:            draft.RequiresMFA,
 		X11Forwarding:          draft.X11Forwarding,
 		X11WarningAcknowledged: draft.X11WarningAcknowledged,
+		X11ForwardingSet:       draft.X11ForwardingSet,
 		HostChain:              domainvault.CloneHostChain(draft.HostChain),
 		Proxy:                  domainvault.CloneProxy(draft.Proxy),
 		ProxyProfileID:         draft.ProxyProfileID,
@@ -1123,7 +1124,8 @@ func sortedGroupPaths(groups map[string]bool) []string {
 func rejectedImportRow(code vaultimport.IssueCode) bool {
 	switch code {
 	case vaultimport.IssueInvalidHostname, vaultimport.IssueUnsupportedProtocol,
-		vaultimport.IssueMissingHostname, vaultimport.IssueUnsupportedEntry:
+		vaultimport.IssueMissingHostname, vaultimport.IssueUnsupportedEntry,
+		vaultimport.IssueUnresolvedJump:
 		return true
 	default:
 		return false

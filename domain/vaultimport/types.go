@@ -103,6 +103,7 @@ const (
 	IssueX11NotImported      IssueCode = "x11_not_imported"
 	IssueDuplicateInFile     IssueCode = "duplicate_in_file"
 	IssueInvalidJump         IssueCode = "invalid_jump"
+	IssueUnresolvedJump      IssueCode = "unresolved_jump"
 	IssueCyclicJump          IssueCode = "cyclic_jump"
 	IssueKeyUnreadable       IssueCode = "key_unreadable"
 	IssuePassphraseConflict  IssueCode = "passphrase_conflict"

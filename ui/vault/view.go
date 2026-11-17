@@ -375,7 +375,7 @@ func list(c *ui.Context, s *vaultstate.State, opts options,
 			return
 		}
 		if page.Shows(section.Hosts) {
-			hostsPage(c, s, opts, at, m, t)
+			hostsPage(c, s, opts, at, m, t, scroll)
 		}
 		if page.Shows(section.Keychain) {
 			keySection(c, s, m, t)
@@ -512,11 +512,11 @@ func groupSummary(s *vaultstate.State, group domainvault.Group, m locales.Messag
 func rootDropTarget(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
 	row := ui.Row(c).FillWidth().Gap(10).Padding(8, 10).Margin(8, 0, 0, 0).Radius(kit.M(c).Radius.Control).
 		Border(1, t.Border).AlignItems(ui.Center).TextColor(t.TextMuted)
-	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
+	if _, over := ui.DragOver[vaultstate.DragPayload](row); over {
 		row.Background(t.Accent.Alpha(0.08)).Border(2, t.Accent)
 	}
-	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && drag.HostID != "" {
-		s.MoveHostToGroup(drag.HostID, "")
+	if drag, dropped := ui.Drop[vaultstate.DragPayload](row); dropped && len(drag.DropHosts()) > 0 {
+		s.MoveHostsToGroup(drag.DropHosts(), "")
 		c.Invalidate()
 	}
 	row.Children(func() {
@@ -1514,6 +1514,8 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					}
 				})
 			}).Description(m.VaultHostProxyProfileHint())
+			hostProxyProfileSourceLine(c, s, m, t)
+			hostJumpHostsField(c, s, m, t, form.Protocol)
 			hostNetworkProfileField(c, s, m, t)
 			if form.Protocol == string(domainvault.ProtocolSSH) {
 				kit.FormRow(c, m.VaultHostFileProtocol(), func() {
@@ -1542,6 +1544,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					ui.Text(c, m.VaultHostX11Warning()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 					ui.Checkbox(c, &form.X11WarningAcknowledged, m.VaultHostX11Acknowledge())
 				}
+				hostX11SourceLine(c, s, m, t)
 				if ui.Checkbox(c, &form.NetworkDevice, m.VaultHostNetworkDevice()).Changed() {
 					if form.NetworkDevice {
 						// A vendor CLI has no login shell for tmux to wrap.
@@ -1799,13 +1802,28 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 					}
 				})
 			})
+			groupProxyProfileSourceLine(c, s, m, t)
 			groupNetworkProfileField(c, s, m, t)
 			if domainvault.Protocol(form.Protocol).UsesSSHAuth() {
+				groupJumpHostsField(c, s, m, t)
 				ui.Checkbox(c, &form.UseSSHAgent, m.VaultHostUseAgent())
 				if form.UseSSHAgent {
 					securityKeyStatus(c, s, m, t)
 				}
 				ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
+				// The X11 default follows the same rules as the Host editor:
+				// turning it off clears the acknowledgement so re-enabling it
+				// asks the user to accept the warning again.
+				if ui.Checkbox(c, &form.X11Forwarding, m.VaultHostX11Forwarding()).Changed() {
+					if !form.X11Forwarding {
+						form.X11WarningAcknowledged = false
+					}
+					c.Invalidate()
+				}
+				if form.X11Forwarding {
+					ui.Text(c, m.VaultHostX11Warning()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
+					ui.Checkbox(c, &form.X11WarningAcknowledged, m.VaultHostX11Acknowledge())
+				}
 			}
 		})
 
@@ -2018,6 +2036,8 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultBackupProblemProtective()
 	case vaultstate.ProblemBackupCorrupt:
 		return m.VaultBackupProblemCorrupt()
+	case vaultstate.ProblemBackupKeyMismatch:
+		return m.VaultBackupProblemKeyMismatch()
 	case vaultstate.ProblemBackupUnavailable:
 		return m.VaultBackupUnavailable()
 	case vaultstate.ProblemBackupClear:

@@ -197,6 +197,10 @@
   "vaultNetworkProfileSourceHost": "Set on this Host",
   "vaultNetworkProfileSourceHostGroup": "Set on this Host Group",
   "vaultNetworkProfileInherited": "Inherited from {path} ({label})",
+  "vaultX11Inherited": "Inherited from {path}",
+  "vaultHostJumpHosts": "Jump Hosts",
+  "vaultHostJumpHostsHint": "Listed first to last, closest to the client.",
+  "vaultGroupJumpHostsHint": "Member Hosts inherit this chain unless they configure their own. Hops follow the order they were checked.",
   "vaultProxyListTitle": "Proxy Profiles ({count})",
   "@vaultProxyListTitle": {
     "description": "The Vault's Proxy Profile list heading and its profile count.",
@@ -841,6 +845,7 @@
   "vaultImportIssuePasswordUnmatched": "A saved password could not be matched to a Host.",
   "vaultImportIssueDuplicateInFile": "This endpoint repeats an earlier row.",
   "vaultImportIssueInvalidJump": "A ProxyJump target is not declared; an inline Host was added.",
+  "vaultImportIssueUnresolvedJump": "A ProxyJump target is not declared in this file, so the Host was skipped.",
   "vaultImportIssueCyclicJump": "A ProxyJump cycle was removed.",
   "vaultImportIssueKeyUnreadable": "The referenced key file could not be read.",
   "vaultImportIssuePassphraseConflict": "The key is encrypted but no usable passphrase was provided.",
@@ -2776,6 +2781,34 @@
   },
   "vaultExportUnreadable": "{count, plural, one {# credential could not be read and was left out.} other {# credentials could not be read and were left out.}}",
   "vaultExportOmitted": "{count, plural, one {# stored credential was left out; enable secrets to include it.} other {# stored credentials were left out; enable secrets to include them.}}",
+  "vaultExportJumpHopMissing": "Jump chain for {host} was left out of the CSV: hop {hop} is not part of this export.",
+  "vaultExportJumpHopUnrepresentable": "Jump chain for {host} was left out of the CSV: hop {hop} cannot be written as an SSH jump.",
+  "@vaultExportJumpHopMissing": {
+    "description": "A CSV export dropped a Host's jump chain because a hop was not in the export.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "Client"
+      },
+      "hop": {
+        "type": "String",
+        "example": "Bastion"
+      }
+    }
+  },
+  "@vaultExportJumpHopUnrepresentable": {
+    "description": "A CSV export dropped a Host's jump chain because a hop cannot be represented as an SSH jump.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "Client"
+      },
+      "hop": {
+        "type": "String",
+        "example": "Telnet"
+      }
+    }
+  },
   "@vaultExportUnreadable": {
     "description": "Credentials that could not be decrypted and were left out.",
     "placeholders": {
@@ -2805,6 +2838,7 @@
   "vaultBackupOpen": "Backups",
   "vaultBackupBack": "Back to Vault",
   "vaultBackupIntro": "Encrypted restore points kept on this device. A backup is written after Vault changes and before every restore.",
+  "vaultBackupPortability": "Backups are encrypted with a key stored on this machine. The folder alone is not portable: another machine needs that key to restore them.",
   "vaultBackupRetentionLabel": "Backups to keep",
   "vaultBackupRetentionHint": "Keep {min} to {max} backups. Default {fallback}.",
   "@vaultBackupRetentionHint": {
@@ -2926,6 +2960,7 @@
   "vaultBackupProblemRestore": "Could not restore this backup. The Vault was not changed.",
   "vaultBackupProblemProtective": "The protective backup failed, so the restore was aborted. The Vault was not changed.",
   "vaultBackupProblemCorrupt": "This backup is damaged or was written by an incompatible version.",
+  "vaultBackupProblemKeyMismatch": "This backup cannot be decrypted with this machine's key. It was probably written on another machine or under a different key. The file may also be damaged.",
   "vaultBackupProblemClear": "Could not delete the backups.",
   "vaultExportNotesPageTitle": "Vault Notes export",
   "vaultBackupRestoreConfirmAction": "Restore now",
@@ -3247,6 +3282,8 @@
   "settingsSyncConflictMerge": "Merge both",
   "settingsSyncBackupsTitle": "Backups",
   "settingsSyncBackupsDescription": "Restore points from this device and cloud copies replaced by a resolution or force push.",
+  "settingsSyncBackupsPortability": "Local restore points are encrypted with a key stored on this machine. Copying the backup folder to another machine is not enough; that machine needs the same key to restore them.",
+  "settingsSyncBackupKeyMismatch": "This backup cannot be decrypted with this machine's key. It was probably created on another machine or under a different key, and the backup folder alone is not portable. The file may also be damaged.",
   "settingsSyncBackupsRefresh": "Refresh backups",
   "settingsSyncBackupsEmpty": "No backups yet.",
   "settingsSyncBackupsProblem": "The local backup list could not be loaded. Cloud copies are still shown.",
@@ -5045,10 +5082,20 @@
   "settingsSyncConvergentReasonDamaged": "The encrypted v2 payload is missing, damaged, or does not match its materialized data.",
   "settingsSyncConvergentReasonNoBaseline": "This device and the cloud hold different data and there is no trusted baseline, so edits cannot be distinguished from deletions.",
   "settingsSyncConvergentReasonConflict": "Unresolved legacy edits would be lost by the merge.",
+  "settingsSyncConvergentReasonChanged": "One or more conflicts changed since they were shown. Nothing was applied; review the updated values and choose again.",
   "settingsSyncConvergentReasonShrink": "The migration would shrink the Vault beyond the destructive-sync guard.",
   "settingsSyncConvergentReasonEmpty": "There is no syncable data to initialize.",
   "settingsSyncConvergentReasonCorruptBaseline": "The stored legacy baseline cannot be decrypted or verified.",
   "settingsSyncConvergentReasonUnknown": "The migration was refused for a reason this version does not recognize.",
+  "settingsSyncConvergentConflictsTitle": "{count} fields conflict",
+  "settingsSyncConvergentConflictEntry": "{family} {id}: {field}",
+  "settingsSyncConvergentConflictFieldPresence": "record presence",
+  "settingsSyncConvergentConflictValues": "This device: {local} · Cloud: {remote}",
+  "settingsSyncConvergentConflictValueMissing": "not set",
+  "settingsSyncConvergentConflictValuePresent": "present",
+  "settingsSyncConvergentConflictValueHidden": "hidden",
+  "settingsSyncConvergentKeepLocalAll": "Keep this device for remaining conflicts",
+  "settingsSyncConvergentKeepRemoteAll": "Keep the cloud copy for remaining conflicts",
   "settingsSyncConvergentDivergenceTitle": "Replicas diverged",
   "settingsSyncConvergentDivergenceDescription": "The provider and this device claim the same causal history but hold different data. Nothing was overwritten automatically.",
   "settingsSyncConvergentDivergenceKind": "Divergence kind: {kind}",
@@ -5069,6 +5116,7 @@
   "settingsSyncConvergentDivergenceUnstable": "The replicas did not satisfy all three verification rounds.",
   "settingsSyncConvergentDivergenceUnknown": "The divergence is not a recognized kind.",
   "settingsSyncProblemConvergentMigration": "Convergent sync could not migrate safely. Review the refusal details; nothing was overwritten.",
+  "settingsSyncProblemConvergentConflictChanged": "A conflict changed while you were deciding. Nothing was applied; review the updated values and choose again.",
   "settingsSyncProblemConvergentDivergence": "Convergent replicas diverged. No automatic overwrite was made.",
   "settingsSyncProblemConvergentCorrupt": "The encrypted convergent sync record is damaged or partially migrated.",
   "settingsSyncProblemConvergentPaused": "Convergent sync is paused. Resume it to sync; the legacy engine is not used.",

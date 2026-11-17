@@ -402,10 +402,72 @@ func TestVaultViewHostEditorShowsTheNetworkProfileAndItsSource(t *testing.T) {
 	}
 }
 
+// Ticket 48: a Host with no X11 choice shows its Host Group's default as
+// inherited, while a Host-level off keeps its own value and shows no inherited
+// label. The checkbox state comes from the same resolved value a Session uses.
+func TestVaultViewHostEditorShowsTheInheritedX11Default(t *testing.T) {
+	hosts := &fakeHosts{items: []domainvault.Host{
+		{
+			ID: "host-inherit", Label: "web", Hostname: "example.com", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "prod",
+		},
+		{
+			ID: "host-off", Label: "db", Hostname: "db.example.com", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "prod", X11ForwardingSet: true,
+		},
+	}}
+	groups := &entityGroups{items: []domainvault.Group{
+		{Path: "prod", Protocol: domainvault.ProtocolSSH, X11Forwarding: true, X11WarningAcknowledged: true},
+	}}
+	state := vaultstate.NewState(hosts, vaultstate.WithGroups(groups))
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt := ui.NewTester(View(state), 900, 1800)
+	tt.SetLocale("en")
+	m := locales.In("en")
+
+	state.BeginEdit("host-inherit")
+	tt.Frame()
+	if !tt.HasText(m.VaultHostX11Forwarding()) {
+		t.Fatalf("the Host editor has no X11 control, texts %q", tt.Texts())
+	}
+	if !tt.HasText(m.VaultX11Inherited("prod")) {
+		t.Fatalf("the Host editor does not show the inherited X11 default, texts %q", tt.Texts())
+	}
+	form := state.Form()
+	if !form.X11Forwarding || !form.X11WarningAcknowledged {
+		t.Fatalf("form = %+v, want the group's X11 on", form)
+	}
+	if form.X11ForwardingSet {
+		t.Fatal("an inherited X11 value was shown as an explicit Host choice")
+	}
+
+	state.BeginEdit("host-off")
+	tt.Frame()
+	if tt.HasText(m.VaultX11Inherited("prod")) {
+		t.Fatalf("an explicit off was labelled inherited, texts %q", tt.Texts())
+	}
+	form = state.Form()
+	if form.X11Forwarding || !form.X11ForwardingSet {
+		t.Fatalf("form = %+v, want an explicit Host off", form)
+	}
+
+	// The Group editor offers the same default, including its warning and
+	// acknowledgement, so a group can be configured without a member Host.
+	state.BeginEditGroup("prod")
+	tt.Frame()
+	if !tt.HasText(m.VaultHostX11Forwarding()) || !tt.HasText(m.VaultHostX11Acknowledge()) {
+		t.Fatalf("the Group editor has no X11 default controls, texts %q", tt.Texts())
+	}
+	if !state.GroupForm().X11Forwarding || !state.GroupForm().X11WarningAcknowledged {
+		t.Fatalf("group form = %+v, want the saved X11 default", state.GroupForm())
+	}
+}
+
 func TestVaultViewNetworkDeleteBannerWarnsAboutAffectedRecords(t *testing.T) {
 	state, tt := newRoutingView(t)
 	m := locales.In("en")
-
 	state.RequestDeleteNetworkProfile("net-1")
 	tt.Frame()
 	if !tt.HasText(m.VaultNetworkDeleteAffected(1, 2)) {
