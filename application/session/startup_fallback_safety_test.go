@@ -99,36 +99,60 @@ func startupTailHas(session *Session, want string) bool {
 	return strings.Contains(string(session.startupTail), want)
 }
 
-func startupWaitDisarmed(session *Session) bool {
+// startupState reports whether the one-shot command is still pending and
+// whether the fallback timer has cleared (fired and returned in a safe wait).
+func startupState(session *Session) (pending, timerCleared bool) {
 	session.startupMu.Lock()
 	defer session.startupMu.Unlock()
-	return !session.startupPending
+	return session.startupPending, session.startupTimer == nil
 }
 
-// startupTimerCleared reports that the bounded fallback has fired and left the
-// command in the safe wait-for-prompt state (no timer, still pending).
-func startupTimerCleared(session *Session) bool {
-	session.startupMu.Lock()
-	defer session.startupMu.Unlock()
-	return session.startupTimer == nil
-}
-
-// expectNoStartupWrite drains writes for one hard-deadline window and fails if
-// any contains the Host startup command. Other input (credentials, a manual
-// takeover) is allowed.
-func expectNoStartupWrite(t *testing.T, writes <-chan string, command string, window time.Duration) {
+// expectStartupSafeWait waits on a real state transition, bounded by a hard
+// timeout: the bounded fallback has run and returned without typing, leaving
+// the command pending with no timer. startupReadinessElapsed disarms before it
+// spawns a sender, so this state proves no fallback write is still in flight.
+func expectStartupSafeWait(t *testing.T, session *Session) {
 	t.Helper()
-	timer := time.NewTimer(window)
-	defer timer.Stop()
-	for {
-		select {
-		case got := <-writes:
-			if strings.Contains(got, command) {
-				t.Fatalf("the startup command was written where it must not be: %q", got)
-			}
-		case <-timer.C:
-			return
-		}
+	waitForCondition(t, "the fallback to finish in a safe wait", func() bool {
+		pending, timerCleared := startupState(session)
+		return pending && timerCleared
+	})
+	if startupPromptReady(startupTail(session)) {
+		t.Fatal("the retained tail is prompt-ready; a startup write may still be in flight")
+	}
+}
+
+// expectStartupStillWaiting proves the prompt path has not released the
+// command: the command is still pending and the retained tail is not
+// prompt-ready. The fallback must be captured by a manual scheduler, so no
+// write path remains after this check.
+func expectStartupStillWaiting(t *testing.T, session *Session) {
+	t.Helper()
+	if startupPromptReady(startupTail(session)) {
+		t.Fatal("the retained tail is prompt-ready; the prompt path may still write")
+	}
+	if pending, _ := startupState(session); !pending {
+		t.Fatal("the startup command was disarmed before a real prompt")
+	}
+}
+
+// expectStartupPending proves a command that auto-login or a manual takeover
+// still owns was not disarmed. The tail may be prompt-ready, but neither the
+// prompt path nor a manual-scheduler fallback can write in this state.
+func expectStartupPending(t *testing.T, session *Session) {
+	t.Helper()
+	if pending, _ := startupState(session); !pending {
+		t.Fatal("the startup command was disarmed while auto-login or a takeover owned the console")
+	}
+}
+
+// expectNoStartupInput fails if the transport already received the startup
+// command. Call it only after a deterministic state (a safe wait, a pending
+// manual fallback, or teardown) proves the write path has completed.
+func expectNoStartupInput(t *testing.T, transport *writeSignallingTransport, command string) {
+	t.Helper()
+	if got := transport.input(); strings.Contains(got, command) {
+		t.Fatalf("the startup command was written where it must not be: %q", got)
 	}
 }
 
@@ -158,18 +182,19 @@ func preShellReadinessCases() []struct {
 func TestPromptPathWaitsForEveryPreShellForm(t *testing.T) {
 	for _, tc := range preShellReadinessCases() {
 		t.Run(tc.name, func(t *testing.T) {
+			scheduler := &manualStartupScheduler{}
 			transport := newWriteSignallingTransport()
 			session := openStartupSafetySession(t, transport, StartSpec{
 				Kind:           KindSSH,
 				StartupCommand: "show status",
-			})
+			}, withStartupReadinessScheduler(scheduler.schedule))
 
 			before := session.Snapshot().LastActivity
 			transport.output <- []byte(tc.tail)
 			waitForCondition(t, "the pre-shell output", func() bool {
 				return session.Snapshot().LastActivity.After(before)
 			})
-			expectNoStartupWrite(t, transport.writes, "show status", 150*time.Millisecond)
+			expectStartupStillWaiting(t, session)
 
 			transport.output <- []byte("\r\n$ ")
 			waitForCondition(t, "the startup command at the real prompt", func() bool {
@@ -200,10 +225,8 @@ func TestFallbackLeavesEveryPreShellFormUnsent(t *testing.T) {
 			})
 
 			scheduler.fireFirst()
-			if startupWaitDisarmed(session) {
-				t.Fatal("the fallback permanently disarmed the one-shot command over pre-shell output")
-			}
-			expectNoStartupWrite(t, transport.writes, "show status", 150*time.Millisecond)
+			expectStartupSafeWait(t, session)
+			expectNoStartupInput(t, transport, "show status")
 
 			// A real prompt after the pre-shell output must still release the
 			// command exactly once.
@@ -243,17 +266,11 @@ func TestBoundedFallbackDoesNotTypeIntoAPersistentLoginPrompt(t *testing.T) {
 		return startupTailHas(session, "login: ")
 	})
 
-	// The bound elapses and must not type. Waiting for the timer to clear proves
-	// the fallback actually ran; it leaves the one-shot command in the safe
-	// wait-for-prompt state rather than typing at the login prompt. The channel
-	// window proves the fallback goroutine did not write.
-	waitForCondition(t, "the fallback to leave the login prompt alone", func() bool {
-		return startupTimerCleared(session)
-	})
-	if startupWaitDisarmed(session) {
-		t.Fatal("the fallback permanently disarmed the one-shot command over a login prompt")
-	}
-	expectNoStartupWrite(t, transport.writes, "show status", 250*time.Millisecond)
+	// The bound elapses and must not type. The safe-wait state (still pending,
+	// timer cleared) is the real completion signal: startupReadinessElapsed
+	// disarms before spawning a sender, so no fallback write can be in flight.
+	expectStartupSafeWait(t, session)
+	expectNoStartupInput(t, transport, "show status")
 }
 
 // TestDefaultFallbackDoesNotTypeIntoALoginPrompt proves the production four
@@ -281,10 +298,8 @@ func TestDefaultFallbackDoesNotTypeIntoALoginPrompt(t *testing.T) {
 	})
 
 	scheduler.fireFirst()
-	if startupWaitDisarmed(session) {
-		t.Fatal("the fallback permanently disarmed the one-shot command after a persistent login prompt")
-	}
-	expectNoStartupWrite(t, transport.writes, "show status", 250*time.Millisecond)
+	expectStartupSafeWait(t, session)
+	expectNoStartupInput(t, transport, "show status")
 }
 
 // TestAutoLoginAuthorityBlocksAShellPromptStartupCommand is mutation-sensitive
@@ -292,12 +307,13 @@ func TestDefaultFallbackDoesNotTypeIntoALoginPrompt(t *testing.T) {
 // saved login completed, and the startup command must still wait. Removing the
 // guard types the command immediately.
 func TestAutoLoginAuthorityBlocksAShellPromptStartupCommand(t *testing.T) {
+	scheduler := &manualStartupScheduler{}
 	transport := newWriteSignallingTransport()
 	session := openStartupSafetySession(t, transport, StartSpec{
 		Kind:           KindSerial,
 		StartupCommand: "show status",
 		AutoLogin:      &autologin.Options{Username: "admin", Password: "secret"},
-	})
+	}, withStartupReadinessScheduler(scheduler.schedule))
 
 	// "$ " is a genuine shell prompt, but the credential exchange never ran.
 	before := session.Snapshot().LastActivity
@@ -308,7 +324,8 @@ func TestAutoLoginAuthorityBlocksAShellPromptStartupCommand(t *testing.T) {
 	if session.autoLoginAllowsStartup(session.generation) {
 		t.Fatal("the auto-login detector reported completion without answering a prompt")
 	}
-	expectNoStartupWrite(t, transport.writes, "show status", 250*time.Millisecond)
+	expectStartupPending(t, session)
+	expectNoStartupInput(t, transport, "show status")
 }
 
 // TestManualTakeoverLeavesTheStartupCommandUnsent pins the deliberate behavior
@@ -316,12 +333,13 @@ func TestAutoLoginAuthorityBlocksAShellPromptStartupCommand(t *testing.T) {
 // Host startup command never runs on that connection, even at a later shell
 // prompt.
 func TestManualTakeoverLeavesTheStartupCommandUnsent(t *testing.T) {
+	scheduler := &manualStartupScheduler{}
 	transport := newWriteSignallingTransport()
 	session := openStartupSafetySession(t, transport, StartSpec{
 		Kind:           KindSerial,
 		StartupCommand: "show status",
 		AutoLogin:      &autologin.Options{Username: "admin", Password: "secret"},
-	})
+	}, withStartupReadinessScheduler(scheduler.schedule))
 
 	if _, err := session.TerminalConn().Write([]byte("guest\r")); err != nil {
 		t.Fatalf("typed takeover: %v", err)
@@ -343,7 +361,8 @@ func TestManualTakeoverLeavesTheStartupCommandUnsent(t *testing.T) {
 	waitForCondition(t, "the shell prompt after the manual login", func() bool {
 		return session.Snapshot().LastActivity.After(before)
 	})
-	expectNoStartupWrite(t, transport.writes, "show status", 250*time.Millisecond)
+	expectStartupPending(t, session)
+	expectNoStartupInput(t, transport, "show status")
 }
 
 // TestStartupCommandAfterTeardownNeverWrites exercises the late-write guard in
@@ -381,5 +400,7 @@ func TestStartupCommandAfterTeardownNeverWrites(t *testing.T) {
 			t.Fatal("sendStartupCommand did not return within the deadline")
 		}
 	}
-	expectNoStartupWrite(t, transport.writes, "echo ready", 100*time.Millisecond)
+	// Every sender has returned, so the late-write guard has completed; no
+	// write can still be in flight.
+	expectNoStartupInput(t, transport, "echo ready")
 }

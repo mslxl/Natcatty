@@ -74,6 +74,27 @@ func TestStartupPromptGrammarRejectsNonPromptLines(t *testing.T) {
 		{"opening bracket only", "[user@host ~"},
 		{"overlong", "deploy@web:" + strings.Repeat("a", 256) + "$"},
 		{"prose angle", "device ready>"},
+		// Prose near-misses around the newly accepted spaced-path and POSIX
+		// PowerShell shapes must stay rejected.
+		{"user host colon prose", "user@host: failed to connect$"},
+		{"user host colon spaced label", "user@host: /home/my dir$"},
+		{"bracket spaced path prose", "[build@host /tmp failed to start]#"},
+		{"spaced user host prose", "user@host /tmp failed to start>"},
+		{"spaced path extra words", "user@host:~/my dir failed$"},
+		{"powershell prose", "PS error occurred>"},
+		{"powershell spaced path prose", "PS /home failed to start>"},
+		{"bare spaced path prose", "/tmp failed to start>"},
+		// Mutation pins for the remaining prefix guards: a no-space URL, an
+		// ellipsis, an unbalanced spaced bracket, a boot label, and a
+		// sensitive-word token each have a shape a mutated guard would accept.
+		{"scheme url token", "https://x/y>"},
+		{"protocol-relative url token", "//x/y>"},
+		{"ellipsis token", "connecting...>"},
+		{"unbalanced spaced bracket", "[user@host ~$"},
+		{"boot label token", "booting>"},
+		{"loading label token", "loading>"},
+		{"sensitive token", "passphrase-key>"},
+		{"pin token", "pin-code>"},
 		{"empty", ""},
 	}
 	for _, tc := range cases {
@@ -135,6 +156,18 @@ func TestStartupPromptGrammarAcceptsRealShapes(t *testing.T) {
 		{"trailing whitespace", "deploy@web:~$   "},
 		{"literal user host angle", "user@host> "},
 		{"prompt after banner", "Last login: Mon Nov 16 09:00:00 2026\r\ndeploy@web:~$ "},
+		// U-Boot's "U-Boot>" is a single-token device prompt; only a leading
+		// "boot" label (start of line or after a separator) is boot progress.
+		{"uboot angle", "U-Boot> "},
+		{"uboot after version log", "U-Boot 2024.01-rc1\r\nU-Boot> "},
+		// Paths with spaces, in each concrete shape.
+		{"user host colon spaced home", "user@host:~/my dir$ "},
+		{"user host colon spaced abs", "user@host:/home/my dir$ "},
+		{"user host spaced home path", "user@host ~/my dir> "},
+		{"rhel bracket spaced path", "[user@host /home/my dir]# "},
+		{"powershell posix path", "PS /home/deploy> "},
+		{"powershell posix home", "PS ~/src> "},
+		{"powershell posix spaced path", "PS /home/my dir> "},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -159,6 +192,7 @@ func TestStartupPreShellDetectsBootProgressAndMarkup(t *testing.T) {
 		{"fsck", "fsck /dev/sda1: 100% ", true},
 		{"rebuilding", "Rebuilding /dev/md0: 45% ", true},
 		{"progress bar", "Progress: [##########] 50% ", true},
+		{"progress bar without percent", "[#####    ]\r\n", true},
 		{"checking", "Checking /dev/sda1 ... 100% ", true},
 		{"loading label", "Loading kernel modules\r\n", true},
 		{"booting", "booting...\r\n", true},
@@ -181,6 +215,16 @@ func TestStartupPreShellDetectsBootProgressAndMarkup(t *testing.T) {
 		// markup; the fallback must still be able to type.
 		{"arrow prose", "error -> retry\r\n", false},
 		{"unrecognized prompt", "switch prompt>\r\n", false},
+		// U-Boot's prompt is not boot progress; "boot:" still is.
+		{"uboot prompt", "U-Boot> ", false},
+		{"uboot version then prompt", "U-Boot 2024.01-rc1\r\nU-Boot> ", false},
+		{"boot colon", "boot: ", true},
+		// The newest line decides: an older banner must not strand the
+		// fallback when the last line is prompt-shaped but unrecognized, and
+		// the last line being boot progress must still safe-wait.
+		{"last login then unrecognized prompt", "Last login: Mon Nov 16 09:00:00 2026\r\nWelcome to the lab switch\r\nswitch ready>\r\n", false},
+		{"progress then unrecognized prompt", "Loading firmware\r\n100% \r\nswitch ready>\r\n", false},
+		{"last login then boot progress prompt shape", "Last login: Mon Nov 16 09:00:00 2026\r\nBooting kernel>\r\n", true},
 		{"empty", "", false},
 	}
 	for _, tc := range cases {
@@ -226,7 +270,7 @@ func TestTelnetBannerProseDoesNotReleaseTheStartupCommand(t *testing.T) {
 			waitForCondition(t, "the telnet banner", func() bool {
 				return session.Snapshot().LastActivity.After(before)
 			})
-			expectNoStartupWrite(t, transport.writes, "show status", 150*time.Millisecond)
+			expectStartupStillWaiting(t, session)
 
 			transport.output <- []byte("\r\nRouter# ")
 			waitForCondition(t, "the startup command at the device prompt", func() bool {
@@ -281,13 +325,87 @@ func TestFallbackSafeWaitsOverBootProgressAndReleasesAtThePrompt(t *testing.T) {
 			})
 
 			scheduler.fireFirst()
-			if startupWaitDisarmed(session) {
-				t.Fatal("the fallback permanently disarmed the one-shot command over boot/progress output")
-			}
-			expectNoStartupWrite(t, transport.writes, "show status", 150*time.Millisecond)
+			expectStartupSafeWait(t, session)
+			expectNoStartupInput(t, transport, "show status")
 
 			// The next output rearms the fallback; a real prompt still releases
 			// the command exactly once.
+			transport.output <- []byte("\r\nRouter# ")
+			waitForCondition(t, "the startup command at the later prompt", func() bool {
+				return strings.Count(transport.input(), "show status\r") == 1
+			})
+		})
+	}
+}
+
+// TestFallbackTypesAtAnUnrecognizedPromptAfterAnOlderBanner pins the stranding
+// regression: an earlier Last login:/Welcome to/Starting line must not keep the
+// bounded fallback in a permanent safe wait when the newest line is
+// prompt-shaped but outside the strict grammar.
+func TestFallbackTypesAtAnUnrecognizedPromptAfterAnOlderBanner(t *testing.T) {
+	cases := []struct {
+		name string
+		tail string
+	}{
+		{"last login", "Last login: Mon Nov 16 09:00:00 2026\r\nswitch ready>"},
+		{"welcome", "Welcome to the lab switch\r\nswitch ready>"},
+		{"starting label", "Starting network services\r\nswitch ready>"},
+		{"progress percent", "Loading firmware\r\n100% \r\nswitch ready>"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scheduler := &manualStartupScheduler{}
+			transport := newWriteSignallingTransport()
+			session := openStartupSafetySession(t, transport, StartSpec{
+				Kind:           KindTelnet,
+				StartupCommand: "show status",
+			}, withStartupReadinessScheduler(scheduler.schedule))
+
+			transport.output <- []byte(tc.tail)
+			waitForCondition(t, "the banner and the unrecognized prompt", func() bool {
+				return startupTailHas(session, "switch ready>")
+			})
+			expectStartupStillWaiting(t, session)
+
+			scheduler.fireFirst()
+			waitForCondition(t, "the startup command at the unrecognized prompt", func() bool {
+				return strings.Count(transport.input(), "show status\r") == 1
+			})
+		})
+	}
+}
+
+// TestFallbackSafeWaitsWhenTheNewestLineIsBootProgress pins the last-line rule
+// in the other direction: when the newest line is genuinely pre-shell, the
+// fallback must safe-wait even after an older banner.
+func TestFallbackSafeWaitsWhenTheNewestLineIsBootProgress(t *testing.T) {
+	cases := []struct {
+		name string
+		tail string
+	}{
+		{"booting prompt shape", "Last login: Mon Nov 16 09:00:00 2026\r\nBooting kernel>"},
+		{"boot colon", "boot: "},
+		{"percent", "Last login: Mon Nov 16 09:00:00 2026\r\nLoading firmware\r\n100% "},
+		{"loading label", "Welcome to the lab switch\r\nLoading kernel modules\r\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scheduler := &manualStartupScheduler{}
+			transport := newWriteSignallingTransport()
+			session := openStartupSafetySession(t, transport, StartSpec{
+				Kind:           KindTelnet,
+				StartupCommand: "show status",
+			}, withStartupReadinessScheduler(scheduler.schedule))
+
+			transport.output <- []byte(tc.tail)
+			waitForCondition(t, "the boot/progress output in the tail", func() bool {
+				return startupTailHas(session, strings.TrimSpace(tc.tail))
+			})
+
+			scheduler.fireFirst()
+			expectStartupSafeWait(t, session)
+			expectNoStartupInput(t, transport, "show status")
+
 			transport.output <- []byte("\r\nRouter# ")
 			waitForCondition(t, "the startup command at the later prompt", func() bool {
 				return strings.Count(transport.input(), "show status\r") == 1
@@ -316,10 +434,8 @@ func TestFallbackRearmsOnOutputAfterASafeWait(t *testing.T) {
 	}
 
 	scheduler.fireFirst()
-	if startupWaitDisarmed(session) {
-		t.Fatal("the fallback disarmed the one-shot command over a login prompt")
-	}
-	expectNoStartupWrite(t, transport.writes, "show status", 100*time.Millisecond)
+	expectStartupSafeWait(t, session)
+	expectNoStartupInput(t, transport, "show status")
 
 	// Ordinary output after the safe wait must arm a fresh bounded fallback.
 	transport.output <- []byte("still waiting\r\n")
@@ -349,10 +465,8 @@ func TestFallbackDoesNotTypeWhileAutoLoginIsUnfinished(t *testing.T) {
 	}
 
 	scheduler.fireFirst()
-	if startupWaitDisarmed(session) {
-		t.Fatal("the fallback disarmed the one-shot command while auto-login was unfinished")
-	}
-	expectNoStartupWrite(t, transport.writes, "show status", 250*time.Millisecond)
+	expectStartupSafeWait(t, session)
+	expectNoStartupInput(t, transport, "show status")
 }
 
 // TestStartupPromptSplitAcrossReadsReleasesOnce pins the retained tail: a
@@ -369,7 +483,7 @@ func TestStartupPromptSplitAcrossReadsReleasesOnce(t *testing.T) {
 	waitForCondition(t, "the first prompt fragment", func() bool {
 		return startupTailHas(session, "deploy@web:")
 	})
-	expectNoStartupWrite(t, transport.writes, "show status", 100*time.Millisecond)
+	expectStartupStillWaiting(t, session)
 
 	transport.output <- []byte("~$ ")
 	waitForCondition(t, "the startup command at the split prompt", func() bool {

@@ -28,6 +28,12 @@ func startupPromptShapeCases() []struct {
 		{"spaced angle", "user@host ~/src> "},
 		{"bare angle", "> "},
 		{"question angle", ">? "},
+		// U-Boot's "U-Boot>" is a single-token prompt, not boot progress.
+		{"uboot", "U-Boot> "},
+		// Paths with spaces and PowerShell-on-Linux.
+		{"user host colon spaced path", "user@host:~/my dir$ "},
+		{"rhel bracket spaced path", "[user@host /home/my dir]# "},
+		{"powershell posix", "PS /home/deploy> "},
 	}
 }
 
@@ -71,11 +77,10 @@ func TestFallbackOverShellPrintedMOTDKeepsWaitingForThePrompt(t *testing.T) {
 
 	scheduler.fireFirst()
 
-	// The fallback saw a banner line and must not type into it.
-	expectNoStartupWrite(t, transport.writes, "show status", 150*time.Millisecond)
-	if startupWaitDisarmed(session) {
-		t.Fatal("the fallback permanently disarmed the one-shot startup command over ordinary shell output")
-	}
+	// The fallback saw a banner line and must not type into it. The safe-wait
+	// state (still pending, timer cleared) proves the write path completed.
+	expectStartupSafeWait(t, session)
+	expectNoStartupInput(t, transport, "show status")
 
 	// The shell prompt arrives after the fallback; the command must still run,
 	// exactly once.

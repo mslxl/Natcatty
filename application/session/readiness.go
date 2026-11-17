@@ -50,8 +50,11 @@ var (
 	currencyCode = regexp.MustCompile(`^[A-Z]{2,4}$`)
 	// bootProgressLabel recognizes boot/progress prose that must make the
 	// bounded fallback safe-wait instead of typing into a device that is still
-	// initializing.
-	bootProgressLabel = regexp.MustCompile(`(?i)\b(fsck|checking|rebuilding|loading|progress|boot|booting|copying|starting|waiting|installing|verifying|scanning|mounting|initializing|configuring|downloading|extracting|formatting|creating|updating|percent)\b`)
+	// initializing. The leading boundary is a line start, whitespace, a colon,
+	// or a bracket, not a generic word boundary: "U-Boot>" is a device prompt
+	// ("U-" is not a boot label), while "Booting...", "boot:", and
+	// "Loading kernel" still are.
+	bootProgressLabel = regexp.MustCompile(`(?i)(^|[\s:\[\]()])(fsck|checking|rebuilding|loading|progress|boot|booting|copying|starting|waiting|installing|verifying|scanning|mounting|initializing|configuring|downloading|extracting|formatting|creating|updating|percent)\b`)
 	// progressBar recognizes a rendered progress bar such as "[#####    ]".
 	progressBar = regexp.MustCompile(`\[[#=.\- ]+\]|[#=]{3,}`)
 	// markupText recognizes HTML/XML tags and the dashed angle banners such as
@@ -59,16 +62,25 @@ var (
 	markupText = regexp.MustCompile(`(?i)<[a-z/!?][^>]*>|[-=]{2,}>`)
 	// promptDrivePathPattern is a Windows drive path: `C:\Users\deploy`.
 	promptDrivePathPattern = `[A-Za-z]:\\[^\s]*`
-	// promptPathPattern is one path token: "~/src", "/var/log", or
-	// `C:\Users\deploy`.
-	promptPathPattern = `(~(/[^\s]*)?|/[^\s]*|` + promptDrivePathPattern + `)`
+	// promptPathPattern is one path token without spaces: "~/src",
+	// "/var/log", or `C:\Users\deploy`.
+	promptPathPattern = `(?:~(/[^\s]*)?|/[^\s]*|` + promptDrivePathPattern + `)`
+	// promptSpacedPathPattern is a path token with at most one space, such as
+	// "~/my dir", "/home/my dir", or `C:\Program Files`. A space is accepted
+	// only inside a token that starts with "~", "/", or a drive letter and
+	// carries a path separator, so ordinary prose with spaces is not a path.
+	promptSpacedPathPattern = `(?:~/[^\s]*( [^\s]+)?|/[^\s]*( [^\s]+)?|[A-Za-z]:\\[^\s]*( [^\s]+)?)`
+	// promptAnyPathPattern accepts either path token.
+	promptAnyPathPattern = `(?:` + promptPathPattern + `|` + promptSpacedPathPattern + `)`
 	// promptUserAtHostPattern is a user and host token: "deploy@web".
 	promptUserAtHostPattern = `[A-Za-z0-9._-]+@[A-Za-z0-9._-]+`
 	// userHostPrompt accepts "user@host", "user@host:~", "user@host:/var/log",
-	// and the spaced forms "user@host ~/src" / "user@host /var/log".
-	userHostPrompt = regexp.MustCompile(`^` + promptUserAtHostPattern + `(:` + promptPathPattern + `)?( ` + promptPathPattern + `)?$`)
-	// powerShellPrompt accepts "PS C:\" and "PS C:\Users\deploy".
-	powerShellPrompt = regexp.MustCompile(`^PS ` + promptDrivePathPattern + `$`)
+	// the spaced forms "user@host ~/src" / "user@host /var/log", and the same
+	// forms with a spaced path such as "user@host:~/my dir".
+	userHostPrompt = regexp.MustCompile(`^` + promptUserAtHostPattern + `(:` + promptAnyPathPattern + `)?( ` + promptAnyPathPattern + `)?$`)
+	// powerShellPrompt accepts "PS C:\", "PS C:\Users\deploy", and the POSIX
+	// forms "PS /home/deploy" / "PS ~/src".
+	powerShellPrompt = regexp.MustCompile(`^PS ` + promptAnyPathPattern + `$`)
 	// promptPathOnly accepts a bare path prompt such as "~/src" or
 	// `C:\Users\deploy`.
 	promptPathOnly = regexp.MustCompile(`^` + promptPathPattern + `$`)
@@ -135,8 +147,8 @@ func splitPromptTerminator(line string) (byte, string, bool) {
 
 // plausiblePromptPrefix is the strict prompt-shape grammar. It accepts exactly
 // the real forms (bracket, PowerShell, user@host, path, single token, bare
-// terminator) and rejects prose, markup, URLs, email-in-prose, colon-space
-// labels, progress bars, ellipses, and boot/progress labels.
+// terminator) and rejects prose, markup, URLs, email-in-prose, progress bars,
+// ellipses, and boot/progress labels.
 func plausiblePromptPrefix(terminator byte, prefix string) bool {
 	if prefix == "" {
 		// A bare "$", "#", "%", or ">" is a legitimate root/user prompt.
@@ -156,17 +168,8 @@ func plausiblePromptPrefix(terminator byte, prefix string) bool {
 	if strings.Contains(prefix, "://") || strings.Contains(prefix, "//") {
 		return false
 	}
-	// A colon-space is a label ("error: ...", "Progress: ...",
-	// "fsck /dev/sda1: ..."), not the colon of a user@host prompt.
-	if strings.Contains(prefix, ": ") {
-		return false
-	}
 	// An ellipsis is boot/banner prose, never a prompt.
 	if strings.Contains(prefix, "...") {
-		return false
-	}
-	// A prompt has at most one separating space (user@host + path).
-	if strings.Count(prefix, " ") > 1 {
 		return false
 	}
 	if progressPercent.MatchString(prefix) {
@@ -263,6 +266,14 @@ func startupPreShellVisible(tail string) bool {
 	tail = ansiSequence.ReplaceAllString(tail, "")
 	tail = strings.ReplaceAll(tail, "\r", "\n")
 	lines := strings.Split(tail, "\n")
+	// The last non-empty line is newer than every banner above it. A
+	// prompt-shaped line that is not itself pre-shell evidence means the
+	// console may already be at a prompt the strict grammar does not
+	// recognize; an older "Last login:" or "Welcome to" line must not suppress
+	// the bounded fallback forever.
+	if last := lastNonEmptyLine(lines); promptTerminatedLine(last) && !preShellLine(last) {
+		return false
+	}
 	for index := len(lines) - 1; index >= 0; index-- {
 		line := strings.TrimRight(lines[index], " \t\v\f")
 		if strings.TrimSpace(line) == "" {
@@ -273,14 +284,38 @@ func startupPreShellVisible(tail string) bool {
 			// banner again would suppress a legitimate startup command.
 			return false
 		}
-		if loginPrompt.MatchString(line) || continuePrompt.MatchString(line) ||
-			lastLogin.MatchString(line) || bannerText.MatchString(line) ||
-			sensitiveAnglePrompt(line) || continuationStatusPrompt(line) ||
-			bootProgressOrMarkupLine(line) {
+		if preShellLine(line) {
 			return true
 		}
 	}
 	return false
+}
+
+// lastNonEmptyLine returns the newest non-empty line, right-trimmed.
+func lastNonEmptyLine(lines []string) string {
+	for index := len(lines) - 1; index >= 0; index-- {
+		line := strings.TrimRight(lines[index], " \t\v\f")
+		if strings.TrimSpace(line) != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+// promptTerminatedLine reports whether a line ends in a prompt terminator.
+func promptTerminatedLine(line string) bool {
+	_, _, ok := splitPromptTerminator(strings.TrimSpace(line))
+	return ok
+}
+
+// preShellLine reports whether one line is pre-shell evidence: a login or
+// continue prompt, a last-login/MOTD banner, a credential angle prompt, a shell
+// continuation prompt, or boot/progress/markup output.
+func preShellLine(line string) bool {
+	return loginPrompt.MatchString(line) || continuePrompt.MatchString(line) ||
+		lastLogin.MatchString(line) || bannerText.MatchString(line) ||
+		sensitiveAnglePrompt(line) || continuationStatusPrompt(line) ||
+		bootProgressOrMarkupLine(line)
 }
 
 // bootProgressOrMarkupLine recognizes boot, progress, and markup output that is
@@ -306,12 +341,5 @@ func bootProgressOrMarkupLine(line string) bool {
 func lastOutputLine(tail string) string {
 	tail = ansiSequence.ReplaceAllString(tail, "")
 	tail = strings.ReplaceAll(tail, "\r", "\n")
-	lines := strings.Split(tail, "\n")
-	for index := len(lines) - 1; index >= 0; index-- {
-		line := strings.TrimRight(lines[index], " \t\v\f")
-		if strings.TrimSpace(line) != "" {
-			return line
-		}
-	}
-	return ""
+	return lastNonEmptyLine(strings.Split(tail, "\n"))
 }
