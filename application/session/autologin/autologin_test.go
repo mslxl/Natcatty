@@ -236,3 +236,208 @@ func assertWrites(t *testing.T, recorder *recorder, want ...string) {
 		}
 	}
 }
+
+// TestPasswordOnlyProfileSpendsOneAttemptPerPassword is the accounting
+// contract for a console that asks for the password first, with no username.
+// The first password send opens an attempt just as the first username does, so
+// the number of sends never exceeds the configured limit. The old tests always
+// fed "login: " first, which let the username branch hide this off-by-one.
+func TestPasswordOnlyProfileSpendsOneAttemptPerPassword(t *testing.T) {
+	const password = "MaxAttempts=1"
+	cases := []struct {
+		name        string
+		maxAttempts int
+		want        int
+	}{
+		{name: "one", maxAttempts: 1, want: 1},
+		{name: "two", maxAttempts: 2, want: 2},
+		{name: "default", maxAttempts: 0, want: DefaultAttempts},
+		{name: "explicit default", maxAttempts: DefaultAttempts, want: DefaultAttempts},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			engine, recorder := newTestEngine(Options{
+				Password: password, PasswordSet: true, MaxAttempts: testCase.maxAttempts,
+			})
+
+			engine.Feed("Password: ")
+			for index := 1; index < testCase.want; index++ {
+				engine.Feed("\r\nPassword: ")
+			}
+			// One prompt past the limit must not be answered.
+			engine.Feed("\r\nPassword: ")
+
+			want := make([]string, testCase.want)
+			for index := range want {
+				want[index] = password + "\r"
+			}
+			assertWrites(t, recorder, want...)
+			if engine.attempts != testCase.want {
+				t.Fatalf("attempts = %d, want %d", engine.attempts, testCase.want)
+			}
+			if engine.Active() {
+				t.Fatal("the detector stayed armed past the attempt limit")
+			}
+		})
+	}
+}
+
+// TestFirstPromptPasswordCountsItsAttempt covers a profile that also has a
+// username: when the console asks for the password before the username, that
+// first password still spends one of the configured attempts.
+func TestFirstPromptPasswordCountsItsAttempt(t *testing.T) {
+	const password = "MaxAttempts=1"
+	engine, recorder := newTestEngine(Options{
+		Username: "admin", Password: password, PasswordSet: true, MaxAttempts: 1,
+	})
+
+	engine.Feed("Password: ")
+	assertWrites(t, recorder, password+"\r")
+	if engine.attempts != 1 {
+		t.Fatalf("attempts = %d, want 1 after the first password", engine.attempts)
+	}
+
+	engine.Feed("\r\nPassword: ")
+	if engine.Active() {
+		t.Fatal("a second password prompt stayed armed past a one-attempt limit")
+	}
+	assertWrites(t, recorder, password+"\r")
+}
+
+// TestPasswordBannerDoesNotSendTheSavedPassword covers a MOTD or security
+// notice that merely ends in the word "password". Before the banner filter the
+// detector answered it, spent the one allowed attempt, and then never answered
+// the real prompt.
+func TestPasswordBannerDoesNotSendTheSavedPassword(t *testing.T) {
+	const password = "MaxAttempts=1"
+	banners := []string{
+		"Never share your password",
+		"Do not reveal your password",
+		"Never share your password:",
+		"Your password expires in 30 days",
+	}
+	for _, banner := range banners {
+		t.Run(banner, func(t *testing.T) {
+			engine, recorder := newTestEngine(Options{
+				Username: "admin", Password: password, PasswordSet: true, MaxAttempts: 1,
+			})
+
+			engine.Feed(banner + "\r\n")
+			assertWrites(t, recorder)
+			if !engine.Active() {
+				t.Fatal("the banner disarmed the detector")
+			}
+			if engine.attempts != 0 {
+				t.Fatalf("attempts = %d, want 0 after a banner", engine.attempts)
+			}
+
+			engine.Feed("login: ")
+			engine.Feed("\r\nPassword: ")
+			assertWrites(t, recorder, "admin\r", password+"\r")
+			engine.Feed("\r\n$ ")
+			if !engine.Completed() {
+				t.Fatal("the real login did not complete")
+			}
+		})
+	}
+}
+
+// TestPasswordPromptForms keeps the real forms answerable while the sentence
+// filter rejects notices.
+func TestPasswordPromptForms(t *testing.T) {
+	const password = "MaxAttempts=1"
+	cases := []struct {
+		name  string
+		feeds []string
+	}{
+		{name: "colon", feeds: []string{"Password: "}},
+		{name: "lowercase", feeds: []string{"password:"}},
+		{name: "for user", feeds: []string{"Password for user: "}},
+		{name: "ansi", feeds: []string{"\x1b[1mPassword:\x1b[0m "}},
+		{name: "split reads", feeds: []string{"Pass", "word: "}},
+		{name: "bare word", feeds: []string{"Password"}},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			engine, recorder := newTestEngine(Options{
+				Password: password, PasswordSet: true, MaxAttempts: 1,
+			})
+			for _, feed := range testCase.feeds {
+				engine.Feed(feed)
+			}
+			assertWrites(t, recorder, password+"\r")
+		})
+	}
+}
+
+// TestRepliesOnlyProfileCompletesAtACommandPrompt pins the firedAny branch of
+// the completion check: a profile with no saved credentials still completes
+// when its custom answer is followed by the console's shell prompt.
+func TestRepliesOnlyProfileCompletesAtACommandPrompt(t *testing.T) {
+	engine, recorder := newTestEngine(Options{
+		Replies: []Reply{{Expect: "Site code:", Respond: "lab-1"}},
+	})
+	engine.Feed("Site code: ")
+	assertWrites(t, recorder, "lab-1\r")
+	if engine.Completed() {
+		t.Fatal("the detector completed before a command prompt")
+	}
+	engine.Feed("\r\n$ ")
+	if !engine.Completed() || engine.Active() {
+		t.Fatal("a replied profile did not complete at the command prompt")
+	}
+}
+
+// TestTakeoverDropsQueuedAnswers asserts the invariant Takeover documents:
+// answers queued by advance never reach the transport after a takeover. Feed
+// drains under the same lock, so the queue is seeded directly to make the
+// removal of the clearing assignment observable.
+func TestTakeoverDropsQueuedAnswers(t *testing.T) {
+	engine, recorder := newTestEngine(Options{
+		Username: "admin", Password: "secret", MaxAttempts: 1,
+	})
+	engine.mu.Lock()
+	engine.pending = [][]byte{[]byte("admin\r"), []byte("secret\r")}
+	engine.mu.Unlock()
+
+	engine.Takeover()
+
+	engine.mu.Lock()
+	pending := engine.pending
+	engine.mu.Unlock()
+	if pending != nil {
+		t.Fatalf("Takeover left %d queued writes", len(pending))
+	}
+	engine.Feed("login: \r\nPassword: ")
+	assertWrites(t, recorder)
+}
+
+// TestWakeEnterAfterABannerFollowingCredentialsIsATakeover makes the
+// !sentUser guard observable: after the username was sent, a banner is the last
+// line, so no prompt condition would disarm a naked Enter. It must still be a
+// takeover because credentials were already transmitted.
+func TestWakeEnterAfterABannerFollowingCredentialsIsATakeover(t *testing.T) {
+	engine, recorder := newTestEngine(Options{Username: "admin", Password: "secret"})
+	engine.Feed("login: ")
+	engine.Feed("\r\nSession started\r\n")
+	assertWrites(t, recorder, "admin\r")
+
+	engine.UserInput([]byte("\r"))
+	if engine.Active() {
+		t.Fatal("a bare Enter after credentials was treated as a wake")
+	}
+}
+
+// TestWakeEnterAfterABannerFollowingAPasswordIsATakeover is the password-only
+// counterpart: sentPass alone must disarm the wake exemption.
+func TestWakeEnterAfterABannerFollowingAPasswordIsATakeover(t *testing.T) {
+	engine, recorder := newTestEngine(Options{Password: "secret", PasswordSet: true})
+	engine.Feed("Password: ")
+	engine.Feed("\r\nWelcome\r\n")
+	assertWrites(t, recorder, "secret\r")
+
+	engine.UserInput([]byte("\r"))
+	if engine.Active() {
+		t.Fatal("a bare Enter after a password was treated as a wake")
+	}
+}

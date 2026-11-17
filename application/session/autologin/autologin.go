@@ -34,11 +34,26 @@ var (
 	// phrasing ("last login", "password expires") so a bare "login:" or
 	// "Password:" prompt is still answered.
 	credentialBanner = regexp.MustCompile(`(?i)(^|[^a-z0-9])((last|previous|failed|successful)\s+(login|logon)|(last|previous)\s+password|password\s+(expires?|expired|will\s+expire|change\s+required)|change\s+your\s+password)`)
-	usernamePrompt   = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(user\s*name|username|login|logon|account|userid|user\s*id|user|用户名|帐号|账号|登录|登入)(\s*[:：>])?\s*$`)
-	passwordPrompt   = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(password|passwd|passcode|passphrase|pass\s*phrase|pin|密码|口令)(\s*[:：>])?\s*$`)
-	continuePrompt   = regexp.MustCompile(`(?i)(press|hit)\s+([<\[(]?\s*)?(return|enter|any\s+key|space)\b(\s*[>\]\)])?.*(continue|get\s+started|start|begin|started)?\.?\s*$`)
-	commandPrompt    = regexp.MustCompile(`[$#>]\s*$`)
-	wakeOnly         = regexp.MustCompile(`^[\r\n]+$`)
+	// passwordBanner recognizes a MOTD or security notice that merely mentions
+	// a password, such as "Never share your password" or "Your password
+	// expires in 30 days". Answering one of those would spend an attempt before
+	// the console asked for anything. The words are notice vocabulary; a real
+	// prompt is an imperative form ("Password:") without them.
+	passwordBanner = regexp.MustCompile(`(?i)(never|do\s+not|don'?t|re-?veal|disclos|share|your\s+password|password\s+(expiry|expiration|expires?|expired|will\s+expire|change\s+required))`)
+	usernamePrompt = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(user\s*name|username|login|logon|account|userid|user\s*id|user|用户名|帐号|账号|登录|登入)(\s*[:：>])?\s*$`)
+	// passwordPrompt matches a real password form that ends at the credential
+	// word with a prompt terminator: "Password:", "password:", or
+	// "Password for user:". A sentence with the word in the middle ("Do not
+	// reveal your password") fails to match because it does not end at the
+	// terminator.
+	passwordPrompt = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(password|passwd|passcode|passphrase|pass\s*phrase|pin|密码|口令)(\s+for\s+[^\s:：>]+)?\s*[:：>]\s*$`)
+	// barePasswordPrompt matches a console that prints the word alone, with no
+	// punctuation. It is kept separate so the sentence filter above cannot be
+	// bypassed by a colon appended to a notice.
+	barePasswordPrompt = regexp.MustCompile(`(?i)^\s*(password|passwd|passcode|passphrase|pass\s*phrase|pin|密码|口令)\s*$`)
+	continuePrompt     = regexp.MustCompile(`(?i)(press|hit)\s+([<\[(]?\s*)?(return|enter|any\s+key|space)\b(\s*[>\]\)])?.*(continue|get\s+started|start|begin|started)?\.?\s*$`)
+	commandPrompt      = regexp.MustCompile(`[$#>]\s*$`)
+	wakeOnly           = regexp.MustCompile(`^[\r\n]+$`)
 )
 
 // Reply is one user-configured expect/reply pair. Expect is matched against
@@ -257,9 +272,19 @@ func (e *Engine) advance() {
 			}
 		}
 		if e.hasPassword && isPasswordPrompt(window) {
-			if e.sentPass {
+			switch {
+			case e.sentPass:
 				// The device asked for the password again instead of returning to
 				// its login prompt. That is a rejected attempt like any other.
+				if !e.beginAttempt() {
+					return
+				}
+				e.fired = make([]bool, len(e.replies))
+			case e.attempts == 0:
+				// This is the first credential the detector sends: a
+				// password-only profile or a console that asks for the password
+				// before a username. It opens an attempt just as the username
+				// branch does, so the first password is not free.
 				if !e.beginAttempt() {
 					return
 				}
@@ -368,15 +393,36 @@ func isContinuePrompt(text string) bool {
 }
 
 func isUsernamePrompt(text string) bool {
-	line := lastPromptLine(text)
-	if credentialBanner.MatchString(line) {
+	return isUsernamePromptLine(lastPromptLine(text))
+}
+
+// isUsernamePromptLine reports whether one stripped line asks for a username.
+// A banner that happens to contain a credential word is never a prompt, and a
+// password form such as "Password for user:" is not a username prompt just
+// because it ends in "user:".
+func isUsernamePromptLine(line string) bool {
+	if credentialBanner.MatchString(line) || isPasswordPromptLine(line) {
 		return false
 	}
 	return usernamePrompt.MatchString(line)
 }
 
 func isPasswordPrompt(text string) bool {
-	return passwordPrompt.MatchString(lastPromptLine(text))
+	return isPasswordPromptLine(lastPromptLine(text))
+}
+
+// isPasswordPromptLine reports whether one stripped line asks for a password.
+// A MOTD or security notice mentioning a password is rejected before the form
+// is considered, so a sentence such as "Never share your password" cannot
+// consume the saved credential.
+func isPasswordPromptLine(line string) bool {
+	if line == "" || len(line) > 200 {
+		return false
+	}
+	if credentialBanner.MatchString(line) || passwordBanner.MatchString(line) {
+		return false
+	}
+	return passwordPrompt.MatchString(line) || barePasswordPrompt.MatchString(line)
 }
 
 func isCommandPrompt(text string) bool {
@@ -384,8 +430,8 @@ func isCommandPrompt(text string) bool {
 	if line == "" || len(line) > 200 {
 		return false
 	}
-	if credentialBanner.MatchString(line) || usernamePrompt.MatchString(line) ||
-		passwordPrompt.MatchString(line) || continuePrompt.MatchString(line) {
+	if credentialBanner.MatchString(line) || isUsernamePromptLine(line) ||
+		isPasswordPromptLine(line) || continuePrompt.MatchString(line) {
 		return false
 	}
 	return commandPrompt.MatchString(line)
@@ -395,7 +441,7 @@ func hasUsernamePromptBeforePassword(text string) bool {
 	lines := promptLines(text)
 	lastPassword := -1
 	for index, line := range lines {
-		if passwordPrompt.MatchString(line) {
+		if isPasswordPromptLine(line) {
 			lastPassword = index
 		}
 	}
@@ -403,7 +449,7 @@ func hasUsernamePromptBeforePassword(text string) bool {
 		return false
 	}
 	for _, line := range lines[:lastPassword] {
-		if !credentialBanner.MatchString(line) && usernamePrompt.MatchString(line) {
+		if isUsernamePromptLine(line) {
 			return true
 		}
 	}
