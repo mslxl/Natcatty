@@ -121,8 +121,107 @@ func TestConnectStoresThePasswordAndKeepsItOutOfTheConfig(t *testing.T) {
 	if strings.Contains(string(encoded), "pa55-secret") {
 		t.Fatalf("config JSON contains the password: %s", encoded)
 	}
-	if state.AutoLoginPassword() != "pa55-secret" {
-		t.Fatal("Connect cleared the form field")
+	if state.AutoLoginPassword() != "" {
+		t.Fatal("Connect kept the typed password in the form")
+	}
+}
+
+// TestPortChangeDoesNotReplayThePreviousPortsPassword is the reported
+// sequence: connect COM3 with a password, reopen the dialog, select COM5, and
+// connect. COM5 must not inherit COM3's credential, either in the opened
+// configuration or in the secret store.
+func TestPortChangeDoesNotReplayThePreviousPortsPassword(t *testing.T) {
+	const password = "MaxAttempts=1"
+	opener := &recordedOpen{}
+	secrets := newFakeSecretStore(nil)
+	state := autoLoginState(t, opener, secrets)
+	state.SetAutoLoginEnabled(true)
+	state.SetAutoLoginUsername("admin")
+	state.SetAutoLoginPassword(password)
+
+	if err := state.Connect(); err != nil {
+		t.Fatalf("Connect COM3: %v", err)
+	}
+	if got := secrets.values["COM3"]; got != password {
+		t.Fatalf("stored COM3 password = %q, want the typed value", got)
+	}
+	if got := state.AutoLoginPassword(); got != "" {
+		t.Fatalf("the typed password survived Connect: %q", got)
+	}
+
+	state.Show()
+	state.SetPort("COM5")
+	if got := state.AutoLoginPassword(); got != "" {
+		t.Fatalf("a port change kept the previous port's password: %q", got)
+	}
+	if err := state.Connect(); err != nil {
+		t.Fatalf("Connect COM5: %v", err)
+	}
+	cfg := opener.last(t)
+	if cfg.Path != "COM5" {
+		t.Fatalf("opened path = %q, want COM5", cfg.Path)
+	}
+	if cfg.AutoLogin == nil || cfg.AutoLogin.PasswordSet {
+		t.Fatalf("COM5 auto-login = %+v, want no inherited credential", cfg.AutoLogin)
+	}
+	if _, ok := secrets.values["COM5"]; ok {
+		t.Fatal("the secret store gained a COM5 entry from the COM3 password")
+	}
+	if got := secrets.values["COM3"]; got != password {
+		t.Fatalf("the COM3 password changed to %q", got)
+	}
+}
+
+// TestPortChangeBeforeConnectDiscardsTheTypedPassword covers the same leak
+// before the first connect: the field is filled for COM3, the user switches to
+// COM5, and Connect must not store the COM3 value for COM5.
+func TestPortChangeBeforeConnectDiscardsTheTypedPassword(t *testing.T) {
+	const password = "MaxAttempts=1"
+	opener := &recordedOpen{}
+	secrets := newFakeSecretStore(nil)
+	state := autoLoginState(t, opener, secrets)
+	state.SetAutoLoginEnabled(true)
+	state.SetAutoLoginUsername("admin")
+	state.SetAutoLoginPassword(password)
+	state.SetPort("COM5")
+
+	if err := state.Connect(); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	cfg := opener.last(t)
+	if cfg.Path != "COM5" || cfg.AutoLogin == nil || cfg.AutoLogin.PasswordSet {
+		t.Fatalf("COM5 config = %+v, want no typed COM3 credential", cfg)
+	}
+	if len(secrets.values) != 0 {
+		t.Fatalf("secret store = %v, want no entry", secrets.values)
+	}
+}
+
+// TestReconnectToTheSamePortReusesTheStoredPassword documents the lifecycle
+// choice: the typed field is cleared after a connect, so a second connect to
+// the same port finds the stored profile password and re-enables auto-login.
+func TestReconnectToTheSamePortReusesTheStoredPassword(t *testing.T) {
+	const password = "MaxAttempts=1"
+	opener := &recordedOpen{}
+	secrets := newFakeSecretStore(nil)
+	state := autoLoginState(t, opener, secrets)
+	state.SetAutoLoginEnabled(true)
+	state.SetAutoLoginUsername("admin")
+	state.SetAutoLoginPassword(password)
+	if err := state.Connect(); err != nil {
+		t.Fatalf("first Connect: %v", err)
+	}
+
+	state.Show()
+	if err := state.Connect(); err != nil {
+		t.Fatalf("reconnect: %v", err)
+	}
+	cfg := opener.last(t)
+	if cfg.Path != "COM3" || cfg.AutoLogin == nil || !cfg.AutoLogin.PasswordSet {
+		t.Fatalf("reconnect config = %+v, want the stored COM3 password reused", cfg)
+	}
+	if got := secrets.values["COM3"]; got != password {
+		t.Fatalf("stored password = %q, want it unchanged", got)
 	}
 }
 
@@ -184,35 +283,6 @@ func TestConnectRefusesAPasswordWithoutASecretStore(t *testing.T) {
 	}
 	if !state.Visible() {
 		t.Fatal("the failure closed the dialog")
-	}
-}
-
-// TestLoadAutoLoginKeepsThePasswordOutOfTheForm restores the non-secret
-// profile when a dialog is reopened; the password stays in the store.
-func TestLoadAutoLoginKeepsThePasswordOutOfTheForm(t *testing.T) {
-	opener := &recordedOpen{}
-	secrets := newFakeSecretStore(map[string]string{"COM3": "saved-secret"})
-	state := autoLoginState(t, opener, secrets)
-	state.LoadAutoLogin(&domainserial.AutoLogin{
-		Enabled: true, Username: "admin", PasswordSet: true, MaxAttempts: 4,
-		Replies: []domainserial.AutoLoginReply{{Expect: "Site code:", Respond: "lab-1"}},
-	})
-
-	if !state.AutoLoginEnabled() || state.AutoLoginUsername() != "admin" ||
-		state.AutoLoginAttempts() != "4" || state.AutoLoginPassword() != "" {
-		t.Fatalf("restored form = enabled %v user %q attempts %q password %q",
-			state.AutoLoginEnabled(), state.AutoLoginUsername(),
-			state.AutoLoginAttempts(), state.AutoLoginPassword())
-	}
-	if got := state.AutoLoginReplies(); got != "Site code: => lab-1" {
-		t.Fatalf("replies = %q", got)
-	}
-	cfg, err := state.Config()
-	if err != nil {
-		t.Fatalf("Config: %v", err)
-	}
-	if cfg.AutoLogin == nil || cfg.AutoLogin.Username != "admin" {
-		t.Fatalf("config auto-login = %+v", cfg.AutoLogin)
 	}
 }
 

@@ -288,3 +288,50 @@ func TestAutoLoginRoundTripsWithoutAPassword(t *testing.T) {
 		t.Fatalf("secret names changed: %q %q", SecretEntityType, SecretFieldPassword)
 	}
 }
+
+// TestSecretProfileIDCanonicalizesEquivalentSpellings pins the identity of a
+// stored serial credential. A user who typed "com3" in one dialog and
+// "\\.\COM3" in another must reach the same secret, while two different
+// devices and two different POSIX paths stay distinct.
+func TestSecretProfileIDCanonicalizesEquivalentSpellings(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "upper COM", path: "COM3", want: "COM3"},
+		{name: "lower COM", path: "com3", want: "COM3"},
+		{name: "padded mixed COM", path: " Com3 ", want: "COM3"},
+		{name: "windows device prefix", path: `\\.\COM3`, want: "COM3"},
+		{name: "padded device prefix", path: `  \\.\com3  `, want: "COM3"},
+		{name: "posix path", path: "/dev/ttyUSB0", want: "/dev/ttyUSB0"},
+		{name: "posix case", path: "/dev/TTYUSB0", want: "/dev/TTYUSB0"},
+		{name: "posix padded", path: " /dev/ttyUSB0 ", want: "/dev/ttyUSB0"},
+		{name: "named pipe", path: `\\.\pipe\Console`, want: `\\.\pipe\console`},
+		{name: "question prefix", path: `\\?\pipe\CONSOLE`, want: `\\.\pipe\console`},
+		{name: "upper pipe prefix", path: `\\.\PIPE\Console`, want: `\\.\pipe\console`},
+		{name: "named pipe with space", path: `\\.\pipe\Console 1`, want: `\\.\pipe\console 1`},
+		{name: "empty", path: "  ", want: ""},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := (Config{Path: testCase.path}).SecretProfileID(); got != testCase.want {
+				t.Fatalf("SecretProfileID(%q) = %q, want %q", testCase.path, got, testCase.want)
+			}
+		})
+	}
+
+	if first, second := (Config{Path: `\\.\pipe\one`}).SecretProfileID(),
+		(Config{Path: `\\.\pipe\two`}).SecretProfileID(); first == second {
+		t.Fatalf("two named pipes share the key %q", first)
+	}
+	if first, second := (Config{Path: "/dev/ttyUSB0"}).SecretProfileID(),
+		(Config{Path: "/dev/ttyUSB1"}).SecretProfileID(); first == second {
+		t.Fatalf("two POSIX devices share the key %q", first)
+	}
+	// Only the secret key folds: the path the transport opens keeps the
+	// spelling the user chose.
+	if got := (Config{Path: `\\.\COM3`}).Normalized().Path; got != `\\.\COM3` {
+		t.Fatalf("Normalized path = %q, want the original device spelling", got)
+	}
+}

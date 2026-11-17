@@ -202,7 +202,13 @@ type AutoLogin struct {
 
 // AutoLoginReply is one user-configured expect/reply pair.
 type AutoLoginReply struct {
-	Expect  string `json:"expect"`
+	// Expect is matched case-insensitively as a substring of the console's
+	// last output line, before the built-in login prompts. It is not a
+	// credential and persists with the profile.
+	Expect string `json:"expect"`
+	// Respond is written to the console when Expect matches. It may be a
+	// command or a one-shot token, so it is treated as a secret by the engine:
+	// it never enters a Session log.
 	Respond string `json:"respond"`
 }
 
@@ -229,10 +235,49 @@ func (a AutoLogin) Normalized() AutoLogin {
 }
 
 // SecretProfileID names the field-secret entry that holds this profile's
-// auto-login password. The normalized port path is the profile's stable key,
-// so reconnecting the same device finds the same stored credential.
+// auto-login password. The key is canonical, so the same device is found
+// however the user spelled it: Windows COM names are upper-cased with a \\.\
+// prefix removed, and named-pipe names are case-folded under one \\.\pipe\
+// prefix. POSIX device paths stay case-sensitive. A credential saved by a
+// build that keyed on the raw spelling would not be found; serial auto-login
+// is introduced by this port, so no released store predates the canonical key.
 func (c Config) SecretProfileID() string {
-	return c.Normalized().Path
+	return NormalizePortPath(c.Path)
+}
+
+// NormalizePortPath returns the canonical key for a serial profile's stored
+// credential. It never changes the path used to open the device; only the
+// secret's identity is folded. Windows device names are case-insensitive, so
+// COM3, com3, and \\.\COM3 name one profile. Named pipes are case-insensitive
+// too and their two local prefixes are equivalent, so \\.\pipe\Console and
+// \\?\pipe\console also name one profile. A POSIX path is case-sensitive and
+// is returned trimmed but otherwise unchanged.
+func NormalizePortPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+	upper := strings.ToUpper(trimmed)
+	if windowsDevicePattern.MatchString(upper) {
+		return upper[len(`\\.\`):]
+	}
+	if comPortPattern.MatchString(upper) {
+		return upper
+	}
+	if IsNamedPipePath(trimmed) {
+		return `\\.\pipe\` + strings.ToLower(namedPipeName(trimmed))
+	}
+	return trimmed
+}
+
+// namedPipeName returns the device part of a local named-pipe path.
+func namedPipeName(path string) string {
+	const marker = `\pipe\`
+	index := strings.Index(strings.ToLower(path), marker)
+	if index < 0 {
+		return path
+	}
+	return path[index+len(marker):]
 }
 
 // Normalized returns cfg with the original defaults filled in and the path's
