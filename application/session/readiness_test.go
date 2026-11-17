@@ -1,6 +1,9 @@
 package session
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestStartupPromptReadyRejectsPreShellOutput pins the prompt heuristic against
 // the output a console prints before its shell exists. None of these lines may
@@ -26,6 +29,24 @@ func TestStartupPromptReadyRejectsPreShellOutput(t *testing.T) {
 		{"currency US", "US$ "},
 		{"currency HK", "HK$ "},
 		{"MOTD token", "MOTD>"},
+		// A login word immediately before a prompt-like ">" is the exact shape
+		// the angle-prompt widening must not release on. These pin the
+		// prompt-path login classifier.
+		{"password angle prompt", "Password> "},
+		{"login angle prompt", "login> "},
+		{"user angle prompt", "user> "},
+		{"pin angle prompt", "PIN> "},
+		// A "press Enter" notice that also carries a path signal would satisfy
+		// the widened angle shape; the prompt-path continue classifier rejects
+		// it.
+		{"continue angle prompt", "Press Enter to continue /dev/tty> "},
+		// A last-login line carrying a path signal is likewise prompt-shaped.
+		// The prompt-path last-login classifier rejects it.
+		{"last login angle prompt", "Last login: /home/deploy> "},
+		// A passphrase phrase with a path signal ends on the widened ">" shape.
+		{"passphrase angle prompt", "Enter passphrase for /home/deploy/key> "},
+		// A line longer than the bounded prompt line is never readiness.
+		{"overlong prompt", "deploy@web:" + strings.Repeat("a", 256) + "$ "},
 		{"empty", ""},
 	}
 	for _, tc := range cases {
@@ -55,6 +76,20 @@ func TestStartupPromptReadyAcceptsShellPrompts(t *testing.T) {
 		{"ansi prompt", "\x1b[32mdeploy@web:~$\x1b[0m "},
 		{"mysql", "mysql> "},
 		{"prompt after banner", "Last login: Mon Nov 16 09:00:00 2026\r\ndeploy@web:~$ "},
+		// Genuine prompts that carry spaces or brackets. Each must release on
+		// the prompt path, not only after the bounded fallback.
+		{"rhel bracket after last login", "Last login: Mon Nov 16 09:00:00 2026\r\n[root@host ~]# "},
+		{"debian bracket", "user@host ~/src]$ "},
+		{"spaced dollar", "guest@host:~ $ "},
+		{"spaced percent", "deploy@web /var/log % "},
+		{"spaced angle", "user@host ~/src> "},
+		{"powershell drive", `PS C:\> `},
+		{"powershell after welcome", "Welcome to Windows\r\n" + `PS C:\Users\deploy> `},
+		{"fish after motd", "Welcome to the fish shell\r\n/usr/share/fish\r\ndeploy@web ~/src> "},
+		{"bare angle", "> "},
+		{"question angle", ">? "},
+		{"windows drive prompt", `C:\Users\deploy> `},
+		{"ansi rhel bracket", "\x1b[32m[root@host ~]#\x1b[0m "},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -88,6 +123,14 @@ func TestStartupPreShellVisible(t *testing.T) {
 		{"shell prompt after banner", "Last login: Mon Nov 16 09:00:00 2026\r\n\r\n$ ", false},
 		{"empty", "", false},
 		{"boot progress is not pre-shell", "100% ", false},
+		// A login marker followed by boot progress still names a pre-shell
+		// console: the progress shape must be rejected as a prompt so the scan
+		// reaches the login line.
+		{"login then progress", "login: \r\n100% ", true},
+		// ANSI styling around a real prompt must be stripped before the scan
+		// recognizes it; otherwise the earlier banner wins.
+		{"ansi banner then styled prompt", "Welcome to the lab\r\n\x1b[32mdeploy@web:~$\x1b[0m ", false},
+		{"passphrase angle prompt", "Enter passphrase for /home/deploy/key> ", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

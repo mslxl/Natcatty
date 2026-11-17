@@ -35,11 +35,10 @@ var (
 	// bannerText recognizes the opening line of a login notice or MOTD. Such a
 	// banner is pre-shell output even when no login prompt has arrived yet.
 	bannerText = regexp.MustCompile(`(?i)\b(welcome to|authorized (users|access) only|message of the day|motd)\b`)
-	// shellPrompt accepts a last line that ends in a shell or device
-	// terminator: "$", "#", "%", or a bare "Router>". The ">" form requires a
-	// single token so HTML or prose banners ending in ">" are not mistaken for
-	// a prompt.
-	shellPrompt = regexp.MustCompile(`^[$#%]\s*$|^[^\s<>]+[$#%]\s*$|^[^\s<>]+>\s*$`)
+	// sensitivePrompt recognizes a password, passphrase, or passcode phrase. On
+	// a line that also has the widened ">" prompt shape it is an interactive
+	// credential prompt, never readiness.
+	sensitivePrompt = regexp.MustCompile(`(?i)\b(passphrase|passcode|password)\b`)
 	// progressPercent recognizes the token of a boot/progress line such as
 	// "100%" or "87.5%". It ends in a shell-like "%" but is never a prompt.
 	progressPercent = regexp.MustCompile(`^[0-9]+([.,][0-9]+)?$`)
@@ -69,20 +68,47 @@ func startupPromptLineReady(line string) bool {
 	return plausibleShellPrompt(line)
 }
 
-// plausibleShellPrompt rejects a line that matches shellPrompt's shape but is
-// boot or banner output: a pure-punctuation "->", a "100%" progress line, or
-// a "US$" price. These lines appear before a login banner, so releasing on
-// them would type the startup command into the next login prompt. A genuine
+// plausibleShellPrompt rejects a line that has a shell prompt shape but is
+// boot or banner output: a pure-punctuation "->", a "100%" progress line, a
+// "US$" price, or a passphrase phrase in the widened ">" form. A genuine
 // prompt keeps at least one letter or digit before its terminator.
 func plausibleShellPrompt(line string) bool {
-	line = strings.TrimSpace(line)
-	if line == "" || !shellPrompt.MatchString(line) {
+	terminator, prefix, ok := splitPromptTerminator(strings.TrimSpace(line))
+	if !ok {
 		return false
 	}
-	terminator := line[len(line)-1]
-	prefix := line[:len(line)-1]
+	return plausiblePromptPrefix(terminator, prefix)
+}
+
+// splitPromptTerminator returns the prompt terminator and the token, path, or
+// bracket prefix in front of it. A shell or device prompt ends in "$", "#",
+// "%", ">", or the console-specific ">?". The prefix may contain spaces so
+// bracketed RHEL/Debian prompts, PowerShell drive prompts, fish/nushell paths,
+// and spaced host prompts are recognized; a bare terminator is legal too.
+func splitPromptTerminator(line string) (byte, string, bool) {
+	switch {
+	case strings.HasSuffix(line, ">?"):
+		return '>', strings.TrimSpace(line[:len(line)-2]), true
+	case strings.HasSuffix(line, "$"):
+		return '$', strings.TrimSpace(line[:len(line)-1]), true
+	case strings.HasSuffix(line, "#"):
+		return '#', strings.TrimSpace(line[:len(line)-1]), true
+	case strings.HasSuffix(line, "%"):
+		return '%', strings.TrimSpace(line[:len(line)-1]), true
+	case strings.HasSuffix(line, ">"):
+		return '>', strings.TrimSpace(line[:len(line)-1]), true
+	default:
+		return 0, "", false
+	}
+}
+
+// plausiblePromptPrefix rejects the prompt-shaped fragments that are really
+// boot output. The bare ">" form is the riskiest widening, so markup and prose
+// are rejected unless the prefix carries a host, path, bracket, or drive
+// signal.
+func plausiblePromptPrefix(terminator byte, prefix string) bool {
 	if prefix == "" {
-		// A bare "$", "#", or "%" is a legitimate root/user prompt.
+		// A bare "$", "#", "%", or ">" is a legitimate root/user prompt.
 		return true
 	}
 	if !containsWordRune(prefix) {
@@ -97,7 +123,41 @@ func plausibleShellPrompt(line string) bool {
 		// "US$", "HK$".
 		return false
 	}
+	if terminator == '>' {
+		if sensitivePrompt.MatchString(prefix) {
+			// "Enter passphrase for /home/deploy/key>".
+			return false
+		}
+		if !plausibleAnglePrefix(prefix) {
+			return false
+		}
+	}
 	return true
+}
+
+// plausibleAnglePrefix keeps the widened ">" form from accepting banner or
+// markup lines. A bare or single-token prompt (">", "mysql>", "Router>") is
+// fine. A prompt with spaces must carry a shell-ish signal: a user/host "@", a
+// path separator, a bracket, a drive colon, or a PowerShell tag. Markup
+// fragments ending in ">" are rejected outright.
+func plausibleAnglePrefix(prefix string) bool {
+	if strings.ContainsAny(prefix, "<>\"=`{}") {
+		return false
+	}
+	if !strings.ContainsAny(prefix, " \t") {
+		return true
+	}
+	if strings.ContainsAny(prefix, "@/\\]:") {
+		return true
+	}
+	return strings.HasPrefix(strings.ToUpper(prefix), "PS ")
+}
+
+// sensitiveAnglePrompt reports whether a line is a credential prompt in the
+// widened ">" form, so the fallback scans it as pre-shell evidence too.
+func sensitiveAnglePrompt(line string) bool {
+	terminator, prefix, ok := splitPromptTerminator(strings.TrimSpace(line))
+	return ok && terminator == '>' && sensitivePrompt.MatchString(prefix)
 }
 
 func containsWordRune(text string) bool {
@@ -111,11 +171,12 @@ func containsWordRune(text string) bool {
 
 // startupPreShellVisible reports whether the retained output still shows a
 // pre-shell prompt or banner after the last recognized shell prompt: a login,
-// username, or password prompt, a press-Enter notice, or a last-login/MOTD
-// line. The bounded fallback consults it so a device that never reaches its
-// shell is left alone instead of having the startup command typed into the
-// login. A markerless MOTD cannot be told apart from a device prompt the
-// heuristic does not recognize; that remains the fallback's reason to exist.
+// username, password, or passphrase prompt, a press-Enter notice, or a
+// last-login/MOTD line. The bounded fallback consults it so a device that never
+// reaches its shell is left alone instead of having the startup command typed
+// into the login. A markerless MOTD cannot be told apart from a device prompt
+// the heuristic does not recognize; that remains the fallback's reason to
+// exist.
 func startupPreShellVisible(tail string) bool {
 	tail = ansiSequence.ReplaceAllString(tail, "")
 	tail = strings.ReplaceAll(tail, "\r", "\n")
@@ -131,7 +192,8 @@ func startupPreShellVisible(tail string) bool {
 			return false
 		}
 		if loginPrompt.MatchString(line) || continuePrompt.MatchString(line) ||
-			lastLogin.MatchString(line) || bannerText.MatchString(line) {
+			lastLogin.MatchString(line) || bannerText.MatchString(line) ||
+			sensitiveAnglePrompt(line) {
 			return true
 		}
 	}

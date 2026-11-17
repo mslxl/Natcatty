@@ -105,6 +105,14 @@ func startupWaitDisarmed(session *Session) bool {
 	return !session.startupPending
 }
 
+// startupTimerCleared reports that the bounded fallback has fired and left the
+// command in the safe wait-for-prompt state (no timer, still pending).
+func startupTimerCleared(session *Session) bool {
+	session.startupMu.Lock()
+	defer session.startupMu.Unlock()
+	return session.startupTimer == nil
+}
+
 // expectNoStartupWrite drains writes for one hard-deadline window and fails if
 // any contains the Host startup command. Other input (credentials, a manual
 // takeover) is allowed.
@@ -140,6 +148,7 @@ func preShellReadinessCases() []struct {
 		{"press enter", "\r\nPress Enter to continue..."},
 		{"last login", "Last login: Mon Nov 16 09:00:00 2026\r\n"},
 		{"motd", "Welcome to the lab switch\r\n\r\n"},
+		{"passphrase angle prompt", "Enter passphrase for /home/deploy/key> "},
 	}
 }
 
@@ -170,8 +179,10 @@ func TestPromptPathWaitsForEveryPreShellForm(t *testing.T) {
 }
 
 // TestFallbackLeavesEveryPreShellFormUnsent fires the bounded fallback with
-// each pre-shell line retained and proves it disarms without writing. The
-// genuine-prompt control releases the command.
+// each pre-shell line retained and proves it does not write. The command stays
+// in the safe wait-for-prompt state instead of being lost, so a genuine prompt
+// that arrives later still releases it. The genuine-prompt control releases the
+// command without the fallback.
 func TestFallbackLeavesEveryPreShellFormUnsent(t *testing.T) {
 	for _, tc := range preShellReadinessCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -188,10 +199,17 @@ func TestFallbackLeavesEveryPreShellFormUnsent(t *testing.T) {
 			})
 
 			scheduler.fireFirst()
-			if !startupWaitDisarmed(session) {
-				t.Fatal("the fallback left the command armed over pre-shell output")
+			if startupWaitDisarmed(session) {
+				t.Fatal("the fallback permanently disarmed the one-shot command over pre-shell output")
 			}
 			expectNoStartupWrite(t, transport.writes, "show status", 150*time.Millisecond)
+
+			// A real prompt after the pre-shell output must still release the
+			// command exactly once.
+			transport.output <- []byte("\r\n$ ")
+			waitForCondition(t, "the startup command at the later prompt", func() bool {
+				return strings.Count(transport.input(), "show status\r") == 1
+			})
 		})
 	}
 
@@ -224,12 +242,16 @@ func TestBoundedFallbackDoesNotTypeIntoAPersistentLoginPrompt(t *testing.T) {
 		return startupTailHas(session, "login: ")
 	})
 
-	// The bound elapses and disarms instead of typing. Waiting for the disarm
-	// proves the fallback actually ran; the channel window proves it did not
-	// write from its goroutine.
+	// The bound elapses and must not type. Waiting for the timer to clear proves
+	// the fallback actually ran; it leaves the one-shot command in the safe
+	// wait-for-prompt state rather than typing at the login prompt. The channel
+	// window proves the fallback goroutine did not write.
 	waitForCondition(t, "the fallback to leave the login prompt alone", func() bool {
-		return startupWaitDisarmed(session)
+		return startupTimerCleared(session)
 	})
+	if startupWaitDisarmed(session) {
+		t.Fatal("the fallback permanently disarmed the one-shot command over a login prompt")
+	}
 	expectNoStartupWrite(t, transport.writes, "show status", 250*time.Millisecond)
 }
 
@@ -258,8 +280,8 @@ func TestDefaultFallbackDoesNotTypeIntoALoginPrompt(t *testing.T) {
 	})
 
 	scheduler.fireFirst()
-	if !startupWaitDisarmed(session) {
-		t.Fatal("the fallback left the startup command armed after a persistent login prompt")
+	if startupWaitDisarmed(session) {
+		t.Fatal("the fallback permanently disarmed the one-shot command after a persistent login prompt")
 	}
 	expectNoStartupWrite(t, transport.writes, "show status", 250*time.Millisecond)
 }

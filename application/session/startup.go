@@ -88,9 +88,12 @@ func (s *Session) maybeRunStartupCommand(generation int, transport Transport) {
 // unfinished auto-login; a later output rearms the bound if the detector is
 // still running. Before typing, it consults the same pre-shell classifiers as
 // the prompt path: if the retained output shows a login/password prompt, a
-// press-Enter notice, or a last-login/MOTD banner, the command is left unsent
-// and the wait is disarmed. A device that never reached its shell therefore
-// stays untouched instead of receiving the command as a login name.
+// press-Enter notice, a passphrase prompt, or a last-login/MOTD banner, the
+// command is never typed into that output. Instead of discarding the one-shot
+// command, the wait stays pending in a safe wait-for-prompt state: the shell
+// may print a MOTD as ordinary output or finish initializing slowly, and a
+// genuine prompt that arrives later must still release the command exactly
+// once. The next output rearms the bounded fallback.
 func (s *Session) startupReadinessElapsed(generation int) {
 	if !s.autoLoginAllowsStartup(generation) {
 		s.startupMu.Lock()
@@ -105,10 +108,10 @@ func (s *Session) startupReadinessElapsed(generation int) {
 		s.startupMu.Unlock()
 		return
 	}
+	s.startupTimer = nil
 	if startupPreShellVisible(string(s.startupTail)) {
-		// Leave the command unsent and disarm deterministically. A manual
-		// login after the bound reaches the shell with no surprise command.
-		s.disarmStartupLocked()
+		// Leave the command pending and armed only on the prompt path. The next
+		// output rearms observeStartupOutput's bounded fallback.
 		s.startupMu.Unlock()
 		return
 	}
