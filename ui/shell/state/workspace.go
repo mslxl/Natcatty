@@ -1568,15 +1568,29 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 
 	if len(domainworkspace.CollectPaneIDs(sourceRoot)) == 0 {
 		// The source Tab lost its last Pane; it ceases to exist. Its Sessions
-		// all moved with the Pane, so nothing is closed.
+		// all moved with the Pane, so nothing is closed, and the zoom goes with
+		// the Tab it belonged to.
+		source.Magnified = ""
 		s.removeTabAt(sourceIndex)
 		if sourceIndex < targetIndex {
 			targetIndex--
 		}
 		s.active = targetIndex
 	} else {
+		// Install the post-removal tree before asking whether the zoom is
+		// stale. The old order checked the pre-removal root, so a magnified
+		// Pane dragged to another Tab still counted as contained: the zoom
+		// survived, the source Tab rendered nothing, and its surviving members
+		// stayed hidden and unfocusable.
 		source.Root = sourceRoot
-		source.FocusPath = domainworkspace.FocusPath(sourceRoot, "")
+		source.clearStaleMagnification()
+		if source.Magnified != "" {
+			// A zoom that is still valid must keep focus: the moved Pane is not
+			// the visible one any more.
+			source.setFocus(source.Magnified)
+		} else {
+			source.FocusPath = domainworkspace.FocusPath(sourceRoot, "")
+		}
 		s.active = targetIndex
 	}
 	s.leaveMonitor()

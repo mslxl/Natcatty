@@ -478,12 +478,16 @@ func paneDropZone(c *ui.Context, s *state.State, t *ui.Theme,
 		zone = ui.Column(c).Width(4).FillHeight().Radius(2)
 	}
 	if drag, over := ui.DragOver[state.DragItem](zone); over &&
-		drag.Kind == state.DragKindPane && drag.PaneID != paneID {
+		drag.Kind == state.DragKindPane &&
+		s.CanMovePane(drag.TabID, drag.PaneID, tabID, paneID, side) {
+		// Ask the same plan the drop will use, so a Pane on itself, a hidden
+		// member of a zoomed Tab, or a Tab that closed mid-drag never lights.
 		zone.Background(t.Accent)
 	}
 	if drag, dropped := ui.Drop[state.DragItem](zone); dropped &&
 		drag.Kind == state.DragKindPane {
-		if s.MovePane(drag.TabID, drag.PaneID, tabID, paneID, side) {
+		if s.CanMovePane(drag.TabID, drag.PaneID, tabID, paneID, side) &&
+			s.MovePane(drag.TabID, drag.PaneID, tabID, paneID, side) {
 			c.Invalidate()
 		}
 	}

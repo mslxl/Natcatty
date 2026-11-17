@@ -348,6 +348,63 @@ func TestShellDragMovesAPaneOntoAnotherTab(t *testing.T) {
 	}
 }
 
+// TestShellShowsTheSiblingAfterAMagnifiedPaneJoinsAnotherTab pins the rendered
+// side of the cross-Tab defect: dropping the zoomed Pane on a Tab strip must
+// clear the zoom, so going back to the source Tab shows its surviving sibling
+// instead of an empty body.
+func TestShellShowsTheSiblingAfterAMagnifiedPaneJoinsAnotherTab(t *testing.T) {
+	graph := newWorkspaceViewGraph(t)
+	tt := ui.NewTester(View(graph.state), 900, 600)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.waitForSurfaces(t, 2)
+	root, _, _ := graph.state.TabTree(0)
+	panes := domainworkspace.CollectPaneIDs(root)
+	if len(panes) != 2 {
+		t.Fatalf("panes = %v, want 2", panes)
+	}
+	if !graph.state.SetMagnifiedPane(0, panes[0]) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	graph.state.RenameTab(1, "Tab 2")
+	graph.waitForSurfaces(t, 3)
+	graph.state.SelectTab(0)
+	tt.Frame()
+
+	handle, ok := tt.Find("::")
+	if !ok {
+		t.Fatalf("the zoomed Pane has no drag handle, texts %q", tt.Texts())
+	}
+	tab, ok := tt.Find("Tab 2")
+	if !ok {
+		t.Fatalf("Tab 2 is not visible, texts %q", tt.Texts())
+	}
+	tt.Press(handle.X+handle.W/2, handle.Y+handle.H/2)
+	tt.Move(tab.X+tab.W/2, tab.Y+tab.H/2)
+	tt.Frame()
+	tt.Release(tab.X+tab.W/2, tab.Y+tab.H/2)
+	tt.Frame()
+
+	if graph.state.TabCount() != 2 {
+		t.Fatalf("tabs = %d, want the source Tab to survive with its sibling", graph.state.TabCount())
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != "" {
+		t.Fatalf("magnified Pane = %q after the tab-strip drop, want the zoom cleared", got)
+	}
+	graph.state.SelectTab(0)
+	tt.Frame()
+	if got := countText(tt.Texts(), "terminal-surface"); got != 1 {
+		t.Fatalf("terminal surfaces = %d on the source Tab, want the surviving sibling", got)
+	}
+}
+
 // failingTelnetFactory fails the first Open with a network failure and opens
 // every later attempt, so a restored Pane can be reconnected in a test.
 type failingTelnetFactory struct {

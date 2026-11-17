@@ -259,6 +259,45 @@ func TestCloseFocusedPaneCollapsesTheSiblingSubtree(t *testing.T) {
 	}
 }
 
+// TestCloseFocusedPaneWhileMagnifiedClearsTheZoom closes the Pane that fills
+// its Tab. The zoom must end with the Pane, or MagnifiedPaneID keeps naming a
+// removed Pane and the surviving sibling stays hidden.
+func TestCloseFocusedPaneWhileMagnifiedClearsTheZoom(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the split", func() bool {
+		return len(graph.state.WorkspacePayload().Panes) == 2
+	})
+	left, right := panesOf(t, graph.state, 0)[0], panesOf(t, graph.state, 0)[1]
+	if !graph.state.SetMagnifiedPane(0, left) {
+		t.Fatal("SetMagnifiedPane rejected the focused Pane")
+	}
+	if got, ok := graph.state.FocusedPaneID(0); !ok || got != left {
+		t.Fatalf("focused Pane = %q, %v; want the magnified Pane", got, ok)
+	}
+
+	if !graph.state.CloseFocusedPane() {
+		t.Fatal("CloseFocusedPane returned false")
+	}
+	if graph.state.TabCount() != 1 {
+		t.Fatalf("tabs = %d, want the Tab to survive its second Pane", graph.state.TabCount())
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != "" {
+		t.Fatalf("magnified Pane = %q after closing the zoomed Pane, want the zoom cleared", got)
+	}
+	if got := panesOf(t, graph.state, 0); !equalPaneIDs(got, []model.PaneID{right}) {
+		t.Fatalf("panes = %v, want the surviving sibling", got)
+	}
+	if got, ok := graph.state.FocusedPaneID(0); !ok || got != right {
+		t.Fatalf("focused Pane = %q, %v; want the surviving sibling", got, ok)
+	}
+}
+
 func TestDirectionalFocusMovesAcrossSplitGeometry(t *testing.T) {
 	graph := newWorkspaceGraph(t)
 	if err := graph.state.NewTab(); err != nil {
@@ -701,9 +740,146 @@ func TestDetachPaneKeepsAValidMagnification(t *testing.T) {
 	}
 }
 
-// TestFocusStaysOnTheMagnifiedPane pins the focus invariant: directional
-// focus and explicit Pane focus cannot move onto a hidden member while the Tab
-// is zoomed, so the keyboard and compose target stay on what is visible.
+// TestMovePaneAcrossTabsClearsTheStaleZoom pins the cross-Tab move path: the
+// zoomed Pane leaves its Tab, so the zoom must end and the surviving sibling
+// must become both visible and focused. Before the fix the stale check ran
+// against the pre-removal root, the zoom survived, and the source Tab kept
+// pointing at a Pane it no longer owned.
+func TestMovePaneAcrossTabsClearsTheStaleZoom(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the split", func() bool {
+		return len(graph.state.WorkspacePayload().Panes) == 2
+	})
+	sourceID, _ := graph.state.TabID(0)
+	left, right := panesOf(t, graph.state, 0)[0], panesOf(t, graph.state, 0)[1]
+	if !graph.state.SetMagnifiedPane(0, left) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	targetID, _ := graph.state.TabID(1)
+	targetPane := panesOf(t, graph.state, 1)[0]
+
+	if !graph.state.MovePane(sourceID, left, targetID, targetPane, domainworkspace.SideRight) {
+		t.Fatal("MovePane across Tabs returned false")
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != "" {
+		t.Fatalf("magnified Pane = %q after moving the zoomed Pane out, want the zoom cleared", got)
+	}
+	if got := panesOf(t, graph.state, 0); !equalPaneIDs(got, []model.PaneID{right}) {
+		t.Fatalf("source panes = %v, want the surviving sibling", got)
+	}
+	if got, ok := graph.state.FocusedPaneID(0); !ok || got != right {
+		t.Fatalf("source focus = %q, %v; want the surviving sibling", got, ok)
+	}
+	if got := graph.state.ActiveTab(); got != 1 {
+		t.Fatalf("active Tab = %d, want the drop target", got)
+	}
+	if got, ok := graph.state.FocusedPaneID(1); !ok || got != left {
+		t.Fatalf("target focus = %q, %v; want the moved Pane", got, ok)
+	}
+}
+
+// TestMovePaneToTabDropClearsTheStaleZoom pins the tab-strip drop path: it
+// routes through MovePaneToTab rather than a Pane drop zone, so it needs the
+// same stale-zoom invariant.
+func TestMovePaneToTabDropClearsTheStaleZoom(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the split", func() bool {
+		return len(graph.state.WorkspacePayload().Panes) == 2
+	})
+	sourceID, _ := graph.state.TabID(0)
+	left, right := panesOf(t, graph.state, 0)[0], panesOf(t, graph.state, 0)[1]
+	if !graph.state.SetMagnifiedPane(0, left) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	targetID, _ := graph.state.TabID(1)
+
+	if !graph.state.MovePaneToTab(sourceID, left, targetID) {
+		t.Fatal("MovePaneToTab returned false")
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != "" {
+		t.Fatalf("magnified Pane = %q after the tab-strip drop, want the zoom cleared", got)
+	}
+	if got := panesOf(t, graph.state, 0); !equalPaneIDs(got, []model.PaneID{right}) {
+		t.Fatalf("source panes = %v, want the surviving sibling", got)
+	}
+	if got, ok := graph.state.FocusedPaneID(0); !ok || got != right {
+		t.Fatalf("source focus = %q, %v; want the surviving sibling", got, ok)
+	}
+	if got := graph.state.ActiveTab(); got != 1 {
+		t.Fatalf("active Tab = %d, want the Tab that received the drop", got)
+	}
+	got := panesOf(t, graph.state, 1)
+	if len(got) != 2 {
+		t.Fatalf("target panes = %v, want the moved Pane beside the target", got)
+	}
+	found := false
+	for _, id := range got {
+		if id == left {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("target panes = %v, want the moved Pane %q", got, left)
+	}
+}
+
+// TestMovePaneIntoAMagnifiedTabKeepsItsZoomFocused pins the receiving side: a
+// drop into a zoomed Tab must not focus the hidden Pane it was inserted beside.
+func TestMovePaneIntoAMagnifiedTabKeepsItsZoomFocused(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	sourceID, _ := graph.state.TabID(0)
+	sourcePane := panesOf(t, graph.state, 0)[0]
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the target split", func() bool {
+		return len(panesOf(t, graph.state, 1)) == 2
+	})
+	targetID, _ := graph.state.TabID(1)
+	zoomed := panesOf(t, graph.state, 1)[0]
+	if !graph.state.SetMagnifiedPane(1, zoomed) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+
+	if !graph.state.MovePane(sourceID, sourcePane, targetID, zoomed, domainworkspace.SideRight) {
+		t.Fatal("MovePane into the zoomed Tab returned false")
+	}
+	// The emptied source Tab is removed, so the target becomes Tab 0.
+	if got := graph.state.TabCount(); got != 1 {
+		t.Fatalf("tabs = %d after the source emptied, want 1", got)
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != zoomed {
+		t.Fatalf("magnified Pane = %q, want the zoomed target %q", got, zoomed)
+	}
+	if got, ok := graph.state.FocusedPaneID(0); !ok || got != zoomed {
+		t.Fatalf("focused Pane = %q, %v; want the zoomed target", got, ok)
+	}
+}
+
 func TestFocusStaysOnTheMagnifiedPane(t *testing.T) {
 	graph := newWorkspaceGraph(t)
 	if err := graph.state.NewTab(); err != nil {
