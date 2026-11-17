@@ -134,11 +134,13 @@ func TestStartupPreShellVisible(t *testing.T) {
 		{"welcome banner", "Welcome to the lab switch\r\n\r\n", true},
 		{"authorized users notice", "Authorized users only.\r\n", true},
 		{"MOTD token", "MOTD>\r\n", true},
-		{"booting", "booting...\r\n", false},
+		// Boot/progress/markup output is pre-shell evidence: the fallback must
+		// safe-wait rather than type into a device that is still booting.
+		{"booting", "booting...\r\n", true},
+		{"boot progress", "100% ", true},
 		{"shell prompt", "deploy@web:~$ ", false},
 		{"shell prompt after banner", "Last login: Mon Nov 16 09:00:00 2026\r\n\r\n$ ", false},
 		{"empty", "", false},
-		{"boot progress is not pre-shell", "100% ", false},
 		// A login marker followed by boot progress still names a pre-shell
 		// console: the progress shape must be rejected as a prompt so the scan
 		// reaches the login line.

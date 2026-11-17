@@ -124,13 +124,15 @@ func TestStartupCommandFallsBackWhenNoPromptIsRecognized(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 
-	transport.output <- []byte("booting...\r\n")
+	// Markerless output (not boot/progress/markup) leaves the fallback free to
+	// type: the device may be a console the heuristic simply does not recognize.
+	transport.output <- []byte("device ready\r\n")
 	waitForCondition(t, "the bounded startup-command fallback", func() bool {
 		return transport.input() == "show status\r"
 	})
 
 	before := session.Snapshot().LastActivity
-	transport.output <- []byte("\r\nstill booting\r\n")
+	transport.output <- []byte("\r\nstill idle\r\n")
 	waitForCondition(t, "output after the fallback", func() bool {
 		return session.Snapshot().LastActivity.After(before)
 	})
