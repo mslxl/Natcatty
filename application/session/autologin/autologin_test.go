@@ -315,6 +315,14 @@ func TestPasswordBannerDoesNotSendTheSavedPassword(t *testing.T) {
 		"Do not reveal your password",
 		"Never share your password:",
 		"Your password expires in 30 days",
+		// Positive password-management notices also end at the credential
+		// word now that the terminator is optional. They must not consume the
+		// saved credential either.
+		"Reset your password",
+		"Update your password",
+		"Set your password",
+		"Create your password",
+		"Contact IT to reset your password",
 	}
 	for _, banner := range banners {
 		t.Run(banner, func(t *testing.T) {
@@ -398,28 +406,39 @@ func TestRepliesOnlyProfileCompletesAtACommandPrompt(t *testing.T) {
 	}
 }
 
-// TestTakeoverDropsQueuedAnswers asserts the invariant Takeover documents:
-// answers queued by advance never reach the transport after a takeover. Feed
-// drains under the same lock, so the queue is seeded directly to make the
-// removal of the clearing assignment observable.
-func TestTakeoverDropsQueuedAnswers(t *testing.T) {
-	engine, recorder := newTestEngine(Options{
-		Username: "admin", Password: "secret", MaxAttempts: 1,
-	})
-	engine.mu.Lock()
-	engine.pending = [][]byte{[]byte("admin\r"), []byte("secret\r")}
-	engine.mu.Unlock()
-
-	engine.Takeover()
-
-	engine.mu.Lock()
-	pending := engine.pending
-	engine.mu.Unlock()
-	if pending != nil {
-		t.Fatalf("Takeover left %d queued writes", len(pending))
+// TestDisarmDropsQueuedAnswers asserts the invariant Takeover and Cancel
+// document: answers queued by advance never reach the transport after a
+// disarm. Feed drains under the same lock, so the queue is seeded directly to
+// make each clearing assignment observable.
+func TestDisarmDropsQueuedAnswers(t *testing.T) {
+	cases := []struct {
+		name   string
+		disarm func(*Engine)
+	}{
+		{name: "takeover", disarm: (*Engine).Takeover},
+		{name: "cancel", disarm: (*Engine).Cancel},
 	}
-	engine.Feed("login: \r\nPassword: ")
-	assertWrites(t, recorder)
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			engine, recorder := newTestEngine(Options{
+				Username: "admin", Password: "secret", MaxAttempts: 1,
+			})
+			engine.mu.Lock()
+			engine.pending = [][]byte{[]byte("admin\r"), []byte("secret\r")}
+			engine.mu.Unlock()
+
+			testCase.disarm(engine)
+
+			engine.mu.Lock()
+			pending := engine.pending
+			engine.mu.Unlock()
+			if pending != nil {
+				t.Fatalf("%s left %d queued writes", testCase.name, len(pending))
+			}
+			engine.Feed("login: \r\nPassword: ")
+			assertWrites(t, recorder)
+		})
+	}
 }
 
 // TestWakeEnterAfterABannerFollowingCredentialsIsATakeover makes the
@@ -472,6 +491,8 @@ func TestDisarmDuringEmitDropsTheRemainingAnswers(t *testing.T) {
 	}{
 		{name: "takeover", disarm: (*Engine).Takeover},
 		{name: "cancel", disarm: (*Engine).Cancel},
+		// Ordinary typed input is a takeover too; it disarms through UserInput.
+		{name: "user input", disarm: func(engine *Engine) { engine.UserInput([]byte("x")) }},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -491,25 +512,4 @@ func TestDisarmDuringEmitDropsTheRemainingAnswers(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestCancelDropsQueuedAnswers is the Cancel counterpart of
-// TestTakeoverDropsQueuedAnswers. Removing Cancel's clearing assignment leaves
-// the seeded queue observable.
-func TestCancelDropsQueuedAnswers(t *testing.T) {
-	engine, recorder := newTestEngine(Options{Username: "admin", Password: "secret"})
-	engine.mu.Lock()
-	engine.pending = [][]byte{[]byte("admin\r"), []byte("secret\r")}
-	engine.mu.Unlock()
-
-	engine.Cancel()
-
-	engine.mu.Lock()
-	pending := engine.pending
-	engine.mu.Unlock()
-	if pending != nil {
-		t.Fatalf("Cancel left %d queued writes", len(pending))
-	}
-	engine.Feed("login: \r\nPassword: ")
-	assertWrites(t, recorder)
 }

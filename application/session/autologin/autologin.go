@@ -40,24 +40,22 @@ var (
 	// the console asked for anything. The words are notice vocabulary; a real
 	// prompt is an imperative form ("Password:", "Input Password", "Enter your
 	// password:") without them. The bare possessive "your password" is not
-	// notice vocabulary on its own: "Your password:" is a real prompt.
-	passwordBanner = regexp.MustCompile(`(?i)(never|do\s+not|don'?t|re-?veal|disclos|share|password\s+(expiry|expiration|expires?|expired|will\s+expire|change\s+required))`)
+	// notice vocabulary on its own: "Your password:" is a real prompt, while a
+	// password-management verb in front of it ("Reset your password") is a
+	// notice.
+	passwordBanner = regexp.MustCompile(`(?i)(never|do\s+not|don'?t|re-?veal|disclos|share|(reset|update|set|create|choose|change|forgot(?:ten)?|recover|rotate)\s+(your|a|the)\s+password|password\s+(expiry|expiration|expires?|expired|reset|update|policy|change\s+required))`)
 	usernamePrompt = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(user\s*name|username|login|logon|account|userid|user\s*id|user|用户名|帐号|账号|登录|登入)(\s*[:：>])?\s*$`)
 	// passwordPrompt matches a real password form. The terminator is optional,
 	// as in the original detector: consoles print "Password:", "Password for
 	// user:", and bare forms such as Kylin V10's "Input Password" or the
-	// Chinese "输入密码". A sentence with the word in the middle ("Do not
-	// reveal your password") fails to match because it does not end at the
-	// credential word, and the banner filter above rejects notices that do end
-	// there.
+	// Chinese "输入密码". The match is anchored at the end of the line, so a
+	// sentence that mentions a password in the middle does not match; notices
+	// that do end at the credential word are rejected by the banner filter
+	// above.
 	passwordPrompt = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(password|passwd|passcode|passphrase|pass\s*phrase|pin|密码|口令)(\s+for\s+[^\s:：>]+)?\s*[:：>]?\s*$`)
-	// barePasswordPrompt matches a console that prints the word alone, with no
-	// punctuation. It is kept separate so the sentence filter above cannot be
-	// bypassed by a colon appended to a notice.
-	barePasswordPrompt = regexp.MustCompile(`(?i)^\s*(password|passwd|passcode|passphrase|pass\s*phrase|pin|密码|口令)\s*$`)
-	continuePrompt     = regexp.MustCompile(`(?i)(press|hit)\s+([<\[(]?\s*)?(return|enter|any\s+key|space)\b(\s*[>\]\)])?.*(continue|get\s+started|start|begin|started)?\.?\s*$`)
-	commandPrompt      = regexp.MustCompile(`[$#>]\s*$`)
-	wakeOnly           = regexp.MustCompile(`^[\r\n]+$`)
+	continuePrompt = regexp.MustCompile(`(?i)(press|hit)\s+([<\[(]?\s*)?(return|enter|any\s+key|space)\b(\s*[>\]\)])?.*(continue|get\s+started|start|begin|started)?\.?\s*$`)
+	commandPrompt  = regexp.MustCompile(`[$#>]\s*$`)
+	wakeOnly       = regexp.MustCompile(`^[\r\n]+$`)
 )
 
 // Reply is one user-configured expect/reply pair. Expect is matched against
@@ -193,7 +191,7 @@ func (e *Engine) UserInput(data []byte) {
 		!isUsernamePrompt(e.tail) && !isPasswordPrompt(e.tail) {
 		return
 	}
-	e.active = false
+	e.disarmLocked()
 }
 
 // Takeover disarms the detector for input that did not come from this
@@ -202,9 +200,7 @@ func (e *Engine) UserInput(data []byte) {
 // by those routes are deliberate, so they always transfer control to the user.
 func (e *Engine) Takeover() {
 	e.mu.Lock()
-	e.active = false
-	e.pending = nil
-	e.epoch++
+	e.disarmLocked()
 	e.mu.Unlock()
 }
 
@@ -212,10 +208,16 @@ func (e *Engine) Takeover() {
 // closed or replaced by a reconnect.
 func (e *Engine) Cancel() {
 	e.mu.Lock()
+	e.disarmLocked()
+	e.mu.Unlock()
+}
+
+// disarmLocked drops the queued answers and advances the takeover epoch so an
+// emit already in flight stops before its next write. The caller holds e.mu.
+func (e *Engine) disarmLocked() {
 	e.active = false
 	e.pending = nil
 	e.epoch++
-	e.mu.Unlock()
 }
 
 func (e *Engine) append(text string) {
@@ -360,10 +362,11 @@ func (e *Engine) drain() [][]byte {
 }
 
 // emit writes the answers drained by one Feed. It re-checks the takeover epoch
-// before every write: a Takeover or Cancel that lands after the drain (even
-// from inside an earlier write's callback) discards the rest of the queue.
-// The lock is not held across write because write may call back into the
-// engine, so the check and the write are separate steps.
+// before every write, so a disarm that lands after the drain — including one
+// from inside an earlier write's callback — stops the rest of the queue. The
+// lock is not held across write because write may call back into the engine;
+// a disarm racing between the check and that single write is therefore not
+// observable here, but no later answer is written.
 func (e *Engine) emit(pending [][]byte, epoch uint64) {
 	if e.write == nil {
 		return
@@ -445,7 +448,7 @@ func isPasswordPromptLine(line string) bool {
 	if credentialBanner.MatchString(line) || passwordBanner.MatchString(line) {
 		return false
 	}
-	return passwordPrompt.MatchString(line) || barePasswordPrompt.MatchString(line)
+	return passwordPrompt.MatchString(line)
 }
 
 func isCommandPrompt(text string) bool {
