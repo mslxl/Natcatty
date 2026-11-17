@@ -112,7 +112,7 @@ func Controls(c *ui.Context, style Style, w Window) {
 	}
 	m := locales.In(c.Locale())
 	if style == Dialog {
-		ui.Row(c).Key("window-controls").Absolute().Top(CloseTop).Right(CloseInset).Children(func() {
+		ui.Row(c.Key("window-controls")).Absolute().Top(CloseTop).Right(CloseInset).Children(func() {
 			if dialogClose(c, m.WindowClose()).Clicked() {
 				w.Close()
 			}
@@ -123,7 +123,7 @@ func Controls(c *ui.Context, style Style, w Window) {
 	if style == Popup {
 		button = popupControl
 	}
-	ui.Row(c).Key("window-controls").Absolute().Top(0).Right(0).Height(Height).Children(func() {
+	ui.Row(c.Key("window-controls")).Absolute().Top(0).Right(0).Height(Height).Children(func() {
 		if button(c, "window-minimize", icons.Minus, m.WindowMinimize(), false).Clicked() {
 			w.Minimize()
 		}
@@ -144,7 +144,7 @@ func Controls(c *ui.Context, style Style, w Window) {
 // hover, and red under the close glyph.
 func tabsControl(c *ui.Context, key, icon, label string, danger bool) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Key(key).Label(label).Tooltip(label).Size(ButtonWidth, Height).
+	button := ui.ButtonBase(c.Key(key)).Label(label).Tooltip(label).Size(ButtonWidth, Height).
 		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted)
 	switch {
 	case danger && (button.Hovered() || button.Pressed()):
@@ -166,7 +166,7 @@ func tabsControl(c *ui.Context, key, icon, label string, danger bool) ui.Element
 // dimmed until hovered rather than red.
 func popupControl(c *ui.Context, key, icon, label string, closing bool) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Key(key).Label(label).Tooltip(label).Size(PopupButtonWidth, Height).
+	button := ui.ButtonBase(c.Key(key)).Label(label).Tooltip(label).Size(PopupButtonWidth, Height).
 		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.Text)
 	hovered := button.Hovered() || button.Pressed()
 	if hovered {
@@ -187,7 +187,7 @@ func popupControl(c *ui.Context, key, icon, label string, closing bool) ui.Eleme
 // rounded square that turns the destructive color on hover.
 func dialogClose(c *ui.Context, label string) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Key("window-close").Label(label).Size(CloseSize, CloseSize).Radius(kit.M(c).Radius.Control).
+	button := ui.ButtonBase(c.Key("window-close")).Label(label).Size(CloseSize, CloseSize).Radius(kit.M(c).Radius.Control).
 		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted)
 	if button.Hovered() || button.Pressed() {
 		button.Background(t.Danger.Alpha(0.2)).TextColor(t.Danger)
@@ -200,5 +200,5 @@ func dialogClose(c *ui.Context, label string) ui.Element {
 // top of its parent that drags the window even where Tabs fill the bar. It
 // sits above the parent's other children.
 func DragStripe(c *ui.Context) {
-	ui.Box(c).Key("drag-stripe").Absolute().Top(0).Left(0).Right(0).Height(4).DragWindow()
+	ui.Box(c.Key("drag-stripe")).Absolute().Top(0).Left(0).Right(0).Height(4).DragWindow()
 }

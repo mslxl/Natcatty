@@ -433,7 +433,7 @@ func (p *Panel) tabStrip(c *ui.Context, state appbrowser.State, m locales.Messag
 						itemHandle = &ui.Handle{}
 						p.tabItems[tab.ID] = itemHandle
 					}
-					item := ui.Row(c).Key("browser-tab-" + tab.ID).Gap(browserTabGap).
+					item := ui.Row(c.Key("browser-tab-" + tab.ID)).Gap(browserTabGap).
 						AlignItems(ui.Center).Bind(itemHandle)
 					item.Children(func() {
 						if bitmap := p.iconBitmap(tab.IconDataURL); bitmap != nil {
@@ -524,7 +524,7 @@ func (p *Panel) page(c *ui.Context, tab appbrowser.Tab, t *ui.Theme) {
 	page := p.openTabs[tab.ID]
 	if page != nil {
 		if native := page.Native(); native != nil {
-			ui.WebView(c, native).Grow(1).Key("browser-page-" + tab.ID)
+			ui.WebView(c.Key("browser-page-"+tab.ID), native).Grow(1)
 			return
 		}
 	}

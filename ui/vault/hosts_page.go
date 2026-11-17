@@ -421,7 +421,7 @@ func treeGroup(c *ui.Context, s *vaultstate.State, opts options, at *browse, m l
 			groupRowBody(c, s, node.section, at, m, t)
 			return
 		}
-		chevron := ui.ButtonBase(c).Key("tree-toggle-"+path).Label(m.VaultTreeToggle()).
+		chevron := ui.ButtonBase(c.Key("tree-toggle-"+path)).Label(m.VaultTreeToggle()).
 			Size(treeToggleSize, treeToggleSize).Radius(kit.M(c).Radius.Control).Justify(ui.Center).AlignItems(ui.Center).
 			TextColor(t.TextMuted).Shrink(0)
 		if chevron.Hovered() {
@@ -451,7 +451,7 @@ func treeGroup(c *ui.Context, s *vaultstate.State, opts options, at *browse, m l
 // groupRowElement is a group's row shell: indented, hoverable, and a drop
 // target for a dragged Host.
 func groupRowElement(c *ui.Context, t *ui.Theme, path string, depth int) ui.Element {
-	row := ui.Row(c).Key("group-row-" + path).FillWidth().Height(rowHeight).
+	row := ui.Row(c.Key("group-row-" + path)).FillWidth().Height(rowHeight).
 		PaddingStart(8 + float32(depth)*treeIndent).PaddingEnd(8).
 		Radius(kit.M(c).Radius.Control).AlignItems(ui.Center).Gap(8)
 	if row.Hovered() {
@@ -743,7 +743,7 @@ func cardGrid(c *ui.Context, key string, count int, card func(int)) {
 	if count == 0 {
 		return
 	}
-	grid := ui.Grid(c).Key(key).FillWidth().Gap(gridGap)
+	grid := ui.Grid(c.Key(key)).FillWidth().Gap(gridGap)
 	width := grid.Bounds().W
 	if width <= 0 {
 		// The first frame has no width yet; size from the window and settle
@@ -765,7 +765,7 @@ func cardGrid(c *ui.Context, key string, count int, card func(int)) {
 // hovered or dragged over. The key comes first, before any state is read, so
 // the card stays the same element when the root drop target appears above it.
 func cardShell(c *ui.Context, t *ui.Theme, key string) ui.Element {
-	card := ui.Row(c).Key(key).MinWidth(0).Height(64).Padding(0, 8, 0, 12).Gap(12).Radius(kit.M(c).Radius.Card).
+	card := ui.Row(c.Key(key)).MinWidth(0).Height(64).Padding(0, 8, 0, 12).Gap(12).Radius(kit.M(c).Radius.Card).
 		Border(1, t.Border).Background(t.Surface).AlignItems(ui.Center).
 		Shadow(0, 1, 2, 0, kit.CardShadow(t))
 	if card.Hovered() {
@@ -853,7 +853,7 @@ func hostCard(c *ui.Context, s *vaultstate.State, opts options, host domainvault
 // hostRow is one Host in the list and tree views.
 func hostRow(c *ui.Context, s *vaultstate.State, opts options, host domainvault.Host, at *browse,
 	m locales.Messages, t *ui.Theme, layout domainpreferences.Layout, depth int) {
-	row := ui.Row(c).Key("host-row-" + string(host.ID)).FillWidth().Height(rowHeight).
+	row := ui.Row(c.Key("host-row-" + string(host.ID))).FillWidth().Height(rowHeight).
 		PaddingStart(8 + float32(depth)*treeIndent).PaddingEnd(8).
 		Radius(kit.M(c).Radius.Control).AlignItems(ui.Center).Gap(8)
 	if row.Hovered() {

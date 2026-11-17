@@ -61,11 +61,11 @@ func View(s *State) func(*ui.Context) {
 				statusView(c, s, m, t)
 
 				ui.Row(c).Gap(8).Children(func() {
-					if ui.PrimaryButton(c, m.SerialConnect()).Key("serial-connect").Clicked() {
+					if ui.PrimaryButton(c.Key("serial-connect"), m.SerialConnect()).Clicked() {
 						_ = s.Connect()
 						c.Invalidate()
 					}
-					if ui.Button(c, m.SerialCancel()).Key("serial-cancel").Clicked() {
+					if ui.Button(c.Key("serial-cancel"), m.SerialCancel()).Clicked() {
 						s.Hide()
 						c.Invalidate()
 					}
@@ -117,7 +117,7 @@ func statusView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 func portField(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	ui.Row(c).Gap(8).Children(func() {
 		ui.Text(c, m.SerialPort()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
-		if ui.Button(c, m.SerialRefresh()).Key("serial-refresh").Clicked() {
+		if ui.Button(c.Key("serial-refresh"), m.SerialRefresh()).Clicked() {
 			s.RefreshPorts()
 			c.Invalidate()
 		}
@@ -148,12 +148,13 @@ func portsView(c *ui.Context, s *State, ports []domainserial.PortInfo) {
 				label += " — " + port.Manufacturer
 			}
 			var button ui.Element
+			key := "serial-port-" + port.Path
 			if port.Path == s.Port() {
-				button = ui.PrimaryButton(c, label)
+				button = ui.PrimaryButton(c.Key(key), label)
 			} else {
-				button = ui.Button(c, label)
+				button = ui.Button(c.Key(key), label)
 			}
-			button.Key("serial-port-" + port.Path).Width(460)
+			button.Width(460)
 			if button.Clicked() {
 				s.SetPort(port.Path)
 				c.Invalidate()

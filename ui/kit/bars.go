@@ -57,10 +57,10 @@ func iconRecipe(c *ui.Context, role IconRole) (box, glyph, radius float32) {
 func IconButtonWith(c *ui.Context, name, label string, options IconOptions) ui.Element {
 	t := c.Theme()
 	box, glyph, radius := iconRecipe(c, options.Role)
-	button := ui.ButtonBase(c)
 	if options.Key != "" {
-		button.Key(options.Key)
+		c = c.Key(options.Key)
 	}
+	button := ui.ButtonBase(c)
 	button.Label(label).Tooltip(label).Size(box, box).Radius(radius).
 		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
 	if options.Role == IconBar && CurrentStyle().Native() {

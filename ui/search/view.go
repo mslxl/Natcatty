@@ -246,7 +246,7 @@ func row(c *ui.Context, result appsearch.Result, selected bool, activate func(),
 	if record.ID == "" {
 		key += record.Title
 	}
-	e := ui.Row(c).Key(key).FillWidth().MinWidth(0).Height(rowHeight).
+	e := ui.Row(c.Key(key)).FillWidth().MinWidth(0).Height(rowHeight).
 		Padding(0, 8).Gap(10).AlignItems(ui.Center).Clip()
 	if selected {
 		e = e.Background(t.Selection)

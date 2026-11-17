@@ -243,7 +243,7 @@ func SettingsLayout(c *ui.Context, slots SettingsSlots) {
 	t := c.Theme()
 	WindowFrame(c, FrameOptions{}, func() {
 		left, right := titlebar.Insets(c, titlebar.Dialog)
-		ui.Row(c).Key("title-bar").FillWidth().Shrink(0).Padding(titlebar.CloseTop, 16+right, 8, 16+left).
+		ui.Row(c.Key("title-bar")).FillWidth().Shrink(0).Padding(titlebar.CloseTop, 16+right, 8, 16+left).
 			AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).
 			DragWindow().Children(func() {
 			ui.Row(c).Height(titlebar.CloseSize).AlignItems(ui.Center).Children(func() {
@@ -279,7 +279,7 @@ func nativeSettings(c *ui.Context, slots SettingsSlots) {
 			})
 			ui.Column(c).Grow(1).FillHeight().MinWidth(0).MinHeight(0).Background(t.Background).Children(func() {
 				_, right := titlebar.Insets(c, titlebar.Dialog)
-				ui.Row(c).Key("title-bar").FillWidth().Shrink(0).Padding(titlebar.CloseTop, 16+right, 0, 24).
+				ui.Row(c.Key("title-bar")).FillWidth().Shrink(0).Padding(titlebar.CloseTop, 16+right, 0, 24).
 					AlignItems(ui.Center).DragWindow().Children(func() {
 					ui.Row(c).Height(titlebar.CloseSize).AlignItems(ui.Center).Children(func() {
 						ui.Text(c, slots.Title).FontSize(kit.M(c).Font.Headline).FontWeight(600)

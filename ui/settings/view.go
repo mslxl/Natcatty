@@ -192,7 +192,7 @@ func searchResults(c *ui.Context, search *SearchState, hits []SearchHit, m local
 				}
 				for index, hit := range hits {
 					hit := hit
-					option := ui.ButtonBase(c).Key("settings-hit-"+string(hit.Area)+"-"+hit.Label).
+					option := ui.ButtonBase(c.Key("settings-hit-"+string(hit.Area)+"-"+hit.Label)).
 						Label(hit.Label).FillWidth().MinWidth(0).Padding(8, 12).Justify(ui.Start)
 					switch {
 					case index == search.Selected():

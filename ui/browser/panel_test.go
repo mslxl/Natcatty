@@ -497,9 +497,13 @@ func TestPanelTabsActivateAndCloseTheirOwnPage(t *testing.T) {
 	first.emit(PageEvent{Kind: PageTitle, Title: "Docs"})
 	h.frame()
 
-	if err := h.tester.Click("+"); err != nil {
-		t.Fatalf("click New tab: %v", err)
+	// The "+" glyph is a text run with no box of its own; click the control
+	// through its handle, as the minimum-window tests do.
+	plus := h.stripBounds(h.panel.newTab)
+	if plus.W <= 0 || plus.H <= 0 {
+		t.Fatalf("the New tab control has no area: %+v", plus)
 	}
+	h.tester.ClickAt(plus.X+plus.W/2, plus.Y+plus.H/2)
 	h.frame()
 	state := h.state()
 	if len(state.Tabs) != 2 {

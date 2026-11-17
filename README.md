@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-0.1.0-1f6feb" alt="version">
-  <img src="https://img.shields.io/badge/Go-1.27.1-00ADD8" alt="Go">
+  <img src="https://img.shields.io/badge/Go-1.27.4-00ADD8" alt="Go">
   <img src="https://img.shields.io/badge/MyGo-0.6.0-8957e5" alt="MyGo">
   <img src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-2da44e" alt="platforms">
   <img src="https://img.shields.io/badge/license-GPL--3.0--or--later-57606a" alt="license">

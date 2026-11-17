@@ -146,7 +146,7 @@ func paneTab(c *ui.Context, s *transferstate.State, side transferstate.Side, ind
 	if tab.Kind == transferstate.KindLocal {
 		icon = icons.Monitor
 	}
-	result := kit.Tab(c, kit.TabPane, kit.TabSpec{
+	_, result := kit.Tab(c, kit.TabPane, kit.TabSpec{
 		Title:  paneTitle(m, tab),
 		Icon:   icon,
 		Active: active,

@@ -167,16 +167,15 @@ type TabSpec struct {
 	Reveal bool
 }
 
-// TabResult is what a tab reported this frame. Element is the tab itself,
-// for the caller's drag and drop.
+// TabResult is what a tab reported this frame.
 type TabResult struct {
-	Element ui.Element
 	Clicked bool
 	Closed  bool
 }
 
-// Tab draws one tab of a TabStrip of role.
-func Tab(c *ui.Context, role TabRole, spec TabSpec) TabResult {
+// Tab draws one tab of a TabStrip of role. It returns the tab's element, for
+// the caller's drag and drop within this build pass.
+func Tab(c *ui.Context, role TabRole, spec TabSpec) (ui.Element, TabResult) {
 	if role == TabPane && CurrentStyle().Native() {
 		return nativePaneTab(c, spec)
 	}
@@ -189,9 +188,9 @@ func Tab(c *ui.Context, role TabRole, spec TabSpec) TabResult {
 	return workTab(c, spec)
 }
 
-func fixedWorkTab(c *ui.Context, spec TabSpec) TabResult {
+func fixedWorkTab(c *ui.Context, spec TabSpec) (ui.Element, TabResult) {
 	t := c.Theme()
-	tab := ui.ButtonBase(c).Key(spec.Key).Label(spec.Title).Height(M(c).Control.Regular).Padding(0, 12).Gap(8).
+	tab := ui.ButtonBase(c.Key(spec.Key)).Label(spec.Title).Height(M(c).Control.Regular).Padding(0, 12).Gap(8).
 		AlignItems(ui.Center).Shrink(0).TextColor(t.TextMuted)
 	workTabShape(c, tab)
 	workTabFill(c, tab, spec.Active, tab.Hovered())
@@ -202,10 +201,10 @@ func fixedWorkTab(c *ui.Context, spec TabSpec) TabResult {
 		IconSized(c, spec.Icon, M(c).Icon.Medium)
 		ui.Text(c, spec.Title).FontSize(M(c).Font.Footnote).FontWeight(600).SingleLine()
 	})
-	return TabResult{Element: tab, Clicked: tab.Clicked()}
+	return tab, TabResult{Clicked: tab.Clicked()}
 }
 
-func workTab(c *ui.Context, spec TabSpec) TabResult {
+func workTab(c *ui.Context, spec TabSpec) (ui.Element, TabResult) {
 	t := c.Theme()
 	body := ui.Row(c).Height(M(c).Control.Regular).MinWidth(140).MaxWidth(240).Padding(0, 4, 0, 12).Gap(8).
 		AlignItems(ui.Center).Tooltip(spec.Title)
@@ -215,7 +214,7 @@ func workTab(c *ui.Context, spec TabSpec) TabResult {
 	}
 	hovered := body.Hovered()
 	workTabFill(c, body, spec.Active, hovered)
-	result := TabResult{Element: body, Clicked: body.Clicked()}
+	result := TabResult{Clicked: body.Clicked()}
 	if spec.ContextMenu != nil {
 		body.ContextMenu(spec.ContextMenu)
 	}
@@ -253,10 +252,10 @@ func workTab(c *ui.Context, spec TabSpec) TabResult {
 	if spec.Active && spec.Reveal {
 		body.ScrollIntoView()
 	}
-	return result
+	return body, result
 }
 
-func paneTab(c *ui.Context, spec TabSpec) TabResult {
+func paneTab(c *ui.Context, spec TabSpec) (ui.Element, TabResult) {
 	t := c.Theme()
 	el := ui.Row(c).Height(M(c).Bar.Tabs).MinWidth(100).MaxWidth(180).Padding(0, 6, 0, 12).Gap(6).
 		AlignItems(ui.Center).BorderWidth(0, 1, 0, 0).BorderColor(t.Border).
@@ -273,7 +272,7 @@ func paneTab(c *ui.Context, spec TabSpec) TabResult {
 		el.Background(Subtle(t))
 		text = t.Text
 	}
-	result := TabResult{Element: el}
+	result := TabResult{}
 	el.Children(func() {
 		tabLead(c, spec, M(c).Icon.Small, glyph)
 		ui.Text(c, spec.Title).FontSize(M(c).Font.Footnote).FontWeight(500).SingleLine().MinWidth(0).Grow(1).TextColor(text)
@@ -298,7 +297,7 @@ func paneTab(c *ui.Context, spec TabSpec) TabResult {
 	if spec.Active && spec.Reveal {
 		el.ScrollIntoView()
 	}
-	return result
+	return el, result
 }
 
 // nativePaneStrip is a pane's Tabs in the macOS style: rounded cells apart
@@ -328,7 +327,7 @@ func nativePaneStrip(c *ui.Context, o TabStripOptions, tabs func()) (added bool)
 
 // nativePaneTab is one of a nativePaneStrip's Tabs: the chosen one shaded,
 // as a sidebar row is.
-func nativePaneTab(c *ui.Context, spec TabSpec) TabResult {
+func nativePaneTab(c *ui.Context, spec TabSpec) (ui.Element, TabResult) {
 	t := c.Theme()
 	el := ui.Row(c).Height(M(c).Bar.Tabs-8).MinWidth(100).MaxWidth(180).Padding(0, 4, 0, 10).Gap(6).
 		Radius(M(c).Radius.Control).AlignItems(ui.Center).Cursor(ui.CursorPointer).Label(spec.Title)
@@ -344,7 +343,7 @@ func nativePaneTab(c *ui.Context, spec TabSpec) TabResult {
 		el.Background(t.Text.Alpha(0.04))
 		text = t.Text
 	}
-	result := TabResult{Element: el}
+	result := TabResult{}
 	el.Children(func() {
 		tabLead(c, spec, M(c).Icon.Small, glyph)
 		ui.Text(c, spec.Title).FontSize(M(c).Font.Footnote).FontWeight(500).SingleLine().MinWidth(0).Grow(1).TextColor(text)
@@ -366,7 +365,7 @@ func nativePaneTab(c *ui.Context, spec TabSpec) TabResult {
 	if spec.Active && spec.Reveal {
 		el.ScrollIntoView()
 	}
-	return result
+	return el, result
 }
 
 func tabLead(c *ui.Context, spec TabSpec, size float32, color ui.Color) {

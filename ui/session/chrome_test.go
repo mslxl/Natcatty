@@ -307,7 +307,7 @@ func autocompleteFrame(c *ui.Context, model chromeModel, cursor autocompleteCurs
 			ui.Column(c).Grow(1)
 			toolbar(c, model, locales.In(c.Locale()), c.Theme(), chromeActions{})
 		})
-		target := ui.Column(c).Grow(1).FillWidth().MinHeight(0).Key("autocomplete-target")
+		target := ui.Column(c.Key("autocomplete-target")).Grow(1).FillWidth().MinHeight(0)
 		autocompleteLayers(c, target, model, cursor, 80, rows,
 			locales.In(c.Locale()), c.Theme(), chromeActions{})
 	})

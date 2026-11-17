@@ -65,6 +65,18 @@ requests; this file is the human-maintained changelog.
   release-time checks, and the custom release-note generator were removed, and
   `internal/tools/sourceoffer` writes the package's Corresponding Source
   offer.
+- MyGo is upgraded from v0.6.0 to v0.9.2 and the native UI uses its checked
+  element value API. The module graph is refreshed: `golang.org/x/crypto`
+  v0.59.0, `golang.org/x/net` v0.62.0, `golang.org/x/image` v0.48.0,
+  `golang.org/x/sys` v0.50.0, `golang.org/x/text` v0.44.0,
+  `golang.org/x/sync` v0.25.0, `golang.org/x/term` v0.48.0,
+  `github.com/glebarez/go-sqlite` v1.23.0, `github.com/pkg/sftp` v1.13.12,
+  `gorm.io/gorm` v1.31.2, `tailscale.com` v1.104.7, and its
+  `github.com/tailscale/wireguard-go`
+  v0.0.0-20261106233718-9e0ab45c16ca. Tailscale v1.104.7 requires Go 1.27.4,
+  so the toolchain moves to 1.27.4; nixpkgs still ships 1.27.3, and `flake.nix`
+  overrides the Go source until nixpkgs catches up. `golang.zx2c4.com/wireguard`
+  stays at v0.0.0-20261024220952-b3bc704ef0ee.
 
 ### Removed
 
@@ -77,6 +89,14 @@ requests; this file is the human-maintained changelog.
 - The generated parity matrix, its `paritygen` CLI, the CI and release gates
   that read it, and the signed limitations list. The MyGo rewrite is complete;
   the regular test suite and the workflow's artifact checks cover releases.
+
+### Security
+
+- Release builds use Go 1.27.4, which fixes GO-2026-6859, a `net/http` HTTP/1
+  server crash caused by a `MaxBytesReader` header race that `govulncheck`
+  reported as reachable from called code in the Go 1.27.3 build. With the
+  toolchain and module graph updated, the pinned `govulncheck` run reports no
+  remaining vulnerabilities.
 
 ## [0.1.0] - 2026-10-28
 

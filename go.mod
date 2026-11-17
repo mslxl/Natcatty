@@ -1,9 +1,12 @@
 module github.com/mslxl/natcatty
 
-go 1.27.3
+go 1.27.4
 
 // In-process network provider dependencies. Both versions are pinned exactly;
-// do not follow upstream main. tailscale.com v1.104.5 requires Go >= 1.27.3.
+// do not follow upstream main. tailscale.com v1.104.7 requires Go >= 1.27.4,
+// which is why flake.nix overrides nixpkgs' Go 1.27.3 with 1.27.4; see the
+// goFor comment there. Do not lower the Go version while this Tailscale
+// release is pinned.
 //
 // Upgrading either module requires a fresh dependency audit before the change:
 // CGO_ENABLED=0 cross-builds for windows/amd64, linux/amd64, linux/arm64,
@@ -13,25 +16,27 @@ go 1.27.3
 // tun/netstack ambiguity note and the replace directive below must be
 // re-checked against the new module graph.
 require (
-	github.com/egoist/mygo v0.6.0
-	github.com/glebarez/go-sqlite v1.21.2
+	github.com/egoist/mygo v0.9.2
+	github.com/glebarez/go-sqlite v1.23.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/kayrus/putty v1.0.5
-	github.com/pkg/sftp v1.13.11
-	golang.org/x/crypto v0.58.0
-	golang.org/x/image v0.46.0
-	golang.org/x/sys v0.49.0
-	golang.org/x/text v0.43.0
+	github.com/pkg/sftp v1.13.12
+	golang.org/x/crypto v0.59.0
+	golang.org/x/image v0.48.0
+	golang.org/x/sys v0.50.0
+	golang.org/x/text v0.44.0
 	golang.zx2c4.com/wireguard v0.0.0-20261024220952-b3bc704ef0ee // in-process WireGuard Net (tun/netstack)
 	google.golang.org/protobuf v1.36.12
-	gorm.io/gorm v1.31.1
-	tailscale.com v1.104.5 // in-process Tailscale Net (tsnet)
+	gorm.io/gorm v1.31.2
+	tailscale.com v1.104.7 // in-process Tailscale Net (tsnet)
 )
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
+	github.com/ProtonMail/go-crypto v1.4.1 // indirect
 	github.com/akutz/memconn v0.1.0 // indirect
 	github.com/alexbrainman/sspi v0.0.0-20250919150558-7d374ff0d59e // indirect
+	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/creachadair/msync v0.10.1 // indirect
 	github.com/dblohm7/wingoes v0.0.0-20260526185140-fb298caac7ca // indirect
@@ -57,6 +62,7 @@ require (
 	github.com/mdlayher/netlink v1.11.2 // indirect
 	github.com/mdlayher/socket v0.7.0 // indirect
 	github.com/mitchellh/go-ps v1.0.0 // indirect
+	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pires/go-proxyproto v0.15.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/safchain/ethtool v0.7.0 // indirect
@@ -65,23 +71,25 @@ require (
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f // indirect
 	github.com/tailscale/peercred v0.0.0-20250107143737-35a0c7bd7edc // indirect
 	github.com/tailscale/web-client-prebuilt v0.0.0-20260917222731-e0ed2d0d0fea // indirect
-	github.com/tailscale/wireguard-go v0.0.0-20260928213032-417aef361226 // indirect
+	github.com/tailscale/wireguard-go v0.0.0-20261106233718-9e0ab45c16ca // indirect
+	github.com/ulikunitz/xz v0.5.16 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	go.digitalxero.dev/rpm v0.3.4 // indirect
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb // indirect
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect
-	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/term v0.47.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
+	golang.org/x/term v0.48.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	golang.zx2c4.com/wireguard/windows v1.0.1 // indirect
 	gvisor.dev/gvisor v0.0.0-20260915211658-a6f909f08a72 // indirect
-	modernc.org/libc v1.22.5 // indirect
-	modernc.org/mathutil v1.5.0 // indirect
-	modernc.org/memory v1.5.0 // indirect
-	modernc.org/sqlite v1.23.1 // indirect
+	modernc.org/libc v1.74.1 // indirect
+	modernc.org/mathutil v1.7.1 // indirect
+	modernc.org/memory v1.11.0 // indirect
+	modernc.org/sqlite v1.55.0 // indirect
 )
 
 tool github.com/egoist/mygo/cmd/mygo

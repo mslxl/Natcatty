@@ -289,11 +289,12 @@ func TestLoadSignerUsesMatchingCertificate(t *testing.T) {
 		t.Fatalf("other signer: %v", err)
 	}
 	other := &xssh.Certificate{
-		Key:         otherSigner.PublicKey(),
-		CertType:    xssh.UserCert,
-		KeyId:       "other",
-		ValidAfter:  uint64(time.Now().Add(-time.Minute).Unix()),
-		ValidBefore: uint64(time.Now().Add(time.Hour).Unix()),
+		Key:             otherSigner.PublicKey(),
+		CertType:        xssh.UserCert,
+		KeyId:           "other",
+		ValidPrincipals: []string{"bob"},
+		ValidAfter:      uint64(time.Now().Add(-time.Minute).Unix()),
+		ValidBefore:     uint64(time.Now().Add(time.Hour).Unix()),
 	}
 	if err := other.SignCert(rand.Reader, caSigner); err != nil {
 		t.Fatalf("sign other certificate: %v", err)

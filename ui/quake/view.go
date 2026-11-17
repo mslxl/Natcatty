@@ -56,7 +56,7 @@ func Bar(s *State) func(*ui.Context) {
 				if title == "" {
 					title = m.LocalSessionTab(tab.Number)
 				}
-				result := kit.Tab(c, kit.TabPane, kit.TabSpec{
+				_, result := kit.Tab(c, kit.TabPane, kit.TabSpec{
 					Key:    fmt.Sprintf("quake-tab-%d", tab.Number),
 					Title:  title,
 					Active: tab.Active,

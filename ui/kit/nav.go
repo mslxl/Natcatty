@@ -98,7 +98,7 @@ func NavItemWith(c *ui.Context, role NavRole, key, icon, label string, active bo
 	}
 	t := c.Theme()
 	r := navRecipeOf(c, role)
-	item := ui.ButtonBase(c).Key(key).Label(label).FillWidth().MinWidth(0).Padding(r.padY, r.padX).
+	item := ui.ButtonBase(c.Key(key)).Label(label).FillWidth().MinWidth(0).Padding(r.padY, r.padX).
 		Gap(r.gap).Radius(r.radius).Justify(ui.Start).AlignItems(ui.Center).TextColor(t.TextMuted)
 	if r.height > 0 {
 		item.Height(r.height)
@@ -206,7 +206,7 @@ func SearchField(c *ui.Context, query *string, o SearchOptions) ui.Element {
 				IconSized(c, icons.Search, M(c).Icon.Medium)
 			})
 			if o.Clear != "" && o.ShowClear {
-				clear := ui.ButtonBase(c).Key(o.ClearKey).Label(o.Clear).
+				clear := ui.ButtonBase(c.Key(o.ClearKey)).Label(o.Clear).
 					Absolute().Right(6).Top(7).Size(22, 22).Radius(3).TextColor(t.TextMuted)
 				if clear.Hovered() || clear.Pressed() {
 					clear.Background(t.Text.Alpha(0.08)).TextColor(t.Text)
@@ -225,7 +225,7 @@ func SearchField(c *ui.Context, query *string, o SearchOptions) ui.Element {
 			field()
 			input.FontSize(M(c).Font.Footnote)
 			if o.Clear != "" && o.ShowClear {
-				clear := ui.ButtonBase(c).Key(o.ClearKey).Label(o.Clear).Tooltip(o.Clear).
+				clear := ui.ButtonBase(c.Key(o.ClearKey)).Label(o.Clear).Tooltip(o.Clear).
 					Size(16, 16).Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted)
 				clear.Children(func() { IconSized(c, icons.X, M(c).Icon.Small) })
 				if clear.Clicked() {
@@ -262,7 +262,7 @@ func (o SearchOptions) clear(query *string) {
 // tile of tint, and the label; the chosen row is filled with the accent.
 func tiledNavItem(c *ui.Context, key, icon, label string, active bool, tint Tint) ui.Element {
 	t := c.Theme()
-	item := ui.ButtonBase(c).Key(key).Label(label).FillWidth().MinWidth(0).Padding(5, 8).Gap(8).
+	item := ui.ButtonBase(c.Key(key)).Label(label).FillWidth().MinWidth(0).Padding(5, 8).Gap(8).
 		Radius(M(c).Radius.Control).Justify(ui.Start).AlignItems(ui.Center).TextColor(t.Text)
 	switch {
 	case active:

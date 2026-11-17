@@ -220,12 +220,12 @@ func brand(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 
 // homeTabs are the Tab bar's fixed home and SFTP Tabs.
 func homeTabs(c *ui.Context, s *state.State, m locales.Messages) {
-	if kit.Tab(c, kit.TabWork, kit.TabSpec{Key: "tab-home", Icon: icons.LayoutGrid, Title: m.NavVault(), Fixed: true, Active: homeVisible(s)}).Clicked {
+	if _, tab := kit.Tab(c, kit.TabWork, kit.TabSpec{Key: "tab-home", Icon: icons.LayoutGrid, Title: m.NavVault(), Fixed: true, Active: homeVisible(s)}); tab.Clicked {
 		s.ShowHome()
 		c.Invalidate()
 	}
 	if s.SFTPTabShown() {
-		if kit.Tab(c, kit.TabWork, kit.TabSpec{Key: "tab-sftp", Icon: icons.FolderOpen, Title: m.NavSftp(), Fixed: true, Active: s.SFTPVisible()}).Clicked {
+		if _, tab := kit.Tab(c, kit.TabWork, kit.TabSpec{Key: "tab-sftp", Icon: icons.FolderOpen, Title: m.NavSftp(), Fixed: true, Active: s.SFTPVisible()}); tab.Clicked {
 			s.ShowSFTP()
 			c.Invalidate()
 		}

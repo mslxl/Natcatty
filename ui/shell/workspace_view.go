@@ -238,7 +238,7 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 	// as the original's; a right-click opens the same menu on any Tab. The
 	// strip scrolls sideways, so reveal keeps the active Tab whole when it is
 	// opened or selected while the strip is scrolled, and after a resize.
-	tab := kit.Tab(c, kit.TabWork, kit.TabSpec{
+	body, tab := kit.Tab(c, kit.TabWork, kit.TabSpec{
 		Title:  tabTitle(m, info),
 		Active: info.Active,
 		Lead: func() {
@@ -252,7 +252,6 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 		ContextMenu: tabMenu,
 		Reveal:      reveal,
 	})
-	body := tab.Element
 	body.Drag(state.TabDrag(info.ID))
 	if tab.Clicked {
 		s.SelectTab(index)

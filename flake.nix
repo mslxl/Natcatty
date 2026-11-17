@@ -14,18 +14,41 @@
 
       forAllSystems = nixpkgs.lib.genAttrs systems;
 
+      # nixpkgs still packages Go 1.27.3. This module needs 1.27.4: the
+      # in-process Tailscale provider is pinned at v1.104.7, whose go.mod
+      # requires Go >= 1.27.4, and 1.27.4 is the first release with the net/http
+      # fix for GO-2026-6859. Build that patch release from the official source
+      # until nixpkgs ships it, then this falls back to the packaged Go.
+      goFor =
+        pkgs:
+        let
+          packaged = if pkgs ? go_1_27 then pkgs.go_1_27 else pkgs.go;
+        in
+        if nixpkgs.lib.versionAtLeast packaged.version "1.27.4" then
+          packaged
+        else
+          packaged.overrideAttrs (_: _: {
+            version = "1.27.4";
+            src = pkgs.fetchurl {
+              url = "https://go.dev/dl/go1.27.4.src.tar.gz";
+              hash = "sha256-c8+4VxrsDAEXdofbhxY9Rqog6XeWcncokaoXZU2aYJk=";
+            };
+          });
+
       mkPackage =
         pkgs:
         let
           buildGoModule =
-            if pkgs ? buildGo127Module then pkgs.buildGo127Module else pkgs.buildGoModule;
+            (if pkgs ? buildGo127Module then pkgs.buildGo127Module else pkgs.buildGoModule).override {
+              go = goFor pkgs;
+            };
         in
         buildGoModule {
           pname = "natcatty";
           version = "0.1.0";
           src = ./.;
 
-          vendorHash = "sha256-zdSpbAviPrvgB1f+yyyw5M7lAmq0eQ4O/GWGoc4M+dY=";
+          vendorHash = "sha256-ppz3enfI1XVqZLeWjktZTeUTKjfwcrQHyZX67E0NIFM=";
           subPackages = [ "." ];
           env.CGO_ENABLED = "0";
           ldflags = [
@@ -63,7 +86,7 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
-          go = if pkgs ? go_1_27 then pkgs.go_1_27 else pkgs.go;
+          go = goFor pkgs;
         in
         {
           default = pkgs.mkShell {

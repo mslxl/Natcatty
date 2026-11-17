@@ -155,7 +155,7 @@ func (p *Panel) saveBookmark(c *ui.Context) {
 }
 
 func (p *Panel) bookmarkRow(c *ui.Context, bookmark appbrowser.BookmarkView, m locales.Messages, t *ui.Theme) {
-	row := ui.Row(c).Key("browser-bookmark-"+bookmark.ID).FillWidth().Height(34).
+	row := ui.Row(c.Key("browser-bookmark-"+bookmark.ID)).FillWidth().Height(34).
 		Padding(4, 2).Gap(6).AlignItems(ui.Center)
 	row.Children(func() {
 		if bitmap := p.iconBitmap(bookmark.IconDataURL); bitmap != nil {
@@ -301,7 +301,7 @@ func (p *Panel) downloadPane(c *ui.Context, m locales.Messages, t *ui.Theme) {
 
 func (p *Panel) downloadRow(c *ui.Context, item appbrowser.Download, m locales.Messages, t *ui.Theme) {
 	active := item.Status == appbrowser.DownloadWaiting || item.Status == appbrowser.DownloadProgressing
-	row := ui.Row(c).Key("browser-download-"+item.ID).FillWidth().MinHeight(42).
+	row := ui.Row(c.Key("browser-download-"+item.ID)).FillWidth().MinHeight(42).
 		Padding(4, 2).Gap(6).AlignItems(ui.Center)
 	row.Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {

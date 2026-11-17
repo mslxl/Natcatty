@@ -131,7 +131,7 @@ func FollowBar(s *state.State) func(*ui.Context) {
 				if !ok {
 					continue
 				}
-				tab := kit.Tab(c, kit.TabPane, kit.TabSpec{
+				_, tab := kit.Tab(c, kit.TabPane, kit.TabSpec{
 					Key:    "follow-tab-" + string(info.ID),
 					Title:  tabTitle(m, info),
 					Active: info.Active,

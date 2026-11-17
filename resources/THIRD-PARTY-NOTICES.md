@@ -69,7 +69,7 @@ each module's own `LICENSE` file.
 | `github.com/dustin/go-humanize` | v1.0.1 | MIT | Copyright (c) 2005-2008 Dustin Sallings |
 | `github.com/ebitengine/purego` | v0.11.1 | Apache-2.0 | Copyright The Ebitengine Authors (SPDX-FileCopyrightText in the source files) |
 | `github.com/egoist/mygo` | pinned in `go.mod` | MIT | Copyright (c) 2026 MyGo contributors |
-| `github.com/glebarez/go-sqlite` | v1.21.2 | BSD-3-Clause | Copyright (c) 2017 The Sqlite Authors. All rights reserved. |
+| `github.com/glebarez/go-sqlite` | v1.23.0 | BSD-3-Clause | Copyright (c) 2017 The Sqlite Authors. All rights reserved. |
 | `github.com/glebarez/sqlite` | v1.11.0 | MIT | Copyright (c) 2013-NOW Jinzhu |
 | `github.com/go-text/typesetting` | v0.3.5 | BSD-3-Clause (dual-licensed Unlicense OR BSD-3-Clause; this distribution relies on BSD-3-Clause) | Copyright 2021 The go-text authors |
 | `github.com/google/uuid` | v1.6.0 | BSD-3-Clause | Copyright (c) 2009,2014 Google Inc. All rights reserved. |
@@ -78,22 +78,37 @@ each module's own `LICENSE` file.
 | `github.com/kayrus/putty` | v1.0.5 | Apache-2.0 | Copyright kayrus and the putty package contributors (the package LICENSE carries the Apache-2.0 text without a copyright line) |
 | `github.com/kr/fs` | v0.1.0 | BSD-3-Clause | Copyright (c) 2012 The Go Authors. All rights reserved. |
 | `github.com/mattn/go-isatty` | v0.0.24 | MIT (Expat) | Copyright (c) Yasuhiro MATSUMOTO <mattn.jp@gmail.com> |
-| `github.com/pkg/sftp` | v1.13.11 | BSD-2-Clause | Copyright (c) 2013, Dave Cheney |
+| `github.com/ncruces/go-strftime` | v1.0.0 | MIT | Copyright (c) 2022 Nuno Cruces |
+| `github.com/pkg/sftp` | v1.13.12 | BSD-2-Clause | Copyright (c) 2013, Dave Cheney |
 | `github.com/remyoudompheng/bigfft` | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | Copyright (c) 2012 The Go Authors. All rights reserved. |
-| `golang.org/x/crypto` | v0.58.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
-| `golang.org/x/image` | v0.46.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
-| `golang.org/x/sys` | v0.49.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
-| `golang.org/x/text` | v0.43.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `golang.org/x/crypto` | v0.59.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `golang.org/x/image` | v0.48.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `golang.org/x/sys` | v0.50.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `golang.org/x/text` | v0.44.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
 | `google.golang.org/protobuf` | v1.36.12 | BSD-3-Clause | Copyright (c) 2018 The Go Authors. All rights reserved. |
-| `gorm.io/gorm` | v1.31.1 | MIT | Copyright (c) 2013-present Jinzhu |
-| `modernc.org/libc` | v1.22.5 | BSD-3-Clause | Copyright (c) 2017 The Libc Authors. All rights reserved.; portions Copyright (c) 2009 The Go Authors. All rights reserved. |
-| `modernc.org/mathutil` | v1.5.0 | BSD-3-Clause | Copyright (c) 2014 The mathutil Authors. All rights reserved.; bundled mersenne code Copyright (c) 2014 The mersenne Authors. All rights reserved. |
-| `modernc.org/memory` | v1.5.0 | BSD-3-Clause | Copyright (c) 2017 The Memory Authors. All rights reserved.; portions Copyright (c) 2009 The Go Authors. All rights reserved.; mmap-go portion Copyright (c) 2011, Evan Shaw <edsrzf@gmail.com> |
-| `modernc.org/sqlite` | v1.23.1 | BSD-3-Clause | Copyright (c) 2017 The Sqlite Authors. All rights reserved. |
+| `gorm.io/gorm` | v1.31.2 | MIT | Copyright (c) 2013-present Jinzhu |
+| `modernc.org/libc` | v1.74.1 | BSD-3-Clause | Copyright (c) 2017 The Libc Authors. All rights reserved.; portions Copyright (c) 2009 The Go Authors. All rights reserved. |
+| `modernc.org/mathutil` | v1.7.1 | BSD-3-Clause | Copyright (c) 2014 The mathutil Authors. All rights reserved.; bundled mersenne code Copyright (c) 2014 The mersenne Authors. All rights reserved. |
+| `modernc.org/memory` | v1.11.0 | BSD-3-Clause | Copyright (c) 2017 The Memory Authors. All rights reserved.; portions Copyright (c) 2009 The Go Authors. All rights reserved.; mmap-go portion Copyright (c) 2011, Evan Shaw <edsrzf@gmail.com> |
+| `modernc.org/sqlite` | v1.55.0 | BSD-3-Clause | Copyright (c) 2017 The Sqlite Authors. All rights reserved. |
 
 `github.com/google/go-cmp` is an indirect requirement because the protobuf
 module's tests import it; no Natcatty package imports it and it is not linked
 into the distribution.
+
+### Build-tool modules
+
+`tool github.com/egoist/mygo/cmd/mygo` builds the MyGo CLI that generates the
+locale accessors and packages releases. The modules below are in the `go.mod`
+module graph because of that tool; the application does not import them and
+they are not linked into any distributed binary.
+
+| Module | Version | License | Copyright notice |
+| --- | --- | --- | --- |
+| `go.digitalxero.dev/rpm` | v0.3.4 | MIT | Copyright (c) 2026 Dj Gilcrease |
+| `github.com/ProtonMail/go-crypto` | v1.4.1 | BSD-3-Clause | Copyright (c) 2009 The Go Authors. All rights reserved. |
+| `github.com/cloudflare/circl` | v1.6.3 | BSD-3-Clause | Copyright (c) 2019 Cloudflare. All rights reserved. |
+| `github.com/ulikunitz/xz` | v0.5.16 | BSD-3-Clause | Copyright (c) 2014-2022 Ulrich Kunitz. All rights reserved. |
 
 ## Network Provider dependency baseline
 
@@ -122,7 +137,7 @@ either provider dependency follows the audit requirements recorded in `go.mod`.
 | `github.com/hdevalence/ed25519consensus` | v0.2.0 | BSD-3-Clause | Copyright (c) 2009 The Go Authors. All rights reserved.; Copyright (c) 2020 Henry de Valence. All rights reserved. |
 | `github.com/huin/goupnp` | v1.3.0 | BSD-2-Clause | Copyright (c) 2013, John Beisley |
 | `github.com/jsimonetti/rtnetlink` | v1.4.2 | MIT | Copyright (C) 2016 Jeroen Simonetti |
-| `github.com/klauspost/compress` | v1.20.0 | BSD-3-Clause (bundled components also carry Apache-2.0 and MIT notices) | Copyright (c) 2012 The Go Authors. All rights reserved.; Copyright (c) 2019 Klaus Post. All rights reserved. |
+| `github.com/klauspost/compress` | v1.20.2 | BSD-3-Clause (bundled components also carry Apache-2.0 and MIT notices) | Copyright (c) 2012 The Go Authors. All rights reserved.; Copyright (c) 2019 Klaus Post. All rights reserved. |
 | `github.com/mdlayher/netlink` | v1.11.2 | MIT | Copyright (C) 2016-2026 Matt Layher |
 | `github.com/mdlayher/socket` | v0.7.0 | MIT | Copyright (C) 2021 Matt Layher |
 | `github.com/mitchellh/go-ps` | v1.0.0 | MIT | Copyright (c) 2014 Mitchell Hashimoto |
@@ -133,21 +148,21 @@ either provider dependency follows the audit requirements recorded in `go.mod`.
 | `github.com/tailscale/hujson` | v0.0.0-20260727124030-b80ff77dac4f | BSD-3-Clause | Copyright (c) 2019 Tailscale Inc. All rights reserved. |
 | `github.com/tailscale/peercred` | v0.0.0-20250107143737-35a0c7bd7edc | BSD-3-Clause | Copyright (c) 2021, Tailscale Inc. |
 | `github.com/tailscale/web-client-prebuilt` | v0.0.0-20260917222731-e0ed2d0d0fea | BSD-3-Clause | Copyright (c) 2020 Tailscale Inc & AUTHORS. |
-| `github.com/tailscale/wireguard-go` | v0.0.0-20260928213032-417aef361226 | MIT | Copyright (C) 2017-2023 WireGuard LLC. All Rights Reserved. |
+| `github.com/tailscale/wireguard-go` | v0.0.0-20261106233718-9e0ab45c16ca | MIT | Copyright (C) 2017-2023 WireGuard LLC. All Rights Reserved. |
 | `github.com/x448/float16` | v0.8.4 | MIT | Copyright (c) 2019 Montgomery Edwards and Faye Amacker |
 | `go4.org/mem` | v0.0.0-20240501181205-ae6ca9944745 | Apache-2.0 | Copyright the go4.org authors (the Apache-2.0 LICENSE has no copyright line) |
 | `go4.org/netipx` | v0.0.0-20260823151212-3075585bcbeb | BSD-3-Clause | Copyright (c) 2020 The Inet.af AUTHORS. All rights reserved. |
 | `golang.org/x/exp` | v0.0.0-20260908205506-85c1c2202aba | BSD-3-Clause | Copyright 2009 The Go Authors. |
-| `golang.org/x/net` | v0.60.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `golang.org/x/net` | v0.62.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
 | `golang.org/x/oauth2` | v0.37.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
-| `golang.org/x/sync` | v0.24.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
-| `golang.org/x/term` | v0.47.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `golang.org/x/sync` | v0.25.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `golang.org/x/term` | v0.48.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
 | `golang.org/x/time` | v0.16.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
 | `golang.zx2c4.com/wintun` | v0.0.0-20230126152724-0fa3db229ce2 | MIT | Copyright WireGuard LLC (the MIT LICENSE has no copyright line) |
 | `golang.zx2c4.com/wireguard` | v0.0.0-20261024220952-b3bc704ef0ee | MIT | Copyright (C) 2017-2025 WireGuard LLC. All Rights Reserved. |
 | `golang.zx2c4.com/wireguard/windows` | v1.0.1 | MIT | Copyright (C) 2018-2026 WireGuard LLC. All Rights Reserved. |
 | `gvisor.dev/gvisor` | v0.0.0-20260915211658-a6f909f08a72 | Apache-2.0 | Copyright the gVisor authors (the Apache-2.0 LICENSE has no copyright line; the module carries an AUTHORS file) |
-| `tailscale.com` | v1.104.5 | BSD-3-Clause | Copyright (c) 2020 Tailscale Inc & contributors. |
+| `tailscale.com` | v1.104.7 | BSD-3-Clause | Copyright (c) 2020 Tailscale Inc & contributors. |
 
 The pinned `tailscale.com` and `golang.zx2c4.com/wireguard` versions are
 recorded in `go.mod` with their upgrade and audit requirements. The `replace`
@@ -546,14 +561,17 @@ Software.
   in-process Mosh and EternalTerminal provenance, so `go test
   ./internal/legal` fails if a required notice or provenance marker
   disappears.
-- **Ticket 01 baseline:** the release validation job runs the pinned scanner
-  `golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...`; upgrading the scanner is a
-  dependency-baseline change and needs the same audit as a `go.mod` change. At
-  this baseline it reported no vulnerabilities affecting called code and three
-  module-only findings that the code does not call: GO-2026-6866 and
-  GO-2026-6860 in `golang.org/x/net v0.60.0` (fixed upstream in v0.62.0), and
-  GO-2026-5932 in `golang.org/x/crypto v0.58.0` (fixed upstream in
-  v0.58.1-0.20261009181718-2f1f834330b2). The release gate is a point-in-time
+- **Dependency baseline (2026-11-17):** the release validation job runs the
+  pinned scanner `golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...`; upgrading
+  the scanner is a dependency-baseline change and needs the same audit as a
+  `go.mod` change. This baseline reports no vulnerabilities in the modules the
+  app imports or in the standard library. `golang.org/x/net v0.62.0` and
+  `golang.org/x/crypto v0.59.0` fixed the module-only findings recorded at the
+  earlier baseline, and the toolchain move to Go 1.27.4 closes the one
+  standard-library finding, GO-2026-6859 (HTTP/1 server crash due to a
+  `MaxBytesReader` header race in `net/http`), which was reachable in the Go
+  1.27.3 build. `go.mod` requires Go 1.27.4 and `flake.nix` overrides
+  nixpkgs' Go 1.27.3 with 1.27.4 to match. The release gate is a point-in-time
   advisory check, not a standing guarantee.
 - **Bundled Mosh client removed:** the former bundled `mosh-client` binary,
   its shipped Rust crate notices, and its packaged resources no longer ship.

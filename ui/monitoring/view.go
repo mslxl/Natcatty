@@ -421,7 +421,7 @@ func partitions(c *ui.Context, m locales.Messages, t *ui.Theme, ready bool, samp
 			if disk.TotalGB > 0 {
 				capacity = m.MonitoringDiskCapacity(gbText(disk.UsedGB), gbText(disk.TotalGB))
 			}
-			ui.Column(c).Key("disk-" + strconv.Itoa(index)).FillWidth().Children(func() {
+			ui.Column(c.Key("disk-" + strconv.Itoa(index))).FillWidth().Children(func() {
 				resourceBar(c, t, disk.MountPoint, disk.Percent, capacity)
 			})
 		}
@@ -547,7 +547,7 @@ func hostList(c *ui.Context, s *State, panel domainpreferences.MonitorPanel, m l
 					id := string(host.ID)
 					state := s.HostState(id)
 					status := s.DisplayStatus(id)
-					row := ui.Row(c).Key("host-"+id).FillWidth().MinHeight(52).Padding(8, 12).
+					row := ui.Row(c.Key("host-"+id)).FillWidth().MinHeight(52).Padding(8, 12).
 						AlignItems(ui.Center).Radius(kit.M(c).Radius.Card).Background(t.Surface).Border(1, t.Border)
 					if row.Hovered() {
 						row.Border(1, t.Border.Mix(t.Text, 0.18))
@@ -785,7 +785,7 @@ func editor(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 					label = s.HostLabel(host)
 				}
 				first := index == 0
-				ui.Row(c).Key("selected-"+hostID).FillWidth().Gap(8).Padding(6, 8).Radius(kit.M(c).Radius.Control).
+				ui.Row(c.Key("selected-"+hostID)).FillWidth().Gap(8).Padding(6, 8).Radius(kit.M(c).Radius.Control).
 					Background(kit.Muted(t)).AlignItems(ui.Center).Children(func() {
 					kit.HostAvatar(c, "", avatarKind(host.Protocol), label, 24)
 					ui.Column(c).Grow(1).MinWidth(0).Children(func() {
@@ -847,7 +847,7 @@ func picker(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 				for _, host := range hosts {
 					id := string(host.ID)
 					selected := s.FormHostSelected(id)
-					row := ui.Row(c).Key("pick-"+id).FillWidth().Gap(10).Padding(6, 8).
+					row := ui.Row(c.Key("pick-"+id)).FillWidth().Gap(10).Padding(6, 8).
 						Radius(kit.M(c).Radius.Control).AlignItems(ui.Center)
 					if row.Hovered() {
 						row.Background(kit.Subtle(t))
