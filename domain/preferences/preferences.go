@@ -28,8 +28,8 @@ const (
 	GroupMonitor    Group = "monitor"
 	GroupSysManager Group = "sysManager"
 	// GroupExternalMCP owns the device-local Streamable HTTP endpoint. It is
-	// not listed in Groups because the MCP surface renders it beside the
-	// permission mode rather than in the generic preferences form.
+	// absent from Groups and from PortableSettings: the opt-in switch and bind
+	// fields are currently device-local only, with no Settings surface yet.
 	GroupExternalMCP Group = "externalMcp"
 )
 

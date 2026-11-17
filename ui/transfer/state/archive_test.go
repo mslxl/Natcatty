@@ -44,6 +44,73 @@ func (a *archiveFS) lastRequest() apptransfer.ArchiveRequest {
 	return a.requests[len(a.requests)-1]
 }
 
+// unavailableArchiveFS implements ArchiveCreator while reporting that its
+// transport cannot run the command, the way a single-channel Remote does.
+type unavailableArchiveFS struct {
+	*archiveFS
+	mu      sync.Mutex
+	capable bool
+}
+
+func (a *unavailableArchiveFS) CanArchive() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.capable
+}
+
+func (a *unavailableArchiveFS) setCapable(capable bool) {
+	a.mu.Lock()
+	a.capable = capable
+	a.mu.Unlock()
+}
+
+// TestArchiveIsNotOfferedOnASingleChannelPane covers the pane whose type
+// implements ArchiveCreator but whose transport has no executor. A bare type
+// assertion used to offer the action even though the call could only return
+// KindUnsupported.
+func TestArchiveIsNotOfferedOnASingleChannelPane(t *testing.T) {
+	f := newFixture(t)
+	tab := f.state.Tab(Left)
+	tab.FS = &unavailableArchiveFS{archiveFS: &archiveFS{fakeFS: tab.FS.(*fakeFS)}}
+	selectOne(t, f.state, Left, "folder")
+	if CanArchive(tab) {
+		t.Fatal("a pane without a transport is offered Create Archive")
+	}
+	f.state.RequestArchive(Left)
+	if f.state.Dialog() != nil {
+		t.Fatal("a pane without a transport opened the archive prompt")
+	}
+	if notice := f.state.Notice(); notice != "pane-unavailable" {
+		t.Fatalf("notice = %q", notice)
+	}
+}
+
+// TestArchiveSubmitRechecksTheCapability proves the prompt cannot bypass the
+// menu: if the transport disappears while the dialog is open, submitting it
+// runs nothing and reports the typed unsupported failure.
+func TestArchiveSubmitRechecksTheCapability(t *testing.T) {
+	f := newFixture(t)
+	tab := f.state.Tab(Left)
+	archive := &unavailableArchiveFS{
+		archiveFS: &archiveFS{fakeFS: tab.FS.(*fakeFS)},
+		capable:   true,
+	}
+	tab.FS = archive
+	selectOne(t, f.state, Left, "folder")
+	f.state.RequestArchive(Left)
+	if f.state.Dialog() == nil {
+		t.Fatal("the prompt did not open while the transport was available")
+	}
+	archive.setCapable(false)
+	f.state.SubmitDialog()
+	if archive.requestCount() != 0 {
+		t.Fatal("a pane without a transport reached CreateArchive")
+	}
+	if notice := f.state.Notice(); notice != "error:unsupported" {
+		t.Fatalf("notice = %q", notice)
+	}
+}
+
 // TestArchiveSelectionCreatesTheArchiveAndRefreshes holds the acceptance path:
 // the prompt starts from the folder's name, the format choice follows through
 // to the command's request, and the finished operation reloads the folder.
