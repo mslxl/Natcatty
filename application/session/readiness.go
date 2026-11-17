@@ -24,7 +24,7 @@ var (
 	ansiSequence = regexp.MustCompile(`\x1b([@-Z\\_-]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(\x07|\x1b\\))`)
 	// loginPrompt recognizes the pre-shell prompts an SSH/Telnet/serial
 	// connection prints before the shell exists. None of them is readiness.
-	loginPrompt = regexp.MustCompile(`(?i)(^|[^a-z0-9])(user\s*name|username|login|logon|account|userid|user\s*id|user|password|passwd|passcode|passphrase|pass\s*phrase|pin|密码|口令|登录|用户名|账号)(\s*[:：>])?\s*$`)
+	loginPrompt = regexp.MustCompile(`(?i)(^|[^a-z0-9])(user\s*name|username|login|logon|account|userid|user\s*id|user|password|passwd|passcode|passphrase|pass\s*phrase|pin|密码|口令|登录|用户名|账号)(\s*[:：>]\??)?\s*$`)
 	// continuePrompt recognizes "press Enter to continue" banners, which often
 	// end in punctuation a prompt check might otherwise accept.
 	continuePrompt = regexp.MustCompile(`(?i)(press|hit)\s+.*(return|enter|any\s+key|space).*(continue|get\s+started|start|begin)?\.?\s*$`)
@@ -35,10 +35,10 @@ var (
 	// bannerText recognizes the opening line of a login notice or MOTD. Such a
 	// banner is pre-shell output even when no login prompt has arrived yet.
 	bannerText = regexp.MustCompile(`(?i)\b(welcome to|authorized (users|access) only|message of the day|motd)\b`)
-	// sensitivePrompt recognizes a password, passphrase, or passcode phrase. On
-	// a line that also has the widened ">" prompt shape it is an interactive
-	// credential prompt, never readiness.
-	sensitivePrompt = regexp.MustCompile(`(?i)\b(passphrase|passcode|password)\b`)
+	// sensitivePrompt recognizes a password, passphrase, passcode, or PIN
+	// phrase. On a line that also has the widened ">" prompt shape it is an
+	// interactive credential prompt, never readiness.
+	sensitivePrompt = regexp.MustCompile(`(?i)\b(passphrase|passcode|password|pin)\b`)
 	// progressPercent recognizes the token of a boot/progress line such as
 	// "100%" or "87.5%". It ends in a shell-like "%" but is never a prompt.
 	progressPercent = regexp.MustCompile(`^[0-9]+([.,][0-9]+)?$`)
@@ -62,7 +62,8 @@ func startupPromptLineReady(line string) bool {
 		return false
 	}
 	if loginPrompt.MatchString(line) || continuePrompt.MatchString(line) ||
-		lastLogin.MatchString(line) || bannerText.MatchString(line) {
+		lastLogin.MatchString(line) || bannerText.MatchString(line) ||
+		continuationStatusPrompt(line) {
 		return false
 	}
 	return plausibleShellPrompt(line)
@@ -123,34 +124,43 @@ func plausiblePromptPrefix(terminator byte, prefix string) bool {
 		// "US$", "HK$".
 		return false
 	}
-	if terminator == '>' {
-		if sensitivePrompt.MatchString(prefix) {
-			// "Enter passphrase for /home/deploy/key>".
-			return false
-		}
-		if !plausibleAnglePrefix(prefix) {
-			return false
-		}
+	if terminator == '>' && sensitivePrompt.MatchString(prefix) {
+		// "Enter passphrase for /home/deploy/key>".
+		return false
+	}
+	if strings.ContainsAny(prefix, " \t") && !plausibleSpacedPrefix(prefix) {
+		return false
 	}
 	return true
 }
 
-// plausibleAnglePrefix keeps the widened ">" form from accepting banner or
-// markup lines. A bare or single-token prompt (">", "mysql>", "Router>") is
-// fine. A prompt with spaces must carry a shell-ish signal: a user/host "@", a
-// path separator, a bracket, a drive colon, or a PowerShell tag. Markup
-// fragments ending in ">" are rejected outright.
-func plausibleAnglePrefix(prefix string) bool {
+// plausibleSpacedPrefix keeps the widened spaced-prefix forms from accepting
+// prose or banner lines. A prompt with spaces must carry a shell-ish signal: a
+// user/host "@", a path separator, a bracket, or a PowerShell tag. This rejects
+// "Progress: 87.5%", "Total cost: US$", and "Filesystem check 100%" while
+// accepting "[root@host ~]#", "guest@host:~ $", "PS C:\Users\deploy>", and
+// "user@host ~/src>".
+func plausibleSpacedPrefix(prefix string) bool {
 	if strings.ContainsAny(prefix, "<>\"=`{}") {
 		return false
 	}
-	if !strings.ContainsAny(prefix, " \t") {
+	return strings.ContainsAny(prefix, "@/\\[]") ||
+		strings.HasPrefix(strings.ToUpper(prefix), "PS ")
+}
+
+// continuationStatusPrompt reports whether a line is a shell continuation
+// (PS2) prompt such as "dquote>" or "cmdand>". A bare ">" and the console form
+// ">?" are primary prompts the heuristic accepts, so they are excluded.
+func continuationStatusPrompt(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == ">" || trimmed == ">?" {
+		return false
+	}
+	if continuationPrompt(trimmed) {
 		return true
 	}
-	if strings.ContainsAny(prefix, "@/\\]:") {
-		return true
-	}
-	return strings.HasPrefix(strings.ToUpper(prefix), "PS ")
+	return strings.HasSuffix(trimmed, ">?") &&
+		continuationPrompt(strings.TrimSuffix(trimmed, "?"))
 }
 
 // sensitiveAnglePrompt reports whether a line is a credential prompt in the
@@ -193,7 +203,7 @@ func startupPreShellVisible(tail string) bool {
 		}
 		if loginPrompt.MatchString(line) || continuePrompt.MatchString(line) ||
 			lastLogin.MatchString(line) || bannerText.MatchString(line) ||
-			sensitiveAnglePrompt(line) {
+			sensitiveAnglePrompt(line) || continuationStatusPrompt(line) {
 			return true
 		}
 	}

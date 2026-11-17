@@ -45,6 +45,22 @@ func TestStartupPromptReadyRejectsPreShellOutput(t *testing.T) {
 		{"last login angle prompt", "Last login: /home/deploy> "},
 		// A passphrase phrase with a path signal ends on the widened ">" shape.
 		{"passphrase angle prompt", "Enter passphrase for /home/deploy/key> "},
+		// A PIN phrase with a path signal has the same widened shape.
+		{"pin angle prompt", "Enter PIN for /home/deploy/key> "},
+		// The console ">?" form must not bypass the login rejections.
+		{"login question angle prompt", "login>? "},
+		{"user question angle prompt", "user>? "},
+		{"pin question angle prompt", "PIN>? "},
+		// Shell continuation (PS2) prompts look like angle prompts but mean the
+		// previous command is unfinished.
+		{"dquote continuation", "dquote> "},
+		{"cmdand continuation", "cmdand> "},
+		{"pipe continuation", "pipe> "},
+		// Spaced prefixes need a shell signal. Prose that happens to end in a
+		// progress or currency token is not a prompt.
+		{"progress after prose", "Progress: 87.5% "},
+		{"progress after prose digits", "Filesystem check 100% "},
+		{"currency after prose", "Total cost: US$ "},
 		// A line longer than the bounded prompt line is never readiness.
 		{"overlong prompt", "deploy@web:" + strings.Repeat("a", 256) + "$ "},
 		{"empty", ""},
@@ -131,6 +147,9 @@ func TestStartupPreShellVisible(t *testing.T) {
 		// recognizes it; otherwise the earlier banner wins.
 		{"ansi banner then styled prompt", "Welcome to the lab\r\n\x1b[32mdeploy@web:~$\x1b[0m ", false},
 		{"passphrase angle prompt", "Enter passphrase for /home/deploy/key> ", true},
+		{"pin angle prompt", "Enter PIN for /home/deploy/key> ", true},
+		{"continuation prompt", "dquote> ", true},
+		{"continuation after banner", "Welcome to the lab\r\ncmdand> ", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

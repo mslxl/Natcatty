@@ -149,6 +149,7 @@ func preShellReadinessCases() []struct {
 		{"last login", "Last login: Mon Nov 16 09:00:00 2026\r\n"},
 		{"motd", "Welcome to the lab switch\r\n\r\n"},
 		{"passphrase angle prompt", "Enter passphrase for /home/deploy/key> "},
+		{"pin angle prompt", "Enter PIN for /home/deploy/key> "},
 	}
 }
 
