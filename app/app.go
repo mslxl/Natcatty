@@ -113,6 +113,11 @@ func Run() error {
 		return err
 	}
 	if !smokeActive {
+		// A development build keeps its Vault and secrets in the working
+		// directory, never in the real profile or the OS credential store.
+		if mygo.IsDev() {
+			return runDevProfile()
+		}
 		return run(nil, runOptions{})
 	}
 	if err := smoke.prepare(); err != nil {
@@ -140,6 +145,10 @@ type runOptions struct {
 	// skips the single-instance lock, which would hand the launch to a running
 	// app, and does not start the external MCP loopback listener.
 	packagedSmoke bool
+	// devProfile keeps a development build on a throwaway profile in the
+	// working directory. Run sets it only when MyGo reports a development
+	// build, so a production build never sees it.
+	devProfile bool
 	// secretService, when set, scopes the OS credential store to this service.
 	// The packaged smoke sets it to a per-profile name so an isolated run never
 	// reads or writes the user's real entries.
@@ -150,14 +159,24 @@ type runOptions struct {
 	secrets platformsecrets.Store
 }
 
-// importsShellHistory reports whether the composition root may read the real
-// shell history files. The packaged smoke keeps the real ~/.zsh_history and
-// friends out of the isolated profile.
-func (o runOptions) importsShellHistory() bool { return !o.packagedSmoke }
+// isolated reports whether the process must stay away from the user's real
+// data and machine integration. The packaged smoke and the dev profile both
+// qualify; the normal app does not.
+func (o runOptions) isolated() bool { return o.packagedSmoke || o.devProfile }
 
-// registersURLScheme reports whether the app may claim the OS ssh handler. A
-// packaged smoke must not switch the user's real handler to a temporary build.
-func (o runOptions) registersURLScheme() bool { return !o.packagedSmoke }
+// suppressesDesktopIntegration reports whether the process must not touch the
+// tray, global hotkeys, login items, notifications, or the Dock icon. The dev
+// profile suppresses them; the packaged smoke keeps its normal wiring.
+func (o runOptions) suppressesDesktopIntegration() bool { return o.devProfile }
+
+// importsShellHistory reports whether the composition root may read the real
+// shell history files. An isolated run keeps the real ~/.zsh_history and
+// friends out of the throwaway profile.
+func (o runOptions) importsShellHistory() bool { return !o.isolated() }
+
+// registersURLScheme reports whether the app may claim the OS ssh handler. An
+// isolated run must not switch the user's real handler to a temporary build.
+func (o runOptions) registersURLScheme() bool { return !o.isolated() }
 
 // run is the composition root proper. afterReady, when non-nil, runs on the UI
 // thread after the main window exists; the smoke modes use it to assert
@@ -216,7 +235,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			desktopCtl.HandleLaunchArgs(args)
 		}
 	}
-	if !options.packagedSmoke && !singleInstancePrimary(mygoInstanceLock{}, secondInstance) {
+	if !options.isolated() && !singleInstancePrimary(mygoInstanceLock{}, secondInstance) {
 		return nil
 	}
 
@@ -254,12 +273,16 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 
 	// Desktop integration lives in a versioned JSON file beside App Lock. The
 	// OS login-item state is refreshed once the application is ready; MyGo's
-	// native APIs cannot answer before Run.
-	desktopService = appdesktop.NewService(
-		store.OpenDesktop(filepath.Join(userData, "desktop-settings.json")),
-		hotkeyRegistrar{},
-		autoLauncher{},
-		&nativeNotifier{
+	// native APIs cannot answer before Run. A development profile injects no
+	// ports, so it never claims a global accelerator, rewrites the real login
+	// item, or shows a system notification.
+	var hotkeys appdesktop.Hotkeys
+	var autoStart appdesktop.AutoLauncher
+	var notifier appdesktop.Notifier
+	if !options.suppressesDesktopIntegration() {
+		hotkeys = hotkeyRegistrar{}
+		autoStart = autoLauncher{}
+		notifier = &nativeNotifier{
 			locale: func() string { return mygo.App.Locale() },
 			// The request carries the Session the event belongs to, so a click
 			// lands on the window and Tab that own it: the main window for a
@@ -269,7 +292,13 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 					desktopCtl.HandleNotificationClick(request)
 				}
 			},
-		},
+		}
+	}
+	desktopService = appdesktop.NewService(
+		store.OpenDesktop(filepath.Join(userData, "desktop-settings.json")),
+		hotkeys,
+		autoStart,
+		notifier,
 		appdesktop.WithGOOS(runtime.GOOS),
 	)
 	if err := desktopService.Load(context.Background()); err != nil {
@@ -1023,6 +1052,11 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// The app applies the notification mode and window focus before
 		// showing an OS notification.
 		appsession.WithNotificationHook(func(id model.SessionID, notification appsession.TerminalNotification) {
+			// A development profile never reaches the system notification
+			// center; OSC 9/777/99 is a real desktop side effect.
+			if options.suppressesDesktopIntegration() {
+				return
+			}
 			mode := terminalService.Settings().OSCNotifications
 			deliverProgramNotification(mode, notification, func() bool {
 				if mainWindow == nil || mainWindow.IsDestroyed() {
@@ -1068,7 +1102,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	mcpSettingsState := settings.NewMCPState(&mcpSettingsController{
 		policy: mcpPolicy, mode: mcpMode, sessions: mcpLive,
 	})
-	if !options.packagedSmoke {
+	if !options.isolated() {
 		externalMCPServer, err = startExternalMCP(context.Background(), mcpBridge,
 			externalMCPDiscoveryPath(userData), func(format string, args ...any) {
 				fmt.Fprintf(os.Stderr, format+"\n", args...)
@@ -1516,10 +1550,15 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		}
 	})
 	// The tray owns show/hide, recent Hosts, active Port Forwarding Rules, and
-	// quit. Close-to-tray asks the current settings live.
+	// quit. Close-to-tray asks the current settings live. A development
+	// profile passes no backend, so no second tray icon appears.
+	var tray trayBackend
+	if !options.suppressesDesktopIntegration() {
+		tray = mygoTrayBackend{}
+	}
 	desktopCtl = newDesktopController(
 		windows, shellState, quakeState, vaultState, forwardingManager,
-		desktopService, mygoTrayBackend{},
+		desktopService, tray,
 		func() string { return mygo.App.Locale() },
 		mygo.App.Quit,
 	)
@@ -1572,7 +1611,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		if desktopCtl != nil {
 			desktopCtl.SetIconProvider(func() []byte { return trayIconPNG(current.Appearance.AppIcon) })
 		}
-		if runtime.GOOS == "darwin" {
+		if runtime.GOOS == "darwin" && !options.suppressesDesktopIntegration() {
 			// MyGo panics when Dock.SetIcon runs before App.Run, and the
 			// initial preference apply below happens before the event loop
 			// starts. WhenReady also schedules immediately after startup, so
@@ -1727,18 +1766,24 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// The tray appears before launch targets so any deep link or
 		// command-line Host opens into a running shell.
 		desktopCtl.MarkReady()
-		if err := desktopService.Apply(desktopCtl.HandleHotkey); err != nil {
-			// Another application may own the accelerator. The failure is
-			// reported in Settings; the app keeps working.
-			desktopState.RefreshProblem()
+		if !options.suppressesDesktopIntegration() {
+			if err := desktopService.Apply(desktopCtl.HandleHotkey); err != nil {
+				// Another application may own the accelerator. The failure is
+				// reported in Settings; the app keeps working.
+				desktopState.RefreshProblem()
+			}
 		}
 		forwardingManager.Subscribe(desktopCtl.NoteForwarding)
-		desktopCtl.HandleLaunchArgs(os.Args[1:])
+		if !options.suppressesDesktopIntegration() {
+			desktopCtl.HandleLaunchArgs(os.Args[1:])
+		}
 
 		// A login launch starts quietly in the tray, as the original did,
 		// but only when there is a tray icon to reopen the window from. It
 		// never displays the Dropdown Panel.
-		desktopCtl.HandleLoginLaunch(mygo.App.WasOpenedAtLogin())
+		if !options.suppressesDesktopIntegration() {
+			desktopCtl.HandleLoginLaunch(mygo.App.WasOpenedAtLogin())
+		}
 
 		// Terminal widgets consume their own input, so the gate never sees
 		// keystrokes typed there. A Session change (including the echo of
