@@ -67,6 +67,18 @@ requests; this file is the human-maintained changelog.
   document needs no migration. The same area now exposes the Streamable HTTP
   endpoint's enable switch, listen address, and port, and all three apply
   without a restart.
+- The bundle identifier is now `com.mslxl.natcatty` on every platform (it was
+  `io.github.mslxl.natcatty`). The operating system treats this build as a
+  different app: quit the previous version before installing, then expect to
+  grant permissions again and to re-enter saved passwords and passphrases
+  (they are still in the system credential store, under the old name, but the
+  app can no longer read them). On macOS the notification authorization is
+  asked again and an existing Start at login entry is no longer recognised;
+  re-enable it once and delete the old entry if System Settings shows two. On
+  Windows the old Apps & Features entry and the old Run value under
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` linger and should be
+  removed. The Vault, Hosts, settings, Sessions and window layout live under
+  the unchanged application name and survive untouched.
 - Settings → System → Global Hotkey is now the four-mode choice above. The old
   enable checkbox and the stored `globalHotkeyEnabled` value were removed; an
   old record loads with Quake as the default and no migration, while tray,

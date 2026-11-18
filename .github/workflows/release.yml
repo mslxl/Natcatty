@@ -261,7 +261,7 @@ jobs:
             test -d "${app}"
             plutil -lint "${app}/Contents/Info.plist"
             test "$(plutil -extract CFBundleShortVersionString raw -o - "${app}/Contents/Info.plist")" = "${NATCATTY_VERSION}"
-            test "$(plutil -extract CFBundleIdentifier raw -o - "${app}/Contents/Info.plist")" = "io.github.mslxl.natcatty"
+            test "$(plutil -extract CFBundleIdentifier raw -o - "${app}/Contents/Info.plist")" = "com.mslxl.natcatty"
             for entry in THIRD-PARTY-NOTICES.md \
               LICENSE \
               NOTICE \
