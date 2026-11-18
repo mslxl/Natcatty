@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "name": "libghostty-vt",
+  "upstream": "https://github.com/ghostty-org/ghostty",
+  "commit": "befcdfd2c3a1cb24d9ec886e93c95b2b5daa7028",
+  "libVersion": "0.1.0-dev",
+  "zig": "0.16.0",
+  "ndk": "30.0.16248370",
+  "optimize": "ReleaseFast",
+  "strip": true,
+  "release": "https://github.com/mslxl/natcatty/releases/download/libghostty-vt-befcdfd2-mobile-1",
+  "artifacts": {
+    "android-arm64-v8a": {
+      "file": "libghostty-vt-befcdfd2-android-arm64-v8a.a",
+      "url": "https://github.com/mslxl/natcatty/releases/download/libghostty-vt-befcdfd2-mobile-1/libghostty-vt-befcdfd2-android-arm64-v8a.a",
+      "sha256": "4571f3f49b347342552e89e9b1a1e1ac48f08745b18fc47ccea80d5173d92fc8",
+      "size": 18805000,
+      "commit": "befcdfd2c3a1cb24d9ec886e93c95b2b5daa7028"
+    },
+    "android-armeabi-v7a": {
+      "file": "libghostty-vt-befcdfd2-android-armeabi-v7a.a",
+      "url": "https://github.com/mslxl/natcatty/releases/download/libghostty-vt-befcdfd2-mobile-1/libghostty-vt-befcdfd2-android-armeabi-v7a.a",
+      "sha256": "e05a65aa0e816301f192a460ee1b86103c1745097322295bbc91d9091d1f8a91",
+      "size": 11371864,
+      "commit": "befcdfd2c3a1cb24d9ec886e93c95b2b5daa7028"
+    },
+    "android-x86_64": {
+      "file": "libghostty-vt-befcdfd2-android-x86_64.a",
+      "url": "https://github.com/mslxl/natcatty/releases/download/libghostty-vt-befcdfd2-mobile-1/libghostty-vt-befcdfd2-android-x86_64.a",
+      "sha256": "c6fa3624d35c2a8a3aec15dee4366f3aacf4159ac477f862604a7886bf62c55f",
+      "size": 18349758,
+      "commit": "befcdfd2c3a1cb24d9ec886e93c95b2b5daa7028"
+    },
+    "ios-arm64": {
+      "file": "libghostty-vt-befcdfd2-ios-arm64.a",
+      "url": "https://github.com/mslxl/natcatty/releases/download/libghostty-vt-befcdfd2-mobile-1/libghostty-vt-befcdfd2-ios-arm64.a",
+      "sha256": "bb5d0945666ab9e1c7cd60d665bad1f51ebc5d68c9c487c905f9c6d8758b53af",
+      "size": 10913432,
+      "commit": "befcdfd2c3a1cb24d9ec886e93c95b2b5daa7028"
+    },
+    "ios-arm64-simulator": {
+      "file": "libghostty-vt-befcdfd2-ios-arm64-simulator.a",
+      "url": "https://github.com/mslxl/natcatty/releases/download/libghostty-vt-befcdfd2-mobile-1/libghostty-vt-befcdfd2-ios-arm64-simulator.a",
+      "sha256": "7ff7b0e07d47277a9f4de509780917fb080d405485d44763807dd8f3eda778cc",
+      "size": 10818088,
+      "commit": "befcdfd2c3a1cb24d9ec886e93c95b2b5daa7028"
+    }
+  }
+}
