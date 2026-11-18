@@ -11,6 +11,12 @@ requests; this file is the human-maintained changelog.
 
 ### Added
 
+- Settings → Layout & Tabs → Open on launch can now show a new local terminal
+  or the Monitoring page at startup, in addition to the Vault and the last
+  session. A restore that finds nothing falls back to the chosen landing.
+  Because the setting is synced, a device still running an older build
+  normalizes the new values to Vault once; re-select the choice after all
+  devices are upgraded.
 - The global shortcut has four user-selectable Hotkey Modes: release it to the
   system, toggle the main window as before, pull down a Quake terminal, or
   pull down the complete application. Quake is the default. The Dropdown

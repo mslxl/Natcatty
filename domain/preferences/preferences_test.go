@@ -84,6 +84,18 @@ func TestNormalizeClampsAndValidates(t *testing.T) {
 	}
 }
 
+func TestNormalizeKeepsEveryKnownStartupLanding(t *testing.T) {
+	for _, landing := range []StartupLanding{
+		StartupVault, StartupLast, StartupTerminal, StartupMonitoring,
+	} {
+		settings := Defaults()
+		settings.Layout.StartupLanding = landing
+		if got := Normalize(settings).Layout.StartupLanding; got != landing {
+			t.Errorf("Normalize(%q) = %q, want %q", landing, got, landing)
+		}
+	}
+}
+
 func TestClampWindowOpacity(t *testing.T) {
 	cases := map[float64]float64{-1: 0.5, 0.25: 0.5, 0.8: 0.8, 3: 1}
 	for input, want := range cases {

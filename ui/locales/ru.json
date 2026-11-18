@@ -1846,6 +1846,8 @@
   "settingsStartupLanding": "Открывать при запуске",
   "settingsStartupVault": "Хранилище",
   "settingsStartupLast": "Последний сеанс",
+  "settingsStartupTerminal": "Новый локальный терминал",
+  "settingsStartupMonitoring": "Мониторинг",
   "settingsSidePanelDock": "Положение боковой панели",
   "settingsDockLeft": "Слева",
   "settingsDockRight": "Справа",

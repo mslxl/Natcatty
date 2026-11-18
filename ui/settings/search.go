@@ -162,7 +162,7 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaLayout, domain.FieldShellOnlyTabNumberShortcuts, m.SettingsShellOnlyTabNumberShortcuts(), "tab number pinned")
 	add(AreaLayout, domain.FieldShowTabNumberBadges, m.SettingsShowTabNumberBadges(), "tab badge number")
 	add(AreaLayout, domain.FieldRestorePreviousSession, m.SettingsRestorePreviousSession(), "restore session startup")
-	add(AreaLayout, domain.FieldStartupLanding, m.SettingsStartupLanding(), "startup landing vault")
+	add(AreaLayout, domain.FieldStartupLanding, m.SettingsStartupLanding(), "startup landing vault terminal monitoring last session")
 	add(AreaLayout, domain.FieldSidePanelDock, m.SettingsSidePanelDock(), "side panel dock")
 
 	add(AreaTerminal, "", m.SettingsTerminalLoggingTitle(), "logging log directory format timestamps output")

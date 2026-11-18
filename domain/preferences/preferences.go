@@ -64,9 +64,27 @@ const (
 type StartupLanding string
 
 const (
+	// StartupVault opens the Vault.
 	StartupVault StartupLanding = "vault"
-	StartupLast  StartupLanding = "last"
+	// StartupLast is the "last session" choice. Session restore is its own
+	// switch, so with restore off it opens a local terminal like
+	// StartupTerminal.
+	StartupLast StartupLanding = "last"
+	// StartupTerminal opens a new local terminal Tab.
+	StartupTerminal StartupLanding = "terminal"
+	// StartupMonitoring opens the Host monitoring page.
+	StartupMonitoring StartupLanding = "monitoring"
 )
+
+// Valid reports whether landing is one the shell knows how to show.
+func (landing StartupLanding) Valid() bool {
+	switch landing {
+	case StartupVault, StartupLast, StartupTerminal, StartupMonitoring:
+		return true
+	default:
+		return false
+	}
+}
 
 // SidePanelDock is the default terminal side-panel edge.
 type SidePanelDock string
@@ -571,7 +589,7 @@ func Normalize(settings Settings) Settings {
 	if settings.Layout.TabBarPosition != TabBarTop && settings.Layout.TabBarPosition != TabBarBottom {
 		settings.Layout.TabBarPosition = defaults.Layout.TabBarPosition
 	}
-	if settings.Layout.StartupLanding != StartupVault && settings.Layout.StartupLanding != StartupLast {
+	if !settings.Layout.StartupLanding.Valid() {
 		settings.Layout.StartupLanding = defaults.Layout.StartupLanding
 	}
 	switch settings.Layout.SidePanelDock {

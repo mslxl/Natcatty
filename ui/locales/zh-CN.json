@@ -1846,6 +1846,8 @@
   "settingsStartupLanding": "启动时打开",
   "settingsStartupVault": "保管库",
   "settingsStartupLast": "上次会话",
+  "settingsStartupTerminal": "新建本地终端",
+  "settingsStartupMonitoring": "监控",
   "settingsSidePanelDock": "侧面板位置",
   "settingsDockLeft": "左侧",
   "settingsDockRight": "右侧",

@@ -14280,6 +14280,26 @@ func (msgs Messages) SettingsStartupLast() string {
 	return Catalog.Format(msgs.locale, "settingsStartupLast", nil)
 }
 
+// SettingsStartupTerminal says "New local terminal"
+// in the language the app shows.
+func SettingsStartupTerminal() string { return In(i18n.Locale()).SettingsStartupTerminal() }
+
+// SettingsStartupTerminal says "New local terminal"
+// in the language of msgs.
+func (msgs Messages) SettingsStartupTerminal() string {
+	return Catalog.Format(msgs.locale, "settingsStartupTerminal", nil)
+}
+
+// SettingsStartupMonitoring says "Monitoring"
+// in the language the app shows.
+func SettingsStartupMonitoring() string { return In(i18n.Locale()).SettingsStartupMonitoring() }
+
+// SettingsStartupMonitoring says "Monitoring"
+// in the language of msgs.
+func (msgs Messages) SettingsStartupMonitoring() string {
+	return Catalog.Format(msgs.locale, "settingsStartupMonitoring", nil)
+}
+
 // SettingsSidePanelDock says "Side panel position"
 // in the language the app shows.
 func SettingsSidePanelDock() string { return In(i18n.Locale()).SettingsSidePanelDock() }

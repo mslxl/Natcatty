@@ -3010,6 +3010,8 @@
   "settingsStartupLanding": "Open on launch",
   "settingsStartupVault": "Vault",
   "settingsStartupLast": "Last session",
+  "settingsStartupTerminal": "New local terminal",
+  "settingsStartupMonitoring": "Monitoring",
   "settingsSidePanelDock": "Side panel position",
   "settingsDockLeft": "Left",
   "settingsDockRight": "Right",
