@@ -1846,6 +1846,8 @@
   "settingsStartupLanding": "Abrir al iniciar",
   "settingsStartupVault": "Bóveda",
   "settingsStartupLast": "Última sesión",
+  "settingsStartupTerminal": "Nueva terminal local",
+  "settingsStartupMonitoring": "Monitoreo",
   "settingsSidePanelDock": "Posición del panel lateral",
   "settingsDockLeft": "Izquierda",
   "settingsDockRight": "Derecha",

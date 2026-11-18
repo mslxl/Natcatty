@@ -1846,6 +1846,8 @@
   "settingsStartupLanding": "啟動時開啟",
   "settingsStartupVault": "保存庫",
   "settingsStartupLast": "上次工作階段",
+  "settingsStartupTerminal": "新建本機終端機",
+  "settingsStartupMonitoring": "監控",
   "settingsSidePanelDock": "側面板位置",
   "settingsDockLeft": "左側",
   "settingsDockRight": "右側",

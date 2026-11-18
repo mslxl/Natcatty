@@ -464,11 +464,19 @@ func layoutArea(c *ui.Context, state *PreferencesState, m locales.Messages, t *u
 			m.SettingsRestorePreviousSession(), settings.Layout.RestorePreviousSession,
 			func(s *domain.Settings, value bool) { s.Layout.RestorePreviousSession = value })
 
-		landingLabels := []string{m.SettingsStartupVault(), m.SettingsStartupLast()}
-		landingValues := []domain.StartupLanding{domain.StartupVault, domain.StartupLast}
+		landingLabels := []string{
+			m.SettingsStartupVault(), m.SettingsStartupLast(),
+			m.SettingsStartupTerminal(), m.SettingsStartupMonitoring(),
+		}
+		landingValues := []domain.StartupLanding{
+			domain.StartupVault, domain.StartupLast,
+			domain.StartupTerminal, domain.StartupMonitoring,
+		}
 		landing := landingLabels[indexOfLandings(landingValues, settings.Layout.StartupLanding)]
 		fieldRow(c, state, m, t, domain.FieldStartupLanding, m.SettingsStartupLanding(), func() {
-			if ui.Select(c, &landing, landingLabels).Width(180).Changed() {
+			// Wide enough for the longest landing label in the shipped
+			// catalogs, which is the Russian "Новый локальный терминал".
+			if ui.Select(c, &landing, landingLabels).Width(240).Changed() {
 				state.Update(func(s *domain.Settings) {
 					s.Layout.StartupLanding = landingValues[indexOf(landingLabels, landing)]
 				})

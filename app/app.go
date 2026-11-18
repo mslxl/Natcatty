@@ -1835,14 +1835,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 
 		// Tabs, splits, and working directories come back; their Sessions open
 		// asynchronously and apply on the next frame. Output does not survive.
+		// The Layout's startup landing picks the surface when restore is off
+		// or finds nothing.
 		layout := preferenceService.Settings().Layout
-		if layout.RestorePreviousSession {
-			shellState.Restore(context.Background())
-		} else if layout.StartupLanding == domainpreferences.StartupVault {
-			shellState.ShowVault()
-		} else {
-			_ = shellState.NewTab()
-		}
+		applyStartupLanding(layout, shellState)
 
 		mygo.App.OnLocaleChanged(func(tag string) {
 			windows.ApplyLocale()
