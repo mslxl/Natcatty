@@ -6,3 +6,6 @@ build/
 
 # Runtime log written by the app when it is launched from a checkout
 myeasylog.log
+
+# Throwaway profile of a development build (mygo.IsDev)
+.natcatty-test/

@@ -14,6 +14,10 @@ Default five-role vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `
 
 Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
+## Development runs
+
+When testing the app, run `just dev` (`go run .`). A development build keeps its Vault and secrets in `<cwd>/.natcatty-test/` and never reads the real profile or OS credential store (ADR 0022). Do not test against an installed Natcatty or a `go tool mygo build` binary; those use the real profile and keychain.
+
 ## Git merges
 
 Merge feature branches into `main` only after verifying the baseline.
