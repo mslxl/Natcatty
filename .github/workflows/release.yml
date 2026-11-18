@@ -495,13 +495,23 @@ jobs:
       NATCATTY_PRERELEASE: ${{ needs.validate.outputs.prerelease }}
     steps:
       - name: Checkout
-        # scripts/release.nu lives in the repository; nothing is rebuilt.
+        # scripts/release.nu lives in the repository; the app is not rebuilt.
+        # Full history and tags let the body step find the previous release
+        # even when the tag was re-pushed or force-moved.
         uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Set up Nushell
         uses: ./.github/actions/setup-nu
+
+      - name: Set up Go
+        # internal/tools/releasebody composes the release body.
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: Download every platform artifact
         # The same pattern as the checksums job: exactly the three platform
@@ -529,6 +539,36 @@ jobs:
           cmp release/SHA256SUMS checksums/SHA256SUMS
           cat release/SHA256SUMS
 
+      - name: Compose the release body
+        # GitHub generates the notes from the commits and pull requests since
+        # the previous release. `gh release edit` cannot regenerate notes, so
+        # compose one body here and use it for both the create and edit paths.
+        # The identifier-migration note is appended only for the first release
+        # whose manifest carries the new identifier; a user who reads only the
+        # release page still learns about the one-time reset.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes="${RUNNER_TEMP}/release-notes.md"
+          previous_manifest="${RUNNER_TEMP}/previous-mygo.json"
+          : > "${previous_manifest}"
+          # The nearest tag reachable from this tag's parent is the release
+          # this build upgrades. Comparing manifests rather than release dates
+          # keeps a re-pushed tag's body stable.
+          if previous_tag="$(git describe --tags --abbrev=0 "${NATCATTY_TAG}^{commit}^" 2>/dev/null)"; then
+            git show "${previous_tag}:mygo.json" > "${previous_manifest}" \
+              || : > "${previous_manifest}"
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${NATCATTY_TAG}" --jq .body > "${notes}"
+          go run ./internal/tools/releasebody \
+            -notes "${notes}" \
+            -out "${notes}" \
+            -manifest mygo.json \
+            -previous-manifest "${previous_manifest}" \
+            -fragment docs/releases/identifier-migration.md
+
       - name: Publish the GitHub release
         # Re-pushing or force-moving a tag is expected, so an existing release
         # is edited and its assets replaced instead of failing. The tag and the
@@ -541,13 +581,8 @@ jobs:
           assets=(release/*)
           # The eight installers plus the checksum manifest.
           test "${#assets[@]}" -eq 9
-          # GitHub generates the body from the commits and pull requests since
-          # the previous release. `gh release edit` cannot regenerate notes, so
-          # fetch one body and use it for both the create and edit paths.
-          notes="$(mktemp)"
-          trap 'rm -f "${notes}"' EXIT
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-            -f tag_name="${NATCATTY_TAG}" --jq .body > "${notes}"
+          notes="${RUNNER_TEMP}/release-notes.md"
+          test -s "${notes}"
           # A SemVer pre-release is published as a GitHub pre-release and never
           # becomes Latest. A normal release clears a stale pre-release mark.
           flags=(--prerelease=false)

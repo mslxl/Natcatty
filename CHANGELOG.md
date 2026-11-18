@@ -70,7 +70,8 @@ requests; this file is the human-maintained changelog.
 - The bundle identifier is now `com.mslxl.natcatty` on every platform (it was
   `io.github.mslxl.natcatty`). The operating system treats this build as a
   different app: quit the previous version before installing, then expect to
-  grant permissions again and to re-enter saved passwords and passphrases
+  grant permissions again and to re-enter every orphaned credential — saved
+  passwords and passphrases, and each EternalTerminal resume identity and key
   (they are still in the system credential store, under the old name, but the
   app can no longer read them). On macOS the notification authorization is
   asked again and an existing Start at login entry is no longer recognised;
