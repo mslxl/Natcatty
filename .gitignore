@@ -16,3 +16,6 @@ resources/winconpty/*.exe
 
 # direnv's per-checkout cache. The .envrc itself is tracked.
 .direnv/
+
+# Local mobile test state (AVDs, simulator ids, emulator logs)
+.dev/

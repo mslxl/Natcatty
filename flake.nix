@@ -87,6 +87,40 @@
         let
           pkgs = import nixpkgs { inherit system; };
           go = goFor pkgs;
+
+          # The SDK licenses are accepted globally for this shell only; the
+          # default shell keeps unconfigured nixpkgs.
+          androidPkgs = import nixpkgs {
+            inherit system;
+            config = {
+              android_sdk.accept_license = true;
+              allowUnfree = true;
+            };
+          };
+
+          # A writable AVD home is resolved in the shell hook: the SDK itself
+          # comes from the nix store and is read-only, but AVDs must be created
+          # at runtime.
+
+          androidPackages = androidPkgs.androidenv.composeAndroidPackages {
+            platformVersions = [ "36" ];
+            buildToolsVersions = [ "37.0.0" ];
+            # Emulator ABIs. `armeabi-v7a` is a Go/NDK target name, not an
+            # emulator image ABI, so only the emulator ABI is listed here.
+            abiVersions = [ "arm64-v8a" ];
+            systemImageTypes = [ "google_apis" ];
+            includeSystemImages = true;
+            includeEmulator = true;
+            # cgo builds for Android need the NDK. androidenv exposes it as
+            # `ndk-bundle` (which is why `androidPkgs.ndk` does not exist) and
+            # links it into the SDK as both `ndk/<version>` and `ndk-bundle`.
+            includeNDK = true;
+            extraLicenses = [
+              "android-sdk-license"
+              "android-sdk-preview-license"
+            ];
+          };
+          androidSdk = androidPackages.androidsdk;
         in
         {
           default = pkgs.mkShell {
@@ -96,6 +130,54 @@
               pkgs.just
             ];
             env.CGO_ENABLED = "0";
+          };
+
+          # iOS needs no packaged SDK: Xcode is the toolchain, and nix only
+          # supplies Go. DEVELOPER_DIR pins the Xcode the simulator tools must
+          # come from.
+          ios = pkgs.mkShell {
+            packages = [
+              go
+              pkgs.just
+            ];
+            env = {
+              CGO_ENABLED = "1";
+              DEVELOPER_DIR = "/Applications/Xcode.app/Contents/Developer";
+            };
+            shellHook = ''
+              echo "iOS dev shell — Xcode: $(xcodebuild -version 2>/dev/null | head -1)"
+              echo "boot a simulator: scripts/dev/ios-boot.sh   stop: scripts/dev/ios-stop.sh"
+            '';
+          };
+
+          # Android SDK, emulator and a system image come from nix so every
+          # machine gets the same toolchain. AVDs live outside the store.
+          android = pkgs.mkShell {
+            packages = [
+              go
+              pkgs.just
+              androidPkgs.jdk21
+              androidSdk
+            ];
+            env = {
+              CGO_ENABLED = "1";
+              ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
+              ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
+              # Point cgo at the NDK linked into the SDK above; the version is
+              # resolved from the same derivation, so it never drifts.
+              ANDROID_NDK_HOME = "${androidSdk}/libexec/android-sdk/ndk/${androidPackages.ndk-bundle.version}";
+              ANDROID_NDK_ROOT = "${androidSdk}/libexec/android-sdk/ndk/${androidPackages.ndk-bundle.version}";
+            };
+            shellHook = ''
+              # AVDs and avdmanager's config live in the checkout, not the
+              # read-only nix store, so resolve them from wherever the shell
+              # was entered.
+              export ANDROID_AVD_HOME="$PWD/.dev/avd"
+              export ANDROID_USER_HOME="$PWD/.dev/android-home"
+              mkdir -p "$ANDROID_AVD_HOME" "$ANDROID_USER_HOME"
+              echo "Android dev shell — $(adb version | head -1)"
+              echo "boot an emulator: scripts/dev/android-boot.sh   stop: scripts/dev/android-stop.sh"
+            '';
           };
         }
       );
