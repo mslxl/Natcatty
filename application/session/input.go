@@ -160,7 +160,7 @@ func (s *Service) SendCompose(targets []model.SessionID, preview ComposePreview)
 			delivery.Err = ErrClosed
 		} else {
 			payload := preview.PasteData(sessions[index].BracketedPaste())
-			delivery.Status, delivery.Err = sessions[index].deliver(payload)
+			delivery.Status, delivery.Err = sessions[index].deliver(payload, false)
 		}
 		result.Deliveries = append(result.Deliveries, delivery)
 	}

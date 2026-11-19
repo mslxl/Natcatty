@@ -151,7 +151,7 @@ func (s *Session) sendStartupCommand(transport Transport) {
 		// teardown is closing.
 		return
 	}
-	forwarded, _, gated := s.handleInput([]byte(s.spec.StartupCommand+"\r"), false)
+	forwarded, _, gated := s.handleInput([]byte(s.spec.StartupCommand+"\r"), false, false)
 	if gated || len(forwarded) == 0 {
 		return
 	}
