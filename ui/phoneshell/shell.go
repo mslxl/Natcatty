@@ -3,11 +3,15 @@
 // with its own back stack.
 //
 // The sections are navigation, not Workspace Tabs: a Workspace Tab is an open
-// terminal Session, and the phone keeps one per Tab. Nothing here connects;
-// the pages are placeholders until the Session and Vault pages land.
+// terminal Session, and the phone keeps one per Tab. The Sessions and Hosts
+// pages are placeholders until their tickets land; the Vault and Settings
+// pages read the same Vault store and the same settings documents the desktop
+// uses.
 package phoneshell
 
 import (
+	"context"
+
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
@@ -37,14 +41,17 @@ var infos = [sectionCount]Info{
 	Settings: {Title: "Settings", Symbol: "gearshape"},
 }
 
-// page is a placeholder page of a section.
+// page is one page of a section.
 type page struct {
 	// path is the router location, as "/keys".
 	path string
 	// title is the page's navigation title.
 	title string
-	// text is what the placeholder says.
+	// text is what a placeholder page says. Real pages leave it empty.
 	text string
+	// summary is the root row's second line, such as a list count. It is
+	// evaluated while the root renders, so it can reflect a fresh load.
+	summary func() string
 }
 
 // section is one navigation section: its identity, its pages, and the router
@@ -55,6 +62,8 @@ type section struct {
 	router *ui.Router
 	pages  []page
 	intro  string
+	// draw renders a non-placeholder page. A nil draw falls back to text.
+	draw func(c *ui.Context, p page)
 }
 
 // Shell is the four sections of the phone app. Construct it with New; its
@@ -64,49 +73,77 @@ type Shell struct {
 	selected Section
 	windows  [sectionCount]*mygo.Window
 	tabs     *mygo.Tabs
+
+	vault    *vaultPages
+	settings *settingsPages
+}
+
+// Option customizes a Shell. The composition root passes the shared Vault
+// and settings services; a Shell without them still navigates, and each page
+// says the data is unavailable instead of drawing blank.
+type Option func(*Shell)
+
+// WithVault gives the Vault pages the shared SSH Key and Known Host store.
+func WithVault(store VaultStore) Option {
+	return func(s *Shell) { s.vault.store = store }
+}
+
+// WithSettings gives the Settings pages the shared preferences and terminal
+// behavior services.
+func WithSettings(service SettingsService) Option {
+	return func(s *Shell) { s.settings.service = service }
 }
 
 // New returns the phone shell with every section at its root page.
-func New() *Shell {
-	s := &Shell{}
+func New(opts ...Option) *Shell {
+	s := &Shell{vault: newVaultPages(), settings: newSettingsPages()}
+	for _, opt := range opts {
+		opt(s)
+	}
 	for i := range s.sections {
-		s.sections[i] = newSection(Section(i))
+		s.sections[i] = s.newSection(Section(i))
 	}
 	return s
 }
 
-func newSection(i Section) *section {
-	s := &section{info: infos[i], router: ui.NewRouter("/")}
+func (s *Shell) newSection(i Section) *section {
+	sec := &section{info: infos[i], router: ui.NewRouter("/")}
 	switch i {
 	case Sessions:
-		s.intro = "No sessions yet."
-		s.pages = []page{
+		sec.intro = "No sessions yet."
+		sec.pages = []page{
 			{path: "/new", title: "New session", text: "New session is a placeholder page."},
 			{path: "/log", title: "Connection log", text: "Connection log is a placeholder page."},
 		}
 		s.pages = append(s.pages, smokePages(i)...)
 	case Hosts:
-		s.intro = "No hosts yet."
-		s.pages = []page{
+		sec.intro = "No hosts yet."
+		sec.pages = []page{
 			{path: "/host/new", title: "New host", text: "New host is a placeholder page."},
 			{path: "/browse", title: "Browse hosts", text: "Browse hosts is a placeholder page."},
 		}
 	case Vault:
-		s.intro = "Browse the Vault on the phone."
-		s.pages = []page{
-			{path: "/keys", title: "SSH keys", text: "SSH keys is a placeholder page."},
-			{path: "/known-hosts", title: "Known hosts", text: "Known hosts is a placeholder page."},
+		sec.intro = "Browse the Vault on the phone."
+		sec.pages = []page{
+			{path: "/keys", title: "SSH keys", summary: s.vault.keysSummary},
+			{path: "/known-hosts", title: "Known hosts", summary: s.vault.knownHostsSummary},
 		}
+		sec.draw = s.vault.draw
 	case Settings:
-		s.intro = "Phone settings."
-		s.pages = []page{
-			{path: "/appearance", title: "Appearance", text: "Appearance is a placeholder page."},
-			{path: "/terminal", title: "Terminal", text: "Terminal is a placeholder page."},
-			{path: "/input", title: "Input", text: "Input is a placeholder page."},
-			{path: "/security", title: "Security", text: "Security is a placeholder page."},
+		sec.intro = "Settings for this phone."
+		sec.pages = []page{
+			{path: "/appearance", title: "Appearance", summary: staticSummary("Theme, interface, icons")},
+			{path: "/terminal", title: "Terminal", summary: staticSummary("Clipboard and paste")},
+			{path: "/input", title: "Input", summary: staticSummary("Completion and suggestions")},
+			{path: "/security", title: "Security", summary: staticSummary("Confirmations")},
 		}
+		sec.draw = s.settings.draw
 	}
-	return s
+	return sec
+}
+
+func staticSummary(text string) func() string {
+	return func() string { return text }
 }
 
 // Info returns a section's title and symbol.
@@ -132,6 +169,11 @@ func (s *Shell) Select(sec Section) {
 		s.tabs.Select(int(sec))
 	}
 }
+
+// Load reads the Vault lists the shell shows. The phone root calls it before
+// the first frame; a failure is recorded on the Vault pages as their error
+// state, so the shell still opens. It is safe to call again to refresh.
+func (s *Shell) Load(ctx context.Context) error { return s.vault.load(ctx) }
 
 // View returns the view of one section, for the window of its tab. A section
 // is its own view rather than the shell's so that each tab's window renders
@@ -174,13 +216,23 @@ func (sec *section) page(c *ui.Context, r *ui.Route) {
 		for _, p := range sec.pages {
 			if r.Match(p.path) {
 				r.Title(p.title)
-				sec.placeholder(c, p)
+				sec.drawPage(c, p)
 				return
 			}
 		}
 		r.Title("Not found")
 		ui.Text(c, "Not found").Padding(16)
 	}
+}
+
+// drawPage renders a page: the Vault and Settings sections own their pages,
+// while the sections whose tickets have not landed keep their placeholder.
+func (sec *section) drawPage(c *ui.Context, p page) {
+	if sec.draw != nil && p.text == "" {
+		sec.draw(c, p)
+		return
+	}
+	sec.placeholder(c, p)
 }
 
 // root lists the section's pages. Every row routes instead of connecting. The
@@ -195,7 +247,14 @@ func (sec *section) root(c *ui.Context) {
 				row := ui.Row(c.Key(p.path)).FillWidth().Padding(14, 16).Gap(12).
 					AlignItems(ui.Center).Background(t.Surface).Radius(12).Label(p.title)
 				row.Children(func() {
-					ui.Text(c, p.title).Grow(1)
+					ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+						ui.Text(c, p.title)
+						if p.summary != nil {
+							if summary := p.summary(); summary != "" {
+								ui.Text(c, summary).FontSize(12).TextColor(t.TextMuted).SingleLine()
+							}
+						}
+					})
 					ui.Text(c, "›").FontSize(20).TextColor(t.TextMuted)
 				})
 				if row.Clicked() {

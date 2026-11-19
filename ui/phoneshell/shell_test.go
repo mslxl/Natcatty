@@ -1,8 +1,10 @@
 package phoneshell
 
 import (
+	"context"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -16,19 +18,24 @@ func hasText(tt *ui.Tester, want string) bool {
 	return slices.Contains(tt.Texts(), want)
 }
 
-// TestSectionsRouteAndPop drives every section through its placeholder pages
-// with the framework's tester: a row routes to the page, and the back button
-// returns to the section's root with its state intact.
+// TestSectionsRouteAndPop drives every section through its pages with the
+// framework's tester: a row routes to the page, the page renders, and the back
+// button returns to the section's root with its state intact. A section whose
+// real page has landed is checked for its own content; a section still on
+// placeholders is checked for the placeholder text.
 func TestSectionsRouteAndPop(t *testing.T) {
 	for _, sec := range []Section{Sessions, Hosts, Vault, Settings} {
 		shell := New()
+		// The Vault pages start in their loading state; Load turns a shell
+		// without a store into the unavailable state this test checks.
+		_ = shell.Load(context.Background())
 		tt := ui.NewTester(shell.View(sec), 390, 844)
 		if !hasText(tt, shell.Info(sec).Title) {
 			t.Fatalf("section %d: root does not show %q; texts: %v", sec, shell.Info(sec).Title, texts(t, tt))
 		}
 		pages := shell.sections[sec].pages
 		if len(pages) == 0 {
-			t.Fatalf("section %d has no placeholder pages", sec)
+			t.Fatalf("section %d has no pages", sec)
 		}
 		for _, p := range pages {
 			if err := tt.Click(p.title); err != nil {
@@ -37,12 +44,19 @@ func TestSectionsRouteAndPop(t *testing.T) {
 			if got := shell.Router(sec).Path(); got != p.path {
 				t.Fatalf("section %d: path after clicking %q = %q, want %q", sec, p.title, got, p.path)
 			}
-			if !hasText(tt, p.text) {
-				t.Fatalf("section %d: %q does not show %q; texts: %v", sec, p.path, p.text, texts(t, tt))
+			if p.text != "" {
+				if !hasText(tt, p.text) {
+					t.Fatalf("section %d: %q does not show %q; texts: %v", sec, p.path, p.text, texts(t, tt))
+				}
+			} else if !tt.HasText("not available on this device") {
+				// The Vault and Settings pages, without their services,
+				// render their own unavailable state rather than blank.
+				t.Fatalf("section %d: %q rendered blank or without its state; texts: %v", sec, p.path, texts(t, tt))
 			}
 			if err := tt.Click("Back"); err != nil {
 				t.Fatalf("section %d: click Back from %q: %v", sec, p.path, err)
 			}
+			tt.Advance(600 * time.Millisecond)
 			if got := shell.Router(sec).Path(); got != "/" {
 				t.Fatalf("section %d: path after Back = %q, want /", sec, got)
 			}
