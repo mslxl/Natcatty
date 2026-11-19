@@ -46,6 +46,44 @@ func TestCheckImportRejectsLayerViolations(t *testing.T) {
 	}
 }
 
+func TestCheckImportForTestRelaxesOnlyTheAdapterBoundary(t *testing.T) {
+	allowed := []struct {
+		name string
+		pkg  string
+		imp  string
+	}{
+		{"application test uses an adapter factory", "application/session", "github.com/mslxl/natcatty/adapters/localpty"},
+		{"application test uses a codec", "application/session", "github.com/mslxl/natcatty/adapters/textcodec"},
+		{"ui test uses a serial factory", "ui/shell/state", "github.com/mslxl/natcatty/adapters/serial"},
+	}
+	for _, test := range allowed {
+		t.Run(test.name, func(t *testing.T) {
+			if got := checkImportForTest(test.pkg, test.imp); got != "" {
+				t.Fatalf("checkImportForTest(%q, %q) = %q, want no violation", test.pkg, test.imp, got)
+			}
+		})
+	}
+
+	rejected := []struct {
+		name string
+		pkg  string
+		imp  string
+	}{
+		{"domain test still cannot leave the domain", "domain/vault", "github.com/mslxl/natcatty/application/vault"},
+		{"application test still cannot use the ui", "application/session", "github.com/mslxl/natcatty/ui/shell"},
+		{"application test still cannot use MyGo", "application/session", "github.com/egoist/mygo"},
+		{"ui test still cannot use the composition root", "ui/shell/state", "github.com/mslxl/natcatty/app"},
+		{"adapter tests are still bound by the production rule", "adapters/store", "github.com/mslxl/natcatty/ui/shell"},
+	}
+	for _, test := range rejected {
+		t.Run(test.name, func(t *testing.T) {
+			if got := checkImportForTest(test.pkg, test.imp); got == "" {
+				t.Fatalf("checkImportForTest(%q, %q) allowed a violation", test.pkg, test.imp)
+			}
+		})
+	}
+}
+
 func TestCheckImportAllowsTheDocumentedDirection(t *testing.T) {
 	tests := []struct {
 		name string
@@ -86,11 +124,17 @@ func TestArchitecture(t *testing.T) {
 	}
 	for _, pkg := range packages {
 		rel := relativePackage(pkg.ImportPath)
-		for _, importSet := range [][]string{pkg.Imports, pkg.TestImports, pkg.XTestImports} {
-			for _, imported := range importSet {
-				if violation := checkImport(rel, imported); violation != "" {
-					t.Errorf("%s imports %s: %s", pkg.ImportPath, imported, violation)
-				}
+		for _, imported := range pkg.Imports {
+			if violation := checkImport(rel, imported); violation != "" {
+				t.Errorf("%s imports %s: %s", pkg.ImportPath, imported, violation)
+			}
+		}
+		// Test files (internal and external) may reach adapters to drive a
+		// real factory or codec. The rule still binds the production graph;
+		// test-only imports compile away before release.
+		for _, imported := range append(append([]string{}, pkg.TestImports...), pkg.XTestImports...) {
+			if violation := checkImportForTest(rel, imported); violation != "" {
+				t.Errorf("%s imports %s: %s", pkg.ImportPath, imported, violation)
 			}
 		}
 	}

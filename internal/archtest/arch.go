@@ -98,6 +98,21 @@ func packageLayer(pkg string) string {
 	return pkg
 }
 
+// checkImportForTest relaxes the production rule for a test file: a test
+// compiled outside the shipped binary may reach any adapter, so a service
+// test can plug in a real factory or codec without an artificial port. All
+// other boundaries still apply — a ui test still cannot touch the composition
+// root, and domain tests still cannot leave the domain.
+func checkImportForTest(pkg, imp string) string {
+	layer := packageLayer(pkg)
+	if layer == "application" || layer == "ui" {
+		if imp == modulePath+"/adapters" || strings.HasPrefix(imp, modulePath+"/adapters/") {
+			return ""
+		}
+	}
+	return checkImport(pkg, imp)
+}
+
 // sameApplicationContext reports whether two application packages belong to
 // the same bounded context, so a context may split its ports and use cases
 // across packages without importing another context's internals.
