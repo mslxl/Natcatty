@@ -166,6 +166,10 @@ func fieldValue(settings domain.Settings, field domain.Field) string {
 		return settings.Appearance.TerminalTheme
 	case domain.FieldTerminalFontFamily:
 		return settings.Appearance.TerminalFontFamily
+	case domain.FieldLocalShell:
+		return settings.Appearance.LocalShell.Path
+	case domain.FieldLocalShellArgs:
+		return settings.Appearance.LocalShell.Args
 	case domain.FieldSyncProvider:
 		return settings.Sync.Provider
 	case domain.FieldHistorySyncAddress:

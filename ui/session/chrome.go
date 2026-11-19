@@ -311,6 +311,12 @@ func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *
 				if selected {
 					command.Bold()
 				}
+				if suggestion.Description != "" {
+					// The catalogs' one-line hint sits beside the command. It
+					// never replaces the typed text or affects acceptance.
+					ui.Text(c, suggestion.Description).FontSize(9).SingleLine().
+						MaxWidth(260).TextColor(colors.Muted)
+				}
 				if source != "" {
 					ui.Text(c, source).FontSize(9).SingleLine().TextColor(colors.Muted)
 				}

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
@@ -16,6 +18,7 @@ import (
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
 	telnetmodel "github.com/mslxl/natcatty/domain/model/telnet"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
@@ -435,6 +438,51 @@ func TestLocalSessionStillUsesTheLocalFactory(t *testing.T) {
 	_ = transport.Close()
 	if local.spec.Kind != appsession.KindLocal {
 		t.Fatalf("local factory spec = %+v, want a local Session", local.spec)
+	}
+}
+
+// TestLocalSessionUsesTheConfiguredShell proves every local open, not just the
+// shell's Tab action, carries the custom shell into the transport.
+func TestLocalSessionUsesTheConfiguredShell(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := domainpreferences.Defaults()
+	settings.Appearance.LocalShell = domainpreferences.LocalShell{
+		Path: executable,
+		Args: "-l",
+	}
+	local := &factoryLocal{}
+	factory := newTransportFactory(local, nil, nil, nil, nil).
+		withPreferences(fakePreferenceSource{settings: settings})
+
+	transport, err := factory.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindLocal})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	_ = transport.Close()
+	if want := []string{executable, "-l"}; !slices.Equal(local.spec.Command, want) {
+		t.Fatalf("local command = %q, want %q", local.spec.Command, want)
+	}
+}
+
+func TestLocalSessionFallsBackWhenTheConfiguredShellIsMissing(t *testing.T) {
+	settings := domainpreferences.Defaults()
+	settings.Appearance.LocalShell = domainpreferences.LocalShell{
+		Path: filepath.Join(t.TempDir(), "no-such-shell"),
+	}
+	local := &factoryLocal{}
+	factory := newTransportFactory(local, nil, nil, nil, nil).
+		withPreferences(fakePreferenceSource{settings: settings})
+
+	transport, err := factory.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindLocal})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	_ = transport.Close()
+	if len(local.spec.Command) != 0 {
+		t.Fatalf("local command = %q, want the OS login shell", local.spec.Command)
 	}
 }
 

@@ -172,6 +172,13 @@ type State struct {
 	vaultVisible  bool
 	// vaultSection is the Vault page the sidebar chose.
 	vaultSection section.Section
+	// hostListChord resolves the catalog's host-list toggle for the active
+	// scheme and the user's overrides. The shell registers it on the terminal
+	// Pane and the Vault list rather than at window scope, so a focused text
+	// field keeps the chord. hostListFocusPending asks the Vault list to take
+	// the keyboard after the chord shows it, so the same chord can hide it.
+	hostListChord        func() (ui.Modifiers, ui.Key, bool)
+	hostListFocusPending bool
 	// home is the page of the home Tab shown last: the Vault, Logs,
 	// monitoring, or System manager. Choosing the home Tab returns to it.
 	home        HomePage
@@ -231,9 +238,13 @@ type State struct {
 	requestSettings  func()
 	requestRedraw    func()
 	sessions         *appsession.Service
-	surfaces         SurfaceFactory
-	trustPrompt      *sessionui.TrustPrompt
-	authPrompt       *sessionui.AuthPrompt
+	// localShell resolves the custom shell a local Session starts: the argv
+	// and whether the configured path was unusable, so the OS login shell
+	// opened instead. Nil asks the OS directly.
+	localShell  func() (command []string, fallback bool)
+	surfaces    SurfaceFactory
+	trustPrompt *sessionui.TrustPrompt
+	authPrompt  *sessionui.AuthPrompt
 	// etResumeStore lets the shell clear a saved ET credential pair when no
 	// live Session owns it any more: a restored reattach the server refuses as
 	// unsupported, or an ET Pane closed while its Session never opened. Nil
@@ -298,18 +309,48 @@ type State struct {
 	broadcastTargets     map[model.SessionID]bool
 	broadcastSessions    map[model.SessionID]bool
 	broadcastTargetIDs   []model.SessionID
+	mainSessionIDs       []model.SessionID
 	broadcastResult      appsession.SendResult
 	broadcastNotice      int
+	composeTargets       map[model.SessionID]bool
+	composeExplicit      bool
+	composeNotice        int
 	composeOpen          bool
 	composeDraft         string
 	composeTrim          bool
 	composeDecodeEscapes bool
 	composeLineMode      appsession.ComposeLineMode
 	composeSending       bool
+	composeReconnecting  bool
+	composeConnection    ComposeConnection
 	composeBroadcast     bool
 	composeResult        appsession.SendResult
 	composeSeq           uint64
 	composeCancel        context.CancelFunc
+
+	// The compose directory picker. Listings run off the UI thread and write
+	// these fields under inputMu; composeDirectorySeq makes a superseded or
+	// canceled listing unable to replace a newer one.
+	composeDirectory        ComposeDirectorySource
+	composeDirectoryOpen    bool
+	composeDirectorySession model.SessionID
+	composeDirectoryShell   string
+	composeDirectoryTracked string
+	composeDirectoryPath    string
+	composeDirectoryTyped   string
+	// composeDirectoryPendingTyped is the resolved path a finished listing
+	// wants the editor to show. The listing goroutine writes only this field;
+	// the UI thread copies it into composeDirectoryTyped, which is the string
+	// the TextInput binds directly and never shares with another goroutine.
+	composeDirectoryPendingTyped string
+	composeDirectoryRequested    string
+	composeDirectoryEntries      []ComposeDirectoryEntry
+	composeDirectoryUnknown      bool
+	composeDirectoryLoading      bool
+	composeDirectoryFailed       bool
+	composeDirectoryUnsupported  bool
+	composeDirectorySeq          uint64
+	composeDirectoryCancel       context.CancelFunc
 
 	// desktopNotice is a non-blocking message for a deep-link or command-line
 	// target the app could not open. It is set and read on the UI thread.
@@ -368,6 +409,14 @@ func WithSessions(service *appsession.Service, surfaces SurfaceFactory) Option {
 		s.sessions = service
 		s.surfaces = surfaces
 	}
+}
+
+// WithLocalShell supplies the custom shell for local Sessions. command is the
+// argv to start; fallback reports that the configured program was unusable,
+// so the OS login shell opens and the shell warns. Without this option a local
+// Tab asks the transport for the OS login shell.
+func WithLocalShell(resolve func() (command []string, fallback bool)) Option {
+	return func(s *State) { s.localShell = resolve }
 }
 
 // ETResumeStore removes a saved ET session pair from the secret store. The app
@@ -531,6 +580,7 @@ func NewState(opts ...Option) *State {
 		active: -1, nextTabNumber: 1, vaultVisible: true, vaultSection: section.Hosts, ctx: ctx, cancel: cancel,
 		broadcastTargets:  make(map[model.SessionID]bool),
 		broadcastSessions: make(map[model.SessionID]bool),
+		composeTargets:    make(map[model.SessionID]bool),
 		composeLineMode:   appsession.ComposePaste,
 	}
 	for _, opt := range opts {
@@ -570,9 +620,10 @@ func (s *State) setProblem(err error) {
 type DesktopNotice string
 
 const (
-	DesktopNoticeNone              DesktopNotice = ""
-	DesktopNoticeInvalidTarget     DesktopNotice = "invalid_target"
-	DesktopNoticeUnsupportedTarget DesktopNotice = "unsupported_target"
+	DesktopNoticeNone               DesktopNotice = ""
+	DesktopNoticeInvalidTarget      DesktopNotice = "invalid_target"
+	DesktopNoticeUnsupportedTarget  DesktopNotice = "unsupported_target"
+	DesktopNoticeLocalShellFallback DesktopNotice = "local_shell_fallback"
 )
 
 // SetDesktopNotice records the banner code. Passing DesktopNoticeNone clears
@@ -655,6 +706,56 @@ func (s *State) ShowHome() {
 	default:
 		s.ShowVault()
 	}
+}
+
+// WithHostListChord supplies the host-list toggle's effective chord. The app
+// resolves it through the dispatcher, so a user rebind reaches the surfaces
+// that register it.
+func WithHostListChord(chord func() (ui.Modifiers, ui.Key, bool)) Option {
+	return func(s *State) { s.hostListChord = chord }
+}
+
+// HostListChord returns the effective host-list chord, if the app wired one.
+func (s *State) HostListChord() (ui.Modifiers, ui.Key, bool) {
+	if s.hostListChord == nil {
+		return 0, 0, false
+	}
+	return s.hostListChord()
+}
+
+// ToggleHostList shows the Vault's Host list, or returns to the active work
+// Tab when the list is already showing. It is the host-list binding's action
+// in the Go port, where the Vault is the host list surface. Hiding needs a
+// work Tab to return to; with none the Vault stays, as the only surface there
+// is. It reports whether the visible surface changed.
+func (s *State) ToggleHostList() bool {
+	if s.vaultVisible {
+		if s.TabCount() == 0 {
+			return false
+		}
+		s.vaultVisible = false
+		s.logsVisible = false
+		s.sftpVisible = false
+		s.hostListFocusPending = false
+		s.RequestRedraw()
+		return true
+	}
+	s.vaultSection = section.Hosts
+	// Set the focus request before showing the Vault: the frame the show
+	// schedules must already know the list takes the keyboard, so the chord
+	// can hide the Vault on its next press.
+	s.hostListFocusPending = true
+	s.ShowVault()
+	return true
+}
+
+// ConsumeHostListFocus reports whether the Vault list should take the
+// keyboard this frame. ToggleHostList asks for it when the chord shows the
+// list, so pressing the chord again hides it without a click.
+func (s *State) ConsumeHostListFocus() bool {
+	pending := s.hostListFocusPending
+	s.hostListFocusPending = false
+	return pending
 }
 
 // ShowVault makes the Vault the visible surface.
@@ -787,7 +888,21 @@ func (s *State) NewTab() error {
 		return ErrNoSessions
 	}
 	s.setProblem(nil)
-	session, err := s.sessions.OpenLocal(context.Background())
+	var command []string
+	if s.localShell != nil {
+		// A new local Tab re-reads the preference. Clear only this feature's
+		// fallback so a fixed path stops warning without hiding an unrelated
+		// deep-link problem.
+		if s.DesktopNotice() == DesktopNoticeLocalShellFallback {
+			s.SetDesktopNotice(DesktopNoticeNone)
+		}
+		var fallback bool
+		command, fallback = s.localShell()
+		if fallback {
+			s.SetDesktopNotice(DesktopNoticeLocalShellFallback)
+		}
+	}
+	session, err := s.sessions.OpenLocalCommand(context.Background(), command)
 	if err != nil {
 		return err
 	}

@@ -104,3 +104,10 @@ tool github.com/egoist/mygo/cmd/mygo
 // verify the removal with `go mod tidy`, internal/netprobe, and the
 // CGO_ENABLED=0 five-target build.
 replace golang.zx2c4.com/wireguard/tun/netstack => golang.zx2c4.com/wireguard v0.0.0-20261024220952-b3bc704ef0ee
+
+// MyGo v0.7.4 is a git submodule at third_party/mygo, pinned by the gitlink.
+// patches/mygo holds the local behavioral patches (link policy while a
+// program takes the mouse, DEC 1001 tracking, ConPTY padding, and encoder mode
+// restoration); scripts/apply-mygo-patches.sh applies them to a clean
+// submodule checkout before building. See patches/mygo/README.md.
+replace github.com/egoist/mygo => ./third_party/mygo

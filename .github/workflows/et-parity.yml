@@ -65,6 +65,9 @@ jobs:
           # mix trees between jobs.
           ref: ${{ github.sha }}
 
+      - name: Prepare MyGo
+        uses: ./.github/actions/prepare-mygo
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -106,6 +109,9 @@ jobs:
           # Pin every job to the workflow's commit so a force-moved tag cannot
           # mix trees between jobs.
           ref: ${{ github.sha }}
+
+      - name: Prepare MyGo
+        uses: ./.github/actions/prepare-mygo
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -183,6 +189,9 @@ jobs:
           # mix trees between jobs.
           ref: ${{ github.sha }}
 
+      - name: Prepare MyGo
+        uses: ./.github/actions/prepare-mygo
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -238,6 +247,9 @@ jobs:
           # Pin every job to the workflow's commit so a force-moved tag cannot
           # mix trees between jobs.
           ref: ${{ github.sha }}
+
+      - name: Prepare MyGo
+        uses: ./.github/actions/prepare-mygo
 
       - name: Set up Go
         uses: actions/setup-go@v5

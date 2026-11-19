@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -220,6 +221,10 @@ type Snapshot struct {
 	// Input is the line being typed but not yet submitted. Autocomplete reads
 	// it without reaching into the terminal's screen buffer.
 	Input string
+	// InputCursor is the cursor's rune offset within Input. It mirrors the
+	// line editor's cursor so an accepted suggestion replaces only the text
+	// left of it and leaves the rest of the line intact.
+	InputCursor int
 	// Busy reports recent output, a running command, or an active transfer.
 	Busy bool
 	// LastActivity is when terminal output last arrived.
@@ -709,8 +714,12 @@ type Service struct {
 	highlightPolicy     func() (bool, []domainterminal.KeywordHighlightRule)
 	captureHook         CaptureHook
 	hostAtuin           HostAtuin
-	mu                  sync.Mutex
-	sessions            map[model.SessionID]*Session
+	// localShell resolves the configured custom shell for a local Session. It
+	// runs before the capture-hook planner so the hook wraps the user's shell
+	// instead of the OS login shell; nil keeps the OS default.
+	localShell func() []string
+	mu         sync.Mutex
+	sessions   map[model.SessionID]*Session
 	// captureNotices records the Host whose capture-hook failure was already
 	// announced, so a reconnect loop does not repeat the capability notice.
 	captureNotices map[string]bool
@@ -802,6 +811,17 @@ func WithCaptureHook(hook CaptureHook) Option {
 // the hook for that Session. A nil policy keeps the normal hook behaviour.
 func WithHostAtuin(policy HostAtuin) Option {
 	return func(s *Service) { s.hostAtuin = policy }
+}
+
+// WithLocalShell resolves the configured custom shell argv for a local
+// Session. It is read before the capture-hook planner so a planned hook wraps
+// the user's shell rather than the OS login shell. The resolver returns nil
+// when no custom shell is configured, or when the configured path is missing
+// (the caller keeps the visible fallback warning). An explicit StartSpec
+// command always wins; this only fills a local Session that named none, which
+// is the workspace restore, split, and retry path.
+func WithLocalShell(resolve func() []string) Option {
+	return func(s *Service) { s.localShell = resolve }
 }
 
 // WithConnectionHook receives one event per completed connection attempt. The
@@ -896,6 +916,17 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		cancel()
 		hostAtuinActive = probe.Present
 		hostAtuinFailed = probe.Failed
+	}
+
+	// Resolve the custom shell for a local Session before the capture hook
+	// plans. The planner rewrites the interactive shell's startup into
+	// spec.Command; resolving afterwards (the transport factory's fallback)
+	// would see a non-empty command and keep the OS login shell. An explicit
+	// StartSpec command, such as the Tab button's, still wins.
+	if spec.Kind == KindLocal && len(spec.Command) == 0 && s.localShell != nil {
+		if command := s.localShell(); len(command) > 0 {
+			spec.Command = command
+		}
 	}
 
 	// The capture hook rewrites the startup before the transport opens: local
@@ -1070,8 +1101,23 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 
 // OpenLocal opens the platform's local shell in a new Session.
 func (s *Service) OpenLocal(ctx context.Context) (*Session, error) {
+	return s.OpenLocalCommand(ctx, nil)
+}
+
+// OpenLocalCommand opens a local Session with an explicit command line. An
+// empty command asks the transport for the platform's login shell. The caller
+// resolves a configured custom shell; this method only carries it through.
+func (s *Service) OpenLocalCommand(ctx context.Context, command []string) (*Session, error) {
 	// The original names local Session logs "Local Terminal".
-	return s.Open(ctx, StartSpec{Kind: KindLocal, Label: "Local Terminal"})
+	return s.Open(ctx, StartSpec{Kind: KindLocal, Label: "Local Terminal", Command: command})
+}
+
+// LocalShellExists reports whether path names a program the OS can start. It
+// resolves PATH but never runs the program, so a custom-shell preference can
+// be checked before a Session opens.
+func LocalShellExists(path string) bool {
+	_, err := exec.LookPath(path)
+	return err == nil
 }
 
 // Label names the Session for logging. It is the Host label the shell opened,
@@ -1388,6 +1434,15 @@ func (s *Session) ID() model.SessionID { return s.id }
 // has no Host and reports "".
 func (s *Session) HostID() model.HostID { return s.spec.HostID }
 
+// BracketedPaste reports whether the peer last enabled DECSET 2004. The
+// compose bar uses it to wrap multiline submissions in one paste.
+func (s *Session) BracketedPaste() bool {
+	if s == nil || s.tap == nil {
+		return false
+	}
+	return s.tap.state(time.Now()).BracketedPaste
+}
+
 // Done is closed once the Session has ended, its final snapshot is published,
 // and its Service has unregistered it. After Done fires, input addressed to the
 // Session by ID reports DeliveryMissing rather than DeliveryFailed.
@@ -1412,6 +1467,7 @@ func (s *Session) Snapshot() Snapshot {
 	snapshot.Title = state.Title
 	snapshot.Command = state.Command
 	snapshot.Input = state.Input
+	snapshot.InputCursor = state.InputCursor
 	snapshot.Busy = state.Busy
 	snapshot.LastActivity = state.LastActivity
 	snapshot.Transfer = state.Transfer

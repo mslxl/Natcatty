@@ -2,10 +2,13 @@ package settings
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
 
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	"github.com/mslxl/natcatty/ui/locales"
 )
@@ -463,5 +466,103 @@ func TestTerminalSettingsInteractionUpdatesTheService(t *testing.T) {
 	tester.Frame()
 	if fake.settings.OSC52 != domainterminal.ClipboardPrompt {
 		t.Fatalf("OSC 52 policy = %q, want prompt", fake.settings.OSC52)
+	}
+}
+
+// TestTerminalSettingsShowTheResolvedLocalShell proves the editor resolves
+// the configured path without executing it, and that a missing path is called
+// out instead of silently looking configured.
+func TestTerminalSettingsShowTheResolvedLocalShell(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	preferences := newFakePreferences()
+	preferences.settings.Appearance.LocalShell = domainpreferences.LocalShell{
+		Path: executable,
+		Args: "-l",
+	}
+	tester := ui.NewTester(viewAt(AreaTerminal, Config{
+		Lock:        NewAppLockState(&fakeAppLock{}),
+		Preferences: NewPreferencesState(preferences),
+		Terminal:    NewTerminalState(newFakeTerminal()),
+	}), 1100, 900)
+	tester.SetLocale("en")
+	tester.Frame()
+	m := locales.In("en")
+	if !tester.HasText(m.SettingsLocalShellTitle()) {
+		t.Fatalf("the local-shell setting is not rendered: %v", tester.Texts())
+	}
+	if !tester.HasText(domainpreferences.FormatArgs([]string{executable, "-l"})) {
+		t.Fatalf("the resolved shell is not shown: %v", tester.Texts())
+	}
+
+	missing := filepath.Join(t.TempDir(), "no-such-shell")
+	preferences.settings.Appearance.LocalShell = domainpreferences.LocalShell{Path: missing}
+	tester.Frame()
+	if !tester.HasText(m.SettingsLocalShellMissing(missing)) {
+		t.Fatalf("the missing shell is not reported: %v", tester.Texts())
+	}
+}
+
+// TestLocalShellArgumentsKeepAPartialDraft proves the arguments field stores
+// the raw string. Saving on every keystroke must not normalize a trailing
+// space or an unclosed quote away while the user is still typing.
+func TestLocalShellArgumentsKeepAPartialDraft(t *testing.T) {
+	preferences := newFakePreferences()
+	state := NewPreferencesState(preferences)
+	draft := state.Field(domainpreferences.FieldLocalShellArgs)
+	for _, typed := range []string{"-l ", `-l --flag "a `, `-l --flag "a b"`} {
+		*draft = typed
+		if !state.Update(func(s *domainpreferences.Settings) {
+			s.Appearance.LocalShell = domainpreferences.LocalShell{
+				Path: "/bin/zsh",
+				Args: *draft,
+			}
+		}) {
+			t.Fatal("the update failed")
+		}
+		if got := state.FieldValue(domainpreferences.FieldLocalShellArgs); got != typed {
+			t.Fatalf("arguments draft = %q after saving %q", got, typed)
+		}
+	}
+	if got := preferences.settings.Appearance.LocalShell.Args; got != `-l --flag "a b"` {
+		t.Fatalf("saved arguments = %q", got)
+	}
+}
+
+// TestTerminalSettingsToggleShiftEnter proves the Terminal area edits the
+// Shift+Enter preference: it is on by default (ESC CR) and clicking the row
+// stores the plain-carriage-return choice.
+func TestTerminalSettingsToggleShiftEnter(t *testing.T) {
+	fakeTerminalSettings := newFakeTerminal()
+	preferences := newFakePreferences()
+	tester := ui.NewTester(viewAt(AreaTerminal, Config{
+		Lock:        NewAppLockState(&fakeAppLock{}),
+		Preferences: NewPreferencesState(preferences),
+		Terminal:    NewTerminalState(fakeTerminalSettings),
+	}), 1100, 900)
+	tester.SetLocale("en")
+	tester.Frame()
+	m := locales.In("en")
+	if !tester.HasText(m.SettingsTerminalShiftEnter()) {
+		t.Fatalf("the Shift+Enter setting is not rendered: %v", tester.Texts())
+	}
+	if preferences.settings.Appearance.TerminalShiftEnterPlain {
+		t.Fatal("Shift+Enter is not ESC CR by default")
+	}
+	if err := tester.Click(m.SettingsTerminalShiftEnter()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if !preferences.settings.Appearance.TerminalShiftEnterPlain {
+		t.Fatal("the Shift+Enter checkbox did not reach the preferences service")
+	}
+	if err := tester.Click(m.SettingsTerminalShiftEnter()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if preferences.settings.Appearance.TerminalShiftEnterPlain {
+		t.Fatal("clicking again did not restore the ESC CR default")
 	}
 }

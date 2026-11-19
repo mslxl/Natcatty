@@ -79,11 +79,11 @@ func (f *typingFactory) at(index int) *typingTransport {
 
 // newTypingState builds a shell whose Panes hold the production terminal
 // surface, so a test types through the same focus path as the app.
-func newTypingState(t *testing.T, factory *typingFactory) *state.State {
+func newTypingState(t *testing.T, factory *typingFactory, extra ...state.Option) *state.State {
 	t.Helper()
 	service := appsession.NewService(factory)
 	t.Cleanup(service.CloseAll)
-	return state.NewState(state.WithSessions(service, func(s *appsession.Session) (state.Surface, error) {
+	options := []state.Option{state.WithSessions(service, func(s *appsession.Session) (state.Surface, error) {
 		return sessionui.New(s,
 			sessionui.WithRedraw(func() {}),
 			sessionui.WithPastePolicy(func() (bool, int) { return false, 2 }),
@@ -92,7 +92,8 @@ func newTypingState(t *testing.T, factory *typingFactory) *state.State {
 			}),
 			sessionui.WithEncodingChange(func(domainterminal.Encoding) {}),
 		)
-	}))
+	})}
+	return state.NewState(append(options, extra...)...)
 }
 
 // eventuallyInput waits for input to reach transport, refreshing frames while

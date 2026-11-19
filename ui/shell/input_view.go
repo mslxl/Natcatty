@@ -41,8 +41,15 @@ func inputCheckbox(c *ui.Context, value *bool, label string) ui.Element {
 // draft, previews the original transformations, and sends to the focused
 // Session or the broadcast set.
 func terminalToolbar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
-	if s.ComposeOpen() && s.ComposeSending() {
-		ui.Text(c, m.ComposeSending()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
+	if s.ComposeOpen() {
+		// A pending reconnect is surfaced before a send starts; the draft
+		// stays in the editor until the target is ready.
+		switch {
+		case s.ComposeReconnecting():
+			ui.Text(c, m.ConnectionStatusReconnecting()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
+		case s.ComposeSending():
+			ui.Text(c, m.ComposeSending()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).SingleLine()
+		}
 	}
 	broadcastLabel := m.BroadcastButton()
 	if s.Broadcasting() {
@@ -254,11 +261,30 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 	body := func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, m.ComposeTitle()).FontSize(kit.M(c).Font.Callout).Bold()
-			// At the minimum width the target and result stay on one line:
-			// the compact target label truncates rather than wrapping the
-			// header into a ragged block above Cancel.
-			ui.Text(c, composeTargetText(s, m)).FontSize(kit.M(c).Font.Caption).
-				TextColor(t.TextMuted).SingleLine()
+			// The target is a menu button: its label is what Send would
+			// deliver to now, and the menu is where the compose-specific set
+			// is chosen. It never edits the toolbar broadcast selection.
+			inputButton(c, composeTargetText(s, m)).Menu(func(menu *ui.Menu) {
+				if menu.Item(m.ComposeTargetFollow()).Checked(!s.ComposeTargetExplicit()).Chosen() {
+					s.ResetComposeTargets()
+					c.Invalidate()
+				}
+				menu.Separator()
+				for _, info := range s.BroadcastSessions() {
+					if !info.Running {
+						continue
+					}
+					selected := s.ComposeTargetSelected(info.ID)
+					if menu.Item(sessionTitle(m, info)).Checked(selected).Chosen() {
+						s.SetComposeTarget(info.ID, !selected)
+						c.Invalidate()
+					}
+				}
+			})
+			if inputButton(c, m.ComposeDirectoryButton()).Clicked() {
+				s.ToggleComposeDirectory()
+				c.Invalidate()
+			}
 			if result, ok := s.ComposeResult(); ok {
 				ui.Text(c, composeResultText(m, result)).FontSize(kit.M(c).Font.Caption).
 					TextColor(summaryColor(result, t)).SingleLine()
@@ -269,6 +295,17 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 				c.Invalidate()
 			}
 		})
+
+		if s.ComposeTargetDiverges() {
+			ui.Text(c, m.ComposeTargetsDiverged()).FontSize(kit.M(c).Font.Caption).
+				TextColor(uitheme.WarningText(t))
+		}
+		if notice := s.ComposeNotice(); notice > 0 {
+			ui.Text(c, m.BroadcastTargetsRemoved(notice)).FontSize(kit.M(c).Font.Caption).
+				TextColor(uitheme.WarningText(t))
+		}
+
+		composeDirectoryPanel(c, s, m, t)
 
 		area := ui.TextArea(c, s.ComposeDraft()).FillWidth().Height(draftHeight).
 			Placeholder(m.ComposePlaceholder()).Label(m.ComposePlaceholder())
@@ -333,7 +370,7 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 			ui.Column(c).Grow(1)
 			targets, _ := s.ComposeTargets()
 			send := inputPrimaryButton(c, m.ComposeSend()).
-				Disabled(preview.Empty() || len(targets) == 0 || s.ComposeSending())
+				Disabled(preview.Empty() || len(targets) == 0 || s.ComposeSending() || s.ComposeReconnecting())
 			if send.Clicked() {
 				s.SendCompose()
 				c.Invalidate()
@@ -356,8 +393,89 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 	})
 }
 
+// composeDirectoryPanel browses the Session's filesystem from the working
+// directory the shell reported. Listing runs through the Session's existing
+// command path; confirming a path only inserts it into the draft.
+func composeDirectoryPanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	// Follow a changed OSC 7 directory and a Session that ended.
+	s.RefreshComposeDirectory()
+	if !s.ComposeDirectoryOpen() {
+		return
+	}
+	ui.Column(c).FillWidth().Padding(4).Gap(3).Radius(t.Radius).
+		Background(t.Surface).Border(1, t.Border).Children(func() {
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.ComposeDirectoryTitle()).FontSize(kit.M(c).Font.Caption).Bold()
+			if path := s.ComposeDirectoryPath(); path != "" {
+				ui.Text(c, path).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted).SingleLine()
+			}
+			ui.Column(c).Grow(1)
+			if inputButton(c, m.ComposeDirectoryUp()).Clicked() {
+				s.ComposeDirectoryUp()
+				c.Invalidate()
+			}
+		})
+		if s.ComposeDirectoryUnknownCWD() {
+			ui.Text(c, m.ComposeDirectoryUnknownCWD()).FontSize(kit.M(c).Font.Caption2).
+				TextColor(uitheme.WarningText(t))
+		}
+		ui.Row(c).FillWidth().Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
+			input := ui.TextInput(c, s.ComposeDirectoryTyped()).
+				Label(m.ComposeDirectoryPathLabel()).Width(360)
+			if input.Changed() {
+				c.Invalidate()
+			}
+			if inputPrimaryButton(c, m.ComposeDirectoryInsert()).Clicked() {
+				s.ConfirmComposeDirectory()
+				c.Invalidate()
+			}
+		})
+		ui.Text(c, m.ComposeDirectoryHint()).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted)
+
+		switch {
+		case s.ComposeDirectoryUnsupported():
+			ui.Text(c, m.ComposeDirectoryUnsupported()).FontSize(kit.M(c).Font.Caption).
+				TextColor(uitheme.DangerText(t))
+		case s.ComposeDirectoryLoading():
+			ui.Text(c, m.ComposeDirectoryLoading()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+		case s.ComposeDirectoryFailed():
+			ui.Text(c, m.ComposeDirectoryFailed()).FontSize(kit.M(c).Font.Caption).
+				TextColor(uitheme.DangerText(t))
+		case len(s.ComposeDirectoryEntries()) == 0:
+			ui.Text(c, m.ComposeDirectoryEmpty()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+		default:
+			// A long listing scrolls inside the panel so the draft, options, and
+			// Send stay in the window.
+			ui.Scroll(c).FillWidth().Height(120).Children(func() {
+				ui.Column(c).FillWidth().Gap(2).Children(func() {
+					for _, entry := range s.ComposeDirectoryEntries() {
+						label := entry.Name
+						if entry.Directory {
+							label += "/"
+						}
+						if inputButton(c, label).Clicked() {
+							if entry.Directory {
+								s.NavigateComposeDirectory(entry.Name)
+							} else {
+								s.InsertComposeDirectoryEntry(entry.Name)
+							}
+							c.Invalidate()
+						}
+					}
+				})
+			})
+		}
+	})
+}
+
 func composeTargetText(s *state.State, m locales.Messages) string {
 	ids, broadcast := s.ComposeTargets()
+	if s.ComposeTargetExplicit() {
+		if len(ids) == 0 {
+			return m.ComposeTargetNone()
+		}
+		return m.ComposeTargetCustom(len(ids))
+	}
 	if broadcast {
 		return m.ComposeTargetBroadcast(len(ids))
 	}

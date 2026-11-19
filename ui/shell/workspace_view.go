@@ -44,6 +44,9 @@ type tabRef struct {
 	detach       func(model.PaneID) bool
 	rename       func(model.PaneID, string) bool
 	retry        func(model.PaneID) bool
+	// magnified reports the Tab's zoomed Pane, or "". While set, the Tree
+	// renders that Pane alone; its hidden members show no drop zones.
+	magnified func() model.PaneID
 	// split marks a Tab with more than one Pane: only then does the focused
 	// Pane need an outline to tell it apart.
 	split bool
@@ -77,7 +80,8 @@ func mainTabRef(owner state.RenderOwner, s *state.State, tabIndex int) tabRef {
 		rename: func(paneID model.PaneID, title string) bool {
 			return s.RenamePane(tabIndex, paneID, title)
 		},
-		retry: func(paneID model.PaneID) bool { return s.RetryPane(id, paneID) },
+		retry:     func(paneID model.PaneID) bool { return s.RetryPane(id, paneID) },
+		magnified: func() model.PaneID { return s.MagnifiedPaneID(tabIndex) },
 	}
 }
 
@@ -322,6 +326,15 @@ func paneTree(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 	if node == nil {
 		return
 	}
+	// A magnified Pane fills its Tab alone. The other members still exist in
+	// the tree and in their Sessions; they are only hidden, so no drop zone
+	// or focus target for them is drawn.
+	if ref.magnified != nil {
+		if ID := ref.magnified(); ID != "" {
+			paneView(c, s, m, t, ref, ID, ordinal)
+			return
+		}
+	}
 	if node.IsPane() {
 		paneView(c, s, m, t, ref, node.PaneID, ordinal)
 		return
@@ -420,6 +433,16 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 			}
 			pane := ui.Column(c).Grow(1).FillHeight().MinWidth(0).
 				Background(t.Background).Clip()
+			// The host-list chord lives on the Pane's focus subtree, not at
+			// window scope, so the compose bar's text field and the Vault's
+			// search field keep it for typing. A scoped handler also wins over
+			// the Backups menu accelerator when the terminal has the keyboard.
+			// Detached windows leave the main Vault alone.
+			if ref.managesPanes {
+				if mods, key, ok := s.HostListChord(); ok {
+					pane.OnShortcut(mods, key, func() { s.ToggleHostList() })
+				}
+			}
 			// Naming the Pane region gives assistive technology and the
 			// layout tests the Pane's exact box. Several Panes in one window
 			// must be distinguishable by their titles.
@@ -455,12 +478,16 @@ func paneDropZone(c *ui.Context, s *state.State, t *ui.Theme,
 		zone = ui.Column(c).Width(4).FillHeight().Radius(2)
 	}
 	if drag, over := ui.DragOver[state.DragItem](zone); over &&
-		drag.Kind == state.DragKindPane && drag.PaneID != paneID {
+		drag.Kind == state.DragKindPane &&
+		s.CanMovePane(drag.TabID, drag.PaneID, tabID, paneID, side) {
+		// Ask the same plan the drop will use, so a Pane on itself, a hidden
+		// member of a zoomed Tab, or a Tab that closed mid-drag never lights.
 		zone.Background(t.Accent)
 	}
 	if drag, dropped := ui.Drop[state.DragItem](zone); dropped &&
 		drag.Kind == state.DragKindPane {
-		if s.MovePane(drag.TabID, drag.PaneID, tabID, paneID, side) {
+		if s.CanMovePane(drag.TabID, drag.PaneID, tabID, paneID, side) &&
+			s.MovePane(drag.TabID, drag.PaneID, tabID, paneID, side) {
 			c.Invalidate()
 		}
 	}

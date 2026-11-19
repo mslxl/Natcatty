@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
 
@@ -203,6 +204,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	var associationsState *settings.AssociationsState
 	var shellState *state.State
 	var quakeState *quakeui.State
+	// dispatcher is built after the shell state, whose surfaces resolve the
+	// host-list chord through it. The closure below only runs during frames.
+	var dispatcher *bindingDispatcher
 	var preferencesState *settings.PreferencesState
 	var shortcutsState *settings.ShortcutsState
 	var searchState *settings.SearchState
@@ -470,6 +474,31 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				Scope:          current.AutocompleteHistoryScope,
 			}
 		},
+		// The catalog annotates rows after ranking, never reorders them. It is
+		// looked up through the live locale, so a language switch changes the
+		// next annotation without rebuilding the service.
+		autocomplete.WithCommandDescriptions(func(command string) string {
+			return locales.CommandDescription(locales.In(i18n.Locale()), command)
+		}),
+		// Snippets are read lazily from the Vault state, which is built later
+		// and reloaded after storage opens. At a program input prompt the
+		// autocomplete popup offers them beside the journal rows.
+		autocomplete.WithSnippets(func() []autocomplete.Snippet {
+			if vaultState == nil {
+				return nil
+			}
+			snippets := vaultState.Snippets()
+			result := make([]autocomplete.Snippet, 0, len(snippets))
+			for _, snippet := range snippets {
+				result = append(result, autocomplete.Snippet{
+					Label:   snippet.Label,
+					Command: snippet.Command,
+					Tags:    append([]string(nil), snippet.Tags...),
+					Package: snippet.Package,
+				})
+			}
+			return result
+		}),
 	)
 	autocompleteService.Load(context.Background())
 	// A Host-Atuin Session captures commands transiently: they feed this
@@ -980,6 +1009,14 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// Tier 1. It contains no binary, reads the user's startup files without
 		// editing them, and is skipped when the setting is off or the transport
 		// owns shell startup.
+		// The custom shell is resolved before the capture hook plans, so a
+		// restored, split, or retried local Session starts the configured
+		// shell too. The Tab action still passes its own resolver through
+		// state.WithLocalShell for the visible missing-path warning.
+		appsession.WithLocalShell(func() []string {
+			command, _ := preferenceService.Settings().Appearance.LocalShell.Command(appsession.LocalShellExists)
+			return command
+		}),
 		appsession.WithCaptureHook(shellhook.NewPlanner(
 			shellhook.WithEnabled(func() bool {
 				return terminalService.Settings().HistoryCaptureHookEnabled
@@ -1244,6 +1281,17 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 					current := terminalService.Settings()
 					return current.AutocompletePopupMenu, current.AutocompleteGhostText
 				}),
+			// At a program input prompt the Vault Snippets join the rows;
+			// the same transient commands still apply. The shell prompt
+			// path above stays history-only.
+			sessionui.WithPromptSuggestions(func(input, scope, cwd string, program bool) []autocomplete.Suggestion {
+				kind := autocomplete.PromptShell
+				if program {
+					kind = autocomplete.PromptProgram
+				}
+				return autocompleteService.SuggestionsAtPrompt(input, scope, cwd, kind,
+					transientRegistry.Entries(s.ID()))
+			}),
 			sessionui.WithAutocompleteDelay(func() int {
 				return terminalService.Settings().AutocompleteDebounceMs
 			}),
@@ -1260,6 +1308,11 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			sessionui.WithTerminalCursor(func() (domainpreferences.CursorStyle, bool) {
 				appearance := preferenceService.Settings().Appearance
 				return appearance.TerminalCursorStyle, !appearance.TerminalCursorSteady
+			}),
+			// Shift+Enter is read on each press, so toggling the Settings
+			// preference applies to open terminals without reopening them.
+			sessionui.WithShiftEnterNewline(func() bool {
+				return !preferenceService.Settings().Appearance.TerminalShiftEnterPlain
 			}),
 			sessionui.WithTerminalTheme(currentTerminalTheme),
 			sessionui.WithTerminalKeybinds(func() []terminal.Keybind {
@@ -1307,6 +1360,12 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// frame that shows the new tab strip or Vault placeholder. Every
 		// window redraws so a lock or unlock propagates.
 		state.WithRedrawRequest(invalidate),
+		// The host-list toggle is registered by the terminal Panes and the
+		// Vault list, not at window scope, so text fields keep the chord. The
+		// dispatcher resolves the live binding and the user's overrides.
+		state.WithHostListChord(func() (ui.Modifiers, ui.Key, bool) {
+			return dispatcher.hostListChord()
+		}),
 		// Tab titles follow the shell-reported OSC 0/2 title according to the
 		// live setting, and a Host rename reaches its already-open Tabs.
 		state.WithDynamicTabTitleMode(func() domainterminal.DynamicTabTitleMode {
@@ -1321,6 +1380,11 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				return "", false
 			}
 			return host.Label, true
+		}),
+		// A local Tab starts the custom shell when one is configured and
+		// usable, and warns when the configured path is gone.
+		state.WithLocalShell(func() ([]string, bool) {
+			return preferenceService.Settings().Appearance.LocalShell.Command(appsession.LocalShellExists)
 		}),
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
 			return newSessionSurface(s)
@@ -1359,6 +1423,25 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				}
 				return shellState.VaultSection()
 			}),
+			// The host list registers the toggle on its own focus subtree, so
+			// the search field above it keeps the chord for typing. Showing
+			// the Vault through the chord also asks the list for the keyboard,
+			// which makes the same chord hide it again without a click.
+			vaultui.WithHostListToggle(
+				func() (ui.Modifiers, ui.Key, bool) { return dispatcher.hostListChord() },
+				func() bool {
+					if shellState == nil {
+						return false
+					}
+					return shellState.ToggleHostList()
+				},
+				func() bool {
+					if shellState == nil {
+						return false
+					}
+					return shellState.ConsumeHostListFocus()
+				},
+			),
 			vaultui.WithLocalTerminal(func() {
 				if shellState != nil {
 					_ = shellState.NewTab()
@@ -1697,7 +1780,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		invalidate()
 	})
 
-	dispatcher := &bindingDispatcher{
+	dispatcher = &bindingDispatcher{
 		service:   keybindingService,
 		shell:     shellState,
 		search:    overlayState,

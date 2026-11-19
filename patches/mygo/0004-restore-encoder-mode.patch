@@ -1,0 +1,299 @@
+diff --git a/plugins/terminal/internal/vt/terminal.go b/plugins/terminal/internal/vt/terminal.go
+index 24e8fca9f..1024979cb 100644
+--- a/plugins/terminal/internal/vt/terminal.go
++++ b/plugins/terminal/internal/vt/terminal.go
+@@ -36,6 +36,17 @@ type Terminal struct {
+ 	// here so that a program asking only for 1001 still counts as taking the
+ 	// mouse (Netcatty patch).
+ 	mouse9, mouse1000, mouse1001, mouse1002, mouse1003 bool
++	// mouseOrder is the tracking modes a program set, in the order it last
++	// set them. When a reset of one mode turns the C encoder off while
++	// another is still set, the last mode in this order is the one the
++	// encoder goes back to (Netcatty patch).
++	mouseOrder []int
++	// encoderMode is the tracking mode the C library's encoder has, as the
++	// fork last read from the output or wrote itself. The library's parser
++	// keeps the mode of the last mouse-mode sequence, a reset included, so a
++	// reset of any mode turns it off; encoderMode mirrors that (Netcatty
++	// patch).
++	encoderMode int
+ 	// synthetic1000 is set while the fork turned mode 1000 on in the C
+ 	// library to stand for 1001, which it cannot keep, or while that write is
+ 	// pending because the parser was not ground. That mode makes both
+@@ -253,7 +264,7 @@ func (t *Terminal) Write(p []byte) {
+ 		call(fnTerminalVTWrite, t.h, uintptr(unsafe.Pointer(&p[0])), uintptr(len(p)))
+ 		// 1001 is invisible to the C library; make the mode it cannot keep
+ 		// visible to MouseTracking and the encoder.
+-		t.syncSyntheticMouseMode()
++		t.syncMouseMode()
+ 		t.deferred = nil
+ 		// A read that writes no refusal, as OSC 52's, leaves silent set;
+ 		// it is for that read alone.
+@@ -356,78 +367,116 @@ func (t *Terminal) setPrivateMouseModes(params []byte, on bool) {
+ 		switch string(param) {
+ 		case "9":
+ 			t.mouse9 = on
++			t.noteTrackingMode(9, on)
+ 		case "1000":
+ 			t.mouse1000 = on
++			t.noteTrackingMode(1000, on)
+ 		case "1001":
+ 			t.mouse1001 = on
+ 		case "1002":
+ 			t.mouse1002 = on
++			t.noteTrackingMode(1002, on)
+ 		case "1003":
+ 			t.mouse1003 = on
++			t.noteTrackingMode(1003, on)
+ 		}
+ 	}
+ }
+ 
++// noteTrackingMode records a tracking mode a program set or reset and what
++// the C parser's encoder now holds. The library keeps the mode of the last
++// mouse-mode sequence it read, a reset included, so a reset of any mode leaves
++// the encoder with none even when another mode is still set. The order keeps
++// the modes still on, most recently set last, so syncMouseMode can restore the
++// one the program still asked for.
++func (t *Terminal) noteTrackingMode(m int, on bool) {
++	t.mouseOrder = slices.DeleteFunc(t.mouseOrder, func(x int) bool { return x == m })
++	if on {
++		t.mouseOrder = append(t.mouseOrder, m)
++		t.encoderMode = m
++	} else {
++		t.encoderMode = 0
++	}
++	if m == 1000 {
++		// The program's own 1000 now owns the bit, set or cleared.
++		t.synthetic1000 = false
++	}
++}
++
+ // clearMouseModes forgets every recorded mouse mode and the synthetic 1000,
+ // as the library does on a reset.
+ func (t *Terminal) clearMouseModes() {
+ 	t.mouse9, t.mouse1000, t.mouse1001, t.mouse1002, t.mouse1003 = false, false, false, false, false
++	t.mouseOrder = t.mouseOrder[:0]
++	t.encoderMode = 0
+ 	t.synthetic1000 = false
+ }
+ 
+-// syncSyntheticMouseMode turns the C library's mode 1000 on or off to stand
+-// for 1001, which it cannot keep.
++// syncMouseMode keeps the C library's mouse encoder in the mode the program's
++// still-set modes ask for.
+ //
+-// The mode is written as output bytes, because the library's mode API sets
+-// the bit without telling the mouse encoder, which reads the parser's own
+-// tracking mode and would then encode nothing. The write is deferred while
+-// the parser holds a partial sequence or rune: raw bytes fed into it then
+-// would abort the program's split CSI, and the encoder would stay dead.
++// The library's encoder keeps the mode of the last mouse-mode sequence its
++// parser read, and a reset of any mode turns it off even when another mode is
++// still set: after 1002 h then 1000 l the library reports tracking on (the 1002
++// bit stays set) while the encoder writes nothing, so a click is neither
++// reported to the program nor left to the link and the selection. The fork
++// restores the most recently set mode still on, so MouseTracking and the
++// encoder agree. A 1001, which the library drops, is emulated with a 1000 the
++// fork writes itself.
+ //
+-// Once the program takes a mode of its own, the synthetic 1000 is dropped
+-// without a reset write. The library's tracking mode is the mode of the last
+-// mouse-mode sequence it read, not a combination of the bits: a 1000 reset
+-// after 1002 or 1003 turns tracking off while their bits stay set, and the
+-// encoder then reports nothing. Leaving the bit alone keeps the program's
+-// mode in force.
+-func (t *Terminal) syncSyntheticMouseMode() {
+-	real := t.mouse9 || t.mouse1000 || t.mouse1002 || t.mouse1003
++// The write is deferred while the parser holds a partial sequence or rune: raw
++// bytes fed into it then would abort the program's split CSI, and the encoder
++// would stay dead. Every Write recomputes the wanted mode, so a deferred write
++// is retried until it can be made.
++func (t *Terminal) syncMouseMode() {
++	real := len(t.mouseOrder) > 0
+ 	if t.mouse1001 && !real {
+ 		// Re-assert on every write, not just when the state flips: a 1000
+-		// toggle later in the same output may have cleared the bit.
++		// reset later in the same output may have cleared the bit.
+ 		t.synthetic1000 = true
+-		t.enableSyntheticMouseMode()
++		t.restoreMouseMode(1000)
+ 		return
+ 	}
+-	if !t.synthetic1000 {
+-		return
++	if t.synthetic1000 {
++		// A program mode takes over, or 1001 ended. Clear the fork's 1000 bit
++		// rather than leaving it: the library's bits outlive the encoder mode,
++		// and a leftover 1000 would make MouseTracking true with no encoder
++		// mode once the program's own mode ends.
++		t.clearSyntheticMouse1000()
+ 	}
++	want := 0
+ 	if real {
+-		// The program's own mode now takes the mouse.
+-		t.synthetic1000 = false
+-		return
++		want = t.mouseOrder[len(t.mouseOrder)-1]
+ 	}
+-	t.disableSyntheticMouseMode()
++	t.restoreMouseMode(want)
+ }
+ 
+-// enableSyntheticMouseMode writes mode 1000 on, if the parser can take it now.
+-// A deferred write stays pending, as synthetic1000 records, until the next
+-// write finds the parser quiescent.
+-func (t *Terminal) enableSyntheticMouseMode() {
+-	if !t.parserQuiescent() {
++// restoreMouseMode writes the sequence that makes the C encoder track want, or
++// none for 0, unless it already does. A write the parser cannot take now is
++// retried on the next Write, which recomputes the wanted mode.
++func (t *Terminal) restoreMouseMode(want int) {
++	if want == t.encoderMode || !t.parserQuiescent() {
++		return
++	}
++	if want == 0 {
++		t.writeSyntheticMouseMode(fmt.Appendf(nil, "\x1b[?%dl", t.encoderMode))
++		t.encoderMode = 0
+ 		return
+ 	}
+-	t.writeSyntheticMouseMode([]byte("\x1b[?1000h"))
++	t.writeSyntheticMouseMode(fmt.Appendf(nil, "\x1b[?%dh", want))
++	t.encoderMode = want
+ }
+ 
+-// disableSyntheticMouseMode writes mode 1000 off and forgets the synthetic
+-// bit, but only once the write can be made: the bit stays pending until then.
+-func (t *Terminal) disableSyntheticMouseMode() {
++// clearSyntheticMouse1000 clears the 1000 bit the fork set for 1001 once the
++// program's own mode takes over or 1001 ends. A write the parser cannot take
++// now stays pending, as synthetic1000 records, until the next Write.
++func (t *Terminal) clearSyntheticMouse1000() {
+ 	if !t.parserQuiescent() {
+ 		return
+ 	}
+-	t.synthetic1000 = false
+ 	t.writeSyntheticMouseMode([]byte("\x1b[?1000l"))
++	t.synthetic1000 = false
++	t.encoderMode = 0
+ }
+ 
+ func (t *Terminal) writeSyntheticMouseMode(seq []byte) {
+@@ -563,7 +612,7 @@ func (t *Terminal) Mode(m Mode) bool {
+ func (t *Terminal) SetMode(m Mode, v bool) {
+ 	if m == ModeHighlightMouse {
+ 		t.mouse1001 = v
+-		t.syncSyntheticMouseMode()
++		t.syncMouseMode()
+ 		return
+ 	}
+ 	c := modeConfig{mode: uint16(m), value: v}
+diff --git a/plugins/terminal/internal/vt/terminal_test.go b/plugins/terminal/internal/vt/terminal_test.go
+index c5c4b0741..ccbd84743 100644
+--- a/plugins/terminal/internal/vt/terminal_test.go
++++ b/plugins/terminal/internal/vt/terminal_test.go
+@@ -296,3 +296,104 @@ func TestDeferredSyntheticResetIsWrittenLater(t *testing.T) {
+ 		t.Fatal("the deferred synthetic reset was never written")
+ 	}
+ }
++
++// mousePressReport is what the encoder writes for a left press, or nil when
++// the program asked for no such event.
++func mousePressReport(t *testing.T, term *Terminal) []byte {
++	t.Helper()
++	encoder, err := NewMouseEncoder()
++	if err != nil {
++		t.Fatalf("NewMouseEncoder: %v", err)
++	}
++	defer encoder.Free()
++	encoder.Sync(term, 800, 600, 8, 16, 0, 0, false)
++	return encoder.Encode(MousePress, ButtonLeft, 0, 20, 20)
++}
++
++// TestMouseTrackingAgreesWithTheEncoder pins the invariant a click relies on:
++// whenever MouseTracking says a program takes the mouse, the encoder writes a
++// report, and when it does not, the encoder is silent. The library's encoder
++// keeps the mode of the last mouse-mode sequence, a reset included, while its
++// aggregate bit stays set; the fork restores the mode a program still asked
++// for, so a click after 1002 h then 1000 l is never dead.
++func TestMouseTrackingAgreesWithTheEncoder(t *testing.T) {
++	cases := []struct {
++		name   string
++		output string
++		want   bool
++	}{
++		{"none", "", false},
++		{"1000", "\x1b[?1000h", true},
++		{"1002", "\x1b[?1002h", true},
++		{"1002 then 1000 reset", "\x1b[?1002h\x1b[?1000l", true},
++		{"1003 then 1000 reset", "\x1b[?1003h\x1b[?1000l", true},
++		{"9 then 1000 reset", "\x1b[?9h\x1b[?1000l", true},
++		{"1002 then 1002 reset", "\x1b[?1002h\x1b[?1002l", false},
++		{"1000 then 1000 reset", "\x1b[?1000h\x1b[?1000l", false},
++		{"1002 then 1000 set", "\x1b[?1002h\x1b[?1000h", true},
++		{"1002 1000 then 1000 reset", "\x1b[?1002h\x1b[?1000h\x1b[?1000l", true},
++		{"1001 only", "\x1b[?1001h", true},
++		{"1001 then 1001 reset", "\x1b[?1001h\x1b[?1001l", false},
++		{"1001 then 1002 then 1002 reset", "\x1b[?1001h\x1b[?1002h\x1b[?1002l", true},
++		{"1001 then 1002 then 1000 reset", "\x1b[?1001h\x1b[?1002h\x1b[?1000l", true},
++		{"1002 then 1000 reset then 1002 reset", "\x1b[?1002h\x1b[?1000l\x1b[?1002l", false},
++		{"1001 then 1002 then 1001 reset", "\x1b[?1001h\x1b[?1002h\x1b[?1001l", true},
++		{"1001 then 1000 then 1000 reset", "\x1b[?1001h\x1b[?1000h\x1b[?1000l", true},
++		{"RIS", "\x1b[?1002h\x1bc", false},
++	}
++	for _, testCase := range cases {
++		t.Run(testCase.name, func(t *testing.T) {
++			term := newTestTerminal(t)
++			term.Write([]byte(testCase.output))
++			got := term.MouseTracking()
++			report := mousePressReport(t, term)
++			if got != testCase.want {
++				t.Fatalf("MouseTracking = %v, want %v", got, testCase.want)
++			}
++			if (len(report) > 0) != got {
++				t.Fatalf("MouseTracking = %v but the encoder wrote %q", got, report)
++			}
++		})
++	}
++}
++
++// TestRestoredMouseModeWaitsForTheParser pins the deferral: a 1000 reset that
++// turns the encoder off while 1002 is still set cannot be answered until the
++// program's split sequence ends; the fork restores 1002 on the next read.
++func TestRestoredMouseModeWaitsForTheParser(t *testing.T) {
++	term := newTestTerminal(t)
++	term.Write([]byte("\x1b[?1002h"))
++	term.Write([]byte("\x1b[?1000"))
++	if got := mousePressReport(t, term); len(got) == 0 {
++		t.Fatal("the encoder lost 1002 while the parser held a partial sequence")
++	}
++	term.Write([]byte("l"))
++	if !term.MouseTracking() {
++		t.Fatal("MouseTracking is off after 1000 l while 1002 is set")
++	}
++	if got := mousePressReport(t, term); len(got) == 0 {
++		t.Fatal("the encoder stayed off after a split 1000 reset; clicks are dead")
++	}
++}
++
++// TestSyntheticHighlightModeLeavesNoTrackingBitBehind pins the cleanup: a
++// program that asks for 1001, then 1002, then resets 1002 must not leave the
++// fork's synthetic 1000 behind to make MouseTracking true over a dead encoder.
++func TestSyntheticHighlightModeLeavesNoTrackingBitBehind(t *testing.T) {
++	term := newTestTerminal(t)
++	term.Write([]byte("\x1b[?1001h\x1b[?1002h\x1b[?1002l"))
++	// 1001 is still on, so the fork emulates it again.
++	if !term.MouseTracking() {
++		t.Fatal("1001 stopped taking the mouse after a program mode ended")
++	}
++	if got := mousePressReport(t, term); len(got) == 0 {
++		t.Fatal("the emulated 1001 has no encoder report")
++	}
++	term.Write([]byte("\x1b[?1001l"))
++	if term.MouseTracking() {
++		t.Fatal("MouseTracking stayed on after every mode ended")
++	}
++	if got := mousePressReport(t, term); len(got) > 0 {
++		t.Fatalf("the encoder still reports after every mode ended: %q", got)
++	}
++}

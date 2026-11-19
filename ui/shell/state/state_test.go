@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -135,20 +136,22 @@ type testGraph struct {
 	changes  atomic.Int32
 }
 
-func newTestGraph(t *testing.T) *testGraph {
+func newTestGraph(t *testing.T, opts ...Option) *testGraph {
 	t.Helper()
 	graph := &testGraph{}
 	graph.factory = &fakeFactory{transport: newFakeTransport()}
 	service := appsession.NewService(graph.factory)
 	t.Cleanup(service.CloseAll)
 	graph.surface = &fakeSurface{}
-	graph.state = NewState(
+	options := []Option{
 		WithRedrawRequest(func() { graph.changes.Add(1) }),
 		WithSessions(service, func(session *appsession.Session) (Surface, error) {
 			graph.sessions = append(graph.sessions, session)
 			return graph.surface, nil
 		}),
-	)
+	}
+	options = append(options, opts...)
+	graph.state = NewState(options...)
 	return graph
 }
 
@@ -185,6 +188,92 @@ func TestNewTabOpensALocalShellSessionAndSurface(t *testing.T) {
 	}
 	if snapshot.Status != appsession.StatusRunning {
 		t.Errorf("session status = %q, want %q", snapshot.Status, appsession.StatusRunning)
+	}
+}
+
+// TestNewTabStartsTheConfiguredLocalShell proves the shell passes the
+// preference's argv straight to the Session launcher. The fake factory is the
+// launcher here, so no real shell is started.
+func TestNewTabStartsTheConfiguredLocalShell(t *testing.T) {
+	command := []string{"/opt/fake-shell", "-l", "arg with space"}
+	graph := newTestGraph(t, WithLocalShell(func() ([]string, bool) {
+		return command, false
+	}))
+
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatalf("NewTab: %v", err)
+	}
+	if !slices.Equal(graph.factory.spec.Command, command) {
+		t.Fatalf("local Session command = %q, want %q", graph.factory.spec.Command, command)
+	}
+	if graph.factory.spec.Kind != appsession.KindLocal {
+		t.Fatalf("Session kind = %q, want local", graph.factory.spec.Kind)
+	}
+	if got := graph.state.DesktopNotice(); got != DesktopNoticeNone {
+		t.Fatalf("desktop notice = %q, want none", got)
+	}
+}
+
+// TestNewTabFallsBackWhenTheConfiguredShellIsMissing proves an unusable path
+// never blocks a Tab: the Session opens the OS login shell and the shell shows
+// the warning.
+func TestNewTabFallsBackWhenTheConfiguredShellIsMissing(t *testing.T) {
+	graph := newTestGraph(t, WithLocalShell(func() ([]string, bool) {
+		return nil, true
+	}))
+
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatalf("NewTab: %v", err)
+	}
+	if len(graph.factory.spec.Command) != 0 {
+		t.Fatalf("local Session command = %q, want the OS login shell", graph.factory.spec.Command)
+	}
+	if got := graph.state.DesktopNotice(); got != DesktopNoticeLocalShellFallback {
+		t.Fatalf("desktop notice = %q, want the local-shell fallback", got)
+	}
+	if graph.state.TabCount() != 1 {
+		t.Fatalf("tabs = %d, want one", graph.state.TabCount())
+	}
+}
+
+// TestNewTabClearsTheShellFallbackAfterTheSettingIsFixed proves the warning
+// does not outlive the bad path.
+func TestNewTabClearsTheShellFallbackAfterTheSettingIsFixed(t *testing.T) {
+	missing := true
+	graph := newTestGraph(t, WithLocalShell(func() ([]string, bool) {
+		if missing {
+			return nil, true
+		}
+		return []string{"/opt/fake-shell"}, false
+	}))
+
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if graph.state.DesktopNotice() != DesktopNoticeLocalShellFallback {
+		t.Fatal("the fallback warning was not shown")
+	}
+	missing = false
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if got := graph.state.DesktopNotice(); got != DesktopNoticeNone {
+		t.Fatalf("desktop notice = %q after the fix, want none", got)
+	}
+	if !slices.Equal(graph.factory.spec.Command, []string{"/opt/fake-shell"}) {
+		t.Fatalf("command = %q, want the configured shell", graph.factory.spec.Command)
+	}
+}
+
+// TestNewTabWithoutACustomShellAsksTheOS proves clearing the preference
+// restores the platform login shell.
+func TestNewTabWithoutACustomShellAsksTheOS(t *testing.T) {
+	graph := newTestGraph(t, WithLocalShell(func() ([]string, bool) { return nil, false }))
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.factory.spec.Command) != 0 {
+		t.Fatalf("local Session command = %q, want the OS login shell", graph.factory.spec.Command)
 	}
 }
 
@@ -590,6 +679,48 @@ func TestSendToFocusedWithoutRunUsesTheSafeInsertionPath(t *testing.T) {
 	graph.factory.transport.mu.Unlock()
 	if len(input) != 0 {
 		t.Fatalf("insertion bypassed the surface and reached the shell: %q", input)
+	}
+}
+
+// TestSnippetInsertionKeepsTheLineEditorTextAndSafety mirrors the
+// autocomplete snippet acceptance at the shell seam: inserting a snippet
+// never submits a line, never clears text the terminal holds to the right of
+// its cursor (InsertText only writes at the cursor), and a multi-line snippet
+// at a target without bracketed paste is refused with ErrInsertUnsafe rather
+// than typed as several lines.
+func TestSnippetInsertionKeepsTheLineEditorTextAndSafety(t *testing.T) {
+	graph := newTestGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatalf("NewTab: %v", err)
+	}
+
+	const command = "work@example.com"
+	if !graph.state.SendToFocused(command, false) {
+		t.Fatal("the single-line snippet insertion was refused")
+	}
+	if len(graph.surface.inserted) != 1 || graph.surface.inserted[0] != command {
+		t.Fatalf("inserted = %+v, want the snippet command unchanged", graph.surface.inserted)
+	}
+	graph.factory.transport.mu.Lock()
+	input := append([]byte(nil), graph.factory.transport.input...)
+	graph.factory.transport.mu.Unlock()
+	if len(input) != 0 {
+		t.Fatalf("the snippet insertion reached the shell as input: %q", input)
+	}
+
+	const multiline = "first line\nsecond line"
+	graph.surface.insertErr = sessionui.ErrInsertUnsafe
+	if graph.state.SendToFocused(multiline, false) {
+		t.Fatal("the refused multi-line snippet was accepted")
+	}
+	if len(graph.surface.inserted) != 1 {
+		t.Fatalf("the refused snippet reached the surface: %+v", graph.surface.inserted)
+	}
+	graph.factory.transport.mu.Lock()
+	input = append([]byte(nil), graph.factory.transport.input...)
+	graph.factory.transport.mu.Unlock()
+	if len(input) != 0 {
+		t.Fatalf("the refused snippet reached the shell: %q", input)
 	}
 }
 
