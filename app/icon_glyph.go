@@ -8,13 +8,15 @@ import (
 	"sync"
 )
 
+// trayIconGlyphPNG is a small fallback notification-area mark for cases where
+// the selected PNG asset cannot be decoded. The renderer is portable and lives
+// here rather than in the desktop-only tray wiring so the phone build can
+// share the icon code without linking the tray.
 var (
 	trayIconOnce sync.Once
 	trayIconData []byte
 )
 
-// trayIconGlyphPNG returns a small fallback notification-area mark for cases
-// where the selected PNG asset cannot be decoded.
 func trayIconGlyphPNG() []byte {
 	trayIconOnce.Do(func() {
 		const size = 32

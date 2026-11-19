@@ -11,5 +11,13 @@
   },
   "macos": {
     "minimumSystemVersion": "13.0"
+  },
+  "ios": {
+    "minimumSystemVersion": "17.0",
+    "multipleWindows": false,
+    "orientations": ["portrait", "landscape"],
+    "infoPlist": {
+      "NSLocalNetworkUsageDescription": "Connect to SSH hosts on your local network."
+    }
   }
 }

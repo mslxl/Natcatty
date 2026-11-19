@@ -1,3 +1,5 @@
+//go:build !ios && !android
+
 // Package app is the composition root: it constructs the windows, the shell
 // state, the command registry, and the native menu, and wires MyGo's
 // application lifecycle to them. It is the only package besides main that

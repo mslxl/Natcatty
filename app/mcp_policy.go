@@ -1,3 +1,5 @@
+//go:build !ios && !android
+
 // External MCP policy surface. This file composes the ticket-56 read bridge
 // with ticket 57's forced scope, session allowlist, ownership generations,
 // permission modes, and expiring approvals. It is the handler the loopback

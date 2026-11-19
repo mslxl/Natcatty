@@ -1,4 +1,4 @@
-//go:build launchsmoke
+//go:build launchsmoke && !ios && !android
 
 package app
 

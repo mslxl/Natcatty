@@ -1,3 +1,5 @@
+//go:build !ios && !android
+
 package app
 
 import "github.com/egoist/mygo"
