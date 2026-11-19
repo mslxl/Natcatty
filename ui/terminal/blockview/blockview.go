@@ -39,8 +39,10 @@ const maxRawLines = 500
 const maxCellLines = 40
 
 // Render draws every block in the store, in order, each with its prompt line
-// above it.
-func Render(c *ui.Context, store *model.Store, engine *lens.Engine, onCopy func(string)) {
+// above it. viewport is the visible part of the flow in window coordinates
+// (the zero Rect when the caller has none); a block's toolbar uses it to stay
+// inside the visible range.
+func Render(c *ui.Context, store *model.Store, engine *lens.Engine, viewport ui.Rect, onCopy func(string)) {
 	blocks := store.Snapshot()
 	col := ui.Column(c).Gap(10).FillWidth()
 	col.Children(func() {
@@ -51,7 +53,7 @@ func Render(c *ui.Context, store *model.Store, engine *lens.Engine, onCopy func(
 			if !blocks[i].Exited {
 				continue
 			}
-			RenderCommand(c, store, engine, &blocks[i], onCopy)
+			RenderCommand(c, store, engine, &blocks[i], viewport, onCopy)
 		}
 	})
 }
@@ -61,15 +63,16 @@ func Render(c *ui.Context, store *model.Store, engine *lens.Engine, onCopy func(
 // claimed, plain cells. Terminal builds .sf-block only for a lens's command: its bar
 // always carries the lens name and the Native/Raw switch, so a plain command is
 // left as terminal output.
-func RenderCommand(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, onCopy func(string)) {
+func RenderCommand(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, viewport ui.Rect, onCopy func(string)) {
 	group := ui.Column(c).Gap(0).FillWidth()
 	group.Children(func() {
 		renderPromptLine(c, b)
 		if b.LensID == "" {
 			renderCell(c, store, b)
+			renderImages(c, b)
 			return
 		}
-		renderBlock(c, store, engine, b, onCopy)
+		renderBlock(c, store, engine, b, viewport, onCopy)
 	})
 }
 
@@ -97,10 +100,10 @@ func renderPromptLine(c *ui.Context, b *model.Block) {
 // lens view or the raw output, and the foot. The flow draws the prompt line with
 // RenderCommand; a caller that shows a block on its own gets only the block.
 func RenderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, onCopy func(string)) {
-	renderBlock(c, store, engine, b, onCopy)
+	renderBlock(c, store, engine, b, ui.Rect{}, onCopy)
 }
 
-func renderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, onCopy func(string)) {
+func renderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, viewport ui.Rect, onCopy func(string)) {
 	t := c.Theme()
 	// Native holds a lens.Node for blocks a lens claimed.
 	native, hasNative := b.Native.(lens.Node)
@@ -138,8 +141,9 @@ func renderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *mode
 		// Terminal's .sf-block-bar: always mounted, faded in on hover; it is absolutely
 		// positioned, so it never takes room in the flow and a block never moves
 		// under the pointer.
-		renderActions(c, store, b, hasNative, onCopy, hovered)
+		renderActions(c, store, b, card, viewport, hasNative, onCopy, hovered)
 		renderBody(c, store, b, native, hasNative, engine)
+		renderImages(c, b)
 		renderFoot(c, b)
 		// Terminal keeps a question a program is waiting on visible on the block
 		// ("they show … any prompt waiting on you, such as `[y/N]`"). A running
@@ -277,7 +281,42 @@ func withAlpha(c ui.Color, a float32) ui.Color {
 // renderActions is Terminal's .sf-block-bar: a pill at the block's top-right holding the
 // lens's icon and name, the Native/Raw segmented control and the copy button. It
 // lives on an absolute row, so showing it never moves the block.
-func renderActions(c *ui.Context, store *model.Store, b *model.Block, hasNative bool, onCopy func(string), hovered bool) {
+// The action bar's metrics, and where it sits inside its card.
+const (
+	actionBarHeight = float32(24)
+	actionBarTop    = float32(4) // from the card's padding box, below its border
+	actionBarGap    = float32(4) // breathing room below the bar at the card's end
+)
+
+// actionBarOffset returns the Top the bar needs inside its card so that its
+// window top is the visible top of the block: the bar sticks to the top-right
+// of the block's visible range instead of scrolling away with the body.
+// Terminal's bar is absolutely positioned against the block, and MyGo has no
+// sticky inset, so the offset is recomputed each frame from the card's placed
+// box (the previous frame's, from LayoutBounds: Top is a layout-space inset, so
+// the border box is the right reference) and the viewport the flow drew into.
+// While the block's own top is still visible the bar stays there; once it
+// scrolls above the viewport the bar follows it; and it stops before the
+// block's end so it never leaves the lens.
+func actionBarOffset(viewport, card ui.Rect) float32 {
+	if viewport.H <= 0 || card.H <= 0 {
+		return actionBarTop
+	}
+	// The card's top padding is 1: Top is measured from the padding box,
+	// which starts one DIP below the border box. While the card's own top is
+	// still on screen the bar sits on the card; once that top is above the
+	// viewport it sits on the viewport instead.
+	anchor := max(card.Y+1, viewport.Y)
+	top := anchor + actionBarTop - (card.Y + 1)
+	// The padding box is two DIPs shorter than the border box (1 top,
+	// 1 bottom); the bar may travel no further than its end.
+	if limit := max(actionBarTop, card.H-2-actionBarHeight-actionBarGap); top > limit {
+		top = limit
+	}
+	return top
+}
+
+func renderActions(c *ui.Context, store *model.Store, b *model.Block, card ui.Element, viewport ui.Rect, hasNative bool, onCopy func(string), hovered bool) {
 	bc := lensview.BlockColorsFor(c)
 	// --pop-bg: the surface Terminal's bar sits on, then the fade Terminal animates (0 -> 1
 	// over 150ms) and pointer-events off while it is hidden.
@@ -294,7 +333,7 @@ func renderActions(c *ui.Context, store *model.Store, b *model.Block, hasNative 
 	op := bar.AnimateWith("blockbar:"+rawKey(store, b), target, 150*time.Millisecond, ui.EaseOut)
 	// Terminal hides the bar with translateY(-2px) and lifts it into place on hover, so
 	// it rides down as it fades in.
-	bar.Top(4 + 2*op).Opacity(op).Disabled(!hovered)
+	bar.Top(actionBarOffset(viewport, card.LayoutBounds()) + 2*op).Opacity(op).Disabled(!hovered)
 	bar.Children(func() {
 		// .sf-block-lens: an icon and the name in 11px mono, the muted step, cut at
 		// 220 DIP.
@@ -484,6 +523,22 @@ func renderCell(c *ui.Context, store *model.Store, b *model.Block) {
 		textViewport(c, lines, cellTexts)
 	}
 	renderRawNotice(c, store, b, hidden, expanded)
+}
+
+// renderImages draws the inline pictures a command printed, in the block they
+// belong to. They are part of the block rather than a strip above the live
+// screen, so they sit in the command's output where the program put them and
+// scroll away with it instead of lingering.
+func renderImages(c *ui.Context, b *model.Block) {
+	if len(b.Images) == 0 {
+		return
+	}
+	scope := "block-image:" + strconv.Itoa(b.ID)
+	ui.Column(c).Gap(6).Padding(0, 0, 4, 0).FillWidth().Children(func() {
+		for _, img := range b.Images {
+			lensview.RenderInto(c, lens.Image{Data: img.Data, Path: img.Path, Alt: img.Alt}, scope, nil)
+		}
+	})
 }
 
 // CellRowHeight is one row of the terminal's grid, in DIPs. The flow that draws the

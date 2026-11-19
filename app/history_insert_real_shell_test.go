@@ -149,8 +149,12 @@ func openInsertSurface(t *testing.T, command []string, dir string, waitBracketed
 		Kind:    appsession.KindLocal,
 		Command: command,
 		Dir:     dir,
-		Cols:    100,
-		Rows:    30,
+		// Wide enough that a marker path in realShellDir's temp directory never
+		// soft-wraps: the assertions look for the whole "touch <path>" on one
+		// rendered row, and a macOS $TMPDIR path plus the prompt overflows 100
+		// columns.
+		Cols: 240,
+		Rows: 30,
 	})
 	if err != nil {
 		t.Fatalf("open the real shell: %v", err)
@@ -201,6 +205,7 @@ func posixShellWithoutBracketedPaste(t *testing.T) []string {
 		t.Skip("no POSIX shell on Windows")
 	}
 	if info, err := os.Stat("/bin/sh"); err == nil && !info.IsDir() {
+		useTestShellPrompt(t)
 		return []string{"/bin/sh"}
 	}
 	t.Skip("no /bin/sh is available")

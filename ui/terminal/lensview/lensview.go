@@ -334,9 +334,11 @@ func renderWith(c *ui.Context, n lens.Node, rs *renderState) {
 		md.Text, md.Muted, md.Strong = ms.T1, ms.T3, ms.T1
 		md.Code, md.CodeBackground = ms.T1, ms.CodeBG
 		md.Link = ms.Accent
-		ui.Box(c).MaxHeight(420).Clip().Children(func() {
-			markdown.View(c, n.Text, &markdown.Options{Theme: md})
-		})
+		// The document is part of the flow: its height follows the text, so a
+		// `cat README.md` block shows the whole file and the flow's scroll
+		// reaches it. A fixed cap here clipped every document at 420 DIP and
+		// left no affordance to read the rest.
+		markdown.View(c, n.Text, &markdown.Options{Theme: md})
 	case lens.Meter:
 		renderMeter(c, n)
 	case lens.Progress:
@@ -1508,6 +1510,14 @@ func renderTree(c *ui.Context, n lens.Tree) {
 	ui.Tree(c, func() { build(n.Nodes) })
 }
 
+// listRowKey identifies a list row for MyGo: the row's label and how many
+// equal labels come before it. A comparable struct, so the key follows the
+// row's identity across frames without colliding with another row's text.
+type listRowKey struct {
+	label string
+	nth   int
+}
+
 func renderList(c *ui.Context, n lens.List, rs *renderState) {
 	s := styleFor(c)
 	// The keys are content-derived, not walk-order-derived: the row callbacks run
@@ -1542,8 +1552,18 @@ func renderList(c *ui.Context, n lens.List, rs *renderState) {
 	lb := listState(listKey)
 	// Key keeps the choice on the row's identity when the list is filtered or grows;
 	// Label is left unset, since it also renders the row's name as a text node and
-	// the row draws its own label (and its icon must lead it).
-	lb.st.Key = func(row int) any { return plain(items[row].Label) }
+	// the row draws its own label (and its icon must lead it). Rows may repeat a
+	// label — a listing can hold two equal names, and an icon-only row repeats
+	// its glyph — while MyGo gives one state, and one id, to every element that
+	// shares a key; the occurrence among equal labels keeps repeated rows apart.
+	keys := make([]listRowKey, len(items))
+	seen := make(map[string]int, len(items))
+	for i := range items {
+		label := plain(items[i].Label)
+		keys[i] = listRowKey{label: label, nth: seen[label]}
+		seen[label]++
+	}
+	lb.st.Key = func(row int) any { return keys[row] }
 	lst := ui.List(c, &lb.st, len(items), func(i int) {
 		it := items[i]
 		t := c.Theme()
@@ -1612,10 +1632,11 @@ func renderCode(c *ui.Context, n lens.Code, rs *renderState) {
 	th := c.Theme()
 	s := styleFor(c)
 	codeLines := strings.Count(text, "\n") + 1
+	// The body follows its text. A fixed cap here cut long code silently: the
+	// editor inside was clipped with no way to reach the rest. The lens's own
+	// Clamp ("N more lines · Show all lines") is where a limit belongs, because
+	// it is stated and can be lifted.
 	bodyH := float32(codeLines)*s.LH + 8
-	if bodyH > 320 {
-		bodyH = 320
-	}
 	ui.Column(c).Radius(s.CodeR).Background(s.CodeBG).InsetShadow(0, 0, 1, 0, s.L1).Children(func() {
 		if n.Lang != "" {
 			ui.Row(c).Gap(6).MinHeight(26).Padding(0, 10).Children(func() {
@@ -1716,8 +1737,11 @@ func renderDiff(c *ui.Context, n lens.Diff) {
 				}
 			})
 			ui.Box(c).FillWidth().Height(1).Background(s.L1)
-			// The diff view sizes itself; only its growth is bounded.
-			ui.Box(c).MaxHeight(400).Clip().Children(func() { renderDiffBody(c, n) })
+			// The diff sizes itself and grows with its patch. It used to be
+			// bounded to 400 DIP and clipped, which dropped every line past
+			// the bound: there is no scroll inside to reach them. The flow's
+			// scroll is the scroll.
+			ui.Box(c).FillWidth().Children(func() { renderDiffBody(c, n) })
 		})
 		return
 	}

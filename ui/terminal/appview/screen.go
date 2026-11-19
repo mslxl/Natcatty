@@ -26,13 +26,27 @@ type screen struct {
 	links      []string // OSC 8 hyperlinks, by the index cells store
 	link       int32    // the hyperlink in force, as cells store it
 	cursorOn   bool     // DECSET ?25: whether the program shows the cursor
-	cursor     Cursor
-	colors     TerminalColors
-	grid       [][]cell
-	r, c       int
-	st         sgr
-	savedR     int
-	savedC     int
+	// cursorShape is the shape a program asked for with DECSCUSR (CSI n SP q),
+	// which overrides the application's cursor preference while it is set.
+	cursorShape    terminal.CursorStyle
+	cursorShapeSet bool
+	// alt is DECSET ?47/?1047/?1049: a full-screen program owns the screen.
+	// Its snapshot carries that screen alone, with no scrollback, so rows
+	// recorded against the main screen's scrollback do not name its rows.
+	alt    bool
+	cursor Cursor
+	colors TerminalColors
+	grid   [][]cell
+	// dropped is how many rows the replay cap threw away above the grid. A row
+	// recorded in an earlier, uncapped replay is still found in this one by
+	// subtracting it (see CursorReplayRow and Tail.PromptRow): the cap slides
+	// the window down as output arrives, and without the count every such row
+	// named a different line.
+	dropped int
+	r, c    int
+	st      sgr
+	savedR  int
+	savedC  int
 }
 
 type cell struct {
@@ -101,8 +115,11 @@ func parseScreenWithTheme(data []byte, cols, rows int, showCursor bool, cursor C
 			}
 			s.csi(text[i+2:j], text[j])
 			i = j + 1
-		case ch == 0x1b && i+1 < len(text) && (text[i+1] == ']' || text[i+1] == 'P'):
-			// OSC/DCS: an OSC 8 opens or closes a hyperlink; the rest is skipped.
+		case ch == 0x1b && i+1 < len(text) && (text[i+1] == ']' || text[i+1] == 'P' || text[i+1] == '_'):
+			// OSC/DCS/APC: an OSC 8 opens or closes a hyperlink; the rest is
+			// skipped. APC carries Kitty graphics (ESC _ G …, the base64 of an
+			// image): skipped whole, its payload would otherwise be drawn as
+			// text where a program placed a picture.
 			j := i + 2
 			for j < len(text) {
 				if text[j] == 0x07 {
@@ -123,7 +140,18 @@ func parseScreenWithTheme(data []byte, cols, rows int, showCursor bool, cursor C
 			}
 			i = j
 		case ch == 0x1b:
-			i += 2 // two-byte escape (ESC ( B, ESC 7 …): the cell grid ignores it
+			// A one- or two-byte escape: ESC 7 saves the cursor, ESC ( B
+			// designates the ASCII charset, ESC # 8 fills the screen with E.
+			// The cell grid ignores them, but it has to skip the whole
+			// sequence: an escape with an intermediate byte (0x20–0x2f) ends
+			// on the byte after it, and skipping only two bytes left that
+			// final byte — the "B" of ESC ( B, which vim and other
+			// full-screen programs emit constantly — to be drawn as text.
+			i++
+			if i < len(text) && text[i] >= 0x20 && text[i] <= 0x2f {
+				i++
+			}
+			i++
 		case ch == '\r':
 			s.c = 0
 			i++
@@ -163,6 +191,9 @@ func (s *screen) clearAll() {
 		s.grid[i] = make([]cell, s.cols)
 	}
 	s.top = 0
+	// The clear starts a new replay: its first row is the origin rows recorded
+	// against this screen count from.
+	s.dropped = 0
 }
 
 func (s *screen) lineFeed() {
@@ -191,6 +222,20 @@ func (s *screen) ensureRow(row int) {
 	if len(s.grid) > maxGridRows {
 		drop := len(s.grid) - maxGridRows
 		s.grid = s.grid[drop:]
+		s.dropped += drop
+		// The cursor and the saved cursor index into the grid. When the oldest
+		// rows go, the rows holding them move up by the same count; without
+		// this the cursor pointed past the last row after the 400th line of a
+		// long snapshot, and put skipped every later write: the newest rows —
+		// the prompt and the line being typed on them — stayed blank.
+		s.r -= drop
+		s.savedR -= drop
+		if s.r < 0 {
+			s.r = 0
+		}
+		if s.savedR < 0 {
+			s.savedR = 0
+		}
 		s.top -= drop
 		if s.top < 0 {
 			s.top = 0
@@ -231,6 +276,18 @@ func (s *screen) csi(params string, final byte) {
 		if final == 'h' || final == 'l' {
 			s.decset(csiNums(params[1:]), final == 'h')
 		}
+		return
+	}
+	if len(params) > 0 && (params[0] == '=' || params[0] == '>' || params[0] == '<') {
+		// Private-parameter sequences change input encoding, not the cell
+		// grid: the kitty keyboard protocol's CSI = flags ; mode u sets its
+		// flags and CSI > flags u pushes them, and xterm's CSI > 4 ; n m sets
+		// modifyOtherKeys. Read as the drawing commands whose final bytes
+		// they share (CSI u restores the cursor, CSI m is Select Graphic
+		// Rendition), they moved the cursor to the saved position and
+		// repainted text: Ghostty's snapshot of a vim screen ends with
+		// CSI = 3 ; 1 u, which put the cursor back at the top-left and drew
+		// the charset escape after it there.
 		return
 	}
 	nums := csiNums(params)
@@ -304,6 +361,23 @@ func (s *screen) csi(params string, final byte) {
 		s.savedR, s.savedC = s.r, s.c
 	case 'u':
 		s.r, s.c = s.savedR, s.savedC
+	case 'q':
+		// DECSCUSR is CSI n SP q: the shape a program asks for, as vim shows
+		// a bar in insert mode. The blink half of the number is the
+		// application's own setting; 0 returns to the default shape.
+		if strings.HasSuffix(params, " ") {
+			n, _ := strconv.Atoi(strings.TrimSpace(params))
+			switch {
+			case n == 0:
+				s.cursorShapeSet = false
+			case n == 3 || n == 4:
+				s.cursorShape, s.cursorShapeSet = terminal.CursorUnderline, true
+			case n == 5 || n == 6:
+				s.cursorShape, s.cursorShapeSet = terminal.CursorBar, true
+			case n == 1 || n == 2:
+				s.cursorShape, s.cursorShapeSet = terminal.CursorBlock, true
+			}
+		}
 	}
 	if s.r < 0 {
 		s.r = 0
@@ -454,66 +528,77 @@ func (s *screen) sgrTokens(tokens []string) {
 func (s *screen) Lines() (lines [][]ui.Span, cursorRow, cursorCol int) {
 	lines = make([][]ui.Span, 0, len(s.grid))
 	for r := 0; r < len(s.grid); r++ {
-		var spans []ui.Span
-		var run strings.Builder
-		var runSt sgr
-		flush := func() {
-			if run.Len() == 0 {
-				return
-			}
-			spans = append(spans, runSt.span(run.String(), s.colors))
-			run.Reset()
-		}
-		for c := 0; c < s.cols; c++ {
-			cl := s.grid[r][c]
-			st := cl.st
-			if s.showCursor && s.cursorOn && r == s.r && c == s.c {
-				// A block cursor uses the terminal's cursor color. The other
-				// shapes are represented by the closest span decoration; the
-				// live cell overlay keeps the grid independent of the plugin.
-				if s.cursor.Style == terminal.CursorUnderline {
-					st.rule = 1
-					st.ruleColor = s.cursorColor()
-					st.hasRuleColor = true
-				} else {
-					st.reverse = !st.reverse
-				}
-				if cl.s == "" {
-					cl.s = " "
-				}
-			}
-			if st != runSt {
-				flush()
-				runSt = st
-			}
-			switch {
-			case cl.cont:
-				// nothing: the wide rune before it owns both columns
-			case cl.s == "":
-				run.WriteByte(' ')
-			default:
-				run.WriteString(cl.s)
-			}
-		}
-		flush()
-		// Drop trailing blanks so a row does not paint the whole width, but keep a
-		// styled blank: that is the cursor, or a program's coloured background.
-		for len(spans) > 0 {
-			last := spans[len(spans)-1]
-			if strings.TrimSpace(last.Text) != "" || last.Background != (ui.Color{}) {
-				break
-			}
-			spans = spans[:len(spans)-1]
-		}
-		if len(spans) > 0 {
-			last := &spans[len(spans)-1]
-			if last.Background == (ui.Color{}) {
-				last.Text = strings.TrimRight(last.Text, " ")
-			}
-		}
-		lines = append(lines, spans)
+		lines = append(lines, s.rowSpans(r, 0, -1, ui.Color{}))
 	}
 	return lines, s.r, s.c
+}
+
+// rowSpans renders one row, painting the cells from colFrom through colTo with
+// bg behind the text, as Terminal fills its selection before the glyphs.
+// colFrom > colTo paints nothing.
+func (s *screen) rowSpans(r, colFrom, colTo int, bg ui.Color) []ui.Span {
+	var spans []ui.Span
+	var run strings.Builder
+	var runSt sgr
+	flush := func() {
+		if run.Len() == 0 {
+			return
+		}
+		spans = append(spans, runSt.span(run.String(), s.colors))
+		run.Reset()
+	}
+	for c := 0; c < s.cols; c++ {
+		cl := s.grid[r][c]
+		st := cl.st
+		if s.showCursor && s.cursorOn && r == s.r && c == s.c {
+			// A block cursor uses the terminal's cursor color. The other
+			// shapes are represented by the closest span decoration; the
+			// live cell overlay keeps the grid independent of the plugin.
+			if s.cursor.Style == terminal.CursorUnderline {
+				st.rule = 1
+				st.ruleColor = s.cursorColor()
+				st.hasRuleColor = true
+			} else {
+				st.reverse = !st.reverse
+			}
+			if cl.s == "" {
+				cl.s = " "
+			}
+		}
+		if bg.A != 0 && colFrom <= colTo && c >= colFrom && c <= colTo {
+			st.bg, st.hasBg = bg, true
+		}
+		if st != runSt {
+			flush()
+			runSt = st
+		}
+		switch {
+		case cl.cont:
+			// nothing: the wide rune before it owns both columns
+		case cl.s == "":
+			run.WriteByte(' ')
+		default:
+			run.WriteString(cl.s)
+		}
+	}
+	flush()
+	// Drop trailing blanks so a row does not paint the whole width, but keep a
+	// styled blank: that is the cursor, a program's coloured background, or the
+	// selection.
+	for len(spans) > 0 {
+		last := spans[len(spans)-1]
+		if strings.TrimSpace(last.Text) != "" || last.Background != (ui.Color{}) {
+			break
+		}
+		spans = spans[:len(spans)-1]
+	}
+	if len(spans) > 0 {
+		last := &spans[len(spans)-1]
+		if last.Background == (ui.Color{}) {
+			last.Text = strings.TrimRight(last.Text, " ")
+		}
+	}
+	return spans
 }
 
 func (s *screen) cursorColor() ui.Color {
@@ -637,6 +722,8 @@ func (s *screen) decset(nums []int, on bool) {
 			s.mouse.motion = on
 		case 1006:
 			s.mouse.sgr = on
+		case 47, 1047, 1049:
+			s.alt = on
 		}
 	}
 }

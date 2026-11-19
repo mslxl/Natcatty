@@ -18,6 +18,16 @@ import (
 // text, so history and Vault Snippets may be offered there. Dismissing the
 // popup keeps it hidden until the input changes again.
 func (s *Surface) refreshSuggestions(input, cwd string, commandRunning bool) {
+	s.refreshSuggestionsFor(input, cwd, commandRunning, false)
+}
+
+// refreshSuggestionsFor is refreshSuggestions with the debounce made optional.
+// A key that acts on the rows (Tab accepting one) cannot wait out the delay the
+// popup uses: pressing Tab within the debounce window after typing looked at an
+// empty list, declined the key, and the Pane sent a literal tab to the shell.
+// skipDelay recomputes the rows right away; the delay still governs when the
+// popup first appears, since the frame path keeps calling without it.
+func (s *Surface) refreshSuggestionsFor(input, cwd string, commandRunning, skipDelay bool) {
 	popup, ghost := false, false
 	if s.options.AutocompleteDisplay != nil {
 		popup, ghost = s.options.AutocompleteDisplay()
@@ -65,7 +75,7 @@ func (s *Surface) refreshSuggestions(input, cwd string, commandRunning bool) {
 		s.suggestionLocale = s.locale
 		s.suggestions = nil
 	}
-	if delay > 0 && time.Since(s.suggestionPending) < time.Duration(delay)*time.Millisecond {
+	if !skipDelay && delay > 0 && time.Since(s.suggestionPending) < time.Duration(delay)*time.Millisecond {
 		s.showAutocomplete = false
 		s.showGhost = false
 		return
@@ -129,7 +139,17 @@ func (s *Surface) handleAutocompleteKey(mods ui.Modifiers, key ui.Key) bool {
 		return false
 	}
 	snapshot := s.session.Snapshot()
-	s.refreshSuggestions(snapshot.Input, snapshot.CWD, snapshot.Command.Running)
+	// Tab is an explicit request for completion, so a popup the user dismissed
+	// earlier (Escape, or the click that accepted the previous row) must not
+	// keep it from answering: without this the key path recomputed nothing,
+	// declined, and the Pane handed the shell a literal tab.
+	if key == ui.KeyTab {
+		s.suggestionDismissed = false
+	}
+	// The key path cannot ride the popup's debounce: a Tab pressed right after
+	// typing must still see the rows it acts on, or it falls through and the
+	// shell receives a tab.
+	s.refreshSuggestionsFor(snapshot.Input, snapshot.CWD, snapshot.Command.Running, true)
 	switch key {
 	case ui.KeyTab:
 		if len(s.suggestions) == 0 || (!s.showAutocomplete && !s.showGhost) {

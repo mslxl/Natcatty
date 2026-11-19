@@ -434,7 +434,11 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 		if ref.managesPanes {
 			paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideTop, true)
 		}
-		ui.Row(c).Fill().Children(func() {
+		// FillWidth and Grow, not Fill: the drop zones above and below take
+		// their 4 DIPs out of the column. A Fill-height row asks for the
+		// column's whole height and laid the Pane's bottom 4 DIPs past it
+		// (and past the window), where the flow's last padding was clipped.
+		ui.Row(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
 			if ref.managesPanes {
 				paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideLeft, false)
 			}

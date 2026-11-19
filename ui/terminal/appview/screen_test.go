@@ -83,19 +83,6 @@ func TestScreenStyles(t *testing.T) {
 	}
 }
 
-// The cursor is drawn as the reversed cell.
-func TestScreenCursorIsReversed(t *testing.T) {
-	sc := parseScreen([]byte("ab"), 10, 2, true)
-	lines, _, _ := sc.Lines()
-	if len(lines[0]) == 0 {
-		t.Fatalf("row 0 is empty")
-	}
-	last := lines[0][len(lines[0])-1]
-	if last.Background == (ui.Color{}) {
-		t.Errorf("the cursor cell has no background: %+v", lines[0])
-	}
-}
-
 // nopConn is a terminal connection that only discards what it is given.
 type nopConn struct {
 	mu     sync.Mutex
@@ -183,6 +170,23 @@ func TestInputBytes(t *testing.T) {
 		{"left", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyLeft}, "\x1b[D"},
 		{"home", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyHome}, "\x1b[H"},
 		{"delete", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyDelete}, "\x1b[3~"},
+		// A modified key carries xterm's modifier parameter; without it
+		// Ctrl+Left was a plain Left and word-wise movement never happened in
+		// readline, vim and less.
+		{"ctrl-left", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyLeft, Mods: ui.Ctrl}, "\x1b[1;5D"},
+		{"shift-up", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyUp, Mods: ui.Shift}, "\x1b[1;2A"},
+		{"alt-left", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyLeft, Mods: ui.Alt}, "\x1b[1;3D"},
+		{"ctrl-end", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyEnd, Mods: ui.Ctrl}, "\x1b[1;5F"},
+		{"ctrl-page-up", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyPageUp, Mods: ui.Ctrl}, "\x1b[5;5~"},
+		{"ctrl-delete", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyDelete, Mods: ui.Ctrl}, "\x1b[3;5~"},
+		{"alt-backspace", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyBackspace, Mods: ui.Alt}, "\x1b\x7f"},
+		// F1-F4 are SS3 keys, F5 and on are tilde keys; both grew a modifier.
+		{"f1", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyF1}, "\x1bOP"},
+		{"shift-f1", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyF1, Mods: ui.Shift}, "\x1b[1;2P"},
+		{"f4", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyF4}, "\x1bOS"},
+		{"f5", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyF5}, "\x1b[15~"},
+		{"ctrl-f5", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyF5, Mods: ui.Ctrl}, "\x1b[15;5~"},
+		{"f12", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyF12}, "\x1b[24~"},
 		{"ctrl-c", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyC, Mods: ui.Ctrl}, "\x03"},
 		{"ctrl-space", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeySpace, Mods: ui.Ctrl}, "\x00"},
 		{"alt-f", ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyF, Mods: ui.Alt}, "\x1bf"},
@@ -361,6 +365,16 @@ func TestMouseSeqSGR(t *testing.T) {
 		{"motion with button", ui.InputEvent{Kind: ui.InputPointerMove, Button: 0}, 3, 3, "\x1b[<32;4;4M"},
 		{"wheel up", ui.InputEvent{Kind: ui.InputScroll, DY: -1}, 0, 1, "\x1b[<64;1;2M"},
 		{"wheel down", ui.InputEvent{Kind: ui.InputScroll, DY: 1}, 0, 1, "\x1b[<65;1;2M"},
+		// A horizontal wheel is a different button pair, not a dropped event.
+		{"wheel left", ui.InputEvent{Kind: ui.InputScroll, DX: -1}, 0, 1, "\x1b[<66;1;2M"},
+		{"wheel right", ui.InputEvent{Kind: ui.InputScroll, DX: 1}, 0, 1, "\x1b[<67;1;2M"},
+		// xterm carries the modifier keys in the button byte: Shift 4,
+		// Alt 8, Ctrl 16. Without them vim cannot tell a Shift-click from a
+		// plain one, and Ctrl-click opened no context menu.
+		{"ctrl-click", ui.InputEvent{Kind: ui.InputPointerDown, Button: 0, Mods: ui.Ctrl}, 0, 0, "\x1b[<16;1;1M"},
+		{"alt-click", ui.InputEvent{Kind: ui.InputPointerDown, Button: 0, Mods: ui.Alt}, 0, 0, "\x1b[<8;1;1M"},
+		{"shift-click", ui.InputEvent{Kind: ui.InputPointerDown, Button: 0, Mods: ui.Shift}, 0, 0, "\x1b[<4;1;1M"},
+		{"ctrl-wheel", ui.InputEvent{Kind: ui.InputScroll, DY: -1, Mods: ui.Ctrl}, 0, 1, "\x1b[<80;1;2M"},
 	}
 	for _, c := range cases {
 		if got := string(MouseSeq(m, c.ev, c.col, c.row)); got != c.want {
@@ -394,22 +408,6 @@ func TestFrameCarriesMouseMode(t *testing.T) {
 	}
 	if len(f.Lines) == 0 || !strings.Contains(rowText(f.Lines[0]), "x") {
 		t.Errorf("frame lines lost the text: %v", f.Lines)
-	}
-}
-
-// Pointer positions divide by the measured cell.
-func TestCellAt(t *testing.T) {
-	cellWidth, cellHeight = 8, 16
-	defer func() { cellWidth, cellHeight = 0, 0 }()
-	if col, row, ok := cellAt(8*3+1, 16*2+1); !ok || col != 3 || row != 2 {
-		t.Errorf("cellAt = (%d,%d,%v), want (3,2,true)", col, row, ok)
-	}
-	if col, row, _ := cellAt(-5, -5); col != 0 || row != 0 {
-		t.Errorf("negative pointer = (%d,%d), want clamped to 0", col, row)
-	}
-	cellWidth, cellHeight = 0, 0
-	if _, _, ok := cellAt(10, 10); ok {
-		t.Errorf("an unmeasured cell reported a position")
 	}
 }
 
@@ -708,7 +706,7 @@ func TestGridFor(t *testing.T) {
 // which put every mouse report and the grid size ten times off.
 func TestCellIsMeasured(t *testing.T) {
 	tt := ui.NewTester(func(c *ui.Context) {
-		measureCells(c)
+		measureCell(c)
 	}, 900, 600)
 	tt.Frame()
 	w, h := CellSize()
@@ -717,5 +715,162 @@ func TestCellIsMeasured(t *testing.T) {
 	}
 	if h < 8 || h > 40 {
 		t.Errorf("cell height = %v, want a line box", h)
+	}
+}
+
+// The alternate screen is what a full-screen program's snapshot holds; the
+// replay must know it, because that snapshot has no scrollback for the shell
+// integration's rows to index. Programs use three mode numbers for it.
+func TestParseScreenRecognizesTheAlternateScreen(t *testing.T) {
+	for _, mode := range []string{"47", "1047", "1049"} {
+		sc := parseScreen([]byte("\x1b[?"+mode+"hvim"), 20, 3, false)
+		if !sc.alt {
+			t.Errorf("?%sh was not read as the alternate screen", mode)
+		}
+		// A program may turn it off again in the same stream.
+		off := parseScreen([]byte("\x1b[?"+mode+"h\x1b[?"+mode+"lmain"), 20, 3, false)
+		if off.alt {
+			t.Errorf("?%sl left the replay on the alternate screen", mode)
+		}
+	}
+	main := parseScreen([]byte("PS C:\\work> vim"), 20, 3, false)
+	if main.alt {
+		t.Error("a main-screen replay was read as the alternate screen")
+	}
+}
+
+// A snapshot carries escapes the cell grid does not draw. ESC ( B designates a
+// charset, ESC # 8 fills the screen with E, and Ghostty's formatter ends a
+// full-screen program's snapshot with them. Skipping only ESC and one byte left
+// their final byte ("B" in ESC ( B) to be drawn as text, which overwrote the
+// first character of vim's top row.
+func TestParseScreenSkipsCharsetEscapesWhole(t *testing.T) {
+	sc := parseScreen([]byte("\x1b(Bhello\x1b)0 world\x1b#8"), 20, 3, false)
+	lines, curRow, curCol := sc.Lines()
+	if got := rowText(lines[0]); got != "hello world" {
+		t.Errorf("row 0 = %q, want the text with no charset byte in it", got)
+	}
+	if curRow != 0 || curCol != 11 {
+		t.Errorf("cursor = (%d,%d), want (0,11): a skipped escape must not move it", curRow, curCol)
+	}
+}
+
+// Kitty graphics is an APC (ESC _ G … ; base64 payload ESC \), and a snapshot
+// of a program that placed a picture carries it. Skipping only ESC and the
+// "G" drew the image's base64 where the picture belonged, which is what a
+// yazi preview looked like.
+func TestParseScreenSkipsGraphicsAPCWhole(t *testing.T) {
+	sc := parseScreen([]byte("before\x1b_Ga=T,f=24,s=1,v=1,i=1;AAAA\x1b\\after"), 20, 3, false)
+	lines, curRow, curCol := sc.Lines()
+	if got := rowText(lines[0]); got != "beforeafter" {
+		t.Errorf("row 0 = %q, want the text around the graphics APC", got)
+	}
+	if curRow != 0 || curCol != 11 {
+		t.Errorf("cursor = (%d,%d), want (0,11): a skipped APC must not move it", curRow, curCol)
+	}
+	// An APC is ended by ST only, as the protocol says; an ESC that is not one
+	// does not end it, and nothing of it may show.
+	sc = parseScreen([]byte("\x1b_Gi=1;AA\x1b[0mBB\x1b\\ok"), 20, 3, false)
+	lines, _, _ = sc.Lines()
+	if got := rowText(lines[0]); got != "ok" {
+		t.Errorf("row 0 = %q, want only the text after the APC", got)
+	}
+}
+
+// is also restore-cursor, so reading the flag set as that jumped the cursor to
+// the saved position: Ghostty's vim snapshot ends with CSI = 3 ; 1 u, which put
+// the cursor back at the top-left, drew the charset escape's "B" there, and
+// reported the wrong cursor row. CSI > flags u pushes the flags, and xterm's
+// CSI > 4 ; n m sets modifyOtherKeys: neither draws anything.
+func TestParseScreenKeepsKeyboardModesOutOfTheCursor(t *testing.T) {
+	sc := parseScreen([]byte("ab\x1b[=3;1uXY\x1b[>3u\x1b[<1uZ"), 20, 3, false)
+	lines, curRow, curCol := sc.Lines()
+	if got := rowText(lines[0]); got != "abXYZ" {
+		t.Errorf("row 0 = %q, want the text to keep its place", got)
+	}
+	if curRow != 0 || curCol != 5 {
+		t.Errorf("cursor = (%d,%d), want (0,5): a keyboard flag set must not move it", curRow, curCol)
+	}
+
+	// Without a private prefix the pair still saves and restores the cursor.
+	sc = parseScreen([]byte("ab\x1b[s\x1b[2;1Hcd\x1b[uZ"), 20, 3, false)
+	lines, curRow, curCol = sc.Lines()
+	if got := rowText(lines[0]); got != "abZ" {
+		t.Errorf("row 0 = %q, want the restored cursor to continue the line", got)
+	}
+	if curRow != 0 || curCol != 3 {
+		t.Errorf("cursor = (%d,%d), want (0,3)", curRow, curCol)
+	}
+
+	// modifyOtherKeys is a mode, not Select Graphic Rendition: the text after
+	// it stays plain.
+	sc = parseScreen([]byte("\x1b[>4;2mplain"), 20, 3, false)
+	lines, _, _ = sc.Lines()
+	if got := rowText(lines[0]); got != "plain" {
+		t.Errorf("row 0 = %q, want plain", got)
+	}
+	if len(lines[0]) != 1 || lines[0][0].Weight != 0 || lines[0][0].Italic {
+		t.Errorf("the mode was drawn as a rendition: %+v", lines[0])
+	}
+}
+
+// The program owns the cursor's visibility and shape: vim hides it while
+// redrawing (DECSET ?25l) and asks for a bar in insert mode (DECSCUSR). The
+// live overlay read neither, so a hidden cursor stayed on screen as a block at
+// the old position, and the insert-mode bar stayed the configured block.
+func TestParseScreenTracksTheProgramsCursor(t *testing.T) {
+	sc := parseScreen([]byte("ab\x1b[?25l"), 10, 2, true)
+	if sc.cursorOn {
+		t.Error("DECSET ?25l left the cursor on")
+	}
+	sc = parseScreen([]byte("ab\x1b[?25h"), 10, 2, true)
+	if !sc.cursorOn {
+		t.Error("DECSET ?25h did not show the cursor")
+	}
+
+	cases := []struct {
+		seq  string
+		want terminal.CursorStyle
+		set  bool
+	}{
+		{"\x1b[2 q", terminal.CursorBlock, true},
+		{"\x1b[4 q", terminal.CursorUnderline, true},
+		{"\x1b[5 q", terminal.CursorBar, true},
+		{"\x1b[6 q", terminal.CursorBar, true},
+		{"\x1b[0 q", terminal.CursorBlock, false},
+	}
+	for _, c := range cases {
+		sc = parseScreen([]byte("ab"+c.seq), 10, 2, true)
+		if sc.cursorShapeSet != c.set || c.set && sc.cursorShape != c.want {
+			t.Errorf("%q: shape = (%v, %t), want (%v, %t)", c.seq, sc.cursorShape, sc.cursorShapeSet, c.want, c.set)
+		}
+	}
+}
+
+// indexes into the grid the cap trims, so a drop has to move it up by the same
+// count. When it did not, a snapshot of 400 or more rows (a shell with a long
+// scrollback) left the cursor one row past the end: every later cell write was
+// skipped, and the rows that arrived after the 400th — the prompt and the line
+// being typed on the last rows of the window — stayed blank.
+func TestParseScreenKeepsTheTailOfALongReplay(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 410; i++ {
+		fmt.Fprintf(&b, "line-%03d\r\n", i)
+	}
+	b.WriteString("PROMPT> typed")
+	sc := parseScreen([]byte(b.String()), 40, 8, false)
+	lines, curRow, curCol := sc.Lines()
+	if len(lines) != maxGridRows {
+		t.Fatalf("rows = %d, want the %d-row cap", len(lines), maxGridRows)
+	}
+	last := len(lines) - 1
+	if got := rowText(lines[last]); got != "PROMPT> typed" {
+		t.Errorf("last row = %q, want the newest line: the replay lost its tail", got)
+	}
+	if got := rowText(lines[last-1]); got != "line-409" {
+		t.Errorf("row %d = %q, want line-409", last-1, got)
+	}
+	if curRow != last || curCol != 13 {
+		t.Errorf("cursor = (%d,%d), want (%d,13)", curRow, curCol, last)
 	}
 }

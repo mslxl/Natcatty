@@ -25,6 +25,11 @@ type Parser struct {
 	buf     []byte
 	kitty   map[string][]byte // chunk accumulator by image id (or "auto")
 	maxSize int
+	// sawGraphics is any graphics-protocol sequence, picture or not. A program
+	// that queries the protocol draws with it (yazi asks before it previews),
+	// and the terminal's own view is the only renderer that can show what it
+	// draws; the queries themselves carry no picture to keep.
+	sawGraphics bool
 }
 
 // New returns a parser that drops a single image above maxSize bytes.
@@ -61,6 +66,7 @@ func (p *Parser) Feed(b []byte) []Image {
 			body := p.buf[2 : 2+end]
 			p.buf = p.buf[2+end+2:]
 			if len(body) > 0 && body[0] == 'G' {
+				p.sawGraphics = true
 				if im, ok := p.kittyChunk(string(body[1:])); ok {
 					out = append(out, im)
 				}
@@ -71,6 +77,9 @@ func (p *Parser) Feed(b []byte) []Image {
 				return out
 			}
 			p.buf = p.buf[2+n:]
+			if strings.HasPrefix(body, "1337;File=") {
+				p.sawGraphics = true
+			}
 			if im, ok := itermFile(body); ok {
 				out = append(out, im)
 			}
@@ -81,6 +90,12 @@ func (p *Parser) Feed(b []byte) []Image {
 			}
 			body := string(p.buf[2 : 2+end])
 			p.buf = p.buf[2+end+2:]
+			// A sixel picture, or DECRQSS's "$q" sixel capability query (what
+			// yazi sends). Other DCS strings (XTGETTCAP, for one) say nothing
+			// about graphics and must not ask for the terminal's own view.
+			if isSixelDCS(body) {
+				p.sawGraphics = true
+			}
 			if data, ok := DecodeSixel(body); ok {
 				out = append(out, Image{Data: data, Name: "sixel image"})
 			}
@@ -97,6 +112,27 @@ func (p *Parser) Feed(b []byte) []Image {
 			p.buf = p.buf[1:]
 		}
 	}
+}
+
+// SawGraphics reports whether the stream carried any graphics-protocol
+// sequence since ForgetGraphics: a picture, a query or a delete. A program that
+// asks the protocol is one that draws with it, which is what the pane needs to
+// know to draw the screen with the terminal's own view.
+func (p *Parser) SawGraphics() bool { return p.sawGraphics }
+
+// ForgetGraphics clears the graphics activity, which the pane does when the
+// program that used it leaves its alternate screen: the next program starts
+// clean.
+func (p *Parser) ForgetGraphics() { p.sawGraphics = false }
+
+// isSixelDCS reports a DCS that is a sixel picture or DECRQSS's sixel
+// capability query ("$q" + the "q" request, which yazi sends before it draws).
+func isSixelDCS(body string) bool {
+	if strings.HasPrefix(body, "$q") {
+		return strings.HasPrefix(strings.TrimLeft(body[2:], " "), "q")
+	}
+	q := strings.IndexByte(body, 'q')
+	return q >= 0 && numericSixelParams(body[:q])
 }
 
 // oscBody returns the bytes between ESC ] and its BEL/ST terminator, and how
@@ -124,7 +160,7 @@ func (p *Parser) kittyChunk(s string) (Image, bool) {
 	if semi >= 0 {
 		params, data = s[:semi], s[semi+1:]
 	}
-	var id, format, more string
+	var id, format, more, action string
 	width, height := 0, 0
 	for _, kv := range strings.Split(params, ",") {
 		k, v, ok := strings.Cut(kv, "=")
@@ -132,6 +168,8 @@ func (p *Parser) kittyChunk(s string) (Image, bool) {
 			continue
 		}
 		switch k {
+		case "a":
+			action = v
 		case "i":
 			id = v
 		case "f":
@@ -143,6 +181,17 @@ func (p *Parser) kittyChunk(s string) (Image, bool) {
 		case "v":
 			height, _ = strconv.Atoi(v)
 		}
+	}
+	// Only a transmit (the default) or a transmit-and-display carries a picture
+	// to keep. A query (a=q) asks whether the terminal speaks the protocol and
+	// its payload is a 1x1 sample, not something to draw: yazi probes both
+	// direct and shared-memory transmission this way, and rendering the probes
+	// left dots under the command that ran it. Deletes, puts and animation
+	// commands carry no picture at all.
+	switch action {
+	case "", "t", "T":
+	default:
+		return Image{}, false
 	}
 	if id == "" {
 		id = "auto"

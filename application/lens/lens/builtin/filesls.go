@@ -128,8 +128,15 @@ func (st *lsState) observe(text string) {
 	}
 	// A plain ls prints names; keep them for the list fallback. A long
 	// listing's continuation lines (wrapped names) are not worth guessing.
+	// eza and lsd print a Nerd Font icon before each entry, and the glyph
+	// arrives as a field of its own: kept, every icon became a row above its
+	// name and the repeated glyphs collided as list keys.
 	if !st.expectLong {
-		st.names = append(st.names, fields...)
+		for _, field := range fields {
+			if !isIconToken(field) {
+				st.names = append(st.names, field)
+			}
+		}
 	}
 }
 
@@ -281,7 +288,13 @@ func parseLSRow(fields []string) (lsRow, bool) {
 		return lsRow{}, false
 	}
 	date := strings.Join(fields[month:month+dateWidth], " ")
-	name := strings.Join(fields[month+dateWidth:], " ")
+	nameFields := make([]string, 0, len(fields)-month-dateWidth)
+	for _, field := range fields[month+dateWidth:] {
+		if !isIconToken(field) {
+			nameFields = append(nameFields, field)
+		}
+	}
+	name := strings.Join(nameFields, " ")
 	if name == "" {
 		return lsRow{}, false
 	}
@@ -342,6 +355,31 @@ func mergeDeviceSizes(fields []string) []string {
 		}
 	}
 	return fields
+}
+
+// isIconToken reports a whitespace-separated field that is a file-type icon
+// rather than a name. eza and lsd print a Nerd Font glyph from a private use
+// area before each entry (" Applications"), so a plain listing's fields are
+// icon, name, icon, name; parsing the icons as names listed each one on a row
+// of its own and gave every icon row the same list key.
+func isIconToken(field string) bool {
+	if field == "" {
+		return false
+	}
+	for _, r := range field {
+		if !privateUseRune(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// privateUseRune reports the Unicode private use areas, where Nerd Font icons
+// (and other icon fonts) live.
+func privateUseRune(r rune) bool {
+	return (r >= 0xE000 && r <= 0xF8FF) ||
+		(r >= 0xF0000 && r <= 0xFFFFD) ||
+		(r >= 0x100000 && r <= 0x10FFFD)
 }
 
 func looksLikeMode(s string) bool {

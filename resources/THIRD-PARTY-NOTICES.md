@@ -71,6 +71,7 @@ each module's own `LICENSE` file.
 
 | Module | Version | License | Copyright notice |
 | --- | --- | --- | --- |
+| `github.com/creack/pty` | v1.1.24 | MIT | Copyright (c) 2011 Keith Rarick |
 | `github.com/dustin/go-humanize` | v1.0.1 | MIT | Copyright (c) 2005-2008 Dustin Sallings |
 | `github.com/ebitengine/purego` | v0.11.1 | Apache-2.0 | Copyright The Ebitengine Authors (SPDX-FileCopyrightText in the source files) |
 | `github.com/egoist/mygo` | pinned in `go.mod` | MIT | Copyright (c) 2026 MyGo contributors |

@@ -119,6 +119,58 @@ func TestNormalizeKeywordHighlightRulesFallsBackToTheCatalog(t *testing.T) {
 	}
 }
 
+func TestHighlighterLeavesControlStringPayloadsAlone(t *testing.T) {
+	highlighter := NewHighlighter(true, []KeywordHighlightRule{
+		{ID: "ok", Patterns: []string{`OK`, `ok`}, Color: "#34D399", Enabled: true},
+	})
+	// A picture travels as an APC whose payload contains the pattern. Coloring
+	// a byte inside it ends the string at the terminal, which then prints the
+	// rest of the payload as text; the whole sequence must stay byte-identical.
+	for _, input := range []string{
+		"\x1b_Gf=32,s=1,v=1,a=T,i=1;/gAAokAA/gAAOK\x1b\\",
+		"\x1b[32m\x1b_Gf=32,s=1,v=1,a=T,i=1;/gAAok\x1b\\",
+		"\x1bPq#0;2;0;0;0#0~~ok~~\x1b\\",
+		"\x1b]0;ok title\x07",
+		"\x1b]0;ok\x1b\\",
+		"\x1b^ok\x1b\\",
+		"\x1bXok\x1b\\",
+	} {
+		if got := string(highlighter.Apply([]byte(input))); got != input {
+			t.Fatalf("apply = %q, want %q", got, input)
+		}
+	}
+	// Text outside the string is still colored.
+	got := string(highlighter.Apply([]byte("ok\x1b_Gi=1;ok\x1b\\ok")))
+	want := "\x1b[38;2;52;211;153mok\x1b[39m\x1b_Gi=1;ok\x1b\\\x1b[38;2;52;211;153mok\x1b[39m"
+	if got != want {
+		t.Fatalf("apply around a picture = %q, want %q", got, want)
+	}
+}
+
+func TestOpenControlStringNamesTheStringAWriteEndsInside(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		input string
+		want  int
+	}{
+		{"no escapes", "plain ok", -1},
+		{"complete APC", "\x1b_Gi=1;AAAA\x1b\\ok", -1},
+		{"complete OSC by BEL", "\x1b]0;title\x07ok", -1},
+		{"complete CSI", "\x1b[32mok", -1},
+		{"open APC", "\x1b_Gi=1;AAAA", 0},
+		{"open APC after text", "ok\x1b_Gi=1;AA", 2},
+		{"open APC after a complete one", "\x1b_Gi=1;a\x1b\\\x1b_Gi=1;b", 10},
+		{"open OSC terminated by ESC", "\x1b]0;title\x1b", 0},
+		{"open DCS", "\x1bPq#0;2;0;0;0", 0},
+		{"incomplete CSI", "ok\x1b[3", 2},
+		{"incomplete two-byte escape", "ok\x1b", 2},
+	} {
+		if got := OpenControlString([]byte(test.input)); got != test.want {
+			t.Fatalf("%s: OpenControlString(%q) = %d, want %d", test.name, test.input, got, test.want)
+		}
+	}
+}
+
 func TestHighlighterLeavesIncompleteTrailingEscapeAlone(t *testing.T) {
 	highlighter := NewHighlighter(true, []KeywordHighlightRule{
 		{ID: "ok", Patterns: []string{`OK`}, Color: "#34D399", Enabled: true},

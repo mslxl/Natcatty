@@ -1,6 +1,7 @@
 package appview
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -35,6 +36,44 @@ func keyBytes(ev ui.InputEvent) ([]byte, bool) {
 	shift := ev.Mods&ui.Shift != 0
 
 	seq := func(s string) ([]byte, bool) { return []byte(s), true }
+	// xterm's modifier parameter is 1 plus Shift (1), Alt (2) and Ctrl (4).
+	// It is what a program reads a modified arrow or function key as; without
+	// it Ctrl+Left arrived as a plain Left, so word-wise movement in readline,
+	// vim and less never happened.
+	mod := 1
+	if shift {
+		mod++
+	}
+	if alt {
+		mod += 2
+	}
+	if ctrl {
+		mod += 4
+	}
+	// cursorKey is an arrow or Home/End key: CSI final, or CSI 1 ; mod final
+	// with a modifier.
+	cursorKey := func(final byte) []byte {
+		if mod == 1 {
+			return []byte{0x1b, '[', final}
+		}
+		return []byte(fmt.Sprintf("\x1b[1;%d%c", mod, final))
+	}
+	// tildeKey is Insert, Delete, PageUp/PageDown or F5-F12: CSI number ~,
+	// with the modifier before the tilde.
+	tildeKey := func(number int) []byte {
+		if mod == 1 {
+			return []byte(fmt.Sprintf("\x1b[%d~", number))
+		}
+		return []byte(fmt.Sprintf("\x1b[%d;%d~", number, mod))
+	}
+	// fKey is F1-F4, which xterm sends as SS3 without modifiers and as
+	// CSI 1 ; mod final with them.
+	fKey := func(final byte) []byte {
+		if mod == 1 {
+			return []byte{0x1b, 'O', final}
+		}
+		return []byte(fmt.Sprintf("\x1b[1;%d%c", mod, final))
+	}
 	switch key {
 	case ui.KeyEnter:
 		if alt {
@@ -42,16 +81,24 @@ func keyBytes(ev ui.InputEvent) ([]byte, bool) {
 		}
 		return seq("\r")
 	case ui.KeyBackspace:
+		b := []byte{0x7f}
 		if ctrl {
-			return seq("\x08")
+			b = []byte{0x08}
 		}
-		return seq("\x7f")
+		if alt {
+			// Meta-Backspace deletes the word before the cursor in readline.
+			b = append([]byte{0x1b}, b...)
+		}
+		return b, true
 	case ui.KeyTab:
 		if shift {
 			return seq("\x1b[Z")
 		}
 		return seq("\t")
 	case ui.KeyEscape:
+		if alt {
+			return seq("\x1b\x1b")
+		}
 		return seq("\x1b")
 	case ui.KeySpace:
 		if ctrl {
@@ -59,25 +106,33 @@ func keyBytes(ev ui.InputEvent) ([]byte, bool) {
 		}
 		return nil, false // a plain space comes as text
 	case ui.KeyUp:
-		return seq("\x1b[A")
+		return cursorKey('A'), true
 	case ui.KeyDown:
-		return seq("\x1b[B")
+		return cursorKey('B'), true
 	case ui.KeyRight:
-		return seq("\x1b[C")
+		return cursorKey('C'), true
 	case ui.KeyLeft:
-		return seq("\x1b[D")
+		return cursorKey('D'), true
 	case ui.KeyHome:
-		return seq("\x1b[H")
+		return cursorKey('H'), true
 	case ui.KeyEnd:
-		return seq("\x1b[F")
+		return cursorKey('F'), true
 	case ui.KeyDelete:
-		return seq("\x1b[3~")
+		return tildeKey(3), true
 	case ui.KeyPageUp:
-		return seq("\x1b[5~")
+		return tildeKey(5), true
 	case ui.KeyPageDown:
-		return seq("\x1b[6~")
+		return tildeKey(6), true
 	case ui.KeyInsert:
-		return seq("\x1b[2~")
+		return tildeKey(2), true
+	}
+	if key >= ui.KeyF1 && key <= ui.KeyF12 {
+		n := int(key - ui.KeyF1)
+		if n < 4 {
+			return fKey("PQRS"[n]), true
+		}
+		// F5 starts the tilde group; F11 and F12 skip 22.
+		return tildeKey([]int{15, 17, 18, 19, 20, 21, 23, 24}[n-4]), true
 	}
 
 	// Control and Alt combinations of a letter.

@@ -297,8 +297,8 @@ func TestTapHookSlowMultilineWaitsAtContinuationPrompt(t *testing.T) {
 	}
 }
 
-// A command typed before the planned hook's first handshake is tentative. The
-// pre-hook prompt's native A/D and the prompt heuristic must not finalize it;
+// A command typed before the planned hook's first prompt is tentative. The
+// hook's handshake and the prompt marks that follow it must not finalize it;
 // the private sequence replaces it and its D publishes exactly one Tier 1 row.
 func TestTapHookExpectedHoldsAnEarlyCommandUntilItsPrivateSequence(t *testing.T) {
 	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
@@ -312,22 +312,23 @@ func TestTapHookExpectedHoldsAnEarlyCommandUntilItsPrivateSequence(t *testing.T)
 		t.Fatalf("the early command is not tentative: %+v", tap.pending)
 	}
 
-	// The shell's own prompt marks belong to its pre-hook prompt.
-	_, effects := tap.observe([]byte("\x1b]133;A\x07"), tapAt(10*time.Millisecond))
+	// The planned hook speaks first in its precmd; the native marks of the
+	// prompt it draws must not finalize the line typed ahead of it.
+	tap.observe([]byte(hookHandshake("zsh")), tapAt(10*time.Millisecond))
+	if !tap.state(tapAt(10 * time.Millisecond)).HookActive {
+		t.Fatal("the handshake did not mark the hook active")
+	}
+	_, effects := tap.observe([]byte("\x1b]133;A\x07"), tapAt(20*time.Millisecond))
 	if len(effects.Completions) != 0 {
 		t.Fatalf("a native prompt start finalized the early command: %+v", effects.Completions)
 	}
-	_, effects = tap.observe([]byte("\x1b]133;D;0\x07"), tapAt(20*time.Millisecond))
+	_, effects = tap.observe([]byte("\x1b]133;D;0\x07"), tapAt(30*time.Millisecond))
 	if len(effects.Completions) != 0 {
 		t.Fatalf("a native D finalized the early command: %+v", effects.Completions)
 	}
 
 	// The first handshake proves the hook exists, but not yet which command
 	// it saw; the tentative capture stays held.
-	tap.observe([]byte(hookHandshake("zsh")), tapAt(30*time.Millisecond))
-	if !tap.state(tapAt(30 * time.Millisecond)).HookActive {
-		t.Fatal("the handshake did not mark the hook active")
-	}
 	_, effects = tap.observe([]byte("\x1b]133;D;0\x07"), tapAt(40*time.Millisecond))
 	if len(effects.Completions) != 0 {
 		t.Fatalf("a D after the handshake finalized the early command: %+v", effects.Completions)
@@ -355,21 +356,38 @@ func TestTapHookExpectedHoldsAnEarlyCommandUntilItsPrivateSequence(t *testing.T)
 	}
 }
 
-// If the planned hook never speaks, the tentative early capture is not lost:
-// Session close publishes it once with an unknown finish.
-func TestTapHookExpectedFinalizesTheEarlyCommandAtClose(t *testing.T) {
+// A shell that never announces the planned hook still publishes a command
+// typed before its startup prompt. The handshake-less prompt releases the
+// reservation, so the command's own C/D publishes it while the user works
+// instead of deferring it to Session close.
+func TestTapHookExpectedReleasesAnEarlyCommandAtTheFirstPrompt(t *testing.T) {
 	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
 	tap.hookExpected = true
 	tap.handleInput([]byte("echo early\r"), tapAt(0))
-	tap.observe([]byte("\x1b]133;A\x07\x1b]133;D;0\x07"), tapAt(10*time.Millisecond))
 
-	completion := tap.finalizePending()
-	if completion == nil {
-		t.Fatal("Session close lost the early tentative capture")
+	// The startup prompt of a shell with no hook: D then A, no handshake.
+	_, effects := tap.observe([]byte("\x1b]133;D;0\x07\x1b]133;A\x07"), tapAt(10*time.Millisecond))
+	if len(effects.Completions) != 0 {
+		t.Fatalf("the startup prompt published the early command: %+v", effects.Completions)
 	}
-	if completion.command != "echo early" || !completion.finishedAt.IsZero() ||
-		completion.hasExitCode {
-		t.Fatalf("close completion = %+v", completion)
+	if tap.hookExpected {
+		t.Fatal("the handshake-less prompt left the hook expectation in place")
+	}
+	if tap.pending == nil || tap.pending.awaitingHook {
+		t.Fatalf("the startup prompt did not release the early capture: %+v", tap.pending)
+	}
+
+	// The typed line runs; its own D publishes exactly one native row.
+	tap.observe([]byte("\x1b]133;C\x07"), tapAt(20*time.Millisecond))
+	_, effects = tap.observe([]byte("\x1b]133;D;0\x07"), tapAt(time.Second))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("early completions = %+v, want exactly one", effects.Completions)
+	}
+	completion := effects.Completions[0]
+	if completion.command != "echo early" ||
+		completion.captureTier != domainhistory.CaptureTierNativeOSC ||
+		!completion.hasExitCode || completion.exitCode != 0 {
+		t.Fatalf("early completion = %+v", completion)
 	}
 	if again := tap.finalizePending(); again != nil {
 		t.Fatalf("Session close published the early capture twice: %+v", again)

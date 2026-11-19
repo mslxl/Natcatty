@@ -2,6 +2,7 @@ package vt
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 
 	"github.com/mslxl/natcatty/application/lens/model"
@@ -40,6 +41,36 @@ func TestTapUnderstandsNatcattyExecMarker(t *testing.T) {
 	}
 	if got := blocks[0].Raw; got != " M file.txt\n" {
 		t.Fatalf("raw = %q", got)
+	}
+}
+
+// Nushell writes its own bare 133;C immediately after the hook's 133;C. The
+// second mark used to reset the capture screen and end the command, so the
+// block kept the command line and lost all of its output (raw was empty).
+func TestTapKeepsNushellOutputAfterItsNativeCommandMark(t *testing.T) {
+	enc := func(value string) string {
+		return base64.RawURLEncoding.EncodeToString([]byte(value))
+	}
+	store := model.NewStore(nil)
+	tap := New(store).WithCols(80)
+	tap.Feed([]byte("\x1b]1337;NetcattyExec;nu;" + enc("/tmp") + ";" + enc("echo probe_hello") + "\x07"))
+	tap.Feed([]byte("\x1b]133;C\x07")) // the hook's mark
+	tap.Feed([]byte("\x1b]133;C\x07")) // nushell's own mark
+	tap.Feed([]byte("probe_hello\r\n"))
+	tap.Feed([]byte("\x1b]133;D;0\x07\x1b]133;D;0\x07"))
+
+	blocks := store.Snapshot()
+	if len(blocks) != 1 {
+		t.Fatalf("blocks = %d, want 1", len(blocks))
+	}
+	if got := blocks[0].Cmd.Typed; got != "echo probe_hello" {
+		t.Fatalf("typed = %q", got)
+	}
+	if got := blocks[0].Raw; got != "probe_hello\n" {
+		t.Fatalf("raw = %q, want the command output", got)
+	}
+	if !blocks[0].Exited || blocks[0].Status != 0 {
+		t.Fatalf("block did not finish cleanly: %+v", blocks[0])
 	}
 }
 
@@ -120,5 +151,33 @@ func TestTapRetiresParentBlockWhenAHookedChildShellStarts(t *testing.T) {
 	}
 	if blocks[1].Raw != "Name\n" {
 		t.Fatalf("child raw = %q", blocks[1].Raw)
+	}
+}
+
+// A full-screen program draws on the alternate screen, which the terminal
+// restores when the program quits: none of it is part of the command's output.
+// The tap used to write the program's rows into the capture screen, so after
+// :q the command's block held a monochrome copy of the vim screen (title,
+// tildes, status line) above the next prompt. The tap keeps following the
+// marks and the main screen, and ignores the program's painting in between.
+func TestTapOmitsAlternateScreenPainting(t *testing.T) {
+	store := model.NewStore(nil)
+	tap := New(store).WithCols(20)
+	tap.Feed([]byte("\x1b]133;A\x07\x1b]133;B\x07PS> "))
+	tap.Feed([]byte("\x1b]133;C;vim\x07"))
+	tap.Feed([]byte("before\r\n"))
+	tap.Feed([]byte("\x1b[?1049h\x1b[2J\x1b[H"))
+	tap.Feed([]byte("VIM TITLE\r\n~\r\n~\r\n:q\r\n"))
+	tap.Feed([]byte("\x1b[?1049l"))
+	tap.Feed([]byte("\x1b]133;D;0\x07\x1b]133;A\x07\x1b]133;B\x07PS> "))
+	blocks := store.Snapshot()
+	if len(blocks) != 1 {
+		t.Fatalf("blocks = %d, want 1", len(blocks))
+	}
+	if got := blocks[0].Raw; got != "before\n" {
+		t.Fatalf("raw = %q, want only the main screen's output", got)
+	}
+	if strings.Contains(blocks[0].Raw, "VIM TITLE") {
+		t.Fatalf("the alternate screen became command output: %q", blocks[0].Raw)
 	}
 }

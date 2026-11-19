@@ -93,27 +93,48 @@ func DistortionEffect(pos vec2) vec2 {
 type Ripple struct {
 	kind         Kind
 	cellX, cellY int
-	started      time.Time
-	running      bool
-	starts       int
-	lastStartX   int
-	lastStartY   int
-	// dropCellX and dropCellY are where the pointer last was in cells: where a drop
-	// lands.
+	// origin is the exact point in the pane the ripple started at, when the
+	// caller knew it: a pointer's position is inside a cell, not its nominal
+	// centre. hasOrigin is false for a start named only by a cell.
+	origin     ui.Point
+	hasOrigin  bool
+	started    time.Time
+	running    bool
+	starts     int
+	lastStartX int
+	lastStartY int
+	// dropCellX and dropCellY are where the pointer last was in cells, and
+	// dropOrigin is where it was in the pane: where a drop lands.
 	dropCellX, dropCellY int
+	dropOrigin           ui.Point
+	hasDropOrigin        bool
 	hasPointer           bool
 	effects              int
 }
 
-// Start begins a ripple of a kind at a cell, at now.
+// Start begins a ripple of a kind at a cell, at now. Its origin is the cell's
+// nominal centre, because the caller named no point.
 func (r *Ripple) Start(kind Kind, cellX, cellY int, now time.Time) {
 	r.kind = kind
 	r.cellX, r.cellY = cellX, cellY
+	r.origin, r.hasOrigin = ui.Point{}, false
 	r.started = now
 	r.running = true
 	r.starts++
 	r.lastStartX, r.lastStartY = cellX, cellY
 }
+
+// StartAt begins a ripple at a cell and the exact point in the pane it started
+// at, at now: a pointer's own position is inside the cell rather than its
+// nominal centre, which matters when rows are laid out by the text engine.
+func (r *Ripple) StartAt(kind Kind, cellX, cellY int, at ui.Point, now time.Time) {
+	r.Start(kind, cellX, cellY, now)
+	r.origin, r.hasOrigin = at, true
+}
+
+// Origin returns the point the ripple began at, and whether the caller gave one
+// rather than only a cell.
+func (r *Ripple) Origin() (ui.Point, bool) { return r.origin, r.hasOrigin }
 
 // LastStart is the cell the newest ripple began at, for a diagnostic.
 func (r *Ripple) LastStart() (int, int) { return r.lastStartX, r.lastStartY }
@@ -124,7 +145,11 @@ func (r *Ripple) StartDrop(now time.Time) bool {
 	if !r.hasPointer {
 		return false
 	}
-	r.Start(Drop, r.dropCellX, r.dropCellY, now)
+	if r.hasDropOrigin {
+		r.StartAt(Drop, r.dropCellX, r.dropCellY, r.dropOrigin, now)
+	} else {
+		r.Start(Drop, r.dropCellX, r.dropCellY, now)
+	}
 	return true
 }
 
@@ -132,6 +157,14 @@ func (r *Ripple) StartDrop(now time.Time) bool {
 func (r *Ripple) Pointer(cellX, cellY int) {
 	r.hasPointer = true
 	r.dropCellX, r.dropCellY = cellX, cellY
+	r.dropOrigin, r.hasDropOrigin = ui.Point{}, false
+}
+
+// PointerAt records the cell and the exact point in the pane the pointer is
+// over, which is where a drop lands.
+func (r *Ripple) PointerAt(cellX, cellY int, at ui.Point) {
+	r.Pointer(cellX, cellY)
+	r.dropOrigin, r.hasDropOrigin = at, true
 }
 
 // HasPointer reports whether a pointer position is known.

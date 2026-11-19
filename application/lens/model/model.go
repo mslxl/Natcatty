@@ -47,6 +47,16 @@ type Cmd struct {
 // ViewMode is how a block shows: the lens view (native) or the raw output.
 type ViewMode int
 
+// Image is a picture a command printed as inline graphics (Kitty APC, iTerm2
+// OSC 1337 File, Sixel). Data holds the PNG bytes the graphics parser decoded;
+// Path and Alt name it when the source had a name. It is a model type rather
+// than lens.Image because the lens package imports this one.
+type Image struct {
+	Data []byte
+	Path string
+	Alt  string
+}
+
 const (
 	ViewAuto ViewMode = iota
 	ViewNative
@@ -72,6 +82,10 @@ type Block struct {
 	Progress *float64
 	// StateText is the program's OSC 7501 status ("working", "waiting", …).
 	StateText string
+	// Images are the inline pictures the command printed. They belong to the
+	// block, so they stay in the flow with its output instead of floating
+	// above the live screen until the buffer is cleared.
+	Images []Image
 }
 
 // SetProgress records the running block's OSC 9;4 progress.
@@ -94,6 +108,21 @@ func (s *Store) SetStateText(id int, text string) {
 		return
 	}
 	s.blocks[id].StateText = text
+	s.rev++
+}
+
+// AddImage records an inline picture the block with id printed. Data is copied:
+// the graphics parser may reuse its buffers, while Snapshot shares the slice
+// and callers must treat it as immutable, as they do Native and Raw.
+func (s *Store) AddImage(id int, img Image) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id < 0 || id >= len(s.blocks) {
+		return
+	}
+	cp := img
+	cp.Data = append([]byte(nil), img.Data...)
+	s.blocks[id].Images = append(s.blocks[id].Images, cp)
 	s.rev++
 }
 
@@ -454,6 +483,24 @@ func StripANSI(s string) string {
 		}
 		// ESC ] ... BEL or ESC \
 		if i+1 < len(s) && s[i+1] == ']' {
+			j := i + 2
+			for j < len(s) && s[j] != 0x07 {
+				if s[j] == 0x1b && j+1 < len(s) && s[j+1] == '\\' {
+					j++
+					break
+				}
+				j++
+			}
+			if j < len(s) {
+				j++
+			}
+			i = j
+			continue
+		}
+		// APC (ESC _), DCS (ESC P), PM (ESC ^) and SOS (ESC X) ... BEL or ESC \:
+		// an inline picture's payload (Kitty graphics, Sixel) is not text and
+		// must not reach a block's output.
+		if i+1 < len(s) && (s[i+1] == '_' || s[i+1] == 'P' || s[i+1] == '^' || s[i+1] == 'X') {
 			j := i + 2
 			for j < len(s) && s[j] != 0x07 {
 				if s[j] == 0x1b && j+1 < len(s) && s[j+1] == '\\' {

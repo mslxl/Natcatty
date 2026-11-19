@@ -225,7 +225,7 @@ func (h *Highlighter) Apply(data []byte) []byte {
 	changed := false
 	for index := 0; index < len(data); {
 		if data[index] == 0x1b {
-			end := escapeEnd(data, index)
+			end, _ := escapeEnd(data, index)
 			output = append(output, data[index:end]...)
 			index = end
 			continue
@@ -266,34 +266,74 @@ func (h *Highlighter) Apply(data []byte) []byte {
 	return output
 }
 
-// escapeEnd returns the byte just past the escape sequence starting at start.
-// An incomplete sequence at the end of the write is copied as-is; the terminal
-// receives the same bytes it would have without highlighting.
-func escapeEnd(data []byte, start int) int {
+// escapeEnd returns the byte just past the escape sequence starting at start,
+// and whether the sequence is complete. An incomplete sequence at the end of
+// the write runs to its end and is copied as-is; the terminal receives the
+// same bytes it would have without highlighting.
+func escapeEnd(data []byte, start int) (end int, complete bool) {
 	if start+1 >= len(data) {
-		return len(data)
+		return len(data), false
 	}
 	switch data[start+1] {
-	case ']':
+	case ']', 'P', '_', '^', 'X':
+		// OSC and the control strings (DCS, APC, PM, SOS). Their payload is not
+		// text: a picture sent through the Kitty graphics protocol (APC) or
+		// Sixel (DCS) is base64 or pixel data here, and inserting an escape
+		// into it ends the string at the terminal, which then prints the rest
+		// of the picture as garbage.
 		for index := start + 2; index < len(data); index++ {
-			if data[index] == 0x07 || data[index] == 0x18 || data[index] == 0x1a {
-				return index + 1
+			if data[index] == 0x07 || data[index] == 0x18 || data[index] == 0x1a || data[index] == 0x9c {
+				return index + 1, true
 			}
-			if data[index] == 0x1b && index+1 < len(data) && data[index+1] == '\\' {
-				return index + 2
+			if data[index] == 0x1b {
+				if index+1 >= len(data) {
+					return len(data), false
+				}
+				if data[index+1] == '\\' {
+					return index + 2, true
+				}
 			}
 		}
-		return len(data)
+		return len(data), false
 	case '[':
 		for index := start + 2; index < len(data); index++ {
 			if data[index] >= 0x40 && data[index] <= 0x7e {
-				return index + 1
+				return index + 1, true
 			}
 		}
-		return len(data)
+		return len(data), false
 	default:
-		return start + 2
+		// A two-byte escape ends on the byte after it, unless intermediate
+		// bytes (0x20–0x2f) come first, as in ESC ( B.
+		index := start + 1
+		for index < len(data) && data[index] >= 0x20 && data[index] <= 0x2f {
+			index++
+		}
+		if index >= len(data) {
+			return len(data), false
+		}
+		return index + 1, true
 	}
+}
+
+// OpenControlString returns the index of the introducer of a control string
+// (OSC, DCS, APC, PM or SOS) that the write ends inside of, or -1 when every
+// sequence in data is complete. A caller that hands output to Apply in pieces
+// holds the tail from that index: highlighting the rest of a string as if it
+// were text would insert escapes into its payload.
+func OpenControlString(data []byte) int {
+	for index := 0; index < len(data); {
+		if data[index] != 0x1b {
+			index++
+			continue
+		}
+		end, complete := escapeEnd(data, index)
+		if !complete {
+			return index
+		}
+		index = end
+	}
+	return -1
 }
 
 func parseHighlightColor(color string) (int, int, int, bool) {

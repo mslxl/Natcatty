@@ -1,63 +1,107 @@
 package appview
 
 import (
-	"strings"
-
 	"github.com/egoist/mygo/ui"
+
+	"github.com/mslxl/natcatty/application/lens/lens/parse"
 )
 
-// cellWidth and cellHeight are one cell of the live grid, in DIPs, measured from a
-// monospaced "M": pointer positions divide by them to find the cell a program's
-// mouse report names.
+// cellWidth and cellHeight are one cell of the live grid, in DIPs. The live rows
+// are painted cell by cell at these positions (see gridRow), so every row is one
+// cell tall and every column starts at col*cellWidth. That is the terminal's own
+// model: a program names cells, not pen positions, and a glyph the font falls
+// back for is centered in its cell rather than moving the ones after it.
 var cellWidth, cellHeight float32
 
-// measureCells reads the cell size from a clipped, invisible row so the text in it
-// never shows. Bounds come from the previous layout, which is enough: the font does
-// not change from frame to frame.
-//
-// The row is a RichText with one span, exactly what the live grid draws for each
-// screen row: MyGo's RichText and Text do not have the same line box (18.62 vs 16.27
-// DIP for the same monospace at the theme size), and measuring a Text made the cell
-// 2.3 DIP shorter than every row drawn. Pointer rows drifted with it, the grid asked
-// for more rows than fit, and a finished command's plain cells were shorter than the
-// grid rows they replaced.
-func measureCells(c *ui.Context) {
-	// Zero height keeps the row out of the layout and Clip hides what it draws. The
-	// width has to come from a relative position: a text element fills the room it is
-	// given, so its own width is not the text's.
-	ui.Box(c).Height(0).Clip().Children(func() {
-		var wide, one ui.Element
-		// Zero height alone does not stop the text painting: the row's children
-		// overflow the box and the live rows below are drawn over the "M"s. Fully
-		// transparent keeps it measurable and invisible.
-		ui.Row(c).Gap(0).Opacity(0).Children(func() {
-			wide = ui.RichText(c, ui.Span{Text: strings.Repeat("M", 10), Font: "monospace"}).SingleLine()
-			one = ui.RichText(c, ui.Span{Text: "M", Font: "monospace"}).SingleLine()
-		})
-		rw, ro := wide.Bounds(), one.Bounds()
-		if ro.X > rw.X {
-			cellWidth = (ro.X - rw.X) / 10
-		}
-		if ro.H > 0 {
-			cellHeight = ro.H
-		}
-	})
+// measureCell reads the cell size from a monospace "M" at the frame's font size.
+// MeasureText lays the text out now, in the same frame the rows are built, so the
+// first frame already has its cells (an element's Bounds would still be empty on
+// that frame).
+func measureCell(c *ui.Context) {
+	if w, h := c.MeasureText(0, ui.Span{Text: "M", Font: "monospace"}); w > 0 && h > 0 {
+		cellWidth, cellHeight = w, h
+	}
 }
 
-// cellAt turns a pointer position, relative to the live rows, into a cell.
-func cellAt(x, y float32) (col, row int, ok bool) {
+// pointerCell turns a pointer position in the live rows into a grid cell. The
+// rows are laid out at the measured cell, so the mapping is the grid's own
+// arithmetic: a row is one cell tall and a column one cell wide, whatever glyph
+// stands in a cell. A pointer on the continuation column of a wide rune names
+// the rune's first column, as selecting either half must take the whole rune.
+func pointerCell(lines [][]ui.Span, x, y float32, cols int) (col, row int, ok bool) {
 	if cellWidth <= 0 || cellHeight <= 0 {
 		return 0, 0, false
 	}
-	col = int(x / cellWidth)
-	row = int(y / cellHeight)
+	col, row = int(x/cellWidth), int(y/cellHeight)
 	if col < 0 {
 		col = 0
 	}
 	if row < 0 {
 		row = 0
 	}
+	if cols > 0 && col >= cols {
+		col = cols - 1
+	}
+	if row < len(lines) {
+		if start, found := clusterStart(lines[row], col); found {
+			col = start
+		}
+	}
 	return col, row, true
+}
+
+// clusterStart returns the column the cluster that covers col starts at. A wide
+// rune covers two columns, so the right half names the rune's first column; a
+// combining mark adds no column of its own. Columns past the row's text are not
+// in a cluster, and keep their own column.
+func clusterStart(spans []ui.Span, col int) (int, bool) {
+	cell := 0
+	for _, sp := range spans {
+		for _, r := range sp.Text {
+			w := parse.RuneWidth(r)
+			if w <= 0 {
+				continue
+			}
+			if col >= cell && col < cell+w {
+				return cell, true
+			}
+			cell += w
+		}
+	}
+	return col, false
+}
+
+// cellOrigin is where a cell's centre lies in the pane's own coordinates. The
+// rows are uniform now, so the centre is the cell's place in the grid. The
+// shader's positions start at the pane's box corner, which is outside the
+// padding, while the cells are counted inside it.
+func cellOrigin(cellX, cellY, cols int) ui.Point {
+	if cellX < 0 {
+		cellX = 0
+	}
+	if cols > 0 && cellX >= cols {
+		cellX = cols - 1
+	}
+	if cellY < 0 {
+		cellY = 0
+	}
+	return ui.Point{
+		X: livePad + (float32(cellX)+0.5)*cellWidth,
+		Y: livePad + (float32(cellY)+0.5)*cellHeight,
+	}
+}
+
+// spanFont is the font a live row's span is drawn with: the rows set
+// "monospace" and leave the size to the frame, which the terminal theme sizes.
+func spanFont(sp ui.Span, size float32) ui.Font {
+	f := ui.Font{Family: "monospace", Size: size, Weight: sp.Weight, Italic: sp.Italic, Features: sp.Features, Lang: sp.Lang}
+	if sp.Font != "" {
+		f.Family = sp.Font
+	}
+	if sp.Size > 0 {
+		f.Size = sp.Size
+	}
+	return f
 }
 
 // CellSize is the measured cell, for tests and diagnostics.

@@ -4,6 +4,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/mslxl/natcatty/application/lens/graphics"
@@ -31,6 +32,10 @@ type terminalFlow struct {
 	tapMu       sync.Mutex
 	imageMu     sync.RWMutex
 	images      []lens.Image
+	// pictures tells that a program placed a picture since the pane last drew
+	// its own replay: a full-screen one then needs the terminal's own view,
+	// which is the only renderer that draws placements.
+	pictures atomic.Bool
 
 	// bellTerm is a private VT mirror fed from the decoded stream before the
 	// Session gives that stream to the visible terminal. It lets us snapshot
@@ -71,14 +76,47 @@ func newTerminalFlow(session *appsession.Session, redraw func()) *terminalFlow {
 	}
 	surface.unsubscribe = session.SubscribeOutputReplay(func(data []byte) {
 		surface.tapMu.Lock()
+		// Pictures belong to the command that printed them. The tap has to see
+		// the bytes first (that is what starts and ends its block), so remember
+		// which block owns this chunk: the one already running, or the one the
+		// chunk itself created when a fast command arrives whole (its output,
+		// picture and OSC 133;D in one read).
+		runningID, running := surface.store.LastID(), surface.store.HasRunning()
 		tap.Feed(data)
-		for _, image := range gfx.Feed(data) {
-			surface.imageMu.Lock()
-			surface.images = append(surface.images, lens.Image{Data: image.Data, Alt: image.Name})
-			if len(surface.images) > 4 {
-				surface.images = append([]lens.Image(nil), surface.images[len(surface.images)-4:]...)
+		images := surface.gfx.Feed(data)
+		// What the screen is now decides whether pictures show: on the
+		// alternate screen only the terminal's own view can draw one, so the
+		// pane asks for it. A program that merely queries the protocol draws
+		// with it too (yazi asks before it previews), so any graphics sequence
+		// counts, not only a picture this parser could decode. Leaving that
+		// screen clears the request (see clearPictures), and the next
+		// full-screen program is drawn by the pane's replay again.
+		if surface.gfx.SawGraphics() {
+			surface.pictures.Store(true)
+		}
+		if len(images) > 0 {
+			owner, owned := -1, false
+			switch last := surface.store.LastID(); {
+			case running:
+				owner, owned = runningID, true
+			case last != runningID:
+				owner, owned = last, true
 			}
-			surface.imageMu.Unlock()
+			for _, image := range images {
+				if owned {
+					surface.store.AddImage(owner, lensmodel.Image{Data: image.Data})
+					continue
+				}
+				// A picture printed outside any command (a prompt-time program,
+				// or a shell with no integration marks) has no block to live in;
+				// it stays in the flow's own strip above the live screen.
+				surface.imageMu.Lock()
+				surface.images = append(surface.images, lens.Image{Data: image.Data})
+				if len(surface.images) > 4 {
+					surface.images = append([]lens.Image(nil), surface.images[len(surface.images)-4:]...)
+				}
+				surface.imageMu.Unlock()
+			}
 		}
 		surface.tapMu.Unlock()
 		surface.feedBell(data)
@@ -87,6 +125,29 @@ func newTerminalFlow(session *appsession.Session, redraw func()) *terminalFlow {
 		}
 	})
 	return surface
+}
+
+// hasPictures reports that a program used the graphics protocol since the pane
+// last drew the screen its own way.
+func (s *terminalFlow) hasPictures() bool {
+	return s != nil && s.pictures.Load()
+}
+
+// clearPictures forgets the pictures placed so far, which the pane calls when it
+// draws the screen itself again: the next full-screen program starts clean.
+func (s *terminalFlow) clearPictures() {
+	if s == nil {
+		return
+	}
+	s.pictures.Store(false)
+	// The program that asked for the view is gone: the next one starts without
+	// graphics activity, so an ordinary full-screen program keeps the pane's
+	// replay.
+	s.tapMu.Lock()
+	if s.gfx != nil {
+		s.gfx.ForgetGraphics()
+	}
+	s.tapMu.Unlock()
 }
 
 func (s *terminalFlow) close() {
@@ -144,11 +205,20 @@ func (s *terminalFlow) setSize(cols, rows int) {
 	s.bellMu.Lock()
 	if s.bellTerm != nil {
 		if s.bellSize.Cols != cols || s.bellSize.Rows != rows {
+			reflow := s.bellSize.Cols != cols
 			s.bellTerm.Resize(cols, rows)
 			s.bellSize = appview.Size{Cols: cols, Rows: rows}
 			s.promptSize = s.bellSize
-			if s.promptRowKnown && s.promptRow >= rows {
-				s.promptRow = rows - 1
+			if reflow {
+				// A width change re-wraps the scrollback, so the recorded
+				// absolute row now names a different line. Forget it until the
+				// shell redraws its prompt and reports a fresh OSC 133;B: a
+				// stale row cropped the live area at the wrong line, replaying
+				// finished output under the blocks that already showed it (or
+				// cutting the prompt off above the cursor). A height change
+				// without re-wrapping keeps every row where it was, and the
+				// Pane's own block insertion relies on that.
+				s.promptRowKnown = false
 			}
 		}
 	}
@@ -171,9 +241,12 @@ func (s *terminalFlow) setCols(cols int) {
 	s.setSize(cols, rows)
 }
 
-// promptBoundary returns the screen row where the current shell prompt run
-// starts. The row is meaningful only while the mirror has the same dimensions
-// as the visible terminal.
+// promptBoundary returns the row where the current shell prompt run starts,
+// counted from the replay's first row before the Pane's row cap drops the
+// oldest rows above it (see appview.CursorReplayRow). The Pane translates the
+// row into its own capped frame, so it names the prompt even after output has
+// pushed the replay window down. The row is meaningful only while the mirror
+// has the same dimensions as the visible terminal.
 func (s *terminalFlow) promptBoundary(size appview.Size) (int, bool) {
 	if s == nil {
 		return 0, false
@@ -199,6 +272,12 @@ func (s *terminalFlow) promptBoundaryAfterCommand() bool {
 // The visible terminal may already have replayed a Session snapshot, so seed
 // the mirror from that snapshot before applying any output chunks that arrived
 // while the Surface was being attached.
+//
+// The mirror keeps the same scrollback as the visible terminal. Its rows then
+// count from the same first line as the replay the Pane draws, so a row
+// recorded at OSC 133;B is an absolute row of the flow and stays correct when
+// the screen scrolls without a new marker. A screen-only mirror made the row
+// relative to the visible screen, which the replay's scrollback then shifted.
 func (s *terminalFlow) bindBellTracker(term *terminal.Terminal) {
 	if s == nil || term == nil {
 		return
@@ -207,7 +286,7 @@ func (s *terminalFlow) bindBellTracker(term *terminal.Terminal) {
 	conn := newBellTrackerConn()
 	tracker, err := terminal.New(terminal.Options{
 		Conn:       conn,
-		Scrollback: -1,
+		Scrollback: terminalScrollback,
 	})
 	if err != nil {
 		_ = conn.Close()
@@ -226,6 +305,9 @@ func (s *terminalFlow) bindBellTracker(term *terminal.Terminal) {
 	s.promptRowKnown = false
 	s.promptAfterCommand = false
 	s.commandSincePrompt = false
+	// A queued bell's cell counts rows of the replay being replaced; drawing it
+	// on the new one would ripple at an unrelated row (a clear rebinds here).
+	s.bellQueue = nil
 	backlog := s.bellBacklog
 	s.bellBacklog = nil
 	s.bellMu.Unlock()
@@ -263,20 +345,53 @@ func (s *terminalFlow) feedBell(data []byte) {
 
 func (s *terminalFlow) feedBellChunk(data []byte) {
 	for len(data) > 0 {
-		i := s.bellScanner.Next(data)
+		i, ev := s.bellScanner.NextEvent(data)
 		if i < 0 {
 			s.bellTerm.Feed(data)
 			return
 		}
 		s.bellTerm.Feed(data[:i+1])
-		snapshot := s.bellTerm.Snapshot()
-		col, row, ok := appview.CursorCell(snapshot, s.bellSize)
-		if !ok {
-			col, row = -1, -1
+		switch ev {
+		case vt.BellEvent:
+			snapshot := s.bellTerm.Snapshot()
+			col, row, ok := appview.CursorCell(snapshot, s.bellSize)
+			if !ok {
+				col, row = -1, -1
+			}
+			s.bellQueue = append(s.bellQueue, appview.Bell{Fired: true, Col: col, Row: row})
+		case vt.ClearEvent:
+			s.anchorPromptAfterClear()
 		}
-		s.bellQueue = append(s.bellQueue, appview.Bell{Fired: true, Col: col, Row: row})
 		data = data[i+1:]
 	}
+}
+
+// anchorPromptAfterClear re-anchors the prompt row of the live run when the
+// screen is cleared without a fresh OSC 133;B. zsh's and bash's clear-screen
+// (Ctrl+L) erase the display and repaint the prompt from the home position
+// without running precmd, so no B arrives: the recorded boundary then named a
+// row above the repainted prompt, and the live area cropped it and the line
+// being typed away, with nothing to scroll to. The cursor right after the
+// clear is where the shell repaints the prompt, so its row is the new boundary.
+// A clear on a running command's behalf (clear(1), a TUI on the main screen)
+// lands the live area on the cleared screen the same way. Only a main-screen
+// clear counts: a full-screen program clears its alternate screen constantly,
+// and those rows name nothing on the main screen.
+func (s *terminalFlow) anchorPromptAfterClear() {
+	// Only the prompt's own clear matters here: while a command runs, its echo
+	// still anchors the live area (tailFrom finds the running line), and a
+	// full-screen TUI that redraws on the main screen clears on every frame.
+	// Snapshotting the mirror for each of those would cost a replay of the
+	// whole scrollback per frame for a boundary the next OSC 133;B replaces.
+	if !s.promptRowKnown || s.commandSincePrompt {
+		return
+	}
+	row, alt, ok := appview.CursorReplayRow(s.bellTerm.Snapshot(), s.bellSize)
+	if !ok || alt {
+		return
+	}
+	s.promptRow = row
+	s.promptSize = s.bellSize
 }
 
 // recordOSC133 consumes a complete OSC 133 payload (the leading "133;" is
@@ -291,7 +406,7 @@ func (s *terminalFlow) recordOSC133(marker string) {
 	case "C":
 		s.commandSincePrompt = true
 	case "B":
-		_, row, ok := appview.CursorCell(s.bellTerm.Snapshot(), s.bellSize)
+		row, _, ok := appview.CursorReplayRow(s.bellTerm.Snapshot(), s.bellSize)
 		if !ok {
 			return
 		}

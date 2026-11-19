@@ -362,7 +362,7 @@ if [ "${NETCATTY_CHILD_HOOK:-}" = "1" ]; then
         fi
         ;;
     esac
-    printf '%s\n' "${1-}"
+    printf "%s\n" "${1-}"
   }
   __netcatty_child_interactive() {
     local __nc_arg __nc_name

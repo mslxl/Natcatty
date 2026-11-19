@@ -60,6 +60,12 @@ const highlightIdleFlush = 30 * time.Millisecond
 // maxHighlightCarry bounds the partial line held for highlighting.
 const maxHighlightCarry = 64 << 10
 
+// maxControlStringCarry bounds a control string held for highlighting. A
+// picture sent through the terminal's graphics protocol is one string, so the
+// bound is generous; a runaway program that never terminates one is handed
+// through rather than held forever.
+const maxControlStringCarry = 64 << 20
+
 // Kind is the protocol of a Session. Local shells, SSH, serial, Telnet, Mosh,
 // and EternalTerminal exist in this slice.
 type Kind string
@@ -1428,6 +1434,18 @@ func (s *Session) highlightChunk(p []byte) {
 	if len(s.highlightCarry) > maxHighlightCarry || !endsInHighlightWord(s.highlightCarry) {
 		flushed = len(s.highlightCarry)
 	}
+	// A control string's payload (a picture's base64, a Sixel bitmap) is not
+	// text. Hold it whole until its terminator: highlighting the next write as
+	// if it were plain text would insert an escape into the payload, end the
+	// string at the terminal, and print the rest of the picture as garbage.
+	if start := domainterminal.OpenControlString(s.highlightCarry); start >= 0 {
+		if len(s.highlightCarry)-start > maxControlStringCarry {
+			// A runaway string: hand it through rather than hold forever.
+			flushed = len(s.highlightCarry)
+		} else if start < flushed {
+			flushed = start
+		}
+	}
 	if flushed > 0 {
 		part := append([]byte(nil), s.highlightCarry[:flushed]...)
 		s.highlightCarry = s.highlightCarry[flushed:]
@@ -1474,6 +1492,11 @@ func (s *Session) flushHighlightCarry() {
 	defer s.highlightMu.Unlock()
 	s.highlightTimer = nil
 	if len(s.highlightCarry) == 0 {
+		return
+	}
+	if domainterminal.OpenControlString(s.highlightCarry) >= 0 {
+		// The program is in the middle of a control string; its bytes are not
+		// text and must not be highlighted. The next write continues it.
 		return
 	}
 	part := append([]byte(nil), s.highlightCarry...)

@@ -19,6 +19,13 @@ func DecodeSixel(body string) ([]byte, bool) {
 		return nil, false
 	}
 	params := body[:q]
+	// A sixel DCS introduces itself with numeric parameters only ("0;0;0q").
+	// Other DCS strings that contain a 'q' are not pictures: yazi probes sixel
+	// support with DECRQSS's "$q", whose payload used to be decoded as a
+	// one-column image and drawn under the command.
+	if !numericSixelParams(params) {
+		return nil, false
+	}
 	data := body[q+1:]
 	transparent := false
 	if fields := strings.Split(params, ";"); len(fields) >= 2 {
@@ -31,6 +38,17 @@ func DecodeSixel(body string) ([]byte, bool) {
 		return nil, false
 	}
 	return dec.png()
+}
+
+// numericSixelParams reports that a DCS introducer before the sixel 'q' is made
+// of decimal parameters and ';' separators only, as the protocol specifies.
+func numericSixelParams(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if (s[i] < '0' || s[i] > '9') && s[i] != ';' {
+			return false
+		}
+	}
+	return true
 }
 
 type sixelDecoder struct {

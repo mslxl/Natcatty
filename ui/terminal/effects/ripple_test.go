@@ -3,6 +3,8 @@ package effects
 import (
 	"testing"
 	"time"
+
+	"github.com/egoist/mygo/ui"
 )
 
 // The bell's envelope: held for the first 45% of its second, then ramped to zero so
@@ -132,6 +134,43 @@ func TestRippleRestarts(t *testing.T) {
 	}
 	if r.Starts() != 2 {
 		t.Errorf("starts = %d, want 2", r.Starts())
+	}
+}
+
+// A drop starts at the pointer's own point when the pane knows it: a cell centre
+// is only the fallback for a ripple named by a cell alone (the bell). A later
+// cell-only pointer position drops the point, so a stale one cannot move the
+// next drop's wave.
+func TestRippleExactOrigin(t *testing.T) {
+	var r Ripple
+	now := time.Now()
+	r.StartAt(Bell, 2, 3, ui.Point{X: 10, Y: 20}, now)
+	if x, y := r.Cell(); x != 2 || y != 3 {
+		t.Errorf("cell = (%d,%d), want (2,3)", x, y)
+	}
+	if at, ok := r.Origin(); !ok || at != (ui.Point{X: 10, Y: 20}) {
+		t.Errorf("origin = %v, %v, want the given point", at, ok)
+	}
+	r.Start(Bell, 1, 1, now)
+	if _, ok := r.Origin(); ok {
+		t.Error("a start named only by a cell kept an exact origin")
+	}
+	r.PointerAt(4, 5, ui.Point{X: 6, Y: 7})
+	if !r.StartDrop(now) {
+		t.Fatal("a drop did not start with a pointer")
+	}
+	if at, ok := r.Origin(); !ok || at.X != 6 || at.Y != 7 {
+		t.Errorf("drop origin = %v, %v, want the pointer's (6,7)", at, ok)
+	}
+	if x, y := r.Cell(); x != 4 || y != 5 {
+		t.Errorf("drop cell = (%d,%d), want (4,5)", x, y)
+	}
+	r.Pointer(8, 9)
+	if !r.StartDrop(now) {
+		t.Fatal("a second drop did not start")
+	}
+	if _, ok := r.Origin(); ok {
+		t.Error("a cell-only pointer kept the previous exact origin")
 	}
 }
 

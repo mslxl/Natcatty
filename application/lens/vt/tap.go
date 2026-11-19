@@ -23,6 +23,13 @@ const (
 	stCSI
 	stOSC
 	stOSCEsc
+	// stString and stStringEsc swallow a control string's payload: APC (Kitty
+	// graphics), DCS (Sixel), PM and SOS carry pictures or private data, not
+	// command output. Without them the payload after ESC _ or ESC P became
+	// block text ("Gf=100,a=T;iVBORw…"), the garbage a picture left in its
+	// command's output.
+	stString
+	stStringEsc
 )
 
 // Tap is the incremental parser. Feed it every byte the PTY produced, in
@@ -47,7 +54,14 @@ type Tap struct {
 	escStart  int
 	escActive bool
 
+	// inCommand is between OSC 133;C and OSC 133;D.
 	inCommand bool
+	// alt is DECSET ?47/?1047/?1049 inside a command: a full-screen program
+	// (vim, less, top) owns the screen, and what it paints is not the
+	// command's output. The terminal restores the main screen when the
+	// program quits, so the tap ignores the painting in between instead of
+	// keeping a monochrome copy of the TUI in the block.
+	alt bool
 	// Netcatty's session hook reports the exact typed command and cwd in a
 	// private OSC 1337 marker immediately before the standard OSC 133;C mark.
 	// Keeping it here lets the Terminal lens path work with Natcatty's existing
@@ -123,7 +137,13 @@ func (t *Tap) drain() {
 		t.store.Append([]byte(ln.Text + "\n"))
 	}
 	t.rowsOut = t.rowsOut[:0]
-	t.ansi = t.ansi[:0]
+	if t.state != stString && t.state != stStringEsc {
+		// A control string's introducer stays in the buffer until its end cuts
+		// it: the payload arrives over many reads, and the offset recorded at
+		// the introducer only means anything while the buffer it points into
+		// is the same one.
+		t.ansi = t.ansi[:0]
+	}
 }
 
 // Bells counts the bells the program rang (BEL, 0x07). An OSC may end with a BEL
@@ -135,6 +155,22 @@ func (t *Tap) Bells() int64 { return t.bells.Load() }
 func (t *Tap) applyCSI(final byte) {
 	if !t.inCommand {
 		return
+	}
+	if final == 'h' || final == 'l' {
+		// DECSET/DECRST: of the modes a program sets, only the alternate
+		// screen matters to the transcript.
+		if len(t.csi) > 0 && t.csi[0] == '?' {
+			for _, field := range strings.Split(string(t.csi[1:]), ";") {
+				if n, err := strconv.Atoi(field); err == nil && (n == 47 || n == 1047 || n == 1049) {
+					t.alt = final == 'h'
+					return
+				}
+			}
+		}
+		return
+	}
+	if t.alt {
+		return // the program's painting is not the command's output
 	}
 	r := t.screen()
 	parts := strings.Split(string(t.csi), ";")
@@ -195,15 +231,24 @@ func (t *Tap) Feed(b []byte) {
 	for i := 0; i < len(b); i++ {
 		c := b[i]
 		// Keep every byte for the styled line; an OSC that turns out to be one of
-		// our own marks is truncated back to escStart when it is dispatched.
-		t.ansi = append(t.ansi, c)
+		// our own marks is truncated back to escStart when it is dispatched. An
+		// alternate screen's painting is not kept: it belongs to the program,
+		// not to the command's output. A control string's payload is not kept
+		// either, byte by byte as it arrives: an image is read in many reads,
+		// and the buffer is emptied after each of them, so remembering the
+		// introducer's offset alone could never cut the payload back out.
+		if !t.alt && t.state != stString && t.state != stStringEsc {
+			t.ansi = append(t.ansi, c)
+		}
 		switch t.state {
 		case stGround:
 			switch {
 			case c == 0x07:
 				// A bell: Terminal answers it with a ripple from the cursor, so it must
 				// not reach the line the lens reads.
-				t.ansi = t.ansi[:len(t.ansi)-1]
+				if !t.alt {
+					t.ansi = t.ansi[:len(t.ansi)-1]
+				}
 				t.bells.Add(1)
 			case c == 0x1b:
 				t.state = stEsc
@@ -212,6 +257,10 @@ func (t *Tap) Feed(b []byte) {
 			case !t.inCommand:
 				// Between the marks the screen shows the prompt and the typed line;
 				// none of that is the command's output.
+			case t.alt:
+				// A full-screen program's alternate screen; the terminal
+				// restores the main screen when it quits, so there is
+				// nothing to add to the command's output.
 			case c == '\n':
 				t.screen().newline(&t.rowsOut)
 				t.drain()
@@ -241,8 +290,26 @@ func (t *Tap) Feed(b []byte) {
 			case ']':
 				t.osc = t.osc[:0]
 				t.state = stOSC
+			case '_', 'P', '^', 'X':
+				// APC, DCS and the PM/SOS strings carry no command output. The
+				// whole sequence, payload included, is taken back out of the
+				// styled line; the graphics parser reads the stream separately.
+				t.state = stString
 			default:
 				t.state = stGround // two byte escape, ignored
+			}
+		case stString:
+			switch c {
+			case 0x07:
+				t.endString()
+			case 0x1b:
+				t.state = stStringEsc
+			}
+		case stStringEsc:
+			if c == '\\' {
+				t.endString()
+			} else {
+				t.state = stString
 			}
 		case stCSI:
 			if c >= 0x40 && c <= 0x7e {
@@ -284,6 +351,18 @@ func (t *Tap) flushRaw() { t.drain() }
 
 // Flush ends a line the program left open (no trailing newline).
 func (t *Tap) Flush() { t.flushLine() }
+
+// endString closes an APC/DCS/PM/SOS payload. Every byte of it, including the
+// introducer and the terminator, is cut back out of the styled line: the
+// picture a program printed is read by the graphics parser, and the block's
+// text must not show its base64 or Sixel payload.
+func (t *Tap) endString() {
+	if t.escActive && t.escStart >= 0 && t.escStart <= len(t.ansi) {
+		t.ansi = t.ansi[:t.escStart]
+	}
+	t.escActive = false
+	t.state = stGround
+}
 
 func (t *Tap) flushLine() {
 	t.screen().flush(&t.rowsOut)
@@ -327,6 +406,7 @@ func (t *Tap) dispatchOSC() {
 			t.line = t.line[:0]
 			t.ansi = t.ansi[:0]
 			t.col = 0
+			t.alt = false
 			_ = shell
 		}
 		if cwd, typed, ok := parseNetcattyExec(rest); ok {
@@ -340,7 +420,16 @@ func (t *Tap) dispatchOSC() {
 		sub, args, _ := strings.Cut(rest, ";")
 		switch sub {
 		case "C":
+			// Nushell emits its own bare OSC 133;C right after the hook's
+			// 133;C (the hook's carries no line either, so it started the block
+			// from NetcattyExec). Starting a second, empty command there would
+			// throw away the output the block is about to receive, so a bare C
+			// while a command is already running is that command's mark again.
+			if t.inCommand && strings.TrimSpace(args) == "" && t.pendingTyped == "" {
+				return
+			}
 			t.inCommand = true
+			t.alt = false
 			// A fresh scratch screen; the prompt and the echoed command are not output.
 			t.rowsModel = newRowsH(t.screen().cols, captureRows)
 			t.rowsOut = t.rowsOut[:0]

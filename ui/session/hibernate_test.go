@@ -89,7 +89,7 @@ func (f scriptedFactory) Open(context.Context, appsession.StartSpec) (appsession
 	return f.transport, nil
 }
 
-func newScriptedSurface(t *testing.T) (*Surface, *scriptedTransport) {
+func newScriptedSurface(t *testing.T, options ...Option) (*Surface, *scriptedTransport) {
 	t.Helper()
 	transport := newScriptedTransport()
 	service := appsession.NewService(scriptedFactory{transport: transport})
@@ -98,7 +98,8 @@ func newScriptedSurface(t *testing.T) (*Surface, *scriptedTransport) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	surface, err := New(session, WithRedraw(func() {}))
+	options = append(options, WithRedraw(func() {}))
+	surface, err := New(session, options...)
 	if err != nil {
 		t.Fatalf("New surface: %v", err)
 	}
@@ -309,14 +310,24 @@ func TestClickingTheBlankTerminalAreaKeepsInputFocused(t *testing.T) {
 	}
 }
 
-func TestTerminalUsesTheOrdinaryKeyInputPath(t *testing.T) {
-	surface, _ := newScriptedSurface(t)
+func TestTerminalKeepsItsInputPathForTyping(t *testing.T) {
+	surface, transport := newScriptedSurface(t)
 	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, true) }, 900, 600)
 	tester.SetLocale("en")
 	tester.Frame()
 
-	if active, noIME := tester.TextInputActive(); active || noIME {
-		t.Fatalf("terminal installed a native text-input client: active=%v noIME=%v", active, noIME)
+	// The platform may or may not need the terminal to declare a text input
+	// (see appview.takesPlatformTextInput); either way a typed character and a
+	// committed input-method composition must reach the transport, and the
+	// terminal must never turn input methods off.
+	if _, noIME := tester.TextInputActive(); noIME {
+		t.Fatal("the terminal turned input methods off")
+	}
+	tester.Compose("ni", 2)
+	tester.Type("你")
+	tester.TypeKey(0, ui.KeyE, "echo")
+	if !waitFor(t, func() bool { return strings.Contains(transport.Input(), "你echo") }) {
+		t.Fatalf("typed text never reached the transport: %q", transport.Input())
 	}
 }
 

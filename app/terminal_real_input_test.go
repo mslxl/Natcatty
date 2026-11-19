@@ -124,7 +124,9 @@ func waitRealSnapshot(t *testing.T, st *shellstate.State, tab int, predicate fun
 
 func waitForRealShellSurfaces(t *testing.T, st *shellstate.State, count int) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	// Each surface starts a real shell, and a loaded machine can take many
+	// seconds to spawn them; the wait is for state, not for speed.
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		st.Flush()
 		live := 0

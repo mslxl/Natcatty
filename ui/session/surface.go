@@ -280,6 +280,12 @@ func WithBrowser(open func(onClose func()) (BrowserPanel, error)) Option {
 	return func(options *Options) { options.Browser = open }
 }
 
+// terminalScrollback is how much output the terminal keeps above its screen.
+// The Shell's boundary mirror keeps the same amount, so its absolute rows and
+// the visible terminal's replay rows name the same line: a prompt row recorded
+// at OSC 133;B stays valid while the screen scrolls under it.
+const terminalScrollback = 256 << 10
+
 // Surface is one Tab's terminal view.
 type Surface struct {
 	session   *appsession.Session
@@ -287,6 +293,11 @@ type Surface struct {
 	flow      *terminalFlow
 	options   Options
 	closeOnce sync.Once
+
+	// liveSelection is the text selected by dragging over the live screen. It
+	// lives here because the Pane is rebuilt every frame; see
+	// appview.Selection for why MyGo's paragraph selection cannot serve it.
+	liveSelection appview.Selection
 
 	gate             *PasteGate
 	drops            *DropHandler
@@ -305,6 +316,11 @@ type Surface struct {
 	// unique per Session so two Tabs never share one node's keyboard, editor,
 	// or focus state.
 	terminalKey string
+	// inputClient is the live screen's connection to the system's input
+	// methods. It outlives the frames and the terminal itself: MyGo ends a
+	// composition when the client changes, and Hibernate/Resume replaces the
+	// terminal the client sends to.
+	inputClient *appview.InputClient
 	flowScroll  ui.ScrollState
 	flowFollow  appview.Follow
 	flowRipple  terminaleffects.Ripple
@@ -328,7 +344,13 @@ type Surface struct {
 	flowLastID          int
 	flowLastExit        bool
 	terminalLiveFocused bool
-	focusRequests       uint64
+	// terminalOwnView tells that the last frame was drawn by the terminal's own
+	// view: that view sizes the terminal, so the pane's grid must not.
+	terminalOwnView bool
+	// terminalSawAlt tells that an alternate screen was drawn since a program
+	// placed its pictures; the frame that leaves that screen clears them.
+	terminalSawAlt bool
+	focusRequests  uint64
 	// browser replaces the Session chrome and terminal while open. The
 	// Session and its transport keep running underneath.
 	browser    BrowserPanel
@@ -430,7 +452,7 @@ func (s *Surface) attach(conn io.ReadWriteCloser) error {
 	cursor, blink := s.terminalCursor()
 	options := terminal.Options{
 		Conn:             conn,
-		Scrollback:       256 << 10,
+		Scrollback:       terminalScrollback,
 		Font:             s.terminalFont(),
 		Theme:            s.terminalTheme(),
 		Keybinds:         s.terminalKeybinds(),
@@ -475,6 +497,9 @@ func (s *Surface) attach(conn io.ReadWriteCloser) error {
 		}
 	}
 	s.terminal = term
+	// The selection named cells of the terminal that was showing; Resume (or a
+	// reattach) brings a different screen and the rows no longer name it.
+	s.liveSelection.Clear()
 	if s.flow != nil {
 		s.flow.bindBellTracker(term)
 	}
@@ -694,7 +719,14 @@ func (s *Surface) view(c *ui.Context, focused, explicitFocus bool) ui.Element {
 	s.refreshSuggestions(snapshot.Input, snapshot.CWD, snapshot.Command.Running)
 	model, actions := s.chrome(c, snapshot)
 
-	return ui.Column(c).Fill().Children(func() {
+	// FillHeight sizes the surface to the room its Pane gives it, but a
+	// column's automatic minimum is its content's: with a live grid taller
+	// than the window (the flow grows a row per prompt), that minimum became
+	// the Pane's whole height and the surface could not shrink by the header
+	// above it. The flow then laid out below the window, where neither follow
+	// nor the wheel could reach it. MinHeight(0) lets the Pane's header take
+	// its row out of the surface, as bodyRow does for the window's body.
+	return ui.Column(c).Fill().MinHeight(0).Children(func() {
 		if s.browserErr != nil {
 			ui.Row(c).FillWidth().Padding(6, 8).Gap(8).AlignItems(ui.Center).
 				Background(t.Surface).Children(func() {
@@ -885,7 +917,17 @@ func (s *Surface) clearBuffer() {
 	}
 	if s.terminal != nil {
 		appview.ClearScreen(s.terminal)
+		// The boundary mirror replays what the visible terminal shows. Clearing
+		// the screen here leaves the mirror holding rows the visible replay no
+		// longer has, so every later row it records counts from a different
+		// first line: the next prompt's boundary landed below the live area and
+		// the flow then drew a finished command both as its block and again as
+		// raw rows. Seed it from the cleared terminal, as attach does.
+		if s.flow != nil {
+			s.flow.bindBellTracker(s.terminal)
+		}
 	}
+	s.liveSelection.Clear()
 	s.flowScroll.Y = math.MaxFloat32
 	s.flowFollow = appview.Follow{}
 	if s.session != nil {
@@ -893,11 +935,31 @@ func (s *Surface) clearBuffer() {
 	}
 }
 
+// textInputClient is the live screen's one input client, made on first use.
+// It sends committed input-method text to the terminal attached now, not to
+// the one that existed when it was made: Resume attaches a new terminal.
+func (s *Surface) textInputClient() ui.TextInputClient {
+	if s.inputClient == nil {
+		s.inputClient = appview.NewInputClient(func(b []byte) {
+			if s.terminal != nil {
+				s.terminal.Send(b)
+			}
+		})
+	}
+	return s.inputClient
+}
+
 // terminalView shows the live terminal and returns its element, which anchors
 // the floating autocomplete layers. It is the Session's one live view.
 func (s *Surface) terminalView(c *ui.Context) ui.Element {
 	if s.flow != nil && s.terminal != nil {
-		if !s.session.ScreenSizeFromRemote() {
+		if !s.session.ScreenSizeFromRemote() && !s.terminalOwnView {
+			// A full-screen program is shown by MyGo's own view (see
+			// appview.Live), which sizes the terminal to fit its box, with the
+			// font metrics the terminal draws with. Sizing it here too, from the
+			// pane's coarser grid, makes the two disagree by a cell and resize
+			// the program twice every frame: it then repaints forever and its
+			// image placeholders are erased before a frame can show them.
 			if grid, ok := appview.GridFor(); ok {
 				s.terminal.Resize(grid.Cols, grid.Rows)
 			}
@@ -990,12 +1052,62 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 			terminalTheme,
 			appview.Hooks{
 				Key:       s.terminalKey + "-" + strconv.FormatUint(s.focusEpoch, 10),
+				TextInput: s.textInputClient(),
+				Selection: &s.liveSelection,
 				Focus:     focus,
 				Refocus:   flowRefocus,
 				KeepFocus: s.focused,
+				// A press on a finished command's row or Lens body must not
+				// leave the keyboard there. The block still selects text and
+				// its Native/Raw switch still works; the Session asks for the
+				// terminal's focus on the next frame so typing reaches the
+				// shell again.
+				Click: func() {
+					// A press outside the live screen starts a new selection
+					// there: keeping the old highlight over text the user is
+					// no longer working with would copy the wrong cells.
+					s.liveSelection.Clear()
+					// Do not test terminalLiveFocused here: at pointer-down
+					// time it is still the previous frame's value, which is
+					// true because the terminal owned the keyboard a moment
+					// ago, so the guard would skip the one press that needs
+					// it. Request the terminal's focus and let the next build
+					// (hooks.Focus) put it back on the input box.
+					if s.focused {
+						s.focusPending = true
+						s.redraw()
+					}
+				},
 				Focused: func(focused bool) {
 					s.terminalLiveFocused = focused
 				},
+				OwnView: func(pictures, alt bool) {
+					if pictures != s.terminalOwnView && s.focused {
+						// The pane changed which element takes the keyboard:
+						// a full-screen program that placed pictures is drawn
+						// by the terminal's own view instead of the pane's
+						// cell grid (and back again). The element that appears
+						// starts without focus, so the keys typed after the
+						// program opened went nowhere while the mouse still
+						// worked. Ask for focus once, as a finished block does.
+						s.focusPending = true
+						s.focusRetryFrames = 4
+					}
+					s.terminalOwnView = pictures
+					// Pictures are wanted until the program that placed them
+					// leaves its alternate screen: a full-screen program sends
+					// an image before the replay reports that screen, so a
+					// frame in between is not a sign that it is done.
+					if alt {
+						s.terminalSawAlt = true
+						return
+					}
+					if s.terminalSawAlt {
+						s.terminalSawAlt = false
+						s.flow.clearPictures()
+					}
+				},
+				Images: s.flow.hasPictures(),
 				Input: func(ev ui.InputEvent) bool {
 					if ev.Kind == ui.InputCommand && ev.Text == "paste" {
 						if text := c.ReadClipboard(); text != "" {
@@ -1020,7 +1132,10 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 					s.redraw()
 				},
 			},
-			func(text string) { c.WriteClipboard(text) },
+			// Copy runs from the menu and from handlers, outside the frame,
+			// where Context.WriteClipboard is a no-op: Services reaches the
+			// window's clipboard at any time.
+			func(text string) { c.Services().WriteClipboard(text) },
 		).Grow(1)
 		if focusRequested && s.focusRetryFrames > 0 {
 			// Keep retrying only during the bounded activation window. This
@@ -1063,13 +1178,13 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 	// File drag/drop belongs to the terminal element. Reading it here marks
 	// the terminal as the drop target and consumes a completed drop once; the
 	// resulting banner appears on the next frame.
-	if over := termView.FileDragOver(); over != s.dropOver {
+	if over := appview.FileDragOver(termView); over != s.dropOver {
 		s.dropOver = over
 		// Both entering and leaving change the banner, so redraw either way;
 		// otherwise the drop hint would stay after the pointer left.
 		s.redraw()
 	}
-	if files := termView.DroppedFiles(); len(files) > 0 {
+	if files := appview.DroppedFiles(termView); len(files) > 0 {
 		s.dropOver = false
 		s.drops.Drop(files, s.windowsShell())
 		s.redraw()

@@ -137,10 +137,46 @@ __natcatty_prompt() {
   printf '\033]133;A\007'
   printf '\033]7;file://%s%s\007' "${HOSTNAME:-localhost}" "$PWD"
   printf '\033]133;B\007'
+  # The user's own precmd runs after this one and reads $? to report the
+  # command's status (starship's status module does), so hand it back.
+  return "$code"
 }
 
-PROMPT_COMMAND=__natcatty_prompt
-trap '__natcatty_preexec' DEBUG
+# The user's startup files, read above, may already own PROMPT_COMMAND and the
+# DEBUG trap: starship keeps its precmd in PROMPT_COMMAND and its timing in the
+# DEBUG trap, and bash-preexec owns the DEBUG trap too. Assigning either one
+# froze those prompts and silenced those hooks, so the integration only layers
+# on top: its precmd runs first, with the status of the command that just
+# finished, then the user's hooks run as they did before.
+case ${PROMPT_COMMAND-} in
+  *__natcatty_prompt*) ;;
+  '') PROMPT_COMMAND=__natcatty_prompt ;;
+  *)
+    # bash 5.1 and later run every element of an array PROMPT_COMMAND; earlier
+    # bashes treat the value as one command line.
+    if [ "${BASH_VERSINFO[0]}" -gt 5 ] || { [ "${BASH_VERSINFO[0]}" -eq 5 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
+      PROMPT_COMMAND=(__natcatty_prompt "${PROMPT_COMMAND[@]}")
+    else
+      PROMPT_COMMAND="__natcatty_prompt;$PROMPT_COMMAND"
+    fi
+    ;;
+esac
+
+# trap -p prints 'trap -- <command> DEBUG'; the command is word 2 of that list.
+# bash refuses to re-enter a trap while it runs, so chaining cannot recurse.
+eval "__natcatty_debug_trap=($(trap -p DEBUG))"
+__natcatty_debug_trap=${__natcatty_debug_trap[2]-}
+if [ -z "$__natcatty_debug_trap" ]; then
+  trap '__natcatty_preexec' DEBUG
+elif [ "$__natcatty_debug_trap" != '__natcatty_preexec' ]; then
+  __natcatty_preexec_all() {
+    local __natcatty_last=$1
+    eval -- "$__natcatty_debug_trap"
+    __natcatty_preexec
+    : "$__natcatty_last"
+  }
+  trap '__natcatty_preexec_all "$_"' DEBUG
+fi
 `
 }
 

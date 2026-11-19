@@ -820,6 +820,24 @@ func (t *terminalTap) handleOSC133(rest string, now time.Time) (bool, *capturedC
 	switch kind {
 	case 'A':
 		t.nativeSeen = true
+		if t.hookExpected && !t.hookSeen {
+			// Every capture hook announces itself at the prompt before this
+			// mark. A prompt without that handshake means the shell is running
+			// a different startup — the Lens OSC 133 integration replaces the
+			// planned hook's ZDOTDIR on a local zsh, for one — so the hook is
+			// not installed and will never speak. Stop reserving typed
+			// commands for it: otherwise every command of the Session stays
+			// pending until it closes, and the history never sees it while the
+			// user is typing.
+			t.hookExpected = false
+			if t.pending != nil && t.pending.awaitingHook {
+				// The line was typed before this prompt was drawn, so this
+				// mark starts the command rather than finishing it. Native
+				// capture owns the line now; its own D publishes it.
+				t.pending.awaitingHook = false
+				return true, nil
+			}
+		}
 		if t.hookOwnedPending() {
 			// The hook owns this capture; only its D may finish it.
 			return false, nil
@@ -867,7 +885,8 @@ func (t *terminalTap) handleOSC133(rest string, now time.Time) (bool, *capturedC
 		if t.pending != nil && t.pending.awaitingHook {
 			// A prompt mark that arrived before the planned hook's first
 			// private sequence belongs to an earlier command; the tentative
-			// capture must stay until the hook replaces it or the Session ends.
+			// capture must stay until the hook replaces it, a prompt without
+			// the handshake releases it, or the Session ends.
 			return false, nil
 		}
 		completion := t.finalizePendingLocked(now, true, exitCode, hasExitCode)

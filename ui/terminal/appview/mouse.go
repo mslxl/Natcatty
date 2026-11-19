@@ -36,11 +36,27 @@ func MouseSeq(m mouseMode, ev ui.InputEvent, col, row int) []byte {
 			button = 64
 		case ev.DY > 0:
 			button = 65
+		case ev.DX < 0:
+			button = 66 // wheel left
+		case ev.DX > 0:
+			button = 67 // wheel right
 		default:
 			return nil
 		}
 	default:
 		return nil
+	}
+	// xterm reports the modifier keys in the button byte: Shift 4, Alt 8,
+	// Ctrl 16. Without them vim and tmux could not tell a Shift-click from a
+	// plain one, and a Ctrl-click's context menu never opened.
+	if ev.Mods&ui.Shift != 0 {
+		button += 4
+	}
+	if ev.Mods&ui.Alt != 0 {
+		button += 8
+	}
+	if ev.Mods&ui.Ctrl != 0 {
+		button += 16
 	}
 	if m.sgr {
 		return []byte(fmt.Sprintf("\x1b[<%d;%d;%d%c", button, col+1, row+1, fin))

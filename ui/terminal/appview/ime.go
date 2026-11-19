@@ -4,7 +4,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -18,11 +17,34 @@ type InputClient struct {
 
 	mu     sync.Mutex
 	marked string // the composition; ranges count UTF-16 units of it
+	// echo is set while the key just dispatched carried its own encoding.
+	// A platform may commit the characters a key types separately from its
+	// key down, and a key the Pane already sent as an escape sequence must
+	// not send those characters a second time. On macOS that is what
+	// happens to an Option-modified letter: the Pane sends Meta-letter, and
+	// AppKit's interpretKeyEvents: then commits the composed character
+	// (Option-A is å) through insertText:, which ReplaceText would pass on
+	// as a second write. Tab, Return and Escape are command selectors
+	// there and commit no text, and mygo drops Windows's control-character
+	// messages, so those keys never echo. Keys the Pane leaves to the
+	// platform (a plain letter) clear the mark, so their text still takes
+	// the ordinary path, and a key that commits an input-method
+	// composition never sets it: that text is the user's.
+	echo bool
 }
 
 // NewInputClient makes a client that sends committed text with send.
 func NewInputClient(send func([]byte)) *InputClient {
 	return &InputClient{send: send}
+}
+
+// keyEcho is the part of the text-input client that keeps the characters of a
+// key the Pane already encoded out of the program. InputClient implements it;
+// the Pane only needs the methods, so another client can replace it.
+type keyEcho interface {
+	NoteKey(encoded bool)
+	NoteKeyUp()
+	TakeEcho() bool
 }
 
 // Marked returns the composition text in force, for tests and the app.
@@ -59,22 +81,66 @@ func (c *InputClient) MarkedRange() (ui.TextInputRange, bool) {
 	return ui.TextInputRange{Start: 0, End: ui.UTF16Len(c.marked)}, true
 }
 
+// NoteKey records whether the key event being dispatched was encoded by the
+// Pane itself. The text the key types may follow as a commit; when the key
+// already reached the program as its escape sequence, that commit is the same
+// key and TakeEcho drops it. A key left to the platform clears the mark, so
+// the text it types is sent as committed text.
+func (c *InputClient) NoteKey(encoded bool) {
+	c.mu.Lock()
+	// A key pressed while a composition is in force commits that composition:
+	// Return ends an input-method composition, and the characters it commits
+	// are the user's text, not this key's echo. Keep sending them even though
+	// the key down carried its own encoding.
+	c.echo = encoded && c.marked == ""
+	c.mu.Unlock()
+}
+
+// NoteKeyUp ends the key. A key that produced no text must not make the next
+// commit — an input method's, later — look like its echo.
+func (c *InputClient) NoteKeyUp() {
+	c.mu.Lock()
+	c.echo = false
+	c.mu.Unlock()
+}
+
+// TakeEcho reports whether the next committed text is the characters of a key
+// the Pane already encoded, and clears the mark. It is how the Pane's own
+// InputText path drops the duplicate on platforms that deliver text to the
+// element instead of the client. A composition is never an echo: its commit
+// sends the user's text.
+func (c *InputClient) TakeEcho() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	echo := c.echo && c.marked == ""
+	c.echo = false
+	return echo
+}
+
 // ReplaceText commits: whatever replaced what, the text goes to the program now.
 // An input method commits with a replacement of the composition range, and a plain
-// send is what a terminal needs.
+// send is what a terminal needs. Text the key's own key down already sent is not
+// sent again; see NoteKey.
 func (c *InputClient) ReplaceText(_ *ui.TextInputRange, s string) {
 	c.mu.Lock()
 	c.marked = ""
+	echo := c.echo
+	c.echo = false
 	c.mu.Unlock()
-	if s != "" && c.send != nil {
+	if echo || s == "" {
+		return
+	}
+	if c.send != nil {
 		c.send([]byte(s))
 	}
 }
 
-// SetMarkedText records the composition the system is showing.
+// SetMarkedText records the composition the system is showing. A composition is
+// new text, not the echo of the key that started it, so it ends any key echo.
 func (c *InputClient) SetMarkedText(_ *ui.TextInputRange, s string, _ ui.TextInputRange) {
 	c.mu.Lock()
 	c.marked = s
+	c.echo = false
 	c.mu.Unlock()
 }
 
@@ -131,22 +197,4 @@ func substringUTF16(s string, start, end int) string {
 		}
 	}
 	return b.String()
-}
-
-// clients keeps one input client per terminal, across frames.
-var (
-	clientsMu sync.Mutex
-	clients   = map[*terminal.Terminal]*InputClient{}
-)
-
-// clientFor returns the input client of a terminal, making it on first use.
-func clientFor(term *terminal.Terminal) *InputClient {
-	clientsMu.Lock()
-	defer clientsMu.Unlock()
-	if c, ok := clients[term]; ok {
-		return c
-	}
-	c := NewInputClient(func(b []byte) { term.Send(b) })
-	clients[term] = c
-	return c
 }

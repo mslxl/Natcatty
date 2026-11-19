@@ -79,7 +79,10 @@ PROMPT_COMMAND=__netcatty_test_user_prompt
 		if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		return env
+		// The process that runs the tests may export an empty PS1, and bash
+		// then renders no prompt at all. Give the shell under test its own
+		// prompt so the capture does not depend on the caller's environment.
+		return append(env, "PS1=$ ")
 	case "fish":
 		dir := filepath.Join(home, ".config", "fish")
 		if err := os.MkdirAll(dir, 0o700); err != nil {
