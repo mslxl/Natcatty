@@ -27,6 +27,18 @@ requests; this file is the human-maintained changelog.
   and Host Tabs while hidden; Follow Mode can instead render the main
   window's active Tab without moving or reordering it, and hides and restores
   the main window around the Panel.
+- Synced upstream `binaricat/Netcatty` `73d15da76..ad0586702`
+  (2026-10-19..2026-11-09): workspace pane rearrange with drop guards,
+  compose bracketed paste / send target / reconnect / directory picker,
+  Shift+Enter, archive extraction links, snippets and command descriptions
+  at prompts, startup commands, host-list toggle, custom shell and
+  `--open-terminal-shell`, quick connect, per-GPU/per-core/disk-I/O
+  monitoring, global default proxy, serial named pipes and auto-login,
+  SSH TOTP/rekey/host-certificates, MCP Streamable HTTP and dedicated SFTP
+  dial, SFTP duplicate/create-archive, Nginx highlighting, quit-while-
+  transferring guard, vault marquee/CSV jump chains/inherited proxy+X11,
+  and convergent migration conflict resolution. Session menu can open the
+  session log, and a local shell's cwd is probed without OSC 7.
 - Mosh Sessions can use a Network Profile. The in-process Mosh client carries
   both its SSH bootstrap and its UDP flow through the selected Network
   Provider, so Mosh works over Tailscale Net and WireGuard Net without an
