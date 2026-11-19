@@ -119,9 +119,13 @@ func newPhoneTransportFactory(manager *appconnection.Manager, routes vaultRoutes
 	)
 }
 
-// OpenHost opens one saved Host and attaches the terminal view the phone
-// draws. The StartSpec comes from the shared application mapping, so a Mosh,
-// ET, or Telnet Host behaves as it does on the desktop.
+// OpenHost opens one saved Host as a Session. The StartSpec comes from the
+// shared application mapping, so a Mosh, ET, or Telnet Host behaves as it does
+// on the desktop.
+//
+// The returned handle does not attach a terminal view. The phone shell attaches
+// one only while the Session is visible (and resumes it when the user returns),
+// so a hidden Session never holds a live view.
 func (r *phoneSessionRuntime) OpenHost(ctx context.Context, host domainvault.Host) (phoneshell.SessionHandle, error) {
 	// The Hosts list carries stored records, while the desktop opens a Host
 	// with its Host Group defaults and selected Proxy Profile applied. Resolve
@@ -150,12 +154,7 @@ func (r *phoneSessionRuntime) OpenHost(ctx context.Context, host domainvault.Hos
 	if err != nil {
 		return nil, err
 	}
-	view, err := session.AttachView()
-	if err != nil {
-		_ = session.Close()
-		return nil, err
-	}
-	return &phoneSessionHandle{session: session, view: view}, nil
+	return &phoneSessionHandle{session: session}, nil
 }
 
 // Close ends every Session and shuts the Connection Manager down.
@@ -184,30 +183,35 @@ func networkProviderStateBase(userData string) string {
 	return userData + "/network-providers"
 }
 
-// phoneSessionHandle adapts an attached Session view to the phone shell's
-// handle. Read and Write are the terminal's output and input; Close detaches
-// the view and ends the Session.
+// phoneSessionHandle adapts an application Session to the phone shell's
+// handle. The Session owns the transport, the bounded replay, and the one live
+// view. Attach claims that view; Hibernate detaches it and keeps the Session
+// running; Resume replays what it produced while hidden. End is the only
+// method that disconnects and ends the Session.
 type phoneSessionHandle struct {
 	session *appsession.Session
-	view    *appsession.ViewConn
 	once    sync.Once
 	err     error
 }
 
 var _ phoneshell.SessionHandle = (*phoneSessionHandle)(nil)
 
-func (h *phoneSessionHandle) Read(p []byte) (int, error)  { return h.view.Read(p) }
-func (h *phoneSessionHandle) Write(p []byte) (int, error) { return h.view.Write(p) }
-func (h *phoneSessionHandle) Resize(cols, rows int) error { return h.view.Resize(cols, rows) }
-func (h *phoneSessionHandle) Done() <-chan struct{}       { return h.session.Done() }
+func (h *phoneSessionHandle) Attach() (io.ReadWriteCloser, error) {
+	return h.session.AttachView()
+}
 
-func (h *phoneSessionHandle) Close() error {
+func (h *phoneSessionHandle) Hibernate() bool { return h.session.Hibernate() }
+
+func (h *phoneSessionHandle) Resume() (io.ReadWriteCloser, error) {
+	return h.session.Resume()
+}
+
+func (h *phoneSessionHandle) Done() <-chan struct{} { return h.session.Done() }
+
+// End disconnects and ends the Session. An explicit close is the only caller.
+func (h *phoneSessionHandle) End() error {
 	h.once.Do(func() {
-		detachErr := h.view.Close()
-		closeErr := h.session.Close()
-		h.err = errors.Join(detachErr, closeErr)
+		h.err = h.session.Close()
 	})
 	return h.err
 }
-
-var _ io.ReadWriteCloser = (*phoneSessionHandle)(nil)

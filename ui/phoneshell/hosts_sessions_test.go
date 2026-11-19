@@ -29,24 +29,32 @@ func (s *fakeHostStore) List(context.Context) ([]domainvault.Host, error) {
 	return append([]domainvault.Host(nil), s.hosts...), nil
 }
 
-// fakeHandle is one phone Session: output the fake screen shows and input the
-// screen writes back.
+// fakeHandle is one phone Session. The handle owns the Session state and its
+// one live view, as the real application Session does: Attach claims the view,
+// Hibernate releases it without ending the Session, Resume claims it again,
+// and only End ends the Session. The view itself is the handle, because a fake
+// terminal screen only needs the output buffer and input recorder.
 type fakeHandle struct {
-	mu      sync.Mutex
-	output  bytes.Buffer
-	written bytes.Buffer
-	done    chan struct{}
-	closed  bool
+	mu         sync.Mutex
+	output     bytes.Buffer
+	written    bytes.Buffer
+	done       chan struct{}
+	viewDone   chan struct{}
+	attached   bool
+	hibernated bool
+	ended      bool
+	// resumeErr, when set, makes Resume fail after the next Hibernate.
+	resumeErr error
 }
 
 func newFakeHandle(output string) *fakeHandle {
-	h := &fakeHandle{done: make(chan struct{})}
+	h := &fakeHandle{done: make(chan struct{}), viewDone: make(chan struct{})}
 	h.output.WriteString(output)
 	return h
 }
 
 // Read serves the queued output, as a Session view does, then blocks until the
-// handle closes.
+// view detaches or the Session ends.
 func (h *fakeHandle) Read(p []byte) (int, error) {
 	h.mu.Lock()
 	if h.output.Len() > 0 {
@@ -54,9 +62,14 @@ func (h *fakeHandle) Read(p []byte) (int, error) {
 		h.mu.Unlock()
 		return n, err
 	}
+	viewDone, done := h.viewDone, h.done
 	h.mu.Unlock()
-	<-h.done
-	return 0, io.EOF
+	select {
+	case <-viewDone:
+		return 0, io.EOF
+	case <-done:
+		return 0, io.EOF
+	}
 }
 
 func (h *fakeHandle) Write(p []byte) (int, error) {
@@ -66,13 +79,78 @@ func (h *fakeHandle) Write(p []byte) (int, error) {
 }
 
 func (h *fakeHandle) Resize(int, int) error { return nil }
-func (h *fakeHandle) Done() <-chan struct{} { return h.done }
 
+// Close detaches the view: it is what a terminal screen's Close reaches.
 func (h *fakeHandle) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if !h.closed {
-		h.closed = true
+	if h.attached {
+		h.attached = false
+		close(h.viewDone)
+	}
+	return nil
+}
+
+func (h *fakeHandle) Attach() (io.ReadWriteCloser, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.attached {
+		return nil, errors.New("fake handle: a view is already attached")
+	}
+	if h.ended {
+		return nil, io.EOF
+	}
+	h.attachLocked()
+	return h, nil
+}
+
+func (h *fakeHandle) Hibernate() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.ended {
+		return false
+	}
+	if h.attached {
+		h.attached = false
+		close(h.viewDone)
+	}
+	h.hibernated = true
+	return true
+}
+
+func (h *fakeHandle) Resume() (io.ReadWriteCloser, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.hibernated {
+		return nil, errors.New("fake handle: not hibernated")
+	}
+	if h.resumeErr != nil {
+		err := h.resumeErr
+		h.resumeErr = nil
+		return nil, err
+	}
+	h.hibernated = false
+	h.attachLocked()
+	return h, nil
+}
+
+// attachLocked claims the view. The caller holds h.mu.
+func (h *fakeHandle) attachLocked() {
+	h.attached = true
+	h.viewDone = make(chan struct{})
+}
+
+func (h *fakeHandle) Done() <-chan struct{} { return h.done }
+
+func (h *fakeHandle) End() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.ended {
+		h.ended = true
+		if h.attached {
+			h.attached = false
+			close(h.viewDone)
+		}
 		close(h.done)
 	}
 	return nil
@@ -88,6 +166,26 @@ func (h *fakeHandle) rendered() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.output.String()
+}
+
+func (h *fakeHandle) isAttached() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.attached
+}
+
+func (h *fakeHandle) isEnded() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.ended
+}
+
+// failNextResume makes the next Resume fail, modelling a transport that ended
+// while its Session was hibernated.
+func (h *fakeHandle) failNextResume(err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.resumeErr = err
 }
 
 // fakeOpener records the Hosts it was asked to open.
@@ -130,6 +228,40 @@ func (o *fakeOpener) opened() []domainvault.Host {
 	return append([]domainvault.Host(nil), o.hosts...)
 }
 
+// liveViews sums the fake Sessions' attached views: the phone holds at most
+// one across every Tab.
+func (o *fakeOpener) liveViews() int {
+	o.mu.Lock()
+	handles := append([]*fakeHandle(nil), o.handles...)
+	o.mu.Unlock()
+	live := 0
+	for _, handle := range handles {
+		if handle.isAttached() {
+			live++
+		}
+	}
+	return live
+}
+
+func (o *fakeOpener) ended() int {
+	o.mu.Lock()
+	handles := append([]*fakeHandle(nil), o.handles...)
+	o.mu.Unlock()
+	ended := 0
+	for _, handle := range handles {
+		if handle.isEnded() {
+			ended++
+		}
+	}
+	return ended
+}
+
+func (o *fakeOpener) count() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return len(o.handles)
+}
+
 // fakeScreen shows the handle's output and forwards typed text to it. It is
 // the test's stand-in for libghostty-vt.
 type fakeScreen struct {
@@ -153,7 +285,7 @@ func (s *fakeScreen) View(c *ui.Context) ui.Element {
 	return column
 }
 
-func (s *fakeScreen) Close() error { return nil }
+func (s *fakeScreen) Close() error { return s.handle.Close() }
 
 func fakeScreens(conn io.ReadWriteCloser) (TerminalScreen, error) {
 	handle, ok := conn.(*fakeHandle)
@@ -163,29 +295,33 @@ func fakeScreens(conn io.ReadWriteCloser) (TerminalScreen, error) {
 	return &fakeScreen{handle: handle}, nil
 }
 
-// phoneFixture is one shell over a fake store, opener, and screen.
+// phoneFixture is one shell over a fake store, opener, screen, and settings.
 type phoneFixture struct {
-	shell   *Shell
-	store   *fakeHostStore
-	opener  *fakeOpener
-	tester  *ui.Tester
-	hosts   []domainvault.Host
-	context context.Context
+	shell    *Shell
+	store    *fakeHostStore
+	opener   *fakeOpener
+	settings *fakeSettings
+	tester   *ui.Tester
+	hosts    []domainvault.Host
+	context  context.Context
 }
 
 func newPhoneFixture(t *testing.T, hosts []domainvault.Host, opener *fakeOpener) *phoneFixture {
 	t.Helper()
 	store := &fakeHostStore{hosts: hosts}
+	settings := newFakeSettings()
 	shell := New(
 		WithHosts(store),
 		WithSessionOpener(opener),
 		WithScreenFactory(fakeScreens),
+		WithSettings(settings),
 	)
 	if err := shell.Load(context.Background()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	fixture := &phoneFixture{
-		shell: shell, store: store, opener: opener, hosts: hosts, context: context.Background(),
+		shell: shell, store: store, opener: opener, settings: settings,
+		hosts: hosts, context: context.Background(),
 	}
 	// The tab bar opens on Sessions in the app; start a Hosts test there.
 	shell.Select(Hosts)

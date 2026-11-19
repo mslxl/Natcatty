@@ -107,3 +107,59 @@ inputs to the final link, not the bytes shipped in the APK.
   `darwin-aarch64` QEMU backend and the arm64-v8a system image, so it cannot
   boot an x86_64 AVD; no physical device was attached. The x86_64 library
   still builds, links and passes the 16 KB gate.
+
+## M3 — phone Session lifecycle
+
+Recorded 2026-11-20 while implementing ticket 10 (Session lifecycle) on an
+arm64 Darwin host (macOS 27.2.1) with Go 1.27.4 from the pinned `.#default`
+nix shell. The rule under test is the phone's: one Tab per Session, one Pane
+per Tab, the visible Session resumed, every other Session hibernated with its
+transport and replay kept and its live terminal view released.
+
+### Memory with several Sessions open
+
+The measurement is
+`TestPhoneHibernationMemoryWithSeveralSessions` in `app`, run with:
+
+```
+nix develop .#default --command bash -c \
+  'go test ./app/ -run TestPhoneHibernationMemoryWithSeveralSessions -count=1 -v'
+```
+
+It opens six real Sessions against six in-process SSH servers (the production
+Connection Manager, Transport factory and Session service; the fixture is only
+the wire endpoint), attaches each Session once to a real libghostty-vt
+terminal, writes 500 lines to it, closes the terminal and hibernates the
+Session. It then samples memory with every Session hibernated and again with
+one Session resumed as the phone's single live view. One sample is
+`runtime.GC()` twice, then `runtime.ReadMemStats` (HeapAlloc and HeapInuse),
+plus the process's current resident set from `ps -o rss= -p <pid>`; the Go
+heap does not include the terminal emulator's native allocation, which is why
+RSS is recorded too. Deltas are against a sample taken before any Session
+opened.
+
+Representative run (four consecutive runs were within the ranges shown):
+
+| State | HeapAlloc | HeapInuse | RSS |
+| --- | ---: | ---: | ---: |
+| No Sessions (baseline) | 3,704,232 B | 6,340,608 B | 45,216 KiB |
+| 6 Sessions, all hibernated | 4,852,480 B | 8,044,544 B | 51,632 KiB |
+| 5 hibernated + 1 live view | 4,933,088 B | 8,110,080 B | 52,016 KiB |
+
+- Six hibernated Sessions cost +1,148,248 B of Go heap (1.10 MiB, about
+  191 KB per Session; four runs: +1,148,248 to +1,153,000 B). That is the
+  Session bookkeeping plus each Session's bounded replay (500 lines), not a
+  terminal screen.
+- The phone's one live terminal adds +80,608 B of Go heap and +65,536 B of
+  heap in use over the all-hibernated state (four runs: +80,608 to +84,120 B).
+  The rest of a terminal's footprint is native and appears only in RSS.
+- RSS rises by 6,416 KiB across the six Sessions and by 384 KiB for the live
+  view (four runs: +6,192 to +6,608 KiB, live +384 to +464 KiB). The test
+  process also hosts the six SSH servers, so this RSS is an upper bound on the
+  phone's cost, not only the client's.
+
+The test asserts the structural part — six open Sessions, zero live views with
+all of them hibernated, and exactly one after one is resumed — so a regression
+in the rule fails even when the heap is noisy; the numbers above are the
+recorded measurement, not a target.
+

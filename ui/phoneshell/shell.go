@@ -11,6 +11,7 @@ package phoneshell
 
 import (
 	"context"
+	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -72,6 +73,9 @@ type section struct {
 	// route renders a dynamic page, such as /session/{id}. It reports whether
 	// it matched the current path.
 	route func(c *ui.Context, r *ui.Route) bool
+	// before runs before the section draws a frame. Every section uses the
+	// same hook — the Shell's lifecycle rule — so navigation cannot bypass it.
+	before func()
 }
 
 // Shell is the four sections of the phone app. Construct it with New; its
@@ -143,14 +147,50 @@ func New(opts ...Option) *Shell {
 		s.sections[Sessions].router.Push("/session/" + id)
 	}
 	s.sessions.close = s.closeSession
+	s.sessions.confirmClose = s.confirmClosingSessions
 	for i := range s.sections {
 		s.sections[i] = s.newSection(Section(i))
 	}
 	return s
 }
 
+// confirmClosingSessions reads the Security preference live. Without a
+// settings service the phone keeps the product default: confirm a close while
+// the Session is live.
+func (s *Shell) confirmClosingSessions() bool {
+	if s.settings == nil || s.settings.service == nil {
+		return true
+	}
+	return s.settings.service.Preferences().Security.ConfirmCloseSessions
+}
+
+// syncLiveView derives the visible Session from the current route and applies
+// the lifecycle: that Tab is attached and resumed, every other Tab hibernates.
+// It is the only place the rule is applied, so back-navigation, section
+// switches, backgrounding, and deep links cannot each invent their own rule.
+// It runs once per frame, before the section draws.
+func (s *Shell) syncLiveView() {
+	s.sessions.syncVisible(s.visibleSession())
+}
+
+// visibleSession is the Session the current route shows: the top page behind
+// /session/{id}, and only while the Sessions section is selected. A page in
+// another section, or behind a pushed page in Sessions, shows no terminal.
+func (s *Shell) visibleSession() string {
+	if s.selected != Sessions {
+		return ""
+	}
+	// A deep link may carry a trailing slash; the route still names the page.
+	path := strings.TrimSuffix(s.sections[Sessions].router.Path(), "/")
+	id, ok := strings.CutPrefix(path, "/session/")
+	if !ok || id == "" || strings.Contains(id, "/") {
+		return ""
+	}
+	return id
+}
+
 func (s *Shell) newSection(i Section) *section {
-	sec := &section{info: infos[i], router: ui.NewRouter("/")}
+	sec := &section{info: infos[i], router: ui.NewRouter("/"), before: s.syncLiveView}
 	switch i {
 	case Sessions:
 		sec.rootDraw = s.sessions.drawRoot
@@ -162,7 +202,7 @@ func (s *Shell) newSection(i Section) *section {
 			r.Title("Session")
 			s.sessions.drawSession(c, id,
 				func() { s.sessions.retry(id) },
-				func() { s.closeSession(id) })
+				func() { s.leaveSession(id) })
 			return true
 		}
 		s.pages = append(s.pages, smokePages(i)...)
@@ -280,11 +320,20 @@ func (s *Shell) launchTab(tab *phoneTab) {
 
 // closeSession ends one Tab and leaves its page if that page is showing.
 func (s *Shell) closeSession(id string) {
-	router := s.sections[Sessions].router
-	if router.Path() == "/session/"+id {
-		router.Back()
+	if s.visibleSession() == id {
+		s.sections[Sessions].router.Back()
 	}
 	s.sessions.remove(id)
+}
+
+// leaveSession backs out of one Session's page without closing the Session.
+// A Tab whose open failed is not a Session, so its error page is discarded; a
+// reconnecting Tab stays and remains retryable.
+func (s *Shell) leaveSession(id string) {
+	if s.visibleSession() == id {
+		s.sections[Sessions].router.Back()
+	}
+	s.sessions.discardFailed(id)
 }
 
 // View returns the view of one section, for the window of its tab. A section
@@ -295,6 +344,11 @@ func (s *Shell) View(sec Section) func(c *ui.Context) { return s.sections[sec].v
 // view draws the section: the system's navigation bar on phones, and a back
 // bar of its own where there is no system stack (the desktop tester).
 func (sec *section) view(c *ui.Context) {
+	// Apply the Session lifecycle before anything draws: the route that is
+	// about to render decides which Session owns the one live terminal view.
+	if sec.before != nil {
+		sec.before()
+	}
 	// A section's router is the window's first, so its history is the
 	// system's stack of screens. On devices this draws the system bar; in
 	// the tester it is a no-op and the view draws its own bar below.
