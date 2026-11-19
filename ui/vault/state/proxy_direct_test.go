@@ -46,7 +46,7 @@ func (f *savingGroups) UpdateGroup(_ context.Context, _ string, draft domainvaul
 
 func (f *savingGroups) DeleteGroup(context.Context, string) error { return nil }
 
-func (f *savingGroups) AssignHostGroup(context.Context, model.HostID, string) error {
+func (f *savingGroups) AssignHostsGroup(context.Context, []model.HostID, string) error {
 	return nil
 }
 
