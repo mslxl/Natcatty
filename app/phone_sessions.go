@@ -22,6 +22,7 @@ import (
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appvault "github.com/mslxl/natcatty/application/vault"
+	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/phoneshell"
 )
@@ -67,29 +68,52 @@ func newPhoneVault(database *store.Store, secrets *store.SecretStore) *appvault.
 	return appvault.NewService(database, options...)
 }
 
+// newPhonePrompts builds the phone's host-key and credential prompt queues and
+// points the password saver at the Vault's field-secret store. An answered
+// password is encrypted under the Host's identifier, exactly like one saved on
+// the desktop; it never reaches a settings document or the log.
+func newPhonePrompts(vault *appvault.Service) *phoneshell.Prompts {
+	prompts := phoneshell.NewPrompts()
+	prompts.Auth.SetPasswordSaver(func(ctx context.Context, id model.HostID, password string) error {
+		return vault.SetSecret(ctx, id, appvault.FieldPassword, password)
+	})
+	return prompts
+}
+
 // newPhoneSessionRuntime builds the phone's remote-only transport stack. The
 // known-host repository is the shared Vault database, so a host key trusted on
-// the desktop is trusted here after a sync and vice versa.
-func newPhoneSessionRuntime(vault *appvault.Service, known appconnection.KnownHostRepository, userData string) *phoneSessionRuntime {
+// the desktop is trusted here after a sync and vice versa. prompts answers the
+// host-key and credential challenges the dial raises; without them the Manager
+// fails closed on an untrusted key, as before.
+func newPhoneSessionRuntime(vault *appvault.Service, known appconnection.KnownHostRepository, userData string, prompts *phoneshell.Prompts) *phoneSessionRuntime {
+	return newPhoneSessionRuntimeWithDialer(sshadapter.NewDialer(), vault, known, userData, prompts)
+}
+
+// newPhoneSessionRuntimeWithDialer is newPhoneSessionRuntime with the SSH
+// dialer replaced. Tests use it to point the whole phone stack at an
+// in-process SSH server while keeping the real Manager, Vault, and prompts.
+func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvault.Service,
+	known appconnection.KnownHostRepository, userData string, prompts *phoneshell.Prompts) *phoneSessionRuntime {
 	providers := appconnection.NewNetworkProviderRegistry(&networkProviderFactory{
 		vault:     vault,
 		stateBase: networkProviderStateBase(userData),
 	})
-	connections := appconnection.NewManager(
-		sshadapter.NewDialer(),
-		vaultPasswords{vault: vault},
-		known,
+	options := []appconnection.Option{
 		appconnection.WithNetworkProviders(providers),
-		// The phone has no interactive trust prompt yet. A Host whose key is
-		// not already a Known Host fails closed with a host-key error instead
-		// of being trusted silently.
 		appconnection.WithAuthSource(vaultAuthSource{
 			vault:    vault,
 			defaults: newSSHDefaultKeys(),
 		}),
 		appconnection.WithAuthMethodCache(
 			appconnection.NewAuthMethodCache(appconnection.MaxAuthMethodCacheEntries)),
-	)
+	}
+	if prompts != nil {
+		options = append(options,
+			appconnection.WithPrompter(prompts.HostKey),
+			appconnection.WithAuthPrompter(prompts.Auth),
+		)
+	}
+	connections := appconnection.NewManager(dialer, vaultPasswords{vault: vault}, known, options...)
 	routes := vaultRoutes{vault: vault}
 	service := appsession.NewService(
 		newPhoneTransportFactory(connections, routes, providers),

@@ -111,14 +111,21 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 		return nil, nil, nil, err
 	}
 
+	// Host-key and credential prompts are answered on the Sessions page. A
+	// password typed there is recorded through the Vault's field-secret store
+	// under the Host's identifier, so it is encrypted at rest and never
+	// written to the settings documents or the log.
+	prompts := newPhonePrompts(vault)
+
 	// The phone registers only remote transports: SSH, Telnet, Mosh, and ET.
 	// Local and serial shells are not constructed here at all.
-	sessions := newPhoneSessionRuntime(vault, database, userData)
+	sessions := newPhoneSessionRuntime(vault, database, userData, prompts)
 
 	shell := phoneshell.New(
 		phoneshell.WithVault(vault),
 		phoneshell.WithHosts(vault),
 		phoneshell.WithSessionOpener(sessions),
+		phoneshell.WithPrompts(prompts),
 		phoneshell.WithSettings(phoneshell.NewSettingsService(preferences, terminal)),
 	)
 	return shell, database, sessions, nil

@@ -92,6 +92,9 @@ type phoneTab struct {
 	// exists it owns the connection; the screen's Close detaches it.
 	conn   io.ReadWriteCloser
 	screen TerminalScreen
+	// cancel aborts the in-flight open, including any queued host-key or
+	// credential prompt. It is nil before the open starts and after it ends.
+	cancel context.CancelFunc
 }
 
 // sessionTabs owns the Sessions section's Tabs. Each Tab is the app's one
@@ -100,7 +103,9 @@ type sessionTabs struct {
 	mu        sync.Mutex
 	opener    SessionOpener
 	newScreen ScreenFactory
-	launch    func(*phoneTab)
+	// prompts holds the trust and credential prompts the Tabs answer.
+	prompts *Prompts
+	launch  func(*phoneTab)
 	// show pushes one Tab's terminal page on the Sessions router.
 	show func(id string)
 	// close ends one Tab and leaves the page it was showing.
@@ -171,14 +176,16 @@ func (t *sessionTabs) begin(host domainvault.Host) *phoneTab {
 // view is attached by syncVisible, on the UI thread.
 func (t *sessionTabs) finish(id string, handle SessionHandle, err error) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	tab := t.find(id)
 	if tab == nil {
+		t.mu.Unlock()
 		if handle != nil {
 			_ = handle.End()
 		}
 		return
 	}
+	cancel := tab.cancel
+	tab.cancel = nil
 	if err != nil || handle == nil {
 		if handle != nil {
 			_ = handle.End()
@@ -189,11 +196,35 @@ func (t *sessionTabs) finish(id string, handle SessionHandle, err error) {
 		tab.status = tabFailed
 		tab.problem = connectProblem(tab.label, err)
 		tab.handle = nil
+	} else {
+		tab.handle = handle
+		tab.status = tabReady
+		tab.problem = ""
+	}
+	t.mu.Unlock()
+	// The dial context is only live for the open; releasing it here also
+	// resolves any prompt the attempt abandoned.
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// attachCancel records the in-flight open's cancel function. A Tab that was
+// removed while its open was starting is cancelled immediately.
+func (t *sessionTabs) attachCancel(id string, cancel context.CancelFunc) {
+	t.mu.Lock()
+	tab := t.find(id)
+	if tab == nil {
+		t.mu.Unlock()
+		cancel()
 		return
 	}
-	tab.handle = handle
-	tab.status = tabReady
-	tab.problem = ""
+	previous := tab.cancel
+	tab.cancel = cancel
+	t.mu.Unlock()
+	if previous != nil {
+		previous()
+	}
 }
 
 // syncVisible is the one place the lifecycle rule is applied: the Session
@@ -423,7 +454,8 @@ func (t *sessionTabs) retry(id string) {
 		return
 	}
 	screen, handle := tab.screen, tab.handle
-	tab.screen, tab.conn, tab.handle = nil, nil, nil
+	cancel := tab.cancel
+	tab.screen, tab.conn, tab.handle, tab.cancel = nil, nil, nil, nil
 	tab.status = tabConnecting
 	tab.problem = ""
 	if t.pendingClose == id {
@@ -432,6 +464,9 @@ func (t *sessionTabs) retry(id string) {
 	launch := t.launch
 	t.mu.Unlock()
 	// Close the old attempt outside the lock: the Session service may block.
+	if cancel != nil {
+		cancel()
+	}
 	if screen != nil {
 		_ = screen.Close()
 	}
@@ -511,7 +546,12 @@ func (t *sessionTabs) remove(id string) bool {
 		if t.pendingClose == id {
 			t.pendingClose = ""
 		}
+		cancel := tab.cancel
+		tab.cancel = nil
 		t.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
 		if tab.screen != nil {
 			_ = tab.screen.Close()
 		}
@@ -542,10 +582,18 @@ func (t *sessionTabs) discardFailed(id string) {
 func (t *sessionTabs) closeAll() {
 	t.mu.Lock()
 	tabs := t.tabs
+	cancels := make([]context.CancelFunc, len(tabs))
+	for i, tab := range tabs {
+		cancels[i] = tab.cancel
+		tab.cancel = nil
+	}
 	t.tabs = nil
 	t.pendingClose = ""
 	t.mu.Unlock()
-	for _, tab := range tabs {
+	for i, tab := range tabs {
+		if cancels[i] != nil {
+			cancels[i]()
+		}
 		if tab.screen != nil {
 			_ = tab.screen.Close()
 		}
@@ -639,6 +687,13 @@ func (t *sessionTabs) drawSession(c *ui.Context, id string, retry func(), back f
 	case tabConnecting:
 		ui.Column(c).Fill().Padding(16).Gap(10).Children(func() {
 			kit.EmptyHint(c, "Connecting to "+view.label+"…")
+			// A host-key or credential challenge is drawn here, on the page of
+			// the Tab that raised it. Rejecting or cancelling a prompt closes
+			// the Tab, so no attempt is left open behind the user.
+			if t.prompts != nil {
+				t.prompts.HostKey.drawHostKey(c, view.id, back)
+				t.prompts.Auth.drawAuth(c, view.id, back)
+			}
 			// The open runs off the UI thread; poll until its outcome lands.
 			c.After(15 * time.Millisecond)
 		})

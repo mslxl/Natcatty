@@ -121,6 +121,12 @@ func WithSessionOpener(opener SessionOpener) Option {
 	return func(s *Shell) { s.sessions.opener = opener }
 }
 
+// WithPrompts gives the Sessions section the trust and credential prompt
+// queues the application's Connection Manager blocks on.
+func WithPrompts(prompts *Prompts) Option {
+	return func(s *Shell) { s.sessions.prompts = prompts }
+}
+
 // WithScreenFactory replaces the libghostty-vt terminal screen. Tests inject a
 // fake because ordinary `go test` runs have no native library.
 func WithScreenFactory(factory ScreenFactory) Option {
@@ -304,16 +310,20 @@ func (s *Shell) openHost(host domainvault.Host) {
 
 // launchTab opens one Tab off the UI thread. The Session service dials, so the
 // frame that handled the tap is not held while a network connect runs. The
-// terminal page polls until the outcome is recorded.
+// dial context is tagged with the Tab's identity, so a host-key or credential
+// prompt is queued for this Tab, and cancelling the Tab aborts the dial
+// including any prompt it is waiting on.
 func (s *Shell) launchTab(tab *phoneTab) {
 	opener := s.sessions.opener
 	if opener == nil {
 		s.sessions.finish(tab.id, nil, errNoOpener)
 		return
 	}
+	ctx, cancel := context.WithCancel(withPromptOwner(context.Background(), tab.id))
+	s.sessions.attachCancel(tab.id, cancel)
 	host := tab.host
 	go func() {
-		handle, err := opener.OpenHost(context.Background(), host)
+		handle, err := opener.OpenHost(ctx, host)
 		s.sessions.finish(tab.id, handle, err)
 	}()
 }

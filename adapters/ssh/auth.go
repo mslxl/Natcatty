@@ -157,10 +157,14 @@ func (m *authMachine) Next(state *xssh.ClientAuthContext) (xssh.AuthMethod, erro
 			}
 			return m.chooseCandidate(candidate, xssh.PublicKeys(signer))
 		case appconnection.AuthKindPassword:
-			if m.plan.Password == "" {
+			password, promptErr := m.passwordCredential()
+			if promptErr != nil {
+				return nil, promptErr
+			}
+			if password == "" {
 				continue
 			}
-			return m.chooseCandidate(candidate, xssh.Password(m.plan.Password))
+			return m.chooseCandidate(candidate, xssh.Password(password))
 		case appconnection.AuthKindKeyboardInteractive:
 			return m.chooseCandidate(candidate, xssh.KeyboardInteractive(m.challenge))
 		}
@@ -229,10 +233,53 @@ func (m *authMachine) choose(candidate *appconnection.AuthCandidate) (xssh.AuthM
 	case appconnection.AuthKindKeyboardInteractive:
 		return m.chooseCandidate(candidate, xssh.KeyboardInteractive(m.challenge))
 	case appconnection.AuthKindPassword:
-		return m.chooseCandidate(candidate, xssh.Password(m.plan.Password))
+		password, err := m.passwordCredential()
+		if err != nil {
+			return nil, err
+		}
+		if password == "" {
+			return nil, authFailure(appconnection.ErrNoCredentials)
+		}
+		return m.chooseCandidate(candidate, xssh.Password(password))
 	default:
 		return nil, authFailure(fmt.Errorf("%w: no method for candidate %s", appconnection.ErrAuthentication, candidate.ID))
 	}
+}
+
+// passwordCredential returns the password to offer. A stored password wins;
+// otherwise an interactive prompter may supply one. A prompter without the
+// optional capability, or an empty answer, means the method is skipped exactly
+// as it was before interactive passwords existed.
+func (m *authMachine) passwordCredential() (string, error) {
+	if m.plan.Password != "" {
+		return m.plan.Password, nil
+	}
+	prompter, ok := m.prompter.(appconnection.PasswordPrompter)
+	if !ok || prompter == nil {
+		return "", nil
+	}
+	decision, err := prompter.Password(m.ctx, appconnection.PasswordRequest{
+		HostID:   m.plan.HostID,
+		Hostname: m.hostname,
+		Username: m.plan.Username,
+	})
+	if err != nil {
+		return "", m.classifyPromptError(err)
+	}
+	if decision.Cancelled {
+		return "", &appconnection.Error{
+			Kind:  appconnection.KindCancelled,
+			Cause: fmt.Errorf("%w: password for %s", appconnection.ErrPromptCancelled, m.hostname),
+		}
+	}
+	if decision.Password == "" {
+		return "", nil
+	}
+	// Keep the answer for the rest of this handshake. A password that also
+	// satisfies a keyboard-interactive round is auto-filled by challenge, and
+	// a fresh pass after a partial success reuses it instead of asking again.
+	m.plan.Password = decision.Password
+	return m.plan.Password, nil
 }
 
 func (m *authMachine) chooseCandidate(candidate *appconnection.AuthCandidate, method xssh.AuthMethod) (xssh.AuthMethod, error) {

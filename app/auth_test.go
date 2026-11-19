@@ -188,6 +188,9 @@ func TestAuthSourceAddsDefaultKeysAfterTheSelectedKeyOnlyInAutomaticMode(t *test
 	want := []appconnection.AuthCandidateKind{
 		appconnection.AuthKindPublicKey,
 		appconnection.AuthKindPublicKey,
+		// The plan always carries a password candidate; a transport without a
+		// stored password or an interactive password prompter skips it.
+		appconnection.AuthKindPassword,
 		appconnection.AuthKindKeyboardInteractive,
 	}
 	if len(kinds) != len(want) {
