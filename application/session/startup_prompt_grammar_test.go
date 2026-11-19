@@ -219,6 +219,20 @@ func TestStartupPreShellDetectsBootProgressAndMarkup(t *testing.T) {
 		{"uboot prompt", "U-Boot> ", false},
 		{"uboot version then prompt", "U-Boot 2024.01-rc1\r\nU-Boot> ", false},
 		{"boot colon", "boot: ", true},
+		// Boot/progress labels behind a mid-line boundary (whitespace, colon,
+		// or bracket) are still boot progress — the fallback must safe-wait
+		// rather than type into a console that is still booting.
+		{"mid-line boot after space", "device boot: up>\r\n", true},
+		{"mid-line booting after space", "console foo booting>\r\n", true},
+		{"mid-line loading after space", "see a loading:\r\n", true},
+		{"mid-line progress after space", "see Progress: 5>\r\n", true},
+		{"mid-line boot bracketed", "x [boot]\r\n", true},
+		{"mid-line scanning label", "prefix scanning: 1>\r\n", true},
+		// A bare run of progress characters is rendered progress output even
+		// without brackets; the fallback must not type into it.
+		{"bare hash run", "#####\r\n", true},
+		{"bare equals run", "=====\r\n", true},
+		{"bare run before prompt shape", "a #####>\r\n", true},
 		// The newest line decides: an older banner must not strand the
 		// fallback when the last line is prompt-shaped but unrecognized, and
 		// the last line being boot progress must still safe-wait.
