@@ -17,6 +17,7 @@ import (
 
 	adapteret "github.com/mslxl/natcatty/adapters/et"
 	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
+	"github.com/mslxl/natcatty/adapters/store"
 	adapterstnet "github.com/mslxl/natcatty/adapters/telnet"
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
@@ -40,6 +41,31 @@ type phoneSessionRuntime struct {
 
 // Ensure the runtime is the shell's opener seam.
 var _ phoneshell.SessionOpener = (*phoneSessionRuntime)(nil)
+
+// newPhoneVault builds the phone's Vault over the shared SQLite store. It
+// registers the same record families the desktop root does, because route
+// resolution is shared code: a Host that selects a Host Group, Identity, Proxy
+// Profile, or Network Profile must resolve through the phone exactly as it
+// does on the desktop. Without these repositories the phone would silently
+// dial around a selected Proxy Profile and fail closed on a Network Profile.
+//
+// The secret store is optional. A phone whose OS credential store is
+// unavailable reports the session-only mode instead of refusing to start, so
+// listing and deleting Keys still work against the same Vault.
+func newPhoneVault(database *store.Store, secrets *store.SecretStore) *appvault.Service {
+	options := []appvault.Option{
+		appvault.WithKeys(database),
+		appvault.WithIdentities(database),
+		appvault.WithGroups(database),
+		appvault.WithProxyProfiles(database),
+		appvault.WithNetworkProfiles(database),
+		appvault.WithKnownHosts(database),
+	}
+	if secrets != nil {
+		options = append(options, appvault.WithSecrets(secrets))
+	}
+	return appvault.NewService(database, options...)
+}
 
 // newPhoneSessionRuntime builds the phone's remote-only transport stack. The
 // known-host repository is the shared Vault database, so a host key trusted on
@@ -97,6 +123,17 @@ func newPhoneTransportFactory(manager *appconnection.Manager, routes vaultRoutes
 // draws. The StartSpec comes from the shared application mapping, so a Mosh,
 // ET, or Telnet Host behaves as it does on the desktop.
 func (r *phoneSessionRuntime) OpenHost(ctx context.Context, host domainvault.Host) (phoneshell.SessionHandle, error) {
+	// The Hosts list carries stored records, while the desktop opens a Host
+	// with its Host Group defaults and selected Proxy Profile applied. Resolve
+	// the effective record here too so an inherited port or user reaches the
+	// Session's endpoint instead of an empty field.
+	if r.vault != nil {
+		effective, err := r.vault.Get(ctx, host.ID)
+		if err != nil {
+			return nil, err
+		}
+		host = effective
+	}
 	spec := appsession.HostSpec(host)
 	if phoneRefusesKind(spec.Kind) {
 		return nil, errPhoneLocalSession

@@ -23,7 +23,6 @@ import (
 	"github.com/mslxl/natcatty/adapters/store"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
-	appvault "github.com/mslxl/natcatty/application/vault"
 	platformsecrets "github.com/mslxl/natcatty/platform/secrets"
 	"github.com/mslxl/natcatty/ui/phoneshell"
 	"github.com/mslxl/natcatty/ui/terminal"
@@ -96,14 +95,10 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 	if err != nil {
 		secrets = nil
 	}
-	vaultOptions := []appvault.Option{
-		appvault.WithKeys(database),
-		appvault.WithKnownHosts(database),
-	}
-	if secrets != nil {
-		vaultOptions = append(vaultOptions, appvault.WithSecrets(secrets))
-	}
-	vault := appvault.NewService(database, vaultOptions...)
+	// The phone Vault registers the same record families as the desktop, so a
+	// Host's jump chain, Identity, Proxy Profile, and Network Profile resolve
+	// through the shared route code instead of being ignored here.
+	vault := newPhoneVault(database, secrets)
 
 	preferences := apppreferences.NewService(
 		store.OpenPreferences(filepath.Join(userData, "preferences.json")))
