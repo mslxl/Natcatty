@@ -1,0 +1,87 @@
+name: upstream-sync
+
+# Keeps drift from the upstream project visible without touching history.
+# The scheduled run fetches upstream read-only, counts the commits in each
+# direction, and opens or updates exactly one issue. It never merges,
+# rebases, cherry-picks, or pushes: `contents` is read-only, and the only
+# permission granted is `issues: write`. This workflow has no path to a
+# merge commit or a branch update.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: report upstream drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      UPSTREAM_URL: https://github.com/binaricat/Netcatty.git
+      UPSTREAM_BRANCH: main
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream read-only
+        run: |
+          set -euo pipefail
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch --no-tags upstream "$UPSTREAM_BRANCH"
+
+      - name: Write the drift report
+        run: |
+          set -euo pipefail
+          upstream="upstream/$UPSTREAM_BRANCH"
+          behind="$(git rev-list --count "HEAD..$upstream")"
+          ahead="$(git rev-list --count "$upstream..HEAD")"
+          base="$(git merge-base HEAD "$upstream")"
+          body="$RUNNER_TEMP/upstream-sync.md"
+          {
+            echo '<!-- upstream-sync: one open issue is updated in place -->'
+            echo '## Upstream drift'
+            echo
+            echo "- Upstream: \`$UPSTREAM_URL\` (\`$UPSTREAM_BRANCH\`)"
+            echo "- Reported: $(date -u +%FT%TZ)"
+            echo "- Commits upstream has that this branch lacks: **$behind**"
+            echo "- Commits this branch has that upstream lacks: **$ahead**"
+            echo "- Merge base: \`$base\`"
+            echo
+            if [ "$behind" -eq 0 ]; then
+              echo "No upstream drift: every upstream commit is already in this history."
+            else
+              echo '### Upstream commits not in this branch'
+              echo '```'
+              git log --oneline --no-merges "HEAD..$upstream" | head -50
+              echo '```'
+            fi
+            echo
+            echo "This workflow only reports. It never merges, rebases, or pushes."
+          } > "$body"
+          cat "$body" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the one drift issue
+        run: |
+          set -euo pipefail
+          title="Upstream sync: $UPSTREAM_BRANCH"
+          number="$(gh issue list --state open \
+            --search "in:title \"$title\"" --json number,title \
+            --jq ".[] | select(.title == \"$title\") | .number" | head -1)"
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body-file "$RUNNER_TEMP/upstream-sync.md"
+            echo "updated issue #$number"
+          else
+            gh issue create --title "$title" --body-file "$RUNNER_TEMP/upstream-sync.md"
+          fi

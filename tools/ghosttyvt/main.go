@@ -33,6 +33,8 @@ func run(args []string) error {
 	switch args[0] {
 	case "build":
 		return cmdBuild(args[1:])
+	case "fetch":
+		return cmdFetch(args[1:])
 	case "verify":
 		return cmdVerify(args[1:])
 	case "manifest":
@@ -51,6 +53,7 @@ func usage() {
 
 Usage:
   scripts/mobile/build-ghostty-vt.sh build [flags]
+  scripts/mobile/build-ghostty-vt.sh fetch [flags]
   scripts/mobile/build-ghostty-vt.sh verify [flags]
   scripts/mobile/build-ghostty-vt.sh manifest [flags]
 
@@ -63,6 +66,11 @@ build flags:
   --cache DIR       download and build cache
   --release URL     release URL recorded in the manifest
   --no-manifest     build and verify without recording artifacts
+
+fetch flags:
+  --out DIR         artifact directory (default build/ghostty-vt)
+  --manifest PATH   manifest naming each artifact (default ui/terminal/artifacts.json)
+  --platform P      all (default), ios or android
 
 verify flags:
   --out DIR         artifact directory (default build/ghostty-vt)

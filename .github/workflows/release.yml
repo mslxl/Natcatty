@@ -169,9 +169,20 @@ jobs:
           fi
           echo "release commit ${RELEASE_SHA}"
 
+  # Before building anything, exercise the phone gates and the simulator and
+  # emulator smokes on the tagged commit. build waits for it, so a broken
+  # phone build cannot reach a release tag.
+  phone-smoke:
+    name: phone gates before release
+    needs: validate
+    uses: ./.github/workflows/phone-ci.yml
+    secrets: inherit
+
   build:
     name: build (${{ matrix.artifact }})
-    needs: validate
+    needs:
+      - validate
+      - phone-smoke
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     defaults:

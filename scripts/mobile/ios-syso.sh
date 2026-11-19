@@ -86,13 +86,18 @@ esac
 input=${input:-$default_input}
 
 manifest_platform() {
+  # Read otool's whole listing: under `set -o pipefail`, awk's `exit` after
+  # the first platform would close the pipe early and make otool's SIGPIPE
+  # the pipeline's status, which the callers read as "no platform". That is
+  # timing-dependent on a multi-member archive, so the device slice could
+  # pass or fail the same check between runs.
   /usr/bin/otool -l "$1" 2>/dev/null |
-    awk '/LC_BUILD_VERSION/{found=1} found && $1=="platform"{print $2; exit}'
+    awk '/LC_BUILD_VERSION/{found=1} found && $1=="platform" && !done{print $2; done=1}'
 }
 
 manifest_minos() {
   /usr/bin/otool -l "$1" 2>/dev/null |
-    awk '/LC_BUILD_VERSION/{found=1} found && $1=="minos"{print $2; exit}'
+    awk '/LC_BUILD_VERSION/{found=1} found && $1=="minos" && !done{print $2; done=1}'
 }
 
 has_symbol() {

@@ -15,7 +15,9 @@
 #            clang the build dies inside runtime/cgo instead of compiling for
 #            Android.
 #
-# Usage: scripts/mobile/check-compile.sh ios
+# Usage: scripts/mobile/check-compile.sh ios          # the simulator (default)
+#        scripts/mobile/check-compile.sh ios/simulator
+#        scripts/mobile/check-compile.sh ios/device
 #        scripts/mobile/check-compile.sh android          # every shipped ABI
 #        scripts/mobile/check-compile.sh android/arm64    # one ABI: arm64, arm, amd64
 set -euo pipefail
@@ -32,6 +34,21 @@ min_sdk() {
 }
 
 check_ios() {
+  local target=${1:-simulator} sdk_name clang_suffix
+  case "$target" in
+  device)
+    sdk_name=iphoneos
+    clang_suffix=""
+    ;;
+  simulator)
+    sdk_name=iphonesimulator
+    clang_suffix="-simulator"
+    ;;
+  *)
+    echo "check-compile.sh: unknown iOS target $target: device or simulator" >&2
+    exit 2
+    ;;
+  esac
   if [ "$(uname -s)" != "Darwin" ]; then
     echo "check-compile.sh: iOS builds need macOS with Xcode" >&2
     exit 1
@@ -45,8 +62,8 @@ check_ios() {
   unset SDKROOT
   local xcrun=/usr/bin/xcrun
   local sdk clang
-  sdk=$("$xcrun" --sdk iphonesimulator --show-sdk-path)
-  clang=$("$xcrun" --sdk iphonesimulator --find clang)
+  sdk=$("$xcrun" --sdk "$sdk_name" --show-sdk-path)
+  clang=$("$xcrun" --sdk "$sdk_name" --find clang)
   # The minimum must be the one the committed configuration declares. Read it
   # from mygo.json so the gate cannot drift from what the app ships.
   local min
@@ -57,16 +74,16 @@ check_ios() {
   fi
 
   local arch=arm64
-  local cc="$clang -target $arch-apple-ios$min-simulator -isysroot $sdk"
+  local cc="$clang -target $arch-apple-ios$min$clang_suffix -isysroot $sdk"
 
-  echo "check-compile: ios/$arch, minimum iOS $min"
+  echo "check-compile: ios/$target, minimum iOS $min"
   echo "check-compile: CC=$cc"
 
-  # The app links libghostty-vt through a staged object. Require the simulator
+  # The app links libghostty-vt through a staged object. Require the matching
   # slice and verify it before compiling: a device object (platform 2) in a
-  # simulator build fails here, not on the running app.
-  echo "check-compile: checking the staged terminal object"
-  scripts/mobile/ios-syso.sh simulator --check
+  # simulator build fails here, not on the running app, and the reverse too.
+  echo "check-compile: checking the staged $target terminal object"
+  scripts/mobile/ios-syso.sh "$target" --check
 
   echo "check-compile: compiling ${roots[*]}"
   GOOS=ios GOARCH="$arch" CGO_ENABLED=1 CC="$cc" go build "${roots[@]}"
@@ -81,16 +98,12 @@ check_ios() {
   GOOS=ios GOARCH="$arch" CGO_ENABLED=1 CC="$cc" \
     go build -buildmode=c-archive -o "$work/libapp.a" .
 
-  # The archive must carry the linked library. Without the staged object the
-  # link fails on the undefined ghostty_* symbols that addr.c takes the
-  # addresses of; this assertion also catches an object silently dropped.
-  if ! /usr/bin/nm -gU "$work/libapp.a" 2>/dev/null | grep '_ghostty_type_json' >/dev/null; then
-    echo "check-compile: the app archive does not carry libghostty-vt" >&2
-    echo "  the staged object was not linked; check ui/terminal/mobile/ghostty_ios_arm64.syso" >&2
-    exit 1
-  fi
+  # The archive must carry every symbol the bindings look up, exactly once.
+  # This is the linked artifact, not the staged object: an object silently
+  # dropped or a linker that drops a symbol fails here.
+  scripts/mobile/check-symbols.sh macho "$work/libapp.a" /usr/bin/nm
 
-  echo "check-compile: ok — ios phone build compiles and links"
+  echo "check-compile: ok — ios/$target phone build compiles and links"
 }
 
 check_android() {
@@ -227,6 +240,9 @@ check_android() {
     mkdir -p "$work/$abi"
     env "${build_env[@]}" go build -buildmode=c-shared -o "$work/$abi/libmygoapp.so" .
     verify_shared_object "$work/$abi/libmygoapp.so" "$abi" "$class" "$machine"
+    # The linked jniLibs object, not the staging archive, must carry every
+    # binding symbol exactly once. ABI drift fails the build here.
+    scripts/mobile/check-symbols.sh elf "$work/$abi/libmygoapp.so" "$host/bin/llvm-nm"
   done
 
   echo "check-compile: ok — android phone build compiles and links"
@@ -234,7 +250,13 @@ check_android() {
 
 case ${1:-} in
   ios)
-    check_ios
+    check_ios simulator
+    ;;
+  ios/simulator)
+    check_ios simulator
+    ;;
+  ios/device)
+    check_ios device
     ;;
   android)
     check_android
@@ -243,7 +265,7 @@ case ${1:-} in
     check_android "${1#android/}"
     ;;
   *)
-    echo "usage: $(basename "$0") ios | android[/arm64|/arm|/amd64]" >&2
+    echo "usage: $(basename "$0") ios | ios/device | ios/simulator | android[/arm64|/arm|/amd64]" >&2
     exit 2
     ;;
 esac

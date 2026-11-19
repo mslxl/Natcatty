@@ -1,0 +1,493 @@
+name: phone-ci
+
+# A green check here means the phone builds are real. Every code pull
+# request compiles and link-checks the iOS device, the iOS simulator and
+# every shipped Android ABI, walks the phone dependency graph, and keeps the
+# desktop suite in ci.yml untouched. Simulator and emulator smoke runs follow
+# phone-code changes, run nightly, and run before a release tag (release.yml
+# calls this workflow and its build job waits for it).
+#
+# Native inputs are the pinned release assets named by
+# ui/terminal/artifacts.json; scripts/mobile/fetch-artifacts.sh downloads and
+# verifies them, so a fresh runner never needs to rebuild Ghostty.
+#
+# The Android emulator job uses an arm64 system image on an arm64 runner.
+# Testing one ARM ABI there is deliberate: the linker gate covers every ABI
+# statically, and there is no x86 emulator run.
+
+on:
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+      - "LICENSE"
+      - "NOTICE"
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+      - "LICENSE"
+      - "NOTICE"
+  schedule:
+    # Nightly, after the desktop suite's usual window.
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: phone-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # One diff decides whether the expensive device smoke runs. Every other
+  # job below runs on every pull request: compile and link gates are cheap
+  # enough that a phone build must never be skipped because a path filter
+  # guessed wrong.
+  changes:
+    name: detect phone changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      smoke: ${{ steps.changed.outputs.smoke }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether a device smoke is needed
+        id: changed
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          all=0
+          if [ "$EVENT" = "pull_request" ]; then
+            changed="$(git diff --name-only "$BASE...$HEAD")"
+          elif [ "$EVENT" = "push" ] && [ "$REF_TYPE" = "tag" ]; then
+            # release.yml calls this workflow before a tag is published. A
+            # tag can point at a desktop-only commit, so do not infer from
+            # the diff: every tag runs both device smokes.
+            all=1
+            changed=""
+          elif [ "$EVENT" = "push" ] && [ -n "${BEFORE:-}" ] \
+            && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            changed="$(git diff --name-only "$BEFORE" "$HEAD")"
+          else
+            # schedule, workflow_dispatch, a tag pushed by release.yml, or a
+            # before SHA that is not in this clone: smoke unconditionally.
+            all=1
+            changed=""
+          fi
+          smoke=0
+          if [ "$all" -eq 1 ]; then
+            smoke=1
+          elif printf '%s\n' "$changed" | grep -Eq \
+            '^(app/|ui/|platform/|adapters/|application/|domain/|internal/|cmd/|resources/|scripts/mobile/|scripts/dev/|mygo\.json|go\.(mod|sum)|flake\.(nix|lock)|main\.go|\.github/workflows/phone-ci\.yml)'; then
+            smoke=1
+          fi
+          echo "smoke=$smoke" >> "$GITHUB_OUTPUT"
+          echo "device smoke: $smoke"
+
+  # The single ABI list android-abis.txt feeds this matrix, so a new ABI is a
+  # one-line edit, not a second copy in YAML.
+  android-matrix:
+    name: read the Android ABI list
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      abis: ${{ steps.abis.outputs.abis }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Emit the shipped ABIs
+        id: abis
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          rows = []
+          with open("scripts/mobile/android-abis.txt", encoding="utf-8") as f:
+              for line in f:
+                  line = line.strip()
+                  if line and not line.startswith("#"):
+                      rows.append(line.split()[0])
+          print("abis=" + json.dumps(rows))
+          PY
+
+  phone-deps:
+    name: phone dependency gate
+    # macOS, not ubuntu: check-deps walks the graph with CGO_ENABLED=1 under
+    # GOOS=ios, the same load the iOS compile gate proves works with the
+    # host clang. A Linux runner would make the walk depend on a cross cgo
+    # toolchain the gate does not otherwise need.
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: The phone graph reaches no desktop-only package
+        # check-deps names the offending package and target, e.g.
+        # "android/arm64: desktop-only ui/browser is in the phone graph".
+        run: scripts/mobile/check-deps.sh
+
+  compile-ios:
+    name: compile (ios/${{ matrix.target }})
+    runs-on: macos-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - simulator
+          - device
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Fetch the pinned iOS slices
+        run: scripts/mobile/fetch-artifacts.sh --platform ios
+
+      - name: Stage the ${{ matrix.target }} object
+        run: scripts/mobile/ios-syso.sh ${{ matrix.target }}
+
+      - name: Compile and link the app
+        run: scripts/mobile/check-compile.sh ios/${{ matrix.target }}
+
+  compile-android:
+    name: compile (android/${{ matrix.abi }})
+    needs: android-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: ${{ fromJSON(needs.android-matrix.outputs.abis) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Locate the Android NDK
+        run: |
+          set -euo pipefail
+          if [ -n "${ANDROID_NDK_HOME:-}" ] && [ -d "$ANDROID_NDK_HOME" ]; then
+            exit 0
+          fi
+          sdk="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          ndk="$(find "$sdk/ndk" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
+          if [ -z "$ndk" ]; then
+            yes | sdkmanager --install "ndk;30.0.16248370" >/dev/null
+            ndk="$sdk/ndk/30.0.16248370"
+          fi
+          test -d "$ndk"
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ndk" >> "$GITHUB_ENV"
+
+      - name: Fetch the pinned Android archives
+        run: scripts/mobile/fetch-artifacts.sh --platform android
+
+      - name: Stage the ${{ matrix.abi }} archive
+        run: scripts/mobile/android-libs.sh --abi ${{ matrix.abi }}
+
+      - name: Compile and link the app
+        run: scripts/mobile/check-compile.sh android/${{ matrix.abi }}
+
+  link-smoke-ios:
+    name: link smoke (ios/${{ matrix.target }})
+    runs-on: macos-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - simulator
+          - device
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Fetch the pinned iOS slices
+        run: scripts/mobile/fetch-artifacts.sh --platform ios
+
+      - name: Compare the final link with the binding list
+        run: scripts/mobile/link-smoke.sh ${{ matrix.target }}
+
+  link-smoke-android:
+    name: link smoke (android/${{ matrix.abi }})
+    needs: android-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: ${{ fromJSON(needs.android-matrix.outputs.abis) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Locate the Android NDK
+        run: |
+          set -euo pipefail
+          if [ -n "${ANDROID_NDK_HOME:-}" ] && [ -d "$ANDROID_NDK_HOME" ]; then
+            exit 0
+          fi
+          sdk="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          ndk="$(find "$sdk/ndk" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
+          if [ -z "$ndk" ]; then
+            yes | sdkmanager --install "ndk;30.0.16248370" >/dev/null
+            ndk="$sdk/ndk/30.0.16248370"
+          fi
+          test -d "$ndk"
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ndk" >> "$GITHUB_ENV"
+
+      - name: Fetch the pinned Android archives
+        run: scripts/mobile/fetch-artifacts.sh --platform android
+
+      - name: Stage the ${{ matrix.abi }} archive
+        run: scripts/mobile/android-libs.sh --abi ${{ matrix.abi }}
+
+      - name: Compare the linked object with the binding list
+        run: scripts/mobile/android-link-smoke.sh --abi ${{ matrix.abi }}
+
+  ios-simulator-artifact:
+    name: iOS simulator artifact
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Fetch the pinned iOS slices
+        run: scripts/mobile/fetch-artifacts.sh --platform ios
+
+      - name: Stage the simulator object
+        run: scripts/mobile/ios-syso.sh simulator
+
+      - name: Build the simulator app
+        run: go tool mygo build -platform ios/simulator -o dist
+
+      - name: Verify the app is a simulator bundle
+        run: |
+          set -euo pipefail
+          app=dist/ios-simulator/Natcatty.app
+          test -d "$app"
+          exe="$(plutil -extract CFBundleExecutable raw "$app/Info.plist")"
+          vtool -show-build "$app/$exe" | grep -q 'platform IOSSIMULATOR'
+          ditto -c -k --keepParent "$app" dist/natcatty-ios-simulator.zip
+          ls -l dist/natcatty-ios-simulator.zip
+
+      - name: Upload the simulator app
+        uses: actions/upload-artifact@v4
+        with:
+          name: natcatty-ios-simulator-${{ github.sha }}
+          path: dist/natcatty-ios-simulator.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  # A device package needs an Apple developer account: a team ID in the
+  # APPLE_DEVELOPMENT_TEAM repository variable, a signing identity in
+  # APPLE_CERTIFICATE_P12 (base64 .p12) with APPLE_CERTIFICATE_PASSWORD, and
+  # a profile in APPLE_PROVISIONING_PROFILE (base64 .mobileprovision). Until
+  # the variable exists this job is skipped, so CI never fails for the
+  # absence of an account and never publishes an unsigned device package.
+  # It is also skipped on pull requests: a fork's secrets are withheld, and
+  # without a signing identity the build would upload an unsigned .ipa.
+  ios-device-package:
+    name: iOS device package (Apple account)
+    if: ${{ vars.APPLE_DEVELOPMENT_TEAM != '' && github.event_name != 'pull_request' }}
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Fetch the pinned iOS slices
+        run: scripts/mobile/fetch-artifacts.sh --platform ios
+
+      - name: Stage the device object
+        run: scripts/mobile/ios-syso.sh device
+
+      - name: Import the signing identity
+        if: ${{ secrets.APPLE_CERTIFICATE_P12 != '' }}
+        env:
+          CERT_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p actions build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p actions build.keychain
+          security import "$RUNNER_TEMP/cert.p12" -k build.keychain \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k actions build.keychain
+
+      - name: Install the provisioning profile
+        if: ${{ secrets.APPLE_PROVISIONING_PROFILE != '' }}
+        env:
+          PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+          TEAM: ${{ vars.APPLE_DEVELOPMENT_TEAM }}
+        run: |
+          set -euo pipefail
+          echo "$PROFILE" | base64 --decode > "$RUNNER_TEMP/natcatty.mobileprovision"
+          PROFILE_PATH="$RUNNER_TEMP/natcatty.mobileprovision" TEAM="$TEAM" \
+            python3 - <<'PY'
+          import json, os
+          path = "mygo.json"
+          with open(path, encoding="utf-8") as f:
+              config = json.load(f)
+          config.setdefault("ios", {})
+          config["ios"]["team"] = os.environ["TEAM"]
+          config["ios"]["provisioningProfile"] = os.environ["PROFILE_PATH"]
+          with open(path, "w", encoding="utf-8") as f:
+              json.dump(config, f, indent=2)
+              f.write("\n")
+          PY
+
+      - name: Build the signed device package
+        run: go tool mygo build -platform ios -o dist
+
+      - name: Verify the package
+        run: |
+          set -euo pipefail
+          ipa="$(find dist/ios-arm64 -maxdepth 1 -name '*.ipa' -print -quit)"
+          test -n "$ipa"
+          unzip -l "$ipa" | grep -q 'Payload/.*\.app/'
+          ls -l "$ipa"
+
+      - name: Upload the device package
+        uses: actions/upload-artifact@v4
+        with:
+          name: natcatty-ios-device-${{ github.sha }}
+          path: dist/ios-arm64/*.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+  smoke-ios:
+    name: simulator smoke
+    needs: changes
+    if: needs.changes.outputs.smoke == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Fetch the pinned iOS slices
+        run: scripts/mobile/fetch-artifacts.sh --platform ios
+
+      - name: Boot the simulator, run the diagnostic, shut it down
+        # ios-render.sh owns the lifetime of the simulator it boots.
+        run: |
+          scripts/mobile/ios-syso.sh simulator
+          scripts/mobile/ios-render.sh
+
+  smoke-android:
+    name: emulator smoke (arm64)
+    needs: changes
+    if: needs.changes.outputs.smoke == 'true'
+    # GitHub's macOS runners are Apple Silicon, so the emulator image is ARM:
+    # there is no x86 AVD in this gate.
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Locate the Android NDK
+        run: |
+          set -euo pipefail
+          if [ -n "${ANDROID_NDK_HOME:-}" ] && [ -d "$ANDROID_NDK_HOME" ]; then
+            exit 0
+          fi
+          sdk="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+          ndk="$(find "$sdk/ndk" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
+          if [ -z "$ndk" ]; then
+            yes | sdkmanager --install "ndk;30.0.16248370" >/dev/null
+            ndk="$sdk/ndk/30.0.16248370"
+          fi
+          test -d "$ndk"
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ndk" >> "$GITHUB_ENV"
+
+      - name: Fetch and stage the ARM64 archive
+        run: |
+          scripts/mobile/fetch-artifacts.sh --platform android
+          scripts/mobile/android-libs.sh --abi arm64-v8a
+
+      - name: Run the terminal corpus on the ARM emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: arm64-v8a
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-snapshot -no-boot-anim
+          script: scripts/mobile/android-render.sh
