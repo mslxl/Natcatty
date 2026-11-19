@@ -142,9 +142,14 @@
             ];
             env = {
               CGO_ENABLED = "1";
-              DEVELOPER_DIR = "/Applications/Xcode.app/Contents/Developer";
             };
             shellHook = ''
+              # nixpkgs' xcbuild setup hook points DEVELOPER_DIR and SDKROOT at
+              # the packaged macOS SDK, which makes xcrun unable to find the
+              # iphonesimulator SDK. Phone work must use the host Xcode, so
+              # override both after the setup hook has run.
+              unset SDKROOT
+              export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
               echo "iOS dev shell — Xcode: $(xcodebuild -version 2>/dev/null | head -1)"
               echo "boot a simulator: scripts/dev/ios-boot.sh   stop: scripts/dev/ios-stop.sh"
             '';
