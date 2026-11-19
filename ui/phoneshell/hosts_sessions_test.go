@@ -38,6 +38,7 @@ type fakeHandle struct {
 	mu         sync.Mutex
 	output     bytes.Buffer
 	written    bytes.Buffer
+	keys       []sentKey
 	done       chan struct{}
 	viewDone   chan struct{}
 	attached   bool
@@ -45,6 +46,12 @@ type fakeHandle struct {
 	ended      bool
 	// resumeErr, when set, makes Resume fail after the next Hibernate.
 	resumeErr error
+}
+
+// sentKey is one key the accessory bar asked the screen to send.
+type sentKey struct {
+	key  ui.Key
+	mods ui.Modifiers
 }
 
 func newFakeHandle(output string) *fakeHandle {
@@ -188,6 +195,22 @@ func (h *fakeHandle) failNextResume(err error) {
 	h.resumeErr = err
 }
 
+// recordKey records a key the accessory bar sent.
+func (h *fakeHandle) recordKey(key ui.Key, mods ui.Modifiers) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.keys = append(h.keys, sentKey{key: key, mods: mods})
+}
+
+// sentKeys returns the keys recorded since the last call.
+func (h *fakeHandle) sentKeys() []sentKey {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	keys := h.keys
+	h.keys = nil
+	return keys
+}
+
 // fakeOpener records the Hosts it was asked to open.
 type fakeOpener struct {
 	mu      sync.Mutex
@@ -280,7 +303,7 @@ func (s *fakeScreen) View(c *ui.Context) ui.Element {
 	column := ui.Column(c).Fill().Gap(4).Padding(8)
 	column.Children(func() {
 		ui.Text(c, s.handle.rendered())
-		ui.Box(c).Fill().HandleInput(func(ev ui.InputEvent) bool {
+		ui.Box(c).Fill().Label("Terminal").HandleInput(func(ev ui.InputEvent) bool {
 			if ev.Kind != ui.InputText || ev.Text == "" {
 				return false
 			}
@@ -294,6 +317,9 @@ func (s *fakeScreen) View(c *ui.Context) ui.Element {
 }
 
 func (s *fakeScreen) Close() error { return s.handle.Close() }
+
+// SendKey records what the accessory bar asked to type.
+func (s *fakeScreen) SendKey(key ui.Key, mods ui.Modifiers) { s.handle.recordKey(key, mods) }
 
 func fakeScreens(conn io.ReadWriteCloser) (TerminalScreen, error) {
 	handle, ok := conn.(*fakeHandle)

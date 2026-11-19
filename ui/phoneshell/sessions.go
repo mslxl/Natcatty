@@ -65,8 +65,10 @@ type SessionStore interface {
 type TerminalScreen interface {
 	// View draws the terminal for the current frame.
 	View(c *ui.Context) ui.Element
-	// Close releases the terminal. It closes the connection it was built
-	// over, which detaches the Session's view; it never ends the Session.
+	// SendKey types one key as the accessory bar's, through the terminal's
+	// own encoder. It carries no text: the key and its modifiers decide.
+	SendKey(key ui.Key, mods ui.Modifiers)
+	// Close detaches the screen. The Session handle's Close ends the Session.
 	Close() error
 }
 
@@ -119,6 +121,8 @@ type phoneTab struct {
 	// Session no longer runs. Its failure keeps the Tab reconnecting and
 	// retryable instead of dropping it from the list.
 	reopening bool
+	// accessory holds the bar's Ctrl and Alt latches for this Tab.
+	accessory accessoryState
 }
 
 // sessionTabs owns the Sessions section's Tabs. Each Tab is the app's one
@@ -183,6 +187,8 @@ type tabView struct {
 	status  tabStatus
 	problem string
 	screen  TerminalScreen
+	// accessory is the page's latch state, which outlives a frame.
+	accessory *accessoryState
 }
 
 // begin records a connecting Tab and returns it. The caller starts the open.
@@ -510,6 +516,7 @@ func (t *sessionTabs) viewOfLocked(id string) (tabView, bool) {
 	return tabView{
 		id: tab.id, label: tab.label, host: tab.host,
 		status: tab.status, problem: tab.problem, screen: tab.screen,
+		accessory: &tab.accessory,
 	}, true
 }
 
@@ -1066,6 +1073,9 @@ func (t *sessionTabs) drawSession(c *ui.Context, id string, retry func(), back f
 					t.requestClose(view.id)
 				}
 			})
+			// The bar goes above the keyboard, inside the safe area the
+			// window root already applies, and the terminal takes what is left.
+			accessoryBar(c, view.accessory, view.screen)
 			view.screen.View(c).Fill()
 		})
 	}

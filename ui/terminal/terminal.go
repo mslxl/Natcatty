@@ -569,6 +569,10 @@ type Terminal struct {
 	// guards it. v is the view's state, on the main thread.
 	curTheme *Theme
 	v        *view
+
+	// keyEnc encodes keys for the accessory bar (SendKey), with the modes
+	// in effect at the time; t.mu guards it.
+	keyEnc *vt.KeyEncoder
 }
 
 // gridSize is the size of the screen in cells and of a cell in pixels.
@@ -939,6 +943,51 @@ func (t *Terminal) Send(data []byte) {
 	}
 }
 
+// SendKey sends one key press to the program, encoded as a hardware key
+// would be, so the modes a program set apply: application cursor keys,
+// xterm's modifyOtherKeys and the Kitty keyboard protocol. Phones use it
+// for the accessory bar, where the system sends no key event. Text keys
+// carry their US-layout character, so Shift+Backslash is |; Control and
+// Alt apply as modifiers (Ctrl+C is 0x03). An unknown key, or one the
+// encoder sends nothing for, sends nothing.
+func (t *Terminal) SendKey(key ui.Key, mods ui.Modifiers) {
+	k, unshifted := vtKey(key)
+	if k == vt.KeyUnidentified {
+		return
+	}
+	ev := vt.KeyEvent{Action: vt.KeyPress, Key: k, Mods: vtMods(mods), Unshifted: unshifted}
+	if typesText(key) && mods&(ui.Ctrl|ui.Alt) == 0 {
+		ev.Text = string(unshifted)
+		if mods&ui.Shift != 0 {
+			ev.Text = shiftedText(key, unshifted)
+			ev.Consumed = vtMods(mods & (ui.Shift | ui.Alt))
+		}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.term == nil {
+		return
+	}
+	if t.keyEnc == nil {
+		e, err := vt.NewKeyEncoder()
+		if err != nil {
+			return
+		}
+		t.keyEnc = e
+	}
+	t.keyEnc.Sync(t.term, t.opts.OptionAsAlt)
+	b := t.keyEnc.Encode(ev)
+	if len(b) == 0 {
+		b = controlKey(ev)
+	}
+	if len(b) == 0 {
+		return
+	}
+	t.in.push(append([]byte(nil), b...))
+	t.term.ScrollToBottom()
+	t.term.SetSelection(nil)
+}
+
 // Feed shows data as if the program wrote it: text and escape sequences.
 func (t *Terminal) Feed(data []byte) { t.write(data) }
 
@@ -998,6 +1047,10 @@ func (t *Terminal) Close() error {
 	t.mu.Lock()
 	t.rmu.Lock()
 	t.endSearch()
+	if t.keyEnc != nil {
+		t.keyEnc.Free()
+		t.keyEnc = nil
+	}
 	t.term.Free()
 	t.term = nil
 	t.rs.Free()
