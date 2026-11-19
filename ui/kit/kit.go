@@ -333,7 +333,9 @@ func ListRow(c *ui.Context) ui.Element {
 
 // ConfirmBar asks inline to confirm a destructive action: a danger Notice
 // with text, an optional detail under it, and cancel and confirm buttons. It
-// reports which button was clicked.
+// reports which button was clicked. Cancel takes the keyboard focus and is
+// drawn first, so the default action of a destructive prompt is to keep
+// things as they are.
 func ConfirmBar(c *ui.Context, text string, detail func(), cancel, confirm string) (cancelled, confirmed bool) {
 	t := c.Theme()
 	ui.Row(c).FillWidth().Gap(10).Padding(10, 12).Radius(M(c).Radius.Control).Wrap().
@@ -347,7 +349,7 @@ func ConfirmBar(c *ui.Context, text string, detail func(), cancel, confirm strin
 				}
 			})
 			ui.Row(c).Gap(8).Children(func() {
-				cancelled = GhostButton(c, "", cancel).Clicked()
+				cancelled = GhostButton(c, "", cancel).AutoFocus().Clicked()
 				confirmed = DangerButton(c, "", confirm).Clicked()
 			})
 		})

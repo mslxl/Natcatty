@@ -124,6 +124,24 @@ func TestOpenLocalStartsARunningLocalSession(t *testing.T) {
 	}
 }
 
+func TestOpenLocalShellStartsTheNamedProgram(t *testing.T) {
+	factory := &fakeFactory{transport: newFakeTransport()}
+	service := newTestService(factory, WithIDGenerator(func() model.SessionID { return "session-shell" }))
+
+	session, err := service.OpenLocalShell(context.Background(), "pwsh.exe")
+	if err != nil {
+		t.Fatalf("OpenLocalShell: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	if factory.spec.Kind != KindLocal || len(factory.spec.Command) != 1 || factory.spec.Command[0] != "pwsh.exe" {
+		t.Fatalf("factory spec = %+v, want a local Session running pwsh.exe", factory.spec)
+	}
+	if snapshot := session.Snapshot(); snapshot.Kind != KindLocal {
+		t.Fatalf("snapshot kind = %q, want %q", snapshot.Kind, KindLocal)
+	}
+}
+
 func TestOpenSSHPassesTheConnectionTargetToTheFactory(t *testing.T) {
 	factory := &fakeFactory{transport: newFakeTransport()}
 	service := newTestService(factory, WithIDGenerator(func() model.SessionID { return "session-ssh" }))

@@ -32,7 +32,10 @@ import (
 // and the window redraw used when a clipboard request arrives on the UI thread.
 type Options struct {
 	LogDefaults func() appsession.LogOptions
-	Redraw      func()
+	// OpenLog hands a Session's current log file to the platform opener. Nil
+	// leaves the menu action disabled.
+	OpenLog func(path string)
+	Redraw  func()
 	// PastePolicy reads the live multiline paste setting.
 	PastePolicy func() (protection bool, minLines int)
 	// DropAction reads what a file drop should do.
@@ -139,6 +142,11 @@ type Option func(*Options)
 // by the Session's Start log control.
 func WithLogDefaults(fn func() appsession.LogOptions) Option {
 	return func(options *Options) { options.LogDefaults = fn }
+}
+
+// WithLogOpener supplies the platform opener for a Session's current log file.
+func WithLogOpener(fn func(path string)) Option {
+	return func(options *Options) { options.OpenLog = fn }
 }
 
 // WithRedraw supplies the window invalidation used for asynchronous clipboard
@@ -709,8 +717,13 @@ func (s *Surface) chrome(c *ui.Context, snapshot appsession.Snapshot) (chromeMod
 		saveScreen = func() { s.saveScreen() }
 		clearBuffer = func() { s.session.ClearBuffer() }
 	}
+	var openLog func(path string)
+	if s.options.OpenLog != nil {
+		openLog = s.openLog
+	}
 	actions := chromeActions{
 		ToggleLog: func() { s.toggleLog() },
+		OpenLog:   openLog,
 		SetLogFormat: func(format domainterminal.LogFormat) {
 			s.setLogFormat(format)
 		},
@@ -1166,6 +1179,17 @@ func (s *Surface) toggleLog() {
 		return
 	}
 	s.logError = false
+}
+
+// openLog hands the file the Session is currently writing to the platform
+// opener. It never starts logging: with logging off there is no current file,
+// and the menu action is disabled instead.
+func (s *Surface) openLog(string) {
+	logging := s.session.Snapshot().Logging
+	if s.options.OpenLog == nil || !logging.Active || logging.Path == "" {
+		return
+	}
+	s.options.OpenLog(logging.Path)
 }
 
 func (s *Surface) setLogFormat(format domainterminal.LogFormat) {

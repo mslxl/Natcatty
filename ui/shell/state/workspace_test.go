@@ -124,6 +124,10 @@ type workspaceGraph struct {
 }
 
 func newWorkspaceGraph(t *testing.T) *workspaceGraph {
+	return newWorkspaceGraphWithOptions(t)
+}
+
+func newWorkspaceGraphWithOptions(t *testing.T, options ...Option) *workspaceGraph {
 	t.Helper()
 	graph := &workspaceGraph{
 		factory:  &workspaceFactory{},
@@ -133,7 +137,7 @@ func newWorkspaceGraph(t *testing.T) *workspaceGraph {
 	}
 	graph.service = appsession.NewService(graph.factory)
 	t.Cleanup(graph.service.CloseAll)
-	graph.state = NewState(
+	base := []Option{
 		WithSessions(graph.service, func(session *appsession.Session) (Surface, error) {
 			graph.sessions = append(graph.sessions, session)
 			surface := &fakeSurface{}
@@ -152,7 +156,8 @@ func newWorkspaceGraph(t *testing.T) *workspaceGraph {
 		WithDetachReattachHandler(func(id model.TabID) {
 			graph.reattached = append(graph.reattached, id)
 		}),
-	)
+	}
+	graph.state = NewState(append(base, options...)...)
 	return graph
 }
 

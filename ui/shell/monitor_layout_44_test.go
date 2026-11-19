@@ -79,7 +79,8 @@ func newMonitorLayoutTester(t *testing.T, width, height int) (*ui.Tester, *uimon
 			HostID: "h-live", Status: domainmonitor.StatusLive, At: now,
 			Sample: domainmonitor.Sample{
 				At: now, CPU: 42, Memory: 33, Disk: 51,
-				Rx: 1 << 20, Tx: 4096, Latency: 12, GPU: 35,
+				Rx: 1 << 20, Tx: 4096, Latency: 12,
+				GPUs: []domainmonitor.GPU{{Utilization: 35}},
 			},
 			Points: []domainmonitor.Point{
 				{At: now.Add(-4 * time.Second), CPU: 40, Memory: 31, Disk: 50, Rx: 1 << 19, Tx: 2048},

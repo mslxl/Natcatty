@@ -80,12 +80,24 @@ func (s *Session) handleInput(data []byte, source, translate bool) (forwarded []
 	// so concurrent input, output, and close cannot produce a second event.
 	for _, completion := range completions {
 		s.publishCommandCompletion(completion)
+		s.invalidateCWDProbe()
 	}
 	if transfer != nil && s.onTransfer != nil {
 		s.onTransfer(s.id, *transfer)
 	}
-	if source && len(forwarded) > 0 && s.onInput != nil {
-		s.onInput(s.id, forwarded)
+	if len(forwarded) > 0 {
+		// Any input that reaches the console can take over from the detector.
+		// Typed input keeps the wake-Enter exemption; input delivered by a
+		// broadcast or an inserted snippet is deliberate, so it always
+		// disarms. Only the engine's own replies bypass handleInput.
+		if source {
+			s.userInputAutoLogin(forwarded)
+		} else {
+			s.takeoverAutoLogin()
+		}
+		if source && s.onInput != nil {
+			s.onInput(s.id, forwarded)
+		}
 	}
 	// The Host's input compatibility applies to keyboard input only, after
 	// the tap and the broadcast hook observed the user's bytes. Programmatic
@@ -168,7 +180,7 @@ func (s *Session) publishCommandCompletion(capture capturedCommand) {
 	})
 }
 
-func (s *Session) publishTap(now time.Time) {
+func (s *Session) publishTap(now time.Time) tapState {
 	state := s.tap.state(now)
 	s.update(func(snapshot *Snapshot) {
 		snapshot.CWD = state.CWD
@@ -182,6 +194,7 @@ func (s *Session) publishTap(now time.Time) {
 		snapshot.Clipboard = state.Clipboard
 		snapshot.Stats = state.Stats
 	})
+	return state
 }
 
 // scheduleActivityClear publishes Busy=false once output has been quiet for
@@ -245,6 +258,7 @@ func (s *Session) schedulePromptRecheck() {
 		if completion := s.tap.resolvePrompt(now); completion != nil {
 			s.publishTap(now)
 			s.publishCommandCompletion(*completion)
+			s.invalidateCWDProbe()
 		}
 	})
 	s.mu.Unlock()

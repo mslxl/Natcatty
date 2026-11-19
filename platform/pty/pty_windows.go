@@ -40,6 +40,14 @@ type sys struct {
 
 	processMu sync.Mutex
 	process   syscall.Handle // 0 once reaped
+	processID uint32
+}
+
+// pid returns the shell process id.
+func (p *PTY) pid() int {
+	p.processMu.Lock()
+	defer p.processMu.Unlock()
+	return int(p.processID)
 }
 
 func (p *PTY) start(options Options) error {
@@ -149,6 +157,7 @@ func (p *PTY) spawn(options Options) error {
 	}
 	syscall.CloseHandle(info.Thread)
 	p.process = info.Process
+	p.processID = info.ProcessId
 	return nil
 }
 

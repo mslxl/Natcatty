@@ -1473,6 +1473,9 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 			kit.FormRow(c, m.VaultHostNotes(), func() {
 				ui.TextArea(c, &form.Notes).Height(80)
 			})
+			kit.FormRow(c, m.VaultHostStartupCommand(), func() {
+				ui.TextInput(c, &form.StartupCommand)
+			}).Description(m.VaultHostStartupCommandHint())
 			passwordHint := m.VaultHostPasswordHint()
 			if form.HasPassword {
 				passwordHint = m.VaultHostPasswordKeep()

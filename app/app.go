@@ -62,6 +62,7 @@ import (
 	appmonitor "github.com/mslxl/natcatty/application/monitor"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/application/session/autologin"
 	appsync "github.com/mslxl/natcatty/application/sync"
 	appsysmanager "github.com/mslxl/natcatty/application/sysmanager"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
@@ -768,7 +769,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// The Vault starts from the database. A read failure leaves the surface
 	// empty and shows the localized internal-error message rather than
 	// preventing the app from starting.
-	routes := vaultRoutes{vault: vaultService}
+	routes := vaultRoutes{vault: vaultService, preferences: preferenceService}
 
 	// SFTP reuses the Vault's routes and the same connection manager as a
 	// terminal Session. The local pane and the global bookmark file belong to
@@ -1237,6 +1238,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			return shellState.OpenSerial(cfg)
 		},
 		serialui.WithRedraw(invalidate),
+		serialui.WithSecretStore(serialSecrets{store: secretStore}),
 	)
 	// The side panel's Scripts, History, Theme, and Notes read the states of
 	// the pages they mirror; each keeps its own search.
@@ -1260,6 +1262,11 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		options := []sessionui.Option{
 			sessionui.WithLogDefaults(func() appsession.LogOptions {
 				return terminalLogDefaults(s.Label())
+			}),
+			// The log path is a local file the app already owns; the
+			// platform launcher opens it with the associated application.
+			sessionui.WithLogOpener(func(path string) {
+				_ = adapterslaunch.New().OpenSystem(context.Background(), path)
 			}),
 			sessionui.WithRedraw(invalidate),
 			sessionui.WithPastePolicy(terminalService.PasteConfirmation),
@@ -1388,6 +1395,16 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		}),
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
 			return newSessionSurface(s)
+		}),
+		// A serial Session's saved profile and a Telnet Host's Vault login
+		// become the console's expect engine. The password is read from the
+		// encrypted field-secret store on the open goroutine and never enters
+		// a workspace descriptor.
+		state.WithSerialAutoLogin(func(ctx context.Context, cfg domainserial.Config) *autologin.Options {
+			return serialAutoLoginOptions(ctx, serialSecrets{store: secretStore}, cfg)
+		}),
+		state.WithTelnetAutoLogin(func(ctx context.Context, host domainvault.Host, password string) *autologin.Options {
+			return telnetAutoLoginOptions(ctx, vaultService, host, password)
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState),
 			// The Hosts page's view and sort switches are this device's
@@ -1904,10 +1921,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			shellState.NoteSessionActivity(snapshot.ID)
 			windows.InvalidateAll()
 			desktopCtl.NoteSession(snapshot)
-			// OSC 7 is the only source of a shell's working directory. The
-			// surface decides whether follow-cwd is on and whether this
-			// Session's Host has a pane; reporting here costs nothing when it
-			// is off.
+			// OSC 7, or a local shell's probed process directory, is the
+			// source of a Session's working directory. The surface decides
+			// whether follow-cwd is on and whether this Session's Host has a
+			// pane; reporting here costs nothing when it is off.
 			forwardTerminalCwd(sessions, transferState, snapshot)
 			forwardTerminalCwd(sessions, filesState, snapshot)
 			// A Session replaced under the same Host (host re-open, tab

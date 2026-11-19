@@ -56,6 +56,10 @@ func Start(options Options) (*PTY, error) {
 	return p, nil
 }
 
+// PID returns the process id of the program started in the terminal, or 0
+// when it has not started or is already gone.
+func (p *PTY) PID() int { return p.pid() }
+
 // Wait waits for the process to exit and returns its exit code.
 func (p *PTY) Wait() (int, error) {
 	<-p.exited

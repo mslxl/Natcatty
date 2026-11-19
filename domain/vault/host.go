@@ -42,6 +42,9 @@ const (
 	maxTagLength      = 64
 	maxTagCount       = 64
 	maxNotesLength    = 64 << 10
+	// maxStartupCommandLength bounds the command typed into every new
+	// connection. It is generous for a small multi-line setup script.
+	maxStartupCommandLength = 16 << 10
 	// maxKeyMaterialLength bounds a private key or certificate before it is
 	// handed to the field-secret store.
 	maxKeyMaterialLength = 256 << 10
@@ -145,6 +148,10 @@ type ProxyConfig struct {
 	Password string `json:"-"`
 	// HasPassword reports that an encrypted proxy password exists.
 	HasPassword bool `json:"hasPassword,omitempty"`
+	// ProfileID marks a config materialized from a saved Proxy Profile. It is
+	// resolved state, never persisted: the Host stores the reference in
+	// ProxyProfileID instead.
+	ProfileID string `json:"-"`
 }
 
 // HostChain is a jump chain, ordered first = closest to the client. The final
@@ -214,6 +221,9 @@ type Host struct {
 	Tags    []string `json:"tags"`
 	Notes   string   `json:"notes,omitempty"`
 	Pinned  bool     `json:"pinned"`
+	// StartupCommand is typed once after a Session to this Host is ready and
+	// replayed after every reconnect. Empty means none.
+	StartupCommand string `json:"startupCommand,omitempty"`
 	// HasPassword reports that an encrypted password exists for this Host.
 	// The ciphertext lives in secret_values, never in this record.
 	HasPassword bool `json:"hasPassword,omitempty"`
@@ -257,6 +267,10 @@ type Host struct {
 	// ProxyProfileID selects a saved Proxy Profile. A manual Proxy wins over a
 	// profile; an empty reference means the Host has no proxy of its own.
 	ProxyProfileID string `json:"proxyProfileId,omitempty"`
+	// DirectProxy forces a direct connection and stops Host Group and app-wide
+	// proxy inheritance. It wins over a manual Proxy and a ProxyProfileID; a
+	// zero value means inherit.
+	DirectProxy bool `json:"directProxy,omitempty"`
 	// NetworkProfileID selects a saved Network Profile for the first endpoint
 	// of this Host's route. An empty reference inherits the Host Group's
 	// selection; with no group default the Host has no Network Route and
@@ -321,6 +335,9 @@ type Draft struct {
 	Tags     []string
 	Notes    string
 	Pinned   bool
+	// StartupCommand is typed after the shell is ready and after every
+	// reconnect. Empty means none.
+	StartupCommand string
 	// IdentityID, KeyID, AuthMethod, UseSSHAgent, and RequiresMFA select how
 	// the Host authenticates. They carry references only, never material.
 	IdentityID  model.IdentityID
@@ -343,6 +360,9 @@ type Draft struct {
 	// deleting a profile clears it on every Host and Host Group, but a record
 	// written by an older version may still hold an unknown identifier.
 	ProxyProfileID string
+	// DirectProxy forces a direct connection and stops inheritance. It is
+	// cleared with the proxy selection it overrides.
+	DirectProxy bool
 	// NetworkProfileID selects a saved Network Profile. It is a soft reference
 	// resolved like ProxyProfileID: a Host's own value wins over its Host
 	// Group's default, and deleting the profile clears both.
@@ -423,6 +443,8 @@ const (
 	// settings a validation error concerns.
 	FieldMoshServerPath Field = "mosh_server_path"
 	FieldETPort         Field = "et_port"
+	// FieldStartupCommand names the command replayed on every connection.
+	FieldStartupCommand Field = "startup_command"
 	// FieldSnippet, FieldSnippetCommand, and FieldSnippetPackage name the
 	// parts of a Snippet a validation error concerns.
 	FieldSnippet        Field = "snippet"
@@ -529,6 +551,7 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	draft.Username = strings.TrimSpace(draft.Username)
 	draft.Group = NormalizeGroup(draft.Group)
 	draft.Notes = strings.TrimSpace(draft.Notes)
+	draft.StartupCommand = strings.TrimSpace(draft.StartupCommand)
 	draft.Tags = normalizeTags(draft.Tags)
 	normalizedTOTP, err := normalizeTOTPDraft(draft)
 	if err != nil {
@@ -538,6 +561,12 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	draft.HostChain = normalizeHostChain(draft.HostChain)
 	draft.Proxy = normalizeProxy(draft.Proxy)
 	draft.ProxyProfileID = strings.TrimSpace(draft.ProxyProfileID)
+	if draft.DirectProxy {
+		// An explicit direct choice is not a configuration: keeping a manual
+		// proxy or profile here would make the editor show two selections.
+		draft.Proxy = nil
+		draft.ProxyProfileID = ""
+	}
 	draft.NetworkProfileID = strings.TrimSpace(draft.NetworkProfileID)
 	draft.Algorithms = normalizeAlgorithms(draft.Algorithms)
 	// Disabling X11 drops the acknowledgement, so re-enabling it always asks
@@ -622,6 +651,7 @@ func (h Host) Validate() error {
 		Group:                  h.Group,
 		Tags:                   h.Tags,
 		Notes:                  h.Notes,
+		StartupCommand:         h.StartupCommand,
 		AuthMethod:             h.AuthMethod,
 		RequiresMFA:            h.RequiresMFA,
 		UseSSHAgent:            h.UseSSHAgent,
@@ -784,6 +814,12 @@ func validateFields(draft Draft) error {
 	}
 	if strings.ContainsRune(draft.Notes, 0) {
 		return validation(FieldNotes, RuleInvalid)
+	}
+	if len(draft.StartupCommand) > maxStartupCommandLength {
+		return validation(FieldStartupCommand, RuleTooLong)
+	}
+	if strings.ContainsRune(draft.StartupCommand, 0) {
+		return validation(FieldStartupCommand, RuleInvalid)
 	}
 
 	if err := validateHostChain(draft.HostChain); err != nil {

@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -733,6 +734,52 @@ func TestNormalizeDraftRejectsAnOutOfRangeETPort(t *testing.T) {
 	var invalid *ValidationError
 	if !errors.As(err, &invalid) || invalid.Field != FieldETPort || invalid.Rule != RuleOutOfRange {
 		t.Fatalf("error = %v, want an out-of-range ET port", err)
+	}
+}
+
+func TestStartupCommandIsTrimmedAndSurvivesTheRecord(t *testing.T) {
+	normalized, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com",
+		StartupCommand: "  echo ready\r\nuptime  ",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if normalized.StartupCommand != "echo ready\r\nuptime" {
+		t.Fatalf("StartupCommand = %q", normalized.StartupCommand)
+	}
+
+	host := Host{
+		ID:             model.HostID("host-1"),
+		Label:          normalized.Label,
+		Hostname:       normalized.Hostname,
+		Protocol:       normalized.Protocol,
+		StartupCommand: normalized.StartupCommand,
+	}
+	if err := host.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	encoded, err := json.Marshal(host)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var decoded Host
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if decoded.StartupCommand != normalized.StartupCommand {
+		t.Fatalf("round-trip StartupCommand = %q", decoded.StartupCommand)
+	}
+
+	if _, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com", StartupCommand: "echo\x00",
+	}); err == nil {
+		t.Fatal("a startup command containing NUL was accepted")
+	} else {
+		var invalid *ValidationError
+		if !errors.As(err, &invalid) || invalid.Field != FieldStartupCommand || invalid.Rule != RuleInvalid {
+			t.Fatalf("error = %v, want an invalid startup command", err)
+		}
 	}
 }
 

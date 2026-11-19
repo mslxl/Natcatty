@@ -239,7 +239,11 @@ type Overview struct {
 	Cores         int
 	// CPUPercent is NaN until a second Linux counter reading establishes a
 	// delta; macOS reports a direct percentage.
-	CPUPercent  float64
+	CPUPercent float64
+	// CPUPerCore is one utilization percentage per logical core, index 0
+	// being C1. It is empty when the Host reports no per-core counters, and
+	// an entry is NaN until a second reading establishes its delta.
+	CPUPerCore  []float64
 	MemUsedMB   float64
 	MemTotalMB  float64
 	SwapUsedMB  float64
@@ -867,6 +871,7 @@ func (s *Service) sampleOnce(ctx context.Context, host domainvault.Host, tab Tab
 		}
 		overview := sample.overview
 		overview.CPUPercent = sample.cpuPercent(*previous)
+		overview.CPUPerCore = sample.perCorePercent(*previous)
 		*previous = sample.counters()
 		s.update(string(host.ID), tab, gen, func(state *TabState) {
 			state.Status = StatusLive

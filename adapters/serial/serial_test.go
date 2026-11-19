@@ -149,6 +149,57 @@ func TestFactoryRejectsUnsupportedSettingsAsATypedError(t *testing.T) {
 	}
 }
 
+// TestFactoryRejectsANamedPipeOffWindows keeps the pipe form valid for the
+// saved-port list while refusing to open it where there is no named-pipe API.
+func TestFactoryRejectsANamedPipeOffWindows(t *testing.T) {
+	caps := domainserial.CapabilitiesFor("linux")
+	factory := Factory{
+		Capabilities: &caps,
+		OpenPort: func(context.Context, domainserial.Config) (io.ReadWriteCloser, error) {
+			t.Fatal("the pipe was opened on linux")
+			return nil, nil
+		},
+	}
+	cfg := domainserial.Config{Path: `\\.\pipe\vm-console`, BaudRate: 115200,
+		DataBits: 8, StopBits: domainserial.StopBitsOne,
+		Parity: domainserial.ParityNone, FlowControl: domainserial.FlowNone}
+	_, err := factory.Open(context.Background(), serialSpec(cfg))
+	if !errors.Is(err, domainserial.ErrUnsupported) {
+		t.Fatalf("Open = %v, want ErrUnsupported", err)
+	}
+	var typed *domainserial.UnsupportedError
+	if !errors.As(err, &typed) || typed.Setting != "Windows named pipe" || typed.Platform != "linux" {
+		t.Fatalf("error = %#v, want a named-pipe unsupported error for linux", err)
+	}
+}
+
+// TestFactoryTypesAnOpenFailureAndKeepsItsCause keeps the device-failure class
+// separate from a configuration mistake and preserves the driver error.
+func TestFactoryTypesAnOpenFailureAndKeepsItsCause(t *testing.T) {
+	cause := errors.New("device busy")
+	caps := allCapabilities()
+	factory := Factory{
+		Capabilities: &caps,
+		OpenPort: func(context.Context, domainserial.Config) (io.ReadWriteCloser, error) {
+			return nil, cause
+		},
+	}
+	cfg := domainserial.Config{Path: "COM3", BaudRate: 115200, DataBits: 8,
+		StopBits: domainserial.StopBitsOne, Parity: domainserial.ParityNone,
+		FlowControl: domainserial.FlowNone}
+	_, err := factory.Open(context.Background(), serialSpec(cfg))
+	if !errors.Is(err, domainserial.ErrOpen) {
+		t.Fatalf("Open = %v, want ErrOpen", err)
+	}
+	var typed *domainserial.OpenError
+	if !errors.As(err, &typed) || typed.Path != "COM3" {
+		t.Fatalf("error = %#v, want an OpenError naming COM3", err)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("error = %v, want the platform cause", err)
+	}
+}
+
 func TestFactoryRejectsAnUnsupportedPlatformAndEnumerationAsTypedErrors(t *testing.T) {
 	caps := domainserial.CapabilitiesFor("plan9")
 	factory := Factory{Capabilities: &caps}

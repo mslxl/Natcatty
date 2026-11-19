@@ -15,10 +15,11 @@ package monitor
 // command from shifting the labels.
 const latencyMarker = "NC_LATENCY_MARK"
 
-// gpuAssignment samples NVIDIA utilization and VRAM best-effort. A Host
-// without nvidia-smi, or without timeout, reports an empty GPU and the UI
-// hides the metric.
-const gpuAssignment = `gpustat=$(gpucsv=$(timeout -s KILL 2 nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,name --format=csv,noheader,nounits 2>/dev/null) && printf '%s\n' "$gpucsv" | awk -F', *' 'NF >= 4 {g++; if($1 ~ /^[0-9]+$/) {n++; u+=$1} if($2 ~ /^[0-9]+$/) {mu+=$2; uc++} if($3 ~ /^[0-9]+$/) {mt+=$3; tc++} if(name=="") name=$4} END{if(n>0) printf "%.0f %s %s %s", u/n, (uc==g ? sprintf("%.0f",mu) : "N/A"), (tc==g ? sprintf("%.0f",mt) : "N/A"), name}' 2>/dev/null || echo "")`
+// gpuAssignment samples one line per NVIDIA device, comma separated, with
+// utilization, VRAM used, VRAM total, and the device name. A Host without
+// nvidia-smi, or without timeout, reports an empty GPU and the UI hides the
+// metric.
+const gpuAssignment = `gpustat=$(gpucsv=$(timeout -s KILL 2 nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,name --format=csv,noheader,nounits 2>/dev/null) && printf '%s\n' "$gpucsv" | awk -F', *' 'NF >= 4 {u=$1; mu=$2; mt=$3; name=$4; for(i=5;i<=NF;i++) name=name ", " $i; if(u !~ /^[0-9]+$/) u="N/A"; if(mu !~ /^[0-9]+$/) mu="N/A"; if(mt !~ /^[0-9]+$/) mt="N/A"; printf "%s %s %s %s,", u, mu, mt, name}' 2>/dev/null | sed 's/,$//' || echo "")`
 
 // macOSStatsCommand mirrors the original: a fast ps-based CPU estimate, memory
 // pages from vm_stat, swap from sysctl, root and /Volumes capacities from
@@ -122,10 +123,22 @@ const linuxDiskAwk = `awk '
 const linuxDiskTable = `{ LC_ALL=C mount 2>/dev/null; printf "%s\n" "__NETCATTY_DF__"; LC_ALL=C df -kPT 2>/dev/null || LC_ALL=C df -kP 2>/dev/null; }`
 const linuxDiskRoot = `{ LC_ALL=C mount 2>/dev/null; printf "%s\n" "__NETCATTY_DF__"; LC_ALL=C df -kPT / 2>/dev/null || LC_ALL=C df -kP / 2>/dev/null; }`
 
-// linuxDiskCommand returns the DISKS label for the local mounts.
+// linuxDiskstatsAssignment samples /proc/diskstats for whole, hardware-backed
+// block devices: /sys/block lists no partitions, and requiring a device link
+// drops stacked dm/md/loop/zram layers that would double-count the same I/O.
+// Each entry carries the remote uptime so rates use one clock, and read and
+// written sector counters (fields 6 and 10); block-stat sectors are 512 bytes.
+const linuxDiskstatsAssignment = `diskio=$(if [ -r /proc/uptime ] && [ -r /proc/diskstats ]; then ` +
+	`awk '{printf "%s;",$1}' /proc/uptime; ` +
+	`for d in /sys/block/*; do [ -e "$d/device" ] || continue; n=${d##*/}; ` +
+	`awk -v n="$n" '$3 == n {printf "%s:%s:%s,", n, $6, $10}' /proc/diskstats; done; fi)`
+
+// linuxDiskCommand returns the DISKS and DISKIO labels for the local mounts
+// and physical devices.
 const linuxDiskCommand = `disks=$( { ` + linuxDiskTable + `; } | ` + linuxDiskAwk + ` | sed 's/,$//' ); ` +
 	`[ -n "$disks" ] || disks=$( { ` + linuxDiskRoot + `; } | ` + linuxDiskAwk + ` | sed 's/,$//' ); ` +
-	`echo "DISKS:$disks"`
+	linuxDiskstatsAssignment + `; ` +
+	`echo "DISKS:$disks|DISKIO:$diskio"`
 
 // statsCommand returns the remote command for one stats sample.
 func statsCommand() string {

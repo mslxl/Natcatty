@@ -119,7 +119,7 @@ func TestOpenHostCarriesAutoAttachTmuxOnlyForPlainSSH(t *testing.T) {
 				graph.state.Flush()
 				return graph.state.TabCount() == 1
 			})
-			if got := graph.factory.spec.AutoAttachTmux; got != testCase.expected {
+			if got := graph.factory.lastSpec().AutoAttachTmux; got != testCase.expected {
 				t.Fatalf("StartSpec AutoAttachTmux = %v, want %v", got, testCase.expected)
 			}
 		})

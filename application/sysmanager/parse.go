@@ -69,17 +69,55 @@ type overviewSample struct {
 	mode     string
 	cpuTotal float64
 	cpuIdle  float64
+	perCore  []overviewCoreCounters
 }
 
 func (s overviewSample) counters() overviewCounters {
-	return overviewCounters{mode: s.mode, total: s.cpuTotal, idle: s.cpuIdle}
+	return overviewCounters{
+		mode:    s.mode,
+		total:   s.cpuTotal,
+		idle:    s.cpuIdle,
+		perCore: append([]overviewCoreCounters(nil), s.perCore...),
+	}
 }
 
 // overviewCounters is the previous CPU reading a service keeps per run.
 type overviewCounters struct {
-	mode  string
+	mode    string
+	total   float64
+	idle    float64
+	perCore []overviewCoreCounters
+}
+
+// overviewCoreCounters is one logical core's aggregate CPU time, in the same
+// total/idle shape the aggregate counters use.
+type overviewCoreCounters struct {
 	total float64
 	idle  float64
+}
+
+// perCorePercent derives each core's utilization from the counter delta. A
+// reply without per-core counters leaves the list empty: the Host reports no
+// per-core data, so the overview shows only the aggregate. Counters without a
+// matching baseline still yield one entry per core, each NaN, so the rows
+// appear as soon as the sampler sees them.
+func (s overviewSample) perCorePercent(previous overviewCounters) []float64 {
+	if len(s.perCore) == 0 {
+		return nil
+	}
+	out := make([]float64, len(s.perCore))
+	for index, core := range s.perCore {
+		out[index] = math.NaN()
+		if index >= len(previous.perCore) {
+			continue
+		}
+		totalDelta := core.total - previous.perCore[index].total
+		idleDelta := core.idle - previous.perCore[index].idle
+		if totalDelta > 0 && idleDelta >= 0 {
+			out[index] = clampPercent(100 * (totalDelta - idleDelta) / totalDelta)
+		}
+	}
+	return out
 }
 
 // cpuPercent derives Linux CPU utilization from the counter delta. macOS
@@ -154,7 +192,33 @@ func parseOverview(stdout string) (overviewSample, error) {
 		// macOS emits one direct percentage.
 		sample.cpuTotal = parseFloat(raw[0])
 	}
+	sample.perCore = parseOverviewPerCore(labels["PERCORERAW"])
 	return sample, nil
+}
+
+// parseOverviewPerCore reads "total:idle,total:idle,..." as the same counters
+// the aggregate line carries. One malformed entry drops the whole list, so a
+// truncated reply never looks like fewer cores than the Host has.
+func parseOverviewPerCore(value string) []overviewCoreCounters {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	entries := strings.Split(value, ",")
+	cores := make([]overviewCoreCounters, 0, len(entries))
+	for _, entry := range entries {
+		fields := strings.SplitN(strings.TrimSpace(entry), ":", 2)
+		if len(fields) != 2 {
+			return nil
+		}
+		total := parseFloat(fields[0])
+		idle := parseFloat(fields[1])
+		if math.IsNaN(total) || math.IsNaN(idle) || total < 0 || idle < 0 {
+			return nil
+		}
+		cores = append(cores, overviewCoreCounters{total: total, idle: idle})
+	}
+	return cores
 }
 
 // parseLabels splits "LABEL:value|LABEL:value" without splitting inside a

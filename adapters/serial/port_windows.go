@@ -39,10 +39,14 @@ const (
 const readPollMilliseconds = 50
 
 // platformOpenPort opens a Windows communications resource and programs its
-// DCB.
+// DCB. A named pipe is a byte stream without a DCB, so it takes the pipe path
+// instead.
 func platformOpenPort(ctx context.Context, cfg domainserial.Config) (io.ReadWriteCloser, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if domainserial.IsNamedPipePath(cfg.Path) {
+		return openNamedPipe(strings.TrimSpace(cfg.Path))
 	}
 	path := windowsDevicePath(cfg.Path)
 	name, err := windows.UTF16PtrFromString(path)

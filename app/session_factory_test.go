@@ -540,6 +540,52 @@ func TestSSHSessionUsesTheResolvedChainAndProxy(t *testing.T) {
 	}
 }
 
+func TestUnsavedHostRouteNeedsNoVaultRecord(t *testing.T) {
+	vault := &fakeRouteVault{}
+	route, err := (vaultRoutes{vault: vault}).Route(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Route with no Host: %v", err)
+	}
+	if len(route.Jumps) != 0 || route.Proxy != nil || route.Network != nil {
+		t.Fatalf("route = %+v, want the direct defaults", route)
+	}
+}
+
+// TestQuickConnectSSHSessionDialsWithTheTypedCredentials is the app-level
+// Unsaved Host contract: no Vault lookup, the typed password authenticates,
+// and the transport is never parked for another unsaved target to reuse.
+func TestQuickConnectSSHSessionDialsWithTheTypedCredentials(t *testing.T) {
+	client := &factoryClient{terminal: &factoryTerminal{}}
+	dialer := &factoryDialer{client: client}
+	// The password source knows nothing, as for a Host that was never saved.
+	manager := appconnection.NewManager(dialer, vaultPasswords{vault: factoryPasswords{err: appvault.ErrNotFound}}, &factoryKnownHosts{})
+	t.Cleanup(manager.CloseAll)
+	routes := vaultRoutes{vault: &fakeRouteVault{}}
+	factory := newTransportFactory(&factoryLocal{}, nil, nil, manager, routes)
+	wantPassword := "quick" + "pass"
+
+	transport, err := factory.Open(context.Background(), appsession.StartSpec{
+		Kind: appsession.KindSSH, HostID: "", Hostname: "switch.local", Port: 2222,
+		Username: "admin", Password: wantPassword,
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if dialer.calls != 1 {
+		t.Fatalf("dial calls = %d, want 1", dialer.calls)
+	}
+	if dialer.request.Password != wantPassword || dialer.request.Username != "admin" ||
+		dialer.request.Hostname != "switch.local" || dialer.request.Port != 2222 {
+		t.Fatalf("dial request = %+v, want the typed endpoint and credential", dialer.request)
+	}
+	if err := transport.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if client.closeCall != 1 {
+		t.Fatalf("transport closes = %d, want the unsaved transport discarded", client.closeCall)
+	}
+}
+
 func TestSSHSessionRouteFailurePreventsDialing(t *testing.T) {
 	dialer := &factoryDialer{client: &factoryClient{terminal: &factoryTerminal{}}}
 	manager := appconnection.NewManager(dialer, vaultPasswords{vault: factoryPasswords{value: "pw"}}, &factoryKnownHosts{})

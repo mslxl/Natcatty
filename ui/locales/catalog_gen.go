@@ -800,6 +800,160 @@ func (msgs Messages) MenuNewTab() string {
 	return Catalog.Format(msgs.locale, "menuNewTab", nil)
 }
 
+// MenuQuickConnect says "Quick Connect"
+// in the language the app shows.
+func MenuQuickConnect() string { return In(i18n.Locale()).MenuQuickConnect() }
+
+// MenuQuickConnect says "Quick Connect"
+// in the language of msgs.
+func (msgs Messages) MenuQuickConnect() string {
+	return Catalog.Format(msgs.locale, "menuQuickConnect", nil)
+}
+
+// QuickConnectDescription says "Open a Session without saving a Host to the Vault."
+// in the language the app shows.
+func QuickConnectDescription() string { return In(i18n.Locale()).QuickConnectDescription() }
+
+// QuickConnectDescription says "Open a Session without saving a Host to the Vault."
+// in the language of msgs.
+func (msgs Messages) QuickConnectDescription() string {
+	return Catalog.Format(msgs.locale, "quickConnectDescription", nil)
+}
+
+// QuickConnectProtocol says "Protocol"
+// in the language the app shows.
+func QuickConnectProtocol() string { return In(i18n.Locale()).QuickConnectProtocol() }
+
+// QuickConnectProtocol says "Protocol"
+// in the language of msgs.
+func (msgs Messages) QuickConnectProtocol() string {
+	return Catalog.Format(msgs.locale, "quickConnectProtocol", nil)
+}
+
+// QuickConnectAddress says "Address"
+// in the language the app shows.
+func QuickConnectAddress() string { return In(i18n.Locale()).QuickConnectAddress() }
+
+// QuickConnectAddress says "Address"
+// in the language of msgs.
+func (msgs Messages) QuickConnectAddress() string {
+	return Catalog.Format(msgs.locale, "quickConnectAddress", nil)
+}
+
+// QuickConnectAddressPlaceholder says "host or IP address"
+// in the language the app shows.
+func QuickConnectAddressPlaceholder() string {
+	return In(i18n.Locale()).QuickConnectAddressPlaceholder()
+}
+
+// QuickConnectAddressPlaceholder says "host or IP address"
+// in the language of msgs.
+func (msgs Messages) QuickConnectAddressPlaceholder() string {
+	return Catalog.Format(msgs.locale, "quickConnectAddressPlaceholder", nil)
+}
+
+// QuickConnectPort says "Port"
+// in the language the app shows.
+func QuickConnectPort() string { return In(i18n.Locale()).QuickConnectPort() }
+
+// QuickConnectPort says "Port"
+// in the language of msgs.
+func (msgs Messages) QuickConnectPort() string {
+	return Catalog.Format(msgs.locale, "quickConnectPort", nil)
+}
+
+// QuickConnectUsername says "Username"
+// in the language the app shows.
+func QuickConnectUsername() string { return In(i18n.Locale()).QuickConnectUsername() }
+
+// QuickConnectUsername says "Username"
+// in the language of msgs.
+func (msgs Messages) QuickConnectUsername() string {
+	return Catalog.Format(msgs.locale, "quickConnectUsername", nil)
+}
+
+// QuickConnectPassword says "Password"
+// in the language the app shows.
+func QuickConnectPassword() string { return In(i18n.Locale()).QuickConnectPassword() }
+
+// QuickConnectPassword says "Password"
+// in the language of msgs.
+func (msgs Messages) QuickConnectPassword() string {
+	return Catalog.Format(msgs.locale, "quickConnectPassword", nil)
+}
+
+// QuickConnectAddressRequired says "Enter an address."
+// in the language the app shows.
+func QuickConnectAddressRequired() string { return In(i18n.Locale()).QuickConnectAddressRequired() }
+
+// QuickConnectAddressRequired says "Enter an address."
+// in the language of msgs.
+func (msgs Messages) QuickConnectAddressRequired() string {
+	return Catalog.Format(msgs.locale, "quickConnectAddressRequired", nil)
+}
+
+// QuickConnectPortInvalid says "Enter a port between 1 and 65535."
+// in the language the app shows.
+func QuickConnectPortInvalid() string { return In(i18n.Locale()).QuickConnectPortInvalid() }
+
+// QuickConnectPortInvalid says "Enter a port between 1 and 65535."
+// in the language of msgs.
+func (msgs Messages) QuickConnectPortInvalid() string {
+	return Catalog.Format(msgs.locale, "quickConnectPortInvalid", nil)
+}
+
+// QuickConnectUnavailable says "Sessions are unavailable."
+// in the language the app shows.
+func QuickConnectUnavailable() string { return In(i18n.Locale()).QuickConnectUnavailable() }
+
+// QuickConnectUnavailable says "Sessions are unavailable."
+// in the language of msgs.
+func (msgs Messages) QuickConnectUnavailable() string {
+	return Catalog.Format(msgs.locale, "quickConnectUnavailable", nil)
+}
+
+// QuickConnectDiscardTitle says "Discard quick connect?"
+// in the language the app shows.
+func QuickConnectDiscardTitle() string { return In(i18n.Locale()).QuickConnectDiscardTitle() }
+
+// QuickConnectDiscardTitle says "Discard quick connect?"
+// in the language of msgs.
+func (msgs Messages) QuickConnectDiscardTitle() string {
+	return Catalog.Format(msgs.locale, "quickConnectDiscardTitle", nil)
+}
+
+// QuickConnectDiscardDescription says "The details you typed are not saved anywhere."
+// in the language the app shows.
+func QuickConnectDiscardDescription() string {
+	return In(i18n.Locale()).QuickConnectDiscardDescription()
+}
+
+// QuickConnectDiscardDescription says "The details you typed are not saved anywhere."
+// in the language of msgs.
+func (msgs Messages) QuickConnectDiscardDescription() string {
+	return Catalog.Format(msgs.locale, "quickConnectDiscardDescription", nil)
+}
+
+// QuickConnectDiscard says "Discard"
+// in the language the app shows.
+func QuickConnectDiscard() string { return In(i18n.Locale()).QuickConnectDiscard() }
+
+// QuickConnectDiscard says "Discard"
+// in the language of msgs.
+func (msgs Messages) QuickConnectDiscard() string {
+	return Catalog.Format(msgs.locale, "quickConnectDiscard", nil)
+}
+
+// QuickConnectKeepEditing says "Keep editing"
+// in the language the app shows.
+func QuickConnectKeepEditing() string { return In(i18n.Locale()).QuickConnectKeepEditing() }
+
+// QuickConnectKeepEditing says "Keep editing"
+// in the language of msgs.
+func (msgs Messages) QuickConnectKeepEditing() string {
+	return Catalog.Format(msgs.locale, "quickConnectKeepEditing", nil)
+}
+
 // MenuCloseTab says "Close Tab"
 // in the language the app shows.
 func MenuCloseTab() string { return In(i18n.Locale()).MenuCloseTab() }
@@ -2834,6 +2988,26 @@ func VaultHostNotes() string { return In(i18n.Locale()).VaultHostNotes() }
 // in the language of msgs.
 func (msgs Messages) VaultHostNotes() string {
 	return Catalog.Format(msgs.locale, "vaultHostNotes", nil)
+}
+
+// VaultHostStartupCommand says "Startup command"
+// in the language the app shows.
+func VaultHostStartupCommand() string { return In(i18n.Locale()).VaultHostStartupCommand() }
+
+// VaultHostStartupCommand says "Startup command"
+// in the language of msgs.
+func (msgs Messages) VaultHostStartupCommand() string {
+	return Catalog.Format(msgs.locale, "vaultHostStartupCommand", nil)
+}
+
+// VaultHostStartupCommandHint says "Typed once after the shell is ready on every connection, including reconnects. Leave empty for none."
+// in the language the app shows.
+func VaultHostStartupCommandHint() string { return In(i18n.Locale()).VaultHostStartupCommandHint() }
+
+// VaultHostStartupCommandHint says "Typed once after the shell is ready on every connection, including reconnects. Leave empty for none."
+// in the language of msgs.
+func (msgs Messages) VaultHostStartupCommandHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostStartupCommandHint", nil)
 }
 
 // VaultHostPinned says "Pin this Host"
@@ -4984,6 +5158,100 @@ func SerialFlowRTSCTS() string { return In(i18n.Locale()).SerialFlowRTSCTS() }
 // in the language of msgs.
 func (msgs Messages) SerialFlowRTSCTS() string {
 	return Catalog.Format(msgs.locale, "serialFlowRTSCTS", nil)
+}
+
+// SerialAutoLoginEnabled says "Auto-login after connecting"
+// in the language the app shows.
+func SerialAutoLoginEnabled() string { return In(i18n.Locale()).SerialAutoLoginEnabled() }
+
+// SerialAutoLoginEnabled says "Auto-login after connecting"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginEnabled() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginEnabled", nil)
+}
+
+// SerialAutoLoginHint says "Answer the console's login and password prompts from this profile. The password is kept in the encrypted vault secret…"
+// in the language the app shows.
+func SerialAutoLoginHint() string { return In(i18n.Locale()).SerialAutoLoginHint() }
+
+// SerialAutoLoginHint says "Answer the console's login and password prompts from this profile. The password is kept in the encrypted vault secret…"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginHint() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginHint", nil)
+}
+
+// SerialAutoLoginUsername says "Username"
+// in the language the app shows.
+func SerialAutoLoginUsername() string { return In(i18n.Locale()).SerialAutoLoginUsername() }
+
+// SerialAutoLoginUsername says "Username"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginUsername() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginUsername", nil)
+}
+
+// SerialAutoLoginPassword says "Password"
+// in the language the app shows.
+func SerialAutoLoginPassword() string { return In(i18n.Locale()).SerialAutoLoginPassword() }
+
+// SerialAutoLoginPassword says "Password"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginPassword() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginPassword", nil)
+}
+
+// SerialAutoLoginPasswordPlaceholder says "Leave blank to keep the saved password"
+// in the language the app shows.
+func SerialAutoLoginPasswordPlaceholder() string {
+	return In(i18n.Locale()).SerialAutoLoginPasswordPlaceholder()
+}
+
+// SerialAutoLoginPasswordPlaceholder says "Leave blank to keep the saved password"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginPasswordPlaceholder() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginPasswordPlaceholder", nil)
+}
+
+// SerialAutoLoginForgetPassword says "Forget saved password"
+// in the language the app shows.
+func SerialAutoLoginForgetPassword() string { return In(i18n.Locale()).SerialAutoLoginForgetPassword() }
+
+// SerialAutoLoginForgetPassword says "Forget saved password"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginForgetPassword() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginForgetPassword", nil)
+}
+
+// SerialAutoLoginAttempts says "Login attempts"
+// in the language the app shows.
+func SerialAutoLoginAttempts() string { return In(i18n.Locale()).SerialAutoLoginAttempts() }
+
+// SerialAutoLoginAttempts says "Login attempts"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginAttempts() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginAttempts", nil)
+}
+
+// SerialAutoLoginReplies says "Expect / reply rules"
+// in the language the app shows.
+func SerialAutoLoginReplies() string { return In(i18n.Locale()).SerialAutoLoginReplies() }
+
+// SerialAutoLoginReplies says "Expect / reply rules"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginReplies() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginReplies", nil)
+}
+
+// SerialAutoLoginRepliesPlaceholder says "expect => reply, one per line"
+// in the language the app shows.
+func SerialAutoLoginRepliesPlaceholder() string {
+	return In(i18n.Locale()).SerialAutoLoginRepliesPlaceholder()
+}
+
+// SerialAutoLoginRepliesPlaceholder says "expect => reply, one per line"
+// in the language of msgs.
+func (msgs Messages) SerialAutoLoginRepliesPlaceholder() string {
+	return Catalog.Format(msgs.locale, "serialAutoLoginRepliesPlaceholder", nil)
 }
 
 // SerialConnect says "Connect"
@@ -8502,6 +8770,26 @@ func SessionLoggingNoDirectory() string { return In(i18n.Locale()).SessionLoggin
 // in the language of msgs.
 func (msgs Messages) SessionLoggingNoDirectory() string {
 	return Catalog.Format(msgs.locale, "sessionLoggingNoDirectory", nil)
+}
+
+// SessionLoggingOpen says "Open log file"
+// in the language the app shows.
+func SessionLoggingOpen() string { return In(i18n.Locale()).SessionLoggingOpen() }
+
+// SessionLoggingOpen says "Open log file"
+// in the language of msgs.
+func (msgs Messages) SessionLoggingOpen() string {
+	return Catalog.Format(msgs.locale, "sessionLoggingOpen", nil)
+}
+
+// SessionLoggingNoFile says "No log file for this Session yet."
+// in the language the app shows.
+func SessionLoggingNoFile() string { return In(i18n.Locale()).SessionLoggingNoFile() }
+
+// SessionLoggingNoFile says "No log file for this Session yet."
+// in the language of msgs.
+func (msgs Messages) SessionLoggingNoFile() string {
+	return Catalog.Format(msgs.locale, "sessionLoggingNoFile", nil)
 }
 
 // SessionLogFormatText says "Text"
@@ -15344,6 +15632,18 @@ func (msgs Messages) SettingsAssociationRemove() string {
 	return Catalog.Format(msgs.locale, "settingsAssociationRemove", nil)
 }
 
+// SettingsAssociationRemoveConfirm says "Remove the .{extension} association? Files with this extension will open with the default opener."
+// in the language the app shows.
+func SettingsAssociationRemoveConfirm(extension string) string {
+	return In(i18n.Locale()).SettingsAssociationRemoveConfirm(extension)
+}
+
+// SettingsAssociationRemoveConfirm says "Remove the .{extension} association? Files with this extension will open with the default opener."
+// in the language of msgs.
+func (msgs Messages) SettingsAssociationRemoveConfirm(extension string) string {
+	return Catalog.Format(msgs.locale, "settingsAssociationRemoveConfirm", map[string]any{"extension": extension})
+}
+
 // SettingsAssociationEditing says "Editing .{extension}"
 // in the language the app shows.
 func SettingsAssociationEditing(extension string) string {
@@ -21154,6 +21454,52 @@ func MonitoringDiskCapacityUnknown() string { return In(i18n.Locale()).Monitorin
 // in the language of msgs.
 func (msgs Messages) MonitoringDiskCapacityUnknown() string {
 	return Catalog.Format(msgs.locale, "monitoringDiskCapacityUnknown", nil)
+}
+
+// MonitoringDiskIO says "Disk I/O"
+// in the language the app shows.
+func MonitoringDiskIO() string { return In(i18n.Locale()).MonitoringDiskIO() }
+
+// MonitoringDiskIO says "Disk I/O"
+// in the language of msgs.
+func (msgs Messages) MonitoringDiskIO() string {
+	return Catalog.Format(msgs.locale, "monitoringDiskIO", nil)
+}
+
+// MonitoringDiskRead says "Read"
+// in the language the app shows.
+func MonitoringDiskRead() string { return In(i18n.Locale()).MonitoringDiskRead() }
+
+// MonitoringDiskRead says "Read"
+// in the language of msgs.
+func (msgs Messages) MonitoringDiskRead() string {
+	return Catalog.Format(msgs.locale, "monitoringDiskRead", nil)
+}
+
+// MonitoringDiskWrite says "Write"
+// in the language the app shows.
+func MonitoringDiskWrite() string { return In(i18n.Locale()).MonitoringDiskWrite() }
+
+// MonitoringDiskWrite says "Write"
+// in the language of msgs.
+func (msgs Messages) MonitoringDiskWrite() string {
+	return Catalog.Format(msgs.locale, "monitoringDiskWrite", nil)
+}
+
+// MonitoringPartitionAlert says "Partition usage above {percent}%: {mounts}"
+// in the language the app shows.
+//
+// A warning listing the partitions above the capacity threshold.
+func MonitoringPartitionAlert(percent string, mounts string) string {
+	return In(i18n.Locale()).MonitoringPartitionAlert(percent, mounts)
+}
+
+// MonitoringPartitionAlert says "Partition usage above {percent}%: {mounts}"
+// in the language of msgs.
+//
+// A warning listing the partitions above the capacity threshold.
+func (msgs Messages) MonitoringPartitionAlert(percent string, mounts string) string {
+	return Catalog.Format(msgs.locale, "monitoringPartitionAlert", map[string]any{"percent": percent, "mounts": mounts})
 }
 
 // MonitoringNetwork says "Network"

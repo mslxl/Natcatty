@@ -88,6 +88,68 @@ func TestParseOverviewReadsLinuxAndDarwinFields(t *testing.T) {
 	}
 }
 
+func TestParseOverviewDerivesEveryPerCorePercentage(t *testing.T) {
+	line := func(perCore string) string {
+		text := "MODE:linux|HOST:web-1|OS:Debian 12|KERNEL:6.1|UPTIME:86400|" +
+			"LOAD:0.50 0.40 0.30|CORES:8|CPURAW:1600 800"
+		if perCore != "" {
+			text += "|PERCORERAW:" + perCore
+		}
+		return text + "|MEM:2048 8192|SWAP:128 1024|DISK:12.5 100.0"
+	}
+	coreList := func(total, idle string) string {
+		entries := make([]string, 8)
+		for index := range entries {
+			entries[index] = total + ":" + idle
+		}
+		return strings.Join(entries, ",")
+	}
+
+	first, err := parseOverview(line(coreList("200", "100")))
+	if err != nil {
+		t.Fatalf("parse overview: %v", err)
+	}
+	if len(first.perCore) != 8 {
+		t.Fatalf("per-core counters = %d, want 8", len(first.perCore))
+	}
+	if values := first.perCorePercent(overviewCounters{}); len(values) != 8 {
+		t.Errorf("first per-core reading = %v, want one unknown row per core", values)
+	} else {
+		for index, value := range values {
+			if !math.IsNaN(value) {
+				t.Errorf("core %d before a delta = %v, want NaN", index+1, value)
+			}
+		}
+	}
+
+	second, err := parseOverview(line(coreList("400", "150")))
+	if err != nil {
+		t.Fatalf("parse second overview: %v", err)
+	}
+	values := second.perCorePercent(first.counters())
+	if len(values) != 8 {
+		t.Fatalf("per-core percentages = %v, want one per core", values)
+	}
+	for index, value := range values {
+		if value != 75 {
+			t.Errorf("core %d = %v, want 75", index+1, value)
+		}
+	}
+
+	// A Host that reports its core count but no per-core counters keeps only
+	// the aggregate, and a truncated list is dropped rather than shortened.
+	withoutPerCore, err := parseOverview(line(""))
+	if err != nil {
+		t.Fatalf("parse overview without per-core counters: %v", err)
+	}
+	if withoutPerCore.overview.Cores != 8 || withoutPerCore.perCorePercent(first.counters()) != nil {
+		t.Errorf("per-core without counters = %+v", withoutPerCore.perCore)
+	}
+	if cores := parseOverviewPerCore("1:2,bad"); cores != nil {
+		t.Errorf("malformed per-core counters = %v, want none", cores)
+	}
+}
+
 func TestParseProcessesReadsGNUAndBusyBoxShapes(t *testing.T) {
 	stdout := strings.Join([]string{
 		"",

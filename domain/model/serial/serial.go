@@ -163,6 +163,121 @@ type Config struct {
 	Parity Parity `json:"parity,omitempty"`
 	// FlowControl is none, xon/xoff, or rts/cts.
 	FlowControl FlowControl `json:"flowControl,omitempty"`
+	// AutoLogin is this profile's console login automation. It is absent for a
+	// profile that never enabled auto-login, so an older workspace payload
+	// decodes unchanged. It never contains a password: PasswordSet records
+	// whether one lives in the encrypted field-secret store under
+	// SecretProfileID.
+	AutoLogin *AutoLogin `json:"autoLogin,omitempty"`
+}
+
+// Secret entity and field names for a serial profile's auto-login password.
+// They are part of the field-secret store's persisted key and AAD, so do not
+// rename them.
+const (
+	SecretEntityType    = "serial_profile"
+	SecretFieldPassword = "password"
+)
+
+// AutoLogin is a serial profile's console login automation. Username, the
+// expect/reply rules, and the attempt limit are not credentials and persist
+// with the profile. Only the password is kept in the field-secret store, and
+// PasswordSet records whether that entry exists so a restored profile knows to
+// look for it.
+type AutoLogin struct {
+	// Enabled turns the automation on for this profile.
+	Enabled bool `json:"enabled,omitempty"`
+	// Username answers the console's username/login prompt.
+	Username string `json:"username,omitempty"`
+	// PasswordSet reports that a password is stored in the field-secret store.
+	// It is metadata, never the password itself.
+	PasswordSet bool `json:"passwordSet,omitempty"`
+	// Replies are custom expect/reply rules answered before the built-in
+	// login prompts.
+	Replies []AutoLoginReply `json:"replies,omitempty"`
+	// MaxAttempts bounds how many times the saved credentials are sent. Zero
+	// uses the engine's default.
+	MaxAttempts int `json:"maxAttempts,omitempty"`
+}
+
+// AutoLoginReply is one user-configured expect/reply pair.
+type AutoLoginReply struct {
+	// Expect is matched case-insensitively as a substring of the console's
+	// last output line, before the built-in login prompts. It is not a
+	// credential and persists with the profile.
+	Expect string `json:"expect"`
+	// Respond is written to the console when Expect matches. It may be a
+	// command or a one-shot token, so it is treated as a secret by the engine:
+	// it never enters a Session log.
+	Respond string `json:"respond"`
+}
+
+// Normalized trims the user-entered text and drops empty expect rules, which
+// can never match. A negative attempt limit becomes the zero default.
+func (a AutoLogin) Normalized() AutoLogin {
+	a.Username = strings.TrimSpace(a.Username)
+	if a.MaxAttempts < 0 {
+		a.MaxAttempts = 0
+	}
+	if len(a.Replies) > 0 {
+		replies := make([]AutoLoginReply, 0, len(a.Replies))
+		for _, reply := range a.Replies {
+			reply.Expect = strings.TrimSpace(reply.Expect)
+			reply.Respond = strings.TrimSpace(reply.Respond)
+			if reply.Expect == "" {
+				continue
+			}
+			replies = append(replies, reply)
+		}
+		a.Replies = replies
+	}
+	return a
+}
+
+// SecretProfileID names the field-secret entry that holds this profile's
+// auto-login password. The key is canonical, so the same device is found
+// however the user spelled it: Windows COM names are upper-cased with a \\.\
+// prefix removed, and named-pipe names are case-folded under one \\.\pipe\
+// prefix. POSIX device paths stay case-sensitive. A credential saved by a
+// build that keyed on the raw spelling would not be found; serial auto-login
+// is introduced by this port, so no released store predates the canonical key.
+func (c Config) SecretProfileID() string {
+	return NormalizePortPath(c.Path)
+}
+
+// NormalizePortPath returns the canonical key for a serial profile's stored
+// credential. It never changes the path used to open the device; only the
+// secret's identity is folded. Windows device names are case-insensitive, so
+// COM3, com3, and \\.\COM3 name one profile. Named pipes are case-insensitive
+// too and their two local prefixes are equivalent, so \\.\pipe\Console and
+// \\?\pipe\console also name one profile. A POSIX path is case-sensitive and
+// is returned trimmed but otherwise unchanged.
+func NormalizePortPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+	upper := strings.ToUpper(trimmed)
+	if windowsDevicePattern.MatchString(upper) {
+		return upper[len(`\\.\`):]
+	}
+	if comPortPattern.MatchString(upper) {
+		return upper
+	}
+	if IsNamedPipePath(trimmed) {
+		return `\\.\pipe\` + strings.ToLower(namedPipeName(trimmed))
+	}
+	return trimmed
+}
+
+// namedPipeName returns the device part of a local named-pipe path.
+func namedPipeName(path string) string {
+	const marker = `\pipe\`
+	index := strings.Index(strings.ToLower(path), marker)
+	if index < 0 {
+		return path
+	}
+	return path[index+len(marker):]
 }
 
 // Normalized returns cfg with the original defaults filled in and the path's
@@ -184,6 +299,10 @@ func (c Config) Normalized() Config {
 	}
 	if c.FlowControl == "" {
 		c.FlowControl = FlowNone
+	}
+	if c.AutoLogin != nil {
+		autoLogin := c.AutoLogin.Normalized()
+		c.AutoLogin = &autoLogin
 	}
 	return c
 }
@@ -214,7 +333,7 @@ func (c Config) Validate() error {
 	}
 	if !ValidPortPath(c.Path) {
 		return &ValidationError{Field: "port", Value: c.Path,
-			Reason: "must be a /dev/ path or a COM port"}
+			Reason: "must be a /dev/ path, a COM port, or a Windows named pipe"}
 	}
 	if c.BaudRate < MinBaudRate || c.BaudRate > MaxBaudRate {
 		return &ValidationError{Field: "baudRate", Value: strconv.Itoa(c.BaudRate),
@@ -242,17 +361,28 @@ func (c Config) Validate() error {
 var (
 	comPortPattern       = regexp.MustCompile(`^COM[0-9]+$`)
 	windowsDevicePattern = regexp.MustCompile(`^\\\\\.\\COM[0-9]+$`)
+	// A local Windows named pipe: \\.\pipe\name or \\?\pipe\name. Remote UNC
+	// paths are not serial consoles and stay invalid.
+	namedPipePattern = regexp.MustCompile(`(?i)^\\\\[.?]\\pipe\\[^\r\n\x00]+$`)
 )
 
+// IsNamedPipePath reports whether path names a local Windows named pipe. The
+// original used a VM's pipe as a console, so the name may contain spaces.
+func IsNamedPipePath(path string) bool {
+	return namedPipePattern.MatchString(strings.TrimSpace(path))
+}
+
 // ValidPortPath reports whether path is a form the original accepted: a Unix
-// device below /dev/, a COM port, or a Windows raw-device path. Validation is
-// deliberately platform-independent; whether the device exists is decided by
-// the open call, and a pseudo-terminal path is a valid /dev/ path.
+// device below /dev/, a COM port, a Windows raw-device path, or a Windows
+// named pipe. Validation is deliberately platform-independent; whether the
+// device exists is decided by the open call, and whether the platform can open
+// a pipe is decided by CheckSupport.
 func ValidPortPath(path string) bool {
 	path = strings.TrimSpace(path)
 	return strings.HasPrefix(path, "/dev/") ||
 		comPortPattern.MatchString(strings.ToUpper(path)) ||
-		windowsDevicePattern.MatchString(strings.ToUpper(path))
+		windowsDevicePattern.MatchString(strings.ToUpper(path)) ||
+		IsNamedPipePath(path)
 }
 
 // PortName returns the short display name of a port, as the original derived
@@ -280,6 +410,28 @@ type PortInfo struct {
 	PNPID        string `json:"pnpId,omitempty"`
 	Type         string `json:"type,omitempty"`
 }
+
+// ErrOpen reports a well-formed port the platform could not open. It is
+// distinct from a configuration mistake and from an unsupported setting: the
+// input is valid, but the device or its server could not be reached.
+var ErrOpen = errors.New("serial: cannot open port")
+
+// OpenError carries the path and the operating-system failure. The original
+// surfaced the driver message while keeping the failure class separate.
+type OpenError struct {
+	Path string
+	Err  error
+}
+
+func (e *OpenError) Error() string {
+	return fmt.Sprintf("serial: open %q: %v", e.Path, e.Err)
+}
+
+// Unwrap exposes the platform error for errors.Is and errors.As.
+func (e *OpenError) Unwrap() error { return e.Err }
+
+// Is makes errors.Is(err, ErrOpen) true for every open failure.
+func (e *OpenError) Is(target error) bool { return target == ErrOpen }
 
 // ErrUnsupported reports a setting or platform the serial transport cannot
 // serve. It is distinct from ErrInvalidConfig: the input is well formed, but

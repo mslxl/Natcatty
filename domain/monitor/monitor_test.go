@@ -25,6 +25,19 @@ func TestPercentThresholdsMirrorResourceBar(t *testing.T) {
 	}
 }
 
+func TestDiskAlertsListsOnlyPartitionsAboveTheThreshold(t *testing.T) {
+	disks := []Disk{
+		{MountPoint: "/", Percent: 80},
+		{MountPoint: "/var", Percent: 81},
+		{MountPoint: "/boot", Percent: 12},
+		{MountPoint: "/srv", Percent: math.NaN()},
+	}
+	alerts := DiskAlerts(disks)
+	if len(alerts) != 1 || alerts[0].MountPoint != "/var" {
+		t.Fatalf("DiskAlerts = %+v, want only /var", alerts)
+	}
+}
+
 func TestLatencyThresholdsMirrorSignalBars(t *testing.T) {
 	tests := []struct {
 		value float64
@@ -83,7 +96,7 @@ func TestAppendPointKeepsTheRetentionWindowAndCap(t *testing.T) {
 	}
 	points = AppendPoint(points, Sample{At: now.Add(time.Second),
 		CPU: math.NaN(), Memory: math.NaN(), Disk: math.NaN(),
-		Rx: math.NaN(), Tx: math.NaN(), GPU: math.NaN()})
+		Rx: math.NaN(), Tx: math.NaN()})
 	if len(points) != 1 {
 		t.Fatalf("an all-unknown sample was appended: %+v", points)
 	}

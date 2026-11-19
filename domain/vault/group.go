@@ -44,6 +44,10 @@ type Group struct {
 	SkipEcdsaHostKey bool                `json:"skipEcdsaHostKey,omitempty"`
 	Algorithms       *AlgorithmOverrides `json:"algorithms,omitempty"`
 	ProxyProfileID   string              `json:"proxyProfileId,omitempty"`
+	// DirectProxy is the group's explicit direct connection. It wins over an
+	// inherited group profile and the app-wide default, but a Host's own proxy
+	// selection still wins.
+	DirectProxy bool `json:"directProxy,omitempty"`
 	// NetworkProfileID is the group's default Network Profile. A member Host's
 	// own reference wins; with neither, the Host has no Network Route.
 	NetworkProfileID string `json:"networkProfileId,omitempty"`
@@ -76,6 +80,7 @@ type GroupDraft struct {
 	SkipEcdsaHostKey bool
 	Algorithms       *AlgorithmOverrides
 	ProxyProfileID   string
+	DirectProxy      bool
 	NetworkProfileID string
 	HostChain        *HostChain
 	// X11Forwarding and X11WarningAcknowledged are the group's X11 default.
@@ -96,6 +101,10 @@ func NormalizeGroupDraft(draft GroupDraft) (GroupDraft, error) {
 	draft.IdentityID = model.IdentityID(strings.TrimSpace(string(draft.IdentityID)))
 	draft.KeyID = model.KeyID(strings.TrimSpace(string(draft.KeyID)))
 	draft.ProxyProfileID = strings.TrimSpace(draft.ProxyProfileID)
+	if draft.DirectProxy {
+		// Direct and a profile are exclusive; the editor never offers both.
+		draft.ProxyProfileID = ""
+	}
 	draft.NetworkProfileID = strings.TrimSpace(draft.NetworkProfileID)
 	draft.HostChain = normalizeHostChain(draft.HostChain)
 	draft.Algorithms = normalizeAlgorithms(draft.Algorithms)
@@ -179,6 +188,7 @@ func (g Group) Defaults() GroupDefaults {
 		SkipEcdsaHostKey: g.SkipEcdsaHostKey,
 		Algorithms:       CloneAlgorithms(g.Algorithms),
 		ProxyProfileID:   g.ProxyProfileID,
+		DirectProxy:      g.DirectProxy,
 		NetworkProfileID: g.NetworkProfileID,
 		HostChain:        CloneHostChain(g.HostChain),
 		X11Forwarding:    g.X11Forwarding,
@@ -204,6 +214,7 @@ type GroupDefaults struct {
 	SkipEcdsaHostKey bool
 	Algorithms       *AlgorithmOverrides
 	ProxyProfileID   string
+	DirectProxy      bool
 	NetworkProfileID string
 	HostChain        *HostChain
 	// X11Forwarding and X11WarningAcknowledged are effective only when both
@@ -296,7 +307,13 @@ func mergeGroupDefaults(merged *GroupDefaults, defaults GroupDefaults) {
 	if defaults.Algorithms != nil {
 		merged.Algorithms = CloneAlgorithms(defaults.Algorithms)
 	}
-	if defaults.ProxyProfileID != "" {
+	if defaults.DirectProxy {
+		// A nearer group that chooses direct replaces an inherited profile.
+		// A nearer group that names a profile replaces inherited direct.
+		merged.DirectProxy = true
+		merged.ProxyProfileID = ""
+	} else if defaults.ProxyProfileID != "" {
+		merged.DirectProxy = false
 		merged.ProxyProfileID = defaults.ProxyProfileID
 	}
 	if defaults.NetworkProfileID != "" {
@@ -513,7 +530,20 @@ func ApplyGroupDefaults(host Host, defaults GroupDefaults) Host {
 	if effective.Algorithms == nil {
 		effective.Algorithms = CloneAlgorithms(defaults.Algorithms)
 	}
-	if effective.ProxyProfileID == "" {
+	switch {
+	case effective.DirectProxy:
+		// An explicit Host direct choice beats its own proxy settings and
+		// every inherited one.
+		effective.Proxy = nil
+		effective.ProxyProfileID = ""
+	case effective.Proxy != nil || effective.ProxyProfileID != "":
+		// The Host owns a proxy; a Group default must not replace it.
+	case defaults.DirectProxy:
+		// The Group connects directly and stops the app-wide default too.
+		effective.DirectProxy = true
+		effective.Proxy = nil
+		effective.ProxyProfileID = ""
+	case defaults.ProxyProfileID != "":
 		effective.ProxyProfileID = defaults.ProxyProfileID
 	}
 	if effective.NetworkProfileID == "" {

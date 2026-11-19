@@ -284,16 +284,20 @@ func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.
 		Hostname:          spec.Hostname,
 		Port:              spec.Port,
 		Username:          spec.Username,
+		Password:          spec.Password,
 		Jumps:             route.Jumps,
 		Proxy:             route.Proxy,
 		Network:           route.Network,
 		Algorithms:        route.Algorithms,
 		ConfigFingerprint: route.ConfigFingerprint,
 		LeaseKind:         appconnection.LeaseShell,
-		Keepalive:         &appconnection.DefaultKeepalive,
-		X11Forwarding:     spec.X11Forwarding,
-		X11Display:        spec.X11Display,
-		OnX11Notice:       onX11Notice,
+		// A target with no saved Host (Quick Connect) must not share or park a
+		// transport: another unsaved target could carry different credentials.
+		Dedicated:     spec.HostID == "",
+		Keepalive:     &appconnection.DefaultKeepalive,
+		X11Forwarding: spec.X11Forwarding,
+		X11Display:    spec.X11Display,
+		OnX11Notice:   onX11Notice,
 	}
 	for attempt := 0; ; attempt++ {
 		lease, err := f.manager.Acquire(ctx, request)
@@ -833,6 +837,13 @@ type routeVault interface {
 	NetworkProfile(ctx context.Context, id string) (domainvault.NetworkProfile, error)
 }
 
+// proxyProfileReader is the optional Vault surface the app-wide default proxy
+// needs. Route fakes that do not resolve profiles keep working without it.
+type proxyProfileReader interface {
+	ProxyProfile(ctx context.Context, id string) (domainvault.ProxyProfile, error)
+	ProxyProfileSecret(ctx context.Context, id string) (string, error)
+}
+
 // authMaterialResolver is implemented by the Vault service. Route fakes need
 // not implement it; when present, its digest scopes pool reuse to the resolved
 // credentials so rotating a password or Key never reuses a parked transport.
@@ -849,9 +860,17 @@ type authMaterialResolver interface {
 // chain.
 type vaultRoutes struct {
 	vault routeVault
+	// preferences supplies the app-wide default proxy. It is optional so a
+	// test or MCP caller without global preferences keeps the Host's route.
+	preferences preferenceSource
 }
 
 func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.Route, error) {
+	// An unsaved target (Quick Connect) has no Host record to read a chain or
+	// Network Profile from. The app-wide default proxy still applies.
+	if id == "" {
+		return r.routeWithoutHost(ctx)
+	}
 	if r.vault == nil {
 		return appconnection.Route{}, routeError(errors.New("app: no Vault for route resolution"))
 	}
@@ -887,10 +906,10 @@ func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.
 	}
 
 	proxyOwner := target
-	if first != nil && first.Proxy != nil {
+	if first != nil && firstSelectsProxy(*first) {
 		proxyOwner = *first
 	}
-	proxy, err := r.proxy(ctx, proxyOwner)
+	proxy, err := r.resolveProxy(ctx, proxyOwner)
 	if err != nil {
 		return appconnection.Route{}, err
 	}
@@ -902,6 +921,20 @@ func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.
 	}
 	route.Network = network
 	return route, nil
+}
+
+// routeWithoutHost resolves the route of a target that has no saved Host. Only
+// the app-wide default proxy applies: there is no chain, Host proxy, or
+// Network Profile to read, and a default profile deleted since the preference
+// was written restores a direct connection.
+func (r vaultRoutes) routeWithoutHost(ctx context.Context) (appconnection.Route, error) {
+	// An empty Host selects no Host or Group proxy, so resolveProxy falls
+	// through to the app-wide default.
+	proxy, err := r.resolveProxy(ctx, domainvault.Host{})
+	if err != nil {
+		return appconnection.Route{}, err
+	}
+	return appconnection.Route{Proxy: proxy}, nil
 }
 
 // NetworkRouteForHost resolves only the target Host's effective Network
@@ -977,6 +1010,96 @@ func (r vaultRoutes) networkRoute(ctx context.Context, host domainvault.Host) (*
 			"Network Profile %s: %w", host.NetworkProfileID, err))
 	}
 	return network, nil
+}
+
+// firstSelectsProxy reports whether the first jump makes any proxy choice of
+// its own. A jump that explicitly chooses direct still owns the decision,
+// because it must stop the target Host's and app-wide inheritance.
+func firstSelectsProxy(host domainvault.Host) bool {
+	return host.Proxy != nil || host.ProxyProfileID != "" || host.DirectProxy
+}
+
+// proxySource maps an effective Host onto the resolver's Host level. The Vault
+// has already applied Host Group defaults, so the Group level is empty here.
+func proxySource(host domainvault.Host) appconnection.ProxySource {
+	switch {
+	case host.DirectProxy:
+		return appconnection.ProxySource{Direct: true}
+	case host.Proxy != nil && host.Proxy.ProfileID != "":
+		return appconnection.ProxySource{ProfileID: host.Proxy.ProfileID}
+	case host.Proxy != nil:
+		return appconnection.ProxySource{Manual: proxyTransport(host.Proxy)}
+	default:
+		return appconnection.ProxySource{ProfileID: host.ProxyProfileID}
+	}
+}
+
+func proxyTransport(config *domainvault.ProxyConfig) *appconnection.Proxy {
+	if config == nil {
+		return nil
+	}
+	return &appconnection.Proxy{
+		Type:     appconnection.ProxyType(config.Type),
+		Host:     config.Host,
+		Port:     config.Port,
+		Command:  config.Command,
+		Username: config.Username,
+		Password: config.Password,
+	}
+}
+
+// resolveProxy applies the Host, Host Group, app-wide default, direct
+// precedence. The Host and Group values are already merged by the Vault, so
+// the Group level stays empty; the app-wide default is read here instead of in
+// the UI so every connection path agrees.
+func (r vaultRoutes) resolveProxy(ctx context.Context, host domainvault.Host) (*appconnection.Proxy, error) {
+	global := ""
+	if r.preferences != nil {
+		global = r.preferences.Settings().DefaultProxyProfileID()
+	}
+	choice := appconnection.ResolveProxy(proxySource(host), appconnection.ProxySource{}, global)
+	switch {
+	case choice.Direct:
+		return nil, nil
+	case choice.Manual != nil:
+		return r.proxy(ctx, host)
+	case choice.ProfileID != "":
+		if host.Proxy != nil && host.Proxy.ProfileID == choice.ProfileID {
+			// The Vault already materialized this profile and loaded its
+			// credential; re-reading the Host's field secret would look in the
+			// wrong place.
+			return proxyTransport(host.Proxy), nil
+		}
+		return r.profileProxy(ctx, choice.ProfileID)
+	}
+	return nil, nil
+}
+
+// profileProxy materializes an app-wide default profile. A profile deleted
+// since the preference was written restores a direct connection, matching the
+// Vault's non-cascading delete behavior.
+func (r vaultRoutes) profileProxy(ctx context.Context, id string) (*appconnection.Proxy, error) {
+	reader, ok := r.vault.(proxyProfileReader)
+	if !ok {
+		return nil, nil
+	}
+	profile, err := reader.ProxyProfile(ctx, id)
+	switch {
+	case errors.Is(err, appvault.ErrNotFound):
+		return nil, nil
+	case err != nil:
+		return nil, routeError(fmt.Errorf("Proxy Profile %s: %w", id, err))
+	}
+	config := domainvault.CloneProxy(&profile.Config)
+	config.ProfileID = profile.ID
+	if profile.Config.HasPassword {
+		password, err := reader.ProxyProfileSecret(ctx, id)
+		if err != nil {
+			return nil, routeError(fmt.Errorf("proxy password for Profile %s: %w", id, err))
+		}
+		config.Password = password
+	}
+	return proxyTransport(config), nil
 }
 
 func (r vaultRoutes) proxy(ctx context.Context, host domainvault.Host) (*appconnection.Proxy, error) {
