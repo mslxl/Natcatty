@@ -8,15 +8,34 @@ import (
 	"path/filepath"
 )
 
-// cmdFetch downloads the pinned release artifacts into a directory, verifying
-// each one's sha256 and size against ui/terminal/artifacts.json. CI starts
-// from a clean checkout, where build/ghostty-vt is empty; this is how a phone
-// job gets the native library without rebuilding Ghostty.
+// buildPinnedArtifacts builds the artifacts for platform from the pinned,
+// sha256-verified Ghostty source. It is a variable so a test can prove the
+// download fallback without compiling Ghostty.
+var buildPinnedArtifacts = func(outDir, manifestPath, platform string) error {
+	return cmdBuild([]string{
+		"--out", outDir,
+		"--manifest", manifestPath,
+		"--platforms", platform,
+		"--no-manifest",
+	})
+}
+
+// cmdFetch puts the pinned native artifacts in a directory, verifying each
+// one's sha256 and size against ui/terminal/artifacts.json. A matching file is
+// left alone, so a warm cache costs no network.
+//
+// If the published release cannot be downloaded, it falls back to building the
+// same pinned commit from source, whose tarball is itself sha256-verified. CI
+// starts from a clean checkout, so this keeps every phone job runnable even
+// when the release assets have not been published (or have gone away); the
+// release stays the fast path when it exists. Pass --build-if-missing=false to
+// require the release and fail instead.
 func cmdFetch(args []string) error {
 	fs := flag.NewFlagSet("fetch", flag.ContinueOnError)
 	outDir := fs.String("out", "build/ghostty-vt", "directory to put the .a artifacts in")
 	manifestPath := fs.String("manifest", "ui/terminal/artifacts.json", "manifest naming each artifact")
 	platform := fs.String("platform", "all", "all, ios or android")
+	buildIfMissing := fs.Bool("build-if-missing", true, "build from the pinned source when the release artifact cannot be downloaded")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -27,7 +46,18 @@ func cmdFetch(args []string) error {
 	if err := m.validate(); err != nil {
 		return fmt.Errorf("%s: %w", *manifestPath, err)
 	}
-	return fetchManifest(m, *outDir, *platform)
+	if err := fetchManifest(m, *outDir, *platform); err != nil {
+		if !*buildIfMissing {
+			return err
+		}
+		log.Printf("fetch: %v", err)
+		log.Printf("fetch: the pinned release is unavailable; building the same pinned commit from source")
+		if buildErr := buildPinnedArtifacts(*outDir, *manifestPath, *platform); buildErr != nil {
+			return fmt.Errorf("fetch the pinned artifacts: %w; build from the pinned source: %v", err, buildErr)
+		}
+		log.Printf("fetch: built %s artifacts from the pinned source", *platform)
+	}
+	return nil
 }
 
 // fetchManifest downloads every target of platform (all, ios or android)

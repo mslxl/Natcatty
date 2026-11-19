@@ -27,11 +27,13 @@ The iOS slices come from `scripts/mobile/build-ghostty-vt.sh build
 Both staged objects are far under the 4 MiB cap. Android ABIs are recorded
 when ticket 08 builds them against the 15 MiB-per-ABI cap.
 
-The sizes above are a local rebuild. `ui/terminal/artifacts.json` still carries
-the sizes and sha256 sums recorded when the release assets were produced
-(10,913,432 and 10,818,088 bytes); a rebuild differs by under 0.5%, so the
-manifest remains the pinned record and the staged object's size is recorded
-here.
+The sizes above are the local rebuild that `ui/terminal/artifacts.json`
+records (10,918,320 and 10,822,984 bytes): the manifest is written by
+`scripts/mobile/build-ghostty-vt.sh build --platforms all` from the pinned
+source, so it matches the artifact the gate stages. A rebuild on another host
+is not byte-reproducible, so CI builds from that same sha256-pinned source
+when the release asset is unavailable instead of requiring a foreign copy to
+hash identically.
 
 ### Gate results
 
@@ -76,10 +78,12 @@ page-aligned probe link.
 | `armeabi-v7a` | `lib/android/armeabi-v7a/libghostty-vt.a` | 11,377,320 | 10.85 |
 | `x86_64` | `lib/android/x86_64/libghostty-vt.a` | 18,355,614 | 17.51 |
 
-These are the locally rebuilt archives, a few KiB larger than the sizes in
-`ui/terminal/artifacts.json` because the rebuild is not byte-reproducible
-across hosts; the manifest stays the pinned record. The archives are static
-inputs to the final link, not the bytes shipped in the APK.
+These are the locally rebuilt archives and the sizes and sums
+`ui/terminal/artifacts.json` records. The build is not byte-reproducible
+across hosts, so a rebuild elsewhere can differ by a few KiB; CI therefore
+builds from the same sha256-pinned source when the release asset is
+unavailable rather than requiring byte-identical copies. The archives are
+static inputs to the final link, not the bytes shipped in the APK.
 
 ### Gate results
 

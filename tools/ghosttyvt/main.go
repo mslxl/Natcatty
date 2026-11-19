@@ -71,6 +71,11 @@ fetch flags:
   --out DIR         artifact directory (default build/ghostty-vt)
   --manifest PATH   manifest naming each artifact (default ui/terminal/artifacts.json)
   --platform P      all (default), ios or android
+  --build-if-missing
+                    build the pinned commit from source when the release
+                    artifact cannot be downloaded (default true)
+  --build-if-missing=false
+                    require the release; fail instead of building
 
 verify flags:
   --out DIR         artifact directory (default build/ghostty-vt)

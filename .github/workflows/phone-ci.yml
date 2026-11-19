@@ -7,9 +7,10 @@ name: phone-ci
 # phone-code changes, run nightly, and run before a release tag (release.yml
 # calls this workflow and its build job waits for it).
 #
-# Native inputs are the pinned release assets named by
-# ui/terminal/artifacts.json; scripts/mobile/fetch-artifacts.sh downloads and
-# verifies them, so a fresh runner never needs to rebuild Ghostty.
+# Native inputs are the pinned artifacts named by ui/terminal/artifacts.json;
+# scripts/mobile/fetch-artifacts.sh downloads and verifies the release when it
+# is available, and otherwise builds the same sha256-pinned source commit, so
+# a fresh runner always gets verified native inputs.
 #
 # The Android emulator job uses an arm64 system image on an arm64 runner.
 # Testing one ARM ABI there is deliberate: the linker gate covers every ABI
@@ -250,7 +251,7 @@ jobs:
     name: link smoke (android/${{ matrix.abi }})
     needs: android-matrix
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

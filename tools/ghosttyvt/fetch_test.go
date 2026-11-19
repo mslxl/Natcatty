@@ -182,3 +182,82 @@ func TestFetchRejectsUnknownPlatform(t *testing.T) {
 		t.Fatalf("unknown platform error = %v", err)
 	}
 }
+
+// unreachableRelease serves 404 for every artifact, the way the pinned release
+// actually behaves when its assets have not been published.
+func unreachableRelease(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// manifestAt writes a manifest whose URLs point at srv and returns its path.
+func manifestAt(t *testing.T, srv *httptest.Server) string {
+	t.Helper()
+	m, _ := testFetchManifest(t, srv.URL)
+	path := filepath.Join(t.TempDir(), "artifacts.json")
+	if err := writeManifest(path, m); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestFetchFallsBackToThePinnedSource proves a fresh checkout still gets the
+// native artifacts when the release is gone: the download failure must hand
+// the same platform to the source build instead of failing the job.
+func TestFetchFallsBackToThePinnedSource(t *testing.T) {
+	srv := unreachableRelease(t)
+	manifestPath := manifestAt(t, srv)
+
+	orig := buildPinnedArtifacts
+	t.Cleanup(func() { buildPinnedArtifacts = orig })
+	var calls [][3]string
+	buildPinnedArtifacts = func(outDir, manifest, platform string) error {
+		calls = append(calls, [3]string{outDir, manifest, platform})
+		return nil
+	}
+
+	out := t.TempDir()
+	if err := cmdFetch([]string{
+		"--manifest", manifestPath, "--out", out, "--platform", "ios",
+	}); err != nil {
+		t.Fatalf("fetch with source fallback: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("source build called %d times, want 1", len(calls))
+	}
+	if got := calls[0]; got != [3]string{out, manifestPath, "ios"} {
+		t.Errorf("source build args = %v, want out=%s manifest=%s platform=ios", got, out, manifestPath)
+	}
+}
+
+// TestFetchReportsTheReleaseFailureWhenBuildIsDisabled proves the fallback is
+// not a silent success path: with it disabled the artifact is named and the
+// command fails.
+func TestFetchReportsTheReleaseFailureWhenBuildIsDisabled(t *testing.T) {
+	srv := unreachableRelease(t)
+	manifestPath := manifestAt(t, srv)
+
+	orig := buildPinnedArtifacts
+	t.Cleanup(func() { buildPinnedArtifacts = orig })
+	buildPinnedArtifacts = func(outDir, manifest, platform string) error {
+		t.Fatal("source build ran although --build-if-missing=false")
+		return nil
+	}
+
+	err := cmdFetch([]string{
+		"--manifest", manifestPath, "--out", t.TempDir(), "--platform", "ios",
+		"--build-if-missing=false",
+	})
+	if err == nil {
+		t.Fatal("a missing release was accepted with the fallback disabled")
+	}
+	for _, want := range []string{"ios-arm64", "404"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+}
