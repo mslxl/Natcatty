@@ -3864,5 +3864,13 @@
   "connectionErrorUnsupportedHost": "Este Host usa un protocolo o transporte que esta versión no admite. Edita el Host antes de conectar.",
   "connectionErrorVNCUnsupported": "Este servidor VNC no ofrece ningún tipo de seguridad compatible con Natcatty. Usa una ruta SSH para cifrar y acceder a él.",
   "connectionErrorVNCCertificate": "El certificado del servidor VNC no se pudo verificar con el almacén de confianza del sistema y el nombre del host. Comprueba el nombre del host y el certificado del servidor.",
-  "connectionErrorVNCCancelled": "Conexión cancelada antes de enviar las credenciales."
+  "connectionErrorVNCCancelled": "Conexión cancelada antes de enviar las credenciales.",
+  "terminalClearTerminal": "Limpiar",
+  "terminalClipboardRead": "Un programa quiere leer el portapapeles.",
+  "terminalClipboardReadAllow": "Permitir",
+  "terminalClipboardReadDeny": "Denegar",
+  "terminalClipboardReadEmpty": "El portapapeles está vacío.",
+  "terminalCopy": "Copiar",
+  "terminalPaste": "Pegar",
+  "terminalSelectAll": "Seleccionar todo"
 }

@@ -5896,5 +5896,13 @@
   "connectionErrorUnsupportedHost": "This Host uses a protocol or transport this version does not support. Edit the Host before connecting.",
   "connectionErrorVNCUnsupported": "This VNC server offers no security type Natcatty supports. Use an SSH route to encrypt and reach it.",
   "connectionErrorVNCCertificate": "The VNC server's certificate did not verify against the system trust store and the Host name. Check the Host name and the server certificate.",
-  "connectionErrorVNCCancelled": "Connection cancelled before sending credentials."
+  "connectionErrorVNCCancelled": "Connection cancelled before sending credentials.",
+  "terminalClearTerminal": "Clear",
+  "terminalClipboardRead": "A program wants to read the clipboard.",
+  "terminalClipboardReadAllow": "Allow",
+  "terminalClipboardReadDeny": "Deny",
+  "terminalClipboardReadEmpty": "The clipboard is empty.",
+  "terminalCopy": "Copy",
+  "terminalPaste": "Paste",
+  "terminalSelectAll": "Select All"
 }

@@ -20,8 +20,8 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/i18n"
-	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
+	"github.com/mslxl/natcatty/ui/terminal"
 
 	fileapplock "github.com/mslxl/natcatty/adapters/applock"
 	atuinremote "github.com/mslxl/natcatty/adapters/atuin/remote"

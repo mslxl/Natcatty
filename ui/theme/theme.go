@@ -6,8 +6,8 @@ package theme
 import (
 	"math"
 
-	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
+	"github.com/mslxl/natcatty/ui/terminal"
 
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 )

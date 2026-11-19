@@ -3864,5 +3864,13 @@
   "connectionErrorUnsupportedHost": "此 Host 使用了当前版本不支持的协议或传输方式。请先编辑该 Host 再连接。",
   "connectionErrorVNCUnsupported": "此 VNC 服务器未提供 Natcatty 支持的任何安全类型。请使用 SSH 路由来加密并访问它。",
   "connectionErrorVNCCertificate": "VNC 服务器的证书未能通过系统信任库和主机名验证。请检查主机名和服务器证书。",
-  "connectionErrorVNCCancelled": "在发送凭据之前已取消连接。"
+  "connectionErrorVNCCancelled": "在发送凭据之前已取消连接。",
+  "terminalClearTerminal": "清除",
+  "terminalClipboardRead": "某个程序想要读取剪贴板。",
+  "terminalClipboardReadAllow": "允许",
+  "terminalClipboardReadDeny": "拒绝",
+  "terminalClipboardReadEmpty": "剪贴板为空。",
+  "terminalCopy": "复制",
+  "terminalPaste": "粘贴",
+  "terminalSelectAll": "全选"
 }

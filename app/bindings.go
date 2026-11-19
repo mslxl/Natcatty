@@ -4,8 +4,8 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
+	"github.com/mslxl/natcatty/ui/terminal"
 
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
 	domain "github.com/mslxl/natcatty/domain/keybindings"
