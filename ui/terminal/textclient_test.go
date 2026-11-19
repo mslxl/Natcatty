@@ -6,6 +6,7 @@ package terminal
 // a platform's input method is what would call it.
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -554,5 +555,71 @@ func TestTerminalTapKeepsKeyboardTarget(t *testing.T) {
 	tt.Compose("ni", 2)
 	if _, ok := term.v.MarkedRange(); !ok {
 		t.Fatal("the click released the text client")
+	}
+}
+
+// keyboardShows returns how many times the tester's host has been asked to
+// show the on-screen keyboard, which MyGo counts for a finger pressed on a
+// focused element that owns a text client and passes to the host as
+// TextInputState.ShowKeyboard. The Tester exposes whether text input is
+// active but not that count, so the test reads the state the tester's
+// headless host recorded; a count that grew is the keyboard-show
+// notification a phone host acts on.
+func keyboardShows(t *testing.T, tt *ui.Tester) uint32 {
+	t.Helper()
+	value := func(v reflect.Value, field string) reflect.Value {
+		t.Helper()
+		f := v.FieldByName(field)
+		if !f.IsValid() {
+			t.Fatalf("the tester's text-input state has no %s", field)
+		}
+		return f
+	}
+	h := value(reflect.ValueOf(tt).Elem(), "h")
+	if h.Kind() != reflect.Pointer || h.IsNil() {
+		t.Fatal("the tester has no host")
+	}
+	ime := value(h.Elem(), "ime")
+	show := value(ime, "ShowKeyboard")
+	if show.Kind() != reflect.Uint32 {
+		t.Fatalf("the tester's keyboard-show count is a %s, want a uint32", show.Kind())
+	}
+	return uint32(show.Uint())
+}
+
+func TestKeyboardReshownOnTap(t *testing.T) {
+	term, _, tt := newClientTerm(t)
+	term.Feed([]byte("abc"))
+	tt.Frame()
+	// Focus alone does not ask for the keyboard: a phone shows it as the
+	// terminal is focused, and asks again only for a finger tapped on the
+	// focused element. A mouse click is not such a tap.
+	x, y := cellCenter(term, 1, 0)
+	before := keyboardShows(t, tt)
+	tt.ClickAt(x, y)
+	if got := keyboardShows(t, tt); got != before {
+		t.Fatalf("a mouse click asked to show the keyboard: %d, want %d", got, before)
+	}
+	if !tt.Focused("Terminal") {
+		t.Fatal("the click took the terminal's focus")
+	}
+	// A finger on the focused terminal: the tap goes through the tester's
+	// touch hook, as a phone's tap does, and the host is told to show the
+	// keyboard again even though the focus never moved.
+	tt.FingerDown(x, y)
+	tt.FingerUp(x, y)
+	if got := keyboardShows(t, tt); got != before+1 {
+		t.Fatalf("a tap asked to show the keyboard %d times, want %d", got, before+1)
+	}
+	if !tt.Focused("Terminal") {
+		t.Fatal("the tap took the terminal's focus")
+	}
+	if active, _ := tt.TextInputActive(); !active {
+		t.Fatal("the tapped terminal is no longer a text target")
+	}
+	// The same client still composes after the tap.
+	tt.Compose("ni", 2)
+	if _, ok := term.v.MarkedRange(); !ok {
+		t.Fatal("the tap released the text client")
 	}
 }

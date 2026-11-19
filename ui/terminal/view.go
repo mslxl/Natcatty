@@ -43,6 +43,14 @@ func View(c *ui.Context, t *Terminal) ui.Element {
 	// 22). It is the view pointer, not one per frame: a new client each
 	// frame would release and unmark the composition every frame.
 	e.HandleTextInput(v)
+	// The on-screen keyboard phones show for a terminal: the full layout,
+	// no capitalization and no corrections, and Return as the default key
+	// (the key itself still arrives through input, as Enter and Tab do).
+	// Desktop hosts ignore these traits; a hardware keyboard types as ever.
+	e.Keyboard(ui.KeyboardDefault)
+	e.Capitalize(ui.CapitalizeNone)
+	e.Autocorrect(false)
+	e.ReturnKey(ui.ReturnDefault)
 	cursor := v.pointerAt
 	if v.hover.on() {
 		cursor = ui.CursorPointer

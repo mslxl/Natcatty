@@ -9,9 +9,11 @@ package terminal
 // TextCaret can never bring back a keyboard the user dismissed. The same
 // client serves desktop and phones; desktop key events still arrive as keys,
 // and only text and composition are diverted here, so typing, the Edit menu,
-// pointer selection and accessibility keep their paths. The keyboard traits
-// (Keyboard, Capitalize, Autocorrect, ReturnKey) wait for the MyGo version
-// that has them; the client alone is what the keyboard gate counts.
+// pointer selection and accessibility keep their paths. The phone traits are
+// set on the element beside the client (Keyboard, Capitalize, Autocorrect,
+// ReturnKey, in View): the keyboard request is counted for a focused element
+// that owns a client, and a tap on one asks again for the keyboard the user
+// dismissed.
 //
 // The document is a read-only snapshot of the visible grid, not an editable
 // buffer: a terminal has no text model to edit, and no API exposes the
