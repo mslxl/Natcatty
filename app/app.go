@@ -354,7 +354,23 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	preferencesState = settings.NewPreferencesState(preferenceService,
 		settings.WithPreferencesRedrawRequest(invalidate),
 		settings.WithLocaleRequest(func(tag string) { mygo.App.SetLocale(tag) }),
-		settings.WithIconArtwork(appIconPNG))
+		settings.WithIconArtwork(appIconPNG),
+		// The Vault state is built later; resolve it when the row renders so
+		// Profiles saved or deleted afterwards appear without a restart.
+		settings.WithProxyProfiles(func() []settings.ProxyProfileChoice {
+			if vaultState == nil {
+				return nil
+			}
+			profiles := vaultState.ProxyProfiles()
+			choices := make([]settings.ProxyProfileChoice, 0, len(profiles))
+			for _, profile := range profiles {
+				choices = append(choices, settings.ProxyProfileChoice{
+					ID:    profile.ID,
+					Label: profile.Label,
+				})
+			}
+			return choices
+		}))
 
 	// File associations and the default opener live in the same preferences
 	// document. The launch adapter is the only platform-aware piece. The

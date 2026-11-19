@@ -6,13 +6,16 @@ import (
 	"io"
 	"net"
 	"os"
+
 	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/mslxl/natcatty/adapters/store"
 	appconnection "github.com/mslxl/natcatty/application/connection"
+	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
@@ -20,6 +23,7 @@ import (
 	telnetmodel "github.com/mslxl/natcatty/domain/model/telnet"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
+
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -979,6 +983,181 @@ func (r *routeNetworkRepo) SaveNetworkProfile(_ context.Context, profile domainv
 func (r *routeNetworkRepo) DeleteNetworkProfile(_ context.Context, id string) error {
 	delete(r.items, id)
 	return nil
+}
+
+type routeProxyRepo struct {
+	items map[string]domainvault.ProxyProfile
+}
+
+func (r *routeProxyRepo) ListProxyProfiles(context.Context) ([]domainvault.ProxyProfile, error) {
+	items := make([]domainvault.ProxyProfile, 0, len(r.items))
+	for _, profile := range r.items {
+		items = append(items, profile)
+	}
+	return items, nil
+}
+
+func (r *routeProxyRepo) GetProxyProfile(_ context.Context, id string) (domainvault.ProxyProfile, error) {
+	profile, ok := r.items[id]
+	if !ok {
+		return domainvault.ProxyProfile{}, appvault.ErrNotFound
+	}
+	return profile, nil
+}
+
+func (r *routeProxyRepo) SaveProxyProfile(_ context.Context, profile domainvault.ProxyProfile) error {
+	r.items[profile.ID] = profile
+	return nil
+}
+
+func (r *routeProxyRepo) DeleteProxyProfile(_ context.Context, id string) error {
+	delete(r.items, id)
+	return nil
+}
+
+// TestVaultRoutesResolveTheProxyPrecedenceThroughTheRealVault exercises the
+// full route source, not just the pure resolver: the app-wide default comes
+// from preferences, Group defaults are merged by the Vault, and the Host's
+// own choice wins over both.
+func TestVaultRoutesResolveTheProxyPrecedenceThroughTheRealVault(t *testing.T) {
+	proxies := func() *routeProxyRepo {
+		return &routeProxyRepo{items: map[string]domainvault.ProxyProfile{
+			"host":   {ID: "host", Config: domainvault.ProxyConfig{Type: domainvault.ProxyHTTP, Host: "host.proxy", Port: 1111}},
+			"group":  {ID: "group", Config: domainvault.ProxyConfig{Type: domainvault.ProxySOCKS5, Host: "group.proxy", Port: 2222}},
+			"global": {ID: "global", Config: domainvault.ProxyConfig{Type: domainvault.ProxyHTTP, Host: "global.proxy", Port: 3333}},
+		}}
+	}
+	route := func(t *testing.T, host domainvault.Host, groups []domainvault.Group, global string) appconnection.Route {
+		t.Helper()
+		service := appvault.NewService(&routeHostRepo{hosts: map[model.HostID]domainvault.Host{"target": host}},
+			appvault.WithGroups(&routeGroupRepo{items: groups}),
+			appvault.WithProxyProfiles(proxies()))
+		resolved, err := (vaultRoutes{
+			vault:       service,
+			preferences: fakePreferenceSource{settings: domainpreferences.Settings{Proxy: domainpreferences.Proxy{DefaultProfileID: global}}},
+		}).Route(context.Background(), "target")
+		if err != nil {
+			t.Fatalf("Route: %v", err)
+		}
+		return resolved
+	}
+	base := domainvault.Host{ID: "target", Label: "target", Hostname: "target.internal", Port: 22, Protocol: domainvault.ProtocolSSH}
+
+	t.Run("the app-wide default applies when the host and group do not choose", func(t *testing.T) {
+		got := route(t, base, nil, "global")
+		if got.Proxy == nil || got.Proxy.Type != appconnection.ProxyHTTP ||
+			got.Proxy.Host != "global.proxy" || got.Proxy.Port != 3333 {
+			t.Fatalf("proxy = %+v, want the app-wide default", got.Proxy)
+		}
+	})
+
+	t.Run("the host profile beats the group and the app-wide default", func(t *testing.T) {
+		host := base
+		host.ProxyProfileID = "host"
+		host.GroupID = "prod"
+		got := route(t, host, []domainvault.Group{{ID: "prod", Path: "prod", ProxyProfileID: "group"}}, "global")
+		if got.Proxy == nil || got.Proxy.Host != "host.proxy" {
+			t.Fatalf("proxy = %+v, want the host profile", got.Proxy)
+		}
+	})
+
+	t.Run("the group profile applies when the host does not choose", func(t *testing.T) {
+		host := base
+		host.GroupID = "prod"
+		got := route(t, host, []domainvault.Group{{ID: "prod", Path: "prod", ProxyProfileID: "group"}}, "global")
+		if got.Proxy == nil || got.Proxy.Type != appconnection.ProxySOCKS5 || got.Proxy.Host != "group.proxy" {
+			t.Fatalf("proxy = %+v, want the group profile", got.Proxy)
+		}
+	})
+
+	t.Run("host direct stops the group and app-wide default", func(t *testing.T) {
+		host := base
+		host.DirectProxy = true
+		host.GroupID = "prod"
+		got := route(t, host, []domainvault.Group{{ID: "prod", Path: "prod", ProxyProfileID: "group"}}, "global")
+		if got.Proxy != nil {
+			t.Fatalf("proxy = %+v, want direct", got.Proxy)
+		}
+	})
+
+	t.Run("group direct stops the app-wide default", func(t *testing.T) {
+		host := base
+		host.GroupID = "prod"
+		got := route(t, host, []domainvault.Group{{ID: "prod", Path: "prod", DirectProxy: true}}, "global")
+		if got.Proxy != nil {
+			t.Fatalf("proxy = %+v, want direct", got.Proxy)
+		}
+	})
+
+	t.Run("a deleted host profile falls through to the app-wide default", func(t *testing.T) {
+		host := base
+		host.ProxyProfileID = "deleted"
+		got := route(t, host, nil, "global")
+		if got.Proxy == nil || got.Proxy.Host != "global.proxy" {
+			t.Fatalf("proxy = %+v, want the app-wide default after the dangling Host profile", got.Proxy)
+		}
+	})
+
+	t.Run("a deleted group profile falls through to the app-wide default", func(t *testing.T) {
+		host := base
+		host.GroupID = "prod"
+		got := route(t, host, []domainvault.Group{{ID: "prod", Path: "prod", ProxyProfileID: "deleted"}}, "global")
+		if got.Proxy == nil || got.Proxy.Host != "global.proxy" {
+			t.Fatalf("proxy = %+v, want the app-wide default after the dangling Group profile", got.Proxy)
+		}
+	})
+
+	t.Run("a deleted app-wide default restores a direct connection", func(t *testing.T) {
+		got := route(t, base, nil, "deleted")
+		if got.Proxy != nil {
+			t.Fatalf("proxy = %+v, want direct", got.Proxy)
+		}
+	})
+}
+
+// TestVaultRoutesReadTheLiveDefaultProxyPreference wires the same preference
+// service the Settings window writes through. Changing the document applies to
+// the next resolution without rebuilding the route source.
+func TestVaultRoutesReadTheLiveDefaultProxyPreference(t *testing.T) {
+	preferences := apppreferences.NewService(store.OpenPreferences(filepath.Join(t.TempDir(), "preferences.json")))
+	if err := preferences.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	vault := appvault.NewService(&routeHostRepo{hosts: map[model.HostID]domainvault.Host{
+		"target": {ID: "target", Label: "target", Hostname: "target.internal", Port: 22, Protocol: domainvault.ProtocolSSH},
+	}}, appvault.WithProxyProfiles(&routeProxyRepo{items: map[string]domainvault.ProxyProfile{
+		"global": {ID: "global", Config: domainvault.ProxyConfig{Type: domainvault.ProxyHTTP, Host: "global.proxy", Port: 3333}},
+	}}))
+	routes := vaultRoutes{vault: vault, preferences: preferences}
+
+	resolve := func(t *testing.T) *appconnection.Proxy {
+		t.Helper()
+		route, err := routes.Route(context.Background(), "target")
+		if err != nil {
+			t.Fatalf("Route: %v", err)
+		}
+		return route.Proxy
+	}
+
+	if got := resolve(t); got != nil {
+		t.Fatalf("proxy before the preference = %+v, want direct", got)
+	}
+	if err := preferences.Update(func(settings *domainpreferences.Settings) {
+		settings.Proxy.DefaultProfileID = "global"
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got := resolve(t); got == nil || got.Host != "global.proxy" || got.Port != 3333 {
+		t.Fatalf("proxy after enabling the default = %+v, want global.proxy", got)
+	}
+	if err := preferences.Update(func(settings *domainpreferences.Settings) {
+		settings.Proxy.DefaultProfileID = ""
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got := resolve(t); got != nil {
+		t.Fatalf("proxy after clearing the default = %+v, want direct", got)
+	}
 }
 
 func TestVaultRoutesUseTheFirstHopsGroupInheritedNetworkProfile(t *testing.T) {

@@ -577,6 +577,18 @@ func groupDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t
 	}
 }
 
+// directProxyChoice is the radio sentinel for an explicit direct connection.
+// It never reaches the Vault: rendering translates it into the form's
+// DirectProxy flag and an empty ProxyProfileID.
+const directProxyChoice = "\x00direct"
+
+func proxyChoiceValue(direct bool, profileID string) string {
+	if direct {
+		return directProxyChoice
+	}
+	return profileID
+}
+
 func keySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
 	kit.SectionBar(c, m.VaultKeyListTitle(s.KeyCount()), func() {
 		if kit.PrimaryButton(c, icons.Plus, m.VaultKeyNew()).Clicked() {
@@ -1474,7 +1486,10 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				ui.TextArea(c, &form.Notes).Height(80)
 			})
 			kit.FormRow(c, m.VaultHostStartupCommand(), func() {
-				ui.TextInput(c, &form.StartupCommand)
+				// Multi-line: the domain accepts up to 16 KiB and scripts
+				// routinely contain newlines, which a single-line input cannot
+				// hold.
+				ui.TextArea(c, &form.StartupCommand).Height(120)
 			}).Description(m.VaultHostStartupCommandHint())
 			passwordHint := m.VaultHostPasswordHint()
 			if form.HasPassword {
@@ -1546,13 +1561,20 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
 			}
 			kit.FormRow(c, m.VaultHostProxyProfile(), func() {
+				proxyChoice := proxyChoiceValue(form.DirectProxy, form.ProxyProfileID)
 				ui.RadioGroup(c, func() {
-					ui.Radio(c, &form.ProxyProfileID, "", m.VaultNone())
+					ui.Radio(c, &proxyChoice, "", m.VaultNone())
+					ui.Radio(c, &proxyChoice, directProxyChoice, m.VaultProxyDirect())
 					for _, profile := range s.ProxyProfiles() {
-						ui.Radio(c, &form.ProxyProfileID, profile.ID, profile.Label)
+						ui.Radio(c, &proxyChoice, profile.ID, profile.Label)
 					}
 				})
-			}).Description(m.VaultHostProxyProfileHint())
+				form.DirectProxy = proxyChoice == directProxyChoice
+				form.ProxyProfileID = ""
+				if !form.DirectProxy {
+					form.ProxyProfileID = proxyChoice
+				}
+			}).Description(m.VaultHostProxyProfileHint() + " " + m.VaultProxyDirectHint())
 			hostProxyProfileSourceLine(c, s, m, t)
 			hostJumpHostsField(c, s, m, t, form.Protocol)
 			hostNetworkProfileField(c, s, m, t)
@@ -1834,13 +1856,20 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 				})
 			}
 			kit.FormRow(c, m.VaultHostProxyProfile(), func() {
+				proxyChoice := proxyChoiceValue(form.DirectProxy, form.ProxyProfileID)
 				ui.RadioGroup(c, func() {
-					ui.Radio(c, &form.ProxyProfileID, "", m.VaultNone())
+					ui.Radio(c, &proxyChoice, "", m.VaultNone())
+					ui.Radio(c, &proxyChoice, directProxyChoice, m.VaultProxyDirect())
 					for _, profile := range s.ProxyProfiles() {
-						ui.Radio(c, &form.ProxyProfileID, profile.ID, profile.Label)
+						ui.Radio(c, &proxyChoice, profile.ID, profile.Label)
 					}
 				})
-			})
+				form.DirectProxy = proxyChoice == directProxyChoice
+				form.ProxyProfileID = ""
+				if !form.DirectProxy {
+					form.ProxyProfileID = proxyChoice
+				}
+			}).Description(m.VaultProxyDirectHint())
 			groupProxyProfileSourceLine(c, s, m, t)
 			groupNetworkProfileField(c, s, m, t)
 			if domainvault.Protocol(form.Protocol).UsesSSHAuth() {

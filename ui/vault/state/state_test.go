@@ -59,6 +59,9 @@ func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainva
 		X11WarningAcknowledged: normalized.X11WarningAcknowledged,
 		HostChain:              domainvault.CloneHostChain(normalized.HostChain),
 		Proxy:                  domainvault.CloneProxy(normalized.Proxy),
+		ProxyProfileID:         normalized.ProxyProfileID,
+		DirectProxy:            normalized.DirectProxy,
+		NetworkProfileID:       normalized.NetworkProfileID,
 		LegacyAlgorithms:       normalized.LegacyAlgorithms,
 		SkipEcdsaHostKey:       normalized.SkipEcdsaHostKey,
 		Algorithms:             domainvault.CloneAlgorithms(normalized.Algorithms),
@@ -108,6 +111,9 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.X11ForwardingSet = normalized.X11ForwardingSet
 		host.HostChain = domainvault.CloneHostChain(normalized.HostChain)
 		host.Proxy = domainvault.CloneProxy(normalized.Proxy)
+		host.ProxyProfileID = normalized.ProxyProfileID
+		host.DirectProxy = normalized.DirectProxy
+		host.NetworkProfileID = normalized.NetworkProfileID
 		host.LegacyAlgorithms = normalized.LegacyAlgorithms
 		host.SkipEcdsaHostKey = normalized.SkipEcdsaHostKey
 		host.Algorithms = domainvault.CloneAlgorithms(normalized.Algorithms)

@@ -134,6 +134,7 @@ type GroupForm struct {
 	UseSSHAgent      bool
 	RequiresMFA      bool
 	ProxyProfileID   string
+	DirectProxy      bool
 	NetworkProfileID string
 	// HostChain is the group's default jump chain. Its hops are edited as
 	// checkboxes; ToggleGroupJumpHost keeps their order.
@@ -229,6 +230,7 @@ func (s *State) BeginEditGroup(path string) bool {
 		UseSSHAgent:            group.UseSSHAgent,
 		RequiresMFA:            group.RequiresMFA,
 		ProxyProfileID:         group.ProxyProfileID,
+		DirectProxy:            group.DirectProxy,
 		NetworkProfileID:       group.NetworkProfileID,
 		HostChain:              domainvault.CloneHostChain(group.HostChain),
 		LegacyAlgorithms:       group.LegacyAlgorithms,
@@ -811,6 +813,7 @@ func (s *State) groupDraft() (domainvault.GroupDraft, Problem) {
 		UseSSHAgent:            s.groupForm.UseSSHAgent,
 		RequiresMFA:            s.groupForm.RequiresMFA,
 		ProxyProfileID:         s.groupForm.ProxyProfileID,
+		DirectProxy:            s.groupForm.DirectProxy,
 		NetworkProfileID:       s.groupForm.NetworkProfileID,
 		HostChain:              domainvault.CloneHostChain(s.groupForm.HostChain),
 		LegacyAlgorithms:       s.groupForm.LegacyAlgorithms,

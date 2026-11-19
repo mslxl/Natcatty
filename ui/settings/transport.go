@@ -47,6 +47,31 @@ func transportArea(c *ui.Context, state *PreferencesState, m locales.Messages, t
 			c.Invalidate()
 		}
 
+		// The app-wide default Proxy is the last level before a direct
+		// connection. A Host or Host Group that selects its own Profile, or an
+		// explicit Direct choice on either, still wins.
+		defaultProxy := state.Settings().DefaultProxyProfileID()
+		defaultProxyChanged := false
+		kit.FormRow(c, m.SettingsDefaultProxy(), func() {
+			ui.RadioGroup(c, func() {
+				if ui.Radio(c, &defaultProxy, "", m.SettingsDefaultProxyOff()).Changed() {
+					defaultProxyChanged = true
+				}
+				for _, profile := range state.ProxyProfiles() {
+					if ui.Radio(c, &defaultProxy, profile.ID, profile.Label).Changed() {
+						defaultProxyChanged = true
+					}
+				}
+			}).Label(m.SettingsDefaultProxy())
+		}).Description(m.SettingsDefaultProxyHint())
+
+		if defaultProxyChanged {
+			state.Update(func(settings *domain.Settings) {
+				settings.Proxy.DefaultProfileID = defaultProxy
+			})
+			c.Invalidate()
+		}
+
 		groupReset(c, m, t, m.SettingsAreaTransport(), func() bool {
 			return state.ResetGroup(domain.GroupTransport)
 		}, true)

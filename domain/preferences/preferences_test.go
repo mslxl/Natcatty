@@ -252,8 +252,8 @@ func TestEveryFieldBelongsToAGroup(t *testing.T) {
 			t.Errorf("field %q has unknown group %q", field, group)
 		}
 	}
-	if len(seen) != 52 {
-		t.Errorf("fields = %d, want 52", len(seen))
+	if len(seen) != 53 {
+		t.Errorf("fields = %d, want 53", len(seen))
 	}
 }
 
@@ -351,6 +351,37 @@ func TestLocalShellArgumentsParseAndFormat(t *testing.T) {
 	if got := ParseArgs(`--flag 'a b' "c \"d\""`); !reflect.DeepEqual(got,
 		[]string{"--flag", "a b", `c "d"`}) {
 		t.Fatalf("ParseArgs = %q", got)
+	}
+}
+
+func TestDefaultProxyPreferenceResetsWithTheTransportGroup(t *testing.T) {
+	settings := Defaults()
+	settings.Proxy.DefaultProfileID = "proxy-1"
+	settings.Appearance.AppIcon = "rainbow"
+
+	if group, ok := GroupOf(FieldDefaultProxy); !ok || group != GroupTransport {
+		t.Fatalf("FieldDefaultProxy group = %q, %v; want %q", group, ok, GroupTransport)
+	}
+	// The internal field id mirrors the persisted JSON path, so search and
+	// reset stay traceable to the document. The persisted key itself is
+	// unchanged.
+	if got := string(FieldDefaultProxy); got != "proxy.defaultProfileId" {
+		t.Fatalf("FieldDefaultProxy id = %q, want the JSON path proxy.defaultProfileId", got)
+	}
+	reset := ResetField(settings, FieldDefaultProxy)
+	if reset.Proxy.DefaultProfileID != "" {
+		t.Errorf("default proxy = %q after reset, want direct", reset.Proxy.DefaultProfileID)
+	}
+	if reset.Appearance.AppIcon != "rainbow" {
+		t.Errorf("resetting the default proxy touched Appearance: %+v", reset.Appearance)
+	}
+
+	reset = ResetGroup(settings, GroupTransport)
+	if reset.Proxy.DefaultProfileID != "" {
+		t.Errorf("transport-area reset kept the default proxy %q", reset.Proxy.DefaultProfileID)
+	}
+	if reset.Appearance.AppIcon != "rainbow" {
+		t.Errorf("resetting Transport touched Appearance: %+v", reset.Appearance)
 	}
 }
 

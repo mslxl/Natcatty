@@ -209,6 +209,9 @@ type Form struct {
 	// ProxyProfileID selects a saved Proxy Profile. A manually configured
 	// Proxy still wins; an empty reference means no profile is selected.
 	ProxyProfileID string
+	// DirectProxy is an explicit direct connection for this Host. It wins over
+	// the Host Group's proxy and the app-wide default.
+	DirectProxy bool
 	// NetworkProfileID selects a saved Network Profile for the route's first
 	// endpoint. An empty value inherits the Host Group's default; the source
 	// helpers tell the editor which of the two applies.
@@ -841,6 +844,7 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		UseSSHAgent:            host.UseSSHAgent,
 		RequiresMFA:            host.RequiresMFA,
 		ProxyProfileID:         host.ProxyProfileID,
+		DirectProxy:            host.DirectProxy,
 		NetworkProfileID:       host.NetworkProfileID,
 		X11Forwarding:          host.X11Forwarding,
 		X11WarningAcknowledged: host.X11WarningAcknowledged,
@@ -1311,6 +1315,7 @@ func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 		HostChain:              domainvault.CloneHostChain(host.HostChain),
 		Proxy:                  domainvault.CloneProxy(host.Proxy),
 		ProxyProfileID:         host.ProxyProfileID,
+		DirectProxy:            host.DirectProxy,
 		NetworkProfileID:       host.NetworkProfileID,
 		LegacyAlgorithms:       host.LegacyAlgorithms,
 		SkipEcdsaHostKey:       host.SkipEcdsaHostKey,
@@ -1388,6 +1393,7 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		HostChain:        domainvault.CloneHostChain(s.hostChain),
 		Proxy:            domainvault.CloneProxy(s.proxy),
 		ProxyProfileID:   s.form.ProxyProfileID,
+		DirectProxy:      s.form.DirectProxy,
 		NetworkProfileID: s.form.NetworkProfileID,
 		LegacyAlgorithms: s.legacyAlgorithms,
 		SkipEcdsaHostKey: s.skipEcdsaHostKey,

@@ -1057,7 +1057,33 @@ func (r vaultRoutes) resolveProxy(ctx context.Context, host domainvault.Host) (*
 	if r.preferences != nil {
 		global = r.preferences.Settings().DefaultProxyProfileID()
 	}
-	choice := appconnection.ResolveProxy(proxySource(host), appconnection.ProxySource{}, global)
+	// A Host or Group may still name a Profile that has since been deleted. The
+	// reference then must not dead-end the route: resolution continues to the
+	// next level, ending at the app-wide default and finally direct.
+	var lookupErr error
+	profileExists := func(id string) bool {
+		reader, ok := r.vault.(proxyProfileReader)
+		if !ok {
+			return false
+		}
+		_, err := reader.ProxyProfile(ctx, id)
+		switch {
+		case err == nil:
+			return true
+		case errors.Is(err, appvault.ErrNotFound):
+			return false
+		default:
+			// Report the real failure instead of silently rerouting it.
+			if lookupErr == nil {
+				lookupErr = err
+			}
+			return true
+		}
+	}
+	choice := appconnection.ResolveProxy(proxySource(host), appconnection.ProxySource{}, global, profileExists)
+	if lookupErr != nil {
+		return nil, routeError(fmt.Errorf("Proxy Profile %s: %w", choice.ProfileID, lookupErr))
+	}
 	switch {
 	case choice.Direct:
 		return nil, nil

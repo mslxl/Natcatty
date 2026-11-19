@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
@@ -1822,5 +1824,145 @@ func TestETDuplicateGetsItsOwnResumeKey(t *testing.T) {
 	}
 	if len(keys) != 2 {
 		t.Fatalf("workspace holds %d distinct ET resume keys, want 2: %+v", len(keys), panes)
+	}
+}
+
+func (f *workspaceFactory) transportAt(index int) *fakeTransport {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if index < 0 || index >= len(f.transports) {
+		return nil
+	}
+	return f.transports[index]
+}
+
+// sendTransportOutput delivers one chunk to a live Session without blocking
+// forever if the Session already closed the transport.
+func sendTransportOutput(t *testing.T, transport *fakeTransport, text string) {
+	t.Helper()
+	select {
+	case transport.output <- []byte(text):
+	case <-transport.closed:
+		t.Fatalf("the transport closed before %q could be delivered", text)
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out delivering %q", text)
+	}
+}
+
+// TestRestoreResolvesASavedLocalHostsStartupCommand is the workspace half of
+// the Local Host fix: the descriptor names a saved Host, so the restored
+// Session keeps that association, runs its startup command once after the
+// shell's prompt, and never repeats it on later output.
+func TestRestoreResolvesASavedLocalHostsStartupCommand(t *testing.T) {
+	payload := domainworkspace.Payload{
+		Version:   domainworkspace.PayloadVersion,
+		ActiveTab: 0,
+		Tabs: []domainworkspace.RestoredTab{{
+			ID: "tab-local", Number: 1, Root: domainworkspace.NewPaneNode("pane-local"),
+		}},
+		Panes: []domainworkspace.RestoredPane{{
+			ID: "pane-local",
+			Session: domainworkspace.SessionDescriptor{
+				Kind: domainworkspace.SessionLocal, Label: "local-host",
+				Number: 1, HostID: "host-local",
+			},
+		}},
+	}
+	graph := newWorkspaceGraph(t)
+	graph.hosts["host-local"] = domainvault.Host{
+		ID: "host-local", Label: "local-host", Protocol: domainvault.ProtocolLocal,
+		StartupCommand: "echo restored",
+	}
+	graph.repo.payload = payload
+	graph.state.Restore(context.Background())
+	graph.flushUntil(t, "the restored local Pane", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, "pane-local")
+		return ok && !info.Pending && info.Surface != nil
+	})
+
+	spec := graph.factory.lastSpec()
+	if spec.Kind != appsession.KindLocal || spec.HostID != "host-local" {
+		t.Fatalf("restored spec = %+v, want the saved Local Host association", spec)
+	}
+	if spec.StartupCommand != "echo restored" {
+		t.Fatalf("restored StartupCommand = %q, want the Host's command", spec.StartupCommand)
+	}
+
+	transport := graph.factory.transportAt(0)
+	sendTransportOutput(t, transport, "$ ")
+	waitTransportInput(t, transport, "echo restored\r")
+
+	before := graph.sessions[0].Snapshot().LastActivity
+	sendTransportOutput(t, transport, "later output")
+	waitFor(t, "the later output", func() bool {
+		return graph.sessions[0].Snapshot().LastActivity.After(before)
+	})
+	if got := strings.Count(transport.inputString(), "echo restored\r"); got != 1 {
+		t.Fatalf("the startup command ran %d times on the restored connection", got)
+	}
+}
+
+// TestRestoredSSHPaneReplaysItsStartupCommandOncePerReconnect proves the
+// restore path keeps the Host's startup command and that each reconnect
+// replays it once, not once per output burst.
+func TestRestoredSSHPaneReplaysItsStartupCommandOncePerReconnect(t *testing.T) {
+	payload := domainworkspace.Payload{
+		Version:   domainworkspace.PayloadVersion,
+		ActiveTab: 0,
+		Tabs: []domainworkspace.RestoredTab{{
+			ID: "tab-ssh", Number: 1, Root: domainworkspace.NewPaneNode("pane-ssh"),
+		}},
+		Panes: []domainworkspace.RestoredPane{{
+			ID: "pane-ssh",
+			Session: domainworkspace.SessionDescriptor{
+				Kind: domainworkspace.SessionSSH, Label: "prod",
+				HostID: "host-ssh", Hostname: "prod.example.com", Port: 22,
+				Username: "root",
+			},
+		}},
+	}
+	graph := newWorkspaceGraph(t)
+	graph.hosts["host-ssh"] = domainvault.Host{
+		ID: "host-ssh", Label: "prod", Hostname: "prod.example.com", Port: 22,
+		Username: "root", Protocol: domainvault.ProtocolSSH,
+		StartupCommand: "echo restored",
+	}
+	graph.repo.payload = payload
+	graph.state.Restore(context.Background())
+	graph.flushUntil(t, "the restored SSH Pane", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, "pane-ssh")
+		return ok && !info.Pending && info.Surface != nil
+	})
+
+	first := graph.factory.transportAt(0)
+	sendTransportOutput(t, first, "$ ")
+	waitTransportInput(t, first, "echo restored\r")
+
+	before := graph.sessions[0].Snapshot().LastActivity
+	sendTransportOutput(t, first, "more output\r\n")
+	waitFor(t, "the output after restore", func() bool {
+		return graph.sessions[0].Snapshot().LastActivity.After(before)
+	})
+	if got := strings.Count(first.inputString(), "echo restored\r"); got != 1 {
+		t.Fatalf("the startup command ran %d times on the restored connection", got)
+	}
+
+	if !graph.sessions[0].ReconnectNow() {
+		t.Fatal("ReconnectNow was refused")
+	}
+	waitFor(t, "the reconnected transport", func() bool { return graph.factory.specCount() == 2 })
+	second := graph.factory.transportAt(1)
+	if got := second.inputString(); got != "" {
+		t.Fatalf("the startup command ran before the reconnected shell spoke: %q", got)
+	}
+	sendTransportOutput(t, second, "$ ")
+	waitTransportInput(t, second, "echo restored\r")
+	before = graph.sessions[0].Snapshot().LastActivity
+	sendTransportOutput(t, second, "after reconnect\r\n")
+	waitFor(t, "the output after reconnect", func() bool {
+		return graph.sessions[0].Snapshot().LastActivity.After(before)
+	})
+	if got := strings.Count(second.inputString(), "echo restored\r"); got != 1 {
+		t.Fatalf("the startup command replayed %d times after reconnect", got)
 	}
 }

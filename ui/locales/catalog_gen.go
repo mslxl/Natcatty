@@ -1430,6 +1430,26 @@ func (msgs Messages) VaultHostProxyProfileHint() string {
 	return Catalog.Format(msgs.locale, "vaultHostProxyProfileHint", nil)
 }
 
+// VaultProxyDirect says "Direct (no proxy)"
+// in the language the app shows.
+func VaultProxyDirect() string { return In(i18n.Locale()).VaultProxyDirect() }
+
+// VaultProxyDirect says "Direct (no proxy)"
+// in the language of msgs.
+func (msgs Messages) VaultProxyDirect() string {
+	return Catalog.Format(msgs.locale, "vaultProxyDirect", nil)
+}
+
+// VaultProxyDirectHint says "Direct (no proxy) stops inheritance, including the Group and app-wide defaults."
+// in the language the app shows.
+func VaultProxyDirectHint() string { return In(i18n.Locale()).VaultProxyDirectHint() }
+
+// VaultProxyDirectHint says "Direct (no proxy) stops inheritance, including the Group and app-wide defaults."
+// in the language of msgs.
+func (msgs Messages) VaultProxyDirectHint() string {
+	return Catalog.Format(msgs.locale, "vaultProxyDirectHint", nil)
+}
+
 // VaultNetworkProfile says "Network Profile"
 // in the language the app shows.
 func VaultNetworkProfile() string { return In(i18n.Locale()).VaultNetworkProfile() }
@@ -13848,6 +13868,36 @@ func SettingsMoshPredictionHint() string { return In(i18n.Locale()).SettingsMosh
 // in the language of msgs.
 func (msgs Messages) SettingsMoshPredictionHint() string {
 	return Catalog.Format(msgs.locale, "settingsMoshPredictionHint", nil)
+}
+
+// SettingsDefaultProxy says "Default Proxy"
+// in the language the app shows.
+func SettingsDefaultProxy() string { return In(i18n.Locale()).SettingsDefaultProxy() }
+
+// SettingsDefaultProxy says "Default Proxy"
+// in the language of msgs.
+func (msgs Messages) SettingsDefaultProxy() string {
+	return Catalog.Format(msgs.locale, "settingsDefaultProxy", nil)
+}
+
+// SettingsDefaultProxyOff says "Off (direct)"
+// in the language the app shows.
+func SettingsDefaultProxyOff() string { return In(i18n.Locale()).SettingsDefaultProxyOff() }
+
+// SettingsDefaultProxyOff says "Off (direct)"
+// in the language of msgs.
+func (msgs Messages) SettingsDefaultProxyOff() string {
+	return Catalog.Format(msgs.locale, "settingsDefaultProxyOff", nil)
+}
+
+// SettingsDefaultProxyHint says "Used when the Host and its Host Group do not choose a proxy. An explicit Direct (no proxy) choice on either still wins."
+// in the language the app shows.
+func SettingsDefaultProxyHint() string { return In(i18n.Locale()).SettingsDefaultProxyHint() }
+
+// SettingsDefaultProxyHint says "Used when the Host and its Host Group do not choose a proxy. An explicit Direct (no proxy) choice on either still wins."
+// in the language of msgs.
+func (msgs Messages) SettingsDefaultProxyHint() string {
+	return Catalog.Format(msgs.locale, "settingsDefaultProxyHint", nil)
 }
 
 // SettingsAreaLayout says "Layout & Tabs"

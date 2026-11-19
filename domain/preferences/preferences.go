@@ -890,6 +890,9 @@ func ResetGroup(settings Settings, group Group) Settings {
 		settings.Security = defaults.Security
 	case GroupTransport:
 		settings.Transport = defaults.Transport
+		// The app-wide default Proxy lives in its own top-level field but is
+		// edited in this Settings area, so resetting the area must clear it.
+		settings.Proxy = defaults.Proxy
 	case GroupMonitor:
 		settings.Monitor = defaults.Monitor
 	case GroupSysManager:
@@ -952,6 +955,7 @@ const (
 	FieldConfirmCloseSessions         Field = "security.confirmCloseSessions"
 	FieldConfirmDestructive           Field = "security.confirmDestructive"
 	FieldMoshPredictionDisplay        Field = "transport.moshPredictionDisplay"
+	FieldDefaultProxy                 Field = "proxy.defaultProfileId"
 	FieldHistorySyncEnabled           Field = "history.syncEnabled"
 	FieldHistorySyncAddress           Field = "history.syncAddress"
 	FieldHistoryUsername              Field = "history.username"
@@ -983,6 +987,7 @@ func Fields() []Field {
 		FieldSyncProvider,
 		FieldConfirmCloseSessions, FieldConfirmDestructive,
 		FieldMoshPredictionDisplay,
+		FieldDefaultProxy,
 	}
 }
 
@@ -1014,7 +1019,7 @@ func GroupOf(field Field) (Group, bool) {
 		return GroupSync, true
 	case FieldConfirmCloseSessions, FieldConfirmDestructive:
 		return GroupSecurity, true
-	case FieldMoshPredictionDisplay:
+	case FieldMoshPredictionDisplay, FieldDefaultProxy:
 		return GroupTransport, true
 	default:
 		return "", false
@@ -1132,6 +1137,8 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.Security.ConfirmDestructive = defaults.Security.ConfirmDestructive
 	case FieldMoshPredictionDisplay:
 		settings.Transport.MoshPredictionDisplay = defaults.Transport.MoshPredictionDisplay
+	case FieldDefaultProxy:
+		settings.Proxy.DefaultProfileID = defaults.Proxy.DefaultProfileID
 	}
 	return settings
 }

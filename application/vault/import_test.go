@@ -526,6 +526,31 @@ func TestCommitImportKeepsTagsNotesAndProxy(t *testing.T) {
 	}
 }
 
+func TestCommitImportKeepsStartupCommandAndDirectProxy(t *testing.T) {
+	service, hosts, _, _, _ := newImportService(t)
+	document := `{"kind":"netcatty.vault","version":1,"hosts":[{` +
+		`"label":"edge","hostname":"edge.example.test","port":22,"protocol":"ssh",` +
+		`"startupCommand":"cd /srv\n./run --watch","directProxy":true}]}`
+	preview, err := service.PreviewImport(context.Background(), document,
+		PreviewImportOptions{Format: vaultimport.FormatNetcattyJSON})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CommitImport(context.Background(), preview, ImportCommitOptions{}); err != nil {
+		t.Fatalf("CommitImport: %v", err)
+	}
+	if len(hosts.hosts) != 1 {
+		t.Fatalf("hosts = %+v", hosts.hosts)
+	}
+	host := hosts.hosts[0]
+	if host.StartupCommand != "cd /srv\n./run --watch" {
+		t.Fatalf("StartupCommand = %q, want the exported script", host.StartupCommand)
+	}
+	if !host.DirectProxy || host.ProxyProfileID != "" {
+		t.Fatalf("Host = %+v, want the explicit direct choice", host)
+	}
+}
+
 func TestCommitImportResolvesForwardProxyJump(t *testing.T) {
 	service, hosts, _, _, _ := newImportService(t)
 	text := "Host a\n    HostName a.example.test\n    ProxyJump b\n\n" +

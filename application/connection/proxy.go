@@ -30,15 +30,32 @@ type ProxyChoice struct {
 // setting, the nearest Host Group's setting, the app-wide default, then a
 // direct connection. An explicit direct choice at the Host or Group level wins
 // over every lower level, including the app-wide default.
-func ResolveProxy(host, group ProxySource, globalProfileID string) ProxyChoice {
+//
+// profileExists reports whether a saved Proxy Profile still exists. A reference
+// to a Profile that was deleted (or that never existed) is treated exactly as
+// if the level had not selected a proxy, so resolution continues down the
+// precedence chain instead of dead-ending on an unusable Profile. A nil
+// profileExists treats every non-empty Profile ID as available; callers that
+// can look Profiles up should always supply one.
+func ResolveProxy(host, group ProxySource, globalProfileID string, profileExists func(id string) bool) ProxyChoice {
+	profile := func(id string) string {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return ""
+		}
+		if profileExists != nil && !profileExists(id) {
+			return ""
+		}
+		return id
+	}
 	if host.Direct {
 		return ProxyChoice{Direct: true}
 	}
 	if host.Manual != nil {
 		return ProxyChoice{Manual: host.Manual}
 	}
-	if profile := strings.TrimSpace(host.ProfileID); profile != "" {
-		return ProxyChoice{ProfileID: profile}
+	if id := profile(host.ProfileID); id != "" {
+		return ProxyChoice{ProfileID: id}
 	}
 	if group.Direct {
 		return ProxyChoice{Direct: true}
@@ -46,11 +63,11 @@ func ResolveProxy(host, group ProxySource, globalProfileID string) ProxyChoice {
 	if group.Manual != nil {
 		return ProxyChoice{Manual: group.Manual}
 	}
-	if profile := strings.TrimSpace(group.ProfileID); profile != "" {
-		return ProxyChoice{ProfileID: profile}
+	if id := profile(group.ProfileID); id != "" {
+		return ProxyChoice{ProfileID: id}
 	}
-	if profile := strings.TrimSpace(globalProfileID); profile != "" {
-		return ProxyChoice{ProfileID: profile}
+	if id := profile(globalProfileID); id != "" {
+		return ProxyChoice{ProfileID: id}
 	}
 	return ProxyChoice{Direct: true}
 }
