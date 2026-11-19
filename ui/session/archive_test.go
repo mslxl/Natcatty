@@ -309,3 +309,44 @@ func TestArchiveFillWaitsForThePromptAndIgnoresOtherLinks(t *testing.T) {
 		t.Fatalf("a non-archive changed the input: %q", got)
 	}
 }
+
+// A program that keeps 1002 set while resetting 1000 still takes the mouse:
+// the library's encoder follows the last sequence, so a reset of 1000 used to
+// leave it dead while the 1002 bit stayed set. The click then neither filled
+// the archive command nor reached the program. The fork restores 1002, so the
+// press is reported and the link stays suppressed.
+func TestArchiveClickIsForwardedAfterAProgramResetsAnotherMouseMode(t *testing.T) {
+	surface, transport := newArchiveSurface(t)
+	surface.terminal.Feed([]byte("release.tar.gz\r\n$ "))
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	x, y := archiveLinkPoint(t, tester, surface, "release.tar.gz")
+	command := "tar -xzf 'release.tar.gz'"
+	// The probe's click filled the command once; wait for it before the
+	// baseline below, as the other reporting tests do.
+	waitArchiveTransport(t, transport, command)
+
+	// 1002 is button-event tracking and 1006 makes the report SGR-encoded.
+	// The program then resets 1000, which is not the mode it is using.
+	surface.terminal.Feed([]byte("\x1b[?1002h\x1b[?1006h"))
+	surface.terminal.Feed([]byte("\x1b[?1000l"))
+	tester.Frame()
+	before := transport.input()
+	tester.ClickAtWith(ui.Cmd, x, y)
+
+	if link, path, at := surface.terminal.HoveredLink(); link != "" || path || at.W != 0 {
+		t.Fatalf("mouse tracking still offered link %q path %v rect %+v", link, path, at)
+	}
+	added := ""
+	if !waitFor(t, func() bool {
+		added = strings.TrimPrefix(transport.input(), before)
+		return strings.Contains(added, "\x1b[<")
+	}) {
+		t.Fatalf("a 1000 reset left the 1002 click dead: %q", added)
+	}
+	if strings.Count(transport.input(), command) != 1 {
+		t.Fatalf("a mouse-tracking program received the archive command: %q", transport.input())
+	}
+}
