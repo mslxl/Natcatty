@@ -85,15 +85,17 @@ func newPhonePrompts(vault *appvault.Service) *phoneshell.Prompts {
 // the desktop is trusted here after a sync and vice versa. prompts answers the
 // host-key and credential challenges the dial raises; without them the Manager
 // fails closed on an untrusted key, as before.
-func newPhoneSessionRuntime(vault *appvault.Service, known appconnection.KnownHostRepository, userData string, prompts *phoneshell.Prompts) *phoneSessionRuntime {
-	return newPhoneSessionRuntimeWithDialer(sshadapter.NewDialer(), vault, known, userData, prompts)
+func newPhoneSessionRuntime(vault *appvault.Service, known appconnection.KnownHostRepository,
+	userData string, prompts *phoneshell.Prompts, history *phoneHistory) *phoneSessionRuntime {
+	return newPhoneSessionRuntimeWithDialer(sshadapter.NewDialer(), vault, known, userData, prompts, history)
 }
 
 // newPhoneSessionRuntimeWithDialer is newPhoneSessionRuntime with the SSH
 // dialer replaced. Tests use it to point the whole phone stack at an
 // in-process SSH server while keeping the real Manager, Vault, and prompts.
 func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvault.Service,
-	known appconnection.KnownHostRepository, userData string, prompts *phoneshell.Prompts) *phoneSessionRuntime {
+	known appconnection.KnownHostRepository, userData string, prompts *phoneshell.Prompts,
+	history *phoneHistory) *phoneSessionRuntime {
 	providers := appconnection.NewNetworkProviderRegistry(&networkProviderFactory{
 		vault:     vault,
 		stateBase: networkProviderStateBase(userData),
@@ -117,6 +119,10 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 	routes := vaultRoutes{vault: vault}
 	service := appsession.NewService(
 		newPhoneTransportFactory(connections, routes, providers),
+		// Every completed remote command becomes exactly one journal row
+		// through the shared completion hook. The row is what the background
+		// Atuin engine uploads; capture itself never touches the network.
+		appsession.WithCommandCompletionHook(history.commandHook()),
 		// A successful open is the Vault's Recently Connected fact on the
 		// phone too; it is device-local telemetry, exactly as on the desktop.
 		appsession.WithConnectionHook(func(event appsession.ConnectionEvent) {

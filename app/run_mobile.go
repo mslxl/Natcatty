@@ -43,13 +43,14 @@ func Run() error {
 	log.Printf("natcatty: libghostty-vt %s", v)
 
 	ctx := context.Background()
-	shell, database, sessions, err := newPhoneShell(ctx)
+	shell, database, sessions, history, err := newPhoneShell(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		shell.Close()
 		sessions.Close()
+		history.Stop()
 		_ = database.Close()
 	}()
 	var showErr error
@@ -76,15 +77,15 @@ func Run() error {
 // newPhoneShell opens the device's Vault and settings stores and wires the
 // shell to them. The database and the Session runtime are returned so Run can
 // close them.
-func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phoneSessionRuntime, error) {
+func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phoneSessionRuntime, *phoneHistory, error) {
 	userData, err := mygo.App.Path(mygo.PathUserData)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	database, err := store.Open(ctx, filepath.Join(userData, "natcatty.db"))
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	// The field-secret store protects key material at rest on the desktop.
@@ -103,12 +104,12 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 	preferences := apppreferences.NewService(
 		store.OpenPreferences(filepath.Join(userData, "preferences.json")))
 	if err := preferences.Load(ctx); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	terminal := appterminalsettings.NewService(
 		store.OpenTerminalSettings(filepath.Join(userData, "terminal-settings.json")))
 	if err := terminal.Load(ctx); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	// Host-key and credential prompts are answered on the Sessions page. A
@@ -117,9 +118,16 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 	// written to the settings documents or the log.
 	prompts := newPhonePrompts(vault)
 
+	// Command History and Atuin sync use the same account configuration
+	// document, field-secret store, and sync services as the desktop. The
+	// engine runs on its own goroutine; a failed upload updates the status
+	// the Settings page shows and never reaches a Session.
+	history := newPhoneHistory(database, preferences, terminal, secrets)
+	history.Start(ctx)
+
 	// The phone registers only remote transports: SSH, Telnet, Mosh, and ET.
 	// Local and serial shells are not constructed here at all.
-	sessions := newPhoneSessionRuntime(vault, database, userData, prompts)
+	sessions := newPhoneSessionRuntime(vault, database, userData, prompts, history)
 
 	shell := phoneshell.New(
 		phoneshell.WithVault(vault),
@@ -127,6 +135,7 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 		phoneshell.WithSessionOpener(sessions),
 		phoneshell.WithPrompts(prompts),
 		phoneshell.WithSettings(phoneshell.NewSettingsService(preferences, terminal)),
+		phoneshell.WithHistorySync(history),
 	)
-	return shell, database, sessions, nil
+	return shell, database, sessions, history, nil
 }

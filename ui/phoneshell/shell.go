@@ -108,6 +108,13 @@ func WithSettings(service SettingsService) Option {
 	return func(s *Shell) { s.settings.service = service }
 }
 
+// WithHistorySync gives the Settings pages the phone's Command History sync
+// account and engine. Without it the History sync page says it is unavailable;
+// no other page is affected.
+func WithHistorySync(service HistorySyncService) Option {
+	return func(s *Shell) { s.settings.history = service }
+}
+
 // WithHosts gives the Hosts section the shared Vault's Host list. Only remote
 // Hosts are listed; Local and serial records stay on the desktop.
 func WithHosts(store HostStore) Option {
@@ -236,6 +243,7 @@ func (s *Shell) newSection(i Section) *section {
 			{path: "/terminal", title: "Terminal", summary: staticSummary("Clipboard and paste")},
 			{path: "/input", title: "Input", summary: staticSummary("Completion and suggestions")},
 			{path: "/security", title: "Security", summary: staticSummary("Confirmations")},
+			{path: "/history", title: "History sync", summary: staticSummary("Atuin account and sync")},
 		}
 		sec.draw = s.settings.draw
 	}

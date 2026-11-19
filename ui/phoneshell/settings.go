@@ -29,8 +29,10 @@ type SettingsService interface {
 // through the service on the click that changes it, so the value is persisted
 // and published before the next frame draws.
 type settingsPages struct {
-	service SettingsService
-	problem string
+	service     SettingsService
+	history     HistorySyncService
+	historyForm historyDraft
+	problem     string
 }
 
 func newSettingsPages() *settingsPages { return &settingsPages{} }
@@ -56,6 +58,8 @@ func (p *settingsPages) draw(c *ui.Context, page page) {
 				p.input(c)
 			case "/security":
 				p.security(c)
+			case "/history":
+				p.historySync(c)
 			}
 		})
 	})

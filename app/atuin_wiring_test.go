@@ -31,17 +31,26 @@ func TestCompositionWiresTheProductionAtuinFactory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse app.go: %v", err)
 	}
+	sharedFile, err := parser.ParseFile(token.NewFileSet(), "history_sync.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse history_sync.go: %v", err)
+	}
 
 	var helper *ast.FuncDecl
-	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if ok && function.Name.Name == "newHistorySyncServices" {
-			helper = function
+	for _, parsed := range []*ast.File{sharedFile, file} {
+		for _, declaration := range parsed.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if ok && function.Name.Name == "newHistorySyncServices" {
+				helper = function
+				break
+			}
+		}
+		if helper != nil {
 			break
 		}
 	}
 	if helper == nil {
-		t.Fatal("app.go has no newHistorySyncServices composition helper")
+		t.Fatal("the composition has no newHistorySyncServices helper")
 	}
 
 	factoryName := ""
@@ -73,7 +82,7 @@ func TestCompositionWiresTheProductionAtuinFactory(t *testing.T) {
 	}
 
 	constructors := map[string]int{}
-	ast.Inspect(file, func(node ast.Node) bool {
+	ast.Inspect(sharedFile, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
 		if !ok {
 			return true

@@ -225,7 +225,7 @@ func (r *promptTestRig) start(t *testing.T) {
 		sshadapter.WithDialFunc(r.dialer.dial),
 		sshadapter.WithTimeouts(2*time.Second, 2*time.Second),
 	)
-	r.runtime = newPhoneSessionRuntimeWithDialer(dialer, r.vault, r.db, r.userData, r.prompts)
+	r.runtime = newPhoneSessionRuntimeWithDialer(dialer, r.vault, r.db, r.userData, r.prompts, nil)
 	r.runtimes = append(r.runtimes, r.runtime)
 	r.shell = phoneshell.New(
 		phoneshell.WithVault(r.vault),
