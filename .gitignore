@@ -4,6 +4,9 @@
 # Build output
 build/
 
+# MyGo's generated phone host project (Gradle / Xcode)
+.mygo/
+
 # libghostty-vt phone artifacts are built, hashed and published, never committed.
 # The manifest is the committed record; see scripts/mobile/build-ghostty-vt.sh.
 build/ghostty-vt/

@@ -19,5 +19,8 @@
     "infoPlist": {
       "NSLocalNetworkUsageDescription": "Connect to SSH hosts on your local network."
     }
+  },
+  "android": {
+    "minSdk": 26
   }
 }

@@ -104,7 +104,10 @@
 
           androidPackages = androidPkgs.androidenv.composeAndroidPackages {
             platformVersions = [ "36" ];
-            buildToolsVersions = [ "37.0.0" ];
+            # AGP 8.12, which MyGo's Gradle host uses, asks for Build-Tools
+            # 35.0.0 by default; keeping 37.0.0 as well leaves the newer
+            # tools available without changing what Gradle resolves.
+            buildToolsVersions = [ "35.0.0" "37.0.0" ];
             # Emulator ABIs. `armeabi-v7a` is a Go/NDK target name, not an
             # emulator image ABI, so only the emulator ABI is listed here.
             abiVersions = [ "arm64-v8a" ];
@@ -161,7 +164,10 @@
             packages = [
               go
               pkgs.just
-              androidPkgs.jdk21
+              # MyGo's Gradle host asks for a Java 17 toolchain in every
+              # module (jvmToolchain(17)); Gradle matches that request by
+              # language version, so a newer JDK alone cannot satisfy it.
+              androidPkgs.jdk17
               androidSdk
             ];
             env = {
