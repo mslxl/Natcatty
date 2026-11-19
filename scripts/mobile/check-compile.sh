@@ -95,11 +95,9 @@ check_ios() {
 
 check_android() {
   local want=${1:-}
-  # The ABIs and compiler triples are the ones cmd/mygo/android.go ships:
-  # androidABIs. Keep them in step with it; armeabi-v7a needs GOARM=7.
-  local abis=("arm64-v8a arm64 aarch64-linux-android"
-              "armeabi-v7a arm armv7a-linux-androideabi"
-              "x86_64 amd64 x86_64-linux-android")
+  # The ABI list is scripts/mobile/android-abis.txt, shared with
+  # android-libs.sh and internal/archtest; it mirrors cmd/mygo/android.go's
+  # androidABIs. armeabi-v7a is kept and needs GOARM=7.
 
   local ndk=${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}
   if [ -z "$ndk" ]; then
@@ -142,13 +140,13 @@ check_android() {
   local api=$(( min > 21 ? min : 21 ))
 
   local selected=()
-  local entry abi goarch triple
-  for entry in "${abis[@]}"; do
-    read -r abi goarch triple <<<"$entry"
+  local abi goarch triple artifact class machine
+  while read -r abi goarch triple artifact class machine; do
+    case "$abi" in '' | '#'*) continue ;; esac
     if [ -z "$want" ] || [ "$want" = "$abi" ] || [ "$want" = "$goarch" ]; then
-      selected+=("$entry")
+      selected+=("$abi $goarch $triple $artifact $class $machine")
     fi
-  done
+  done <scripts/mobile/android-abis.txt
   if [ ${#selected[@]} -eq 0 ]; then
     echo "check-compile.sh: unknown Android ABI $want: arm64, arm or amd64" >&2
     exit 2
@@ -157,13 +155,58 @@ check_android() {
   work=$(mktemp -d)
   trap 'rm -rf "$work"' EXIT
 
+  # verify_shared_object checks what Gradle actually ships in
+  # jniLibs/<abi>: the c-shared library's ELF target, the linked terminal
+  # library, and the LOAD alignment. The page flag is an input; this is the
+  # output, so a flag that did not take effect still fails the gate.
+  verify_shared_object() {
+    local so=$1 abi=$2 class=$3 machine=$4 header aligns align
+    if ! header=$("$host/bin/llvm-readelf" -h "$so" 2>/dev/null); then
+      echo "check-compile: $abi: libmygoapp.so is not an ELF object" >&2
+      exit 1
+    fi
+    if ! grep -q "Class:[[:space:]]*$class\$" <<<"$header"; then
+      echo "check-compile: $abi: libmygoapp.so is not $class" >&2
+      exit 1
+    fi
+    if ! grep -Eq "Machine:.*${machine}\$" <<<"$header"; then
+      echo "check-compile: $abi: libmygoapp.so is not $machine" >&2
+      exit 1
+    fi
+    if ! "$host/bin/llvm-nm" "$so" 2>/dev/null |
+      awk '$NF == "ghostty_type_json" { n++ } END { exit !(n > 0) }'; then
+      echo "check-compile: $abi: libmygoapp.so does not carry libghostty-vt" >&2
+      exit 1
+    fi
+    aligns=$("$host/bin/llvm-readelf" -l -W "$so" | awk '$1 == "LOAD" { print $NF }')
+    if [ -z "$aligns" ]; then
+      echo "check-compile: $abi: libmygoapp.so has no LOAD segments" >&2
+      exit 1
+    fi
+    for align in $aligns; do
+      align=$((align))
+      if [ "$align" -lt 16384 ] || [ $((align & (align - 1))) -ne 0 ]; then
+        echo "check-compile: $abi: libmygoapp.so has a $((align))-byte LOAD alignment, want at least 16384 (0x4000)" >&2
+        exit 1
+      fi
+    done
+    echo "check-compile: $abi libmygoapp.so is $class $machine with 16 KB LOAD segments"
+  }
+
   for entry in "${selected[@]}"; do
-    read -r abi goarch triple <<<"$entry"
+    read -r abi goarch triple artifact class machine <<<"$entry"
     local cc="$host/bin/${triple}${api}-clang"
     if [ ! -x "$cc" ]; then
       echo "check-compile.sh: $cc does not exist (minSdk $min, clang API $api)" >&2
       exit 1
     fi
+
+    # The app links libghostty-vt through the staged archive cgo names.
+    # Verify every selected ABI before compiling: a missing, wrong-target or
+    # 4 KB-page archive fails here, not on a device at launch.
+    echo "check-compile: checking the staged $abi terminal archive"
+    scripts/mobile/android-libs.sh --check --abi "$abi"
+
     # 16 KB pages are what new devices have and Google Play asks for; MyGo
     # passes the same CGO_LDFLAGS (cmd/mygo/android.go, buildGo).
     local cgo_ldflags="-Wl,-z,max-page-size=16384"
@@ -183,6 +226,7 @@ check_android() {
     echo "check-compile: linking the app c-shared library"
     mkdir -p "$work/$abi"
     env "${build_env[@]}" go build -buildmode=c-shared -o "$work/$abi/libmygoapp.so" .
+    verify_shared_object "$work/$abi/libmygoapp.so" "$abi" "$class" "$machine"
   done
 
   echo "check-compile: ok — android phone build compiles and links"

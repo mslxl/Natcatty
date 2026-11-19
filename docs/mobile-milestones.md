@@ -57,3 +57,53 @@ here.
 - The VT corpus (`ui/terminal/corpus.go`) asserts text, style runs (palette,
   bold, 24-bit colour, inverse, background), cursor cell and a steady bar
   cursor over the echo transport.
+
+## M2 — the same terminal on Android
+
+Recorded 2026-11-19 while implementing ticket 08 (Android terminal rendering).
+The Android archives are the same pinned commit as M1
+(`befcdfd2c3a1cb24d9ec886e93c95b2b5daa7028`), built with Zig 0.16.0 against
+NDK 30.0.16248370. `scripts/mobile/android-libs.sh` stages each archive into
+the path `ui/terminal/mobile/mobile.go` names for that ABI, after checking the
+ELF target, all 93 binding symbols, the reported library version, and a 16 KB
+page-aligned probe link.
+
+### Sizes
+
+| ABI | Staged archive | Bytes | MiB |
+| --- | --- | ---: | ---: |
+| `arm64-v8a` | `lib/android/arm64-v8a/libghostty-vt.a` | 18,810,760 | 17.94 |
+| `armeabi-v7a` | `lib/android/armeabi-v7a/libghostty-vt.a` | 11,377,320 | 10.85 |
+| `x86_64` | `lib/android/x86_64/libghostty-vt.a` | 18,355,614 | 17.51 |
+
+These are the locally rebuilt archives, a few KiB larger than the sizes in
+`ui/terminal/artifacts.json` because the rebuild is not byte-reproducible
+across hosts; the manifest stays the pinned record. The archives are static
+inputs to the final link, not the bytes shipped in the APK.
+
+### Gate results
+
+- `scripts/mobile/android-libs.sh --check` accepts all three staged archives:
+  `ELF64 AArch64`, `ELF32 ARM` and `ELF64 X86-64` respectively, each with the
+  93 binding symbols defined once, `0.1.0-dev`, and every probe `LOAD`
+  segment aligned to `0x4000`.
+- `scripts/mobile/check-compile.sh android` compiles and links the app for all
+  three ABIs. The linked `jniLibs/<abi>/libmygoapp.so` — the object Gradle
+  ships — is checked after the link: correct ELF class and machine, carries
+  `ghostty_type_json`, and every `LOAD` segment is at least 16 KB and a power
+  of two.
+- The ABI list (`scripts/mobile/android-abis.txt`) includes `armeabi-v7a` and
+  is pinned by `internal/archtest`; the compile gate and the staging script
+  both read that one list.
+- On `emulator-5554` (arm64-v8a, Android 16, API 36),
+  `scripts/mobile/android-render.sh` ran the test binaries for the device's
+  own ABI: `TestVTCorpus` and `TestVTCorpusThroughEcho` passed (text, style
+  runs, cursor cell and steady bar cursor), and
+  `TestDiagnosticRunsEchoTransport` passed, logging
+  `natcatty_smoke: libghostty-vt 0.1.0-dev, echo text "hello\nred green true
+  inv\nblue-bg plain"`.
+- Not observed on this host: an x86_64 emulator run and a physical ARM device
+  run. The host is arm64 Darwin and the installed emulator has only the
+  `darwin-aarch64` QEMU backend and the arm64-v8a system image, so it cannot
+  boot an x86_64 AVD; no physical device was attached. The x86_64 library
+  still builds, links and passes the 16 KB gate.
