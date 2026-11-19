@@ -36,6 +36,10 @@ type lsState struct {
 	rows       []lsRow
 	maxSize    int64
 	names      []string
+	// unparsed is output the plain fallback does not understand (a program
+	// error, a recursive listing's heading). The block then stays raw instead
+	// of showing a list guessed from it.
+	unparsed bool
 
 	// PowerShell's `ls` is Get-ChildItem: a "Directory:" heading, then a
 	// Mode/LastWriteTime/Length/Name header over two rules, then the rows. It is a
@@ -128,15 +132,15 @@ func (st *lsState) observe(text string) {
 	}
 	// A plain ls prints names; keep them for the list fallback. A long
 	// listing's continuation lines (wrapped names) are not worth guessing.
-	// eza and lsd print a Nerd Font icon before each entry, and the glyph
-	// arrives as a field of its own: kept, every icon became a row above its
-	// name and the repeated glyphs collided as list keys.
+	// The plain fallback understands name listings only: a program error or a
+	// recursive listing's directory heading is not a name, and a widget guessed
+	// from it would be wrong, so leave the block raw.
 	if !st.expectLong {
-		for _, field := range fields {
-			if !isIconToken(field) {
-				st.names = append(st.names, field)
-			}
+		if listingError(trimmed) || strings.HasSuffix(trimmed, ":") {
+			st.unparsed = true
+			return
 		}
+		st.names = append(st.names, splitListingLine(trimmed)...)
 	}
 }
 
@@ -382,6 +386,68 @@ func privateUseRune(r rune) bool {
 		(r >= 0x100000 && r <= 0x10FFFD)
 }
 
+// splitListingLine splits one plain listing line into its entries. ls -C and
+// eza's grid separate columns with two or more spaces (or a tab), while a single
+// space belongs to the name, so "My Documents" stays one entry. Splitting on
+// every space cut such names in two.
+func splitListingLine(line string) []string {
+	var out []string
+	i := 0
+	for i < len(line) {
+		for i < len(line) && line[i] == ' ' {
+			i++
+		}
+		if i >= len(line) {
+			break
+		}
+		start := i
+		for i < len(line) {
+			if line[i] == '\t' {
+				break
+			}
+			if line[i] == ' ' {
+				j := i
+				for j < len(line) && line[j] == ' ' {
+					j++
+				}
+				if j-i >= 2 {
+					break
+				}
+				i = j
+				continue
+			}
+			i++
+		}
+		if entry := stripListingIcon(strings.TrimSpace(line[start:i])); entry != "" {
+			out = append(out, entry)
+		}
+		i++ // the tab or the first space that ended the entry
+	}
+	return out
+}
+
+// stripListingIcon removes the icon glyph eza and lsd print in front of an
+// entry (" Applications", and in a grid " 'My Documents'" with no space after
+// the glyph); the glyph is not part of the name.
+func stripListingIcon(entry string) string {
+	trimmed := strings.TrimLeftFunc(entry, privateUseRune)
+	if trimmed == entry {
+		return entry
+	}
+	return strings.TrimSpace(trimmed)
+}
+
+// listingError reports a listing program's own error line ("ls: cannot access
+// …"), which must not become a name in the plain fallback.
+func listingError(line string) bool {
+	for _, program := range []string{"ls", "eza", "exa", "lsd"} {
+		if strings.HasPrefix(line, program+":") {
+			return true
+		}
+	}
+	return false
+}
+
 func looksLikeMode(s string) bool {
 	if len(s) < 10 {
 		return false
@@ -424,7 +490,7 @@ func (f *filesLS) View(state any) (lens.Node, error) {
 	if len(st.rows) > 0 {
 		return lsTable(st), nil
 	}
-	if !st.expectLong && len(st.names) > 0 {
+	if !st.expectLong && !st.unparsed && len(st.names) > 0 {
 		return lsList(st.names), nil
 	}
 	return nil, nil

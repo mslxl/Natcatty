@@ -55,6 +55,71 @@ func TestFilesLSPlainListingIgnoresIconGlyphs(t *testing.T) {
 	}
 }
 
+// Only runs of two or more spaces separate grid columns; a single space is
+// part of a name, and flattening every field cut "My Documents" into two
+// entries.
+func TestFilesLSPlainListingKeepsNamesWithSpaces(t *testing.T) {
+	l := lens.ByID("files.ls")
+	state, err := l.Open(model.Cmd{Program: "eza", Args: []string{"--icons", "auto"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		" 'My Documents'   notes.txt",
+		" Single File Name",
+	} {
+		if err := l.Line(state, model.Line{Text: line}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	node, err := l.View(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, ok := node.(lens.List)
+	if !ok {
+		t.Fatalf("view = %T, want lens.List", node)
+	}
+	var got []string
+	for _, item := range list.Items {
+		got = append(got, spanText(item.Label))
+	}
+	want := []string{"'My Documents'", "notes.txt", "Single File Name"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("list labels = %q, want %q", got, want)
+	}
+}
+
+// Output the plain fallback does not understand stays raw: a guessed list of
+// error text is worse than the output the program printed.
+func TestFilesLSPlainListingFallsBackToRaw(t *testing.T) {
+	cases := map[string][]string{
+		"program error":     {"ls: cannot access 'missing': No such file or directory"},
+		"recursive heading": {"src:", "  a.go", "  b.go"},
+	}
+	for name, lines := range cases {
+		t.Run(name, func(t *testing.T) {
+			l := lens.ByID("files.ls")
+			state, err := l.Open(model.Cmd{Program: "ls"}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, line := range lines {
+				if err := l.Line(state, model.Line{Text: line}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			node, err := l.View(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if node != nil {
+				t.Fatalf("view = %T, want raw output (nil view)", node)
+			}
+		})
+	}
+}
+
 // The long format puts the same icon in front of the name column.
 func TestFilesLSLongListingStripsIconGlyph(t *testing.T) {
 	l := lens.ByID("files.ls")
