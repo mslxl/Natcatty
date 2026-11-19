@@ -8,8 +8,11 @@ name: release
 # validate and build without publishing: workflow_dispatch is a dry run that
 # creates no release.
 #
-# Releases stay unsigned apart from MyGo's ad hoc macOS signature and carry no
-# notarization, Authenticode, or update metadata.
+# Releases stay unsigned apart from MyGo's ad hoc macOS signature and the
+# Android APK, which is signed with natcatty's own keystore material supplied
+# to this workflow from secrets. There is no notarization, Authenticode, or
+# update metadata, and no store account is involved: the APK is installed from
+# the release file.
 
 on:
   workflow_dispatch:
@@ -44,11 +47,15 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
       version: ${{ steps.tag.outputs.version }}
       prerelease: ${{ steps.tag.outputs.prerelease }}
+      version_code: ${{ steps.android.outputs.version-code }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
+          # The Android version-code check reads the previous release tag's
+          # mygo.json, which needs the tags and the history behind them.
+          fetch-depth: 0
 
       - name: Prepare MyGo
         uses: ./.github/actions/prepare-mygo
@@ -83,13 +90,65 @@ jobs:
           echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
           echo "release tag ${tag} uses mygo.json version ${version} (prerelease=${prerelease})"
 
+      - name: Check that the Android version code increases
+        # Android orders installs by versionCode; a code that does not grow
+        # would refuse to install over the previous release. The code is
+        # computed from the manifest version (internal/tools/androidversion)
+        # and compared with the previous release tag's manifest. A tag that is
+        # not checked out (a workflow_dispatch input) compares against the
+        # nearest release tag reachable from HEAD instead.
+        id: android
+        env:
+          NATCATTY_VERSION: ${{ steps.tag.outputs.version }}
+          NATCATTY_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          code="$(go run ./internal/tools/androidversion -version "${NATCATTY_VERSION}")"
+          echo "version-code=${code}" >> "${GITHUB_OUTPUT}"
+          if git rev-parse --quiet --verify "refs/tags/${NATCATTY_TAG}" >/dev/null; then
+            start="${NATCATTY_TAG}^{commit}"
+          else
+            start="HEAD"
+          fi
+          if previous_tag="$(git describe --tags --abbrev=0 --match 'v*' "${start}^" 2>/dev/null)"; then
+            previous_version="$(git show "${previous_tag}:mygo.json" | python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])')"
+            go run ./internal/tools/androidversion \
+              -version "${NATCATTY_VERSION}" -previous "${previous_version}"
+            echo "Android version code ${code} for ${NATCATTY_VERSION} follows ${previous_tag} (${previous_version})"
+          else
+            echo "no earlier release tag is reachable; Android version code ${code} is the first"
+          fi
+
+      - name: Refuse signing material in the checkout
+        # The repository ships no Android keystore and no committed keystore
+        # path: the release job decodes its own from secrets, and a developer
+        # build falls back to the debug key. SSH test fixtures under
+        # adapters/ssh/testdata are .pem files and are not Android signing
+        # material.
+        run: |
+          set -euo pipefail
+          committed="$(git ls-files '*.jks' '*.keystore' '*.p12' '*.pfx')"
+          if [ -n "${committed}" ]; then
+            echo "signing material is committed to the repository:" >&2
+            echo "${committed}" >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json, sys
+          with open("mygo.json") as f:
+              manifest = json.load(f)
+          if manifest.get("android", {}).get("keystore"):
+              sys.exit("mygo.json commits an android.keystore path; the release job supplies it from secrets")
+          PY
+          echo "the repository carries no Android signing material"
+
       - name: Refuse signing and notarization environment variables
         run: |
           set -euo pipefail
           for name in MYGO_UPDATER_PRIVATE_KEY APPLE_ID APPLE_APP_SPECIFIC_PASSWORD \
             APPLE_TEAM_ID CSC_LINK WINDOWS_CERTIFICATE WINDOWS_CERTIFICATE_PASSWORD; do
             if [ -n "${!name:-}" ]; then
-              echo "${name} must not be set: releases are unsigned and never self-update" >&2
+              echo "${name} must not be set: the desktop releases are unsigned and never self-update" >&2
               exit 1
             fi
           done
@@ -384,11 +443,239 @@ jobs:
           path: dist
           if-no-files-found: error
 
+  build-android:
+    name: build signed Android APK
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    env:
+      NATCATTY_VERSION: ${{ needs.validate.outputs.version }}
+      NATCATTY_TAG: ${{ needs.validate.outputs.tag }}
+      NATCATTY_ANDROID_VERSION_CODE: ${{ needs.validate.outputs.version_code }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Nushell
+        uses: ./.github/actions/setup-nu
+
+      - name: Set up Java
+        # Gradle 8.14.3 and AGP 8.12 ask for a Java 17 toolchain.
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install the platform, build tools and NDK
+        # android-abis.txt and mygo.json pin the minimum API and the NDK the
+        # libghostty-vt archives were built with. Build-tools 35.0.0 supplies
+        # zipalign -P 16 and apksigner.
+        run: |
+          set -euo pipefail
+          # A finite answer file, not `yes |`: with pipefail, yes is killed by
+          # SIGPIPE when sdkmanager exits and the pipeline's 141 fails the step.
+          licenses="${RUNNER_TEMP}/android-licenses.txt"
+          printf 'y\n%.0s' {1..100} > "${licenses}"
+          sdkmanager --licenses < "${licenses}" >/dev/null
+          rm -f "${licenses}"
+          sdkmanager --install \
+            "platforms;android-36" \
+            "build-tools;35.0.0" \
+            "ndk;30.0.16248370"
+
+      - name: Build the pinned terminal archives
+        # The Android app links one libghostty-vt archive per ABI. Build them
+        # from the commit and Zig version recorded in ui/terminal/artifacts.json
+        # (both URLs are pinned); the builder verifies every archive's binding
+        # symbols, library version and 16 KB pages. --no-manifest leaves the
+        # committed manifest untouched in this disposable checkout.
+        run: |
+          set -euo pipefail
+          scripts/mobile/build-ghostty-vt.sh build \
+            --platforms android \
+            --ndk "${ANDROID_HOME}/ndk/30.0.16248370" \
+            --no-manifest
+
+      - name: Stage the terminal archives for cgo
+        run: scripts/mobile/android-libs.sh
+
+      - name: Decode the release keystore from secrets
+        # The keystore is base64 in a secret and lives only in RUNNER_TEMP,
+        # outside the checkout. Base64 keeps the binary intact in a secret.
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo "secret ANDROID_KEYSTORE_BASE64 is not set" >&2
+            exit 1
+          fi
+          keystore="${RUNNER_TEMP}/natcatty-release.keystore"
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "${keystore}"
+          chmod 600 "${keystore}"
+          test -s "${keystore}"
+          echo "keystore decoded into RUNNER_TEMP"
+
+      - name: Compute and write the Android release manifest
+        env:
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_KEY_ALIAS:-}" ]; then
+            echo "secret ANDROID_KEY_ALIAS is not set" >&2
+            exit 1
+          fi
+          # versionCode is an integer Android orders installs by; the
+          # committed manifest has none, so the release value comes from the
+          # version and is written into this disposable checkout only.
+          nu scripts/release.nu android-manifest \
+            --keystore "${RUNNER_TEMP}/natcatty-release.keystore" \
+            --key-alias "${ANDROID_KEY_ALIAS}" \
+            --version-code "${NATCATTY_ANDROID_VERSION_CODE}"
+
+      - name: Build the signed universal APK
+        # MyGo builds the Go library for every ABI in scripts/mobile/android-abis.txt
+        # with the NDK and 16 KB page alignment, then Gradle packages and signs
+        # one APK. Without android.keystore it would sign with the debug key;
+        # this job always writes a release keystore first.
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ]; then
+            echo "secret ANDROID_KEYSTORE_PASSWORD is not set" >&2
+            exit 1
+          fi
+          export MYGO_ANDROID_KEYSTORE_PASSWORD="${ANDROID_KEYSTORE_PASSWORD}"
+          if [ -n "${ANDROID_KEY_PASSWORD:-}" ]; then
+            export MYGO_ANDROID_KEY_PASSWORD="${ANDROID_KEY_PASSWORD}"
+          fi
+          go tool mygo build -platform android -o dist
+
+      - name: Publish the APK, not the store bundle
+        run: |
+          set -euo pipefail
+          # Google Play would take the .aab, but this project distributes the
+          # APK from the release file. Keep only the APK and give it its
+          # published name.
+          rm -f dist/android/*.aab
+          nu scripts/release.nu rename-assets --dir dist --version "${NATCATTY_VERSION}"
+          apk="dist/android/natcatty-${NATCATTY_VERSION}-android.apk"
+          test -s "${apk}"
+          test "$(find dist/android -maxdepth 1 -type f | wc -l)" -eq 1
+          echo "release artifact: ${apk}"
+
+      - name: Verify the signature and the expected certificate
+        env:
+          EXPECTED_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          apk="dist/android/natcatty-${NATCATTY_VERSION}-android.apk"
+          build_tools="${ANDROID_HOME}/build-tools/35.0.0"
+          "${build_tools}/apksigner" verify --verbose --print-certs "${apk}" | tee apksigner.txt
+          grep -qx 'Verifies' apksigner.txt
+          grep -q '^Verified using v2 scheme (APK Signature Scheme v2): true$' apksigner.txt
+          cert="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' apksigner.txt)"
+          test -n "${cert}"
+          if [ -z "${EXPECTED_CERT_SHA256:-}" ]; then
+            echo "repository variable ANDROID_SIGNING_CERT_SHA256 is not set" >&2
+            exit 1
+          fi
+          expected="$(printf '%s' "${EXPECTED_CERT_SHA256}" | tr 'A-F' 'a-f')"
+          actual="$(printf '%s' "${cert}" | tr 'A-F' 'a-f')"
+          if [ "${actual}" != "${expected}" ]; then
+            echo "the APK certificate ${actual} is not the expected ${expected}" >&2
+            exit 1
+          fi
+          echo "the APK verifies and reports certificate ${actual}"
+
+      - name: Verify the version code, ABIs and 16 KB pages
+        run: |
+          set -euo pipefail
+          apk="dist/android/natcatty-${NATCATTY_VERSION}-android.apk"
+          build_tools="${ANDROID_HOME}/build-tools/35.0.0"
+          # The APK's own manifest, not the manifest this job wrote.
+          apkanalyzer="$(command -v apkanalyzer || true)"
+          if [ -z "${apkanalyzer}" ]; then
+            apkanalyzer="${ANDROID_HOME}/cmdline-tools/latest/bin/apkanalyzer"
+          fi
+          got="$("${apkanalyzer}" manifest version-code "${apk}")"
+          if [ "${got}" != "${NATCATTY_ANDROID_VERSION_CODE}" ]; then
+            echo "APK versionCode ${got} is not the computed ${NATCATTY_ANDROID_VERSION_CODE}" >&2
+            exit 1
+          fi
+          # zipalign -P 16 checks the uncompressed native libraries' alignment
+          # inside the zip; Gradle's useLegacyPackaging=false keeps them
+          # uncompressed for direct loading.
+          "${build_tools}/zipalign" -c -P 16 4 "${apk}"
+          if unzip -v "${apk}" | awk '$2 != "Stored" && $8 ~ /^lib\/.*\/libmygoapp\.so$/ { bad=1 } END { exit bad }'; then
+            :
+          else
+            echo "a native library is compressed in the APK" >&2
+            exit 1
+          fi
+          ndk_root="${ANDROID_NDK_HOME:-${ANDROID_HOME}/ndk/30.0.16248370}"
+          ndk_bin="${ndk_root}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          work="$(mktemp -d)"
+          trap 'rm -rf "${work}"' EXIT
+          # List the archive once, into a file. Piping `unzip -l` straight into
+          # `grep -q` would let grep exit after the first match, SIGPIPE unzip,
+          # and fail the pipeline under `set -o pipefail`.
+          unzip -Z1 "${apk}" > "${work}/entries.txt"
+          while read -r abi goarch triple artifact class machine; do
+            case "${abi}" in '' | '#'*) continue ;; esac
+            entry="lib/${abi}/libmygoapp.so"
+            grep -qxF "${entry}" "${work}/entries.txt" || {
+              echo "the APK does not ship ${abi} (${entry})" >&2
+              exit 1
+            }
+            unzip -p "${apk}" "${entry}" > "${work}/${abi}.so"
+            "${ndk_bin}/llvm-readelf" -h "${work}/${abi}.so" > "${work}/${abi}.hdr"
+            grep -q "Machine:.*${machine}$" "${work}/${abi}.hdr" || {
+              echo "${abi}: ${entry} is not ${machine}" >&2
+              exit 1
+            }
+            aligns="$("${ndk_bin}/llvm-readelf" -l -W "${work}/${abi}.so" | awk '$1 == "LOAD" { print $NF }')"
+            test -n "${aligns}"
+            for align in ${aligns}; do
+              align=$((align))
+              if [ "${align}" -lt 16384 ] || [ $((align & (align - 1))) -ne 0 ]; then
+                echo "${abi}: a LOAD segment is aligned to ${align} bytes, want at least 16384" >&2
+                exit 1
+              fi
+            done
+            echo "${abi}: ${machine}, 16 KB LOAD segments"
+          done < scripts/mobile/android-abis.txt
+          echo "the APK ships every supported ABI with 16 KB pages"
+
+      - name: Upload the Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: natcatty-android
+          path: dist
+          if-no-files-found: error
+
   checksums:
     name: aggregate checksums
     needs:
       - validate
       - build
+      - build-android
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -407,8 +694,8 @@ jobs:
         uses: ./.github/actions/setup-nu
 
       - name: Download every platform artifact
-        # `natcatty-*` selects exactly the three platform artifacts the build
-        # job uploads. The aggregate checksum artifact (`release-checksums`)
+        # `natcatty-*` selects exactly the four platform artifacts the build
+        # jobs upload. The aggregate checksum artifact (`release-checksums`)
         # stays outside the pattern, so a re-run cannot sweep the previous
         # attempt's aggregate file back in.
         uses: actions/download-artifact@v4
@@ -425,6 +712,7 @@ jobs:
         run: |
           set -euo pipefail
           cat > expected.txt <<EOF
+          natcatty-${NATCATTY_VERSION}-android.apk
           natcatty-${NATCATTY_VERSION}-linux-amd64.deb
           natcatty-${NATCATTY_VERSION}-linux-amd64.tar.gz
           natcatty-${NATCATTY_VERSION}-linux-arm64.deb
@@ -437,7 +725,7 @@ jobs:
           sort -o expected.txt expected.txt
           find release -maxdepth 1 -type f -printf '%f\n' | sort > actual.txt
           diff -u expected.txt actual.txt
-          test "$(wc -l < actual.txt)" -eq 8
+          test "$(wc -l < actual.txt)" -eq 9
         env:
           NATCATTY_VERSION: ${{ needs.validate.outputs.version }}
 
@@ -480,6 +768,7 @@ jobs:
     needs:
       - validate
       - build
+      - build-android
       - checksums
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -514,7 +803,7 @@ jobs:
           cache: true
 
       - name: Download every platform artifact
-        # The same pattern as the checksums job: exactly the three platform
+        # The same pattern as the checksums job: exactly the four platform
         # artifacts, never the aggregate checksum artifact.
         uses: actions/download-artifact@v4
         with:
@@ -567,7 +856,8 @@ jobs:
             -out "${notes}" \
             -manifest mygo.json \
             -previous-manifest "${previous_manifest}" \
-            -fragment docs/releases/identifier-migration.md
+            -fragment docs/releases/identifier-migration.md \
+            -append docs/releases/android-apk.md
 
       - name: Publish the GitHub release
         # Re-pushing or force-moving a tag is expected, so an existing release
@@ -579,8 +869,9 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           assets=(release/*)
-          # The eight installers plus the checksum manifest.
-          test "${#assets[@]}" -eq 9
+          # The nine installers (including the Android APK) plus the checksum
+          # manifest.
+          test "${#assets[@]}" -eq 10
           notes="${RUNNER_TEMP}/release-notes.md"
           test -s "${notes}"
           # A SemVer pre-release is published as a GitHub pre-release and never

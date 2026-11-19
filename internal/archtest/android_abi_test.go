@@ -135,3 +135,72 @@ func TestAndroidGatesUseTheSharedList(t *testing.T) {
 		t.Error("android-libs.sh does not link the 16 KB page probe")
 	}
 }
+
+// TestManifestLeavesAndroidSigningToTheReleaseJob keeps the committed
+// manifest free of signing material and of a frozen version code. The release
+// job writes both into its disposable checkout from secrets and the computed
+// version; a committed value here would either ship a keystore path or stop
+// the version code from growing with each release.
+func TestManifestLeavesAndroidSigningToTheReleaseJob(t *testing.T) {
+	root := testutil.ModuleRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "mygo.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Android struct {
+			Keystore    string `json:"keystore"`
+			KeyAlias    string `json:"keyAlias"`
+			VersionCode int    `json:"versionCode"`
+		} `json:"android"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("mygo.json: %v", err)
+	}
+	if manifest.Android.Keystore != "" || manifest.Android.KeyAlias != "" {
+		t.Errorf("mygo.json commits Android signing configuration: %+v", manifest.Android)
+	}
+	if manifest.Android.VersionCode != 0 {
+		t.Errorf("mygo.json commits android.versionCode %d; the release job computes it per release", manifest.Android.VersionCode)
+	}
+}
+
+// TestAndroidReleaseWorkflowCarriesTheSigningContract pins the release steps
+// the ticket requires: keystore material from secrets, signature and
+// certificate verification, the computed version code, and the release note
+// saying the APK is installed from a file rather than a store.
+func TestAndroidReleaseWorkflowCarriesTheSigningContract(t *testing.T) {
+	root := testutil.ModuleRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, ".github/workflows/release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(data)
+	for _, want := range []string{
+		"ANDROID_KEYSTORE_BASE64",
+		"ANDROID_KEYSTORE_PASSWORD",
+		"ANDROID_KEY_ALIAS",
+		"ANDROID_SIGNING_CERT_SHA256",
+		"apksigner",
+		"--print-certs",
+		"manifest version-code",
+		"-c -P 16 4",
+		"internal/tools/androidversion",
+		"natcatty-android",
+		"-append docs/releases/android-apk.md",
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Errorf("release.yml does not contain %q", want)
+		}
+	}
+
+	note, err := os.ReadFile(filepath.Join(root, "docs/releases/android-apk.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"installed from the file", "not from a store", "adb install"} {
+		if !strings.Contains(string(note), want) {
+			t.Errorf("docs/releases/android-apk.md does not say %q", want)
+		}
+	}
+}

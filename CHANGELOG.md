@@ -21,6 +21,13 @@ requests; this file is the human-maintained changelog.
   Because the setting is synced, a device still running an older build
   normalizes the new values to Vault once; re-select the choice after all
   devices are upgraded.
+- Android releases publish one universal, 16 KB page compatible APK signed
+  with natcatty's own release keystore. It carries every supported ABI, is
+  installed from the release file rather than a store, and its version code
+  grows with every release so a newer APK installs over an older one.
+  Development builds need no account and fall back to the debug key; losing
+  the release keystore is unrecoverable and its backup lives outside the
+  repository.
 - The global shortcut has four user-selectable Hotkey Modes: release it to the
   system, toggle the main window as before, pull down a Quake terminal, or
   pull down the complete application. Quake is the default. The Dropdown

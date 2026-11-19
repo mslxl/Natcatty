@@ -1,9 +1,9 @@
 // Command releasebody composes the body of a GitHub release. GitHub generates
-// the notes from the tag's commits; the one-time application-identifier
-// migration note is checked in beside the other release documents and appended
-// by this tool for the first release whose manifest carries the new
-// identifier. Once the previous release already used that identifier the note
-// is not repeated.
+// the notes from the tag's commits; checked-in release documents are appended
+// to them. The identifier-migration note is appended only for the first
+// release whose manifest carries the new identifier, so a user who reads only
+// the release page learns about the one-time reset. Notes passed with
+// -append (the Android sideload note, for example) are always appended once.
 package main
 
 import (
@@ -16,6 +16,16 @@ import (
 	"path/filepath"
 	"strings"
 )
+
+// stringList collects a flag that may be repeated.
+type stringList []string
+
+func (s *stringList) String() string { return strings.Join(*s, ",") }
+
+func (s *stringList) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
 
 // manifest is the part of mygo.json this tool reads.
 type manifest struct {
@@ -36,6 +46,8 @@ func run(args []string) error {
 	current := fs.String("manifest", "mygo.json", "manifest carrying the release's identifier")
 	previous := fs.String("previous-manifest", "", "manifest of the previous release; absent or empty means this is the first release")
 	fragment := fs.String("fragment", "", "checked-in migration note to append")
+	var appends stringList
+	fs.Var(&appends, "append", "checked-in note to always append (repeatable)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -64,6 +76,20 @@ func run(args []string) error {
 	body, appended, err := compose(generated, note, previousID, currentIdentifier)
 	if err != nil {
 		return err
+	}
+	for _, path := range appends {
+		extra, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read the appended note %s: %w", path, err)
+		}
+		var added bool
+		body, added, err = appendNote(body, extra)
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		if added {
+			fmt.Printf("release body: appended %s\n", filepath.Base(path))
+		}
 	}
 	if dir := filepath.Dir(*out); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -152,4 +178,26 @@ func compose(generated, fragment []byte, previousIdentifier, currentIdentifier s
 	body = append(body, note...)
 	body = append(body, '\n')
 	return body, true, nil
+}
+
+// appendNote appends note after body unless body already carries it.
+// added reports whether the returned body gained the note.
+func appendNote(body, note []byte) ([]byte, bool, error) {
+	trimmed := bytes.TrimSpace(note)
+	if len(trimmed) == 0 {
+		return nil, false, errors.New("an appended note is empty")
+	}
+	if bytes.Contains(body, trimmed) {
+		return body, false, nil
+	}
+	out := append([]byte(nil), body...)
+	if len(out) > 0 && !bytes.HasSuffix(out, []byte("\n")) {
+		out = append(out, '\n')
+	}
+	if len(out) > 0 {
+		out = append(out, '\n')
+	}
+	out = append(out, trimmed...)
+	out = append(out, '\n')
+	return out, true, nil
 }

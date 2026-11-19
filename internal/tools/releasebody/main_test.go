@@ -165,3 +165,75 @@ func TestPreviousIdentifierTreatsUnreadableInputAsUnknown(t *testing.T) {
 		}
 	}
 }
+
+func TestAppendNoteAddsOnce(t *testing.T) {
+	note := []byte("## Android APK\n\nInstall the APK from the release file.\n")
+	got, added, err := appendNote([]byte("generated\n"), note)
+	if err != nil {
+		t.Fatalf("appendNote: %v", err)
+	}
+	if !added {
+		t.Fatal("appendNote did not report adding the note")
+	}
+	want := "generated\n\n" + string(note)
+	if string(got) != want {
+		t.Fatalf("appended body = %q, want %q", got, want)
+	}
+	again, added, err := appendNote(got, note)
+	if err != nil {
+		t.Fatalf("appendNote again: %v", err)
+	}
+	if added {
+		t.Fatal("appendNote added an identical note twice")
+	}
+	if string(again) != string(got) {
+		t.Fatalf("second append changed the body: %q", again)
+	}
+}
+
+func TestAppendNoteRejectsAnEmptyNote(t *testing.T) {
+	if _, _, err := appendNote([]byte("generated\n"), []byte(" \n")); err == nil {
+		t.Fatal("appendNote accepted an empty note")
+	}
+}
+
+func TestRunAlwaysAppendsTheRequestedNotes(t *testing.T) {
+	dir := t.TempDir()
+	manifest := filepath.Join(dir, "mygo.json")
+	if err := os.WriteFile(manifest, []byte(`{"identifier":"`+testCurrentIdentifier+`"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	notes := filepath.Join(dir, "notes.md")
+	if err := os.WriteFile(notes, []byte("generated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fragment := filepath.Join(dir, "migration.md")
+	if err := os.WriteFile(fragment, []byte("migration note\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	android := filepath.Join(dir, "android.md")
+	if err := os.WriteFile(android, []byte("Install the APK from a file.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{
+		"-notes", notes,
+		"-out", notes,
+		"-manifest", manifest,
+		"-previous-manifest", manifest,
+		"-fragment", fragment,
+		"-append", android,
+	}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	body, err := os.ReadFile(notes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "generated") || !strings.Contains(text, "Install the APK from a file.") {
+		t.Fatalf("output = %q, want the generated notes and the Android note", body)
+	}
+	if strings.Contains(text, "migration note") {
+		t.Fatalf("output = %q, want no migration note once the identifier is unchanged", body)
+	}
+}

@@ -4,6 +4,7 @@
 #
 #   nu scripts/release.nu version [--manifest mygo.json] [--debian]
 #   nu scripts/release.nu prerelease [--manifest mygo.json]
+#   nu scripts/release.nu android-manifest --keystore FILE --key-alias NAME --version-code N
 #   nu scripts/release.nu rename-assets --dir dist --version 0.1.0
 #   nu scripts/release.nu make-portable --dir dist/windows-amd64 --out FILE [--exclude PATH]
 #   nu scripts/release.nu generate-sums --dir release [--out release/SHA256SUMS]
@@ -11,7 +12,7 @@
 
 # Print the subcommand list; a bare invocation does nothing else.
 def main [] {
-    print "usage: nu scripts/release.nu <version|prerelease|rename-assets|make-portable|generate-sums|collect> [flags]"
+    print "usage: nu scripts/release.nu <version|prerelease|android-manifest|rename-assets|make-portable|generate-sums|collect> [flags]"
 }
 
 # MyGo encodes the first "-" of a SemVer pre-release as "~" in the Debian
@@ -47,6 +48,40 @@ def "main prerelease" [
     $version | str contains '-'
 }
 
+# Write the Android release settings into the manifest: the absolute path of
+# the keystore the workflow decoded from secrets (outside the checkout), the
+# key alias, and the version code computed by internal/tools/androidversion.
+# This is a CI-only mutation of the working tree; the committed manifest keeps
+# no keystore, so a developer build falls back to the debug key. The script
+# refuses to read signing material itself: it records only the path.
+def "main android-manifest" [
+    --manifest: path = "mygo.json"
+    --keystore: string
+    --key-alias: string
+    --version-code: int
+] {
+    if ($keystore | is-empty) {
+        error make { msg: "android-manifest needs --keystore" }
+    }
+    if ($key_alias | is-empty) {
+        error make { msg: "android-manifest needs --key-alias" }
+    }
+    if $version_code <= 0 {
+        error make { msg: "android-manifest needs a positive --version-code" }
+    }
+    let config = (open $manifest)
+    let android = ($config.android? | default {})
+    let updated = (
+        $android
+        | upsert keystore $keystore
+        | upsert keyAlias $key_alias
+        | upsert versionCode $version_code
+    )
+    let document = ($config | upsert android $updated | to json --indent 2)
+    $document + "\n" | save -f $manifest
+    print $"($manifest): android.keystore=($keystore) android.keyAlias=($key_alias) android.versionCode=($version_code)"
+}
+
 # Whether name is a release artifact handed to users.
 def is-artifact [name: string] {
     let base = ($name | path basename)
@@ -55,6 +90,7 @@ def is-artifact [name: string] {
         or ($base | str ends-with '.deb')
         or ($base | str ends-with '.tar.gz')
         or ($base | str ends-with '-portable.zip')
+        or ($base | str ends-with '.apk')
         or (
             ($base | str ends-with '.exe')
             and (
@@ -82,6 +118,7 @@ def canonical-asset-name [name: string, version: string] {
     let linux_arm64_tar = $"natcatty-($version)-linux-arm64.tar.gz"
     let linux_amd64_deb = $"natcatty-($version)-linux-amd64.deb"
     let linux_arm64_deb = $"natcatty-($version)-linux-arm64.deb"
+    let android_apk = $"natcatty-($version)-android.apk"
     # MyGo v0.10.0, the pinned submodule, writes slug names:
     # natcatty-<version>-<arch>.dmg and natcatty-setup-<version>-<arch>.exe.
     if ($base == $"natcatty-($version)-arm64.dmg") { return $dmg_arm64 }
@@ -95,7 +132,10 @@ def canonical-asset-name [name: string, version: string] {
     if ($base == $"Natcatty Setup ($version) amd64.exe") { return $setup }
     if ($base == $"natcatty_($deb)_amd64.deb") { return $linux_amd64_deb }
     if ($base == $"natcatty_($deb)_arm64.deb") { return $linux_arm64_deb }
-    let canonical = [$dmg_arm64 $dmg_amd64 $dmg_universal $setup $portable $linux_amd64_tar $linux_arm64_tar $linux_amd64_deb $linux_arm64_deb]
+    # MyGo writes build/android/natcatty-<version>.apk; the release carries
+    # the universal APK that ships every ABI.
+    if ($base == $"natcatty-($version).apk") { return $android_apk }
+    let canonical = [$dmg_arm64 $dmg_amd64 $dmg_universal $setup $portable $linux_amd64_tar $linux_arm64_tar $linux_amd64_deb $linux_arm64_deb $android_apk]
     if ($base in $canonical) { return $base }
     error make { msg: $"($base) is a release artifact but has no canonical name for version ($version)" }
 }
