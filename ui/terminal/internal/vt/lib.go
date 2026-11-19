@@ -208,6 +208,28 @@ func Loaded() bool {
 	return lib.loaded
 }
 
+// LibraryVersion returns the library_version the loaded library reports
+// through its type manifest. The pinned commit has no ghostty_version
+// symbol (that arrives in 1.0.1) and the bindings do not bind
+// ghostty_build_info, so the manifest is where the ABI version lives.
+func LibraryVersion() (string, error) {
+	if !Loaded() {
+		return "", errors.New("no libghostty-vt loaded")
+	}
+	p := call(fnTypeJSON)
+	if p == 0 {
+		return "", errors.New("no type manifest")
+	}
+	var m manifest
+	if err := json.Unmarshal([]byte(cStringAt(p)), &m); err != nil {
+		return "", fmt.Errorf("type manifest: %w", err)
+	}
+	if m.LibraryVersion == "" {
+		return "", errors.New("type manifest has no library_version")
+	}
+	return m.LibraryVersion, nil
+}
+
 // Result is a GhosttyResult other than GHOSTTY_SUCCESS.
 type Result int32
 
@@ -301,7 +323,10 @@ type manifest struct {
 	ABI struct {
 		PointerSize int `json:"pointer_size"`
 	} `json:"abi"`
-	Types map[string]typeInfo `json:"types"`
+	// LibraryVersion is the version string the library reports, which the
+	// bindings and the staged phone artifact must agree on.
+	LibraryVersion string              `json:"library_version"`
+	Types          map[string]typeInfo `json:"types"`
 }
 
 type typeInfo struct {

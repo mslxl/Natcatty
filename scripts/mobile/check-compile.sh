@@ -43,6 +43,12 @@ cc="$clang -target $arch-apple-ios$minimum-simulator -isysroot $sdk"
 echo "check-compile: ios/$arch, minimum iOS $minimum"
 echo "check-compile: CC=$cc"
 
+# The app links libghostty-vt through a staged object. Require the simulator
+# slice and verify it before compiling: a device object (platform 2) in a
+# simulator build fails here, not on the running app.
+echo "check-compile: checking the staged terminal object"
+scripts/mobile/ios-syso.sh simulator --check
+
 roots=(./app ./ui/phoneshell ./ui/session ./ui/terminal/...)
 echo "check-compile: compiling ${roots[*]}"
 GOOS=ios GOARCH="$arch" CGO_ENABLED=1 CC="$cc" go build "${roots[@]}"
@@ -54,5 +60,14 @@ trap 'rm -rf "$work"' EXIT
 echo "check-compile: linking the app c-archive"
 GOOS=ios GOARCH="$arch" CGO_ENABLED=1 CC="$cc" \
   go build -buildmode=c-archive -o "$work/libapp.a" .
+
+# The archive must carry the linked library. Without the staged object the
+# link fails on the undefined ghostty_* symbols that addr.c takes the
+# addresses of; this assertion also catches an object silently dropped.
+if ! /usr/bin/nm -gU "$work/libapp.a" 2>/dev/null | grep '_ghostty_type_json' >/dev/null; then
+  echo "check-compile: the app archive does not carry libghostty-vt" >&2
+  echo "  the staged object was not linked; check ui/terminal/mobile/ghostty_ios_arm64.syso" >&2
+  exit 1
+fi
 
 echo "check-compile: ok — ios phone build compiles and links"

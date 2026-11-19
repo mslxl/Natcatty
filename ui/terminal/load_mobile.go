@@ -3,25 +3,40 @@
 package terminal
 
 import (
-	"errors"
+	"fmt"
 	"sync"
-)
 
-// errUnsupported is returned on phones until the static library backend
-// lands: the shared core carries no loader of its own.
-var errUnsupported = errors.New("terminal: libghostty-vt is not linked on this platform yet")
+	"github.com/mslxl/natcatty/ui/terminal/internal/vt"
+	"github.com/mslxl/natcatty/ui/terminal/mobile"
+)
 
 var load struct {
 	once sync.Once
 	err  error
 }
 
-// Load reports that the statically linked backend is not available yet.
+// Load resolves the symbols of the libghostty-vt linked into the app and
+// checks that the library reports the version the bindings expect. It is
+// called at startup, so a library built from another commit fails there
+// instead of misreading a cell later.
 func Load() error {
-	load.once.Do(func() { load.err = errUnsupported })
+	load.once.Do(func() {
+		if err := vt.Load(""); err != nil {
+			load.err = err
+			return
+		}
+		got, err := vt.LibraryVersion()
+		if err != nil {
+			load.err = err
+			return
+		}
+		if got != mobile.Version {
+			load.err = fmt.Errorf("terminal: linked libghostty-vt reports %q, want %q", got, mobile.Version)
+		}
+	})
 	return load.err
 }
 
-// LibraryPath returns "" on phones: a statically linked library has no
-// file to name.
+// LibraryPath returns "" on phones: a statically linked library has no file
+// to name.
 func LibraryPath() (string, error) { return "", nil }

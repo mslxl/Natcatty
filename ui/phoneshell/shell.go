@@ -84,6 +84,7 @@ func newSection(i Section) *section {
 			{path: "/new", title: "New session", text: "New session is a placeholder page."},
 			{path: "/log", title: "Connection log", text: "Connection log is a placeholder page."},
 		}
+		s.pages = append(s.pages, smokePages(i)...)
 	case Hosts:
 		s.intro = "No hosts yet."
 		s.pages = []page{
@@ -161,6 +162,11 @@ func (sec *section) view(c *ui.Context) {
 // bar on phones; the back bar shows it elsewhere.
 func (sec *section) page(c *ui.Context, r *ui.Route) {
 	r.Title(sec.info.Title)
+	// A smoke build adds the terminal diagnostic; every other build has
+	// no such route.
+	if smokeRoute(c, r) {
+		return
+	}
 	switch {
 	case r.Match("/"):
 		sec.root(c)
