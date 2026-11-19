@@ -13,3 +13,6 @@ myeasylog.log
 # Windows ConPTY release assets are downloaded during the build.
 resources/winconpty/*.dll
 resources/winconpty/*.exe
+
+# direnv's per-checkout cache. The .envrc itself is tracked.
+.direnv/
