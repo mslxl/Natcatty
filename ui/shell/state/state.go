@@ -19,7 +19,6 @@ import (
 	"github.com/mslxl/natcatty/domain/model"
 	domainetmodel "github.com/mslxl/natcatty/domain/model/et"
 	domoshmodel "github.com/mslxl/natcatty/domain/model/mosh"
-	domainprotocol "github.com/mslxl/natcatty/domain/model/protocol"
 	domainserial "github.com/mslxl/natcatty/domain/model/serial"
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
@@ -1224,32 +1223,7 @@ func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (mode
 // main Tab (the Dropdown Panel's Quake workspace) uses it, so both paths keep
 // one transport mapping.
 func HostSessionSpec(host domainvault.Host) appsession.StartSpec {
-	label := host.Label
-	if label == "" {
-		label = host.Hostname
-	}
-	plan := hostSessionTransport(host)
-	return appsession.StartSpec{
-		Kind:           plan.kind,
-		Label:          label,
-		StartupCommand: host.StartupCommand,
-		HostID:         host.ID,
-		Hostname:       host.Hostname,
-		Port:           host.Port,
-		Username:       host.Username,
-		X11Forwarding:  plan.kind == appsession.KindSSH && host.X11Enabled(),
-		NetworkDevice:  plan.kind == appsession.KindSSH && host.IsNetworkDevice(),
-		AutoAttachTmux: plan.tmux,
-		Telnet:         plan.telnet,
-		Mosh:           plan.mosh,
-		ET:             plan.et,
-		VNC:            plan.vnc,
-		// Input compatibility is local-only: the Session translates typed keys
-		// before they reach this transport.
-		InputCompatibility: host.InputCompatibility(),
-		ResumeKey:          plan.newResumeKey(),
-		Reconnect:          plan.reconnect,
-	}
+	return appsession.HostSpec(host)
 }
 
 // hostTransportPlan is the transport, restore descriptor kind, endpoint, and
@@ -1270,125 +1244,38 @@ type hostTransportPlan struct {
 	unsupported bool
 }
 
-// newResumeKey returns a fresh opaque locator for an ET Session's saved
-// credentials, or "" for a transport without resume state. The same value goes
-// into the StartSpec and the persisted descriptor.
-func (p hostTransportPlan) newResumeKey() string {
-	if p.kind == appsession.KindET {
-		return newETResumeKey()
-	}
-	return ""
-}
-
 // hostSessionTransport maps a saved Host's protocol onto the Session
-// transport, its restore descriptor, and its reconnect policy. A Telnet Host
-// gets the Telnet endpoint and a policy that permits the manual Reconnect
-// action without automatically retrying a dropped socket, matching the
-// original's SSH-only auto-reconnect.
+// transport, its restore descriptor, and its reconnect policy. The mapping
+// itself lives in the Session service, so the phone composition root starts a
+// Host the same way.
 func hostSessionTransport(host domainvault.Host) hostTransportPlan {
 	if !host.ConnectionSupported() {
+		// A removed protocol or unknown transport never dials as SSH.
 		return hostTransportPlan{unsupported: true}
 	}
-	// The Host resolves its effective transport: an SSH Host with Transport
-	// mosh or et selects that Session kind; this switch only builds the
-	// kind-specific start payload and restore descriptor.
-	switch host.SessionTransport() {
-	case domainprotocol.TransportTelnet:
-		cfg := domaintelnet.Config{Hostname: host.Hostname, Port: host.Port}.Normalized()
-		return hostTransportPlan{
-			kind:       appsession.KindTelnet,
-			descriptor: domainworkspace.SessionTelnet,
-			telnet:     &cfg,
-			reconnect:  telnetReconnectPolicy(),
-		}
-	case domainprotocol.TransportMosh:
-		return hostTransportPlan{
-			kind:       appsession.KindMosh,
-			descriptor: domainworkspace.SessionMosh,
-			mosh:       moshConfig(host),
-			reconnect:  &appsession.ReconnectPolicy{},
-		}
-	case domainprotocol.TransportET:
-		return hostTransportPlan{
-			kind:       appsession.KindET,
-			descriptor: domainworkspace.SessionET,
-			et:         etConfig(host),
-			reconnect:  &appsession.ReconnectPolicy{},
-		}
-	case domainprotocol.TransportVNC:
-		// VNC follows the SSH reconnect policy: a dropped pixel stream retries,
-		// but an authentication failure never does.
-		return hostTransportPlan{
-			kind:       appsession.KindVNC,
-			descriptor: domainworkspace.SessionVNC,
-			vnc:        vncConfig(host),
-			reconnect:  &appsession.ReconnectPolicy{},
-		}
+	spec := appsession.HostSpec(host)
+	plan := hostTransportPlan{
+		kind:      spec.Kind,
+		telnet:    spec.Telnet,
+		mosh:      spec.Mosh,
+		et:        spec.ET,
+		vnc:       spec.VNC,
+		reconnect: spec.Reconnect,
+		tmux:      spec.AutoAttachTmux,
 	}
-	// A dropped SSH transport retries every five seconds under the original
-	// reason predicate.
-	return hostTransportPlan{
-		kind:       appsession.KindSSH,
-		descriptor: domainworkspace.SessionSSH,
-		reconnect:  &appsession.ReconnectPolicy{},
-		tmux:       host.AutoAttachTmuxEnabled(),
+	switch spec.Kind {
+	case appsession.KindTelnet:
+		plan.descriptor = domainworkspace.SessionTelnet
+	case appsession.KindMosh:
+		plan.descriptor = domainworkspace.SessionMosh
+	case appsession.KindET:
+		plan.descriptor = domainworkspace.SessionET
+	case appsession.KindVNC:
+		plan.descriptor = domainworkspace.SessionVNC
+	default:
+		plan.descriptor = domainworkspace.SessionSSH
 	}
-}
-
-// moshConfig is the non-secret bootstrap half of a Mosh Session. Credentials,
-// jump trust, and MFA stay with the SSH Connection Manager.
-func moshConfig(host domainvault.Host) *domoshmodel.Config {
-	cfg := domoshmodel.Config{
-		Hostname:   host.Hostname,
-		Port:       host.Port,
-		Username:   host.Username,
-		ServerPath: host.MoshServerPath,
-	}.Normalized()
-	return &cfg
-}
-
-// etConfig is the non-secret half of an EternalTerminal Session. The app adds
-// credentials, host-key snapshots, and the single jump Host after resolving the
-// route.
-func etConfig(host domainvault.Host) *domainetmodel.Config {
-	cfg := domainetmodel.Config{
-		Hostname: host.Hostname,
-		Port:     host.Port,
-		Username: host.Username,
-		ETPort:   host.ETPort,
-	}.Normalized()
-	return &cfg
-}
-
-// vncConfig is the kind-selected start section for a VNC Host. The password is
-// resolved by the app from the Host's own secret slot; this mapping carries the
-// endpoint, the non-secret viewer configuration, and the route references.
-func vncConfig(host domainvault.Host) *domainvnc.SessionConfig {
-	configuration := domainvnc.DefaultConfig()
-	if host.VNC != nil {
-		configuration = *domainvnc.NormalizeConfig(host.VNC)
-	}
-	cfg := domainvnc.SessionConfig{
-		Hostname:      host.Hostname,
-		Port:          host.Port,
-		Username:      host.Username,
-		Configuration: configuration,
-		Route: domainvnc.Route{
-			Jumps:            host.HostChain.IDs(),
-			ProxyProfileID:   host.ProxyProfileID,
-			NetworkProfileID: host.NetworkProfileID,
-			DirectProxy:      host.DirectProxy,
-		},
-	}.Normalized()
-	return &cfg
-}
-
-// telnetReconnectPolicy allows the Session menu's manual Reconnect action but
-// never retries a dropped Telnet socket automatically.
-func telnetReconnectPolicy() *appsession.ReconnectPolicy {
-	return &appsession.ReconnectPolicy{
-		ShouldRetry: func(appsession.End) bool { return false },
-	}
+	return plan
 }
 
 // attachAutoLogin fills the expect engine for a console transport. A serial

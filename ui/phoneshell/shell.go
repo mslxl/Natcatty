@@ -4,9 +4,9 @@
 //
 // The sections are navigation, not Workspace Tabs: a Workspace Tab is an open
 // terminal Session, and the phone keeps one per Tab. The Sessions and Hosts
-// pages are placeholders until their tickets land; the Vault and Settings
-// pages read the same Vault store and the same settings documents the desktop
-// uses.
+// sections draw their own roots and push one page per open Session or Host;
+// the Vault and Settings pages read the same Vault store and the same settings
+// documents the desktop uses.
 package phoneshell
 
 import (
@@ -14,6 +14,8 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
 // Section identifies one of the phone's four navigation sections.
@@ -64,6 +66,12 @@ type section struct {
 	intro  string
 	// draw renders a non-placeholder page. A nil draw falls back to text.
 	draw func(c *ui.Context, p page)
+	// rootDraw renders the section's root page instead of the list of pages.
+	// Sessions and Hosts own their roots this way.
+	rootDraw func(c *ui.Context)
+	// route renders a dynamic page, such as /session/{id}. It reports whether
+	// it matched the current path.
+	route func(c *ui.Context, r *ui.Route) bool
 }
 
 // Shell is the four sections of the phone app. Construct it with New; its
@@ -76,6 +84,8 @@ type Shell struct {
 
 	vault    *vaultPages
 	settings *settingsPages
+	hosts    *hostPages
+	sessions *sessionTabs
 }
 
 // Option customizes a Shell. The composition root passes the shared Vault
@@ -94,12 +104,45 @@ func WithSettings(service SettingsService) Option {
 	return func(s *Shell) { s.settings.service = service }
 }
 
+// WithHosts gives the Hosts section the shared Vault's Host list. Only remote
+// Hosts are listed; Local and serial records stay on the desktop.
+func WithHosts(store HostStore) Option {
+	return func(s *Shell) { s.hosts.store = store }
+}
+
+// WithSessionOpener gives the Sessions section the application Session
+// service. Without it, tapping a Host shows an actionable error instead of
+// opening a Session.
+func WithSessionOpener(opener SessionOpener) Option {
+	return func(s *Shell) { s.sessions.opener = opener }
+}
+
+// WithScreenFactory replaces the libghostty-vt terminal screen. Tests inject a
+// fake because ordinary `go test` runs have no native library.
+func WithScreenFactory(factory ScreenFactory) Option {
+	return func(s *Shell) { s.sessions.newScreen = factory }
+}
+
 // New returns the phone shell with every section at its root page.
 func New(opts ...Option) *Shell {
-	s := &Shell{vault: newVaultPages(), settings: newSettingsPages()}
+	s := &Shell{
+		vault:    newVaultPages(),
+		settings: newSettingsPages(),
+		hosts:    newHostPages(),
+		sessions: &sessionTabs{newScreen: newTerminalScreen},
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
+	s.hosts.open = s.openHost
+	s.hosts.details = func(host domainvault.Host) {
+		s.sections[Hosts].router.Push("/host/" + string(host.ID))
+	}
+	s.sessions.launch = s.launchTab
+	s.sessions.show = func(id string) {
+		s.sections[Sessions].router.Push("/session/" + id)
+	}
+	s.sessions.close = s.closeSession
 	for i := range s.sections {
 		s.sections[i] = s.newSection(Section(i))
 	}
@@ -110,17 +153,28 @@ func (s *Shell) newSection(i Section) *section {
 	sec := &section{info: infos[i], router: ui.NewRouter("/")}
 	switch i {
 	case Sessions:
-		sec.intro = "No sessions yet."
-		sec.pages = []page{
-			{path: "/new", title: "New session", text: "New session is a placeholder page."},
-			{path: "/log", title: "Connection log", text: "Connection log is a placeholder page."},
+		sec.rootDraw = s.sessions.drawRoot
+		sec.route = func(c *ui.Context, r *ui.Route) bool {
+			if !r.Match("/session/{id}") {
+				return false
+			}
+			id := r.Param("id")
+			r.Title("Session")
+			s.sessions.drawSession(c, id,
+				func() { s.sessions.retry(id) },
+				func() { s.closeSession(id) })
+			return true
 		}
 		s.pages = append(s.pages, smokePages(i)...)
 	case Hosts:
-		sec.intro = "No hosts yet."
-		sec.pages = []page{
-			{path: "/host/new", title: "New host", text: "New host is a placeholder page."},
-			{path: "/browse", title: "Browse hosts", text: "Browse hosts is a placeholder page."},
+		sec.rootDraw = s.hosts.drawRoot
+		sec.route = func(c *ui.Context, r *ui.Route) bool {
+			if !r.Match("/host/{id}") {
+				return false
+			}
+			r.Title("Host")
+			s.hosts.drawDetail(c, r.Param("id"))
+			return true
 		}
 	case Vault:
 		sec.intro = "Browse the Vault on the phone."
@@ -144,6 +198,18 @@ func (s *Shell) newSection(i Section) *section {
 
 func staticSummary(text string) func() string {
 	return func() string { return text }
+}
+
+// pageContentWidth is the width a padded page body may use. Width is the
+// content box, so the horizontal padding comes out of the window's width; a
+// full-window column would otherwise lay its right edge past the screen.
+func pageContentWidth(c *ui.Context) float32 {
+	width, _ := c.Size()
+	const padding = 32
+	if width > padding {
+		return width - padding
+	}
+	return width
 }
 
 // Info returns a section's title and symbol.
@@ -170,10 +236,56 @@ func (s *Shell) Select(sec Section) {
 	}
 }
 
-// Load reads the Vault lists the shell shows. The phone root calls it before
-// the first frame; a failure is recorded on the Vault pages as their error
-// state, so the shell still opens. It is safe to call again to refresh.
-func (s *Shell) Load(ctx context.Context) error { return s.vault.load(ctx) }
+// Load reads the Vault lists the shell shows and the Hosts it can open. The
+// phone root calls it before the first frame; a failure is recorded on the
+// pages as their error state, so the shell still opens. It is safe to call
+// again to refresh.
+func (s *Shell) Load(ctx context.Context) error {
+	vaultErr := s.vault.load(ctx)
+	hostErr := s.hosts.load(ctx)
+	if hostErr != nil {
+		return hostErr
+	}
+	return vaultErr
+}
+
+// Close ends every open Session. The phone root calls it on quit.
+func (s *Shell) Close() { s.sessions.closeAll() }
+
+// openHost opens one Host as a Session Tab, switches to Sessions, and pushes
+// the terminal page there. The Hosts section's router is untouched, so
+// selecting Hosts again returns to the page the user left.
+func (s *Shell) openHost(host domainvault.Host) {
+	tab := s.sessions.begin(host)
+	s.Select(Sessions)
+	s.sections[Sessions].router.Push("/session/" + tab.id)
+	s.launchTab(tab)
+}
+
+// launchTab opens one Tab off the UI thread. The Session service dials, so the
+// frame that handled the tap is not held while a network connect runs. The
+// terminal page polls until the outcome is recorded.
+func (s *Shell) launchTab(tab *phoneTab) {
+	opener := s.sessions.opener
+	if opener == nil {
+		s.sessions.finish(tab.id, nil, errNoOpener)
+		return
+	}
+	host := tab.host
+	go func() {
+		handle, err := opener.OpenHost(context.Background(), host)
+		s.sessions.finish(tab.id, handle, err)
+	}()
+}
+
+// closeSession ends one Tab and leaves its page if that page is showing.
+func (s *Shell) closeSession(id string) {
+	router := s.sections[Sessions].router
+	if router.Path() == "/session/"+id {
+		router.Back()
+	}
+	s.sessions.remove(id)
+}
 
 // View returns the view of one section, for the window of its tab. A section
 // is its own view rather than the shell's so that each tab's window renders
@@ -213,6 +325,9 @@ func (sec *section) page(c *ui.Context, r *ui.Route) {
 	case r.Match("/"):
 		sec.root(c)
 	default:
+		if sec.route != nil && sec.route(c, r) {
+			return
+		}
 		for _, p := range sec.pages {
 			if r.Match(p.path) {
 				r.Title(p.title)
@@ -239,6 +354,10 @@ func (sec *section) drawPage(c *ui.Context, p page) {
 // heading comes from the navigation bar (the system's on phones, the view's
 // own elsewhere), so the page itself starts with the section's introduction.
 func (sec *section) root(c *ui.Context) {
+	if sec.rootDraw != nil {
+		sec.rootDraw(c)
+		return
+	}
 	t := c.Theme()
 	ui.Scroll(c).Fill().Children(func() {
 		ui.Column(c).FillWidth().Padding(16).Gap(10).Children(func() {

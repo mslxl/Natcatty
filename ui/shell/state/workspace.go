@@ -201,7 +201,7 @@ func newRuntimeID(prefix string) string {
 
 // newETResumeKey returns the opaque, non-secret locator for a resumable ET
 // Session's saved credentials. Every Pane owns a distinct key.
-func newETResumeKey() string { return newRuntimeID("et-resume-") }
+func newETResumeKey() string { return appsession.NewETResumeKey() }
 
 // withFreshResumeKey gives a duplicated or split ET Session its own resume
 // credentials. Copying the source's key would make two Panes reattach the same
@@ -2612,7 +2612,7 @@ func (s *State) openDescriptor(ctx context.Context,
 		spec.Telnet = &telnetConfig
 		// Telnet keeps the manual Reconnect action but does not retry a
 		// dropped socket automatically.
-		spec.Reconnect = telnetReconnectPolicy()
+		spec.Reconnect = appsession.TelnetReconnectPolicy()
 		// The descriptor still names the Host, so the resolver can read its
 		// saved login even when the Vault lookup above found nothing new.
 		s.attachAutoLogin(ctx, &spec, domainvault.Host{

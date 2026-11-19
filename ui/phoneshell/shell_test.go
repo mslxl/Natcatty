@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
 func texts(t *testing.T, tt *ui.Tester) []string {
@@ -35,7 +37,19 @@ func TestSectionsRouteAndPop(t *testing.T) {
 		}
 		pages := shell.sections[sec].pages
 		if len(pages) == 0 {
-			t.Fatalf("section %d has no pages", sec)
+			// Sessions and Hosts draw their roots directly instead of listing
+			// placeholder pages; each has its own test for the real surface.
+			switch sec {
+			case Sessions:
+				if !hasText(tt, "No sessions yet. Open a Host from the Hosts tab.") {
+					t.Fatalf("Sessions root lacks its empty state; texts: %v", texts(t, tt))
+				}
+			case Hosts:
+				if !hasText(tt, "The Vault is not available on this device.") {
+					t.Fatalf("Hosts root lacks its unavailable state; texts: %v", texts(t, tt))
+				}
+			}
+			continue
 		}
 		for _, p := range pages {
 			if err := tt.Click(p.title); err != nil {
@@ -71,18 +85,26 @@ func TestSectionsRouteAndPop(t *testing.T) {
 // shell's selected section, as the tab bar switches it: a deep page in Hosts
 // stays deep through a detour to Sessions, while Sessions is untouched.
 func TestSwitchingSectionsReturnsWhereTheUserLeftOff(t *testing.T) {
-	shell := New()
+	shell := New(WithHosts(&fakeHostStore{hosts: []domainvault.Host{{
+		ID: "prod", Label: "prod box", Hostname: "prod.example.com", Port: 22,
+		Protocol: domainvault.ProtocolSSH,
+	}}}))
+	if err := shell.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
 	tt := ui.NewTester(func(c *ui.Context) {
 		shell.View(shell.Selected())(c)
 	}, 390, 844)
 
 	shell.Select(Hosts)
 	tt.Frame()
-	if err := tt.Click("New host"); err != nil {
-		t.Fatalf("click New host in Hosts: %v", err)
+	if err := tt.Click("Details for prod box"); err != nil {
+		t.Fatalf("open the Host's detail page: %v", err)
 	}
-	if got := shell.Router(Hosts).Path(); got != "/host/new" {
-		t.Fatalf("Hosts path = %q, want /host/new", got)
+	tt.Advance(600 * time.Millisecond)
+	tt.Frame()
+	if got := shell.Router(Hosts).Path(); got != "/host/prod" {
+		t.Fatalf("Hosts path = %q, want /host/prod", got)
 	}
 
 	shell.Select(Sessions)
@@ -96,11 +118,11 @@ func TestSwitchingSectionsReturnsWhereTheUserLeftOff(t *testing.T) {
 
 	shell.Select(Hosts)
 	tt.Frame()
-	if !hasText(tt, "New host is a placeholder page.") {
-		t.Fatalf("Hosts did not return to /host/new; texts: %v", texts(t, tt))
+	if !hasText(tt, "Endpoint") {
+		t.Fatalf("Hosts did not return to /host/prod; texts: %v", texts(t, tt))
 	}
-	if got := shell.Router(Hosts).Path(); got != "/host/new" {
-		t.Fatalf("Hosts path after returning = %q, want /host/new", got)
+	if got := shell.Router(Hosts).Path(); got != "/host/prod" {
+		t.Fatalf("Hosts path after returning = %q, want /host/prod", got)
 	}
 }
 

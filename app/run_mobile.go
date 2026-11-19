@@ -44,11 +44,15 @@ func Run() error {
 	log.Printf("natcatty: libghostty-vt %s", v)
 
 	ctx := context.Background()
-	shell, database, err := newPhoneShell(ctx)
+	shell, database, sessions, err := newPhoneShell(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = database.Close() }()
+	defer func() {
+		shell.Close()
+		sessions.Close()
+		_ = database.Close()
+	}()
 	var showErr error
 	mygo.App.WhenReady(func() {
 		// Load before the first frame. A read failure is the Vault pages'
@@ -71,16 +75,17 @@ func Run() error {
 }
 
 // newPhoneShell opens the device's Vault and settings stores and wires the
-// shell to them. The database is returned so Run can close it.
-func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, error) {
+// shell to them. The database and the Session runtime are returned so Run can
+// close them.
+func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phoneSessionRuntime, error) {
 	userData, err := mygo.App.Path(mygo.PathUserData)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	database, err := store.Open(ctx, filepath.Join(userData, "natcatty.db"))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// The field-secret store protects key material at rest on the desktop.
@@ -103,17 +108,23 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, error)
 	preferences := apppreferences.NewService(
 		store.OpenPreferences(filepath.Join(userData, "preferences.json")))
 	if err := preferences.Load(ctx); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	terminal := appterminalsettings.NewService(
 		store.OpenTerminalSettings(filepath.Join(userData, "terminal-settings.json")))
 	if err := terminal.Load(ctx); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+
+	// The phone registers only remote transports: SSH, Telnet, Mosh, and ET.
+	// Local and serial shells are not constructed here at all.
+	sessions := newPhoneSessionRuntime(vault, database, userData)
 
 	shell := phoneshell.New(
 		phoneshell.WithVault(vault),
+		phoneshell.WithHosts(vault),
+		phoneshell.WithSessionOpener(sessions),
 		phoneshell.WithSettings(phoneshell.NewSettingsService(preferences, terminal)),
 	)
-	return shell, database, nil
+	return shell, database, sessions, nil
 }
