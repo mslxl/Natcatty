@@ -38,6 +38,11 @@ func View(c *ui.Context, t *Terminal) ui.Element {
 	// A terminal's grid is left to right in a right-to-left interface too.
 	e := ui.Box(c).Direction(ui.LeftToRight).Focusable().FocusRing(false).Clip().Label("Terminal")
 	v.build(c, e)
+	// The client comes before the cursor: HandleTextInput asks for the text
+	// cursor, which would otherwise overwrite the shape a program set (OSC
+	// 22). It is the view pointer, not one per frame: a new client each
+	// frame would release and unmark the composition every frame.
+	e.HandleTextInput(v)
 	cursor := v.pointerAt
 	if v.hover.on() {
 		cursor = ui.CursorPointer
@@ -629,6 +634,15 @@ func (v *view) input(ev ui.InputEvent) bool {
 			v.paste()
 		case "selectAll":
 			v.selectAll()
+		case "delete":
+			// The Edit menu's Delete, and an input method's delete
+			// backward: within a composition it edits the composition,
+			// never the shell.
+			if v.preedit != "" {
+				v.deletePreedit(true)
+			} else {
+				v.sendKey(vt.KeyEvent{Action: vt.KeyPress, Key: vt.KeyBackspace})
+			}
 		default:
 			return false
 		}
@@ -677,6 +691,12 @@ func (v *view) keyDown(ev ui.InputEvent) bool {
 	if ev.Key == ui.KeyUnknown {
 		return false // a modifier on its own, or a key of no name
 	}
+	if v.preedit != "" && (ev.Key == ui.KeyBackspace || ev.Key == ui.KeyDelete) {
+		// A host that lets an erase key through while an input method
+		// composes means it for the composition, not for the shell.
+		v.deletePreedit(ev.Key == ui.KeyBackspace)
+		return true
+	}
 	t := v.t
 	if on := t.opts.OnKey; on != nil && on(ev.Mods, ev.Key) {
 		k, _ := vtKey(ev.Key)
@@ -704,6 +724,22 @@ func (v *view) keyDown(ev ui.InputEvent) bool {
 	// AltGr types text on Windows, where it is Control and Alt.
 	altGr := goos == "windows" && mods&(ui.Ctrl|ui.Alt) == ui.Ctrl|ui.Alt
 	if typesText(key) && (mods&(ui.Ctrl|ui.Alt) == 0 || mods&ui.Alt != 0 && !altMeta && mods&ui.Ctrl == 0 || altGr) {
+		if ev.Repeat && mac {
+			// macOS stops repeating a held key for a text client: it
+			// sends the repeat here and then routes it through the input
+			// method, whose press-and-hold menu types nothing repeated.
+			// Send the repeat ourselves, and drop the text that may still
+			// come (sent); the cost is that a picked accent types nothing.
+			text := string(unshifted)
+			var consumed vt.Mods
+			if mods&ui.Shift != 0 {
+				text = shiftedText(key, unshifted)
+				consumed = vtMods(mods & (ui.Shift | ui.Alt))
+			}
+			v.pending = &pendingKey{key: k, sent: true}
+			v.sendKey(vt.KeyEvent{Action: vt.KeyRepeat, Key: k, Mods: vtMods(mods), Consumed: consumed, Text: text, Unshifted: unshifted})
+			return true
+		}
 		// The text it types comes next.
 		v.pending = &pendingKey{key: k, unshifted: unshifted, mods: mods, repeat: ev.Repeat}
 		return true
@@ -855,7 +891,7 @@ func (v *view) keyUp(ev ui.InputEvent) bool {
 
 // typed sends text typed or committed by an input method.
 func (v *view) typed(text string) {
-	v.preedit = ""
+	v.preedit, v.preeditCaret = "", 0
 	p := v.pending
 	v.pending = nil
 	if p != nil && (p.taken || p.sent) {
@@ -891,6 +927,12 @@ func (v *view) typed(text string) {
 	if r != p.unshifted {
 		// Shift or Option made the character.
 		consumed = vtMods(mods & (ui.Shift | ui.Alt))
+	}
+	if p.key == vt.KeyUnidentified {
+		// Text no key maps to, as a single CJK rune: the encoder has no
+		// key to put it on.
+		v.sendText(text)
+		return
 	}
 	action := vt.KeyPress
 	if p.repeat {
