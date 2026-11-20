@@ -63,9 +63,19 @@ func Run() error {
 			mygo.App.Quit()
 			return
 		}
+		// The link that launched the app may have arrived before the Host
+		// list was readable. Ready applies it now, after Load and Show, so it
+		// matches against loaded Hosts and can navigate a shown shell.
+		shell.Ready()
 		// A natcatty_smoke build opens the terminal diagnostic itself, so
 		// the simulator job can grep the echo result without a UI driver.
 		smokeStart(shell)
+	})
+	// A link from another app reaches the shell through the same handler as
+	// the launch URL. Registering before Run makes the started-with URL arrive
+	// too; before Ready the shell buffers it.
+	mygo.App.OnOpenURL(func(raw string) {
+		_ = shell.HandleDeepLink(raw)
 	})
 	// Leaving the foreground releases the terminal view and persists the
 	// Tabs; returning resumes or reconnects the visible Session. Registering
@@ -138,6 +148,10 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 		phoneshell.WithVault(vault),
 		phoneshell.WithHosts(vault),
 		phoneshell.WithSessionOpener(sessions),
+		// A deep link for an endpoint the Vault does not have asks to create
+		// that Host. The shared Vault service writes the record, so the new
+		// Host is the same one the desktop lists.
+		phoneshell.WithHostCreator(vault),
 		phoneshell.WithPrompts(prompts),
 		phoneshell.WithSettings(phoneshell.NewSettingsService(preferences, terminal)),
 		phoneshell.WithHistorySync(history),

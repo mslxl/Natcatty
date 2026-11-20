@@ -916,6 +916,24 @@ func (t *sessionTabs) find(id string) *phoneTab {
 	return nil
 }
 
+// tabForHost returns the identity of the open Tab already addressing one saved
+// Host. A failed open is not an open Session, so it is skipped: a link for the
+// same Host starts a fresh attempt instead of selecting an error page. The
+// caller uses this to select an existing Tab rather than stacking a duplicate.
+func (t *sessionTabs) tabForHost(id domainmodel.HostID) (string, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, tab := range t.tabs {
+		if tab.status == tabFailed {
+			continue
+		}
+		if tab.host.ID == id {
+			return tab.id, true
+		}
+	}
+	return "", false
+}
+
 // drawRoot lists the open Tabs. Tapping one pushes its terminal page.
 func (t *sessionTabs) drawRoot(c *ui.Context) {
 	width := pageContentWidth(c)

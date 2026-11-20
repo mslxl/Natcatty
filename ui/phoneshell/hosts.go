@@ -38,12 +38,23 @@ const (
 // the connect action.
 type hostPages struct {
 	store HostStore
+	// create writes a Host the create form asked for. A Shell without it still
+	// opens the form but reports that this build cannot create Hosts.
+	create HostCreator
 	// open opens a Host Session. The Shell sets it so a row tap switches to
 	// Sessions and pushes the terminal page there.
 	open func(domainvault.Host)
 	// details pushes one Host's detail page on the Hosts section's own
 	// router. The Shell sets it, because the section owns the router.
 	details func(domainvault.Host)
+	// created runs after the create form succeeds. The Shell sets it to move
+	// the page to the new Host.
+	created func(domainvault.Host)
+	// form is the prefilled draft a deep link asked for, or nil when no
+	// create form is open.
+	form *hostForm
+	// formProblem is the create form's inline error.
+	formProblem string
 
 	status  hostsStatus
 	problem string
@@ -284,4 +295,87 @@ func protocolOf(host domainvault.Host) domainvault.Protocol {
 		return domainvault.ProtocolSSH
 	}
 	return host.Protocol
+}
+
+// drawCreate renders the form a deep link asked for when no saved Host matches
+// it. The endpoint the link named is prefilled and the page names it, so the
+// user knows which link they are acting on. Creating the Host moves to its
+// page, where Connect is one tap away.
+func (h *hostPages) drawCreate(c *ui.Context, cancel func()) {
+	width := pageContentWidth(c)
+	ui.Scroll(c).Fill().Children(func() {
+		ui.Column(c).Width(width).Padding(16).Gap(12).Children(func() {
+			if h.form == nil {
+				kit.EmptyHint(c, "This link no longer needs a new Host.")
+				if kit.GhostButton(c, icons.X, "Back to Hosts").Clicked() && cancel != nil {
+					cancel()
+				}
+				return
+			}
+			kit.SectionBar(c, "New Host", nil)
+			kit.EmptyHint(c, "No saved Host matches "+h.form.endpoint()+". Create one to connect.")
+			if h.formProblem != "" {
+				kit.Notice(c, icons.TriangleAlert, c.Theme().Danger, h.formProblem, nil)
+			}
+			kit.FormRow(c, "Label", func() {
+				ui.TextInput(c, &h.form.label).Placeholder("A name you recognize").FillWidth()
+			})
+			kit.FormRow(c, "Hostname", func() {
+				ui.TextInput(c, &h.form.hostname).Placeholder("host.example.com").FillWidth()
+			})
+			kit.FormRow(c, "Port", func() {
+				ui.TextInput(c, &h.form.port).Placeholder("22").FillWidth()
+			})
+			kit.FormRow(c, "Username", func() {
+				ui.TextInput(c, &h.form.username).Placeholder("user").FillWidth()
+			})
+			if kit.PrimaryButton(c, "", "Create Host").Clicked() {
+				h.submitCreate()
+			}
+			if kit.SecondaryButton(c, "", "Cancel").Clicked() && cancel != nil {
+				cancel()
+			}
+		})
+	})
+}
+
+// submitCreate validates the form and writes the Host through the Vault. A
+// failure stays on the form with an actionable reason, so the user can correct
+// the address or retry instead of losing what they entered.
+func (h *hostPages) submitCreate() {
+	if h.form == nil {
+		return
+	}
+	draft, err := h.form.draft()
+	if err != nil {
+		h.formProblem = err.Error()
+		return
+	}
+	if h.create == nil {
+		h.formProblem = "This build cannot create Hosts."
+		return
+	}
+	host, err := h.create.Create(context.Background(), draft)
+	if err != nil {
+		h.formProblem = createProblem(err)
+		return
+	}
+	h.form = nil
+	h.formProblem = ""
+	if h.created != nil {
+		h.created(host)
+	}
+}
+
+// remember adds or replaces one Host in the loaded list, so a newly created
+// Host is found by the page that follows it and by a repeat deep link without
+// a full reload.
+func (h *hostPages) remember(host domainvault.Host) {
+	for i, existing := range h.hosts {
+		if existing.ID == host.ID {
+			h.hosts[i] = host
+			return
+		}
+	}
+	h.hosts = append(h.hosts, host)
 }

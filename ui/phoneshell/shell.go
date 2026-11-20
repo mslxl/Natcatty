@@ -17,6 +17,8 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
 )
 
 // Section identifies one of the phone's four navigation sections.
@@ -76,6 +78,10 @@ type section struct {
 	// before runs before the section draws a frame. Every section uses the
 	// same hook — the Shell's lifecycle rule — so navigation cannot bypass it.
 	before func()
+	// banner draws the shell's cross-section message, such as a rejected deep
+	// link. It runs inside whichever section is showing, so a problem never
+	// moves the user to another page to read it.
+	banner func(c *ui.Context)
 }
 
 // Shell is the four sections of the phone app. Construct it with New; its
@@ -95,6 +101,15 @@ type Shell struct {
 	// view); a frame that still arrives must not reattach it before Foreground
 	// resumes the Session deliberately.
 	backgrounded bool
+	// ready reports that Load and Show completed. A deep link that arrives
+	// before then is buffered, because matching against an unloaded Host list
+	// would offer to create a Host that already exists.
+	ready bool
+	// pendingLinks are the URLs delivered while the shell was starting.
+	pendingLinks []string
+	// deepLinkProblem is the inline message a rejected link leaves. Every
+	// section draws it; a successful link clears it.
+	deepLinkProblem string
 }
 
 // Option customizes a Shell. The composition root passes the shared Vault
@@ -167,6 +182,7 @@ func New(opts ...Option) *Shell {
 	s.hosts.details = func(host domainvault.Host) {
 		s.sections[Hosts].router.Push("/host/" + string(host.ID))
 	}
+	s.hosts.created = s.finishCreatedHost
 	s.sessions.launch = s.launchTab
 	s.sessions.show = func(id string) {
 		s.sections[Sessions].router.Push("/session/" + id)
@@ -218,7 +234,7 @@ func (s *Shell) visibleSession() string {
 }
 
 func (s *Shell) newSection(i Section) *section {
-	sec := &section{info: infos[i], router: ui.NewRouter("/"), before: s.syncLiveView}
+	sec := &section{info: infos[i], router: ui.NewRouter("/"), before: s.syncLiveView, banner: s.drawDeepLinkNotice}
 	switch i {
 	case Sessions:
 		sec.rootDraw = s.sessions.drawRoot
@@ -237,6 +253,13 @@ func (s *Shell) newSection(i Section) *section {
 	case Hosts:
 		sec.rootDraw = s.hosts.drawRoot
 		sec.route = func(c *ui.Context, r *ui.Route) bool {
+			// The fixed path is tested before the {id} route, which would
+			// otherwise read "new" as a Host identity.
+			if r.Match(createHostPath) {
+				r.Title("New Host")
+				s.hosts.drawCreate(c, s.cancelCreateHost)
+				return true
+			}
 			if !r.Match("/host/{id}") {
 				return false
 			}
@@ -436,7 +459,26 @@ func (sec *section) view(c *ui.Context) {
 				ui.Text(c, sec.router.Title()).Bold()
 			})
 		}
+		if sec.banner != nil {
+			sec.banner(c)
+		}
 		sec.router.View(c, func(r *ui.Route) { sec.page(c, r) })
+	})
+}
+
+// drawDeepLinkNotice shows a rejected link above the current page. It is drawn
+// by every section, so the message follows the user without navigation; the
+// dismiss action clears it until the next rejected link.
+func (s *Shell) drawDeepLinkNotice(c *ui.Context) {
+	if s.deepLinkProblem == "" {
+		return
+	}
+	ui.Box(c).FillWidth().Padding(8, 12).Children(func() {
+		kit.Notice(c, icons.TriangleAlert, c.Theme().Danger, s.deepLinkProblem, func() {
+			if kit.GhostButton(c, icons.X, "Dismiss").Clicked() {
+				s.deepLinkProblem = ""
+			}
+		})
 	})
 }
 

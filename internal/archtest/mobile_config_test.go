@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/mslxl/natcatty/internal/testutil"
@@ -43,5 +44,36 @@ func TestMobileConfigurationDeclaresMinimums(t *testing.T) {
 	}
 	if got := *config.Android.MinSdk; got != 26 {
 		t.Errorf("android.minSdk = %d, want 26 (Android 8.0)", got)
+	}
+}
+
+// TestMobileConfigurationRegistersSSHDeepLinks pins the committed registration
+// of the ssh:// handler under the single application identifier. MyGo v0.10.0
+// turns urlSchemes into the iOS bundle's CFBundleURLTypes (CFBundleURLName is
+// the identifier) and into a VIEW intent-filter for the same scheme in the
+// Android manifest, so these two committed values are the handler registration
+// on both platforms. Removing either would make links open another app or no
+// app; the test makes that a visible edit.
+func TestMobileConfigurationRegistersSSHDeepLinks(t *testing.T) {
+	root := testutil.ModuleRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "mygo.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Identifier string   `json:"identifier"`
+		URLSchemes []string `json:"urlSchemes"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatalf("mygo.json: %v", err)
+	}
+
+	if config.Identifier != "com.mslxl.natcatty" {
+		t.Errorf("identifier = %q, want the single application identifier %q",
+			config.Identifier, "com.mslxl.natcatty")
+	}
+	if !slices.Contains(config.URLSchemes, "ssh") {
+		t.Errorf("urlSchemes = %v, want it to declare %q for ssh:// deep links",
+			config.URLSchemes, "ssh")
 	}
 }
