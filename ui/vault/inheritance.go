@@ -58,9 +58,9 @@ func hostX11SourceLine(c *ui.Context, s *vaultstate.State, m locales.Messages, t
 func hostJumpHostsField(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, protocol string) {
 	source, path, ids := s.HostJumpChainSource()
 	labels := strings.Join(s.JumpHostLabels(ids), ", ")
-	if labels == "" && protocol != string(domainvault.ProtocolSSH) {
-		// Only an SSH session can carry a jump chain, so another protocol
-		// shows the row only when a chain is actually resolved for it.
+	if labels == "" && !domainvault.Protocol(protocol).SupportsProxy() {
+		// A protocol whose route cannot run through SSH has no chain to show.
+		// Telnet does route through SSH jumps, so it keeps the row.
 		return
 	}
 	kit.FormRow(c, m.VaultHostJumpHosts(), func() {
