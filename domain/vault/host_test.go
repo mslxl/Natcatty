@@ -82,15 +82,21 @@ func TestNormalizeDraftDisablingX11DropsTheAcknowledgement(t *testing.T) {
 	}
 }
 
-func TestNormalizeDraftRejectsX11OutsideSSH(t *testing.T) {
+func TestNormalizeDraftClearsX11OutsideSSH(t *testing.T) {
 	for _, protocol := range []Protocol{ProtocolLocal, ProtocolTelnet} {
-		_, err := NormalizeDraft(Draft{
+		draft, err := NormalizeDraft(Draft{
 			Label: "web", Hostname: "example.com", Protocol: protocol,
 			X11Forwarding: true, X11WarningAcknowledged: true,
 		})
-		var invalid *ValidationError
-		if !errors.As(err, &invalid) || invalid.Field != FieldX11 || invalid.Rule != RuleUnsupported {
-			t.Errorf("%s: error = %v, want unsupported X11", protocol, err)
+		if err != nil {
+			t.Errorf("%s: NormalizeDraft: %v", protocol, err)
+			continue
+		}
+		// X11 is forwarded over the target's SSH connection, which these
+		// protocols do not have. The hidden preference is cleared instead of
+		// making an imported record impossible to save.
+		if draft.X11Forwarding || draft.X11WarningAcknowledged {
+			t.Errorf("%s: draft = %+v, want X11 cleared", protocol, draft)
 		}
 	}
 }
@@ -554,11 +560,16 @@ func TestNormalizeDraftDefaultsAndValidatesTheFileProtocol(t *testing.T) {
 		t.Fatalf("sudo with SFTP: %v", err)
 	}
 
-	base = Draft{Label: "web", Hostname: "example.com", Protocol: ProtocolTelnet,
-		SFTPFileProtocol: FileProtocolSFTP}
-	assertNormalizeValidation(t, base, FieldFileProtocol, RuleUnsupported)
-	base = Draft{Label: "web", Hostname: "example.com", Protocol: ProtocolTelnet, SFTPSudo: true}
-	assertNormalizeValidation(t, base, FieldSFTPSudo, RuleUnsupported)
+	// A Telnet target has no SFTP subsystem. NormalizeDraft clears the
+	// hidden preference instead of making an imported record unsaveable.
+	telnet, err := NormalizeDraft(Draft{Label: "web", Hostname: "example.com", Protocol: ProtocolTelnet,
+		SFTPFileProtocol: FileProtocolSFTP, SFTPSudo: true})
+	if err != nil {
+		t.Fatalf("NormalizeDraft Telnet file protocol: %v", err)
+	}
+	if telnet.SFTPFileProtocol != FileProtocolAuto || telnet.SFTPSudo {
+		t.Fatalf("Telnet draft = %+v, want the file-transfer preference cleared", telnet)
+	}
 
 	base = Draft{Label: "web", Hostname: "example.com", Protocol: ProtocolSSH,
 		SFTPFileProtocol: "ftp"}
@@ -873,5 +884,47 @@ func TestNormalizeDraftClearsTOTPForNonSSHProtocols(t *testing.T) {
 	}
 	if draft.TOTP != "" || draft.ClearTOTP {
 		t.Fatalf("non-SSH draft kept TOTP=%q clear=%v", draft.TOTP, draft.ClearTOTP)
+	}
+}
+
+// TestNormalizeDraftKeepsTheRouteForTelnetAndDropsItForLocal pins the split
+// between route fields and target-side SSH features: an SSH jump chain, a
+// proxy, and algorithm overrides describe how to reach the Host, so a Telnet
+// Host keeps them; a Local shell dials nothing, so they are cleared.
+func TestNormalizeDraftKeepsTheRouteForTelnetAndDropsItForLocal(t *testing.T) {
+	route := func(protocol Protocol) Draft {
+		return Draft{
+			Label: "console", Hostname: "console.local", Protocol: protocol,
+			HostChain:        &HostChain{HostIDs: []model.HostID{"bastion"}},
+			Proxy:            &ProxyConfig{Type: "socks5", Host: "proxy.local", Port: 1080},
+			ProxyProfileID:   "proxy-1",
+			NetworkProfileID: "net-1",
+			LegacyAlgorithms: true,
+			SkipEcdsaHostKey: true,
+			Algorithms:       &AlgorithmOverrides{Ciphers: []string{"aes128-ctr"}},
+		}
+	}
+
+	telnet, err := NormalizeDraft(route(ProtocolTelnet))
+	if err != nil {
+		t.Fatalf("Telnet NormalizeDraft: %v", err)
+	}
+	if telnet.HostChain == nil || telnet.Proxy == nil ||
+		telnet.ProxyProfileID != "proxy-1" || telnet.NetworkProfileID != "net-1" ||
+		!telnet.LegacyAlgorithms || !telnet.SkipEcdsaHostKey || telnet.Algorithms == nil {
+		t.Fatalf("Telnet route = chain %+v, proxy %+v, profile %q, network %q, algorithms %v/%v/%+v",
+			telnet.HostChain, telnet.Proxy, telnet.ProxyProfileID, telnet.NetworkProfileID,
+			telnet.LegacyAlgorithms, telnet.SkipEcdsaHostKey, telnet.Algorithms)
+	}
+
+	local, err := NormalizeDraft(route(ProtocolLocal))
+	if err != nil {
+		t.Fatalf("Local NormalizeDraft: %v", err)
+	}
+	if local.HostChain != nil || local.Proxy != nil ||
+		local.ProxyProfileID != "" || local.NetworkProfileID != "" ||
+		local.LegacyAlgorithms || local.SkipEcdsaHostKey || local.Algorithms != nil {
+		t.Fatalf("Local kept a route it cannot use: chain %+v, proxy %+v, profile %q, network %q",
+			local.HostChain, local.Proxy, local.ProxyProfileID, local.NetworkProfileID)
 	}
 }
