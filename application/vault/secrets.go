@@ -43,9 +43,12 @@ const (
 	EntityNetworkProfile = "network_profile"
 	EntityNetworkPeer    = "network_peer"
 
-	FieldPassword      = "password"
-	FieldPassphrase    = "passphrase"
-	FieldPrivateKey    = "private_key"
+	FieldPassword   = "password"
+	FieldPassphrase = "passphrase"
+	FieldPrivateKey = "private_key"
+	// FieldVNCPassword is a VNC Host's password. It is a separate slot from
+	// FieldPassword: VNC never reads, writes, or migrates the SSH password.
+	FieldVNCPassword   = "vnc_password"
 	FieldProxyPassword = "proxy_password"
 	// FieldTOTP stores a Host's canonical otpauth://totp URI. Like every other
 	// value here it is credential material: the URI embeds the shared secret.
@@ -204,6 +207,9 @@ func (s *Service) SetSecret(ctx context.Context, id model.HostID, field, value s
 	case FieldPassword:
 		host.HasPassword = value != ""
 		changed = true
+	case FieldVNCPassword:
+		host.HasVNCPassword = value != ""
+		changed = true
 	case FieldProxyPassword:
 		if host.Proxy != nil {
 			host.Proxy.HasPassword = value != ""
@@ -285,7 +291,8 @@ func (s *Service) UseSessionSecrets(ctx context.Context) error {
 
 // hostField accepts the Host fields the Vault encrypts.
 func hostField(field string) bool {
-	return field == FieldPassword || field == FieldPassphrase || field == FieldProxyPassword || field == FieldTOTP
+	return field == FieldPassword || field == FieldPassphrase || field == FieldVNCPassword ||
+		field == FieldProxyPassword || field == FieldTOTP
 }
 
 func invalidField(field string) error {

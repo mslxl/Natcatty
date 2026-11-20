@@ -1244,6 +1244,53 @@ func secretProblem(c *ui.Context, s *vaultstate.State, t *ui.Theme) {
 	ui.Text(c, message).TextColor(uitheme.DangerText(t))
 }
 
+// plaintextProtocolName renders the protocol a plaintext warning names. The
+// display name is presentation only; whether the warning appears is the
+// descriptor capability.
+func plaintextProtocolName(protocol domainvault.Protocol) string {
+	switch protocol {
+	case domainvault.ProtocolVNC:
+		return "VNC"
+	case domainvault.ProtocolTelnet:
+		return "Telnet"
+	}
+	value := string(protocol)
+	if value == "" {
+		return value
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
+}
+
+// vncSection renders the persisted viewer defaults. View-only, scaling,
+// sharing, and the cursor are per-session toggles at connect time, but a Host
+// remembers the values a new Session starts from.
+func vncSection(c *ui.Context, form *vaultstate.Form, m locales.Messages) {
+	ui.Text(c, m.VaultHostVNC()).Bold()
+	fitLabels := []string{
+		m.VaultHostVNCFitFit(), m.VaultHostVNCFitOneToOne(), m.VaultHostVNCFitClip(),
+	}
+	fitModes := []string{
+		string(domainvault.VNCFit), string(domainvault.VNCOneToOne), string(domainvault.VNCClip),
+	}
+	fitLabel := optionLabel(fitLabels, fitModes, string(domainvault.NormalizeFitMode(domainvault.VNCFitMode(form.VNCFitMode))))
+	kit.FormRow(c, m.VaultHostVNCFitMode(), func() {
+		if ui.Select(c, &fitLabel, fitLabels).Width(200).Changed() {
+			form.VNCFitMode = optionValue(fitModes, fitLabels, fitLabel)
+		}
+	})
+	cursorLabels := []string{m.VaultHostVNCCursorLocal(), m.VaultHostVNCCursorServer()}
+	cursorModes := []string{string(domainvault.VNCCursorLocal), string(domainvault.VNCCursorServer)}
+	cursorLabel := optionLabel(cursorLabels, cursorModes,
+		string(domainvault.NormalizeCursorMode(domainvault.VNCCursorMode(form.VNCCursorMode))))
+	kit.FormRow(c, m.VaultHostVNCCursorMode(), func() {
+		if ui.Select(c, &cursorLabel, cursorLabels).Width(220).Changed() {
+			form.VNCCursorMode = optionValue(cursorModes, cursorLabels, cursorLabel)
+		}
+	})
+	ui.Checkbox(c, &form.VNCViewOnly, m.VaultHostVNCViewOnly())
+	ui.Checkbox(c, &form.VNCShared, m.VaultHostVNCShared())
+}
+
 // hostAvatarKind picks the avatar glyph for a Host's protocol.
 func hostAvatarKind(protocol domainvault.Protocol) kit.AvatarKind {
 	switch protocol {
@@ -1442,36 +1489,76 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				ui.TextInput(c, &form.Hostname).Placeholder("example.com")
 			})
 			ui.Row(c).Gap(8).Wrap().Children(func() {
-				portHint := ""
-				if placeholder := s.HostPortPlaceholder(); placeholder != "" {
-					portHint = m.VaultHostPortHint(placeholder)
-				}
-				portField := kit.FormRow(c, m.VaultHostPort(), func() {
-					// The hint follows the protocol and group selection, so a
-					// Telnet Host shows 23 rather than a hardcoded 22. A blank
-					// field preserves inheritance; the hint shows what a
-					// connection would use.
-					ui.TextInput(c, &form.Port).
-						Placeholder(s.HostPortPlaceholder()).Width(120)
-				})
-				if portHint != "" {
-					portField.Description(portHint)
+				if domainvault.Protocol(form.Protocol) == domainvault.ProtocolVNC {
+					// A VNC endpoint is entered as a display number or as the
+					// real TCP port. Both modes describe the same stored port.
+					kit.FormRow(c, m.VaultHostVNCInputMode(), func() {
+						// The Select writes its choice before the callback runs, so
+						// bind a local: the state setter needs the old mode to carry
+						// the endpoint across.
+						inputLabels := []string{m.VaultHostVNCInputDisplay(), m.VaultHostVNCInputPort()}
+						inputModes := []string{string(domainvault.VNCDisplayNumber), string(domainvault.VNCPort)}
+						inputLabel := optionLabel(inputLabels, inputModes,
+							string(domainvault.NormalizeDisplayMode(domainvault.VNCDisplayMode(form.VNCInputMode))))
+						if ui.Select(c, &inputLabel, inputLabels).Width(160).Changed() {
+							s.SetVNCInputMode(optionValue(inputModes, inputLabels, inputLabel))
+							c.Invalidate()
+						}
+					})
+					if form.VNCInputMode == string(domainvault.VNCPort) {
+						portHint := ""
+						if placeholder := s.HostPortPlaceholder(); placeholder != "" {
+							portHint = m.VaultHostPortHint(placeholder)
+						}
+						portField := kit.FormRow(c, m.VaultHostPort(), func() {
+							ui.TextInput(c, &form.Port).
+								Placeholder(s.HostPortPlaceholder()).Width(120)
+						})
+						if portHint != "" {
+							portField.Description(portHint)
+						}
+					} else {
+						kit.FormRow(c, m.VaultHostVNCDisplay(), func() {
+							ui.TextInput(c, &form.VNCDisplay).
+								Placeholder("0").Width(120)
+						}).Description(m.VaultHostPortHint(strconv.Itoa(domainvault.VNCDisplayBasePort)))
+					}
+				} else {
+					portHint := ""
+					if placeholder := s.HostPortPlaceholder(); placeholder != "" {
+						portHint = m.VaultHostPortHint(placeholder)
+					}
+					portField := kit.FormRow(c, m.VaultHostPort(), func() {
+						// The hint follows the protocol and group selection, so a
+						// Telnet Host shows 23 rather than a hardcoded 22. A blank
+						// field preserves inheritance; the hint shows what a
+						// connection would use.
+						ui.TextInput(c, &form.Port).
+							Placeholder(s.HostPortPlaceholder()).Width(120)
+					})
+					if portHint != "" {
+						portField.Description(portHint)
+					}
 				}
 				kit.FormRow(c, m.VaultHostUsername(), func() {
 					ui.TextInput(c, &form.Username).Placeholder("root").Width(200)
 				})
 				kit.FormRow(c, m.VaultHostProtocol(), func() {
-					changed := ui.Select(c, &form.Protocol, []string{
+					// The Select writes its choice before the callback runs, so
+					// bind a local: the state setter needs the old protocol to
+					// clear the settings that belonged to it.
+					protocol := form.Protocol
+					if ui.Select(c, &protocol, []string{
 						string(domainvault.ProtocolSSH),
 						string(domainvault.ProtocolMosh),
 						string(domainvault.ProtocolET),
 						string(domainvault.ProtocolTelnet),
+						string(domainvault.ProtocolVNC),
 						string(domainvault.ProtocolLocal),
-					}).Width(140).Changed()
-					if changed {
+					}).Width(140).Changed() {
 						// A hidden protocol-specific control must not keep a
 						// value Save would persist.
-						s.SetHostProtocol(form.Protocol)
+						s.SetHostProtocol(protocol)
 						c.Invalidate()
 					}
 				})
@@ -1491,18 +1578,36 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				// hold.
 				ui.TextArea(c, &form.StartupCommand).Height(120)
 			}).Description(m.VaultHostStartupCommandHint())
-			passwordHint := m.VaultHostPasswordHint()
-			if form.HasPassword {
-				passwordHint = m.VaultHostPasswordKeep()
+			if domainvault.Protocol(form.Protocol) == domainvault.ProtocolVNC {
+				// VNC has its own password slot. The SSH password control is
+				// hidden so the two credentials can never be confused or
+				// migrated into each other.
+				vncHint := m.VaultHostVNCPasswordHint()
+				if form.HasVNCPassword {
+					vncHint = m.VaultHostVNCPasswordKeep()
+				}
+				kit.FormRow(c, m.VaultHostVNCPassword(), func() {
+					ui.TextInput(c, &form.VNCPassword).Password()
+				}).Description(vncHint)
+			} else {
+				passwordHint := m.VaultHostPasswordHint()
+				if form.HasPassword {
+					passwordHint = m.VaultHostPasswordKeep()
+				}
+				kit.FormRow(c, m.VaultHostPassword(), func() {
+					// The input is plaintext only while the editor is open. It is
+					// never loaded back from storage and never rendered again.
+					ui.TextInput(c, &form.Password).Password()
+				}).Description(passwordHint)
 			}
-			kit.FormRow(c, m.VaultHostPassword(), func() {
-				// The input is plaintext only while the editor is open. It is
-				// never loaded back from storage and never rendered again.
-				ui.TextInput(c, &form.Password).Password()
-			}).Description(passwordHint)
-			if domainvault.Protocol(form.Protocol) == domainvault.ProtocolTelnet {
-				ui.Text(c, m.VaultHostTelnetPlaintextWarning()).
+			if domainvault.Protocol(form.Protocol).Plaintext() {
+				// The disclosure follows the descriptor capability shared with
+				// Telnet, so a future plaintext protocol inherits it.
+				ui.Text(c, m.VaultHostPlaintextWarning(plaintextProtocolName(domainvault.Protocol(form.Protocol)))).
 					FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
+			}
+			if domainvault.Protocol(form.Protocol) == domainvault.ProtocolVNC {
+				vncSection(c, form, m)
 			}
 
 			if domainvault.Protocol(form.Protocol).UsesSSHAuth() {
@@ -1829,9 +1934,10 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 					if ui.Select(c, &form.Protocol, []string{
 						string(domainvault.ProtocolSSH),
 						string(domainvault.ProtocolTelnet),
+						string(domainvault.ProtocolVNC),
 					}).Width(140).Changed() {
-						// Telnet does not authenticate over SSH; clear the
-						// defaults an invisible control selected.
+						// Telnet and VNC do not authenticate over SSH; clear
+						// the defaults an invisible control selected.
 						s.SetGroupProtocol(form.Protocol)
 						c.Invalidate()
 					}
@@ -2059,6 +2165,10 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultProblemSudoUnsupported()
 	case vaultstate.ProblemETPort:
 		return m.VaultProblemETPort()
+	case vaultstate.ProblemVNCDisplay:
+		return m.VaultProblemVncDisplay()
+	case vaultstate.ProblemVNCDisplayRange:
+		return m.VaultProblemVncDisplayRange()
 	case vaultstate.ProblemTOTP:
 		return m.VaultProblemTOTP()
 	case vaultstate.ProblemTOTPImage:

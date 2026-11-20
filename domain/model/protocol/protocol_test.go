@@ -20,7 +20,7 @@ func TestBuiltinsAreUniqueAndResolvable(t *testing.T) {
 			t.Fatalf("Resolve(%q) = %+v, %v; want %+v", descriptor.ID, resolved, ok, descriptor)
 		}
 	}
-	for _, id := range []ID{SSH, Telnet, Local, Mosh, ET} {
+	for _, id := range []ID{SSH, Telnet, VNC, Local, Mosh, ET} {
 		if !seen[id] {
 			t.Fatalf("built-in protocol %q is missing", id)
 		}
@@ -41,14 +41,18 @@ func TestCapabilities(t *testing.T) {
 		monitor   bool
 		proxy     bool
 		x11       bool
+		plaintext bool
 	}{
-		{SSH, TransportSSH, 22, true, true, true, true, true, true},
-		{Mosh, TransportMosh, 22, true, false, true, true, true, false},
-		{ET, TransportET, 22, true, false, true, true, true, false},
+		{SSH, TransportSSH, 22, true, true, true, true, true, true, false},
+		{Mosh, TransportMosh, 22, true, false, true, true, true, false, false},
+		{ET, TransportET, 22, true, false, true, true, true, false, false},
 		// The Telnet target has no SSH handshake or SSH application channel,
 		// but its route can still run through SSH jumps and a proxy.
-		{Telnet, TransportTelnet, 23, false, false, false, false, true, false},
-		{Local, TransportLocal, 0, false, false, false, false, false, false},
+		{Telnet, TransportTelnet, 23, false, false, false, false, true, false, true},
+		// VNC is a pixel stream: no SSH application channel, but the route can
+		// still run through SSH jumps and a proxy. Plain RFB is unencrypted.
+		{VNC, TransportVNC, 5900, false, false, false, false, true, false, true},
+		{Local, TransportLocal, 0, false, false, false, false, false, false, false},
 	}
 	for _, test := range tests {
 		descriptor, ok := Resolve(test.id)
@@ -62,10 +66,11 @@ func TestCapabilities(t *testing.T) {
 		got := []bool{
 			descriptor.SSHAuth, descriptor.FileTransfer,
 			descriptor.Forwarding, descriptor.Monitoring, descriptor.Proxy, descriptor.X11,
+			descriptor.Plaintext,
 		}
 		want := []bool{
 			test.sshAuth, test.file, test.forward,
-			test.monitor, test.proxy, test.x11,
+			test.monitor, test.proxy, test.x11, test.plaintext,
 		}
 		for i := range want {
 			if got[i] != want[i] {
@@ -85,7 +90,7 @@ func TestResolveRejectsUnknownIDs(t *testing.T) {
 }
 
 func TestHostAndGroupEligibility(t *testing.T) {
-	for _, id := range []ID{SSH, Telnet, Local, Mosh, ET} {
+	for _, id := range []ID{SSH, Telnet, VNC, Local, Mosh, ET} {
 		if !ValidHostID(id) {
 			t.Fatalf("ValidHostID(%q) = false, want a Host protocol", id)
 		}
@@ -95,7 +100,7 @@ func TestHostAndGroupEligibility(t *testing.T) {
 	}
 	// A Host Group may use the protocols that make sense as an inherited
 	// default; a blank value means the group sets none.
-	for _, id := range []ID{"", SSH, Telnet} {
+	for _, id := range []ID{"", SSH, Telnet, VNC} {
 		if !ValidGroupDefault(id) {
 			t.Fatalf("ValidGroupDefault(%q) = false", id)
 		}

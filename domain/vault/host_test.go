@@ -83,7 +83,7 @@ func TestNormalizeDraftDisablingX11DropsTheAcknowledgement(t *testing.T) {
 }
 
 func TestNormalizeDraftClearsX11OutsideSSH(t *testing.T) {
-	for _, protocol := range []Protocol{ProtocolLocal, ProtocolTelnet} {
+	for _, protocol := range []Protocol{ProtocolLocal, ProtocolTelnet, ProtocolVNC} {
 		draft, err := NormalizeDraft(Draft{
 			Label: "web", Hostname: "example.com", Protocol: protocol,
 			X11Forwarding: true, X11WarningAcknowledged: true,
@@ -140,6 +140,8 @@ func TestEffectivePortUsesTheHostThenTheProtocolDefault(t *testing.T) {
 		{"explicit SSH port wins", ProtocolSSH, 2222, 2222},
 		{"SSH default", ProtocolSSH, 0, 22},
 		{"telnet default", ProtocolTelnet, 0, 23},
+		{"vnc default", ProtocolVNC, 0, 5900},
+		{"vnc display port", ProtocolVNC, 5901, 5901},
 		{"local has no port", ProtocolLocal, 0, 0},
 	}
 	for _, test := range tests {
@@ -917,6 +919,17 @@ func TestNormalizeDraftKeepsTheRouteForTelnetAndDropsItForLocal(t *testing.T) {
 			telnet.LegacyAlgorithms, telnet.SkipEcdsaHostKey, telnet.Algorithms)
 	}
 
+	vnc, err := NormalizeDraft(route(ProtocolVNC))
+	if err != nil {
+		t.Fatalf("VNC NormalizeDraft: %v", err)
+	}
+	if vnc.HostChain == nil || vnc.Proxy == nil ||
+		vnc.ProxyProfileID != "proxy-1" || vnc.NetworkProfileID != "net-1" ||
+		!vnc.LegacyAlgorithms || !vnc.SkipEcdsaHostKey || vnc.Algorithms == nil {
+		t.Fatalf("VNC route = chain %+v, proxy %+v, profile %q, network %q",
+			vnc.HostChain, vnc.Proxy, vnc.ProxyProfileID, vnc.NetworkProfileID)
+	}
+
 	local, err := NormalizeDraft(route(ProtocolLocal))
 	if err != nil {
 		t.Fatalf("Local NormalizeDraft: %v", err)
@@ -926,5 +939,179 @@ func TestNormalizeDraftKeepsTheRouteForTelnetAndDropsItForLocal(t *testing.T) {
 		local.LegacyAlgorithms || local.SkipEcdsaHostKey || local.Algorithms != nil {
 		t.Fatalf("Local kept a route it cannot use: chain %+v, proxy %+v, profile %q, network %q",
 			local.HostChain, local.Proxy, local.ProxyProfileID, local.NetworkProfileID)
+	}
+}
+
+// TestNormalizeVNCDraftDefaultsTheConfiguration pins the viewer defaults a new
+// VNC Host starts from and proves the stored endpoint stays the real port.
+func TestNormalizeVNCDraftDefaultsTheConfiguration(t *testing.T) {
+	draft, err := NormalizeDraft(Draft{
+		Label: "desk", Hostname: "desk.local", Protocol: ProtocolVNC, Port: 5901,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if draft.Port != 5901 {
+		t.Fatalf("Port = %d, want the stored TCP port 5901", draft.Port)
+	}
+	if draft.VNC == nil {
+		t.Fatal("a VNC Host lost its configuration")
+	}
+	want := DefaultVNCConfig()
+	if *draft.VNC != want {
+		t.Fatalf("VNC = %+v, want defaults %+v", *draft.VNC, want)
+	}
+
+	// Unknown enum values from an older or hand-edited record fall back to
+	// their defaults, while an explicit Shared=false survives.
+	fallback, err := NormalizeDraft(Draft{
+		Label: "desk", Hostname: "desk.local", Protocol: ProtocolVNC,
+		VNC: &VNCConfig{DisplayMode: "unknown", FitMode: "", CursorMode: "", Shared: true},
+	})
+	if err != nil {
+		t.Fatalf("fallback NormalizeDraft: %v", err)
+	}
+	if *fallback.VNC != want {
+		t.Fatalf("VNC fallback = %+v, want defaults %+v", *fallback.VNC, want)
+	}
+	exclusive, err := NormalizeDraft(Draft{
+		Label: "desk", Hostname: "desk.local", Protocol: ProtocolVNC,
+		VNC: &VNCConfig{Shared: false},
+	})
+	if err != nil {
+		t.Fatalf("exclusive NormalizeDraft: %v", err)
+	}
+	if exclusive.VNC.Shared {
+		t.Fatal("an explicit Shared=false was replaced by the default")
+	}
+}
+
+// TestNormalizeDraftClearsVNCOutsideTheProtocol proves a hidden VNC section
+// leaves no configuration or password behind when the Host is saved with
+// another protocol, while the SSH password input is left alone.
+func TestNormalizeDraftClearsVNCOutsideTheProtocol(t *testing.T) {
+	draft, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com", Protocol: ProtocolSSH,
+		Password:    "alpha-pass",
+		VNCPassword: "beta-pass",
+		VNC:         &VNCConfig{DisplayMode: VNCPort, FitMode: VNCClip},
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if draft.VNC != nil || draft.VNCPassword != "" {
+		t.Fatalf("SSH draft kept VNC config %+v / password %q", draft.VNC, draft.VNCPassword)
+	}
+	if draft.Password != "alpha-pass" {
+		t.Fatalf("SSH password = %q, want it untouched", draft.Password)
+	}
+}
+
+// TestNormalizeVNCNeverAcceptsTheSSHPasswordSlot proves a switched form cannot
+// migrate its SSH password into a VNC Host; VNC uses only its own slot.
+func TestNormalizeVNCNeverAcceptsTheSSHPasswordSlot(t *testing.T) {
+	draft, err := NormalizeDraft(Draft{
+		Label: "desk", Hostname: "desk.local", Protocol: ProtocolVNC,
+		Password: "alpha-pass", VNCPassword: "beta-pass",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if draft.Password != "" {
+		t.Fatalf("VNC draft kept the SSH password %q", draft.Password)
+	}
+	if draft.VNCPassword != "beta-pass" {
+		t.Fatalf("VNC password = %q, want the dedicated input", draft.VNCPassword)
+	}
+}
+
+// TestNormalizeVNCRejectsAnOutOfRangeDisplayEndpoint pins the display rule:
+// display-number input maps to 5900-5999, while port input accepts any valid
+// TCP port.
+func TestNormalizeVNCRejectsAnOutOfRangeDisplayEndpoint(t *testing.T) {
+	for _, port := range []int{6000, 22, 5900 + VNCDisplayMax + 1} {
+		_, err := NormalizeDraft(Draft{
+			Label: "desk", Hostname: "desk.local", Protocol: ProtocolVNC, Port: port,
+			VNC: &VNCConfig{DisplayMode: VNCDisplayNumber},
+		})
+		var validation *ValidationError
+		if !errors.As(err, &validation) || validation.Field != FieldPort || validation.Rule != RuleOutOfRange {
+			t.Fatalf("port %d: error = %v, want FieldPort out of range", port, err)
+		}
+	}
+
+	// The same port is valid when the editor presents raw-port input.
+	portDraft, err := NormalizeDraft(Draft{
+		Label: "desk", Hostname: "desk.local", Protocol: ProtocolVNC, Port: 6000,
+		VNC: &VNCConfig{DisplayMode: VNCPort},
+	})
+	if err != nil {
+		t.Fatalf("port-mode NormalizeDraft: %v", err)
+	}
+	if portDraft.Port != 6000 {
+		t.Fatalf("port-mode Port = %d, want 6000", portDraft.Port)
+	}
+}
+
+// TestVNCVersionDisplayMapping pins the one editor rule both the state and
+// domain use to translate a display number.
+func TestVNCDisplayPortMapping(t *testing.T) {
+	for display := 0; display <= VNCDisplayMax; display++ {
+		port, ok := VNCPortForDisplay(display)
+		if !ok || port != VNCDisplayBasePort+display {
+			t.Fatalf("VNCPortForDisplay(%d) = %d, %v", display, port, ok)
+		}
+		back, ok := VNCDisplayForPort(port)
+		if !ok || back != display {
+			t.Fatalf("VNCDisplayForPort(%d) = %d, %v, want %d", port, back, ok, display)
+		}
+	}
+	if _, ok := VNCPortForDisplay(VNCDisplayMax + 1); ok {
+		t.Fatal("an out-of-range display resolved to a port")
+	}
+	if _, ok := VNCDisplayForPort(VNCDisplayBasePort + VNCDisplayMax + 1); ok {
+		t.Fatal("a port outside the display range resolved to a display")
+	}
+}
+
+// TestVNCHostIdentityIncludesTheProtocol proves a VNC Host and an SSH Host on
+// the same address remain distinct Vault entries.
+func TestVNCHostIdentityIncludesTheProtocol(t *testing.T) {
+	ssh := Host{Label: "desk", Hostname: "desk.local", Port: 5901, Protocol: ProtocolSSH}
+	vnc := Host{Label: "desk", Hostname: "desk.local", Port: 5901, Protocol: ProtocolVNC}
+	if ssh.MergeKey() == vnc.MergeKey() {
+		t.Fatalf("SSH and VNC merge keys are equal: %q", ssh.MergeKey())
+	}
+	if !strings.HasPrefix(ssh.MergeKey(), "ssh\x1f") {
+		t.Fatalf("SSH merge key = %q, want the protocol first", ssh.MergeKey())
+	}
+	if !strings.HasPrefix(vnc.MergeKey(), "vnc\x1f") {
+		t.Fatalf("VNC merge key = %q, want the protocol first", vnc.MergeKey())
+	}
+}
+
+// TestVNCHostValidateRefusesSSHOnlyFeatures proves a record that bypassed the
+// editor still fails closed for X11 and SFTP rather than carrying settings the
+// VNC transport can never apply.
+func TestVNCHostValidateRefusesSSHOnlyFeatures(t *testing.T) {
+	base := Host{
+		Label: "desk", Hostname: "desk.local", Port: 5901,
+		Protocol: ProtocolVNC, VNC: NormalizeVNCConfig(nil),
+	}
+
+	x11 := base
+	x11.X11Forwarding = true
+	x11.X11WarningAcknowledged = true
+	var validation *ValidationError
+	if err := x11.Validate(); !errors.As(err, &validation) ||
+		validation.Field != FieldX11 || validation.Rule != RuleUnsupported {
+		t.Fatalf("VNC X11 validation = %v, want FieldX11 unsupported", err)
+	}
+
+	sftp := base
+	sftp.SFTPSudo = true
+	if err := sftp.Validate(); !errors.As(err, &validation) ||
+		validation.Field != FieldSFTPSudo || validation.Rule != RuleUnsupported {
+		t.Fatalf("VNC SFTP validation = %v, want FieldSFTPSudo unsupported", err)
 	}
 }

@@ -651,3 +651,123 @@ func TestFailedSaveDoesNotDeleteAnUnchangedPassword(t *testing.T) {
 		t.Fatalf("proxy password after a failed save = %q, want it preserved", got)
 	}
 }
+
+// TestCreateHostStoresTheVNCPasswordInItsOwnSlot proves a VNC password never
+// uses the SSH password slot and the Host JSON keeps only a marker.
+func TestCreateHostStoresTheVNCPasswordInItsOwnSlot(t *testing.T) {
+	repo := &fakeHosts{}
+	secrets := newFakeSecrets()
+	service := newSecretService(t, repo, secrets)
+
+	host, err := service.Create(context.Background(), domainvault.Draft{
+		Hostname: "desk.local", Label: "desk", Port: 5901,
+		Protocol: domainvault.ProtocolVNC, VNCPassword: "vnc-alpha",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !host.HasVNCPassword {
+		t.Error("HasVNCPassword = false, want true")
+	}
+	if host.HasPassword {
+		t.Error("a VNC Host claims the SSH password marker")
+	}
+	if got := secrets.values[HostSecretRef(host.ID, FieldVNCPassword)]; got != "vnc-alpha" {
+		t.Errorf("VNC secret = %q, want the password", got)
+	}
+	if _, ok := secrets.values[HostSecretRef(host.ID, FieldPassword)]; ok {
+		t.Fatal("a VNC Host wrote the SSH password slot")
+	}
+	if host.VNC == nil || host.VNC.DisplayMode != domainvault.VNCDisplayNumber ||
+		host.VNC.FitMode != domainvault.VNCFit || !host.VNC.Shared ||
+		host.VNC.CursorMode != domainvault.VNCCursorLocal {
+		t.Fatalf("VNC config = %+v, want the defaults", host.VNC)
+	}
+
+	data, err := json.Marshal(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "vnc-alpha") {
+		t.Fatalf("Host JSON contains the VNC password: %s", data)
+	}
+}
+
+// TestVNCAndSSHPasswordsStayInSeparateSlots proves a protocol switch never
+// migrates or erases the other protocol's credential, and leaving VNC removes
+// only the VNC secret.
+func TestVNCAndSSHPasswordsStayInSeparateSlots(t *testing.T) {
+	repo := &fakeHosts{}
+	secrets := newFakeSecrets()
+	service := newSecretService(t, repo, secrets)
+	ctx := context.Background()
+
+	host, err := service.Create(ctx, domainvault.Draft{
+		Hostname: "example.com", Password: "ssh-alpha",
+	})
+	if err != nil {
+		t.Fatalf("Create SSH: %v", err)
+	}
+
+	updated, err := service.Update(ctx, host.ID, domainvault.Draft{
+		Hostname: "example.com", Protocol: domainvault.ProtocolVNC, VNCPassword: "vnc-beta",
+	})
+	if err != nil {
+		t.Fatalf("Update to VNC: %v", err)
+	}
+	if got := secrets.values[HostSecretRef(host.ID, FieldPassword)]; got != "ssh-alpha" {
+		t.Fatalf("SSH secret = %q, want it untouched", got)
+	}
+	if got := secrets.values[HostSecretRef(host.ID, FieldVNCPassword)]; got != "vnc-beta" {
+		t.Fatalf("VNC secret = %q, want the VNC password", got)
+	}
+	if !updated.HasPassword || !updated.HasVNCPassword {
+		t.Fatalf("markers = %+v, want both credentials", updated)
+	}
+
+	back, err := service.Update(ctx, host.ID, domainvault.Draft{
+		Hostname: "example.com", Protocol: domainvault.ProtocolSSH,
+	})
+	if err != nil {
+		t.Fatalf("Update back to SSH: %v", err)
+	}
+	if _, ok := secrets.values[HostSecretRef(host.ID, FieldVNCPassword)]; ok {
+		t.Fatal("leaving VNC kept its password")
+	}
+	if got := secrets.values[HostSecretRef(host.ID, FieldPassword)]; got != "ssh-alpha" {
+		t.Fatalf("SSH secret = %q after leaving VNC, want it untouched", got)
+	}
+	if back.HasVNCPassword || !back.HasPassword || back.VNC != nil {
+		t.Fatalf("Host after leaving VNC = %+v, want VNC cleared and SSH kept", back)
+	}
+}
+
+// TestHostCredentialsReadsTheVNCSlot proves Copy Credentials never shows the
+// SSH password for a VNC Host.
+func TestHostCredentialsReadsTheVNCSlot(t *testing.T) {
+	repo := &fakeHosts{}
+	secrets := newFakeSecrets()
+	service := newSecretService(t, repo, secrets)
+	ctx := context.Background()
+
+	host, err := service.Create(ctx, domainvault.Draft{
+		Hostname: "desk.local", Username: "operator",
+		Protocol: domainvault.ProtocolVNC, VNCPassword: "vnc-alpha",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Give the Host an SSH password too, so a wrong slot read is observable.
+	secrets.values[HostSecretRef(host.ID, FieldPassword)] = "ssh-alpha"
+
+	credentials, err := service.HostCredentials(ctx, host.ID)
+	if err != nil {
+		t.Fatalf("HostCredentials: %v", err)
+	}
+	if credentials.Password != "vnc-alpha" {
+		t.Fatalf("password = %q, want the VNC slot", credentials.Password)
+	}
+	if credentials.Username != "operator" {
+		t.Fatalf("username = %q, want the Host username", credentials.Username)
+	}
+}

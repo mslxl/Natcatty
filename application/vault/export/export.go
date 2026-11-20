@@ -718,18 +718,11 @@ func formatHostname(hostname string) string {
 	return hostname
 }
 
+// portText writes the endpoint an imported Host would use. A zero port means
+// the Host inherits its Group's, so the protocol's default (22 SSH, 23 Telnet,
+// 5900 VNC, 0 for a Local shell) is the value that survives a round trip.
 func portText(host domainvault.Host) string {
-	port := host.Port
-	if port == 0 {
-		if host.Protocol == domainvault.ProtocolLocal {
-			return "0"
-		}
-		port = 22
-		if host.Protocol == domainvault.ProtocolTelnet {
-			port = 23
-		}
-	}
-	return strconv.Itoa(port)
+	return strconv.Itoa(domainvault.EffectivePort(host.Protocol, host.Port))
 }
 
 // ---------------------------------------------------------------- Snippets

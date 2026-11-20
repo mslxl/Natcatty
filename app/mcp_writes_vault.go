@@ -220,6 +220,7 @@ func hostDraftFromHost(host domainvault.Host) domainvault.Draft {
 		NewlineMode: host.NewlineMode, BackspaceMode: host.BackspaceMode,
 		LineEditingMode: host.LineEditingMode,
 		MoshServerPath:  host.MoshServerPath, ETPort: host.ETPort,
+		VNC: domainvault.CloneVNCConfig(host.VNC),
 	}
 	if host.HostChain != nil {
 		chain := *host.HostChain

@@ -6216,16 +6216,206 @@ func (msgs Messages) VaultHostX11Acknowledge() string {
 	return Catalog.Format(msgs.locale, "vaultHostX11Acknowledge", nil)
 }
 
-// VaultHostTelnetPlaintextWarning says "Telnet is a plaintext protocol: everything you type, including the password, crosses the network unencrypted. Use it …"
+// VaultHostPlaintextWarning says "{protocol} is a plaintext protocol: everything you type, including the password, crosses the network unencrypted. Use…"
 // in the language the app shows.
-func VaultHostTelnetPlaintextWarning() string {
-	return In(i18n.Locale()).VaultHostTelnetPlaintextWarning()
+func VaultHostPlaintextWarning(protocol string) string {
+	return In(i18n.Locale()).VaultHostPlaintextWarning(protocol)
 }
 
-// VaultHostTelnetPlaintextWarning says "Telnet is a plaintext protocol: everything you type, including the password, crosses the network unencrypted. Use it …"
+// VaultHostPlaintextWarning says "{protocol} is a plaintext protocol: everything you type, including the password, crosses the network unencrypted. Use…"
 // in the language of msgs.
-func (msgs Messages) VaultHostTelnetPlaintextWarning() string {
-	return Catalog.Format(msgs.locale, "vaultHostTelnetPlaintextWarning", nil)
+func (msgs Messages) VaultHostPlaintextWarning(protocol string) string {
+	return Catalog.Format(msgs.locale, "vaultHostPlaintextWarning", map[string]any{"protocol": protocol})
+}
+
+// VaultHostVNC says "VNC"
+// in the language the app shows.
+func VaultHostVNC() string { return In(i18n.Locale()).VaultHostVNC() }
+
+// VaultHostVNC says "VNC"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNC() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNC", nil)
+}
+
+// VaultHostVNCInputMode says "Endpoint input"
+// in the language the app shows.
+func VaultHostVNCInputMode() string { return In(i18n.Locale()).VaultHostVNCInputMode() }
+
+// VaultHostVNCInputMode says "Endpoint input"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCInputMode() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCInputMode", nil)
+}
+
+// VaultHostVNCInputDisplay says "Display number"
+// in the language the app shows.
+func VaultHostVNCInputDisplay() string { return In(i18n.Locale()).VaultHostVNCInputDisplay() }
+
+// VaultHostVNCInputDisplay says "Display number"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCInputDisplay() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCInputDisplay", nil)
+}
+
+// VaultHostVNCInputPort says "TCP port"
+// in the language the app shows.
+func VaultHostVNCInputPort() string { return In(i18n.Locale()).VaultHostVNCInputPort() }
+
+// VaultHostVNCInputPort says "TCP port"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCInputPort() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCInputPort", nil)
+}
+
+// VaultHostVNCDisplay says "Display"
+// in the language the app shows.
+func VaultHostVNCDisplay() string { return In(i18n.Locale()).VaultHostVNCDisplay() }
+
+// VaultHostVNCDisplay says "Display"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCDisplay() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCDisplay", nil)
+}
+
+// VaultHostVNCPassword says "VNC Password"
+// in the language the app shows.
+func VaultHostVNCPassword() string { return In(i18n.Locale()).VaultHostVNCPassword() }
+
+// VaultHostVNCPassword says "VNC Password"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCPassword() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCPassword", nil)
+}
+
+// VaultHostVNCPasswordHint says "Stored encrypted and never shown again."
+// in the language the app shows.
+func VaultHostVNCPasswordHint() string { return In(i18n.Locale()).VaultHostVNCPasswordHint() }
+
+// VaultHostVNCPasswordHint says "Stored encrypted and never shown again."
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCPasswordHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCPasswordHint", nil)
+}
+
+// VaultHostVNCPasswordKeep says "A VNC password is stored. Leave blank to keep it."
+// in the language the app shows.
+func VaultHostVNCPasswordKeep() string { return In(i18n.Locale()).VaultHostVNCPasswordKeep() }
+
+// VaultHostVNCPasswordKeep says "A VNC password is stored. Leave blank to keep it."
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCPasswordKeep() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCPasswordKeep", nil)
+}
+
+// VaultHostVNCFitMode says "Scaling"
+// in the language the app shows.
+func VaultHostVNCFitMode() string { return In(i18n.Locale()).VaultHostVNCFitMode() }
+
+// VaultHostVNCFitMode says "Scaling"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCFitMode() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCFitMode", nil)
+}
+
+// VaultHostVNCFitFit says "Fit to window"
+// in the language the app shows.
+func VaultHostVNCFitFit() string { return In(i18n.Locale()).VaultHostVNCFitFit() }
+
+// VaultHostVNCFitFit says "Fit to window"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCFitFit() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCFitFit", nil)
+}
+
+// VaultHostVNCFitOneToOne says "1:1"
+// in the language the app shows.
+func VaultHostVNCFitOneToOne() string { return In(i18n.Locale()).VaultHostVNCFitOneToOne() }
+
+// VaultHostVNCFitOneToOne says "1:1"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCFitOneToOne() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCFitOneToOne", nil)
+}
+
+// VaultHostVNCFitClip says "Clip"
+// in the language the app shows.
+func VaultHostVNCFitClip() string { return In(i18n.Locale()).VaultHostVNCFitClip() }
+
+// VaultHostVNCFitClip says "Clip"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCFitClip() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCFitClip", nil)
+}
+
+// VaultHostVNCViewOnly says "View only"
+// in the language the app shows.
+func VaultHostVNCViewOnly() string { return In(i18n.Locale()).VaultHostVNCViewOnly() }
+
+// VaultHostVNCViewOnly says "View only"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCViewOnly() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCViewOnly", nil)
+}
+
+// VaultHostVNCShared says "Share session with other clients"
+// in the language the app shows.
+func VaultHostVNCShared() string { return In(i18n.Locale()).VaultHostVNCShared() }
+
+// VaultHostVNCShared says "Share session with other clients"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCShared() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCShared", nil)
+}
+
+// VaultHostVNCCursorMode says "Cursor"
+// in the language the app shows.
+func VaultHostVNCCursorMode() string { return In(i18n.Locale()).VaultHostVNCCursorMode() }
+
+// VaultHostVNCCursorMode says "Cursor"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCCursorMode() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCCursorMode", nil)
+}
+
+// VaultHostVNCCursorLocal says "Local cursor"
+// in the language the app shows.
+func VaultHostVNCCursorLocal() string { return In(i18n.Locale()).VaultHostVNCCursorLocal() }
+
+// VaultHostVNCCursorLocal says "Local cursor"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCCursorLocal() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCCursorLocal", nil)
+}
+
+// VaultHostVNCCursorServer says "Server-drawn cursor"
+// in the language the app shows.
+func VaultHostVNCCursorServer() string { return In(i18n.Locale()).VaultHostVNCCursorServer() }
+
+// VaultHostVNCCursorServer says "Server-drawn cursor"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCCursorServer() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCCursorServer", nil)
+}
+
+// VaultProblemVncDisplay says "The display number must be a whole number."
+// in the language the app shows.
+func VaultProblemVncDisplay() string { return In(i18n.Locale()).VaultProblemVncDisplay() }
+
+// VaultProblemVncDisplay says "The display number must be a whole number."
+// in the language of msgs.
+func (msgs Messages) VaultProblemVncDisplay() string {
+	return Catalog.Format(msgs.locale, "vaultProblemVncDisplay", nil)
+}
+
+// VaultProblemVncDisplayRange says "The display number must be between 0 and 99."
+// in the language the app shows.
+func VaultProblemVncDisplayRange() string { return In(i18n.Locale()).VaultProblemVncDisplayRange() }
+
+// VaultProblemVncDisplayRange says "The display number must be between 0 and 99."
+// in the language of msgs.
+func (msgs Messages) VaultProblemVncDisplayRange() string {
+	return Catalog.Format(msgs.locale, "vaultProblemVncDisplayRange", nil)
 }
 
 // VaultHostNetworkDevice says "Network device mode"

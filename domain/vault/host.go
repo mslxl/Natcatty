@@ -24,6 +24,8 @@ const (
 	ProtocolSSH Protocol = "ssh"
 	// ProtocolTelnet is a Host reached over Telnet.
 	ProtocolTelnet Protocol = "telnet"
+	// ProtocolVNC is a Host reached over the RFB protocol.
+	ProtocolVNC Protocol = "vnc"
 	// ProtocolLocal is a shell that runs on this machine.
 	ProtocolLocal Protocol = "local"
 	// ProtocolMosh is an SSH Host that swaps to Mosh after the bootstrap.
@@ -98,6 +100,157 @@ func NormalizeFileProtocol(value FileProtocol) FileProtocol {
 	default:
 		return FileProtocolAuto
 	}
+}
+
+// VNC endpoint range. A VNC display number is editor presentation only: the
+// Host always stores the real TCP port, so display 0 maps to 5900 and display
+// 99 maps to 5999.
+const (
+	// VNCDisplayBasePort is the TCP port of VNC display 0.
+	VNCDisplayBasePort = 5900
+	// VNCDisplayMax is the highest display number the editor accepts.
+	VNCDisplayMax = 99
+)
+
+// VNCDisplayMode selects how the VNC Host editor accepts the endpoint. It is
+// presentation state: the Host record always stores the resolved TCP port.
+type VNCDisplayMode string
+
+const (
+	// VNCDisplayNumber enters the endpoint as a display number ("1" or ":1").
+	VNCDisplayNumber VNCDisplayMode = "display"
+	// VNCPort enters the endpoint as a raw TCP port.
+	VNCPort VNCDisplayMode = "port"
+)
+
+// NormalizeDisplayMode maps an empty or unknown value to display-number input,
+// the default the editor presents.
+func NormalizeDisplayMode(mode VNCDisplayMode) VNCDisplayMode {
+	switch mode {
+	case VNCPort:
+		return VNCPort
+	default:
+		return VNCDisplayNumber
+	}
+}
+
+// VNCFitMode selects how the viewer scales the remote desktop.
+type VNCFitMode string
+
+const (
+	// VNCFit scales the desktop to fit the pane, preserving the aspect ratio.
+	VNCFit VNCFitMode = "fit"
+	// VNCOneToOne shows one remote pixel per pane pixel.
+	VNCOneToOne VNCFitMode = "one_to_one"
+	// VNCClip keeps one-to-one pixels and pans a clipped viewport.
+	VNCClip VNCFitMode = "clip"
+)
+
+// NormalizeFitMode maps an empty or unknown value to fit-to-window, the
+// default the viewer starts with.
+func NormalizeFitMode(mode VNCFitMode) VNCFitMode {
+	switch mode {
+	case VNCOneToOne, VNCClip:
+		return mode
+	default:
+		return VNCFit
+	}
+}
+
+// VNCCursorMode selects whether the local pointer or the server-drawn cursor
+// is visible over the framebuffer.
+type VNCCursorMode string
+
+const (
+	// VNCCursorLocal draws the local pointer from the server's cursor shape.
+	VNCCursorLocal VNCCursorMode = "local"
+	// VNCCursorServer lets the server paint the cursor into the framebuffer.
+	VNCCursorServer VNCCursorMode = "server"
+)
+
+// NormalizeCursorMode maps an empty or unknown value to the local cursor, the
+// default every other remote-desktop client uses.
+func NormalizeCursorMode(mode VNCCursorMode) VNCCursorMode {
+	switch mode {
+	case VNCCursorServer:
+		return VNCCursorServer
+	default:
+		return VNCCursorLocal
+	}
+}
+
+// VNCConfig is a VNC Host's persisted viewer configuration. The endpoint is
+// not stored here: the Host's Port is always the real TCP port, and the
+// display-number input mode only decides how the editor presents it.
+type VNCConfig struct {
+	// DisplayMode selects display-number or raw-port input in the editor.
+	DisplayMode VNCDisplayMode `json:"displayMode"`
+	// FitMode is the viewer's initial scaling behavior.
+	FitMode VNCFitMode `json:"fitMode"`
+	// ViewOnly suppresses local keyboard and pointer input.
+	ViewOnly bool `json:"viewOnly,omitempty"`
+	// Shared asks the server to keep other clients connected (ClientInit).
+	// It defaults to true; an explicit false is persisted.
+	Shared bool `json:"shared"`
+	// CursorMode selects the local or server-drawn pointer.
+	CursorMode VNCCursorMode `json:"cursorMode"`
+	// PlaintextWarningAcknowledged records that the user accepted the
+	// unencrypted-transport warning for this Host.
+	PlaintextWarningAcknowledged bool `json:"plaintextWarningAcknowledged,omitempty"`
+}
+
+// DefaultVNCConfig is the configuration a new VNC Host starts from and the
+// baseline NormalizeVNCConfig fills missing enum values from.
+func DefaultVNCConfig() VNCConfig {
+	return VNCConfig{
+		DisplayMode: VNCDisplayNumber,
+		FitMode:     VNCFit,
+		Shared:      true,
+		CursorMode:  VNCCursorLocal,
+	}
+}
+
+// NormalizeVNCConfig canonicalizes a VNC configuration. A nil value means a
+// new or older record, so it starts from the defaults; unknown enum values
+// fall back to their defaults. A non-nil Shared=false is an explicit choice
+// and is preserved.
+func NormalizeVNCConfig(config *VNCConfig) *VNCConfig {
+	normalized := DefaultVNCConfig()
+	if config != nil {
+		normalized = *config
+	}
+	normalized.DisplayMode = NormalizeDisplayMode(normalized.DisplayMode)
+	normalized.FitMode = NormalizeFitMode(normalized.FitMode)
+	normalized.CursorMode = NormalizeCursorMode(normalized.CursorMode)
+	return &normalized
+}
+
+// CloneVNCConfig returns a copy safe to store on a Host or draft. It keeps a
+// nil value nil so a non-VNC Host serializes exactly as before.
+func CloneVNCConfig(config *VNCConfig) *VNCConfig {
+	if config == nil {
+		return nil
+	}
+	copy := *config
+	return &copy
+}
+
+// VNCPortForDisplay returns the TCP port for a VNC display number. The
+// boolean is false for a display outside 0-99.
+func VNCPortForDisplay(display int) (int, bool) {
+	if display < 0 || display > VNCDisplayMax {
+		return 0, false
+	}
+	return VNCDisplayBasePort + display, true
+}
+
+// VNCDisplayForPort returns the display number for a TCP port. The boolean is
+// false when the port is outside the 5900-5999 display range.
+func VNCDisplayForPort(port int) (int, bool) {
+	if port < VNCDisplayBasePort || port > VNCDisplayBasePort+VNCDisplayMax {
+		return 0, false
+	}
+	return port - VNCDisplayBasePort, true
 }
 
 // DeviceType marks a Host whose SSH peer runs a vendor CLI instead of a POSIX
@@ -228,6 +381,13 @@ type Host struct {
 	// HasPassword reports that an encrypted password exists for this Host.
 	// The ciphertext lives in secret_values, never in this record.
 	HasPassword bool `json:"hasPassword,omitempty"`
+	// HasVNCPassword reports that a VNC password exists in its own secret
+	// slot. It is independent of HasPassword: VNC never reads or writes the
+	// SSH password slot.
+	HasVNCPassword bool `json:"hasVncPassword,omitempty"`
+	// VNC is the viewer configuration of a VNC Host. It is nil for every
+	// other protocol.
+	VNC *VNCConfig `json:"vnc,omitempty"`
 	// HasTOTP reports that an encrypted TOTP authenticator URI exists for this
 	// Host. As with HasPassword, only the marker lives on the record.
 	HasTOTP bool `json:"hasTotp,omitempty"`
@@ -393,10 +553,17 @@ type Draft struct {
 	// ETPort is the EternalTerminal server port. Zero means the default and is
 	// kept only for ProtocolET.
 	ETPort int
+	// VNC is the viewer configuration. It is normalized for a VNC Host and
+	// cleared for every other protocol.
+	VNC *VNCConfig
 	// Password is plaintext form input. The Vault application encrypts it
 	// into the field-secret store; it is never copied onto Host or written
 	// to the JSON tail. An empty value on Update keeps the stored password.
 	Password string
+	// VNCPassword is plaintext form input for a VNC Host's own password. It is
+	// stored under a dedicated field-secret slot and is never migrated to or
+	// from Password. An empty value on Update keeps the stored VNC password.
+	VNCPassword string
 	// TOTP is plaintext form input: an otpauth://totp URI or a raw Base32
 	// secret. NormalizeDraft canonicalizes it to a URI; the Vault encrypts it
 	// into the field-secret store. An empty value on Update keeps the stored
@@ -532,8 +699,22 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	if draft.Protocol != ProtocolET {
 		draft.ETPort = 0
 	}
+	if draft.Protocol == ProtocolVNC {
+		// A new VNC Host starts from the viewer defaults, and an unknown enum
+		// from an older or hand-edited record falls back to the same values.
+		draft.VNC = NormalizeVNCConfig(draft.VNC)
+		// VNC authenticates with its own password slot. The SSH password slot
+		// is never written for a VNC Host, even when a switched form still
+		// holds a value the hidden control no longer shows.
+		draft.Password = ""
+	} else {
+		// A hidden VNC section must not leave configuration or a password on
+		// another protocol.
+		draft.VNC = nil
+		draft.VNCPassword = ""
+	}
 	if !draft.Protocol.UsesSSHAuth() {
-		// Telnet and a Local shell never read the SSH credential bundle. Clear
+		// Telnet, VNC, and a Local shell never read the SSH credential bundle. Clear
 		// it here as well as in the editor: a Host saved from a legacy or
 		// imported draft must not keep credentials whose controls it hides.
 		draft.IdentityID = ""
@@ -562,7 +743,7 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 		draft.SkipEcdsaHostKey = false
 		draft.Algorithms = nil
 	}
-	if !draft.Protocol.SupportsX11() {
+	if !draft.Protocol.X11() {
 		draft.X11Forwarding = false
 		draft.X11WarningAcknowledged = false
 	}
@@ -693,6 +874,7 @@ func (h Host) Validate() error {
 		AutoAttachTmux:         h.AutoAttachTmux,
 		MoshServerPath:         h.MoshServerPath,
 		ETPort:                 h.ETPort,
+		VNC:                    CloneVNCConfig(h.VNC),
 	})
 }
 
@@ -800,6 +982,18 @@ func validateFields(draft Draft) error {
 		// default when the group sets none.
 		if draft.Port != 0 && (draft.Port < 1 || draft.Port > 65535) {
 			return validation(FieldPort, RuleOutOfRange)
+		}
+		if draft.Protocol == ProtocolVNC && draft.Port != 0 {
+			// Display-number input is an editor presentation, but a Host that
+			// records it can only describe a display in the 5900-5999 range.
+			// A raw port that falls outside it must switch input mode first.
+			displayMode := VNCDisplayNumber
+			if draft.VNC != nil {
+				displayMode = NormalizeDisplayMode(draft.VNC.DisplayMode)
+			}
+			if _, ok := VNCDisplayForPort(draft.Port); !ok && displayMode == VNCDisplayNumber {
+				return validation(FieldPort, RuleOutOfRange)
+			}
 		}
 	}
 
@@ -1101,7 +1295,8 @@ func defaultPort(protocol Protocol) int {
 
 // EffectivePort returns the port a connection uses. A Host with a port of its
 // own wins; a zero port means it inherits its Host Group's port, and when no
-// group sets one the protocol's default applies (22 for SSH, 23 for Telnet).
+// group sets one the protocol's default applies (22 for SSH, 23 for Telnet,
+// 5900 for VNC).
 // The Vault stores the zero so the inheritance survives a group change.
 func EffectivePort(protocol Protocol, port int) int {
 	if port != 0 {
@@ -1133,8 +1328,8 @@ func (p Protocol) SessionTransport() domainprotocol.Transport {
 
 // UsesSSHAuth reports whether a protocol authenticates with the shared SSH
 // credential settings (Identity, SSH Key, Method, agent, and MFA). SSH, Mosh,
-// and EternalTerminal all bootstrap through SSH; Telnet and a Local shell do
-// not, so their editors must not show those controls.
+// and EternalTerminal all bootstrap through SSH; Telnet, VNC, and a Local shell
+// do not, so their editors must not show those controls.
 func (p Protocol) UsesSSHAuth() bool {
 	descriptor, ok := p.descriptor()
 	return ok && descriptor.SSHAuth
@@ -1168,11 +1363,19 @@ func (p Protocol) SupportsProxy() bool {
 	return ok && descriptor.Proxy
 }
 
-// SupportsX11 reports whether X11 forwarding applies to the Host. X11 is
-// forwarded over the target's SSH connection, so only SSH qualifies.
-func (p Protocol) SupportsX11() bool {
+// X11 reports whether X11 forwarding applies to the Host. X11 is forwarded
+// over the target's SSH connection, so only SSH qualifies.
+func (p Protocol) X11() bool {
 	descriptor, ok := p.descriptor()
 	return ok && descriptor.X11
+}
+
+// Plaintext reports whether the protocol's native transport sends credentials
+// and input unencrypted. The Vault editor uses this capability, not a protocol
+// name comparison, to disclose the exposure.
+func (p Protocol) Plaintext() bool {
+	descriptor, ok := p.descriptor()
+	return ok && descriptor.Plaintext
 }
 
 func validation(field Field, rule Rule) error {

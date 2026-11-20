@@ -17,6 +17,9 @@ const (
 	SSH ID = "ssh"
 	// Telnet is a Host reached over Telnet.
 	Telnet ID = "telnet"
+	// VNC is a Host reached over the RFB protocol. Its Session carries pixels
+	// through a display-session port rather than a byte stream.
+	VNC ID = "vnc"
 	// Local is a shell that runs on this machine.
 	Local ID = "local"
 	// Mosh is an SSH Host that swaps to Mosh after the bootstrap.
@@ -37,6 +40,8 @@ const (
 	TransportSSH Transport = "ssh"
 	// TransportTelnet is a Telnet terminal.
 	TransportTelnet Transport = "telnet"
+	// TransportVNC is a VNC pixel Session over RFB.
+	TransportVNC Transport = "vnc"
 	// TransportMosh is a UDP Mosh Session bootstrapped over SSH.
 	TransportMosh Transport = "mosh"
 	// TransportET is an EternalTerminal Session.
@@ -74,6 +79,11 @@ type Descriptor struct {
 	Proxy bool
 	// X11 reports whether X11 forwarding applies to the Host.
 	X11 bool
+	// Plaintext reports whether the protocol's own transport sends credentials
+	// and keystrokes over the network unencrypted. A route through SSH encrypts
+	// the wire, but the capability describes the native protocol and lets the
+	// Vault editor disclose the exposure without comparing protocol names.
+	Plaintext bool
 }
 
 // builtins is the ordered built-in protocol set. The order is the order the
@@ -104,6 +114,21 @@ var builtins = []Descriptor{
 		// through SSH jumps and a proxy, so the route controls apply.
 		FileTransfer: false, Forwarding: false,
 		Monitoring: false, Proxy: true, X11: false,
+		// The native protocol sends its password and every keystroke in the
+		// clear. The editor discloses that through this capability.
+		Plaintext: true,
+	},
+	{
+		ID: VNC, Transport: TransportVNC, DefaultPort: 5900,
+		SSHAuth: false, HostProtocol: true, GroupDefault: true,
+		// RFB is a single pixel stream. Jump chains and a proxy can still
+		// carry it, like a Telnet stream, but there is no SSH application
+		// channel for SFTP, forwarding, monitoring, or X11.
+		FileTransfer: false, Forwarding: false,
+		Monitoring: false, Proxy: true, X11: false,
+		// VNC password authentication is challenge-response over an
+		// unencrypted stream; only TLS or an SSH route encrypts the wire.
+		Plaintext: true,
 	},
 	{
 		ID: Local, Transport: TransportLocal, DefaultPort: 0,

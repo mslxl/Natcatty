@@ -2766,21 +2766,206 @@ func TestHostProtocolSwitchKeepsTheRouteForTelnet(t *testing.T) {
 	}
 }
 
-// TestHostEditorDisclosesTelnetPlaintext checks the editor warns that Telnet
-// sends the password unencrypted, and that the warning is gone for SSH.
-func TestHostEditorDisclosesTelnetPlaintext(t *testing.T) {
+// TestHostEditorDisclosesPlaintextTransport checks the editor warns that a
+// plaintext protocol sends the password unencrypted, and that the warning is
+// gone for SSH. Telnet and VNC share the disclosure through the descriptor
+// capability.
+func TestHostEditorDisclosesPlaintextTransport(t *testing.T) {
 	m := locales.In("en")
 	state, _, _, _, _, tt := newProductionEntityView(t, 720, 480)
 	state.BeginCreate()
-	state.SetHostProtocol(string(domainvault.ProtocolTelnet))
-	tt.Frame()
-	if !tt.HasText(m.VaultHostTelnetPlaintextWarning()) {
-		t.Fatalf("a Telnet Host does not disclose plaintext transport, texts %q", tt.Texts())
+
+	for _, protocol := range []domainvault.Protocol{domainvault.ProtocolTelnet, domainvault.ProtocolVNC} {
+		state.SetHostProtocol(string(protocol))
+		tt.Frame()
+		warning := m.VaultHostPlaintextWarning(protocolNameForTest(protocol))
+		if !tt.HasText(warning) {
+			t.Fatalf("a %s Host does not disclose plaintext transport, texts %q", protocol, tt.Texts())
+		}
 	}
 
 	state.SetHostProtocol(string(domainvault.ProtocolSSH))
 	tt.Frame()
-	if tt.HasText(m.VaultHostTelnetPlaintextWarning()) {
-		t.Fatalf("an SSH Host shows the Telnet disclosure, texts %q", tt.Texts())
+	for _, protocol := range []domainvault.Protocol{domainvault.ProtocolTelnet, domainvault.ProtocolVNC} {
+		if tt.HasText(m.VaultHostPlaintextWarning(protocolNameForTest(protocol))) {
+			t.Fatalf("an SSH Host shows the %s disclosure, texts %q", protocol, tt.Texts())
+		}
+	}
+}
+
+func protocolNameForTest(protocol domainvault.Protocol) string {
+	if protocol == domainvault.ProtocolVNC {
+		return "VNC"
+	}
+	return "Telnet"
+}
+
+// TestHostEditorShowsTheVNCConfigurationAndHidesSSHOnlyControls covers the
+// VNC editor: the endpoint, viewer defaults, dedicated VNC password, and the
+// plaintext disclosure appear, while the SSH credential and feature controls
+// disappear.
+func TestHostEditorShowsTheVNCConfigurationAndHidesSSHOnlyControls(t *testing.T) {
+	m := locales.In("en")
+	state, _, _, _, _, tt := newProductionEntityView(t, 720, 480)
+	state.BeginCreate()
+	state.SetHostProtocol(string(domainvault.ProtocolVNC))
+	tt.Frame()
+
+	for _, text := range []string{
+		m.VaultHostVNCInputMode(), m.VaultHostVNCDisplay(), m.VaultHostVNCPassword(),
+		m.VaultHostVNCFitMode(), m.VaultHostVNCCursorMode(), m.VaultHostVNCViewOnly(),
+		m.VaultHostVNCShared(), m.VaultHostPlaintextWarning("VNC"),
+	} {
+		if !tt.HasText(text) {
+			t.Fatalf("a VNC Host does not show %q, texts %q", text, tt.Texts())
+		}
+	}
+	for _, text := range []string{
+		m.VaultHostAuthSection(), m.VaultHostIdentity(), m.VaultHostKey(),
+		m.VaultHostAuthMethod(), m.VaultHostUseAgent(), m.VaultHostRequiresMFA(),
+		m.VaultHostFileProtocol(), m.VaultHostX11Forwarding(), m.VaultHostNetworkDevice(),
+	} {
+		if tt.HasText(text) {
+			t.Fatalf("a VNC Host still shows the SSH-only %q, texts %q", text, tt.Texts())
+		}
+	}
+
+	state.SetHostProtocol(string(domainvault.ProtocolSSH))
+	tt.Frame()
+	if tt.HasText(m.VaultHostVNCDisplay()) || tt.HasText(m.VaultHostVNCPassword()) {
+		t.Fatalf("an SSH Host still shows the VNC section, texts %q", tt.Texts())
+	}
+	if !tt.HasText(m.VaultHostIdentity()) {
+		t.Fatal("switching back to SSH did not restore the SSH credential controls")
+	}
+}
+
+// TestHostEditorVNCDisplayAndPortModesShareTheEndpoint covers the editor's
+// mode switch: display-number input is the default, port input shows the same
+// endpoint, and the hint remains the VNC default.
+func TestHostEditorVNCDisplayAndPortModesShareTheEndpoint(t *testing.T) {
+	m := locales.In("en")
+	state, _, _, _, _, tt := newProductionEntityView(t, 720, 480)
+	state.BeginCreate()
+	state.SetHostProtocol(string(domainvault.ProtocolVNC))
+	tt.Frame()
+	if !tt.HasText(m.VaultHostVNCDisplay()) || tt.HasText(m.VaultHostVNCInputPort()) {
+		t.Fatalf("display mode = %q", tt.Texts())
+	}
+	if got := state.HostPortPlaceholder(); got != "5900" {
+		t.Fatalf("VNC Port hint = %q, want 5900", got)
+	}
+
+	state.SetVNCInputMode(string(domainvault.VNCPort))
+	tt.Frame()
+	if !tt.HasText(m.VaultHostPort()) || tt.HasText(m.VaultHostVNCDisplay()) {
+		t.Fatalf("port mode = %q", tt.Texts())
+	}
+	if got := state.HostPortPlaceholder(); got != "5900" {
+		t.Fatalf("VNC Port hint = %q, want 5900", got)
+	}
+	if !tt.HasText(m.VaultHostPortHint("5900")) {
+		t.Fatalf("the VNC port hint is not rendered, texts %q", tt.Texts())
+	}
+}
+
+// TestHostEditorSelectsCarryTheirOldValue drives the real dropdowns, not the
+// state setters: a Select writes the chosen value before Changed runs, so the
+// editor must hand the setter the previous value it needs to clear or convert
+// the settings that belonged to it.
+func TestHostEditorSelectsCarryTheirOldValue(t *testing.T) {
+	m := locales.In("en")
+	state, _, _, _, _, tt := newProductionEntityView(t, 720, 480)
+	state.BeginCreate()
+	state.SetHostProtocol(string(domainvault.ProtocolVNC))
+	state.Form().VNCDisplay = "1"
+	tt.Frame()
+
+	if err := tt.Click(m.VaultHostVNCInputDisplay()); err != nil {
+		t.Fatalf("open the input-mode Select: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(m.VaultHostVNCInputPort()); err != nil {
+		t.Fatalf("choose port input: %v", err)
+	}
+	tt.Frame()
+	if got := state.Form().VNCInputMode; got != string(domainvault.VNCPort) {
+		t.Fatalf("input mode = %q, want port", got)
+	}
+	if got := state.Form().Port; got != "5901" {
+		t.Fatalf("port after the mode switch = %q, want 5901 for display 1", got)
+	}
+
+	// Returning to display mode carries the same endpoint back.
+	if err := tt.Click(m.VaultHostVNCInputPort()); err != nil {
+		t.Fatalf("open the input-mode Select: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(m.VaultHostVNCInputDisplay()); err != nil {
+		t.Fatalf("choose display input: %v", err)
+	}
+	tt.Frame()
+	if got := state.Form().VNCDisplay; got != "1" {
+		t.Fatalf("display after the mode switch = %q, want 1", got)
+	}
+
+	// Leaving VNC through the protocol Select resets the hidden section.
+	state.Form().VNCViewOnly = true
+	state.Form().VNCPassword = "typed"
+	state.Form().HasVNCPassword = true
+	tt.Frame()
+	if err := tt.Click(string(domainvault.ProtocolVNC)); err != nil {
+		t.Fatalf("open the protocol Select: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(string(domainvault.ProtocolSSH)); err != nil {
+		t.Fatalf("choose SSH: %v", err)
+	}
+	tt.Frame()
+	if got := state.Form().Protocol; got != string(domainvault.ProtocolSSH) {
+		t.Fatalf("protocol = %q, want ssh", got)
+	}
+	if state.Form().VNCViewOnly || state.Form().VNCPassword != "" || state.Form().HasVNCPassword {
+		t.Fatalf("leaving VNC kept hidden state: %+v", state.Form())
+	}
+
+	// Entering VNC starts from the viewer defaults, never the hidden form.
+	state.Form().VNCViewOnly = true
+	state.Form().VNCInputMode = string(domainvault.VNCPort)
+	if err := tt.Click(string(domainvault.ProtocolSSH)); err != nil {
+		t.Fatalf("open the protocol Select: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(string(domainvault.ProtocolVNC)); err != nil {
+		t.Fatalf("choose VNC: %v", err)
+	}
+	tt.Frame()
+	if got := state.Form().Protocol; got != string(domainvault.ProtocolVNC) {
+		t.Fatalf("protocol = %q, want vnc", got)
+	}
+	if state.Form().VNCViewOnly || state.Form().VNCInputMode != string(domainvault.VNCDisplayNumber) {
+		t.Fatalf("entering VNC did not start from defaults: %+v", state.Form())
+	}
+}
+
+// TestGroupEditorOffersVNCAsADefault proves a Host Group can set VNC and its
+// port default resolves to 5900.
+func TestGroupEditorOffersVNCAsADefault(t *testing.T) {
+	state, _, groups, _, _, tt := newProductionEntityView(t, 720, 480)
+	state.BeginCreateGroup()
+	state.GroupForm().Path = "desks"
+	state.SetGroupProtocol(string(domainvault.ProtocolVNC))
+	if got := state.GroupPortPlaceholder(); got != "5900" {
+		t.Fatalf("VNC group Port hint = %q, want 5900", got)
+	}
+	tt.Frame()
+	if tt.HasText(locales.In("en").VaultHostIdentity()) {
+		t.Fatal("a VNC group editor still shows the SSH-only Identity default")
+	}
+	if err := state.SaveGroup(); err != nil {
+		t.Fatalf("SaveGroup: %v", err)
+	}
+	if len(groups.items) != 1 || groups.items[0].Protocol != domainvault.ProtocolVNC {
+		t.Fatalf("saved group = %+v, want VNC default", groups.items)
 	}
 }

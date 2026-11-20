@@ -1466,7 +1466,9 @@ func TestVaultRoutesFailWhenAJumpHostIsMissing(t *testing.T) {
 // guard: it opens an SSH transport, so a Telnet or Local Host is rejected with
 // a typed unsupported failure before any route resolution or dial.
 func TestTestConnectionRefusesAProtocolWithoutSSHAuth(t *testing.T) {
-	for _, protocol := range []domainvault.Protocol{domainvault.ProtocolTelnet, domainvault.ProtocolLocal} {
+	for _, protocol := range []domainvault.Protocol{
+		domainvault.ProtocolTelnet, domainvault.ProtocolVNC, domainvault.ProtocolLocal,
+	} {
 		err := testConnection(context.Background(), nil, nil, domainvault.Host{
 			ID: "console", Label: "console", Hostname: "console.local", Protocol: protocol,
 		})

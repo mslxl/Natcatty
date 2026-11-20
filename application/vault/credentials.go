@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/mslxl/natcatty/domain/model"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
 // HostCredentials is the login a Host would authenticate with, for the Copy
@@ -50,7 +51,13 @@ func (s *Service) HostCredentials(ctx context.Context, id model.HostID) (HostCre
 		}
 	}
 	if s.secrets != nil {
-		password, secretErr := s.secretOrEmpty(ctx, HostSecretRef(host.ID, FieldPassword))
+		// A VNC Host authenticates from its own slot. Reading the SSH slot
+		// here would show a credential the VNC client never sends.
+		field := FieldPassword
+		if host.Protocol == domainvault.ProtocolVNC {
+			field = FieldVNCPassword
+		}
+		password, secretErr := s.secretOrEmpty(ctx, HostSecretRef(host.ID, field))
 		if secretErr != nil {
 			return HostCredentials{}, secretErr
 		}

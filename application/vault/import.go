@@ -1066,6 +1066,7 @@ func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 		LineEditingMode:        draft.LineEditingMode,
 		MoshServerPath:         draft.MoshServerPath,
 		ETPort:                 draft.ETPort,
+		VNC:                    domainvault.CloneVNCConfig(draft.VNC),
 	}
 }
 

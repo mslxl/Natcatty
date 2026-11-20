@@ -11,17 +11,19 @@ import (
 )
 
 // TestMonitorRefusesAHostWithNoSSHChannel covers the connector guard: metric
-// sampling runs commands over an SSH channel, so a Telnet Host is rejected
-// with the stable unsupported reason before any route or dial work.
+// sampling runs commands over an SSH channel, so a Telnet or VNC Host is
+// rejected with the stable unsupported reason before any route or dial work.
 func TestMonitorRefusesAHostWithNoSSHChannel(t *testing.T) {
-	connector := monitorConnector{}
-	_, err := connector.Open(context.Background(), domainvault.Host{
-		ID: "console", Label: "console", Hostname: "console.local",
-		Protocol: domainvault.ProtocolTelnet,
-	})
-	var typed *appmonitor.Error
-	if !errors.As(err, &typed) || typed.Reason != appmonitor.ReasonUnsupported {
-		t.Fatalf("Open = %v, want a typed unsupported failure", err)
+	for _, protocol := range []domainvault.Protocol{domainvault.ProtocolTelnet, domainvault.ProtocolVNC} {
+		connector := monitorConnector{}
+		_, err := connector.Open(context.Background(), domainvault.Host{
+			ID: "console", Label: "console", Hostname: "console.local",
+			Protocol: protocol,
+		})
+		var typed *appmonitor.Error
+		if !errors.As(err, &typed) || typed.Reason != appmonitor.ReasonUnsupported {
+			t.Fatalf("%s: Open = %v, want a typed unsupported failure", protocol, err)
+		}
 	}
 }
 
