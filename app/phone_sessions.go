@@ -231,13 +231,21 @@ type phoneSessionHandle struct {
 var _ phoneshell.SessionHandle = (*phoneSessionHandle)(nil)
 
 func (h *phoneSessionHandle) Attach() (io.ReadWriteCloser, error) {
-	return h.session.AttachView()
+	view, err := h.session.AttachView()
+	if err != nil {
+		return nil, err
+	}
+	return phoneView{phoneSessionView: view, remote: h.session.ScreenSizeFromRemote()}, nil
 }
 
 func (h *phoneSessionHandle) Hibernate() bool { return h.session.Hibernate() }
 
 func (h *phoneSessionHandle) Resume() (io.ReadWriteCloser, error) {
-	return h.session.Resume()
+	view, err := h.session.Resume()
+	if err != nil {
+		return nil, err
+	}
+	return phoneView{phoneSessionView: view, remote: h.session.ScreenSizeFromRemote()}, nil
 }
 
 func (h *phoneSessionHandle) Done() <-chan struct{} { return h.session.Done() }
@@ -249,3 +257,28 @@ func (h *phoneSessionHandle) End() error {
 	})
 	return h.err
 }
+
+// phoneSessionView is every optional Conn method a Session view offers and the
+// terminal probes. The terminal is told the grid the view fits through Resize,
+// and a peer-authoritative Session installs the terminal's Resize as its
+// screen-size sink. Embedding io.ReadWriteCloser alone would hide both, so the
+// phone would neither report its size nor accept the peer's.
+type phoneSessionView interface {
+	io.ReadWriteCloser
+	Resize(cols, rows int) error
+	SetScreenSizeSink(func(cols, rows int))
+}
+
+// phoneView is the attached view plus the Session's screen-size ownership.
+// The terminal screen is built over an io.ReadWriteCloser, so the flag has to
+// travel with the view: a Mosh or Eternal Terminal peer owns the size, and
+// the screen must hand that size to the terminal instead of resizing the view.
+// It embeds the Session view's method set rather than io.ReadWriteCloser so
+// the terminal's optional Conn methods stay reachable through the wrapper.
+type phoneView struct {
+	phoneSessionView
+	remote bool
+}
+
+// ScreenSizeFromRemote reports whether the peer owns the screen size.
+func (v phoneView) ScreenSizeFromRemote() bool { return v.remote }
