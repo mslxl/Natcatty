@@ -233,6 +233,11 @@ func (s *Service) SendChunksUntil(ctx context.Context, targets []model.SessionID
 // transfer gate. typed marks a broadcast copy of keyboard input, which passes
 // the target Host's own input compatibility; an explicit insertion does not.
 func (s *Session) deliver(data []byte, typed bool) (DeliveryStatus, error) {
+	if !s.ByteStream() {
+		// A pixel Session has no byte stream. Broadcast, compose, and Insert
+		// refuse it explicitly instead of queuing bytes nothing will send.
+		return DeliveryFailed, ErrNoByteStream
+	}
 	select {
 	case <-s.done:
 		return DeliveryFailed, ErrClosed

@@ -16,6 +16,7 @@ import (
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
+	domainvnc "github.com/mslxl/natcatty/domain/model/vnc"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainsessiontitle "github.com/mslxl/natcatty/domain/sessiontitle"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
@@ -2021,6 +2022,36 @@ func (s *State) openDescriptor(ctx context.Context,
 			ID: descriptor.HostID, Hostname: spec.Hostname,
 			Port: spec.Port, Username: spec.Username,
 		}, "")
+	case domainworkspace.SessionVNC:
+		spec.Kind = appsession.KindVNC
+		spec.HostID = descriptor.HostID
+		spec.Hostname = descriptor.Hostname
+		spec.Port = descriptor.Port
+		spec.Username = descriptor.Username
+		spec.X11Forwarding = false
+		spec.AutoAttachTmux = false
+		if s.resolveHost != nil {
+			host, ok := s.resolveHost(ctx, descriptor.HostID)
+			if !ok {
+				return nil, ErrHostUnavailable
+			}
+			plan := hostSessionTransport(host)
+			spec.HostID = host.ID
+			spec.Hostname = host.Hostname
+			spec.Port = host.Port
+			spec.Username = host.Username
+			spec.VNC = plan.vnc
+			spec.Dir = ""
+		}
+		if spec.VNC == nil {
+			cfg := domainvnc.SessionConfig{
+				Hostname: spec.Hostname, Port: spec.Port, Username: spec.Username,
+			}.Normalized()
+			spec.VNC = &cfg
+		}
+		// VNC follows the SSH reconnect policy: retry a network drop, never an
+		// authentication failure.
+		spec.Reconnect = &appsession.ReconnectPolicy{}
 	case domainworkspace.SessionSerial:
 		if descriptor.Serial == nil {
 			return nil, fmt.Errorf("%w: %q", ErrUnknownSession, descriptor.Kind)

@@ -160,6 +160,9 @@ func shellKindForSpec(spec StartSpec) string {
 // and network-device Sessions use raw execution without a wrapper; every other
 // Session uses the marker wrapper for its shell.
 func (s *Session) Command(ctx context.Context, command string, opts CommandOptions) (CommandResult, error) {
+	if !s.ByteStream() {
+		return CommandResult{}, ErrNoByteStream
+	}
 	if strings.TrimSpace(command) == "" {
 		return CommandResult{}, ErrCommandEmpty
 	}

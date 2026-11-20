@@ -129,6 +129,10 @@ type ScreenTextSnapshot struct {
 // control sequences so line-oriented context reads see text, not escape
 // codes. It never consumes the live view's output queue.
 func (s *Session) ScreenText() ScreenTextSnapshot {
+	if !s.ByteStream() {
+		// A pixel Session has no scrollback or screen text.
+		return ScreenTextSnapshot{SessionID: s.id}
+	}
 	observation, err := s.Observe()
 	if err != nil {
 		snapshot := s.Snapshot()

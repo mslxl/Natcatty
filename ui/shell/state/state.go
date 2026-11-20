@@ -23,6 +23,7 @@ import (
 	domainserial "github.com/mslxl/natcatty/domain/model/serial"
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
+	domainvnc "github.com/mslxl/natcatty/domain/model/vnc"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -1125,6 +1126,7 @@ func HostSessionSpec(host domainvault.Host) appsession.StartSpec {
 		Telnet:         plan.telnet,
 		Mosh:           plan.mosh,
 		ET:             plan.et,
+		VNC:            plan.vnc,
 		// Input compatibility is local-only: the Session translates typed keys
 		// before they reach this transport.
 		InputCompatibility: host.InputCompatibility(),
@@ -1141,6 +1143,7 @@ type hostTransportPlan struct {
 	telnet     *domaintelnet.Config
 	mosh       *domoshmodel.Config
 	et         *domainetmodel.Config
+	vnc        *domainvnc.SessionConfig
 	reconnect  *appsession.ReconnectPolicy
 	// tmux carries the Host's opt-in auto-attach setting. Only a plain SSH
 	// Session may use it; Mosh and ET keep their own persistence.
@@ -1163,8 +1166,8 @@ func (p hostTransportPlan) newResumeKey() string {
 // action without automatically retrying a dropped socket, matching the
 // original's SSH-only auto-reconnect.
 func hostSessionTransport(host domainvault.Host) hostTransportPlan {
-	// The protocol descriptor owns transport selection, so this switch never
-	// needs a new case when a built-in protocol is added.
+	// The protocol descriptor owns transport selection; this switch only
+	// builds the kind-specific start payload and restore descriptor.
 	switch host.Protocol.SessionTransport() {
 	case domainprotocol.TransportLocal:
 		// A saved local-shell Host opens a shell on this machine, exactly like
@@ -1193,6 +1196,15 @@ func hostSessionTransport(host domainvault.Host) hostTransportPlan {
 			kind:       appsession.KindET,
 			descriptor: domainworkspace.SessionET,
 			et:         etConfig(host),
+			reconnect:  &appsession.ReconnectPolicy{},
+		}
+	case domainprotocol.TransportVNC:
+		// VNC follows the SSH reconnect policy: a dropped pixel stream retries,
+		// but an authentication failure never does.
+		return hostTransportPlan{
+			kind:       appsession.KindVNC,
+			descriptor: domainworkspace.SessionVNC,
+			vnc:        vncConfig(host),
 			reconnect:  &appsession.ReconnectPolicy{},
 		}
 	}
@@ -1227,6 +1239,29 @@ func etConfig(host domainvault.Host) *domainetmodel.Config {
 		Port:     host.Port,
 		Username: host.Username,
 		ETPort:   host.ETPort,
+	}.Normalized()
+	return &cfg
+}
+
+// vncConfig is the kind-selected start section for a VNC Host. The password is
+// resolved by the app from the Host's own secret slot; this mapping carries the
+// endpoint, the non-secret viewer configuration, and the route references.
+func vncConfig(host domainvault.Host) *domainvnc.SessionConfig {
+	configuration := domainvnc.DefaultConfig()
+	if host.VNC != nil {
+		configuration = *domainvnc.NormalizeConfig(host.VNC)
+	}
+	cfg := domainvnc.SessionConfig{
+		Hostname:      host.Hostname,
+		Port:          host.Port,
+		Username:      host.Username,
+		Configuration: configuration,
+		Route: domainvnc.Route{
+			Jumps:            host.HostChain.IDs(),
+			ProxyProfileID:   host.ProxyProfileID,
+			NetworkProfileID: host.NetworkProfileID,
+			DirectProxy:      host.DirectProxy,
+		},
 	}.Normalized()
 	return &cfg
 }

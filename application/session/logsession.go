@@ -10,6 +10,11 @@ func (s *Session) Logging() LogStatus { return s.logStatus() }
 // StartLogging starts a log for this Session, stopping a previous one first.
 // It is available while the Session runs and is safe from the UI thread.
 func (s *Session) StartLogging(options LogOptions) error {
+	if !s.ByteStream() {
+		// Session logs capture the terminal byte stream; a pixel Session has
+		// none.
+		return ErrNoByteStream
+	}
 	if options.Directory == "" {
 		return errNoLogDirectory
 	}

@@ -220,6 +220,9 @@ func (o *Observation) Close() error {
 // produced after it. The returned Observation is read-only and independent of
 // the Session's single live view.
 func (s *Session) Observe() (*Observation, error) {
+	if !s.ByteStream() {
+		return nil, ErrNoByteStream
+	}
 	s.mu.Lock()
 	snapshot := s.snapshot
 	s.mu.Unlock()
@@ -284,6 +287,9 @@ func (s *Session) emitOutput(p []byte) {
 // clear with the owning screen instead of resurrecting cleared scrollback from
 // the bounded history.
 func (s *Session) ClearBuffer() {
+	if !s.ByteStream() {
+		return
+	}
 	s.emitOutput([]byte("\x1b[3J"))
 }
 
@@ -380,6 +386,9 @@ func (s *Session) LiveViews() int {
 // AttachView claims the Session's one live view. A second claim fails with
 // ErrViewAttached instead of creating another view of the same Session.
 func (s *Session) AttachView() (*ViewConn, error) {
+	if !s.ByteStream() {
+		return nil, ErrNoByteStream
+	}
 	token, ok := s.conn.attachView()
 	if !ok {
 		return nil, ErrViewAttached

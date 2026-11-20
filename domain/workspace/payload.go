@@ -28,6 +28,8 @@ const (
 	SessionMosh SessionKind = "mosh"
 	// SessionET is an EternalTerminal Session on a saved Host.
 	SessionET SessionKind = "et"
+	// SessionVNC is a pixel desktop on a saved VNC Host.
+	SessionVNC SessionKind = "vnc"
 )
 
 // SessionDescriptor is the non-secret description of a Pane's Session. It is
@@ -68,7 +70,7 @@ func (d SessionDescriptor) Valid() bool {
 	switch d.Kind {
 	case SessionLocal:
 		return true
-	case SessionSSH, SessionTelnet, SessionMosh, SessionET:
+	case SessionSSH, SessionTelnet, SessionMosh, SessionET, SessionVNC:
 		return d.HostID != "" && d.Hostname != ""
 	case SessionSerial:
 		return d.Serial != nil && d.Serial.Normalized().Validate() == nil

@@ -189,6 +189,10 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 			return nil, errors.New("app: no in-process EternalTerminal client")
 		}
 		return f.etInProcess.Open(ctx, spec)
+	case appsession.KindVNC:
+		// The RFB adapter and its transport factory land with the first
+		// desktop. Failing closed keeps a VNC Host from opening a local shell.
+		return nil, errors.New("app: no VNC transport")
 	default:
 		return f.local.Open(ctx, f.withLocalShell(spec))
 	}

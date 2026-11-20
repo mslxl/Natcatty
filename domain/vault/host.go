@@ -13,6 +13,7 @@ import (
 	"github.com/mslxl/natcatty/domain/model"
 	domainprotocol "github.com/mslxl/natcatty/domain/model/protocol"
 	modelterminal "github.com/mslxl/natcatty/domain/model/terminal"
+	modelvnc "github.com/mslxl/natcatty/domain/model/vnc"
 )
 
 // Protocol is the connection protocol a Host uses. Serial and network-device
@@ -102,112 +103,78 @@ func NormalizeFileProtocol(value FileProtocol) FileProtocol {
 	}
 }
 
-// VNC endpoint range. A VNC display number is editor presentation only: the
-// Host always stores the real TCP port, so display 0 maps to 5900 and display
-// 99 maps to 5999.
+// The VNC endpoint and viewer vocabulary lives in domain/model/vnc so the
+// Session start spec, this persisted record, and the RFB adapter share one
+// definition. The names below stay on the Vault package because the Host record
+// and its editor already use them.
 const (
 	// VNCDisplayBasePort is the TCP port of VNC display 0.
-	VNCDisplayBasePort = 5900
+	VNCDisplayBasePort = modelvnc.DisplayBasePort
 	// VNCDisplayMax is the highest display number the editor accepts.
-	VNCDisplayMax = 99
+	VNCDisplayMax = modelvnc.DisplayMax
 )
 
 // VNCDisplayMode selects how the VNC Host editor accepts the endpoint. It is
 // presentation state: the Host record always stores the resolved TCP port.
-type VNCDisplayMode string
+type VNCDisplayMode = modelvnc.DisplayMode
 
 const (
 	// VNCDisplayNumber enters the endpoint as a display number ("1" or ":1").
-	VNCDisplayNumber VNCDisplayMode = "display"
+	VNCDisplayNumber = modelvnc.DisplayNumber
 	// VNCPort enters the endpoint as a raw TCP port.
-	VNCPort VNCDisplayMode = "port"
+	VNCPort = modelvnc.Port
 )
 
 // NormalizeDisplayMode maps an empty or unknown value to display-number input,
 // the default the editor presents.
 func NormalizeDisplayMode(mode VNCDisplayMode) VNCDisplayMode {
-	switch mode {
-	case VNCPort:
-		return VNCPort
-	default:
-		return VNCDisplayNumber
-	}
+	return modelvnc.NormalizeDisplayMode(mode)
 }
 
 // VNCFitMode selects how the viewer scales the remote desktop.
-type VNCFitMode string
+type VNCFitMode = modelvnc.FitMode
 
 const (
 	// VNCFit scales the desktop to fit the pane, preserving the aspect ratio.
-	VNCFit VNCFitMode = "fit"
+	VNCFit = modelvnc.Fit
 	// VNCOneToOne shows one remote pixel per pane pixel.
-	VNCOneToOne VNCFitMode = "one_to_one"
+	VNCOneToOne = modelvnc.OneToOne
 	// VNCClip keeps one-to-one pixels and pans a clipped viewport.
-	VNCClip VNCFitMode = "clip"
+	VNCClip = modelvnc.Clip
 )
 
 // NormalizeFitMode maps an empty or unknown value to fit-to-window, the
 // default the viewer starts with.
 func NormalizeFitMode(mode VNCFitMode) VNCFitMode {
-	switch mode {
-	case VNCOneToOne, VNCClip:
-		return mode
-	default:
-		return VNCFit
-	}
+	return modelvnc.NormalizeFitMode(mode)
 }
 
 // VNCCursorMode selects whether the local pointer or the server-drawn cursor
 // is visible over the framebuffer.
-type VNCCursorMode string
+type VNCCursorMode = modelvnc.CursorMode
 
 const (
 	// VNCCursorLocal draws the local pointer from the server's cursor shape.
-	VNCCursorLocal VNCCursorMode = "local"
+	VNCCursorLocal = modelvnc.CursorLocal
 	// VNCCursorServer lets the server paint the cursor into the framebuffer.
-	VNCCursorServer VNCCursorMode = "server"
+	VNCCursorServer = modelvnc.CursorServer
 )
 
 // NormalizeCursorMode maps an empty or unknown value to the local cursor, the
 // default every other remote-desktop client uses.
 func NormalizeCursorMode(mode VNCCursorMode) VNCCursorMode {
-	switch mode {
-	case VNCCursorServer:
-		return VNCCursorServer
-	default:
-		return VNCCursorLocal
-	}
+	return modelvnc.NormalizeCursorMode(mode)
 }
 
 // VNCConfig is a VNC Host's persisted viewer configuration. The endpoint is
 // not stored here: the Host's Port is always the real TCP port, and the
 // display-number input mode only decides how the editor presents it.
-type VNCConfig struct {
-	// DisplayMode selects display-number or raw-port input in the editor.
-	DisplayMode VNCDisplayMode `json:"displayMode"`
-	// FitMode is the viewer's initial scaling behavior.
-	FitMode VNCFitMode `json:"fitMode"`
-	// ViewOnly suppresses local keyboard and pointer input.
-	ViewOnly bool `json:"viewOnly,omitempty"`
-	// Shared asks the server to keep other clients connected (ClientInit).
-	// It defaults to true; an explicit false is persisted.
-	Shared bool `json:"shared"`
-	// CursorMode selects the local or server-drawn pointer.
-	CursorMode VNCCursorMode `json:"cursorMode"`
-	// PlaintextWarningAcknowledged records that the user accepted the
-	// unencrypted-transport warning for this Host.
-	PlaintextWarningAcknowledged bool `json:"plaintextWarningAcknowledged,omitempty"`
-}
+type VNCConfig = modelvnc.Config
 
 // DefaultVNCConfig is the configuration a new VNC Host starts from and the
 // baseline NormalizeVNCConfig fills missing enum values from.
 func DefaultVNCConfig() VNCConfig {
-	return VNCConfig{
-		DisplayMode: VNCDisplayNumber,
-		FitMode:     VNCFit,
-		Shared:      true,
-		CursorMode:  VNCCursorLocal,
-	}
+	return modelvnc.DefaultConfig()
 }
 
 // NormalizeVNCConfig canonicalizes a VNC configuration. A nil value means a
@@ -215,42 +182,25 @@ func DefaultVNCConfig() VNCConfig {
 // fall back to their defaults. A non-nil Shared=false is an explicit choice
 // and is preserved.
 func NormalizeVNCConfig(config *VNCConfig) *VNCConfig {
-	normalized := DefaultVNCConfig()
-	if config != nil {
-		normalized = *config
-	}
-	normalized.DisplayMode = NormalizeDisplayMode(normalized.DisplayMode)
-	normalized.FitMode = NormalizeFitMode(normalized.FitMode)
-	normalized.CursorMode = NormalizeCursorMode(normalized.CursorMode)
-	return &normalized
+	return modelvnc.NormalizeConfig(config)
 }
 
 // CloneVNCConfig returns a copy safe to store on a Host or draft. It keeps a
 // nil value nil so a non-VNC Host serializes exactly as before.
 func CloneVNCConfig(config *VNCConfig) *VNCConfig {
-	if config == nil {
-		return nil
-	}
-	copy := *config
-	return &copy
+	return modelvnc.CloneConfig(config)
 }
 
 // VNCPortForDisplay returns the TCP port for a VNC display number. The
 // boolean is false for a display outside 0-99.
 func VNCPortForDisplay(display int) (int, bool) {
-	if display < 0 || display > VNCDisplayMax {
-		return 0, false
-	}
-	return VNCDisplayBasePort + display, true
+	return modelvnc.PortForDisplay(display)
 }
 
 // VNCDisplayForPort returns the display number for a TCP port. The boolean is
 // false when the port is outside the 5900-5999 display range.
 func VNCDisplayForPort(port int) (int, bool) {
-	if port < VNCDisplayBasePort || port > VNCDisplayBasePort+VNCDisplayMax {
-		return 0, false
-	}
-	return port - VNCDisplayBasePort, true
+	return modelvnc.DisplayForPort(port)
 }
 
 // DeviceType marks a Host whose SSH peer runs a vendor CLI instead of a POSIX

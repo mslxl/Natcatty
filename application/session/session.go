@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,6 +35,7 @@ import (
 	"github.com/mslxl/natcatty/domain/model/serial"
 	telnetmodel "github.com/mslxl/natcatty/domain/model/telnet"
 	modelterminal "github.com/mslxl/natcatty/domain/model/terminal"
+	modelvnc "github.com/mslxl/natcatty/domain/model/vnc"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 )
 
@@ -77,6 +79,9 @@ const (
 	KindMosh Kind = "mosh"
 	// KindET is an EternalTerminal Session using the in-process et client.
 	KindET Kind = "et"
+	// KindVNC is a pixel Session on a VNC Host. It carries a DisplaySession
+	// instead of a byte stream.
+	KindVNC Kind = "vnc"
 )
 
 // Status is a Session's lifecycle state.
@@ -134,6 +139,10 @@ const (
 	// reconnecting would fight the new owner; the transport reports a notice
 	// instead of retrying.
 	EndReasonDisplaced EndReason = "displaced"
+	// EndReasonAuthFailed reports an authentication or host-key rejection on a
+	// live channel, such as an RFB security handshake. A Session never retries
+	// it; the user reconnects explicitly after fixing the credential.
+	EndReasonAuthFailed EndReason = "auth-failed"
 )
 
 // End is a transport's final state.
@@ -167,6 +176,11 @@ const DefaultReconnectDelay = 5 * time.Second
 // shouldRetry reports the original reason predicate.
 func (p *ReconnectPolicy) shouldRetry(end End) bool {
 	if p == nil {
+		return false
+	}
+	if end.Reason == EndReasonAuthFailed {
+		// A rejected credential never improves by retrying. This check is
+		// authoritative even for a caller-supplied predicate.
 		return false
 	}
 	if p.ShouldRetry != nil {
@@ -206,6 +220,9 @@ type Snapshot struct {
 	EndReason EndReason
 	// Cols and Rows are the last size sent to the transport.
 	Cols, Rows int
+	// DisplayWidth and DisplayHeight are the remote framebuffer size of a
+	// pixel Session. They stay zero for a byte-stream Session.
+	DisplayWidth, DisplayHeight int
 	// PendingBytes is the output waiting for the terminal to read.
 	PendingBytes int
 	// Paused reports that output backpressure is engaged.
@@ -473,6 +490,10 @@ type StartSpec struct {
 	// ET carries an EternalTerminal Session's endpoint and credentials. It is
 	// required when Kind is KindET and ignored by every other transport.
 	ET *etmodel.Config
+	// VNC carries a VNC Session's endpoint, credentials, viewer configuration,
+	// and route selection. It is required when Kind is KindVNC and ignored by
+	// every other transport.
+	VNC *modelvnc.SessionConfig
 	// ResumeKey locates a saved ET session in the secret store so a new
 	// process can reattach it. It is an opaque, non-secret identifier; the
 	// session id and passkey live only in the store. Empty disables reattach.
@@ -579,6 +600,21 @@ type Session struct {
 	factory   Factory
 	spec      StartSpec
 
+	// displayMu guards the current pixel Session. The command loop swaps it on
+	// reconnect; the viewer's send methods read it from any goroutine.
+	displayMu sync.RWMutex
+	display   *SerializedDisplay
+	// displayEvents is the Session's own single-consumer event stream. The
+	// display loop drains the adapter's channel and forwards every event here,
+	// so the adapter still has exactly one consumer. It closes once, at
+	// teardown, and never between reconnect generations.
+	displayEvents chan DisplayEvent
+	// displayDone closes exactly once after displayEvents.
+	displayDone sync.Once
+	// displayLoops tracks every display-generation goroutine so teardown waits
+	// before closing the Session event stream.
+	displayLoops sync.WaitGroup
+
 	// generation changes whenever the transport is replaced. The loop is the
 	// only writer; readers and writers carry the generation they were started
 	// with so a late event from an abandoned transport is ignored.
@@ -613,6 +649,12 @@ type Session struct {
 	ended        bool
 	mu           sync.Mutex
 	snapshot     Snapshot
+
+	// closedMu guards closedTransports. A transport can be closed by the end
+	// handler and again by the final teardown path; recording it here keeps a
+	// non-idempotent DisplayProvider from closing its event channel twice.
+	closedMu         sync.Mutex
+	closedTransports []Transport
 
 	tap             *terminalTap
 	clipboardAccess domainterminal.ClipboardAccess
@@ -951,6 +993,21 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		// never on its own: nothing drops between here and the shell.
 		spec.Reconnect = &ReconnectPolicy{ShouldRetry: func(End) bool { return false }}
 	}
+	if spec.Kind == KindVNC {
+		// A VNC Session follows the SSH policy: retry a dropped stream every
+		// five seconds, but never after an authentication failure.
+		if spec.Reconnect == nil {
+			spec.Reconnect = &ReconnectPolicy{}
+		}
+		if spec.VNC == nil {
+			return nil, errors.New("session: VNC configuration is required")
+		}
+		normalized := spec.VNC.Normalized()
+		if err := normalized.Validate(); err != nil {
+			return nil, err
+		}
+		spec.VNC = &normalized
+	}
 	if spec.Cols <= 0 {
 		spec.Cols = 80
 	}
@@ -964,20 +1021,27 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 			spec.EncodingScope = domainterminal.EncodingScopeLocal
 		}
 	}
-	if !spec.Encoding.Valid() {
+	if spec.Kind == KindVNC {
+		// A pixel Session has no wire encoding: pixels cross the display port,
+		// and clipboard text is Latin-1 at the RFB layer. Keep the Snapshot's
+		// encoding field at its neutral value and never ask for a codec.
 		spec.Encoding = domainterminal.EncodingUTF8
-		if s.encodingPolicy != nil {
-			if candidate := s.encodingPolicy(spec); candidate.Valid() {
-				spec.Encoding = candidate
+	} else {
+		if !spec.Encoding.Valid() {
+			spec.Encoding = domainterminal.EncodingUTF8
+			if s.encodingPolicy != nil {
+				if candidate := s.encodingPolicy(spec); candidate.Valid() {
+					spec.Encoding = candidate
+				}
 			}
 		}
-	}
-	spec.Encoding = domainterminal.NormalizeEncoding(spec.Encoding)
-	if spec.Encoding != domainterminal.EncodingUTF8 && s.codecFactory == nil {
-		return nil, fmt.Errorf("session: no codec factory for encoding %q", spec.Encoding)
+		spec.Encoding = domainterminal.NormalizeEncoding(spec.Encoding)
+		if spec.Encoding != domainterminal.EncodingUTF8 && s.codecFactory == nil {
+			return nil, fmt.Errorf("session: no codec factory for encoding %q", spec.Encoding)
+		}
 	}
 	codec := Codec(identityCodec{})
-	if s.codecFactory != nil {
+	if s.codecFactory != nil && spec.Kind != KindVNC {
 		codec = s.codecFactory(spec.Encoding)
 	}
 	if codec == nil {
@@ -994,7 +1058,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	// notice once the Session is live. The probe never fails an Open.
 	hostAtuinActive := false
 	hostAtuinFailed := false
-	if s.hostAtuin != nil {
+	if s.hostAtuin != nil && spec.Kind != KindVNC {
 		probeCtx, cancel := context.WithTimeout(ctx, hostAtuinProbeTimeout)
 		probe := s.hostAtuin.Probe(probeCtx, spec)
 		cancel()
@@ -1020,7 +1084,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	var captureCleanup func()
 	captureFailed := false
 	hookExpected := false
-	if s.captureHook != nil && !hostAtuinActive {
+	if s.captureHook != nil && !hostAtuinActive && spec.Kind != KindVNC {
 		plan, failed := s.captureHook.Plan(spec)
 		spec = plan.Spec
 		captureCleanup = plan.Cleanup
@@ -1047,6 +1111,21 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 			EndedAt: time.Now(), Err: err,
 		})
 		return nil, err
+	}
+	var display *SerializedDisplay
+	if spec.Kind == KindVNC {
+		display = displayFromTransport(transport)
+		if display == nil {
+			err := errors.New("session: VNC transport did not provide a display session")
+			_ = transport.Close()
+			runCaptureCleanup(captureCleanup)
+			s.reportConnection(ConnectionEvent{
+				HostID: spec.HostID, Label: specLabel(spec), Hostname: spec.Hostname,
+				Username: spec.Username, Kind: spec.Kind, StartedAt: startedAt,
+				EndedAt: time.Now(), Err: err,
+			})
+			return nil, err
+		}
 	}
 	if reporter, ok := transport.(CaptureHookExpectedReporter); ok && !reporter.CaptureHookExpected() {
 		// The transport learned while connecting that the planned hook was not
@@ -1084,6 +1163,8 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		ctx:                     sessionCtx,
 		cancel:                  cancel,
 		transport:               transport,
+		display:                 display,
+		displayEvents:           newDisplayEvents(spec.Kind),
 		factory:                 s.factory,
 		spec:                    spec,
 		startupReadinessTimeout: s.startupReadinessTimeout,
@@ -1125,9 +1206,13 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	// finish its startup (a ForceCommand bash -i included) before it can read a
 	// wrapper, so the first command probes readiness first.
 	session.commandReady.Store(spec.Kind == KindLocal)
-	// A Host startup command waits for this connection's shell prompt.
-	session.armStartupCommand(session.generation, transport)
-	session.armAutoLogin(session.generation, transport)
+	if spec.Kind != KindVNC {
+		// A Host startup command waits for this connection's shell prompt. A
+		// pixel Session has no shell, so neither a startup command nor an
+		// auto-login detector applies.
+		session.armStartupCommand(session.generation, transport)
+		session.armAutoLogin(session.generation, transport)
+	}
 
 	s.mu.Lock()
 	if s.closing {
@@ -1176,7 +1261,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		}
 	}
 
-	if s.autoLog != nil {
+	if s.autoLog != nil && spec.Kind != KindVNC {
 		if options := s.autoLog(spec); options != nil {
 			if options.Label == "" {
 				options.Label = spec.Label
@@ -1240,6 +1325,13 @@ func specLabel(spec StartSpec) string {
 		}
 		if spec.Telnet != nil && spec.Telnet.Hostname != "" {
 			return spec.Telnet.Hostname
+		}
+	case KindVNC:
+		if spec.Hostname != "" {
+			return spec.Hostname
+		}
+		if spec.VNC != nil && spec.VNC.Hostname != "" {
+			return spec.VNC.Hostname
 		}
 	case KindLocal:
 		return "Local Terminal"
@@ -1311,6 +1403,10 @@ func commandScope(spec StartSpec) string {
 // use. It is separate from EncodingScope, which selects a persisted text
 // encoding preference rather than a history partition.
 func (s *Session) HistoryScope() string {
+	if !s.ByteStream() {
+		// A pixel Session has no shell and records no command history.
+		return ""
+	}
 	return commandScope(s.spec)
 }
 
@@ -1578,7 +1674,11 @@ func (s *Session) Snapshot() Snapshot {
 	if snapshot.CWD == "" && snapshot.Kind == KindLocal {
 		snapshot.CWD = s.probedCWD()
 	}
-	snapshot.Title = state.Title
+	if s.ByteStream() {
+		// A VNC title is the server's desktop name, stored by the display
+		// event path; the terminal tap never sees that stream.
+		snapshot.Title = state.Title
+	}
 	snapshot.Command = state.Command
 	snapshot.Input = state.Input
 	snapshot.InputCursor = state.InputCursor
@@ -1599,6 +1699,11 @@ func (s *Session) TerminalConn() *TerminalConn { return s.conn }
 // serializes it with close and exit.
 func (s *Session) Resize(cols, rows int) error {
 	if cols <= 0 || rows <= 0 {
+		return nil
+	}
+	if !s.ByteStream() {
+		// A pixel Session has no terminal to resize. The viewer scales its own
+		// bitmap; a remote desktop resize is SetDesktopSize and is explicit.
 		return nil
 	}
 	select {
@@ -1726,6 +1831,49 @@ func (s *Session) publishEnded() {
 	}
 }
 
+// closeTransport closes one transport at most once for this Session. The end
+// handler and final teardown can both reach the same generation, and a
+// DisplayProvider's Close owns the display's event channel; closing it twice
+// would panic on a non-idempotent adapter. A transport Open returned but never
+// handed to the command loop uses the same path.
+func (s *Session) closeTransport(transport Transport) {
+	if transport == nil {
+		return
+	}
+	if !s.recordTransportClosed(transport) {
+		return
+	}
+	_ = transport.Close()
+}
+
+// recordTransportClosed reports whether transport has not been closed yet and
+// records it in one step. Interfaces are compared only when their dynamic type
+// is comparable, so an exotic non-pointer transport cannot panic the teardown.
+func (s *Session) recordTransportClosed(transport Transport) bool {
+	s.closedMu.Lock()
+	defer s.closedMu.Unlock()
+	for _, closed := range s.closedTransports {
+		if sameTransport(closed, transport) {
+			return false
+		}
+	}
+	s.closedTransports = append(s.closedTransports, transport)
+	return true
+}
+
+// sameTransport compares two transports by identity. Distinct non-comparable
+// values are treated as different, which may close one twice but never panics.
+func sameTransport(a, b Transport) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	kind := reflect.TypeOf(a)
+	if kind != reflect.TypeOf(b) || !kind.Comparable() {
+		return false
+	}
+	return a == b
+}
+
 // bindScreenSizer connects a transport that owns the remote screen size to
 // the live view's inverse resize path. A reconnect binds the replacement
 // transport the same way.
@@ -1747,7 +1895,16 @@ func (s *Session) bindScreenSizer(transport Transport) {
 func (s *Session) ScreenSizeFromRemote() bool { return s.remoteScreen.Load() }
 
 func (s *Session) start() {
+	// Register the display generation before the command loop can observe an
+	// end and wait on displayLoops.
+	if !s.ByteStream() {
+		s.displayLoops.Add(1)
+	}
 	go s.loop()
+	if !s.ByteStream() {
+		go s.displayLoop(s.generation, s.transport, s.display, s.genDone)
+		return
+	}
 	go s.readLoop(s.generation, s.transport)
 	go s.writeLoop(s.generation, s.transport, s.genDone)
 	go s.noticeLoop(s.transport, s.genDone)
@@ -1769,7 +1926,9 @@ func (s *Session) loop() {
 		case cmd := <-s.commands:
 			switch cmd.kind {
 			case commandResize:
-				if s.reopening {
+				if s.reopening || !s.ByteStream() {
+					// A pixel Session has no terminal size; the viewer scales
+					// its own bitmap and a remote resize is a separate request.
 					continue
 				}
 				if err := s.transport.Resize(cmd.cols, cmd.rows); err != nil {
@@ -1782,9 +1941,7 @@ func (s *Session) loop() {
 				if cmd.generation != s.generation || s.reopening {
 					// A late read or write error from a transport this Session
 					// already abandoned.
-					if cmd.transport != nil {
-						_ = cmd.transport.Close()
-					}
+					s.closeTransport(cmd.transport)
 					continue
 				}
 				retry := s.spec.Reconnect != nil && s.spec.Reconnect.shouldRetry(cmd.end)
@@ -1793,7 +1950,8 @@ func (s *Session) loop() {
 					// its credentials across this handover.
 					preserveTransportResume(cmd.transport)
 				}
-				_ = cmd.transport.Close()
+				s.setDisplay(nil)
+				s.closeTransport(cmd.transport)
 				if !retry {
 					status = StatusExited
 					connection = connectionForEnd(cmd.end)
@@ -1829,7 +1987,8 @@ func (s *Session) loop() {
 				s.genDone = make(chan struct{})
 				if s.transport != nil {
 					preserveTransportResume(s.transport)
-					_ = s.transport.Close()
+					s.setDisplay(nil)
+					s.closeTransport(s.transport)
 				}
 				s.update(func(snapshot *Snapshot) {
 					snapshot.Connection = ConnectionStatusReconnecting
@@ -1837,13 +1996,29 @@ func (s *Session) loop() {
 				go s.reconnect(s.generation, true)
 			case commandTransportOpen:
 				if cmd.generation != s.generation || !s.reopening {
-					if cmd.transport != nil {
-						_ = cmd.transport.Close()
-					}
+					s.closeTransport(cmd.transport)
 					continue
 				}
 				s.reopening = false
 				s.transport = cmd.transport
+				if !s.ByteStream() {
+					display := displayFromTransport(cmd.transport)
+					if display == nil {
+						s.closeTransport(cmd.transport)
+						status = StatusExited
+						connection = ConnectionStatusError
+						reason = EndReasonError
+						goto finished
+					}
+					s.setDisplay(display)
+					s.update(func(snapshot *Snapshot) {
+						snapshot.Connection = ConnectionStatusActive
+						snapshot.Notice = nil
+					})
+					s.displayLoops.Add(1)
+					go s.displayLoop(cmd.generation, cmd.transport, display, s.genDone)
+					continue
+				}
 				if withdrawn, ok := cmd.transport.(CaptureHookWithdrawn); ok && withdrawn.CaptureHookWithdrawn() {
 					// The replacement transport kept the plain login shell. Release
 					// any hook reservation left from the previous generation.
@@ -1883,6 +2058,12 @@ func (s *Session) loop() {
 	}
 
 finished:
+	// Clear the public display handle on every teardown path, including an
+	// explicit Close that never saw a transport-end command. Send methods then
+	// report ErrNoDisplay instead of reaching an adapter the transport closed
+	// below. The normal-end path already did this; this makes the two paths
+	// identical.
+	s.setDisplay(nil)
 	s.cancel()
 	close(s.genDone)
 	s.stopActivityTimer()
@@ -1891,9 +2072,12 @@ finished:
 	s.cancelAutoLogin()
 	s.conn.finish()
 	s.closeObservations()
-	if s.transport != nil {
-		_ = s.transport.Close()
-	}
+	s.closeTransport(s.transport)
+	// The owning transport closes its DisplaySession (see DisplayProvider).
+	// Every generation's event loop must stop before the Session stream
+	// closes; ctx is already cancelled, so a blocked surface send unwinds.
+	s.displayLoops.Wait()
+	s.closeDisplayEvents()
 	// Temporary startup files are session-scoped. The command loop is the one
 	// teardown path, so the cleanup runs exactly once.
 	if s.captureCleanup != nil {
@@ -1933,6 +2117,21 @@ finished:
 		// detached; the transport is gone now.
 		snapshot.Hibernated = false
 	})
+	// A reconnect can finish its dial exactly as the command loop exits,
+	// leaving a handoff the loop never consumed. Close it so the transport's
+	// display emitter does not leak. closeTransport dedupes the common case
+	// where the loop did consume and assign it.
+drainHandoffs:
+	for {
+		select {
+		case cmd := <-s.commands:
+			if cmd.kind == commandTransportOpen {
+				s.closeTransport(cmd.transport)
+			}
+		default:
+			break drainHandoffs
+		}
+	}
 	// Unregister before announcing the end; see Done.
 	if s.onEnd != nil {
 		s.onEnd(s.id)
@@ -1943,7 +2142,7 @@ finished:
 // connectionForEnd reports the indicator a final transport end leaves. A
 // dropped transport is an error; a deliberate shell end is not.
 func connectionForEnd(end End) ConnectionStatus {
-	if end.Reason == EndReasonError {
+	if end.Reason == EndReasonError || end.Reason == EndReasonAuthFailed {
 		return ConnectionStatusError
 	}
 	return ConnectionStatusActive
@@ -1969,16 +2168,31 @@ func (s *Session) reconnect(generation int, immediate bool) {
 		}
 		transport, err := s.factory.Open(s.ctx, s.spec)
 		if err == nil {
+			// The dial may outlive the Session: an explicit Close can cancel
+			// the context while Open is blocked. The newly opened transport
+			// owns a display and its DisplayEmitter goroutine, so close it here
+			// rather than leaking it when the command loop has already stopped.
+			if s.ctx.Err() != nil {
+				s.setDisplay(nil)
+				s.closeTransport(transport)
+				return
+			}
 			// A new transport starts a new remote line, so the input
 			// translator must not delete bytes from the previous one.
 			s.inputTranslator.reset()
 			s.post(command{kind: commandTransportOpen, generation: generation, transport: transport})
+			// The handoff may still lose to a cancellation between the check
+			// above and post. Close the transport unless the command loop
+			// accepted it; closeTransport dedupes if both paths reach it.
+			if s.ctx.Err() != nil {
+				s.closeTransport(transport)
+			}
 			return
 		}
 		if s.ctx.Err() != nil {
 			return
 		}
-		if permanentOpenError(err) {
+		if permanentError(err) {
 			s.post(command{kind: commandTransportFailed, generation: generation, err: err})
 			return
 		}
@@ -1986,8 +2200,9 @@ func (s *Session) reconnect(generation int, immediate bool) {
 	}
 }
 
-// permanentOpenError reports failures that must not be retried.
-func permanentOpenError(err error) bool {
+// permanentError reports a typed rejection, including an authentication or
+// host-key failure, that must not be retried after it is observed.
+func permanentError(err error) bool {
 	var failure permanentFailure
 	return errors.As(err, &failure) && failure.Permanent()
 }

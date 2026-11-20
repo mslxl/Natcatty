@@ -61,6 +61,10 @@ func (s *Session) EncodingScope() string {
 // encoded from now on. It reports whether the encoding is supported. The
 // terminal surface calls it when the user chooses from the encoding menu.
 func (s *Session) SetEncoding(encoding domainterminal.Encoding) bool {
+	if !s.ByteStream() {
+		// A pixel Session has no wire encoding to switch.
+		return false
+	}
 	if !encoding.Valid() {
 		return false
 	}
