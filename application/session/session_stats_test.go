@@ -204,6 +204,39 @@ func TestSessionHighlightReassemblesAKeywordSplitAcrossChunks(t *testing.T) {
 	}
 }
 
+// TestSessionHighlightKeepsAChunkedPictureIntact proves that a control string
+// is never highlighted across the writes that carry it: the payload of a
+// Kitty picture contains the configured keyword, and an escape inserted there
+// would end the string at the terminal and print the picture as text.
+func TestSessionHighlightKeepsAChunkedPictureIntact(t *testing.T) {
+	factory := &fakeFactory{transport: newFakeTransport()}
+	service := newTestService(factory, WithHighlightPolicy(func() (bool, []domainterminal.KeywordHighlightRule) {
+		return true, []domainterminal.KeywordHighlightRule{
+			{ID: "error", Patterns: []string{`ERROR`}, Color: "#FF0000", Enabled: true},
+		}
+	}))
+	session, err := service.OpenLocal(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	chunks := []string{
+		"\x1b_Gf=32,s=1,v=1,a=T,i=1,m=1;/gAA",
+		"ERRORERRORERROR",
+		"\x1b_Gm=0;\x1b\\ ERROR\n",
+	}
+	for _, chunk := range chunks {
+		factory.transport.send(chunk)
+	}
+	got := readOutput(t, session)
+	want := strings.Join(chunks[:2], "") + "\x1b_Gm=0;\x1b\\" +
+		" \x1b[38;2;255;0;0mERROR\x1b[39m\n"
+	if got != want {
+		t.Fatalf("chunked picture output = %q, want %q", got, want)
+	}
+}
+
 func TestSessionHighlightPolicyAppliesToLiveSessions(t *testing.T) {
 	factory := &fakeFactory{transport: newFakeTransport()}
 	service := newTestService(factory, WithHighlightPolicy(func() (bool, []domainterminal.KeywordHighlightRule) {

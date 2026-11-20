@@ -259,6 +259,14 @@ func (s *Service) SetLegacyAlgorithms(enabled bool) error {
 	})
 }
 
+// SetRawTerminalMode controls the inverse of the Lens terminal switch:
+// true disables Lens blocks and shows the raw terminal screen.
+func (s *Service) SetRawTerminalMode(enabled bool) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.RawTerminalMode = enabled
+	})
+}
+
 // SetConnectionLogRetention sets how many connection logs are kept. Zero
 // keeps every log.
 func (s *Service) SetConnectionLogRetention(count, days int) error {

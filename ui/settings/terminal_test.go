@@ -129,6 +129,10 @@ func (t *fakeTerminal) SetHistoryCaptureHookEnabled(enabled bool) error {
 	return t.update(func(settings *domainterminal.Settings) { settings.HistoryCaptureHookEnabled = enabled })
 }
 
+func (t *fakeTerminal) SetRawTerminalMode(enabled bool) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.RawTerminalMode = enabled })
+}
+
 func TestTerminalStateSavesEachSettingAndReportsFailure(t *testing.T) {
 	fake := newFakeTerminal()
 	state := NewTerminalState(fake)
@@ -380,12 +384,35 @@ func TestTerminalSettingsShowThePowerUxControls(t *testing.T) {
 			m.SettingsKeywordHighlightTitle(),
 			m.SettingsKeywordHighlightEnabled(),
 			m.SettingsKeywordHighlightPatterns(),
+			m.SettingsRawTerminalModeTitle(),
+			m.SettingsRawTerminalModeEnabled(),
 			"Error",
 		} {
 			if !tester.HasText(text) {
 				t.Fatalf("%dx%d does not show %q: %v", size[0], size[1], text, tester.Texts())
 			}
 		}
+	}
+}
+
+func TestTerminalSettingsToggleLensTerminalMode(t *testing.T) {
+	fake := newFakeTerminal()
+	state := NewTerminalState(fake)
+	tester := ui.NewTester(viewAt(AreaTerminal, Config{
+		Lock: NewAppLockState(&fakeAppLock{}), Terminal: state,
+	}), 1100, 900)
+	tester.SetLocale("en")
+	tester.Frame()
+	m := locales.In("en")
+	if fake.settings.RawTerminalMode {
+		t.Fatal("Lens terminal mode is not on by default")
+	}
+	if err := tester.Click(m.SettingsRawTerminalModeEnabled()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if !fake.settings.RawTerminalMode {
+		t.Fatal("turning off Lens terminal mode did not enable raw terminal mode")
 	}
 }
 

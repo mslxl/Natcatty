@@ -1341,6 +1341,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			sessionui.WithTerminalKeybinds(func() []terminal.Keybind {
 				return terminalKeybinds(keybindingService)
 			}),
+			sessionui.WithRawTerminal(func() bool {
+				return terminalService.Settings().RawTerminalMode
+			}),
 			// Reconnect is the original's manual retry: it abandons the
 			// current transport and dials again without the policy delay.
 			sessionui.WithReconnect(func() { s.ReconnectNow() }, s.CanReconnect),
@@ -1699,7 +1702,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	windows.SetCloseToTray(desktopCtl.HideOnClose)
 	// Regaining focus asks the sync engine for a debounced run. Every window
 	// reports focus through the same hook, so a detached Session works too.
-	windows.SetFocusHandler(historySyncService.NotifyFocus)
+	windows.SetFocusHandler(func() {
+		historySyncService.NotifyFocus()
+		shellState.NotifyWindowFocus()
+	})
 	// The Security preference governs close intent live.
 	windows.SetSessionConfirmation(func() bool {
 		return preferenceService.Settings().Security.ConfirmCloseSessions

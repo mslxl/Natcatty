@@ -307,7 +307,13 @@ func DetachedLayout(c *ui.Context, title string, actions, body func()) {
 				actions()
 			}
 		})
-	}, body)
+	}, func() {
+		// The body shrinks by the title bar the way the main window's does:
+		// a raw Fill-height body keeps its content's minimum and lays the
+		// Pane's bottom (and its flow) below the window, where neither
+		// follow nor the wheel can reach it.
+		bodyRow(c, body)
+	})
 }
 
 // LockLayout is the lock screen: content centered in a window that, being

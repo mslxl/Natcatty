@@ -55,9 +55,10 @@ func shellView(owner state.RenderOwner, s *state.State) func(*ui.Context) {
 	// belongs to this window's content function, so the active Tab is revealed
 	// when it changes or the window is resized.
 	reveal := newWorkTabReveal()
+	focus := &focusEpochTracker{}
 	return func(c *ui.Context) {
 		m, t := shellPreamble(c, s, func() bool { return terminalVisible(s) })
-		shellLayout(c, s, m, t, owner, reveal)
+		shellLayout(c, s, m, t, owner, reveal, focus.next(s))
 		// A side panel tool no longer drawn, such as System sampling a Host,
 		// stops once the frame is done. FinishSideFrameFor is per renderer, so
 		// this call cannot stop a tool another window still draws.
@@ -65,11 +66,42 @@ func shellView(owner state.RenderOwner, s *state.State) func(*ui.Context) {
 	}
 }
 
+// focusEpochTracker counts the frames in which the visible Tab, its focused
+// Pane, or the presence of a terminal changes. A live Surface compares the
+// epoch with the one that built its terminal and rebuilds when the Tab is
+// shown again, so a terminal that was hidden under a prompt or another surface
+// comes back focused.
+type focusEpochTracker struct {
+	last struct {
+		tab     model.TabID
+		pane    model.PaneID
+		visible bool
+	}
+	epoch uint64
+}
+
+// next reports the epoch of this frame, one higher than the last frame's
+// whenever the focus key changed.
+func (f *focusEpochTracker) next(s *state.State) uint64 {
+	activeID, _ := s.TabID(s.ActiveTab())
+	activePane, _ := s.FocusedPaneID(s.ActiveTab())
+	key := struct {
+		tab     model.TabID
+		pane    model.PaneID
+		visible bool
+	}{activeID, activePane, terminalVisible(s)}
+	if key != f.last {
+		f.last = key
+		f.epoch++
+	}
+	return f.epoch
+}
+
 // shellLayout draws the shell below the preamble: the Tab bar, the chosen
 // surface, and every global overlay above it. It runs the per-frame Flush
 // through shellPreamble only, so both renderers execute it exactly once.
 func shellLayout(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
-	owner state.RenderOwner, reveal *workTabReveal) {
+	owner state.RenderOwner, reveal *workTabReveal, focusEpoch uint64) {
 	// Hiding the SFTP Tab while it is shown leaves for the Vault, as the
 	// original's; the Session panel still browses files.
 	if !s.SFTPTabShown() && s.SFTPVisible() {
@@ -80,7 +112,7 @@ func shellLayout(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		HomeTabs: func() { homeTabs(c, s, m) },
 		Tabs:     func() { workTabs(c, s, m, t, reveal) },
 		Flush:    terminalVisible(s),
-		Body:     func() { body(c, s, m, t, owner) },
+		Body:     func() { body(c, s, m, t, owner, focusEpoch) },
 	})
 
 	if prompt := s.TrustPrompt(); prompt != nil {
@@ -133,10 +165,11 @@ func homeVisible(s *state.State) bool {
 }
 
 // body draws the chosen Tab's surface below the Tab bar.
-func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, owner state.RenderOwner) {
+func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
+	owner state.RenderOwner, focusEpoch uint64) {
 	switch {
 	case terminalVisible(s):
-		activeTab(c, s, m, t, owner)
+		activeTab(c, s, m, t, owner, focusEpoch)
 	case s.SFTPVisible():
 		layout.HomeLayout(c, layout.HomeSlots{
 			Notices: func() { notices(c, s, m, t) },
@@ -310,9 +343,11 @@ func vaultPageLabel(m locales.Messages, page section.Section) string {
 // activeTab draws the active Tab with the window's Pane commands. The owner
 // scopes the side panel's per-renderer bookkeeping; the top-down renderer
 // draws the same commands from the Dropdown Panel, where it is the only
-// window rendering the Workspace.
-func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, owner state.RenderOwner) {
-	activeTabBody(c, s, m, t, mainTabRef(owner, s, s.ActiveTab()))
+// window rendering the Workspace. focusEpoch is the renderer's count of focus
+// changes, which tells a live Surface its terminal is shown again.
+func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
+	owner state.RenderOwner, focusEpoch uint64) {
+	activeTabBody(c, s, m, t, mainTabRef(owner, s, s.ActiveTab(), focusEpoch))
 }
 
 // activeTabBody draws one Tab's split tree, the side panel beside it, and the

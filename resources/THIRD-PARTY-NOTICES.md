@@ -45,6 +45,11 @@ the open items are listed at the end and in `docs/audit/mosh-provenance.md`.**
 MyGo is compiled into the application and also packages these native or
 embedded components:
 
+- **Windows Terminal winconpty passthrough pair** (`resources/winconpty/conpty.dll`
+  and `OpenConsole.exe`), from the Windows Terminal project, ProductName
+  "Windows Terminal", FileVersion 1.24.2607.10001. License: MIT. The pair is
+  used only on Windows to preserve Kitty, Sixel and iTerm2 inline-image VT
+  sequences through ConPTY.
 - **libghostty-vt**, the terminal emulator library used by MyGo's terminal
   plugin. Source: <https://github.com/ghostty-org/ghostty/tree/befcdfd2c3a1cb24d9ec886e93c95b2b5daa7028>.
   License: MIT. Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors.
@@ -66,6 +71,7 @@ each module's own `LICENSE` file.
 
 | Module | Version | License | Copyright notice |
 | --- | --- | --- | --- |
+| `github.com/creack/pty` | v1.1.24 | MIT | Copyright (c) 2011 Keith Rarick |
 | `github.com/dustin/go-humanize` | v1.0.1 | MIT | Copyright (c) 2005-2008 Dustin Sallings |
 | `github.com/ebitengine/purego` | v0.11.1 | Apache-2.0 | Copyright The Ebitengine Authors (SPDX-FileCopyrightText in the source files) |
 | `github.com/egoist/mygo` | pinned in `go.mod` | MIT | Copyright (c) 2026 MyGo contributors |

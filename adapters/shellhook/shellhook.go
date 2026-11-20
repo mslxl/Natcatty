@@ -200,6 +200,20 @@ func (p *Planner) planLocal(spec appsession.StartSpec) (appsession.CaptureHookPl
 			cleanup()
 			return unchanged, true
 		}
+		childBashRC := filepath.Join(dir, "child-bashrc")
+		if err := os.WriteFile(childBashRC, []byte(bashStartupScript()), 0o600); err != nil {
+			cleanup()
+			return unchanged, true
+		}
+		childShEnv := filepath.Join(dir, "child-sh-env")
+		if err := os.WriteFile(childShEnv, []byte(posixStartupScript()), 0o600); err != nil {
+			cleanup()
+			return unchanged, true
+		}
+		if err := writeWindowsChildWrappers(dir); err != nil {
+			cleanup()
+			return unchanged, true
+		}
 		// The hook must not gate on [Environment]::UserInteractive: Win32-OpenSSH
 		// starts an interactive shell in session 0 with a non-visible window
 		// station, where that property is false. This marker is the launcher's
@@ -210,6 +224,11 @@ func (p *Planner) planLocal(spec appsession.StartSpec) (appsession.CaptureHookPl
 		spec.Env = append(spec.Env,
 			"NETCATTY_HOOK_START=1",
 			"NETCATTY_HOOK_STATE="+filepath.Join(dir, "hook-loaded"),
+			"NETCATTY_HOOK_FILE="+hookPath,
+			"NETCATTY_CHILD_BASHRC="+childBashRC,
+			"NETCATTY_CHILD_SH_ENV="+childShEnv,
+			"NETCATTY_CHILD_WRAPPER_DIR="+dir,
+			"NETCATTY_CHILD_CMD_INIT="+filepath.Join(dir, "cmd-init.cmd"),
 		)
 		spec.Command = powershellCommand(shell.path, shell.args, hookPath)
 	case shellNu:

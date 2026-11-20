@@ -28,8 +28,12 @@ type tabRef struct {
 	// per owner, so the main window and a second renderer cannot stop each
 	// other's live tool.
 	owner state.RenderOwner
-	tree  func() (*domainworkspace.Node, []int, bool)
-	pane  func(model.PaneID) (state.PaneInfo, bool)
+	// focusEpoch counts this renderer's focus changes; a live Surface rebuilds
+	// its terminal when the epoch it is shown with differs from the one its
+	// terminal was built under.
+	focusEpoch uint64
+	tree       func() (*domainworkspace.Node, []int, bool)
+	pane       func(model.PaneID) (state.PaneInfo, bool)
 	// setRatio is nil for a read-only ref: the renderer still draws the split
 	// tree but cannot change the Workspace's ratios.
 	setRatio func(model.SplitID, float32) bool
@@ -59,13 +63,14 @@ type tabRef struct {
 // window renderer holds the full Pane commands; owner scopes the side panel's
 // per-renderer bookkeeping, so the main window and the Dropdown Panel's
 // top-down route never stop each other's live tool.
-func mainTabRef(owner state.RenderOwner, s *state.State, tabIndex int) tabRef {
+func mainTabRef(owner state.RenderOwner, s *state.State, tabIndex int, focusEpoch uint64) tabRef {
 	id, _ := s.TabID(tabIndex)
 	return tabRef{
-		id:    id,
-		owner: owner,
-		tree:  func() (*domainworkspace.Node, []int, bool) { return s.TabTree(tabIndex) },
-		pane:  func(id model.PaneID) (state.PaneInfo, bool) { return s.PaneInfoAt(tabIndex, id) },
+		id:         id,
+		owner:      owner,
+		focusEpoch: focusEpoch,
+		tree:       func() (*domainworkspace.Node, []int, bool) { return s.TabTree(tabIndex) },
+		pane:       func(id model.PaneID) (state.PaneInfo, bool) { return s.PaneInfoAt(tabIndex, id) },
 		setRatio: func(id model.SplitID, ratio float32) bool {
 			return s.SetSplitRatio(tabIndex, id, ratio)
 		},
@@ -91,15 +96,16 @@ func mainTabRef(owner state.RenderOwner, s *state.State, tabIndex int) tabRef {
 // close, detach, drag/drop, and ratio writes are left unwired, so the
 // renderer cannot change the Workspace's Tab order, active index, or split
 // tree.
-func readOnlyTabRef(owner state.RenderOwner, tab state.ReadOnlyTab) tabRef {
+func readOnlyTabRef(owner state.RenderOwner, tab state.ReadOnlyTab, focusEpoch uint64) tabRef {
 	return tabRef{
-		id:     tab.ID(),
-		owner:  owner,
-		tree:   tab.Tree,
-		pane:   tab.PaneInfo,
-		focus:  tab.FocusPane,
-		rename: tab.RenamePane,
-		retry:  tab.RetryPane,
+		id:         tab.ID(),
+		owner:      owner,
+		focusEpoch: focusEpoch,
+		tree:       tab.Tree,
+		pane:       tab.PaneInfo,
+		focus:      tab.FocusPane,
+		rename:     tab.RenamePane,
+		retry:      tab.RetryPane,
 	}
 }
 
@@ -428,7 +434,11 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 		if ref.managesPanes {
 			paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideTop, true)
 		}
-		ui.Row(c).Fill().Children(func() {
+		// FillWidth and Grow, not Fill: the drop zones above and below take
+		// their 4 DIPs out of the column. A Fill-height row asks for the
+		// column's whole height and laid the Pane's bottom 4 DIPs past it
+		// (and past the window), where the flow's last padding was clipped.
+		ui.Row(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
 			if ref.managesPanes {
 				paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideLeft, false)
 			}
@@ -660,6 +670,9 @@ func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	case info.Surface != nil:
 		// The focused Pane's terminal takes the keyboard; every other Pane
 		// renders without asking for it, so a split cannot steal the focus.
+		if setter, ok := info.Surface.(state.FocusEpochSetter); ok {
+			setter.SetFocusEpoch(ref.focusEpoch)
+		}
 		if target, ok := info.Surface.(state.FocusedSurface); ok {
 			target.ViewFocused(c, info.Focused)
 			return

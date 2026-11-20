@@ -176,6 +176,66 @@ func TestSurfaceAutocompleteSuggestsFromTheTypedLineAndTabAccepts(t *testing.T) 
 	}
 }
 
+// TestTabCompletesAfterThePopupWasDismissed guards the key path against a
+// dismissal that outlives the popup. Escape hides the rows until the input
+// changes, but Tab is an explicit request for completion: it must recompute
+// from the typed line, accept the row, and keep the literal tab away from the
+// shell.
+func TestTabCompletesAfterThePopupWasDismissed(t *testing.T) {
+	transport := newRecordingTransport()
+	service := appsession.NewService(recordingFactory{transport: transport})
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface, err := New(session,
+		WithRedraw(func() {}),
+		WithSuggestions(func(input, _, _ string) []autocomplete.Suggestion {
+			if input != "gi" {
+				return nil
+			}
+			return []autocomplete.Suggestion{{Text: "git status", Display: "git status", Source: "history"}}
+		}, func() (bool, bool) { return true, false }),
+	)
+	if err != nil {
+		t.Fatalf("New surface: %v", err)
+	}
+	t.Cleanup(surface.Close)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+	tester.ClickAt(360, 420)
+	tester.Type("gi")
+	if !waitFor(t, func() bool { return session.Snapshot().Input == "gi" }) {
+		t.Fatalf("typed input = %q", session.Snapshot().Input)
+	}
+	tester.Frame()
+	if !tester.HasText("git status") {
+		t.Fatalf("the popup does not show the suggestion: %v", tester.Texts())
+	}
+
+	// Escape closes the popup and the rows stay hidden for the same input.
+	tester.Key(0, ui.KeyEscape)
+	tester.Frame()
+	if tester.HasText("git status") {
+		t.Fatalf("Escape left the popup open: %v", tester.Texts())
+	}
+
+	// Tab asks for completion again: it must accept the row that the popup
+	// still has for this line, and never reach the shell as a tab byte.
+	tester.Key(0, ui.KeyTab)
+	if !waitFor(t, func() bool {
+		return bytes.Contains([]byte(transport.input()), []byte("\x7f\x7fgit status"))
+	}) {
+		t.Fatalf("Tab after dismissing the popup typed %q, want the accepted line",
+			transport.input())
+	}
+	if bytes.Contains([]byte(transport.input()), []byte("\t")) {
+		t.Fatalf("Tab reached the transport after the popup was dismissed: %q", transport.input())
+	}
+}
+
 // TestSurfaceAutocompleteRefusesMultilineSuggestionWithoutBracketedPaste
 // proves the acceptance path uses the safe insertion seam: without DEC 2004 a
 // multi-line suggestion cannot be typed into the editor, so nothing is sent
@@ -484,6 +544,59 @@ func TestSurfaceAutocompleteHonorsTheDebounceAndRunningCommand(t *testing.T) {
 	mu.Unlock()
 	if afterRunning == 0 {
 		t.Fatal("the provider was never called")
+	}
+}
+
+// TestSurfaceTabTakesASuggestionInsideTheDebounceWindow is the regression for
+// a fast Tab: the key handler used to run the frame path's debounce, so a Tab
+// pressed before the delay elapsed saw no rows and was left to the Pane, which
+// sent a literal tab to the shell. The delay belongs to the popup's appearance,
+// not to the key that acts on its rows.
+func TestSurfaceTabTakesASuggestionInsideTheDebounceWindow(t *testing.T) {
+	transport := newRecordingTransport()
+	service := appsession.NewService(recordingFactory{transport: transport})
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface, err := New(session,
+		WithRedraw(func() {}),
+		WithSuggestions(func(input, _, _ string) []autocomplete.Suggestion {
+			return []autocomplete.Suggestion{{Text: input + " status", Source: "history"}}
+		}, func() (bool, bool) { return true, false }),
+		// Long enough that the test cannot accidentally cross the window.
+		WithAutocompleteDelay(func() int { return 60000 }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(surface.Close)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+	tester.ClickAt(360, 420)
+	tester.Type("gi")
+	if !waitFor(t, func() bool { return session.Snapshot().Input == "gi" }) {
+		t.Fatalf("typed input = %q", session.Snapshot().Input)
+	}
+	tester.Frame()
+	if tester.HasText("gi status") {
+		t.Fatalf("the popup appeared before the delay: %v", tester.Texts())
+	}
+	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
+		t.Fatalf("Tab was not taken inside the debounce window: %v", surface.SuggestionRows())
+	}
+	if !waitFor(t, func() bool {
+		return bytes.Contains([]byte(transport.input()), []byte("\x7f\x7fgi status"))
+	}) {
+		t.Fatalf("accepted input = %q", transport.input())
+	}
+	if bytes.Contains([]byte(transport.input()), []byte("\t")) {
+		t.Fatalf("a literal tab reached the shell: %q", transport.input())
+	}
+	if !waitFor(t, func() bool { return session.Snapshot().Input == "gi status" }) {
+		t.Fatalf("the shell line tracked after accepting = %q", session.Snapshot().Input)
 	}
 }
 

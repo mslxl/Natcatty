@@ -680,6 +680,14 @@ jobs:
             -out resources/SOURCE-OFFER.md
           test -s resources/SOURCE-OFFER.md
 
+      - name: Download Windows ConPTY passthrough pair
+        if: matrix.artifact == 'windows-amd64'
+        run: |
+          set -euo pipefail
+          nu scripts/conptyfetch.nu --out resources/winconpty
+          test -s resources/winconpty/conpty.dll
+          test -s resources/winconpty/OpenConsole.exe
+
       - name: Build with MyGo
         run: |
           set -euo pipefail

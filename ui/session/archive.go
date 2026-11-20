@@ -37,6 +37,18 @@ func (s *Surface) openArchiveLink(link string) bool {
 	return true
 }
 
+// openPaneLink is the Pane's link hook. The Pane resolves text links itself,
+// because it draws the grid and owns the pointer mapping, so it says whether a
+// link is a printed path. An archive path fills its extraction command; a URL
+// is left to the Pane, which opens it in the browser, and a path that is not an
+// archive opens nothing, as MyGo leaves declined paths to the app.
+func (s *Surface) openPaneLink(link string, path bool) bool {
+	if !path {
+		return false
+	}
+	return s.openArchiveLink(link)
+}
+
 // mouseTrackingModes are the DEC private modes that make a program take the
 // pointer: X10, normal, highlight, button-event, and any-event reporting. The
 // encoding modes (1005, 1006, 1015, 1016) only change how a report is written.

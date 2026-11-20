@@ -265,6 +265,16 @@ func realShellDir(t *testing.T) string {
 
 // realShellCommand picks a real interactive shell: PowerShell (PSReadLine) on
 // Windows, and a POSIX shell elsewhere.
+// useTestShellPrompt gives the POSIX shell under test a prompt of its own. The
+// process that runs the tests may export an empty PS1 (`PS1=` from a wrapper
+// shell), and a /bin/sh started without an rc then prints no prompt at all;
+// the tests' first wait is for that prompt.
+func useTestShellPrompt(t *testing.T) {
+	t.Helper()
+	t.Setenv("PS1", "sh$ ")
+	t.Setenv("PROMPT_COMMAND", "")
+}
+
 func realShellCommand(t *testing.T) []string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -277,6 +287,7 @@ func realShellCommand(t *testing.T) []string {
 	}
 	for _, name := range []string{"/bin/sh", "/bin/bash", "/bin/zsh"} {
 		if info, err := os.Stat(name); err == nil && !info.IsDir() {
+			useTestShellPrompt(t)
 			return []string{name}
 		}
 	}
@@ -285,13 +296,15 @@ func realShellCommand(t *testing.T) []string {
 }
 
 // realShellWait polls a condition for a real shell's asynchronous output. It
-// keeps its own five-second budget instead of reusing the UI tests' waitFor,
-// whose two seconds fit the fake shell but are tight for a real one starting.
-// Every iteration observes real shell state, and the ten-millisecond interval
-// is only the poll cadence; the loop always stops at the hard deadline.
+// keeps its own budget instead of reusing the UI tests' waitFor, whose two
+// seconds fit the fake shell. A real shell's startup depends on the machine:
+// a loaded CI machine or a full parallel test run can need many seconds before
+// the first prompt, so a tight deadline would report a missing shell. Every
+// iteration observes real shell state, and the ten-millisecond interval is
+// only the poll cadence; the loop always stops at the hard deadline.
 func realShellWait(t *testing.T, condition func() bool) bool {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if condition() {
 			return true

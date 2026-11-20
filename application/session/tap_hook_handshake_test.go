@@ -116,19 +116,56 @@ func TestTapWithdrawCaptureHookReleasesTheReservedCommand(t *testing.T) {
 	}
 }
 
-// Without the handshake the typed fallback still works: a shell integration
-// that never installs the hook, or a nested shell, must keep Tier 3 capture.
-func TestTapWithoutAHookHandshakeKeepsTheTypedFallback(t *testing.T) {
+// A shell whose startup is not the planned capture hook still records its
+// commands. The Lens zsh integration draws native marks (D, A, OSC 7, B) but
+// never the hook's handshake, because it replaces the planned ZDOTDIR; when the
+// tap kept reserving every typed command for a handshake that could not come,
+// the command reached history only when the Session closed, so the Tab
+// completion popup never had a row to accept while the user was typing.
+func TestTapPromptWithoutAHandshakeStopsWaitingForTheHook(t *testing.T) {
 	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
-	if _, _, _, completions, _ := tap.handleInput([]byte("echo plain\r"), tapAt(0)); len(completions) != 0 {
-		t.Fatalf("Enter completed the command early: %+v", completions)
+	tap.hookExpected = true
+
+	prompt := "\x1b]133;D;0\x07\x1b]133;A\x07\x1b]7;file://host/work\x07\x1b]133;B\x07"
+	_, effects := tap.observe([]byte(prompt), tapAt(0))
+	if len(effects.Completions) != 0 {
+		t.Fatalf("the startup prompt completed a command: %+v", effects.Completions)
 	}
-	_, effects := tap.observe([]byte("echo plain\r\nresult\r\n$ "), tapAt(time.Second))
+	if tap.hookExpected || tap.hookActive {
+		t.Fatalf("the tap still waits for the hook: expected=%v active=%v", tap.hookExpected, tap.hookActive)
+	}
+
+	if _, _, _, completions, _ := tap.handleInput([]byte("git status\r"), tapAt(time.Second)); len(completions) != 0 {
+		t.Fatalf("Enter published the command: %+v", completions)
+	}
+	execution := "\x1b]133;C;git%20status;git%20status\x07"
+	if _, effects = tap.observe([]byte(execution), tapAt(1500*time.Millisecond)); len(effects.Completions) != 0 {
+		t.Fatalf("the execution mark completed the command: %+v", effects.Completions)
+	}
+	_, effects = tap.observe([]byte("\x1b]133;D;0\x07"), tapAt(2*time.Second))
 	if len(effects.Completions) != 1 {
-		t.Fatalf("completions = %+v, want the typed fallback", effects.Completions)
+		t.Fatalf("completions = %+v, want one at the next prompt", effects.Completions)
 	}
-	if completion := effects.Completions[0]; completion.command != "echo plain" ||
-		completion.captureTier != domainhistory.CaptureTierFallback {
+	completion := effects.Completions[0]
+	if completion.command != "git status" ||
+		completion.captureTier != domainhistory.CaptureTierNativeOSC ||
+		!completion.hasExitCode || completion.exitCode != 0 {
 		t.Fatalf("completion = %+v", completion)
+	}
+}
+
+// The handshake comes before the prompt mark in every installed hook, so an
+// announced hook keeps its authority: a prompt after the handshake must not
+// clear the expectation or fall back to native capture.
+func TestTapKeepsTheHookAnnouncedBeforeThePrompt(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.hookExpected = true
+
+	if _, effects := tap.observe([]byte(hookHandshake("zsh")), tapAt(0)); len(effects.Completions) != 0 {
+		t.Fatalf("the handshake completed a command: %+v", effects.Completions)
+	}
+	tap.observe([]byte("\x1b]133;A\x07"), tapAt(time.Second))
+	if !tap.hookActive || !tap.hookSeen {
+		t.Fatalf("the announced hook was dropped: active=%v seen=%v", tap.hookActive, tap.hookSeen)
 	}
 }

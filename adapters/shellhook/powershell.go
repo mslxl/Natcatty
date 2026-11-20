@@ -68,7 +68,7 @@ if (-not $global:__netcatty_validate -and -not [string]::IsNullOrEmpty($env:NETC
 
 try {
 
-if ($env:NETCATTY_HOOK -eq '1') {
+if ($env:NETCATTY_HOOK -eq '1' -and $env:NETCATTY_CHILD_HOOK -ne '1') {
     if (-not (Get-Command __netcatty_prompt -CommandType Function -ErrorAction SilentlyContinue)) {
         __netcatty_skip
     }
@@ -159,6 +159,7 @@ if ($null -eq (Get-Variable -Name LASTEXITCODE -Scope Global -ErrorAction Silent
 
 $global:__netcatty_last_exit = $null
 $global:__netcatty_error_count = 0
+$global:__netcatty_forced_exit = $null
 
 # The PowerShell host calls PSConsoleHostReadLine for every line the user
 # accepts and executes the string it returns. PSReadLine exports the same
@@ -197,7 +198,11 @@ function global:__netcatty_finish {
     # sees the command's real $? and LASTEXITCODE. Assigning a variable (or
     # calling Get-Variable/Console::Write) first would reset $? to $true.
     $netcatty_user_prompt = & $global:__netcatty_previous_prompt
-    if ($netcatty_ok) {
+    $netcatty_forced = $global:__netcatty_forced_exit
+    $global:__netcatty_forced_exit = $null
+    if ($null -ne $netcatty_forced) {
+        $netcatty_status = [int]$netcatty_forced
+    } elseif ($netcatty_ok) {
         $netcatty_status = 0
     } elseif ($null -ne $netcatty_last -and $netcatty_last -ne 0 -and
               ($null -eq $global:__netcatty_last_exit -or $netcatty_last -ne $global:__netcatty_last_exit)) {
@@ -233,6 +238,132 @@ function global:__netcatty_prompt {
 
 function global:prompt {
     __netcatty_prompt
+}
+
+# Child shells launched from this hooked PowerShell inherit the session's
+# startup files through environment-backed wrappers. The wrappers only
+# intercept interactive forms; -Command/-File/-NonInteractive remain ordinary
+# process invocations. This gives a child shell its own OSC 133 handshake,
+# which the Lens tap uses to retire the parent shell-launch block before the
+# child's first command.
+function global:__netcatty_child_is_interactive([object[]]$arguments) {
+    foreach ($argument in @($arguments)) {
+        $name = ([string]$argument).ToLowerInvariant()
+        if ($name -eq '-c' -or $name -eq '--command' -or
+            $name -eq '-f' -or $name -eq '--file' -or
+            $name -eq '-encodedcommand' -or $name -eq '-ec' -or
+            $name -eq '-noninteractive' -or $name -eq '-noni' -or
+            $name.StartsWith('-command:') -or $name.StartsWith('-file:') -or
+            $name.StartsWith('-encodedcommand:')) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function global:__netcatty_child_state {
+    return (Join-Path ([IO.Path]::GetTempPath()) ('netcatty-child-' + [guid]::NewGuid().ToString('N') + '.state'))
+}
+
+function global:__netcatty_child_powershell {
+    param([string]$path, [object[]]$arguments)
+    if (-not (__netcatty_child_is_interactive $arguments)) {
+        & $path @arguments
+        if ($global:LASTEXITCODE -ne 0) {
+            $global:__netcatty_forced_exit = [int]$global:LASTEXITCODE
+        }
+        return
+    }
+    $state = __netcatty_child_state
+    $oldStart = $env:NETCATTY_HOOK_START
+    $oldState = $env:NETCATTY_HOOK_STATE
+    $oldChild = $env:NETCATTY_CHILD_HOOK
+    try {
+        $env:NETCATTY_CHILD_HOOK = '1'
+        $env:NETCATTY_HOOK_START = '1'
+        $env:NETCATTY_HOOK_STATE = $state
+        & $path @arguments -NoLogo -NoExit -ExecutionPolicy Bypass -File $env:NETCATTY_HOOK_FILE
+    } finally {
+        $env:NETCATTY_HOOK_START = $oldStart
+        $env:NETCATTY_HOOK_STATE = $oldState
+        $env:NETCATTY_CHILD_HOOK = $oldChild
+        Remove-Item -LiteralPath $state -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function global:__netcatty_child_bash {
+    param([string]$path, [object[]]$arguments)
+    if (-not (__netcatty_child_is_interactive $arguments)) {
+        & $path @arguments
+        if ($global:LASTEXITCODE -ne 0) {
+            $global:__netcatty_forced_exit = [int]$global:LASTEXITCODE
+        }
+        return
+    }
+    $oldChild = $env:NETCATTY_CHILD_HOOK
+    $oldStart = $env:NETCATTY_HOOK_START
+    try {
+        $env:NETCATTY_CHILD_HOOK = '1'
+        $env:NETCATTY_HOOK_START = '1'
+        & $path --rcfile $env:NETCATTY_CHILD_BASHRC @arguments -i
+    } finally {
+        $env:NETCATTY_HOOK_START = $oldStart
+        $env:NETCATTY_CHILD_HOOK = $oldChild
+    }
+}
+
+function global:__netcatty_child_cmd {
+    param([string]$path, [object[]]$arguments)
+    foreach ($argument in @($arguments)) {
+        $name = ([string]$argument).ToLowerInvariant()
+        if ($name -eq '/c' -or $name -eq '/k') {
+            & $path @arguments
+            if ($global:LASTEXITCODE -ne 0) {
+                $global:__netcatty_forced_exit = [int]$global:LASTEXITCODE
+            }
+            return
+        }
+    }
+    & $path /K $env:NETCATTY_CHILD_CMD_INIT
+}
+
+$__netcatty_pwsh = Get-Command pwsh.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($null -eq $__netcatty_pwsh) {
+    $__netcatty_pwsh = Get-Command powershell.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+}
+$__netcatty_powershell = Get-Command powershell.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+$__netcatty_bash = Get-Command bash.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+$__netcatty_sh = Get-Command sh.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+$__netcatty_cmd = Get-Command cmd.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($null -ne $__netcatty_pwsh) {
+    $env:NETCATTY_PWSH_PATH = $__netcatty_pwsh.Source
+}
+if ($null -ne $__netcatty_powershell) {
+    $env:NETCATTY_POWERSHELL_PATH = $__netcatty_powershell.Source
+}
+if ($null -ne $__netcatty_bash) {
+    $env:NETCATTY_BASH_PATH = $__netcatty_bash.Source
+}
+if ($null -ne $__netcatty_sh) {
+    $env:NETCATTY_SH_PATH = $__netcatty_sh.Source
+}
+if ($null -ne $__netcatty_cmd) {
+    $env:NETCATTY_CMD_PATH = $__netcatty_cmd.Source
+}
+if ($null -ne $__netcatty_pwsh) {
+    function global:pwsh { __netcatty_child_powershell $env:NETCATTY_PWSH_PATH $args }
+}
+if ($null -ne $__netcatty_powershell) {
+    function global:powershell { __netcatty_child_powershell $env:NETCATTY_POWERSHELL_PATH $args }
+}
+if ($null -ne $__netcatty_bash -and $env:NETCATTY_CHILD_BASHRC) {
+    function global:bash { __netcatty_child_bash $env:NETCATTY_BASH_PATH $args }
+}
+if ($null -ne $__netcatty_sh -and $env:NETCATTY_CHILD_BASHRC) {
+    function global:sh { __netcatty_child_bash $env:NETCATTY_SH_PATH $args }
+}
+if ($null -ne $__netcatty_cmd -and $env:NETCATTY_CHILD_CMD_INIT) {
+    function global:cmd { __netcatty_child_cmd $env:NETCATTY_CMD_PATH $args }
 }
 
 $env:NETCATTY_HOOK = '1'

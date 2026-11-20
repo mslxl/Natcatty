@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mslxl/natcatty/application/lens/integration"
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/platform/processcwd"
 	"github.com/mslxl/natcatty/platform/pty"
@@ -31,16 +32,39 @@ func (Factory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.
 		return nil, err
 	}
 
-	path, args, err := command(spec)
-	if err != nil {
-		return nil, err
+	env := environment(spec.Env)
+	var path string
+	var args []string
+	if len(spec.Command) == 0 {
+		// The default Local Terminal owns the interactive shell, so install the
+		// same OSC 133/7 integration used by the Lens capture path. Explicit
+		// commands are left untouched: callers use those for one-shot scripts,
+		// fixtures, and shells that provide their own integration.
+		shell, err := defaultShell()
+		if err != nil {
+			return nil, err
+		}
+		// Name the shell the Session actually runs, not the one it replaced, so
+		// a nested $SHELL and the tools that read it agree with the terminal.
+		env = append(env, "SHELL="+shell)
+		path, args, env = integration.Shell([]string{shell}, env)
+		// integration.Shell names the program separately; the PTY wants argv,
+		// including argv[0]. Without it a bash reads --rcfile as the name of a
+		// script and exits at once instead of starting the integrated shell.
+		args = append([]string{path}, args...)
+	} else {
+		var err error
+		path, args, err = command(spec)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	terminal, err := pty.Start(pty.Options{
 		Path: path,
 		Args: args,
 		Dir:  workingDir(spec.Dir),
-		Env:  environment(spec.Env),
+		Env:  env,
 		Cols: spec.Cols,
 		Rows: spec.Rows,
 	})
@@ -92,7 +116,7 @@ func defaultShell() (string, error) {
 
 	if shell := os.Getenv("SHELL"); shell != "" {
 		if path, err := exec.LookPath(shell); err == nil {
-			return path, nil
+			return editableShell(path), nil
 		}
 	}
 	fallback := "/bin/sh"
@@ -104,6 +128,78 @@ func defaultShell() (string, error) {
 		return "", fmt.Errorf("local shell: %w", err)
 	}
 	return path, nil
+}
+
+// editableShell replaces a bash that cannot edit a command line with one that
+// can. Nix's dev shells export a bash built without readline as $SHELL
+// (`nix develop` does), and such a shell is unusable as a terminal: Tab
+// inserts a literal tab because no completion exists, the \[ \] markers of a
+// PS1 print literally because readline is what decodes them, and the prompt
+// never redraws. Nothing the terminal sends can repair that, so the Session
+// runs a bash that has line editing instead.
+func editableShell(path string) string {
+	if runtime.GOOS == "windows" || !isBash(path) || bashHasLineEditing(path) {
+		return path
+	}
+	if replacement := interactiveBash(path); replacement != "" {
+		return replacement
+	}
+	return path
+}
+
+func isBash(path string) bool {
+	name := strings.TrimSuffix(strings.ToLower(filepath.Base(path)), ".exe")
+	return name == "bash"
+}
+
+// bashHasLineEditing asks a bash whether it was built with readline by probing
+// the programmable-completion option, which that build enables together with
+// it; `shopt` answers without starting an interactive session.
+func bashHasLineEditing(path string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "--noprofile", "--norc", "-c", "shopt -q progcomp")
+	cmd.Env = []string{"PATH=/usr/bin:/bin"}
+	return cmd.Run() == nil
+}
+
+// interactiveBash finds a bash with line editing: the first one on PATH (the
+// broken build is normally a single early entry there, with the user's profile
+// bash further along), then the usual profile locations.
+func interactiveBash(skip string) string {
+	name := "bash.exe"
+	if runtime.GOOS != "windows" {
+		name = "bash"
+	}
+	var candidates []string
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir != "" {
+			candidates = append(candidates, filepath.Join(dir, name))
+		}
+	}
+	if user := os.Getenv("USER"); user != "" {
+		candidates = append(candidates, filepath.Join("/etc/profiles/per-user", user, "bin", name))
+	}
+	candidates = append(candidates,
+		"/run/current-system/sw/bin/"+name,
+		"/opt/homebrew/bin/"+name,
+		"/usr/local/bin/"+name,
+		"/usr/bin/"+name,
+		"/bin/"+name,
+	)
+	for _, candidate := range candidates {
+		if candidate == skip {
+			continue
+		}
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if bashHasLineEditing(candidate) {
+			return candidate
+		}
+	}
+	return ""
 }
 
 // workingDir returns spec's directory when it is a directory, else the user's
@@ -145,6 +241,20 @@ func environment(extra []string) []string {
 
 	set("TERM", "xterm-256color")
 	set("COLORTERM", "truecolor")
+	set("TERM_PROGRAM", "Natcatty")
+	set("NATCATTY_LENSES", "1")
+	// Keep command output parseable for Natcatty's command-lens renderer:
+	// disable interactive pagers and force line-oriented build progress.
+	set("PAGER", "cat")
+	set("GIT_PAGER", "cat")
+	set("GH_PAGER", "cat")
+	set("MANPAGER", "cat")
+	set("SYSTEMD_PAGER", "cat")
+	set("AWS_PAGER", "")
+	set("BAT_PAGING", "never")
+	set("PSQL_PAGER", "cat")
+	set("BUILDKIT_PROGRESS", "plain")
+	set("CLICOLOR", "1")
 	if runtime.GOOS != "windows" && !hasLocale(get("LANG"), get("LC_ALL"), get("LC_CTYPE")) {
 		set("LANG", "en_US.UTF-8")
 	}

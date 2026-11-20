@@ -6,6 +6,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
+	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
@@ -87,6 +88,18 @@ func terminalSection(c *ui.Context, state *TerminalState, prefs *PreferencesStat
 			state.SetDynamicTabTitleMode(titleModes[indexOf(titleLabels, titleLabel)])
 			c.Invalidate()
 		}
+
+		ui.Text(c, m.SettingsRawTerminalModeTitle()).Bold()
+		ui.Text(c, m.SettingsRawTerminalModeDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+		lensTerminal := !settings.RawTerminalMode
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			changed := ui.Checkbox(c, &lensTerminal, m.SettingsRawTerminalModeEnabled()).Changed()
+			kit.IconSized(c, icons.WandSparkles, 14).TextColor(t.Accent).Tooltip("Beta")
+			if changed {
+				state.SetRawTerminalMode(!lensTerminal)
+				c.Invalidate()
+			}
+		})
 
 		renderPowerUxSection(c, state, settings, m, t)
 		renderRetentionSection(c, state, settings, m, t)
