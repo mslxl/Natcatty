@@ -84,6 +84,27 @@ type Hooks struct {
 	// the Pane is rebuilt every frame. It is nil when the caller offers no
 	// selection.
 	Selection *Selection
+	// OpenLink is asked to open the link a Command+click names in the live
+	// screen: an OSC 8 hyperlink, a URL printed as text, or a printed file
+	// path. It returns whether it took the link. A URL it declines opens in
+	// the system's browser; a file path it declines opens nothing, as
+	// Terminal's Options.OpenLink leaves paths to the app. Nil opens every
+	// URL and no path.
+	OpenLink func(link string, path bool) bool
+	// Hover is the link Command is held over in the live screen. The caller
+	// owns it because the Pane is rebuilt every frame: the Pane writes it as
+	// the pointer moves and reads it to underline the link. Nil keeps the
+	// underline off and nothing else.
+	Hover *Hover
+}
+
+// Hover is the link the pointer with Command held rests over: what the link
+// opens, whether it is a file path, and the cells' rectangle in DIPs relative
+// to the Pane. A zero Hover is no link.
+type Hover struct {
+	Link string
+	Path bool
+	At   ui.Rect
 }
 
 // Cursor describes the application cursor preference that the native terminal
@@ -444,6 +465,83 @@ func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, 
 	if uiTheme := c.Theme(); uiTheme != nil {
 		rowSize = uiTheme.FontSize
 	}
+	// linkUnder resolves the link at a cell of the live rows: an OSC 8
+	// hyperlink, a URL printed as text, or, when the caller opens paths, a
+	// printed file path. It returns the cells the link spans, x0 up to x1, so
+	// the pane can underline exactly those and the caller can preview them.
+	linkUnder := func(row, col int) (link string, path bool, x0, x1 int) {
+		global := row + from
+		if uri, ok := frame.LinkAt(global, col); ok && uri != "" {
+			x0, x1 = col, col+1
+			for x0 > 0 {
+				if prev, ok := frame.LinkAt(global, x0-1); !ok || prev != uri {
+					break
+				}
+				x0--
+			}
+			for x1 < size.Cols {
+				if next, ok := frame.LinkAt(global, x1); !ok || next != uri {
+					break
+				}
+				x1++
+			}
+			return uri, false, x0, x1
+		}
+		if row < 0 || row >= len(lines) {
+			return "", false, 0, 0
+		}
+		if uri, x0, x1, ok := urlAtRow(lines[row], col); ok {
+			return uri, false, x0, x1
+		}
+		if hooks.OpenLink != nil {
+			if p, x0, x1, ok := pathAtRow(lines[row], col); ok {
+				return p, true, x0, x1
+			}
+		}
+		return "", false, 0, 0
+	}
+	// setHover recomputes the link Command is held over from a point in the
+	// grid's own coordinates, records it for the caller and the underline, and
+	// returns what a press at that point would open. A program that takes the
+	// mouse keeps Command for itself, and a drag that is selecting keeps the
+	// press, so neither offers a link.
+	setHover := func(mods ui.Modifiers, x, y float32) (string, bool) {
+		next := Hover{}
+		if mods&ui.Cmd != 0 && !frame.Mouse.Enabled() &&
+			!(hooks.Selection != nil && hooks.Selection.Dragging()) {
+			if col, row, ok := pointerCell(lines, x, y, size.Cols); ok {
+				if link, path, x0, x1 := linkUnder(row, col); link != "" {
+					next = Hover{
+						Link: link,
+						Path: path,
+						At: ui.Rect{
+							// The live grid sits flowPadY inside the Pane and
+							// livePad inside that box, which is the origin the
+							// grid's input coordinates are relative to.
+							X: flowPadY + livePad + float32(x0)*cellWidth,
+							Y: flowPadY + livePad + float32(row)*cellHeight,
+							W: float32(x1-x0) * cellWidth,
+							H: cellHeight,
+						},
+					}
+				}
+			}
+		}
+		if hooks.Hover != nil && next != *hooks.Hover {
+			*hooks.Hover = next
+			c.Invalidate()
+		}
+		return next.Link, next.Path
+	}
+	// Command is read every frame, so pressing or releasing it with the
+	// pointer still underlines or un-underlines the link, as Terminal does.
+	if hooks.Hover != nil && !frame.AltScreen() {
+		if x, y, over := outer.PointerPosition(); over {
+			setHover(c.Modifiers(), x-livePad, y-livePad)
+		} else if hooks.Hover.Link != "" {
+			setHover(0, 0, 0)
+		}
+	}
 	outer.Children(func() {
 		// Not Selectable: MyGo paints and copies a paragraph selection only
 		// while that paragraph holds the keyboard, and this box must hold it
@@ -527,18 +625,21 @@ func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, 
 			if ripple != nil && cellOK {
 				ripple.PointerAt(col, row, ui.Point{X: livePad + ev.X, Y: livePad + ev.Y})
 			}
-			// Control-click opens a hyperlink under the pointer, as Terminal does (it
-			// takes Command on macOS).
-			if ev.Kind == ui.InputPointerDown && ev.Mods&ui.Ctrl != 0 && cellOK {
-				if uri, ok := frame.LinkAt(row+from, col); ok {
-					c.OpenURL(uri)
-					return true
-				}
-				if row+from < len(frame.Lines) {
-					if uri, ok := URLAt(frame.Lines[row+from], col); ok {
-						c.OpenURL(uri)
-						return true
+			// Command over a link underlines it and a click opens it, before a
+			// program that takes the mouse sees the press (setHover offers no
+			// link while the program tracks the mouse, so the report below
+			// keeps that press). A printed archive name goes to the caller's
+			// OpenLink; a URL it does not take opens in the system browser,
+			// and a file path it declines opens nothing, as Terminal does.
+			if ev.Kind == ui.InputPointerDown || ev.Kind == ui.InputPointerMove {
+				link, path := setHover(ev.Mods, ev.X, ev.Y)
+				if ev.Kind == ui.InputPointerDown && ev.Button == 0 && link != "" {
+					if open := hooks.OpenLink; open == nil || !open(link, path) {
+						if !path {
+							c.OpenURL(link)
+						}
 					}
+					return true
 				}
 			}
 			// A program that asked for the mouse gets the pointer instead of the
@@ -668,6 +769,22 @@ func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, 
 						renderCursor(c, cursor, float32(frame.CursorCol)*cellWidth, theme)
 					}
 				})
+			}
+			if hooks.Hover != nil && hooks.Hover.Link != "" && hooks.Hover.At.W > 0 {
+				// The link Command is held over underlines, over exactly the
+				// cells the pane resolved. The Hover rectangle is relative to
+				// the Pane; this box sits flowPadY in from the Pane and livePad
+				// inside the terminal's rounded background.
+				at := hooks.Hover.At
+				underline := ui.Color{}
+				if uiTheme := c.Theme(); uiTheme != nil {
+					underline = uiTheme.Accent
+				}
+				ui.Box(c).Absolute().
+					Left(at.X - flowPadY - livePad).
+					Top(at.Y - flowPadY - livePad + cellHeight - 2).
+					Width(at.W).Height(2).
+					Background(underline).PassThrough()
 			}
 		})
 	})

@@ -298,6 +298,10 @@ type Surface struct {
 	// lives here because the Pane is rebuilt every frame; see
 	// appview.Selection for why MyGo's paragraph selection cannot serve it.
 	liveSelection appview.Selection
+	// liveHover is the printed link Command is held over on the live screen.
+	// The Pane writes it, because it draws the grid and owns the pointer
+	// mapping; it lives here for the same reason the selection does.
+	liveHover appview.Hover
 
 	gate             *PasteGate
 	drops            *DropHandler
@@ -500,6 +504,7 @@ func (s *Surface) attach(conn io.ReadWriteCloser) error {
 	// The selection named cells of the terminal that was showing; Resume (or a
 	// reattach) brings a different screen and the rows no longer name it.
 	s.liveSelection.Clear()
+	s.liveHover = appview.Hover{}
 	if s.flow != nil {
 		s.flow.bindBellTracker(term)
 	}
@@ -523,6 +528,24 @@ func (s *Surface) handleTerminalKey(mods ui.Modifiers, key ui.Key) bool {
 		}
 	}
 	return s.handleAutocompleteKey(mods, key)
+}
+
+// HoveredLink reports the link Command (Control elsewhere) is held over in
+// the live screen: what it opens, whether it is a file path, and the cells in
+// DIPs relative to the terminal view. The pane's cell grid resolves it (see
+// appview.Hover); a full-screen program that the plugin's own view draws
+// reports its own.
+func (s *Surface) HoveredLink() (link string, path bool, at ui.Rect) {
+	if s == nil {
+		return "", false, ui.Rect{}
+	}
+	if s.liveHover.Link != "" {
+		return s.liveHover.Link, s.liveHover.Path, s.liveHover.At
+	}
+	if s.terminal != nil {
+		return s.terminal.HoveredLink()
+	}
+	return "", false, ui.Rect{}
 }
 
 func (s *Surface) terminalFont() terminal.Font {
@@ -928,6 +951,7 @@ func (s *Surface) clearBuffer() {
 		}
 	}
 	s.liveSelection.Clear()
+	s.liveHover = appview.Hover{}
 	s.flowScroll.Y = math.MaxFloat32
 	s.flowFollow = appview.Follow{}
 	if s.session != nil {
@@ -1054,6 +1078,13 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 				Key:       s.terminalKey + "-" + strconv.FormatUint(s.focusEpoch, 10),
 				TextInput: s.textInputClient(),
 				Selection: &s.liveSelection,
+				// The pane draws the live screen itself, so it resolves and
+				// opens links too, with the same policy the plugin's view
+				// gets from Options.OpenLink: an archive name fills its
+				// extraction command, other file paths open nothing, and a
+				// URL opens in the browser.
+				OpenLink:  s.openPaneLink,
+				Hover:     &s.liveHover,
 				Focus:     focus,
 				Refocus:   flowRefocus,
 				KeepFocus: s.focused,
@@ -1116,7 +1147,12 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 						return true
 					}
 					if ev.Kind == ui.InputKeyDown {
-						return s.handleAutocompleteKey(ev.Mods, ev.Key)
+						// The pane builds the bytes the program reads, so the
+						// same key hook the plugin's own view calls (OnKey)
+						// runs before the pane's encoder. Shift+Enter's newline
+						// and the autocomplete popup are taken here; every other
+						// key falls through to the pane.
+						return s.handleTerminalKey(ev.Mods, ev.Key)
 					}
 					return false
 				},

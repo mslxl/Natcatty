@@ -37,20 +37,24 @@ func newArchiveSurface(t *testing.T) (*Surface, *recordingTransport) {
 	return surface, transport
 }
 
-// archiveLinkPoint finds the printed name through MyGo's own link state and
-// returns the center of the rectangle the widget reports. The terminal's Move
-// helper cannot hold a modifier (it resets the held state on each move), so
-// the probe is a Command-click; the test feeds the name at the start of row 0,
-// where the first cell-sized step lands and the scan stops. MyGo fills the
-// command on that one click, so callers that need a second click wait for the
-// fill first. The rectangle is in view coordinates; surfaceFrameTop maps it to
-// window DIPs.
+// archiveLinkPoint finds the printed name through the pane's link state and
+// returns the center of the rectangle it reports. The terminal's Move helper
+// cannot hold a modifier (it resets the held state on each move), so the probe
+// is a Command-click; the test feeds the name at the start of row 0, where the
+// first cell-sized step lands and the scan stops. The click fills the command,
+// so callers that need a second click wait for the fill first. The rectangle is
+// in view coordinates; surfaceFrameTop maps it to window DIPs.
 func archiveLinkPoint(t *testing.T, tester *ui.Tester, surface *Surface, want string) (float32, float32) {
 	t.Helper()
-	const firstRowY = surfaceFrameTop + 4
-	for x := float32(2); x < 300; x += 2 {
+	// The live grid is flowPadY (10) inside the flow and livePad (6) inside
+	// the terminal's rounded background, so the first row starts 16 DIP below
+	// the terminal view and twenty DIPs land on it whatever the cell height.
+	// The probe stays inside that inset on the left too: a press in the
+	// padding is the flow's, not the grid's.
+	const firstRowY = surfaceFrameTop + 20
+	for x := float32(20); x < 300; x += 2 {
 		tester.ClickAtWith(ui.Cmd, x, firstRowY)
-		link, path, at := surface.terminal.HoveredLink()
+		link, path, at := surface.HoveredLink()
 		if link != want {
 			continue
 		}
@@ -150,7 +154,7 @@ func TestArchiveClickIsForwardedWhileTheProgramTakesTheMouse(t *testing.T) {
 	before := transport.input()
 	tester.ClickAtWith(ui.Cmd, x, y)
 
-	if link, path, at := surface.terminal.HoveredLink(); link != "" || path || at.W != 0 {
+	if link, path, at := surface.HoveredLink(); link != "" || path || at.W != 0 {
 		t.Fatalf("mouse tracking still offered link %q path %v rect %+v", link, path, at)
 	}
 	added := ""
@@ -191,7 +195,7 @@ func TestArchiveClickIsForwardedUnderHighlightTracking(t *testing.T) {
 	before := transport.input()
 	tester.ClickAtWith(ui.Cmd, x, y)
 
-	if link, path, at := surface.terminal.HoveredLink(); link != "" || path || at.W != 0 {
+	if link, path, at := surface.HoveredLink(); link != "" || path || at.W != 0 {
 		t.Fatalf("highlight tracking still offered link %q path %v rect %+v", link, path, at)
 	}
 	added := ""
@@ -241,7 +245,7 @@ func TestArchiveClickIsForwardedAfterASplitMouseMode(t *testing.T) {
 	before := transport.input()
 	tester.ClickAtWith(ui.Cmd, x, y)
 
-	if link, path, at := surface.terminal.HoveredLink(); link != "" || path || at.W != 0 {
+	if link, path, at := surface.HoveredLink(); link != "" || path || at.W != 0 {
 		t.Fatalf("mouse tracking still offered link %q path %v rect %+v", link, path, at)
 	}
 	added := ""
@@ -336,7 +340,7 @@ func TestArchiveClickIsForwardedAfterAProgramResetsAnotherMouseMode(t *testing.T
 	before := transport.input()
 	tester.ClickAtWith(ui.Cmd, x, y)
 
-	if link, path, at := surface.terminal.HoveredLink(); link != "" || path || at.W != 0 {
+	if link, path, at := surface.HoveredLink(); link != "" || path || at.W != 0 {
 		t.Fatalf("mouse tracking still offered link %q path %v rect %+v", link, path, at)
 	}
 	added := ""
