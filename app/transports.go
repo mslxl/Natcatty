@@ -13,6 +13,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/domain/model"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
+	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 )
 
 // newMoshFactory builds the in-process Mosh transport. The SSH bootstrap runs
@@ -162,39 +163,85 @@ func (s *moshBootstrapStream) Close() error {
 	return err
 }
 
-// telnetNetworkRoutes resolves only the target Host's effective Network
-// Profile. Telnet has no jump chain or proxy, so the first endpoint is always
-// the target Host.
-type telnetNetworkRoutes interface {
-	NetworkRouteForHost(ctx context.Context, id model.HostID) (*appconnection.NetworkRoute, error)
-}
-
-// newTelnetFactory gives the Telnet adapter the Network Provider selected for
-// the Host's effective Network Profile. The profile is resolved at Open time;
-// without one the adapter dials exactly as it did before Network Profiles
-// existed. A selected profile is never replaced with the adapter's direct
-// dialer: a Provider failure is returned typed and the Telnet socket is not
-// opened.
-func newTelnetFactory(inner adapterstnet.Factory, routes telnetNetworkRoutes,
-	providers *appconnection.NetworkProviderRegistry) appsession.Factory {
-	return &telnetTransportFactory{inner: inner, routes: routes, providers: providers}
+// newTelnetFactory gives the Telnet adapter the route resolved for the Host.
+// A route with SSH jumps or a proxy is opened by the shared Connection Manager
+// as a raw routed stream: every jump authenticates and verifies its host key
+// exactly as an SSH Session would, and the final TCP stream is handed to
+// Telnet without an SSH handshake on the target. Without such a route the
+// Host's Network Profile still supplies the one dial, and without a profile
+// the adapter dials exactly as it did before Network Profiles existed.
+func newTelnetFactory(inner adapterstnet.Factory, routes routeSource,
+	providers *appconnection.NetworkProviderRegistry,
+	manager *appconnection.Manager) appsession.Factory {
+	return &telnetTransportFactory{
+		inner: inner, routes: routes, providers: providers, manager: manager,
+	}
 }
 
 type telnetTransportFactory struct {
 	inner     adapterstnet.Factory
-	routes    telnetNetworkRoutes
+	routes    routeSource
 	providers *appconnection.NetworkProviderRegistry
+	manager   *appconnection.Manager
 }
 
 func (f *telnetTransportFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
-	network, err := f.networkRoute(ctx, spec.HostID)
+	route, err := f.route(ctx, spec.HostID)
 	if err != nil {
 		return nil, err
 	}
-	if network == nil {
+	if len(route.Jumps) > 0 || route.Proxy != nil {
+		return f.openRouted(ctx, spec, route)
+	}
+	if route.Network == nil {
 		return f.inner.Open(ctx, spec)
 	}
-	provider, err := f.providers.Acquire(ctx, *network)
+	return f.openNetwork(ctx, spec, *route.Network)
+}
+
+// openRouted hands the Telnet adapter a dial seam backed by the Connection
+// Manager. The adapter still validates its configuration before it calls Dial,
+// so a malformed Host opens no SSH chain.
+func (f *telnetTransportFactory) openRouted(ctx context.Context,
+	spec appsession.StartSpec, route appconnection.Route) (appsession.Transport, error) {
+
+	if f.manager == nil {
+		return nil, &appconnection.Error{
+			Kind:  appconnection.KindInternal,
+			Cause: errors.New("app: no SSH connection manager for a routed Telnet Host"),
+		}
+	}
+	cfg := telnetConfig(spec)
+	factory := f.inner
+	factory.Dial = func(dialCtx context.Context, network, address string) (net.Conn, error) {
+		return f.manager.DialStream(dialCtx, appconnection.Request{
+			HostID:            spec.HostID,
+			Hostname:          cfg.Hostname,
+			Port:              cfg.Port,
+			Username:          spec.Username,
+			Jumps:             route.Jumps,
+			Proxy:             route.Proxy,
+			Network:           route.Network,
+			Algorithms:        route.Algorithms,
+			ConfigFingerprint: route.ConfigFingerprint,
+			// A raw stream has no pooled Connection to keep alive. The jump
+			// clients live exactly as long as this Telnet stream, and the
+			// Telnet adapter owns closing it.
+		})
+	}
+	return factory.Open(ctx, spec)
+}
+
+// openNetwork keeps the original Network Profile path: the Provider supplies
+// the one Telnet dial. A selected profile is never replaced with the adapter's
+// direct dialer.
+func (f *telnetTransportFactory) openNetwork(ctx context.Context,
+	spec appsession.StartSpec, network appconnection.NetworkRoute) (appsession.Transport, error) {
+
+	if f.providers == nil {
+		return nil, appconnection.ProviderUnavailable(network)
+	}
+	provider, err := f.providers.Acquire(ctx, network)
 	if err != nil {
 		return nil, err
 	}
@@ -228,12 +275,22 @@ func (f *telnetTransportFactory) Open(ctx context.Context, spec appsession.Start
 	return transport, nil
 }
 
-// networkRoute returns nil when the Host has no saved identity or no effective
-// profile, which keeps the adapter's original direct dial byte-identical for
-// ad-hoc restore descriptors and Hosts without a Network Profile.
-func (f *telnetTransportFactory) networkRoute(ctx context.Context, id model.HostID) (*appconnection.NetworkRoute, error) {
-	if f.routes == nil || id == "" {
-		return nil, nil
+// route resolves the Host's full route. An unsaved target (Quick Connect) has
+// no Host record, so the routes source falls back to the app-wide default
+// proxy; with no routes source at all the adapter keeps its direct dial.
+func (f *telnetTransportFactory) route(ctx context.Context, id model.HostID) (appconnection.Route, error) {
+	if f.routes == nil {
+		return appconnection.Route{}, nil
 	}
-	return f.routes.NetworkRouteForHost(ctx, id)
+	return f.routes.Route(ctx, id)
+}
+
+// telnetConfig is the endpoint the adapter will validate and dial. Using the
+// normalized configuration keeps the route target on the same port the
+// adapter computes when the Host stores a zero port.
+func telnetConfig(spec appsession.StartSpec) domaintelnet.Config {
+	if spec.Telnet == nil {
+		return domaintelnet.Config{Hostname: spec.Hostname, Port: spec.Port}.Normalized()
+	}
+	return spec.Telnet.Normalized()
 }
