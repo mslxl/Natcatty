@@ -55,6 +55,7 @@ final class SoftKeyboardUITests: XCTestCase {
     private func expectInput(_ hex: String, timeout: TimeInterval = 10) {
         let e = app.staticTexts["input-bytes: " + hex]
         XCTAssertTrue(e.waitForExistence(timeout: timeout), "shell received \(currentInput()), want \(hex)")
+        print("SoftKeyboardUITests: shell received \(hex)")
     }
 
     private func currentInput() -> String {
@@ -103,6 +104,7 @@ final class SoftKeyboardUITests: XCTestCase {
                        "the keyboard came back without a tap")
         app.descendants(matching: .any)["Terminal"].tap()
         XCTAssertTrue(waitForKeyboard(), "the second tap did not bring the keyboard back")
+        print("SoftKeyboardUITests: the keyboard hid with its own key and the next tap re-showed it")
     }
 
     /// Criterion 2, Latin path: keys typed on the software keyboard arrive
@@ -139,6 +141,7 @@ final class SoftKeyboardUITests: XCTestCase {
         XCTAssertTrue(committed.waitForExistence(timeout: 10), "the committed candidate never reached the shell")
         let hex = String(committed.label.dropFirst("input-bytes: ".count))
         XCTAssertEqual(hex.count, 6, "one CJK character reaches the shell, got \(hex)")
+        print("SoftKeyboardUITests: composition stayed marked, then committed once as \(hex)")
         sleep(1)
         XCTAssertTrue(app.staticTexts["input-bytes: " + hex].exists, "the commit was sent more than once")
         key("n").tap()
@@ -149,6 +152,7 @@ final class SoftKeyboardUITests: XCTestCase {
         label(app.buttons["Return"], is: "换行")
         sleep(1)
         XCTAssertTrue(app.staticTexts["input-bytes: " + hex].exists, "deleting the composition reached the shell")
+        print("SoftKeyboardUITests: delete edited only the marked text; nothing reached the shell")
         app.buttons["Return"].tap()
         expectInput(hex + "0d")
     }

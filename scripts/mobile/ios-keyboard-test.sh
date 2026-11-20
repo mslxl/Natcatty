@@ -13,7 +13,9 @@
 # An iPad is used because its on-screen keyboard carries the explicit
 # "Hide keyboard" key that a manual dismissal needs. CoreSimulator attaches
 # a hardware keyboard by default, which suppresses the software keyboard,
-# so the run detaches it with a small private-API helper.
+# so the run detaches it with a small private-API helper. ios-render.sh runs
+# this suite after its render smoke, so the permitted simulator entry point
+# reproduces these checks.
 #
 # Usage: scripts/mobile/ios-keyboard-test.sh [-d UDID] [-k]
 #   -d UDID   use this already booted iPad simulator and leave it running
@@ -154,32 +156,58 @@ fi
 bundle_id=$(/usr/bin/plutil -extract CFBundleIdentifier raw "$app/Info.plist")
 xcrun simctl install "$udid" "$app"
 
-# The nix shell exports LD and NIX_LDFLAGS for its own clang; Xcode must use
-# its own linker, which knows the current -objc_abi_version flag.
-run_suite() {
-  local name=$1
-  shift
-  echo "ios-keyboard-test.sh: running the $name suite"
-  if ! env -u LD -u NIX_LDFLAGS -u NIX_CFLAGS_COMPILE xcodebuild test \
-    -project scripts/mobile/ios-keyboard-uitest/NatcattyKeyboardUITests.xcodeproj \
-    -scheme NatcattyKeyboardUITests \
-    -destination "platform=iOS Simulator,id=$udid" \
-    -derivedDataPath "$work/derived" \
-    -resultBundlePath "$work/result-$name.xcresult" \
-    CODE_SIGNING_ALLOWED=NO "$@"; then
+# Xcode 27's testmanagerd can crash in AttachmentProcessor while it tears
+# down a harness session, after the test has already passed; xcodebuild then
+# reports "Lost connection to testmanagerd" and exits non-zero. Retry only
+# that signature, and never an assertion: a real failure has its own message
+# and exits here.
+infra_teardown_crash() {
+  local result=$1 total lost
+  [ -d "$result" ] || return 1
+  xcrun xcresulttool get test-results tests --path "$result" \
+    >"$work/tests.json" 2>/dev/null || return 1
+  grep -q 'Lost connection to testmanagerd' "$work/tests.json" || return 1
+  total=$(grep -cE '"nodeType"[[:space:]]*:[[:space:]]*"Failure Message"' "$work/tests.json" || true)
+  lost=$(grep -cE '"name"[[:space:]]*:[[:space:]]*"Lost connection to testmanagerd"' "$work/tests.json" || true)
+  [ "$total" -gt 0 ] && [ "$total" -eq "$lost" ]
+}
+
+# One test per xcodebuild invocation keeps the harness session short and
+# narrows the window for that teardown crash. The nix shell exports LD and
+# NIX_LDFLAGS for its own clang; Xcode must use its own linker, which knows
+# the current -objc_abi_version flag.
+run_test() {
+  local name=$1 test=$2 attempt=1 max=3 result
+  while [ "$attempt" -le "$max" ]; do
+    result="$work/result-$name-$attempt.xcresult"
+    echo "ios-keyboard-test.sh: running $name (attempt $attempt)"
+    if env -u LD -u NIX_LDFLAGS -u NIX_CFLAGS_COMPILE xcodebuild test \
+      -project scripts/mobile/ios-keyboard-uitest/NatcattyKeyboardUITests.xcodeproj \
+      -scheme NatcattyKeyboardUITests \
+      -destination "platform=iOS Simulator,id=$udid" \
+      -derivedDataPath "$work/derived" \
+      -resultBundlePath "$result" \
+      CODE_SIGNING_ALLOWED=NO \
+      -only-testing:NatcattyKeyboardUITests/SoftKeyboardUITests/"$test"; then
+      return 0
+    fi
+    if [ "$attempt" -lt "$max" ] && infra_teardown_crash "$result"; then
+      echo "ios-keyboard-test.sh: testmanagerd crashed after $test passed; retrying" >&2
+      attempt=$((attempt + 1))
+      continue
+    fi
     keep=1
-    echo "ios-keyboard-test.sh: the $name suite failed; results in $work/result-$name.xcresult" >&2
+    echo "ios-keyboard-test.sh: $name failed; results in $result" >&2
     return 1
-  fi
+  done
+  return 1
 }
 
 use_keyboard "$english_keyboard"
-run_suite english \
-  -only-testing:NatcattyKeyboardUITests/SoftKeyboardUITests/testKeyboardComesBackAfterDismissal \
-  -only-testing:NatcattyKeyboardUITests/SoftKeyboardUITests/testSoftKeyboardTypesAndReturnSendsCarriageReturn
+run_test english-dismissal testKeyboardComesBackAfterDismissal
+run_test english-typing testSoftKeyboardTypesAndReturnSendsCarriageReturn
 
 use_keyboard "$pinyin_keyboard"
-run_suite pinyin \
-  -only-testing:NatcattyKeyboardUITests/SoftKeyboardUITests/testPinyinCompositionCommitsOnceAndEditsLocally
+run_test pinyin-composition testPinyinCompositionCommitsOnceAndEditsLocally
 
 echo "ios-keyboard-test.sh: soft keyboard, dismissal and IME checks passed"

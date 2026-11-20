@@ -7,25 +7,34 @@
 # Go c-archive, the Swift host and the paint all work on the simulator; a
 # production app would not open the diagnostic, so this is the smoke build.
 #
+# After the render smoke it runs the soft keyboard and IME suite
+# (ios-keyboard-test.sh): presentation and re-show after the iPad's dismiss
+# key, Latin keys and Return as CR, and Pinyin composition. A rendered
+# diagnostic cannot prove UIKit's keyboard or an input method, so the one
+# simulator entry point drives both, and `--no-keyboard` opts out.
+#
 # The staged object must already be the simulator slice:
 #   scripts/mobile/ios-syso.sh simulator
 #
-# Usage: scripts/mobile/ios-render.sh [-d UDID]
-#   -d UDID   use this simulator, already booted, and leave it running;
-#             default: scripts/dev/ios-boot.sh boots the shared simulator,
-#             and this script shuts it down when the run finishes.
+# Usage: scripts/mobile/ios-render.sh [-d UDID] [--no-keyboard]
+#   -d UDID        use this simulator, already booted, and leave it running;
+#                  default: scripts/dev/ios-boot.sh boots the shared simulator,
+#                  and this script shuts it down when the run finishes.
+#   --no-keyboard  skip the soft keyboard and IME suite.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 device=
+keyboard=1
 while [ $# -gt 0 ]; do
   case "$1" in
   -d | --device)
     device=${2:? -d needs a simulator UDID}
     shift
     ;;
+  --no-keyboard) keyboard=0 ;;
   *)
-    echo "usage: $(basename "$0") [-d UDID]" >&2
+    echo "usage: $(basename "$0") [-d UDID] [--no-keyboard]" >&2
     exit 2
     ;;
   esac
@@ -113,3 +122,15 @@ while ! grep -q 'natcatty_smoke: libghostty-vt .*echo text' "$log" 2>/dev/null; 
 done
 grep 'natcatty_smoke:' "$log"
 echo "ios-render.sh: ok — the terminal diagnostic rendered the echo corpus on $device"
+
+if [ "$keyboard" -eq 1 ]; then
+  # The keyboard criteria need UIKit's keyboard and a real input method, which
+  # the rendered diagnostic cannot drive. Free the smoke device first when it
+  # is ours, so only one simulator runs; the suite uses its own iPad because
+  # only the iPad keyboard has the explicit dismiss key.
+  if [ "$stop_device" -eq 1 ]; then
+    scripts/dev/ios-stop.sh
+    stop_device=0
+  fi
+  scripts/mobile/ios-keyboard-test.sh
+fi

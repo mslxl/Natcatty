@@ -28,14 +28,25 @@ static NSString *developerDir(void) {
 int main(int argc, char **argv) {
     @autoreleasepool {
         if (argc != 3) { fprintf(stderr, "usage: hwkeyboard <UDID> <0|1>\n"); return 2; }
-        if (!dlopen("/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/CoreSimulator", RTLD_NOW)) {
+        NSString *devDir = developerDir();
+        if (!devDir) { fprintf(stderr, "hwkeyboard: xcode-select -p failed\n"); return 1; }
+        // A host Xcode installs CoreSimulator under /Library; the GitHub
+        // runner's Xcode keeps it inside the developer dir instead.
+        NSString *paths[] = {
+            @"/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/CoreSimulator",
+            [devDir stringByAppendingString:@"/Library/PrivateFrameworks/CoreSimulator.framework/Versions/A/CoreSimulator"],
+            [devDir stringByAppendingString:@"/../SharedFrameworks/CoreSimulator.framework/Versions/A/CoreSimulator"],
+        };
+        BOOL loaded = NO;
+        for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+            if (dlopen([paths[i] UTF8String], RTLD_NOW)) { loaded = YES; break; }
+        }
+        if (!loaded) {
             fprintf(stderr, "hwkeyboard: no CoreSimulator framework: %s\n", dlerror());
             return 1;
         }
         Class ctxCls = objc_getClass("SimServiceContext");
         if (!ctxCls) { fprintf(stderr, "hwkeyboard: no SimServiceContext\n"); return 1; }
-        NSString *devDir = developerDir();
-        if (!devDir) { fprintf(stderr, "hwkeyboard: xcode-select -p failed\n"); return 1; }
         NSError *err = nil;
         id ctx = ((id(*)(id, SEL, id, NSError **))objc_msgSend)((id)ctxCls,
             sel_registerName("sharedServiceContextForDeveloperDir:error:"), devDir, &err);
