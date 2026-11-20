@@ -153,6 +153,106 @@ func TestMarkedFieldEncoding(t *testing.T) {
 	}
 }
 
+// csvHostRow builds one canonical CSV row. Columns this test does not exercise
+// stay empty.
+func csvHostRow(group, label, hostname, protocol, port, username, proxyJump string) string {
+	return strings.Join([]string{
+		group, label, "", "", hostname, protocol, port, username,
+		"", "", "", "", EscapeCSVField(proxyJump, false), "",
+	}, ",")
+}
+
+// TestCSVProxyJumpChainBindsEveryHopInOrder proves the exported ProxyJump
+// cell round-trips: hops are written closest-first and bind to the Hosts the
+// same file declares, including a chain of more than one hop.
+func TestCSVProxyJumpChainBindsEveryHopInOrder(t *testing.T) {
+	text := strings.Join([]string{
+		strings.Join(CSVHeader(), ","),
+		csvHostRow("Prod", "Bastion", "bastion.example.test", "ssh", "22", "ops", ""),
+		csvHostRow("Prod", "Edge", "edge.example.test", "ssh", "2200", "deploy",
+			"bastion.example.test"),
+		csvHostRow("Prod", "Client", "client.example.test", "ssh", "22", "",
+			"deploy@edge.example.test:2200,bastion.example.test"),
+	}, "\r\n")
+
+	result := Parse(FormatCSV, text, Options{})
+	if len(result.Issues) != 0 {
+		t.Fatalf("issues = %+v", result.Issues)
+	}
+	if len(result.Records) != 3 {
+		t.Fatalf("records = %d: %+v", len(result.Records), result.Records)
+	}
+	edge, client := result.Records[1], result.Records[2]
+	if len(edge.JumpRefs) != 1 || edge.JumpRefs[0] != 0 {
+		t.Fatalf("edge JumpRefs = %v, want [0]", edge.JumpRefs)
+	}
+	if len(client.JumpRefs) != 2 || client.JumpRefs[0] != 1 || client.JumpRefs[1] != 0 {
+		t.Fatalf("client JumpRefs = %v, want [1 0]", client.JumpRefs)
+	}
+}
+
+// TestCSVUnresolvedProxyJumpRejectsTheWholeRow proves an unknown hop is a row
+// error and that the row is not imported with the hops that did resolve.
+func TestCSVUnresolvedProxyJumpRejectsTheWholeRow(t *testing.T) {
+	text := strings.Join([]string{
+		strings.Join(CSVHeader(), ","),
+		csvHostRow("Prod", "Bastion", "bastion.example.test", "ssh", "22", "ops", ""),
+		csvHostRow("Prod", "Client", "client.example.test", "ssh", "22", "",
+			"bastion.example.test,ghost.example.test"),
+	}, "\r\n")
+
+	result := Parse(FormatCSV, text, Options{})
+	if len(result.Records) != 1 || result.Records[0].Hostname != "bastion.example.test" {
+		t.Fatalf("records = %+v, want only the resolvable Host", result.Records)
+	}
+	item := requireIssue(t, result, IssueUnresolvedJump)
+	if item.Severity != SeverityError || item.Row != 3 ||
+		item.Field != "proxyjump" || item.Value != "ghost.example.test" {
+		t.Fatalf("issue = %+v", item)
+	}
+}
+
+// TestCSVProxyJumpPrefersTheHopInTheHostsGroup proves two Hosts with the same
+// endpoint are not ambiguous: the copy in the client's Group wins.
+func TestCSVProxyJumpPrefersTheHopInTheHostsGroup(t *testing.T) {
+	text := strings.Join([]string{
+		strings.Join(CSVHeader(), ","),
+		csvHostRow("Dev", "Dev Bastion", "bastion.example.test", "ssh", "22", "ops", ""),
+		csvHostRow("Prod", "Prod Bastion", "bastion.example.test", "ssh", "22", "ops", ""),
+		csvHostRow("Prod", "Client", "client.example.test", "ssh", "22", "",
+			"bastion.example.test"),
+	}, "\r\n")
+
+	result := Parse(FormatCSV, text, Options{})
+	if len(result.Records) != 3 {
+		t.Fatalf("records = %+v, issues = %+v", result.Records, result.Issues)
+	}
+	if refs := result.Records[2].JumpRefs; len(refs) != 1 || refs[0] != 1 {
+		t.Fatalf("client JumpRefs = %v, want the Prod copy at index 1", refs)
+	}
+}
+
+// TestCSVWithoutAProxyJumpColumnStillParses proves an export written before
+// the column existed still imports, with no chains and no errors.
+func TestCSVWithoutAProxyJumpColumnStillParses(t *testing.T) {
+	text := fixture(t, "netcatty.csv")
+	if strings.Contains(strings.SplitN(text, "\n", 2)[0], "ProxyJump") {
+		t.Fatal("the legacy fixture must not carry the ProxyJump column")
+	}
+	result := Parse(FormatCSV, text, Options{})
+	if len(result.Records) != 5 {
+		t.Fatalf("records = %d: %+v", len(result.Records), result.Records)
+	}
+	for _, record := range result.Records {
+		if len(record.JumpRefs) != 0 {
+			t.Fatalf("legacy row gained a chain: %+v", record)
+		}
+	}
+	if findIssue(result.Issues, IssueUnresolvedJump) != nil {
+		t.Fatalf("legacy CSV reported an unresolved jump: %+v", result.Issues)
+	}
+}
+
 func TestParseCSVKeepsCRLFInsideQuotedField(t *testing.T) {
 	text := "Hostname,Notes,Label\r\n" +
 		"web.example.test,\"line1\r\nline2\",\"quoted, label\"\r\n" +

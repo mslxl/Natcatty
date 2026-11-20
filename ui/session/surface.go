@@ -32,7 +32,10 @@ import (
 // and the window redraw used when a clipboard request arrives on the UI thread.
 type Options struct {
 	LogDefaults func() appsession.LogOptions
-	Redraw      func()
+	// OpenLog hands a Session's current log file to the platform opener. Nil
+	// leaves the menu action disabled.
+	OpenLog func(path string)
+	Redraw  func()
 	// PastePolicy reads the live multiline paste setting.
 	PastePolicy func() (protection bool, minLines int)
 	// DropAction reads what a file drop should do.
@@ -58,6 +61,10 @@ type Options struct {
 	// working directory the shell last reported with OSC 7, used for the
 	// current-directory ranking bonus. Nil leaves autocomplete off.
 	Suggest func(input, scope, cwd string) []autocomplete.Suggestion
+	// SuggestAtPrompt is Suggest with the tracked prompt kind: program is true
+	// when a non-shell program is waiting for ordinary input, where the Vault
+	// Snippets join the journal rows. Nil uses Suggest for every prompt.
+	SuggestAtPrompt func(input, scope, cwd string, program bool) []autocomplete.Suggestion
 	// AutocompleteDisplay reports whether the popup and ghost hint are shown.
 	AutocompleteDisplay func() (popup, ghost bool)
 	// AutocompleteDelay is the debounce in milliseconds before suggestions are
@@ -70,6 +77,10 @@ type Options struct {
 	// app applies a Settings change to open terminals through
 	// SetTerminalCursor; a new terminal reads it here.
 	Cursor func() (domainpreferences.CursorStyle, bool)
+	// ShiftEnterNewline reports whether Shift+Enter sends ESC CR instead of
+	// the terminal's own encoding. It is read on each key press, so a Settings
+	// change applies to an open terminal.
+	ShiftEnterNewline func() bool
 	// Theme reads the live terminal color scheme. The app applies a Settings
 	// change to open terminals through SetTerminalTheme; a new terminal reads
 	// it here.
@@ -133,6 +144,11 @@ func WithLogDefaults(fn func() appsession.LogOptions) Option {
 	return func(options *Options) { options.LogDefaults = fn }
 }
 
+// WithLogOpener supplies the platform opener for a Session's current log file.
+func WithLogOpener(fn func(path string)) Option {
+	return func(options *Options) { options.OpenLog = fn }
+}
+
 // WithRedraw supplies the window invalidation used for asynchronous clipboard
 // requests, paste confirmation, and drop feedback.
 func WithRedraw(fn func()) Option {
@@ -194,6 +210,15 @@ func WithSuggestions(suggest func(input, scope, cwd string) []autocomplete.Sugge
 	}
 }
 
+// WithPromptSuggestions supplies the provider used at a tracked prompt: it
+// receives whether a non-shell program is waiting for input, so it can add
+// Vault Snippets there while leaving shell completions history-only.
+func WithPromptSuggestions(suggest func(input, scope, cwd string, program bool) []autocomplete.Suggestion) Option {
+	return func(options *Options) {
+		options.SuggestAtPrompt = suggest
+	}
+}
+
 // WithAutocompleteDelay supplies the debounce applied after the typed line
 // changes.
 func WithAutocompleteDelay(fn func() int) Option {
@@ -209,6 +234,12 @@ func WithTerminalFont(fn func() terminal.Font) Option {
 // terminal uses.
 func WithTerminalCursor(fn func() (domainpreferences.CursorStyle, bool)) Option {
 	return func(options *Options) { options.Cursor = fn }
+}
+
+// WithShiftEnterNewline supplies the live Shift+Enter encoding preference. A
+// nil reader leaves Shift+Enter to MyGo's own encoding.
+func WithShiftEnterNewline(fn func() bool) Option {
+	return func(options *Options) { options.ShiftEnterNewline = fn }
 }
 
 // WithTerminalTheme supplies the live terminal color scheme a new terminal
@@ -281,15 +312,23 @@ type Surface struct {
 	observation *appsession.Observation
 
 	// Autocomplete state, refreshed once per frame from the Session's typed
-	// line.
+	// line. locale is the frame's language; a change invalidates the cached
+	// suggestions so their descriptions follow a live language switch.
+	locale              string
 	suggestions         []autocomplete.Suggestion
 	suggestionIndex     int
 	suggestionInput     string
+	suggestionLocale    string
+	suggestionProgram   bool
 	suggestionPending   time.Time
 	suggestionDismissed bool
 	suggestionTimer     *time.Timer
 	showAutocomplete    bool
 	showGhost           bool
+	// programPrompt reports that the last refresh found a non-shell program
+	// waiting for ordinary input. Acceptance uses it to replace only the typed
+	// query instead of the whole shell line.
+	programPrompt bool
 }
 
 // New connects a MyGo terminal to session's TerminalConn. It returns an error
@@ -386,7 +425,10 @@ func (s *Surface) attach(conn io.ReadWriteCloser) error {
 			s.requestPaste(string(text))
 			return true
 		},
-		OnKey: s.handleAutocompleteKey,
+		OnKey: s.handleTerminalKey,
+		// Printed archive names underline and Command+click fills their
+		// extraction command. Returning false leaves URLs to MyGo.
+		OpenLink: s.openArchiveLink,
 	}
 	term, err := terminal.New(options)
 	if err != nil {
@@ -399,6 +441,25 @@ func (s *Surface) attach(conn io.ReadWriteCloser) error {
 	}
 	s.terminal = term
 	return nil
+}
+
+// handleTerminalKey runs before MyGo encodes a key. Shift+Enter is taken only
+// when the Settings preference asks for the legacy ESC CR newline; every other
+// key, including plain Enter and Shift+Enter with the preference off, falls
+// through to MyGo's own encoding. The autocomplete popup follows.
+func (s *Surface) handleTerminalKey(mods ui.Modifiers, key ui.Key) bool {
+	if mods == ui.Shift && key == ui.KeyEnter {
+		newline := s.options.ShiftEnterNewline != nil && s.options.ShiftEnterNewline()
+		if data := appsession.ShiftEnterNewlineData(newline); data != nil {
+			if s.terminal != nil {
+				// Send keeps the escape sequence in order with the text
+				// typed around it, as the chosen key's encoding would have.
+				s.terminal.Send(data)
+			}
+			return true
+		}
+	}
+	return s.handleAutocompleteKey(mods, key)
 }
 
 func (s *Surface) terminalFont() terminal.Font {
@@ -540,6 +601,7 @@ func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
 		return s.browser.View(c)
 	}
 	m := locales.In(c.Locale())
+	s.locale = c.Locale()
 	t := c.Theme()
 	snapshot := s.session.Snapshot()
 	s.refreshSuggestions(snapshot.Input, snapshot.CWD, snapshot.Command.Running)
@@ -655,8 +717,13 @@ func (s *Surface) chrome(c *ui.Context, snapshot appsession.Snapshot) (chromeMod
 		saveScreen = func() { s.saveScreen() }
 		clearBuffer = func() { s.session.ClearBuffer() }
 	}
+	var openLog func(path string)
+	if s.options.OpenLog != nil {
+		openLog = s.openLog
+	}
 	actions := chromeActions{
 		ToggleLog: func() { s.toggleLog() },
+		OpenLog:   openLog,
 		SetLogFormat: func(format domainterminal.LogFormat) {
 			s.setLogFormat(format)
 		},
@@ -1112,6 +1179,17 @@ func (s *Surface) toggleLog() {
 		return
 	}
 	s.logError = false
+}
+
+// openLog hands the file the Session is currently writing to the platform
+// opener. It never starts logging: with logging off there is no current file,
+// and the menu action is disabled instead.
+func (s *Surface) openLog(string) {
+	logging := s.session.Snapshot().Logging
+	if s.options.OpenLog == nil || !logging.Active || logging.Path == "" {
+		return
+	}
+	s.options.OpenLog(logging.Path)
 }
 
 func (s *Surface) setLogFormat(format domainterminal.LogFormat) {

@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 
 	appsync "github.com/mslxl/natcatty/application/sync"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
+	domainsync "github.com/mslxl/natcatty/domain/sync"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
@@ -18,9 +20,12 @@ import (
 type fakeConvergentSyncService struct {
 	*fakeSyncService
 
-	convergentCalls []bool
-	restores        int
-	convergentErr   error
+	convergentCalls     []bool
+	restores            int
+	convergentErr       error
+	conflictResolutions []appsync.ConvergentConflictResolution
+	bulkResolutions     []appsync.ConvergentConflictSide
+	bulkExpectations    [][]appsync.ConvergentConflictExpectation
 }
 
 func newFakeConvergentSyncService() *fakeConvergentSyncService {
@@ -63,6 +68,27 @@ func (f *fakeConvergentSyncService) SetConvergentEnabled(_ context.Context, enab
 		CanInitialize:      true,
 		AlreadyInitialized: true,
 	}, nil
+}
+
+func (f *fakeConvergentSyncService) ResolveConvergentMigrationConflict(_ context.Context, resolution appsync.ConvergentConflictResolution) (appsync.ConvergentMigrationPreview, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.conflictResolutions = append(f.conflictResolutions, resolution)
+	if f.convergentErr != nil {
+		return appsync.ConvergentMigrationPreview{}, f.convergentErr
+	}
+	return appsync.ConvergentMigrationPreview{SchemaVersion: 2}, nil
+}
+
+func (f *fakeConvergentSyncService) ResolveConvergentMigrationConflicts(_ context.Context, side appsync.ConvergentConflictSide, expected []appsync.ConvergentConflictExpectation) (appsync.ConvergentMigrationPreview, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bulkResolutions = append(f.bulkResolutions, side)
+	f.bulkExpectations = append(f.bulkExpectations, append([]appsync.ConvergentConflictExpectation(nil), expected...))
+	if f.convergentErr != nil {
+		return appsync.ConvergentMigrationPreview{}, f.convergentErr
+	}
+	return appsync.ConvergentMigrationPreview{SchemaVersion: 2}, nil
 }
 
 func (f *fakeConvergentSyncService) RestoreLastVerified(context.Context) (appsync.Result, error) {
@@ -531,6 +557,147 @@ func TestSyncConvergentActionsStayPinnedAboveTheScroll(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+// TestSyncConvergentMigrationListsAndResolvesConflicts drives ticket 66's
+// surface: the blocked preview lists every contested field with both values,
+// a per-field choice reaches the service, and the bulk default does too.
+func TestSyncConvergentMigrationListsAndResolvesConflicts(t *testing.T) {
+	m := locales.In("en")
+	service := newFakeConvergentSyncService()
+	label := appsync.ConvergentMigrationConflict{
+		Family:        "hosts",
+		EntityID:      "host-1",
+		Field:         "label",
+		Register:      "hosts\x00host-1\x00label",
+		Fingerprint:   "fingerprint-host-label",
+		LocalPresent:  true,
+		RemotePresent: true,
+		LocalValue:    json.RawMessage(`"This device name"`),
+		RemoteValue:   json.RawMessage(`"Cloud name"`),
+	}
+	secret := appsync.ConvergentMigrationConflict{
+		Family:        "secrets",
+		EntityID:      "host-1/password",
+		Field:         "value",
+		Register:      "secrets\x00host-1/password\x00value",
+		Fingerprint:   "fingerprint-secret-value",
+		LocalPresent:  true,
+		RemotePresent: true,
+		// A blocked preview never carries these values; set them here so the
+		// leak assertion below would actually catch a surface that printed a
+		// secret-marked conflict's raw sides.
+		LocalValue:  json.RawMessage(`"local-hunter2"`),
+		RemoteValue: json.RawMessage(`"cloud-hunter2"`),
+		Secret:      true,
+	}
+	presence := appsync.ConvergentMigrationConflict{
+		Family:        "hosts",
+		EntityID:      "host-2",
+		Field:         domainsync.PresenceField,
+		Register:      domainsync.RegisterIdentity("hosts", "host-2", domainsync.PresenceField),
+		Fingerprint:   "fingerprint-host-presence",
+		LocalPresent:  true,
+		RemotePresent: false,
+	}
+	service.snapshot.Convergent = appsync.ConvergentInfo{
+		Phase:         "blocked",
+		ConflictCount: 3,
+		Migration: &appsync.ConvergentMigrationPreview{
+			SchemaVersion:  2,
+			ConflictCount:  3,
+			Conflicts:      []appsync.ConvergentMigrationConflict{label, presence, secret},
+			BlockedReasons: []appsync.ConvergentBlockedReason{{Code: "conflicts-unresolved"}},
+		},
+	}
+	state := NewSyncState(service)
+	var layout viewLayout
+	var context *ui.Context
+	view := viewAtWithLayout(AreaSync, Config{Sync: state}, &layout)
+	const w, h = 1100, 720
+	tester := ui.NewTester(func(c *ui.Context) {
+		context = c
+		view(c)
+	}, w, h)
+	tester.SetLocale("en")
+	tester.Frame()
+	viewport := layout.Content.Bounds(context)
+
+	for _, want := range []string{
+		m.SettingsSyncConvergentConflictsTitle("3"),
+		m.SettingsSyncConvergentConflictEntry(m.SearchSectionHost(), "host-1", "label"),
+		m.SettingsSyncConvergentConflictValues("This device name", "Cloud name"),
+		m.SettingsSyncConvergentConflictEntry(m.SearchSectionHost(), "host-2", m.SettingsSyncConvergentConflictFieldPresence()),
+		m.SettingsSyncConvergentConflictValues(m.SettingsSyncConvergentConflictValuePresent(), m.SettingsSyncConvergentConflictValueMissing()),
+		m.SettingsSyncConvergentConflictEntry(m.SettingsSyncEntityUnknown(), "host-1/password", "value"),
+		m.SettingsSyncConvergentConflictValues(m.SettingsSyncConvergentConflictValueHidden(), m.SettingsSyncConvergentConflictValueHidden()),
+	} {
+		scrollSettingsTo(t, tester, want, w, h, viewport)
+	}
+	for _, leaked := range []string{
+		`Cloud name"`, "local-hunter2", "cloud-hunter2",
+		`"local-hunter2"`, `"cloud-hunter2"`, "secret",
+	} {
+		if tester.HasText(leaked) {
+			t.Fatalf("raw conflict value %q leaked: %q", leaked, tester.Texts())
+		}
+	}
+
+	if _, ok := tester.Find(m.SettingsSyncConflictUseLocal()); !ok {
+		scrollSettingsTo(t, tester, m.SettingsSyncConflictUseLocal(), w, h, viewport)
+	}
+	if err := tester.Click(m.SettingsSyncConflictUseLocal()); err != nil {
+		t.Fatal(err)
+	}
+	waitSyncIdle(t, state)
+	service.mu.Lock()
+	resolutions := append([]appsync.ConvergentConflictResolution(nil), service.conflictResolutions...)
+	service.mu.Unlock()
+	if len(resolutions) != 1 || resolutions[0].Register != label.Register || resolutions[0].Side != appsync.ConvergentConflictKeepLocal {
+		t.Fatalf("per-field resolutions = %+v", resolutions)
+	}
+	if resolutions[0].Fingerprint != label.Fingerprint {
+		t.Fatalf("per-field resolution fingerprint = %q, want the rendered %q", resolutions[0].Fingerprint, label.Fingerprint)
+	}
+
+	tester.Frame()
+	if err := tester.Click(m.SettingsSyncConvergentKeepRemoteAll()); err != nil {
+		t.Fatal(err)
+	}
+	waitSyncIdle(t, state)
+	service.mu.Lock()
+	bulk := append([]appsync.ConvergentConflictSide(nil), service.bulkResolutions...)
+	expectations := append([][]appsync.ConvergentConflictExpectation(nil), service.bulkExpectations...)
+	service.mu.Unlock()
+	if len(bulk) != 1 || bulk[0] != appsync.ConvergentConflictKeepRemote {
+		t.Fatalf("bulk resolutions = %+v", bulk)
+	}
+	if len(expectations) != 1 || len(expectations[0]) != 3 {
+		t.Fatalf("bulk expectations = %+v", expectations)
+	}
+	for index, rendered := range []appsync.ConvergentMigrationConflict{label, presence, secret} {
+		got := expectations[0][index]
+		if got.Register != rendered.Register || got.Fingerprint != rendered.Fingerprint {
+			t.Fatalf("bulk expectation %d = %+v, want register %q fingerprint %q", index, got, rendered.Register, rendered.Fingerprint)
+		}
+	}
+}
+
+// TestSyncConvergentConflictChangedIsVisible maps the typed changed-conflict
+// refusal onto a localized message instead of raw Go error text.
+func TestSyncConvergentConflictChangedIsVisible(t *testing.T) {
+	if got := syncProblemForError(appsync.ErrConvergentConflictChanged); got != appsync.ProblemConvergentConflictChanged {
+		t.Fatalf("problem = %q, want %q", got, appsync.ProblemConvergentConflictChanged)
+	}
+	for _, language := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
+		m := locales.In(language)
+		if m.SettingsSyncProblemConvergentConflictChanged() == "" || m.SettingsSyncConvergentReasonChanged() == "" {
+			t.Fatalf("%s has empty changed-conflict messages", language)
+		}
+		if m.SettingsSyncConvergentKeepRemoteAll() == m.SettingsSyncConvergentKeepLocalAll() {
+			t.Fatalf("%s bulk labels are identical", language)
 		}
 	}
 }

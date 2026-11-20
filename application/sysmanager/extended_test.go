@@ -31,7 +31,7 @@ func TestParseCapabilitiesReadsTheExtendedTools(t *testing.T) {
 	if ok, reason := bare.Available(TabTmux); ok || reason != ReasonMissingTmux {
 		t.Errorf("tmux availability = %v, %q", ok, reason)
 	}
-	if ok, reason := bare.Available(TabDocker); ok || reason != ReasonMissingDocker {
+	if ok, reason := bare.Available(TabDocker); ok || reason != ReasonMissingContainerRuntime {
 		t.Errorf("docker availability = %v, %q", ok, reason)
 	}
 	// A Host without an accelerator tool is the normal empty GPU state, not
@@ -252,11 +252,17 @@ func TestExtendedCommandsUseFixedTemplates(t *testing.T) {
 		t.Errorf("gpu command = %q", gpuCommand())
 	}
 	for tab, want := range map[Tab]string{
-		TabTmux:   "__NC_TMUX_BEGIN__",
-		TabDocker: "__NC_DOCKER_BEGIN__",
-		TabGPU:    "__NC_GPU_BEGIN__",
+		TabTmux:       "__NC_TMUX_BEGIN__",
+		TabDocker:     "__NC_DOCKER_BEGIN__",
+		TabKubernetes: "__NC_K8S_BEGIN__",
+		TabGPU:        "__NC_GPU_BEGIN__",
 	} {
-		if got := commandFor(tab); !strings.Contains(got, want) {
+		got, err := commandFor(tab, RuntimeDocker, "")
+		if err != nil {
+			t.Errorf("commandFor(%s): %v", tab, err)
+			continue
+		}
+		if !strings.Contains(got, want) {
 			t.Errorf("commandFor(%s) = %q", tab, got)
 		}
 	}
@@ -265,6 +271,9 @@ func TestExtendedCommandsUseFixedTemplates(t *testing.T) {
 func TestDefaultIntervalCoversExtendedTabs(t *testing.T) {
 	if got := DefaultInterval(TabDocker); got != 5*time.Second {
 		t.Errorf("docker interval = %s", got)
+	}
+	if got := DefaultInterval(TabKubernetes); got != 5*time.Second {
+		t.Errorf("kubernetes interval = %s", got)
 	}
 	for _, tab := range []Tab{TabTmux, TabGPU} {
 		if got := DefaultInterval(tab); got != 3*time.Second {
@@ -554,7 +563,7 @@ func TestServiceDegradesExtendedTabsToTypedUnavailability(t *testing.T) {
 		reason Reason
 	}{
 		{TabTmux, ReasonMissingTmux},
-		{TabDocker, ReasonMissingDocker},
+		{TabDocker, ReasonMissingContainerRuntime},
 	} {
 		if err := service.Start(host, test.tab, 20*time.Millisecond); err != nil {
 			t.Fatalf("start %s: %v", test.tab, err)

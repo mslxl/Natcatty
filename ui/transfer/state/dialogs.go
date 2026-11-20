@@ -37,6 +37,8 @@ const (
 	DialogConflict DialogKind = "conflict"
 	// DialogHostPicker chooses a Host for a remote pane.
 	DialogHostPicker DialogKind = "host-picker"
+	// DialogArchive creates an archive beside the selected entries.
+	DialogArchive DialogKind = "archive"
 )
 
 // Dialog is one open prompt. The view renders it and routes Enter/Escape to
@@ -60,6 +62,9 @@ type Dialog struct {
 	ApplyToAll bool
 	// Cursor is the Host picker's highlighted row among its matches.
 	Cursor int
+	// ArchiveFormat is the create-archive prompt's selected container. The
+	// draft name always carries its extension.
+	ArchiveFormat apptransfer.ArchiveFormat
 
 	// resolve answers a conflict prompt. It is called once, after the dialog
 	// closes, with the action the user chose and whether it covers the batch.
@@ -151,6 +156,34 @@ func (s *State) RequestDelete(side Side) {
 	s.RequestRedraw()
 }
 
+// RequestArchive opens the create-archive prompt for the selection. The name
+// starts from the selection's own name and the prompt's format choice keeps
+// its extension in step.
+func (s *State) RequestArchive(side Side) {
+	tab := s.Tab(side)
+	if tab == nil || tab.FS == nil || tab.Path == "" || !CanArchive(tab) {
+		s.notice = "pane-unavailable"
+		s.RequestRedraw()
+		return
+	}
+	paths := tab.SelectedPaths()
+	if len(paths) == 0 {
+		s.notice = "nothing-selected"
+		s.RequestRedraw()
+		return
+	}
+	format := apptransfer.ArchiveTarGz
+	s.dialog = &Dialog{
+		Kind:          DialogArchive,
+		Side:          side,
+		Tab:           tab,
+		Paths:         paths,
+		Draft:         apptransfer.DefaultArchiveName(tab.Path, paths, format),
+		ArchiveFormat: format,
+	}
+	s.RequestRedraw()
+}
+
 // RequestHostPicker opens the Host chooser for a remote pane.
 func (s *State) RequestHostPicker(side Side) {
 	s.dialog = &Dialog{Kind: DialogHostPicker, Side: side}
@@ -198,6 +231,19 @@ func (s *State) SetDialogDraft(text string) {
 		s.dialog.Draft = text
 		s.dialog.Err = ""
 	}
+}
+
+// SetDialogArchiveFormat switches the create-archive prompt between tar.gz and
+// zip. The draft's archive extension follows the choice so the name stays
+// consistent with what the remote command produces.
+func (s *State) SetDialogArchiveFormat(format apptransfer.ArchiveFormat) {
+	if s.dialog == nil || s.dialog.Kind != DialogArchive || !format.Valid() {
+		return
+	}
+	s.dialog.ArchiveFormat = format
+	s.dialog.Draft = apptransfer.WithArchiveExtension(s.dialog.Draft, format)
+	s.dialog.Err = ""
+	s.RequestRedraw()
 }
 
 // SetDialogApplyToAll sets the conflict prompt's apply-to-all checkbox.
@@ -320,6 +366,34 @@ func (s *State) SubmitDialog() {
 		s.dialog = nil
 		s.runOneShot(domainsftp.OpChmod, tab, func(ctx context.Context) error {
 			return s.service.Chmod(ctx, tab.FS, path, mode)
+		})
+	case DialogArchive:
+		tab := dialog.Tab
+		if tab == nil || tab.FS == nil {
+			s.dialog = nil
+			s.notice = "error:" + string(apptransfer.KindUnsupported)
+			break
+		}
+		request := apptransfer.ArchiveRequest{
+			Directory: tab.Path,
+			Name:      dialog.Draft,
+			Format:    dialog.ArchiveFormat,
+			Paths:     append([]string(nil), dialog.Paths...),
+		}
+		if _, err := apptransfer.PlanArchive(request); err != nil {
+			dialog.Err = "invalid-archive-name"
+			s.RequestRedraw()
+			return
+		}
+		creator, ok := tab.FS.(apptransfer.ArchiveCreator)
+		if !ok || !apptransfer.CanCreateArchive(tab.FS) {
+			s.dialog = nil
+			s.notice = "error:" + string(apptransfer.KindUnsupported)
+			break
+		}
+		s.dialog = nil
+		s.runOneShot(domainsftp.OpArchive, tab, func(ctx context.Context) error {
+			return creator.CreateArchive(ctx, request)
 		})
 	case DialogDelete:
 		side := dialog.Side
@@ -509,6 +583,8 @@ func (s *State) Run(action string) bool {
 		s.Refresh(side)
 	case "sftpNewFolder":
 		s.RequestNewFolder(side)
+	case "sftpCreateArchive":
+		s.RequestArchive(side)
 	case "sftpOpen":
 		if tab := s.Tab(side); tab != nil {
 			if entry, ok := tab.SelectedEntry(); ok {

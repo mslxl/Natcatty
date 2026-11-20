@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
 )
 
@@ -54,18 +55,27 @@ var (
 	// ErrSudoWithSCP reports a contradictory Host: SCP cannot elevate, and
 	// silently dropping sudo would hide the loss of access.
 	ErrSudoWithSCP = errors.New("transfer: sudo mode requires SFTP; SCP cannot elevate")
-	// ErrSingleChannel reports a transport that is already serving the one
-	// channel a bastion allows. Opening another would disconnect the terminal.
+	// ErrSingleChannel reports a single-channel transport that cannot open a
+	// companion dial, so borrowing its one channel would disconnect the
+	// terminal. It is only returned when the session lacks DedicatedRemoteSession.
 	ErrSingleChannel = errors.New("transfer: this host uses a single SSH channel; opening SFTP would disconnect the terminal")
 	// ErrSingleChannelFallback reports an SFTP failure on a single-channel host
 	// where the SCP fallback is therefore disabled.
 	ErrSingleChannelFallback = errors.New("transfer: SFTP is unavailable and SCP fallback is disabled on a single-channel host")
+	// ErrDedicatedDial reports that a single-channel Host needed a companion
+	// transport and the dedicated dial failed. The terminal's own transport is
+	// untouched; the failure belongs to this Transfer.
+	ErrDedicatedDial = errors.New("transfer: the dedicated SFTP connection failed")
 )
 
 // RemoteSession is one authenticated transport that protocol selection may
 // turn into a filesystem. The app adapts a Connection lease to it; tests use
 // a fake. A session owns the transport: the selector calls Discard exactly
 // once when it gives up without returning a filesystem.
+//
+// A single-channel transport that already serves a terminal cannot host
+// another channel. A session that can open an independent transport implements
+// DedicatedRemoteSession; one that cannot is refused with ErrSingleChannel.
 type RemoteSession interface {
 	// SingleChannel reports a bastion or vendor banner that permits one SSH
 	// channel only.
@@ -91,6 +101,22 @@ type RemoteConnector interface {
 	ConnectRemote(ctx context.Context, hostID model.HostID) (RemoteSession, error)
 }
 
+// DedicatedRemoteSession is the optional capability of a session whose peer
+// may allow only one channel per transport. Instead of borrowing the channel
+// its terminal already uses, it opens a second Connection with the same dial
+// profile: host, credentials, proxy, jump chain, keepalive, and host-key
+// policy. The original session remains owned by the caller.
+type DedicatedRemoteSession interface {
+	// AcceptedHostIdentities lists the host keys this transport trusted during
+	// its handshake. The dedicated dial pins them so the same hosts are not
+	// prompted again.
+	AcceptedHostIdentities() []domainconn.Key
+	// DialDedicated opens an independent transport and returns the session
+	// protocol selection should use. A failure is returned as-is; the selector
+	// wraps it with ErrDedicatedDial.
+	DialDedicated(ctx context.Context, accepted []domainconn.Key) (RemoteSession, error)
+}
+
 // RemoteOptions is one remote-pane open request.
 type RemoteOptions struct {
 	HostID       model.HostID
@@ -110,7 +136,8 @@ type RemoteOptions struct {
 //   - explicit SCP activates SCP and its probe, with no SFTP attempt;
 //   - explicit SFTP never falls back;
 //   - auto may fall back, but not on a single-channel host;
-//   - a reused single-channel transport is refused before any channel opens;
+//   - a reused single-channel transport opens a companion dial instead of
+//     borrowing the terminal's one channel; a session that cannot is refused;
 //   - sudo is never silently downgraded to unprivileged SFTP or SCP.
 func SelectRemote(ctx context.Context, connector RemoteConnector, options RemoteOptions) (FileSystem, FileProtocol, error) {
 	protocol := options.Protocol
@@ -128,8 +155,23 @@ func SelectRemote(ctx context.Context, connector RemoteConnector, options Remote
 		return nil, "", err
 	}
 	if session.SingleChannel() && (session.Reused() || options.RequireExtraChannel) {
+		// The peer allows one session channel per TCP connection. Borrowing the
+		// transport the terminal already uses would tear that Session down, so
+		// open an independent Connection with the same dial profile. The
+		// borrowed lease is returned first: it was only evidence that the peer
+		// is single-channel, and the terminal must keep its own transport even
+		// if the companion dial fails.
+		dedicated, ok := session.(DedicatedRemoteSession)
+		if !ok {
+			session.Discard()
+			return nil, "", ErrSingleChannel
+		}
+		accepted := dedicated.AcceptedHostIdentities()
 		session.Discard()
-		return nil, "", ErrSingleChannel
+		session, err = dedicated.DialDedicated(ctx, accepted)
+		if err != nil {
+			return nil, "", fmt.Errorf("%w: %w", ErrDedicatedDial, err)
+		}
 	}
 
 	if options.Sudo {

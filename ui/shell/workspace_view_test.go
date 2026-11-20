@@ -90,6 +90,78 @@ func TestShellRendersRecursiveSplitPanes(t *testing.T) {
 	}
 }
 
+// TestShellRendersOnlyTheMagnifiedPane pins the view side of the magnified
+// guard: hidden members draw no surface and therefore no drop zone.
+func TestShellRendersOnlyTheMagnifiedPane(t *testing.T) {
+	graph := newWorkspaceViewGraph(t)
+	tt := ui.NewTester(View(graph.state), 900, 600)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.waitForSurfaces(t, 2)
+	root, _, _ := graph.state.TabTree(0)
+	panes := domainworkspace.CollectPaneIDs(root)
+	if len(panes) != 2 {
+		t.Fatalf("panes = %v, want 2", panes)
+	}
+
+	if !graph.state.SetMagnifiedPane(0, panes[0]) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+	tt.Frame()
+	if got := countText(tt.Texts(), "terminal-surface"); got != 1 {
+		t.Fatalf("terminal surfaces = %d while magnified, want 1", got)
+	}
+	if !graph.state.SetMagnifiedPane(0, "") {
+		t.Fatal("clearing the zoom failed")
+	}
+	tt.Frame()
+	if got := countText(tt.Texts(), "terminal-surface"); got != 2 {
+		t.Fatalf("terminal surfaces = %d after restoring the split, want 2", got)
+	}
+}
+
+// TestShellShowsTheSiblingAfterDetachingTheMagnifiedPane pins the rendered
+// side of the stale-zoom defect: after the zoomed Pane leaves the Tab, the
+// surviving member still draws its surface and the Tab body is not blank.
+func TestShellShowsTheSiblingAfterDetachingTheMagnifiedPane(t *testing.T) {
+	graph := newWorkspaceViewGraph(t)
+	tt := ui.NewTester(View(graph.state), 900, 600)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.waitForSurfaces(t, 2)
+	root, _, _ := graph.state.TabTree(0)
+	panes := domainworkspace.CollectPaneIDs(root)
+	if len(panes) != 2 {
+		t.Fatalf("panes = %v, want 2", panes)
+	}
+
+	if !graph.state.SetMagnifiedPane(0, panes[0]) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+	tt.Frame()
+	if got := countText(tt.Texts(), "terminal-surface"); got != 1 {
+		t.Fatalf("terminal surfaces = %d while magnified, want 1", got)
+	}
+	if !graph.state.DetachPane(0, panes[0]) {
+		t.Fatal("DetachPane failed")
+	}
+	tt.Frame()
+	if got := countText(tt.Texts(), "terminal-surface"); got != 1 {
+		t.Fatalf("terminal surfaces = %d after detaching the zoomed Pane, want the sibling", got)
+	}
+	if graph.state.MagnifiedPaneID(0) != "" {
+		t.Fatal("the detached Pane is still reported as magnified")
+	}
+}
+
 func TestShellPaneMenuSplitsAndCloses(t *testing.T) {
 	graph := newWorkspaceViewGraph(t)
 	tt := ui.NewTester(View(graph.state), 900, 600)
@@ -273,6 +345,63 @@ func TestShellDragMovesAPaneOntoAnotherTab(t *testing.T) {
 	root, _, ok := graph.state.TabTree(0)
 	if !ok || len(domainworkspace.CollectPaneIDs(root)) != 2 {
 		t.Fatalf("target Tab panes = %+v, want two", root)
+	}
+}
+
+// TestShellShowsTheSiblingAfterAMagnifiedPaneJoinsAnotherTab pins the rendered
+// side of the cross-Tab defect: dropping the zoomed Pane on a Tab strip must
+// clear the zoom, so going back to the source Tab shows its surviving sibling
+// instead of an empty body.
+func TestShellShowsTheSiblingAfterAMagnifiedPaneJoinsAnotherTab(t *testing.T) {
+	graph := newWorkspaceViewGraph(t)
+	tt := ui.NewTester(View(graph.state), 900, 600)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.waitForSurfaces(t, 2)
+	root, _, _ := graph.state.TabTree(0)
+	panes := domainworkspace.CollectPaneIDs(root)
+	if len(panes) != 2 {
+		t.Fatalf("panes = %v, want 2", panes)
+	}
+	if !graph.state.SetMagnifiedPane(0, panes[0]) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	graph.state.RenameTab(1, "Tab 2")
+	graph.waitForSurfaces(t, 3)
+	graph.state.SelectTab(0)
+	tt.Frame()
+
+	handle, ok := tt.Find("::")
+	if !ok {
+		t.Fatalf("the zoomed Pane has no drag handle, texts %q", tt.Texts())
+	}
+	tab, ok := tt.Find("Tab 2")
+	if !ok {
+		t.Fatalf("Tab 2 is not visible, texts %q", tt.Texts())
+	}
+	tt.Press(handle.X+handle.W/2, handle.Y+handle.H/2)
+	tt.Move(tab.X+tab.W/2, tab.Y+tab.H/2)
+	tt.Frame()
+	tt.Release(tab.X+tab.W/2, tab.Y+tab.H/2)
+	tt.Frame()
+
+	if graph.state.TabCount() != 2 {
+		t.Fatalf("tabs = %d, want the source Tab to survive with its sibling", graph.state.TabCount())
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != "" {
+		t.Fatalf("magnified Pane = %q after the tab-strip drop, want the zoom cleared", got)
+	}
+	graph.state.SelectTab(0)
+	tt.Frame()
+	if got := countText(tt.Texts(), "terminal-surface"); got != 1 {
+		t.Fatalf("terminal surfaces = %d on the source Tab, want the surviving sibling", got)
 	}
 }
 

@@ -51,11 +51,13 @@ func normalizeRemoteVersion(remoteVersion string) string {
 // product name; OpenSSH, Dropbear, and JumpServer KoKo all multiplex. A
 // second channel on one of these peers tears down the first interactive
 // session, so SCP fallback (a second exec channel) would disconnect the user.
+// russh is a Rust SSH server with the same one-channel restriction.
 var singleChannelSoftwareTokens = []string{
 	"BHostSSH",
 	"TERM-SSHD",
 	"CLOUDBILITY",
 	"CLOUDLINKER",
+	"russh",
 }
 
 // RemoteRequiresSingleChannel reports whether the peer's SSH identification

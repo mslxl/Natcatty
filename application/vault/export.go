@@ -16,6 +16,19 @@ import (
 // ExportFormat is one portable output shape.
 type ExportFormat = vaultexport.Format
 
+// ExportIssueCode names why one exported row could not carry a field.
+type ExportIssueCode = vaultexport.IssueCode
+
+// Export issue codes re-exported for the UI layer.
+const (
+	ExportIssueJumpHopMissing         = vaultexport.IssueJumpHopMissing
+	ExportIssueJumpHopUnrepresentable = vaultexport.IssueJumpHopUnrepresentable
+)
+
+// ExportIssue is one non-fatal export warning naming the Host and the jump hop
+// that could not be written.
+type ExportIssue = vaultexport.Issue
+
 // Export formats re-exported for callers that should not import the domain
 // package just to name a format.
 const (
@@ -80,6 +93,9 @@ type Export struct {
 	// out on purpose. The UI reports the number so the user knows what is not
 	// in the file.
 	OmittedSecrets int
+	// Issues reports rows that exported but had to drop a field the format
+	// cannot represent, such as a jump chain with an unrepresentable hop.
+	Issues []ExportIssue
 }
 
 // ExportVault renders the requested data in opts.Format. The result is
@@ -93,7 +109,7 @@ func (s *Service) ExportVault(ctx context.Context, opts ExportOptions) (Export, 
 	if err != nil {
 		return Export{}, err
 	}
-	content, err := vaultexport.Export(dataset, opts.Format, vaultexport.Options{
+	content, issues, err := vaultexport.ExportWithIssues(dataset, opts.Format, vaultexport.Options{
 		Title:          opts.Title,
 		IncludeSecrets: opts.IncludeSecrets,
 		ExportedAt:     opts.ExportedAt,
@@ -107,6 +123,7 @@ func (s *Service) ExportVault(ctx context.Context, opts ExportOptions) (Export, 
 		Content:           content,
 		UnreadableSecrets: unreadable,
 		OmittedSecrets:    omittedSecrets(dataset, opts.Format, opts.IncludeSecrets),
+		Issues:            issues,
 	}, nil
 }
 
@@ -125,6 +142,9 @@ func omittedSecrets(dataset vaultexport.Dataset, format ExportFormat, includeSec
 				count++
 			}
 			if host.Host.Proxy != nil && host.Host.Proxy.HasPassword {
+				count++
+			}
+			if host.Host.HasTOTP {
 				count++
 			}
 		}
@@ -216,12 +236,28 @@ func (s *Service) exportDataset(ctx context.Context, opts ExportOptions) (vaulte
 	for _, key := range keys {
 		keyExportByID[key.Key.ID] = key
 	}
+	// Groups are loaded before the Hosts so the CSV path can resolve the
+	// defaults a Host inherits. JSON already carries the group records, so its
+	// Host rows keep the stored values unchanged.
+	var groups []domainvault.Group
+	if s.groups != nil {
+		groups, err = s.groups.ListGroups(ctx)
+		if err != nil {
+			return dataset, 0, internal(err)
+		}
+		dataset.Groups = groups
+	}
 	for _, host := range hosts {
 		if len(selected) > 0 && !selected[host.ID] {
 			continue
 		}
-		entry := vaultexport.Host{Host: host}
-		if key, ok := keyExportByID[host.KeyID]; ok {
+		exported := host
+		if opts.Format == ExportCSV {
+			exported = domainvault.ApplyGroupDefaults(host,
+				domainvault.ResolveGroupDefaults(groups, host.Group))
+		}
+		entry := vaultexport.Host{Host: exported}
+		if key, ok := keyExportByID[exported.KeyID]; ok {
 			entry.KeyPath = key.Key.FilePath
 			entry.Passphrase = key.Passphrase
 		}
@@ -242,17 +278,18 @@ func (s *Service) exportDataset(ctx context.Context, opts ExportOptions) (vaulte
 					entry.ProxyPassword = value
 				}
 			}
+			if host.HasTOTP {
+				value, readErr := s.Secret(ctx, host.ID, FieldTOTP)
+				if readErr != nil {
+					unreadable++
+				} else {
+					entry.TOTP = value
+				}
+			}
 		}
 		dataset.Hosts = append(dataset.Hosts, entry)
 	}
 
-	if s.groups != nil {
-		groups, err := s.groups.ListGroups(ctx)
-		if err != nil {
-			return dataset, 0, internal(err)
-		}
-		dataset.Groups = groups
-	}
 	if s.identities != nil {
 		identities, err := s.identities.ListIdentities(ctx)
 		if err != nil {

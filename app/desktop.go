@@ -55,16 +55,24 @@ type targetOpener interface {
 	Open(appdesktop.Target) error
 }
 
-// shellTargetOpener resolves the target against the Vault and opens a Session
-// through the shell. A unique saved Host is reused; otherwise an unsaved Host
-// is built with the original label and default port.
+// shellTargetOpener opens a launch target through the shell. A local-shell
+// target starts a named shell in a new Tab; a Host target resolves against the
+// Vault. A unique saved Host is reused; otherwise an unsaved Host is built
+// with the original label and default port.
 type shellTargetOpener struct {
 	shell *state.State
 	vault *vaultstate.State
 }
 
 func (o shellTargetOpener) Open(target appdesktop.Target) error {
-	if target.Kind != appdesktop.TargetSSH {
+	switch target.Kind {
+	case appdesktop.TargetLocalShell:
+		if o.shell == nil {
+			return appdesktop.ErrUnsupportedScheme
+		}
+		return o.shell.NewTabWithShell(target.Shell)
+	case appdesktop.TargetSSH:
+	default:
 		return appdesktop.ErrUnsupportedScheme
 	}
 	host, ok := appdesktop.MatchHost(o.vault.Items(), target)
@@ -311,10 +319,13 @@ func (c *desktopController) HandleDeepLink(raw string) {
 	})
 }
 
-// HandleLaunchArgs opens Host targets passed on the command line. ssh:// URLs
-// are skipped here because MyGo delivers them to OnOpenURL, which avoids
-// opening a deep link twice after a single-instance handover. Other schemes
-// stay in the list so an unsupported target is reported instead of ignored.
+// HandleLaunchArgs opens Host and local-terminal targets passed on the command
+// line. --open-terminal-shell reaches the same single-instance handoff as a
+// Host target: a cold start queues until ready, a later launch opens into the
+// running window. ssh:// URLs are skipped here because MyGo delivers them to
+// OnOpenURL, which avoids opening a deep link twice after a single-instance
+// handover. Other schemes stay in the list so an unsupported target is
+// reported instead of ignored.
 func (c *desktopController) HandleLaunchArgs(args []string) {
 	filtered := make([]string, 0, len(args))
 	var invalid []error
@@ -355,7 +366,7 @@ func isSSHSchemeURL(arg string) bool {
 }
 
 func (c *desktopController) openTarget(target appdesktop.Target) {
-	if target.Kind != appdesktop.TargetSSH {
+	if target.Kind != appdesktop.TargetSSH && target.Kind != appdesktop.TargetLocalShell {
 		c.reportTargetProblem(appdesktop.ErrUnsupportedScheme)
 		return
 	}

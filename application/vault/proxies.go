@@ -204,6 +204,20 @@ func (s *Service) ProxyProfile(ctx context.Context, id string) (domainvault.Prox
 	return profile, nil
 }
 
+// ProxyProfileSecret reads a saved profile's credential after the field store
+// is available. The route path uses it when the app-wide default selects a
+// profile that no Host owns.
+func (s *Service) ProxyProfileSecret(ctx context.Context, id string) (string, error) {
+	if s.secrets == nil {
+		return "", unsupported(ErrSecretsUnavailable)
+	}
+	value, err := s.secrets.Get(ctx, ProxyProfileSecretRef(id, FieldProxyPassword))
+	if err != nil {
+		return "", secretError(err)
+	}
+	return value, nil
+}
+
 func nextProxyProfileOrder(profiles []domainvault.ProxyProfile) int64 {
 	var max int64
 	for _, profile := range profiles {

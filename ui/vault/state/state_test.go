@@ -8,6 +8,7 @@ import (
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
+	modelterminal "github.com/mslxl/natcatty/domain/model/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -48,6 +49,7 @@ func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainva
 		Tags:                   normalized.Tags,
 		Notes:                  normalized.Notes,
 		Pinned:                 normalized.Pinned,
+		StartupCommand:         normalized.StartupCommand,
 		IdentityID:             normalized.IdentityID,
 		KeyID:                  normalized.KeyID,
 		AuthMethod:             normalized.AuthMethod,
@@ -57,11 +59,17 @@ func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainva
 		X11WarningAcknowledged: normalized.X11WarningAcknowledged,
 		HostChain:              domainvault.CloneHostChain(normalized.HostChain),
 		Proxy:                  domainvault.CloneProxy(normalized.Proxy),
+		ProxyProfileID:         normalized.ProxyProfileID,
+		DirectProxy:            normalized.DirectProxy,
+		NetworkProfileID:       normalized.NetworkProfileID,
 		LegacyAlgorithms:       normalized.LegacyAlgorithms,
 		SkipEcdsaHostKey:       normalized.SkipEcdsaHostKey,
 		Algorithms:             domainvault.CloneAlgorithms(normalized.Algorithms),
 		DeviceType:             normalized.DeviceType,
 		AutoAttachTmux:         normalized.AutoAttachTmux,
+		NewlineMode:            normalized.NewlineMode,
+		BackspaceMode:          normalized.BackspaceMode,
+		LineEditingMode:        normalized.LineEditingMode,
 		MoshServerPath:         normalized.MoshServerPath,
 		ETPort:                 normalized.ETPort,
 		OrderKey:               int64(f.nextID) * 1000,
@@ -92,6 +100,7 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.Tags = normalized.Tags
 		host.Notes = normalized.Notes
 		host.Pinned = normalized.Pinned
+		host.StartupCommand = normalized.StartupCommand
 		host.IdentityID = normalized.IdentityID
 		host.KeyID = normalized.KeyID
 		host.AuthMethod = normalized.AuthMethod
@@ -99,13 +108,20 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.RequiresMFA = normalized.RequiresMFA
 		host.X11Forwarding = normalized.X11Forwarding
 		host.X11WarningAcknowledged = normalized.X11WarningAcknowledged
+		host.X11ForwardingSet = normalized.X11ForwardingSet
 		host.HostChain = domainvault.CloneHostChain(normalized.HostChain)
 		host.Proxy = domainvault.CloneProxy(normalized.Proxy)
+		host.ProxyProfileID = normalized.ProxyProfileID
+		host.DirectProxy = normalized.DirectProxy
+		host.NetworkProfileID = normalized.NetworkProfileID
 		host.LegacyAlgorithms = normalized.LegacyAlgorithms
 		host.SkipEcdsaHostKey = normalized.SkipEcdsaHostKey
 		host.Algorithms = domainvault.CloneAlgorithms(normalized.Algorithms)
 		host.DeviceType = normalized.DeviceType
 		host.AutoAttachTmux = normalized.AutoAttachTmux
+		host.NewlineMode = normalized.NewlineMode
+		host.BackspaceMode = normalized.BackspaceMode
+		host.LineEditingMode = normalized.LineEditingMode
 		host.MoshServerPath = normalized.MoshServerPath
 		host.ETPort = normalized.ETPort
 		f.items[i] = host
@@ -183,6 +199,77 @@ func TestCreateFlowSavesAndReloads(t *testing.T) {
 	}
 }
 
+func TestHostDetailsRoundTripsInputCompatibility(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+	state.BeginCreate()
+	form := state.Form()
+	form.Label = "legacy-shell"
+	form.Hostname = "example.com"
+	form.Username = "root"
+	form.NewlineMode = string(modelterminal.NewlineCRLF)
+	form.BackspaceMode = string(modelterminal.BackspaceCtrlH)
+	form.LineEditingMode = string(modelterminal.LineEditingByte)
+
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if len(repo.created) != 1 {
+		t.Fatalf("created drafts = %d, want 1", len(repo.created))
+	}
+	created := repo.created[0]
+	if created.NewlineMode != modelterminal.NewlineCRLF ||
+		created.BackspaceMode != modelterminal.BackspaceCtrlH ||
+		created.LineEditingMode != modelterminal.LineEditingByte {
+		t.Fatalf("created draft input modes = %q/%q/%q, want crlf/ctrl-h/byte",
+			created.NewlineMode, created.BackspaceMode, created.LineEditingMode)
+	}
+	saved := state.Items()[0]
+	if saved.NewlineMode != modelterminal.NewlineCRLF ||
+		saved.BackspaceMode != modelterminal.BackspaceCtrlH ||
+		saved.LineEditingMode != modelterminal.LineEditingByte {
+		t.Fatalf("saved Host input modes = %q/%q/%q, want crlf/ctrl-h/byte",
+			saved.NewlineMode, saved.BackspaceMode, saved.LineEditingMode)
+	}
+
+	if !state.BeginEdit(saved.ID) {
+		t.Fatal("BeginEdit failed")
+	}
+	restored := state.Form()
+	if restored.NewlineMode != string(modelterminal.NewlineCRLF) ||
+		restored.BackspaceMode != string(modelterminal.BackspaceCtrlH) ||
+		restored.LineEditingMode != string(modelterminal.LineEditingByte) {
+		t.Fatalf("editor input modes = %q/%q/%q, want crlf/ctrl-h/byte",
+			restored.NewlineMode, restored.BackspaceMode, restored.LineEditingMode)
+	}
+}
+
+func TestHostDetailsClearsInputCompatibilityWhenLeavingSSH(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+	state.BeginCreate()
+	form := state.Form()
+	form.Label = "local-shell"
+	form.Protocol = string(domainvault.ProtocolLocal)
+	form.NewlineMode = string(modelterminal.NewlineLF)
+	form.BackspaceMode = string(modelterminal.BackspaceCtrlH)
+	form.LineEditingMode = string(modelterminal.LineEditingByte)
+
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if len(repo.created) != 1 {
+		t.Fatalf("created drafts = %d, want 1", len(repo.created))
+	}
+	saved := state.Items()[0]
+	if saved.NewlineMode != modelterminal.NewlineCR ||
+		saved.BackspaceMode != modelterminal.BackspaceDEL ||
+		saved.LineEditingMode != modelterminal.LineEditingCharacter {
+		t.Fatalf("non-SSH Host input modes = %q/%q/%q, want defaults",
+			saved.NewlineMode, saved.BackspaceMode, saved.LineEditingMode)
+	}
+}
+
 func TestX11ForwardingIsOffByDefaultAndNeedsTheWarningAcknowledgement(t *testing.T) {
 	repo := &fakeHosts{}
 	state, _ := newTestState(t, repo)
@@ -254,6 +341,118 @@ func TestDisablingX11ClearsTheAcknowledgement(t *testing.T) {
 	}
 	if state.Problem() != ProblemX11Acknowledged {
 		t.Fatalf("Problem = %q, want %q", state.Problem(), ProblemX11Acknowledged)
+	}
+}
+
+// Ticket 48: opening a Host that leaves X11 unset shows the Host Group's
+// default, and saving without touching it leaves the Host unowned so it keeps
+// following the group. A toggle becomes the Host's own value, including off.
+func TestInheritedX11IsShownButNotSavedAsAnExplicitChoice(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "host-1", Label: "web", Hostname: "example.com",
+		Protocol: domainvault.ProtocolSSH, Group: "prod",
+	}}}
+	groups := &effectiveGroups{items: []domainvault.Group{{
+		Path: "prod", Protocol: domainvault.ProtocolSSH,
+		X11Forwarding: true, X11WarningAcknowledged: true,
+	}}}
+	state := NewState(repo, WithGroups(groups), WithRedrawRequest(func() {}))
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit failed")
+	}
+	form := state.Form()
+	if !form.X11Forwarding || !form.X11WarningAcknowledged || !form.X11Inherited {
+		t.Fatalf("form = %+v, want the inherited X11 on", form)
+	}
+	if form.X11ForwardingSet {
+		t.Fatal("the inherited value was marked as the Host's own")
+	}
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if len(repo.updated) != 1 {
+		t.Fatalf("updates = %d, want 1", len(repo.updated))
+	}
+	saved := repo.updated[0]
+	if saved.X11Forwarding || saved.X11WarningAcknowledged || saved.X11ForwardingSet {
+		t.Fatalf("saving the displayed inheritance wrote an explicit choice: %+v", saved)
+	}
+	if effective, _ := state.EffectiveHost("host-1"); !effective.X11Enabled() {
+		t.Fatalf("effective Host = %+v, want it to keep inheriting X11", effective)
+	}
+
+	// An explicit toggle is the Host's own value, even when it turns the
+	// group's default off.
+	state.BeginEdit("host-1")
+	state.SetX11Forwarding(false)
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save explicit off: %v", err)
+	}
+	if len(repo.updated) != 2 {
+		t.Fatalf("updates = %d, want 2", len(repo.updated))
+	}
+	off := repo.updated[1]
+	if off.X11Forwarding || !off.X11ForwardingSet {
+		t.Fatalf("explicit off draft = %+v, want an owned off", off)
+	}
+	if effective, _ := state.EffectiveHost("host-1"); effective.X11Enabled() {
+		t.Fatalf("effective Host = %+v, want the explicit off to win", effective)
+	}
+}
+
+// TestSwitchingProtocolToSSHReappliesInheritedX11 proves the X11 control and
+// its source label agree after a protocol change. A non-SSH Host hides the
+// control and clears the displayed value, so switching back to SSH must
+// re-resolve the group default rather than leave an unchecked box labelled
+// inherited.
+func TestSwitchingProtocolToSSHReappliesInheritedX11(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "host-1", Label: "web", Hostname: "example.com",
+		Protocol: domainvault.ProtocolTelnet, Group: "prod",
+	}}}
+	groups := &effectiveGroups{items: []domainvault.Group{{
+		Path: "prod", Protocol: domainvault.ProtocolSSH,
+		X11Forwarding: true, X11WarningAcknowledged: true,
+	}}}
+	state := NewState(repo, WithGroups(groups), WithRedrawRequest(func() {}))
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit failed")
+	}
+	if form := state.Form(); form.X11Forwarding || form.X11Inherited {
+		t.Fatalf("a Telnet Host shows X11: %+v", form)
+	}
+
+	state.SetHostProtocol(string(domainvault.ProtocolSSH))
+	form := state.Form()
+	if !form.X11Forwarding || !form.X11WarningAcknowledged || !form.X11Inherited {
+		t.Fatalf("switching to SSH did not show the inherited X11: %+v", form)
+	}
+	if form.X11ForwardingSet {
+		t.Fatal("the inherited value was marked as the Host's own")
+	}
+	if source, _, _ := state.HostX11Source(); source != InheritedValueSourceInherited {
+		t.Fatalf("HostX11Source = %q, want inherited", source)
+	}
+
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if len(repo.updated) != 1 {
+		t.Fatalf("updates = %d, want 1", len(repo.updated))
+	}
+	saved := repo.updated[0]
+	if saved.X11Forwarding || saved.X11WarningAcknowledged || saved.X11ForwardingSet {
+		t.Fatalf("saving the displayed inheritance wrote an explicit choice: %+v", saved)
+	}
+	if effective, _ := state.EffectiveHost("host-1"); !effective.X11Enabled() {
+		t.Fatalf("effective Host = %+v, want it to inherit X11", effective)
 	}
 }
 
@@ -363,6 +562,40 @@ func TestEditPopulatesTheFormAndUpdatesTheSameHost(t *testing.T) {
 	}
 	if state.Items()[0].Label != "web-2" {
 		t.Fatalf("Label = %q, want web-2", state.Items()[0].Label)
+	}
+}
+
+func TestHostDetailsRoundTripsTheStartupCommand(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "host-1", Label: "web", Hostname: "example.com", Port: 22,
+		Username: "root", Protocol: domainvault.ProtocolSSH,
+		StartupCommand: "echo ready",
+	}}}
+	state, _ := newTestState(t, repo)
+	if err := state.Reload(); err != nil {
+		t.Fatal(err)
+	}
+
+	state.BeginEdit("host-1")
+	if got := state.Form().StartupCommand; got != "echo ready" {
+		t.Fatalf("Form().StartupCommand = %q, want the Host's command", got)
+	}
+	state.Form().StartupCommand = "  uptime  "
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if len(repo.updated) != 1 {
+		t.Fatalf("updated drafts = %d, want 1", len(repo.updated))
+	}
+	normalized, err := domainvault.NormalizeDraft(repo.updated[0])
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if normalized.StartupCommand != "uptime" {
+		t.Fatalf("StartupCommand = %q, want uptime", normalized.StartupCommand)
+	}
+	if got := state.Items()[0].StartupCommand; got != "uptime" {
+		t.Fatalf("StartupCommand = %q, want uptime", got)
 	}
 }
 

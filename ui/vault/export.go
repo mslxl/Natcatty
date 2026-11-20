@@ -189,6 +189,19 @@ func exportOutcomeBanner(c *ui.Context, s *vaultstate.State, m locales.Messages,
 				ui.Text(c, m.VaultExportOmitted(outcome.Omitted)).
 					FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 			}
+			for _, issue := range outcome.Issues {
+				var line string
+				switch issue.Code {
+				case appvault.ExportIssueJumpHopMissing:
+					line = m.VaultExportJumpHopMissing(issue.Host, issue.Hop)
+				case appvault.ExportIssueJumpHopUnrepresentable:
+					line = m.VaultExportJumpHopUnrepresentable(issue.Host, issue.Hop)
+				}
+				if line != "" {
+					ui.Text(c, line).FontSize(kit.M(c).Font.Caption).
+						TextColor(uitheme.WarningText(t))
+				}
+			}
 		})
 		if ui.Button(c, m.VaultExportDismiss()).Clicked() {
 			s.DismissExportOutcome()

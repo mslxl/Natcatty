@@ -3,15 +3,32 @@ package settings
 import (
 	"github.com/egoist/mygo/ui"
 
+	appsession "github.com/mslxl/natcatty/application/session"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
-func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t *ui.Theme) {
+func terminalSection(c *ui.Context, state *TerminalState, prefs *PreferencesState,
+	m locales.Messages, t *ui.Theme) {
 	settings := state.Settings()
 	sectionBody(c, t, func() {
+		if prefs != nil {
+			localShellSection(c, prefs, m, t)
+			// Shift+Enter is a Terminal preference even though the typed
+			// document keeps it beside the terminal appearance fields, so the
+			// row is edited here through the preferences service.
+			shiftEnter := !prefs.Settings().Appearance.TerminalShiftEnterPlain
+			checkboxRow(c, prefs, m, domainpreferences.FieldTerminalShiftEnter,
+				m.SettingsTerminalShiftEnter(), shiftEnter, func(s *domainpreferences.Settings, value bool) {
+					s.Appearance.TerminalShiftEnterPlain = !value
+				})
+			ui.Text(c, m.SettingsTerminalShiftEnterDescription()).
+				FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+		}
+
 		ui.Text(c, m.SettingsTerminalLoggingTitle()).Bold()
 		ui.Text(c, m.SettingsTerminalLoggingDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 
@@ -123,10 +140,63 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 			}
 		})
 
+		ui.Text(c, m.SettingsLegacyAlgorithmsTitle()).Bold()
+		ui.Text(c, m.SettingsLegacyAlgorithmsDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+		legacyAlgorithms := settings.LegacyAlgorithms
+		if ui.Checkbox(c, &legacyAlgorithms, m.SettingsLegacyAlgorithmsEnabled()).Changed() {
+			state.SetLegacyAlgorithms(legacyAlgorithms)
+			c.Invalidate()
+		}
+
 		if state.Problem() {
 			ui.Text(c, m.SettingsTerminalSaveFailed()).TextColor(uitheme.DangerText(t)).FontSize(kit.M(c).Font.Footnote)
 		}
 	})
+}
+
+// localShellSection edits the custom shell for local Sessions. The path is
+// validated by resolving it through PATH, never by running it, and the
+// resolved command is shown so a path that will silently fall back is visible
+// before a Session opens.
+func localShellSection(c *ui.Context, prefs *PreferencesState, m locales.Messages, t *ui.Theme) {
+	shell := prefs.Settings().Appearance.LocalShell.Normalized()
+	ui.Text(c, m.SettingsLocalShellTitle()).Bold()
+	ui.Text(c, m.SettingsLocalShellDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+
+	fieldRow(c, prefs, m, t, domainpreferences.FieldLocalShell, m.SettingsLocalShellPath(), func() {
+		input := ui.TextInput(c, prefs.Field(domainpreferences.FieldLocalShell)).Width(320)
+		if input.Changed() {
+			value := prefs.FieldValue(domainpreferences.FieldLocalShell)
+			prefs.Update(func(s *domainpreferences.Settings) {
+				s.Appearance.LocalShell.Path = value
+			})
+			c.Invalidate()
+		}
+	})
+	fieldRow(c, prefs, m, t, domainpreferences.FieldLocalShellArgs, m.SettingsLocalShellArguments(), func() {
+		input := ui.TextInput(c, prefs.Field(domainpreferences.FieldLocalShellArgs)).Width(320)
+		if input.Changed() {
+			value := prefs.FieldValue(domainpreferences.FieldLocalShellArgs)
+			prefs.Update(func(s *domainpreferences.Settings) {
+				s.Appearance.LocalShell.Args = value
+			})
+			c.Invalidate()
+		}
+	})
+
+	command, fallback := shell.Command(appsession.LocalShellExists)
+	kit.FormRow(c, m.SettingsLocalShellResolved(), func() {
+		switch {
+		case fallback:
+			ui.Text(c, m.SettingsLocalShellMissing(shell.Path)).TextColor(uitheme.DangerText(t))
+		case len(command) == 0:
+			ui.Text(c, m.SettingsLocalShellOsDefault()).TextColor(t.TextMuted)
+		default:
+			ui.Text(c, domainpreferences.FormatArgs(command))
+		}
+	})
+	ui.Text(c, m.SettingsLocalShellArgumentsDescription()).
+		FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted)
 }
 
 // renderPowerUxSection draws autocomplete, keyword highlighting, and the

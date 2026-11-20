@@ -135,19 +135,49 @@ func TestAssociationsAreAddedEditedAndRemoved(t *testing.T) {
 		t.Error("CancelEdit did not clear the form")
 	}
 
-	if !state.Remove(".MD") {
-		t.Fatal("removing the association failed")
+	if !state.RequestRemove(".MD") {
+		t.Fatal("requesting the removal failed")
+	}
+	if got := state.PendingRemove(); got != "md" {
+		t.Fatalf("pending removal = %q, want md", got)
+	}
+	if len(prefs.settings.SFTPEditor.FileAssociations) != 1 {
+		t.Fatal("requesting a removal deleted the association before confirmation")
+	}
+	if !state.ConfirmRemove() {
+		t.Fatal("confirming the removal failed")
 	}
 	if len(prefs.settings.SFTPEditor.FileAssociations) != 0 {
 		t.Errorf("associations after removal = %+v", prefs.settings.SFTPEditor.FileAssociations)
 	}
-	// Removing an extension that has no association still succeeds; the list
-	// simply does not change.
-	if !state.Remove("missing") {
+	// Confirming a removal for an extension that has no association still
+	// succeeds; the list simply does not change.
+	if !state.RequestRemove("missing") || !state.ConfirmRemove() {
 		t.Error("removing an unconfigured extension failed")
 	}
-	if state.Remove("") {
-		t.Error("an empty extension was removed")
+	if state.RequestRemove("") {
+		t.Error("an empty extension was requested for removal")
+	}
+}
+
+// TestSavingAnAssociationCancelsAStaleRemoval keeps the confirmation from
+// pointing at a row an edit just renamed away.
+func TestSavingAnAssociationCancelsAStaleRemoval(t *testing.T) {
+	prefs := newFakePreferences()
+	state := NewAssociationsState(prefs)
+	*state.Extension() = "txt"
+	if !state.Save() {
+		t.Fatalf("saving the association failed: %s", state.Problem())
+	}
+	if !state.RequestRemove("txt") || !state.BeginEdit("txt") {
+		t.Fatal("the removal or edit was refused")
+	}
+	*state.Extension() = "md"
+	if !state.Save() {
+		t.Fatalf("renaming the association failed: %s", state.Problem())
+	}
+	if pending := state.PendingRemove(); pending != "" {
+		t.Errorf("the pending removal survived the save: %q", pending)
 	}
 }
 
@@ -204,8 +234,14 @@ func TestAssociationFormValidatesAndReportsSaveFailures(t *testing.T) {
 	if state.ExtensionValue() != "md" {
 		t.Error("a failed save cleared the form")
 	}
-	if state.Remove("txt") {
+	if !state.RequestRemove("txt") {
+		t.Fatal("requesting the removal failed")
+	}
+	if state.ConfirmRemove() {
 		t.Error("a failed remove reported success")
+	}
+	if state.PendingRemove() != "" {
+		t.Error("a failed remove left the confirmation pending")
 	}
 }
 
@@ -268,7 +304,35 @@ func TestAssociationsViewAddsEditsAndRemovesThroughTheControls(t *testing.T) {
 		t.Error("cancelling the edit did not return to the add form")
 	}
 
+	// Removing asks first: the row stays until the user confirms, and Cancel
+	// is the default action.
+	confirmText := m.SettingsAssociationRemoveConfirm("txt")
 	if err := tester.Click(m.SettingsAssociationRemove()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if !tester.HasText(confirmText) {
+		t.Errorf("the removal was not confirmed; texts %q", tester.Texts())
+	}
+	if !tester.Focused(m.SettingsCancel()) {
+		t.Error("the confirm bar did not put the keyboard focus on Cancel")
+	}
+	if !tester.HasText(".txt") {
+		t.Errorf("the association vanished before confirmation; texts %q", tester.Texts())
+	}
+	if err := tester.Click(m.SettingsCancel()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if tester.HasText(confirmText) || !tester.HasText(".txt") {
+		t.Errorf("cancelling the removal changed the list; texts %q", tester.Texts())
+	}
+
+	if err := tester.Click(m.SettingsAssociationRemove()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if err := tester.Click(m.VaultHostDelete()); err != nil {
 		t.Fatal(err)
 	}
 	tester.Frame()
@@ -369,7 +433,8 @@ func TestAssociationsStateRedrawsAfterEveryChange(t *testing.T) {
 	state.BeginEdit("txt")
 	state.CancelEdit()
 	state.SelectKind(domain.OpenerInternal)
-	state.Remove("txt")
+	state.RequestRemove("txt")
+	state.CancelRemove()
 	state.SelectDefaultKind(domain.OpenerInternal)
 	state.ResetDefaultOpener()
 	if redraws == 0 {

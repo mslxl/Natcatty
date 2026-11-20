@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
 
@@ -61,6 +62,7 @@ import (
 	appmonitor "github.com/mslxl/natcatty/application/monitor"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/application/session/autologin"
 	appsync "github.com/mslxl/natcatty/application/sync"
 	appsysmanager "github.com/mslxl/natcatty/application/sysmanager"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
@@ -203,6 +205,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	var associationsState *settings.AssociationsState
 	var shellState *state.State
 	var quakeState *quakeui.State
+	// dispatcher is built after the shell state, whose surfaces resolve the
+	// host-list chord through it. The closure below only runs during frames.
+	var dispatcher *bindingDispatcher
 	var preferencesState *settings.PreferencesState
 	var shortcutsState *settings.ShortcutsState
 	var searchState *settings.SearchState
@@ -217,6 +222,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	var logsState *logsui.State
 	var sessions *appsession.Service
 	var externalMCPServer *externalMCP
+	var externalMCPHTTPServer *externalMCPHTTP
 	var desktopCtl *desktopController
 	var ready bool
 	var focusRequested bool
@@ -348,7 +354,23 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	preferencesState = settings.NewPreferencesState(preferenceService,
 		settings.WithPreferencesRedrawRequest(invalidate),
 		settings.WithLocaleRequest(func(tag string) { mygo.App.SetLocale(tag) }),
-		settings.WithIconArtwork(appIconPNG))
+		settings.WithIconArtwork(appIconPNG),
+		// The Vault state is built later; resolve it when the row renders so
+		// Profiles saved or deleted afterwards appear without a restart.
+		settings.WithProxyProfiles(func() []settings.ProxyProfileChoice {
+			if vaultState == nil {
+				return nil
+			}
+			profiles := vaultState.ProxyProfiles()
+			choices := make([]settings.ProxyProfileChoice, 0, len(profiles))
+			for _, profile := range profiles {
+				choices = append(choices, settings.ProxyProfileChoice{
+					ID:    profile.ID,
+					Label: profile.Label,
+				})
+			}
+			return choices
+		}))
 
 	// File associations and the default opener live in the same preferences
 	// document. The launch adapter is the only platform-aware piece. The
@@ -469,6 +491,31 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				Scope:          current.AutocompleteHistoryScope,
 			}
 		},
+		// The catalog annotates rows after ranking, never reorders them. It is
+		// looked up through the live locale, so a language switch changes the
+		// next annotation without rebuilding the service.
+		autocomplete.WithCommandDescriptions(func(command string) string {
+			return locales.CommandDescription(locales.In(i18n.Locale()), command)
+		}),
+		// Snippets are read lazily from the Vault state, which is built later
+		// and reloaded after storage opens. At a program input prompt the
+		// autocomplete popup offers them beside the journal rows.
+		autocomplete.WithSnippets(func() []autocomplete.Snippet {
+			if vaultState == nil {
+				return nil
+			}
+			snippets := vaultState.Snippets()
+			result := make([]autocomplete.Snippet, 0, len(snippets))
+			for _, snippet := range snippets {
+				result = append(result, autocomplete.Snippet{
+					Label:   snippet.Label,
+					Command: snippet.Command,
+					Tags:    append([]string(nil), snippet.Tags...),
+					Package: snippet.Package,
+				})
+			}
+			return result
+		}),
 	)
 	autocompleteService.Load(context.Background())
 	// A Host-Atuin Session captures commands transiently: they feed this
@@ -738,7 +785,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// The Vault starts from the database. A read failure leaves the surface
 	// empty and shows the localized internal-error message rather than
 	// preventing the app from starting.
-	routes := vaultRoutes{vault: vaultService}
+	routes := vaultRoutes{vault: vaultService, preferences: preferenceService}
 
 	// SFTP reuses the Vault's routes and the same connection manager as a
 	// terminal Session. The local pane and the global bookmark file belong to
@@ -903,6 +950,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		vaultstate.WithImports(vaultService),
 		vaultstate.WithImportPicker(importFilePicker{locale: func() string { return mygo.App.Locale() }}),
 		vaultstate.WithWireGuardConfPicker(wireguardConfPicker{locale: func() string { return mygo.App.Locale() }}),
+		vaultstate.WithTOTPQRPicker(totpQRPicker{locale: func() string { return mygo.App.Locale() }}),
 		vaultstate.WithExports(vaultService),
 		vaultstate.WithExportWriter(noteFileWriter{}),
 		vaultstate.WithBackups(backupService),
@@ -956,7 +1004,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			Routes:   routes,
 			Sessions: adapteret.SecretSessionStore{Secrets: secretStore},
 		},
-	).withPreferences(preferenceService),
+	).withPreferences(preferenceService).withTerminalSettings(terminalService),
 		// Automatic logging starts with the Session, as the original's
 		// configured log did. An empty directory keeps it off.
 		appsession.WithAutoLogging(func(spec appsession.StartSpec) *appsession.LogOptions {
@@ -978,6 +1026,14 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// Tier 1. It contains no binary, reads the user's startup files without
 		// editing them, and is skipped when the setting is off or the transport
 		// owns shell startup.
+		// The custom shell is resolved before the capture hook plans, so a
+		// restored, split, or retried local Session starts the configured
+		// shell too. The Tab action still passes its own resolver through
+		// state.WithLocalShell for the visible missing-path warning.
+		appsession.WithLocalShell(func() []string {
+			command, _ := preferenceService.Settings().Appearance.LocalShell.Command(appsession.LocalShellExists)
+			return command
+		}),
 		appsession.WithCaptureHook(shellhook.NewPlanner(
 			shellhook.WithEnabled(func() bool {
 				return terminalService.Settings().HistoryCaptureHookEnabled
@@ -1111,6 +1167,19 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			fmt.Fprintln(os.Stderr, "natcatty: external MCP:", err)
 		}
 	}
+	// The optional Streamable HTTP endpoint reuses the loopback transport's
+	// bearer token and the same policy handler. It is disabled until the
+	// preferences enable it, so a default profile opens no HTTP listener.
+	if !options.packagedSmoke {
+		externalMCPHTTPServer = newExternalMCPHTTP(mcpHandler, func() string {
+			if externalMCPServer == nil {
+				return ""
+			}
+			return externalMCPServer.token
+		}, func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, format+"\n", args...)
+		})
+	}
 	// The Workspace restores Tabs, splits, and working directories at startup
 	// and persists them after every structural change. Output is never stored.
 	workspaceService := appworkspace.NewService(database.Workspace())
@@ -1185,6 +1254,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			return shellState.OpenSerial(cfg)
 		},
 		serialui.WithRedraw(invalidate),
+		serialui.WithSecretStore(serialSecrets{store: secretStore}),
 	)
 	// The side panel's Scripts, History, Theme, and Notes read the states of
 	// the pages they mirror; each keeps its own search.
@@ -1209,6 +1279,11 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			sessionui.WithLogDefaults(func() appsession.LogOptions {
 				return terminalLogDefaults(s.Label())
 			}),
+			// The log path is a local file the app already owns; the
+			// platform launcher opens it with the associated application.
+			sessionui.WithLogOpener(func(path string) {
+				_ = adapterslaunch.New().OpenSystem(context.Background(), path)
+			}),
 			sessionui.WithRedraw(invalidate),
 			sessionui.WithPastePolicy(terminalService.PasteConfirmation),
 			sessionui.WithDropAction(func() domainterminal.DropAction {
@@ -1229,6 +1304,17 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 					current := terminalService.Settings()
 					return current.AutocompletePopupMenu, current.AutocompleteGhostText
 				}),
+			// At a program input prompt the Vault Snippets join the rows;
+			// the same transient commands still apply. The shell prompt
+			// path above stays history-only.
+			sessionui.WithPromptSuggestions(func(input, scope, cwd string, program bool) []autocomplete.Suggestion {
+				kind := autocomplete.PromptShell
+				if program {
+					kind = autocomplete.PromptProgram
+				}
+				return autocompleteService.SuggestionsAtPrompt(input, scope, cwd, kind,
+					transientRegistry.Entries(s.ID()))
+			}),
 			sessionui.WithAutocompleteDelay(func() int {
 				return terminalService.Settings().AutocompleteDebounceMs
 			}),
@@ -1245,6 +1331,11 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			sessionui.WithTerminalCursor(func() (domainpreferences.CursorStyle, bool) {
 				appearance := preferenceService.Settings().Appearance
 				return appearance.TerminalCursorStyle, !appearance.TerminalCursorSteady
+			}),
+			// Shift+Enter is read on each press, so toggling the Settings
+			// preference applies to open terminals without reopening them.
+			sessionui.WithShiftEnterNewline(func() bool {
+				return !preferenceService.Settings().Appearance.TerminalShiftEnterPlain
 			}),
 			sessionui.WithTerminalTheme(currentTerminalTheme),
 			sessionui.WithTerminalKeybinds(func() []terminal.Keybind {
@@ -1292,6 +1383,12 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// frame that shows the new tab strip or Vault placeholder. Every
 		// window redraws so a lock or unlock propagates.
 		state.WithRedrawRequest(invalidate),
+		// The host-list toggle is registered by the terminal Panes and the
+		// Vault list, not at window scope, so text fields keep the chord. The
+		// dispatcher resolves the live binding and the user's overrides.
+		state.WithHostListChord(func() (ui.Modifiers, ui.Key, bool) {
+			return dispatcher.hostListChord()
+		}),
 		// Tab titles follow the shell-reported OSC 0/2 title according to the
 		// live setting, and a Host rename reaches its already-open Tabs.
 		state.WithDynamicTabTitleMode(func() domainterminal.DynamicTabTitleMode {
@@ -1307,8 +1404,23 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			}
 			return host.Label, true
 		}),
+		// A local Tab starts the custom shell when one is configured and
+		// usable, and warns when the configured path is gone.
+		state.WithLocalShell(func() ([]string, bool) {
+			return preferenceService.Settings().Appearance.LocalShell.Command(appsession.LocalShellExists)
+		}),
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
 			return newSessionSurface(s)
+		}),
+		// A serial Session's saved profile and a Telnet Host's Vault login
+		// become the console's expect engine. The password is read from the
+		// encrypted field-secret store on the open goroutine and never enters
+		// a workspace descriptor.
+		state.WithSerialAutoLogin(func(ctx context.Context, cfg domainserial.Config) *autologin.Options {
+			return serialAutoLoginOptions(ctx, serialSecrets{store: secretStore}, cfg)
+		}),
+		state.WithTelnetAutoLogin(func(ctx context.Context, host domainvault.Host, password string) *autologin.Options {
+			return telnetAutoLoginOptions(ctx, vaultService, host, password)
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState),
 			// The Hosts page's view and sort switches are this device's
@@ -1344,6 +1456,25 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				}
 				return shellState.VaultSection()
 			}),
+			// The host list registers the toggle on its own focus subtree, so
+			// the search field above it keeps the chord for typing. Showing
+			// the Vault through the chord also asks the list for the keyboard,
+			// which makes the same chord hide it again without a click.
+			vaultui.WithHostListToggle(
+				func() (ui.Modifiers, ui.Key, bool) { return dispatcher.hostListChord() },
+				func() bool {
+					if shellState == nil {
+						return false
+					}
+					return shellState.ToggleHostList()
+				},
+				func() bool {
+					if shellState == nil {
+						return false
+					}
+					return shellState.ConsumeHostListFocus()
+				},
+			),
 			vaultui.WithLocalTerminal(func() {
 				if shellState != nil {
 					_ = shellState.NewTab()
@@ -1573,6 +1704,8 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	windows.SetSessionConfirmation(func() bool {
 		return preferenceService.Settings().Security.ConfirmCloseSessions
 	})
+	// A quit with unfinished Transfers asks first, after the Session prompt.
+	windows.SetTransferGuard(transferState)
 
 	// currentTerminalTheme resolves the scheme terminals draw with: the one
 	// matched to the active UI preset while the terminal follows the app,
@@ -1620,6 +1753,13 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			mygo.App.WhenReady(func() {
 				_ = mygo.App.Dock.SetIcon(icon)
 			})
+		}
+		// The MCP endpoint follows its preference without a restart. An
+		// unchanged configuration is a no-op inside the transport.
+		if externalMCPHTTPServer != nil {
+			if err := externalMCPHTTPServer.Apply(current.ExternalMCP); err != nil {
+				fmt.Fprintln(os.Stderr, "natcatty:", err)
+			}
 		}
 		if shellState != nil {
 			shellState.SetTerminalFont(domainpreferences.TerminalFontFamily(current.Appearance.TerminalFontFamily),
@@ -1673,7 +1813,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		invalidate()
 	})
 
-	dispatcher := &bindingDispatcher{
+	dispatcher = &bindingDispatcher{
 		service:   keybindingService,
 		shell:     shellState,
 		search:    overlayState,
@@ -1717,6 +1857,8 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		shellState.Persist()
 		// Stop accepting external MCP calls before the services they read are
 		// torn down, then remove the discovery pointer if it is still ours.
+		// The HTTP listener goes first because it shares the same handler.
+		externalMCPHTTPServer.Close()
 		externalMCPServer.Close()
 		closeForwarding(forwardingManager, forwardingState)
 		// Monitoring leases are connection channels; release them before the
@@ -1795,10 +1937,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			shellState.NoteSessionActivity(snapshot.ID)
 			windows.InvalidateAll()
 			desktopCtl.NoteSession(snapshot)
-			// OSC 7 is the only source of a shell's working directory. The
-			// surface decides whether follow-cwd is on and whether this
-			// Session's Host has a pane; reporting here costs nothing when it
-			// is off.
+			// OSC 7, or a local shell's probed process directory, is the
+			// source of a Session's working directory. The surface decides
+			// whether follow-cwd is on and whether this Session's Host has a
+			// pane; reporting here costs nothing when it is off.
 			forwardTerminalCwd(sessions, transferState, snapshot)
 			forwardTerminalCwd(sessions, filesState, snapshot)
 			// A Session replaced under the same Host (host re-open, tab

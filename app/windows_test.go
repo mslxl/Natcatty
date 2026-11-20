@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -998,5 +999,105 @@ func TestSingleInstanceExistingInstanceExits(t *testing.T) {
 func TestSingleInstanceAcquireFailureFallsBackToSoleInstance(t *testing.T) {
 	if !singleInstancePrimary(&fakeInstanceLock{err: context.DeadlineExceeded}, nil) {
 		t.Fatal("an acquisition error did not fall back to running")
+	}
+}
+
+// fakeTransferGuard is the quit guard seam: a fixed count or read failure,
+// plus how many times the quit consulted it.
+type fakeTransferGuard struct {
+	count int
+	err   error
+	calls int
+}
+
+func (g *fakeTransferGuard) UnfinishedTransfers() (int, error) {
+	g.calls++
+	return g.count, g.err
+}
+
+// TestQuitAsksBeforeAbandoningUnfinishedTransfers is the acceptance: a quit
+// with unfinished Transfers asks first, Cancel aborts while the Transfers stay
+// untouched, and Confirm quits.
+func TestQuitAsksBeforeAbandoningUnfinishedTransfers(t *testing.T) {
+	graph := newWindowGraph(t, nil)
+	graph.manager.OpenMain()
+	guard := &fakeTransferGuard{count: 2}
+	graph.manager.SetTransferGuard(guard)
+	m := locales.In("en")
+
+	graph.confirmer.answer = false
+	if graph.manager.ConfirmQuit() {
+		t.Fatal("quit proceeded while the user declined the Transfer prompt")
+	}
+	if graph.manager.Quitting() {
+		t.Fatal("a cancelled quit was remembered as accepted")
+	}
+	if guard.calls != 1 {
+		t.Fatalf("the quit guard was read %d times, want once", guard.calls)
+	}
+	if guard.count != 2 {
+		t.Fatalf("cancelling the quit changed the Transfer count to %d", guard.count)
+	}
+	if len(graph.confirmer.prompts) != 1 {
+		t.Fatalf("prompts = %+v, want one Transfer prompt", graph.confirmer.prompts)
+	}
+	prompt := graph.confirmer.prompts[0]
+	if prompt.Title != m.QuitTransferTitle() ||
+		prompt.Message != m.QuitTransferMessage(2) ||
+		prompt.Confirm != m.QuitConfirmConfirm() ||
+		prompt.Cancel != m.CloseWindowCancel() {
+		t.Fatalf("Transfer prompt = %+v, want the localized two-Transfer prompt", prompt)
+	}
+
+	graph.confirmer.answer = true
+	if !graph.manager.ConfirmQuit() {
+		t.Fatal("quit did not proceed after consent")
+	}
+	if !graph.manager.Quitting() {
+		t.Fatal("the accepted quit was not remembered")
+	}
+	if guard.calls != 2 || len(graph.confirmer.prompts) != 2 {
+		t.Fatalf("after consent: guard calls = %d, prompts = %+v", guard.calls, graph.confirmer.prompts)
+	}
+}
+
+// TestQuitWithoutUnfinishedTransfersIsUnchanged keeps the ordinary quit: no
+// prompt and the quit is confirmed immediately.
+func TestQuitWithoutUnfinishedTransfersIsUnchanged(t *testing.T) {
+	graph := newWindowGraph(t, nil)
+	graph.manager.OpenMain()
+	graph.manager.SetTransferGuard(&fakeTransferGuard{count: 0})
+
+	if !graph.manager.ConfirmQuit() {
+		t.Fatal("quit without Transfers did not proceed")
+	}
+	if !graph.manager.Quitting() {
+		t.Fatal("the quit was not remembered")
+	}
+	if len(graph.confirmer.prompts) != 0 {
+		t.Fatalf("prompts = %+v, want none without unfinished Transfers", graph.confirmer.prompts)
+	}
+}
+
+// TestQuitAsksWhenTheTransferStateCannotBeRead proves the guard fails closed:
+// a read error asks instead of quitting silently, and declining keeps the app
+// running.
+func TestQuitAsksWhenTheTransferStateCannotBeRead(t *testing.T) {
+	graph := newWindowGraph(t, nil)
+	graph.manager.OpenMain()
+	graph.manager.SetTransferGuard(&fakeTransferGuard{err: errors.New("unreadable queue")})
+	m := locales.In("en")
+
+	graph.confirmer.answer = false
+	if graph.manager.ConfirmQuit() {
+		t.Fatal("quit proceeded although the Transfer state could not be read")
+	}
+	if len(graph.confirmer.prompts) != 1 || graph.confirmer.prompts[0].Message != m.QuitTransferUnknown() {
+		t.Fatalf("prompts = %+v, want the fail-closed Transfer question", graph.confirmer.prompts)
+	}
+
+	graph.confirmer.answer = true
+	if !graph.manager.ConfirmQuit() {
+		t.Fatal("quit did not proceed after the fail-closed consent")
 	}
 }

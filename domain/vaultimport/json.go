@@ -44,7 +44,10 @@ type jsonHost struct {
 	Passphrase string `json:"passphrase"`
 	Proxy      string `json:"proxy"`
 	Password   string `json:"password"`
-	KeyID      string `json:"keyId"`
+	// TOTP is the Host authenticator URI. It is present only in a destructive
+	// export.
+	TOTP  string `json:"totp"`
+	KeyID string `json:"keyId"`
 	// IdentityID, AuthMethod, UseSSHAgent, RequiresMFA, and the advanced
 	// options round-trip the Host's authentication and negotiation policy.
 	IdentityID             string          `json:"identityId"`
@@ -54,7 +57,9 @@ type jsonHost struct {
 	X11Forwarding          bool            `json:"x11Forwarding"`
 	X11WarningAcknowledged bool            `json:"x11WarningAcknowledged"`
 	ProxyProfileID         string          `json:"proxyProfileId"`
+	DirectProxy            bool            `json:"directProxy"`
 	NetworkProfileID       string          `json:"networkProfileId"`
+	StartupCommand         string          `json:"startupCommand"`
 	LegacyAlgorithms       bool            `json:"legacyAlgorithms"`
 	SkipEcdsaHostKey       bool            `json:"skipEcdsaHostKey"`
 	Algorithms             *jsonAlgorithms `json:"algorithms"`
@@ -150,14 +155,17 @@ type jsonWireGuardPeer struct {
 }
 
 type jsonKnownHost struct {
-	Hostname          string    `json:"hostname"`
-	Port              int       `json:"port"`
-	KeyType           string    `json:"keyType"`
-	PublicKey         string    `json:"publicKey"`
-	Fingerprint       string    `json:"fingerprint"`
-	DiscoveredAt      time.Time `json:"discoveredAt"`
-	LastSeen          time.Time `json:"lastSeen"`
-	ConvertedToHostID string    `json:"convertedToHostId"`
+	Hostname    string `json:"hostname"`
+	Port        int    `json:"port"`
+	KeyType     string `json:"keyType"`
+	PublicKey   string `json:"publicKey"`
+	Fingerprint string `json:"fingerprint"`
+	// IsCertificateAuthority distinguishes a signing CA trust anchor from a
+	// presented key so the Known Hosts view keeps that rendering after import.
+	IsCertificateAuthority bool      `json:"isCertificateAuthority,omitempty"`
+	DiscoveredAt           time.Time `json:"discoveredAt"`
+	LastSeen               time.Time `json:"lastSeen"`
+	ConvertedToHostID      string    `json:"convertedToHostId"`
 }
 
 type jsonSnippet struct {
@@ -244,6 +252,7 @@ func parseJSON(text string) Result {
 			Tags:                   append([]string(nil), source.Tags...),
 			Notes:                  source.Notes,
 			Password:               source.Password,
+			TOTP:                   source.TOTP,
 			Pinned:                 source.Pinned,
 			IdentityID:             strings.TrimSpace(source.IdentityID),
 			KeyID:                  strings.TrimSpace(source.KeyID),
@@ -253,7 +262,9 @@ func parseJSON(text string) Result {
 			X11Forwarding:          source.X11Forwarding,
 			X11WarningAcknowledged: source.X11WarningAcknowledged,
 			ProxyProfileID:         strings.TrimSpace(source.ProxyProfileID),
+			DirectProxy:            source.DirectProxy,
 			NetworkProfileID:       strings.TrimSpace(source.NetworkProfileID),
+			StartupCommand:         source.StartupCommand,
 			LegacyAlgorithms:       source.LegacyAlgorithms,
 			SkipEcdsaHostKey:       source.SkipEcdsaHostKey,
 			DeviceType:             strings.TrimSpace(source.DeviceType),
@@ -376,7 +387,8 @@ func familyFromJSON(document jsonDocument) *Family {
 		family.KnownHosts = append(family.KnownHosts, FamilyKnownHost{
 			Hostname: known.Hostname, Port: known.Port, KeyType: known.KeyType,
 			PublicKey: known.PublicKey, Fingerprint: known.Fingerprint,
-			DiscoveredAt: known.DiscoveredAt, LastSeen: known.LastSeen,
+			IsCertificateAuthority: known.IsCertificateAuthority,
+			DiscoveredAt:           known.DiscoveredAt, LastSeen: known.LastSeen,
 			ConvertedToHostID: known.ConvertedToHostID,
 		})
 	}

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // parseCapabilities reads the line-anchored probe markers. Line anchoring
@@ -33,6 +34,9 @@ func parseCapabilities(stdout string) Capabilities {
 		HasSystemctl: hasFlag("systemctl"),
 		HasTmux:      hasFlag("tmux"),
 		HasDocker:    hasFlag("docker"),
+		HasPodman:    hasFlag("podman"),
+		HasNerdctl:   hasFlag("nerdctl"),
+		HasKubectl:   hasFlag("kubectl"),
 		HasNvidiaSmi: hasFlag("nvidia-smi"),
 		HasNpuSmi:    hasFlag("npu-smi"),
 	}
@@ -65,17 +69,55 @@ type overviewSample struct {
 	mode     string
 	cpuTotal float64
 	cpuIdle  float64
+	perCore  []overviewCoreCounters
 }
 
 func (s overviewSample) counters() overviewCounters {
-	return overviewCounters{mode: s.mode, total: s.cpuTotal, idle: s.cpuIdle}
+	return overviewCounters{
+		mode:    s.mode,
+		total:   s.cpuTotal,
+		idle:    s.cpuIdle,
+		perCore: append([]overviewCoreCounters(nil), s.perCore...),
+	}
 }
 
 // overviewCounters is the previous CPU reading a service keeps per run.
 type overviewCounters struct {
-	mode  string
+	mode    string
+	total   float64
+	idle    float64
+	perCore []overviewCoreCounters
+}
+
+// overviewCoreCounters is one logical core's aggregate CPU time, in the same
+// total/idle shape the aggregate counters use.
+type overviewCoreCounters struct {
 	total float64
 	idle  float64
+}
+
+// perCorePercent derives each core's utilization from the counter delta. A
+// reply without per-core counters leaves the list empty: the Host reports no
+// per-core data, so the overview shows only the aggregate. Counters without a
+// matching baseline still yield one entry per core, each NaN, so the rows
+// appear as soon as the sampler sees them.
+func (s overviewSample) perCorePercent(previous overviewCounters) []float64 {
+	if len(s.perCore) == 0 {
+		return nil
+	}
+	out := make([]float64, len(s.perCore))
+	for index, core := range s.perCore {
+		out[index] = math.NaN()
+		if index >= len(previous.perCore) {
+			continue
+		}
+		totalDelta := core.total - previous.perCore[index].total
+		idleDelta := core.idle - previous.perCore[index].idle
+		if totalDelta > 0 && idleDelta >= 0 {
+			out[index] = clampPercent(100 * (totalDelta - idleDelta) / totalDelta)
+		}
+	}
+	return out
 }
 
 // cpuPercent derives Linux CPU utilization from the counter delta. macOS
@@ -150,7 +192,33 @@ func parseOverview(stdout string) (overviewSample, error) {
 		// macOS emits one direct percentage.
 		sample.cpuTotal = parseFloat(raw[0])
 	}
+	sample.perCore = parseOverviewPerCore(labels["PERCORERAW"])
 	return sample, nil
+}
+
+// parseOverviewPerCore reads "total:idle,total:idle,..." as the same counters
+// the aggregate line carries. One malformed entry drops the whole list, so a
+// truncated reply never looks like fewer cores than the Host has.
+func parseOverviewPerCore(value string) []overviewCoreCounters {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	entries := strings.Split(value, ",")
+	cores := make([]overviewCoreCounters, 0, len(entries))
+	for _, entry := range entries {
+		fields := strings.SplitN(strings.TrimSpace(entry), ":", 2)
+		if len(fields) != 2 {
+			return nil
+		}
+		total := parseFloat(fields[0])
+		idle := parseFloat(fields[1])
+		if math.IsNaN(total) || math.IsNaN(idle) || total < 0 || idle < 0 {
+			return nil
+		}
+		cores = append(cores, overviewCoreCounters{total: total, idle: idle})
+	}
+	return cores
 }
 
 // parseLabels splits "LABEL:value|LABEL:value" without splitting inside a
@@ -905,17 +973,22 @@ type dockerImageJSON struct {
 	Digest       string `json:"Digest"`
 }
 
-// parseDockerList reads the container and image JSON-line sections. The
-// command captures each docker failure into a marker section, so a missing
-// daemon or socket permission produces a typed reason rather than an empty
-// list.
-func parseDockerList(stdout string) ([]Container, []Image, error) {
-	if hasUnavailable(stdout, "docker") {
-		return nil, nil, &Error{Reason: ReasonMissingDocker,
-			Cause: errors.New("docker: the command is unavailable")}
+// parseContainerList reads the container and image JSON-line sections from
+// the selected engine. The command captures each failure into a marker
+// section, so a missing daemon or socket permission produces a typed reason
+// rather than an empty list.
+func parseContainerList(stdout string, runtime ContainerRuntime) ([]Container, []Image, error) {
+	bin := runtime.Binary()
+	if hasUnavailable(stdout, bin) {
+		reason := ReasonMissingContainerRuntime
+		if runtime == RuntimeDocker {
+			reason = ReasonMissingDocker
+		}
+		return nil, nil, &Error{Reason: reason,
+			Cause: errors.New(bin + ": the command is unavailable")}
 	}
 	if detail := dockerErrorText(stdout); detail != "" {
-		return nil, nil, dockerFailure(detail)
+		return nil, nil, containerFailure(detail, runtime)
 	}
 	containerText := extractBetween(stdout, "__NC_DOCKER_CONTAINERS__",
 		"__NC_DOCKER_IMAGES__", "__NC_DOCKER_END__")
@@ -985,6 +1058,12 @@ func parseDockerList(stdout string) ([]Container, []Image, error) {
 	return containers, images, nil
 }
 
+// parseDockerList is the Docker-only form kept for callers and tests that
+// predate the runtime switcher.
+func parseDockerList(stdout string) ([]Container, []Image, error) {
+	return parseContainerList(stdout, RuntimeDocker)
+}
+
 // dockerErrorText joins every captured docker failure section.
 func dockerErrorText(stdout string) string {
 	var (
@@ -1009,6 +1088,48 @@ func dockerErrorText(stdout string) string {
 	return strings.TrimSpace(builder.String())
 }
 
+// containerFailure maps a runtime's stderr text onto the surface's typed
+// reasons. Docker keeps its historical daemon reason; Podman and nerdctl use
+// the shared container-daemon reason.
+func containerFailure(detail string, runtime ContainerRuntime) error {
+	if runtime == RuntimeDocker {
+		return dockerFailure(detail)
+	}
+	lower := strings.ToLower(detail)
+	reason := ReasonInternal
+	switch {
+	case strings.Contains(lower, "permission denied"),
+		strings.Contains(lower, "operation not permitted"):
+		reason = ReasonPermission
+	case isContainerDaemon(detail),
+		strings.Contains(lower, "podman daemon"),
+		strings.Contains(lower, "cannot connect"):
+		reason = ReasonContainerDaemon
+	case strings.Contains(lower, "command not found"),
+		strings.Contains(lower, "no such file or directory"):
+		reason = ReasonMissingContainerRuntime
+	}
+	return &Error{Reason: reason, Cause: errors.New(detail)}
+}
+
+// isContainerDaemon reports stderr text from an unreachable podman or nerdctl
+// daemon. The same symptoms appear in a command's captured output and on the
+// closed-connection path, so both failure mappers share one list.
+func isContainerDaemon(detail string) bool {
+	lower := strings.ToLower(detail)
+	for _, symptom := range []string{
+		"podman.sock",
+		"cannot connect to podman",
+		"containerd.sock",
+		"rootless containerd",
+	} {
+		if strings.Contains(lower, symptom) {
+			return true
+		}
+	}
+	return false
+}
+
 // dockerFailure maps Docker's stderr text onto the surface's typed reasons.
 func dockerFailure(detail string) error {
 	lower := strings.ToLower(detail)
@@ -1026,6 +1147,328 @@ func dockerFailure(detail string) error {
 		reason = ReasonMissingDocker
 	}
 	return &Error{Reason: reason, Cause: errors.New(detail)}
+}
+
+// --- Kubernetes namespaces and pods ---------------------------------------
+
+type kubeMetadataJSON struct {
+	Name              string `json:"name"`
+	Namespace         string `json:"namespace"`
+	CreationTimestamp string `json:"creationTimestamp"`
+	DeletionTimestamp string `json:"deletionTimestamp"`
+}
+
+type kubeNamespaceListJSON struct {
+	Items []struct {
+		Metadata kubeMetadataJSON `json:"metadata"`
+	} `json:"items"`
+}
+
+type kubeContainerSpecJSON struct {
+	Name string `json:"name"`
+}
+
+type kubeStateJSON struct {
+	Waiting *struct {
+		Reason string `json:"reason"`
+	} `json:"waiting"`
+	Terminated *struct {
+		Reason string `json:"reason"`
+	} `json:"terminated"`
+	Running *struct{} `json:"running"`
+}
+
+type kubeContainerStatusJSON struct {
+	Name         string        `json:"name"`
+	RestartCount int           `json:"restartCount"`
+	State        kubeStateJSON `json:"state"`
+}
+
+type kubePodJSON struct {
+	Metadata kubeMetadataJSON `json:"metadata"`
+	Spec     struct {
+		Containers          []kubeContainerSpecJSON `json:"containers"`
+		InitContainers      []kubeContainerSpecJSON `json:"initContainers"`
+		EphemeralContainers []kubeContainerSpecJSON `json:"ephemeralContainers"`
+	} `json:"spec"`
+	Status struct {
+		Phase                      string                    `json:"phase"`
+		Reason                     string                    `json:"reason"`
+		ContainerStatuses          []kubeContainerStatusJSON `json:"containerStatuses"`
+		InitContainerStatuses      []kubeContainerStatusJSON `json:"initContainerStatuses"`
+		EphemeralContainerStatuses []kubeContainerStatusJSON `json:"ephemeralContainerStatuses"`
+	} `json:"status"`
+}
+
+type kubePodListJSON struct {
+	Items []kubePodJSON `json:"items"`
+}
+
+// parseKubernetesList reads the namespace and pod JSON sections. A forbidden
+// namespace list is tolerated because a restricted kubeconfig often permits
+// pods in its own namespace but not a cluster-wide namespace list; any other
+// failure is typed. now anchors the pod age the surface shows.
+func parseKubernetesList(stdout string, now time.Time) (Kubernetes, error) {
+	inventory := Kubernetes{Namespaces: make([]string, 0, 16), Pods: make([]Pod, 0, 32)}
+	if hasUnavailable(stdout, "kubectl") {
+		return inventory, &Error{Reason: ReasonMissingKubectl,
+			Cause: errors.New("kubectl: the command is unavailable")}
+	}
+
+	namespacesText := extractBetween(stdout, markerKubernetesNamespaces,
+		markerKubernetesNamespacesEnd)
+	namespacesBody, namespacesErr := splitKubernetesSection(namespacesText)
+	if namespacesErr != "" {
+		if !isKubectlForbidden(namespacesErr) {
+			return inventory, kubernetesFailure(namespacesErr)
+		}
+	} else if strings.TrimSpace(namespacesBody) != "" {
+		var list kubeNamespaceListJSON
+		if err := decodeJSONAfterBanner(namespacesBody, &list, "items"); err != nil {
+			return inventory, &Error{Reason: ReasonInternal,
+				Cause: fmt.Errorf("kubectl: parse namespaces: %w", err)}
+		}
+		for _, item := range list.Items {
+			if name := strings.TrimSpace(item.Metadata.Name); name != "" {
+				inventory.Namespaces = append(inventory.Namespaces, name)
+			}
+		}
+	}
+
+	podsText := extractBetween(stdout, markerKubernetesPods, markerKubernetesPodsEnd)
+	podsBody, podsErr := splitKubernetesSection(podsText)
+	if podsErr != "" {
+		return inventory, kubernetesFailure(podsErr)
+	}
+	if strings.TrimSpace(podsBody) != "" {
+		var list kubePodListJSON
+		if err := decodeJSONAfterBanner(podsBody, &list, "items"); err != nil {
+			return inventory, &Error{Reason: ReasonInternal,
+				Cause: fmt.Errorf("kubectl: parse pods: %w", err)}
+		}
+		for _, item := range list.Items {
+			name := strings.TrimSpace(item.Metadata.Name)
+			if name == "" {
+				continue
+			}
+			inventory.Pods = append(inventory.Pods, kubePod(item, now))
+		}
+	}
+
+	// An empty pod list cannot tell which namespace the kubeconfig used, so
+	// leave it empty rather than claiming "default": the surface then lets the
+	// kubeconfig's choice stand instead of displaying a namespace that was
+	// never queried.
+	for _, pod := range inventory.Pods {
+		if pod.Namespace != "" {
+			inventory.Namespace = pod.Namespace
+			break
+		}
+	}
+	return inventory, nil
+}
+
+// splitKubernetesSection separates a section's JSON from the failure text the
+// command captured after its error marker.
+func splitKubernetesSection(text string) (body, failure string) {
+	if index := strings.Index(text, markerKubernetesError); index >= 0 {
+		return "", strings.TrimSpace(text[index+len(markerKubernetesError):])
+	}
+	return text, ""
+}
+
+// decodeJSONAfterBanner skips a kubectl banner such as a bracketed warning
+// before the JSON document. Trying each opening brace keeps an occasional
+// nested brace from ending the search at the first one. A warning that happens
+// to be JSON-shaped must not shadow the real document, so the body is decoded
+// as a stream of successive JSON values and only the value carrying the
+// payload's required top-level key is accepted. The warning may precede or
+// follow the list: neither a successful decode nor extra trailing data makes it
+// the answer. When no value carries the key, the reply is a parse failure
+// rather than a silently empty inventory.
+func decodeJSONAfterBanner(text string, target any, requiredKey string) error {
+	trimmed := strings.TrimSpace(text)
+	for offset := 0; offset < len(trimmed); offset++ {
+		if trimmed[offset] != '{' && trimmed[offset] != '[' {
+			continue
+		}
+		decoder := json.NewDecoder(strings.NewReader(trimmed[offset:]))
+		for {
+			var candidate json.RawMessage
+			if err := decoder.Decode(&candidate); err != nil {
+				// End of the decodable stream: text after the last value is a
+				// banner or a malformed tail, not another document.
+				break
+			}
+			if requiredKey != "" && !jsonObjectHasKey(candidate, requiredKey) {
+				continue
+			}
+			return json.Unmarshal(candidate, target)
+		}
+	}
+	if requiredKey != "" {
+		return fmt.Errorf("no JSON document with top-level key %q", requiredKey)
+	}
+	return errors.New("no JSON document")
+}
+
+// jsonObjectHasKey reports whether raw is a JSON object with key at its top
+// level. The Kubernetes list payloads both use "items"; a warning object that
+// merely parses as JSON does not.
+func jsonObjectHasKey(raw []byte, key string) bool {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return false
+	}
+	_, ok := object[key]
+	return ok
+}
+
+func kubePod(pod kubePodJSON, now time.Time) Pod {
+	names := make([]string, 0, len(pod.Spec.Containers))
+	specs := make([]kubeContainerSpecJSON, 0,
+		len(pod.Spec.Containers)+len(pod.Spec.InitContainers)+len(pod.Spec.EphemeralContainers))
+	specs = append(specs, pod.Spec.Containers...)
+	specs = append(specs, pod.Spec.InitContainers...)
+	specs = append(specs, pod.Spec.EphemeralContainers...)
+	for _, container := range specs {
+		name := strings.TrimSpace(container.Name)
+		if name == "" || containsString(names, name) {
+			continue
+		}
+		names = append(names, name)
+	}
+	running := make([]string, 0, len(names))
+	statuses := make([]kubeContainerStatusJSON, 0,
+		len(pod.Status.ContainerStatuses)+len(pod.Status.InitContainerStatuses)+
+			len(pod.Status.EphemeralContainerStatuses))
+	statuses = append(statuses, pod.Status.ContainerStatuses...)
+	statuses = append(statuses, pod.Status.InitContainerStatuses...)
+	statuses = append(statuses, pod.Status.EphemeralContainerStatuses...)
+	restarts := 0
+	for _, status := range statuses {
+		restarts += status.RestartCount
+		if status.State.Running != nil && status.Name != "" &&
+			!containsString(running, status.Name) {
+			running = append(running, status.Name)
+		}
+	}
+	// The declared order is the terminal's natural order; a running status
+	// the spec omitted still gets a place after every declared container.
+	ordered := make([]string, 0, len(running))
+	for _, name := range names {
+		if containsString(running, name) {
+			ordered = append(ordered, name)
+		}
+	}
+	for _, name := range running {
+		if !containsString(ordered, name) {
+			ordered = append(ordered, name)
+		}
+	}
+	return Pod{
+		Name:              strings.TrimSpace(pod.Metadata.Name),
+		Namespace:         strings.TrimSpace(pod.Metadata.Namespace),
+		Status:            kubePodStatus(pod),
+		Restarts:          restarts,
+		Age:               kubePodAge(pod.Metadata.CreationTimestamp, now),
+		Containers:        names,
+		RunningContainers: ordered,
+	}
+}
+
+func kubePodStatus(pod kubePodJSON) string {
+	if strings.TrimSpace(pod.Metadata.DeletionTimestamp) != "" {
+		return "Terminating"
+	}
+	statuses := make([]kubeContainerStatusJSON, 0,
+		len(pod.Status.InitContainerStatuses)+len(pod.Status.ContainerStatuses))
+	statuses = append(statuses, pod.Status.InitContainerStatuses...)
+	statuses = append(statuses, pod.Status.ContainerStatuses...)
+	for _, status := range statuses {
+		if status.State.Waiting != nil && status.State.Waiting.Reason != "" {
+			return status.State.Waiting.Reason
+		}
+	}
+	if reason := strings.TrimSpace(pod.Status.Reason); reason != "" {
+		return reason
+	}
+	for _, status := range statuses {
+		if status.State.Terminated != nil &&
+			status.State.Terminated.Reason != "" &&
+			status.State.Terminated.Reason != "Completed" {
+			return status.State.Terminated.Reason
+		}
+	}
+	phase := strings.TrimSpace(pod.Status.Phase)
+	if phase == "Succeeded" {
+		return "Completed"
+	}
+	if phase == "" {
+		return "Unknown"
+	}
+	return phase
+}
+
+// kubePodAge formats a creation timestamp the way kubectl's AGE column does.
+func kubePodAge(created string, now time.Time) string {
+	timestamp, err := time.Parse(time.RFC3339, strings.TrimSpace(created))
+	if err != nil {
+		return ""
+	}
+	seconds := int(now.Sub(timestamp) / time.Second)
+	if seconds < 0 {
+		seconds = 0
+	}
+	switch {
+	case seconds < 60:
+		return strconv.Itoa(seconds) + "s"
+	case seconds < 3600:
+		return strconv.Itoa(seconds/60) + "m"
+	case seconds < 86400:
+		return strconv.Itoa(seconds/3600) + "h"
+	default:
+		return strconv.Itoa(seconds/86400) + "d"
+	}
+}
+
+// isKubectlForbidden reports a refusal the namespace selector can survive.
+func isKubectlForbidden(detail string) bool {
+	return strings.Contains(strings.ToLower(detail), "forbidden")
+}
+
+// kubernetesFailure maps kubectl's stderr text onto the surface's typed
+// reasons.
+func kubernetesFailure(detail string) error {
+	lower := strings.ToLower(detail)
+	reason := ReasonInternal
+	switch {
+	case isKubectlForbidden(detail):
+		reason = ReasonKubernetesForbidden
+	case strings.Contains(lower, "unable to connect to the server"),
+		strings.Contains(lower, "couldn't get current server api group list"),
+		strings.Contains(lower, "could not get current server api group list"),
+		strings.Contains(lower, "connection refused"),
+		strings.Contains(lower, "dial tcp"),
+		strings.Contains(lower, "i/o timeout"),
+		strings.Contains(lower, "no such host"),
+		strings.Contains(lower, "network is unreachable"),
+		strings.Contains(lower, "context deadline exceeded"),
+		strings.Contains(lower, "tls handshake timeout"):
+		reason = ReasonClusterUnreachable
+	case strings.Contains(lower, "command not found"):
+		reason = ReasonMissingKubectl
+	}
+	return &Error{Reason: reason, Cause: errors.New(detail)}
+}
+
+func containsString(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Accelerators ----------------------------------------------------------

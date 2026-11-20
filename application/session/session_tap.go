@@ -58,9 +58,11 @@ func (s *Session) AcknowledgeActivity() {
 
 // handleInput passes input through the tap. source is true for input typed in
 // this Session's own terminal: only that input is observed by the input hook,
-// so a broadcast delivery cannot recursively fan out again. gated reports that
-// an active transfer consumed the input.
-func (s *Session) handleInput(data []byte, source bool) (forwarded []byte, changed bool, gated bool) {
+// so a broadcast delivery cannot recursively fan out again. translate is true
+// for keyboard input, including a broadcast target's copy, and false for an
+// explicit insertion. gated reports that an active transfer consumed the
+// input.
+func (s *Session) handleInput(data []byte, source, translate bool) (forwarded []byte, changed bool, gated bool) {
 	now := time.Now()
 	forwarded, changed, started, completions, transfer := s.tap.handleInput(data, now)
 	// The tap returns no bytes only while a transfer consumes normal input.
@@ -78,12 +80,30 @@ func (s *Session) handleInput(data []byte, source bool) (forwarded []byte, chang
 	// so concurrent input, output, and close cannot produce a second event.
 	for _, completion := range completions {
 		s.publishCommandCompletion(completion)
+		s.invalidateCWDProbe()
 	}
 	if transfer != nil && s.onTransfer != nil {
 		s.onTransfer(s.id, *transfer)
 	}
-	if source && len(forwarded) > 0 && s.onInput != nil {
-		s.onInput(s.id, forwarded)
+	if len(forwarded) > 0 {
+		// Any input that reaches the console can take over from the detector.
+		// Typed input keeps the wake-Enter exemption; input delivered by a
+		// broadcast or an inserted snippet is deliberate, so it always
+		// disarms. Only the engine's own replies bypass handleInput.
+		if source {
+			s.userInputAutoLogin(forwarded)
+		} else {
+			s.takeoverAutoLogin()
+		}
+		if source && s.onInput != nil {
+			s.onInput(s.id, forwarded)
+		}
+	}
+	// The Host's input compatibility applies to keyboard input only, after
+	// the tap and the broadcast hook observed the user's bytes. Programmatic
+	// insertion already carries the bytes its caller chose.
+	if translate && len(forwarded) > 0 {
+		forwarded = s.inputTranslator.translate(forwarded)
 	}
 	// Encode only the bytes that leave the Session. The tap, input hook, and
 	// broadcast fan-out above operate on the user's UTF-8 text.
@@ -160,7 +180,7 @@ func (s *Session) publishCommandCompletion(capture capturedCommand) {
 	})
 }
 
-func (s *Session) publishTap(now time.Time) {
+func (s *Session) publishTap(now time.Time) tapState {
 	state := s.tap.state(now)
 	s.update(func(snapshot *Snapshot) {
 		snapshot.CWD = state.CWD
@@ -174,6 +194,7 @@ func (s *Session) publishTap(now time.Time) {
 		snapshot.Clipboard = state.Clipboard
 		snapshot.Stats = state.Stats
 	})
+	return state
 }
 
 // scheduleActivityClear publishes Busy=false once output has been quiet for
@@ -237,6 +258,7 @@ func (s *Session) schedulePromptRecheck() {
 		if completion := s.tap.resolvePrompt(now); completion != nil {
 			s.publishTap(now)
 			s.publishCommandCompletion(*completion)
+			s.invalidateCWDProbe()
 		}
 	})
 	s.mu.Unlock()

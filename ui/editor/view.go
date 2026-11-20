@@ -72,6 +72,10 @@ func documentView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			ui.Text(c, m.SftpEditorTitle(s.Name())).FontSize(kit.M(c).Font.Title3).Bold().
 				SingleLine().MinWidth(0).TextColor(t.Text)
 			ui.Column(c).Grow(1)
+			highlight := s.Highlighting()
+			if ui.Checkbox(c, &highlight, m.SftpEditorHighlight()).Changed() {
+				s.SetHighlighting(highlight)
+			}
 			if ui.Button(c, m.SftpEditorClose()).Clicked() {
 				s.Close()
 				c.Invalidate()
@@ -84,9 +88,14 @@ func documentView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		content := s.Content()
 		if content != nil {
 			c.Key("editor-content")
-			ui.TextArea(c, content).
+			area := ui.TextArea(c, content).
 				Label("editor-content").
 				FillWidth().Grow(1).MinHeight(0).AutoFocus()
+			if s.Highlighting() {
+				// TextRanges paints runs of the same editable TextArea: the
+				// caret, selection, and edits keep behaving as without it.
+				area.TextRanges(highlightRanges(*content, GrammarForName(s.Name()), t)...)
+			}
 		}
 		switch {
 		case s.Saving():
@@ -101,6 +110,34 @@ func documentView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		s.Close()
 		c.Invalidate()
 	}
+}
+
+// highlightRanges turns a grammar's tokens into TextRanges for the text
+// area. A nil grammar, as for a name the app does not know, paints nothing
+// and leaves the document in the theme's plain text color.
+func highlightRanges(text string, grammar Grammar, t *ui.Theme) []ui.TextRange {
+	if grammar == nil {
+		return nil
+	}
+	tokens := grammar.Highlight(text)
+	ranges := make([]ui.TextRange, 0, len(tokens))
+	for _, token := range tokens {
+		var color ui.Color
+		switch token.Kind {
+		case TokenComment:
+			color = t.TextMuted
+		case TokenString:
+			color = uitheme.SuccessText(t)
+		case TokenDirective:
+			color = uitheme.AccentBodyText(t)
+		case TokenVariable:
+			color = uitheme.WarningText(t)
+		default:
+			continue
+		}
+		ranges = append(ranges, ui.TextRange{Start: token.Start, End: token.End, Color: color})
+	}
+	return ranges
 }
 
 func confirmView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {

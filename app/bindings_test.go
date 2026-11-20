@@ -274,7 +274,7 @@ func TestDispatcherRunsRealActionsAndLeavesTerminalChordsAlone(t *testing.T) {
 	}
 
 	// An unavailable binding never reaches the dispatcher.
-	if _, err := service.SetBinding("toggle-pane-zoom", domain.SchemePC, "Ctrl + Alt + Z", nil); err != nil {
+	if _, err := service.SetBinding("search-terminal", domain.SchemePC, "Ctrl + Alt + Z", nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, shortcut := range dispatcher.Shortcuts() {
@@ -378,6 +378,38 @@ func TestDispatcherRegistersAFocusOverride(t *testing.T) {
 	}
 }
 
+// TestHostListBindingIsScopedAndRebindable pins the host-list toggle to the
+// surfaces that own it. A window shortcut would run before a focused text
+// field could type the chord, and would lose to the Backups menu accelerator
+// on the same keys; the terminal Pane and the Vault list register the scoped
+// handler instead. The chord the surfaces use must follow a user rebind.
+func TestHostListBindingIsScopedAndRebindable(t *testing.T) {
+	service, _ := newBindingFixture(t, "windows")
+	shellState := state.NewState(state.WithHostListChord(func() (ui.Modifiers, ui.Key, bool) {
+		return (&bindingDispatcher{service: service}).hostListChord()
+	}))
+	dispatcher := &bindingDispatcher{service: service, shell: shellState}
+
+	mods, key, ok := shellState.HostListChord()
+	if !ok || mods != ui.Ctrl|ui.Shift || key != ui.KeyB {
+		t.Fatalf("default host-list chord = %v/%v/%v, want Ctrl+Shift+B", mods, key, ok)
+	}
+	for _, shortcut := range dispatcher.Shortcuts() {
+		if shortcut.mods == ui.Ctrl|ui.Shift && shortcut.key == ui.KeyB {
+			t.Fatal("the host-list chord was registered at window scope")
+		}
+	}
+
+	if err := service.ReplaceBinding("toggle-host-list", domain.SchemePC,
+		"Ctrl + Alt + H", nil); err != nil {
+		t.Fatal(err)
+	}
+	mods, key, ok = shellState.HostListChord()
+	if !ok || mods != ui.Ctrl|ui.Alt || key != ui.KeyH {
+		t.Fatalf("rebound host-list chord = %v/%v/%v, want Ctrl+Alt+H", mods, key, ok)
+	}
+}
+
 func TestTerminalKeybindsFollowOverridesAndClearOldDefaults(t *testing.T) {
 	service, _ := newBindingFixture(t, "windows")
 	keybindOf := func(binds []terminal.Keybind, mods ui.Modifiers, key ui.Key) (terminal.Keybind, bool) {
@@ -421,13 +453,13 @@ func TestTerminalKeybindsFollowOverridesAndClearOldDefaults(t *testing.T) {
 }
 
 func TestUnavailableCatalogEntriesKeepTheirLabels(t *testing.T) {
-	for _, id := range []string{"search-terminal", "toggle-pane-zoom", "paste-selection"} {
+	for _, id := range []string{"search-terminal", "paste-selection"} {
 		if catalogBindingAvailable(id) {
 			t.Errorf("%s is marked available", id)
 		}
 	}
 	for _, id := range []string{
-		"new-tab", "copy", "open-settings", "broadcast",
+		"new-tab", "copy", "open-settings", "broadcast", "toggle-pane-zoom",
 		"open-sftp", "sftp-copy", "sftp-cut", "sftp-paste", "sftp-rename",
 		"sftp-delete", "sftp-refresh", "sftp-new-folder", "sftp-open", "sftp-go-parent",
 	} {

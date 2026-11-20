@@ -49,6 +49,9 @@ const (
 	// KindTypeMismatch reports a replace or merge the destination's type cannot
 	// support, such as a folder over a file. It fails closed.
 	KindTypeMismatch ErrorKind = "type-mismatch"
+	// KindToolMissing reports a remote program the operation needs, such as
+	// tar or zip for archive creation.
+	KindToolMissing ErrorKind = "tool-missing"
 	// KindInternal reports anything unclassified.
 	KindInternal ErrorKind = "internal"
 )

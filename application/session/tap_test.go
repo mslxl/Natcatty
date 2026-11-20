@@ -154,6 +154,32 @@ func TestTapOSC9And777Notifications(t *testing.T) {
 	}
 }
 
+// TestTapTracksThePeersBracketedPasteMode proves the tap learns DECSET 2004
+// from output and keeps the controls for the renderer. Compose uses this flag
+// to decide whether a multiline draft may be wrapped.
+func TestTapTracksThePeersBracketedPasteMode(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	forwarded, _ := tap.observe([]byte("\x1b[?2004h"), tapAt(0))
+	if !bytes.Equal(forwarded, []byte("\x1b[?2004h")) {
+		t.Fatalf("forwarded = %q, want the mode control unchanged", forwarded)
+	}
+	if !tap.state(tapAt(0)).BracketedPaste {
+		t.Fatal("DECSET 2004h did not enable bracketed paste")
+	}
+
+	// An unrelated mode change must not clear it, including a split write.
+	tap.observe([]byte("\x1b[?25"), tapAt(time.Second))
+	tap.observe([]byte("h"), tapAt(time.Second))
+	if !tap.state(tapAt(time.Second)).BracketedPaste {
+		t.Fatal("an unrelated mode change cleared bracketed paste")
+	}
+
+	tap.observe([]byte("\x1b[?2004l"), tapAt(2*time.Second))
+	if tap.state(tapAt(2 * time.Second)).BracketedPaste {
+		t.Fatal("DECSET 2004l did not disable bracketed paste")
+	}
+}
+
 // TestTapBracketedPasteDoesNotSubmitInnerLines proves a pasted multi-line
 // command is text in the line editor, not one submitted command per line. The
 // shell never executes it until the user presses Enter.

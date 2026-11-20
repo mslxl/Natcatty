@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
@@ -124,6 +126,10 @@ type workspaceGraph struct {
 }
 
 func newWorkspaceGraph(t *testing.T) *workspaceGraph {
+	return newWorkspaceGraphWithOptions(t)
+}
+
+func newWorkspaceGraphWithOptions(t *testing.T, options ...Option) *workspaceGraph {
 	t.Helper()
 	graph := &workspaceGraph{
 		factory:  &workspaceFactory{},
@@ -133,7 +139,7 @@ func newWorkspaceGraph(t *testing.T) *workspaceGraph {
 	}
 	graph.service = appsession.NewService(graph.factory)
 	t.Cleanup(graph.service.CloseAll)
-	graph.state = NewState(
+	base := []Option{
 		WithSessions(graph.service, func(session *appsession.Session) (Surface, error) {
 			graph.sessions = append(graph.sessions, session)
 			surface := &fakeSurface{}
@@ -152,7 +158,8 @@ func newWorkspaceGraph(t *testing.T) *workspaceGraph {
 		WithDetachReattachHandler(func(id model.TabID) {
 			graph.reattached = append(graph.reattached, id)
 		}),
-	)
+	}
+	graph.state = NewState(append(base, options...)...)
 	return graph
 }
 
@@ -256,6 +263,45 @@ func TestCloseFocusedPaneCollapsesTheSiblingSubtree(t *testing.T) {
 	if graph.state.TabCount() != 0 || !graph.state.VaultVisible() {
 		t.Fatalf("tabs = %d, vault = %v; want an empty Workspace showing the Vault",
 			graph.state.TabCount(), graph.state.VaultVisible())
+	}
+}
+
+// TestCloseFocusedPaneWhileMagnifiedClearsTheZoom closes the Pane that fills
+// its Tab. The zoom must end with the Pane, or MagnifiedPaneID keeps naming a
+// removed Pane and the surviving sibling stays hidden.
+func TestCloseFocusedPaneWhileMagnifiedClearsTheZoom(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the split", func() bool {
+		return len(graph.state.WorkspacePayload().Panes) == 2
+	})
+	left, right := panesOf(t, graph.state, 0)[0], panesOf(t, graph.state, 0)[1]
+	if !graph.state.SetMagnifiedPane(0, left) {
+		t.Fatal("SetMagnifiedPane rejected the focused Pane")
+	}
+	if got, ok := graph.state.FocusedPaneID(0); !ok || got != left {
+		t.Fatalf("focused Pane = %q, %v; want the magnified Pane", got, ok)
+	}
+
+	if !graph.state.CloseFocusedPane() {
+		t.Fatal("CloseFocusedPane returned false")
+	}
+	if graph.state.TabCount() != 1 {
+		t.Fatalf("tabs = %d, want the Tab to survive its second Pane", graph.state.TabCount())
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != "" {
+		t.Fatalf("magnified Pane = %q after closing the zoomed Pane, want the zoom cleared", got)
+	}
+	if got := panesOf(t, graph.state, 0); !equalPaneIDs(got, []model.PaneID{right}) {
+		t.Fatalf("panes = %v, want the surviving sibling", got)
+	}
+	if got, ok := graph.state.FocusedPaneID(0); !ok || got != right {
+		t.Fatalf("focused Pane = %q, %v; want the surviving sibling", got, ok)
 	}
 }
 
@@ -493,6 +539,465 @@ func TestMovePaneWithinAndAcrossTabs(t *testing.T) {
 	if graph.state.TabCount() != 1 {
 		t.Fatalf("tabs = %d after emptying a Tab, want 1", graph.state.TabCount())
 	}
+}
+
+// TestMovePaneKeepsTheMovedPanesSessionAndTabIdentity pins the acceptance
+// contract: a drag rearranges the tree, never the Session behind the Pane.
+func TestMovePaneKeepsTheMovedPanesSessionAndTabIdentity(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "both Pane Sessions", func() bool {
+		for _, id := range panesOf(t, graph.state, 0) {
+			info, ok := graph.state.PaneInfoAt(0, id)
+			if !ok || info.Surface == nil {
+				return false
+			}
+		}
+		return len(panesOf(t, graph.state, 0)) == 2
+	})
+	tabID, _ := graph.state.TabID(0)
+	panes := panesOf(t, graph.state, 0)
+	left, right := panes[0], panes[1]
+
+	moved := graph.state.tabs[0].panes[right]
+	session, descriptor := moved.session, moved.descriptor
+	if session == nil {
+		t.Fatal("the moved Pane has no Session")
+	}
+
+	if !graph.state.MovePane(tabID, right, tabID, left, domainworkspace.SideLeft) {
+		t.Fatal("MovePane returned false")
+	}
+	if got, _ := graph.state.TabID(0); got != tabID {
+		t.Fatalf("Tab identity = %q, want %q", got, tabID)
+	}
+	after := graph.state.tabs[0].panes[right]
+	if after == nil || after.session != session || after.descriptor != descriptor {
+		t.Fatalf("the moved Pane lost its Session or descriptor: %+v", after)
+	}
+	if got, want := panesOf(t, graph.state, 0), []model.PaneID{right, left}; !equalPaneIDs(got, want) {
+		t.Fatalf("panes = %v, want %v", got, want)
+	}
+}
+
+// TestMovePaneRejectsADropWhoseTargetClosedMidDrag pins the stale-target
+// guard: the source is pruned only after the target still exists.
+func TestMovePaneRejectsADropWhoseTargetClosedMidDrag(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the split", func() bool {
+		return len(graph.state.WorkspacePayload().Panes) == 2
+	})
+	tabID, _ := graph.state.TabID(0)
+	left, right := panesOf(t, graph.state, 0)[0], panesOf(t, graph.state, 0)[1]
+
+	// Close the right Pane mid-drag: it is the drop target the drag started
+	// against but no longer exists when the drop lands.
+	if !graph.state.FocusPaneID(0, right) || !graph.state.CloseFocusedPane() {
+		t.Fatal("closing the drag target failed")
+	}
+	if got := panesOf(t, graph.state, 0); !equalPaneIDs(got, []model.PaneID{left}) {
+		t.Fatalf("panes after close = %v, want only the source", got)
+	}
+
+	// The guard's decision is observable through the public drop-zone API:
+	// a stale target must be rejected before the drop lands. Delete the state
+	// containment check and CanMovePane reports true, failing here even though
+	// the tree would later refuse to split around the missing Pane.
+	if graph.state.CanMovePane(tabID, left, tabID, right, domainworkspace.SideRight) {
+		t.Fatal("CanMovePane accepted a drop on a Pane that closed mid-drag")
+	}
+	if graph.state.MovePane(tabID, left, tabID, right, domainworkspace.SideRight) {
+		t.Fatal("MovePane accepted a drop on a Pane that closed mid-drag")
+	}
+	if graph.state.TabCount() != 1 {
+		t.Fatalf("tabs = %d, want the source Tab untouched", graph.state.TabCount())
+	}
+	if got := panesOf(t, graph.state, 0); !equalPaneIDs(got, []model.PaneID{left}) {
+		t.Fatalf("panes = %v after a stale drop, want the source to survive", got)
+	}
+}
+
+// TestMagnifiedPaneHidesItsMembersFromDrops pins the magnified guard: while a
+// Pane fills its Tab, the hidden members neither accept a drop nor drag.
+func TestMagnifiedPaneHidesItsMembersFromDrops(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the split", func() bool {
+		return len(graph.state.WorkspacePayload().Panes) == 2
+	})
+	tabID, _ := graph.state.TabID(0)
+	left, right := panesOf(t, graph.state, 0)[0], panesOf(t, graph.state, 0)[1]
+
+	if !graph.state.SetMagnifiedPane(0, left) {
+		t.Fatal("SetMagnifiedPane rejected a Pane in the Tab")
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != left {
+		t.Fatalf("magnified Pane = %q, want %q", got, left)
+	}
+	// Dropping onto the hidden right member is refused.
+	if graph.state.MovePane(tabID, left, tabID, right, domainworkspace.SideRight) {
+		t.Fatal("a hidden member accepted a drop while magnified")
+	}
+	// A hidden member cannot start a drag either.
+	if graph.state.MovePane(tabID, right, tabID, left, domainworkspace.SideRight) {
+		t.Fatal("a hidden member started a drag while magnified")
+	}
+	if got := panesOf(t, graph.state, 0); !equalPaneIDs(got, []model.PaneID{left, right}) {
+		t.Fatalf("panes = %v after rejected drops, want the tree unchanged", got)
+	}
+
+	// The magnified Pane itself still accepts a drop from another Tab.
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	otherID, _ := graph.state.TabID(1)
+	otherPane := panesOf(t, graph.state, 1)[0]
+	if !graph.state.MovePane(otherID, otherPane, tabID, left, domainworkspace.SideRight) {
+		t.Fatal("the magnified Pane refused a drop")
+	}
+
+	// Toggling restores the split and magnifies the focused Pane again.
+	graph.state.SetMagnifiedPane(0, "")
+	if !graph.state.FocusPaneID(0, left) {
+		t.Fatal("focusing the left Pane failed")
+	}
+	if !graph.state.TogglePaneZoom() || graph.state.MagnifiedPaneID(0) != left {
+		t.Fatal("TogglePaneZoom did not magnify the focused Pane")
+	}
+	if !graph.state.TogglePaneZoom() || graph.state.MagnifiedPaneID(0) != "" {
+		t.Fatal("TogglePaneZoom did not restore the split")
+	}
+}
+
+// TestDetachPaneClearsStaleMagnification pins the detach path: magnifying one
+// Pane and detaching it must end the zoom. Otherwise MagnifiedPaneID points at
+// a removed Pane, the Tab body renders nothing, and the remaining member is
+// still hidden.
+func TestDetachPaneClearsStaleMagnification(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the split", func() bool {
+		return len(graph.state.WorkspacePayload().Panes) == 2
+	})
+	left, right := panesOf(t, graph.state, 0)[0], panesOf(t, graph.state, 0)[1]
+	if !graph.state.SetMagnifiedPane(0, left) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+	if !graph.state.DetachPane(0, left) {
+		t.Fatal("DetachPane failed")
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != "" {
+		t.Fatalf("magnified Pane = %q after detaching the zoomed Pane, want the zoom cleared", got)
+	}
+	if got := panesOf(t, graph.state, 0); !equalPaneIDs(got, []model.PaneID{right}) {
+		t.Fatalf("panes = %v, want the surviving sibling", got)
+	}
+	if got, ok := graph.state.FocusedPaneID(0); !ok || got != right {
+		t.Fatalf("focused Pane = %q, %v; want the surviving sibling", got, ok)
+	}
+}
+
+// TestDetachPaneKeepsAValidMagnification pins the other side of the same
+// invariant: detaching a hidden member while another Pane is magnified leaves
+// the zoom pointing at a Pane that is still in the tree.
+func TestDetachPaneKeepsAValidMagnification(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the split", func() bool {
+		return len(graph.state.WorkspacePayload().Panes) == 2
+	})
+	left, right := panesOf(t, graph.state, 0)[0], panesOf(t, graph.state, 0)[1]
+	if !graph.state.SetMagnifiedPane(0, left) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+	if !graph.state.DetachPane(0, right) {
+		t.Fatal("DetachPane of the hidden member failed")
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != left {
+		t.Fatalf("magnified Pane = %q, want the still-present Pane %q", got, left)
+	}
+	if got := panesOf(t, graph.state, 0); !equalPaneIDs(got, []model.PaneID{left}) {
+		t.Fatalf("panes = %v, want the zoomed Pane", got)
+	}
+}
+
+// TestMovePaneAcrossTabsClearsTheStaleZoom pins the cross-Tab move path: the
+// zoomed Pane leaves its Tab, so the zoom must end and the surviving sibling
+// must become both visible and focused. Before the fix the stale check ran
+// against the pre-removal root, the zoom survived, and the source Tab kept
+// pointing at a Pane it no longer owned.
+func TestMovePaneAcrossTabsClearsTheStaleZoom(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the split", func() bool {
+		return len(graph.state.WorkspacePayload().Panes) == 2
+	})
+	sourceID, _ := graph.state.TabID(0)
+	left, right := panesOf(t, graph.state, 0)[0], panesOf(t, graph.state, 0)[1]
+	if !graph.state.SetMagnifiedPane(0, left) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	targetID, _ := graph.state.TabID(1)
+	targetPane := panesOf(t, graph.state, 1)[0]
+
+	if !graph.state.MovePane(sourceID, left, targetID, targetPane, domainworkspace.SideRight) {
+		t.Fatal("MovePane across Tabs returned false")
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != "" {
+		t.Fatalf("magnified Pane = %q after moving the zoomed Pane out, want the zoom cleared", got)
+	}
+	if got := panesOf(t, graph.state, 0); !equalPaneIDs(got, []model.PaneID{right}) {
+		t.Fatalf("source panes = %v, want the surviving sibling", got)
+	}
+	if got, ok := graph.state.FocusedPaneID(0); !ok || got != right {
+		t.Fatalf("source focus = %q, %v; want the surviving sibling", got, ok)
+	}
+	if got := graph.state.ActiveTab(); got != 1 {
+		t.Fatalf("active Tab = %d, want the drop target", got)
+	}
+	if got, ok := graph.state.FocusedPaneID(1); !ok || got != left {
+		t.Fatalf("target focus = %q, %v; want the moved Pane", got, ok)
+	}
+}
+
+// TestMovePaneToTabDropClearsTheStaleZoom pins the tab-strip drop path: it
+// routes through MovePaneToTab rather than a Pane drop zone, so it needs the
+// same stale-zoom invariant.
+func TestMovePaneToTabDropClearsTheStaleZoom(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the split", func() bool {
+		return len(graph.state.WorkspacePayload().Panes) == 2
+	})
+	sourceID, _ := graph.state.TabID(0)
+	left, right := panesOf(t, graph.state, 0)[0], panesOf(t, graph.state, 0)[1]
+	if !graph.state.SetMagnifiedPane(0, left) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	targetID, _ := graph.state.TabID(1)
+
+	if !graph.state.MovePaneToTab(sourceID, left, targetID) {
+		t.Fatal("MovePaneToTab returned false")
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != "" {
+		t.Fatalf("magnified Pane = %q after the tab-strip drop, want the zoom cleared", got)
+	}
+	if got := panesOf(t, graph.state, 0); !equalPaneIDs(got, []model.PaneID{right}) {
+		t.Fatalf("source panes = %v, want the surviving sibling", got)
+	}
+	if got, ok := graph.state.FocusedPaneID(0); !ok || got != right {
+		t.Fatalf("source focus = %q, %v; want the surviving sibling", got, ok)
+	}
+	if got := graph.state.ActiveTab(); got != 1 {
+		t.Fatalf("active Tab = %d, want the Tab that received the drop", got)
+	}
+	got := panesOf(t, graph.state, 1)
+	if len(got) != 2 {
+		t.Fatalf("target panes = %v, want the moved Pane beside the target", got)
+	}
+	found := false
+	for _, id := range got {
+		if id == left {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("target panes = %v, want the moved Pane %q", got, left)
+	}
+}
+
+// TestMovePaneIntoAMagnifiedTabKeepsItsZoomFocused pins the receiving side: a
+// drop into a zoomed Tab must not focus the hidden Pane it was inserted beside.
+func TestMovePaneIntoAMagnifiedTabKeepsItsZoomFocused(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	sourceID, _ := graph.state.TabID(0)
+	sourcePane := panesOf(t, graph.state, 0)[0]
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the target split", func() bool {
+		return len(panesOf(t, graph.state, 1)) == 2
+	})
+	targetID, _ := graph.state.TabID(1)
+	zoomed := panesOf(t, graph.state, 1)[0]
+	if !graph.state.SetMagnifiedPane(1, zoomed) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+
+	if !graph.state.MovePane(sourceID, sourcePane, targetID, zoomed, domainworkspace.SideRight) {
+		t.Fatal("MovePane into the zoomed Tab returned false")
+	}
+	// The emptied source Tab is removed, so the target becomes Tab 0.
+	if got := graph.state.TabCount(); got != 1 {
+		t.Fatalf("tabs = %d after the source emptied, want 1", got)
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != zoomed {
+		t.Fatalf("magnified Pane = %q, want the zoomed target %q", got, zoomed)
+	}
+	if got, ok := graph.state.FocusedPaneID(0); !ok || got != zoomed {
+		t.Fatalf("focused Pane = %q, %v; want the zoomed target", got, ok)
+	}
+}
+
+func TestFocusStaysOnTheMagnifiedPane(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	left, right := panesOf(t, graph.state, 0)[0], panesOf(t, graph.state, 0)[1]
+	if !graph.state.SetMagnifiedPane(0, left) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+	if got, _ := graph.state.FocusedPaneID(0); got != left {
+		t.Fatalf("focused Pane = %q after zooming, want the magnified Pane %q", got, left)
+	}
+	for _, direction := range []domainworkspace.FocusDirection{
+		domainworkspace.FocusLeft, domainworkspace.FocusRight,
+		domainworkspace.FocusUp, domainworkspace.FocusDown,
+	} {
+		if graph.state.FocusPane(direction) {
+			t.Fatalf("FocusPane(%q) moved focus onto a hidden Pane", direction)
+		}
+	}
+	if graph.state.FocusPaneID(0, right) {
+		t.Fatal("FocusPaneID focused a hidden member")
+	}
+	if got, _ := graph.state.FocusedPaneID(0); got != left {
+		t.Fatalf("focused Pane = %q, want the magnified Pane to keep focus", got)
+	}
+}
+
+// TestSplitWhileMagnifiedRestoresTheSplit pins the split invariant: a split of
+// the zoomed Pane reveals the split (so the new Pane is visible) and puts
+// focus on the new Pane instead of leaving it hidden behind the zoom.
+func TestSplitWhileMagnifiedRestoresTheSplit(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	left := panesOf(t, graph.state, 0)[0]
+	if !graph.state.SetMagnifiedPane(0, left) {
+		t.Fatal("SetMagnifiedPane rejected a member Pane")
+	}
+	if err := graph.state.SplitDown(); err != nil {
+		t.Fatalf("SplitDown while magnified: %v", err)
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != "" {
+		t.Fatalf("magnified Pane = %q after splitting, want the split restored", got)
+	}
+	focused, ok := graph.state.FocusedPaneID(0)
+	if !ok || focused == left {
+		t.Fatalf("focused Pane = %q, %v; want the new Pane", focused, ok)
+	}
+	if got := len(panesOf(t, graph.state, 0)); got != 3 {
+		t.Fatalf("panes = %d after the split, want 3", got)
+	}
+	if path := focusPathOf(t, graph.state); len(path) == 0 {
+		t.Fatal("the split left no focus path")
+	}
+}
+
+// TestMovePaneIntoAnEmptyTabAdoptsTheSourcePane pins empty-Workspace
+// recovery: a Tab with no Panes takes the dropped Pane as its root.
+func TestMovePaneIntoAnEmptyTabAdoptsTheSourcePane(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the split", func() bool {
+		return len(graph.state.WorkspacePayload().Panes) == 2
+	})
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	sourceID, _ := graph.state.TabID(0)
+	targetID, _ := graph.state.TabID(1)
+	left := panesOf(t, graph.state, 0)[0]
+
+	// An emptied Tab is the recovery case: no Pane means no drop target.
+	target := graph.state.tabs[1]
+	target.panes = map[model.PaneID]*pane{}
+	target.Root = nil
+	target.FocusPath = nil
+
+	if !graph.state.MovePaneToTab(sourceID, left, targetID) {
+		t.Fatal("MovePaneToTab rejected an empty target Tab")
+	}
+	if got := panesOf(t, graph.state, 1); !equalPaneIDs(got, []model.PaneID{left}) {
+		t.Fatalf("target panes = %v, want the adopted Pane", got)
+	}
+	if graph.state.TabCount() != 2 {
+		t.Fatalf("tabs = %d, want the source Tab to keep its other Pane", graph.state.TabCount())
+	}
+}
+
+func equalPaneIDs(got, want []model.PaneID) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestWorkspacePayloadRoundTripsThroughRestore(t *testing.T) {
@@ -1319,5 +1824,145 @@ func TestETDuplicateGetsItsOwnResumeKey(t *testing.T) {
 	}
 	if len(keys) != 2 {
 		t.Fatalf("workspace holds %d distinct ET resume keys, want 2: %+v", len(keys), panes)
+	}
+}
+
+func (f *workspaceFactory) transportAt(index int) *fakeTransport {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if index < 0 || index >= len(f.transports) {
+		return nil
+	}
+	return f.transports[index]
+}
+
+// sendTransportOutput delivers one chunk to a live Session without blocking
+// forever if the Session already closed the transport.
+func sendTransportOutput(t *testing.T, transport *fakeTransport, text string) {
+	t.Helper()
+	select {
+	case transport.output <- []byte(text):
+	case <-transport.closed:
+		t.Fatalf("the transport closed before %q could be delivered", text)
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out delivering %q", text)
+	}
+}
+
+// TestRestoreResolvesASavedLocalHostsStartupCommand is the workspace half of
+// the Local Host fix: the descriptor names a saved Host, so the restored
+// Session keeps that association, runs its startup command once after the
+// shell's prompt, and never repeats it on later output.
+func TestRestoreResolvesASavedLocalHostsStartupCommand(t *testing.T) {
+	payload := domainworkspace.Payload{
+		Version:   domainworkspace.PayloadVersion,
+		ActiveTab: 0,
+		Tabs: []domainworkspace.RestoredTab{{
+			ID: "tab-local", Number: 1, Root: domainworkspace.NewPaneNode("pane-local"),
+		}},
+		Panes: []domainworkspace.RestoredPane{{
+			ID: "pane-local",
+			Session: domainworkspace.SessionDescriptor{
+				Kind: domainworkspace.SessionLocal, Label: "local-host",
+				Number: 1, HostID: "host-local",
+			},
+		}},
+	}
+	graph := newWorkspaceGraph(t)
+	graph.hosts["host-local"] = domainvault.Host{
+		ID: "host-local", Label: "local-host", Protocol: domainvault.ProtocolLocal,
+		StartupCommand: "echo restored",
+	}
+	graph.repo.payload = payload
+	graph.state.Restore(context.Background())
+	graph.flushUntil(t, "the restored local Pane", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, "pane-local")
+		return ok && !info.Pending && info.Surface != nil
+	})
+
+	spec := graph.factory.lastSpec()
+	if spec.Kind != appsession.KindLocal || spec.HostID != "host-local" {
+		t.Fatalf("restored spec = %+v, want the saved Local Host association", spec)
+	}
+	if spec.StartupCommand != "echo restored" {
+		t.Fatalf("restored StartupCommand = %q, want the Host's command", spec.StartupCommand)
+	}
+
+	transport := graph.factory.transportAt(0)
+	sendTransportOutput(t, transport, "$ ")
+	waitTransportInput(t, transport, "echo restored\r")
+
+	before := graph.sessions[0].Snapshot().LastActivity
+	sendTransportOutput(t, transport, "later output")
+	waitFor(t, "the later output", func() bool {
+		return graph.sessions[0].Snapshot().LastActivity.After(before)
+	})
+	if got := strings.Count(transport.inputString(), "echo restored\r"); got != 1 {
+		t.Fatalf("the startup command ran %d times on the restored connection", got)
+	}
+}
+
+// TestRestoredSSHPaneReplaysItsStartupCommandOncePerReconnect proves the
+// restore path keeps the Host's startup command and that each reconnect
+// replays it once, not once per output burst.
+func TestRestoredSSHPaneReplaysItsStartupCommandOncePerReconnect(t *testing.T) {
+	payload := domainworkspace.Payload{
+		Version:   domainworkspace.PayloadVersion,
+		ActiveTab: 0,
+		Tabs: []domainworkspace.RestoredTab{{
+			ID: "tab-ssh", Number: 1, Root: domainworkspace.NewPaneNode("pane-ssh"),
+		}},
+		Panes: []domainworkspace.RestoredPane{{
+			ID: "pane-ssh",
+			Session: domainworkspace.SessionDescriptor{
+				Kind: domainworkspace.SessionSSH, Label: "prod",
+				HostID: "host-ssh", Hostname: "prod.example.com", Port: 22,
+				Username: "root",
+			},
+		}},
+	}
+	graph := newWorkspaceGraph(t)
+	graph.hosts["host-ssh"] = domainvault.Host{
+		ID: "host-ssh", Label: "prod", Hostname: "prod.example.com", Port: 22,
+		Username: "root", Protocol: domainvault.ProtocolSSH,
+		StartupCommand: "echo restored",
+	}
+	graph.repo.payload = payload
+	graph.state.Restore(context.Background())
+	graph.flushUntil(t, "the restored SSH Pane", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, "pane-ssh")
+		return ok && !info.Pending && info.Surface != nil
+	})
+
+	first := graph.factory.transportAt(0)
+	sendTransportOutput(t, first, "$ ")
+	waitTransportInput(t, first, "echo restored\r")
+
+	before := graph.sessions[0].Snapshot().LastActivity
+	sendTransportOutput(t, first, "more output\r\n")
+	waitFor(t, "the output after restore", func() bool {
+		return graph.sessions[0].Snapshot().LastActivity.After(before)
+	})
+	if got := strings.Count(first.inputString(), "echo restored\r"); got != 1 {
+		t.Fatalf("the startup command ran %d times on the restored connection", got)
+	}
+
+	if !graph.sessions[0].ReconnectNow() {
+		t.Fatal("ReconnectNow was refused")
+	}
+	waitFor(t, "the reconnected transport", func() bool { return graph.factory.specCount() == 2 })
+	second := graph.factory.transportAt(1)
+	if got := second.inputString(); got != "" {
+		t.Fatalf("the startup command ran before the reconnected shell spoke: %q", got)
+	}
+	sendTransportOutput(t, second, "$ ")
+	waitTransportInput(t, second, "echo restored\r")
+	before = graph.sessions[0].Snapshot().LastActivity
+	sendTransportOutput(t, second, "after reconnect\r\n")
+	waitFor(t, "the output after reconnect", func() bool {
+		return graph.sessions[0].Snapshot().LastActivity.After(before)
+	})
+	if got := strings.Count(second.inputString(), "echo restored\r"); got != 1 {
+		t.Fatalf("the startup command replayed %d times after reconnect", got)
 	}
 }

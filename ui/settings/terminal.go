@@ -32,6 +32,7 @@ type Terminal interface {
 	SetKeywordHighlightRules([]domainterminal.KeywordHighlightRule) error
 	SetConnectionLogRetention(count, days int) error
 	SetHistoryCaptureHookEnabled(bool) error
+	SetLegacyAlgorithms(bool) error
 }
 
 // terminalResetter is implemented by the application service. Keeping it
@@ -269,6 +270,12 @@ func (s *TerminalState) SetKeywordHighlightRuleEnabled(id string, enabled bool) 
 // hook.
 func (s *TerminalState) SetHistoryCaptureHookEnabled(enabled bool) bool {
 	return s.apply(func() error { return s.terminal.SetHistoryCaptureHookEnabled(enabled) })
+}
+
+// SetLegacyAlgorithms stores whether an Unsaved Host may offer the legacy
+// algorithm list. A saved Host keeps its own per-Host setting.
+func (s *TerminalState) SetLegacyAlgorithms(enabled bool) bool {
+	return s.apply(func() error { return s.terminal.SetLegacyAlgorithms(enabled) })
 }
 
 // SetConnectionLogRetention stores how many connection logs are kept and for

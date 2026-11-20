@@ -69,6 +69,13 @@ func View(s *State) func(*ui.Context) {
 						})
 					})
 				}
+				if alerts := s.PartitionAlerts(); len(alerts) > 0 && !s.Editing() {
+					threshold := strconv.FormatFloat(domainmonitor.DiskAlertPercent, 'f', -1, 64)
+					ui.Box(c).FillWidth().Padding(0, 20, 8, 20).Children(func() {
+						kit.Notice(c, icons.TriangleAlert, t.Warning,
+							m.MonitoringPartitionAlert(threshold, alertMounts(alerts)), nil)
+					})
+				}
 				ui.Column(c).Grow(1).MinHeight(0).FillWidth().Children(func() {
 					switch {
 					case !ok:
@@ -323,6 +330,7 @@ func hostCard(c *ui.Context, s *State, m locales.Messages, t *ui.Theme,
 				points, func(p domainmonitor.Point) float64 { return p.Memory }, 100, uitheme.SeriesMemory)
 		})
 		partitions(c, m, t, ready, sample, 2)
+		diskIOTotal(c, m, t, ready, sample)
 		ui.Row(c).FillWidth().Gap(14).AlignItems(ui.Center).Children(func() {
 			rate(c, t, icons.ArrowDown, uitheme.SeriesCPU, unknownUnless(ready, sample.Rx))
 			rate(c, t, icons.ArrowUp, uitheme.SeriesUpload, unknownUnless(ready, sample.Tx))
@@ -641,7 +649,10 @@ func cell(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, key string,
 		} else if ready {
 			percent = sample.Disk
 		}
-		ui.Column(c).FillWidth().Children(func() { resourceBar(c, t, diskLabel(sample, ready), percent, "") })
+		ui.Column(c).FillWidth().Gap(3).Children(func() {
+			resourceBar(c, t, diskLabel(sample, ready), percent, "")
+			diskIO(c, m, t, ready, sample)
+		})
 	case "network":
 		ui.Column(c).Gap(2).Children(func() {
 			rate(c, t, icons.ArrowDown, uitheme.SeriesCPU, unknownUnless(ready, sample.Rx))
@@ -681,6 +692,67 @@ func diskLabel(sample domainmonitor.Sample, ready bool) string {
 	return "/"
 }
 
+// diskIO lists one row per physical device with its read and write rates. A
+// platform that reports no counters draws nothing, so the disk-usage view is
+// unchanged there.
+func diskIO(c *ui.Context, m locales.Messages, t *ui.Theme, ready bool, sample domainmonitor.Sample) {
+	if !ready || len(sample.DiskIO) == 0 {
+		return
+	}
+	ui.Column(c).FillWidth().Gap(2).Tooltip(m.MonitoringDiskIO()).Children(func() {
+		for _, device := range sample.DiskIO {
+			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, device.Device).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted).
+					Grow(1).MinWidth(0).SingleLine()
+				diskRate(c, t, icons.ArrowDown, uitheme.SeriesCPU, m.MonitoringDiskRead(),
+					device.ReadBytesPerSecond)
+				diskRate(c, t, icons.ArrowUp, uitheme.SeriesUpload, m.MonitoringDiskWrite(),
+					device.WriteBytesPerSecond)
+			})
+		}
+	})
+}
+
+// diskIOTotal is a card's one-line aggregate: the cards are fixed height, so
+// they summarize the per-device rows the list and detail show.
+func diskIOTotal(c *ui.Context, m locales.Messages, t *ui.Theme, ready bool, sample domainmonitor.Sample) {
+	if !ready || len(sample.DiskIO) == 0 {
+		return
+	}
+	read, write := 0.0, 0.0
+	for _, device := range sample.DiskIO {
+		if !domainmonitor.Valid(device.ReadBytesPerSecond) || !domainmonitor.Valid(device.WriteBytesPerSecond) {
+			read, write = math.NaN(), math.NaN()
+			break
+		}
+		read += device.ReadBytesPerSecond
+		write += device.WriteBytesPerSecond
+	}
+	ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, m.MonitoringDiskIO()).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted).
+			Grow(1).MinWidth(0).SingleLine()
+		diskRate(c, t, icons.ArrowDown, uitheme.SeriesCPU, m.MonitoringDiskRead(), read)
+		diskRate(c, t, icons.ArrowUp, uitheme.SeriesUpload, m.MonitoringDiskWrite(), write)
+	})
+}
+
+func diskRate(c *ui.Context, t *ui.Theme, icon string, color ui.Color, label string, value float64) {
+	ui.Row(c).Gap(2).AlignItems(ui.Center).Tooltip(label).Children(func() {
+		kit.IconSized(c, icon, kit.M(c).Icon.Small).TextColor(color)
+		ui.Text(c, rateText(value)).FontSize(kit.M(c).Font.Caption2).TextColor(t.TextMuted).NoWrap()
+	})
+}
+
+// alertMounts labels each alert with its Host, so the same mount on two Hosts
+// stays distinguishable.
+func alertMounts(alerts []PartitionAlert) string {
+	mounts := make([]string, len(alerts))
+	for index, alert := range alerts {
+		mounts[index] = alert.Host + ": " + alert.Disk.MountPoint
+	}
+	return strings.Join(mounts, ", ")
+}
+
 // detail is a live Host's side panel: every reading of its last sample.
 func detail(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width float32) {
 	id := s.DetailID()
@@ -705,23 +777,34 @@ func detail(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 			metricBlock(c, t, m.MonitoringMemory(), unknownUnless(ready, sample.Memory), memorySub(ready, sample),
 				points, func(p domainmonitor.Point) float64 { return p.Memory }, 100, uitheme.SeriesMemory)
 		})
-		if ready && domainmonitor.Valid(sample.GPU) {
-			kit.FormGroup(c, m.MonitoringGpu(), func() {
-				if sample.GPUName != "" {
-					ui.Text(c, sample.GPUName).FontSize(kit.M(c).Font.Footnote).SingleLine()
+		if ready {
+			// One group per device: a single-GPU Host looks exactly as before,
+			// and a multi-GPU Host gets a distinct row for each.
+			for index, gpu := range sample.GPUs {
+				title := m.MonitoringGpu()
+				if len(sample.GPUs) > 1 {
+					title = m.MonitoringGpu() + " " + strconv.Itoa(index+1)
 				}
-				resourceBar(c, t, m.MonitoringGpuUtil(), sample.GPU, "")
-				if sample.GPUMemTotalMB > 0 {
-					resourceBar(c, t, m.MonitoringGpuMemory(), sample.GPUMemUsedMB/sample.GPUMemTotalMB*100,
-						mbText(sample.GPUMemUsedMB)+" / "+mbText(sample.GPUMemTotalMB))
-				}
-			})
+				kit.FormGroup(c, title, func() {
+					if gpu.Name != "" {
+						ui.Text(c, gpu.Name).FontSize(kit.M(c).Font.Footnote).SingleLine()
+					}
+					resourceBar(c, t, m.MonitoringGpuUtil(), gpu.Utilization, "")
+					if gpu.MemTotalMB > 0 {
+						resourceBar(c, t, m.MonitoringGpuMemory(), gpu.MemUsedMB/gpu.MemTotalMB*100,
+							mbText(gpu.MemUsedMB)+" / "+mbText(gpu.MemTotalMB))
+					}
+				})
+			}
 		}
 		kit.FormGroup(c, m.MonitoringNetwork(), func() {
 			infoRow(c, t, m.MonitoringDownload(), rateText(unknownUnless(ready, sample.Rx)))
 			infoRow(c, t, m.MonitoringUpload(), rateText(unknownUnless(ready, sample.Tx)))
 		})
 		kit.FormGroup(c, "", func() { partitions(c, m, t, ready, sample, 0) })
+		if ready && len(sample.DiskIO) > 0 {
+			kit.FormGroup(c, m.MonitoringDiskIO(), func() { diskIO(c, m, t, ready, sample) })
+		}
 		kit.FormGroup(c, m.MonitoringSystem(), func() {
 			infoRow(c, t, m.MonitoringHost(), orDash(sample.Hostname))
 			infoRow(c, t, "OS", orDash(sample.OSName))

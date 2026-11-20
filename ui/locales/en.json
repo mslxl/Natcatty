@@ -75,6 +75,21 @@
   "menuFile": "File",
   "menuView": "View",
   "menuNewTab": "New Tab",
+  "menuQuickConnect": "Quick Connect",
+  "quickConnectDescription": "Open a Session without saving a Host to the Vault.",
+  "quickConnectProtocol": "Protocol",
+  "quickConnectAddress": "Address",
+  "quickConnectAddressPlaceholder": "host or IP address",
+  "quickConnectPort": "Port",
+  "quickConnectUsername": "Username",
+  "quickConnectPassword": "Password",
+  "quickConnectAddressRequired": "Enter an address.",
+  "quickConnectPortInvalid": "Enter a port between 1 and 65535.",
+  "quickConnectUnavailable": "Sessions are unavailable.",
+  "quickConnectDiscardTitle": "Discard quick connect?",
+  "quickConnectDiscardDescription": "The details you typed are not saved anywhere.",
+  "quickConnectDiscard": "Discard",
+  "quickConnectKeepEditing": "Keep editing",
   "menuCloseTab": "Close Tab",
   "menuQuit": "Quit",
   "tabTitle": "Tab {number}",
@@ -191,12 +206,18 @@
   },
   "vaultHostProxyProfile": "Proxy Profile",
   "vaultHostProxyProfileHint": "A Host's own proxy settings win over the selected profile.",
+  "vaultProxyDirect": "Direct (no proxy)",
+  "vaultProxyDirectHint": "Direct (no proxy) stops inheritance, including the Group and app-wide defaults.",
   "vaultNetworkProfile": "Network Profile",
   "vaultHostNetworkProfileHint": "The first jump's Network Profile wins; otherwise this Host's. Later hops never use one.",
   "vaultGroupNetworkProfileHint": "Member Hosts inherit this unless they select their own. The first jump's profile wins.",
   "vaultNetworkProfileSourceHost": "Set on this Host",
   "vaultNetworkProfileSourceHostGroup": "Set on this Host Group",
   "vaultNetworkProfileInherited": "Inherited from {path} ({label})",
+  "vaultX11Inherited": "Inherited from {path}",
+  "vaultHostJumpHosts": "Jump Hosts",
+  "vaultHostJumpHostsHint": "Listed first to last, closest to the client.",
+  "vaultGroupJumpHostsHint": "Member Hosts inherit this chain unless they configure their own. Hops follow the order they were checked.",
   "vaultProxyListTitle": "Proxy Profiles ({count})",
   "@vaultProxyListTitle": {
     "description": "The Vault's Proxy Profile list heading and its profile count.",
@@ -572,6 +593,10 @@
   },
   "vaultKnownHostsEmpty": "No Known Hosts yet. Trusted host keys appear after a connection.",
   "vaultKnownHostTrusted": "Trusted",
+  "vaultKnownHostCertificateAuthority": "CA anchor",
+  "@vaultKnownHostCertificateAuthority": {
+    "description": "Marks a Known Host record whose fingerprint is the signing CA of a host certificate, not a presented key."
+  },
   "vaultKnownHostRemove": "Remove trust",
   "vaultKnownHostRemoveConfirm": "Remove trust for {endpoint}? The next connection will ask again.",
   "@vaultKnownHostRemoveConfirm": {
@@ -586,6 +611,8 @@
   "vaultHostTags": "Tags",
   "vaultHostTagsHint": "Separate tags with commas.",
   "vaultHostNotes": "Notes",
+  "vaultHostStartupCommand": "Startup command",
+  "vaultHostStartupCommandHint": "Typed once after the shell is ready on every connection, including reconnects. Leave empty for none.",
   "vaultHostPinned": "Pin this Host",
   "vaultHostCredentialsNote": "Passwords are encrypted before they are saved.",
   "vaultHostDeleteConfirm": "Delete Host “{label}”? This cannot be undone.",
@@ -837,6 +864,7 @@
   "vaultImportIssuePasswordUnmatched": "A saved password could not be matched to a Host.",
   "vaultImportIssueDuplicateInFile": "This endpoint repeats an earlier row.",
   "vaultImportIssueInvalidJump": "A ProxyJump target is not declared; an inline Host was added.",
+  "vaultImportIssueUnresolvedJump": "A ProxyJump target is not declared in this file, so the Host was skipped.",
   "vaultImportIssueCyclicJump": "A ProxyJump cycle was removed.",
   "vaultImportIssueKeyUnreadable": "The referenced key file could not be read.",
   "vaultImportIssuePassphraseConflict": "The key is encrypted but no usable passphrase was provided.",
@@ -851,6 +879,14 @@
   "vaultHostPasswordStored": "Password stored",
   "vaultHostPasswordKeep": "A password is stored. Leave blank to keep it.",
   "vaultHostPasswordHint": "Stored encrypted and never shown again.",
+  "vaultHostTOTP": "TOTP",
+  "vaultHostTOTPHint": "Paste an otpauth:// URI or a Base32 secret. It is stored encrypted and never shown again.",
+  "vaultHostTOTPKeep": "A TOTP authenticator is stored. Leave blank to keep it.",
+  "vaultHostTOTPPlaceholder": "otpauth://totp/... or Base32 secret",
+  "vaultHostTOTPImportQR": "Import QR image",
+  "vaultHostTOTPRemove": "Remove stored authenticator",
+  "vaultProblemTOTP": "Enter a valid otpauth://totp URI or Base32 secret.",
+  "vaultProblemTOTPImage": "The image could not be read, or it contains no TOTP QR code.",
   "vaultProblemSecretField": "The password could not be stored.",
   "vaultProblemSecretsUnavailable": "Encrypted storage is unavailable. Choose how to protect credentials.",
   "vaultProblemSecretsLocked": "Unlock encrypted storage to save credentials.",
@@ -941,6 +977,15 @@
   "serialFlowNone": "None",
   "serialFlowXONXOFF": "XON/XOFF (Software)",
   "serialFlowRTSCTS": "RTS/CTS (Hardware)",
+  "serialAutoLoginEnabled": "Auto-login after connecting",
+  "serialAutoLoginHint": "Answer the console's login and password prompts from this profile. The password is kept in the encrypted vault secret store.",
+  "serialAutoLoginUsername": "Username",
+  "serialAutoLoginPassword": "Password",
+  "serialAutoLoginPasswordPlaceholder": "Leave blank to keep the saved password",
+  "serialAutoLoginForgetPassword": "Forget saved password",
+  "serialAutoLoginAttempts": "Login attempts",
+  "serialAutoLoginReplies": "Expect / reply rules",
+  "serialAutoLoginRepliesPlaceholder": "expect => reply, one per line",
   "serialConnect": "Connect",
   "serialCancel": "Cancel",
   "serialInvalidConfiguration": "Check the serial port settings.",
@@ -1008,6 +1053,34 @@
   "hostKeyPromptFingerprint": "{keyType} fingerprint: {fingerprint}",
   "@hostKeyPromptFingerprint": {
     "description": "The live host key's type and SHA-256 fingerprint.",
+    "placeholders": {
+      "keyType": {
+        "type": "String",
+        "example": "ssh-ed25519"
+      },
+      "fingerprint": {
+        "type": "String",
+        "example": "uqlUaJEm3yLsW7r4i4a5I0LgW5jDcMKWYoNA/8Nn0Eo"
+      }
+    }
+  },
+  "hostKeyPromptCertificateFingerprint": "Certificate fingerprint ({keyType}): {fingerprint}",
+  "@hostKeyPromptCertificateFingerprint": {
+    "description": "The presented host certificate's type and SHA-256 fingerprint.",
+    "placeholders": {
+      "keyType": {
+        "type": "String",
+        "example": "ssh-ed25519-cert-v01@openssh.com"
+      },
+      "fingerprint": {
+        "type": "String",
+        "example": "uqlUaJEm3yLsW7r4i4a5I0LgW5jDcMKWYoNA/8Nn0Eo"
+      }
+    }
+  },
+  "hostKeyPromptCertificateAuthority": "Issued by certificate authority ({keyType}): {fingerprint}",
+  "@hostKeyPromptCertificateAuthority": {
+    "description": "The CA that signed the presented host certificate: trusting the certificate delegates trust to this CA.",
     "placeholders": {
       "keyType": {
         "type": "String",
@@ -1140,6 +1213,18 @@
   "vaultHostNetworkDeviceHint": "For switches, routers, and firewalls reached over SSH. Automation sends commands as-is without a shell wrapper, and exit codes are unavailable. Only enable this for devices that do not run a standard shell.",
   "vaultHostAutoAttachTmux": "Auto-attach tmux",
   "vaultHostAutoAttachTmuxHint": "Keeps the remote shell alive in a tmux session named after this Host. Detaching leaves it running and the next connection reattaches. Plain SSH only; tmux must already be installed.",
+  "vaultHostInputCompatibility": "Terminal behavior",
+  "vaultHostInputCompatibilityHint": "Only affects keys typed in a plain SSH session. Leave Default unless the remote shell misreads Enter or Backspace.",
+  "vaultHostNewlineMode": "Enter key",
+  "vaultHostNewlineDefault": "Default (carriage return)",
+  "vaultHostNewlineLF": "Line feed",
+  "vaultHostNewlineCRLF": "Carriage return and line feed",
+  "vaultHostBackspaceMode": "Backspace key",
+  "vaultHostBackspaceDefault": "Default (DEL)",
+  "vaultHostBackspaceCtrlH": "Ctrl-H",
+  "vaultHostLineEditingMode": "Line editing",
+  "vaultHostLineEditingDefault": "Default (per character)",
+  "vaultHostLineEditingByte": "Byte at a time",
   "vaultHostFileProtocol": "File protocol",
   "vaultHostFileProtocolHint": "Automatic tries SFTP, then falls back to SCP only when the server has no SFTP subsystem.",
   "vaultHostSFTPSudo": "Use sudo for SFTP",
@@ -1394,6 +1479,18 @@
     }
   },
   "quitConfirmConfirm": "Quit",
+  "quitTransferTitle": "Quit Natcatty?",
+  "quitTransferMessage": "{count, plural, one {# Transfer is still unfinished. Quit anyway?} other {# Transfers are still unfinished. Quit anyway?}}",
+  "@quitTransferMessage": {
+    "description": "The quit intent prompt naming how many unfinished Transfers the quit would abandon.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitTransferUnknown": "Unfinished Transfers could not be checked. Quit anyway?",
   "settingsTrayTitle": "System Tray",
   "settingsTrayDescription": "Keep Natcatty in the notification area.",
   "settingsShowTrayIcon": "Show tray icon",
@@ -1523,6 +1620,7 @@
   "notificationUnknownTarget": "a Host",
   "deepLinkProblemInvalid": "Natcatty could not open that link.",
   "deepLinkProblemUnsupported": "Natcatty does not support that link or Host yet.",
+  "customShellUnavailable": "The custom shell could not be found; opened the OS login shell.",
   "sessionActivityBusy": "Terminal activity",
   "sessionActivityIdle": "No terminal activity",
   "sessionCommandIdle": "No command",
@@ -1536,6 +1634,8 @@
   "sessionLoggingPath": "Log: {path}",
   "sessionLoggingFailed": "The Session log could not be written.",
   "sessionLoggingNoDirectory": "Choose a log folder in Settings.",
+  "sessionLoggingOpen": "Open log file",
+  "sessionLoggingNoFile": "No log file for this Session yet.",
   "sessionLogFormatText": "Text",
   "sessionLogFormatRaw": "Raw",
   "sessionLogFormatHTML": "HTML",
@@ -1552,6 +1652,16 @@
   "sessionClipboardDeny": "Deny",
   "settingsTerminalTitle": "Terminal",
   "settingsTerminalDescription": "Session logging and terminal program behavior.",
+  "settingsTerminalShiftEnter": "Shift+Enter sends ESC+CR",
+  "settingsTerminalShiftEnterDescription": "Send Escape and Enter, the legacy Alt+Enter sequence most TUI programs read as a newline instead of a submit. Turning this off leaves Shift+Enter to the terminal's own encoding.",
+  "settingsLocalShellTitle": "Local shell",
+  "settingsLocalShellDescription": "The program a new local terminal starts. Leave it empty to use the OS login shell.",
+  "settingsLocalShellPath": "Shell path",
+  "settingsLocalShellArguments": "Arguments",
+  "settingsLocalShellArgumentsDescription": "Separate arguments with spaces. Quote an argument that contains spaces; a backslash escapes a quote.",
+  "settingsLocalShellResolved": "Resolved shell",
+  "settingsLocalShellOsDefault": "OS login shell",
+  "settingsLocalShellMissing": "Not found: {path}. The OS login shell will be used.",
   "settingsTerminalLoggingTitle": "Session logging",
   "settingsTerminalLoggingDescription": "Write Session output to a folder you choose.",
   "settingsLogEnabled": "Log new Sessions automatically",
@@ -1596,6 +1706,9 @@
   "settingsKeywordHighlightRuleDebug": "Debug",
   "settingsKeywordHighlightRuleIPMAC": "URL, IP & MAC",
   "settingsKeywordHighlightRuleUnixPath": "Unix paths",
+  "settingsLegacyAlgorithmsTitle": "Legacy SSH algorithms",
+  "settingsLegacyAlgorithmsDescription": "Offer older ciphers, key exchanges, and host-key types to Unsaved Hosts. A saved Host uses its own algorithm settings.",
+  "settingsLegacyAlgorithmsEnabled": "Use legacy algorithms for Unsaved Hosts",
   "settingsTerminalSaveFailed": "The terminal settings could not be saved.",
   "@sessionCommandRunning": {
     "description": "The command line that is running.",
@@ -1689,9 +1802,24 @@
   "composeTargetFocused": "Focused Session",
   "composeTargetFocusedNamed": "Focused: {name}",
   "composeTargetBroadcast": "Broadcast ({count, plural, one {# Session} other {# Sessions}})",
+  "composeTargetCustom": "Compose: {count, plural, one {# Session} other {# Sessions}}",
+  "composeTargetNone": "No compose targets",
+  "composeTargetFollow": "Follow broadcast or focused Session",
+  "composeTargetsDiverged": "Compose targets differ from the broadcast selection.",
   "composeSending": "Sending…",
   "composeSent": "Sent to {delivered, plural, one {# Session} other {# Sessions}}",
   "composeFailed": "Compose was not delivered",
+  "composeDirectoryButton": "Directory",
+  "composeDirectoryTitle": "Insert a path",
+  "composeDirectoryPathLabel": "Path",
+  "composeDirectoryHint": "Insert a path into the draft without running it.",
+  "composeDirectoryUnsupported": "This shell cannot list directories. Type a path and insert it instead.",
+  "composeDirectoryInsert": "Insert",
+  "composeDirectoryUp": "Up",
+  "composeDirectoryUnknownCWD": "This Session has not reported its working directory, so the picker starts at home.",
+  "composeDirectoryLoading": "Loading…",
+  "composeDirectoryFailed": "Could not list this directory.",
+  "composeDirectoryEmpty": "This directory is empty.",
   "@broadcastButtonActive": {
     "description": "The broadcast button while broadcasting is active.",
     "placeholders": {
@@ -2709,6 +2837,34 @@
   },
   "vaultExportUnreadable": "{count, plural, one {# credential could not be read and was left out.} other {# credentials could not be read and were left out.}}",
   "vaultExportOmitted": "{count, plural, one {# stored credential was left out; enable secrets to include it.} other {# stored credentials were left out; enable secrets to include them.}}",
+  "vaultExportJumpHopMissing": "Jump chain for {host} was left out of the CSV: hop {hop} is not part of this export.",
+  "vaultExportJumpHopUnrepresentable": "Jump chain for {host} was left out of the CSV: hop {hop} cannot be written as an SSH jump.",
+  "@vaultExportJumpHopMissing": {
+    "description": "A CSV export dropped a Host's jump chain because a hop was not in the export.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "Client"
+      },
+      "hop": {
+        "type": "String",
+        "example": "Bastion"
+      }
+    }
+  },
+  "@vaultExportJumpHopUnrepresentable": {
+    "description": "A CSV export dropped a Host's jump chain because a hop cannot be represented as an SSH jump.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "Client"
+      },
+      "hop": {
+        "type": "String",
+        "example": "Telnet"
+      }
+    }
+  },
   "@vaultExportUnreadable": {
     "description": "Credentials that could not be decrypted and were left out.",
     "placeholders": {
@@ -2738,6 +2894,7 @@
   "vaultBackupOpen": "Backups",
   "vaultBackupBack": "Back to Vault",
   "vaultBackupIntro": "Encrypted restore points kept on this device. A backup is written after Vault changes and before every restore.",
+  "vaultBackupPortability": "Backups are encrypted with a key stored on this machine. The folder alone is not portable: another machine needs that key to restore them.",
   "vaultBackupRetentionLabel": "Backups to keep",
   "vaultBackupRetentionHint": "Keep {min} to {max} backups. Default {fallback}.",
   "@vaultBackupRetentionHint": {
@@ -2859,6 +3016,7 @@
   "vaultBackupProblemRestore": "Could not restore this backup. The Vault was not changed.",
   "vaultBackupProblemProtective": "The protective backup failed, so the restore was aborted. The Vault was not changed.",
   "vaultBackupProblemCorrupt": "This backup is damaged or was written by an incompatible version.",
+  "vaultBackupProblemKeyMismatch": "This backup cannot be decrypted with this machine's key. It was probably written on another machine or under a different key. The file may also be damaged.",
   "vaultBackupProblemClear": "Could not delete the backups.",
   "vaultExportNotesPageTitle": "Vault Notes export",
   "vaultBackupRestoreConfirmAction": "Restore now",
@@ -2871,6 +3029,9 @@
   "settingsMoshPredictionAlways": "Always",
   "settingsMoshPredictionNever": "Never",
   "settingsMoshPredictionHint": "Mosh can draw keystrokes locally before the server echoes them. Adaptive shows predictions only on links slow enough to need them; Always always shows them; Never waits for the server.",
+  "settingsDefaultProxy": "Default Proxy",
+  "settingsDefaultProxyOff": "Off (direct)",
+  "settingsDefaultProxyHint": "Used when the Host and its Host Group do not choose a proxy. An explicit Direct (no proxy) choice on either still wins.",
   "settingsAreaLayout": "Layout & Tabs",
   "settingsAreaSFTPEditor": "SFTP & Editor",
   "settingsAreaLogs": "Logs & Command History",
@@ -3046,6 +3207,7 @@
   "settingsAssociationSave": "Save association",
   "settingsAssociationEdit": "Edit",
   "settingsAssociationRemove": "Remove",
+  "settingsAssociationRemoveConfirm": "Remove the .{extension} association? Files with this extension will open with the default opener.",
   "settingsAssociationEditing": "Editing .{extension}",
   "settingsAssociationEmpty": "No file associations yet.",
   "settingsAssociationInvalid": "Enter a file extension such as txt.",
@@ -3180,6 +3342,8 @@
   "settingsSyncConflictMerge": "Merge both",
   "settingsSyncBackupsTitle": "Backups",
   "settingsSyncBackupsDescription": "Restore points from this device and cloud copies replaced by a resolution or force push.",
+  "settingsSyncBackupsPortability": "Local restore points are encrypted with a key stored on this machine. Copying the backup folder to another machine is not enough; that machine needs the same key to restore them.",
+  "settingsSyncBackupKeyMismatch": "This backup cannot be decrypted with this machine's key. It was probably created on another machine or under a different key, and the backup folder alone is not portable. The file may also be damaged.",
   "settingsSyncBackupsRefresh": "Refresh backups",
   "settingsSyncBackupsEmpty": "No backups yet.",
   "settingsSyncBackupsProblem": "The local backup list could not be loaded. Cloud copies are still shown.",
@@ -3255,6 +3419,7 @@
   "settingsBindingSnippets": "Open Snippets",
   "settingsBindingBroadcast": "Switch the Broadcast Mode",
   "settingsBindingToggleSidePanel": "Toggle Side Panel",
+  "settingsBindingToggleHostList": "Toggle Host List",
   "settingsBindingOpenSettings": "Open Settings",
   "settingsBindingToggleOpacity": "Toggle Window Transparency",
   "settingsBindingSFTPCopy": "Copy Files",
@@ -3365,6 +3530,34 @@
   "sftpDuplicateTab": "Duplicate tab",
   "@sftpDuplicateTab": {
     "description": "The action that duplicates the active tab."
+  },
+  "sftpDuplicateEntry": "Duplicate",
+  "@sftpDuplicateEntry": {
+    "description": "The action that copies the selected files or folders beside themselves."
+  },
+  "sftpCreateArchive": "Create archive",
+  "@sftpCreateArchive": {
+    "description": "The action that packs the selection into an archive beside it."
+  },
+  "sftpArchiveLabel": "Archive name",
+  "@sftpArchiveLabel": {
+    "description": "The create-archive prompt's field label."
+  },
+  "sftpArchiveFormat": "Format",
+  "@sftpArchiveFormat": {
+    "description": "The create-archive prompt's format chooser."
+  },
+  "sftpArchiveTarGz": "tar.gz",
+  "@sftpArchiveTarGz": {
+    "description": "The gzip tarball format choice."
+  },
+  "sftpArchiveZip": "zip",
+  "@sftpArchiveZip": {
+    "description": "The zip format choice."
+  },
+  "sftpInvalidArchiveName": "Enter a file name ending with .tar.gz or .zip.",
+  "@sftpInvalidArchiveName": {
+    "description": "The validation error for an archive name without the selected extension."
   },
   "sftpCloseTab": "Close tab",
   "@sftpCloseTab": {
@@ -3610,6 +3803,10 @@
   "sftpOpenTooLarge": "This file is too large for the internal editor (10 MB limit).",
   "sftpEditorTitle": "Edit {name}",
   "sftpEditorSave": "Save",
+  "sftpEditorHighlight": "Highlight",
+  "@sftpEditorHighlight": {
+    "description": "The editor's switch that turns syntax highlighting on or off."
+  },
   "sftpEditorClose": "Close",
   "sftpEditorSaving": "Saving…",
   "sftpEditorSaved": "Saved to the remote file.",
@@ -3707,6 +3904,10 @@
   "sftpErrorUnsupported": "That operation is not available.",
   "@sftpErrorUnsupported": {
     "description": "The error shown for an unavailable operation."
+  },
+  "sftpErrorToolMissing": "The remote host does not have the archive tool installed.",
+  "@sftpErrorToolMissing": {
+    "description": "The error shown when the remote host lacks tar or zip."
   },
   "sftpErrorCancelled": "The operation was cancelled.",
   "@sftpErrorCancelled": {
@@ -4164,6 +4365,23 @@
     }
   },
   "monitoringDiskCapacityUnknown": "Capacity unavailable",
+  "monitoringDiskIO": "Disk I/O",
+  "monitoringDiskRead": "Read",
+  "monitoringDiskWrite": "Write",
+  "monitoringPartitionAlert": "Partition usage above {percent}%: {mounts}",
+  "@monitoringPartitionAlert": {
+    "description": "A warning listing the partitions above the capacity threshold.",
+    "placeholders": {
+      "percent": {
+        "type": "String",
+        "example": "80"
+      },
+      "mounts": {
+        "type": "String",
+        "example": "Alpha: /var"
+      }
+    }
+  },
   "monitoringNetwork": "Network",
   "monitoringDownload": "Download",
   "monitoringUpload": "Upload",
@@ -4819,6 +5037,26 @@
   "sysManagerOverviewResources": "Resources",
   "sysManagerPortOwnerUnknown": "Unknown process",
   "sysManagerOverviewCoresLabel": "Cores",
+  "sysManagerTabKubernetes": "Kubernetes",
+  "sysManagerRuntime": "Runtime",
+  "sysManagerRuntimeDocker": "Docker",
+  "sysManagerRuntimePodman": "Podman",
+  "sysManagerRuntimeNerdctl": "nerdctl",
+  "sysManagerNamespace": "Namespace",
+  "sysManagerSearchPods": "Search pods…",
+  "sysManagerPodsCount": "{count, plural, one {# pod} other {# pods}}",
+  "sysManagerNoPods": "No pods.",
+  "sysManagerPod": "Pod",
+  "sysManagerRestarts": "Restarts",
+  "sysManagerAge": "Age",
+  "sysManagerPodHint": "Select a pod to open a terminal in it.",
+  "sysManagerSelectedPod": "{namespace}/{name} · {status}",
+  "sysManagerOpenTerminal": "Open terminal",
+  "sysManagerReasonMissingContainerRuntime": "No container runtime (Docker, Podman, or nerdctl) is available on this Host.",
+  "sysManagerReasonContainerDaemon": "The container engine's daemon is not reachable.",
+  "sysManagerReasonMissingKubectl": "kubectl is not available on this Host.",
+  "sysManagerReasonKubernetesForbidden": "The cluster refused access to Kubernetes resources.",
+  "sysManagerReasonClusterUnreachable": "The Kubernetes cluster did not answer.",
   "vaultHostMoshServerPath": "mosh-server path",
   "vaultHostMoshServerPathHint": "Remote mosh-server binary. Leave blank to use the Host's PATH.",
   "vaultHostMoshRestrictionHint": "Mosh Sessions cannot use jump Hosts or proxies.",
@@ -4922,10 +5160,20 @@
   "settingsSyncConvergentReasonDamaged": "The encrypted v2 payload is missing, damaged, or does not match its materialized data.",
   "settingsSyncConvergentReasonNoBaseline": "This device and the cloud hold different data and there is no trusted baseline, so edits cannot be distinguished from deletions.",
   "settingsSyncConvergentReasonConflict": "Unresolved legacy edits would be lost by the merge.",
+  "settingsSyncConvergentReasonChanged": "One or more conflicts changed since they were shown. Nothing was applied; review the updated values and choose again.",
   "settingsSyncConvergentReasonShrink": "The migration would shrink the Vault beyond the destructive-sync guard.",
   "settingsSyncConvergentReasonEmpty": "There is no syncable data to initialize.",
   "settingsSyncConvergentReasonCorruptBaseline": "The stored legacy baseline cannot be decrypted or verified.",
   "settingsSyncConvergentReasonUnknown": "The migration was refused for a reason this version does not recognize.",
+  "settingsSyncConvergentConflictsTitle": "{count} fields conflict",
+  "settingsSyncConvergentConflictEntry": "{family} {id}: {field}",
+  "settingsSyncConvergentConflictFieldPresence": "record presence",
+  "settingsSyncConvergentConflictValues": "This device: {local} · Cloud: {remote}",
+  "settingsSyncConvergentConflictValueMissing": "not set",
+  "settingsSyncConvergentConflictValuePresent": "present",
+  "settingsSyncConvergentConflictValueHidden": "hidden",
+  "settingsSyncConvergentKeepLocalAll": "Keep this device for remaining conflicts",
+  "settingsSyncConvergentKeepRemoteAll": "Keep the cloud copy for remaining conflicts",
   "settingsSyncConvergentDivergenceTitle": "Replicas diverged",
   "settingsSyncConvergentDivergenceDescription": "The provider and this device claim the same causal history but hold different data. Nothing was overwritten automatically.",
   "settingsSyncConvergentDivergenceKind": "Divergence kind: {kind}",
@@ -4946,6 +5194,7 @@
   "settingsSyncConvergentDivergenceUnstable": "The replicas did not satisfy all three verification rounds.",
   "settingsSyncConvergentDivergenceUnknown": "The divergence is not a recognized kind.",
   "settingsSyncProblemConvergentMigration": "Convergent sync could not migrate safely. Review the refusal details; nothing was overwritten.",
+  "settingsSyncProblemConvergentConflictChanged": "A conflict changed while you were deciding. Nothing was applied; review the updated values and choose again.",
   "settingsSyncProblemConvergentDivergence": "Convergent replicas diverged. No automatic overwrite was made.",
   "settingsSyncProblemConvergentCorrupt": "The encrypted convergent sync record is damaged or partially migrated.",
   "settingsSyncProblemConvergentPaused": "Convergent sync is paused. Resume it to sync; the legacy engine is not used.",
@@ -5525,5 +5774,35 @@
   "settingsAtuinDetailsServer": "Server version: {version}",
   "settingsAtuinDetailsLastSync": "Last sync: {time}",
   "settingsAtuinDetailsPending": "Unsynced uploads: {count}",
-  "settingsAtuinDetailsNextRetry": "Next retry: {time}"
+  "settingsAtuinDetailsNextRetry": "Next retry: {time}",
+  "commandDescriptionLs": "List directory contents",
+  "commandDescriptionCd": "Change the current directory",
+  "commandDescriptionPwd": "Print the working directory",
+  "commandDescriptionCat": "Print files to standard output",
+  "commandDescriptionCp": "Copy files and directories",
+  "commandDescriptionMv": "Move or rename files and directories",
+  "commandDescriptionRm": "Remove files and directories",
+  "commandDescriptionMkdir": "Create directories",
+  "commandDescriptionFind": "Search for files in a directory tree",
+  "commandDescriptionGrep": "Search text for lines matching a pattern",
+  "commandDescriptionSed": "Edit text with a stream editor",
+  "commandDescriptionAwk": "Process text field by field",
+  "commandDescriptionSort": "Sort lines of text",
+  "commandDescriptionHead": "Print the first lines of a file",
+  "commandDescriptionTail": "Print the last lines of a file",
+  "commandDescriptionChmod": "Change file permissions",
+  "commandDescriptionPs": "List running processes",
+  "commandDescriptionKill": "Send a signal to a process",
+  "commandDescriptionDf": "Show filesystem disk usage",
+  "commandDescriptionTar": "Archive files into a tar file",
+  "commandDescriptionSsh": "Connect to a remote host over SSH",
+  "commandDescriptionCurl": "Transfer data from a URL",
+  "commandDescriptionGit": "Track and manage source changes",
+  "commandDescriptionMake": "Build targets from a Makefile",
+  "commandDescriptionSudo": "Run a command as another user",
+  "commandDescriptionMan": "Show a command's manual page",
+  "commandDescriptionVim": "Edit text in the terminal",
+  "commandDescriptionEcho": "Print text to standard output",
+  "commandDescriptionDocker": "Build and run containers",
+  "commandDescriptionSystemctl": "Control systemd services"
 }

@@ -5,17 +5,25 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
+
+	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/mslxl/natcatty/adapters/store"
 	appconnection "github.com/mslxl/natcatty/application/connection"
+	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
 	telnetmodel "github.com/mslxl/natcatty/domain/model/telnet"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
+
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -437,6 +445,51 @@ func TestLocalSessionStillUsesTheLocalFactory(t *testing.T) {
 	}
 }
 
+// TestLocalSessionUsesTheConfiguredShell proves every local open, not just the
+// shell's Tab action, carries the custom shell into the transport.
+func TestLocalSessionUsesTheConfiguredShell(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := domainpreferences.Defaults()
+	settings.Appearance.LocalShell = domainpreferences.LocalShell{
+		Path: executable,
+		Args: "-l",
+	}
+	local := &factoryLocal{}
+	factory := newTransportFactory(local, nil, nil, nil, nil).
+		withPreferences(fakePreferenceSource{settings: settings})
+
+	transport, err := factory.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindLocal})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	_ = transport.Close()
+	if want := []string{executable, "-l"}; !slices.Equal(local.spec.Command, want) {
+		t.Fatalf("local command = %q, want %q", local.spec.Command, want)
+	}
+}
+
+func TestLocalSessionFallsBackWhenTheConfiguredShellIsMissing(t *testing.T) {
+	settings := domainpreferences.Defaults()
+	settings.Appearance.LocalShell = domainpreferences.LocalShell{
+		Path: filepath.Join(t.TempDir(), "no-such-shell"),
+	}
+	local := &factoryLocal{}
+	factory := newTransportFactory(local, nil, nil, nil, nil).
+		withPreferences(fakePreferenceSource{settings: settings})
+
+	transport, err := factory.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindLocal})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	_ = transport.Close()
+	if len(local.spec.Command) != 0 {
+		t.Fatalf("local command = %q, want the OS login shell", local.spec.Command)
+	}
+}
+
 type factoryRoutes struct {
 	route appconnection.Route
 	err   error
@@ -488,6 +541,52 @@ func TestSSHSessionUsesTheResolvedChainAndProxy(t *testing.T) {
 	}
 	if dialer.request.Hostname != "target.example.com" || dialer.request.Username != "root" {
 		t.Fatalf("target = %+v", dialer.request)
+	}
+}
+
+func TestUnsavedHostRouteNeedsNoVaultRecord(t *testing.T) {
+	vault := &fakeRouteVault{}
+	route, err := (vaultRoutes{vault: vault}).Route(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Route with no Host: %v", err)
+	}
+	if len(route.Jumps) != 0 || route.Proxy != nil || route.Network != nil {
+		t.Fatalf("route = %+v, want the direct defaults", route)
+	}
+}
+
+// TestQuickConnectSSHSessionDialsWithTheTypedCredentials is the app-level
+// Unsaved Host contract: no Vault lookup, the typed password authenticates,
+// and the transport is never parked for another unsaved target to reuse.
+func TestQuickConnectSSHSessionDialsWithTheTypedCredentials(t *testing.T) {
+	client := &factoryClient{terminal: &factoryTerminal{}}
+	dialer := &factoryDialer{client: client}
+	// The password source knows nothing, as for a Host that was never saved.
+	manager := appconnection.NewManager(dialer, vaultPasswords{vault: factoryPasswords{err: appvault.ErrNotFound}}, &factoryKnownHosts{})
+	t.Cleanup(manager.CloseAll)
+	routes := vaultRoutes{vault: &fakeRouteVault{}}
+	factory := newTransportFactory(&factoryLocal{}, nil, nil, manager, routes)
+	wantPassword := "quick" + "pass"
+
+	transport, err := factory.Open(context.Background(), appsession.StartSpec{
+		Kind: appsession.KindSSH, HostID: "", Hostname: "switch.local", Port: 2222,
+		Username: "admin", Password: wantPassword,
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if dialer.calls != 1 {
+		t.Fatalf("dial calls = %d, want 1", dialer.calls)
+	}
+	if dialer.request.Password != wantPassword || dialer.request.Username != "admin" ||
+		dialer.request.Hostname != "switch.local" || dialer.request.Port != 2222 {
+		t.Fatalf("dial request = %+v, want the typed endpoint and credential", dialer.request)
+	}
+	if err := transport.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if client.closeCall != 1 {
+		t.Fatalf("transport closes = %d, want the unsaved transport discarded", client.closeCall)
 	}
 }
 
@@ -886,6 +985,181 @@ func (r *routeNetworkRepo) DeleteNetworkProfile(_ context.Context, id string) er
 	return nil
 }
 
+type routeProxyRepo struct {
+	items map[string]domainvault.ProxyProfile
+}
+
+func (r *routeProxyRepo) ListProxyProfiles(context.Context) ([]domainvault.ProxyProfile, error) {
+	items := make([]domainvault.ProxyProfile, 0, len(r.items))
+	for _, profile := range r.items {
+		items = append(items, profile)
+	}
+	return items, nil
+}
+
+func (r *routeProxyRepo) GetProxyProfile(_ context.Context, id string) (domainvault.ProxyProfile, error) {
+	profile, ok := r.items[id]
+	if !ok {
+		return domainvault.ProxyProfile{}, appvault.ErrNotFound
+	}
+	return profile, nil
+}
+
+func (r *routeProxyRepo) SaveProxyProfile(_ context.Context, profile domainvault.ProxyProfile) error {
+	r.items[profile.ID] = profile
+	return nil
+}
+
+func (r *routeProxyRepo) DeleteProxyProfile(_ context.Context, id string) error {
+	delete(r.items, id)
+	return nil
+}
+
+// TestVaultRoutesResolveTheProxyPrecedenceThroughTheRealVault exercises the
+// full route source, not just the pure resolver: the app-wide default comes
+// from preferences, Group defaults are merged by the Vault, and the Host's
+// own choice wins over both.
+func TestVaultRoutesResolveTheProxyPrecedenceThroughTheRealVault(t *testing.T) {
+	proxies := func() *routeProxyRepo {
+		return &routeProxyRepo{items: map[string]domainvault.ProxyProfile{
+			"host":   {ID: "host", Config: domainvault.ProxyConfig{Type: domainvault.ProxyHTTP, Host: "host.proxy", Port: 1111}},
+			"group":  {ID: "group", Config: domainvault.ProxyConfig{Type: domainvault.ProxySOCKS5, Host: "group.proxy", Port: 2222}},
+			"global": {ID: "global", Config: domainvault.ProxyConfig{Type: domainvault.ProxyHTTP, Host: "global.proxy", Port: 3333}},
+		}}
+	}
+	route := func(t *testing.T, host domainvault.Host, groups []domainvault.Group, global string) appconnection.Route {
+		t.Helper()
+		service := appvault.NewService(&routeHostRepo{hosts: map[model.HostID]domainvault.Host{"target": host}},
+			appvault.WithGroups(&routeGroupRepo{items: groups}),
+			appvault.WithProxyProfiles(proxies()))
+		resolved, err := (vaultRoutes{
+			vault:       service,
+			preferences: fakePreferenceSource{settings: domainpreferences.Settings{Proxy: domainpreferences.Proxy{DefaultProfileID: global}}},
+		}).Route(context.Background(), "target")
+		if err != nil {
+			t.Fatalf("Route: %v", err)
+		}
+		return resolved
+	}
+	base := domainvault.Host{ID: "target", Label: "target", Hostname: "target.internal", Port: 22, Protocol: domainvault.ProtocolSSH}
+
+	t.Run("the app-wide default applies when the host and group do not choose", func(t *testing.T) {
+		got := route(t, base, nil, "global")
+		if got.Proxy == nil || got.Proxy.Type != appconnection.ProxyHTTP ||
+			got.Proxy.Host != "global.proxy" || got.Proxy.Port != 3333 {
+			t.Fatalf("proxy = %+v, want the app-wide default", got.Proxy)
+		}
+	})
+
+	t.Run("the host profile beats the group and the app-wide default", func(t *testing.T) {
+		host := base
+		host.ProxyProfileID = "host"
+		host.GroupID = "prod"
+		got := route(t, host, []domainvault.Group{{ID: "prod", Path: "prod", ProxyProfileID: "group"}}, "global")
+		if got.Proxy == nil || got.Proxy.Host != "host.proxy" {
+			t.Fatalf("proxy = %+v, want the host profile", got.Proxy)
+		}
+	})
+
+	t.Run("the group profile applies when the host does not choose", func(t *testing.T) {
+		host := base
+		host.GroupID = "prod"
+		got := route(t, host, []domainvault.Group{{ID: "prod", Path: "prod", ProxyProfileID: "group"}}, "global")
+		if got.Proxy == nil || got.Proxy.Type != appconnection.ProxySOCKS5 || got.Proxy.Host != "group.proxy" {
+			t.Fatalf("proxy = %+v, want the group profile", got.Proxy)
+		}
+	})
+
+	t.Run("host direct stops the group and app-wide default", func(t *testing.T) {
+		host := base
+		host.DirectProxy = true
+		host.GroupID = "prod"
+		got := route(t, host, []domainvault.Group{{ID: "prod", Path: "prod", ProxyProfileID: "group"}}, "global")
+		if got.Proxy != nil {
+			t.Fatalf("proxy = %+v, want direct", got.Proxy)
+		}
+	})
+
+	t.Run("group direct stops the app-wide default", func(t *testing.T) {
+		host := base
+		host.GroupID = "prod"
+		got := route(t, host, []domainvault.Group{{ID: "prod", Path: "prod", DirectProxy: true}}, "global")
+		if got.Proxy != nil {
+			t.Fatalf("proxy = %+v, want direct", got.Proxy)
+		}
+	})
+
+	t.Run("a deleted host profile falls through to the app-wide default", func(t *testing.T) {
+		host := base
+		host.ProxyProfileID = "deleted"
+		got := route(t, host, nil, "global")
+		if got.Proxy == nil || got.Proxy.Host != "global.proxy" {
+			t.Fatalf("proxy = %+v, want the app-wide default after the dangling Host profile", got.Proxy)
+		}
+	})
+
+	t.Run("a deleted group profile falls through to the app-wide default", func(t *testing.T) {
+		host := base
+		host.GroupID = "prod"
+		got := route(t, host, []domainvault.Group{{ID: "prod", Path: "prod", ProxyProfileID: "deleted"}}, "global")
+		if got.Proxy == nil || got.Proxy.Host != "global.proxy" {
+			t.Fatalf("proxy = %+v, want the app-wide default after the dangling Group profile", got.Proxy)
+		}
+	})
+
+	t.Run("a deleted app-wide default restores a direct connection", func(t *testing.T) {
+		got := route(t, base, nil, "deleted")
+		if got.Proxy != nil {
+			t.Fatalf("proxy = %+v, want direct", got.Proxy)
+		}
+	})
+}
+
+// TestVaultRoutesReadTheLiveDefaultProxyPreference wires the same preference
+// service the Settings window writes through. Changing the document applies to
+// the next resolution without rebuilding the route source.
+func TestVaultRoutesReadTheLiveDefaultProxyPreference(t *testing.T) {
+	preferences := apppreferences.NewService(store.OpenPreferences(filepath.Join(t.TempDir(), "preferences.json")))
+	if err := preferences.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	vault := appvault.NewService(&routeHostRepo{hosts: map[model.HostID]domainvault.Host{
+		"target": {ID: "target", Label: "target", Hostname: "target.internal", Port: 22, Protocol: domainvault.ProtocolSSH},
+	}}, appvault.WithProxyProfiles(&routeProxyRepo{items: map[string]domainvault.ProxyProfile{
+		"global": {ID: "global", Config: domainvault.ProxyConfig{Type: domainvault.ProxyHTTP, Host: "global.proxy", Port: 3333}},
+	}}))
+	routes := vaultRoutes{vault: vault, preferences: preferences}
+
+	resolve := func(t *testing.T) *appconnection.Proxy {
+		t.Helper()
+		route, err := routes.Route(context.Background(), "target")
+		if err != nil {
+			t.Fatalf("Route: %v", err)
+		}
+		return route.Proxy
+	}
+
+	if got := resolve(t); got != nil {
+		t.Fatalf("proxy before the preference = %+v, want direct", got)
+	}
+	if err := preferences.Update(func(settings *domainpreferences.Settings) {
+		settings.Proxy.DefaultProfileID = "global"
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got := resolve(t); got == nil || got.Host != "global.proxy" || got.Port != 3333 {
+		t.Fatalf("proxy after enabling the default = %+v, want global.proxy", got)
+	}
+	if err := preferences.Update(func(settings *domainpreferences.Settings) {
+		settings.Proxy.DefaultProfileID = ""
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got := resolve(t); got != nil {
+		t.Fatalf("proxy after clearing the default = %+v, want direct", got)
+	}
+}
+
 func TestVaultRoutesUseTheFirstHopsGroupInheritedNetworkProfile(t *testing.T) {
 	service := appvault.NewService(&routeHostRepo{hosts: map[model.HostID]domainvault.Host{
 		"target": {
@@ -1056,6 +1330,120 @@ func TestVaultRoutesFallBackToTheTargetProxyWithoutAFirstHopProxy(t *testing.T) 
 	if route.Proxy == nil || route.Proxy.Type != appconnection.ProxyCommand ||
 		route.Proxy.Command != "ssh -W %h:%p bastion" {
 		t.Fatalf("proxy = %+v", route.Proxy)
+	}
+}
+
+// factoryTerminalSettings is the terminal settings seam the factory reads for
+// an Unsaved Host's legacy-algorithm opt-in.
+type factoryTerminalSettings struct {
+	legacy bool
+}
+
+func (f factoryTerminalSettings) Settings() domainterminal.Settings {
+	return domainterminal.Settings{LegacyAlgorithms: f.legacy}
+}
+
+// TestUnsavedHostUsesTheTerminalLegacyAlgorithmPreference proves an Unsaved
+// Host has no Vault route to resolve and takes the terminal-wide opt-in
+// instead. With the preference off the pinned route carries no legacy
+// algorithms, so a server that requires one fails at negotiation.
+func TestUnsavedHostUsesTheTerminalLegacyAlgorithmPreference(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		legacy bool
+	}{
+		{"opt-in offers the legacy list", true},
+		{"off fails closed", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &factoryClient{terminal: &factoryTerminal{}}
+			dialer := &factoryDialer{client: client}
+			manager := appconnection.NewManager(dialer,
+				vaultPasswords{vault: factoryPasswords{value: "pw"}}, &factoryKnownHosts{})
+			t.Cleanup(manager.CloseAll)
+			// The Vault holds no record for an Unsaved Host. Resolving a
+			// route by its empty ID would fail, so a successful Open also
+			// proves the factory did not ask the Vault.
+			routes := vaultRoutes{vault: &fakeRouteVault{
+				hosts:   map[model.HostID]domainvault.Host{},
+				secrets: map[string]string{},
+			}}
+			factory := newTransportFactory(&factoryLocal{}, nil, nil, manager, routes).
+				withTerminalSettings(factoryTerminalSettings{legacy: test.legacy})
+
+			transport, err := factory.Open(context.Background(), appsession.StartSpec{
+				Kind: appsession.KindSSH, Hostname: "typed.example.com", Port: 2222,
+				Username: "root", Cols: 100, Rows: 30,
+			})
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			if got := dialer.request.Algorithms.Legacy; got != test.legacy {
+				t.Fatalf("legacy algorithms = %v, want %v", got, test.legacy)
+			}
+			if dialer.request.Algorithms.SkipECDSAHostKey ||
+				len(dialer.request.Algorithms.Ciphers) != 0 ||
+				len(dialer.request.Algorithms.KeyExchanges) != 0 ||
+				len(dialer.request.Algorithms.MACs) != 0 ||
+				len(dialer.request.Algorithms.HostKeys) != 0 {
+				t.Fatalf("unsaved algorithms = %+v, want only the legacy opt-in",
+					dialer.request.Algorithms)
+			}
+			if len(dialer.request.Jumps) != 0 || dialer.request.Proxy != nil ||
+				dialer.request.Network != nil {
+				t.Fatalf("unsaved request = %+v, want no jumps, proxy, or Network Profile",
+					dialer.request)
+			}
+			if err := transport.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+		})
+	}
+}
+
+// TestSavedHostKeepsItsOwnLegacyAlgorithmSetting proves the terminal-wide
+// opt-in never reaches a Host that has a saved backing.
+func TestSavedHostKeepsItsOwnLegacyAlgorithmSetting(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		hostLegacy   bool
+		globalLegacy bool
+	}{
+		{"a Host opt-in wins over the global off", true, false},
+		{"a Host default wins over the global on", false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &factoryClient{terminal: &factoryTerminal{}}
+			dialer := &factoryDialer{client: client}
+			manager := appconnection.NewManager(dialer,
+				vaultPasswords{vault: factoryPasswords{value: "pw"}}, &factoryKnownHosts{})
+			t.Cleanup(manager.CloseAll)
+			routes := vaultRoutes{vault: &fakeRouteVault{
+				hosts: map[model.HostID]domainvault.Host{
+					"saved": {
+						ID: "saved", Hostname: "saved.example.com", Port: 22, Username: "root",
+						LegacyAlgorithms: test.hostLegacy,
+					},
+				},
+				secrets: map[string]string{},
+			}}
+			factory := newTransportFactory(&factoryLocal{}, nil, nil, manager, routes).
+				withTerminalSettings(factoryTerminalSettings{legacy: test.globalLegacy})
+
+			transport, err := factory.Open(context.Background(), appsession.StartSpec{
+				Kind: appsession.KindSSH, HostID: "saved", Hostname: "saved.example.com",
+				Port: 22, Username: "root", Cols: 100, Rows: 30,
+			})
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			if got := dialer.request.Algorithms.Legacy; got != test.hostLegacy {
+				t.Fatalf("legacy algorithms = %v, want the saved Host's %v", got, test.hostLegacy)
+			}
+			if err := transport.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+		})
 	}
 }
 

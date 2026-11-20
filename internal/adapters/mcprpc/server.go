@@ -66,8 +66,19 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	}
 }
 
-// ServeConn authenticates and serves one connection.
+// ServeConn authenticates and serves one connection. Cancelling the context
+// closes the socket, so an app shutdown is observed by connected clients as a
+// closed connection rather than an idle one.
 func (s *Server) ServeConn(ctx context.Context, conn net.Conn) {
+	stop := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-stop:
+		}
+	}()
+	defer close(stop)
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 	authenticated := false

@@ -131,6 +131,11 @@ var (
 	ErrSamePane = errors.New("workspace: a pane cannot be moved onto itself")
 	// ErrInvalidSide reports an unknown insertion side.
 	ErrInvalidSide = errors.New("workspace: invalid insertion side")
+	// ErrStaleTarget reports a move whose target pane left the tree before
+	// the drop landed. It is distinct from ErrPaneNotFound so a drop zone can
+	// tell a stale drag target from a malformed request; either way the source
+	// is left untouched.
+	ErrStaleTarget = errors.New("workspace: the drop target is no longer in the tree")
 )
 
 // WithSplitRatio returns a copy of root in which splitID takes ratio. It
@@ -256,18 +261,26 @@ func removePane(n *Node, target model.PaneID) (*Node, bool) {
 	return &clone, true
 }
 
-// MoveWithin moves source beside target inside one Tab. Dropping a pane onto
-// itself is rejected; the source subtree is a leaf, so it cannot contain the
-// target.
-func MoveWithin(root *Node, source, target model.PaneID, splitID model.SplitID, side Side) (*Node, error) {
+// MovePane moves source beside target inside one Tab. The side chooses the
+// before (left/top) or after (right/bottom) slot; moving into another Tab is
+// the shell's MovePaneToTab. Dropping a pane onto itself is rejected; the
+// source is a leaf, so it cannot contain the target.
+//
+// Every check runs before the source is pruned. A drop whose target is no
+// longer in the tree, such as one that closed mid-drag, returns
+// ErrStaleTarget and leaves the input tree unchanged.
+func MovePane(root *Node, source, target model.PaneID, splitID model.SplitID, side Side) (*Node, error) {
 	if !side.Valid() {
 		return nil, ErrInvalidSide
 	}
 	if source == target {
 		return nil, ErrSamePane
 	}
-	if !ContainsPane(root, source) || !ContainsPane(root, target) {
+	if !ContainsPane(root, source) {
 		return nil, ErrPaneNotFound
+	}
+	if !ContainsPane(root, target) {
+		return nil, ErrStaleTarget
 	}
 	pruned, err := RemovePane(root, source)
 	if err != nil {

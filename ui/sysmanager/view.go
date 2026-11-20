@@ -26,6 +26,10 @@ import (
 // the window chrome take their space.
 const surfaceGap float32 = 4
 
+// coreListMaxHeight bounds the per-core list so a many-core Host keeps the
+// rest of the resource card in view; the list scrolls past this height.
+const coreListMaxHeight float32 = 240
+
 // View returns the System manager surface. It is one flex column that takes
 // the height its parent leaves, so the list of every tab can scroll above its
 // pinned action bar instead of running past the window at the minimum size.
@@ -182,6 +186,12 @@ func tabsMenu(c *ui.Context, s *State, m locales.Messages) {
 	c.Key("sysmanager-tabs-layout")
 	kit.IconButton(c, icons.Columns, m.SysManagerTabsLayout()).Menu(func(menu *ui.Menu) {
 		for _, tab := range s.AllTabs() {
+			// A tab the Host cannot support is not offered, matching the
+			// strip; the active one stays listed until the probe moves away
+			// from it.
+			if !s.TabAvailable(tab) && tab != s.tab {
+				continue
+			}
 			if menu.Item(tabLabel(m, tab)).
 				Checked(s.TabVisible(tab)).
 				Disabled(tab == appsysmanager.TabOverview).
@@ -276,6 +286,8 @@ func tabLabel(m locales.Messages, tab appsysmanager.Tab) string {
 		return m.SysManagerTabTmux()
 	case appsysmanager.TabDocker:
 		return m.SysManagerTabDocker()
+	case appsysmanager.TabKubernetes:
+		return m.SysManagerTabKubernetes()
 	case appsysmanager.TabGPU:
 		return m.SysManagerTabGPU()
 	default:
@@ -350,11 +362,30 @@ func tabContent(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		}
 		tmuxContent(c, s, state, m, t)
 	case appsysmanager.TabDocker:
+		// The toolbar stays up in a degraded state: when the selected engine's
+		// daemon is stopped, the runtime switcher must remain reachable so the
+		// user can choose another detected engine instead of retrying forever.
+		dockerToolbar(c, s, m, state.Status == appsysmanager.StatusLive)
 		if state.Status != appsysmanager.StatusLive {
 			statusPanel(c, s, state, m, t)
 			return
 		}
-		dockerContent(c, s, state, m, t)
+		if s.DockerView() == 1 {
+			dockerImages(c, s, state, m, t)
+			return
+		}
+		dockerContainers(c, s, state, m, t)
+	case appsysmanager.TabKubernetes:
+		if state.Status != appsysmanager.StatusLive {
+			// A successful namespace list followed by a refused pods list is
+			// terminal for sampling, but the listed namespaces remain valid:
+			// keep the selector so the user can pick another namespace rather
+			// than only retrying the forbidden one.
+			kubernetesNamespaceSelector(c, s, m)
+			statusPanel(c, s, state, m, t)
+			return
+		}
+		kubernetesContent(c, s, state, m, t)
 	case appsysmanager.TabGPU:
 		gpuContent(c, s, state, m, t)
 	}
@@ -457,25 +488,62 @@ func sessionActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	})
 }
 
-func dockerContent(c *ui.Context, s *State, state appsysmanager.TabState,
-	m locales.Messages, t *ui.Theme) {
-	view := s.DockerView()
-	chosen := view
-	ui.Row(c).FillWidth().Children(func() {
-		kit.Segmented(c, kit.SegmentedText, &chosen, m.SysManagerDockerView(), []kit.Segment{
-			{Label: m.SysManagerContainers()}, {Label: m.SysManagerImages()},
-		})
-	})
-	if chosen != view {
-		s.SetDockerView(chosen)
-		c.Invalidate()
-		view = chosen
-	}
-	if view == 1 {
-		dockerImages(c, s, state, m, t)
+// dockerToolbar renders the Containers/Images switch while the tab is live and
+// the runtime switcher whenever the probe found more than one engine. The
+// switcher is drawn in a degraded state too, which is the only way out of a
+// selected engine whose daemon is stopped.
+func dockerToolbar(c *ui.Context, s *State, m locales.Messages, live bool) {
+	runtimes := s.AvailableContainerRuntimes()
+	if !live && len(runtimes) < 2 {
 		return
 	}
-	dockerContainers(c, s, state, m, t)
+	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+		if live {
+			view := s.DockerView()
+			chosen := view
+			kit.Segmented(c, kit.SegmentedText, &chosen, m.SysManagerDockerView(), []kit.Segment{
+				{Label: m.SysManagerContainers()}, {Label: m.SysManagerImages()},
+			})
+			if chosen != view {
+				s.SetDockerView(chosen)
+				c.Invalidate()
+			}
+		}
+		// A Host with one engine behaves as it did before the switcher: no
+		// control is shown. Only the engines the probe actually found are
+		// offered, so selecting one can never target a missing binary.
+		if len(runtimes) > 1 {
+			labels := make([]string, len(runtimes))
+			for index, runtime := range runtimes {
+				labels[index] = runtimeLabel(m, runtime)
+			}
+			current := runtimeLabel(m, s.ContainerRuntime())
+			picked := current
+			ui.Column(c).Grow(1)
+			ui.Select(c, &picked, labels).Width(112).MinWidth(96).
+				Label(m.SysManagerRuntime())
+			if picked != current {
+				for index, label := range labels {
+					if label == picked {
+						s.SetContainerRuntime(runtimes[index])
+						break
+					}
+				}
+				c.Invalidate()
+			}
+		}
+	})
+}
+
+func runtimeLabel(m locales.Messages, runtime appsysmanager.ContainerRuntime) string {
+	switch runtime {
+	case appsysmanager.RuntimePodman:
+		return m.SysManagerRuntimePodman()
+	case appsysmanager.RuntimeNerdctl:
+		return m.SysManagerRuntimeNerdctl()
+	default:
+		return m.SysManagerRuntimeDocker()
+	}
 }
 
 func dockerContainers(c *ui.Context, s *State, state appsysmanager.TabState,
@@ -621,6 +689,114 @@ func dockerImages(c *ui.Context, s *State, state appsysmanager.TabState,
 			}
 			ui.Text(c, m.SysManagerImageHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		})
+	})
+}
+
+func kubernetesContent(c *ui.Context, s *State, state appsysmanager.TabState,
+	m locales.Messages, t *ui.Theme) {
+	listTab(c, func() {
+		kubernetesNamespaceSelector(c, s, m)
+		toolbar(c, s, m, t, m.SysManagerSearchPods(),
+			m.SysManagerPodsCount(len(s.DisplayPods())))
+		rows := s.DisplayPods()
+		if len(rows) == 0 {
+			emptyState(c, emptyText(len(state.Kubernetes.Pods), m.SysManagerNoPods(),
+				m.SysManagerNoMatches()), t)
+			return
+		}
+		kubernetesTable(c, s, rows, m, t)
+		kubernetesActions(c, s, m, t)
+	})
+}
+
+// kubernetesNamespaceSelector offers the namespaces the last successful list
+// returned. It is rendered outside the live content too, so a forbidden pods
+// list cannot dead-end the tab on one namespace.
+func kubernetesNamespaceSelector(c *ui.Context, s *State, m locales.Messages) {
+	namespaces := s.KubernetesNamespaces()
+	if len(namespaces) == 0 {
+		return
+	}
+	current := s.KubernetesNamespace()
+	options := append([]string(nil), namespaces...)
+	if current != "" && !slices.Contains(options, current) {
+		options = append([]string{current}, options...)
+	}
+	picked := current
+	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Select(c, &picked, options).Width(170).MinWidth(120).
+			Label(m.SysManagerNamespace())
+		ui.Column(c).Grow(1)
+	})
+	if picked != current {
+		_ = s.SetKubernetesNamespace(picked)
+		c.Invalidate()
+	}
+}
+
+func kubernetesTable(c *ui.Context, s *State, rows []appsysmanager.Pod,
+	m locales.Messages, t *ui.Theme) {
+	columns := []ui.TableColumn{
+		{Title: m.SysManagerPod(), ID: "pod", MinWidth: 120},
+		{Title: m.SysManagerNamespace(), ID: "namespace", MinWidth: 90},
+		{Title: m.SysManagerStatus(), ID: "status", Width: 92, MinWidth: 70},
+		{Title: m.SysManagerRestarts(), ID: "restarts", Width: 76, MinWidth: 60, Align: ui.End},
+		{Title: m.SysManagerAge(), ID: "age", Width: 64, MinWidth: 50},
+	}
+	columns, full := s.fitColumns(columns, "pod", "status")
+	ui.Table(c, &s.table, columns, len(rows), func(row, col int) {
+		col = full(col)
+		if row < 0 || row >= len(rows) {
+			return
+		}
+		pod := rows[row]
+		switch col {
+		case 0:
+			ui.Text(c, pod.Name).FontSize(kit.M(c).Font.Footnote).SingleLine()
+		case 1:
+			text := ui.Text(c, pod.Namespace).FontSize(kit.M(c).Font.Footnote).SingleLine()
+			if s.selected != row {
+				text.TextColor(t.TextMuted)
+			}
+		case 2:
+			text := ui.Text(c, pod.Status).FontSize(kit.M(c).Font.Footnote).SingleLine()
+			if s.selected != row {
+				color := t.TextMuted
+				switch strings.ToLower(pod.Status) {
+				case "running":
+					color = t.Text
+				case "failed", "error", "crashloopbackoff", "imagepullbackoff":
+					color = uitheme.DangerText(t)
+				}
+				text.TextColor(color)
+			}
+		case 3:
+			ui.Text(c, strconv.Itoa(pod.Restarts)).FontSize(kit.M(c).Font.Footnote)
+		case 4:
+			text := ui.Text(c, blank(pod.Age, m)).FontSize(kit.M(c).Font.Footnote).SingleLine()
+			if s.selected != row {
+				text.TextColor(t.TextMuted)
+			}
+		}
+	}).Grow(1).MinHeight(0).FillWidth()
+}
+
+func kubernetesActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
+	pod, ok := s.SelectedPod()
+	if !ok {
+		actionBar(c, func() {
+			ui.Text(c, m.SysManagerPodHint()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+		})
+		return
+	}
+	actionBar(c, func() {
+		ui.Text(c, m.SysManagerSelectedPod(pod.Namespace, pod.Name, pod.Status)).
+			FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).Grow(1).SingleLine()
+		if kit.SecondaryButton(c, "", m.SysManagerOpenTerminal()).
+			Key("sysmanager-kubernetes-attach").Clicked() {
+			request(s, s.AttachPod(pod))
+			c.Invalidate()
+		}
 	})
 }
 
@@ -1072,6 +1248,7 @@ func resourceCard(c *ui.Context, data appsysmanager.Overview, m locales.Messages
 		ui.Text(c, m.SysManagerOverviewResources()).FontSize(kit.M(c).Font.Callout).Bold()
 		metric(c, m.SysManagerOverviewCPU(), percentText(data.CPUPercent),
 			ratio(data.CPUPercent, 100), t)
+		coreMetrics(c, data.CPUPerCore, t)
 		metric(c, m.SysManagerOverviewMemory(),
 			usedText(data.MemUsedMB, data.MemTotalMB, 1024, m), memRatio, t)
 		metric(c, m.SysManagerOverviewSwap(),
@@ -1081,17 +1258,43 @@ func resourceCard(c *ui.Context, data appsysmanager.Overview, m locales.Messages
 	})
 }
 
+// coreMetrics lists every reported core as its own row. The list scrolls
+// inside a bounded height so a many-core Host does not push the rest of the
+// card out of view. Each row is keyed by its core, so it keeps its state when
+// an unrelated sample updates the card.
+func coreMetrics(c *ui.Context, values []float64, t *ui.Theme) {
+	if len(values) == 0 {
+		return
+	}
+	m := kit.M(c)
+	ui.Scroll(c).FillWidth().MaxHeight(coreListMaxHeight).Children(func() {
+		ui.Column(c).FillWidth().GapY(m.Space.XSmall).Children(func() {
+			for index, value := range values {
+				ui.Column(c).Key(fmt.Sprintf("sysmanager-core-%d", index)).
+					FillWidth().Children(func() {
+					metricBody(c, fmt.Sprintf("C%d", index+1), percentText(value),
+						ratio(value, 100), t)
+				})
+			}
+		})
+	})
+}
+
 func metric(c *ui.Context, label, value string, ratio float64, t *ui.Theme) {
 	ui.Column(c).FillWidth().Gap(2).Children(func() {
-		ui.Row(c).FillWidth().Gap(6).Children(func() {
-			ui.Text(c, label).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
-			ui.Column(c).Grow(1)
-			ui.Text(c, value).FontSize(kit.M(c).Font.Caption).NoWrap()
-		})
-		if ratio >= 0 {
-			ui.Progress(c, ratio).Grow(1)
-		}
+		metricBody(c, label, value, ratio, t)
 	})
+}
+
+func metricBody(c *ui.Context, label, value string, ratio float64, t *ui.Theme) {
+	ui.Row(c).FillWidth().Gap(6).Children(func() {
+		ui.Text(c, label).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+		ui.Column(c).Grow(1)
+		ui.Text(c, value).FontSize(kit.M(c).Font.Caption).NoWrap()
+	})
+	if ratio >= 0 {
+		ui.Progress(c, ratio).Grow(1)
+	}
 }
 
 func field(c *ui.Context, label, value string, t *ui.Theme) {
@@ -1228,6 +1431,16 @@ func reasonText(m locales.Messages, reason appsysmanager.Reason) string {
 		return m.SysManagerReasonMissingDocker()
 	case appsysmanager.ReasonDockerDaemon:
 		return m.SysManagerReasonDockerDaemon()
+	case appsysmanager.ReasonMissingContainerRuntime:
+		return m.SysManagerReasonMissingContainerRuntime()
+	case appsysmanager.ReasonContainerDaemon:
+		return m.SysManagerReasonContainerDaemon()
+	case appsysmanager.ReasonMissingKubectl:
+		return m.SysManagerReasonMissingKubectl()
+	case appsysmanager.ReasonKubernetesForbidden:
+		return m.SysManagerReasonKubernetesForbidden()
+	case appsysmanager.ReasonClusterUnreachable:
+		return m.SysManagerReasonClusterUnreachable()
 	default:
 		return ""
 	}

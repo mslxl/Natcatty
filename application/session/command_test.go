@@ -53,6 +53,37 @@ func newShellSession(t *testing.T) (*Session, *fakeTransport) {
 	return session, transport
 }
 
+// runCommandWithEndMarker runs one wrapped command to completion. It feeds the
+// start marker and a stdout line, then the chunks built from the per-command
+// marker, and asserts the common result: stdout "hello" and exit 7.
+func runCommandWithEndMarker(t *testing.T, chunks func(marker string) []string) commandCase {
+	t.Helper()
+	session, transport := newShellSession(t)
+	done := startTestCommand(session, context.Background(), "echo hello", CommandOptions{
+		Timeout: 5 * time.Second,
+	})
+	var marker string
+	eventually(t, "the wrapped command to reach the transport", func() bool {
+		marker = markerPattern.FindString(transport.input())
+		return marker != ""
+	})
+	transport.send("\n" + marker + "_S\r\nhello\r\n")
+	for _, chunk := range chunks(marker) {
+		transport.send(chunk)
+	}
+	got := awaitTestCommand(t, done)
+	if got.err != nil {
+		t.Fatalf("Command: %v", got.err)
+	}
+	if got.result.Stdout != "hello" {
+		t.Fatalf("stdout = %q; want hello", got.result.Stdout)
+	}
+	if !got.result.HasExitCode || got.result.ExitCode != 7 {
+		t.Fatalf("exit = (%v, %d); want (true, 7)", got.result.HasExitCode, got.result.ExitCode)
+	}
+	return got
+}
+
 func TestCommandRemoteWithoutAShellHintUsesTheUnknownStrictKind(t *testing.T) {
 	transport := newFakeTransport()
 	service := newTestService(&fakeFactory{transport: transport})
@@ -213,28 +244,110 @@ func TestCommandToleratesConPTYHardWrappedMarkers(t *testing.T) {
 // the digits. The command has finished; waiting for CR/LF would hold it until
 // the deadline.
 func TestCommandCompletesWhenTerminalControlsFollowTheEndMarker(t *testing.T) {
-	session, transport := newShellSession(t)
-	done := startTestCommand(session, context.Background(), "echo hello", CommandOptions{
-		Timeout: 5 * time.Second,
+	runCommandWithEndMarker(t, func(marker string) []string {
+		return []string{
+			marker + "_E:7\x1b[?2004h",
+			"\x1b[32m\x1b[22;1Hmslxl@host ~\r\n$ ",
+		}
 	})
-	var marker string
-	eventually(t, "the wrapped command to reach the transport", func() bool {
-		marker = markerPattern.FindString(transport.input())
-		return marker != ""
-	})
-	transport.send("\n" + marker + "_S\r\nhello\r\n")
-	transport.send(marker + "_E:7\x1b[?2004h")
-	transport.send("\x1b[32m\x1b[22;1Hmslxl@host ~\r\n$ ")
+}
 
-	got := awaitTestCommand(t, done)
-	if got.err != nil {
-		t.Fatalf("Command: %v", got.err)
+// TestFindEndMarkerToleratesHorizontalPadding pins the ConPTY end-marker
+// shape: the console pads the marker row with spaces before it repositions the
+// cursor for the prompt, so the exit code is followed by horizontal
+// whitespace rather than a line ending or an escape. The marker is matched as
+// a token followed by bounded padding and then a terminator; a name that
+// continues after the digits, or padding longer than the bound, is not the
+// exit line.
+func TestFindEndMarkerToleratesHorizontalPadding(t *testing.T) {
+	const marker = "__NCMCP_padding_0123456789abcdef__"
+	cases := []struct {
+		name string
+		data string
+		code int
+		ok   bool
+	}{
+		{"line ending", marker + "_E:0\r\n", 0, true},
+		{"one space then CRLF", marker + "_E:4 \r\n", 4, true},
+		{"several spaces then CRLF", marker + "_E:7    \r\n", 7, true},
+		{"tab then CRLF", marker + "_E:3\t\r\n", 3, true},
+		{"space then cursor escape", marker + "_E:0 \x1b[30;1H", 0, true},
+		{"spaces then erase line", marker + "_E:9   \x1b[K\r\n", 9, true},
+		{"filename continues after the digits", marker + "_E:0 release.tar.gz\r\n", 0, false},
+		{"filename continues after padding", marker + "_E:0    release.tar.gz\r\n", 0, false},
+		{"marker inside a longer name", "release-" + marker + "_E:0.tar.gz\r\n", 0, false},
+		{"padding over the bound", marker + "_E:0" + strings.Repeat(" ", 300) + "\r\n", 0, false},
 	}
-	if got.result.Stdout != "hello" {
-		t.Fatalf("stdout = %q; want hello", got.result.Stdout)
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			start, code, ok, _ := findEndMarkerFrom([]byte(testCase.data), marker, 0)
+			if ok != testCase.ok {
+				t.Fatalf("findEndMarkerFrom(%q) ok = %v; want %v", testCase.data, ok, testCase.ok)
+			}
+			if !ok {
+				return
+			}
+			if start != 0 || code != testCase.code {
+				t.Fatalf("findEndMarkerFrom(%q) = (%d, %d); want (0, %d)", testCase.data, start, code, testCase.code)
+			}
+		})
 	}
-	if !got.result.HasExitCode || got.result.ExitCode != 7 {
-		t.Fatalf("exit = (%v, %d); want (true, 7)", got.result.HasExitCode, got.result.ExitCode)
+}
+
+// TestFindEndMarkerWaitsForPaddingToFinish proves the incremental scanner
+// treats a buffer that ends inside the padding as undecided: the terminator may
+// arrive in the next read, so the candidate must be rescanned, not rejected.
+func TestFindEndMarkerWaitsForPaddingToFinish(t *testing.T) {
+	const marker = "__NCMCP_padding_0123456789abcdef__"
+	cases := []struct {
+		name   string
+		suffix string
+		code   int
+	}{
+		{"one space at the buffer end", "_E:0 ", 0},
+		{"several spaces at the buffer end", "_E:5   ", 5},
+		{"tab at the buffer end", "_E:3\t", 3},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			data := []byte(marker + testCase.suffix)
+			start, _, ok, resume := findEndMarkerFrom(data, marker, 0)
+			if ok {
+				t.Fatalf("the end marker completed inside the padding: start=%d", start)
+			}
+			if resume != 0 {
+				t.Fatalf("resume = %d; want the undecided candidate at 0", resume)
+			}
+			data = append(data, "\r\n"...)
+			start, code, ok, _ := findEndMarkerFrom(data, marker, resume)
+			if !ok || start != 0 || code != testCase.code {
+				t.Fatalf("after the terminator arrived: start=%d code=%d ok=%v", start, code, ok)
+			}
+		})
+	}
+}
+
+// TestCommandCompletesWhenConPTYPadsTheEndMarker reproduces the real ConPTY
+// output that made the directory picker time out: the console pads the marker
+// row with spaces before a cursor-position escape and the prompt, so requiring
+// a line ending or an escape immediately after the digits held the command
+// until its deadline.
+func TestCommandCompletesWhenConPTYPadsTheEndMarker(t *testing.T) {
+	cases := []struct {
+		name string
+		tail string
+	}{
+		{"one space", " "},
+		{"several spaces", "   "},
+		{"tab", "\t"},
+		{"space before a cursor escape", " \x1b[30;1H"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			runCommandWithEndMarker(t, func(marker string) []string {
+				return []string{marker + "_E:7" + testCase.tail + "\r\n"}
+			})
+		})
 	}
 }
 

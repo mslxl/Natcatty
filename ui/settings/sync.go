@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsync "github.com/mslxl/natcatty/application/sync"
+	appbackup "github.com/mslxl/natcatty/application/vaultbackup"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainsync "github.com/mslxl/natcatty/domain/sync"
 	"github.com/mslxl/natcatty/ui/kit"
@@ -84,6 +86,8 @@ type DestructiveSyncService interface {
 // the ticket 49-54 surface unchanged; the production service implements it.
 type ConvergentSyncService interface {
 	SetConvergentEnabled(ctx context.Context, enabled bool) (appsync.ConvergentMigrationPreview, error)
+	ResolveConvergentMigrationConflict(ctx context.Context, resolution appsync.ConvergentConflictResolution) (appsync.ConvergentMigrationPreview, error)
+	ResolveConvergentMigrationConflicts(ctx context.Context, side appsync.ConvergentConflictSide, expected []appsync.ConvergentConflictExpectation) (appsync.ConvergentMigrationPreview, error)
 	RestoreLastVerified(ctx context.Context) (appsync.Result, error)
 }
 
@@ -1023,6 +1027,73 @@ func (s *SyncState) SetConvergentEnabled(enabled bool) {
 	}()
 }
 
+// ResolveConvergentMigrationConflict keeps one side of one contested field and
+// re-runs the migration preview; the migration completes only once the last
+// field is resolved. The fingerprint is the one rendered with the row, so the
+// service can refuse a choice whose conflict changed in the meantime.
+func (s *SyncState) ResolveConvergentMigrationConflict(register, fingerprint string, side appsync.ConvergentConflictSide) {
+	service, ok := s.service.(ConvergentSyncService)
+	if !ok || s.busy || register == "" || fingerprint == "" {
+		return
+	}
+	s.busy = true
+	s.lastErr = nil
+	state := s
+	go func() {
+		_, err := service.ResolveConvergentMigrationConflict(state.ctx, appsync.ConvergentConflictResolution{
+			Register:    register,
+			Fingerprint: fingerprint,
+			Side:        side,
+		})
+		state.post(func() {
+			state.busy = false
+			state.lastErr = err
+			if err == nil {
+				state.requestBackups()
+			}
+		})
+	}()
+}
+
+// ResolveConvergentMigrationConflicts is the bulk action for the conflicts
+// still listed: one side for every rendered row. The expectations are captured
+// from the rows the user actually saw; the service applies the action only
+// while all of their fingerprints still match, and applies none if any
+// changed. Choices already made field by field are not part of that list and
+// are preserved.
+func (s *SyncState) ResolveConvergentMigrationConflicts(side appsync.ConvergentConflictSide, expected []appsync.ConvergentConflictExpectation) {
+	service, ok := s.service.(ConvergentSyncService)
+	if !ok || s.busy || len(expected) == 0 {
+		return
+	}
+	s.busy = true
+	s.lastErr = nil
+	state := s
+	go func() {
+		_, err := service.ResolveConvergentMigrationConflicts(state.ctx, side, expected)
+		state.post(func() {
+			state.busy = false
+			state.lastErr = err
+			if err == nil {
+				state.requestBackups()
+			}
+		})
+	}()
+}
+
+// convergentConflictExpectations captures the identity of each rendered
+// conflict row for a bulk action.
+func convergentConflictExpectations(conflicts []appsync.ConvergentMigrationConflict) []appsync.ConvergentConflictExpectation {
+	expected := make([]appsync.ConvergentConflictExpectation, 0, len(conflicts))
+	for _, conflict := range conflicts {
+		expected = append(expected, appsync.ConvergentConflictExpectation{
+			Register:    conflict.Register,
+			Fingerprint: conflict.Fingerprint,
+		})
+	}
+	return expected
+}
+
 // RestoreLastVerified applies the last provider-verified materialized copy
 // locally behind a protective backup. It never writes the provider and never
 // mutates the CRDT replica, so it is safe during divergence.
@@ -1613,7 +1684,10 @@ func syncConvergentPinnedBar(c *ui.Context, state *SyncState, snapshot appsync.S
 	showResume := phase == "paused"
 	showPause := info.Enabled && phase != "paused" && phase != "diverged" && phase != "blocked"
 	showDivergence := phase == "diverged"
-	if !showEnable && !showResume && !showPause && !showDivergence {
+	// A blocked migration with listed field conflicts can be completed with a
+	// single side for every field; the per-field rows stay in the report.
+	showBulkResolve := phase == "blocked" && info.Migration != nil && len(info.Migration.Conflicts) > 0
+	if !showEnable && !showResume && !showPause && !showDivergence && !showBulkResolve {
 		return
 	}
 	ui.Row(c).FillWidth().Height(syncConvergentBarHeight).
@@ -1635,6 +1709,17 @@ func syncConvergentPinnedBar(c *ui.Context, state *SyncState, snapshot appsync.S
 			if showPause {
 				if kit.SecondaryButton(c, "", m.SettingsSyncConvergentPause()).Disabled(state.Busy()).Clicked() {
 					state.SetConvergentEnabled(false)
+					c.Invalidate()
+				}
+			}
+			if showBulkResolve {
+				expected := convergentConflictExpectations(info.Migration.Conflicts)
+				if kit.SecondaryButton(c, "", m.SettingsSyncConvergentKeepLocalAll()).Disabled(state.Busy()).Clicked() {
+					state.ResolveConvergentMigrationConflicts(appsync.ConvergentConflictKeepLocal, expected)
+					c.Invalidate()
+				}
+				if kit.SecondaryButton(c, "", m.SettingsSyncConvergentKeepRemoteAll()).Disabled(state.Busy()).Clicked() {
+					state.ResolveConvergentMigrationConflicts(appsync.ConvergentConflictKeepRemote, expected)
 					c.Invalidate()
 				}
 			}
@@ -1856,7 +1941,72 @@ func syncConvergentMigrationBlocked(c *ui.Context, state *SyncState, info appsyn
 		for _, reason := range preview.BlockedReasons {
 			ui.Text(c, convergentReasonName(reason.Code, m)).FontSize(kit.M(c).Font.Caption).TextColor(syncDangerTextColor(t))
 		}
+		if len(preview.Conflicts) > 0 {
+			ui.Text(c, m.SettingsSyncConvergentConflictsTitle(strconv.Itoa(len(preview.Conflicts)))).
+				FontSize(kit.M(c).Font.Footnote).Bold().TextColor(t.Text)
+			for _, conflict := range preview.Conflicts {
+				syncConvergentConflictRow(c, state, conflict, m, t)
+			}
+		}
 	}
+}
+
+// syncConvergentConflictRow lists one contested field with the value each side
+// would keep and the two per-field choices. Register values are never written
+// to disk and secret-bearing registers render as hidden.
+func syncConvergentConflictRow(c *ui.Context, state *SyncState, conflict appsync.ConvergentMigrationConflict, m locales.Messages, t *ui.Theme) {
+	field := conflict.Field
+	if field == domainsync.PresenceField {
+		field = m.SettingsSyncConvergentConflictFieldPresence()
+	}
+	ui.Column(c).FillWidth().Padding(6).Gap(4).Background(t.Surface).Border(1, t.Border).Children(func() {
+		ui.Text(c, m.SettingsSyncConvergentConflictEntry(
+			syncEntityLabel(conflict.Family, m), conflict.EntityID, field,
+		)).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
+		ui.Text(c, m.SettingsSyncConvergentConflictValues(
+			convergentConflictValueText(conflict.Field, conflict.LocalValue, conflict.LocalPresent, conflict.Secret, m),
+			convergentConflictValueText(conflict.Field, conflict.RemoteValue, conflict.RemotePresent, conflict.Secret, m),
+		)).FontSize(kit.M(c).Font.Caption).TextColor(t.Text)
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			if kit.SecondaryButton(c, "", m.SettingsSyncConflictUseLocal()).Disabled(state.Busy()).Clicked() {
+				state.ResolveConvergentMigrationConflict(conflict.Register, conflict.Fingerprint, appsync.ConvergentConflictKeepLocal)
+				c.Invalidate()
+			}
+			if kit.SecondaryButton(c, "", m.SettingsSyncConflictUseRemote()).Disabled(state.Busy()).Clicked() {
+				state.ResolveConvergentMigrationConflict(conflict.Register, conflict.Fingerprint, appsync.ConvergentConflictKeepRemote)
+				c.Invalidate()
+			}
+		})
+	})
+}
+
+// convergentConflictValueText renders one side's value for the conflict list.
+// A presence register reports existence rather than the literal true. The raw
+// JSON string is shown without quotes; complex values are abbreviated so one
+// long document cannot crowd out the choices.
+func convergentConflictValueText(field string, value json.RawMessage, present, secret bool, m locales.Messages) string {
+	switch {
+	case secret:
+		return m.SettingsSyncConvergentConflictValueHidden()
+	case !present:
+		return m.SettingsSyncConvergentConflictValueMissing()
+	case field == domainsync.PresenceField:
+		return m.SettingsSyncConvergentConflictValuePresent()
+	}
+	text := strings.TrimSpace(string(value))
+	var decoded string
+	if err := json.Unmarshal(value, &decoded); err == nil {
+		text = decoded
+	}
+	if text == "" {
+		return m.SettingsSyncConvergentConflictValueMissing()
+	}
+	const limit = 60
+	runes := []rune(text)
+	if len(runes) > limit {
+		text = string(runes[:limit]) + "…"
+	}
+	return text
 }
 
 // syncConvergentDivergence offers only the safe actions: inspect the
@@ -2012,6 +2162,8 @@ func convergentReasonName(code string, m locales.Messages) string {
 		return m.SettingsSyncConvergentReasonNoBaseline()
 	case "legacy-conflict", "conflicts-unresolved", "legacy-merge-failed", "pending-conflict":
 		return m.SettingsSyncConvergentReasonConflict()
+	case "conflict-changed":
+		return m.SettingsSyncConvergentReasonChanged()
 	case "shrunk-vault":
 		return m.SettingsSyncConvergentReasonShrink()
 	case "empty-vault":
@@ -2137,6 +2289,10 @@ func syncBackupsPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapshot
 	ui.Column(c).Gap(6).Children(func() {
 		ui.Text(c, m.SettingsSyncBackupsTitle()).FontSize(kit.M(c).Font.Footnote).Bold()
 		ui.Text(c, m.SettingsSyncBackupsDescription()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
+		// The list mixes local restore points with cloud copies, but only the
+		// local ones live in the keychain-encrypted folder. Say so before any
+		// Restore button, because a copied folder alone cannot be restored.
+		ui.Text(c, m.SettingsSyncBackupsPortability()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		// Refresh backups is pinned in syncActionsPinnedBar so it stays
 		// visible even when the list is long.
 		if snapshot.BackupsProblem != appsync.ProblemNone {
@@ -2226,7 +2382,13 @@ func syncStatus(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m lo
 		return
 	}
 	if err := state.Err(); err != nil {
-		// Worker errors carry typed sentinels; never render Go error text.
+		// Worker errors carry typed sentinels; never render Go error text. A
+		// local restore under another machine's key is the one failure the
+		// generic vocabulary would misrepresent, so name it explicitly.
+		if errors.Is(err, appbackup.ErrDecrypt) {
+			ui.Text(c, m.SettingsSyncBackupKeyMismatch()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
+			return
+		}
 		text := syncProblemTextFor(m, provider, syncProblemForError(err))
 		if text == "" {
 			text = m.SettingsSyncOperationFailed()
@@ -2331,6 +2493,8 @@ func syncProblemText(m locales.Messages, problem appsync.Problem) string {
 		return m.SettingsSyncProblemBackup()
 	case appsync.ProblemConvergentMigration:
 		return m.SettingsSyncProblemConvergentMigration()
+	case appsync.ProblemConvergentConflictChanged:
+		return m.SettingsSyncProblemConvergentConflictChanged()
 	case appsync.ProblemConvergentDivergence:
 		return m.SettingsSyncProblemConvergentDivergence()
 	case appsync.ProblemConvergentCorrupt:
@@ -2391,6 +2555,8 @@ func syncProblemForError(err error) appsync.Problem {
 		return appsync.ProblemRateLimited
 	case errors.Is(err, appsync.ErrNetwork):
 		return appsync.ProblemNetwork
+	case errors.Is(err, appsync.ErrConvergentConflictChanged):
+		return appsync.ProblemConvergentConflictChanged
 	case errors.Is(err, appsync.ErrConvergentMigration):
 		return appsync.ProblemConvergentMigration
 	case errors.Is(err, appsync.ErrConvergentDivergence):

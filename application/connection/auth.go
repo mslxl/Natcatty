@@ -79,6 +79,11 @@ type AuthPlan struct {
 	Candidates  []AuthCandidate
 	FailClosed  bool
 	RequiresMFA bool
+	// TOTPSecret is the Host's canonical otpauth://totp URI, or empty when the
+	// Host has no authenticator. It embeds the shared secret and is memory-only:
+	// the machine answers a matching keyboard-interactive prompt with a code and
+	// never logs the secret.
+	TOTPSecret string
 }
 
 // AuthSpec is the non-secret input to BuildAuthPlan. Password is credential
@@ -92,6 +97,9 @@ type AuthSpec struct {
 	UseAgent     bool
 	RequiresMFA  bool
 	CachedMethod string
+	// TOTPSecret is credential material: an otpauth://totp URI or a raw Base32
+	// secret. It is carried in memory only.
+	TOTPSecret string
 }
 
 // AuthSource resolves a Host's saved authentication material. The app bridges
@@ -171,6 +179,7 @@ func BuildAuthPlan(spec AuthSpec) AuthPlan {
 		Username:    spec.Username,
 		Password:    spec.Password,
 		RequiresMFA: spec.RequiresMFA,
+		TOTPSecret:  spec.TOTPSecret,
 	}
 	passwordMethods := func(preferKeyboardInteractive bool) {
 		if preferKeyboardInteractive {

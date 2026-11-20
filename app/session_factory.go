@@ -19,6 +19,7 @@ import (
 	"github.com/mslxl/natcatty/domain/model"
 	"github.com/mslxl/natcatty/domain/model/tmux"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -61,6 +62,13 @@ type preferenceSource interface {
 	Settings() domainpreferences.Settings
 }
 
+// terminalSettingsSource reads the terminal behavior group. The factory reads
+// only the Unsaved Host legacy-algorithm opt-in from it; a saved Host's own
+// algorithm settings always win.
+type terminalSettingsSource interface {
+	Settings() domainterminal.Settings
+}
+
 // transportFactory routes a Session to the local PTY adapter, the serial
 // adapter, the Telnet adapter, or an SSH Connection. The SSH path acquires a
 // lease for the Session's lifetime and releases it when the transport closes,
@@ -80,6 +88,10 @@ type transportFactory struct {
 	// test or MCP caller that supplies no global preferences keeps the
 	// configuration as written.
 	preferences preferenceSource
+	// terminalSettings supplies the Unsaved Host legacy-algorithm opt-in. It
+	// is optional so a test can build the factory without the settings
+	// service; a missing source means the opt-in is off.
+	terminalSettings terminalSettingsSource
 	// tmuxNotices deduplicates fallback notices per Host: a missing tmux is
 	// announced once, not on every reconnect.
 	tmuxNotices *tmux.NoticeState
@@ -139,6 +151,12 @@ func (f *transportFactory) withPreferences(preferences preferenceSource) *transp
 	return f
 }
 
+// withTerminalSettings supplies the Unsaved Host legacy-algorithm opt-in.
+func (f *transportFactory) withTerminalSettings(settings terminalSettingsSource) *transportFactory {
+	f.terminalSettings = settings
+	return f
+}
+
 func newTransportFactory(local, serial, telnet appsession.Factory, manager *appconnection.Manager, routes routeSource) *transportFactory {
 	return &transportFactory{
 		local: local, serial: serial, telnet: telnet, manager: manager, routes: routes,
@@ -172,14 +190,20 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		}
 		return f.etInProcess.Open(ctx, spec)
 	default:
-		return f.local.Open(ctx, spec)
+		return f.local.Open(ctx, f.withLocalShell(spec))
 	}
 	if f.manager == nil {
 		return nil, errors.New("app: no SSH connection manager")
 	}
 
 	var route appconnection.Route
-	if f.routes != nil {
+	switch {
+	case spec.HostID == "":
+		// An Unsaved Host has no saved backing, so there is no jump chain,
+		// proxy, or Network Profile to resolve. Its only algorithm setting is
+		// the terminal-wide legacy opt-in.
+		route = f.unsavedHostRoute()
+	case f.routes != nil:
 		resolved, err := f.routes.Route(ctx, spec.HostID)
 		if err != nil {
 			return nil, err
@@ -195,6 +219,20 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		terminal: terminal, lease: lease, notices: notices,
 		tmuxAttached: attached, captureHookExpected: hookExpected, hookWithdrawn: hookWithdrawn,
 	}, nil
+}
+
+// withLocalShell copies the configured custom shell into a local Session's
+// start command. An explicit command wins, and an absent or unusable path
+// leaves the command empty so the transport opens the OS login shell. This is
+// the path every local open takes, including an MCP-created Session and the
+// command line's --open-terminal-shell.
+func (f *transportFactory) withLocalShell(spec appsession.StartSpec) appsession.StartSpec {
+	if spec.Kind != appsession.KindLocal || len(spec.Command) > 0 || f.preferences == nil {
+		return spec
+	}
+	command, _ := f.preferences.Settings().Appearance.LocalShell.Command(appsession.LocalShellExists)
+	spec.Command = command
+	return spec
 }
 
 // withMoshPreferences copies the persisted prediction choice into a Mosh
@@ -246,16 +284,20 @@ func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.
 		Hostname:          spec.Hostname,
 		Port:              spec.Port,
 		Username:          spec.Username,
+		Password:          spec.Password,
 		Jumps:             route.Jumps,
 		Proxy:             route.Proxy,
 		Network:           route.Network,
 		Algorithms:        route.Algorithms,
 		ConfigFingerprint: route.ConfigFingerprint,
 		LeaseKind:         appconnection.LeaseShell,
-		Keepalive:         &appconnection.DefaultKeepalive,
-		X11Forwarding:     spec.X11Forwarding,
-		X11Display:        spec.X11Display,
-		OnX11Notice:       onX11Notice,
+		// A target with no saved Host (Quick Connect) must not share or park a
+		// transport: another unsaved target could carry different credentials.
+		Dedicated:     spec.HostID == "",
+		Keepalive:     &appconnection.DefaultKeepalive,
+		X11Forwarding: spec.X11Forwarding,
+		X11Display:    spec.X11Display,
+		OnX11Notice:   onX11Notice,
 	}
 	for attempt := 0; ; attempt++ {
 		lease, err := f.manager.Acquire(ctx, request)
@@ -795,6 +837,13 @@ type routeVault interface {
 	NetworkProfile(ctx context.Context, id string) (domainvault.NetworkProfile, error)
 }
 
+// proxyProfileReader is the optional Vault surface the app-wide default proxy
+// needs. Route fakes that do not resolve profiles keep working without it.
+type proxyProfileReader interface {
+	ProxyProfile(ctx context.Context, id string) (domainvault.ProxyProfile, error)
+	ProxyProfileSecret(ctx context.Context, id string) (string, error)
+}
+
 // authMaterialResolver is implemented by the Vault service. Route fakes need
 // not implement it; when present, its digest scopes pool reuse to the resolved
 // credentials so rotating a password or Key never reuses a parked transport.
@@ -811,9 +860,17 @@ type authMaterialResolver interface {
 // chain.
 type vaultRoutes struct {
 	vault routeVault
+	// preferences supplies the app-wide default proxy. It is optional so a
+	// test or MCP caller without global preferences keeps the Host's route.
+	preferences preferenceSource
 }
 
 func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.Route, error) {
+	// An unsaved target (Quick Connect) has no Host record to read a chain or
+	// Network Profile from. The app-wide default proxy still applies.
+	if id == "" {
+		return r.routeWithoutHost(ctx)
+	}
 	if r.vault == nil {
 		return appconnection.Route{}, routeError(errors.New("app: no Vault for route resolution"))
 	}
@@ -849,10 +906,10 @@ func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.
 	}
 
 	proxyOwner := target
-	if first != nil && first.Proxy != nil {
+	if first != nil && firstSelectsProxy(*first) {
 		proxyOwner = *first
 	}
-	proxy, err := r.proxy(ctx, proxyOwner)
+	proxy, err := r.resolveProxy(ctx, proxyOwner)
 	if err != nil {
 		return appconnection.Route{}, err
 	}
@@ -864,6 +921,20 @@ func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.
 	}
 	route.Network = network
 	return route, nil
+}
+
+// routeWithoutHost resolves the route of a target that has no saved Host. Only
+// the app-wide default proxy applies: there is no chain, Host proxy, or
+// Network Profile to read, and a default profile deleted since the preference
+// was written restores a direct connection.
+func (r vaultRoutes) routeWithoutHost(ctx context.Context) (appconnection.Route, error) {
+	// An empty Host selects no Host or Group proxy, so resolveProxy falls
+	// through to the app-wide default.
+	proxy, err := r.resolveProxy(ctx, domainvault.Host{})
+	if err != nil {
+		return appconnection.Route{}, err
+	}
+	return appconnection.Route{Proxy: proxy}, nil
 }
 
 // NetworkRouteForHost resolves only the target Host's effective Network
@@ -941,6 +1012,122 @@ func (r vaultRoutes) networkRoute(ctx context.Context, host domainvault.Host) (*
 	return network, nil
 }
 
+// firstSelectsProxy reports whether the first jump makes any proxy choice of
+// its own. A jump that explicitly chooses direct still owns the decision,
+// because it must stop the target Host's and app-wide inheritance.
+func firstSelectsProxy(host domainvault.Host) bool {
+	return host.Proxy != nil || host.ProxyProfileID != "" || host.DirectProxy
+}
+
+// proxySource maps an effective Host onto the resolver's Host level. The Vault
+// has already applied Host Group defaults, so the Group level is empty here.
+func proxySource(host domainvault.Host) appconnection.ProxySource {
+	switch {
+	case host.DirectProxy:
+		return appconnection.ProxySource{Direct: true}
+	case host.Proxy != nil && host.Proxy.ProfileID != "":
+		return appconnection.ProxySource{ProfileID: host.Proxy.ProfileID}
+	case host.Proxy != nil:
+		return appconnection.ProxySource{Manual: proxyTransport(host.Proxy)}
+	default:
+		return appconnection.ProxySource{ProfileID: host.ProxyProfileID}
+	}
+}
+
+func proxyTransport(config *domainvault.ProxyConfig) *appconnection.Proxy {
+	if config == nil {
+		return nil
+	}
+	return &appconnection.Proxy{
+		Type:     appconnection.ProxyType(config.Type),
+		Host:     config.Host,
+		Port:     config.Port,
+		Command:  config.Command,
+		Username: config.Username,
+		Password: config.Password,
+	}
+}
+
+// resolveProxy applies the Host, Host Group, app-wide default, direct
+// precedence. The Host and Group values are already merged by the Vault, so
+// the Group level stays empty; the app-wide default is read here instead of in
+// the UI so every connection path agrees.
+func (r vaultRoutes) resolveProxy(ctx context.Context, host domainvault.Host) (*appconnection.Proxy, error) {
+	global := ""
+	if r.preferences != nil {
+		global = r.preferences.Settings().DefaultProxyProfileID()
+	}
+	// A Host or Group may still name a Profile that has since been deleted. The
+	// reference then must not dead-end the route: resolution continues to the
+	// next level, ending at the app-wide default and finally direct.
+	var lookupErr error
+	profileExists := func(id string) bool {
+		reader, ok := r.vault.(proxyProfileReader)
+		if !ok {
+			return false
+		}
+		_, err := reader.ProxyProfile(ctx, id)
+		switch {
+		case err == nil:
+			return true
+		case errors.Is(err, appvault.ErrNotFound):
+			return false
+		default:
+			// Report the real failure instead of silently rerouting it.
+			if lookupErr == nil {
+				lookupErr = err
+			}
+			return true
+		}
+	}
+	choice := appconnection.ResolveProxy(proxySource(host), appconnection.ProxySource{}, global, profileExists)
+	if lookupErr != nil {
+		return nil, routeError(fmt.Errorf("Proxy Profile %s: %w", choice.ProfileID, lookupErr))
+	}
+	switch {
+	case choice.Direct:
+		return nil, nil
+	case choice.Manual != nil:
+		return r.proxy(ctx, host)
+	case choice.ProfileID != "":
+		if host.Proxy != nil && host.Proxy.ProfileID == choice.ProfileID {
+			// The Vault already materialized this profile and loaded its
+			// credential; re-reading the Host's field secret would look in the
+			// wrong place.
+			return proxyTransport(host.Proxy), nil
+		}
+		return r.profileProxy(ctx, choice.ProfileID)
+	}
+	return nil, nil
+}
+
+// profileProxy materializes an app-wide default profile. A profile deleted
+// since the preference was written restores a direct connection, matching the
+// Vault's non-cascading delete behavior.
+func (r vaultRoutes) profileProxy(ctx context.Context, id string) (*appconnection.Proxy, error) {
+	reader, ok := r.vault.(proxyProfileReader)
+	if !ok {
+		return nil, nil
+	}
+	profile, err := reader.ProxyProfile(ctx, id)
+	switch {
+	case errors.Is(err, appvault.ErrNotFound):
+		return nil, nil
+	case err != nil:
+		return nil, routeError(fmt.Errorf("Proxy Profile %s: %w", id, err))
+	}
+	config := domainvault.CloneProxy(&profile.Config)
+	config.ProfileID = profile.ID
+	if profile.Config.HasPassword {
+		password, err := reader.ProxyProfileSecret(ctx, id)
+		if err != nil {
+			return nil, routeError(fmt.Errorf("proxy password for Profile %s: %w", id, err))
+		}
+		config.Password = password
+	}
+	return proxyTransport(config), nil
+}
+
 func (r vaultRoutes) proxy(ctx context.Context, host domainvault.Host) (*appconnection.Proxy, error) {
 	if host.Proxy == nil {
 		return nil, nil
@@ -970,6 +1157,23 @@ func (r vaultRoutes) proxy(ctx context.Context, host domainvault.Host) (*appconn
 		return nil, routeError(fmt.Errorf("proxy password for Host %s: %w", host.ID, err))
 	}
 	return proxy, nil
+}
+
+// unsavedHostRoute is the route for an Unsaved Host. It has no Vault record,
+// so it carries no jump chain, proxy, or Network Profile; the terminal-wide
+// opt-in is the only algorithm setting it can have. The config fingerprint
+// includes that opt-in so changing it never reuses a parked transport built
+// with the other policy.
+func (f *transportFactory) unsavedHostRoute() appconnection.Route {
+	legacy := false
+	if f.terminalSettings != nil {
+		legacy = f.terminalSettings.Settings().LegacyAlgorithms
+	}
+	host := domainvault.Host{LegacyAlgorithms: legacy}
+	return appconnection.Route{
+		Algorithms:        algorithmPolicy(host),
+		ConfigFingerprint: configFingerprint(host, "unsaved"),
+	}
 }
 
 // algorithmPolicy maps a Host's advanced SSH settings onto the transport's

@@ -103,6 +103,7 @@ const (
 	IssueX11NotImported      IssueCode = "x11_not_imported"
 	IssueDuplicateInFile     IssueCode = "duplicate_in_file"
 	IssueInvalidJump         IssueCode = "invalid_jump"
+	IssueUnresolvedJump      IssueCode = "unresolved_jump"
 	IssueCyclicJump          IssueCode = "cyclic_jump"
 	IssueKeyUnreadable       IssueCode = "key_unreadable"
 	IssuePassphraseConflict  IssueCode = "passphrase_conflict"
@@ -168,6 +169,8 @@ type Record struct {
 	Notes    string
 	// Password is credential plaintext in memory only.
 	Password string
+	// TOTP is a Host's authenticator URI or Base32 secret in memory only.
+	TOTP string
 	// KeyPath and Passphrase feed the SSH Key importer. They are never
 	// written onto a Host record.
 	KeyPath    string
@@ -206,10 +209,14 @@ type Record struct {
 	RequiresMFA            bool
 	X11WarningAcknowledged bool
 	ProxyProfileID         string
+	DirectProxy            bool
 	NetworkProfileID       string
 	LegacyAlgorithms       bool
 	SkipEcdsaHostKey       bool
 	Algorithms             *Algorithms
+	// StartupCommand is typed once after the Session is ready. A portable
+	// export carries it and an import must not silently drop it.
+	StartupCommand string
 	// DeviceType is the original Host Details "Network Device Mode" value.
 	// Empty is an ordinary SSH Host.
 	DeviceType string
@@ -346,14 +353,18 @@ type FamilyWireGuardPeer struct {
 
 // FamilyKnownHost is one recorded host-key trust decision.
 type FamilyKnownHost struct {
-	Hostname          string
-	Port              int
-	KeyType           string
-	PublicKey         string
-	Fingerprint       string
-	DiscoveredAt      time.Time
-	LastSeen          time.Time
-	ConvertedToHostID string
+	Hostname    string
+	Port        int
+	KeyType     string
+	PublicKey   string
+	Fingerprint string
+	// IsCertificateAuthority marks the record as the signing CA of a host
+	// certificate rather than the presented key. It is display metadata for
+	// the Known Hosts view; trust matching still uses Fingerprint alone.
+	IsCertificateAuthority bool
+	DiscoveredAt           time.Time
+	LastSeen               time.Time
+	ConvertedToHostID      string
 }
 
 // HasData reports whether the family carries any record. A document may be a

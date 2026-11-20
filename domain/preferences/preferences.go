@@ -5,6 +5,7 @@ package preferences
 
 import (
 	"math"
+	"net"
 	"runtime"
 	"strings"
 
@@ -26,6 +27,10 @@ const (
 	GroupTransport  Group = "transport"
 	GroupMonitor    Group = "monitor"
 	GroupSysManager Group = "sysManager"
+	// GroupExternalMCP owns the device-local Streamable HTTP endpoint. It is
+	// absent from Groups and from PortableSettings: the opt-in switch and bind
+	// fields are currently device-local only, with no Settings surface yet.
+	GroupExternalMCP Group = "externalMcp"
 )
 
 // Groups returns every group in Settings-window order. GroupMonitor owns
@@ -229,6 +234,116 @@ func DefaultInterfaceStyle(goos string) InterfaceStyle {
 	return InterfaceClassic
 }
 
+// LocalShell is the program a new local Session starts instead of the OS
+// login shell. An empty Path asks the platform for its login shell, and an
+// empty Args starts the program without arguments.
+//
+// Args is stored exactly as the user typed it and parsed when a Session
+// opens. Storing argv instead would force the Settings editor to re-render
+// every keystroke through quote normalization, which loses a trailing space
+// and an unclosed quote while they are still being typed.
+//
+// The value is device-local: a path names a program installed on one machine,
+// so Portable strips it and MergePortable keeps the local choice.
+type LocalShell struct {
+	Path string `json:"path,omitempty"`
+	Args string `json:"args,omitempty"`
+}
+
+// Normalized trims the path but keeps the argument draft even while the path
+// is still empty. The Settings editor saves after every keystroke, and the
+// user may type arguments before the path; dropping the draft then would erase
+// them on the next save before the path arrives. Command ignores the draft
+// until a path is set, so it still asks for the OS login shell.
+func (shell LocalShell) Normalized() LocalShell {
+	shell.Path = strings.TrimSpace(shell.Path)
+	return shell
+}
+
+// Command returns the argv a local Session starts. exists reports whether a
+// configured path names a program the OS can start; it must resolve the path
+// without running the program. A nil exists skips the check.
+//
+// An empty path returns nil and false: the OS login shell. A configured path
+// that does not exist returns nil and true, so the caller opens the OS login
+// shell and can warn that the choice was ignored.
+func (shell LocalShell) Command(exists func(string) bool) ([]string, bool) {
+	shell = shell.Normalized()
+	if shell.Path == "" {
+		return nil, false
+	}
+	if exists != nil && !exists(shell.Path) {
+		return nil, true
+	}
+	return append([]string{shell.Path}, ParseArgs(shell.Args)...), false
+}
+
+// ParseArgs splits a Settings-window argument string into argv words. Single
+// and double quotes group spaces, a backslash escapes the next character, and
+// a quoted empty word ("") is kept. It never invokes a shell.
+func ParseArgs(raw string) []string {
+	var args []string
+	var word strings.Builder
+	started := false
+	var quote byte
+	for i := 0; i < len(raw); i++ {
+		ch := raw[i]
+		if quote != 0 {
+			switch {
+			case ch == quote:
+				quote = 0
+			case ch == '\\' && quote == '"' && i+1 < len(raw):
+				i++
+				word.WriteByte(raw[i])
+			default:
+				word.WriteByte(ch)
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
+			started = true
+		case '\\':
+			if i+1 < len(raw) {
+				i++
+				word.WriteByte(raw[i])
+			} else {
+				word.WriteByte(ch)
+			}
+			started = true
+		case ' ', '\t', '\n', '\r':
+			if started {
+				args = append(args, word.String())
+				word.Reset()
+				started = false
+			}
+		default:
+			word.WriteByte(ch)
+			started = true
+		}
+	}
+	if started {
+		args = append(args, word.String())
+	}
+	return args
+}
+
+// FormatArgs renders args so ParseArgs reads them back unchanged. A word is
+// quoted only when it contains whitespace, a quote, or a backslash.
+func FormatArgs(args []string) string {
+	parts := make([]string, len(args))
+	escaper := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	for i, arg := range args {
+		if arg != "" && !strings.ContainsAny(arg, " \t\n\r\"'\\") {
+			parts[i] = arg
+			continue
+		}
+		parts[i] = `"` + escaper.Replace(arg) + `"`
+	}
+	return strings.Join(parts, " ")
+}
+
 // Appearance group.
 type Appearance struct {
 	ThemeMode     ThemeMode  `json:"themeMode"`
@@ -259,6 +374,15 @@ type Appearance struct {
 	// inverted so a document written before the field existed, which has no
 	// value, keeps the original's blinking default.
 	TerminalCursorSteady bool `json:"terminalCursorSteady"`
+	// TerminalShiftEnterPlain leaves Shift+Enter to the terminal's own
+	// encoding instead of sending ESC CR. It is stored inverted so a document
+	// written before the field existed, which has no value, keeps the default:
+	// ESC CR is the legacy Alt+Enter sequence that readline, zle, and most TUI
+	// CLIs read as a literal newline rather than a submit.
+	TerminalShiftEnterPlain bool `json:"terminalShiftEnterPlain"`
+	// LocalShell replaces the OS login shell for local Sessions. It is
+	// device-local and stripped from the synced document.
+	LocalShell LocalShell `json:"localShell"`
 }
 
 // Layout group.
@@ -367,6 +491,60 @@ type Security struct {
 	ConfirmDestructive   bool `json:"confirmDestructive"`
 }
 
+// ExternalMCP is the optional Streamable HTTP endpoint for the external MCP
+// server. It is device-local: a bind address and port name this machine, and
+// the endpoint is off until the user enables it.
+type ExternalMCP struct {
+	HTTPEnabled         bool   `json:"httpEnabled"`
+	HTTPPort            int    `json:"httpPort"`
+	HTTPAllowCustomBind bool   `json:"httpAllowCustomBind"`
+	HTTPListenAddress   string `json:"httpListenAddress"`
+	HTTPClientHost      string `json:"httpClientHost"`
+}
+
+const (
+	// DefaultExternalMCPHTTPPort matches the original endpoint's default.
+	DefaultExternalMCPHTTPPort = 47391
+	// MinExternalMCPHTTPPort keeps the endpoint out of privileged ports.
+	MinExternalMCPHTTPPort = 1024
+	// MaxExternalMCPHTTPPort is the highest TCP port.
+	MaxExternalMCPHTTPPort = 65535
+	// DefaultExternalMCPHTTPListenAddress keeps the endpoint on loopback.
+	DefaultExternalMCPHTTPListenAddress = "127.0.0.1"
+)
+
+// EffectiveHTTPListenAddress is the bind address the transport uses. A custom
+// address applies only when the user explicitly allows a non-default bind.
+func (e ExternalMCP) EffectiveHTTPListenAddress() string {
+	if e.HTTPAllowCustomBind {
+		if address := strings.TrimSpace(e.HTTPListenAddress); address != "" {
+			return address
+		}
+	}
+	return DefaultExternalMCPHTTPListenAddress
+}
+
+// NormalizeExternalMCP repairs an unusable endpoint configuration. The
+// transport is still off after normalization; only an explicit enable turns
+// it on.
+func NormalizeExternalMCP(group ExternalMCP) ExternalMCP {
+	if group.HTTPPort < MinExternalMCPHTTPPort || group.HTTPPort > MaxExternalMCPHTTPPort {
+		group.HTTPPort = DefaultExternalMCPHTTPPort
+	}
+	group.HTTPListenAddress = strings.TrimSpace(group.HTTPListenAddress)
+	if group.HTTPListenAddress != "localhost" && net.ParseIP(group.HTTPListenAddress) == nil {
+		group.HTTPListenAddress = DefaultExternalMCPHTTPListenAddress
+	}
+	group.HTTPClientHost = strings.TrimSpace(group.HTTPClientHost)
+	if group.HTTPClientHost != "" {
+		address := net.ParseIP(group.HTTPClientHost)
+		if address == nil || group.HTTPClientHost == "0.0.0.0" || group.HTTPClientHost == "::" {
+			group.HTTPClientHost = ""
+		}
+	}
+	return group
+}
+
 // Transport holds the Mosh client's display settings. Both transports use
 // their in-process clients, so there is no client implementation to choose.
 type Transport struct {
@@ -375,21 +553,39 @@ type Transport struct {
 	MoshPredictionDisplay moshmodel.PredictionDisplay `json:"moshPredictionDisplay"`
 }
 
+// Proxy is the connection default used when neither a Host nor its Host
+// Group selects a proxy. It is portable, so a synced settings document carries
+// the same default to the user's other devices.
+type Proxy struct {
+	// DefaultProfileID names a saved Proxy Profile. Empty means a direct
+	// connection when nothing else selects a proxy.
+	DefaultProfileID string `json:"defaultProfileId,omitempty"`
+}
+
+// DefaultProxyProfileID returns the normalized app-wide proxy selection.
+func (settings Settings) DefaultProxyProfileID() string {
+	return strings.TrimSpace(settings.Proxy.DefaultProfileID)
+}
+
 // Settings is the whole persisted preference document.
 type Settings struct {
 	Appearance Appearance `json:"appearance"`
 	Layout     Layout     `json:"layout"`
 	SFTPEditor SFTPEditor `json:"sftpEditor"`
 	Logs       Logs       `json:"logs"`
+	// Proxy is the app-wide connection default, below Host and Host Group
+	// selections in precedence.
+	Proxy Proxy `json:"proxy"`
 	// History is device-local. It is deliberately absent from
 	// PortableSettings, so Vault cloud sync never carries an account address,
 	// username, auth mode, or interval.
-	History    History    `json:"history"`
-	Sync       Sync       `json:"sync"`
-	Security   Security   `json:"security"`
-	Transport  Transport  `json:"transport"`
-	Monitor    Monitor    `json:"monitor"`
-	SysManager SysManager `json:"sysManager"`
+	History     History     `json:"history"`
+	Sync        Sync        `json:"sync"`
+	Security    Security    `json:"security"`
+	Transport   Transport   `json:"transport"`
+	Monitor     Monitor     `json:"monitor"`
+	SysManager  SysManager  `json:"sysManager"`
+	ExternalMCP ExternalMCP `json:"externalMcp"`
 }
 
 // PortableSettings is the subset of Settings that follows the user between
@@ -402,6 +598,7 @@ type PortableSettings struct {
 	Layout     Layout     `json:"layout"`
 	SFTPEditor SFTPEditor `json:"sftpEditor"`
 	Logs       Logs       `json:"logs"`
+	Proxy      Proxy      `json:"proxy"`
 	Security   Security   `json:"security"`
 	Monitor    Monitor    `json:"monitor"`
 	SysManager SysManager `json:"sysManager"`
@@ -412,6 +609,8 @@ func Portable(settings Settings) PortableSettings {
 	appearance := settings.Appearance
 	appearance.AppIcon = ""
 	appearance.InterfaceStyle = ""
+	// A shell path names a program installed on this device.
+	appearance.LocalShell = LocalShell{}
 	editor := settings.SFTPEditor
 	editor.DefaultOpener = Opener{}
 	editor.FileAssociations = nil
@@ -425,6 +624,7 @@ func Portable(settings Settings) PortableSettings {
 		Layout:     layout,
 		SFTPEditor: editor,
 		Logs:       settings.Logs,
+		Proxy:      settings.Proxy,
 		Security:   settings.Security,
 		Monitor:    settings.Monitor,
 		SysManager: settings.SysManager,
@@ -439,6 +639,7 @@ func MergePortable(current Settings, portable PortableSettings) Settings {
 	next.Appearance = portable.Appearance
 	next.Appearance.AppIcon = current.Appearance.AppIcon
 	next.Appearance.InterfaceStyle = current.Appearance.InterfaceStyle
+	next.Appearance.LocalShell = current.Appearance.LocalShell
 	next.Layout = portable.Layout
 	next.Layout.HostViewMode = current.Layout.HostViewMode
 	next.Layout.HostSortMode = current.Layout.HostSortMode
@@ -446,6 +647,7 @@ func MergePortable(current Settings, portable PortableSettings) Settings {
 	next.SFTPEditor.DefaultOpener = current.SFTPEditor.DefaultOpener
 	next.SFTPEditor.FileAssociations = current.SFTPEditor.FileAssociations
 	next.Logs = portable.Logs
+	next.Proxy = portable.Proxy
 	next.Security = portable.Security
 	next.Monitor = portable.Monitor
 	next.SysManager = portable.SysManager
@@ -535,6 +737,13 @@ func Defaults() Settings {
 		},
 		Monitor:    DefaultMonitor(),
 		SysManager: DefaultSysManager(),
+		ExternalMCP: ExternalMCP{
+			// The HTTP endpoint is opt-in; a fresh profile exposes MCP over
+			// stdio only, as the original did.
+			HTTPEnabled:       false,
+			HTTPPort:          DefaultExternalMCPHTTPPort,
+			HTTPListenAddress: DefaultExternalMCPHTTPListenAddress,
+		},
 	}
 }
 
@@ -576,6 +785,7 @@ func Normalize(settings Settings) Settings {
 	if !settings.Appearance.TerminalCursorStyle.Valid() {
 		settings.Appearance.TerminalCursorStyle = defaults.Appearance.TerminalCursorStyle
 	}
+	settings.Appearance.LocalShell = settings.Appearance.LocalShell.Normalized()
 
 	if !settings.Layout.HostViewMode.Valid() {
 		settings.Layout.HostViewMode = defaults.Layout.HostViewMode
@@ -624,6 +834,8 @@ func Normalize(settings Settings) Settings {
 		settings.Transport.MoshPredictionDisplay.Normalized()
 	settings.Monitor = NormalizeMonitor(settings.Monitor)
 	settings.SysManager = NormalizeSysManager(settings.SysManager)
+	settings.ExternalMCP = NormalizeExternalMCP(settings.ExternalMCP)
+	settings.Proxy.DefaultProfileID = strings.TrimSpace(settings.Proxy.DefaultProfileID)
 	return settings
 }
 
@@ -678,10 +890,15 @@ func ResetGroup(settings Settings, group Group) Settings {
 		settings.Security = defaults.Security
 	case GroupTransport:
 		settings.Transport = defaults.Transport
+		// The app-wide default Proxy lives in its own top-level field but is
+		// edited in this Settings area, so resetting the area must clear it.
+		settings.Proxy = defaults.Proxy
 	case GroupMonitor:
 		settings.Monitor = defaults.Monitor
 	case GroupSysManager:
 		settings.SysManager = defaults.SysManager
+	case GroupExternalMCP:
+		settings.ExternalMCP = defaults.ExternalMCP
 	}
 	return settings
 }
@@ -706,6 +923,9 @@ const (
 	FieldTerminalFontSize             Field = "appearance.terminalFontSize"
 	FieldTerminalCursorStyle          Field = "appearance.terminalCursorStyle"
 	FieldTerminalCursorBlink          Field = "appearance.terminalCursorBlink"
+	FieldTerminalShiftEnter           Field = "appearance.terminalShiftEnter"
+	FieldLocalShell                   Field = "appearance.localShell"
+	FieldLocalShellArgs               Field = "appearance.localShellArgs"
 	FieldShowHostTreeSidebar          Field = "layout.showHostTreeSidebar"
 	FieldShowSFTPTab                  Field = "layout.showSftpTab"
 	FieldShowRecentHosts              Field = "layout.showRecentHosts"
@@ -735,6 +955,7 @@ const (
 	FieldConfirmCloseSessions         Field = "security.confirmCloseSessions"
 	FieldConfirmDestructive           Field = "security.confirmDestructive"
 	FieldMoshPredictionDisplay        Field = "transport.moshPredictionDisplay"
+	FieldDefaultProxy                 Field = "proxy.defaultProfileId"
 	FieldHistorySyncEnabled           Field = "history.syncEnabled"
 	FieldHistorySyncAddress           Field = "history.syncAddress"
 	FieldHistoryUsername              Field = "history.username"
@@ -749,6 +970,7 @@ func Fields() []Field {
 		FieldAccentColor, FieldAppIcon, FieldUIFont,
 		FieldWindowOpacity, FieldInterfaceStyle, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
 		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink,
+		FieldTerminalShiftEnter, FieldLocalShell, FieldLocalShellArgs,
 		FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
 		FieldShowOnlyUngroupedHostsInRoot, FieldHostClickBehavior,
 		FieldTabBarPosition, FieldShellOnlyTabNumberShortcuts,
@@ -765,6 +987,7 @@ func Fields() []Field {
 		FieldSyncProvider,
 		FieldConfirmCloseSessions, FieldConfirmDestructive,
 		FieldMoshPredictionDisplay,
+		FieldDefaultProxy,
 	}
 }
 
@@ -774,7 +997,8 @@ func GroupOf(field Field) (Group, bool) {
 	case FieldThemeMode, FieldLightTheme, FieldDarkTheme, FieldAccentMode,
 		FieldAccentColor, FieldAppIcon, FieldUIFont,
 		FieldWindowOpacity, FieldInterfaceStyle, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
-		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink:
+		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink,
+		FieldTerminalShiftEnter, FieldLocalShell, FieldLocalShellArgs:
 		return GroupAppearance, true
 	case FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
 		FieldShowOnlyUngroupedHostsInRoot, FieldHostClickBehavior,
@@ -795,7 +1019,7 @@ func GroupOf(field Field) (Group, bool) {
 		return GroupSync, true
 	case FieldConfirmCloseSessions, FieldConfirmDestructive:
 		return GroupSecurity, true
-	case FieldMoshPredictionDisplay:
+	case FieldMoshPredictionDisplay, FieldDefaultProxy:
 		return GroupTransport, true
 	default:
 		return "", false
@@ -837,6 +1061,14 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.Appearance.TerminalCursorStyle = defaults.Appearance.TerminalCursorStyle
 	case FieldTerminalCursorBlink:
 		settings.Appearance.TerminalCursorSteady = defaults.Appearance.TerminalCursorSteady
+	case FieldTerminalShiftEnter:
+		settings.Appearance.TerminalShiftEnterPlain = defaults.Appearance.TerminalShiftEnterPlain
+	case FieldLocalShell:
+		// Resetting the path also clears its arguments: arguments without a
+		// program are meaningless.
+		settings.Appearance.LocalShell = defaults.Appearance.LocalShell
+	case FieldLocalShellArgs:
+		settings.Appearance.LocalShell.Args = defaults.Appearance.LocalShell.Args
 	case FieldShowHostTreeSidebar:
 		settings.Layout.ShowHostTreeSidebar = defaults.Layout.ShowHostTreeSidebar
 	case FieldShowSFTPTab:
@@ -905,6 +1137,8 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.Security.ConfirmDestructive = defaults.Security.ConfirmDestructive
 	case FieldMoshPredictionDisplay:
 		settings.Transport.MoshPredictionDisplay = defaults.Transport.MoshPredictionDisplay
+	case FieldDefaultProxy:
+		settings.Proxy.DefaultProfileID = defaults.Proxy.DefaultProfileID
 	}
 	return settings
 }

@@ -20,6 +20,7 @@ type viewBackups struct {
 	encryption   bool
 	status       appbackup.Status
 	restoreCalls []string
+	restoreErr   error
 	clearCalls   int
 }
 
@@ -29,6 +30,9 @@ func (f *viewBackups) List(context.Context) ([]domainbackup.Summary, error) {
 
 func (f *viewBackups) Restore(_ context.Context, id string) error {
 	f.restoreCalls = append(f.restoreCalls, id)
+	if f.restoreErr != nil {
+		return f.restoreErr
+	}
 	f.items = nil
 	f.status = appbackup.Status{Kind: appbackup.StatusRestored}
 	return nil
@@ -109,6 +113,7 @@ func TestBackupPanelRendersAtBothSizesInEnglishAndChinese(t *testing.T) {
 
 				for _, want := range []string{
 					m.VaultBackupTitle(), m.VaultBackupRetentionLabel(),
+					m.VaultBackupPortability(),
 					m.VaultBackupRetentionHint(
 						domainbackup.MinRetention, domainbackup.MaxRetention,
 						domainbackup.DefaultRetention),
@@ -331,6 +336,7 @@ func TestBackupPanelIsLocalizedInEveryLocale(t *testing.T) {
 			m := openBackupPanel(t, state, tt, locale)
 			for _, want := range []string{
 				m.VaultBackupTitle(), m.VaultBackupRetentionLabel(),
+				m.VaultBackupPortability(),
 				m.VaultBackupListTitle(3), m.VaultBackupClear(),
 			} {
 				if !tt.HasText(want) {
@@ -339,5 +345,28 @@ func TestBackupPanelIsLocalizedInEveryLocale(t *testing.T) {
 			}
 			assertNoHorizontalOverflow(t, tt, 720, 480)
 		})
+	}
+}
+
+// TestBackupPanelNamesAForeignKeyFailure is ticket 31's restore contract at
+// the Vault panel: a backup written under another machine's key must not fall
+// back to the generic "could not restore" message.
+func TestBackupPanelNamesAForeignKeyFailure(t *testing.T) {
+	state, backups, tt := newBackupView(t, 900, 720)
+	backups.restoreErr = fmt.Errorf("%w: cipher: message authentication failed", appbackup.ErrDecrypt)
+	m := openBackupPanel(t, state, tt, "en")
+
+	state.RequestRestoreBackup("b1")
+	tt.Frame()
+	if state.ConfirmRestoreBackup() {
+		t.Fatal("ConfirmRestoreBackup reported success for a foreign key")
+	}
+	tt.Frame()
+
+	if !tt.HasText(m.VaultBackupProblemKeyMismatch()) {
+		t.Fatalf("the decrypt failure was not explained: %q", tt.Texts())
+	}
+	if tt.HasText(m.VaultBackupProblemRestore()) {
+		t.Fatal("the decrypt failure fell back to the generic restore error")
 	}
 }

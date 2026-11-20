@@ -166,6 +166,7 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaLayout, domain.FieldSidePanelDock, m.SettingsSidePanelDock(), "side panel dock")
 
 	add(AreaTerminal, "", m.SettingsTerminalLoggingTitle(), "logging log directory format timestamps output")
+	add(AreaTerminal, "", m.SettingsTerminalShiftEnter(), "shift enter newline esc cr alt enter encoding")
 	add(AreaTerminal, "", m.SettingsLogEnabled(), "logging enabled save output")
 	add(AreaTerminal, "", m.SettingsLogDirectory(), "log directory path")
 	add(AreaTerminal, "", m.SettingsLogFormat(), "log format text html")
@@ -176,6 +177,8 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaTerminal, "", m.SettingsPasteProtection(), "paste protection multiline warning")
 	add(AreaTerminal, "", m.SettingsPasteMinLines(), "paste protection threshold lines")
 	add(AreaTerminal, "", m.SettingsDropAction(), "drag drop file insert upload")
+	add(AreaTerminal, "", m.SettingsLegacyAlgorithmsTitle(),
+		"legacy algorithms ssh unsaved host ciphers key exchange host key")
 	add(AreaTerminal, "", m.SettingsAutocompleteTitle(), "autocomplete completion suggestions")
 	add(AreaTerminal, "", m.SettingsAutocompleteEnabled(), "autocomplete enabled")
 	add(AreaTerminal, "", m.SettingsAutocompletePopupMenu(), "autocomplete popup menu")
@@ -193,6 +196,8 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 
 	add(AreaTransport, domain.FieldMoshPredictionDisplay, m.SettingsMoshPredictionDisplay(),
 		"mosh prediction local echo adaptive always never latency")
+	add(AreaTransport, domain.FieldDefaultProxy, m.SettingsDefaultProxy(),
+		"proxy default app-wide profile direct no proxy")
 
 	add(AreaSFTPEditor, domain.FieldDoubleClickBehavior, m.SettingsDoubleClickBehavior(), "double click open transfer")
 	add(AreaSFTPEditor, domain.FieldAutoSync, m.SettingsAutoSync(), "sync directories")

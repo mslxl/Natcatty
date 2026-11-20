@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -736,6 +737,52 @@ func TestNormalizeDraftRejectsAnOutOfRangeETPort(t *testing.T) {
 	}
 }
 
+func TestStartupCommandIsTrimmedAndSurvivesTheRecord(t *testing.T) {
+	normalized, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com",
+		StartupCommand: "  echo ready\r\nuptime  ",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if normalized.StartupCommand != "echo ready\r\nuptime" {
+		t.Fatalf("StartupCommand = %q", normalized.StartupCommand)
+	}
+
+	host := Host{
+		ID:             model.HostID("host-1"),
+		Label:          normalized.Label,
+		Hostname:       normalized.Hostname,
+		Protocol:       normalized.Protocol,
+		StartupCommand: normalized.StartupCommand,
+	}
+	if err := host.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	encoded, err := json.Marshal(host)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var decoded Host
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if decoded.StartupCommand != normalized.StartupCommand {
+		t.Fatalf("round-trip StartupCommand = %q", decoded.StartupCommand)
+	}
+
+	if _, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com", StartupCommand: "echo\x00",
+	}); err == nil {
+		t.Fatal("a startup command containing NUL was accepted")
+	} else {
+		var invalid *ValidationError
+		if !errors.As(err, &invalid) || invalid.Field != FieldStartupCommand || invalid.Rule != RuleInvalid {
+			t.Fatalf("error = %v, want an invalid startup command", err)
+		}
+	}
+}
+
 func TestEffectivePortUsesSSHDefaultsForMoshAndET(t *testing.T) {
 	for _, protocol := range []Protocol{ProtocolMosh, ProtocolET} {
 		if got := EffectivePort(protocol, 0); got != 22 {
@@ -778,5 +825,53 @@ func TestAutoAttachTmuxIsKeptOnlyForPlainSSHHosts(t *testing.T) {
 	}
 	if network.AutoAttachTmux {
 		t.Fatal("network-device mode kept autoAttachTmux")
+	}
+}
+
+func TestNormalizeDraftCanonicalizesATOTPInput(t *testing.T) {
+	secret := totpBase32.EncodeToString(rfcSHA1Seed)
+	draft, err := NormalizeDraft(Draft{
+		Hostname: "example.test",
+		TOTP:     "  " + strings.ToLower(secret) + "  ",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if !strings.HasPrefix(draft.TOTP, "otpauth://totp/") {
+		t.Fatalf("TOTP = %q, want a canonical otpauth URI", draft.TOTP)
+	}
+	parsed, err := ParseTOTP(draft.TOTP)
+	if err != nil {
+		t.Fatalf("canonical TOTP does not parse: %v", err)
+	}
+	if parsed.Algorithm() != TOTPAlgorithmSHA1 || parsed.Digits() != 6 || parsed.Period() != 30 {
+		t.Fatalf("defaults = %s/%d/%d", parsed.Algorithm(), parsed.Digits(), parsed.Period())
+	}
+}
+
+func TestNormalizeDraftRejectsAnInvalidTOTPInput(t *testing.T) {
+	_, err := NormalizeDraft(Draft{Hostname: "example.test", TOTP: "not a secret"})
+	var validation *ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("error = %v, want *ValidationError", err)
+	}
+	if validation.Field != FieldTOTP || validation.Rule != RuleInvalid {
+		t.Fatalf("validation = %+v", validation)
+	}
+}
+
+func TestNormalizeDraftClearsTOTPForNonSSHProtocols(t *testing.T) {
+	secret := totpBase32.EncodeToString(rfcSHA1Seed)
+	draft, err := NormalizeDraft(Draft{
+		Hostname:  "example.test",
+		Protocol:  ProtocolTelnet,
+		TOTP:      secret,
+		ClearTOTP: true,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if draft.TOTP != "" || draft.ClearTOTP {
+		t.Fatalf("non-SSH draft kept TOTP=%q clear=%v", draft.TOTP, draft.ClearTOTP)
 	}
 }

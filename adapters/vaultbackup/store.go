@@ -437,7 +437,11 @@ func (s *Store) Read(ctx context.Context, id string) (domainbackup.Summary, []by
 	}
 	payload, err := aead.Open(nil, match.record.Nonce, match.record.Payload, aad(match.record))
 	if err != nil {
-		return domainbackup.Summary{}, nil, fmt.Errorf("%w: %v", appbackup.ErrCorrupt, err)
+		// Authentication covers both the ciphertext and the cleartext AAD, so
+		// this fires for a key from another machine, an edited record, and a
+		// damaged payload alike. Keep it typed: the UI explains the likely
+		// machine/key mismatch instead of rendering the cipher error.
+		return domainbackup.Summary{}, nil, fmt.Errorf("%w: %v", appbackup.ErrDecrypt, err)
 	}
 	sum := sha256.Sum256(payload)
 	if hex.EncodeToString(sum[:]) != match.record.Fingerprint {

@@ -20,6 +20,7 @@ require (
 	github.com/glebarez/go-sqlite v1.23.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/kayrus/putty v1.0.5
+	github.com/makiuchi-d/gozxing v0.1.1
 	github.com/pkg/sftp v1.13.12
 	golang.org/x/crypto v0.59.0
 	golang.org/x/image v0.48.0
@@ -83,6 +84,7 @@ require (
 	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/term v0.48.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
+	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	golang.zx2c4.com/wireguard/windows v1.0.1 // indirect
 	gvisor.dev/gvisor v0.0.0-20260915211658-a6f909f08a72 // indirect
@@ -102,3 +104,10 @@ tool github.com/egoist/mygo/cmd/mygo
 // verify the removal with `go mod tidy`, internal/netprobe, and the
 // CGO_ENABLED=0 five-target build.
 replace golang.zx2c4.com/wireguard/tun/netstack => golang.zx2c4.com/wireguard v0.0.0-20261024220952-b3bc704ef0ee
+
+// MyGo v0.7.4 is a git submodule at third_party/mygo, pinned by the gitlink.
+// patches/mygo holds the local behavioral patches (link policy while a
+// program takes the mouse, DEC 1001 tracking, ConPTY padding, and encoder mode
+// restoration); scripts/apply-mygo-patches.sh applies them to a clean
+// submodule checkout before building. See patches/mygo/README.md.
+replace github.com/egoist/mygo => ./third_party/mygo

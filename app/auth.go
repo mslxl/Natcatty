@@ -32,6 +32,17 @@ type vaultAuthSource struct {
 var _ appconnection.AuthSource = vaultAuthSource{}
 
 func (a vaultAuthSource) AuthPlan(ctx context.Context, req appconnection.Request) (appconnection.AuthPlan, error) {
+	// A target with no saved Host (Quick Connect) has no Vault record to
+	// resolve. Offer automatic authentication: the default keys and an
+	// interactive keyboard-interactive prompt. A typed one-shot password never
+	// reaches this source: Manager.authPlan offers it before asking for a plan.
+	if req.HostID == "" {
+		spec := appconnection.AuthSpec{Username: req.Username, Mode: appconnection.AuthModeAuto}
+		if a.defaults != nil {
+			spec.DefaultKeys = a.defaults.DefaultKeys()
+		}
+		return appconnection.BuildAuthPlan(spec), nil
+	}
 	resolved, err := a.vault.ResolveAuth(ctx, req.HostID)
 	if err != nil {
 		return appconnection.AuthPlan{}, authErrorFor(err)
@@ -63,6 +74,7 @@ func (a vaultAuthSource) AuthPlan(ctx context.Context, req appconnection.Request
 		Password:    resolved.Password,
 		UseAgent:    resolved.Selection.UseSSHAgent,
 		RequiresMFA: resolved.Selection.RequiresMFA,
+		TOTPSecret:  resolved.TOTP,
 	}
 	if spec.Mode == appconnection.AuthModeAuto && a.defaults != nil {
 		spec.DefaultKeys = a.defaults.DefaultKeys()

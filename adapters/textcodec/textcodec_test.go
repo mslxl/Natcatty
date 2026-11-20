@@ -34,6 +34,37 @@ func TestCodecDecodesLegacyBytesSplitAcrossChunks(t *testing.T) {
 	}
 }
 
+// TestEncodedWidthMatchesTheWireEncoding pins the byte count a byte-oriented
+// line editor needs: the GB18030 and Shift_JIS forms of a CJK character are two
+// bytes, unlike its three UTF-8 bytes, and the width must match what Encode
+// actually writes.
+func TestEncodedWidthMatchesTheWireEncoding(t *testing.T) {
+	tests := []struct {
+		name     string
+		encoding domainterminal.Encoding
+		r        rune
+		want     int
+	}{
+		{"GB18030 two-byte CJK", domainterminal.EncodingGB18030, '中', 2},
+		{"ShiftJIS two-byte CJK", domainterminal.EncodingShiftJIS, '日', 2},
+		{"Latin1 single byte", domainterminal.EncodingLatin1, 'é', 1},
+		{"UTF-8 three-byte CJK", domainterminal.EncodingUTF8, '中', 3},
+		{"ASCII stays one byte", domainterminal.EncodingGB18030, 'a', 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			codec := New(test.encoding)
+			encoded := codec.Encode([]byte(string(test.r)))
+			if len(encoded) != test.want {
+				t.Fatalf("Encode(%q) = %d bytes, want %d", test.r, len(encoded), test.want)
+			}
+			if got := codec.EncodedWidth(test.r); got != test.want {
+				t.Fatalf("EncodedWidth(%q) = %d, want %d", test.r, got, test.want)
+			}
+		})
+	}
+}
+
 func TestCodecEncodeUsesTheSelectedEncodingAndHoldsSplitRunes(t *testing.T) {
 	codec := New(domainterminal.EncodingGB18030)
 	// 中 is E4 B8 AD in UTF-8; the first call must hold its incomplete prefix.

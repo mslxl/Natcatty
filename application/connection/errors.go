@@ -106,6 +106,11 @@ var (
 	// ErrHostKeyRejected reports that the user rejected the server's key, or
 	// that no trust decision could be made.
 	ErrHostKeyRejected = errors.New("connection: host key rejected")
+	// ErrHostKeyUnverified reports a companion dial whose live host key is not
+	// trusted on the transport that inherited it. The dial never opens a prompt
+	// because the user did not start it; reconnecting the terminal re-verifies
+	// and repins the key before the companion may open again.
+	ErrHostKeyUnverified = errors.New("connection: host key is no longer trusted; reconnect the terminal to verify the host key before transferring files")
 	// ErrAuthentication reports refused credentials.
 	ErrAuthentication = errors.New("connection: authentication failed")
 	// ErrDialTimeout reports that the TCP connection did not establish in

@@ -282,6 +282,70 @@ func TestMultiValueRegisterConcurrentWrites(t *testing.T) {
 	}
 }
 
+// TestResolveConvergentRegisterDominatesBothSides covers the CRDT primitive
+// behind a user's keep-local / keep-remote migration decision: one register is
+// rewritten with a chosen value, and a stale branch cannot restore the
+// conflict.
+func TestResolveConvergentRegisterDominatesBothSides(t *testing.T) {
+	base := mustCreateState(t, hostSnapshot(t, "h1", "base"), "base", 100)
+	a, _ := mustApply(t, base, hostSnapshot(t, "h1", "from-a"), "a", 500, false)
+	b, _ := mustApply(t, base, hostSnapshot(t, "h1", "from-b"), "b", 500, false)
+	merged := mustMerge(t, a, b)
+
+	resolved, err := ResolveConvergentRegister(merged, "hosts", "h1", "name", json.RawMessage(`"base"`), false, "local", 900)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entity := resolved.Collections["hosts"].Entities["h1"]
+	if RegisterHasConflict(entity.Fields["name"]) {
+		t.Fatal("resolution left a field conflict")
+	}
+	if got := materializedValue(t, mustMaterialize(t, resolved), "hosts", "h1")["name"]; got != "base" {
+		t.Fatalf("resolved value = %v", got)
+	}
+	for _, stale := range []ConvergentState{a, b} {
+		joined := mustMerge(t, resolved, stale)
+		if RegisterHasConflict(joined.Collections["hosts"].Entities["h1"].Fields["name"]) {
+			t.Fatal("stale branch reintroduced a field conflict")
+		}
+	}
+
+	// Presence resolves the same way: a tombstone choice hides the entity and
+	// a stale live branch cannot resurrect it.
+	deleted := mustApplyForTest(t, base, emptyFamilySnapshot("hosts"), "d", 800)
+	// A concurrent delete-then-recreate writes a live presence that did not
+	// observe the other branch's tombstone, so the two presence candidates are
+	// genuinely concurrent.
+	live := mustApplyForTest(t,
+		mustApplyForTest(t, base, emptyFamilySnapshot("hosts"), "e", 800),
+		hostSnapshot(t, "h1", "from-e"), "e", 800,
+	)
+	presenceConflict := mustMerge(t, deleted, live)
+	conflicts, err := ConvergentConflicts(presenceConflict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conflicts) == 0 || conflicts[0].Field != PresenceField {
+		t.Fatalf("concurrent delete and edit did not list a presence conflict: %+v", conflicts)
+	}
+	hidden, err := ResolveConvergentRegister(presenceConflict, "hosts", "h1", PresenceField, nil, true, "local", 900)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mustMaterialize(t, hidden).Families["hosts"]) != 0 {
+		t.Fatal("presence resolution kept a resolved-deleted entity")
+	}
+	if joined := mustMerge(t, hidden, live); len(mustMaterialize(t, joined).Families["hosts"]) != 0 {
+		t.Fatal("stale live branch resurrected a resolved deletion")
+	}
+}
+
+func mustApplyForTest(t *testing.T, state ConvergentState, snapshot ConvergentSnapshot, node string, now int64) ConvergentState {
+	t.Helper()
+	next, _ := mustApply(t, state, snapshot, node, now, false)
+	return next
+}
+
 func TestConcurrentDeleteAndEdit(t *testing.T) {
 	base := mustCreateState(t, hostSnapshot(t, "h1", "before"), "base", 100)
 	deleted, _ := mustApply(t, base, emptyFamilySnapshot("hosts"), "a", 300, false)

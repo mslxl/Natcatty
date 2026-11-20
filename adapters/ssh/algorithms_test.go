@@ -44,6 +44,11 @@ func TestOfferForAppliesLegacyAlgorithmsAdditively(t *testing.T) {
 			t.Fatalf("legacy host keys = %v, missing %q", offer.hostKeys, want)
 		}
 	}
+	for _, want := range []string{xssh.CertAlgoRSAv01, xssh.InsecureCertAlgoDSAv01} {
+		if !slices.Contains(offer.hostKeys, want) {
+			t.Fatalf("legacy host keys = %v, missing legacy certificate %q", offer.hostKeys, want)
+		}
+	}
 	seen := make(map[string]bool, len(offer.macs))
 	for _, mac := range offer.macs {
 		if seen[mac] {
@@ -106,6 +111,14 @@ func TestOfferForSkipECDSAFiltersTheFinalHostKeyList(t *testing.T) {
 	if !slices.Contains(offer.hostKeys, "ssh-ed25519") || !slices.Contains(offer.hostKeys, "rsa-sha2-512") {
 		t.Fatalf("host keys = %v lost non-ECDSA algorithms", offer.hostKeys)
 	}
+	for _, want := range []string{xssh.CertAlgoED25519v01, xssh.CertAlgoRSASHA256v01, xssh.CertAlgoRSASHA512v01} {
+		if !slices.Contains(offer.hostKeys, want) {
+			t.Fatalf("host keys = %v dropped the non-ECDSA certificate %q", offer.hostKeys, want)
+		}
+	}
+	if slices.Contains(offer.hostKeys, xssh.CertAlgoECDSA256v01) {
+		t.Fatalf("host keys = %v still offer an ECDSA certificate", offer.hostKeys)
+	}
 
 	override := offerFor(t, dialer, appconnection.AlgorithmPolicy{
 		SkipECDSAHostKey: true,
@@ -128,6 +141,31 @@ func TestOfferForSkipECDSAFiltersTheFinalHostKeyList(t *testing.T) {
 	}
 }
 
+func TestHostKeyOffersIncludeCertificateAlgorithms(t *testing.T) {
+	dialer := NewDialer()
+	def := offerFor(t, dialer, appconnection.AlgorithmPolicy{})
+	for _, want := range []string{
+		xssh.CertAlgoED25519v01,
+		xssh.CertAlgoECDSA256v01,
+		xssh.CertAlgoECDSA384v01,
+		xssh.CertAlgoECDSA521v01,
+		xssh.CertAlgoRSASHA512v01,
+		xssh.CertAlgoRSASHA256v01,
+	} {
+		if !slices.Contains(def.hostKeys, want) {
+			t.Fatalf("default host keys = %v, missing certificate %q", def.hostKeys, want)
+		}
+	}
+	if slices.Contains(def.hostKeys, xssh.CertAlgoRSAv01) || slices.Contains(def.hostKeys, xssh.InsecureCertAlgoDSAv01) {
+		t.Fatalf("default host keys = %v offer a SHA-1 certificate without opting in", def.hostKeys)
+	}
+	// A certificate form is preferred over its plain key so a cert-only bastion
+	// negotiates rather than failing over to an untrusted plain key.
+	if slices.Index(def.hostKeys, xssh.CertAlgoED25519v01) > slices.Index(def.hostKeys, xssh.KeyAlgoED25519) {
+		t.Fatalf("host keys = %v put the plain Ed25519 key before its certificate", def.hostKeys)
+	}
+}
+
 func TestDefaultHostKeyAlgorithmsReturnsTheDialerOrder(t *testing.T) {
 	_, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -147,10 +185,14 @@ func TestDefaultHostKeyAlgorithmsReturnsTheDialerOrder(t *testing.T) {
 	if dialer := NewDialer(); !slices.Equal(dialer.hostKeyAlgos, want) {
 		t.Fatalf("dialer host keys = %v, want %v", dialer.hostKeyAlgos, want)
 	}
-	// The first preference is Ed25519, which is what makes the packaged
-	// smoke probe and the live session agree on a server offering both keys.
-	if got[0] != signer.PublicKey().Type() {
-		t.Fatalf("first host key = %q, want the Ed25519 type %q", got[0], signer.PublicKey().Type())
+	// The first preference is the Ed25519 family; its certificate form leads so
+	// a certificate-only bastion negotiates before the plain key is considered.
+	// The smoke probe and the live session still agree on the family.
+	if got[0] != xssh.CertAlgoED25519v01 {
+		t.Fatalf("first host key = %q, want the Ed25519 certificate type %q", got[0], xssh.CertAlgoED25519v01)
+	}
+	if !slices.Contains(got, signer.PublicKey().Type()) {
+		t.Fatalf("host keys = %v lost the plain Ed25519 type %q", got, signer.PublicKey().Type())
 	}
 
 	got[0] = "mutated-by-caller"

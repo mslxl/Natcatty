@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -50,6 +51,21 @@ type netCounters struct {
 	tx   uint64
 }
 
+// diskSectors is one device's accumulated sector counters. Linux block stat
+// sectors are always 512 bytes, whatever the device's sector size.
+type diskSectors struct {
+	read  uint64
+	write uint64
+}
+
+// diskIOCounters is one diskstats reading with the remote uptime it was taken
+// at. The remote time is the delta baseline: two samples close together must
+// not look idle because their local round trips differed.
+type diskIOCounters struct {
+	uptimeSeconds float64
+	devices       map[string]diskSectors
+}
+
 // parsedStats is one command reply before deltas are applied.
 type parsedStats struct {
 	hostname      string
@@ -65,11 +81,9 @@ type parsedStats struct {
 	swapTotal     float64
 	swapFree      float64
 	disks         []domainmonitor.Disk
+	diskIO        *diskIOCounters
 	network       []netCounters
-	gpu           float64
-	gpuName       string
-	gpuMemUsed    float64
-	gpuMemTotal   float64
+	gpus          []domainmonitor.GPU
 	uptimeSeconds float64
 	loadAverage   []float64
 }
@@ -78,15 +92,13 @@ type parsedStats struct {
 type samplerState struct {
 	cpu     cpuCounters
 	network map[string]netCounters
+	diskIO  *diskIOCounters
 	at      time.Time
 }
 
 func newParsedStats() parsedStats {
 	return parsedStats{
-		directCPU:   math.NaN(),
-		gpu:         math.NaN(),
-		gpuMemUsed:  math.NaN(),
-		gpuMemTotal: math.NaN(),
+		directCPU: math.NaN(),
 	}
 }
 
@@ -133,6 +145,11 @@ func parseStats(output string) (parsedStats, error) {
 		case strings.HasPrefix(part, "DISKS:"):
 			parsed.disks = parseDisks(part[6:])
 			sawMetric = true
+		case strings.HasPrefix(part, "DISKIO:"):
+			parsed.diskIO = parseDiskIO(part[7:])
+			if parsed.diskIO != nil {
+				sawMetric = true
+			}
 		case strings.HasPrefix(part, "GPU:"):
 			parseGPU(&parsed, part)
 		case strings.HasPrefix(part, "HOST:"):
@@ -264,32 +281,116 @@ func parseDisks(text string) []domainmonitor.Disk {
 	return disks
 }
 
+// parseDiskIO parses the Linux diskstats reply: the remote uptime, then one
+// name:readSectors:writeSectors entry per physical device. A malformed reply
+// yields no counters, so a partial read never looks like a valid sample.
+func parseDiskIO(text string) *diskIOCounters {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	parts := strings.SplitN(text, ";", 2)
+	if len(parts) != 2 {
+		return nil
+	}
+	uptime, ok := parseFloat(parts[0])
+	if !ok || uptime < 0 {
+		return nil
+	}
+	counters := &diskIOCounters{uptimeSeconds: uptime, devices: make(map[string]diskSectors)}
+	entries := strings.TrimSuffix(strings.TrimSpace(parts[1]), ",")
+	if entries == "" {
+		return counters
+	}
+	for _, entry := range strings.Split(entries, ",") {
+		fields := strings.Split(entry, ":")
+		if len(fields) != 3 {
+			return nil
+		}
+		name := strings.TrimSpace(fields[0])
+		read, okRead := parseUint(fields[1])
+		write, okWrite := parseUint(fields[2])
+		if name == "" || !okRead || !okWrite {
+			return nil
+		}
+		counters.devices[name] = diskSectors{read: read, write: write}
+	}
+	return counters
+}
+
+// diskIORates derives each device's throughput between two readings. A device
+// missing from the previous reading, or whose counters went backwards, keeps
+// NaN instead of reporting a fabricated rate; the first sample has no rates at
+// all.
+func diskIORates(current, previous *diskIOCounters) []domainmonitor.DiskIO {
+	if current == nil || len(current.devices) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(current.devices))
+	for name := range current.devices {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	elapsed := math.NaN()
+	if previous != nil && current.uptimeSeconds > previous.uptimeSeconds {
+		elapsed = current.uptimeSeconds - previous.uptimeSeconds
+	}
+	devices := make([]domainmonitor.DiskIO, 0, len(names))
+	for _, name := range names {
+		reading := current.devices[name]
+		entry := domainmonitor.DiskIO{
+			Device:              name,
+			ReadBytesPerSecond:  math.NaN(),
+			WriteBytesPerSecond: math.NaN(),
+		}
+		if previous != nil && !math.IsNaN(elapsed) {
+			if before, ok := previous.devices[name]; ok &&
+				reading.read >= before.read && reading.write >= before.write {
+				entry.ReadBytesPerSecond = float64(reading.read-before.read) * 512 / elapsed
+				entry.WriteBytesPerSecond = float64(reading.write-before.write) * 512 / elapsed
+			}
+		}
+		devices = append(devices, entry)
+	}
+	return devices
+}
+
 func parseGPU(parsed *parsedStats, part string) {
 	// The label may arrive as "GPU:..." or after another label without its
-	// own delimiter, as in the original parser.
+	// own delimiter, as in the original parser. Entries are comma separated,
+	// each with utilization, used MB, total MB, and the remaining words as
+	// the device name.
 	index := strings.Index(part, "GPU:")
 	if index < 0 {
 		return
 	}
-	fields := strings.Fields(part[index+4:])
-	if len(fields) == 0 {
-		return
-	}
-	if value, ok := parseFloat(fields[0]); ok {
-		parsed.gpu = clamp(value, 0, 100)
-	}
-	if len(fields) > 1 {
-		if value, ok := parseFloat(fields[1]); ok {
-			parsed.gpuMemUsed = value
+	for _, entry := range strings.Split(part[index+4:], ",") {
+		fields := strings.Fields(entry)
+		if len(fields) == 0 {
+			continue
 		}
-	}
-	if len(fields) > 2 {
-		if value, ok := parseFloat(fields[2]); ok {
-			parsed.gpuMemTotal = value
+		gpu := domainmonitor.GPU{
+			Utilization: math.NaN(),
+			MemUsedMB:   math.NaN(),
+			MemTotalMB:  math.NaN(),
 		}
-	}
-	if len(fields) > 3 {
-		parsed.gpuName = strings.Join(fields[3:], " ")
+		if value, ok := parseFloat(fields[0]); ok {
+			gpu.Utilization = clamp(value, 0, 100)
+		}
+		if len(fields) > 1 {
+			if value, ok := parseFloat(fields[1]); ok {
+				gpu.MemUsedMB = value
+			}
+		}
+		if len(fields) > 2 {
+			if value, ok := parseFloat(fields[2]); ok {
+				gpu.MemTotalMB = value
+			}
+		}
+		if len(fields) > 3 {
+			gpu.Name = strings.Join(fields[3:], " ")
+		}
+		parsed.gpus = append(parsed.gpus, gpu)
 	}
 }
 
@@ -317,10 +418,7 @@ func (p parsedStats) sample(previous samplerState, at time.Time, latency time.Du
 		Rx:            math.NaN(),
 		Tx:            math.NaN(),
 		Latency:       latency.Seconds() * 1000,
-		GPU:           p.gpu,
-		GPUName:       p.gpuName,
-		GPUMemUsedMB:  p.gpuMemUsed,
-		GPUMemTotalMB: p.gpuMemTotal,
+		GPUs:          p.gpus,
 		Hostname:      p.hostname,
 		OSName:        p.osName,
 		KernelRelease: p.kernelRelease,
@@ -357,6 +455,7 @@ func (p parsedStats) sample(previous samplerState, at time.Time, latency time.Du
 		used, total, percent := domainmonitor.AggregateDisks(p.disks)
 		sample.DiskUsedGB, sample.DiskTotalGB, sample.Disk = used, total, percent
 	}
+	sample.DiskIO = diskIORates(p.diskIO, previous.diskIO)
 
 	elapsed := 0.0
 	if !previous.at.IsZero() {
@@ -370,6 +469,7 @@ func (p parsedStats) sample(previous samplerState, at time.Time, latency time.Du
 	next := samplerState{
 		cpu:     p.cpu,
 		network: make(map[string]netCounters, len(p.network)),
+		diskIO:  p.diskIO,
 		at:      at,
 	}
 	for _, counter := range p.network {

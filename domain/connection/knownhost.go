@@ -40,6 +40,18 @@ type Key struct {
 	// PublicKey is "keytype base64-blob", or empty when it cannot be parsed.
 	PublicKey string
 
+	// Certificate fields are set when the live host key is an OpenSSH host
+	// certificate. Fingerprint above then covers the certificate blob, which
+	// changes on renewal, so the embedded key and the signing CA are carried
+	// separately for trust matching.
+	IsHostCertificate         bool
+	CertificateKeyType        string
+	CertificateKeyFingerprint string
+	CertificateKeyPublicKey   string
+	CertificateCAType         string
+	CertificateCAFingerprint  string
+	CertificateCAPublicKey    string
+
 	// Status, KnownHostID, and ExpectedFingerprint are filled by Classify.
 	Status              Status
 	KnownHostID         string
@@ -56,11 +68,16 @@ type KnownHost struct {
 	PublicKey string
 	// Fingerprint is SHA-256 base64 without padding; it is the ground truth
 	// for matching. PublicKey is display and import metadata.
-	Fingerprint       string
-	DiscoveredAt      time.Time
-	LastSeen          time.Time
-	ConvertedToHostID string
-	Order             int64
+	Fingerprint string
+	// IsCertificateAuthority marks a record whose KeyType and Fingerprint are
+	// the signing CA of a host certificate, not a presented key. The user
+	// approved the certificate while delegating trust to this CA, so the
+	// Known Hosts view must say so instead of showing it as a plain key.
+	IsCertificateAuthority bool
+	DiscoveredAt           time.Time
+	LastSeen               time.Time
+	ConvertedToHostID      string
+	Order                  int64
 }
 
 // normalizeFingerprint removes the display prefix and base64 padding so stored
@@ -106,17 +123,37 @@ func PublicKey(keyType string, blob []byte) string {
 }
 
 // NewKnownHost records a trusted key. The caller owns the id so the
-// application can generate an opaque identifier.
+// application can generate an opaque identifier. A host certificate is
+// recorded under its signing CA: that is the trust anchor, it survives
+// certificate renewal, and a certificate signed by a different CA does not
+// match it.
 func NewKnownHost(id string, key Key, when time.Time) KnownHost {
+	keyType := key.KeyType
+	publicKey := key.PublicKey
+	fingerprint := key.Fingerprint
+	certificateAuthority := false
+	if key.IsHostCertificate {
+		if key.CertificateCAFingerprint != "" {
+			keyType = key.CertificateCAType
+			publicKey = key.CertificateCAPublicKey
+			fingerprint = key.CertificateCAFingerprint
+			certificateAuthority = true
+		} else if key.CertificateKeyFingerprint != "" {
+			keyType = key.CertificateKeyType
+			publicKey = key.CertificateKeyPublicKey
+			fingerprint = key.CertificateKeyFingerprint
+		}
+	}
 	return KnownHost{
-		ID:           id,
-		Hostname:     normalizeHostname(key.Hostname),
-		Port:         portOr22(key.Port),
-		KeyType:      key.KeyType,
-		PublicKey:    key.PublicKey,
-		Fingerprint:  normalizeFingerprint(key.Fingerprint),
-		DiscoveredAt: when,
-		LastSeen:     when,
+		ID:                     id,
+		Hostname:               normalizeHostname(key.Hostname),
+		Port:                   portOr22(key.Port),
+		KeyType:                keyType,
+		PublicKey:              publicKey,
+		Fingerprint:            normalizeFingerprint(fingerprint),
+		IsCertificateAuthority: certificateAuthority,
+		DiscoveredAt:           when,
+		LastSeen:               when,
 	}
 }
 
@@ -124,23 +161,40 @@ func NewKnownHost(id string, key Key, when time.Time) KnownHost {
 // Key carries the status and, for changed keys, the fingerprint the user
 // previously trusted.
 func Classify(known []KnownHost, hostname string, port int, keyType, fingerprint string) Key {
-	normalizedFingerprint := normalizeFingerprint(fingerprint)
-	port = portOr22(port)
-	normalizedKeyType := strings.TrimSpace(keyType)
+	return ClassifyKey(known, Key{
+		Hostname:    hostname,
+		Port:        port,
+		KeyType:     keyType,
+		Fingerprint: fingerprint,
+	})
+}
+
+// ClassifyKey is Classify for a key that may be an OpenSSH host certificate. A
+// certificate is trusted when the Vault knows its certificate blob, its
+// embedded host key, or its signing CA for the endpoint, so renewal (same key,
+// new certificate) does not re-prompt. An unknown CA or key stays unknown and
+// the caller asks the user.
+func ClassifyKey(known []KnownHost, live Key) Key {
+	normalizedFingerprint := normalizeFingerprint(live.Fingerprint)
+	port := portOr22(live.Port)
+	normalizedKeyType := strings.TrimSpace(live.KeyType)
+
+	result := live
+	result.Hostname = normalizeHostname(live.Hostname)
+	result.Port = port
+	result.KeyType = normalizedKeyType
+	result.Fingerprint = normalizedFingerprint
+	result.CertificateKeyFingerprint = normalizeFingerprint(live.CertificateKeyFingerprint)
+	result.CertificateCAFingerprint = normalizeFingerprint(live.CertificateCAFingerprint)
+	result.Status = StatusUnknown
+	result.KnownHostID = ""
+	result.ExpectedFingerprint = ""
 
 	candidates := make([]KnownHost, 0, len(known))
 	for _, record := range known {
-		if matchesEndpoint(record, hostname, port) {
+		if matchesEndpoint(record, result.Hostname, port) {
 			candidates = append(candidates, record)
 		}
-	}
-
-	result := Key{
-		Hostname:    normalizeHostname(hostname),
-		Port:        port,
-		KeyType:     normalizedKeyType,
-		Fingerprint: normalizedFingerprint,
-		Status:      StatusUnknown,
 	}
 	if len(candidates) == 0 {
 		return result
@@ -163,11 +217,22 @@ func Classify(known []KnownHost, hostname string, port int, keyType, fingerprint
 		}
 	}
 
-	for _, entry := range comparable {
-		if entry.fingerprint == normalizedFingerprint {
-			result.Status = StatusTrusted
-			result.KnownHostID = entry.record.ID
-			return result
+	liveMatches := []string{normalizedFingerprint}
+	if result.IsHostCertificate {
+		if result.CertificateKeyFingerprint != "" {
+			liveMatches = append(liveMatches, result.CertificateKeyFingerprint)
+		}
+		if result.CertificateCAFingerprint != "" {
+			liveMatches = append(liveMatches, result.CertificateCAFingerprint)
+		}
+	}
+	for _, match := range liveMatches {
+		for _, entry := range comparable {
+			if entry.fingerprint == match {
+				result.Status = StatusTrusted
+				result.KnownHostID = entry.record.ID
+				return result
+			}
 		}
 	}
 

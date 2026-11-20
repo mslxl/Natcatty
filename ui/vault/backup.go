@@ -47,6 +47,10 @@ func backupPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 		ui.Text(c, m.VaultBackupUnavailable()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.WarningText(t))
 	} else {
 		ui.Text(c, m.VaultBackupIntro()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+		// The files are encrypted under this machine's keychain entry. A user
+		// who copies the folder to another machine must know that the folder
+		// alone will not restore anything.
+		ui.Text(c, m.VaultBackupPortability()).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 	}
 
 	var retentionRect ui.Rect

@@ -206,6 +206,79 @@ func (e endpoint) address() string {
 	return net.JoinHostPort(e.hostname, strconv.Itoa(e.portOr22()))
 }
 
+// keyExchangeGuard answers the host-key callback for one Connection. The first
+// key it sees is checked through the application's verifier; a later key
+// exchange (rekey) that presents that same key is answered synchronously with
+// nil and never reaches the user again. A different key is not remembered, so
+// a mid-session key change still verifies, prompts, and can fail closed.
+type keyExchangeGuard struct {
+	mu       sync.Mutex
+	accepted []byte
+}
+
+// verifyKey reports whether blob is the key already accepted for this
+// connection, and otherwise runs the application verifier before remembering
+// it. It is safe to call from concurrent key exchanges.
+func (g *keyExchangeGuard) verifyKey(ctx context.Context, blob []byte, verify func(context.Context, domainconn.Key) error, key domainconn.Key) error {
+	g.mu.Lock()
+	unchanged := len(g.accepted) > 0 && bytes.Equal(g.accepted, blob)
+	g.mu.Unlock()
+	if unchanged {
+		return nil
+	}
+	if err := verify(ctx, key); err != nil {
+		return err
+	}
+	g.mu.Lock()
+	g.accepted = append(g.accepted[:0], blob...)
+	g.mu.Unlock()
+	return nil
+}
+
+// describeHostKey turns a live server key into the domain key the application
+// verifies. An OpenSSH host certificate is validated here - host certificate
+// type, principal, validity, and CA signature - because a forged or expired
+// certificate must fail closed instead of prompting. A valid certificate also
+// carries its embedded key and signing CA so the Vault can match either of them
+// across a renewal that changes only the certificate blob.
+func describeHostKey(hostname string, port int, key xssh.PublicKey) (domainconn.Key, error) {
+	blob := key.Marshal()
+	described := domainconn.Key{
+		Hostname:    hostname,
+		Port:        port,
+		KeyType:     key.Type(),
+		Fingerprint: domainconn.Fingerprint(blob),
+		PublicKey:   domainconn.PublicKey(key.Type(), blob),
+	}
+	certificate, ok := key.(*xssh.Certificate)
+	if !ok {
+		return described, nil
+	}
+	if certificate.CertType != xssh.HostCert {
+		return described, &appconnection.Error{
+			Kind:  appconnection.KindHostKey,
+			Cause: fmt.Errorf("%w: certificate type %d is not a host certificate", appconnection.ErrHostKeyRejected, certificate.CertType),
+		}
+	}
+	checker := &xssh.CertChecker{}
+	if err := checker.CheckCert(hostname, certificate); err != nil {
+		return described, &appconnection.Error{
+			Kind:  appconnection.KindHostKey,
+			Cause: fmt.Errorf("%w: %v", appconnection.ErrHostKeyRejected, err),
+		}
+	}
+	keyBlob := certificate.Key.Marshal()
+	caBlob := certificate.SignatureKey.Marshal()
+	described.IsHostCertificate = true
+	described.CertificateKeyType = certificate.Key.Type()
+	described.CertificateKeyFingerprint = domainconn.Fingerprint(keyBlob)
+	described.CertificateKeyPublicKey = domainconn.PublicKey(certificate.Key.Type(), keyBlob)
+	described.CertificateCAType = certificate.SignatureKey.Type()
+	described.CertificateCAFingerprint = domainconn.Fingerprint(caBlob)
+	described.CertificateCAPublicKey = domainconn.PublicKey(certificate.SignatureKey.Type(), caBlob)
+	return described, nil
+}
+
 func endpointsFor(req appconnection.DialRequest) []endpoint {
 	endpoints := make([]endpoint, 0, len(req.Jumps)+1)
 	for _, hop := range req.Jumps {
@@ -270,6 +343,20 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 		}
 	}
 
+	// Host-key verification after the handshake runs on every key exchange, so
+	// it cannot use the handshake-scoped context: that one is canceled as soon
+	// as the initial handshake returns. This context lives as long as the
+	// transport and is canceled when the client closes, which releases a trust
+	// prompt queued by a rekey. It is deliberately not derived from the dial
+	// context: the caller's attempt may end while the connection stays open.
+	connCtx, cancelConn := context.WithCancel(context.Background())
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			cancelConn()
+		}
+	}()
+
 	for i, ep := range endpoints {
 		label := ep.label
 		if label == "" {
@@ -298,11 +385,12 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 			reportChain(req, total, i+1, label, appconnection.ChainError, annotated)
 			return nil, annotated
 		}
+		disableNagle(raw)
 		reportChain(req, total, i+1, label, appconnection.ChainTCPConnected, nil)
 		reportChain(req, total, i+1, label, appconnection.ChainAuthenticating, nil)
 
 		versioned := &versionRecorder{Conn: raw}
-		client, remoteVersion, err := d.handshake(ctx, versioned, ep)
+		client, remoteVersion, err := d.handshake(ctx, connCtx, versioned, ep)
 		if err != nil {
 			_ = raw.Close()
 			closeChain()
@@ -320,6 +408,7 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 		client:        final,
 		ancestors:     clients[:len(clients)-1],
 		remoteVersion: versions[len(versions)-1],
+		cancel:        cancelConn,
 	}
 	if req.X11 != nil {
 		bridge, err := newX11Bridge(final, req.X11, d.x11Local)
@@ -333,7 +422,27 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 	// the connection pool's liveness check sees a transport that died while
 	// no channel operation was in flight.
 	go client.watchDeath()
+	handedOff = true
 	return client, nil
+}
+
+// noDelayConn is the latency hint a TCP transport exposes. Serial devices,
+// named pipes, ProxyCommand processes, jump-host channels, and the in-process
+// test pipe are not TCP and do not implement it.
+type noDelayConn interface {
+	SetNoDelay(bool) error
+}
+
+// disableNagle asks a TCP transport to send small SSH packets immediately. With
+// Nagle on, a second SFTP request behind an unacknowledged one waits for the
+// peer's delayed ACK, adding tens or hundreds of milliseconds to every
+// round trip. The hint is best-effort: a non-TCP transport is skipped and a
+// transport that rejects the option still carries the session, because latency
+// is not worth refusing a working connection.
+func disableNagle(conn net.Conn) {
+	if setter, ok := conn.(noDelayConn); ok {
+		_ = setter.SetNoDelay(true)
+	}
 }
 
 func reportChain(req appconnection.DialRequest, total, index int, label string, status appconnection.ChainStatus, err error) {
@@ -390,7 +499,7 @@ func (d *Dialer) openForward(ctx context.Context, previous *xssh.Client, ep endp
 
 // handshake verifies the host key, authenticates, and returns the client. raw
 // is closed by the caller on failure.
-func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xssh.Client, string, error) {
+func (d *Dialer) handshake(ctx context.Context, connCtx context.Context, raw net.Conn, ep endpoint) (*xssh.Client, string, error) {
 	port := ep.portOr22()
 	address := net.JoinHostPort(ep.hostname, strconv.Itoa(port))
 
@@ -399,6 +508,19 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 	// user decision is released when the authentication deadline expires.
 	authCtx, cancelAuth := context.WithCancel(ctx)
 	defer cancelAuth()
+
+	// The first key exchange must be released by the handshake deadline, but a
+	// later rekey outlives this call. The callback therefore reads the current
+	// context: authCtx until the handshake succeeds, then the connection-scoped
+	// connCtx. Without the switch a changed key on rekey would immediately see a
+	// canceled context and report a cancellation instead of prompting.
+	verifyMu := sync.RWMutex{}
+	verifyCtx := context.Context(authCtx)
+	currentVerifyCtx := func() context.Context {
+		verifyMu.RLock()
+		defer verifyMu.RUnlock()
+		return verifyCtx
+	}
 
 	plan := ep.auth
 	if plan.Password == "" {
@@ -423,6 +545,7 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 	if err != nil {
 		return nil, "", err
 	}
+	guard := &keyExchangeGuard{}
 	config := &xssh.ClientConfig{
 		User:         ep.username,
 		AuthCallback: machine.Next,
@@ -431,13 +554,11 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 				return &appconnection.Error{Kind: appconnection.KindHostKey, Cause: appconnection.ErrHostKeyRejected}
 			}
 			blob := key.Marshal()
-			return ep.verify(authCtx, domainconn.Key{
-				Hostname:    ep.hostname,
-				Port:        port,
-				KeyType:     key.Type(),
-				Fingerprint: domainconn.Fingerprint(blob),
-				PublicKey:   domainconn.PublicKey(key.Type(), blob),
-			})
+			described, err := describeHostKey(ep.hostname, port, key)
+			if err != nil {
+				return err
+			}
+			return guard.verifyKey(currentVerifyCtx(), blob, ep.verify, described)
 		},
 		HostKeyAlgorithms: offer.hostKeys,
 		Config: xssh.Config{
@@ -485,6 +606,11 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 				ep.onAuth(candidate)
 			}
 		}
+		// From here on the transport owns further key exchanges. Verify them
+		// against the connection lifetime instead of this handshake's context.
+		verifyMu.Lock()
+		verifyCtx = connCtx
+		verifyMu.Unlock()
 		return xssh.NewClient(result.conn, result.chans, result.reqs), versionOf(raw), nil
 	case <-timer.C:
 		return nil, "", abort(&appconnection.Error{

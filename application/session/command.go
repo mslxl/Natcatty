@@ -48,6 +48,11 @@ const (
 	// commandReadinessProbeAttempts bounds readiness retries so one dropped
 	// line does not consume the caller's whole deadline before the command runs.
 	commandReadinessProbeAttempts = 3
+	// maxEndMarkerPadding bounds the horizontal padding ConPTY may leave
+	// between the exit code and the terminator that ends the marker line. The
+	// bound keeps a marker-shaped string inside output from reaching a line
+	// ending; the per-command nonce is what makes the token itself unforgeable.
+	maxEndMarkerPadding = 256
 )
 
 var (
@@ -929,7 +934,18 @@ func findEndMarkerFrom(data []byte, marker string, from int) (start, code int, o
 		if len(digits) == 0 {
 			continue
 		}
-		if position >= len(data) {
+		// ConPTY pads the end-marker row with spaces before it repositions the
+		// cursor for the prompt, so horizontal whitespace may sit between the
+		// exit code and the terminator. The padding is bounded: a marker-shaped
+		// string inside output that runs on to a line ending is not the exit
+		// line.
+		padded := position
+		for padded < len(data) && (data[padded] == ' ' || data[padded] == '\t') && padded-position < maxEndMarkerPadding {
+			padded++
+		}
+		if padded >= len(data) {
+			// The buffer ends inside the padding: the terminator may arrive in
+			// the next read, so this candidate is undecided.
 			markIncomplete(start)
 			continue
 		}
@@ -938,7 +954,7 @@ func findEndMarkerFrom(data []byte, marker string, from int) (start, code int, o
 		// prompt may emit escape bytes immediately after the digits and deliver
 		// the newline as part of the prompt redraw, so requiring CR/LF here
 		// would leave a completed command running until its deadline.
-		if data[position] != '\r' && data[position] != '\n' && data[position] != 0x1b {
+		if data[padded] != '\r' && data[padded] != '\n' && data[padded] != 0x1b {
 			continue
 		}
 		code, err := strconv.Atoi(string(digits))

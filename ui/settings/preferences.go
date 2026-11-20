@@ -15,6 +15,14 @@ type Preferences interface {
 	ResetAll() error
 }
 
+// ProxyProfileChoice is one saved Proxy Profile offered as the app-wide
+// default. The Settings window only needs identity and label; the Vault owns
+// the configuration.
+type ProxyProfileChoice struct {
+	ID    string
+	Label string
+}
+
 // PreferencesState owns the Settings window's typed preference form. It is
 // mutated only on the UI thread.
 type PreferencesState struct {
@@ -30,6 +38,10 @@ type PreferencesState struct {
 	// scaled thumbnails iconThumbs keeps.
 	iconArtwork func(variant string) []byte
 	iconThumbs  map[string]*ui.Bitmap
+	// proxyProfiles lists the saved Proxy Profiles offered as the app-wide
+	// default. The callback is resolved at render time because the Vault state
+	// is built after the Settings state.
+	proxyProfiles func() []ProxyProfileChoice
 }
 
 // PreferencesOption customizes a PreferencesState.
@@ -46,6 +58,13 @@ func WithLocaleRequest(fn func(tag string)) PreferencesOption {
 	return func(s *PreferencesState) { s.requestLocale = fn }
 }
 
+// WithProxyProfiles sets the saved Proxy Profiles the app-wide default row
+// offers. The source is called at render time so Vault edits appear without
+// rebuilding the Settings state.
+func WithProxyProfiles(source func() []ProxyProfileChoice) PreferencesOption {
+	return func(s *PreferencesState) { s.proxyProfiles = source }
+}
+
 // NewPreferencesState returns the typed preference form for service.
 func NewPreferencesState(service Preferences, opts ...PreferencesOption) *PreferencesState {
 	state := &PreferencesState{prefs: service}
@@ -57,6 +76,14 @@ func NewPreferencesState(service Preferences, opts ...PreferencesOption) *Prefer
 
 // Settings returns the current persisted document.
 func (s *PreferencesState) Settings() domain.Settings { return s.prefs.Settings() }
+
+// ProxyProfiles returns the Proxy Profiles the default row can select.
+func (s *PreferencesState) ProxyProfiles() []ProxyProfileChoice {
+	if s.proxyProfiles == nil {
+		return nil
+	}
+	return s.proxyProfiles()
+}
 
 // Failed reports whether the last change could not be saved.
 func (s *PreferencesState) Failed() bool { return s.failed }
@@ -166,12 +193,18 @@ func fieldValue(settings domain.Settings, field domain.Field) string {
 		return settings.Appearance.TerminalTheme
 	case domain.FieldTerminalFontFamily:
 		return settings.Appearance.TerminalFontFamily
+	case domain.FieldLocalShell:
+		return settings.Appearance.LocalShell.Path
+	case domain.FieldLocalShellArgs:
+		return settings.Appearance.LocalShell.Args
 	case domain.FieldSyncProvider:
 		return settings.Sync.Provider
 	case domain.FieldHistorySyncAddress:
 		return settings.History.SyncAddress
 	case domain.FieldHistoryUsername:
 		return settings.History.Username
+	case domain.FieldDefaultProxy:
+		return settings.DefaultProxyProfileID()
 	default:
 		return ""
 	}

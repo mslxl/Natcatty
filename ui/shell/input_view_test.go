@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/domain/model"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
@@ -65,6 +66,54 @@ func assertInputInside(t *testing.T, tester *ui.Tester, width, height int, text 
 // shell renders the active broadcast banner, target rows with per-Session
 // status, and the compose preview inside 1100x720 and 720x480 without row
 // overlap.
+// fakeDirectorySource opens the picker at home for a Session that has not
+// reported OSC 7 yet.
+type fakeDirectorySource struct{ cwd string }
+
+func (f fakeDirectorySource) Session(model.SessionID) (string, bool) { return f.cwd, true }
+
+func (f fakeDirectorySource) List(_ context.Context, _ *appsession.Session, path string) (state.ComposeDirectoryListing, error) {
+	if path == "" {
+		return state.ComposeDirectoryListing{Path: "/home/me"}, nil
+	}
+	return state.ComposeDirectoryListing{Path: path}, nil
+}
+
+// TestComposeDirectoryPickerShowsTheHomeFallback proves the unknown-CWD
+// explanation is visible in the rendered compose bar, not only in state.
+func TestComposeDirectoryPickerShowsTheHomeFallback(t *testing.T) {
+	graph := newTestGraph(t, state.WithComposeDirectory(state.ComposeDirectorySource{
+		List:    fakeDirectorySource{}.List,
+		Session: fakeDirectorySource{}.Session,
+	}))
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	graph.state.Flush()
+	graph.state.OpenCompose()
+	if !graph.state.OpenComposeDirectoryFor(graph.sessions[0].ID()) {
+		t.Fatal("the picker did not open")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for graph.state.ComposeDirectoryPath() != "/home/me" {
+		if !time.Now().Before(deadline) {
+			t.Fatalf("picker path = %q", graph.state.ComposeDirectoryPath())
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	tester := ui.NewTester(View(graph.state), 1100, 900)
+	tester.SetLocale("en")
+	tester.Frame()
+	m := locales.In("en")
+	if !tester.HasText(m.ComposeDirectoryTitle()) {
+		t.Fatalf("the picker is not rendered: %v", tester.Texts())
+	}
+	if !tester.HasText(m.ComposeDirectoryUnknownCWD()) {
+		t.Fatalf("the home fallback is not explained: %v", tester.Texts())
+	}
+}
+
 func TestBroadcastAndComposeFitAtDefaultAndMinimumSizes(t *testing.T) {
 	m := locales.In("en")
 	for _, size := range [][2]int{{1084, 661}, {704, 421}} {
@@ -592,4 +641,57 @@ func TestDenseBroadcastComposeKeepsTabStripAtMinimumSize(t *testing.T) {
 	}
 	assertInputInside(t, tester, 704, 421, m.ComposeSend())
 	assertInputInside(t, tester, 704, 421, m.ComposeCancel())
+}
+
+// TestComposeTargetMenuRendersTheChosenSet proves the compose bar exposes the
+// target choice: the default label follows the broadcast latch, choosing one
+// peer in the menu splits the set, and the bar shows both the new target and
+// the divergence instead of silently rewriting it.
+func TestComposeTargetMenuRendersTheChosenSet(t *testing.T) {
+	graph := newInputGraph(t)
+	state := graph.state
+	state.OpenBroadcastPanel()
+	if !state.StartBroadcast() {
+		t.Fatal("broadcast did not start")
+	}
+	state.OpenCompose()
+	tester := ui.NewTester(View(state), 1084, 661)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	m := locales.In("en")
+	if !tester.HasText(m.ComposeTargetBroadcast(2)) {
+		t.Fatalf("the compose target does not follow broadcast: %v", tester.Texts())
+	}
+	if err := tester.Click(m.ComposeTargetBroadcast(2)); err != nil {
+		t.Fatalf("open the compose target menu: %v", err)
+	}
+	if menu := tester.Menu(); !containsText(menu, "Tab 1") || !containsText(menu, "Tab 2") {
+		t.Fatalf("compose target menu = %v, want both broadcast peers", menu)
+	}
+	if err := tester.ChooseMenuItem("Tab 1"); err != nil {
+		t.Fatalf("choose only Tab 2: %v", err)
+	}
+	tester.Frame()
+
+	if !tester.HasText(m.ComposeTargetCustom(1)) {
+		t.Fatalf("the compose bar does not show the chosen target: %v", tester.Texts())
+	}
+	if !tester.HasText(m.ComposeTargetsDiverged()) {
+		t.Fatalf("the compose bar does not show the divergence: %v", tester.Texts())
+	}
+	targets, broadcast := state.ComposeTargets()
+	if broadcast || len(targets) != 1 || targets[0] != graph.sessions[1].ID() {
+		t.Fatalf("compose targets = %v broadcast = %v, want only Tab 2 (%q)",
+			targets, broadcast, graph.sessions[1].ID())
+	}
+}
+
+func containsText(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }

@@ -111,6 +111,66 @@ func TestChromeRefusesLoggingWithoutADirectory(t *testing.T) {
 	}
 }
 
+// TestChromeOpensTheCurrentLogOnlyWhileLogging keeps Open log file beside the
+// log controls: a Session that is logging hands its current file to the
+// platform opener, and one that is not logging (or has no file yet) leaves the
+// action disabled instead of starting a log behind the user's back.
+func TestChromeOpensTheCurrentLogOnlyWhileLogging(t *testing.T) {
+	m := locales.In("en")
+	const logPath = `C:\Users\example\logs\host\session.txt`
+	tests := []struct {
+		name     string
+		logging  bool
+		path     string
+		wantOpen bool
+	}{
+		{name: "an active log opens", logging: true, path: logPath, wantOpen: true},
+		{name: "a stopped log with a stale path stays closed", logging: false, path: logPath},
+		{name: "an active log without a file stays closed", logging: true, path: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var opened []string
+			actions := chromeActions{OpenLog: func(path string) {
+				opened = append(opened, path)
+			}}
+			tester := ui.NewTester(func(c *ui.Context) {
+				chromeFrame(c, chromeModel{
+					Logging: appsession.LogStatus{
+						Active: test.logging,
+						Format: domainterminal.LogFormatText,
+						Path:   test.path,
+					},
+					LogFormat:    domainterminal.LogFormatText,
+					LogDirectory: `C:\logs`,
+				}, locales.In(c.Locale()), c.Theme(), actions)
+			}, 720, 480)
+			tester.SetLocale("en")
+			tester.Frame()
+
+			if err := tester.Click(m.SessionMenuLabel()); err != nil {
+				t.Fatalf("open the Session menu: %v", err)
+			}
+			err := tester.ChooseMenuItem(m.SessionMenuLogging(), m.SessionLoggingOpen())
+			if !test.wantOpen {
+				if err == nil {
+					t.Fatal("Open log file was choosable without a current log")
+				}
+				if len(opened) != 0 {
+					t.Fatalf("opened %v without a current log", opened)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Open log file: %v", err)
+			}
+			if len(opened) != 1 || opened[0] != logPath {
+				t.Fatalf("opened %v, want exactly %q", opened, logPath)
+			}
+		})
+	}
+}
+
 // TestChromeSaysNothingWhenTheSessionHasNothingToSay keeps the terminal
 // right under the Pane header: an idle Session with no log folder shows no
 // status line, no "No command", and no hint to choose a folder.
