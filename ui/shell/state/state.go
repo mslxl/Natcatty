@@ -19,6 +19,7 @@ import (
 	"github.com/mslxl/natcatty/domain/model"
 	domainetmodel "github.com/mslxl/natcatty/domain/model/et"
 	domoshmodel "github.com/mslxl/natcatty/domain/model/mosh"
+	domainprotocol "github.com/mslxl/natcatty/domain/model/protocol"
 	domainserial "github.com/mslxl/natcatty/domain/model/serial"
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
@@ -1162,15 +1163,17 @@ func (p hostTransportPlan) newResumeKey() string {
 // action without automatically retrying a dropped socket, matching the
 // original's SSH-only auto-reconnect.
 func hostSessionTransport(host domainvault.Host) hostTransportPlan {
-	switch host.Protocol {
-	case domainvault.ProtocolLocal:
+	// The protocol descriptor owns transport selection, so this switch never
+	// needs a new case when a built-in protocol is added.
+	switch host.Protocol.SessionTransport() {
+	case domainprotocol.TransportLocal:
 		// A saved local-shell Host opens a shell on this machine, exactly like
 		// the original's local Hosts. Its label is the Tab's connection label.
 		return hostTransportPlan{
 			kind:       appsession.KindLocal,
 			descriptor: domainworkspace.SessionLocal,
 		}
-	case domainvault.ProtocolTelnet:
+	case domainprotocol.TransportTelnet:
 		cfg := domaintelnet.Config{Hostname: host.Hostname, Port: host.Port}.Normalized()
 		return hostTransportPlan{
 			kind:       appsession.KindTelnet,
@@ -1178,14 +1181,14 @@ func hostSessionTransport(host domainvault.Host) hostTransportPlan {
 			telnet:     &cfg,
 			reconnect:  telnetReconnectPolicy(),
 		}
-	case domainvault.ProtocolMosh:
+	case domainprotocol.TransportMosh:
 		return hostTransportPlan{
 			kind:       appsession.KindMosh,
 			descriptor: domainworkspace.SessionMosh,
 			mosh:       moshConfig(host),
 			reconnect:  &appsession.ReconnectPolicy{},
 		}
-	case domainvault.ProtocolET:
+	case domainprotocol.TransportET:
 		return hostTransportPlan{
 			kind:       appsession.KindET,
 			descriptor: domainworkspace.SessionET,

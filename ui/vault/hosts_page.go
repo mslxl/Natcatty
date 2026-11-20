@@ -1130,7 +1130,7 @@ func hostActions(s *vaultstate.State, opts options, host domainvault.Host, m loc
 			s.Connect(host.ID)
 			c.Invalidate()
 		}
-		if opts.openSFTP != nil && host.Protocol.UsesSSHAuth() &&
+		if opts.openSFTP != nil && host.Protocol.SupportsFileTransfer() &&
 			(opts.sftpEnabled == nil || opts.sftpEnabled()) {
 			if menu.Item(m.VaultHostOpenSftp()).Chosen() {
 				opts.openSFTP(host)
@@ -1141,9 +1141,13 @@ func hostActions(s *vaultstate.State, opts options, host domainvault.Host, m loc
 				opts.openBrowser(host)
 			}
 		}
-		if menu.Item(testLabel).Disabled(s.Testing(host.ID)).Chosen() {
-			s.Test(host.ID)
-			c.Invalidate()
+		// A connection test performs an SSH handshake; a Telnet or Local Host
+		// has none to check.
+		if host.Protocol.UsesSSHAuth() {
+			if menu.Item(testLabel).Disabled(s.Testing(host.ID)).Chosen() {
+				s.Test(host.ID)
+				c.Invalidate()
+			}
 		}
 		menu.Separator()
 		if menu.Item(m.VaultHostEdit()).Chosen() {

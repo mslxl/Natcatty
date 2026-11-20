@@ -445,6 +445,128 @@ func disableNagle(conn net.Conn) {
 	}
 }
 
+var _ appconnection.StreamDialer = (*Dialer)(nil)
+
+// DialStream establishes the same route as Dial but stops before the target's
+// SSH handshake. Every jump is authenticated and host-key verified exactly as
+// in Dial; the first endpoint still selects between the proxy, the Network
+// Provider, and a direct dial. The returned stream is the final proxy or
+// direct-tcpip connection, and closing it also closes every jump client opened
+// for it. The target's Auth plan is deliberately unused.
+func (d *Dialer) DialStream(ctx context.Context, req appconnection.DialRequest) (net.Conn, error) {
+	// A ProxyCommand process cannot run inside an in-process Network Provider,
+	// and a selected Provider must never be bypassed. These are the same
+	// guards Dial applies before it starts any I/O.
+	if req.Network != nil && req.Proxy != nil && req.Proxy.Type == appconnection.ProxyCommand {
+		return nil, appconnection.ProxyCommandNetworkConflict(*req.Network)
+	}
+	if req.Network != nil && req.Provider == nil {
+		return nil, appconnection.ProviderUnavailable(*req.Network)
+	}
+
+	endpoints := endpointsFor(req)
+	total := len(endpoints)
+	clients := make([]*xssh.Client, 0, total)
+	closeChain := func() {
+		for i := len(clients) - 1; i >= 0; i-- {
+			_ = clients[i].Close()
+		}
+	}
+	// A jump's rekey host-key check outlives the handshake, so it uses a
+	// connection-scoped context, exactly as Dial does. It is not derived from
+	// the dial context: the caller's attempt may end while the stream stays
+	// open. streamConn closes it so a queued trust prompt cannot outlive the
+	// routed stream.
+	connCtx, cancelConn := context.WithCancel(context.Background())
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			cancelConn()
+		}
+	}()
+
+	for i, ep := range endpoints {
+		label := ep.label
+		if label == "" {
+			label = ep.address()
+		}
+		reportChain(req, total, i+1, label, appconnection.ChainConnecting, nil)
+
+		var (
+			raw net.Conn
+			err error
+		)
+		if i == 0 {
+			raw, err = d.openFirst(ctx, req.Proxy, req.Provider, ep)
+		} else {
+			previous := endpoints[i-1]
+			previousLabel := previous.label
+			if previousLabel == "" {
+				previousLabel = previous.address()
+			}
+			reportChain(req, total, i, previousLabel, appconnection.ChainForwarding, nil)
+			raw, err = d.openForward(ctx, clients[i-1], ep)
+		}
+		if err != nil {
+			closeChain()
+			annotated := appconnection.TagHop(err, i+1, total, label)
+			reportChain(req, total, i+1, label, appconnection.ChainError, annotated)
+			return nil, annotated
+		}
+		reportChain(req, total, i+1, label, appconnection.ChainTCPConnected, nil)
+
+		if i == total-1 {
+			// The target speaks its own protocol. Hand the transport up; the
+			// caller owns closing it and, through streamConn, the whole chain.
+			handedOff = true
+			return &streamConn{Conn: raw, ancestors: clients, cancel: cancelConn}, nil
+		}
+
+		reportChain(req, total, i+1, label, appconnection.ChainAuthenticating, nil)
+		versioned := &versionRecorder{Conn: raw}
+		client, _, err := d.handshake(ctx, connCtx, versioned, ep)
+		if err != nil {
+			_ = raw.Close()
+			closeChain()
+			annotated := appconnection.TagHop(err, i+1, total, label)
+			reportChain(req, total, i+1, label, appconnection.ChainError, annotated)
+			return nil, annotated
+		}
+		clients = append(clients, client)
+		reportChain(req, total, i+1, label, appconnection.ChainConnected, nil)
+	}
+
+	// endpointsFor always appends the target, so the loop returns above.
+	return nil, &appconnection.Error{
+		Kind:  appconnection.KindInternal,
+		Cause: errors.New("ssh: routed stream has no target endpoint"),
+	}
+}
+
+// streamConn is a routed TCP stream that owns the jump clients carrying it.
+// Closing the stream closes the final hop and then every ancestor, so a closed
+// Session cannot leak an SSH connection.
+type streamConn struct {
+	net.Conn
+	ancestors []*xssh.Client
+	cancel    context.CancelFunc
+	closeOnce sync.Once
+}
+
+// Close closes the target stream and the jump clients in reverse order.
+func (s *streamConn) Close() error {
+	err := s.Conn.Close()
+	s.closeOnce.Do(func() {
+		for i := len(s.ancestors) - 1; i >= 0; i-- {
+			_ = s.ancestors[i].Close()
+		}
+		if s.cancel != nil {
+			s.cancel()
+		}
+	})
+	return err
+}
+
 func reportChain(req appconnection.DialRequest, total, index int, label string, status appconnection.ChainStatus, err error) {
 	if req.OnProgress == nil {
 		return

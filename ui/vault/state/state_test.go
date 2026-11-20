@@ -456,7 +456,7 @@ func TestSwitchingProtocolToSSHReappliesInheritedX11(t *testing.T) {
 	}
 }
 
-func TestX11IsRejectedOutsideSSH(t *testing.T) {
+func TestX11IsClearedOutsideSSH(t *testing.T) {
 	repo := &fakeHosts{}
 	state, _ := newTestState(t, repo)
 	state.BeginCreate()
@@ -464,14 +464,19 @@ func TestX11IsRejectedOutsideSSH(t *testing.T) {
 	form.Label = "telnet"
 	form.Hostname = "example.com"
 	form.Protocol = string(domainvault.ProtocolTelnet)
+	// A hidden control must not keep a value Save would persist.
 	form.X11Forwarding = true
 	form.X11WarningAcknowledged = true
 
 	if err := state.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if state.Problem() != ProblemX11 {
-		t.Fatalf("Problem = %q, want %q", state.Problem(), ProblemX11)
+	if state.Problem() != ProblemNone {
+		t.Fatalf("Problem = %q, want none", state.Problem())
+	}
+	if len(repo.items) != 1 || repo.items[0].X11Forwarding ||
+		repo.items[0].X11WarningAcknowledged {
+		t.Fatalf("saved Host = %+v, want X11 cleared", repo.items)
 	}
 }
 

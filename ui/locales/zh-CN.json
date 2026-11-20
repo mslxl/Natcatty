@@ -749,6 +749,7 @@
   "vaultHostX11Forwarding": "启用 X11 转发",
   "vaultHostX11Warning": "X11 转发允许远程 Host 上的程序访问你的本地 X 服务器。仅对信任的 Host 启用。",
   "vaultHostX11Acknowledge": "我了解安全风险，并希望启用 X11 转发。",
+  "vaultHostTelnetPlaintextWarning": "Telnet 是明文协议：你输入的一切（包括密码）都会以未加密的形式经过网络。仅在信任的网络中使用。",
   "vaultHostNetworkDevice": "网络设备模式",
   "vaultHostNetworkDeviceHint": "适用于通过 SSH 连接的交换机、路由器和防火墙。自动化命令将原样发送，不进行 Shell 包装，且无法获取退出码。仅对不运行标准 Shell 的设备启用。",
   "vaultHostAutoAttachTmux": "自动附加 tmux",

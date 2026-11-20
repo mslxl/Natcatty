@@ -457,30 +457,9 @@ func (m *Manager) Acquire(ctx context.Context, req Request) (*Lease, error) {
 	// transport is handed out or a dial starts. Doing it here, ahead of the
 	// pool, is what makes reuse fail closed too: a stopped Provider can never
 	// leave a parked transport to be silently used again.
-	var provider NetworkProvider
-	if req.Network != nil {
-		if m.providers == nil {
-			return nil, providerRouteError(*req.Network, ProviderPhaseStopped,
-				fmt.Errorf("%w: no registry", ErrNetworkProvider))
-		}
-		opened, err := m.providers.Acquire(ctx, *req.Network)
-		if err != nil {
-			return nil, err
-		}
-		if opened == nil {
-			return nil, providerRouteError(*req.Network, ProviderPhaseStopped,
-				fmt.Errorf("%w: registry returned no provider", ErrNetworkProvider))
-		}
-		// The registry reuses a live Provider while its profile fingerprint is
-		// unchanged, so its phase can have moved since the open. Refuse to reuse
-		// a parked transport or start a dial unless the Provider is actually
-		// running; a login prompt, a restart, or a dead node must surface as a
-		// typed provider failure, never as a direct connection.
-		if phase := providerPhase(opened); phase != "" && phase != ProviderPhaseRunning {
-			return nil, providerRouteError(*req.Network, phase,
-				fmt.Errorf("%w: phase %s", ErrNetworkProviderNotRunning, phase))
-		}
-		provider = opened
+	provider, err := m.acquireProvider(ctx, req.Network)
+	if err != nil {
+		return nil, err
 	}
 
 	endpoint := endpointFor(req)
@@ -528,6 +507,157 @@ func (m *Manager) Acquire(ctx context.Context, req Request) (*Lease, error) {
 		return nil, internalError(ErrClosed)
 	}
 	return m.readyLease(lease), nil
+}
+
+// acquireProvider opens the live Network Provider for a route's first
+// endpoint. Acquire and DialStream call it ahead of any dial so a stopped
+// Provider can never leave a parked transport to be silently reused or be
+// replaced by a direct connection.
+func (m *Manager) acquireProvider(ctx context.Context, network *NetworkRoute) (NetworkProvider, error) {
+	if network == nil {
+		return nil, nil
+	}
+	if m.providers == nil {
+		return nil, providerRouteError(*network, ProviderPhaseStopped,
+			fmt.Errorf("%w: no registry", ErrNetworkProvider))
+	}
+	opened, err := m.providers.Acquire(ctx, *network)
+	if err != nil {
+		return nil, err
+	}
+	if opened == nil {
+		return nil, providerRouteError(*network, ProviderPhaseStopped,
+			fmt.Errorf("%w: registry returned no provider", ErrNetworkProvider))
+	}
+	// The registry reuses a live Provider while its profile fingerprint is
+	// unchanged, so its phase can have moved since the open. Refuse to reuse
+	// a parked transport or start a dial unless the Provider is actually
+	// running; a login prompt, a restart, or a dead node must surface as a
+	// typed provider failure, never as a direct connection.
+	if phase := providerPhase(opened); phase != "" && phase != ProviderPhaseRunning {
+		return nil, providerRouteError(*network, phase,
+			fmt.Errorf("%w: phase %s", ErrNetworkProviderNotRunning, phase))
+	}
+	return opened, nil
+}
+
+// StreamDialer is a Dialer that can open the raw TCP stream to a target
+// without authenticating the final endpoint. The SSH adapter implements it;
+// tests provide a fake. A dialer that does not implement it cannot serve a
+// routed non-SSH protocol.
+type StreamDialer interface {
+	DialStream(ctx context.Context, req DialRequest) (net.Conn, error)
+}
+
+// DialStream resolves and opens a routed raw stream for a protocol whose
+// target speaks something other than SSH (Telnet). Jumps are authenticated
+// and host-key verified exactly as for a shell; the target is not, because it
+// has no SSH server. The returned stream owns the transport: closing it
+// closes the target stream and every jump opened for it. It is not pooled and
+// carries no keepalive schedule; the caller's Session owns its lifetime.
+func (m *Manager) DialStream(ctx context.Context, req Request) (net.Conn, error) {
+	if m.dialer == nil {
+		return nil, internalError(ErrNoDialer)
+	}
+	streamer, ok := m.dialer.(StreamDialer)
+	if !ok {
+		return nil, &Error{
+			Kind:  KindUnsupported,
+			Cause: errors.New("connection: the dialer cannot open a routed raw stream"),
+		}
+	}
+	provider, err := m.acquireProvider(ctx, req.Network)
+	if err != nil {
+		return nil, err
+	}
+	known, err := m.knownHosts(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	total := len(req.Jumps) + 1
+	succeeded := make([]string, len(req.Jumps))
+	verify := func(verifyCtx context.Context, key domainconn.Key) error {
+		return m.verifyHostKey(verifyCtx, key, known, req.HostKeyUnattended)
+	}
+	username := func(plan AuthPlan, fallback string) string {
+		if plan.Username != "" {
+			return plan.Username
+		}
+		return fallback
+	}
+	dialRequest := DialRequest{
+		Proxy:      req.Proxy,
+		Network:    req.Network,
+		Provider:   provider,
+		Algorithms: req.Algorithms,
+		OnProgress: req.OnProgress,
+		Label:      targetHop(req).LabelOrAddress(),
+		Hostname:   req.Hostname,
+		Port:       req.Port,
+		Username:   req.Username,
+	}
+	for i, hop := range req.Jumps {
+		plan, err := m.authPlan(ctx, requestForHop(hop))
+		if err != nil {
+			return nil, TagHop(err, i+1, total, hop.LabelOrAddress())
+		}
+		cacheKey := authCacheKey(hop.Username, hop.Hostname, hop.Port)
+		if cached, ok := m.authCache.Get(cacheKey); ok {
+			PromoteCachedCandidate(&plan, cached, plan.Mode)
+		}
+		index := i
+		// Legacy mode is inherited additively from the target, exactly as a
+		// jump inherits it in dial. The target's own algorithm policy applies
+		// to the SSH hops, because the target itself has no handshake.
+		algorithms := hop.Algorithms
+		algorithms.Legacy = algorithms.Legacy || req.Algorithms.Legacy
+		dialRequest.Jumps = append(dialRequest.Jumps, DialHop{
+			Label:         hop.LabelOrAddress(),
+			Hostname:      hop.Hostname,
+			Port:          hop.Port,
+			Username:      username(plan, hop.Username),
+			Password:      plan.Password,
+			Auth:          plan,
+			Prompter:      m.authPrompter,
+			OnAuth:        func(candidateID string) { succeeded[index] = candidateID },
+			VerifyHostKey: verify,
+			Algorithms:    algorithms,
+		})
+	}
+
+	stream, err := streamer.DialStream(ctx, dialRequest)
+	if err != nil {
+		if req.Network != nil {
+			phase := ProviderPhaseRunning
+			if provider != nil {
+				if reported := providerPhase(provider); reported != "" {
+					phase = reported
+				}
+			}
+			err = TagProvider(err, providerInfo(*req.Network, phase))
+		}
+		if isAuthenticationFailure(err) {
+			// A revoked credential must not stay cached for the next attempt.
+			index := len(req.Jumps) - 1
+			var typed *Error
+			if errors.As(err, &typed) && typed.Hop != nil &&
+				typed.Hop.Index >= 1 && typed.Hop.Index <= len(req.Jumps) {
+				index = typed.Hop.Index - 1
+			}
+			if index >= 0 && index < len(req.Jumps) {
+				hop := req.Jumps[index]
+				m.authCache.Delete(authCacheKey(hop.Username, hop.Hostname, hop.Port))
+			}
+		}
+		return nil, err
+	}
+	for i, hop := range req.Jumps {
+		if succeeded[i] != "" {
+			m.authCache.Put(authCacheKey(hop.Username, hop.Hostname, hop.Port), succeeded[i])
+		}
+	}
+	return stream, nil
 }
 
 // readyLease arms the reused-shell liveness probe. Only a shell opened on a

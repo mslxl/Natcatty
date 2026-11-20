@@ -996,7 +996,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 
 	sessions = appsession.NewService(newTransportFactory(
 		localpty.Factory{}, adapterserial.Factory{},
-		newTelnetFactory(adapterstnet.Factory{}, routes, networkProviders), connections, routes,
+		newTelnetFactory(adapterstnet.Factory{}, routes, networkProviders, connections), connections, routes,
 	).withInProcess(
 		newMoshFactory(connections, routes, networkProviders),
 		adapteret.InProcessFactory{

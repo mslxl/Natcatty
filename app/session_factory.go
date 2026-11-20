@@ -639,6 +639,12 @@ func mapX11Notice(notice appconnection.X11Notice) (appsession.Notice, bool) {
 // authentication all completed; a typed failure keeps its kind for the Vault
 // to localize.
 func testConnection(ctx context.Context, manager *appconnection.Manager, routes routeSource, host domainvault.Host) error {
+	if !host.Protocol.UsesSSHAuth() {
+		return &appconnection.Error{
+			Kind:  appconnection.KindUnsupported,
+			Cause: fmt.Errorf("app: %s Hosts have no SSH connection to test", host.Protocol),
+		}
+	}
 	if manager == nil {
 		return routeError(errors.New("app: no SSH connection manager"))
 	}
@@ -935,21 +941,6 @@ func (r vaultRoutes) routeWithoutHost(ctx context.Context) (appconnection.Route,
 		return appconnection.Route{}, err
 	}
 	return appconnection.Route{Proxy: proxy}, nil
-}
-
-// NetworkRouteForHost resolves only the target Host's effective Network
-// Profile, ignoring any jump chain. Telnet has no jumps or proxy, so its first
-// endpoint is always the target Host; an SSH route would otherwise prefer the
-// first jump's profile.
-func (r vaultRoutes) NetworkRouteForHost(ctx context.Context, id model.HostID) (*appconnection.NetworkRoute, error) {
-	if r.vault == nil {
-		return nil, routeError(errors.New("app: no Vault for route resolution"))
-	}
-	target, err := r.vault.Get(ctx, id)
-	if err != nil {
-		return nil, routeError(fmt.Errorf("Host %s: %w", id, err))
-	}
-	return r.networkRoute(ctx, target)
 }
 
 // NetworkProfileIDForHost resolves only the Network Profile a Session's first

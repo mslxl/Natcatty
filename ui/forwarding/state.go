@@ -182,8 +182,18 @@ func (s *State) Items() []appforwarding.View { return s.items }
 // RuleCount returns the number of listed rules.
 func (s *State) RuleCount() int { return len(s.items) }
 
-// Hosts returns the Hosts an editor can reference.
-func (s *State) Hosts() []domainvault.Host { return s.hostItems }
+// Hosts returns the Hosts an editor can reference. A rule needs an SSH
+// connection to carry its channels, so a Host whose protocol cannot forward
+// ports is never offered.
+func (s *State) Hosts() []domainvault.Host {
+	out := make([]domainvault.Host, 0, len(s.hostItems))
+	for _, host := range s.hostItems {
+		if host.Protocol.SupportsForwarding() {
+			out = append(out, host)
+		}
+	}
+	return out
+}
 
 // Editing reports whether the rule editor is open.
 func (s *State) Editing() bool { return s.editing }

@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/mslxl/natcatty/domain/model"
+	domainprotocol "github.com/mslxl/natcatty/domain/model/protocol"
 	modelterminal "github.com/mslxl/natcatty/domain/model/terminal"
 )
 
@@ -546,6 +547,29 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 		draft.TOTP = ""
 		draft.ClearTOTP = false
 	}
+	// Jump chains, proxies, and algorithm overrides describe the route to the
+	// Host, not the protocol spoken to it. Telnet keeps them because SSH jumps
+	// can carry a Telnet stream; only a Local shell, which dials nothing,
+	// drops the route. X11 and the file-transfer preference, by contrast, are
+	// target-side SSH features: a Telnet target has neither an SSH connection
+	// nor an SFTP subsystem, so the values would be unsaveable dead state.
+	if draft.Protocol == ProtocolLocal {
+		draft.HostChain = nil
+		draft.Proxy = nil
+		draft.ProxyProfileID = ""
+		draft.NetworkProfileID = ""
+		draft.LegacyAlgorithms = false
+		draft.SkipEcdsaHostKey = false
+		draft.Algorithms = nil
+	}
+	if !draft.Protocol.SupportsX11() {
+		draft.X11Forwarding = false
+		draft.X11WarningAcknowledged = false
+	}
+	if !draft.Protocol.SupportsFileTransfer() {
+		draft.SFTPFileProtocol = FileProtocolAuto
+		draft.SFTPSudo = false
+	}
 	draft.Label = strings.TrimSpace(draft.Label)
 	draft.Hostname = strings.TrimSpace(draft.Hostname)
 	draft.Username = strings.TrimSpace(draft.Username)
@@ -709,9 +733,7 @@ func (h Host) InputCompatibility() modelterminal.InputCompatibility {
 }
 
 func validateFields(draft Draft) error {
-	switch draft.Protocol {
-	case ProtocolSSH, ProtocolTelnet, ProtocolLocal, ProtocolMosh, ProtocolET:
-	default:
+	if !domainprotocol.ValidHostID(domainprotocol.ID(draft.Protocol)) {
 		return validation(FieldProtocol, RuleUnsupported)
 	}
 
@@ -1071,14 +1093,10 @@ func normalizeTags(tags []string) []string {
 }
 
 func defaultPort(protocol Protocol) int {
-	switch protocol {
-	case ProtocolTelnet:
-		return 23
-	case ProtocolLocal:
-		return 0
-	default:
-		return 22
+	if descriptor, ok := protocol.descriptor(); ok {
+		return descriptor.DefaultPort
 	}
+	return 22
 }
 
 // EffectivePort returns the port a connection uses. A Host with a port of its
@@ -1092,16 +1110,69 @@ func EffectivePort(protocol Protocol, port int) int {
 	return defaultPort(protocol)
 }
 
+// descriptor resolves the built-in protocol facts. A blank protocol is the
+// SSH default the Vault applies when a Host is saved without one, so it
+// resolves as SSH; an unknown persisted value has no descriptor and callers
+// treat that as no capability.
+func (p Protocol) descriptor() (domainprotocol.Descriptor, bool) {
+	if p == "" {
+		return domainprotocol.Resolve(domainprotocol.SSH)
+	}
+	return domainprotocol.Resolve(domainprotocol.ID(p))
+}
+
+// SessionTransport names the Session transport the protocol opens. The value
+// matches application/session.Kind. An unknown protocol falls back to SSH,
+// which is the same default the Vault applies to a blank protocol.
+func (p Protocol) SessionTransport() domainprotocol.Transport {
+	if descriptor, ok := p.descriptor(); ok {
+		return descriptor.Transport
+	}
+	return domainprotocol.TransportSSH
+}
+
 // UsesSSHAuth reports whether a protocol authenticates with the shared SSH
 // credential settings (Identity, SSH Key, Method, agent, and MFA). SSH, Mosh,
 // and EternalTerminal all bootstrap through SSH; Telnet and a Local shell do
 // not, so their editors must not show those controls.
 func (p Protocol) UsesSSHAuth() bool {
-	switch p {
-	case ProtocolSSH, ProtocolMosh, ProtocolET:
-		return true
-	}
-	return false
+	descriptor, ok := p.descriptor()
+	return ok && descriptor.SSHAuth
+}
+
+// SupportsFileTransfer reports whether SFTP/SCP apply to the Host.
+func (p Protocol) SupportsFileTransfer() bool {
+	descriptor, ok := p.descriptor()
+	return ok && descriptor.FileTransfer
+}
+
+// SupportsForwarding reports whether a Port Forwarding rule may target the
+// Host. A Telnet Host has no SSH connection to carry a forwarding channel.
+func (p Protocol) SupportsForwarding() bool {
+	descriptor, ok := p.descriptor()
+	return ok && descriptor.Forwarding
+}
+
+// SupportsMonitoring reports whether remote metric sampling may target the
+// Host.
+func (p Protocol) SupportsMonitoring() bool {
+	descriptor, ok := p.descriptor()
+	return ok && descriptor.Monitoring
+}
+
+// SupportsProxy reports whether a jump chain, a proxy, and SSH algorithm
+// overrides apply to the Host's route. Telnet supports them even though its
+// target has no SSH handshake: the SSH hops carry the route.
+func (p Protocol) SupportsProxy() bool {
+	descriptor, ok := p.descriptor()
+	return ok && descriptor.Proxy
+}
+
+// SupportsX11 reports whether X11 forwarding applies to the Host. X11 is
+// forwarded over the target's SSH connection, so only SSH qualifies.
+func (p Protocol) SupportsX11() bool {
+	descriptor, ok := p.descriptor()
+	return ok && descriptor.X11
 }
 
 func validation(field Field, rule Rule) error {

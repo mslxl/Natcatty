@@ -137,6 +137,11 @@ func (c browserConnector) Connect(ctx context.Context, hostID model.HostID) (app
 	if err != nil {
 		return nil, err
 	}
+	// A browser tunnel opens an SSH direct-tcpip channel. A Telnet Host has no
+	// channel to dedicate, so the connector must not treat it as SSH.
+	if !host.Protocol.SupportsForwarding() {
+		return nil, fmt.Errorf("app: %s Hosts cannot host a browser tunnel", host.Protocol)
+	}
 	var route appconnection.Route
 	if c.routes != nil {
 		route, err = c.routes.Route(ctx, hostID)
