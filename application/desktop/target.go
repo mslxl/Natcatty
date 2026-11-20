@@ -16,8 +16,9 @@ type TargetKind string
 const (
 	// TargetSSH is an ssh:// URL or an ssh-style command-line Host.
 	TargetSSH TargetKind = "ssh"
-	// TargetTelnet is a telnet:// URL. The rewrite has no Telnet transport
-	// yet, so the app reports it as an unknown target instead of connecting.
+	// TargetTelnet is a telnet:// URL. Deep links and the command line only
+	// open saved SSH Hosts, so the app reports a Telnet target as an
+	// unsupported scheme instead of connecting.
 	TargetTelnet TargetKind = "telnet"
 	// TargetLocalShell is a local terminal requested with
 	// --open-terminal-shell. It opens a Tab instead of dialing a Host.
