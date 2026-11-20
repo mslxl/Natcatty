@@ -128,7 +128,7 @@ Netcatty Native is a **ground-up native rewrite** of [binaricat/Netcatty](https:
 
 <br>
 
-To describe the feature set accurately, the following are **explicitly out of scope** in the current version: a plugin runtime and plugin sync providers, a built-in AI assistant, Electron data migration, custom CSS, terminal content search / selection export, inline images, a second live terminal view, a terminal accessibility tree, per-Host cookie partitioning, SSH compression and several legacy algorithms, and Windows arm64. See [`docs/parity/limitations.md`](docs/parity/limitations.md) for details.
+To describe the feature set accurately, the following are **explicitly out of scope** in the current version: a plugin runtime and plugin sync providers, a built-in AI assistant, Electron data migration, custom CSS, terminal content search / selection export, inline images, a second live terminal view, a terminal accessibility tree, per-Host cookie partitioning, SSH compression and several legacy algorithms, and Windows arm64.
 
 </details>
 
@@ -138,6 +138,8 @@ To describe the feature set accurately, the following are **explicitly out of sc
   WireGuard Net, supported transports, capability limits, validation status,
   and the opt-in real-network tests.
 - [Packaging](docs/packaging.md): release artifacts and platform requirements.
+- [Phone builds](docs/mobile.md): iOS and Android prerequisites, the pinned
+  native terminal artifacts, build and release commands, and troubleshooting.
 - [Atuin-compatible history sync](docs/atuin/README.md): supported versions,
   compatibility and fail-closed policy, licensing and trademark rules, and the
   independent-client notice. Netcatty is an independent client and is not

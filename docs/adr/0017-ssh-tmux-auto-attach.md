@@ -14,4 +14,4 @@ SSH + tmux auto-attach is a formal, per-Host, opt-in capability. It is implement
 - Default off; each SSH Host has an `autoAttachTmux` setting. The deterministic name allows one named session per Host in v1; custom names, multiple sessions, a kill-session UI, and non-POSIX login shells are post-v1.
 - Detaching closes the tab without error and leaves the remote session running; the next connect reattaches. Nested `$TMUX` environments are detected and not wrapped, with a notice.
 - If tmux is missing or shell integration fails, the app falls back to a plain login shell on the same SSH connection and shows a one-time notice. It never installs tmux automatically and never fails the connection because of it.
-- The capability works over plain SSH and is the persistence story of last resort. Mobile UX and its role in the deferred mobile fallback wait for the mobile gate.
+- The capability works over plain SSH and is the persistence story of last resort. Mobile depends on server-side persistence because the app cannot keep a background connection; auto-attach therefore runs on the host.

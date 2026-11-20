@@ -21,6 +21,14 @@ requests; this file is the human-maintained changelog.
   Because the setting is synced, a device still running an older build
   normalizes the new values to Vault once; re-select the choice after all
   devices are upgraded.
+- The first phone release: iOS 17+ and Android 8+ (API 26) builds share the
+  desktop's Vault, Hosts, settings and Sessions. A phone opens only remote
+  Sessions — SSH, telnet, Mosh and EternalTerminal — in a native
+  libghostty-vt terminal with no webview. A visible Session is resumed, a
+  hidden one is hibernated with its connection and state kept, and only an
+  explicit close ends it. Distribution is direct: a signed APK from the
+  release file and an iOS simulator app, with no store account. See
+  `docs/mobile.md`.
 - Android releases publish one universal, 16 KB page compatible APK signed
   with natcatty's own release keystore. It carries every supported ABI, is
   installed from the release file rather than a store, and its version code
