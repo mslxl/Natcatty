@@ -1461,3 +1461,18 @@ func TestVaultRoutesFailWhenAJumpHostIsMissing(t *testing.T) {
 		t.Fatalf("error = %v, want an internal connection error", err)
 	}
 }
+
+// TestTestConnectionRefusesAProtocolWithoutSSHAuth covers the Test action's
+// guard: it opens an SSH transport, so a Telnet or Local Host is rejected with
+// a typed unsupported failure before any route resolution or dial.
+func TestTestConnectionRefusesAProtocolWithoutSSHAuth(t *testing.T) {
+	for _, protocol := range []domainvault.Protocol{domainvault.ProtocolTelnet, domainvault.ProtocolLocal} {
+		err := testConnection(context.Background(), nil, nil, domainvault.Host{
+			ID: "console", Label: "console", Hostname: "console.local", Protocol: protocol,
+		})
+		var typed *appconnection.Error
+		if !errors.As(err, &typed) || typed.Kind != appconnection.KindUnsupported {
+			t.Fatalf("%s: testConnection = %v, want a typed unsupported failure", protocol, err)
+		}
+	}
+}

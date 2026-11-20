@@ -639,6 +639,12 @@ func mapX11Notice(notice appconnection.X11Notice) (appsession.Notice, bool) {
 // authentication all completed; a typed failure keeps its kind for the Vault
 // to localize.
 func testConnection(ctx context.Context, manager *appconnection.Manager, routes routeSource, host domainvault.Host) error {
+	if !host.Protocol.UsesSSHAuth() {
+		return &appconnection.Error{
+			Kind:  appconnection.KindUnsupported,
+			Cause: fmt.Errorf("app: %s Hosts have no SSH connection to test", host.Protocol),
+		}
+	}
 	if manager == nil {
 		return routeError(errors.New("app: no SSH connection manager"))
 	}

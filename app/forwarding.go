@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
@@ -42,6 +43,11 @@ func (c forwardingConnector) Connect(ctx context.Context, hostID model.HostID) (
 	host, err := c.vault.Get(ctx, hostID)
 	if err != nil {
 		return nil, forwardingRuntimeError(err)
+	}
+	if !host.Protocol.SupportsForwarding() {
+		return nil, appforwarding.NewRuntimeError(
+			appforwarding.ErrorUnsupported, nil,
+			fmt.Sprintf("app: %s Hosts cannot forward ports", host.Protocol), nil)
 	}
 	var route appconnection.Route
 	if c.routes != nil {

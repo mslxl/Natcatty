@@ -684,11 +684,16 @@ func (s *State) EndPickHosts() {
 }
 
 // PickerHosts returns the Vault Hosts the picker lists, filtered by its
-// search as the surface's search filters a panel.
+// search as the surface's search filters a panel. Monitoring runs metric
+// commands over an SSH channel, so a Host whose protocol has none is never
+// offered.
 func (s *State) PickerHosts() []domainvault.Host {
 	query := strings.ToLower(strings.TrimSpace(s.pickerSearch))
 	out := make([]domainvault.Host, 0, len(s.hostItems))
 	for _, host := range s.hostItems {
+		if !host.Protocol.SupportsMonitoring() {
+			continue
+		}
 		if query == "" || hostMatches(host, query) {
 			out = append(out, host)
 		}
