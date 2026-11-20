@@ -90,6 +90,11 @@ type Shell struct {
 	settings *settingsPages
 	hosts    *hostPages
 	sessions *sessionTabs
+	// backgrounded suppresses the per-frame lifecycle rule while the app is
+	// not in the foreground. Background applies the rule once (releasing the
+	// view); a frame that still arrives must not reattach it before Foreground
+	// resumes the Session deliberately.
+	backgrounded bool
 }
 
 // Option customizes a Shell. The composition root passes the shared Vault
@@ -140,6 +145,13 @@ func WithScreenFactory(factory ScreenFactory) Option {
 	return func(s *Shell) { s.sessions.newScreen = factory }
 }
 
+// WithSessionStore persists the open Tabs in the shared Workspace restore
+// format, so a relaunch lists the Tabs the previous run left open as dormant
+// entries. Without it the phone still works but forgets its Tabs at exit.
+func WithSessionStore(store SessionStore) Option {
+	return func(s *Shell) { s.sessions.store = store }
+}
+
 // New returns the phone shell with every section at its root page.
 func New(opts ...Option) *Shell {
 	s := &Shell{
@@ -183,6 +195,9 @@ func (s *Shell) confirmClosingSessions() bool {
 // switches, backgrounding, and deep links cannot each invent their own rule.
 // It runs once per frame, before the section draws.
 func (s *Shell) syncLiveView() {
+	if s.backgrounded {
+		return
+	}
 	s.sessions.syncVisible(s.visibleSession())
 }
 
@@ -290,17 +305,58 @@ func (s *Shell) Select(sec Section) {
 	}
 }
 
-// Load reads the Vault lists the shell shows and the Hosts it can open. The
-// phone root calls it before the first frame; a failure is recorded on the
-// pages as their error state, so the shell still opens. It is safe to call
-// again to refresh.
+// Load reads the Vault lists the shell shows and the Hosts it can open, then
+// adds the Tabs a previous launch left open as dormant entries. The phone root
+// calls it before the first frame; a failure is recorded on the pages as their
+// error state, so the shell still opens. It is safe to call again to refresh:
+// the persisted Tabs are adopted once.
 func (s *Shell) Load(ctx context.Context) error {
 	vaultErr := s.vault.load(ctx)
 	hostErr := s.hosts.load(ctx)
+	// Restore even when the Host list failed: a dormant entry built from its
+	// descriptor is still identifiable, and its restore reports the failure.
+	s.restoreSessions(ctx)
 	if hostErr != nil {
 		return hostErr
 	}
 	return vaultErr
+}
+
+// restoreSessions turns the persisted Workspace payload into dormant Tabs. It
+// runs once per Shell and ignores a storage failure: a broken row must not
+// stop the app from starting, exactly as on the desktop.
+func (s *Shell) restoreSessions(ctx context.Context) {
+	if s.sessions.store == nil || s.sessions.restored {
+		return
+	}
+	s.sessions.restored = true
+	payload, err := s.sessions.store.Load(ctx)
+	if err != nil {
+		return
+	}
+	s.sessions.adoptRestored(FlattenRestored(payload), s.hosts.host)
+}
+
+// Background is the app-lifecycle hook for leaving the foreground. It releases
+// the visible terminal view and persists the open Tabs, but never ends a
+// Session: each transport and its application state stay alive, so Foreground
+// can resume them. The screen is the only thing given up, which is what lets
+// the OS suspend the app without the Sessions noticing.
+func (s *Shell) Background() {
+	s.backgrounded = true
+	s.sessions.syncVisible("")
+	s.sessions.persist()
+}
+
+// Foreground is the app-lifecycle hook for returning to the foreground. It
+// resumes the Session the route makes visible, with no user action. A Session
+// whose transport died while suspended is reopened under the same Tab; a Tab
+// whose reconnect then fails stays reconnecting and retryable.
+func (s *Shell) Foreground() {
+	s.backgrounded = false
+	visible := s.visibleSession()
+	s.sessions.syncVisible(visible)
+	s.sessions.reconnectVisible(visible)
 }
 
 // Close ends every open Session. The phone root calls it on quit.

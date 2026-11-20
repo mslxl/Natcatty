@@ -262,6 +262,14 @@ func (o *fakeOpener) count() int {
 	return len(o.handles)
 }
 
+// setErr changes the failure the next OpenHost reports, so a test can make a
+// restore fail and then succeed without rebuilding the shell.
+func (o *fakeOpener) setErr(err error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.err = err
+}
+
 // fakeScreen shows the handle's output and forwards typed text to it. It is
 // the test's stand-in for libghostty-vt.
 type fakeScreen struct {
@@ -308,14 +316,23 @@ type phoneFixture struct {
 
 func newPhoneFixture(t *testing.T, hosts []domainvault.Host, opener *fakeOpener) *phoneFixture {
 	t.Helper()
+	return newPhoneFixtureWith(t, hosts, opener)
+}
+
+// newPhoneFixtureWith is newPhoneFixture with extra options, so a test can
+// wire persistence or anything else the app root supplies.
+func newPhoneFixtureWith(t *testing.T, hosts []domainvault.Host, opener *fakeOpener, opts ...Option) *phoneFixture {
+	t.Helper()
 	store := &fakeHostStore{hosts: hosts}
 	settings := newFakeSettings()
-	shell := New(
+	options := []Option{
 		WithHosts(store),
 		WithSessionOpener(opener),
 		WithScreenFactory(fakeScreens),
 		WithSettings(settings),
-	)
+	}
+	options = append(options, opts...)
+	shell := New(options...)
 	if err := shell.Load(context.Background()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}

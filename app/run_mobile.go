@@ -67,6 +67,11 @@ func Run() error {
 		// the simulator job can grep the echo result without a UI driver.
 		smokeStart(shell)
 	})
+	// Leaving the foreground releases the terminal view and persists the
+	// Tabs; returning resumes or reconnects the visible Session. Registering
+	// before Run makes the first foreground transition reach the shell.
+	mygo.App.OnDidResignActive(shell.Background)
+	mygo.App.OnDidBecomeActive(shell.Foreground)
 	err = mygo.App.Run()
 	if showErr != nil {
 		return showErr
@@ -136,6 +141,10 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 		phoneshell.WithPrompts(prompts),
 		phoneshell.WithSettings(phoneshell.NewSettingsService(preferences, terminal)),
 		phoneshell.WithHistorySync(history),
+		// The open Tabs survive a relaunch in the shared Workspace restore
+		// format; the phone's payload is its flat one-Pane-per-Tab form, which
+		// FlattenRestored reads back as dormant entries.
+		phoneshell.WithSessionStore(database.Workspace()),
 	)
 	return shell, database, sessions, history, nil
 }

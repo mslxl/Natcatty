@@ -43,6 +43,10 @@ type phoneSessionRuntime struct {
 // Ensure the runtime is the shell's opener seam.
 var _ phoneshell.SessionOpener = (*phoneSessionRuntime)(nil)
 
+// The shared SQLite Workspace row is the phone's session persistence seam:
+// the same payload format, read back through FlattenRestored.
+var _ phoneshell.SessionStore = (*store.WorkspaceRepository)(nil)
+
 // newPhoneVault builds the phone's Vault over the shared SQLite store. It
 // registers the same record families the desktop root does, because route
 // resolution is shared code: a Host that selects a Host Group, Identity, Proxy

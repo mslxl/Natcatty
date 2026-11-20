@@ -11,7 +11,9 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	domainmodel "github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
 )
@@ -47,6 +49,16 @@ type SessionOpener interface {
 	OpenHost(ctx context.Context, host domainvault.Host) (SessionHandle, error)
 }
 
+// SessionStore persists the Tabs a relaunch should list. The payload is the
+// same Workspace restore payload the desktop writes, so the phone's flat
+// workspace reuses the shared format and FlattenRestored; the application
+// wires it to the shared SQLite Workspace row. A Shell without a store simply
+// forgets its Tabs at exit.
+type SessionStore interface {
+	Load(ctx context.Context) (domainworkspace.Payload, error)
+	Save(ctx context.Context, payload domainworkspace.Payload) error
+}
+
 // TerminalScreen is one live terminal attached to a Session view. It is an
 // interface so a test can drive output and typing without the native
 // libghostty-vt library, which ordinary `go test` runs do not load.
@@ -74,6 +86,10 @@ const (
 	tabHibernated
 	tabReconnecting
 	tabFailed
+	// tabDormant is a Tab a previous launch left open. It owns no connection
+	// until the user taps it (or a deep link makes it visible); then it is
+	// restored under the same Tab identity.
+	tabDormant
 )
 
 // phoneTab is one open Session Tab: its Host, its connection state, and, while
@@ -95,6 +111,14 @@ type phoneTab struct {
 	// cancel aborts the in-flight open, including any queued host-key or
 	// credential prompt. It is nil before the open starts and after it ends.
 	cancel context.CancelFunc
+	// restoring marks an open that reconnects a dormant Tab from a previous
+	// launch. Its failure returns the Tab to dormant with the error, rather
+	// than discarding an entry the user can retry.
+	restoring bool
+	// reopening marks an automatic foreground reconnect of a Tab whose
+	// Session no longer runs. Its failure keeps the Tab reconnecting and
+	// retryable instead of dropping it from the list.
+	reopening bool
 }
 
 // sessionTabs owns the Sessions section's Tabs. Each Tab is the app's one
@@ -118,6 +142,15 @@ type sessionTabs struct {
 	pendingClose string
 	tabs         []*phoneTab
 	next         int
+	// store persists the Tabs a relaunch lists. nil means this Shell forgets
+	// its Tabs at exit; it never fails navigation.
+	store SessionStore
+	// restored records that this launch's persisted Tabs were read once, so a
+	// reload cannot duplicate them.
+	restored bool
+	// saveMu serializes persistence snapshots, so an open's outcome cannot
+	// overwrite a newer snapshot written by the UI.
+	saveMu sync.Mutex
 }
 
 // errNoOpener is the failure a phone without a Session service reports when a
@@ -155,7 +188,6 @@ type tabView struct {
 // begin records a connecting Tab and returns it. The caller starts the open.
 func (t *sessionTabs) begin(host domainvault.Host) *phoneTab {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.next == 0 {
 		t.next = 1
 	}
@@ -167,6 +199,10 @@ func (t *sessionTabs) begin(host domainvault.Host) *phoneTab {
 	}
 	t.next++
 	t.tabs = append(t.tabs, tab)
+	t.mu.Unlock()
+	// The Tab exists the moment it is opened: an app suspended mid-connect
+	// still lists it after a relaunch.
+	t.persist()
 	return tab
 }
 
@@ -186,6 +222,8 @@ func (t *sessionTabs) finish(id string, handle SessionHandle, err error) {
 	}
 	cancel := tab.cancel
 	tab.cancel = nil
+	restoring, reopening := tab.restoring, tab.reopening
+	tab.restoring, tab.reopening = false, false
 	if err != nil || handle == nil {
 		if handle != nil {
 			_ = handle.End()
@@ -193,9 +231,22 @@ func (t *sessionTabs) finish(id string, handle SessionHandle, err error) {
 		if err == nil {
 			err = errNoOpener
 		}
-		tab.status = tabFailed
-		tab.problem = connectProblem(tab.label, err)
 		tab.handle = nil
+		switch {
+		case restoring:
+			// A dormant Tab stays an entry: its failure is shown on the page
+			// and the Tab remains retryable.
+			tab.status = tabDormant
+			tab.problem = restoreProblem(tab.label, err)
+		case reopening:
+			// The Session the foreground tried to reconnect is gone; keep
+			// the Tab in the list so the user can still retry it.
+			tab.status = tabReconnecting
+			tab.problem = connectProblem(tab.label, err)
+		default:
+			tab.status = tabFailed
+			tab.problem = connectProblem(tab.label, err)
+		}
 	} else {
 		tab.handle = handle
 		tab.status = tabReady
@@ -207,6 +258,8 @@ func (t *sessionTabs) finish(id string, handle SessionHandle, err error) {
 	if cancel != nil {
 		cancel()
 	}
+	// The outcome decides whether the Tab is an entry a relaunch lists.
+	t.persist()
 }
 
 // attachCancel records the in-flight open's cancel function. A Tab that was
@@ -292,6 +345,22 @@ func (t *sessionTabs) syncVisible(visible string) {
 	switch tab.status {
 	case tabHibernated:
 		resuming = true
+	case tabDormant:
+		// A Tab from a previous launch reconnects when it becomes visible,
+		// under its existing identity. A failed restore keeps its problem and
+		// waits for the user's explicit retry, so a frame cannot loop on it.
+		if tab.problem != "" {
+			t.mu.Unlock()
+			return
+		}
+		tab.status = tabConnecting
+		tab.restoring = true
+		launch := t.launch
+		t.mu.Unlock()
+		if launch != nil {
+			launch(tab)
+		}
+		return
 	case tabReady:
 		// The initial attach happens once, when the Tab first becomes
 		// visible. A screen that already exists means the view is live — unless
@@ -456,6 +525,15 @@ func (t *sessionTabs) retry(id string) {
 	screen, handle := tab.screen, tab.handle
 	cancel := tab.cancel
 	tab.screen, tab.conn, tab.handle, tab.cancel = nil, nil, nil, nil
+	// A retry of a dormant or reconnecting Tab is a restore of an existing
+	// entry: a failure must leave it in the list, not discard it.
+	tab.restoring, tab.reopening = false, false
+	switch tab.status {
+	case tabDormant:
+		tab.restoring = true
+	case tabReconnecting:
+		tab.reopening = true
+	}
 	tab.status = tabConnecting
 	tab.problem = ""
 	if t.pendingClose == id {
@@ -467,6 +545,60 @@ func (t *sessionTabs) retry(id string) {
 	if cancel != nil {
 		cancel()
 	}
+	if screen != nil {
+		_ = screen.Close()
+	}
+	if handle != nil {
+		_ = handle.End()
+	}
+	if launch != nil {
+		launch(tab)
+	}
+}
+
+// restore starts the open of a dormant Tab under its existing identity. It is
+// the deliberate retry: any earlier failure text is cleared before the new
+// attempt. It does nothing for a Tab that is not dormant.
+func (t *sessionTabs) restore(id string) {
+	t.mu.Lock()
+	tab := t.find(id)
+	if tab == nil || tab.status != tabDormant {
+		t.mu.Unlock()
+		return
+	}
+	tab.status = tabConnecting
+	tab.problem = ""
+	tab.restoring = true
+	launch := t.launch
+	t.mu.Unlock()
+	if launch != nil {
+		launch(tab)
+	}
+}
+
+// reconnectVisible reopens the visible Tab when its Session is gone. The
+// foreground calls it after syncVisible, so a resume that failed — the
+// transport died while the app was suspended — becomes a fresh connection
+// without the user acting. A Tab that is not reconnecting is left alone.
+func (t *sessionTabs) reconnectVisible(id string) {
+	if id == "" {
+		return
+	}
+	t.mu.Lock()
+	tab := t.find(id)
+	if tab == nil || tab.status != tabReconnecting {
+		t.mu.Unlock()
+		return
+	}
+	screen, handle := tab.screen, tab.handle
+	tab.screen, tab.conn, tab.handle = nil, nil, nil
+	tab.status = tabConnecting
+	tab.problem = ""
+	tab.reopening = true
+	launch := t.launch
+	t.mu.Unlock()
+	// The old Session no longer runs; release it outside the lock, then open
+	// the Host again under the same Tab.
 	if screen != nil {
 		_ = screen.Close()
 	}
@@ -558,6 +690,8 @@ func (t *sessionTabs) remove(id string) bool {
 		if tab.handle != nil {
 			_ = tab.handle.End()
 		}
+		// A closed Tab is no longer a Session a relaunch lists.
+		t.persist()
 		return true
 	}
 	t.mu.Unlock()
@@ -578,7 +712,9 @@ func (t *sessionTabs) discardFailed(id string) {
 	t.remove(id)
 }
 
-// closeAll ends every Tab. The app calls it on quit.
+// closeAll ends every Tab. The app calls it on quit. The Tabs are persisted
+// first: quitting is not closing a Session, so the next launch still lists
+// them as dormant entries.
 func (t *sessionTabs) closeAll() {
 	t.mu.Lock()
 	tabs := t.tabs
@@ -587,6 +723,7 @@ func (t *sessionTabs) closeAll() {
 		cancels[i] = tab.cancel
 		tab.cancel = nil
 	}
+	payload := payloadOf(tabs)
 	t.tabs = nil
 	t.pendingClose = ""
 	t.mu.Unlock()
@@ -600,6 +737,155 @@ func (t *sessionTabs) closeAll() {
 		if tab.handle != nil {
 			_ = tab.handle.End()
 		}
+	}
+	t.savePayload(payload)
+}
+
+// adoptRestored adds the Tabs a previous launch left open as dormant entries,
+// in the order FlattenRestored produced them. Each Tab resolves its Host from
+// the freshly loaded Vault list, so a renamed or reconfigured Host is opened
+// as it is now; a Host that is gone keeps the descriptor's identity and fails
+// actionably when restored.
+func (t *sessionTabs) adoptRestored(restored []RestoredSession, lookup func(string) (domainvault.Host, bool)) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, session := range restored {
+		host, ok := lookup(string(session.Descriptor.HostID))
+		if !ok {
+			host = restoredHost(session)
+		}
+		if t.next == 0 {
+			t.next = 1
+		}
+		t.tabs = append(t.tabs, &phoneTab{
+			id:     fmt.Sprintf("tab-%d", t.next),
+			host:   host,
+			label:  session.Title,
+			status: tabDormant,
+		})
+		t.next++
+	}
+}
+
+// persist snapshots the open Tabs and stores them. The snapshot and the save
+// are serialized, so an open's outcome cannot overwrite a newer layout.
+func (t *sessionTabs) persist() {
+	t.saveMu.Lock()
+	defer t.saveMu.Unlock()
+	if t.store == nil {
+		return
+	}
+	t.mu.Lock()
+	payload := payloadOf(t.tabs)
+	t.mu.Unlock()
+	_ = t.store.Save(context.Background(), payload)
+}
+
+// savePayload stores a snapshot taken before the Tabs were cleared.
+func (t *sessionTabs) savePayload(payload domainworkspace.Payload) {
+	t.saveMu.Lock()
+	defer t.saveMu.Unlock()
+	if t.store == nil {
+		return
+	}
+	_ = t.store.Save(context.Background(), payload)
+}
+
+// payloadOf snapshots the Tabs that should survive a relaunch in the shared
+// Workspace restore format. The phone Workspace is flat, so every Tab is one
+// Pane. A Tab whose open failed is not a Session and is omitted; a dormant or
+// reconnecting Tab is an entry the user can still restore, so it is kept.
+func payloadOf(tabs []*phoneTab) domainworkspace.Payload {
+	payload := domainworkspace.EmptyPayload()
+	for i, tab := range tabs {
+		if tab.status == tabFailed {
+			continue
+		}
+		descriptor := descriptorOf(tab.host, tab.label)
+		if !descriptor.Valid() {
+			// Without a Host identity and endpoint there is nothing restore
+			// could open, so it is not an entry.
+			continue
+		}
+		pane := domainmodel.PaneID("pane-" + tab.id)
+		payload.Tabs = append(payload.Tabs, domainworkspace.RestoredTab{
+			ID:     domainmodel.TabID(tab.id),
+			Number: i + 1,
+			Title:  tab.label,
+			Root:   domainworkspace.NewPaneNode(pane),
+		})
+		payload.Panes = append(payload.Panes, domainworkspace.RestoredPane{
+			ID:      pane,
+			Session: descriptor,
+		})
+	}
+	return payload
+}
+
+// descriptorOf describes one open phone Tab for restore. It captures no
+// credential or output, exactly as the desktop descriptor does.
+func descriptorOf(host domainvault.Host, label string) domainworkspace.SessionDescriptor {
+	return domainworkspace.SessionDescriptor{
+		Kind:     sessionKindOf(host),
+		Label:    label,
+		HostID:   host.ID,
+		Hostname: host.Hostname,
+		Port:     host.Port,
+		Username: host.Username,
+	}
+}
+
+// restoredHost rebuilds the endpoint of a Host that is no longer in the
+// Vault. The restore still fails actionably through the Session service, and
+// the row keeps enough identity to tell the user what could not be opened.
+func restoredHost(session RestoredSession) domainvault.Host {
+	descriptor := session.Descriptor
+	return domainvault.Host{
+		ID:       descriptor.HostID,
+		Label:    firstNonEmpty(descriptor.CustomName, descriptor.Label, session.Title),
+		Hostname: descriptor.Hostname,
+		Port:     descriptor.Port,
+		Username: descriptor.Username,
+		Protocol: protocolOfKind(descriptor.Kind),
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func sessionKindOf(host domainvault.Host) domainworkspace.SessionKind {
+	switch protocolOf(host) {
+	case domainvault.ProtocolTelnet:
+		return domainworkspace.SessionTelnet
+	case domainvault.ProtocolMosh:
+		return domainworkspace.SessionMosh
+	case domainvault.ProtocolET:
+		return domainworkspace.SessionET
+	case domainvault.ProtocolLocal:
+		return domainworkspace.SessionLocal
+	default:
+		return domainworkspace.SessionSSH
+	}
+}
+
+func protocolOfKind(kind domainworkspace.SessionKind) domainvault.Protocol {
+	switch kind {
+	case domainworkspace.SessionTelnet:
+		return domainvault.ProtocolTelnet
+	case domainworkspace.SessionMosh:
+		return domainvault.ProtocolMosh
+	case domainworkspace.SessionET:
+		return domainvault.ProtocolET
+	case domainworkspace.SessionLocal:
+		return domainvault.ProtocolLocal
+	default:
+		return domainvault.ProtocolSSH
 	}
 }
 
@@ -658,6 +944,12 @@ func (t *sessionTabs) drawRoot(c *ui.Context) {
 					if t.show != nil {
 						t.show(view.id)
 					}
+					// Tapping a dormant entry is the restore gesture: it
+					// reconnects the persisted Tab, clearing an earlier
+					// failure so the attempt is not blocked by stale text.
+					if view.status == tabDormant {
+						t.restore(view.id)
+					}
 				}
 				t.drawPendingClose(c, view)
 			}
@@ -704,6 +996,26 @@ func (t *sessionTabs) drawSession(c *ui.Context, id string, retry func(), back f
 					retry()
 				}
 			})
+			if kit.GhostButton(c, icons.X, "Back to Sessions").Clicked() && back != nil {
+				back()
+			}
+		})
+	case tabDormant:
+		ui.Column(c).Fill().Padding(16).Gap(12).Children(func() {
+			if view.problem != "" {
+				// A failed restore reports its cause and keeps the entry: Try
+				// again reopens the same Tab, Back leaves it in the list.
+				kit.Notice(c, icons.TriangleAlert, c.Theme().Danger, view.problem, func() {
+					if kit.GhostButton(c, icons.RefreshCw, "Try again").Clicked() && retry != nil {
+						retry()
+					}
+				})
+			} else {
+				kit.EmptyHint(c, "Restoring "+view.label+"…")
+				// The open runs off the UI thread; poll until the outcome
+				// lands, as a fresh open's connecting page does.
+				c.After(15 * time.Millisecond)
+			}
 			if kit.GhostButton(c, icons.X, "Back to Sessions").Clicked() && back != nil {
 				back()
 			}
@@ -766,7 +1078,7 @@ func (t *sessionTabs) drawPendingClose(c *ui.Context, view tabView) {
 func statusLine(c *ui.Context, view tabView) {
 	color := c.Theme().Accent
 	switch view.status {
-	case tabHibernated:
+	case tabHibernated, tabDormant:
 		color = c.Theme().TextMuted
 	case tabConnecting, tabReconnecting:
 		color = c.Theme().Warning
@@ -786,6 +1098,8 @@ func tabStatusText(view tabView) string {
 		return "Connecting… · " + identity
 	case tabHibernated:
 		return "Hibernated · " + identity
+	case tabDormant:
+		return "Dormant · " + identity
 	case tabReconnecting:
 		return "Reconnecting… · " + identity
 	case tabFailed:
@@ -824,4 +1138,14 @@ func resumeProblem(label string, err error) string {
 		reason = "the Session is no longer running"
 	}
 	return fmt.Sprintf("Could not resume %s: %s. Open the Host again to reconnect.", label, reason)
+}
+
+// restoreProblem turns a failed restore of a dormant entry into an actionable
+// sentence. The entry is kept, so the user's next step is the same Tab again.
+func restoreProblem(label string, err error) string {
+	reason := strings.TrimSpace(err.Error())
+	if reason == "" {
+		reason = "the Session could not be reopened"
+	}
+	return fmt.Sprintf("Could not restore %s: %s. Check the Host and network, then try again.", label, reason)
 }

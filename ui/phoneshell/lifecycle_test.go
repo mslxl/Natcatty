@@ -105,6 +105,7 @@ func TestTabStatusTextNamesEveryLifecycleState(t *testing.T) {
 		{tabConnecting, "Connecting… · deploy@prod.example.com:2222"},
 		{tabReady, "Connected · deploy@prod.example.com:2222"},
 		{tabHibernated, "Hibernated · deploy@prod.example.com:2222"},
+		{tabDormant, "Dormant · deploy@prod.example.com:2222"},
 		{tabReconnecting, "Reconnecting… · deploy@prod.example.com:2222"},
 		{tabFailed, "Connection failed · deploy@prod.example.com:2222"},
 	}
