@@ -43,6 +43,9 @@ fi
 
 # A device object in a simulator build fails before the app can start.
 scripts/mobile/ios-syso.sh simulator --check
+# The Swift host comes from the vendored MyGo; without its patches the app
+# builds but the keyboard fix is absent.
+scripts/apply-mygo-patches.sh
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/natcatty-ios-render.XXXXXX")
 launch_pid=

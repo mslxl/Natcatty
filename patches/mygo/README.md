@@ -15,8 +15,10 @@ replace directive would otherwise compile one release while `go.mod` names
 another. `just dev`, `just test`, and `just build` depend on it, and CI runs
 it before Go.
 
-The patches are relative to v0.10.0. If the submodule moves to another upstream
-commit, rebase them and re-run the archive and terminal tests.
+The patches are relative to v0.10.0 and are applied in name order, because
+later ones build on earlier ones (0004 extends the tracking modes 0002 adds).
+If the submodule moves to another upstream commit, rebase them and re-run the
+archive and terminal tests.
 
 If GitHub over HTTPS is unavailable in your environment, point the submodule
 at SSH locally (not committed):
@@ -34,3 +36,14 @@ no report for a Command+click over a link-looking string; MyGo opened the link
 instead. TUIs commonly bind Command/Alt+click to their own action. The patches
 keep the link policy in MyGo, where the ordering lives, without vendoring its
 source into this repository.
+
+## The phone keyboard patch
+
+`0005-ios-reshow-keyboard-after-manual-dismissal.patch` is the one phone-only
+patch. The MyGo iOS host in v0.10.0 cannot re-show the soft keyboard after the
+user dismisses it with the keyboard's own key: `SurfaceWindow.setTextInput`
+calls `becomeFirstResponder()`, but the view never stopped being first
+responder, so UIKit does nothing. The patch tracks an explicit dismissal and
+uses `reloadInputViews()` (or a fresh `becomeFirstResponder()`) only when a
+tap asks for the keyboard, so the resize after a dismissal does not raise it
+again.

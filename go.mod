@@ -105,9 +105,12 @@ tool github.com/egoist/mygo/cmd/mygo
 // CGO_ENABLED=0 five-target build.
 replace golang.zx2c4.com/wireguard/tun/netstack => golang.zx2c4.com/wireguard v0.0.0-20261024220952-b3bc704ef0ee
 
-// MyGo v0.10.0 is a git submodule at third_party/mygo, pinned by the gitlink.
-// patches/mygo holds the local behavioral patches (link policy while a
-// program takes the mouse, DEC 1001 tracking, ConPTY padding, and encoder mode
-// restoration); scripts/apply-mygo-patches.sh applies them to a clean
-// submodule checkout before building. See patches/mygo/README.md.
+// MyGo v0.10.0 is a git submodule at third_party/mygo, pinned by the gitlink
+// and built from source through the replace below. patches/mygo holds the
+// local patches: the desktop mouse, DEC 1001, ConPTY and encoder-mode fixes
+// and the phone's iOS keyboard patch. scripts/apply-mygo-patches.sh resets the
+// submodule to the pinned commit and applies every patch, so every build path
+// starts from the same tree. Upgrading the pinned tag means re-checking each
+// patch against the new source and updating or dropping it; a new patch is a
+// product decision and needs the maintainer's approval.
 replace github.com/egoist/mygo => ./third_party/mygo

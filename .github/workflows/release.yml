@@ -52,6 +52,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          submodules: recursive
           ref: ${{ github.sha }}
           # The Android version-code check reads the previous release tag's
           # mygo.json, which needs the tags and the history behind them.
@@ -208,6 +209,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          submodules: recursive
           ref: ${{ github.sha }}
 
       - name: Prepare MyGo
@@ -470,6 +472,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          submodules: recursive
           ref: ${{ github.sha }}
 
       - name: Set up Go
@@ -557,6 +560,9 @@ jobs:
             --keystore "${RUNNER_TEMP}/natcatty-release.keystore" \
             --key-alias "${ANDROID_KEY_ALIAS}" \
             --version-code "${NATCATTY_ANDROID_VERSION_CODE}"
+
+      - name: Patch the vendored MyGo
+        run: scripts/apply-mygo-patches.sh
 
       - name: Build the signed universal APK
         # MyGo builds the Go library for every ABI in scripts/mobile/android-abis.txt
@@ -696,6 +702,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          submodules: recursive
           ref: ${{ github.sha }}
 
       - name: Prepare MyGo
@@ -800,6 +807,7 @@ jobs:
         # even when the tag was re-pushed or force-moved.
         uses: actions/checkout@v7
         with:
+          submodules: recursive
           ref: ${{ github.sha }}
           fetch-depth: 0
 

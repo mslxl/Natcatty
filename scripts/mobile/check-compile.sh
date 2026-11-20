@@ -25,6 +25,11 @@ cd "$(dirname "$0")/../.."
 
 roots=(./app ./ui/phoneshell ./ui/session ./ui/terminal/...)
 
+# MyGo is vendored (see go.mod's replace) so the phone host can carry a patch
+# upstream has not released. The script resets the submodule and applies every
+# patch, so a gate run always compiles the pinned tree.
+scripts/apply-mygo-patches.sh
+
 # min_sdk reads the Android minimum from mygo.json, where the committed
 # configuration declares it, so the gate cannot drift from what the app ships.
 # The key is unique in the file; the iOS minimum is read with plutil below

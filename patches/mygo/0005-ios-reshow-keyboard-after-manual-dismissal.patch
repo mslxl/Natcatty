@@ -1,0 +1,66 @@
+diff --git a/internal/mobile/ios/Sources/MyGoHost/SurfaceWindow.swift b/internal/mobile/ios/Sources/MyGoHost/SurfaceWindow.swift
+index 319a0ca2..0c200d79 100644
+--- a/internal/mobile/ios/Sources/MyGoHost/SurfaceWindow.swift
++++ b/internal/mobile/ios/Sources/MyGoHost/SurfaceWindow.swift
+@@ -22,6 +22,11 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
+     private var editing = false
+     private var hasDocument = false
+     private var shows = 0
++    // Set when the user dismisses the keyboard with its own key: UIKit
++    // resigns this view, and a later text-input update (the surface grows
++    // as the keyboard leaves) must not take that for a request to focus
++    // again. A new show counter from a tap clears it.
++    private var dismissed = false
+     private var serial = 0
+ 
+     // The input's traits, which the keyboard reads as it shows.
+@@ -305,6 +310,7 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
+     func setTextInput(_ c: SetTextInputCall) {
+         let wasEditing = editing
+         editing = c.active
++        if !editing { dismissed = false }
+         let another = c.serial != serial
+         serial = c.serial
+         hasDocument = c.document
+@@ -317,11 +323,24 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
+         apply(text: c.text, base: c.base, length: c.length, selStart: c.selStart, selEnd: c.selEnd, markStart: c.markStart, markEnd: c.markEnd)
+         if selChanged { inputDelegate?.selectionDidChange(self) }
+         if textChanged { inputDelegate?.textDidChange(self) }
+-        if editing && (!isFirstResponder || c.show != shows) {
++        if editing && c.show != shows {
++            // A tap asked for the keyboard. Dismissing it with its own key
++            // leaves this view first responder, where becomeFirstResponder()
++            // is a no-op; asking for the input views again is what brings it
++            // back. If UIKit did resign the view, focus it again here: the
++            // show counter is what tells this apart from a resize after a
++            // dismissal.
++            dismissed = false
++            if isFirstResponder {
++                reloadInputViews()
++            } else {
++                becomeFirstResponder()
++            }
++        } else if editing && !isFirstResponder && !dismissed {
+             becomeFirstResponder()
+         } else if !editing && wasEditing && isFirstResponder {
+             resignFirstResponder()
+-        } else if editing && (traitsChanged || another) {
++        } else if editing && (traitsChanged || another) && (isFirstResponder || !dismissed) {
+             reloadInputViews()
+         }
+         shows = c.show
+@@ -402,6 +421,14 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
+ 
+     override func resignFirstResponder() -> Bool {
+         let r = super.resignFirstResponder()
++        if editing && r && UIApplication.shared.applicationState == .active {
++            // The keyboard's own dismiss key resigns the view while the app
++            // stays active. Go then resizes the surface as the keyboard
++            // leaves and asks for the text input again; without this flag
++            // that update would focus the view and the keyboard would pop
++            // straight back, so the dismissal would not stick.
++            dismissed = true
++        }
+         if editing { Go.send(Event.textInputEnded(id: id)) }
+         return r
+     }

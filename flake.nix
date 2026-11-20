@@ -3,8 +3,16 @@
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+  # The same MyGo release the third_party/mygo submodule pins. A submodule's
+  # contents are not part of a git flake's source, so the package takes the
+  # tree from this input and overlays it in place of the empty gitlink.
+  inputs.mygo = {
+    url = "github:egoist/mygo/v0.10.0";
+    flake = false;
+  };
+
   outputs =
-    { self, nixpkgs }:
+    { self, nixpkgs, mygo }:
     let
       systems = [
         "aarch64-darwin"
@@ -46,9 +54,22 @@
         buildGoModule {
           pname = "natcatty";
           version = "0.1.0";
-          src = ./.;
+          # The submodule is a gitlink here, not content: supply the pinned
+          # MyGo tree from the flake input and apply the same patches the
+          # checkout applies, so the package builds the phone host natcatty
+          # actually ships.
+          src = pkgs.runCommand "natcatty-src" { } ''
+            cp -R ${./.} $out
+            chmod -R u+w $out
+            rm -rf $out/third_party/mygo
+            cp -R ${mygo} $out/third_party/mygo
+            chmod -R u+w $out/third_party/mygo
+            for p in $out/patches/mygo/*.patch; do
+              patch -p1 -d $out/third_party/mygo < "$p"
+            done
+          '';
 
-          vendorHash = "sha256-ppz3enfI1XVqZLeWjktZTeUTKjfwcrQHyZX67E0NIFM=";
+          vendorHash = "sha256-g5V3GngaPq1/PGlYYY1aRA1coYVGRlX25UYs2NZme18=";
           subPackages = [ "." ];
           env.CGO_ENABLED = "0";
           ldflags = [
