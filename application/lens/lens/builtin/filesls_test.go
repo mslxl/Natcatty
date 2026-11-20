@@ -16,91 +16,25 @@ func spanText(spans []lens.Span) string {
 	return b.String()
 }
 
-// eza's --icons (the `ls` alias on many setups) prints a Nerd Font glyph from
-// a private use area before each entry, as a whitespace-separated field of its
-// own. Reading those glyphs as names listed every icon on a row above its
-// file, and the repeated glyphs gave the list equal keys.
-func TestFilesLSPlainListingIgnoresIconGlyphs(t *testing.T) {
-	l := lens.ByID("files.ls")
-	if l == nil {
-		t.Fatal("files.ls is not registered")
-	}
-	state, err := l.Open(model.Cmd{Program: "eza", Args: []string{"--icons", "auto", "--git"}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, line := range []string{
-		" Applications    cp-solution    Documents",
-		" go              notes.txt",
-	} {
-		if err := l.Line(state, model.Line{Text: line}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	node, err := l.View(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	list, ok := node.(lens.List)
-	if !ok {
-		t.Fatalf("view = %T, want lens.List", node)
-	}
-	var got []string
-	for _, item := range list.Items {
-		got = append(got, spanText(item.Label))
-	}
-	want := []string{"Applications", "cp-solution", "Documents", "go", "notes.txt"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("list labels = %q, want %q", got, want)
-	}
-}
-
-// Only runs of two or more spaces separate grid columns; a single space is
-// part of a name, and flattening every field cut "My Documents" into two
-// entries.
-func TestFilesLSPlainListingKeepsNamesWithSpaces(t *testing.T) {
-	l := lens.ByID("files.ls")
-	state, err := l.Open(model.Cmd{Program: "eza", Args: []string{"--icons", "auto"}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, line := range []string{
-		" 'My Documents'   notes.txt",
-		" Single File Name",
-	} {
-		if err := l.Line(state, model.Line{Text: line}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	node, err := l.View(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	list, ok := node.(lens.List)
-	if !ok {
-		t.Fatalf("view = %T, want lens.List", node)
-	}
-	var got []string
-	for _, item := range list.Items {
-		got = append(got, spanText(item.Label))
-	}
-	want := []string{"'My Documents'", "notes.txt", "Single File Name"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("list labels = %q, want %q", got, want)
-	}
-}
-
-// Output the plain fallback does not understand stays raw: a guessed list of
-// error text is worse than the output the program printed.
-func TestFilesLSPlainListingFallsBackToRaw(t *testing.T) {
+// A plain `ls` prints names and little else, so the lens builds no widget and
+// the block keeps the raw output. A list of the bare names added nothing, and
+// a list guessed from an error line or a recursive listing's heading was worse
+// than the text the program printed.
+func TestFilesLSPlainListingStaysRaw(t *testing.T) {
 	cases := map[string][]string{
+		"names":             {"Applications  cp-solution  notes.txt"},
+		"icons":             {"\uf115 Applications   \uf15b notes.txt"},
+		"quoted":            {"\uf115 'My Documents'  \uf15b notes.txt"},
 		"program error":     {"ls: cannot access 'missing': No such file or directory"},
 		"recursive heading": {"src:", "  a.go", "  b.go"},
 	}
 	for name, lines := range cases {
 		t.Run(name, func(t *testing.T) {
 			l := lens.ByID("files.ls")
-			state, err := l.Open(model.Cmd{Program: "ls"}, nil)
+			if l == nil {
+				t.Fatal("files.ls is not registered")
+			}
+			state, err := l.Open(model.Cmd{Program: "eza", Args: []string{"--icons", "auto"}}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,6 +54,33 @@ func TestFilesLSPlainListingFallsBackToRaw(t *testing.T) {
 	}
 }
 
+// A plain `ls` on PowerShell is Get-ChildItem, whose columns are worth a
+// table: the listing still gets a lens, unlike the name-only case above.
+func TestFilesLSPowerShellListingStillBuildsTable(t *testing.T) {
+	l := lens.ByID("files.ls")
+	state, err := l.Open(model.Cmd{Program: "ls"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		`Directory: C:\Users\me`,
+		"Mode                 LastWriteTime         Length Name",
+		"----                 -------------         ------ ----",
+		"d-----         7/22/2026   8:11 PM                .git",
+	} {
+		if err := l.Line(state, model.Line{Text: line}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	node, err := l.View(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := node.(lens.Column); !ok {
+		t.Fatalf("view = %T, want a column (heading + table)", node)
+	}
+}
+
 // The long format puts the same icon in front of the name column.
 func TestFilesLSLongListingStripsIconGlyph(t *testing.T) {
 	l := lens.ByID("files.ls")
@@ -131,7 +92,7 @@ func TestFilesLSLongListingStripsIconGlyph(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := l.Line(state, model.Line{
-		Text: "-rw-r--r--  1 mslxl staff 1.5K Nov 19 12:00  notes.txt",
+		Text: "-rw-r--r--  1 mslxl staff 1.5K Nov 19 12:00 \uf15b notes.txt",
 	}); err != nil {
 		t.Fatal(err)
 	}

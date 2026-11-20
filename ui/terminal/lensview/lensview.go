@@ -4,6 +4,15 @@
 // a view tree (internal/lens), and this package maps every node kind onto the
 // closest widget of github.com/egoist/mygo/ui v0.5.5, composing the rest.
 //
+// A lens view never scrolls inside itself. Lists, ANSI screens, code, diffs and
+// Markdown documents take their natural height in the flow, and the terminal's
+// own scroll reaches every row; a widget with its own scrollbar split one
+// command's output into two scroll regions (ADR-0022). A limit on long content
+// belongs to the lens's own Clamp or Overflow node, which states the omitted
+// rows and can be lifted, never to a hidden scroll box. A code line, a Markdown
+// code block, a Markdown table's cell and display math wrap instead of scrolling
+// sideways for the same reason.
+//
 // Known gaps, kept here because the mapping is deliberately lossy (the frozen
 // lens.Node carries no node ids, events or stylesheet):
 //
@@ -53,6 +62,7 @@ import (
 	"github.com/egoist/mygo/ui/chart"
 	"github.com/egoist/mygo/ui/editor"
 	"github.com/egoist/mygo/ui/markdown"
+	"github.com/egoist/mygo/ui/markdown/parser"
 
 	"github.com/mslxl/natcatty/application/lens/lens"
 	"github.com/mslxl/natcatty/application/lens/lens/parse"
@@ -230,34 +240,6 @@ func filterItems(items []lens.Item, q string) []lens.Item {
 	return out
 }
 
-// listBoxes keeps a ui.ListState per list instance: the list itself owns the
-// keyboard choice (Up/Down/Home/End choose a row while it has focus, Enter
-// submits), which is Terminal's Key channel without re-implementing it.
-type listBox struct {
-	st  ui.ListState
-	sel int
-}
-
-var (
-	listBoxMu sync.Mutex
-	listBoxes = map[string]*listBox{}
-)
-
-func listState(key string) *listBox {
-	listBoxMu.Lock()
-	defer listBoxMu.Unlock()
-	if b, ok := listBoxes[key]; ok {
-		return b
-	}
-	if len(listBoxes) > stateCap {
-		listBoxes = map[string]*listBox{}
-	}
-	b := &listBox{sel: -1}
-	b.st.Selected = &b.sel
-	listBoxes[key] = b
-	return b
-}
-
 // selectedStyle marks the picked row: a 12% accent tint behind a two-pixel accent
 // bar on its leading edge, Terminal's accent 10/16% fill and `inset 2px 0 0 var(--accent)`.
 func (s style) selectedStyle(c *ui.Context, e ui.Element) ui.Element {
@@ -337,8 +319,13 @@ func renderWith(c *ui.Context, n lens.Node, rs *renderState) {
 		// The document is part of the flow: its height follows the text, so a
 		// `cat README.md` block shows the whole file and the flow's scroll
 		// reaches it. A fixed cap here clipped every document at 420 DIP and
-		// left no affordance to read the rest.
-		markdown.View(c, n.Text, &markdown.Options{Theme: md})
+		// left no affordance to read the rest. WrapCode wraps a code block's
+		// long lines, and markdownBlock wraps a table's cells and display math,
+		// instead of giving the document a sideways scroll of its own
+		// (ADR-0022).
+		opts := &markdown.Options{Theme: md, WrapCode: true}
+		opts.Block = markdownBlock
+		markdown.View(c, n.Text, opts)
 	case lens.Meter:
 		renderMeter(c, n)
 	case lens.Progress:
@@ -1510,18 +1497,11 @@ func renderTree(c *ui.Context, n lens.Tree) {
 	ui.Tree(c, func() { build(n.Nodes) })
 }
 
-// listRowKey identifies a list row for MyGo: the row's label and how many
-// equal labels come before it. A comparable struct, so the key follows the
-// row's identity across frames without colliding with another row's text.
-type listRowKey struct {
-	label string
-	nth   int
-}
-
 func renderList(c *ui.Context, n lens.List, rs *renderState) {
 	s := styleFor(c)
-	// The keys are content-derived, not walk-order-derived: the row callbacks run
-	// during layout, and a counter would give every row a different list key.
+	// The key is content-derived, not walk-order-derived: the lens rebuilds its
+	// tree every frame, so a counter would move the filter and the choice from
+	// one list to another.
 	listKey := stateKey(rs.scope, "list", 0)
 	if len(n.Items) > 0 {
 		listKey = stateKey(rs.scope, "list:"+fingerprint(plain(n.Items[0].Label)), 0)
@@ -1549,64 +1529,274 @@ func renderList(c *ui.Context, n lens.List, rs *renderState) {
 			return
 		}
 	}
-	lb := listState(listKey)
-	// Key keeps the choice on the row's identity when the list is filtered or grows;
-	// Label is left unset, since it also renders the row's name as a text node and
-	// the row draws its own label (and its icon must lead it). Rows may repeat a
-	// label — a listing can hold two equal names, and an icon-only row repeats
-	// its glyph — while MyGo gives one state, and one id, to every element that
-	// shares a key; the occurrence among equal labels keeps repeated rows apart.
-	keys := make([]listRowKey, len(items))
+	// Rows may repeat a label — a listing can hold two equal names, and an
+	// icon-only row repeats its glyph — so the occurrence among equal labels
+	// keeps repeated rows apart when one is chosen.
+	labels := make([]string, len(items))
+	nths := make([]int, len(items))
 	seen := make(map[string]int, len(items))
 	for i := range items {
 		label := plain(items[i].Label)
-		keys[i] = listRowKey{label: label, nth: seen[label]}
+		labels[i] = label
+		nths[i] = seen[label]
 		seen[label]++
 	}
-	lb.st.Key = func(row int) any { return keys[row] }
-	lst := ui.List(c, &lb.st, len(items), func(i int) {
-		it := items[i]
-		t := c.Theme()
-		row := ui.Row(c).Gap(8).MinHeight(s.RowH).Padding(0, 8, 0, 10)
-		// Hover is Terminal's `.sf-list .sf-item:hover` hairline tint; the chosen row
-		// keeps its accent, which wins over it.
-		if row.Hovered() {
-			row = row.Background(s.L1)
-		}
-		if *lb.st.Selected == i {
-			row = s.selectedStyle(c, row)
-		}
-		row.Children(func() {
-			// Terminal gives list items an icon name (e.g. "failed", "package", a
-			// severity); ui has no SVG slot for a name, so a glyph carries it.
-			if g, tone := iconGlyph(it.Icon); g != "" {
-				st := ui.Text(c, g).Font(monoFamily())
-				if col, ok := toneColor(c, tone); ok {
-					st = st.TextColor(col)
+	// Every row goes into the flow: the list has no scroll box of its own, so
+	// the terminal's scroll reaches the end of a long listing. Focus stays with
+	// the flow too — the arrow keys scroll the terminal, they do not move a
+	// selection inside the widget.
+	t := c.Theme()
+	ui.Column(c).Gap(0).FillWidth().Children(func() {
+		for i := range items {
+			it, label, nth := items[i], labels[i], nths[i]
+			rowKey := "row:" + fingerprint(label) + ":" + itoa(nth)
+			selected := selectGet(listKey) == rowKey
+			row := ui.Row(c).Gap(8).MinHeight(s.RowH).Padding(0, 8, 0, 10)
+			// Hover is Terminal's `.sf-list .sf-item:hover` hairline tint; the chosen row
+			// keeps its accent, which wins over it.
+			if row.Hovered() {
+				row = row.Background(s.L1)
+			}
+			if selected {
+				row = s.selectedStyle(c, row)
+			}
+			// A click chooses a row and a second click on the chosen row activates
+			// it, as a table's rows do; the lens is told and rebuilds its view.
+			row.OnClick(func() {
+				if selected {
+					emit(rs, "activate", label)
+				} else {
+					selectSet(listKey, rowKey)
+					emit(rs, "select", label)
 				}
-			}
-			text(c, it.Label)
-			if len(it.Detail) > 0 {
-				ui.Spacer(c)
-				ui.Text(c, plain(it.Detail)).TextColor(t.TextMuted)
-			}
-			if len(it.Value) > 0 {
-				ui.Spacer(c)
-				text(c, it.Value)
-			}
-		})
-	}).FillWidth().MaxHeight(240)
-	if *lb.st.Selected >= len(items) {
-		*lb.st.Selected = len(items) - 1
+				c.Invalidate()
+			})
+			row.Children(func() {
+				// Terminal gives list items an icon name (e.g. "failed", "package", a
+				// severity); ui has no SVG slot for a name, so a glyph carries it.
+				if g, tone := iconGlyph(it.Icon); g != "" {
+					st := ui.Text(c, g).Font(monoFamily())
+					if col, ok := toneColor(c, tone); ok {
+						st = st.TextColor(col)
+					}
+				}
+				text(c, it.Label)
+				if len(it.Detail) > 0 {
+					ui.Spacer(c)
+					ui.Text(c, plain(it.Detail)).TextColor(t.TextMuted)
+				}
+				if len(it.Value) > 0 {
+					ui.Spacer(c)
+					text(c, it.Value)
+				}
+			})
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Markdown
+
+// markdownBlock takes the blocks MyGo's markdown view builds inside a
+// ui.ScrollHorizontal and draws them in the flow instead (ADR-0022): a table
+// wraps its cells at column widths that fit the view, and display math wraps
+// its TeX. markdown.Options has no hook for either, so Options.Block takes
+// them over; every other block renders as MyGo renders it.
+func markdownBlock(c *ui.Context, d *parser.Document, i int) bool {
+	switch d.Block(i).Kind {
+	case parser.Table:
+		renderMarkdownTable(c, d, i)
+		return true
+	case parser.MathBlock:
+		tex := strings.TrimRight(d.Lines(i), "\n")
+		ui.Text(c, tex).Font(monoFamily()).TextColor(c.Theme().TextMuted).
+			FillWidth().TextAlign(ui.Center).Selectable()
+		return true
 	}
-	// A change of choice and a submit (Enter, double click) go back to the lens,
-	// which decides what they mean (Terminal's UiEvent select and activate).
-	if lst.Changed() && *lb.st.Selected >= 0 && *lb.st.Selected < len(items) {
-		emit(rs, "select", plain(items[*lb.st.Selected].Label))
+	return false
+}
+
+// renderMarkdownTable draws a Markdown table as a header over a hairline and
+// rows of wrapping cells. The columns are as wide as their widest cell, up to
+// a readable cap, and share the view's width when they do not fit, so a wide
+// table wraps instead of panning sideways inside the document.
+func renderMarkdownTable(c *ui.Context, d *parser.Document, i int) {
+	tbl := d.Block(i)
+	n := len(tbl.Align)
+	if n == 0 {
+		return
 	}
-	if lst.Submitted() && *lb.st.Selected >= 0 && *lb.st.Selected < len(items) {
-		emit(rs, "activate", plain(items[*lb.st.Selected].Label))
+	var head [][]lens.Span
+	var rows [][][]lens.Span
+	for r := i + 1; r < tbl.Next; r = d.Block(r).Next {
+		line := d.Block(r)
+		cells := make([][]lens.Span, 0, n)
+		for cell := r + 1; cell < line.Next && len(cells) < n; cell = d.Block(cell).Next {
+			cells = append(cells, markdownCellSpans(d, cell))
+		}
+		for len(cells) < n {
+			cells = append(cells, nil)
+		}
+		if line.Header && head == nil {
+			head = cells
+			continue
+		}
+		rows = append(rows, cells)
 	}
+	if head == nil {
+		head = make([][]lens.Span, n)
+	}
+	s := styleFor(c)
+	width, _ := c.Size()
+	widths := markdownColWidths(s, width, head, rows)
+	ui.Column(c).Selectable().Children(func() {
+		markdownTableRow(c, s, head, tbl.Align, widths, true)
+		ui.Box(c).FillWidth().Height(1).Background(s.L2)
+		for r := range rows {
+			row := markdownTableRow(c, s, rows[r], tbl.Align, widths, false)
+			if r < len(rows)-1 {
+				row.InsetShadow(0, -1, 0, 0, s.L1)
+			}
+		}
+	})
+}
+
+// markdownColWidths sizes a table's columns: their content's width in cells,
+// capped, sharing the view's width when the sum is too wide.
+func markdownColWidths(s style, width float32, head [][]lens.Span, rows [][][]lens.Span) []float32 {
+	n := len(head)
+	natural := make([]int, n)
+	for k := 0; k < n; k++ {
+		natural[k] = max(displayWidth(plain(head[k])), 4)
+		for r := range rows {
+			if k < len(rows[r]) {
+				natural[k] = max(natural[k], displayWidth(plain(rows[r][k])))
+			}
+		}
+		natural[k] = min(natural[k], 40)
+	}
+	total := 0
+	for _, w := range natural {
+		total += w
+	}
+	if total == 0 {
+		total = n
+	}
+	scale := float32(1)
+	if avail := width - 4*s.CellPadX; width > 0 && float32(total)*s.CharW > avail {
+		scale = avail / (float32(total) * s.CharW)
+	}
+	// A table of many columns in a narrow view still has to fit: the floor
+	// gives way before the table runs past the view's width.
+	floor := float32(6)
+	if width > 0 {
+		floor = max(min(floor, (width-4*s.CellPadX)/(float32(n)*s.CharW)), 2)
+	}
+	out := make([]float32, n)
+	for k := range out {
+		out[k] = max(float32(natural[k])*s.CharW*scale, floor*s.CharW)
+	}
+	return out
+}
+
+// markdownTableRow draws one row of a Markdown table. A header row is muted,
+// strong and small; every cell wraps at its column's width.
+func markdownTableRow(c *ui.Context, s style, cells [][]lens.Span, aligns []parser.Align, widths []float32, header bool) ui.Element {
+	row := ui.Row(c).Gap(0).AlignItems(ui.Start)
+	row.Children(func() {
+		for k := range widths {
+			var spans []lens.Span
+			if k < len(cells) {
+				spans = cells[k]
+			}
+			if header {
+				spans = markdownHeaderSpans(spans)
+			}
+			ui.Box(c).Width(widths[k]).Padding(2, s.CellPadX).ClipX().Children(func() {
+				el := text(c, spans).TextAlign(markdownAlign(aligns[k]))
+				if header {
+					el = el.FontSize(s.SmallSize)
+				}
+			})
+		}
+	})
+	return row
+}
+
+// markdownHeaderSpans makes a header cell strong and muted, as a Markdown
+// table's header reads.
+func markdownHeaderSpans(spans []lens.Span) []lens.Span {
+	out := make([]lens.Span, len(spans))
+	for k, s := range spans {
+		s.Style = markdownStyle(s.Style, "strong muted")
+		out[k] = s
+	}
+	return out
+}
+
+// markdownCellSpans turns a table cell's inlines into lens spans, keeping
+// emphasis, code, links and math; an image shows its description, as it does
+// within MyGo's text.
+func markdownCellSpans(d *parser.Document, cell int) []lens.Span {
+	in := d.Inlines(cell)
+	var out []lens.Span
+	var walk func(from, to int, style, href string)
+	walk = func(from, to int, style, href string) {
+		for k := from; k < to; k++ {
+			n := in[k]
+			next := max(n.Next, k+1)
+			switch n.Kind {
+			case parser.Text, parser.HTML:
+				out = append(out, lens.Span{Text: n.Text, Style: style, Href: href})
+			case parser.SoftBreak, parser.LineBreak:
+				out = append(out, lens.Span{Text: " ", Style: style})
+			case parser.Code:
+				out = append(out, lens.Span{Text: n.Text, Style: markdownStyle(style, "code"), Href: href})
+			case parser.Math:
+				out = append(out, lens.Span{Text: n.Text, Style: markdownStyle(style, "code")})
+			case parser.Emphasis:
+				walk(k+1, next, markdownStyle(style, "em"), href)
+			case parser.Strong:
+				walk(k+1, next, markdownStyle(style, "strong"), href)
+			case parser.Strikethrough:
+				walk(k+1, next, markdownStyle(style, "del"), href)
+			case parser.Link:
+				walk(k+1, next, markdownStyle(style, "link"), n.Dest)
+			case parser.Image:
+				alt := parser.PlainText(in[k+1 : next])
+				if alt == "" {
+					alt = "image"
+				}
+				out = append(out, lens.Span{Text: "[" + alt + "]", Style: markdownStyle(style, "muted")})
+			case parser.FootnoteRef:
+				out = append(out, lens.Span{Text: "[" + n.Text + "]", Style: markdownStyle(style, "muted")})
+			}
+			if n.Next > k+1 {
+				k = n.Next - 1
+			}
+		}
+	}
+	walk(0, len(in), "", "")
+	return out
+}
+
+// markdownStyle adds a style token to a span's.
+func markdownStyle(style, add string) string {
+	if style == "" {
+		return add
+	}
+	return style + " " + add
+}
+
+// markdownAlign maps a Markdown table column's alignment to the text's.
+func markdownAlign(a parser.Align) ui.Align {
+	switch a {
+	case parser.AlignCenter:
+		return ui.Center
+	case parser.AlignRight:
+		return ui.End
+	}
+	return ui.Start
 }
 
 // ---------------------------------------------------------------------------
@@ -1617,7 +1807,7 @@ func renderCode(c *ui.Context, n lens.Code, rs *renderState) {
 	hidden := 0
 	// "Show all lines" is clickable and remembered per position (Terminal's code
 	// block expands on click, strings 827046-827047).
-	key := rs.key("code", n.Text)
+	key := rs.key("code", itoa(n.Start)+":"+n.Text)
 	if n.Clamp > 0 && !expandGet(key) {
 		lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 		if len(lines) > n.Clamp {
@@ -1625,18 +1815,13 @@ func renderCode(c *ui.Context, n lens.Code, rs *renderState) {
 			text = strings.Join(lines[:n.Clamp], "\n")
 		}
 	}
-	// Keep the editor state across frames: a lens rebuilds its node tree every
-	// frame, and a fresh Buffer would drop folds and the selection. The entry is
-	// reused while the text is unchanged and replaced when it changes.
-	_, st := codeBufferFor(key, text, n.Lang)
-	th := c.Theme()
 	s := styleFor(c)
-	codeLines := strings.Count(text, "\n") + 1
 	// The body follows its text. A fixed cap here cut long code silently: the
 	// editor inside was clipped with no way to reach the rest. The lens's own
 	// Clamp ("N more lines · Show all lines") is where a limit belongs, because
-	// it is stated and can be lifted.
-	bodyH := float32(codeLines)*s.LH + 8
+	// it is stated and can be lifted. The editor fits its content, wrapped
+	// lines included, and paints no bars (see codeBufferFor), so the body takes
+	// the height the editor asks for instead of one counted from line breaks.
 	ui.Column(c).Radius(s.CodeR).Background(s.CodeBG).InsetShadow(0, 0, 1, 0, s.L1).Children(func() {
 		if n.Lang != "" {
 			ui.Row(c).Gap(6).MinHeight(26).Padding(0, 10).Children(func() {
@@ -1645,28 +1830,29 @@ func renderCode(c *ui.Context, n lens.Code, rs *renderState) {
 			})
 			ui.Box(c).FillWidth().Height(1).Background(s.L1)
 		}
-		ui.Box(c).Height(bodyH).Clip().Padding(4, 0).Children(func() {
-			// Terminal's `code(text, lang, start)` numbers lines from `start`; the editor
-			// has no such option, so a gutter is drawn beside it.
-			lineCount := strings.Count(text, "\n") + 1
-			// Terminal's `code(text, lang, start)`: numbers show from `start` whenever it is
-			// given (start = 1 included); no start (0) draws none.
-			if n.Start >= 1 && lineCount <= 200 {
-				ui.Row(c).Gap(8).Children(func() {
-					ui.Column(c).Gap(0).Children(func() {
-						for i := 0; i < lineCount; i++ {
-							ui.Text(c, itoa(n.Start+i)).Font(monoFamily()).
-								FontSize(th.FontSize - 1).FontFeatures("tnum").
-								TextColor(th.TextMuted)
-						}
-					})
+		ui.Box(c).FillWidth().Padding(4, 0).Children(func() {
+			// Keep the editor state across frames: a lens rebuilds its node tree
+			// every frame, and a fresh Buffer would drop folds and the selection.
+			// The entry is reused while the text is unchanged and replaced when
+			// it changes.
+			_, st := codeBufferFor(key, text, n.Lang)
+			if n.Start > 1 {
+				// The editor's gutter numbers from 1, with no offset; a snippet
+				// that starts elsewhere gets the numbers drawn beside it, one
+				// box per line, as high as the rows the line takes. Folding is
+				// off: numbers are drawn for every line, and a fold would hide
+				// lines the gutter still counts.
+				st.LineNumbers = editor.LineNumbersOff
+				st.NoFolding = true
+				ui.Row(c).Gap(8).AlignItems(ui.Start).Children(func() {
+					renderGutter(c, st, text, n.Start)
 					ui.Box(c).Grow(1).Children(func() {
-						editor.View(c, st).Fill()
+						editor.View(c, st).FillWidth()
 					})
 				})
-			} else {
-				editor.View(c, st).Fill()
+				return
 			}
+			editor.View(c, st).FillWidth()
 		})
 	})
 	if hidden > 0 {
@@ -1691,6 +1877,32 @@ func renderCode(c *ui.Context, n lens.Code, rs *renderState) {
 			c.Invalidate()
 		})
 	}
+}
+
+// renderGutter draws the numbers of a snippet that starts at start, beside an
+// editor that numbers from 1. Each number sits in a box as high as the rows
+// its line takes, as the editor laid them out, so a soft-wrapped line keeps
+// its number on its first row instead of pushing the numbers below it out of
+// step.
+func renderGutter(c *ui.Context, st *editor.State, text string, start int) {
+	th := c.Theme()
+	fallback := styleFor(c).LH
+	lines := strings.Count(text, "\n") + 1
+	ui.Column(c).Gap(0).Children(func() {
+		for i := 0; i < lines; i++ {
+			h := float32(st.LineTop(i+1) - st.LineTop(i))
+			if h <= 0 {
+				// The frame that creates the editor has not laid it out yet;
+				// one row a line is right until it has.
+				h = fallback
+			}
+			ui.Box(c).Height(h).AlignItems(ui.Start).Padding(2, 0).Children(func() {
+				ui.Text(c, itoa(start+i)).Font(monoFamily()).
+					FontSize(th.FontSize - 1).FontFeatures("tnum").
+					TextColor(th.TextMuted)
+			})
+		}
+	})
 }
 
 // renderRule draws Terminal's separator: a hairline, the label in the muted step, and a
@@ -2568,19 +2780,20 @@ func decodeRune(s string) (rune, int) {
 func renderANSI(c *ui.Context, n lens.ANSI) {
 	scr := newANSIScreen()
 	scr.feed(n.Text)
-	box := ui.Box(c).MaxHeight(300).Clip().Background(c.Theme().Surface).Radius(6).Padding(6)
+	// The whole screen is in the flow: no capped box and no scroll of its own,
+	// so the terminal's scroll reaches every row, however long the program's
+	// coloured output was.
+	box := ui.Box(c).FillWidth().Background(c.Theme().Surface).Radius(6).Padding(6)
 	box.Children(func() {
-		ui.Scroll(c).Grow(1).Children(func() {
-			col := ui.Column(c).Gap(0).Selectable()
-			col.Children(func() {
-				for _, spans := range scr.lines() {
-					if len(spans) == 0 {
-						ui.Text(c, " ")
-						continue
-					}
-					ui.RichText(c, spans...).Font(monoFamily())
+		col := ui.Column(c).Gap(0).Selectable()
+		col.Children(func() {
+			for _, spans := range scr.lines() {
+				if len(spans) == 0 {
+					ui.Text(c, " ")
+					continue
 				}
-			})
+				ui.RichText(c, spans...).Font(monoFamily())
+			}
 		})
 	})
 }
@@ -3172,7 +3385,15 @@ func codeBufferFor(key, text, lang string) (*editor.Buffer, *editor.State) {
 		}
 		buf.SetLanguage(editor.LanguageFor("x." + native))
 	}
-	st := &editor.State{Buffer: buf, ReadOnly: true}
+	// FitContent sizes the editor to its lines and SoftWrap keeps a long line
+	// in the flow rather than behind a sideways scroll: a lens view never
+	// scrolls inside itself, nothing overflows to draw a bar, and the
+	// terminal's scroll reaches every line. The wheel over the code goes to
+	// the flow.
+	st := &editor.State{
+		Buffer: buf, ReadOnly: true,
+		FitContent: true, SoftWrap: true,
+	}
 	codeState_[key] = &codeState{text: text, lang: lang, buf: buf, st: st}
 	return buf, st
 }

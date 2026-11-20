@@ -18,9 +18,10 @@ func init() {
 	})
 }
 
-// filesLS turns `ls -l` (and eza/exa/lsd long listings) into a table, and a
-// plain `ls` into a list of names. Unknown lines are ignored; a long listing
-// that parses nothing falls back to raw.
+// filesLS turns `ls -l` (and eza/exa/lsd long listings) into a table. A plain
+// `ls` prints names and little else, so there is nothing a widget would add:
+// it stays raw. Unknown lines are ignored, and a listing that parses nothing
+// falls back to raw.
 type filesLS struct{}
 
 type lsRow struct {
@@ -32,14 +33,8 @@ type lsRow struct {
 }
 
 type lsState struct {
-	expectLong bool
-	rows       []lsRow
-	maxSize    int64
-	names      []string
-	// unparsed is output the plain fallback does not understand (a program
-	// error, a recursive listing's heading). The block then stays raw instead
-	// of showing a list guessed from it.
-	unparsed bool
+	rows    []lsRow
+	maxSize int64
 
 	// PowerShell's `ls` is Get-ChildItem: a "Directory:" heading, then a
 	// Mode/LastWriteTime/Length/Name header over two rules, then the rows. It is a
@@ -65,18 +60,7 @@ func (f *filesLS) Match(cmd model.Cmd) bool {
 }
 
 func (f *filesLS) Open(cmd model.Cmd, cx *lens.Ctx) (any, error) {
-	long := false
-	for _, a := range cmd.Args {
-		switch {
-		case a == "--long":
-			long = true
-		case strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--"):
-			if strings.ContainsAny(a[1:], "lgo") {
-				long = true
-			}
-		}
-	}
-	return &lsState{expectLong: long}, nil
+	return &lsState{}, nil
 }
 
 func (f *filesLS) Line(state any, l model.Line) error {
@@ -128,20 +112,11 @@ func (st *lsState) observe(text string) {
 			st.maxSize = row.sizeBytes
 		}
 		st.rows = append(st.rows, row)
-		return
 	}
-	// A plain ls prints names; keep them for the list fallback. A long
-	// listing's continuation lines (wrapped names) are not worth guessing.
-	// The plain fallback understands name listings only: a program error or a
-	// recursive listing's directory heading is not a name, and a widget guessed
-	// from it would be wrong, so leave the block raw.
-	if !st.expectLong {
-		if listingError(trimmed) || strings.HasSuffix(trimmed, ":") {
-			st.unparsed = true
-			return
-		}
-		st.names = append(st.names, splitListingLine(trimmed)...)
-	}
+	// Anything else (a plain listing's names, a wrapped continuation, a program
+	// error) is left to the raw output: a plain `ls` has no columns worth a
+	// table, and guessing a widget from lines we did not parse was worse than
+	// showing them as printed.
 }
 
 // parsePSRow parses one Get-ChildItem row:
@@ -363,9 +338,8 @@ func mergeDeviceSizes(fields []string) []string {
 
 // isIconToken reports a whitespace-separated field that is a file-type icon
 // rather than a name. eza and lsd print a Nerd Font glyph from a private use
-// area before each entry (" Applications"), so a plain listing's fields are
-// icon, name, icon, name; parsing the icons as names listed each one on a row
-// of its own and gave every icon row the same list key.
+// area before each entry (" notes.txt"), so the name column starts with an
+// icon token that is not part of the name.
 func isIconToken(field string) bool {
 	if field == "" {
 		return false
@@ -384,68 +358,6 @@ func privateUseRune(r rune) bool {
 	return (r >= 0xE000 && r <= 0xF8FF) ||
 		(r >= 0xF0000 && r <= 0xFFFFD) ||
 		(r >= 0x100000 && r <= 0x10FFFD)
-}
-
-// splitListingLine splits one plain listing line into its entries. ls -C and
-// eza's grid separate columns with two or more spaces (or a tab), while a single
-// space belongs to the name, so "My Documents" stays one entry. Splitting on
-// every space cut such names in two.
-func splitListingLine(line string) []string {
-	var out []string
-	i := 0
-	for i < len(line) {
-		for i < len(line) && line[i] == ' ' {
-			i++
-		}
-		if i >= len(line) {
-			break
-		}
-		start := i
-		for i < len(line) {
-			if line[i] == '\t' {
-				break
-			}
-			if line[i] == ' ' {
-				j := i
-				for j < len(line) && line[j] == ' ' {
-					j++
-				}
-				if j-i >= 2 {
-					break
-				}
-				i = j
-				continue
-			}
-			i++
-		}
-		if entry := stripListingIcon(strings.TrimSpace(line[start:i])); entry != "" {
-			out = append(out, entry)
-		}
-		i++ // the tab or the first space that ended the entry
-	}
-	return out
-}
-
-// stripListingIcon removes the icon glyph eza and lsd print in front of an
-// entry (" Applications", and in a grid " 'My Documents'" with no space after
-// the glyph); the glyph is not part of the name.
-func stripListingIcon(entry string) string {
-	trimmed := strings.TrimLeftFunc(entry, privateUseRune)
-	if trimmed == entry {
-		return entry
-	}
-	return strings.TrimSpace(trimmed)
-}
-
-// listingError reports a listing program's own error line ("ls: cannot access
-// …"), which must not become a name in the plain fallback.
-func listingError(line string) bool {
-	for _, program := range []string{"ls", "eza", "exa", "lsd"} {
-		if strings.HasPrefix(line, program+":") {
-			return true
-		}
-	}
-	return false
 }
 
 func looksLikeMode(s string) bool {
@@ -490,9 +402,7 @@ func (f *filesLS) View(state any) (lens.Node, error) {
 	if len(st.rows) > 0 {
 		return lsTable(st), nil
 	}
-	if !st.expectLong && !st.unparsed && len(st.names) > 0 {
-		return lsList(st.names), nil
-	}
+	// Plain name listings have no view: the block shows the raw output.
 	return nil, nil
 }
 
@@ -572,18 +482,4 @@ func lsNameStyle(r lsRow) string {
 		return "strong accent"
 	}
 	return ""
-}
-
-func lsList(names []string) lens.Node {
-	items := make([]lens.Item, 0, len(names))
-	for _, n := range names {
-		style := ""
-		if strings.HasSuffix(n, "/") {
-			style = "strong accent"
-		}
-		items = append(items, lens.Item{Label: []lens.Span{{Text: n, Style: style}}})
-	}
-	// A directory can be long; the filter box narrows it as it is typed, the way
-	// Terminal's file listing lenses offer a search input.
-	return lens.List{Items: items, Filter: len(items) > 8}
 }
