@@ -36,6 +36,10 @@ type State struct {
 	queue    []func()
 	occupied bool
 
+	// highlight is the user's syntax-highlighting switch. It starts on and
+	// holds across documents, so turning it off stays off for the next file.
+	highlight bool
+
 	doc      *document
 	conflict *conflictPrompt
 	confirm  *confirmPrompt
@@ -81,7 +85,7 @@ func WithRedrawRequest(fn func()) Option {
 // NewState builds the editor state.
 func NewState(service Service, options ...Option) *State {
 	ctx, cancel := context.WithCancel(context.Background())
-	state := &State{service: service, ctx: ctx, cancel: cancel}
+	state := &State{service: service, ctx: ctx, cancel: cancel, highlight: true}
 	for _, option := range options {
 		option(state)
 	}
@@ -165,6 +169,13 @@ func (s *State) Content() *string {
 	}
 	return &s.doc.content
 }
+
+// Highlighting reports whether the editor paints syntax colors.
+func (s *State) Highlighting() bool { return s.highlight }
+
+// SetHighlighting turns syntax highlighting on or off. The view calls it when
+// the user toggles the switch; the document and its caret are unaffected.
+func (s *State) SetHighlighting(on bool) { s.highlight = on }
 
 // Dirty reports whether the buffer differs from the saved baseline.
 func (s *State) Dirty() bool {

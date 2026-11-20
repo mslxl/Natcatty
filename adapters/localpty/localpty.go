@@ -16,6 +16,7 @@ import (
 	"time"
 
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/platform/processcwd"
 	"github.com/mslxl/natcatty/platform/pty"
 )
 
@@ -175,6 +176,13 @@ type transport struct {
 
 	closeOnce sync.Once
 	closeErr  error
+}
+
+// WorkingDirectory reports the shell process's current directory. It is the
+// fallback for a local shell that never reports OSC 7; a remote transport has
+// no such capability.
+func (t *transport) WorkingDirectory() (string, error) {
+	return processcwd.Of(t.pty.PID())
 }
 
 func (t *transport) Read(p []byte) (int, error)  { return t.pty.Read(p) }

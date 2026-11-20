@@ -49,6 +49,20 @@ func (s *State) TransferStats() apptransfer.QueueStats {
 	return s.transferQueue.Stats()
 }
 
+// UnfinishedTransfers counts what a quit would abandon: every queue row that
+// has not reached a terminal status, or a running direct operation when the
+// surface has no queue. A row the state cannot interpret is an error, so the
+// quit guard asks instead of quitting silently.
+func (s *State) UnfinishedTransfers() (int, error) {
+	if s.transferQueue != nil {
+		return apptransfer.CountUnfinished(s.transferQueue.Tasks())
+	}
+	if s.operation != nil && s.operation.snapshot().Running {
+		return 1, nil
+	}
+	return 0, nil
+}
+
 // TransferConcurrency returns the per-resource file limit.
 func (s *State) TransferConcurrency() int {
 	if s.transferQueue == nil {

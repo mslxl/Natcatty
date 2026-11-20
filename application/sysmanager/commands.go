@@ -25,7 +25,7 @@ func probeCommand() string {
 	return `printf "` + markerOS + `=%s\n" "$(uname -s 2>/dev/null || echo Unknown)"; ` +
 		`for c in ps top ss netstat lsof systemctl; do ` +
 		`if command -v "$c" >/dev/null 2>&1; then printf "` + markerHasPrefix + `%s=1\n" "$c"; fi; done; ` +
-		`for c in tmux docker nvidia-smi npu-smi; do ` +
+		`for c in tmux docker podman nerdctl kubectl nvidia-smi npu-smi; do ` +
 		`if command -v "$c" >/dev/null 2>&1; then printf "` + markerHasPrefix + `%s=1\n" "$c"; fi; done`
 }
 
@@ -89,11 +89,12 @@ const linuxOverview = `host=$(hostname 2>/dev/null || uname -n 2>/dev/null); ` +
 	`load=$(awk '{print $1" "$2" "$3}' /proc/loadavg 2>/dev/null); ` +
 	`cores=$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null); ` +
 	`cpuraw=$(awk '/^cpu /{t=0;for(i=2;i<=NF;i++)t+=$i;printf "%d %d",t,$5}' /proc/stat 2>/dev/null); ` +
+	`percore=$(awk '/^cpu[0-9]+ /{t=0;for(i=2;i<=NF;i++)t+=$i;printf "%s%d:%d",(n++?",":""),t,$5}' /proc/stat 2>/dev/null); ` +
 	`mem=$(awk '/^MemTotal:/{t=$2}/^MemFree:/{f=$2}/^Buffers:/{b=$2}/^Cached:/{c=$2}/^SReclaimable:/{s=$2}END{if(t>0)printf "%d %d",(t-f-b-c-s)/1024,t/1024}' /proc/meminfo 2>/dev/null); ` +
 	`swap=$(awk '/^SwapTotal:/{t=$2}/^SwapFree:/{f=$2}END{if(t>0)printf "%d %d",(t-f)/1024,t/1024}' /proc/meminfo 2>/dev/null); ` +
 	`disk=$(df -Pk / 2>/dev/null | awk 'NR==2{printf "%.1f %.1f",$3/1048576,$2/1048576}'); ` +
-	`printf "MODE:linux|HOST:%s|OS:%s|KERNEL:%s|UPTIME:%s|LOAD:%s|CORES:%s|CPURAW:%s|MEM:%s|SWAP:%s|DISK:%s\n" ` +
-	`"$host" "$osname" "$kernel" "$uptime" "$load" "$cores" "$cpuraw" "$mem" "$swap" "$disk"`
+	`printf "MODE:linux|HOST:%s|OS:%s|KERNEL:%s|UPTIME:%s|LOAD:%s|CORES:%s|CPURAW:%s|PERCORERAW:%s|MEM:%s|SWAP:%s|DISK:%s\n" ` +
+	`"$host" "$osname" "$kernel" "$uptime" "$load" "$cores" "$cpuraw" "$percore" "$mem" "$swap" "$disk"`
 
 const darwinOverview = `host=$(hostname 2>/dev/null || uname -n 2>/dev/null); ` +
 	`osname=$(printf "%s %s" "$(sw_vers -productName 2>/dev/null)" "$(sw_vers -productVersion 2>/dev/null)" | sed 's/[[:space:]]*$//'); ` +
@@ -131,25 +132,32 @@ func tmuxSessionsCommand() string {
 		`printf "%s\n" "__NC_TMUX_END__"`
 }
 
-// dockerListCommand lists containers and images as JSON lines. Each docker
-// call's failure text is captured into its own marker section, so permission
-// denied, a stopped daemon, and an ordinary error become distinct typed
-// reasons instead of an empty live list.
-func dockerListCommand() string {
+// containerListCommand lists containers and images as JSON lines through the
+// selected engine. Each call's failure text is captured into its own marker
+// section, so permission denied, a stopped daemon, and an ordinary error
+// become distinct typed reasons instead of an empty live list.
+func containerListCommand(runtime ContainerRuntime) string {
+	bin := runtime.Binary()
 	return `printf "%s\n" "__NC_DOCKER_BEGIN__"; ` +
-		`if command -v docker >/dev/null 2>&1; then ` +
+		`if command -v ` + bin + ` >/dev/null 2>&1; then ` +
 		`printf "%s\n" "__NC_DOCKER_CONTAINERS__"; ` +
-		`_nc_out=$(docker ps -a --format '{{json .}}' 2>&1); _nc_status=$?; ` +
+		`_nc_out=$(` + bin + ` ps -a --format '{{json .}}' 2>&1); _nc_status=$?; ` +
 		`if [ "$_nc_status" -eq 0 ]; then printf "%s\n" "$_nc_out"; ` +
 		`else printf "%s\n" "__NC_DOCKER_ERROR_BEGIN__"; printf "%s\n" "$_nc_out"; ` +
 		`printf "%s\n" "__NC_DOCKER_ERROR_END__"; fi; ` +
 		`printf "%s\n" "__NC_DOCKER_IMAGES__"; ` +
-		`_nc_out=$(docker images --format '{{json .}}' 2>&1); _nc_status=$?; ` +
+		`_nc_out=$(` + bin + ` images --format '{{json .}}' 2>&1); _nc_status=$?; ` +
 		`if [ "$_nc_status" -eq 0 ]; then printf "%s\n" "$_nc_out"; ` +
 		`else printf "%s\n" "__NC_DOCKER_ERROR_BEGIN__"; printf "%s\n" "$_nc_out"; ` +
 		`printf "%s\n" "__NC_DOCKER_ERROR_END__"; fi; ` +
-		`else printf "` + markerUnavailable + `=docker\n"; fi; ` +
+		`else printf "` + markerUnavailable + `=` + bin + `\n"; fi; ` +
 		`printf "%s\n" "__NC_DOCKER_END__"`
+}
+
+// dockerListCommand is the Docker-only form kept for callers and tests that
+// predate the runtime switcher.
+func dockerListCommand() string {
+	return containerListCommand(RuntimeDocker)
 }
 
 // gpuCommand queries every NVIDIA device and its driver version. A Host
@@ -166,22 +174,28 @@ func gpuCommand() string {
 		`printf "%s\n" "__NC_GPU_END__"`
 }
 
-func commandFor(tab Tab) string {
+// commandFor returns the fixed sample command for tab. Container and
+// Kubernetes samples depend on the selected engine, namespace, and the Host's
+// kubeconfig; an invalid namespace is a typed error rather than a substituted
+// command.
+func commandFor(tab Tab, runtime ContainerRuntime, namespace string) (string, error) {
 	switch tab {
 	case TabProcesses:
-		return processesCommand()
+		return processesCommand(), nil
 	case TabPorts:
-		return portsCommand()
+		return portsCommand(), nil
 	case TabServices:
-		return servicesCommand()
+		return servicesCommand(), nil
 	case TabTmux:
-		return tmuxSessionsCommand()
+		return tmuxSessionsCommand(), nil
 	case TabDocker:
-		return dockerListCommand()
+		return containerListCommand(runtime), nil
+	case TabKubernetes:
+		return kubernetesListCommand(namespace)
 	case TabGPU:
-		return gpuCommand()
+		return gpuCommand(), nil
 	default:
-		return overviewCommand()
+		return overviewCommand(), nil
 	}
 }
 
@@ -329,35 +343,49 @@ func sanitizeDockerID(id string) (string, error) {
 	return safe, nil
 }
 
-// DockerActionCommand validates the target and action and returns the exact
-// command the confirmation names and the service runs.
-func DockerActionCommand(id string, action DockerAction) (string, error) {
+// ContainerActionCommand validates the target and action and returns the
+// exact command the confirmation names and the service runs. The selected
+// engine is the executable, so Docker, Podman, and nerdctl share one shape.
+func ContainerActionCommand(runtime ContainerRuntime, id string,
+	action DockerAction) (string, error) {
 	safe, err := sanitizeDockerID(id)
 	if err != nil {
 		return "", err
 	}
+	bin := runtime.Binary()
 	switch action {
 	case DockerStart:
-		return "docker start " + safe, nil
+		return bin + " start " + safe, nil
 	case DockerStop:
-		return "docker stop " + safe, nil
+		return bin + " stop " + safe, nil
 	case DockerRemove:
 		// The original's remove is a forced removal; a stopped or running
 		// container leaves the same way.
-		return "docker rm -f " + safe, nil
+		return bin + " rm -f " + safe, nil
 	default:
 		return "", &Error{Reason: ReasonInternal,
 			Cause: fmt.Errorf("invalid container action: %q", action)}
 	}
 }
 
-// DockerInspectCommand returns the inspect command for id.
-func DockerInspectCommand(id string) (string, error) {
+// DockerActionCommand is the Docker-only form kept for callers and tests that
+// predate the runtime switcher.
+func DockerActionCommand(id string, action DockerAction) (string, error) {
+	return ContainerActionCommand(RuntimeDocker, id, action)
+}
+
+// ContainerInspectCommand returns the inspect command for id.
+func ContainerInspectCommand(runtime ContainerRuntime, id string) (string, error) {
 	safe, err := sanitizeDockerID(id)
 	if err != nil {
 		return "", err
 	}
-	return "docker inspect " + safe, nil
+	return runtime.Binary() + " inspect " + safe, nil
+}
+
+// DockerInspectCommand is the Docker-only form.
+func DockerInspectCommand(id string) (string, error) {
+	return ContainerInspectCommand(RuntimeDocker, id)
 }
 
 // MaxDockerLogTail is the largest bounded log tail the surface may request.
@@ -366,8 +394,8 @@ const MaxDockerLogTail = 1000
 // DefaultDockerLogTail matches the original's `--tail 200`.
 const DefaultDockerLogTail = 200
 
-// DockerLogsCommand returns a bounded, non-following logs command.
-func DockerLogsCommand(id string, tail int) (string, error) {
+// ContainerLogsCommand returns a bounded, non-following logs command.
+func ContainerLogsCommand(runtime ContainerRuntime, id string, tail int) (string, error) {
 	safe, err := sanitizeDockerID(id)
 	if err != nil {
 		return "", err
@@ -378,5 +406,10 @@ func DockerLogsCommand(id string, tail int) (string, error) {
 	if tail > MaxDockerLogTail {
 		tail = MaxDockerLogTail
 	}
-	return "docker logs --tail " + strconv.Itoa(tail) + " " + safe, nil
+	return runtime.Binary() + " logs --tail " + strconv.Itoa(tail) + " " + safe, nil
+}
+
+// DockerLogsCommand is the Docker-only form.
+func DockerLogsCommand(id string, tail int) (string, error) {
+	return ContainerLogsCommand(RuntimeDocker, id, tail)
 }

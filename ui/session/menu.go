@@ -14,6 +14,9 @@ type sessionMenuModel struct {
 	Logging      bool
 	LogFormat    domainterminal.LogFormat
 	LogDirectory string
+	// LogPath is the current log file. It is empty when the Session has not
+	// written one, which disables Open log file.
+	LogPath      string
 	CanPaste     bool
 	CanReconnect bool
 	CanClear     bool
@@ -42,6 +45,7 @@ type sessionMenuActions struct {
 	Rename         func()
 	SetEncoding    func(domainterminal.Encoding)
 	ToggleLog      func()
+	OpenLog        func(path string)
 	SetLogFormat   func(domainterminal.LogFormat)
 	SplitRight     func()
 	SplitDown      func()
@@ -154,6 +158,17 @@ func buildSessionMenu(menu *ui.Menu, model sessionMenuModel, m locales.Messages,
 		// not as a standing line above every terminal.
 		if !model.Logging && model.LogDirectory == "" {
 			sub.Item(m.SessionLoggingNoDirectory()).Disabled(true)
+		}
+		// Open log file only ever reads the file the Session is already
+		// writing. A Session with logging off has no current file, and the
+		// action must not start one just to give it a path.
+		open := sub.Item(m.SessionLoggingOpen()).Disabled(actions.OpenLog == nil ||
+			!model.Logging || model.LogPath == "")
+		if open.Chosen() && actions.OpenLog != nil {
+			actions.OpenLog(model.LogPath)
+		}
+		if !model.Logging && model.LogPath == "" && model.LogDirectory != "" {
+			sub.Item(m.SessionLoggingNoFile()).Disabled(true)
 		}
 		sub.Submenu(m.SessionMenuLogFormat(), func(formats *ui.Menu) {
 			for index, format := range chromeFormats {

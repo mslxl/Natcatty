@@ -73,6 +73,25 @@ type SizedCreator interface {
 	CreateSized(ctx context.Context, path string, size int64) (io.WriteCloser, error)
 }
 
+// ReadOnlyFileSystem is an optional FileSystem capability for a backing that
+// refuses every write. A pane over such a filesystem hides write actions
+// instead of letting the user start an operation that cannot finish. A
+// filesystem that does not implement it is assumed writable: adapters report
+// read-only only when the transport knows it.
+type ReadOnlyFileSystem interface {
+	ReadOnly() bool
+}
+
+// ReadOnly reports whether files refuses writes. An absent filesystem, or one
+// that declares itself read-only, cannot host a write.
+func ReadOnly(files FileSystem) bool {
+	if files == nil {
+		return true
+	}
+	declared, ok := files.(ReadOnlyFileSystem)
+	return ok && declared.ReadOnly()
+}
+
 // ArchiveExtractor is an optional FileSystem capability for a destination that
 // can unpack a gzip-compressed tar stream into a directory with its own tooling
 // (the remote adapters run tar over an SSH exec channel). It lets a folder

@@ -333,6 +333,33 @@ func TestCopyRunsFromTheRowMenuAndReportsProgress(t *testing.T) {
 	}
 }
 
+// TestDuplicateRunsFromTheRowMenu is the entry-point bullet: the context menu
+// action copies beside the original and leaves it in place.
+func TestDuplicateRunsFromTheRowMenu(t *testing.T) {
+	m := locales.In("en")
+	f := newViewFixture(t, 1100, 720, "en")
+	if err := f.tester.Click("alpha.txt"); err != nil {
+		t.Fatal(err)
+	}
+	f.tester.Frame()
+	if err := f.tester.RightClick("alpha.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.tester.ChooseMenuItem(m.SftpDuplicateEntry()); err != nil {
+		t.Fatal(err)
+	}
+	frameUntil(t, f.tester, "the duplicate to finish", func() bool {
+		return !f.state.Busy() && f.state.Snapshot() != nil
+	})
+	f.tester.Frame()
+	if got := contentOf(t, filepath.Join(f.local, "alpha (copy).txt")); got != "alpha" {
+		t.Fatalf("the duplicate wrote %q", got)
+	}
+	if got := contentOf(t, filepath.Join(f.local, "alpha.txt")); got != "alpha" {
+		t.Fatalf("the duplicate changed the original to %q", got)
+	}
+}
+
 func TestMetadataOperationShowsCompletionInsteadOfZeroPercent(t *testing.T) {
 	m := locales.In("en")
 	f := newViewFixture(t, 1100, 720, "en")

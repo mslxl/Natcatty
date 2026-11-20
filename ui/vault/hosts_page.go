@@ -54,6 +54,27 @@ type browse struct {
 	// collapsed holds the group paths the tree view collapsed. A path missing
 	// from it is expanded, so a fresh Vault shows its contents.
 	collapsed map[string]bool
+	// hostBounds holds the window rectangle each rendered Host card or row
+	// occupied in the previous frame, keyed by Host. The marquee intersects
+	// the pointer rectangle with these, so a Host between two pointer samples
+	// is still selected.
+	hostBounds map[model.HostID]ui.Rect
+	// pressSet records the window point where the current background press
+	// began, which is the marquee's anchor.
+	pressSet bool
+	// scrollY is the offset the scroll container tracked last frame. The Host
+	// rectangles Bounds reports describe that frame's layout, so a frame that
+	// scrolls must shift them by the difference before the sweep reads them.
+	scrollY, pressX, pressY float32
+	scrollSet               bool
+	marqueeAnchorX          float32
+	marqueeAnchorY          float32
+	marqueeRect             ui.Rect
+	marqueeRectAvailable    bool
+	// marqueeSwept accumulates every Host a box has enclosed during the
+	// current drag, so moving the pointer back over already-swept Hosts does
+	// not drop them from the selection.
+	marqueeSwept map[model.HostID]bool
 }
 
 // hostsToolbar is the Hosts page's top row, as the original's: the search
@@ -179,8 +200,67 @@ func sortSelect(c *ui.Context, opts options, layout domainpreferences.Layout, m 
 }
 
 // hostsPage draws the Vault's Hosts page in the mode the user chose: cards,
-// rows, or the whole group tree.
-func hostsPage(c *ui.Context, s *vaultstate.State, opts options, at *browse, m locales.Messages, t *ui.Theme) {
+// rows, or the whole group tree. scroll is the container the page scrolls in,
+// which the sweep follows so a frame that scrolls does not compare the box
+// against last frame's rectangles.
+func hostsPage(c *ui.Context, s *vaultstate.State, opts options, at *browse, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
+	// The bounds only describe Hosts this frame rendered; a Host moved off the
+	// page must not stay sweepable at a stale rectangle.
+	at.hostBounds = make(map[model.HostID]ui.Rect)
+	scrollDelta := at.trackScroll(scroll)
+	page := ui.Column(c).FillWidth()
+	if !page.Dragging() {
+		// Arming the source while it already drags would make MyGo paint a
+		// shifted copy of the whole page under the pointer (paintDrag); only
+		// arming it for a new press is needed. The drop reads the live
+		// selection through Swept, so the value captured at the start stays
+		// current.
+		page.Drag(vaultstate.MarqueeDrag{Swept: s.SelectedHostIDs})
+	}
+	page.DrawOver(func(p *ui.Painter, box ui.Rect) {
+		if !at.marqueeRectAvailable {
+			return
+		}
+		// The page's box is the selection's only visible extent, even when
+		// the pointer leaves it.
+		p.Clip(box, 0, func() {
+			p.Fill(at.marqueeRect, t.Accent.Alpha(0.12), 2)
+			p.Stroke(at.marqueeRect, t.Accent, 2, 1)
+		})
+	})
+	// Children record each Host's bounds before the sweep reads them.
+	page.Children(func() {
+		hostsPageContent(c, s, opts, at, m, t)
+	})
+	if scrollDelta != 0 {
+		// Bounds describe the previous frame's layout, which used the previous
+		// scroll offset. Move them into this frame so the box intersects what
+		// the window shows now, as during the drag's own edge scrolling.
+		for id, bounds := range at.hostBounds {
+			bounds.Y -= scrollDelta
+			at.hostBounds[id] = bounds
+		}
+	}
+	hostsMarquee(page, c, s, at)
+}
+
+// trackScroll records this frame's scroll offset and returns how far the
+// content moved since the previous frame, in window pixels.
+func (at *browse) trackScroll(scroll *ui.ScrollState) float32 {
+	if scroll == nil {
+		at.scrollSet = false
+		return 0
+	}
+	if !at.scrollSet {
+		at.scrollSet, at.scrollY = true, scroll.Y
+		return 0
+	}
+	delta := scroll.Y - at.scrollY
+	at.scrollY = scroll.Y
+	return delta
+}
+
+func hostsPageContent(c *ui.Context, s *vaultstate.State, opts options, at *browse, m locales.Messages, t *ui.Theme) {
 	layout := opts.layout()
 	sections, ungrouped := groupSections(s)
 	// A group renamed or deleted elsewhere takes the page back to the top.
@@ -197,6 +277,115 @@ func hostsPage(c *ui.Context, s *vaultstate.State, opts options, at *browse, m l
 		return
 	}
 	browsedRoot(c, s, opts, at, m, t, layout, sections, ungrouped)
+}
+
+// hostsMarquee makes the Hosts page background a marquee drag source. A press
+// lands on the page only where no card, row, or input under it takes the press,
+// so dragging empty space sweeps a rectangle over the Hosts it encloses.
+func hostsMarquee(page ui.Element, c *ui.Context, s *vaultstate.State, at *browse) {
+	localX, localY, _ := page.PointerPosition()
+	pointerX, pointerY := page.LocalToWindow(localX, localY)
+	dragging := page.Dragging()
+
+	// The press point is the box's fixed corner. It arrives on the press frame,
+	// before the pointer has moved far enough to start the drag.
+	if page.Pressed() && !dragging && !s.MarqueeActive() {
+		if !at.pressSet {
+			at.pressSet, at.pressX, at.pressY = true, pointerX, pointerY
+		}
+	}
+	if !page.Pressed() {
+		at.pressSet = false
+	}
+
+	if dragging && !s.MarqueeActive() {
+		anchorX, anchorY := at.pressX, at.pressY
+		if !at.pressSet {
+			// A drag can begin on a frame the press was not observed; the first
+			// pointer sample is the best anchor then.
+			anchorX, anchorY = pointerX, pointerY
+		}
+		s.BeginMarquee(c.Modifiers()&(ui.Cmd|ui.Shift|ui.Ctrl) != 0)
+		at.marqueeAnchorX, at.marqueeAnchorY = anchorX, anchorY
+		at.marqueeSwept = make(map[model.HostID]bool)
+	}
+
+	// A sweep only grows while the drag is live. The release frame runs the
+	// drop first, which clears the selection; sweeping after it would put the
+	// moved Hosts back.
+	if s.MarqueeActive() && dragging {
+		left, right := at.marqueeAnchorX, pointerX
+		if right < left {
+			left, right = right, left
+		}
+		top, bottom := at.marqueeAnchorY, pointerY
+		if bottom < top {
+			top, bottom = bottom, top
+		}
+		at.marqueeRect = ui.Rect{X: left, Y: top, W: right - left, H: bottom - top}
+		at.marqueeRectAvailable = true
+		if at.marqueeSwept == nil {
+			at.marqueeSwept = make(map[model.HostID]bool)
+		}
+		for _, id := range at.hostsInside(s, at.marqueeRect) {
+			at.marqueeSwept[id] = true
+		}
+		ids := make([]model.HostID, 0, len(at.marqueeSwept))
+		for id := range at.marqueeSwept {
+			ids = append(ids, id)
+		}
+		s.SweepMarquee(ids)
+	}
+
+	if !dragging && s.MarqueeActive() {
+		// Escape cancels the framework drag while the pointer is still held; a
+		// release ends it. Pressed reports only while the pointer is inside the
+		// page, and the user may press Escape with it anywhere, so follow the
+		// press itself: Dragged stays true wherever the pointer is, and a
+		// release clears it.
+		if _, _, held := page.Dragged(); held {
+			// Only the cancellation restores the selection the sweep started
+			// from.
+			s.CancelMarquee()
+		} else {
+			// The release keeps what the box chose.
+			s.EndMarquee()
+		}
+		at.marqueeRectAvailable = false
+		at.marqueeSwept = nil
+		at.pressSet = false
+	}
+	if page.Clicked() {
+		// A press of the background with no drag clears the box selection.
+		s.ClearSelection()
+	}
+}
+
+// hostsInside returns the Hosts whose rendered rectangle intersects box. It
+// walks the Vault's own order so the swept selection is deterministic.
+func (at *browse) hostsInside(s *vaultstate.State, box ui.Rect) []model.HostID {
+	ids := make([]model.HostID, 0, len(at.hostBounds))
+	for _, host := range s.EffectiveItems() {
+		if bounds, ok := at.hostBounds[host.ID]; ok && rectsIntersect(box, bounds) {
+			ids = append(ids, host.ID)
+		}
+	}
+	return ids
+}
+
+// rectsIntersect reports whether two rectangles share any area.
+func rectsIntersect(a, b ui.Rect) bool {
+	return a.W > 0 && a.H > 0 && b.W > 0 && b.H > 0 &&
+		a.X < b.X+b.W && b.X < a.X+a.W && a.Y < b.Y+b.H && b.Y < a.Y+a.H
+}
+
+// hostDragPayload is what a Host card or row drags: the whole marquee
+// selection when the Host is part of it, else just that Host.
+func hostDragPayload(s *vaultstate.State, id model.HostID) vaultstate.DragItem {
+	if s.Chosen(id) {
+		return vaultstate.HostsDrag(id, s.SelectedHostIDs())
+	}
+	return vaultstate.HostDrag(id)
 }
 
 // browsedRoot draws the Vault root: the Pinned and Recently Connected
@@ -260,6 +449,12 @@ func browsedRoot(c *ui.Context, s *vaultstate.State, opts options, at *browse, m
 		} else {
 			renderHosts(c, s, opts, visible, at, m, t, layout, 0, "hosts")
 		}
+	}
+	if !dragged && s.MarqueeActive() {
+		// A box selection can be dropped on the Vault root too, so a swept
+		// group's Hosts can leave it. The target follows the list: mounting it
+		// above the cards mid-drag would move them out from under the box.
+		rootDropTarget(c, s, m, t)
 	}
 }
 
@@ -481,14 +676,15 @@ func groupRow(c *ui.Context, s *vaultstate.State, section hostGroupSection, at *
 	})
 }
 
-// hostDropTarget makes a group row accept a dragged Host. The card, list row,
-// and tree row all accept the same drop.
+// hostDropTarget makes a group row accept a dragged Host. The list and tree
+// rows and the group card all accept the same drop, whether the value is one
+// Host dragged from a card or row or the box selection swept from the page.
 func hostDropTarget(c *ui.Context, s *vaultstate.State, row ui.Element, path string, t *ui.Theme) {
-	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
+	if _, over := ui.DragOver[vaultstate.DragPayload](row); over {
 		row.Border(1, t.Accent).Background(t.Accent.Alpha(0.08))
 	}
-	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && drag.HostID != "" {
-		s.MoveHostToGroup(drag.HostID, path)
+	if drag, dropped := ui.Drop[vaultstate.DragPayload](row); dropped && len(drag.DropHosts()) > 0 {
+		s.MoveHostsToGroup(drag.DropHosts(), path)
 		c.Invalidate()
 	}
 }
@@ -715,11 +911,11 @@ func breadcrumb(c *ui.Context, s *vaultstate.State, at *browse, m locales.Messag
 	path := append([]string{m.VaultAllHosts()}, parts...)
 	chosen := len(path) - 1
 	row := ui.Row(c).FillWidth().Padding(4).Radius(kit.M(c).Radius.Control).Border(1, ui.Transparent)
-	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
+	if _, over := ui.DragOver[vaultstate.DragPayload](row); over {
 		row.Border(1, t.Accent)
 	}
-	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && drag.HostID != "" {
-		s.MoveHostToGroup(drag.HostID, "")
+	if drag, dropped := ui.Drop[vaultstate.DragPayload](row); dropped && len(drag.DropHosts()) > 0 {
+		s.MoveHostsToGroup(drag.DropHosts(), "")
 		c.Invalidate()
 	}
 	row.Children(func() {
@@ -779,11 +975,11 @@ func cardShell(c *ui.Context, t *ui.Theme, key string) ui.Element {
 func groupCard(c *ui.Context, s *vaultstate.State, section hostGroupSection, at *browse,
 	m locales.Messages, t *ui.Theme) {
 	card := cardShell(c, t, "group-"+section.path)
-	if _, over := ui.DragOver[vaultstate.DragItem](card); over {
+	if _, over := ui.DragOver[vaultstate.DragPayload](card); over {
 		card.Border(1, t.Accent).Background(t.Accent.Alpha(0.08))
 	}
-	if drag, dropped := ui.Drop[vaultstate.DragItem](card); dropped && drag.HostID != "" {
-		s.MoveHostToGroup(drag.HostID, section.path)
+	if drag, dropped := ui.Drop[vaultstate.DragPayload](card); dropped && len(drag.DropHosts()) > 0 {
+		s.MoveHostsToGroup(drag.DropHosts(), section.path)
 		c.Invalidate()
 	}
 	open := func() {
@@ -816,7 +1012,8 @@ func groupCard(c *ui.Context, s *vaultstate.State, section hostGroupSection, at 
 func hostCard(c *ui.Context, s *vaultstate.State, opts options, host domainvault.Host, at *browse,
 	m locales.Messages, t *ui.Theme, layout domainpreferences.Layout) {
 	card := cardShell(c, t, "host-"+string(host.ID)).Tooltip(strings.Join(hostSummary(s, host, m), "  ·  "))
-	card.Drag(vaultstate.HostDrag(host.ID))
+	at.hostBounds[host.ID] = card.Bounds()
+	card.Drag(hostDragPayload(s, host.ID))
 	hovered := card.Hovered()
 	if card.Dragging() {
 		at.dragging = true
@@ -829,6 +1026,9 @@ func hostCard(c *ui.Context, s *vaultstate.State, opts options, host domainvault
 	activateHost(c, s, host, at, layout, card)
 	if host.Pinned {
 		card.Border(1, t.Accent.Alpha(0.4))
+	}
+	if s.Chosen(host.ID) {
+		card.Border(1, t.Accent).Background(t.Accent.Alpha(0.08))
 	}
 	card.ContextMenu(hostActions(s, opts, host, m, c))
 	card.Children(func() {
@@ -862,7 +1062,11 @@ func hostRow(c *ui.Context, s *vaultstate.State, opts options, host domainvault.
 	if at.focused == host.ID && layout.HostClickBehavior == domainpreferences.HostClickSelect {
 		row.Border(1, t.Accent)
 	}
-	row.Drag(vaultstate.HostDrag(host.ID))
+	at.hostBounds[host.ID] = row.Bounds()
+	if s.Chosen(host.ID) {
+		row.Border(1, t.Accent).Background(t.Accent.Alpha(0.08))
+	}
+	row.Drag(hostDragPayload(s, host.ID))
 	if row.Dragging() {
 		at.dragging = true
 	}
@@ -926,7 +1130,7 @@ func hostActions(s *vaultstate.State, opts options, host domainvault.Host, m loc
 			s.Connect(host.ID)
 			c.Invalidate()
 		}
-		if opts.openSFTP != nil && host.Protocol.UsesSSHAuth() &&
+		if opts.openSFTP != nil && host.Protocol.SupportsFileTransfer() &&
 			(opts.sftpEnabled == nil || opts.sftpEnabled()) {
 			if menu.Item(m.VaultHostOpenSftp()).Chosen() {
 				opts.openSFTP(host)
@@ -937,9 +1141,13 @@ func hostActions(s *vaultstate.State, opts options, host domainvault.Host, m loc
 				opts.openBrowser(host)
 			}
 		}
-		if menu.Item(testLabel).Disabled(s.Testing(host.ID)).Chosen() {
-			s.Test(host.ID)
-			c.Invalidate()
+		// A connection test performs an SSH handshake; a Telnet or Local Host
+		// has none to check.
+		if host.Protocol.UsesSSHAuth() {
+			if menu.Item(testLabel).Disabled(s.Testing(host.ID)).Chosen() {
+				s.Test(host.ID)
+				c.Invalidate()
+			}
 		}
 		menu.Separator()
 		if menu.Item(m.VaultHostEdit()).Chosen() {

@@ -55,6 +55,8 @@ func View(s *State) func(*ui.Context) {
 							parityField(c, s, m)
 							flowField(c, s, m)
 						})
+
+						autoLoginFields(c, s, m, t)
 					})
 				})
 
@@ -275,6 +277,65 @@ func flowField(c *ui.Context, s *State, m locales.Messages) {
 		m.SerialFlowRTSCTS(),
 	}
 	choice(c, m.SerialFlowControl(), "serial-flow", s.FlowControl(), values, labels, s.SetFlowControl)
+}
+
+// autoLoginFields collects the per-profile console login automation. The
+// password goes to the encrypted secret store on Connect; it never joins the
+// port configuration, which a workspace payload can persist. Turning the
+// feature off hides the detail fields but keeps them for the next enable.
+func autoLoginFields(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
+	enabled := s.AutoLoginEnabled()
+	ui.Checkbox(c.Key("serial-autologin"), &enabled, m.SerialAutoLoginEnabled())
+	if enabled != s.AutoLoginEnabled() {
+		s.SetAutoLoginEnabled(enabled)
+	}
+	if !enabled {
+		return
+	}
+	ui.Text(c, m.SerialAutoLoginHint()).
+		FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+
+	username := s.AutoLoginUsername()
+	ui.TextInput(c.Key("serial-autologin-username"), &username).
+		Label(m.SerialAutoLoginUsername()).
+		Width(460)
+	if username != s.AutoLoginUsername() {
+		s.SetAutoLoginUsername(username)
+	}
+
+	password := s.AutoLoginPassword()
+	ui.TextInput(c.Key("serial-autologin-password"), &password).
+		Label(m.SerialAutoLoginPassword()).
+		Placeholder(m.SerialAutoLoginPasswordPlaceholder()).
+		Password().
+		Width(460)
+	if password != s.AutoLoginPassword() {
+		s.SetAutoLoginPassword(password)
+	}
+
+	forget := s.AutoLoginForgetPassword()
+	ui.Checkbox(c.Key("serial-autologin-forget"), &forget, m.SerialAutoLoginForgetPassword())
+	if forget != s.AutoLoginForgetPassword() {
+		s.SetAutoLoginForgetPassword(forget)
+	}
+
+	attempts := s.AutoLoginAttempts()
+	ui.TextInput(c.Key("serial-autologin-attempts"), &attempts).
+		Label(m.SerialAutoLoginAttempts()).
+		Width(460)
+	if attempts != s.AutoLoginAttempts() {
+		s.SetAutoLoginAttempts(attempts)
+	}
+
+	replies := s.AutoLoginReplies()
+	ui.TextArea(c.Key("serial-autologin-replies"), &replies).
+		Label(m.SerialAutoLoginReplies()).
+		Placeholder(m.SerialAutoLoginRepliesPlaceholder()).
+		Width(460).
+		MinHeight(72)
+	if replies != s.AutoLoginReplies() {
+		s.SetAutoLoginReplies(replies)
+	}
 }
 
 // choice renders a localized drop-down whose stored value is a stable domain

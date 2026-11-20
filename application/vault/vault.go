@@ -24,6 +24,13 @@ type HostRepository interface {
 	Delete(ctx context.Context, id model.HostID) error
 }
 
+// HostBatchSaver is the optional transactional extension of HostRepository.
+// A repository that implements it writes a whole drop in one transaction, so a
+// multi-Host group assignment cannot half-apply.
+type HostBatchSaver interface {
+	SaveHosts(ctx context.Context, hosts []domainvault.Host) error
+}
+
 // Service implements the Vault use cases.
 type Service struct {
 	repo                HostRepository
@@ -235,6 +242,7 @@ func (s *Service) Create(ctx context.Context, draft domainvault.Draft) (domainva
 	}, normalized, groupID)
 	passwordStored := normalized.Password != ""
 	proxyPasswordStored := normalized.Proxy != nil && normalized.Proxy.Password != ""
+	totpStored := normalized.TOTP != ""
 	if err := s.persistPassword(ctx, host.ID, normalized.Password); err != nil {
 		return domainvault.Host{}, err
 	}
@@ -246,9 +254,19 @@ func (s *Service) Create(ctx context.Context, draft domainvault.Draft) (domainva
 		}
 		return domainvault.Host{}, err
 	}
+	if err := s.persistTOTP(ctx, host.ID, normalized.TOTP); err != nil {
+		if passwordStored {
+			_ = s.secrets.Delete(ctx, HostSecretRef(host.ID, FieldPassword))
+		}
+		if proxyPasswordStored {
+			_ = s.secrets.Delete(ctx, HostSecretRef(host.ID, FieldProxyPassword))
+		}
+		return domainvault.Host{}, err
+	}
 	// Session-only credentials are deliberately forgotten on restart, so the
 	// Host record must not claim a persisted password.
 	host.HasPassword = passwordStored && s.SecretMode() != SecretModeSession
+	host.HasTOTP = totpStored && s.SecretMode() != SecretModeSession
 	if host.Proxy != nil {
 		host.Proxy.HasPassword = proxyPasswordStored && s.SecretMode() != SecretModeSession
 	}
@@ -260,6 +278,9 @@ func (s *Service) Create(ctx context.Context, draft domainvault.Draft) (domainva
 		}
 		if proxyPasswordStored {
 			_ = s.secrets.Delete(ctx, HostSecretRef(host.ID, FieldProxyPassword))
+		}
+		if totpStored {
+			_ = s.secrets.Delete(ctx, HostSecretRef(host.ID, FieldTOTP))
 		}
 		return domainvault.Host{}, internal(err)
 	}
@@ -310,14 +331,24 @@ func (s *Service) Update(ctx context.Context, id model.HostID, draft domainvault
 	if err != nil {
 		return domainvault.Host{}, err
 	}
+	// A new authenticator, an explicit clear, or a protocol that no longer
+	// authenticates over SSH replaces the stored one.
+	totpReplaced := normalized.TOTP != "" || normalized.ClearTOTP || !normalized.Protocol.UsesSSHAuth()
+	previousTOTP, err := s.readSecret(ctx, existing.ID, FieldTOTP, totpReplaced)
+	if err != nil {
+		return domainvault.Host{}, err
+	}
 
-	var passwordWritten, proxyWritten bool
+	var passwordWritten, proxyWritten, totpWritten bool
 	rollback := func() {
 		if passwordWritten {
 			rollbackSecret(ctx, s.secrets, HostSecretRef(updated.ID, FieldPassword), previousPassword)
 		}
 		if proxyWritten {
 			rollbackSecret(ctx, s.secrets, HostSecretRef(updated.ID, FieldProxyPassword), previousProxy)
+		}
+		if totpWritten {
+			rollbackSecret(ctx, s.secrets, HostSecretRef(updated.ID, FieldTOTP), previousTOTP)
 		}
 	}
 
@@ -352,6 +383,32 @@ func (s *Service) Update(ctx context.Context, id model.HostID, draft domainvault
 			return domainvault.Host{}, secretError(err)
 		}
 		proxyWritten = true
+	}
+
+	switch {
+	case normalized.TOTP != "":
+		if err := s.persistTOTP(ctx, updated.ID, normalized.TOTP); err != nil {
+			rollback()
+			return domainvault.Host{}, err
+		}
+		totpWritten = true
+		if s.SecretMode() != SecretModeSession {
+			updated.HasTOTP = true
+		}
+	case normalized.ClearTOTP || !normalized.Protocol.UsesSSHAuth():
+		// A non-SSH protocol never reads an authenticator. NormalizeDraft drops
+		// the input, so remove any secret the Host stored under SSH as well.
+		if s.secrets != nil {
+			if err := s.secrets.Delete(ctx, HostSecretRef(updated.ID, FieldTOTP)); err != nil &&
+				!errors.Is(err, ErrSecretNotFound) {
+				rollback()
+				return domainvault.Host{}, secretError(err)
+			}
+			totpWritten = true
+		}
+		updated.HasTOTP = false
+	default:
+		updated.HasTOTP = existing.HasTOTP
 	}
 
 	if err := s.repo.Save(ctx, updated); err != nil {
@@ -418,7 +475,7 @@ func (s *Service) Delete(ctx context.Context, id model.HostID) error {
 	// secret store leaves an orphan ciphertext, never plaintext, and must
 	// not block deleting the Host.
 	if s.secrets != nil {
-		for _, field := range []string{FieldPassword, FieldPassphrase, FieldProxyPassword} {
+		for _, field := range []string{FieldPassword, FieldPassphrase, FieldProxyPassword, FieldTOTP} {
 			_ = s.secrets.Delete(ctx, HostSecretRef(id, field))
 		}
 	}
@@ -450,6 +507,22 @@ func (s *Service) persistProxyPassword(ctx context.Context, id model.HostID, pro
 		return unsupported(ErrSecretsUnavailable)
 	}
 	if err := s.secrets.Set(ctx, HostSecretRef(id, FieldProxyPassword), proxy.Password); err != nil {
+		return secretError(err)
+	}
+	return nil
+}
+
+// persistTOTP encrypts a draft's canonical otpauth URI into the field-secret
+// store. An empty value means "leave the stored authenticator as it is";
+// removal is expressed by Draft.ClearTOTP instead.
+func (s *Service) persistTOTP(ctx context.Context, id model.HostID, uri string) error {
+	if uri == "" {
+		return nil
+	}
+	if s.secrets == nil {
+		return unsupported(ErrSecretsUnavailable)
+	}
+	if err := s.secrets.Set(ctx, HostSecretRef(id, FieldTOTP), uri); err != nil {
 		return secretError(err)
 	}
 	return nil

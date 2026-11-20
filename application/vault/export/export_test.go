@@ -10,11 +10,14 @@ import (
 	"time"
 
 	domainhistory "github.com/mslxl/natcatty/domain/history"
+	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/domain/vaultimport"
 )
 
 var stamp = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+
+const testTOTPURI = "otpauth://totp/Acme:deploy?secret=JBSWY3DPEHPK3PXP"
 
 func testDataset() Dataset {
 	return Dataset{
@@ -26,7 +29,8 @@ func testDataset() Dataset {
 					Port: 2222, Username: "deploy", Protocol: domainvault.ProtocolSSH,
 					Group: "Acme/Prod", Tags: []string{"web", "prod"},
 					Notes: "line1\r\nline2, \"quoted\"", OrderKey: 2000,
-					KeyID: "k1",
+					KeyID:   "k1",
+					HasTOTP: true,
 					Proxy: &domainvault.ProxyConfig{
 						Type: domainvault.ProxySOCKS5, Host: "127.0.0.1", Port: 1080,
 						Username: "proxyuser", HasPassword: true,
@@ -34,12 +38,15 @@ func testDataset() Dataset {
 				},
 				Password: "p@ss,1", KeyPath: "=C:/keys/id_ed25519",
 				Passphrase: "pa ss", ProxyPassword: "p@ss",
+				TOTP: testTOTPURI,
 			},
 			{
 				Host: domainvault.Host{
 					ID: "h1", Label: "Web", Hostname: "web.example.test",
 					Port: 22, Username: "root", Protocol: domainvault.ProtocolTelnet,
 					Tags: []string{"edge"}, OrderKey: 1000,
+					StartupCommand: "cd /srv\n./run --watch",
+					DirectProxy:    true,
 				},
 			},
 		},
@@ -70,12 +77,73 @@ func testDataset() Dataset {
 
 func exportFor(t *testing.T, format Format, opts Options) []byte {
 	t.Helper()
+	return exportDatasetFor(t, testDataset(), format, opts)
+}
+
+func exportDatasetFor(t *testing.T, d Dataset, format Format, opts Options) []byte {
+	t.Helper()
+	content, _ := exportDatasetForWithIssues(t, d, format, opts)
+	return content
+}
+
+func exportDatasetForWithIssues(t *testing.T, d Dataset, format Format, opts Options) ([]byte, []Issue) {
+	t.Helper()
 	opts.ExportedAt = stamp
-	content, err := Export(testDataset(), format, opts)
+	content, issues, err := ExportWithIssues(d, format, opts)
 	if err != nil {
 		t.Fatalf("export %s: %v", format, err)
 	}
-	return content
+	return content, issues
+}
+
+// jumpDataset is three SSH Hosts where Client reaches the network through
+// Edge, which reaches it through Bastion.
+func jumpDataset() Dataset {
+	return Dataset{Hosts: []Host{
+		{Host: domainvault.Host{
+			ID: "bastion", Label: "Bastion", Hostname: "bastion.example.test",
+			Port: 22, Username: "ops", Protocol: domainvault.ProtocolSSH, OrderKey: 1000,
+		}},
+		{Host: domainvault.Host{
+			ID: "edge", Label: "Edge", Hostname: "edge.example.test",
+			Port: 2200, Username: "deploy", Protocol: domainvault.ProtocolSSH, OrderKey: 2000,
+			HostChain: &domainvault.HostChain{HostIDs: []model.HostID{"bastion"}},
+		}},
+		{Host: domainvault.Host{
+			ID: "client", Label: "Client", Hostname: "client.example.test",
+			Port: 22, Protocol: domainvault.ProtocolSSH, OrderKey: 3000,
+			HostChain: &domainvault.HostChain{
+				HostIDs: []model.HostID{"edge", "bastion"},
+			},
+		}},
+	}}
+}
+
+// csvCell finds the exported row for one Hostname and returns its value in the
+// named column.
+func csvCell(t *testing.T, rows [][]string, hostname, column string) string {
+	t.Helper()
+	columnAt := func(name string) int {
+		for index, header := range rows[0] {
+			if header == name {
+				return index
+			}
+		}
+		t.Fatalf("no %q column in %v", name, rows[0])
+		return -1
+	}
+	hostIdx := columnAt("Hostname/IP")
+	columnIdx := columnAt(column)
+	for _, row := range rows[1:] {
+		if hostIdx < len(row) && row[hostIdx] == hostname {
+			if columnIdx >= len(row) {
+				return ""
+			}
+			return row[columnIdx]
+		}
+	}
+	t.Fatalf("no exported row for %q", hostname)
+	return ""
 }
 
 func TestCSVUsesHeaderMarkedFieldsAndGuards(t *testing.T) {
@@ -138,6 +206,117 @@ func TestCSVWithoutSecretsOmitsCredentials(t *testing.T) {
 	}
 }
 
+// TestCSVWritesAProxyJumpChainBeforeLocalShell pins the column position and
+// the OpenSSH hop shape: port 22 is omitted and the first hop is closest to
+// the client.
+func TestCSVWritesAProxyJumpChainBeforeLocalShell(t *testing.T) {
+	content, warnings := exportDatasetForWithIssues(t, jumpDataset(), FormatCSV, Options{})
+	if len(warnings) != 0 {
+		t.Fatalf("a fully representable chain warned: %+v", warnings)
+	}
+	rows, issues := vaultimport.ParseCSV(string(content))
+	if len(issues) != 0 {
+		t.Fatalf("CSV parse issues = %+v", issues)
+	}
+	jumpIdx, shellIdx := -1, -1
+	for index, header := range rows[0] {
+		switch header {
+		case "ProxyJump":
+			jumpIdx = index
+		case "LocalShell":
+			shellIdx = index
+		}
+	}
+	if jumpIdx < 0 || shellIdx != jumpIdx+1 {
+		t.Fatalf("ProxyJump must sit immediately before LocalShell: %v", rows[0])
+	}
+	if got := csvCell(t, rows, "client.example.test", "ProxyJump"); got !=
+		"deploy@edge.example.test:2200,ops@bastion.example.test" {
+		t.Fatalf("client ProxyJump = %q", got)
+	}
+	if got := csvCell(t, rows, "bastion.example.test", "ProxyJump"); got != "" {
+		t.Fatalf("a Host without a chain wrote %q", got)
+	}
+}
+
+// TestCSVRoundTripsATwoHopJumpChain proves an export imports back as the same
+// chain, both for the client and for an intermediate hop.
+func TestCSVRoundTripsATwoHopJumpChain(t *testing.T) {
+	csvText := string(exportDatasetFor(t, jumpDataset(), FormatCSV, Options{}))
+	parsed := vaultimport.Parse(vaultimport.FormatCSV, csvText, vaultimport.Options{})
+	if len(parsed.Issues) != 0 {
+		t.Fatalf("issues = %+v", parsed.Issues)
+	}
+	if len(parsed.Records) != 3 {
+		t.Fatalf("records = %d: %+v", len(parsed.Records), parsed.Records)
+	}
+	client := parsed.Records[2]
+	if client.Hostname != "client.example.test" || len(client.JumpRefs) != 2 {
+		t.Fatalf("client = %+v", client)
+	}
+	if got := parsed.Records[client.JumpRefs[0]].Hostname; got != "edge.example.test" {
+		t.Fatalf("first hop = %q, want Edge", got)
+	}
+	if got := parsed.Records[client.JumpRefs[1]].Hostname; got != "bastion.example.test" {
+		t.Fatalf("second hop = %q, want Bastion", got)
+	}
+	if refs := parsed.Records[1].JumpRefs; len(refs) != 1 || refs[0] != 0 {
+		t.Fatalf("edge JumpRefs = %v, want [0]", refs)
+	}
+}
+
+// TestCSVOmitsAChainWithAnUnrepresentableHop proves a chain is written whole
+// or not at all: a telnet hop cannot carry a session, so the client keeps an
+// empty cell instead of a shortened chain, and the export names the Host and
+// the hop that were dropped.
+func TestCSVOmitsAChainWithAnUnrepresentableHop(t *testing.T) {
+	dataset := jumpDataset()
+	dataset.Hosts = append(dataset.Hosts, Host{Host: domainvault.Host{
+		ID: "telnet", Label: "Telnet", Hostname: "telnet.example.test",
+		Port: 23, Protocol: domainvault.ProtocolTelnet, OrderKey: 4000,
+	}})
+	dataset.Hosts[2].Host.HostChain = &domainvault.HostChain{
+		HostIDs: []model.HostID{"edge", "telnet"},
+	}
+	content, warnings := exportDatasetForWithIssues(t, dataset, FormatCSV, Options{})
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %+v, want one unrepresentable-hop warning", warnings)
+	}
+	if want := (Issue{Host: "Client", Code: IssueJumpHopUnrepresentable, Hop: "Telnet"}); warnings[0] != want {
+		t.Fatalf("warning = %+v, want %+v", warnings[0], want)
+	}
+	rows, issues := vaultimport.ParseCSV(string(content))
+	if len(issues) != 0 {
+		t.Fatalf("CSV parse issues = %+v", issues)
+	}
+	if got := csvCell(t, rows, "client.example.test", "ProxyJump"); got != "" {
+		t.Fatalf("a partly representable chain was written as %q", got)
+	}
+}
+
+// TestCSVWarnsAboutAJumpHopMissingFromTheExport proves a chain referencing a
+// Host outside the selected export is reported, not silently blanked.
+func TestCSVWarnsAboutAJumpHopMissingFromTheExport(t *testing.T) {
+	dataset := jumpDataset()
+	dataset.Hosts[2].Host.HostChain = &domainvault.HostChain{
+		HostIDs: []model.HostID{"edge", "ghost"},
+	}
+	content, warnings := exportDatasetForWithIssues(t, dataset, FormatCSV, Options{})
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %+v, want one missing-hop warning", warnings)
+	}
+	if want := (Issue{Host: "Client", Code: IssueJumpHopMissing, Hop: "ghost"}); warnings[0] != want {
+		t.Fatalf("warning = %+v, want %+v", warnings[0], want)
+	}
+	rows, issues := vaultimport.ParseCSV(string(content))
+	if len(issues) != 0 {
+		t.Fatalf("CSV parse issues = %+v", issues)
+	}
+	if got := csvCell(t, rows, "client.example.test", "ProxyJump"); got != "" {
+		t.Fatalf("a chain with a missing hop was written as %q", got)
+	}
+}
+
 func TestJSONRoundTripsThroughImporter(t *testing.T) {
 	document := exportFor(t, FormatJSON, Options{IncludeSecrets: true})
 	var decoded struct {
@@ -166,15 +345,31 @@ func TestJSONRoundTripsThroughImporter(t *testing.T) {
 	if parsed.Records[1].KeyMaterial != "PRIVATE" || parsed.Records[1].Passphrase != "pa ss" {
 		t.Fatalf("inline key lost: %+v", parsed.Records[1])
 	}
+	if parsed.Records[1].TOTP != testTOTPURI {
+		t.Fatalf("TOTP lost: %+v", parsed.Records[1])
+	}
+	// The portable document carries the startup command (newlines included)
+	// and an explicit direct-proxy choice; the importer Record must represent
+	// both instead of dropping them.
+	if !strings.Contains(string(document), `"startupCommand"`) ||
+		!strings.Contains(string(document), `"directProxy": true`) {
+		t.Fatalf("document does not carry startupCommand/directProxy:\n%s", document)
+	}
+	host := parsed.Records[0]
+	if host.StartupCommand != "cd /srv\n./run --watch" || !host.DirectProxy {
+		t.Fatalf("startup command / direct proxy lost: %+v", host)
+	}
 }
 
 func TestJSONWithoutSecretsOmitsKeyMaterial(t *testing.T) {
 	document := string(exportFor(t, FormatJSON, Options{}))
-	if strings.Contains(document, "PRIVATE") || strings.Contains(document, `"password"`) {
+	if strings.Contains(document, "PRIVATE") || strings.Contains(document, `"password"`) ||
+		strings.Contains(document, `"totp"`) {
 		t.Fatalf("secret leaked:\n%s", document)
 	}
 	parsed := vaultimport.Parse(vaultimport.FormatNetcattyJSON, document, vaultimport.Options{})
-	if len(parsed.Records) != 2 || parsed.Records[1].KeyMaterial != "" {
+	if len(parsed.Records) != 2 || parsed.Records[1].KeyMaterial != "" ||
+		parsed.Records[1].TOTP != "" {
 		t.Fatalf("non-destructive parse = %+v", parsed.Records)
 	}
 }

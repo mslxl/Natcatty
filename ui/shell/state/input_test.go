@@ -37,16 +37,18 @@ type inputGraph struct {
 	factory *inputFactory
 }
 
-func newInputGraph(t *testing.T, tabs int) *inputGraph {
+func newInputGraph(t *testing.T, tabs int, options ...Option) *inputGraph {
 	t.Helper()
 	graph := &inputGraph{factory: &inputFactory{}}
 	service := appsession.NewService(graph.factory)
 	t.Cleanup(service.CloseAll)
-	graph.state = NewState(
+	all := []Option{
 		WithSessions(service, func(*appsession.Session) (Surface, error) {
 			return &fakeSurface{}, nil
 		}),
-	)
+	}
+	all = append(all, options...)
+	graph.state = NewState(all...)
 	for index := 0; index < tabs; index++ {
 		if err := graph.state.NewTab(); err != nil {
 			t.Fatalf("open tab %d: %v", index, err)
@@ -228,6 +230,135 @@ func TestComposeTransformsTheDraftAndSendsToTheFocusedSession(t *testing.T) {
 	}
 }
 
+// composeReconnectSeam is a fake connection: it records retries and stays
+// unavailable until the test reports the target is active again.
+type composeReconnectSeam struct {
+	mu         sync.Mutex
+	status     appsession.Status
+	connection appsession.ConnectionStatus
+	retries    int
+}
+
+func (s *composeReconnectSeam) Status(model.SessionID) (appsession.Status, appsession.ConnectionStatus, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.status, s.connection, true
+}
+
+func (s *composeReconnectSeam) Reconnect(model.SessionID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retries++
+	s.connection = appsession.ConnectionStatusReconnecting
+	return true
+}
+
+func (s *composeReconnectSeam) Ready(model.SessionID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.status == appsession.StatusRunning && s.connection == appsession.ConnectionStatusActive
+}
+
+func (s *composeReconnectSeam) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.retries
+}
+
+func (s *composeReconnectSeam) becomeActive() {
+	s.mu.Lock()
+	s.status = appsession.StatusRunning
+	s.connection = appsession.ConnectionStatusActive
+	s.mu.Unlock()
+}
+
+// TestComposeEnterReconnectsThenSends proves Enter on a disconnected target
+// requests the retry, keeps the composed text while the transport is down, and
+// dispatches the captured text once the Session is active again.
+func TestComposeEnterReconnectsThenSends(t *testing.T) {
+	seam := &composeReconnectSeam{status: appsession.StatusRunning, connection: appsession.ConnectionStatusError}
+	graph := newInputGraph(t, 1, WithComposeConnection(ComposeConnection{
+		Status:    seam.Status,
+		Reconnect: seam.Reconnect,
+		Ready:     seam.Ready,
+	}))
+	state := graph.state
+	state.OpenCompose()
+	state.SetComposeDraft("echo hello")
+
+	if state.SendComposeDraft("echo hello") {
+		t.Fatal("the editor cleared while the target was reconnecting")
+	}
+	if draft := *state.ComposeDraft(); draft != "echo hello" {
+		t.Fatalf("draft during reconnect = %q, want the composed text kept", draft)
+	}
+	if !state.ComposeReconnecting() {
+		t.Fatal("compose does not report the reconnect wait")
+	}
+	if got := seam.count(); got != 1 {
+		t.Fatalf("reconnects = %d, want one request", got)
+	}
+	if got := graph.factory.transport(0).inputString(); got != "" {
+		t.Fatalf("input was delivered before the target was ready: %q", got)
+	}
+
+	seam.becomeActive()
+	waitTransportInput(t, graph.factory.transport(0), "echo hello\r")
+	waitFor(t, "the queued compose to finish", func() bool {
+		_, reported := state.ComposeResult()
+		return reported && !state.ComposeReconnecting() && *state.ComposeDraft() == ""
+	})
+	result, ok := state.ComposeResult()
+	if !ok || result.DeliveredCount() != 1 {
+		t.Fatalf("compose result = %+v", result)
+	}
+}
+
+// A Session already reconnecting is waited for, not retried again.
+func TestComposeWaitsForAnAlreadyReconnectingTarget(t *testing.T) {
+	seam := &composeReconnectSeam{status: appsession.StatusRunning, connection: appsession.ConnectionStatusReconnecting}
+	graph := newInputGraph(t, 1, WithComposeConnection(ComposeConnection{
+		Status:    seam.Status,
+		Reconnect: seam.Reconnect,
+		Ready:     seam.Ready,
+	}))
+	state := graph.state
+	state.OpenCompose()
+
+	if state.SendComposeDraft("echo back") {
+		t.Fatal("the editor cleared during the wait")
+	}
+	if got := seam.count(); got != 0 {
+		t.Fatalf("reconnects = %d, want no second request", got)
+	}
+	seam.becomeActive()
+	waitTransportInput(t, graph.factory.transport(0), "echo back\r")
+}
+
+// A connected target sends immediately even when it is busy: only a transport
+// that is not active may trigger a reconnect.
+func TestComposeConnectedTargetIsNeverReconnected(t *testing.T) {
+	seam := &composeReconnectSeam{status: appsession.StatusRunning, connection: appsession.ConnectionStatusActive}
+	graph := newInputGraph(t, 1, WithComposeConnection(ComposeConnection{
+		Status:    seam.Status,
+		Reconnect: seam.Reconnect,
+		Ready:     seam.Ready,
+	}))
+	state := graph.state
+	state.OpenCompose()
+
+	if !state.SendComposeDraft("echo now") {
+		t.Fatal("a connected target refused the send")
+	}
+	if state.ComposeReconnecting() {
+		t.Fatal("a connected target entered the reconnect wait")
+	}
+	if got := seam.count(); got != 0 {
+		t.Fatalf("reconnects = %d, want none", got)
+	}
+	waitTransportInput(t, graph.factory.transport(0), "echo now\r")
+}
+
 func TestComposeSendsToTheBroadcastSetAndAppliesEscapesAndTrim(t *testing.T) {
 	graph := newInputGraph(t, 3)
 	state := graph.state
@@ -349,6 +480,135 @@ func TestStoppingBroadcastCancelsTheRemainingComposedLines(t *testing.T) {
 	}
 	if got := graph.factory.transport(2).inputString(); got != "" {
 		t.Fatalf("the unselected focused Session received %q", got)
+	}
+}
+
+// TestComposeTargetChoiceOverridesBroadcast proves the compose bar's own
+// target set wins over the broadcast latch: with A+B broadcasting, dropping A
+// in compose sends only to B.
+func TestComposeTargetChoiceOverridesBroadcast(t *testing.T) {
+	graph := newInputGraph(t, 3)
+	state := graph.state
+	a, b := graph.sessionID(t, 0), graph.sessionID(t, 1)
+	state.OpenBroadcastPanel()
+	if !state.StartBroadcast() {
+		t.Fatal("broadcast did not start")
+	}
+	state.OpenCompose()
+
+	targets, broadcast := state.ComposeTargets()
+	if !broadcast || !sameSessionSet(targets, []model.SessionID{a, b}) {
+		t.Fatalf("default compose targets = %v broadcast = %v, want the A+B broadcast set",
+			targets, broadcast)
+	}
+
+	// The first choice refines the default: deselecting A leaves only B.
+	state.SetComposeTarget(a, false)
+	targets, broadcast = state.ComposeTargets()
+	if broadcast || len(targets) != 1 || targets[0] != b {
+		t.Fatalf("chosen compose targets = %v broadcast = %v, want only %q", targets, broadcast, b)
+	}
+	if !state.ComposeTargetExplicit() {
+		t.Fatal("the compose choice is not marked explicit")
+	}
+	if !state.ComposeTargetDiverges() {
+		t.Fatal("the chosen set differs from the broadcast selection but the bar sees no divergence")
+	}
+
+	state.SetComposeDraft("only b")
+	if !state.SendCompose() {
+		t.Fatal("compose send failed")
+	}
+	waitTransportInput(t, graph.factory.transport(1), "only b\r")
+	time.Sleep(20 * time.Millisecond)
+	if got := graph.factory.transport(0).inputString(); got != "" {
+		t.Fatalf("the deselected broadcast target received %q", got)
+	}
+	if got := graph.factory.transport(2).inputString(); got != "" {
+		t.Fatalf("the focused Session received %q", got)
+	}
+	// The explicit set is not the broadcast set, so the broadcast panel's
+	// result must not acquire this delivery.
+	if _, ok := state.BroadcastResult(); ok {
+		t.Fatal("a compose send to an explicit set reported as broadcast input")
+	}
+}
+
+// TestBroadcastChangeDoesNotRewriteExplicitComposeTargets covers the toolbar
+// side of the split: changing the broadcast selection afterwards leaves the
+// compose choice (and where Send delivers) alone, and the bar reports the
+// divergence until the user chooses to follow the default again.
+func TestBroadcastChangeDoesNotRewriteExplicitComposeTargets(t *testing.T) {
+	graph := newInputGraph(t, 3)
+	state := graph.state
+	a, b := graph.sessionID(t, 0), graph.sessionID(t, 1)
+	state.OpenBroadcastPanel()
+	if !state.StartBroadcast() {
+		t.Fatal("broadcast did not start")
+	}
+	state.OpenCompose()
+	state.SetComposeTarget(a, false) // explicit B only
+
+	// The toolbar broadcast flips to A only. The compose set stays B.
+	state.SetBroadcastTarget(b, false)
+	state.SetBroadcastTarget(a, true)
+	targets, _ := state.ComposeTargets()
+	if len(targets) != 1 || targets[0] != b {
+		t.Fatalf("compose targets after the broadcast change = %v, want only %q", targets, b)
+	}
+	if !state.ComposeTargetDiverges() {
+		t.Fatal("the bar does not report the divergence")
+	}
+
+	state.SetComposeDraft("still b")
+	if !state.SendCompose() {
+		t.Fatal("compose send failed")
+	}
+	waitTransportInput(t, graph.factory.transport(1), "still b\r")
+	time.Sleep(20 * time.Millisecond)
+	if got := graph.factory.transport(0).inputString(); got != "" {
+		t.Fatalf("the new broadcast target received %q", got)
+	}
+
+	// Following the default again adopts the current broadcast set.
+	state.ResetComposeTargets()
+	if state.ComposeTargetExplicit() || state.ComposeTargetDiverges() {
+		t.Fatal("following the default still marks an explicit choice/divergence")
+	}
+	targets, _ = state.ComposeTargets()
+	if len(targets) != 1 || targets[0] != a {
+		t.Fatalf("compose targets after reset = %v, want the broadcast target %q", targets, a)
+	}
+}
+
+// TestDetachingAnExplicitComposeTargetPrunesIt proves a compose choice is
+// bounded by the main window: a target that leaves stops receiving and the
+// bar says so, without falling back to the default while another choice
+// remains.
+func TestDetachingAnExplicitComposeTargetPrunesIt(t *testing.T) {
+	graph := newInputGraph(t, 3)
+	state := graph.state
+	a, b := graph.sessionID(t, 0), graph.sessionID(t, 1)
+	state.OpenBroadcastPanel()
+	if !state.StartBroadcast() {
+		t.Fatal("broadcast did not start")
+	}
+	state.OpenCompose()
+	state.SetComposeTarget(a, false) // explicit B
+	state.SetComposeTarget(a, true)  // explicit A+B
+	if !state.DetachTab(0) {
+		t.Fatal("detach failed")
+	}
+	targets, broadcast := state.ComposeTargets()
+	if broadcast || len(targets) != 1 || targets[0] != b {
+		t.Fatalf("compose targets after detach = %v broadcast = %v, want only %q",
+			targets, broadcast, b)
+	}
+	if !state.ComposeTargetExplicit() {
+		t.Fatal("one explicit target remains but the choice was dropped")
+	}
+	if got := state.ComposeNotice(); got != 1 {
+		t.Fatalf("compose removal notice = %d, want 1", got)
 	}
 }
 

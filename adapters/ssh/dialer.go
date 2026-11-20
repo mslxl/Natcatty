@@ -206,6 +206,79 @@ func (e endpoint) address() string {
 	return net.JoinHostPort(e.hostname, strconv.Itoa(e.portOr22()))
 }
 
+// keyExchangeGuard answers the host-key callback for one Connection. The first
+// key it sees is checked through the application's verifier; a later key
+// exchange (rekey) that presents that same key is answered synchronously with
+// nil and never reaches the user again. A different key is not remembered, so
+// a mid-session key change still verifies, prompts, and can fail closed.
+type keyExchangeGuard struct {
+	mu       sync.Mutex
+	accepted []byte
+}
+
+// verifyKey reports whether blob is the key already accepted for this
+// connection, and otherwise runs the application verifier before remembering
+// it. It is safe to call from concurrent key exchanges.
+func (g *keyExchangeGuard) verifyKey(ctx context.Context, blob []byte, verify func(context.Context, domainconn.Key) error, key domainconn.Key) error {
+	g.mu.Lock()
+	unchanged := len(g.accepted) > 0 && bytes.Equal(g.accepted, blob)
+	g.mu.Unlock()
+	if unchanged {
+		return nil
+	}
+	if err := verify(ctx, key); err != nil {
+		return err
+	}
+	g.mu.Lock()
+	g.accepted = append(g.accepted[:0], blob...)
+	g.mu.Unlock()
+	return nil
+}
+
+// describeHostKey turns a live server key into the domain key the application
+// verifies. An OpenSSH host certificate is validated here - host certificate
+// type, principal, validity, and CA signature - because a forged or expired
+// certificate must fail closed instead of prompting. A valid certificate also
+// carries its embedded key and signing CA so the Vault can match either of them
+// across a renewal that changes only the certificate blob.
+func describeHostKey(hostname string, port int, key xssh.PublicKey) (domainconn.Key, error) {
+	blob := key.Marshal()
+	described := domainconn.Key{
+		Hostname:    hostname,
+		Port:        port,
+		KeyType:     key.Type(),
+		Fingerprint: domainconn.Fingerprint(blob),
+		PublicKey:   domainconn.PublicKey(key.Type(), blob),
+	}
+	certificate, ok := key.(*xssh.Certificate)
+	if !ok {
+		return described, nil
+	}
+	if certificate.CertType != xssh.HostCert {
+		return described, &appconnection.Error{
+			Kind:  appconnection.KindHostKey,
+			Cause: fmt.Errorf("%w: certificate type %d is not a host certificate", appconnection.ErrHostKeyRejected, certificate.CertType),
+		}
+	}
+	checker := &xssh.CertChecker{}
+	if err := checker.CheckCert(hostname, certificate); err != nil {
+		return described, &appconnection.Error{
+			Kind:  appconnection.KindHostKey,
+			Cause: fmt.Errorf("%w: %v", appconnection.ErrHostKeyRejected, err),
+		}
+	}
+	keyBlob := certificate.Key.Marshal()
+	caBlob := certificate.SignatureKey.Marshal()
+	described.IsHostCertificate = true
+	described.CertificateKeyType = certificate.Key.Type()
+	described.CertificateKeyFingerprint = domainconn.Fingerprint(keyBlob)
+	described.CertificateKeyPublicKey = domainconn.PublicKey(certificate.Key.Type(), keyBlob)
+	described.CertificateCAType = certificate.SignatureKey.Type()
+	described.CertificateCAFingerprint = domainconn.Fingerprint(caBlob)
+	described.CertificateCAPublicKey = domainconn.PublicKey(certificate.SignatureKey.Type(), caBlob)
+	return described, nil
+}
+
 func endpointsFor(req appconnection.DialRequest) []endpoint {
 	endpoints := make([]endpoint, 0, len(req.Jumps)+1)
 	for _, hop := range req.Jumps {
@@ -270,6 +343,148 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 		}
 	}
 
+	// Host-key verification after the handshake runs on every key exchange, so
+	// it cannot use the handshake-scoped context: that one is canceled as soon
+	// as the initial handshake returns. This context lives as long as the
+	// transport and is canceled when the client closes, which releases a trust
+	// prompt queued by a rekey. It is deliberately not derived from the dial
+	// context: the caller's attempt may end while the connection stays open.
+	connCtx, cancelConn := context.WithCancel(context.Background())
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			cancelConn()
+		}
+	}()
+
+	for i, ep := range endpoints {
+		label := ep.label
+		if label == "" {
+			label = ep.address()
+		}
+		reportChain(req, total, i+1, label, appconnection.ChainConnecting, nil)
+
+		var (
+			raw net.Conn
+			err error
+		)
+		if i == 0 {
+			raw, err = d.openFirst(ctx, req.Proxy, req.Provider, ep)
+		} else {
+			previous := endpoints[i-1]
+			previousLabel := previous.label
+			if previousLabel == "" {
+				previousLabel = previous.address()
+			}
+			reportChain(req, total, i, previousLabel, appconnection.ChainForwarding, nil)
+			raw, err = d.openForward(ctx, clients[i-1], ep)
+		}
+		if err != nil {
+			closeChain()
+			annotated := appconnection.TagHop(err, i+1, total, label)
+			reportChain(req, total, i+1, label, appconnection.ChainError, annotated)
+			return nil, annotated
+		}
+		disableNagle(raw)
+		reportChain(req, total, i+1, label, appconnection.ChainTCPConnected, nil)
+		reportChain(req, total, i+1, label, appconnection.ChainAuthenticating, nil)
+
+		versioned := &versionRecorder{Conn: raw}
+		client, remoteVersion, err := d.handshake(ctx, connCtx, versioned, ep)
+		if err != nil {
+			_ = raw.Close()
+			closeChain()
+			annotated := appconnection.TagHop(err, i+1, total, label)
+			reportChain(req, total, i+1, label, appconnection.ChainError, annotated)
+			return nil, annotated
+		}
+		clients = append(clients, client)
+		versions = append(versions, remoteVersion)
+		reportChain(req, total, i+1, label, appconnection.ChainConnected, nil)
+	}
+
+	final := clients[len(clients)-1]
+	client := &sshClient{
+		client:        final,
+		ancestors:     clients[:len(clients)-1],
+		remoteVersion: versions[len(versions)-1],
+		cancel:        cancelConn,
+	}
+	if req.X11 != nil {
+		bridge, err := newX11Bridge(final, req.X11, d.x11Local)
+		if err != nil {
+			_ = client.Close()
+			return nil, err
+		}
+		client.x11 = bridge
+	}
+	// Record a peer-side disconnect as soon as the SSH client notices it, so
+	// the connection pool's liveness check sees a transport that died while
+	// no channel operation was in flight.
+	go client.watchDeath()
+	handedOff = true
+	return client, nil
+}
+
+// noDelayConn is the latency hint a TCP transport exposes. Serial devices,
+// named pipes, ProxyCommand processes, jump-host channels, and the in-process
+// test pipe are not TCP and do not implement it.
+type noDelayConn interface {
+	SetNoDelay(bool) error
+}
+
+// disableNagle asks a TCP transport to send small SSH packets immediately. With
+// Nagle on, a second SFTP request behind an unacknowledged one waits for the
+// peer's delayed ACK, adding tens or hundreds of milliseconds to every
+// round trip. The hint is best-effort: a non-TCP transport is skipped and a
+// transport that rejects the option still carries the session, because latency
+// is not worth refusing a working connection.
+func disableNagle(conn net.Conn) {
+	if setter, ok := conn.(noDelayConn); ok {
+		_ = setter.SetNoDelay(true)
+	}
+}
+
+var _ appconnection.StreamDialer = (*Dialer)(nil)
+
+// DialStream establishes the same route as Dial but stops before the target's
+// SSH handshake. Every jump is authenticated and host-key verified exactly as
+// in Dial; the first endpoint still selects between the proxy, the Network
+// Provider, and a direct dial. The returned stream is the final proxy or
+// direct-tcpip connection, and closing it also closes every jump client opened
+// for it. The target's Auth plan is deliberately unused.
+func (d *Dialer) DialStream(ctx context.Context, req appconnection.DialRequest) (net.Conn, error) {
+	// A ProxyCommand process cannot run inside an in-process Network Provider,
+	// and a selected Provider must never be bypassed. These are the same
+	// guards Dial applies before it starts any I/O.
+	if req.Network != nil && req.Proxy != nil && req.Proxy.Type == appconnection.ProxyCommand {
+		return nil, appconnection.ProxyCommandNetworkConflict(*req.Network)
+	}
+	if req.Network != nil && req.Provider == nil {
+		return nil, appconnection.ProviderUnavailable(*req.Network)
+	}
+
+	endpoints := endpointsFor(req)
+	total := len(endpoints)
+	clients := make([]*xssh.Client, 0, total)
+	closeChain := func() {
+		for i := len(clients) - 1; i >= 0; i-- {
+			_ = clients[i].Close()
+		}
+	}
+	// A jump's rekey host-key check outlives the handshake, so it uses a
+	// connection-scoped context, exactly as Dial does. It is not derived from
+	// the dial context: the caller's attempt may end while the stream stays
+	// open. streamConn closes it so a queued trust prompt cannot outlive the
+	// routed stream.
+	connCtx, cancelConn := context.WithCancel(context.Background())
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			cancelConn()
+		}
+	}()
+
 	for i, ep := range endpoints {
 		label := ep.label
 		if label == "" {
@@ -299,10 +514,17 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 			return nil, annotated
 		}
 		reportChain(req, total, i+1, label, appconnection.ChainTCPConnected, nil)
-		reportChain(req, total, i+1, label, appconnection.ChainAuthenticating, nil)
 
+		if i == total-1 {
+			// The target speaks its own protocol. Hand the transport up; the
+			// caller owns closing it and, through streamConn, the whole chain.
+			handedOff = true
+			return &streamConn{Conn: raw, ancestors: clients, cancel: cancelConn}, nil
+		}
+
+		reportChain(req, total, i+1, label, appconnection.ChainAuthenticating, nil)
 		versioned := &versionRecorder{Conn: raw}
-		client, remoteVersion, err := d.handshake(ctx, versioned, ep)
+		client, _, err := d.handshake(ctx, connCtx, versioned, ep)
 		if err != nil {
 			_ = raw.Close()
 			closeChain()
@@ -311,29 +533,38 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 			return nil, annotated
 		}
 		clients = append(clients, client)
-		versions = append(versions, remoteVersion)
 		reportChain(req, total, i+1, label, appconnection.ChainConnected, nil)
 	}
 
-	final := clients[len(clients)-1]
-	client := &sshClient{
-		client:        final,
-		ancestors:     clients[:len(clients)-1],
-		remoteVersion: versions[len(versions)-1],
+	// endpointsFor always appends the target, so the loop returns above.
+	return nil, &appconnection.Error{
+		Kind:  appconnection.KindInternal,
+		Cause: errors.New("ssh: routed stream has no target endpoint"),
 	}
-	if req.X11 != nil {
-		bridge, err := newX11Bridge(final, req.X11, d.x11Local)
-		if err != nil {
-			_ = client.Close()
-			return nil, err
+}
+
+// streamConn is a routed TCP stream that owns the jump clients carrying it.
+// Closing the stream closes the final hop and then every ancestor, so a closed
+// Session cannot leak an SSH connection.
+type streamConn struct {
+	net.Conn
+	ancestors []*xssh.Client
+	cancel    context.CancelFunc
+	closeOnce sync.Once
+}
+
+// Close closes the target stream and the jump clients in reverse order.
+func (s *streamConn) Close() error {
+	err := s.Conn.Close()
+	s.closeOnce.Do(func() {
+		for i := len(s.ancestors) - 1; i >= 0; i-- {
+			_ = s.ancestors[i].Close()
 		}
-		client.x11 = bridge
-	}
-	// Record a peer-side disconnect as soon as the SSH client notices it, so
-	// the connection pool's liveness check sees a transport that died while
-	// no channel operation was in flight.
-	go client.watchDeath()
-	return client, nil
+		if s.cancel != nil {
+			s.cancel()
+		}
+	})
+	return err
 }
 
 func reportChain(req appconnection.DialRequest, total, index int, label string, status appconnection.ChainStatus, err error) {
@@ -390,7 +621,7 @@ func (d *Dialer) openForward(ctx context.Context, previous *xssh.Client, ep endp
 
 // handshake verifies the host key, authenticates, and returns the client. raw
 // is closed by the caller on failure.
-func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xssh.Client, string, error) {
+func (d *Dialer) handshake(ctx context.Context, connCtx context.Context, raw net.Conn, ep endpoint) (*xssh.Client, string, error) {
 	port := ep.portOr22()
 	address := net.JoinHostPort(ep.hostname, strconv.Itoa(port))
 
@@ -399,6 +630,19 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 	// user decision is released when the authentication deadline expires.
 	authCtx, cancelAuth := context.WithCancel(ctx)
 	defer cancelAuth()
+
+	// The first key exchange must be released by the handshake deadline, but a
+	// later rekey outlives this call. The callback therefore reads the current
+	// context: authCtx until the handshake succeeds, then the connection-scoped
+	// connCtx. Without the switch a changed key on rekey would immediately see a
+	// canceled context and report a cancellation instead of prompting.
+	verifyMu := sync.RWMutex{}
+	verifyCtx := context.Context(authCtx)
+	currentVerifyCtx := func() context.Context {
+		verifyMu.RLock()
+		defer verifyMu.RUnlock()
+		return verifyCtx
+	}
 
 	plan := ep.auth
 	if plan.Password == "" {
@@ -423,6 +667,7 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 	if err != nil {
 		return nil, "", err
 	}
+	guard := &keyExchangeGuard{}
 	config := &xssh.ClientConfig{
 		User:         ep.username,
 		AuthCallback: machine.Next,
@@ -431,13 +676,11 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 				return &appconnection.Error{Kind: appconnection.KindHostKey, Cause: appconnection.ErrHostKeyRejected}
 			}
 			blob := key.Marshal()
-			return ep.verify(authCtx, domainconn.Key{
-				Hostname:    ep.hostname,
-				Port:        port,
-				KeyType:     key.Type(),
-				Fingerprint: domainconn.Fingerprint(blob),
-				PublicKey:   domainconn.PublicKey(key.Type(), blob),
-			})
+			described, err := describeHostKey(ep.hostname, port, key)
+			if err != nil {
+				return err
+			}
+			return guard.verifyKey(currentVerifyCtx(), blob, ep.verify, described)
 		},
 		HostKeyAlgorithms: offer.hostKeys,
 		Config: xssh.Config{
@@ -485,6 +728,11 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 				ep.onAuth(candidate)
 			}
 		}
+		// From here on the transport owns further key exchanges. Verify them
+		// against the connection lifetime instead of this handshake's context.
+		verifyMu.Lock()
+		verifyCtx = connCtx
+		verifyMu.Unlock()
 		return xssh.NewClient(result.conn, result.chans, result.reqs), versionOf(raw), nil
 	case <-timer.C:
 		return nil, "", abort(&appconnection.Error{

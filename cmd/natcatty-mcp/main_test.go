@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,14 +18,55 @@ import (
 	"github.com/mslxl/natcatty/internal/mcp/catalog"
 )
 
+// bridgeListener tracks accepted connections so stopping the fake app closes
+// them: a restart is then observable to the client immediately, with no delay.
+type bridgeListener struct {
+	net.Listener
+	mu    sync.Mutex
+	conns map[net.Conn]struct{}
+}
+
+func (l *bridgeListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	tracked := &bridgeConn{Conn: conn, owner: l}
+	l.mu.Lock()
+	l.conns[conn] = struct{}{}
+	l.mu.Unlock()
+	return tracked, nil
+}
+
+func (l *bridgeListener) closeAll() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for conn := range l.conns {
+		_ = conn.Close()
+	}
+}
+
+type bridgeConn struct {
+	net.Conn
+	owner *bridgeListener
+}
+
+func (c *bridgeConn) Close() error {
+	c.owner.mu.Lock()
+	delete(c.owner.conns, c.Conn)
+	c.owner.mu.Unlock()
+	return c.Conn.Close()
+}
+
 // startAppBridge serves the app side of the authenticated loopback transport on
 // an already-bound listener, so a client dial cannot race readiness.
 func startAppBridge(t *testing.T, token string) (port int, stop func()) {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	rawListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
+	listener := &bridgeListener{Listener: rawListener, conns: map[net.Conn]struct{}{}}
 	handler := mcprpc.HandlerFunc(func(_ context.Context, method string, _ json.RawMessage) (any, error) {
 		switch method {
 		case "netcatty/getContext":
@@ -40,17 +84,32 @@ func startAppBridge(t *testing.T, token string) (port int, stop func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(ctx, listener) }()
+	var once sync.Once
 	stop = func() {
-		cancel()
-		_ = listener.Close()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			t.Fatal("app bridge did not stop")
-		}
+		once.Do(func() {
+			cancel()
+			_ = listener.Close()
+			listener.closeAll()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("app bridge did not stop")
+			}
+		})
 	}
 	t.Cleanup(stop)
 	return listener.Addr().(*net.TCPAddr).Port, stop
+}
+
+func writeAppDiscovery(t *testing.T, path string, port int, token string) {
+	t.Helper()
+	if _, err := mcprpc.WriteDiscovery(path, mcprpc.Discovery{
+		Host:  "127.0.0.1",
+		Port:  port,
+		Token: token,
+	}); err != nil {
+		t.Fatalf("write discovery: %v", err)
+	}
 }
 
 func requestLine(id int, method string, params any) string {
@@ -195,6 +254,108 @@ func TestRunExplainsAMissingDiscoveryFile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "is the Netcatty app running?") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+// TestRunReconnectsAfterTheAppRestarts keeps one stdio session alive across a
+// fake app restart. The discovery file changes port and token, the old socket
+// is closed, and the next tool call redials, re-verifies, and succeeds.
+func TestRunReconnectsAfterTheAppRestarts(t *testing.T) {
+	firstPort, stopFirst := startAppBridge(t, "first-token")
+	discoveryPath := filepath.Join(t.TempDir(), "external-mcp", "discovery.json")
+	writeAppDiscovery(t, discoveryPath, firstPort, "first-token")
+	t.Setenv(mcprpc.EnvDiscoveryFile, discoveryPath)
+	t.Setenv(mcprpc.EnvPort, "")
+	t.Setenv(mcprpc.EnvToken, "")
+
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	var stderr bytes.Buffer
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- run(context.Background(), stdinReader, stdoutWriter, &stderr)
+		_ = stdoutWriter.Close()
+	}()
+
+	messages := make(chan map[string]any, 8)
+	go func() {
+		scanner := bufio.NewScanner(stdoutReader)
+		for scanner.Scan() {
+			var message map[string]any
+			if err := json.Unmarshal(scanner.Bytes(), &message); err != nil {
+				continue
+			}
+			messages <- message
+		}
+		close(messages)
+	}()
+
+	send := func(line string) {
+		t.Helper()
+		if _, err := io.WriteString(stdinWriter, line+"\n"); err != nil {
+			t.Fatalf("write request: %v", err)
+		}
+	}
+	await := func(id int) map[string]any {
+		t.Helper()
+		deadline := time.After(5 * time.Second)
+		for {
+			select {
+			case message, ok := <-messages:
+				if !ok {
+					t.Fatalf("stdout closed before response %d", id)
+				}
+				if got, ok := message["id"].(float64); ok && int(got) == id {
+					return message
+				}
+			case <-deadline:
+				t.Fatalf("timed out waiting for response %d", id)
+			}
+		}
+	}
+
+	send(requestLine(1, "initialize", map[string]any{
+		"protocolVersion": "2024-11-05",
+		"capabilities":    map[string]any{},
+		"clientInfo":      map[string]any{"name": "test", "version": "1"},
+	}))
+	if response := await(1); response["result"] == nil {
+		t.Fatalf("initialize failed: %v", response)
+	}
+
+	// The app restarts: its socket closes and the discovery pointer changes.
+	stopFirst()
+	secondPort, _ := startAppBridge(t, "second-token")
+	writeAppDiscovery(t, discoveryPath, secondPort, "second-token")
+
+	send(requestLine(2, "tools/call", map[string]any{
+		"name":      "get_environment",
+		"arguments": map[string]any{},
+	}))
+	response := await(2)
+	result, ok := response["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool call failed: %v", response)
+	}
+	content := result["content"].([]any)
+	text := content[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "netcatty-terminal") {
+		t.Fatalf("tool text = %s", text)
+	}
+
+	if err := stdinWriter.Close(); err != nil {
+		t.Fatalf("close stdin: %v", err)
+	}
+	select {
+	case err := <-runDone:
+		if err != nil {
+			t.Fatalf("run: %v\nstderr: %s", err, stderr.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not exit after stdin closed")
+	}
+	if connects := strings.Count(stderr.String(), "connected to Netcatty"); connects != 2 {
+		t.Fatalf("connections = %d, want 2\nstderr: %s", connects, stderr.String())
 	}
 }
 

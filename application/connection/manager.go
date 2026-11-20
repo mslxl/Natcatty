@@ -28,7 +28,10 @@ import (
 )
 
 // Request describes an endpoint to connect to. Credentials are deliberately
-// absent: the Manager reads the saved password through PasswordSource.
+// absent from persisted state: the Manager reads the saved password through
+// PasswordSource. Password is the one exception, a one-shot credential for a
+// target with no saved Host (Quick Connect); it stays in memory and takes
+// precedence over the saved credential sources.
 //
 // Jumps, when present, are full endpoints reached before the target, ordered
 // first = closest to the client. Proxy applies to the first endpoint only.
@@ -37,6 +40,10 @@ type Request struct {
 	Hostname string
 	Port     int
 	Username string
+	// Password is a one-shot plaintext credential for a target that has no
+	// saved Host record. Empty resolves credentials through AuthSource or
+	// PasswordSource. It is never persisted, logged, or cached.
+	Password string
 	Jumps    []Hop
 	Proxy    *Proxy
 	// Network selects the Network Profile used for the first endpoint. Nil
@@ -68,6 +75,17 @@ type Request struct {
 	// so closing a browser cannot disturb a Session and two browsers on one
 	// Host never share network state.
 	Dedicated bool
+	// AcceptedHostKeys are host keys the caller already accepted on another
+	// transport for this route. A companion dial pins them as pre-trusted so
+	// the same hosts are not prompted a second time. They are matched by
+	// hostname, port, key type, and fingerprint, so a different key still
+	// fails or prompts.
+	AcceptedHostKeys []domainconn.Key
+	// HostKeyUnattended rejects an untrusted or changed host key instead of
+	// asking. A background companion dial must never open a prompt the user
+	// did not start; it fails with KindHostKey so the owner can ask for a
+	// reconnect instead.
+	HostKeyUnattended bool
 	// X11Forwarding requests X11 forwarding on the connection's shell. X11
 	// transports never enter the general reuse pool.
 	X11Forwarding bool
@@ -439,30 +457,9 @@ func (m *Manager) Acquire(ctx context.Context, req Request) (*Lease, error) {
 	// transport is handed out or a dial starts. Doing it here, ahead of the
 	// pool, is what makes reuse fail closed too: a stopped Provider can never
 	// leave a parked transport to be silently used again.
-	var provider NetworkProvider
-	if req.Network != nil {
-		if m.providers == nil {
-			return nil, providerRouteError(*req.Network, ProviderPhaseStopped,
-				fmt.Errorf("%w: no registry", ErrNetworkProvider))
-		}
-		opened, err := m.providers.Acquire(ctx, *req.Network)
-		if err != nil {
-			return nil, err
-		}
-		if opened == nil {
-			return nil, providerRouteError(*req.Network, ProviderPhaseStopped,
-				fmt.Errorf("%w: registry returned no provider", ErrNetworkProvider))
-		}
-		// The registry reuses a live Provider while its profile fingerprint is
-		// unchanged, so its phase can have moved since the open. Refuse to reuse
-		// a parked transport or start a dial unless the Provider is actually
-		// running; a login prompt, a restart, or a dead node must surface as a
-		// typed provider failure, never as a direct connection.
-		if phase := providerPhase(opened); phase != "" && phase != ProviderPhaseRunning {
-			return nil, providerRouteError(*req.Network, phase,
-				fmt.Errorf("%w: phase %s", ErrNetworkProviderNotRunning, phase))
-		}
-		provider = opened
+	provider, err := m.acquireProvider(ctx, req.Network)
+	if err != nil {
+		return nil, err
 	}
 
 	endpoint := endpointFor(req)
@@ -512,6 +509,157 @@ func (m *Manager) Acquire(ctx context.Context, req Request) (*Lease, error) {
 	return m.readyLease(lease), nil
 }
 
+// acquireProvider opens the live Network Provider for a route's first
+// endpoint. Acquire and DialStream call it ahead of any dial so a stopped
+// Provider can never leave a parked transport to be silently reused or be
+// replaced by a direct connection.
+func (m *Manager) acquireProvider(ctx context.Context, network *NetworkRoute) (NetworkProvider, error) {
+	if network == nil {
+		return nil, nil
+	}
+	if m.providers == nil {
+		return nil, providerRouteError(*network, ProviderPhaseStopped,
+			fmt.Errorf("%w: no registry", ErrNetworkProvider))
+	}
+	opened, err := m.providers.Acquire(ctx, *network)
+	if err != nil {
+		return nil, err
+	}
+	if opened == nil {
+		return nil, providerRouteError(*network, ProviderPhaseStopped,
+			fmt.Errorf("%w: registry returned no provider", ErrNetworkProvider))
+	}
+	// The registry reuses a live Provider while its profile fingerprint is
+	// unchanged, so its phase can have moved since the open. Refuse to reuse
+	// a parked transport or start a dial unless the Provider is actually
+	// running; a login prompt, a restart, or a dead node must surface as a
+	// typed provider failure, never as a direct connection.
+	if phase := providerPhase(opened); phase != "" && phase != ProviderPhaseRunning {
+		return nil, providerRouteError(*network, phase,
+			fmt.Errorf("%w: phase %s", ErrNetworkProviderNotRunning, phase))
+	}
+	return opened, nil
+}
+
+// StreamDialer is a Dialer that can open the raw TCP stream to a target
+// without authenticating the final endpoint. The SSH adapter implements it;
+// tests provide a fake. A dialer that does not implement it cannot serve a
+// routed non-SSH protocol.
+type StreamDialer interface {
+	DialStream(ctx context.Context, req DialRequest) (net.Conn, error)
+}
+
+// DialStream resolves and opens a routed raw stream for a protocol whose
+// target speaks something other than SSH (Telnet). Jumps are authenticated
+// and host-key verified exactly as for a shell; the target is not, because it
+// has no SSH server. The returned stream owns the transport: closing it
+// closes the target stream and every jump opened for it. It is not pooled and
+// carries no keepalive schedule; the caller's Session owns its lifetime.
+func (m *Manager) DialStream(ctx context.Context, req Request) (net.Conn, error) {
+	if m.dialer == nil {
+		return nil, internalError(ErrNoDialer)
+	}
+	streamer, ok := m.dialer.(StreamDialer)
+	if !ok {
+		return nil, &Error{
+			Kind:  KindUnsupported,
+			Cause: errors.New("connection: the dialer cannot open a routed raw stream"),
+		}
+	}
+	provider, err := m.acquireProvider(ctx, req.Network)
+	if err != nil {
+		return nil, err
+	}
+	known, err := m.knownHosts(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	total := len(req.Jumps) + 1
+	succeeded := make([]string, len(req.Jumps))
+	verify := func(verifyCtx context.Context, key domainconn.Key) error {
+		return m.verifyHostKey(verifyCtx, key, known, req.HostKeyUnattended)
+	}
+	username := func(plan AuthPlan, fallback string) string {
+		if plan.Username != "" {
+			return plan.Username
+		}
+		return fallback
+	}
+	dialRequest := DialRequest{
+		Proxy:      req.Proxy,
+		Network:    req.Network,
+		Provider:   provider,
+		Algorithms: req.Algorithms,
+		OnProgress: req.OnProgress,
+		Label:      targetHop(req).LabelOrAddress(),
+		Hostname:   req.Hostname,
+		Port:       req.Port,
+		Username:   req.Username,
+	}
+	for i, hop := range req.Jumps {
+		plan, err := m.authPlan(ctx, requestForHop(hop))
+		if err != nil {
+			return nil, TagHop(err, i+1, total, hop.LabelOrAddress())
+		}
+		cacheKey := authCacheKey(hop.Username, hop.Hostname, hop.Port)
+		if cached, ok := m.authCache.Get(cacheKey); ok {
+			PromoteCachedCandidate(&plan, cached, plan.Mode)
+		}
+		index := i
+		// Legacy mode is inherited additively from the target, exactly as a
+		// jump inherits it in dial. The target's own algorithm policy applies
+		// to the SSH hops, because the target itself has no handshake.
+		algorithms := hop.Algorithms
+		algorithms.Legacy = algorithms.Legacy || req.Algorithms.Legacy
+		dialRequest.Jumps = append(dialRequest.Jumps, DialHop{
+			Label:         hop.LabelOrAddress(),
+			Hostname:      hop.Hostname,
+			Port:          hop.Port,
+			Username:      username(plan, hop.Username),
+			Password:      plan.Password,
+			Auth:          plan,
+			Prompter:      m.authPrompter,
+			OnAuth:        func(candidateID string) { succeeded[index] = candidateID },
+			VerifyHostKey: verify,
+			Algorithms:    algorithms,
+		})
+	}
+
+	stream, err := streamer.DialStream(ctx, dialRequest)
+	if err != nil {
+		if req.Network != nil {
+			phase := ProviderPhaseRunning
+			if provider != nil {
+				if reported := providerPhase(provider); reported != "" {
+					phase = reported
+				}
+			}
+			err = TagProvider(err, providerInfo(*req.Network, phase))
+		}
+		if isAuthenticationFailure(err) {
+			// A revoked credential must not stay cached for the next attempt.
+			index := len(req.Jumps) - 1
+			var typed *Error
+			if errors.As(err, &typed) && typed.Hop != nil &&
+				typed.Hop.Index >= 1 && typed.Hop.Index <= len(req.Jumps) {
+				index = typed.Hop.Index - 1
+			}
+			if index >= 0 && index < len(req.Jumps) {
+				hop := req.Jumps[index]
+				m.authCache.Delete(authCacheKey(hop.Username, hop.Hostname, hop.Port))
+			}
+		}
+		return nil, err
+	}
+	for i, hop := range req.Jumps {
+		if succeeded[i] != "" {
+			m.authCache.Put(authCacheKey(hop.Username, hop.Hostname, hop.Port), succeeded[i])
+		}
+	}
+	return stream, nil
+}
+
 // readyLease arms the reused-shell liveness probe. Only a shell opened on a
 // transport that was parked needs it; a live transport already proved itself.
 func (m *Manager) readyLease(lease *Lease) *Lease {
@@ -530,6 +678,11 @@ func (m *Manager) dial(ctx context.Context, req Request, endpoint endpointConfig
 	if err != nil {
 		return nil, err
 	}
+	// A companion dial inherits the host identities its owner already accepted
+	// on another transport. They are pinned by hostname, port, key type, and
+	// fingerprint, so they trust exactly the keys that were seen, not the whole
+	// endpoint.
+	known = append(known, acceptedKnownHosts(req.AcceptedHostKeys)...)
 
 	total := len(req.Jumps) + 1
 	type endpointPlan struct {
@@ -569,8 +722,28 @@ func (m *Manager) dial(ctx context.Context, req Request, endpoint endpointConfig
 	}
 
 	succeeded := make([]string, total)
+	accepted := &hostKeyAcceptance{}
+	// acceptedKeys collects every key the handshake trusted, in hop order. A
+	// later companion dial replays it instead of prompting for the same hosts.
+	acceptedKeys := make([]domainconn.Key, 0, total)
+	var acceptedKeysMu sync.Mutex
 	verify := func(verifyCtx context.Context, key domainconn.Key) error {
-		return m.verifyHostKey(verifyCtx, key, known)
+		// x/crypto/ssh runs the verifier again on every key exchange. The Known
+		// Host snapshot above is fixed for this dial, so a key trusted earlier in
+		// this Connection is remembered here and a rekey presenting it answers
+		// without prompting again. A different key is not remembered and still
+		// verifies (and can fail closed).
+		if accepted.has(key) {
+			return nil
+		}
+		if err := m.verifyHostKey(verifyCtx, key, known, req.HostKeyUnattended); err != nil {
+			return err
+		}
+		accepted.add(key)
+		acceptedKeysMu.Lock()
+		acceptedKeys = append(acceptedKeys, key)
+		acceptedKeysMu.Unlock()
+		return nil
 	}
 	username := func(plan AuthPlan, fallback string) string {
 		if plan.Username != "" {
@@ -665,8 +838,31 @@ func (m *Manager) dial(ctx context.Context, req Request, endpoint endpointConfig
 		}
 	}
 	conn := newPooledConnection(client, endpoint, m)
+	conn.acceptedHostKeys = acceptedKeys
 	conn.startKeepalive(endpoint.keepalive, func() { m.pool.discard(conn, "keepalive") })
 	return conn, nil
+}
+
+// acceptedKnownHosts turns keys accepted on another transport into Known Host
+// records for classification. They are not persisted: the caller's trust was
+// for that live route, and the dedicated dial only needs to avoid asking the
+// same question twice. An empty ID keeps them from being mistaken for stored
+// records.
+func acceptedKnownHosts(keys []domainconn.Key) []domainconn.KnownHost {
+	if len(keys) == 0 {
+		return nil
+	}
+	records := make([]domainconn.KnownHost, 0, len(keys))
+	for _, key := range keys {
+		records = append(records, domainconn.KnownHost{
+			Hostname:    key.Hostname,
+			Port:        key.Port,
+			KeyType:     key.KeyType,
+			PublicKey:   key.PublicKey,
+			Fingerprint: key.Fingerprint,
+		})
+	}
+	return records
 }
 
 // requestForHop turns a jump Hop into the Request an AuthSource consumes.
@@ -693,6 +889,15 @@ func targetHop(req Request) Hop {
 // AuthSource, it preserves the ticket 06 behavior of using the saved password
 // and offering password plus keyboard-interactive.
 func (m *Manager) authPlan(ctx context.Context, req Request) (AuthPlan, error) {
+	// A one-shot credential belongs to a target that has no saved Host, so no
+	// AuthSource can resolve it. It is offered as password authentication.
+	if req.Password != "" {
+		return BuildAuthPlan(AuthSpec{
+			Username: req.Username,
+			Mode:     AuthModePassword,
+			Password: req.Password,
+		}), nil
+	}
 	if m.authSource != nil {
 		plan, err := m.authSource.AuthPlan(ctx, req)
 		if err != nil {
@@ -783,15 +988,63 @@ func (m *Manager) knownHosts(ctx context.Context) ([]domainconn.KnownHost, error
 	return known, nil
 }
 
+// hostKeyAcceptance remembers the keys trusted for the lifetime of one
+// Connection. The Known Host snapshot is read once per dial, so without this a
+// key the user trusted on the first key exchange would prompt again on rekey.
+// It is scoped by hostname, port, and fingerprint so a different endpoint (or a
+// changed key) is always verified.
+type hostKeyAcceptance struct {
+	mu   sync.Mutex
+	seen map[string]struct{}
+}
+
+func hostKeyAcceptanceKey(key domainconn.Key) string {
+	fingerprint := key.Fingerprint
+	// An OpenSSH host certificate is identified by its stable trust anchor so a
+	// renewal inside one Connection does not look like a changed key.
+	if key.IsHostCertificate {
+		if key.CertificateCAFingerprint != "" {
+			fingerprint = key.CertificateCAFingerprint
+		} else if key.CertificateKeyFingerprint != "" {
+			fingerprint = key.CertificateKeyFingerprint
+		}
+	}
+	return fmt.Sprintf("%s\x00%d\x00%s", key.Hostname, key.Port, fingerprint)
+}
+
+func (a *hostKeyAcceptance) has(key domainconn.Key) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_, ok := a.seen[hostKeyAcceptanceKey(key)]
+	return ok
+}
+
+func (a *hostKeyAcceptance) add(key domainconn.Key) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.seen == nil {
+		a.seen = make(map[string]struct{})
+	}
+	a.seen[hostKeyAcceptanceKey(key)] = struct{}{}
+}
+
 // verifyHostKey classifies the live key and asks the user when the key is not
-// already trusted. Trust upserts the Known Host before authentication starts.
-func (m *Manager) verifyHostKey(ctx context.Context, key domainconn.Key, known []domainconn.KnownHost) error {
-	classified := domainconn.Classify(known, key.Hostname, key.Port, key.KeyType, key.Fingerprint)
+// already trusted. A host certificate matches a Known Host under its embedded
+// key or signing CA, so renewal does not prompt; an unknown CA or key still
+// does. Trust upserts the Known Host before authentication starts. An
+// unattended dial never prompts: an untrusted or changed key fails closed with
+// ErrHostKeyUnverified so its owner can tell the user to reconnect.
+func (m *Manager) verifyHostKey(ctx context.Context, key domainconn.Key, known []domainconn.KnownHost, unattended bool) error {
+	classified := domainconn.ClassifyKey(known, key)
 	if classified.PublicKey == "" {
 		classified.PublicKey = key.PublicKey
 	}
 	if classified.Status == domainconn.StatusTrusted {
 		return nil
+	}
+	if unattended {
+		return hostKeyError(fmt.Errorf("%w: %s:%d %s", ErrHostKeyUnverified,
+			key.Hostname, key.Port, key.KeyType))
 	}
 	if m.prompter == nil {
 		return hostKeyError(ErrHostKeyRejected)
@@ -897,6 +1150,10 @@ type Connection struct {
 	idle      bool
 	idleSince time.Time
 	endpoint  endpointConfig
+	// acceptedHostKeys records the keys this transport trusted during its
+	// handshake, pinned to the hop they arrived on. A companion dial replays
+	// them so the same hosts are not prompted again.
+	acceptedHostKeys []domainconn.Key
 	// allowIdlePark is false for single-channel, X11, and vendor bastions
 	// that cannot host a later shell.
 	allowIdlePark bool

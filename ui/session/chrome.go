@@ -86,6 +86,7 @@ const (
 // also shows the corresponding menu and banner controls as disabled.
 type chromeActions struct {
 	ToggleLog        func()
+	OpenLog          func(path string)
 	SetLogFormat     func(domainterminal.LogFormat)
 	AllowClipboard   func()
 	DenyClipboard    func()
@@ -198,6 +199,7 @@ func toolbar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, 
 			Logging:      model.Logging.Active,
 			LogFormat:    model.LogFormat,
 			LogDirectory: model.LogDirectory,
+			LogPath:      model.Logging.Path,
 			CanPaste:     model.CanPaste && actions.Paste != nil,
 			CanReconnect: model.CanReconnect && actions.Reconnect != nil,
 			CanClear:     actions.ClearBuffer != nil,
@@ -221,6 +223,7 @@ func toolbar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, 
 			Rename:         actions.Rename,
 			SetEncoding:    actions.SetEncoding,
 			ToggleLog:      actions.ToggleLog,
+			OpenLog:        actions.OpenLog,
 			SetLogFormat:   actions.SetLogFormat,
 			SplitRight:     actions.SplitRight,
 			SplitDown:      actions.SplitDown,
@@ -310,6 +313,12 @@ func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *
 					MinWidth(0).Grow(1).TextColor(colors.Text)
 				if selected {
 					command.Bold()
+				}
+				if suggestion.Description != "" {
+					// The catalogs' one-line hint sits beside the command. It
+					// never replaces the typed text or affects acceptance.
+					ui.Text(c, suggestion.Description).FontSize(9).SingleLine().
+						MaxWidth(260).TextColor(colors.Muted)
 				}
 				if source != "" {
 					ui.Text(c, source).FontSize(9).SingleLine().TextColor(colors.Muted)

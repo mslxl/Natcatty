@@ -1,10 +1,68 @@
 package vault
 
 import (
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/mslxl/natcatty/domain/model"
 )
+
+// Assigning several Hosts at once is the drop of a marquee selection: every
+// Host gets the group, keeps its own fields, and an invalid member fails the
+// whole assignment instead of half-applying it.
+func TestAssignHostsGroupAssignsEveryHostOrNone(t *testing.T) {
+	at := time.Unix(1700000000, 0).UTC()
+	hosts := []Host{
+		{ID: "host-1", Label: "web-1", Hostname: "10.0.0.1", GroupID: "old", Group: "dev"},
+		{ID: "host-2", Label: "web-2", Hostname: "10.0.0.2", Username: "deploy"},
+	}
+	assigned, err := AssignHostsGroup(hosts, "g-prod", at)
+	if err != nil {
+		t.Fatalf("AssignHostsGroup: %v", err)
+	}
+	if len(assigned) != len(hosts) {
+		t.Fatalf("assigned %d Hosts, want %d", len(assigned), len(hosts))
+	}
+	for index, host := range assigned {
+		if host.GroupID != "g-prod" || host.Group != "" {
+			t.Fatalf("Host %d membership = %q/%q, want the group ID only", index, host.GroupID, host.Group)
+		}
+		if !host.UpdatedAt.Equal(at) {
+			t.Fatalf("Host %d UpdatedAt = %v, want %v", index, host.UpdatedAt, at)
+		}
+	}
+	if assigned[1].Username != "deploy" || assigned[0].Hostname != "10.0.0.1" {
+		t.Fatalf("assignment changed other Host fields: %+v", assigned)
+	}
+	if hosts[0].GroupID != "old" || hosts[1].GroupID != "" {
+		t.Fatalf("assignment mutated its input: %+v", hosts)
+	}
+
+	root, err := AssignHostsGroup(hosts, "", at)
+	if err != nil {
+		t.Fatalf("AssignHostsGroup root: %v", err)
+	}
+	if root[0].GroupID != "" || root[1].GroupID != "" {
+		t.Fatalf("root assignment left a group: %+v", root)
+	}
+}
+
+func TestAssignHostsGroupRejectsAHostWithoutIdentityOrADuplicate(t *testing.T) {
+	at := time.Unix(1700000000, 0).UTC()
+	if _, err := AssignHostsGroup([]Host{{Label: "no id"}}, "g-prod", at); err == nil {
+		t.Fatal("AssignHostsGroup accepted a Host with no identity")
+	} else {
+		var invalid *ValidationError
+		if !errors.As(err, &invalid) || invalid.Field != FieldGroup {
+			t.Fatalf("error = %v, want a FieldGroup validation error", err)
+		}
+	}
+	duplicate := []Host{{ID: "host-1"}, {ID: "host-1"}}
+	if _, err := AssignHostsGroup(duplicate, "g-prod", at); err == nil {
+		t.Fatal("AssignHostsGroup accepted the same Host twice")
+	}
+}
 
 func TestNormalizeGroupDraftDropsSSHDefaultsOnlyForExplicitNonSSHProtocols(t *testing.T) {
 	// A group that explicitly selects Telnet never reads its members' SSH
@@ -311,6 +369,81 @@ func TestNetworkProfileReferenceFollowsProxyProfileMergingRules(t *testing.T) {
 	}
 }
 
+func TestGroupJumpChainDefaultIsInheritedAsOneValue(t *testing.T) {
+	groups := []Group{
+		{Path: "prod", HostChain: &HostChain{HostIDs: []model.HostID{"bastion"}}},
+		{Path: "prod/web", HostChain: &HostChain{HostIDs: []model.HostID{"edge", "bastion"}}},
+		{Path: "prod/db"},
+	}
+	child := ResolveGroupDefaults(groups, "prod/web")
+	if chain := child.HostChain; chain == nil || len(chain.HostIDs) != 2 ||
+		chain.HostIDs[0] != "edge" || chain.HostIDs[1] != "bastion" {
+		t.Fatalf("child chain = %+v, want the child's edge then bastion", chain)
+	}
+	sibling := ResolveGroupDefaults(groups, "prod/db")
+	if chain := sibling.HostChain; chain == nil || len(chain.HostIDs) != 1 ||
+		chain.HostIDs[0] != "bastion" {
+		t.Fatalf("sibling chain = %+v, want the parent's bastion", chain)
+	}
+
+	// A Host's own hops replace the inherited chain whole.
+	own := ApplyGroupDefaults(Host{
+		Protocol:  ProtocolSSH,
+		HostChain: &HostChain{HostIDs: []model.HostID{"own-hop"}},
+	}, child)
+	if chain := own.HostChain; chain == nil || len(chain.HostIDs) != 1 ||
+		chain.HostIDs[0] != "own-hop" {
+		t.Fatalf("own chain = %+v, want only own-hop", chain)
+	}
+	inherited := ApplyGroupDefaults(Host{Protocol: ProtocolSSH}, child)
+	if chain := inherited.HostChain; chain == nil || len(chain.HostIDs) != 2 {
+		t.Fatalf("inherited chain = %+v, want the group's two hops", chain)
+	}
+	// The resolved chain must not alias the group's stored slice.
+	inherited.HostChain.HostIDs[0] = "mutated"
+	if groups[1].HostChain.HostIDs[0] != "edge" {
+		t.Fatal("ApplyGroupDefaults aliased the group's chain slice")
+	}
+	if local := ApplyGroupDefaults(Host{Protocol: ProtocolLocal}, child); local.HostChain != nil {
+		t.Fatalf("a Local shell inherited a jump chain: %+v", local.HostChain)
+	}
+}
+
+func TestNormalizeGroupDraftNormalizesAndValidatesTheJumpChain(t *testing.T) {
+	draft, err := NormalizeGroupDraft(GroupDraft{
+		Path:      " prod/web ",
+		HostChain: &HostChain{HostIDs: []model.HostID{" edge ", "bastion"}},
+	})
+	if err != nil {
+		t.Fatalf("NormalizeGroupDraft: %v", err)
+	}
+	if chain := draft.HostChain; chain == nil || chain.HostIDs[0] != "edge" {
+		t.Fatalf("chain = %+v, want trimmed hops", chain)
+	}
+	empty, err := NormalizeGroupDraft(GroupDraft{
+		Path: "prod", HostChain: &HostChain{},
+	})
+	if err != nil {
+		t.Fatalf("NormalizeGroupDraft with an empty chain: %v", err)
+	}
+	if empty.HostChain != nil {
+		t.Fatalf("empty chain = %+v, want nil to inherit", empty.HostChain)
+	}
+	for _, hops := range [][]model.HostID{
+		{"bastion", "bastion"},
+		{""},
+	} {
+		_, err := NormalizeGroupDraft(GroupDraft{
+			Path: "prod", HostChain: &HostChain{HostIDs: hops},
+		})
+		var invalid *ValidationError
+		if !groupAsValidation(err, &invalid) ||
+			invalid.Field != FieldChain || invalid.Rule != RuleInvalid {
+			t.Fatalf("chain %v error = %v, want chain/invalid", hops, err)
+		}
+	}
+}
+
 func groupAsValidation(err error, target **ValidationError) bool {
 	invalid, ok := err.(*ValidationError)
 	if ok {
@@ -389,5 +522,91 @@ func TestResolveGroupTreeIsDeterministicForConflicts(t *testing.T) {
 	}
 	if paths["e"] != "e" || paths["f"] != "f" {
 		t.Fatalf("dangling and self-parent paths = %q, %q", paths["e"], paths["f"])
+	}
+}
+
+// Ticket 48: a Host Group's X11 default applies to member SSH Hosts. The
+// nearest group that sets it wins, and a Host that owns an explicit off keeps
+// that off instead of inheriting the group's on.
+func TestGroupDefaultsInheritX11Forwarding(t *testing.T) {
+	groups := []Group{
+		{Path: "prod", X11Forwarding: true, X11WarningAcknowledged: true},
+		{Path: "prod/web"},
+	}
+	defaults := ResolveGroupDefaults(groups, "prod/web")
+	if !defaults.X11Enabled() {
+		t.Fatalf("defaults = %+v, want the ancestor's X11 forwarding", defaults)
+	}
+
+	unset := ApplyGroupDefaults(Host{Protocol: ProtocolSSH, Group: "prod/web"}, defaults)
+	if !unset.X11Enabled() {
+		t.Fatalf("unset Host = %+v, want inherited X11 forwarding", unset)
+	}
+	if !unset.X11ForwardingSet {
+		t.Fatal("the inherited value must resolve exactly as an owned on would")
+	}
+
+	// An explicit off is a Host value, so it wins over the group default.
+	off := ApplyGroupDefaults(Host{
+		Protocol: ProtocolSSH, Group: "prod/web",
+		X11Forwarding: false, X11ForwardingSet: true,
+	}, defaults)
+	if off.X11Enabled() || !off.X11ForwardingSet {
+		t.Fatalf("explicit off = %+v, want the Host's off to win", off)
+	}
+
+	// A stored true predates the marker but still means the user chose it.
+	legacyOn := ApplyGroupDefaults(Host{
+		Protocol: ProtocolSSH, X11Forwarding: true, X11WarningAcknowledged: true,
+	}, GroupDefaults{})
+	if !legacyOn.X11Enabled() {
+		t.Fatalf("legacy on = %+v, want it preserved without a group", legacyOn)
+	}
+
+	// X11 runs over SSH only: another transport never inherits it.
+	mosh := ApplyGroupDefaults(Host{Protocol: ProtocolMosh, Group: "prod/web"}, defaults)
+	if mosh.X11Forwarding || mosh.X11ForwardingSet {
+		t.Fatalf("Mosh Host inherited X11: %+v", mosh)
+	}
+	local := ApplyGroupDefaults(Host{Protocol: ProtocolLocal, Group: "prod/web"}, defaults)
+	if local.X11Forwarding || local.X11ForwardingSet {
+		t.Fatalf("Local shell inherited X11: %+v", local)
+	}
+}
+
+func TestGroupX11ForwardingRequiresSSHAndAcknowledgement(t *testing.T) {
+	if _, err := NormalizeGroupDraft(GroupDraft{
+		Path: "prod", Protocol: ProtocolSSH, X11Forwarding: true,
+	}); err == nil {
+		t.Fatal("a group turned X11 on without the acknowledgement")
+	} else {
+		var invalid *ValidationError
+		if !errors.As(err, &invalid) || invalid.Field != FieldX11 ||
+			invalid.Rule != RuleAcknowledgementRequired {
+			t.Fatalf("error = %v, want FieldX11 acknowledgement required", err)
+		}
+	}
+	// An explicit non-SSH protocol has no X11 control, so the default is
+	// dropped rather than saved where no member could use it.
+	telnet, err := NormalizeGroupDraft(GroupDraft{
+		Path: "prod", Protocol: ProtocolTelnet,
+		X11Forwarding: true, X11WarningAcknowledged: true,
+	})
+	if err != nil || telnet.X11Forwarding || telnet.X11WarningAcknowledged {
+		t.Fatalf("Telnet group draft = %+v, %v; want X11 dropped", telnet, err)
+	}
+	draft, err := NormalizeGroupDraft(GroupDraft{
+		Path: "prod", Protocol: ProtocolSSH,
+		X11Forwarding: true, X11WarningAcknowledged: true,
+	})
+	if err != nil || !draft.X11Forwarding || !draft.X11WarningAcknowledged {
+		t.Fatalf("valid group draft = %+v, %v", draft, err)
+	}
+	// A group with a blank protocol inherits SSH and may set the default; the
+	// transport check happens when the member Host resolves it.
+	if _, err := NormalizeGroupDraft(GroupDraft{
+		Path: "prod", X11Forwarding: true, X11WarningAcknowledged: true,
+	}); err != nil {
+		t.Fatalf("blank-protocol group rejected X11: %v", err)
 	}
 }

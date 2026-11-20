@@ -703,15 +703,16 @@ func (s *Service) commitFamilyKnownHosts(ctx context.Context, preview ImportPrev
 			convertedTo = string(id)
 		}
 		record := domainconn.KnownHost{
-			ID:                newULID(),
-			Hostname:          known.Hostname,
-			Port:              port,
-			KeyType:           known.KeyType,
-			PublicKey:         known.PublicKey,
-			Fingerprint:       known.Fingerprint,
-			DiscoveredAt:      known.DiscoveredAt,
-			LastSeen:          known.LastSeen,
-			ConvertedToHostID: convertedTo,
+			ID:                     newULID(),
+			Hostname:               known.Hostname,
+			Port:                   port,
+			KeyType:                known.KeyType,
+			PublicKey:              known.PublicKey,
+			Fingerprint:            known.Fingerprint,
+			IsCertificateAuthority: known.IsCertificateAuthority,
+			DiscoveredAt:           known.DiscoveredAt,
+			LastSeen:               known.LastSeen,
+			ConvertedToHostID:      convertedTo,
 		}
 		if err := saver.UpsertKnownHost(ctx, record); err != nil {
 			return fmt.Errorf("vault: restore Known Host: %w", err)

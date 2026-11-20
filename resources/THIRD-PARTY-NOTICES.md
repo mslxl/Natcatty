@@ -77,6 +77,7 @@ each module's own `LICENSE` file.
 | `github.com/jinzhu/now` | v1.1.5 | MIT | Copyright (c) 2013-NOW Jinzhu |
 | `github.com/kayrus/putty` | v1.0.5 | Apache-2.0 | Copyright kayrus and the putty package contributors (the package LICENSE carries the Apache-2.0 text without a copyright line) |
 | `github.com/kr/fs` | v0.1.0 | BSD-3-Clause | Copyright (c) 2012 The Go Authors. All rights reserved. |
+| `github.com/makiuchi-d/gozxing` | v0.1.1 | MIT | Copyright (c) 2018 Daisuke MAKIUCHI (MakKi; makki_d) |
 | `github.com/mattn/go-isatty` | v0.0.24 | MIT (Expat) | Copyright (c) Yasuhiro MATSUMOTO <mattn.jp@gmail.com> |
 | `github.com/ncruces/go-strftime` | v1.0.0 | MIT | Copyright (c) 2022 Nuno Cruces |
 | `github.com/pkg/sftp` | v1.13.12 | BSD-2-Clause | Copyright (c) 2013, Dave Cheney |
@@ -85,6 +86,7 @@ each module's own `LICENSE` file.
 | `golang.org/x/image` | v0.48.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
 | `golang.org/x/sys` | v0.50.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
 | `golang.org/x/text` | v0.44.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `golang.org/x/xerrors` | v0.0.0-20200804184101-5ec99f83aff1 | BSD-3-Clause | Copyright (c) 2019 The Go Authors. All rights reserved. |
 | `google.golang.org/protobuf` | v1.36.12 | BSD-3-Clause | Copyright (c) 2018 The Go Authors. All rights reserved. |
 | `gorm.io/gorm` | v1.31.2 | MIT | Copyright (c) 2013-present Jinzhu |
 | `modernc.org/libc` | v1.74.1 | BSD-3-Clause | Copyright (c) 2017 The Libc Authors. All rights reserved.; portions Copyright (c) 2009 The Go Authors. All rights reserved. |

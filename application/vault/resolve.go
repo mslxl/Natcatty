@@ -27,6 +27,10 @@ type ResolvedAuth struct {
 	Selection domainvault.AuthSelection
 	Password  string
 	Key       *ResolvedKey
+	// TOTP is the Host's canonical otpauth://totp URI, or empty when the Host
+	// has no authenticator. It embeds the shared secret and is memory-only;
+	// callers must not log it.
+	TOTP string
 	// MissingKey reports a selected Key that no longer exists or has no
 	// stored private material. The connection fails closed rather than
 	// substituting unrelated credentials.
@@ -100,6 +104,15 @@ func (s *Service) ResolveAuth(ctx context.Context, hostID model.HostID) (Resolve
 		password = hostPassword
 	}
 	resolved.Password = password
+
+	// A TOTP authenticator is independent of the chosen method: it answers a
+	// keyboard-interactive challenge after the primary credential. An absent
+	// value is not an error and leaves the field empty.
+	totp, err := s.secretOrEmpty(ctx, HostSecretRef(host.ID, FieldTOTP))
+	if err != nil {
+		return ResolvedAuth{}, err
+	}
+	resolved.TOTP = totp
 
 	// Automatic mode also loads a selected Key: it takes its place in the
 	// automatic order after the agent. A dangling reference is reported as a

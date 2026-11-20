@@ -92,6 +92,7 @@ func shellLayout(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	if serial := s.SerialView(); serial != nil {
 		serial(c)
 	}
+	quickConnectView(c, s, m)
 	// The editor sits above the work surfaces so a remote-change conflict
 	// from an external edit is visible wherever the user is.
 	if editor := s.EditorView(); editor != nil {
@@ -494,6 +495,8 @@ func desktopNoticeText(m locales.Messages, notice state.DesktopNotice) string {
 		return m.DeepLinkProblemInvalid()
 	case state.DesktopNoticeUnsupportedTarget:
 		return m.DeepLinkProblemUnsupported()
+	case state.DesktopNoticeLocalShellFallback:
+		return m.CustomShellUnavailable()
 	}
 	return ""
 }

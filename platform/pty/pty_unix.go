@@ -53,6 +53,14 @@ func (p *PTY) start(options Options) error {
 	return nil
 }
 
+// pid returns the shell process id.
+func (p *PTY) pid() int {
+	if p.cmd == nil || p.cmd.Process == nil {
+		return 0
+	}
+	return p.cmd.Process.Pid
+}
+
 func (p *PTY) wait() (int, error) {
 	err := p.cmd.Wait()
 	var exit *exec.ExitError

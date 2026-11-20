@@ -10,12 +10,60 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 )
 
-// Client is the stdio process's one loopback connection to the app. It does
-// not reconnect: a lost app connection is reported, exactly as the original
-// stdio server did.
+// ErrConnectionClosed reports that the loopback socket is gone: the app closed
+// it, the peer reset it, or the client wrote to a closed connection. It marks
+// the only class of failure a caller may retry on a fresh connection, because a
+// request that failed this way is not known to have reached the app.
+var ErrConnectionClosed = errors.New("external MCP: the app connection is closed")
+
+// IsConnectionClosed reports whether err came from a lost or closed loopback
+// socket rather than a protocol, authentication, or dispatch failure.
+func IsConnectionClosed(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrConnectionClosed) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, io.ErrClosedPipe) ||
+		errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	// Windows reports socket loss as winsock numbers that do not compare equal
+	// to the Unix-style syscall constants above. Any non-timeout failure of an
+	// established read or write is a dead socket, whatever the platform calls it.
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return false
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return opErr.Op == "read" || opErr.Op == "write"
+	}
+	return false
+}
+
+// closedError wraps a transport failure that means the socket is gone. A
+// deadline or context failure is deliberately not wrapped: retrying it would
+// replay work the app may already have done.
+func closedError(operation string, err error) error {
+	if !IsConnectionClosed(err) {
+		return fmt.Errorf("%s: %w", operation, err)
+	}
+	return fmt.Errorf("%w: %s: %v", ErrConnectionClosed, operation, err)
+}
+
+// Client is the stdio process's one loopback connection to the app. It never
+// redials by itself: a lost connection is reported to its caller. The external
+// bridge wraps it in ReconnectingClient when it opts into reconnection; managed
+// callers keep this fail-fast behavior.
 type Client struct {
 	conn   net.Conn
 	reader *bufio.Reader
@@ -66,7 +114,7 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, errors.New("external MCP: the app connection is closed")
+		return nil, ErrConnectionClosed
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -92,7 +140,7 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 	}
 	if err := writeMessage(c.conn, message); err != nil {
 		c.closed = true
-		return nil, fmt.Errorf("external MCP: send %s: %w", method, err)
+		return nil, closedError("external MCP: send "+method, err)
 	}
 
 	wantID := strconv.FormatUint(id, 10)
@@ -115,7 +163,7 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 		if err != nil {
 			c.closed = true
 			if errors.Is(err, io.EOF) {
-				return nil, errors.New("external MCP: the app closed the connection")
+				return nil, fmt.Errorf("%w: the app closed the connection", ErrConnectionClosed)
 			}
 			if errors.Is(err, ErrLineTooLong) {
 				return nil, err
@@ -123,7 +171,7 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
 			}
-			return nil, fmt.Errorf("external MCP: read %s: %w", method, err)
+			return nil, closedError("external MCP: read "+method, err)
 		}
 	}
 }

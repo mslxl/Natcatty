@@ -246,6 +246,11 @@ type Settings struct {
 	// raises command capture to Tier 1. It is portable and on by default. When
 	// it is off, Sessions fall back to native OSC 133/7 or typed input.
 	HistoryCaptureHookEnabled bool
+	// LegacyAlgorithms offers legacy ciphers, key exchanges, and host-key
+	// types to an Unsaved Host, which has no saved backing to hold the
+	// per-Host setting. A saved Host always uses its own value, so this
+	// preference never widens a saved Host's offer. It is off by default.
+	LegacyAlgorithms bool
 }
 
 // Portable returns the terminal settings that follow the user between

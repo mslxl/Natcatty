@@ -13,6 +13,7 @@ import (
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
+	modelterminal "github.com/mslxl/natcatty/domain/model/terminal"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainbackup "github.com/mslxl/natcatty/domain/vaultbackup"
@@ -53,6 +54,27 @@ type options struct {
 	// clipboard; tests inject a recorder, because the platform clipboard needs
 	// a running main loop.
 	copyText func(string)
+	// hostListChord resolves the host-list toggle for the active scheme and
+	// the user's overrides, hostListToggle shows or hides the Vault, and
+	// hostListFocus reports whether the list should take the keyboard this
+	// frame. The chord is registered on the list itself, so the search field
+	// above it keeps the key for typing.
+	hostListChord  func() (ui.Modifiers, ui.Key, bool)
+	hostListToggle func() bool
+	hostListFocus  func() bool
+}
+
+// WithHostListToggle installs the host-list toggle on the list. The shortcut
+// is scoped to the list's focus subtree rather than the whole Vault, so a
+// focused text field keeps the chord. focus is asked once after the chord
+// shows the list, which lets the same chord hide it again.
+func WithHostListToggle(chord func() (ui.Modifiers, ui.Key, bool),
+	toggle func() bool, focus func() bool) Option {
+	return func(o *options) {
+		o.hostListChord = chord
+		o.hostListToggle = toggle
+		o.hostListFocus = focus
+	}
 }
 
 // WithClipboard overrides where the Host actions write copied text.
@@ -368,13 +390,28 @@ func list(c *ui.Context, s *vaultstate.State, opts options,
 
 	// Reserve the overlay scroll bar's gutter so a row's last action does not
 	// run under it, as the Settings viewport does.
-	ui.Scroll(c).Grow(1).PaddingEnd(scrollbarGutter(t)).TrackScroll(scroll).Children(func() {
+	listView := ui.Scroll(c).Grow(1).PaddingEnd(scrollbarGutter(t)).TrackScroll(scroll)
+	// The host-list chord is scoped to the list: a list row has focus when
+	// the user is browsing hosts, while the search field and the editors are
+	// text fields outside this subtree and keep the chord for typing.
+	if opts.hostListChord != nil {
+		if mods, key, ok := opts.hostListChord(); ok && opts.hostListToggle != nil {
+			listView.OnShortcut(mods, key, func() { opts.hostListToggle() })
+		}
+	}
+	// After the chord shows the Vault, the list takes the keyboard so the
+	// same chord can hide it. A one-shot request, not a steady frame focus,
+	// leaves the search field and rows their own focus.
+	if opts.hostListFocus != nil && opts.hostListFocus() {
+		listView.Focus()
+	}
+	listView.Children(func() {
 		if strings.TrimSpace(search.Query()) != "" {
 			vaultSearchResults(c, search, m, t)
 			return
 		}
 		if page.Shows(section.Hosts) {
-			hostsPage(c, s, opts, at, m, t)
+			hostsPage(c, s, opts, at, m, t, scroll)
 		}
 		if page.Shows(section.Keychain) {
 			keySection(c, s, m, t)
@@ -511,11 +548,11 @@ func groupSummary(s *vaultstate.State, group domainvault.Group, m locales.Messag
 func rootDropTarget(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
 	row := ui.Row(c).FillWidth().Gap(10).Padding(8, 10).Margin(8, 0, 0, 0).Radius(kit.M(c).Radius.Control).
 		Border(1, t.Border).AlignItems(ui.Center).TextColor(t.TextMuted)
-	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
+	if _, over := ui.DragOver[vaultstate.DragPayload](row); over {
 		row.Background(t.Accent.Alpha(0.08)).Border(2, t.Accent)
 	}
-	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && drag.HostID != "" {
-		s.MoveHostToGroup(drag.HostID, "")
+	if drag, dropped := ui.Drop[vaultstate.DragPayload](row); dropped && len(drag.DropHosts()) > 0 {
+		s.MoveHostsToGroup(drag.DropHosts(), "")
 		c.Invalidate()
 	}
 	row.Children(func() {
@@ -538,6 +575,18 @@ func groupDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t
 		_ = s.ConfirmDeleteGroup()
 		c.Invalidate()
 	}
+}
+
+// directProxyChoice is the radio sentinel for an explicit direct connection.
+// It never reaches the Vault: rendering translates it into the form's
+// DirectProxy flag and an empty ProxyProfileID.
+const directProxyChoice = "\x00direct"
+
+func proxyChoiceValue(direct bool, profileID string) string {
+	if direct {
+		return directProxyChoice
+	}
+	return profileID
 }
 
 func keySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
@@ -785,7 +834,11 @@ func knownHostRow(c *ui.Context, s *vaultstate.State, record domainconn.KnownHos
 	kit.ListRow(c).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, net.JoinHostPort(record.Hostname, strconv.Itoa(record.Port))).Bold()
-			ui.Text(c, record.KeyType+" · "+record.Fingerprint).
+			detail := record.KeyType + " · " + record.Fingerprint
+			if record.IsCertificateAuthority {
+				detail = m.VaultKnownHostCertificateAuthority() + " · " + detail
+			}
+			ui.Text(c, detail).
 				FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		})
 		ui.Text(c, m.VaultKnownHostTrusted()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
@@ -1220,6 +1273,65 @@ func securityKeyStatus(c *ui.Context, s *vaultstate.State, m locales.Messages, t
 	}
 }
 
+// newlineOptions maps the Enter key's wire sequence to its localized labels.
+// The default is the first entry, so an unrecognized saved value shows as
+// Default instead of an empty selection.
+func newlineOptions(m locales.Messages) ([]string, []modelterminal.NewlineMode) {
+	return []string{
+		m.VaultHostNewlineDefault(),
+		m.VaultHostNewlineLF(),
+		m.VaultHostNewlineCRLF(),
+	}, []modelterminal.NewlineMode{
+		modelterminal.NewlineCR,
+		modelterminal.NewlineLF,
+		modelterminal.NewlineCRLF,
+	}
+}
+
+// backspaceOptions maps the Backspace key's wire byte to its localized labels.
+func backspaceOptions(m locales.Messages) ([]string, []modelterminal.BackspaceMode) {
+	return []string{
+		m.VaultHostBackspaceDefault(),
+		m.VaultHostBackspaceCtrlH(),
+	}, []modelterminal.BackspaceMode{
+		modelterminal.BackspaceDEL,
+		modelterminal.BackspaceCtrlH,
+	}
+}
+
+// lineEditingOptions maps how Backspace counts characters to its labels.
+func lineEditingOptions(m locales.Messages) ([]string, []modelterminal.LineEditingMode) {
+	return []string{
+		m.VaultHostLineEditingDefault(),
+		m.VaultHostLineEditingByte(),
+	}, []modelterminal.LineEditingMode{
+		modelterminal.LineEditingCharacter,
+		modelterminal.LineEditingByte,
+	}
+}
+
+// optionLabel returns the label for current, or the first label when current
+// is not one of the options.
+func optionLabel[T comparable](labels []string, values []T, current T) string {
+	for index, candidate := range values {
+		if candidate == current {
+			return labels[index]
+		}
+	}
+	return labels[0]
+}
+
+// optionValue returns the value for label, or the first value when label is
+// not one of the options.
+func optionValue[T comparable](values []T, labels []string, label string) T {
+	for index, candidate := range labels {
+		if candidate == label {
+			return values[index]
+		}
+	}
+	return values[0]
+}
+
 // summaryRow lays the Host's summary out as separate wrapped tokens. No token
 // is a bare separator, so a narrow window never starts a line with "·".
 func summaryRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locales.Messages, t *ui.Theme) {
@@ -1373,6 +1485,12 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 			kit.FormRow(c, m.VaultHostNotes(), func() {
 				ui.TextArea(c, &form.Notes).Height(80)
 			})
+			kit.FormRow(c, m.VaultHostStartupCommand(), func() {
+				// Multi-line: the domain accepts up to 16 KiB and scripts
+				// routinely contain newlines, which a single-line input cannot
+				// hold.
+				ui.TextArea(c, &form.StartupCommand).Height(120)
+			}).Description(m.VaultHostStartupCommandHint())
 			passwordHint := m.VaultHostPasswordHint()
 			if form.HasPassword {
 				passwordHint = m.VaultHostPasswordKeep()
@@ -1382,8 +1500,39 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				// never loaded back from storage and never rendered again.
 				ui.TextInput(c, &form.Password).Password()
 			}).Description(passwordHint)
+			if domainvault.Protocol(form.Protocol) == domainvault.ProtocolTelnet {
+				ui.Text(c, m.VaultHostTelnetPlaintextWarning()).
+					FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
+			}
 
 			if domainvault.Protocol(form.Protocol).UsesSSHAuth() {
+				totpHint := m.VaultHostTOTPHint()
+				if form.HasTOTP && !form.ClearTOTP {
+					totpHint = m.VaultHostTOTPKeep()
+				}
+				kit.FormRow(c, m.VaultHostTOTP(), func() {
+					// The secret is plaintext only while the editor is open. It is
+					// never loaded back from storage and never rendered again.
+					ui.TextInput(c, &form.TOTP).
+						Password().
+						Placeholder(m.VaultHostTOTPPlaceholder())
+				}).Description(totpHint)
+				ui.Row(c).Gap(8).Children(func() {
+					if ui.Button(c, m.VaultHostTOTPImportQR()).Clicked() {
+						s.ChooseTOTPQRCode()
+						c.Invalidate()
+					}
+					if form.HasTOTP {
+						if ui.Checkbox(c, &form.ClearTOTP, m.VaultHostTOTPRemove()).Changed() {
+							if form.ClearTOTP {
+								// A removal decision must not be undone by a stale
+								// value left in the secret field.
+								form.TOTP = ""
+							}
+							c.Invalidate()
+						}
+					}
+				})
 				ui.Text(c, m.VaultHostAuthSection()).Bold()
 				kit.FormRow(c, m.VaultHostIdentity(), func() {
 					ui.RadioGroup(c, func() {
@@ -1415,15 +1564,29 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				}
 				ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
 			}
-			kit.FormRow(c, m.VaultHostProxyProfile(), func() {
-				ui.RadioGroup(c, func() {
-					ui.Radio(c, &form.ProxyProfileID, "", m.VaultNone())
-					for _, profile := range s.ProxyProfiles() {
-						ui.Radio(c, &form.ProxyProfileID, profile.ID, profile.Label)
+			// Jump chains, proxies, and Network Profiles describe how to reach
+			// the endpoint, so a protocol that routes through SSH keeps them
+			// even when its target is not SSH.
+			if domainvault.Protocol(form.Protocol).SupportsProxy() {
+				kit.FormRow(c, m.VaultHostProxyProfile(), func() {
+					proxyChoice := proxyChoiceValue(form.DirectProxy, form.ProxyProfileID)
+					ui.RadioGroup(c, func() {
+						ui.Radio(c, &proxyChoice, "", m.VaultNone())
+						ui.Radio(c, &proxyChoice, directProxyChoice, m.VaultProxyDirect())
+						for _, profile := range s.ProxyProfiles() {
+							ui.Radio(c, &proxyChoice, profile.ID, profile.Label)
+						}
+					})
+					form.DirectProxy = proxyChoice == directProxyChoice
+					form.ProxyProfileID = ""
+					if !form.DirectProxy {
+						form.ProxyProfileID = proxyChoice
 					}
-				})
-			}).Description(m.VaultHostProxyProfileHint())
-			hostNetworkProfileField(c, s, m, t)
+				}).Description(m.VaultHostProxyProfileHint() + " " + m.VaultProxyDirectHint())
+				hostProxyProfileSourceLine(c, s, m, t)
+				hostJumpHostsField(c, s, m, t, form.Protocol)
+				hostNetworkProfileField(c, s, m, t)
+			}
 			if form.Protocol == string(domainvault.ProtocolSSH) {
 				kit.FormRow(c, m.VaultHostFileProtocol(), func() {
 					changed := ui.Select(c, &form.FileProtocol, []string{
@@ -1451,6 +1614,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					ui.Text(c, m.VaultHostX11Warning()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 					ui.Checkbox(c, &form.X11WarningAcknowledged, m.VaultHostX11Acknowledge())
 				}
+				hostX11SourceLine(c, s, m, t)
 				if ui.Checkbox(c, &form.NetworkDevice, m.VaultHostNetworkDevice()).Changed() {
 					if form.NetworkDevice {
 						// A vendor CLI has no login shell for tmux to wrap.
@@ -1462,6 +1626,32 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				ui.Checkbox(c, &form.AutoAttachTmux, m.VaultHostAutoAttachTmux()).
 					Disabled(form.NetworkDevice)
 				ui.Text(c, m.VaultHostAutoAttachTmuxHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+				ui.Text(c, m.VaultHostInputCompatibility()).Bold()
+				ui.Text(c, m.VaultHostInputCompatibilityHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+				newlineLabels, newlineModes := newlineOptions(m)
+				newlineLabel := optionLabel(newlineLabels, newlineModes, modelterminal.NewlineMode(form.NewlineMode))
+				kit.FormRow(c, m.VaultHostNewlineMode(), func() {
+					if ui.Select(c, &newlineLabel, newlineLabels).Width(260).Changed() {
+						form.NewlineMode = string(optionValue(newlineModes, newlineLabels, newlineLabel))
+						c.Invalidate()
+					}
+				})
+				backspaceLabels, backspaceModes := backspaceOptions(m)
+				backspaceLabel := optionLabel(backspaceLabels, backspaceModes, modelterminal.BackspaceMode(form.BackspaceMode))
+				kit.FormRow(c, m.VaultHostBackspaceMode(), func() {
+					if ui.Select(c, &backspaceLabel, backspaceLabels).Width(260).Changed() {
+						form.BackspaceMode = string(optionValue(backspaceModes, backspaceLabels, backspaceLabel))
+						c.Invalidate()
+					}
+				})
+				lineEditingLabels, lineEditingModes := lineEditingOptions(m)
+				lineEditingLabel := optionLabel(lineEditingLabels, lineEditingModes, modelterminal.LineEditingMode(form.LineEditingMode))
+				kit.FormRow(c, m.VaultHostLineEditingMode(), func() {
+					if ui.Select(c, &lineEditingLabel, lineEditingLabels).Width(260).Changed() {
+						form.LineEditingMode = string(optionValue(lineEditingModes, lineEditingLabels, lineEditingLabel))
+						c.Invalidate()
+					}
+				})
 			}
 			if form.Protocol == string(domainvault.ProtocolMosh) {
 				kit.FormRow(c, m.VaultHostMoshServerPath(), func() {
@@ -1675,20 +1865,42 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 				})
 			}
 			kit.FormRow(c, m.VaultHostProxyProfile(), func() {
+				proxyChoice := proxyChoiceValue(form.DirectProxy, form.ProxyProfileID)
 				ui.RadioGroup(c, func() {
-					ui.Radio(c, &form.ProxyProfileID, "", m.VaultNone())
+					ui.Radio(c, &proxyChoice, "", m.VaultNone())
+					ui.Radio(c, &proxyChoice, directProxyChoice, m.VaultProxyDirect())
 					for _, profile := range s.ProxyProfiles() {
-						ui.Radio(c, &form.ProxyProfileID, profile.ID, profile.Label)
+						ui.Radio(c, &proxyChoice, profile.ID, profile.Label)
 					}
 				})
-			})
+				form.DirectProxy = proxyChoice == directProxyChoice
+				form.ProxyProfileID = ""
+				if !form.DirectProxy {
+					form.ProxyProfileID = proxyChoice
+				}
+			}).Description(m.VaultProxyDirectHint())
+			groupProxyProfileSourceLine(c, s, m, t)
 			groupNetworkProfileField(c, s, m, t)
 			if domainvault.Protocol(form.Protocol).UsesSSHAuth() {
+				groupJumpHostsField(c, s, m, t)
 				ui.Checkbox(c, &form.UseSSHAgent, m.VaultHostUseAgent())
 				if form.UseSSHAgent {
 					securityKeyStatus(c, s, m, t)
 				}
 				ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
+				// The X11 default follows the same rules as the Host editor:
+				// turning it off clears the acknowledgement so re-enabling it
+				// asks the user to accept the warning again.
+				if ui.Checkbox(c, &form.X11Forwarding, m.VaultHostX11Forwarding()).Changed() {
+					if !form.X11Forwarding {
+						form.X11WarningAcknowledged = false
+					}
+					c.Invalidate()
+				}
+				if form.X11Forwarding {
+					ui.Text(c, m.VaultHostX11Warning()).FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
+					ui.Checkbox(c, &form.X11WarningAcknowledged, m.VaultHostX11Acknowledge())
+				}
 			}
 		})
 
@@ -1847,6 +2059,10 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultProblemSudoUnsupported()
 	case vaultstate.ProblemETPort:
 		return m.VaultProblemETPort()
+	case vaultstate.ProblemTOTP:
+		return m.VaultProblemTOTP()
+	case vaultstate.ProblemTOTPImage:
+		return m.VaultProblemTOTPImage()
 	case vaultstate.ProblemSnippet:
 		return m.VaultSnippetProblem()
 	case vaultstate.ProblemSnippetPackage:
@@ -1897,6 +2113,8 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultBackupProblemProtective()
 	case vaultstate.ProblemBackupCorrupt:
 		return m.VaultBackupProblemCorrupt()
+	case vaultstate.ProblemBackupKeyMismatch:
+		return m.VaultBackupProblemKeyMismatch()
 	case vaultstate.ProblemBackupUnavailable:
 		return m.VaultBackupUnavailable()
 	case vaultstate.ProblemBackupClear:

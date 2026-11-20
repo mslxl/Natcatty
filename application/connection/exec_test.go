@@ -82,9 +82,14 @@ func TestRemoteRequiresSingleChannelMatchesOnlySoftwareTokens(t *testing.T) {
 		{"SSH-2.0-Qizhi TERM-SSHD_1.0", true},
 		{"SSH-2.0-CLOUDBILITY-4.14", true},
 		{"SSH-2.0-CloudLinker", true},
+		{"SSH-2.0-russh_0.40.0", true},
+		{"SSH-2.0-Russh", true},
 		// A token inside another word or product name is not a match.
 		{"SSH-2.0-SuperBHOSTSSHx", false},
 		{"SSH-2.0-NotTERM-SSHD-Other", false},
+		{"SSH-2.0-russhd_1.0", false},
+		{"SSH-2.0-myrussh", false},
+		{"SSH-2.0-notRussh", false},
 		{"", false},
 	}
 	for _, test := range tests {
@@ -124,6 +129,17 @@ func TestLeaseReportsSingleChannelAndReuse(t *testing.T) {
 	t.Cleanup(func() { _ = second.Release() })
 	if !second.Reused() {
 		t.Fatal("a parked transport lease did not report reuse")
+	}
+
+	russh := &execClient{version: "SSH-2.0-russh_0.40.0"}
+	russhManager, _ := newExecManager(t, russh)
+	russhLease, err := russhManager.Acquire(context.Background(), sshRequest())
+	if err != nil {
+		t.Fatalf("russh Acquire: %v", err)
+	}
+	t.Cleanup(func() { _ = russhLease.Release() })
+	if !russhLease.SingleChannel() {
+		t.Fatal("a russh banner was not classified as single-channel")
 	}
 
 	plain := &execClient{version: "SSH-2.0-OpenSSH_9.6"}

@@ -21,16 +21,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/mslxl/natcatty/application/session/autologin"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	"github.com/mslxl/natcatty/domain/model"
 	etmodel "github.com/mslxl/natcatty/domain/model/et"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	"github.com/mslxl/natcatty/domain/model/serial"
 	telnetmodel "github.com/mslxl/natcatty/domain/model/telnet"
+	modelterminal "github.com/mslxl/natcatty/domain/model/terminal"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 )
 
@@ -210,7 +213,9 @@ type Snapshot struct {
 	// Notice is the most recent non-fatal runtime problem, such as a local X11
 	// display that could not be reached. It is nil when there is none.
 	Notice *Notice
-	// CWD is the working directory the shell reported with OSC 7, or "".
+	// CWD is the working directory the shell reported with OSC 7, or for a
+	// local shell that never reports it, the probed process directory. It is
+	// empty when neither source knows.
 	CWD string
 	// Title is the terminal title from OSC 0/2, or "".
 	Title string
@@ -219,6 +224,10 @@ type Snapshot struct {
 	// Input is the line being typed but not yet submitted. Autocomplete reads
 	// it without reaching into the terminal's screen buffer.
 	Input string
+	// InputCursor is the cursor's rune offset within Input. It mirrors the
+	// line editor's cursor so an accepted suggestion replaces only the text
+	// left of it and leaves the rest of the line intact.
+	InputCursor int
 	// Busy reports recent output, a running command, or an active transfer.
 	Busy bool
 	// LastActivity is when terminal output last arrived.
@@ -312,6 +321,14 @@ type ExitWaiter interface {
 	Wait() (int, error)
 }
 
+// CWDProbe is implemented by a local transport that can read the shell
+// process's working directory. It is the fallback when the shell never
+// reports OSC 7. A remote transport leaves it unimplemented, so its cwd stays
+// unknown rather than being read from this machine.
+type CWDProbe interface {
+	WorkingDirectory() (string, error)
+}
+
 // CaptureHookExpectedReporter is implemented by transports that decide after
 // connecting whether the planned capture hook was actually installed. A remote
 // peer's shell is only known once its terminal opens: a Windows OpenSSH peer
@@ -389,11 +406,21 @@ type StartSpec struct {
 	Rows    int
 	// Label names the Session for logging (usually the Host label). Empty
 	// falls back to "session".
-	Label    string
-	HostID   model.HostID
-	Hostname string
-	Port     int
-	Username string
+	Label string
+	// StartupCommand, when non-empty, is typed once after the shell produces
+	// its first output on each connection, and replayed after every reconnect.
+	// It travels as ordinary input, so the shell's own line editor handles it.
+	StartupCommand string
+	HostID         model.HostID
+	Hostname       string
+	Port           int
+	Username       string
+	// Password is a one-shot credential for an SSH target with no saved Host,
+	// such as Quick Connect. It is memory-only: it is never persisted in the
+	// Workspace or the Vault, and a reconnect reuses the value the Session
+	// already holds. Empty asks the transport to resolve the Host's saved
+	// credentials.
+	Password string
 	// X11Forwarding requests X11 forwarding for this SSH Session when the Host
 	// has it enabled and acknowledged. The transport factory turns it into a
 	// non-pooled Connection.
@@ -424,6 +451,11 @@ type StartSpec struct {
 	// commands then use RawExec: they are written to the existing PTY as-is,
 	// without a shell wrapper or completion markers, and report no exit code.
 	NetworkDevice bool
+	// InputCompatibility translates typed Enter and Backspace keys before
+	// they reach the wire. It applies only to KindSSH; every other transport
+	// keeps its own input behavior. The zero value is byte-identical to
+	// today.
+	InputCompatibility modelterminal.InputCompatibility
 	// Serial carries a serial Session's port and framing. It is required when
 	// Kind is KindSerial and ignored by every other transport.
 	Serial *serial.Config
@@ -431,6 +463,10 @@ type StartSpec struct {
 	// is required when Kind is KindTelnet and ignored by every other
 	// transport.
 	Telnet *telnetmodel.Config
+	// AutoLogin, when non-nil, answers a Serial or Telnet console's login and
+	// password prompts. It is ignored by every other transport, which
+	// authenticates before its shell exists.
+	AutoLogin *autologin.Options
 	// Mosh carries a Mosh Session's bootstrap settings. It is required when
 	// Kind is KindMosh and ignored by every other transport.
 	Mosh *moshmodel.Config
@@ -557,6 +593,10 @@ type Session struct {
 	closeCh chan struct{}
 	writeCh chan []byte
 	done    chan struct{}
+	// writeMu serializes transport writes between the write loop and the
+	// one-shot startup command, so their bytes never interleave inside a
+	// chunk.
+	writeMu sync.Mutex
 
 	// remoteScreen reports that the transport receives its authoritative
 	// screen size from the peer. The UI sets MyGo's ResizeByConn option and
@@ -585,6 +625,7 @@ type Session struct {
 	hostAtuinActive bool
 	codec           Codec
 	highlighter     *domainterminal.Highlighter
+	inputTranslator *inputTranslator
 
 	// rawExecMu serializes programmatic commands on the one interactive PTY.
 	// rawMu guards the single raw-output subscriber that a running command
@@ -612,6 +653,36 @@ type Session struct {
 	// be swallowed by a line editor that is still aborting. A local shell is
 	// ready by construction.
 	commandReady atomic.Bool
+
+	// startupMu guards the one-shot Host startup command and the prompt
+	// readiness that releases it. It is armed for each transport generation and
+	// disarmed before the command is queued, so an output burst can never replay
+	// it within one connection. The generation keeps a late read or timer from
+	// the abandoned transport from firing the new connection's command.
+	startupMu               sync.Mutex
+	startupPending          bool
+	startupGeneration       int
+	startupTransport        Transport
+	startupTail             []byte
+	startupTimer            *time.Timer
+	startupReadinessTimeout time.Duration
+	startupSchedule         func(time.Duration, func()) *time.Timer
+
+	// autoLoginMu guards the console detector for the current transport
+	// generation. It is replaced on reconnect and disarmed when the transport
+	// ends, so a stale prompt can never write to a replacement connection.
+	autoLoginMu         sync.Mutex
+	autoLogin           *autologin.Engine
+	autoLoginGeneration int
+
+	// cwdProbeMu guards the optional local-shell working-directory probe and
+	// its cache. A consumer asks for the value; a finished command or a shell
+	// prompt marks it stale, so the next ask reads the process again.
+	cwdProbeMu    sync.Mutex
+	cwdProbe      CWDProbe
+	cwdProbeValue string
+	cwdProbeValid bool
+	cwdProbeStale bool
 
 	// outputMu orders rendered output against hibernate/resume. replay holds
 	// the bounded screen snapshot, feeds holds the observers, and the live
@@ -689,7 +760,12 @@ type Service struct {
 	onChange   func(Snapshot)
 	// autoLog decides whether a new Session starts logging. Nil disables
 	// automatic logs; the user can still start one from the Session surface.
-	autoLog             func(StartSpec) *LogOptions
+	autoLog                 func(StartSpec) *LogOptions
+	startupReadinessTimeout time.Duration
+	// startupSchedule replaces the readiness fallback timer. It is nil in
+	// production; tests inject it to observe the default bound and fire it
+	// without waiting.
+	startupSchedule     func(time.Duration, func()) *time.Timer
 	clipboardPolicy     func() domainterminal.ClipboardAccess
 	encodingPolicy      func(StartSpec) domainterminal.Encoding
 	codecFactory        CodecFactory
@@ -702,8 +778,12 @@ type Service struct {
 	highlightPolicy     func() (bool, []domainterminal.KeywordHighlightRule)
 	captureHook         CaptureHook
 	hostAtuin           HostAtuin
-	mu                  sync.Mutex
-	sessions            map[model.SessionID]*Session
+	// localShell resolves the configured custom shell for a local Session. It
+	// runs before the capture-hook planner so the hook wraps the user's shell
+	// instead of the OS login shell; nil keeps the OS default.
+	localShell func() []string
+	mu         sync.Mutex
+	sessions   map[model.SessionID]*Session
 	// captureNotices records the Host whose capture-hook failure was already
 	// announced, so a reconnect loop does not repeat the capability notice.
 	captureNotices map[string]bool
@@ -742,6 +822,26 @@ func WithAutoLogging(fn func(StartSpec) *LogOptions) Option {
 // keeps the original write-only default.
 func WithClipboardPolicy(fn func() domainterminal.ClipboardAccess) Option {
 	return func(s *Service) { s.clipboardPolicy = fn }
+}
+
+// WithStartupReadinessTimeout bounds how long a Host startup command waits for
+// output that looks like a shell prompt. A device that never prints a
+// recognized prompt still receives its command after this timeout; zero keeps
+// the default. It exists for a slow console and for tests.
+func WithStartupReadinessTimeout(timeout time.Duration) Option {
+	return func(s *Service) {
+		if timeout > 0 {
+			s.startupReadinessTimeout = timeout
+		}
+	}
+}
+
+// withStartupReadinessScheduler replaces the fallback timer. Tests use it to
+// assert the production default bound and to fire the callback deterministically.
+// The callback must not run synchronously: callers hold startupMu while
+// scheduling, and the callback locks it.
+func withStartupReadinessScheduler(schedule func(time.Duration, func()) *time.Timer) Option {
+	return func(s *Service) { s.startupSchedule = schedule }
 }
 
 // WithEncodingResolver supplies the initial encoding when a StartSpec does
@@ -795,6 +895,17 @@ func WithCaptureHook(hook CaptureHook) Option {
 // the hook for that Session. A nil policy keeps the normal hook behaviour.
 func WithHostAtuin(policy HostAtuin) Option {
 	return func(s *Service) { s.hostAtuin = policy }
+}
+
+// WithLocalShell resolves the configured custom shell argv for a local
+// Session. It is read before the capture-hook planner so a planned hook wraps
+// the user's shell rather than the OS login shell. The resolver returns nil
+// when no custom shell is configured, or when the configured path is missing
+// (the caller keeps the visible fallback warning). An explicit StartSpec
+// command always wins; this only fills a local Session that named none, which
+// is the workspace restore, split, and retry path.
+func WithLocalShell(resolve func() []string) Option {
+	return func(s *Service) { s.localShell = resolve }
 }
 
 // WithConnectionHook receives one event per completed connection attempt. The
@@ -872,6 +983,10 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	if codec == nil {
 		return nil, fmt.Errorf("session: codec factory returned nil for %q", spec.Encoding)
 	}
+	var inputTranslator *inputTranslator
+	if spec.Kind == KindSSH {
+		inputTranslator = newInputTranslator(spec.InputCompatibility, codec.EncodedWidth)
+	}
 
 	// A Host that already runs Atuin is detected before the terminal opens,
 	// over a separate read-only channel. Present keeps the Netcatty capture
@@ -885,6 +1000,17 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		cancel()
 		hostAtuinActive = probe.Present
 		hostAtuinFailed = probe.Failed
+	}
+
+	// Resolve the custom shell for a local Session before the capture hook
+	// plans. The planner rewrites the interactive shell's startup into
+	// spec.Command; resolving afterwards (the transport factory's fallback)
+	// would see a non-empty command and keep the OS login shell. An explicit
+	// StartSpec command, such as the Tab button's, still wins.
+	if spec.Kind == KindLocal && len(spec.Command) == 0 && s.localShell != nil {
+		if command := s.localShell(); len(command) > 0 {
+			spec.Command = command
+		}
 	}
 
 	// The capture hook rewrites the startup before the transport opens: local
@@ -954,29 +1080,32 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		highlightEnabled, highlightRules = s.highlightPolicy()
 	}
 	session := &Session{
-		id:                  id,
-		ctx:                 sessionCtx,
-		cancel:              cancel,
-		transport:           transport,
-		factory:             s.factory,
-		spec:                spec,
-		tap:                 tap,
-		clipboardAccess:     policy,
-		captureCleanup:      captureCleanup,
-		hostAtuin:           s.hostAtuin,
-		hostAtuinActive:     hostAtuinActive,
-		codec:               codec,
-		highlighter:         domainterminal.NewHighlighter(highlightEnabled, highlightRules),
-		genDone:             make(chan struct{}),
-		writeCh:             make(chan []byte, s.writeDepth),
-		commands:            make(chan command, 16),
-		closeCh:             make(chan struct{}, 1),
-		done:                make(chan struct{}),
-		onNotification:      s.onNotification,
-		onTransfer:          s.onTransfer,
-		onInput:             s.onInput,
-		onCommandCompletion: s.onCommandCompletion,
-		onBell:              s.onBell,
+		id:                      id,
+		ctx:                     sessionCtx,
+		cancel:                  cancel,
+		transport:               transport,
+		factory:                 s.factory,
+		spec:                    spec,
+		startupReadinessTimeout: s.startupReadinessTimeout,
+		startupSchedule:         s.startupSchedule,
+		tap:                     tap,
+		clipboardAccess:         policy,
+		captureCleanup:          captureCleanup,
+		hostAtuin:               s.hostAtuin,
+		hostAtuinActive:         hostAtuinActive,
+		codec:                   codec,
+		inputTranslator:         inputTranslator,
+		highlighter:             domainterminal.NewHighlighter(highlightEnabled, highlightRules),
+		genDone:                 make(chan struct{}),
+		writeCh:                 make(chan []byte, s.writeDepth),
+		commands:                make(chan command, 16),
+		closeCh:                 make(chan struct{}, 1),
+		done:                    make(chan struct{}),
+		onNotification:          s.onNotification,
+		onTransfer:              s.onTransfer,
+		onInput:                 s.onInput,
+		onCommandCompletion:     s.onCommandCompletion,
+		onBell:                  s.onBell,
 		snapshot: Snapshot{
 			ID:         id,
 			Kind:       spec.Kind,
@@ -991,10 +1120,14 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	}
 	session.conn = newTerminalConn(session)
 	session.bindScreenSizer(transport)
+	session.bindCWDProbe(transport)
 	// A local PTY is attached to a live shell at Open; a remote shell has to
 	// finish its startup (a ForceCommand bash -i included) before it can read a
 	// wrapper, so the first command probes readiness first.
 	session.commandReady.Store(spec.Kind == KindLocal)
+	// A Host startup command waits for this connection's shell prompt.
+	session.armStartupCommand(session.generation, transport)
+	session.armAutoLogin(session.generation, transport)
 
 	s.mu.Lock()
 	if s.closing {
@@ -1058,8 +1191,37 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 
 // OpenLocal opens the platform's local shell in a new Session.
 func (s *Service) OpenLocal(ctx context.Context) (*Session, error) {
+	return s.OpenLocalCommand(ctx, nil)
+}
+
+// OpenLocalCommand opens a local Session with an explicit command line. An
+// empty command asks the transport for the platform's login shell. The caller
+// resolves a configured custom shell; this method only carries it through.
+func (s *Service) OpenLocalCommand(ctx context.Context, command []string) (*Session, error) {
 	// The original names local Session logs "Local Terminal".
-	return s.Open(ctx, StartSpec{Kind: KindLocal, Label: "Local Terminal"})
+	return s.Open(ctx, StartSpec{Kind: KindLocal, Label: "Local Terminal", Command: command})
+}
+
+// LocalShellExists reports whether path names a program the OS can start. It
+// resolves PATH but never runs the program, so a custom-shell preference can
+// be checked before a Session opens.
+func LocalShellExists(path string) bool {
+	_, err := exec.LookPath(path)
+	return err == nil
+}
+
+// OpenLocalShell opens a named local shell in a new Session. shell is a
+// program name resolved on PATH or an executable path; empty falls back to
+// the platform default through OpenLocal.
+func (s *Service) OpenLocalShell(ctx context.Context, shell string) (*Session, error) {
+	if shell == "" {
+		return s.OpenLocal(ctx)
+	}
+	return s.Open(ctx, StartSpec{
+		Kind:    KindLocal,
+		Label:   "Local Terminal",
+		Command: []string{shell},
+	})
 }
 
 // Label names the Session for logging. It is the Host label the shell opened,
@@ -1363,10 +1525,17 @@ func (s *Service) remove(id model.SessionID) {
 func (s *Service) changed(snapshot Snapshot) {
 	s.mu.Lock()
 	hook := s.onChange
+	session := s.sessions[snapshot.ID]
 	s.mu.Unlock()
-	if hook != nil {
-		hook(snapshot)
+	if hook == nil {
+		return
 	}
+	if session != nil {
+		// Change consumers see the same cwd a Snapshot would, so follow-cwd
+		// works for a local shell that never reports OSC 7.
+		session.fillProbedCWD(&snapshot)
+	}
+	hook(snapshot)
 }
 
 // ID returns the Session's stable runtime identifier.
@@ -1375,6 +1544,15 @@ func (s *Session) ID() model.SessionID { return s.id }
 // HostID returns the Vault Host the Session was opened for. A local Session
 // has no Host and reports "".
 func (s *Session) HostID() model.HostID { return s.spec.HostID }
+
+// BracketedPaste reports whether the peer last enabled DECSET 2004. The
+// compose bar uses it to wrap multiline submissions in one paste.
+func (s *Session) BracketedPaste() bool {
+	if s == nil || s.tap == nil {
+		return false
+	}
+	return s.tap.state(time.Now()).BracketedPaste
+}
 
 // Done is closed once the Session has ended, its final snapshot is published,
 // and its Service has unregistered it. After Done fires, input addressed to the
@@ -1397,9 +1575,13 @@ func (s *Session) Snapshot() Snapshot {
 	snapshot.PendingBytes, snapshot.Paused = s.conn.stats()
 	state := s.tap.state(now)
 	snapshot.CWD = state.CWD
+	if snapshot.CWD == "" && snapshot.Kind == KindLocal {
+		snapshot.CWD = s.probedCWD()
+	}
 	snapshot.Title = state.Title
 	snapshot.Command = state.Command
 	snapshot.Input = state.Input
+	snapshot.InputCursor = state.InputCursor
 	snapshot.Busy = state.Busy
 	snapshot.LastActivity = state.LastActivity
 	snapshot.Transfer = state.Transfer
@@ -1624,6 +1806,8 @@ func (s *Session) loop() {
 				s.generation++
 				s.reopening = true
 				s.commandReady.Store(false)
+				s.stopStartupTimer()
+				s.cancelAutoLogin()
 				close(s.genDone)
 				s.genDone = make(chan struct{})
 				s.update(func(snapshot *Snapshot) {
@@ -1639,6 +1823,8 @@ func (s *Session) loop() {
 				s.generation++
 				s.reopening = true
 				s.commandReady.Store(false)
+				s.stopStartupTimer()
+				s.cancelAutoLogin()
 				close(s.genDone)
 				s.genDone = make(chan struct{})
 				if s.transport != nil {
@@ -1664,6 +1850,11 @@ func (s *Session) loop() {
 					s.tap.withdrawCaptureHook()
 				}
 				s.bindScreenSizer(cmd.transport)
+				s.bindCWDProbe(cmd.transport)
+				// Every reconnect gets its own one-shot startup command and a
+				// fresh detector for the console's new boot.
+				s.armStartupCommand(cmd.generation, cmd.transport)
+				s.armAutoLogin(cmd.generation, cmd.transport)
 				s.update(func(snapshot *Snapshot) {
 					snapshot.Connection = ConnectionStatusActive
 					snapshot.Notice = nil
@@ -1696,6 +1887,8 @@ finished:
 	close(s.genDone)
 	s.stopActivityTimer()
 	s.stopPromptTimer()
+	s.stopStartupTimer()
+	s.cancelAutoLogin()
 	s.conn.finish()
 	s.closeObservations()
 	if s.transport != nil {
@@ -1776,6 +1969,9 @@ func (s *Session) reconnect(generation int, immediate bool) {
 		}
 		transport, err := s.factory.Open(s.ctx, s.spec)
 		if err == nil {
+			// A new transport starts a new remote line, so the input
+			// translator must not delete bytes from the previous one.
+			s.inputTranslator.reset()
 			s.post(command{kind: commandTransportOpen, generation: generation, transport: transport})
 			return
 		}
@@ -1812,19 +2008,29 @@ func (s *Session) readLoop(generation int, transport Transport) {
 			// its completion detection must not depend on prompt tracking or
 			// history effects.
 			s.publishRawOutput(decoded)
+			s.feedAutoLogin(generation, string(decoded))
+			s.observeStartupOutput(generation, decoded)
 			output, effects := s.tap.observe(decoded, now)
 			if len(output) > 0 {
 				s.writeLog(logOutput(output))
 				s.highlightChunk(output)
 			}
 			if effects.Changed {
-				s.publishTap(now)
+				state := s.publishTap(now)
+				if len(output) > 0 && !state.Command.Running {
+					// A prompt or shell-initiated output can follow a cd.
+					// Cache until the next such burst; a running command's
+					// output rarely moves the shell's own directory.
+					s.invalidateCWDProbe()
+				}
 				s.scheduleActivityClear()
 			}
 			// observe returned after releasing the tap lock, so completions are
 			// published outside it. Each command is finalized once.
 			for _, completion := range effects.Completions {
 				s.publishCommandCompletion(completion)
+				// Prompt return is the canonical cwd change point.
+				s.invalidateCWDProbe()
 			}
 			if effects.PromptRecheck {
 				s.schedulePromptRecheck()
@@ -1841,6 +2047,13 @@ func (s *Session) readLoop(generation int, transport Transport) {
 			// The bytes are now in the backlog (or filtered out); a pending
 			// remote resize may proceed without overtaking them.
 			s.conn.noteTransportRead(n)
+			// The shell has produced output for this connection. The startup
+			// command is typed once that output ends on a prompt; while
+			// auto-login is still answering prompts it would land on a login
+			// prompt, so it waits for the detector to finish.
+			if s.autoLoginAllowsStartup(generation) {
+				s.maybeRunStartupCommand(generation, transport)
+			}
 		}
 		if err != nil {
 			s.flushHighlightCarry()
@@ -1919,7 +2132,10 @@ func (s *Session) writeLoop(generation int, transport Transport, genDone <-chan 
 		case <-genDone:
 			return
 		case input := <-s.writeCh:
-			if _, err := transport.Write(input); err != nil {
+			s.writeMu.Lock()
+			_, err := transport.Write(input)
+			s.writeMu.Unlock()
+			if err != nil {
 				s.post(command{
 					kind:       commandTransportEnded,
 					generation: generation,

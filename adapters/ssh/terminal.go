@@ -26,6 +26,9 @@ type sshClient struct {
 	x11           *x11Bridge
 	mu            sync.Mutex
 	closed        bool
+	// cancel releases a trust prompt blocked on a key re-exchange. It is the
+	// cancel function for the connection-scoped host-key verification context.
+	cancel context.CancelFunc
 	// dead records that the peer-side transport ended without Close being
 	// called. Keeping it separate from closed preserves the Close path that
 	// still has to tear down jump-hop clients.
@@ -254,6 +257,12 @@ func (c *sshClient) watchDeath() {
 	c.mu.Lock()
 	c.dead = true
 	c.mu.Unlock()
+	// A prompt queued for a rekey on this transport has no connection left to
+	// authorize; release it so it cannot linger until its own timeout. A
+	// transport without a verification context has no cancel function.
+	if c.cancel != nil {
+		c.cancel()
+	}
 }
 
 // RemoteVersion returns the server's full SSH identification line (for
@@ -341,6 +350,9 @@ func (c *sshClient) Close() error {
 	c.closed = true
 	c.mu.Unlock()
 
+	if c.cancel != nil {
+		c.cancel()
+	}
 	c.x11.Close()
 	err := c.client.Close()
 	for i := len(c.ancestors) - 1; i >= 0; i-- {

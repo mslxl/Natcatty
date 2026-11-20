@@ -22,6 +22,9 @@ type Capabilities struct {
 	FlowControls  []FlowControl
 	BaudRates     []int
 	ArbitraryBaud bool
+	// NamedPipes reports whether a local Windows named pipe can be used as a
+	// serial console. The original supports this on Windows only.
+	NamedPipes bool
 }
 
 // PlatformCapabilities returns the capabilities of the running platform.
@@ -45,6 +48,7 @@ func CapabilitiesFor(goos string) Capabilities {
 			// The DCB stores the rate as a 32-bit integer, so a custom rate is
 			// a driver question rather than a representation limit.
 			ArbitraryBaud: true,
+			NamedPipes:    true,
 		}
 	case "linux":
 		return Capabilities{
@@ -81,6 +85,14 @@ func CapabilitiesFor(goos string) Capabilities {
 func CheckSupport(cfg Config, caps Capabilities) error {
 	if !caps.Supported {
 		return &UnsupportedError{Platform: caps.Platform, Setting: "serial ports"}
+	}
+	if IsNamedPipePath(cfg.Path) {
+		if !caps.NamedPipes {
+			return &UnsupportedError{Platform: caps.Platform, Setting: "Windows named pipe",
+				Value: cfg.Path}
+		}
+		// A pipe carries bytes; baud rate and framing are not programmed.
+		return nil
 	}
 	if !slices.Contains(caps.DataBits, cfg.DataBits) {
 		return &UnsupportedError{Platform: caps.Platform, Setting: "dataBits",

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"runtime"
 
@@ -34,6 +35,13 @@ func (c sysmanagerConnector) Open(ctx context.Context, host domainvault.Host) (a
 				Cause: errors.New("no POSIX shell on Windows")}
 		}
 		return localSystemConnection{}, nil
+	}
+	// The panel runs POSIX commands over an SSH channel. A Telnet Host has no
+	// shell channel, so the surface must fail closed instead of treating the
+	// target as SSH.
+	if !host.Protocol.UsesSSHAuth() {
+		return nil, &appsysmanager.Error{Reason: appsysmanager.ReasonUnsupported,
+			Cause: fmt.Errorf("%s Hosts have no system shell over SSH", host.Protocol)}
 	}
 	if c.connections == nil {
 		return nil, &appsysmanager.Error{Reason: appsysmanager.ReasonInternal,

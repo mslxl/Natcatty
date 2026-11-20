@@ -39,6 +39,7 @@ func TestTerminalSettingsRoundTrip(t *testing.T) {
 			{ID: "custom", Patterns: []string{`boom`}, Color: "#123456", Enabled: true},
 		},
 		HistoryCaptureHookEnabled: false,
+		LegacyAlgorithms:          true,
 	}
 	if err := store.Save(context.Background(), want); err != nil {
 		t.Fatal(err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -514,5 +515,90 @@ func TestJournalIsTheOnlySuggestionSource(t *testing.T) {
 	got := service.Suggestions("git", "local")
 	if len(got) != 1 || got[0].Text != "git status" || got[0].Source != SourceHistory {
 		t.Fatalf("suggestions = %+v, want the journal row", got)
+	}
+}
+
+// catalogDescriptions stands in for the localized command catalog: it keys by
+// the first word of the suggestion, as the real catalog does, and returns ""
+// for anything it does not know.
+func catalogDescriptions(command string) string {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return ""
+	}
+	switch fields[0] {
+	case "git":
+		return "Track and manage source changes"
+	case "grep":
+		return "Search text for lines matching a pattern"
+	case "ls":
+		return "List directory contents"
+	default:
+		return ""
+	}
+}
+
+// TestCommandDescriptionsAnnotateWithoutChangingRanking proves the catalog is
+// an annotation only: the rows, their order, and their scores are exactly what
+// the unannotated service returns, while catalog matches gain a description.
+func TestCommandDescriptionsAnnotateWithoutChangingRanking(t *testing.T) {
+	base := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	journal := &journalMemory{entries: []domainhistory.Entry{
+		journalEntryFor("git status", "local", base),
+		journalEntryFor("git stash", "local", base.Add(time.Minute)),
+		journalEntryFor("grep -R needle", "local", base.Add(2*time.Minute)),
+		journalEntryFor("frobnicate --fast", "local", base.Add(3*time.Minute)),
+	}}
+	plain := newTestService(t, journal, defaultConfig())
+	annotated := newTestService(t, journal, defaultConfig(),
+		WithCommandDescriptions(catalogDescriptions))
+
+	want := plain.Suggestions("g", "local")
+	got := annotated.Suggestions("g", "local")
+	if len(got) != len(want) || len(got) != 3 {
+		t.Fatalf("annotated rows = %+v, want the 3 unannotated rows %+v", got, want)
+	}
+	for index := range want {
+		if got[index].Text != want[index].Text ||
+			got[index].Display != want[index].Display ||
+			got[index].Source != want[index].Source ||
+			got[index].Frequency != want[index].Frequency ||
+			got[index].Score != want[index].Score {
+			t.Fatalf("row %d changed: annotated %+v, plain %+v", index, got[index], want[index])
+		}
+		if got[index].Description == "" {
+			t.Errorf("row %d %q has no catalog description", index, got[index].Text)
+		}
+	}
+
+	// A command outside the catalog is still suggested, just unannotated.
+	unknown := annotated.Suggestions("frob", "local")
+	if len(unknown) != 1 || unknown[0].Text != "frobnicate --fast" {
+		t.Fatalf("unknown-command suggestions = %+v", unknown)
+	}
+	if unknown[0].Description != "" {
+		t.Errorf("unknown command description = %q, want none", unknown[0].Description)
+	}
+}
+
+// TestCommandDescriptionsReadTheLiveCatalog proves the callback runs per
+// request: changing what the catalog returns changes the next annotation
+// without rebuilding the service, which is what a live language switch needs.
+func TestCommandDescriptionsReadTheLiveCatalog(t *testing.T) {
+	journal := &journalMemory{entries: []domainhistory.Entry{
+		journalEntryFor("ls -la", "local", time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)),
+	}}
+	description := "List directory contents"
+	service := newTestService(t, journal, defaultConfig(),
+		WithCommandDescriptions(func(string) string { return description }))
+
+	first := service.Suggestions("ls", "local")
+	if len(first) != 1 || first[0].Description != "List directory contents" {
+		t.Fatalf("first suggestions = %+v", first)
+	}
+	description = "Lista el contenido del directorio"
+	second := service.Suggestions("ls", "local")
+	if len(second) != 1 || second[0].Description != description {
+		t.Fatalf("second suggestions = %+v, want the changed description", second)
 	}
 }

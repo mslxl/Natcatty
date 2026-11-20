@@ -140,6 +140,11 @@ func (v *Vault) Snapshot(ctx context.Context) (appsync.Payload, error) {
 				return appsync.Payload{}, err
 			}
 		}
+		if host.HasTOTP {
+			if err := v.addSecret(ctx, &payload, appvault.HostSecretRef(host.ID, appvault.FieldTOTP)); err != nil {
+				return appsync.Payload{}, err
+			}
+		}
 	}
 	if payload.Groups, err = v.records.ListGroups(ctx); err != nil {
 		return appsync.Payload{}, err
@@ -379,6 +384,9 @@ func (v *Vault) clearStale(ctx context.Context, payload appsync.Payload, byRef m
 			return err
 		}
 		if err := clear(appvault.HostSecretRef(host.ID, appvault.FieldProxyPassword)); err != nil {
+			return err
+		}
+		if err := clear(appvault.HostSecretRef(host.ID, appvault.FieldTOTP)); err != nil {
 			return err
 		}
 	}

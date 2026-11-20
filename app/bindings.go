@@ -21,8 +21,6 @@ import (
 // have. They keep their row and override controls in Settings but are never
 // dispatched, so a key can never run a different action than its label says.
 var unavailableBindings = map[string]bool{
-	"toggle-pane-zoom": true,
-
 	"port-forwarding": true,
 	"new-workspace":   true,
 	"snippets":        true,
@@ -45,6 +43,15 @@ var menuHandledBindings = map[string]bool{
 	"split-horizontal": true,
 	"split-vertical":   true,
 	"open-settings":    true,
+}
+
+// surfaceHandledBindings register their own element-scoped shortcut on the
+// surfaces they act on. A window shortcut would fire before a focused text
+// field could type the chord, so the terminal Pane and the Vault list own it
+// instead. The dispatcher still resolves their effective chord for those
+// surfaces, which keeps a user rebind working.
+var surfaceHandledBindings = map[string]bool{
+	"toggle-host-list": true,
 }
 
 // derivedMenuItems are menu items whose accelerator comes from the binding
@@ -227,7 +234,7 @@ func (d *bindingDispatcher) Shortcuts() []keyShortcut {
 			d.addDirectional(add, candidate.Parsed)
 			continue
 		}
-		if menuHandledBindings[id] {
+		if menuHandledBindings[id] || surfaceHandledBindings[id] {
 			continue
 		}
 		action, ok := d.action(id)
@@ -253,6 +260,38 @@ func (d *bindingDispatcher) Shortcuts() []keyShortcut {
 		add(chordMods(candidate.Parsed), key, run)
 	}
 	return out
+}
+
+// hostListChord returns the effective chord of the host-list toggle, as the
+// terminal Pane and the Vault list register it. The dispatcher leaves it out
+// of the window table: a scoped shortcut lets a focused text field keep the
+// chord, and it wins over the Backups menu accelerator on the same keys.
+func (d *bindingDispatcher) hostListChord() (ui.Modifiers, ui.Key, bool) {
+	if d == nil || d.service == nil {
+		return 0, 0, false
+	}
+	const id = "toggle-host-list"
+	if !catalogBindingAvailable(id) {
+		return 0, 0, false
+	}
+	binding, ok := domain.Lookup(id)
+	if !ok {
+		return 0, 0, false
+	}
+	scheme := d.service.Scheme()
+	chord, ok := domain.ParseChord(domain.EffectiveChord(binding, scheme, d.service.State().Overrides))
+	if !ok || chord.Range || chord.Arrows {
+		return 0, 0, false
+	}
+	key, ok := mygoKey(chord.Key)
+	if !ok {
+		return 0, 0, false
+	}
+	mods := chordMods(chord)
+	if terminalReservedChords(scheme, d.service.State().Overrides)[chordKey{mods: mods, key: key}] {
+		return 0, 0, false
+	}
+	return mods, key, true
 }
 
 // addDirectional registers a move-focus override. The catalog's pattern
@@ -348,6 +387,8 @@ func (d *bindingDispatcher) action(id string) (func(int), bool) {
 		}, true
 	case "toggle-side-panel":
 		return func(int) { d.shell.ToggleActiveFiles() }, true
+	case "toggle-pane-zoom":
+		return func(int) { d.shell.TogglePaneZoom() }, true
 	case "history-search":
 		if d.logs == nil {
 			return nil, false

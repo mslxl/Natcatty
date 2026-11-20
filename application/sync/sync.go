@@ -94,6 +94,11 @@ const (
 	// without a trusted baseline, unresolved conflicts, or a suspected shrink.
 	// The cloud bytes are left untouched.
 	ProblemConvergentMigration Problem = "convergent-migration-blocked"
+	// ProblemConvergentConflictChanged reports that a migration conflict's
+	// local or remote value changed between rendering the resolution row and
+	// the user's choice. The choice was not recorded and the migration did not
+	// complete; the refreshed preview lists the new values for review.
+	ProblemConvergentConflictChanged Problem = "convergent-conflict-changed"
 	// ProblemConvergentDivergence reports that two replicas with the same
 	// causal history serialize differently, or that a provider did not
 	// converge after all verification rounds. No side is overwritten
@@ -143,6 +148,10 @@ var (
 	// ErrConvergentMigration refuses to enable v2 unless every migration input
 	// is understood and has a trusted baseline.
 	ErrConvergentMigration = errors.New("sync: convergent migration is blocked")
+	// ErrConvergentConflictChanged refuses a migration conflict resolution
+	// whose expected value fingerprint no longer matches the fresh plan. The
+	// user must review the changed conflict before any side is applied.
+	ErrConvergentConflictChanged = errors.New("sync: convergent conflict changed since it was shown")
 	// ErrConvergentDivergence refuses to overwrite a genuinely divergent
 	// replica.
 	ErrConvergentDivergence = errors.New("sync: convergent replicas diverged")
@@ -660,6 +669,11 @@ type Service struct {
 	backupsList    []BackupInfo
 	backupsProblem Problem
 	convergent     ConvergentInfo
+	// migrationResolutions holds this process's per-field choices for a blocked
+	// migration, tagged with the conflict attempt they were made against. It is
+	// deliberately not persisted: the register address names Vault entities,
+	// and a restarted process simply lists the conflicts again.
+	migrationResolutions map[string]convergentMigrationResolution
 
 	// WebDAV connection state. The secrets stay in the token store; these are
 	// the non-secret fields the setup form prefills.
@@ -2318,6 +2332,8 @@ func problemFor(err error) Problem {
 		return ProblemBackup
 	case errors.Is(err, ErrUnsupportedVersion):
 		return ProblemUnsupported
+	case errors.Is(err, ErrConvergentConflictChanged):
+		return ProblemConvergentConflictChanged
 	case errors.Is(err, ErrConvergentMigration):
 		return ProblemConvergentMigration
 	case errors.Is(err, ErrConvergentDivergence):

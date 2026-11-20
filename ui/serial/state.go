@@ -21,6 +21,24 @@ type PortLister func(context.Context) ([]domainserial.PortInfo, error)
 // Opener opens a serial Session for a validated configuration.
 type Opener func(domainserial.Config) error
 
+// SecretStore keeps a serial profile's auto-login password in the app's
+// encrypted field-secret store. The profile key is the normalized port path
+// from Config.SecretProfileID. The dialog never writes a password into the
+// configuration, a workspace payload, or a log.
+type SecretStore interface {
+	// GetPassword returns the stored password and whether one exists.
+	GetPassword(ctx context.Context, profile string) (string, bool, error)
+	// SetPassword stores or replaces the profile's password.
+	SetPassword(ctx context.Context, profile, password string) error
+	// DeletePassword removes the profile's password.
+	DeletePassword(ctx context.Context, profile string) error
+}
+
+// ErrNoSecretStore reports a dialog asked to keep auto-login credentials
+// without a secret store. The session can still open, but the password is not
+// persisted.
+var ErrNoSecretStore = errors.New("serial dialog: no secret store")
+
 // ErrNoOpener reports a dialog created without a way to open a Session.
 var ErrNoOpener = errors.New("serial dialog: no Session opener")
 
@@ -39,6 +57,13 @@ func WithCapabilities(caps domainserial.Capabilities) Option {
 	return func(s *State) { s.capabilities = caps }
 }
 
+// WithSecretStore lets the dialog keep an auto-login password in the app's
+// encrypted field-secret store. Without it, a password typed into the dialog is
+// refused rather than silently dropped.
+func WithSecretStore(store SecretStore) Option {
+	return func(s *State) { s.secrets = store }
+}
+
 // State is the serial dialog's form and enumeration state. It is mutated on
 // the UI thread; the port list is filled synchronously because both platform
 // enumerators are local metadata reads, and an asynchronous list would need a
@@ -47,6 +72,7 @@ type State struct {
 	mu           sync.Mutex
 	lister       PortLister
 	opener       Opener
+	secrets      SecretStore
 	redraw       func()
 	visible      bool
 	capabilities domainserial.Capabilities
@@ -61,20 +87,36 @@ type State struct {
 	stopBits    string
 	parity      string
 	flowControl string
+
+	autoLoginEnabled  bool
+	autoLoginUsername string
+	autoLoginPassword string
+	// autoLoginPasswordPort records the port the typed password was entered
+	// for. A password is never stored or replayed for another port, even if a
+	// caller changes the path without clearing the form.
+	autoLoginPasswordPort string
+	autoLoginForget       bool
+	autoLoginAttempts     string
+	autoLoginReplies      string
 }
+
+// defaultAttempts is the dialog's initial attempt limit, matching the expect
+// engine's default so an unedited form shows what will happen.
+const defaultAttempts = 3
 
 // NewState returns a hidden dialog with the original defaults: 115200 baud,
 // 8 data bits, 1 stop bit, no parity, and no flow control.
 func NewState(lister PortLister, opener Opener, opts ...Option) *State {
 	state := &State{
-		lister:       lister,
-		opener:       opener,
-		capabilities: domainserial.PlatformCapabilities(),
-		baud:         strconv.Itoa(domainserial.DefaultBaudRate),
-		dataBits:     "8",
-		stopBits:     "1",
-		parity:       string(domainserial.ParityNone),
-		flowControl:  string(domainserial.FlowNone),
+		lister:            lister,
+		opener:            opener,
+		capabilities:      domainserial.PlatformCapabilities(),
+		baud:              strconv.Itoa(domainserial.DefaultBaudRate),
+		dataBits:          "8",
+		stopBits:          "1",
+		parity:            string(domainserial.ParityNone),
+		flowControl:       string(domainserial.FlowNone),
+		autoLoginAttempts: strconv.Itoa(defaultAttempts),
 	}
 	for _, opt := range opts {
 		opt(state)
@@ -146,10 +188,19 @@ func (s *State) PortsError() error {
 }
 
 // SetPort selects a port path and clears the last validation or connection
-// failure, since the user changed the input that caused it.
+// failure, since the user changed the input that caused it. A different port
+// also discards the typed auto-login password and forget request: they belong
+// to the port they were entered for, and carrying them over would send one
+// device's credential to another.
 func (s *State) SetPort(path string) {
 	s.mu.Lock()
-	s.path = strings.TrimSpace(path)
+	trimmed := strings.TrimSpace(path)
+	if trimmed != s.path {
+		s.autoLoginPassword = ""
+		s.autoLoginPasswordPort = ""
+		s.autoLoginForget = false
+	}
+	s.path = trimmed
 	s.problem = nil
 	s.mu.Unlock()
 	s.requestRedraw()
@@ -253,6 +304,114 @@ func (s *State) FlowControl() string {
 	return s.flowControl
 }
 
+// SetAutoLoginEnabled turns console login automation on or off. Turning it off
+// leaves the other fields intact so the user can switch it back on without
+// retyping; Config drops them from the opened profile while it is off.
+func (s *State) SetAutoLoginEnabled(enabled bool) {
+	s.mu.Lock()
+	s.autoLoginEnabled = enabled
+	s.problem = nil
+	s.mu.Unlock()
+	s.requestRedraw()
+}
+
+// AutoLoginEnabled reports whether login automation is on.
+func (s *State) AutoLoginEnabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.autoLoginEnabled
+}
+
+// SetAutoLoginUsername sets the username the detector answers with.
+func (s *State) SetAutoLoginUsername(value string) {
+	s.mu.Lock()
+	s.autoLoginUsername = value
+	s.problem = nil
+	s.mu.Unlock()
+	s.requestRedraw()
+}
+
+// AutoLoginUsername returns the username text.
+func (s *State) AutoLoginUsername() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.autoLoginUsername
+}
+
+// SetAutoLoginPassword sets the password text. It is written to the field
+// secret store on Connect and never enters Config. The password is scoped to
+// the port selected now; changing the port discards it.
+func (s *State) SetAutoLoginPassword(value string) {
+	s.mu.Lock()
+	s.autoLoginPassword = value
+	s.autoLoginPasswordPort = strings.TrimSpace(s.path)
+	s.autoLoginForget = false
+	s.problem = nil
+	s.mu.Unlock()
+	s.requestRedraw()
+}
+
+// AutoLoginPassword returns the password text for the form only. Callers must
+// not log or persist it.
+func (s *State) AutoLoginPassword() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.autoLoginPassword
+}
+
+// SetAutoLoginForgetPassword asks Connect to delete the profile's stored
+// password. Setting it also clears the form's password text.
+func (s *State) SetAutoLoginForgetPassword(forget bool) {
+	s.mu.Lock()
+	s.autoLoginForget = forget
+	if forget {
+		s.autoLoginPassword = ""
+	}
+	s.problem = nil
+	s.mu.Unlock()
+	s.requestRedraw()
+}
+
+// AutoLoginForgetPassword reports whether the stored password will be deleted.
+func (s *State) AutoLoginForgetPassword() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.autoLoginForget
+}
+
+// SetAutoLoginAttempts sets the attempt-limit text. It is parsed by Config.
+func (s *State) SetAutoLoginAttempts(value string) {
+	s.mu.Lock()
+	s.autoLoginAttempts = strings.TrimSpace(value)
+	s.problem = nil
+	s.mu.Unlock()
+	s.requestRedraw()
+}
+
+// AutoLoginAttempts returns the attempt-limit text.
+func (s *State) AutoLoginAttempts() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.autoLoginAttempts
+}
+
+// SetAutoLoginReplies sets the expect/reply rules as one "expect => reply" rule
+// per line, the form's editable shape.
+func (s *State) SetAutoLoginReplies(value string) {
+	s.mu.Lock()
+	s.autoLoginReplies = value
+	s.problem = nil
+	s.mu.Unlock()
+	s.requestRedraw()
+}
+
+// AutoLoginReplies returns the expect/reply rules as edited text.
+func (s *State) AutoLoginReplies() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.autoLoginReplies
+}
+
 // Config builds the selected configuration. A form value that cannot be read
 // is reported as the same typed validation error the transport would return.
 func (s *State) Config() (domainserial.Config, error) {
@@ -260,6 +419,8 @@ func (s *State) Config() (domainserial.Config, error) {
 	path, baudText := s.path, s.baud
 	dataText, stopText := s.dataBits, s.stopBits
 	parityText, flowText := s.parity, s.flowControl
+	autoEnabled, autoUsername := s.autoLoginEnabled, s.autoLoginUsername
+	autoAttempts, autoReplies := s.autoLoginAttempts, s.autoLoginReplies
 	s.mu.Unlock()
 
 	baud, err := strconv.Atoi(strings.TrimSpace(baudText))
@@ -296,8 +457,109 @@ func (s *State) Config() (domainserial.Config, error) {
 		Path: path, BaudRate: baud, DataBits: dataBits,
 		StopBits: stopBits, Parity: parity, FlowControl: flow,
 	}.Normalized()
+	if autoEnabled {
+		attempts := 0
+		if strings.TrimSpace(autoAttempts) != "" {
+			parsed, err := strconv.Atoi(strings.TrimSpace(autoAttempts))
+			if err != nil || parsed < 0 {
+				return domainserial.Config{}, &domainserial.ValidationError{
+					Field: "autoLoginAttempts", Value: autoAttempts,
+					Reason: "must be a whole number of attempts",
+				}
+			}
+			attempts = parsed
+		}
+		profile := domainserial.AutoLogin{
+			Enabled:     true,
+			Username:    autoUsername,
+			MaxAttempts: attempts,
+			Replies:     parseReplies(autoReplies),
+		}.Normalized()
+		cfg.AutoLogin = &profile
+	}
 	if err := cfg.Validate(); err != nil {
 		return domainserial.Config{}, err
+	}
+	return cfg, nil
+}
+
+// parseReplies reads the form's one-rule-per-line text. "expect => reply" and
+// "expect = reply" are both accepted; an unreadable line is ignored rather than
+// failing the whole connection, because the built-in login prompts still work
+// without it.
+func parseReplies(text string) []domainserial.AutoLoginReply {
+	var replies []domainserial.AutoLoginReply
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		index, separator := strings.Index(line, "=>"), 2
+		if index < 0 {
+			index, separator = strings.Index(line, "="), 1
+		}
+		if index < 0 {
+			continue
+		}
+		expect := strings.TrimSpace(line[:index])
+		if expect == "" {
+			continue
+		}
+		replies = append(replies, domainserial.AutoLoginReply{
+			Expect: expect, Respond: strings.TrimSpace(line[index+separator:]),
+		})
+	}
+	return replies
+}
+
+// persistAutoLogin writes, keeps, or deletes the profile's password according
+// to the form. It returns the configuration to open: PasswordSet records
+// whether a stored secret exists, but the password value never enters cfg. A
+// typed password that belongs to a different port is ignored rather than
+// stored under this one.
+func (s *State) persistAutoLogin(cfg domainserial.Config) (domainserial.Config, error) {
+	if cfg.AutoLogin == nil {
+		return cfg, nil
+	}
+	s.mu.Lock()
+	password, passwordPort := s.autoLoginPassword, s.autoLoginPasswordPort
+	forget, secrets := s.autoLoginForget, s.secrets
+	s.mu.Unlock()
+
+	profile := cfg.SecretProfileID()
+	if password != "" && domainserial.NormalizePortPath(passwordPort) != profile {
+		// The field was filled for another device (or before a port was
+		// chosen). Storing it here would replay one port's credential on
+		// another, so treat the field as empty for this profile.
+		password = ""
+	}
+	switch {
+	case forget:
+		if secrets != nil {
+			if err := secrets.DeletePassword(context.Background(), profile); err != nil {
+				return domainserial.Config{}, err
+			}
+		}
+		cfg.AutoLogin.PasswordSet = false
+	case password != "":
+		if secrets == nil {
+			return domainserial.Config{}, ErrNoSecretStore
+		}
+		if err := secrets.SetPassword(context.Background(), profile, password); err != nil {
+			return domainserial.Config{}, err
+		}
+		cfg.AutoLogin.PasswordSet = true
+	case secrets != nil:
+		// An empty field keeps the password already stored for this port, so
+		// editing the framing does not silently disable the login. A reconnect
+		// to the same port therefore reuses its stored profile password.
+		_, found, err := secrets.GetPassword(context.Background(), profile)
+		if err != nil {
+			return domainserial.Config{}, err
+		}
+		cfg.AutoLogin.PasswordSet = found
+	default:
+		cfg.AutoLogin.PasswordSet = false
 	}
 	return cfg, nil
 }
@@ -320,6 +582,11 @@ func (s *State) Connect() error {
 		s.setProblem(ErrNoOpener)
 		return ErrNoOpener
 	}
+	cfg, err = s.persistAutoLogin(cfg)
+	if err != nil {
+		s.setProblem(err)
+		return err
+	}
 	if err := s.opener(cfg); err != nil {
 		s.setProblem(err)
 		return err
@@ -327,6 +594,13 @@ func (s *State) Connect() error {
 	s.mu.Lock()
 	s.visible = false
 	s.problem = nil
+	// A completed connect consumes the typed credential. Clearing it here keeps
+	// a later Show/SetPort/Connect sequence from replaying this port's
+	// password, while an empty field still finds the stored profile password
+	// on a reconnect to the same port.
+	s.autoLoginPassword = ""
+	s.autoLoginPasswordPort = ""
+	s.autoLoginForget = false
 	s.mu.Unlock()
 	s.requestRedraw()
 	return nil
@@ -349,7 +623,7 @@ func ProblemText(m locales.Messages, err error) string {
 		return m.SerialUnsupported()
 	case errors.Is(err, domainserial.ErrInvalidConfig):
 		return m.SerialInvalidConfiguration()
-	case errors.Is(err, ErrNoOpener):
+	case errors.Is(err, ErrNoOpener), errors.Is(err, ErrNoSecretStore):
 		return m.ConnectionErrorInternal()
 	default:
 		return m.SerialConnectionFailed()

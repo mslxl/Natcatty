@@ -18,24 +18,29 @@ import (
 type fakeExtendedService struct {
 	*fakeService
 
-	mu            sync.Mutex
-	tmuxCreates   []string
-	tmuxKills     []string
-	dockerActions []dockerCall
-	inspectCalls  int
-	logCalls      int
-	logTail       int
-	document      appsysmanager.DockerDocument
-	documentErr   error
-	extendedErr   error
-	block         chan struct{}
-	started       chan struct{}
-	finished      chan struct{}
+	mu             sync.Mutex
+	tmuxCreates    []string
+	tmuxKills      []string
+	dockerActions  []dockerCall
+	inspectCalls   int
+	logCalls       int
+	logTail        int
+	inspectRuntime appsysmanager.ContainerRuntime
+	logRuntime     appsysmanager.ContainerRuntime
+	runtimes       []appsysmanager.ContainerRuntime
+	namespaces     []string
+	document       appsysmanager.DockerDocument
+	documentErr    error
+	extendedErr    error
+	block          chan struct{}
+	started        chan struct{}
+	finished       chan struct{}
 }
 
 type dockerCall struct {
-	id     string
-	action appsysmanager.DockerAction
+	runtime appsysmanager.ContainerRuntime
+	id      string
+	action  appsysmanager.DockerAction
 }
 
 func newFakeExtendedService() *fakeExtendedService {
@@ -78,11 +83,12 @@ func (f *fakeExtendedService) TmuxKill(ctx context.Context, host domainvault.Hos
 		Stdout: "killed", HasExitCode: true}, nil
 }
 
-func (f *fakeExtendedService) DockerContainerAction(ctx context.Context, host domainvault.Host,
-	id string, action appsysmanager.DockerAction) (appsysmanager.ActionResult, error) {
-	command, _ := appsysmanager.DockerActionCommand(id, action)
+func (f *fakeExtendedService) ContainerAction(ctx context.Context, host domainvault.Host,
+	runtime appsysmanager.ContainerRuntime, id string,
+	action appsysmanager.DockerAction) (appsysmanager.ActionResult, error) {
+	command, _ := appsysmanager.ContainerActionCommand(runtime, id, action)
 	f.mu.Lock()
-	f.dockerActions = append(f.dockerActions, dockerCall{id: id, action: action})
+	f.dockerActions = append(f.dockerActions, dockerCall{runtime: runtime, id: id, action: action})
 	f.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return appsysmanager.ActionResult{Command: command}, err
@@ -90,10 +96,35 @@ func (f *fakeExtendedService) DockerContainerAction(ctx context.Context, host do
 	return appsysmanager.ActionResult{Command: command, Stdout: "ok", HasExitCode: true}, nil
 }
 
-func (f *fakeExtendedService) DockerInspect(ctx context.Context, host domainvault.Host,
-	id string) (appsysmanager.DockerDocument, error) {
+func (f *fakeExtendedService) SetContainerRuntime(runtime appsysmanager.ContainerRuntime) {
+	f.mu.Lock()
+	f.runtimes = append(f.runtimes, runtime)
+	f.mu.Unlock()
+	// Mirror the real service: the cached Docker sample belongs to the previous
+	// engine, so switching discards it and shows a fresh sample connecting.
+	f.fakeService.mu.Lock()
+	f.snapshot.ContainerRuntime = runtime
+	if f.snapshot.Active == appsysmanager.TabDocker {
+		f.snapshot.Tabs[appsysmanager.TabDocker] = appsysmanager.TabState{
+			Tab: appsysmanager.TabDocker, Status: appsysmanager.StatusConnecting,
+			At: time.Now(),
+		}
+	}
+	f.fakeService.mu.Unlock()
+}
+
+func (f *fakeExtendedService) SetKubernetesNamespace(namespace string) error {
+	f.mu.Lock()
+	f.namespaces = append(f.namespaces, namespace)
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeExtendedService) ContainerInspect(ctx context.Context, host domainvault.Host,
+	runtime appsysmanager.ContainerRuntime, id string) (appsysmanager.DockerDocument, error) {
 	f.mu.Lock()
 	f.inspectCalls++
+	f.inspectRuntime = runtime
 	block := f.block
 	started := f.started
 	document := f.document
@@ -118,11 +149,12 @@ func (f *fakeExtendedService) DockerInspect(ctx context.Context, host domainvaul
 	return document, err
 }
 
-func (f *fakeExtendedService) DockerLogs(ctx context.Context, host domainvault.Host,
-	id string, tail int) (appsysmanager.DockerDocument, error) {
+func (f *fakeExtendedService) ContainerLogs(ctx context.Context, host domainvault.Host,
+	runtime appsysmanager.ContainerRuntime, id string, tail int) (appsysmanager.DockerDocument, error) {
 	f.mu.Lock()
 	f.logCalls++
 	f.logTail = tail
+	f.logRuntime = runtime
 	block := f.block
 	started := f.started
 	document := f.document
@@ -224,7 +256,7 @@ func TestTabVisibilityAndOrderPersist(t *testing.T) {
 	state.Activate()
 	state.Flush()
 
-	if got := state.Tabs(); len(got) != len(appsysmanager.ExtendedTabs) ||
+	if got := state.Tabs(); len(got) != len(appsysmanager.ExtendedTabs)-1 ||
 		got[4] != appsysmanager.TabTmux || got[6] != appsysmanager.TabGPU {
 		t.Fatalf("default tabs = %v", got)
 	}
@@ -265,8 +297,11 @@ func TestTabVisibilityAndOrderPersist(t *testing.T) {
 	if got := state.Tabs(); !sameTabList(got, want) {
 		t.Errorf("tabs after move = %v, want %v", got, want)
 	}
-	if got := prefs.Settings().SysManager.Order(); len(got) != len(want) ||
-		string(got[4]) != "docker" || string(got[5]) != "tmux" {
+	// The persisted layout names every known tab, including the Kubernetes one
+	// the active Host hides; the strip drops only the unsupported tab.
+	if got := prefs.Settings().SysManager.Order(); len(got) != len(want)+1 ||
+		string(got[4]) != "docker" || string(got[5]) != "tmux" ||
+		string(got[6]) != "kubernetes" {
 		t.Errorf("persisted order = %v", got)
 	}
 	if state.MoveTab(1) {
@@ -725,5 +760,211 @@ func TestDockerDocumentRejectsUnknownTargetsBeforeOpening(t *testing.T) {
 	}
 	if _, _, _, inspects, logs := service.calls(); inspects != 0 || logs != 0 {
 		t.Errorf("invalid targets ran inspect=%d logs=%d", inspects, logs)
+	}
+}
+
+func TestContainerRuntimeSwitcherOffersProbedEnginesAndRoutesActions(t *testing.T) {
+	service := newFakeExtendedService()
+	snapshot := demoExtendedSnapshot()
+	snapshot.CapabilitiesHost = "alpha"
+	snapshot.Capabilities = appsysmanager.Capabilities{HasDocker: true, HasPodman: true}
+	snapshot.ContainerRuntime = appsysmanager.RuntimeDocker
+	service.snapshot = snapshot
+	state := newExtendedTestState(service, newFakePreferences())
+	state.Activate()
+	state.Flush()
+
+	runtimes := state.AvailableContainerRuntimes()
+	if !sameRuntimes(runtimes, []appsysmanager.ContainerRuntime{
+		appsysmanager.RuntimeDocker, appsysmanager.RuntimePodman}) {
+		t.Fatalf("offered runtimes = %v, want only the probed engines", runtimes)
+	}
+	if got := state.ContainerRuntime(); got != appsysmanager.RuntimeDocker {
+		t.Fatalf("initial runtime = %q, want docker", got)
+	}
+
+	state.SetContainerRuntime(appsysmanager.RuntimePodman)
+	if got := state.ContainerRuntime(); got != appsysmanager.RuntimePodman {
+		t.Errorf("switched runtime = %q", got)
+	}
+	service.mu.Lock()
+	selected := append([]appsysmanager.ContainerRuntime(nil), service.runtimes...)
+	service.mu.Unlock()
+	if len(selected) != 1 || selected[0] != appsysmanager.RuntimePodman {
+		t.Errorf("service runtimes = %v, want one podman selection", selected)
+	}
+
+	// An engine the probe did not find is never selectable.
+	state.SetContainerRuntime(appsysmanager.RuntimeNerdctl)
+	if got := state.ContainerRuntime(); got != appsysmanager.RuntimePodman {
+		t.Errorf("an unprobed engine was selected: %q", got)
+	}
+
+	container := appsysmanager.Container{ID: "3f2a1b", Name: "web"}
+	if err := state.RequestDockerAction(container, appsysmanager.DockerStop); err != nil {
+		t.Fatalf("request stop: %v", err)
+	}
+	pending, ok := state.Pending()
+	if !ok || pending.Runtime != appsysmanager.RuntimePodman ||
+		pending.Command != "podman stop 3f2a1b" {
+		t.Fatalf("podman pending = %+v, %v", pending, ok)
+	}
+	state.CancelPending()
+
+	if err := state.InspectContainer(container); err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	waitFor(t, 2*time.Second, "the podman inspect", func() bool {
+		state.Flush()
+		return !state.DocumentBusy()
+	})
+	service.mu.Lock()
+	inspectRuntime := service.inspectRuntime
+	service.mu.Unlock()
+	if inspectRuntime != appsysmanager.RuntimePodman {
+		t.Errorf("inspect runtime = %q, want podman", inspectRuntime)
+	}
+	state.CloseDocument()
+
+	// A Docker-only Host is unchanged: one engine, no choice to make.
+	snapshot.Capabilities = appsysmanager.Capabilities{HasDocker: true}
+	service.mu.Lock()
+	service.snapshot = snapshot
+	service.mu.Unlock()
+	state.hostID = ""
+	state.reload()
+	state.Flush()
+	if got := state.AvailableContainerRuntimes(); !sameRuntimes(got,
+		[]appsysmanager.ContainerRuntime{appsysmanager.RuntimeDocker}) {
+		t.Errorf("docker-only runtimes = %v", got)
+	}
+	if got := state.ContainerRuntime(); got != appsysmanager.RuntimeDocker {
+		t.Errorf("docker-only runtime = %q", got)
+	}
+}
+
+func sameRuntimes(left, right []appsysmanager.ContainerRuntime) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func kubeSnapshot() appsysmanager.Snapshot {
+	snapshot := demoExtendedSnapshot()
+	snapshot.CapabilitiesHost = "alpha"
+	snapshot.Capabilities = appsysmanager.Capabilities{HasKubectl: true}
+	snapshot.KubernetesNamespace = "team-a"
+	snapshot.Tabs[appsysmanager.TabKubernetes] = appsysmanager.TabState{
+		Tab: appsysmanager.TabKubernetes, Status: appsysmanager.StatusLive, At: time.Now(),
+		Kubernetes: appsysmanager.Kubernetes{
+			Namespaces: []string{"default", "team-a"},
+			Namespace:  "team-a",
+			Pods: []appsysmanager.Pod{
+				{Name: "web-0", Namespace: "team-a", Status: "Running", Restarts: 2,
+					Age: "2h", Containers: []string{"app"}, RunningContainers: []string{"app"}},
+			},
+		},
+	}
+	return snapshot
+}
+
+func TestKubernetesTabAppearsWithKubectlAndOpensAPodTerminal(t *testing.T) {
+	service := newFakeExtendedService()
+	service.snapshot = kubeSnapshot()
+	prefs := newFakePreferences()
+	var opened string
+	state := NewState(service, fakeHosts{hosts: testHosts()}, prefs,
+		WithTerminalOpener(func(host domainvault.Host, command string) error {
+			if string(host.ID) != "alpha" {
+				t.Errorf("terminal host = %q", host.ID)
+			}
+			opened = command
+			return nil
+		}))
+	state.Activate()
+	state.Flush()
+
+	if !state.TabAvailable(appsysmanager.TabKubernetes) ||
+		!state.TabVisible(appsysmanager.TabKubernetes) {
+		t.Fatal("the Kubernetes tab is not offered with kubectl present")
+	}
+	state.SetTab(appsysmanager.TabKubernetes)
+	if got := state.Tab(); got != appsysmanager.TabKubernetes {
+		t.Fatalf("active tab = %q", got)
+	}
+	state.Flush()
+
+	pods := state.DisplayPods()
+	if len(pods) != 1 || pods[0].Name != "web-0" {
+		t.Fatalf("displayed pods = %+v", pods)
+	}
+	if got := state.KubernetesNamespaces(); len(got) != 2 || got[1] != "team-a" {
+		t.Errorf("namespaces = %v", got)
+	}
+	if got := state.KubernetesNamespace(); got != "team-a" {
+		t.Errorf("namespace = %q, want the effective one", got)
+	}
+	state.SelectRow(0)
+	pod, ok := state.SelectedPod()
+	if !ok || pod.Name != "web-0" {
+		t.Fatalf("selected pod = %+v, %v", pod, ok)
+	}
+	if err := state.AttachPod(pod); err != nil {
+		t.Fatalf("attach pod: %v", err)
+	}
+	for _, want := range []string{
+		"exec kubectl -n 'team-a' exec -it 'web-0' -c 'app'",
+		`printf '\033[H\033[2J\033[3J'`,
+	} {
+		if !strings.Contains(opened, want) {
+			t.Errorf("terminal command is missing %q: %q", want, opened)
+		}
+	}
+
+	if err := state.SetKubernetesNamespace("default"); err != nil {
+		t.Fatalf("select namespace: %v", err)
+	}
+	service.mu.Lock()
+	namespaces := append([]string(nil), service.namespaces...)
+	service.mu.Unlock()
+	if len(namespaces) != 1 || namespaces[0] != "default" {
+		t.Errorf("service namespaces = %v", namespaces)
+	}
+}
+
+func TestKubernetesTabIsAbsentWithoutKubectl(t *testing.T) {
+	service := newFakeExtendedService()
+	snapshot := demoExtendedSnapshot()
+	snapshot.CapabilitiesHost = "alpha"
+	snapshot.Capabilities = appsysmanager.Capabilities{HasDocker: true}
+	service.snapshot = snapshot
+	state := newExtendedTestState(service, newFakePreferences())
+	state.Activate()
+	state.Flush()
+
+	if state.TabAvailable(appsysmanager.TabKubernetes) {
+		t.Error("Kubernetes is available without kubectl")
+	}
+	if state.TabVisible(appsysmanager.TabKubernetes) {
+		t.Error("Kubernetes is visible without kubectl")
+	}
+	for _, tab := range state.Tabs() {
+		if tab == appsysmanager.TabKubernetes {
+			t.Error("the Kubernetes tab is still in the strip")
+		}
+	}
+	state.SetTab(appsysmanager.TabKubernetes)
+	if got := state.Tab(); got == appsysmanager.TabKubernetes {
+		t.Error("a hidden Kubernetes tab was activated")
+	}
+	// The Docker tab and the rest of the surface keep working.
+	if !state.TabVisible(appsysmanager.TabDocker) {
+		t.Error("the Docker tab disappeared with Kubernetes")
 	}
 }

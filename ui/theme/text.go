@@ -28,6 +28,21 @@ func DangerText(t *ui.Theme) ui.Color {
 	})
 }
 
+// SuccessText returns a success color readable as body text on the theme's
+// background and surface. The green token is tuned for meters, and the light
+// one falls below the body-text target on light fills; this helper darkens a
+// light theme's green until it clears the target and keeps a dark theme's
+// bright one.
+func SuccessText(t *ui.Theme) ui.Color {
+	return readableText(t, []ui.Color{
+		ui.Hex("#15803d"), ui.Hex("#166534"), ui.Hex("#14532d"),
+		ui.Hex("#052e16"), ui.Hex("#000000"),
+	}, []ui.Color{
+		t.Success, ui.Hex("#4ade80"), ui.Hex("#86efac"),
+		ui.Hex("#bbf7d0"), ui.Hex("#f0fdf4"),
+	})
+}
+
 // WarningText returns a warning color readable as body text on the theme's
 // background and surface. The light warning token is tuned for icons and
 // borders and falls below the body-text target on light fills; dark mode keeps

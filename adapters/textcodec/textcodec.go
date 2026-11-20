@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"unicode/utf8"
 
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
@@ -122,6 +123,27 @@ func (c *Codec) Encode(p []byte) []byte {
 		c.encInput = append(c.encInput[:0], rest...)
 	}
 	return encoded
+}
+
+// EncodedWidth returns the number of wire bytes r occupies in the current
+// encoding. It uses a throwaway encoder so measuring never consumes or retains
+// state in the streaming encoder Encode uses. A rune the charset cannot
+// represent becomes '?' on the wire and therefore counts as one byte.
+func (c *Codec) EncodedWidth(r rune) int {
+	c.mu.Lock()
+	text := textEncoding(c.encoding)
+	c.mu.Unlock()
+	if text == nil {
+		if size := utf8.RuneLen(r); size > 0 {
+			return size
+		}
+		return 1
+	}
+	encoded, _, err := transformChunk(text.NewEncoder(), []byte(string(r)), true)
+	if err != nil || len(encoded) == 0 {
+		return 1
+	}
+	return len(encoded)
 }
 
 // textEncoding returns the x/text codec for encoding, or nil for UTF-8, which

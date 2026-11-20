@@ -379,9 +379,14 @@ func areaContent(c *ui.Context, config Config, area Area, m locales.Messages, t 
 		appearanceArea(c, config.Preferences, config.Themes, m, t)
 	case AreaTerminal:
 		if config.Terminal != nil {
-			terminalSection(c, config.Terminal, m, t)
+			terminalSection(c, config.Terminal, config.Preferences, m, t)
 			groupReset(c, m, t, m.SettingsTerminalTitle(), func() bool {
-				return config.Terminal.ResetAll()
+				reset := config.Terminal.ResetAll()
+				if config.Preferences != nil &&
+					!config.Preferences.IsDefault(domain.FieldTerminalShiftEnter) {
+					reset = config.Preferences.ResetField(domain.FieldTerminalShiftEnter) && reset
+				}
+				return reset
 			}, true)
 		}
 	case AreaTransport:

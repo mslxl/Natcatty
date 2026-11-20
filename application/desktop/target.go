@@ -10,16 +10,24 @@ import (
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
-// TargetKind is the transport a launch target addresses.
+// TargetKind is what a launch target opens: a transport, or a local shell.
 type TargetKind string
 
 const (
 	// TargetSSH is an ssh:// URL or an ssh-style command-line Host.
 	TargetSSH TargetKind = "ssh"
-	// TargetTelnet is a telnet:// URL. The rewrite has no Telnet transport
-	// yet, so the app reports it as an unknown target instead of connecting.
+	// TargetTelnet is a telnet:// URL. Deep links and the command line only
+	// open saved SSH Hosts, so the app reports a Telnet target as an
+	// unsupported scheme instead of connecting.
 	TargetTelnet TargetKind = "telnet"
+	// TargetLocalShell is a local terminal requested with
+	// --open-terminal-shell. It opens a Tab instead of dialing a Host.
+	TargetLocalShell TargetKind = "local-shell"
 )
+
+// maxTerminalShellLength bounds a launch flag's shell value. A discovered id
+// is short; the cap still leaves room for a nested executable path.
+const maxTerminalShellLength = 4096
 
 // Target is a launch target parsed from a deep link or the command line.
 type Target struct {
@@ -32,6 +40,9 @@ type Target struct {
 	Password string
 	// Port is the explicit port, or 0 for the protocol default.
 	Port int
+	// Shell is the program a TargetLocalShell starts, either a name resolved
+	// on PATH or an executable path.
+	Shell string
 	// Raw is the original argument, kept for diagnostics.
 	Raw string
 }
@@ -197,6 +208,25 @@ func ParseCommandLine(args []string) ([]Target, []error) {
 			} else {
 				problems = append(problems, err)
 			}
+		case lower == "--open-terminal-shell":
+			value := ""
+			if index+1 < len(args) && !isOpenTerminalFlag(args[index+1]) {
+				index++
+				value = args[index]
+			}
+			target, err := parseTerminalShellArgument(value)
+			if err != nil {
+				problems = append(problems, err)
+				continue
+			}
+			targets = append(targets, target)
+		case strings.HasPrefix(lower, "--open-terminal-shell="):
+			target, err := parseTerminalShellArgument(arg[len("--open-terminal-shell="):])
+			if err != nil {
+				problems = append(problems, err)
+				continue
+			}
+			targets = append(targets, target)
 		case commandLineValueFlags[arg]:
 			if index+1 < len(args) {
 				index++
@@ -222,6 +252,39 @@ func ParseCommandLine(args []string) ([]Target, []error) {
 		}
 	}
 	return targets, problems
+}
+
+// parseTerminalShellArgument validates an --open-terminal-shell value. A path
+// or program name may arrive quoted. An empty or oversized value is a
+// problem, not a Tab in the default shell: a malformed launch must not open an
+// empty window.
+func parseTerminalShellArgument(raw string) (Target, error) {
+	value := strings.TrimSpace(raw)
+	if len(value) >= 2 {
+		if (value[0] == '"' && value[len(value)-1] == '"') ||
+			(value[0] == '\'' && value[len(value)-1] == '\'') {
+			value = strings.TrimSpace(value[1 : len(value)-1])
+		}
+	}
+	if value == "" {
+		return Target{}, fmt.Errorf("%w: missing shell", ErrInvalidTarget)
+	}
+	if len(value) > maxTerminalShellLength || strings.ContainsRune(value, 0) {
+		return Target{}, fmt.Errorf("%w: shell %q", ErrInvalidTarget, value)
+	}
+	return Target{Kind: TargetLocalShell, Shell: value, Raw: value}, nil
+}
+
+// isOpenTerminalFlag reports a local-terminal launch flag, including its
+// =value form, so one flag cannot become the value of another.
+func isOpenTerminalFlag(arg string) bool {
+	arg = strings.ToLower(strings.TrimSpace(arg))
+	for _, flag := range []string{"--open-terminal-shell", "--open-terminal-path"} {
+		if arg == flag || strings.HasPrefix(arg, flag+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 // commandLineProtocol recognizes the explicit transport switches. The third

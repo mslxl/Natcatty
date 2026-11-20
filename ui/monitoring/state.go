@@ -79,16 +79,11 @@ var ColumnKeys = []string{
 // RangeChoices are the trend windows the toolbar offers, in minutes.
 var RangeChoices = []int{5, 15, 30}
 
-// IntervalChoices are the refresh cadences the toolbar offers: the
-// original hides the sub-three-second ones.
+// IntervalChoices are the refresh cadences the toolbar offers. One second is
+// available for a close look; the sampler runs only while the surface is
+// visible, so leaving it stops the faster polling.
 func IntervalChoices() []int {
-	out := make([]int, 0, len(domainpreferences.MonitorIntervalChoices))
-	for _, choice := range domainpreferences.MonitorIntervalChoices {
-		if choice >= 3 {
-			out = append(out, choice)
-		}
-	}
-	return out
+	return append([]int(nil), domainpreferences.MonitorIntervalChoices...)
 }
 
 // Form is the panel editor's draft. Interval, Range, and Sort are carried
@@ -402,6 +397,40 @@ func (s *State) DisplayStatus(id string) domainmonitor.Status {
 	return state.Status
 }
 
+// PartitionAlert is one displayed Host's partition above the capacity
+// threshold. The Host label keeps two Hosts' root partitions distinct.
+type PartitionAlert struct {
+	Host string
+	Disk domainmonitor.Disk
+}
+
+// PartitionAlerts returns the partitions above the capacity threshold across
+// the displayed, live Hosts, sorted by mount point and then Host label. It is
+// empty while the panel is not sampling, so a hidden panel raises no alerts.
+func (s *State) PartitionAlerts() []PartitionAlert {
+	if !s.Running() {
+		return nil
+	}
+	var out []PartitionAlert
+	for _, host := range s.DisplayHosts() {
+		id := string(host.ID)
+		if s.DisplayStatus(id) != domainmonitor.StatusLive {
+			continue
+		}
+		state := s.HostState(id)
+		for _, disk := range domainmonitor.DiskAlerts(state.Sample.Disks) {
+			out = append(out, PartitionAlert{Host: s.HostLabel(host), Disk: disk})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Disk.MountPoint != out[j].Disk.MountPoint {
+			return out[i].Disk.MountPoint < out[j].Disk.MountPoint
+		}
+		return out[i].Host < out[j].Host
+	})
+	return out
+}
+
 // Now returns the surface's clock.
 func (s *State) Now() time.Time { return s.now() }
 
@@ -655,11 +684,16 @@ func (s *State) EndPickHosts() {
 }
 
 // PickerHosts returns the Vault Hosts the picker lists, filtered by its
-// search as the surface's search filters a panel.
+// search as the surface's search filters a panel. Monitoring runs metric
+// commands over an SSH channel, so a Host whose protocol has none is never
+// offered.
 func (s *State) PickerHosts() []domainvault.Host {
 	query := strings.ToLower(strings.TrimSpace(s.pickerSearch))
 	out := make([]domainvault.Host, 0, len(s.hostItems))
 	for _, host := range s.hostItems {
+		if !host.Protocol.SupportsMonitoring() {
+			continue
+		}
 		if query == "" || hostMatches(host, query) {
 			out = append(out, host)
 		}

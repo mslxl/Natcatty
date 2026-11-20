@@ -153,7 +153,8 @@ func liveSnapshot(now time.Time, hosts ...domainvault.Host) domainmonitor.Snapsh
 	for index, host := range hosts {
 		sample := domainmonitor.Sample{
 			At: now, CPU: 42 + float64(index), Memory: 33, Disk: 51,
-			Rx: 1 << 20, Tx: 4096, Latency: 12, GPU: 35,
+			Rx: 1 << 20, Tx: 4096, Latency: 12,
+			GPUs: []domainmonitor.GPU{{Utilization: 35}},
 		}
 		snapshot.Hosts[string(host.ID)] = domainmonitor.HostState{
 			HostID: string(host.ID),
@@ -335,6 +336,124 @@ func TestStateCreatesPanelValidatesAndOpensTerminal(t *testing.T) {
 	}
 }
 
+// TestStateOneSecondRefreshSamplesOnlyWhileVisible proves the one-second
+// choice is offered, samples at one second while the surface is visible, and
+// is stopped rather than stacked when the surface is left.
+func TestStateOneSecondRefreshSamplesOnlyWhileVisible(t *testing.T) {
+	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	prefs := newFakePrefs(domainpreferences.Monitor{
+		Panels: []domainpreferences.MonitorPanel{{
+			ID: "ops", Name: "Ops", HostIDs: []string{"h1"},
+			View: domainpreferences.MonitorViewList, Interval: 1,
+			Range: 30, Sort: domainpreferences.MonitorSortManual,
+		}},
+	})
+	service := newFakeService()
+	state := NewState(service, &fakeHosts{items: []domainvault.Host{
+		testHost("h1", "Alpha", "alpha.example", ""),
+	}}, prefs, nil, WithClock(func() time.Time { return now }))
+	defer state.Close()
+
+	offered := false
+	for _, choice := range IntervalChoices() {
+		if choice == 1 {
+			offered = true
+		}
+	}
+	if !offered {
+		t.Fatalf("IntervalChoices = %v, want one second", IntervalChoices())
+	}
+
+	state.Activate()
+	state.Start()
+	if got := service.lastStart(t).interval; got != time.Second {
+		t.Fatalf("start interval = %v, want 1s", got)
+	}
+
+	service.mu.Lock()
+	starts, stops := len(service.starts), len(service.stops)
+	service.mu.Unlock()
+	if starts != 1 || stops != 0 {
+		t.Fatalf("after Start: starts=%d stops=%d, want 1/0", starts, stops)
+	}
+
+	state.Deactivate()
+	if state.Running() {
+		t.Fatal("Deactivate left the one-second sampler running")
+	}
+	state.Activate()
+	if got := service.lastStart(t).interval; got != time.Second {
+		t.Fatalf("resumed interval = %v, want 1s", got)
+	}
+	service.mu.Lock()
+	starts, stops = len(service.starts), len(service.stops)
+	service.mu.Unlock()
+	if starts != 2 || stops != 1 {
+		t.Fatalf("after leaving and returning: starts=%d stops=%d, want 2/1", starts, stops)
+	}
+}
+
+// TestStatePartitionAlertsSurfaceOnlyAboveTheThreshold proves a partition over
+// the capacity threshold raises the existing alert surface on every affected
+// Host, and that a hidden panel raises none.
+func TestStatePartitionAlertsSurfaceOnlyAboveTheThreshold(t *testing.T) {
+	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	alpha := testHost("h1", "Alpha", "alpha.example", "")
+	beta := testHost("h2", "Beta", "beta.example", "")
+	prefs := newFakePrefs(domainpreferences.Monitor{
+		Panels: []domainpreferences.MonitorPanel{{
+			ID: "ops", Name: "Ops", HostIDs: []string{"h1", "h2"},
+			View: domainpreferences.MonitorViewList, Interval: 5,
+			Range: 30, Sort: domainpreferences.MonitorSortManual,
+		}},
+	})
+	service := newFakeService()
+	state := NewState(service, &fakeHosts{items: []domainvault.Host{alpha, beta}},
+		prefs, nil, WithClock(func() time.Time { return now }))
+	defer state.Close()
+	state.Activate()
+	state.Start()
+
+	snapshot := liveSnapshot(now, alpha, beta)
+	first := snapshot.Hosts["h1"]
+	first.Sample.Disks = []domainmonitor.Disk{
+		{MountPoint: "/var", Percent: 81},
+		{MountPoint: "/", Percent: 91},
+	}
+	snapshot.Hosts["h1"] = first
+	second := snapshot.Hosts["h2"]
+	second.Sample.Disks = []domainmonitor.Disk{
+		{MountPoint: "/", Percent: 88},
+		{MountPoint: "/data", Percent: 40},
+	}
+	snapshot.Hosts["h2"] = second
+	service.mu.Lock()
+	service.snapshot = snapshot
+	service.mu.Unlock()
+	state.Flush()
+
+	alerts := state.PartitionAlerts()
+	want := []PartitionAlert{
+		{Host: "Alpha", Disk: domainmonitor.Disk{MountPoint: "/", Percent: 91}},
+		{Host: "Beta", Disk: domainmonitor.Disk{MountPoint: "/", Percent: 88}},
+		{Host: "Alpha", Disk: domainmonitor.Disk{MountPoint: "/var", Percent: 81}},
+	}
+	if len(alerts) != len(want) {
+		t.Fatalf("alerts = %+v, want %+v", alerts, want)
+	}
+	for index := range want {
+		if alerts[index].Host != want[index].Host ||
+			alerts[index].Disk.MountPoint != want[index].Disk.MountPoint {
+			t.Fatalf("alerts[%d] = %+v, want %+v", index, alerts[index], want[index])
+		}
+	}
+
+	state.Deactivate()
+	if got := state.PartitionAlerts(); len(got) != 0 {
+		t.Fatalf("hidden-panel alerts = %+v, want none", got)
+	}
+}
+
 func TestStateReportsTooManyHostsAndStopsOnDeactivate(t *testing.T) {
 	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
 	prefs := newFakePrefs(domainpreferences.Monitor{
@@ -484,6 +603,53 @@ func TestViewRendersListChartsEditorAndNarrowWindow(t *testing.T) {
 	tester.Frame()
 	if !tester.HasText(locales.In("zh-CN").MonitoringStatusLive()) {
 		t.Errorf("zh-CN list missing; texts: %v", tester.Texts())
+	}
+}
+
+// TestStateKeepsAndRendersEveryGPU is the two-GPU view contract: the state
+// exposes both devices and the detail panel gives each one its own row.
+func TestStateKeepsAndRendersEveryGPU(t *testing.T) {
+	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	hosts := []domainvault.Host{testHost("h1", "Alpha", "alpha.example", "prod", "web")}
+	prefs := newFakePrefs(domainpreferences.Monitor{
+		Panels: []domainpreferences.MonitorPanel{{
+			ID: "ops", Name: "Operations", HostIDs: []string{"h1"},
+			View: domainpreferences.MonitorViewList, Interval: 5,
+			Range: 30, Sort: domainpreferences.MonitorSortManual,
+		}},
+	})
+	service := newFakeService()
+	service.snapshot = liveSnapshot(now, hosts...)
+	service.snapshot.Running["ops"] = true
+	service.snapshot.StartedAt["ops"] = now.Add(-time.Minute)
+	state := service.snapshot.Hosts["h1"]
+	state.Sample.GPUs = []domainmonitor.GPU{
+		{Utilization: 42, MemUsedMB: 1024, MemTotalMB: 8192, Name: "NVIDIA GeForce RTX 4090"},
+		{Utilization: 18, MemUsedMB: 512, MemTotalMB: 40960, Name: "NVIDIA A100-SXM4-40GB"},
+	}
+	service.snapshot.Hosts["h1"] = state
+
+	monitorState := NewState(service, &fakeHosts{items: hosts}, prefs, nil,
+		WithClock(func() time.Time { return now }))
+	defer monitorState.Close()
+	monitorState.Activate()
+	monitorState.Start()
+	monitorState.Flush()
+
+	if got := monitorState.HostState("h1").Sample.GPUs; len(got) != 2 {
+		t.Fatalf("state kept %d GPUs, want 2: %+v", len(got), got)
+	}
+
+	tester := ui.NewTester(View(monitorState), 1100, 720)
+	tester.SetLocale("en")
+	monitorState.OpenDetail("h1")
+	tester.Frame()
+	for _, want := range []string{
+		"NVIDIA GeForce RTX 4090", "NVIDIA A100-SXM4-40GB", "42.0%", "18.0%",
+	} {
+		if !tester.HasText(want) {
+			t.Errorf("the detail panel does not show %q; texts: %v", want, tester.Texts())
+		}
 	}
 }
 

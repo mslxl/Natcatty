@@ -14,10 +14,12 @@ import (
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/application/session/autologin"
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	"github.com/mslxl/natcatty/domain/model"
 	domainetmodel "github.com/mslxl/natcatty/domain/model/et"
 	domoshmodel "github.com/mslxl/natcatty/domain/model/mosh"
+	domainprotocol "github.com/mslxl/natcatty/domain/model/protocol"
 	domainserial "github.com/mslxl/natcatty/domain/model/serial"
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
@@ -172,6 +174,13 @@ type State struct {
 	vaultVisible  bool
 	// vaultSection is the Vault page the sidebar chose.
 	vaultSection section.Section
+	// hostListChord resolves the catalog's host-list toggle for the active
+	// scheme and the user's overrides. The shell registers it on the terminal
+	// Pane and the Vault list rather than at window scope, so a focused text
+	// field keeps the chord. hostListFocusPending asks the Vault list to take
+	// the keyboard after the chord shows it, so the same chord can hide it.
+	hostListChord        func() (ui.Modifiers, ui.Key, bool)
+	hostListFocusPending bool
 	// home is the page of the home Tab shown last: the Vault, Logs,
 	// monitoring, or System manager. Choosing the home Tab returns to it.
 	home        HomePage
@@ -231,9 +240,13 @@ type State struct {
 	requestSettings  func()
 	requestRedraw    func()
 	sessions         *appsession.Service
-	surfaces         SurfaceFactory
-	trustPrompt      *sessionui.TrustPrompt
-	authPrompt       *sessionui.AuthPrompt
+	// localShell resolves the custom shell a local Session starts: the argv
+	// and whether the configured path was unusable, so the OS login shell
+	// opened instead. Nil asks the OS directly.
+	localShell  func() (command []string, fallback bool)
+	surfaces    SurfaceFactory
+	trustPrompt *sessionui.TrustPrompt
+	authPrompt  *sessionui.AuthPrompt
 	// etResumeStore lets the shell clear a saved ET credential pair when no
 	// live Session owns it any more: a restored reattach the server refuses as
 	// unsupported, or an ET Pane closed while its Session never opened. Nil
@@ -243,6 +256,13 @@ type State struct {
 	// workspace persists layout changes and supplies the restore payload.
 	workspace   *appworkspace.Service
 	resolveHost HostResolver
+	// serialAutoLogin resolves a serial profile's expect engine options from
+	// its saved credentials. Nil leaves auto-login off.
+	serialAutoLogin func(context.Context, domainserial.Config) *autologin.Options
+	// telnetAutoLogin resolves a Telnet Host's expect engine options from its
+	// saved credentials and the one-shot password of a Quick Connect. Nil
+	// leaves auto-login off.
+	telnetAutoLogin func(context.Context, domainvault.Host, string) *autologin.Options
 	// dynamicTabTitleMode is the live Dynamic tab title setting. Nil keeps the
 	// default: dynamic titles for every Session.
 	dynamicTabTitleMode func() domainterminal.DynamicTabTitleMode
@@ -298,22 +318,56 @@ type State struct {
 	broadcastTargets     map[model.SessionID]bool
 	broadcastSessions    map[model.SessionID]bool
 	broadcastTargetIDs   []model.SessionID
+	mainSessionIDs       []model.SessionID
 	broadcastResult      appsession.SendResult
 	broadcastNotice      int
+	composeTargets       map[model.SessionID]bool
+	composeExplicit      bool
+	composeNotice        int
 	composeOpen          bool
 	composeDraft         string
 	composeTrim          bool
 	composeDecodeEscapes bool
 	composeLineMode      appsession.ComposeLineMode
 	composeSending       bool
+	composeReconnecting  bool
+	composeConnection    ComposeConnection
 	composeBroadcast     bool
 	composeResult        appsession.SendResult
 	composeSeq           uint64
 	composeCancel        context.CancelFunc
 
+	// The compose directory picker. Listings run off the UI thread and write
+	// these fields under inputMu; composeDirectorySeq makes a superseded or
+	// canceled listing unable to replace a newer one.
+	composeDirectory        ComposeDirectorySource
+	composeDirectoryOpen    bool
+	composeDirectorySession model.SessionID
+	composeDirectoryShell   string
+	composeDirectoryTracked string
+	composeDirectoryPath    string
+	composeDirectoryTyped   string
+	// composeDirectoryPendingTyped is the resolved path a finished listing
+	// wants the editor to show. The listing goroutine writes only this field;
+	// the UI thread copies it into composeDirectoryTyped, which is the string
+	// the TextInput binds directly and never shares with another goroutine.
+	composeDirectoryPendingTyped string
+	composeDirectoryRequested    string
+	composeDirectoryEntries      []ComposeDirectoryEntry
+	composeDirectoryUnknown      bool
+	composeDirectoryLoading      bool
+	composeDirectoryFailed       bool
+	composeDirectoryUnsupported  bool
+	composeDirectorySeq          uint64
+	composeDirectoryCancel       context.CancelFunc
+
 	// desktopNotice is a non-blocking message for a deep-link or command-line
 	// target the app could not open. It is set and read on the UI thread.
 	desktopNotice DesktopNotice
+
+	// quickConnect is the tab bar's quick-connect dialog. It opens an Unsaved
+	// Host Session and never writes to the Vault.
+	quickConnect quickConnectState
 
 	// searchState is the Quick Switcher and command palette overlay. A nil
 	// state leaves the chords and the overlay out, which test shells use.
@@ -368,6 +422,30 @@ func WithSessions(service *appsession.Service, surfaces SurfaceFactory) Option {
 		s.sessions = service
 		s.surfaces = surfaces
 	}
+}
+
+// WithLocalShell supplies the custom shell for local Sessions. command is the
+// argv to start; fallback reports that the configured program was unusable,
+// so the OS login shell opens and the shell warns. Without this option a local
+// Tab asks the transport for the OS login shell.
+func WithLocalShell(resolve func() (command []string, fallback bool)) Option {
+	return func(s *State) { s.localShell = resolve }
+}
+
+// WithSerialAutoLogin gives the shell the resolver that turns a serial
+// profile's stored credentials into an expect engine. The resolver reads the
+// password from the app's encrypted field-secret store; it returns nil when
+// auto-login is off. Without it, serial Sessions open without automation.
+func WithSerialAutoLogin(resolve func(context.Context, domainserial.Config) *autologin.Options) Option {
+	return func(s *State) { s.serialAutoLogin = resolve }
+}
+
+// WithTelnetAutoLogin gives the shell the resolver that turns a Telnet Host's
+// Vault login into an expect engine. password is the one-shot credential of a
+// Quick Connect, or "" for a saved Host. It returns nil when the Host has no
+// login to replay.
+func WithTelnetAutoLogin(resolve func(context.Context, domainvault.Host, string) *autologin.Options) Option {
+	return func(s *State) { s.telnetAutoLogin = resolve }
 }
 
 // ETResumeStore removes a saved ET session pair from the secret store. The app
@@ -531,6 +609,7 @@ func NewState(opts ...Option) *State {
 		active: -1, nextTabNumber: 1, vaultVisible: true, vaultSection: section.Hosts, ctx: ctx, cancel: cancel,
 		broadcastTargets:  make(map[model.SessionID]bool),
 		broadcastSessions: make(map[model.SessionID]bool),
+		composeTargets:    make(map[model.SessionID]bool),
 		composeLineMode:   appsession.ComposePaste,
 	}
 	for _, opt := range opts {
@@ -570,9 +649,10 @@ func (s *State) setProblem(err error) {
 type DesktopNotice string
 
 const (
-	DesktopNoticeNone              DesktopNotice = ""
-	DesktopNoticeInvalidTarget     DesktopNotice = "invalid_target"
-	DesktopNoticeUnsupportedTarget DesktopNotice = "unsupported_target"
+	DesktopNoticeNone               DesktopNotice = ""
+	DesktopNoticeInvalidTarget      DesktopNotice = "invalid_target"
+	DesktopNoticeUnsupportedTarget  DesktopNotice = "unsupported_target"
+	DesktopNoticeLocalShellFallback DesktopNotice = "local_shell_fallback"
 )
 
 // SetDesktopNotice records the banner code. Passing DesktopNoticeNone clears
@@ -655,6 +735,56 @@ func (s *State) ShowHome() {
 	default:
 		s.ShowVault()
 	}
+}
+
+// WithHostListChord supplies the host-list toggle's effective chord. The app
+// resolves it through the dispatcher, so a user rebind reaches the surfaces
+// that register it.
+func WithHostListChord(chord func() (ui.Modifiers, ui.Key, bool)) Option {
+	return func(s *State) { s.hostListChord = chord }
+}
+
+// HostListChord returns the effective host-list chord, if the app wired one.
+func (s *State) HostListChord() (ui.Modifiers, ui.Key, bool) {
+	if s.hostListChord == nil {
+		return 0, 0, false
+	}
+	return s.hostListChord()
+}
+
+// ToggleHostList shows the Vault's Host list, or returns to the active work
+// Tab when the list is already showing. It is the host-list binding's action
+// in the Go port, where the Vault is the host list surface. Hiding needs a
+// work Tab to return to; with none the Vault stays, as the only surface there
+// is. It reports whether the visible surface changed.
+func (s *State) ToggleHostList() bool {
+	if s.vaultVisible {
+		if s.TabCount() == 0 {
+			return false
+		}
+		s.vaultVisible = false
+		s.logsVisible = false
+		s.sftpVisible = false
+		s.hostListFocusPending = false
+		s.RequestRedraw()
+		return true
+	}
+	s.vaultSection = section.Hosts
+	// Set the focus request before showing the Vault: the frame the show
+	// schedules must already know the list takes the keyboard, so the chord
+	// can hide the Vault on its next press.
+	s.hostListFocusPending = true
+	s.ShowVault()
+	return true
+}
+
+// ConsumeHostListFocus reports whether the Vault list should take the
+// keyboard this frame. ToggleHostList asks for it when the chord shows the
+// list, so pressing the chord again hides it without a click.
+func (s *State) ConsumeHostListFocus() bool {
+	pending := s.hostListFocusPending
+	s.hostListFocusPending = false
+	return pending
 }
 
 // ShowVault makes the Vault the visible surface.
@@ -782,12 +912,36 @@ func (s *State) leaveSystemManager() {
 
 // NewTab opens a local shell Session, builds its terminal surface, appends it
 // as a work Tab, and makes it active.
-func (s *State) NewTab() error {
+func (s *State) NewTab() error { return s.NewTabWithShell("") }
+
+// NewTabWithShell opens a local terminal Tab with a chosen shell, as
+// --open-terminal-shell does. An empty shell uses the platform default;
+// otherwise it is a program name or executable path. A failed shell start
+// returns the error without appending an empty Tab.
+func (s *State) NewTabWithShell(shell string) error {
 	if s.sessions == nil || s.surfaces == nil {
 		return ErrNoSessions
 	}
 	s.setProblem(nil)
-	session, err := s.sessions.OpenLocal(context.Background())
+	var command []string
+	if s.localShell != nil {
+		// A new local Tab re-reads the preference. Clear only this feature's
+		// fallback so a fixed path stops warning without hiding an unrelated
+		// deep-link problem.
+		if s.DesktopNotice() == DesktopNoticeLocalShellFallback {
+			s.SetDesktopNotice(DesktopNoticeNone)
+		}
+		var fallback bool
+		command, fallback = s.localShell()
+		if fallback {
+			s.SetDesktopNotice(DesktopNoticeLocalShellFallback)
+		}
+	}
+	// An explicit shell argument wins over the configured preference.
+	if shell != "" {
+		command = []string{shell}
+	}
+	session, err := s.sessions.OpenLocalCommand(context.Background(), command)
 	if err != nil {
 		return err
 	}
@@ -839,6 +993,13 @@ func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput)
 // openHost is the one connection path: OpenHost, OpenHostWithStartup, and
 // OpenHostBrowser differ only in what they do once the Tab is attached.
 func (s *State) openHost(host domainvault.Host, startup StartupInput, browser bool) error {
+	return s.openHostWithPassword(host, startup, browser, "")
+}
+
+// openHostWithPassword is openHost plus a one-shot password for a target that
+// has no saved Host, as Quick Connect does. The password stays in memory: it is
+// passed to the Session but never stored in the workspace descriptor.
+func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput, browser bool, password string) error {
 	if s.sessions == nil || s.surfaces == nil {
 		return ErrNoSessions
 	}
@@ -851,9 +1012,13 @@ func (s *State) openHost(host domainvault.Host, startup StartupInput, browser bo
 
 	plan := hostSessionTransport(host)
 	spec := HostSessionSpec(host)
+	// The one-shot password is never stored in the workspace descriptor; it
+	// only travels into this Session's StartSpec.
+	spec.Password = password
 	resumeKey, x11 := spec.ResumeKey, spec.X11Forwarding
 	ctx := s.ctx
 	go func() {
+		s.attachAutoLogin(ctx, &spec, host, password)
 		session, err := s.sessions.Open(ctx, spec)
 		s.mu.Lock()
 		s.outcomes = append(s.outcomes, openOutcome{
@@ -903,6 +1068,7 @@ func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (mode
 	plan := hostSessionTransport(host)
 	spec := HostSessionSpec(host)
 	resumeKey, x11 := spec.ResumeKey, spec.X11Forwarding
+	s.attachAutoLogin(ctx, &spec, host, "")
 	session, err := s.sessions.Open(ctx, spec)
 	if err != nil {
 		// Flush clears the pending label and records the problem on the UI
@@ -948,6 +1114,7 @@ func HostSessionSpec(host domainvault.Host) appsession.StartSpec {
 	return appsession.StartSpec{
 		Kind:           plan.kind,
 		Label:          label,
+		StartupCommand: host.StartupCommand,
 		HostID:         host.ID,
 		Hostname:       host.Hostname,
 		Port:           host.Port,
@@ -958,8 +1125,11 @@ func HostSessionSpec(host domainvault.Host) appsession.StartSpec {
 		Telnet:         plan.telnet,
 		Mosh:           plan.mosh,
 		ET:             plan.et,
-		ResumeKey:      plan.newResumeKey(),
-		Reconnect:      plan.reconnect,
+		// Input compatibility is local-only: the Session translates typed keys
+		// before they reach this transport.
+		InputCompatibility: host.InputCompatibility(),
+		ResumeKey:          plan.newResumeKey(),
+		Reconnect:          plan.reconnect,
 	}
 }
 
@@ -993,15 +1163,17 @@ func (p hostTransportPlan) newResumeKey() string {
 // action without automatically retrying a dropped socket, matching the
 // original's SSH-only auto-reconnect.
 func hostSessionTransport(host domainvault.Host) hostTransportPlan {
-	switch host.Protocol {
-	case domainvault.ProtocolLocal:
+	// The protocol descriptor owns transport selection, so this switch never
+	// needs a new case when a built-in protocol is added.
+	switch host.Protocol.SessionTransport() {
+	case domainprotocol.TransportLocal:
 		// A saved local-shell Host opens a shell on this machine, exactly like
 		// the original's local Hosts. Its label is the Tab's connection label.
 		return hostTransportPlan{
 			kind:       appsession.KindLocal,
 			descriptor: domainworkspace.SessionLocal,
 		}
-	case domainvault.ProtocolTelnet:
+	case domainprotocol.TransportTelnet:
 		cfg := domaintelnet.Config{Hostname: host.Hostname, Port: host.Port}.Normalized()
 		return hostTransportPlan{
 			kind:       appsession.KindTelnet,
@@ -1009,14 +1181,14 @@ func hostSessionTransport(host domainvault.Host) hostTransportPlan {
 			telnet:     &cfg,
 			reconnect:  telnetReconnectPolicy(),
 		}
-	case domainvault.ProtocolMosh:
+	case domainprotocol.TransportMosh:
 		return hostTransportPlan{
 			kind:       appsession.KindMosh,
 			descriptor: domainworkspace.SessionMosh,
 			mosh:       moshConfig(host),
 			reconnect:  &appsession.ReconnectPolicy{},
 		}
-	case domainvault.ProtocolET:
+	case domainprotocol.TransportET:
 		return hostTransportPlan{
 			kind:       appsession.KindET,
 			descriptor: domainworkspace.SessionET,
@@ -1067,6 +1239,24 @@ func telnetReconnectPolicy() *appsession.ReconnectPolicy {
 	}
 }
 
+// attachAutoLogin fills the expect engine for a console transport. A serial
+// profile carries its own non-secret rules; a Telnet Host reuses its Vault
+// login. Every other Kind authenticates before its shell exists and ignores
+// the field. A resolver that finds nothing leaves auto-login off rather than
+// failing the connection.
+func (s *State) attachAutoLogin(ctx context.Context, spec *appsession.StartSpec, host domainvault.Host, password string) {
+	switch spec.Kind {
+	case appsession.KindSerial:
+		if s.serialAutoLogin != nil && spec.Serial != nil {
+			spec.AutoLogin = s.serialAutoLogin(ctx, *spec.Serial)
+		}
+	case appsession.KindTelnet:
+		if s.telnetAutoLogin != nil {
+			spec.AutoLogin = s.telnetAutoLogin(ctx, host, password)
+		}
+	}
+}
+
 // OpenSerial opens a serial Session without blocking the UI thread. The
 // configuration is validated before the background open, so a malformed port
 // or an unsupported setting returns the typed error to the dialog that asked.
@@ -1087,11 +1277,13 @@ func (s *State) OpenSerial(cfg domainserial.Config) error {
 	ctx := s.ctx
 	go func() {
 		serialConfig := normalized
-		session, err := s.sessions.Open(ctx, appsession.StartSpec{
+		spec := appsession.StartSpec{
 			Kind:   appsession.KindSerial,
 			Label:  label,
 			Serial: &serialConfig,
-		})
+		}
+		s.attachAutoLogin(ctx, &spec, domainvault.Host{}, "")
+		session, err := s.sessions.Open(ctx, spec)
 		s.mu.Lock()
 		s.outcomes = append(s.outcomes, openOutcome{
 			session: session,

@@ -53,9 +53,10 @@ func TestParseStatsReadsEveryMetricLabel(t *testing.T) {
 		sample.Disks[0].FilesystemType != "ext4" || sample.Disks[0].CapacityKey != "/dev/sda1" {
 		t.Errorf("disks = %+v", sample.Disks)
 	}
-	if sample.GPU != 42 || sample.GPUMemUsedMB != 1024 || sample.GPUMemTotalMB != 8192 ||
-		sample.GPUName != "NVIDIA GeForce RTX 4090" {
-		t.Errorf("gpu = %+v", sample)
+	if len(sample.GPUs) != 1 || sample.GPUs[0].Utilization != 42 ||
+		sample.GPUs[0].MemUsedMB != 1024 || sample.GPUs[0].MemTotalMB != 8192 ||
+		sample.GPUs[0].Name != "NVIDIA GeForce RTX 4090" {
+		t.Errorf("gpus = %+v", sample.GPUs)
 	}
 	if sample.Hostname != "web-1" || sample.OSName != "Ubuntu 24.04" ||
 		sample.KernelRelease != "6.8.0" || sample.UptimeSeconds != 12345 {
@@ -95,6 +96,35 @@ func TestParseStatsSecondSampleUsesCounters(t *testing.T) {
 	}
 	if sample.Rx != 750 || sample.Tx != 400 {
 		t.Errorf("rates = %v/%v B/s, want 750/400", sample.Rx, sample.Tx)
+	}
+}
+
+func TestParseStatsExposesEveryPerCoreReading(t *testing.T) {
+	coreList := func(total, idle int) string {
+		entries := make([]string, 8)
+		for index := range entries {
+			entries[index] = strconv.Itoa(total) + ":" + strconv.Itoa(idle)
+		}
+		return strings.Join(entries, ",")
+	}
+	first, err := parseStats("CPURAW:1600 800|CORES:8|PERCORERAW:" + coreList(200, 100))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, previous := first.sample(samplerState{}, time.Unix(0, 0), 0)
+
+	second, err := parseStats("CPURAW:1600 800|CORES:8|PERCORERAW:" + coreList(400, 150))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sample, _ := second.sample(previous, time.Unix(1, 0), 0)
+	if len(sample.CPUPerCore) != 8 {
+		t.Fatalf("per-core readings = %d, want one per reported core", len(sample.CPUPerCore))
+	}
+	for index, value := range sample.CPUPerCore {
+		if value != 75 {
+			t.Errorf("core %d = %v, want 75", index+1, value)
+		}
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+
+	domainconn "github.com/mslxl/natcatty/domain/connection"
 )
 
 // ErrExecUnavailable reports a transport that cannot run a non-interactive
@@ -128,3 +130,16 @@ func (l *Lease) SingleChannel() bool {
 // before the Acquire call. A reused single-channel transport must not host an
 // SFTP channel.
 func (l *Lease) Reused() bool { return l != nil && l.reused }
+
+// AcceptedHostIdentities returns the host keys this transport trusted during
+// its handshake, pinned to the hop they arrived on. A companion dial replays
+// them as pre-trusted instead of prompting for the same hosts again. The
+// slice is a copy and is safe to hold after the lease is released.
+func (l *Lease) AcceptedHostIdentities() []domainconn.Key {
+	if l == nil || l.conn == nil {
+		return nil
+	}
+	l.conn.mu.Lock()
+	defer l.conn.mu.Unlock()
+	return append([]domainconn.Key(nil), l.conn.acceptedHostKeys...)
+}

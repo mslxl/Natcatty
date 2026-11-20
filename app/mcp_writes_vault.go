@@ -211,12 +211,15 @@ func hostDraftFromHost(host domainvault.Host) domainvault.Draft {
 		AuthMethod: host.AuthMethod, UseSSHAgent: host.UseSSHAgent,
 		RequiresMFA:   host.RequiresMFA,
 		X11Forwarding: host.X11Forwarding, X11WarningAcknowledged: host.X11WarningAcknowledged,
-		ProxyProfileID: host.ProxyProfileID, NetworkProfileID: host.NetworkProfileID,
+		X11ForwardingSet: host.X11ForwardingSet || host.X11Forwarding,
+		ProxyProfileID:   host.ProxyProfileID, NetworkProfileID: host.NetworkProfileID,
 		LegacyAlgorithms: host.LegacyAlgorithms,
 		SkipEcdsaHostKey: host.SkipEcdsaHostKey, Algorithms: host.Algorithms,
 		SFTPFileProtocol: host.SFTPFileProtocol, SFTPSudo: host.SFTPSudo,
 		DeviceType: host.DeviceType, AutoAttachTmux: host.AutoAttachTmux,
-		MoshServerPath: host.MoshServerPath, ETPort: host.ETPort,
+		NewlineMode: host.NewlineMode, BackspaceMode: host.BackspaceMode,
+		LineEditingMode: host.LineEditingMode,
+		MoshServerPath:  host.MoshServerPath, ETPort: host.ETPort,
 	}
 	if host.HostChain != nil {
 		chain := *host.HostChain

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base32"
 	"encoding/pem"
 	"errors"
 	"net"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/mslxl/natcatty/adapters/sshtest/fakessh"
 	appconnection "github.com/mslxl/natcatty/application/connection"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
 type promptLog struct {
@@ -461,5 +463,140 @@ func TestDialPasswordModeNeverOffersAPublicKey(t *testing.T) {
 	assertKind(t, err, appconnection.KindAuth)
 	if server.PublicKeyAttempts() != 0 {
 		t.Fatalf("password-only mode offered %d public keys", server.PublicKeyAttempts())
+	}
+}
+
+// totpTestSeedBase32 is the RFC 6238 SHA1 seed in the Base32 form a user would
+// paste. The auth tests only need a well-formed secret, not a fixed code: each
+// side derives the code from the same clock.
+var totpTestSeedBase32 = base32.StdEncoding.WithPadding(base32.NoPadding).
+	EncodeToString([]byte("12345678901234567890"))
+
+// totpCodeIsCurrent reports whether answer is the code for the current,
+// previous, or next step. Accepting the neighbours keeps the test independent
+// of a step boundary that falls between the client's clock read and the
+// server's.
+func totpCodeIsCurrent(answer string) error {
+	parsed, err := domainvault.ParseTOTP(totpTestSeedBase32)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	for _, at := range []time.Time{now, now.Add(30 * time.Second), now.Add(-30 * time.Second)} {
+		code, err := parsed.Code(at)
+		if err != nil {
+			return err
+		}
+		if code == answer {
+			return nil
+		}
+	}
+	return errors.New("fakessh: the answer is not a current TOTP code")
+}
+
+func TestDialAutoFillsTheHostTOTPIntoAVerificationPrompt(t *testing.T) {
+	_, dialFunc := startFixture(t, fakessh.Options{
+		Password: "not-the-saved-password",
+		KeyboardInteractive: func(_ xssh.ConnMetadata, challenge xssh.KeyboardInteractiveChallenge) (*xssh.Permissions, error) {
+			answers, err := challenge("", "", []string{"Password: "}, []bool{false})
+			if err != nil {
+				return nil, err
+			}
+			if len(answers) != 1 || answers[0] != "hunter2" {
+				return nil, errors.New("fakessh: wrong first factor")
+			}
+			answers, err = challenge("verify", "second factor", []string{"Verification code:"}, []bool{true})
+			if err != nil {
+				return nil, err
+			}
+			if len(answers) != 1 {
+				return nil, errors.New("fakessh: wrong code answer count")
+			}
+			return nil, totpCodeIsCurrent(answers[0])
+		},
+	})
+	prompter := &fakeAuthPrompter{keyboard: func(appconnection.KeyboardInteractiveRequest) (appconnection.KeyboardInteractiveDecision, error) {
+		t.Error("the Host TOTP should have been auto-filled without a prompt")
+		return appconnection.KeyboardInteractiveDecision{}, nil
+	}}
+	plan := appconnection.BuildAuthPlan(appconnection.AuthSpec{
+		Username: "alice", Mode: appconnection.AuthModePassword,
+		Password: "hunter2", TOTPSecret: totpTestSeedBase32,
+	})
+	client, err := dialWithPlan(t, dialFunc, plan, prompter)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if got := len(prompter.requests().kiReqs); got != 0 {
+		t.Errorf("keyboard-interactive prompts = %d, want 0", got)
+	}
+}
+
+func TestDialAsksForAVerificationCodeWithoutAHostTOTP(t *testing.T) {
+	_, dialFunc := startFixture(t, fakessh.Options{
+		Password: "not-the-saved-password",
+		KeyboardInteractive: func(_ xssh.ConnMetadata, challenge xssh.KeyboardInteractiveChallenge) (*xssh.Permissions, error) {
+			if _, err := challenge("", "", []string{"Password: "}, []bool{false}); err != nil {
+				return nil, err
+			}
+			answers, err := challenge("verify", "", []string{"Verification code:"}, []bool{true})
+			if err != nil {
+				return nil, err
+			}
+			if len(answers) != 1 || answers[0] != "654321" {
+				return nil, errors.New("fakessh: the prompt answer was not forwarded")
+			}
+			return nil, nil
+		},
+	})
+	prompter := &fakeAuthPrompter{keyboard: func(appconnection.KeyboardInteractiveRequest) (appconnection.KeyboardInteractiveDecision, error) {
+		return appconnection.KeyboardInteractiveDecision{Answers: []string{"654321"}}, nil
+	}}
+	plan := appconnection.BuildAuthPlan(appconnection.AuthSpec{
+		Username: "alice", Mode: appconnection.AuthModePassword, Password: "hunter2",
+	})
+	client, err := dialWithPlan(t, dialFunc, plan, prompter)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	rounds := prompter.requests().kiReqs
+	if len(rounds) != 1 || len(rounds[0].Prompts) != 1 || rounds[0].Prompts[0].Text != "Verification code:" {
+		t.Fatalf("prompts = %+v, want one Verification code round", rounds)
+	}
+}
+
+func TestDialLeavesAnSMSCodePromptToTheUser(t *testing.T) {
+	_, dialFunc := startFixture(t, fakessh.Options{
+		Password: "not-the-saved-password",
+		KeyboardInteractive: func(_ xssh.ConnMetadata, challenge xssh.KeyboardInteractiveChallenge) (*xssh.Permissions, error) {
+			if _, err := challenge("", "", []string{"Password: "}, []bool{false}); err != nil {
+				return nil, err
+			}
+			answers, err := challenge("verify", "A code was sent by SMS.", []string{"Verification code:"}, []bool{true})
+			if err != nil {
+				return nil, err
+			}
+			if len(answers) != 1 || answers[0] != "654321" {
+				return nil, errors.New("fakessh: an SMS prompt must not receive the TOTP")
+			}
+			return nil, nil
+		},
+	})
+	prompter := &fakeAuthPrompter{keyboard: func(appconnection.KeyboardInteractiveRequest) (appconnection.KeyboardInteractiveDecision, error) {
+		return appconnection.KeyboardInteractiveDecision{Answers: []string{"654321"}}, nil
+	}}
+	plan := appconnection.BuildAuthPlan(appconnection.AuthSpec{
+		Username: "alice", Mode: appconnection.AuthModePassword,
+		Password: "hunter2", TOTPSecret: totpTestSeedBase32,
+	})
+	client, err := dialWithPlan(t, dialFunc, plan, prompter)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if got := len(prompter.requests().kiReqs); got != 1 {
+		t.Fatalf("keyboard-interactive prompts = %d, want the SMS round to reach the user", got)
 	}
 }

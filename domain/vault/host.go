@@ -11,6 +11,8 @@ import (
 	"unicode"
 
 	"github.com/mslxl/natcatty/domain/model"
+	domainprotocol "github.com/mslxl/natcatty/domain/model/protocol"
+	modelterminal "github.com/mslxl/natcatty/domain/model/terminal"
 )
 
 // Protocol is the connection protocol a Host uses. Serial and network-device
@@ -41,6 +43,9 @@ const (
 	maxTagLength      = 64
 	maxTagCount       = 64
 	maxNotesLength    = 64 << 10
+	// maxStartupCommandLength bounds the command typed into every new
+	// connection. It is generous for a small multi-line setup script.
+	maxStartupCommandLength = 16 << 10
 	// maxKeyMaterialLength bounds a private key or certificate before it is
 	// handed to the field-secret store.
 	maxKeyMaterialLength = 256 << 10
@@ -144,12 +149,25 @@ type ProxyConfig struct {
 	Password string `json:"-"`
 	// HasPassword reports that an encrypted proxy password exists.
 	HasPassword bool `json:"hasPassword,omitempty"`
+	// ProfileID marks a config materialized from a saved Proxy Profile. It is
+	// resolved state, never persisted: the Host stores the reference in
+	// ProxyProfileID instead.
+	ProfileID string `json:"-"`
 }
 
 // HostChain is a jump chain, ordered first = closest to the client. The final
 // target is the Host that owns the chain, so it is not repeated here.
 type HostChain struct {
 	HostIDs []model.HostID `json:"hostIds"`
+}
+
+// IDs returns a copy of the chain's hop IDs, or nil when the chain is nil or
+// empty. It makes an optional chain safe to read without a nil check.
+func (c *HostChain) IDs() []model.HostID {
+	if c == nil || len(c.HostIDs) == 0 {
+		return nil
+	}
+	return append([]model.HostID(nil), c.HostIDs...)
 }
 
 // AlgorithmOverrides is a Host's advanced SSH algorithm selection. A non-empty
@@ -204,9 +222,15 @@ type Host struct {
 	Tags    []string `json:"tags"`
 	Notes   string   `json:"notes,omitempty"`
 	Pinned  bool     `json:"pinned"`
+	// StartupCommand is typed once after a Session to this Host is ready and
+	// replayed after every reconnect. Empty means none.
+	StartupCommand string `json:"startupCommand,omitempty"`
 	// HasPassword reports that an encrypted password exists for this Host.
 	// The ciphertext lives in secret_values, never in this record.
 	HasPassword bool `json:"hasPassword,omitempty"`
+	// HasTOTP reports that an encrypted TOTP authenticator URI exists for this
+	// Host. As with HasPassword, only the marker lives on the record.
+	HasTOTP bool `json:"hasTotp,omitempty"`
 	// IdentityID selects a reusable Identity. An empty value means the Host
 	// authenticates on its own.
 	IdentityID model.IdentityID `json:"identityId,omitempty"`
@@ -221,11 +245,19 @@ type Host struct {
 	// RequiresMFA prefers keyboard-interactive before password or key probing.
 	RequiresMFA bool `json:"requiresMfa,omitempty"`
 	// X11Forwarding requests X11 forwarding for SSH Sessions on this Host. It
-	// is off by default and requires X11WarningAcknowledged.
+	// is off by default and requires X11WarningAcknowledged. When
+	// X11ForwardingSet is false the value is unset and the Host Group's X11
+	// default fills it in.
 	X11Forwarding bool `json:"x11Forwarding,omitempty"`
 	// X11WarningAcknowledged records that the user accepted the X11 security
 	// warning. It is meaningful only while X11Forwarding is true.
 	X11WarningAcknowledged bool `json:"x11WarningAcknowledged,omitempty"`
+	// X11ForwardingSet records that the user made an explicit X11 choice on
+	// this Host. It makes an explicit off distinguishable from "inherit the
+	// group's value", which a plain false cannot express once groups have an
+	// X11 default. A true X11Forwarding implies ownership even without it, so
+	// records written before group inheritance keep working.
+	X11ForwardingSet bool `json:"x11ForwardingSet,omitempty"`
 	// HostChain lists the jump Host references used before this Host. It is an
 	// ordered reference list, not an existence guarantee: a deleted jump Host
 	// remains dangling, as in the original's non-cascading Vault.
@@ -236,6 +268,10 @@ type Host struct {
 	// ProxyProfileID selects a saved Proxy Profile. A manual Proxy wins over a
 	// profile; an empty reference means the Host has no proxy of its own.
 	ProxyProfileID string `json:"proxyProfileId,omitempty"`
+	// DirectProxy forces a direct connection and stops Host Group and app-wide
+	// proxy inheritance. It wins over a manual Proxy and a ProxyProfileID; a
+	// zero value means inherit.
+	DirectProxy bool `json:"directProxy,omitempty"`
 	// NetworkProfileID selects a saved Network Profile for the first endpoint
 	// of this Host's route. An empty reference inherits the Host Group's
 	// selection; with no group default the Host has no Network Route and
@@ -263,6 +299,13 @@ type Host struct {
 	// tmux session. It is opt-in, off by default, and meaningful only for
 	// ProtocolSSH: another protocol and network-device mode clear it.
 	AutoAttachTmux bool `json:"autoAttachTmux,omitempty"`
+	// NewlineMode, BackspaceMode, and LineEditingMode translate typed Enter
+	// and Backspace keys locally before the Session writes them. The zero
+	// value of each is today's behavior, so an old record needs no migration.
+	// They are meaningful only for ProtocolSSH; another protocol clears them.
+	NewlineMode     modelterminal.NewlineMode     `json:"newlineBehavior,omitempty"`
+	BackspaceMode   modelterminal.BackspaceMode   `json:"backspaceBehavior,omitempty"`
+	LineEditingMode modelterminal.LineEditingMode `json:"lineEditingBehavior,omitempty"`
 	// MoshServerPath overrides the remote mosh-server binary for a Mosh Host.
 	// Empty uses the remote PATH. It is kept only for ProtocolMosh.
 	MoshServerPath string `json:"moshServerPath,omitempty"`
@@ -293,6 +336,9 @@ type Draft struct {
 	Tags     []string
 	Notes    string
 	Pinned   bool
+	// StartupCommand is typed after the shell is ready and after every
+	// reconnect. Empty means none.
+	StartupCommand string
 	// IdentityID, KeyID, AuthMethod, UseSSHAgent, and RequiresMFA select how
 	// the Host authenticates. They carry references only, never material.
 	IdentityID  model.IdentityID
@@ -302,8 +348,11 @@ type Draft struct {
 	RequiresMFA bool
 	// X11Forwarding and X11WarningAcknowledged enable X11 forwarding. The
 	// acknowledgement must be set before the preference can be saved.
+	// X11ForwardingSet records an explicit off, which must override a Host
+	// Group default instead of inheriting it.
 	X11Forwarding          bool
 	X11WarningAcknowledged bool
+	X11ForwardingSet       bool
 	// HostChain and Proxy configure the route to this Host. Proxy.Password is
 	// plaintext form input; the Vault encrypts it into the field-secret store.
 	HostChain *HostChain
@@ -312,6 +361,9 @@ type Draft struct {
 	// deleting a profile clears it on every Host and Host Group, but a record
 	// written by an older version may still hold an unknown identifier.
 	ProxyProfileID string
+	// DirectProxy forces a direct connection and stops inheritance. It is
+	// cleared with the proxy selection it overrides.
+	DirectProxy bool
 	// NetworkProfileID selects a saved Network Profile. It is a soft reference
 	// resolved like ProxyProfileID: a Host's own value wins over its Host
 	// Group's default, and deleting the profile clears both.
@@ -330,6 +382,11 @@ type Draft struct {
 	// AutoAttachTmux keeps the SSH login shell in a deterministic tmux
 	// session. It is cleared for another protocol and for network-device mode.
 	AutoAttachTmux bool
+	// NewlineMode, BackspaceMode, and LineEditingMode translate typed Enter
+	// and Backspace keys. Each zero value preserves today's bytes.
+	NewlineMode     modelterminal.NewlineMode
+	BackspaceMode   modelterminal.BackspaceMode
+	LineEditingMode modelterminal.LineEditingMode
 	// MoshServerPath overrides the remote mosh-server binary. It is kept only
 	// for ProtocolMosh.
 	MoshServerPath string
@@ -340,6 +397,14 @@ type Draft struct {
 	// into the field-secret store; it is never copied onto Host or written
 	// to the JSON tail. An empty value on Update keeps the stored password.
 	Password string
+	// TOTP is plaintext form input: an otpauth://totp URI or a raw Base32
+	// secret. NormalizeDraft canonicalizes it to a URI; the Vault encrypts it
+	// into the field-secret store. An empty value on Update keeps the stored
+	// authenticator unless ClearTOTP is set.
+	TOTP string
+	// ClearTOTP explicitly removes a stored TOTP authenticator. It wins over a
+	// submitted TOTP value.
+	ClearTOTP bool
 }
 
 // Field names the part of a Host a validation error concerns.
@@ -362,8 +427,10 @@ const (
 	FieldPrivateKey  Field = "private_key"
 	FieldPassphrase  Field = "passphrase"
 	FieldCertificate Field = "certificate"
-	FieldChain       Field = "chain"
-	FieldProxy       Field = "proxy"
+	// FieldTOTP names the Host's TOTP authenticator input.
+	FieldTOTP  Field = "totp"
+	FieldChain Field = "chain"
+	FieldProxy Field = "proxy"
 	// FieldNetworkProfile names a Network Profile configuration. A Network
 	// Profile editor has one form, so its Kind-specific rules share one field.
 	FieldNetworkProfile Field = "network_profile"
@@ -377,6 +444,8 @@ const (
 	// settings a validation error concerns.
 	FieldMoshServerPath Field = "mosh_server_path"
 	FieldETPort         Field = "et_port"
+	// FieldStartupCommand names the command replayed on every connection.
+	FieldStartupCommand Field = "startup_command"
 	// FieldSnippet, FieldSnippetCommand, and FieldSnippetPackage name the
 	// parts of a Snippet a validation error concerns.
 	FieldSnippet        Field = "snippet"
@@ -443,6 +512,17 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 		// the preference on the Host record.
 		draft.AutoAttachTmux = false
 	}
+	draft.NewlineMode = modelterminal.NormalizeNewlineMode(draft.NewlineMode)
+	draft.BackspaceMode = modelterminal.NormalizeBackspaceMode(draft.BackspaceMode)
+	draft.LineEditingMode = modelterminal.NormalizeLineEditingMode(draft.LineEditingMode)
+	if draft.Protocol != ProtocolSSH {
+		// The translation is defined for SSH keyboard input. Telnet, Local,
+		// Mosh, and ET keep their own input behavior, so a Host that switched
+		// protocol must not carry a mode its Session never applies.
+		draft.NewlineMode = modelterminal.NewlineCR
+		draft.BackspaceMode = modelterminal.BackspaceDEL
+		draft.LineEditingMode = modelterminal.LineEditingCharacter
+	}
 	draft.MoshServerPath = strings.TrimSpace(draft.MoshServerPath)
 	if draft.Protocol != ProtocolMosh {
 		// A server path and an ET port belong to one protocol. Keeping them on
@@ -461,16 +541,56 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 		draft.AuthMethod = HostAuthAuto
 		draft.UseSSHAgent = false
 		draft.RequiresMFA = false
+		// A TOTP authenticator answers SSH keyboard-interactive prompts. A
+		// protocol without SSH auth must not save one, and a stored value is
+		// left alone unless the draft explicitly clears it.
+		draft.TOTP = ""
+		draft.ClearTOTP = false
+	}
+	// Jump chains, proxies, and algorithm overrides describe the route to the
+	// Host, not the protocol spoken to it. Telnet keeps them because SSH jumps
+	// can carry a Telnet stream; only a Local shell, which dials nothing,
+	// drops the route. X11 and the file-transfer preference, by contrast, are
+	// target-side SSH features: a Telnet target has neither an SSH connection
+	// nor an SFTP subsystem, so the values would be unsaveable dead state.
+	if draft.Protocol == ProtocolLocal {
+		draft.HostChain = nil
+		draft.Proxy = nil
+		draft.ProxyProfileID = ""
+		draft.NetworkProfileID = ""
+		draft.LegacyAlgorithms = false
+		draft.SkipEcdsaHostKey = false
+		draft.Algorithms = nil
+	}
+	if !draft.Protocol.SupportsX11() {
+		draft.X11Forwarding = false
+		draft.X11WarningAcknowledged = false
+	}
+	if !draft.Protocol.SupportsFileTransfer() {
+		draft.SFTPFileProtocol = FileProtocolAuto
+		draft.SFTPSudo = false
 	}
 	draft.Label = strings.TrimSpace(draft.Label)
 	draft.Hostname = strings.TrimSpace(draft.Hostname)
 	draft.Username = strings.TrimSpace(draft.Username)
 	draft.Group = NormalizeGroup(draft.Group)
 	draft.Notes = strings.TrimSpace(draft.Notes)
+	draft.StartupCommand = strings.TrimSpace(draft.StartupCommand)
 	draft.Tags = normalizeTags(draft.Tags)
+	normalizedTOTP, err := normalizeTOTPDraft(draft)
+	if err != nil {
+		return Draft{}, err
+	}
+	draft.TOTP = normalizedTOTP
 	draft.HostChain = normalizeHostChain(draft.HostChain)
 	draft.Proxy = normalizeProxy(draft.Proxy)
 	draft.ProxyProfileID = strings.TrimSpace(draft.ProxyProfileID)
+	if draft.DirectProxy {
+		// An explicit direct choice is not a configuration: keeping a manual
+		// proxy or profile here would make the editor show two selections.
+		draft.Proxy = nil
+		draft.ProxyProfileID = ""
+	}
 	draft.NetworkProfileID = strings.TrimSpace(draft.NetworkProfileID)
 	draft.Algorithms = normalizeAlgorithms(draft.Algorithms)
 	// Disabling X11 drops the acknowledgement, so re-enabling it always asks
@@ -488,6 +608,23 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 		return Draft{}, err
 	}
 	return draft, nil
+}
+
+// normalizeTOTPDraft canonicalizes the TOTP form input. An empty field keeps
+// any stored authenticator, and ClearTOTP wins over a submitted value.
+func normalizeTOTPDraft(draft Draft) (string, error) {
+	if draft.ClearTOTP {
+		return "", nil
+	}
+	input := strings.TrimSpace(draft.TOTP)
+	if input == "" {
+		return "", nil
+	}
+	canonical, err := NormalizeTOTP(input)
+	if err != nil {
+		return "", &ValidationError{Field: FieldTOTP, Rule: RuleInvalid}
+	}
+	return canonical, nil
 }
 
 // NormalizeGroup canonicalizes a Host Group path: slash-separated segments,
@@ -538,11 +675,13 @@ func (h Host) Validate() error {
 		Group:                  h.Group,
 		Tags:                   h.Tags,
 		Notes:                  h.Notes,
+		StartupCommand:         h.StartupCommand,
 		AuthMethod:             h.AuthMethod,
 		RequiresMFA:            h.RequiresMFA,
 		UseSSHAgent:            h.UseSSHAgent,
 		X11Forwarding:          h.X11Forwarding,
 		X11WarningAcknowledged: h.X11WarningAcknowledged,
+		X11ForwardingSet:       h.X11ForwardingSet,
 		HostChain:              h.HostChain,
 		Proxy:                  h.Proxy,
 		ProxyProfileID:         h.ProxyProfileID,
@@ -578,10 +717,23 @@ func (h Host) AutoAttachTmuxEnabled() bool {
 	return h.AutoAttachTmux && h.Protocol == ProtocolSSH && !h.IsNetworkDevice()
 }
 
+// InputCompatibility reports the Enter/Backspace translation this Host
+// selects. Only an SSH Host has one; every other protocol returns the default,
+// which leaves input byte-identical to today. An unknown stored value also
+// falls back to the default rather than changing the bytes sent.
+func (h Host) InputCompatibility() modelterminal.InputCompatibility {
+	if h.Protocol != ProtocolSSH {
+		return modelterminal.InputCompatibility{}
+	}
+	return modelterminal.InputCompatibility{
+		Newline:     h.NewlineMode,
+		Backspace:   h.BackspaceMode,
+		LineEditing: h.LineEditingMode,
+	}.Normalize()
+}
+
 func validateFields(draft Draft) error {
-	switch draft.Protocol {
-	case ProtocolSSH, ProtocolTelnet, ProtocolLocal, ProtocolMosh, ProtocolET:
-	default:
+	if !domainprotocol.ValidHostID(domainprotocol.ID(draft.Protocol)) {
 		return validation(FieldProtocol, RuleUnsupported)
 	}
 
@@ -685,18 +837,15 @@ func validateFields(draft Draft) error {
 	if strings.ContainsRune(draft.Notes, 0) {
 		return validation(FieldNotes, RuleInvalid)
 	}
+	if len(draft.StartupCommand) > maxStartupCommandLength {
+		return validation(FieldStartupCommand, RuleTooLong)
+	}
+	if strings.ContainsRune(draft.StartupCommand, 0) {
+		return validation(FieldStartupCommand, RuleInvalid)
+	}
 
-	if draft.HostChain != nil {
-		if len(draft.HostChain.HostIDs) > maxHostChainLength {
-			return validation(FieldChain, RuleTooLong)
-		}
-		seen := make(map[model.HostID]bool, len(draft.HostChain.HostIDs))
-		for _, id := range draft.HostChain.HostIDs {
-			if strings.TrimSpace(string(id)) == "" || seen[id] {
-				return validation(FieldChain, RuleInvalid)
-			}
-			seen[id] = true
-		}
+	if err := validateHostChain(draft.HostChain); err != nil {
+		return err
 	}
 
 	if err := validateProxy(draft.Proxy); err != nil {
@@ -771,6 +920,26 @@ func validateProxy(proxy *ProxyConfig) error {
 		}
 	default:
 		return validation(FieldProxy, RuleUnsupported)
+	}
+	return nil
+}
+
+// validateHostChain rejects a chain a save cannot keep: more hops than a
+// session supports, or a blank or duplicate hop. It is shared by the Host and
+// Host Group drafts so both editors agree.
+func validateHostChain(chain *HostChain) error {
+	if chain == nil {
+		return nil
+	}
+	if len(chain.HostIDs) > maxHostChainLength {
+		return validation(FieldChain, RuleTooLong)
+	}
+	seen := make(map[model.HostID]bool, len(chain.HostIDs))
+	for _, id := range chain.HostIDs {
+		if strings.TrimSpace(string(id)) == "" || seen[id] {
+			return validation(FieldChain, RuleInvalid)
+		}
+		seen[id] = true
 	}
 	return nil
 }
@@ -924,14 +1093,10 @@ func normalizeTags(tags []string) []string {
 }
 
 func defaultPort(protocol Protocol) int {
-	switch protocol {
-	case ProtocolTelnet:
-		return 23
-	case ProtocolLocal:
-		return 0
-	default:
-		return 22
+	if descriptor, ok := protocol.descriptor(); ok {
+		return descriptor.DefaultPort
 	}
+	return 22
 }
 
 // EffectivePort returns the port a connection uses. A Host with a port of its
@@ -945,16 +1110,69 @@ func EffectivePort(protocol Protocol, port int) int {
 	return defaultPort(protocol)
 }
 
+// descriptor resolves the built-in protocol facts. A blank protocol is the
+// SSH default the Vault applies when a Host is saved without one, so it
+// resolves as SSH; an unknown persisted value has no descriptor and callers
+// treat that as no capability.
+func (p Protocol) descriptor() (domainprotocol.Descriptor, bool) {
+	if p == "" {
+		return domainprotocol.Resolve(domainprotocol.SSH)
+	}
+	return domainprotocol.Resolve(domainprotocol.ID(p))
+}
+
+// SessionTransport names the Session transport the protocol opens. The value
+// matches application/session.Kind. An unknown protocol falls back to SSH,
+// which is the same default the Vault applies to a blank protocol.
+func (p Protocol) SessionTransport() domainprotocol.Transport {
+	if descriptor, ok := p.descriptor(); ok {
+		return descriptor.Transport
+	}
+	return domainprotocol.TransportSSH
+}
+
 // UsesSSHAuth reports whether a protocol authenticates with the shared SSH
 // credential settings (Identity, SSH Key, Method, agent, and MFA). SSH, Mosh,
 // and EternalTerminal all bootstrap through SSH; Telnet and a Local shell do
 // not, so their editors must not show those controls.
 func (p Protocol) UsesSSHAuth() bool {
-	switch p {
-	case ProtocolSSH, ProtocolMosh, ProtocolET:
-		return true
-	}
-	return false
+	descriptor, ok := p.descriptor()
+	return ok && descriptor.SSHAuth
+}
+
+// SupportsFileTransfer reports whether SFTP/SCP apply to the Host.
+func (p Protocol) SupportsFileTransfer() bool {
+	descriptor, ok := p.descriptor()
+	return ok && descriptor.FileTransfer
+}
+
+// SupportsForwarding reports whether a Port Forwarding rule may target the
+// Host. A Telnet Host has no SSH connection to carry a forwarding channel.
+func (p Protocol) SupportsForwarding() bool {
+	descriptor, ok := p.descriptor()
+	return ok && descriptor.Forwarding
+}
+
+// SupportsMonitoring reports whether remote metric sampling may target the
+// Host.
+func (p Protocol) SupportsMonitoring() bool {
+	descriptor, ok := p.descriptor()
+	return ok && descriptor.Monitoring
+}
+
+// SupportsProxy reports whether a jump chain, a proxy, and SSH algorithm
+// overrides apply to the Host's route. Telnet supports them even though its
+// target has no SSH handshake: the SSH hops carry the route.
+func (p Protocol) SupportsProxy() bool {
+	descriptor, ok := p.descriptor()
+	return ok && descriptor.Proxy
+}
+
+// SupportsX11 reports whether X11 forwarding applies to the Host. X11 is
+// forwarded over the target's SSH connection, so only SSH qualifies.
+func (p Protocol) SupportsX11() bool {
+	descriptor, ok := p.descriptor()
+	return ok && descriptor.X11
 }
 
 func validation(field Field, rule Rule) error {

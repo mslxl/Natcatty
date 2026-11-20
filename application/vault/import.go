@@ -706,6 +706,7 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 		host.CreatedAt = now
 		host.UpdatedAt = now
 		host.HasPassword = draft.Password != "" && s.SecretMode() != SecretModeSession
+		host.HasTOTP = draft.TOTP != "" && s.SecretMode() != SecretModeSession
 		if host.Proxy != nil {
 			host.Proxy.HasPassword = draft.Proxy != nil &&
 				draft.Proxy.Password != "" && s.SecretMode() != SecretModeSession
@@ -748,7 +749,8 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 	for _, item := range pending {
 		needsPassword := item.draft.Password != ""
 		needsProxy := item.draft.Proxy != nil && item.draft.Proxy.Password != ""
-		if (needsPassword || needsProxy) && s.secrets == nil {
+		needsTOTP := item.draft.TOTP != ""
+		if (needsPassword || needsProxy || needsTOTP) && s.secrets == nil {
 			return result, unsupported(ErrSecretsUnavailable)
 		}
 	}
@@ -764,6 +766,14 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 		if item.draft.Proxy != nil && item.draft.Proxy.Password != "" {
 			ref := HostSecretRef(item.host.ID, FieldProxyPassword)
 			if err := s.secrets.Set(ctx, ref, item.draft.Proxy.Password); err != nil {
+				rollback()
+				return result, secretError(err)
+			}
+			written = append(written, ref)
+		}
+		if item.draft.TOTP != "" {
+			ref := HostSecretRef(item.host.ID, FieldTOTP)
+			if err := s.secrets.Set(ctx, ref, item.draft.TOTP); err != nil {
 				rollback()
 				return result, secretError(err)
 			}
@@ -875,13 +885,16 @@ func draftFromRecord(record vaultimport.Record) domainvault.Draft {
 		Tags:             append([]string(nil), record.Tags...),
 		Notes:            record.Notes,
 		Pinned:           record.Pinned,
+		StartupCommand:   record.StartupCommand,
 		IdentityID:       model.IdentityID(record.IdentityID),
 		KeyID:            model.KeyID(record.KeyID),
 		AuthMethod:       domainvault.HostAuthMethod(record.AuthMethod),
 		UseSSHAgent:      record.UseSSHAgent,
 		RequiresMFA:      record.RequiresMFA,
 		Password:         record.Password,
+		TOTP:             record.TOTP,
 		ProxyProfileID:   record.ProxyProfileID,
+		DirectProxy:      record.DirectProxy,
 		NetworkProfileID: record.NetworkProfileID,
 		LegacyAlgorithms: record.LegacyAlgorithms,
 		SkipEcdsaHostKey: record.SkipEcdsaHostKey,
@@ -1027,6 +1040,7 @@ func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 		Tags:                   append([]string(nil), draft.Tags...),
 		Notes:                  draft.Notes,
 		Pinned:                 draft.Pinned,
+		StartupCommand:         draft.StartupCommand,
 		IdentityID:             draft.IdentityID,
 		KeyID:                  draft.KeyID,
 		AuthMethod:             draft.AuthMethod,
@@ -1034,9 +1048,11 @@ func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 		RequiresMFA:            draft.RequiresMFA,
 		X11Forwarding:          draft.X11Forwarding,
 		X11WarningAcknowledged: draft.X11WarningAcknowledged,
+		X11ForwardingSet:       draft.X11ForwardingSet,
 		HostChain:              domainvault.CloneHostChain(draft.HostChain),
 		Proxy:                  domainvault.CloneProxy(draft.Proxy),
 		ProxyProfileID:         draft.ProxyProfileID,
+		DirectProxy:            draft.DirectProxy,
 		NetworkProfileID:       draft.NetworkProfileID,
 		LegacyAlgorithms:       draft.LegacyAlgorithms,
 		SkipEcdsaHostKey:       draft.SkipEcdsaHostKey,
@@ -1045,6 +1061,9 @@ func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 		SFTPSudo:               draft.SFTPSudo,
 		DeviceType:             draft.DeviceType,
 		AutoAttachTmux:         draft.AutoAttachTmux,
+		NewlineMode:            draft.NewlineMode,
+		BackspaceMode:          draft.BackspaceMode,
+		LineEditingMode:        draft.LineEditingMode,
 		MoshServerPath:         draft.MoshServerPath,
 		ETPort:                 draft.ETPort,
 	}
@@ -1109,7 +1128,8 @@ func sortedGroupPaths(groups map[string]bool) []string {
 func rejectedImportRow(code vaultimport.IssueCode) bool {
 	switch code {
 	case vaultimport.IssueInvalidHostname, vaultimport.IssueUnsupportedProtocol,
-		vaultimport.IssueMissingHostname, vaultimport.IssueUnsupportedEntry:
+		vaultimport.IssueMissingHostname, vaultimport.IssueUnsupportedEntry,
+		vaultimport.IssueUnresolvedJump:
 		return true
 	default:
 		return false

@@ -1,6 +1,10 @@
 package preferences
 
-import "testing"
+import (
+	"encoding/json"
+	"reflect"
+	"testing"
+)
 
 func TestDefaultsMatchTheOriginal(t *testing.T) {
 	got := Defaults()
@@ -34,6 +38,39 @@ func TestSessionRestoreIsOptIn(t *testing.T) {
 	}
 	if got.Layout.StartupLanding != StartupVault {
 		t.Errorf("startup landing = %q, want %q", got.Layout.StartupLanding, StartupVault)
+	}
+}
+
+// TestGlobalDefaultProxyIsNormalizedPortableAndMergeable covers the app-wide
+// proxy preference: a saved profile id is trimmed, travels with synced
+// settings, and an empty value means no default.
+func TestGlobalDefaultProxyIsNormalizedPortableAndMergeable(t *testing.T) {
+	settings := Defaults()
+	if got := settings.DefaultProxyProfileID(); got != "" {
+		t.Fatalf("default proxy = %q, want none", got)
+	}
+
+	settings.Proxy.DefaultProfileID = "  proxy-1  "
+	normalized := Normalize(settings)
+	if got := normalized.DefaultProxyProfileID(); got != "proxy-1" {
+		t.Fatalf("normalized default proxy = %q, want proxy-1", got)
+	}
+
+	portable := Portable(normalized)
+	if portable.Proxy.DefaultProfileID != "proxy-1" {
+		t.Fatalf("Portable dropped the default proxy: %+v", portable.Proxy)
+	}
+	remote := portable
+	remote.Proxy.DefaultProfileID = "proxy-2"
+	merged := MergePortable(normalized, remote)
+	if got := merged.DefaultProxyProfileID(); got != "proxy-2" {
+		t.Fatalf("MergePortable default proxy = %q, want proxy-2", got)
+	}
+
+	off := portable
+	off.Proxy.DefaultProfileID = ""
+	if got := MergePortable(normalized, off).DefaultProxyProfileID(); got != "" {
+		t.Fatalf("turning the default off left %q", got)
 	}
 }
 
@@ -157,6 +194,36 @@ func TestCursorFieldsResetIndependently(t *testing.T) {
 	}
 }
 
+// TestShiftEnterDefaultsToEscCR pins the default: Shift+Enter sends ESC CR
+// (the legacy Alt+Enter encoding). The field is stored inverted, so a settings
+// document written before it existed keeps that default.
+func TestShiftEnterDefaultsToEscCR(t *testing.T) {
+	if got := Defaults().Appearance.TerminalShiftEnterPlain; got {
+		t.Error("Shift+Enter leaves the key to the terminal by default")
+	}
+	var older Appearance
+	if older.TerminalShiftEnterPlain {
+		t.Error("an appearance document without the field asks for the plain encoding")
+	}
+	if group, ok := GroupOf(FieldTerminalShiftEnter); !ok || group != GroupAppearance {
+		t.Errorf("GroupOf(%q) = %q, %v", FieldTerminalShiftEnter, group, ok)
+	}
+}
+
+func TestShiftEnterPreferenceResetsAlone(t *testing.T) {
+	settings := Defaults()
+	settings.Appearance.TerminalShiftEnterPlain = true
+	settings.Appearance.TerminalCursorSteady = true
+
+	reset := ResetField(settings, FieldTerminalShiftEnter)
+	if reset.Appearance.TerminalShiftEnterPlain {
+		t.Error("the ESC CR default was not restored")
+	}
+	if !reset.Appearance.TerminalCursorSteady {
+		t.Error("resetting Shift+Enter touched the cursor setting")
+	}
+}
+
 func TestEveryFieldBelongsToAGroup(t *testing.T) {
 	seen := make(map[Field]bool)
 	for _, group := range Groups() {
@@ -185,8 +252,136 @@ func TestEveryFieldBelongsToAGroup(t *testing.T) {
 			t.Errorf("field %q has unknown group %q", field, group)
 		}
 	}
-	if len(seen) != 49 {
-		t.Errorf("fields = %d, want 49", len(seen))
+	if len(seen) != 53 {
+		t.Errorf("fields = %d, want 53", len(seen))
+	}
+}
+
+// TestLocalShellPreferenceRoundTrips proves the path and its arguments survive
+// the stored document, and that the device-local value follows the local
+// machine rather than a synced one.
+func TestLocalShellPreferenceRoundTrips(t *testing.T) {
+	settings := Defaults()
+	settings.Appearance.LocalShell = LocalShell{
+		Path: "/opt/custom shell/bin/zsh",
+		Args: `-l "arg with space" "quote\"inside"`,
+	}
+
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loaded Settings
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		t.Fatal(err)
+	}
+	if got := Normalize(loaded).Appearance.LocalShell; !reflect.DeepEqual(got, settings.Appearance.LocalShell) {
+		t.Fatalf("round-trip LocalShell = %+v, want %+v", got, settings.Appearance.LocalShell)
+	}
+
+	portable := Portable(settings)
+	if !reflect.DeepEqual(portable.Appearance.LocalShell, LocalShell{}) {
+		t.Fatalf("portable LocalShell = %+v, want it stripped", portable.Appearance.LocalShell)
+	}
+	current := Defaults()
+	current.Appearance.LocalShell = LocalShell{Path: `C:\Program Files\PowerShell\7\pwsh.exe`}
+	merged := MergePortable(current, portable)
+	if merged.Appearance.LocalShell.Path != current.Appearance.LocalShell.Path {
+		t.Fatalf("merged LocalShell = %+v, want the local value", merged.Appearance.LocalShell)
+	}
+}
+
+// TestLocalShellKeepsAnArgumentDraftBeforeItsPath proves arguments typed
+// before the path survive every save. Normalization used to drop the whole
+// LocalShell when Path was empty, so the Settings editor erased the draft on
+// the next keystroke.
+func TestLocalShellKeepsAnArgumentDraftBeforeItsPath(t *testing.T) {
+	settings := Defaults()
+	settings.Appearance.LocalShell = LocalShell{Args: `-l --color=always "a b"`}
+
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loaded Settings
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		t.Fatal(err)
+	}
+	normalized := Normalize(loaded)
+	if got := normalized.Appearance.LocalShell.Args; got != settings.Appearance.LocalShell.Args {
+		t.Fatalf("argument draft = %q after a save, want %q", got, settings.Appearance.LocalShell.Args)
+	}
+	// The draft is inert until a path exists: the OS login shell still starts.
+	if command, fallback := normalized.Appearance.LocalShell.Command(nil); command != nil || fallback {
+		t.Fatalf("empty-path Command = %v/%v, want the OS login shell", command, fallback)
+	}
+	// Setting the path later starts the shell with the preserved arguments.
+	normalized.Appearance.LocalShell.Path = "/opt/zsh"
+	if command, fallback := normalized.Appearance.LocalShell.Command(nil); fallback ||
+		!reflect.DeepEqual(command, []string{"/opt/zsh", "-l", "--color=always", "a b"}) {
+		t.Fatalf("Command = %v/%v, want the path with the preserved arguments", command, fallback)
+	}
+}
+
+func TestLocalShellCommandFallsBackWhenThePathIsMissing(t *testing.T) {
+	shell := LocalShell{Path: " /opt/zsh ", Args: `-l --flag "a b"`}
+	command, fallback := shell.Command(func(path string) bool { return path == "/opt/zsh" })
+	if fallback || !reflect.DeepEqual(command, []string{"/opt/zsh", "-l", "--flag", "a b"}) {
+		t.Fatalf("Command = %v/%v, want the configured shell", command, fallback)
+	}
+
+	command, fallback = shell.Command(func(string) bool { return false })
+	if !fallback || command != nil {
+		t.Fatalf("missing path Command = %v/%v, want a fallback with no command", command, fallback)
+	}
+
+	// An empty path asks for the OS login shell and is not a fallback.
+	if command, fallback = (LocalShell{Args: "-l"}).Command(nil); command != nil || fallback {
+		t.Fatalf("empty path Command = %v/%v", command, fallback)
+	}
+}
+
+func TestLocalShellArgumentsParseAndFormat(t *testing.T) {
+	args := []string{"-l", "arg with space", `quote"inside`, `back\slash`, "", "plain"}
+	formatted := FormatArgs(args)
+	parsed := ParseArgs(formatted)
+	if !reflect.DeepEqual(parsed, args) {
+		t.Fatalf("ParseArgs(FormatArgs(%q)) = %q", args, parsed)
+	}
+	if got := ParseArgs(`--flag 'a b' "c \"d\""`); !reflect.DeepEqual(got,
+		[]string{"--flag", "a b", `c "d"`}) {
+		t.Fatalf("ParseArgs = %q", got)
+	}
+}
+
+func TestDefaultProxyPreferenceResetsWithTheTransportGroup(t *testing.T) {
+	settings := Defaults()
+	settings.Proxy.DefaultProfileID = "proxy-1"
+	settings.Appearance.AppIcon = "rainbow"
+
+	if group, ok := GroupOf(FieldDefaultProxy); !ok || group != GroupTransport {
+		t.Fatalf("FieldDefaultProxy group = %q, %v; want %q", group, ok, GroupTransport)
+	}
+	// The internal field id mirrors the persisted JSON path, so search and
+	// reset stay traceable to the document. The persisted key itself is
+	// unchanged.
+	if got := string(FieldDefaultProxy); got != "proxy.defaultProfileId" {
+		t.Fatalf("FieldDefaultProxy id = %q, want the JSON path proxy.defaultProfileId", got)
+	}
+	reset := ResetField(settings, FieldDefaultProxy)
+	if reset.Proxy.DefaultProfileID != "" {
+		t.Errorf("default proxy = %q after reset, want direct", reset.Proxy.DefaultProfileID)
+	}
+	if reset.Appearance.AppIcon != "rainbow" {
+		t.Errorf("resetting the default proxy touched Appearance: %+v", reset.Appearance)
+	}
+
+	reset = ResetGroup(settings, GroupTransport)
+	if reset.Proxy.DefaultProfileID != "" {
+		t.Errorf("transport-area reset kept the default proxy %q", reset.Proxy.DefaultProfileID)
+	}
+	if reset.Appearance.AppIcon != "rainbow" {
+		t.Errorf("resetting Transport touched Appearance: %+v", reset.Appearance)
 	}
 }
 

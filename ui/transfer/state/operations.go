@@ -77,7 +77,8 @@ type Operation struct {
 // contents. Such an operation has no byte or file totals to show.
 func (o Operation) Metadata() bool {
 	switch o.Kind {
-	case domainsftp.OpMkdir, domainsftp.OpCreateFile, domainsftp.OpRename, domainsftp.OpChmod:
+	case domainsftp.OpMkdir, domainsftp.OpCreateFile, domainsftp.OpRename, domainsftp.OpChmod,
+		domainsftp.OpArchive:
 		return true
 	}
 	return false
@@ -827,6 +828,52 @@ func (s *State) DropPane(side Side, targetDir string, payload *DragPayload) {
 		source.Kind = dest.Kind
 	}
 	s.startCopy(source, dest, payload.Paths, targetDir, move, kind, apptransfer.ConflictAsk, s.refreshAfter(source, dest, move))
+}
+
+// CanDuplicate reports whether a Tab can duplicate its selection beside
+// itself. The action writes next to the originals, so the pane needs a mounted
+// filesystem that accepts writes.
+func CanDuplicate(tab *Tab) bool {
+	return tab != nil && tab.FS != nil && !apptransfer.ReadOnly(tab.FS)
+}
+
+// CanArchive reports whether the pane can run an archive command. A local or
+// single-channel filesystem has no exec capability, and a read-only pane
+// cannot write the result. The filesystem decides the capability; a bare type
+// assertion would advertise the action on a pane whose executor is absent.
+func CanArchive(tab *Tab) bool {
+	if tab == nil || tab.FS == nil || apptransfer.ReadOnly(tab.FS) {
+		return false
+	}
+	return apptransfer.CanCreateArchive(tab.FS)
+}
+
+// DuplicateSelection copies the focused pane's selection inside the folder
+// that already holds it. The names collide by construction, so the request
+// asks the copy engine for the duplicate policy instead of a conflict dialog:
+// every entry becomes "name (copy)", "name (copy 2)", and so on, and folders
+// recurse through the same engine as any other copy. The originals are never
+// touched, and a failure arrives as the operation's notice.
+func (s *State) DuplicateSelection(side Side) {
+	tab := s.Tab(side)
+	if !CanDuplicate(tab) {
+		s.notice = "pane-unavailable"
+		s.RequestRedraw()
+		return
+	}
+	paths := tab.SelectedPaths()
+	if len(paths) == 0 {
+		s.notice = "nothing-selected"
+		s.RequestRedraw()
+		return
+	}
+	destDir := tab.Path
+	if destDir == "" {
+		s.notice = "pane-unavailable"
+		s.RequestRedraw()
+		return
+	}
+	s.startCopy(tab, tab, paths, destDir, false, domainsftp.OpCopy, apptransfer.ConflictDuplicate, []*Tab{tab})
 }
 
 // DeleteSelection removes the focused pane's selection. The view calls it

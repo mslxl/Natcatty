@@ -188,16 +188,9 @@ func (s *State) GroupNetworkProfileSource() (NetworkProfileSource, string, strin
 // networkProfileOwner returns the deepest group at or above path that holds
 // its own Network Profile reference, matching the child-last merge order.
 func (s *State) networkProfileOwner(path string) string {
-	owner := ""
-	for _, ancestor := range domainvault.GroupAncestors(path) {
-		for _, group := range s.groupItems {
-			if group.Path == ancestor && group.NetworkProfileID != "" {
-				owner = ancestor
-				break
-			}
-		}
-	}
-	return owner
+	return s.groupDefaultOwner(path, func(group domainvault.Group) bool {
+		return group.NetworkProfileID != ""
+	})
 }
 
 // EditingNetworkProfile reports whether the Network Profile editor is open.

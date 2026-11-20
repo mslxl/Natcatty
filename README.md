@@ -152,7 +152,7 @@ To describe the feature set accurately, the following are **explicitly out of sc
 | **SSH** | The sole SSH transport is built on `golang.org/x/crypto/ssh`; supports agent / public key / certificate / password / keyboard-interactive MFA / FIDO security keys (via system OpenSSH), jump hosts, X11 forwarding, and tmux auto-attach |
 | **Mosh** | Bootstraps over SSH, then hands off to Mosh; always uses the built-in pure-Go in-process client, with predictive local echo |
 | **EternalTerminal (ET)** | Always uses the built-in pure-Go in-process client; no external `et` binary is launched |
-| **Telnet** | Lazy IAC negotiation and raw-TCP passthrough |
+| **Telnet** | Lazy IAC negotiation and raw-TCP passthrough; jump chains, proxies, and Network Profiles carry the TCP stream, and the target stays a plaintext endpoint (no SSH credentials, file transfer, forwarding, monitoring, or X11) |
 | **Serial** | Port enumeration and baud / parity settings (POSIX termios / Windows DCB) |
 | **Local** | Local PTY running the system default shell |
 | **SFTP / SCP** | File transfer with automatic fallback, sudo SFTP, single-channel Hosts, and a custom SCP backend |

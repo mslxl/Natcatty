@@ -11,23 +11,22 @@ import (
 	adapterstnet "github.com/mslxl/natcatty/adapters/telnet"
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
+	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
-// fakeHostNetworkRoutes resolves only the target Host's profile and records
-// the identity it was asked about.
-type fakeHostNetworkRoutes struct {
-	route *appconnection.NetworkRoute
+// fakeTelnetRoutes resolves the Host's route and records the identity it was
+// asked about.
+type fakeTelnetRoutes struct {
+	route appconnection.Route
 	err   error
 	id    model.HostID
 	calls int
 }
 
-func (f *fakeHostNetworkRoutes) NetworkRouteForHost(_ context.Context,
-	id model.HostID) (*appconnection.NetworkRoute, error) {
-
+func (f *fakeTelnetRoutes) Route(_ context.Context, id model.HostID) (appconnection.Route, error) {
 	f.calls++
 	f.id = id
 	return f.route, f.err
@@ -115,8 +114,8 @@ func TestTelnetWithoutANetworkProfileKeepsTheDirectDial(t *testing.T) {
 			return nil, errors.New("unexpected provider dial")
 		},
 	}}
-	factory := newTelnetFactory(inner, &fakeHostNetworkRoutes{},
-		appconnection.NewNetworkProviderRegistry(networkFactory))
+	factory := newTelnetFactory(inner, &fakeTelnetRoutes{},
+		appconnection.NewNetworkProviderRegistry(networkFactory), nil)
 
 	transport, err := factory.Open(context.Background(), telnetStartSpec())
 	if err != nil {
@@ -149,9 +148,9 @@ func TestTelnetUsesTheHostNetworkProviderForItsFirstDial(t *testing.T) {
 	network := &appconnection.NetworkRoute{
 		ProfileID: "net-console", Kind: "wireguard", Label: "Lab", Fingerprint: "fp-telnet",
 	}
-	routes := &fakeHostNetworkRoutes{route: network}
+	routes := &fakeTelnetRoutes{route: appconnection.Route{Network: network}}
 	registry := appconnection.NewNetworkProviderRegistry(&telnetTestNetworkFactory{provider: provider})
-	factory := newTelnetFactory(inner, routes, registry)
+	factory := newTelnetFactory(inner, routes, registry, nil)
 
 	transport, err := factory.Open(context.Background(), telnetStartSpec())
 	if err != nil {
@@ -187,9 +186,11 @@ func TestTelnetProviderFailureStaysTypedAndNeverFallsBack(t *testing.T) {
 		return nil, errors.New("direct dial is forbidden")
 	}}
 	registry := appconnection.NewNetworkProviderRegistry(&telnetTestNetworkFactory{provider: provider})
-	factory := newTelnetFactory(inner, &fakeHostNetworkRoutes{route: &appconnection.NetworkRoute{
-		ProfileID: "net-console", Kind: "tailscale", Fingerprint: "fp-telnet",
-	}}, registry)
+	factory := newTelnetFactory(inner, &fakeTelnetRoutes{route: appconnection.Route{
+		Network: &appconnection.NetworkRoute{
+			ProfileID: "net-console", Kind: "tailscale", Fingerprint: "fp-telnet",
+		},
+	}}, registry, nil)
 
 	_, err := factory.Open(context.Background(), telnetStartSpec())
 	var typed *appconnection.Error
@@ -214,9 +215,9 @@ func TestTelnetConfigErrorIsNotBlamedOnTheProvider(t *testing.T) {
 	}}
 	registry := appconnection.NewNetworkProviderRegistry(&telnetTestNetworkFactory{provider: provider})
 	factory := newTelnetFactory(adapterstnet.Factory{},
-		&fakeHostNetworkRoutes{route: &appconnection.NetworkRoute{
+		&fakeTelnetRoutes{route: appconnection.Route{Network: &appconnection.NetworkRoute{
 			ProfileID: "net-console", Kind: "tailscale", Fingerprint: "fp-telnet",
-		}}, registry)
+		}}}, registry, nil)
 	cfg := domaintelnet.Config{Hostname: "", Port: 23}.Normalized()
 	_, err := factory.Open(context.Background(), appsession.StartSpec{
 		Kind: appsession.KindTelnet, HostID: "console", Telnet: &cfg,
@@ -242,9 +243,11 @@ func TestTelnetNetworkProfileWithoutAProviderFailsClosed(t *testing.T) {
 		directCalls++
 		return nil, errors.New("direct dial is forbidden")
 	}}
-	factory := newTelnetFactory(inner, &fakeHostNetworkRoutes{route: &appconnection.NetworkRoute{
-		ProfileID: "net-console", Kind: "tailscale", Fingerprint: "fp-telnet",
-	}}, appconnection.NewNetworkProviderRegistry(nil))
+	factory := newTelnetFactory(inner, &fakeTelnetRoutes{route: appconnection.Route{
+		Network: &appconnection.NetworkRoute{
+			ProfileID: "net-console", Kind: "tailscale", Fingerprint: "fp-telnet",
+		},
+	}}, appconnection.NewNetworkProviderRegistry(nil), nil)
 
 	_, err := factory.Open(context.Background(), telnetStartSpec())
 	var typed *appconnection.Error
@@ -275,9 +278,11 @@ func TestTelnetReopenReusesTheSameProvider(t *testing.T) {
 	}}
 	networkFactory := &telnetTestNetworkFactory{provider: provider}
 	registry := appconnection.NewNetworkProviderRegistry(networkFactory)
-	factory := newTelnetFactory(inner, &fakeHostNetworkRoutes{route: &appconnection.NetworkRoute{
-		ProfileID: "net-console", Kind: "tailscale", Fingerprint: "fp-telnet",
-	}}, registry)
+	factory := newTelnetFactory(inner, &fakeTelnetRoutes{route: appconnection.Route{
+		Network: &appconnection.NetworkRoute{
+			ProfileID: "net-console", Kind: "tailscale", Fingerprint: "fp-telnet",
+		},
+	}}, registry, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	for i := 0; i < 2; i++ {
@@ -295,9 +300,112 @@ func TestTelnetReopenReusesTheSameProvider(t *testing.T) {
 	}
 }
 
-// TestVaultRoutesHostNetworkRouteIgnoresJumps checks Telnet resolves the target
-// Host's own effective profile even when an SSH route would prefer a jump's.
-func TestVaultRoutesHostNetworkRouteIgnoresJumps(t *testing.T) {
+// telnetTestKnownHosts is an empty Known Host store; these tests never reach a
+// host-key prompt.
+type telnetTestKnownHosts struct{}
+
+func (telnetTestKnownHosts) ListKnownHosts(context.Context) ([]domainconn.KnownHost, error) {
+	return nil, nil
+}
+
+func (telnetTestKnownHosts) UpsertKnownHost(context.Context, domainconn.KnownHost) error {
+	return nil
+}
+
+// telnetTestAuthSource authenticates every SSH hop with one password.
+type telnetTestAuthSource struct{}
+
+func (telnetTestAuthSource) AuthPlan(context.Context, appconnection.Request) (appconnection.AuthPlan, error) {
+	return appconnection.BuildAuthPlan(appconnection.AuthSpec{
+		Mode: appconnection.AuthModePassword, Password: "pw",
+	}), nil
+}
+
+// telnetTestStreamDialer records the routed request and hands back a scripted
+// raw stream. Dial is never reached: a routed Telnet Host opens a stream.
+type telnetTestStreamDialer struct {
+	mu    sync.Mutex
+	req   appconnection.DialRequest
+	conn  net.Conn
+	calls int
+}
+
+func (d *telnetTestStreamDialer) Dial(context.Context, appconnection.DialRequest) (appconnection.Client, error) {
+	return nil, errors.New("a routed Telnet Host opened an SSH client instead of a stream")
+}
+
+func (d *telnetTestStreamDialer) DialStream(_ context.Context, req appconnection.DialRequest) (net.Conn, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.calls++
+	d.req = req
+	return d.conn, nil
+}
+
+func (d *telnetTestStreamDialer) recorded() appconnection.DialRequest {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.req
+}
+
+// TestTelnetUsesTheRoutedStreamForAJumpOrProxy proves a Telnet Host routes
+// through the Connection Manager: the jump is an SSH endpoint with its own
+// credentials, the proxy applies to the first endpoint, and the target is the
+// Telnet endpoint. The adapter's direct dialer is never tried.
+func TestTelnetUsesTheRoutedStreamForAJumpOrProxy(t *testing.T) {
+	client, server := net.Pipe()
+	_ = server.Close()
+	t.Cleanup(func() { _ = client.Close() })
+	dialer := &telnetTestStreamDialer{conn: client}
+	manager := appconnection.NewManager(dialer, nil, telnetTestKnownHosts{},
+		appconnection.WithAuthSource(telnetTestAuthSource{}))
+	route := appconnection.Route{
+		Jumps: []appconnection.Hop{{
+			HostID: "bastion", Label: "bastion", Hostname: "bastion.lab",
+			Port: 2222, Username: "ops",
+		}},
+		Proxy: &appconnection.Proxy{
+			Type: appconnection.ProxySOCKS5, Host: "proxy.lab", Port: 1080,
+		},
+	}
+	directCalls := 0
+	inner := adapterstnet.Factory{Dial: func(context.Context, string, string) (net.Conn, error) {
+		directCalls++
+		return nil, errors.New("direct dial is forbidden")
+	}}
+	factory := newTelnetFactory(inner, &fakeTelnetRoutes{route: route},
+		appconnection.NewNetworkProviderRegistry(nil), manager)
+
+	transport, err := factory.Open(context.Background(), telnetStartSpec())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	_ = transport.Close()
+
+	req := dialer.recorded()
+	if req.Hostname != "console.local" || req.Port != 2323 {
+		t.Fatalf("target = %s:%d, want console.local:2323", req.Hostname, req.Port)
+	}
+	if len(req.Jumps) != 1 {
+		t.Fatalf("jumps = %d, want the saved jump", len(req.Jumps))
+	}
+	jump := req.Jumps[0]
+	if jump.Hostname != "bastion.lab" || jump.Port != 2222 || jump.Username != "ops" {
+		t.Fatalf("jump = %s@%s:%d, want ops@bastion.lab:2222",
+			jump.Username, jump.Hostname, jump.Port)
+	}
+	if req.Proxy == nil || req.Proxy.Host != "proxy.lab" || req.Proxy.Port != 1080 {
+		t.Fatalf("proxy = %+v, want the saved proxy", req.Proxy)
+	}
+	if directCalls != 0 {
+		t.Fatalf("direct dials = %d, want no fallback", directCalls)
+	}
+}
+
+// TestTelnetRouteFollowsTheJumpChain checks Telnet resolves the same route as
+// an SSH Session, including the first jump's Network Profile: a jump that must
+// be reached through a profile now carries the Telnet stream with it.
+func TestTelnetRouteFollowsTheJumpChain(t *testing.T) {
 	vault := &fakeRouteVault{
 		hosts: map[model.HostID]domainvault.Host{
 			"target": {
@@ -314,19 +422,14 @@ func TestVaultRoutesHostNetworkRouteIgnoresJumps(t *testing.T) {
 	}
 	routes := vaultRoutes{vault: vault}
 
-	sshRoute, err := routes.Route(context.Background(), "target")
+	route, err := routes.Route(context.Background(), "target")
 	if err != nil {
 		t.Fatalf("Route: %v", err)
 	}
-	if sshRoute.Network == nil || sshRoute.Network.ProfileID != "net-first" {
-		t.Fatalf("SSH Network = %+v, want the first jump's profile", sshRoute.Network)
+	if len(route.Jumps) != 1 || route.Jumps[0].Hostname != "bastion.internal" {
+		t.Fatalf("Jumps = %+v, want the saved chain", route.Jumps)
 	}
-	hostRoute, err := routes.NetworkRouteForHost(context.Background(), "target")
-	if err != nil {
-		t.Fatalf("NetworkRouteForHost: %v", err)
-	}
-	if hostRoute == nil || hostRoute.ProfileID != "net-target" ||
-		hostRoute.Kind != string(domainvault.NetworkKindTailscale) {
-		t.Fatalf("telnet Network = %+v, want the target Host's profile", hostRoute)
+	if route.Network == nil || route.Network.ProfileID != "net-first" {
+		t.Fatalf("Network = %+v, want the first jump's profile", route.Network)
 	}
 }

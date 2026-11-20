@@ -6,6 +6,7 @@ import "errors"
 
 type sys struct{}
 
+func (p *PTY) pid() int                    { return 0 }
 func (p *PTY) start(Options) error         { return errors.ErrUnsupported }
 func (p *PTY) wait() (int, error)          { return 0, errors.ErrUnsupported }
 func (p *PTY) Read([]byte) (int, error)    { return 0, errors.ErrUnsupported }

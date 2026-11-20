@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/mslxl/natcatty/domain/model"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
 // SecretMode says how the field-secret store protects credentials. The UI
@@ -42,10 +43,13 @@ const (
 	EntityNetworkProfile = "network_profile"
 	EntityNetworkPeer    = "network_peer"
 
-	FieldPassword            = "password"
-	FieldPassphrase          = "passphrase"
-	FieldPrivateKey          = "private_key"
-	FieldProxyPassword       = "proxy_password"
+	FieldPassword      = "password"
+	FieldPassphrase    = "passphrase"
+	FieldPrivateKey    = "private_key"
+	FieldProxyPassword = "proxy_password"
+	// FieldTOTP stores a Host's canonical otpauth://totp URI. Like every other
+	// value here it is credential material: the URI embeds the shared secret.
+	FieldTOTP                = "totp"
 	FieldETSessionID         = "session_id"
 	FieldETSessionKey        = "session_passkey"
 	FieldNetworkAuthKey      = "network_auth_key"
@@ -172,6 +176,15 @@ func (s *Service) SetSecret(ctx context.Context, id model.HostID, field, value s
 	if !hostField(field) {
 		return invalidField(field)
 	}
+	if field == FieldTOTP && value != "" {
+		// Keep the stored value canonical so the marker never advertises an
+		// input the auth machine cannot generate a code from.
+		normalizedValue, err := domainvault.NormalizeTOTP(value)
+		if err != nil {
+			return invalid(err)
+		}
+		value = normalizedValue
+	}
 
 	if value == "" {
 		if err := s.secrets.Delete(ctx, HostSecretRef(id, field)); err != nil && !errors.Is(err, ErrSecretNotFound) {
@@ -196,6 +209,9 @@ func (s *Service) SetSecret(ctx context.Context, id model.HostID, field, value s
 			host.Proxy.HasPassword = value != ""
 			changed = true
 		}
+	case FieldTOTP:
+		host.HasTOTP = value != ""
+		changed = true
 	}
 	if changed {
 		host.UpdatedAt = s.now()
@@ -269,7 +285,7 @@ func (s *Service) UseSessionSecrets(ctx context.Context) error {
 
 // hostField accepts the Host fields the Vault encrypts.
 func hostField(field string) bool {
-	return field == FieldPassword || field == FieldPassphrase || field == FieldProxyPassword
+	return field == FieldPassword || field == FieldPassphrase || field == FieldProxyPassword || field == FieldTOTP
 }
 
 func invalidField(field string) error {

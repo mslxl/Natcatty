@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mslxl/natcatty/domain/model"
+	domainprotocol "github.com/mslxl/natcatty/domain/model/protocol"
 )
 
 // Group is one Host Group: a user-defined grouping of Hosts with shared
@@ -44,12 +45,24 @@ type Group struct {
 	SkipEcdsaHostKey bool                `json:"skipEcdsaHostKey,omitempty"`
 	Algorithms       *AlgorithmOverrides `json:"algorithms,omitempty"`
 	ProxyProfileID   string              `json:"proxyProfileId,omitempty"`
+	// DirectProxy is the group's explicit direct connection. It wins over an
+	// inherited group profile and the app-wide default, but a Host's own proxy
+	// selection still wins.
+	DirectProxy bool `json:"directProxy,omitempty"`
 	// NetworkProfileID is the group's default Network Profile. A member Host's
 	// own reference wins; with neither, the Host has no Network Route.
-	NetworkProfileID string    `json:"networkProfileId,omitempty"`
-	OrderKey         int64     `json:"orderKey"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	NetworkProfileID string `json:"networkProfileId,omitempty"`
+	// HostChain is the group's default jump chain. A member Host that lists
+	// its own hops wins as a whole; a Host with no chain uses this one.
+	HostChain *HostChain `json:"hostChain,omitempty"`
+	// X11Forwarding and X11WarningAcknowledged are the group's X11 default.
+	// Only SSH Sessions read them; a member Host that owns an X11 preference
+	// (including an explicit off) wins over this pair.
+	X11Forwarding          bool      `json:"x11Forwarding,omitempty"`
+	X11WarningAcknowledged bool      `json:"x11WarningAcknowledged,omitempty"`
+	OrderKey               int64     `json:"orderKey"`
+	CreatedAt              time.Time `json:"createdAt"`
+	UpdatedAt              time.Time `json:"updatedAt"`
 }
 
 // GroupDraft is the editable part of a Host Group.
@@ -68,7 +81,14 @@ type GroupDraft struct {
 	SkipEcdsaHostKey bool
 	Algorithms       *AlgorithmOverrides
 	ProxyProfileID   string
+	DirectProxy      bool
 	NetworkProfileID string
+	HostChain        *HostChain
+	// X11Forwarding and X11WarningAcknowledged are the group's X11 default.
+	// A member Host that owns an X11 preference, including an explicit off,
+	// keeps it.
+	X11Forwarding          bool
+	X11WarningAcknowledged bool
 }
 
 // NormalizeGroupDraft trims and canonicalizes a Host Group's input and returns
@@ -82,7 +102,12 @@ func NormalizeGroupDraft(draft GroupDraft) (GroupDraft, error) {
 	draft.IdentityID = model.IdentityID(strings.TrimSpace(string(draft.IdentityID)))
 	draft.KeyID = model.KeyID(strings.TrimSpace(string(draft.KeyID)))
 	draft.ProxyProfileID = strings.TrimSpace(draft.ProxyProfileID)
+	if draft.DirectProxy {
+		// Direct and a profile are exclusive; the editor never offers both.
+		draft.ProxyProfileID = ""
+	}
 	draft.NetworkProfileID = strings.TrimSpace(draft.NetworkProfileID)
+	draft.HostChain = normalizeHostChain(draft.HostChain)
 	draft.Algorithms = normalizeAlgorithms(draft.Algorithms)
 	// A blank protocol inherits from the parent group, so only an explicit
 	// non-SSH protocol drops defaults its members would never read.
@@ -92,6 +117,8 @@ func NormalizeGroupDraft(draft GroupDraft) (GroupDraft, error) {
 		draft.AuthMethod = ""
 		draft.UseSSHAgent = false
 		draft.RequiresMFA = false
+		draft.X11Forwarding = false
+		draft.X11WarningAcknowledged = false
 	}
 
 	if draft.Path == "" {
@@ -111,9 +138,7 @@ func NormalizeGroupDraft(draft GroupDraft) (GroupDraft, error) {
 	if err := validateText(FieldUsername, draft.Username, maxUsernameLength, false); err != nil {
 		return GroupDraft{}, err
 	}
-	switch draft.Protocol {
-	case "", ProtocolSSH, ProtocolTelnet:
-	default:
+	if !domainprotocol.ValidGroupDefault(domainprotocol.ID(draft.Protocol)) {
 		return GroupDraft{}, validation(FieldProtocol, RuleUnsupported)
 	}
 	switch draft.AuthMethod {
@@ -129,6 +154,20 @@ func NormalizeGroupDraft(draft GroupDraft) (GroupDraft, error) {
 	}
 	if err := validateText(FieldNetworkProfile, draft.NetworkProfileID, maxLabelLength, false); err != nil {
 		return GroupDraft{}, err
+	}
+	if err := validateHostChain(draft.HostChain); err != nil {
+		return GroupDraft{}, err
+	}
+	// X11 forwarding builds on SSH, and it can only be turned on for members
+	// that have seen the warning. A group whose protocol is blank inherits the
+	// protocol, so the check is deferred to ApplyGroupDefaults.
+	if draft.X11Forwarding {
+		if draft.Protocol != "" && draft.Protocol != ProtocolSSH {
+			return GroupDraft{}, validation(FieldX11, RuleUnsupported)
+		}
+		if !draft.X11WarningAcknowledged {
+			return GroupDraft{}, validation(FieldX11, RuleAcknowledgementRequired)
+		}
 	}
 	return draft, nil
 }
@@ -148,7 +187,14 @@ func (g Group) Defaults() GroupDefaults {
 		SkipEcdsaHostKey: g.SkipEcdsaHostKey,
 		Algorithms:       CloneAlgorithms(g.Algorithms),
 		ProxyProfileID:   g.ProxyProfileID,
+		DirectProxy:      g.DirectProxy,
 		NetworkProfileID: g.NetworkProfileID,
+		HostChain:        CloneHostChain(g.HostChain),
+		X11Forwarding:    g.X11Forwarding,
+		// A group cannot turn forwarding on without the acknowledgement, but a
+		// hand-edited payload might; pairing them here keeps the effective value
+		// unusable rather than opening a session the user never accepted.
+		X11WarningAcknowledged: g.X11Forwarding && g.X11WarningAcknowledged,
 	}
 }
 
@@ -167,7 +213,18 @@ type GroupDefaults struct {
 	SkipEcdsaHostKey bool
 	Algorithms       *AlgorithmOverrides
 	ProxyProfileID   string
+	DirectProxy      bool
 	NetworkProfileID string
+	HostChain        *HostChain
+	// X11Forwarding and X11WarningAcknowledged are effective only when both
+	// are set: forwarding without the acknowledgement is not usable.
+	X11Forwarding          bool
+	X11WarningAcknowledged bool
+}
+
+// X11Enabled reports whether the resolved defaults turn X11 forwarding on.
+func (d GroupDefaults) X11Enabled() bool {
+	return d.X11Forwarding && d.X11WarningAcknowledged
 }
 
 // ResolveGroupDefaults merges the group configs along a Host Group path. The
@@ -249,11 +306,30 @@ func mergeGroupDefaults(merged *GroupDefaults, defaults GroupDefaults) {
 	if defaults.Algorithms != nil {
 		merged.Algorithms = CloneAlgorithms(defaults.Algorithms)
 	}
-	if defaults.ProxyProfileID != "" {
+	if defaults.DirectProxy {
+		// A nearer group that chooses direct replaces an inherited profile.
+		// A nearer group that names a profile replaces inherited direct.
+		merged.DirectProxy = true
+		merged.ProxyProfileID = ""
+	} else if defaults.ProxyProfileID != "" {
+		merged.DirectProxy = false
 		merged.ProxyProfileID = defaults.ProxyProfileID
 	}
 	if defaults.NetworkProfileID != "" {
 		merged.NetworkProfileID = defaults.NetworkProfileID
+	}
+	// A chain is one value: a group that sets hops replaces the inherited
+	// chain whole, so every hop still names a Host the same level chose.
+	if defaults.HostChain != nil {
+		merged.HostChain = CloneHostChain(defaults.HostChain)
+	}
+	// X11 is one preference, so the nearest group that turns it on wins. A
+	// child cannot turn a parent's forwarding off, because a stored false is
+	// indistinguishable from "unset" in the payload; a Host that wants off owns
+	// an explicit off value of its own.
+	if defaults.X11Enabled() {
+		merged.X11Forwarding = true
+		merged.X11WarningAcknowledged = true
 	}
 }
 
@@ -352,6 +428,33 @@ func MaterializeHostGroup(host Host, groups []Group) Host {
 	return host
 }
 
+// AssignHostsGroup returns copies of hosts whose Host Group is groupID, or the
+// Vault root when groupID is empty. Every Host is checked before any is
+// returned, so a drop that names the same Host twice or carries a Host with no
+// identity fails as a whole and the caller never applies half of it. Other
+// fields, including credentials, are preserved.
+func AssignHostsGroup(hosts []Host, groupID string, at time.Time) ([]Host, error) {
+	if len(hosts) == 0 {
+		return nil, nil
+	}
+	seen := make(map[model.HostID]struct{}, len(hosts))
+	assigned := make([]Host, len(hosts))
+	for index, host := range hosts {
+		if host.ID == "" {
+			return nil, validation(FieldGroup, RuleRequired)
+		}
+		if _, duplicate := seen[host.ID]; duplicate {
+			return nil, validation(FieldGroup, RuleInvalid)
+		}
+		seen[host.ID] = struct{}{}
+		host.GroupID = groupID
+		host.Group = ""
+		host.UpdatedAt = at
+		assigned[index] = host
+	}
+	return assigned, nil
+}
+
 // ApplyGroupDefaults fills a Host's unset connection settings from its group's
 // effective defaults. The Host's own value wins, as in the original Vault.
 // Local shells never inherit remote credentials or SSH transport settings.
@@ -364,6 +467,11 @@ func ApplyGroupDefaults(host Host, defaults GroupDefaults) Host {
 
 	if effective.Protocol == ProtocolLocal {
 		return effective
+	}
+	// A jump chain is one value: the Host's own hops replace the group's
+	// chain whole, and a Host with no chain inherits the group's.
+	if effective.HostChain == nil {
+		effective.HostChain = CloneHostChain(defaults.HostChain)
 	}
 	// A Host that already owns an Identity must not gain another level's
 	// username or key, and a Host that owns manual credentials must not gain
@@ -395,6 +503,17 @@ func ApplyGroupDefaults(host Host, defaults GroupDefaults) Host {
 	if effective.Protocol == "" {
 		effective.Protocol = defaults.Protocol
 	}
+	// X11 is a tri-state preference: a Host that owns one (including an
+	// explicit off) keeps it, and an unset Host inherits the group's. It only
+	// applies to a plain SSH Session, since the other protocols cannot carry
+	// the forwarding channel. An empty protocol is the legacy SSH default.
+	hostOwnsX11 := effective.X11ForwardingSet || effective.X11Forwarding
+	if (effective.Protocol == ProtocolSSH || effective.Protocol == "") &&
+		!hostOwnsX11 && defaults.X11Enabled() {
+		effective.X11Forwarding = true
+		effective.X11WarningAcknowledged = true
+		effective.X11ForwardingSet = true
+	}
 	if !effective.UseSSHAgent {
 		effective.UseSSHAgent = defaults.UseSSHAgent
 	}
@@ -410,7 +529,20 @@ func ApplyGroupDefaults(host Host, defaults GroupDefaults) Host {
 	if effective.Algorithms == nil {
 		effective.Algorithms = CloneAlgorithms(defaults.Algorithms)
 	}
-	if effective.ProxyProfileID == "" {
+	switch {
+	case effective.DirectProxy:
+		// An explicit Host direct choice beats its own proxy settings and
+		// every inherited one.
+		effective.Proxy = nil
+		effective.ProxyProfileID = ""
+	case effective.Proxy != nil || effective.ProxyProfileID != "":
+		// The Host owns a proxy; a Group default must not replace it.
+	case defaults.DirectProxy:
+		// The Group connects directly and stops the app-wide default too.
+		effective.DirectProxy = true
+		effective.Proxy = nil
+		effective.ProxyProfileID = ""
+	case defaults.ProxyProfileID != "":
 		effective.ProxyProfileID = defaults.ProxyProfileID
 	}
 	if effective.NetworkProfileID == "" {

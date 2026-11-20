@@ -251,6 +251,14 @@ func (s *Service) SetHistoryCaptureHookEnabled(enabled bool) error {
 	})
 }
 
+// SetLegacyAlgorithms enables or disables the legacy algorithm offer for an
+// Unsaved Host. A saved Host keeps its own per-Host setting.
+func (s *Service) SetLegacyAlgorithms(enabled bool) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.LegacyAlgorithms = enabled
+	})
+}
+
 // SetConnectionLogRetention sets how many connection logs are kept. Zero
 // keeps every log.
 func (s *Service) SetConnectionLogRetention(count, days int) error {

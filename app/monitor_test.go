@@ -7,7 +7,23 @@ import (
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appmonitor "github.com/mslxl/natcatty/application/monitor"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
+
+// TestMonitorRefusesAHostWithNoSSHChannel covers the connector guard: metric
+// sampling runs commands over an SSH channel, so a Telnet Host is rejected
+// with the stable unsupported reason before any route or dial work.
+func TestMonitorRefusesAHostWithNoSSHChannel(t *testing.T) {
+	connector := monitorConnector{}
+	_, err := connector.Open(context.Background(), domainvault.Host{
+		ID: "console", Label: "console", Hostname: "console.local",
+		Protocol: domainvault.ProtocolTelnet,
+	})
+	var typed *appmonitor.Error
+	if !errors.As(err, &typed) || typed.Reason != appmonitor.ReasonUnsupported {
+		t.Fatalf("Open = %v, want a typed unsupported failure", err)
+	}
+}
 
 func TestMonitorFailureMapsConnectionFailures(t *testing.T) {
 	cases := []struct {

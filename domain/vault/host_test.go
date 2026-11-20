@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -81,15 +82,21 @@ func TestNormalizeDraftDisablingX11DropsTheAcknowledgement(t *testing.T) {
 	}
 }
 
-func TestNormalizeDraftRejectsX11OutsideSSH(t *testing.T) {
+func TestNormalizeDraftClearsX11OutsideSSH(t *testing.T) {
 	for _, protocol := range []Protocol{ProtocolLocal, ProtocolTelnet} {
-		_, err := NormalizeDraft(Draft{
+		draft, err := NormalizeDraft(Draft{
 			Label: "web", Hostname: "example.com", Protocol: protocol,
 			X11Forwarding: true, X11WarningAcknowledged: true,
 		})
-		var invalid *ValidationError
-		if !errors.As(err, &invalid) || invalid.Field != FieldX11 || invalid.Rule != RuleUnsupported {
-			t.Errorf("%s: error = %v, want unsupported X11", protocol, err)
+		if err != nil {
+			t.Errorf("%s: NormalizeDraft: %v", protocol, err)
+			continue
+		}
+		// X11 is forwarded over the target's SSH connection, which these
+		// protocols do not have. The hidden preference is cleared instead of
+		// making an imported record impossible to save.
+		if draft.X11Forwarding || draft.X11WarningAcknowledged {
+			t.Errorf("%s: draft = %+v, want X11 cleared", protocol, draft)
 		}
 	}
 }
@@ -553,11 +560,16 @@ func TestNormalizeDraftDefaultsAndValidatesTheFileProtocol(t *testing.T) {
 		t.Fatalf("sudo with SFTP: %v", err)
 	}
 
-	base = Draft{Label: "web", Hostname: "example.com", Protocol: ProtocolTelnet,
-		SFTPFileProtocol: FileProtocolSFTP}
-	assertNormalizeValidation(t, base, FieldFileProtocol, RuleUnsupported)
-	base = Draft{Label: "web", Hostname: "example.com", Protocol: ProtocolTelnet, SFTPSudo: true}
-	assertNormalizeValidation(t, base, FieldSFTPSudo, RuleUnsupported)
+	// A Telnet target has no SFTP subsystem. NormalizeDraft clears the
+	// hidden preference instead of making an imported record unsaveable.
+	telnet, err := NormalizeDraft(Draft{Label: "web", Hostname: "example.com", Protocol: ProtocolTelnet,
+		SFTPFileProtocol: FileProtocolSFTP, SFTPSudo: true})
+	if err != nil {
+		t.Fatalf("NormalizeDraft Telnet file protocol: %v", err)
+	}
+	if telnet.SFTPFileProtocol != FileProtocolAuto || telnet.SFTPSudo {
+		t.Fatalf("Telnet draft = %+v, want the file-transfer preference cleared", telnet)
+	}
 
 	base = Draft{Label: "web", Hostname: "example.com", Protocol: ProtocolSSH,
 		SFTPFileProtocol: "ftp"}
@@ -736,6 +748,52 @@ func TestNormalizeDraftRejectsAnOutOfRangeETPort(t *testing.T) {
 	}
 }
 
+func TestStartupCommandIsTrimmedAndSurvivesTheRecord(t *testing.T) {
+	normalized, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com",
+		StartupCommand: "  echo ready\r\nuptime  ",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if normalized.StartupCommand != "echo ready\r\nuptime" {
+		t.Fatalf("StartupCommand = %q", normalized.StartupCommand)
+	}
+
+	host := Host{
+		ID:             model.HostID("host-1"),
+		Label:          normalized.Label,
+		Hostname:       normalized.Hostname,
+		Protocol:       normalized.Protocol,
+		StartupCommand: normalized.StartupCommand,
+	}
+	if err := host.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	encoded, err := json.Marshal(host)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var decoded Host
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if decoded.StartupCommand != normalized.StartupCommand {
+		t.Fatalf("round-trip StartupCommand = %q", decoded.StartupCommand)
+	}
+
+	if _, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com", StartupCommand: "echo\x00",
+	}); err == nil {
+		t.Fatal("a startup command containing NUL was accepted")
+	} else {
+		var invalid *ValidationError
+		if !errors.As(err, &invalid) || invalid.Field != FieldStartupCommand || invalid.Rule != RuleInvalid {
+			t.Fatalf("error = %v, want an invalid startup command", err)
+		}
+	}
+}
+
 func TestEffectivePortUsesSSHDefaultsForMoshAndET(t *testing.T) {
 	for _, protocol := range []Protocol{ProtocolMosh, ProtocolET} {
 		if got := EffectivePort(protocol, 0); got != 22 {
@@ -778,5 +836,95 @@ func TestAutoAttachTmuxIsKeptOnlyForPlainSSHHosts(t *testing.T) {
 	}
 	if network.AutoAttachTmux {
 		t.Fatal("network-device mode kept autoAttachTmux")
+	}
+}
+
+func TestNormalizeDraftCanonicalizesATOTPInput(t *testing.T) {
+	secret := totpBase32.EncodeToString(rfcSHA1Seed)
+	draft, err := NormalizeDraft(Draft{
+		Hostname: "example.test",
+		TOTP:     "  " + strings.ToLower(secret) + "  ",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if !strings.HasPrefix(draft.TOTP, "otpauth://totp/") {
+		t.Fatalf("TOTP = %q, want a canonical otpauth URI", draft.TOTP)
+	}
+	parsed, err := ParseTOTP(draft.TOTP)
+	if err != nil {
+		t.Fatalf("canonical TOTP does not parse: %v", err)
+	}
+	if parsed.Algorithm() != TOTPAlgorithmSHA1 || parsed.Digits() != 6 || parsed.Period() != 30 {
+		t.Fatalf("defaults = %s/%d/%d", parsed.Algorithm(), parsed.Digits(), parsed.Period())
+	}
+}
+
+func TestNormalizeDraftRejectsAnInvalidTOTPInput(t *testing.T) {
+	_, err := NormalizeDraft(Draft{Hostname: "example.test", TOTP: "not a secret"})
+	var validation *ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("error = %v, want *ValidationError", err)
+	}
+	if validation.Field != FieldTOTP || validation.Rule != RuleInvalid {
+		t.Fatalf("validation = %+v", validation)
+	}
+}
+
+func TestNormalizeDraftClearsTOTPForNonSSHProtocols(t *testing.T) {
+	secret := totpBase32.EncodeToString(rfcSHA1Seed)
+	draft, err := NormalizeDraft(Draft{
+		Hostname:  "example.test",
+		Protocol:  ProtocolTelnet,
+		TOTP:      secret,
+		ClearTOTP: true,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if draft.TOTP != "" || draft.ClearTOTP {
+		t.Fatalf("non-SSH draft kept TOTP=%q clear=%v", draft.TOTP, draft.ClearTOTP)
+	}
+}
+
+// TestNormalizeDraftKeepsTheRouteForTelnetAndDropsItForLocal pins the split
+// between route fields and target-side SSH features: an SSH jump chain, a
+// proxy, and algorithm overrides describe how to reach the Host, so a Telnet
+// Host keeps them; a Local shell dials nothing, so they are cleared.
+func TestNormalizeDraftKeepsTheRouteForTelnetAndDropsItForLocal(t *testing.T) {
+	route := func(protocol Protocol) Draft {
+		return Draft{
+			Label: "console", Hostname: "console.local", Protocol: protocol,
+			HostChain:        &HostChain{HostIDs: []model.HostID{"bastion"}},
+			Proxy:            &ProxyConfig{Type: "socks5", Host: "proxy.local", Port: 1080},
+			ProxyProfileID:   "proxy-1",
+			NetworkProfileID: "net-1",
+			LegacyAlgorithms: true,
+			SkipEcdsaHostKey: true,
+			Algorithms:       &AlgorithmOverrides{Ciphers: []string{"aes128-ctr"}},
+		}
+	}
+
+	telnet, err := NormalizeDraft(route(ProtocolTelnet))
+	if err != nil {
+		t.Fatalf("Telnet NormalizeDraft: %v", err)
+	}
+	if telnet.HostChain == nil || telnet.Proxy == nil ||
+		telnet.ProxyProfileID != "proxy-1" || telnet.NetworkProfileID != "net-1" ||
+		!telnet.LegacyAlgorithms || !telnet.SkipEcdsaHostKey || telnet.Algorithms == nil {
+		t.Fatalf("Telnet route = chain %+v, proxy %+v, profile %q, network %q, algorithms %v/%v/%+v",
+			telnet.HostChain, telnet.Proxy, telnet.ProxyProfileID, telnet.NetworkProfileID,
+			telnet.LegacyAlgorithms, telnet.SkipEcdsaHostKey, telnet.Algorithms)
+	}
+
+	local, err := NormalizeDraft(route(ProtocolLocal))
+	if err != nil {
+		t.Fatalf("Local NormalizeDraft: %v", err)
+	}
+	if local.HostChain != nil || local.Proxy != nil ||
+		local.ProxyProfileID != "" || local.NetworkProfileID != "" ||
+		local.LegacyAlgorithms || local.SkipEcdsaHostKey || local.Algorithms != nil {
+		t.Fatalf("Local kept a route it cannot use: chain %+v, proxy %+v, profile %q, network %q",
+			local.HostChain, local.Proxy, local.ProxyProfileID, local.NetworkProfileID)
 	}
 }

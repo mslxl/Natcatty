@@ -70,6 +70,8 @@ func bindingLabel(m locales.Messages, binding domain.Binding) string {
 		return m.SettingsBindingBroadcast()
 	case "toggle-side-panel":
 		return m.SettingsBindingToggleSidePanel()
+	case "toggle-host-list":
+		return m.SettingsBindingToggleHostList()
 	case "open-settings":
 		return m.SettingsBindingOpenSettings()
 	case "toggle-opacity":

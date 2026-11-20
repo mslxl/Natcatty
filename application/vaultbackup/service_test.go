@@ -3,6 +3,7 @@ package vaultbackup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -499,6 +500,32 @@ func TestFailedRestoreLeavesTheVaultUnchanged(t *testing.T) {
 	// can still recover the pre-restore state.
 	if graph.store.count() != 2 {
 		t.Fatalf("count = %d, want 2", graph.store.count())
+	}
+}
+
+func TestRestoreReportsADecryptFailureAsTyped(t *testing.T) {
+	graph := newTestService(t, hostSnapshot("old"))
+	ctx := context.Background()
+	created, err := graph.service.Create(ctx, domainbackup.ReasonVaultChange, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph.store.mu.Lock()
+	graph.store.readErr = fmt.Errorf("%w: cipher: message authentication failed", ErrDecrypt)
+	graph.store.mu.Unlock()
+
+	err = graph.service.Restore(ctx, created.Backup.ID)
+	if !errors.Is(err, ErrDecrypt) {
+		t.Fatalf("Restore = %v, want ErrDecrypt", err)
+	}
+	if errors.Is(err, ErrCorrupt) {
+		t.Fatalf("Restore = %v, a decrypt failure must not claim corruption", err)
+	}
+	if _, restores := graph.snapshotter.calls(); restores != 0 {
+		t.Fatal("an undecryptable backup reached the snapshotter")
+	}
+	if graph.service.LastStatus().Kind != StatusRestoreFailed {
+		t.Fatalf("status = %q, want restore_failed", graph.service.LastStatus().Kind)
 	}
 }
 

@@ -108,6 +108,7 @@ var catalog = []Binding{
 	{ID: "snippets", Action: "snippets", Mac: "⌘ + Shift + S", PC: "Ctrl + Shift + S", Category: CategoryApp},
 	{ID: "broadcast", Action: "broadcast", Mac: "⌘ + B", PC: "Ctrl + B", Category: CategoryApp},
 	{ID: "toggle-side-panel", Action: "toggleSidePanel", Mac: "⌘ + \\", PC: "Ctrl + \\", Category: CategoryApp},
+	{ID: "toggle-host-list", Action: "toggleHostTree", Mac: "⌘ + Shift + B", PC: "Ctrl + Shift + B", Category: CategoryApp},
 	{ID: "open-settings", Action: "openSettings", Mac: "⌘ + ,", PC: "Ctrl + ,", Category: CategoryApp},
 	{ID: "toggle-opacity", Action: "toggleOpacity", Mac: "⌘ + U", PC: "Ctrl + Shift + U", Category: CategoryApp},
 
