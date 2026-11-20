@@ -445,6 +445,19 @@ func TestTerminalEnterAndTab(t *testing.T) {
 	}
 }
 
+// TestSoftKeyboardReturnSendsCarriageReturn covers the phone's Return key.
+// An on-screen keyboard's Return does not arrive as a key event: UIKit's
+// insertText delivers the text "\n". A terminal's Enter is a carriage
+// return, and a full-screen program reads a bare line feed as Ctrl+J, so the
+// commit has to become Enter's key rather than raw text.
+func TestSoftKeyboardReturnSendsCarriageReturn(t *testing.T) {
+	term, conn, tt := newClientTerm(t)
+	tt.Type("\n")
+	if got := conn.take(term); got != "\r" {
+		t.Fatalf("a soft keyboard Return sent %q, want %q", got, "\r")
+	}
+}
+
 func TestKeyRepeatTypesOnDarwin(t *testing.T) {
 	was := goos
 	defer func() { goos = was }()

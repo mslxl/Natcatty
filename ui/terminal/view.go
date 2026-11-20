@@ -914,6 +914,16 @@ func (v *view) typed(text string) {
 			return
 		}
 		k, unshifted, shift := keyOfRune(r)
+		if r == '\n' || r == '\r' {
+			// A soft keyboard's Return reaches a text input as text:
+			// UIKit's insertText puts a newline for it, and an input
+			// method may commit a carriage return. A terminal's Return
+			// is Enter, so send its key rather than the raw character;
+			// a bare line feed would reach a full-screen program as
+			// Ctrl+J instead of Return.
+			k, unshifted, shift = vt.KeyEnter, '\r', false
+			text = string(unshifted)
+		}
 		mods := ui.Modifiers(0)
 		if shift {
 			mods = ui.Shift

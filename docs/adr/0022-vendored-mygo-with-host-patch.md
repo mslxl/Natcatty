@@ -2,12 +2,13 @@
 
 The phone shell is a MyGo app: MyGo supplies the native host, the UI runtime,
 and the terminal surface on both platforms. The iOS host in MyGo v0.10.0
-cannot re-show the soft keyboard after the user dismisses it with the
-keyboard's own key: `SurfaceWindow.setTextInput` calls
-`becomeFirstResponder()` again, but the view never stopped being first
-responder, so UIKit does nothing and the keyboard stays down. `reloadInputViews()`
-is the call that brings it back. The fix belongs in the host, and the host
-ships as Swift source inside the MyGo module.
+cannot keep a soft-keyboard dismissal: `SurfaceWindow.setTextInput` treats
+every text-input update while editing as a request to focus. When the
+dismiss key leaves the view first responder, the update's
+`becomeFirstResponder()` is a no-op and a later tap cannot re-show the
+keyboard; when it resigns the view, the resize that follows the keyboard's
+exit focuses it again and the keyboard pops back by itself. The fix belongs
+in the host, and the host ships as Swift source inside the MyGo module.
 
 **Status**: accepted
 
@@ -19,16 +20,18 @@ changes live as patches in `patches/mygo/`. Every build path runs
 commit and applies every patch in name order. The compile gates, the iOS
 render driver, and the release and phone CI workflows call it before they
 build. The directory also carries the desktop mouse, DEC 1001, ConPTY and
-encoder-mode patches; the keyboard patch is `0005`. The Nix package cannot see a submodule's contents (a flake
-source holds the gitlink, not the tree), so it takes the same release from a
-`mygo` flake input and overlays that tree in place of the empty
-`third_party/mygo`, applying the same patches.
+encoder-mode patches; the keyboard patch is `0005`. The Nix package cannot
+see a submodule's contents (a flake source holds the gitlink, not the tree),
+so it takes the same release from a `mygo` flake input and overlays that tree
+in place of the empty `third_party/mygo`, applying the same patches.
 
-The patch is the smallest upstream-shaped change: when the host is asked to
-show the keyboard again while it is still first responder, call
-`reloadInputViews()` instead of `becomeFirstResponder()`. It is written as an
-ordinary `git diff` against the pinned tag so it can be proposed upstream
-unchanged.
+The patch is the smallest upstream-shaped change: only a changed show
+counter counts as a request to show, so the resize after a dismissal does
+not focus the view. It calls `reloadInputViews()` when the view is still
+first responder and `becomeFirstResponder()` when UIKit has resigned it,
+and it remembers an active-app resignation — the keyboard's own dismiss key
+— until a new show request clears it. It is written as an ordinary
+`git diff` against the pinned tag so it can be proposed upstream unchanged.
 
 **Upgrading MyGo**: bump the submodule and the `mygo` flake input to the new
 tag, run `scripts/apply-mygo-patches.sh` and decide each patch: if upstream
