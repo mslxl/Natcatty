@@ -119,6 +119,40 @@ final class SoftKeyboardUITests: XCTestCase {
         expectInput("6162630d")
     }
 
+    /// Criterion 2, Tab path: a tab delivered through the soft keyboard's
+    /// text input must reach the shell as Tab's key (0x09), not be dropped
+    /// or typed as some other character.
+    func testSoftKeyboardTabSendsTabKey() {
+        XCTAssertTrue(switchKeyboard(pinyin: false), "the English keyboard is not available")
+        app.typeText("\t")
+        expectInput("09")
+        print("SoftKeyboardUITests: the soft keyboard's tab reached the shell as Tab")
+    }
+
+    /// Criterion 2, cancel path: erasing the whole marked composition clears
+    /// it without committing anything. The empty marked text is the cancel
+    /// the text client defines. The erase that follows must be an ordinary
+    /// Backspace key — had the composition survived, that erase would have
+    /// edited it and the shell would still see nothing — so one 0x7f proves
+    /// the composition really ended.
+    func testPinyinEraseToEmptyCancelsTheComposition() {
+        XCTAssertTrue(switchKeyboard(pinyin: true), "the Pinyin keyboard is not enabled")
+        expectInput("")
+        key("n").tap()
+        key("i").tap()
+        label(app.buttons["Return"], is: "确认")
+        app.keys["delete"].tap()
+        app.keys["delete"].tap()
+        // The candidate bar is gone: the composition was cleared, not
+        // committed.
+        label(app.buttons["Return"], is: "换行")
+        sleep(1)
+        XCTAssertEqual(currentInput(), "", "cancelling the composition sent something")
+        app.keys["delete"].tap()
+        expectInput("7f")
+        print("SoftKeyboardUITests: clearing the composition sent nothing; the next erase was Backspace")
+    }
+
     /// Criterion 2, IME path: a Pinyin composition is marked text in the
     /// terminal, the shell sees nothing until a candidate is committed, the
     /// candidate reaches it once, and deleting inside the composition edits

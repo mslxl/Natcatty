@@ -6,9 +6,10 @@
 # connection receives and shows them as an accessibility label, because a
 # rendered terminal cell cannot tell Return's CR from a line feed. The
 # XCUITest bundle next to this script taps the real UIKit keyboard: it
-# presents and dismisses it, types Latin text, and composes Pinyin. The
-# terminal's text client has unit tests too; this run is the check that the
-# host path (UITextInput, insertText, the surface resize on dismissal) works.
+# presents and dismisses it, types Latin text and Tab, and composes Pinyin,
+# including cancelling a composition by erasing it. The terminal's text
+# client has unit tests too; this run is the check that the host path
+# (UITextInput, insertText, the surface resize on dismissal) works.
 #
 # An iPad is used because its on-screen keyboard carries the explicit
 # "Hide keyboard" key that a manual dismissal needs. CoreSimulator attaches
@@ -22,8 +23,9 @@
 #   -k        keep the build and result directory
 #
 # Run inside `nix develop .#ios` from the repository root. A run without
-# -d creates (or reuses) its own iPad, and always shuts it down, including
-# after a failure.
+# -d creates (or reuses) its own iPad, erases it so an earlier run's
+# keyboard state cannot mask a broken setup, and always shuts it down,
+# including after a failure.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -109,6 +111,14 @@ if [ -z "$udid" ]; then
   echo "$udid" >"$state"
   stop_device=1
 fi
+# The default iPad is erased before its keyboard is configured. A keyboard
+# or input-mode cache left behind by an earlier run must never be what makes
+# this run pass: the setup below has to work on a clean device. An explicit
+# -d device belongs to the caller and is never erased.
+if [ "$stop_device" -eq 1 ]; then
+  xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
+  xcrun simctl erase "$udid"
+fi
 if ! xcrun simctl list devices | grep -q "$udid.*Booted"; then
   xcrun simctl boot "$udid"
 fi
@@ -140,10 +150,11 @@ use_keyboard() {
 
 # Each phase enables exactly one language keyboard. The globe key cycles
 # through them plus the emoji keyboard, and its order is not stable enough
-# to script; with one language there is nothing to cycle to. The Latin and
-# dismissal tests run with English, the IME test with the Pinyin keyboard.
+# to script; with one language there is nothing to cycle to. The Latin,
+# dismissal and Tab tests run with English; the IME and cancel tests with
+# the Pinyin keyboard.
 english_keyboard='"en_US@sw=QWERTY;hw=Automatic"'
-pinyin_keyboard='"{{SECRET_njvhgzwm}};hw=Automatic"'
+pinyin_keyboard='"zh_Hans-Pinyin@sw=Pinyin-Simplified;hw=Automatic"'
 
 echo "ios-keyboard-test.sh: building the natcatty_smoke app"
 GOFLAGS="${GOFLAGS:+$GOFLAGS }-tags=natcatty_smoke" \
@@ -206,8 +217,10 @@ run_test() {
 use_keyboard "$english_keyboard"
 run_test english-dismissal testKeyboardComesBackAfterDismissal
 run_test english-typing testSoftKeyboardTypesAndReturnSendsCarriageReturn
+run_test english-tab testSoftKeyboardTabSendsTabKey
 
 use_keyboard "$pinyin_keyboard"
 run_test pinyin-composition testPinyinCompositionCommitsOnceAndEditsLocally
+run_test pinyin-cancel testPinyinEraseToEmptyCancelsTheComposition
 
-echo "ios-keyboard-test.sh: soft keyboard, dismissal and IME checks passed"
+echo "ios-keyboard-test.sh: soft keyboard, dismissal, Return, Tab, IME and composition-cancel checks passed"

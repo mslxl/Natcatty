@@ -458,6 +458,18 @@ func TestSoftKeyboardReturnSendsCarriageReturn(t *testing.T) {
 	}
 }
 
+// TestSoftKeyboardTabSendsTabKey covers the phone's Tab path. A host that
+// delivers Tab as text — UIKit's insertText for a tab — must send Tab's key,
+// which the terminal encodes as a tab byte; a bare character would be
+// indistinguishable from text the program did not ask for.
+func TestSoftKeyboardTabSendsTabKey(t *testing.T) {
+	term, conn, tt := newClientTerm(t)
+	tt.Type("\t")
+	if got := conn.take(term); got != "\t" {
+		t.Fatalf("a soft keyboard Tab sent %q, want %q", got, "\t")
+	}
+}
+
 func TestKeyRepeatTypesOnDarwin(t *testing.T) {
 	was := goos
 	defer func() { goos = was }()

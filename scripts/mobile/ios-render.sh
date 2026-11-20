@@ -9,9 +9,10 @@
 #
 # After the render smoke it runs the soft keyboard and IME suite
 # (ios-keyboard-test.sh): presentation and re-show after the iPad's dismiss
-# key, Latin keys and Return as CR, and Pinyin composition. A rendered
-# diagnostic cannot prove UIKit's keyboard or an input method, so the one
-# simulator entry point drives both, and `--no-keyboard` opts out.
+# key, Latin keys with Return as CR and Tab as Tab, and Pinyin composition
+# with a commit and a cancel. A rendered diagnostic cannot prove UIKit's
+# keyboard or an input method, so the one simulator entry point drives both,
+# and `--no-keyboard` opts out.
 #
 # The staged object must already be the simulator slice:
 #   scripts/mobile/ios-syso.sh simulator
