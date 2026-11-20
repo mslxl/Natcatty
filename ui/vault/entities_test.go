@@ -2731,3 +2731,56 @@ func TestHostCardDetailHasNoOrphanSeparatorsAt720x480(t *testing.T) {
 		t.Fatalf("the address is not on the line under the label: label %+v, address %+v", label, detail)
 	}
 }
+
+// TestHostProtocolSwitchKeepsTheRouteForTelnet checks the route controls a
+// Telnet stream can still use: SSH jumps, a proxy, and the Network Profile stay
+// selectable and their values survive the switch. A Local shell dials nothing,
+// so its route is cleared and the controls disappear.
+func TestHostProtocolSwitchKeepsTheRouteForTelnet(t *testing.T) {
+	m := locales.In("en")
+	state, _, _, _, _, tt := newProductionEntityView(t, 720, 480)
+	state.BeginCreate()
+	form := state.Form()
+	form.ProxyProfileID = "proxy-1"
+	form.NetworkProfileID = "net-1"
+
+	state.SetHostProtocol(string(domainvault.ProtocolTelnet))
+	if form.ProxyProfileID != "proxy-1" || form.NetworkProfileID != "net-1" {
+		t.Fatalf("Telnet dropped its route fields: %+v", *form)
+	}
+	tt.Frame()
+	if !tt.HasText(m.VaultHostProxyProfile()) {
+		t.Fatalf("a Telnet Host does not offer a Proxy Profile, texts %q", tt.Texts())
+	}
+	if !tt.HasText(m.VaultNetworkProfile()) {
+		t.Fatalf("a Telnet Host does not offer a Network Profile, texts %q", tt.Texts())
+	}
+
+	state.SetHostProtocol(string(domainvault.ProtocolLocal))
+	if form.ProxyProfileID != "" || form.NetworkProfileID != "" {
+		t.Fatalf("Local kept route fields from a hidden control: %+v", *form)
+	}
+	tt.Frame()
+	if tt.HasText(m.VaultHostProxyProfile()) || tt.HasText(m.VaultNetworkProfile()) {
+		t.Fatalf("a Local shell still shows route controls, texts %q", tt.Texts())
+	}
+}
+
+// TestHostEditorDisclosesTelnetPlaintext checks the editor warns that Telnet
+// sends the password unencrypted, and that the warning is gone for SSH.
+func TestHostEditorDisclosesTelnetPlaintext(t *testing.T) {
+	m := locales.In("en")
+	state, _, _, _, _, tt := newProductionEntityView(t, 720, 480)
+	state.BeginCreate()
+	state.SetHostProtocol(string(domainvault.ProtocolTelnet))
+	tt.Frame()
+	if !tt.HasText(m.VaultHostTelnetPlaintextWarning()) {
+		t.Fatalf("a Telnet Host does not disclose plaintext transport, texts %q", tt.Texts())
+	}
+
+	state.SetHostProtocol(string(domainvault.ProtocolSSH))
+	tt.Frame()
+	if tt.HasText(m.VaultHostTelnetPlaintextWarning()) {
+		t.Fatalf("an SSH Host shows the Telnet disclosure, texts %q", tt.Texts())
+	}
+}

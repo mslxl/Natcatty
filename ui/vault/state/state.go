@@ -946,11 +946,14 @@ func (s *State) SetX11Forwarding(enabled bool) {
 
 // SetHostProtocol records the Host editor's protocol and clears settings that
 // belong to the previous protocol. A hidden control must never leave a value
-// behind that Save would persist: file-transfer settings and SSH-only
-// credentials all follow the protocol.
+// behind that Save would persist: file-transfer settings, X11, and SSH-only
+// credentials all follow the protocol. Route fields survive a switch to Telnet
+// because SSH jumps and a proxy can still carry a Telnet stream; only a Local
+// shell, which dials nothing, drops them.
 func (s *State) SetHostProtocol(protocol string) {
 	s.form.Protocol = protocol
-	if protocol != string(domainvault.ProtocolSSH) {
+	capabilities := domainvault.Protocol(protocol)
+	if !capabilities.SupportsX11() {
 		// X11 has no control on another protocol, so neither a shown value nor
 		// an inherited one may survive Save. Ownership is dropped too: the
 		// preference was never a choice the user could see.
@@ -958,8 +961,16 @@ func (s *State) SetHostProtocol(protocol string) {
 		s.form.X11WarningAcknowledged = false
 		s.form.X11ForwardingSet = false
 		s.form.X11Inherited = false
+	}
+	if !capabilities.SupportsFileTransfer() {
 		s.form.FileProtocol = string(domainvault.FileProtocolAuto)
 		s.form.SFTPSudo = false
+	}
+	if !capabilities.SupportsProxy() {
+		s.form.ProxyProfileID = ""
+		s.form.NetworkProfileID = ""
+	}
+	if protocol != string(domainvault.ProtocolSSH) {
 		s.form.NetworkDevice = false
 		s.form.AutoAttachTmux = false
 	}
@@ -978,7 +989,7 @@ func (s *State) SetHostProtocol(protocol string) {
 			Protocol: domainvault.ProtocolSSH,
 		})
 	}
-	if !domainvault.Protocol(protocol).UsesSSHAuth() {
+	if !capabilities.UsesSSHAuth() {
 		s.form.IdentityID = ""
 		s.form.KeyID = ""
 		s.form.AuthMethod = string(domainvault.HostAuthAuto)

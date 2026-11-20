@@ -6216,6 +6216,18 @@ func (msgs Messages) VaultHostX11Acknowledge() string {
 	return Catalog.Format(msgs.locale, "vaultHostX11Acknowledge", nil)
 }
 
+// VaultHostTelnetPlaintextWarning says "Telnet is a plaintext protocol: everything you type, including the password, crosses the network unencrypted. Use it …"
+// in the language the app shows.
+func VaultHostTelnetPlaintextWarning() string {
+	return In(i18n.Locale()).VaultHostTelnetPlaintextWarning()
+}
+
+// VaultHostTelnetPlaintextWarning says "Telnet is a plaintext protocol: everything you type, including the password, crosses the network unencrypted. Use it …"
+// in the language of msgs.
+func (msgs Messages) VaultHostTelnetPlaintextWarning() string {
+	return Catalog.Format(msgs.locale, "vaultHostTelnetPlaintextWarning", nil)
+}
+
 // VaultHostNetworkDevice says "Network device mode"
 // in the language the app shows.
 func VaultHostNetworkDevice() string { return In(i18n.Locale()).VaultHostNetworkDevice() }

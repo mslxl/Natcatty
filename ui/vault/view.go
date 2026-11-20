@@ -1500,6 +1500,10 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				// never loaded back from storage and never rendered again.
 				ui.TextInput(c, &form.Password).Password()
 			}).Description(passwordHint)
+			if domainvault.Protocol(form.Protocol) == domainvault.ProtocolTelnet {
+				ui.Text(c, m.VaultHostTelnetPlaintextWarning()).
+					FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
+			}
 
 			if domainvault.Protocol(form.Protocol).UsesSSHAuth() {
 				totpHint := m.VaultHostTOTPHint()
@@ -1560,24 +1564,29 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				}
 				ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
 			}
-			kit.FormRow(c, m.VaultHostProxyProfile(), func() {
-				proxyChoice := proxyChoiceValue(form.DirectProxy, form.ProxyProfileID)
-				ui.RadioGroup(c, func() {
-					ui.Radio(c, &proxyChoice, "", m.VaultNone())
-					ui.Radio(c, &proxyChoice, directProxyChoice, m.VaultProxyDirect())
-					for _, profile := range s.ProxyProfiles() {
-						ui.Radio(c, &proxyChoice, profile.ID, profile.Label)
+			// Jump chains, proxies, and Network Profiles describe how to reach
+			// the endpoint, so a protocol that routes through SSH keeps them
+			// even when its target is not SSH.
+			if domainvault.Protocol(form.Protocol).SupportsProxy() {
+				kit.FormRow(c, m.VaultHostProxyProfile(), func() {
+					proxyChoice := proxyChoiceValue(form.DirectProxy, form.ProxyProfileID)
+					ui.RadioGroup(c, func() {
+						ui.Radio(c, &proxyChoice, "", m.VaultNone())
+						ui.Radio(c, &proxyChoice, directProxyChoice, m.VaultProxyDirect())
+						for _, profile := range s.ProxyProfiles() {
+							ui.Radio(c, &proxyChoice, profile.ID, profile.Label)
+						}
+					})
+					form.DirectProxy = proxyChoice == directProxyChoice
+					form.ProxyProfileID = ""
+					if !form.DirectProxy {
+						form.ProxyProfileID = proxyChoice
 					}
-				})
-				form.DirectProxy = proxyChoice == directProxyChoice
-				form.ProxyProfileID = ""
-				if !form.DirectProxy {
-					form.ProxyProfileID = proxyChoice
-				}
-			}).Description(m.VaultHostProxyProfileHint() + " " + m.VaultProxyDirectHint())
-			hostProxyProfileSourceLine(c, s, m, t)
-			hostJumpHostsField(c, s, m, t, form.Protocol)
-			hostNetworkProfileField(c, s, m, t)
+				}).Description(m.VaultHostProxyProfileHint() + " " + m.VaultProxyDirectHint())
+				hostProxyProfileSourceLine(c, s, m, t)
+				hostJumpHostsField(c, s, m, t, form.Protocol)
+				hostNetworkProfileField(c, s, m, t)
+			}
 			if form.Protocol == string(domainvault.ProtocolSSH) {
 				kit.FormRow(c, m.VaultHostFileProtocol(), func() {
 					changed := ui.Select(c, &form.FileProtocol, []string{
