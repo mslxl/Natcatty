@@ -7,8 +7,9 @@ produced, not targets.
 
 ## M1 — libghostty-vt linked into the phone app
 
-Recorded 2026-11-19 while implementing ticket 07 (iOS terminal rendering).
-Built from the pinned commit `befcdfd2c3a1cb24d9ec886e93c95b2b5daa7028` with
+Recorded 2026-11-19 while implementing ticket 07 (iOS terminal rendering);
+re-measured 2026-11-21 while reworking ticket 07 after its audit. Built from
+the pinned commit `befcdfd2c3a1cb24d9ec886e93c95b2b5daa7028` with
 Zig 0.16.0 and Xcode 27.2 (iPhoneSimulator 27.2 SDK), `ReleaseFast`, stripped.
 The iOS slices come from `scripts/mobile/build-ghostty-vt.sh build
 --platforms ios`; the object is staged with `scripts/mobile/ios-syso.sh`.
@@ -19,13 +20,23 @@ The iOS slices come from `scripts/mobile/build-ghostty-vt.sh build
 | --- | ---: | ---: | --- |
 | iOS device library (`ios-arm64` `.a`) | 10,918,320 | 10.41 | — |
 | iOS simulator library (`ios-arm64-simulator` `.a`) | 10,822,984 | 10.32 | — |
-| iOS device staged object (`ghostty_ios_arm64.syso`, platform 2) | 2,727,640 | 2.60 | ≤ 4 MiB |
-| iOS simulator staged object (`ghostty_ios_arm64.syso`, platform 7) | 2,688,832 | 2.56 | ≤ 4 MiB |
-| Fallback device object (with `.linker_option "-lz"`) | 2,727,680 | 2.60 | ≤ 4 MiB |
-| Fallback simulator object (with `.linker_option "-lz"`) | 2,688,872 | 2.56 | ≤ 4 MiB |
+| iOS device staged object (`ghostty_ios_arm64.syso`, platform 2) | 2,728,312 | 2.60 | ≤ 4 MiB |
+| iOS simulator staged object (`ghostty_ios_arm64.syso`, platform 7) | 2,689,504 | 2.56 | ≤ 4 MiB |
+| Fallback device object (with `.linker_option "-lz"`) | 2,728,352 | 2.60 | ≤ 4 MiB |
+| Fallback simulator object (with `.linker_option "-lz"`) | 2,689,544 | 2.56 | ≤ 4 MiB |
 
 Both staged objects are far under the 4 MiB cap. Android ABIs are recorded
 when ticket 08 builds them against the 15 MiB-per-ABI cap.
+
+The M1 numbers recorded on 2026-11-19 were device 2,727,640 B and simulator
+2,688,832 B (fallbacks 2,727,680 B and 2,688,872 B). The re-measurement is
+672 B larger for every object; it was not a silent replacement. The whole
+difference is the Mach-O symbol string table (`strsize`), which `ld -r`
+derives from the path of the input archive: staging the same sha256-pinned
+slice from a shorter checkout path produces a smaller object (a `/tmp`
+checkout gave 2,688,856 B for the simulator object, 648 B below the table).
+The table's numbers were measured with the slice under the audit checkout
+path, so a future comparison must use a like-for-like path.
 
 The sizes above are the local rebuild that `ui/terminal/artifacts.json`
 records (10,918,320 and 10,822,984 bytes): the manifest is written by

@@ -4,9 +4,6 @@ package phoneshell
 
 import "github.com/egoist/mygo/ui"
 
-// smokePages and smokeRoute are the hooks a natcatty_smoke build fills with
-// the terminal diagnostic. A normal phone build has neither a route nor a
-// page for it.
-func smokePages(Section) []page { return nil }
-
+// smokeRoute is the hook a natcatty_smoke build fills with the terminal
+// diagnostic. A normal phone build has no route for it.
 func smokeRoute(*ui.Context, *ui.Route) bool { return false }

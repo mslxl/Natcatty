@@ -3,11 +3,9 @@
 package terminal
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/mslxl/natcatty/ui/terminal/internal/vt"
-	"github.com/mslxl/natcatty/ui/terminal/mobile"
 )
 
 var load struct {
@@ -25,14 +23,7 @@ func Load() error {
 			load.err = err
 			return
 		}
-		got, err := vt.LibraryVersion()
-		if err != nil {
-			load.err = err
-			return
-		}
-		if got != mobile.Version {
-			load.err = fmt.Errorf("terminal: linked libghostty-vt reports %q, want %q", got, mobile.Version)
-		}
+		load.err = loadLinked(vt.LibraryVersion)
 	})
 	return load.err
 }

@@ -72,16 +72,11 @@ func (r *inputRecorder) hex() string {
 	return hex.EncodeToString(r.n)
 }
 
-// smokePages adds the diagnostic to Sessions.
-func smokePages(sec Section) []page {
-	if sec != Sessions {
-		return nil
-	}
-	return []page{{path: "/diagnostic", title: "Terminal diagnostic",
-		text: "The terminal diagnostic shows the echo connection's cells."}}
-}
-
-// smokeRoute serves the diagnostic page.
+// smokeRoute serves the diagnostic page. It is a route, not a row: the smoke
+// app opens it with Router(Sessions).Push("/diagnostic"), and Sessions' root
+// is drawn by its own rootDraw, so a page in sec.pages could never be shown
+// or clicked. The route is what makes the page reachable and lets a test
+// drive the same navigation the app uses.
 func smokeRoute(c *ui.Context, r *ui.Route) bool {
 	if !r.Match("/diagnostic") {
 		return false

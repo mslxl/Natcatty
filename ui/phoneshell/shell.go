@@ -249,7 +249,6 @@ func (s *Shell) newSection(i Section) *section {
 				func() { s.leaveSession(id) })
 			return true
 		}
-		sec.pages = append(sec.pages, smokePages(i)...)
 	case Hosts:
 		sec.rootDraw = s.hosts.drawRoot
 		sec.route = func(c *ui.Context, r *ui.Route) bool {
