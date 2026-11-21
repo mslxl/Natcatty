@@ -300,6 +300,31 @@ func TestCloseIsIdempotentAndClosesTheEventStream(t *testing.T) {
 	}
 }
 
+// TestRoutedDecisionIsCarriedFromTheFactory proves the adapter takes the
+// tunnel-encryption decision from the Factory and never infers it from the
+// negotiated protocol: both a routed and an unrouted Factory run the same None
+// handshake, and each transport reports the value it was given.
+func TestRoutedDecisionIsCarriedFromTheFactory(t *testing.T) {
+	for _, routed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "direct", true: "routed"}[routed], func(t *testing.T) {
+			h := start(t, rfbtest.Config{Frame: testFrame(), Encoding: rfb.EncodingRaw})
+			h.factory.Routed = routed
+			transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			t.Cleanup(func() { _ = transport.Close() })
+			reporter, ok := transport.(interface{ Routed() bool })
+			if !ok {
+				t.Fatal("the transport does not report its routed decision")
+			}
+			if got := reporter.Routed(); got != routed {
+				t.Fatalf("Routed() = %v, want %v", got, routed)
+			}
+		})
+	}
+}
+
 // TestByteStreamMethodsAreUnavailable keeps a VNC transport from pretending to
 // carry a terminal.
 func TestByteStreamMethodsAreUnavailable(t *testing.T) {

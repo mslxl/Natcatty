@@ -9,11 +9,13 @@ import (
 
 	moshadapter "github.com/mslxl/natcatty/adapters/mosh"
 	adapterstnet "github.com/mslxl/natcatty/adapters/telnet"
+	adaptervnc "github.com/mslxl/natcatty/adapters/vnc"
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/domain/model"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
+	modelvnc "github.com/mslxl/natcatty/domain/model/vnc"
 )
 
 // newMoshFactory builds the in-process Mosh transport. The SSH bootstrap runs
@@ -293,4 +295,157 @@ func telnetConfig(spec appsession.StartSpec) domaintelnet.Config {
 		return domaintelnet.Config{Hostname: spec.Hostname, Port: spec.Port}.Normalized()
 	}
 	return spec.Telnet.Normalized()
+}
+
+// newVNCFactory gives the VNC adapter the route resolved for the Host. A route
+// with SSH jumps or a proxy is opened by the shared Connection Manager as a
+// raw routed stream: every jump authenticates and verifies its host key
+// exactly as an SSH Session would, and the final TCP stream is handed to VNC
+// without an SSH handshake on the target. A route with only a Network Profile
+// still supplies the one VNC dial through that Provider, and without a route
+// the adapter dials directly.
+func newVNCFactory(inner adaptervnc.Factory, routes routeSource,
+	providers *appconnection.NetworkProviderRegistry,
+	manager *appconnection.Manager) appsession.Factory {
+	return &vncTransportFactory{
+		inner: inner, routes: routes, providers: providers, manager: manager,
+	}
+}
+
+type vncTransportFactory struct {
+	inner     adaptervnc.Factory
+	routes    routeSource
+	providers *appconnection.NetworkProviderRegistry
+	manager   *appconnection.Manager
+}
+
+func (f *vncTransportFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
+	// Validate before resolving a route or touching a Provider so a malformed
+	// Host opens no jump, proxy, or provider connection. The adapter validates
+	// again; this early check is what keeps the route seams from starting.
+	cfg, err := vncConfig(spec)
+	if err != nil {
+		return nil, err
+	}
+	route, err := f.route(ctx, spec.HostID)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case len(route.Jumps) > 0 || route.Proxy != nil:
+		return f.openRouted(ctx, spec, cfg, route)
+	case route.Network != nil:
+		return f.openNetwork(ctx, spec, *route.Network)
+	default:
+		return f.openDirect(ctx, spec)
+	}
+}
+
+// openRouted hands the VNC adapter a dial seam backed by the Connection
+// Manager. The adapter still validates its configuration before it calls Dial,
+// so a malformed Host opens no SSH chain.
+func (f *vncTransportFactory) openRouted(ctx context.Context, spec appsession.StartSpec,
+	cfg modelvnc.SessionConfig, route appconnection.Route) (appsession.Transport, error) {
+
+	if f.manager == nil {
+		return nil, &appconnection.Error{
+			Kind:  appconnection.KindInternal,
+			Cause: errors.New("app: no SSH connection manager for a routed VNC Host"),
+		}
+	}
+	factory := f.inner
+	factory.Routed = true
+	factory.Dial = func(dialCtx context.Context, network, address string) (net.Conn, error) {
+		return f.manager.DialStream(dialCtx, appconnection.Request{
+			HostID:            spec.HostID,
+			Hostname:          cfg.Hostname,
+			Port:              cfg.Port,
+			Username:          spec.Username,
+			Jumps:             route.Jumps,
+			Proxy:             route.Proxy,
+			Network:           route.Network,
+			Algorithms:        route.Algorithms,
+			ConfigFingerprint: route.ConfigFingerprint,
+			// A raw stream has no pooled Connection to keep alive. The jump
+			// clients live exactly as long as this VNC stream, and the VNC
+			// adapter owns closing it.
+		})
+	}
+	return factory.Open(ctx, spec)
+}
+
+// openNetwork keeps the original Network Profile path: the Provider supplies
+// the one VNC dial. A selected profile is never replaced with the adapter's
+// direct dialer.
+func (f *vncTransportFactory) openNetwork(ctx context.Context, spec appsession.StartSpec,
+	network appconnection.NetworkRoute) (appsession.Transport, error) {
+
+	if f.providers == nil {
+		return nil, appconnection.ProviderUnavailable(network)
+	}
+	provider, err := f.providers.Acquire(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	factory := f.inner
+	factory.Routed = true
+	// Tag only the failure that came from the dial seam. A configuration error
+	// the adapter catches before dialing must keep its own meaning instead of
+	// blaming the profile.
+	dialFailed := false
+	factory.Dial = func(dialCtx context.Context, network, address string) (net.Conn, error) {
+		conn, err := provider.DialContext(dialCtx, network, address)
+		if err != nil {
+			dialFailed = true
+		}
+		return conn, err
+	}
+	transport, err := factory.Open(ctx, spec)
+	if err != nil {
+		if !dialFailed {
+			return nil, err
+		}
+		// Keep the transport's Kind (an unreachable target stays KindNetwork
+		// and an expired deadline stays KindTimeout), but name the profile
+		// behind the failure. A typed provider failure keeps KindProvider.
+		return nil, appconnection.TagProvider(err, appconnection.ProviderInfo{
+			ProfileID: network.ProfileID,
+			Label:     network.Label,
+			Kind:      network.Kind,
+			Phase:     appconnection.ProviderPhaseRunning,
+		})
+	}
+	return transport, nil
+}
+
+// openDirect is the Host with no route: the adapter's own dialer is used and
+// the stream is not marked as tunnel-encrypted.
+func (f *vncTransportFactory) openDirect(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
+	factory := f.inner
+	factory.Routed = false
+	return factory.Open(ctx, spec)
+}
+
+// route resolves the Host's full route. An unsaved target (Quick Connect) has
+// no Host record, so the routes source falls back to the app-wide default
+// proxy; with no routes source at all the adapter keeps its direct dial.
+func (f *vncTransportFactory) route(ctx context.Context, id model.HostID) (appconnection.Route, error) {
+	if f.routes == nil {
+		return appconnection.Route{}, nil
+	}
+	return f.routes.Route(ctx, id)
+}
+
+// vncConfig is the endpoint the adapter will validate and dial. Using the
+// normalized configuration keeps the route target on the same port the
+// adapter computes when the Host stores a zero port.
+func vncConfig(spec appsession.StartSpec) (modelvnc.SessionConfig, error) {
+	if spec.VNC == nil {
+		return modelvnc.SessionConfig{}, &modelvnc.ValidationError{Field: "vnc", Reason: "is required"}
+	}
+	cfg := spec.VNC.Normalized()
+	if err := cfg.Validate(); err != nil {
+		return modelvnc.SessionConfig{}, err
+	}
+	return cfg, nil
 }

@@ -2,11 +2,14 @@
 // TCP connection, the RFB client, and the single display-event stream the
 // viewer consumes.
 //
-// This slice dials the Host directly and performs the baseline None security
-// handshake. Jump chains, proxies, Network Profiles, password authentication,
-// TLS, and the optional encodings arrive in later tickets. The adapter is
-// deliberately free of UI types: frames cross the port as stdlib images and
-// input arrives as X11 keysyms and RFB button masks.
+// The Factory dials whichever stream the app hands it and performs the
+// baseline None security handshake. Jump chains, proxies, and Network
+// Profiles are resolved by the app: it supplies a routed dial seam for a jump
+// or proxy, a Provider-backed dial seam for a Network Profile, and the plain
+// direct dialer otherwise. Password authentication, TLS, and the optional
+// encodings arrive in later tickets. The adapter is deliberately free of UI
+// types: frames cross the port as stdlib images and input arrives as X11
+// keysyms and RFB button masks.
 package vnc
 
 import (
@@ -36,14 +39,20 @@ const (
 	handshakeTimeout = 15 * time.Second
 )
 
-// Factory opens a VNC Session over a direct TCP connection. Dial is the seam
-// tests replace with an in-process stream; a nil value uses net.Dialer, which
-// is the path for a Host with no route.
+// Factory opens a VNC Session over one TCP connection. Dial is the seam the
+// app backs with a routed stream, a Network Provider, or the plain dialer; a
+// nil value uses net.Dialer, which is the path for a Host with no route.
 type Factory struct {
 	// Dial opens the TCP connection. A nil value uses net.Dialer.
 	Dial func(ctx context.Context, network, address string) (net.Conn, error)
 	// ConnectTimeout overrides DefaultConnectTimeout.
 	ConnectTimeout time.Duration
+	// Routed reports that the dialled stream is already encrypted by a tunnel.
+	// The app sets it from the Host's resolved route (a jump chain, proxy, or
+	// Network Profile) before Open. The adapter never derives it from the
+	// protocol or from the dial seam, so a routed session can suppress a second
+	// TLS layer and the plaintext warning. A direct Host leaves it false.
+	Routed bool
 }
 
 var _ appsession.Factory = Factory{}
@@ -90,7 +99,7 @@ func (f Factory) Open(ctx context.Context, spec appsession.StartSpec) (appsessio
 		_ = conn.Close()
 		return nil, classifyHandshakeError(ctx, err)
 	}
-	return newTransport(conn, client), nil
+	return newTransport(conn, client, f.Routed), nil
 }
 
 func (f Factory) dial(ctx context.Context, network, address string) (net.Conn, error) {
@@ -151,6 +160,9 @@ func classifyHandshakeError(ctx context.Context, err error) error {
 type transport struct {
 	conn   net.Conn
 	client *rfb.Client
+	// routed is the app's tunnel decision, carried unchanged from the Factory.
+	// The adapter must not infer it from the protocol state.
+	routed bool
 	// emitter coalesces frames and closes the one event channel exactly once.
 	emitter *appsession.DisplayEmitter
 
@@ -174,8 +186,8 @@ var (
 	_ appsession.DisplaySession  = (*transport)(nil)
 )
 
-func newTransport(conn net.Conn, client *rfb.Client) *transport {
-	t := &transport{conn: conn, client: client, emitter: appsession.NewDisplayEmitter()}
+func newTransport(conn net.Conn, client *rfb.Client, routed bool) *transport {
+	t := &transport{conn: conn, client: client, routed: routed, emitter: appsession.NewDisplayEmitter()}
 	info := client.ServerInfo()
 	// The desktop name and size are known before the first update. Publishing
 	// them now means the Tab title is right as soon as the Session is visible.
@@ -194,6 +206,10 @@ func newTransport(conn net.Conn, client *rfb.Client) *transport {
 // Display returns the adapter's display session. The transport owns its
 // lifetime and closes it exactly once.
 func (t *transport) Display() appsession.DisplaySession { return t }
+
+// Routed reports the app's decision that the stream is already encrypted by a
+// tunnel. It is the value the Factory received, never a protocol inference.
+func (t *transport) Routed() bool { return t.routed }
 
 // Events returns the single display-event stream.
 func (t *transport) Events() <-chan appsession.DisplayEvent { return t.emitter.Events() }

@@ -999,7 +999,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	sessions = appsession.NewService(newTransportFactory(
 		localpty.Factory{}, adapterserial.Factory{},
 		newTelnetFactory(adapterstnet.Factory{}, routes, networkProviders, connections), connections, routes,
-	).withVNC(adaptervnc.Factory{}).withInProcess(
+	).withVNC(newVNCFactory(adaptervnc.Factory{}, routes, networkProviders, connections)).withInProcess(
 		newMoshFactory(connections, routes, networkProviders),
 		adapteret.InProcessFactory{
 			Manager:  connections,
