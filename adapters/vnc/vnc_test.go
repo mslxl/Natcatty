@@ -93,6 +93,102 @@ func nextEvent(t *testing.T, events <-chan appsession.DisplayEvent, kind appsess
 	}
 }
 
+// TestPhysicalKeysUseExtendedEventsWhenNegotiated proves the adapter's send
+// path: after QEMU's acknowledgement, a key with a physical number becomes an
+// Extended Key Event, while a key without one falls back to a plain KeyEvent.
+// The server's frame is awaited first, which also guarantees the client has
+// read the acknowledgement that preceded it.
+func TestPhysicalKeysUseExtendedEventsWhenNegotiated(t *testing.T) {
+	h := start(t, rfbtest.Config{Frame: testFrame(), Encoding: rfb.EncodingRaw, ExtendedKeyEvent: true})
+	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	display := transport.(appsession.DisplayProvider).Display()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event, ok := <-display.Events():
+			if !ok {
+				t.Fatal("event stream closed before a frame")
+			}
+			if event.Kind != appsession.DisplayEventFrame {
+				continue
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for the first frame")
+		}
+		break
+	}
+
+	if err := display.SendPhysicalKey(0x61, 30, true); err != nil {
+		t.Fatalf("SendPhysicalKey down: %v", err)
+	}
+	if err := display.SendPhysicalKey(0x61, 30, false); err != nil {
+		t.Fatalf("SendPhysicalKey up: %v", err)
+	}
+	if err := display.SendPhysicalKey(0xffe1, 0, true); err != nil {
+		t.Fatalf("SendPhysicalKey without a key number: %v", err)
+	}
+
+	pollDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(pollDeadline) {
+		received := h.server.Received()
+		if len(received.ExtendedKeys) == 2 && len(received.Keys) == 1 {
+			want := []rfbtest.ExtendedKeyEvent{
+				{Down: true, Keysym: 0x61, Keycode: 30},
+				{Down: false, Keysym: 0x61, Keycode: 30},
+			}
+			for i := range want {
+				if received.ExtendedKeys[i] != want[i] {
+					t.Fatalf("extended keys = %+v, want %+v", received.ExtendedKeys, want)
+				}
+			}
+			if received.Keys[0] != (rfbtest.KeyEvent{Down: true, Keysym: 0xffe1}) {
+				t.Fatalf("plain key = %+v, want the keysym-only fallback", received.Keys[0])
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("extended keys = %+v, plain keys = %+v", h.server.Received().ExtendedKeys, h.server.Received().Keys)
+}
+
+// TestPhysicalKeysStayPlainWithoutExtendedEvent proves the same send path
+// sends ordinary KeyEvents when the server did not negotiate the extension.
+func TestPhysicalKeysStayPlainWithoutExtendedEvent(t *testing.T) {
+	h := start(t, rfbtest.Config{Frame: testFrame(), Encoding: rfb.EncodingRaw})
+	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	display := transport.(appsession.DisplayProvider).Display()
+	if err := display.SendPhysicalKey(0x61, 30, true); err != nil {
+		t.Fatalf("SendPhysicalKey: %v", err)
+	}
+	if err := display.SendPhysicalKey(0x61, 30, false); err != nil {
+		t.Fatalf("SendPhysicalKey: %v", err)
+	}
+	pollDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(pollDeadline) {
+		received := h.server.Received()
+		if len(received.Keys) == 2 {
+			if len(received.ExtendedKeys) != 0 {
+				t.Fatalf("extended keys = %+v, want none", received.ExtendedKeys)
+			}
+			if received.Keys[0] != (rfbtest.KeyEvent{Down: true, Keysym: 0x61}) ||
+				received.Keys[1] != (rfbtest.KeyEvent{Down: false, Keysym: 0x61}) {
+				t.Fatalf("plain keys = %+v, want press and release", received.Keys)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("plain keys = %+v", h.server.Received().Keys)
+}
+
 // TestOpenRendersTheServerFrameAndSendsInput is the adapter's end-to-end
 // contract against the in-process RFB server: a None handshake, a delivered
 // immutable frame, recorded key and pointer messages, and one clean close.

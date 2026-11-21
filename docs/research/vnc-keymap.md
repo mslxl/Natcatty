@@ -357,12 +357,20 @@ Wire format (msg `255`, submsg `0`): `U8 255`, `U8 0`, `U16 down-flag`,
 | `InputPointerDown` `Button=0/1/2` | set bit `1<<(Button)` → left=`0x01`, middle=`0x02`, right=`0x04` in mask; send with `x,y` |
 | `InputPointerUp` | clear the bit for that `Button`, send new mask |
 | `InputPointerMove` while `Button!=-1` (drag) | keep the held-button bits in mask while moving |
-| `InputScroll` `DY>0` (view down) | **button 4** = mask bit `0x08` — send `PointerEvent` down **and** release (wheel = momentary) |
-| `InputScroll` `DY<0` | **button 5** = mask bit `0x10`, down+release |
+| `InputScroll` `DY>0` (view down) | **button 5** = mask bit `0x10` — send `PointerEvent` down **and** release (wheel = momentary) |
+| `InputScroll` `DY<0` (view up) | **button 4** = mask bit `0x08`, down+release |
 | `InputScroll` `DX≠0` | buttons 6/7 (left/right tilt) = `0x20/0x40`, down+release — optional |
 | `InputZoom` / pinch | not in RFB pointer model — map to `Ctrl`+`4`/`5` only if the guest wants zoom; otherwise ignore |
 
 `PointerEvent` = `U8 5`, `U8 button-mask` (bits 1–8 as above), `U16 x`, `U16 y`.
+
+> **Correction (verified against the vendored MyGo):** an earlier revision of
+> this table paired `DY>0` with button 4 and `DY<0` with button 5. MyGo
+> documents positive `DY` as scrolling the view down, and X11/noVNC pair
+> down-scrolling with wheel button 5, so the mapping above is the correct one:
+> `+DY` → button 5 (`0x10`), `−DY` → button 4 (`0x08`). `ui/vnc` sends it this
+> way; the wheel test asserts buttons 5 then 4 for `dy=+1` then `dy=-1`.
+
 `x,y` are **guest framebuffer pixels** — convert `ev.X,Y` (element-local DIPs)
 by the `Fit`/`Pixelated` scale factor the `ui.Image` renders at (§4.4 of the
 feasibility doc), and clamp to `[0, w-1]`. Drag outside the element still

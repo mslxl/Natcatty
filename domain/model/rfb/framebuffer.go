@@ -167,9 +167,12 @@ func (f *Framebuffer) ReadRectangles(r io.Reader, count int) ([]Rectangle, error
 			})
 			continue
 		}
-		if encoding == EncodingFence || encoding == EncodingContinuousUpdates {
+		if encoding == EncodingFence || encoding == EncodingContinuousUpdates || encoding == EncodingExtendedKeyEvent {
 			// A server may acknowledge an extension with an empty pseudo
-			// rectangle. It carries no payload.
+			// rectangle. It carries no payload. QEMU's ExtendedKeyEvent
+			// acknowledgement names the whole server surface as its bounds,
+			// so the dimensions are informational and must not be decoded as
+			// pixels.
 			rectangles = append(rectangles, Rectangle{
 				X: x, Y: y, Width: width, Height: height, Encoding: encoding,
 			})

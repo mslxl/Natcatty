@@ -479,7 +479,7 @@ func advertisedEncodingRectangle(t *testing.T, encoding rfb.Encoding, pf rfb.Pix
 	case rfb.EncodingCursorWithAlpha:
 		width, height = 0, 0
 		payload = []byte{0, 0, 0, 0}
-	case rfb.EncodingFence, rfb.EncodingContinuousUpdates:
+	case rfb.EncodingFence, rfb.EncodingContinuousUpdates, rfb.EncodingExtendedKeyEvent:
 	default:
 		t.Fatalf("no wire fixture for advertised encoding %d", encoding)
 	}

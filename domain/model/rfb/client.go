@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sync/atomic"
 )
 
 // Client-to-server message types added by the extensions. EnableContinuousUpdates
@@ -15,6 +16,10 @@ const (
 	clientEnableContinuousUpdates = 150
 	clientFence                   = 248
 	clientSetDesktopSize          = 251
+	// clientQEMU is the QEMU client message family. Submessage 0 is the
+	// Extended Key Event; see EncodingExtendedKeyEvent.
+	clientQEMU                = 255
+	qemuSubmessageExtKeyEvent = 0
 )
 
 // ClientConfig configures the client handshake.
@@ -62,6 +67,11 @@ type Client struct {
 	security SecurityType
 	info     ServerInfo
 	frame    *Framebuffer
+	// extendedKey is set when the server's update carries the
+	// ExtendedKeyEvent pseudo-encoding. QEMU acknowledges the client's
+	// advertisement with such a pseudo-rectangle; noVNC treats that as the
+	// capability signal, and QEMU has no separate acknowledgement message.
+	extendedKey atomic.Bool
 }
 
 // Connect performs the version, security and initialisation handshakes, reads
@@ -363,6 +373,31 @@ func (c *Client) SendKey(keysym uint32, down bool) error {
 	return writeAll(c.conn, wire[:])
 }
 
+// ExtendedKeySupported reports whether the server acknowledged the QEMU
+// Extended Key Event pseudo-encoding. It is safe to call from any goroutine.
+func (c *Client) ExtendedKeySupported() bool { return c.extendedKey.Load() }
+
+// SendPhysicalKey sends one key press or release with its physical QEMU key
+// number. When the server negotiated ExtendedKeyEvent and keyNumber is known,
+// it sends a QEMU Extended Key Event (client message 255, submessage 0).
+// Otherwise it sends a plain KeyEvent with the keysym. The spec forbids an
+// extended event whose keycode is unknown, so keyNumber 0 always takes the
+// plain path. Guest behavior is identical either way.
+func (c *Client) SendPhysicalKey(keysym uint32, keyNumber uint32, down bool) error {
+	if keyNumber == 0 || !c.extendedKey.Load() {
+		return c.SendKey(keysym, down)
+	}
+	var wire [12]byte
+	wire[0] = clientQEMU
+	wire[1] = qemuSubmessageExtKeyEvent
+	if down {
+		binary.BigEndian.PutUint16(wire[2:4], 1)
+	}
+	binary.BigEndian.PutUint32(wire[4:8], keysym)
+	binary.BigEndian.PutUint32(wire[8:12], keyNumber)
+	return writeAll(c.conn, wire[:])
+}
+
 // SendPointer sends a PointerEvent with the RFB button mask.
 func (c *Client) SendPointer(mask uint8, x, y uint16) error {
 	var wire [6]byte
@@ -460,6 +495,11 @@ func (c *Client) ReadMessage() (ServerMessage, error) {
 		rectangles, err := c.frame.ReadRectangles(c.reader, count)
 		if err != nil {
 			return ServerMessage{}, err
+		}
+		for _, rect := range rectangles {
+			if rect.Encoding == EncodingExtendedKeyEvent {
+				c.extendedKey.Store(true)
+			}
 		}
 		return ServerMessage{Kind: MessageFramebufferUpdate, Rectangles: rectangles}, nil
 	case ServerSetColourMapEntries:

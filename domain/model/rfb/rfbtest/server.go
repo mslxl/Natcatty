@@ -104,6 +104,12 @@ type Config struct {
 	Cursor     *image.RGBA
 	CursorAt   image.Point
 	HideCursor bool
+	// ExtendedKeyEvent makes the server acknowledge the QEMU Extended Key
+	// Event pseudo-encoding the way QEMU does: an update holding one
+	// pseudo-rectangle for the whole surface. Extended key messages are
+	// recorded and accepted either way, so a test can prove the client's
+	// fallback.
+	ExtendedKeyEvent bool
 }
 
 // UpdateRequest is a recorded FramebufferUpdateRequest.
@@ -119,6 +125,14 @@ type UpdateRequest struct {
 type KeyEvent struct {
 	Down   bool
 	Keysym uint32
+}
+
+// ExtendedKeyEvent is a recorded QEMU Extended Key Event (message 255,
+// submessage 0). Keycode is the QEMU key number the client sent.
+type ExtendedKeyEvent struct {
+	Down    bool
+	Keysym  uint32
+	Keycode uint32
 }
 
 // PointerEvent is a recorded PointerEvent.
@@ -157,6 +171,7 @@ type Received struct {
 	Encodings       []rfb.Encoding
 	Requests        []UpdateRequest
 	Keys            []KeyEvent
+	ExtendedKeys    []ExtendedKeyEvent
 	Pointers        []PointerEvent
 	CutTexts        []string
 	Continuous      []ContinuousUpdate
@@ -182,6 +197,7 @@ type Server struct {
 	sentFence    bool
 	sentCursor   bool
 	sentExtended bool
+	sentExtKey   bool
 
 	// zrleBuf and zrleWriter form the connection's persistent ZRLE stream.
 	zrleBuf    bytes.Buffer
@@ -271,6 +287,7 @@ func (s *Server) Received() Received {
 	received.Encodings = append([]rfb.Encoding(nil), s.received.Encodings...)
 	received.Requests = append([]UpdateRequest(nil), s.received.Requests...)
 	received.Keys = append([]KeyEvent(nil), s.received.Keys...)
+	received.ExtendedKeys = append([]ExtendedKeyEvent(nil), s.received.ExtendedKeys...)
 	received.Pointers = append([]PointerEvent(nil), s.received.Pointers...)
 	received.CutTexts = append([]string(nil), s.received.CutTexts...)
 	received.Continuous = append([]ContinuousUpdate(nil), s.received.Continuous...)
@@ -372,6 +389,10 @@ func (s *Server) Serve(conn io.ReadWriter) error {
 			}
 		case 251:
 			if err := s.readSetDesktopSize(conn); err != nil {
+				return err
+			}
+		case 255:
+			if err := s.readQEMU(conn); err != nil {
 				return err
 			}
 		default:
@@ -600,6 +621,10 @@ func (s *Server) acknowledgeExtensions(conn io.ReadWriter, encodings []rfb.Encod
 	if fence {
 		s.sentFence = true
 	}
+	extKey := s.cfg.ExtendedKeyEvent && advertised(rfb.EncodingExtendedKeyEvent) && !s.sentExtKey
+	if extKey {
+		s.sentExtKey = true
+	}
 	s.mu.Unlock()
 	if continuous {
 		if err := writeAll(conn, []byte{byte(rfb.ServerEndOfContinuousUpdates)}); err != nil {
@@ -615,6 +640,11 @@ func (s *Server) acknowledgeExtensions(conn io.ReadWriter, encodings []rfb.Encod
 			Flags:   flags,
 			Payload: []byte("rfbtest"),
 		}); err != nil {
+			return err
+		}
+	}
+	if extKey {
+		if err := s.sendExtendedKeyEventAck(conn); err != nil {
 			return err
 		}
 	}
@@ -662,6 +692,8 @@ func (s *Server) readBurstMessage(conn io.ReadWriter) error {
 		return s.readFence(conn)
 	case 251:
 		return s.readSetDesktopSize(conn)
+	case 255:
+		return s.readQEMU(conn)
 	default:
 		return fmt.Errorf("rfbtest: unknown client message type %d", messageType[0])
 	}
@@ -827,6 +859,45 @@ func (s *Server) resizeFrame(width, height int) error {
 	draw.Draw(resized, resized.Bounds(), s.frame, s.frame.Bounds().Min, draw.Src)
 	s.frame = resized
 	s.width, s.height = width, height
+	return nil
+}
+
+// sendExtendedKeyEventAck advertises QEMU's Extended Key Event support the way
+// QEMU does: a framebuffer update holding one pseudo-rectangle covering the
+// whole surface, in place of any pixel payload.
+func (s *Server) sendExtendedKeyEventAck(conn io.Writer) error {
+	var update bytes.Buffer
+	var updateHeader [4]byte
+	binary.BigEndian.PutUint16(updateHeader[2:4], 1)
+	update.Write(updateHeader[:])
+	var rect [12]byte
+	binary.BigEndian.PutUint16(rect[4:6], uint16(s.width))
+	binary.BigEndian.PutUint16(rect[6:8], uint16(s.height))
+	extendedKeyEncoding := int32(rfb.EncodingExtendedKeyEvent)
+	binary.BigEndian.PutUint32(rect[8:12], uint32(extendedKeyEncoding))
+	update.Write(rect[:])
+	return writeAll(conn, update.Bytes())
+}
+
+// readQEMU records one QEMU client message. Only the Extended Key Event
+// submessage is defined for this client; another submessage is a protocol
+// error, so a desynchronised stream fails instead of being misread.
+func (s *Server) readQEMU(conn io.Reader) error {
+	var header [11]byte
+	if _, err := io.ReadFull(conn, header[:]); err != nil {
+		return err
+	}
+	if header[0] != 0 {
+		return fmt.Errorf("rfbtest: unknown QEMU submessage %d", header[0])
+	}
+	event := ExtendedKeyEvent{
+		Down:    binary.BigEndian.Uint16(header[1:3]) != 0,
+		Keysym:  binary.BigEndian.Uint32(header[3:7]),
+		Keycode: binary.BigEndian.Uint32(header[7:11]),
+	}
+	s.mu.Lock()
+	s.received.ExtendedKeys = append(s.received.ExtendedKeys, event)
+	s.mu.Unlock()
 	return nil
 }
 

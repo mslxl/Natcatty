@@ -88,6 +88,98 @@ func TestClientFenceAndContinuousExtensions(t *testing.T) {
 	}
 }
 
+func TestClientQEMUExtendedKeyEvents(t *testing.T) {
+	server, conn, done := startServer(t, rfbtest.Config{
+		Frame:            newTestFrame(2, 2),
+		Encoding:         rfb.EncodingRaw,
+		ExtendedKeyEvent: true,
+	})
+	client, err := rfb.Connect(conn, rfb.ClientConfig{Shared: true})
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if client.ExtendedKeySupported() {
+		t.Fatal("ExtendedKeyEvent support was set before the server acknowledged it")
+	}
+	readUntil(t, client, func(message rfb.ServerMessage) bool {
+		for _, rect := range message.Rectangles {
+			if rect.Encoding == rfb.EncodingExtendedKeyEvent {
+				return true
+			}
+		}
+		return false
+	})
+	if !client.ExtendedKeySupported() {
+		t.Fatal("the server's pseudo-rectangle did not negotiate ExtendedKeyEvent")
+	}
+
+	// A known physical key number takes the QEMU message; an unknown one falls
+	// back to a plain KeyEvent instead, as the spec requires.
+	if err := client.SendPhysicalKey(0x61, 30, true); err != nil {
+		t.Fatalf("SendPhysicalKey extended down: %v", err)
+	}
+	if err := client.SendPhysicalKey(0x61, 30, false); err != nil {
+		t.Fatalf("SendPhysicalKey extended up: %v", err)
+	}
+	if err := client.SendPhysicalKey(0x41, 0, true); err != nil {
+		t.Fatalf("SendPhysicalKey plain fallback: %v", err)
+	}
+
+	_ = conn.Close()
+	waitServer(t, done)
+	received := server.Received()
+	wantExtended := []rfbtest.ExtendedKeyEvent{
+		{Down: true, Keysym: 0x61, Keycode: 30},
+		{Down: false, Keysym: 0x61, Keycode: 30},
+	}
+	if len(received.ExtendedKeys) != len(wantExtended) {
+		t.Fatalf("extended key events = %+v, want %+v", received.ExtendedKeys, wantExtended)
+	}
+	for i := range wantExtended {
+		if received.ExtendedKeys[i] != wantExtended[i] {
+			t.Fatalf("extended key events = %+v, want %+v", received.ExtendedKeys, wantExtended)
+		}
+	}
+	if len(received.Keys) != 1 || received.Keys[0] != (rfbtest.KeyEvent{Down: true, Keysym: 0x41}) {
+		t.Fatalf("plain key events = %+v, want the keysym-only fallback", received.Keys)
+	}
+}
+
+func TestClientExtendedKeyEventNotNegotiatedFallsBackToKeysym(t *testing.T) {
+	server, conn, done := startServer(t, rfbtest.Config{
+		Frame:    newTestFrame(2, 2),
+		Encoding: rfb.EncodingRaw,
+	})
+	client, err := rfb.Connect(conn, rfb.ClientConfig{Shared: true})
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if client.ExtendedKeySupported() {
+		t.Fatal("ExtendedKeyEvent support was set without a server acknowledgement")
+	}
+	if err := client.SendPhysicalKey(0x62, 48, true); err != nil {
+		t.Fatalf("SendPhysicalKey: %v", err)
+	}
+	if err := client.SendPhysicalKey(0x62, 48, false); err != nil {
+		t.Fatalf("SendPhysicalKey: %v", err)
+	}
+	_ = conn.Close()
+	waitServer(t, done)
+	received := server.Received()
+	if len(received.ExtendedKeys) != 0 {
+		t.Fatalf("extended key events = %+v, want none before negotiation", received.ExtendedKeys)
+	}
+	want := []rfbtest.KeyEvent{{Down: true, Keysym: 0x62}, {Down: false, Keysym: 0x62}}
+	if len(received.Keys) != len(want) {
+		t.Fatalf("plain key events = %+v, want %+v", received.Keys, want)
+	}
+	for i := range want {
+		if received.Keys[i] != want[i] {
+			t.Fatalf("plain key events = %+v, want %+v", received.Keys, want)
+		}
+	}
+}
+
 func TestClientSetDesktopSizeRoundTrip(t *testing.T) {
 	server, conn, done := startServer(t, rfbtest.Config{
 		Frame:               newTestFrame(2, 2),

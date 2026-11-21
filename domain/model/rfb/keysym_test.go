@@ -100,6 +100,127 @@ func TestKeysymTableCoversMappingResearch(t *testing.T) {
 	}
 }
 
+func TestResolveKeyUSLayout(t *testing.T) {
+	tests := []struct {
+		name   string
+		stroke KeyStroke
+		keysym uint32
+		qnum   uint32
+	}{
+		{"letter unshifted", KeyStroke{Code: CodeKeyA}, 0x61, 30},
+		{"letter shifted", KeyStroke{Code: CodeKeyA, Shift: true}, 0x41, 30},
+		{"digit shifted", KeyStroke{Code: CodeDigit2, Shift: true}, 0x40, 3},
+		{"digit zero shifted", KeyStroke{Code: CodeDigit0, Shift: true}, 0x29, 11},
+		{"minus shifted", KeyStroke{Code: CodeMinus, Shift: true}, 0x5f, 12},
+		{"equal shifted", KeyStroke{Code: CodeEqual, Shift: true}, 0x2b, 13},
+		{"bracket left shifted", KeyStroke{Code: CodeBracketLeft, Shift: true}, 0x7b, 26},
+		{"bracket right shifted", KeyStroke{Code: CodeBracketRight, Shift: true}, 0x7d, 27},
+		{"backslash shifted", KeyStroke{Code: CodeBackslash, Shift: true}, 0x7c, 43},
+		{"semicolon shifted", KeyStroke{Code: CodeSemicolon, Shift: true}, 0x3a, 39},
+		{"quote shifted", KeyStroke{Code: CodeQuote, Shift: true}, 0x22, 40},
+		{"backquote shifted", KeyStroke{Code: CodeBackquote, Shift: true}, 0x7e, 41},
+		{"comma shifted", KeyStroke{Code: CodeComma, Shift: true}, 0x3c, 51},
+		{"period shifted", KeyStroke{Code: CodePeriod, Shift: true}, 0x3e, 52},
+		{"slash shifted", KeyStroke{Code: CodeSlash, Shift: true}, 0x3f, 53},
+		{"space unaffected by shift", KeyStroke{Code: CodeSpace, Shift: true}, 0x20, 57},
+		{"tab unaffected by shift", KeyStroke{Code: CodeTab, Shift: true}, 0xff09, 15},
+		{"numpad unaffected by shift", KeyStroke{Code: CodeNumpad2, Shift: true}, 0xffb2, 80},
+		{"shift is not ISO_Left_Tab", KeyStroke{Code: CodeTab, Shift: true}, 0xff09, 15},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := ResolveKey(tt.stroke)
+			if !ok {
+				t.Fatalf("ResolveKey(%+v) dropped the key", tt.stroke)
+			}
+			if got.Keysym != tt.keysym || got.QEMUKeyNumber != tt.qnum {
+				t.Fatalf("ResolveKey(%+v) = %#x/q%d, want %#x/q%d",
+					tt.stroke, got.Keysym, got.QEMUKeyNumber, tt.keysym, tt.qnum)
+			}
+		})
+	}
+}
+
+func TestResolveKeyISOLayout(t *testing.T) {
+	// The ISO extra key beside the left Shift has no US position of its own;
+	// the mapping research sends it as backslash, and bar with Shift.
+	tests := []struct {
+		name   string
+		stroke KeyStroke
+		keysym uint32
+	}{
+		{"iso extra key", KeyStroke{Physical: CodeIntlBackslash}, 0x5c},
+		{"iso extra key shifted", KeyStroke{Physical: CodeIntlBackslash, Shift: true}, 0x7c},
+		{"iso section types # but sends the physical position", KeyStroke{Physical: CodeBackslash}, 0x5c},
+		{"iso section shifted", KeyStroke{Physical: CodeBackslash, Shift: true}, 0x7c},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := ResolveKey(tt.stroke)
+			if !ok {
+				t.Fatalf("ResolveKey(%+v) dropped the key", tt.stroke)
+			}
+			if got.Keysym != tt.keysym {
+				t.Fatalf("ResolveKey(%+v) = %#x, want %#x", tt.stroke, got.Keysym, tt.keysym)
+			}
+		})
+	}
+}
+
+func TestResolveKeyFallbackChain(t *testing.T) {
+	// Windows PrintScreen arrives without a physical code but with the
+	// PrintScreen physical identity; the resolver still maps it to XK_Print.
+	got, ok := ResolveKey(KeyStroke{Physical: CodePrintScreen})
+	if !ok || got.Keysym != 0xff61 {
+		t.Fatalf("PrintScreen fallback = %+v, %v; want XK_Print", got, ok)
+	}
+	if got.QEMUKeyNumber != 99 {
+		t.Fatalf("PrintScreen QEMU key number = %d, want 99", got.QEMUKeyNumber)
+	}
+
+	// A dead key reports no logical key but a physical position: send the
+	// position's keysym rather than guessing a dead keysym.
+	got, ok = ResolveKey(KeyStroke{Physical: CodeQuote, Shift: true})
+	if !ok || got.Keysym != 0x22 {
+		t.Fatalf("dead key = %+v, %v; want quotedbl from the physical position", got, ok)
+	}
+
+	// A logical-only key still sends a keysym but must not claim a physical
+	// QEMU key number, because the layout may not match the US position.
+	got, ok = ResolveKey(KeyStroke{Logical: CodeKeyA, Shift: true})
+	if !ok || got.Keysym != 0x41 {
+		t.Fatalf("logical fallback = %+v, %v; want XK_A", got, ok)
+	}
+	if got.QEMUKeyNumber != 0 {
+		t.Fatalf("logical fallback QEMU key number = %d, want none", got.QEMUKeyNumber)
+	}
+
+	// A preferred code wins over the other tiers.
+	got, ok = ResolveKey(KeyStroke{Code: CodeKeyB, Physical: CodeKeyA, Logical: CodeKeyC})
+	if !ok || got.Keysym != 0x62 || got.Code != CodeKeyB {
+		t.Fatalf("tier precedence = %+v, %v; want CodeKeyB", got, ok)
+	}
+
+	// A US layout reports the same key at the physical and logical positions.
+	// The physical tier must still carry its QEMU key number; the tier is not
+	// the code value, so equality must not misclassify it as logical.
+	got, ok = ResolveKey(KeyStroke{Physical: CodeKeyA, Logical: CodeKeyA})
+	if !ok || got.QEMUKeyNumber != 30 {
+		t.Fatalf("physical==logical = %+v, %v; want QEMU key number 30", got, ok)
+	}
+}
+
+func TestResolveKeyDropsUnmappedKey(t *testing.T) {
+	// macOS Fn has no keysym and no physical identity; it is a hardware
+	// toggle with no guest meaning, so the input layer drops it.
+	if got, ok := ResolveKey(KeyStroke{}); ok {
+		t.Fatalf("ResolveKey(drop) = %+v, want the event dropped", got)
+	}
+	if _, ok := ResolveKey(KeyStroke{Code: CodeUnknown, Physical: CodeUnknown, Logical: CodeUnknown}); ok {
+		t.Fatal("an all-unknown stroke was not dropped")
+	}
+}
+
 func TestQEMUKeyNumberTableCoversMappingResearch(t *testing.T) {
 	want := map[KeyCode]uint32{
 		CodeEscape:          1,

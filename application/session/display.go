@@ -164,6 +164,11 @@ type DisplaySession interface {
 	Events() <-chan DisplayEvent
 	// SendKey sends one X11 keysym press or release.
 	SendKey(keysym uint32, pressed bool) error
+	// SendPhysicalKey sends one X11 keysym press or release with the physical
+	// key number when the backend knows it. keyNumber 0 means unknown. A VNC
+	// backend uses it for QEMU Extended Key Events; a backend without the
+	// extension must behave exactly like SendKey.
+	SendPhysicalKey(keysym uint32, keyNumber uint32, pressed bool) error
 	// SendPointer sends pointer position and the RFB button mask.
 	SendPointer(x, y int, buttonMask uint8) error
 	// SendCutText sends clipboard text to the server.
@@ -260,6 +265,16 @@ func (s *Session) SendKey(keysym uint32, pressed bool) error {
 		return ErrNoDisplay
 	}
 	return display.SendKey(keysym, pressed)
+}
+
+// SendPhysicalKey sends one X11 keysym press or release with the physical key
+// number when the pixel backend knows it.
+func (s *Session) SendPhysicalKey(keysym uint32, keyNumber uint32, pressed bool) error {
+	display := s.Display()
+	if display == nil {
+		return ErrNoDisplay
+	}
+	return display.SendPhysicalKey(keysym, keyNumber, pressed)
 }
 
 // SendPointer sends pointer position and the RFB button mask.
@@ -422,6 +437,16 @@ func (d *SerializedDisplay) SendKey(keysym uint32, pressed bool) error {
 		return err
 	}
 	return d.inner.SendKey(keysym, pressed)
+}
+
+// SendPhysicalKey serializes one keysym-with-physical-key event.
+func (d *SerializedDisplay) SendPhysicalKey(keysym uint32, keyNumber uint32, pressed bool) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if err := d.checkOpen(); err != nil {
+		return err
+	}
+	return d.inner.SendPhysicalKey(keysym, keyNumber, pressed)
 }
 
 // SendPointer serializes one pointer event.

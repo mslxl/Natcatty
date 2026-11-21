@@ -208,6 +208,21 @@ const (
 	keysymXF86PowerOff    uint32 = 0x1008ff2a
 	keysymXF86Back        uint32 = 0x1008ff26
 	keysymXF86Forward     uint32 = 0x1008ff27
+	// keysymISOLevel3Shift is AltGr. On macOS the viewer synthesizes it for
+	// Option, matching noVNC's Alt→ISO_Level3_Shift mapping.
+	keysymISOLevel3Shift uint32 = 0xfe03
+)
+
+// Exported keysyms the viewer needs for synthesized modifier presses and the
+// Ctrl+Alt+Del chord. They are the standard keysymdef.h values.
+const (
+	KeysymShiftL         = keysymShiftL
+	KeysymControlL       = keysymControlL
+	KeysymAltL           = keysymAltL
+	KeysymSuperL         = keysymSuperL
+	KeysymTab            = keysymTab
+	KeysymDelete         = keysymDelete
+	KeysymISOLevel3Shift = keysymISOLevel3Shift
 )
 
 var codeKeysyms = buildCodeKeysyms()
@@ -306,3 +321,105 @@ func KeysymForCode(code KeyCode) (uint32, bool) {
 	keysym, ok := codeKeysyms[code]
 	return keysym, ok
 }
+
+// KeyStroke is one key press as an input layer sees it. The tiers mirror the
+// mapping research's fallback order:
+//
+//  1. Code is the platform's physical key code (USB HID usage page 0x07).
+//  2. Physical is the key's ANSI-US position when Code is not reported.
+//  3. Logical is the layout's key, the last resort.
+//
+// A tier that is unavailable is CodeUnknown. Shift reports whether Shift is
+// held; the resolver sends the shifted keysym the protocol expects instead of
+// relying on the server to apply the shift state.
+type KeyStroke struct {
+	Code     KeyCode
+	Physical KeyCode
+	Logical  KeyCode
+	Shift    bool
+}
+
+// ResolvedKey is the wire identity of one key press. Keysym is the X11 keysym
+// to send. Code is the code value of whichever tier matched, so the input layer
+// can pair a key-up with the key-down that preceded it. QEMUKeyNumber is the
+// QEMU (Linux KEY_*) number when a real physical position is known and 0
+// otherwise; a zero number must use a plain KeyEvent, never a QEMU Extended
+// Key Event.
+type ResolvedKey struct {
+	Keysym        uint32
+	Code          KeyCode
+	QEMUKeyNumber uint32
+}
+
+// keyTier records which input identity resolved a key. It is explicit rather
+// than inferred from the code value: a US layout reports the same key as both
+// Physical and Logical, and comparing values would misclassify the physical
+// tier as logical and drop its QEMU key number.
+type keyTier uint8
+
+const (
+	tierNone keyTier = iota
+	tierCode
+	tierPhysical
+	tierLogical
+)
+
+// ResolveKey maps one key press through the physical-code, physical-position
+// and logical-key tiers. It reports false when no tier has a keysym, as for
+// macOS Fn, rather than guessing: the input layer then drops the event.
+func ResolveKey(stroke KeyStroke) (ResolvedKey, bool) {
+	code, tier := stroke.Code, tierCode
+	if _, ok := KeysymForCode(code); !ok {
+		code, tier = stroke.Physical, tierPhysical
+	}
+	if _, ok := KeysymForCode(code); !ok {
+		code, tier = stroke.Logical, tierLogical
+	}
+	keysym, ok := KeysymForCode(code)
+	if !ok {
+		return ResolvedKey{}, false
+	}
+	if stroke.Shift {
+		if shifted, ok := shiftedCodeKeysyms[code]; ok {
+			keysym = shifted
+		}
+	}
+	resolved := ResolvedKey{Keysym: keysym, Code: code}
+	// A logical key is layout-dependent: its ANSI-US position may not be the
+	// key the user pressed, so it must not be sent as a physical QEMU code.
+	if tier == tierCode || tier == tierPhysical {
+		resolved.QEMUKeyNumber, _ = QEMUKeyNumberForCode(code)
+	}
+	return resolved, true
+}
+
+// shiftedCodeKeysyms is the US-layout shifted symbol for each printable
+// position, which RFC 6143 §7.5.4 requires the client to send instead of the
+// unshifted keysym. Non-printing keys (Tab, arrows, numpad) deliberately have
+// no entry, so Shift+Tab stays XK_Tab rather than becoming ISO_Left_Tab.
+var shiftedCodeKeysyms = func() map[KeyCode]uint32 {
+	shifted := map[KeyCode]uint32{
+		CodeMinus:         0x5f, // underscore
+		CodeEqual:         0x2b, // plus
+		CodeBracketLeft:   0x7b, // braceleft
+		CodeBracketRight:  0x7d, // braceright
+		CodeBackslash:     0x7c, // bar
+		CodeSemicolon:     0x3a, // colon
+		CodeQuote:         0x22, // quotedbl
+		CodeBackquote:     0x7e, // asciitilde
+		CodeComma:         0x3c, // less
+		CodePeriod:        0x3e, // greater
+		CodeSlash:         0x3f, // question
+		CodeIntlBackslash: 0x7c, // bar, the ISO extra key beside left Shift
+	}
+	for i := 0; i < 26; i++ {
+		shifted[CodeKeyA+KeyCode(i)] = 0x41 + uint32(i)
+	}
+	for i := 0; i < 9; i++ {
+		shifted[CodeDigit1+KeyCode(i)] = []uint32{
+			0x21, 0x40, 0x23, 0x24, 0x25, 0x5e, 0x26, 0x2a, 0x28,
+		}[i]
+	}
+	shifted[CodeDigit0] = 0x29 // parenright
+	return shifted
+}()

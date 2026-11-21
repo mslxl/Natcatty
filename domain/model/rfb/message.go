@@ -28,6 +28,11 @@ const (
 	EncodingContinuousUpdates Encoding = -313
 	// EncodingCursorWithAlpha carries a locally drawn cursor bitmap.
 	EncodingCursorWithAlpha Encoding = -314
+	// EncodingExtendedKeyEvent negotiates the QEMU Extended Key Event message
+	// (-258). The server acknowledges it with an empty pseudo-rectangle, as
+	// QEMU's send_ext_key_event_ack does; the client may then send client
+	// message 255/submessage 0.
+	EncodingExtendedKeyEvent Encoding = -258
 )
 
 // supportedEncodings is the single source of truth for the encodings this
@@ -44,6 +49,7 @@ var supportedEncodings = []Encoding{
 	EncodingCursorWithAlpha,
 	EncodingContinuousUpdates,
 	EncodingFence,
+	EncodingExtendedKeyEvent,
 }
 
 // ClientEncodings returns the encodings the compositor truly decodes, in

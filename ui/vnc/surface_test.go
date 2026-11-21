@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"net"
+	"runtime"
 	"testing"
 	"time"
 
@@ -175,18 +176,19 @@ func TestFirstDesktopRendersAndInputsEndToEnd(t *testing.T) {
 		t.Fatalf("letterbox pixel = %+v, want the pane background", got)
 	}
 
-	// Typed text reaches the element through the platform's text input on
-	// Linux as well as through keys; the headless tester reports whether the
-	// focused viewer takes text.
-	if active, _ := f.tester.TextInputActive(); !active {
-		t.Fatal("the VNC viewer does not take text input")
+	// The viewer takes text focus so it can disable the input method; in pure
+	// keysym mode it must have done so, because the guest composes characters
+	// from keysyms and forwarding local text would type twice.
+	active, noIME := f.tester.TextInputActive()
+	if !active || !noIME {
+		t.Fatalf("text input = active %v, IME off %v; want both true", active, noIME)
 	}
 
-	// Basic pointer and typed-character input reach the guest.
+	// Basic pointer and key input reach the guest.
 	f.tester.Move(35, 15)
 	f.tester.Press(35, 15)
 	f.tester.Release(35, 15)
-	f.tester.Type("A")
+	f.tester.Key(0, ui.KeyA)
 
 	waitUntil(t, "the guest to record input", func() bool {
 		received := f.server.Received()
@@ -194,13 +196,17 @@ func TestFirstDesktopRendersAndInputsEndToEnd(t *testing.T) {
 			return false
 		}
 		keys := received.Keys
-		return keys[0] == (rfbtest.KeyEvent{Down: true, Keysym: 0x41}) &&
-			keys[1] == (rfbtest.KeyEvent{Down: false, Keysym: 0x41}) &&
+		return keys[0] == (rfbtest.KeyEvent{Down: true, Keysym: 0x61}) &&
+			keys[1] == (rfbtest.KeyEvent{Down: false, Keysym: 0x61}) &&
 			hasPress(received.Pointers)
 	})
 	pointers := f.server.Received().Pointers
 	if len(pointers) == 0 || pointers[0].X != 0 || pointers[0].Y != 0 {
 		t.Fatalf("pointer events = %+v, want the press at remote 0,0", pointers)
+	}
+	// Hover sends an empty button mask at the pointer's remote position.
+	if pointers[0].Mask != 0 {
+		t.Fatalf("hover mask = %d, want 0", pointers[0].Mask)
 	}
 
 	// A VNC pane has no byte stream, so no terminal resize, capture,
@@ -283,6 +289,329 @@ func TestDownscaledDesktopStaysCrisp(t *testing.T) {
 		shot.RGBAAt(0, 1) != blue || shot.RGBAAt(1, 1) != red {
 		t.Fatalf("downscaled tile = %+v %+v %+v %+v, want exactly red/blue",
 			shot.RGBAAt(0, 0), shot.RGBAAt(1, 0), shot.RGBAAt(0, 1), shot.RGBAAt(1, 1))
+	}
+}
+
+// waitKeys waits for exactly want key events at the front of the guest's
+// record. Each test starts from a fresh server, so the prefix is the whole
+// exchange it sent.
+func waitKeys(t *testing.T, server *rfbtest.Server, want []rfbtest.KeyEvent) {
+	t.Helper()
+	waitUntil(t, "the guest's key sequence", func() bool {
+		received := server.Received().Keys
+		if len(received) != len(want) {
+			return false
+		}
+		for i := range want {
+			if received[i] != want[i] {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+// TestKeyboardShiftedKeysymsAndModifiers proves the send-time rules: Shift is
+// sent as its own keysym around the key, the shifted keysym is sent instead of
+// the unshifted one, and the modifier is released with the key so it cannot
+// stay stuck (MyGo never reports a modifier's own key-up).
+func TestKeyboardShiftedKeysymsAndModifiers(t *testing.T) {
+	f := newFixture(t)
+	f.tester.Frame()
+	f.tester.Key(ui.Shift, ui.Key2)
+	f.tester.Key(0, ui.KeyA)
+	waitKeys(t, f.server, []rfbtest.KeyEvent{
+		{Down: true, Keysym: rfb.KeysymShiftL},
+		{Down: true, Keysym: 0x40}, // @, the shifted keysym for position 2
+		{Down: false, Keysym: 0x40},
+		{Down: false, Keysym: rfb.KeysymShiftL},
+		{Down: true, Keysym: 0x61},
+		{Down: false, Keysym: 0x61},
+	})
+}
+
+// TestKeyboardSpecialCombinations covers Ctrl+A, Shift+Tab (never
+// ISO_Left_Tab) and Alt+Tab, and the toolbar's Ctrl+Alt+Del injection.
+func TestKeyboardSpecialCombinations(t *testing.T) {
+	f := newFixture(t)
+	f.tester.Frame()
+
+	f.tester.Key(ui.Ctrl, ui.KeyA)
+	waitKeys(t, f.server, []rfbtest.KeyEvent{
+		{Down: true, Keysym: rfb.KeysymControlL},
+		{Down: true, Keysym: 0x61},
+		{Down: false, Keysym: 0x61},
+		{Down: false, Keysym: rfb.KeysymControlL},
+	})
+
+	f.tester.Key(ui.Shift, ui.KeyTab)
+	waitUntil(t, "Shift+Tab", func() bool {
+		keys := f.server.Received().Keys
+		if len(keys) != 8 {
+			return false
+		}
+		for _, event := range keys[4:] {
+			if event.Keysym == 0xfe20 { // ISO_Left_Tab
+				t.Fatalf("Shift+Tab sent ISO_Left_Tab: %+v", keys[4:])
+			}
+		}
+		return keys[4] == (rfbtest.KeyEvent{Down: true, Keysym: rfb.KeysymShiftL}) &&
+			keys[5] == (rfbtest.KeyEvent{Down: true, Keysym: rfb.KeysymTab}) &&
+			keys[6] == (rfbtest.KeyEvent{Down: false, Keysym: rfb.KeysymTab}) &&
+			keys[7] == (rfbtest.KeyEvent{Down: false, Keysym: rfb.KeysymShiftL})
+	})
+
+	f.tester.Key(ui.Alt, ui.KeyTab)
+	alt := rfb.KeysymAltL
+	if runtime.GOOS == "darwin" {
+		alt = rfb.KeysymISOLevel3Shift
+	}
+	waitUntil(t, "Alt+Tab", func() bool {
+		keys := f.server.Received().Keys
+		if len(keys) != 12 {
+			return false
+		}
+		return keys[8] == (rfbtest.KeyEvent{Down: true, Keysym: alt}) &&
+			keys[9] == (rfbtest.KeyEvent{Down: true, Keysym: rfb.KeysymTab}) &&
+			keys[10] == (rfbtest.KeyEvent{Down: false, Keysym: rfb.KeysymTab}) &&
+			keys[11] == (rfbtest.KeyEvent{Down: false, Keysym: alt})
+	})
+
+	if err := f.surface.SendCtrlAltDel(); err != nil {
+		t.Fatalf("SendCtrlAltDel: %v", err)
+	}
+	waitKeys(t, f.server, append(allKeys(), []rfbtest.KeyEvent{
+		{Down: true, Keysym: rfb.KeysymControlL},
+		{Down: true, Keysym: rfb.KeysymAltL},
+		{Down: true, Keysym: rfb.KeysymDelete},
+		{Down: false, Keysym: rfb.KeysymDelete},
+		{Down: false, Keysym: rfb.KeysymAltL},
+		{Down: false, Keysym: rfb.KeysymControlL},
+	}...))
+}
+
+// allKeys is the prefix the previous steps in TestKeyboardSpecialCombinations
+// sent: Ctrl+A, Shift+Tab and Alt+Tab.
+func allKeys() []rfbtest.KeyEvent {
+	alt := rfb.KeysymAltL
+	if runtime.GOOS == "darwin" {
+		alt = rfb.KeysymISOLevel3Shift
+	}
+	return []rfbtest.KeyEvent{
+		{Down: true, Keysym: rfb.KeysymControlL},
+		{Down: true, Keysym: 0x61},
+		{Down: false, Keysym: 0x61},
+		{Down: false, Keysym: rfb.KeysymControlL},
+		{Down: true, Keysym: rfb.KeysymShiftL},
+		{Down: true, Keysym: rfb.KeysymTab},
+		{Down: false, Keysym: rfb.KeysymTab},
+		{Down: false, Keysym: rfb.KeysymShiftL},
+		{Down: true, Keysym: alt},
+		{Down: true, Keysym: rfb.KeysymTab},
+		{Down: false, Keysym: rfb.KeysymTab},
+		{Down: false, Keysym: alt},
+	}
+}
+
+// TestKeyboardPhysicalFallbackAndDrop proves a key reported only by its
+// physical position still maps (a dead key), while a key with no identity such
+// as macOS Fn is dropped rather than guessed.
+func TestKeyboardPhysicalFallbackAndDrop(t *testing.T) {
+	f := newFixture(t)
+	f.tester.Frame()
+	f.tester.Key(0, ui.KeyUnknown)
+	f.tester.KeyAt(0, ui.KeyQuote)
+	waitKeys(t, f.server, []rfbtest.KeyEvent{
+		{Down: true, Keysym: 0x27},
+		{Down: false, Keysym: 0x27},
+	})
+}
+
+// TestPureKeysymModeIgnoresTextInput proves the input method is disabled and
+// typed or composed text never reaches the guest, so the guest's own handling
+// is not doubled.
+func TestPureKeysymModeIgnoresTextInput(t *testing.T) {
+	f := newFixture(t)
+	if _, noIME := f.tester.TextInputActive(); !noIME {
+		t.Fatal("the viewer did not disable the input method")
+	}
+	f.tester.Type("héllo")
+	f.tester.Compose("にほん", 1)
+	f.tester.Type("世界")
+	// A later real key proves the text events are not merely queued behind a
+	// slow path: only the key's two events are recorded.
+	f.tester.Key(0, ui.KeyB)
+	waitKeys(t, f.server, []rfbtest.KeyEvent{
+		{Down: true, Keysym: 0x62},
+		{Down: false, Keysym: 0x62},
+	})
+}
+
+// TestWindowBlurReleasesHeldKey proves switching away from the window while a
+// key is held releases it in the guest. MyGo's SurfaceBlur clears window focus
+// without delivering key-up events, so the viewer must synthesize the release
+// from the focus transition it observes while building the frame.
+func TestWindowBlurReleasesHeldKey(t *testing.T) {
+	f := newFixture(t)
+	f.tester.Frame()
+	f.tester.KeyDown(ui.KeyK)
+	waitKeys(t, f.server, []rfbtest.KeyEvent{{Down: true, Keysym: 0x6b}})
+
+	f.tester.SetFocused(false)
+	f.tester.Frame()
+	waitKeys(t, f.server, []rfbtest.KeyEvent{
+		{Down: true, Keysym: 0x6b},
+		{Down: false, Keysym: 0x6b},
+	})
+}
+
+// TestWindowBlurBeforeFocusSendsNoReleases proves startup does not storm the
+// guest with releases: a window that was never observed focused, or one that
+// blurs with nothing held, sends no key events at all.
+func TestWindowBlurBeforeFocusSendsNoReleases(t *testing.T) {
+	f := newFixture(t)
+	f.tester.SetFocused(false)
+	f.tester.Frame()
+	if keys := f.server.Received().Keys; len(keys) != 0 {
+		t.Fatalf("startup sent %+v, want no releases", keys)
+	}
+	if events := f.server.Received().ExtendedKeys; len(events) != 0 {
+		t.Fatalf("startup sent extended key events %+v, want none", events)
+	}
+}
+
+// TestPaneFocusLossReleasesHeldKey keeps the other release path covered: when
+// the Pane itself loses focus (not the window), a held key is released too.
+func TestPaneFocusLossReleasesHeldKey(t *testing.T) {
+	focused := true
+	f := newFixtureWithRoot(t, func(c *ui.Context, surface *vncui.Surface) ui.Element {
+		return surface.ViewFocused(c, focused)
+	})
+	f.tester.Frame()
+	f.tester.KeyDown(ui.KeyK)
+	waitKeys(t, f.server, []rfbtest.KeyEvent{{Down: true, Keysym: 0x6b}})
+
+	focused = false
+	f.tester.Frame()
+	waitKeys(t, f.server, []rfbtest.KeyEvent{
+		{Down: true, Keysym: 0x6b},
+		{Down: false, Keysym: 0x6b},
+	})
+}
+
+// TestWindowBlurReleasesHeldPointerButton proves window blur leaves no pointer
+// button held: the guest sees the press followed by an empty mask.
+func TestWindowBlurReleasesHeldPointerButton(t *testing.T) {
+	f := newFixture(t)
+	waitUntil(t, "the frame", func() bool {
+		f.tester.Frame()
+		return f.tester.Image().RGBAAt(35, 15) == red
+	})
+	f.tester.Press(35, 15)
+	waitUntil(t, "the pointer press", func() bool {
+		pointers := f.server.Received().Pointers
+		return len(pointers) > 0 && pointers[len(pointers)-1].Mask&1 != 0
+	})
+
+	f.tester.SetFocused(false)
+	f.tester.Frame()
+	waitUntil(t, "the pointer release", func() bool {
+		pointers := f.server.Received().Pointers
+		return len(pointers) > 0 && pointers[len(pointers)-1].Mask == 0
+	})
+}
+
+// TestExtendedKeyEventsWhenNegotiated proves the viewer sends a QEMU Extended
+// Key Event with the physical key number once the server acknowledged the
+// pseudo-encoding. The tester's KeyAt reports a physical position, as a real
+// platform does.
+func TestExtendedKeyEventsWhenNegotiated(t *testing.T) {
+	f := newFixtureWithOptions(t, fixtureOptions{configure: func(cfg *rfbtest.Config) {
+		cfg.ExtendedKeyEvent = true
+	}})
+	// The acknowledgement is written before the first framebuffer update, so
+	// rendering that update means the client has already read the ack. Waiting
+	// only for the client to send SetEncodings would race the reader under
+	// -race -count=20 and could send plain KeyEvents before the ack arrived.
+	waitUntil(t, "the first rendered frame", func() bool {
+		f.tester.Frame()
+		return f.tester.Image().RGBAAt(35, 15) == red
+	})
+	f.tester.KeyAt(0, ui.KeyA)
+	waitUntil(t, "the extended key events", func() bool {
+		events := f.server.Received().ExtendedKeys
+		return len(events) == 2 &&
+			events[0] == (rfbtest.ExtendedKeyEvent{Down: true, Keysym: 0x61, Keycode: 30}) &&
+			events[1] == (rfbtest.ExtendedKeyEvent{Down: false, Keysym: 0x61, Keycode: 30})
+	})
+	if keys := f.server.Received().Keys; len(keys) != 0 {
+		t.Fatalf("plain key events = %+v, want only extended events", keys)
+	}
+}
+
+// TestPointerMasksWheelAndFitCoordinates proves hover sends an empty mask,
+// every held button combines in the mask, the wheel is buttons 5/4 pressed and
+// released, and all coordinates pass through the fit rectangle (including the
+// letterbox offset and clamping).
+func TestPointerMasksWheelAndFitCoordinates(t *testing.T) {
+	f := newFixture(t)
+	waitUntil(t, "the frame", func() bool {
+		f.tester.Frame()
+		return f.tester.Image().RGBAAt(35, 15) == red
+	})
+
+	f.tester.Move(35, 15)          // local (35,15) -> remote (0,0), hover
+	f.tester.Press(35, 15)         // primary down
+	f.tester.Move(80, 60)          // drag to remote (2,2), primary still held
+	f.tester.Release(80, 60)       // primary up at remote (2,2)
+	f.tester.RightClickAt(140, 15) // secondary at letterbox-clamped (3,0)
+	f.tester.Wheel(140, 15, 0, 1)  // wheel down
+	f.tester.Wheel(140, 15, 0, -1) // wheel up
+
+	want := []rfbtest.PointerEvent{
+		{Mask: 0x00, X: 0, Y: 0}, // hover
+		{Mask: 0x01, X: 0, Y: 0}, // primary down
+		{Mask: 0x01, X: 2, Y: 2}, // drag keeps the held button
+		{Mask: 0x00, X: 2, Y: 2}, // primary up
+		{Mask: 0x00, X: 3, Y: 0}, // hover before the press
+		{Mask: 0x04, X: 3, Y: 0}, // secondary (right) down
+		{Mask: 0x00, X: 3, Y: 0}, // secondary up
+		{Mask: 0x10, X: 3, Y: 0}, // button 5 down
+		{Mask: 0x00, X: 3, Y: 0},
+		{Mask: 0x08, X: 3, Y: 0}, // button 4 down
+		{Mask: 0x00, X: 3, Y: 0},
+	}
+	waitUntil(t, "some pointer events", func() bool {
+		return len(f.server.Received().Pointers) >= 11
+	})
+	got := f.server.Received().Pointers
+	if len(got) != len(want) {
+		t.Fatalf("pointer events = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("pointer events = %+v, want %+v", got, want)
+		}
+	}
+}
+
+// TestPointerClickCarriesModifiers proves a Shift-click reaches the guest with
+// Shift held: MyGo reports the modifier as a bit on the pointer event, not as
+// a key event, so the viewer synthesizes the keysyms around the click.
+func TestPointerClickCarriesModifiers(t *testing.T) {
+	f := newFixture(t)
+	waitUntil(t, "the frame", func() bool {
+		f.tester.Frame()
+		return f.tester.Image().RGBAAt(35, 15) == red
+	})
+	f.tester.ClickAtWith(ui.Shift, 35, 15)
+	waitKeys(t, f.server, []rfbtest.KeyEvent{
+		{Down: true, Keysym: rfb.KeysymShiftL},
+		{Down: false, Keysym: rfb.KeysymShiftL},
+	})
+	pointers := f.server.Received().Pointers
+	if len(pointers) < 2 || pointers[len(pointers)-2].Mask != 1 || pointers[len(pointers)-1].Mask != 0 {
+		t.Fatalf("pointer events = %+v, want primary down and up", pointers)
 	}
 }
 

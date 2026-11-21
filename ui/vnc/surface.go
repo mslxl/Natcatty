@@ -1,10 +1,18 @@
 // Package vnc renders a VNC display Session: it owns a bitmap updated from the
-// application's display-event stream and sends basic pointer and typed-key
-// input back through the Session. It implements the shell's Surface interface,
-// so a VNC Host opens in an ordinary Tab.
+// application's display-event stream and sends keysym-mode keyboard input and
+// pointer input back through the Session. It implements the shell's Surface
+// interface, so a VNC Host opens in an ordinary Tab.
 //
-// This first desktop offers the fit scaling, letterboxing, crisp pixels, and
-// basic input the ticket specifies. The per-kind chrome (scale cycle, view-only
+// Keyboard input follows the mapping research: the physical key identity is
+// preferred, the logical key is the fallback, shifted keysyms are sent at
+// send-time, and modifiers are synthesized because MyGo reports them as bits
+// rather than key events. The local input method is disabled and text-input
+// events are ignored, so only the guest's own layout composes characters.
+// When the server negotiates QEMU Extended Key Events the Session uses them;
+// otherwise it sends plain KeyEvents with identical guest behavior.
+//
+// This desktop offers fit scaling, letterboxing, crisp pixels, and the input
+// mapping the ticket specifies. The per-kind chrome (scale cycle, view-only
 // toggle, clipboard actions, fullscreen, keyboard grab) arrives with a later
 // ticket.
 package vnc
@@ -12,11 +20,13 @@ package vnc
 import (
 	"errors"
 	"image"
+	"runtime"
 	"sync"
 
 	"github.com/egoist/mygo/ui"
 
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/domain/model/rfb"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
@@ -79,12 +89,44 @@ type Surface struct {
 	// UI-thread state.
 	focused      bool
 	focusPending bool
-	pointerX     float32
-	pointerY     float32
+	// windowFocused is the window's keyboard focus as observed last frame.
+	// MyGo clears it on SurfaceBlur without delivering key-up events, so the
+	// viewer watches the true-to-false transition and releases held input.
+	windowFocused bool
+	pointerX      float32
+	pointerY      float32
+
+	// Keyboard state, touched only from HandleInput on the UI thread.
+	//
+	// heldKeys is the noVNC down-list: a key-up sends the keysym and physical
+	// number recorded at key-down, so the pair always matches even if the
+	// layout or modifier state changed in between. heldMods is the modifier
+	// state the guest has been told about; MyGo reports modifiers as bits and
+	// never as key events, so the viewer synthesizes the keysym presses and
+	// releases itself.
+	heldKeys map[rfb.KeyCode]heldKey
+	heldMods ui.Modifiers
+	// downMask combines every pointer button currently held. RFB pointer
+	// events carry the whole mask, so a drag with two buttons held must keep
+	// both bits set.
+	downMask uint8
+	// macModifiers applies noVNC's macOS swap: Command reaches the guest as
+	// Alt and Option as AltGr (ISO_Level3_Shift).
+	macModifiers bool
 
 	done      chan struct{}
 	closeOnce sync.Once
 }
+
+// heldKey is one key's wire identity, recorded at key-down for its key-up.
+type heldKey struct {
+	keysym    uint32
+	keyNumber uint32
+}
+
+// modifierOrder is the deterministic order modifier keysyms are pressed and
+// the reverse order they are released.
+var modifierOrder = []ui.Modifiers{ui.Shift, ui.Ctrl, ui.Alt, ui.Super}
 
 // New starts a viewer for session. It reports an error when the Session is not
 // a pixel Session.
@@ -100,7 +142,12 @@ func New(session *appsession.Session, options ...Option) (*Surface, error) {
 	for _, option := range options {
 		option(&opts)
 	}
-	surface := &Surface{session: session, opts: opts, done: make(chan struct{})}
+	surface := &Surface{
+		session:      session,
+		opts:         opts,
+		macModifiers: runtime.GOOS == "darwin",
+		done:         make(chan struct{}),
+	}
 	go surface.consume(events)
 	return surface, nil
 }
@@ -162,12 +209,20 @@ func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
 	caret := ui.Rect{X: s.pointerX, Y: s.pointerY, W: 1, H: 1}
 	element := ui.Column(c).Fill().Clip().Background(t.Background).
 		Focusable().HandleInput(s.handleInput).TextCaret(caret).
+		// Pure keysym mode: the guest's own layout composes characters, so
+		// the local input method must not intercept keys. The viewer ignores
+		// the InputText events that follow.
+		InputMethod(false).
 		Draw(func(p *ui.Painter, r ui.Rect) {
 			s.draw(p, r)
 		})
 	// Marking the element as watching the pointer makes moves over it arrive
 	// as InputPointerMove events, not only the presses it takes.
 	_, _, _ = element.PointerPosition()
+	if s.focused && !focused {
+		// The pane lost the keyboard; the guest must not keep keys held.
+		s.releaseHeldKeys()
+	}
 	s.focusPending = focused && !s.focused
 	s.focused = focused
 	if focused {
@@ -177,6 +232,19 @@ func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
 		}
 	}
 	s.focusPending = false
+	// MyGo's SurfaceBlur clears the window focus but delivers no key-up events,
+	// so Cmd-Tab away with a key held would leave it down in the guest. Focused
+	// reports focused id && window focus; reading it here both observes the
+	// window focus (independent of whether the Pane itself is focused) and makes
+	// MyGo request the frame that reports a change. On a true-to-false
+	// transition, release every held key, synthesized modifier and pointer
+	// button. Tracking the previous state keeps startup (false to false) from
+	// sending a burst of key-ups.
+	windowFocused := element.Focused()
+	if s.windowFocused && !windowFocused {
+		s.releaseHeldKeys()
+	}
+	s.windowFocused = windowFocused
 	return element
 }
 
@@ -342,40 +410,267 @@ func (s *Surface) draw(p *ui.Painter, r ui.Rect) {
 	p.Image(scaled, ui.Rect{X: dest.X, Y: dest.Y, W: float32(width), H: float32(height)}, ui.FillBox)
 }
 
-// handleInput sends basic pointer and typed-character input. It never claims a
-// key it does not map, so shortcuts and focus traversal still work.
+// handleInput sends keyboard and pointer input in pure keysym mode. It never
+// claims an event it does not map, so shortcuts and focus traversal still work.
+// Text-input and composition events are deliberately ignored: their text comes
+// from the local layout or input method, and forwarding it would type twice
+// over the guest's own handling.
 func (s *Surface) handleInput(event ui.InputEvent) bool {
 	if s.session == nil {
 		return false
 	}
 	switch event.Kind {
+	case ui.InputKeyDown:
+		return s.handleKeyDown(event)
+	case ui.InputKeyUp:
+		return s.handleKeyUp(event)
 	case ui.InputPointerDown:
 		s.pointerX, s.pointerY = event.X, event.Y
-		s.sendPointer(event.X, event.Y, buttonMask(event.Button))
+		next, ok := applyButton(s.downMask, event.Button, true)
+		if !ok {
+			return false
+		}
+		// A Shift- or Ctrl-click carries its modifier to the guest. The
+		// modifiers are scoped to the click (released on button-up) because
+		// MyGo never reports their own key-up.
+		s.syncModifiers(event.Mods)
+		s.downMask = next
+		s.sendPointer(event.X, event.Y, s.downMask)
 		return true
 	case ui.InputPointerUp:
 		s.pointerX, s.pointerY = event.X, event.Y
-		s.sendPointer(event.X, event.Y, 0)
+		next, ok := applyButton(s.downMask, event.Button, false)
+		if !ok {
+			return false
+		}
+		s.downMask = next
+		s.sendPointer(event.X, event.Y, s.downMask)
+		s.releaseModifiers()
 		return true
 	case ui.InputPointerMove:
 		s.pointerX, s.pointerY = event.X, event.Y
-		mask := uint8(0)
+		// A move during a drag carries the held button; the mask is the full
+		// set of buttons down, so a second button pressed mid-drag stays set.
 		if event.Button >= 0 {
-			mask = buttonMask(event.Button)
+			if next, ok := applyButton(s.downMask, event.Button, true); ok {
+				s.downMask = next
+			}
 		}
-		s.sendPointer(event.X, event.Y, mask)
+		// Hover still sends a position update with an empty mask so the
+		// remote cursor tracks the pointer.
+		s.sendPointer(event.X, event.Y, s.downMask)
 		return true
-	case ui.InputText:
-		if event.Text == "" {
-			return false
-		}
-		for _, r := range event.Text {
-			_ = s.session.SendKey(KeysymForRune(r), true)
-			_ = s.session.SendKey(KeysymForRune(r), false)
-		}
-		return true
+	case ui.InputScroll:
+		return s.handleScroll(event)
+	case ui.InputText, ui.InputCompose, ui.InputCommand:
+		return false
 	}
 	return false
+}
+
+// handleKeyDown resolves the physical key, tells the guest about modifier
+// changes, then sends the key. Auto-repeat reuses the recorded identity.
+func (s *Surface) handleKeyDown(event ui.InputEvent) bool {
+	if event.Repeat {
+		if _, held, ok := s.held(event); ok {
+			s.sendKeyEvent(held.keysym, held.keyNumber, true)
+			return true
+		}
+	}
+	resolved, ok := resolveEvent(event)
+	if !ok {
+		// No tier has a keysym: macOS Fn is a hardware toggle with no guest
+		// meaning, so the event is dropped rather than guessed.
+		return false
+	}
+	s.syncModifiers(event.Mods)
+	s.sendKeyEvent(resolved.Keysym, resolved.QEMUKeyNumber, true)
+	if s.heldKeys == nil {
+		s.heldKeys = make(map[rfb.KeyCode]heldKey)
+	}
+	s.heldKeys[resolved.Code] = heldKey{keysym: resolved.Keysym, keyNumber: resolved.QEMUKeyNumber}
+	return true
+}
+
+// handleKeyUp sends the key-down's recorded keysym, then lets go of every
+// synthesized modifier. MyGo never reports a modifier's own key-up (it reports
+// modifier changes as bits only), so a modifier held for a chord is scoped to
+// that key press: it is released with the key. The next key press re-presses
+// it. This avoids a modifier that stays stuck in the guest after the user lets
+// go, while every chord still reaches the guest with its modifiers down. A
+// key-up with no matching key-down is ignored, as noVNC does.
+func (s *Surface) handleKeyUp(event ui.InputEvent) bool {
+	code, held, ok := s.held(event)
+	if !ok {
+		return false
+	}
+	s.sendKeyEvent(held.keysym, held.keyNumber, false)
+	delete(s.heldKeys, code)
+	s.releaseModifiers()
+	return true
+}
+
+// held returns the recorded key-down for an event. Resolution is physical
+// first, so a key-up pairs with its down even when the shift state changed.
+func (s *Surface) held(event ui.InputEvent) (rfb.KeyCode, heldKey, bool) {
+	resolved, ok := resolveEvent(event)
+	if !ok {
+		return rfb.CodeUnknown, heldKey{}, false
+	}
+	key, found := s.heldKeys[resolved.Code]
+	if !found {
+		return rfb.CodeUnknown, heldKey{}, false
+	}
+	return resolved.Code, key, true
+}
+
+// resolveEvent maps MyGo's key identities onto the RFB resolver's tiers.
+//
+// MyGo v0.7.4 (the vendored version) exposes no USB HID code, so the Code tier
+// is unavailable and the physical ANSI-US position is the first tier. A future
+// MyGo with InputEvent.Code can fill Code without changing the resolver.
+//
+// MyGo's Key is also reduced to a fixed US-key enum (KeyForRune), so a layout
+// character outside that set, such as ISO '#' or a non-US punctuation mark,
+// arrives as KeyUnknown and resolves by physical position. The shifted keysym
+// is therefore the US table's for that position; the platform API cannot give
+// the layout's actual character on a key event.
+func resolveEvent(event ui.InputEvent) (rfb.ResolvedKey, bool) {
+	return rfb.ResolveKey(rfb.KeyStroke{
+		Code:     rfb.CodeUnknown,
+		Physical: rfbKeyCode(event.PhysicalKey),
+		Logical:  rfbKeyCode(event.Key),
+		Shift:    event.Mods&ui.Shift != 0,
+	})
+}
+
+// syncModifiers makes the guest's modifier state match want, pressing and
+// releasing the left-side keysyms in a deterministic order. MyGo reports
+// modifiers only as bits, so their keysym events have to be synthesized.
+func (s *Surface) syncModifiers(want ui.Modifiers) {
+	want &= ui.Shift | ui.Ctrl | ui.Alt | ui.Super
+	for i := len(modifierOrder) - 1; i >= 0; i-- {
+		mod := modifierOrder[i]
+		if s.heldMods&mod != 0 && want&mod == 0 {
+			s.sendModifier(mod, false)
+		}
+	}
+	for _, mod := range modifierOrder {
+		if want&mod != 0 && s.heldMods&mod == 0 {
+			s.sendModifier(mod, true)
+		}
+	}
+	s.heldMods = want
+}
+
+// releaseModifiers lets go of every synthesized modifier.
+func (s *Surface) releaseModifiers() { s.syncModifiers(0) }
+
+// sendModifier presses or releases one synthesized modifier keysym.
+func (s *Surface) sendModifier(mod ui.Modifiers, down bool) {
+	if keysym, ok := s.modifierKeysym(mod); ok {
+		_ = s.session.SendKey(keysym, down)
+	}
+}
+
+// modifierKeysym maps a modifier bit onto its keysym. macOS follows noVNC:
+// Command is the guest's Alt and Option is AltGr, because macOS's Option types
+// special characters instead of acting as a plain Alt.
+func (s *Surface) modifierKeysym(mod ui.Modifiers) (uint32, bool) {
+	switch mod {
+	case ui.Shift:
+		return rfb.KeysymShiftL, true
+	case ui.Ctrl:
+		return rfb.KeysymControlL, true
+	case ui.Alt:
+		if s.macModifiers {
+			return rfb.KeysymISOLevel3Shift, true
+		}
+		return rfb.KeysymAltL, true
+	case ui.Super:
+		if s.macModifiers {
+			return rfb.KeysymAltL, true
+		}
+		return rfb.KeysymSuperL, true
+	}
+	return 0, false
+}
+
+// sendKeyEvent sends one key with its physical number when known. The Session
+// chooses an Extended Key Event or a plain KeyEvent; either is the same guest
+// behavior.
+func (s *Surface) sendKeyEvent(keysym, keyNumber uint32, down bool) {
+	if keyNumber != 0 {
+		_ = s.session.SendPhysicalKey(keysym, keyNumber, down)
+		return
+	}
+	_ = s.session.SendKey(keysym, down)
+}
+
+// releaseHeldKeys lets go of every key, synthesized modifier and pointer
+// button the guest was told about, so losing the Pane or the window's focus
+// cannot leave input stuck. MyGo reports neither a key-up on window blur nor a
+// modifier's own key-up, so the viewer owns both.
+func (s *Surface) releaseHeldKeys() {
+	if s.session == nil {
+		return
+	}
+	for code, held := range s.heldKeys {
+		s.sendKeyEvent(held.keysym, held.keyNumber, false)
+		delete(s.heldKeys, code)
+	}
+	s.releaseModifiers()
+	if s.downMask != 0 {
+		s.downMask = 0
+		s.sendPointer(s.pointerX, s.pointerY, 0)
+	}
+}
+
+// handleScroll sends the wheel as momentary RFB buttons: 4 (up) and 5 (down).
+// Each notch is a press followed by a release carrying the rest of the mask.
+//
+// Direction follows X11 and noVNC: positive DY moves the view down the content,
+// which is wheel-down or RFB button 5. The mapping research's table pairs
+// positive DY with button 4, but that contradicts X11 (4=up, 5=down) and the
+// ticket's "4 (up) and 5 (down)"; noVNC also sends 5 for a positive delta.
+func (s *Surface) handleScroll(event ui.InputEvent) bool {
+	if event.DY == 0 {
+		return false
+	}
+	s.pointerX, s.pointerY = event.X, event.Y
+	button := uint8(0x10) // button 5: wheel down
+	if event.DY < 0 {
+		button = 0x08 // button 4: wheel up
+	}
+	s.sendPointer(event.X, event.Y, s.downMask|button)
+	s.sendPointer(event.X, event.Y, s.downMask)
+	return true
+}
+
+// SendCtrlAltDel injects the Ctrl+Alt+Del chord as three keysyms, pressed in
+// order and released in reverse. The host OS usually grabs the real chord, so
+// the viewer chrome calls this from its toolbar.
+func (s *Surface) SendCtrlAltDel() error {
+	if s.session == nil {
+		return appsession.ErrNoDisplay
+	}
+	sequence := []struct {
+		keysym uint32
+		down   bool
+	}{
+		{rfb.KeysymControlL, true},
+		{rfb.KeysymAltL, true},
+		{rfb.KeysymDelete, true},
+		{rfb.KeysymDelete, false},
+		{rfb.KeysymAltL, false},
+		{rfb.KeysymControlL, false},
+	}
+	for _, step := range sequence {
+		if err := s.session.SendKey(step.keysym, step.down); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // sendPointer maps a local pixel position onto the framebuffer and sends it.
@@ -390,16 +685,30 @@ func (s *Surface) sendPointer(x, y float32, mask uint8) {
 	_ = s.session.SendPointer(rx, ry, mask)
 }
 
-// buttonMask maps a MyGo pointer button onto the RFB mask. Primary is bit 0,
-// secondary bit 1, middle bit 2.
+// applyButton sets or clears one button's bit in a pointer mask, returning the
+// combined mask. ok is false for a button RFB has no bit for.
+func applyButton(mask uint8, button int, down bool) (next uint8, ok bool) {
+	bit := buttonMask(button)
+	if bit == 0 {
+		return mask, false
+	}
+	if down {
+		return mask | bit, true
+	}
+	return mask &^ bit, true
+}
+
+// buttonMask maps a MyGo pointer button onto the RFB mask. The protocol's bits
+// are 0 primary, 1 middle, 2 secondary; MyGo numbers the secondary button 1
+// and the middle button 2, so those two are swapped on the way out.
 func buttonMask(button int) uint8 {
 	switch button {
 	case 0:
-		return 1
+		return 1 // primary
 	case 1:
-		return 2
+		return 4 // secondary
 	case 2:
-		return 4
+		return 2 // middle
 	default:
 		return 0
 	}

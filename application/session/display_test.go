@@ -27,6 +27,7 @@ type fakeDisplay struct {
 	active     int
 	maxActive  int
 	keys       []uint32
+	physical   [][2]uint32
 	pointers   [][2]int
 	cutTexts   []string
 	updates    []bool
@@ -67,6 +68,16 @@ func (d *fakeDisplay) SendKey(keysym uint32, pressed bool) error {
 	defer d.leave()
 	d.mu.Lock()
 	d.keys = append(d.keys, keysym)
+	d.mu.Unlock()
+	return nil
+}
+
+func (d *fakeDisplay) SendPhysicalKey(keysym uint32, keyNumber uint32, pressed bool) error {
+	d.enter()
+	defer d.leave()
+	d.mu.Lock()
+	d.keys = append(d.keys, keysym)
+	d.physical = append(d.physical, [2]uint32{keysym, keyNumber})
 	d.mu.Unlock()
 	return nil
 }

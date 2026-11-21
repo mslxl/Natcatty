@@ -493,8 +493,11 @@ func (t *transport) publishMetadata(rectangles []rfb.Rectangle) {
 				Kind:   appsession.DisplayEventCursorShape,
 				Cursor: shape,
 			})
-		case rect.Encoding == rfb.EncodingFence || rect.Encoding == rfb.EncodingContinuousUpdates:
-			// Extension acknowledgements carry no pixels.
+		case rect.Encoding == rfb.EncodingFence || rect.Encoding == rfb.EncodingContinuousUpdates ||
+			rect.Encoding == rfb.EncodingExtendedKeyEvent:
+			// Extension acknowledgements carry no pixels. The RFB client
+			// records the ExtendedKeyEvent acknowledgement itself, because it
+			// is the party that chooses the wire format for later keys.
 		}
 	}
 }
@@ -620,6 +623,13 @@ func updateRect(rectangles []rfb.Rectangle) image.Rectangle {
 // SendKey sends one X11 keysym press or release.
 func (t *transport) SendKey(keysym uint32, pressed bool) error {
 	return t.write(func() error { return t.client.SendKey(keysym, pressed) })
+}
+
+// SendPhysicalKey sends one key with its QEMU key number when known. The RFB
+// client chooses an Extended Key Event when the server acknowledged the
+// pseudo-encoding and falls back to a plain KeyEvent otherwise.
+func (t *transport) SendPhysicalKey(keysym uint32, keyNumber uint32, pressed bool) error {
+	return t.write(func() error { return t.client.SendPhysicalKey(keysym, keyNumber, pressed) })
 }
 
 // SendPointer sends a pointer position and the RFB button mask. Coordinates
