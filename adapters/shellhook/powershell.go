@@ -312,6 +312,34 @@ function global:__netcatty_child_bash {
     }
 }
 
+# Bash invoked as sh ignores --rcfile and reads ENV instead. Git Bash's sh.exe
+# is bash, so the ENV file upgrades it to the full bash hook; a genuine POSIX sh
+# falls back to the prompt/cwd-only script inside that file.
+function global:__netcatty_child_sh {
+    param([string]$path, [object[]]$arguments)
+    if (-not (__netcatty_child_is_interactive $arguments)) {
+        & $path @arguments
+        if ($global:LASTEXITCODE -ne 0) {
+            $global:__netcatty_forced_exit = [int]$global:LASTEXITCODE
+        }
+        return
+    }
+    $oldChild = $env:NETCATTY_CHILD_HOOK
+    $oldStart = $env:NETCATTY_HOOK_START
+    $oldEnv = $env:ENV
+    try {
+        $env:NETCATTY_CHILD_HOOK = '1'
+        $env:NETCATTY_HOOK_START = '1'
+        # MSYS opens ENV through its POSIX layer, which expects forward slashes.
+        $env:ENV = ($env:NETCATTY_CHILD_SH_ENV -replace '\\', '/')
+        & $path @arguments -i
+    } finally {
+        $env:NETCATTY_HOOK_START = $oldStart
+        $env:NETCATTY_CHILD_HOOK = $oldChild
+        $env:ENV = $oldEnv
+    }
+}
+
 function global:__netcatty_child_cmd {
     param([string]$path, [object[]]$arguments)
     foreach ($argument in @($arguments)) {
@@ -359,8 +387,8 @@ if ($null -ne $__netcatty_powershell) {
 if ($null -ne $__netcatty_bash -and $env:NETCATTY_CHILD_BASHRC) {
     function global:bash { __netcatty_child_bash $env:NETCATTY_BASH_PATH $args }
 }
-if ($null -ne $__netcatty_sh -and $env:NETCATTY_CHILD_BASHRC) {
-    function global:sh { __netcatty_child_bash $env:NETCATTY_SH_PATH $args }
+if ($null -ne $__netcatty_sh -and $env:NETCATTY_CHILD_SH_ENV) {
+    function global:sh { __netcatty_child_sh $env:NETCATTY_SH_PATH $args }
 }
 if ($null -ne $__netcatty_cmd -and $env:NETCATTY_CHILD_CMD_INIT) {
     function global:cmd { __netcatty_child_cmd $env:NETCATTY_CMD_PATH $args }

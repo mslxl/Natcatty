@@ -52,7 +52,9 @@ func TestNatcattyWindowsNestedShLens(t *testing.T) {
 
 	send("sh")
 	waitNestedBlocks(t, surface, 1)
-	send("ls")
+	// Git Bash's plain `ls` prints names only, which files.ls deliberately
+	// leaves raw. The long form has the columns the native view renders.
+	send("ls -l")
 	waitNestedBlocks(t, surface, 2, "", "files.ls")
 	waitNestedNative(t, surface, 1)
 	if surface.LensBlocks()[1].Native == nil {
@@ -72,7 +74,7 @@ func TestNatcattyWindowsNestedShWithinShLens(t *testing.T) {
 	waitNestedBlocks(t, surface, 1)
 	send("sh")
 	waitNestedBlocks(t, surface, 2, "", "")
-	send("ls")
+	send("ls -l")
 	waitNestedBlocks(t, surface, 3, "", "", "files.ls")
 	waitNestedNative(t, surface, 2)
 }
@@ -108,7 +110,7 @@ func TestNatcattyWindowsCmdPowerShellShLens(t *testing.T) {
 	waitNestedBlocks(t, surface, 1)
 	send("sh")
 	waitNestedBlocks(t, surface, 2, "", "")
-	send("ls")
+	send("ls -l")
 	waitNestedBlocks(t, surface, 3, "", "", "files.ls")
 	waitNestedNative(t, surface, 2)
 }

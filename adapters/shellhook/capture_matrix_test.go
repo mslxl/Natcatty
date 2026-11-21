@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -841,7 +842,26 @@ func matrixSpecEnv(values map[string]string, home string) []string {
 	return env
 }
 
+// matrixQuotedArgument matches a double-quoted argument produced by Go's %q,
+// which escapes every backslash in a Windows path.
+var matrixQuotedArgument = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+
+// literalizeMatrixQuoting folds the escapes of each Go-quoted argument back to
+// the literal spelling. The nushell launch quotes its hook path with %q, and on
+// Windows that doubles the separators; the path substitutions below and the
+// slash conversion need the real path to recognize it.
+func literalizeMatrixQuoting(value string) string {
+	return matrixQuotedArgument.ReplaceAllStringFunc(value, func(quoted string) string {
+		unquoted, err := strconv.Unquote(quoted)
+		if err != nil {
+			return quoted
+		}
+		return `"` + unquoted + `"`
+	})
+}
+
 func normalizeMatrixValue(value, shellPath, home, hookDir string) string {
+	value = literalizeMatrixQuoting(value)
 	value = strings.ReplaceAll(value, hookDir, "<hook-dir>")
 	value = strings.ReplaceAll(value, home, "<home>")
 	value = strings.ReplaceAll(value, shellPath, "<shell>")

@@ -206,7 +206,7 @@ func (p *Planner) planLocal(spec appsession.StartSpec) (appsession.CaptureHookPl
 			return unchanged, true
 		}
 		childShEnv := filepath.Join(dir, "child-sh-env")
-		if err := os.WriteFile(childShEnv, []byte(posixStartupScript()), 0o600); err != nil {
+		if err := os.WriteFile(childShEnv, []byte(childShStartupScript()), 0o600); err != nil {
 			cleanup()
 			return unchanged, true
 		}

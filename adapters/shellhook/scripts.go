@@ -415,7 +415,7 @@ if [ "${NETCATTY_CHILD_HOOK:-}" = "1" ]; then
         command "$__nc_path" --rcfile "$NETCATTY_CHILD_BASHRC" "$@" -i
     }
   fi
-  if [ -n "${NETCATTY_SH_PATH:-}" ] && [ -n "${NETCATTY_CHILD_BASHRC:-}" ]; then
+  if [ -n "${NETCATTY_SH_PATH:-}" ] && [ -n "${NETCATTY_CHILD_SH_ENV:-}" ]; then
     sh() {
       local __nc_path
       __nc_path=$(__netcatty_child_path "$NETCATTY_SH_PATH")
@@ -423,8 +423,15 @@ if [ "${NETCATTY_CHILD_HOOK:-}" = "1" ]; then
         command "$__nc_path" "$@"
         return $?
       fi
-      NETCATTY_CHILD_HOOK=1 NETCATTY_HOOK_START=1 \
-        command "$__nc_path" --rcfile "$NETCATTY_CHILD_BASHRC" "$@" -i
+      # Bash invoked as sh ignores --rcfile and reads ENV. The installed file
+      # decides whether this sh is bash and can run the full hook.
+      (
+        ENV=$(__netcatty_child_path "$NETCATTY_CHILD_SH_ENV")
+        NETCATTY_CHILD_HOOK=1
+        NETCATTY_HOOK_START=1
+        export ENV NETCATTY_CHILD_HOOK NETCATTY_HOOK_START
+        exec "$__nc_path" "$@" -i
+      )
     }
   fi
   if [ -n "${NETCATTY_CMD_PATH:-}" ] && [ -n "${NETCATTY_CHILD_CMD_INIT:-}" ]; then
@@ -456,6 +463,23 @@ func posixStartupScript() string {
   printf '\033]133;B\007'
 }
 PS1='$(__netcatty_prompt)$ '
+`
+}
+
+// childShStartupScript is the startup a Windows sh.exe reads through ENV.
+// Bash invoked as sh ignores --rcfile but sources ENV, so this file is the only
+// way to hand Git Bash's sh.exe the bash hook. A genuine POSIX sh cannot run
+// that hook and keeps the prompt/cwd-only script.
+func childShStartupScript() string {
+	return `if [ -n "${BASH_VERSION:-}" ] && [ -n "${NETCATTY_CHILD_BASHRC:-}" ]; then
+  # MSYS opens this path through its POSIX layer; forward slashes are certain
+  # to resolve.
+  __netcatty_child_bashrc=${NETCATTY_CHILD_BASHRC//\\//}
+fi
+if [ -n "${__netcatty_child_bashrc:-}" ] && [ -f "$__netcatty_child_bashrc" ]; then
+  . "$__netcatty_child_bashrc"
+else
+` + posixStartupScript() + `fi
 `
 }
 

@@ -1,3 +1,8 @@
+//go:build !windows
+
+// The remote wrapper is a POSIX /bin/sh script, and the fake shells it starts
+// are shebang scripts. A Windows host can execute neither. Windows peers use
+// the PowerShell or cmd wrapper, covered by powershell_real_test.go.
 package shellhook
 
 import (

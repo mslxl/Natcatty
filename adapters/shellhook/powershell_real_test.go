@@ -1108,19 +1108,13 @@ func TestRealPowerShellRemoteWrapperSurvivesAnUnusableTempPath(t *testing.T) {
 	})
 
 	process.typeLine(t, "exit")
-	deadline := time.Now().Add(20 * time.Second)
-	for {
-		output, closed := process.snapshot()
-		if closed {
-			if strings.Contains(output, "Remove-Item") {
-				t.Fatalf("the wrapper's cleanup threw: %q", output)
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the wrapper did not exit after the fallback shell closed")
-		}
-		time.Sleep(25 * time.Millisecond)
+	select {
+	case <-process.exited():
+	case <-time.After(20 * time.Second):
+		t.Fatal("the wrapper did not exit after the fallback shell closed")
+	}
+	if output, _ := process.snapshot(); strings.Contains(output, "Remove-Item") {
+		t.Fatalf("the wrapper's cleanup threw: %q", output)
 	}
 	if info, err := os.Stat(blocked); err != nil || info.IsDir() {
 		t.Fatalf("the wrapper's cleanup damaged the blocked temp path: %v", err)

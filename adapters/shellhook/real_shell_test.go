@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -19,10 +20,17 @@ import (
 	"github.com/mslxl/natcatty/platform/pty"
 )
 
-// availableShells returns the real shells this machine can run. fish is not
-// installed everywhere; NETCATTY_TEST_FISH points at a provisioned binary.
+// availableShells returns the real POSIX shells this machine can run. fish is
+// not installed everywhere; NETCATTY_TEST_FISH points at a provisioned binary.
 func availableShells() map[string]string {
 	shells := map[string]string{}
+	if runtime.GOOS == "windows" {
+		// Git Bash is a Windows program with an MSYS environment, not a POSIX
+		// host: its startup and capture behavior differs from the zsh, bash,
+		// and fish sessions these tests assert. A Windows local Session starts
+		// PowerShell instead, and the PowerShell tests cover it.
+		return shells
+	}
 	for _, name := range []string{"zsh", "bash"} {
 		if path, err := exec.LookPath(name); err == nil {
 			shells[name] = path
@@ -242,6 +250,13 @@ func (p *shellProcess) snapshot() (string, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.output.String(), p.closed
+}
+
+// exited reports that the process itself exited. The output pipe can outlive
+// the process on ConPTY, so a test that asks whether the shell exited must wait
+// on the process rather than on the read loop's EOF.
+func (p *shellProcess) exited() <-chan struct{} {
+	return p.terminal.Exited()
 }
 
 // waitFor blocks on real output, never on a fixed delay.
