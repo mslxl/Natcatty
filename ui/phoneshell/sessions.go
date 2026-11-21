@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
 	domainmodel "github.com/mslxl/natcatty/domain/model"
@@ -68,6 +69,19 @@ type TerminalScreen interface {
 	// SendKey types one key as the accessory bar's, through the terminal's
 	// own encoder. It carries no text: the key and its modifiers decide.
 	SendKey(key ui.Key, mods ui.Modifiers)
+	// SelectionText is what the terminal's selection holds, if it has one.
+	// The page puts it on the system clipboard, through MyGo's Services.
+	SelectionText() (string, bool)
+	// PasteData pastes the system clipboard's data through the terminal's
+	// own paste path, which wraps it in a bracketed paste when the program
+	// asks for one, so a multi-line paste does not run as commands.
+	PasteData(d transfer.Data)
+	// InScrollback reports whether the viewport shows the scrollback above
+	// the live screen.
+	InScrollback() bool
+	// ToggleScrollback enters the scrollback one screen up, or returns to
+	// the live screen.
+	ToggleScrollback()
 	// Close detaches the screen. The Session handle's Close ends the Session.
 	Close() error
 }

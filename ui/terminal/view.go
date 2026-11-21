@@ -38,6 +38,9 @@ func View(c *ui.Context, t *Terminal) ui.Element {
 	// A terminal's grid is left to right in a right-to-left interface too.
 	e := ui.Box(c).Direction(ui.LeftToRight).Focusable().FocusRing(false).Clip().Label("Terminal")
 	v.build(c, e)
+	// The touches come after the build that sized the grid: a long press
+	// selects the cells under the finger, and a drag extends over them.
+	v.fingers(c, e)
 	// The client comes before the cursor: HandleTextInput asks for the text
 	// cursor, which would otherwise overwrite the shape a program set (OSC
 	// 22). It is the view pointer, not one per frame: a new client each
@@ -219,6 +222,10 @@ type view struct {
 	// selecting tells that the primary button selects; reporting that a
 	// press went to the program, which gets the release too.
 	selecting, reporting bool
+	// touch is the finger on a touchscreen: held still it begins a selection
+	// (long press), which dragging extends, where the program does not take
+	// the mouse. A finger that pans or taps selects nothing.
+	touch touchState
 	// extending keeps a Shift-click drag anchored to the existing selection.
 	extending bool
 	pointer   [2]float32
@@ -275,6 +282,36 @@ type view struct {
 	searched SearchStatus
 	matches  []matchSpan
 	matchBuf []vt.Selection
+}
+
+// touchSelectDelay is how long a finger stays still before it begins a
+// selection, as UIKit's and Android's long press timeout. It is MyGo's
+// long-press delay, so a phone's other long presses feel alike.
+const touchSelectDelay = 500 * time.Millisecond
+
+// touchSelectSlop is how far a finger may move, in DIPs, and still count as
+// held still, MyGo's touch slop: past it the finger is panning or dragging,
+// which is no long press.
+const touchSelectSlop = 8
+
+// touchState is the one finger the view follows. A touchscreen terminal
+// selects with a long press rather than a click, because a finger pressing
+// the grid should focus it and show the keyboard, not throw away the text a
+// reader is looking at.
+type touchState struct {
+	id   uint64
+	down bool
+	// pressed is set once the long press began the selection; moved is set
+	// once the finger went too far for one.
+	pressed, moved bool
+	// tracking is set where the program takes the mouse: the finger is a
+	// pointer then, reported on the press and release, and its moves are
+	// reported from the touches as the touch recognizer swallows them.
+	tracking bool
+	// start is when the finger landed, by the window's clock.
+	start time.Time
+	// x, y is where it is, and x0, y0 where it landed.
+	x, y, x0, y0 float32
 }
 
 type pendingKey struct {
@@ -396,6 +433,194 @@ func (v *view) build(c *ui.Context, e ui.Element) {
 	if v.ticking {
 		c.After(40 * time.Millisecond)
 	}
+}
+
+// fingers runs the view's touch gesture. A finger held still on the grid for
+// touchSelectDelay selects the word under it, as a long press does on a
+// phone, and dragging extends the selection. A finger on a program that takes
+// the mouse is that program's pointer instead: MyGo's touch recognition turns
+// a drag into a pan and swallows the moves, so the view reports them from the
+// touches, and the release too when the recognizer ate it.
+//
+// A tap does what a tap does without a selection: it focuses the terminal,
+// shows the keyboard, and dismisses the selection, and it leaves an input
+// method's composition and the text client alone.
+func (v *view) fingers(c *ui.Context, e ui.Element) {
+	touches := e.Touches()
+	if len(touches) == 0 {
+		return
+	}
+	t := v.t
+	tracking := false
+	t.mu.Lock()
+	if t.term != nil {
+		tracking = t.term.MouseTracking()
+	}
+	t.mu.Unlock()
+	for _, f := range touches {
+		switch f.Phase {
+		case ui.TouchBegan:
+			if v.touch.down {
+				continue // one finger selects; the others are no gesture of its
+			}
+			v.touch = touchState{
+				id: f.ID, down: true, start: c.Now(),
+				x: f.X, y: f.Y, x0: f.StartX, y0: f.StartY, tracking: tracking,
+			}
+			if tracking {
+				continue // the press went to the program as a pointer press
+			}
+			// A frame at the delay decides the long press even if the
+			// finger does not move again.
+			c.After(touchSelectDelay)
+		case ui.TouchStationary:
+			if !v.touch.down || f.ID != v.touch.id || v.touch.tracking {
+				continue
+			}
+			if !v.touch.pressed && !v.touch.moved && c.Now().Sub(v.touch.start) >= touchSelectDelay {
+				v.beginTouchSelection(v.touch.x, v.touch.y)
+			}
+		case ui.TouchMoved:
+			if !v.touch.down || f.ID != v.touch.id {
+				continue
+			}
+			v.touch.x, v.touch.y = f.X, f.Y
+			switch {
+			case v.touch.tracking:
+				// The recognizer swallowed the move; the program still
+				// wants its pointer there. Only a press went already.
+				v.reportTouch(ui.InputPointerMove, f.X, f.Y)
+			case v.touch.pressed:
+				v.extendTouchSelection(f.X, f.Y)
+			default:
+				if math.Hypot(float64(f.X-v.touch.x0), float64(f.Y-v.touch.y0)) > touchSelectSlop {
+					v.touch.moved = true // it pans or drags, not a long press
+				}
+				if !v.touch.moved && c.Now().Sub(v.touch.start) >= touchSelectDelay {
+					v.beginTouchSelection(f.X, f.Y)
+					v.extendTouchSelection(f.X, f.Y)
+				}
+			}
+		case ui.TouchEnded, ui.TouchCanceled:
+			if f.ID != v.touch.id {
+				continue
+			}
+			was := v.touch
+			v.touch = touchState{}
+			if was.tracking {
+				// A tap's release came as a pointer's; a drag's did not.
+				v.reportTouch(ui.InputPointerUp, f.X, f.Y)
+			} else if was.pressed {
+				v.endTouchSelection()
+			} else if was.down && !was.moved && f.Phase == ui.TouchEnded {
+				// A tap dismisses what was selected, as a click does.
+				v.clearSelectionOnTap()
+			}
+		}
+	}
+}
+
+// beginTouchSelection selects the word under a point, as a long press does.
+// It presses twice with the terminal's own gesture, whose second press within
+// the repeat interval is the double click that selects a word; a terminal
+// with no word there keeps the cell the first press selected.
+func (v *view) beginTouchSelection(x, y float32) {
+	t := v.t
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.term == nil || v.cellW == 0 {
+		return
+	}
+	if v.gesture == nil {
+		g, err := vt.NewGesture(uint64(touchSelectDelay), 5*float64(v.scale))
+		if err != nil {
+			return
+		}
+		v.gesture = g
+	}
+	col, row := v.cellAt(x, y)
+	ref, ok := t.term.CellAt(col, row)
+	if !ok {
+		return
+	}
+	px, py := float64(x*v.scale), float64(y*v.scale)
+	v.gesture.Reset(t.term)
+	ns := uint64(time.Now().UnixNano())
+	first, firstOK := v.gesture.Press(t.term, ref, px, py, ns)
+	if s, ok := v.gesture.Press(t.term, ref, px, py, ns+1); ok {
+		t.term.SetSelection(&s)
+	} else if firstOK {
+		t.term.SetSelection(&first)
+	} else {
+		return
+	}
+	v.touch.pressed = true
+	v.selecting = true
+	v.ticking = false
+	v.services.Invalidate()
+}
+
+// extendTouchSelection drags the selection to a point, scrolling past an
+// edge as the pointer's drag does.
+func (v *view) extendTouchSelection(x, y float32) {
+	t := v.t
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.term == nil || v.gesture == nil {
+		return
+	}
+	col, row := v.cellAt(x, y)
+	ref, ok := t.term.CellAt(col, row)
+	if !ok {
+		return
+	}
+	px, py := float64(x*v.scale), float64(y*v.scale)
+	if s, ok := v.gesture.Drag(t.term, ref, px, py, v.geometry(), false); ok {
+		t.term.SetSelection(&s)
+	}
+	v.pointer = [2]float32{x, y}
+	v.ticking = v.gesture.Autoscroll(t.term) != 0
+	v.services.Invalidate()
+}
+
+// endTouchSelection ends a touch selection, keeping it for Copy, and copies
+// it where the option copies on select.
+func (v *view) endTouchSelection() {
+	t := v.t
+	var copying string
+	t.mu.Lock()
+	v.selecting, v.ticking = false, false
+	if t.term != nil && t.opts.CopyOnSelect == CopyOnSelectClipboard {
+		if text, ok := t.term.SelectionText(); ok {
+			copying = text
+		}
+	}
+	t.mu.Unlock()
+	if copying != "" {
+		v.services.WriteClipboard(copying)
+		v.copied(copying, CopySelect)
+	}
+	v.services.Invalidate()
+}
+
+// clearSelectionOnTap dismisses the selection when a finger taps the grid.
+func (v *view) clearSelectionOnTap() {
+	t := v.t
+	t.mu.Lock()
+	if t.term != nil {
+		t.term.SetSelection(nil)
+	}
+	t.mu.Unlock()
+	v.services.Invalidate()
+}
+
+// reportTouch reports a finger's move or release to a program that takes the
+// mouse, where MyGo's touch recognition kept the pointer event from it.
+func (v *view) reportTouch(kind ui.InputKind, x, y float32) {
+	if !v.reporting {
+		return
+	}
+	v.report(ui.InputEvent{Kind: kind, X: x, Y: y, Button: 0, Pointer: ui.PointerTouch})
 }
 
 const blinkPeriod = 600 * time.Millisecond
@@ -1169,6 +1394,23 @@ func (v *view) pointerEvent(ev ui.InputEvent) bool {
 		return true
 	}
 	tracking := t.term.MouseTracking() && ev.Mods&ui.Shift == 0
+	if ev.Pointer == ui.PointerTouch {
+		// A finger selects by a long press, which fingers recognizes, not
+		// by the press a click makes: a tap must focus the grid and show
+		// the keyboard without throwing away what is selected. A program
+		// that takes the mouse gets every finger event, selection or not.
+		if !tracking {
+			return false
+		}
+		if ev.Kind == ui.InputPointerUp && !v.reporting {
+			// The touch already reported the release (fingers), or no
+			// press went: a drag's pointer release is swallowed by the
+			// touch recognizer, so the touch sends it, and the platform
+			// may deliver this one after.
+			return false
+		}
+		return v.report(ev)
+	}
 	if tracking && !v.selecting || v.reporting {
 		return v.report(ev)
 	}

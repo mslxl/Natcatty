@@ -3,6 +3,7 @@ package phoneshell
 import (
 	"io"
 
+	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
 	"github.com/mslxl/natcatty/ui/terminal"
@@ -44,5 +45,25 @@ func (s *ghosttyScreen) View(c *ui.Context) ui.Element { return terminal.View(c,
 
 // SendKey types an accessory-bar key through the terminal's own encoder.
 func (s *ghosttyScreen) SendKey(key ui.Key, mods ui.Modifiers) { s.term.SendKey(key, mods) }
+
+// SelectionText reads the terminal's own selection, the one the long press
+// and drag made.
+func (s *ghosttyScreen) SelectionText() (string, bool) { return s.term.SelectionText() }
+
+// PasteData uses the terminal's paste path, so bracketed paste mode applies:
+// the program that asked for one gets the payload wrapped and does not run a
+// multi-line paste as commands.
+func (s *ghosttyScreen) PasteData(d transfer.Data) { s.term.PasteData(d) }
+
+// InScrollback reports whether the viewport is above the live screen.
+func (s *ghosttyScreen) InScrollback() bool { return s.term.ScrolledBack() }
+
+// ToggleScrollback uses the terminal's own viewport API rather than a MyGo
+// scroll widget. The scrollback lives in libghostty-vt and reflows with the
+// grid, so a scroll container around the view could not show the rows above
+// it without duplicating the screen, and a finger drag there would claim the
+// gesture the grid needs for selection and mouse reporting. A button the
+// thumb reaches asks for neither and works whether a program takes the mouse.
+func (s *ghosttyScreen) ToggleScrollback() { s.term.ToggleScrollback() }
 
 func (s *ghosttyScreen) Close() error { return s.term.Close() }

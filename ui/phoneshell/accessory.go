@@ -12,6 +12,13 @@ package phoneshell
 // the focus would make the terminal stop reporting an active text input,
 // and the keyboard would collapse on the first tap.
 //
+// A third row holds the controls a phone has no keyboard shortcut for:
+// Copy puts the terminal's selection on the system clipboard, Paste reads
+// the system clipboard through the terminal's own paste path (so bracketed
+// paste mode applies), and History/Latest moves the terminal's viewport into
+// the scrollback and back. None of them takes the drag the grid selects
+// with, and all sit within the thumb's reach above the keyboard.
+//
 // The bar's keys go through TerminalScreen.SendKey, which uses the
 // terminal's own key encoder: arrows follow application cursor mode and
 // Control combinations are the control characters a shell reads (Ctrl+C is
@@ -89,8 +96,38 @@ func accessoryBar(c *ui.Context, acc *accessoryState, screen TerminalScreen) ui.
 			accessoryLatch{label: "Ctrl", held: &acc.ctrl},
 			accessoryLatch{label: "Alt", held: &acc.alt})
 		accessoryRow(c, acc, screen, accessoryRowTwo)
+		accessoryControls(c, screen)
 	})
 	return bar
+}
+
+// accessoryControls draws Copy, Paste and the scrollback toggle. Copy writes
+// the selection through MyGo's Services, the system clipboard seam the
+// terminal view uses too; Paste hands the clipboard's data to the terminal so
+// the terminal, not the page, decides whether to wrap it for bracketed paste.
+// The label tells where the toggle goes: History into the scrollback, Latest
+// back to the live screen.
+func accessoryControls(c *ui.Context, screen TerminalScreen) {
+	ui.Row(c).FillWidth().Shrink(0).Gap(4).KeepFocus().Children(func() {
+		if b := accessoryButton(c, "Copy", false); b.Clicked() {
+			if text, ok := screen.SelectionText(); ok && text != "" {
+				c.Services().WriteClipboard(text)
+			}
+		}
+		if b := accessoryButton(c, "Paste", false); b.Clicked() {
+			if d := c.Services().ReadClipboardData(); len(d.Items()) > 0 {
+				screen.PasteData(d)
+			}
+		}
+		scrolled := screen.InScrollback()
+		label := "History"
+		if scrolled {
+			label = "Latest"
+		}
+		if b := accessoryButton(c, label, scrolled); b.Clicked() {
+			screen.ToggleScrollback()
+		}
+	})
 }
 
 // accessoryLatch is a modifier button that toggles held.

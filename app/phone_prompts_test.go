@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 	xssh "golang.org/x/crypto/ssh"
 
@@ -129,6 +130,11 @@ func (d *fakesshDialer) closeAll() {
 type nopScreen struct{}
 
 func (nopScreen) View(c *ui.Context) ui.Element { return ui.Text(c, "terminal") }
+func (nopScreen) SendKey(ui.Key, ui.Modifiers)  {}
+func (nopScreen) SelectionText() (string, bool) { return "", false }
+func (nopScreen) PasteData(transfer.Data)       {}
+func (nopScreen) InScrollback() bool            { return false }
+func (nopScreen) ToggleScrollback()             {}
 func (nopScreen) Close() error                  { return nil }
 
 func nopScreens(io.ReadWriteCloser) (phoneshell.TerminalScreen, error) {

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -297,6 +298,11 @@ func (o *fakeOpener) setErr(err error) {
 // the test's stand-in for libghostty-vt.
 type fakeScreen struct {
 	handle *fakeHandle
+	// selected is what the test says the terminal selected, and pasted what
+	// the Paste control handed it. scrolled is the scrollback toggle's state.
+	selected string
+	pasted   transfer.Data
+	scrolled bool
 }
 
 func (s *fakeScreen) View(c *ui.Context) ui.Element {
@@ -320,6 +326,14 @@ func (s *fakeScreen) Close() error { return s.handle.Close() }
 
 // SendKey records what the accessory bar asked to type.
 func (s *fakeScreen) SendKey(key ui.Key, mods ui.Modifiers) { s.handle.recordKey(key, mods) }
+
+func (s *fakeScreen) SelectionText() (string, bool) { return s.selected, s.selected != "" }
+
+func (s *fakeScreen) PasteData(d transfer.Data) { s.pasted = d }
+
+func (s *fakeScreen) InScrollback() bool { return s.scrolled }
+
+func (s *fakeScreen) ToggleScrollback() { s.scrolled = !s.scrolled }
 
 func fakeScreens(conn io.ReadWriteCloser) (TerminalScreen, error) {
 	handle, ok := conn.(*fakeHandle)

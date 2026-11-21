@@ -1021,6 +1021,43 @@ func (t *Terminal) ClearScreen() bool {
 	return true
 }
 
+// SelectionText returns the text the pointer or a touch selected, and
+// whether there is a selection: what Copy puts on the clipboard.
+func (t *Terminal) SelectionText() (string, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.term == nil {
+		return "", false
+	}
+	return t.term.SelectionText()
+}
+
+// ScrolledBack reports whether the viewport shows the scrollback rather than
+// the live screen: what a control that leaves the scrollback shows.
+func (t *Terminal) ScrolledBack() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.term != nil && !t.term.AtBottom()
+}
+
+// ToggleScrollback moves the viewport one screen up into the scrollback when
+// it follows the live screen, and back to the live screen when it does not.
+// It is the phone's scrollback control: scrolled one screen at a time, the
+// button neither takes the finger drag the grid selects with nor asks a
+// MyGo scroll container to duplicate the terminal's grid and reflow.
+func (t *Terminal) ToggleScrollback() {
+	t.mu.Lock()
+	if t.term != nil {
+		if t.term.AtBottom() {
+			t.term.ScrollBy(-max(t.size.rows-1, 1))
+		} else {
+			t.term.ScrollToBottom()
+		}
+	}
+	t.mu.Unlock()
+	t.redraw()
+}
+
 // ClearScrollback clears the scrollback, leaving the screen as it is.
 func (t *Terminal) ClearScrollback() { t.write([]byte("\x1b[3J")) }
 
