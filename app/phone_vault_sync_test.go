@@ -207,11 +207,11 @@ func newSyncDevice(t *testing.T, ctx context.Context, dir, name string,
 	// Host. That is what sends the real service down its decision path rather
 	// than the empty-Vault refusal.
 	if err := database.Save(ctx, domainvault.Host{
-		ID:       model.HostID(name + "-host"),
-		Label:    name + " host",
-		Hostname: name + ".example",
-		Port:     22,
-		Protocol: domainvault.ProtocolSSH,
+		ID:        model.HostID(name + "-host"),
+		Label:     name + " host",
+		Hostname:  name + ".example",
+		Port:      22,
+		Protocol:  domainvault.ProtocolSSH,
 		UpdatedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("%s: save host: %v", name, err)

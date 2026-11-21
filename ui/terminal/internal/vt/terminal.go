@@ -30,7 +30,37 @@ type Terminal struct {
 	// reply gathers what the library writes while it answers a clipboard
 	// read, which WritePTY then gets at once.
 	reply *[]byte
+	// mouseModes are the DEC mouse modes a program set, as this fork read
+	// them from the stream. The C library keeps 9, 1000, 1002 and 1003, but
+	// not 1001 (highlight tracking), whose bit it drops: the fork tracks it
+	// here so that a program asking only for 1001 still counts as taking the
+	// mouse (Netcatty patch).
+	mouse9, mouse1000, mouse1001, mouse1002, mouse1003 bool
+	// mouseOrder is the tracking modes a program set, in the order it last
+	// set them. When a reset of one mode turns the C encoder off while
+	// another is still set, the last mode in this order is the one the
+	// encoder goes back to (Netcatty patch).
+	mouseOrder []int
+	// encoderMode is the tracking mode the C library's encoder has, as the
+	// fork last read from the output or wrote itself. The library's parser
+	// keeps the mode of the last mouse-mode sequence, a reset included, so a
+	// reset of any mode turns it off; encoderMode mirrors that (Netcatty
+	// patch).
+	encoderMode int
+	// synthetic1000 is set while the fork turned mode 1000 on in the C
+	// library to stand for 1001, which it cannot keep, or while that write is
+	// pending because the parser was not ground. That mode makes both
+	// MouseTracking and the mouse encoder act, as a program that takes the
+	// mouse asked.
+	synthetic1000 bool
+	// modeTail holds an incomplete escape sequence from the last Write, so
+	// a DEC mode split across the PTY's reads is still seen.
+	modeTail []byte
 }
+
+// maxModeTail bounds the incomplete escape sequence a Write keeps for the
+// DEC mouse-mode scan. A mode sequence is short; anything longer is not one.
+const maxModeTail = 64
 
 // ClipboardRead is a program's request to read the clipboard.
 type ClipboardRead struct {
@@ -155,6 +185,7 @@ const (
 	dataColorFgDefault = 22 // the same, defaults alone
 	dataViewportActive = 32
 	dataMode           = 37
+	dataVTGround       = 38
 	dataMouseShape     = 41
 )
 
@@ -229,12 +260,228 @@ func (t *Terminal) Write(p []byte) {
 		// A read that was deferred but whose refusal never came, as of a
 		// library of another version, is stale.
 		t.deferred = nil
+		t.observeMouseModes(p)
 		call(fnTerminalVTWrite, t.h, uintptr(unsafe.Pointer(&p[0])), uintptr(len(p)))
+		// 1001 is invisible to the C library; make the mode it cannot keep
+		// visible to MouseTracking and the encoder.
+		t.syncMouseMode()
 		t.deferred = nil
 		// A read that writes no refusal, as OSC 52's, leaves silent set;
 		// it is for that read alone.
 		t.silent = false
 	}
+}
+
+// observeMouseModes records the DEC mouse modes p sets or resets. It also
+// keeps an incomplete sequence for the next Write, as the program's PTY
+// output may split one.
+func (t *Terminal) observeMouseModes(p []byte) {
+	buf := p
+	if len(t.modeTail) > 0 {
+		buf = make([]byte, 0, len(t.modeTail)+len(p))
+		buf = append(buf, t.modeTail...)
+		buf = append(buf, p...)
+		t.modeTail = nil
+	}
+	for i := 0; i < len(buf); {
+		if buf[i] != 0x1b {
+			i++
+			continue
+		}
+		if i+1 >= len(buf) {
+			t.keepModeTail(buf[i:])
+			return
+		}
+		if buf[i+1] == 'c' {
+			// RIS resets the terminal, and the library resets the modes it
+			// keeps. Clear the shadow and the synthetic bit with it so the
+			// fork and the library agree; a split ESC/c is carried as
+			// modeTail above.
+			t.clearMouseModes()
+			i += 2
+			continue
+		}
+		if buf[i+1] != '[' {
+			// OSC and the other strings an ESC starts are not modes; a raw
+			// ESC inside one ends it for the parser too.
+			i++
+			continue
+		}
+		j := i + 2
+		for j < len(buf) && buf[j] >= 0x30 && buf[j] <= 0x3f { // parameter bytes
+			j++
+		}
+		if j >= len(buf) {
+			t.keepModeTail(buf[i:])
+			return
+		}
+		for j < len(buf) && buf[j] >= 0x20 && buf[j] <= 0x2f { // intermediate bytes
+			j++
+		}
+		if j >= len(buf) {
+			t.keepModeTail(buf[i:])
+			return
+		}
+		final := buf[j]
+		if final < 0x40 || final > 0x7e {
+			// Not a control sequence the parser reads as one; leave it and
+			// go on scanning after its ESC.
+			i++
+			continue
+		}
+		if (final == 'h' || final == 'l') && i+2 < len(buf) && buf[i+2] == '?' {
+			t.setPrivateMouseModes(buf[i+3:j], final == 'h')
+		}
+		i = j + 1
+	}
+}
+
+// keepModeTail keeps what is left of an incomplete escape sequence for the
+// next Write.
+func (t *Terminal) keepModeTail(b []byte) {
+	if len(b) > maxModeTail {
+		b = b[:maxModeTail]
+	}
+	t.modeTail = append(t.modeTail[:0], b...)
+}
+
+// parserQuiescent reports that the library is not holding a partial escape
+// sequence or UTF-8 rune, so a synthetic sequence can be written without
+// aborting the program's output. The library answers for its own parser:
+// VT_GROUND is false mid-CSI, mid-OSC, mid-DCS and mid-rune.
+func (t *Terminal) parserQuiescent() bool {
+	var ground bool
+	return t.get(dataVTGround, unsafe.Pointer(&ground)) == nil && ground
+}
+
+// setPrivateMouseModes records the mouse modes in one DEC private-mode
+// parameter list.
+func (t *Terminal) setPrivateMouseModes(params []byte, on bool) {
+	for len(params) > 0 {
+		param := params
+		if i := bytes.IndexByte(params, ';'); i >= 0 {
+			param, params = params[:i], params[i+1:]
+		} else {
+			params = nil
+		}
+		switch string(param) {
+		case "9":
+			t.mouse9 = on
+			t.noteTrackingMode(9, on)
+		case "1000":
+			t.mouse1000 = on
+			t.noteTrackingMode(1000, on)
+		case "1001":
+			t.mouse1001 = on
+		case "1002":
+			t.mouse1002 = on
+			t.noteTrackingMode(1002, on)
+		case "1003":
+			t.mouse1003 = on
+			t.noteTrackingMode(1003, on)
+		}
+	}
+}
+
+// noteTrackingMode records a tracking mode a program set or reset and what
+// the C parser's encoder now holds. The library keeps the mode of the last
+// mouse-mode sequence it read, a reset included, so a reset of any mode leaves
+// the encoder with none even when another mode is still set. The order keeps
+// the modes still on, most recently set last, so syncMouseMode can restore the
+// one the program still asked for.
+func (t *Terminal) noteTrackingMode(m int, on bool) {
+	t.mouseOrder = slices.DeleteFunc(t.mouseOrder, func(x int) bool { return x == m })
+	if on {
+		t.mouseOrder = append(t.mouseOrder, m)
+		t.encoderMode = m
+	} else {
+		t.encoderMode = 0
+	}
+	if m == 1000 {
+		// The program's own 1000 now owns the bit, set or cleared.
+		t.synthetic1000 = false
+	}
+}
+
+// clearMouseModes forgets every recorded mouse mode and the synthetic 1000,
+// as the library does on a reset.
+func (t *Terminal) clearMouseModes() {
+	t.mouse9, t.mouse1000, t.mouse1001, t.mouse1002, t.mouse1003 = false, false, false, false, false
+	t.mouseOrder = t.mouseOrder[:0]
+	t.encoderMode = 0
+	t.synthetic1000 = false
+}
+
+// syncMouseMode keeps the C library's mouse encoder in the mode the program's
+// still-set modes ask for.
+//
+// The library's encoder keeps the mode of the last mouse-mode sequence its
+// parser read, and a reset of any mode turns it off even when another mode is
+// still set: after 1002 h then 1000 l the library reports tracking on (the 1002
+// bit stays set) while the encoder writes nothing, so a click is neither
+// reported to the program nor left to the link and the selection. The fork
+// restores the most recently set mode still on, so MouseTracking and the
+// encoder agree. A 1001, which the library drops, is emulated with a 1000 the
+// fork writes itself.
+//
+// The write is deferred while the parser holds a partial sequence or rune: raw
+// bytes fed into it then would abort the program's split CSI, and the encoder
+// would stay dead. Every Write recomputes the wanted mode, so a deferred write
+// is retried until it can be made.
+func (t *Terminal) syncMouseMode() {
+	real := len(t.mouseOrder) > 0
+	if t.mouse1001 && !real {
+		// Re-assert on every write, not just when the state flips: a 1000
+		// reset later in the same output may have cleared the bit.
+		t.synthetic1000 = true
+		t.restoreMouseMode(1000)
+		return
+	}
+	if t.synthetic1000 {
+		// A program mode takes over, or 1001 ended. Clear the fork's 1000 bit
+		// rather than leaving it: the library's bits outlive the encoder mode,
+		// and a leftover 1000 would make MouseTracking true with no encoder
+		// mode once the program's own mode ends.
+		t.clearSyntheticMouse1000()
+	}
+	want := 0
+	if real {
+		want = t.mouseOrder[len(t.mouseOrder)-1]
+	}
+	t.restoreMouseMode(want)
+}
+
+// restoreMouseMode writes the sequence that makes the C encoder track want, or
+// none for 0, unless it already does. A write the parser cannot take now is
+// retried on the next Write, which recomputes the wanted mode.
+func (t *Terminal) restoreMouseMode(want int) {
+	if want == t.encoderMode || !t.parserQuiescent() {
+		return
+	}
+	if want == 0 {
+		t.writeSyntheticMouseMode(fmt.Appendf(nil, "\x1b[?%dl", t.encoderMode))
+		t.encoderMode = 0
+		return
+	}
+	t.writeSyntheticMouseMode(fmt.Appendf(nil, "\x1b[?%dh", want))
+	t.encoderMode = want
+}
+
+// clearSyntheticMouse1000 clears the 1000 bit the fork set for 1001 once the
+// program's own mode takes over or 1001 ends. A write the parser cannot take
+// now stays pending, as synthetic1000 records, until the next Write.
+func (t *Terminal) clearSyntheticMouse1000() {
+	if !t.parserQuiescent() {
+		return
+	}
+	t.writeSyntheticMouseMode([]byte("\x1b[?1000l"))
+	t.synthetic1000 = false
+	t.encoderMode = 0
+}
+
+func (t *Terminal) writeSyntheticMouseMode(seq []byte) {
+	call(fnTerminalVTWrite, t.h, uintptr(unsafe.Pointer(&seq[0])), uintptr(len(seq)))
+	runtime.KeepAlive(seq)
 }
 
 // Resize sets the size of the screen in cells, and of a cell in pixels.
@@ -260,7 +507,11 @@ func (t *Terminal) Cursor() (x, y int) {
 }
 
 // Reset resets the terminal fully (RIS).
-func (t *Terminal) Reset() { call(fnTerminalReset, t.h) }
+func (t *Terminal) Reset() {
+	t.clearMouseModes()
+	t.modeTail = nil
+	call(fnTerminalReset, t.h)
+}
 
 // SetColors sets the default colors, which programs may change: the
 // foreground, the background, the cursor's (nil for the text's) and the
@@ -342,16 +593,28 @@ const (
 	// ModeColorScheme has the terminal tell the program when its colors
 	// go from light to dark or back (CSI ? 997 ; 1 n for dark, 2 light).
 	ModeColorScheme Mode = 2031
+	// ModeHighlightMouse is DEC 1001, highlight mouse tracking: a program
+	// asks the terminal to follow the mouse. The C library drops the bit,
+	// so this fork records it from the output (Netcatty patch).
+	ModeHighlightMouse Mode = 1001
 )
 
 // Mode reports whether a mode is set.
 func (t *Terminal) Mode(m Mode) bool {
+	if m == ModeHighlightMouse {
+		return t.mouse1001
+	}
 	c := modeConfig{mode: uint16(m)}
 	return t.get(dataMode, unsafe.Pointer(&c)) == nil && c.value
 }
 
 // SetMode sets a mode.
 func (t *Terminal) SetMode(m Mode, v bool) {
+	if m == ModeHighlightMouse {
+		t.mouse1001 = v
+		t.syncMouseMode()
+		return
+	}
 	c := modeConfig{mode: uint16(m), value: v}
 	t.set(optMode, unsafe.Pointer(&c))
 }
@@ -364,6 +627,9 @@ func (t *Terminal) SetModeDefault(m Mode, v bool) {
 
 // MouseTracking reports whether a program asked for mouse events.
 func (t *Terminal) MouseTracking() bool {
+	if t.mouse1001 {
+		return true
+	}
 	var v bool
 	return t.get(dataMouseTracking, unsafe.Pointer(&v)) == nil && v
 }
@@ -612,7 +878,14 @@ func (t *Terminal) VT() []byte {
 	if p != 0 {
 		call(fnFree, 0, p, n)
 	}
-	return t.padRows(b)
+	b = t.padRows(b)
+	// The formatter cannot write the mode the C library dropped. Append it
+	// so a replayed snapshot both shows the program taking the mouse to
+	// Netcatty and restores 1001 rather than only its synthetic 1000.
+	if t.mouse1001 {
+		return append(b, "\x1b[?1001h"...)
+	}
+	return append(b, "\x1b[?1001l"...)
 }
 
 // padRows adds the blank rows at the end of the screen, which the

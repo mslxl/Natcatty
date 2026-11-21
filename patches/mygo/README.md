@@ -47,3 +47,12 @@ responder, so UIKit does nothing. The patch tracks an explicit dismissal and
 uses `reloadInputViews()` (or a fresh `becomeFirstResponder()`) only when a
 tap asks for the keyboard, so the resize after a dismissal does not raise it
 again.
+
+## The fork carries the same desktop fixes
+
+Natcatty's desktop and phone terminal now run the source fork in `ui/terminal`
+(it forked MyGo's terminal so the phone could use one core). The four desktop
+fixes above are therefore carried in that fork's source as well, and the copy
+in this directory keeps MyGo's own bundled plugin consistent. When an upgrade
+moves either tree, update both: the patches here for the submodule, and the
+forked files for the terminal Natcatty builds.

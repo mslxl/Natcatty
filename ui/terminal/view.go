@@ -1558,8 +1558,16 @@ func (t *Terminal) HoveredLink() (link string, path bool, at ui.Rect) {
 
 // linkUnder is the link a click with mods at (x, y) opens, whether it is
 // a file path, and its cells: none without Command, or while the primary
-// button selects or the program has a press; t.mu is held.
+// button selects, the program has a press, or the program takes the mouse;
+// t.mu is held.
 func (v *view) linkUnder(mods ui.Modifiers, x, y float32) (link string, path bool, at linkSpan) {
+	// While the program takes the mouse, Command+click belongs to the
+	// program: a TUI may bind it to its own action, and opening a link over a
+	// mouse-tracking view would swallow the report. Shift still turns tracking
+	// off, but then the gesture is a selection, not a link. (Netcatty patch.)
+	if v.t.term.MouseTracking() {
+		return "", false, linkSpan{}
+	}
 	if mods&ui.Cmd == 0 || v.selecting || v.reporting || v.cellW == 0 || v.overScrollbar(x, y) {
 		return "", false, linkSpan{}
 	}

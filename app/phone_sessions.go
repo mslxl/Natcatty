@@ -200,7 +200,7 @@ func newPhoneTransportFactory(manager *appconnection.Manager, routes vaultRoutes
 	}
 	return newTransportFactory(
 		nil, nil,
-		newTelnetFactory(adapterstnet.Factory{}, routes, providers),
+		newTelnetFactory(adapterstnet.Factory{}, routes, providers, manager),
 		manager, routes,
 	).withInProcess(
 		newMoshFactory(manager, routes, providers),

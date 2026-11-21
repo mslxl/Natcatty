@@ -1,7 +1,7 @@
 package appview
 
 import (
-	"github.com/egoist/mygo/plugins/terminal"
+	"github.com/mslxl/natcatty/ui/terminal"
 
 	"github.com/mslxl/natcatty/application/lens/model"
 )

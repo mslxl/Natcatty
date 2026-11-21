@@ -358,6 +358,7 @@ var enums = []struct {
 	{"GhosttyTerminalData", "KITTY_KEYBOARD_FLAGS", dataKittyKeyboardFlags},
 	{"GhosttyTerminalData", "SCROLLBACK_ROWS", dataScrollbackRows},
 	{"GhosttyTerminalData", "MOUSE_TRACKING", dataMouseTracking},
+	{"GhosttyTerminalData", "VT_GROUND", dataVTGround},
 	{"GhosttyTerminalData", "MOUSE_SHAPE", dataMouseShape},
 	{"GhosttyRowData", "WRAP", rowDataWrap},
 	{"GhosttyRowData", "SEMANTIC_PROMPT", rowDataSemanticPrompt},

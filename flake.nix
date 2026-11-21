@@ -69,7 +69,7 @@
             done
           '';
 
-          vendorHash = "sha256-g5V3GngaPq1/PGlYYY1aRA1coYVGRlX25UYs2NZme18=";
+          vendorHash = "sha256-MeeEImEnkj1jhivx+wpPj1OsqmcRXvYM1RTZNpmiIko=";
           subPackages = [ "." ];
           env.CGO_ENABLED = "0";
           ldflags = [
