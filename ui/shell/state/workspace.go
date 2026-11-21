@@ -262,6 +262,28 @@ func (t *Tab) clearStaleMagnification() {
 	}
 }
 
+// setMagnified zooms paneID to fill its Tab, or restores the split when it is
+// empty. Zooming hides every other member, and MyGo delivers no key-up to a
+// subtree it stops building, so each newly hidden Pane -- focused or not --
+// releases guest input. The Pane that stays visible is deliberately untouched.
+// Restoring the split hides nothing and releases nothing: doing so would send
+// a spurious release to Panes that just became visible.
+func (t *Tab) setMagnified(paneID model.PaneID) {
+	if paneID != "" && t.Magnified != paneID {
+		for _, id := range t.paneIDs() {
+			if id != paneID {
+				releasePaneInput(t.panes[id])
+			}
+		}
+	}
+	t.Magnified = paneID
+	// The zoomed Pane is the only visible member, so it must also hold focus.
+	// Otherwise the keyboard and compose target would stay on a hidden Pane.
+	if paneID != "" {
+		t.setFocus(paneID)
+	}
+}
+
 func (s *State) activeTab() (*Tab, int) {
 	if s.active < 0 || s.active >= len(s.tabs) {
 		return nil, -1
@@ -442,13 +464,62 @@ func (s *State) FocusedPaneID(index int) (model.PaneID, bool) {
 	return id, id != ""
 }
 
+// releasePaneInput asks a Surface to release guest input it believes is still
+// held. MyGo stops building a Tab's subtree when it is not the active one and
+// delivers no key-up events for it, so the shell owns this transition.
+func releasePaneInput(value *pane) {
+	if value == nil || value.surface == nil {
+		return
+	}
+	if releaser, ok := value.surface.(KeyReleaser); ok {
+		releaser.ReleaseInput()
+	}
+}
+
+// releaseTabInput asks every Pane in tab to let go of guest input. MyGo builds
+// a Tab's subtree only while the Tab is visible, so all of its Panes stop
+// rendering together when another Tab or page replaces it. Releasing only the
+// focused Pane is not enough: hit testing routes pointer buttons to any Pane,
+// so a non-focused member of a split can be the one holding a button and
+// modifiers. Calling this for a Pane that already released its input is
+// harmless, and a Surface without KeyReleaser is ignored.
+func releaseTabInput(tab *Tab) {
+	if tab == nil {
+		return
+	}
+	for _, id := range tab.paneIDs() {
+		releasePaneInput(tab.panes[id])
+	}
+}
+
+// releaseActiveInput releases guest input held by every Pane in the active Tab.
+// Call it before changing which Tab or page is visible.
+func (s *State) releaseActiveInput() {
+	tab, _ := s.activeTab()
+	releaseTabInput(tab)
+}
+
+// activateTab makes index the active Tab. When this hides the outgoing Tab,
+// its whole subtree stops being built this frame, so release any key,
+// modifier, or pointer button the guest still believes down. Every Tab route
+// that shows a different Tab (select, open, duplicate, reattach, move) uses
+// this switch point; page routes call releaseActiveInput directly. Keeping the
+// release centralized is what guarantees an outgoing Tab releases all of its
+// Panes.
+func (s *State) activateTab(index int) {
+	if index != s.active {
+		s.releaseActiveInput()
+	}
+	s.active = index
+}
+
 // SelectTab makes the Tab at index active and shows it. Out-of-range indexes
 // are ignored. Choosing a Tab marks its activity seen.
 func (s *State) SelectTab(index int) {
 	if index < 0 || index >= len(s.tabs) {
 		return
 	}
-	s.active = index
+	s.activateTab(index)
 	s.tabs[index].Dirty = false
 	s.leaveMonitor()
 	s.leaveSystemManager()
@@ -633,7 +704,7 @@ func (s *State) DuplicateTab(index int) error {
 	s.tabs = append(s.tabs, nil)
 	copy(s.tabs[index+2:], s.tabs[index+1:])
 	s.tabs[index+1] = copyTab
-	s.active = index + 1
+	s.activateTab(index + 1)
 	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
@@ -741,6 +812,10 @@ func (s *State) DetachTab(index int) bool {
 		return false
 	}
 	tab := s.tabs[index]
+	// The whole Tab leaves this window before the detached one builds it, so
+	// every Pane in it must let go of guest input across that gap, not only
+	// the focused one.
+	releaseTabInput(tab)
 	s.removeTabAt(index)
 	s.detached = append(s.detached, tab)
 	if s.onDetach != nil {
@@ -863,7 +938,7 @@ func (s *State) ReattachDetachedTab(id model.TabID) bool {
 		}
 		s.detached = append(s.detached[:index], s.detached[index+1:]...)
 		s.tabs = append(s.tabs, tab)
-		s.active = len(s.tabs) - 1
+		s.activateTab(len(s.tabs) - 1)
 		s.leaveMonitor()
 		s.vaultVisible = false
 		s.logsVisible = false
@@ -895,6 +970,10 @@ func (s *State) DetachPane(tabIndex int, paneID model.PaneID) bool {
 	if len(tab.paneIDs()) == 1 {
 		return s.DetachTab(tabIndex)
 	}
+
+	// The Pane is removed from this split tree before the detached window
+	// builds it; release any input it was holding first.
+	releasePaneInput(value)
 
 	focused, _ := tab.focusedPane()
 	focusedID := model.PaneID("")
@@ -1264,9 +1343,9 @@ func (s *State) TogglePaneZoom() bool {
 		return false
 	}
 	if tab.Magnified == focusedID {
-		tab.Magnified = ""
+		tab.setMagnified("")
 	} else {
-		tab.Magnified = focusedID
+		tab.setMagnified(focusedID)
 	}
 	s.RequestRedraw()
 	return true
@@ -1290,12 +1369,10 @@ func (s *State) SetMagnifiedPane(index int, paneID model.PaneID) bool {
 	if paneID != "" && !domainworkspace.ContainsPane(tab.Root, paneID) {
 		return false
 	}
-	tab.Magnified = paneID
-	// The zoomed Pane is the only visible member, so it must also hold focus.
-	// Otherwise the keyboard and compose target would stay on a hidden Pane.
-	if paneID != "" {
-		tab.setFocus(paneID)
-	}
+	// Zooming hides every other member of the split, focused or not, so each
+	// of them releases the input it was holding. Empty paneID restores the
+	// split, which hides nothing and therefore releases nothing.
+	tab.setMagnified(paneID)
 	s.RequestRedraw()
 	return true
 }
@@ -1564,6 +1641,14 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 	} else {
 		target.setFocus(sourcePaneID)
 	}
+	// A destination that is magnified to another Pane renders only that Pane,
+	// so the moved Pane never appears in it and must release whatever it held
+	// in the source. A non-magnified destination shows the moved Pane, so it
+	// keeps its input; and because this move never changes the destination's
+	// magnification, no Pane that was already visible there stops rendering.
+	if target.Magnified != "" && target.Magnified != sourcePaneID {
+		releasePaneInput(value)
+	}
 	source.clearStaleMagnification()
 	if sourcePanes == 1 && targetPanes == 1 {
 		// Dragging one single-Pane Tab onto another merges them into a Tab
@@ -1586,7 +1671,7 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 		if sourceIndex < targetIndex {
 			targetIndex--
 		}
-		s.active = targetIndex
+		s.activateTab(targetIndex)
 	} else {
 		// Install the post-removal tree before asking whether the zoom is
 		// stale. The old order checked the pre-removal root, so a magnified
@@ -1602,7 +1687,7 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 		} else {
 			source.FocusPath = domainworkspace.FocusPath(sourceRoot, "")
 		}
-		s.active = targetIndex
+		s.activateTab(targetIndex)
 	}
 	s.leaveMonitor()
 	s.vaultVisible = false
@@ -1835,6 +1920,52 @@ func (s *State) RetryPane(tabID model.TabID, paneID model.PaneID) bool {
 		s.closePane(value, false)
 		value.session = nil
 	}
+	value.pending = true
+	value.err = nil
+	s.requestPaneOpen(tab.ID, paneID, value.descriptor, true)
+	s.RequestRedraw()
+	return true
+}
+
+// ReconnectPane reopens a Pane whose Session can no longer reconnect by
+// itself, namely one that stopped on a permanent failure such as a rejected
+// VNC password. It closes the stopped Session and Surface and dials the
+// Pane's own descriptor again. A Pane that is still live or still reconnecting
+// is left alone, so a manual reconnect cannot throw away a working transport.
+// It also handles a Pane that never opened. It reports whether a new dial was
+// started.
+func (s *State) ReconnectPane(tabID model.TabID, paneID model.PaneID) bool {
+	if s.sessions == nil || s.surfaces == nil {
+		return false
+	}
+	tab, _ := s.tabByAnyID(tabID)
+	if tab == nil {
+		return false
+	}
+	value, ok := tab.panes[paneID]
+	if !ok || !domainworkspace.ContainsPane(tab.Root, paneID) {
+		return false
+	}
+	if value.pending {
+		return false
+	}
+	if value.surface == nil || value.session == nil {
+		// A pane that never opened has its own retry path.
+		return s.RetryPane(tabID, paneID)
+	}
+	snapshot := value.session.Snapshot()
+	live := snapshot.Status == appsession.StatusRunning &&
+		(snapshot.Connection == appsession.ConnectionStatusActive ||
+			snapshot.Connection == appsession.ConnectionStatusReconnecting ||
+			snapshot.Connection == "")
+	if live {
+		// The Session owns its eager reconnect. A manual reopen here would
+		// abandon a connection that is still recovering.
+		return false
+	}
+	s.closePane(value, false)
+	value.session = nil
+	value.surface = nil
 	value.pending = true
 	value.err = nil
 	s.requestPaneOpen(tab.ID, paneID, value.descriptor, true)
@@ -2193,6 +2324,9 @@ func (s *State) closePane(value *pane, preserve bool) {
 	if value == nil {
 		return
 	}
+	// Release held input before the transport closes so the guest is not left
+	// with a key or button down.
+	releasePaneInput(value)
 	if value.surface != nil {
 		value.surface.Close()
 	}
@@ -2213,7 +2347,12 @@ func (s *State) closePane(value *pane, preserve bool) {
 }
 
 // removeTabAt removes the Tab at index and keeps the active index valid. It
-// does not close Sessions.
+// does not close Sessions and does not release input itself: every caller has
+// already done so. CloseTab closes each Pane (which releases its Surface);
+// DetachTab releases every Pane before moving the Tab out; MovePane only calls
+// it for a source Tab whose last Pane was moved away, releasing that Pane if
+// its destination hides it. The direct s.active assignments below therefore
+// never expose a Surface that was rendering and was not released.
 func (s *State) removeTabAt(index int) {
 	if index < 0 || index >= len(s.tabs) {
 		return

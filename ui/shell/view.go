@@ -487,6 +487,12 @@ func activeStatus(s *state.State, m locales.Messages, t *ui.Theme) paneStatus {
 	}
 	settled := snapshot.Status == appsession.StatusRunning &&
 		(snapshot.Connection == appsession.ConnectionStatusActive || snapshot.Connection == "")
+	// A pixel Pane has no terminal cursor or prompt to say it is live, so its
+	// header keeps the connection badge visible. Byte-stream Panes stay
+	// settled: their own live screen is the indicator.
+	if snapshot.Kind == appsession.KindVNC {
+		settled = false
+	}
 	return paneStatus{text: statusText(m, snapshot), tone: sessionTone(t, snapshot, true), settled: settled}
 }
 

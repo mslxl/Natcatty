@@ -120,6 +120,7 @@ type fakeSurface struct {
 	inserted      []string
 	insertErr     error
 	invalidations int
+	releases      int
 }
 
 func (f *fakeSurface) View(c *ui.Context) ui.Element {
@@ -127,6 +128,10 @@ func (f *fakeSurface) View(c *ui.Context) ui.Element {
 }
 
 func (f *fakeSurface) Close() { f.closed = true }
+
+// ReleaseInput records that the shell asked this Surface to let go of guest
+// input before it stops rendering.
+func (f *fakeSurface) ReleaseInput() { f.releases++ }
 
 // OpenBrowser makes the fake a BrowserOpener so a shell test can prove the
 // Vault's browser action reaches the Session surface.

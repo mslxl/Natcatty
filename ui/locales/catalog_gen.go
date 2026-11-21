@@ -236,6 +236,36 @@ func (msgs Messages) SessionVNCResizeFallback() string {
 	return Catalog.Format(msgs.locale, "sessionVNCResizeFallback", nil)
 }
 
+// SessionVNCConnectionFailed says "Desktop connection failed"
+// in the language the app shows.
+func SessionVNCConnectionFailed() string { return In(i18n.Locale()).SessionVNCConnectionFailed() }
+
+// SessionVNCConnectionFailed says "Desktop connection failed"
+// in the language of msgs.
+func (msgs Messages) SessionVNCConnectionFailed() string {
+	return Catalog.Format(msgs.locale, "sessionVNCConnectionFailed", nil)
+}
+
+// SessionVNCReconnectHint says "The connection ended and will not retry automatically. Reconnect to try again."
+// in the language the app shows.
+func SessionVNCReconnectHint() string { return In(i18n.Locale()).SessionVNCReconnectHint() }
+
+// SessionVNCReconnectHint says "The connection ended and will not retry automatically. Reconnect to try again."
+// in the language of msgs.
+func (msgs Messages) SessionVNCReconnectHint() string {
+	return Catalog.Format(msgs.locale, "sessionVNCReconnectHint", nil)
+}
+
+// SessionVNCHibernatedBody says "The connection stays open and the last frame is kept. Resume to show the desktop again."
+// in the language the app shows.
+func SessionVNCHibernatedBody() string { return In(i18n.Locale()).SessionVNCHibernatedBody() }
+
+// SessionVNCHibernatedBody says "The connection stays open and the last frame is kept. Resume to show the desktop again."
+// in the language of msgs.
+func (msgs Messages) SessionVNCHibernatedBody() string {
+	return Catalog.Format(msgs.locale, "sessionVNCHibernatedBody", nil)
+}
+
 // SessionMenuHibernate says "Hibernate"
 // in the language the app shows.
 func SessionMenuHibernate() string { return In(i18n.Locale()).SessionMenuHibernate() }

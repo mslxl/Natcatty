@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"go/parser"
 	"go/token"
 	"image"
@@ -659,7 +660,9 @@ func TestVNCSessionRefusesToRetryAnAuthenticationFailure(t *testing.T) {
 	}}
 	session := openVNC(t, factory)
 
-	first.publish(DisplayEvent{Kind: DisplayEventError, Err: permanentTestError{}})
+	first.publish(DisplayEvent{Kind: DisplayEventError, Err: &appconnection.Error{
+		Kind: appconnection.KindAuth, Cause: errors.New("wrong password"),
+	}})
 	waitForDone(t, session)
 
 	if calls := factory.callCount(); calls != 1 {
@@ -709,8 +712,9 @@ func TestVNCSessionStopsWhenAReconnectIsRejected(t *testing.T) {
 		t.Fatalf("factory opened %d transports, want one reconnect then a permanent stop", calls)
 	}
 	if snapshot := session.Snapshot(); snapshot.Status != StatusExited ||
-		snapshot.Connection != ConnectionStatusError {
-		t.Fatalf("final snapshot = %+v, want an exited Session with a connection error", snapshot)
+		snapshot.Connection != ConnectionStatusError ||
+		snapshot.EndReason != EndReasonAuthFailed {
+		t.Fatalf("final snapshot = %+v, want an exited Session with an authentication error", snapshot)
 	}
 
 	// The retry delay is 10ms; a repeat would land inside this window.
@@ -720,6 +724,84 @@ func TestVNCSessionStopsWhenAReconnectIsRejected(t *testing.T) {
 			t.Fatal("the Session retried a rejected VNC password")
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestVNCSessionStopsOnAPermanentX11Failure proves a permanent failure that is
+// not an authentication rejection still stops the reconnect loop, but is
+// reported as a generic error rather than an authentication failure.
+func TestVNCSessionStopsOnAPermanentX11Failure(t *testing.T) {
+	first := newFakeDisplay()
+	factory := &displayFactory{transports: []*fakeDisplayTransport{
+		newFakeDisplayTransport(first),
+		newFakeDisplayTransport(newFakeDisplay()),
+	}}
+	session := openVNC(t, factory)
+
+	first.publish(DisplayEvent{Kind: DisplayEventError, Err: &appconnection.Error{
+		Kind: appconnection.KindX11, Cause: errors.New("X11 forwarding refused"),
+	}})
+	waitForDone(t, session)
+
+	if calls := factory.callCount(); calls != 1 {
+		t.Fatalf("factory opened %d transports, want no retry after a permanent X11 failure", calls)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.Status != StatusExited || snapshot.Connection != ConnectionStatusError ||
+		snapshot.EndReason != EndReasonError {
+		t.Fatalf("final snapshot = %+v, want an exited Session with a generic error", snapshot)
+	}
+}
+
+// TestEndReasonOnlyNamesAuthenticationAndHostKey pins the classification
+// boundary: Permanent() also covers X11 refusals, but only credentials and
+// host keys are authentication failures. Retry behavior is unchanged because
+// permanentError still gates it for every permanent kind.
+func TestEndReasonOnlyNamesAuthenticationAndHostKey(t *testing.T) {
+	cases := []struct {
+		name          string
+		err           error
+		want          EndReason
+		wantPermanent bool
+	}{
+		{
+			name: "auth", err: &appconnection.Error{Kind: appconnection.KindAuth},
+			want: EndReasonAuthFailed, wantPermanent: true,
+		},
+		{
+			name: "host key", err: &appconnection.Error{Kind: appconnection.KindHostKey},
+			want: EndReasonAuthFailed, wantPermanent: true,
+		},
+		{
+			name: "wrapped auth",
+			err:  fmt.Errorf("dial: %w", &appconnection.Error{Kind: appconnection.KindAuth}),
+			want: EndReasonAuthFailed, wantPermanent: true,
+		},
+		{
+			name: "x11", err: &appconnection.Error{Kind: appconnection.KindX11},
+			want: EndReasonError, wantPermanent: true,
+		},
+		{
+			name: "generic permanent", err: permanentTestError{},
+			want: EndReasonError, wantPermanent: true,
+		},
+		{
+			name: "provider", err: &appconnection.Error{Kind: appconnection.KindProvider},
+			want: EndReasonError, wantPermanent: false,
+		},
+		{
+			name: "plain", err: errors.New("boom"),
+			want: EndReasonError, wantPermanent: false,
+		},
+	}
+	for _, tc := range cases {
+		if got := endReasonFor(tc.err); got != tc.want {
+			t.Fatalf("%s end reason = %q, want %q", tc.name, got, tc.want)
+		}
+		if got := permanentError(tc.err); got != tc.wantPermanent {
+			t.Fatalf("%s permanent = %v, want %v (retry behavior must not change)",
+				tc.name, got, tc.wantPermanent)
+		}
 	}
 }
 

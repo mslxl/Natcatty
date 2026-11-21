@@ -28,6 +28,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/domain/model/rfb"
 	"github.com/mslxl/natcatty/ui/locales"
+	sessionui "github.com/mslxl/natcatty/ui/session"
 )
 
 // unicodeKeysymBase prefixes a Unicode code point as an X11 keysym. Latins 1
@@ -85,6 +86,19 @@ type Surface struct {
 	// timeout it acts as a per-size backoff until the pane uses another size.
 	// A DisplayEventResize of the same size, or a successful reply, clears it.
 	resizeRequested image.Point
+
+	// hibernated replaces the live desktop with a resumable placeholder while
+	// the Session and its transport stay alive. pixels is kept: it is the
+	// last frame Resume shows before any new update arrives.
+	hibernated bool
+
+	// paneActions are the Pane commands the shell supplies for this Pane.
+	// They carry split, detach, rename, close, and manual reconnect, so the
+	// VNC pane behaves like a terminal pane.
+	paneActions sessionui.PaneActions
+	// renaming and renameValue drive the Pane rename dialog.
+	renaming    bool
+	renameValue string
 
 	// UI-thread state.
 	focused      bool
@@ -160,6 +174,9 @@ func (s *Surface) consume(events <-chan appsession.DisplayEvent) {
 			return
 		case event, ok := <-events:
 			if !ok {
+				// The Session ended. The pane may now have to show its
+				// failed state; ask for the frame that draws it.
+				s.requestRedraw()
 				return
 			}
 			switch event.Kind {
@@ -169,8 +186,11 @@ func (s *Surface) consume(events <-chan appsession.DisplayEvent) {
 				}
 				s.mu.Lock()
 				s.pending = event.Frame
+				hibernated := s.hibernated
 				s.mu.Unlock()
-				s.requestRedraw()
+				if !hibernated {
+					s.requestRedraw()
+				}
 			case appsession.DisplayEventResize:
 				if event.Width > 0 && event.Height > 0 {
 					s.mu.Lock()
@@ -204,8 +224,29 @@ func (s *Surface) ViewFocused(c *ui.Context, focused bool) ui.Element {
 }
 
 func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
-	s.applyPendingFrame()
+	m := locales.In(c.Locale())
 	t := c.Theme()
+	snapshot := s.session.Snapshot()
+	// A stopped Session and a hibernated one render no desktop, so neither can
+	// own the keyboard. Release whatever the guest still believes held before
+	// hiding the live surface.
+	switch {
+	case connectionFailed(snapshot):
+		s.dropFocus()
+		element := s.failedView(c, m, snapshot)
+		if s.renaming {
+			s.renameDialog(c, m, t)
+		}
+		return element
+	case s.Hibernated():
+		s.dropFocus()
+		element := s.hibernatedView(c, m)
+		if s.renaming {
+			s.renameDialog(c, m, t)
+		}
+		return element
+	}
+	s.applyPendingFrame()
 	caret := ui.Rect{X: s.pointerX, Y: s.pointerY, W: 1, H: 1}
 	element := ui.Column(c).Fill().Clip().Background(t.Background).
 		Focusable().HandleInput(s.handleInput).TextCaret(caret).
@@ -245,6 +286,10 @@ func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
 		s.releaseHeldKeys()
 	}
 	s.windowFocused = windowFocused
+	s.connectionOverlay(c, m, t, snapshot, element)
+	if s.renaming {
+		s.renameDialog(c, m, t)
+	}
 	return element
 }
 
@@ -260,7 +305,9 @@ func (s *Surface) applyPendingFrame() {
 	}
 	bounds := frame.Image.Bounds()
 	size := image.Rect(0, 0, bounds.Dx(), bounds.Dy())
-	if s.pixels == nil || s.pixels.Bounds() != size {
+	// Hibernation keeps pixels but drops the drawn bitmap, so a pending frame
+	// that arrived while hibernated must recreate it before Update.
+	if s.pixels == nil || s.pixels.Bounds() != size || s.bitmap == nil {
 		s.pixels = image.NewRGBA(size)
 		s.bitmap = ui.NewBitmap(s.pixels).Pixelated()
 	}
@@ -728,6 +775,9 @@ func KeysymForRune(r rune) uint32 {
 // application Session separately, which closes the transport.
 func (s *Surface) Close() {
 	s.closeOnce.Do(func() {
+		// The Pane is going away; let go of every key and pointer button the
+		// guest still believes held before the transport closes.
+		s.releaseHeldKeys()
 		close(s.done)
 		s.mu.Lock()
 		s.pending = nil
@@ -736,6 +786,7 @@ func (s *Surface) Close() {
 		s.scaled = nil
 		s.scaledPix = nil
 		s.cursor = nil
+		s.hibernated = false
 		s.mu.Unlock()
 	})
 }

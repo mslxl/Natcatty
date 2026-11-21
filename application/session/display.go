@@ -363,9 +363,9 @@ func (s *Session) displayLoop(generation int, transport Transport, display Displ
 			}
 			s.forwardDisplayEvent(event, genDone)
 			if event.Kind == DisplayEventError {
-				end := End{Reason: EndReasonError}
-				if event.Err != nil && permanentError(event.Err) {
-					end.Reason = EndReasonAuthFailed
+				end := End{
+					Reason:  endReasonFor(event.Err),
+					NoRetry: permanentError(event.Err),
 				}
 				s.post(command{
 					kind:       commandTransportEnded,

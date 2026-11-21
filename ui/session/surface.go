@@ -122,6 +122,10 @@ type PaneActions struct {
 	Close      func()
 	// Rename sets the Pane's Tab title to the trimmed, non-empty argument.
 	Rename func(title string)
+	// Reconnect reopens a failed Pane's Session from its descriptor. It is
+	// wired for kinds whose surface offers a manual reconnect; nil leaves the
+	// action unavailable.
+	Reconnect func()
 	// ToggleFiles opens or closes the Tab's side panel on this Pane's Host;
 	// FilesOpen reports that it is open. Nil hides the toolbar's side panel
 	// button. FilesIcon is that button's glyph, the panel's docked edge; empty

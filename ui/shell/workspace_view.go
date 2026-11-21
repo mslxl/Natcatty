@@ -44,6 +44,8 @@ type tabRef struct {
 	detach       func(model.PaneID) bool
 	rename       func(model.PaneID, string) bool
 	retry        func(model.PaneID) bool
+	// reconnect reopens a stopped Pane whose Session cannot recover by itself.
+	reconnect func(model.PaneID) bool
 	// magnified reports the Tab's zoomed Pane, or "". While set, the Tree
 	// renders that Pane alone; its hidden members show no drop zones.
 	magnified func() model.PaneID
@@ -81,6 +83,7 @@ func mainTabRef(owner state.RenderOwner, s *state.State, tabIndex int) tabRef {
 			return s.RenamePane(tabIndex, paneID, title)
 		},
 		retry:     func(paneID model.PaneID) bool { return s.RetryPane(id, paneID) },
+		reconnect: func(paneID model.PaneID) bool { return s.ReconnectPane(id, paneID) },
 		magnified: func() model.PaneID { return s.MagnifiedPaneID(tabIndex) },
 	}
 }
@@ -113,7 +116,8 @@ func detachedTabRef(s *state.State, tabID model.TabID) tabRef {
 		rename: func(paneID model.PaneID, title string) bool {
 			return s.RenameDetachedPane(tabID, paneID, title)
 		},
-		retry: func(paneID model.PaneID) bool { return s.RetryPane(tabID, paneID) },
+		retry:     func(paneID model.PaneID) bool { return s.RetryPane(tabID, paneID) },
+		reconnect: func(paneID model.PaneID) bool { return s.ReconnectPane(tabID, paneID) },
 	}
 }
 
@@ -416,6 +420,16 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 				actions.ToggleFiles = func() {
 					ref.focus(info.ID)
 					s.ToggleFiles(tabID, host, info.Label)
+					c.Invalidate()
+				}
+			}
+		}
+		// A stopped Session needs a new dial rather than the eager reconnect
+		// the transport owns. Detached Panes keep this action too, so a failed
+		// VNC desktop can be reopened from its own window.
+		if ref.reconnect != nil {
+			actions.Reconnect = func() {
+				if ref.reconnect(info.ID) {
 					c.Invalidate()
 				}
 			}

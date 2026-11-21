@@ -2021,3 +2021,517 @@ func TestVNCPaneNeverShowsTheTerminalToolbar(t *testing.T) {
 		t.Fatal("VNC Pane reported a byte stream; the terminal toolbar must stay hidden")
 	}
 }
+
+// TestSelectTabReleasesTheOutgoingPanesHeldInput is the lifecycle seam the
+// hidden-VNC-Tab risk exposed: a Tab that stops being built receives no MyGo
+// key-up, so the shell must ask its Surface to release guest input as it
+// switches away.
+func TestSelectTabReleasesTheOutgoingPanesHeldInput(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "both Pane surfaces", func() bool {
+		return graph.state.TabCount() == 2 && len(graph.surfaces) == 2
+	})
+	// Opening the second Tab already released the first Tab's input. Start the
+	// switch assertion from a clean count.
+	for _, surface := range graph.surfaces {
+		surface.releases = 0
+	}
+
+	outgoing, ok := graph.state.ActiveSurface().(*fakeSurface)
+	if !ok || outgoing == nil {
+		t.Fatal("the active Tab has no fake surface")
+	}
+	graph.state.SelectTab(0)
+	if outgoing.releases != 1 {
+		t.Fatalf("outgoing surface releases = %d, want 1", outgoing.releases)
+	}
+	incoming, ok := graph.state.ActiveSurface().(*fakeSurface)
+	if !ok || incoming == nil {
+		t.Fatal("the selected Tab has no fake surface")
+	}
+	if incoming.releases != 0 {
+		t.Fatalf("incoming surface releases = %d, want 0", incoming.releases)
+	}
+}
+
+// TestOpeningATabReleasesTheOutgoingPanesInput covers the other main way a
+// different Tab becomes visible: opening one, whether from Ctrl+T or a Host,
+// must not leave the previously visible Pane holding a key or pointer button.
+func TestOpeningATabReleasesTheOutgoingPanesInput(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the first Pane surface", func() bool {
+		return graph.state.TabCount() == 1 && len(graph.surfaces) == 1
+	})
+	outgoing, ok := graph.state.ActiveSurface().(*fakeSurface)
+	if !ok || outgoing == nil {
+		t.Fatal("the first Tab has no fake surface")
+	}
+
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if outgoing.releases != 1 {
+		t.Fatalf("outgoing surface releases = %d, want 1", outgoing.releases)
+	}
+}
+
+// TestDetachAndCloseReleaseHeldInput covers the other two ways a Surface stops
+// rendering: detaching its Tab and closing it.
+func TestDetachAndCloseReleaseHeldInput(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the Pane surface", func() bool {
+		return graph.state.TabCount() == 1 && len(graph.surfaces) == 1
+	})
+	detached, _ := graph.state.ActiveSurface().(*fakeSurface)
+	if !graph.state.DetachTab(0) {
+		t.Fatal("DetachTab returned false")
+	}
+	if detached == nil || detached.releases != 1 {
+		t.Fatalf("detached surface releases = %v, want 1", detached)
+	}
+
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the second Pane surface", func() bool {
+		return len(graph.surfaces) == 2
+	})
+	closed, _ := graph.state.ActiveSurface().(*fakeSurface)
+	if !graph.state.CloseActiveTab() {
+		t.Fatal("CloseActiveTab returned false")
+	}
+	if closed == nil || closed.releases != 1 {
+		t.Fatalf("closed surface releases = %v, want 1", closed)
+	}
+	if closed.closed != true {
+		t.Fatal("the closed Pane's surface was not closed")
+	}
+}
+
+// resetSurfaceReleases starts a release assertion from a clean count.
+func resetSurfaceReleases(graph *workspaceGraph) {
+	for _, surface := range graph.surfaces {
+		surface.releases = 0
+	}
+}
+
+// fakeSurfaceAt returns the fake Surface of one Pane, failing the test when
+// the Pane has not opened yet.
+func fakeSurfaceAt(t *testing.T, state *State, tabIndex int, id model.PaneID) *fakeSurface {
+	t.Helper()
+	info, ok := state.PaneInfoAt(tabIndex, id)
+	if !ok || info.Surface == nil {
+		t.Fatalf("Pane %q at Tab %d has no Surface", id, tabIndex)
+	}
+	surface, ok := info.Surface.(*fakeSurface)
+	if !ok {
+		t.Fatalf("Pane %q surface is %T, want *fakeSurface", id, info.Surface)
+	}
+	return surface
+}
+
+// TestSelectTabReleasesEveryPaneInASplitTab is the non-focused-pane case: MyGo
+// hit-tests pointer input, so a split member that never held focus can still
+// have a button down when the Tab is hidden. Hiding the Tab must release every
+// member, not only tab.focusedPane().
+func TestSelectTabReleasesEveryPaneInASplitTab(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "both split surfaces", func() bool {
+		return len(panesOf(t, graph.state, 0)) == 2 && len(graph.surfaces) == 2
+	})
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the second Tab surface", func() bool {
+		return len(graph.surfaces) == 3
+	})
+	graph.state.SelectTab(0)
+	resetSurfaceReleases(graph)
+
+	ids := panesOf(t, graph.state, 0)
+	if !graph.state.FocusPaneID(0, ids[0]) {
+		t.Fatal("FocusPaneID rejected the left Pane")
+	}
+	outgoing := []*fakeSurface{
+		fakeSurfaceAt(t, graph.state, 0, ids[0]),
+		fakeSurfaceAt(t, graph.state, 0, ids[1]),
+	}
+	incoming := fakeSurfaceAt(t, graph.state, 1, panesOf(t, graph.state, 1)[0])
+
+	graph.state.SelectTab(1)
+	for index, surface := range outgoing {
+		if surface.releases != 1 {
+			t.Fatalf("outgoing Pane %d releases = %d, want 1", index, surface.releases)
+		}
+	}
+	if incoming.releases != 0 {
+		t.Fatalf("incoming Pane releases = %d, want 0", incoming.releases)
+	}
+}
+
+// TestDetachTabReleasesEveryPaneInASplitTab mirrors the hidden-Tab case for
+// detach: the whole subtree leaves this window, so every member releases.
+func TestDetachTabReleasesEveryPaneInASplitTab(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "both split surfaces", func() bool {
+		return len(panesOf(t, graph.state, 0)) == 2 && len(graph.surfaces) == 2
+	})
+	ids := panesOf(t, graph.state, 0)
+	surfaces := []*fakeSurface{
+		fakeSurfaceAt(t, graph.state, 0, ids[0]),
+		fakeSurfaceAt(t, graph.state, 0, ids[1]),
+	}
+	resetSurfaceReleases(graph)
+
+	if !graph.state.DetachTab(0) {
+		t.Fatal("DetachTab returned false")
+	}
+	for index, surface := range surfaces {
+		if surface.releases != 1 {
+			t.Fatalf("detached Pane %d releases = %d, want 1", index, surface.releases)
+		}
+	}
+}
+
+// TestMagnifyReleasesEveryHiddenPane proves zoom is not a focused-Pane-only
+// transition: every other member of the split stops rendering, and the Pane
+// that stays visible is left alone. Un-zooming hides nothing, so it must not
+// release the Panes it just restored.
+func TestMagnifyReleasesEveryHiddenPane(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the first split", func() bool {
+		return len(panesOf(t, graph.state, 0)) == 2 && len(graph.surfaces) == 2
+	})
+	// Split one member again so more than one Pane is hidden by the zoom.
+	first := panesOf(t, graph.state, 0)[0]
+	if !graph.state.FocusPaneID(0, first) {
+		t.Fatal("FocusPaneID rejected the first Pane")
+	}
+	if err := graph.state.SplitDown(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the second split", func() bool {
+		return len(panesOf(t, graph.state, 0)) == 3 && len(graph.surfaces) == 3
+	})
+
+	ids := panesOf(t, graph.state, 0)
+	surfaces := map[model.PaneID]*fakeSurface{}
+	for _, id := range ids {
+		surfaces[id] = fakeSurfaceAt(t, graph.state, 0, id)
+	}
+	if !graph.state.FocusPaneID(0, first) {
+		t.Fatal("FocusPaneID rejected the first Pane")
+	}
+	resetSurfaceReleases(graph)
+
+	if !graph.state.SetMagnifiedPane(0, first) {
+		t.Fatal("SetMagnifiedPane rejected the first Pane")
+	}
+	if got := surfaces[first].releases; got != 0 {
+		t.Fatalf("visible magnified Pane releases = %d, want 0", got)
+	}
+	for _, id := range ids {
+		if id == first {
+			continue
+		}
+		if got := surfaces[id].releases; got != 1 {
+			t.Fatalf("hidden Pane %q releases = %d, want 1", id, got)
+		}
+	}
+
+	// The magnified Pane is focused, so TogglePaneZoom restores the split.
+	if !graph.state.TogglePaneZoom() || graph.state.MagnifiedPaneID(0) != "" {
+		t.Fatal("TogglePaneZoom did not restore the split")
+	}
+	if got := surfaces[first].releases; got != 0 {
+		t.Fatalf("visible Pane releases = %d after un-zoom, want 0", got)
+	}
+	for _, id := range ids {
+		if id == first {
+			continue
+		}
+		if got := surfaces[id].releases; got != 1 {
+			t.Fatalf("un-zoom released Pane %q again: %d, want 1", id, got)
+		}
+	}
+
+	// TogglePaneZoom's zoom path releases the newly hidden members too.
+	if !graph.state.TogglePaneZoom() || graph.state.MagnifiedPaneID(0) != first {
+		t.Fatal("TogglePaneZoom did not magnify the focused Pane")
+	}
+	if got := surfaces[first].releases; got != 0 {
+		t.Fatalf("magnified Pane releases = %d after TogglePaneZoom, want 0", got)
+	}
+	for _, id := range ids {
+		if id == first {
+			continue
+		}
+		if got := surfaces[id].releases; got != 2 {
+			t.Fatalf("hidden Pane %q releases = %d after TogglePaneZoom, want 2", id, got)
+		}
+	}
+}
+
+// TestMovePaneIntoAMagnifiedTabReleasesTheMovedPane covers the cross-Tab drop
+// whose destination shows only its zoomed Pane: the inserted Pane never
+// renders there, so it releases both any held key and any pointer button.
+func TestMovePaneIntoAMagnifiedTabReleasesTheMovedPane(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the source Pane surface", func() bool {
+		return len(graph.surfaces) == 1
+	})
+	sourceTab, _ := graph.state.TabID(0)
+	sourcePane := panesOf(t, graph.state, 0)[0]
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the target split", func() bool {
+		return len(graph.surfaces) == 3 && len(panesOf(t, graph.state, 1)) == 2
+	})
+	targetTab, _ := graph.state.TabID(1)
+	targetPanes := panesOf(t, graph.state, 1)
+	zoomed := targetPanes[0]
+	if !graph.state.SetMagnifiedPane(1, zoomed) {
+		t.Fatal("SetMagnifiedPane rejected the target Pane")
+	}
+	movedSurface := fakeSurfaceAt(t, graph.state, 0, sourcePane)
+	zoomedSurface := fakeSurfaceAt(t, graph.state, 1, zoomed)
+	resetSurfaceReleases(graph)
+
+	if !graph.state.MovePane(sourceTab, sourcePane, targetTab, zoomed, domainworkspace.SideRight) {
+		t.Fatal("MovePane into the magnified Tab returned false")
+	}
+	if got := movedSurface.releases; got != 1 {
+		t.Fatalf("moved Pane releases = %d, want 1 after landing hidden", got)
+	}
+	if got := zoomedSurface.releases; got != 0 {
+		t.Fatalf("visible zoomed Pane releases = %d, want 0", got)
+	}
+}
+
+// TestMovePaneIntoANonMagnifiedTabKeepsTheMovedPanesInput is the other side of
+// the drop: a non-magnified destination makes the moved Pane visible, so
+// releasing it would be spurious.
+func TestMovePaneIntoANonMagnifiedTabKeepsTheMovedPanesInput(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the source Pane surface", func() bool {
+		return len(graph.surfaces) == 1
+	})
+	sourceTab, _ := graph.state.TabID(0)
+	sourcePane := panesOf(t, graph.state, 0)[0]
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the target Pane surface", func() bool {
+		return len(graph.surfaces) == 2
+	})
+	targetTab, _ := graph.state.TabID(1)
+	targetPane := panesOf(t, graph.state, 1)[0]
+	movedSurface := fakeSurfaceAt(t, graph.state, 0, sourcePane)
+	targetSurface := fakeSurfaceAt(t, graph.state, 1, targetPane)
+	resetSurfaceReleases(graph)
+
+	if !graph.state.MovePane(sourceTab, sourcePane, targetTab, targetPane, domainworkspace.SideRight) {
+		t.Fatal("MovePane into the plain Tab returned false")
+	}
+	if got := movedSurface.releases; got != 0 {
+		t.Fatalf("moved Pane releases = %d, want 0 while it stays visible", got)
+	}
+	if got := targetSurface.releases; got != 0 {
+		t.Fatalf("destination Pane releases = %d, want 0 while it stays visible", got)
+	}
+}
+
+// TestMovingTheMagnifiedPaneOutReleasesItOnly pins the source side: moving the
+// zoomed Pane away clears the source's zoom, so the surviving member becomes
+// the visible one and must not be released, while the moved Pane lands hidden
+// in the magnified destination and does release.
+func TestMovingTheMagnifiedPaneOutReleasesItOnly(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the source split", func() bool {
+		return len(graph.surfaces) == 2 && len(panesOf(t, graph.state, 0)) == 2
+	})
+	sourceTab, _ := graph.state.TabID(0)
+	left, right := panesOf(t, graph.state, 0)[0], panesOf(t, graph.state, 0)[1]
+	if !graph.state.FocusPaneID(0, left) || !graph.state.SetMagnifiedPane(0, left) {
+		t.Fatal("could not magnify the source Pane")
+	}
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the target split", func() bool {
+		return len(graph.surfaces) == 4 && len(panesOf(t, graph.state, 1)) == 2
+	})
+	targetTab, _ := graph.state.TabID(1)
+	zoomed := panesOf(t, graph.state, 1)[0]
+	if !graph.state.SetMagnifiedPane(1, zoomed) {
+		t.Fatal("could not magnify the target Pane")
+	}
+	leftSurface := fakeSurfaceAt(t, graph.state, 0, left)
+	rightSurface := fakeSurfaceAt(t, graph.state, 0, right)
+	zoomedSurface := fakeSurfaceAt(t, graph.state, 1, zoomed)
+	resetSurfaceReleases(graph)
+
+	if !graph.state.MovePane(sourceTab, left, targetTab, zoomed, domainworkspace.SideRight) {
+		t.Fatal("MovePane across Tabs returned false")
+	}
+	if got := leftSurface.releases; got != 1 {
+		t.Fatalf("moved magnified Pane releases = %d, want 1", got)
+	}
+	if got := rightSurface.releases; got != 0 {
+		t.Fatalf("surviving source Pane releases = %d, want 0", got)
+	}
+	if got := zoomedSurface.releases; got != 0 {
+		t.Fatalf("visible destination Pane releases = %d, want 0", got)
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != "" {
+		t.Fatalf("source magnification = %q after the move, want cleared", got)
+	}
+	if got, ok := graph.state.FocusedPaneID(0); !ok || got != right {
+		t.Fatalf("source focus = %q, %v; want the surviving Pane", got, ok)
+	}
+}
+
+// TestRestoreReopensAVNCPaneFromTheSavedHost proves a restart restores an open
+// VNC Tab through the ordinary descriptor path and reconnects it to its Host.
+func TestRestoreReopensAVNCPaneFromTheSavedHost(t *testing.T) {
+	payload := domainworkspace.Payload{
+		Version:   domainworkspace.PayloadVersion,
+		ActiveTab: 0,
+		Tabs: []domainworkspace.RestoredTab{{
+			ID: "tab-vnc", Number: 1, Root: domainworkspace.NewPaneNode("pane-vnc"),
+		}},
+		Panes: []domainworkspace.RestoredPane{{
+			ID: "pane-vnc",
+			Session: domainworkspace.SessionDescriptor{
+				Kind: domainworkspace.SessionVNC, HostID: "vnc-desk",
+				Hostname: "desk.local", Port: 5901, Label: "desk",
+			},
+		}},
+	}
+	graph := newWorkspaceGraph(t)
+	graph.hosts["vnc-desk"] = domainvault.Host{
+		ID: "vnc-desk", Hostname: "desk.local", Port: 5901,
+		Protocol: domainvault.ProtocolVNC,
+	}
+	graph.repo.payload = payload
+	graph.state.Restore(context.Background())
+	graph.flushUntil(t, "the restored VNC Pane", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, "pane-vnc")
+		return ok && !info.Pending
+	})
+
+	spec := graph.factory.lastSpec()
+	if spec.Kind != appsession.KindVNC || spec.VNC == nil ||
+		spec.VNC.Hostname != "desk.local" || spec.VNC.Port != 5901 {
+		t.Fatalf("restored spec = %+v, want the VNC endpoint", spec)
+	}
+	if spec.Reconnect == nil {
+		t.Fatal("a restored VNC Pane has no automatic reconnect policy")
+	}
+	if info, ok := graph.state.PaneInfoAt(0, "pane-vnc"); !ok || info.ByteStream {
+		t.Fatalf("restored VNC Pane = %+v, %v; want a pixel Pane", info, ok)
+	}
+}
+
+// TestReconnectPaneReopensOnlyAStoppedPane proves a manual reconnect replaces
+// a stopped Session and its Surface, while a still-running Pane is left alone
+// so the action cannot abandon a transport that is still recovering.
+func TestReconnectPaneReopensOnlyAStoppedPane(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the first Pane surface", func() bool {
+		return graph.state.ActiveSurface() != nil && len(graph.surfaces) == 1
+	})
+	tabID, ok := graph.state.TabID(0)
+	if !ok {
+		t.Fatal("the Tab has no ID")
+	}
+	paneID, ok := graph.state.FocusedPaneID(0)
+	if !ok {
+		t.Fatal("the Tab has no focused Pane")
+	}
+
+	if graph.state.ReconnectPane(tabID, paneID) {
+		t.Fatal("a live Pane was reopened")
+	}
+	if graph.factory.specCount() != 1 {
+		t.Fatalf("Session opens after a live reconnect = %d, want 1", graph.factory.specCount())
+	}
+
+	first := graph.sessions[0]
+	if err := first.Close(); err != nil {
+		t.Fatalf("stop the first Session: %v", err)
+	}
+	graph.flushUntil(t, "the stopped Session", func() bool {
+		return first.Snapshot().Status != appsession.StatusRunning
+	})
+
+	if !graph.state.ReconnectPane(tabID, paneID) {
+		t.Fatal("a stopped Pane was not reopened")
+	}
+	graph.flushUntil(t, "the replacement Pane", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, paneID)
+		return ok && !info.Pending && info.Surface != nil && len(graph.surfaces) == 2
+	})
+	if !graph.surfaces[0].closed {
+		t.Fatal("the stopped Pane's Surface was not closed")
+	}
+	if graph.factory.specCount() != 2 {
+		t.Fatalf("Session opens = %d, want one replacement dial", graph.factory.specCount())
+	}
+	info, _ := graph.state.PaneInfoAt(0, paneID)
+	if info.Surface == Surface(graph.surfaces[0]) {
+		t.Fatal("the Pane still renders the stopped Session's Surface")
+	}
+}

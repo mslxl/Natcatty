@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	"github.com/mslxl/natcatty/application/session/autologin"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	"github.com/mslxl/natcatty/domain/model"
@@ -150,6 +151,12 @@ type End struct {
 	Reason      EndReason
 	ExitCode    int
 	HasExitCode bool
+	// NoRetry marks a permanent failure that must not be retried even though
+	// Reason is EndReasonError. A display error implements Permanent() to stop
+	// reconnecting, but only authentication and host-key failures are allowed
+	// to claim EndReasonAuthFailed; an X11 or similar permanent refusal keeps
+	// the generic reason and carries the no-retry decision here instead.
+	NoRetry bool
 }
 
 // EndReporter is implemented by transports that can classify why they
@@ -176,6 +183,11 @@ const DefaultReconnectDelay = 5 * time.Second
 // shouldRetry reports the original reason predicate.
 func (p *ReconnectPolicy) shouldRetry(end End) bool {
 	if p == nil {
+		return false
+	}
+	if end.NoRetry {
+		// A permanent failure the transport already classified never improves
+		// by retrying, regardless of the end reason it displays.
 		return false
 	}
 	if end.Reason == EndReasonAuthFailed {
@@ -793,7 +805,10 @@ type closeRequest struct {
 }
 
 // permanentFailure is implemented by typed open failures that must not be
-// retried, namely authentication and host-key rejections.
+// retried, namely authentication and host-key rejections, and an X11
+// forwarding refusal. Every permanent failure stops the reconnect loop, but
+// only authentication and host-key failures are classified as an authentication
+// failure for display; see endReasonFor.
 type permanentFailure interface {
 	Permanent() bool
 }
@@ -2051,7 +2066,10 @@ func (s *Session) loop() {
 				}
 				status = StatusExited
 				connection = ConnectionStatusError
-				reason = EndReasonError
+				// Only a permanent failure posts this command, from a rejected
+				// credential or host key. Naming it lets the pane explain why
+				// the reconnect stopped instead of showing a generic error.
+				reason = endReasonFor(cmd.err)
 				goto finished
 			}
 		case <-s.closeCh:
@@ -2213,6 +2231,26 @@ func (s *Session) reconnect(generation int, immediate bool) {
 func permanentError(err error) bool {
 	var failure permanentFailure
 	return errors.As(err, &failure) && failure.Permanent()
+}
+
+// authFailure reports whether err is a rejected credential or host key. It is
+// deliberately narrower than Permanent(): an X11 forwarding refusal is
+// permanent for retry purposes but is not an authentication failure.
+func authFailure(err error) bool {
+	var connErr *appconnection.Error
+	return errors.As(err, &connErr) &&
+		(connErr.Kind == appconnection.KindAuth || connErr.Kind == appconnection.KindHostKey)
+}
+
+// endReasonFor classifies an error that stopped the transport. Only an
+// authentication or host-key rejection is named as such; every other permanent
+// failure, such as an X11 or proxy refusal, stays a generic error and keeps
+// its generic user-visible message.
+func endReasonFor(err error) EndReason {
+	if authFailure(err) {
+		return EndReasonAuthFailed
+	}
+	return EndReasonError
 }
 
 // readLoop moves transport output into the bounded TerminalConn backlog. Each

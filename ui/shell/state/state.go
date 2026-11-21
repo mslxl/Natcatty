@@ -59,6 +59,16 @@ type Surface interface {
 	Close()
 }
 
+// KeyReleaser is implemented by a Surface that can tell its remote peer to
+// release keyboard keys, synthesized modifiers, and pointer buttons the viewer
+// last reported down. The shell calls it before a Surface stops rendering:
+// switching Tabs, detaching a Pane, or closing it. MyGo does not deliver key-up
+// events for a subtree it stops building, so without this seam a held key
+// would stay down in the guest.
+type KeyReleaser interface {
+	ReleaseInput()
+}
+
 // BrowserOpener is implemented by a Session surface that can show its Host's
 // browser panel. The Vault's "Open host browser" action opens a Session and
 // asks the surface for the panel once it exists.
@@ -804,6 +814,9 @@ func (s *State) ConsumeHostListFocus() bool {
 
 // ShowVault makes the Vault the visible surface.
 func (s *State) ShowVault() {
+	// The work Tab stops rendering, so its focused pane must not leave guest
+	// input held.
+	s.releaseActiveInput()
 	s.home = HomeVault
 	s.leaveMonitor()
 	s.leaveSystemManager()
@@ -824,6 +837,7 @@ func (s *State) LogsView() func(*ui.Context) { return s.logsView }
 // stays over it, so a user can return to a Session without leaving Logs
 // first.
 func (s *State) ShowLogs() {
+	s.releaseActiveInput()
 	s.home = HomeLogs
 	s.leaveMonitor()
 	s.leaveSystemManager()
@@ -851,6 +865,7 @@ func (s *State) ShowSFTP() {
 	if !s.SFTPTabShown() {
 		return
 	}
+	s.releaseActiveInput()
 	s.leaveMonitor()
 	s.leaveSystemManager()
 	s.sftpVisible = true
@@ -868,6 +883,7 @@ func (s *State) MonitorView() func(*ui.Context) { return s.monitorView }
 // ShowMonitor makes the Host monitoring surface visible and asks it to start
 // sampling. The work Tab strip stays over it like Logs and SFTP.
 func (s *State) ShowMonitor() {
+	s.releaseActiveInput()
 	s.home = HomeMonitor
 	s.leaveSystemManager()
 	s.monitorVisible = true
@@ -901,6 +917,7 @@ func (s *State) SysManagerView() func(*ui.Context) { return s.sysManagerView }
 // ShowSystemManager makes the System manager visible and asks it to start
 // sampling. The work Tab strip stays over it like Logs and SFTP.
 func (s *State) ShowSystemManager() {
+	s.releaseActiveInput()
 	s.home = HomeSystem
 	s.leaveMonitor()
 	s.sysManagerVisible = true
@@ -972,7 +989,7 @@ func (s *State) NewTabWithShell(shell string) error {
 	}})
 	tab.attachOnlySession(session, surface)
 	s.tabs = append(s.tabs, tab)
-	s.active = len(s.tabs) - 1
+	s.activateTab(len(s.tabs) - 1)
 	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
@@ -1401,7 +1418,7 @@ func (s *State) Flush() {
 			}
 		}
 		s.tabs = append(s.tabs, tab)
-		s.active = len(s.tabs) - 1
+		s.activateTab(len(s.tabs) - 1)
 		s.leaveMonitor()
 		s.vaultVisible = false
 		s.logsVisible = false
