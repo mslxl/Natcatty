@@ -24,8 +24,21 @@ type ServerInfo struct {
 }
 
 // Client is one RFB connection after the ServerInit handshake. It owns the
-// framebuffer and serialises nothing: the adapter must not call its methods
-// concurrently.
+// framebuffer and holds no lock; callers must observe this concurrency model:
+//
+//   - ReadMessage is the only receive path. Exactly one goroutine may call it,
+//     and only that goroutine may read or copy Frame's pixels.
+//   - The write methods (SetPixelFormat, SetEncodings, RequestUpdate,
+//     RequestFullUpdate, SendKey, SendPointer, SendCutText) may be called from
+//     any goroutine, but the caller must serialise them so at most one write
+//     is in flight at a time.
+//   - Reads and writes may run concurrently. Version, ServerInfo, and Frame's
+//     bounds are immutable after Connect, so a writer may read them while the
+//     reader decodes. Frame's pixel format is not immutable: SetPixelFormat
+//     changes it, so it must not run concurrently with ReadMessage.
+//
+// The Client never closes conn; closing it is the caller's responsibility and
+// is not coordinated with an in-flight read or write.
 type Client struct {
 	conn    io.ReadWriter
 	reader  *bufio.Reader
@@ -213,12 +226,15 @@ func (c *Client) Version() Version { return c.version }
 func (c *Client) ServerInfo() ServerInfo { return c.info }
 
 // Frame returns the framebuffer the decoder writes into. The pointer is owned
-// by the client and its pixels change on every FramebufferUpdate.
+// by the client and its bounds are fixed after Connect, but its pixels change
+// on every FramebufferUpdate and are only safe to read from the ReadMessage
+// goroutine.
 func (c *Client) Frame() *Framebuffer { return c.frame }
 
 // SetPixelFormat asks the server to switch to pf and updates the decoder to
-// match. The protocol has no acknowledgement, so the caller must hold the
-// connection serialised with updates.
+// match. The protocol has no acknowledgement, so the caller must serialise it
+// with every other write, and it changes the decoder's pixel format, so it
+// must not run concurrently with ReadMessage.
 func (c *Client) SetPixelFormat(pf PixelFormat) error {
 	if err := pf.Validate(); err != nil {
 		return err

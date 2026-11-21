@@ -46,6 +46,7 @@ import (
 	adapterstnet "github.com/mslxl/natcatty/adapters/telnet"
 	"github.com/mslxl/natcatty/adapters/textcodec"
 	adapterbackup "github.com/mslxl/natcatty/adapters/vaultbackup"
+	adaptervnc "github.com/mslxl/natcatty/adapters/vnc"
 	adapterwebdav "github.com/mslxl/natcatty/adapters/webdav"
 	appapplock "github.com/mslxl/natcatty/application/applock"
 	"github.com/mslxl/natcatty/application/autocomplete"
@@ -102,6 +103,7 @@ import (
 	vaultui "github.com/mslxl/natcatty/ui/vault"
 	vaultsection "github.com/mslxl/natcatty/ui/vault/section"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
+	vncui "github.com/mslxl/natcatty/ui/vnc"
 )
 
 // Run starts Natcatty and blocks until the application quits.
@@ -997,7 +999,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	sessions = appsession.NewService(newTransportFactory(
 		localpty.Factory{}, adapterserial.Factory{},
 		newTelnetFactory(adapterstnet.Factory{}, routes, networkProviders, connections), connections, routes,
-	).withInProcess(
+	).withVNC(adaptervnc.Factory{}).withInProcess(
 		newMoshFactory(connections, routes, networkProviders),
 		adapteret.InProcessFactory{
 			Manager:  connections,
@@ -1367,6 +1369,15 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		}
 		return sessionui.New(s, options...)
 	}
+	// newSurface chooses the surface a Session's kind owns. A VNC Session
+	// renders pixels in the viewer; every byte-stream kind keeps the terminal
+	// surface and its full chrome.
+	newSurface := func(s *appsession.Session) (state.Surface, error) {
+		if s.Snapshot().Kind == appsession.KindVNC {
+			return vncui.New(s, vncui.WithRedraw(invalidate))
+		}
+		return newSessionSurface(s)
+	}
 	shellState = state.NewState(
 		state.WithLocaleRequest(func(tag string) {
 			mygo.App.SetLocale(tag)
@@ -1409,9 +1420,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		state.WithLocalShell(func() ([]string, bool) {
 			return preferenceService.Settings().Appearance.LocalShell.Command(appsession.LocalShellExists)
 		}),
-		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
-			return newSessionSurface(s)
-		}),
+		state.WithSessions(sessions, newSurface),
 		// A serial Session's saved profile and a Telnet Host's Vault login
 		// become the console's expect engine. The password is read from the
 		// encrypted field-secret store on the open goroutine and never enters
@@ -1623,7 +1632,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	quakeState = quakeui.NewState(
 		quakeSessionOpener{sessions: sessions},
 		func(s *appsession.Session) (quakeui.Surface, error) {
-			return newSessionSurface(s)
+			return newSurface(s)
 		},
 		// The Host picker reads the Vault's effective Host list live, so a
 		// renamed Host or an edited group default shows on the next frame.

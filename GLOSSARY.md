@@ -138,9 +138,16 @@ or the app quits.
 _Avoid_: cache, warm pool
 
 **Session**:
-A user-visible terminal instance (local, SSH, serial, telnet, mosh, or EternalTerminal)
-with its own lifecycle, transport, and terminal surface.
+A user-visible connection instance (local, SSH, serial, telnet, mosh,
+EternalTerminal, or VNC) with its own lifecycle, transport, and surface: a
+terminal for a byte stream, or a pixel display for VNC.
 _Avoid_: terminal, tab, shell
+
+**Display Session**:
+The pixel half of a VNC Session. It carries framebuffer events and display
+input instead of a byte stream, so scrollback, capture, compose, broadcast, and
+terminal resize do not apply.
+_Avoid_: VNC terminal, screen session
 
 **Editing Session**:
 The service's record of one file handed to an opener: the materialized local copy,

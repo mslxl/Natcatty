@@ -1966,3 +1966,58 @@ func TestRestoredSSHPaneReplaysItsStartupCommandOncePerReconnect(t *testing.T) {
 		t.Fatalf("the startup command replayed %d times after reconnect", got)
 	}
 }
+
+// TestPendingTerminalPaneKeepsTheToolbarBeforeItsSessionOpens proves the
+// terminal-toolbar gate follows the Pane's kind rather than whether its
+// Session exists yet. A Pane opened by a split is pending with a nil Session
+// until the next Flush applies the background open, and it must keep the
+// toolbar during that window.
+func TestPendingTerminalPaneKeepsTheToolbarBeforeItsSessionOpens(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatalf("SplitRight: %v", err)
+	}
+	id, ok := graph.state.FocusedPaneID(0)
+	if !ok {
+		t.Fatal("split Tab has no focused Pane")
+	}
+	// The open runs on its own goroutine and is applied only by Flush, so the
+	// new Pane is still pending with no Session here.
+	value := graph.state.tabs[0].panes[id]
+	if value == nil || value.session != nil || !value.pending {
+		t.Fatalf("split Pane = %+v, want a pending Pane without a Session", value)
+	}
+	info, ok := graph.state.PaneInfoAt(0, id)
+	if !ok || !info.Pending || !info.ByteStream {
+		t.Fatalf("PaneInfo = %+v, %v; want a pending Pane with a byte stream", info, ok)
+	}
+}
+
+// TestVNCPaneNeverShowsTheTerminalToolbar proves a pixel Pane stays out of the
+// terminal-toolbar gate even while it is connecting and has no Session. A fix
+// that merely defaults a nil Session to "terminal" would regress this.
+func TestVNCPaneNeverShowsTheTerminalToolbar(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	tab := graph.state.newTab(TabOptions{Descriptor: domainworkspace.SessionDescriptor{
+		Kind:     domainworkspace.SessionVNC,
+		HostID:   "vnc-desk",
+		Hostname: "desk.local",
+		Port:     5901,
+		Label:    "desk",
+	}})
+	graph.state.tabs = append(graph.state.tabs, tab)
+	id := tab.paneIDs()[0]
+	// Model the connect window: the Pane is visible but its Session is nil.
+	tab.panes[id].pending = true
+
+	info, ok := graph.state.PaneInfoAt(0, id)
+	if !ok || !info.Pending {
+		t.Fatalf("PaneInfo = %+v, %v; want a pending Pane", info, ok)
+	}
+	if info.ByteStream {
+		t.Fatal("VNC Pane reported a byte stream; the terminal toolbar must stay hidden")
+	}
+}

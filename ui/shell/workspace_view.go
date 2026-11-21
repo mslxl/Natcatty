@@ -543,7 +543,7 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		if !ref.managesPanes {
 			return
 		}
-		if info.Focused {
+		if info.Focused && info.ByteStream {
 			terminalToolbar(c, s, m, t)
 		}
 		if bar, ok := info.Surface.(interface{ Toolbar(*ui.Context) }); ok && info.Err == nil {

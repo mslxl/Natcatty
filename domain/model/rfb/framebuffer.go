@@ -47,7 +47,8 @@ func NewFramebuffer(width, height int, pf PixelFormat) (*Framebuffer, error) {
 // a caller that needs an immutable snapshot must copy it.
 func (f *Framebuffer) Image() *image.RGBA { return f.img }
 
-// Bounds returns the framebuffer rectangle.
+// Bounds returns the framebuffer rectangle. The rectangle is fixed for the
+// framebuffer's lifetime, so it may be read concurrently with decoding.
 func (f *Framebuffer) Bounds() image.Rectangle { return f.img.Bounds() }
 
 // PixelFormat returns the format currently used to decode wire pixels.

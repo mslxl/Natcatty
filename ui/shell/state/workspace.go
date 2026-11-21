@@ -114,6 +114,11 @@ type PaneInfo struct {
 	Pending bool
 	Err     error
 	Surface Surface
+	// ByteStream reports whether the Pane is a terminal. It follows the Pane's
+	// kind rather than its Session, so a terminal Pane that is still connecting
+	// keeps the terminal toolbar. A pixel Session (VNC) never has one: capture,
+	// broadcast, compose, and terminal resize do not apply.
+	ByteStream bool
 }
 
 // DetachedTabInfo describes a Tab that left the main window and now belongs to
@@ -1053,6 +1058,10 @@ func (s *State) paneInfo(tab *Tab, id model.PaneID) (PaneInfo, bool) {
 		Pending: value.pending,
 		Err:     value.err,
 		Surface: value.surface,
+		// The kind is known as soon as the Pane exists, while the Session is
+		// still nil during the connect window. Gate the terminal toolbar on the
+		// Pane's kind so a connecting terminal keeps it and VNC never gets it.
+		ByteStream: value.descriptor.Kind != domainworkspace.SessionVNC,
 	}, true
 }
 

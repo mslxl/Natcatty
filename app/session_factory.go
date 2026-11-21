@@ -74,9 +74,13 @@ type terminalSettingsSource interface {
 // lease for the Session's lifetime and releases it when the transport closes,
 // which is the seam ticket 09's pool extends.
 type transportFactory struct {
-	local   appsession.Factory
-	serial  appsession.Factory
-	telnet  appsession.Factory
+	local  appsession.Factory
+	serial appsession.Factory
+	telnet appsession.Factory
+	// vnc is the RFB display transport. It is optional so a test can build the
+	// factory without it; a missing one fails closed instead of opening a local
+	// shell for a VNC Host.
+	vnc     appsession.Factory
 	manager *appconnection.Manager
 	routes  routeSource
 	// moshInProcess and etInProcess are the application-owned clients. They
@@ -129,6 +133,13 @@ func (s *captureNoticeState) shouldAnnounce(hostID model.HostID, hostname string
 	}
 	s.announced[key] = true
 	return true
+}
+
+// withVNC attaches the RFB display transport. A nil factory keeps VNC Hosts
+// unavailable, so a missing adapter never falls back to a local shell.
+func (f *transportFactory) withVNC(vnc appsession.Factory) *transportFactory {
+	f.vnc = vnc
+	return f
 }
 
 // withInProcess attaches the application-owned Mosh and EternalTerminal
@@ -190,9 +201,10 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		}
 		return f.etInProcess.Open(ctx, spec)
 	case appsession.KindVNC:
-		// The RFB adapter and its transport factory land with the first
-		// desktop. Failing closed keeps a VNC Host from opening a local shell.
-		return nil, errors.New("app: no VNC transport")
+		if f.vnc == nil {
+			return nil, errors.New("app: no VNC transport")
+		}
+		return f.vnc.Open(ctx, spec)
 	default:
 		return f.local.Open(ctx, f.withLocalShell(spec))
 	}
