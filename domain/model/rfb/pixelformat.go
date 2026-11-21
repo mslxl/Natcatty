@@ -96,7 +96,12 @@ func (p PixelFormat) Decode(data []byte) (color.RGBA, error) {
 // decodePixel is the hot path for rectangle decoding. The caller must have
 // validated the format and passed at least BytesPerPixel bytes.
 func (p PixelFormat) decodePixel(data []byte) color.RGBA {
-	value := readPixelValue(data, p.BytesPerPixel(), p.BigEndian)
+	return p.decodeValue(readPixelValue(data, p.BytesPerPixel(), p.BigEndian))
+}
+
+// decodeValue turns one already-assembled wire pixel value into 32-bit RGBA.
+// The ZRLE decoder uses it after reconstructing a CPIXEL.
+func (p PixelFormat) decodeValue(value uint32) color.RGBA {
 	return color.RGBA{
 		R: scaleChannel(channelValue(value, p.RedShift, p.RedMax), p.RedMax),
 		G: scaleChannel(channelValue(value, p.GreenShift, p.GreenMax), p.GreenMax),
@@ -116,6 +121,77 @@ func (p PixelFormat) Encode(c color.RGBA) ([]byte, error) {
 	out := make([]byte, p.BytesPerPixel())
 	writePixelValue(out, value, p.BigEndian)
 	return out, nil
+}
+
+// usedBitsMask returns the bits the red, green and blue channels occupy.
+func (p PixelFormat) usedBitsMask() uint32 {
+	mask := func(max uint16, shift uint8) uint32 {
+		return ((uint32(1) << bits.Len32(uint32(max))) - 1) << shift
+	}
+	return mask(p.RedMax, p.RedShift) | mask(p.GreenMax, p.GreenShift) | mask(p.BlueMax, p.BlueShift)
+}
+
+// CPixelBytes is the width of one ZRLE CPIXEL in this format. Encoders use it
+// to write the same compact form the decoder expects.
+func (p PixelFormat) CPixelBytes() int { return p.cpixelBytes() }
+
+// EncodeCPixel encodes one colour as a ZRLE CPIXEL.
+func (p PixelFormat) EncodeCPixel(c color.RGBA) ([]byte, error) {
+	wire, err := p.Encode(c)
+	if err != nil {
+		return nil, err
+	}
+	if p.cpixelBytes() != 3 {
+		return wire, nil
+	}
+	if p.usedBitsMask()&0xFF000000 == 0 {
+		// Least significant three bytes.
+		if p.BigEndian {
+			return wire[1:4], nil
+		}
+		return wire[0:3], nil
+	}
+	// Most significant three bytes.
+	if p.BigEndian {
+		return wire[0:3], nil
+	}
+	return wire[1:4], nil
+}
+
+// cpixelBytes is the CPIXEL width the ZRLE decoder must read. For 32-bit true
+// colour with depth at most 24 and every used bit in the least or most
+// significant three bytes, a CPIXEL is three bytes; otherwise it is a PIXEL.
+func (p PixelFormat) cpixelBytes() int {
+	if p.BitsPerPixel != 32 || !p.TrueColour || p.Depth > 24 {
+		return p.BytesPerPixel()
+	}
+	used := p.usedBitsMask()
+	if used&0xFF000000 == 0 || used&0x000000FF == 0 {
+		return 3
+	}
+	return 4
+}
+
+// cpixelValue reconstructs a wire pixel value from a CPIXEL. The caller must
+// pass cpixelBytes bytes.
+func (p PixelFormat) cpixelValue(data []byte) uint32 {
+	if p.cpixelBytes() != 3 {
+		return readPixelValue(data, len(data), p.BigEndian)
+	}
+	// Choose the three bytes the used channels live in and rebuild the full
+	// 32-bit value in the wire byte order.
+	if p.usedBitsMask()&0xFF000000 == 0 {
+		// Least significant three bytes.
+		if p.BigEndian {
+			return uint32(data[0])<<16 | uint32(data[1])<<8 | uint32(data[2])
+		}
+		return uint32(data[0]) | uint32(data[1])<<8 | uint32(data[2])<<16
+	}
+	// Most significant three bytes.
+	if p.BigEndian {
+		return uint32(data[0])<<24 | uint32(data[1])<<16 | uint32(data[2])<<8
+	}
+	return uint32(data[0])<<8 | uint32(data[1])<<16 | uint32(data[2])<<24
 }
 
 func readPixelValue(data []byte, bpp int, bigEndian bool) uint32 {

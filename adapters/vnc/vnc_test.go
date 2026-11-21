@@ -415,6 +415,200 @@ func TestRoutedDecisionIsCarriedFromTheFactory(t *testing.T) {
 	}
 }
 
+func hasEncoding(encodings []rfb.Encoding, want rfb.Encoding) bool {
+	for _, encoding := range encodings {
+		if encoding == want {
+			return true
+		}
+	}
+	return false
+}
+
+func waitFor(t *testing.T, what string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// TestZRLEOnlyServerRendersTheGoldenFrame proves the adapter prefers ZRLE and
+// composites the decoder's output identically to the server image.
+func TestZRLEOnlyServerRendersTheGoldenFrame(t *testing.T) {
+	frame := testFrame()
+	h := start(t, rfbtest.Config{Frame: frame, Encoding: rfb.EncodingZRLE})
+	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	display := transport.(appsession.DisplayProvider).Display()
+
+	event := nextEvent(t, display.Events(), appsession.DisplayEventFrame)
+	if event.Frame == nil || event.Frame.Image.Bounds() != frame.Bounds() {
+		t.Fatalf("frame = %+v, want %v", event.Frame, frame.Bounds())
+	}
+	for y := 0; y < frame.Bounds().Dy(); y++ {
+		for x := 0; x < frame.Bounds().Dx(); x++ {
+			if got, want := event.Frame.Image.RGBAAt(x, y), frame.RGBAAt(x, y); got != want {
+				t.Fatalf("ZRLE pixel %d,%d = %+v, want %+v", x, y, got, want)
+			}
+		}
+	}
+	waitFor(t, "the client to advertise ZRLE", func() bool {
+		return hasEncoding(h.server.Received().Encodings, rfb.EncodingZRLE)
+	})
+}
+
+// TestExtensionsAreNegotiatedAndKeepUpdatesFlowing proves ContinuousUpdates and
+// Fence are advertised, negotiated and used: the server streams a frame after
+// the client enables continuous updates, and the client stops polling.
+func TestExtensionsAreNegotiatedAndKeepUpdatesFlowing(t *testing.T) {
+	h := start(t, rfbtest.Config{
+		Frame:               testFrame(),
+		Encoding:            rfb.EncodingRaw,
+		ExtendedDesktopSize: true,
+		ContinuousUpdates:   true,
+		Fence:               true,
+	})
+	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	display := transport.(appsession.DisplayProvider).Display()
+
+	// Wait for the first frame: by then the EDS rectangle has been read and
+	// the extension is live.
+	frameDeadline := time.After(5 * time.Second)
+	frameSeen := false
+	for !frameSeen {
+		select {
+		case event, ok := <-display.Events():
+			if !ok {
+				t.Fatalf("event stream closed; encodings=%v", h.server.Received().Encodings)
+			}
+			frameSeen = event.Kind == appsession.DisplayEventFrame
+		case err := <-h.serve:
+			t.Fatalf("server ended early: %v; encodings=%v", err, h.server.Received().Encodings)
+		case <-frameDeadline:
+			t.Fatalf("timed out waiting for a frame; encodings=%v received=%+v",
+				h.server.Received().Encodings, h.server.Received().Requests)
+		}
+	}
+	negotiationDeadline := time.Now().Add(5 * time.Second)
+	for {
+		received := h.server.Received()
+		negotiated := hasEncoding(received.Encodings, rfb.EncodingContinuousUpdates) &&
+			hasEncoding(received.Encodings, rfb.EncodingFence) &&
+			hasEncoding(received.Encodings, rfb.EncodingExtendedDesktopSize) &&
+			hasEncoding(received.Encodings, rfb.EncodingCursorWithAlpha) &&
+			len(received.Continuous) > 0 && received.Continuous[0].Enable &&
+			len(received.Fences) > 0
+		if negotiated {
+			break
+		}
+		if time.Now().After(negotiationDeadline) {
+			t.Fatalf("extensions did not negotiate: encodings=%v continuous=%+v fences=%+v requests=%+v",
+				received.Encodings, received.Continuous, received.Fences, received.Requests)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Polling stopped as soon as continuous updates were enabled: the only
+	// update request is the initial non-incremental one.
+	received := h.server.Received()
+	for _, request := range received.Requests {
+		if request.Incremental {
+			t.Fatalf("the client polled after enabling continuous updates: %+v", received.Requests)
+		}
+	}
+
+	if err := display.SetDesktopSize(8, 6); err != nil {
+		t.Fatalf("SetDesktopSize: %v", err)
+	}
+	waitFor(t, "the resize request to reach the server", func() bool {
+		for _, request := range h.server.Received().DesktopSizes {
+			if request.Width == 8 && request.Height == 6 {
+				return true
+			}
+		}
+		return false
+	})
+	// A successful resize re-scopes server-driven updates to the new extent,
+	// so the added area is part of the continuous region.
+	waitFor(t, "continuous updates re-scoped to 8x6", func() bool {
+		for _, update := range h.server.Received().Continuous {
+			if update.Enable && update.Width == 8 && update.Height == 6 {
+				return true
+			}
+		}
+		return false
+	})
+	// The server follows the request and streams a repaint at the new size.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		event := nextEvent(t, display.Events(), appsession.DisplayEventFrame)
+		if event.Frame.Image.Bounds().Dx() == 8 && event.Frame.Image.Bounds().Dy() == 6 {
+			return
+		}
+	}
+	t.Fatal("the resized desktop never repainted")
+}
+
+// TestCursorShapeArrivesAsADisplayEvent proves CursorWithAlpha is parsed and
+// surfaced through the display port, including the hidden-cursor form.
+func TestCursorShapeArrivesAsADisplayEvent(t *testing.T) {
+	cursor := image.NewRGBA(image.Rect(0, 0, 2, 1))
+	cursor.SetRGBA(0, 0, color.RGBA{R: 255, A: 255})
+	cursor.SetRGBA(1, 0, color.RGBA{G: 255, A: 255})
+	h := start(t, rfbtest.Config{
+		Frame: testFrame(), Encoding: rfb.EncodingRaw,
+		Cursor: cursor, CursorAt: image.Pt(1, 0),
+	})
+	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	event := nextEvent(t, transport.(appsession.DisplayProvider).Display().Events(),
+		appsession.DisplayEventCursorShape)
+	if event.Cursor == nil || event.Cursor.Image == nil {
+		t.Fatalf("cursor event = %+v", event)
+	}
+	if event.Cursor.Hotspot != image.Pt(1, 0) {
+		t.Fatalf("cursor hotspot = %v, want (1,0)", event.Cursor.Hotspot)
+	}
+	if got := event.Cursor.Image.RGBAAt(0, 0); got != (color.RGBA{R: 255, A: 255}) {
+		t.Fatalf("cursor pixel = %+v", got)
+	}
+}
+
+// TestHiddenCursorArrivesAsAnEmptyShape proves a zero-size CursorWithAlpha
+// clears the local cursor instead of drawing a stale one.
+func TestHiddenCursorArrivesAsAnEmptyShape(t *testing.T) {
+	cursor := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	cursor.SetRGBA(0, 0, color.RGBA{A: 255})
+	h := start(t, rfbtest.Config{
+		Frame: testFrame(), Encoding: rfb.EncodingRaw,
+		Cursor: cursor, HideCursor: true,
+	})
+	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	event := nextEvent(t, transport.(appsession.DisplayProvider).Display().Events(),
+		appsession.DisplayEventCursorShape)
+	if event.Cursor != nil {
+		t.Fatalf("hidden cursor event = %+v, want an empty shape", event.Cursor)
+	}
+}
+
 // TestByteStreamMethodsAreUnavailable keeps a VNC transport from pretending to
 // carry a terminal.
 func TestByteStreamMethodsAreUnavailable(t *testing.T) {

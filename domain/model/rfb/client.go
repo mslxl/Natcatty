@@ -8,6 +8,15 @@ import (
 	"io"
 )
 
+// Client-to-server message types added by the extensions. EnableContinuousUpdates
+// and EndOfContinuousUpdates share a number because they travel in opposite
+// directions.
+const (
+	clientEnableContinuousUpdates = 150
+	clientFence                   = 248
+	clientSetDesktopSize          = 251
+)
+
 // ClientConfig configures the client handshake.
 type ClientConfig struct {
 	// Shared requests a shared session (ClientInit shared-flag 1). A server
@@ -33,13 +42,16 @@ type ServerInfo struct {
 //   - ReadMessage is the only receive path. Exactly one goroutine may call it,
 //     and only that goroutine may read or copy Frame's pixels.
 //   - The write methods (SetPixelFormat, SetEncodings, RequestUpdate,
-//     RequestFullUpdate, SendKey, SendPointer, SendCutText) may be called from
-//     any goroutine, but the caller must serialise them so at most one write
-//     is in flight at a time.
-//   - Reads and writes may run concurrently. Version, ServerInfo, and Frame's
-//     bounds are immutable after Connect, so a writer may read them while the
-//     reader decodes. Frame's pixel format is not immutable: SetPixelFormat
-//     changes it, so it must not run concurrently with ReadMessage.
+//     RequestFullUpdate, SendKey, SendPointer, SendCutText, SendFence,
+//     SendContinuousUpdates, SendSetDesktopSize) may be called from any
+//     goroutine, but the caller must serialise them so at most one write is in
+//     flight at a time.
+//   - Reads and writes may run concurrently. Version and ServerInfo are
+//     immutable after Connect, so a writer may read them while the reader
+//     decodes. Frame's pixels change on every FramebufferUpdate and its pixel
+//     format changes on SetPixelFormat, so neither may be read concurrently
+//     with ReadMessage; Bounds, Image and PixelFormat are safe to read from
+//     any goroutine.
 //
 // The Client never closes conn; closing it is the caller's responsibility and
 // is not coordinated with an in-flight read or write.
@@ -272,9 +284,10 @@ func (c *Client) Security() SecurityType { return c.security }
 func (c *Client) ServerInfo() ServerInfo { return c.info }
 
 // Frame returns the framebuffer the decoder writes into. The pointer is owned
-// by the client and its bounds are fixed after Connect, but its pixels change
-// on every FramebufferUpdate and are only safe to read from the ReadMessage
-// goroutine.
+// by the client, and its pixel format changes on SetPixelFormat. Its pixels
+// change on every FramebufferUpdate, so they are only safe to read from the
+// ReadMessage goroutine; Image, Bounds and PixelFormat are safe to call from
+// any goroutine (see Framebuffer).
 func (c *Client) Frame() *Framebuffer { return c.frame }
 
 // SetPixelFormat asks the server to switch to pf and updates the decoder to
@@ -330,9 +343,13 @@ func (c *Client) RequestUpdate(incremental bool, x, y, width, height uint16) err
 	return writeAll(c.conn, wire[:])
 }
 
-// RequestFullUpdate requests the whole framebuffer.
+// RequestFullUpdate requests the whole current framebuffer. The size comes
+// from the framebuffer rather than the immutable ServerInit dimensions, so a
+// desktop resized by ExtendedDesktopSize is fully repainted on a server that
+// does not use ContinuousUpdates.
 func (c *Client) RequestFullUpdate(incremental bool) error {
-	return c.RequestUpdate(incremental, 0, 0, c.info.Width, c.info.Height)
+	bounds := c.frame.Bounds()
+	return c.RequestUpdate(incremental, 0, 0, uint16(bounds.Dx()), uint16(bounds.Dy()))
 }
 
 // SendKey sends a KeyEvent for one X11 keysym.
@@ -354,6 +371,61 @@ func (c *Client) SendPointer(mask uint8, x, y uint16) error {
 	binary.BigEndian.PutUint16(wire[2:4], x)
 	binary.BigEndian.PutUint16(wire[4:6], y)
 	return writeAll(c.conn, wire[:])
+}
+
+// SendFence sends a ClientFence message. The reply to a server request clears
+// FenceRequest and echoes the remaining flags and payload.
+func (c *Client) SendFence(flags uint32, payload []byte) error {
+	if len(payload) > FenceMaxPayload {
+		return fmt.Errorf("%w: fence payload is %d bytes", ErrOversize, len(payload))
+	}
+	var wire [9]byte
+	wire[0] = clientFence
+	binary.BigEndian.PutUint32(wire[4:8], flags)
+	wire[8] = byte(len(payload))
+	if err := writeAll(c.conn, wire[:]); err != nil {
+		return err
+	}
+	return writeAll(c.conn, payload)
+}
+
+// SendContinuousUpdates enables or disables server-driven updates for one
+// region. The caller must have established support, normally by receiving a
+// MessageEndOfContinuousUpdates.
+func (c *Client) SendContinuousUpdates(enable bool, x, y, width, height uint16) error {
+	var wire [10]byte
+	wire[0] = clientEnableContinuousUpdates
+	if enable {
+		wire[1] = 1
+	}
+	binary.BigEndian.PutUint16(wire[2:4], x)
+	binary.BigEndian.PutUint16(wire[4:6], y)
+	binary.BigEndian.PutUint16(wire[6:8], width)
+	binary.BigEndian.PutUint16(wire[8:10], height)
+	return writeAll(c.conn, wire[:])
+}
+
+// SendSetDesktopSize requests a new desktop size and screen layout. The caller
+// must have seen an ExtendedDesktopSize rectangle first.
+func (c *Client) SendSetDesktopSize(width, height uint16, screens []Screen) error {
+	if len(screens) > 255 {
+		return fmt.Errorf("%w: %d screens", ErrOversize, len(screens))
+	}
+	wire := make([]byte, 8+16*len(screens))
+	wire[0] = clientSetDesktopSize
+	binary.BigEndian.PutUint16(wire[2:4], width)
+	binary.BigEndian.PutUint16(wire[4:6], height)
+	wire[6] = byte(len(screens))
+	for i, screen := range screens {
+		offset := 8 + i*16
+		binary.BigEndian.PutUint32(wire[offset:offset+4], screen.ID)
+		binary.BigEndian.PutUint16(wire[offset+4:offset+6], screen.X)
+		binary.BigEndian.PutUint16(wire[offset+6:offset+8], screen.Y)
+		binary.BigEndian.PutUint16(wire[offset+8:offset+10], screen.Width)
+		binary.BigEndian.PutUint16(wire[offset+10:offset+12], screen.Height)
+		binary.BigEndian.PutUint32(wire[offset+12:offset+16], screen.Flags)
+	}
+	return writeAll(c.conn, wire)
 }
 
 // SendCutText sends a ClientCutText message. The protocol's baseline form is
@@ -420,6 +492,26 @@ func (c *Client) ReadMessage() (ServerMessage, error) {
 			return ServerMessage{}, err
 		}
 		return ServerMessage{Kind: MessageCutText, CutText: string(text)}, nil
+	case ServerEndOfContinuousUpdates:
+		return ServerMessage{Kind: MessageEndOfContinuousUpdates}, nil
+	case ServerFenceMessage:
+		var header [8]byte
+		if _, err := io.ReadFull(c.reader, header[:]); err != nil {
+			return ServerMessage{}, err
+		}
+		flags := binary.BigEndian.Uint32(header[3:7])
+		length := int(header[7])
+		if length > FenceMaxPayload {
+			return ServerMessage{}, fmt.Errorf("%w: fence payload is %d bytes", ErrOversize, length)
+		}
+		payload := make([]byte, length)
+		if _, err := io.ReadFull(c.reader, payload); err != nil {
+			return ServerMessage{}, err
+		}
+		return ServerMessage{
+			Kind:  MessageFence,
+			Fence: Fence{Flags: flags, Payload: payload},
+		}, nil
 	default:
 		return ServerMessage{}, fmt.Errorf("%w: server message type %d", ErrMalformed, typeWire[0])
 	}

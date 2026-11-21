@@ -2,7 +2,10 @@ package rfb_test
 
 import (
 	"bytes"
+	"compress/zlib"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"net"
@@ -414,17 +417,77 @@ func TestClientNormalisesNon32BitServerPixelFormat(t *testing.T) {
 	waitServer(t, done)
 }
 
-func TestClientEncodingsNeverIncludeTight(t *testing.T) {
+// TestClientEncodingsAreDecodable drives the decoder for every encoding the
+// client advertises, so supportedEncodings and the ReadRectangles switch
+// cannot drift. Tight and TightPNG must never appear in the advertisement.
+func TestClientEncodingsAreDecodable(t *testing.T) {
 	encodings := rfb.ClientEncodings()
-	want := []rfb.Encoding{rfb.EncodingRaw, rfb.EncodingCopyRect, rfb.EncodingRRE, rfb.EncodingHextile}
-	if !reflect.DeepEqual(encodings, want) {
-		t.Fatalf("ClientEncodings = %v, want %v", encodings, want)
-	}
-	for _, encoding := range encodings {
-		if encoding == rfb.EncodingTight || encoding == rfb.EncodingTightPNG {
-			t.Fatalf("ClientEncodings advertises %d", encoding)
+	for _, banned := range []rfb.Encoding{rfb.EncodingTight, rfb.EncodingTightPNG} {
+		for _, encoding := range encodings {
+			if encoding == banned {
+				t.Fatalf("ClientEncodings advertises %d, which has no decoder", encoding)
+			}
 		}
 	}
+	for _, encoding := range encodings {
+		t.Run(fmt.Sprintf("encoding_%d", encoding), func(t *testing.T) {
+			frame, err := rfb.NewFramebuffer(2, 2, rfb.DefaultPixelFormat())
+			if err != nil {
+				t.Fatalf("NewFramebuffer: %v", err)
+			}
+			data := advertisedEncodingRectangle(t, encoding, rfb.DefaultPixelFormat())
+			if _, err := frame.ReadRectangles(bytes.NewReader(data), 1); err != nil {
+				t.Fatalf("advertised encoding %d is not decodable: %v", encoding, err)
+			}
+		})
+	}
+}
+
+// advertisedEncodingRectangle builds one minimal rectangle in encoding. It is
+// independent of the framebuffer implementation so the decoder is exercised
+// on the wire form a server would send.
+func advertisedEncodingRectangle(t *testing.T, encoding rfb.Encoding, pf rfb.PixelFormat) []byte {
+	t.Helper()
+	width, height := uint16(1), uint16(1)
+	var payload []byte
+	switch encoding {
+	case rfb.EncodingRaw:
+		payload = make([]byte, pf.BytesPerPixel())
+	case rfb.EncodingCopyRect:
+		payload = []byte{0, 0, 0, 0}
+	case rfb.EncodingRRE:
+		payload = make([]byte, 4+pf.BytesPerPixel())
+	case rfb.EncodingHextile:
+		payload = append([]byte{1}, make([]byte, pf.BytesPerPixel())...)
+	case rfb.EncodingZRLE:
+		var compressed bytes.Buffer
+		writer := zlib.NewWriter(&compressed)
+		if _, err := writer.Write([]byte{1}); err != nil {
+			t.Fatalf("zlib: %v", err)
+		}
+		if _, err := writer.Write(make([]byte, pf.CPixelBytes())); err != nil {
+			t.Fatalf("zlib: %v", err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatalf("zlib: %v", err)
+		}
+		payload = make([]byte, 4)
+		binary.BigEndian.PutUint32(payload, uint32(compressed.Len()))
+		payload = append(payload, compressed.Bytes()...)
+	case rfb.EncodingExtendedDesktopSize:
+		payload = []byte{0, 0, 0, 0}
+	case rfb.EncodingCursorWithAlpha:
+		width, height = 0, 0
+		payload = []byte{0, 0, 0, 0}
+	case rfb.EncodingFence, rfb.EncodingContinuousUpdates:
+	default:
+		t.Fatalf("no wire fixture for advertised encoding %d", encoding)
+	}
+	header := make([]byte, 12)
+	binary.BigEndian.PutUint16(header[4:6], width)
+	binary.BigEndian.PutUint16(header[6:8], height)
+	binary.BigEndian.PutUint32(header[8:12], uint32(int32(encoding)))
+	return append(header, payload...)
 }
 
 func TestSetEncodingsRefusesUndecodableEncodings(t *testing.T) {
@@ -434,8 +497,8 @@ func TestSetEncodingsRefusesUndecodableEncodings(t *testing.T) {
 	}{
 		{"Tight", rfb.EncodingTight},
 		{"TightPNG", rfb.EncodingTightPNG},
-		{"ZRLE", rfb.Encoding(16)},
 		{"DesktopSize", rfb.Encoding(-223)},
+		{"Unknown", rfb.Encoding(9999)},
 	}
 	for _, test := range undecodable {
 		t.Run(test.name, func(t *testing.T) {

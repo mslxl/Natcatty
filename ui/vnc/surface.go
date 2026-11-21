@@ -17,6 +17,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/ui/locales"
 )
 
 // unicodeKeysymBase prefixes a Unicode code point as an X11 keysym. Latins 1
@@ -61,6 +62,19 @@ type Surface struct {
 	scaledFor   uint64
 	frame       image.Rectangle
 	pane        ui.Rect
+	// cursor is the newest CursorWithAlpha shape. Ticket 19 renders it; this
+	// slice stores it so the display event is not lost.
+	cursor *appsession.CursorShape
+	// resizeUnsupported latches after the server refuses or never negotiates
+	// desktop resizing, so the viewer stops asking and keeps local scaling.
+	resizeUnsupported bool
+	resizeInFlight    bool
+	// resizeRequested is the pane size of the outstanding or last-answered
+	// resize. It suppresses duplicate requests for that size: it stays set
+	// while a forwarded (pending) request may still complete, and after a
+	// timeout it acts as a per-size backoff until the pane uses another size.
+	// A DisplayEventResize of the same size, or a successful reply, clears it.
+	resizeRequested image.Point
 
 	// UI-thread state.
 	focused      bool
@@ -112,8 +126,20 @@ func (s *Surface) consume(events <-chan appsession.DisplayEvent) {
 				s.requestRedraw()
 			case appsession.DisplayEventResize:
 				if event.Width > 0 && event.Height > 0 {
+					s.mu.Lock()
+					// The server reached the size we last asked for. A pending
+					// (status 4) request is complete and must not be re-sent.
+					if s.resizeRequested == image.Pt(event.Width, event.Height) {
+						s.resizeRequested = image.Point{}
+					}
+					s.mu.Unlock()
 					s.requestRedraw()
 				}
+			case appsession.DisplayEventCursorShape:
+				s.mu.Lock()
+				s.cursor = event.Cursor
+				s.mu.Unlock()
+				s.requestRedraw()
 			}
 		}
 	}
@@ -178,6 +204,106 @@ func (s *Surface) applyPendingFrame() {
 	s.scaledPix = nil
 }
 
+// maybeRequestDesktopSize asks the server to match a pane size change. It runs
+// only after the first frame, because ExtendedDesktopSize support is learned
+// from the server's initial full update; asking earlier would mistake
+// "not negotiated yet" for "unsupported". The request runs off the UI thread
+// so drawing never waits on the network.
+func (s *Surface) maybeRequestDesktopSize(width, height float32) {
+	w, h := int(width+0.5), int(height+0.5)
+	if w <= 0 || h <= 0 {
+		return
+	}
+	s.mu.Lock()
+	if !s.shouldRequestDesktopSize(w, h) {
+		s.mu.Unlock()
+		return
+	}
+	s.resizeRequested = image.Pt(w, h)
+	s.resizeInFlight = true
+	s.mu.Unlock()
+	go s.requestDesktopSize(w, h)
+}
+
+// shouldRequestDesktopSize reports whether a pane size should start a resize
+// request. The caller holds s.mu. A timeout leaves resizeRequested at the
+// failed size, so redraws at that size are suppressed while a different pane
+// size is still allowed to retry.
+func (s *Surface) shouldRequestDesktopSize(w, h int) bool {
+	if s.resizeUnsupported || s.resizeInFlight || s.frameNumber == 0 {
+		return false
+	}
+	if s.frame.Dx() == w && s.frame.Dy() == h {
+		return false
+	}
+	return s.resizeRequested != image.Pt(w, h)
+}
+
+// requestDesktopSize sends one resize and folds its outcome into the viewer
+// state. Any other error is left to the Session, which owns reconnect and
+// teardown.
+func (s *Surface) requestDesktopSize(width, height int) {
+	err := s.session.SetDesktopSize(width, height)
+	s.applyResizeResult(err)
+	s.requestRedraw()
+}
+
+// applyResizeResult records the result of one desktop-resize request.
+//
+//   - Success clears resizeRequested; the server adopted the size.
+//   - A pending (forwarded) status is not a failure: the server may complete it
+//     later, so the requested size stays set to avoid spamming and local
+//     scaling is not latched. A later DisplayEventResize of that size clears it.
+//   - A refusal latches the local-scaling fallback and clears the size.
+//   - A timeout keeps resizeRequested at the failed size as a per-size
+//     backoff, so a silent server cannot make every redraw wait again; a
+//     different pane size may still retry.
+func (s *Surface) applyResizeResult(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resizeInFlight = false
+	switch {
+	case err == nil:
+		s.resizeRequested = image.Point{}
+	case errors.Is(err, appsession.ErrDesktopResizePending):
+		// Keep the request; the server may complete it asynchronously.
+	case errors.Is(err, appsession.ErrDesktopResizeUnsupported),
+		errors.Is(err, appsession.ErrDesktopResizeRefused):
+		s.resizeRequested = image.Point{}
+		s.resizeUnsupported = true
+	case errors.Is(err, appsession.ErrDesktopResizeTimeout):
+		// Keep resizeRequested as the per-size backoff.
+	default:
+		s.resizeRequested = image.Point{}
+	}
+}
+
+// LocalScaling reports that the server cannot resize its desktop, so the
+// viewer letterboxes and scales the framebuffer locally.
+func (s *Surface) LocalScaling() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.resizeUnsupported
+}
+
+// ResizeFallbackNotice is the user-facing message for LocalScaling, or "" when
+// remote resizing works (or has not been attempted yet). The per-kind chrome
+// added by a later ticket renders it.
+func (s *Surface) ResizeFallbackNotice() string {
+	if !s.LocalScaling() {
+		return ""
+	}
+	return locales.SessionVNCResizeFallback()
+}
+
+// Cursor returns the latest cursor shape the server sent, or nil when no shape
+// has arrived. Rendering belongs to the viewer chrome ticket.
+func (s *Surface) Cursor() *appsession.CursorShape {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cursor
+}
+
 // draw paints the letterbox background and the bitmap in its fit rectangle.
 // The pane is kept in element-local coordinates: MyGo reports pointer input
 // relative to the element's box, while Draw receives its window rectangle.
@@ -187,6 +313,7 @@ func (s *Surface) draw(p *ui.Painter, r ui.Rect) {
 	frame := s.frame
 	s.pane = ui.Rect{W: r.W, H: r.H}
 	s.mu.Unlock()
+	s.maybeRequestDesktopSize(r.W, r.H)
 	if bitmap == nil || frame.Empty() {
 		return
 	}
@@ -299,6 +426,7 @@ func (s *Surface) Close() {
 		s.pixels = nil
 		s.scaled = nil
 		s.scaledPix = nil
+		s.cursor = nil
 		s.mu.Unlock()
 	})
 }

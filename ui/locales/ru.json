@@ -18,6 +18,7 @@
   "sessionDismiss": "Скрыть",
   "sessionScreenSaved": "Текущий экран сохранён.",
   "sessionScreenFailed": "Не удалось сохранить текущий экран.",
+  "sessionVNCResizeFallback": "Используется локальное масштабирование: сервер не может изменить размер рабочего стола.",
   "sessionMenuHibernate": "Приостановить",
   "sessionMenuObserveSnapshot": "Снимок наблюдателя",
   "sessionHibernatedTitle": "Сеанс приостановлен",

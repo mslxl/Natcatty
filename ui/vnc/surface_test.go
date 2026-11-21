@@ -2,6 +2,7 @@ package vnc_test
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"net"
@@ -65,6 +66,7 @@ type fixtureOptions struct {
 	frame         *image.RGBA
 	width, height int
 	root          func(*ui.Context, *vncui.Surface) ui.Element
+	configure     func(*rfbtest.Config)
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -90,11 +92,15 @@ func newFixtureWithOptions(t *testing.T, opts fixtureOptions) *fixture {
 		width, height = 160, 120
 	}
 	serverConn, clientConn := net.Pipe()
-	server := rfbtest.New(rfbtest.Config{
+	serverCfg := rfbtest.Config{
 		Frame:       frame,
 		DesktopName: "lab-desktop",
 		Encoding:    rfb.EncodingRaw,
-	})
+	}
+	if opts.configure != nil {
+		opts.configure(&serverCfg)
+	}
+	server := rfbtest.New(serverCfg)
 	serve := make(chan error, 1)
 	go func() { serve <- server.Serve(serverConn) }()
 
@@ -287,6 +293,205 @@ func hasPress(pointers []rfbtest.PointerEvent) bool {
 		}
 	}
 	return false
+}
+
+func desktopSizes(server *rfbtest.Server) []rfbtest.DesktopSizeRequest {
+	return server.Received().DesktopSizes
+}
+
+func requestedSize(server *rfbtest.Server, width, height uint16) bool {
+	for _, request := range desktopSizes(server) {
+		if request.Width == width && request.Height == height {
+			return true
+		}
+	}
+	return false
+}
+
+// TestPaneResizeAsksTheServerForTheMatchingDesktopSize proves ExtendedDesktopSize
+// is used for both the initial pane fit and a later pane resize, and that the
+// server's follow-up resize reaches the Session snapshot.
+func TestPaneResizeAsksTheServerForTheMatchingDesktopSize(t *testing.T) {
+	f := newFixtureWithOptions(t, fixtureOptions{configure: func(cfg *rfbtest.Config) {
+		cfg.ExtendedDesktopSize = true
+	}})
+	f.tester.Frame()
+	waitUntil(t, "the initial 160x120 resize", func() bool {
+		f.tester.Frame()
+		return requestedSize(f.server, 160, 120)
+	})
+
+	f.tester.SetSize(80, 60)
+	waitUntil(t, "the 80x60 resize", func() bool {
+		f.tester.Frame()
+		return requestedSize(f.server, 80, 60)
+	})
+	waitUntil(t, "the Session to adopt the server's size", func() bool {
+		f.tester.Frame()
+		snapshot := f.session.Snapshot()
+		return snapshot.DisplayWidth == 80 && snapshot.DisplayHeight == 60
+	})
+	if f.surface.LocalScaling() {
+		t.Fatal("a supporting server was reported as local scaling")
+	}
+}
+
+// TestServerWithoutResizeKeepsLocalScaling proves the fallback: when the server
+// never negotiates ExtendedDesktopSize the viewer stops asking, keeps fitting
+// locally and exposes a notice the chrome can show.
+func TestServerWithoutResizeKeepsLocalScaling(t *testing.T) {
+	f := newFixture(t)
+	waitUntil(t, "the local scaling fallback", func() bool {
+		f.tester.Frame()
+		return f.surface.LocalScaling()
+	})
+	if notice := f.surface.ResizeFallbackNotice(); notice == "" {
+		t.Fatal("the local scaling fallback has no notice")
+	}
+	if len(desktopSizes(f.server)) != 0 {
+		t.Fatalf("the test server received %+v despite not supporting resize", desktopSizes(f.server))
+	}
+
+	// The pane still renders the letterboxed desktop after a local resize.
+	f.tester.SetSize(80, 60)
+	var shot *image.RGBA
+	waitUntil(t, "the local-scaled frame", func() bool {
+		f.tester.Frame()
+		shot = f.tester.Image()
+		return shot.RGBAAt(20, 15) == red && shot.RGBAAt(60, 45) == blue
+	})
+}
+
+// TestServerRefusingResizeShowsTheFallback proves a nonzero ExtendedDesktopSize
+// status leaves local scaling in place and exposes the notice, rather than
+// silently caching the rejected size.
+func TestServerRefusingResizeShowsTheFallback(t *testing.T) {
+	f := newFixtureWithOptions(t, fixtureOptions{configure: func(cfg *rfbtest.Config) {
+		cfg.ExtendedDesktopSize = true
+		cfg.DesktopSizeStatus = 1
+	}})
+	f.tester.Frame()
+	waitUntil(t, "the resize request to reach the refusing server", func() bool {
+		f.tester.Frame()
+		return len(desktopSizes(f.server)) > 0
+	})
+	waitUntil(t, "the local scaling fallback", func() bool {
+		f.tester.Frame()
+		return f.surface.LocalScaling()
+	})
+	if notice := f.surface.ResizeFallbackNotice(); notice == "" {
+		t.Fatal("a refused resize left no fallback notice")
+	}
+
+	// The refused size is not retried forever: a later pane change leaves the
+	// latched fallback in place and still renders the letterboxed desktop.
+	f.tester.SetSize(80, 60)
+	var shot *image.RGBA
+	waitUntil(t, "the fallback frame after a pane change", func() bool {
+		f.tester.Frame()
+		shot = f.tester.Image()
+		return shot.RGBAAt(20, 15) == red && shot.RGBAAt(60, 45) == blue
+	})
+	if !f.surface.LocalScaling() {
+		t.Fatal("the fallback was cleared after a refused resize")
+	}
+}
+
+// TestForwardedResizeStaysPendingThenCompletes proves ExtendedDesktopSize
+// status 4 ("request forwarded") does not latch local scaling: the pane keeps
+// the same size pending, and a later server-initiated resize to that size
+// completes it and clears the request.
+func TestForwardedResizeStaysPendingThenCompletes(t *testing.T) {
+	f := newFixtureWithOptions(t, fixtureOptions{configure: func(cfg *rfbtest.Config) {
+		cfg.ExtendedDesktopSize = true
+		cfg.DesktopSizeStatus = 4
+		cfg.DesktopSizeFollowUp = true
+	}})
+	f.tester.Frame()
+	waitUntil(t, "the pane-size request", func() bool {
+		f.tester.Frame()
+		return requestedSize(f.server, 160, 120)
+	})
+	waitUntil(t, "the forwarded resize to complete", func() bool {
+		f.tester.Frame()
+		snapshot := f.session.Snapshot()
+		return snapshot.DisplayWidth == 160 && snapshot.DisplayHeight == 120
+	})
+	// Let redraws run at the new size; the pending request must not be re-sent
+	// and the fallback must never latch.
+	for i := 0; i < 5; i++ {
+		f.tester.Frame()
+	}
+	if f.surface.LocalScaling() {
+		t.Fatal("a forwarded (status 4) resize latched local scaling")
+	}
+	if notice := f.surface.ResizeFallbackNotice(); notice != "" {
+		t.Fatalf("a forwarded resize showed the fallback notice: %q", notice)
+	}
+	if sizes := desktopSizes(f.server); len(sizes) != 1 {
+		t.Fatalf("desktop size requests = %+v, want one pending request", sizes)
+	}
+}
+
+// TestForwardedResizeWithoutFollowUpKeepsTheRequest proves a status-4 answer
+// with no follow-up is not retried at the same pane size, a different pane
+// size still retries, and the fallback never latches.
+func TestForwardedResizeWithoutFollowUpKeepsTheRequest(t *testing.T) {
+	f := newFixtureWithOptions(t, fixtureOptions{configure: func(cfg *rfbtest.Config) {
+		cfg.ExtendedDesktopSize = true
+		cfg.DesktopSizeStatus = 4
+		cfg.DesktopSizeFollowUp = false
+	}})
+	f.tester.Frame()
+	waitUntil(t, "the first pane-size request", func() bool {
+		f.tester.Frame()
+		return requestedSize(f.server, 160, 120)
+	})
+	// Redraws at the same pane size must not spam the silent server.
+	for i := 0; i < 10; i++ {
+		f.tester.Frame()
+	}
+	if sizes := desktopSizes(f.server); len(sizes) != 1 {
+		t.Fatalf("desktop size requests = %+v, want exactly one pending request", sizes)
+	}
+	if f.surface.LocalScaling() {
+		t.Fatal("a forwarded (status 4) resize latched local scaling")
+	}
+
+	// A different pane size is allowed to retry.
+	f.tester.SetSize(80, 60)
+	waitUntil(t, "a retry at the new pane size", func() bool {
+		f.tester.Frame()
+		return requestedSize(f.server, 80, 60)
+	})
+	if f.surface.LocalScaling() {
+		t.Fatal("a retry after a forwarded resize latched local scaling")
+	}
+	if notice := f.surface.ResizeFallbackNotice(); notice != "" {
+		t.Fatalf("a forwarded resize showed the fallback notice: %q", notice)
+	}
+}
+
+// TestRefusedResizeStatusesLatchTheFallback proves statuses 1, 2 and 3 (and an
+// unknown nonzero status, which fails safe) leave local scaling in place.
+func TestRefusedResizeStatusesLatchTheFallback(t *testing.T) {
+	for _, status := range []uint8{1, 2, 3, 9} {
+		t.Run(fmt.Sprintf("status-%d", status), func(t *testing.T) {
+			f := newFixtureWithOptions(t, fixtureOptions{configure: func(cfg *rfbtest.Config) {
+				cfg.ExtendedDesktopSize = true
+				cfg.DesktopSizeStatus = status
+			}})
+			f.tester.Frame()
+			waitUntil(t, "the resize request", func() bool {
+				f.tester.Frame()
+				return len(desktopSizes(f.server)) > 0
+			})
+			waitUntil(t, "the local scaling fallback", func() bool {
+				f.tester.Frame()
+				return f.surface.LocalScaling()
+			})
+		})
+	}
 }
 
 // TestPointerUsesPaneLocalCoordinates proves the viewer inverts the fit with

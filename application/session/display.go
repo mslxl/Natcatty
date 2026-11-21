@@ -198,6 +198,12 @@ type SerializedDisplay struct {
 	closed    bool
 	closeOnce sync.Once
 	closeErr  error
+
+	// resizeMu serializes desktop-resize calls and, in Close, lets the
+	// wrapper wait for a call that passed the open check before closing the
+	// adapter. It is never held across the adapter's blocking wait by any
+	// other send, so input keeps flowing during a resize.
+	resizeMu sync.Mutex
 }
 
 // NewSerializedDisplay wraps inner. A nil inner returns nil.
@@ -448,25 +454,48 @@ func (d *SerializedDisplay) RequestUpdate(incremental bool) error {
 	return d.inner.RequestUpdate(incremental)
 }
 
-// SetDesktopSize serializes one desktop resize request. The adapter's
-// unsupported error is returned unchanged.
+// SetDesktopSize sends one desktop resize request. The adapter may block for
+// its reply bound (several seconds) while a server is slow or silent, so the
+// send mutex is deliberately NOT held across the wait: key and pointer input
+// must keep flowing while a resize is outstanding. The mutex is acquired only
+// to check closed; concurrent resize calls are serialized by resizeMu. Close
+// marks the wrapper closed, closes the adapter (which must unblock an in-flight
+// adapter wait), and then waits for any call that passed the open check to
+// return before Close itself returns. A SetDesktopSize that starts after the
+// closed flag is set therefore never reaches the closed adapter.
 func (d *SerializedDisplay) SetDesktopSize(width, height int) error {
+	d.resizeMu.Lock()
+	defer d.resizeMu.Unlock()
+
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	if err := d.checkOpen(); err != nil {
+		d.mu.Unlock()
 		return err
 	}
+	d.mu.Unlock()
+
 	return d.inner.SetDesktopSize(width, height)
 }
 
 // Close closes the adapter exactly once. Once it returns, every send reports
 // ErrNoDisplay instead of reaching the closed adapter.
+//
+// It first sets the closed flag and closes the adapter under the send mutex, so
+// no other send can overlap the adapter's Close. An in-flight SetDesktopSize
+// does not hold the send mutex; the adapter's Close must unblock that wait (the
+// VNC adapter closes its done channel). Close then joins the resize mutex, so
+// a call that passed the open check cannot call the adapter after Close returns.
+// Adapters whose blocking SetDesktopSize does not observe Close would make
+// Close wait for its own timeout; that is the adapter's contract to uphold.
 func (d *SerializedDisplay) Close() error {
 	d.closeOnce.Do(func() {
 		d.mu.Lock()
-		defer d.mu.Unlock()
 		d.closed = true
 		d.closeErr = d.inner.Close()
+		d.mu.Unlock()
+
+		d.resizeMu.Lock()
+		d.resizeMu.Unlock()
 	})
 	return d.closeErr
 }

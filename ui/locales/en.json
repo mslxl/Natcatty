@@ -18,6 +18,7 @@
   "sessionDismiss": "Dismiss",
   "sessionScreenSaved": "Saved the current screen.",
   "sessionScreenFailed": "Could not save the current screen.",
+  "sessionVNCResizeFallback": "Using local scaling: the server cannot resize its desktop.",
   "sessionMenuHibernate": "Hibernate",
   "sessionMenuObserveSnapshot": "Observer snapshot",
   "sessionHibernatedTitle": "Session hibernated",

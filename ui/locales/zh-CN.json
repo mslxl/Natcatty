@@ -18,6 +18,7 @@
   "sessionDismiss": "关闭",
   "sessionScreenSaved": "已保存当前屏幕。",
   "sessionScreenFailed": "无法保存当前屏幕。",
+  "sessionVNCResizeFallback": "正在使用本地缩放：服务器无法调整其桌面大小。",
   "sessionMenuHibernate": "休眠",
   "sessionMenuObserveSnapshot": "观察者快照",
   "sessionHibernatedTitle": "会话已休眠",

@@ -18,6 +18,7 @@
   "sessionDismiss": "Descartar",
   "sessionScreenSaved": "Se guardó la pantalla actual.",
   "sessionScreenFailed": "No se pudo guardar la pantalla actual.",
+  "sessionVNCResizeFallback": "Usando escala local: el servidor no puede cambiar el tamaño de su escritorio.",
   "sessionMenuHibernate": "Hibernar",
   "sessionMenuObserveSnapshot": "Instantánea del observador",
   "sessionHibernatedTitle": "Sesión suspendida",

@@ -33,6 +33,10 @@ type fakeDisplay struct {
 	resize     int
 	resizeErr  error
 	closeCount int
+	// resizeGate, when non-nil, blocks SetDesktopSize until it is closed.
+	// resizeEntered, when non-nil, receives once when the call has started.
+	resizeGate    chan struct{}
+	resizeEntered chan struct{}
 
 	closeOnce sync.Once
 }
@@ -98,9 +102,22 @@ func (d *fakeDisplay) SetDesktopSize(width, height int) error {
 	d.enter()
 	defer d.leave()
 	d.mu.Lock()
-	defer d.mu.Unlock()
+	entered, gate := d.resizeEntered, d.resizeGate
+	d.mu.Unlock()
+	if entered != nil {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+	}
+	if gate != nil {
+		<-gate
+	}
+	d.mu.Lock()
 	d.resize++
-	return d.resizeErr
+	err := d.resizeErr
+	d.mu.Unlock()
+	return err
 }
 
 func (d *fakeDisplay) Close() error {
@@ -852,6 +869,120 @@ func TestSerializedDisplayRejectsSendsAfterClose(t *testing.T) {
 	inner.mu.Unlock()
 	if closeCount != 1 {
 		t.Fatalf("adapter Close ran %d times, want once", closeCount)
+	}
+}
+
+// TestSendKeyIsNotBlockedByAnOutstandingResize proves the wrapper does not hold
+// its send mutex across the adapter's blocking resize wait: input keeps
+// flowing while a slow server's reply is outstanding.
+func TestSendKeyIsNotBlockedByAnOutstandingResize(t *testing.T) {
+	inner := newFakeDisplay()
+	gate := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	inner.resizeGate = gate
+	inner.resizeEntered = entered
+	display := NewSerializedDisplay(inner)
+
+	resizeDone := make(chan error, 1)
+	go func() { resizeDone <- display.SetDesktopSize(800, 600) }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("SetDesktopSize never reached the adapter")
+	}
+
+	keyDone := make(chan error, 1)
+	go func() { keyDone <- display.SendKey(0xff0d, true) }()
+	select {
+	case err := <-keyDone:
+		if err != nil {
+			t.Fatalf("SendKey: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SendKey blocked while a desktop resize wait was outstanding")
+	}
+	inner.mu.Lock()
+	keys := len(inner.keys)
+	inner.mu.Unlock()
+	if keys != 1 {
+		t.Fatalf("adapter received %d keys, want 1 during the resize wait", keys)
+	}
+
+	close(gate)
+	select {
+	case err := <-resizeDone:
+		if err != nil {
+			t.Fatalf("SetDesktopSize: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("SetDesktopSize did not return after the gate opened")
+	}
+}
+
+// TestCloseWaitsForAnInFlightResize proves Close does not return while a
+// SetDesktopSize that already passed the open check is still inside the
+// adapter, and that a resize starting afterwards never reaches the adapter.
+func TestCloseWaitsForAnInFlightResize(t *testing.T) {
+	inner := newFakeDisplay()
+	gate := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	inner.resizeGate = gate
+	inner.resizeEntered = entered
+	display := NewSerializedDisplay(inner)
+
+	resizeDone := make(chan error, 1)
+	go func() { resizeDone <- display.SetDesktopSize(800, 600) }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("SetDesktopSize never reached the adapter")
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- display.Close() }()
+	select {
+	case <-closeDone:
+		t.Fatal("Close returned while a resize was still in flight")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(gate)
+	select {
+	case err := <-resizeDone:
+		if err != nil {
+			t.Fatalf("SetDesktopSize: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("SetDesktopSize did not return")
+	}
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return after the resize finished")
+	}
+
+	inner.mu.Lock()
+	resizes, closes := inner.resize, inner.closeCount
+	inner.mu.Unlock()
+	if resizes != 1 {
+		t.Fatalf("adapter resize calls = %d, want 1", resizes)
+	}
+	if closes != 1 {
+		t.Fatalf("adapter Close calls = %d, want 1", closes)
+	}
+
+	// A resize that starts after Close must not reach the closed adapter.
+	if err := display.SetDesktopSize(640, 480); !errors.Is(err, ErrNoDisplay) {
+		t.Fatalf("post-close SetDesktopSize = %v, want ErrNoDisplay", err)
+	}
+	inner.mu.Lock()
+	resizes = inner.resize
+	inner.mu.Unlock()
+	if resizes != 1 {
+		t.Fatal("a post-close resize reached the adapter")
 	}
 }
 

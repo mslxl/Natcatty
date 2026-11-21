@@ -7,6 +7,7 @@ package rfbtest
 
 import (
 	"bytes"
+	"compress/zlib"
 	"encoding/binary"
 	"fmt"
 	"image"
@@ -64,6 +65,45 @@ type Config struct {
 	// for RFB 3.3, which has room for one security type. When empty the list
 	// derives from Password: {VNCAuth} when it is set, otherwise {None}.
 	SecurityTypes []rfb.SecurityType
+	// ExtendedDesktopSize makes the server send an ExtendedDesktopSize
+	// rectangle with the initial full update and follow a client
+	// SetDesktopSize request.
+	ExtendedDesktopSize bool
+	// DesktopSizeStatus makes the server answer a client SetDesktopSize with
+	// this nonzero ExtendedDesktopSize status instead of resizing. Status 1 is
+	// "prohibited"; status 4 is "request forwarded", which a QEMU server uses
+	// while the guest boots. The server replies with its current layout and
+	// does not send a repaint unless DesktopSizeFollowUp is set.
+	DesktopSizeStatus uint8
+	// DesktopSizeFollowUp, when true, makes a status-4 answer complete later:
+	// the server adopts the requested layout and streams a successful
+	// server-initiated ExtendedDesktopSize (reason 0) plus a repaint at that
+	// size, modeling QEMU finishing a forwarded request.
+	DesktopSizeFollowUp bool
+	// FenceBurst sends this many additional ServerFence requests during
+	// extension acknowledgement, reading one client message between each so a
+	// synchronous client cannot deadlock on an unbuffered stream.
+	FenceBurst int
+	// ExtraEncoding, when nonzero, appends one rectangle header in that
+	// encoding after the configured plan, with no payload. The client must
+	// refuse the encoding before reading any payload.
+	ExtraEncoding rfb.Encoding
+	// ContinuousUpdates makes the server acknowledge the pseudo-encoding with
+	// EndOfContinuousUpdates and stream a frame after the client enables it.
+	ContinuousUpdates bool
+	// Fence makes the server send a ServerFence request when it sees the
+	// pseudo-encoding and answer ClientFence requests.
+	Fence bool
+	// FenceFlags overrides the flags on the initial ServerFence request. Zero
+	// uses FenceRequest|FenceBlockBefore. FenceRequest is always added, so a
+	// test can set an unknown bit to prove the client clears what it does not
+	// understand.
+	FenceFlags uint32
+	// Cursor sends one CursorWithAlpha shape before the first framebuffer
+	// update. HideCursor sends a zero-size (hidden) shape instead.
+	Cursor     *image.RGBA
+	CursorAt   image.Point
+	HideCursor bool
 }
 
 // UpdateRequest is a recorded FramebufferUpdateRequest.
@@ -88,6 +128,22 @@ type PointerEvent struct {
 	Y    uint16
 }
 
+// ContinuousUpdate is a recorded EnableContinuousUpdates message.
+type ContinuousUpdate struct {
+	Enable bool
+	X      uint16
+	Y      uint16
+	Width  uint16
+	Height uint16
+}
+
+// DesktopSizeRequest is a recorded SetDesktopSize message.
+type DesktopSizeRequest struct {
+	Width   uint16
+	Height  uint16
+	Screens []rfb.Screen
+}
+
 // Received is a snapshot of everything the client sent.
 type Received struct {
 	ClientVersion rfb.Version
@@ -103,6 +159,9 @@ type Received struct {
 	Keys            []KeyEvent
 	Pointers        []PointerEvent
 	CutTexts        []string
+	Continuous      []ContinuousUpdate
+	Fences          []rfb.Fence
+	DesktopSizes    []DesktopSizeRequest
 }
 
 // Server is the in-process test server. New prepares it; Serve performs one
@@ -115,10 +174,18 @@ type Server struct {
 	err    error
 	pf     rfb.PixelFormat
 
-	mu       sync.Mutex
-	received Received
-	sentBell bool
-	sentCut  bool
+	mu           sync.Mutex
+	received     Received
+	sentBell     bool
+	sentCut      bool
+	sentEnd      bool
+	sentFence    bool
+	sentCursor   bool
+	sentExtended bool
+
+	// zrleBuf and zrleWriter form the connection's persistent ZRLE stream.
+	zrleBuf    bytes.Buffer
+	zrleWriter *zlib.Writer
 }
 
 // New prepares a server for cfg. Invalid configurations are reported by Serve.
@@ -184,7 +251,7 @@ func (s *Server) checkRectangle(rect Rectangle) error {
 			rect.X, rect.Y, rect.Width, rect.Height, s.width, s.height)
 	}
 	switch rect.Encoding {
-	case rfb.EncodingRaw, rfb.EncodingRRE, rfb.EncodingHextile:
+	case rfb.EncodingRaw, rfb.EncodingRRE, rfb.EncodingHextile, rfb.EncodingZRLE:
 	case rfb.EncodingCopyRect:
 		if int(rect.SrcX)+int(rect.Width) > s.width || int(rect.SrcY)+int(rect.Height) > s.height {
 			return fmt.Errorf("rfbtest: CopyRect source %d,%d %dx%d outside %dx%d",
@@ -206,6 +273,15 @@ func (s *Server) Received() Received {
 	received.Keys = append([]KeyEvent(nil), s.received.Keys...)
 	received.Pointers = append([]PointerEvent(nil), s.received.Pointers...)
 	received.CutTexts = append([]string(nil), s.received.CutTexts...)
+	received.Continuous = append([]ContinuousUpdate(nil), s.received.Continuous...)
+	received.Fences = append([]rfb.Fence(nil), s.received.Fences...)
+	for i := range received.Fences {
+		received.Fences[i].Payload = append([]byte(nil), s.received.Fences[i].Payload...)
+	}
+	received.DesktopSizes = append([]DesktopSizeRequest(nil), s.received.DesktopSizes...)
+	for i := range received.DesktopSizes {
+		received.DesktopSizes[i].Screens = append([]rfb.Screen(nil), s.received.DesktopSizes[i].Screens...)
+	}
 	return received
 }
 
@@ -267,10 +343,11 @@ func (s *Server) Serve(conn io.ReadWriter) error {
 				return err
 			}
 		case 3:
-			if err := s.readUpdateRequest(conn); err != nil {
+			request, err := s.readUpdateRequest(conn)
+			if err != nil {
 				return err
 			}
-			if err := s.sendFrame(conn); err != nil {
+			if err := s.sendFrame(conn, request.Incremental); err != nil {
 				return err
 			}
 		case 4:
@@ -283,6 +360,18 @@ func (s *Server) Serve(conn io.ReadWriter) error {
 			}
 		case 6:
 			if err := s.readCutText(conn); err != nil {
+				return err
+			}
+		case 150:
+			if err := s.readContinuousUpdate(conn); err != nil {
+				return err
+			}
+		case 248:
+			if err := s.readFence(conn); err != nil {
+				return err
+			}
+		case 251:
+			if err := s.readSetDesktopSize(conn); err != nil {
 				return err
 			}
 		default:
@@ -467,7 +556,7 @@ func (s *Server) readSetPixelFormat(conn io.Reader) error {
 	return nil
 }
 
-func (s *Server) readSetEncodings(conn io.Reader) error {
+func (s *Server) readSetEncodings(conn io.ReadWriter) error {
 	var header [3]byte
 	if _, err := io.ReadFull(conn, header[:]); err != nil {
 		return err
@@ -487,13 +576,101 @@ func (s *Server) readSetEncodings(conn io.Reader) error {
 	s.mu.Lock()
 	s.received.Encodings = encodings
 	s.mu.Unlock()
+	return s.acknowledgeExtensions(conn, encodings)
+}
+
+// acknowledgeExtensions answers the pseudo-encodings the client advertised, as
+// the extensions require: EndOfContinuousUpdates announces ContinuousUpdates
+// and a ServerFence announces Fence.
+func (s *Server) acknowledgeExtensions(conn io.ReadWriter, encodings []rfb.Encoding) error {
+	advertised := func(want rfb.Encoding) bool {
+		for _, encoding := range encodings {
+			if encoding == want {
+				return true
+			}
+		}
+		return false
+	}
+	s.mu.Lock()
+	continuous := s.cfg.ContinuousUpdates && advertised(rfb.EncodingContinuousUpdates) && !s.sentEnd
+	if continuous {
+		s.sentEnd = true
+	}
+	fence := s.cfg.Fence && advertised(rfb.EncodingFence) && !s.sentFence
+	if fence {
+		s.sentFence = true
+	}
+	s.mu.Unlock()
+	if continuous {
+		if err := writeAll(conn, []byte{byte(rfb.ServerEndOfContinuousUpdates)}); err != nil {
+			return err
+		}
+	}
+	if fence {
+		flags := rfb.FenceRequest | rfb.FenceBlockBefore
+		if s.cfg.FenceFlags != 0 {
+			flags = s.cfg.FenceFlags | rfb.FenceRequest
+		}
+		if err := writeServerFence(conn, rfb.Fence{
+			Flags:   flags,
+			Payload: []byte("rfbtest"),
+		}); err != nil {
+			return err
+		}
+	}
+	for i := 0; i < s.cfg.FenceBurst; i++ {
+		if err := writeServerFence(conn, rfb.Fence{
+			Flags:   rfb.FenceRequest,
+			Payload: []byte("burst"),
+		}); err != nil {
+			return err
+		}
+		// Read one client message so its reply can make progress; it is
+		// recorded by the same handlers the main loop uses.
+		if err := s.readBurstMessage(conn); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-func (s *Server) readUpdateRequest(conn io.Reader) error {
+// readBurstMessage consumes one client message during the fence burst without
+// sending a frame, so reading cannot block the burst on a peer that is not
+// requesting updates.
+func (s *Server) readBurstMessage(conn io.ReadWriter) error {
+	var messageType [1]byte
+	if _, err := io.ReadFull(conn, messageType[:]); err != nil {
+		return err
+	}
+	switch messageType[0] {
+	case 0:
+		return s.readSetPixelFormat(conn)
+	case 2:
+		return s.readSetEncodings(conn)
+	case 3:
+		_, err := s.readUpdateRequest(conn)
+		return err
+	case 4:
+		return s.readKey(conn)
+	case 5:
+		return s.readPointer(conn)
+	case 6:
+		return s.readCutText(conn)
+	case 150:
+		return s.readContinuousUpdate(conn)
+	case 248:
+		return s.readFence(conn)
+	case 251:
+		return s.readSetDesktopSize(conn)
+	default:
+		return fmt.Errorf("rfbtest: unknown client message type %d", messageType[0])
+	}
+}
+
+func (s *Server) readUpdateRequest(conn io.Reader) (UpdateRequest, error) {
 	var payload [9]byte
 	if _, err := io.ReadFull(conn, payload[:]); err != nil {
-		return err
+		return UpdateRequest{}, err
 	}
 	request := UpdateRequest{
 		Incremental: payload[0] != 0,
@@ -505,6 +682,151 @@ func (s *Server) readUpdateRequest(conn io.Reader) error {
 	s.mu.Lock()
 	s.received.Requests = append(s.received.Requests, request)
 	s.mu.Unlock()
+	return request, nil
+}
+
+func (s *Server) readContinuousUpdate(conn io.ReadWriter) error {
+	var payload [9]byte
+	if _, err := io.ReadFull(conn, payload[:]); err != nil {
+		return err
+	}
+	update := ContinuousUpdate{
+		Enable: payload[0] != 0,
+		X:      binary.BigEndian.Uint16(payload[1:3]),
+		Y:      binary.BigEndian.Uint16(payload[3:5]),
+		Width:  binary.BigEndian.Uint16(payload[5:7]),
+		Height: binary.BigEndian.Uint16(payload[7:9]),
+	}
+	s.mu.Lock()
+	s.received.Continuous = append(s.received.Continuous, update)
+	s.mu.Unlock()
+	if update.Enable && s.cfg.ContinuousUpdates {
+		// Continuous updates mean the server sends frames without a new
+		// FramebufferUpdateRequest; one suffices to prove the path.
+		if err := s.sendFrame(conn, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) readFence(conn io.ReadWriter) error {
+	fence, err := readFencePayload(conn)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.received.Fences = append(s.received.Fences, fence)
+	s.mu.Unlock()
+	if fence.Request() {
+		response := rfb.Fence{
+			Flags:   fence.Flags &^ rfb.FenceRequest,
+			Payload: append([]byte(nil), fence.Payload...),
+		}
+		return writeServerFence(conn, response)
+	}
+	return nil
+}
+
+func readFencePayload(conn io.Reader) (rfb.Fence, error) {
+	var header [8]byte
+	if _, err := io.ReadFull(conn, header[:]); err != nil {
+		return rfb.Fence{}, err
+	}
+	flags := binary.BigEndian.Uint32(header[3:7])
+	length := int(header[7])
+	if length > rfb.FenceMaxPayload {
+		return rfb.Fence{}, fmt.Errorf("rfbtest: fence payload is %d bytes", length)
+	}
+	payload := make([]byte, length)
+	if _, err := io.ReadFull(conn, payload); err != nil {
+		return rfb.Fence{}, err
+	}
+	return rfb.Fence{Flags: flags, Payload: payload}, nil
+}
+
+func writeServerFence(conn io.Writer, fence rfb.Fence) error {
+	var header [9]byte
+	header[0] = byte(rfb.ServerFenceMessage)
+	binary.BigEndian.PutUint32(header[4:8], fence.Flags)
+	header[8] = byte(len(fence.Payload))
+	if err := writeAll(conn, header[:]); err != nil {
+		return err
+	}
+	return writeAll(conn, fence.Payload)
+}
+
+func (s *Server) readSetDesktopSize(conn io.ReadWriter) error {
+	var header [7]byte
+	if _, err := io.ReadFull(conn, header[:]); err != nil {
+		return err
+	}
+	request := DesktopSizeRequest{
+		Width:  binary.BigEndian.Uint16(header[1:3]),
+		Height: binary.BigEndian.Uint16(header[3:5]),
+	}
+	count := int(header[5])
+	payload := make([]byte, count*16)
+	if _, err := io.ReadFull(conn, payload); err != nil {
+		return err
+	}
+	request.Screens = make([]rfb.Screen, count)
+	for i := range request.Screens {
+		wire := payload[i*16:]
+		request.Screens[i] = rfb.Screen{
+			ID:     binary.BigEndian.Uint32(wire[0:4]),
+			X:      binary.BigEndian.Uint16(wire[4:6]),
+			Y:      binary.BigEndian.Uint16(wire[6:8]),
+			Width:  binary.BigEndian.Uint16(wire[8:10]),
+			Height: binary.BigEndian.Uint16(wire[10:12]),
+			Flags:  binary.BigEndian.Uint32(wire[12:16]),
+		}
+	}
+	s.mu.Lock()
+	s.received.DesktopSizes = append(s.received.DesktopSizes, request)
+	s.mu.Unlock()
+	if !s.cfg.ExtendedDesktopSize {
+		return nil
+	}
+	if s.cfg.DesktopSizeStatus != 0 {
+		// Answer with the current desktop and the configured status. For a
+		// refusal this is final; for status 4 with follow-up the server later
+		// adopts the request, as QEMU does after the guest boots.
+		screens := []rfb.Screen{{Width: uint16(s.width), Height: uint16(s.height)}}
+		if err := s.sendExtendedDesktopSize(conn, 1, s.cfg.DesktopSizeStatus, uint16(s.width), uint16(s.height), screens); err != nil {
+			return err
+		}
+		if s.cfg.DesktopSizeStatus == 4 && s.cfg.DesktopSizeFollowUp {
+			if err := s.resizeFrame(int(request.Width), int(request.Height)); err != nil {
+				return err
+			}
+			if err := s.sendExtendedDesktopSize(conn, 0, 0, request.Width, request.Height, request.Screens); err != nil {
+				return err
+			}
+			return s.sendFrame(conn, false)
+		}
+		return nil
+	}
+	if err := s.resizeFrame(int(request.Width), int(request.Height)); err != nil {
+		return err
+	}
+	if err := s.sendExtendedDesktopSize(conn, 1, 0, request.Width, request.Height, request.Screens); err != nil {
+		return err
+	}
+	// A following data update lets the client repaint at the new size.
+	return s.sendFrame(conn, false)
+}
+
+// resizeFrame reallocates the canned frame for a requested desktop size,
+// keeping the old pixels in the top-left corner.
+func (s *Server) resizeFrame(width, height int) error {
+	if width <= 0 || height <= 0 || width > 0xffff || height > 0xffff {
+		return fmt.Errorf("rfbtest: invalid desktop size %dx%d", width, height)
+	}
+	resized := image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.Draw(resized, resized.Bounds(), s.frame, s.frame.Bounds().Min, draw.Src)
+	s.frame = resized
+	s.width, s.height = width, height
 	return nil
 }
 
@@ -555,7 +877,24 @@ func (s *Server) readCutText(conn io.Reader) error {
 	return nil
 }
 
-func (s *Server) sendFrame(conn io.Writer) error {
+func (s *Server) sendFrame(conn io.Writer, incremental bool) error {
+	// ExtendedDesktopSize must be the only rectangle in its update, so it is
+	// sent on its own before the framebuffer data.
+	if s.cfg.ExtendedDesktopSize && !incremental && s.advertised(rfb.EncodingExtendedDesktopSize) {
+		s.mu.Lock()
+		due := !s.sentExtended
+		if due {
+			s.sentExtended = true
+		}
+		s.mu.Unlock()
+		if due {
+			screens := []rfb.Screen{{Width: uint16(s.width), Height: uint16(s.height)}}
+			if err := s.sendExtendedDesktopSize(conn, 0, 0, uint16(s.width), uint16(s.height), screens); err != nil {
+				return err
+			}
+		}
+	}
+
 	plan := s.cfg.Rectangles
 	if len(plan) == 0 {
 		plan = []Rectangle{{
@@ -579,16 +918,129 @@ func (s *Server) sendFrame(conn io.Writer) error {
 		}
 	}
 
+	s.mu.Lock()
+	sendCursor := (s.cfg.Cursor != nil || s.cfg.HideCursor) && !s.sentCursor && s.advertisedLocked(rfb.EncodingCursorWithAlpha)
+	if sendCursor {
+		s.sentCursor = true
+	}
+	s.mu.Unlock()
+
 	var update bytes.Buffer
 	var header [4]byte
-	binary.BigEndian.PutUint16(header[2:4], uint16(len(plan)))
+	count := len(plan)
+	if sendCursor {
+		count++
+	}
+	if s.cfg.ExtraEncoding != 0 {
+		count++
+	}
+	binary.BigEndian.PutUint16(header[2:4], uint16(count))
 	update.Write(header[:])
+	if sendCursor {
+		if err := s.writeCursorRectangle(&update); err != nil {
+			return err
+		}
+	}
 	for _, rect := range plan {
 		if err := s.writeRectangle(&update, rect); err != nil {
 			return err
 		}
 	}
+	if s.cfg.ExtraEncoding != 0 {
+		// One in-bounds 1x1 rectangle in an encoding the client must refuse.
+		var extra [12]byte
+		binary.BigEndian.PutUint16(extra[4:6], 1)
+		binary.BigEndian.PutUint16(extra[6:8], 1)
+		binary.BigEndian.PutUint32(extra[8:12], uint32(int32(s.cfg.ExtraEncoding)))
+		update.Write(extra[:])
+	}
 	return writeAll(conn, update.Bytes())
+}
+
+// sendExtendedDesktopSize writes one update holding only an
+// ExtendedDesktopSize pseudo-rectangle. reason and status are the header's
+// x-position and y-position.
+func (s *Server) sendExtendedDesktopSize(conn io.Writer, reason, status uint8, width, height uint16, screens []rfb.Screen) error {
+	var update bytes.Buffer
+	var updateHeader [4]byte
+	binary.BigEndian.PutUint16(updateHeader[2:4], 1)
+	update.Write(updateHeader[:])
+	var header [12]byte
+	binary.BigEndian.PutUint16(header[0:2], uint16(reason))
+	binary.BigEndian.PutUint16(header[2:4], uint16(status))
+	binary.BigEndian.PutUint16(header[4:6], width)
+	binary.BigEndian.PutUint16(header[6:8], height)
+	extendedEncoding := int32(rfb.EncodingExtendedDesktopSize)
+	binary.BigEndian.PutUint32(header[8:12], uint32(extendedEncoding))
+	update.Write(header[:])
+	payload := make([]byte, 4+len(screens)*16)
+	payload[0] = byte(len(screens))
+	for i, screen := range screens {
+		offset := 4 + i*16
+		binary.BigEndian.PutUint32(payload[offset:offset+4], screen.ID)
+		binary.BigEndian.PutUint16(payload[offset+4:offset+6], screen.X)
+		binary.BigEndian.PutUint16(payload[offset+6:offset+8], screen.Y)
+		binary.BigEndian.PutUint16(payload[offset+8:offset+10], screen.Width)
+		binary.BigEndian.PutUint16(payload[offset+10:offset+12], screen.Height)
+		binary.BigEndian.PutUint32(payload[offset+12:offset+16], screen.Flags)
+	}
+	update.Write(payload)
+	return writeAll(conn, update.Bytes())
+}
+
+// writeCursorRectangle writes one CursorWithAlpha pseudo-rectangle in the raw
+// 32-bit RGBA form the client accepts.
+func (s *Server) writeCursorRectangle(update *bytes.Buffer) error {
+	cursor := s.cfg.Cursor
+	width, height := 0, 0
+	hotspot := s.cfg.CursorAt
+	if cursor != nil && !s.cfg.HideCursor {
+		bounds := cursor.Bounds()
+		width, height = bounds.Dx(), bounds.Dy()
+	}
+	var header [12]byte
+	binary.BigEndian.PutUint16(header[0:2], uint16(hotspot.X))
+	binary.BigEndian.PutUint16(header[2:4], uint16(hotspot.Y))
+	binary.BigEndian.PutUint16(header[4:6], uint16(width))
+	binary.BigEndian.PutUint16(header[6:8], uint16(height))
+	cursorEncoding := int32(rfb.EncodingCursorWithAlpha)
+	binary.BigEndian.PutUint32(header[8:12], uint32(cursorEncoding))
+	update.Write(header[:])
+	var encoding [4]byte
+	binary.BigEndian.PutUint32(encoding[:], uint32(rfb.EncodingRaw))
+	update.Write(encoding[:])
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			update.Write(encodeCursorPixel(cursor.RGBAAt(x, y)))
+		}
+	}
+	return nil
+}
+
+// encodeCursorPixel writes the pre-multiplied RGBA byte order the
+// CursorWithAlpha extension specifies.
+func encodeCursorPixel(c color.RGBA) []byte {
+	premultiply := func(value, alpha uint8) uint8 {
+		return uint8(uint32(value) * uint32(alpha) / 255)
+	}
+	return []byte{
+		premultiply(c.R, c.A), premultiply(c.G, c.A), premultiply(c.B, c.A), c.A,
+	}
+}
+
+func (s *Server) advertised(encoding rfb.Encoding) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.advertisedLocked(encoding)
+}
+
+func (s *Server) advertisedLocked(encoding rfb.Encoding) bool {
+	for _, advertised := range s.received.Encodings {
+		if advertised == encoding {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) checkAdvertised(plan []Rectangle) error {
@@ -632,9 +1084,74 @@ func (s *Server) writeRectangle(update *bytes.Buffer, rect Rectangle) error {
 		return s.writeRRE(update, rect)
 	case rfb.EncodingHextile:
 		return s.writeHextile(update, rect)
+	case rfb.EncodingZRLE:
+		return s.writeZRLE(update, rect)
 	default:
 		return fmt.Errorf("rfbtest: unsupported encoding %d", rect.Encoding)
 	}
+}
+
+// writeZRLE encodes one rectangle into the connection's persistent zlib
+// stream. Each tile is sent solid when it is one colour and raw otherwise, so
+// the test server exercises both the compact and the general path.
+func (s *Server) writeZRLE(update *bytes.Buffer, rect Rectangle) error {
+	if s.zrleWriter == nil {
+		s.zrleWriter = zlib.NewWriter(&s.zrleBuf)
+	}
+	writePixel := func(c color.RGBA) error {
+		encoded, err := s.pf.EncodeCPixel(c)
+		if err != nil {
+			return err
+		}
+		_, err = s.zrleWriter.Write(encoded)
+		return err
+	}
+	for tileY := 0; tileY < int(rect.Height); tileY += 64 {
+		height := min(64, int(rect.Height)-tileY)
+		for tileX := 0; tileX < int(rect.Width); tileX += 64 {
+			width := min(64, int(rect.Width)-tileX)
+			solid := true
+			first := s.pixel(int(rect.X)+tileX, int(rect.Y)+tileY)
+			for row := 0; row < height && solid; row++ {
+				for column := 0; column < width; column++ {
+					if s.pixel(int(rect.X)+tileX+column, int(rect.Y)+tileY+row) != first {
+						solid = false
+						break
+					}
+				}
+			}
+			if solid {
+				if _, err := s.zrleWriter.Write([]byte{1}); err != nil {
+					return err
+				}
+				if err := writePixel(first); err != nil {
+					return err
+				}
+				continue
+			}
+			if _, err := s.zrleWriter.Write([]byte{0}); err != nil {
+				return err
+			}
+			for row := 0; row < height; row++ {
+				for column := 0; column < width; column++ {
+					pixel := s.pixel(int(rect.X)+tileX+column, int(rect.Y)+tileY+row)
+					if err := writePixel(pixel); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	if err := s.zrleWriter.Flush(); err != nil {
+		return err
+	}
+	compressed := append([]byte(nil), s.zrleBuf.Bytes()...)
+	s.zrleBuf.Reset()
+	var length [4]byte
+	binary.BigEndian.PutUint32(length[:], uint32(len(compressed)))
+	update.Write(length[:])
+	update.Write(compressed)
+	return nil
 }
 
 func (s *Server) writeRaw(update *bytes.Buffer, rect Rectangle) error {

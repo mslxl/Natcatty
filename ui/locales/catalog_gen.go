@@ -226,6 +226,16 @@ func (msgs Messages) SessionScreenFailed() string {
 	return Catalog.Format(msgs.locale, "sessionScreenFailed", nil)
 }
 
+// SessionVNCResizeFallback says "Using local scaling: the server cannot resize its desktop."
+// in the language the app shows.
+func SessionVNCResizeFallback() string { return In(i18n.Locale()).SessionVNCResizeFallback() }
+
+// SessionVNCResizeFallback says "Using local scaling: the server cannot resize its desktop."
+// in the language of msgs.
+func (msgs Messages) SessionVNCResizeFallback() string {
+	return Catalog.Format(msgs.locale, "sessionVNCResizeFallback", nil)
+}
+
 // SessionMenuHibernate says "Hibernate"
 // in the language the app shows.
 func SessionMenuHibernate() string { return In(i18n.Locale()).SessionMenuHibernate() }
