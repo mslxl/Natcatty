@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
@@ -287,9 +288,16 @@ func TestMouseReportNamesTheCellUnderTheGlyph(t *testing.T) {
 	x := float32(rect.X) + glyphs*cellW + 3
 	y := float32(rect.Y+rect.H) - 2
 	tester.Press(x, y)
-	// SGR reports count from one: the first cell is 1;1.
-	if got, want := conn.Written(), fmt.Sprintf("\x1b[<0;%d;%dM", glyphs+1, glyphRows+1); !strings.Contains(got, want) {
-		t.Errorf("the mouse press reported %q, want %q", got, want)
+	// SGR reports count from one: the first cell is 1;1. The report reaches
+	// the connection from the input path, so on a loaded runner it can land
+	// just after Press returns; give it a bounded moment.
+	want := fmt.Sprintf("\x1b[<0;%d;%dM", glyphs+1, glyphRows+1)
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(conn.Written(), want) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the mouse press reported %q, want %q", conn.Written(), want)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

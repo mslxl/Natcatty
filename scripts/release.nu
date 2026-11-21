@@ -57,7 +57,12 @@ def is-artifact [name: string] {
         or ($base | str ends-with '-portable.zip')
         or (
             ($base | str ends-with '.exe')
-            and (($base | str contains ' Setup ') or ($base | str ends-with '-setup.exe'))
+            and (
+                ($base | str contains ' Setup ')
+                or ($base | str ends-with '-setup.exe')
+                # MyGo's slug naming: natcatty-setup-<version>-<arch>.exe.
+                or ($base | str contains '-setup-')
+            )
         )
     )
 }
@@ -77,6 +82,13 @@ def canonical-asset-name [name: string, version: string] {
     let linux_arm64_tar = $"natcatty-($version)-linux-arm64.tar.gz"
     let linux_amd64_deb = $"natcatty-($version)-linux-amd64.deb"
     let linux_arm64_deb = $"natcatty-($version)-linux-arm64.deb"
+    # MyGo v0.7.4, the pinned submodule, writes slug names:
+    # natcatty-<version>-<arch>.dmg and natcatty-setup-<version>-<arch>.exe.
+    if ($base == $"natcatty-($version)-arm64.dmg") { return $dmg_arm64 }
+    if ($base == $"natcatty-($version)-amd64.dmg") { return $dmg_amd64 }
+    if ($base == $"natcatty-($version).dmg") { return $dmg_universal }
+    if ($base == $"natcatty-setup-($version)-amd64.exe") { return $setup }
+    # Older MyGo releases used display names.
     if ($base == $"Natcatty ($version) arm64.dmg") { return $dmg_arm64 }
     if ($base == $"Natcatty ($version) amd64.dmg") { return $dmg_amd64 }
     if ($base == $"Natcatty ($version).dmg") { return $dmg_universal }

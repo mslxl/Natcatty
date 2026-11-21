@@ -525,12 +525,11 @@ a packaged build, or a separate acceptance run) is not available here.
    loopback integration test here proves the production composition opens a
    real HTTP remote. A live-server run is release acceptance, not a code
    boundary left unverified.
-4. **Pinned-server conformance suite (ticket 19) and Host/Shell matrix
-   (ticket 21).**
-   Owner: release manager; both are separate release tasks.
-   They were not run for this review, and this document does not claim their
-   results. Why not a checklist defect: they are release-acceptance gates for
-   protocol and shell coverage, not open findings of this security review.
+4. **Pinned-server conformance suite (ticket 19).**
+   Owner: release manager; it is a separate release task.
+   It was not run for this review, and this document does not claim its
+   result. Why not a checklist defect: it is a release-acceptance gate for
+   protocol coverage, not an open finding of this security review.
 
 None of these dependencies contradicts a checklist claim above: each is either
 an OS-level property, a packaged-build exercise, or a separate acceptance run.

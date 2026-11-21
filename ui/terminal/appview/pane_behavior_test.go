@@ -714,8 +714,16 @@ func TestShiftClickSelectsWhileAProgramReportsTheMouse(t *testing.T) {
 	if !sel.Empty() {
 		t.Fatal("a plain click started a selection while the program reports the mouse")
 	}
-	if got := conn.Written(); !strings.Contains(got, "\x1b[<0;") {
-		t.Fatalf("a plain click did not reach the program: %q", got)
+	// The report reaches the connection from the input path, so the press and
+	// its release can land after ClickAt returns. Wait for both before taking
+	// the baseline; otherwise the plain click's late release looks like the
+	// Shift-click's write.
+	deadline := time.Now().Add(5 * time.Second)
+	for strings.Count(conn.Written(), "\x1b[<0;") < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("a plain click did not reach the program: %q", conn.Written())
+		}
+		time.Sleep(time.Millisecond)
 	}
 
 	before := conn.Written()
@@ -726,6 +734,11 @@ func TestShiftClickSelectsWhileAProgramReportsTheMouse(t *testing.T) {
 	// are one cell until a drag moves it.
 	if care := sel.Caret(); care != (Cell{Row: 0, Col: 4}) {
 		t.Errorf("Shift-click selected at %+v, want column 4", care)
+	}
+	// Give the input path the same bounded moment before reading the writes.
+	deadline = time.Now().Add(250 * time.Millisecond)
+	for conn.Written() == before && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
 	}
 	if got := conn.Written(); got != before {
 		t.Errorf("Shift-click reached the program: added %q", strings.TrimPrefix(got, before))
@@ -930,8 +943,15 @@ func TestPaneReportsFullScreenMouseInScreenRows(t *testing.T) {
 	}
 	// The third cell of the screen's first row: the report counts from 1.
 	tester.Press(row.X+2*cellW+cellW/2, row.Y+cellH/2)
-	if got := conn.Written(); !strings.Contains(got, "\x1b[<0;3;1M") {
-		t.Fatalf("mouse press reported %q, want the screen's first row", got)
+	// The program's reply is written from the input path; on a loaded runner it
+	// can land just after Press returns, so give it a bounded moment rather than
+	// reading once.
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(conn.Written(), "\x1b[<0;3;1M") {
+		if time.Now().After(deadline) {
+			t.Fatalf("mouse press reported %q, want the screen's first row", conn.Written())
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -996,8 +1016,15 @@ func TestPaneReportsMainScreenMouseInScreenRows(t *testing.T) {
 		t.Fatal("the live cells were not measured")
 	}
 	tester.Press(row.X+cellW/2, row.Y+cellH/2)
-	if got, wantSeq := conn.Written(), fmt.Sprintf("\x1b[<0;1;%dM", want); !strings.Contains(got, wantSeq) {
-		t.Fatalf("mouse press reported %q, want %q", got, wantSeq)
+	// The report reaches the connection from the input path, so it can land
+	// just after Press returns on a loaded runner.
+	wantSeq := fmt.Sprintf("\x1b[<0;1;%dM", want)
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(conn.Written(), wantSeq) {
+		if time.Now().After(deadline) {
+			t.Fatalf("mouse press reported %q, want %q", conn.Written(), wantSeq)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

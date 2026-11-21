@@ -86,9 +86,9 @@ func WithTempDir(create func() (string, error)) Option {
 	}
 }
 
-// WithPlatform replaces the local operating system the planner sees. It exists
-// so the capture matrix can assert the same POSIX mechanism on every BSD, and
-// that Windows stays unsupported, without cross-compiling.
+// WithPlatform replaces the local operating system the planner sees. It lets a
+// test assert the same POSIX mechanism on every BSD, and that Windows stays
+// unsupported, without cross-compiling.
 func WithPlatform(goos string) Option {
 	return func(planner *Planner) {
 		if goos != "" {
