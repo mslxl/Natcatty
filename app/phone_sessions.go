@@ -90,16 +90,25 @@ func newPhonePrompts(vault *appvault.Service) *phoneshell.Prompts {
 // host-key and credential challenges the dial raises; without them the Manager
 // fails closed on an untrusted key, as before.
 func newPhoneSessionRuntime(vault *appvault.Service, known appconnection.KnownHostRepository,
-	userData string, prompts *phoneshell.Prompts, history *phoneHistory) *phoneSessionRuntime {
-	return newPhoneSessionRuntimeWithDialer(sshadapter.NewDialer(), vault, known, userData, prompts, history)
+	userData string, prompts *phoneshell.Prompts, history *phoneHistory,
+	secrets appvault.FieldSecrets) *phoneSessionRuntime {
+	return newPhoneSessionRuntimeWithDialer(
+		sshadapter.NewDialer(), vault, known, userData, prompts, history, secrets)
 }
 
 // newPhoneSessionRuntimeWithDialer is newPhoneSessionRuntime with the SSH
 // dialer replaced. Tests use it to point the whole phone stack at an
 // in-process SSH server while keeping the real Manager, Vault, and prompts.
+// A nil history means completed commands are not recorded.
+//
+// secrets is the phone's encrypted field-secret store. EternalTerminal keeps
+// its resumable session credentials there, under the app's user-data
+// directory, so a relaunch can reattach without the key. A nil store keeps ET
+// sessions memory-only; the adapter never writes credentials anywhere else.
 func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvault.Service,
-	known appconnection.KnownHostRepository, userData string, prompts *phoneshell.Prompts,
-	history *phoneHistory) *phoneSessionRuntime {
+	known appconnection.KnownHostRepository, userData string,
+	prompts *phoneshell.Prompts, history *phoneHistory,
+	secrets appvault.FieldSecrets) *phoneSessionRuntime {
 	providers := appconnection.NewNetworkProviderRegistry(&networkProviderFactory{
 		vault:     vault,
 		stateBase: networkProviderStateBase(userData),
@@ -122,7 +131,7 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 	connections := appconnection.NewManager(dialer, vaultPasswords{vault: vault}, known, options...)
 	routes := vaultRoutes{vault: vault}
 	service := appsession.NewService(
-		newPhoneTransportFactory(connections, routes, providers),
+		newPhoneTransportFactory(connections, routes, providers, secrets),
 		// Every completed remote command becomes exactly one journal row
 		// through the shared completion hook. The row is what the background
 		// Atuin engine uploads; capture itself never touches the network.
@@ -142,14 +151,24 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 // transports only. A Local or Serial Session fails closed instead of reaching
 // a shell or device on the phone.
 func newPhoneTransportFactory(manager *appconnection.Manager, routes vaultRoutes,
-	providers *appconnection.NetworkProviderRegistry) *transportFactory {
+	providers *appconnection.NetworkProviderRegistry,
+	secrets appvault.FieldSecrets) *transportFactory {
+
+	etFactory := adapteret.InProcessFactory{Manager: manager, Routes: routes}
+	if secrets != nil {
+		// The same encrypted field store the Vault uses keeps an ET session's
+		// id and passkey. They never reach a workspace descriptor, a settings
+		// document, or a log: the descriptor carries only the opaque resume
+		// key.
+		etFactory.Sessions = adapteret.SecretSessionStore{Secrets: secrets}
+	}
 	return newTransportFactory(
 		nil, nil,
 		newTelnetFactory(adapterstnet.Factory{}, routes, providers),
 		manager, routes,
 	).withInProcess(
 		newMoshFactory(manager, routes, providers),
-		adapteret.InProcessFactory{Manager: manager, Routes: routes},
+		etFactory,
 	)
 }
 
@@ -161,6 +180,23 @@ func newPhoneTransportFactory(manager *appconnection.Manager, routes vaultRoutes
 // one only while the Session is visible (and resumes it when the user returns),
 // so a hidden Session never holds a live view.
 func (r *phoneSessionRuntime) OpenHost(ctx context.Context, host domainvault.Host) (phoneshell.SessionHandle, error) {
+	return r.openHost(ctx, host, "")
+}
+
+// OpenHostWithResume opens a restored EternalTerminal Tab under the resume key
+// its workspace descriptor carried. The key is an opaque, non-secret locator:
+// the adapter reads the encrypted id and passkey for it, so a relaunch
+// reattaches the still-running remote shell without asking for the key again.
+// Every other transport ignores the key.
+func (r *phoneSessionRuntime) OpenHostWithResume(ctx context.Context, host domainvault.Host,
+	resumeKey string) (phoneshell.SessionHandle, error) {
+
+	return r.openHost(ctx, host, resumeKey)
+}
+
+func (r *phoneSessionRuntime) openHost(ctx context.Context, host domainvault.Host,
+	resumeKey string) (phoneshell.SessionHandle, error) {
+
 	// The Hosts list carries stored records, while the desktop opens a Host
 	// with its Host Group defaults and selected Proxy Profile applied. Resolve
 	// the effective record here too so an inherited port or user reaches the
@@ -175,6 +211,12 @@ func (r *phoneSessionRuntime) OpenHost(ctx context.Context, host domainvault.Hos
 	spec := appsession.HostSpec(host)
 	if phoneRefusesKind(spec.Kind) {
 		return nil, errPhoneLocalSession
+	}
+	// HostSpec generates a fresh locator for a new ET Session. A restore
+	// supplies the one its descriptor saved, which is what makes the saved
+	// credentials reachable in this process.
+	if spec.Kind == appsession.KindET && resumeKey != "" {
+		spec.ResumeKey = resumeKey
 	}
 	// A phone has no window size before its first frame; the terminal view
 	// resizes the Session as soon as it is laid out.
@@ -254,6 +296,17 @@ func (h *phoneSessionHandle) Done() <-chan struct{} { return h.session.Done() }
 func (h *phoneSessionHandle) End() error {
 	h.once.Do(func() {
 		h.err = h.session.Close()
+	})
+	return h.err
+}
+
+// EndPreservingResume ends the Session when the app itself is quitting. A
+// resumable transport (EternalTerminal) keeps the credentials the next app run
+// needs to reattach; every other transport behaves exactly like End. A user
+// closing one Tab still uses End, which clears them.
+func (h *phoneSessionHandle) EndPreservingResume() error {
+	h.once.Do(func() {
+		h.err = h.session.ClosePreservingResume()
 	})
 	return h.err
 }

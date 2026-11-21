@@ -36,7 +36,7 @@ func TestPhoneRuntimeRefusesLocalAndSerialSessions(t *testing.T) {
 		t.Fatal("a Local Host reports IsRemote, so the phone would list it")
 	}
 
-	factory := newPhoneTransportFactory(nil, vaultRoutes{}, nil)
+	factory := newPhoneTransportFactory(nil, vaultRoutes{}, nil, nil)
 	if _, err := factory.Open(context.Background(), appsession.HostSpec(local)); err == nil {
 		t.Fatal("the phone transport registry opened a local Session")
 	}
@@ -91,7 +91,7 @@ func TestPhoneHostOpenUsesJumpsProxyAndNetwork(t *testing.T) {
 	target := vault.hosts["target"]
 
 	providers := appconnection.NewNetworkProviderRegistry(factoryNetworkFactory{})
-	factory := newPhoneTransportFactory(manager, vaultRoutes{vault: vault}, providers)
+	factory := newPhoneTransportFactory(manager, vaultRoutes{vault: vault}, providers, nil)
 
 	transport, err := factory.Open(context.Background(), appsession.HostSpec(target))
 	if err != nil {

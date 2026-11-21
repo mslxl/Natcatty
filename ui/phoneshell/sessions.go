@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
+	appsession "github.com/mslxl/natcatty/application/session"
 	domainmodel "github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
@@ -48,6 +49,21 @@ type SessionHandle interface {
 // one, which is what keeps the phone to one live view at a time.
 type SessionOpener interface {
 	OpenHost(ctx context.Context, host domainvault.Host) (SessionHandle, error)
+}
+
+// ResumeKeyOpener is implemented by an opener that can reattach a restored
+// resumable Session. The key is the opaque, non-secret locator a workspace
+// descriptor carries; the credentials it names stay in the encrypted secret
+// store. An opener that does not implement it still opens the Host normally.
+type ResumeKeyOpener interface {
+	OpenHostWithResume(ctx context.Context, host domainvault.Host, resumeKey string) (SessionHandle, error)
+}
+
+// ResumePreservingHandle is implemented by a handle that can end a Session
+// while keeping the credentials a relaunch needs to reattach it. The app calls
+// it when it quits; an explicit Tab close uses End, which clears them.
+type ResumePreservingHandle interface {
+	EndPreservingResume() error
 }
 
 // SessionStore persists the Tabs a relaunch should list. The payload is the
@@ -137,6 +153,11 @@ type phoneTab struct {
 	reopening bool
 	// accessory holds the bar's Ctrl and Alt latches for this Tab.
 	accessory accessoryState
+	// resumeKey is an EternalTerminal Tab's opaque locator for its saved
+	// session credentials. The credentials themselves live only in the
+	// encrypted secret store; this key is what the restore payload carries so
+	// a relaunch reattaches instead of starting a second remote shell.
+	resumeKey string
 }
 
 // sessionTabs owns the Sessions section's Tabs. Each Tab is the app's one
@@ -216,6 +237,12 @@ func (t *sessionTabs) begin(host domainvault.Host) *phoneTab {
 		host:   host,
 		label:  hostName(host),
 		status: tabConnecting,
+	}
+	if protocolOf(host) == domainvault.ProtocolET {
+		// A new ET Session needs a locator before it opens: the adapter saves
+		// the credentials under it, and the same key must survive into the
+		// next launch's restore payload.
+		tab.resumeKey = appsession.NewETResumeKey()
 	}
 	t.next++
 	t.tabs = append(t.tabs, tab)
@@ -735,7 +762,8 @@ func (t *sessionTabs) discardFailed(id string) {
 
 // closeAll ends every Tab. The app calls it on quit. The Tabs are persisted
 // first: quitting is not closing a Session, so the next launch still lists
-// them as dormant entries.
+// them as dormant entries. A resumable handle keeps the credentials the next
+// launch's restore needs; every other handle ends exactly as End does.
 func (t *sessionTabs) closeAll() {
 	t.mu.Lock()
 	tabs := t.tabs
@@ -756,10 +784,20 @@ func (t *sessionTabs) closeAll() {
 			_ = tab.screen.Close()
 		}
 		if tab.handle != nil {
-			_ = tab.handle.End()
+			endPreservingResume(tab.handle)
 		}
 	}
 	t.savePayload(payload)
+}
+
+// endPreservingResume ends a handle while keeping what a relaunch needs to
+// reattach it. Handles without resume state end normally.
+func endPreservingResume(handle SessionHandle) {
+	if preserving, ok := handle.(ResumePreservingHandle); ok {
+		_ = preserving.EndPreservingResume()
+		return
+	}
+	_ = handle.End()
 }
 
 // adoptRestored adds the Tabs a previous launch left open as dormant entries,
@@ -779,10 +817,11 @@ func (t *sessionTabs) adoptRestored(restored []RestoredSession, lookup func(stri
 			t.next = 1
 		}
 		t.tabs = append(t.tabs, &phoneTab{
-			id:     fmt.Sprintf("tab-%d", t.next),
-			host:   host,
-			label:  session.Title,
-			status: tabDormant,
+			id:        fmt.Sprintf("tab-%d", t.next),
+			host:      host,
+			label:     session.Title,
+			status:    tabDormant,
+			resumeKey: session.Descriptor.ResumeKey,
 		})
 		t.next++
 	}
@@ -822,7 +861,7 @@ func payloadOf(tabs []*phoneTab) domainworkspace.Payload {
 		if tab.status == tabFailed {
 			continue
 		}
-		descriptor := descriptorOf(tab.host, tab.label)
+		descriptor := descriptorOf(tab.host, tab.label, tab.resumeKey)
 		if !descriptor.Valid() {
 			// Without a Host identity and endpoint there is nothing restore
 			// could open, so it is not an entry.
@@ -844,15 +883,18 @@ func payloadOf(tabs []*phoneTab) domainworkspace.Payload {
 }
 
 // descriptorOf describes one open phone Tab for restore. It captures no
-// credential or output, exactly as the desktop descriptor does.
-func descriptorOf(host domainvault.Host, label string) domainworkspace.SessionDescriptor {
+// credential or output, exactly as the desktop descriptor does. resumeKey, when
+// set, is the opaque locator an EternalTerminal Session's saved credentials
+// answer to.
+func descriptorOf(host domainvault.Host, label, resumeKey string) domainworkspace.SessionDescriptor {
 	return domainworkspace.SessionDescriptor{
-		Kind:     sessionKindOf(host),
-		Label:    label,
-		HostID:   host.ID,
-		Hostname: host.Hostname,
-		Port:     host.Port,
-		Username: host.Username,
+		Kind:      sessionKindOf(host),
+		Label:     label,
+		HostID:    host.ID,
+		Hostname:  host.Hostname,
+		Port:      host.Port,
+		Username:  host.Username,
+		ResumeKey: resumeKey,
 	}
 }
 

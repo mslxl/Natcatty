@@ -214,11 +214,12 @@ func (h *fakeHandle) sentKeys() []sentKey {
 
 // fakeOpener records the Hosts it was asked to open.
 type fakeOpener struct {
-	mu      sync.Mutex
-	err     error
-	output  string
-	hosts   []domainvault.Host
-	handles []*fakeHandle
+	mu         sync.Mutex
+	err        error
+	output     string
+	hosts      []domainvault.Host
+	handles    []*fakeHandle
+	resumeKeys []string
 }
 
 func (o *fakeOpener) OpenHost(_ context.Context, host domainvault.Host) (SessionHandle, error) {
@@ -235,6 +236,24 @@ func (o *fakeOpener) OpenHost(_ context.Context, host domainvault.Host) (Session
 	o.handles = append(o.handles, handle)
 	o.mu.Unlock()
 	return handle, nil
+}
+
+// OpenHostWithResume records the locator a restored EternalTerminal Tab
+// carried and then opens the Host like any other. The shell type-asserts this
+// method, so its presence also proves the restore path prefers it.
+func (o *fakeOpener) OpenHostWithResume(ctx context.Context, host domainvault.Host,
+	resumeKey string) (SessionHandle, error) {
+
+	o.mu.Lock()
+	o.resumeKeys = append(o.resumeKeys, resumeKey)
+	o.mu.Unlock()
+	return o.OpenHost(ctx, host)
+}
+
+func (o *fakeOpener) resumeKeysUsed() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.resumeKeys...)
 }
 
 func (o *fakeOpener) last() *fakeHandle {

@@ -409,8 +409,26 @@ func (s *Shell) launchTab(tab *phoneTab) {
 	ctx, cancel := context.WithCancel(withPromptOwner(context.Background(), tab.id))
 	s.sessions.attachCancel(tab.id, cancel)
 	host := tab.host
+	s.sessions.mu.Lock()
+	resumeKey := tab.resumeKey
+	s.sessions.mu.Unlock()
 	go func() {
-		handle, err := opener.OpenHost(ctx, host)
+		var (
+			handle SessionHandle
+			err    error
+		)
+		// A restored EternalTerminal Tab passes the locator its descriptor
+		// carried, so the opener reattaches the saved session instead of
+		// starting a fresh one. Every other transport opens the Host normally.
+		if resumeKey != "" {
+			if resuming, ok := opener.(ResumeKeyOpener); ok {
+				handle, err = resuming.OpenHostWithResume(ctx, host, resumeKey)
+			} else {
+				handle, err = opener.OpenHost(ctx, host)
+			}
+		} else {
+			handle, err = opener.OpenHost(ctx, host)
+		}
 		s.sessions.finish(tab.id, handle, err)
 	}()
 }

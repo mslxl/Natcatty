@@ -23,6 +23,7 @@ import (
 	"github.com/mslxl/natcatty/adapters/store"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
+	appvault "github.com/mslxl/natcatty/application/vault"
 	platformsecrets "github.com/mslxl/natcatty/platform/secrets"
 	"github.com/mslxl/natcatty/ui/phoneshell"
 	"github.com/mslxl/natcatty/ui/terminal"
@@ -108,8 +109,11 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 	// mode instead of failing; listing and deleting Keys still work against
 	// the same Vault, and deletion simply has no ciphertext to remove.
 	secrets, err := store.OpenSecretStore(ctx, database, platformsecrets.System{})
+	var fieldSecrets appvault.FieldSecrets
 	if err != nil {
 		secrets = nil
+	} else {
+		fieldSecrets = secrets
 	}
 	// The phone Vault registers the same record families as the desktop, so a
 	// Host's jump chain, Identity, Proxy Profile, and Network Profile resolve
@@ -142,7 +146,7 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 
 	// The phone registers only remote transports: SSH, Telnet, Mosh, and ET.
 	// Local and serial shells are not constructed here at all.
-	sessions := newPhoneSessionRuntime(vault, database, userData, prompts, history)
+	sessions := newPhoneSessionRuntime(vault, database, userData, prompts, history, fieldSecrets)
 
 	shell := phoneshell.New(
 		phoneshell.WithVault(vault),

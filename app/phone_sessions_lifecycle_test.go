@@ -132,7 +132,7 @@ func newRealPhoneFixture(t *testing.T) *realPhoneFixture {
 		secrets: map[string]string{},
 	}}
 	fixture.runtime = &phoneSessionRuntime{
-		service:     appsession.NewService(newPhoneTransportFactory(manager, routes, nil)),
+		service:     appsession.NewService(newPhoneTransportFactory(manager, routes, nil, nil)),
 		connections: manager,
 	}
 	t.Cleanup(func() {
