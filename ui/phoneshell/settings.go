@@ -33,6 +33,10 @@ type settingsPages struct {
 	history     HistorySyncService
 	historyForm historyDraft
 	problem     string
+	// onAppearanceChange re-styles live terminals after a successful
+	// Appearance write. Nil is only for a build whose Shell did not install
+	// the hook; a newly built terminal still reads the new value.
+	onAppearanceChange func()
 }
 
 func newSettingsPages() *settingsPages { return &settingsPages{} }
@@ -137,12 +141,6 @@ func (p *settingsPages) appearance(c *ui.Context) {
 
 func (p *settingsPages) terminal(c *ui.Context) {
 	settings := p.service.Terminal()
-	p.toggle(c, "Paste protection", settings.PasteProtection, func(on bool) {
-		p.updateTerminal(func(s *domainterminal.Settings) { s.PasteProtection = on })
-	})
-	p.stepper(c, "Paste warning after lines", settings.PasteMinLines, 2, 50, 1, func(value int) {
-		p.updateTerminal(func(s *domainterminal.Settings) { s.PasteMinLines = value })
-	})
 	p.choices(c, "Remote clipboard", []choice{
 		pick("Off", settings.OSC52 == domainterminal.ClipboardOff, func() {
 			p.updateTerminal(func(s *domainterminal.Settings) { s.OSC52 = domainterminal.ClipboardOff })
@@ -159,22 +157,19 @@ func (p *settingsPages) terminal(c *ui.Context) {
 	})
 }
 
+// input holds the options the phone's own paste path enforces. They live on
+// this page rather than Terminal because they govern typing into the
+// terminal, and because the phone consumes them: the Paste control reads them
+// on every tap. The desktop's autocomplete controls are deliberately absent —
+// the phone terminal has no suggestion surface, so a control that wrote a
+// document nobody reads would be a lie.
 func (p *settingsPages) input(c *ui.Context) {
 	settings := p.service.Terminal()
-	p.toggle(c, "Autocomplete", settings.AutocompleteEnabled, func(on bool) {
-		p.updateTerminal(func(s *domainterminal.Settings) { s.AutocompleteEnabled = on })
+	p.toggle(c, "Paste protection", settings.PasteProtection, func(on bool) {
+		p.updateTerminal(func(s *domainterminal.Settings) { s.PasteProtection = on })
 	})
-	p.toggle(c, "Inline suggestion", settings.AutocompleteGhostText, func(on bool) {
-		p.updateTerminal(func(s *domainterminal.Settings) { s.AutocompleteGhostText = on })
-	})
-	p.toggle(c, "Suggestion list", settings.AutocompletePopupMenu, func(on bool) {
-		p.updateTerminal(func(s *domainterminal.Settings) { s.AutocompletePopupMenu = on })
-	})
-	p.stepper(c, "Suggest after characters", settings.AutocompleteMinChars, 1, 10, 1, func(value int) {
-		p.updateTerminal(func(s *domainterminal.Settings) { s.AutocompleteMinChars = value })
-	})
-	p.stepper(c, "Suggestion delay (ms)", settings.AutocompleteDebounceMs, 0, 1000, 50, func(value int) {
-		p.updateTerminal(func(s *domainterminal.Settings) { s.AutocompleteDebounceMs = value })
+	p.stepper(c, "Paste warning after lines", settings.PasteMinLines, 2, 50, 1, func(value int) {
+		p.updateTerminal(func(s *domainterminal.Settings) { s.PasteMinLines = value })
 	})
 }
 
@@ -264,6 +259,9 @@ func (p *settingsPages) updatePreferences(change func(*domainpreferences.Setting
 		return
 	}
 	p.problem = ""
+	if p.onAppearanceChange != nil {
+		p.onAppearanceChange()
+	}
 }
 
 func (p *settingsPages) updateTerminal(change func(*domainterminal.Settings)) {

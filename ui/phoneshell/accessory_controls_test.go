@@ -15,6 +15,7 @@ import (
 	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	"github.com/mslxl/natcatty/ui/terminal"
 )
 
@@ -41,7 +42,7 @@ func newControlTerminal(t *testing.T, output string) (*terminal.Terminal, *ghost
 	acc := &accessoryState{}
 	tt := ui.NewTester(func(c *ui.Context) {
 		ui.Column(c).Fill().Children(func() {
-			accessoryBar(c, acc, screen)
+			accessoryBar(c, acc, screen, nil)
 			screen.View(c).Fill()
 		})
 	}, 390, 500)
@@ -152,7 +153,7 @@ func TestAccessoryControlsWithFakeScreen(t *testing.T) {
 	handle := newFakeHandle("")
 	screen := &fakeScreen{handle: handle, selected: "picked text"}
 	acc := &accessoryState{}
-	tt := ui.NewTester(func(c *ui.Context) { accessoryBar(c, acc, screen) }, 390, 200)
+	tt := ui.NewTester(func(c *ui.Context) { accessoryBar(c, acc, screen, nil) }, 390, 200)
 	tt.Frame()
 
 	if err := tt.Click("Copy"); err != nil {
@@ -183,6 +184,66 @@ func TestAccessoryControlsWithFakeScreen(t *testing.T) {
 	tt.Frame()
 	if screen.scrolled {
 		t.Fatal("Latest did not return to the live screen")
+	}
+}
+
+// TestAccessoryPasteProtectionAsksFirst drives the phone paste path with the
+// shared PasteProtection rule: a multi-line payload is held and shown with a
+// line count until the user confirms, a cancel discards it, and protection
+// off sends the next paste directly.
+func TestAccessoryPasteProtectionAsksFirst(t *testing.T) {
+	handle := newFakeHandle("")
+	screen := &fakeScreen{handle: handle}
+	acc := &accessoryState{}
+	protect := true
+	guard := func(text string) bool {
+		return domainterminal.ShouldConfirmPaste(text, protect, 2)
+	}
+	tt := ui.NewTester(func(c *ui.Context) { accessoryBar(c, acc, screen, guard) }, 390, 300)
+	tt.Frame()
+
+	tt.SetClipboard("one\ntwo\nthree")
+	if err := tt.Click("Paste"); err != nil {
+		t.Fatalf("click Paste: %v", err)
+	}
+	tt.Frame()
+	if _, err := screen.pasted.Read(transfer.Text); err == nil {
+		t.Fatal("the paste reached the terminal before the user confirmed")
+	}
+	if !tt.HasText("Paste 3 lines?") {
+		t.Fatalf("the confirmation does not name the line count; texts: %q", tt.Texts())
+	}
+	if err := tt.Click("Paste anyway"); err != nil {
+		t.Fatalf("click Paste anyway: %v", err)
+	}
+	tt.Frame()
+	if text, err := screen.pasted.Read(transfer.Text); err != nil || string(text) != "one\ntwo\nthree" {
+		t.Fatalf("confirmed paste = %q (%v), want the clipboard text", text, err)
+	}
+
+	// Cancel keeps the held text from ever reaching the terminal.
+	screen.pasted = transfer.Data{}
+	tt.SetClipboard("left\nright")
+	if err := tt.Click("Paste"); err != nil {
+		t.Fatalf("click Paste: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click("Cancel"); err != nil {
+		t.Fatalf("click Cancel: %v", err)
+	}
+	tt.Frame()
+	if _, err := screen.pasted.Read(transfer.Text); err == nil {
+		t.Fatal("a cancelled paste still reached the terminal")
+	}
+
+	// Protection off is the original's default: the next paste is direct.
+	protect = false
+	if err := tt.Click("Paste"); err != nil {
+		t.Fatalf("click Paste with protection off: %v", err)
+	}
+	tt.Frame()
+	if text, err := screen.pasted.Read(transfer.Text); err != nil || string(text) != "left\nright" {
+		t.Fatalf("unguarded paste = %q (%v), want the clipboard text", text, err)
 	}
 }
 

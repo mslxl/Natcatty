@@ -129,15 +129,16 @@ func (d *fakesshDialer) closeAll() {
 // so the screen only has to exist and name itself.
 type nopScreen struct{}
 
-func (nopScreen) View(c *ui.Context) ui.Element { return ui.Text(c, "terminal") }
-func (nopScreen) SendKey(ui.Key, ui.Modifiers)  {}
-func (nopScreen) SelectionText() (string, bool) { return "", false }
-func (nopScreen) PasteData(transfer.Data)       {}
-func (nopScreen) InScrollback() bool            { return false }
-func (nopScreen) ToggleScrollback()             {}
-func (nopScreen) Close() error                  { return nil }
+func (nopScreen) View(c *ui.Context) ui.Element               { return ui.Text(c, "terminal") }
+func (nopScreen) SendKey(ui.Key, ui.Modifiers)                {}
+func (nopScreen) SelectionText() (string, bool)               { return "", false }
+func (nopScreen) PasteData(transfer.Data)                     {}
+func (nopScreen) SetAppearance(phoneshell.TerminalAppearance) {}
+func (nopScreen) InScrollback() bool                          { return false }
+func (nopScreen) ToggleScrollback()                           {}
+func (nopScreen) Close() error                                { return nil }
 
-func nopScreens(io.ReadWriteCloser) (phoneshell.TerminalScreen, error) {
+func nopScreens(io.ReadWriteCloser, phoneshell.TerminalAppearance) (phoneshell.TerminalScreen, error) {
 	return nopScreen{}, nil
 }
 
@@ -232,7 +233,7 @@ func (r *promptTestRig) start(t *testing.T) {
 		sshadapter.WithTimeouts(2*time.Second, 2*time.Second),
 	)
 	r.runtime = newPhoneSessionRuntimeWithDialer(
-		dialer, r.vault, r.db, r.userData, r.prompts, nil, r.secrets)
+		dialer, r.vault, r.db, r.userData, r.prompts, nil, r.secrets, nil)
 	r.runtimes = append(r.runtimes, r.runtime)
 	r.shell = phoneshell.New(
 		phoneshell.WithVault(r.vault),

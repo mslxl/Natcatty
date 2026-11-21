@@ -23,6 +23,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/phoneshell"
 )
@@ -88,12 +89,15 @@ func newPhonePrompts(vault *appvault.Service) *phoneshell.Prompts {
 // known-host repository is the shared Vault database, so a host key trusted on
 // the desktop is trusted here after a sync and vice versa. prompts answers the
 // host-key and credential challenges the dial raises; without them the Manager
-// fails closed on an untrusted key, as before.
+// fails closed on an untrusted key, as before. history receives the completed
+// commands the background Atuin engine uploads. terminalSettings supplies the
+// shared terminal document for the OSC 52 clipboard policy; nil keeps the
+// original's write-only default.
 func newPhoneSessionRuntime(vault *appvault.Service, known appconnection.KnownHostRepository,
 	userData string, prompts *phoneshell.Prompts, history *phoneHistory,
-	secrets appvault.FieldSecrets) *phoneSessionRuntime {
+	secrets appvault.FieldSecrets, terminalSettings func() domainterminal.Settings) *phoneSessionRuntime {
 	return newPhoneSessionRuntimeWithDialer(
-		sshadapter.NewDialer(), vault, known, userData, prompts, history, secrets)
+		sshadapter.NewDialer(), vault, known, userData, prompts, history, secrets, terminalSettings)
 }
 
 // newPhoneSessionRuntimeWithDialer is newPhoneSessionRuntime with the SSH
@@ -108,7 +112,7 @@ func newPhoneSessionRuntime(vault *appvault.Service, known appconnection.KnownHo
 func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvault.Service,
 	known appconnection.KnownHostRepository, userData string,
 	prompts *phoneshell.Prompts, history *phoneHistory,
-	secrets appvault.FieldSecrets) *phoneSessionRuntime {
+	secrets appvault.FieldSecrets, terminalSettings func() domainterminal.Settings) *phoneSessionRuntime {
 	providers := appconnection.NewNetworkProviderRegistry(&networkProviderFactory{
 		vault:     vault,
 		stateBase: networkProviderStateBase(userData),
@@ -132,19 +136,51 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 	routes := vaultRoutes{vault: vault}
 	service := appsession.NewService(
 		newPhoneTransportFactory(connections, routes, providers, secrets),
-		// Every completed remote command becomes exactly one journal row
-		// through the shared completion hook. The row is what the background
-		// Atuin engine uploads; capture itself never touches the network.
-		appsession.WithCommandCompletionHook(history.commandHook()),
+		phoneSessionOptions(vault, history, terminalSettings)...)
+	return &phoneSessionRuntime{service: service, connections: connections, vault: vault}
+}
+
+// phoneSessionOptions is the shared Session behavior the phone composes. The
+// clipboard policy is the same OSC 52 setting the desktop applies, read live:
+// the Settings change hook calls SetClipboardPolicy so a change reaches
+// Sessions that are already open. The Vault is optional so a test fixture can
+// reuse this option set without a Vault service.
+func phoneSessionOptions(vault *appvault.Service, history *phoneHistory,
+	terminalSettings func() domainterminal.Settings) []appsession.Option {
+
+	var options []appsession.Option
+	if vault != nil {
 		// A successful open is the Vault's Recently Connected fact on the
 		// phone too; it is device-local telemetry, exactly as on the desktop.
-		appsession.WithConnectionHook(func(event appsession.ConnectionEvent) {
+		options = append(options, appsession.WithConnectionHook(func(event appsession.ConnectionEvent) {
 			if event.Err == nil && !event.UnsavedHost && event.HostID != "" {
 				_ = vault.MarkConnected(context.Background(), event.HostID)
 			}
-		}),
-	)
-	return &phoneSessionRuntime{service: service, connections: connections, vault: vault}
+		}))
+	}
+	if history != nil {
+		// Every completed remote command becomes exactly one journal row
+		// through the shared completion hook. The row is what the background
+		// Atuin engine uploads; capture itself never touches the network.
+		options = append(options,
+			appsession.WithCommandCompletionHook(history.commandHook()))
+	}
+	if terminalSettings != nil {
+		options = append(options, appsession.WithClipboardPolicy(func() domainterminal.ClipboardAccess {
+			return terminalSettings().OSC52
+		}))
+	}
+	return options
+}
+
+// SetClipboardPolicy applies a changed OSC 52 setting to every live phone
+// Session. The composition root's terminal-settings change hook calls it, so
+// the Remote clipboard control takes effect without reopening anything.
+func (r *phoneSessionRuntime) SetClipboardPolicy(policy domainterminal.ClipboardAccess) {
+	if r == nil || r.service == nil {
+		return
+	}
+	r.service.SetClipboardPolicy(policy)
 }
 
 // newPhoneTransportFactory is the phone's transport registry: remote

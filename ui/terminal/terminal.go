@@ -354,6 +354,22 @@ const (
 	CursorUnderline
 )
 
+// cursorSequence is the DECSCUSR sequence for a cursor shape and blink
+// preference. Odd shapes blink and even ones are steady, as xterm's.
+func cursorSequence(style CursorStyle, blink bool) string {
+	shape := 1
+	switch style {
+	case CursorBar:
+		shape = 5
+	case CursorUnderline:
+		shape = 3
+	}
+	if !blink {
+		shape++
+	}
+	return "\x1b[" + strconv.Itoa(shape) + " q"
+}
+
 // ScrollMultiplier scales scrolling (Options.ScrollMultiplier), as
 // Ghostty's mouse-scroll-multiplier = precision:…,discrete:….
 type ScrollMultiplier struct {
@@ -802,6 +818,43 @@ func (t *Terminal) font() Font {
 		f.Size = t.fontSize
 	}
 	return f
+}
+
+// Font returns the font the terminal draws text with, as Options.Font or
+// SetFont set it.
+func (t *Terminal) Font() Font {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.font()
+}
+
+// Theme returns the colors the view shows, as Options.Theme or SetTheme set
+// them.
+func (t *Terminal) Theme() *Theme {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.opts.Theme
+}
+
+// Cursor returns the default cursor shape and whether it blinks, as
+// Options.Cursor and Options.NoBlink set them, or SetCursor last changed them.
+// A program that asks for its own cursor overrides them until it resets.
+func (t *Terminal) Cursor() (CursorStyle, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.opts.Cursor, !t.opts.NoBlink
+}
+
+// SetCursor changes the default cursor shape and blink preference of a live
+// terminal, as Options.Cursor and Options.NoBlink do at creation. MyGo reads
+// the options only when a terminal is built, so the running terminal receives
+// the DECSCUSR sequence a program would send; a program that sets its own
+// cursor later still wins.
+func (t *Terminal) SetCursor(style CursorStyle, blink bool) {
+	t.mu.Lock()
+	t.opts.Cursor, t.opts.NoBlink = style, !blink
+	t.mu.Unlock()
+	t.Feed([]byte(cursorSequence(style, blink)))
 }
 
 // zoom changes the font's size as z asks, a DIP a step, from 1 DIP, as

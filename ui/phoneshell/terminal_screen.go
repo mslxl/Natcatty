@@ -13,7 +13,11 @@ import (
 // libghostty-vt is linked into the app on phones, so terminal.New succeeds once
 // the root has called terminal.Load; a test injects its own ScreenFactory so
 // the shell's navigation tests do not depend on the native library.
-func newTerminalScreen(conn io.ReadWriteCloser) (TerminalScreen, error) {
+//
+// appearance is the shared Appearance document's terminal settings. Passing
+// it here is what makes the phone draw the same font, cursor and scheme as the
+// desktop; SetAppearance applies later changes to the live screen.
+func newTerminalScreen(conn io.ReadWriteCloser, appearance TerminalAppearance) (TerminalScreen, error) {
 	// A Mosh or Eternal Terminal Session's peer owns the screen size. On a
 	// phone that is the only size signal there is: the peer has no
 	// window-change channel of its own, so the view must not resize the
@@ -24,7 +28,14 @@ func newTerminalScreen(conn io.ReadWriteCloser) (TerminalScreen, error) {
 	if remote, ok := conn.(interface{ ScreenSizeFromRemote() bool }); ok {
 		remoteScreen = remote.ScreenSizeFromRemote()
 	}
-	term, err := terminal.New(terminal.Options{Conn: conn, ResizeByConn: remoteScreen})
+	term, err := terminal.New(terminal.Options{
+		Conn:         conn,
+		ResizeByConn: remoteScreen,
+		Font:         appearance.Font,
+		Theme:        appearance.Theme,
+		Cursor:       appearance.Cursor,
+		NoBlink:      !appearance.Blink,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -54,6 +65,16 @@ func (s *ghosttyScreen) SelectionText() (string, bool) { return s.term.Selection
 // the program that asked for one gets the payload wrapped and does not run a
 // multi-line paste as commands.
 func (s *ghosttyScreen) PasteData(d transfer.Data) { s.term.PasteData(d) }
+
+// SetAppearance restyles the live terminal without recreating the view. It is
+// what applies an Appearance change while a Session is open: the font and
+// colors are set directly, and the cursor is sent the DECSCUSR sequence a
+// program would use.
+func (s *ghosttyScreen) SetAppearance(a TerminalAppearance) {
+	s.term.SetFont(a.Font)
+	s.term.SetTheme(a.Theme, nil)
+	s.term.SetCursor(a.Cursor, a.Blink)
+}
 
 // InScrollback reports whether the viewport is above the live screen.
 func (s *ghosttyScreen) InScrollback() bool { return s.term.ScrolledBack() }

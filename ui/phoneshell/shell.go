@@ -160,6 +160,13 @@ func WithScreenFactory(factory ScreenFactory) Option {
 	return func(s *Shell) { s.sessions.newScreen = factory }
 }
 
+// WithTerminalAppearance supplies the Appearance document a phone terminal is
+// built with and re-styled from. Without it the Shell reads the Settings
+// service it was given, which is enough for a shell driven by a test.
+func WithTerminalAppearance(provider func() TerminalAppearance) Option {
+	return func(s *Shell) { s.sessions.appearance = provider }
+}
+
 // WithSessionStore persists the open Tabs in the shared Workspace restore
 // format, so a relaunch lists the Tabs the previous run left open as dormant
 // entries. Without it the phone still works but forgets its Tabs at exit.
@@ -178,6 +185,23 @@ func New(opts ...Option) *Shell {
 	for _, opt := range opts {
 		opt(s)
 	}
+	// The Sessions section reads the same Appearance and terminal documents
+	// the Settings pages edit. A shell given no provider still follows the
+	// shared defaults, and a test's fake service supplies its own values.
+	s.sessions.settings = s.settings.service
+	if s.sessions.appearance == nil {
+		s.sessions.appearance = func() TerminalAppearance {
+			if s.settings.service == nil {
+				return DefaultTerminalAppearance()
+			}
+			return TerminalAppearanceFromAppearance(
+				s.settings.service.Preferences().Appearance, false)
+		}
+	}
+	// A Settings tap that changes the font, cursor or scheme re-styles open
+	// terminals on the same frame; the composition root's change hook covers
+	// documents applied from outside the pages.
+	s.settings.onAppearanceChange = s.RefreshTerminalAppearance
 	s.hosts.open = s.openHost
 	s.hosts.details = func(host domainvault.Host) {
 		s.sections[Hosts].router.Push("/host/" + string(host.ID))
@@ -204,6 +228,12 @@ func (s *Shell) confirmClosingSessions() bool {
 	}
 	return s.settings.service.Preferences().Security.ConfirmCloseSessions
 }
+
+// RefreshTerminalAppearance re-styles every live phone terminal from the
+// current Appearance document. The Settings page calls it after a change, and
+// the composition root calls it when a preference document is applied from
+// outside the page (a Vault sync, for example).
+func (s *Shell) RefreshTerminalAppearance() { s.sessions.applyAppearance() }
 
 // syncLiveView derives the visible Session from the current route and applies
 // the lifecycle: that Tab is attached and resumed, every other Tab hibernates.
@@ -276,9 +306,9 @@ func (s *Shell) newSection(i Section) *section {
 	case Settings:
 		sec.intro = "Settings for this phone."
 		sec.pages = []page{
-			{path: "/appearance", title: "Appearance", summary: staticSummary("Theme, interface, icons")},
-			{path: "/terminal", title: "Terminal", summary: staticSummary("Clipboard and paste")},
-			{path: "/input", title: "Input", summary: staticSummary("Completion and suggestions")},
+			{path: "/appearance", title: "Appearance", summary: staticSummary("Theme, font, cursor, icons")},
+			{path: "/terminal", title: "Terminal", summary: staticSummary("Remote clipboard")},
+			{path: "/input", title: "Input", summary: staticSummary("Paste confirmation")},
 			{path: "/security", title: "Security", summary: staticSummary("Confirmations")},
 			{path: "/history", title: "History sync", summary: staticSummary("Atuin account and sync")},
 		}

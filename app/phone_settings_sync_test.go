@@ -10,6 +10,7 @@ import (
 	"github.com/mslxl/natcatty/adapters/store"
 	adaptersyncedsettings "github.com/mslxl/natcatty/adapters/syncedsettings"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
+	appsession "github.com/mslxl/natcatty/application/session"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
@@ -56,8 +57,8 @@ func TestSettingsWritesTheSharedSchemaAndKeepsDeviceLocalFields(t *testing.T) {
 		t.Fatalf("click Back: %v", err)
 	}
 	tt.Advance(600 * time.Millisecond)
-	if err := tt.Click("Terminal"); err != nil {
-		t.Fatalf("click Terminal: %v", err)
+	if err := tt.Click("Input"); err != nil {
+		t.Fatalf("click Input: %v", err)
 	}
 	tt.Advance(600 * time.Millisecond)
 	if err := tt.Click("Paste protection"); err != nil {
@@ -188,5 +189,34 @@ func TestPortableSettingsTravelWithTheSharedAdapter(t *testing.T) {
 	}
 	if after.AppIcon != "rainbow" {
 		t.Fatalf("AppIcon after apply = %q, want the local rainbow", after.AppIcon)
+	}
+}
+
+// TestPhoneSessionCarriesTheClipboardPolicy proves the terminal page's Remote
+// clipboard control has an effect on the phone: the Session is built with the
+// shared OSC 52 policy, and the change hook's SetClipboardPolicy reaches a
+// Session that is already open.
+func TestPhoneSessionCarriesTheClipboardPolicy(t *testing.T) {
+	settings := domainterminal.Settings{OSC52: domainterminal.ClipboardOff}
+	service := appsession.NewService(
+		&wiringFactory{transport: &wiringTransport{closed: make(chan struct{})}},
+		phoneSessionOptions(nil, nil, func() domainterminal.Settings { return settings })...)
+
+	session, err := service.Open(context.Background(), appsession.StartSpec{
+		Kind: appsession.KindSSH, Label: "phone", Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatalf("open Session: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	if got := session.ClipboardAccess(); got != domainterminal.ClipboardOff {
+		t.Fatalf("opened with clipboard policy %q, want off", got)
+	}
+
+	// What the phone's terminal-settings change hook does.
+	service.SetClipboardPolicy(domainterminal.ClipboardReadWrite)
+	if got := session.ClipboardAccess(); got != domainterminal.ClipboardReadWrite {
+		t.Fatalf("live Session clipboard policy = %q, want read-write", got)
 	}
 }

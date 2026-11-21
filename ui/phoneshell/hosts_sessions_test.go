@@ -322,6 +322,9 @@ type fakeScreen struct {
 	selected string
 	pasted   transfer.Data
 	scrolled bool
+	// appearance is the last Appearance the shell applied, so a test can
+	// observe a live re-style through the same seam production uses.
+	appearance TerminalAppearance
 }
 
 func (s *fakeScreen) View(c *ui.Context) ui.Element {
@@ -350,16 +353,20 @@ func (s *fakeScreen) SelectionText() (string, bool) { return s.selected, s.selec
 
 func (s *fakeScreen) PasteData(d transfer.Data) { s.pasted = d }
 
+// SetAppearance records the last appearance the shell applied, so a test can
+// observe a live re-style without the native library.
+func (s *fakeScreen) SetAppearance(a TerminalAppearance) { s.appearance = a }
+
 func (s *fakeScreen) InScrollback() bool { return s.scrolled }
 
 func (s *fakeScreen) ToggleScrollback() { s.scrolled = !s.scrolled }
 
-func fakeScreens(conn io.ReadWriteCloser) (TerminalScreen, error) {
+func fakeScreens(conn io.ReadWriteCloser, appearance TerminalAppearance) (TerminalScreen, error) {
 	handle, ok := conn.(*fakeHandle)
 	if !ok {
 		return nil, errors.New("fake screen: not a fake handle")
 	}
-	return &fakeScreen{handle: handle}, nil
+	return &fakeScreen{handle: handle, appearance: appearance}, nil
 }
 
 // phoneFixture is one shell over a fake store, opener, screen, and settings.

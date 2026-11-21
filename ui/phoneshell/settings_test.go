@@ -93,11 +93,40 @@ func TestSettingsAppearanceAppliesImmediately(t *testing.T) {
 	}
 }
 
-// TestSettingsTerminalAppliesImmediately covers clipboard and paste policy.
+// TestSettingsTerminalAppliesImmediately covers the remote clipboard policy
+// the phone Session service reads.
 func TestSettingsTerminalAppliesImmediately(t *testing.T) {
 	settings := newFakeSettings()
 	shell := New(WithSettings(settings))
 	tt := openSectionPage(t, shell, Settings, "Terminal")
+
+	if err := tt.Click("Remote clipboard: Off"); err != nil {
+		t.Fatalf("click Remote clipboard: Off: %v", err)
+	}
+	if got := settings.term.OSC52; got != domainterminal.ClipboardOff {
+		t.Fatalf("OSC52 = %q, want off", got)
+	}
+	if err := tt.Click("Remote clipboard: Read and write"); err != nil {
+		t.Fatalf("click Remote clipboard: Read and write: %v", err)
+	}
+	if got := settings.term.OSC52; got != domainterminal.ClipboardReadWrite {
+		t.Fatalf("OSC52 = %q, want read-write", got)
+	}
+}
+
+// TestSettingsInputAppliesImmediately covers the paste controls: the phone's
+// own Paste action reads them on every tap. The desktop's autocomplete
+// controls are gone because the phone terminal has no suggestion surface.
+func TestSettingsInputAppliesImmediately(t *testing.T) {
+	settings := newFakeSettings()
+	shell := New(WithSettings(settings))
+	tt := openSectionPage(t, shell, Settings, "Input")
+
+	for _, gone := range []string{"Autocomplete", "Inline suggestion", "Suggestion list"} {
+		if tt.HasText(gone) {
+			t.Fatalf("the Input page still offers %q, which the phone terminal does not consume", gone)
+		}
+	}
 
 	wasProtected := settings.term.PasteProtection
 	if err := tt.Click("Paste protection"); err != nil {
@@ -113,53 +142,6 @@ func TestSettingsTerminalAppliesImmediately(t *testing.T) {
 	}
 	if got := settings.term.PasteMinLines; got != lines+1 {
 		t.Fatalf("PasteMinLines = %d, want %d", got, lines+1)
-	}
-
-	if err := tt.Click("Remote clipboard: Off"); err != nil {
-		t.Fatalf("click Remote clipboard: Off: %v", err)
-	}
-	if got := settings.term.OSC52; got != domainterminal.ClipboardOff {
-		t.Fatalf("OSC52 = %q, want off", got)
-	}
-}
-
-// TestSettingsInputAppliesImmediately covers the autocomplete controls a
-// phone keyboard makes useful.
-func TestSettingsInputAppliesImmediately(t *testing.T) {
-	settings := newFakeSettings()
-	shell := New(WithSettings(settings))
-	tt := openSectionPage(t, shell, Settings, "Input")
-
-	wasEnabled := settings.term.AutocompleteEnabled
-	if err := tt.Click("Autocomplete"); err != nil {
-		t.Fatalf("click Autocomplete: %v", err)
-	}
-	if got := settings.term.AutocompleteEnabled; got == wasEnabled {
-		t.Fatalf("AutocompleteEnabled did not change from %v", wasEnabled)
-	}
-
-	wasInline := settings.term.AutocompleteGhostText
-	if err := tt.Click("Inline suggestion"); err != nil {
-		t.Fatalf("click Inline suggestion: %v", err)
-	}
-	if got := settings.term.AutocompleteGhostText; got == wasInline {
-		t.Fatalf("AutocompleteGhostText did not change from %v", wasInline)
-	}
-
-	minChars := settings.term.AutocompleteMinChars
-	if err := tt.Click("Increase Suggest after characters"); err != nil {
-		t.Fatalf("click min chars increase: %v", err)
-	}
-	if got := settings.term.AutocompleteMinChars; got != minChars+1 {
-		t.Fatalf("AutocompleteMinChars = %d, want %d", got, minChars+1)
-	}
-
-	delay := settings.term.AutocompleteDebounceMs
-	if err := tt.Click("Increase Suggestion delay (ms)"); err != nil {
-		t.Fatalf("click delay increase: %v", err)
-	}
-	if got := settings.term.AutocompleteDebounceMs; got != delay+50 {
-		t.Fatalf("AutocompleteDebounceMs = %d, want %d", got, delay+50)
 	}
 }
 

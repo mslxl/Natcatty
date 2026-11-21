@@ -130,7 +130,7 @@ func awaitReport(t *testing.T, conn *screenConn) [2]int {
 
 func TestPhoneRemoteScreenTakesThePeersSize(t *testing.T) {
 	conn := newScreenConn(true)
-	screen, err := newTerminalScreen(conn)
+	screen, err := newTerminalScreen(conn, TerminalAppearance{})
 	if err != nil {
 		t.Skipf("libghostty-vt unavailable: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestPhoneRemoteScreenTakesThePeersSize(t *testing.T) {
 
 func TestPhonePlainScreenTakesTheViewsSize(t *testing.T) {
 	conn := newScreenConn(false)
-	screen, err := newTerminalScreen(conn)
+	screen, err := newTerminalScreen(conn, TerminalAppearance{})
 	if err != nil {
 		t.Skipf("libghostty-vt unavailable: %v", err)
 	}

@@ -14,6 +14,7 @@ import (
 
 	appsession "github.com/mslxl/natcatty/application/session"
 	domainmodel "github.com/mslxl/natcatty/domain/model"
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	"github.com/mslxl/natcatty/ui/icons"
@@ -92,6 +93,9 @@ type TerminalScreen interface {
 	// own paste path, which wraps it in a bracketed paste when the program
 	// asks for one, so a multi-line paste does not run as commands.
 	PasteData(d transfer.Data)
+	// SetAppearance applies an Appearance setting change to the live
+	// terminal without recreating the view.
+	SetAppearance(a TerminalAppearance)
 	// InScrollback reports whether the viewport shows the scrollback above
 	// the live screen.
 	InScrollback() bool
@@ -102,9 +106,10 @@ type TerminalScreen interface {
 	Close() error
 }
 
-// ScreenFactory builds the terminal over a Session view. The phone root uses
-// the libghostty-vt screen; a test injects a fake.
-type ScreenFactory func(conn io.ReadWriteCloser) (TerminalScreen, error)
+// ScreenFactory builds the terminal over a Session view with the terminal
+// appearance the shared settings currently describe. The phone root uses the
+// libghostty-vt screen; a test injects a fake.
+type ScreenFactory func(conn io.ReadWriteCloser, appearance TerminalAppearance) (TerminalScreen, error)
 
 // tabStatus is the lifecycle of one Sessions Tab. The list tells them apart:
 // a Tab that is visible is connected and owns the phone's one live terminal
@@ -166,6 +171,12 @@ type sessionTabs struct {
 	mu        sync.Mutex
 	opener    SessionOpener
 	newScreen ScreenFactory
+	// appearance reads the current Appearance document for a new screen and
+	// for a live re-style. Nil means the shared defaults.
+	appearance func() TerminalAppearance
+	// settings reads the terminal policy the phone's paste path enforces.
+	// Nil means no paste guard, which is the original's default.
+	settings SettingsService
 	// prompts holds the trust and credential prompts the Tabs answer.
 	prompts *Prompts
 	launch  func(*phoneTab)
@@ -516,12 +527,53 @@ func (t *sessionTabs) syncVisible(visible string) {
 }
 
 // buildScreen builds the terminal for one view. ScreenFactory runs on the UI
-// thread; syncVisible is called from a frame, so that holds here too.
+// thread; syncVisible is called from a frame, so that holds here too. The
+// appearance is read at build time, so a terminal opened after a Settings
+// change already shows it.
 func (t *sessionTabs) buildScreen(conn io.ReadWriteCloser) (TerminalScreen, error) {
 	if t.newScreen == nil {
 		return nil, errors.New("the terminal screen is not available on this device")
 	}
-	return t.newScreen(conn)
+	return t.newScreen(conn, t.currentAppearance())
+}
+
+// currentAppearance reads the live Appearance document. The provider is
+// installed by the shell from the shared preferences service, so a change is
+// visible without recreating the shell.
+func (t *sessionTabs) currentAppearance() TerminalAppearance {
+	if t.appearance == nil {
+		return DefaultTerminalAppearance()
+	}
+	return t.appearance()
+}
+
+// applyAppearance restyles every live terminal, as the desktop root does when
+// the Appearance preference changes. Only visible Tabs have a screen; a
+// hibernated Tab picks the new appearance up when its view is rebuilt.
+func (t *sessionTabs) applyAppearance() {
+	appearance := t.currentAppearance()
+	t.mu.Lock()
+	screens := make([]TerminalScreen, 0, len(t.tabs))
+	for _, tab := range t.tabs {
+		if tab.screen != nil {
+			screens = append(screens, tab.screen)
+		}
+	}
+	t.mu.Unlock()
+	for _, screen := range screens {
+		screen.SetAppearance(appearance)
+	}
+}
+
+// pasteNeedsConfirmation reports whether the phone's paste path must ask
+// before sending text. It reads the shared terminal settings each time, so a
+// Settings toggle applies to the next paste without reopening anything.
+func (t *sessionTabs) pasteNeedsConfirmation(text string) bool {
+	if t.settings == nil {
+		return false
+	}
+	settings := t.settings.Terminal()
+	return domainterminal.ShouldConfirmPaste(text, settings.PasteProtection, settings.PasteMinLines)
 }
 
 // failAttach records a failed attach or resume. A failed resume leaves the Tab
@@ -1131,7 +1183,7 @@ func (t *sessionTabs) drawSession(c *ui.Context, id string, retry func(), back f
 			})
 			// The bar goes above the keyboard, inside the safe area the
 			// window root already applies, and the terminal takes what is left.
-			accessoryBar(c, view.accessory, view.screen)
+			accessoryBar(c, view.accessory, view.screen, t.pasteNeedsConfirmation)
 			view.screen.View(c).Fill()
 		})
 	}

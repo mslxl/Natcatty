@@ -26,12 +26,25 @@ package phoneshell
 // and tapping the latch again without a key cancels it. ^C, ^D and ^Z are
 // the combinations a phone user needs most, without a latch.
 
-import "github.com/egoist/mygo/ui"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/egoist/mygo/transfer"
+	"github.com/egoist/mygo/ui"
+
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
+	"github.com/mslxl/natcatty/ui/kit"
+)
 
 // accessoryState is one terminal page's latch state. It lives on the page's
 // Tab and survives frames; the zero value has no latch held.
 type accessoryState struct {
 	ctrl, alt bool
+	// pendingPaste is the clipboard text a guarded paste is waiting to send.
+	// It survives frames so the confirmation stays on screen until the user
+	// answers, and it is never written to a log or the settings document.
+	pendingPaste string
 }
 
 // take consumes the held latches and returns their modifiers.
@@ -83,8 +96,10 @@ var (
 
 // accessoryBar draws the bar and sends tapped keys to screen. It takes the
 // latches it reads and writes, so the page's Ctrl and Alt buttons toggle the
-// same state the keys consult.
-func accessoryBar(c *ui.Context, acc *accessoryState, screen TerminalScreen) ui.Element {
+// same state the keys consult. pasteGuard reports whether a paste needs
+// confirmation, as the shared PasteProtection setting decides; nil means
+// every paste is sent directly.
+func accessoryBar(c *ui.Context, acc *accessoryState, screen TerminalScreen, pasteGuard func(string) bool) ui.Element {
 	if acc == nil {
 		acc = &accessoryState{}
 	}
@@ -96,7 +111,8 @@ func accessoryBar(c *ui.Context, acc *accessoryState, screen TerminalScreen) ui.
 			accessoryLatch{label: "Ctrl", held: &acc.ctrl},
 			accessoryLatch{label: "Alt", held: &acc.alt})
 		accessoryRow(c, acc, screen, accessoryRowTwo)
-		accessoryControls(c, screen)
+		accessoryControls(c, acc, screen, pasteGuard)
+		accessoryPasteConfirmation(c, acc, screen)
 	})
 	return bar
 }
@@ -105,9 +121,11 @@ func accessoryBar(c *ui.Context, acc *accessoryState, screen TerminalScreen) ui.
 // the selection through MyGo's Services, the system clipboard seam the
 // terminal view uses too; Paste hands the clipboard's data to the terminal so
 // the terminal, not the page, decides whether to wrap it for bracketed paste.
+// A guarded paste is held on the page and a confirmation row asks first; the
+// payload reaches the terminal only from that row's confirm action.
 // The label tells where the toggle goes: History into the scrollback, Latest
 // back to the live screen.
-func accessoryControls(c *ui.Context, screen TerminalScreen) {
+func accessoryControls(c *ui.Context, acc *accessoryState, screen TerminalScreen, pasteGuard func(string) bool) {
 	ui.Row(c).FillWidth().Shrink(0).Gap(4).KeepFocus().Children(func() {
 		if b := accessoryButton(c, "Copy", false); b.Clicked() {
 			if text, ok := screen.SelectionText(); ok && text != "" {
@@ -116,7 +134,15 @@ func accessoryControls(c *ui.Context, screen TerminalScreen) {
 		}
 		if b := accessoryButton(c, "Paste", false); b.Clicked() {
 			if d := c.Services().ReadClipboardData(); len(d.Items()) > 0 {
-				screen.PasteData(d)
+				// The guard needs the text, but a clipboard holding only
+				// files or images has none: those still go straight to the
+				// terminal, which ignores formats it does not paste.
+				text, err := d.Read(transfer.Text)
+				if err == nil && pasteGuard != nil && pasteGuard(string(text)) {
+					acc.pendingPaste = string(text)
+				} else {
+					screen.PasteData(d)
+				}
 			}
 		}
 		scrolled := screen.InScrollback()
@@ -128,6 +154,36 @@ func accessoryControls(c *ui.Context, screen TerminalScreen) {
 			screen.ToggleScrollback()
 		}
 	})
+}
+
+// accessoryPasteConfirmation draws the PasteProtection question for a held
+// paste: how many lines, a bounded preview, and the two answers. Cancelling
+// discards the held text; confirming sends it through the terminal's own
+// bracketed-paste path.
+func accessoryPasteConfirmation(c *ui.Context, acc *accessoryState, screen TerminalScreen) {
+	if acc.pendingPaste == "" {
+		return
+	}
+	text := acc.pendingPaste
+	lines := domainterminal.PasteLineCount(text)
+	cancelled, confirmed := kit.ConfirmBar(c,
+		fmt.Sprintf("Paste %d lines?", lines),
+		func() {
+			preview, truncated := domainterminal.PreviewPaste(text, 120)
+			preview = strings.ReplaceAll(preview, "\n", " ↵ ")
+			if truncated {
+				preview += "…"
+			}
+			ui.Text(c, preview).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
+		},
+		"Cancel", "Paste anyway")
+	switch {
+	case cancelled:
+		acc.pendingPaste = ""
+	case confirmed:
+		acc.pendingPaste = ""
+		screen.PasteData(transfer.TextData(text))
+	}
 }
 
 // accessoryLatch is a modifier button that toggles held.

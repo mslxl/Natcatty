@@ -11,6 +11,12 @@
 // device's application-data directory, which is what makes interface style
 // and app icon device-local; the portable fields are the ones
 // domainpreferences.Portable leaves in the sync document.
+//
+// Vault sync is deliberately not configured in the phone build yet: there is
+// no sync account or provider surface on the phone, so a portable document is
+// written in the shared schema (adapters/syncedsettings) but travels to a
+// desktop only through a build that has the sync engine and a configured
+// remote. This is a known gap of this ticket, not an implied working feature.
 package app
 
 import (
@@ -24,6 +30,8 @@ import (
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
 	appvault "github.com/mslxl/natcatty/application/vault"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	platformsecrets "github.com/mslxl/natcatty/platform/secrets"
 	"github.com/mslxl/natcatty/ui/phoneshell"
 	"github.com/mslxl/natcatty/ui/terminal"
@@ -120,14 +128,35 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 	// through the shared route code instead of being ignored here.
 	vault := newPhoneVault(database, secrets)
 
+	// The shell is assigned after the services are built. The change hooks
+	// below only fire on a successful Update, which a user can only reach
+	// through the shown UI, so the nil checks cover construction only.
+	var shell *phoneshell.Shell
+	var sessionRuntime *phoneSessionRuntime
+
 	preferences := apppreferences.NewService(
-		store.OpenPreferences(filepath.Join(userData, "preferences.json")))
+		store.OpenPreferences(filepath.Join(userData, "preferences.json")),
+		apppreferences.WithChangeHook(func(domainpreferences.Settings) {
+			// The font, cursor and scheme are read when a terminal is built.
+			// Re-style the live ones now, as the desktop root does; this also
+			// covers a preference document applied from outside the page.
+			if shell != nil {
+				shell.RefreshTerminalAppearance()
+			}
+		}))
 	if err := preferences.Load(ctx); err != nil {
 		return nil, nil, nil, nil, err
 	}
-	terminal := appterminalsettings.NewService(
-		store.OpenTerminalSettings(filepath.Join(userData, "terminal-settings.json")))
-	if err := terminal.Load(ctx); err != nil {
+	terminalSettings := appterminalsettings.NewService(
+		store.OpenTerminalSettings(filepath.Join(userData, "terminal-settings.json")),
+		appterminalsettings.WithChangeHook(func(current domainterminal.Settings) {
+			// The OSC 52 policy is read when a Session opens; apply a change
+			// to the Sessions that are already running.
+			if sessionRuntime != nil {
+				sessionRuntime.SetClipboardPolicy(current.OSC52)
+			}
+		}))
+	if err := terminalSettings.Load(ctx); err != nil {
 		return nil, nil, nil, nil, err
 	}
 
@@ -141,28 +170,38 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 	// document, field-secret store, and sync services as the desktop. The
 	// engine runs on its own goroutine; a failed upload updates the status
 	// the Settings page shows and never reaches a Session.
-	history := newPhoneHistory(database, preferences, terminal, secrets)
+	history := newPhoneHistory(database, preferences, terminalSettings, secrets)
 	history.Start(ctx)
 
 	// The phone registers only remote transports: SSH, Telnet, Mosh, and ET.
-	// Local and serial shells are not constructed here at all.
-	sessions := newPhoneSessionRuntime(vault, database, userData, prompts, history, fieldSecrets)
+	// Local and serial shells are not constructed here at all. The terminal
+	// settings supply the same OSC 52 policy the desktop's Session service
+	// uses, so the Terminal page's Remote clipboard control has an effect.
+	sessionRuntime = newPhoneSessionRuntime(vault, database, userData, prompts, history, fieldSecrets,
+		func() domainterminal.Settings { return terminalSettings.Settings() })
 
-	shell := phoneshell.New(
+	shell = phoneshell.New(
 		phoneshell.WithVault(vault),
 		phoneshell.WithHosts(vault),
-		phoneshell.WithSessionOpener(sessions),
+		phoneshell.WithSessionOpener(sessionRuntime),
 		// A deep link for an endpoint the Vault does not have asks to create
 		// that Host. The shared Vault service writes the record, so the new
 		// Host is the same one the desktop lists.
 		phoneshell.WithHostCreator(vault),
 		phoneshell.WithPrompts(prompts),
-		phoneshell.WithSettings(phoneshell.NewSettingsService(preferences, terminal)),
+		phoneshell.WithSettings(phoneshell.NewSettingsService(preferences, terminalSettings)),
 		phoneshell.WithHistorySync(history),
+		// The terminal is built with and re-styled from the shared Appearance
+		// document. mygo.Theme is read when a screen is built, which is after
+		// App.Run has started the event loop.
+		phoneshell.WithTerminalAppearance(func() phoneshell.TerminalAppearance {
+			return phoneshell.TerminalAppearanceFromAppearance(
+				preferences.Settings().Appearance, mygo.Theme.IsDark())
+		}),
 		// The open Tabs survive a relaunch in the shared Workspace restore
 		// format; the phone's payload is its flat one-Pane-per-Tab form, which
 		// FlattenRestored reads back as dormant entries.
 		phoneshell.WithSessionStore(database.Workspace()),
 	)
-	return shell, database, sessions, history, nil
+	return shell, database, sessionRuntime, history, nil
 }
