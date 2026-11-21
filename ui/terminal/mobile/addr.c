@@ -1,4 +1,10 @@
-/* Generated from ui/terminal/internal/vt/symbols.txt. Do not edit. */
+//go:build ios || android
+
+/* Generated from ui/terminal/internal/vt/symbols.txt. Do not edit.
+ *
+ * The build constraint matches mobile.go: without it a host build with
+ * CGO_ENABLED=1 sees this C file while every cgo Go file is excluded, and
+ * fails with "C source files not allowed when not using cgo or SWIG". */
 #include <stdint.h>
 #include "addr.h"
 

@@ -1,3 +1,5 @@
+//go:build ios || android
+
 #ifndef NATCATTY_GHOSTTY_ADDR_H
 #define NATCATTY_GHOSTTY_ADDR_H
 
