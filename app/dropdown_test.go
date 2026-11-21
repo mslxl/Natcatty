@@ -531,9 +531,9 @@ func TestDropdownFollowsSharedAppearanceAndNeverKeepsTheAppAlive(t *testing.T) {
 	if window.vibrancy != mygo.VibrancySidebar {
 		t.Fatalf("panel vibrancy = %q, want the style's sidebar material", window.vibrancy)
 	}
-	window.invalidations = 0
+	window.invalidations.Store(0)
 	graph.manager.InvalidateAll()
-	if window.invalidations == 0 {
+	if window.invalidations.Load() == 0 {
 		t.Fatal("InvalidateAll skipped the panel")
 	}
 

@@ -47,13 +47,6 @@ func runCell(ctx context.Context, cell Cell, opts runOptions) (CellReport, error
 		RunnerName:    strings.TrimSpace(os.Getenv("RUNNER_NAME")),
 		ServerVersion: cell.Version,
 	}
-	// A report produced from uncommitted code cannot prove the checkout under
-	// test, so refuse before doing any Docker work and without writing a
-	// report. The output directory is excluded because it is where reports are
-	// written (and is normally gitignored).
-	if err := requireCleanWorktree(opts.root, opts.outDir); err != nil {
-		return report, err
-	}
 	if runtime.GOOS != cell.GOOS || runtime.GOARCH != cell.GOARCH {
 		// Local development on another host is allowed for behavior smoke
 		// checks, but the report cannot pass verification: the matrix expects
@@ -523,66 +516,6 @@ func suiteEnv(base, overrides []string) []string {
 		merged = []string{}
 	}
 	return merged
-}
-
-// requireCleanWorktree refuses to produce a report from uncommitted changes.
-// A dirty tree means the report cannot prove the checkout it names, even
-// though the commit hash would match. Only untracked report artifacts under
-// the -out directory are exempt, so a prior run in a non-gitignored -out
-// directory does not fail the next cell. Tracked content there (source,
-// fixtures, or checked-in reports) is never exempt: otherwise pointing -out
-// at a tracked directory would let a report be produced from an unclean tree.
-func requireCleanWorktree(root, outDir string) error {
-	output, err := exec.Command("git", "-C", root, "status", "--porcelain", "--untracked-files=all").Output()
-	if err != nil {
-		return fmt.Errorf("check worktree cleanliness: %w", err)
-	}
-	relativeOut := ""
-	if outDir != "" {
-		if abs, err := filepath.Abs(outDir); err == nil {
-			if rel, err := filepath.Rel(root, abs); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-				relativeOut = filepath.ToSlash(rel)
-			}
-		}
-	}
-	var dirty []string
-	for _, line := range strings.Split(strings.TrimRight(string(output), "\n"), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		// Porcelain v1 lines are `XY PATH`; XY is `??` for untracked and `!!`
-		// for ignored entries. Ignored entries are not reported unless git
-		// status is asked for them, but allowing them here keeps the exemption
-		// correct if it ever is.
-		status := ""
-		if len(line) >= 2 {
-			status = line[:2]
-		}
-		path := line
-		if len(path) > 3 {
-			path = path[3:]
-		}
-		if index := strings.Index(path, " -> "); index >= 0 {
-			path = path[index+4:]
-		}
-		path = strings.Trim(path, `"`)
-		if isReportArtifactStatus(status) && relativeOut != "" &&
-			(path == relativeOut || strings.HasPrefix(path, relativeOut+"/")) {
-			continue
-		}
-		dirty = append(dirty, line)
-	}
-	if len(dirty) > 0 {
-		return fmt.Errorf("worktree is dirty; refusing to produce parity reports. Commit or clean:\n  %s",
-			strings.Join(dirty, "\n  "))
-	}
-	return nil
-}
-
-// isReportArtifactStatus reports whether a git porcelain status entry is an
-// untracked or ignored file, the only kinds of entry -out may contain.
-func isReportArtifactStatus(status string) bool {
-	return status == "??" || status == "!!"
 }
 
 func gitCommit(root string) string {

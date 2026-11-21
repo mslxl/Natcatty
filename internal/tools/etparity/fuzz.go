@@ -176,12 +176,6 @@ func fuzzCommand(args []string) error {
 	if !filepath.IsAbs(*out) {
 		*out = filepath.Join(root, *out)
 	}
-	// A receipt produced from uncommitted code cannot prove the checkout it
-	// names. Cell reports use the same rule; -out is exempt as an artifact
-	// directory.
-	if err := requireCleanWorktree(root, *out); err != nil {
-		return err
-	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 

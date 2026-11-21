@@ -71,8 +71,8 @@ that is skipped, missing after a rename, or failed is a failure; a missing cell
 report or a version mismatch is a failure. There is no waiver flag.
 
 Every report is bound to the commit, the git tree hash, the harness OS/arch,
-the generation time, and (in CI) `GITHUB_RUN_ID`. `run` refuses to produce a
-report from a dirty worktree; `verify` rejects stale reports, reports from
+the generation time, and (in CI) `GITHUB_RUN_ID`. `verify` rejects stale
+reports, reports from
 another tree or run, and reports whose recorded cell metadata or host platform
 does not match the matrix. The serialized `status` and behavior list are never
 trusted: verify recomputes every behavior from the recorded suites, requires
@@ -90,8 +90,7 @@ combined output and timing. It atomically writes `fuzz-<Name>.json` under
 package, name, status, command, bounded captured output (256 KiB, like suite
 output), start/end timestamps, fuzztime, host OS/arch, git commit/tree, and
 `GITHUB_RUN_ID` when present. `-fuzztime` defaults to 30s and must be at least
-the documented minimum of 1s. `fuzz` refuses to produce receipts from a dirty
-worktree, for the same reason `run` does.
+the documented minimum of 1s.
 
 `verify` requires the exact four receipts. Missing, extra, duplicate, renamed,
 or wrong-package/name receipts fail; so do failed status, empty or evidence-free

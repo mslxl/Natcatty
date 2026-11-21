@@ -2,6 +2,7 @@ package app
 
 import (
 	"math"
+	"sync"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -299,10 +300,15 @@ type windowManager struct {
 	transferGuard transferQuitGuard
 	// onFocus runs after any window gains focus, beside the App Lock activity
 	// record. The sync engine uses it for its debounced focus trigger.
-	onFocus  func()
-	main     hostWindow
-	settings hostWindow
-	detached map[model.TabID]hostWindow
+	onFocus func()
+	// windowsMu guards the window collections that windows() enumerates. A
+	// background redraw can call it while the UI thread creates or destroys a
+	// window, so the list must be built under a lock even though every writer
+	// is otherwise UI-thread only. Per-window state is not covered.
+	windowsMu sync.RWMutex
+	main      hostWindow
+	settings  hostWindow
+	detached  map[model.TabID]hostWindow
 	// panels are auxiliary native windows that follow the shared appearance
 	// and invalidation paths but never keep the application alive. The
 	// Dropdown Panel is the first one.
@@ -409,6 +415,8 @@ type managedWindow struct {
 // window kind is added: everything that applies to all windows, or that
 // decides what keeps the app alive, derives from this list.
 func (m *windowManager) windows() []managedWindow {
+	m.windowsMu.RLock()
+	defer m.windowsMu.RUnlock()
 	windows := make([]managedWindow, 0, 2+len(m.detached)+len(m.panels))
 	windows = append(windows,
 		managedWindow{
@@ -700,7 +708,7 @@ func (m *windowManager) OpenMain() hostWindow {
 	// would become element-scoped and fail from the Vault view with no
 	// terminal focus.
 	content := m.withTheme(m.withAccelerators(gated))
-	m.main = m.create(windowSpec{
+	window := m.create(windowSpec{
 		Key:       "main",
 		Title:     m.messages().AppName(),
 		StateKey:  "main",
@@ -721,15 +729,24 @@ func (m *windowManager) OpenMain() hostWindow {
 			// every window closed, so this close is the last chance to preserve
 			// them.
 			m.state.CloseMainSessionsPreserving()
+			m.windowsMu.Lock()
 			m.main = nil
+			m.windowsMu.Unlock()
 			m.markQuittingIfNoWindows()
 		},
 	})
-	return m.main
+	m.windowsMu.Lock()
+	m.main = window
+	m.windowsMu.Unlock()
+	return window
 }
 
 // Main returns the main window, or nil before it is created.
-func (m *windowManager) Main() hostWindow { return m.main }
+func (m *windowManager) Main() hostWindow {
+	m.windowsMu.RLock()
+	defer m.windowsMu.RUnlock()
+	return m.main
+}
 
 // OpenSettings creates the singleton Settings window or focuses the existing
 // one. Settings holds no Sessions, so it never asks close intent. It uses the
@@ -751,7 +768,7 @@ func (m *windowManager) OpenSettings() {
 	if m.settingsContent == nil {
 		return
 	}
-	m.settings = m.create(windowSpec{
+	window := m.create(windowSpec{
 		Key:       "settings",
 		Title:     m.messages().NavSettings(),
 		StateKey:  "settings",
@@ -766,8 +783,16 @@ func (m *windowManager) OpenSettings() {
 		// Settings owns no Sessions, but closing the last counted window quits
 		// and would end the Quake Workspace's live Sessions.
 		OnCloseRequest: func() bool { return m.allowQuakeClose(m.settings) },
-		OnClosed:       func() { m.settings = nil; m.markQuittingIfNoWindows() },
+		OnClosed: func() {
+			m.windowsMu.Lock()
+			m.settings = nil
+			m.windowsMu.Unlock()
+			m.markQuittingIfNoWindows()
+		},
 	})
+	m.windowsMu.Lock()
+	m.settings = window
+	m.windowsMu.Unlock()
 }
 
 // OpenDetached creates the window that owns one detached Tab. Every window,
@@ -783,7 +808,7 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 		return
 	}
 	content := m.detachedContent(tabID)
-	m.detached[tabID] = m.create(windowSpec{
+	window := m.create(windowSpec{
 		Key:       "detached:" + string(tabID),
 		Title:     shell.DetachedTitle(m.messages(), info),
 		Width:     900,
@@ -796,7 +821,9 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 		OnFocus:        m.recordActivity,
 		OnCloseRequest: func() bool { return m.allowDetachedClose(tabID) },
 		OnClosed: func() {
+			m.windowsMu.Lock()
 			delete(m.detached, tabID)
+			m.windowsMu.Unlock()
 			delete(m.forceClose, "detached:"+string(tabID))
 			// Detached Tabs are not part of the persisted Workspace, so a
 			// saved credential pair could never be reattached after a restart.
@@ -808,6 +835,9 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 			m.markQuittingIfNoWindows()
 		},
 	})
+	m.windowsMu.Lock()
+	m.detached[tabID] = window
+	m.windowsMu.Unlock()
 }
 
 // ReattachClose closes a detached window after its Tab moved back into the
@@ -1080,13 +1110,17 @@ func (m *windowManager) createDropdown(bounds windowBounds) hostWindow {
 			m.restoreMainOwnership(!m.quitting)
 		},
 	})
+	m.windowsMu.Lock()
 	m.dropdown = window
 	m.panels = append(m.panels, window)
+	m.windowsMu.Unlock()
 	return window
 }
 
 // forgetDropdown clears a destroyed Panel from the manager.
 func (m *windowManager) forgetDropdown(window hostWindow) {
+	m.windowsMu.Lock()
+	defer m.windowsMu.Unlock()
 	if m.dropdown == window {
 		m.dropdown = nil
 	}

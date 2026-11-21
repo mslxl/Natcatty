@@ -43,11 +43,14 @@ func (t *testTransport) Close() error {
 // testFactory opens a fresh fake transport per Session, so a test can prove
 // that closing one Tab ends that Tab's Session and no other.
 type testFactory struct {
+	mu         sync.Mutex
 	transports []*testTransport
 	err        error
 }
 
 func (f *testFactory) Open(context.Context, appsession.StartSpec) (appsession.Transport, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -56,12 +59,21 @@ func (f *testFactory) Open(context.Context, appsession.StartSpec) (appsession.Tr
 	return transport, nil
 }
 
+// transportsSnapshot copies the transports a test may inspect while Session
+// goroutines still run.
+func (f *testFactory) transportsSnapshot() []*testTransport {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*testTransport(nil), f.transports...)
+}
+
 // testOpener is the consumer-owned SessionOpener port as the app implements
 // it: it opens through the shared Session service. It counts opens so a test
 // can prove hiding and showing the panel never starts a second shell, and it
 // records the Host each remote Tab opened so the label and lifecycle remain
 // observable.
 type testOpener struct {
+	mu        sync.Mutex
 	service   *appsession.Service
 	opens     int
 	err       error
@@ -70,17 +82,23 @@ type testOpener struct {
 }
 
 func (o *testOpener) OpenLocal() (*appsession.Session, error) {
+	o.mu.Lock()
 	o.opens++
-	if o.err != nil {
-		return nil, o.err
+	err := o.err
+	o.mu.Unlock()
+	if err != nil {
+		return nil, err
 	}
 	return o.service.OpenLocal(context.Background())
 }
 
 func (o *testOpener) OpenHost(host domainvault.Host) (*appsession.Session, error) {
+	o.mu.Lock()
 	o.hostOpens = append(o.hostOpens, host)
-	if o.hostErr != nil {
-		return nil, o.hostErr
+	err := o.hostErr
+	o.mu.Unlock()
+	if err != nil {
+		return nil, err
 	}
 	return o.service.Open(context.Background(), appsession.StartSpec{
 		Kind:     appsession.KindSSH,
@@ -90,6 +108,24 @@ func (o *testOpener) OpenHost(host domainvault.Host) (*appsession.Session, error
 		Port:     host.Port,
 		Username: host.Username,
 	})
+}
+
+func (o *testOpener) opened() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.opens
+}
+
+func (o *testOpener) hostsOpened() []domainvault.Host {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]domainvault.Host(nil), o.hostOpens...)
+}
+
+func (o *testOpener) setHostErr(err error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.hostErr = err
 }
 
 // testHostSource is the consumer-owned HostSource port: a fixed list a test
@@ -154,8 +190,8 @@ func TestActivateOpensOneLocalShellAndReusesItAcrossShows(t *testing.T) {
 	if err := state.Activate(); err != nil {
 		t.Fatalf("Activate: %v", err)
 	}
-	if opener.opens != 1 {
-		t.Fatalf("opens = %d, want one local Shell", opener.opens)
+	if opener.opened() != 1 {
+		t.Fatalf("opens = %d, want one local Shell", opener.opened())
 	}
 	first, ok := state.Active()
 	if !ok || first.Session == nil || first.Surface == nil {
@@ -171,8 +207,8 @@ func TestActivateOpensOneLocalShellAndReusesItAcrossShows(t *testing.T) {
 		t.Fatalf("second Activate: %v", err)
 	}
 	second, _ := state.Active()
-	if opener.opens != 1 {
-		t.Fatalf("opens = %d after a second show, want the original shell", opener.opens)
+	if opener.opened() != 1 {
+		t.Fatalf("opens = %d after a second show, want the original shell", opener.opened())
 	}
 	if second.Session != first.Session || second.Surface != first.Surface {
 		t.Fatal("a second show replaced the Session or Surface instead of reusing it")
@@ -189,8 +225,8 @@ func TestAddLocalTabAppendsAndActivates(t *testing.T) {
 	if err := state.AddLocalTab(); err != nil {
 		t.Fatalf("AddLocalTab: %v", err)
 	}
-	if opener.opens != 2 {
-		t.Fatalf("opens = %d, want two local shells", opener.opens)
+	if opener.opened() != 2 {
+		t.Fatalf("opens = %d, want two local shells", opener.opened())
 	}
 	tabs := state.Tabs()
 	if len(tabs) != 2 {
@@ -248,10 +284,11 @@ func TestCloseTabEndsItsSessionAndSurfaceAndKeepsActiveValid(t *testing.T) {
 	state.SelectTab(0)
 	remainingTab, _ := state.Active()
 	closingSurface := state.tabs[1].Surface.(*recordingSurface)
-	if len(factory.transports) != 2 {
-		t.Fatalf("transports = %d, want one per Tab", len(factory.transports))
+	transports := factory.transportsSnapshot()
+	if len(transports) != 2 {
+		t.Fatalf("transports = %d, want one per Tab", len(transports))
 	}
-	remainingTransport, closingTransport := factory.transports[0], factory.transports[1]
+	remainingTransport, closingTransport := transports[0], transports[1]
 
 	if !state.CloseTab(1) {
 		t.Fatal("CloseTab reported no change for a valid index")
@@ -310,8 +347,8 @@ func TestClosingTheLastTabRequestsHide(t *testing.T) {
 	if err := state.Activate(); err != nil {
 		t.Fatalf("Activate after the last close: %v", err)
 	}
-	if opener.opens != 2 {
-		t.Fatalf("opens = %d, want a new local Shell after the workspace emptied", opener.opens)
+	if opener.opened() != 2 {
+		t.Fatalf("opens = %d, want a new local Shell after the workspace emptied", opener.opened())
 	}
 }
 
@@ -373,10 +410,11 @@ func TestFreshStateStartsWithNoTabs(t *testing.T) {
 	if fresh.Session == old.Session {
 		t.Fatal("a restarted workspace reused the previous Session")
 	}
-	if opener.opens != 2 {
-		t.Fatalf("opens = %d, want one new shell per app run", opener.opens)
+	if opener.opened() != 2 {
+		t.Fatalf("opens = %d, want one new shell per app run", opener.opened())
 	}
-	if len(factory.transports) != 2 || factory.transports[0] == factory.transports[1] {
+	transports := factory.transportsSnapshot()
+	if len(transports) != 2 || transports[0] == transports[1] {
 		t.Fatalf("a restarted workspace did not get a fresh Session transport")
 	}
 }
@@ -420,10 +458,10 @@ func TestSurfaceFailureClosesTheSession(t *testing.T) {
 	if state.TabCount() != 0 {
 		t.Fatalf("a failed surface left %d Tabs", state.TabCount())
 	}
-	if len(factory.transports) != 1 {
-		t.Fatalf("transports = %d, want the failed surface's Session", len(factory.transports))
+	if len(factory.transportsSnapshot()) != 1 {
+		t.Fatalf("transports = %d, want the failed surface's Session", len(factory.transportsSnapshot()))
 	}
-	waitTransportClosed(t, factory.transports[0])
+	waitTransportClosed(t, factory.transportsSnapshot()[0])
 }
 
 // flushUntil applies completed Host opens until condition holds. Dialing runs
@@ -555,8 +593,8 @@ func TestAddHostTabOpensThroughTheSharedOpenerAndLabelsTheTab(t *testing.T) {
 	// The connection runs off the UI thread and its Tab appears on the next
 	// Flush.
 	flushUntil(t, state, "the Host Tab", func() bool { return state.TabCount() == 2 })
-	if len(opener.hostOpens) != 1 || opener.hostOpens[0].ID != host.ID {
-		t.Fatalf("opener Hosts = %+v, want the selected Host", opener.hostOpens)
+	if len(opener.hostsOpened()) != 1 || opener.hostsOpened()[0].ID != host.ID {
+		t.Fatalf("opener Hosts = %+v, want the selected Host", opener.hostsOpened())
 	}
 	if state.TabCount() != 2 {
 		t.Fatalf("Tabs = %d, want the local Shell and the Host", state.TabCount())
@@ -592,9 +630,10 @@ func TestRemoteTabsSelectAndClose(t *testing.T) {
 		t.Fatalf("second AddHostTab: %v", err)
 	}
 	flushUntil(t, state, "both Host Tabs", func() bool { return state.TabCount() == 3 })
-	if len(opener.hostOpens) != 2 || len(factory.transports) != 3 {
+	hostsOpened, transports := opener.hostsOpened(), factory.transportsSnapshot()
+	if len(hostsOpened) != 2 || len(transports) != 3 {
 		t.Fatalf("Host opens = %d, transports = %d, want two Hosts and three Sessions",
-			len(opener.hostOpens), len(factory.transports))
+			len(hostsOpened), len(transports))
 	}
 	// Host opens complete off the UI thread, so the two Tabs may append in
 	// either completion order. Find Alpha by label rather than assuming it.
@@ -627,7 +666,7 @@ func TestRemoteTabsSelectAndClose(t *testing.T) {
 	}
 	// Exactly one Host transport ends; the other Host still owns a Session.
 	// Closing a Session ends its transport asynchronously.
-	hostTransports := factory.transports[1:]
+	hostTransports := factory.transportsSnapshot()[1:]
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		closed := 0
@@ -695,7 +734,7 @@ func TestFailedHostOpenSurfacesAProblemAndAddsNoTab(t *testing.T) {
 	if err := state.Activate(); err != nil {
 		t.Fatalf("Activate: %v", err)
 	}
-	opener.hostErr = errors.New("no route to Host")
+	opener.setHostErr(errors.New("no route to Host"))
 	if err := state.AddHostTab(hostsForTest()[0]); err != nil {
 		t.Fatalf("AddHostTab reported a configuration error: %v", err)
 	}
@@ -729,7 +768,7 @@ func TestFailedHostSurfaceClosesTheSession(t *testing.T) {
 	if state.TabCount() != 0 {
 		t.Fatalf("a failed Host surface left %d Tabs", state.TabCount())
 	}
-	waitTransportClosed(t, factory.transports[0])
+	waitTransportClosed(t, factory.transportsSnapshot()[0])
 }
 
 // TestTabAtAndTabForSessionLocateTheSameTabs proves the integration seam the

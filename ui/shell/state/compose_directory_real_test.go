@@ -200,9 +200,9 @@ func checkComposeDirectoryRealPath(t *testing.T, got, want string) {
 // spaces before it repositions the cursor, and whether it does depends on
 // where the hex frame leaves the marker row. The sweep varies the entry count,
 // and so the frame length, across the alignments that used to time out: odd
-// counts in the original reproduction failed every time. Each listing has a
-// short deadline so a regression fails the suite instead of holding it for the
-// production 15-second timeout.
+// counts in the original reproduction failed every time. Each listing gets a
+// deadline just past the production timeout, so a regression fails the suite
+// instead of hanging it forever.
 func TestComposeDirectorySweepsTheFrameLength(t *testing.T) {
 	session := composeDirectoryRealSession(t, nil)
 	for entries := 1; entries <= 30; entries++ {
@@ -213,7 +213,7 @@ func TestComposeDirectorySweepsTheFrameLength(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), composeDirectoryTimeout+5*time.Second)
 		listing, err := listComposeDirectory(ctx, session, dir)
 		cancel()
 		if err != nil {

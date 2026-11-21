@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -114,19 +115,42 @@ func TestObserverAndLensOutputSeeTheSameDecodedStream(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 
+	// The subscription runs on the Session's read loop, so the buffer needs
+	// its own lock rather than the test's goroutine ordering.
+	var observedMu sync.Mutex
 	var observed bytes.Buffer
-	remove := session.SubscribeOutput(func(data []byte) { observed.Write(data) })
-	t.Cleanup(remove)
-	transport.send("remote-output\r\n")
-	eventually(t, "decoded observer stream", func() bool {
-		return observed.String() == "decoded:remote-output\r\n"
+	remove := session.SubscribeOutput(func(data []byte) {
+		observedMu.Lock()
+		defer observedMu.Unlock()
+		observed.Write(data)
 	})
-	observation, err := session.Observe()
-	if err != nil {
-		t.Fatal(err)
-	}
+	t.Cleanup(remove)
+	const want = "decoded:remote-output\r\n"
+	transport.send("remote-output\r\n")
+	// The read loop publishes the decoded stream before the rendered one that
+	// fills the replay, so wait for both rather than sampling the replay the
+	// instant the subscription fires.
+	var observation *Observation
+	eventually(t, "decoded observer and replay stream", func() bool {
+		observedMu.Lock()
+		ready := observed.String() == want
+		observedMu.Unlock()
+		if !ready {
+			return false
+		}
+		candidate, err := session.Observe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(candidate.Screen().Data) != want {
+			_ = candidate.Close()
+			return false
+		}
+		observation = candidate
+		return true
+	})
 	t.Cleanup(func() { _ = observation.Close() })
-	if got := string(observation.Screen().Data); got != "decoded:remote-output\r\n" {
+	if got := string(observation.Screen().Data); got != want {
 		t.Fatalf("observer replay = %q, want decoded stream", got)
 	}
 	decoded, _, _ := codec.snapshot()

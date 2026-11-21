@@ -499,7 +499,9 @@ func TestSurfaceAutocompleteHonorsTheDebounceAndRunningCommand(t *testing.T) {
 			mu.Unlock()
 			return []autocomplete.Suggestion{{Text: input + " status", Source: "history"}}
 		}, func() (bool, bool) { return true, false }),
-		WithAutocompleteDelay(func() int { return 40 }),
+		// The pre-delay assertion below samples immediately after typing, so
+		// leave enough headroom that a slow frame cannot cross the deadline.
+		WithAutocompleteDelay(func() int { return 500 }),
 	)
 	if err != nil {
 		t.Fatal(err)

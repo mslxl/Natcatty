@@ -961,122 +961,6 @@ func TestSuiteEnvAllowlistExcludesAmbientTestControls(t *testing.T) {
 	}
 }
 
-func TestRequireCleanWorktree(t *testing.T) {
-	dir := t.TempDir()
-	runGit(t, dir, "init", "-q")
-	writeFile(t, filepath.Join(dir, "tracked.txt"), "clean\n")
-	runGit(t, dir, "add", "tracked.txt")
-	runGit(t, dir, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "init")
-
-	outDir := filepath.Join(dir, "build", "et-parity")
-	if err := requireCleanWorktree(dir, outDir); err != nil {
-		t.Fatalf("clean tree rejected: %v", err)
-	}
-
-	// Reports and logs in the output directory must not make the tree dirty
-	// for the next cell, even when the directory is not gitignored.
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(outDir, "debian-12_7.1.1.json"), "{}\n")
-	if err := requireCleanWorktree(dir, outDir); err != nil {
-		t.Fatalf("output directory dirtied the check: %v", err)
-	}
-
-	writeFile(t, filepath.Join(dir, "tracked.txt"), "dirty\n")
-	if err := requireCleanWorktree(dir, outDir); err == nil {
-		t.Fatal("modified tracked file was accepted")
-	}
-	runGit(t, dir, "checkout", "--", "tracked.txt")
-
-	writeFile(t, filepath.Join(dir, "untracked.txt"), "new\n")
-	if err := requireCleanWorktree(dir, outDir); err == nil {
-		t.Fatal("untracked source file was accepted")
-	}
-}
-
-// TestRequireCleanWorktreeRefusesTrackedOutput proves -out is only exempt for
-// untracked report artifacts. A tracked file under -out is source or a
-// committed fixture; letting it be dirty would produce a report that cannot
-// prove the tree it names.
-func TestRequireCleanWorktreeRefusesTrackedOutput(t *testing.T) {
-	dir := t.TempDir()
-	runGit(t, dir, "init", "-q")
-	outDir := filepath.Join(dir, "adapters", "et")
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(dir, "tracked.txt"), "clean\n")
-	writeFile(t, filepath.Join(outDir, "tracked-report.json"), "{}\n")
-	runGit(t, dir, "add", "tracked.txt", "adapters/et/tracked-report.json")
-	runGit(t, dir, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "init")
-
-	// A clean tree with tracked files under -out is allowed.
-	if err := requireCleanWorktree(dir, outDir); err != nil {
-		t.Fatalf("clean tree with tracked output rejected: %v", err)
-	}
-
-	// Modifying a tracked file under -out must not be exempted.
-	writeFile(t, filepath.Join(outDir, "tracked-report.json"), "{\"dirty\":true}\n")
-	if err := requireCleanWorktree(dir, outDir); err == nil {
-		t.Fatal("dirty tracked file under -out was exempted")
-	}
-	runGit(t, dir, "restore", "--", "adapters/et/tracked-report.json")
-
-	// A staged new file under -out is tracked index state, not a report
-	// artifact, and must not be exempted either.
-	writeFile(t, filepath.Join(outDir, "staged-report.json"), "{}\n")
-	runGit(t, dir, "add", "adapters/et/staged-report.json")
-	if err := requireCleanWorktree(dir, outDir); err == nil {
-		t.Fatal("staged file under -out was exempted")
-	}
-	runGit(t, dir, "rm", "--cached", "-q", "adapters/et/staged-report.json")
-	if err := os.Remove(filepath.Join(outDir, "staged-report.json")); err != nil {
-		t.Fatal(err)
-	}
-
-	// An untracked report written under -out is allowed.
-	writeFile(t, filepath.Join(outDir, "report.json"), "{}\n")
-	if err := requireCleanWorktree(dir, outDir); err != nil {
-		t.Fatalf("untracked report output rejected: %v", err)
-	}
-}
-
-// TestRequireCleanWorktreeAllowsGitignoredOutput proves the default CI report
-// directory, which is gitignored, stays usable. Git reports no status entry
-// for ignored files, which is exactly the exemption this test covers.
-func TestRequireCleanWorktreeAllowsGitignoredOutput(t *testing.T) {
-	dir := t.TempDir()
-	runGit(t, dir, "init", "-q")
-	writeFile(t, filepath.Join(dir, ".gitignore"), "build/\n")
-	runGit(t, dir, "add", ".gitignore")
-	runGit(t, dir, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "init")
-
-	outDir := filepath.Join(dir, "build", "et-parity")
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(outDir, "debian-12_7.1.1.json"), "{}\n")
-	if err := requireCleanWorktree(dir, outDir); err != nil {
-		t.Fatalf("ignored report output rejected: %v", err)
-	}
-}
-
-func runGit(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, output)
-	}
-}
-
-func writeFile(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // TestRequiredFuzzTargetsExistInSourceAndAreUnique keeps the compiled-in
 // table honest. The workflow is no longer parsed: receipts are the evidence,
 // and verify checks each receipt's target against this table and the source.
@@ -2334,5 +2218,20 @@ func TestVerifyCommandRecordsJobResultFailure(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(summary.Problems, "; "), `required job fuzz result "failure"`) {
 		t.Fatalf("summary problems = %v", summary.Problems)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, output)
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

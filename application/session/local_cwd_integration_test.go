@@ -5,6 +5,7 @@ package session_test
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -57,12 +58,27 @@ func TestLocalShellReportsItsCWDWithoutOSC7(t *testing.T) {
 // with a hard deadline rather than assuming a delay.
 func waitForCWD(t *testing.T, session *appsession.Session, want string) {
 	t.Helper()
+	// t.TempDir on macOS lives under /var/folders, while the process probe
+	// reports lsof's canonical /private/var path. Compare the same form.
+	want = canonicalCWD(want)
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if session.Snapshot().CWD == want {
+		if got := canonicalCWD(session.Snapshot().CWD); got == want {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("cwd never became %q; last reported %q", want, session.Snapshot().CWD)
+}
+
+// canonicalCWD resolves symlinks so a temp directory and the path the process
+// probe reports compare equal. An empty or vanished path is returned as is.
+func canonicalCWD(path string) string {
+	if path == "" {
+		return path
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return path
 }

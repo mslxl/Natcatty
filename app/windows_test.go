@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,12 +26,14 @@ import (
 // fakeWindow is a hostWindow whose close follows the same contract as the
 // native one: OnCloseRequest can cancel it, and OnClosed runs once.
 type fakeWindow struct {
-	spec          windowSpec
-	hooks         windowHooks
-	shown         bool
-	focused       bool
-	destroyed     bool
-	invalidations int
+	spec      windowSpec
+	hooks     windowHooks
+	shown     bool
+	focused   bool
+	destroyed bool
+	// invalidations is atomic because a background redraw may invalidate
+	// every window while the test's goroutine reads or resets the count.
+	invalidations atomic.Int64
 	title         string
 	opacity       float64
 	vibrancy      mygo.Vibrancy
@@ -69,7 +72,7 @@ func (w *fakeWindow) Close() {
 		w.hooks.OnClosed()
 	}
 }
-func (w *fakeWindow) Invalidate()       { w.invalidations++ }
+func (w *fakeWindow) Invalidate()       { w.invalidations.Add(1) }
 func (w *fakeWindow) IsDestroyed() bool { return w.destroyed }
 func (w *fakeWindow) IsVisible() bool   { return w.shown && !w.destroyed }
 func (w *fakeWindow) SetBounds(bounds windowBounds) {
@@ -448,8 +451,8 @@ func TestPanelWindowsFollowAppearanceButDoNotKeepTheAppAlive(t *testing.T) {
 	if string(fake.icon) != "icon" {
 		t.Fatalf("panel icon = %q, want the live icon", fake.icon)
 	}
-	if fake.invalidations < 2 {
-		t.Fatalf("panel invalidations = %d, want the shared redraws", fake.invalidations)
+	if fake.invalidations.Load() < 2 {
+		t.Fatalf("panel invalidations = %d, want the shared redraws", fake.invalidations.Load())
 	}
 	if fake.title != "Quake" {
 		t.Fatalf("panel title = %q, want no locale retitle", fake.title)
@@ -546,13 +549,13 @@ func TestEveryWindowIsGatedAndLockUnlockPropagates(t *testing.T) {
 	}
 
 	for _, window := range graph.host.windows {
-		window.invalidations = 0
+		window.invalidations.Store(0)
 	}
 	if err := gate.Lock(); err != nil {
 		t.Fatalf("Lock: %v", err)
 	}
 	for _, window := range graph.host.windows {
-		if window.invalidations == 0 {
+		if window.invalidations.Load() == 0 {
 			t.Fatalf("locking did not redraw window %q", window.spec.Key)
 		}
 		tester := render(window)
