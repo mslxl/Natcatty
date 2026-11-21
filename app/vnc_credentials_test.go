@@ -90,9 +90,9 @@ func (w *vncTestWarnings) state() (acked bool, checks, acks int) {
 	return w.acked, w.checks, w.acks
 }
 
-// vncPlaintextTestPrompter is a scripted pre-connect confirmation. It reports each
-// request and waits for the test to answer, so a test can inspect the store
-// between the request and the user's explicit action.
+// vncPlaintextTestPrompter is a scripted post-negotiation confirmation. It
+// reports each request and waits for the test to answer, so a test can inspect
+// the store between the request and the user's explicit action.
 type vncPlaintextTestPrompter struct {
 	requests chan string
 	answers  chan bool
@@ -221,9 +221,9 @@ func TestVNCSecretStoreFailureIsInternal(t *testing.T) {
 }
 
 // TestVNCPlaintextConfirmationRecordsAcknowledgmentOnContinue proves the
-// unrouted confirmation is asked before dialing, the acknowledgement is NOT
-// written while the user has not answered, and an explicit Continue persists
-// it so the next connect is silent.
+// unrouted confirmation is asked after the stream is open and the security type
+// is known, the acknowledgement is NOT written while the user has not answered,
+// and an explicit Continue persists it so the next connect is silent.
 func TestVNCPlaintextConfirmationRecordsAcknowledgmentOnContinue(t *testing.T) {
 	warnings := &vncTestWarnings{}
 	prompt := newVNCPlaintextTestPrompter()
@@ -289,19 +289,31 @@ func TestVNCPlaintextConfirmationRecordsAcknowledgmentOnContinue(t *testing.T) {
 }
 
 // TestVNCPlaintextConfirmationCancelAbortsWithoutAcknowledging proves Cancel
-// neither dials nor records the acknowledgement.
+// records nothing and aborts before the client authenticates. Ticket 16 moved
+// the warning decision to the negotiated security type, so the TCP stream is
+// open by the time the prompt appears; Cancel must still stop before any
+// credential reaches the server.
 func TestVNCPlaintextConfirmationCancelAbortsWithoutAcknowledging(t *testing.T) {
 	warnings := &vncTestWarnings{}
 	prompt := newVNCPlaintextTestPrompter()
+	server := rfbtest.New(rfbtest.Config{Width: 2, Height: 2, Password: "required"})
+	client, peer := net.Pipe()
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(peer) }()
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = peer.Close()
+	})
 	dialed := false
 	factory := newVNCFactory(adaptervnc.Factory{
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			dialed = true
-			return nil, errors.New("unexpected dial")
+			return client, nil
 		},
 	}, &vncTestRoutes{}, appconnection.NewNetworkProviderRegistry(nil), nil).
 		withPlaintextWarnings(warnings).
-		withPlaintextPrompt(prompt)
+		withPlaintextPrompt(prompt).
+		withVNCPasswords(&vncTestSecrets{value: "required"})
 
 	errs := make(chan error, 1)
 	go func() {
@@ -319,11 +331,21 @@ func TestVNCPlaintextConfirmationCancelAbortsWithoutAcknowledging(t *testing.T) 
 	if !errors.Is(err, sessionui.ErrPlaintextDeclined) {
 		t.Fatalf("Open after Cancel = %v, want ErrPlaintextDeclined", err)
 	}
-	if dialed {
-		t.Fatal("Cancel dialed the server")
+	if !dialed {
+		t.Fatal("the stream must be open when the negotiated-type gate runs")
 	}
 	if acked, _, acks := warnings.state(); acked || acks != 0 {
 		t.Fatalf("warning store = acked %v, acks %d; Cancel must not write", acked, acks)
+	}
+	// Cancel closes the stream. Wait for the server to observe that close, so
+	// its recorded credential state is final before asserting it saw nothing.
+	select {
+	case <-served:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the server did not observe the cancelled stream")
+	}
+	if server.Received().VNCAuthAccepted {
+		t.Fatal("Cancel sent VNC authentication credentials")
 	}
 }
 

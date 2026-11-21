@@ -9,19 +9,81 @@ import (
 	"testing"
 )
 
-func TestSelectSecurityPrefersVNCPasswordOverNone(t *testing.T) {
+func TestSelectSecurityUsesTheDocumentedPreference(t *testing.T) {
 	selected, ok := SelectSecurity([]SecurityType{SecurityNone, SecurityVNCAuth})
 	if !ok || selected != SecurityVNCAuth {
 		t.Fatalf("SelectSecurity = %v, %v; want VNC authentication, true", selected, ok)
 	}
-	if selected, ok := SelectSecurity([]SecurityType{SecurityNone}); !ok || selected != SecurityNone {
-		t.Fatalf("SelectSecurity = %v, %v; want None, true", selected, ok)
+	// The full unrouted order, strongest first.
+	order := []SecurityType{
+		SecurityRA2ne, SecurityRA2_256, SecurityRA2, SecurityVeNCrypt,
+		SecurityAppleDH, SecurityVNCAuth, SecurityNone,
 	}
-	if _, ok := SelectSecurity([]SecurityType{SecurityVeNCrypt, SecurityAppleDH}); ok {
-		t.Fatal("SelectSecurity accepted types this ticket does not implement")
+	for i := 0; i < len(order); i++ {
+		selected, ok := SelectSecurity(order[i:])
+		if !ok || selected != order[i] {
+			t.Fatalf("SelectSecurity(%v) = %v, %v; want %v", order[i:], selected, ok, order[i])
+		}
+	}
+	// A routed Host must not choose VeNCrypt while another non-TLS type is
+	// available; it may only use VeNCrypt when nothing else is offered.
+	if selected, ok := SelectSecurityRouted([]SecurityType{SecurityVeNCrypt, SecurityVNCAuth}); !ok || selected != SecurityVNCAuth {
+		t.Fatalf("SelectSecurityRouted = %v, %v; want VNC authentication", selected, ok)
+	}
+	if selected, ok := SelectSecurityRouted([]SecurityType{SecurityVeNCrypt, SecurityNone}); !ok || selected != SecurityVeNCrypt {
+		t.Fatalf("SelectSecurityRouted = %v, %v; want VeNCrypt over None", selected, ok)
+	}
+	if _, ok := SelectSecurity([]SecurityType{SecurityType(113)}); ok {
+		t.Fatal("SelectSecurity accepted an unimplemented type")
 	}
 	if _, ok := SelectSecurity(nil); ok {
 		t.Fatal("SelectSecurity accepted an empty offer")
+	}
+}
+
+// TestSelectSecurityEveryCombination proves the strongest type wins for every
+// subset of the types the client implements, not just the hand-picked pairs.
+func TestSelectSecurityEveryCombination(t *testing.T) {
+	order := []SecurityType{
+		SecurityRA2ne, SecurityRA2_256, SecurityRA2, SecurityVeNCrypt,
+		SecurityAppleDH, SecurityVNCAuth, SecurityNone,
+	}
+	for mask := 1; mask < 1<<len(order); mask++ {
+		offered := make([]SecurityType, 0, len(order))
+		want := SecurityInvalid
+		for bit, security := range order {
+			if mask&(1<<bit) == 0 {
+				continue
+			}
+			offered = append(offered, security)
+			if want == SecurityInvalid {
+				want = security
+			}
+		}
+		selected, ok := SelectSecurity(offered)
+		if !ok || selected != want {
+			t.Fatalf("offered %v: SelectSecurity = %v, %v; want %v", offered, selected, ok, want)
+		}
+	}
+}
+
+func TestSelectVeNCryptSubtypePreference(t *testing.T) {
+	order := []VeNCryptSubtype{
+		VeNCryptX509Plain, VeNCryptX509Vnc,
+		VeNCryptTLSPlain, VeNCryptTLSVnc, VeNCryptPlain,
+	}
+	offered := append([]VeNCryptSubtype(nil), order...)
+	for i := 0; i < len(order); i++ {
+		selected, ok := SelectVeNCryptSubtype(offered[i:])
+		if !ok || selected != order[i] {
+			t.Fatalf("SelectVeNCryptSubtype(%v) = %v, %v; want %v", offered[i:], selected, ok, order[i])
+		}
+	}
+	if selected, ok := SelectVeNCryptSubtypeRouted(offered); !ok || selected != VeNCryptPlain {
+		t.Fatalf("SelectVeNCryptSubtypeRouted = %v, %v; want Plain", selected, ok)
+	}
+	if _, ok := SelectVeNCryptSubtypeRouted([]VeNCryptSubtype{VeNCryptTLSPlain, VeNCryptX509Plain}); ok {
+		t.Fatal("a routed Host accepted a TLS-requiring VeNCrypt subtype")
 	}
 }
 
@@ -62,7 +124,7 @@ func TestClientSecurity3_7RejectionConsumesReason(t *testing.T) {
 
 	reader := bufio.NewReader(bytes.NewReader(wire))
 	var out bytes.Buffer
-	_, err := clientSecurity(&out, reader, Version3_7, "")
+	_, err := clientSecurity(&out, reader, Version3_7, ClientConfig{})
 
 	var securityErr *SecurityError
 	if !errors.As(err, &securityErr) {
@@ -93,7 +155,7 @@ func TestClientSecurity3_3Rejection(t *testing.T) {
 
 	reader := bufio.NewReader(bytes.NewReader(wire))
 	var out bytes.Buffer
-	_, err := clientSecurity(&out, reader, Version3_3, "")
+	_, err := clientSecurity(&out, reader, Version3_3, ClientConfig{})
 
 	var securityErr *SecurityError
 	if !errors.As(err, &securityErr) {
@@ -115,10 +177,12 @@ func TestClientSecurity3_3Rejection(t *testing.T) {
 
 func TestClientSecurity3_3UnsupportedType(t *testing.T) {
 	wire := make([]byte, 4)
-	binary.BigEndian.PutUint32(wire, uint32(SecurityVeNCrypt))
+	// UltraVNC's MSLogonII (113) is registered but not implemented. It must be
+	// refused instead of falling back to None.
+	binary.BigEndian.PutUint32(wire, uint32(SecurityType(113)))
 
 	var out bytes.Buffer
-	_, err := clientSecurity(&out, bufio.NewReader(bytes.NewReader(wire)), Version3_3, "")
+	_, err := clientSecurity(&out, bufio.NewReader(bytes.NewReader(wire)), Version3_3, ClientConfig{})
 	if !errors.Is(err, ErrUnsupportedSecurity) {
 		t.Fatalf("clientSecurity = %v, want ErrUnsupportedSecurity", err)
 	}
@@ -149,6 +213,9 @@ func TestSecurityTypePlaintext(t *testing.T) {
 	for _, plaintext := range []SecurityType{
 		SecurityNone, SecurityVNCAuth, SecurityAppleDH,
 		SecurityRA2ne, SecurityRA2ne_256,
+		// VeNCrypt alone cannot prove privacy: the subtype decides, so the
+		// container fails closed as plaintext.
+		SecurityVeNCrypt,
 		// An unknown type fails closed: it is not silently treated as
 		// encrypted without a decision.
 		SecurityType(200),
@@ -158,11 +225,40 @@ func TestSecurityTypePlaintext(t *testing.T) {
 		}
 	}
 	for _, encrypted := range []SecurityType{
-		SecurityVeNCrypt, SecurityRA2, SecurityRA2r,
-		SecurityRA2_256, SecurityRA2r_256,
+		SecurityRA2, SecurityRA2r, SecurityRA2_256, SecurityRA2r_256,
 	} {
 		if encrypted.Plaintext() {
 			t.Fatalf("%v.Plaintext() = true, want false", encrypted)
+		}
+	}
+}
+
+func TestSecurityChoicePlaintextIsSubtypeAware(t *testing.T) {
+	plain := SecurityChoice{Type: SecurityVeNCrypt, Subtype: VeNCryptPlain}
+	if !plain.Plaintext() {
+		t.Fatal("VeNCrypt Plain was reported encrypted")
+	}
+	for _, subtype := range []VeNCryptSubtype{
+		VeNCryptTLSPlain, VeNCryptTLSVnc, VeNCryptX509Plain, VeNCryptX509Vnc,
+	} {
+		choice := SecurityChoice{Type: SecurityVeNCrypt, Subtype: subtype}
+		if choice.Plaintext() {
+			t.Fatalf("%v was reported plaintext", subtype)
+		}
+	}
+	for _, choice := range []SecurityChoice{
+		{Type: SecurityRA2ne}, {Type: SecurityRA2ne_256},
+		{Type: SecurityAppleDH}, {Type: SecurityVNCAuth}, {Type: SecurityNone},
+	} {
+		if !choice.Plaintext() {
+			t.Fatalf("%v choice was reported encrypted", choice)
+		}
+	}
+	for _, choice := range []SecurityChoice{
+		{Type: SecurityRA2}, {Type: SecurityRA2_256},
+	} {
+		if choice.Plaintext() {
+			t.Fatalf("%v choice was reported plaintext", choice)
 		}
 	}
 }
@@ -173,7 +269,7 @@ func TestClientSecurity3_8VNCAuthSendsResponse(t *testing.T) {
 	wire = append(wire, 0, 0, 0, 0) // Success.
 
 	var out bytes.Buffer
-	selected, err := clientSecurity(&out, bufio.NewReader(bytes.NewReader(wire)), Version3_8, "secret")
+	selected, err := clientSecurity(&out, bufio.NewReader(bytes.NewReader(wire)), Version3_8, ClientConfig{Password: "secret"})
 	if err != nil {
 		t.Fatalf("clientSecurity: %v", err)
 	}
@@ -203,7 +299,7 @@ func TestClientSecurity3_3VNCAuthReadsResult(t *testing.T) {
 	wire = append(wire, 0, 0, 0, 0)
 
 	var out bytes.Buffer
-	selected, err := clientSecurity(&out, bufio.NewReader(bytes.NewReader(wire)), Version3_3, "secret")
+	selected, err := clientSecurity(&out, bufio.NewReader(bytes.NewReader(wire)), Version3_3, ClientConfig{Password: "secret"})
 	if err != nil {
 		t.Fatalf("clientSecurity: %v", err)
 	}
@@ -223,7 +319,7 @@ func TestClientSecurityRejectsAWrongVNCPassword(t *testing.T) {
 	wire = appendReason(wire, reason)
 
 	var out bytes.Buffer
-	_, err := clientSecurity(&out, bufio.NewReader(bytes.NewReader(wire)), Version3_8, "wrong")
+	_, err := clientSecurity(&out, bufio.NewReader(bytes.NewReader(wire)), Version3_8, ClientConfig{Password: "wrong"})
 	if !errors.Is(err, ErrSecurityRejected) {
 		t.Fatalf("clientSecurity = %v, want ErrSecurityRejected", err)
 	}
@@ -237,7 +333,7 @@ func TestClientSecurityMissingVNCPasswordSendsNothing(t *testing.T) {
 	wire := []byte{1, byte(SecurityVNCAuth)}
 	reader := bufio.NewReader(bytes.NewReader(wire))
 	var out bytes.Buffer
-	_, err := clientSecurity(&out, reader, Version3_8, "")
+	_, err := clientSecurity(&out, reader, Version3_8, ClientConfig{})
 	if !errors.Is(err, ErrMissingPassword) {
 		t.Fatalf("clientSecurity = %v, want ErrMissingPassword", err)
 	}
@@ -259,7 +355,7 @@ func TestClientSecurity3_8RejectionReadsReason(t *testing.T) {
 
 	reader := bufio.NewReader(bytes.NewReader(wire))
 	var out bytes.Buffer
-	_, err := clientSecurity(&out, reader, Version3_8, "")
+	_, err := clientSecurity(&out, reader, Version3_8, ClientConfig{})
 	if !errors.Is(err, ErrSecurityRejected) {
 		t.Fatalf("clientSecurity = %v, want ErrSecurityRejected", err)
 	}
@@ -269,5 +365,21 @@ func TestClientSecurity3_8RejectionReadsReason(t *testing.T) {
 	}
 	if reader.Buffered() != 0 {
 		t.Fatalf("%d reason bytes left unread", reader.Buffered())
+	}
+}
+
+// TestVeNCryptTLSVerificationPolicyIsClosedByDefault proves a subtype outside
+// the explicit X509 and anonymous-TLS cases cannot fall through to a TLS
+// handshake that skips certificate verification.
+func TestVeNCryptTLSVerificationPolicyIsClosedByDefault(t *testing.T) {
+	for _, subtype := range []VeNCryptSubtype{
+		VeNCryptSubtype(9999),
+		VeNCryptTLSNone,
+		VeNCryptX509None,
+	} {
+		_, err := startVeNCryptTLS(&bytes.Buffer{}, &bytes.Buffer{}, subtype, "desk.local")
+		if !errors.Is(err, ErrUnsupportedSecurity) {
+			t.Fatalf("startVeNCryptTLS(%v) = %v, want ErrUnsupportedSecurity", subtype, err)
+		}
 	}
 }

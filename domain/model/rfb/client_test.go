@@ -147,6 +147,9 @@ func TestClientHandshakeVersions(t *testing.T) {
 			if !received.Shared {
 				t.Fatal("server did not see the shared flag")
 			}
+			if received.Username != "" {
+				t.Fatalf("None security sent a username: %q", received.Username)
+			}
 			if received.PixelFormat != rfb.DefaultPixelFormat() {
 				t.Fatalf("server saw pixel format %+v", received.PixelFormat)
 			}
@@ -199,6 +202,9 @@ func TestClientVNCPasswordHandshake(t *testing.T) {
 			}
 			if !received.VNCAuthAccepted {
 				t.Fatal("server did not verify the VNC password response")
+			}
+			if received.Username != "" {
+				t.Fatalf("VNC authentication sent a username: %q", received.Username)
 			}
 		})
 	}
@@ -258,17 +264,19 @@ func TestClientSelectsVNCPasswordOverNone(t *testing.T) {
 // TestClientUnsupportedOnlySecurityNamesTheOffer proves an offer the client
 // cannot speak fails closed with the offered types recorded.
 func TestClientUnsupportedOnlySecurityNamesTheOffer(t *testing.T) {
+	// MSLogonII (113) is registered but not implemented. Offering it alone must
+	// fail closed instead of falling back to None.
 	_, conn, _ := startServer(t, rfbtest.Config{
 		Width: 2, Height: 2,
-		SecurityTypes: []rfb.SecurityType{rfb.SecurityVeNCrypt},
+		SecurityTypes: []rfb.SecurityType{rfb.SecurityType(113)},
 	})
 	_, err := rfb.Connect(conn, rfb.ClientConfig{})
 	if !errors.Is(err, rfb.ErrUnsupportedSecurity) {
 		t.Fatalf("Connect = %v, want ErrUnsupportedSecurity", err)
 	}
 	var securityErr *rfb.SecurityError
-	if !errors.As(err, &securityErr) || !containsSecurityType(securityErr.Offered, rfb.SecurityVeNCrypt) {
-		t.Fatalf("Connect = %v, want the offered VeNCrypt type", err)
+	if !errors.As(err, &securityErr) || !containsSecurityType(securityErr.Offered, rfb.SecurityType(113)) {
+		t.Fatalf("Connect = %v, want the offered type 113", err)
 	}
 }
 

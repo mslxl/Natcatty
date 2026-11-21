@@ -5845,5 +5845,8 @@
   "commandDescriptionVim": "Edit text in the terminal",
   "commandDescriptionEcho": "Print text to standard output",
   "commandDescriptionDocker": "Build and run containers",
-  "commandDescriptionSystemctl": "Control systemd services"
+  "commandDescriptionSystemctl": "Control systemd services",
+  "connectionErrorVNCUnsupported": "This VNC server offers no security type Natcatty supports. Use an SSH route to encrypt and reach it.",
+  "connectionErrorVNCCertificate": "The VNC server's certificate did not verify against the system trust store and the Host name. Check the Host name and the server certificate.",
+  "connectionErrorVNCCancelled": "Connection cancelled before sending credentials."
 }

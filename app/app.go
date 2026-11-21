@@ -723,7 +723,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	trustPrompt := sessionui.NewTrustPrompt(sessionui.WithTrustRedrawRequest(invalidate))
 	authPrompt := sessionui.NewAuthPrompt(sessionui.WithAuthPromptRedrawRequest(invalidate))
 	// The unencrypted-VNC confirmation is both the transport factory's
-	// pre-connect gate and the shell modal that answers it.
+	// post-negotiation gate and the shell modal that answers it.
 	plaintextPrompt := sessionui.NewVNCPlaintextPrompt(sessionui.WithVNCPlaintextRedrawRequest(invalidate))
 
 	// A persisted host-key trust decision marks the Vault's Known Host list

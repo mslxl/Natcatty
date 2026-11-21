@@ -3813,5 +3813,8 @@
   "commandDescriptionVim": "Редактирует текст в терминале",
   "commandDescriptionEcho": "Выводит текст в стандартный поток вывода",
   "commandDescriptionDocker": "Собирает и запускает контейнеры",
-  "commandDescriptionSystemctl": "Управляет службами systemd"
+  "commandDescriptionSystemctl": "Управляет службами systemd",
+  "connectionErrorVNCUnsupported": "Этот сервер VNC не предлагает ни одного поддерживаемого Natcatty типа защиты. Используйте SSH-маршрут, чтобы зашифровать подключение.",
+  "connectionErrorVNCCertificate": "Сертификат сервера VNC не прошёл проверку по системному хранилищу доверия и имени хоста. Проверьте имя хоста и сертификат сервера.",
+  "connectionErrorVNCCancelled": "Подключение отменено до отправки учётных данных."
 }

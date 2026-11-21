@@ -7,8 +7,57 @@ import (
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
+	"github.com/mslxl/natcatty/domain/model/rfb"
 	"github.com/mslxl/natcatty/ui/locales"
+	sessionui "github.com/mslxl/natcatty/ui/session"
 )
+
+// TestProblemTextForNamesVNCStrongAuthFailures proves the VNC certificate and
+// unsupported-security failures get their own localized text in every
+// language, and a rejected password still falls back to the auth text.
+func TestProblemTextForNamesVNCStrongAuthFailures(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want func(locales.Messages) string
+	}{
+		{
+			name: "certificate",
+			err:  fmt.Errorf("vnc: %w", rfb.ErrTLSVerification),
+			want: func(m locales.Messages) string { return m.ConnectionErrorVNCCertificate() },
+		},
+		{
+			name: "unsupported",
+			err:  &rfb.SecurityError{Offered: []rfb.SecurityType{rfb.SecurityType(113)}},
+			want: func(m locales.Messages) string { return m.ConnectionErrorVNCUnsupported() },
+		},
+	}
+	for _, locale := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
+		m := locales.In(locale)
+		for _, tc := range cases {
+			t.Run(locale+"/"+tc.name, func(t *testing.T) {
+				got := ProblemTextFor(m, tc.err)
+				if got == "" {
+					t.Fatalf("no text for a %s failure", tc.name)
+				}
+				if want := tc.want(m); got != want {
+					t.Fatalf("text = %q, want %q", got, want)
+				}
+			})
+		}
+	}
+
+	// A rejected credential is an auth failure, not an unsupported-security
+	// failure, even though both are *SecurityError.
+	rejected := &appconnection.Error{
+		Kind:  appconnection.KindAuth,
+		Cause: &rfb.SecurityError{Rejected: true, Reason: "authentication failed"},
+	}
+	if got, want := ProblemTextFor(locales.In("en"), rejected),
+		locales.In("en").ConnectionErrorAuth(); got != want {
+		t.Fatalf("rejected password text = %q, want %q", got, want)
+	}
+}
 
 func TestProblemTextForNamesSecurityKeyFailures(t *testing.T) {
 	cases := []struct {
@@ -50,6 +99,23 @@ func TestProblemTextForNamesSecurityKeyFailures(t *testing.T) {
 				t.Fatalf("text = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+// TestProblemTextForNamesPlaintextCancel proves cancelling the unencrypted-VNC
+// confirmation is a deliberate user action with its own localized text, not the
+// generic internal failure that used to replace it.
+func TestProblemTextForNamesPlaintextCancel(t *testing.T) {
+	declined := fmt.Errorf("%w: %w", rfb.ErrSecurityDeclined, sessionui.ErrPlaintextDeclined)
+	for _, locale := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
+		m := locales.In(locale)
+		got := ProblemTextFor(m, declined)
+		if want := m.ConnectionErrorVNCCancelled(); got == "" || got != want {
+			t.Fatalf("%s cancel text = %q, want %q", locale, got, want)
+		}
+		if got == m.ConnectionErrorInternal() {
+			t.Fatalf("%s cancel text fell back to the internal failure", locale)
+		}
 	}
 }
 

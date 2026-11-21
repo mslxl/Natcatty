@@ -3813,5 +3813,8 @@
   "commandDescriptionVim": "Edita texto en el terminal",
   "commandDescriptionEcho": "Imprime texto en la salida estándar",
   "commandDescriptionDocker": "Compila y ejecuta contenedores",
-  "commandDescriptionSystemctl": "Controla servicios de systemd"
+  "commandDescriptionSystemctl": "Controla servicios de systemd",
+  "connectionErrorVNCUnsupported": "Este servidor VNC no ofrece ningún tipo de seguridad compatible con Natcatty. Usa una ruta SSH para cifrar y acceder a él.",
+  "connectionErrorVNCCertificate": "El certificado del servidor VNC no se pudo verificar con el almacén de confianza del sistema y el nombre del host. Comprueba el nombre del host y el certificado del servidor.",
+  "connectionErrorVNCCancelled": "Conexión cancelada antes de enviar las credenciales."
 }

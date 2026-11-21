@@ -439,7 +439,10 @@ func waitForUpdateRequest(conn net.Conn) error {
 
 // serveBlockingFence performs the RFB 3.8 None handshake, then sends a
 // BlockBefore ServerFence followed immediately by a CutText. The client must
-// write its fence reply before processing the cut text.
+// write its fence reply before processing the cut text. The server keeps
+// reading after the reply: the client also sends one client-initiated fence
+// request, and returning before consuming it would leave that write blocked on
+// the unbuffered pipe and stall every later client message.
 func serveBlockingFence(conn net.Conn) error {
 	if err := serveNoneHandshake(conn); err != nil {
 		return err
@@ -471,7 +474,9 @@ func serveBlockingFence(conn net.Conn) error {
 			if _, err := io.ReadFull(conn, payload); err != nil {
 				return err
 			}
-			if flags&rfb.FenceRequest == 0 {
+			// A fence without Request is the reply to our BlockBefore fence;
+			// keep reading until the client's own one-shot request arrives.
+			if flags&rfb.FenceRequest != 0 {
 				return nil
 			}
 		default:

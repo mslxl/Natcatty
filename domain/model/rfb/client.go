@@ -3,10 +3,12 @@ package rfb
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"sync/atomic"
+	"time"
 )
 
 // Client-to-server message types added by the extensions. EnableContinuousUpdates
@@ -27,10 +29,39 @@ type ClientConfig struct {
 	// Shared requests a shared session (ClientInit shared-flag 1). A server
 	// may disconnect other clients when it is false.
 	Shared bool
-	// Password is the VNC password used by security type 2. It is plaintext
-	// in memory only. An empty value fails with ErrMissingPassword when the
-	// server selects VNC authentication instead of sending a guess.
+	// Password is the credential used by the authenticating security types. It
+	// is plaintext in memory only. An empty value fails with ErrMissingPassword
+	// when the server selects a type that requires one instead of sending a
+	// guess.
 	Password string
+	// Username is the account name sent by Apple's Diffie-Hellman type, the
+	// VeNCrypt Plain family and an RA2 user+password subtype. The VNC password
+	// challenge, TLSVnc and X509Vnc never send it.
+	Username string
+	// ServerName is the Host name a VeNCrypt X509 certificate must match. It
+	// also supplies the TLS SNI value. An empty value makes X509 verification
+	// fail rather than skip the name check.
+	ServerName string
+	// Routed reports that the dialled stream is already encrypted by a tunnel.
+	// A routed client never negotiates an inner TLS layer and prefers a type
+	// that does not require one.
+	Routed bool
+	// SecurityGate, when set, is called after the security type (and any
+	// VeNCrypt subtype) is chosen but before a credential is sent or a TLS
+	// handshake starts. Returning an error aborts the connection; Connect wraps
+	// it with ErrSecurityDeclined so the caller's error remains available to
+	// errors.Is.
+	SecurityGate func(SecurityChoice) error
+	// Context, when set, cancels local cryptographic work. Only RA2 client key
+	// generation does CPU-bound work that is not interrupted by a connection
+	// deadline, so it observes this context (and KeygenTimeout) instead of
+	// stalling the handshake indefinitely. A nil value is context.Background.
+	Context context.Context
+	// KeygenTimeout bounds RA2 client key generation. It is the same handshake
+	// budget the adapter applies to network I/O, restarted when key generation
+	// begins so a user answering a plaintext confirmation cannot consume it.
+	// Zero uses defaultRA2KeygenTimeout.
+	KeygenTimeout time.Duration
 }
 
 // ServerInfo is the ServerInit message.
@@ -65,6 +96,7 @@ type Client struct {
 	reader   *bufio.Reader
 	version  Version
 	security SecurityType
+	subtype  VeNCryptSubtype
 	info     ServerInfo
 	frame    *Framebuffer
 	// extendedKey is set when the server's update carries the
@@ -95,16 +127,17 @@ func Connect(conn io.ReadWriter, cfg ClientConfig) (*Client, error) {
 	if err := writeAll(conn, []byte(version.Wire())); err != nil {
 		return nil, fmt.Errorf("%w: writing client version: %w", ErrHandshake, err)
 	}
-	security, err := clientSecurity(conn, reader, version, cfg.Password)
+	choice, stream, securityReader, err := negotiateSecurity(conn, reader, version, cfg)
 	if err != nil {
 		return nil, err
 	}
+	reader = securityReader
 
 	shared := byte(0)
 	if cfg.Shared {
 		shared = 1
 	}
-	if err := writeAll(conn, []byte{shared}); err != nil {
+	if err := writeAll(stream, []byte{shared}); err != nil {
 		return nil, fmt.Errorf("%w: writing ClientInit: %w", ErrHandshake, err)
 	}
 
@@ -117,10 +150,11 @@ func Connect(conn io.ReadWriter, cfg ClientConfig) (*Client, error) {
 		return nil, err
 	}
 	client := &Client{
-		conn:     conn,
+		conn:     stream,
 		reader:   reader,
 		version:  version,
-		security: security,
+		security: choice.Type,
+		subtype:  choice.Subtype,
 		info:     info,
 		frame:    frame,
 	}
@@ -133,83 +167,14 @@ func Connect(conn io.ReadWriter, cfg ClientConfig) (*Client, error) {
 	return client, nil
 }
 
-// clientSecurity negotiates the security type and, when it selects VNC
-// password authentication, performs the DES challenge/response. It returns the
-// selected type so the caller can report whether the wire is plaintext.
-func clientSecurity(w io.Writer, r *bufio.Reader, version Version, password string) (SecurityType, error) {
-	if version.Minor < Version3_7.Minor {
-		var wire [4]byte
-		if _, err := io.ReadFull(r, wire[:]); err != nil {
-			return SecurityInvalid, fmt.Errorf("%w: reading security type: %w", ErrHandshake, err)
-		}
-		offered := SecurityType(binary.BigEndian.Uint32(wire[:]))
-		switch offered {
-		case SecurityInvalid:
-			// RFB 3.3 signals a rejected connection with security type 0
-			// followed by a length-prefixed reason string.
-			return SecurityInvalid, &SecurityError{Rejected: true, Reason: readReason(r)}
-		case SecurityNone:
-			return SecurityNone, nil
-		case SecurityVNCAuth:
-			if password == "" {
-				return SecurityInvalid, &SecurityError{
-					Offered: []SecurityType{offered}, MissingPassword: true,
-				}
-			}
-			if err := vncAuthenticate(r, w, password); err != nil {
-				return SecurityInvalid, err
-			}
-			// RFB 3.3 reports the outcome of VNC authentication after the
-			// response, and a failure appends a reason string.
-			if err := readSecurityResult(r, version, []SecurityType{offered}); err != nil {
-				return SecurityInvalid, err
-			}
-			return offered, nil
-		default:
-			return SecurityInvalid, &SecurityError{Offered: []SecurityType{offered}}
-		}
-	}
-
-	var count [1]byte
-	if _, err := io.ReadFull(r, count[:]); err != nil {
-		return SecurityInvalid, fmt.Errorf("%w: reading security count: %w", ErrHandshake, err)
-	}
-	if count[0] == 0 {
-		// RFB 3.7 and 3.8 both send a length-prefixed reason string here.
-		return SecurityInvalid, &SecurityError{Rejected: true, Reason: readReason(r)}
-	}
-	var wire [255]byte
-	if _, err := io.ReadFull(r, wire[:count[0]]); err != nil {
-		return SecurityInvalid, fmt.Errorf("%w: reading security types: %w", ErrHandshake, err)
-	}
-	offered := make([]SecurityType, int(count[0]))
-	for i := range offered {
-		offered[i] = SecurityType(wire[i])
-	}
-	selected, ok := SelectSecurity(offered)
-	if !ok {
-		return SecurityInvalid, &SecurityError{Offered: offered}
-	}
-	if selected == SecurityVNCAuth && password == "" {
-		return SecurityInvalid, &SecurityError{Offered: offered, MissingPassword: true}
-	}
-	if err := writeAll(w, []byte{byte(selected)}); err != nil {
-		return SecurityInvalid, fmt.Errorf("%w: writing security type: %w", ErrHandshake, err)
-	}
-	// RFB 3.7 with None proceeds directly to ClientInit (RFC 6143 A.2);
-	// 3.8, and every authenticating type, reports a SecurityResult.
-	if selected == SecurityNone && version.Minor < Version3_8.Minor {
-		return selected, nil
-	}
-	if selected == SecurityVNCAuth {
-		if err := vncAuthenticate(r, w, password); err != nil {
-			return SecurityInvalid, err
-		}
-	}
-	if err := readSecurityResult(r, version, offered); err != nil {
-		return SecurityInvalid, err
-	}
-	return selected, nil
+// clientSecurity negotiates the security type and performs the selected
+// exchange. It is the historical seam the security tests use; Connect calls
+// negotiateSecurity directly so it can keep a TLS or AES-EAX stream. It takes
+// the whole ClientConfig so a caller cannot accidentally negotiate without the
+// routing, username or security-gate policy.
+func clientSecurity(w io.Writer, r *bufio.Reader, version Version, cfg ClientConfig) (SecurityType, error) {
+	choice, _, _, err := negotiateSecurity(readWriter{Reader: r, Writer: w}, r, version, cfg)
+	return choice.Type, err
 }
 
 // readSecurityResult consumes the four-byte status every authenticating type
@@ -287,8 +252,18 @@ func readServerInit(r io.Reader) (ServerInfo, error) {
 // Version returns the negotiated protocol version.
 func (c *Client) Version() Version { return c.version }
 
-// Security returns the security type the handshake selected.
+// Security returns the security type the handshake selected. For VeNCrypt,
+// SecurityChoice carries the subtype that decides privacy.
 func (c *Client) Security() SecurityType { return c.security }
+
+// SecurityChoice returns the negotiated type and, for VeNCrypt, its subtype.
+func (c *Client) SecurityChoice() SecurityChoice {
+	return SecurityChoice{Type: c.security, Subtype: c.subtype}
+}
+
+// Plaintext reports whether the negotiated security type leaves the RFB stream
+// unencrypted. It is subtype-aware for VeNCrypt.
+func (c *Client) Plaintext() bool { return c.SecurityChoice().Plaintext() }
 
 // ServerInfo returns the ServerInit fields.
 func (c *Client) ServerInfo() ServerInfo { return c.info }

@@ -358,9 +358,9 @@ func TestUnsupportedSecurityFailsTyped(t *testing.T) {
 		if _, err := io.ReadFull(serverConn, clientVersion[:]); err != nil {
 			return
 		}
-		// One offered security type: VeNCrypt, which this slice does not
-		// implement yet.
-		_, _ = serverConn.Write([]byte{1, byte(rfb.SecurityVeNCrypt)})
+		// One offered security type: UltraVNC's MSLogonII (113), which this
+		// client does not implement.
+		_, _ = serverConn.Write([]byte{1, byte(rfb.SecurityType(113))})
 	}()
 	factory := vnc.Factory{Dial: func(context.Context, string, string) (net.Conn, error) {
 		return clientConn, nil

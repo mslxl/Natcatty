@@ -20,14 +20,16 @@ import (
 const defaultPlaintextTimeout = 2 * time.Minute
 
 // ErrPlaintextDeclined reports that the user rejected an unencrypted VNC
-// connection. The caller aborts without dialing and without recording an
+// connection. The stream is already open and the security type is known, but
+// the caller aborts before any credential is sent and without recording an
 // acknowledgement.
 var ErrPlaintextDeclined = errors.New("session: unencrypted VNC connection declined")
 
-// VNCPlaintextPrompt is the pre-connect confirmation for an unrouted VNC Host
-// whose plaintext warning was never acknowledged. ConfirmPlaintext is called
-// from the transport's open goroutine and blocks until the user continues or
-// cancels. The UI reads Current on the UI thread and calls Answer.
+// VNCPlaintextPrompt is the post-negotiation confirmation for an unrouted VNC
+// Host whose plaintext warning was never acknowledged. ConfirmPlaintext is
+// called from the transport's open goroutine after the security type is chosen
+// and blocks until the user continues or cancels. The UI reads Current on the
+// UI thread and calls Answer.
 type VNCPlaintextPrompt struct {
 	mu      sync.Mutex
 	queue   []*plaintextRequest

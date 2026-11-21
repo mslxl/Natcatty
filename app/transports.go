@@ -324,9 +324,11 @@ type vncPlaintextWarnings interface {
 }
 
 // vncPlaintextPrompter asks the user to accept an unencrypted VNC connection
-// before the dial starts. ConfirmPlaintext blocks on the open goroutine; the
-// UI answers it. It is an interface so the transport layer stays free of UI
-// types.
+// after security negotiation has identified a genuinely plaintext type and
+// before any credential is sent. The stream is already open at that point, but
+// nothing but the version and security offers has crossed it. ConfirmPlaintext
+// blocks on the open goroutine; the UI answers it. It is an interface so the
+// transport layer stays free of UI types.
 type vncPlaintextPrompter interface {
 	// ConfirmPlaintext returns true only when the user chose to continue. A
 	// false decision is an error that aborts the connection.
@@ -364,8 +366,8 @@ func (f *vncTransportFactory) withPlaintextWarnings(warnings vncPlaintextWarning
 	return f
 }
 
-// withPlaintextPrompt attaches the user confirmation shown before an
-// unacknowledged unrouted VNC Host dials.
+// withPlaintextPrompt attaches the user confirmation shown when an
+// unacknowledged unrouted VNC Host negotiates a plaintext security type.
 func (f *vncTransportFactory) withPlaintextPrompt(prompt vncPlaintextPrompter) *vncTransportFactory {
 	f.plaintextPrompt = prompt
 	return f
@@ -392,20 +394,21 @@ func (f *vncTransportFactory) Open(ctx context.Context, spec appsession.StartSpe
 	}
 	routed := len(route.Jumps) > 0 || route.Proxy != nil || route.Network != nil
 	var transport appsession.Transport
-	// A routed Host is encrypted by its tunnel and never warns. An unrouted
-	// Host asks the user before dialing: the acknowledgement belongs to that
-	// explicit action, never to the delivery of a notice.
-	needsNotice, err := f.confirmPlaintext(ctx, spec, routed)
-	if err != nil {
-		return nil, err
-	}
+	// The warning decision now depends on the negotiated security type, so the
+	// gate runs inside the handshake, after the type is known but before any
+	// credential leaves the client. A routed Host is encrypted by its tunnel
+	// and never warns. An unrouted Host asks the user only when the negotiated
+	// type is genuinely plaintext; the acknowledgement belongs to that explicit
+	// action, never to the delivery of a notice.
+	needsNotice := false
+	gate := f.securityGate(spec, routed, &needsNotice)
 	switch {
 	case len(route.Jumps) > 0 || route.Proxy != nil:
-		transport, err = f.openRouted(ctx, spec, cfg, route)
+		transport, err = f.openRouted(ctx, spec, cfg, route, gate)
 	case route.Network != nil:
-		transport, err = f.openNetwork(ctx, spec, *route.Network)
+		transport, err = f.openNetwork(ctx, spec, *route.Network, gate)
 	default:
-		transport, err = f.openDirect(ctx, spec)
+		transport, err = f.openDirect(ctx, spec, gate)
 	}
 	if err != nil {
 		return nil, err
@@ -444,52 +447,52 @@ func (f *vncTransportFactory) withCredentials(ctx context.Context, spec appsessi
 	return spec, nil
 }
 
-// confirmPlaintext asks the user to accept an unencrypted VNC connection
-// before an unrouted Host dials. A routed Host is encrypted by its tunnel and
-// never warns. The acknowledgement is recorded only after an explicit
-// Continue; Cancel aborts the connection without writing it. When no UI is
-// attached, the caller falls back to a post-connect notice and still never
-// records the acknowledgement on the user's behalf.
-//
-// Until ticket 16 negotiates VeNCrypt, every type this client can select
-// (None and VNC authentication) is plaintext, so asking before the handshake
-// is accurate. Ticket 16 must teach this gate the negotiated VeNCrypt subtype.
-func (f *vncTransportFactory) confirmPlaintext(ctx context.Context,
-	spec appsession.StartSpec, routed bool) (needsNotice bool, err error) {
+// securityGate builds the callback the adapter consults after negotiating the
+// security type. The gate is the only place the warning decision is made, so
+// an encrypted type (VeNCrypt TLS/X509, RA2, or a raw encrypted tunnel) never
+// prompts. A genuinely plaintext type on an unrouted Host asks before any
+// credential is sent: Continue records the acknowledgement, Cancel aborts the
+// handshake, and when no UI is attached the caller shows a post-connect notice
+// without recording consent.
+func (f *vncTransportFactory) securityGate(spec appsession.StartSpec, routed bool,
+	needsNotice *bool) func(context.Context, bool) error {
 
-	if routed || f.plaintextWarnings == nil || spec.HostID == "" {
-		return false, nil
+	return func(ctx context.Context, plaintext bool) error {
+		if routed || !plaintext || f.plaintextWarnings == nil || spec.HostID == "" {
+			return nil
+		}
+		acknowledged, ackErr := f.plaintextWarnings.PlaintextWarningAcknowledged(ctx, spec.HostID)
+		if ackErr == nil && acknowledged {
+			return nil
+		}
+		if f.plaintextPrompt == nil {
+			// No prompt to ask. Show the notice after the stream opens, but
+			// leave the acknowledgement unrecorded so consent is never assumed.
+			*needsNotice = true
+			return nil
+		}
+		name := spec.Label
+		if name == "" {
+			name = spec.Hostname
+		}
+		accepted, err := f.plaintextPrompt.ConfirmPlaintext(ctx, spec.HostID, name)
+		if err != nil {
+			return err
+		}
+		if !accepted {
+			// A prompt that declines without an error still must not connect.
+			return errors.New("app: unencrypted VNC connection declined")
+		}
+		// Continue is the explicit acknowledgement. A store failure only means
+		// the warning is shown again next time; it never blocks the Session the
+		// user just approved.
+		_ = f.plaintextWarnings.AcknowledgePlaintextWarning(ctx, spec.HostID)
+		return nil
 	}
-	acknowledged, ackErr := f.plaintextWarnings.PlaintextWarningAcknowledged(ctx, spec.HostID)
-	if ackErr == nil && acknowledged {
-		return false, nil
-	}
-	if f.plaintextPrompt == nil {
-		// No prompt to ask. Show the notice after the stream opens, but leave
-		// the acknowledgement unrecorded so consent is never assumed.
-		return true, nil
-	}
-	name := spec.Label
-	if name == "" {
-		name = spec.Hostname
-	}
-	accepted, err := f.plaintextPrompt.ConfirmPlaintext(ctx, spec.HostID, name)
-	if err != nil {
-		return false, err
-	}
-	if !accepted {
-		// A prompt that declines without an error still must not connect.
-		return false, errors.New("app: unencrypted VNC connection declined")
-	}
-	// Continue is the explicit acknowledgement. A store failure only means
-	// the warning is shown again next time; it never blocks the Session the
-	// user just approved.
-	_ = f.plaintextWarnings.AcknowledgePlaintextWarning(ctx, spec.HostID)
-	return false, nil
 }
 
 // withPlaintextNotice adds the one-time unencrypted notice to a transport when
-// no pre-connect confirmation was available. It never writes the
+// no post-negotiation confirmation was available. It never writes the
 // acknowledgement: only an explicit user action may do that.
 func (f *vncTransportFactory) withPlaintextNotice(transport appsession.Transport, needsNotice bool) appsession.Transport {
 	if !needsNotice || transport == nil {
@@ -557,7 +560,8 @@ func (t *plaintextWarnedTransport) Plaintext() bool {
 // Manager. The adapter still validates its configuration before it calls Dial,
 // so a malformed Host opens no SSH chain.
 func (f *vncTransportFactory) openRouted(ctx context.Context, spec appsession.StartSpec,
-	cfg modelvnc.SessionConfig, route appconnection.Route) (appsession.Transport, error) {
+	cfg modelvnc.SessionConfig, route appconnection.Route,
+	gate func(context.Context, bool) error) (appsession.Transport, error) {
 
 	if f.manager == nil {
 		return nil, &appconnection.Error{
@@ -567,6 +571,7 @@ func (f *vncTransportFactory) openRouted(ctx context.Context, spec appsession.St
 	}
 	factory := f.inner
 	factory.Routed = true
+	factory.SecurityGate = gate
 	factory.Dial = func(dialCtx context.Context, network, address string) (net.Conn, error) {
 		return f.manager.DialStream(dialCtx, appconnection.Request{
 			HostID:            spec.HostID,
@@ -590,7 +595,8 @@ func (f *vncTransportFactory) openRouted(ctx context.Context, spec appsession.St
 // the one VNC dial. A selected profile is never replaced with the adapter's
 // direct dialer.
 func (f *vncTransportFactory) openNetwork(ctx context.Context, spec appsession.StartSpec,
-	network appconnection.NetworkRoute) (appsession.Transport, error) {
+	network appconnection.NetworkRoute,
+	gate func(context.Context, bool) error) (appsession.Transport, error) {
 
 	if f.providers == nil {
 		return nil, appconnection.ProviderUnavailable(network)
@@ -601,6 +607,7 @@ func (f *vncTransportFactory) openNetwork(ctx context.Context, spec appsession.S
 	}
 	factory := f.inner
 	factory.Routed = true
+	factory.SecurityGate = gate
 	// Tag only the failure that came from the dial seam. A configuration error
 	// the adapter catches before dialing must keep its own meaning instead of
 	// blaming the profile.
@@ -632,9 +639,11 @@ func (f *vncTransportFactory) openNetwork(ctx context.Context, spec appsession.S
 
 // openDirect is the Host with no route: the adapter's own dialer is used and
 // the stream is not marked as tunnel-encrypted.
-func (f *vncTransportFactory) openDirect(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
+func (f *vncTransportFactory) openDirect(ctx context.Context, spec appsession.StartSpec,
+	gate func(context.Context, bool) error) (appsession.Transport, error) {
 	factory := f.inner
 	factory.Routed = false
+	factory.SecurityGate = gate
 	return factory.Open(ctx, spec)
 }
 

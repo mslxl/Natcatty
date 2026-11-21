@@ -2,14 +2,17 @@
 // TCP connection, the RFB client, and the single display-event stream the
 // viewer consumes.
 //
-// The Factory dials whichever stream the app hands it and negotiates None or
-// VNC password authentication, preferring the password type when the server
-// offers both. Jump chains, proxies, and Network Profiles are resolved by the
-// app: it supplies a routed dial seam for a jump or proxy, a Provider-backed
-// dial seam for a Network Profile, and the plain direct dialer otherwise.
-// Stronger TLS-backed types and the optional encodings arrive in later
-// tickets. The adapter is deliberately free of UI types: frames cross the port
-// as stdlib images and input arrives as X11 keysyms and RFB button masks.
+// The Factory dials whichever stream the app hands it and negotiates the
+// strongest security type both sides support: the RealVNC RA2 family, VeNCrypt
+// (Plain, TLSPlain, X509Plain, TLSVnc, X509Vnc), Apple's Diffie-Hellman type,
+// the VNC password challenge, or None. X509 certificates are verified against
+// the system trust store and the Host name; no configuration skips that check.
+// Jump chains, proxies, and Network Profiles are resolved by the app: it
+// supplies a routed dial seam for a jump or proxy, a Provider-backed dial seam
+// for a Network Profile, and the plain direct dialer otherwise. A routed stream
+// prefers a security type that does not add a second TLS layer. The adapter is
+// deliberately free of UI types: frames cross the port as stdlib images and
+// input arrives as X11 keysyms and RFB button masks.
 package vnc
 
 import (
@@ -47,6 +50,10 @@ const (
 	// ErrInboundQueueFull rather than blocking forever (a server that never
 	// reads client replies could otherwise deadlock an unbuffered stream).
 	InboundHandoffCapacity = 32
+	// fenceProbeWriteTimeout bounds the one-shot client-initiated fence request.
+	// It only proves the extension is live, so a peer that stops reading after
+	// its own fence reply must not hold the ordered writer indefinitely.
+	fenceProbeWriteTimeout = 5 * time.Second
 )
 
 // ErrWriteQueueFull reports that the bounded outbound writer queue overflowed.
@@ -74,6 +81,11 @@ type Factory struct {
 	// protocol or from the dial seam, so a routed session can suppress a second
 	// TLS layer and the plaintext warning. A direct Host leaves it false.
 	Routed bool
+	// SecurityGate is consulted after security negotiation and before any
+	// credential is sent or TLS handshake starts. It receives the effective
+	// plaintext decision of the negotiated type (including the VeNCrypt
+	// subtype). Returning an error aborts Open. A nil gate accepts everything.
+	SecurityGate func(ctx context.Context, plaintext bool) error
 }
 
 var _ appsession.Factory = Factory{}
@@ -119,9 +131,34 @@ func (f Factory) Open(ctx context.Context, spec appsession.StartSpec) (appsessio
 	if password == "" {
 		password = spec.Password
 	}
+	username := cfg.Username
+	if username == "" {
+		username = spec.Username
+	}
 	client, err := rfb.Connect(conn, rfb.ClientConfig{
-		Shared:   cfg.Configuration.Shared,
-		Password: password,
+		Shared:        cfg.Configuration.Shared,
+		Password:      password,
+		Username:      username,
+		ServerName:    cfg.Hostname,
+		Routed:        f.Routed,
+		Context:       ctx,
+		KeygenTimeout: handshakeTimeout,
+		SecurityGate: func(choice rfb.SecurityChoice) error {
+			if f.SecurityGate == nil {
+				return nil
+			}
+			// A user may take longer than the handshake deadline to answer a
+			// plaintext confirmation, so suspend the deadline while the gate
+			// runs and restore it afterwards.
+			if deadline, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
+				_ = deadline.SetDeadline(time.Time{})
+			}
+			err := f.SecurityGate(ctx, choice.Plaintext())
+			if deadline, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
+				_ = deadline.SetDeadline(time.Now().Add(handshakeTimeout))
+			}
+			return err
+		},
 	})
 	if deadline, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
 		_ = deadline.SetDeadline(time.Time{})
@@ -171,6 +208,16 @@ func classifyDialError(ctx context.Context, dialCtxErr error, address string, er
 func classifyHandshakeError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return &appconnection.Error{Kind: appconnection.KindCancelled, Cause: ctx.Err()}
+	}
+	// A caller-declined plaintext session is the caller's own error, not a
+	// transport classification. Preserve it so errors.Is still finds the
+	// prompt's decision.
+	if errors.Is(err, rfb.ErrSecurityDeclined) {
+		return err
+	}
+	if errors.Is(err, rfb.ErrTLSVerification) {
+		return &appconnection.Error{Kind: appconnection.KindAuth, Cause: fmt.Errorf(
+			"%w: the VNC server certificate did not verify against the system trust store and the Host name", err)}
 	}
 	if errors.Is(err, rfb.ErrMissingPassword) {
 		return &appconnection.Error{Kind: appconnection.KindAuth, Cause: fmt.Errorf(
@@ -304,12 +351,13 @@ func (t *transport) Security() rfb.SecurityType { return t.client.Security() }
 
 // Plaintext reports whether the negotiated security type leaves the RFB wire
 // unencrypted. It is independent of Routed: a routed session is encrypted by
-// the tunnel even when the inner type is plaintext.
-func (t *transport) Plaintext() bool { return negotiatedPlaintext(t.client.Security()) }
+// the tunnel even when the inner type is plaintext. The decision is
+// subtype-aware for VeNCrypt, so an X509 or TLS subtype is never reported as
+// plaintext even though the container type alone cannot say.
+func (t *transport) Plaintext() bool { return negotiatedPlaintext(t.client.SecurityChoice()) }
 
-// negotiatedPlaintext is the plaintext decision isolated from the connection,
-// so a test can inject a type this slice does not yet negotiate.
-func negotiatedPlaintext(security rfb.SecurityType) bool { return security.Plaintext() }
+// negotiatedPlaintext is the plaintext decision isolated from the connection.
+func negotiatedPlaintext(choice rfb.SecurityChoice) bool { return choice.Plaintext() }
 
 // Events returns the single display-event stream.
 func (t *transport) Events() <-chan appsession.DisplayEvent { return t.emitter.Events() }
@@ -548,7 +596,9 @@ const understoodFenceFlags = rfb.FenceBlockBefore | rfb.FenceBlockAfter | rfb.Fe
 // BlockBefore or BlockAfter is written synchronously, so the processing loop
 // does not consume a later server message before the reply is on the wire. A
 // non-blocking fence is queued and the loop keeps draining, so a peer that
-// floods fences cannot deadlock or accumulate goroutines.
+// floods fences cannot deadlock or accumulate goroutines. The one-shot client
+// request is bounded: it is only a liveness probe, so a peer that stops
+// reading cannot stall the ordered writer behind it.
 func (t *transport) handleFence(fence rfb.Fence) error {
 	if fence.Request() {
 		// Echo only the flags this client understands. The Request bit is not
@@ -568,10 +618,15 @@ func (t *transport) handleFence(fence rfb.Fence) error {
 	}
 	// The client-initiated request is asynchronous: its BlockBefore flag
 	// constrains the server, and waiting for it here would let a flooding
-	// server stall the processing loop.
+	// server stall the processing loop. It is also bounded, because it is only
+	// a liveness probe: a server that stops reading after replying must not
+	// leave the single writer blocked forever on an unbuffered pipe and stall
+	// every later client message.
 	t.fenceRequestOnce.Do(func() {
 		request := rfb.Fence{Flags: rfb.FenceRequest | rfb.FenceBlockBefore, Payload: []byte("natcatty")}
-		t.writeAsync(func() error { return t.client.SendFence(request.Flags, request.Payload) })
+		t.writeAsyncBounded(fenceProbeWriteTimeout, func() error {
+			return t.client.SendFence(request.Flags, request.Payload)
+		})
 	})
 	return nil
 }
@@ -1046,6 +1101,28 @@ func (t *transport) writeAsync(send func() error) {
 		return
 	}
 	t.writes.submitAsync(func() error {
+		if err := send(); err != nil && !t.closed.Load() {
+			t.fail(err)
+			_ = t.Close()
+		}
+		return nil
+	})
+}
+
+// writeAsyncBounded is writeAsync with a write deadline for one optional
+// message. The deadline is set and cleared inside the writer goroutine, so no
+// other message is written under it. If the peer stops reading, the write
+// times out, the transport ends, and the writer is released instead of
+// blocking every later message behind it.
+func (t *transport) writeAsyncBounded(timeout time.Duration, send func() error) {
+	if t.closed.Load() {
+		return
+	}
+	t.writes.submitAsync(func() error {
+		if setter, ok := t.conn.(interface{ SetWriteDeadline(time.Time) error }); ok {
+			_ = setter.SetWriteDeadline(time.Now().Add(timeout))
+			defer func() { _ = setter.SetWriteDeadline(time.Time{}) }()
+		}
 		if err := send(); err != nil && !t.closed.Load() {
 			t.fail(err)
 			_ = t.Close()

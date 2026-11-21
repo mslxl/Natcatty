@@ -579,7 +579,8 @@ func WithAuthPrompt(prompt *sessionui.AuthPrompt) Option {
 }
 
 // WithVNCPlaintextPrompt gives the shell the unencrypted-VNC confirmation to
-// render. The same prompt blocks the VNC transport factory before it dials.
+// render. The same prompt blocks the VNC transport factory after the stream is
+// open and the security type is known, before any credential is sent.
 func WithVNCPlaintextPrompt(prompt *sessionui.VNCPlaintextPrompt) Option {
 	return func(s *State) { s.plaintextPrompt = prompt }
 }

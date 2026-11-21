@@ -29299,3 +29299,33 @@ func CommandDescriptionSystemctl() string { return In(i18n.Locale()).CommandDesc
 func (msgs Messages) CommandDescriptionSystemctl() string {
 	return Catalog.Format(msgs.locale, "commandDescriptionSystemctl", nil)
 }
+
+// ConnectionErrorVNCUnsupported says "This VNC server offers no security type Natcatty supports. Use an SSH route to encrypt and reach it."
+// in the language the app shows.
+func ConnectionErrorVNCUnsupported() string { return In(i18n.Locale()).ConnectionErrorVNCUnsupported() }
+
+// ConnectionErrorVNCUnsupported says "This VNC server offers no security type Natcatty supports. Use an SSH route to encrypt and reach it."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorVNCUnsupported() string {
+	return Catalog.Format(msgs.locale, "connectionErrorVNCUnsupported", nil)
+}
+
+// ConnectionErrorVNCCertificate says "The VNC server's certificate did not verify against the system trust store and the Host name. Check the Host name and…"
+// in the language the app shows.
+func ConnectionErrorVNCCertificate() string { return In(i18n.Locale()).ConnectionErrorVNCCertificate() }
+
+// ConnectionErrorVNCCertificate says "The VNC server's certificate did not verify against the system trust store and the Host name. Check the Host name and…"
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorVNCCertificate() string {
+	return Catalog.Format(msgs.locale, "connectionErrorVNCCertificate", nil)
+}
+
+// ConnectionErrorVNCCancelled says "Connection cancelled before sending credentials."
+// in the language the app shows.
+func ConnectionErrorVNCCancelled() string { return In(i18n.Locale()).ConnectionErrorVNCCancelled() }
+
+// ConnectionErrorVNCCancelled says "Connection cancelled before sending credentials."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorVNCCancelled() string {
+	return Catalog.Format(msgs.locale, "connectionErrorVNCCancelled", nil)
+}

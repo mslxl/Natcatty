@@ -16,10 +16,18 @@ var (
 	// ErrSecurityRejected reports a server that failed or refused the
 	// security handshake.
 	ErrSecurityRejected = errors.New("rfb: security handshake rejected")
-	// ErrMissingPassword reports that the server selected VNC password
-	// authentication but the client was not given a password. The connection
+	// ErrMissingPassword reports that the server selected an authenticating
+	// security type but the client was not given a password. The connection
 	// fails without sending a guess.
 	ErrMissingPassword = errors.New("rfb: server requires a VNC password")
+	// ErrSecurityDeclined reports that the caller's security gate refused the
+	// negotiated type before any credential was sent. The gate's own error is
+	// wrapped so the caller can preserve its user-facing meaning.
+	ErrSecurityDeclined = errors.New("rfb: security negotiation declined")
+	// ErrTLSVerification reports that a VeNCrypt X509 server's certificate did
+	// not verify against the system trust store and the Host name. There is no
+	// configuration that relaxes this check.
+	ErrTLSVerification = errors.New("rfb: VNC server certificate verification failed")
 	// ErrInvalidPixelFormat reports a pixel format the decoder cannot read.
 	ErrInvalidPixelFormat = errors.New("rfb: invalid pixel format")
 	// ErrFramebufferTooLarge reports a ServerInit size beyond the client's
@@ -43,7 +51,10 @@ var (
 // selected type failed, as opposed to offering only types this client does not
 // implement.
 type SecurityError struct {
-	Offered  []SecurityType
+	Offered []SecurityType
+	// Subtypes is the VeNCrypt subtype list when the server offered type 19
+	// but no subtype this client can or may use.
+	Subtypes []VeNCryptSubtype
 	Reason   string
 	Rejected bool
 	// MissingPassword reports that the negotiated type needs a VNC password
@@ -61,17 +72,21 @@ func (e *SecurityError) Error() string {
 		return ErrMissingPassword.Error()
 	}
 	rejected := e.Rejected || e.Reason != ""
+	offered := fmt.Sprintf("%v", e.Offered)
+	if len(e.Subtypes) > 0 {
+		offered = fmt.Sprintf("%v subtypes %v", e.Offered, e.Subtypes)
+	}
 	switch {
 	case rejected && e.Reason != "" && len(e.Offered) > 0:
-		return fmt.Sprintf("rfb: security handshake rejected: %s (offered %v)", e.Reason, e.Offered)
+		return fmt.Sprintf("rfb: security handshake rejected: %s (offered %s)", e.Reason, offered)
 	case rejected && e.Reason != "":
 		return fmt.Sprintf("rfb: security handshake rejected: %s", e.Reason)
 	case rejected && len(e.Offered) > 0:
-		return fmt.Sprintf("rfb: security handshake rejected (offered %v)", e.Offered)
+		return fmt.Sprintf("rfb: security handshake rejected (offered %s)", offered)
 	case rejected:
 		return ErrSecurityRejected.Error()
 	case len(e.Offered) > 0:
-		return fmt.Sprintf("rfb: no supported security type (offered %v)", e.Offered)
+		return fmt.Sprintf("rfb: no supported security type (offered %s)", offered)
 	default:
 		return ErrUnsupportedSecurity.Error()
 	}

@@ -8,6 +8,7 @@ package rfbtest
 import (
 	"bytes"
 	"compress/zlib"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"image"
@@ -57,14 +58,32 @@ type Config struct {
 	SendBell bool
 	// CutText sends one ServerCutText before the first framebuffer update.
 	CutText string
-	// Password is the VNC password the server verifies for security type 2.
+	// Password is the VNC password the server verifies for security type 2 and
+	// the inner authentication of the strong types.
 	// When SecurityTypes is empty a non-empty Password makes the server offer
 	// VNC authentication alone; an empty Password offers None.
 	Password string
+	// Username is the account name the server verifies for Apple DH, the
+	// VeNCrypt Plain family and an RA2 user+password subtype. It also selects
+	// the RA2 credential subtype: subtype 1 when set, subtype 2 when empty.
+	Username string
 	// SecurityTypes overrides the offered list. A count of one is also used
 	// for RFB 3.3, which has room for one security type. When empty the list
 	// derives from Password: {VNCAuth} when it is set, otherwise {None}.
 	SecurityTypes []rfb.SecurityType
+	// VeNCryptSubtypes is the subtype list the server offers when security
+	// type 19 is selected. It is required to exercise VeNCrypt.
+	VeNCryptSubtypes []rfb.VeNCryptSubtype
+	// TLSConfig is the server certificate for VeNCrypt TLS/X509 subtypes. The
+	// TLS-prefixed subtypes use it too because Go has no anonymous cipher
+	// suites; the client does not verify those subtypes.
+	TLSConfig *tls.Config
+	// AppleDHKeyBytes is the DH modulus size for Apple's type 30. Zero uses
+	// 128 bytes (1024 bits), the smallest size TigerVNC accepts.
+	AppleDHKeyBytes int
+	// RA2KeyBits is the RSA modulus size for the RA2 family. Zero uses 1024
+	// bits, the smallest the protocol accepts.
+	RA2KeyBits int
 	// ExtendedDesktopSize makes the server send an ExtendedDesktopSize
 	// rectangle with the initial full update and follow a client
 	// SetDesktopSize request.
@@ -163,20 +182,42 @@ type Received struct {
 	ClientVersion rfb.Version
 	// Security is the type the client selected.
 	Security rfb.SecurityType
+	// SecurityChoice includes the VeNCrypt subtype when one was negotiated.
+	SecurityChoice rfb.SecurityChoice
+	// VeNCryptSubtype is the subtype the client selected, or zero.
+	VeNCryptSubtype rfb.VeNCryptSubtype
+	// Username is the account name the client sent in the inner plaintext
+	// exchange (VeNCrypt Plain family or Apple DH), or "".
+	Username string
+	// Password is the password the client sent in a plaintext exchange, or "".
+	Password string
+	// TLSStarted reports that the server ran the VeNCrypt TLS handshake.
+	TLSStarted bool
 	// VNCAuthAccepted reports that a VNC password challenge was answered with
 	// the server's password.
 	VNCAuthAccepted bool
-	Shared          bool
-	PixelFormat     rfb.PixelFormat
-	Encodings       []rfb.Encoding
-	Requests        []UpdateRequest
-	Keys            []KeyEvent
-	ExtendedKeys    []ExtendedKeyEvent
-	Pointers        []PointerEvent
-	CutTexts        []string
-	Continuous      []ContinuousUpdate
-	Fences          []rfb.Fence
-	DesktopSizes    []DesktopSizeRequest
+	// AppleDHAccepted reports that Apple DH credentials matched.
+	AppleDHAccepted bool
+	// AppleDHUsername is the account name carried by Apple DH.
+	AppleDHUsername string
+	// RA2Subtype is the credential subtype the server requested.
+	RA2Subtype byte
+	// RA2Username and RA2Password are the credentials the client sent.
+	RA2Username string
+	RA2Password string
+	// RA2Accepted reports that the RA2 credentials matched.
+	RA2Accepted  bool
+	Shared       bool
+	PixelFormat  rfb.PixelFormat
+	Encodings    []rfb.Encoding
+	Requests     []UpdateRequest
+	Keys         []KeyEvent
+	ExtendedKeys []ExtendedKeyEvent
+	Pointers     []PointerEvent
+	CutTexts     []string
+	Continuous   []ContinuousUpdate
+	Fences       []rfb.Fence
+	DesktopSizes []DesktopSizeRequest
 }
 
 // Server is the in-process test server. New prepares it; Serve performs one
@@ -326,9 +367,11 @@ func (s *Server) Serve(conn io.ReadWriter) error {
 	s.received.ClientVersion = clientVersion
 	s.mu.Unlock()
 
-	if _, err := s.handshakeSecurity(conn, version, s.securityTypes()); err != nil {
+	stream, err := s.handshakeSecurity(conn, version, s.securityTypes())
+	if err != nil {
 		return err
 	}
+	conn = stream
 
 	var shared [1]byte
 	if _, err := io.ReadFull(conn, shared[:]); err != nil {
@@ -415,71 +458,77 @@ func (s *Server) securityTypes() []rfb.SecurityType {
 
 // handshakeSecurity offers the configured security types and completes the
 // selected exchange. RFB 3.3 has one type and no client selection; 3.7 and 3.8
-// send a list and read the client's choice.
-func (s *Server) handshakeSecurity(conn io.ReadWriter, version rfb.Version, offered []rfb.SecurityType) (rfb.SecurityType, error) {
+// send a list and read the client's choice. It returns the stream the rest of
+// the protocol runs on, which a TLS or encrypted RA2 handshake may replace.
+func (s *Server) handshakeSecurity(conn io.ReadWriter, version rfb.Version, offered []rfb.SecurityType) (io.ReadWriter, error) {
 	if len(offered) == 0 {
-		return rfb.SecurityInvalid, fmt.Errorf("rfbtest: no security types configured")
+		return nil, fmt.Errorf("rfbtest: no security types configured")
 	}
+	var selected rfb.SecurityType
 	if version.Minor < rfb.Version3_7.Minor {
-		selected := offered[0]
+		selected = offered[0]
 		var wire [4]byte
 		binary.BigEndian.PutUint32(wire[:], uint32(selected))
 		if err := writeAll(conn, wire[:]); err != nil {
-			return selected, err
+			return nil, err
 		}
-		s.mu.Lock()
-		s.received.Security = selected
-		s.mu.Unlock()
-		switch selected {
-		case rfb.SecurityNone:
-			return selected, nil
-		case rfb.SecurityVNCAuth:
-			if err := s.exchangeVNCAuth(conn); err != nil {
-				_ = writeSecurityResult(conn, version, false, "authentication failed")
-				return selected, err
-			}
-			return selected, writeSecurityResult(conn, version, true, "")
-		default:
-			return selected, fmt.Errorf("rfbtest: server cannot perform security type %d", selected)
+	} else {
+		wire := make([]byte, 1+len(offered))
+		wire[0] = byte(len(offered))
+		for i, security := range offered {
+			wire[1+i] = byte(security)
 		}
-	}
-
-	wire := make([]byte, 1+len(offered))
-	wire[0] = byte(len(offered))
-	for i, security := range offered {
-		wire[1+i] = byte(security)
-	}
-	if err := writeAll(conn, wire); err != nil {
-		return rfb.SecurityInvalid, err
-	}
-	var selection [1]byte
-	if _, err := io.ReadFull(conn, selection[:]); err != nil {
-		return rfb.SecurityInvalid, err
-	}
-	selected := rfb.SecurityType(selection[0])
-	if !containsSecurity(offered, selected) {
-		_ = writeSecurityResult(conn, version, false, "unsupported security type")
-		return selected, fmt.Errorf("rfbtest: client selected security type %d", selected)
+		if err := writeAll(conn, wire); err != nil {
+			return nil, err
+		}
+		var selection [1]byte
+		if _, err := io.ReadFull(conn, selection[:]); err != nil {
+			return nil, err
+		}
+		selected = rfb.SecurityType(selection[0])
+		if !containsSecurity(offered, selected) {
+			_ = writeSecurityResult(conn, version, false, "unsupported security type")
+			return nil, fmt.Errorf("rfbtest: client selected security type %d", selected)
+		}
 	}
 	s.mu.Lock()
 	s.received.Security = selected
+	s.received.SecurityChoice = rfb.SecurityChoice{Type: selected}
 	s.mu.Unlock()
+	return s.runSecurity(conn, version, selected)
+}
+
+// runSecurity performs one selected security exchange and returns the stream
+// the rest of the handshake must use.
+func (s *Server) runSecurity(conn io.ReadWriter, version rfb.Version, selected rfb.SecurityType) (io.ReadWriter, error) {
 	switch selected {
 	case rfb.SecurityNone:
 		// RFB 3.7 with None has no SecurityResult (RFC 6143 A.2); 3.8 does.
 		if version.Minor >= rfb.Version3_8.Minor {
-			return selected, writeSecurityResult(conn, version, true, "")
+			if err := writeSecurityResult(conn, version, true, ""); err != nil {
+				return nil, err
+			}
 		}
-		return selected, nil
+		return conn, nil
 	case rfb.SecurityVNCAuth:
 		if err := s.exchangeVNCAuth(conn); err != nil {
 			_ = writeSecurityResult(conn, version, false, "authentication failed")
-			return selected, err
+			return nil, err
 		}
-		return selected, writeSecurityResult(conn, version, true, "")
+		return conn, writeSecurityResult(conn, version, true, "")
+	case rfb.SecurityAppleDH:
+		if err := s.exchangeAppleDH(conn); err != nil {
+			_ = writeSecurityResult(conn, version, false, "authentication failed")
+			return nil, err
+		}
+		return conn, writeSecurityResult(conn, version, true, "")
+	case rfb.SecurityVeNCrypt:
+		return s.exchangeVeNCrypt(conn, version)
+	case rfb.SecurityRA2, rfb.SecurityRA2ne, rfb.SecurityRA2_256, rfb.SecurityRA2ne_256:
+		return s.exchangeRA2(conn, version, selected)
 	default:
 		_ = writeSecurityResult(conn, version, false, "unsupported security type")
-		return selected, fmt.Errorf("rfbtest: server cannot perform security type %d", selected)
+		return nil, fmt.Errorf("rfbtest: server cannot perform security type %d", selected)
 	}
 }
 

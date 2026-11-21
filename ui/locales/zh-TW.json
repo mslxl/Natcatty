@@ -3813,5 +3813,8 @@
   "commandDescriptionVim": "在終端中編輯文字",
   "commandDescriptionEcho": "將文字輸出到標準輸出",
   "commandDescriptionDocker": "建置和執行容器",
-  "commandDescriptionSystemctl": "管理 systemd 服務"
+  "commandDescriptionSystemctl": "管理 systemd 服務",
+  "connectionErrorVNCUnsupported": "此 VNC 伺服器未提供 Natcatty 支援的任何安全類型。請使用 SSH 路由來加密並存取它。",
+  "connectionErrorVNCCertificate": "VNC 伺服器的憑證未能通過系統信任庫和主機名稱驗證。請檢查主機名稱和伺服器憑證。",
+  "connectionErrorVNCCancelled": "在傳送認證資訊之前已取消連線。"
 }
