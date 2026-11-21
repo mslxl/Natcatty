@@ -12,11 +12,12 @@
 // and app icon device-local; the portable fields are the ones
 // domainpreferences.Portable leaves in the sync document.
 //
-// Vault sync is deliberately not configured in the phone build yet: there is
-// no sync account or provider surface on the phone, so a portable document is
-// written in the shared schema (adapters/syncedsettings) but travels to a
-// desktop only through a build that has the sync engine and a configured
-// remote. This is a known gap of this ticket, not an implied working feature.
+// Vault sync is wired here too. The phone configures WebDAV or S3-compatible
+// storage on the Settings page, and the shared sync engine carries the Vault
+// families and the portable settings documents to any other device configured
+// for the same account. Interface style, app icon, filesystem paths and the
+// other device-local fields are stripped by domainpreferences.Portable and
+// domainterminal.Portable, so they never leave this phone.
 package app
 
 import (
@@ -52,7 +53,7 @@ func Run() error {
 	log.Printf("natcatty: libghostty-vt %s", v)
 
 	ctx := context.Background()
-	shell, database, sessions, history, err := newPhoneShell(ctx)
+	shell, database, sessions, history, vaultSync, err := newPhoneShell(ctx)
 	if err != nil {
 		return err
 	}
@@ -60,6 +61,9 @@ func Run() error {
 		shell.Close()
 		sessions.Close()
 		history.Stop()
+		if vaultSync != nil {
+			vaultSync.Stop()
+		}
 		_ = database.Close()
 	}()
 	var showErr error
@@ -101,15 +105,15 @@ func Run() error {
 // newPhoneShell opens the device's Vault and settings stores and wires the
 // shell to them. The database and the Session runtime are returned so Run can
 // close them.
-func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phoneSessionRuntime, *phoneHistory, error) {
+func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phoneSessionRuntime, *phoneHistory, *phoneSync, error) {
 	userData, err := mygo.App.Path(mygo.PathUserData)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	database, err := store.Open(ctx, filepath.Join(userData, "natcatty.db"))
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	// The field-secret store protects key material at rest on the desktop.
@@ -133,6 +137,7 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 	// through the shown UI, so the nil checks cover construction only.
 	var shell *phoneshell.Shell
 	var sessionRuntime *phoneSessionRuntime
+	var vaultSync *phoneSync
 
 	preferences := apppreferences.NewService(
 		store.OpenPreferences(filepath.Join(userData, "preferences.json")),
@@ -143,9 +148,14 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 			if shell != nil {
 				shell.RefreshTerminalAppearance()
 			}
+			// A portable theme or font change is a Vault-sync fact: schedule
+			// an automatic upload when sync is configured and enabled.
+			if vaultSync != nil {
+				vaultSync.NotifyLocalChange()
+			}
 		}))
 	if err := preferences.Load(ctx); err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	terminalSettings := appterminalsettings.NewService(
 		store.OpenTerminalSettings(filepath.Join(userData, "terminal-settings.json")),
@@ -155,9 +165,12 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 			if sessionRuntime != nil {
 				sessionRuntime.SetClipboardPolicy(current.OSC52)
 			}
+			if vaultSync != nil {
+				vaultSync.NotifyLocalChange()
+			}
 		}))
 	if err := terminalSettings.Load(ctx); err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	// Host-key and credential prompts are answered on the Sessions page. A
@@ -172,6 +185,18 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 	// the Settings page shows and never reaches a Session.
 	history := newPhoneHistory(database, preferences, terminalSettings, secrets)
 	history.Start(ctx)
+
+	// Cloud sync uses the same shared Vault and settings documents. A failure
+	// to open the profile must not stop the phone from starting: the Settings
+	// page then reports that sync is unavailable, exactly as a Vault read
+	// failure reports its own error state.
+	if secrets != nil {
+		vaultSync, err = newPhoneSync(ctx, database, secrets, preferences, terminalSettings, userData)
+		if err != nil {
+			log.Printf("natcatty: Vault sync unavailable: %v", err)
+			vaultSync = nil
+		}
+	}
 
 	// The phone registers only remote transports: SSH, Telnet, Mosh, and ET.
 	// Local and serial shells are not constructed here at all. The terminal
@@ -191,6 +216,10 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 		phoneshell.WithPrompts(prompts),
 		phoneshell.WithSettings(phoneshell.NewSettingsService(preferences, terminalSettings)),
 		phoneshell.WithHistorySync(history),
+		// The phone configures WebDAV or S3-compatible storage on the Settings
+		// page; the engine carries portable settings documents and Vault
+		// records to a desktop configured for the same account.
+		phoneshell.WithVaultSync(vaultSync),
 		// The terminal is built with and re-styled from the shared Appearance
 		// document. mygo.Theme is read when a screen is built, which is after
 		// App.Run has started the event loop.
@@ -203,5 +232,5 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 		// FlattenRestored reads back as dormant entries.
 		phoneshell.WithSessionStore(database.Workspace()),
 	)
-	return shell, database, sessionRuntime, history, nil
+	return shell, database, sessionRuntime, history, vaultSync, nil
 }

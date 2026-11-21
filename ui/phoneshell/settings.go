@@ -31,6 +31,8 @@ type SettingsService interface {
 type settingsPages struct {
 	service     SettingsService
 	history     HistorySyncService
+	sync        VaultSyncService
+	syncForm    vaultSyncDraft
 	historyForm historyDraft
 	problem     string
 	// onAppearanceChange re-styles live terminals after a successful
@@ -64,6 +66,8 @@ func (p *settingsPages) draw(c *ui.Context, page page) {
 				p.security(c)
 			case "/history":
 				p.historySync(c)
+			case "/vault-sync":
+				p.vaultSync(c)
 			}
 		})
 	})

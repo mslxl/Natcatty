@@ -135,6 +135,14 @@ func WithHistorySync(service HistorySyncService) Option {
 	return func(s *Shell) { s.settings.history = service }
 }
 
+// WithVaultSync gives the Settings pages the shared Vault sync engine, so the
+// phone can configure WebDAV or S3-compatible storage and carry its portable
+// settings documents to another device. Without it the Vault sync page says it
+// is unavailable; no other page is affected.
+func WithVaultSync(service VaultSyncService) Option {
+	return func(s *Shell) { s.settings.sync = service }
+}
+
 // WithHosts gives the Hosts section the shared Vault's Host list. Only remote
 // Hosts are listed; Local and serial records stay on the desktop.
 func WithHosts(store HostStore) Option {
@@ -311,6 +319,7 @@ func (s *Shell) newSection(i Section) *section {
 			{path: "/input", title: "Input", summary: staticSummary("Paste confirmation")},
 			{path: "/security", title: "Security", summary: staticSummary("Confirmations")},
 			{path: "/history", title: "History sync", summary: staticSummary("Atuin account and sync")},
+			{path: "/vault-sync", title: "Vault sync", summary: staticSummary("Portable settings and Vault")},
 		}
 		sec.draw = s.settings.draw
 	}
