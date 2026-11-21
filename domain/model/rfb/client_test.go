@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"net"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,6 +168,114 @@ func TestClientHandshakeVersions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestClientVNCPasswordHandshake proves the client completes VNC password
+// authentication against the in-process server for every protocol version the
+// engine speaks.
+func TestClientVNCPasswordHandshake(t *testing.T) {
+	for _, version := range []rfb.Version{rfb.Version3_3, rfb.Version3_7, rfb.Version3_8} {
+		t.Run(version.String(), func(t *testing.T) {
+			server, conn, done := startServer(t, rfbtest.Config{
+				Version:  version,
+				Frame:    newTestFrame(2, 2),
+				Password: "correct-horse",
+			})
+			client, err := rfb.Connect(conn, rfb.ClientConfig{Shared: true, Password: "correct-horse"})
+			if err != nil {
+				t.Fatalf("Connect: %v", err)
+			}
+			if client.Security() != rfb.SecurityVNCAuth {
+				t.Fatalf("Security() = %v, want VNC authentication", client.Security())
+			}
+			_ = conn.Close()
+			waitServer(t, done)
+			received := server.Received()
+			if received.Security != rfb.SecurityVNCAuth {
+				t.Fatalf("server saw security type %v, want VNC authentication", received.Security)
+			}
+			if !received.VNCAuthAccepted {
+				t.Fatal("server did not verify the VNC password response")
+			}
+		})
+	}
+}
+
+// TestTestServerRejectsAWrongVNCPassword proves the in-process server rejects
+// a response that does not match its configured password, and the client
+// reports the rejection.
+func TestTestServerRejectsAWrongVNCPassword(t *testing.T) {
+	_, conn, done := startServer(t, rfbtest.Config{Width: 2, Height: 2, Password: "right-pass"})
+	_, err := rfb.Connect(conn, rfb.ClientConfig{Password: "wrong-pass"})
+	if !errors.Is(err, rfb.ErrSecurityRejected) {
+		t.Fatalf("Connect = %v, want ErrSecurityRejected", err)
+	}
+	select {
+	case serverErr := <-done:
+		if serverErr == nil || !strings.Contains(serverErr.Error(), "authentication failed") {
+			t.Fatalf("server error = %v, want an authentication failure", serverErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("server did not finish after rejecting a password")
+	}
+}
+
+// TestClientMissingVNCPasswordFailsClosed proves a server that offers only VNC
+// password authentication is not satisfied with an empty credential.
+func TestClientMissingVNCPasswordFailsClosed(t *testing.T) {
+	_, conn, _ := startServer(t, rfbtest.Config{Width: 2, Height: 2, Password: "required"})
+	_, err := rfb.Connect(conn, rfb.ClientConfig{})
+	if !errors.Is(err, rfb.ErrMissingPassword) {
+		t.Fatalf("Connect = %v, want ErrMissingPassword", err)
+	}
+}
+
+// TestClientSelectsVNCPasswordOverNone proves the server's stronger offer wins
+// even when None is also available.
+func TestClientSelectsVNCPasswordOverNone(t *testing.T) {
+	server, conn, done := startServer(t, rfbtest.Config{
+		Width: 2, Height: 2,
+		Password:      "preferred",
+		SecurityTypes: []rfb.SecurityType{rfb.SecurityNone, rfb.SecurityVNCAuth},
+	})
+	client, err := rfb.Connect(conn, rfb.ClientConfig{Password: "preferred"})
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if client.Security() != rfb.SecurityVNCAuth {
+		t.Fatalf("Security() = %v, want VNC authentication", client.Security())
+	}
+	_ = conn.Close()
+	waitServer(t, done)
+	if received := server.Received(); received.Security != rfb.SecurityVNCAuth {
+		t.Fatalf("server saw security type %v, want VNC authentication", received.Security)
+	}
+}
+
+// TestClientUnsupportedOnlySecurityNamesTheOffer proves an offer the client
+// cannot speak fails closed with the offered types recorded.
+func TestClientUnsupportedOnlySecurityNamesTheOffer(t *testing.T) {
+	_, conn, _ := startServer(t, rfbtest.Config{
+		Width: 2, Height: 2,
+		SecurityTypes: []rfb.SecurityType{rfb.SecurityVeNCrypt},
+	})
+	_, err := rfb.Connect(conn, rfb.ClientConfig{})
+	if !errors.Is(err, rfb.ErrUnsupportedSecurity) {
+		t.Fatalf("Connect = %v, want ErrUnsupportedSecurity", err)
+	}
+	var securityErr *rfb.SecurityError
+	if !errors.As(err, &securityErr) || !containsSecurityType(securityErr.Offered, rfb.SecurityVeNCrypt) {
+		t.Fatalf("Connect = %v, want the offered VeNCrypt type", err)
+	}
+}
+
+func containsSecurityType(offered []rfb.SecurityType, want rfb.SecurityType) bool {
+	for _, security := range offered {
+		if security == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestClientServerMessages(t *testing.T) {

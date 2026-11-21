@@ -13,6 +13,10 @@ type ClientConfig struct {
 	// Shared requests a shared session (ClientInit shared-flag 1). A server
 	// may disconnect other clients when it is false.
 	Shared bool
+	// Password is the VNC password used by security type 2. It is plaintext
+	// in memory only. An empty value fails with ErrMissingPassword when the
+	// server selects VNC authentication instead of sending a guess.
+	Password string
 }
 
 // ServerInfo is the ServerInit message.
@@ -40,11 +44,12 @@ type ServerInfo struct {
 // The Client never closes conn; closing it is the caller's responsibility and
 // is not coordinated with an in-flight read or write.
 type Client struct {
-	conn    io.ReadWriter
-	reader  *bufio.Reader
-	version Version
-	info    ServerInfo
-	frame   *Framebuffer
+	conn     io.ReadWriter
+	reader   *bufio.Reader
+	version  Version
+	security SecurityType
+	info     ServerInfo
+	frame    *Framebuffer
 }
 
 // Connect performs the version, security and initialisation handshakes, reads
@@ -68,7 +73,8 @@ func Connect(conn io.ReadWriter, cfg ClientConfig) (*Client, error) {
 	if err := writeAll(conn, []byte(version.Wire())); err != nil {
 		return nil, fmt.Errorf("%w: writing client version: %w", ErrHandshake, err)
 	}
-	if err := clientSecurity(conn, reader, version); err != nil {
+	security, err := clientSecurity(conn, reader, version, cfg.Password)
+	if err != nil {
 		return nil, err
 	}
 
@@ -89,11 +95,12 @@ func Connect(conn io.ReadWriter, cfg ClientConfig) (*Client, error) {
 		return nil, err
 	}
 	client := &Client{
-		conn:    conn,
-		reader:  reader,
-		version: version,
-		info:    info,
-		frame:   frame,
+		conn:     conn,
+		reader:   reader,
+		version:  version,
+		security: security,
+		info:     info,
+		frame:    frame,
 	}
 	if err := client.SetPixelFormat(DefaultPixelFormat()); err != nil {
 		return nil, err
@@ -104,36 +111,54 @@ func Connect(conn io.ReadWriter, cfg ClientConfig) (*Client, error) {
 	return client, nil
 }
 
-func clientSecurity(w io.Writer, r *bufio.Reader, version Version) error {
+// clientSecurity negotiates the security type and, when it selects VNC
+// password authentication, performs the DES challenge/response. It returns the
+// selected type so the caller can report whether the wire is plaintext.
+func clientSecurity(w io.Writer, r *bufio.Reader, version Version, password string) (SecurityType, error) {
 	if version.Minor < Version3_7.Minor {
 		var wire [4]byte
 		if _, err := io.ReadFull(r, wire[:]); err != nil {
-			return fmt.Errorf("%w: reading security type: %w", ErrHandshake, err)
+			return SecurityInvalid, fmt.Errorf("%w: reading security type: %w", ErrHandshake, err)
 		}
 		offered := SecurityType(binary.BigEndian.Uint32(wire[:]))
 		switch offered {
 		case SecurityInvalid:
 			// RFB 3.3 signals a rejected connection with security type 0
 			// followed by a length-prefixed reason string.
-			return &SecurityError{Rejected: true, Reason: readReason(r)}
+			return SecurityInvalid, &SecurityError{Rejected: true, Reason: readReason(r)}
 		case SecurityNone:
-			return nil
+			return SecurityNone, nil
+		case SecurityVNCAuth:
+			if password == "" {
+				return SecurityInvalid, &SecurityError{
+					Offered: []SecurityType{offered}, MissingPassword: true,
+				}
+			}
+			if err := vncAuthenticate(r, w, password); err != nil {
+				return SecurityInvalid, err
+			}
+			// RFB 3.3 reports the outcome of VNC authentication after the
+			// response, and a failure appends a reason string.
+			if err := readSecurityResult(r, version, []SecurityType{offered}); err != nil {
+				return SecurityInvalid, err
+			}
+			return offered, nil
 		default:
-			return &SecurityError{Offered: []SecurityType{offered}}
+			return SecurityInvalid, &SecurityError{Offered: []SecurityType{offered}}
 		}
 	}
 
 	var count [1]byte
 	if _, err := io.ReadFull(r, count[:]); err != nil {
-		return fmt.Errorf("%w: reading security count: %w", ErrHandshake, err)
+		return SecurityInvalid, fmt.Errorf("%w: reading security count: %w", ErrHandshake, err)
 	}
 	if count[0] == 0 {
 		// RFB 3.7 and 3.8 both send a length-prefixed reason string here.
-		return &SecurityError{Rejected: true, Reason: readReason(r)}
+		return SecurityInvalid, &SecurityError{Rejected: true, Reason: readReason(r)}
 	}
 	var wire [255]byte
 	if _, err := io.ReadFull(r, wire[:count[0]]); err != nil {
-		return fmt.Errorf("%w: reading security types: %w", ErrHandshake, err)
+		return SecurityInvalid, fmt.Errorf("%w: reading security types: %w", ErrHandshake, err)
 	}
 	offered := make([]SecurityType, int(count[0]))
 	for i := range offered {
@@ -141,24 +166,41 @@ func clientSecurity(w io.Writer, r *bufio.Reader, version Version) error {
 	}
 	selected, ok := SelectSecurity(offered)
 	if !ok {
-		return &SecurityError{Offered: offered}
+		return SecurityInvalid, &SecurityError{Offered: offered}
+	}
+	if selected == SecurityVNCAuth && password == "" {
+		return SecurityInvalid, &SecurityError{Offered: offered, MissingPassword: true}
 	}
 	if err := writeAll(w, []byte{byte(selected)}); err != nil {
-		return fmt.Errorf("%w: writing security type: %w", ErrHandshake, err)
+		return SecurityInvalid, fmt.Errorf("%w: writing security type: %w", ErrHandshake, err)
 	}
 	// RFB 3.7 with None proceeds directly to ClientInit (RFC 6143 A.2);
 	// 3.8, and every authenticating type, reports a SecurityResult.
 	if selected == SecurityNone && version.Minor < Version3_8.Minor {
-		return nil
+		return selected, nil
 	}
+	if selected == SecurityVNCAuth {
+		if err := vncAuthenticate(r, w, password); err != nil {
+			return SecurityInvalid, err
+		}
+	}
+	if err := readSecurityResult(r, version, offered); err != nil {
+		return SecurityInvalid, err
+	}
+	return selected, nil
+}
+
+// readSecurityResult consumes the four-byte status every authenticating type
+// sends, plus the failure reason where the version carries one.
+func readSecurityResult(r io.Reader, version Version, offered []SecurityType) error {
 	var result [4]byte
 	if _, err := io.ReadFull(r, result[:]); err != nil {
 		return fmt.Errorf("%w: reading security result: %w", ErrHandshake, err)
 	}
-	if binary.BigEndian.Uint32(result[:]) != 0 {
-		return &SecurityError{Offered: offered, Rejected: true, Reason: readResultReason(r, version)}
+	if binary.BigEndian.Uint32(result[:]) == 0 {
+		return nil
 	}
-	return nil
+	return &SecurityError{Offered: offered, Rejected: true, Reason: readResultReason(r, version)}
 }
 
 // readReason consumes the 32-bit length-prefixed reason string that follows a
@@ -182,9 +224,10 @@ func readReason(r io.Reader) string {
 }
 
 // readResultReason reads the failure text carried by a SecurityResult. RFB 3.7
-// reports only the four-byte status, so there is nothing to consume.
+// reports only the four-byte status, so there is nothing to consume; 3.3 and
+// 3.8 both append a length-prefixed reason.
 func readResultReason(r io.Reader, version Version) string {
-	if version.Minor < Version3_8.Minor {
+	if version.Minor == Version3_7.Minor {
 		return ""
 	}
 	return readReason(r)
@@ -221,6 +264,9 @@ func readServerInit(r io.Reader) (ServerInfo, error) {
 
 // Version returns the negotiated protocol version.
 func (c *Client) Version() Version { return c.version }
+
+// Security returns the security type the handshake selected.
+func (c *Client) Security() SecurityType { return c.security }
 
 // ServerInfo returns the ServerInit fields.
 func (c *Client) ServerInfo() ServerInfo { return c.info }

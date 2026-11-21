@@ -5,9 +5,9 @@ import "fmt"
 // SecurityType is an RFB security type number.
 type SecurityType uint8
 
-// Registered security types. Only SecurityNone is implemented by this
-// package; the rest are carried so negotiation can report what a server
-// offered and refuse a downgrade.
+// Registered security types. Only SecurityNone and SecurityVNCAuth are
+// implemented by this package; the rest are carried so negotiation can report
+// what a server offered and refuse a downgrade.
 const (
 	// SecurityInvalid is the 3.3 failure value.
 	SecurityInvalid SecurityType = 0
@@ -65,9 +65,39 @@ func (t SecurityType) String() string {
 	}
 }
 
+// Plaintext reports whether a security type leaves the RFB byte stream
+// unencrypted. None and VNC password carry no session encryption; Apple's
+// Diffie-Hellman type also leaves the stream in the clear. RA2ne and
+// RA2ne-256 authenticate but deliberately provide no session encryption, so
+// they are plaintext too.
+//
+// An unknown type is classified plaintext (fail closed): a type this client
+// has not decided about must not be silently treated as encrypted and skip
+// the warning. VeNCrypt is a container whose security depends on the subtype
+// negotiated inside it; ticket 16 must classify Plain versus TLS subtypes when
+// it adds them. Until then the container stays non-plaintext here.
+func (t SecurityType) Plaintext() bool {
+	switch t {
+	case SecurityNone, SecurityVNCAuth, SecurityAppleDH,
+		SecurityRA2ne, SecurityRA2ne_256:
+		return true
+	case SecurityRA2, SecurityRA2r, SecurityRA2_256, SecurityRA2r_256:
+		return false
+	case SecurityVeNCrypt:
+		// TODO(ticket 16): classify the VeNCrypt subtype; Plain is
+		// unencrypted and TLS is not.
+		return false
+	default:
+		// Fail closed: unknown and future types are treated as unencrypted
+		// until a decision is made, so the warning is never skipped.
+		return true
+	}
+}
+
 // supportedSecurity is the client's preference order, strongest first. This
-// ticket implements only None; later security work prepends stronger types.
-var supportedSecurity = []SecurityType{SecurityNone}
+// slice implements VNC password authentication and None; later security work
+// prepends stronger types.
+var supportedSecurity = []SecurityType{SecurityVNCAuth, SecurityNone}
 
 // SelectSecurity returns the strongest security type both this client and the
 // server support.

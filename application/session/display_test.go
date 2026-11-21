@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	"github.com/mslxl/natcatty/domain/model"
 	modelvnc "github.com/mslxl/natcatty/domain/model/vnc"
 )
@@ -174,8 +175,11 @@ func (t *fakeDisplayTransport) counters() (reads, writes, resizes int) {
 type displayFactory struct {
 	mu         sync.Mutex
 	transports []*fakeDisplayTransport
-	calls      int
-	spec       StartSpec
+	// errs supplies an error for a given Open, so a reconnect can fail with a
+	// typed transport failure instead of handing back another display.
+	errs  []error
+	calls int
+	spec  StartSpec
 }
 
 func (f *displayFactory) Open(_ context.Context, spec StartSpec) (Transport, error) {
@@ -184,6 +188,9 @@ func (f *displayFactory) Open(_ context.Context, spec StartSpec) (Transport, err
 	f.calls++
 	f.spec = spec
 	index := f.calls - 1
+	if index < len(f.errs) && f.errs[index] != nil {
+		return nil, f.errs[index]
+	}
 	if index >= len(f.transports) {
 		index = len(f.transports) - 1
 	}
@@ -645,6 +652,81 @@ func TestVNCSessionRefusesToRetryAnAuthenticationFailure(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
+}
+
+// TestVNCSessionStopsWhenAReconnectIsRejected proves the adapter's real
+// authentication error type (appconnection.Error with KindAuth) ends the
+// reconnect loop instead of retrying a rejected VNC password.
+func TestVNCSessionStopsWhenAReconnectIsRejected(t *testing.T) {
+	first := newFakeDisplay()
+	authFailure := &appconnection.Error{
+		Kind: appconnection.KindAuth, Cause: errors.New("wrong VNC password"),
+	}
+	factory := &displayFactory{
+		transports: []*fakeDisplayTransport{newFakeDisplayTransport(first)},
+		errs:       []error{nil, authFailure},
+	}
+	session := openVNC(t, factory)
+
+	first.publish(DisplayEvent{Kind: DisplayEventError, Err: errors.New("network dropped")})
+	waitForCondition(t, "the rejected reconnect", func() bool {
+		select {
+		case <-session.Done():
+			return true
+		default:
+			return false
+		}
+	})
+	if calls := factory.callCount(); calls != 2 {
+		t.Fatalf("factory opened %d transports, want one reconnect then a permanent stop", calls)
+	}
+	if snapshot := session.Snapshot(); snapshot.Status != StatusExited ||
+		snapshot.Connection != ConnectionStatusError {
+		t.Fatalf("final snapshot = %+v, want an exited Session with a connection error", snapshot)
+	}
+
+	// The retry delay is 10ms; a repeat would land inside this window.
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if factory.callCount() != 2 {
+			t.Fatal("the Session retried a rejected VNC password")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// notifyingDisplayTransport is a pixel transport that also reports non-fatal
+// notices, as the app's plaintext-warning wrapper does.
+type notifyingDisplayTransport struct {
+	*fakeDisplayTransport
+	notices chan Notice
+}
+
+func (t *notifyingDisplayTransport) Notices() <-chan Notice { return t.notices }
+
+// fixedDisplayFactory hands one transport to every Open.
+type fixedDisplayFactory struct{ transport Transport }
+
+func (f fixedDisplayFactory) Open(context.Context, StartSpec) (Transport, error) {
+	return f.transport, nil
+}
+
+// TestVNCSessionSurfacesThePlaintextNotice proves a pixel transport's notices
+// reach the Session snapshot.
+func TestVNCSessionSurfacesThePlaintextNotice(t *testing.T) {
+	display := newFakeDisplay()
+	notices := make(chan Notice, 1)
+	notices <- Notice{Code: NoticeVNCPlaintext}
+	close(notices)
+	transport := &notifyingDisplayTransport{
+		fakeDisplayTransport: newFakeDisplayTransport(display), notices: notices,
+	}
+	session := openVNC(t, fixedDisplayFactory{transport: transport})
+	t.Cleanup(func() { _ = session.Close() })
+	waitForCondition(t, "the plaintext notice", func() bool {
+		notice := session.Snapshot().Notice
+		return notice != nil && notice.Code == NoticeVNCPlaintext
+	})
 }
 
 // vncStartSpec returns the minimal VNC StartSpec the lifecycle tests open.

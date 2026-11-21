@@ -248,6 +248,10 @@ type State struct {
 	surfaces    SurfaceFactory
 	trustPrompt *sessionui.TrustPrompt
 	authPrompt  *sessionui.AuthPrompt
+	// plaintextPrompt asks the user to accept an unencrypted VNC connection
+	// before an unrouted Host dials. It is the same prompt the VNC transport
+	// factory waits on.
+	plaintextPrompt *sessionui.VNCPlaintextPrompt
 	// etResumeStore lets the shell clear a saved ET credential pair when no
 	// live Session owns it any more: a restored reattach the server refuses as
 	// unsupported, or an ET Pane closed while its Session never opened. Nil
@@ -564,6 +568,12 @@ func WithAuthPrompt(prompt *sessionui.AuthPrompt) Option {
 	return func(s *State) { s.authPrompt = prompt }
 }
 
+// WithVNCPlaintextPrompt gives the shell the unencrypted-VNC confirmation to
+// render. The same prompt blocks the VNC transport factory before it dials.
+func WithVNCPlaintextPrompt(prompt *sessionui.VNCPlaintextPrompt) Option {
+	return func(s *State) { s.plaintextPrompt = prompt }
+}
+
 // WithDynamicTabTitleMode supplies the live Dynamic tab title setting. Without
 // it the shell follows the default: every Session's title.
 func WithDynamicTabTitleMode(mode func() domainterminal.DynamicTabTitleMode) Option {
@@ -624,6 +634,10 @@ func (s *State) TrustPrompt() *sessionui.TrustPrompt { return s.trustPrompt }
 
 // AuthPrompt returns the authentication prompt the shell renders, or nil.
 func (s *State) AuthPrompt() *sessionui.AuthPrompt { return s.authPrompt }
+
+// VNCPlaintextPrompt returns the unencrypted-VNC confirmation the shell
+// renders, or nil.
+func (s *State) VNCPlaintextPrompt() *sessionui.VNCPlaintextPrompt { return s.plaintextPrompt }
 
 // Problem returns the last connection failure, or "" when the last attempt
 // succeeded or none has run.

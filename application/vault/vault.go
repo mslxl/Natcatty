@@ -637,6 +637,50 @@ func (s *Service) MarkConnected(ctx context.Context, id model.HostID) error {
 	return nil
 }
 
+// PlaintextWarningAcknowledged reports whether a VNC Host's unencrypted
+// transport warning was accepted. A Host without a VNC configuration has
+// nothing to acknowledge.
+func (s *Service) PlaintextWarningAcknowledged(ctx context.Context, id model.HostID) (bool, error) {
+	host, err := s.repo.Get(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, internal(err)
+	}
+	if host.VNC == nil {
+		return false, nil
+	}
+	return host.VNC.PlaintextWarningAcknowledged, nil
+}
+
+// AcknowledgePlaintextWarning records the acceptance for a VNC Host. Like
+// MarkConnected, accepting the warning is a runtime observation rather than a
+// user edit, so it deliberately leaves UpdatedAt alone and does not reorder the
+// Vault or win a sync conflict.
+func (s *Service) AcknowledgePlaintextWarning(ctx context.Context, id model.HostID) error {
+	host, err := s.repo.Get(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return internal(err)
+	}
+	if host.Protocol != domainvault.ProtocolVNC {
+		return nil
+	}
+	config := domainvault.DefaultVNCConfig()
+	if host.VNC != nil {
+		config = *host.VNC
+	}
+	config.PlaintextWarningAcknowledged = true
+	host.VNC = &config
+	if err := s.repo.Save(ctx, host); err != nil {
+		return internal(err)
+	}
+	return nil
+}
+
 // duplicate reports whether any Host other than except has the same merge key
 // as draft. An empty except matches every existing Host.
 func duplicate(hosts []domainvault.Host, draft domainvault.Draft, except model.HostID) bool {

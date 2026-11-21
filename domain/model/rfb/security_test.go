@@ -9,12 +9,15 @@ import (
 	"testing"
 )
 
-func TestSelectSecurityOnlyNone(t *testing.T) {
-	selected, ok := SelectSecurity([]SecurityType{SecurityVNCAuth, SecurityNone})
-	if !ok || selected != SecurityNone {
+func TestSelectSecurityPrefersVNCPasswordOverNone(t *testing.T) {
+	selected, ok := SelectSecurity([]SecurityType{SecurityNone, SecurityVNCAuth})
+	if !ok || selected != SecurityVNCAuth {
+		t.Fatalf("SelectSecurity = %v, %v; want VNC authentication, true", selected, ok)
+	}
+	if selected, ok := SelectSecurity([]SecurityType{SecurityNone}); !ok || selected != SecurityNone {
 		t.Fatalf("SelectSecurity = %v, %v; want None, true", selected, ok)
 	}
-	if _, ok := SelectSecurity([]SecurityType{SecurityVNCAuth, SecurityVeNCrypt}); ok {
+	if _, ok := SelectSecurity([]SecurityType{SecurityVeNCrypt, SecurityAppleDH}); ok {
 		t.Fatal("SelectSecurity accepted types this ticket does not implement")
 	}
 	if _, ok := SelectSecurity(nil); ok {
@@ -59,7 +62,7 @@ func TestClientSecurity3_7RejectionConsumesReason(t *testing.T) {
 
 	reader := bufio.NewReader(bytes.NewReader(wire))
 	var out bytes.Buffer
-	err := clientSecurity(&out, reader, Version3_7)
+	_, err := clientSecurity(&out, reader, Version3_7, "")
 
 	var securityErr *SecurityError
 	if !errors.As(err, &securityErr) {
@@ -90,7 +93,7 @@ func TestClientSecurity3_3Rejection(t *testing.T) {
 
 	reader := bufio.NewReader(bytes.NewReader(wire))
 	var out bytes.Buffer
-	err := clientSecurity(&out, reader, Version3_3)
+	_, err := clientSecurity(&out, reader, Version3_3, "")
 
 	var securityErr *SecurityError
 	if !errors.As(err, &securityErr) {
@@ -112,15 +115,137 @@ func TestClientSecurity3_3Rejection(t *testing.T) {
 
 func TestClientSecurity3_3UnsupportedType(t *testing.T) {
 	wire := make([]byte, 4)
-	binary.BigEndian.PutUint32(wire, uint32(SecurityVNCAuth))
+	binary.BigEndian.PutUint32(wire, uint32(SecurityVeNCrypt))
 
 	var out bytes.Buffer
-	err := clientSecurity(&out, bufio.NewReader(bytes.NewReader(wire)), Version3_3)
+	_, err := clientSecurity(&out, bufio.NewReader(bytes.NewReader(wire)), Version3_3, "")
 	if !errors.Is(err, ErrUnsupportedSecurity) {
 		t.Fatalf("clientSecurity = %v, want ErrUnsupportedSecurity", err)
 	}
 	if errors.Is(err, ErrSecurityRejected) {
 		t.Fatalf("clientSecurity = %v, want it not to unwrap to ErrSecurityRejected", err)
+	}
+}
+
+// vncChallengeWire is the deterministic challenge the VNC auth tests use.
+var vncChallengeWire = [16]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+
+func TestVNCAuthKeyReversesEveryBit(t *testing.T) {
+	// Each ASCII digit's bits are reversed: '1' (0x31) becomes 0x8c.
+	want := [8]byte{0x8c, 0x4c, 0xcc, 0x2c, 0xac, 0x6c, 0xec, 0x1c}
+	if got := VNCAuthKey("12345678"); got != want {
+		t.Fatalf("VNCAuthKey = %#v, want %#v", got, want)
+	}
+	// A short password is NUL-padded; a long one is truncated to 8 bytes.
+	if VNCAuthKey("abc")[3] != 0 {
+		t.Fatalf("short password was not NUL-padded: %#v", VNCAuthKey("abc"))
+	}
+	if VNCAuthKey("123456789") != VNCAuthKey("12345678") {
+		t.Fatal("a password longer than 8 bytes was not truncated")
+	}
+}
+
+func TestSecurityTypePlaintext(t *testing.T) {
+	for _, plaintext := range []SecurityType{
+		SecurityNone, SecurityVNCAuth, SecurityAppleDH,
+		SecurityRA2ne, SecurityRA2ne_256,
+		// An unknown type fails closed: it is not silently treated as
+		// encrypted without a decision.
+		SecurityType(200),
+	} {
+		if !plaintext.Plaintext() {
+			t.Fatalf("%v.Plaintext() = false, want true", plaintext)
+		}
+	}
+	for _, encrypted := range []SecurityType{
+		SecurityVeNCrypt, SecurityRA2, SecurityRA2r,
+		SecurityRA2_256, SecurityRA2r_256,
+	} {
+		if encrypted.Plaintext() {
+			t.Fatalf("%v.Plaintext() = true, want false", encrypted)
+		}
+	}
+}
+
+func TestClientSecurity3_8VNCAuthSendsResponse(t *testing.T) {
+	wire := []byte{1, byte(SecurityVNCAuth)}
+	wire = append(wire, vncChallengeWire[:]...)
+	wire = append(wire, 0, 0, 0, 0) // Success.
+
+	var out bytes.Buffer
+	selected, err := clientSecurity(&out, bufio.NewReader(bytes.NewReader(wire)), Version3_8, "secret")
+	if err != nil {
+		t.Fatalf("clientSecurity: %v", err)
+	}
+	if selected != SecurityVNCAuth {
+		t.Fatalf("selected = %v, want VNC authentication", selected)
+	}
+	want, err := VNCAuthResponse("secret", vncChallengeWire[:])
+	if err != nil {
+		t.Fatalf("VNCAuthResponse: %v", err)
+	}
+	got := out.Bytes()
+	if len(got) != 1+len(want) {
+		t.Fatalf("client wrote %d bytes, want selection plus a 16-byte response", len(got))
+	}
+	if got[0] != byte(SecurityVNCAuth) {
+		t.Fatalf("selection = %d, want %d", got[0], SecurityVNCAuth)
+	}
+	if !bytes.Equal(got[1:], want[:]) {
+		t.Fatalf("response = %x, want %x", got[1:], want)
+	}
+}
+
+func TestClientSecurity3_3VNCAuthReadsResult(t *testing.T) {
+	wire := make([]byte, 4)
+	binary.BigEndian.PutUint32(wire, uint32(SecurityVNCAuth))
+	wire = append(wire, vncChallengeWire[:]...)
+	wire = append(wire, 0, 0, 0, 0)
+
+	var out bytes.Buffer
+	selected, err := clientSecurity(&out, bufio.NewReader(bytes.NewReader(wire)), Version3_3, "secret")
+	if err != nil {
+		t.Fatalf("clientSecurity: %v", err)
+	}
+	if selected != SecurityVNCAuth {
+		t.Fatalf("selected = %v, want VNC authentication", selected)
+	}
+	if out.Len() != 16 {
+		t.Fatalf("client wrote %d bytes, want only the 16-byte response", out.Len())
+	}
+}
+
+func TestClientSecurityRejectsAWrongVNCPassword(t *testing.T) {
+	const reason = "authentication failed"
+	wire := []byte{1, byte(SecurityVNCAuth)}
+	wire = append(wire, vncChallengeWire[:]...)
+	wire = append(wire, 0, 0, 0, 1)
+	wire = appendReason(wire, reason)
+
+	var out bytes.Buffer
+	_, err := clientSecurity(&out, bufio.NewReader(bytes.NewReader(wire)), Version3_8, "wrong")
+	if !errors.Is(err, ErrSecurityRejected) {
+		t.Fatalf("clientSecurity = %v, want ErrSecurityRejected", err)
+	}
+	var securityErr *SecurityError
+	if !errors.As(err, &securityErr) || securityErr.Reason != reason {
+		t.Fatalf("clientSecurity = %v, want reason %q", err, reason)
+	}
+}
+
+func TestClientSecurityMissingVNCPasswordSendsNothing(t *testing.T) {
+	wire := []byte{1, byte(SecurityVNCAuth)}
+	reader := bufio.NewReader(bytes.NewReader(wire))
+	var out bytes.Buffer
+	_, err := clientSecurity(&out, reader, Version3_8, "")
+	if !errors.Is(err, ErrMissingPassword) {
+		t.Fatalf("clientSecurity = %v, want ErrMissingPassword", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("client wrote %d bytes without a password", out.Len())
+	}
+	if reader.Buffered() != 0 {
+		t.Fatalf("%d bytes left unread after a missing-password failure", reader.Buffered())
 	}
 }
 
@@ -134,7 +259,7 @@ func TestClientSecurity3_8RejectionReadsReason(t *testing.T) {
 
 	reader := bufio.NewReader(bytes.NewReader(wire))
 	var out bytes.Buffer
-	err := clientSecurity(&out, reader, Version3_8)
+	_, err := clientSecurity(&out, reader, Version3_8, "")
 	if !errors.Is(err, ErrSecurityRejected) {
 		t.Fatalf("clientSecurity = %v, want ErrSecurityRejected", err)
 	}

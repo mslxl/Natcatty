@@ -27942,6 +27942,74 @@ func (msgs Messages) ConnectionHostAtuinImportFailed() string {
 	return Catalog.Format(msgs.locale, "connectionHostAtuinImportFailed", nil)
 }
 
+// ConnectionVNCPlaintextWarning says "This VNC connection is not encrypted. The screen and everything you type cross the network in the clear."
+// in the language the app shows.
+//
+// A one-time warning that an unrouted VNC Session negotiated an unencrypted
+// security type.
+func ConnectionVNCPlaintextWarning() string { return In(i18n.Locale()).ConnectionVNCPlaintextWarning() }
+
+// ConnectionVNCPlaintextWarning says "This VNC connection is not encrypted. The screen and everything you type cross the network in the clear."
+// in the language of msgs.
+//
+// A one-time warning that an unrouted VNC Session negotiated an unencrypted
+// security type.
+func (msgs Messages) ConnectionVNCPlaintextWarning() string {
+	return Catalog.Format(msgs.locale, "connectionVNCPlaintextWarning", nil)
+}
+
+// ConnectionVNCPlaintextPromptTitle says "Unencrypted VNC connection"
+// in the language the app shows.
+func ConnectionVNCPlaintextPromptTitle() string {
+	return In(i18n.Locale()).ConnectionVNCPlaintextPromptTitle()
+}
+
+// ConnectionVNCPlaintextPromptTitle says "Unencrypted VNC connection"
+// in the language of msgs.
+func (msgs Messages) ConnectionVNCPlaintextPromptTitle() string {
+	return Catalog.Format(msgs.locale, "connectionVNCPlaintextPromptTitle", nil)
+}
+
+// ConnectionVNCPlaintextPromptBody says "The VNC connection to {host} is not encrypted. Anyone who can observe the network can see the screen and everything y…"
+// in the language the app shows.
+//
+// Asks the user to accept an unencrypted VNC connection before it starts.
+func ConnectionVNCPlaintextPromptBody(host string) string {
+	return In(i18n.Locale()).ConnectionVNCPlaintextPromptBody(host)
+}
+
+// ConnectionVNCPlaintextPromptBody says "The VNC connection to {host} is not encrypted. Anyone who can observe the network can see the screen and everything y…"
+// in the language of msgs.
+//
+// Asks the user to accept an unencrypted VNC connection before it starts.
+func (msgs Messages) ConnectionVNCPlaintextPromptBody(host string) string {
+	return Catalog.Format(msgs.locale, "connectionVNCPlaintextPromptBody", map[string]any{"host": host})
+}
+
+// ConnectionVNCPlaintextPromptContinue says "Continue anyway"
+// in the language the app shows.
+func ConnectionVNCPlaintextPromptContinue() string {
+	return In(i18n.Locale()).ConnectionVNCPlaintextPromptContinue()
+}
+
+// ConnectionVNCPlaintextPromptContinue says "Continue anyway"
+// in the language of msgs.
+func (msgs Messages) ConnectionVNCPlaintextPromptContinue() string {
+	return Catalog.Format(msgs.locale, "connectionVNCPlaintextPromptContinue", nil)
+}
+
+// ConnectionVNCPlaintextPromptCancel says "Cancel"
+// in the language the app shows.
+func ConnectionVNCPlaintextPromptCancel() string {
+	return In(i18n.Locale()).ConnectionVNCPlaintextPromptCancel()
+}
+
+// ConnectionVNCPlaintextPromptCancel says "Cancel"
+// in the language of msgs.
+func (msgs Messages) ConnectionVNCPlaintextPromptCancel() string {
+	return Catalog.Format(msgs.locale, "connectionVNCPlaintextPromptCancel", nil)
+}
+
 // SettingsAtuinSectionTitle says "Command History sync"
 // in the language the app shows.
 func SettingsAtuinSectionTitle() string { return In(i18n.Locale()).SettingsAtuinSectionTitle() }

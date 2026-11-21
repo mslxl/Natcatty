@@ -2,14 +2,14 @@
 // TCP connection, the RFB client, and the single display-event stream the
 // viewer consumes.
 //
-// The Factory dials whichever stream the app hands it and performs the
-// baseline None security handshake. Jump chains, proxies, and Network
-// Profiles are resolved by the app: it supplies a routed dial seam for a jump
-// or proxy, a Provider-backed dial seam for a Network Profile, and the plain
-// direct dialer otherwise. Password authentication, TLS, and the optional
-// encodings arrive in later tickets. The adapter is deliberately free of UI
-// types: frames cross the port as stdlib images and input arrives as X11
-// keysyms and RFB button masks.
+// The Factory dials whichever stream the app hands it and negotiates None or
+// VNC password authentication, preferring the password type when the server
+// offers both. Jump chains, proxies, and Network Profiles are resolved by the
+// app: it supplies a routed dial seam for a jump or proxy, a Provider-backed
+// dial seam for a Network Profile, and the plain direct dialer otherwise.
+// Stronger TLS-backed types and the optional encodings arrive in later
+// tickets. The adapter is deliberately free of UI types: frames cross the port
+// as stdlib images and input arrives as X11 keysyms and RFB button masks.
 package vnc
 
 import (
@@ -91,7 +91,17 @@ func (f Factory) Open(ctx context.Context, spec appsession.StartSpec) (appsessio
 	if deadline, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
 		_ = deadline.SetDeadline(time.Now().Add(handshakeTimeout))
 	}
-	client, err := rfb.Connect(conn, rfb.ClientConfig{Shared: cfg.Configuration.Shared})
+	// A one-shot credential on the start spec is the fallback for a target
+	// with no saved Host; otherwise the app resolves the Host's VNC secret
+	// into the section before Open.
+	password := cfg.Password
+	if password == "" {
+		password = spec.Password
+	}
+	client, err := rfb.Connect(conn, rfb.ClientConfig{
+		Shared:   cfg.Configuration.Shared,
+		Password: password,
+	})
 	if deadline, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
 		_ = deadline.SetDeadline(time.Time{})
 	}
@@ -133,23 +143,33 @@ func classifyDialError(ctx context.Context, dialCtxErr error, address string, er
 }
 
 // classifyHandshakeError distinguishes a refused credential from an endpoint
-// the client cannot speak to. None is the only supported type in this slice, so
-// a server that offers anything else fails as unsupported rather than as a
-// rejected password.
+// the client cannot speak to. A missing or rejected password is KindAuth (and
+// therefore permanent, so the Session never retries it). A server that offers
+// only unimplemented security types is KindUnsupported with the SSH-route
+// suggestion the VNC specification calls for.
 func classifyHandshakeError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return &appconnection.Error{Kind: appconnection.KindCancelled, Cause: ctx.Err()}
 	}
+	if errors.Is(err, rfb.ErrMissingPassword) {
+		return &appconnection.Error{Kind: appconnection.KindAuth, Cause: fmt.Errorf(
+			"%w: the server requires a VNC password; add it in the Host editor's VNC Password field", err)}
+	}
 	var security *rfb.SecurityError
 	if errors.As(err, &security) {
-		kind := appconnection.KindUnsupported
 		if security.Rejected {
-			kind = appconnection.KindAuth
+			return &appconnection.Error{Kind: appconnection.KindAuth, Cause: fmt.Errorf(
+				"vnc: authentication failed: %w; check the saved VNC password", err)}
 		}
-		return &appconnection.Error{Kind: kind, Cause: err}
+		return &appconnection.Error{Kind: appconnection.KindUnsupported, Cause: fmt.Errorf(
+			"%w: the server offers no security type this client implements; use an SSH route to encrypt the stream", err)}
 	}
-	if errors.Is(err, rfb.ErrUnsupportedVersion) || errors.Is(err, rfb.ErrUnsupportedSecurity) {
+	if errors.Is(err, rfb.ErrUnsupportedVersion) {
 		return &appconnection.Error{Kind: appconnection.KindUnsupported, Cause: err}
+	}
+	if errors.Is(err, rfb.ErrUnsupportedSecurity) {
+		return &appconnection.Error{Kind: appconnection.KindUnsupported, Cause: fmt.Errorf(
+			"%w: the server offers no security type this client implements; use an SSH route to encrypt the stream", err)}
 	}
 	return &appconnection.Error{Kind: appconnection.KindNetwork, Cause: err}
 }
@@ -210,6 +230,18 @@ func (t *transport) Display() appsession.DisplaySession { return t }
 // Routed reports the app's decision that the stream is already encrypted by a
 // tunnel. It is the value the Factory received, never a protocol inference.
 func (t *transport) Routed() bool { return t.routed }
+
+// Security returns the security type the RFB handshake negotiated.
+func (t *transport) Security() rfb.SecurityType { return t.client.Security() }
+
+// Plaintext reports whether the negotiated security type leaves the RFB wire
+// unencrypted. It is independent of Routed: a routed session is encrypted by
+// the tunnel even when the inner type is plaintext.
+func (t *transport) Plaintext() bool { return negotiatedPlaintext(t.client.Security()) }
+
+// negotiatedPlaintext is the plaintext decision isolated from the connection,
+// so a test can inject a type this slice does not yet negotiate.
+func negotiatedPlaintext(security rfb.SecurityType) bool { return security.Plaintext() }
 
 // Events returns the single display-event stream.
 func (t *transport) Events() <-chan appsession.DisplayEvent { return t.emitter.Events() }

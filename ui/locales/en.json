@@ -5706,6 +5706,23 @@
     "description": "The Settings shortcut label for the global History search binding."
   },
   "connectionHostAtuinImportFailed": "This Host runs Atuin, but Netcatty could not read its history this time. It will retry on a later Session.",
+  "connectionVNCPlaintextWarning": "This VNC connection is not encrypted. The screen and everything you type cross the network in the clear.",
+  "@connectionVNCPlaintextWarning": {
+    "description": "A one-time warning that an unrouted VNC Session negotiated an unencrypted security type."
+  },
+  "connectionVNCPlaintextPromptTitle": "Unencrypted VNC connection",
+  "connectionVNCPlaintextPromptBody": "The VNC connection to {host} is not encrypted. Anyone who can observe the network can see the screen and everything you type. Continue only if you trust the network, or add an SSH route to this Host.",
+  "@connectionVNCPlaintextPromptBody": {
+    "description": "Asks the user to accept an unencrypted VNC connection before it starts.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "desk.local"
+      }
+    }
+  },
+  "connectionVNCPlaintextPromptContinue": "Continue anyway",
+  "connectionVNCPlaintextPromptCancel": "Cancel",
   "settingsAtuinSectionTitle": "Command History sync",
   "settingsAtuinSectionDescription": "One Atuin account; local history stays plaintext. These settings stay on this device.",
   "settingsAtuinSyncEnabled": "Sync Command History",

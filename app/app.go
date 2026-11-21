@@ -722,6 +722,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// the UI thread.
 	trustPrompt := sessionui.NewTrustPrompt(sessionui.WithTrustRedrawRequest(invalidate))
 	authPrompt := sessionui.NewAuthPrompt(sessionui.WithAuthPromptRedrawRequest(invalidate))
+	// The unencrypted-VNC confirmation is both the transport factory's
+	// pre-connect gate and the shell modal that answers it.
+	plaintextPrompt := sessionui.NewVNCPlaintextPrompt(sessionui.WithVNCPlaintextRedrawRequest(invalidate))
 
 	// A persisted host-key trust decision marks the Vault's Known Host list
 	// stale through this pointer, which is declared with the app's other
@@ -999,7 +1002,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	sessions = appsession.NewService(newTransportFactory(
 		localpty.Factory{}, adapterserial.Factory{},
 		newTelnetFactory(adapterstnet.Factory{}, routes, networkProviders, connections), connections, routes,
-	).withVNC(newVNCFactory(adaptervnc.Factory{}, routes, networkProviders, connections)).withInProcess(
+	).withVNC(newVNCFactory(adaptervnc.Factory{}, routes, networkProviders, connections).
+		withVNCPasswords(vaultService).
+		withPlaintextWarnings(vaultService).
+		withPlaintextPrompt(plaintextPrompt)).withInProcess(
 		newMoshFactory(connections, routes, networkProviders),
 		adapteret.InProcessFactory{
 			Manager:  connections,
@@ -1549,6 +1555,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		state.WithSerialDialog(serialui.View(serialDialog), serialDialog.Show),
 		state.WithTrustPrompt(trustPrompt),
 		state.WithAuthPrompt(authPrompt),
+		state.WithVNCPlaintextPrompt(plaintextPrompt),
 		// The shell clears a stale ET pair when no live Session owns it: a
 		// restored Pane a legacy server refuses to reattach, or one closed
 		// while its Open never produced a Session.

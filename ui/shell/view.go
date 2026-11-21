@@ -89,6 +89,9 @@ func shellLayout(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	if prompt := s.AuthPrompt(); prompt != nil {
 		sessionui.AuthPromptModal(prompt)(c)
 	}
+	if prompt := s.VNCPlaintextPrompt(); prompt != nil {
+		sessionui.VNCPlaintextView(prompt)(c)
+	}
 	if serial := s.SerialView(); serial != nil {
 		serial(c)
 	}
@@ -530,6 +533,8 @@ func noticeText(m locales.Messages, notice *appsession.Notice) string {
 		return m.ConnectionHostAtuinDetected()
 	case appsession.NoticeHostAtuinImportFailed:
 		return m.ConnectionHostAtuinImportFailed()
+	case appsession.NoticeVNCPlaintext:
+		return m.ConnectionVNCPlaintextWarning()
 	default:
 		return ""
 	}

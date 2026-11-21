@@ -16,6 +16,10 @@ var (
 	// ErrSecurityRejected reports a server that failed or refused the
 	// security handshake.
 	ErrSecurityRejected = errors.New("rfb: security handshake rejected")
+	// ErrMissingPassword reports that the server selected VNC password
+	// authentication but the client was not given a password. The connection
+	// fails without sending a guess.
+	ErrMissingPassword = errors.New("rfb: server requires a VNC password")
 	// ErrInvalidPixelFormat reports a pixel format the decoder cannot read.
 	ErrInvalidPixelFormat = errors.New("rfb: invalid pixel format")
 	// ErrFramebufferTooLarge reports a ServerInit size beyond the client's
@@ -42,10 +46,20 @@ type SecurityError struct {
 	Offered  []SecurityType
 	Reason   string
 	Rejected bool
+	// MissingPassword reports that the negotiated type needs a VNC password
+	// the client was not given. The handshake stops before a challenge is
+	// answered, so no guess is sent to the server.
+	MissingPassword bool
 }
 
 // Error implements error.
 func (e *SecurityError) Error() string {
+	if e.MissingPassword {
+		if len(e.Offered) > 0 {
+			return fmt.Sprintf("rfb: %v requires a password but none is saved", e.Offered)
+		}
+		return ErrMissingPassword.Error()
+	}
 	rejected := e.Rejected || e.Reason != ""
 	switch {
 	case rejected && e.Reason != "" && len(e.Offered) > 0:
@@ -63,8 +77,12 @@ func (e *SecurityError) Error() string {
 	}
 }
 
-// Unwrap reports the nearest sentinel: a rejection or an unsupported offer.
+// Unwrap reports the nearest sentinel: a missing credential, a rejection, or
+// an unsupported offer.
 func (e *SecurityError) Unwrap() error {
+	if e.MissingPassword {
+		return ErrMissingPassword
+	}
 	if e.Rejected || e.Reason != "" {
 		return ErrSecurityRejected
 	}

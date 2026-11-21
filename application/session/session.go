@@ -310,6 +310,10 @@ const (
 	// later Session retries; the notice makes the failure visible instead of
 	// silently leaving the Host without Netcatty capture.
 	NoticeHostAtuinImportFailed NoticeCode = "host_atuin_import_failed"
+	// NoticeVNCPlaintext reports that an unrouted VNC Session negotiated a
+	// security type that leaves the wire unencrypted. The app shows it once per
+	// Host and records the acknowledgement; a routed Host never receives it.
+	NoticeVNCPlaintext NoticeCode = "vnc_plaintext"
 )
 
 // Notice is a non-fatal problem reported while a Session keeps running.
@@ -1903,6 +1907,9 @@ func (s *Session) start() {
 	go s.loop()
 	if !s.ByteStream() {
 		go s.displayLoop(s.generation, s.transport, s.display, s.genDone)
+		// A pixel transport can still report non-fatal notices, such as the
+		// one-time unencrypted-VNC warning.
+		go s.noticeLoop(s.transport, s.genDone)
 		return
 	}
 	go s.readLoop(s.generation, s.transport)
@@ -2017,6 +2024,7 @@ func (s *Session) loop() {
 					})
 					s.displayLoops.Add(1)
 					go s.displayLoop(cmd.generation, cmd.transport, display, s.genDone)
+					go s.noticeLoop(cmd.transport, s.genDone)
 					continue
 				}
 				if withdrawn, ok := cmd.transport.(CaptureHookWithdrawn); ok && withdrawn.CaptureHookWithdrawn() {

@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,9 +62,14 @@ func start(t *testing.T, cfg rfbtest.Config) *harness {
 }
 
 func openSpec(hostname string, port int) appsession.StartSpec {
+	return openSpecWithPassword(hostname, port, "")
+}
+
+func openSpecWithPassword(hostname string, port int, password string) appsession.StartSpec {
 	cfg := modelvnc.SessionConfig{
 		Hostname:      hostname,
 		Port:          port,
+		Password:      password,
 		Configuration: modelvnc.DefaultConfig(),
 	}
 	return appsession.StartSpec{Kind: appsession.KindVNC, VNC: &cfg}
@@ -244,7 +250,8 @@ func TestMalformedConfigurationDialsNothing(t *testing.T) {
 }
 
 // TestUnsupportedSecurityFailsTyped proves an offer the client cannot negotiate
-// is reported as unsupported rather than as a rejected password.
+// is reported as unsupported rather than as a rejected password, and that the
+// failure suggests an SSH route.
 func TestUnsupportedSecurityFailsTyped(t *testing.T) {
 	serverConn, clientConn := net.Pipe()
 	defer serverConn.Close()
@@ -255,9 +262,9 @@ func TestUnsupportedSecurityFailsTyped(t *testing.T) {
 		if _, err := io.ReadFull(serverConn, clientVersion[:]); err != nil {
 			return
 		}
-		// One offered security type: VNC authentication, which this slice does
-		// not implement.
-		_, _ = serverConn.Write([]byte{1, byte(rfb.SecurityVNCAuth)})
+		// One offered security type: VeNCrypt, which this slice does not
+		// implement yet.
+		_, _ = serverConn.Write([]byte{1, byte(rfb.SecurityVeNCrypt)})
 	}()
 	factory := vnc.Factory{Dial: func(context.Context, string, string) (net.Conn, error) {
 		return clientConn, nil
@@ -269,6 +276,89 @@ func TestUnsupportedSecurityFailsTyped(t *testing.T) {
 	var typed *appconnection.Error
 	if !errors.As(err, &typed) || typed.Kind != appconnection.KindUnsupported {
 		t.Fatalf("Open = %v, want KindUnsupported", err)
+	}
+	if !strings.Contains(err.Error(), "SSH route") {
+		t.Fatalf("Open = %v, want an SSH-route suggestion", err)
+	}
+}
+
+// TestVNCPasswordAuthenticates proves the adapter reads the password from the
+// start section, negotiates the password type and reports the wire plaintext.
+func TestVNCPasswordAuthenticates(t *testing.T) {
+	const password = "desk-secret"
+	h := start(t, rfbtest.Config{
+		Frame: testFrame(), Encoding: rfb.EncodingRaw, Password: password,
+	})
+	transport, err := h.factory.Open(context.Background(), openSpecWithPassword("desk.test", 5900, password))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	reporter, ok := transport.(interface{ Security() rfb.SecurityType })
+	if !ok || reporter.Security() != rfb.SecurityVNCAuth {
+		t.Fatalf("negotiated security = %v, want VNC authentication", reporter.Security())
+	}
+	if plaintext, ok := transport.(interface{ Plaintext() bool }); !ok || !plaintext.Plaintext() {
+		t.Fatal("a VNC password session did not report a plaintext wire")
+	}
+	if !h.server.Received().VNCAuthAccepted {
+		t.Fatal("the server did not verify the VNC password")
+	}
+}
+
+// TestVNCWrongPasswordIsAPermanentAuthFailure proves a rejected password is a
+// typed authentication failure the Session will not retry.
+func TestVNCWrongPasswordIsAPermanentAuthFailure(t *testing.T) {
+	h := start(t, rfbtest.Config{
+		Frame: testFrame(), Encoding: rfb.EncodingRaw, Password: "right-pass",
+	})
+	_, err := h.factory.Open(context.Background(), openSpecWithPassword("desk.test", 5900, "wrong-pass"))
+	if !errors.Is(err, rfb.ErrSecurityRejected) {
+		t.Fatalf("Open = %v, want ErrSecurityRejected", err)
+	}
+	var typed *appconnection.Error
+	if !errors.As(err, &typed) || typed.Kind != appconnection.KindAuth {
+		t.Fatalf("Open = %v, want a KindAuth failure", err)
+	}
+	if !typed.Permanent() {
+		t.Fatal("a rejected VNC password was not classified as permanent")
+	}
+}
+
+// TestVNCMissingPasswordPointsAtTheEditorField proves a server that demands a
+// password with none saved reports the missing credential and where to set it.
+func TestVNCMissingPasswordPointsAtTheEditorField(t *testing.T) {
+	h := start(t, rfbtest.Config{
+		Frame: testFrame(), Encoding: rfb.EncodingRaw, Password: "required",
+	})
+	_, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if !errors.Is(err, rfb.ErrMissingPassword) {
+		t.Fatalf("Open = %v, want ErrMissingPassword", err)
+	}
+	var typed *appconnection.Error
+	if !errors.As(err, &typed) || typed.Kind != appconnection.KindAuth {
+		t.Fatalf("Open = %v, want a KindAuth failure", err)
+	}
+	if !typed.Permanent() {
+		t.Fatal("a missing VNC password was not classified as permanent")
+	}
+	if !strings.Contains(err.Error(), "VNC Password field") {
+		t.Fatalf("Open = %v, want the editor field in the message", err)
+	}
+}
+
+// TestVNCReportsNoneAsPlaintext proves the default None handshake reports the
+// wire as plaintext too.
+func TestVNCReportsNoneAsPlaintext(t *testing.T) {
+	h := start(t, rfbtest.Config{Frame: testFrame(), Encoding: rfb.EncodingRaw})
+	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	reporter, ok := transport.(interface{ Plaintext() bool })
+	if !ok || !reporter.Plaintext() {
+		t.Fatal("a None session did not report a plaintext wire")
 	}
 }
 

@@ -56,6 +56,14 @@ type Config struct {
 	SendBell bool
 	// CutText sends one ServerCutText before the first framebuffer update.
 	CutText string
+	// Password is the VNC password the server verifies for security type 2.
+	// When SecurityTypes is empty a non-empty Password makes the server offer
+	// VNC authentication alone; an empty Password offers None.
+	Password string
+	// SecurityTypes overrides the offered list. A count of one is also used
+	// for RFB 3.3, which has room for one security type. When empty the list
+	// derives from Password: {VNCAuth} when it is set, otherwise {None}.
+	SecurityTypes []rfb.SecurityType
 }
 
 // UpdateRequest is a recorded FramebufferUpdateRequest.
@@ -83,13 +91,18 @@ type PointerEvent struct {
 // Received is a snapshot of everything the client sent.
 type Received struct {
 	ClientVersion rfb.Version
-	Shared        bool
-	PixelFormat   rfb.PixelFormat
-	Encodings     []rfb.Encoding
-	Requests      []UpdateRequest
-	Keys          []KeyEvent
-	Pointers      []PointerEvent
-	CutTexts      []string
+	// Security is the type the client selected.
+	Security rfb.SecurityType
+	// VNCAuthAccepted reports that a VNC password challenge was answered with
+	// the server's password.
+	VNCAuthAccepted bool
+	Shared          bool
+	PixelFormat     rfb.PixelFormat
+	Encodings       []rfb.Encoding
+	Requests        []UpdateRequest
+	Keys            []KeyEvent
+	Pointers        []PointerEvent
+	CutTexts        []string
 }
 
 // Server is the in-process test server. New prepares it; Serve performs one
@@ -220,33 +233,8 @@ func (s *Server) Serve(conn io.ReadWriter) error {
 	s.received.ClientVersion = clientVersion
 	s.mu.Unlock()
 
-	if version.Minor < rfb.Version3_7.Minor {
-		var wire [4]byte
-		binary.BigEndian.PutUint32(wire[:], uint32(rfb.SecurityNone))
-		if err := writeAll(conn, wire[:]); err != nil {
-			return err
-		}
-	} else {
-		if err := writeAll(conn, []byte{1, byte(rfb.SecurityNone)}); err != nil {
-			return err
-		}
-		var selected [1]byte
-		if _, err := io.ReadFull(conn, selected[:]); err != nil {
-			return err
-		}
-		if rfb.SecurityType(selected[0]) != rfb.SecurityNone {
-			var failure [4]byte
-			binary.BigEndian.PutUint32(failure[:], 1)
-			_ = writeAll(conn, failure[:])
-			return fmt.Errorf("rfbtest: client selected security type %d", selected[0])
-		}
-		// RFB 3.7 with None has no SecurityResult (RFC 6143 A.2); 3.8 does.
-		if version.Minor >= rfb.Version3_8.Minor {
-			var success [4]byte
-			if err := writeAll(conn, success[:]); err != nil {
-				return err
-			}
-		}
+	if _, err := s.handshakeSecurity(conn, version, s.securityTypes()); err != nil {
+		return err
 	}
 
 	var shared [1]byte
@@ -301,6 +289,145 @@ func (s *Server) Serve(conn io.ReadWriter) error {
 			return fmt.Errorf("rfbtest: unknown client message type %d", messageType[0])
 		}
 	}
+}
+
+// securityTypes returns the offered list. An explicit list wins; otherwise a
+// configured password selects VNC authentication and no password selects None.
+func (s *Server) securityTypes() []rfb.SecurityType {
+	if len(s.cfg.SecurityTypes) > 0 {
+		return append([]rfb.SecurityType(nil), s.cfg.SecurityTypes...)
+	}
+	if s.cfg.Password != "" {
+		return []rfb.SecurityType{rfb.SecurityVNCAuth}
+	}
+	return []rfb.SecurityType{rfb.SecurityNone}
+}
+
+// handshakeSecurity offers the configured security types and completes the
+// selected exchange. RFB 3.3 has one type and no client selection; 3.7 and 3.8
+// send a list and read the client's choice.
+func (s *Server) handshakeSecurity(conn io.ReadWriter, version rfb.Version, offered []rfb.SecurityType) (rfb.SecurityType, error) {
+	if len(offered) == 0 {
+		return rfb.SecurityInvalid, fmt.Errorf("rfbtest: no security types configured")
+	}
+	if version.Minor < rfb.Version3_7.Minor {
+		selected := offered[0]
+		var wire [4]byte
+		binary.BigEndian.PutUint32(wire[:], uint32(selected))
+		if err := writeAll(conn, wire[:]); err != nil {
+			return selected, err
+		}
+		s.mu.Lock()
+		s.received.Security = selected
+		s.mu.Unlock()
+		switch selected {
+		case rfb.SecurityNone:
+			return selected, nil
+		case rfb.SecurityVNCAuth:
+			if err := s.exchangeVNCAuth(conn); err != nil {
+				_ = writeSecurityResult(conn, version, false, "authentication failed")
+				return selected, err
+			}
+			return selected, writeSecurityResult(conn, version, true, "")
+		default:
+			return selected, fmt.Errorf("rfbtest: server cannot perform security type %d", selected)
+		}
+	}
+
+	wire := make([]byte, 1+len(offered))
+	wire[0] = byte(len(offered))
+	for i, security := range offered {
+		wire[1+i] = byte(security)
+	}
+	if err := writeAll(conn, wire); err != nil {
+		return rfb.SecurityInvalid, err
+	}
+	var selection [1]byte
+	if _, err := io.ReadFull(conn, selection[:]); err != nil {
+		return rfb.SecurityInvalid, err
+	}
+	selected := rfb.SecurityType(selection[0])
+	if !containsSecurity(offered, selected) {
+		_ = writeSecurityResult(conn, version, false, "unsupported security type")
+		return selected, fmt.Errorf("rfbtest: client selected security type %d", selected)
+	}
+	s.mu.Lock()
+	s.received.Security = selected
+	s.mu.Unlock()
+	switch selected {
+	case rfb.SecurityNone:
+		// RFB 3.7 with None has no SecurityResult (RFC 6143 A.2); 3.8 does.
+		if version.Minor >= rfb.Version3_8.Minor {
+			return selected, writeSecurityResult(conn, version, true, "")
+		}
+		return selected, nil
+	case rfb.SecurityVNCAuth:
+		if err := s.exchangeVNCAuth(conn); err != nil {
+			_ = writeSecurityResult(conn, version, false, "authentication failed")
+			return selected, err
+		}
+		return selected, writeSecurityResult(conn, version, true, "")
+	default:
+		_ = writeSecurityResult(conn, version, false, "unsupported security type")
+		return selected, fmt.Errorf("rfbtest: server cannot perform security type %d", selected)
+	}
+}
+
+// vncTestChallenge is the deterministic challenge the in-process server uses,
+// so a wrong-password test compares against a stable value.
+var vncTestChallenge = [16]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+
+// exchangeVNCAuth sends the challenge, reads the client's response and
+// compares it with the response the configured password yields.
+func (s *Server) exchangeVNCAuth(conn io.ReadWriter) error {
+	if err := writeAll(conn, vncTestChallenge[:]); err != nil {
+		return err
+	}
+	var response [16]byte
+	if _, err := io.ReadFull(conn, response[:]); err != nil {
+		return err
+	}
+	expected, err := rfb.VNCAuthResponse(s.cfg.Password, vncTestChallenge[:])
+	if err != nil {
+		return err
+	}
+	if response != expected {
+		return fmt.Errorf("rfbtest: VNC authentication failed")
+	}
+	s.mu.Lock()
+	s.received.VNCAuthAccepted = true
+	s.mu.Unlock()
+	return nil
+}
+
+// writeSecurityResult writes a status word and, on failure where the version
+// carries one, a reason string. RFB 3.7 omits the reason.
+func writeSecurityResult(w io.Writer, version rfb.Version, success bool, reason string) error {
+	var wire [4]byte
+	if !success {
+		binary.BigEndian.PutUint32(wire[:], 1)
+	}
+	if err := writeAll(w, wire[:]); err != nil {
+		return err
+	}
+	if success || version.Minor == rfb.Version3_7.Minor || reason == "" {
+		return nil
+	}
+	var length [4]byte
+	binary.BigEndian.PutUint32(length[:], uint32(len(reason)))
+	if err := writeAll(w, length[:]); err != nil {
+		return err
+	}
+	return writeAll(w, []byte(reason))
+}
+
+func containsSecurity(offered []rfb.SecurityType, want rfb.SecurityType) bool {
+	for _, security := range offered {
+		if security == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) writeServerInit(conn io.Writer) error {
