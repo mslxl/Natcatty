@@ -1,6 +1,10 @@
 package desktop
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/mslxl/natcatty/domain/model/launch"
+)
 
 // Kind classifies a desktop use-case failure. The UI maps it to a localized
 // message; this package never contains user-visible text.
@@ -37,21 +41,29 @@ func (e *Error) Error() string {
 func (e *Error) Unwrap() error { return e.Cause }
 
 // KindOf returns the classification of err, or KindInternal when it did not
-// come from this package.
+// come from this package. Launch-target failures come from the shared
+// domain/model/launch package, so their sentinels map onto the same
+// validation/unsupported vocabulary here.
 func KindOf(err error) Kind {
 	var target *Error
 	if errors.As(err, &target) {
 		return target.Kind
 	}
+	switch {
+	case errors.Is(err, launch.ErrUnsupportedScheme):
+		return KindUnsupported
+	case errors.Is(err, launch.ErrInvalidTarget):
+		return KindValidation
+	}
 	return KindInternal
 }
 
 // Sentinel errors. Callers wrap them with %w so errors.Is keeps working while
-// KindOf still classifies the failure.
+// KindOf still classifies the failure. ErrInvalidTarget and
+// ErrUnsupportedScheme are declared in target.go because they belong to the
+// shared launch parser.
 var (
-	ErrInvalidTarget     = &Error{Kind: KindValidation, Cause: errors.New("invalid target")}
-	ErrUnsupportedScheme = &Error{Kind: KindUnsupported, Cause: errors.New("unsupported URL scheme")}
-	ErrUnsupported       = &Error{Kind: KindUnsupported, Cause: errors.New("unsupported on this host")}
-	ErrHotkey            = &Error{Kind: KindHotkey, Cause: errors.New("cannot register the toggle hotkey")}
-	ErrAutoStart         = &Error{Kind: KindAutoStart, Cause: errors.New("cannot change launch at login")}
+	ErrUnsupported = &Error{Kind: KindUnsupported, Cause: errors.New("unsupported on this host")}
+	ErrHotkey      = &Error{Kind: KindHotkey, Cause: errors.New("cannot register the toggle hotkey")}
+	ErrAutoStart   = &Error{Kind: KindAutoStart, Cause: errors.New("cannot change launch at login")}
 )

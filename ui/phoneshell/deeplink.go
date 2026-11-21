@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	appdesktop "github.com/mslxl/natcatty/application/desktop"
+	launch "github.com/mslxl/natcatty/domain/model/launch"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -63,20 +63,20 @@ func (s *Shell) Ready() {
 // to a prefilled create form. A rejected link changes nothing but the inline
 // problem, so a malformed link never leaves the user on a blank page.
 func (s *Shell) applyDeepLink(raw string) error {
-	target, err := appdesktop.ParseDeepLink(raw)
+	target, err := launch.ParseDeepLink(raw)
 	if err != nil {
 		s.reportDeepLinkProblem(err)
 		return err
 	}
 	// Only ssh:// reaches this app: it is the scheme registered on both
 	// platforms, and the phone's Hosts all open over a remote transport.
-	if target.Kind != appdesktop.TargetSSH {
-		s.reportDeepLinkProblem(appdesktop.ErrUnsupportedScheme)
-		return appdesktop.ErrUnsupportedScheme
+	if target.Kind != launch.TargetSSH {
+		s.reportDeepLinkProblem(launch.ErrUnsupportedScheme)
+		return launch.ErrUnsupportedScheme
 	}
 	s.deepLinkProblem = ""
 
-	if host, ok := appdesktop.MatchHost(s.hosts.hosts, target); ok {
+	if host, ok := domainvault.MatchHost(s.hosts.hosts, target); ok {
 		s.openOrSelectHost(host)
 		return nil
 	}
@@ -103,8 +103,8 @@ func (s *Shell) openOrSelectHost(host domainvault.Host) {
 // promptToCreateHost is the link's unmatched path: an ssh:// link names an
 // endpoint the Vault does not have, so the Hosts section asks for a Host with
 // the link's user, host, and port already filled in.
-func (s *Shell) promptToCreateHost(target appdesktop.Target) {
-	s.hosts.form = formFromHost(appdesktop.DraftHost(target))
+func (s *Shell) promptToCreateHost(target launch.Target) {
+	s.hosts.form = formFromHost(domainvault.DraftHost(target))
 	s.hosts.formProblem = ""
 	s.Select(Hosts)
 	router := s.sections[Hosts].router
@@ -136,7 +136,7 @@ func (s *Shell) cancelCreateHost() {
 // the inline banner every section draws. The raw error is never shown: the
 // user gets the next step instead of a parser message.
 func (s *Shell) reportDeepLinkProblem(err error) {
-	if errors.Is(err, appdesktop.ErrUnsupportedScheme) {
+	if errors.Is(err, launch.ErrUnsupportedScheme) {
 		s.deepLinkProblem = "Natcatty does not support that link. Only ssh:// links open a Host."
 		return
 	}
