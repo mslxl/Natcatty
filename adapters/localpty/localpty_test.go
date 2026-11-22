@@ -47,6 +47,136 @@ func TestEnvironmentIncludesTerminalLensHints(t *testing.T) {
 	}
 }
 
+// A C/POSIX locale names no locale, and zsh under it counts a UTF-8 prompt
+// glyph such as "❯" by its bytes while the terminal draws one cell; its line
+// editor's redraws then corrupt the prompt and input rows a finished block
+// shows. LC_ALL and LC_CTYPE take precedence over LANG, so the shell must get
+// a UTF-8 LANG with those C defaults cleared, while a configured locale stays
+// the user's choice.
+func TestEnvironmentEnsuresAUTF8Locale(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no locale variables to inherit")
+	}
+	for _, test := range []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"no locale", nil, "en_US.UTF-8"},
+		{"C LC_ALL", map[string]string{"LC_ALL": "C"}, "en_US.UTF-8"},
+		{"POSIX LC_ALL", map[string]string{"LC_ALL": "POSIX"}, "en_US.UTF-8"},
+		{"C LC_CTYPE", map[string]string{"LC_CTYPE": "C"}, "en_US.UTF-8"},
+		{"C LC_ALL behind a UTF-8 LANG", map[string]string{"LANG": "en_US.UTF-8", "LC_ALL": "C"}, "en_US.UTF-8"},
+		{"configured LANG", map[string]string{"LANG": "ja_JP.UTF-8"}, "ja_JP.UTF-8"},
+		{"configured LANG behind a C LC_ALL", map[string]string{"LANG": "ja_JP.UTF-8", "LC_ALL": "C"}, "en_US.UTF-8"},
+		{"configured LC_CTYPE", map[string]string{"LC_CTYPE": "ja_JP.UTF-8", "LANG": "C"}, "ja_JP.UTF-8"},
+		{"configured LC_ALL", map[string]string{"LC_ALL": "ja_JP.UTF-8", "LANG": "C"}, "ja_JP.UTF-8"},
+		{"configured non-UTF-8 locale", map[string]string{"LANG": "zh_CN.GB18030"}, "zh_CN.GB18030"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			withLocaleEnv(t, test.env)
+			values := environmentValues(nil)
+			if got := ctypeLocale(values); got != test.want {
+				t.Fatalf("the shell's character locale = %q, want %q (LANG=%q LC_ALL=%q LC_CTYPE=%q)",
+					got, test.want, values["LANG"], values["LC_ALL"], values["LC_CTYPE"])
+			}
+		})
+	}
+}
+
+// An explicit C/POSIX LC_ALL is the caller's "C for everything": only the
+// character category becomes UTF-8, because that is the one the terminal's
+// cell widths need. Collation, date formats and message language stay C even
+// when a non-English LANG is configured, because the command lenses parse
+// English output. With no locale variable at all, the app's historical LANG
+// default still applies to every category, and a configured LC_CTYPE moves
+// only itself.
+func TestEnvironmentKeepsCForTheOtherCategories(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no locale variables to inherit")
+	}
+	for _, test := range []struct {
+		name           string
+		env            map[string]string
+		wantCTyp       string
+		wantLANG       string
+		wantCategories string
+	}{
+		{"C LC_ALL", map[string]string{"LC_ALL": "C"}, "en_US.UTF-8", "", "C"},
+		{"POSIX LC_ALL", map[string]string{"LC_ALL": "POSIX"}, "en_US.UTF-8", "", "C"},
+		{"C LC_ALL behind a configured LANG", map[string]string{"LC_ALL": "C", "LANG": "ja_JP.UTF-8"}, "en_US.UTF-8", "ja_JP.UTF-8", "C"},
+		{"C LC_CTYPE", map[string]string{"LC_CTYPE": "C"}, "en_US.UTF-8", "", ""},
+		{"C LC_CTYPE behind a configured LANG", map[string]string{"LC_CTYPE": "C", "LANG": "ja_JP.UTF-8"}, "en_US.UTF-8", "ja_JP.UTF-8", ""},
+		{"no locale", nil, "", "en_US.UTF-8", ""},
+		{"configured LANG", map[string]string{"LANG": "ja_JP.UTF-8"}, "", "ja_JP.UTF-8", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			withLocaleEnv(t, test.env)
+			values := environmentValues(nil)
+			if got := values["LC_CTYPE"]; got != test.wantCTyp {
+				t.Errorf("LC_CTYPE = %q, want %q", got, test.wantCTyp)
+			}
+			if got := values["LANG"]; got != test.wantLANG {
+				t.Errorf("LANG = %q, want %q", got, test.wantLANG)
+			}
+			for _, key := range cCategories {
+				if got := values[key]; got != test.wantCategories {
+					t.Errorf("%s = %q, want %q", key, got, test.wantCategories)
+				}
+			}
+		})
+	}
+}
+
+// environmentValues maps environment()'s output by key.
+func environmentValues(extra []string) map[string]string {
+	values := make(map[string]string)
+	for _, entry := range environment(extra) {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	return values
+}
+
+// ctypeLocale resolves the character locale the way POSIX does.
+func ctypeLocale(values map[string]string) string {
+	for _, key := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		if value := strings.TrimSpace(values[key]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// localeKeys are every locale variable the guard reads, sets or preserves.
+var localeKeys = append([]string{"LANG", "LC_ALL", "LC_CTYPE"}, cCategories...)
+
+// withLocaleEnv replaces the locale variables for one test and restores the
+// process environment afterwards. An empty value unsets the variable.
+func withLocaleEnv(t *testing.T, values map[string]string) {
+	t.Helper()
+	for _, key := range localeKeys {
+		previous, ok := os.LookupEnv(key)
+		t.Cleanup(func() {
+			if ok {
+				_ = os.Setenv(key, previous)
+				return
+			}
+			_ = os.Unsetenv(key)
+		})
+		_ = os.Unsetenv(key)
+	}
+	for key, value := range values {
+		if value == "" {
+			_ = os.Unsetenv(key)
+			continue
+		}
+		_ = os.Setenv(key, value)
+	}
+}
+
 // TestLocalShellProducesOutputAndExitStatus is the adapter integration seam:
 // it proves a real pseudo-terminal carries output and reports exit.
 func TestLocalShellProducesOutputAndExitStatus(t *testing.T) {
