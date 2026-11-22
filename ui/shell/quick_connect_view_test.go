@@ -6,6 +6,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
@@ -154,6 +155,102 @@ func TestQuickConnectConnectOpensAnUnsavedTab(t *testing.T) {
 	}
 	if got := graph.sessions[0].HostID(); got != "" {
 		t.Fatalf("Session HostID = %q, want an Unsaved Host", got)
+	}
+}
+
+// TestQuickConnectVNCShowsVNCControls proves the VNC form offers the endpoint
+// mode, display, username, and its own password, and hides SSH-only controls.
+func TestQuickConnectVNCShowsVNCControls(t *testing.T) {
+	m := locales.In("en")
+	graph := newTestGraph(t)
+	tt := ui.NewTester(View(graph.state), 1100, 720)
+	tt.SetLocale("en")
+	tt.Frame()
+	graph.state.OpenQuickConnect()
+	graph.state.SetQuickConnectProtocol(domainvault.ProtocolVNC)
+	tt.Frame()
+
+	for _, text := range []string{
+		m.VaultHostVNCInputMode(), m.VaultHostVNCInputDisplay(),
+		m.VaultHostVNCDisplay(), m.VaultHostVNCPassword(), m.QuickConnectUsername(),
+	} {
+		if !tt.HasText(text) {
+			t.Fatalf("the VNC form does not show %q; texts %q", text, tt.Texts())
+		}
+	}
+	for _, text := range []string{
+		m.VaultHostNetworkDevice(), m.VaultHostTransport(),
+	} {
+		if tt.HasText(text) {
+			t.Fatalf("the VNC form still shows the SSH-only control %q", text)
+		}
+	}
+	// "VNC Password" contains "Password", so compare the label exactly to prove
+	// the SSH password field itself is gone.
+	for _, text := range tt.Texts() {
+		if text == m.QuickConnectPassword() {
+			t.Fatal("the VNC form still shows the SSH password control")
+		}
+	}
+}
+
+// TestQuickConnectSSHShowsTransportAndPlainNetworkDevice proves the SSH form
+// offers the transport selector, keeps the SSH credentials for Mosh/ET, and
+// hides network-device mode for them.
+func TestQuickConnectSSHShowsTransportAndPlainNetworkDevice(t *testing.T) {
+	m := locales.In("en")
+	graph := newTestGraph(t)
+	tt := ui.NewTester(View(graph.state), 1100, 720)
+	tt.SetLocale("en")
+	tt.Frame()
+	graph.state.OpenQuickConnect()
+	tt.Frame()
+
+	if !tt.HasText(m.VaultHostTransport()) || !tt.HasText(m.VaultHostTransportSSH()) {
+		t.Fatalf("the SSH form does not offer the transport select; texts %q", tt.Texts())
+	}
+	if !tt.HasText(m.VaultHostNetworkDevice()) {
+		t.Fatalf("plain SSH does not offer network-device mode; texts %q", tt.Texts())
+	}
+	if tt.HasText(m.VaultHostVNCInputMode()) {
+		t.Fatal("the SSH form shows the VNC endpoint controls")
+	}
+
+	graph.state.SetQuickConnectTransport(domainvault.TransportMosh)
+	tt.Frame()
+	if !tt.HasText(m.VaultHostTransportMosh()) {
+		t.Fatalf("the transport select does not show Mosh; texts %q", tt.Texts())
+	}
+	if !tt.HasText(m.QuickConnectUsername()) || !tt.HasText(m.QuickConnectPassword()) {
+		t.Fatal("Mosh lost the shared SSH credential fields")
+	}
+	if tt.HasText(m.VaultHostNetworkDevice()) {
+		t.Fatal("Mosh still shows network-device mode")
+	}
+}
+
+// TestQuickConnectTelnetHidesProtocolSpecificControls proves Telnet keeps only
+// its address and port.
+func TestQuickConnectTelnetHidesProtocolSpecificControls(t *testing.T) {
+	m := locales.In("en")
+	graph := newTestGraph(t)
+	tt := ui.NewTester(View(graph.state), 1100, 720)
+	tt.SetLocale("en")
+	tt.Frame()
+	graph.state.OpenQuickConnect()
+	graph.state.SetQuickConnectProtocol(domainvault.ProtocolTelnet)
+	tt.Frame()
+
+	if !tt.HasText(m.QuickConnectAddress()) || !tt.HasText(m.QuickConnectPort()) {
+		t.Fatalf("the Telnet form lost its endpoint; texts %q", tt.Texts())
+	}
+	for _, text := range []string{
+		m.QuickConnectUsername(), m.QuickConnectPassword(), m.VaultHostTransport(),
+		m.VaultHostVNCInputMode(), m.VaultHostNetworkDevice(),
+	} {
+		if tt.HasText(text) {
+			t.Fatalf("the Telnet form shows the hidden control %q", text)
+		}
 	}
 }
 

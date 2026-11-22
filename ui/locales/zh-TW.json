@@ -108,6 +108,7 @@
   "quickConnectPassword": "密碼",
   "quickConnectAddressRequired": "請輸入位址。",
   "quickConnectPortInvalid": "請輸入 1 到 65535 之間的連接埠。",
+  "quickConnectDisplayInvalid": "請輸入 0 到 99 之間的顯示編號。",
   "quickConnectUnavailable": "工作階段無法使用。",
   "quickConnectDiscardTitle": "捨棄快速連線？",
   "quickConnectDiscardDescription": "你輸入的內容不會儲存在任何地方。",

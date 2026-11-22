@@ -1134,6 +1134,16 @@ func (msgs Messages) QuickConnectPortInvalid() string {
 	return Catalog.Format(msgs.locale, "quickConnectPortInvalid", nil)
 }
 
+// QuickConnectDisplayInvalid says "Enter a display number between 0 and 99."
+// in the language the app shows.
+func QuickConnectDisplayInvalid() string { return In(i18n.Locale()).QuickConnectDisplayInvalid() }
+
+// QuickConnectDisplayInvalid says "Enter a display number between 0 and 99."
+// in the language of msgs.
+func (msgs Messages) QuickConnectDisplayInvalid() string {
+	return Catalog.Format(msgs.locale, "quickConnectDisplayInvalid", nil)
+}
+
 // QuickConnectUnavailable says "Sessions are unavailable."
 // in the language the app shows.
 func QuickConnectUnavailable() string { return In(i18n.Locale()).QuickConnectUnavailable() }

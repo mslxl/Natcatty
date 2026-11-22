@@ -108,6 +108,7 @@
   "quickConnectPassword": "Contraseña",
   "quickConnectAddressRequired": "Introduce una dirección.",
   "quickConnectPortInvalid": "Introduce un puerto entre 1 y 65535.",
+  "quickConnectDisplayInvalid": "Introduce un número de pantalla entre 0 y 99.",
   "quickConnectUnavailable": "Las sesiones no están disponibles.",
   "quickConnectDiscardTitle": "¿Descartar conexión rápida?",
   "quickConnectDiscardDescription": "Los detalles que escribiste no se guardan en ningún sitio.",

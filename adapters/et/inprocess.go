@@ -336,6 +336,7 @@ func (f InProcessFactory) acquire(ctx context.Context, spec appsession.StartSpec
 		Hostname: spec.Hostname,
 		Port:     spec.Port,
 		Username: username,
+		Password: spec.Password,
 		Jumps:    route.Jumps,
 		Proxy:    route.Proxy,
 		// The bootstrap and every replacement lease use the same first-endpoint
@@ -345,7 +346,10 @@ func (f InProcessFactory) acquire(ctx context.Context, spec appsession.StartSpec
 		Algorithms:        route.Algorithms,
 		ConfigFingerprint: route.ConfigFingerprint,
 		LeaseKind:         appconnection.LeaseShell,
-		Keepalive:         &appconnection.DefaultKeepalive,
+		// A target with no saved Host (Quick Connect) must not share or park a
+		// transport: another unsaved target could carry different credentials.
+		Dedicated: spec.HostID == "",
+		Keepalive: &appconnection.DefaultKeepalive,
 	}
 	if f.Acquire != nil {
 		return f.Acquire(ctx, request)

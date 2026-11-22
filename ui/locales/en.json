@@ -108,6 +108,7 @@
   "quickConnectPassword": "Password",
   "quickConnectAddressRequired": "Enter an address.",
   "quickConnectPortInvalid": "Enter a port between 1 and 65535.",
+  "quickConnectDisplayInvalid": "Enter a display number between 0 and 99.",
   "quickConnectUnavailable": "Sessions are unavailable.",
   "quickConnectDiscardTitle": "Discard quick connect?",
   "quickConnectDiscardDescription": "The details you typed are not saved anywhere.",

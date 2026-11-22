@@ -104,18 +104,33 @@ func quickConnectFields(c *ui.Context, s *state.State, m locales.Messages, t *ui
 	ui.Text(c, m.QuickConnectDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 
 	protocolField(c, s, m)
+	if form.Protocol == domainvault.ProtocolSSH {
+		transportField(c, s, m)
+	}
 	ui.TextInput(c.Key("quick-connect-address"), &form.Hostname).
 		Label(m.QuickConnectAddress()).Placeholder(m.QuickConnectAddressPlaceholder()).
 		FillWidth().AutoFocus()
-	ui.TextInput(c.Key("quick-connect-port"), &form.Port).
-		Label(m.QuickConnectPort()).FillWidth()
-	if form.Protocol == domainvault.ProtocolSSH {
+	if form.Protocol == domainvault.ProtocolVNC {
+		vncEndpointFields(c, s, m)
+	} else {
+		ui.TextInput(c.Key("quick-connect-port"), &form.Port).
+			Label(m.QuickConnectPort()).FillWidth()
+	}
+	switch form.Protocol {
+	case domainvault.ProtocolSSH:
 		ui.TextInput(c.Key("quick-connect-username"), &form.Username).
 			Label(m.QuickConnectUsername()).FillWidth()
 		ui.TextInput(c.Key("quick-connect-password"), &form.Password).
 			Label(m.QuickConnectPassword()).Password().FillWidth()
-		ui.Checkbox(c.Key("quick-connect-network-device"), &form.NetworkDevice,
-			m.VaultHostNetworkDevice())
+		if form.Transport == domainvault.TransportPlain {
+			ui.Checkbox(c.Key("quick-connect-network-device"), &form.NetworkDevice,
+				m.VaultHostNetworkDevice())
+		}
+	case domainvault.ProtocolVNC:
+		ui.TextInput(c.Key("quick-connect-username"), &form.Username).
+			Label(m.QuickConnectUsername()).FillWidth()
+		ui.TextInput(c.Key("quick-connect-vnc-password"), &form.VNCPassword).
+			Label(m.VaultHostVNCPassword()).Password().FillWidth()
 	}
 
 	if problem := quickConnectProblem(m, s.QuickConnectIssue()); problem != "" {
@@ -123,12 +138,23 @@ func quickConnectFields(c *ui.Context, s *state.State, m locales.Messages, t *ui
 	}
 }
 
-// protocolField switches the form between SSH and Telnet. The labels are the
-// protocol names, which are not translated.
+// protocolField switches the form between SSH, Telnet, and VNC. The labels are
+// the protocol names, which are not translated.
 func protocolField(c *ui.Context, s *state.State, m locales.Messages) {
-	labels := []string{string(domainvault.ProtocolSSH), string(domainvault.ProtocolTelnet)}
+	labels := []string{
+		string(domainvault.ProtocolSSH),
+		string(domainvault.ProtocolTelnet),
+		string(domainvault.ProtocolVNC),
+	}
 	current := string(s.QuickConnectForm().Protocol)
-	if current != labels[0] && current != labels[1] {
+	found := false
+	for _, label := range labels {
+		if current == label {
+			found = true
+			break
+		}
+	}
+	if !found {
 		current = labels[0]
 	}
 	kit.FormRow(c, m.QuickConnectProtocol(), func() {
@@ -140,6 +166,81 @@ func protocolField(c *ui.Context, s *state.State, m locales.Messages) {
 	}
 }
 
+// transportField switches an SSH form between plain SSH, Mosh, and ET. Mosh and
+// ET are SSH transports, so they keep the same Username and Password fields.
+func transportField(c *ui.Context, s *state.State, m locales.Messages) {
+	labels := []string{
+		m.VaultHostTransportSSH(),
+		m.VaultHostTransportMosh(),
+		m.VaultHostTransportET(),
+	}
+	values := []string{
+		string(domainvault.TransportPlain),
+		string(domainvault.TransportMosh),
+		string(domainvault.TransportET),
+	}
+	current := quickConnectOptionLabel(labels, values, string(s.QuickConnectForm().Transport))
+	kit.FormRow(c, m.VaultHostTransport(), func() {
+		ui.Select(c.Key("quick-connect-transport"), &current, labels).FillWidth()
+	}).FillWidth()
+	transport := domainvault.Transport(quickConnectOptionValue(values, labels, current))
+	if transport != s.QuickConnectForm().Transport {
+		s.SetQuickConnectTransport(transport)
+		c.Invalidate()
+	}
+}
+
+// vncEndpointFields renders the VNC endpoint as a display number or a raw TCP
+// port. Both modes describe the same stored port.
+func vncEndpointFields(c *ui.Context, s *state.State, m locales.Messages) {
+	form := s.QuickConnectForm()
+	inputLabels := []string{m.VaultHostVNCInputDisplay(), m.VaultHostVNCInputPort()}
+	inputModes := []string{
+		string(domainvault.VNCDisplayNumber),
+		string(domainvault.VNCPort),
+	}
+	inputLabel := quickConnectOptionLabel(inputLabels, inputModes,
+		string(domainvault.NormalizeDisplayMode(form.VNCMode)))
+	kit.FormRow(c, m.VaultHostVNCInputMode(), func() {
+		ui.Select(c.Key("quick-connect-vnc-mode"), &inputLabel, inputLabels).FillWidth()
+	}).FillWidth()
+	mode := domainvault.VNCDisplayMode(quickConnectOptionValue(inputModes, inputLabels, inputLabel))
+	if mode != domainvault.NormalizeDisplayMode(form.VNCMode) {
+		s.SetQuickConnectVNCMode(mode)
+		c.Invalidate()
+	}
+
+	if domainvault.NormalizeDisplayMode(form.VNCMode) == domainvault.VNCPort {
+		ui.TextInput(c.Key("quick-connect-vnc-port"), &form.Port).
+			Label(m.QuickConnectPort()).FillWidth()
+		return
+	}
+	ui.TextInput(c.Key("quick-connect-vnc-display"), &form.VNCDisplay).
+		Label(m.VaultHostVNCDisplay()).FillWidth()
+}
+
+// quickConnectOptionLabel returns the label for current, or the first label
+// when current is not one of the options.
+func quickConnectOptionLabel(labels, values []string, current string) string {
+	for index, candidate := range values {
+		if candidate == current {
+			return labels[index]
+		}
+	}
+	return labels[0]
+}
+
+// quickConnectOptionValue returns the value for label, or the first value when
+// label is not one of the options.
+func quickConnectOptionValue(values, labels []string, label string) string {
+	for index, candidate := range labels {
+		if candidate == label {
+			return values[index]
+		}
+	}
+	return values[0]
+}
+
 // quickConnectProblem localizes the validation issue, if any.
 func quickConnectProblem(m locales.Messages, issue state.QuickConnectIssue) string {
 	switch issue {
@@ -147,6 +248,8 @@ func quickConnectProblem(m locales.Messages, issue state.QuickConnectIssue) stri
 		return m.QuickConnectAddressRequired()
 	case state.QuickConnectIssuePort:
 		return m.QuickConnectPortInvalid()
+	case state.QuickConnectIssueDisplay:
+		return m.QuickConnectDisplayInvalid()
 	case state.QuickConnectIssueNoSessions:
 		return m.QuickConnectUnavailable()
 	default:

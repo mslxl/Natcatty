@@ -133,13 +133,17 @@ func (b *moshBootstrap) OpenBootstrap(ctx context.Context, spec appsession.Start
 		Hostname:          spec.Hostname,
 		Port:              spec.Port,
 		Username:          spec.Username,
+		Password:          spec.Password,
 		Jumps:             b.route.Jumps,
 		Proxy:             b.route.Proxy,
 		Network:           b.route.Network,
 		Algorithms:        b.route.Algorithms,
 		ConfigFingerprint: b.route.ConfigFingerprint,
 		LeaseKind:         appconnection.LeaseShell,
-		Keepalive:         &appconnection.DefaultKeepalive,
+		// A target with no saved Host (Quick Connect) must not share or park a
+		// transport: another unsaved target could carry different credentials.
+		Dedicated: spec.HostID == "",
+		Keepalive: &appconnection.DefaultKeepalive,
 	})
 	if err != nil {
 		return nil, err

@@ -108,6 +108,7 @@
   "quickConnectPassword": "密码",
   "quickConnectAddressRequired": "请输入地址。",
   "quickConnectPortInvalid": "请输入 1 到 65535 之间的端口。",
+  "quickConnectDisplayInvalid": "请输入 0 到 99 之间的显示编号。",
   "quickConnectUnavailable": "会话不可用。",
   "quickConnectDiscardTitle": "放弃快速连接？",
   "quickConnectDiscardDescription": "你输入的内容不会保存在任何地方。",

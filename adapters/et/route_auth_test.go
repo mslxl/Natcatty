@@ -790,12 +790,18 @@ func TestInProcessETPassesTheSharedRouteAndPolicies(t *testing.T) {
 		ConfigFingerprint: "target-digest",
 	}
 	cases := []struct {
-		name     string
-		username string
-		wantUser string
+		name          string
+		hostID        string
+		username      string
+		wantUser      string
+		password      string
+		wantDedicated bool
 	}{
-		{"spec username", "spec-user", "spec-user"},
-		{"config fallback", "", "config-user"},
+		{"spec username", "target", "spec-user", "spec-user", "saved-secret", false},
+		{"config fallback", "target", "", "config-user", "", false},
+		// Quick Connect has no saved Host, so the one-shot password must reach
+		// the SSH acquisition and the target must not share a pooled transport.
+		{"quick connect", "", "spec-user", "spec-user", "s3cret", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -814,17 +820,24 @@ func TestInProcessETPassesTheSharedRouteAndPolicies(t *testing.T) {
 				Hostname: "target.internal", Port: 2222, Username: "config-user", ETPort: 2022,
 			}.Normalized()
 			spec := appsession.StartSpec{
-				Kind: appsession.KindET, HostID: "target", Hostname: "target.internal",
-				Port: 2222, Username: tc.username, ET: &cfg,
+				Kind: appsession.KindET, HostID: model.HostID(tc.hostID), Hostname: "target.internal",
+				Port: 2222, Username: tc.username, Password: tc.password, ET: &cfg,
 			}
 			if _, err := factory.Open(context.Background(), spec); !errors.Is(err, etmodel.ErrBootstrapFailed) {
 				t.Fatalf("Open error = %v, want the expected bootstrap failure", err)
 			}
-			if got.HostID != "target" || got.Hostname != "target.internal" || got.Port != 2222 {
+			if got.HostID != model.HostID(tc.hostID) || got.Hostname != "target.internal" || got.Port != 2222 {
 				t.Fatalf("request endpoint = %+v", got)
 			}
 			if got.Username != tc.wantUser {
 				t.Fatalf("request username = %q, want %q", got.Username, tc.wantUser)
+			}
+			if got.Password != tc.password {
+				t.Fatalf("request password = %q, want %q", got.Password, tc.password)
+			}
+			if got.Dedicated != tc.wantDedicated {
+				t.Fatalf("request dedicated = %v, want %v for Host %q",
+					got.Dedicated, tc.wantDedicated, tc.hostID)
 			}
 			if !reflect.DeepEqual(got.Jumps, route.Jumps) {
 				t.Fatalf("request jumps = %+v, want %+v", got.Jumps, route.Jumps)

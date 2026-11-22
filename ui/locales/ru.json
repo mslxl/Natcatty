@@ -108,6 +108,7 @@
   "quickConnectPassword": "Пароль",
   "quickConnectAddressRequired": "Введите адрес.",
   "quickConnectPortInvalid": "Введите порт от 1 до 65535.",
+  "quickConnectDisplayInvalid": "Введите номер дисплея от 0 до 99.",
   "quickConnectUnavailable": "Сеансы недоступны.",
   "quickConnectDiscardTitle": "Отменить быстрое подключение?",
   "quickConnectDiscardDescription": "Введённые данные нигде не сохраняются.",
