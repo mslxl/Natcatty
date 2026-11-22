@@ -68,6 +68,12 @@ type fixtureOptions struct {
 	width, height int
 	root          func(*ui.Context, *vncui.Surface) ui.Element
 	configure     func(*rfbtest.Config)
+	// config overrides the Host's viewer configuration; nil uses defaults.
+	config *modelvnc.Config
+	// serviceOptions and surfaceOptions pass test seams through to the
+	// Session service and the viewer.
+	serviceOptions []appsession.Option
+	surfaceOptions []vncui.Option
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -108,12 +114,16 @@ func newFixtureWithOptions(t *testing.T, opts fixtureOptions) *fixture {
 	factory := adaptervnc.Factory{Dial: func(context.Context, string, string) (net.Conn, error) {
 		return clientConn, nil
 	}}
+	configuration := modelvnc.DefaultConfig()
+	if opts.config != nil {
+		configuration = *modelvnc.NormalizeConfig(opts.config)
+	}
 	cfg := modelvnc.SessionConfig{
 		Hostname:      "desk.test",
 		Port:          5900,
-		Configuration: modelvnc.DefaultConfig(),
+		Configuration: configuration,
 	}
-	session, err := appsession.NewService(factory).Open(context.Background(), appsession.StartSpec{
+	session, err := appsession.NewService(factory, opts.serviceOptions...).Open(context.Background(), appsession.StartSpec{
 		Kind:  appsession.KindVNC,
 		Label: "workstation",
 		VNC:   &cfg,
@@ -121,7 +131,7 @@ func newFixtureWithOptions(t *testing.T, opts fixtureOptions) *fixture {
 	if err != nil {
 		t.Fatalf("Open VNC: %v", err)
 	}
-	surface, err := vncui.New(session)
+	surface, err := vncui.New(session, opts.surfaceOptions...)
 	if err != nil {
 		t.Fatalf("New viewer: %v", err)
 	}

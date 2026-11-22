@@ -56,10 +56,15 @@ func Bar(s *State) func(*ui.Context) {
 				if title == "" {
 					title = m.LocalSessionTab(tab.Number)
 				}
+				marker := ""
+				if tab.Bell {
+					marker = m.TabDirtyMarker()
+				}
 				_, result := kit.Tab(c, kit.TabPane, kit.TabSpec{
 					Key:    fmt.Sprintf("quake-tab-%d", tab.Number),
 					Title:  title,
 					Active: tab.Active,
+					Marker: marker,
 					Close:  m.MenuCloseTab(),
 				})
 				if result.Closed {
@@ -233,6 +238,17 @@ func View(s *State) func(*ui.Context) {
 			return
 		}
 		ui.Column(c).FillWidth().Grow(1).MinWidth(0).MinHeight(0).Children(func() {
+			// A VNC Tab keeps its per-kind chrome in the Panel too, so the
+			// scale, view-only, clipboard, Ctrl-Alt-Del, and grab controls
+			// stay reachable. The Panel is not a host window, so it uses the
+			// embedded toolbar, which omits fullscreen. Terminal Surfaces keep
+			// the body-only layout.
+			if bar, ok := viewerBar(tab.Surface); ok {
+				kit.Bar(c, kit.BarPane).Padding(0, 4, 0, 8).Gap(4).Children(func() {
+					ui.Column(c).Grow(1).MinWidth(0)
+					bar.ToolbarEmbedded(c)
+				})
+			}
 			if focused, ok := tab.Surface.(FocusedSurface); ok {
 				focused.ViewFocused(c, true)
 				return
@@ -240,4 +256,20 @@ func View(s *State) func(*ui.Context) {
 			tab.Surface.View(c)
 		})
 	}
+}
+
+// viewerBar returns a Surface's per-kind chrome when it marks itself as a
+// viewer (VNC). The marker keeps terminal Surfaces on the existing Quake
+// body-only layout. The Panel is not a host window, so the embedded toolbar is
+// the one it draws: the same controls without fullscreen.
+func viewerBar(surface Surface) (interface{ ToolbarEmbedded(*ui.Context) }, bool) {
+	if surface == nil {
+		return nil, false
+	}
+	marker, ok := surface.(interface{ ViewerChrome() bool })
+	if !ok || !marker.ViewerChrome() {
+		return nil, false
+	}
+	bar, ok := surface.(interface{ ToolbarEmbedded(*ui.Context) })
+	return bar, ok
 }

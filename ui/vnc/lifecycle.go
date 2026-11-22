@@ -6,6 +6,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsession "github.com/mslxl/natcatty/application/session"
+	modelvnc "github.com/mslxl/natcatty/domain/model/vnc"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
@@ -144,12 +145,29 @@ func connectionFailed(snapshot appsession.Snapshot) bool {
 		snapshot.Connection == appsession.ConnectionStatusError
 }
 
-// Toolbar renders the VNC Pane's controls for its header: the two splits and
-// the Session menu. The menu carries the lifecycle actions the terminal's menu
-// offers, without the byte-stream-only items.
+// Toolbar renders the VNC Pane's controls for its header: the per-kind viewer
+// controls, the two splits, and the Session menu. It is the host-window form,
+// so it includes the fullscreen action. The menu carries the lifecycle actions
+// the terminal's menu offers, without the byte-stream-only items.
 func (s *Surface) Toolbar(c *ui.Context) {
+	s.toolbar(c, true)
+}
+
+// ToolbarEmbedded renders the same controls for a renderer that is not a host
+// window: the Dropdown Panel in Quake's own mode and the top-down and follow
+// routes. It omits fullscreen, which would otherwise target the main window or
+// no-op on a non-activating panel. Every other control is unchanged.
+func (s *Surface) ToolbarEmbedded(c *ui.Context) {
+	s.toolbar(c, false)
+}
+
+func (s *Surface) toolbar(c *ui.Context, hostWindow bool) {
+	s.locale = c.Locale()
 	m := locales.In(c.Locale())
 	snapshot := s.session.Snapshot()
+	s.vncControls(c, m, hostWindow)
+	t := c.Theme()
+	s.notices(c, t)
 	if s.paneActions.SplitRight != nil &&
 		kit.IconButtonWith(c, icons.Columns, m.PaneSplitRight(), kit.IconOptions{Role: kit.IconPane}).Clicked() {
 		s.paneActions.SplitRight()
@@ -213,6 +231,65 @@ func (s *Surface) Toolbar(c *ui.Context) {
 			c.Invalidate()
 		}
 	})
+}
+
+// vncControls is the viewer's per-kind chrome: the scale cycle, view-only,
+// clipboard send and pull, Ctrl-Alt-Del, fullscreen, and keyboard grab. It is
+// deliberately separate from the terminal pane's toolbar, whose capture,
+// broadcast, compose, and terminal-resize controls cannot work on pixels.
+// hostWindow gates fullscreen, so a non-activating Panel never offers a
+// control that cannot affect its own window.
+func (s *Surface) vncControls(c *ui.Context, m locales.Messages, hostWindow bool) {
+	scaleLabel := m.SessionVNCScaleFit()
+	switch s.scaleMode {
+	case modelvnc.OneToOne:
+		scaleLabel = m.SessionVNCScaleOneToOne()
+	case modelvnc.Clip:
+		scaleLabel = m.SessionVNCScaleClip()
+	}
+	if kit.IconButtonWith(c, icons.SlidersHorizontal, scaleLabel,
+		kit.IconOptions{Role: kit.IconPane}).Clicked() {
+		s.CycleScale()
+		c.Invalidate()
+	}
+	if kit.IconButtonWith(c, icons.Eye, m.SessionVNCViewOnly(),
+		kit.IconOptions{Role: kit.IconPane, On: s.viewOnly}).Clicked() {
+		s.SetViewOnly(!s.viewOnly)
+		c.Invalidate()
+	}
+	if kit.IconButtonWith(c, icons.Upload, m.SessionVNCClipboardSend(),
+		kit.IconOptions{Role: kit.IconPane}).Clicked() {
+		s.SendClipboard(c.ReadClipboard())
+		c.Invalidate()
+	}
+	if kit.IconButtonWith(c, icons.Download, m.SessionVNCClipboardPull(),
+		kit.IconOptions{Role: kit.IconPane}).Clicked() {
+		s.PullClipboard(c.WriteClipboard)
+		c.Invalidate()
+	}
+	if kit.IconButtonWith(c, icons.Power, m.SessionVNCCtrlAltDel(),
+		kit.IconOptions{Role: kit.IconPane}).Clicked() {
+		// View-only must not silently ignore the control: the clipboard send
+		// button reports the same mode through SendClipboard's result.
+		if s.viewOnly {
+			s.setViewOnlyNotice(m.SessionVNCViewOnlyAction())
+		} else {
+			_ = s.SendCtrlAltDel()
+		}
+		c.Invalidate()
+	}
+	if hostWindow {
+		if kit.IconButtonWith(c, icons.Maximize, m.SessionVNCFullscreen(),
+			kit.IconOptions{Role: kit.IconPane}).Clicked() {
+			s.ToggleFullscreen()
+			c.Invalidate()
+		}
+	}
+	if kit.IconButtonWith(c, icons.Keyboard, m.SessionVNCKeyboardGrab(),
+		kit.IconOptions{Role: kit.IconPane, On: s.keyboardGrab}).Clicked() {
+		s.SetKeyboardGrab(!s.keyboardGrab)
+		c.Invalidate()
+	}
 }
 
 // reconnectAvailable reports whether the Session menu offers Reconnect. A

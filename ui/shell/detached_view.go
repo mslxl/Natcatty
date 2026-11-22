@@ -31,6 +31,9 @@ func DetachedView(s *state.State, tabID model.TabID) func(*ui.Context) {
 		}
 
 		layout.DetachedLayout(c, DetachedTitle(m, info), func() {
+			if info.Bell {
+				kit.Badge(c, t.Warning, m.SessionVNCBell())
+			}
 			if kit.IconButtonWith(c, icons.LogIn, m.DetachedMoveToMain(), kit.IconOptions{Role: kit.IconCard, Key: "detached-move-main"}).Clicked() {
 				s.ReattachDetachedTab(tabID)
 				c.Invalidate()

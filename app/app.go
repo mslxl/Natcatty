@@ -1104,10 +1104,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				transientRegistry)),
 		// A BEL marks the Session active, matching the original's tab badge.
 		// The notification mode is applied separately by the notification hook.
+		// A terminal BEL in the Quake workspace has no shell Tab to mark, so the
+		// router also hands it to the Quake strip.
 		appsession.WithBellHook(func(id model.SessionID) {
-			if shellState != nil {
-				shellState.NoteSessionActivity(id)
-			}
+			bellRouter{shell: shellState, quake: quakeState}.terminal(id)
 		}),
 		appsession.WithHighlightPolicy(func() (bool, []domainterminal.KeywordHighlightRule) {
 			current := terminalService.Settings()
@@ -1380,7 +1380,27 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// surface and its full chrome.
 	newSurface := func(s *appsession.Session) (state.Surface, error) {
 		if s.Snapshot().Kind == appsession.KindVNC {
-			return vncui.New(s, vncui.WithRedraw(invalidate))
+			return vncui.New(s,
+				vncui.WithRedraw(invalidate),
+				// Fullscreen is resolved at invocation time, so the action
+				// targets the host window showing this Pane: the main window
+				// or a detached window. The Dropdown Panel uses the embedded
+				// toolbar, which omits fullscreen. It is injectable so an
+				// offscreen test never drives a real window.
+				vncui.WithFullscreen(func() {
+					if windows != nil {
+						windows.ToggleFocusedFullScreen()
+					}
+				}),
+				// A remote bell reuses the app's Session bell path with the
+				// Session ID, so a focused main Pane and a detached window get
+				// a visible cue. The same router reaches the Quake workspace,
+				// whose Sessions own their own Tab strip. The Session's own
+				// bell hook also fires, and both markers are idempotent.
+				vncui.WithBell(func() {
+					bellRouter{shell: shellState, quake: quakeState}.viewer(s.ID())
+				}),
+			)
 		}
 		return newSessionSurface(s)
 	}
@@ -1633,6 +1653,11 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		},
 		func() string { return mygo.App.Locale() },
 	)
+	// A VNC pane that grabbed the keyboard makes its own window stand down its
+	// accelerators, so chords reach the guest. The shell reads the focused
+	// pane's Surface; terminal panes report false, and a detached window reads
+	// its own Tab rather than the main window's.
+	windows.SetKeyboardGrabProvider(shellState.KeyboardGrab, shellState.DetachedKeyboardGrab)
 	// The Dropdown Panel's Quake workspace is separate from the main shell's
 	// Workspace: its Tabs never enter the main Tab strip, and the Panel is
 	// created lazily on the first hotkey press. Its state is memory-only.

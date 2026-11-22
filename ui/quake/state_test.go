@@ -109,6 +109,8 @@ type recordingSurface struct {
 	cursorBlink bool
 	theme       domaintheme.TerminalTheme
 	themeSet    bool
+	grab        bool
+	hibernated  bool
 }
 
 func (s *recordingSurface) View(c *ui.Context) ui.Element {
@@ -129,6 +131,14 @@ func (s *recordingSurface) SetTerminalTheme(preset domaintheme.TerminalTheme) {
 	s.theme, s.themeSet = preset, true
 }
 
+// KeyboardGrab makes the fake a viewer-looking Surface for the Panel's
+// accelerator gate.
+func (s *recordingSurface) KeyboardGrab() bool { return s.grab }
+
+// Hibernated makes the fake report a released live view, as the VNC viewer
+// does while its Session stays connected.
+func (s *recordingSurface) Hibernated() bool { return s.hibernated }
+
 func newTestState(t *testing.T) (*State, *testOpener, *testFactory) {
 	t.Helper()
 	factory := &testFactory{}
@@ -140,6 +150,110 @@ func newTestState(t *testing.T) (*State, *testOpener, *testFactory) {
 	})
 	t.Cleanup(state.Shutdown)
 	return state, opener, factory
+}
+
+// TestBellMarksItsTabAndClearsWhenSelected pins the Quake bell cue: a bell is
+// queued off the UI thread, Flush applies it to the Tab that owns the Session,
+// selecting that Tab acknowledges it, and a bell for a Session the Quake
+// workspace does not own is ignored.
+func TestBellMarksItsTabAndClearsWhenSelected(t *testing.T) {
+	state, _, _ := newTestState(t)
+	if err := state.Activate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.AddLocalTab(); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := state.TabAt(0)
+	second, _ := state.TabAt(1)
+	if first.Session == nil || second.Session == nil {
+		t.Fatal("the Quake Tabs have no Sessions")
+	}
+
+	state.NoteSessionBell(first.Session.ID())
+	// The cue is only queued; the UI thread applies it in Flush.
+	if state.tabs[0].Bell {
+		t.Fatal("the bell mutated the Tab before Flush")
+	}
+	state.Flush()
+	if !state.Tabs()[0].Bell {
+		t.Fatal("Flush did not mark the bell's Tab")
+	}
+	if state.Tabs()[1].Bell {
+		t.Fatal("the bell marked a Tab that does not own the Session")
+	}
+
+	// A repeated bell keeps one mark, not a queue of duplicates.
+	state.NoteSessionBell(first.Session.ID())
+	state.NoteSessionBell(first.Session.ID())
+	state.Flush()
+	if !state.Tabs()[0].Bell {
+		t.Fatal("a repeated bell dropped the mark")
+	}
+
+	// Selecting the Tab acknowledges the mark.
+	state.SelectTab(0)
+	if state.Tabs()[0].Bell {
+		t.Fatal("selecting the Tab did not clear its bell")
+	}
+
+	// A foreign Session leaves both Tabs untouched.
+	state.SelectTab(1)
+	state.NoteSessionBell("no-such-session")
+	state.Flush()
+	if state.Tabs()[0].Bell || state.Tabs()[1].Bell {
+		t.Fatal("a foreign Session marked a Quake Tab")
+	}
+}
+
+// TestClosingTheActiveTabAcknowledgesTheNextTabsBell proves the activation path
+// that is not SelectTab: the Tab that takes over when the active one closes is
+// acknowledged, while closing a Tab before the active one only shifts its index
+// and keeps the same Tab's mark.
+func TestClosingTheActiveTabAcknowledgesTheNextTabsBell(t *testing.T) {
+	state, _, _ := newTestState(t)
+	if err := state.Activate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.AddLocalTab(); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := state.TabAt(0)
+
+	// The inactive first Tab carries a bell while the second is active.
+	state.NoteSessionBell(first.Session.ID())
+	state.Flush()
+	if !state.Tabs()[0].Bell {
+		t.Fatal("the bell did not mark the inactive Tab")
+	}
+	// Closing the active second Tab makes the marked first Tab active.
+	if !state.CloseTab(1) {
+		t.Fatal("CloseTab returned false")
+	}
+	if state.Tabs()[0].Bell {
+		t.Fatal("the Tab that took over kept an unacknowledged bell")
+	}
+
+	// Build three Tabs, mark the active last one, then close the first: the
+	// active Tab only shifts index, so its mark must survive.
+	if err := state.AddLocalTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.AddLocalTab(); err != nil {
+		t.Fatal(err)
+	}
+	active, _ := state.Active()
+	state.NoteSessionBell(active.Session.ID())
+	state.Flush()
+	if !state.Tabs()[2].Bell {
+		t.Fatal("the bell did not mark the active Tab")
+	}
+	if !state.CloseTab(0) {
+		t.Fatal("CloseTab on an earlier Tab returned false")
+	}
+	if state.TabCount() != 2 || !state.Tabs()[1].Bell {
+		t.Fatalf("closing an earlier Tab cleared the same Tab's mark: %+v", state.Tabs())
+	}
 }
 
 // TestActivateOpensOneLocalShellAndReusesItAcrossShows pins the persistence
@@ -463,6 +577,36 @@ func waitTransportClosed(t *testing.T, transport *testTransport) {
 			t.Fatal("a Session did not close its transport")
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestKeyboardGrabIgnoresAHibernatedSurface pins the Panel's accelerator gate:
+// the active Tab's grab counts only while its Surface renders a live view, and
+// the stored preference is kept so resuming restores it.
+func TestKeyboardGrabIgnoresAHibernatedSurface(t *testing.T) {
+	state, _, _ := newTestState(t)
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	surface := state.tabs[0].Surface.(*recordingSurface)
+
+	if state.KeyboardGrab() {
+		t.Fatal("a Surface without the grab silenced the Panel")
+	}
+	surface.grab = true
+	if !state.KeyboardGrab() {
+		t.Fatal("a live grabbing Surface did not silence the Panel")
+	}
+	surface.hibernated = true
+	if state.KeyboardGrab() {
+		t.Fatal("a hibernated Surface silenced the Panel's accelerators")
+	}
+	surface.hibernated = false
+	if !state.KeyboardGrab() {
+		t.Fatal("resuming the Surface did not restore the grab")
+	}
+	if !surface.grab {
+		t.Fatal("the grab preference was cleared instead of gated")
 	}
 }
 

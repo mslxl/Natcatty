@@ -12,9 +12,10 @@
 // otherwise it sends plain KeyEvents with identical guest behavior.
 //
 // This desktop offers fit scaling, letterboxing, crisp pixels, and the input
-// mapping the ticket specifies. The per-kind chrome (scale cycle, view-only
-// toggle, clipboard actions, fullscreen, keyboard grab) arrives with a later
-// ticket.
+// mapping the ticket specifies. Its per-kind chrome adds the scale cycle,
+// view-only toggle, bidirectional clipboard, Ctrl+Alt+Del, fullscreen, and
+// keyboard grab; the shell renders that row in the main window, a detached
+// window, and the Quake panel wherever a VNC Pane appears.
 package vnc
 
 import (
@@ -27,6 +28,7 @@ import (
 
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/domain/model/rfb"
+	modelvnc "github.com/mslxl/natcatty/domain/model/vnc"
 	"github.com/mslxl/natcatty/ui/locales"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 )
@@ -35,10 +37,26 @@ import (
 // and printable ASCII are their own keysyms.
 const unicodeKeysymBase uint32 = 0x01000000
 
+// clipDragThreshold is how far the pointer must move while held in clip mode
+// before a primary press becomes a viewport drag. A shorter gesture is a
+// click, which still reaches the guest.
+const clipDragThreshold float32 = 3
+
+// ErrViewOnly reports that a guest-directed write was refused because the
+// viewer is in view-only mode. The chrome turns it into an explicit localized
+// notice instead of silently dropping the action.
+var ErrViewOnly = errors.New("vnc viewer: view-only")
+
 // Options configure a viewer Surface.
 type Options struct {
 	// Redraw asks for a new frame after an asynchronous display event.
 	Redraw func()
+	// Fullscreen toggles the hosting window's fullscreen state. It is an
+	// injectable callback so offscreen tests never open a real window.
+	Fullscreen func()
+	// Bell receives a remote bell. A nil callback leaves the app's existing
+	// Session bell plumbing as the only cue.
+	Bell func()
 }
 
 // Option customizes Options.
@@ -47,6 +65,17 @@ type Option func(*Options)
 // WithRedraw supplies the window invalidation used when a frame arrives.
 func WithRedraw(fn func()) Option {
 	return func(options *Options) { options.Redraw = fn }
+}
+
+// WithFullscreen supplies the window fullscreen toggle the toolbar uses.
+func WithFullscreen(fn func()) Option {
+	return func(options *Options) { options.Fullscreen = fn }
+}
+
+// WithBell supplies a callback for a remote bell. The Session's own bell hook
+// still marks the Tab active; this callback is for a viewer-owned cue.
+func WithBell(fn func()) Option {
+	return func(options *Options) { options.Bell = fn }
 }
 
 // Surface is one VNC Tab's viewer. It drains the Session's display events on
@@ -73,9 +102,34 @@ type Surface struct {
 	scaledFor   uint64
 	frame       image.Rectangle
 	pane        ui.Rect
-	// cursor is the newest CursorWithAlpha shape. Ticket 19 renders it; this
-	// slice stores it so the display event is not lost.
+	// cursor is the newest CursorWithAlpha shape. A nil shape is a hidden
+	// cursor or one the server has not sent yet; both draw nothing.
 	cursor *appsession.CursorShape
+	// cursorFor and cursorBitmap cache the drawn shape. A CursorWithAlpha
+	// event allocates a new shape, so pointer identity is the cache key.
+	cursorFor    *appsession.CursorShape
+	cursorBitmap *ui.Bitmap
+	// cursorScaled caches a scaled cursor for the current fit factor, so a
+	// pointer move does not resample the shape every frame.
+	cursorScaled     *ui.Bitmap
+	cursorScaledFor  *appsession.CursorShape
+	cursorScaledSize image.Point
+	cursorMode       modelvnc.CursorMode
+	scaleMode        modelvnc.FitMode
+	// panX and panY are the clip viewport's offset from the centered 1:1
+	// position. They are clamped against the pane and frame on every use.
+	panX, panY float32
+	// remoteText is the last ServerCutText decoded from Latin-1, and
+	// clipboardPending asks the UI thread to put it on the local clipboard.
+	remoteText       string
+	hasRemoteText    bool
+	clipboardPending bool
+	// clipboardResult is the most recent toolbar clipboard outcome, shown as
+	// a localized notice. A nil value means no action has run.
+	clipboardResult *ClipboardResult
+	// viewOnlyNotice is the localized explanation for a chrome action that
+	// view-only refused. It is cleared when the viewer leaves view-only.
+	viewOnlyNotice string
 	// resizeUnsupported latches after the server refuses or never negotiates
 	// desktop resizing, so the viewer stops asking and keeps local scaling.
 	resizeUnsupported bool
@@ -103,6 +157,31 @@ type Surface struct {
 	// UI-thread state.
 	focused      bool
 	focusPending bool
+	// viewOnly suppresses keys and pointer writes while frames and clipboard
+	// pull keep working. keyboardGrab lets the guest keep chords the app would
+	// otherwise dispatch as accelerators.
+	viewOnly     bool
+	keyboardGrab bool
+	// panning, panStartX/Y, panStartPanX/Y track a clip-mode drag. The pointer
+	// position always updates for the local cursor even while panning.
+	panning                    bool
+	panStartX, panStartY       float32
+	panStartPanX, panStartPanY float32
+	// panPending is a primary press in clip mode that has not yet moved past
+	// clipDragThreshold. Inside the threshold the gesture is a click and is
+	// replayed as a press and release; past it the gesture becomes panning and
+	// the guest sees no button at all. panPressX/Y is where the press landed,
+	// because MyGo delivers it with its own coordinates, not the last hover.
+	// panMods carries the modifiers the click was pressed with, because the
+	// press is deferred until release.
+	panPending           bool
+	panPressX, panPressY float32
+	panMods              ui.Modifiers
+	// pointerSeen keeps the local cursor hidden until the pointer has moved,
+	// so it cannot appear at the pane origin on the first frame.
+	pointerSeen bool
+	// locale is the language of the last frame, used for clipboard results.
+	locale string
 	// windowFocused is the window's keyboard focus as observed last frame.
 	// MyGo clears it on SurfaceBlur without delivering key-up events, so the
 	// viewer watches the true-to-false transition and releases held input.
@@ -156,10 +235,15 @@ func New(session *appsession.Session, options ...Option) (*Surface, error) {
 	for _, option := range options {
 		option(&opts)
 	}
+	config := session.VNCConfiguration()
 	surface := &Surface{
 		session:      session,
 		opts:         opts,
 		macModifiers: runtime.GOOS == "darwin",
+		scaleMode:    modelvnc.NormalizeFitMode(config.FitMode),
+		cursorMode:   modelvnc.NormalizeCursorMode(config.CursorMode),
+		viewOnly:     config.ViewOnly,
+		locale:       "en",
 		done:         make(chan struct{}),
 	}
 	go surface.consume(events)
@@ -205,7 +289,29 @@ func (s *Surface) consume(events <-chan appsession.DisplayEvent) {
 			case appsession.DisplayEventCursorShape:
 				s.mu.Lock()
 				s.cursor = event.Cursor
+				// The shape changed, so the cached bitmaps describe the old
+				// one and must not be drawn again.
+				s.cursorFor = nil
+				s.cursorBitmap = nil
+				s.cursorScaled = nil
+				s.cursorScaledFor = nil
 				s.mu.Unlock()
+				s.requestRedraw()
+			case appsession.DisplayEventCutText:
+				// The wire text is Latin-1; decode it once so both the local
+				// clipboard and the toolbar's pull action see the same text.
+				s.mu.Lock()
+				s.remoteText = DecodeLatin1(event.Text)
+				s.hasRemoteText = true
+				s.clipboardPending = true
+				s.mu.Unlock()
+				s.requestRedraw()
+			case appsession.DisplayEventBell:
+				if s.opts.Bell != nil {
+					s.opts.Bell()
+				}
+				// The Session's own bell hook marks the Tab; a redraw makes
+				// the new badge visible on the next frame.
 				s.requestRedraw()
 			}
 		}
@@ -224,6 +330,7 @@ func (s *Surface) ViewFocused(c *ui.Context, focused bool) ui.Element {
 }
 
 func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
+	s.locale = c.Locale()
 	m := locales.In(c.Locale())
 	t := c.Theme()
 	snapshot := s.session.Snapshot()
@@ -247,6 +354,7 @@ func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
 		return element
 	}
 	s.applyPendingFrame()
+	s.syncRemoteClipboard(c)
 	caret := ui.Rect{X: s.pointerX, Y: s.pointerY, W: 1, H: 1}
 	element := ui.Column(c).Fill().Clip().Background(t.Background).
 		Focusable().HandleInput(s.handleInput).TextCaret(caret).
@@ -325,6 +433,12 @@ func (s *Surface) applyPendingFrame() {
 // "not negotiated yet" for "unsupported". The request runs off the UI thread
 // so drawing never waits on the network.
 func (s *Surface) maybeRequestDesktopSize(width, height float32) {
+	// View-only is a read-only promise: asking the guest to resize is a
+	// guest-directed write, like a key or a pointer button. Frames keep
+	// arriving and the viewer keeps scaling them locally.
+	if s.viewOnly {
+		return
+	}
 	w, h := int(width+0.5), int(height+0.5)
 	if w <= 0 || h <= 0 {
 		return
@@ -402,8 +516,8 @@ func (s *Surface) LocalScaling() bool {
 }
 
 // ResizeFallbackNotice is the user-facing message for LocalScaling, or "" when
-// remote resizing works (or has not been attempted yet). The per-kind chrome
-// added by a later ticket renders it.
+// remote resizing works (or has not been attempted yet). The Pane chrome shows
+// it as a badge beside the viewer controls.
 func (s *Surface) ResizeFallbackNotice() string {
 	if !s.LocalScaling() {
 		return ""
@@ -412,16 +526,17 @@ func (s *Surface) ResizeFallbackNotice() string {
 }
 
 // Cursor returns the latest cursor shape the server sent, or nil when no shape
-// has arrived. Rendering belongs to the viewer chrome ticket.
+// has arrived. The viewer draws it in local cursor mode.
 func (s *Surface) Cursor() *appsession.CursorShape {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.cursor
 }
 
-// draw paints the letterbox background and the bitmap in its fit rectangle.
-// The pane is kept in element-local coordinates: MyGo reports pointer input
-// relative to the element's box, while Draw receives its window rectangle.
+// draw paints the desktop in its scale mode and, when the Host uses the local
+// cursor, the server's cursor shape at the pointer. The pane is kept in
+// element-local coordinates: MyGo reports pointer input relative to the
+// element's box, while Draw receives its window rectangle.
 func (s *Surface) draw(p *ui.Painter, r ui.Rect) {
 	s.mu.Lock()
 	bitmap := s.bitmap
@@ -432,29 +547,98 @@ func (s *Surface) draw(p *ui.Painter, r ui.Rect) {
 	if bitmap == nil || frame.Empty() {
 		return
 	}
-	dest := fitRect(r, frame)
+	mode := s.scaleMode
+	// Draw uses the element's window rectangle; input and the cursor's remote
+	// position use the element-local pane kept above.
+	dest := contentRect(r, frame, mode, s.panX, s.panY)
 	width, height := int(dest.W+0.5), int(dest.H+0.5)
 	if width <= 0 || height <= 0 {
 		return
 	}
-	if width == frame.Dx() && height == frame.Dy() {
+	switch {
+	case width == frame.Dx() && height == frame.Dy():
+		// 1:1, or a fit that happens to be exact: the owned bitmap is drawn
+		// directly and the pane's Clip keeps any 1:1 overflow out of view.
 		p.Image(bitmap, dest, ui.FillBox)
+	case mode != modelvnc.Fit:
+		// A non-fit mode never resamples: one remote pixel is one pane pixel.
+		p.Image(bitmap, dest, ui.FillBox)
+	default:
+		s.mu.Lock()
+		if s.pixels == nil {
+			s.mu.Unlock()
+			return
+		}
+		if s.scaled == nil || s.scaledSize != image.Pt(width, height) || s.scaledFor != s.frameNumber {
+			s.scaledPix = scaleNearest(s.pixels, width, height)
+			s.scaled = ui.NewBitmap(s.scaledPix).Pixelated()
+			s.scaledSize = image.Pt(width, height)
+			s.scaledFor = s.frameNumber
+		}
+		scaled := s.scaled
+		s.mu.Unlock()
+		p.Image(scaled, ui.Rect{X: dest.X, Y: dest.Y, W: float32(width), H: float32(height)}, ui.FillBox)
+	}
+	s.drawCursor(p, frame, dest)
+}
+
+// drawCursor paints the server's cursor shape at the pointer's framebuffer
+// position. It draws nothing for a server cursor, a hidden cursor, a shape
+// that has not arrived, or before the pointer has moved.
+func (s *Surface) drawCursor(p *ui.Painter, frame image.Rectangle, content ui.Rect) {
+	if s.cursorMode == modelvnc.CursorServer || !s.pointerSeen {
 		return
 	}
 	s.mu.Lock()
-	if s.pixels == nil {
-		s.mu.Unlock()
+	shape := s.cursor
+	s.mu.Unlock()
+	if shape == nil || shape.Image == nil || shape.Image.Bounds().Empty() {
 		return
 	}
-	if s.scaled == nil || s.scaledSize != image.Pt(width, height) || s.scaledFor != s.frameNumber {
-		s.scaledPix = scaleNearest(s.pixels, width, height)
-		s.scaled = ui.NewBitmap(s.scaledPix).Pixelated()
-		s.scaledSize = image.Pt(width, height)
-		s.scaledFor = s.frameNumber
+	// The hotspot sits at the remote pixel under the pointer, so the shape's
+	// origin is the pointer's framebuffer pixel minus the hotspot.
+	rx, ry := remotePointFor(s.pointerX, s.pointerY, s.pane, frame, s.scaleMode, s.panX, s.panY)
+	scaleX := content.W / float32(frame.Dx())
+	scaleY := content.H / float32(frame.Dy())
+	if scaleX <= 0 || scaleY <= 0 {
+		return
 	}
-	scaled := s.scaled
-	s.mu.Unlock()
-	p.Image(scaled, ui.Rect{X: dest.X, Y: dest.Y, W: float32(width), H: float32(height)}, ui.FillBox)
+	originX := content.X + (float32(rx)-float32(shape.Hotspot.X))*scaleX
+	originY := content.Y + (float32(ry)-float32(shape.Hotspot.Y))*scaleY
+	width := float32(shape.Image.Bounds().Dx()) * scaleX
+	height := float32(shape.Image.Bounds().Dy()) * scaleY
+	if width <= 0 || height <= 0 {
+		return
+	}
+	bitmap := s.cursorBitmapFor(shape, int(width+0.5), int(height+0.5), scaleX == 1 && scaleY == 1)
+	if bitmap == nil {
+		return
+	}
+	p.Image(bitmap, ui.Rect{X: originX, Y: originY, W: width, H: height}, ui.FillBox)
+}
+
+// cursorBitmapFor returns a cached drawn cursor at the requested size. A 1:1
+// cursor uses the server bitmap directly; a scaled one is resampled nearest
+// like the desktop so it stays crisp.
+func (s *Surface) cursorBitmapFor(shape *appsession.CursorShape, width, height int, exact bool) *ui.Bitmap {
+	if width <= 0 || height <= 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if exact {
+		if s.cursorFor != shape || s.cursorBitmap == nil {
+			s.cursorBitmap = ui.NewBitmap(shape.Image).Pixelated()
+			s.cursorFor = shape
+		}
+		return s.cursorBitmap
+	}
+	if s.cursorScaledFor != shape || s.cursorScaled == nil || s.cursorScaledSize != image.Pt(width, height) {
+		s.cursorScaled = ui.NewBitmap(scaleNearest(shape.Image, width, height)).Pixelated()
+		s.cursorScaledFor = shape
+		s.cursorScaledSize = image.Pt(width, height)
+	}
+	return s.cursorScaled
 }
 
 // handleInput sends keyboard and pointer input in pure keysym mode. It never
@@ -462,17 +646,43 @@ func (s *Surface) draw(p *ui.Painter, r ui.Rect) {
 // Text-input and composition events are deliberately ignored: their text comes
 // from the local layout or input method, and forwarding it would type twice
 // over the guest's own handling.
+//
+// View-only writes nothing. It still tracks the pointer locally so the cursor
+// and a clip pan keep working, and it lets key and text events fall through to
+// the app's normal handling. In clip mode a primary drag pans the viewport
+// instead of reaching the guest; every other pointer event is inverted with
+// the pan offset.
 func (s *Surface) handleInput(event ui.InputEvent) bool {
 	if s.session == nil {
 		return false
 	}
 	switch event.Kind {
 	case ui.InputKeyDown:
+		if s.viewOnly {
+			return false
+		}
 		return s.handleKeyDown(event)
 	case ui.InputKeyUp:
+		if s.viewOnly {
+			return false
+		}
 		return s.handleKeyUp(event)
 	case ui.InputPointerDown:
-		s.pointerX, s.pointerY = event.X, event.Y
+		s.pointerX, s.pointerY, s.pointerSeen = event.X, event.Y, true
+		// In clip mode a primary press starts a gesture that is either a
+		// viewport drag or a click; neither is written until it is resolved.
+		// Panning stays local even in view-only mode.
+		if s.beginClipGesture(event) {
+			s.requestRedraw()
+			return true
+		}
+		// A second button during a pending clip gesture means the user is
+		// clicking, not panning. Drop the unrealized primary press so the
+		// button that follows is handled normally.
+		s.cancelPendingPan()
+		if s.viewOnly {
+			return true
+		}
 		next, ok := applyButton(s.downMask, event.Button, true)
 		if !ok {
 			return false
@@ -483,9 +693,18 @@ func (s *Surface) handleInput(event ui.InputEvent) bool {
 		s.syncModifiers(event.Mods)
 		s.downMask = next
 		s.sendPointer(event.X, event.Y, s.downMask)
+		s.requestRedraw()
 		return true
 	case ui.InputPointerUp:
-		s.pointerX, s.pointerY = event.X, event.Y
+		s.pointerX, s.pointerY, s.pointerSeen = event.X, event.Y, true
+		if s.panPending || s.panning {
+			s.finishClipGesture(event)
+			s.requestRedraw()
+			return true
+		}
+		if s.viewOnly {
+			return true
+		}
 		next, ok := applyButton(s.downMask, event.Button, false)
 		if !ok {
 			return false
@@ -493,9 +712,19 @@ func (s *Surface) handleInput(event ui.InputEvent) bool {
 		s.downMask = next
 		s.sendPointer(event.X, event.Y, s.downMask)
 		s.releaseModifiers()
+		s.requestRedraw()
 		return true
 	case ui.InputPointerMove:
-		s.pointerX, s.pointerY = event.X, event.Y
+		s.pointerX, s.pointerY, s.pointerSeen = event.X, event.Y, true
+		if s.panPending || s.panning {
+			s.moveClipGesture(event.X, event.Y)
+			s.requestRedraw()
+			return true
+		}
+		if s.viewOnly {
+			s.requestRedraw()
+			return true
+		}
 		// A move during a drag carries the held button; the mask is the full
 		// set of buttons down, so a second button pressed mid-drag stays set.
 		if event.Button >= 0 {
@@ -506,13 +735,96 @@ func (s *Surface) handleInput(event ui.InputEvent) bool {
 		// Hover still sends a position update with an empty mask so the
 		// remote cursor tracks the pointer.
 		s.sendPointer(event.X, event.Y, s.downMask)
+		// The local cursor must follow a move even when no pointer event
+		// changes anything the guest shows.
+		s.requestRedraw()
 		return true
 	case ui.InputScroll:
+		if s.viewOnly {
+			return true
+		}
 		return s.handleScroll(event)
 	case ui.InputText, ui.InputCompose, ui.InputCommand:
 		return false
 	}
 	return false
+}
+
+// beginClipGesture claims a clip-mode primary press. It records the press
+// point and the pan origin but writes nothing: the gesture resolves into
+// either a click (released inside clipDragThreshold) or a viewport drag
+// (moved past it). It reports whether the event became that gesture.
+func (s *Surface) beginClipGesture(event ui.InputEvent) bool {
+	if s.scaleMode != modelvnc.Clip || event.Kind != ui.InputPointerDown || event.Button != 0 {
+		return false
+	}
+	s.mu.Lock()
+	frame := s.frame
+	s.mu.Unlock()
+	if frame.Empty() {
+		return false
+	}
+	s.panPending = true
+	s.panning = false
+	s.panStartX, s.panStartY = event.X, event.Y
+	s.panPressX, s.panPressY = event.X, event.Y
+	s.panStartPanX, s.panStartPanY = s.panX, s.panY
+	s.panMods = event.Mods
+	return true
+}
+
+// cancelPendingPan forgets an unresolved clip press without writing anything.
+func (s *Surface) cancelPendingPan() {
+	s.panPending = false
+	s.panning = false
+}
+
+// moveClipGesture advances a clip gesture. Before the threshold it only
+// updates the local cursor; past it the gesture becomes a drag and moves the
+// viewport by the total delta from the press. It never sends a pointer button.
+func (s *Surface) moveClipGesture(x, y float32) {
+	if s.panPending {
+		dx, dy := x-s.panStartX, y-s.panStartY
+		distance := dx*dx + dy*dy
+		if distance > clipDragThreshold*clipDragThreshold {
+			s.panPending = false
+			s.panning = true
+		}
+	}
+	if s.panning {
+		s.panViewport(x, y)
+	}
+}
+
+// finishClipGesture resolves a released clip gesture. A drag ends without any
+// wire write. A press that never passed the threshold is a click: the viewer
+// now sends the ordinary primary press where it actually landed and the release
+// at the release point (and any modifiers), so a plain click in clip mode still
+// reaches the guest. View-only keeps the click local and writes nothing.
+func (s *Surface) finishClipGesture(event ui.InputEvent) {
+	wasPanning := s.panning
+	s.panPending = false
+	s.panning = false
+	if wasPanning || s.viewOnly {
+		return
+	}
+	s.syncModifiers(s.panMods)
+	s.sendPointer(s.panPressX, s.panPressY, 1)
+	s.sendPointer(event.X, event.Y, 0)
+	s.releaseModifiers()
+}
+
+// panViewport moves the clip viewport by the drag delta and clamps it so no
+// edge shows a gap.
+func (s *Surface) panViewport(x, y float32) {
+	s.mu.Lock()
+	frame, pane := s.frame, s.pane
+	s.mu.Unlock()
+	if frame.Empty() {
+		return
+	}
+	s.panX = clampPan(s.panStartPanX+(x-s.panStartX), float32(frame.Dx()), pane.W)
+	s.panY = clampPan(s.panStartPanY+(y-s.panStartY), float32(frame.Dy()), pane.H)
 }
 
 // handleKeyDown resolves the physical key, tells the guest about modifier
@@ -616,7 +928,7 @@ func (s *Surface) releaseModifiers() { s.syncModifiers(0) }
 // sendModifier presses or releases one synthesized modifier keysym.
 func (s *Surface) sendModifier(mod ui.Modifiers, down bool) {
 	if keysym, ok := s.modifierKeysym(mod); ok {
-		_ = s.session.SendKey(keysym, down)
+		_ = s.sendKey(keysym, down)
 	}
 }
 
@@ -643,15 +955,36 @@ func (s *Surface) modifierKeysym(mod ui.Modifiers) (uint32, bool) {
 	return 0, false
 }
 
+// canSendInput reports whether guest-directed input writes are permitted.
+// Every send path goes through it, so view-only cannot be bypassed by an
+// action the toolbar, a test, or a later caller invokes directly.
+func (s *Surface) canSendInput() bool { return !s.viewOnly }
+
+// sendKey writes one keysym when input is allowed.
+func (s *Surface) sendKey(keysym uint32, down bool) error {
+	if !s.canSendInput() {
+		return ErrViewOnly
+	}
+	if s.session == nil {
+		return appsession.ErrNoDisplay
+	}
+	return s.session.SendKey(keysym, down)
+}
+
 // sendKeyEvent sends one key with its physical number when known. The Session
 // chooses an Extended Key Event or a plain KeyEvent; either is the same guest
-// behavior.
-func (s *Surface) sendKeyEvent(keysym, keyNumber uint32, down bool) {
-	if keyNumber != 0 {
-		_ = s.session.SendPhysicalKey(keysym, keyNumber, down)
-		return
+// behavior. View-only refuses the write before it reaches the wire.
+func (s *Surface) sendKeyEvent(keysym, keyNumber uint32, down bool) error {
+	if !s.canSendInput() {
+		return ErrViewOnly
 	}
-	_ = s.session.SendKey(keysym, down)
+	if keyNumber != 0 {
+		if s.session == nil {
+			return appsession.ErrNoDisplay
+		}
+		return s.session.SendPhysicalKey(keysym, keyNumber, down)
+	}
+	return s.sendKey(keysym, down)
 }
 
 // releaseHeldKeys lets go of every key, synthesized modifier and pointer
@@ -662,6 +995,10 @@ func (s *Surface) releaseHeldKeys() {
 	if s.session == nil {
 		return
 	}
+	// A viewport drag is local, but stopping the Pane must not leave the
+	// gesture half-applied either.
+	s.panPending = false
+	s.panning = false
 	for code, held := range s.heldKeys {
 		s.sendKeyEvent(held.keysym, held.keyNumber, false)
 		delete(s.heldKeys, code)
@@ -696,8 +1033,12 @@ func (s *Surface) handleScroll(event ui.InputEvent) bool {
 
 // SendCtrlAltDel injects the Ctrl+Alt+Del chord as three keysyms, pressed in
 // order and released in reverse. The host OS usually grabs the real chord, so
-// the viewer chrome calls this from its toolbar.
+// the viewer chrome calls this from its toolbar. View-only refuses the whole
+// chord instead of writing a partial one.
 func (s *Surface) SendCtrlAltDel() error {
+	if !s.canSendInput() {
+		return ErrViewOnly
+	}
 	if s.session == nil {
 		return appsession.ErrNoDisplay
 	}
@@ -713,7 +1054,7 @@ func (s *Surface) SendCtrlAltDel() error {
 		{rfb.KeysymControlL, false},
 	}
 	for _, step := range sequence {
-		if err := s.session.SendKey(step.keysym, step.down); err != nil {
+		if err := s.sendKey(step.keysym, step.down); err != nil {
 			return err
 		}
 	}
@@ -721,14 +1062,19 @@ func (s *Surface) SendCtrlAltDel() error {
 }
 
 // sendPointer maps a local pixel position onto the framebuffer and sends it.
+// The mapping inverts the active scale mode and clip pan, so 1:1 and a panned
+// viewport name the same remote pixels they show. View-only writes nothing.
 func (s *Surface) sendPointer(x, y float32, mask uint8) {
+	if !s.canSendInput() {
+		return
+	}
 	s.mu.Lock()
 	pane, frame := s.pane, s.frame
 	s.mu.Unlock()
 	if frame.Empty() {
 		return
 	}
-	rx, ry := remotePoint(x, y, pane, frame)
+	rx, ry := remotePointFor(x, y, pane, frame, s.scaleMode, s.panX, s.panY)
 	_ = s.session.SendPointer(rx, ry, mask)
 }
 
@@ -786,6 +1132,10 @@ func (s *Surface) Close() {
 		s.scaled = nil
 		s.scaledPix = nil
 		s.cursor = nil
+		s.cursorFor = nil
+		s.cursorBitmap = nil
+		s.cursorScaled = nil
+		s.cursorScaledFor = nil
 		s.hibernated = false
 		s.mu.Unlock()
 	})

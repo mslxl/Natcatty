@@ -266,6 +266,198 @@ func (msgs Messages) SessionVNCHibernatedBody() string {
 	return Catalog.Format(msgs.locale, "sessionVNCHibernatedBody", nil)
 }
 
+// SessionVNCScaleFit says "Scaling: Fit"
+// in the language the app shows.
+func SessionVNCScaleFit() string { return In(i18n.Locale()).SessionVNCScaleFit() }
+
+// SessionVNCScaleFit says "Scaling: Fit"
+// in the language of msgs.
+func (msgs Messages) SessionVNCScaleFit() string {
+	return Catalog.Format(msgs.locale, "sessionVNCScaleFit", nil)
+}
+
+// SessionVNCScaleOneToOne says "Scaling: 1:1"
+// in the language the app shows.
+func SessionVNCScaleOneToOne() string { return In(i18n.Locale()).SessionVNCScaleOneToOne() }
+
+// SessionVNCScaleOneToOne says "Scaling: 1:1"
+// in the language of msgs.
+func (msgs Messages) SessionVNCScaleOneToOne() string {
+	return Catalog.Format(msgs.locale, "sessionVNCScaleOneToOne", nil)
+}
+
+// SessionVNCScaleClip says "Scaling: Clip"
+// in the language the app shows.
+func SessionVNCScaleClip() string { return In(i18n.Locale()).SessionVNCScaleClip() }
+
+// SessionVNCScaleClip says "Scaling: Clip"
+// in the language of msgs.
+func (msgs Messages) SessionVNCScaleClip() string {
+	return Catalog.Format(msgs.locale, "sessionVNCScaleClip", nil)
+}
+
+// SessionVNCViewOnly says "View only"
+// in the language the app shows.
+func SessionVNCViewOnly() string { return In(i18n.Locale()).SessionVNCViewOnly() }
+
+// SessionVNCViewOnly says "View only"
+// in the language of msgs.
+func (msgs Messages) SessionVNCViewOnly() string {
+	return Catalog.Format(msgs.locale, "sessionVNCViewOnly", nil)
+}
+
+// SessionVNCClipboardSend says "Send clipboard to desktop"
+// in the language the app shows.
+func SessionVNCClipboardSend() string { return In(i18n.Locale()).SessionVNCClipboardSend() }
+
+// SessionVNCClipboardSend says "Send clipboard to desktop"
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardSend() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardSend", nil)
+}
+
+// SessionVNCClipboardPull says "Copy desktop clipboard"
+// in the language the app shows.
+func SessionVNCClipboardPull() string { return In(i18n.Locale()).SessionVNCClipboardPull() }
+
+// SessionVNCClipboardPull says "Copy desktop clipboard"
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardPull() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardPull", nil)
+}
+
+// SessionVNCCtrlAltDel says "Send Ctrl-Alt-Del"
+// in the language the app shows.
+func SessionVNCCtrlAltDel() string { return In(i18n.Locale()).SessionVNCCtrlAltDel() }
+
+// SessionVNCCtrlAltDel says "Send Ctrl-Alt-Del"
+// in the language of msgs.
+func (msgs Messages) SessionVNCCtrlAltDel() string {
+	return Catalog.Format(msgs.locale, "sessionVNCCtrlAltDel", nil)
+}
+
+// SessionVNCFullscreen says "Fullscreen"
+// in the language the app shows.
+func SessionVNCFullscreen() string { return In(i18n.Locale()).SessionVNCFullscreen() }
+
+// SessionVNCFullscreen says "Fullscreen"
+// in the language of msgs.
+func (msgs Messages) SessionVNCFullscreen() string {
+	return Catalog.Format(msgs.locale, "sessionVNCFullscreen", nil)
+}
+
+// SessionVNCKeyboardGrab says "Capture keyboard shortcuts"
+// in the language the app shows.
+func SessionVNCKeyboardGrab() string { return In(i18n.Locale()).SessionVNCKeyboardGrab() }
+
+// SessionVNCKeyboardGrab says "Capture keyboard shortcuts"
+// in the language of msgs.
+func (msgs Messages) SessionVNCKeyboardGrab() string {
+	return Catalog.Format(msgs.locale, "sessionVNCKeyboardGrab", nil)
+}
+
+// SessionVNCClipboardSent says "Clipboard sent to the desktop."
+// in the language the app shows.
+func SessionVNCClipboardSent() string { return In(i18n.Locale()).SessionVNCClipboardSent() }
+
+// SessionVNCClipboardSent says "Clipboard sent to the desktop."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardSent() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardSent", nil)
+}
+
+// SessionVNCClipboardPulled says "Desktop clipboard copied."
+// in the language the app shows.
+func SessionVNCClipboardPulled() string { return In(i18n.Locale()).SessionVNCClipboardPulled() }
+
+// SessionVNCClipboardPulled says "Desktop clipboard copied."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardPulled() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardPulled", nil)
+}
+
+// SessionVNCClipboardEmpty says "The clipboard is empty; nothing was sent."
+// in the language the app shows.
+func SessionVNCClipboardEmpty() string { return In(i18n.Locale()).SessionVNCClipboardEmpty() }
+
+// SessionVNCClipboardEmpty says "The clipboard is empty; nothing was sent."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardEmpty() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardEmpty", nil)
+}
+
+// SessionVNCClipboardTooLarge says "The clipboard is too large to send (limit 1 MiB)."
+// in the language the app shows.
+func SessionVNCClipboardTooLarge() string { return In(i18n.Locale()).SessionVNCClipboardTooLarge() }
+
+// SessionVNCClipboardTooLarge says "The clipboard is too large to send (limit 1 MiB)."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardTooLarge() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardTooLarge", nil)
+}
+
+// SessionVNCClipboardNotLatin1 says "The clipboard has characters that cannot be sent as Latin-1."
+// in the language the app shows.
+func SessionVNCClipboardNotLatin1() string { return In(i18n.Locale()).SessionVNCClipboardNotLatin1() }
+
+// SessionVNCClipboardNotLatin1 says "The clipboard has characters that cannot be sent as Latin-1."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardNotLatin1() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardNotLatin1", nil)
+}
+
+// SessionVNCClipboardNoRemoteText says "The desktop has not shared clipboard text yet."
+// in the language the app shows.
+func SessionVNCClipboardNoRemoteText() string {
+	return In(i18n.Locale()).SessionVNCClipboardNoRemoteText()
+}
+
+// SessionVNCClipboardNoRemoteText says "The desktop has not shared clipboard text yet."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardNoRemoteText() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardNoRemoteText", nil)
+}
+
+// SessionVNCClipboardViewOnly says "View-only: clipboard send is disabled."
+// in the language the app shows.
+func SessionVNCClipboardViewOnly() string { return In(i18n.Locale()).SessionVNCClipboardViewOnly() }
+
+// SessionVNCClipboardViewOnly says "View-only: clipboard send is disabled."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardViewOnly() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardViewOnly", nil)
+}
+
+// SessionVNCViewOnlyAction says "View-only: input is disabled."
+// in the language the app shows.
+func SessionVNCViewOnlyAction() string { return In(i18n.Locale()).SessionVNCViewOnlyAction() }
+
+// SessionVNCViewOnlyAction says "View-only: input is disabled."
+// in the language of msgs.
+func (msgs Messages) SessionVNCViewOnlyAction() string {
+	return Catalog.Format(msgs.locale, "sessionVNCViewOnlyAction", nil)
+}
+
+// SessionVNCBell says "Remote bell"
+// in the language the app shows.
+func SessionVNCBell() string { return In(i18n.Locale()).SessionVNCBell() }
+
+// SessionVNCBell says "Remote bell"
+// in the language of msgs.
+func (msgs Messages) SessionVNCBell() string {
+	return Catalog.Format(msgs.locale, "sessionVNCBell", nil)
+}
+
+// SessionVNCClipboardFailed says "Could not send the clipboard to the desktop."
+// in the language the app shows.
+func SessionVNCClipboardFailed() string { return In(i18n.Locale()).SessionVNCClipboardFailed() }
+
+// SessionVNCClipboardFailed says "Could not send the clipboard to the desktop."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardFailed() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardFailed", nil)
+}
+
 // SessionMenuHibernate says "Hibernate"
 // in the language the app shows.
 func SessionMenuHibernate() string { return In(i18n.Locale()).SessionMenuHibernate() }

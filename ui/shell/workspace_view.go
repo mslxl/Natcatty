@@ -517,9 +517,12 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	ref tabRef, info state.PaneInfo) {
 	// A detached window's lone Pane is already named by the window's title
 	// bar, as the original's terminal popup, so it shows no header of its own
-	// unless it has a status to report.
+	// unless it has a status to report. A viewer that owns a per-kind chrome
+	// row (VNC) is the exception: that row carries controls the window cannot
+	// get anywhere else, so it renders even when the title is suppressed.
 	lone := !ref.managesPanes && !ref.split
-	if lone && !info.Pending && !(info.Focused && ref.status.text != "" && !ref.status.settled) {
+	viewerChrome := isViewerChrome(info)
+	if lone && !viewerChrome && !info.Pending && !(info.Focused && ref.status.text != "" && !ref.status.settled) {
 		return
 	}
 	header := kit.Bar(c, kit.BarPane).Padding(0, 4, 0, 8).Gap(4)
@@ -555,14 +558,21 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		ui.Column(c).Grow(1).MinWidth(0)
 
 		if !ref.managesPanes {
+			// A detached window keeps the viewer's own chrome, so scaling,
+			// view-only, clipboard, Ctrl-Alt-Del, fullscreen, and grab stay
+			// reachable there. Terminal panes keep the original popup layout.
+			// The Dropdown Panel's follow and top-down routes also render a
+			// Pane here; they are not host windows, so they use the embedded
+			// toolbar without fullscreen.
+			if viewerChrome {
+				renderPaneToolbar(c, ref.owner, info.Surface)
+			}
 			return
 		}
 		if info.Focused && info.ByteStream {
 			terminalToolbar(c, s, m, t)
 		}
-		if bar, ok := info.Surface.(interface{ Toolbar(*ui.Context) }); ok && info.Err == nil {
-			bar.Toolbar(c)
-		} else {
+		if info.Err != nil || !renderPaneToolbar(c, ref.owner, info.Surface) {
 			paneMenu(c, m, ref, info)
 		}
 		if kit.IconButtonWith(c, icons.X, m.CloseGlyph(), kit.IconOptions{Role: kit.IconTab}).Clicked() {
@@ -571,6 +581,40 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 			c.Invalidate()
 		}
 	})
+}
+
+// isViewerChrome reports whether a Surface asks the shell to render its
+// per-kind toolbar even in a window that does not manage Pane commands. The
+// marker keeps terminal Surfaces on their existing header placement: only a
+// VNC viewer asks for its row in a detached window or the Quake panel.
+func isViewerChrome(info state.PaneInfo) bool {
+	if info.Err != nil || info.Surface == nil {
+		return false
+	}
+	marker, ok := info.Surface.(interface{ ViewerChrome() bool })
+	return ok && marker.ViewerChrome()
+}
+
+// renderPaneToolbar draws a Surface's own toolbar and reports whether it did.
+// A renderer that is not a host window (the Dropdown Panel) uses the embedded
+// form when the Surface offers one, so a control such as fullscreen that only
+// works on a real window is not drawn there. Surfaces without an embedded form
+// keep their original toolbar.
+func renderPaneToolbar(c *ui.Context, owner state.RenderOwner, surface state.Surface) bool {
+	if surface == nil {
+		return false
+	}
+	if owner == state.RenderOwnerDropdown {
+		if embedded, ok := surface.(interface{ ToolbarEmbedded(*ui.Context) }); ok {
+			embedded.ToolbarEmbedded(c)
+			return true
+		}
+	}
+	if bar, ok := surface.(interface{ Toolbar(*ui.Context) }); ok {
+		bar.Toolbar(c)
+		return true
+	}
+	return false
 }
 
 // paneMenu is the Pane commands of a Pane with no Session to hold them: one

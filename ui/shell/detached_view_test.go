@@ -34,6 +34,61 @@ func newDetachedGraph(t *testing.T) (*state.State, *[]model.TabID, *[]model.TabI
 	return shellState, detached, reattached
 }
 
+// vncChromeSurface is a viewer Surface that asks the shell to render its
+// per-kind toolbar even in a window that does not manage Pane commands.
+type vncChromeSurface struct{}
+
+func (vncChromeSurface) View(c *ui.Context) ui.Element { return ui.Text(c, "vnc-desktop").Fill() }
+func (vncChromeSurface) ViewFocused(c *ui.Context, _ bool) ui.Element {
+	return ui.Text(c, "vnc-desktop").Fill()
+}
+func (vncChromeSurface) Close()             {}
+func (vncChromeSurface) ViewerChrome() bool { return true }
+func (vncChromeSurface) Toolbar(c *ui.Context) {
+	ui.Text(c, "vnc-toolbar")
+}
+func (vncChromeSurface) ToolbarEmbedded(c *ui.Context) {
+	ui.Text(c, "vnc-embedded-toolbar")
+}
+
+// TestDetachedViewKeepsTheViewerChrome proves a detached VNC Pane still draws
+// the scale/view-only/clipboard/Ctrl-Alt-Del/fullscreen/grab row with the
+// host-window toolbar (a detached window is a real window), while a terminal
+// popup keeps its title-only header.
+func TestDetachedViewKeepsTheViewerChrome(t *testing.T) {
+	service := appsession.NewService(&fakeFactory{transport: newFakeTransport()})
+	t.Cleanup(service.CloseAll)
+	detached := &[]model.TabID{}
+	shellState := state.NewState(
+		state.WithSessions(service, func(*appsession.Session) (state.Surface, error) {
+			return vncChromeSurface{}, nil
+		}),
+		state.WithDetachHandler(func(id model.TabID) {
+			*detached = append(*detached, id)
+		}),
+	)
+	if err := shellState.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if !shellState.DetachTab(0) {
+		t.Fatal("DetachTab returned false")
+	}
+	tabID := (*detached)[0]
+
+	tester := ui.NewTester(DetachedView(shellState, tabID), 640, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+	if !tester.HasText("vnc-toolbar") {
+		t.Fatalf("the detached VNC window lost its viewer chrome: %v", tester.Texts())
+	}
+	if tester.HasText("vnc-embedded-toolbar") {
+		t.Fatalf("the detached VNC window used the embedded toolbar: %v", tester.Texts())
+	}
+	if !tester.HasText("vnc-desktop") {
+		t.Fatalf("the detached VNC window lost its desktop: %v", tester.Texts())
+	}
+}
+
 func TestDetachedWindowRendersItsTabAndMovesItBack(t *testing.T) {
 	shellState, detached, reattached := newDetachedGraph(t)
 	if err := shellState.NewTab(); err != nil {
@@ -191,5 +246,42 @@ func assertClearOfWindowControls(t *testing.T, rect ui.Rect, width int) {
 	t.Helper()
 	if rect.X+rect.W > float32(width)-titlebar.PopupRoom+0.5 {
 		t.Fatalf("%+v reaches under the window controls of a %d-wide window", rect, width)
+	}
+}
+
+// TestDetachedViewShowsTheBellBadge proves a bell on a detached Tab, which has
+// no tab strip, is visible in the window header until the window acknowledges
+// it.
+func TestDetachedViewShowsTheBellBadge(t *testing.T) {
+	shellState, _, _ := newDetachedGraph(t)
+	if err := shellState.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, ok := shellState.ActiveSnapshot()
+	if !ok {
+		t.Fatal("the new Tab has no Session")
+	}
+	if !shellState.DetachTab(0) {
+		t.Fatal("DetachTab returned false")
+	}
+	tabID := shellState.DetachedTabIDs()[0]
+
+	shellState.NoteSessionBell(snapshot.ID)
+	shellState.Flush()
+	if info, _ := shellState.DetachedTabInfo(tabID); !info.Bell {
+		t.Fatal("the detached Tab did not record the bell")
+	}
+
+	tester := ui.NewTester(DetachedView(shellState, tabID), 640, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+	if !tester.HasText(locales.In("en").SessionVNCBell()) {
+		t.Fatalf("the detached header shows no bell badge: %v", tester.Texts())
+	}
+
+	shellState.ClearDetachedBell(tabID)
+	tester.Frame()
+	if tester.HasText(locales.In("en").SessionVNCBell()) {
+		t.Fatalf("the acknowledged bell badge stayed visible: %v", tester.Texts())
 	}
 }

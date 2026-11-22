@@ -584,3 +584,76 @@ func TestShellKeepsWorkTabsVisibleOverTheVault(t *testing.T) {
 		t.Fatal("clicking the Tab did not return to the Session")
 	}
 }
+
+// TestShellShowsTheBellMarkerFromABell proves the actual bell path, not the
+// dirty setter, reaches the main Tab strip: a queued bell marks its Tab and
+// the strip renders the marker.
+func TestShellShowsTheBellMarkerFromABell(t *testing.T) {
+	graph := newWorkspaceViewGraph(t)
+	tt := ui.NewTester(View(graph.state), 900, 600)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	graph.waitForSurfaces(t, 1)
+	snapshot, ok := graph.state.ActiveSnapshot()
+	if !ok {
+		t.Fatal("the new Tab has no Session")
+	}
+	graph.state.NoteSessionBell(snapshot.ID)
+	graph.state.Flush()
+	tt.Frame()
+
+	if !tt.HasText(locales.In("en").TabDirtyMarker()) {
+		t.Fatalf("shell does not show the bell marker, texts %q", tt.Texts())
+	}
+}
+
+// toolbarChromeSurface is a viewer Surface with both toolbar forms so a test
+// can see which one a render owner chooses.
+type toolbarChromeSurface struct{}
+
+func (toolbarChromeSurface) View(c *ui.Context) ui.Element { return ui.Text(c, "view").Fill() }
+func (toolbarChromeSurface) ViewFocused(c *ui.Context, _ bool) ui.Element {
+	return ui.Text(c, "view").Fill()
+}
+func (toolbarChromeSurface) Close()             {}
+func (toolbarChromeSurface) ViewerChrome() bool { return true }
+func (toolbarChromeSurface) Toolbar(c *ui.Context) {
+	ui.Text(c, "host-toolbar")
+}
+func (toolbarChromeSurface) ToolbarEmbedded(c *ui.Context) {
+	ui.Text(c, "embedded-toolbar")
+}
+
+// TestPaneHeaderChoosesTheToolbarForItsOwner proves the manages-Pane branch,
+// which the main window and the top-down Panel share, renders the host toolbar
+// for the main owner and the embedded one (no fullscreen) for the Dropdown
+// Panel. The detached branch is covered by TestDetachedViewKeepsTheViewerChrome.
+func TestPaneHeaderChoosesTheToolbarForItsOwner(t *testing.T) {
+	tests := []struct {
+		name    string
+		owner   state.RenderOwner
+		want    string
+		notWant string
+	}{
+		{name: "main window", owner: state.RenderOwnerMain, want: "host-toolbar", notWant: "embedded-toolbar"},
+		{name: "dropdown panel", owner: state.RenderOwnerDropdown, want: "embedded-toolbar", notWant: "host-toolbar"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			shellState := state.NewState()
+			info := state.PaneInfo{ID: "pane", Surface: toolbarChromeSurface{}, Focused: true}
+			ref := tabRef{owner: test.owner, managesPanes: true}
+			tester := ui.NewTester(func(c *ui.Context) {
+				paneHeader(c, shellState, locales.In("en"), c.Theme(), ref, info)
+			}, 700, 120)
+			tester.Frame()
+			if !tester.HasText(test.want) {
+				t.Fatalf("%s toolbar missing: %v", test.want, tester.Texts())
+			}
+			if tester.HasText(test.notWant) {
+				t.Fatalf("%s rendered in the wrong context: %v", test.notWant, tester.Texts())
+			}
+		})
+	}
+}

@@ -206,3 +206,59 @@ func TestDetachedWindowCloseRequestIsReported(t *testing.T) {
 		t.Fatalf("close requests = %v, want %q", requested, tabID)
 	}
 }
+
+// TestDetachedKeyboardGrabReadsItsOwnTab proves each window's accelerator gate
+// reads its own Tab's focused Pane: a grab in the detached window does not
+// silence the main window, and the main window's grab does not speak for the
+// detached one.
+func TestDetachedKeyboardGrabReadsItsOwnTab(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "both Pane surfaces", func() bool {
+		return len(graph.surfaces) == 2
+	})
+	panes := panesOf(t, graph.state, 0)
+	right := panes[1]
+	if !graph.state.DetachPane(0, right) {
+		t.Fatal("DetachPane returned false")
+	}
+	ids := graph.state.DetachedTabIDs()
+	if len(ids) != 1 {
+		t.Fatalf("detached tabs = %v, want one", ids)
+	}
+	tabID := ids[0]
+
+	detachedInfo, ok := graph.state.DetachedPaneInfoAt(tabID, right)
+	if !ok {
+		t.Fatal("the detached Pane is missing")
+	}
+	detached := detachedInfo.Surface.(*fakeSurface)
+	detached.keyboardGrab = true
+	if !graph.state.DetachedKeyboardGrab(tabID) {
+		t.Fatal("the detached pane's grab was not reported")
+	}
+	if graph.state.KeyboardGrab() {
+		t.Fatal("the detached grab silenced the main window")
+	}
+
+	mainInfo, ok := graph.state.PaneInfoAt(0, panes[0])
+	if !ok {
+		t.Fatal("the main Pane is missing")
+	}
+	mainInfo.Surface.(*fakeSurface).keyboardGrab = true
+	if !graph.state.KeyboardGrab() {
+		t.Fatal("the main pane's grab was not reported")
+	}
+	detached.keyboardGrab = false
+	if graph.state.DetachedKeyboardGrab(tabID) {
+		t.Fatal("the detached grab did not clear")
+	}
+	if graph.state.DetachedKeyboardGrab("missing-tab") {
+		t.Fatal("an unknown detached Tab reported a grab")
+	}
+}

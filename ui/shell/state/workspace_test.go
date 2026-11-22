@@ -2022,6 +2022,100 @@ func TestVNCPaneNeverShowsTheTerminalToolbar(t *testing.T) {
 	}
 }
 
+// TestKeyboardGrabFollowsTheLiveVisiblePane pins the accelerator gate: a live,
+// visible Pane that took the keyboard reports true, while a home page, SFTP, a
+// hibernated Surface, an opening Pane, and a failed Pane all report false. The
+// Surface keeps the user's preference throughout, so returning to the live Pane
+// restores the grab. Detached windows read their own predicate and are not
+// affected by which surface the main window shows.
+func TestKeyboardGrabFollowsTheLiveVisiblePane(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	// A VNC Pane with a live Session and a viewer Surface that implements both
+	// the grab and the hibernation seam. The fake transport cannot provide the
+	// RFB display a real VNC Open requires, so the Session is local while the
+	// Pane's descriptor stays a pixel kind; the accelerator gate reads only the
+	// Surface and the Session's liveness.
+	session, err := graph.service.Open(context.Background(), appsession.StartSpec{
+		Kind: appsession.KindLocal, Label: "desk",
+	})
+	if err != nil {
+		t.Fatalf("open a live Session: %v", err)
+	}
+	surface := &fakeSurface{keyboardGrab: true}
+	tab := graph.state.newTab(TabOptions{Descriptor: domainworkspace.SessionDescriptor{
+		Kind: domainworkspace.SessionVNC, Label: "desk", HostID: "vnc-desk",
+		Hostname: "desk.local", Port: 5901,
+	}})
+	tab.attachOnlySession(session, surface)
+	graph.state.tabs = append(graph.state.tabs, tab)
+	graph.state.SelectTab(0)
+
+	if !graph.state.KeyboardGrab() {
+		t.Fatal("a live visible grabbing Pane did not report the grab")
+	}
+
+	for _, page := range []struct {
+		name string
+		show func()
+	}{
+		{name: "Vault", show: graph.state.ShowVault},
+		{name: "Logs", show: graph.state.ShowLogs},
+		{name: "Monitor", show: graph.state.ShowMonitor},
+		{name: "System Manager", show: graph.state.ShowSystemManager},
+		{name: "SFTP", show: graph.state.ShowSFTP},
+	} {
+		page.show()
+		if graph.state.KeyboardGrab() {
+			t.Fatalf("%s: the hidden work Tab still grabbed the keyboard", page.name)
+		}
+		// Returning to the work Tab restores the grab; the Surface was never
+		// asked to forget the user's preference.
+		graph.state.SelectTab(0)
+		if !graph.state.KeyboardGrab() {
+			t.Fatalf("%s: the visible work Tab did not restore the grab", page.name)
+		}
+	}
+
+	surface.hibernated = true
+	if graph.state.KeyboardGrab() {
+		t.Fatal("a hibernated Surface grabbed the keyboard")
+	}
+	surface.hibernated = false
+	if !graph.state.KeyboardGrab() {
+		t.Fatal("resuming the Surface did not restore the grab")
+	}
+
+	paneID, _ := graph.state.FocusedPaneID(0)
+	pane := graph.state.tabs[0].panes[paneID]
+	pane.pending = true
+	if graph.state.KeyboardGrab() {
+		t.Fatal("an opening Pane grabbed the keyboard")
+	}
+	pane.pending = false
+	pane.err = errors.New("connection failed")
+	if graph.state.KeyboardGrab() {
+		t.Fatal("a failed Pane grabbed the keyboard")
+	}
+	pane.err = nil
+
+	// A detached window asks its own predicate, so showing the Vault in the
+	// main window does not release the detached Tab's guest input.
+	if !graph.state.DetachTab(0) {
+		t.Fatal("DetachTab returned false")
+	}
+	detached := graph.state.DetachedTabIDs()[0]
+	graph.state.ShowVault()
+	if graph.state.KeyboardGrab() {
+		t.Fatal("the main window grabbed with no work Tab visible")
+	}
+	if !graph.state.DetachedKeyboardGrab(detached) {
+		t.Fatal("the detached window lost its grab when the main window showed the Vault")
+	}
+	if !surface.keyboardGrab {
+		t.Fatal("the grab preference was cleared instead of gated")
+	}
+}
+
 // TestSelectTabReleasesTheOutgoingPanesHeldInput is the lifecycle seam the
 // hidden-VNC-Tab risk exposed: a Tab that stops being built receives no MyGo
 // key-up, so the shell must ask its Surface to release guest input as it
@@ -2533,5 +2627,70 @@ func TestReconnectPaneReopensOnlyAStoppedPane(t *testing.T) {
 	info, _ := graph.state.PaneInfoAt(0, paneID)
 	if info.Surface == Surface(graph.surfaces[0]) {
 		t.Fatal("the Pane still renders the stopped Session's Surface")
+	}
+}
+
+// TestSessionBellMarksTheFocusedMainPaneOnce proves a bell on the focused main
+// Pane still produces a visible marker (the ordinary activity path suppresses
+// it), and that the Session's activity marker and the viewer's bell marker are
+// one cue, not two.
+func TestSessionBellMarksTheFocusedMainPaneOnce(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	id := graph.sessions[0].Snapshot().ID
+
+	graph.state.NoteSessionActivity(id)
+	graph.state.NoteSessionBell(id)
+	graph.state.Flush()
+	info, _ := graph.state.TabInfo(0)
+	if !info.Dirty {
+		t.Fatal("a focused Pane's bell left no visible marker")
+	}
+
+	// A second bell from the same Session is idempotent: the marker is a
+	// state, so the user sees one cue.
+	graph.state.NoteSessionBell(id)
+	graph.state.Flush()
+	// Re-query the Tab: the earlier TabInfo is a snapshot from before the
+	// second bell, so asserting on it would not observe the idempotent path.
+	if refreshed, _ := graph.state.TabInfo(0); !refreshed.Dirty {
+		t.Fatal("the bell marker disappeared")
+	}
+}
+
+// TestSessionBellMarksADetachedWindow proves a bell in a detached Tab sets the
+// header marker (the main tab strip cannot show it) and that focusing the
+// window acknowledges it.
+func TestSessionBellMarksADetachedWindow(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	id := graph.sessions[0].Snapshot().ID
+	if !graph.state.DetachTab(0) {
+		t.Fatal("DetachTab returned false")
+	}
+	tabID := graph.state.DetachedTabIDs()[0]
+
+	graph.state.NoteSessionBell(id)
+	graph.state.Flush()
+	info, ok := graph.state.DetachedTabInfo(tabID)
+	if !ok || !info.Bell {
+		t.Fatalf("detached bell = %+v, want the header marker", info)
+	}
+
+	// Repeating the bell keeps one marker, and the window's focus clears it.
+	graph.state.NoteSessionBell(id)
+	graph.state.Flush()
+	if info, _ := graph.state.DetachedTabInfo(tabID); !info.Bell {
+		t.Fatal("a repeated bell cleared or duplicated the marker")
+	}
+	if !graph.state.ClearDetachedBell(tabID) {
+		t.Fatal("ClearDetachedBell reported nothing to clear")
+	}
+	if info, _ := graph.state.DetachedTabInfo(tabID); info.Bell {
+		t.Fatal("the detached bell marker stayed after acknowledgement")
 	}
 }

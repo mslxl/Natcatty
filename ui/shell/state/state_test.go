@@ -121,6 +121,8 @@ type fakeSurface struct {
 	insertErr     error
 	invalidations int
 	releases      int
+	keyboardGrab  bool
+	hibernated    bool
 }
 
 func (f *fakeSurface) View(c *ui.Context) ui.Element {
@@ -161,6 +163,14 @@ func (f *fakeSurface) InsertText(text string) error {
 }
 
 func (f *fakeSurface) InvalidateSuggestions() { f.invalidations++ }
+
+// KeyboardGrab makes the fake a KeyboardGrabber so the app's accelerator
+// predicate has a focused pane to ask.
+func (f *fakeSurface) KeyboardGrab() bool { return f.keyboardGrab }
+
+// Hibernated makes the fake a Surface whose live view can be released while
+// its Session stays connected, like the VNC viewer.
+func (f *fakeSurface) Hibernated() bool { return f.hibernated }
 
 // testGraph wires a shell State to fake Sessions and surfaces.
 type testGraph struct {
@@ -890,5 +900,33 @@ func TestOpenHostOpensAnETHostWithTheETTransport(t *testing.T) {
 	snapshot, ok := graph.state.ActiveSnapshot()
 	if !ok || snapshot.Kind != appsession.KindET || snapshot.Status != appsession.StatusRunning {
 		t.Fatalf("snapshot = %+v, %v; want a running ET Session", snapshot, ok)
+	}
+}
+
+// TestKeyboardGrabFollowsTheFocusedPane proves the app's accelerator predicate
+// only stands down when the active Tab's focused Pane says it grabbed the
+// keyboard. A terminal surface that does not implement the method keeps the
+// accelerators.
+func TestKeyboardGrabFollowsTheFocusedPane(t *testing.T) {
+	graph := newTestGraph(t)
+	if graph.state.KeyboardGrab() {
+		t.Fatal("an empty shell reports a keyboard grab")
+	}
+
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatalf("NewTab: %v", err)
+	}
+	if graph.state.KeyboardGrab() {
+		t.Fatal("a terminal pane reported a keyboard grab")
+	}
+
+	graph.surface.keyboardGrab = true
+	if !graph.state.KeyboardGrab() {
+		t.Fatal("the focused pane's keyboard grab was not reported")
+	}
+
+	graph.surface.keyboardGrab = false
+	if graph.state.KeyboardGrab() {
+		t.Fatal("the shell kept reporting a released grab")
 	}
 }

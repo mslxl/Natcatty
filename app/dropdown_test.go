@@ -711,3 +711,65 @@ func TestDropdownContentIsBehindTheSharedAppLockGate(t *testing.T) {
 		t.Fatalf("unlocking did not release the dropdown content: %v", tester.Texts())
 	}
 }
+
+// TestDropdownAcceleratorsYieldToTheRenderedPanesGrab proves the Panel gates
+// its shortcuts on the Pane its routed content shows: a grabbed Quake or
+// top-down VNC Pane receives the chord, and the accelerators return when the
+// pane releases the grab.
+func TestDropdownAcceleratorsYieldToTheRenderedPanesGrab(t *testing.T) {
+	graph, _ := newDropdownGraph(t)
+	fired := 0
+	item := &mygo.MenuItem{
+		Label:       "New tab",
+		Accelerator: "Cmd+T",
+		Click:       func(*mygo.MenuItem, *mygo.Window) { fired++ },
+	}
+	graph.manager.SetAccelerators([]acceleratorBinding{{mods: ui.Cmd, key: ui.KeyT, item: item}})
+
+	var keys []ui.Key
+	graph.manager.SetDropdownContentProvider(func() func(*ui.Context) {
+		return func(c *ui.Context) {
+			ui.Column(c).Fill().Focusable().AutoFocus().HandleInput(func(event ui.InputEvent) bool {
+				if event.Kind == ui.InputKeyDown {
+					keys = append(keys, event.Key)
+				}
+				return true
+			})
+		}
+	})
+	grabbed := false
+	graph.manager.SetDropdownKeyboardGrabProvider(func() bool { return grabbed })
+
+	tester := ui.NewTester(graph.manager.dropdownView(), 800, 600)
+	tester.Frame()
+	tester.Frame()
+	tester.Key(ui.Cmd, ui.KeyT)
+	tester.Frame()
+	if fired != 1 {
+		t.Fatalf("accelerator fired %d times without a grab, want 1", fired)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("the panel's pane saw the ungrabbed chord: %v", keys)
+	}
+
+	grabbed = true
+	tester.Frame()
+	tester.Frame()
+	tester.Key(ui.Cmd, ui.KeyT)
+	tester.Frame()
+	if fired != 1 {
+		t.Fatalf("accelerator fired while grabbed: %d, want 1", fired)
+	}
+	if len(keys) != 1 || keys[0] != ui.KeyT {
+		t.Fatalf("the grabbed chord reached the pane as %v, want [T]", keys)
+	}
+
+	grabbed = false
+	tester.Frame()
+	tester.Frame()
+	tester.Key(ui.Cmd, ui.KeyT)
+	tester.Frame()
+	if fired != 2 {
+		t.Fatalf("accelerator did not return after the grab: %d, want 2", fired)
+	}
+}

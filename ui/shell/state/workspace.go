@@ -51,6 +51,10 @@ type Tab struct {
 	// Copy counts duplicate generations: 0 is the original, 1 the first copy.
 	Copy  int
 	Dirty bool
+	// Bell marks a detached Tab that received a remote bell. A detached window
+	// has no Tab strip, so the view shows the marker in its header until the
+	// window is focused.
+	Bell bool
 	// Magnified is the Pane currently zoomed to fill the whole Tab, or "".
 	// While set, the Tab's other member Panes are hidden and accept no drops.
 	// Magnification is a view state: it is not part of the saved Workspace.
@@ -100,6 +104,10 @@ type TabInfo struct {
 	Copy      int
 	Dirty     bool
 	Active    bool
+	// Bell marks a detached Tab that received a remote bell. A detached window
+	// has no Tab strip, so the view shows the marker in its header until the
+	// window is focused.
+	Bell bool
 }
 
 // PaneInfo is the immutable Pane description the view renders.
@@ -131,7 +139,10 @@ type DetachedTabInfo struct {
 	Title       string
 	AutoTitle   bool
 	// Copy counts duplicate generations, as Tab.Copy does.
-	Copy  int
+	Copy int
+	// Bell reports a remote bell the user has not acknowledged by focusing
+	// the detached window.
+	Bell  bool
 	Panes []model.PaneID
 }
 
@@ -464,6 +475,58 @@ func (s *State) FocusedPaneID(index int) (model.PaneID, bool) {
 	return id, id != ""
 }
 
+// KeyboardGrab reports whether the focused Pane of the active Tab has taken
+// the keyboard for its guest. The window asks this before registering its
+// accelerators, so a VNC viewer's grab sends chords to the guest instead of
+// firing an application command. A terminal or any Surface without the
+// interface never grabs, which keeps terminal panes on their existing path.
+//
+// The work Tab only owns the keyboard while it is the visible surface. A home
+// page (the Vault, Logs, monitoring, or System manager) or SFTP replaces it,
+// so the grab must report false there; otherwise the main window would stand
+// down every accelerator with no guest to receive the chords.
+func (s *State) KeyboardGrab() bool {
+	if s.HomeVisible() || s.SFTPVisible() {
+		return false
+	}
+	tab, _ := s.activeTab()
+	return tabKeyboardGrab(tab)
+}
+
+// DetachedKeyboardGrab reports the same for one detached Tab's window. The
+// window's accelerators read this predicate rather than the main window's, so
+// a grab in one window never silences another window's shortcuts.
+func (s *State) DetachedKeyboardGrab(tabID model.TabID) bool {
+	return tabKeyboardGrab(s.detachedTabByID(tabID))
+}
+
+// tabKeyboardGrab asks a Tab's focused Pane whether it took the keyboard. A
+// Pane that is still opening, failed, or running a stopped Session owns no
+// guest input, and a hibernated Surface renders no live screen, so none of
+// them may silence the window's accelerators. The user's grab preference is
+// kept on the Surface; this gate simply reports false until the Pane is live
+// and visible again.
+func tabKeyboardGrab(tab *Tab) bool {
+	if tab == nil {
+		return false
+	}
+	value, _ := tab.focusedPane()
+	if value == nil || value.surface == nil || value.pending || value.err != nil {
+		return false
+	}
+	if value.session != nil && value.session.Snapshot().Status != appsession.StatusRunning {
+		return false
+	}
+	grabber, ok := value.surface.(interface{ KeyboardGrab() bool })
+	if !ok || !grabber.KeyboardGrab() {
+		return false
+	}
+	if hibernator, ok := value.surface.(interface{ Hibernated() bool }); ok && hibernator.Hibernated() {
+		return false
+	}
+	return true
+}
+
 // releasePaneInput asks a Surface to release guest input it believes is still
 // held. MyGo stops building a Tab's subtree when it is not the active one and
 // delivers no key-up events for it, so the shell owns this transition.
@@ -616,6 +679,69 @@ func (s *State) applySessionActivity(id model.SessionID) {
 			return
 		}
 	}
+}
+
+// NoteSessionBell queues a bell cue for the Session's Tab. A terminal Session
+// already marks activity through NoteSessionActivity; the VNC viewer calls
+// this so a focused Pane and a detached window get a cue too. Both paths are
+// idempotent, so one bell never shows two markers.
+func (s *State) NoteSessionBell(id model.SessionID) {
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	s.bells = append(s.bells, id)
+	s.mu.Unlock()
+	s.RequestRedraw()
+}
+
+// applySessionBell makes a Session's bell visible. A main Tab, including the
+// focused one, gets the activity marker; a detached Tab, which has no strip,
+// gets the header bell marker. A Session that is neither (for example one in
+// the Quake workspace) has no shell cue here and is ignored.
+func (s *State) applySessionBell(id model.SessionID) {
+	for _, tab := range s.tabs {
+		if !tabOwnsSession(tab, id) {
+			continue
+		}
+		if !tab.Dirty {
+			tab.Dirty = true
+			s.RequestRedraw()
+		}
+		return
+	}
+	for _, tab := range s.detached {
+		if !tabOwnsSession(tab, id) {
+			continue
+		}
+		if !tab.Bell {
+			tab.Bell = true
+			s.RequestRedraw()
+		}
+		return
+	}
+}
+
+// ClearDetachedBell acknowledges a detached window's bell, as focusing the
+// window does. It reports whether a marker was cleared.
+func (s *State) ClearDetachedBell(id model.TabID) bool {
+	tab := s.detachedTabByID(id)
+	if tab == nil || !tab.Bell {
+		return false
+	}
+	tab.Bell = false
+	s.RequestRedraw()
+	return true
+}
+
+// tabOwnsSession reports whether any Pane of tab runs id.
+func tabOwnsSession(tab *Tab, id model.SessionID) bool {
+	for _, value := range tab.panes {
+		if value.session != nil && value.session.Snapshot().ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // CloseActiveTab closes the active work Tab's terminal surfaces and Sessions,
@@ -850,6 +976,7 @@ func (s *State) DetachedTabInfo(id model.TabID) (DetachedTabInfo, bool) {
 		Title:       s.tabTitle(tab),
 		AutoTitle:   tab.AutoTitle,
 		Copy:        tab.Copy,
+		Bell:        tab.Bell,
 		Panes:       panes,
 	}, true
 }

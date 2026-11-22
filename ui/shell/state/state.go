@@ -318,7 +318,10 @@ type State struct {
 	// activity queues Session change notifications from Session goroutines.
 	// Flush transfers them to the activity markers on the UI thread.
 	activity []model.SessionID
-	problem  appconnection.Kind
+	// bells queues remote bells from the viewer goroutine. Flush applies them
+	// on the UI thread beside the activity markers.
+	bells   []model.SessionID
+	problem appconnection.Kind
 	// problemErr keeps the last failure's cause so the view can distinguish a
 	// missing OpenSSH agent from a missed security key deadline, which share
 	// their protocol-level Kind with other failures.
@@ -1383,6 +1386,8 @@ func (s *State) Flush() {
 	s.outcomes = nil
 	activity := s.activity
 	s.activity = nil
+	bells := s.bells
+	s.bells = nil
 	startupFailures := s.startupFailures
 	s.startupFailures = 0
 	s.mu.Unlock()
@@ -1392,6 +1397,9 @@ func (s *State) Flush() {
 	}
 	for _, id := range activity {
 		s.applySessionActivity(id)
+	}
+	for _, id := range bells {
+		s.applySessionBell(id)
 	}
 	for _, outcome := range paneOutcomes {
 		s.applyPaneOutcome(outcome)

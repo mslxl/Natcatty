@@ -1660,6 +1660,17 @@ func (s *Session) ID() model.SessionID { return s.id }
 // has no Host and reports "".
 func (s *Session) HostID() model.HostID { return s.spec.HostID }
 
+// VNCConfiguration returns the normalized viewer configuration a VNC Session
+// was opened with. A byte-stream Session has none and reports the zero value.
+// The viewer reads it once to start in the Host's fit, cursor, and view-only
+// modes.
+func (s *Session) VNCConfiguration() modelvnc.Config {
+	if s.spec.VNC == nil {
+		return modelvnc.Config{}
+	}
+	return s.spec.VNC.Configuration
+}
+
 // BracketedPaste reports whether the peer last enabled DECSET 2004. The
 // compose bar uses it to wrap multiline submissions in one paste.
 func (s *Session) BracketedPaste() bool {

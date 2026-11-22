@@ -20,6 +20,10 @@ type viewSurface struct {
 	closes        int
 	focusedFrames int
 	idleFrames    int
+	// keyboardGrab makes this fake a guest that takes every chord.
+	keyboardGrab bool
+	// viewerChrome makes this fake render a per-kind toolbar (VNC).
+	viewerChrome bool
 }
 
 func (s *viewSurface) View(c *ui.Context) ui.Element {
@@ -34,6 +38,28 @@ func (s *viewSurface) ViewFocused(c *ui.Context, focused bool) ui.Element {
 		s.idleFrames++
 	}
 	return ui.Text(c, s.name).Fill()
+}
+
+// KeyboardGrab makes the fake a Surface that can hold the keyboard.
+func (s *viewSurface) KeyboardGrab() bool { return s.keyboardGrab }
+
+// ViewerChrome makes the fake a viewer Surface whose toolbar belongs in the
+// Panel. Terminal fakes return false and keep the body-only layout.
+func (s *viewSurface) ViewerChrome() bool { return s.viewerChrome }
+
+// Toolbar draws a findable marker for the host-window toolbar.
+func (s *viewSurface) Toolbar(c *ui.Context) {
+	if s.viewerChrome {
+		ui.Text(c, s.name+"-toolbar")
+	}
+}
+
+// ToolbarEmbedded draws a distinct marker for the toolbar the Panel uses. The
+// Panel is not a host window, so it renders the embedded variant.
+func (s *viewSurface) ToolbarEmbedded(c *ui.Context) {
+	if s.viewerChrome {
+		ui.Text(c, s.name+"-embedded-toolbar")
+	}
 }
 
 func (s *viewSurface) Close() { s.closes++ }
@@ -445,5 +471,97 @@ func TestPickerSearchFiltersHosts(t *testing.T) {
 	}
 	if state.TabCount() != 1 {
 		t.Fatalf("typing in the picker changed the Tabs: %d", state.TabCount())
+	}
+}
+
+// TestViewRendersViewerChrome proves a VNC Tab keeps its per-kind toolbar in
+// the Quake panel, that the Panel takes the embedded variant (no fullscreen),
+// while a terminal Tab still renders only its body.
+func TestViewRendersViewerChrome(t *testing.T) {
+	fixture := newViewFixture(t)
+	if err := fixture.state.Activate(); err != nil {
+		t.Fatal(err)
+	}
+	fixture.surfaces[0].viewerChrome = true
+	tester := renderPanel(t, fixture.state, 800, 400)
+	tester.Frame()
+	if !tester.HasText("surface-1-embedded-toolbar") {
+		t.Fatalf("the Quake VNC Tab lost its embedded chrome: %v", tester.Texts())
+	}
+	if tester.HasText("surface-1-toolbar") {
+		t.Fatalf("the Quake VNC Tab used the host-window toolbar: %v", tester.Texts())
+	}
+	if !tester.HasText("surface-1") {
+		t.Fatalf("the Quake VNC Tab lost its desktop: %v", tester.Texts())
+	}
+
+	terminal := newViewFixture(t)
+	if err := terminal.state.Activate(); err != nil {
+		t.Fatal(err)
+	}
+	terminalTester := renderPanel(t, terminal.state, 800, 400)
+	terminalTester.Frame()
+	if terminalTester.HasText("surface-1-toolbar") {
+		t.Fatalf("a terminal Tab rendered viewer chrome: %v", terminalTester.Texts())
+	}
+}
+
+// TestViewRendersTheQuakeBellMarker proves a Quake Tab that received a bell
+// shows the same marker the main strip uses, and that selecting the Tab
+// acknowledges it.
+func TestViewRendersTheQuakeBellMarker(t *testing.T) {
+	fixture := newViewFixture(t)
+	if err := fixture.state.Activate(); err != nil {
+		t.Fatal(err)
+	}
+	tab, ok := fixture.state.TabAt(0)
+	if !ok || tab.Session == nil {
+		t.Fatal("the Quake workspace has no live Tab")
+	}
+	fixture.state.NoteSessionBell(tab.Session.ID())
+	tester := renderPanel(t, fixture.state, 800, 400)
+	tester.Frame()
+	marker := locales.In("en").TabDirtyMarker()
+	if !tester.HasText(marker) {
+		t.Fatalf("the Quake strip shows no bell marker: %v", tester.Texts())
+	}
+
+	fixture.state.SelectTab(0)
+	tester.Frame()
+	if tester.HasText(marker) {
+		t.Fatalf("selecting the Tab did not clear its bell marker: %v", tester.Texts())
+	}
+}
+
+// TestKeyboardGrabFollowsTheActiveTab proves the Panel's grab predicate asks
+// only the active Quake Tab's Surface, so a grabbed inactive Tab does not
+// silence the panel and a grabbed active Tab does.
+func TestKeyboardGrabFollowsTheActiveTab(t *testing.T) {
+	fixture := newViewFixture(t)
+	if err := fixture.state.Activate(); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.state.KeyboardGrab() {
+		t.Fatal("a terminal Quake Tab reported a grab")
+	}
+	fixture.surfaces[0].keyboardGrab = true
+	if !fixture.state.KeyboardGrab() {
+		t.Fatal("the active Quake Tab's grab was not reported")
+	}
+
+	if err := fixture.state.AddLocalTab(); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.state.KeyboardGrab() {
+		t.Fatal("an inactive grabbed Tab silenced the panel")
+	}
+	fixture.surfaces[1].keyboardGrab = true
+	if !fixture.state.KeyboardGrab() {
+		t.Fatal("the new active Tab's grab was not reported")
+	}
+
+	fixture.state.SelectTab(0)
+	if !fixture.state.KeyboardGrab() {
+		t.Fatal("selecting the grabbed Tab did not report its grab")
 	}
 }

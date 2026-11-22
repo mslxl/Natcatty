@@ -84,6 +84,9 @@ type Tab struct {
 	HostID  model.HostID
 	Session *appsession.Session
 	Surface Surface
+	// Bell marks a Tab that received a remote bell the user has not seen.
+	// The tab strip shows it until the Tab is selected.
+	Bell bool
 }
 
 // TabInfo is the immutable description the tab strip renders.
@@ -93,6 +96,8 @@ type TabInfo struct {
 	Label  string
 	HostID model.HostID
 	Active bool
+	// Bell carries the Tab's unseen-bell mark to the strip.
+	Bell bool
 }
 
 // State is one Dropdown Panel's Quake workspace. The Tab list is mutated on
@@ -125,6 +130,9 @@ type State struct {
 	mu sync.Mutex
 	// pendingHosts holds completed Host opens that Flush has not applied yet.
 	pendingHosts []hostOpen
+	// pendingBells holds bell cues a Session goroutine handed over. Flush
+	// applies them to their Tab on the UI thread, beside the Host opens.
+	pendingBells []model.SessionID
 	// closed reports that Shutdown ran, so a Host open that finishes later
 	// closes its Session instead of attaching an orphaned Tab.
 	closed bool
@@ -236,6 +244,8 @@ func (s *State) Flush() {
 	s.mu.Lock()
 	outcomes := s.pendingHosts
 	s.pendingHosts = nil
+	bells := s.pendingBells
+	s.pendingBells = nil
 	closed := s.closed
 	s.mu.Unlock()
 
@@ -266,6 +276,49 @@ func (s *State) Flush() {
 		s.nextNumber++
 		s.active = len(s.tabs) - 1
 		s.problem = nil
+	}
+	// Apply bells after the Host opens, so a bell that raced a just-finished
+	// connection still finds its Tab in this same frame.
+	if !closed {
+		for _, id := range bells {
+			s.applyBell(id)
+		}
+	}
+}
+
+// NoteSessionBell queues a bell cue for a Session. Session goroutines call it
+// off the UI thread, so it only records the identity under mu; Flush applies
+// it to the Tab on the UI thread. A Session the Quake workspace does not own is
+// ignored when it is applied, so the main and detached workspaces can hand over
+// every bell without the caller knowing where the Session lives.
+func (s *State) NoteSessionBell(id model.SessionID) {
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.pendingBells = append(s.pendingBells, id)
+	s.mu.Unlock()
+	s.requestRedraw()
+}
+
+// applyBell marks the Tab that runs id as having an unseen bell. It is
+// idempotent, so the Session bell hook and the viewer's own cue may both report
+// the same bell without showing two marks.
+func (s *State) applyBell(id model.SessionID) {
+	for index := range s.tabs {
+		tab := s.tabs[index]
+		if tab.Session == nil || tab.Session.ID() != id {
+			continue
+		}
+		if !tab.Bell {
+			s.tabs[index].Bell = true
+			s.requestRedraw()
+		}
+		return
 	}
 }
 
@@ -388,6 +441,7 @@ func (s *State) Tabs() []TabInfo {
 			Label:  tab.Label,
 			HostID: tab.HostID,
 			Active: index == s.active,
+			Bell:   tab.Bell,
 		}
 	}
 	return tabs
@@ -406,6 +460,29 @@ func (s *State) Active() (Tab, bool) {
 		return Tab{}, false
 	}
 	return s.tabs[s.active], true
+}
+
+// KeyboardGrab reports whether the active Tab's Surface has taken every chord
+// for its guest. The Dropdown Panel's accelerator gate reads it in Quake's own
+// mode, so a grabbed VNC Tab receives the chord instead of the application.
+// A stopped Session or a hibernated Surface has no live guest view to receive
+// those chords, so it must not silence the Panel's accelerators.
+func (s *State) KeyboardGrab() bool {
+	tab, ok := s.Active()
+	if !ok || tab.Surface == nil {
+		return false
+	}
+	if tab.Session != nil && tab.Session.Snapshot().Status != appsession.StatusRunning {
+		return false
+	}
+	grabber, ok := tab.Surface.(interface{ KeyboardGrab() bool })
+	if !ok || !grabber.KeyboardGrab() {
+		return false
+	}
+	if hibernator, ok := tab.Surface.(interface{ Hibernated() bool }); ok && hibernator.Hibernated() {
+		return false
+	}
+	return true
 }
 
 // TabAt returns the live Tab at index, including its Session and Surface. The
@@ -435,6 +512,7 @@ func (s *State) TabForSession(id model.SessionID) (TabInfo, bool) {
 			Label:  tab.Label,
 			HostID: tab.HostID,
 			Active: index == s.active,
+			Bell:   tab.Bell,
 		}, true
 	}
 	return TabInfo{}, false
@@ -466,12 +544,18 @@ func (s *State) SessionCount() int {
 	return count
 }
 
-// SelectTab makes the Tab at index active. An out-of-range index is a no-op.
+// SelectTab makes the Tab at index active and shows it. An out-of-range index
+// is a no-op. Selecting a Tab acknowledges its unseen-bell mark, even when it
+// is already active, matching the main strip's activity behavior.
 func (s *State) SelectTab(index int) {
-	if index < 0 || index >= len(s.tabs) || index == s.active {
+	if index < 0 || index >= len(s.tabs) {
+		return
+	}
+	if index == s.active && !s.tabs[index].Bell {
 		return
 	}
 	s.active = index
+	s.tabs[index].Bell = false
 	s.requestRedraw()
 }
 
@@ -489,6 +573,7 @@ func (s *State) CloseTab(index int) bool {
 	if tab.Session != nil {
 		_ = tab.Session.Close()
 	}
+	oldActive := s.active
 	s.tabs = append(s.tabs[:index], s.tabs[index+1:]...)
 	switch {
 	case len(s.tabs) == 0:
@@ -498,6 +583,12 @@ func (s *State) CloseTab(index int) bool {
 	case index == s.active && s.active >= len(s.tabs):
 		// The active Tab was the last one; the new last Tab takes over.
 		s.active = len(s.tabs) - 1
+	}
+	// Closing the active Tab activates a different one, so its bell mark is
+	// acknowledged too. Closing a Tab before the active one only shifts its
+	// index, which must not clear the same Tab's mark.
+	if index == oldActive && s.active >= 0 {
+		s.tabs[s.active].Bell = false
 	}
 	s.requestRedraw()
 	if len(s.tabs) == 0 && s.empty != nil {
@@ -518,6 +609,7 @@ func (s *State) Shutdown() {
 	s.closed = true
 	pending := s.pendingHosts
 	s.pendingHosts = nil
+	s.pendingBells = nil
 	s.mu.Unlock()
 	for _, outcome := range pending {
 		if outcome.session != nil {

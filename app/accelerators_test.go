@@ -6,6 +6,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"github.com/mslxl/natcatty/application/command"
@@ -112,6 +113,66 @@ func TestMenuAcceleratorsComeFromTheMenu(t *testing.T) {
 	backups.item.Click(backups.item, nil)
 	if len(dispatched) != 1 || dispatched[0] != command.OpenBackups {
 		t.Fatalf("dispatched = %v, want [%s]", dispatched, command.OpenBackups)
+	}
+}
+
+// TestKeyboardGrabYieldsAcceleratorsToTheFocusedPane proves the window stops
+// registering menu shortcuts while a pane reports the keyboard grabbed, so the
+// chord reaches that pane, and registers them again when the grab is released.
+func TestKeyboardGrabYieldsAcceleratorsToTheFocusedPane(t *testing.T) {
+	fired := 0
+	item := &mygo.MenuItem{
+		Label:       "New tab",
+		Accelerator: "CmdOrCtrl+T",
+		Click:       func(*mygo.MenuItem, *mygo.Window) { fired++ },
+	}
+	manager := &windowManager{accelerators: []acceleratorBinding{
+		{mods: ui.Cmd, key: ui.KeyT, item: item},
+	}}
+	grabbed := false
+	manager.SetKeyboardGrabProvider(func() bool { return grabbed }, nil)
+
+	var keys []ui.Key
+	content := func(c *ui.Context) {
+		ui.Column(c).Fill().Focusable().AutoFocus().HandleInput(func(event ui.InputEvent) bool {
+			if event.Kind == ui.InputKeyDown {
+				keys = append(keys, event.Key)
+			}
+			return true
+		})
+	}
+	tester := ui.NewTester(manager.withAccelerators(manager.keyboardGrab, content), 400, 300)
+	tester.Frame()
+	tester.Frame()
+
+	tester.Key(ui.Cmd, ui.KeyT)
+	tester.Frame()
+	if fired != 1 {
+		t.Fatalf("accelerator fired %d times without a grab, want 1", fired)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("the grabbed chord also reached the pane: %v", keys)
+	}
+
+	grabbed = true
+	tester.Frame()
+	tester.Frame()
+	tester.Key(ui.Cmd, ui.KeyT)
+	tester.Frame()
+	if fired != 1 {
+		t.Fatalf("accelerator fired while grabbed: %d, want 1", fired)
+	}
+	if len(keys) != 1 || keys[0] != ui.KeyT {
+		t.Fatalf("the grabbed chord reached the pane as %v, want [T]", keys)
+	}
+
+	grabbed = false
+	tester.Frame()
+	tester.Frame()
+	tester.Key(ui.Cmd, ui.KeyT)
+	tester.Frame()
+	if fired != 2 {
+		t.Fatalf("accelerator did not return after the grab: %d, want 2", fired)
 	}
 }
 
