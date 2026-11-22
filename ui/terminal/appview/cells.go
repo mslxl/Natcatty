@@ -4,6 +4,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/mslxl/natcatty/application/lens/lens/parse"
+	"github.com/mslxl/natcatty/ui/terminal/surface"
 )
 
 // cellWidth and cellHeight are one cell of the live grid, in DIPs. The live rows
@@ -13,14 +14,40 @@ import (
 // back for is centered in its cell rather than moving the ones after it.
 var cellWidth, cellHeight float32
 
-// measureCell reads the cell size from a monospace "M" at the frame's font size.
+// cellFamily and cellFontSize are the font the grid measures and paints with:
+// the terminal's own configured font (Appearance), because these rows are
+// terminal text and must look exactly as the terminal plugin draws them. The
+// size falls back to the UI theme's when no terminal font was reported.
+var cellFamily = "monospace"
+var cellFontSize float32
+
+// measureCell reads the cell size from an "M" at the terminal's configured font.
 // MeasureText lays the text out now, in the same frame the rows are built, so the
 // first frame already has its cells (an element's Bounds would still be empty on
 // that frame).
 func measureCell(c *ui.Context) {
-	if w, h := c.MeasureText(0, ui.Span{Text: "M", Font: "monospace"}); w > 0 && h > 0 {
+	family, size := surface.TerminalFont()
+	if family == "" {
+		// The terminal plugin's own default when Font.Family is unset; a test
+		// or a view with no Appearance setting still draws on a cell grid.
+		family = "monospace"
+	}
+	if size <= 0 {
+		size = themeFontSize(c)
+	}
+	cellFamily, cellFontSize = family, size
+	if w, h := c.MeasureText(0, ui.Span{Text: "M", Font: family, Size: size}); w > 0 && h > 0 {
 		cellWidth, cellHeight = w, h
 	}
+}
+
+// themeFontSize is the UI theme's base text size, the fallback when no terminal
+// font size was reported.
+func themeFontSize(c *ui.Context) float32 {
+	if t := c.Theme(); t != nil && t.FontSize > 0 {
+		return t.FontSize
+	}
+	return 13
 }
 
 // pointerCell turns a pointer position in the live rows into a grid cell. The
@@ -91,10 +118,12 @@ func cellOrigin(cellX, cellY, cols int) ui.Point {
 	}
 }
 
-// spanFont is the font a live row's span is drawn with: the rows set
-// "monospace" and leave the size to the frame, which the terminal theme sizes.
+// spanFont is the font a live row's span is drawn with: the terminal's
+// configured family and size, so a row looks the same here, in a finished
+// command's plain cells, and in the terminal plugin's own grid. A span that
+// names a family or size of its own still wins.
 func spanFont(sp ui.Span, size float32) ui.Font {
-	f := ui.Font{Family: "monospace", Size: size, Weight: sp.Weight, Italic: sp.Italic, Features: sp.Features, Lang: sp.Lang}
+	f := ui.Font{Family: cellFamily, Size: size, Weight: sp.Weight, Italic: sp.Italic, Features: sp.Features, Lang: sp.Lang}
 	if sp.Font != "" {
 		f.Family = sp.Font
 	}

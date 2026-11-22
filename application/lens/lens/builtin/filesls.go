@@ -36,6 +36,13 @@ type lsState struct {
 	rows    []lsRow
 	maxSize int64
 
+	// eza (and its ancestor exa) prints a different long format from ls:
+	// MODE SIZE USER [GROUP] DATE NAME, with no link count and with a "."
+	// type character for regular files. Its rows are kept in rows too, and
+	// this flag picks the table without the columns eza never prints.
+	eza      bool
+	ezaGroup bool // eza -g/--group added a group column
+
 	// PowerShell's `ls` is Get-ChildItem: a "Directory:" heading, then a
 	// Mode/LastWriteTime/Length/Name header over two rules, then the rows. It is a
 	// different table from ls -l, so it is read on its own.
@@ -108,6 +115,15 @@ func (st *lsState) observe(text string) {
 		return
 	}
 	if row, ok := parseLSRow(fields); ok {
+		if row.sizeBytes > st.maxSize {
+			st.maxSize = row.sizeBytes
+		}
+		st.rows = append(st.rows, row)
+		return
+	}
+	if row, ok := parseEzaRow(text, fields); ok {
+		st.eza = true
+		st.ezaGroup = st.ezaGroup || row.group != ""
 		if row.sizeBytes > st.maxSize {
 			st.maxSize = row.sizeBytes
 		}
@@ -322,6 +338,248 @@ func lsTZToken(s string) bool {
 	return allDigits(s[1:])
 }
 
+// parseEzaRow parses one eza/exa long-format row. eza's default `-l` columns
+// are not ls's: there is no link count, a regular file's mode starts with ".",
+// the size is humanised, and the date is day-first:
+//
+//	drwxr-xr-x@   - mslxl 22 Nov 21:54 adir
+//	.rw-r--r--@ 20k mslxl 21 Nov 13:43 notes.txt
+//	.rw-r--r--@   0 mslxl  2 Jan  2020 old.txt
+//	lrwxr-xr-x@   - mslxl 22 Nov 21:54 alink -> new.txt
+//
+// `-g`/`--group` adds a group column, `--time-style` swaps the date for
+// "YYYY-MM-DD HH:MM" (long-iso), "MM-DD HH:MM" (iso) or a full-iso stamp with
+// its zone, `--icons` puts a private-use glyph before the name, and a name
+// that needs quoting arrives as 'My Files' or "it's.txt". exa prints the same
+// shape. lsd mimics ls, so its rows take parseLSRow.
+func parseEzaRow(text string, fields []string) (lsRow, bool) {
+	if len(fields) < 5 || !looksLikeEzaMode(fields[0]) {
+		return lsRow{}, false
+	}
+	sizeText := fields[1]
+	var sizeBytes int64
+	if sizeText != "-" {
+		v, ok := parseSizeBytes(sizeText)
+		if !ok {
+			return lsRow{}, false
+		}
+		sizeBytes = v
+	}
+	dateStart, dateWidth := ezaDate(fields)
+	if dateStart < 0 {
+		return lsRow{}, false
+	}
+	owner, group := "", ""
+	switch n := dateStart - 2; {
+	case n == 1:
+		owner = fields[2]
+	case n == 2:
+		owner, group = fields[2], fields[3]
+	default:
+		return lsRow{}, false
+	}
+	nameField := dateStart + dateWidth
+	// --git prints a two-cell status (``--`` is clean) between the date and
+	// the name; a user's alias commonly adds it. It is not part of the name.
+	if nameField < len(fields) && isEzaGitStatus(fields[nameField]) {
+		nameField++
+	}
+	rest, ok := ezaRest(text, nameField)
+	if !ok {
+		return lsRow{}, false
+	}
+	name, target, ok := ezaName(rest)
+	if !ok {
+		return lsRow{}, false
+	}
+	return lsRow{
+		mode: fields[0], links: "", owner: owner, group: group,
+		size: sizeText, sizeBytes: sizeBytes,
+		date: strings.Join(fields[dateStart:nameField], " "),
+		name: name, target: target,
+		dir: fields[0][0] == 'd',
+	}, true
+}
+
+// ezaDate finds eza's date column: the day-first default ("22 Nov 21:54",
+// "2 Jan  2020"), an ISO day ("2026-11-22 21:54[:SS…] [ZONE]") or the
+// month-day style --time-style=iso prints ("11-22 21:54"). It returns the
+// first field and the field count of the date, or -1.
+func ezaDate(fields []string) (start, width int) {
+	for j := 2; j < len(fields); j++ {
+		if isDayNumber(fields[j]) && j+2 < len(fields) && monthAbbrev(fields[j+1]) &&
+			(lsTimeToken(fields[j+2]) || isYearToken(fields[j+2])) {
+			return j, 3
+		}
+		if isMonthDayToken(fields[j]) || isISODateToken(fields[j]) {
+			if j+1 < len(fields) && lsTimeToken(fields[j+1]) {
+				if j+2 < len(fields) && lsTZToken(fields[j+2]) {
+					return j, 3
+				}
+				return j, 2
+			}
+			if isISODateToken(fields[j]) {
+				return j, 1 // --time-style=iso prints the date alone
+			}
+		}
+	}
+	return -1, 0
+}
+
+// ezaRest returns the line from its nth whitespace-separated field on, keeping
+// the field's quotes and inner spacing: eza prints a name that needs escaping
+// quoted ('two  spaces.txt'), and splitting the line into Fields would lose
+// the runs of spaces inside the quotes. Fields before the name carry no
+// quotes, so counting them on the line names the same field as Fields does.
+func ezaRest(line string, n int) (string, bool) {
+	i, field := 0, 0
+	for {
+		for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
+			i++
+		}
+		if i >= len(line) {
+			return "", false
+		}
+		if field == n {
+			return line[i:], true
+		}
+		for quote := byte(0); i < len(line); i++ {
+			c := line[i]
+			if quote != 0 {
+				if c == quote {
+					quote = 0
+				}
+				continue
+			}
+			if c == '\'' || c == '"' {
+				quote = c
+				continue
+			}
+			if c == ' ' || c == '\t' {
+				break
+			}
+		}
+		field++
+	}
+}
+
+// ezaName reads eza's name column: an optional icon glyph, the name (quoted
+// when it needs escaping) and, for a symlink, " -> target".
+func ezaName(rest string) (name, target string, ok bool) {
+	rest = strings.TrimSpace(rest)
+	if f, after, found := strings.Cut(rest, " "); found && isIconToken(f) {
+		rest = strings.TrimSpace(after)
+	}
+	name = rest
+	if i := ezaArrow(rest); i >= 0 {
+		name, target = strings.TrimSpace(rest[:i]), strings.TrimSpace(rest[i+4:])
+		if name == "" || target == "" {
+			return "", "", false
+		}
+	}
+	name, target = unquoteEza(name), unquoteEza(target)
+	if name == "" {
+		return "", "", false
+	}
+	return name, target, true
+}
+
+// ezaArrow finds eza's " -> " between a symlink's name and target, ignoring
+// arrows inside a quoted name.
+func ezaArrow(s string) int {
+	quote := byte(0)
+	for i := 0; i+4 <= len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		if c == '\'' || c == '"' {
+			quote = c
+			continue
+		}
+		if strings.HasPrefix(s[i:], " -> ") {
+			return i
+		}
+	}
+	return -1
+}
+
+// unquoteEza strips the quotes eza wraps around a name that needs escaping.
+func unquoteEza(s string) string {
+	if len(s) < 2 {
+		return s
+	}
+	q := s[0]
+	if (q != '\'' && q != '"') || s[len(s)-1] != q {
+		return s
+	}
+	inner := s[1 : len(s)-1]
+	if q == '\'' {
+		inner = strings.ReplaceAll(inner, `'\''`, `'`)
+	}
+	return inner
+}
+
+// looksLikeEzaMode reports eza's permission column: ls's shape, where a
+// regular file's type character is "." instead of "-".
+func looksLikeEzaMode(s string) bool {
+	if len(s) < 10 {
+		return false
+	}
+	switch s[0] {
+	case '.', '-', 'd', 'l', 'b', 'c', 'p', 's':
+	default:
+		return false
+	}
+	n := 0
+	for _, r := range s[1:] {
+		switch r {
+		case 'r', 'w', 'x', '-', 's', 'S', 't', 'T':
+			n++
+		}
+	}
+	return n >= 6
+}
+
+func isDayNumber(s string) bool {
+	if len(s) < 1 || len(s) > 2 || !allDigits(s) {
+		return false
+	}
+	n, _ := strconv.Atoi(s)
+	return n >= 1 && n <= 31
+}
+
+func isYearToken(s string) bool {
+	return len(s) == 4 && allDigits(s)
+}
+
+// isEzaGitStatus reports eza's --git column: the index and worktree status of
+// one file, as "-M" (modified), "--" (clean) or "??" (untracked). A user's
+// alias often adds --git, and the column sits between the date and the name.
+func isEzaGitStatus(s string) bool {
+	if len(s) != 2 {
+		return false
+	}
+	for _, r := range s {
+		if !strings.ContainsRune("NMDARCTU?I-", r) {
+			return false
+		}
+	}
+	return true
+}
+
+func isISODateToken(s string) bool {
+	return len(s) == 10 && s[4] == '-' && s[7] == '-' &&
+		allDigits(s[:4]) && allDigits(s[5:7]) && allDigits(s[8:10])
+}
+
+func isMonthDayToken(s string) bool {
+	return len(s) == 5 && s[2] == '-' && allDigits(s[:2]) && allDigits(s[3:])
+}
+
 // mergeDeviceSizes joins a device size split by Fields: "1," "3" -> "1, 3".
 func mergeDeviceSizes(fields []string) []string {
 	for i := 0; i < len(fields)-1; i++ {
@@ -400,6 +658,9 @@ func (f *filesLS) View(state any) (lens.Node, error) {
 		return lsPSTable(st), nil
 	}
 	if len(st.rows) > 0 {
+		if st.eza {
+			return lsEzaTable(st), nil
+		}
 		return lsTable(st), nil
 	}
 	// Plain name listings have no view: the block shows the raw output.
@@ -473,6 +734,49 @@ func lsTable(st *lsState) lens.Node {
 			{Meter: &lens.MeterCell{Value: ratio}},
 			{Spans: nameSpans},
 		})
+	}
+	return lens.Table{Cols: cols, Rows: rows}
+}
+
+// lsEzaTable lays an eza/exa listing out. eza prints no link count, so that
+// column is left out; its group column exists only under -g/--group; and its
+// size is already humanised ("20k"), which is shown as printed.
+func lsEzaTable(st *lsState) lens.Node {
+	cols := []lens.Col{
+		{ID: "mode", Head: "Mode", Align: lens.AlignStart, Priority: 4, Truncate: lens.TruncateEnd},
+		{ID: "owner", Head: "Owner", Align: lens.AlignStart, Priority: 2, Grow: 1, Truncate: lens.TruncateEnd},
+	}
+	if st.ezaGroup {
+		cols = append(cols, lens.Col{ID: "group", Head: "Group", Align: lens.AlignStart, Priority: 3, Truncate: lens.TruncateEnd})
+	}
+	cols = append(cols,
+		lens.Col{ID: "size", Head: "Size", Align: lens.AlignEnd, Priority: 1, Truncate: lens.TruncateEnd},
+		lens.Col{ID: "usage", Head: "Usage", Align: lens.AlignStart, Priority: 6},
+		lens.Col{ID: "name", Head: "Name", Align: lens.AlignStart, Grow: 6, Truncate: lens.TruncateMiddle},
+	)
+	rows := make([][]lens.Cell, 0, len(st.rows))
+	for _, r := range st.rows {
+		nameSpans := []lens.Span{{Text: r.name, Style: lsNameStyle(r)}}
+		if r.target != "" {
+			nameSpans = append(nameSpans, lens.Span{Text: " → " + r.target, Style: toneMuted})
+		}
+		ratio := 0.0
+		if st.maxSize > 0 {
+			ratio = float64(r.sizeBytes) / float64(st.maxSize)
+		}
+		cells := []lens.Cell{
+			{Spans: []lens.Span{{Text: r.mode, Style: lsModeStyle(r)}}},
+			{Spans: []lens.Span{{Text: r.owner}}},
+		}
+		if st.ezaGroup {
+			cells = append(cells, lens.Cell{Spans: []lens.Span{{Text: r.group}}})
+		}
+		cells = append(cells,
+			lens.Cell{Spans: []lens.Span{{Text: r.size, Style: "num"}}},
+			lens.Cell{Meter: &lens.MeterCell{Value: ratio}},
+			lens.Cell{Spans: nameSpans},
+		)
+		rows = append(rows, cells)
 	}
 	return lens.Table{Cols: cols, Rows: rows}
 }

@@ -69,6 +69,15 @@ type Tap struct {
 	pendingTyped string
 	pendingCwd   string
 
+	// marks records one entry per OSC 133;C the stream delivered: the block
+	// that mark started (-1 when it started none: Enter on an empty prompt,
+	// Nushell's duplicate mark) and the store epoch at the mark. The terminal
+	// flow pairs these in order with the prompt rows its own mirror captures at
+	// the same marks, which is how a finished block gets the shell's real
+	// prompt.
+	marksMu sync.Mutex
+	marks   []CommandMark
+
 	// The capture screen: Terminal feeds a lens the rows of an 8-row scratch screen as
 	// they scroll off it, not the bytes' line feeds. Rows emitted by the screen are
 	// drained into the store after each step.
@@ -84,8 +93,44 @@ type Tap struct {
 	Status string
 }
 
+// CommandMark is one OSC 133;C a tap saw: the block it started, and the store
+// epoch at that moment. The epoch is read in the tap, before a later OSC 133;D
+// in the same read can clear the store and restart block ids, so a consumer
+// that keys data by block id can tell which run the id belongs to.
+type CommandMark struct {
+	ID    int
+	Epoch uint64
+}
+
+// maxMarks bounds the command-mark queue. The flow drains it after every feed,
+// so the cap only matters for a mirror that is never bound (its captures are
+// not recorded either, and both queues keep the same tail).
+const maxMarks = 4096
+
 // New makes a tap that fills store.
 func New(store *model.Store) *Tap { return &Tap{store: store} }
+
+// recordMark appends one OSC 133;C mark: the block it started, or -1.
+func (t *Tap) recordMark(id int) {
+	mark := CommandMark{ID: id, Epoch: t.store.Epoch()}
+	t.marksMu.Lock()
+	t.marks = append(t.marks, mark)
+	if len(t.marks) > maxMarks {
+		t.marks = append([]CommandMark(nil), t.marks[len(t.marks)-maxMarks:]...)
+	}
+	t.marksMu.Unlock()
+}
+
+// TakeCommandMarks returns and clears the OSC 133;C marks recorded since the
+// last call, in stream order. The terminal flow pairs them with the prompt rows
+// it captured at the same marks.
+func (t *Tap) TakeCommandMarks() []CommandMark {
+	t.marksMu.Lock()
+	defer t.marksMu.Unlock()
+	marks := t.marks
+	t.marks = nil
+	return marks
+}
 
 // WithCols tells the tap the pseudo-console's width so it can join rows that
 // the console soft-wrapped. Terminal does the same in its lens capture ("soft-
@@ -420,6 +465,11 @@ func (t *Tap) dispatchOSC() {
 		sub, args, _ := strings.Cut(rest, ";")
 		switch sub {
 		case "C":
+			// Every C the stream delivers gets one mark, even when it starts no
+			// block: the terminal flow records one prompt-row capture per C
+			// from its own mirror, and the two queues are paired in order.
+			markID := -1
+			defer func() { t.recordMark(markID) }()
 			// Nushell emits its own bare OSC 133;C right after the hook's
 			// 133;C (the hook's carries no line either, so it started the block
 			// from NetcattyExec). Starting a second, empty command there would
@@ -463,7 +513,7 @@ func (t *Tap) dispatchOSC() {
 			if t.pendingCwd != "" {
 				cwd = t.pendingCwd
 			}
-			t.store.Begin(model.Cmd{Line: line, Typed: typed, Cwd: cwd})
+			markID = t.store.Begin(model.Cmd{Line: line, Typed: typed, Cwd: cwd})
 			t.pendingTyped = ""
 			t.pendingCwd = ""
 		case "D":
@@ -514,6 +564,10 @@ func decode(s string) string {
 	return s
 }
 
+// parseNetcattyExec reads the hook's private command marker: the working
+// directory and the line as typed, both base64url. The shell the marker names
+// is validated but not returned: the prompt row is the shell's own drawing,
+// captured from the screen, so its name is not needed to style anything.
 func parseNetcattyExec(rest string) (cwd, command string, ok bool) {
 	const prefix = "NetcattyExec;"
 	if !strings.HasPrefix(rest, prefix) {

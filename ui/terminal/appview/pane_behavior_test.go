@@ -25,8 +25,16 @@ func TestTailFromKeepsOnlyRecordedPromptBoundaryOrRunningCommand(t *testing.T) {
 	if got := tailFrom(lines, 3, Tail{PromptRow: 3, PromptRowKnown: true}); got != 3 {
 		t.Fatalf("idle tail starts at %d, want recorded row 3", got)
 	}
-	if got := tailFrom(lines, 3, Tail{Running: "git status", PromptRowKnown: true}); got != 1 {
-		t.Fatalf("running tail starts at %d, want 1", got)
+	// While a command runs the live area starts at the recorded prompt row,
+	// which is where the finished block's captured prompt band starts, so the
+	// band replaces rows already on screen and nothing moves at OSC 133;D.
+	if got := tailFrom(lines, 3, Tail{Running: "git status", PromptRow: 1, PromptRowKnown: true}); got != 1 {
+		t.Fatalf("running tail starts at %d, want the prompt row 1", got)
+	}
+	// The echoed command's row is the fallback for a boundary that does not
+	// name this replay.
+	if got := tailFrom(lines, 3, Tail{Running: "git status", PromptRow: 9, PromptRowKnown: true}); got != 1 {
+		t.Fatalf("running tail with a stale boundary starts at %d, want the echo row 1", got)
 	}
 }
 
@@ -277,7 +285,11 @@ func TestPaneKeepsEmptyPromptRunThenRendersFinishedCommandOnce(t *testing.T) {
 
 	tester.Frame()
 	text := strings.Join(tester.Texts(), "\n")
-	if got := strings.Count(text, "PS C:/work> echo hi"); got != 1 {
+	// The block has no captured prompt rows (it was begun directly on the
+	// store, with no shell mark), so its prompt row is the typed line alone.
+	// The app no longer invents a prompt from the shell name: the real prompt
+	// is captured from the screen (see Pane's PromptRows hook).
+	if got := strings.Count(text, "echo hi"); got != 1 {
 		t.Fatalf("command echo rendered %d times, want 1: %q", got, text)
 	}
 	outputs := 0

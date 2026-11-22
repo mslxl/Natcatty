@@ -29,6 +29,7 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/terminal/appview"
 	terminaleffects "github.com/mslxl/natcatty/ui/terminal/effects"
+	terminalsurface "github.com/mslxl/natcatty/ui/terminal/surface"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
@@ -337,8 +338,9 @@ type Surface struct {
 	focused          bool
 	focusPending     bool
 	focusInitialized bool
-	focusManaged     bool
-	focusEpoch       uint64
+
+	focusManaged bool
+	focusEpoch   uint64
 	// focusRetryFrames covers the short native-window focus transition when a
 	// Local Terminal is opened from Vault or a work Tab becomes visible. It is
 	// deliberately bounded; steady frames never keep calling Focus.
@@ -404,6 +406,13 @@ func New(session *appsession.Session, optionList ...Option) (*Surface, error) {
 	}
 	surface.flowCursor, surface.flowBlink = surface.terminalCursor()
 	surface.flow = newTerminalFlow(session, options.Redraw)
+	// The rows this app draws itself (the live grid, a block's prompt and plain
+	// cells, a lens view) are terminal text, so they use the terminal's own
+	// configured font. A Surface with no font option reports the empty font,
+	// which resets the shared setting to the fallback.
+	font := surface.terminalFont()
+	terminalsurface.SetTerminalFont(font.Family, font.Size)
+	surface.flow.setPromptTheme(surface.terminalTheme())
 	if options.LogDefaults != nil {
 		if defaults := options.LogDefaults(); validLogFormat(defaults.Format) {
 			surface.logFormat = defaults.Format
@@ -616,6 +625,10 @@ func (s *Surface) SetTerminalFont(family string, size float32) {
 	if s.observer != nil {
 		s.observer.SetFont(font)
 	}
+	// The app's own terminal rows (live grid, finished command rows, lens
+	// views) follow the same setting, so text does not change font when it
+	// moves out of the terminal plugin's grid into a block.
+	terminalsurface.SetTerminalFont(family, size)
 }
 
 // SetTerminalCursor applies a cursor shape and blink change to a live terminal
@@ -1011,6 +1024,9 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 		s.flowCount, s.flowLastID, s.flowLastExit = len(blocks), lastID, lastExited
 		images := s.flow.imagesSnapshot()
 		terminalTheme := s.terminalTheme()
+		// Prompt rows are captured from the mirror between frames; the scheme
+		// in force is the one the shell is drawing with now.
+		s.flow.setPromptTheme(terminalTheme)
 		promptRow, promptRowKnown := s.flow.promptBoundary(appview.Size{Cols: cols, Rows: rows})
 		if s.options.RawTerminal != nil && s.options.RawTerminal() {
 			promptRow, promptRowKnown = 0, false
@@ -1019,6 +1035,7 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 			PromptRow:          promptRow,
 			PromptRowKnown:     promptRowKnown,
 			PromptAfterCommand: s.flow.promptBoundaryAfterCommand(),
+			PromptPending:      s.flow.promptBoundaryPending(),
 		}
 		for _, block := range blocks {
 			if block.Exited {
@@ -1083,11 +1100,15 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 				// gets from Options.OpenLink: an archive name fills its
 				// extraction command, other file paths open nothing, and a
 				// URL opens in the browser.
-				OpenLink:  s.openPaneLink,
-				Hover:     &s.liveHover,
-				Focus:     focus,
-				Refocus:   flowRefocus,
-				KeepFocus: s.focused,
+				OpenLink: s.openPaneLink,
+				Hover:    &s.liveHover,
+				// A finished block shows the prompt and input the shell drew,
+				// captured at the command's OSC 133;C mark: the shell's own
+				// prompt, not one this app could only approximate.
+				PromptRows: s.flow.promptRowsFor,
+				Focus:      focus,
+				Refocus:    flowRefocus,
+				KeepFocus:  s.focused,
 				// A press on a finished command's row or Lens body must not
 				// leave the keyboard there. The block still selects text and
 				// its Native/Raw switch still works; the Session asks for the

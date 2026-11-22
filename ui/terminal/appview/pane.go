@@ -96,6 +96,13 @@ type Hooks struct {
 	// the pointer moves and reads it to underline the link. Nil keeps the
 	// underline off and nothing else.
 	Hover *Hover
+	// PromptRows returns the rows the shell drew for a finished block's prompt
+	// and its echoed input, exactly as the live grid had them (see PromptRows
+	// above). The flow captures them at the command's OSC 133;C mark, so a
+	// block's prompt is the shell's own — any PS1, starship or powerlevel10k —
+	// not one this app draws. Nil, or nil rows for a block, falls back to the
+	// typed line alone; a prompt is never invented.
+	PromptRows func(blockID int) [][]ui.Span
 }
 
 // Hover is the link the pointer with Command held rests over: what the link
@@ -207,6 +214,11 @@ func Pane(c *ui.Context, store *model.Store, engine *lens.Engine, term *terminal
 		}
 		col.Children(func() {
 			renderHistory := tail.PromptRowKnown
+			// The captured prompt rows were drawn on the terminal's background, so
+			// they are given it back here: without it terminal-coloured text can sit
+			// on a page background of the opposite lightness, the way a program's
+			// output never does (the live grid always carries the terminal fill).
+			termFG, termBG := TermColors(c, theme)
 			for i := range blocks {
 				// A command that is still running lives in the terminal: its output is
 				// the live screen below, so a cell for it would show the same bytes
@@ -221,9 +233,21 @@ func Pane(c *ui.Context, store *model.Store, engine *lens.Engine, term *terminal
 				// inset or the prompt jumps left and up the moment the command ends
 				// (Terminal draws its grid and its blocks on one left edge). The block's
 				// own 10 px body padding then sits inside it, as `.sf-block`'s does.
-				cell := ui.Column(c).Padding(livePad, 0, 0, livePad).FillWidth()
+				cell := ui.Column(c).FillWidth()
 				cell.Children(func() {
-					blockview.RenderCommand(c, store, engine, &blocks[i], viewport, onCopy)
+					// The band replaces the live grid's own rows: it carries the
+					// grid's top inset, and the body starts one cell row below the
+					// last row the grid showed (as the output did in the terminal).
+					// A block with no prompt rows at all keeps the inset on its own
+					// body instead.
+					bodyPad := float32(livePad)
+					if renderCommandPrompt(c, &blocks[i], hooks, termFG, termBG) {
+						bodyPad = 0
+					}
+					body := ui.Column(c).Padding(bodyPad, 0, 0, livePad).FillWidth()
+					body.Children(func() {
+						blockview.RenderCommand(c, store, engine, &blocks[i], viewport, onCopy)
+					})
 				})
 			}
 			Live(c, frame, showCursor, term, size, images, followState, ripple, bell, tail, cursor, theme, viewport.H, renderHistory && len(blocks) > 0, hooks)
@@ -237,6 +261,47 @@ func Pane(c *ui.Context, store *model.Store, engine *lens.Engine, term *terminal
 // livePad is the pane's padding around its rows: the terminal's background reaches
 // it, so the ripple's coordinates include it too.
 const livePad = 6
+
+// renderCommandPrompt draws the rows a finished command's prompt and echoed
+// input occupied in the live grid, above its block. They are the captured
+// screen rows (Hooks.PromptRows), painted by the live grid's own cell painter at
+// the same cell size, so nothing moves when the command leaves the live screen:
+// the prompt keeps its glyphs, colours, wrapping and columns. The rows sit on
+// the terminal's background and are inset by the same livePad as the live grid,
+// so they look exactly as they did in the terminal. Without a capture only the
+// typed line is drawn as one cell row; this app never invents a prompt, which
+// could not match the shell's own (starship, powerlevel10k, any PS1). It
+// reports whether it drew any rows: without a band the block body carries the
+// top inset instead.
+func renderCommandPrompt(c *ui.Context, b *model.Block, hooks Hooks, termFG, termBG ui.Color) bool {
+	var rows [][]ui.Span
+	if hooks.PromptRows != nil {
+		rows = hooks.PromptRows(b.ID)
+	}
+	if len(rows) == 0 {
+		typed := b.Cmd.Typed
+		if typed == "" {
+			typed = b.Cmd.Line
+		}
+		if typed == "" {
+			return false
+		}
+		// A multi-line paste is several rows even without a capture.
+		for _, line := range strings.Split(typed, "\n") {
+			rows = append(rows, []ui.Span{{Text: strings.TrimSuffix(line, "\r"), Color: termFG}})
+		}
+	}
+	// The live grid's rows start livePad inside the pane, above the first one
+	// too: the band stands in for those rows, so it takes the same top inset.
+	// Without it the prompt jumped up 6 DIP the moment a command ended.
+	band := ui.Column(c).Gap(0).FillWidth().Background(termBG).Padding(livePad, livePad, 0, livePad)
+	band.Children(func() {
+		for _, row := range rows {
+			gridRow(c, row, cellFontSize)
+		}
+	})
+	return true
+}
 
 // Bell is one frame's bell: whether one rang this frame, and the cell the cursor was
 // at when it did. The cell is taken from a snapshot captured inside the terminal's
@@ -369,6 +434,14 @@ func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, 
 	if tail.PromptRowKnown && frame.sc != nil {
 		tail.PromptRow -= frame.sc.dropped
 	}
+	// Between OSC 133;D and the next prompt the finished command is in its
+	// block and still in the replay below it. Cropping at the cursor keeps
+	// only the line the prompt is about to be drawn on, so the command's
+	// rows do not flash twice and then vanish at the next OSC 133;B.
+	if tail.PromptPending && tail.Running == "" && tail.PromptRowKnown &&
+		frame.CursorRow > tail.PromptRow {
+		tail.PromptRow = frame.CursorRow
+	}
 	from := tailFrom(frame.Lines, frame.CursorRow, tail)
 	if frame.AltScreen() {
 		// A full-screen program (vim, less, nano, emacs, a pager) owns the
@@ -460,11 +533,9 @@ func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, 
 	}
 	// The pointer names a grid cell: the rows are painted one measured cell
 	// tall, so row and column arithmetic is exact whatever glyph the program
-	// wrote in a cell.
-	rowSize := float32(0)
-	if uiTheme := c.Theme(); uiTheme != nil {
-		rowSize = uiTheme.FontSize
-	}
+	// wrote in a cell. The size is the terminal's configured one, measured
+	// above with the family, not the UI theme's: the rows are terminal text.
+	rowSize := cellFontSize
 	// linkUnder resolves the link at a cell of the live rows: an OSC 8
 	// hyperlink, a URL printed as text, or, when the caller opens paths, a
 	// printed file path. It returns the cells the link spans, x0 up to x1, so
@@ -882,6 +953,11 @@ type Tail struct {
 	PromptRow          int
 	PromptRowKnown     bool
 	PromptAfterCommand bool
+	// PromptPending is true between a command's OSC 133;D and the next
+	// OSC 133;B. The live replay still holds the finished command below the
+	// block it has just entered, so the live area is cropped at the cursor
+	// until the shell draws the next prompt.
+	PromptPending bool
 }
 
 // tailFrom is the first screen row the live area shows: the prompt line when idle,
@@ -907,7 +983,17 @@ func tailFrom(lines [][]ui.Span, cursorRow int, tail Tail) int {
 	if !tail.PromptRowKnown {
 		return 0
 	}
+	// While a command runs, the live area starts at the prompt run's own row,
+	// which is where the finished block's captured prompt band starts: the
+	// band then replaces rows that were already on screen, so the prompt and
+	// the typed line stay put at OSC 133;D. The echoed command's row is only
+	// the fallback for a boundary that does not name this replay (a stale row
+	// above or below it). Cropping at the echoed row instead put the prompt
+	// back on screen at D, one row per prompt line below where it had been.
 	if tail.Running != "" {
+		if row := tail.PromptRow; row >= 0 && row < len(lines) && row <= cursorRow {
+			return row
+		}
 		for i := len(lines) - 1; i >= 0; i-- {
 			if strings.Contains(strings.TrimRight(at(i), " "), tail.Running) {
 				return i
@@ -1005,7 +1091,3 @@ func Screen(term *terminal.Terminal, size Size, showCursor bool) (lines [][]ui.S
 	f := ScreenFrame(term, size, showCursor)
 	return f.Lines, f.CursorRow, f.CursorCol
 }
-
-// PromptText is the prompt this app draws for a directory; the prompt row above
-// each block draws it (see model.PromptText), outside the block's chrome.
-func PromptText(dir string) string { return model.PromptText(dir) }

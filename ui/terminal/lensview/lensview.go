@@ -77,7 +77,7 @@ func Render(c *ui.Context, n lens.Node) {
 	// code expansion, editor buffers) is keyed by scope, and two unrelated trees
 	// must never share it. Callers that want a section click to survive the next
 	// frame pass a stable scope to RenderScoped.
-	renderWith(c, n, &renderState{scope: fmt.Sprintf("anon-%d", anonScope.Add(1))})
+	renderSelectable(c, n, &renderState{scope: fmt.Sprintf("anon-%d", anonScope.Add(1))})
 }
 
 // anonScope numbers the scopes Render hands out.
@@ -97,7 +97,29 @@ type Sink func(lens.Event)
 
 // RenderInto renders a view and reports the events its nodes emit through sink.
 func RenderInto(c *ui.Context, n lens.Node, scope string, sink Sink) {
-	renderWith(c, n, &renderState{scope: scope, sink: sink})
+	renderSelectable(c, n, &renderState{scope: scope, sink: sink})
+}
+
+// renderSelectable wraps the tree in the Selectable container that gives the
+// lens view a selection of its own: the Text and RichText descendants share
+// one paragraph selection, so a drag or the Copy gesture over the body copies
+// the rendered rows instead of landing on the terminal's cell selection. A
+// nested Selectable (Markdown, the raw cell) keeps its own scope. The wrapper
+// hands the body the terminal's configured font — the same comma-separated
+// family list and size the terminal plugin draws with — so a lens view is the
+// terminal's own text, not a widget in a different typeface.
+func renderSelectable(c *ui.Context, n lens.Node, rs *renderState) {
+	family, size := surface.TerminalFont()
+	if family == "" {
+		family = "monospace" // the terminal plugin's default when unset
+	}
+	col := ui.Column(c).Selectable().Font(family)
+	if size > 0 {
+		col = col.FontSize(size)
+	}
+	col.Children(func() {
+		renderWith(c, n, rs)
+	})
 }
 
 // renderState threads the scope and a content-derived key through one tree walk.
@@ -498,8 +520,16 @@ func styled(c *ui.Context, e ui.Element, style string) ui.Element {
 	return e
 }
 
-// monoFamily is Terminal's --mono stack, resolved to a family installed here.
-func monoFamily() string { return surface.MonoFamily() }
+// monoFamily is the terminal's configured family list, which the lens body's
+// monospace runs (code, tables, keys) draw with: they are terminal text, so
+// they follow the same font as the grid. With no terminal font reported, the
+// resolved --mono stack is the best available stand-in.
+func monoFamily() string {
+	if family, _ := surface.TerminalFont(); family != "" {
+		return family
+	}
+	return surface.MonoFamily()
+}
 
 // emit reports an event to the lens, when the caller supplied a sink.
 func emit(rs *renderState, action, value string) {

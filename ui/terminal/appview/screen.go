@@ -523,6 +523,66 @@ func (s *screen) sgrTokens(tokens []string) {
 	}
 }
 
+// PromptRows is what the shell actually drew for a command's prompt and its
+// echoed input, as the rows of the live grid: from the prompt run's first row
+// (the OSC 133;B boundary) through the row the cursor was on at OSC 133;C,
+// where the input's echo ends. Captured from the terminal mirror at the marker,
+// they are the shell's own prompt — starship, powerlevel10k, any PS1 — with its
+// glyphs, colours and wrapping, so a finished block can show what was on screen
+// instead of drawing a prompt of its own.
+//
+// promptRow is an absolute replay row, as CursorReplayRow reports it. The
+// cursor row at the marker is the fresh line accept-line opened for the
+// command's output; when it is blank it is dropped, because it was never a row
+// of the prompt. ok is false when the rows are not in this replay (the mirror
+// was not bound at the prompt, or the prompt's first rows have scrolled out of
+// the replay cap).
+func PromptRows(data []byte, size Size, promptRow int, theme *terminal.Theme) ([][]ui.Span, bool) {
+	if len(data) == 0 || size.Cols <= 0 || size.Rows <= 0 {
+		return nil, false
+	}
+	sc := parseScreenWithTheme(data, size.Cols, size.Rows, false, Cursor{}, theme)
+	lines, cursorRow, _ := sc.Lines()
+	from := promptRow - sc.dropped
+	if from < 0 {
+		// The prompt's first rows are above the replay's cap. Keep the rows
+		// that are here, from the top: they are still the shell's own drawing.
+		from = 0
+	}
+	if cursorRow < from || from >= len(lines) {
+		return nil, false
+	}
+	if cursorRow >= len(lines) {
+		cursorRow = len(lines) - 1
+	}
+	if cursorRow > from && rowBlank(lines[cursorRow]) {
+		cursorRow--
+	}
+	rows := make([][]ui.Span, 0, cursorRow-from+1)
+	for r := from; r <= cursorRow; r++ {
+		rows = append(rows, lines[r])
+	}
+	if len(rows) == 0 {
+		return nil, false
+	}
+	// Resolve the default foreground the way the live rows do: a prompt run
+	// with no SGR colour of its own is drawn in the terminal's text colour, not
+	// in whatever colour the UI theme happens to give unstyled text.
+	applyDefaults(rows, sc.colors.Foreground)
+	return rows, true
+}
+
+// rowBlank reports a row with no text on it. Its cells may still carry a
+// background; those are not prompt text.
+func rowBlank(spans []ui.Span) bool {
+	for _, sp := range spans {
+		if strings.TrimSpace(sp.Text) != "" {
+			return false
+		}
+	}
+	return true
+}
+
 // Lines renders the grid as spans, one slice per row, with the cursor cell drawn
 // as a reversed block; cursorRow/cursorCol say where it is.
 func (s *screen) Lines() (lines [][]ui.Span, cursorRow, cursorCol int) {
@@ -626,7 +686,10 @@ func (st sgr) span(text string, colors TerminalColors) ui.Span {
 			bg, hasBg = termFg, true
 		}
 	}
-	sp := ui.Span{Text: text, Font: "monospace"}
+	// The family is left to the grid's painter (spanFont), which uses the
+	// terminal's configured font: fixing "monospace" here made the rows draw
+	// with a different family than the terminal plugin, and every column moved.
+	sp := ui.Span{Text: text}
 	if hasFg {
 		col := fg
 		if st.dim {

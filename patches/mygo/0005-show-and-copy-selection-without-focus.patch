@@ -1,0 +1,177 @@
+diff --git a/ui/input.go b/ui/input.go
+index ac8a47b9..d1213f0b 100644
+--- a/ui/input.go
++++ b/ui/input.go
+@@ -307,6 +307,17 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, clicks i
+ 	defer rt.endDown()
+ 	chain := rt.hitChain(x, y)
+ 	rt.setHover(chain)
++	// A primary press outside the container of the selection ends it, as a
++	// click beside selected text does. The selection shows while it exists
++	// (see textSelectionVisible), so it must not outlive the press that
++	// moves on: the app may hand the focus to the control under the pointer,
++	// as a terminal pane does for its live screen.
++	if button == 0 && rt.selection.scope != 0 && !slices.ContainsFunc(chain, func(id uint64) bool {
++		s := rt.states[id]
++		return s != nil && (s.id == rt.selection.scope || s.textScope == rt.selection.scope)
++	}) {
++		rt.selection = textSelection{}
++	}
+ 	rt.pressDragger = 0
+ 	if len(chain) > 0 {
+ 		rt.downs = append(rt.downs, chain[0])
+@@ -382,8 +393,14 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, clicks i
+ 	target.pressPending = true
+ 	target.pressX, target.pressY = target.local(x, y)
+ 	target.drag.reset(rt.now(), x, y)
+-	if button == 0 && rt.pressTextSelection(target, x, y, mods, clicks) {
+-		return
++	if button == 0 {
++		if rt.pressTextSelection(target, x, y, mods, clicks) {
++			return
++		}
++		// A control or excluded text inside the container keeps its own
++		// interaction, and the container's selection ends here as it would on
++		// a press outside it.
++		rt.selection = textSelection{}
+ 	}
+ 	if target.editor != nil {
+ 		target.editor.pressMods = mods
+@@ -739,6 +756,12 @@ func (rt *engine) keyDownPhysical(mods Modifiers, key, physical Key, repeat bool
+ 		// Windows, leaves it rather than pasting a second time.
+ 		return true
+ 	}
++	// The focus may have left a selectable paragraph since the drag, and its
++	// Copy key must still copy the selection the user sees.
++	if !rt.claimed(k) && k.mods == Cmd && k.key == KeyC && rt.copyTextSelection() {
++		rt.requestFrame()
++		return false
++	}
+ 	if s := rt.states[rt.focused]; s != nil && s.flags&flagTypeSelect != 0 && !rt.claimed(k) {
+ 		// The first letters of a row of a list: they add up while typed
+ 		// quickly enough, with spaces once the first came.
+@@ -1007,6 +1030,13 @@ func (rt *engine) editEvent(ev editEvent) {
+ 			// A handler of text without styles pastes it as Paste does.
+ 			handled = rt.deliver(h, InputEvent{Kind: kind, Text: "paste"})
+ 		}
++		if !handled && kind == InputCommand && ev.text == "copy" && rt.copyTextSelection() {
++			// The focus takes the press but not Copy, as a terminal pane
++			// returning the keyboard to the shell: the menu's Copy still acts
++			// on the text selection the user dragged.
++			rt.requestFrame()
++			return
++		}
+ 		if handled {
+ 			rt.blinkStart = rt.now()
+ 		} else {
+@@ -1016,6 +1046,10 @@ func (rt *engine) editEvent(ev editEvent) {
+ 	}
+ 	s := rt.states[rt.focused]
+ 	if s == nil || s.editor == nil {
++		if ev.kind == editCommand && ev.text == "copy" && rt.copyTextSelection() {
++			rt.requestFrame()
++			return
++		}
+ 		rt.commandKey(ev, nil)
+ 		return
+ 	}
+diff --git a/ui/textselection.go b/ui/textselection.go
+index 5ead0356..9ab7b020 100644
+--- a/ui/textselection.go
++++ b/ui/textselection.go
+@@ -152,8 +152,13 @@ func (rt *engine) textSelectionVisible(s *state) bool {
+ 	if s.textScope == 0 {
+ 		return rt.focused == s.id
+ 	}
+-	f := rt.states[rt.focused]
+-	return s.textScope == rt.selection.scope && f != nil && f.textScope == s.textScope && f.flags&flagDisabled == 0
++	// The selection stays shown for as long as it exists, not only while the
++	// focus is in its container: an app may take the focus back for a control
++	// of its own after the press, as a terminal pane that keeps typing aimed
++	// at the shell, and the text the user dragged must not blank out under
++	// the pointer. A press outside the container clears the selection (see
++	// pointerDown).
++	return s.textScope == rt.selection.scope
+ }
+ 
+ func (rt *engine) syncTextSelection() {
+@@ -361,38 +366,52 @@ func (rt *engine) textSelectionCommand(s *state, name string) bool {
+ 			rt.selection = textSelection{scope: s.textScope, anchor: textPoint{first.id, 0}, caret: textPoint{last.id, last.editor.buf.n}}
+ 		}
+ 	case "copy":
+-		a, b, selected := rt.textSelectionBounds()
+-		if !selected || rt.selection.scope != s.textScope {
++		if rt.selection.scope != s.textScope {
+ 			break
+ 		}
+-		if sc := rt.states[s.textScope]; sc != nil && sc.copyData != nil {
+-			rt.host.writeClipboardData(sc.copyData(rt.selectedTexts(s.textScope)))
+-			break
++		rt.copyTextSelection()
++	}
++	return true // other editing commands cannot change selectable text
++}
++
++// copyTextSelection copies the current paragraph selection, in whichever
++// container it is, and reports whether there was one. The focus may have
++// moved out of the container since the drag — an app can take it back for a
++// control that keeps typing aimed elsewhere, as a terminal pane does — and
++// Edit › Copy and its shortcut still act on the selection the user sees.
++func (rt *engine) copyTextSelection() bool {
++	a, b, selected := rt.textSelectionBounds()
++	if !selected {
++		return false
++	}
++	scope := rt.selection.scope
++	if sc := rt.states[scope]; sc != nil && sc.copyData != nil {
++		rt.host.writeClipboardData(sc.copyData(rt.selectedTexts(scope)))
++		return true
++	}
++	var out strings.Builder
++	first, last := rt.textPointIndex(a), rt.textPointIndex(b)
++	wrote := false
++	for i := first; i <= last; i++ {
++		p := rt.texts[i]
++		if p.textScope != scope {
++			continue
+ 		}
+-		var out strings.Builder
+-		first, last := rt.textPointIndex(a), rt.textPointIndex(b)
+-		wrote := false
+-		for i := first; i <= last; i++ {
+-			p := rt.texts[i]
+-			if p.textScope != s.textScope {
+-				continue
+-			}
+-			from, to := 0, p.editor.buf.n
+-			if i == first {
+-				from = min(a.at, to)
+-			}
+-			if i == last {
+-				to = min(b.at, to)
+-			}
+-			if wrote {
+-				out.WriteByte('\n')
+-			}
+-			out.WriteString(p.editor.buf.slice(from, to))
+-			wrote = true
++		from, to := 0, p.editor.buf.n
++		if i == first {
++			from = min(a.at, to)
++		}
++		if i == last {
++			to = min(b.at, to)
+ 		}
+-		rt.host.writeClipboard(out.String())
++		if wrote {
++			out.WriteByte('\n')
++		}
++		out.WriteString(p.editor.buf.slice(from, to))
++		wrote = true
+ 	}
+-	return true // other editing commands cannot change selectable text
++	rt.host.writeClipboard(out.String())
++	return true
+ }
+ 
+ // selectedTexts returns the parts of paragraphs the selection of
