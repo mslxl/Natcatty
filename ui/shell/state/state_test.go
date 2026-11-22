@@ -506,6 +506,41 @@ func TestClosingTheLastTabShowsTheVault(t *testing.T) {
 	}
 }
 
+// TestOpenHostFailsClosedForRemovedProtocolsAndUnknownTransports proves a
+// record written by an older build, or hand-edited, is never reinterpreted as
+// plain SSH: no Session is opened and the shell reports the unsupported Host.
+func TestOpenHostFailsClosedForRemovedProtocolsAndUnknownTransports(t *testing.T) {
+	hosts := []domainvault.Host{
+		{ID: "old-local", Label: "local", Hostname: "ignored", Protocol: "local"},
+		{ID: "old-mosh", Label: "mosh", Hostname: "example.com", Port: 22, Protocol: "mosh"},
+		{ID: "old-et", Label: "et", Hostname: "example.com", Port: 22, Protocol: "et"},
+		{ID: "bad-transport", Label: "bad", Hostname: "example.com", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Transport: "quic"},
+	}
+	for _, host := range hosts {
+		t.Run(string(host.ID), func(t *testing.T) {
+			graph := newTestGraph(t)
+			err := graph.state.OpenHost(host)
+			if !errors.Is(err, ErrUnsupportedHost) {
+				t.Fatalf("OpenHost error = %v, want ErrUnsupportedHost", err)
+			}
+			if pending := graph.state.PendingConnections(); len(pending) != 0 {
+				t.Fatalf("pending connections = %q, want none", pending)
+			}
+			if graph.state.ProblemError() == nil {
+				t.Fatal("the shell did not record the unsupported Host")
+			}
+			graph.state.Flush()
+			if graph.state.TabCount() != 0 {
+				t.Fatalf("tabs = %d, want 0", graph.state.TabCount())
+			}
+			if len(graph.sessions) != 0 {
+				t.Fatalf("sessions = %d, want 0", len(graph.sessions))
+			}
+		})
+	}
+}
+
 func TestOpenHostAddsAnSSHTabOnTheNextFlush(t *testing.T) {
 	graph := newTestGraph(t)
 	host := domainvault.Host{
@@ -836,7 +871,8 @@ func TestOpenHostOpensAMoshHostWithTheMoshTransport(t *testing.T) {
 	graph := newTestGraph(t)
 	host := domainvault.Host{
 		ID: "host-mosh", Label: "roaming", Hostname: "mosh.example.com",
-		Port: 2222, Username: "alice", Protocol: domainvault.ProtocolMosh,
+		Port: 2222, Username: "alice", Protocol: domainvault.ProtocolSSH,
+		Transport:      domainvault.TransportMosh,
 		MoshServerPath: " /usr/local/bin/mosh-server ",
 	}
 	if err := graph.state.OpenHost(host); err != nil {
@@ -869,7 +905,8 @@ func TestOpenHostOpensAnETHostWithTheETTransport(t *testing.T) {
 	graph := newTestGraph(t)
 	host := domainvault.Host{
 		ID: "host-et", Label: "et", Hostname: "et.example.com",
-		Port: 2022, Username: "bob", Protocol: domainvault.ProtocolET, ETPort: 8737,
+		Port: 2022, Username: "bob", Protocol: domainvault.ProtocolSSH,
+		Transport: domainvault.TransportET, ETPort: 8737,
 	}
 	if err := graph.state.OpenHost(host); err != nil {
 		t.Fatalf("OpenHost: %v", err)

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	domainsync "github.com/mslxl/natcatty/domain/sync"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -131,6 +132,36 @@ func normalizeHostRecord(raw json.RawMessage) (json.RawMessage, error) {
 	} else {
 		encoded, _ := json.Marshal(groupID)
 		fields["groupId"] = encoded
+	}
+	// The protocol and transport are ordinary registers. Canonicalize them so
+	// the input spelling `transport: ssh` never becomes part of the CRDT state
+	// and a non-SSH protocol carries no dead transport. An unknown value is
+	// preserved; validation rejects it when the record is applied.
+	protocol, err := stringField(fields, "protocol")
+	if err != nil {
+		return nil, err
+	}
+	protocol = strings.ToLower(strings.TrimSpace(protocol))
+	if protocol == "" {
+		protocol = "ssh"
+	}
+	encodedProtocol, _ := json.Marshal(protocol)
+	fields["protocol"] = encodedProtocol
+	if protocol != "ssh" {
+		delete(fields, "transport")
+	} else if transport, err := stringField(fields, "transport"); err != nil {
+		return nil, err
+	} else {
+		switch strings.ToLower(strings.TrimSpace(transport)) {
+		case "", "ssh":
+			delete(fields, "transport")
+		case "mosh", "et":
+			encoded, _ := json.Marshal(strings.ToLower(strings.TrimSpace(transport)))
+			fields["transport"] = encoded
+		default:
+			encoded, _ := json.Marshal(strings.ToLower(strings.TrimSpace(transport)))
+			fields["transport"] = encoded
+		}
 	}
 	return json.Marshal(fields)
 }

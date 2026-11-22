@@ -45,6 +45,7 @@ func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainva
 		Port:                   normalized.Port,
 		Username:               normalized.Username,
 		Protocol:               normalized.Protocol,
+		Transport:              normalized.Transport,
 		Group:                  normalized.Group,
 		Tags:                   normalized.Tags,
 		Notes:                  normalized.Notes,
@@ -97,6 +98,7 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.Port = normalized.Port
 		host.Username = normalized.Username
 		host.Protocol = normalized.Protocol
+		host.Transport = normalized.Transport
 		host.Group = normalized.Group
 		host.Tags = normalized.Tags
 		host.Notes = normalized.Notes
@@ -251,8 +253,9 @@ func TestHostDetailsClearsInputCompatibilityWhenLeavingSSH(t *testing.T) {
 	state, _ := newTestState(t, repo)
 	state.BeginCreate()
 	form := state.Form()
-	form.Label = "local-shell"
-	form.Protocol = string(domainvault.ProtocolLocal)
+	form.Label = "console"
+	form.Hostname = "console.example.com"
+	form.Protocol = string(domainvault.ProtocolTelnet)
 	form.NewlineMode = string(modelterminal.NewlineLF)
 	form.BackspaceMode = string(modelterminal.BackspaceCtrlH)
 	form.LineEditingMode = string(modelterminal.LineEditingByte)
@@ -1100,14 +1103,16 @@ func TestNetworkDeviceModeIsSavedOnlyForSSH(t *testing.T) {
 	// save raw execution onto a Host whose transport cannot run it.
 	state.BeginCreate()
 	form = state.Form()
-	form.Label = "local"
-	form.Protocol = string(domainvault.ProtocolLocal)
+	form.Label = "roaming"
+	form.Hostname = "roaming.example.com"
+	form.Protocol = string(domainvault.ProtocolSSH)
+	form.Transport = string(domainvault.TransportMosh)
 	form.NetworkDevice = true
 	if err := state.Save(); err != nil {
-		t.Fatalf("Save local: %v", err)
+		t.Fatalf("Save Mosh Host: %v", err)
 	}
 	if last := repo.created[len(repo.created)-1]; last.DeviceType != domainvault.DeviceTypeDefault {
-		t.Fatalf("local Host device type = %q, want the default", last.DeviceType)
+		t.Fatalf("Mosh Host device type = %q, want the default", last.DeviceType)
 	}
 }
 
@@ -1140,7 +1145,37 @@ func TestBeginEditRestoresTheNetworkDeviceMode(t *testing.T) {
 	}
 }
 
-func TestMoshAndETSettingsAreSavedOnlyForTheirProtocol(t *testing.T) {
+// TestEditorPreservesAnUnsupportedTransportTillSaveRejectsIt proves opening a
+// record with an unknown transport does not rewrite it as plain SSH: the form
+// keeps the raw value, and Save reports it instead of persisting a change.
+func TestEditorPreservesAnUnsupportedTransportTillSaveRejectsIt(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "bad", Label: "bad", Hostname: "bad.example.com", Port: 22,
+		Protocol: domainvault.ProtocolSSH, Transport: "ssh2",
+	}}}
+	state, _ := newTestState(t, repo)
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEdit("bad") {
+		t.Fatal("BeginEdit did not open the Host")
+	}
+	if got := state.Form().Transport; got != "ssh2" {
+		t.Fatalf("form transport = %q, want the raw ssh2", got)
+	}
+	state.Form().Label = "renamed"
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if got := state.Problem(); got != ProblemProtocol {
+		t.Fatalf("problem = %q, want %q", got, ProblemProtocol)
+	}
+	if len(repo.updated) != 0 {
+		t.Fatalf("an unsupported transport was persisted: %+v", repo.updated)
+	}
+}
+
+func TestMoshAndETSettingsAreSavedOnlyForTheirTransport(t *testing.T) {
 	repo := &fakeHosts{}
 	state, _ := newTestState(t, repo)
 
@@ -1148,7 +1183,8 @@ func TestMoshAndETSettingsAreSavedOnlyForTheirProtocol(t *testing.T) {
 	form := state.Form()
 	form.Label = "build-box"
 	form.Hostname = "build.example.com"
-	form.Protocol = string(domainvault.ProtocolMosh)
+	form.Protocol = string(domainvault.ProtocolSSH)
+	form.Transport = string(domainvault.TransportMosh)
 	form.MoshServerPath = "/usr/local/bin/mosh-server"
 	// A hidden ET field must not leak into a Mosh Host.
 	form.ETPort = "8737"
@@ -1169,7 +1205,8 @@ func TestMoshAndETSettingsAreSavedOnlyForTheirProtocol(t *testing.T) {
 	form = state.Form()
 	form.Label = "et-box"
 	form.Hostname = "et.example.com"
-	form.Protocol = string(domainvault.ProtocolET)
+	form.Protocol = string(domainvault.ProtocolSSH)
+	form.Transport = string(domainvault.TransportET)
 	form.ETPort = "8737"
 	form.MoshServerPath = "/opt/mosh-server"
 	if err := state.Save(); err != nil {
@@ -1200,7 +1237,8 @@ func TestMoshAndETSettingsAreSavedOnlyForTheirProtocol(t *testing.T) {
 	form = state.Form()
 	form.Label = "bad-port"
 	form.Hostname = "bad.example.com"
-	form.Protocol = string(domainvault.ProtocolET)
+	form.Protocol = string(domainvault.ProtocolSSH)
+	form.Transport = string(domainvault.TransportET)
 	form.ETPort = "not-a-port"
 	if err := state.Save(); err != nil {
 		t.Fatalf("Save: %v", err)

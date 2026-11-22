@@ -162,6 +162,42 @@ func csvHostRow(group, label, hostname, protocol, port, username, proxyJump stri
 	}, ",")
 }
 
+// TestCSVURLSchemesNeverFallBackToSSH proves a removed or unknown URL scheme
+// in the Hostname cell is rejected instead of importing the endpoint as SSH.
+func TestCSVURLSchemesNeverFallBackToSSH(t *testing.T) {
+	for _, raw := range []string{
+		"mosh://mosh.example.test",
+		"et://et.example.test",
+		"local://local.example.test",
+		"ssh2://ssh2.example.test",
+		"rdp://rdp.example.test",
+	} {
+		text := strings.Join([]string{
+			strings.Join(CSVHeader(), ","),
+			csvHostRow("", "H", raw, "", "", "", ""),
+		}, "\r\n")
+		result := Parse(FormatCSV, text, Options{})
+		if len(result.Records) != 0 {
+			t.Errorf("%s: imported as %+v", raw, result.Records)
+		}
+		requireIssue(t, result, IssueUnsupportedProtocol)
+	}
+
+	// A supported scheme still fills the endpoint.
+	text := strings.Join([]string{
+		strings.Join(CSVHeader(), ","),
+		csvHostRow("", "H", "ssh://ops@ssh.example.test:2222", "", "", "", ""),
+	}, "\r\n")
+	result := Parse(FormatCSV, text, Options{})
+	if len(result.Issues) != 0 || len(result.Records) != 1 {
+		t.Fatalf("ssh:// issues = %+v, records = %+v", result.Issues, result.Records)
+	}
+	if got := result.Records[0]; got.Hostname != "ssh.example.test" ||
+		got.Username != "ops" || got.Port != 2222 || got.Protocol != "ssh" {
+		t.Fatalf("ssh:// record = %+v", got)
+	}
+}
+
 // TestCSVProxyJumpChainBindsEveryHopInOrder proves the exported ProxyJump
 // cell round-trips: hops are written closest-first and bind to the Hosts the
 // same file declares, including a chain of more than one hop.
@@ -300,15 +336,72 @@ func TestParseCSVRejectsUnknownProtocolInsteadOfCoercingToSSH(t *testing.T) {
 }
 
 func TestParseCSVReportsALocalShellSpecItCannotStore(t *testing.T) {
-	text := "Hostname,Protocol,LocalShell\nshell.example.test,local," +
+	text := "Hostname,Protocol,LocalShell\nshell.example.test,ssh," +
 		MarkerLocalShell + "%7B%22shell%22%3A%22pwsh%22%7D\n"
 	result := Parse(FormatCSV, text, Options{})
 	item := requireIssue(t, result, IssueUnsupportedEntry)
 	if item.Row != 2 || item.Field != "localshell" {
 		t.Fatalf("issue = %+v", item)
 	}
-	if len(result.Records) != 1 || result.Records[0].Protocol != "local" {
+	if len(result.Records) != 1 || result.Records[0].Protocol != "ssh" {
 		t.Fatalf("records = %+v", result.Records)
+	}
+}
+
+func TestParseCSVRejectsRemovedProtocolIDs(t *testing.T) {
+	text := "Hostname,Protocol,Port\n" +
+		"local.example.test,local,22\n" +
+		"mosh.example.test,mosh,22\n" +
+		"et.example.test,et,22\n"
+	result := Parse(FormatCSV, text, Options{})
+	if len(result.Records) != 0 {
+		t.Fatalf("removed protocol IDs imported as %+v", result.Records)
+	}
+	if got := countIssues(result, IssueUnsupportedProtocol); got != 3 {
+		t.Fatalf("unsupported-protocol issues = %d, want 3: %+v", got, result.Issues)
+	}
+}
+
+func TestParseCSVReadsTheTransportColumn(t *testing.T) {
+	text := "Hostname,Protocol,Transport\n" +
+		"mosh.example.test,ssh,mosh\n" +
+		"et.example.test,ssh,ET\n" +
+		"plain.example.test,ssh,ssh\n" +
+		"blank.example.test,ssh,\n" +
+		"telnet.example.test,telnet,mosh\n"
+	result := Parse(FormatCSV, text, Options{})
+	if len(result.Records) != 5 {
+		t.Fatalf("records = %+v, issues = %+v", result.Records, result.Issues)
+	}
+	for index, want := range []string{"mosh", "et", "", ""} {
+		if got := result.Records[index].Transport; got != want {
+			t.Errorf("record %d transport = %q, want %q", index, got, want)
+		}
+	}
+	// A transport on a non-SSH protocol is dead state and is cleared, not an
+	// import failure.
+	if got := result.Records[4].Transport; got != "" {
+		t.Errorf("telnet transport = %q, want empty", got)
+	}
+}
+
+func TestParseCSVRejectsAnUnknownTransport(t *testing.T) {
+	text := "Hostname,Protocol,Transport\nweb.example.test,ssh,quic\n"
+	result := Parse(FormatCSV, text, Options{})
+	item := requireIssue(t, result, IssueUnsupportedProtocol)
+	if item.Field != "transport" || item.Value != "quic" {
+		t.Fatalf("issue = %+v", item)
+	}
+	if len(result.Records) != 0 {
+		t.Fatalf("records = %+v, want none", result.Records)
+	}
+}
+
+func TestParseCSVWithoutATransportColumnMeansPlainSSH(t *testing.T) {
+	text := "Hostname,Protocol\nweb.example.test,ssh\n"
+	result := Parse(FormatCSV, text, Options{})
+	if len(result.Records) != 1 || result.Records[0].Transport != "" {
+		t.Fatalf("records = %+v, want a plain SSH Host", result.Records)
 	}
 }
 
@@ -728,19 +821,60 @@ func TestJSONJumpRefsSkipInvalidHostsWithoutShifting(t *testing.T) {
 // without an issue; the removed field is ignored and the Host data is intact.
 func TestJSONHostIgnoresTheRemovedTransportImplementation(t *testing.T) {
 	document := `{"kind":"netcatty.vault","version":1,"hosts":[
-		{"id":"beta","hostname":"beta.example.test","port":22,"protocol":"mosh","transportImplementation":"in_process"},
-		{"id":"stale","hostname":"stale.example.test","port":22,"protocol":"et","transportImplementation":"future_client"},
-		{"id":"inherit","hostname":"inherit.example.test","port":22,"protocol":"mosh"}
+		{"id":"ssh","hostname":"ssh.example.test","port":22,"protocol":"ssh","transportImplementation":"in_process"},
+		{"id":"mosh","hostname":"mosh.example.test","port":22,"protocol":"ssh","transport":"mosh","transportImplementation":"in_process"}
 	]}`
 	result := Parse(FormatNetcattyJSON, document, Options{})
-	if len(result.Records) != 3 || len(result.Issues) != 0 {
+	if len(result.Records) != 2 || len(result.Issues) != 0 {
 		t.Fatalf("records = %+v, issues = %+v", result.Records, result.Issues)
 	}
-	for index, want := range []string{"mosh", "et", "mosh"} {
-		if got := result.Records[index].Protocol; got != want {
-			t.Fatalf("record %d protocol = %q, want %q", index, got, want)
+	if got := result.Records[0].Transport; got != "" {
+		t.Fatalf("plain SSH transport = %q, want empty", got)
+	}
+	if got := result.Records[1].Transport; got != "mosh" {
+		t.Fatalf("Mosh transport = %q, want mosh", got)
+	}
+}
+
+func TestJSONHostRejectsRemovedProtocolIDs(t *testing.T) {
+	document := `{"kind":"netcatty.vault","version":1,"hosts":[
+		{"id":"local","hostname":"local.example.test","port":22,"protocol":"local"},
+		{"id":"mosh","hostname":"mosh.example.test","port":22,"protocol":"mosh"},
+		{"id":"et","hostname":"et.example.test","port":22,"protocol":"et"}
+	]}`
+	result := Parse(FormatNetcattyJSON, document, Options{})
+	if len(result.Records) != 0 {
+		t.Fatalf("removed protocol IDs imported as %+v", result.Records)
+	}
+	if got := countIssues(result, IssueUnsupportedProtocol); got != 3 {
+		t.Fatalf("unsupported-protocol issues = %d, want 3: %+v", got, result.Issues)
+	}
+}
+
+func TestJSONHostClearsATransportOnANonSSHHost(t *testing.T) {
+	document := `{"kind":"netcatty.vault","version":1,"hosts":[
+		{"id":"vnc","hostname":"desk.example.test","port":5901,"protocol":"vnc","transport":"mosh"}
+	]}`
+	result := Parse(FormatNetcattyJSON, document, Options{})
+	if len(result.Issues) != 0 {
+		t.Fatalf("issues = %+v", result.Issues)
+	}
+	if len(result.Records) != 1 {
+		t.Fatalf("records = %+v, want one", result.Records)
+	}
+	if got := result.Records[0].Transport; got != "" {
+		t.Fatalf("transport = %q, want it cleared for a non-SSH Host", got)
+	}
+}
+
+func countIssues(result Result, code IssueCode) int {
+	count := 0
+	for _, item := range result.Issues {
+		if item.Code == code {
+			count++
 		}
 	}
+	return count
 }
 
 func TestJSONHostCarriesTheNetworkDeviceMode(t *testing.T) {

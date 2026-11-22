@@ -27,13 +27,14 @@ const (
 )
 
 // csvHeader is the canonical Netcatty CSV header. Import accepts variants and
-// additional columns; export writes this exact order. VNC and VNCPassword are
-// appended after the original fourteen columns, so an older reader ignores
-// them and a file written by an older build still imports.
+// additional columns; export writes this exact order. VNC, VNCPassword, and
+// Transport are appended after the original fourteen columns, so an older
+// reader ignores them and a file written by an older build still imports.
+// Without the Transport column an SSH Host is read as plain SSH.
 var csvHeader = []string{
 	"Groups", "Label", "Tags", "Notes", "Hostname/IP", "Protocol",
 	"Port", "Username", "Password", "KeyPath", "Passphrase", "Proxy", "ProxyJump",
-	"LocalShell", "VNC", "VNCPassword",
+	"LocalShell", "VNC", "VNCPassword", "Transport",
 }
 
 // CSVHeader returns a copy of the canonical header.
@@ -382,32 +383,37 @@ func splitTags(raw string) []string {
 // parseTarget reads the hostname cell. It accepts a bare host, user@host,
 // host:port, [IPv6]:port, and ssh://, telnet://, or ssh://user@host:port
 // URLs. A recognized source protocol or username fills only the fields the
-// dedicated columns left empty.
-func parseTarget(raw string) (hostname, username string, port int, protocol string, ok bool) {
+// dedicated columns left empty. On failure code names the issue; an unknown
+// URL scheme is IssueUnsupportedProtocol rather than a bare host, so a value
+// such as mosh:// or rdp:// is never imported as SSH.
+func parseTarget(raw string) (hostname, username string, port int, protocol string, code IssueCode, ok bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return "", "", 0, "", false
+		return "", "", 0, "", IssueInvalidHostname, false
 	}
 
 	if strings.Contains(trimmed, "://") {
 		parsed, err := url.Parse(trimmed)
 		if err != nil || parsed.Hostname() == "" {
-			return "", "", 0, "", false
+			return "", "", 0, "", IssueInvalidHostname, false
 		}
 		host := parsed.Hostname()
 		if !validHostname(host) {
-			return "", "", 0, "", false
+			return "", "", 0, "", IssueInvalidHostname, false
 		}
 		value := 0
 		if parsed.Port() != "" {
 			var portOK bool
 			value, portOK = parsePort(parsed.Port())
 			if !portOK {
-				return "", "", 0, "", false
+				return "", "", 0, "", IssueInvalidPort, false
 			}
 		}
-		return host, parsed.User.Username(), value,
-			normalizeProtocol(strings.TrimSuffix(parsed.Scheme, ":")), true
+		protocol = normalizeProtocol(strings.TrimSuffix(parsed.Scheme, ":"))
+		if protocol == "" {
+			return "", "", 0, "", IssueUnsupportedProtocol, false
+		}
+		return host, parsed.User.Username(), value, protocol, "", true
 	}
 
 	rest := trimmed
@@ -418,16 +424,16 @@ func parseTarget(raw string) (hostname, username string, port int, protocol stri
 	if strings.HasPrefix(rest, "[") {
 		end := strings.IndexByte(rest, ']')
 		if end < 0 {
-			return "", "", 0, "", false
+			return "", "", 0, "", IssueInvalidHostname, false
 		}
 		hostname = rest[1:end]
 		if tail := rest[end+1:]; tail != "" {
 			if !strings.HasPrefix(tail, ":") {
-				return "", "", 0, "", false
+				return "", "", 0, "", IssueInvalidHostname, false
 			}
 			value, portOK := parsePort(tail[1:])
 			if !portOK {
-				return "", "", 0, "", false
+				return "", "", 0, "", IssueInvalidPort, false
 			}
 			port = value
 		}
@@ -441,9 +447,9 @@ func parseTarget(raw string) (hostname, username string, port int, protocol stri
 		}
 	}
 	if !validHostname(hostname) {
-		return "", "", 0, "", false
+		return "", "", 0, "", IssueInvalidHostname, false
 	}
-	return hostname, username, port, "", true
+	return hostname, username, port, "", "", true
 }
 
 // validHostname rejects empty, whitespace-containing, and control-character
@@ -496,6 +502,9 @@ func parseCSV(text string) Result {
 	// for the generic Password column above.
 	vncIdx := findExactHeader(headers, "vnc")
 	vncPasswordIdx := findExactHeader(headers, "vncpassword", "vnc password")
+	// A file written before SSH transports existed has no Transport column; an
+	// absent column means plain SSH.
+	transportIdx := findExactHeader(headers, "transport")
 	passwordIdx := findExactHeader(headers, "password", "pass", "passwd")
 	if passwordIdx < 0 {
 		passwordIdx = findHeader(headers, "password", "passwd")
@@ -527,11 +536,14 @@ func parseCSV(text string) Result {
 		record.Row = rowNumber
 		record.Source = "csv"
 
-		hostname, targetUser, targetPort, targetProtocol, ok := parseTarget(
+		hostname, targetUser, targetPort, targetProtocol, targetIssue, ok := parseTarget(
 			StripFormulaGuard(hostnameRaw))
 		if !ok {
+			if targetIssue == "" {
+				targetIssue = IssueInvalidHostname
+			}
 			result.Issues = append(result.Issues,
-				issue(IssueInvalidHostname, rowNumber, "hostname", hostnameRaw))
+				issue(targetIssue, rowNumber, "hostname", hostnameRaw))
 			result.Records = result.Records[:len(result.Records)-1]
 			continue
 		}
@@ -562,6 +574,21 @@ func parseCSV(text string) Result {
 		}
 		if record.Protocol == "" {
 			record.Protocol = "ssh"
+		}
+		if raw := strings.TrimSpace(cell(row, transportIdx)); raw != "" {
+			value, ok := normalizeTransport(raw)
+			if !ok {
+				result.Records = result.Records[:len(result.Records)-1]
+				result.Issues = append(result.Issues,
+					issue(IssueUnsupportedProtocol, rowNumber, "transport", raw))
+				continue
+			}
+			record.Transport = value
+		}
+		if record.Protocol != "ssh" {
+			// A transport belongs to an SSH Host. Another protocol clears it
+			// rather than saving a setting its Session never reads.
+			record.Transport = ""
 		}
 		if portRaw := strings.TrimSpace(cell(row, portIdx)); portRaw != "" {
 			value, portOK := parsePort(portRaw)
@@ -641,15 +668,17 @@ func mergeKey(record Record) string {
 	if protocol == "" {
 		protocol = "ssh"
 	}
+	transport := record.Transport
+	if protocol != "ssh" {
+		transport = ""
+	}
 	parts := []string{
 		protocol,
+		transport,
 		strings.ToLower(record.Hostname),
 		itoa(record.Port),
 		strings.ToLower(record.Username),
 		normalizeGroup(record.Group),
-	}
-	if protocol == "local" {
-		parts = append(parts, strings.ToLower(strings.TrimSpace(record.Label)))
 	}
 	return strings.Join(parts, "\x1f")
 }

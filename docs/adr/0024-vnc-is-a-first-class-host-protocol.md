@@ -1,5 +1,8 @@
 # VNC is a first-class Host protocol
 
+> Partly superseded by ADR 0025: Mosh, EternalTerminal, and Local are no longer
+> Host protocols. VNC's own status and capabilities are unchanged.
+
 A Host may select VNC (`vnc`, port 5900) like SSH, Mosh, EternalTerminal,
 Telnet, or a Local shell. VNC has its own descriptor in
 `domain/model/protocol`, its own Session transport (`adapters/vnc`), and no

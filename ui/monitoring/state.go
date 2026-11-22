@@ -691,7 +691,7 @@ func (s *State) PickerHosts() []domainvault.Host {
 	query := strings.ToLower(strings.TrimSpace(s.pickerSearch))
 	out := make([]domainvault.Host, 0, len(s.hostItems))
 	for _, host := range s.hostItems {
-		if !host.Protocol.SupportsMonitoring() {
+		if !host.SupportsMonitoring() {
 			continue
 		}
 		if query == "" || hostMatches(host, query) {

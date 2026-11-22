@@ -52,7 +52,7 @@ func TestThisComputerLeadsTheSystemToolsHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].ID != thisComputerID || got[0].Protocol != domainvault.ProtocolLocal || got[1].ID != "h1" {
+	if len(got) != 2 || got[0].ID != thisComputerID || got[0].Protocol != "" || got[1].ID != "h1" {
 		t.Fatalf("hosts = %+v, want this computer, then the Vault's", got)
 	}
 }

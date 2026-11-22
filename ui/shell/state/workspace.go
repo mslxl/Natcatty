@@ -2205,6 +2205,9 @@ func (s *State) openDescriptor(ctx context.Context,
 			if !ok {
 				return nil, ErrHostUnavailable
 			}
+			if !host.ConnectionSupported() {
+				return nil, ErrUnsupportedHost
+			}
 			spec.HostID = host.ID
 			spec.Hostname = host.Hostname
 			spec.Port = host.Port
@@ -2234,6 +2237,9 @@ func (s *State) openDescriptor(ctx context.Context,
 			host, ok := s.resolveHost(ctx, descriptor.HostID)
 			if !ok {
 				return nil, ErrHostUnavailable
+			}
+			if !host.ConnectionSupported() {
+				return nil, ErrUnsupportedHost
 			}
 			plan := hostSessionTransport(host)
 			spec.HostID = host.ID
@@ -2272,6 +2278,9 @@ func (s *State) openDescriptor(ctx context.Context,
 			if !ok {
 				return nil, ErrHostUnavailable
 			}
+			if !host.ConnectionSupported() {
+				return nil, ErrUnsupportedHost
+			}
 			spec.HostID = host.ID
 			spec.Hostname = host.Hostname
 			spec.Port = host.Port
@@ -2301,6 +2310,9 @@ func (s *State) openDescriptor(ctx context.Context,
 			host, ok := s.resolveHost(ctx, descriptor.HostID)
 			if !ok {
 				return nil, ErrHostUnavailable
+			}
+			if !host.ConnectionSupported() {
+				return nil, ErrUnsupportedHost
 			}
 			plan := hostSessionTransport(host)
 			spec.HostID = host.ID

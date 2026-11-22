@@ -19,6 +19,7 @@ import (
 	"time"
 
 	domainsync "github.com/mslxl/natcatty/domain/sync"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
 // Trigger says what started a sync.
@@ -2367,6 +2368,12 @@ func decodePayloadBytes(data []byte) (Payload, error) {
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return Payload{}, err
+	}
+	// Canonicalize the SSH transport after decode so a peer that writes the
+	// input spelling "ssh" cannot leave a non-canonical value in the local
+	// payload. An unknown protocol or transport is left for validation.
+	for index := range payload.Hosts {
+		payload.Hosts[index] = domainvault.NormalizeHost(payload.Hosts[index])
 	}
 	return payload, nil
 }

@@ -58,7 +58,7 @@ func (o *sftpRemoteOpener) OpenRemote(ctx context.Context, hostID model.HostID, 
 	if err != nil {
 		return nil, err
 	}
-	if !host.Protocol.SupportsFileTransfer() {
+	if !host.SupportsFileTransfer() {
 		return nil, fmt.Errorf("app: %s Hosts do not support file transfer", host.Protocol)
 	}
 	password := ""

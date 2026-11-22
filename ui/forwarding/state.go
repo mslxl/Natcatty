@@ -188,7 +188,7 @@ func (s *State) RuleCount() int { return len(s.items) }
 func (s *State) Hosts() []domainvault.Host {
 	out := make([]domainvault.Host, 0, len(s.hostItems))
 	for _, host := range s.hostItems {
-		if host.Protocol.SupportsForwarding() {
+		if host.SupportsForwarding() {
 			out = append(out, host)
 		}
 	}

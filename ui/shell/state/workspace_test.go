@@ -1549,7 +1549,7 @@ func TestRestoreReopensMoshAndETPanesFromTheSavedHost(t *testing.T) {
 	graph := newWorkspaceGraph(t)
 	graph.hosts["host-mosh"] = domainvault.Host{
 		ID: "host-mosh", Hostname: "mosh.example.com", Port: 2222,
-		Username: "alice", Protocol: domainvault.ProtocolMosh,
+		Username: "alice", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportMosh,
 		MoshServerPath: "/usr/local/bin/mosh-server",
 	}
 	graph.repo.payload = payload
@@ -1583,7 +1583,7 @@ func TestRestoreReopensMoshAndETPanesFromTheSavedHost(t *testing.T) {
 	graph = newWorkspaceGraph(t)
 	graph.hosts["host-et"] = domainvault.Host{
 		ID: "host-et", Hostname: "et.example.com", Port: 2022,
-		Username: "bob", Protocol: domainvault.ProtocolET, ETPort: 8737,
+		Username: "bob", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET, ETPort: 8737,
 	}
 	graph.repo.payload = payload
 	graph.state.Restore(context.Background())
@@ -1609,7 +1609,7 @@ func TestRestoreGivesALegacyETPaneANewResumeKey(t *testing.T) {
 	graph := newWorkspaceGraph(t)
 	graph.hosts["host-et"] = domainvault.Host{
 		ID: "host-et", Hostname: "et.example.com", Port: 2022,
-		Username: "bob", Protocol: domainvault.ProtocolET, ETPort: 8737,
+		Username: "bob", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET, ETPort: 8737,
 	}
 	graph.repo.payload = domainworkspace.Payload{
 		Version: domainworkspace.PayloadVersion, ActiveTab: 0,
@@ -1651,7 +1651,7 @@ func TestRestoreETPaneFallsBackWhenLegacyServerRefusesReattach(t *testing.T) {
 	graph := newWorkspaceGraph(t)
 	graph.hosts["host-et"] = domainvault.Host{
 		ID: "host-et", Hostname: "et.example.com", Port: 2022,
-		Username: "bob", Protocol: domainvault.ProtocolET, ETPort: 8737,
+		Username: "bob", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET, ETPort: 8737,
 	}
 	graph.etResume.seed(resumeKey)
 	graph.factory.fail = func(spec appsession.StartSpec) error {
@@ -1703,7 +1703,7 @@ func TestFailedETPaneCloseClearsSavedCredentials(t *testing.T) {
 	graph := newWorkspaceGraph(t)
 	graph.hosts["host-et"] = domainvault.Host{
 		ID: "host-et", Hostname: "et.example.com", Port: 2022,
-		Username: "bob", Protocol: domainvault.ProtocolET, ETPort: 8737,
+		Username: "bob", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET, ETPort: 8737,
 	}
 	graph.etResume.seed(resumeKey)
 	graph.factory.fail = func(spec appsession.StartSpec) error {
@@ -1751,7 +1751,7 @@ func TestETSplitGetsItsOwnResumeKey(t *testing.T) {
 	graph := newWorkspaceGraph(t)
 	graph.hosts["host-et"] = domainvault.Host{
 		ID: "host-et", Hostname: "et.example.com", Port: 2022,
-		Username: "bob", Protocol: domainvault.ProtocolET, ETPort: 8737,
+		Username: "bob", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET, ETPort: 8737,
 	}
 	if err := graph.state.OpenHost(graph.hosts["host-et"]); err != nil {
 		t.Fatalf("OpenHost: %v", err)
@@ -1785,7 +1785,7 @@ func TestETDuplicateGetsItsOwnResumeKey(t *testing.T) {
 	graph := newWorkspaceGraph(t)
 	graph.hosts["host-et"] = domainvault.Host{
 		ID: "host-et", Hostname: "et.example.com", Port: 2022,
-		Username: "bob", Protocol: domainvault.ProtocolET, ETPort: 8737,
+		Username: "bob", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET, ETPort: 8737,
 	}
 	if err := graph.state.OpenHost(graph.hosts["host-et"]); err != nil {
 		t.Fatalf("OpenHost: %v", err)
@@ -1846,59 +1846,6 @@ func sendTransportOutput(t *testing.T, transport *fakeTransport, text string) {
 		t.Fatalf("the transport closed before %q could be delivered", text)
 	case <-time.After(2 * time.Second):
 		t.Fatalf("timed out delivering %q", text)
-	}
-}
-
-// TestRestoreResolvesASavedLocalHostsStartupCommand is the workspace half of
-// the Local Host fix: the descriptor names a saved Host, so the restored
-// Session keeps that association, runs its startup command once after the
-// shell's prompt, and never repeats it on later output.
-func TestRestoreResolvesASavedLocalHostsStartupCommand(t *testing.T) {
-	payload := domainworkspace.Payload{
-		Version:   domainworkspace.PayloadVersion,
-		ActiveTab: 0,
-		Tabs: []domainworkspace.RestoredTab{{
-			ID: "tab-local", Number: 1, Root: domainworkspace.NewPaneNode("pane-local"),
-		}},
-		Panes: []domainworkspace.RestoredPane{{
-			ID: "pane-local",
-			Session: domainworkspace.SessionDescriptor{
-				Kind: domainworkspace.SessionLocal, Label: "local-host",
-				Number: 1, HostID: "host-local",
-			},
-		}},
-	}
-	graph := newWorkspaceGraph(t)
-	graph.hosts["host-local"] = domainvault.Host{
-		ID: "host-local", Label: "local-host", Protocol: domainvault.ProtocolLocal,
-		StartupCommand: "echo restored",
-	}
-	graph.repo.payload = payload
-	graph.state.Restore(context.Background())
-	graph.flushUntil(t, "the restored local Pane", func() bool {
-		info, ok := graph.state.PaneInfoAt(0, "pane-local")
-		return ok && !info.Pending && info.Surface != nil
-	})
-
-	spec := graph.factory.lastSpec()
-	if spec.Kind != appsession.KindLocal || spec.HostID != "host-local" {
-		t.Fatalf("restored spec = %+v, want the saved Local Host association", spec)
-	}
-	if spec.StartupCommand != "echo restored" {
-		t.Fatalf("restored StartupCommand = %q, want the Host's command", spec.StartupCommand)
-	}
-
-	transport := graph.factory.transportAt(0)
-	sendTransportOutput(t, transport, "$ ")
-	waitTransportInput(t, transport, "echo restored\r")
-
-	before := graph.sessions[0].Snapshot().LastActivity
-	sendTransportOutput(t, transport, "later output")
-	waitFor(t, "the later output", func() bool {
-		return graph.sessions[0].Snapshot().LastActivity.After(before)
-	})
-	if got := strings.Count(transport.inputString(), "echo restored\r"); got != 1 {
-		t.Fatalf("the startup command ran %d times on the restored connection", got)
 	}
 }
 

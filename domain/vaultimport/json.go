@@ -29,16 +29,19 @@ type jsonGroup struct {
 }
 
 type jsonHost struct {
-	ID       string   `json:"id"`
-	Label    string   `json:"label"`
-	Hostname string   `json:"hostname"`
-	Port     int      `json:"port"`
-	Username string   `json:"username"`
-	Protocol string   `json:"protocol"`
-	Group    string   `json:"group"`
-	Tags     []string `json:"tags"`
-	Notes    string   `json:"notes"`
-	Pinned   bool     `json:"pinned"`
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Hostname string `json:"hostname"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Protocol string `json:"protocol"`
+	// Transport selects an SSH Host's Session transport. An absent value is
+	// plain SSH.
+	Transport string   `json:"transport"`
+	Group     string   `json:"group"`
+	Tags      []string `json:"tags"`
+	Notes     string   `json:"notes"`
+	Pinned    bool     `json:"pinned"`
 	// KeyPath, Passphrase, and Proxy are marked fields, exactly as in CSV.
 	KeyPath    string `json:"keyPath"`
 	Passphrase string `json:"passphrase"`
@@ -257,6 +260,21 @@ func parseJSON(text string) Result {
 		if protocol == "" {
 			protocol = "ssh"
 		}
+		transport := ""
+		if source.Transport != "" {
+			value, ok := normalizeTransport(source.Transport)
+			if !ok {
+				result.Issues = append(result.Issues,
+					issue(IssueUnsupportedProtocol, row, "transport", source.Transport))
+				continue
+			}
+			// A transport belongs to an SSH Host. Another protocol clears it,
+			// matching CSV and the domain normalizer, instead of saving a
+			// setting its Session never reads.
+			if protocol == "ssh" {
+				transport = value
+			}
+		}
 		record := Record{
 			Row:                    row,
 			Source:                 "json",
@@ -266,6 +284,7 @@ func parseJSON(text string) Result {
 			Username:               strings.TrimSpace(source.Username),
 			Port:                   source.Port,
 			Protocol:               protocol,
+			Transport:              transport,
 			Group:                  normalizeGroup(source.Group),
 			Tags:                   append([]string(nil), source.Tags...),
 			Notes:                  source.Notes,

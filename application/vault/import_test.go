@@ -618,40 +618,43 @@ func TestCommitImportRunsTheApplyBarrierOnlyAtTheStart(t *testing.T) {
 	}
 }
 
-// TestImportIgnoresTheRemovedTransportImplementation keeps an export written by
-// an older build importable: transportImplementation is no longer part of the
-// Host, so encoding/json ignores it and every record imports normally.
-func TestImportIgnoresTheRemovedTransportImplementation(t *testing.T) {
+// TestImportRejectsRemovedProtocolIDs pins the clean break: an export whose
+// Hosts still carry the removed protocol IDs imports no compatibility mapping.
+// The unsupported rows are reported and skipped; only the SSH Host is written.
+func TestImportRejectsRemovedProtocolIDs(t *testing.T) {
 	service, hosts, _, _, _ := newImportService(t)
 	document := `{"kind":"netcatty.vault","version":1,"hosts":[
-		{"id":"m","label":"mosh","hostname":"mosh.example.test","port":22,"protocol":"mosh","transportImplementation":"in_process"},
-		{"id":"e","label":"et","hostname":"et.example.test","port":22,"protocol":"et","transportImplementation":"future_client"},
+		{"id":"l","label":"local","hostname":"local.example.test","port":22,"protocol":"local"},
+		{"id":"m","label":"mosh","hostname":"mosh.example.test","port":22,"protocol":"mosh"},
+		{"id":"e","label":"et","hostname":"et.example.test","port":22,"protocol":"et"},
 		{"id":"s","label":"ssh","hostname":"ssh.example.test","port":22,"protocol":"ssh","transportImplementation":"in_process"}
 	]}`
 	preview, err := service.PreviewImport(context.Background(), document, PreviewImportOptions{})
 	if err != nil {
 		t.Fatalf("PreviewImport: %v", err)
 	}
+	unsupported := false
+	for _, issue := range preview.Issues {
+		if issue.Code == vaultimport.IssueUnsupportedProtocol {
+			unsupported = true
+		}
+	}
+	if !unsupported {
+		t.Fatalf("preview issues = %+v, want an unsupported-protocol report", preview.Issues)
+	}
 	if _, err := service.CommitImport(context.Background(), preview,
 		ImportCommitOptions{Merge: ImportMergeSkip}); err != nil {
 		t.Fatalf("CommitImport: %v", err)
 	}
 
-	if len(hosts.hosts) != 3 {
-		t.Fatalf("imported %d Hosts, want 3: %+v", len(hosts.hosts), hosts.hosts)
+	if len(hosts.hosts) != 1 {
+		t.Fatalf("imported %d Hosts, want only the SSH Host: %+v", len(hosts.hosts), hosts.hosts)
 	}
-	protocols := make(map[string]domainvault.Protocol, len(hosts.hosts))
-	for _, host := range hosts.hosts {
-		protocols[host.Hostname] = host.Protocol
+	if got := hosts.hosts[0].Hostname; got != "ssh.example.test" {
+		t.Fatalf("imported %q, want ssh.example.test", got)
 	}
-	for hostname, want := range map[string]domainvault.Protocol{
-		"mosh.example.test": domainvault.ProtocolMosh,
-		"et.example.test":   domainvault.ProtocolET,
-		"ssh.example.test":  domainvault.ProtocolSSH,
-	} {
-		if got := protocols[hostname]; got != want {
-			t.Fatalf("%s protocol = %q, want %q", hostname, got, want)
-		}
+	if got := hosts.hosts[0].Transport; got != domainvault.TransportPlain {
+		t.Fatalf("imported transport = %q, want plain SSH", got)
 	}
 }
 

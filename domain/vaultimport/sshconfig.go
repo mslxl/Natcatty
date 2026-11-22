@@ -313,7 +313,7 @@ func parseJumpSpecs(value string) []Jump {
 		if part == "" {
 			continue
 		}
-		hostname, username, port, _, ok := parseTarget(part)
+		hostname, username, port, _, _, ok := parseTarget(part)
 		if !ok {
 			continue
 		}

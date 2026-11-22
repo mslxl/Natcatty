@@ -38,6 +38,9 @@ func (o quakeSessionOpener) OpenHost(host domainvault.Host) (*appsession.Session
 	if o.sessions == nil {
 		return nil, quakeui.ErrNoSessions
 	}
+	if !host.ConnectionSupported() {
+		return nil, shellstate.ErrUnsupportedHost
+	}
 	return o.sessions.Open(context.Background(), shellstate.HostSessionSpec(host))
 }
 

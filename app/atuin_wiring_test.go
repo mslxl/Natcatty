@@ -275,25 +275,26 @@ func TestAtuinHostPolicyHostRefCoversSSHBootstrappedHosts(t *testing.T) {
 	}
 }
 
-// TestAtuinProbeProtocolCoversSSHBootstrappedHosts pins the protocol gate used
-// by the read-only channel: SSH, Mosh, and ET bootstrap over SSH and can be
-// probed; Telnet and Local cannot.
+// TestAtuinProbeProtocolCoversSSHBootstrappedHosts pins the effective-transport
+// gate used by the read-only channel: plain SSH, Mosh, and ET bootstrap over
+// SSH and can be probed; Telnet and VNC cannot.
 func TestAtuinProbeProtocolCoversSSHBootstrappedHosts(t *testing.T) {
 	cases := []struct {
-		protocol domainvault.Protocol
-		want     bool
+		name string
+		host domainvault.Host
+		want bool
 	}{
-		{protocol: domainvault.ProtocolSSH, want: true},
-		{protocol: domainvault.ProtocolMosh, want: true},
-		{protocol: domainvault.ProtocolET, want: true},
-		{protocol: domainvault.ProtocolTelnet, want: false},
-		{protocol: domainvault.ProtocolLocal, want: false},
-		{protocol: "", want: false},
+		{"ssh", domainvault.Host{Protocol: domainvault.ProtocolSSH}, true},
+		{"mosh", domainvault.Host{Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportMosh}, true},
+		{"et", domainvault.Host{Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET}, true},
+		{"blank protocol is ssh", domainvault.Host{}, true},
+		{"telnet", domainvault.Host{Protocol: domainvault.ProtocolTelnet}, false},
+		{"vnc", domainvault.Host{Protocol: domainvault.ProtocolVNC}, false},
 	}
 	for _, testCase := range cases {
-		if got := atuinProbeProtocol(testCase.protocol); got != testCase.want {
-			t.Errorf("atuinProbeProtocol(%q) = %v, want %v",
-				testCase.protocol, got, testCase.want)
+		if got := atuinProbeProtocol(testCase.host); got != testCase.want {
+			t.Errorf("%s: atuinProbeProtocol(%+v) = %v, want %v",
+				testCase.name, testCase.host, got, testCase.want)
 		}
 	}
 }

@@ -38,9 +38,10 @@ func TestRenderHostsUITour(t *testing.T) {
 	recent.LastConnectedAt = now - 60_000
 	recent.Tags = []string{"web", "nginx"}
 	mosh := host("m1", "staging-api", "Staging")
-	mosh.Protocol = domainvault.ProtocolMosh
-	local := domainvault.Host{ID: "l1", Label: "Local zsh", Protocol: domainvault.ProtocolLocal}
-	items := []domainvault.Host{pinned, recent, mosh, local,
+	mosh.Transport = domainvault.TransportMosh
+	et := host("e1", "build-box", "CI")
+	et.Transport = domainvault.TransportET
+	items := []domainvault.Host{pinned, recent, mosh, et,
 		host("d1", "prod-db-primary-with-a-very-long-name", "Production/Databases"),
 		host("d2", "prod-db-replica", "Production/Databases"),
 		host("w2", "prod-web-02", "Production"),

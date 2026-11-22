@@ -115,7 +115,7 @@ func bindCSVJumpChain(records []Record, owner int, raw string) ([]int, string, b
 // parseCSVJumpHop reads one OpenSSH jump host. Only SSH-family hops make sense
 // in a ProxyJump chain, so a URL naming another transport is rejected.
 func parseCSVJumpHop(value string) (Jump, bool) {
-	hostname, username, port, protocol, ok := parseTarget(value)
+	hostname, username, port, protocol, _, ok := parseTarget(value)
 	if !ok || (protocol != "" && protocol != "ssh") {
 		return Jump{}, false
 	}
@@ -190,11 +190,11 @@ func csvJumpFieldsMatch(record Record, hop Jump) bool {
 }
 
 // canServeAsCSVJump reports whether a record can be dialed as a jump host.
-// Mosh and ET sessions bootstrap over SSH, while telnet, serial, local shells,
-// and plugin transports cannot carry a ProxyJump hop.
+// Only an SSH Host can carry a ProxyJump hop; telnet, VNC, and an unknown
+// transport cannot.
 func canServeAsCSVJump(protocol string) bool {
 	switch protocol {
-	case "", "ssh", "mosh", "et":
+	case "", "ssh":
 		return true
 	default:
 		return false

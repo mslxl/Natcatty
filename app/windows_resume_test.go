@@ -166,7 +166,8 @@ func newResumeWindowGraph(t *testing.T, factory appsession.Factory) *windowGraph
 func etResumeHost() domainvault.Host {
 	return domainvault.Host{
 		ID: "host-et", Label: "et", Hostname: "et.example.com",
-		Port: 2022, Username: "bob", Protocol: domainvault.ProtocolET, ETPort: 8737,
+		Port: 2022, Username: "bob", Protocol: domainvault.ProtocolSSH,
+		Transport: domainvault.TransportET, ETPort: 8737,
 	}
 }
 

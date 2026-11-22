@@ -51,6 +51,10 @@ var ErrNoTextInserter = errors.New("shell: the focused terminal cannot insert te
 // which Session is missing; nothing is invented in its place.
 var ErrHostUnavailable = errors.New("shell: restored Host is unavailable")
 
+// ErrUnsupportedHost reports a Host whose protocol or transport this build
+// does not support. Connecting fails before a Session is created.
+var ErrUnsupportedHost = uiconnection.ErrUnsupportedHost
+
 // Surface is the terminal surface a Pane shows. The UI owns it and the
 // application owns the transport beneath it; the shell only renders and closes
 // it.
@@ -1039,6 +1043,13 @@ func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput
 	if s.sessions == nil || s.surfaces == nil {
 		return ErrNoSessions
 	}
+	plan := hostSessionTransport(host)
+	if plan.unsupported {
+		// Never dial a removed or unknown protocol as SSH. The record has to be
+		// edited before it can connect.
+		s.setProblem(ErrUnsupportedHost)
+		return ErrUnsupportedHost
+	}
 	label := host.Label
 	if label == "" {
 		label = host.Hostname
@@ -1046,7 +1057,6 @@ func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput
 	s.setProblem(nil)
 	s.pending = append(s.pending, label)
 
-	plan := hostSessionTransport(host)
 	spec := HostSessionSpec(host)
 	// The one-shot password is never stored in the workspace descriptor; it
 	// only travels into this Session's StartSpec.
@@ -1089,6 +1099,10 @@ func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (mode
 	if s.sessions == nil || s.surfaces == nil {
 		return "", ErrNoSessions
 	}
+	plan := hostSessionTransport(host)
+	if plan.unsupported {
+		return "", ErrUnsupportedHost
+	}
 	label := host.Label
 	if label == "" {
 		label = host.Hostname
@@ -1101,7 +1115,6 @@ func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (mode
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	plan := hostSessionTransport(host)
 	spec := HostSessionSpec(host)
 	resumeKey, x11 := spec.ResumeKey, spec.X11Forwarding
 	s.attachAutoLogin(ctx, &spec, host, "")
@@ -1183,6 +1196,9 @@ type hostTransportPlan struct {
 	// tmux carries the Host's opt-in auto-attach setting. Only a plain SSH
 	// Session may use it; Mosh and ET keep their own persistence.
 	tmux bool
+	// unsupported marks a Host whose protocol or transport this build cannot
+	// open. Callers fail closed instead of falling through to SSH.
+	unsupported bool
 }
 
 // newResumeKey returns a fresh opaque locator for an ET Session's saved
@@ -1201,16 +1217,13 @@ func (p hostTransportPlan) newResumeKey() string {
 // action without automatically retrying a dropped socket, matching the
 // original's SSH-only auto-reconnect.
 func hostSessionTransport(host domainvault.Host) hostTransportPlan {
-	// The protocol descriptor owns transport selection; this switch only
-	// builds the kind-specific start payload and restore descriptor.
-	switch host.Protocol.SessionTransport() {
-	case domainprotocol.TransportLocal:
-		// A saved local-shell Host opens a shell on this machine, exactly like
-		// the original's local Hosts. Its label is the Tab's connection label.
-		return hostTransportPlan{
-			kind:       appsession.KindLocal,
-			descriptor: domainworkspace.SessionLocal,
-		}
+	if !host.ConnectionSupported() {
+		return hostTransportPlan{unsupported: true}
+	}
+	// The Host resolves its effective transport: an SSH Host with Transport
+	// mosh or et selects that Session kind; this switch only builds the
+	// kind-specific start payload and restore descriptor.
+	switch host.SessionTransport() {
 	case domainprotocol.TransportTelnet:
 		cfg := domaintelnet.Config{Hostname: host.Hostname, Port: host.Port}.Normalized()
 		return hostTransportPlan{
@@ -1244,7 +1257,7 @@ func hostSessionTransport(host domainvault.Host) hostTransportPlan {
 		}
 	}
 	// A dropped SSH transport retries every five seconds under the original
-	// reason predicate. Local shells have no policy.
+	// reason predicate.
 	return hostTransportPlan{
 		kind:       appsession.KindSSH,
 		descriptor: domainworkspace.SessionSSH,

@@ -168,7 +168,7 @@ func TestResolveGroupDefaultsMergesAncestorsChildLast(t *testing.T) {
 	}
 }
 
-func TestApplyGroupDefaultsHostWinsAndLocalShellsDoNotInherit(t *testing.T) {
+func TestApplyGroupDefaultsHostWins(t *testing.T) {
 	defaults := GroupDefaults{
 		Username:         "deploy",
 		Port:             2222,
@@ -211,12 +211,6 @@ func TestApplyGroupDefaultsHostWinsAndLocalShellsDoNotInherit(t *testing.T) {
 	if effective.Algorithms == nil || len(effective.Algorithms.Ciphers) != 1 ||
 		effective.Algorithms.Ciphers[0] != "aes256-ctr" {
 		t.Fatalf("Algorithms = %+v, want the Host's own", effective.Algorithms)
-	}
-
-	local := ApplyGroupDefaults(Host{Protocol: ProtocolLocal}, defaults)
-	if local.Username != "" || local.IdentityID != "" || local.ProxyProfileID != "" ||
-		local.LegacyAlgorithms {
-		t.Fatalf("local shell inherited remote defaults: %+v", local)
 	}
 }
 
@@ -363,10 +357,6 @@ func TestNetworkProfileReferenceFollowsProxyProfileMergingRules(t *testing.T) {
 	if inherited.NetworkProfileID != "net-child" {
 		t.Fatalf("inherited reference = %q, want net-child", inherited.NetworkProfileID)
 	}
-	local := ApplyGroupDefaults(Host{Protocol: ProtocolLocal, Group: "prod/web"}, defaults)
-	if local.NetworkProfileID != "" {
-		t.Fatalf("a Local shell inherited a Network Profile: %q", local.NetworkProfileID)
-	}
 }
 
 func TestGroupJumpChainDefaultIsInheritedAsOneValue(t *testing.T) {
@@ -403,9 +393,6 @@ func TestGroupJumpChainDefaultIsInheritedAsOneValue(t *testing.T) {
 	inherited.HostChain.HostIDs[0] = "mutated"
 	if groups[1].HostChain.HostIDs[0] != "edge" {
 		t.Fatal("ApplyGroupDefaults aliased the group's chain slice")
-	}
-	if local := ApplyGroupDefaults(Host{Protocol: ProtocolLocal}, child); local.HostChain != nil {
-		t.Fatalf("a Local shell inherited a jump chain: %+v", local.HostChain)
 	}
 }
 
@@ -563,14 +550,18 @@ func TestGroupDefaultsInheritX11Forwarding(t *testing.T) {
 		t.Fatalf("legacy on = %+v, want it preserved without a group", legacyOn)
 	}
 
-	// X11 runs over SSH only: another transport never inherits it.
-	mosh := ApplyGroupDefaults(Host{Protocol: ProtocolMosh, Group: "prod/web"}, defaults)
-	if mosh.X11Forwarding || mosh.X11ForwardingSet {
-		t.Fatalf("Mosh Host inherited X11: %+v", mosh)
-	}
-	local := ApplyGroupDefaults(Host{Protocol: ProtocolLocal, Group: "prod/web"}, defaults)
-	if local.X11Forwarding || local.X11ForwardingSet {
-		t.Fatalf("Local shell inherited X11: %+v", local)
+	// X11 runs over plain SSH only: an SSH transport or another protocol never
+	// inherits it.
+	for _, host := range []Host{
+		{Protocol: ProtocolSSH, Transport: TransportMosh, Group: "prod/web"},
+		{Protocol: ProtocolSSH, Transport: TransportET, Group: "prod/web"},
+		{Protocol: ProtocolTelnet, Group: "prod/web"},
+		{Protocol: ProtocolVNC, Group: "prod/web"},
+	} {
+		effective := ApplyGroupDefaults(host, defaults)
+		if effective.X11Forwarding || effective.X11ForwardingSet {
+			t.Fatalf("%s/%s inherited X11: %+v", host.Protocol, host.Transport, effective)
+		}
 	}
 }
 

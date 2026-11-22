@@ -11,6 +11,20 @@ A saved target the user can connect to, identified by an opaque `HostID` and car
 connection settings, credentials references, and display metadata.
 _Avoid_: server, target, machine
 
+**Host Protocol**:
+What a Host's endpoint speaks: `ssh`, `telnet`, or `vnc`. It decides the default
+port, the credential bundle, and which Session kind opens. A blank value is the
+SSH default. A Local shell and the Mosh and EternalTerminal transports are not
+Host protocols.
+_Avoid_: connection type, mode
+
+**SSH Transport**:
+The way an SSH Host carries its interactive Session: plain SSH, Mosh, or
+EternalTerminal. It is meaningful only when the Host protocol is SSH and is
+empty for the other protocols. Mosh and ET reuse SSH authentication, routing,
+forwarding, and monitoring, but have no file transfer or X11 forwarding.
+_Avoid_: protocol, connection method
+
 **Host Group**:
 A user-defined grouping of hosts with shared display and connection defaults.
 In Go, `domain/vault.Group` is a Host Group with a stable ID and a

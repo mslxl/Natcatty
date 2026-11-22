@@ -618,6 +618,77 @@ func TestMCPWriteCatalogEveryWriteMapsOrIsExplicitlyUnavailable(t *testing.T) {
 	}
 }
 
+// TestMCPHostUpdatePreservesTheSSHTransport proves an unrelated edit over MCP
+// cannot turn a Mosh or ET Host into plain SSH. The update path starts from the
+// stored Host, so the transport is an ordinary preserved field.
+func TestMCPHostUpdatePreservesTheSSHTransport(t *testing.T) {
+	fixture := newMCPWriteFixture(t)
+	for _, transport := range []domainvault.Transport{
+		domainvault.TransportMosh,
+		domainvault.TransportET,
+	} {
+		host, err := fixture.vault.Create(fixture.ctx, domainvault.Draft{
+			Label: "transport host", Hostname: "transport.example", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Transport: transport,
+		})
+		if err != nil {
+			t.Fatalf("create %s Host: %v", transport, err)
+		}
+		updated := callMCPTool(t, fixture, "vault_hosts_update", map[string]any{
+			"hostId": string(host.ID), "label": "renamed " + string(transport),
+		})
+		requireMCPWriteOK(t, "vault_hosts_update", updated)
+		stored, err := fixture.vault.Get(fixture.ctx, host.ID)
+		if err != nil {
+			t.Fatalf("get %s Host: %v", transport, err)
+		}
+		if stored.Protocol != domainvault.ProtocolSSH || stored.Transport != transport {
+			t.Fatalf("MCP update stored %q/%q, want ssh/%q",
+				stored.Protocol, stored.Transport, transport)
+		}
+	}
+}
+
+// TestMCPHostCreateCarriesTheSSHTransport proves an MCP create request can
+// select Mosh or ET as an SSH transport instead of silently creating plain
+// SSH.
+func TestMCPHostCreateCarriesTheSSHTransport(t *testing.T) {
+	fixture := newMCPWriteFixture(t)
+	for _, transport := range []domainvault.Transport{
+		domainvault.TransportMosh,
+		domainvault.TransportET,
+	} {
+		created := callMCPTool(t, fixture, "vault_hosts_create", map[string]any{
+			"hosts": fmt.Sprintf(
+				`[{"hostname":"%s.example","label":"%s","protocol":"ssh","transport":"%s"}]`,
+				transport, transport, transport),
+		})
+		requireMCPWriteOK(t, "vault_hosts_create", created)
+	}
+	hosts, err := fixture.vault.List(fixture.ctx)
+	if err != nil {
+		t.Fatalf("list Hosts: %v", err)
+	}
+	want := map[string]domainvault.Transport{
+		"mosh.example": domainvault.TransportMosh,
+		"et.example":   domainvault.TransportET,
+	}
+	for _, host := range hosts {
+		transport, ok := want[host.Hostname]
+		if !ok {
+			continue
+		}
+		if host.Protocol != domainvault.ProtocolSSH || host.Transport != transport {
+			t.Fatalf("%s stored %q/%q, want ssh/%q",
+				host.Hostname, host.Protocol, host.Transport, transport)
+		}
+		delete(want, host.Hostname)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing Hosts: %+v", want)
+	}
+}
+
 func TestMCPWriteVaultNotesGroupsAndSnippetsExecute(t *testing.T) {
 	fixture := newMCPWriteFixture(t)
 

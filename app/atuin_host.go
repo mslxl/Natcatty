@@ -26,16 +26,13 @@ type atuinRemoteSource struct {
 
 var _ apphostatuin.RemoteSource = atuinRemoteSource{}
 
-// atuinProbeProtocol reports whether a saved Host's protocol can be probed over
-// its SSH bootstrap. SSH, Mosh, and ET Hosts all bootstrap over SSH, so the
-// separate read-only SFTP channel reaches the same files. Telnet has no SSH
-// bootstrap, so it cannot be probed and keeps the journaled capture path.
-func atuinProbeProtocol(protocol domainvault.Protocol) bool {
-	switch protocol {
-	case domainvault.ProtocolSSH, domainvault.ProtocolMosh, domainvault.ProtocolET:
-		return true
-	}
-	return false
+// atuinProbeProtocol reports whether a saved Host can be probed over its SSH
+// bootstrap. A plain SSH, Mosh, or ET Host all bootstrap over SSH, so the
+// separate read-only SFTP channel reaches the same files. Telnet and VNC have
+// no SSH bootstrap, so they cannot be probed and keep the journaled capture
+// path.
+func atuinProbeProtocol(host domainvault.Host) bool {
+	return host.UsesSSHAuth()
 }
 
 func (s atuinRemoteSource) OpenReadOnly(ctx context.Context, hostID model.HostID) (apphostatuin.RemoteFiles, error) {
@@ -46,8 +43,8 @@ func (s atuinRemoteSource) OpenReadOnly(ctx context.Context, hostID model.HostID
 	if err != nil {
 		return nil, err
 	}
-	if !atuinProbeProtocol(host.Protocol) {
-		return nil, fmt.Errorf("app: %s Hosts have no SFTP detection channel", host.Protocol)
+	if !atuinProbeProtocol(host) {
+		return nil, fmt.Errorf("app: %s Hosts have no SFTP detection channel", host.SessionTransport())
 	}
 	files, _, err := apptransfer.SelectRemote(ctx,
 		sftpRemoteConnector{opener: s.opener},

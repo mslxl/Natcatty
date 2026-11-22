@@ -1438,16 +1438,6 @@ func (msgs Messages) VaultHostEmpty() string {
 	return Catalog.Format(msgs.locale, "vaultHostEmpty", nil)
 }
 
-// VaultHostLocal says "Local shell"
-// in the language the app shows.
-func VaultHostLocal() string { return In(i18n.Locale()).VaultHostLocal() }
-
-// VaultHostLocal says "Local shell"
-// in the language of msgs.
-func (msgs Messages) VaultHostLocal() string {
-	return Catalog.Format(msgs.locale, "vaultHostLocal", nil)
-}
-
 // VaultHostFormCreateTitle says "New Host"
 // in the language the app shows.
 func VaultHostFormCreateTitle() string { return In(i18n.Locale()).VaultHostFormCreateTitle() }
@@ -1526,6 +1516,46 @@ func VaultHostProtocol() string { return In(i18n.Locale()).VaultHostProtocol() }
 // in the language of msgs.
 func (msgs Messages) VaultHostProtocol() string {
 	return Catalog.Format(msgs.locale, "vaultHostProtocol", nil)
+}
+
+// VaultHostTransport says "Transport"
+// in the language the app shows.
+func VaultHostTransport() string { return In(i18n.Locale()).VaultHostTransport() }
+
+// VaultHostTransport says "Transport"
+// in the language of msgs.
+func (msgs Messages) VaultHostTransport() string {
+	return Catalog.Format(msgs.locale, "vaultHostTransport", nil)
+}
+
+// VaultHostTransportSSH says "SSH"
+// in the language the app shows.
+func VaultHostTransportSSH() string { return In(i18n.Locale()).VaultHostTransportSSH() }
+
+// VaultHostTransportSSH says "SSH"
+// in the language of msgs.
+func (msgs Messages) VaultHostTransportSSH() string {
+	return Catalog.Format(msgs.locale, "vaultHostTransportSSH", nil)
+}
+
+// VaultHostTransportMosh says "Mosh"
+// in the language the app shows.
+func VaultHostTransportMosh() string { return In(i18n.Locale()).VaultHostTransportMosh() }
+
+// VaultHostTransportMosh says "Mosh"
+// in the language of msgs.
+func (msgs Messages) VaultHostTransportMosh() string {
+	return Catalog.Format(msgs.locale, "vaultHostTransportMosh", nil)
+}
+
+// VaultHostTransportET says "ET"
+// in the language the app shows.
+func VaultHostTransportET() string { return In(i18n.Locale()).VaultHostTransportET() }
+
+// VaultHostTransportET says "ET"
+// in the language of msgs.
+func (msgs Messages) VaultHostTransportET() string {
+	return Catalog.Format(msgs.locale, "vaultHostTransportET", nil)
 }
 
 // VaultHostGroup says "Host Group"
@@ -29490,6 +29520,18 @@ func CommandDescriptionSystemctl() string { return In(i18n.Locale()).CommandDesc
 // in the language of msgs.
 func (msgs Messages) CommandDescriptionSystemctl() string {
 	return Catalog.Format(msgs.locale, "commandDescriptionSystemctl", nil)
+}
+
+// ConnectionErrorUnsupportedHost says "This Host uses a protocol or transport this version does not support. Edit the Host before connecting."
+// in the language the app shows.
+func ConnectionErrorUnsupportedHost() string {
+	return In(i18n.Locale()).ConnectionErrorUnsupportedHost()
+}
+
+// ConnectionErrorUnsupportedHost says "This Host uses a protocol or transport this version does not support. Edit the Host before connecting."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorUnsupportedHost() string {
+	return Catalog.Format(msgs.locale, "connectionErrorUnsupportedHost", nil)
 }
 
 // ConnectionErrorVNCUnsupported says "This VNC server offers no security type Natcatty supports. Use an SSH route to encrypt and reach it."

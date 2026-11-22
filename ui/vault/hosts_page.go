@@ -1032,7 +1032,7 @@ func hostCard(c *ui.Context, s *vaultstate.State, opts options, host domainvault
 	}
 	card.ContextMenu(hostActions(s, opts, host, m, c))
 	card.Children(func() {
-		kit.HostAvatar(c, "", hostAvatarKind(host.Protocol), host.Label, 40)
+		kit.HostAvatar(c, "", hostAvatarKind(host), host.Label, 40)
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, host.Label).FontSize(kit.M(c).Font.Body).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
@@ -1076,7 +1076,7 @@ func hostRow(c *ui.Context, s *vaultstate.State, opts options, host domainvault.
 		if layout.HostViewMode == domainpreferences.HostViewTree {
 			ui.Box(c).Size(treeToggleSize, treeToggleSize).Shrink(0)
 		}
-		kit.HostAvatar(c, "", hostAvatarKind(host.Protocol), host.Label, 28)
+		kit.HostAvatar(c, "", hostAvatarKind(host), host.Label, 28)
 		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
 			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, host.Label).FontSize(kit.M(c).Font.Body).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
@@ -1084,7 +1084,7 @@ func hostRow(c *ui.Context, s *vaultstate.State, opts options, host domainvault.
 					kit.IconSized(c, icons.Pin, kit.M(c).Icon.Small).TextColor(t.Accent).Shrink(0)
 				}
 			})
-			ui.Text(c, hostAddress(host, m)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine().MinWidth(0)
+			ui.Text(c, hostAddress(host)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine().MinWidth(0)
 		})
 		if row.Hovered() && kit.IconButtonWith(c, icons.Pencil, m.VaultHostEdit(), kit.IconOptions{Role: kit.IconCard, Key: "edit"}).Clicked() {
 			s.BeginEdit(host.ID)
@@ -1130,20 +1130,20 @@ func hostActions(s *vaultstate.State, opts options, host domainvault.Host, m loc
 			s.Connect(host.ID)
 			c.Invalidate()
 		}
-		if opts.openSFTP != nil && host.Protocol.SupportsFileTransfer() &&
+		if opts.openSFTP != nil && host.SupportsFileTransfer() &&
 			(opts.sftpEnabled == nil || opts.sftpEnabled()) {
 			if menu.Item(m.VaultHostOpenSftp()).Chosen() {
 				opts.openSFTP(host)
 			}
 		}
-		if opts.openBrowser != nil && host.Protocol == domainvault.ProtocolSSH {
+		if opts.openBrowser != nil && host.SupportsForwarding() {
 			if menu.Item(m.VaultHostOpenBrowser()).Chosen() {
 				opts.openBrowser(host)
 			}
 		}
-		// A connection test performs an SSH handshake; a Telnet or Local Host
-		// has none to check.
-		if host.Protocol.UsesSSHAuth() {
+		// A connection test performs an SSH handshake; Telnet and VNC have
+		// none to check.
+		if host.UsesSSHAuth() {
 			if menu.Item(testLabel).Disabled(s.Testing(host.ID)).Chosen() {
 				s.Test(host.ID)
 				c.Invalidate()
@@ -1196,16 +1196,12 @@ func hostCardDetail(c *ui.Context, s *vaultstate.State, host domainvault.Host, m
 	case s.TestSucceeded(host.ID):
 		line(m.VaultHostTestSuccess(), t.Success)
 	default:
-		line(hostAddress(host, m), t.TextMuted)
+		line(hostAddress(host), t.TextMuted)
 	}
 }
 
-// hostAddress is the Host's user@host, as the original's card shows it, or
-// the local terminal's name.
-func hostAddress(host domainvault.Host, m locales.Messages) string {
-	if host.Protocol == domainvault.ProtocolLocal {
-		return m.VaultHostLocal()
-	}
+// hostAddress is the Host's user@host, as the original's card shows it.
+func hostAddress(host domainvault.Host) string {
 	address := host.Hostname
 	if host.Port != 0 && host.Port != 22 {
 		address = net.JoinHostPort(host.Hostname, strconv.Itoa(host.Port))

@@ -30,8 +30,8 @@ func TestRenderUITour(t *testing.T) {
 	}
 	hosts := &entityHosts{items: []domainvault.Host{
 		{ID: "h1", Label: "prod-web-01", Hostname: "10.0.1.11", Port: 22, Username: "deploy", Protocol: domainvault.ProtocolSSH, Group: "Production", Pinned: true},
-		{ID: "h2", Label: "staging-api", Hostname: "staging.example.com", Port: 22, Username: "ubuntu", Protocol: domainvault.ProtocolMosh, Group: "Staging"},
-		{ID: "h3", Label: "Local zsh", Protocol: domainvault.ProtocolLocal},
+		{ID: "h2", Label: "staging-api", Hostname: "staging.example.com", Port: 22, Username: "ubuntu", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportMosh, Group: "Staging"},
+		{ID: "h3", Label: "build-box", Hostname: "build.example.com", Port: 22, Username: "ci", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET},
 	}}
 	groups := &entityGroups{hosts: hosts}
 	proxies := &entityProxies{hosts: hosts, groups: groups}

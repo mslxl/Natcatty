@@ -199,9 +199,15 @@ func parseMobaSessionValue(value string) (Record, *Issue) {
 		}
 	}
 	for _, token := range tokens {
-		hostname, username, port, targetProtocol, ok := parseTarget(
+		hostname, username, port, targetProtocol, targetIssue, ok := parseTarget(
 			strings.TrimPrefix(token, "ssh:"))
 		if !ok {
+			if targetIssue == IssueUnsupportedProtocol {
+				return record, &Issue{
+					Severity: SeverityWarning, Code: IssueUnsupportedProtocol,
+					Field: "protocol", Detail: token,
+				}
+			}
 			continue
 		}
 		record.Hostname = hostname

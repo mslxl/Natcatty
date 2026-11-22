@@ -27,14 +27,93 @@ const (
 	ProtocolTelnet Protocol = "telnet"
 	// ProtocolVNC is a Host reached over the RFB protocol.
 	ProtocolVNC Protocol = "vnc"
-	// ProtocolLocal is a shell that runs on this machine.
-	ProtocolLocal Protocol = "local"
-	// ProtocolMosh is an SSH Host that swaps to Mosh after the bootstrap.
-	ProtocolMosh Protocol = "mosh"
-	// ProtocolET is an SSH Host reached through the in-process
-	// EternalTerminal transport.
-	ProtocolET Protocol = "et"
 )
+
+// Transport names the Session transport an SSH Host uses. It is meaningful
+// only when Protocol is ProtocolSSH; every other protocol clears it. The zero
+// value is plain SSH, so the field stays out of the JSON of the common Host.
+type Transport = domainprotocol.Transport
+
+const (
+	// TransportPlain is plain SSH. It is the zero value and is never persisted;
+	// the transport input spelling "ssh" canonicalizes to it.
+	TransportPlain Transport = ""
+	// TransportMosh is the Mosh transport bootstrapped over SSH.
+	TransportMosh = domainprotocol.TransportMosh
+	// TransportET is the EternalTerminal transport bootstrapped over SSH.
+	TransportET = domainprotocol.TransportET
+)
+
+// NormalizeTransport maps an input transport onto its canonical stored value.
+// The empty value and the transport input spelling "ssh" mean plain SSH. Mosh
+// and ET are recognized; any other value is returned lowercased and trimmed so
+// validation can reject it. A protocol other than SSH never keeps a transport.
+func NormalizeTransport(protocol Protocol, transport Transport) Transport {
+	if protocol != ProtocolSSH {
+		return TransportPlain
+	}
+	value := Transport(strings.ToLower(strings.TrimSpace(string(transport))))
+	switch value {
+	case TransportPlain, domainprotocol.TransportSSH:
+		return TransportPlain
+	case TransportMosh, TransportET:
+		return value
+	default:
+		return value
+	}
+}
+
+// normalizeProtocolTransport canonicalizes a (protocol, transport) pair. An
+// empty protocol is the SSH default; the transport is meaningful only for SSH.
+// It does not validate: an unknown protocol or transport is preserved so the
+// validation step rejects it.
+func normalizeProtocolTransport(protocol Protocol, transport Transport) (Protocol, Transport) {
+	protocol = Protocol(strings.ToLower(strings.TrimSpace(string(protocol))))
+	if protocol == "" {
+		protocol = ProtocolSSH
+	}
+	return protocol, NormalizeTransport(protocol, transport)
+}
+
+// HostCapabilities is the capability set resolved for one Host or Draft. It is
+// a value type so call sites never compare protocol names.
+type HostCapabilities struct {
+	SSHAuth      bool
+	FileTransfer bool
+	Forwarding   bool
+	Monitoring   bool
+	Proxy        bool
+	X11          bool
+	Plaintext    bool
+}
+
+func capabilitiesFor(protocol Protocol, transport Transport) HostCapabilities {
+	protocol, transport = normalizeProtocolTransport(protocol, transport)
+	descriptor, ok := descriptorFor(protocol, transport)
+	if !ok {
+		return HostCapabilities{}
+	}
+	return HostCapabilities{
+		SSHAuth:      descriptor.SSHAuth,
+		FileTransfer: descriptor.FileTransfer,
+		Forwarding:   descriptor.Forwarding,
+		Monitoring:   descriptor.Monitoring,
+		Proxy:        descriptor.Proxy,
+		X11:          descriptor.X11,
+		Plaintext:    descriptor.Plaintext,
+	}
+}
+
+// descriptorFor resolves the facts for a canonical protocol and transport.
+func descriptorFor(protocol Protocol, transport Transport) (domainprotocol.Descriptor, bool) {
+	if protocol != ProtocolSSH {
+		return protocol.descriptor()
+	}
+	if transport == TransportPlain {
+		return domainprotocol.Resolve(domainprotocol.SSH)
+	}
+	return domainprotocol.DescriptorForTransport(domainprotocol.Transport(transport))
+}
 
 // Limits keep a malformed Host from entering the Vault. They are generous
 // enough for real inventories and small enough to catch pasted garbage.
@@ -313,6 +392,11 @@ type Host struct {
 	Port     int          `json:"port"`
 	Username string       `json:"username"`
 	Protocol Protocol     `json:"protocol"`
+	// Transport selects the Session transport for an SSH Host: empty is plain
+	// SSH, "mosh" and "et" are the SSH-based transports. It is empty for every
+	// other protocol. Mosh and ET were never Host protocol IDs, so no record
+	// written by an older build is mapped onto this field.
+	Transport Transport `json:"transport,omitempty"`
 	// Group is the Host Group path, "" for the Vault root. It is derived from
 	// the group tree when a Host is read or written to a portable payload;
 	// storage keeps only GroupID. A legacy record written before IDs existed
@@ -416,11 +500,13 @@ type Host struct {
 	NewlineMode     modelterminal.NewlineMode     `json:"newlineBehavior,omitempty"`
 	BackspaceMode   modelterminal.BackspaceMode   `json:"backspaceBehavior,omitempty"`
 	LineEditingMode modelterminal.LineEditingMode `json:"lineEditingBehavior,omitempty"`
-	// MoshServerPath overrides the remote mosh-server binary for a Mosh Host.
-	// Empty uses the remote PATH. It is kept only for ProtocolMosh.
+	// MoshServerPath overrides the remote mosh-server binary for an SSH Host
+	// with TransportMosh. Empty uses the remote PATH. It is kept only for the
+	// Mosh transport.
 	MoshServerPath string `json:"moshServerPath,omitempty"`
-	// ETPort is the EternalTerminal server port for an ET Host. Zero means the
-	// 2022 default. It is kept only for ProtocolET.
+	// ETPort is the EternalTerminal server port for an SSH Host with
+	// TransportET. Zero means the 2022 default. It is kept only for the ET
+	// transport.
 	ETPort int `json:"etPort,omitempty"`
 	// LastConnectedAt records when the user last opened a Session to this
 	// Host, in Unix milliseconds. It is device-local telemetry: sync strips it
@@ -442,10 +528,13 @@ type Draft struct {
 	Port     int
 	Username string
 	Protocol Protocol
-	Group    string
-	Tags     []string
-	Notes    string
-	Pinned   bool
+	// Transport selects the SSH Session transport. Empty is plain SSH; mosh
+	// and ET are the SSH-based transports. Every other protocol clears it.
+	Transport Transport
+	Group     string
+	Tags      []string
+	Notes     string
+	Pinned    bool
 	// StartupCommand is typed after the shell is ready and after every
 	// reconnect. Empty means none.
 	StartupCommand string
@@ -498,10 +587,10 @@ type Draft struct {
 	BackspaceMode   modelterminal.BackspaceMode
 	LineEditingMode modelterminal.LineEditingMode
 	// MoshServerPath overrides the remote mosh-server binary. It is kept only
-	// for ProtocolMosh.
+	// for the Mosh transport.
 	MoshServerPath string
 	// ETPort is the EternalTerminal server port. Zero means the default and is
-	// kept only for ProtocolET.
+	// kept only for the ET transport.
 	ETPort int
 	// VNC is the viewer configuration. It is normalized for a VNC Host and
 	// cleared for every other protocol.
@@ -533,6 +622,7 @@ const (
 	FieldPort        Field = "port"
 	FieldUsername    Field = "username"
 	FieldProtocol    Field = "protocol"
+	FieldTransport   Field = "transport"
 	FieldGroup       Field = "group"
 	FieldTags        Field = "tags"
 	FieldNotes       Field = "notes"
@@ -605,10 +695,13 @@ func (e *ValidationError) Error() string {
 // blank form implies. It returns a *ValidationError when the input cannot be
 // saved.
 func NormalizeDraft(draft Draft) (Draft, error) {
-	draft.Protocol = Protocol(strings.ToLower(strings.TrimSpace(string(draft.Protocol))))
-	if draft.Protocol == "" {
-		draft.Protocol = ProtocolSSH
-	}
+	// Canonicalize the pair before any other rule runs: a blank protocol is
+	// SSH, the input "ssh" transport is plain SSH, and a non-SSH protocol
+	// clears the transport. Removed protocol IDs are preserved for validation
+	// to reject; there is no compatibility mapping.
+	draft.Protocol, draft.Transport = normalizeProtocolTransport(draft.Protocol, draft.Transport)
+	capabilities := capabilitiesFor(draft.Protocol, draft.Transport)
+	plainSSH := draft.Protocol == ProtocolSSH && draft.Transport == TransportPlain
 	draft.AuthMethod = HostAuthMethod(strings.ToLower(strings.TrimSpace(string(draft.AuthMethod))))
 	if draft.AuthMethod == "" {
 		draft.AuthMethod = HostAuthAuto
@@ -618,35 +711,35 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 		draft.SFTPFileProtocol = FileProtocolAuto
 	}
 	draft.DeviceType = NormalizeDeviceType(draft.DeviceType)
-	if draft.Protocol != ProtocolSSH {
-		// Raw network-device execution needs an SSH PTY; a Host that switched
-		// to another protocol must not keep a mode its transport cannot run.
+	if !plainSSH {
+		// Raw network-device execution needs a plain SSH PTY; Mosh, ET, and
+		// another protocol must not keep a mode their transport cannot run.
 		draft.DeviceType = DeviceTypeDefault
 	}
-	if draft.Protocol != ProtocolSSH || draft.DeviceType == DeviceTypeNetwork {
-		// tmux wraps an interactive POSIX login shell. A non-SSH protocol and
-		// a vendor CLI have no such shell, so a hidden control must not leave
-		// the preference on the Host record.
+	if !plainSSH || draft.DeviceType == DeviceTypeNetwork {
+		// tmux wraps an interactive POSIX login shell. A non-plain-SSH
+		// transport and a vendor CLI have no such shell, so a hidden control
+		// must not leave the preference on the Host record.
 		draft.AutoAttachTmux = false
 	}
 	draft.NewlineMode = modelterminal.NormalizeNewlineMode(draft.NewlineMode)
 	draft.BackspaceMode = modelterminal.NormalizeBackspaceMode(draft.BackspaceMode)
 	draft.LineEditingMode = modelterminal.NormalizeLineEditingMode(draft.LineEditingMode)
-	if draft.Protocol != ProtocolSSH {
-		// The translation is defined for SSH keyboard input. Telnet, Local,
-		// Mosh, and ET keep their own input behavior, so a Host that switched
-		// protocol must not carry a mode its Session never applies.
+	if !plainSSH {
+		// The translation is defined for plain SSH keyboard input. Mosh, ET,
+		// Telnet, and VNC keep their own input behavior, so a Host that
+		// switched transport must not carry a mode its Session never applies.
 		draft.NewlineMode = modelterminal.NewlineCR
 		draft.BackspaceMode = modelterminal.BackspaceDEL
 		draft.LineEditingMode = modelterminal.LineEditingCharacter
 	}
 	draft.MoshServerPath = strings.TrimSpace(draft.MoshServerPath)
-	if draft.Protocol != ProtocolMosh {
-		// A server path and an ET port belong to one protocol. Keeping them on
-		// another Host would surface a setting its transport never reads.
+	if draft.Transport != TransportMosh {
+		// A server path and an ET port belong to one transport. Keeping them
+		// on another Host would surface a setting its transport never reads.
 		draft.MoshServerPath = ""
 	}
-	if draft.Protocol != ProtocolET {
+	if draft.Transport != TransportET {
 		draft.ETPort = 0
 	}
 	if draft.Protocol == ProtocolVNC {
@@ -663,10 +756,10 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 		draft.VNC = nil
 		draft.VNCPassword = ""
 	}
-	if !draft.Protocol.UsesSSHAuth() {
-		// Telnet, VNC, and a Local shell never read the SSH credential bundle. Clear
-		// it here as well as in the editor: a Host saved from a legacy or
-		// imported draft must not keep credentials whose controls it hides.
+	if !capabilities.SSHAuth {
+		// Telnet and VNC never read the SSH credential bundle. Clear it here as
+		// well as in the editor: a Host saved from a legacy or imported draft
+		// must not keep credentials whose controls it hides.
 		draft.IdentityID = ""
 		draft.KeyID = ""
 		draft.AuthMethod = HostAuthAuto
@@ -680,24 +773,19 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	}
 	// Jump chains, proxies, and algorithm overrides describe the route to the
 	// Host, not the protocol spoken to it. Telnet keeps them because SSH jumps
-	// can carry a Telnet stream; only a Local shell, which dials nothing,
-	// drops the route. X11 and the file-transfer preference, by contrast, are
-	// target-side SSH features: a Telnet target has neither an SSH connection
-	// nor an SFTP subsystem, so the values would be unsaveable dead state.
-	if draft.Protocol == ProtocolLocal {
-		draft.HostChain = nil
-		draft.Proxy = nil
-		draft.ProxyProfileID = ""
-		draft.NetworkProfileID = ""
-		draft.LegacyAlgorithms = false
-		draft.SkipEcdsaHostKey = false
-		draft.Algorithms = nil
-	}
-	if !draft.Protocol.X11() {
+	// can carry a Telnet stream. X11 and the file-transfer preference, by
+	// contrast, are target-side SSH features: a Telnet target has neither an
+	// SSH connection nor an SFTP subsystem, so the values would be unsaveable
+	// dead state.
+	if !capabilities.X11 {
 		draft.X11Forwarding = false
 		draft.X11WarningAcknowledged = false
+		// X11ForwardingSet records that the user made an explicit choice. On a
+		// protocol or transport without X11 no such choice is visible, so the
+		// value must not survive to suppress a group default later.
+		draft.X11ForwardingSet = false
 	}
-	if !draft.Protocol.SupportsFileTransfer() {
+	if !capabilities.FileTransfer {
 		draft.SFTPFileProtocol = FileProtocolAuto
 		draft.SFTPSudo = false
 	}
@@ -741,6 +829,16 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	return draft, nil
 }
 
+// NormalizeHost canonicalizes the protocol and transport of a Host record read
+// from storage, a sync payload, or an import. It is deliberately narrow: it
+// does not re-run the draft rules, so editing an unrelated field never silently
+// changes a stored record. Unknown values are preserved for validation to
+// reject; there is no legacy protocol mapping.
+func NormalizeHost(host Host) Host {
+	host.Protocol, host.Transport = normalizeProtocolTransport(host.Protocol, host.Transport)
+	return host
+}
+
 // normalizeTOTPDraft canonicalizes the TOTP form input. An empty field keeps
 // any stored authenticator, and ClearTOTP wins over a submitted value.
 func normalizeTOTPDraft(draft Draft) (string, error) {
@@ -775,22 +873,20 @@ func NormalizeGroup(path string) string {
 }
 
 // MergeKey is the identity the Vault treats as a duplicate: two Hosts with
-// the same protocol, normalized address, recorded port, username, and Host
-// Group would connect to the same endpoint. The recorded port is compared, not
-// the effective one: only the Host Group can resolve an empty port, so a blank
-// port and an explicit protocol default are different endpoints when the group
-// supplies its own port. A local Host additionally needs its label, because
-// its address is the machine the app runs on.
+// the same protocol, SSH transport, normalized address, recorded port,
+// username, and Host Group would connect to the same endpoint. The recorded
+// port is compared, not the effective one: only the Host Group can resolve an
+// empty port, so a blank port and an explicit protocol default are different
+// endpoints when the group supplies its own port.
 func (h Host) MergeKey() string {
+	protocol, transport := normalizeProtocolTransport(h.Protocol, h.Transport)
 	parts := []string{
-		string(h.Protocol),
+		string(protocol),
+		string(transport),
 		strings.ToLower(h.Hostname),
 		strconv.Itoa(h.Port),
 		strings.ToLower(h.Username),
 		NormalizeGroup(h.Group),
-	}
-	if h.Protocol == ProtocolLocal {
-		parts = append(parts, strings.ToLower(strings.TrimSpace(h.Label)))
 	}
 	return strings.Join(parts, "\x1f")
 }
@@ -803,6 +899,7 @@ func (h Host) Validate() error {
 		Port:                   h.Port,
 		Username:               h.Username,
 		Protocol:               h.Protocol,
+		Transport:              h.Transport,
 		Group:                  h.Group,
 		Tags:                   h.Tags,
 		Notes:                  h.Notes,
@@ -832,29 +929,124 @@ func (h Host) Validate() error {
 // preference and the security acknowledgement must be present, so a record
 // created before the warning existed never enables forwarding silently.
 func (h Host) X11Enabled() bool {
-	return h.X11Forwarding && h.X11WarningAcknowledged
+	return h.Capabilities().X11 && h.X11Forwarding && h.X11WarningAcknowledged
 }
 
-// IsNetworkDevice reports whether the Host runs a vendor CLI over SSH and
-// therefore needs raw execution. A value written without SSH (an old or
-// hand-edited record) is not enough on its own.
+// Capabilities resolves the Host's effective capability set. An SSH Host with
+// a transport uses that transport's facts; the protocol name alone is never
+// enough to decide a feature.
+func (h Host) Capabilities() HostCapabilities {
+	return capabilitiesFor(h.Protocol, h.Transport)
+}
+
+// UsesSSHAuth reports whether the Host authenticates with the shared SSH
+// credential bundle.
+func (h Host) UsesSSHAuth() bool { return h.Capabilities().SSHAuth }
+
+// SupportsFileTransfer reports whether SFTP/SCP apply to the Host.
+func (h Host) SupportsFileTransfer() bool { return h.Capabilities().FileTransfer }
+
+// SupportsForwarding reports whether a Port Forwarding rule may target the
+// Host.
+func (h Host) SupportsForwarding() bool { return h.Capabilities().Forwarding }
+
+// SupportsMonitoring reports whether remote metric sampling may target the
+// Host.
+func (h Host) SupportsMonitoring() bool { return h.Capabilities().Monitoring }
+
+// SupportsProxy reports whether a jump chain, a proxy, and SSH algorithm
+// overrides apply to the Host's route.
+func (h Host) SupportsProxy() bool { return h.Capabilities().Proxy }
+
+// X11 reports whether X11 forwarding applies to the Host.
+func (h Host) X11Capability() bool { return h.Capabilities().X11 }
+
+// Plaintext reports whether the Host's native transport sends credentials and
+// input unencrypted.
+func (h Host) Plaintext() bool { return h.Capabilities().Plaintext }
+
+// SessionTransport names the Session transport the Host opens. An SSH Host
+// with a transport returns that transport; every other supported protocol
+// returns its own descriptor's transport. A protocol or transport this build
+// does not support returns TransportUnsupported: it is never mapped to SSH,
+// which would open a different endpoint than the record names.
+func (h Host) SessionTransport() domainprotocol.Transport {
+	protocol, transport := normalizeProtocolTransport(h.Protocol, h.Transport)
+	if protocol == ProtocolSSH {
+		switch transport {
+		case TransportPlain:
+			return domainprotocol.TransportSSH
+		case TransportMosh, TransportET:
+			return domainprotocol.Transport(transport)
+		default:
+			return domainprotocol.TransportUnsupported
+		}
+	}
+	descriptor, ok := protocol.descriptor()
+	if !ok {
+		return domainprotocol.TransportUnsupported
+	}
+	return descriptor.Transport
+}
+
+// ConnectionSupported reports whether this Host's protocol and transport are
+// ones this build can open. A removed protocol ID or an unknown transport is
+// unsupported; it must be rejected rather than reinterpreted as SSH.
+func (h Host) ConnectionSupported() bool {
+	protocol, transport := normalizeProtocolTransport(h.Protocol, h.Transport)
+	if _, ok := protocol.descriptor(); !ok {
+		return false
+	}
+	if protocol != ProtocolSSH {
+		// NormalizeTransport has already dropped a transport from a non-SSH
+		// protocol, so there is nothing else to validate.
+		return true
+	}
+	switch transport {
+	case TransportPlain, TransportMosh, TransportET:
+		return true
+	default:
+		return false
+	}
+}
+
+// TransportLabel reports the SSH transport a Host should be presented with,
+// or the empty string for a non-SSH Host. The Vault list keeps Mosh and ET
+// visible instead of collapsing them into "ssh".
+func (h Host) TransportLabel() Transport {
+	protocol, transport := normalizeProtocolTransport(h.Protocol, h.Transport)
+	if protocol != ProtocolSSH {
+		return TransportPlain
+	}
+	switch transport {
+	case TransportPlain, TransportMosh, TransportET:
+		return transport
+	default:
+		return TransportPlain
+	}
+}
+
+// IsNetworkDevice reports whether the Host runs a vendor CLI over plain SSH
+// and therefore needs raw execution. Mosh and ET have their own session
+// layer, so the mode is not usable there.
 func (h Host) IsNetworkDevice() bool {
-	return h.Protocol == ProtocolSSH && h.DeviceType == DeviceTypeNetwork
+	return h.Protocol == ProtocolSSH && h.Transport == TransportPlain && h.DeviceType == DeviceTypeNetwork
 }
 
 // AutoAttachTmuxEnabled reports whether opening this Host should start the
 // tmux wrapper: the user opted in on a plain SSH Host. Network-device mode
 // speaks a vendor CLI, and mosh/ET have their own session persistence.
 func (h Host) AutoAttachTmuxEnabled() bool {
-	return h.AutoAttachTmux && h.Protocol == ProtocolSSH && !h.IsNetworkDevice()
+	return h.AutoAttachTmux && h.Protocol == ProtocolSSH &&
+		h.Transport == TransportPlain && !h.IsNetworkDevice()
 }
 
 // InputCompatibility reports the Enter/Backspace translation this Host
-// selects. Only an SSH Host has one; every other protocol returns the default,
-// which leaves input byte-identical to today. An unknown stored value also
-// falls back to the default rather than changing the bytes sent.
+// selects. Only a plain SSH Host has one; every other transport returns the
+// default, which leaves input byte-identical to today. An unknown stored value
+// also falls back to the default rather than changing the bytes sent.
 func (h Host) InputCompatibility() modelterminal.InputCompatibility {
-	if h.Protocol != ProtocolSSH {
+	if h.Protocol != ProtocolSSH || h.Transport != TransportPlain {
 		return modelterminal.InputCompatibility{}
 	}
 	return modelterminal.InputCompatibility{
@@ -864,10 +1056,51 @@ func (h Host) InputCompatibility() modelterminal.InputCompatibility {
 	}.Normalize()
 }
 
+// Capabilities resolves the effective capability set of a Draft the same way a
+// saved Host does, so an editor call site never compares protocol names.
+func (d Draft) Capabilities() HostCapabilities {
+	return capabilitiesFor(d.Protocol, d.Transport)
+}
+
+// UsesSSHAuth reports whether the draft authenticates with the shared SSH
+// credential bundle.
+func (d Draft) UsesSSHAuth() bool { return d.Capabilities().SSHAuth }
+
+// SupportsFileTransfer reports whether SFTP/SCP apply to the draft.
+func (d Draft) SupportsFileTransfer() bool { return d.Capabilities().FileTransfer }
+
+// SupportsForwarding reports whether a Port Forwarding rule may target the
+// draft's Host.
+func (d Draft) SupportsForwarding() bool { return d.Capabilities().Forwarding }
+
+// SupportsMonitoring reports whether remote metric sampling may target the
+// draft's Host.
+func (d Draft) SupportsMonitoring() bool { return d.Capabilities().Monitoring }
+
+// SupportsProxy reports whether the route controls apply to the draft.
+func (d Draft) SupportsProxy() bool { return d.Capabilities().Proxy }
+
+// SupportsX11 reports whether X11 forwarding applies to the draft.
+func (d Draft) SupportsX11() bool { return d.Capabilities().X11 }
+
+// Plaintext reports whether the draft's native transport sends credentials
+// and input unencrypted.
+func (d Draft) Plaintext() bool { return d.Capabilities().Plaintext }
+
 func validateFields(draft Draft) error {
-	if !domainprotocol.ValidHostID(domainprotocol.ID(draft.Protocol)) {
+	protocol, transport := normalizeProtocolTransport(draft.Protocol, draft.Transport)
+	if !domainprotocol.ValidHostID(domainprotocol.ID(protocol)) {
 		return validation(FieldProtocol, RuleUnsupported)
 	}
+	switch transport {
+	case TransportPlain, TransportMosh, TransportET:
+	default:
+		return validation(FieldTransport, RuleUnsupported)
+	}
+	// A transport is meaningful only for SSH. normalizeProtocolTransport has
+	// already cleared it for every other protocol, so an input pair such as
+	// Telnet+Mosh validates as Telnet rather than saving dead state.
+	capabilities := capabilitiesFor(protocol, transport)
 
 	switch draft.AuthMethod {
 	case "", HostAuthAuto, HostAuthPassword, HostAuthKey, HostAuthCertificate:
@@ -884,7 +1117,7 @@ func validateFields(draft Draft) error {
 	if !fileProtocol.Valid() {
 		return validation(FieldFileProtocol, RuleInvalid)
 	}
-	if draft.Protocol != ProtocolSSH {
+	if !capabilities.FileTransfer {
 		if fileProtocol != FileProtocolAuto {
 			return validation(FieldFileProtocol, RuleUnsupported)
 		}
@@ -897,7 +1130,7 @@ func validateFields(draft Draft) error {
 	}
 
 	if draft.X11Forwarding {
-		if draft.Protocol != ProtocolSSH {
+		if !capabilities.X11 {
 			return validation(FieldX11, RuleUnsupported)
 		}
 		if !draft.X11WarningAcknowledged {
@@ -912,38 +1145,27 @@ func validateFields(draft Draft) error {
 		return err
 	}
 
-	if draft.Protocol == ProtocolLocal {
-		if draft.Hostname != "" {
-			if err := validateText(FieldHostname, draft.Hostname, maxHostnameLength, true); err != nil {
-				return err
-			}
+	if draft.Hostname == "" {
+		return validation(FieldHostname, RuleRequired)
+	}
+	if err := validateText(FieldHostname, draft.Hostname, maxHostnameLength, true); err != nil {
+		return err
+	}
+	// Zero means the Host inherits its Host Group's port, or the protocol
+	// default when the group sets none.
+	if draft.Port != 0 && (draft.Port < 1 || draft.Port > 65535) {
+		return validation(FieldPort, RuleOutOfRange)
+	}
+	if protocol == ProtocolVNC && draft.Port != 0 {
+		// Display-number input is an editor presentation, but a Host that
+		// records it can only describe a display in the 5900-5999 range.
+		// A raw port that falls outside it must switch input mode first.
+		displayMode := VNCDisplayNumber
+		if draft.VNC != nil {
+			displayMode = NormalizeDisplayMode(draft.VNC.DisplayMode)
 		}
-		if draft.Port != 0 {
+		if _, ok := VNCDisplayForPort(draft.Port); !ok && displayMode == VNCDisplayNumber {
 			return validation(FieldPort, RuleOutOfRange)
-		}
-	} else {
-		if draft.Hostname == "" {
-			return validation(FieldHostname, RuleRequired)
-		}
-		if err := validateText(FieldHostname, draft.Hostname, maxHostnameLength, true); err != nil {
-			return err
-		}
-		// Zero means the Host inherits its Host Group's port, or the protocol
-		// default when the group sets none.
-		if draft.Port != 0 && (draft.Port < 1 || draft.Port > 65535) {
-			return validation(FieldPort, RuleOutOfRange)
-		}
-		if draft.Protocol == ProtocolVNC && draft.Port != 0 {
-			// Display-number input is an editor presentation, but a Host that
-			// records it can only describe a display in the 5900-5999 range.
-			// A raw port that falls outside it must switch input mode first.
-			displayMode := VNCDisplayNumber
-			if draft.VNC != nil {
-				displayMode = NormalizeDisplayMode(draft.VNC.DisplayMode)
-			}
-			if _, ok := VNCDisplayForPort(draft.Port); !ok && displayMode == VNCDisplayNumber {
-				return validation(FieldPort, RuleOutOfRange)
-			}
 		}
 	}
 
@@ -951,12 +1173,12 @@ func validateFields(draft Draft) error {
 		return err
 	}
 
-	if draft.Protocol == ProtocolMosh {
+	if transport == TransportMosh {
 		if err := validateText(FieldMoshServerPath, draft.MoshServerPath, maxMoshServerPathLength, false); err != nil {
 			return err
 		}
 	}
-	if draft.Protocol == ProtocolET && draft.ETPort != 0 && (draft.ETPort < 1 || draft.ETPort > 65535) {
+	if transport == TransportET && draft.ETPort != 0 && (draft.ETPort < 1 || draft.ETPort > 65535) {
 		return validation(FieldETPort, RuleOutOfRange)
 	}
 	if len(draft.Group) > maxGroupLength {
@@ -1267,19 +1489,20 @@ func (p Protocol) descriptor() (domainprotocol.Descriptor, bool) {
 }
 
 // SessionTransport names the Session transport the protocol opens. The value
-// matches application/session.Kind. An unknown protocol falls back to SSH,
-// which is the same default the Vault applies to a blank protocol.
+// matches application/session.Kind. An unknown protocol returns
+// TransportUnsupported instead of falling back to SSH.
 func (p Protocol) SessionTransport() domainprotocol.Transport {
 	if descriptor, ok := p.descriptor(); ok {
 		return descriptor.Transport
 	}
-	return domainprotocol.TransportSSH
+	return domainprotocol.TransportUnsupported
 }
 
 // UsesSSHAuth reports whether a protocol authenticates with the shared SSH
-// credential settings (Identity, SSH Key, Method, agent, and MFA). SSH, Mosh,
-// and EternalTerminal all bootstrap through SSH; Telnet, VNC, and a Local shell
-// do not, so their editors must not show those controls.
+// credential settings (Identity, SSH Key, Method, agent, and MFA). Only SSH
+// does; Telnet and VNC do not, so their editors must not show those controls.
+// A Host with an SSH transport resolves its effective capability from
+// Capabilities instead.
 func (p Protocol) UsesSSHAuth() bool {
 	descriptor, ok := p.descriptor()
 	return ok && descriptor.SSHAuth

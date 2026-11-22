@@ -526,14 +526,15 @@ func marshal(value any) ([]byte, error) {
 // ---------------------------------------------------------------- CSV
 
 // Header is the canonical Netcatty CSV header: the original fourteen columns
-// in the exact order the ticket-24 importer expects, followed by VNC and
-// VNCPassword. An older reader ignores the appended columns.
+// in the exact order the ticket-24 importer expects, followed by VNC,
+// VNCPassword, and Transport. An older reader ignores the appended columns and
+// reads an SSH Host as plain SSH.
 func Header() []string { return vaultimport.CSVHeader() }
 
 // Column indexes of the Host CSV header. These cells carry raw passwords and
 // already-marked references, so they skip the formula guard; every other cell
-// is guarded. VNC and VNCPassword are appended after the original fourteen
-// columns; VNCPassword is a raw credential and is never guarded.
+// is guarded. VNC, VNCPassword, and Transport are appended after the original
+// fourteen columns; VNCPassword is a raw credential and is never guarded.
 const (
 	csvPasswordColumn    = 8
 	csvLocalShellColumn  = 13
@@ -600,6 +601,10 @@ func exportCSV(d Dataset, opts Options) ([]byte, []Issue, error) {
 			"",
 			vnc,
 			vncPassword,
+			// The raw stored value, not the presentation label: an unknown or
+			// unsupported transport must survive export so re-import rejects
+			// it instead of silently turning into plain SSH.
+			string(host.Host.Transport),
 		}
 		for index, value := range row {
 			if index > 0 {
@@ -731,12 +736,13 @@ func formatCSVProxyJumpHop(host domainvault.Host) (string, bool) {
 	return hop, true
 }
 
-// canServeAsSSHJump reports whether a Host's transport can be dialed as a jump
-// hop. Mosh and ET bootstrap over SSH; telnet, local shells, and network
-// devices cannot carry a chained session.
+// canServeAsSSHJump reports whether a Host's protocol can be dialed as a jump
+// hop. Only SSH does: a Mosh or ET Host is still an SSH Host at that layer, so
+// its protocol value is ssh, while Telnet and VNC cannot carry a chained
+// session.
 func canServeAsSSHJump(protocol domainvault.Protocol) bool {
 	switch protocol {
-	case "", domainvault.ProtocolSSH, domainvault.ProtocolMosh, domainvault.ProtocolET:
+	case "", domainvault.ProtocolSSH:
 		return true
 	default:
 		return false
@@ -765,8 +771,8 @@ func formatHostname(hostname string) string {
 }
 
 // portText writes the endpoint an imported Host would use. A zero port means
-// the Host inherits its Group's, so the protocol's default (22 SSH, 23 Telnet,
-// 5900 VNC, 0 for a Local shell) is the value that survives a round trip.
+// the Host inherits its Group's, so the protocol's default (22 SSH and its
+// transports, 23 Telnet, 5900 VNC) is the value that survives a round trip.
 func portText(host domainvault.Host) string {
 	return strconv.Itoa(domainvault.EffectivePort(host.Protocol, host.Port))
 }

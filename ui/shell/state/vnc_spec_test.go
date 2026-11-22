@@ -55,19 +55,23 @@ func TestHostSessionSpecCarriesVNCOnlyForVNC(t *testing.T) {
 		t.Fatal("VNC Host has no reconnect policy")
 	}
 
-	others := []domainvault.Protocol{
-		domainvault.ProtocolSSH,
-		domainvault.ProtocolTelnet,
-		domainvault.ProtocolLocal,
-		domainvault.ProtocolMosh,
-		domainvault.ProtocolET,
+	others := []struct {
+		protocol  domainvault.Protocol
+		transport domainvault.Transport
+	}{
+		{domainvault.ProtocolSSH, domainvault.TransportPlain},
+		{domainvault.ProtocolSSH, domainvault.TransportMosh},
+		{domainvault.ProtocolSSH, domainvault.TransportET},
+		{domainvault.ProtocolTelnet, domainvault.TransportPlain},
 	}
-	for _, protocol := range others {
-		other := host
-		other.Protocol = protocol
-		other.VNC = nil
-		if otherSpec := HostSessionSpec(other); otherSpec.VNC != nil {
-			t.Fatalf("%s spec populated the VNC section: %+v", protocol, otherSpec.VNC)
+	for _, other := range others {
+		host := host
+		host.Protocol = other.protocol
+		host.Transport = other.transport
+		host.VNC = nil
+		if otherSpec := HostSessionSpec(host); otherSpec.VNC != nil {
+			t.Fatalf("%s/%s spec populated the VNC section: %+v",
+				other.protocol, other.transport, otherSpec.VNC)
 		}
 	}
 }

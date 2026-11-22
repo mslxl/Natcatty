@@ -162,12 +162,15 @@ type Record struct {
 	Hostname string
 	Username string
 	Port     int
-	// Protocol is "ssh", "telnet", "local", "mosh", "et", or "vnc"; empty
-	// means SSH.
+	// Protocol is "ssh", "telnet", or "vnc"; empty means SSH.
 	Protocol string
-	Group    string
-	Tags     []string
-	Notes    string
+	// Transport selects an SSH Host's Session transport: empty is plain SSH,
+	// "mosh" and "et" are the SSH-based transports. It is empty for every
+	// other protocol.
+	Transport string
+	Group     string
+	Tags      []string
+	Notes     string
 	// Password is credential plaintext in memory only.
 	Password string
 	// VNC is a VNC Host's viewer configuration from a Netcatty JSON export.
@@ -465,24 +468,35 @@ func normalizeGroup(raw string) string {
 }
 
 // normalizeProtocol maps external protocol spellings onto the Vault's stored
-// protocols. An empty result means the value is not recognized. Mosh and ET
-// are part of the Netcatty JSON vocabulary and must round-trip.
+// Host protocols. An empty result means the value is not recognized. Mosh and
+// ET are SSH transports, not protocols, so they are not accepted here; a
+// document that still names them has an unsupported protocol.
 func normalizeProtocol(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "ssh", "ssh2", "ssh-2", "ssh1", "ssh-1":
+	case "ssh":
 		return "ssh"
 	case "telnet":
 		return "telnet"
-	case "local":
-		return "local"
-	case "mosh":
-		return "mosh"
-	case "et", "eternalterminal", "eternal-terminal":
-		return "et"
 	case "vnc":
 		return "vnc"
 	default:
 		return ""
+	}
+}
+
+// normalizeTransport maps an SSH transport spelling onto its stored value.
+// Empty and "ssh" mean plain SSH. An empty second result means the value is
+// not recognized.
+func normalizeTransport(raw string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "ssh":
+		return "", true
+	case "mosh":
+		return "mosh", true
+	case "et":
+		return "et", true
+	default:
+		return "", false
 	}
 }
 
@@ -513,9 +527,6 @@ func parsePort(raw string) (int, bool) {
 func defaultPort(protocol string) int {
 	if protocol == "telnet" {
 		return 23
-	}
-	if protocol == "local" {
-		return 0
 	}
 	return 22
 }

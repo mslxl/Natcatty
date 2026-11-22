@@ -18,8 +18,8 @@ import (
 // manager. Each sample or action opens a channel lease through Acquire, which
 // runs the same host-key verification, trust prompt, jump chain, proxy, and
 // algorithm policy a Session uses; no ps, ss, systemctl, or kill command can
-// run before the Host key is trusted. A local-shell Host, such as this
-// computer, runs the same commands in this computer's shell instead.
+// run before the Host key is trusted. The synthetic "this computer" Host a
+// local Session lists runs the same commands in this computer's shell instead.
 type sysmanagerConnector struct {
 	routes      routeSource
 	connections *appconnection.Manager
@@ -28,7 +28,7 @@ type sysmanagerConnector struct {
 var _ appsysmanager.Connector = sysmanagerConnector{}
 
 func (c sysmanagerConnector) Open(ctx context.Context, host domainvault.Host) (appsysmanager.Connection, error) {
-	if host.Protocol == domainvault.ProtocolLocal {
+	if host.ID == thisComputerID {
 		if runtime.GOOS == "windows" {
 			// The commands are POSIX shell; cmd.exe cannot run them.
 			return nil, &appsysmanager.Error{Reason: appsysmanager.ReasonUnsupported,
@@ -39,7 +39,7 @@ func (c sysmanagerConnector) Open(ctx context.Context, host domainvault.Host) (a
 	// The panel runs POSIX commands over an SSH channel. A Telnet Host has no
 	// shell channel, so the surface must fail closed instead of treating the
 	// target as SSH.
-	if !host.Protocol.UsesSSHAuth() {
+	if !host.UsesSSHAuth() {
 		return nil, &appsysmanager.Error{Reason: appsysmanager.ReasonUnsupported,
 			Cause: fmt.Errorf("%s Hosts have no system shell over SSH", host.Protocol)}
 	}
@@ -121,14 +121,16 @@ func (localSystemConnection) Close() error { return nil }
 // Host has it: the Vault's IDs are generated.
 const thisComputerID = "local:this-computer"
 
-// thisComputer is the Host a local Session's System tool samples: this
-// computer's shell, labelled with its name.
+// thisComputer is the synthetic Host a local Session's System tool samples:
+// this computer's shell, labelled with its name. It is never saved to the
+// Vault, so it carries no Host protocol; its ID is what selects the local
+// shell.
 func thisComputer() domainvault.Host {
 	name, err := os.Hostname()
 	if err != nil || name == "" {
 		name = "localhost"
 	}
-	return domainvault.Host{ID: thisComputerID, Label: name, Protocol: domainvault.ProtocolLocal}
+	return domainvault.Host{ID: thisComputerID, Label: name}
 }
 
 // withThisComputer lists this computer ahead of the Vault's Hosts, so the

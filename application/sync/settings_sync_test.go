@@ -461,7 +461,7 @@ func TestLegacyPayloadWithOnlyALeafGroupMatchesTheMigratedEnvelope(t *testing.T)
 		t.Fatal(err)
 	}
 	hostValue, err := domainsync.CanonicalValue(mustMarshal(t, domainvault.Host{
-		ID: "host-1", Label: "web", Group: "Prod/Web",
+		ID: "host-1", Label: "web", Protocol: domainvault.ProtocolSSH, Group: "Prod/Web",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -484,7 +484,7 @@ func TestLegacyPayloadWithOnlyALeafGroupMatchesTheMigratedEnvelope(t *testing.T)
 	}
 	payload := Payload{
 		Groups: []domainvault.Group{{Path: "Prod/Web", Notes: "child"}},
-		Hosts:  []domainvault.Host{{ID: "host-1", Label: "web", Group: "Prod/Web"}},
+		Hosts:  []domainvault.Host{{ID: "host-1", Label: "web", Protocol: domainvault.ProtocolSSH, Group: "Prod/Web"}},
 	}
 	snapshot, err := payloadSnapshot(payload)
 	if err != nil {
@@ -516,7 +516,7 @@ func TestLegacyHostInAnImplicitGroupMigratesToStableReferences(t *testing.T) {
 	// at all. The migration must synthesize the ancestor nodes and keep the
 	// Host's membership under the stable ID.
 	hostValue, err := domainsync.CanonicalValue(mustMarshal(t, domainvault.Host{
-		ID: "host-1", Label: "web", Group: "Prod/Web",
+		ID: "host-1", Label: "web", Protocol: domainvault.ProtocolSSH, Group: "Prod/Web",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -537,7 +537,7 @@ func TestLegacyHostInAnImplicitGroupMigratesToStableReferences(t *testing.T) {
 	}
 
 	payload := Payload{Hosts: []domainvault.Host{{
-		ID: "host-1", Label: "web", Group: "Prod/Web",
+		ID: "host-1", Label: "web", Protocol: domainvault.ProtocolSSH, Group: "Prod/Web",
 	}}}
 	snapshot, err := payloadSnapshot(payload)
 	if err != nil {

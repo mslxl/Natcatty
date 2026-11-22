@@ -308,7 +308,7 @@ func hostCard(c *ui.Context, s *State, m locales.Messages, t *ui.Theme,
 	})
 	card.Children(func() {
 		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
-			kit.HostAvatar(c, "", avatarKind(host.Protocol), s.HostLabel(host), 36)
+			kit.HostAvatar(c, "", avatarKind(host), s.HostLabel(host), 36)
 			ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
 				ui.Text(c, s.HostLabel(host)).FontWeight(600).SingleLine()
 				ui.Text(c, host.Hostname).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine()
@@ -619,7 +619,7 @@ func cell(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, key string,
 	sample := state.Sample
 	switch key {
 	case "host":
-		kit.HostAvatar(c, "", avatarKind(host.Protocol), s.HostLabel(host), 28)
+		kit.HostAvatar(c, "", avatarKind(host), s.HostLabel(host), 28)
 		ui.Column(c).Grow(1).MinWidth(0).Gap(0).Margin(0, 0, 0, 8).Children(func() {
 			// The state's dot stays beside the name when the Status column
 			// is scrolled away or hidden.
@@ -870,7 +870,7 @@ func editor(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 				first := index == 0
 				ui.Row(c.Key("selected-"+hostID)).FillWidth().Gap(8).Padding(6, 8).Radius(kit.M(c).Radius.Control).
 					Background(kit.Muted(t)).AlignItems(ui.Center).Children(func() {
-					kit.HostAvatar(c, "", avatarKind(host.Protocol), label, 24)
+					kit.HostAvatar(c, "", avatarKind(host), label, 24)
 					ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 						ui.Text(c, label).FontSize(kit.M(c).Font.Footnote).FontWeight(500).SingleLine()
 						if known && host.Hostname != "" {
@@ -939,7 +939,7 @@ func picker(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 						if ui.Checkbox(c, &selected, "").Changed() {
 							s.ToggleFormHost(id)
 						}
-						kit.HostAvatar(c, "", avatarKind(host.Protocol), s.HostLabel(host), 24)
+						kit.HostAvatar(c, "", avatarKind(host), s.HostLabel(host), 24)
 						ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 							ui.Text(c, s.HostLabel(host)).FontSize(kit.M(c).Font.Footnote).FontWeight(500).SingleLine()
 							detail := host.Hostname
@@ -1041,12 +1041,16 @@ func chartPoints(points []domainmonitor.Point, started time.Time, minutes int, n
 	return points[first:]
 }
 
-func avatarKind(protocol domainvault.Protocol) kit.AvatarKind {
-	switch protocol {
-	case domainvault.ProtocolLocal:
-		return kit.AvatarLocal
+func avatarKind(host domainvault.Host) kit.AvatarKind {
+	switch host.Protocol {
 	case domainvault.ProtocolTelnet:
 		return kit.AvatarTelnet
+	}
+	switch host.TransportLabel() {
+	case domainvault.TransportMosh:
+		return kit.AvatarMosh
+	case domainvault.TransportET:
+		return kit.AvatarET
 	}
 	return kit.AvatarServer
 }

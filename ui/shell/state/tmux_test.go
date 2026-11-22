@@ -88,7 +88,8 @@ func TestOpenHostCarriesAutoAttachTmuxOnlyForPlainSSH(t *testing.T) {
 			name: "mosh",
 			host: domainvault.Host{
 				ID: "host-4", Label: "mosh", Hostname: "example.com", Port: 22,
-				Username: "root", Protocol: domainvault.ProtocolMosh, AutoAttachTmux: true,
+				Username: "root", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportMosh,
+				AutoAttachTmux: true,
 			},
 			expected: false,
 		},
@@ -96,7 +97,8 @@ func TestOpenHostCarriesAutoAttachTmuxOnlyForPlainSSH(t *testing.T) {
 			name: "et",
 			host: domainvault.Host{
 				ID: "host-5", Label: "et", Hostname: "example.com", Port: 22,
-				Username: "root", Protocol: domainvault.ProtocolET, AutoAttachTmux: true,
+				Username: "root", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET,
+				AutoAttachTmux: true,
 			},
 			expected: false,
 		},

@@ -1291,13 +1291,20 @@ func vncSection(c *ui.Context, form *vaultstate.Form, m locales.Messages) {
 	ui.Checkbox(c, &form.VNCShared, m.VaultHostVNCShared())
 }
 
-// hostAvatarKind picks the avatar glyph for a Host's protocol.
-func hostAvatarKind(protocol domainvault.Protocol) kit.AvatarKind {
-	switch protocol {
-	case domainvault.ProtocolLocal:
-		return kit.AvatarLocal
+// hostAvatarKind picks the avatar glyph for a Host. Mosh and ET keep their own
+// glyph so the list shows the effective transport instead of a plain SSH icon.
+func hostAvatarKind(host domainvault.Host) kit.AvatarKind {
+	switch host.Protocol {
 	case domainvault.ProtocolTelnet:
 		return kit.AvatarTelnet
+	case domainvault.ProtocolVNC:
+		return kit.AvatarServer
+	}
+	switch host.TransportLabel() {
+	case domainvault.TransportMosh:
+		return kit.AvatarMosh
+	case domainvault.TransportET:
+		return kit.AvatarET
 	}
 	return kit.AvatarServer
 }
@@ -1395,14 +1402,16 @@ func tokenRow(c *ui.Context, parts []string, t *ui.Theme) {
 }
 
 func hostSummary(s *vaultstate.State, host domainvault.Host, m locales.Messages) []string {
-	parts := make([]string, 0, 5)
-	if host.Protocol == domainvault.ProtocolLocal {
-		parts = append(parts, m.VaultHostLocal())
-	} else {
-		parts = append(parts, net.JoinHostPort(host.Hostname, strconv.Itoa(host.Port)))
-	}
+	parts := make([]string, 0, 6)
+	parts = append(parts, net.JoinHostPort(host.Hostname, strconv.Itoa(host.Port)))
 	if host.Username != "" {
 		parts = append(parts, host.Username)
+	}
+	switch host.TransportLabel() {
+	case domainvault.TransportMosh:
+		parts = append(parts, m.VaultHostTransportMosh())
+	case domainvault.TransportET:
+		parts = append(parts, m.VaultHostTransportET())
 	}
 	parts = append(parts, authSummary(s, host, m))
 	if len(host.Tags) > 0 {
@@ -1482,6 +1491,49 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 		ui.Text(c, title).FontSize(kit.M(c).Font.LargeTitle).Bold()
 
 		ui.Form(c, func() {
+			// Protocol comes first: it decides the endpoint's meaning (a VNC
+			// display number or a real port), the default port hint, and which
+			// credential and transport fields follow.
+			kit.FormRow(c, m.VaultHostProtocol(), func() {
+				// The Select writes its choice before the callback runs, so
+				// bind a local: the state setter needs the old protocol to
+				// clear the settings that belonged to it.
+				protocol := form.Protocol
+				if ui.Select(c, &protocol, []string{
+					string(domainvault.ProtocolSSH),
+					string(domainvault.ProtocolTelnet),
+					string(domainvault.ProtocolVNC),
+				}).Width(140).Changed() {
+					// A hidden protocol-specific control must not keep a
+					// value Save would persist.
+					s.SetHostProtocol(protocol)
+					c.Invalidate()
+				}
+			})
+			if domainvault.Protocol(form.Protocol) == domainvault.ProtocolSSH {
+				// Mosh and ET are SSH transports, not protocols: they keep
+				// SSH authentication and routing but bring their own session
+				// layer.
+				transportLabels := []string{
+					m.VaultHostTransportSSH(),
+					m.VaultHostTransportMosh(),
+					m.VaultHostTransportET(),
+				}
+				transportValues := []string{
+					string(domainvault.TransportPlain),
+					string(domainvault.TransportMosh),
+					string(domainvault.TransportET),
+				}
+				transportLabel := optionLabel(transportLabels, transportValues, form.Transport)
+				kit.FormRow(c, m.VaultHostTransport(), func() {
+					if ui.Select(c, &transportLabel, transportLabels).Width(140).Changed() {
+						// Values the newly hidden controls owned must not be
+						// saved.
+						s.SetHostTransport(optionValue(transportValues, transportLabels, transportLabel))
+						c.Invalidate()
+					}
+				})
+			}
 			kit.FormRow(c, m.VaultHostLabel(), func() {
 				ui.TextInput(c, &form.Label)
 			})
@@ -1543,25 +1595,6 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				kit.FormRow(c, m.VaultHostUsername(), func() {
 					ui.TextInput(c, &form.Username).Placeholder("root").Width(200)
 				})
-				kit.FormRow(c, m.VaultHostProtocol(), func() {
-					// The Select writes its choice before the callback runs, so
-					// bind a local: the state setter needs the old protocol to
-					// clear the settings that belonged to it.
-					protocol := form.Protocol
-					if ui.Select(c, &protocol, []string{
-						string(domainvault.ProtocolSSH),
-						string(domainvault.ProtocolMosh),
-						string(domainvault.ProtocolET),
-						string(domainvault.ProtocolTelnet),
-						string(domainvault.ProtocolVNC),
-						string(domainvault.ProtocolLocal),
-					}).Width(140).Changed() {
-						// A hidden protocol-specific control must not keep a
-						// value Save would persist.
-						s.SetHostProtocol(protocol)
-						c.Invalidate()
-					}
-				})
 			})
 			kit.FormRow(c, m.VaultHostGroup(), func() {
 				ui.TextInput(c, &form.Group).Placeholder("prod/web")
@@ -1600,7 +1633,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					ui.TextInput(c, &form.Password).Password()
 				}).Description(passwordHint)
 			}
-			if domainvault.Protocol(form.Protocol).Plaintext() {
+			if s.HostFormCapabilities().Plaintext {
 				// The disclosure follows the descriptor capability shared with
 				// Telnet, so a future plaintext protocol inherits it.
 				ui.Text(c, m.VaultHostPlaintextWarning(plaintextProtocolName(domainvault.Protocol(form.Protocol)))).
@@ -1610,7 +1643,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				vncSection(c, form, m)
 			}
 
-			if domainvault.Protocol(form.Protocol).UsesSSHAuth() {
+			if s.HostFormCapabilities().SSHAuth {
 				totpHint := m.VaultHostTOTPHint()
 				if form.HasTOTP && !form.ClearTOTP {
 					totpHint = m.VaultHostTOTPKeep()
@@ -1672,7 +1705,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 			// Jump chains, proxies, and Network Profiles describe how to reach
 			// the endpoint, so a protocol that routes through SSH keeps them
 			// even when its target is not SSH.
-			if domainvault.Protocol(form.Protocol).SupportsProxy() {
+			if s.HostFormCapabilities().Proxy {
 				kit.FormRow(c, m.VaultHostProxyProfile(), func() {
 					proxyChoice := proxyChoiceValue(form.DirectProxy, form.ProxyProfileID)
 					ui.RadioGroup(c, func() {
@@ -1692,7 +1725,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				hostJumpHostsField(c, s, m, t, form.Protocol)
 				hostNetworkProfileField(c, s, m, t)
 			}
-			if form.Protocol == string(domainvault.ProtocolSSH) {
+			if s.HostFormPlainSSH() {
 				kit.FormRow(c, m.VaultHostFileProtocol(), func() {
 					changed := ui.Select(c, &form.FileProtocol, []string{
 						string(domainvault.FileProtocolAuto),
@@ -1758,13 +1791,13 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					}
 				})
 			}
-			if form.Protocol == string(domainvault.ProtocolMosh) {
+			if domainvault.Transport(form.Transport) == domainvault.TransportMosh {
 				kit.FormRow(c, m.VaultHostMoshServerPath(), func() {
 					ui.TextInput(c, &form.MoshServerPath).Placeholder("mosh-server")
 				}).Description(m.VaultHostMoshServerPathHint())
 				ui.Text(c, m.VaultHostMoshRestrictionHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 			}
-			if form.Protocol == string(domainvault.ProtocolET) {
+			if domainvault.Transport(form.Transport) == domainvault.TransportET {
 				kit.FormRow(c, m.VaultHostETPort(), func() {
 					ui.TextInput(c, &form.ETPort).Placeholder("2022").Width(120)
 				}).Description(m.VaultHostETPortHint())

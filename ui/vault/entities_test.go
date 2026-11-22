@@ -1311,19 +1311,12 @@ func TestHostEditorPortHintFollowsProtocolAndGroup(t *testing.T) {
 	if !tt.HasText(m.VaultHostPortHint("2222")) {
 		t.Fatalf("the editor does not render the inherited group Port hint, texts %q", tt.Texts())
 	}
-
-	// A Local shell has no port to suggest.
-	state.SetHostProtocol(string(domainvault.ProtocolLocal))
-	state.Form().Group = ""
-	if got := state.HostPortPlaceholder(); got != "" {
-		t.Fatalf("Local Port hint = %q, want none", got)
-	}
 }
 
 // TestHostEditorHidesSSHOnlyAuthenticationForNonSSHProtocols covers ticket 61:
-// a Telnet or Local Host must not offer Identity, SSH Key, Method, agent, or
-// MFA controls that its transport never reads, and a protocol switch must not
-// keep the credentials a now-hidden control selected.
+// a Telnet or VNC Host must not offer Identity, SSH Key, Method, agent, or MFA
+// controls that its transport never reads, and a protocol switch must not keep
+// the credentials a now-hidden control selected.
 func TestHostEditorHidesSSHOnlyAuthenticationForNonSSHProtocols(t *testing.T) {
 	m := locales.In("en")
 	state, _, _, _, _, tt := newProductionEntityView(t, 720, 480)
@@ -1351,11 +1344,12 @@ func TestHostEditorHidesSSHOnlyAuthenticationForNonSSHProtocols(t *testing.T) {
 	}
 
 	// Mosh and ET bootstrap over SSH, so they keep the credential controls.
-	for _, protocol := range []domainvault.Protocol{domainvault.ProtocolMosh, domainvault.ProtocolET} {
-		state.SetHostProtocol(string(protocol))
+	state.SetHostProtocol(string(domainvault.ProtocolSSH))
+	for _, transport := range []domainvault.Transport{domainvault.TransportMosh, domainvault.TransportET} {
+		state.SetHostTransport(string(transport))
 		tt.Frame()
 		if !tt.HasText(m.VaultHostIdentity()) || !tt.HasText(m.VaultHostAuthMethod()) {
-			t.Fatalf("%s Host lost its SSH credential controls", protocol)
+			t.Fatalf("%s transport lost its SSH credential controls", transport)
 		}
 	}
 }
@@ -1371,7 +1365,7 @@ func TestHostProtocolSwitchClearsSSHOnlyCredentials(t *testing.T) {
 	form.RequiresMFA = true
 
 	// Mosh keeps the SSH credential bundle.
-	state.SetHostProtocol(string(domainvault.ProtocolMosh))
+	state.SetHostTransport(string(domainvault.TransportMosh))
 	if form.IdentityID != "identity-1" || form.KeyID != "key-1" ||
 		form.AuthMethod != string(domainvault.HostAuthKey) ||
 		!form.UseSSHAgent || !form.RequiresMFA {
@@ -2756,13 +2750,14 @@ func TestHostProtocolSwitchKeepsTheRouteForTelnet(t *testing.T) {
 		t.Fatalf("a Telnet Host does not offer a Network Profile, texts %q", tt.Texts())
 	}
 
-	state.SetHostProtocol(string(domainvault.ProtocolLocal))
-	if form.ProxyProfileID != "" || form.NetworkProfileID != "" {
-		t.Fatalf("Local kept route fields from a hidden control: %+v", *form)
-	}
-	tt.Frame()
-	if tt.HasText(m.VaultHostProxyProfile()) || tt.HasText(m.VaultNetworkProfile()) {
-		t.Fatalf("a Local shell still shows route controls, texts %q", tt.Texts())
+	// Mosh and ET are SSH transports: they keep the route controls.
+	state.SetHostProtocol(string(domainvault.ProtocolSSH))
+	for _, transport := range []domainvault.Transport{domainvault.TransportMosh, domainvault.TransportET} {
+		state.SetHostTransport(string(transport))
+		tt.Frame()
+		if !tt.HasText(m.VaultHostProxyProfile()) || !tt.HasText(m.VaultNetworkProfile()) {
+			t.Fatalf("a %s Host does not offer its route controls, texts %q", transport, tt.Texts())
+		}
 	}
 }
 

@@ -120,7 +120,8 @@ func (e *mcpWriteExecutor) createHosts(ctx context.Context, tool string,
 		}
 		probe := domainvault.Host{
 			Label: draft.Label, Hostname: normalized.Hostname, Port: normalized.Port,
-			Username: normalized.Username, Protocol: normalized.Protocol, Group: normalized.Group,
+			Username: normalized.Username, Protocol: normalized.Protocol,
+			Transport: normalized.Transport, Group: normalized.Group,
 		}
 		if existingKeys[probe.MergeKey()] {
 			if skipDuplicates {
@@ -135,7 +136,8 @@ func (e *mcpWriteExecutor) createHosts(ctx context.Context, tool string,
 			created = append(created, hostSummary(domainvault.Host{
 				Label: normalized.Label, Hostname: normalized.Hostname,
 				Port: normalized.Port, Username: normalized.Username,
-				Protocol: normalized.Protocol, Group: normalized.Group,
+				Protocol: normalized.Protocol, Transport: normalized.Transport,
+				Group: normalized.Group,
 			}))
 			continue
 		}
@@ -171,21 +173,23 @@ func hostSummary(host domainvault.Host) map[string]any {
 	return map[string]any{
 		"id": string(host.ID), "label": host.Label, "hostname": host.Hostname,
 		"port": host.Port, "username": host.Username,
-		"protocol": string(host.Protocol), "group": host.Group,
+		"protocol": string(host.Protocol), "transport": string(host.Transport),
+		"group": host.Group,
 	}
 }
 
 func hostDraftFromCreateObject(entry map[string]any) (domainvault.Draft, []string) {
 	ignored := make([]string, 0)
 	draft := domainvault.Draft{
-		Label:    firstStringArg(entry, "label", "name"),
-		Hostname: firstStringArg(entry, "hostname", "host", "ip"),
-		Username: stringParam(entry, "username"),
-		Protocol: domainvault.Protocol(strings.ToLower(stringParam(entry, "protocol"))),
-		Group:    stringParam(entry, "group"),
-		Tags:     stringSliceArg(entry, "tags"),
-		Notes:    stringParam(entry, "notes"),
-		Password: stringParam(entry, "password"),
+		Label:     firstStringArg(entry, "label", "name"),
+		Hostname:  firstStringArg(entry, "hostname", "host", "ip"),
+		Username:  stringParam(entry, "username"),
+		Protocol:  domainvault.Protocol(strings.ToLower(stringParam(entry, "protocol"))),
+		Transport: domainvault.Transport(strings.ToLower(stringParam(entry, "transport"))),
+		Group:     stringParam(entry, "group"),
+		Tags:      stringSliceArg(entry, "tags"),
+		Notes:     stringParam(entry, "notes"),
+		Password:  stringParam(entry, "password"),
 	}
 	if port, ok := intArg(entry, "port"); ok {
 		draft.Port = port
@@ -205,7 +209,8 @@ func hostDraftFromCreateObject(entry map[string]any) (domainvault.Draft, []strin
 func hostDraftFromHost(host domainvault.Host) domainvault.Draft {
 	draft := domainvault.Draft{
 		Label: host.Label, Hostname: host.Hostname, Port: host.Port,
-		Username: host.Username, Protocol: host.Protocol, Group: host.Group,
+		Username: host.Username, Protocol: host.Protocol,
+		Transport: host.Transport, Group: host.Group,
 		Tags: append([]string(nil), host.Tags...), Notes: host.Notes,
 		Pinned: host.Pinned, IdentityID: host.IdentityID, KeyID: host.KeyID,
 		AuthMethod: host.AuthMethod, UseSSHAgent: host.UseSSHAgent,

@@ -44,7 +44,7 @@ func (c forwardingConnector) Connect(ctx context.Context, hostID model.HostID) (
 	if err != nil {
 		return nil, forwardingRuntimeError(err)
 	}
-	if !host.Protocol.SupportsForwarding() {
+	if !host.SupportsForwarding() {
 		return nil, appforwarding.NewRuntimeError(
 			appforwarding.ErrorUnsupported, nil,
 			fmt.Sprintf("app: %s Hosts cannot forward ports", host.Protocol), nil)

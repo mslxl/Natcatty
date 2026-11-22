@@ -20,12 +20,6 @@ const (
 	// VNC is a Host reached over the RFB protocol. Its Session carries pixels
 	// through a display-session port rather than a byte stream.
 	VNC ID = "vnc"
-	// Local is a shell that runs on this machine.
-	Local ID = "local"
-	// Mosh is an SSH Host that swaps to Mosh after the bootstrap.
-	Mosh ID = "mosh"
-	// ET is an SSH Host reached through the EternalTerminal transport.
-	ET ID = "et"
 )
 
 // Transport names the Session transport a protocol selects. The values match
@@ -46,6 +40,10 @@ const (
 	TransportMosh Transport = "mosh"
 	// TransportET is an EternalTerminal Session.
 	TransportET Transport = "et"
+	// TransportUnsupported is returned when a persisted Host names a protocol
+	// or transport this build does not support. It is deliberately not a
+	// Session kind: callers fail closed instead of falling back to SSH.
+	TransportUnsupported Transport = "unsupported"
 )
 
 // Descriptor is one protocol's identity and the facts the app resolves from
@@ -86,26 +84,15 @@ type Descriptor struct {
 	Plaintext bool
 }
 
-// builtins is the ordered built-in protocol set. The order is the order the
-// Vault presents when a caller does not impose its own.
+// builtins is the ordered built-in Host protocol set. The order is the order
+// the Vault presents when a caller does not impose its own. Mosh and ET are
+// SSH transports, not Host protocols, so they are absent here.
 var builtins = []Descriptor{
 	{
 		ID: SSH, Transport: TransportSSH, DefaultPort: 22,
 		SSHAuth: true, HostProtocol: true, GroupDefault: true,
 		FileTransfer: true, Forwarding: true,
 		Monitoring: true, Proxy: true, X11: true,
-	},
-	{
-		ID: Mosh, Transport: TransportMosh, DefaultPort: 22,
-		SSHAuth: true, HostProtocol: true, GroupDefault: false,
-		FileTransfer: false, Forwarding: true,
-		Monitoring: true, Proxy: true, X11: false,
-	},
-	{
-		ID: ET, Transport: TransportET, DefaultPort: 22,
-		SSHAuth: true, HostProtocol: true, GroupDefault: false,
-		FileTransfer: false, Forwarding: true,
-		Monitoring: true, Proxy: true, X11: false,
 	},
 	{
 		ID: Telnet, Transport: TransportTelnet, DefaultPort: 23,
@@ -130,24 +117,53 @@ var builtins = []Descriptor{
 		// unencrypted stream; only TLS or an SSH route encrypts the wire.
 		Plaintext: true,
 	},
-	{
-		ID: Local, Transport: TransportLocal, DefaultPort: 0,
-		SSHAuth: false, HostProtocol: true, GroupDefault: false,
-		FileTransfer: false, Forwarding: false,
-		Monitoring: false, Proxy: false, X11: false,
-	},
 }
 
-// Builtins returns the built-in descriptors in display order. The slice is a
-// copy; callers may keep or reorder it.
+// transportDescriptors is the capability table keyed by Session transport. It
+// adds Mosh and ET, which an SSH Host selects through its Transport field and
+// which are never persisted as Host protocol IDs.
+var transportDescriptors = func() []Descriptor {
+	descriptors := append([]Descriptor(nil), builtins...)
+	return append(descriptors,
+		Descriptor{
+			Transport: TransportMosh, DefaultPort: 22,
+			SSHAuth: true, HostProtocol: false, GroupDefault: false,
+			FileTransfer: false, Forwarding: true,
+			Monitoring: true, Proxy: true, X11: false,
+		},
+		Descriptor{
+			Transport: TransportET, DefaultPort: 22,
+			SSHAuth: true, HostProtocol: false, GroupDefault: false,
+			FileTransfer: false, Forwarding: true,
+			Monitoring: true, Proxy: true, X11: false,
+		},
+	)
+}()
+
+// Builtins returns the built-in Host protocol descriptors in display order.
+// The slice is a copy; callers may keep or reorder it.
 func Builtins() []Descriptor {
 	return append([]Descriptor(nil), builtins...)
 }
 
-// Resolve returns the descriptor for a built-in protocol.
+// Resolve returns the descriptor for a built-in Host protocol. Mosh and ET do
+// not resolve: they are transports, not protocol IDs.
 func Resolve(id ID) (Descriptor, bool) {
 	for _, descriptor := range builtins {
 		if descriptor.ID == id {
+			return descriptor, true
+		}
+	}
+	return Descriptor{}, false
+}
+
+// DescriptorForTransport returns the capability descriptor for a Session
+// transport. It lets a Host resolve its effective capabilities from
+// `protocol: ssh` + `transport: mosh|et` without comparing protocol names. An
+// unknown transport has no descriptor.
+func DescriptorForTransport(transport Transport) (Descriptor, bool) {
+	for _, descriptor := range transportDescriptors {
+		if descriptor.Transport == transport {
 			return descriptor, true
 		}
 	}

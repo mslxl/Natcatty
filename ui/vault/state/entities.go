@@ -849,8 +849,7 @@ func (s *State) HostProxyProfileSource() (InheritedValueSource, string, string) 
 	if id := strings.TrimSpace(s.form.ProxyProfileID); id != "" {
 		return InheritedValueSourceRecord, "", id
 	}
-	if s.proxy != nil ||
-		domainvault.Protocol(s.form.Protocol) == domainvault.ProtocolLocal {
+	if s.proxy != nil {
 		return InheritedValueSourceNone, "", ""
 	}
 	group := domainvault.NormalizeGroup(s.form.Group)
@@ -889,9 +888,6 @@ func (s *State) HostJumpChainSource() (InheritedValueSource, string, []model.Hos
 	// the session never uses.
 	if s.hostChain != nil {
 		return InheritedValueSourceRecord, "", s.hostChain.IDs()
-	}
-	if domainvault.Protocol(s.form.Protocol) == domainvault.ProtocolLocal {
-		return InheritedValueSourceNone, "", nil
 	}
 	group := domainvault.NormalizeGroup(s.form.Group)
 	if chain := domainvault.ResolveGroupDefaults(s.groupItems, group).HostChain; chain != nil {
@@ -938,7 +934,9 @@ func (s *State) HostX11Source() (InheritedValueSource, string, bool) {
 	if protocol == "" {
 		protocol = domainvault.ProtocolSSH
 	}
-	if protocol == domainvault.ProtocolSSH && defaults.X11Enabled() {
+	if protocol == domainvault.ProtocolSSH &&
+		domainvault.Transport(s.form.Transport) == domainvault.TransportPlain &&
+		defaults.X11Enabled() {
 		return InheritedValueSourceInherited,
 			s.groupDefaultOwner(group, func(g domainvault.Group) bool {
 				return g.X11Forwarding && g.X11WarningAcknowledged
@@ -990,12 +988,12 @@ func (s *State) JumpHostLabels(ids []model.HostID) []string {
 }
 
 // JumpHostCandidates lists the Hosts that can serve as a jump hop, in Vault
-// order. Only SSH-family endpoints can carry a session; a Local shell, Telnet,
-// or another transport would never be dialed as a hop.
+// order. Only SSH-family endpoints can carry a session; a Telnet, VNC, or
+// non-SSH transport would never be dialed as a hop.
 func (s *State) JumpHostCandidates() []domainvault.Host {
 	out := make([]domainvault.Host, 0, len(s.items))
 	for _, host := range s.items {
-		if host.Protocol == "" || host.Protocol.UsesSSHAuth() {
+		if host.UsesSSHAuth() {
 			out = append(out, host)
 		}
 	}

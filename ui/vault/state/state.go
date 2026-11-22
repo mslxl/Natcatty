@@ -169,10 +169,14 @@ type Form struct {
 	Port     string
 	Username string
 	Protocol string
-	Group    string
-	Tags     string
-	Notes    string
-	Pinned   bool
+	// Transport selects an SSH Host's Session transport: empty is plain SSH,
+	// "mosh" and "et" are the SSH-based transports. It is empty for every
+	// other protocol and is never offered on one.
+	Transport string
+	Group     string
+	Tags      string
+	Notes     string
+	Pinned    bool
 	// StartupCommand is typed once after the Session is ready and replayed
 	// after every reconnect.
 	StartupCommand string
@@ -839,18 +843,25 @@ func (s *State) BeginEdit(id model.HostID) bool {
 	if !ok {
 		return false
 	}
+	// A blank protocol has always meant SSH and the transport input spelling
+	// "ssh" means plain SSH. The editor shows the effective pair so a
+	// hand-edited or older record does not hide the SSH-only controls.
+	host = domainvault.NormalizeHost(host)
 	s.closeEntityEditors()
 	s.editing = true
 	s.selected = host.ID
 	s.problem = ProblemNone
 	s.pendingDelete = ""
 	s.form = Form{
-		ID:             host.ID,
-		Label:          host.Label,
-		Hostname:       host.Hostname,
-		Port:           hostPortText(host),
-		Username:       host.Username,
-		Protocol:       string(host.Protocol),
+		ID:       host.ID,
+		Label:    host.Label,
+		Hostname: host.Hostname,
+		Port:     hostPortText(host),
+		Username: host.Username,
+		Protocol: string(host.Protocol),
+		// The raw stored transport, not a display label: an unknown value must
+		// reach Save and be rejected instead of being rewritten as plain SSH.
+		Transport:      string(host.Transport),
 		Group:          host.Group,
 		Tags:           strings.Join(host.Tags, ", "),
 		Notes:          host.Notes,
@@ -893,9 +904,6 @@ func (s *State) BeginEdit(id model.HostID) bool {
 	if s.form.AuthMethod == "" {
 		s.form.AuthMethod = string(domainvault.HostAuthAuto)
 	}
-	if host.Protocol == domainvault.ProtocolLocal {
-		s.form.Port = ""
-	}
 	s.inheritHostX11(host)
 	s.redraw()
 	return true
@@ -918,7 +926,10 @@ func (s *State) inheritHostX11(host domainvault.Host) {
 	if protocol == "" {
 		protocol = domainvault.ProtocolSSH
 	}
-	if protocol != domainvault.ProtocolSSH || !defaults.X11Enabled() {
+	// X11 needs a plain SSH connection; Mosh and ET bring their own session
+	// layer and cannot carry it.
+	if protocol != domainvault.ProtocolSSH ||
+		host.Transport != domainvault.TransportPlain || !defaults.X11Enabled() {
 		return
 	}
 	s.form.X11Forwarding = true
@@ -1063,27 +1074,73 @@ func parseVNCDisplayNumber(text string) (int, bool) {
 // belong to the previous protocol. A hidden control must never leave a value
 // behind that Save would persist: file-transfer settings, X11, and SSH-only
 // credentials all follow the protocol. Route fields survive a switch to Telnet
-// or VNC because SSH jumps and a proxy can still carry the stream; only a
-// Local shell, which dials nothing, drops them.
+// or VNC because SSH jumps and a proxy can still carry the stream.
 func (s *State) SetHostProtocol(protocol string) {
 	previous := domainvault.Protocol(s.form.Protocol)
 	s.form.Protocol = protocol
-	capabilities := domainvault.Protocol(protocol)
-	if capabilities == domainvault.ProtocolVNC && previous != domainvault.ProtocolVNC {
+	if protocol != string(domainvault.ProtocolSSH) {
+		// A transport belongs to SSH; another protocol has no control for it.
+		s.form.Transport = ""
+	}
+	if protocol == string(domainvault.ProtocolVNC) && previous != domainvault.ProtocolVNC {
 		// Entering VNC starts from the viewer defaults. A typed VNC password
 		// from an earlier VNC edit is not carried over a protocol switch.
 		s.applyVNCDefaults()
 		s.form.VNCPassword = ""
 	}
-	if capabilities != domainvault.ProtocolVNC && previous == domainvault.ProtocolVNC {
+	if protocol != string(domainvault.ProtocolVNC) && previous == domainvault.ProtocolVNC {
 		// Leaving VNC hides every VNC control. Configuration is cleared and
 		// the SSH credential fields are left exactly as they were.
 		s.applyVNCDefaults()
 		s.form.VNCPassword = ""
 		s.form.HasVNCPassword = false
 	}
-	if !capabilities.X11() {
-		// X11 has no control on another protocol, so neither a shown value nor
+	s.clearHostTransportScopedValues()
+}
+
+// SetHostTransport records the SSH transport and clears values the newly
+// hidden controls would otherwise save. A protocol other than SSH keeps no
+// transport.
+func (s *State) SetHostTransport(transport string) {
+	if s.form.Protocol != string(domainvault.ProtocolSSH) {
+		transport = ""
+	}
+	s.form.Transport = transport
+	s.clearHostTransportScopedValues()
+}
+
+// hostFormDraft is the protocol/transport pair the editor currently shows. Its
+// capability methods make the visibility rules agree with the domain.
+func (s *State) hostFormDraft() domainvault.Draft {
+	return domainvault.Draft{
+		Protocol:  domainvault.Protocol(s.form.Protocol),
+		Transport: domainvault.Transport(s.form.Transport),
+	}
+}
+
+// HostFormCapabilities resolves the editor's current protocol and transport.
+// The view reads it instead of comparing protocol names.
+func (s *State) HostFormCapabilities() domainvault.HostCapabilities {
+	return s.hostFormDraft().Capabilities()
+}
+
+// HostFormPlainSSH reports whether the editor is on plain SSH. Controls that
+// only a plain SSH login shell can use are hidden for Mosh and ET.
+func (s *State) HostFormPlainSSH() bool {
+	return domainvault.Protocol(s.form.Protocol) == domainvault.ProtocolSSH &&
+		domainvault.Transport(s.form.Transport) == domainvault.TransportPlain
+}
+
+// clearHostTransportScopedValues drops every value whose control the current
+// protocol and transport hide. A switch must never leave a setting on the
+// record that its Session never reads.
+func (s *State) clearHostTransportScopedValues() {
+	draft := s.hostFormDraft()
+	capabilities := draft.Capabilities()
+	plainSSH := draft.Protocol == domainvault.ProtocolSSH &&
+		draft.Transport == domainvault.TransportPlain
+	if !capabilities.X11 {
+		// X11 has no control on this transport, so neither a shown value nor
 		// an inherited one may survive Save. Ownership is dropped too: the
 		// preference was never a choice the user could see.
 		s.form.X11Forwarding = false
@@ -1091,26 +1148,26 @@ func (s *State) SetHostProtocol(protocol string) {
 		s.form.X11ForwardingSet = false
 		s.form.X11Inherited = false
 	}
-	if !capabilities.SupportsFileTransfer() {
+	if !capabilities.FileTransfer {
 		s.form.FileProtocol = string(domainvault.FileProtocolAuto)
 		s.form.SFTPSudo = false
 	}
-	if !capabilities.SupportsProxy() {
+	if !capabilities.Proxy {
 		s.form.ProxyProfileID = ""
 		s.form.NetworkProfileID = ""
 	}
-	if protocol != string(domainvault.ProtocolSSH) {
+	if !plainSSH {
 		s.form.NetworkDevice = false
 		s.form.AutoAttachTmux = false
 	}
-	if protocol != string(domainvault.ProtocolMosh) {
+	if draft.Transport != domainvault.TransportMosh {
 		s.form.MoshServerPath = ""
 	}
-	if protocol != string(domainvault.ProtocolET) {
+	if draft.Transport != domainvault.TransportET {
 		s.form.ETPort = ""
 	}
-	if domainvault.Protocol(protocol) == domainvault.ProtocolSSH {
-		// X11 becomes visible again with this protocol. Re-resolve the Host
+	if plainSSH {
+		// X11 becomes visible again with plain SSH. Re-resolve the Host
 		// Group's default so the checkbox shows the value a Session would use
 		// instead of staying at the off the hidden control left behind.
 		s.inheritHostX11(domainvault.Host{
@@ -1118,7 +1175,7 @@ func (s *State) SetHostProtocol(protocol string) {
 			Protocol: domainvault.ProtocolSSH,
 		})
 	}
-	if !capabilities.UsesSSHAuth() {
+	if !capabilities.SSHAuth {
 		s.form.IdentityID = ""
 		s.form.KeyID = ""
 		s.form.AuthMethod = string(domainvault.HostAuthAuto)
@@ -1422,7 +1479,7 @@ func (s *State) GroupPortPlaceholder() string {
 }
 
 // portPlaceholder renders the effective default port a blank field inherits.
-// A Local shell has no port, so it shows no hint.
+// A protocol with no TCP port shows no hint.
 func portPlaceholder(protocol domainvault.Protocol, inherited int) string {
 	if port := domainvault.EffectivePort(protocol, inherited); port > 0 {
 		return strconv.Itoa(port)
@@ -1439,6 +1496,7 @@ func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 		Port:                   host.Port,
 		Username:               host.Username,
 		Protocol:               host.Protocol,
+		Transport:              host.Transport,
 		Group:                  host.Group,
 		Tags:                   host.Tags,
 		Notes:                  host.Notes,
@@ -1521,12 +1579,14 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 	}
 
 	etPort := 0
-	if trimmed := strings.TrimSpace(s.form.ETPort); trimmed != "" {
-		parsed, err := strconv.Atoi(trimmed)
-		if err != nil {
-			return domainvault.Draft{}, ProblemETPort
+	if domainvault.Transport(s.form.Transport) == domainvault.TransportET {
+		if trimmed := strings.TrimSpace(s.form.ETPort); trimmed != "" {
+			parsed, err := strconv.Atoi(trimmed)
+			if err != nil {
+				return domainvault.Draft{}, ProblemETPort
+			}
+			etPort = parsed
 		}
-		etPort = parsed
 	}
 
 	var tags []string
@@ -1557,6 +1617,7 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		Port:                   port,
 		Username:               s.form.Username,
 		Protocol:               protocol,
+		Transport:              domainvault.Transport(s.form.Transport),
 		Group:                  s.form.Group,
 		Tags:                   tags,
 		Notes:                  s.form.Notes,
@@ -1586,8 +1647,8 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		Algorithms:       domainvault.CloneAlgorithms(s.algorithms),
 		SFTPFileProtocol: domainvault.FileProtocol(s.form.FileProtocol),
 		SFTPSudo:         s.form.SFTPSudo,
-		DeviceType:       formDeviceType(s.form.NetworkDevice, s.form.Protocol),
-		AutoAttachTmux:   formAutoAttachTmux(s.form.AutoAttachTmux, s.form.NetworkDevice, s.form.Protocol),
+		DeviceType:       formDeviceType(s.form.NetworkDevice, s.form.Protocol, s.form.Transport),
+		AutoAttachTmux:   formAutoAttachTmux(s.form.AutoAttachTmux, s.form.NetworkDevice, s.form.Protocol, s.form.Transport),
 		NewlineMode:      modelterminal.NewlineMode(s.form.NewlineMode),
 		BackspaceMode:    modelterminal.BackspaceMode(s.form.BackspaceMode),
 		LineEditingMode:  modelterminal.LineEditingMode(s.form.LineEditingMode),
@@ -1600,18 +1661,21 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 // formDeviceType maps the editor's checkbox onto the Host record. The mode is
 // offered only for SSH, so a hidden checkbox can never save it for another
 // protocol.
-func formDeviceType(enabled bool, protocol string) domainvault.DeviceType {
-	if enabled && domainvault.Protocol(protocol) == domainvault.ProtocolSSH {
+func formDeviceType(enabled bool, protocol, transport string) domainvault.DeviceType {
+	if enabled && domainvault.Protocol(protocol) == domainvault.ProtocolSSH &&
+		domainvault.Transport(transport) == domainvault.TransportPlain {
 		return domainvault.DeviceTypeNetwork
 	}
 	return domainvault.DeviceTypeDefault
 }
 
 // formAutoAttachTmux maps the editor's checkbox onto the Host record. tmux
-// wraps an interactive POSIX login shell, so neither another protocol nor
-// network-device mode may save it.
-func formAutoAttachTmux(enabled, networkDevice bool, protocol string) bool {
-	return enabled && !networkDevice && domainvault.Protocol(protocol) == domainvault.ProtocolSSH
+// wraps an interactive POSIX login shell, so neither another protocol, an SSH
+// transport, nor network-device mode may save it.
+func formAutoAttachTmux(enabled, networkDevice bool, protocol, transport string) bool {
+	return enabled && !networkDevice &&
+		domainvault.Protocol(protocol) == domainvault.ProtocolSSH &&
+		domainvault.Transport(transport) == domainvault.TransportPlain
 }
 
 // problemFor maps a typed application error to the view's problem id.
@@ -1686,7 +1750,7 @@ func problemForValidation(invalid *domainvault.ValidationError) Problem {
 			return ProblemPortRange
 		}
 		return ProblemPortInvalid
-	case domainvault.FieldProtocol:
+	case domainvault.FieldProtocol, domainvault.FieldTransport:
 		return ProblemProtocol
 	case domainvault.FieldUsername:
 		return ProblemUsername
