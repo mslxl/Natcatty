@@ -56,6 +56,51 @@ type sessionMenuActions struct {
 	Observe        func()
 }
 
+// sessionMenu fills the Session menu from the chrome model and actions. The
+// toolbar's ⋮ button and the terminal's context menu both open it, so the two
+// agree on every command and its disabled state.
+func sessionMenu(menu *ui.Menu, model chromeModel, m locales.Messages, actions chromeActions) {
+	buildSessionMenu(menu, sessionMenuModel{
+		Encoding:     domainterminal.NormalizeEncoding(model.Encoding),
+		Logging:      model.Logging.Active,
+		LogFormat:    model.LogFormat,
+		LogDirectory: model.LogDirectory,
+		LogPath:      model.Logging.Path,
+		CanPaste:     model.CanPaste && actions.Paste != nil,
+		CanReconnect: model.CanReconnect && actions.Reconnect != nil,
+		CanClear:     actions.ClearBuffer != nil,
+		CanSave:      actions.SaveScreen != nil,
+		CanRename:    actions.Rename != nil,
+		CanSplit:     actions.SplitRight != nil || actions.SplitDown != nil,
+		CanDetach:    actions.Detach != nil,
+		CanClosePane: actions.ClosePane != nil,
+		Hibernated:   model.Hibernated,
+	}, m, sessionMenuActions{
+		Copy:           actions.Copy,
+		Paste:          actions.Paste,
+		PasteSelection: actions.PasteSelection,
+		SelectAll:      actions.SelectAll,
+		OpenBrowser:    actions.OpenBrowser,
+		Reconnect:      actions.Reconnect,
+		SendYmodem:     actions.SendYmodem,
+		ReceiveYmodem:  actions.ReceiveYmodem,
+		SaveScreen:     actions.SaveScreen,
+		ClearBuffer:    actions.ClearBuffer,
+		Rename:         actions.Rename,
+		SetEncoding:    actions.SetEncoding,
+		ToggleLog:      actions.ToggleLog,
+		OpenLog:        actions.OpenLog,
+		SetLogFormat:   actions.SetLogFormat,
+		SplitRight:     actions.SplitRight,
+		SplitDown:      actions.SplitDown,
+		Detach:         actions.Detach,
+		ClosePane:      actions.ClosePane,
+		Hibernate:      actions.Hibernate,
+		Resume:         actions.Resume,
+		Observe:        actions.Observe,
+	})
+}
+
 // buildSessionMenu fills the Session menu in the original's order: selection,
 // browser, reconnect, YMODEM, splits, screen, identity, and lifetime. Encoding
 // and logging sit after the screen commands because the original exposed them

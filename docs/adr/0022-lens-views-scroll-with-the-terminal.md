@@ -36,7 +36,8 @@ at column widths fitted to the view, keeping emphasis, code, links, alignment
 and math in the cells; a math block draws its TeX wrapped and centred as muted
 monospace. The remaining blocks render as MyGo renders them.
 
-**Status**: accepted and implemented.
+**Status**: accepted and implemented; the raw-body exception is amended by
+ADR-0024.
 
 **Considered Options**:
 - Keep MyGo's `ui.List` and hide its bars with `Scrollbars(false)`: the bars go,
@@ -84,10 +85,11 @@ monospace. The remaining blocks render as MyGo renders them.
   second click to activate), matching tables; the lens still receives the same
   `select`, `activate` and `change` events.
 - A list's filter box stays, but it is the only focusable part of the list.
-- The raw (non-native) body of a block is unchanged: Terminal's capped
-  `.sf-list-scroll.max` viewport and the "N lines over this command's output
-  limit" notice are terminal output, not a lens widget, and the notice can lift
-  the cap.
+- The raw (non-native) body of a block was originally left as Terminal has it —
+  a capped `.sf-list-scroll.max` viewport — because it is terminal output, not a
+  lens widget. ADR-0024 amends this: raw output and a command no lens claimed
+  are flow content too, and the transcript keeps one scroll. The "N lines over
+  this command's output limit" notice still lifts the cap.
 - New node kinds added to `lens.Node` must follow the same rule: no nested
   `ui.Scroll`, no `ui.List`, no editor bars, and no `ui.ScrollHorizontal`
   (ADR-0022 is the check for review). Markdown content that MyGo would put in

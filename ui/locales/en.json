@@ -1893,6 +1893,7 @@
   "sessionFilesClose": "Close files",
   "sessionMenuPaste": "Paste",
   "sessionMenuClearBuffer": "Clear Buffer",
+  "terminalMenuCopyWorkingDirectory": "Copy Working Directory",
   "sessionMenuSplitRight": "Split Right",
   "sessionMenuSplitDown": "Split Down",
   "sessionMenuDetach": "Detach from workspace",

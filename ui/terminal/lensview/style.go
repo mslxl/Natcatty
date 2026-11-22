@@ -26,6 +26,7 @@ type style struct {
 	BodyIndent float32 // card body padding-left: 36
 	CellPadX   float32 // table cell padding: 7
 	LH         float32 // --sf-lh: one line of the surface
+	BodySize   float32 // the terminal font's size: the body text's size
 	SmallSize  float32 // 11.5: headers, badges, code heads
 	MeterH     float32 // a meter or bar is 6 DIP tall
 	MeterR     float32 // and rounded by 3
@@ -75,6 +76,7 @@ func styleFor(c *ui.Context) style {
 		BodyIndent: 36,
 		CellPadX:   7,
 		LH:         22, // Terminal --he-lh: 22px
+		BodySize:   fs,
 		SmallSize:  11.5,
 		MeterH:     6,
 		MeterR:     3,

@@ -10232,6 +10232,18 @@ func (msgs Messages) SessionMenuClearBuffer() string {
 	return Catalog.Format(msgs.locale, "sessionMenuClearBuffer", nil)
 }
 
+// TerminalMenuCopyWorkingDirectory says "Copy Working Directory"
+// in the language the app shows.
+func TerminalMenuCopyWorkingDirectory() string {
+	return In(i18n.Locale()).TerminalMenuCopyWorkingDirectory()
+}
+
+// TerminalMenuCopyWorkingDirectory says "Copy Working Directory"
+// in the language of msgs.
+func (msgs Messages) TerminalMenuCopyWorkingDirectory() string {
+	return Catalog.Format(msgs.locale, "terminalMenuCopyWorkingDirectory", nil)
+}
+
 // SessionMenuSplitRight says "Split Right"
 // in the language the app shows.
 func SessionMenuSplitRight() string { return In(i18n.Locale()).SessionMenuSplitRight() }

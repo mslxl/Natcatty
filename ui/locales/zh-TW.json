@@ -1243,6 +1243,7 @@
   "sessionFilesClose": "關閉檔案",
   "sessionMenuPaste": "貼上",
   "sessionMenuClearBuffer": "清除緩衝區",
+  "terminalMenuCopyWorkingDirectory": "複製工作目錄",
   "sessionMenuSplitRight": "向右分割",
   "sessionMenuSplitDown": "向下分割",
   "sessionMenuDetach": "從工作區分離",

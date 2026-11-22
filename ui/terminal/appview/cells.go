@@ -98,10 +98,11 @@ func clusterStart(spans []ui.Span, col int) (int, bool) {
 	return col, false
 }
 
-// cellOrigin is where a cell's centre lies in the pane's own coordinates. The
-// rows are uniform now, so the centre is the cell's place in the grid. The
-// shader's positions start at the pane's box corner, which is outside the
-// padding, while the cells are counted inside it.
+// cellOrigin is where a cell's centre lies in the live grid's border box. The
+// rows are uniform now, so the centre is the cell's place in the grid, counted
+// from the box's corner outside the padding. The wave's shader is applied to
+// the whole pane instead, so the caller maps this point out of the grid's box
+// with paneWaveOrigin; a pointer origin is already in this box's space.
 func cellOrigin(cellX, cellY, cols int) ui.Point {
 	if cellX < 0 {
 		cellX = 0

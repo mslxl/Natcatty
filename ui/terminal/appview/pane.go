@@ -55,6 +55,20 @@ type Hooks struct {
 	// switch) must not own the keyboard: Terminal's flow is still the shell's
 	// input surface, so the Session requests the terminal's focus again.
 	Click func()
+	// Secondary is called when the secondary button goes down on a finished
+	// command's row or block. Opening the text menu focuses the read-only
+	// paragraph the click landed on, which would take typing away from the
+	// shell; the Session requests the terminal's focus again. Unlike Click it
+	// does not clear the live selection: a right-click is often how the user
+	// reaches Copy.
+	Secondary func()
+	// Menu adds the application's items to every context menu the Pane opens:
+	// the live screen, blank space, finished blocks, raw cells and Lens
+	// bodies. acts holds the live screen's selection commands for the frame
+	// the menu was opened over; text views pass the zero value and add their
+	// own editing items, so the application must omit Copy and Select All when
+	// acts.Copy is nil (see MenuActions). Nil shows no menu.
+	Menu func(m *ui.Menu, acts MenuActions)
 	// Focus requests the one frame in which the Pane should take keyboard
 	// focus. A steady frame leaves focus with controls such as Compose.
 	Focus bool
@@ -103,6 +117,22 @@ type Hooks struct {
 	// not one this app draws. Nil, or nil rows for a block, falls back to the
 	// typed line alone; a prompt is never invented.
 	PromptRows func(blockID int) [][]ui.Span
+}
+
+// MenuActions are the live screen's selection commands at the time a context
+// menu was built. The Pane supplies them from the frame it was showing; a
+// text view (a Lens body, a finished block's cells) passes the zero value and
+// prepends MyGo's own editing items instead. Copy is nil when nothing is
+// selected, and SelectAll is nil when the screen cannot be replayed.
+type MenuActions struct {
+	// Live marks a menu that opened on the live screen. Only then does the
+	// application add its Copy and Select All items: a text view's own
+	// editing items already hold them, and a second Copy would be a
+	// duplicate label acting on a different selection.
+	Live         bool
+	HasSelection bool
+	Copy         func()
+	SelectAll    func()
 }
 
 // Hover is the link the pointer with Command held rests over: what the link
@@ -174,16 +204,40 @@ func Pane(c *ui.Context, store *model.Store, engine *lens.Engine, term *terminal
 	// command rows (the live box below has its own handler), so a press on a
 	// block reaches this before the widget asks about its click. Report it
 	// and leave the event alone: the block still selects and its buttons still
-	// work, and the Session gives the keyboard back to the shell.
-	if hooks.Click != nil {
+	// work, and the Session gives the keyboard back to the shell. The
+	// secondary button reports too: opening the text menu focuses the
+	// read-only paragraph under the pointer, and the shell must get the
+	// keyboard back as well.
+	if hooks.Click != nil || hooks.Secondary != nil {
 		s.HandleInput(func(ev ui.InputEvent) bool {
-			// Only the primary button: a secondary press opens the text menu
-			// and must leave the keyboard where it was.
-			if ev.Kind == ui.InputPointerDown && ev.Button == 0 {
-				hooks.Click()
+			if ev.Kind == ui.InputPointerDown {
+				switch ev.Button {
+				case 0:
+					if hooks.Click != nil {
+						hooks.Click()
+					}
+				case 1:
+					if hooks.Secondary != nil {
+						hooks.Secondary()
+					}
+				}
 			}
 			return false
 		})
+	}
+	// Every surface the application owns opens the same terminal menu. The
+	// flow itself is the fallback for blank space between and around blocks:
+	// it offers the live screen's Copy and Select All like the grid, so the
+	// menu reads the same wherever the right-click lands. The text views
+	// inside blocks attach the text form of the menu too, after their own
+	// editing items; without that their Selectable would keep MyGo's
+	// two-item text menu and right-click would differ from one row to the
+	// next.
+	var textMenu func(*ui.Menu)
+	if hooks.Menu != nil {
+		textMenu = func(m *ui.Menu) { hooks.Menu(m, MenuActions{}) }
+		acts := liveMenuActions(c, frame, hooks.Selection)
+		s = s.ContextMenu(func(m *ui.Menu) { hooks.Menu(m, acts) })
 	}
 	// The viewport is the scroll's content box: its padding is the flow's
 	// margin, outside the part the content is measured against. Measuring the
@@ -203,6 +257,7 @@ func Pane(c *ui.Context, store *model.Store, engine *lens.Engine, term *terminal
 			viewport = ui.Rect{X: r.X, Y: r.Y + flowPadY, W: r.W, H: r.H - 2*flowPadY}
 		}
 	}
+	var wave PaneWave
 	s.Children(func() {
 		// Keep the live terminal as the viewport-sized last child. Without a
 		// finite height on this flow column, the self-drawn input box shrinks to
@@ -246,13 +301,45 @@ func Pane(c *ui.Context, store *model.Store, engine *lens.Engine, term *terminal
 					}
 					body := ui.Column(c).Padding(bodyPad, 0, 0, livePad).FillWidth()
 					body.Children(func() {
-						blockview.RenderCommand(c, store, engine, &blocks[i], viewport, onCopy)
+						blockview.RenderCommand(c, store, engine, &blocks[i], viewport, onCopy, textMenu)
 					})
 				})
 			}
-			Live(c, frame, showCursor, term, size, images, followState, ripple, bell, tail, cursor, theme, viewport.H, renderHistory && len(blocks) > 0, hooks)
+			wave = Live(c, frame, showCursor, term, size, images, followState, ripple, bell, tail, cursor, theme, viewport.H, renderHistory && len(blocks) > 0, hooks)
 		})
 	})
+	// The bell's wave and ring belong to the whole pane, not to the live grid:
+	// Terminal ripples its body, so the wave starts where the cursor is and runs
+	// over every finished block and the flow's padding too. The live grid's box
+	// moves with the flow (history above it, a scrolled flow), so its origin is
+	// moved into the scroll's own box before the distortion is applied there.
+	if wave.Running && ripple != nil {
+		// Both boxes are the previous frame's layout. A live grid that was just
+		// re-keyed (a tab switch, a pane focus change) has no box yet: translating
+		// its origin by an empty box would put the wave's centre at the pane's
+		// corner, so the distortion stays off until both boxes exist (the ring is
+		// drawn separately and still shows). A flow that is moving (output
+		// streaming, the wheel) leaves the centre one frame behind; at age zero the
+		// wavefront has not left the origin and draws nothing, so the start is
+		// never seen away from the cursor, and the next frame catches up.
+		paneBox := s.LayoutBounds()
+		if wave.Box.W > 0 && wave.Box.H > 0 && paneBox.W > 0 && paneBox.H > 0 {
+			origin := paneWaveOrigin(wave.Box, paneBox, wave.Origin)
+			s = s.Effect(paneWave(ripple, wave.Now, origin))
+		}
+	}
+	if wave.Flash > 0 {
+		// Terminal's tnBell: an inset ring over the content and a hint of ink,
+		// fading out in 0.5 s, and taking no clicks.
+		ink, tint := ui.RGBA(0, 0, 0, 0.55*wave.Flash), ui.RGBA(0, 0, 0, 0.04*wave.Flash)
+		if c.Theme().Dark {
+			ink, tint = ui.RGBA(255, 255, 255, 0.55*wave.Flash), ui.RGBA(255, 255, 255, 0.04*wave.Flash)
+		}
+		s = s.DrawOver(func(p *ui.Painter, r ui.Rect) {
+			p.Fill(r, tint, 4)
+			p.Stroke(r, ink, 4, 1.5)
+		})
+	}
 	return s.Label("Terminal")
 }
 
@@ -343,6 +430,63 @@ func CursorReplayRow(snapshot []byte, size Size) (row int, alt, ok bool) {
 // test can stand in for the desktop.
 var ReduceMotion = func(c *ui.Context) bool { return c.Preferences().ReduceMotion }
 
+// paneWave builds the distortion a running ripple draws with. The wave covers the
+// flow's whole scroll rather than the live grid, so the origin is given in the
+// pane's coordinates. A variable, like ReduceMotion, so a test can stand in for
+// the shader and read where the wave was applied.
+var paneWave = func(r *effects.Ripple, now time.Time, origin ui.Point) ui.Effect {
+	return r.Effect(now, origin)
+}
+
+// PaneWave is one frame's ripple as Live reports it: the live grid's box, the
+// wave's centre in that box's coordinates, whether the distortion draws, and how
+// much of the bell's ring shows. The Pane draws both across its whole scroll —
+// the wave starts at the cursor and runs over every block and the flow's padding
+// — so the box is what the origin is moved out of.
+type PaneWave struct {
+	Box     ui.Rect   // the live grid's border box, in window coordinates
+	Origin  ui.Point  // the wave's centre, in DIPs from Box's corner
+	Running bool      // the distortion draws this frame
+	Flash   float32   // the bell's ring, 1 down to 0
+	Now     time.Time // the frame the ripple was read at
+}
+
+// paneWaveOrigin moves a wave's origin from the live grid's box to the pane's:
+// both are window boxes, and the origin is in DIPs from the live box's corner.
+func paneWaveOrigin(live, pane ui.Rect, origin ui.Point) ui.Point {
+	return ui.Point{X: live.X - pane.X + origin.X, Y: live.Y - pane.Y + origin.Y}
+}
+
+// liveMenuActions returns the selection commands a context menu opened over
+// the live screen offers. The live grid and the flow's blank space share them,
+// so Copy and Select All mean the same thing wherever a right-click lands
+// inside the terminal. Copy and SelectAll are nil when there is nothing to act
+// on, which shows the application's items disabled.
+func liveMenuActions(c *ui.Context, frame Frame, sel *Selection) MenuActions {
+	acts := MenuActions{Live: true}
+	if sel == nil {
+		return acts
+	}
+	acts.HasSelection = !sel.Empty()
+	if !sel.Empty() {
+		acts.Copy = func() {
+			if text := frame.SelectionText(*sel); text != "" {
+				// A menu item runs while the window builds; the clipboard is
+				// reached through Services, which is safe in and out of a frame.
+				c.Services().WriteClipboard(text)
+				c.Invalidate()
+			}
+		}
+	}
+	if frame.sc != nil {
+		acts.SelectAll = func() {
+			sel.SelectAll(frame.sc)
+			c.Invalidate()
+		}
+	}
+	return acts
+}
+
 // Live draws the terminal's screen as rows of the flow and takes the keyboard for
 // it: typing is translated into bytes the program reads. follow is the flow's
 // following state: a wheel towards the start detaches it, so the place the reader
@@ -350,9 +494,13 @@ var ReduceMotion = func(c *ui.Context) bool { return c.Preferences().ReduceMotio
 // decides the cursor blink once, before laying the flow out: whether a full-screen
 // program placed a picture decides how much of the pane the live view takes, so
 // the same replay has to be known before the layout is built.
-func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, size Size, images []lens.Image, follow *Follow, ripple *effects.Ripple, bell Bell, tail Tail, cursor Cursor, theme *terminal.Theme, viewportHeight float32, hasHistory bool, hooks Hooks) {
+//
+// A bell's ripple is reported, not drawn: the wave covers the flow's whole scroll,
+// so the caller applies the returned PaneWave there, moving its origin out of the
+// live grid's box (see Pane).
+func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, size Size, images []lens.Image, follow *Follow, ripple *effects.Ripple, bell Bell, tail Tail, cursor Cursor, theme *terminal.Theme, viewportHeight float32, hasHistory bool, hooks Hooks) PaneWave {
 	if term == nil {
-		return
+		return PaneWave{}
 	}
 	measureCell(c)
 	if len(images) > 0 {
@@ -420,7 +568,9 @@ func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, 
 				hooks.Focused(view.FocusWithin())
 			}
 		})
-		return
+		// A full-screen program's own view draws its screen; the flow's ring and
+		// wave stay off it, as they did when the cell grid was the only surface.
+		return PaneWave{}
 	}
 	// PromptRow is an absolute row of this replay: the boundary mirror keeps
 	// the same scrollback, so its recorded row indexes the same line, and the
@@ -645,6 +795,13 @@ func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, 
 		if client := hooks.TextInput; client != nil && takesPlatformTextInput {
 			box = box.HandleTextInput(client)
 		}
+		if hooks.Menu != nil {
+			// The live grid is where most right-clicks land, and it is the one
+			// surface whose Copy and Select All act on the Pane's own cell
+			// selection rather than MyGo's paragraph selection.
+			acts := liveMenuActions(c, frame, hooks.Selection)
+			box = box.ContextMenu(func(m *ui.Menu) { hooks.Menu(m, acts) })
+		}
 		logicalFocus := box.FocusWithin()
 		if hooks.Focus || (hooks.Refocus && !logicalFocus) ||
 			(hooks.KeepFocus && logicalFocus) {
@@ -798,16 +955,6 @@ func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, 
 			return false
 		})
 
-		if flash > 0 {
-			// Terminal's tnBell: an inset ring over the content and a hint of ink,
-			// fading out in 0.5 s, and taking no clicks.
-			ink, tint := ui.RGBA(0, 0, 0, 0.55*flash), ui.RGBA(0, 0, 0, 0.04*flash)
-			if c.Theme().Dark {
-				ink, tint = ui.RGBA(255, 255, 255, 0.55*flash), ui.RGBA(255, 255, 255, 0.04*flash)
-			}
-			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Radius(4).
-				Border(1.5, ink).Background(tint)
-		}
 		box.Children(func() {
 			// Every row is one measured cell tall and starts at its index times
 			// that cell. A row holding a fallback glyph (an emoji, a Nerd Font
@@ -878,18 +1025,23 @@ func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, 
 			c.AnimationFrame()
 		}
 	}
-	// The wave bends the whole pane, its background and padding too, as
-	// Terminal's body does. It is applied once the rows are built: the bell's
-	// cell centre is the one they were laid out at, and a drop may have started
-	// above, from the pointer's own point.
+	// The wave is reported rather than drawn here: it bends the whole pane, and
+	// this box is only the live part of the flow. The caller moves the origin
+	// into the flow's coordinates and applies it there. It is read once the
+	// rows are built: the bell's cell centre is the one they were laid out at,
+	// and a drop may have started above, from the pointer's own point.
+	wave := PaneWave{Flash: flash, Now: now}
 	if ripple != nil && !reduced && ripple.Running(now) {
 		origin, exact := ripple.Origin()
 		if !exact {
 			cellX, cellY := ripple.Cell()
 			origin = cellOrigin(cellX, cellY, size.Cols)
 		}
-		outer.Effect(ripple.Effect(now, origin))
+		wave.Running = true
+		wave.Origin = origin
+		wave.Box = outer.LayoutBounds()
 	}
+	return wave
 }
 
 // renderCursor draws the overlay as a child of the row that contains the cell,

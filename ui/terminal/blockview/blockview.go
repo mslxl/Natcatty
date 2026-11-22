@@ -29,21 +29,16 @@ import (
 
 // maxRawLines caps how many raw lines one frame builds; the full raw text is
 // still what Copy copies. Terminal virtualizes the raw list; this is a simpler
-// bound because the raw body is a selectable Scroll (a virtualized List cannot
-// be selected as one document, as MyGo's text docs note).
+// bound because the raw body is one selectable document, and a virtualized List
+// cannot be selected as one (MyGo's text docs).
 const maxRawLines = 500
-
-// maxCellLines is how many lines a plain cell draws before it gets a scroll
-// viewport of its own. It keeps an ordinary command (a few lines) as plain flow
-// text instead of a nested scroll area.
-const maxCellLines = 40
 
 // Render draws every finished block in the store, in order. The prompt and
 // echoed input above each block are screen rows the Pane paints from its
 // capture (see appview.Hooks.PromptRows), not part of the card. viewport is the
 // visible part of the flow in window coordinates (the zero Rect when the caller
 // has none); a block's toolbar uses it to stay inside the visible range.
-func Render(c *ui.Context, store *model.Store, engine *lens.Engine, viewport ui.Rect, onCopy func(string)) {
+func Render(c *ui.Context, store *model.Store, engine *lens.Engine, viewport ui.Rect, onCopy func(string), menu func(*ui.Menu)) {
 	blocks := store.Snapshot()
 	col := ui.Column(c).Gap(10).FillWidth()
 	col.Children(func() {
@@ -54,7 +49,7 @@ func Render(c *ui.Context, store *model.Store, engine *lens.Engine, viewport ui.
 			if !blocks[i].Exited {
 				continue
 			}
-			RenderCommand(c, store, engine, &blocks[i], viewport, onCopy)
+			RenderCommand(c, store, engine, &blocks[i], viewport, onCopy, menu)
 		}
 	})
 }
@@ -68,24 +63,24 @@ func Render(c *ui.Context, store *model.Store, engine *lens.Engine, viewport ui.
 // actually renders: its bar always carries the Native/Raw switch, so a block
 // without a native view — no lens claimed it, or the lens claimed it but built
 // no view (files.ls on a plain `ls`) — is left as terminal output.
-func RenderCommand(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, viewport ui.Rect, onCopy func(string)) {
+func RenderCommand(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, viewport ui.Rect, onCopy func(string), menu func(*ui.Menu)) {
 	if _, hasNative := b.Native.(lens.Node); b.LensID == "" || !hasNative {
-		renderCell(c, store, b)
+		renderCell(c, store, b, menu)
 		renderImages(c, b)
 		return
 	}
-	renderBlock(c, store, engine, b, viewport, onCopy)
+	renderBlock(c, store, engine, b, viewport, onCopy, menu)
 }
 
 // RenderBlock draws one block's card, without the prompt rows above it: the
 // chrome, the lens view or the raw output, and the foot. A caller that shows a
 // block on its own gets only the block; the Pane draws the shell's own prompt
 // rows above it.
-func RenderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, onCopy func(string)) {
-	renderBlock(c, store, engine, b, ui.Rect{}, onCopy)
+func RenderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, onCopy func(string), menu func(*ui.Menu)) {
+	renderBlock(c, store, engine, b, ui.Rect{}, onCopy, menu)
 }
 
-func renderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, viewport ui.Rect, onCopy func(string)) {
+func renderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, viewport ui.Rect, onCopy func(string), menu func(*ui.Menu)) {
 	t := c.Theme()
 	// Native holds a lens.Node for blocks a lens claimed.
 	native, hasNative := b.Native.(lens.Node)
@@ -100,6 +95,12 @@ func renderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *mode
 	// steps 10 px out. The card is pulled that far left so its own padding puts the
 	// body back on the prompt's edge (the prompt is drawn outside the card).
 	card := ui.Column(c).Padding(1, 0, 1, 10).Margin(0, 0, 0, -10).Gap(lensview.InnerGap(c)).FillWidth()
+	// A right-click on the card's chrome opens the terminal menu too. The text
+	// inside the body has its own menu (editing items first), which is nearer
+	// in the hit chain and wins; this one covers the bar, rail and padding.
+	if menu != nil {
+		card = card.ContextMenu(func(m *ui.Menu) { menu(m) })
+	}
 
 	// The toolbar shows while the pointer is over the card or keyboard focus
 	// is inside it: MyGo has no CSS :hover, so this is a per-frame query.
@@ -118,15 +119,24 @@ func renderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *mode
 		bar = withAlpha(bc.Bad, 0.5)
 	}
 
+	// A raw view is the program's output as it came out, with no block chrome:
+	// no rail and no foot badges (exit status, how long it took, progress), as a
+	// command that no lens claimed has none. The hover bar stays, faded out until
+	// the pointer is over the block: it is the way back to Native.
+	rawView := store.EffectiveView(b) == model.ViewRaw
 	card.Children(func() {
-		ui.Box(c).Absolute().Left(0).Top(2).Bottom(2).Width(2).Radius(1).Background(bar)
+		if !rawView {
+			ui.Box(c).Absolute().Left(0).Top(2).Bottom(2).Width(2).Radius(1).Background(bar)
+		}
 		// Terminal's .sf-block-bar: always mounted, faded in on hover; it is absolutely
 		// positioned, so it never takes room in the flow and a block never moves
 		// under the pointer.
 		renderActions(c, store, b, card, viewport, hasNative, onCopy, hovered)
-		renderBody(c, store, b, native, hasNative, engine)
+		renderBody(c, store, b, native, hasNative, engine, menu)
 		renderImages(c, b)
-		renderFoot(c, b)
+		if !rawView {
+			renderFoot(c, b)
+		}
 		// Terminal keeps a question a program is waiting on visible on the block
 		// ("they show … any prompt waiting on you, such as `[y/N]`"). A running
 		// block has no Raw yet, so read its partial output.
@@ -426,7 +436,7 @@ func renderSegmented(c *ui.Context, store *model.Store, b *model.Block, hasNativ
 	})
 }
 
-func renderBody(c *ui.Context, store *model.Store, b *model.Block, native lens.Node, hasNative bool, engine *lens.Engine) {
+func renderBody(c *ui.Context, store *model.Store, b *model.Block, native lens.Node, hasNative bool, engine *lens.Engine, menu func(*ui.Menu)) {
 	if store.EffectiveView(b) == model.ViewNative && hasNative && native != nil {
 		ui.Column(c).FillWidth().Children(func() {
 			// Empty lines the program printed first stay rows: the live grid showed
@@ -446,16 +456,16 @@ func renderBody(c *ui.Context, store *model.Store, b *model.Block, native lens.N
 			// rebuilds its tree every frame, so a bare bool would be forgotten. A
 			// click a row reports goes back to the lens, which decides what it
 			// selects and rebuilds its view.
-			lensview.RenderInto(c, native, lensScope(store, b), func(ev lens.Event) {
+			lensview.RenderIntoMenu(c, native, lensScope(store, b), func(ev lens.Event) {
 				if engine != nil {
 					engine.Event(b.ID, ev)
 				}
 				c.Invalidate()
-			})
+			}, menu)
 		})
 		return
 	}
-	renderRaw(c, store, b)
+	renderRaw(c, store, b, menu)
 }
 
 // leadingBlankRows is how many empty output rows the stream begins with. The stream
@@ -497,7 +507,7 @@ func cutBreak(s string) (string, bool) {
 	return s, false
 }
 
-func renderRaw(c *ui.Context, store *model.Store, b *model.Block) {
+func renderRaw(c *ui.Context, store *model.Store, b *model.Block, menu func(*ui.Menu)) {
 	t := c.Theme()
 	lines, hidden, expanded := rawLines(store, b)
 	if lines == nil {
@@ -506,24 +516,26 @@ func renderRaw(c *ui.Context, store *model.Store, b *model.Block) {
 		}
 		return
 	}
-	rawViewport(c, lines)
+	// The raw text is flow text, as tall as its lines: it never gets a scroll of
+	// its own. A viewport here put everything past 260 DIP behind a second
+	// scrollbar, inside the flow's own.
+	col := selectableText(ui.Column(c).Selectable().FillWidth(), menu)
+	col.Children(func() { rawTexts(c, lines) })
 	renderRawNotice(c, store, b, hidden, expanded)
 }
 
 // renderCell is a command no lens claimed: Terminal leaves it as terminal cells, so
 // the flow draws the shared prompt row and the raw output without block chrome
 // (no rail, hover bar, Native/Raw switch, copy button or foot).
-func renderCell(c *ui.Context, store *model.Store, b *model.Block) {
+func renderCell(c *ui.Context, store *model.Store, b *model.Block, menu func(*ui.Menu)) {
 	lines, hidden, expanded := rawLines(store, b)
 	if lines == nil {
 		return
 	}
-	if len(lines) <= maxCellLines && hidden == 0 {
-		col := ui.Column(c).Selectable()
-		col.Children(func() { cellTexts(c, lines) })
-	} else {
-		textViewport(c, lines, cellTexts)
-	}
+	// Cells are flow text too, whatever their count: a long output grows the
+	// flow, and the flow's scroll reaches its end.
+	col := selectableText(ui.Column(c).Selectable(), menu)
+	col.Children(func() { cellTexts(c, lines) })
 	renderRawNotice(c, store, b, hidden, expanded)
 }
 
@@ -601,20 +613,19 @@ func cellTexts(c *ui.Context, lines []string) {
 	}
 }
 
-// rawViewport is the scrollable text area a long raw output gets, inside a block
-// (Terminal's `.sf-list-scroll.max`). One selectable container shares the selection
-// across its Text descendants, so the text can be copied as one document.
-func rawViewport(c *ui.Context, lines []string) { textViewport(c, lines, rawTexts) }
-
-// textViewport is rawViewport over any row drawing: a block's raw body and a plain
-// cell have different row metrics but the same scrolling frame.
-func textViewport(c *ui.Context, lines []string, draw func(*ui.Context, []string)) {
-	box := ui.Box(c).MaxHeight(260).Clip().FillWidth()
-	box.Children(func() {
-		ui.Scroll(c).Grow(1).Children(func() {
-			col := ui.Column(c).Selectable()
-			col.Children(func() { draw(c, lines) })
-		})
+// selectableText attaches the terminal's context menu to a Selectable text
+// view. MyGo's own editing items stay first — Copy and Select All act on the
+// text selection — and the terminal's commands follow after a separator. A
+// nil menu leaves MyGo's default two-item text menu, which is what a caller
+// outside the Session gets.
+func selectableText(e ui.Element, menu func(*ui.Menu)) ui.Element {
+	if menu == nil {
+		return e
+	}
+	return e.ContextMenu(func(m *ui.Menu) {
+		m.EditItems()
+		m.Separator()
+		menu(m)
 	})
 }
 

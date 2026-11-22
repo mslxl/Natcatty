@@ -316,14 +316,207 @@ func TestNatcattyLensViewRepeatedListLabels(t *testing.T) {
 	}
 }
 
-func TestNatcattyLensViewNarrowTableDropsLowPriorityColumn(t *testing.T) {
-	cols := []lens.Col{
-		{ID: "name", Head: "NAME", Priority: 9},
-		{ID: "size", Head: "SIZE", Priority: 1},
-		{ID: "usage", Head: "USAGE", Priority: 0},
+// A column with a higher Priority number hides first: the builtin lenses give
+// the name and size the lowest numbers and their decorative columns the
+// highest, so a narrow table keeps the content the user asked for.
+func TestNatcattyLensViewTableHidesTheMostExpendableColumn(t *testing.T) {
+	cols := []tableColumn{
+		{Priority: 0, Natural: 60, Min: 40, key: "name"},
+		{Priority: 1, Natural: 40, Min: 30, key: "size"},
+		{Priority: 9, Natural: 90, Min: 40, key: "usage"},
 	}
-	kept, _ := tableLayout(cols, [][]lens.Cell{{}, {}, {}}, 40)
+	// The three minimums (110) do not fit, so the highest number goes first.
+	kept, _ := tableAlloc(cols, 80)
+	if len(kept) != 2 || kept[0] != 0 || kept[1] != 1 {
+		t.Fatalf("narrow table kept columns %v, want NAME and SIZE", kept)
+	}
+	// A zero never hides, even when one column is left.
+	kept, _ = tableAlloc(cols, 20)
 	if len(kept) != 1 || kept[0] != 0 {
-		t.Fatalf("narrow table kept columns %v, want only high-priority NAME", kept)
+		t.Fatalf("tiny table kept columns %v, want the zero-priority NAME", kept)
+	}
+}
+
+// The growing columns take the spare width in proportion to their shares, and
+// a fixed column keeps the width its content needs.
+func TestNatcattyLensViewTableGrowSharesTheSpare(t *testing.T) {
+	cols := []tableColumn{
+		{Priority: 0, Natural: 100, Min: 50},
+		{Priority: 0, Natural: 120, Min: 40, Grow: 6},
+		{Priority: 0, Natural: 80, Min: 30, Grow: 2},
+	}
+	kept, widths := tableAlloc(cols, 400)
+	if len(kept) != 3 {
+		t.Fatalf("kept columns %v, want all three", kept)
+	}
+	if widths[0] != 100 {
+		t.Fatalf("fixed column = %v, want its natural 100", widths[0])
+	}
+	// 400 - 300 = 100 spare, 6:2 → 75 to the name and 25 to the meter.
+	if got := widths[1]; got < 194.9 || got > 195.1 {
+		t.Fatalf("name column = %v, want 195", got)
+	}
+	if got := widths[2]; got < 104.9 || got > 105.1 {
+		t.Fatalf("usage column = %v, want 105", got)
+	}
+}
+
+// A width the user dragged stays put, and the growing columns still fill the
+// row around it.
+func TestNatcattyLensViewTableKeepsTheDraggedWidth(t *testing.T) {
+	cols := []tableColumn{
+		{Priority: 0, Natural: 100, Min: 40, User: 160},
+		{Priority: 1, Natural: 100, Min: 40, Grow: 1},
+	}
+	_, widths := tableAlloc(cols, 400)
+	if widths[0] != 160 {
+		t.Fatalf("dragged column = %v, want 160", widths[0])
+	}
+	if got := widths[1]; got < 239.9 || got > 240.1 {
+		t.Fatalf("the other column = %v, want the rest", got)
+	}
+}
+
+// tableTestRenders a table in a column of width DIPs, as a block's body gives
+// it: a left inset and, past the body's right edge, the flow's scroll, which
+// clips. It pumps the frames the wrapper's width needs.
+func tableTestRenders(t *testing.T, scope string, width float32, table lens.Table) *ui.Tester {
+	t.Helper()
+	tester := ui.NewTester(func(c *ui.Context) {
+		ui.Column(c).Fill().Padding(0, 0, 0, 10).Children(func() {
+			ui.Box(c).Width(width).Clip().Children(func() {
+				ui.Column(c).FillWidth().Children(func() {
+					RenderInto(c, table, scope, nil)
+				})
+			})
+		})
+	}, 900, 300)
+	tester.SetLocale("en")
+	for i := 0; i < 4; i++ {
+		tester.Frame()
+	}
+	return tester
+}
+
+// gripX finds the resize grip at the end of a header cell the way a user
+// does, by hovering where it is: the grip draws only under the pointer, and
+// the last column's is inset so the scroll bar over the table's right edge
+// does not take it.
+func gripX(t *testing.T, tester *ui.Tester, box ui.Rect) float32 {
+	t.Helper()
+	y := box.Y + box.H/2
+	for x := box.X + box.W - 1; x > box.X+box.W-40; x -= 2 {
+		tester.Move(x, y)
+		tester.Frame()
+		if tester.Cursor() == ui.CursorResizeEW {
+			return x
+		}
+	}
+	t.Fatalf("no resize grip at the end of the header at %v", box)
+	return 0
+}
+
+// tableTestNode is an ls-like listing: a wide name, and a decorative usage
+// meter that should go before the names do.
+func tableTestNode() lens.Table {
+	return lens.Table{
+		Cols: []lens.Col{
+			{ID: "mode", Head: "Mode", Priority: 4, Truncate: lens.TruncateEnd},
+			{ID: "size", Head: "Size", Align: lens.AlignEnd, Priority: 1},
+			{ID: "usage", Head: "Usage", Priority: 9},
+			{ID: "name", Head: "Name", Grow: 6, Truncate: lens.TruncateMiddle},
+		},
+		Rows: [][]lens.Cell{{
+			{Spans: []lens.Span{{Text: "-rw-r--r--"}}},
+			{Spans: []lens.Span{{Text: "4.0K"}}},
+			{Meter: &lens.MeterCell{Value: 0.5}},
+			{Spans: []lens.Span{{Text: "a-very-long-name-that-keeps-going-and-going.txt"}}},
+		}},
+	}
+}
+
+// A table with room shows every column in full. The width is a border box
+// including the cell padding; the old one-cell slack cut a ten-character mode
+// by a character even here.
+func TestNatcattyLensViewTableShowsItsContentWhenWide(t *testing.T) {
+	tester := tableTestRenders(t, "table-wide", 860, tableTestNode())
+	for _, want := range []string{"Mode", "Size", "Usage", "Name", "-rw-r--r--", "4.0K",
+		"a-very-long-name-that-keeps-going-and-going.txt"} {
+		if !tester.HasText(want) {
+			t.Fatalf("wide table is missing %q: %v", want, tester.Texts())
+		}
+	}
+}
+
+// A table narrower than its columns' least widths hides the most expendable
+// columns and keeps the named ones, instead of dropping the name first.
+func TestNatcattyLensViewTableHidesUsageBeforeTheName(t *testing.T) {
+	tester := tableTestRenders(t, "table-narrow", 100, tableTestNode())
+	for _, want := range []string{"Name", "Size"} {
+		if !tester.HasText(want) {
+			t.Fatalf("narrow table is missing %q: %v", want, tester.Texts())
+		}
+	}
+	for _, gone := range []string{"Usage", "Mode"} {
+		if tester.HasText(gone) {
+			t.Fatalf("narrow table still shows the expendable column %q: %v", gone, tester.Texts())
+		}
+	}
+}
+
+// The header's end edge drags the column wider; the width survives later
+// frames, and a double click gives the column back to its content.
+func TestNatcattyLensViewTableHeaderDragResizesTheColumn(t *testing.T) {
+	// A growing column fills the row, so the NAME column, last, ends at the
+	// body's right edge where the flow's scroll bar lies over it.
+	table := lens.Table{
+		Cols: []lens.Col{
+			{ID: "size", Head: "SIZE", Grow: 1},
+			{ID: "name", Head: "NAME", Truncate: lens.TruncateMiddle},
+		},
+		Rows: [][]lens.Cell{{
+			{Spans: []lens.Span{{Text: "4.0K"}}},
+			{Spans: []lens.Span{{Text: "a.txt"}}},
+		}},
+	}
+	tester := tableTestRenders(t, "table-drag", 500, table)
+	before, ok := tester.Find("NAME")
+	if !ok {
+		t.Fatalf("no NAME header: %v", tester.Texts())
+	}
+	edge := gripX(t, tester, before)
+	y := before.Y + before.H/2
+	tester.Press(edge, y)
+	tester.Move(edge+60, y)
+	tester.Release(edge+60, y)
+	for i := 0; i < 3; i++ {
+		tester.Frame()
+	}
+	after, ok := tester.Find("NAME")
+	if !ok {
+		t.Fatal("the NAME header disappeared after the drag")
+	}
+	if got := after.W - before.W; got < 59 || got > 61 {
+		t.Fatalf("the header is %v wide after a 60 DIP drag, from %v", after.W, before.W)
+	}
+	for i := 0; i < 3; i++ {
+		tester.Frame()
+	}
+	kept, _ := tester.Find("NAME")
+	if kept.W < before.W+59 || kept.W > before.W+61 {
+		t.Fatalf("the dragged width did not survive later frames: %v", kept.W)
+	}
+	// The edge sits at the new end now.
+	edge = gripX(t, tester, kept)
+	tester.ClickAt(edge, kept.Y+kept.H/2)
+	tester.ClickAt(edge, kept.Y+kept.H/2)
+	tester.Frame()
+	tester.Frame()
+	fitted, ok := tester.Find("NAME")
+	if !ok {
+		t.Fatal("the NAME header disappeared after the double click")
+	}
+	if got := fitted.W - before.W; got > 1 || got < -1 {
+		t.Fatalf("a double click left the column at %v, want its fitted %v", fitted.W, before.W)
 	}
 }

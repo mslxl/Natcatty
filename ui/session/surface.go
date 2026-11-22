@@ -615,6 +615,46 @@ func (s *Surface) terminalKeybinds() []terminal.Keybind {
 	return s.options.Keybinds()
 }
 
+// terminalKeybindList is the terminal's effective bindings: MyGo's platform
+// defaults overlaid with the app's, in the same order and with the same
+// replace-or-unbind rule the terminal plugin applies (ActionNone removes the
+// default of its chord).
+func terminalKeybindList(binds []terminal.Keybind) []terminal.Keybind {
+	merged := terminal.DefaultKeybinds()
+	for _, k := range binds {
+		kept := merged[:0]
+		for _, o := range merged {
+			if o.Mods != k.Mods || o.Key != k.Key {
+				kept = append(kept, o)
+			}
+		}
+		merged = kept
+		if k.Action != terminal.ActionNone {
+			merged = append(merged, k)
+		}
+	}
+	return merged
+}
+
+// handlePasteChord runs a key bound to ActionPaste before the pane encodes it.
+// The drawn grid does not go through the terminal plugin's view, so a paste
+// chord used to be sent to the shell as its raw bytes (Ctrl+Shift+V became
+// 0x16, literal-next). A performable binding whose action cannot run — an
+// empty clipboard — falls through to the program, as the plugin's view does.
+func (s *Surface) handlePasteChord(c *ui.Context, mods ui.Modifiers, key ui.Key) bool {
+	for _, bind := range terminalKeybindList(s.terminalKeybinds()) {
+		if bind.Action != terminal.ActionPaste || bind.Mods != mods || bind.Key != key {
+			continue
+		}
+		if text := c.Services().ReadClipboard(); text != "" {
+			s.requestPaste(text)
+			return true
+		}
+		return !bind.Performable
+	}
+	return false
+}
+
 // SetTerminalFont restyles a live terminal without recreating its Session. It
 // is what applies the Appearance settings while Sessions are open.
 func (s *Surface) SetTerminalFont(family string, size float32) {
@@ -1133,6 +1173,28 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 				Focused: func(focused bool) {
 					s.terminalLiveFocused = focused
 				},
+				Secondary: func() {
+					// Right-clicking a block's text opens a text menu, which
+					// focuses the read-only paragraph under the pointer. The
+					// shell keeps the keyboard, as it does after a primary
+					// press; the selection is left alone.
+					if s.focused {
+						s.focusPending = true
+						s.redraw()
+					}
+				},
+				// One menu for the whole terminal: the live grid, blank space,
+				// finished blocks, raw cells and Lens bodies. The text views
+				// prepend MyGo's editing items and pass no live actions.
+				Menu: func(m *ui.Menu, acts appview.MenuActions) {
+					model, actions := s.chrome(c, s.session.Snapshot())
+					dir := s.Dir()
+					var copyDir func()
+					if dir != "" {
+						copyDir = func() { c.Services().WriteClipboard(dir) }
+					}
+					buildTerminalMenu(m, model, locales.In(c.Locale()), acts, actions, copyDir)
+				},
 				OwnView: func(pictures, alt bool) {
 					if pictures != s.terminalOwnView && s.focused {
 						// The pane changed which element takes the keyboard:
@@ -1162,12 +1224,26 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 				Images: s.flow.hasPictures(),
 				Input: func(ev ui.InputEvent) bool {
 					if ev.Kind == ui.InputCommand && ev.Text == "paste" {
-						if text := c.ReadClipboard(); text != "" {
-							s.terminal.Paste(text)
+						// The Edit menu's Paste reaches an input handler, outside
+						// any frame. Context.ReadClipboard is frame-gated and
+						// returns "" there, so the window's clipboard is read
+						// through Services, which works at any time. requestPaste
+						// (not Terminal.Paste) keeps this path on the same
+						// multiline policy and line-ending normalization as the
+						// Session menu and the plugin's own view.
+						if text := c.Services().ReadClipboard(); text != "" {
+							s.requestPaste(text)
 						}
 						return true
 					}
 					if ev.Kind == ui.InputKeyDown {
+						// The drawn grid bypasses the terminal plugin's view,
+						// so its paste chords (Ctrl+Shift+V, Shift+Insert, or a
+						// user binding) are taken here; otherwise they reach
+						// the shell as raw control bytes.
+						if s.handlePasteChord(c, ev.Mods, ev.Key) {
+							return true
+						}
 						// The pane builds the bytes the program reads, so the
 						// same key hook the plugin's own view calls (OnKey)
 						// runs before the pane's encoder. Shift+Enter's newline

@@ -51,7 +51,6 @@ package lensview
 import (
 	"fmt"
 	"hash/fnv"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,7 +76,7 @@ func Render(c *ui.Context, n lens.Node) {
 	// code expansion, editor buffers) is keyed by scope, and two unrelated trees
 	// must never share it. Callers that want a section click to survive the next
 	// frame pass a stable scope to RenderScoped.
-	renderSelectable(c, n, &renderState{scope: fmt.Sprintf("anon-%d", anonScope.Add(1))})
+	renderSelectable(c, n, &renderState{scope: fmt.Sprintf("anon-%d", anonScope.Add(1))}, nil)
 }
 
 // anonScope numbers the scopes Render hands out.
@@ -97,7 +96,15 @@ type Sink func(lens.Event)
 
 // RenderInto renders a view and reports the events its nodes emit through sink.
 func RenderInto(c *ui.Context, n lens.Node, scope string, sink Sink) {
-	renderSelectable(c, n, &renderState{scope: scope, sink: sink})
+	RenderIntoMenu(c, n, scope, sink, nil)
+}
+
+// RenderIntoMenu is RenderInto with the application's terminal context menu on
+// the lens body. MyGo's own editing items stay first, so Copy and Select All
+// still act on the body's text selection; the application's terminal items
+// follow. Nil keeps MyGo's default text menu.
+func RenderIntoMenu(c *ui.Context, n lens.Node, scope string, sink Sink, menu func(*ui.Menu)) {
+	renderSelectable(c, n, &renderState{scope: scope, sink: sink}, menu)
 }
 
 // renderSelectable wraps the tree in the Selectable container that gives the
@@ -108,7 +115,7 @@ func RenderInto(c *ui.Context, n lens.Node, scope string, sink Sink) {
 // hands the body the terminal's configured font — the same comma-separated
 // family list and size the terminal plugin draws with — so a lens view is the
 // terminal's own text, not a widget in a different typeface.
-func renderSelectable(c *ui.Context, n lens.Node, rs *renderState) {
+func renderSelectable(c *ui.Context, n lens.Node, rs *renderState, menu func(*ui.Menu)) {
 	family, size := surface.TerminalFont()
 	if family == "" {
 		family = "monospace" // the terminal plugin's default when unset
@@ -116,6 +123,13 @@ func renderSelectable(c *ui.Context, n lens.Node, rs *renderState) {
 	col := ui.Column(c).Selectable().Font(family)
 	if size > 0 {
 		col = col.FontSize(size)
+	}
+	if menu != nil {
+		col = col.ContextMenu(func(m *ui.Menu) {
+			m.EditItems()
+			m.Separator()
+			menu(m)
+		})
 	}
 	col.Children(func() {
 		renderWith(c, n, rs)
@@ -717,6 +731,11 @@ func renderKV(c *ui.Context, n lens.KV) {
 	})
 }
 
+// charPx estimates the advance of one mono cell where no context is at hand to
+// measure it, as for a key-value column that sizes itself before layout. The
+// table allocator measures the real advance instead (tableCharWidth).
+const charPx = 7
+
 // kvKeyWidth sizes the key column from its widest key instead of a fixed width:
 // a long key ("editable project location") must not be cut, and a short one must
 // not push its value across the block.
@@ -1039,225 +1058,398 @@ func renderTable(c *ui.Context, n lens.Table, rs *renderState) {
 	if len(n.Cols) == 0 {
 		return
 	}
-	width, _ := c.Size()
-	visible, budget := tableLayout(n.Cols, n.Rows, width-80)
-	widths := make([]int, 0, len(visible)) // cells per visible column
-	for k := range visible {
-		widths = append(widths, budget[k])
-	}
 	// Terminal's table is a header over a hairline and rows of the same column
 	// template: 24 DIP header in 11.5 px medium over `--l2`, cells padded 7 DIP and
 	// cut with an ellipsis, rows one line-height plus 6 tall.
 	s := styleFor(c)
-	// A column wide enough for its widest cell, and only the growing columns take
-	// the rest of the row: Terminal measures its columns the same way (with a hidden
-	// probe row) and leaves the spare width to the column that asks for it, instead
-	// of stretching every column in proportion and opening gaps.
-	natural := make([]float32, len(visible))
-	for k := range visible {
-		w := displayWidth(n.Cols[visible[k]].Head)
-		for r := range n.Rows {
-			if cw := cellWidth(n.Rows[r][visible[k]]); cw > w {
-				w = cw
-			}
-		}
-		if w < 4 {
-			w = 4
-		}
-		natural[k] = float32(w)
+	// The room a table may use is its body's own width, not the window's: a
+	// split Pane and the card's insets leave less than the window has, and the
+	// old window estimate then laid the table out past its clip. The wrapper's
+	// previous-frame box is that width — the layout cannot ask a parent for one
+	// while building — and the window estimate only stands in on the frame a
+	// table first appears, before any box exists.
+	wrap := ui.Column(c).FillWidth()
+	bodyW := wrap.LayoutBounds().W
+	avail := bodyW + 2*s.CellPadX
+	if bodyW <= 0 {
+		window, _ := c.Size()
+		avail = window - 80 + 2*s.CellPadX
 	}
-	columnBox := func(k int) ui.Element {
-		col := n.Cols[visible[k]]
-		cell := ui.Box(c).Padding(0, s.CellPadX).ClipX()
-		if col.Grow > 0 {
-			return cell.Grow(natural[k])
+	// Every column is a border box: its width includes the 7 DIP of padding on
+	// each side, and only the rest holds text. The old one-cell slack forgot
+	// that padding, so a ten-character mode got eight characters and an
+	// ellipsis even when the table had room to spare.
+	advance := tableCharWidth(c, s)
+	cols := tableColumns(c, n, rs, s, advance)
+	kept, widths := tableAlloc(cols, avail)
+	limits := make([]int, len(kept)) // text budget in cells, for Truncate*
+	for k := range kept {
+		limits[k] = int((widths[k] - 2*s.CellPadX) / advance)
+		if limits[k] < 1 {
+			limits[k] = 1
 		}
-		// One cell of slack: a cell of proportional text is not exactly one mono cell wide.
-		return cell.Width((natural[k] + 1) * s.CharW)
 	}
-	head := ui.Row(c).Gap(0).MinHeight(24).Margin(0, -s.CellPadX, 0, -s.CellPadX)
-	head.Children(func() {
-		for k := range visible {
-			col := n.Cols[visible[k]]
-			columnBox(k).Children(func() {
-				ui.Text(c, col.Head).FontSize(s.SmallSize).FontWeight(500).
-					TextColor(s.T3).SingleLine()
-			})
-		}
-	})
-	ui.Box(c).FillWidth().Height(1).Background(s.L2).Margin(0, -s.CellPadX, 0, -s.CellPadX)
-	if len(n.Rows) == 0 {
-		// Terminal's TableOpts.empty: shown muted and centred when there are no rows.
-		if len(n.Opts.Empty) > 0 {
-			ui.Row(c).FillWidth().Height(s.RowH * 2).Center().Children(func() {
-				text(c, n.Opts.Empty).FontSize(s.SmallSize).TextColor(s.T3)
-			})
-		}
-		return
+	columnBox := func(w float32) ui.Element {
+		return ui.Box(c).Width(w).Padding(0, s.CellPadX).ClipX()
 	}
-	tableKey := stateKey(rs.scope, "table", 0)
-	if len(n.Rows) > 0 && len(visible) > 0 && len(n.Rows[0]) > visible[0] {
-		tableKey = stateKey(rs.scope, "table:"+fingerprint(plain(n.Rows[0][visible[0]].Spans)), 0)
+	// The flow's scroll bar floats over the table's right edge, and the
+	// table's own negative margin carries the last cell's padding past the
+	// body's edge, which the scroll clips. The last column's grip therefore
+	// sits inside the cell, clear of both, so it can still be reached.
+	bar := c.Theme().ScrollbarWidth
+	if bar <= 0 {
+		bar = 6
 	}
-	for r := range n.Rows {
-		// .sf-tbl-row follows the table's negative margin, and every cell but the
-		// last row's carries a --l1 hairline under it.
-		row := ui.Row(c).Gap(0).MinHeight(s.RowH).Margin(0, -s.CellPadX, 0, -s.CellPadX)
-		if r < len(n.Rows)-1 {
-			row.InsetShadow(0, -1, 0, 0, s.L1)
-		}
-		var opts lens.RowOpts
-		if r < len(n.RowOpts) {
-			opts = n.RowOpts[r]
-		}
-		rowID := opts.ID
-		if rowID == "" && len(visible) > 0 && len(n.Rows[r]) > visible[0] {
-			rowID = plain(n.Rows[r][visible[0]].Spans)
-		}
-		rowKey := "row:" + fingerprint(rowID)
-		selected := (n.Opts.Selected != "" && n.Opts.Selected == rowID) || selectGet(tableKey) == rowKey
-		if selected {
-			row = s.selectedStyle(c, row)
-		}
-		if opts.Title != "" {
-			row.Tooltip(opts.Title)
-		}
-		if opts.Disabled {
-			// Terminal: disabled rows are dimmed, take no select/activate/menu, and a
-			// string reason is the tooltip. The tooltip is all we can honour here.
-			if opts.Reason != "" {
-				row.Tooltip(opts.Reason)
-			}
-		} else if n.Opts.Selectable {
-			row.OnClick(func() {
-				// Terminal sends select on a click and activate on a double click; the ui
-				// layer has single clicks only, so a second click on the selected row
-				// is the activate gesture.
-				if selected {
-					emitRow(rs, "activate", n.ID, rowID)
-				} else {
-					selectSet(tableKey, rowKey)
-					emitRow(rs, "select", n.ID, rowID)
-				}
-				c.Invalidate()
-			})
-		}
-		row.Children(func() {
-			for k := range visible {
-				i := visible[k]
-				col := n.Cols[i]
-				columnBox(k).Children(func() {
-					renderCellNode(c, n.Rows[r][i], col, widths[k], n.ID, rowID, rs)
-				})
-			}
-			// Terminal's TableRow.menu is a right-click menu; the ui layer has no context
-			// menu, so the actions are drawn as small chips at the row's end.
-			if !opts.Disabled {
-				for _, act := range opts.Menu {
-					a := act
-					chip := ui.Text(c, a).FontSize(s.SmallSize).TextColor(s.T3).
-						Padding(0, 6).Radius(4).Background(s.ChipBG)
-					chip.OnClick(func() {
-						emitAction(rs, n.ID, rowID, a)
-						c.Invalidate()
-					})
-				}
-			}
+	lastGripInset := s.CellPadX + bar + 1
+	headerCell := func(i int, w float32, inset float32) {
+		col := n.Cols[i]
+		box := columnBox(w).Role(ui.RoleColumnHeader).Label(col.Head)
+		box.Children(func() {
+			ui.Text(c, col.Head).FontSize(s.SmallSize).FontWeight(500).
+				TextColor(s.T3).SingleLine()
+			// The grip resizes the column; the header still shows its title.
+			headerEdge(c, cols[i].key, w, cols[i].Min, inset)
 		})
 	}
+	wrap.Children(func() {
+		head := ui.Row(c).Gap(0).MinHeight(24).Margin(0, -s.CellPadX, 0, -s.CellPadX)
+		head.Children(func() {
+			for k, i := range kept {
+				inset := float32(0)
+				if k == len(kept)-1 {
+					inset = lastGripInset
+				}
+				headerCell(i, widths[k], inset)
+			}
+		})
+		ui.Box(c).FillWidth().Height(1).Background(s.L2).Margin(0, -s.CellPadX, 0, -s.CellPadX)
+		if len(n.Rows) == 0 {
+			// Terminal's TableOpts.empty: shown muted and centred when there are no rows.
+			if len(n.Opts.Empty) > 0 {
+				ui.Row(c).FillWidth().Height(s.RowH * 2).Center().Children(func() {
+					text(c, n.Opts.Empty).FontSize(s.SmallSize).TextColor(s.T3)
+				})
+			}
+			return
+		}
+		tableKey := stateKey(rs.scope, "table", 0)
+		if len(n.Rows) > 0 && len(kept) > 0 && len(n.Rows[0]) > kept[0] {
+			tableKey = stateKey(rs.scope, "table:"+fingerprint(plain(n.Rows[0][kept[0]].Spans)), 0)
+		}
+		for r := range n.Rows {
+			// .sf-tbl-row follows the table's negative margin, and every cell but the
+			// last row's carries a --l1 hairline under it.
+			row := ui.Row(c).Gap(0).MinHeight(s.RowH).Margin(0, -s.CellPadX, 0, -s.CellPadX)
+			if r < len(n.Rows)-1 {
+				row.InsetShadow(0, -1, 0, 0, s.L1)
+			}
+			var opts lens.RowOpts
+			if r < len(n.RowOpts) {
+				opts = n.RowOpts[r]
+			}
+			rowID := opts.ID
+			if rowID == "" && len(kept) > 0 && len(n.Rows[r]) > kept[0] {
+				rowID = plain(n.Rows[r][kept[0]].Spans)
+			}
+			rowKey := "row:" + fingerprint(rowID)
+			selected := (n.Opts.Selected != "" && n.Opts.Selected == rowID) || selectGet(tableKey) == rowKey
+			if selected {
+				row = s.selectedStyle(c, row)
+			}
+			if opts.Title != "" {
+				row.Tooltip(opts.Title)
+			}
+			if opts.Disabled {
+				// Terminal: disabled rows are dimmed, take no select/activate/menu, and a
+				// string reason is the tooltip. The tooltip is all we can honour here.
+				if opts.Reason != "" {
+					row.Tooltip(opts.Reason)
+				}
+			} else if n.Opts.Selectable {
+				row.OnClick(func() {
+					// Terminal sends select on a click and activate on a double click; the ui
+					// layer has single clicks only, so a second click on the selected row
+					// is the activate gesture.
+					if selected {
+						emitRow(rs, "activate", n.ID, rowID)
+					} else {
+						selectSet(tableKey, rowKey)
+						emitRow(rs, "select", n.ID, rowID)
+					}
+					c.Invalidate()
+				})
+			}
+			row.Children(func() {
+				for k, i := range kept {
+					col := n.Cols[i]
+					columnBox(widths[k]).Children(func() {
+						renderCellNode(c, n.Rows[r][i], col, limits[k], n.ID, rowID, rs)
+					})
+				}
+				// Terminal's TableRow.menu is a right-click menu; the ui layer has no context
+				// menu, so the actions are drawn as small chips at the row's end.
+				if !opts.Disabled {
+					for _, act := range opts.Menu {
+						a := act
+						chip := ui.Text(c, a).FontSize(s.SmallSize).TextColor(s.T3).
+							Padding(0, 6).Radius(4).Background(s.ChipBG)
+						chip.OnClick(func() {
+							emitAction(rs, n.ID, rowID, a)
+							c.Invalidate()
+						})
+					}
+				}
+			})
+		}
+	})
 }
 
-// visibleColumns hides low-priority columns first when the block is narrow.
-// ui.TableColumn has no priority field (see findings/mygo-ui-mapping.md), so
-// the width each column needs is estimated from its header.
-// charPx is the estimated advance of one monospace cell at the default font
-// size; the table budget below is expressed in cells and converted back.
-const charPx = 7
+// tableColumn is one column's request to tableAlloc: widths in DIPs, border
+// boxes, so each includes the cell's 7 DIP of padding on both sides.
+type tableColumn struct {
+	Priority int
+	Grow     float32
+	Natural  float32 // the width the head and the widest cell need
+	Min      float32 // the least the column may shrink to
+	User     float32 // the width the user dragged it to, 0 when untouched
+	key      string  // where the dragged width is remembered
+}
 
-// tableLayout decides which columns to show (dropping the lowest Priority first)
-// and how many cells each gets. It replaces the header-only estimate so
-// TruncateStart/TruncateMiddle have a real width to cut at.
-func tableLayout(cols []lens.Col, rows [][]lens.Cell, avail float32) ([]int, []int) {
-	idx := make([]int, len(cols))
-	natural := make([]int, len(cols))
-	for i := range idx {
-		idx[i] = i
-		natural[i] = displayWidth(cols[i].Head)
-		for r := range rows {
-			if i >= len(rows[r]) {
+// tableCharWidth measures one mono cell in the body font. The advance is
+// measured rather than derived from the font size, so the column budgets and
+// the truncation limits match the glyphs the rows draw.
+func tableCharWidth(c *ui.Context, s style) float32 {
+	if w, _ := c.MeasureText(0, ui.Span{Text: "0000000000", Font: monoFamily(), Size: s.BodySize}); w > 0 {
+		return w / 10
+	}
+	return s.CharW
+}
+
+// tableColumns measures every column before the row is allocated: the width its
+// head and widest cell need, the least it may shrink to, and a width the user
+// dragged it to earlier. Heads are measured at the smaller header size; body
+// cells are counted in mono cells, which is exact for the lens body's terminal
+// font. A stacked meter is a fixed bar rather than a run of cells.
+func tableColumns(c *ui.Context, n lens.Table, rs *renderState, s style, advance float32) []tableColumn {
+	cols := make([]tableColumn, len(n.Cols))
+	for i, col := range n.Cols {
+		headW, _ := c.MeasureText(0, ui.Span{Text: col.Head, Font: monoFamily(), Size: s.SmallSize, Weight: 500})
+		cells, stacked := 0, false
+		for r := range n.Rows {
+			if i >= len(n.Rows[r]) {
 				continue
 			}
-			w := cellWidth(rows[r][i])
-			if w > natural[i] {
-				natural[i] = w
+			cell := n.Rows[r][i]
+			if w := cellWidth(cell); w > cells {
+				cells = w
+			}
+			if cell.Meter != nil && len(cell.Meter.Parts) > 1 {
+				stacked = true
 			}
 		}
-		if natural[i] > 60 {
-			natural[i] = 60
+		textW := max(headW, float32(cells)*advance)
+		if stacked {
+			textW = max(textW, s.MeterW)
 		}
-		if natural[i] < 4 {
-			natural[i] = 4
+		key := rs.key("colwidth", col.ID)
+		user, _ := columnWidthGet(key)
+		natural := textW + 2*s.CellPadX
+		cols[i] = tableColumn{
+			Priority: col.Priority,
+			Grow:     col.Grow,
+			Natural:  natural,
+			Min:      min(natural, 4*advance+2*s.CellPadX),
+			User:     user,
+			key:      key,
 		}
 	}
-	total := 0
-	for _, w := range natural {
-		total += w
-	}
-	availCells := 0
-	if avail > 0 {
-		availCells = int(avail / charPx)
-	}
-	if availCells <= 0 || total <= availCells {
-		return idx, natural
-	}
-	// Not enough room: drop the lowest priority columns first.
-	order := append([]int(nil), idx...)
-	sort.SliceStable(order, func(a, b int) bool {
-		return cols[order[a]].Priority < cols[order[b]].Priority
-	})
-	hidden := make(map[int]bool, len(order))
-	for _, i := range order {
-		if total <= availCells {
-			break
+	return cols
+}
+
+// tableAlloc decides which columns fit and how wide each one is. A column with
+// a higher Priority number is the more expendable one and hides first (zero is
+// never hidden), and only while even the kept columns' least widths do not
+// fit: a long name truncates before a real column goes. What remains shrinks,
+// growing columns first, and the spare width then goes to the growing columns
+// in proportion to their Grow shares. A width the user dragged is kept while
+// it fits and is the last thing given up.
+func tableAlloc(cols []tableColumn, avail float32) (kept []int, widths []float32) {
+	n := len(cols)
+	shown := make([]bool, n)
+	width := make([]float32, n)
+	for i := range cols {
+		shown[i] = true
+		width[i] = cols[i].Natural
+		if cols[i].User > 0 {
+			width[i] = max(cols[i].User, cols[i].Min)
 		}
-		total -= natural[i]
-		hidden[i] = true
 	}
-	kept := make([]int, 0, len(idx))
-	budget := make([]int, 0, len(idx))
-	for _, i := range idx {
-		if !hidden[i] {
+	if avail <= 0 {
+		// No measurement of the room yet: show every column at its natural
+		// width rather than inventing a budget that hides some.
+		for i := range cols {
 			kept = append(kept, i)
-			budget = append(budget, natural[i])
+			widths = append(widths, width[i])
 		}
+		return kept, widths
 	}
-	if len(kept) == 0 {
-		return []int{0}, []int{availCells}
+	sumOf := func(f func(i int) float32) float32 {
+		total := float32(0)
+		for i := range cols {
+			if shown[i] {
+				total += f(i)
+			}
+		}
+		return total
 	}
-	// Shrink the widest columns (grow columns first) until the table fits.
-	for {
-		sum := 0
-		for _, w := range budget {
-			sum += w
-		}
-		if sum <= availCells {
-			break
-		}
-		worst, worstW := -1, 0
-		for k, i := range kept {
-			if cols[i].Grow <= 0 && len(kept) > 1 {
+	minSum := func() float32 { return sumOf(func(i int) float32 { return cols[i].Min }) }
+	for minSum() > avail {
+		hide := -1
+		for i := range cols {
+			if !shown[i] || cols[i].Priority <= 0 {
 				continue
 			}
-			if budget[k] > worstW {
-				worst, worstW = k, budget[k]
+			if hide < 0 {
+				hide = i
+				continue
+			}
+			// A column the user sized is a deliberate choice: hide another first.
+			if cols[hide].User > 0 && cols[i].User <= 0 {
+				hide = i
+				continue
+			}
+			if cols[i].User > 0 && cols[hide].User <= 0 {
+				continue
+			}
+			// The highest number goes first; equal numbers from the right.
+			if cols[i].Priority >= cols[hide].Priority {
+				hide = i
 			}
 		}
-		if worst < 0 || budget[worst] <= 4 {
+		if hide < 0 {
 			break
 		}
-		budget[worst]--
+		shown[hide] = false
 	}
-	return kept, budget
+	// Shrink what is still too wide: growing columns give up their slack
+	// first, then fixed columns, and the user's own widths last.
+	shrink := func(match func(i int) bool) {
+		over := sumOf(func(i int) float32 { return width[i] }) - avail
+		if over <= 0 {
+			return
+		}
+		total := float32(0)
+		for i := range cols {
+			if shown[i] && match(i) {
+				total += max(width[i]-cols[i].Min, 0)
+			}
+		}
+		if total <= 0 {
+			return
+		}
+		reduce := min(over, total)
+		for i := range cols {
+			if !shown[i] || !match(i) {
+				continue
+			}
+			slack := max(width[i]-cols[i].Min, 0)
+			width[i] -= reduce * slack / total
+		}
+	}
+	shrink(func(i int) bool { return cols[i].Grow > 0 && cols[i].User <= 0 })
+	shrink(func(i int) bool { return cols[i].Grow <= 0 && cols[i].User <= 0 })
+	shrink(func(i int) bool { return cols[i].User > 0 })
+	// The growing columns take the rest of the row, as Terminal's do, so a
+	// table with a name column fills its body instead of leaving a gap.
+	if spare := avail - sumOf(func(i int) float32 { return width[i] }); spare > 0 {
+		grow := float32(0)
+		for i := range cols {
+			if shown[i] && cols[i].User <= 0 {
+				grow += max(cols[i].Grow, 0)
+			}
+		}
+		if grow > 0 {
+			for i := range cols {
+				if shown[i] && cols[i].User <= 0 && cols[i].Grow > 0 {
+					width[i] += spare * cols[i].Grow / grow
+				}
+			}
+		}
+	}
+	for i := range cols {
+		if shown[i] {
+			kept = append(kept, i)
+			widths = append(widths, width[i])
+		}
+	}
+	return kept, widths
+}
+
+// Column widths the user dragged, kept per table scope and column so they
+// survive the lens rebuilding its tree every frame. The map is bounded like
+// the other per-position state.
+var (
+	columnWidthMu sync.Mutex
+	columnWidths  = map[string]float32{}
+)
+
+func columnWidthGet(key string) (float32, bool) {
+	columnWidthMu.Lock()
+	defer columnWidthMu.Unlock()
+	w, ok := columnWidths[key]
+	return w, ok
+}
+
+func columnWidthSet(key string, w float32) {
+	columnWidthMu.Lock()
+	defer columnWidthMu.Unlock()
+	if len(columnWidths) > stateCap {
+		columnWidths = map[string]float32{}
+	}
+	columnWidths[key] = w
+}
+
+func columnWidthForget(key string) {
+	columnWidthMu.Lock()
+	defer columnWidthMu.Unlock()
+	delete(columnWidths, key)
+}
+
+// headerEdge is the grip at a header cell's end edge, inset from it by the
+// given amount. Dragging it sets the column's width, and a double click gives
+// the column back to the layout. It stays invisible until the pointer is over
+// it, then draws a hairline in the accent so the edge can be found.
+func headerEdge(c *ui.Context, key string, startWidth, minimum, inset float32) {
+	s := styleFor(c)
+	edge := ui.Box(c).Absolute().Top(0).Bottom(0).End(inset).Width(6).Cursor(ui.CursorResizeEW)
+	// Take the press itself: the Selectable body around the table would
+	// otherwise start a text selection from the press on the edge. A double
+	// click is handled here too: an element that takes its press is not
+	// counted as a double-clicked target.
+	edge.HandleInput(func(ev ui.InputEvent) bool {
+		if ev.Kind != ui.InputPointerDown || ev.Button != 0 {
+			return false
+		}
+		if ev.Clicks >= 2 {
+			columnWidthForget(key)
+			c.Invalidate()
+		}
+		return true
+	})
+	// Dragged is how far the pointer moved since the last frame, and
+	// startWidth is the width the last frame laid this column out at, so
+	// each frame's move carries the width on. A frame with no move is a
+	// frame where a drag was just pressed: it changes nothing.
+	if dx, _, held := edge.Dragged(); held && dx != 0 {
+		columnWidthSet(key, max(startWidth+dx, minimum))
+		c.Invalidate()
+	}
+	edge.Draw(func(p *ui.Painter, r ui.Rect) {
+		if !edge.Hovered() && !edge.Pressed() {
+			return
+		}
+		p.Fill(ui.Rect{X: r.X + r.W - 1, Y: r.Y + r.H/4, W: 1, H: r.H / 2}, s.Accent, 0)
+	})
 }
 
 // displayWidth is the number of cells a string occupies (wide chars count 2).
@@ -1355,32 +1547,6 @@ func spanStyleAt(styles []lens.Span, i int) string {
 		return styles[i].Style
 	}
 	return ""
-}
-
-func visibleColumns(cols []lens.Col, avail float32) []int {
-	idx := make([]int, len(cols))
-	for i := range idx {
-		idx[i] = i
-	}
-	if avail <= 0 {
-		return idx
-	}
-	// Higher priority first: keep while the estimate fits.
-	sort.SliceStable(idx, func(a, b int) bool {
-		return cols[idx[a]].Priority > cols[idx[b]].Priority
-	})
-	kept := make([]int, 0, len(idx))
-	used := float32(0)
-	for _, i := range idx {
-		need := float32(80 + len(cols[i].Head)*7)
-		if used+need > avail && len(kept) > 0 {
-			continue
-		}
-		used += need
-		kept = append(kept, i)
-	}
-	sort.Ints(kept) // back to the tree's order
-	return kept
 }
 
 func renderMeterCell(c *ui.Context, m lens.MeterCell) {
