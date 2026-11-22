@@ -365,6 +365,57 @@ func TestApplyDefaultsAMissingCaptureHookToOn(t *testing.T) {
 	}
 }
 
+// A synced terminal document from a build before the local close-on-exit
+// switch has no key for it. Downloading that document must leave the portable
+// on-by-default setting on, while an explicit keep choice still syncs.
+func TestApplyDefaultsAMissingLocalAutoCloseToOn(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	if err := f.terminal.Update(func(next *domainterminal.Settings) {
+		next.LocalAutoCloseOnExit = true
+		next.OSC52 = domainterminal.ClipboardReadWrite
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	documents := map[string]json.RawMessage{
+		adaptersyncedsettings.KeyTerminal: json.RawMessage(`{"osc52":"off"}`),
+	}
+	if err := f.adapter.Apply(ctx, documents); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	got := f.terminal.Settings()
+	if !got.LocalAutoCloseOnExit {
+		t.Fatal("a document without the local close-on-exit key disabled it")
+	}
+	if got.OSC52 != domainterminal.ClipboardOff {
+		t.Fatalf("OSC52 = %q, want the synced value", got.OSC52)
+	}
+
+	// Both spellings name the same JSON field: this build marshals its
+	// settings with Go field names, while the store and any document written
+	// by a future lower-camel encoder use the tagged key.
+	for _, document := range []string{
+		`{"localAutoCloseOnExit":false}`,
+		`{"LocalAutoCloseOnExit":false}`,
+	} {
+		if err := f.terminal.Update(func(next *domainterminal.Settings) {
+			next.LocalAutoCloseOnExit = true
+		}); err != nil {
+			t.Fatal(err)
+		}
+		documents := map[string]json.RawMessage{
+			adaptersyncedsettings.KeyTerminal: json.RawMessage(document),
+		}
+		if err := f.adapter.Apply(ctx, documents); err != nil {
+			t.Fatalf("Apply %s: %v", document, err)
+		}
+		if f.terminal.Settings().LocalAutoCloseOnExit {
+			t.Fatalf("an explicit keep choice was ignored in %s", document)
+		}
+	}
+}
+
 func customTheme(t *testing.T, id, name string) domaintheme.TerminalTheme {
 	t.Helper()
 	preset, ok := domaintheme.LookupTerminalTheme(domaintheme.DefaultTerminalTheme)

@@ -251,6 +251,15 @@ func (s *Service) SetHistoryCaptureHookEnabled(enabled bool) error {
 	})
 }
 
+// SetLocalAutoCloseOnExit closes a local shell's Tab when the shell exits
+// normally. Turning it off keeps the ended screen. A local Session whose
+// transport fails keeps its Tab either way, as do remote Sessions.
+func (s *Service) SetLocalAutoCloseOnExit(enabled bool) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.LocalAutoCloseOnExit = enabled
+	})
+}
+
 // SetLegacyAlgorithms enables or disables the legacy algorithm offer for an
 // Unsaved Host. A saved Host keeps its own per-Host setting.
 func (s *Service) SetLegacyAlgorithms(enabled bool) error {

@@ -33,6 +33,12 @@ func (f *endingFactory) last() *endingTransport {
 	return f.transports[len(f.transports)-1].(*endingTransport)
 }
 
+func (f *endingFactory) transportAt(index int) *endingTransport {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.transports[index].(*endingTransport)
+}
+
 type endingTransport struct {
 	*fakeTransport
 	end appsession.End
@@ -40,17 +46,18 @@ type endingTransport struct {
 
 func (t *endingTransport) End() appsession.End { return t.end }
 
-func newEndingState(t *testing.T, end appsession.End) (*State, *endingFactory) {
+func newEndingState(t *testing.T, end appsession.End, opts ...Option) (*State, *endingFactory) {
 	t.Helper()
 	factory := &endingFactory{end: end}
 	service := appsession.NewService(factory)
 	t.Cleanup(service.CloseAll)
-	state := NewState(
+	options := []Option{
 		WithSessions(service, func(*appsession.Session) (Surface, error) {
 			return &fakeSurface{}, nil
 		}),
-	)
-	return state, factory
+	}
+	options = append(options, opts...)
+	return NewState(options...), factory
 }
 
 func TestOpenHostCarriesAutoAttachTmuxOnlyForPlainSSH(t *testing.T) {

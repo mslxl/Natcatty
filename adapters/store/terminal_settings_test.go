@@ -39,6 +39,7 @@ func TestTerminalSettingsRoundTrip(t *testing.T) {
 			{ID: "custom", Patterns: []string{`boom`}, Color: "#123456", Enabled: true},
 		},
 		HistoryCaptureHookEnabled: false,
+		LocalAutoCloseOnExit:      false,
 		LegacyAlgorithms:          true,
 	}
 	if err := store.Save(context.Background(), want); err != nil {
@@ -116,6 +117,38 @@ func TestTerminalSettingsIgnoresOldHistoryRetentionFields(t *testing.T) {
 	}
 	if !got.HistoryCaptureHookEnabled {
 		t.Fatal("a version 5 file did not get the capture hook default")
+	}
+}
+
+// A version 8 file predates the local close-on-exit switch. Loading it must
+// leave the on-by-default behavior in place, while a version 9 file records
+// the user's explicit keep choice.
+func TestTerminalSettingsVersion8GetsTheLocalAutoCloseDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "terminal-settings.json")
+	if err := os.WriteFile(path, []byte(`{"version":8,"logFormat":"raw"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := OpenTerminalSettings(path).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.LocalAutoCloseOnExit {
+		t.Fatal("a version 8 file disabled local close-on-exit")
+	}
+}
+
+func TestTerminalSettingsVersion9ReadsTheLocalAutoCloseFlag(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "terminal-settings.json")
+	body := `{"version":9,"localAutoCloseOnExit":false}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := OpenTerminalSettings(path).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LocalAutoCloseOnExit {
+		t.Fatal("the stored keep-on-exit choice was ignored")
 	}
 }
 

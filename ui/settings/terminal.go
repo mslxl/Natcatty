@@ -32,6 +32,7 @@ type Terminal interface {
 	SetKeywordHighlightRules([]domainterminal.KeywordHighlightRule) error
 	SetConnectionLogRetention(count, days int) error
 	SetHistoryCaptureHookEnabled(bool) error
+	SetLocalAutoCloseOnExit(bool) error
 	SetLegacyAlgorithms(bool) error
 	SetRawTerminalMode(bool) error
 }
@@ -271,6 +272,12 @@ func (s *TerminalState) SetKeywordHighlightRuleEnabled(id string, enabled bool) 
 // hook.
 func (s *TerminalState) SetHistoryCaptureHookEnabled(enabled bool) bool {
 	return s.apply(func() error { return s.terminal.SetHistoryCaptureHookEnabled(enabled) })
+}
+
+// SetLocalAutoCloseOnExit closes or keeps a local shell's Tab when the shell
+// exits normally.
+func (s *TerminalState) SetLocalAutoCloseOnExit(enabled bool) bool {
+	return s.apply(func() error { return s.terminal.SetLocalAutoCloseOnExit(enabled) })
 }
 
 // SetLegacyAlgorithms stores whether an Unsaved Host may offer the legacy

@@ -51,6 +51,7 @@ type terminalSettingsRecord struct {
 	ConnectionLogRetentionDays  int `json:"connectionLogRetentionDays"`
 
 	HistoryCaptureHookEnabled bool `json:"historyCaptureHookEnabled"`
+	LocalAutoCloseOnExit      bool `json:"localAutoCloseOnExit"`
 
 	LegacyAlgorithms bool `json:"legacyAlgorithms"`
 }
@@ -61,11 +62,12 @@ type terminalSettingsRecord struct {
 // lack the connection log retention fields; version 4 files lack the dynamic
 // tab title mode; version 5 files lack the history capture hook switch, whose
 // default is on; version 7 removed the Host Atuin preference; version 8 adds
-// the Unsaved Host legacy-algorithm opt-in, whose default is off. Older
-// documents may still carry removed keys, which encoding/json ignores. Zero
-// values for a missing group are replaced by the defaults on load. Older
-// history retention fields are accepted and ignored.
-const terminalSettingsVersion = 8
+// the Unsaved Host legacy-algorithm opt-in, whose default is off; version 9
+// adds the local close-on-exit switch, whose default is on. Older documents
+// may still carry removed keys, which encoding/json ignores. Zero values for a
+// missing group are replaced by the defaults on load. Older history retention
+// fields are accepted and ignored.
+const terminalSettingsVersion = 9
 
 // Load returns the stored settings. A missing file is the original defaults,
 // not an error.
@@ -121,6 +123,9 @@ func (s *TerminalSettingsStore) Load(context.Context) (domainterminal.Settings, 
 	if record.Version >= 8 {
 		settings.LegacyAlgorithms = record.LegacyAlgorithms
 	}
+	if record.Version >= 9 {
+		settings.LocalAutoCloseOnExit = record.LocalAutoCloseOnExit
+	}
 	return domainterminal.Normalize(settings), nil
 }
 
@@ -156,6 +161,7 @@ func (s *TerminalSettingsStore) Save(_ context.Context, settings domainterminal.
 		ConnectionLogRetentionDays:  settings.ConnectionLogRetentionDays,
 
 		HistoryCaptureHookEnabled: settings.HistoryCaptureHookEnabled,
+		LocalAutoCloseOnExit:      settings.LocalAutoCloseOnExit,
 
 		LegacyAlgorithms: settings.LegacyAlgorithms,
 	}
