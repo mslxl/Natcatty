@@ -246,6 +246,12 @@ type Settings struct {
 	// raises command capture to Tier 1. It is portable and on by default. When
 	// it is off, Sessions fall back to native OSC 133/7 or typed input.
 	HistoryCaptureHookEnabled bool
+	// LocalAutoCloseOnExit closes a local shell's Tab when the shell exits
+	// normally instead of keeping the ended screen. It is portable and on by
+	// default. It affects local Sessions only: remote Sessions and failed
+	// transports keep their exit screen, and a tmux detach still closes as
+	// before.
+	LocalAutoCloseOnExit bool
 	// LegacyAlgorithms offers legacy ciphers, key exchanges, and host-key
 	// types to an Unsaved Host, which has no saved backing to hold the
 	// per-Host setting. A saved Host always uses its own value, so this
@@ -319,6 +325,7 @@ func Defaults() Settings {
 		ConnectionLogRetentionDays:  0,
 
 		HistoryCaptureHookEnabled: true,
+		LocalAutoCloseOnExit:      true,
 		RawTerminalMode:           false,
 	}
 }

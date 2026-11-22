@@ -2091,12 +2091,14 @@ func validLocalDir(dir string) string {
 	return dir
 }
 
-// closeDetachedSessions removes Panes whose tmux client detached. The remote
-// session keeps running, so the local Session ended by design: its Tab or Pane
-// closes without an error and the next Host open attaches again. Only a clean
-// tmux detach carries EndReasonDetached, so an ordinary shell exit keeps its
-// ended Tab.
-func (s *State) closeDetachedSessions() bool {
+// closeEndedSessions removes Panes whose Session ended in a way the shell
+// handles by closing. A tmux detach always closes: the remote session keeps
+// running, so the local wrapper ended by design and the next Host open
+// attaches again. A local shell's normal exit closes too when the
+// LocalAutoCloseOnExit setting is on (its default). Any other end keeps its
+// ended screen, so a failure stays visible and a remote exit is unchanged.
+func (s *State) closeEndedSessions() bool {
+	closeLocalExits := s.localAutoCloseOnExit == nil || s.localAutoCloseOnExit()
 	changed := false
 	for index := len(s.tabs) - 1; index >= 0; index-- {
 		tab := s.tabs[index]
@@ -2109,8 +2111,13 @@ func (s *State) closeDetachedSessions() bool {
 				continue
 			}
 			snapshot := value.session.Snapshot()
-			if snapshot.Status != appsession.StatusExited ||
-				snapshot.EndReason != appsession.EndReasonDetached {
+			if snapshot.Status != appsession.StatusExited {
+				continue
+			}
+			shouldClose := snapshot.EndReason == appsession.EndReasonDetached ||
+				(closeLocalExits && snapshot.Kind == appsession.KindLocal &&
+					snapshot.EndReason == appsession.EndReasonExited)
+			if !shouldClose {
 				continue
 			}
 			if len(tab.paneIDs()) == 1 {
@@ -2118,8 +2125,8 @@ func (s *State) closeDetachedSessions() bool {
 				changed = true
 				break
 			}
-			// Focus survives unless the detached Pane itself had it; a
-			// background detach must not move focus in a split Tab.
+			// Focus survives unless the removed Pane itself had it; an
+			// exit in the background must not move focus in a split Tab.
 			_, focusedID := tab.focusedPane()
 			root, err := domainworkspace.RemovePane(tab.Root, id)
 			if err != nil {

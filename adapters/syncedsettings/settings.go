@@ -238,9 +238,10 @@ func (s *Settings) Apply(ctx context.Context, documents map[string]json.RawMessa
 }
 
 // decodeTerminalSettings decodes a synced terminal document. Documents
-// written before the capture hook switch omit its key; a plain decode would
-// read that as false and let a download turn a portable on-by-default setting
-// off, so the field is defaulted to on only when absent.
+// written before the capture hook and local close-on-exit switches omit their
+// keys; a plain decode would read those as false and let a download turn a
+// portable on-by-default setting off, so each field is defaulted to on only
+// when absent.
 func decodeTerminalSettings(raw json.RawMessage) (domainterminal.Settings, error) {
 	var settings domainterminal.Settings
 	if err := json.Unmarshal(raw, &settings); err != nil {
@@ -248,12 +249,16 @@ func decodeTerminalSettings(raw json.RawMessage) (domainterminal.Settings, error
 	}
 	var presence struct {
 		HistoryCaptureHookEnabled *bool `json:"historyCaptureHookEnabled"`
+		LocalAutoCloseOnExit      *bool `json:"localAutoCloseOnExit"`
 	}
 	if err := json.Unmarshal(raw, &presence); err != nil {
 		return domainterminal.Settings{}, err
 	}
 	if presence.HistoryCaptureHookEnabled == nil {
 		settings.HistoryCaptureHookEnabled = true
+	}
+	if presence.LocalAutoCloseOnExit == nil {
+		settings.LocalAutoCloseOnExit = true
 	}
 	return settings, nil
 }

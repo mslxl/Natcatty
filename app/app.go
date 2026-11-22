@@ -1397,6 +1397,12 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		state.WithDynamicTabTitleMode(func() domainterminal.DynamicTabTitleMode {
 			return terminalService.Settings().DynamicTabTitleMode
 		}),
+		// A local shell's normal exit closes its Tab by default. The live
+		// setting is read on every frame, so turning it on also closes an
+		// ended local Tab that a previous keep choice left on screen.
+		state.WithLocalAutoCloseOnExit(func() bool {
+			return terminalService.Settings().LocalAutoCloseOnExit
+		}),
 		state.WithHostLabel(func(id model.HostID) (string, bool) {
 			if vaultState == nil {
 				return "", false

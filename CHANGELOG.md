@@ -11,6 +11,10 @@ requests; this file is the human-maintained changelog.
 
 ### Added
 
+- A local shell's Tab now closes when the shell exits normally, instead of
+  keeping the exit screen. Settings → Terminal → Local shell exit keeps the
+  ended screen instead; SSH, Telnet, and failed local transports still keep
+  theirs, and a tmux detach still closes as before.
 - Settings → Layout & Tabs → Open on launch can now show a new local terminal
   or the Monitoring page at startup, in addition to the Vault and the last
   session. A restore that finds nothing falls back to the chosen landing.

@@ -83,6 +83,19 @@ func TestSetDynamicTabTitleMode(t *testing.T) {
 	}
 }
 
+func TestSetLocalAutoCloseOnExit(t *testing.T) {
+	service := NewService(&fakeStore{})
+	if !service.Settings().LocalAutoCloseOnExit {
+		t.Fatal("a local shell's Tab is kept after exit by default")
+	}
+	if err := service.SetLocalAutoCloseOnExit(false); err != nil {
+		t.Fatal(err)
+	}
+	if service.Settings().LocalAutoCloseOnExit {
+		t.Fatal("the keep-on-exit choice was not stored")
+	}
+}
+
 func TestSetRawTerminalMode(t *testing.T) {
 	service := NewService(&fakeStore{})
 	if service.Settings().RawTerminalMode {
@@ -121,6 +134,7 @@ func TestEverySetterUpdatesItsField(t *testing.T) {
 		func() error { return service.SetOSC52(domainterminal.ClipboardReadWrite) },
 		func() error { return service.SetOSCNotifications(domainterminal.NotificationOff) },
 		func() error { return service.SetHistoryCaptureHookEnabled(false) },
+		func() error { return service.SetLocalAutoCloseOnExit(false) },
 	}
 	for index, step := range steps {
 		if err := step(); err != nil {
@@ -132,7 +146,7 @@ func TestEverySetterUpdatesItsField(t *testing.T) {
 		settings.LogFormat != domainterminal.LogFormatRaw || !settings.LogTimestamps ||
 		settings.OSC52 != domainterminal.ClipboardReadWrite ||
 		settings.OSCNotifications != domainterminal.NotificationOff ||
-		settings.HistoryCaptureHookEnabled {
+		settings.HistoryCaptureHookEnabled || settings.LocalAutoCloseOnExit {
 		t.Fatalf("settings = %+v", settings)
 	}
 }

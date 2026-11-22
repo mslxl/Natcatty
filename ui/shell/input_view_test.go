@@ -17,9 +17,9 @@ import (
 )
 
 // newInputGraph opens three real shell-State Tabs on fake Sessions.
-func newInputGraph(t *testing.T) *testGraph {
+func newInputGraph(t *testing.T, opts ...state.Option) *testGraph {
 	t.Helper()
-	graph := newTestGraph(t)
+	graph := newTestGraph(t, opts...)
 	for index := 0; index < 3; index++ {
 		if err := graph.state.NewTab(); err != nil {
 			t.Fatalf("open tab %d: %v", index, err)
@@ -612,7 +612,9 @@ func TestTabStripScrollsToReachEveryTabAtMinimumWidth(t *testing.T) {
 // preview together must not shrink the Tab strip away at 720x480.
 func TestDenseBroadcastComposeKeepsTabStripAtMinimumSize(t *testing.T) {
 	m := locales.In("en")
-	graph := newInputGraph(t)
+	// Ending the shared transport also ends the other local Sessions. Keep
+	// their ended screens so all three Tabs stay in the strip under test.
+	graph := newInputGraph(t, state.WithLocalAutoCloseOnExit(func() bool { return false }))
 	prepareBroadcastAndCompose(t, graph)
 	// A long draft makes the compose panel taller, as the demo state does.
 	graph.state.SetComposeDraft("echo one long argument\n" +

@@ -9106,6 +9106,36 @@ func (msgs Messages) SettingsLocalShellMissing(path string) string {
 	return Catalog.Format(msgs.locale, "settingsLocalShellMissing", map[string]any{"path": path})
 }
 
+// SettingsLocalExitTitle says "Local shell exit"
+// in the language the app shows.
+func SettingsLocalExitTitle() string { return In(i18n.Locale()).SettingsLocalExitTitle() }
+
+// SettingsLocalExitTitle says "Local shell exit"
+// in the language of msgs.
+func (msgs Messages) SettingsLocalExitTitle() string {
+	return Catalog.Format(msgs.locale, "settingsLocalExitTitle", nil)
+}
+
+// SettingsLocalExitDescription says "When a local shell exits normally, close its Tab instead of keeping the exit screen. Turn this off to keep the ended …"
+// in the language the app shows.
+func SettingsLocalExitDescription() string { return In(i18n.Locale()).SettingsLocalExitDescription() }
+
+// SettingsLocalExitDescription says "When a local shell exits normally, close its Tab instead of keeping the exit screen. Turn this off to keep the ended …"
+// in the language of msgs.
+func (msgs Messages) SettingsLocalExitDescription() string {
+	return Catalog.Format(msgs.locale, "settingsLocalExitDescription", nil)
+}
+
+// SettingsLocalExitCloseOnExit says "Close the Tab on normal exit"
+// in the language the app shows.
+func SettingsLocalExitCloseOnExit() string { return In(i18n.Locale()).SettingsLocalExitCloseOnExit() }
+
+// SettingsLocalExitCloseOnExit says "Close the Tab on normal exit"
+// in the language of msgs.
+func (msgs Messages) SettingsLocalExitCloseOnExit() string {
+	return Catalog.Format(msgs.locale, "settingsLocalExitCloseOnExit", nil)
+}
+
 // SettingsTerminalLoggingTitle says "Session logging"
 // in the language the app shows.
 func SettingsTerminalLoggingTitle() string { return In(i18n.Locale()).SettingsTerminalLoggingTitle() }

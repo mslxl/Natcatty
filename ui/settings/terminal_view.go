@@ -30,6 +30,8 @@ func terminalSection(c *ui.Context, state *TerminalState, prefs *PreferencesStat
 				FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted)
 		}
 
+		renderLocalExitSection(c, state, settings, m, t)
+
 		ui.Text(c, m.SettingsTerminalLoggingTitle()).Bold()
 		ui.Text(c, m.SettingsTerminalLoggingDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 
@@ -296,6 +298,19 @@ func renderPowerUxSection(c *ui.Context, state *TerminalState,
 		})
 	}
 
+}
+
+// renderLocalExitSection toggles whether a local shell's normal exit closes
+// its Tab instead of keeping the ended screen.
+func renderLocalExitSection(c *ui.Context, state *TerminalState,
+	settings domainterminal.Settings, m locales.Messages, t *ui.Theme) {
+	ui.Text(c, m.SettingsLocalExitTitle()).Bold()
+	ui.Text(c, m.SettingsLocalExitDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+	closeOnExit := settings.LocalAutoCloseOnExit
+	if ui.Checkbox(c, &closeOnExit, m.SettingsLocalExitCloseOnExit()).Changed() {
+		state.SetLocalAutoCloseOnExit(closeOnExit)
+		c.Invalidate()
+	}
 }
 
 // renderHistoryCaptureSection toggles the session-scoped shell hook that

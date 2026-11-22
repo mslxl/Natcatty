@@ -387,7 +387,9 @@ func TestShellShowsOpenLocalSessionTabsAndTheirTerminal(t *testing.T) {
 }
 
 func TestShellShowsExitStatusAndCode(t *testing.T) {
-	graph := newTestGraph(t)
+	// Keep the ended screen: this test checks what it reports, not the
+	// close-on-exit default.
+	graph := newTestGraph(t, state.WithLocalAutoCloseOnExit(func() bool { return false }))
 	tt := ui.NewTester(View(graph.state), 900, 600)
 	if err := graph.state.NewTab(); err != nil {
 		t.Fatal(err)

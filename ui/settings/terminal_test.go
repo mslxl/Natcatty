@@ -129,6 +129,10 @@ func (t *fakeTerminal) SetHistoryCaptureHookEnabled(enabled bool) error {
 	return t.update(func(settings *domainterminal.Settings) { settings.HistoryCaptureHookEnabled = enabled })
 }
 
+func (t *fakeTerminal) SetLocalAutoCloseOnExit(enabled bool) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.LocalAutoCloseOnExit = enabled })
+}
+
 func (t *fakeTerminal) SetRawTerminalMode(enabled bool) error {
 	return t.update(func(settings *domainterminal.Settings) { settings.RawTerminalMode = enabled })
 }
@@ -591,5 +595,32 @@ func TestTerminalSettingsToggleShiftEnter(t *testing.T) {
 	tester.Frame()
 	if preferences.settings.Appearance.TerminalShiftEnterPlain {
 		t.Fatal("clicking again did not restore the ESC CR default")
+	}
+}
+
+// TestTerminalSettingsToggleLocalCloseOnExit proves the Terminal area edits
+// the local exit policy. Local close-on-exit is on by default; unchecking it
+// stores the keep-the-exit-screen choice.
+func TestTerminalSettingsToggleLocalCloseOnExit(t *testing.T) {
+	fakeTerminalSettings := newFakeTerminal()
+	tester := ui.NewTester(viewAt(AreaTerminal, Config{
+		Lock:     NewAppLockState(&fakeAppLock{}),
+		Terminal: NewTerminalState(fakeTerminalSettings),
+	}), 1100, 900)
+	tester.SetLocale("en")
+	tester.Frame()
+	m := locales.In("en")
+	if !tester.HasText(m.SettingsLocalExitTitle()) {
+		t.Fatalf("the local exit setting is not rendered: %v", tester.Texts())
+	}
+	if !fakeTerminalSettings.settings.LocalAutoCloseOnExit {
+		t.Fatal("local close-on-exit is not on by default")
+	}
+	if err := tester.Click(m.SettingsLocalExitCloseOnExit()); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if fakeTerminalSettings.settings.LocalAutoCloseOnExit {
+		t.Fatal("the local exit checkbox did not reach the terminal settings service")
 	}
 }

@@ -279,6 +279,9 @@ type State struct {
 	// dynamicTabTitleMode is the live Dynamic tab title setting. Nil keeps the
 	// default: dynamic titles for every Session.
 	dynamicTabTitleMode func() domainterminal.DynamicTabTitleMode
+	// localAutoCloseOnExit is the live Local shell exit setting. Nil keeps
+	// the default: a local Tab closes after a normal shell exit.
+	localAutoCloseOnExit func() bool
 	// hostLabel resolves a Host's current label, so an open Tab follows a Vault
 	// rename. Nil falls back to the descriptor's label snapshot.
 	hostLabel func(model.HostID) (string, bool)
@@ -580,6 +583,13 @@ func WithAuthPrompt(prompt *sessionui.AuthPrompt) Option {
 // it the shell follows the default: every Session's title.
 func WithDynamicTabTitleMode(mode func() domainterminal.DynamicTabTitleMode) Option {
 	return func(s *State) { s.dynamicTabTitleMode = mode }
+}
+
+// WithLocalAutoCloseOnExit supplies the live Local shell exit setting. Without
+// it the shell uses the default and closes a local shell's Tab after a normal
+// exit; a getter that returns false keeps the ended screen instead.
+func WithLocalAutoCloseOnExit(enabled func() bool) Option {
+	return func(s *State) { s.localAutoCloseOnExit = enabled }
 }
 
 // WithHostLabel supplies a Host's current label so open Tabs follow a Vault
@@ -1386,9 +1396,10 @@ func (s *State) Flush() {
 		s.problemErr = nil
 	}
 	// A tmux detach ends the local wrapper cleanly while the remote session
-	// keeps running. Removing the Pane here, on the UI thread, is what makes
-	// detach close the Tab without an error.
-	s.closeDetachedSessions()
+	// keeps running, and an ordinary local shell exit may close its Tab by
+	// setting. Removing the Pane here, on the UI thread, keeps closing a Tab
+	// away from Session goroutines.
+	s.closeEndedSessions()
 	// Tabs and Panes may have changed; keep the input-thread broadcast
 	// recipient snapshot exact.
 	s.refreshBroadcastState()
