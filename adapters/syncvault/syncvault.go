@@ -135,6 +135,13 @@ func (v *Vault) Snapshot(ctx context.Context) (appsync.Payload, error) {
 				return appsync.Payload{}, err
 			}
 		}
+		if host.HasVNCPassword {
+			// A VNC password is an ordinary field secret in its own slot; it
+			// never shares the SSH password address.
+			if err := v.addSecret(ctx, &payload, appvault.HostSecretRef(host.ID, appvault.FieldVNCPassword)); err != nil {
+				return appsync.Payload{}, err
+			}
+		}
 		if host.Proxy != nil && host.Proxy.HasPassword {
 			if err := v.addSecret(ctx, &payload, appvault.HostSecretRef(host.ID, appvault.FieldProxyPassword)); err != nil {
 				return appsync.Payload{}, err
@@ -381,6 +388,9 @@ func (v *Vault) clearStale(ctx context.Context, payload appsync.Payload, byRef m
 	}
 	for _, host := range payload.Hosts {
 		if err := clear(appvault.HostSecretRef(host.ID, appvault.FieldPassword)); err != nil {
+			return err
+		}
+		if err := clear(appvault.HostSecretRef(host.ID, appvault.FieldVNCPassword)); err != nil {
 			return err
 		}
 		if err := clear(appvault.HostSecretRef(host.ID, appvault.FieldProxyPassword)); err != nil {

@@ -759,3 +759,152 @@ func TestJSONHostCarriesTheNetworkDeviceMode(t *testing.T) {
 		t.Fatalf("DeviceType = %q, want empty for an ordinary Host", got)
 	}
 }
+
+// TestJSONPartialVNCSectionDefaultsSharedTrue proves a document that lists only
+// some viewer keys does not turn off client sharing. An explicit false must
+// still survive, matching the domain record's rule.
+func TestJSONPartialVNCSectionDefaultsSharedTrue(t *testing.T) {
+	document := `{"kind":"netcatty.vault","version":1,"hosts":[
+		{"id":"partial","hostname":"desk.example.test","port":5901,"protocol":"vnc",
+		 "vnc":{"viewOnly":true}},
+		{"id":"explicit","hostname":"desk2.example.test","port":5902,"protocol":"vnc",
+		 "vnc":{"shared":false,"fitMode":"clip"}}
+	]}`
+	result := Parse(FormatNetcattyJSON, document, Options{})
+	if len(result.Records) != 2 || len(result.Issues) != 0 {
+		t.Fatalf("records = %+v, issues = %+v", result.Records, result.Issues)
+	}
+	partial := result.Records[0].VNC
+	if partial == nil || !partial.Shared || !partial.ViewOnly {
+		t.Fatalf("partial VNC = %+v, want shared=true and viewOnly=true", partial)
+	}
+	explicit := result.Records[1].VNC
+	if explicit == nil || explicit.Shared || explicit.FitMode != "clip" {
+		t.Fatalf("explicit VNC = %+v, want shared=false and fitMode=clip", explicit)
+	}
+}
+
+// TestCSVVNCCarriesViewerConfigurationAndPassword proves the appended columns
+// round-trip every field in its own slot, and that the generic Password cell is
+// not read as the VNC credential.
+func TestCSVVNCCarriesViewerConfigurationAndPassword(t *testing.T) {
+	config := &VNCConfig{
+		DisplayMode: "port", FitMode: "clip", ViewOnly: true, Shared: false,
+		CursorMode: "server", PlaintextWarningAcknowledged: true,
+	}
+	text := strings.Join([]string{
+		strings.Join(CSVHeader(), ","),
+		strings.Join([]string{
+			"Prod", "Desk", "", "", "desk.example.test", "vnc", "5901", "",
+			"", "", "", "", "", "", EncodeVNCConfig(config), "vnc-secret",
+		}, ","),
+	}, "\r\n")
+
+	result := Parse(FormatCSV, text, Options{})
+	if len(result.Issues) != 0 {
+		t.Fatalf("issues = %+v", result.Issues)
+	}
+	if len(result.Records) != 1 {
+		t.Fatalf("records = %+v", result.Records)
+	}
+	record := result.Records[0]
+	if record.VNC == nil || *record.VNC != *config {
+		t.Fatalf("VNC = %+v, want %+v", record.VNC, config)
+	}
+	if record.Password != "" {
+		t.Fatalf("Password = %q, want the SSH slot empty", record.Password)
+	}
+	if record.VNCPassword != "vnc-secret" {
+		t.Fatalf("VNCPassword = %q", record.VNCPassword)
+	}
+}
+
+// TestCSVVNCConfigDefaultsShareWhenTheKeyIsAbsent proves a hand-written or
+// partial cell defaults sharing to true and fills the other viewer defaults.
+// An explicit shared=false still wins.
+func TestCSVVNCConfigDefaultsShareWhenTheKeyIsAbsent(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		cell       string
+		wantShared bool
+	}{
+		{"only viewOnly", MarkerVNC + "viewOnly=true", true},
+		{"unknown key", MarkerVNC + "bogus=1", true},
+		{"explicit false", MarkerVNC + "shared=false", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text := strings.Join([]string{
+				strings.Join(CSVHeader(), ","),
+				strings.Join([]string{
+					"", "Desk", "", "", "desk.example.test", "vnc", "5901", "",
+					"", "", "", "", "", "", tc.cell, "",
+				}, ","),
+			}, "\r\n")
+			result := Parse(FormatCSV, text, Options{})
+			if len(result.Records) != 1 {
+				t.Fatalf("records = %+v, issues = %+v", result.Records, result.Issues)
+			}
+			config := result.Records[0].VNC
+			if config == nil {
+				t.Fatal("the marked cell was dropped")
+			}
+			if config.Shared != tc.wantShared {
+				t.Fatalf("Shared = %v, want %v", config.Shared, tc.wantShared)
+			}
+			if config.DisplayMode != "display" || config.FitMode != "fit" ||
+				config.CursorMode != "local" {
+				t.Fatalf("missing keys did not default: %+v", config)
+			}
+		})
+	}
+}
+
+// TestCSVOldFourteenColumnFileStillImports proves a file written before the VNC
+// columns existed imports with no VNC configuration and no errors, and that a
+// generic Password column is still read as the SSH password.
+func TestCSVOldFourteenColumnFileStillImports(t *testing.T) {
+	headers := []string{
+		"Groups", "Label", "Tags", "Notes", "Hostname/IP", "Protocol",
+		"Port", "Username", "Password", "KeyPath", "Passphrase", "Proxy",
+		"ProxyJump", "LocalShell",
+	}
+	text := strings.Join([]string{
+		strings.Join(headers, ","),
+		"Prod,Web,,,web.example.test,ssh,22,deploy,ssh-secret,,,,,",
+	}, "\r\n")
+	result := Parse(FormatCSV, text, Options{})
+	if len(result.Issues) != 0 || len(result.Records) != 1 {
+		t.Fatalf("records = %+v, issues = %+v", result.Records, result.Issues)
+	}
+	record := result.Records[0]
+	if record.VNC != nil || record.VNCPassword != "" {
+		t.Fatalf("old file gained VNC data: %+v", record)
+	}
+	if record.Password != "ssh-secret" {
+		t.Fatalf("Password = %q", record.Password)
+	}
+}
+
+// TestCSVVNCAndSSHPasswordsStayInTheirOwnColumns proves the two credentials are
+// read from their own headers and never cross.
+func TestCSVVNCAndSSHPasswordsStayInTheirOwnColumns(t *testing.T) {
+	text := strings.Join([]string{
+		"Hostname,Protocol,Password,VNCPassword",
+		"ssh.example.test,ssh,ssh-secret,",
+		"vnc.example.test,vnc,,vnc-secret",
+		"both.example.test,vnc,ssh-other,vnc-other",
+	}, "\r\n")
+	result := Parse(FormatCSV, text, Options{})
+	if len(result.Records) != 3 {
+		t.Fatalf("records = %+v, issues = %+v", result.Records, result.Issues)
+	}
+	if result.Records[0].Password != "ssh-secret" || result.Records[0].VNCPassword != "" {
+		t.Fatalf("SSH-only record = %+v", result.Records[0])
+	}
+	if result.Records[1].Password != "" || result.Records[1].VNCPassword != "vnc-secret" {
+		t.Fatalf("VNC-only record = %+v", result.Records[1])
+	}
+	if result.Records[2].Password != "ssh-other" || result.Records[2].VNCPassword != "vnc-other" {
+		t.Fatalf("both record = %+v", result.Records[2])
+	}
+}

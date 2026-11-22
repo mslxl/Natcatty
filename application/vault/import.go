@@ -706,6 +706,7 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 		host.CreatedAt = now
 		host.UpdatedAt = now
 		host.HasPassword = draft.Password != "" && s.SecretMode() != SecretModeSession
+		host.HasVNCPassword = draft.VNCPassword != "" && s.SecretMode() != SecretModeSession
 		host.HasTOTP = draft.TOTP != "" && s.SecretMode() != SecretModeSession
 		if host.Proxy != nil {
 			host.Proxy.HasPassword = draft.Proxy != nil &&
@@ -748,9 +749,10 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 	}
 	for _, item := range pending {
 		needsPassword := item.draft.Password != ""
+		needsVNCPassword := item.draft.VNCPassword != ""
 		needsProxy := item.draft.Proxy != nil && item.draft.Proxy.Password != ""
 		needsTOTP := item.draft.TOTP != ""
-		if (needsPassword || needsProxy || needsTOTP) && s.secrets == nil {
+		if (needsPassword || needsVNCPassword || needsProxy || needsTOTP) && s.secrets == nil {
 			return result, unsupported(ErrSecretsUnavailable)
 		}
 	}
@@ -758,6 +760,16 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 		if item.draft.Password != "" {
 			ref := HostSecretRef(item.host.ID, FieldPassword)
 			if err := s.secrets.Set(ctx, ref, item.draft.Password); err != nil {
+				rollback()
+				return result, secretError(err)
+			}
+			written = append(written, ref)
+		}
+		if item.draft.VNCPassword != "" {
+			// The VNC password keeps its own slot. It is never written to the
+			// SSH password address even when the source Host carried both.
+			ref := HostSecretRef(item.host.ID, FieldVNCPassword)
+			if err := s.secrets.Set(ctx, ref, item.draft.VNCPassword); err != nil {
 				rollback()
 				return result, secretError(err)
 			}
@@ -892,6 +904,7 @@ func draftFromRecord(record vaultimport.Record) domainvault.Draft {
 		UseSSHAgent:      record.UseSSHAgent,
 		RequiresMFA:      record.RequiresMFA,
 		Password:         record.Password,
+		VNCPassword:      record.VNCPassword,
 		TOTP:             record.TOTP,
 		ProxyProfileID:   record.ProxyProfileID,
 		DirectProxy:      record.DirectProxy,
@@ -926,6 +939,16 @@ func draftFromRecord(record vaultimport.Record) domainvault.Draft {
 			Ciphers:      append([]string(nil), record.Algorithms.Ciphers...),
 			MACs:         append([]string(nil), record.Algorithms.MACs...),
 			HostKeys:     append([]string(nil), record.Algorithms.HostKeys...),
+		}
+	}
+	if record.VNC != nil {
+		draft.VNC = &domainvault.VNCConfig{
+			DisplayMode:                  domainvault.VNCDisplayMode(record.VNC.DisplayMode),
+			FitMode:                      domainvault.VNCFitMode(record.VNC.FitMode),
+			ViewOnly:                     record.VNC.ViewOnly,
+			Shared:                       record.VNC.Shared,
+			CursorMode:                   domainvault.VNCCursorMode(record.VNC.CursorMode),
+			PlaintextWarningAcknowledged: record.VNC.PlaintextWarningAcknowledged,
 		}
 	}
 	return draft

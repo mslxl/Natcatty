@@ -162,13 +162,22 @@ type Record struct {
 	Hostname string
 	Username string
 	Port     int
-	// Protocol is "ssh", "telnet", or "local"; empty means SSH.
+	// Protocol is "ssh", "telnet", "local", "mosh", "et", or "vnc"; empty
+	// means SSH.
 	Protocol string
 	Group    string
 	Tags     []string
 	Notes    string
 	// Password is credential plaintext in memory only.
 	Password string
+	// VNC is a VNC Host's viewer configuration from a Netcatty JSON export.
+	// Other inventory formats leave it nil, and Vault normalization gives a
+	// VNC Host the defaults.
+	VNC *VNCConfig
+	// VNCPassword is a VNC Host's credential plaintext in memory only. It is
+	// a separate slot from Password and is present only in a destructive
+	// export.
+	VNCPassword string
 	// TOTP is a Host's authenticator URI or Base32 secret in memory only.
 	TOTP string
 	// KeyPath and Passphrase feed the SSH Key importer. They are never
@@ -229,6 +238,18 @@ type Algorithms struct {
 	Ciphers      []string
 	MACs         []string
 	HostKeys     []string
+}
+
+// VNCConfig is a VNC Host's portable viewer configuration. It keeps the
+// package pure; the application maps it onto the domain record, which
+// normalizes missing or unknown enum values.
+type VNCConfig struct {
+	DisplayMode                  string
+	FitMode                      string
+	ViewOnly                     bool
+	Shared                       bool
+	CursorMode                   string
+	PlaintextWarningAcknowledged bool
 }
 
 // Family is the non-Host data a Netcatty document carries. The application
@@ -458,6 +479,8 @@ func normalizeProtocol(raw string) string {
 		return "mosh"
 	case "et", "eternalterminal", "eternal-terminal":
 		return "et"
+	case "vnc":
+		return "vnc"
 	default:
 		return ""
 	}

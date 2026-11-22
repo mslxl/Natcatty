@@ -44,6 +44,11 @@ type jsonHost struct {
 	Passphrase string `json:"passphrase"`
 	Proxy      string `json:"proxy"`
 	Password   string `json:"password"`
+	// VNC is a VNC Host's viewer configuration. It is nil on every other
+	// protocol. VNCPassword is credential plaintext present only in a
+	// destructive export, and it is a separate slot from Password.
+	VNC         *jsonVNCConfig `json:"vnc"`
+	VNCPassword string         `json:"vncPassword"`
 	// TOTP is the Host authenticator URI. It is present only in a destructive
 	// export.
 	TOTP  string `json:"totp"`
@@ -74,6 +79,19 @@ type jsonAlgorithms struct {
 	Ciphers      []string `json:"cipher"`
 	MACs         []string `json:"hmac"`
 	HostKeys     []string `json:"serverHostKey"`
+}
+
+// jsonVNCConfig is a VNC Host's viewer configuration. It mirrors the domain
+// record's JSON names without importing it, so this package stays pure. Shared
+// is a pointer so an absent key can default to true instead of reading as an
+// explicit false.
+type jsonVNCConfig struct {
+	DisplayMode                  string `json:"displayMode"`
+	FitMode                      string `json:"fitMode"`
+	ViewOnly                     bool   `json:"viewOnly"`
+	Shared                       *bool  `json:"shared"`
+	CursorMode                   string `json:"cursorMode"`
+	PlaintextWarningAcknowledged bool   `json:"plaintextWarningAcknowledged"`
 }
 
 type jsonKey struct {
@@ -252,6 +270,8 @@ func parseJSON(text string) Result {
 			Tags:                   append([]string(nil), source.Tags...),
 			Notes:                  source.Notes,
 			Password:               source.Password,
+			VNC:                    vncConfigFromJSON(source.VNC),
+			VNCPassword:            source.VNCPassword,
 			TOTP:                   source.TOTP,
 			Pinned:                 source.Pinned,
 			IdentityID:             strings.TrimSpace(source.IdentityID),
@@ -425,6 +445,28 @@ func normalizeTargetIDs(targets []string) []string {
 		out = append(out, target)
 	}
 	return out
+}
+
+// vncConfigFromJSON maps a portable VNC section onto the import record. A nil
+// section stays nil so a non-VNC Host keeps no viewer configuration. A missing
+// shared key means true: an older or hand-written document that lists only a
+// few keys must not turn off sharing for every client.
+func vncConfigFromJSON(config *jsonVNCConfig) *VNCConfig {
+	if config == nil {
+		return nil
+	}
+	shared := true
+	if config.Shared != nil {
+		shared = *config.Shared
+	}
+	return &VNCConfig{
+		DisplayMode:                  strings.TrimSpace(config.DisplayMode),
+		FitMode:                      strings.TrimSpace(config.FitMode),
+		ViewOnly:                     config.ViewOnly,
+		Shared:                       shared,
+		CursorMode:                   strings.TrimSpace(config.CursorMode),
+		PlaintextWarningAcknowledged: config.PlaintextWarningAcknowledged,
+	}
 }
 
 func cloneStringMap(values map[string]string) map[string]string {

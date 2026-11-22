@@ -47,6 +47,17 @@ not the local shell and must not be reported or filtered as one. "Draft Host"
 means the same thing but is not the preferred term in code or UI.
 _Avoid_: local terminal, typed target, ad-hoc host, temporary host
 
+**VNC Host**:
+A Host whose protocol is `vnc`, the RFB remote-desktop protocol. It is an
+ordinary Host for groups, tags, search, routing, export, and sync, and it opens
+a pixel Session in a normal Pane instead of a shell. The saved endpoint is
+always the real TCP port (default 5900; display 0-99 maps to 5900-5999), so the
+editor's display-number/port toggle is presentation only. Its viewer defaults
+live in `VNCConfig`, and its password lives in its own secret slot, independent
+of the SSH password. Route controls reuse the Host Chain, Proxy Profile, and
+Network Profile a Host already has.
+_Avoid_: remote desktop host, screen host, GUI host
+
 **SSH Key**:
 A saved private/public key pair, optionally protected by a passphrase.
 _Avoid_: credential, keypair
@@ -146,8 +157,17 @@ _Avoid_: terminal, tab, shell
 **Display Session**:
 The pixel half of a VNC Session. It carries framebuffer events and display
 input instead of a byte stream, so scrollback, capture, compose, broadcast, and
-terminal resize do not apply.
+terminal resize do not apply. It is the only new seam a VNC Host adds; the
+viewer, the Session, and tests all depend on it.
 _Avoid_: VNC terminal, screen session
+
+**View-only**:
+A VNC viewer state in which the client writes no keyboard, pointer, or
+clipboard-send input, while frame updates, bell, desktop name, and clipboard
+pull continue. Local pointer tracking and clip panning still work, and the Pane
+still splits, detaches, renames, and closes. A VNC Host's
+`VNCConfig.ViewOnly` is the default a new Session starts with.
+_Avoid_: read-only, observer, locked view
 
 **Editing Session**:
 The service's record of one file handed to an opener: the materialized local copy,

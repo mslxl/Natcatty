@@ -553,3 +553,51 @@ func TestThemesExportCarriesTheActiveTheme(t *testing.T) {
 		t.Fatalf("themes = %s", content)
 	}
 }
+
+// TestCSVKeepsVNCConfigAndCredentialByteExact proves the VNC configuration
+// cell keeps its marker payload and the VNC password is never formula-guarded,
+// while the generic Password cell stays empty for a VNC Host.
+func TestCSVKeepsVNCConfigAndCredentialByteExact(t *testing.T) {
+	config := domainvault.VNCConfig{
+		DisplayMode: domainvault.VNCPort, FitMode: domainvault.VNCClip,
+		Shared: false, CursorMode: domainvault.VNCCursorServer,
+	}
+	dataset := Dataset{Hosts: []Host{{
+		Host: domainvault.Host{
+			ID: "vnc", Label: "Desk", Hostname: "desk.example.test",
+			Port: 5901, Protocol: domainvault.ProtocolVNC, OrderKey: 1000,
+			HasPassword: true, HasVNCPassword: true, VNC: &config,
+		},
+		Password: "ssh-slot-value", VNCPassword: "=1+2",
+	}}}
+	content := exportDatasetFor(t, dataset, FormatCSV, Options{IncludeSecrets: true})
+	rows, issues := vaultimport.ParseCSV(string(content))
+	if len(issues) != 0 {
+		t.Fatalf("parse issues = %+v", issues)
+	}
+	configCell := csvCell(t, rows, "desk.example.test", "VNC")
+	wantConfig := vaultimport.MarkerVNC +
+		"displayMode=port;fitMode=clip;viewOnly=false;shared=false;" +
+		"cursorMode=server;plaintextWarningAcknowledged=false"
+	if configCell != wantConfig {
+		t.Fatalf("VNC cell = %q, want %q", configCell, wantConfig)
+	}
+	if got := csvCell(t, rows, "desk.example.test", "Password"); got != "" {
+		t.Fatalf("Password cell = %q, want empty for a VNC Host", got)
+	}
+	if got := csvCell(t, rows, "desk.example.test", "VNCPassword"); got != "=1+2" {
+		t.Fatalf("VNCPassword cell = %q, want the raw credential", got)
+	}
+
+	parsed := vaultimport.Parse(vaultimport.FormatCSV, string(content), vaultimport.Options{})
+	if len(parsed.Records) != 1 {
+		t.Fatalf("records = %+v", parsed.Records)
+	}
+	record := parsed.Records[0]
+	if record.VNCPassword != "=1+2" || record.Password != "" {
+		t.Fatalf("parsed credentials = password %q, vnc %q", record.Password, record.VNCPassword)
+	}
+	if record.VNC == nil || record.VNC.Shared || record.VNC.FitMode != "clip" {
+		t.Fatalf("parsed VNC = %+v", record.VNC)
+	}
+}

@@ -972,3 +972,74 @@ func settingsToStringMap(t *testing.T, settings map[string]json.RawMessage) map[
 	}
 	return value
 }
+
+// TestPayloadJSONCarriesVNCConfiguration proves the v1 materialized payload's
+// Host JSON is enough on its own: the viewer configuration and the
+// HasVNCPassword marker survive an encode/decode cycle with no VNC branch.
+func TestPayloadJSONCarriesVNCConfiguration(t *testing.T) {
+	config := domainvault.VNCConfig{
+		DisplayMode: domainvault.VNCPort, FitMode: domainvault.VNCClip,
+		Shared: true, CursorMode: domainvault.VNCCursorServer, ViewOnly: true,
+		PlaintextWarningAcknowledged: true,
+	}
+	payload := Payload{Hosts: []domainvault.Host{{
+		ID: "vnc-1", Label: "desk", Hostname: "desk.example", Port: 5901,
+		Protocol: domainvault.ProtocolVNC, HasVNCPassword: true, VNC: &config,
+	}}}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Payload
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	host := decoded.Hosts[0]
+	if host.Protocol != domainvault.ProtocolVNC || !host.HasVNCPassword ||
+		host.VNC == nil || *host.VNC != config {
+		t.Fatalf("decoded Host = %+v", host)
+	}
+}
+
+// TestMergeTreatsVNCConfigurationAsAnOrdinaryHostField drives the three-way
+// merge with one side changing the viewer configuration and the other the
+// credential marker. Both changes survive because they are ordinary top-level
+// Host fields, with no VNC-specific merge branch.
+func TestMergeTreatsVNCConfigurationAsAnOrdinaryHostField(t *testing.T) {
+	config := domainvault.VNCConfig{
+		DisplayMode: domainvault.VNCDisplayNumber, FitMode: domainvault.VNCFit,
+		Shared: true, CursorMode: domainvault.VNCCursorLocal,
+	}
+	baseHost := mergeTestHost("vnc", "Desk", "desk.example")
+	baseHost.Protocol = domainvault.ProtocolVNC
+	baseHost.VNC = &config
+	localHost := baseHost
+	localConfig := config
+	localConfig.FitMode = domainvault.VNCClip
+	localHost.VNC = &localConfig
+	remoteHost := baseHost
+	remoteConfig := config
+	remoteHost.VNC = &remoteConfig
+	remoteHost.HasVNCPassword = true
+
+	base := &Payload{Hosts: []domainvault.Host{baseHost}}
+	local := Payload{Hosts: []domainvault.Host{localHost}}
+	remote := Payload{Hosts: []domainvault.Host{remoteHost}}
+	result, err := MergePayloads(base, local, remote, MergeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Payload.Hosts) != 1 {
+		t.Fatalf("merged Hosts = %+v", result.Payload.Hosts)
+	}
+	merged := result.Payload.Hosts[0]
+	if merged.VNC == nil || merged.VNC.FitMode != domainvault.VNCClip {
+		t.Fatalf("merged VNC = %+v, want the local fit change", merged.VNC)
+	}
+	if !merged.HasVNCPassword {
+		t.Fatal("the remote HasVNCPassword change was dropped")
+	}
+	if len(result.Conflicts) != 0 {
+		t.Fatalf("unrelated VNC fields conflicted: %+v", result.Conflicts)
+	}
+}

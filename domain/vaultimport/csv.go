@@ -4,29 +4,36 @@ import (
 	"encoding/csv"
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode"
 )
 
 // CSV marked-field prefixes. They let a cell carry a value the legacy CSV
-// format cannot represent directly (a key path, passphrase, proxy, or local
-// shell spec) without confusing spreadsheets. A value that begins with a
-// formula character or with the marker itself is percent-encoded behind the
-// marker.
+// format cannot represent directly (a key path, passphrase, proxy, local shell
+// spec, or VNC viewer configuration) without confusing spreadsheets. A value
+// that begins with a formula character or with the marker itself is
+// percent-encoded behind the marker.
 const (
 	MarkerKeyPath    = "__netcatty_csv_keypath_v1__:"
 	MarkerPassphrase = "__netcatty_csv_passphrase_v1__:"
 	MarkerProxy      = "__netcatty_csv_proxy_v1__:"
 	MarkerProxyJump  = "__netcatty_csv_proxyjump_v1__:"
 	MarkerLocalShell = "__netcatty_csv_localshell_v1__:"
+	// MarkerVNC prefixes a VNC Host's viewer configuration. The payload is a
+	// semicolon-separated list of key=value pairs so a spreadsheet user can
+	// read and hand-edit it.
+	MarkerVNC = "__netcatty_csv_vnc_v1__:"
 )
 
 // csvHeader is the canonical Netcatty CSV header. Import accepts variants and
-// additional columns; export writes this exact order.
+// additional columns; export writes this exact order. VNC and VNCPassword are
+// appended after the original fourteen columns, so an older reader ignores
+// them and a file written by an older build still imports.
 var csvHeader = []string{
 	"Groups", "Label", "Tags", "Notes", "Hostname/IP", "Protocol",
 	"Port", "Username", "Password", "KeyPath", "Passphrase", "Proxy", "ProxyJump",
-	"LocalShell",
+	"LocalShell", "VNC", "VNCPassword",
 }
 
 // CSVHeader returns a copy of the canonical header.
@@ -172,6 +179,78 @@ func DecodeMarkedField(value, marker string) string {
 		return value
 	}
 	return decoded
+}
+
+// EncodeVNCConfig renders a VNC viewer configuration as a marker-prefixed,
+// human-readable cell. Every field is written explicitly, so the encoding is
+// stable and a reader never has to guess whether a value was omitted or set to
+// its zero value. A nil configuration writes an empty cell.
+func EncodeVNCConfig(config *VNCConfig) string {
+	if config == nil {
+		return ""
+	}
+	parts := []string{
+		"displayMode=" + config.DisplayMode,
+		"fitMode=" + config.FitMode,
+		"viewOnly=" + strconv.FormatBool(config.ViewOnly),
+		"shared=" + strconv.FormatBool(config.Shared),
+		"cursorMode=" + config.CursorMode,
+		"plaintextWarningAcknowledged=" + strconv.FormatBool(config.PlaintextWarningAcknowledged),
+	}
+	return MarkerVNC + strings.Join(parts, ";")
+}
+
+// DecodeVNCConfig reads the marker-prefixed VNC cell. An empty or unmarked cell
+// means the Host has no VNC configuration. Unknown keys are ignored and known
+// keys with missing or unrecognized values fall back to the viewer defaults;
+// in particular, an absent shared key means true, matching a new VNC Host.
+func DecodeVNCConfig(raw string) *VNCConfig {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, MarkerVNC) {
+		return nil
+	}
+	config := &VNCConfig{
+		DisplayMode: "display", FitMode: "fit", Shared: true, CursorMode: "local",
+	}
+	for _, token := range strings.Split(DecodeMarkedField(raw, MarkerVNC), ";") {
+		key, value, ok := strings.Cut(token, "=")
+		if !ok {
+			continue
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		value = strings.TrimSpace(value)
+		switch key {
+		case "displaymode":
+			config.DisplayMode = value
+		case "fitmode":
+			config.FitMode = value
+		case "viewonly":
+			if parsed, ok := parseBoolValue(value); ok {
+				config.ViewOnly = parsed
+			}
+		case "shared":
+			if parsed, ok := parseBoolValue(value); ok {
+				config.Shared = parsed
+			}
+		case "cursormode":
+			config.CursorMode = value
+		case "plaintextwarningacknowledged":
+			if parsed, ok := parseBoolValue(value); ok {
+				config.PlaintextWarningAcknowledged = parsed
+			}
+		}
+	}
+	return config
+}
+
+// parseBoolValue accepts the same spellings as strconv.ParseBool. An
+// unrecognized spelling leaves the caller's default untouched.
+func parseBoolValue(value string) (bool, bool) {
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return false, false
+	}
+	return parsed, true
 }
 
 // isFormulaStart reports whether a spreadsheet could read the value as a
@@ -412,6 +491,11 @@ func parseCSV(text string) Result {
 	proxyIdx := findExactHeader(headers, "proxy", "proxyserver", "proxy server")
 	proxyJumpIdx := findExactHeader(headers, "proxyjump")
 	localShellIdx := findExactHeader(headers, "localshell", "local shell")
+	// VNC and VNCPassword are matched exactly: a prefix match would confuse the
+	// VNC configuration column with VNCPassword, and neither may be mistaken
+	// for the generic Password column above.
+	vncIdx := findExactHeader(headers, "vnc")
+	vncPasswordIdx := findExactHeader(headers, "vncpassword", "vnc password")
 	passwordIdx := findExactHeader(headers, "password", "pass", "passwd")
 	if passwordIdx < 0 {
 		passwordIdx = findHeader(headers, "password", "passwd")
@@ -492,6 +576,12 @@ func parseCSV(text string) Result {
 			record.Username = value
 		}
 		record.Password = cell(row, passwordIdx)
+		// The VNC configuration and its credential are separate columns from
+		// the generic Password cell. The credential stays byte-exact.
+		if raw := strings.TrimSpace(cell(row, vncIdx)); raw != "" {
+			record.VNC = DecodeVNCConfig(raw)
+		}
+		record.VNCPassword = cell(row, vncPasswordIdx)
 		if raw := strings.TrimSpace(cell(row, keyPathIdx)); raw != "" {
 			record.KeyPath = DecodeMarkedField(raw, MarkerKeyPath)
 		}
