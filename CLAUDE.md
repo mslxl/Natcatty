@@ -18,6 +18,10 @@ Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
 When testing the app, run `just dev` (`go run .`). A development build keeps its Vault and secrets in `<cwd>/.natcatty-test/` and never reads the real profile or OS credential store (ADR 0022). Do not test against an installed Natcatty or a `go tool mygo build` binary; those use the real profile and keychain.
 
+## Mobile simulators and emulators
+
+Use at most one iOS simulator and at most one Android emulator. Before creating one, check existing devices (`xcrun simctl list devices` for iOS, `emulator -list-avds` for Android); if any exists for that platform, reuse it and do not create another, even if it differs in device type, runtime, profile, or system image.
+
 ## Git merges
 
 Merge feature branches into `main` only after verifying the baseline.
