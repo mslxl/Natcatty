@@ -40,15 +40,19 @@ type Dialer struct {
 	dial         DialFunc
 	agentDial    AgentDialFunc
 	processStart ProcessStartFunc
-	dialTimeout  time.Duration
-	authTimeout  time.Duration
-	ciphers      []string
-	keyExchanges []string
-	macs         []string
-	hostKeyAlgos []string
-	x11Local     X11LocalFactory
-	skAgent      appconnection.SecurityKeyAgent
-	skDeadline   time.Duration
+	// proxyCommandUnavailable closes the ProxyCommand transport on a platform
+	// whose process support has not passed device acceptance. It is checked
+	// before a command is substituted or a process is started.
+	proxyCommandUnavailable bool
+	dialTimeout             time.Duration
+	authTimeout             time.Duration
+	ciphers                 []string
+	keyExchanges            []string
+	macs                    []string
+	hostKeyAlgos            []string
+	x11Local                X11LocalFactory
+	skAgent                 appconnection.SecurityKeyAgent
+	skDeadline              time.Duration
 }
 
 // Option customizes a Dialer.
@@ -103,6 +107,13 @@ func WithProcessStart(fn ProcessStartFunc) Option {
 			d.processStart = fn
 		}
 	}
+}
+
+// WithProxyCommandUnavailable disables ProxyCommand for a platform whose
+// process support has not passed device acceptance. The transport then fails
+// with KindUnsupported before any process starts or any direct dial happens.
+func WithProxyCommandUnavailable() Option {
+	return func(d *Dialer) { d.proxyCommandUnavailable = true }
 }
 
 // WithX11Local replaces the local X11 display seam. Tests inject an in-process

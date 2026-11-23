@@ -94,7 +94,7 @@ func (e *phoneTransportEnv) open(t *testing.T) {
 		sshadapter.WithTimeouts(5*time.Second, 5*time.Second),
 	)
 	e.runtime = newPhoneSessionRuntimeWithDialer(
-		dialer, e.vault, db, e.userData, e.prompts, nil, secrets, nil)
+		dialer, e.vault, db, e.userData, e.prompts, nil, secrets, nil, nil)
 }
 
 // shutdown ends one app run: the Session runtime, the encrypted store, and

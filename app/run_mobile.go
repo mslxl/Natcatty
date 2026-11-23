@@ -203,7 +203,7 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 	// settings supply the same OSC 52 policy the desktop's Session service
 	// uses, so the Terminal page's Remote clipboard control has an effect.
 	sessionRuntime = newPhoneSessionRuntime(vault, database, userData, prompts, history, fieldSecrets,
-		func() domainterminal.Settings { return terminalSettings.Settings() })
+		func() domainterminal.Settings { return terminalSettings.Settings() }, preferences)
 
 	shell = phoneshell.New(
 		phoneshell.WithVault(vault),

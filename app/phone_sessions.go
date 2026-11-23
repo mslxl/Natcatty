@@ -15,6 +15,8 @@ import (
 	"io"
 	"sync"
 
+	"github.com/egoist/mygo"
+
 	adapteret "github.com/mslxl/natcatty/adapters/et"
 	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
 	"github.com/mslxl/natcatty/adapters/store"
@@ -92,12 +94,26 @@ func newPhonePrompts(vault *appvault.Service) *phoneshell.Prompts {
 // fails closed on an untrusted key, as before. history receives the completed
 // commands the background Atuin engine uploads. terminalSettings supplies the
 // shared terminal document for the OSC 52 clipboard policy; nil keeps the
-// original's write-only default.
+// original's write-only default. preferences supplies the app-wide default
+// Proxy Profile, so a default synced from another device reaches the phone's
+// route exactly as it does on the desktop.
 func newPhoneSessionRuntime(vault *appvault.Service, known appconnection.KnownHostRepository,
 	userData string, prompts *phoneshell.Prompts, history *phoneHistory,
-	secrets appvault.FieldSecrets, terminalSettings func() domainterminal.Settings) *phoneSessionRuntime {
+	secrets appvault.FieldSecrets, terminalSettings func() domainterminal.Settings,
+	preferences preferenceSource) *phoneSessionRuntime {
 	return newPhoneSessionRuntimeWithDialer(
-		sshadapter.NewDialer(), vault, known, userData, prompts, history, secrets, terminalSettings)
+		newPhoneSSHDialer(), vault, known, userData, prompts, history, secrets, terminalSettings, preferences)
+}
+
+// newPhoneSSHDialer builds the phone's SSH transport. ProxyCommand spawns an
+// operating-system process, so it is gated per platform: a production phone
+// build keeps it closed until the platform passes device acceptance, while a
+// development build opens the same switch for integration testing.
+func newPhoneSSHDialer() *sshadapter.Dialer {
+	if mygo.IsDev() {
+		return sshadapter.NewDialer()
+	}
+	return sshadapter.NewDialer(sshadapter.WithProxyCommandUnavailable())
 }
 
 // newPhoneSessionRuntimeWithDialer is newPhoneSessionRuntime with the SSH
@@ -109,10 +125,16 @@ func newPhoneSessionRuntime(vault *appvault.Service, known appconnection.KnownHo
 // its resumable session credentials there, under the app's user-data
 // directory, so a relaunch can reattach without the key. A nil store keeps ET
 // sessions memory-only; the adapter never writes credentials anywhere else.
+//
+// preferences is wired into the shared route resolver, so an explicit Profile,
+// Host Group inheritance, inline configuration, first-hop Host, explicit
+// Direct, and the app-wide default resolve on the phone in the same order as
+// on the desktop.
 func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvault.Service,
 	known appconnection.KnownHostRepository, userData string,
 	prompts *phoneshell.Prompts, history *phoneHistory,
-	secrets appvault.FieldSecrets, terminalSettings func() domainterminal.Settings) *phoneSessionRuntime {
+	secrets appvault.FieldSecrets, terminalSettings func() domainterminal.Settings,
+	preferences preferenceSource) *phoneSessionRuntime {
 	providers := appconnection.NewNetworkProviderRegistry(&networkProviderFactory{
 		vault:     vault,
 		stateBase: networkProviderStateBase(userData),
@@ -133,7 +155,7 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 		)
 	}
 	connections := appconnection.NewManager(dialer, vaultPasswords{vault: vault}, known, options...)
-	routes := vaultRoutes{vault: vault}
+	routes := vaultRoutes{vault: vault, preferences: preferences}
 	service := appsession.NewService(
 		newPhoneTransportFactory(connections, routes, providers, secrets),
 		phoneSessionOptions(vault, history, terminalSettings)...)
