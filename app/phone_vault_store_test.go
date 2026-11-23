@@ -2,10 +2,17 @@ package app
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/ssh"
+
+	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
 	"github.com/mslxl/natcatty/adapters/store"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
@@ -45,7 +52,7 @@ func TestVaultPagesReadTheSharedStore(t *testing.T) {
 		t.Fatalf("save known host: %v", err)
 	}
 
-	vault := appvault.NewService(db, appvault.WithKeys(db), appvault.WithKnownHosts(db))
+	vault := appvault.NewService(db, appvault.WithKeys(db), appvault.WithIdentities(db), appvault.WithKnownHosts(db))
 	shell := phoneshell.New(phoneshell.WithVault(vault))
 	if err := shell.Load(ctx); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -167,4 +174,211 @@ func TestVaultHostsMoveWritesSharedGroup(t *testing.T) {
 		return
 	}
 	t.Fatalf("Host %q is missing from the shared store", host.ID)
+}
+
+// TestPhoneKeychainWritesTheSharedVault drives Add, Edit, and Delete for an
+// SSH Key and Add for an Identity through the real Vault service and SQLite
+// store. A second phone Shell opened on the same store is the desktop reload:
+// it sees the records the first Shell wrote, and the first Shell's deletion is
+// gone from the store the desktop reads.
+func TestPhoneKeychainWritesTheSharedVault(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "natcatty.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	block, err := ssh.MarshalPrivateKey(private, "")
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	material := string(pem.EncodeToMemory(block))
+
+	vault := appvault.NewService(db,
+		appvault.WithKeys(db),
+		appvault.WithIdentities(db),
+		appvault.WithKnownHosts(db),
+		appvault.WithSecrets(newMemoryFieldSecrets()),
+		appvault.WithKeyInspector(sshadapter.KeyParser{}),
+	)
+	shell := phoneshell.New(phoneshell.WithVault(vault))
+	if err := shell.Load(ctx); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	tt := phonePage(t, shell, phoneshell.Vault, "Keychain")
+
+	// Add an SSH Key with real, parsable material.
+	if err := tt.Click("Add key"); err != nil {
+		t.Fatalf("click Add key: %v", err)
+	}
+	if err := tt.Click("Label"); err != nil {
+		t.Fatalf("focus Label: %v", err)
+	}
+	tt.Type("phone-added")
+	if err := tt.Click("Private key"); err != nil {
+		t.Fatalf("focus Private key: %v", err)
+	}
+	tt.Type(material)
+	if err := tt.Click("Save key"); err != nil {
+		t.Fatalf("click Save key: %v", err)
+	}
+	if !tt.HasText("phone-added") {
+		t.Fatalf("the added key is not listed; texts: %v", tt.Texts())
+	}
+	keys, err := db.ListKeys(ctx)
+	if err != nil {
+		t.Fatalf("list keys: %v", err)
+	}
+	var added domainvault.Key
+	for _, key := range keys {
+		if key.Label == "phone-added" {
+			added = key
+		}
+	}
+	if added.ID == "" || !added.HasPrivateKey {
+		t.Fatalf("the shared store has no usable phone-added key: %+v", keys)
+	}
+	for _, text := range tt.Texts() {
+		if text == material || strings.Contains(text, "OPENSSH PRIVATE KEY") {
+			t.Fatalf("the Keychain rendered private material: %q", text)
+		}
+	}
+
+	// Add an Identity selecting that Key.
+	if err := tt.Click("Add identity"); err != nil {
+		t.Fatalf("click Add identity: %v", err)
+	}
+	if err := tt.Click("Label"); err != nil {
+		t.Fatalf("focus Identity Label: %v", err)
+	}
+	tt.Type("phone-identity")
+	if err := tt.Click("Username"); err != nil {
+		t.Fatalf("focus Username: %v", err)
+	}
+	tt.Type("deploy")
+	if err := tt.Click("SSH key"); err != nil {
+		t.Fatalf("choose SSH key auth: %v", err)
+	}
+	if err := tt.Click("Use key phone-added"); err != nil {
+		t.Fatalf("select the added key: %v", err)
+	}
+	if err := tt.Click("Save identity"); err != nil {
+		t.Fatalf("click Save identity: %v", err)
+	}
+	identities, err := vault.ListIdentities(ctx)
+	if err != nil {
+		t.Fatalf("list identities: %v", err)
+	}
+	foundIdentity := false
+	for _, identity := range identities {
+		if identity.Label != "phone-identity" {
+			continue
+		}
+		foundIdentity = true
+		if identity.AuthMethod != domainvault.IdentityAuthKey || identity.KeyID != added.ID {
+			t.Fatalf("stored Identity = %+v, want key auth with %q", identity, added.ID)
+		}
+	}
+	if !foundIdentity {
+		t.Fatalf("the shared store has no phone-identity: %+v", identities)
+	}
+
+	// A reload of the same store sees both records, as the desktop does.
+	desktop := phoneshell.New(phoneshell.WithVault(vault))
+	if err := desktop.Load(ctx); err != nil {
+		t.Fatalf("desktop Load: %v", err)
+	}
+	reloaded := phonePage(t, desktop, phoneshell.Vault, "Keychain")
+	for _, want := range []string{"phone-added", "phone-identity"} {
+		if !reloaded.HasText(want) {
+			t.Fatalf("a reloaded shell does not show %q; texts: %v", want, reloaded.Texts())
+		}
+	}
+
+	// Edit the Identity's username through the first Shell, then delete it.
+	if err := tt.Click("Edit identity phone-identity"); err != nil {
+		t.Fatalf("click Edit identity: %v", err)
+	}
+	if err := tt.Click("Username"); err != nil {
+		t.Fatalf("focus Username in edit: %v", err)
+	}
+	tt.Type("2")
+	if err := tt.Click("Save identity"); err != nil {
+		t.Fatalf("click Save identity in edit: %v", err)
+	}
+	identities, err = vault.ListIdentities(ctx)
+	if err != nil {
+		t.Fatalf("list identities after edit: %v", err)
+	}
+	editedIdentity := false
+	for _, identity := range identities {
+		if identity.Label == "phone-identity" && identity.Username == "deploy2" {
+			editedIdentity = true
+		}
+	}
+	if !editedIdentity {
+		t.Fatalf("the shared store did not receive the edited Identity: %+v", identities)
+	}
+
+	if err := tt.Click("Delete identity phone-identity"); err != nil {
+		t.Fatalf("click delete identity: %v", err)
+	}
+	if err := tt.Click("Delete"); err != nil {
+		t.Fatalf("click confirm delete identity: %v", err)
+	}
+	identities, err = vault.ListIdentities(ctx)
+	if err != nil {
+		t.Fatalf("list identities after delete: %v", err)
+	}
+	for _, identity := range identities {
+		if identity.Label == "phone-identity" {
+			t.Fatalf("the deleted Identity is still in the shared store: %+v", identity)
+		}
+	}
+
+	// Edit the Key's label through the first Shell, then delete it.
+	if err := tt.Click("Edit key phone-added"); err != nil {
+		t.Fatalf("click Edit key: %v", err)
+	}
+	if err := tt.Click("Label"); err != nil {
+		t.Fatalf("focus Label in edit: %v", err)
+	}
+	tt.Type(" v2")
+	if err := tt.Click("Save key"); err != nil {
+		t.Fatalf("click Save key in edit: %v", err)
+	}
+	keys, err = db.ListKeys(ctx)
+	if err != nil {
+		t.Fatalf("list keys after edit: %v", err)
+	}
+	edited := false
+	for _, key := range keys {
+		if key.ID == added.ID && key.Label == "phone-added v2" {
+			edited = true
+		}
+	}
+	if !edited {
+		t.Fatalf("the shared store did not receive the edited label: %+v", keys)
+	}
+
+	if err := tt.Click("Delete key phone-added v2"); err != nil {
+		t.Fatalf("click delete key: %v", err)
+	}
+	if err := tt.Click("Delete"); err != nil {
+		t.Fatalf("click confirm delete key: %v", err)
+	}
+	keys, err = db.ListKeys(ctx)
+	if err != nil {
+		t.Fatalf("list keys after delete: %v", err)
+	}
+	for _, key := range keys {
+		if key.ID == added.ID {
+			t.Fatalf("the deleted Key is still in the shared store: %+v", key)
+		}
+	}
 }

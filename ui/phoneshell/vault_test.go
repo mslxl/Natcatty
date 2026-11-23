@@ -3,6 +3,7 @@ package phoneshell
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -16,14 +17,37 @@ import (
 // fakeVault is the VaultStore the page tests drive. The real store's behaviour
 // is covered by TestVaultPagesReadTheSharedStore, which uses SQLite.
 type fakeVault struct {
-	keys      []domainvault.Key
-	known     []domainconn.KnownHost
-	keysErr   error
-	hostsErr  error
-	deleteErr error
+	keys              []domainvault.Key
+	identities        []domainvault.Identity
+	known             []domainconn.KnownHost
+	keysErr           error
+	identitiesErr     error
+	hostsErr          error
+	deleteErr         error
+	createKeyErr      error
+	updateKeyErr      error
+	deleteIdentityErr error
 
-	deletedKeys  []model.KeyID
-	deletedHosts []string
+	createdKeys       []domainvault.KeyDraft
+	attemptedKeys     []domainvault.KeyDraft
+	updatedKeys       []keyUpdate
+	deletedKeys       []model.KeyID
+	createdIdentities []domainvault.IdentityDraft
+	updatedIdentities []identityUpdate
+	deletedIdentities []model.IdentityID
+	deletedHosts      []string
+}
+
+// keyUpdate records one UpdateKey call with the draft it received.
+type keyUpdate struct {
+	ID    model.KeyID
+	Draft domainvault.KeyDraft
+}
+
+// identityUpdate records one UpdateIdentity call with the draft it received.
+type identityUpdate struct {
+	ID    model.IdentityID
+	Draft domainvault.IdentityDraft
 }
 
 func (f *fakeVault) ListKeys(context.Context) ([]domainvault.Key, error) {
@@ -76,6 +100,107 @@ func (f *fakeVault) DeleteKnownHost(_ context.Context, id string) error {
 func (f *fakeVault) ListGroups(context.Context) ([]domainvault.Group, error) { return nil, nil }
 
 func (f *fakeVault) AssignHostsGroup(context.Context, []model.HostID, string) error { return nil }
+
+func (f *fakeVault) ListIdentities(context.Context) ([]domainvault.Identity, error) {
+	if f.identitiesErr != nil {
+		return nil, f.identitiesErr
+	}
+	return append([]domainvault.Identity(nil), f.identities...), nil
+}
+
+func (f *fakeVault) CreateKey(_ context.Context, draft domainvault.KeyDraft) (domainvault.Key, error) {
+	f.attemptedKeys = append(f.attemptedKeys, draft)
+	if f.createKeyErr != nil {
+		return domainvault.Key{}, f.createKeyErr
+	}
+	f.createdKeys = append(f.createdKeys, draft)
+	keyType := draft.Type
+	if keyType == "" {
+		keyType = domainvault.KeyTypeED25519
+	}
+	key := domainvault.Key{
+		ID:            model.KeyID(fmt.Sprintf("key-%d", len(f.keys)+1)),
+		Label:         draft.Label,
+		Type:          keyType,
+		PublicKey:     samplePublicKey,
+		HasPrivateKey: draft.PrivateKey != "",
+		HasPassphrase: draft.SavePassphrase && draft.Passphrase != "",
+	}
+	f.keys = append(f.keys, key)
+	return key, nil
+}
+
+func (f *fakeVault) UpdateKey(_ context.Context, id model.KeyID, draft domainvault.KeyDraft) (domainvault.Key, error) {
+	if f.updateKeyErr != nil {
+		return domainvault.Key{}, f.updateKeyErr
+	}
+	f.updatedKeys = append(f.updatedKeys, keyUpdate{ID: id, Draft: draft})
+	for i := range f.keys {
+		if f.keys[i].ID != id {
+			continue
+		}
+		f.keys[i].Label = draft.Label
+		if draft.PrivateKey != "" {
+			f.keys[i].HasPrivateKey = true
+		}
+		if draft.ClearPassphrase {
+			f.keys[i].HasPassphrase = false
+		} else if draft.SavePassphrase && draft.Passphrase != "" {
+			f.keys[i].HasPassphrase = true
+		}
+		return f.keys[i], nil
+	}
+	return domainvault.Key{}, errors.New("key not found")
+}
+
+func (f *fakeVault) CreateIdentity(_ context.Context, draft domainvault.IdentityDraft) (domainvault.Identity, error) {
+	f.createdIdentities = append(f.createdIdentities, draft)
+	identity := domainvault.Identity{
+		ID:          model.IdentityID(fmt.Sprintf("identity-%d", len(f.identities)+1)),
+		Label:       draft.Label,
+		Username:    draft.Username,
+		AuthMethod:  draft.AuthMethod,
+		KeyID:       draft.KeyID,
+		HasPassword: draft.Password != "",
+	}
+	f.identities = append(f.identities, identity)
+	return identity, nil
+}
+
+func (f *fakeVault) UpdateIdentity(_ context.Context, id model.IdentityID, draft domainvault.IdentityDraft) (domainvault.Identity, error) {
+	f.updatedIdentities = append(f.updatedIdentities, identityUpdate{ID: id, Draft: draft})
+	for i := range f.identities {
+		if f.identities[i].ID != id {
+			continue
+		}
+		f.identities[i].Label = draft.Label
+		f.identities[i].Username = draft.Username
+		f.identities[i].AuthMethod = draft.AuthMethod
+		f.identities[i].KeyID = draft.KeyID
+		if draft.ClearPassword {
+			f.identities[i].HasPassword = false
+		} else if draft.Password != "" {
+			f.identities[i].HasPassword = true
+		}
+		return f.identities[i], nil
+	}
+	return domainvault.Identity{}, errors.New("identity not found")
+}
+
+func (f *fakeVault) DeleteIdentity(_ context.Context, id model.IdentityID) error {
+	if f.deleteIdentityErr != nil {
+		return f.deleteIdentityErr
+	}
+	f.deletedIdentities = append(f.deletedIdentities, id)
+	kept := f.identities[:0]
+	for _, identity := range f.identities {
+		if identity.ID != id {
+			kept = append(kept, identity)
+		}
+	}
+	f.identities = kept
+	return nil
+}
 
 func openSectionPage(t *testing.T, shell *Shell, sec Section, title string) *ui.Tester {
 	t.Helper()
@@ -148,7 +273,7 @@ func TestVaultListsIdentifiableEntries(t *testing.T) {
 	}
 	tt.Advance(600 * time.Millisecond)
 	fingerprint := "SHA256:abcdefghijklmnopqrstuvwxyz0123456789"
-	for _, want := range []string{"example.com:22", "ssh-ed25519", fingerprint[:28] + "…"} {
+	for _, want := range []string{"example.com:22", "ssh-ed25519", fingerprint} {
 		if !tt.HasText(want) {
 			t.Fatalf("Known hosts page does not show %q; texts: %v", want, texts(t, tt))
 		}

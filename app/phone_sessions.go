@@ -68,7 +68,9 @@ var _ phoneshell.SessionStore = (*store.WorkspaceRepository)(nil)
 //
 // The secret store is optional. A phone whose OS credential store is
 // unavailable reports the session-only mode instead of refusing to start, so
-// listing and deleting Keys still work against the same Vault.
+// listing and deleting Keys still work against the same Vault. The key parser
+// is always registered: adding or replacing a Key must validate the pasted
+// material exactly as the desktop editor does.
 func newPhoneVault(database *store.Store, secrets *store.SecretStore) *appvault.Service {
 	options := []appvault.Option{
 		appvault.WithKeys(database),
@@ -77,6 +79,7 @@ func newPhoneVault(database *store.Store, secrets *store.SecretStore) *appvault.
 		appvault.WithProxyProfiles(database),
 		appvault.WithNetworkProfiles(database),
 		appvault.WithKnownHosts(database),
+		appvault.WithKeyInspector(sshadapter.KeyParser{}),
 	}
 	if secrets != nil {
 		options = append(options, appvault.WithSecrets(secrets))
