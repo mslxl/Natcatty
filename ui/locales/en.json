@@ -1254,6 +1254,7 @@
   "vaultHostVNCCursorMode": "Cursor",
   "vaultHostVNCCursorLocal": "Local cursor",
   "vaultHostVNCCursorServer": "Server-drawn cursor",
+  "vaultHostVNCTransportTCP": "TCP (standard RFB)",
   "vaultHostVNCWebSocket": "WebSocket (noVNC)",
   "vaultHostVNCWebSocketHint": "Carries the RFB stream inside a WebSocket, like a noVNC/websockify page. Use the HTTP port (usually 6080) and the upgrade path (usually /websockify).",
   "vaultHostVNCWebSocketPath": "WebSocket path",

@@ -158,8 +158,9 @@ func TestQuickConnectConnectOpensAnUnsavedTab(t *testing.T) {
 	}
 }
 
-// TestQuickConnectVNCShowsVNCControls proves the VNC form offers the endpoint
-// mode, display, username, and its own password, and hides SSH-only controls.
+// TestQuickConnectVNCShowsVNCControls proves the VNC form offers its own
+// transport choice, the endpoint mode, display, username, and password, and
+// hides SSH-only controls.
 func TestQuickConnectVNCShowsVNCControls(t *testing.T) {
 	m := locales.In("en")
 	graph := newTestGraph(t)
@@ -173,13 +174,14 @@ func TestQuickConnectVNCShowsVNCControls(t *testing.T) {
 	for _, text := range []string{
 		m.VaultHostVNCInputMode(), m.VaultHostVNCInputDisplay(),
 		m.VaultHostVNCDisplay(), m.VaultHostVNCPassword(), m.QuickConnectUsername(),
+		m.VaultHostTransport(), m.VaultHostVNCTransportTCP(),
 	} {
 		if !tt.HasText(text) {
 			t.Fatalf("the VNC form does not show %q; texts %q", text, tt.Texts())
 		}
 	}
 	for _, text := range []string{
-		m.VaultHostNetworkDevice(), m.VaultHostTransport(),
+		m.VaultHostNetworkDevice(), m.VaultHostTransportMosh(), m.VaultHostTransportET(),
 	} {
 		if tt.HasText(text) {
 			t.Fatalf("the VNC form still shows the SSH-only control %q", text)
@@ -357,9 +359,27 @@ func waitForQuickConnectFrame(t *testing.T, tt *ui.Tester, what string, ready fu
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-// TestQuickConnectVNCWebSocketShowsTheUpgradeControls drives the rendered
-// WebSocket checkbox: it swaps the display/port selector for the HTTP endpoint,
-// the upgrade path, and the TLS choice, and clicking it again restores them.
+// chooseQuickConnectVNCTransport opens the rendered VNC Transport Select and
+// picks target. The Select shows only its current label until it is opened.
+func chooseQuickConnectVNCTransport(t *testing.T, tt *ui.Tester, m locales.Messages, target string) {
+	t.Helper()
+	current := m.VaultHostVNCTransportTCP()
+	if target == current {
+		current = m.VaultHostVNCWebSocket()
+	}
+	if err := tt.Click(current); err != nil {
+		t.Fatalf("open the VNC Transport Select: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(target); err != nil {
+		t.Fatalf("choose %q: %v", target, err)
+	}
+	tt.Frame()
+}
+
+// TestQuickConnectVNCWebSocketShowsTheUpgradeControls drives the rendered VNC
+// Transport choice: it swaps the display/port selector for the HTTP endpoint,
+// the upgrade path, and the TLS choice, and choosing TCP again restores them.
 func TestQuickConnectVNCWebSocketShowsTheUpgradeControls(t *testing.T) {
 	m := locales.In("en")
 	graph := newTestGraph(t)
@@ -369,13 +389,13 @@ func TestQuickConnectVNCWebSocketShowsTheUpgradeControls(t *testing.T) {
 	graph.state.OpenQuickConnect()
 	graph.state.SetQuickConnectProtocol(domainvault.ProtocolVNC)
 	tt.Frame()
-
-	if err := tt.Click(m.VaultHostVNCWebSocket()); err != nil {
-		t.Fatalf("click %q: %v", m.VaultHostVNCWebSocket(), err)
+	if !tt.HasText(m.VaultHostTransport()) || !tt.HasText(m.VaultHostVNCTransportTCP()) {
+		t.Fatalf("a VNC form has no Transport choice; texts %q", tt.Texts())
 	}
-	tt.Frame()
+
+	chooseQuickConnectVNCTransport(t, tt, m, m.VaultHostVNCWebSocket())
 	if !graph.state.QuickConnectForm().VNCWebSocket {
-		t.Fatal("the rendered WebSocket checkbox did not reach the form")
+		t.Fatal("the rendered Transport choice did not reach the form")
 	}
 	for _, text := range []string{
 		m.VaultHostVNCWebSocket(), m.VaultHostVNCWebSocketPath(),
@@ -394,12 +414,12 @@ func TestQuickConnectVNCWebSocketShowsTheUpgradeControls(t *testing.T) {
 		t.Fatalf("WebSocket port = %q, want websockify's default", got)
 	}
 
-	if err := tt.Click(m.VaultHostVNCWebSocket()); err != nil {
-		t.Fatalf("click %q again: %v", m.VaultHostVNCWebSocket(), err)
+	chooseQuickConnectVNCTransport(t, tt, m, m.VaultHostVNCTransportTCP())
+	if graph.state.QuickConnectForm().VNCWebSocket {
+		t.Fatal("choosing TCP left the WebSocket transport on")
 	}
-	tt.Frame()
 	if tt.HasText(m.VaultHostVNCWebSocketPath()) || tt.HasText(m.VaultHostVNCWebSocketSecure()) {
-		t.Fatalf("the WebSocket controls survived turning the transport off; texts %q", tt.Texts())
+		t.Fatalf("the WebSocket controls survived choosing TCP; texts %q", tt.Texts())
 	}
 	if !tt.HasText(m.VaultHostVNCInputMode()) || !tt.HasText(m.VaultHostVNCDisplay()) {
 		t.Fatalf("the display controls did not return; texts %q", tt.Texts())

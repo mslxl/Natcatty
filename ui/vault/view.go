@@ -1263,22 +1263,10 @@ func plaintextProtocolName(protocol domainvault.Protocol) string {
 
 // vncSection renders the persisted viewer defaults. View-only, scaling,
 // sharing, and the cursor are per-session toggles at connect time, but a Host
-// remembers the values a new Session starts from.
-func vncSection(c *ui.Context, s *vaultstate.State, form *vaultstate.Form, m locales.Messages) {
+// remembers the values a new Session starts from. The transport itself is
+// chosen beside the Protocol, because it decides what the endpoint means.
+func vncSection(c *ui.Context, form *vaultstate.Form, m locales.Messages) {
 	ui.Text(c, m.VaultHostVNC()).Bold()
-	if ui.Checkbox(c, &form.VNCWebSocket, m.VaultHostVNCWebSocket()).Changed() {
-		// The endpoint meaning changes with the transport, so the editor
-		// switches the port controls and seeds websockify's default.
-		s.SetVNCWebSocket(form.VNCWebSocket)
-		c.Invalidate()
-	}
-	if form.VNCWebSocket {
-		kit.FormRow(c, m.VaultHostVNCWebSocketPath(), func() {
-			ui.TextInput(c, &form.VNCWebSocketPath).
-				Placeholder(domainvault.VNCDefaultWebSocketPath).Width(240)
-		}).Description(m.VaultHostVNCWebSocketHint())
-		ui.Checkbox(c, &form.VNCWebSocketSecure, m.VaultHostVNCWebSocketSecure())
-	}
 	fitLabels := []string{
 		m.VaultHostVNCFitFit(), m.VaultHostVNCFitOneToOne(), m.VaultHostVNCFitClip(),
 	}
@@ -1547,6 +1535,27 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					}
 				})
 			}
+			if domainvault.Protocol(form.Protocol) == domainvault.ProtocolVNC {
+				// A raw RFB endpoint and a noVNC/websockify one mean different
+				// things (a display versus an HTTP port), so the transport is a
+				// choice with the same shape as SSH's rather than a checkbox.
+				vncTransportLabels := []string{
+					m.VaultHostVNCTransportTCP(),
+					m.VaultHostVNCWebSocket(),
+				}
+				vncTransportLabel := vncTransportLabels[0]
+				if form.VNCWebSocket {
+					vncTransportLabel = vncTransportLabels[1]
+				}
+				kit.FormRow(c, m.VaultHostTransport(), func() {
+					if ui.Select(c, &vncTransportLabel, vncTransportLabels).Width(220).Changed() {
+						// The endpoint controls and the plaintext disclosure
+						// both follow the transport, so the editor rerenders.
+						s.SetVNCWebSocket(vncTransportLabel == vncTransportLabels[1])
+						c.Invalidate()
+					}
+				})
+			}
 			kit.FormRow(c, m.VaultHostLabel(), func() {
 				ui.TextInput(c, &form.Label)
 			})
@@ -1619,6 +1628,16 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					ui.TextInput(c, &form.Username).Placeholder("root").Width(200)
 				})
 			})
+			if domainvault.Protocol(form.Protocol) == domainvault.ProtocolVNC && form.VNCWebSocket {
+				// The upgrade path and TLS choice describe the transport chosen
+				// beside the Protocol, so they sit with its endpoint rather than
+				// among the viewer defaults.
+				kit.FormRow(c, m.VaultHostVNCWebSocketPath(), func() {
+					ui.TextInput(c, &form.VNCWebSocketPath).
+						Placeholder(domainvault.VNCDefaultWebSocketPath).Width(240)
+				}).Description(m.VaultHostVNCWebSocketHint())
+				ui.Checkbox(c, &form.VNCWebSocketSecure, m.VaultHostVNCWebSocketSecure())
+			}
 			kit.FormRow(c, m.VaultHostGroup(), func() {
 				ui.TextInput(c, &form.Group).Placeholder("prod/web")
 			}).Description(m.VaultHostGroupHint())
@@ -1670,7 +1689,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 			}
 			if domainvault.Protocol(form.Protocol) == domainvault.ProtocolVNC {
-				vncSection(c, s, form, m)
+				vncSection(c, form, m)
 			}
 
 			if s.HostFormCapabilities().SSHAuth {

@@ -6670,6 +6670,16 @@ func (msgs Messages) VaultHostVNCCursorServer() string {
 	return Catalog.Format(msgs.locale, "vaultHostVNCCursorServer", nil)
 }
 
+// VaultHostVNCTransportTCP says "TCP (standard RFB)"
+// in the language the app shows.
+func VaultHostVNCTransportTCP() string { return In(i18n.Locale()).VaultHostVNCTransportTCP() }
+
+// VaultHostVNCTransportTCP says "TCP (standard RFB)"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCTransportTCP() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCTransportTCP", nil)
+}
+
 // VaultHostVNCWebSocket says "WebSocket (noVNC)"
 // in the language the app shows.
 func VaultHostVNCWebSocket() string { return In(i18n.Locale()).VaultHostVNCWebSocket() }

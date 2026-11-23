@@ -794,6 +794,7 @@
   "vaultHostVNCCursorMode": "Cursor",
   "vaultHostVNCCursorLocal": "Cursor local",
   "vaultHostVNCCursorServer": "Cursor dibujado por el servidor",
+  "vaultHostVNCTransportTCP": "TCP (RFB estándar)",
   "vaultHostVNCWebSocket": "WebSocket (noVNC)",
   "vaultHostVNCWebSocketHint": "Lleva el flujo RFB dentro de un WebSocket, como una página noVNC/websockify. Usa el puerto HTTP (normalmente 6080) y la ruta de upgrade (normalmente /websockify).",
   "vaultHostVNCWebSocketPath": "Ruta de WebSocket",

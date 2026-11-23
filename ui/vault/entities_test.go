@@ -2965,28 +2965,45 @@ func TestGroupEditorOffersVNCAsADefault(t *testing.T) {
 	}
 }
 
-// TestHostEditorVNCWebSocketShowsTheUpgradeControls drives the rendered
-// WebSocket checkbox: it replaces the display-number control with the HTTP
-// port, the upgrade path, and the TLS choice, turning it off hides them again,
-// and only wss suppresses the plaintext disclosure.
+// chooseVNCTransport opens the rendered VNC Transport Select and picks target.
+// The Select shows only its current label until it is opened, so the helper
+// starts from the label that is on screen.
+func chooseVNCTransport(t *testing.T, tt *ui.Tester, m locales.Messages, target string) {
+	t.Helper()
+	current := m.VaultHostVNCTransportTCP()
+	if target == current {
+		current = m.VaultHostVNCWebSocket()
+	}
+	if err := tt.Click(current); err != nil {
+		t.Fatalf("open the VNC Transport Select: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(target); err != nil {
+		t.Fatalf("choose %q: %v", target, err)
+	}
+	tt.Frame()
+}
+
+// TestHostEditorVNCWebSocketShowsTheUpgradeControls drives the rendered VNC
+// Transport choice: choosing WebSocket replaces the display-number control with
+// the HTTP port, the upgrade path, and the TLS choice, choosing TCP again hides
+// them, and only wss suppresses the plaintext disclosure.
 func TestHostEditorVNCWebSocketShowsTheUpgradeControls(t *testing.T) {
 	m := locales.In("en")
-	// The VNC section sits at the bottom of the editor; a tall window keeps the
-	// rendered checkboxes inside it so the test can click them.
 	state, _, _, _, _, tt := newProductionEntityView(t, 900, 1200)
 	state.BeginCreate()
 	state.SetHostProtocol(string(domainvault.ProtocolVNC))
 	tt.Frame()
+	if !tt.HasText(m.VaultHostTransport()) || !tt.HasText(m.VaultHostVNCTransportTCP()) {
+		t.Fatalf("a VNC Host has no Transport choice, texts %q", tt.Texts())
+	}
 	if !tt.HasText(m.VaultHostPlaintextWarning("VNC")) {
 		t.Fatalf("raw RFB does not disclose plaintext, texts %q", tt.Texts())
 	}
 
-	if err := tt.Click(m.VaultHostVNCWebSocket()); err != nil {
-		t.Fatalf("click %q: %v", m.VaultHostVNCWebSocket(), err)
-	}
-	tt.Frame()
+	chooseVNCTransport(t, tt, m, m.VaultHostVNCWebSocket())
 	if !state.Form().VNCWebSocket {
-		t.Fatal("the rendered WebSocket checkbox did not reach the state")
+		t.Fatal("the rendered Transport choice did not reach the state")
 	}
 	for _, text := range []string{
 		m.VaultHostVNCWebSocket(), m.VaultHostVNCWebSocketPath(),
@@ -3017,10 +3034,10 @@ func TestHostEditorVNCWebSocketShowsTheUpgradeControls(t *testing.T) {
 		t.Fatalf("wss still discloses plaintext, texts %q", tt.Texts())
 	}
 
-	if err := tt.Click(m.VaultHostVNCWebSocket()); err != nil {
-		t.Fatalf("click %q again: %v", m.VaultHostVNCWebSocket(), err)
+	chooseVNCTransport(t, tt, m, m.VaultHostVNCTransportTCP())
+	if state.Form().VNCWebSocket {
+		t.Fatal("choosing TCP left the WebSocket transport on")
 	}
-	tt.Frame()
 	if tt.HasText(m.VaultHostVNCWebSocketPath()) || tt.HasText(m.VaultHostVNCWebSocketSecure()) {
 		t.Fatalf("the WebSocket controls are still shown, texts %q", tt.Texts())
 	}

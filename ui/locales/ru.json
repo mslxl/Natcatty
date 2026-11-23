@@ -794,6 +794,7 @@
   "vaultHostVNCCursorMode": "Курсор",
   "vaultHostVNCCursorLocal": "Локальный курсор",
   "vaultHostVNCCursorServer": "Курсор сервера",
+  "vaultHostVNCTransportTCP": "TCP (стандартный RFB)",
   "vaultHostVNCWebSocket": "WebSocket (noVNC)",
   "vaultHostVNCWebSocketHint": "Передаёт поток RFB внутри WebSocket, как страница noVNC/websockify. Укажите HTTP-порт (обычно 6080) и путь обновления (обычно /websockify).",
   "vaultHostVNCWebSocketPath": "Путь WebSocket",

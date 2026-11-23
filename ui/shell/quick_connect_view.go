@@ -120,8 +120,11 @@ func quickConnectFields(c *ui.Context, s *state.State, m locales.Messages, t *ui
 	ui.Text(c, m.QuickConnectDescription()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 
 	protocolField(c, s, m)
-	if form.Protocol == domainvault.ProtocolSSH {
+	switch form.Protocol {
+	case domainvault.ProtocolSSH:
 		transportField(c, s, m)
+	case domainvault.ProtocolVNC:
+		vncTransportField(c, s, m)
 	}
 	// Every field carries its label in a FormRow, the same as the New Host
 	// editor: a TextInput label alone is not drawn, which left the address,
@@ -131,11 +134,6 @@ func quickConnectFields(c *ui.Context, s *state.State, m locales.Messages, t *ui
 			Placeholder(m.QuickConnectAddressPlaceholder()).FillWidth().AutoFocus()
 	}).FillWidth()
 	if form.Protocol == domainvault.ProtocolVNC {
-		if ui.Checkbox(c.Key("quick-connect-vnc-websocket"), &form.VNCWebSocket,
-			m.VaultHostVNCWebSocket()).Changed() {
-			s.SetQuickConnectVNCWebSocket(form.VNCWebSocket)
-			c.Invalidate()
-		}
 		vncEndpointFields(c, s, m)
 	} else {
 		kit.FormRow(c, m.QuickConnectPort(), func() {
@@ -155,14 +153,6 @@ func quickConnectFields(c *ui.Context, s *state.State, m locales.Messages, t *ui
 				m.VaultHostNetworkDevice())
 		}
 	case domainvault.ProtocolVNC:
-		if form.VNCWebSocket {
-			kit.FormRow(c, m.VaultHostVNCWebSocketPath(), func() {
-				ui.TextInput(c.Key("quick-connect-vnc-websocket-path"), &form.VNCWebSocketPath).
-					Placeholder(domainvault.VNCDefaultWebSocketPath).FillWidth()
-			}).FillWidth()
-			ui.Checkbox(c.Key("quick-connect-vnc-websocket-secure"), &form.VNCWebSocketSecure,
-				m.VaultHostVNCWebSocketSecure())
-		}
 		kit.FormRow(c, m.QuickConnectUsername(), func() {
 			ui.TextInput(c.Key("quick-connect-username"), &form.Username).FillWidth()
 		}).FillWidth()
@@ -229,6 +219,27 @@ func transportField(c *ui.Context, s *state.State, m locales.Messages) {
 	}
 }
 
+// vncTransportField chooses a VNC form's transport. A raw RFB endpoint is a
+// display or port; a noVNC/websockify endpoint is an HTTP service, so the
+// choice decides what the Port field means and which details follow.
+func vncTransportField(c *ui.Context, s *state.State, m locales.Messages) {
+	labels := []string{
+		m.VaultHostVNCTransportTCP(),
+		m.VaultHostVNCWebSocket(),
+	}
+	current := labels[0]
+	if s.QuickConnectForm().VNCWebSocket {
+		current = labels[1]
+	}
+	kit.FormRow(c, m.VaultHostTransport(), func() {
+		ui.Select(c.Key("quick-connect-vnc-transport"), &current, labels).FillWidth()
+	}).FillWidth()
+	if websocket := current == labels[1]; websocket != s.QuickConnectForm().VNCWebSocket {
+		s.SetQuickConnectVNCWebSocket(websocket)
+		c.Invalidate()
+	}
+}
+
 // vncEndpointFields renders the VNC endpoint as a display number or a raw TCP
 // port. Both modes describe the same stored port.
 func vncEndpointFields(c *ui.Context, s *state.State, m locales.Messages) {
@@ -240,6 +251,12 @@ func vncEndpointFields(c *ui.Context, s *state.State, m locales.Messages) {
 			ui.TextInput(c.Key("quick-connect-vnc-port"), &form.Port).
 				Placeholder(strconv.Itoa(domainvault.VNCDefaultWebSocketPort)).FillWidth()
 		}).FillWidth()
+		kit.FormRow(c, m.VaultHostVNCWebSocketPath(), func() {
+			ui.TextInput(c.Key("quick-connect-vnc-websocket-path"), &form.VNCWebSocketPath).
+				Placeholder(domainvault.VNCDefaultWebSocketPath).FillWidth()
+		}).FillWidth()
+		ui.Checkbox(c.Key("quick-connect-vnc-websocket-secure"), &form.VNCWebSocketSecure,
+			m.VaultHostVNCWebSocketSecure())
 		return
 	}
 	inputLabels := []string{m.VaultHostVNCInputDisplay(), m.VaultHostVNCInputPort()}

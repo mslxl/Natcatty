@@ -794,6 +794,7 @@
   "vaultHostVNCCursorMode": "游標",
   "vaultHostVNCCursorLocal": "本機游標",
   "vaultHostVNCCursorServer": "伺服器繪製游標",
+  "vaultHostVNCTransportTCP": "TCP（標準 RFB）",
   "vaultHostVNCWebSocket": "WebSocket（noVNC）",
   "vaultHostVNCWebSocketHint": "把 RFB 資料流放進 WebSocket，與 noVNC/websockify 頁面一致。連接埠填 HTTP 連接埠（通常 6080），路徑通常是 /websockify。",
   "vaultHostVNCWebSocketPath": "WebSocket 路徑",

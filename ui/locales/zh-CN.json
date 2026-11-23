@@ -794,6 +794,7 @@
   "vaultHostVNCCursorMode": "光标",
   "vaultHostVNCCursorLocal": "本地光标",
   "vaultHostVNCCursorServer": "服务器绘制光标",
+  "vaultHostVNCTransportTCP": "TCP（标准 RFB）",
   "vaultHostVNCWebSocket": "WebSocket（noVNC）",
   "vaultHostVNCWebSocketHint": "把 RFB 数据流放进 WebSocket，与 noVNC/websockify 页面一致。端口填 HTTP 端口（通常 6080），路径通常是 /websockify。",
   "vaultHostVNCWebSocketPath": "WebSocket 路径",
