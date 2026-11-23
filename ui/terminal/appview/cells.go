@@ -137,27 +137,20 @@ func spanFont(sp ui.Span, size float32) ui.Font {
 // CellSize is the measured cell, for tests and diagnostics.
 func CellSize() (w, h float32) { return cellWidth, cellHeight }
 
-// availableWidth and availableHeight are the room the live screen gets, measured from
-// the flow's own layout (a scroller knows its viewport in the same frame it is built).
-var availableWidth, availableHeight float32
+// Viewport is the room one Pane's live screen gets, measured from that Pane's
+// own flow layout: the scroll's content box, with the flow's padding removed.
+// It belongs to the Pane, never to the package: a sibling Pane's viewport must
+// not decide this Pane's grid.
+type Viewport struct{ W, H float32 }
 
-// noteAvailable records the viewport the flow was laid out in.
-func noteAvailable(w, h float32) {
-	if w > 0 && h > 0 {
-		availableWidth, availableHeight = w, h
-	}
-}
-
-// Available is the viewport the live screen was last laid out in.
-func Available() (w, h float32) { return availableWidth, availableHeight }
-
-// GridFor is the cell grid the window has room for: the measured monospace cell
-// divides the room the live screen gets. A terminal sizes itself to its pane, because
-// a fixed grid wraps a line where the reader sees no edge (the prompt that broke after
-// a letter) or clips the right side in a narrow window.
-func GridFor() (Size, bool) {
+// GridFor is the cell grid a Pane's own viewport has room for: the measured
+// monospace cell divides the room the live screen gets. A terminal sizes itself
+// to its pane, because a fixed grid wraps a line where the reader sees no edge
+// (the prompt that broke after a letter) or clips the right side in a narrow
+// window.
+func GridFor(viewport Viewport) (Size, bool) {
 	w, h := CellSize()
-	availW, availH := Available()
+	availW, availH := viewport.W, viewport.H
 	if w <= 0 || h <= 0 || availW <= 0 || availH <= 0 {
 		return Size{}, false
 	}

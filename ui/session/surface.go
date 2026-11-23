@@ -353,6 +353,18 @@ type Surface struct {
 	// terminalOwnView tells that the last frame was drawn by the terminal's own
 	// view: that view sizes the terminal, so the pane's grid must not.
 	terminalOwnView bool
+	// viewport is this Pane's own room for the live screen, reported by
+	// appview.Pane from its flow's layout. It is per Surface (one Pane), so a
+	// sibling Pane can never overwrite it.
+	viewport appview.Viewport
+	// grid is the grid for viewport. gridViewport and the cell size record
+	// what it was computed from, so a steady frame does no grid math and a
+	// font or DPI change still recomputes it.
+	grid         appview.Size
+	gridViewport appview.Viewport
+	gridCellW    float32
+	gridCellH    float32
+	gridKnown    bool
 	// terminalSawAlt tells that an alternate screen was drawn since a program
 	// placed its pictures; the frame that leaves that screen clears them.
 	terminalSawAlt bool
@@ -1026,6 +1038,37 @@ func (s *Surface) textInputClient() ui.TextInputClient {
 	return s.inputClient
 }
 
+// noteViewport records the room this Pane's live screen was laid out in. The
+// Pane reports it from its own flow's scroll, so the grid follows this Pane's
+// box and never a sibling's.
+func (s *Surface) noteViewport(w, h float32) {
+	if w > 0 && h > 0 {
+		s.viewport = appview.Viewport{W: w, H: h}
+	}
+}
+
+// gridForViewport is the cell grid this Pane's terminal fits. The grid is
+// recomputed only when the Pane's own viewport or the measured cell changed,
+// so a steady frame does no grid math; a font or DPI change still reaches the
+// terminal. terminal.Resize is told the same size and does nothing.
+func (s *Surface) gridForViewport() (appview.Size, bool) {
+	v := s.viewport
+	if v.W <= 0 || v.H <= 0 {
+		return appview.Size{}, false
+	}
+	cellW, cellH := appview.CellSize()
+	if s.gridKnown && v == s.gridViewport && cellW == s.gridCellW && cellH == s.gridCellH {
+		return s.grid, true
+	}
+	grid, ok := appview.GridFor(v)
+	if !ok {
+		return appview.Size{}, false
+	}
+	s.grid, s.gridViewport = grid, v
+	s.gridCellW, s.gridCellH, s.gridKnown = cellW, cellH, true
+	return grid, true
+}
+
 // terminalView shows the live terminal and returns its element, which anchors
 // the floating autocomplete layers. It is the Session's one live view.
 func (s *Surface) terminalView(c *ui.Context) ui.Element {
@@ -1037,8 +1080,10 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 			// pane's coarser grid, makes the two disagree by a cell and resize
 			// the program twice every frame: it then repaints forever and its
 			// image placeholders are erased before a frame can show them.
-			if grid, ok := appview.GridFor(); ok {
-				s.terminal.Resize(grid.Cols, grid.Rows)
+			if grid, ok := s.gridForViewport(); ok {
+				if cols, rows := s.terminal.Size(); cols != grid.Cols || rows != grid.Rows {
+					s.terminal.Resize(grid.Cols, grid.Rows)
+				}
 			}
 		}
 		cols, rows := s.terminal.Size()
@@ -1146,9 +1191,13 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 				// captured at the command's OSC 133;C mark: the shell's own
 				// prompt, not one this app could only approximate.
 				PromptRows: s.flow.promptRowsFor,
-				Focus:      focus,
-				Refocus:    flowRefocus,
-				KeepFocus:  s.focused,
+				// The Pane reports the box it laid its live screen out in.
+				// It is this Surface's own Pane, so the grid computed from it
+				// cannot read a sibling's viewport.
+				Viewport:  s.noteViewport,
+				Focus:     focus,
+				Refocus:   flowRefocus,
+				KeepFocus: s.focused,
 				// A press on a finished command's row or Lens body must not
 				// leave the keyboard there. The block still selects text and
 				// its Native/Raw switch still works; the Session asks for the
