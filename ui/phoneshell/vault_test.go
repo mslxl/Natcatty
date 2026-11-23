@@ -70,6 +70,13 @@ func (f *fakeVault) DeleteKnownHost(_ context.Context, id string) error {
 	return nil
 }
 
+// The VaultStore seam carries the Host Group half so the Vault's Hosts family
+// shares it. These pages do not exercise the group operations; the Hosts tests
+// drive them through fakeHostStore.
+func (f *fakeVault) ListGroups(context.Context) ([]domainvault.Group, error) { return nil, nil }
+
+func (f *fakeVault) AssignHostsGroup(context.Context, []model.HostID, string) error { return nil }
+
 func openSectionPage(t *testing.T, shell *Shell, sec Section, title string) *ui.Tester {
 	t.Helper()
 	tt := ui.NewTester(shell.View(sec), 390, 844)
@@ -119,7 +126,7 @@ func TestVaultListsIdentifiableEntries(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	tt := openSectionPage(t, shell, Vault, "SSH keys")
+	tt := openSectionPage(t, shell, Vault, "Keychain")
 	blob := "AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyMaterialForTests"
 	wantShort := blob[:24] + "…"
 	for _, want := range []string{"laptop", "ED25519", wantShort, "passphrase protected"} {
@@ -167,7 +174,7 @@ func TestVaultDeleteRequiresConfirmation(t *testing.T) {
 	if err := shell.Load(context.Background()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	tt := openSectionPage(t, shell, Vault, "SSH keys")
+	tt := openSectionPage(t, shell, Vault, "Keychain")
 
 	if err := tt.Click("Delete key laptop"); err != nil {
 		t.Fatalf("click delete: %v", err)
@@ -240,7 +247,7 @@ func TestVaultStatesAreRendered(t *testing.T) {
 		// A fresh shell has not loaded yet, which is the state a slow read
 		// shows.
 		shell := New(WithVault(&fakeVault{}))
-		tt := openSectionPage(t, shell, Vault, "SSH keys")
+		tt := openSectionPage(t, shell, Vault, "Keychain")
 		if !tt.HasText("Loading the Vault") {
 			t.Fatalf("loading state is not rendered; texts: %v", texts(t, tt))
 		}
@@ -251,7 +258,7 @@ func TestVaultStatesAreRendered(t *testing.T) {
 		if err := shell.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		tt := openSectionPage(t, shell, Vault, "SSH keys")
+		tt := openSectionPage(t, shell, Vault, "Keychain")
 		if !tt.HasText("No SSH keys yet") {
 			t.Fatalf("empty key state is not rendered; texts: %v", texts(t, tt))
 		}
@@ -274,7 +281,7 @@ func TestVaultStatesAreRendered(t *testing.T) {
 		if err := shell.Load(context.Background()); err == nil {
 			t.Fatal("Load returned nil for a failing store")
 		}
-		tt := openSectionPage(t, shell, Vault, "SSH keys")
+		tt := openSectionPage(t, shell, Vault, "Keychain")
 		if !tt.HasText("Could not load SSH keys.") {
 			t.Fatalf("error state is not rendered; texts: %v", texts(t, tt))
 		}
@@ -293,7 +300,7 @@ func TestVaultStatesAreRendered(t *testing.T) {
 		if err := shell.Load(context.Background()); err != nil {
 			t.Fatalf("Load without a store = %v, want nil", err)
 		}
-		tt := openSectionPage(t, shell, Vault, "SSH keys")
+		tt := openSectionPage(t, shell, Vault, "Keychain")
 		if !tt.HasText("The Vault is not available on this device.") {
 			t.Fatalf("unavailable state is not rendered; texts: %v", texts(t, tt))
 		}
@@ -309,7 +316,7 @@ func TestVaultRefreshSeesStoreChanges(t *testing.T) {
 	if err := shell.Load(context.Background()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	tt := openSectionPage(t, shell, Vault, "SSH keys")
+	tt := openSectionPage(t, shell, Vault, "Keychain")
 	if err := tt.Click("Refresh"); err != nil {
 		t.Fatalf("click Refresh: %v", err)
 	}

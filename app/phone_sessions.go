@@ -46,6 +46,15 @@ type phoneSessionRuntime struct {
 // Ensure the runtime is the shell's opener seam.
 var _ phoneshell.SessionOpener = (*phoneSessionRuntime)(nil)
 
+// The phone Vault service is the one store behind both Vault seams: the
+// Keychain and Known Hosts pages read it, and the Vault's Hosts family lists
+// its Host Groups and moves Hosts through the same batch operation the desktop
+// uses.
+var (
+	_ phoneshell.VaultStore = (*appvault.Service)(nil)
+	_ phoneshell.HostStore  = (*appvault.Service)(nil)
+)
+
 // The shared SQLite Workspace row is the phone's session persistence seam:
 // the same payload format, read back through FlattenRestored.
 var _ phoneshell.SessionStore = (*store.WorkspaceRepository)(nil)

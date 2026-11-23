@@ -479,6 +479,16 @@ func (l phoneShellHostList) List(context.Context) ([]domainvault.Host, error) {
 	return append([]domainvault.Host(nil), l.hosts...), nil
 }
 
+// The Hosts tab never lists or moves Host Groups; the Vault's Hosts family
+// does, and its own tests drive those operations.
+func (l phoneShellHostList) ListGroups(context.Context) ([]domainvault.Group, error) {
+	return nil, nil
+}
+
+func (l phoneShellHostList) AssignHostsGroup(context.Context, []model.HostID, string) error {
+	return nil
+}
+
 // phoneRecordingOpener keeps the handles the shell opened, so a test can ask the
 // real Session service what the UI did.
 type phoneRecordingOpener struct {

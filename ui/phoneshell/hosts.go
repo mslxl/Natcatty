@@ -8,6 +8,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
@@ -16,12 +17,15 @@ import (
 // HostStore is the Vault read surface the Hosts section needs. The application
 // Vault service implements it over the same SQLite store the desktop reads, so
 // a Host added, edited, or removed on the desktop appears here after a reload.
+// The Host Group half is the same operation the desktop uses to move Hosts in
+// one all-or-nothing transaction.
 //
 // The phone lists only remote Hosts. A Local Host would run a shell on the
 // phone itself, which the phone has no transport for, and a serial device is
 // not a Host record: both stay in the Vault for the desktop and never appear
 // on a phone surface.
 type HostStore interface {
+	HostGroupStore
 	List(ctx context.Context) ([]domainvault.Host, error)
 }
 
@@ -35,7 +39,9 @@ const (
 )
 
 // hostPages owns the Hosts section: the remote-only list, its detail page, and
-// the connect action.
+// the connect action. The Vault's Hosts family draws the same list with the
+// group drop targets and the multi-select Move action; the Hosts tab keeps its
+// plain list, where a tap still connects.
 type hostPages struct {
 	store HostStore
 	// create writes a Host the create form asked for. A Shell without it still
@@ -59,9 +65,41 @@ type hostPages struct {
 	status  hostsStatus
 	problem string
 	hosts   []domainvault.Host
+
+	// groups are the Host Group drop targets the Vault's Hosts page shows.
+	// The Hosts tab ignores them, so a group read failure cannot hide a Host.
+	groups       []domainvault.Group
+	groupStatus  hostsStatus
+	groupProblem string
+
+	// selecting is the Vault Hosts page's multi-select mode. The Hosts tab
+	// never activates it, so a plain tap there always connects.
+	selecting bool
+	selected  map[model.HostID]struct{}
+	// moveOpen shows the Host Group picker.
+	moveOpen bool
+	// pendingMove is the failed move a Retry re-runs, with the selection kept.
+	pendingMove *moveRequest
+	moveProblem string
 }
 
-func newHostPages() *hostPages { return &hostPages{status: hostsLoading} }
+// moveRequest is a batch move that failed and can be retried unchanged.
+type moveRequest struct {
+	IDs        []model.HostID
+	GroupID    string
+	GroupLabel string
+}
+
+// hostDrag is the value a Host row drags onto a Host Group row. It carries
+// the selected Hosts (or just the dragged one) so both move gestures call the
+// same batch operation.
+type hostDrag struct {
+	IDs []model.HostID
+}
+
+func newHostPages() *hostPages {
+	return &hostPages{status: hostsLoading, groupStatus: hostsLoading}
+}
 
 // load replaces the list from the shared store. Local Hosts are dropped here,
 // at the phone's composition seam, rather than in the domain: the desktop
@@ -69,10 +107,20 @@ func newHostPages() *hostPages { return &hostPages{status: hostsLoading} }
 // they never enter the phone's list.
 func (h *hostPages) load(ctx context.Context) error {
 	if h.store == nil {
-		h.status = hostsFailed
-		h.problem = "The Vault is not available on this device."
+		const unavailable = "The Vault is not available on this device."
+		h.status, h.problem = hostsFailed, unavailable
+		h.groupStatus, h.groupProblem = hostsFailed, unavailable
 		return nil
 	}
+	hostErr := h.loadHosts(ctx)
+	// A group failure is the Vault Hosts page's own recoverable state; the
+	// Host list, the Hosts tab, and every other Vault section stay usable.
+	_ = h.loadGroups(ctx)
+	h.pruneSelection()
+	return hostErr
+}
+
+func (h *hostPages) loadHosts(ctx context.Context) error {
 	h.status = hostsLoading
 	all, err := h.store.List(ctx)
 	if err != nil {
@@ -95,6 +143,26 @@ func (h *hostPages) load(ctx context.Context) error {
 	h.hosts = remote
 	h.status = hostsReady
 	h.problem = ""
+	return nil
+}
+
+// loadGroups reads the Host Groups the Vault's Hosts page offers as drop
+// targets. The list is sorted by path so the same tree reads the same way on
+// both devices; the service already materializes the paths.
+func (h *hostPages) loadGroups(ctx context.Context) error {
+	h.groupStatus = hostsLoading
+	groups, err := h.store.ListGroups(ctx)
+	if err != nil {
+		h.groupStatus = hostsFailed
+		h.groupProblem = "Could not load Host Groups."
+		return err
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		return strings.ToLower(groups[i].Path) < strings.ToLower(groups[j].Path)
+	})
+	h.groups = groups
+	h.groupStatus = hostsReady
+	h.groupProblem = ""
 	return nil
 }
 
@@ -183,6 +251,325 @@ func (h *hostPages) drawRoot(c *ui.Context) {
 	})
 }
 
+// drawVaultRoot renders the Vault's Hosts family: the Host Groups as drop
+// targets, the remote Hosts, and the multi-select Move action. A tap outside
+// selection mode still connects, so this page adds organizing actions without
+// taking the Hosts tab's primary gesture away.
+func (h *hostPages) drawVaultRoot(c *ui.Context, details func(domainvault.Host)) {
+	width := pageContentWidth(c)
+	ui.Scroll(c).Fill().Children(func() {
+		ui.Column(c).Width(width).Padding(16).Gap(12).Children(func() {
+			switch h.status {
+			case hostsLoading:
+				kit.EmptyHint(c, "Loading Hosts…")
+				return
+			case hostsFailed:
+				kit.Notice(c, icons.TriangleAlert, c.Theme().Danger, h.problem, func() {
+					if kit.GhostButton(c, icons.RefreshCw, "Retry").Clicked() {
+						_ = h.load(context.Background())
+					}
+				})
+				return
+			}
+			h.drawVaultActions(c)
+			if h.problem != "" {
+				kit.Notice(c, icons.TriangleAlert, c.Theme().Danger, h.problem, nil)
+			}
+			if h.moveProblem != "" && h.pendingMove != nil {
+				h.drawMoveProblem(c)
+			}
+			h.drawGroups(c)
+			if h.moveOpen {
+				h.drawMovePicker(c)
+			}
+			if len(h.hosts) == 0 {
+				kit.EmptyHint(c, "No remote Hosts yet. Hosts you add on the desktop appear here.")
+				return
+			}
+			for _, host := range h.hosts {
+				host := host
+				h.drawVaultHostRow(c, host, details)
+			}
+		})
+	})
+}
+
+// drawVaultActions is the page heading: Refresh and Select, or Done while a
+// selection is active, with the Move action beside the selection count.
+func (h *hostPages) drawVaultActions(c *ui.Context) {
+	kit.SectionBar(c, "Remote Hosts", func() {
+		if h.selecting {
+			if kit.GhostButton(c, icons.X, "Done").Clicked() {
+				h.clearSelection()
+			}
+			return
+		}
+		if kit.GhostButton(c, icons.RefreshCw, "Refresh").Clicked() {
+			_ = h.load(context.Background())
+		}
+		if len(h.hosts) > 0 {
+			if kit.GhostButton(c, icons.Check, "Select").Clicked() {
+				h.selecting = true
+			}
+		}
+	})
+	if !h.selecting {
+		return
+	}
+	count := len(h.selectedIDs())
+	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+		if count > 0 {
+			if kit.PrimaryButton(c, icons.FolderTree, "Move").Clicked() {
+				h.moveOpen = true
+			}
+		}
+		ui.Text(c, fmt.Sprintf("%d selected", count)).FontSize(12).TextColor(c.Theme().TextMuted)
+	})
+}
+
+// drawVaultHostRow is one Host row on the Vault page. In selection mode the
+// row toggles instead of connecting and shows a checkbox; outside it, the
+// whole row connects as on the Hosts tab. A row drags the selection when it is
+// part of one, and only itself otherwise.
+func (h *hostPages) drawVaultHostRow(c *ui.Context, host domainvault.Host, details func(domainvault.Host)) {
+	label := "Open " + hostName(host)
+	if h.selecting {
+		label = "Select " + hostName(host)
+	}
+	row := kit.ListRow(c).Label(label)
+	row.Drag(hostDrag{IDs: h.dragIDs(host)})
+	handled := false
+	row.Children(func() {
+		if h.selecting {
+			checked := h.isSelected(host.ID)
+			if ui.Checkbox(c, &checked, "").Changed() {
+				h.toggleHost(host.ID)
+				handled = true
+				c.Invalidate()
+			}
+		}
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+			ui.Text(c, hostName(host)).FontWeight(600).SingleLine()
+			ui.Text(c, hostDetail(host)).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
+		})
+		if !h.selecting {
+			if kit.IconButton(c, icons.Info, "Details for "+hostName(host)).Clicked() {
+				if details != nil {
+					details(host)
+				}
+				handled = true
+				return
+			}
+			ui.Text(c, "›").FontSize(20).TextColor(c.Theme().TextMuted)
+		}
+	})
+	if handled || !row.Clicked() {
+		return
+	}
+	if h.selecting {
+		h.toggleHost(host.ID)
+		return
+	}
+	if h.open != nil {
+		h.open(host)
+	}
+}
+
+// drawGroups renders the Host Groups as drop targets. The row accepts the
+// value a Host row drags and performs the same batch move the Move picker
+// does, so the two gestures cannot disagree about what a move means.
+func (h *hostPages) drawGroups(c *ui.Context) {
+	switch h.groupStatus {
+	case hostsLoading:
+		kit.EmptyHint(c, "Loading Host Groups…")
+		return
+	case hostsFailed:
+		kit.Notice(c, icons.TriangleAlert, c.Theme().Danger, h.groupProblem, func() {
+			if kit.GhostButton(c, icons.RefreshCw, "Retry").Clicked() {
+				_ = h.loadGroups(context.Background())
+			}
+		})
+		return
+	}
+	if len(h.groups) == 0 {
+		return
+	}
+	kit.SectionBar(c, "Host Groups", nil)
+	for _, group := range h.groups {
+		group := group
+		row := kit.ListRow(c).Label("Group " + group.Path)
+		if _, ok := ui.DragOver[hostDrag](row); ok {
+			row.Background(c.Theme().Accent.Alpha(0.12))
+		}
+		row.Children(func() {
+			ui.Icon(c, icons.Lucide(icons.Folder)).TextColor(c.Theme().TextMuted)
+			ui.Text(c, group.Path).Grow(1).MinWidth(0).SingleLine()
+		})
+		if drag, ok := ui.Drop[hostDrag](row); ok {
+			h.applyMove(drag.IDs, group.ID, group.Path)
+		}
+	}
+}
+
+// drawMoveProblem shows the failed batch move with a Retry that re-runs the
+// same target. The selection stays in place, so Retry needs no re-picking.
+func (h *hostPages) drawMoveProblem(c *ui.Context) {
+	kit.Notice(c, icons.TriangleAlert, c.Theme().Danger, h.moveProblem, func() {
+		if kit.GhostButton(c, icons.RefreshCw, "Retry").Clicked() {
+			request := *h.pendingMove
+			h.applyMove(request.IDs, request.GroupID, request.GroupLabel)
+		}
+	})
+}
+
+// drawMovePicker lists the destination groups plus the Vault root. Choosing
+// one runs the same batch operation a drop runs.
+func (h *hostPages) drawMovePicker(c *ui.Context) {
+	t := c.Theme()
+	ui.Column(c).FillWidth().Padding(12).Gap(8).Background(t.Surface).
+		Radius(12).Border(1, t.Border).Children(func() {
+		ui.Text(c, "Move to").FontWeight(600)
+		targets := append([]moveTarget{{Label: "Vault root"}}, h.groupMoveTargets()...)
+		for _, target := range targets {
+			target := target
+			row := ui.Row(c).FillWidth().Padding(8, 10).Gap(8).AlignItems(ui.Center).
+				Background(kit.Muted(t)).Radius(8).Label("Move to " + target.Label)
+			row.Children(func() {
+				ui.Icon(c, icons.Lucide(icons.FolderTree)).TextColor(t.TextMuted)
+				ui.Text(c, target.Label).Grow(1).MinWidth(0).SingleLine()
+			})
+			if row.Clicked() {
+				h.applyMove(h.selectedIDs(), target.ID, target.Label)
+			}
+		}
+		if kit.GhostButton(c, icons.X, "Cancel Move").Clicked() {
+			h.moveOpen = false
+		}
+	})
+}
+
+// moveTarget is one destination in the Move picker. The empty ID is the Vault
+// root, which clears a Host's group membership.
+type moveTarget struct {
+	ID    string
+	Label string
+}
+
+func (h *hostPages) groupMoveTargets() []moveTarget {
+	targets := make([]moveTarget, 0, len(h.groups))
+	for _, group := range h.groups {
+		targets = append(targets, moveTarget{ID: group.ID, Label: group.Path})
+	}
+	return targets
+}
+
+// applyMove is the one batch move behind both gestures. It keeps the
+// selection when the shared operation fails, so the user can retry the same
+// target instead of reconstructing the selection.
+func (h *hostPages) applyMove(ids []model.HostID, groupID, groupLabel string) {
+	if len(ids) == 0 {
+		return
+	}
+	if h.store == nil {
+		h.failMove(ids, groupID, groupLabel)
+		return
+	}
+	if err := h.store.AssignHostsGroup(context.Background(), ids, groupID); err != nil {
+		h.failMove(ids, groupID, groupLabel)
+		return
+	}
+	h.pendingMove = nil
+	h.moveProblem = ""
+	h.moveOpen = false
+	h.selecting = false
+	h.selected = nil
+	// Re-read the same store: the move's result is the desktop's, not a local
+	// guess. A list failure keeps the page's own retry state.
+	_ = h.load(context.Background())
+}
+
+func (h *hostPages) failMove(ids []model.HostID, groupID, groupLabel string) {
+	h.pendingMove = &moveRequest{
+		IDs:        append([]model.HostID(nil), ids...),
+		GroupID:    groupID,
+		GroupLabel: groupLabel,
+	}
+	h.moveProblem = "Could not move the Hosts to " + groupLabel + "."
+	h.selecting = true
+	h.moveOpen = false
+	h.selected = make(map[model.HostID]struct{}, len(ids))
+	for _, id := range ids {
+		h.selected[id] = struct{}{}
+	}
+}
+
+func (h *hostPages) isSelected(id model.HostID) bool {
+	if h.selected == nil {
+		return false
+	}
+	_, ok := h.selected[id]
+	return ok
+}
+
+func (h *hostPages) toggleHost(id model.HostID) {
+	if h.selected == nil {
+		h.selected = make(map[model.HostID]struct{})
+	}
+	if _, ok := h.selected[id]; ok {
+		delete(h.selected, id)
+		return
+	}
+	h.selected[id] = struct{}{}
+}
+
+// selectedIDs returns the selection in list order so both the picker and a
+// drag hand the service a stable, deterministic batch.
+func (h *hostPages) selectedIDs() []model.HostID {
+	ids := make([]model.HostID, 0, len(h.selected))
+	for _, host := range h.hosts {
+		if h.isSelected(host.ID) {
+			ids = append(ids, host.ID)
+		}
+	}
+	return ids
+}
+
+// dragIDs is what one Host row drags: the whole selection when the row is part
+// of it, otherwise the row alone.
+func (h *hostPages) dragIDs(host domainvault.Host) []model.HostID {
+	if h.selecting && h.isSelected(host.ID) {
+		if ids := h.selectedIDs(); len(ids) > 0 {
+			return ids
+		}
+	}
+	return []model.HostID{host.ID}
+}
+
+// pruneSelection forgets Hosts that left the list, so a selection cannot name
+// a Host the page no longer shows.
+func (h *hostPages) pruneSelection() {
+	if len(h.selected) == 0 {
+		return
+	}
+	present := make(map[model.HostID]struct{}, len(h.hosts))
+	for _, host := range h.hosts {
+		present[host.ID] = struct{}{}
+	}
+	for id := range h.selected {
+		if _, ok := present[id]; !ok {
+			delete(h.selected, id)
+		}
+	}
+}
+
+func (h *hostPages) clearSelection() {
+	h.selecting = false
+	h.selected = nil
+	h.moveOpen = false
+	h.moveProblem = ""
+	h.pendingMove = nil
+}
+
 // pushDetails moves the Hosts section to one Host's detail page. The Shell owns
 // the router, so this is a callback rather than a direct router call.
 func (h *hostPages) pushDetails(host domainvault.Host) {
@@ -202,7 +589,7 @@ func (h *hostPages) drawDetail(c *ui.Context, id string) {
 				return
 			}
 			kit.SectionBar(c, hostName(host), nil)
-			detailColumn(c, host)
+			h.detailColumn(c, host)
 			// The whole row is the tap target, as every other phone action is;
 			// a bare button's text node gives the tester no box to click.
 			action := kit.ListRow(c).Label("Connect to " + hostName(host))
@@ -220,16 +607,26 @@ func (h *hostPages) drawDetail(c *ui.Context, id string) {
 	})
 }
 
-// detailColumn shows the fields that let a user tell two Hosts apart, without
-// any secret: the endpoint, protocol, group, tags, and notes.
-func detailColumn(c *ui.Context, host domainvault.Host) {
+// detailColumn shows the effective connection path and the non-secret fields
+// that let a user tell two Hosts apart. The endpoint is the resolved one a
+// Session would dial, and the jump chain says whether the Host owns it or
+// inherits it from a Host Group, so the page explains the actual route.
+func (h *hostPages) detailColumn(c *ui.Context, host domainvault.Host) {
+	effective := h.effectiveHost(host)
+	chain, chainSource := h.effectiveChain(host)
 	ui.Column(c).FillWidth().PaddingY(12).Gap(6).Background(c.Theme().Surface).Radius(12).
 		Children(func() {
-			detailLine(c, "Endpoint", hostEndpoint(host))
-			detailLine(c, "Protocol", string(protocolOf(host)))
-			if host.Group != "" {
-				detailLine(c, "Group", host.Group)
+			detailLine(c, "Endpoint", hostEndpoint(effective))
+			detailLine(c, "Protocol", string(protocolOf(effective)))
+			if effective.Group != "" {
+				detailLine(c, "Group", effective.Group)
 			}
+			chainText := "Direct"
+			if len(chain) > 0 {
+				chainText = strings.Join(h.hopLabels(chain), " → ")
+			}
+			detailLine(c, "Jump chain", chainText)
+			detailLine(c, "Source", chainSource)
 			if len(host.Tags) > 0 {
 				detailLine(c, "Tags", strings.Join(host.Tags, ", "))
 			}
@@ -237,6 +634,81 @@ func detailColumn(c *ui.Context, host domainvault.Host) {
 				detailLine(c, "Notes", host.Notes)
 			}
 		})
+}
+
+// effectiveHost applies the same group defaults and protocol port fallback the
+// Session's route resolver uses. The stored record is not changed.
+func (h *hostPages) effectiveHost(host domainvault.Host) domainvault.Host {
+	effective := domainvault.MaterializeHostGroup(host, h.groups)
+	effective = domainvault.ApplyGroupDefaults(effective, h.groupDefaults(host))
+	effective.Port = domainvault.EffectivePort(effective.Protocol, effective.Port)
+	return effective
+}
+
+// effectiveChain reports the jump chain the route would use and where it came
+// from. A Host's own non-nil chain wins whole, including an explicit empty
+// chain that means direct; otherwise the nearest group default applies.
+func (h *hostPages) effectiveChain(host domainvault.Host) ([]model.HostID, string) {
+	if host.HostChain != nil {
+		return host.HostChain.IDs(), "This Host"
+	}
+	if protocolOf(host) == domainvault.ProtocolLocal {
+		return nil, "Direct connection"
+	}
+	defaults := h.groupDefaults(host)
+	if defaults.HostChain == nil {
+		return nil, "Direct connection"
+	}
+	owner := h.chainOwner(host)
+	if owner == "" {
+		return defaults.HostChain.IDs(), "Inherited from a Host Group"
+	}
+	return defaults.HostChain.IDs(), "Inherited from " + owner
+}
+
+// groupDefaults resolves the merged group defaults for a Host, by stable ID
+// when it has one and by legacy path otherwise.
+func (h *hostPages) groupDefaults(host domainvault.Host) domainvault.GroupDefaults {
+	if host.GroupID != "" {
+		return domainvault.ResolveGroupDefaultsByID(h.groups, host.GroupID)
+	}
+	if host.Group != "" {
+		return domainvault.ResolveGroupDefaults(h.groups, host.Group)
+	}
+	return domainvault.GroupDefaults{}
+}
+
+// chainOwner is the nearest Host Group whose own record sets a jump chain.
+func (h *hostPages) chainOwner(host domainvault.Host) string {
+	var chain []domainvault.Group
+	switch {
+	case host.GroupID != "":
+		chain = domainvault.GroupChainByID(h.groups, host.GroupID)
+	case host.Group != "":
+		if group, ok := domainvault.GroupByPath(h.groups, host.Group); ok {
+			chain = domainvault.GroupChainByID(h.groups, group.ID)
+		}
+	}
+	for i := len(chain) - 1; i >= 0; i-- {
+		if chain[i].HostChain != nil {
+			return chain[i].Path
+		}
+	}
+	return ""
+}
+
+// hopLabels names the jump Hosts a user recognizes, falling back to the ID for
+// a dangling reference a non-cascading delete left behind.
+func (h *hostPages) hopLabels(ids []model.HostID) []string {
+	labels := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if host, ok := h.host(string(id)); ok {
+			labels = append(labels, hostName(host))
+			continue
+		}
+		labels = append(labels, string(id))
+	}
+	return labels
 }
 
 func detailLine(c *ui.Context, label, value string) {

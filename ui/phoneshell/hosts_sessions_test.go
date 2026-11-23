@@ -13,14 +13,29 @@ import (
 	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
+	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/terminal"
 )
 
-// fakeHostStore is the Vault's Host list, with an optional read failure.
+// fakeHostStore is the Vault's Host list and Host Groups, with optional read
+// and move failures.
 type fakeHostStore struct {
-	hosts []domainvault.Host
-	err   error
+	hosts     []domainvault.Host
+	groups    []domainvault.Group
+	err       error
+	groupsErr error
+	assignErr error
+	// assignments records every batch the page asked the shared service to run,
+	// failed attempts included, so a test can assert the retry re-ran the same
+	// request.
+	assignments []groupAssignment
+}
+
+// groupAssignment is one AssignHostsGroup call.
+type groupAssignment struct {
+	IDs     []model.HostID
+	GroupID string
 }
 
 func (s *fakeHostStore) List(context.Context) ([]domainvault.Host, error) {
@@ -28,6 +43,30 @@ func (s *fakeHostStore) List(context.Context) ([]domainvault.Host, error) {
 		return nil, s.err
 	}
 	return append([]domainvault.Host(nil), s.hosts...), nil
+}
+
+func (s *fakeHostStore) ListGroups(context.Context) ([]domainvault.Group, error) {
+	if s.groupsErr != nil {
+		return nil, s.groupsErr
+	}
+	return append([]domainvault.Group(nil), s.groups...), nil
+}
+
+func (s *fakeHostStore) AssignHostsGroup(_ context.Context, ids []model.HostID, groupID string) error {
+	s.assignments = append(s.assignments, groupAssignment{
+		IDs: append([]model.HostID(nil), ids...), GroupID: groupID,
+	})
+	if s.assignErr != nil {
+		return s.assignErr
+	}
+	for i := range s.hosts {
+		for _, id := range ids {
+			if s.hosts[i].ID == id {
+				s.hosts[i].GroupID = groupID
+			}
+		}
+	}
+	return nil
 }
 
 // fakeHandle is one phone Session. The handle owns the Session state and its

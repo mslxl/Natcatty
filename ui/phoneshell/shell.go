@@ -19,6 +19,7 @@ import (
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
+	vaultsection "github.com/mslxl/natcatty/ui/vault/section"
 )
 
 // Section identifies one of the phone's four navigation sections.
@@ -215,6 +216,12 @@ func New(opts ...Option) *Shell {
 		s.sections[Hosts].router.Push("/host/" + string(host.ID))
 	}
 	s.hosts.created = s.finishCreatedHost
+	// The Vault's Hosts family reads the Hosts tab's list and detail pages.
+	// Only the router differs: the Vault section owns its own stack.
+	s.vault.hosts = s.hosts
+	s.vault.hostDetails = func(host domainvault.Host) {
+		s.sections[Vault].router.Push("/hosts/" + string(host.ID))
+	}
 	s.sessions.launch = s.launchTab
 	s.sessions.show = func(id string) {
 		s.sections[Sessions].router.Push("/session/" + id)
@@ -306,11 +313,16 @@ func (s *Shell) newSection(i Section) *section {
 		}
 	case Vault:
 		sec.intro = "Browse the Vault on the phone."
-		sec.pages = []page{
-			{path: "/keys", title: "SSH keys", summary: s.vault.keysSummary},
-			{path: "/known-hosts", title: "Known hosts", summary: s.vault.knownHostsSummary},
-		}
+		sec.pages = s.vaultSectionPages()
 		sec.draw = s.vault.draw
+		sec.route = func(c *ui.Context, r *ui.Route) bool {
+			if !r.Match("/hosts/{id}") {
+				return false
+			}
+			r.Title("Host")
+			s.hosts.drawDetail(c, r.Param("id"))
+			return true
+		}
 	case Settings:
 		sec.intro = "Settings for this phone."
 		sec.pages = []page{
@@ -328,6 +340,72 @@ func (s *Shell) newSection(i Section) *section {
 
 func staticSummary(text string) func() string {
 	return func() string { return text }
+}
+
+// vaultSectionPages builds the Vault landing list in the desktop sidebar's
+// order. The order comes from the shared ui/vault/section package, so the two
+// surfaces cannot drift apart. The Hosts, Keychain and Known Hosts entries
+// open their real pages; the rest carry a short placeholder until their own
+// tickets land.
+func (s *Shell) vaultSectionPages() []page {
+	sections := vaultsection.Pages()
+	pages := make([]page, 0, len(sections))
+	for _, id := range sections {
+		p := page{path: "/" + string(id), title: vaultSectionTitle(id)}
+		switch id {
+		case vaultsection.Hosts:
+			p.summary = s.hosts.summary
+		case vaultsection.Keychain:
+			p.summary = s.vault.keysSummary
+		case vaultsection.KnownHosts:
+			p.summary = s.vault.knownHostsSummary
+		default:
+			p.text = vaultSectionPlaceholder(id)
+			p.summary = staticSummary("Not on the phone yet")
+		}
+		pages = append(pages, p)
+	}
+	return pages
+}
+
+func vaultSectionTitle(id vaultsection.Section) string {
+	switch id {
+	case vaultsection.Hosts:
+		return "Hosts"
+	case vaultsection.Keychain:
+		return "Keychain"
+	case vaultsection.Proxies:
+		return "Proxies"
+	case vaultsection.Networks:
+		return "Networks"
+	case vaultsection.Forwarding:
+		return "Forwarding"
+	case vaultsection.Snippets:
+		return "Snippets"
+	case vaultsection.Notes:
+		return "Notes"
+	case vaultsection.KnownHosts:
+		return "Known hosts"
+	}
+	return string(id)
+}
+
+// vaultSectionPlaceholder names what the section will hold, so an empty page
+// is a statement about this build rather than a broken screen.
+func vaultSectionPlaceholder(id vaultsection.Section) string {
+	switch id {
+	case vaultsection.Proxies:
+		return "Proxy Profiles are not on the phone yet."
+	case vaultsection.Networks:
+		return "Network Profiles are not on the phone yet."
+	case vaultsection.Forwarding:
+		return "Port forwarding rules are not on the phone yet."
+	case vaultsection.Snippets:
+		return "Snippets are not on the phone yet."
+	case vaultsection.Notes:
+		return "Vault Notes are not on the phone yet."
+	}
+	return "This Vault section is not on the phone yet."
 }
 
 // pageContentWidth is the width a padded page body may use. Width is the

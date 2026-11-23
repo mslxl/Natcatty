@@ -51,7 +51,7 @@ func TestVaultPagesReadTheSharedStore(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	tt := phonePage(t, shell, phoneshell.Vault, "SSH keys")
+	tt := phonePage(t, shell, phoneshell.Vault, "Keychain")
 	if !tt.HasText("desk") {
 		t.Fatalf("shared key is not listed; texts: %v", tt.Texts())
 	}
@@ -115,4 +115,56 @@ func TestVaultPagesReadTheSharedStore(t *testing.T) {
 	if len(known) != 0 {
 		t.Fatalf("forgotten known host is still in the shared store: %+v", known)
 	}
+}
+
+// TestVaultHostsMoveWritesSharedGroup drives the Vault's multi-select Move
+// through the real Vault service: the group membership the phone writes is the
+// same stored record the desktop reads back.
+func TestVaultHostsMoveWritesSharedGroup(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "natcatty.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	vault := newPhoneVault(db, nil)
+	group, err := vault.CreateGroup(ctx, domainvault.GroupDraft{Path: "prod"})
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	host, err := vault.Create(ctx, domainvault.Draft{
+		Label: "prod box", Hostname: "prod.example.com", Protocol: domainvault.ProtocolSSH,
+	})
+	if err != nil {
+		t.Fatalf("create Host: %v", err)
+	}
+
+	shell := phoneshell.New(phoneshell.WithHosts(vault))
+	if err := shell.Load(ctx); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	tt := phonePage(t, shell, phoneshell.Vault, "Hosts")
+
+	for _, action := range []string{"Select", "Select prod box", "Move", "Move to prod"} {
+		if err := tt.Click(action); err != nil {
+			t.Fatalf("click %q: %v", action, tt.Texts())
+		}
+		tt.Frame()
+	}
+
+	stored, err := db.List(ctx)
+	if err != nil {
+		t.Fatalf("list Hosts after move: %v", err)
+	}
+	for _, record := range stored {
+		if record.ID != host.ID {
+			continue
+		}
+		if record.GroupID != group.ID {
+			t.Fatalf("stored Host GroupID = %q, want %q", record.GroupID, group.ID)
+		}
+		return
+	}
+	t.Fatalf("Host %q is missing from the shared store", host.ID)
 }
