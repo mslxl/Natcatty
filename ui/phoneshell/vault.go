@@ -107,6 +107,11 @@ type vaultPages struct {
 	// package lists, their editors, and the run form. The Shell installs it
 	// because a run reaches the Sessions section.
 	snippets *snippetPages
+	// notes owns the Vault's Notes section: the shared Note and Note Group
+	// lists, the Vault section's viewer and editors, and the export writer.
+	// The Session Tools surface reads the same records with its own per-Pane
+	// view state.
+	notes *notePages
 
 	pendingKey       model.KeyID
 	pendingIdentity  model.IdentityID
@@ -127,6 +132,7 @@ func newVaultPages() *vaultPages {
 		knownStatus:      vaultLoading,
 		proxyStatus:      vaultLoading,
 		networks:         newNetworkPages(),
+		notes:            newNotePages(),
 	}
 }
 
@@ -147,6 +153,9 @@ func (v *vaultPages) load(ctx context.Context) error {
 		v.proxyStatus, v.proxyProblem = vaultFailed, unavailable
 		if v.snippets != nil {
 			v.snippets.status, v.snippets.problem = vaultFailed, unavailable
+		}
+		if v.notes != nil {
+			v.notes.status, v.notes.problem = vaultFailed, unavailable
 		}
 		return nil
 	}
@@ -199,6 +208,7 @@ func (v *vaultPages) load(ctx context.Context) error {
 	}
 	v.loadNetworks(ctx)
 	v.loadSnippets(ctx)
+	v.loadNotes(ctx)
 	return firstErr
 }
 
@@ -255,6 +265,8 @@ func (v *vaultPages) draw(c *ui.Context, p page) {
 		v.drawNetworks(c)
 	case "/snippets":
 		v.drawSnippets(c)
+	case "/notes":
+		v.drawNotes(c)
 	case "/known-hosts":
 		v.drawKnownHosts(c)
 	}

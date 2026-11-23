@@ -266,6 +266,11 @@ func New(opts ...Option) *Shell {
 	if s.appLockService != nil {
 		s.appLock = newLockGate(s.appLockService, s.appLockNow)
 	}
+	// A production Notes export goes through the system save picker. The
+	// writer is set after the options so a test's fake replaces it.
+	if s.vault.notes.writer == nil {
+		s.vault.notes.writer = phoneNoteWriter{}
+	}
 	// Both Vault surfaces draw the capability after every option, so a test's
 	// override applies to the Proxies page and the Host editor alike.
 	s.vault.proxyCommand = s.proxyCommand
@@ -316,6 +321,10 @@ func New(opts ...Option) *Shell {
 	// The Snippets page runs a Snippet in the Sessions section, so it is built
 	// after the Shell and holds it.
 	s.vault.snippets = newSnippetPages(s)
+	// The Session Tools surface opens the same Notes records the Vault section
+	// lists. Its selection and draft live on the Pane, so one Pane's Notes
+	// never carry into another.
+	s.sessions.notes = s.vault.notes
 	s.vault.hostDetails = func(host domainvault.Host) {
 		s.sections[Vault].router.Push("/hosts/" + string(host.ID))
 	}
@@ -489,6 +498,8 @@ func (s *Shell) vaultSectionPages() []page {
 			p.summary = s.vault.networksSummary
 		case vaultsection.Snippets:
 			p.summary = s.vault.snippetsSummary
+		case vaultsection.Notes:
+			p.summary = s.vault.notesSummary
 		case vaultsection.KnownHosts:
 			p.summary = s.vault.knownHostsSummary
 		default:
@@ -528,8 +539,6 @@ func vaultSectionPlaceholder(id vaultsection.Section) string {
 	switch id {
 	case vaultsection.Forwarding:
 		return "Port forwarding rules are not on the phone yet."
-	case vaultsection.Notes:
-		return "Vault Notes are not on the phone yet."
 	}
 	return "This Vault section is not on the phone yet."
 }

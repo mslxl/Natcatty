@@ -434,6 +434,10 @@ type sessionTabs struct {
 	// browser backs the Tools surface's Browser tool. Nil means the entry is
 	// absent and the catalog states this build has no browser.
 	browser BrowserProvider
+	// notes backs the Tools surface's Notes tool. It is the same record set
+	// the Vault section lists; each Pane's toolsState holds its own selection
+	// and draft. Nil means the tool reports why it is unavailable.
+	notes *notePages
 	// window is the Sessions window a Browser's WebViews belong to. It is nil
 	// until Show created the windows.
 	window func() *mygo.Window

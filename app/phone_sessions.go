@@ -178,6 +178,10 @@ func newPhoneVault(database *store.Store, secrets *store.SecretStore) *appvault.
 		// edits: a Snippet created on the phone reaches a desktop reload, and a
 		// phone run uses the desktop's substitution and target rules.
 		appvault.WithSnippets(database),
+		// Notes and Note Groups are the same shared family too: a Note edited
+		// on the phone is the Note a desktop reload reads, and the phone uses
+		// the desktop's grouping, search, and export rules.
+		appvault.WithNotes(database),
 		appvault.WithKeyInspector(sshadapter.KeyParser{}),
 	}
 	if secrets != nil {

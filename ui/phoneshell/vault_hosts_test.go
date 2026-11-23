@@ -110,7 +110,7 @@ func TestVaultSectionsNavigate(t *testing.T) {
 		{"Networks", "/networks", "Network Profiles are not available on this device."},
 		{"Forwarding", "/forwarding", "Port forwarding rules are not on the phone yet."},
 		{"Snippets", "/snippets", "Snippets are not available on this device."},
-		{"Notes", "/notes", "Vault Notes are not on the phone yet."},
+		{"Notes", "/notes", "Notes are not available on this device."},
 		{"Known hosts", "/known-hosts", "No known hosts yet"},
 	}
 	for _, tc := range cases {

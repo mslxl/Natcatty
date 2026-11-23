@@ -95,8 +95,6 @@ func toolPlaceholder(id toolID) string {
 		return "System management is not on the phone yet."
 	case toolSessionLog:
 		return "Session logs are not on the phone yet."
-	case toolNotes:
-		return "Notes are not on the phone yet."
 	}
 	return "This tool is not on the phone yet."
 }
@@ -146,6 +144,10 @@ type toolsState struct {
 	// entered. It holds the Host's dedicated channel lease; leaving the tool
 	// closes it, so the Session's own transport is never touched.
 	browser *browserSurface
+	// notes is this Pane's Notes tool view state. The Note records live in the
+	// shared notePages; only the search, open viewer, and draft are per Pane,
+	// so one Pane's half-filled editor never appears in another.
+	notes notesViewState
 	// result is the last clear's outcome; resultProblem marks it a failure.
 	result        string
 	resultProblem bool
@@ -331,6 +333,8 @@ func (t *sessionTabs) drawTools(c *ui.Context, view tabView) {
 				t.drawToolHistory(c, st, view.screen)
 			case toolBrowser:
 				t.drawToolBrowser(c, st, view)
+			case toolNotes:
+				t.drawToolNotes(c, st)
 			default:
 				t.drawToolPage(c, st)
 			}
@@ -367,6 +371,15 @@ func (t *sessionTabs) drawToolCatalog(c *ui.Context, st *toolsState, view tabVie
 				// completed since the last visit is part of the list.
 				t.loadToolHistory(st)
 			}
+			if spec.id == toolNotes {
+				// Entering Notes re-reads the shared Vault so a Note saved on
+				// the desktop while this surface was open is visible. The
+				// Pane's own selection and draft are kept, and the terminal
+				// stays attached.
+				if t.notes != nil {
+					_ = t.notes.reload(context.Background())
+				}
+			}
 		}
 	}
 	// A device without the WebView capability still states why its entry is
@@ -395,6 +408,24 @@ func (t *sessionTabs) toolSummary(st *toolsState, id toolID, host domainvault.Ho
 			return "Unavailable"
 		}
 		return "Browse this Host"
+	case toolNotes:
+		if t.notes == nil || t.notes.store == nil {
+			return "Unavailable"
+		}
+		switch t.notes.status {
+		case vaultLoading:
+			return "Loading…"
+		case vaultFailed:
+			return "Unavailable"
+		}
+		switch len(t.notes.notes) {
+		case 0:
+			return "No Notes yet"
+		case 1:
+			return "1 Note"
+		default:
+			return fmt.Sprintf("%d Notes", len(t.notes.notes))
+		}
 	}
 	return "Not on the phone yet"
 }
@@ -448,6 +479,22 @@ func (t *sessionTabs) drawToolBrowser(c *ui.Context, st *toolsState, view tabVie
 		st.pending = nil
 		st.closeBrowser()
 	})
+}
+
+// drawToolNotes renders the Notes tool inside the Tools surface. All tools
+// returns to the catalog; the tool's own Back returns from a Note to this
+// Pane's list. The terminal and its scroll are untouched throughout, and Done
+// in the surface bar returns to the Pane at the same position.
+func (t *sessionTabs) drawToolNotes(c *ui.Context, st *toolsState) {
+	if kit.GhostButton(c, icons.ChevronLeft, "All tools").Clicked() {
+		st.tool = toolNone
+		return
+	}
+	if t.notes == nil {
+		kit.Notice(c, icons.TriangleAlert, c.Theme().Danger, noteUnavailable, nil)
+		return
+	}
+	t.notes.drawTool(c, &st.notes)
 }
 
 // browserWindow returns the Sessions window the Browser's WebViews belong to.
