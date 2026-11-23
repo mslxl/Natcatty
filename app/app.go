@@ -742,7 +742,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// no system tailscaled state or root access is used.
 	networkStatusSink := &networkProviderStatusSink{
 		// vaultState is assigned later; resolve it when a status arrives.
-		vault:   func() *vaultstate.State { return vaultState },
+		vault:   func() networkStatusPoster { return vaultState },
 		history: historyService,
 	}
 	networkProviderFactory := &networkProviderFactory{

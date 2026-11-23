@@ -25,6 +25,7 @@ type fakeEditorStore struct {
 	keys       []domainvault.Key
 	identities []domainvault.Identity
 	known      []domainconn.KnownHost
+	proxies    []domainvault.ProxyProfile
 
 	credentials   map[model.HostID]appvault.HostCredentials
 	credentialErr map[model.HostID]error
@@ -201,6 +202,22 @@ func (s *fakeEditorStore) ListKnownHosts(context.Context) ([]domainconn.KnownHos
 }
 
 func (s *fakeEditorStore) DeleteKnownHost(context.Context, string) error { return nil }
+
+// ProxyProfile management is part of the same shared Vault service. The Host
+// editor reads the list to offer profiles and to explain a dangling reference.
+func (s *fakeEditorStore) ListProxyProfiles(context.Context) ([]domainvault.ProxyProfile, error) {
+	return append([]domainvault.ProxyProfile(nil), s.proxies...), nil
+}
+
+func (s *fakeEditorStore) CreateProxyProfile(context.Context, domainvault.ProxyProfileDraft) (domainvault.ProxyProfile, error) {
+	return domainvault.ProxyProfile{}, errors.New("unused")
+}
+
+func (s *fakeEditorStore) UpdateProxyProfile(context.Context, string, domainvault.ProxyProfileDraft) (domainvault.ProxyProfile, error) {
+	return domainvault.ProxyProfile{}, errors.New("unused")
+}
+
+func (s *fakeEditorStore) DeleteProxyProfile(context.Context, string) error { return nil }
 
 func (s *fakeEditorStore) HostCredentials(_ context.Context, id model.HostID) (appvault.HostCredentials, error) {
 	if err := s.credentialErr[id]; err != nil {

@@ -61,6 +61,13 @@ const (
 // Hosts page usable, and the Vault's other sections do not share its state.
 type vaultPages struct {
 	store VaultStore
+	// proxies is the shared Vault service's Proxy Profile half, when the store
+	// implements it. A build that wires only Keys and Known Hosts keeps the
+	// Proxies page unavailable rather than drawing an empty list.
+	proxies ProxyProfileStore
+	// proxyCommand is the build's ProxyCommand execution capability. The page
+	// warns when it is closed but never disables editing or syncing.
+	proxyCommand ProxyCommandCapability
 	// hosts is the Vault's Hosts family. It reuses the Hosts tab's list and
 	// detail pages instead of keeping a second copy of the same records.
 	hosts *hostPages
@@ -83,6 +90,20 @@ type vaultPages struct {
 	knownProblem string
 	knownHosts   []domainconn.KnownHost
 
+	proxyStatus   vaultStatus
+	proxyProblem  string
+	proxyProfiles []domainvault.ProxyProfile
+	// pendingProxy is the Profile awaiting a delete confirmation.
+	pendingProxy string
+	// proxyDraft is the open Proxy Profile editor, plaintext only while open.
+	proxyDraft        *proxyDraftForm
+	proxyDraftProblem string
+
+	// networks owns the Vault's Networks section: the shared Network Profile
+	// list, its editor, and the interactive Tailscale login controls. It is
+	// nil only before newVaultPages initializes it.
+	networks *networkPages
+
 	pendingKey       model.KeyID
 	pendingIdentity  model.IdentityID
 	pendingKnownHost string
@@ -100,6 +121,8 @@ func newVaultPages() *vaultPages {
 		keysStatus:       vaultLoading,
 		identitiesStatus: vaultLoading,
 		knownStatus:      vaultLoading,
+		proxyStatus:      vaultLoading,
+		networks:         newNetworkPages(),
 	}
 }
 
@@ -111,11 +134,13 @@ func (v *vaultPages) load(ctx context.Context) error {
 	v.pendingKey = ""
 	v.pendingIdentity = ""
 	v.pendingKnownHost = ""
+	v.pendingProxy = ""
 	if v.store == nil {
 		const unavailable = "The Vault is not available on this device."
 		v.keysStatus, v.keysProblem = vaultFailed, unavailable
 		v.identitiesStatus, v.identityProblem = vaultFailed, unavailable
 		v.knownStatus, v.knownProblem = vaultFailed, unavailable
+		v.proxyStatus, v.proxyProblem = vaultFailed, unavailable
 		return nil
 	}
 	var firstErr error
@@ -150,6 +175,22 @@ func (v *vaultPages) load(ctx context.Context) error {
 	} else {
 		v.knownHosts, v.knownStatus, v.knownProblem = known, vaultReady, ""
 	}
+
+	v.proxyStatus = vaultLoading
+	if v.proxies == nil {
+		v.proxyStatus, v.proxyProblem = vaultFailed, "Proxy Profiles are not available on this device."
+	} else {
+		profiles, err := v.proxies.ListProxyProfiles(ctx)
+		if err != nil {
+			// A service wired for the other Vault families still implements
+			// this seam; an unavailable Proxy repository is this page's own
+			// error, not a reason the whole Vault fails to open.
+			v.proxyStatus, v.proxyProblem = vaultFailed, "Could not load Proxy Profiles."
+		} else {
+			v.proxyProfiles, v.proxyStatus, v.proxyProblem = profiles, vaultReady, ""
+		}
+	}
+	v.loadNetworks(ctx)
 	return firstErr
 }
 
@@ -200,6 +241,10 @@ func (v *vaultPages) draw(c *ui.Context, p page) {
 		v.hosts.drawVaultRoot(c, v.hostDetails)
 	case "/keychain":
 		v.drawKeychain(c)
+	case "/proxies":
+		v.drawProxies(c)
+	case "/networks":
+		v.drawNetworks(c)
 	case "/known-hosts":
 		v.drawKnownHosts(c)
 	}

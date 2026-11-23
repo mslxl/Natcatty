@@ -36,6 +36,13 @@ type fakeVault struct {
 	updatedIdentities []identityUpdate
 	deletedIdentities []model.IdentityID
 	deletedHosts      []string
+
+	proxies          []domainvault.ProxyProfile
+	proxyErr         error
+	createProxyErr   error
+	updateProxyErr   error
+	deleteProxyErr   error
+	attemptedProxies []domainvault.ProxyProfileDraft
 }
 
 // keyUpdate records one UpdateKey call with the draft it received.
@@ -100,6 +107,68 @@ func (f *fakeVault) DeleteKnownHost(_ context.Context, id string) error {
 func (f *fakeVault) ListGroups(context.Context) ([]domainvault.Group, error) { return nil, nil }
 
 func (f *fakeVault) AssignHostsGroup(context.Context, []model.HostID, string) error { return nil }
+
+// ProxyProfile management is part of the shared Vault service. The page tests
+// keep a tiny in-memory implementation; the real SQLite service is covered by
+// the app tests.
+func (f *fakeVault) ListProxyProfiles(context.Context) ([]domainvault.ProxyProfile, error) {
+	if f.proxyErr != nil {
+		return nil, f.proxyErr
+	}
+	return append([]domainvault.ProxyProfile(nil), f.proxies...), nil
+}
+
+func (f *fakeVault) CreateProxyProfile(_ context.Context, draft domainvault.ProxyProfileDraft) (domainvault.ProxyProfile, error) {
+	f.attemptedProxies = append(f.attemptedProxies, draft)
+	if f.createProxyErr != nil {
+		return domainvault.ProxyProfile{}, f.createProxyErr
+	}
+	normalized, err := domainvault.NormalizeProxyProfileDraft(draft)
+	if err != nil {
+		return domainvault.ProxyProfile{}, err
+	}
+	profile := domainvault.ProxyProfile{
+		ID:     fmt.Sprintf("proxy-%d", len(f.proxies)+1),
+		Label:  normalized.Label,
+		Config: normalized.Config,
+	}
+	f.proxies = append(f.proxies, profile)
+	return profile, nil
+}
+
+func (f *fakeVault) UpdateProxyProfile(_ context.Context, id string, draft domainvault.ProxyProfileDraft) (domainvault.ProxyProfile, error) {
+	f.attemptedProxies = append(f.attemptedProxies, draft)
+	if f.updateProxyErr != nil {
+		return domainvault.ProxyProfile{}, f.updateProxyErr
+	}
+	normalized, err := domainvault.NormalizeProxyProfileDraft(draft)
+	if err != nil {
+		return domainvault.ProxyProfile{}, err
+	}
+	for i := range f.proxies {
+		if f.proxies[i].ID != id {
+			continue
+		}
+		f.proxies[i].Label = normalized.Label
+		f.proxies[i].Config = normalized.Config
+		return f.proxies[i], nil
+	}
+	return domainvault.ProxyProfile{}, errors.New("proxy profile not found")
+}
+
+func (f *fakeVault) DeleteProxyProfile(_ context.Context, id string) error {
+	if f.deleteProxyErr != nil {
+		return f.deleteProxyErr
+	}
+	kept := f.proxies[:0]
+	for _, profile := range f.proxies {
+		if profile.ID != id {
+			kept = append(kept, profile)
+		}
+	}
+	f.proxies = kept
+	return nil
+}
 
 func (f *fakeVault) ListIdentities(context.Context) ([]domainvault.Identity, error) {
 	if f.identitiesErr != nil {

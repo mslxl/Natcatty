@@ -29,6 +29,15 @@ type HostStore interface {
 	List(ctx context.Context) ([]domainvault.Host, error)
 }
 
+// GroupProxyStore is the Host Group write half the group proxy editor needs.
+// The application Vault service implements it, so a group's Profile reference
+// written on the phone is the same record the desktop reads and syncs. The
+// identifier is the group's stable ID, as the shared Vault state passes it.
+type GroupProxyStore interface {
+	HostGroupStore
+	UpdateGroup(ctx context.Context, id string, draft domainvault.GroupDraft) (domainvault.Group, error)
+}
+
 // hostsStatus is the state of the Hosts list.
 type hostsStatus int
 
@@ -79,6 +88,18 @@ type hostPages struct {
 	groups       []domainvault.Group
 	groupStatus  hostsStatus
 	groupProblem string
+	// groupStore is the Host Group write surface the proxy editor uses. It is
+	// nil when the build has no group write seam.
+	groupStore GroupProxyStore
+	// proxyProfiles returns the Proxy Profiles the group proxy editor offers.
+	// The Shell points it at the Vault section's loaded list.
+	proxyProfiles func() []domainvault.ProxyProfile
+	// proxyCommand is the build's ProxyCommand execution capability, shown by
+	// the group editor when it selects a command Profile.
+	proxyCommand ProxyCommandCapability
+	// groupProxy is the open Host Group proxy editor.
+	groupProxy        *groupProxyDraft
+	groupProxyProblem string
 
 	// selecting is the Vault Hosts page's multi-select mode. The Hosts tab
 	// never activates it, so a plain tap there always connects.
@@ -171,7 +192,25 @@ func (h *hostPages) loadGroups(ctx context.Context) error {
 	h.groups = groups
 	h.groupStatus = hostsReady
 	h.groupProblem = ""
+	h.refreshGroupProxy()
 	return nil
+}
+
+// refreshGroupProxy keeps an open group proxy editor pointed at the reloaded
+// record, and closes it when the group is gone.
+func (h *hostPages) refreshGroupProxy() {
+	if h.groupProxy == nil {
+		return
+	}
+	for _, group := range h.groups {
+		if group.ID == h.groupProxy.group.ID {
+			h.groupProxy.group = group
+			return
+		}
+	}
+	h.groupProxy = nil
+	h.groupProxyProblem = ""
+	h.groupProblem = "This Host Group is no longer in the Vault."
 }
 
 // summary is the Hosts section's one-line description on any surface that
@@ -272,6 +311,10 @@ func (h *hostPages) drawVaultRoot(c *ui.Context, details func(domainvault.Host))
 	width := pageContentWidth(c)
 	ui.Scroll(c).Fill().Children(func() {
 		ui.Column(c).Width(width).Padding(16).Gap(12).Children(func() {
+			if h.groupProxy != nil {
+				h.drawGroupProxyEditor(c)
+				return
+			}
 			switch h.status {
 			case hostsLoading:
 				kit.EmptyHint(c, "Loading Hosts…")
@@ -414,14 +457,201 @@ func (h *hostPages) drawGroups(c *ui.Context) {
 		if _, ok := ui.DragOver[hostDrag](row); ok {
 			row.Background(c.Theme().Accent.Alpha(0.12))
 		}
+		handled := false
 		row.Children(func() {
 			ui.Icon(c, icons.Lucide(icons.Folder)).TextColor(c.Theme().TextMuted)
-			ui.Text(c, group.Path).Grow(1).MinWidth(0).SingleLine()
+			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+				ui.Text(c, group.Path).Grow(1).MinWidth(0).SingleLine()
+				ui.Text(c, h.groupProxySummary(group)).FontSize(12).
+					TextColor(c.Theme().TextMuted).SingleLine()
+			})
+			ui.Text(c, "›").FontSize(20).TextColor(c.Theme().TextMuted)
 		})
 		if drag, ok := ui.Drop[hostDrag](row); ok {
 			h.applyMove(drag.IDs, group.ID, group.Path)
+			handled = true
+		}
+		if !handled && row.Clicked() {
+			h.beginGroupProxyEdit(group)
 		}
 	}
+}
+
+// groupProxyDraft is the open Host Group proxy editor. choice is the radio
+// value: an empty string inherits, directProxyChoice is an explicit direct
+// connection, and any other value is a Proxy Profile ID.
+type groupProxyDraft struct {
+	group  domainvault.Group
+	choice string
+}
+
+// beginGroupProxyEdit opens one group's proxy editor. The other group fields
+// are carried from the stored record on save, so editing the proxy never
+// clears them.
+func (h *hostPages) beginGroupProxyEdit(group domainvault.Group) {
+	if h.groupStore == nil {
+		h.groupProblem = "This build cannot edit Host Groups."
+		return
+	}
+	choice := group.ProxyProfileID
+	if group.DirectProxy {
+		choice = directProxyChoice
+	}
+	h.groupProxy = &groupProxyDraft{group: group, choice: choice}
+	h.groupProxyProblem = ""
+}
+
+// drawGroupProxyEditor renders the group's Profile reference and Direct
+// choice. A Profile that no longer exists stays visible as a fixable prompt
+// rather than a crash or a silent switch to direct.
+func (h *hostPages) drawGroupProxyEditor(c *ui.Context) {
+	d := h.groupProxy
+	kit.SectionBar(c, "Proxy for "+d.group.Path, nil)
+	if h.groupProxyProblem != "" {
+		kit.Notice(c, icons.TriangleAlert, c.Theme().Danger, h.groupProxyProblem, nil)
+	}
+	profiles := h.availableProxyProfiles()
+	if d.choice != "" && d.choice != directProxyChoice && !hasProxyProfile(profiles, d.choice) {
+		kit.Notice(c, icons.TriangleAlert, c.Theme().Warning,
+			"Profile no longer exists; choose another or clear it.", nil)
+	}
+	kit.FormRow(c, "Proxy", func() {
+		ui.RadioGroup(c, func() {
+			ui.Radio(c, &d.choice, "", "No group proxy")
+			ui.Radio(c, &d.choice, directProxyChoice, "Direct")
+			for _, profile := range profiles {
+				ui.Radio(c, &d.choice, profile.ID, proxyProfileName(profile))
+			}
+		})
+	}).Description("A Host that owns a proxy keeps it; this value applies to the group's other Hosts.")
+	if profile, ok := proxyProfileByID(profiles, d.choice); ok {
+		if profile.Config.Type == domainvault.ProxyCommand {
+			ui.Text(c, "Command").FontSize(12).TextColor(c.Theme().TextMuted)
+			ui.Text(c, profile.Config.Command)
+			if reason := proxyCommandReason(h.proxyCommand); reason != "" {
+				kit.Notice(c, icons.TriangleAlert, c.Theme().Warning,
+					reason+". The group's configuration is still saved and synced.", nil)
+			}
+		} else {
+			detailLine(c, "Endpoint", profile.Config.Host+
+				proxyPortSuffix(profile.Config.Port))
+		}
+	}
+	if kit.PrimaryButton(c, "", "Save group proxy").Clicked() {
+		h.saveGroupProxy()
+	}
+	if kit.SecondaryButton(c, "", "Cancel").Clicked() {
+		h.groupProxy = nil
+		h.groupProxyProblem = ""
+	}
+}
+
+// saveGroupProxy writes the group's proxy choice through the shared Vault
+// service. The other fields come from the record that opened the editor.
+func (h *hostPages) saveGroupProxy() {
+	d := h.groupProxy
+	if d == nil {
+		return
+	}
+	if h.groupStore == nil {
+		h.groupProxyProblem = "This build cannot edit Host Groups."
+		return
+	}
+	draft := groupDraftFromGroup(d.group)
+	draft.ProxyProfileID = ""
+	draft.DirectProxy = false
+	if d.choice == directProxyChoice {
+		draft.DirectProxy = true
+	} else {
+		draft.ProxyProfileID = d.choice
+	}
+	updated, err := h.groupStore.UpdateGroup(context.Background(), groupIdentity(d.group), draft)
+	if err != nil {
+		h.groupProxyProblem = "Could not save the Host Group proxy."
+		return
+	}
+	h.groupProxy = nil
+	h.groupProxyProblem = ""
+	_ = h.load(context.Background())
+	if updated.Path != "" {
+		d.group = updated
+	}
+}
+
+// groupIdentity is the stable ID the shared Vault addresses a group by. A
+// record written before IDs existed uses its path as the identity.
+func groupIdentity(group domainvault.Group) string {
+	if group.ID != "" {
+		return group.ID
+	}
+	return group.Path
+}
+
+// groupDraftFromGroup carries every stored field into the editable draft so a
+// proxy-only save cannot clear unrelated group defaults.
+func groupDraftFromGroup(group domainvault.Group) domainvault.GroupDraft {
+	return domainvault.GroupDraft{
+		Path:                   group.Path,
+		Notes:                  group.Notes,
+		Username:               group.Username,
+		Port:                   group.Port,
+		Protocol:               group.Protocol,
+		AuthMethod:             group.AuthMethod,
+		IdentityID:             group.IdentityID,
+		KeyID:                  group.KeyID,
+		UseSSHAgent:            group.UseSSHAgent,
+		RequiresMFA:            group.RequiresMFA,
+		LegacyAlgorithms:       group.LegacyAlgorithms,
+		SkipEcdsaHostKey:       group.SkipEcdsaHostKey,
+		Algorithms:             domainvault.CloneAlgorithms(group.Algorithms),
+		NetworkProfileID:       group.NetworkProfileID,
+		HostChain:              domainvault.CloneHostChain(group.HostChain),
+		X11Forwarding:          group.X11Forwarding,
+		X11WarningAcknowledged: group.X11WarningAcknowledged,
+	}
+}
+
+// groupProxySummary is the second line of a Host Group row.
+func (h *hostPages) groupProxySummary(group domainvault.Group) string {
+	switch {
+	case group.DirectProxy:
+		return "Proxy: direct"
+	case group.ProxyProfileID != "":
+		if profile, ok := proxyProfileByID(h.availableProxyProfiles(), group.ProxyProfileID); ok {
+			return "Proxy: " + proxyProfileName(profile)
+		}
+		return "Proxy: missing profile"
+	default:
+		return "Proxy: inherited"
+	}
+}
+
+func (h *hostPages) availableProxyProfiles() []domainvault.ProxyProfile {
+	if h.proxyProfiles == nil {
+		return nil
+	}
+	return h.proxyProfiles()
+}
+
+func hasProxyProfile(profiles []domainvault.ProxyProfile, id string) bool {
+	_, ok := proxyProfileByID(profiles, id)
+	return ok
+}
+
+func proxyProfileByID(profiles []domainvault.ProxyProfile, id string) (domainvault.ProxyProfile, bool) {
+	for _, profile := range profiles {
+		if profile.ID == id {
+			return profile, true
+		}
+	}
+	return domainvault.ProxyProfile{}, false
+}
+
+func proxyPortSuffix(port int) string {
+	if port == 0 {
+		return ""
+	}
+	return fmt.Sprintf(":%d", port)
 }
 
 // drawMoveProblem shows the failed batch move with a Retry that re-runs the

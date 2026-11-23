@@ -590,7 +590,7 @@ func TestFactoryPreservesAdapterKindAndPhaseOnStartFailure(t *testing.T) {
 
 func TestStatusSinkPublishesToTheVaultSurface(t *testing.T) {
 	state := vaultstate.NewState(nil)
-	sink := &networkProviderStatusSink{vault: func() *vaultstate.State { return state }}
+	sink := &networkProviderStatusSink{vault: func() networkStatusPoster { return state }}
 	sink.Observe(adaptertailscale.Status{
 		ProfileID:    "net-1",
 		Label:        "Office",
@@ -755,7 +755,7 @@ func TestConnectionLogProviderRowsAreNormalizedAsProviderRows(t *testing.T) {
 
 func TestWireGuardStatusSinkPublishesLiveDetail(t *testing.T) {
 	state := vaultstate.NewState(nil)
-	sink := &networkProviderStatusSink{vault: func() *vaultstate.State { return state }}
+	sink := &networkProviderStatusSink{vault: func() networkStatusPoster { return state }}
 	handshake := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	sink.ObserveWireGuard(adapterwireguard.Status{
 		ProfileID:     "wg-1",

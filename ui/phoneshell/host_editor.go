@@ -67,6 +67,20 @@ type hostEditor struct {
 	jumpOpen     bool
 	advancedOpen bool
 
+	// proxyChoice is the Advanced group's proxy radio: an empty string
+	// inherits, directProxyChoice is explicit direct, inlineProxyChoice edits
+	// an inline transport, and any other value is a Proxy Profile ID.
+	proxyChoice string
+	// inlineProxy and inlineProxyPort are the inline transport's fields. They
+	// are loaded from the stored record and written back unchanged when the
+	// user edits another field.
+	inlineProxy     domainvault.ProxyConfig
+	inlineProxyPort string
+	// hasProxyProfiles reports that the editor was wired with the Proxy
+	// Profile list, so a missing reference can be explained instead of
+	// mistaken for an unwired build.
+	hasProxyProfiles bool
+
 	// problem is the editor's inline message. problemAtAuth also expands the
 	// Authentication group so an invalid authenticator is visible where it was
 	// typed.
@@ -88,6 +102,7 @@ func newHostEditor(pages *hostPages, writer HostCreator, vault VaultStore) *host
 		return nil
 	}
 	options := make([]vaultstate.Option, 0, 6)
+	withProfiles := false
 	if keys, ok := keySource(vault, writer); ok {
 		options = append(options, vaultstate.WithKeys(keys))
 	}
@@ -101,6 +116,7 @@ func newHostEditor(pages *hostPages, writer HostCreator, vault VaultStore) *host
 	}
 	if profiles, ok := proxySource(writer); ok {
 		options = append(options, vaultstate.WithProxyProfiles(profiles))
+		withProfiles = true
 	}
 	if networks, ok := networkSource(writer); ok {
 		options = append(options, vaultstate.WithNetworkProfiles(networks))
@@ -108,7 +124,11 @@ func newHostEditor(pages *hostPages, writer HostCreator, vault VaultStore) *host
 	if credentials, ok := writer.(vaultstate.HostCredentials); ok {
 		options = append(options, vaultstate.WithHostCredentials(credentials))
 	}
-	return &hostEditor{pages: pages, state: vaultstate.NewState(hostService, options...)}
+	return &hostEditor{
+		pages:            pages,
+		state:            vaultstate.NewState(hostService, options...),
+		hasProxyProfiles: withProfiles,
+	}
 }
 
 func keySource(vault VaultStore, writer HostCreator) (vaultstate.Keys, bool) {
@@ -153,6 +173,7 @@ func (e *hostEditor) beginCreate(prefill *domainvault.Host, fromLink bool) {
 	if prefill != nil {
 		prefillForm(e.state.Form(), *prefill)
 	}
+	e.resetProxyForm()
 }
 
 // beginEdit opens an existing record. It reports false when the shared state
@@ -170,7 +191,35 @@ func (e *hostEditor) beginEdit(host domainvault.Host, fromLink bool) bool {
 	e.advancedOpen = false
 	e.problem = ""
 	e.problemAtAuth = false
+	e.resetProxyForm()
 	return true
+}
+
+// inlineProxyChoice is the radio sentinel for an inline proxy transport. It
+// never reaches the Vault: the editor translates it into the ProxyConfig the
+// shared state round-trips.
+const inlineProxyChoice = "\x00inline"
+
+// resetProxyForm reads the shared state's proxy selection into the editor's
+// controls. The order is the route resolver's: an explicit Direct choice wins,
+// then an inline transport, then a Profile reference.
+func (e *hostEditor) resetProxyForm() {
+	form := e.state.Form()
+	e.proxyChoice = ""
+	e.inlineProxy = domainvault.ProxyConfig{Type: domainvault.ProxyCommand}
+	e.inlineProxyPort = ""
+	if form.DirectProxy {
+		e.proxyChoice = directProxyChoice
+	}
+	if proxy := e.state.HostProxy(); proxy != nil {
+		e.inlineProxy = *proxy
+		e.inlineProxyPort = proxyPortText(proxy.Port)
+		if !form.DirectProxy {
+			e.proxyChoice = inlineProxyChoice
+		}
+	} else if !form.DirectProxy && form.ProxyProfileID != "" {
+		e.proxyChoice = form.ProxyProfileID
+	}
 }
 
 // prefillForm fills the basic connection fields from a Host or a link draft.
@@ -454,6 +503,129 @@ func (e *hostEditor) drawAdvanced(c *ui.Context) {
 			ui.TextInput(c, &form.ETPort).Placeholder("2022").Width(120)
 		})
 	}
+	if protocol.SupportsProxy() {
+		e.drawProxyControls(c)
+	}
+}
+
+// drawProxyControls renders the Advanced group's proxy choice. The Host can
+// inherit a Host Group or the app-wide default, connect directly, select a
+// saved Profile, or carry an inline transport. A Profile that no longer exists
+// is shown as a fixable prompt, and the configuration stays savable on a
+// platform that cannot execute a ProxyCommand.
+func (e *hostEditor) drawProxyControls(c *ui.Context) {
+	profiles := e.state.ProxyProfiles()
+	ui.Text(c, "Proxy").FontWeight(600)
+	if e.hasProxyProfiles &&
+		e.proxyChoice != "" && e.proxyChoice != directProxyChoice && e.proxyChoice != inlineProxyChoice &&
+		!hasProxyProfile(profiles, e.proxyChoice) {
+		kit.Notice(c, icons.TriangleAlert, c.Theme().Warning,
+			"Profile no longer exists; choose another or clear it.", nil)
+	}
+	kit.FormRow(c, "Proxy route", func() {
+		ui.RadioGroup(c, func() {
+			ui.Radio(c, &e.proxyChoice, "", "Inherit")
+			ui.Radio(c, &e.proxyChoice, directProxyChoice, "Direct")
+			for _, profile := range profiles {
+				ui.Radio(c, &e.proxyChoice, profile.ID, proxyProfileName(profile))
+			}
+			ui.Radio(c, &e.proxyChoice, inlineProxyChoice, "Inline ProxyCommand")
+		})
+	}).Description("A saved Profile wins over an inline command; Direct stops group and app-wide inheritance.")
+	if e.proxyChoice != inlineProxyChoice {
+		if profile, ok := proxyProfileByID(profiles, e.proxyChoice); ok &&
+			profile.Config.Type == domainvault.ProxyCommand {
+			if reason := proxyCommandReason(e.pages.proxyCommand); reason != "" {
+				kit.Notice(c, icons.TriangleAlert, c.Theme().Warning,
+					reason+". The Host's Profile reference is still saved and synced.", nil)
+			}
+		}
+		return
+	}
+	e.drawInlineProxy(c)
+}
+
+// drawInlineProxy edits the Host's own transport. Only the fields the phone
+// exposes are changed; a stored proxy password is never rendered and is
+// carried through Save.
+func (e *hostEditor) drawInlineProxy(c *ui.Context) {
+	typeIndex := proxyTypeIndex(e.inlineProxy.Type)
+	kit.FormRow(c, "Inline type", func() {
+		ui.Segmented(c, &typeIndex, "ProxyCommand", "HTTP CONNECT", "SOCKS5")
+		e.inlineProxy.Type = proxyTypeAt(typeIndex)
+	})
+	switch e.inlineProxy.Type {
+	case domainvault.ProxyCommand:
+		kit.FormRow(c, "Inline command", func() {
+			ui.TextArea(c, &e.inlineProxy.Command).Height(90).
+				Placeholder("ssh -W %h:%p jump.example.com")
+		}).Description("%h and %p are replaced with the target host and port.")
+		if reason := proxyCommandReason(e.pages.proxyCommand); reason != "" {
+			kit.Notice(c, icons.TriangleAlert, c.Theme().Warning,
+				reason+". The Host's inline command is still saved and synced.", nil)
+		}
+	default:
+		kit.FormRow(c, "Inline host", func() {
+			ui.TextInput(c, &e.inlineProxy.Host).Placeholder("proxy.example.com").FillWidth()
+		})
+		kit.FormRow(c, "Inline port", func() {
+			ui.TextInput(c, &e.inlineProxyPort).Placeholder("1080").Width(120)
+		})
+		kit.FormRow(c, "Inline username", func() {
+			ui.TextInput(c, &e.inlineProxy.Username).FillWidth()
+		})
+	}
+}
+
+// applyProxyChoice writes the Advanced group's selection into the shared
+// state immediately before Save. It reports false and keeps the editor open
+// when the inline port text is not a number.
+func (e *hostEditor) applyProxyChoice() bool {
+	form := e.state.Form()
+	if !domainvault.Protocol(form.Protocol).SupportsProxy() {
+		// A hidden control must not leave a value Save would persist.
+		form.ProxyProfileID = ""
+		form.DirectProxy = false
+		e.state.SetHostProxy(nil)
+		return true
+	}
+	switch e.proxyChoice {
+	case directProxyChoice:
+		form.ProxyProfileID = ""
+		form.DirectProxy = true
+		e.state.SetHostProxy(nil)
+	case inlineProxyChoice:
+		form.ProxyProfileID = ""
+		form.DirectProxy = false
+		if e.inlineProxy.Type != domainvault.ProxyCommand {
+			port := 0
+			if trimmed := strings.TrimSpace(e.inlineProxyPort); trimmed != "" {
+				parsed, err := strconv.Atoi(trimmed)
+				if err != nil {
+					e.problem = "Enter a port between 1 and 65535."
+					e.advancedOpen = true
+					return false
+				}
+				port = parsed
+			}
+			e.inlineProxy.Port = port
+		} else {
+			e.inlineProxy.Port = 0
+			e.inlineProxy.Host = ""
+			e.inlineProxy.Username = ""
+		}
+		proxy := e.inlineProxy
+		e.state.SetHostProxy(&proxy)
+	case "":
+		form.ProxyProfileID = ""
+		form.DirectProxy = false
+		e.state.SetHostProxy(nil)
+	default:
+		form.ProxyProfileID = e.proxyChoice
+		form.DirectProxy = false
+		e.state.SetHostProxy(nil)
+	}
+	return true
 }
 
 // drawInputModes renders the SSH Enter/Backspace translation choices.
@@ -549,6 +721,9 @@ func (e *hostEditor) save(connect bool) {
 	if h == nil {
 		return
 	}
+	if !e.applyProxyChoice() {
+		return
+	}
 	outcome := e.state.SaveWithOutcome()
 	if !outcome.Saved {
 		problem := e.state.Problem()
@@ -607,6 +782,8 @@ func editorProblemText(problem vaultstate.Problem) string {
 		return "Check the username."
 	case vaultstate.ProblemGroup:
 		return "Check the Host Group path."
+	case vaultstate.ProblemProxy:
+		return "Check the proxy settings."
 	case vaultstate.ProblemTags:
 		return "Check the tags."
 	case vaultstate.ProblemDuplicate:

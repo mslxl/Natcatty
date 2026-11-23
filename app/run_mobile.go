@@ -291,6 +291,24 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 		// format: the phone reads and writes the same split tree the desktop
 		// uses, and a cold start restores every restorable Pane.
 		phoneshell.WithSessionStore(database.Workspace()),
+		// The Networks page drives the same Provider registry Host dials use
+		// and reads the status the shared Provider sink publishes. A Tailscale
+		// login therefore acts on the profile's live node.
+		phoneshell.WithNetworkProviderControl(sessionRuntime, sessionRuntime),
+		// A WireGuard .conf is chosen through the system file picker (MyGo's
+		// Dialog.Open, which the mobile host answers with document copies) and
+		// parsed by the shared wireguardconf domain package.
+		phoneshell.WithNetworkConfPicker(wireguardConfPicker{
+			locale: func() string { return mygo.App.Locale() },
+		}),
 	)
+	// A Provider status arrives on its own goroutine. Repaint every phone
+	// window so the Networks row shows the new phase, Auth URL, or error
+	// without waiting for another tap.
+	sessionRuntime.networkStatuses.setInvalidator(func() {
+		for _, window := range mygo.Windows() {
+			window.Invalidate()
+		}
+	})
 	return shell, database, sessionRuntime, history, vaultSync, nil
 }

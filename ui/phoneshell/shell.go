@@ -114,6 +114,9 @@ type Shell struct {
 	// deepLinkProblem is the inline message a rejected link leaves. Every
 	// section draws it; a successful link clears it.
 	deepLinkProblem string
+	// proxyCommand is this build's ProxyCommand execution capability. The
+	// Proxy pages show its reason while keeping configuration editable.
+	proxyCommand ProxyCommandCapability
 }
 
 // Option customizes a Shell. The composition root passes the shared Vault
@@ -123,7 +126,14 @@ type Option func(*Shell)
 
 // WithVault gives the Vault pages the shared SSH Key and Known Host store.
 func WithVault(store VaultStore) Option {
-	return func(s *Shell) { s.vault.store = store }
+	return func(s *Shell) {
+		s.vault.store = store
+		// A store that also serves Proxy Profiles is the same application
+		// Vault service; the Proxies page uses it directly rather than a copy.
+		if proxies, ok := store.(ProxyProfileStore); ok {
+			s.vault.proxies = proxies
+		}
+	}
 }
 
 // WithSettings gives the Settings pages the shared preferences and terminal
@@ -150,7 +160,17 @@ func WithVaultSync(service VaultSyncService) Option {
 // WithHosts gives the Hosts section the shared Vault's Host list. Only remote
 // Hosts are listed; Local and serial records stay on the desktop.
 func WithHosts(store HostStore) Option {
-	return func(s *Shell) { s.hosts.store = store }
+	return func(s *Shell) {
+		s.hosts.store = store
+		// The same application Vault service serves every section. A shell
+		// told about it through the Hosts seam still gets its Proxy Profiles.
+		if vault, ok := store.(VaultStore); ok && s.vault.store == nil {
+			s.vault.store = vault
+		}
+		if proxies, ok := store.(ProxyProfileStore); ok && s.vault.proxies == nil {
+			s.vault.proxies = proxies
+		}
+	}
 }
 
 // WithSessionOpener gives the Sessions section the application Session
@@ -200,9 +220,23 @@ func New(opts ...Option) *Shell {
 		settings: newSettingsPages(),
 		hosts:    newHostPages(),
 		sessions: &sessionTabs{newScreen: newTerminalScreen},
+
+		proxyCommand: platformProxyCommandCapability(),
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	// Both Vault surfaces draw the capability after every option, so a test's
+	// override applies to the Proxies page and the Host editor alike.
+	s.vault.proxyCommand = s.proxyCommand
+	s.hosts.proxyCommand = s.proxyCommand
+	if groups, ok := s.hosts.store.(GroupProxyStore); ok {
+		s.hosts.groupStore = groups
+	}
+	// The group proxy editor offers the same Proxy Profiles the Proxies page
+	// lists, so a profile created there is immediately selectable.
+	s.hosts.proxyProfiles = func() []domainvault.ProxyProfile {
+		return s.vault.proxyProfiles
 	}
 	// The Sessions section reads the same Appearance and terminal documents
 	// the Settings pages edit. A shell given no provider still follows the
@@ -387,6 +421,10 @@ func (s *Shell) vaultSectionPages() []page {
 			p.summary = s.hosts.summary
 		case vaultsection.Keychain:
 			p.summary = s.vault.keysSummary
+		case vaultsection.Proxies:
+			p.summary = s.vault.proxiesSummary
+		case vaultsection.Networks:
+			p.summary = s.vault.networksSummary
 		case vaultsection.KnownHosts:
 			p.summary = s.vault.knownHostsSummary
 		default:
@@ -424,10 +462,6 @@ func vaultSectionTitle(id vaultsection.Section) string {
 // is a statement about this build rather than a broken screen.
 func vaultSectionPlaceholder(id vaultsection.Section) string {
 	switch id {
-	case vaultsection.Proxies:
-		return "Proxy Profiles are not on the phone yet."
-	case vaultsection.Networks:
-		return "Network Profiles are not on the phone yet."
 	case vaultsection.Forwarding:
 		return "Port forwarding rules are not on the phone yet."
 	case vaultsection.Snippets:

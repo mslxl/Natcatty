@@ -28,6 +28,7 @@ import (
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/phoneshell"
+	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
 // errPhoneLocalSession is the closed failure for a Host that would run a shell
@@ -41,10 +42,103 @@ type phoneSessionRuntime struct {
 	service     *appsession.Service
 	connections *appconnection.Manager
 	vault       *appvault.Service
+	// networkControl drives the same Provider registry Host dails use, so the
+	// Networks page's Sign in, Cancel, and Retry act on the profile's live
+	// node rather than starting a second one.
+	networkControl *networkProviderController
+	// networkStatuses is the non-secret Provider status the Networks page
+	// reads. Provider events are posted by the shared status sink.
+	networkStatuses *phoneNetworkStatuses
+}
+
+// phoneNetworkStatuses stores the latest non-secret Provider status per
+// profile. It implements both the shared status sink's target and the phone
+// page's NetworkStatusSource, so no protocol or status mapping is duplicated.
+type phoneNetworkStatuses struct {
+	mu         sync.Mutex
+	statuses   map[string]vaultstate.NetworkProviderStatus
+	invalidate func()
+}
+
+func newPhoneNetworkStatuses() *phoneNetworkStatuses {
+	return &phoneNetworkStatuses{statuses: make(map[string]vaultstate.NetworkProviderStatus)}
+}
+
+// PostNetworkProviderStatus replaces one profile's status and asks the phone
+// UI to repaint. It may run on the Provider's goroutine.
+func (s *phoneNetworkStatuses) PostNetworkProviderStatus(status vaultstate.NetworkProviderStatus) {
+	if s == nil || status.ProfileID == "" {
+		return
+	}
+	status.TailscaleIPs = append([]string(nil), status.TailscaleIPs...)
+	s.mu.Lock()
+	s.statuses[status.ProfileID] = status
+	invalidate := s.invalidate
+	s.mu.Unlock()
+	if invalidate != nil {
+		invalidate()
+	}
+}
+
+// NetworkStatus returns the latest published status of one profile.
+func (s *phoneNetworkStatuses) NetworkStatus(profileID string) (vaultstate.NetworkProviderStatus, bool) {
+	if s == nil {
+		return vaultstate.NetworkProviderStatus{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	status, ok := s.statuses[profileID]
+	return status, ok
+}
+
+func (s *phoneNetworkStatuses) setInvalidator(fn func()) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.invalidate = fn
+	s.mu.Unlock()
+}
+
+// StartNetworkProvider, CancelNetworkProvider, RetryNetworkProvider, and
+// NetworkStatus are the phone Networks page's control and status seam.
+func (r *phoneSessionRuntime) StartNetworkProvider(ctx context.Context, profileID string) error {
+	if r == nil || r.networkControl == nil {
+		return errors.New("app: Network Provider control is unavailable")
+	}
+	return r.networkControl.StartNetworkProvider(ctx, profileID)
+}
+
+func (r *phoneSessionRuntime) CancelNetworkProvider(ctx context.Context, profileID string) error {
+	if r == nil || r.networkControl == nil {
+		return errors.New("app: Network Provider control is unavailable")
+	}
+	return r.networkControl.CancelNetworkProvider(ctx, profileID)
+}
+
+func (r *phoneSessionRuntime) RetryNetworkProvider(ctx context.Context, profileID string) error {
+	if r == nil || r.networkControl == nil {
+		return errors.New("app: Network Provider control is unavailable")
+	}
+	return r.networkControl.RetryNetworkProvider(ctx, profileID)
+}
+
+func (r *phoneSessionRuntime) NetworkStatus(profileID string) (vaultstate.NetworkProviderStatus, bool) {
+	if r == nil || r.networkStatuses == nil {
+		return vaultstate.NetworkProviderStatus{}, false
+	}
+	return r.networkStatuses.NetworkStatus(profileID)
 }
 
 // Ensure the runtime is the shell's opener seam.
 var _ phoneshell.SessionOpener = (*phoneSessionRuntime)(nil)
+
+// The same runtime drives the Networks page's Tailscale login and supplies its
+// status; both seams use the shared application controller and status sink.
+var (
+	_ vaultstate.NetworkProviderActions = (*phoneSessionRuntime)(nil)
+	_ phoneshell.NetworkStatusSource    = (*phoneSessionRuntime)(nil)
+)
 
 // The phone Vault service is the one store behind both Vault seams: the
 // Keychain and Known Hosts pages read it, and the Vault's Hosts family lists
@@ -148,9 +242,15 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 	prompts *phoneshell.Prompts, history *phoneHistory,
 	secrets appvault.FieldSecrets, terminalSettings func() domainterminal.Settings,
 	preferences preferenceSource) *phoneSessionRuntime {
+	statuses := newPhoneNetworkStatuses()
+	statusSink := &networkProviderStatusSink{
+		vault: func() networkStatusPoster { return statuses },
+	}
 	providers := appconnection.NewNetworkProviderRegistry(&networkProviderFactory{
-		vault:     vault,
-		stateBase: networkProviderStateBase(userData),
+		vault:            vault,
+		stateBase:        networkProviderStateBase(userData),
+		observe:          statusSink.Observe,
+		observeWireGuard: statusSink.ObserveWireGuard,
 	})
 	options := []appconnection.Option{
 		appconnection.WithNetworkProviders(providers),
@@ -172,7 +272,16 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 	service := appsession.NewService(
 		newPhoneTransportFactory(connections, routes, providers, secrets),
 		phoneSessionOptions(vault, history, terminalSettings)...)
-	return &phoneSessionRuntime{service: service, connections: connections, vault: vault}
+	// The Networks page drives the same registry without a Host dial, so its
+	// Sign in, Cancel, and Retry act on the profile's live node.
+	networkControl := &networkProviderController{vault: vault, registry: providers}
+	return &phoneSessionRuntime{
+		service:         service,
+		connections:     connections,
+		vault:           vault,
+		networkControl:  networkControl,
+		networkStatuses: statuses,
+	}
 }
 
 // phoneSessionOptions is the shared Session behavior the phone composes. The

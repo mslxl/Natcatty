@@ -944,6 +944,21 @@ func (s *State) inheritHostX11(host domainvault.Host) {
 	s.form.X11Inherited = true
 }
 
+// HostProxy returns a copy of the editor's inline Proxy transport, or nil when
+// the Host has none. The copy keeps an editor from changing the stored value
+// before Save, and the shared draft round-trips it verbatim when the user edits
+// another field.
+func (s *State) HostProxy() *domainvault.ProxyConfig {
+	return domainvault.CloneProxy(s.proxy)
+}
+
+// SetHostProxy replaces the editor's inline Proxy transport. A nil value
+// clears it; the explicit Profile reference and Direct choice are separate
+// form fields.
+func (s *State) SetHostProxy(proxy *domainvault.ProxyConfig) {
+	s.proxy = domainvault.CloneProxy(proxy)
+}
+
 // BeginDuplicate opens the Host editor with a copy of a listed Host. Identity,
 // the pinned flag, and every stored credential are dropped so Save creates a
 // second Host instead of overwriting the first; the label carries the
