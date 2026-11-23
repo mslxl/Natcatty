@@ -24,7 +24,10 @@ import (
 	"sync"
 	"time"
 
+	adaptergdrive "github.com/mslxl/natcatty/adapters/gdrive"
 	adaptergithub "github.com/mslxl/natcatty/adapters/github"
+	"github.com/mslxl/natcatty/adapters/oauthloopback"
+	adapteronedrive "github.com/mslxl/natcatty/adapters/onedrive"
 	adapters3 "github.com/mslxl/natcatty/adapters/s3"
 	"github.com/mslxl/natcatty/adapters/store"
 	adaptersyncedsettings "github.com/mslxl/natcatty/adapters/syncedsettings"
@@ -44,9 +47,15 @@ import (
 type phoneSync struct {
 	service *appsync.Service
 
-	// authCancel aborts the GitHub device flow that is in flight. The page
-	// starts the flow and follows Snapshot; the access token is written only
-	// to the shared credential store by appsync.Service.Connect. authGen tags
+	// redirect receives the custom-scheme OAuth callback the OS delivers on
+	// iOS and Android. The same registry serves Google Drive and OneDrive
+	// because the phone starts one interactive sign-in at a time.
+	redirect *oauthloopback.Registry
+
+	// authCancel aborts the interactive authorization that is in flight: the
+	// GitHub device flow or a Drive/OneDrive browser sign-in. The page starts
+	// the attempt and follows Snapshot; the access token is written only to
+	// the shared credential store by appsync.Service.Connect. authGen tags
 	// each attempt so a late goroutine cannot overwrite a newer attempt's
 	// state after a cancel or retry.
 	authMu       sync.Mutex
@@ -77,6 +86,15 @@ type phoneSyncDeps struct {
 	// cloud copy has been written: Host and SSH Key lists reload, and live
 	// terminals re-read the appearance document.
 	appliedSnapshot func()
+	// browserOpen opens a provider's consent URL in the system browser. The
+	// mobile root supplies mygo.Shell.OpenExternal; a nil opener makes a
+	// browser provider report ErrBrowserUnavailable instead of failing
+	// silently.
+	browserOpen func(string) error
+	// redirectURI is the custom-scheme callback registered with the mobile
+	// clients. An acceptance build may override it with
+	// NATCATTY_OAUTH_REDIRECT_URI or a test option.
+	redirectURI string
 	// extraOptions lets a test install shared-service seams (for example a
 	// shorter debounce) without changing the production graph.
 	extraOptions []appsync.Option
@@ -133,6 +151,42 @@ func withPhoneSyncDevice(id, name, version string) phoneSyncOption {
 	}
 }
 
+// withPhoneSyncBrowserOpener supplies the system-browser opener a
+// Drive/OneDrive sign-in uses. The mobile root passes mygo.Shell.OpenExternal;
+// tests pass an opener that drives the fake redirect.
+func withPhoneSyncBrowserOpener(open func(string) error) phoneSyncOption {
+	return func(d *phoneSyncDeps) {
+		if open != nil {
+			d.browserOpen = open
+		}
+	}
+}
+
+// withPhoneSyncRedirectURI overrides the custom-scheme callback. An acceptance
+// run may need the provider-mandated scheme without changing the default
+// registration.
+func withPhoneSyncRedirectURI(uri string) phoneSyncOption {
+	return func(d *phoneSyncDeps) {
+		if uri != "" {
+			d.redirectURI = uri
+		}
+	}
+}
+
+const defaultPhoneOAuthRedirectURI = "netcatty://oauth/callback"
+
+// phoneOAuthRedirectURI is the redirect_uri sent to Google and Microsoft. It
+// must match the urlType/intent-filter mygo.json generates from urlSchemes.
+func phoneOAuthRedirectURI(override string) string {
+	if override != "" {
+		return override
+	}
+	if uri := os.Getenv("NATCATTY_OAUTH_REDIRECT_URI"); uri != "" {
+		return uri
+	}
+	return defaultPhoneOAuthRedirectURI
+}
+
 // newPhoneSync builds the phone's cloud-sync engine over the shared store and
 // the two settings services. It loads the persisted profile before returning,
 // so the Settings page shows the truth after a relaunch: an unconfigured
@@ -165,6 +219,24 @@ func newPhoneSync(ctx context.Context, database *store.Store, secrets *store.Sec
 	}
 	for _, opt := range opts {
 		opt(&deps)
+	}
+	// Google Drive and OneDrive authorize through the system browser and come
+	// back through the app's custom URI scheme. The registry is the one seam
+	// the OS URL hooks deliver into, shared because only one interactive
+	// sign-in runs at a time. Tests may already have replaced a remote.
+	redirect, err := oauthloopback.NewRegistry(phoneOAuthRedirectURI(deps.redirectURI))
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := deps.remotes[appsync.ProviderGoogleDrive]; !ok {
+		driveOptions := adaptergdrive.OptionsFromEnv()
+		driveOptions.Redirect = redirect
+		deps.remotes[appsync.ProviderGoogleDrive] = adaptergdrive.New(driveOptions)
+	}
+	if _, ok := deps.remotes[appsync.ProviderOneDrive]; !ok {
+		oneDriveOptions := adapteronedrive.OptionsFromEnv()
+		oneDriveOptions.Redirect = redirect
+		deps.remotes[appsync.ProviderOneDrive] = adapteronedrive.New(oneDriveOptions)
 	}
 	primary := deps.remotes[deps.provider]
 	if primary == nil {
@@ -204,6 +276,9 @@ func newPhoneSync(ctx context.Context, database *store.Store, secrets *store.Sec
 	if deps.appliedSnapshot != nil {
 		options = append(options, appsync.WithAppliedSnapshot(deps.appliedSnapshot))
 	}
+	if deps.browserOpen != nil {
+		options = append(options, appsync.WithBrowserOpener(deps.browserOpen))
+	}
 	options = append(options, deps.extraOptions...)
 	for provider, remote := range deps.remotes {
 		if provider == deps.provider {
@@ -215,7 +290,7 @@ func newPhoneSync(ctx context.Context, database *store.Store, secrets *store.Sec
 	if err := service.Load(ctx); err != nil {
 		return nil, err
 	}
-	return &phoneSync{service: service}, nil
+	return &phoneSync{service: service, redirect: redirect}, nil
 }
 
 // Snapshot is the state the Settings page renders. A failed GitHub
@@ -284,10 +359,100 @@ func (p *phoneSync) StartGitHubConnect(password string) error {
 	return nil
 }
 
-// clearGitHubAuthorization abandons an in-flight device flow and its cancel
-// bookkeeping. It is called when the user connects another provider, so the
-// GitHub-specific reason cannot leak into that provider's failure surface.
-func (p *phoneSync) clearGitHubAuthorization() {
+// StartBrowserConnect switches the profile to Google Drive or OneDrive and
+// starts the shared PKCE authorization on its own goroutine. The adapter opens
+// the consent page through the system browser and waits on the custom-scheme
+// callback the composition root routes into this service. The page follows
+// Snapshot for the outcome, so the frame that handled the tap never waits on
+// the browser. The token travels only to the system credential store.
+func (p *phoneSync) StartBrowserConnect(password, provider string) error {
+	if p == nil || p.service == nil {
+		return appsync.ErrNotConfigured
+	}
+	provider = appsync.NormalizeProvider(provider)
+	if provider != appsync.ProviderGoogleDrive && provider != appsync.ProviderOneDrive {
+		return appsync.ErrNotConfigured
+	}
+	if password == "" {
+		return appsync.ErrPasswordRequired
+	}
+	p.authMu.Lock()
+	if p.authCancel != nil {
+		p.authMu.Unlock()
+		return appsync.ErrAlreadyInProgress
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	p.authGen++
+	gen := p.authGen
+	p.authCancel = cancel
+	p.authCanceled = false
+	p.authMu.Unlock()
+	if p.redirect != nil {
+		// Discard a callback that cold-launched the app after an earlier
+		// sign-in; this attempt's state is generated after this point.
+		p.redirect.Begin()
+	}
+
+	go func() {
+		err := p.service.SetProvider(ctx, provider)
+		if err == nil {
+			err = p.service.SetPassword(password)
+		}
+		if err == nil {
+			err = p.service.Connect(ctx, password, nil)
+		}
+		p.authMu.Lock()
+		if p.authGen == gen {
+			p.authCancel = nil
+			if errors.Is(err, context.Canceled) {
+				p.authCanceled = true
+			}
+		}
+		p.authMu.Unlock()
+		cancel()
+	}()
+	return nil
+}
+
+// CancelBrowserConnect aborts a Drive/OneDrive sign-in that is in flight. The
+// waiting callback returns the context error, which Snapshot reports as the
+// same retryable authorization problem a cancel or failed exchange produces.
+func (p *phoneSync) CancelBrowserConnect() {
+	p.CancelGitHubConnect()
+}
+
+// HandleOpenURL routes one URL from the OS. It reports whether the URL belongs
+// to this app's custom scheme, so the mobile root can leave ssh:// links to
+// the shell. A redirect arriving when no sign-in is waiting is ignored.
+func (p *phoneSync) HandleOpenURL(raw string) bool {
+	if p == nil || p.redirect == nil {
+		return false
+	}
+	return p.redirect.Deliver(raw)
+}
+
+// Background pauses the authorization waiting window while the app is
+// suspended, so switching to the system browser and back does not consume or
+// expire the user's foreground budget.
+func (p *phoneSync) Background() {
+	if p == nil || p.redirect == nil {
+		return
+	}
+	p.redirect.Suspend()
+}
+
+// Foreground resumes the authorization waiting window when the app returns.
+func (p *phoneSync) Foreground() {
+	if p == nil || p.redirect == nil {
+		return
+	}
+	p.redirect.Resume()
+}
+
+// clearAuthorization abandons an in-flight interactive authorization and its
+// cancel bookkeeping. It is called when the user connects another provider, so
+// one provider's sign-in reason cannot leak into another's failure surface.
+func (p *phoneSync) clearAuthorization() {
 	if p == nil {
 		return
 	}
@@ -302,7 +467,8 @@ func (p *phoneSync) clearGitHubAuthorization() {
 	}
 }
 
-// CancelGitHubConnect aborts an authorization that is in flight. The shared
+// CancelGitHubConnect aborts an interactive authorization that is in flight
+// (the GitHub device flow or a Drive/OneDrive browser sign-in). The shared
 // engine's fail path records a problem; Snapshot reports it as the retryable
 // authorization state. The cancel is released here so a retry can start
 // before the abandoned goroutine finishes.
@@ -346,7 +512,7 @@ func (p *phoneSync) ConnectWebDAV(ctx context.Context, password string,
 	}
 	// A provider switch abandons any GitHub authorization state, so a later
 	// WebDAV problem is not reported as a GitHub sign-in problem.
-	p.clearGitHubAuthorization()
+	p.clearAuthorization()
 	return p.service.ConnectWebDAV(ctx, password, settings, confirmInsecure)
 }
 
@@ -357,7 +523,7 @@ func (p *phoneSync) ConnectS3(ctx context.Context, password string,
 	if p == nil || p.service == nil {
 		return appsync.ErrNotConfigured
 	}
-	p.clearGitHubAuthorization()
+	p.clearAuthorization()
 	return p.service.ConnectS3(ctx, password, settings, confirmInsecure)
 }
 
@@ -375,7 +541,7 @@ func (p *phoneSync) Disconnect(ctx context.Context) error {
 	if p == nil || p.service == nil {
 		return appsync.ErrNotConfigured
 	}
-	p.clearGitHubAuthorization()
+	p.clearAuthorization()
 	return p.service.Disconnect(ctx)
 }
 

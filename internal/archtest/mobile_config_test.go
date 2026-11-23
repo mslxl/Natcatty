@@ -77,3 +77,27 @@ func TestMobileConfigurationRegistersSSHDeepLinks(t *testing.T) {
 			config.URLSchemes, "ssh")
 	}
 }
+
+// TestMobileConfigurationRegistersTheOAuthCallback pins the custom-scheme
+// callback Google Drive and OneDrive need on a phone. MyGo turns urlSchemes
+// into CFBundleURLTypes on iOS and a VIEW intent-filter on Android, so this
+// committed scheme is the only registration the app needs; the provider
+// clients must be configured with the matching redirect URI
+// netcatty://oauth/callback.
+func TestMobileConfigurationRegistersTheOAuthCallback(t *testing.T) {
+	root := testutil.ModuleRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "mygo.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		URLSchemes []string `json:"urlSchemes"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatalf("mygo.json: %v", err)
+	}
+	if !slices.Contains(config.URLSchemes, "netcatty") {
+		t.Errorf("urlSchemes = %v, want it to declare %q for the OAuth callback %q",
+			config.URLSchemes, "netcatty", "netcatty://oauth/callback")
+	}
+}

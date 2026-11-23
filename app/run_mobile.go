@@ -91,13 +91,31 @@ func Run() error {
 	// the launch URL. Registering before Run makes the started-with URL arrive
 	// too; before Ready the shell buffers it.
 	mygo.App.OnOpenURL(func(raw string) {
+		// A Vault-sync OAuth redirect belongs to the sync engine, not the
+		// Host deep-link router. HandleOpenURL claims every URL of the app's
+		// custom scheme and reports whether it did.
+		if vaultSync != nil && vaultSync.HandleOpenURL(raw) {
+			return
+		}
 		_ = shell.HandleDeepLink(raw)
 	})
 	// Leaving the foreground releases the terminal view and persists the
 	// Tabs; returning resumes or reconnects the visible Session. Registering
 	// before Run makes the first foreground transition reach the shell.
-	mygo.App.OnDidResignActive(shell.Background)
-	mygo.App.OnDidBecomeActive(shell.Foreground)
+	// The sync engine pauses its OAuth waiting window while the browser owns
+	// the screen, so a suspended app never spends its callback budget.
+	mygo.App.OnDidResignActive(func() {
+		shell.Background()
+		if vaultSync != nil {
+			vaultSync.Background()
+		}
+	})
+	mygo.App.OnDidBecomeActive(func() {
+		shell.Foreground()
+		if vaultSync != nil {
+			vaultSync.Foreground()
+		}
+	})
 	err = mygo.App.Run()
 	if showErr != nil {
 		return showErr
@@ -215,6 +233,10 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 					}
 				})
 			}),
+			// Drive/OneDrive sign-in opens the consent page in the system
+			// browser; the callback returns through the app's URL type or
+			// intent-filter and is routed below.
+			withPhoneSyncBrowserOpener(mygo.Shell.OpenExternal),
 		)
 		if err != nil {
 			log.Printf("natcatty: Vault sync unavailable: %v", err)

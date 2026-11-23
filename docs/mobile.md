@@ -217,6 +217,56 @@ nix develop .#android --command scripts/mobile/android-render.sh
 the echo corpus. `android-render.sh` pushes and runs `TestVTCorpus` and
 `TestDiagnosticRunsEchoTransport` for the device's ABI.
 
+## Vault Sync OAuth clients on phones
+
+The phone configures Google Drive and OneDrive on Settings → Vault sync.
+Unlike the desktop, it does not listen on `127.0.0.1`: iOS and Android suspend
+the app while the system browser is open, so the providers redirect to the
+app's custom scheme and the OS hands the URL back to the running app.
+
+`mygo.json` declares `netcatty` in `urlSchemes`. MyGo turns that into
+`CFBundleURLTypes` in the iOS bundle and a VIEW intent-filter in the Android
+manifest, so both platforms deliver
+`netcatty://oauth/callback` to `App.OnOpenURL`. The phone root routes that URL
+to the sync engine (`HandleOpenURL`); ssh:// links still go to the Host
+router. The waiting window pauses while the app is suspended, so switching to
+the browser never spends the user's foreground budget.
+
+Before an acceptance run, register a mobile OAuth client for each provider:
+
+- **Google Drive.** Create an iOS and/or Android OAuth client (not a Desktop
+  client) in the Google Cloud console for the same project as the Drive API.
+  The iOS client is bound to the bundle identifier
+  `com.mslxl.natcatty`; the Android client is bound to the package name
+  `com.mslxl.natcatty` and the signing certificate SHA-1 (debug and release
+  keystores are separate clients). The authorized redirect must be a custom
+  scheme the app declares. Google's mobile client types may require their
+  reversed-client-id scheme (`com.googleusercontent.apps.<client-id>:/…`)
+  instead of the generic `netcatty://oauth/callback`; in that case set
+  `NATCATTY_OAUTH_REDIRECT_URI` to the reversed-client-id URI, add its scheme
+  to `urlSchemes` in `mygo.json` for that build, and register the same URI in
+  the console. Pass the client id to the device as
+  `NATCATTY_GDRIVE_CLIENT_ID`; the app never ships a client secret.
+- **OneDrive.** Register a mobile application in Microsoft Entra ID. A phone
+  redirect is configured by the iOS bundle identifier or by the Android
+  package name plus its signing certificate hash, not by a loopback port.
+  Add `netcatty://oauth/callback` as a mobile redirect URI (or the override
+  described below) and leave the client public (no secret). Pass the
+  application (client) id as `NATCATTY_ONEDRIVE_CLIENT_ID`.
+
+If an acceptance run uses a different callback, set
+`NATCATTY_OAUTH_REDIRECT_URI` and declare the same scheme in `mygo.json`; the
+two must agree or the OS will not deliver the redirect. Fakes for endpoint
+overrides are the same `NATCATTY_GDRIVE_*` / `NATCATTY_ONEDRIVE_*` variables
+the desktop uses.
+
+Acceptance of the callback itself is a real-device check: the simulator and
+emulator can exercise the scheme registration, but a browser installed on a
+real phone, the system's suspension of the app, and the provider's acceptance
+of the bundle/package-bound redirect are only proven on device. Record the
+result per platform in the device matrix; an unverified platform keeps the
+provider hidden rather than showing a button that cannot finish.
+
 ## CI
 
 `.github/workflows/phone-ci.yml` runs on every pull request and on pushes to

@@ -38,6 +38,15 @@ type fakeVaultSync struct {
 	githubPassword string
 	githubCancels  int
 	accessToken    string
+
+	// Drive/OneDrive browser flow. The real engine opens the system browser
+	// and completes through the custom-scheme callback; the fake moves to the
+	// waiting state and lets the test publish the outcome.
+	browserStarts   int
+	browserProvider string
+	browserPassword string
+	browserCancels  int
+	browserErr      error
 }
 
 func (f *fakeVaultSync) Snapshot() appsync.Snapshot { return f.snapshot }
@@ -108,6 +117,28 @@ func (f *fakeVaultSync) StartGitHubConnect(password string) error {
 func (f *fakeVaultSync) CancelGitHubConnect() {
 	f.githubCancels++
 	f.snapshot.DeviceCode = appsync.DeviceCode{}
+	f.snapshot.Status = appsync.StatusFailed
+	f.snapshot.Problem = appsync.ProblemAuthorization
+}
+
+// StartBrowserConnect models the shared engine: the provider switch is
+// published at once and the page shows the waiting window until the test
+// publishes the callback outcome.
+func (f *fakeVaultSync) StartBrowserConnect(password, provider string) error {
+	f.browserStarts++
+	f.browserProvider = provider
+	f.browserPassword = password
+	if f.browserErr != nil {
+		return f.browserErr
+	}
+	f.snapshot.Provider = provider
+	f.snapshot.Status = appsync.StatusAuthorizing
+	f.snapshot.DeviceCode = appsync.DeviceCode{}
+	return nil
+}
+
+func (f *fakeVaultSync) CancelBrowserConnect() {
+	f.browserCancels++
 	f.snapshot.Status = appsync.StatusFailed
 	f.snapshot.Problem = appsync.ProblemAuthorization
 }
@@ -475,5 +506,115 @@ func TestVaultSyncPageUnavailableState(t *testing.T) {
 	tt := openSectionPage(t, shell, Settings, "Vault sync")
 	if !tt.HasText("Vault sync is not available on this device.") {
 		t.Fatalf("page does not show the unavailable state; texts: %v", tt.Texts())
+	}
+}
+
+// TestVaultSyncPageConnectsGoogleDriveInTheBrowser drives the mobile
+// authorization: selecting Drive starts the shared browser flow, the page
+// replaces the form with a waiting window while the system browser owns the
+// screen, and the snapshot the engine publishes on return shows the connected
+// provider.
+func TestVaultSyncPageConnectsGoogleDriveInTheBrowser(t *testing.T) {
+	service := &fakeVaultSync{accessToken: "ya29_phone_secret_token"}
+	shell := New(WithSettings(newFakeSettings()), WithVaultSync(service))
+	tt := openSectionPage(t, shell, Settings, "Vault sync")
+
+	if err := tt.Click("Sync provider: Google Drive"); err != nil {
+		t.Fatalf("choose Google Drive: %v", err)
+	}
+	if err := tt.Click("Master password"); err != nil {
+		t.Fatalf("focus Master password: %v", err)
+	}
+	tt.Type("correct horse battery staple")
+	tt.Frame()
+	if err := tt.Click("Connect"); err != nil {
+		t.Fatalf("click Connect: %v", err)
+	}
+	if service.browserStarts != 1 {
+		t.Fatalf("StartBrowserConnect calls = %d, want 1", service.browserStarts)
+	}
+	if service.browserProvider != appsync.ProviderGoogleDrive {
+		t.Fatalf("provider = %q, want google", service.browserProvider)
+	}
+	if service.browserPassword != "correct horse battery staple" {
+		t.Fatal("the typed master password did not reach the service")
+	}
+
+	// The engine is waiting on the custom-scheme callback.
+	tt.Frame()
+	if !tt.HasText("Waiting for Google Drive sign-in…") {
+		t.Fatalf("page does not show the browser waiting window; texts: %v", tt.Texts())
+	}
+	if !tt.HasText("Cancel sign-in") {
+		t.Fatalf("page does not offer Cancel while waiting; texts: %v", tt.Texts())
+	}
+	if tt.HasText("Master password") {
+		t.Fatal("the setup form is still on screen during authorization")
+	}
+
+	// The callback completed and the engine connected.
+	service.snapshot = appsync.Snapshot{
+		Connected: true, Provider: appsync.ProviderGoogleDrive,
+		Login: "user@example.test", Status: appsync.StatusIdle, HasPassword: true,
+	}
+	tt.Frame()
+	if !tt.HasText("Sync now") || !tt.HasText("Google Drive") {
+		t.Fatalf("page does not show the connected Drive state; texts: %v", tt.Texts())
+	}
+	for _, text := range tt.Texts() {
+		if strings.Contains(text, service.accessToken) {
+			t.Fatalf("the page rendered the access token: %q", text)
+		}
+	}
+}
+
+// TestVaultSyncPageBrowserCancelAndFailuresAreRetryable covers OneDrive and
+// the retryable reasons: a cancel and a failed exchange (state mismatch,
+// denied consent, timeout) all return the setup form with a sentence naming
+// the provider and a Connect action.
+func TestVaultSyncPageBrowserCancelAndFailuresAreRetryable(t *testing.T) {
+	service := &fakeVaultSync{}
+	shell := New(WithSettings(newFakeSettings()), WithVaultSync(service))
+	tt := openSectionPage(t, shell, Settings, "Vault sync")
+
+	if err := tt.Click("Sync provider: OneDrive"); err != nil {
+		t.Fatalf("choose OneDrive: %v", err)
+	}
+	if err := tt.Click("Master password"); err != nil {
+		t.Fatalf("focus Master password: %v", err)
+	}
+	tt.Type("master")
+	tt.Frame()
+	if err := tt.Click("Connect"); err != nil {
+		t.Fatalf("click Connect: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click("Cancel sign-in"); err != nil {
+		t.Fatalf("click Cancel sign-in: %v", err)
+	}
+	if service.browserCancels != 1 {
+		t.Fatalf("CancelBrowserConnect calls = %d, want 1", service.browserCancels)
+	}
+	tt.Frame()
+	if !tt.HasText("OneDrive sign-in did not finish. Try again.") {
+		t.Fatalf("page does not explain the cancelled OneDrive sign-in; texts: %v", tt.Texts())
+	}
+	if !tt.HasText("Connect") {
+		t.Fatal("the page does not offer a retry after cancel")
+	}
+
+	// State mismatch, denied consent, and a failed exchange all publish the
+	// engine's authorization problem; the sentence names Google Drive.
+	service.snapshot = appsync.Snapshot{
+		Provider: appsync.ProviderGoogleDrive, Status: appsync.StatusFailed,
+		Problem: appsync.ProblemAuthorization,
+	}
+	service.githubStarts = 0
+	tt.Frame()
+	if !tt.HasText("Google Drive sign-in did not finish. Try again.") {
+		t.Fatalf("page does not explain the failed Drive exchange; texts: %v", tt.Texts())
+	}
+	if !tt.HasText("Connect") {
+		t.Fatal("the page does not offer a retry after a failed exchange")
 	}
 }

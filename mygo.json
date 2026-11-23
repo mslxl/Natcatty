@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "out": "build",
   "resources": ["mygo.json", "CHANGELOG.md", "LICENSE", "NOTICE"],
-  "urlSchemes": ["ssh"],
+  "urlSchemes": ["ssh", "netcatty"],
   "i18n": {
     "dir": "ui/locales",
     "source": "en"

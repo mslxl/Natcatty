@@ -66,9 +66,13 @@ type Options struct {
 	ClientID   string
 	Scope      string
 	// AuthTimeout bounds the wait for the loopback redirect after the browser
-	// opens. The zero value is five minutes.
+	// opens. The zero value is five minutes. It is ignored when Redirect is
+	// set, because a custom redirect owns its own timeout.
 	AuthTimeout time.Duration
-	HTTPClient  *http.Client
+	// Redirect replaces the loopback listener with a custom URI scheme
+	// callback, as phones need while the system browser suspends the app.
+	Redirect   oauthloopback.Redirect
+	HTTPClient *http.Client
 	// Now is the clock used for token expiry. Tests may substitute it.
 	Now func() time.Time
 	// Random feeds PKCE generation and the multipart boundary.
@@ -97,6 +101,7 @@ type Client struct {
 	clientID    string
 	scope       string
 	authTimeout time.Duration
+	redirect    oauthloopback.Redirect
 	http        *http.Client
 	now         func() time.Time
 	random      io.Reader
@@ -161,6 +166,7 @@ func New(opts Options) *Client {
 		clientID:    strings.TrimSpace(opts.ClientID),
 		scope:       scope,
 		authTimeout: authTimeout,
+		redirect:    opts.Redirect,
 		http:        httpClient,
 		now:         now,
 		random:      random,
@@ -192,9 +198,10 @@ type tokenResponse struct {
 }
 
 // Authorize runs the authorization-code flow with PKCE. It opens the consent
-// URL in the system browser through open, listens on an ephemeral 127.0.0.1
-// port, validates the redirect's state, exchanges the code with the verifier,
-// and returns the authorized account. No client secret is sent.
+// URL in the system browser through open, receives the redirect (a loopback
+// listener, or the configured custom scheme on a phone), validates its state,
+// exchanges the code with the verifier, and returns the authorized account. No
+// client secret is sent.
 func (c *Client) Authorize(ctx context.Context, open func(string) error) (domainsync.Token, appsync.Grant, error) {
 	if c.clientID == "" {
 		return domainsync.Token{}, appsync.Grant{}, fmt.Errorf("%w: no Google OAuth client id configured", appsync.ErrNotConfigured)
@@ -209,8 +216,9 @@ func (c *Client) Authorize(ctx context.Context, open func(string) error) (domain
 			"access_type": {"offline"},
 			"prompt":      {"consent"},
 		},
-		Timeout: c.authTimeout,
-		Random:  c.random,
+		Timeout:  c.authTimeout,
+		Random:   c.random,
+		Redirect: c.redirect,
 	}
 	authorization, err := flow.Authorize(ctx, open)
 	if err != nil {

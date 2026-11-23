@@ -302,10 +302,11 @@ type DeviceAuthorizer interface {
 }
 
 // BrowserAuthorizer is implemented by remotes that use an authorization code
-// with PKCE in the system browser and a loopback redirect (Google Drive).
-// Authorize must open the URL through open, listen on loopback, validate the
-// redirect's state, and exchange the code without a client secret. Tests pass
-// an opener that drives a local fake.
+// with PKCE in the system browser (Google Drive, OneDrive). Authorize must
+// open the URL through open, receive the redirect (loopback on the desktop, a
+// registered custom URI scheme on a phone), validate its state, and exchange
+// the code without a client secret. Tests pass an opener that drives a local
+// fake.
 type BrowserAuthorizer interface {
 	Authorize(ctx context.Context, open func(url string) error) (domainsync.Token, Grant, error)
 }

@@ -21,10 +21,11 @@ import (
 //
 // The paged surface offers the providers a phone can configure on its own:
 // WebDAV and S3-compatible storage take an endpoint and credentials typed on
-// this page, and GitHub Gist uses the shared RFC 8628 device authorization so
-// the user only enters a one-time code in a browser. A portable settings
-// document written here can reach a desktop that is configured for the same
-// account.
+// this page; Google Drive and OneDrive use the system browser and return
+// through the app's registered custom URI scheme; and GitHub Gist uses the
+// shared RFC 8628 device authorization so the user only enters a one-time code
+// in a browser. A portable settings document written here can reach a desktop
+// that is configured for the same account.
 type VaultSyncService interface {
 	Snapshot() appsync.Snapshot
 	SetPassword(password string) error
@@ -37,10 +38,20 @@ type VaultSyncService interface {
 	// outcome, so the frame that handled the tap never waits on the network.
 	// The access token travels only to the system credential store.
 	StartGitHubConnect(password string) error
-	// CancelGitHubConnect aborts an authorization that is in flight. The
+	// StartBrowserConnect switches the profile to Google Drive or OneDrive
+	// and starts the shared PKCE authorization in the system browser on its
+	// own goroutine. The callback returns through the app's custom URI scheme,
+	// so the page shows a waiting window and follows Snapshot for the outcome.
+	// The access token travels only to the system credential store.
+	StartBrowserConnect(password, provider string) error
+	// CancelGitHubConnect aborts a device authorization that is in flight. The
 	// engine returns to a retryable failed state with a problem the page can
 	// explain.
 	CancelGitHubConnect()
+	// CancelBrowserConnect aborts a Drive/OneDrive sign-in that is in flight.
+	// Cancelling, a mismatched state, and a failed token exchange all return
+	// to the same retryable authorization state.
+	CancelBrowserConnect()
 	SyncNow()
 	Disconnect(ctx context.Context) error
 }
@@ -115,7 +126,7 @@ func (p *settingsPages) vaultSyncStatus(c *ui.Context, snapshot appsync.Snapshot
 	}
 	ui.Column(c).FillWidth().Gap(4).Padding(12, 14).Background(t.Surface).Radius(12).Children(func() {
 		ui.Text(c, vaultSyncStateText(snapshot)).FontSize(14).FontWeight(600).TextColor(tone)
-		if problem := vaultSyncProblemText(snapshot.Problem); problem != "" {
+		if problem := vaultSyncProblemText(snapshot.Provider, snapshot.Problem); problem != "" {
 			ui.Text(c, problem).FontSize(13).TextColor(tone)
 		}
 		if snapshot.Connected {
@@ -143,9 +154,23 @@ func (p *settingsPages) vaultSyncSetup(c *ui.Context, service VaultSyncService, 
 		p.vaultSyncDeviceCode(c, service, snapshot)
 		return
 	}
+	if isBrowserSyncProvider(f.provider) && snapshot.Status == appsync.StatusAuthorizing {
+		p.vaultSyncBrowserWait(c, service)
+		return
+	}
 	p.choices(c, "Sync provider", []choice{
 		pick("GitHub Gist", f.provider == appsync.ProviderGitHub, func() {
 			f.provider = appsync.ProviderGitHub
+			f.pendingInsecure = false
+			f.problem = ""
+		}),
+		pick("Google Drive", f.provider == appsync.ProviderGoogleDrive, func() {
+			f.provider = appsync.ProviderGoogleDrive
+			f.pendingInsecure = false
+			f.problem = ""
+		}),
+		pick("OneDrive", f.provider == appsync.ProviderOneDrive, func() {
+			f.provider = appsync.ProviderOneDrive
 			f.pendingInsecure = false
 			f.problem = ""
 		}),
@@ -170,6 +195,11 @@ func (p *settingsPages) vaultSyncSetup(c *ui.Context, service VaultSyncService, 
 		// starts the device code; the token is stored by the engine.
 		kit.Notice(c, icons.Info, c.Theme().TextMuted,
 			"Connect shows a one-time code to enter at github.com. The token stays in this phone's credential store.", nil)
+	case appsync.ProviderGoogleDrive, appsync.ProviderOneDrive:
+		// The browser opens outside the app; the callback comes back through
+		// the registered URL type / intent-filter. No endpoint fields.
+		kit.Notice(c, icons.Info, c.Theme().TextMuted,
+			"Connect opens the system browser. Finish signing in there, then return to Natcatty; the token stays in this phone's credential store.", nil)
 	case appsync.ProviderS3:
 		p.vaultSyncS3Form(c)
 	default:
@@ -204,6 +234,23 @@ func (p *settingsPages) vaultSyncDeviceCode(c *ui.Context, service VaultSyncServ
 	})
 	if kit.SecondaryButton(c, "", "Cancel sign-in").Clicked() {
 		service.CancelGitHubConnect()
+		p.syncForm.problem = ""
+	}
+}
+
+// vaultSyncBrowserWait replaces the setup form while the system browser is
+// open. The waiting window covers switching to the browser and back; the page
+// polls Snapshot, so the outcome appears without the user tapping anything.
+func (p *settingsPages) vaultSyncBrowserWait(c *ui.Context, service VaultSyncService) {
+	t := c.Theme()
+	name := vaultSyncProviderText(p.syncForm.provider)
+	ui.Column(c).FillWidth().Gap(4).Padding(12, 14).Background(t.Surface).Radius(12).Children(func() {
+		ui.Text(c, "Waiting for "+name+" sign-in…").FontSize(14).FontWeight(600).TextColor(t.Text)
+		ui.Text(c, "Complete the sign-in in the browser, then return to Natcatty. The connection finishes here on its own.").
+			FontSize(13).TextColor(t.TextMuted)
+	})
+	if kit.SecondaryButton(c, "", "Cancel sign-in").Clicked() {
+		service.CancelBrowserConnect()
 		p.syncForm.problem = ""
 	}
 }
@@ -279,6 +326,16 @@ func (p *settingsPages) connectVaultSync(service VaultSyncService) {
 		// The shared engine keeps the password for this run and polls GitHub.
 		// Snapshot reports the code and then the outcome.
 		if err := service.StartGitHubConnect(f.master); err != nil {
+			f.problem = vaultSyncActionProblem(err)
+			return
+		}
+		f.problem = ""
+		return
+	case appsync.ProviderGoogleDrive, appsync.ProviderOneDrive:
+		// The shared engine keeps the password for this run, opens the system
+		// browser, and waits for the custom-scheme callback. Snapshot reports
+		// the waiting state and then the outcome.
+		if err := service.StartBrowserConnect(f.master, f.provider); err != nil {
 			f.problem = vaultSyncActionProblem(err)
 			return
 		}
@@ -436,6 +493,18 @@ func vaultSyncStateText(snapshot appsync.Snapshot) string {
 	}
 }
 
+// isBrowserSyncProvider reports a provider whose sign-in leaves the app for
+// the system browser. The page shows the waiting window instead of the form
+// while one is authorizing.
+func isBrowserSyncProvider(provider string) bool {
+	switch appsync.NormalizeProvider(provider) {
+	case appsync.ProviderGoogleDrive, appsync.ProviderOneDrive:
+		return true
+	default:
+		return false
+	}
+}
+
 func vaultSyncProviderText(provider string) string {
 	switch appsync.NormalizeProvider(provider) {
 	case appsync.ProviderS3:
@@ -451,11 +520,17 @@ func vaultSyncProviderText(provider string) string {
 	}
 }
 
-func vaultSyncProblemText(problem appsync.Problem) string {
+// vaultSyncProblemText is the actionable sentence for a failed connection or
+// sync. Provider is used only to name the sign-in that did not finish, so a
+// Google Drive state mismatch never reads as a GitHub problem.
+func vaultSyncProblemText(provider string, problem appsync.Problem) string {
 	switch problem {
 	case appsync.ProblemNone:
 		return ""
 	case appsync.ProblemNotConfigured:
+		if isBrowserSyncProvider(provider) {
+			return vaultSyncProviderText(provider) + " sign-in is not configured on this build."
+		}
 		return "Configure a provider and master password to start syncing."
 	case appsync.ProblemPasswordRequired:
 		return "Enter the master password to sync."
@@ -482,7 +557,10 @@ func vaultSyncProblemText(problem appsync.Problem) string {
 	case appsync.ProblemRateLimited:
 		return "The provider is rate limiting this device."
 	case appsync.ProblemAuthorization:
-		return "GitHub sign-in did not finish. Try again."
+		// Cancel, a mismatched state, a timeout, and a rejected token exchange
+		// are one retryable state; naming the provider tells the user which
+		// sign-in to repeat.
+		return vaultSyncProviderText(provider) + " sign-in did not finish. Try again."
 	case appsync.ProblemCorrupt:
 		return "The cloud copy is damaged."
 	case appsync.ProblemConflict:
