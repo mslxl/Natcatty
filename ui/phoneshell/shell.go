@@ -129,6 +129,13 @@ type Shell struct {
 	// appLock wraps every section while App Lock is closed. A shell without an
 	// App Lock service has no gate and renders its sections directly.
 	appLock *lockGate
+	// browser is the shared browser panel seam. Nil hides every Browser entry
+	// with a stated reason.
+	browser BrowserProvider
+	// hostBrowsers holds one Browser per Host-detail page, keyed by section
+	// and Host. The Vault and the Hosts tab can show the same Host without
+	// sharing one panel's gateway.
+	hostBrowsers map[string]*browserSurface
 }
 
 // Option customizes a Shell. The composition root passes the shared Vault
@@ -249,6 +256,7 @@ func New(opts ...Option) *Shell {
 		sessions: &sessionTabs{newScreen: newTerminalScreen},
 
 		proxyCommand: platformProxyCommandCapability(),
+		hostBrowsers: make(map[string]*browserSurface),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -288,6 +296,10 @@ func New(opts ...Option) *Shell {
 	// documents applied from outside the pages.
 	s.settings.onAppearanceChange = s.RefreshTerminalAppearance
 	s.hosts.open = s.openHost
+	// The Browser entry is a Host-detail action. It pushes the Browser page
+	// in whichever section is showing the detail page.
+	s.hosts.browserCapability = s.browserCapability
+	s.hosts.openBrowser = s.openHostBrowser
 	s.hosts.details = func(host domainvault.Host) {
 		s.sections[Hosts].router.Push("/host/" + string(host.ID))
 	}
@@ -308,6 +320,11 @@ func New(opts ...Option) *Shell {
 		s.sections[Vault].router.Push("/hosts/" + string(host.ID))
 	}
 	s.sessions.launch = s.launchPane
+	// The Session Tools surface offers the Browser for an eligible Host. Its
+	// WebViews belong to the Sessions window, which is where the surface
+	// draws.
+	s.sessions.browser = s.browser
+	s.sessions.window = func() *mygo.Window { return s.windows[Sessions] }
 	s.sessions.show = func(id string) {
 		s.sections[Sessions].router.Push("/session/" + id)
 	}
@@ -403,6 +420,11 @@ func (s *Shell) newSection(i Section) *section {
 				s.hosts.drawEditor(c, s.cancelHostEditor)
 				return true
 			}
+			if r.Match("/host/{id}/browser") {
+				r.Title("Browser")
+				s.drawHostBrowser(c, Hosts, r.Param("id"))
+				return true
+			}
 			if !r.Match("/host/{id}") {
 				return false
 			}
@@ -415,6 +437,11 @@ func (s *Shell) newSection(i Section) *section {
 		sec.pages = s.vaultSectionPages()
 		sec.draw = s.vault.draw
 		sec.route = func(c *ui.Context, r *ui.Route) bool {
+			if r.Match("/hosts/{id}/browser") {
+				r.Title("Browser")
+				s.drawHostBrowser(c, Vault, r.Param("id"))
+				return true
+			}
 			if !r.Match("/hosts/{id}") {
 				return false
 			}
@@ -605,6 +632,12 @@ func (s *Shell) Foreground() {
 
 // Close ends every open Session. The phone root calls it on quit.
 func (s *Shell) Close() {
+	// Release every Browser first: each holds a dedicated gateway and channel
+	// lease that must not outlive the shell.
+	for key, surface := range s.hostBrowsers {
+		delete(s.hostBrowsers, key)
+		surface.close()
+	}
 	s.sessions.closeAll()
 }
 

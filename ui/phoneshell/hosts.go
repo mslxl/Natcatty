@@ -70,6 +70,11 @@ type hostPages struct {
 	// details pushes one Host's detail page on the Hosts section's own
 	// router. The Shell sets it, because the section owns the router.
 	details func(domainvault.Host)
+	// browserCapability reads this device's Host Browser capability, and
+	// openBrowser pushes one Host's Browser page. Both are set by the Shell;
+	// when either is nil the Browser entry is absent with a stated reason.
+	browserCapability func() BrowserCapability
+	openBrowser       func(domainvault.Host)
 	// saveDone navigates after a save: to the saved Host's page, to the new
 	// Session, or away from the editor when the list refresh failed.
 	saveDone func(domainvault.Host, bool, bool)
@@ -839,6 +844,32 @@ func (h *hostPages) drawDetail(c *ui.Context, id string) {
 			h.detailColumn(c, host)
 			if h.detailProblem != "" {
 				kit.Notice(c, icons.TriangleAlert, c.Theme().Danger, h.detailProblem, nil)
+			}
+			// The Browser needs a forwarding channel, so only a remote
+			// forwarding Host is offered it. A device whose WebView cannot
+			// keep a per-Host data store, cookies and downloads states why
+			// the entry is absent instead of showing a button that fails.
+			if browserEligible(host) {
+				capability := BrowserCapability{Reason: "The Host Browser is not available in this build."}
+				if h.browserCapability != nil {
+					capability = h.browserCapability()
+				}
+				if capability.Supported && h.openBrowser != nil {
+					browse := kit.ListRow(c).Label("Open Browser for " + hostName(host))
+					browse.Children(func() {
+						ui.Row(c).Grow(1).Gap(10).AlignItems(ui.Center).Children(func() {
+							ui.Icon(c, icons.Lucide(icons.Globe)).TextColor(c.Theme().Accent)
+							ui.Text(c, "Browser").FontWeight(600)
+						})
+						ui.Text(c, "›").FontSize(20).TextColor(c.Theme().TextMuted)
+					})
+					if browse.Clicked() {
+						h.openBrowser(host)
+					}
+				} else {
+					kit.Notice(c, icons.TriangleAlert, c.Theme().Warning,
+						browserReason(capability), nil)
+				}
 			}
 			if h.editHost != nil {
 				edit := kit.ListRow(c).Label("Edit " + hostName(host))

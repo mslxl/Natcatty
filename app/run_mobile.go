@@ -316,6 +316,19 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 		phoneshell.WithNetworkConfPicker(wireguardConfPicker{
 			locale: func() string { return mygo.App.Locale() },
 		}),
+		// The Host Browser reuses the shared application/browser panel: the
+		// same loopback gateway, destination policy, and download manager as
+		// the desktop, over a dedicated SSH channel lease from the phone's own
+		// Connection Manager and a per-Host MyGo website data store. The probe
+		// hides the entry on a WebView without multi-profile support, with
+		// MyGo's own reason.
+		phoneshell.WithBrowserProvider(newPhoneBrowserProvider(
+			vault,
+			vaultRoutes{vault: vault, preferences: preferences},
+			sessionRuntime.connections,
+			func() (string, error) { return mygo.App.Path(mygo.PathDownloads) },
+			nil,
+		)),
 	)
 	// A Provider status arrives on its own goroutine. Repaint every phone
 	// window so the Networks row shows the new phase, Auth URL, or error

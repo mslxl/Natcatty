@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
@@ -430,6 +431,12 @@ type sessionTabs struct {
 	// history backs the Tools surface's Command History tool. Nil means the
 	// surface still opens, but that tool reports why it is unavailable.
 	history CommandHistoryService
+	// browser backs the Tools surface's Browser tool. Nil means the entry is
+	// absent and the catalog states this build has no browser.
+	browser BrowserProvider
+	// window is the Sessions window a Browser's WebViews belong to. It is nil
+	// until Show created the windows.
+	window func() *mygo.Window
 	// prompts holds the trust and credential prompts the Panes answer.
 	prompts *Prompts
 	// launch opens one Pane's Session off the UI thread. It is addressed by the
@@ -1411,6 +1418,9 @@ func (t *sessionTabs) remove(id string) bool {
 			if pane.handle != nil {
 				_ = pane.handle.End()
 			}
+			// A Browser opened from this Pane's Tools surface holds a
+			// dedicated channel lease; closing the Tab must release it.
+			pane.tools.closeBrowser()
 		}
 		// A closed Tab is no longer a Session a relaunch lists.
 		t.persist()
@@ -1457,6 +1467,8 @@ func (t *sessionTabs) removePane(tabID, paneID string) bool {
 	if pane.handle != nil {
 		_ = pane.handle.End()
 	}
+	// The Pane's Browser, if any, held a dedicated channel lease of its own.
+	pane.tools.closeBrowser()
 	// An empty Tab is deliberately not persisted; payloadOf omits it.
 	t.persist()
 	return true
@@ -1511,6 +1523,7 @@ func (t *sessionTabs) closeAll() {
 			if pane.handle != nil {
 				endPreservingResume(pane.handle)
 			}
+			pane.tools.closeBrowser()
 		}
 	}
 	t.savePayload(payload)

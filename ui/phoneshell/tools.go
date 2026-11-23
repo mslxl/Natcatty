@@ -21,10 +21,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
 	domainhistory "github.com/mslxl/natcatty/domain/history"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
 )
@@ -55,6 +57,7 @@ const (
 	// toolNone is the catalog itself.
 	toolNone toolID = iota
 	toolHistory
+	toolBrowser
 	toolFiles
 	toolForwarding
 	toolSystem
@@ -73,6 +76,7 @@ type toolSpec struct {
 // them.
 var toolCatalog = []toolSpec{
 	{id: toolHistory, title: "Command history"},
+	{id: toolBrowser, title: "Browser"},
 	{id: toolFiles, title: "Files"},
 	{id: toolForwarding, title: "Port forwarding"},
 	{id: toolSystem, title: "System management"},
@@ -138,6 +142,10 @@ type toolsState struct {
 	loadProblem string
 	// pending is the clear awaiting an answer, if any.
 	pending *toolsClear
+	// browser is this Pane's Browser surface, made when the Browser tool is
+	// entered. It holds the Host's dedicated channel lease; leaving the tool
+	// closes it, so the Session's own transport is never touched.
+	browser *browserSurface
 	// result is the last clear's outcome; resultProblem marks it a failure.
 	result        string
 	resultProblem bool
@@ -165,6 +173,20 @@ func (t *sessionTabs) closeTools(st *toolsState) {
 	}
 	st.open = false
 	st.pending = nil
+	// Leaving the Tools surface releases a Browser opened from it. The
+	// terminal was never detached, so the Pane is exactly as it was.
+	st.closeBrowser()
+}
+
+// closeBrowser releases one Pane's Browser and its dedicated channel lease.
+// It is safe when no Browser was ever opened.
+func (st *toolsState) closeBrowser() {
+	if st == nil || st.browser == nil {
+		return
+	}
+	surface := st.browser
+	st.browser = nil
+	surface.close()
 }
 
 // loadToolHistory refreshes the journal behind the Command History tool. A
@@ -304,9 +326,11 @@ func (t *sessionTabs) drawTools(c *ui.Context, view tabView) {
 			})
 			switch st.tool {
 			case toolNone:
-				t.drawToolCatalog(c, st)
+				t.drawToolCatalog(c, st, view)
 			case toolHistory:
 				t.drawToolHistory(c, st, view.screen)
+			case toolBrowser:
+				t.drawToolBrowser(c, st, view)
 			default:
 				t.drawToolPage(c, st)
 			}
@@ -315,15 +339,20 @@ func (t *sessionTabs) drawTools(c *ui.Context, view tabView) {
 }
 
 // drawToolCatalog lists the tools. Command History carries its live entry count
-// or the availability reason; every other row says it is not here yet.
-func (t *sessionTabs) drawToolCatalog(c *ui.Context, st *toolsState) {
+// or the availability reason; the Browser row is listed only for an eligible
+// Host on a device whose WebView supports it, and every other row says it is
+// not here yet.
+func (t *sessionTabs) drawToolCatalog(c *ui.Context, st *toolsState, view tabView) {
 	for _, spec := range toolCatalog {
 		spec := spec
+		if spec.id == toolBrowser && !t.browserToolAvailable(view.host) {
+			continue
+		}
 		row := kit.ListRow(c).Label("Open " + spec.title)
 		row.Children(func() {
 			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 				ui.Text(c, spec.title)
-				ui.Text(c, t.toolSummary(st, spec.id)).FontSize(12).
+				ui.Text(c, t.toolSummary(st, spec.id, view.host)).FontSize(12).
 					TextColor(c.Theme().TextMuted).SingleLine()
 			})
 			ui.Text(c, "›").FontSize(20).TextColor(c.Theme().TextMuted)
@@ -340,20 +369,94 @@ func (t *sessionTabs) drawToolCatalog(c *ui.Context, st *toolsState) {
 			}
 		}
 	}
+	// A device without the WebView capability still states why its entry is
+	// absent, so a missing Browser reads as a fact about this phone rather
+	// than a broken page. An ineligible Host needs no explanation: Telnet and
+	// Local Hosts can never carry a forwarding channel.
+	if browserEligible(view.host) && !t.browserCapability().Supported {
+		kit.Notice(c, icons.TriangleAlert, c.Theme().Warning,
+			browserReason(t.browserCapability()), nil)
+	}
 }
 
 // toolSummary is the catalog row's second line.
-func (t *sessionTabs) toolSummary(st *toolsState, id toolID) string {
-	if id != toolHistory {
-		return "Not on the phone yet"
+func (t *sessionTabs) toolSummary(st *toolsState, id toolID, host domainvault.Host) string {
+	switch id {
+	case toolHistory:
+		if t.history == nil || st == nil || st.loadProblem != "" {
+			return "Unavailable"
+		}
+		if !st.loaded {
+			return "Search and reuse commands"
+		}
+		return fmt.Sprintf("%d entries", len(st.entries))
+	case toolBrowser:
+		if !t.browserToolAvailable(host) {
+			return "Unavailable"
+		}
+		return "Browse this Host"
 	}
-	if t.history == nil || st == nil || st.loadProblem != "" {
-		return "Unavailable"
+	return "Not on the phone yet"
+}
+
+// browserToolAvailable reports whether this Pane's Host can offer the Browser
+// right now. The entry is hidden, not disabled, when it is false.
+func (t *sessionTabs) browserToolAvailable(host domainvault.Host) bool {
+	return t != nil && t.browser != nil && browserEligible(host) && t.browserCapability().Supported
+}
+
+// browserCapability reads the provider's device capability. A sessionTabs with
+// no provider fails closed with a stated reason.
+func (t *sessionTabs) browserCapability() BrowserCapability {
+	if t == nil || t.browser == nil {
+		return BrowserCapability{Reason: "The Host Browser is not available in this build."}
 	}
-	if !st.loaded {
-		return "Search and reuse commands"
+	capability := t.browser.Capability()
+	if !capability.Supported {
+		capability.Reason = browserReason(capability)
 	}
-	return fmt.Sprintf("%d entries", len(st.entries))
+	return capability
+}
+
+// drawToolBrowser renders the Browser inside the Tools surface. The browser
+// gets a dedicated channel lease, so the Pane's terminal stays attached; Done
+// closes the browser's gateway and lease and returns to the terminal.
+func (t *sessionTabs) drawToolBrowser(c *ui.Context, st *toolsState, view tabView) {
+	if kit.GhostButton(c, icons.ChevronLeft, "All tools").Clicked() {
+		st.tool = toolNone
+		st.closeBrowser()
+		return
+	}
+	if !t.browserToolAvailable(view.host) {
+		kit.EmptyHint(c, browserReason(t.browserCapability()))
+		return
+	}
+	if st.browser == nil {
+		browser, err := t.browser.Open(view.host, t.browserWindow())
+		if err != nil {
+			kit.Notice(c, icons.TriangleAlert, c.Theme().Danger,
+				"Could not open the Browser: "+err.Error(), nil)
+			return
+		}
+		st.browser = newBrowserSurface(browser, nil)
+	}
+	kit.SectionBar(c, "Browser · "+hostName(view.host), nil)
+	drawBrowserSurface(c, st.browser, "Close Browser", func() {
+		// Close the whole surface: the user asked to leave the Browser, and
+		// the terminal underneath was never detached.
+		st.open = false
+		st.pending = nil
+		st.closeBrowser()
+	})
+}
+
+// browserWindow returns the Sessions window the Browser's WebViews belong to.
+// It is nil before Show, when Open then reports the missing window.
+func (t *sessionTabs) browserWindow() *mygo.Window {
+	if t == nil || t.window == nil {
+		return nil
+	}
+	return t.window()
 }
 
 // drawToolHistory renders the Command History tool: search, the three clears,
