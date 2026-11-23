@@ -174,6 +174,10 @@ func newPhoneVault(database *store.Store, secrets *store.SecretStore) *appvault.
 		appvault.WithProxyProfiles(database),
 		appvault.WithNetworkProfiles(database),
 		appvault.WithKnownHosts(database),
+		// Snippets and Snippet packages are the same shared family the desktop
+		// edits: a Snippet created on the phone reaches a desktop reload, and a
+		// phone run uses the desktop's substitution and target rules.
+		appvault.WithSnippets(database),
 		appvault.WithKeyInspector(sshadapter.KeyParser{}),
 	}
 	if secrets != nil {
@@ -471,6 +475,11 @@ func (h *phoneSessionHandle) Resume() (io.ReadWriteCloser, error) {
 }
 
 func (h *phoneSessionHandle) Done() <-chan struct{} { return h.session.Done() }
+
+// InsertInput queues bytes in the Session's transport without claiming the one
+// live terminal view. The phone Snippets page uses it to run a command in a
+// Session that is hibernated because another section is on screen.
+func (h *phoneSessionHandle) InsertInput(data []byte) bool { return h.session.InsertInput(data) }
 
 // End disconnects and ends the Session. An explicit close is the only caller.
 func (h *phoneSessionHandle) End() error {

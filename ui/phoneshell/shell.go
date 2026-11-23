@@ -313,6 +313,9 @@ func (s *Shell) syncLiveView() {
 }
 
 // visibleSession is the Session the current route shows: the top page behind
+	// The Snippets page runs a Snippet in the Sessions section, so it is built
+	// after the Shell and holds it.
+	s.vault.snippets = newSnippetPages(s)
 // /session/{id}, and only while the Sessions section is selected. A page in
 // another section, or behind a pushed page in Sessions, shows no terminal.
 func (s *Shell) visibleSession() string {
@@ -464,8 +467,6 @@ func vaultSectionPlaceholder(id vaultsection.Section) string {
 	switch id {
 	case vaultsection.Forwarding:
 		return "Port forwarding rules are not on the phone yet."
-	case vaultsection.Snippets:
-		return "Snippets are not on the phone yet."
 	case vaultsection.Notes:
 		return "Vault Notes are not on the phone yet."
 	}
@@ -484,6 +485,8 @@ func pageContentWidth(c *ui.Context) float32 {
 	return width
 }
 
+		case vaultsection.Snippets:
+			p.summary = s.vault.snippetsSummary
 // Info returns a section's title and symbol.
 func (s *Shell) Info(sec Section) Info { return s.sections[sec].info }
 

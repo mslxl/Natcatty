@@ -103,6 +103,10 @@ type vaultPages struct {
 	// list, its editor, and the interactive Tailscale login controls. It is
 	// nil only before newVaultPages initializes it.
 	networks *networkPages
+	// snippets owns the Vault's Snippets section: the shared Snippet and
+	// package lists, their editors, and the run form. The Shell installs it
+	// because a run reaches the Sessions section.
+	snippets *snippetPages
 
 	pendingKey       model.KeyID
 	pendingIdentity  model.IdentityID
@@ -141,6 +145,9 @@ func (v *vaultPages) load(ctx context.Context) error {
 		v.identitiesStatus, v.identityProblem = vaultFailed, unavailable
 		v.knownStatus, v.knownProblem = vaultFailed, unavailable
 		v.proxyStatus, v.proxyProblem = vaultFailed, unavailable
+		if v.snippets != nil {
+			v.snippets.status, v.snippets.problem = vaultFailed, unavailable
+		}
 		return nil
 	}
 	var firstErr error
@@ -191,6 +198,7 @@ func (v *vaultPages) load(ctx context.Context) error {
 		}
 	}
 	v.loadNetworks(ctx)
+	v.loadSnippets(ctx)
 	return firstErr
 }
 
@@ -245,6 +253,8 @@ func (v *vaultPages) draw(c *ui.Context, p page) {
 		v.drawProxies(c)
 	case "/networks":
 		v.drawNetworks(c)
+	case "/snippets":
+		v.drawSnippets(c)
 	case "/known-hosts":
 		v.drawKnownHosts(c)
 	}
