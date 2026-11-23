@@ -1,5 +1,5 @@
 diff --git a/plugins/terminal/internal/vt/terminal.go b/plugins/terminal/internal/vt/terminal.go
-index 24e8fca9f..1024979cb 100644
+index cc6699c6..6b68e0f7 100644
 --- a/plugins/terminal/internal/vt/terminal.go
 +++ b/plugins/terminal/internal/vt/terminal.go
 @@ -36,6 +36,17 @@ type Terminal struct {
@@ -189,7 +189,7 @@ index 24e8fca9f..1024979cb 100644
  	}
  	c := modeConfig{mode: uint16(m), value: v}
 diff --git a/plugins/terminal/internal/vt/terminal_test.go b/plugins/terminal/internal/vt/terminal_test.go
-index c5c4b0741..ccbd84743 100644
+index c5c4b074..ccbd8474 100644
 --- a/plugins/terminal/internal/vt/terminal_test.go
 +++ b/plugins/terminal/internal/vt/terminal_test.go
 @@ -296,3 +296,104 @@ func TestDeferredSyntheticResetIsWrittenLater(t *testing.T) {

@@ -1,12 +1,11 @@
 diff --git a/plugins/terminal/internal/vt/terminal.go b/plugins/terminal/internal/vt/terminal.go
-index 0126252ec..e390fa6e1 100644
+index 759d674d..0ef24ae0 100644
 --- a/plugins/terminal/internal/vt/terminal.go
 +++ b/plugins/terminal/internal/vt/terminal.go
-@@ -30,7 +30,26 @@ type Terminal struct {
+@@ -30,8 +30,27 @@ type Terminal struct {
  	// reply gathers what the library writes while it answers a clipboard
  	// read, which WritePTY then gets at once.
  	reply *[]byte
--}
 +	// mouseModes are the DEC mouse modes a program set, as this fork read
 +	// them from the stream. The C library keeps 9, 1000, 1002 and 1003, but
 +	// not 1001 (highlight tracking), whose bit it drops: the fork tracks it
@@ -22,14 +21,15 @@ index 0126252ec..e390fa6e1 100644
 +	// modeTail holds an incomplete escape sequence from the last Write, so
 +	// a DEC mode split across the PTY's reads is still seen.
 +	modeTail []byte
-+}
-+
+ }
+ 
 +// maxModeTail bounds the incomplete escape sequence a Write keeps for the
 +// DEC mouse-mode scan. A mode sequence is short; anything longer is not one.
 +const maxModeTail = 64
- 
++
  // ClipboardRead is a program's request to read the clipboard.
  type ClipboardRead struct {
+ 	// Mimes are the types asked for, in order of preference; List asks
 @@ -229,7 +248,11 @@ func (t *Terminal) Write(p []byte) {
  		// A read that was deferred but whose refusal never came, as of a
  		// library of another version, is stale.
@@ -219,7 +219,7 @@ index 0126252ec..e390fa6e1 100644
  	var v bool
  	return t.get(dataMouseTracking, unsafe.Pointer(&v)) == nil && v
  }
-@@ -582,7 +742,14 @@ func (t *Terminal) VT() []byte {
+@@ -612,7 +772,14 @@ func (t *Terminal) VT() []byte {
  	if p != 0 {
  		call(fnFree, 0, p, n)
  	}

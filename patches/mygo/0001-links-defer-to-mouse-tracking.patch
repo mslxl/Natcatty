@@ -1,6 +1,8 @@
+diff --git a/plugins/terminal/view.go b/plugins/terminal/view.go
+index 967e1a79..e1f2a50a 100644
 --- a/plugins/terminal/view.go
 +++ b/plugins/terminal/view.go
-@@ -1134,8 +1134,16 @@
+@@ -1256,8 +1256,16 @@ func (t *Terminal) HoveredLink() (link string, path bool, at ui.Rect) {
  
  // linkUnder is the link a click with mods at (x, y) opens, whether it is
  // a file path, and its cells: none without Command, or while the primary
