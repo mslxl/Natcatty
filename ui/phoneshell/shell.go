@@ -269,6 +269,9 @@ func New(opts ...Option) *Shell {
 	// The Vault's Hosts family reads the Hosts tab's list and detail pages.
 	// Only the router differs: the Vault section owns its own stack.
 	s.vault.hosts = s.hosts
+	// The Snippets page runs a Snippet in the Sessions section, so it is built
+	// after the Shell and holds it.
+	s.vault.snippets = newSnippetPages(s)
 	s.vault.hostDetails = func(host domainvault.Host) {
 		s.sections[Vault].router.Push("/hosts/" + string(host.ID))
 	}
@@ -313,9 +316,6 @@ func (s *Shell) syncLiveView() {
 }
 
 // visibleSession is the Session the current route shows: the top page behind
-	// The Snippets page runs a Snippet in the Sessions section, so it is built
-	// after the Shell and holds it.
-	s.vault.snippets = newSnippetPages(s)
 // /session/{id}, and only while the Sessions section is selected. A page in
 // another section, or behind a pushed page in Sessions, shows no terminal.
 func (s *Shell) visibleSession() string {
@@ -428,6 +428,8 @@ func (s *Shell) vaultSectionPages() []page {
 			p.summary = s.vault.proxiesSummary
 		case vaultsection.Networks:
 			p.summary = s.vault.networksSummary
+		case vaultsection.Snippets:
+			p.summary = s.vault.snippetsSummary
 		case vaultsection.KnownHosts:
 			p.summary = s.vault.knownHostsSummary
 		default:
@@ -485,8 +487,6 @@ func pageContentWidth(c *ui.Context) float32 {
 	return width
 }
 
-		case vaultsection.Snippets:
-			p.summary = s.vault.snippetsSummary
 // Info returns a section's title and symbol.
 func (s *Shell) Info(sec Section) Info { return s.sections[sec].info }
 
