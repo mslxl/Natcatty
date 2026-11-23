@@ -288,6 +288,23 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 	}
 }
 
+// installSessionActivityHook makes every Session change count as user activity
+// for the phone's App Lock gate, postponing the idle lock. Terminal widgets
+// consume their own input, so the gate never sees keystrokes typed there; a
+// Session change (including the echo of that input) is the observable activity.
+// This is the phone's copy of the desktop root's rule in app/app.go, and it is
+// intentionally unfiltered: the desktop records activity for every Session
+// change, output included, so remote output alone postpones the idle lock on
+// both platforms.
+func installSessionActivityHook(service *appsession.Service, record func()) {
+	if service == nil || record == nil {
+		return
+	}
+	service.SetChangeHook(func(appsession.Snapshot) {
+		record()
+	})
+}
+
 // phoneSessionOptions is the shared Session behavior the phone composes. The
 // clipboard policy is the same OSC 52 setting the desktop applies, read live:
 // the Settings change hook calls SetClipboardPolicy so a change reaches

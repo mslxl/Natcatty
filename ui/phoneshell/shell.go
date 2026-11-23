@@ -14,10 +14,12 @@ package phoneshell
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	appapplock "github.com/mslxl/natcatty/application/applock"
 	domainmodel "github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/icons"
@@ -86,6 +88,9 @@ type section struct {
 	// link. It runs inside whichever section is showing, so a problem never
 	// moves the user to another page to read it.
 	banner func(c *ui.Context)
+	// gate wraps this section's frame while App Lock is closed. Every section
+	// shares the shell's gate, so the lock covers whichever one shows.
+	gate *lockGate
 }
 
 // Shell is the four sections of the phone app. Construct it with New; its
@@ -117,6 +122,13 @@ type Shell struct {
 	// proxyCommand is this build's ProxyCommand execution capability. The
 	// Proxy pages show its reason while keeping configuration editable.
 	proxyCommand ProxyCommandCapability
+	// appLockService is the shared App Lock state machine; appLockNow is its
+	// clock. The gate is built after the options, once both are known.
+	appLockService *appapplock.Service
+	appLockNow     func() time.Time
+	// appLock wraps every section while App Lock is closed. A shell without an
+	// App Lock service has no gate and renders its sections directly.
+	appLock *lockGate
 }
 
 // Option customizes a Shell. The composition root passes the shared Vault
@@ -213,6 +225,21 @@ func WithSessionStore(store SessionStore) Option {
 	return func(s *Shell) { s.sessions.store = store }
 }
 
+// WithAppLock gives the shell the shared App Lock state machine. Its gate then
+// covers every section: a locked app shows the phone's unlock page instead of
+// any Workspace content, and leaving the foreground closes the gate so the
+// system's snapshot shows no terminal.
+func WithAppLock(service *appapplock.Service) Option {
+	return func(s *Shell) { s.appLockService = service }
+}
+
+// WithAppLockClock sets the clock the gate uses for the idle rule. It must be
+// the clock the service was built with; tests inject one so an idle lock is
+// deterministic. Without it the gate reads time.Now, as production does.
+func WithAppLockClock(now func() time.Time) Option {
+	return func(s *Shell) { s.appLockNow = now }
+}
+
 // New returns the phone shell with every section at its root page.
 func New(opts ...Option) *Shell {
 	s := &Shell{
@@ -225,6 +252,11 @@ func New(opts ...Option) *Shell {
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	// The gate is built after the options so it shares the service's clock and
+	// applies to every section, including ones added later.
+	if s.appLockService != nil {
+		s.appLock = newLockGate(s.appLockService, s.appLockNow)
 	}
 	// Both Vault surfaces draw the capability after every option, so a test's
 	// override applies to the Proxies page and the Host editor alike.
@@ -332,7 +364,7 @@ func (s *Shell) visibleSession() string {
 }
 
 func (s *Shell) newSection(i Section) *section {
-	sec := &section{info: infos[i], router: ui.NewRouter("/"), before: s.syncLiveView, banner: s.drawDeepLinkNotice}
+	sec := &section{info: infos[i], router: ui.NewRouter("/"), before: s.syncLiveView, banner: s.drawDeepLinkNotice, gate: s.appLock}
 	switch i {
 	case Sessions:
 		sec.rootDraw = s.sessions.drawRoot
@@ -552,6 +584,12 @@ func (s *Shell) Background() {
 	s.backgrounded = true
 	s.sessions.syncVisible("")
 	s.sessions.persist()
+	// Close the gate before the system snapshots the app: the snapshot then
+	// shows the lock screen rather than the terminal. An App Lock that is
+	// disabled or has no verifier leaves the gate open, as on the desktop.
+	if s.appLock != nil {
+		s.appLock.lockForBackground()
+	}
 }
 
 // Foreground is the app-lifecycle hook for returning to the foreground. It
@@ -566,7 +604,9 @@ func (s *Shell) Foreground() {
 }
 
 // Close ends every open Session. The phone root calls it on quit.
-func (s *Shell) Close() { s.sessions.closeAll() }
+func (s *Shell) Close() {
+	s.sessions.closeAll()
+}
 
 // openHost opens one Host as a Session Tab, switches to Sessions, and pushes
 // the terminal page there. The Hosts section's router is untouched, so
@@ -701,12 +741,24 @@ func (s *Shell) leaveSession(id string) {
 
 // View returns the view of one section, for the window of its tab. A section
 // is its own view rather than the shell's so that each tab's window renders
-// the section it holds.
+// the section it holds. The section's own frame applies the shared App Lock
+// gate, so a window created before the gate engaged is covered too.
 func (s *Shell) View(sec Section) func(c *ui.Context) { return s.sections[sec].view }
 
 // view draws the section: the system's navigation bar on phones, and a back
 // bar of its own where there is no system stack (the desktop tester).
 func (sec *section) view(c *ui.Context) {
+	if sec.gate != nil {
+		// A closed gate replaces the whole frame, so no page, router, banner,
+		// or terminal view is built behind it.
+		sec.gate.wrap(sec.drawFrame)(c)
+		return
+	}
+	sec.drawFrame(c)
+}
+
+// drawFrame is the section as it draws when App Lock is open.
+func (sec *section) drawFrame(c *ui.Context) {
 	// Apply the Session lifecycle before anything draws: the route that is
 	// about to render decides which Session owns the one live terminal view.
 	if sec.before != nil {

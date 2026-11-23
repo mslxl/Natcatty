@@ -132,6 +132,14 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 		return nil, nil, nil, nil, nil, err
 	}
 
+	// App Lock is loaded before the shell so an enabled lock is closed before
+	// the first frame; the shell's gate then covers every section, and leaving
+	// the foreground closes it again for the system's snapshot.
+	appLock, err := newPhoneAppLock(ctx, userData)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+
 	database, err := store.Open(ctx, filepath.Join(userData, "natcatty.db"))
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
@@ -260,8 +268,15 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 	// uses, so the Terminal page's Remote clipboard control has an effect.
 	sessionRuntime = newPhoneSessionRuntime(vault, database, userData, prompts, history, fieldSecrets,
 		func() domainterminal.Settings { return terminalSettings.Settings() }, preferences)
+	// Terminal widgets consume their own input, so the gate never sees
+	// keystrokes typed there. A Session change (including output) is the
+	// observable activity, exactly as the desktop composition root counts it.
+	installSessionActivityHook(sessionRuntime.service, appLock.RecordActivity)
 
 	shell = phoneshell.New(
+		// App Lock covers every section and closes on background, so the
+		// system's snapshot cannot show terminal content.
+		phoneshell.WithAppLock(appLock),
 		phoneshell.WithVault(vault),
 		phoneshell.WithHosts(vault),
 		phoneshell.WithSessionOpener(sessionRuntime),
