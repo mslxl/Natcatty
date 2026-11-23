@@ -288,8 +288,8 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 				preferences.Settings().Appearance, mygo.Theme.IsDark())
 		}),
 		// The open Tabs survive a relaunch in the shared Workspace restore
-		// format; the phone's payload is its flat one-Pane-per-Tab form, which
-		// FlattenRestored reads back as dormant entries.
+		// format: the phone reads and writes the same split tree the desktop
+		// uses, and a cold start restores every restorable Pane.
 		phoneshell.WithSessionStore(database.Workspace()),
 	)
 	return shell, database, sessionRuntime, history, vaultSync, nil

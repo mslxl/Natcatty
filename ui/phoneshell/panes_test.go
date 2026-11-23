@@ -483,15 +483,113 @@ func assertUniquePaneIDs(t *testing.T, fixture *phoneFixture) {
 	}
 }
 
+// TestPaneIDsAreNeverRecycled pins the stale-outcome guard: after a Pane
+// closes, the Tab mints a new identity rather than handing the old one to its
+// replacement.
+func TestPaneIDsAreNeverRecycled(t *testing.T) {
+	host := phoneHosts()[0]
+	tabs := &sessionTabs{}
+	tab, first := tabs.begin(host)
+	firstID := first.id
+	tabs.removePane(tab.id, string(firstID))
+
+	second, ok := tabs.addPane(tab.id, host)
+	if !ok {
+		t.Fatal("the Tab rejected a Pane after its last one closed")
+	}
+	if second.id == firstID {
+		t.Fatalf("the reopened Pane reused the closed Pane's identity %q", firstID)
+	}
+	if got := string(tabs.tabs[0].focus); got != string(second.id) {
+		t.Fatalf("focus = %q, want the reopened Pane %q", got, second.id)
+	}
+}
+
+// TestRestoredPaneIdentityIsNotRecycledAfterClose covers the same residual for
+// a Pane that arrived from the persisted tree: its sequence is reserved, so a
+// replacement Pane never inherits its identity and a stale outcome stays dead.
+func TestRestoredPaneIdentityIsNotRecycledAfterClose(t *testing.T) {
+	host := phoneHosts()[0]
+	descriptor := descriptorOf(host, hostName(host), "")
+	tabs := &sessionTabs{}
+	tabs.adoptRestored([]RestoredTab{{
+		ID: "tab-1",
+		Root: domainworkspace.NewSplitNode("split-1", domainworkspace.Vertical, 50,
+			domainworkspace.NewPaneNode("pane-tab-1"),
+			domainworkspace.NewPaneNode("pane-tab-1-2")),
+		Focus: "pane-tab-1",
+		Panes: []RestoredPane{
+			{ID: "pane-tab-1", Title: hostName(host), Descriptor: descriptor},
+			{ID: "pane-tab-1-2", Title: hostName(host), Descriptor: descriptor},
+		},
+	}}, func(string) (domainvault.Host, bool) { return host, true })
+
+	tabs.removePane("tab-1", "pane-tab-1-2")
+	replacement, ok := tabs.addPane("tab-1", host)
+	if !ok {
+		t.Fatal("the Tab rejected a Pane after closing a restored one")
+	}
+	if replacement.id == "pane-tab-1-2" {
+		t.Fatalf("the replacement reused the closed restored identity %q", replacement.id)
+	}
+
+	// A stale outcome for the closed restored Pane cannot reach the new one.
+	stale := newFakeHandle("stale output\r\n")
+	tabs.finish("tab-1", "pane-tab-1-2", stale, nil)
+	if !stale.isEnded() {
+		t.Fatal("a stale dial outcome kept its Session open")
+	}
+	tabs.mu.Lock()
+	handle := replacement.handle
+	tabs.mu.Unlock()
+	if handle != nil {
+		t.Fatal("a stale dial outcome installed a handle on the replacement Pane")
+	}
+}
+
+// regression: a dial started for a Pane that has since closed must not install
+// its Session on the Pane that replaced it in the same Tab. The stale handle is
+// ended and the new Pane stays untouched.
+func TestStaleOutcomeCannotReachAReopenedPane(t *testing.T) {
+	host := phoneHosts()[0]
+	tabs := &sessionTabs{}
+	tab, first := tabs.begin(host)
+	firstID := string(first.id)
+	tabs.removePane(tab.id, firstID)
+	second, ok := tabs.addPane(tab.id, host)
+	if !ok {
+		t.Fatal("the Tab rejected the replacement Pane")
+	}
+
+	// The removed Pane's dial finishes after its replacement is connecting.
+	stale := newFakeHandle("stale output\r\n")
+	tabs.finish(tab.id, firstID, stale, nil)
+
+	if !stale.isEnded() {
+		t.Fatal("a stale dial outcome kept its Session open")
+	}
+	tabs.mu.Lock()
+	handle := second.handle
+	status := second.status
+	tabs.mu.Unlock()
+	if handle != nil {
+		t.Fatal("a stale dial outcome installed a handle on the reopened Pane")
+	}
+	if status != tabConnecting {
+		t.Fatalf("the reopened Pane status = %v, want still connecting", status)
+	}
+}
+
 // TestRestoredPaneIdentityDoesNotCollideWithANewTab is the save/restore gap
-// regression: a saved Tab "tab-2" is renumbered to this launch's "tab-1" while
-// its Pane keeps "pane-tab-2", so the next Tab's first Pane must not mint the
-// same identity. The new Pane has to connect to its own Host, and the restored
-// Pane must stay untouched and dormant.
+// regression: a saved Pane keeps "pane-tab-2" while this launch starts a new
+// Tab, so the new Tab's first Pane must not mint the same identity. The new
+// Pane has to connect to its own Host, and the restored Pane keeps its own
+// identity and Session.
 func TestRestoredPaneIdentityDoesNotCollideWithANewTab(t *testing.T) {
 	hosts := phoneHosts()
 	store := &fakeSessionStore{payload: gapRestorePayload(hosts[0])}
 	opener := &fakeOpener{output: "console output\r\n"}
+	opener.queueOutput("restored output\r\n", "console output\r\n")
 	fixture := newPhoneFixtureWith(t, hosts, opener, WithSessionStore(store))
 	fixture.selectSessions(t)
 
@@ -503,8 +601,8 @@ func TestRestoredPaneIdentityDoesNotCollideWithANewTab(t *testing.T) {
 		t.Fatalf("the restored Pane id = %q, want the record's pane-tab-2", restoredID)
 	}
 
-	// Opening a Host starts this launch's tab-2. Its Pane must get a fresh
-	// identity: the restored Pane already owns pane-tab-2 in another Tab.
+	// Opening a Host starts a new Tab. Its Pane must get a fresh identity: the
+	// restored Pane already owns pane-tab-2.
 	fixture.openHostRow(t, "console")
 	fixture.settle()
 	fixture.await(t, "the new Pane's open to settle", func() bool {
@@ -515,7 +613,8 @@ func TestRestoredPaneIdentityDoesNotCollideWithANewTab(t *testing.T) {
 		}
 		created := fixture.shell.sessions.tabs[1].panes[0]
 		old := fixture.shell.sessions.tabs[0].panes[0]
-		return (created.status == tabReady && created.screen != nil) || old.status != tabDormant
+		return created.status == tabReady && created.screen != nil &&
+			old.status == tabHibernated && old.handle != nil
 	})
 
 	fixture.shell.sessions.mu.Lock()
@@ -538,16 +637,17 @@ func TestRestoredPaneIdentityDoesNotCollideWithANewTab(t *testing.T) {
 		t.Fatalf("the new Pane did not connect: status=%v handle=%v",
 			createdStatus, createdHandle != nil)
 	}
-	if oldID != restoredID || oldHandle != nil || oldStatus != tabDormant {
+	if oldID != restoredID || oldHandle == nil || oldStatus != tabHibernated {
 		t.Fatalf("opening a new Tab disturbed the restored Pane: id=%q status=%v handle=%v",
 			oldID, oldStatus, oldHandle != nil)
 	}
 	opened := opener.opened()
-	if len(opened) != 1 {
-		t.Fatalf("the open dialed %d Sessions, want the new Host once", len(opened))
+	if len(opened) != 2 {
+		t.Fatalf("the launch dialed %d Sessions, want the restored and the new Host", len(opened))
 	}
-	if opened[0].ID != hosts[1].ID {
-		t.Fatalf("dialed Host %q, want the new Host %q", opened[0].ID, hosts[1].ID)
+	if opened[0].ID != hosts[0].ID || opened[1].ID != hosts[1].ID {
+		t.Fatalf("dialed Hosts %q, want the restored %q then the new %q",
+			[]string{string(opened[0].ID), string(opened[1].ID)}, hosts[0].ID, hosts[1].ID)
 	}
 	if got := opener.liveViews(); got != 1 {
 		t.Fatalf("%d live views, want the new Pane's one", got)
@@ -649,9 +749,16 @@ func TestAdoptRestoredKeepsPaneIdentitiesUnique(t *testing.T) {
 		Username: host.Username,
 	}
 	tabs := &sessionTabs{}
-	tabs.adoptRestored([]RestoredSession{
-		{PaneID: "pane-tab-2", Title: "one", Descriptor: descriptor},
-		{PaneID: "pane-tab-2", Title: "two", Descriptor: descriptor},
+	root := domainworkspace.NewPaneNode("pane-tab-2")
+	tabs.adoptRestored([]RestoredTab{
+		{
+			ID: "tab-one", Title: "one", Root: root, Focus: "pane-tab-2",
+			Panes: []RestoredPane{{ID: "pane-tab-2", Title: "one", Descriptor: descriptor}},
+		},
+		{
+			ID: "tab-two", Title: "two", Root: root, Focus: "pane-tab-2",
+			Panes: []RestoredPane{{ID: "pane-tab-2", Title: "two", Descriptor: descriptor}},
+		},
 	}, func(string) (domainvault.Host, bool) { return host, true })
 
 	seen := make(map[model.PaneID]bool)

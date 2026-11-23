@@ -84,51 +84,53 @@ func (f *phoneFixture) selectSessions(t *testing.T) {
 	f.tester.Frame()
 }
 
-func TestColdStartListsPersistedTabsAsDormant(t *testing.T) {
+func TestColdStartRestoresEveryPersistedPane(t *testing.T) {
 	hosts := phoneHosts()
 	store := &fakeSessionStore{payload: storedTabs(hosts[0], hosts[1])}
 	opener := &fakeOpener{}
 	fixture := newPhoneFixtureWith(t, hosts, opener, WithSessionStore(store))
 	fixture.selectSessions(t)
 
-	views := fixture.shell.sessions.list()
-	if len(views) != 2 {
-		t.Fatalf("cold start listed %d Tabs, want the 2 that were open", len(views))
+	// A cold start starts one restore per restorable Pane, including Tabs the
+	// route does not show; with the Sessions list visible they stay hibernated.
+	fixture.await(t, "both persisted Panes to restore", func() bool {
+		views := fixture.shell.sessions.list()
+		return opener.count() == 2 && len(views) == 2 &&
+			views[0].status == tabHibernated && views[1].status == tabHibernated
+	})
+	if got := opener.liveViews(); got != 0 {
+		t.Fatalf("%d live views on the Sessions list, want none", got)
 	}
-	for _, view := range views {
-		if view.status != tabDormant {
-			t.Errorf("restored Tab %q status = %v, want dormant", view.label, view.status)
-		}
+	if !fixture.tester.HasText("Hibernated · deploy@prod.example.com:2222") {
+		t.Fatalf("the restored SSH Tab is not listed; texts: %q", fixture.tester.Texts())
 	}
-	if !fixture.tester.HasText("Dormant · deploy@prod.example.com:2222") {
-		t.Fatalf("the restored SSH Tab is not listed as dormant; texts: %q", fixture.tester.Texts())
-	}
-	if !fixture.tester.HasText("Dormant · console.example.com:23 · telnet") {
-		t.Fatalf("the restored Telnet Tab is not listed as dormant; texts: %q", fixture.tester.Texts())
-	}
-	// Restoring is explicit: a cold start opens nothing by itself.
-	if got := opener.count(); got != 0 {
-		t.Fatalf("cold start opened %d Session(s), want none until a Tab is tapped", got)
+	if !fixture.tester.HasText("Hibernated · console.example.com:23 · telnet") {
+		t.Fatalf("the restored Telnet Tab is not listed; texts: %q", fixture.tester.Texts())
 	}
 }
 
-func TestTappingDormantEntryRestoresItsTabAndReconnects(t *testing.T) {
+func TestTappingARestoredTabShowsTheAlreadyRestoredSession(t *testing.T) {
 	hosts := phoneHosts()
 	store := &fakeSessionStore{payload: storedTabs(hosts[0])}
 	opener := &fakeOpener{output: "restored output\r\n"}
 	fixture := newPhoneFixtureWith(t, hosts, opener, WithSessionStore(store))
 	fixture.selectSessions(t)
 
+	// The cold start already reopened the persisted Pane; tapping the Tab only
+	// shows it, without dialing again.
+	fixture.await(t, "the restored Session", func() bool {
+		return opener.count() == 1
+	})
 	if err := fixture.tester.Click("Open session prod box"); err != nil {
-		t.Fatalf("tap the dormant Tab: %v", err)
+		t.Fatalf("tap the restored Tab: %v", err)
 	}
 	fixture.settle()
-	fixture.await(t, "the restored Session", func() bool {
-		return opener.count() == 1 && opener.liveViews() == 1
-	})
 	fixture.await(t, "the restored terminal output", func() bool {
-		return fixture.tester.HasText("restored output")
+		return opener.liveViews() == 1 && fixture.tester.HasText("restored output")
 	})
+	if got := opener.count(); got != 1 {
+		t.Fatalf("opening the restored Tab dialed again; opens = %d, want 1", got)
+	}
 
 	// The restore reconnects the persisted identity through the current Vault
 	// Host, not a stale copy of it.
@@ -305,20 +307,165 @@ func TestRelaunchListsTabsPersistedByThePreviousRun(t *testing.T) {
 	first.shell.Background()
 	first.tester.Frame()
 
-	// A relaunch reads the same store: no Session is opened, but the Tab the
-	// previous run had open is listed and restorable.
+	// A relaunch reads the same store: the Tab the previous run had open is
+	// reopened automatically, so the Sessions list shows it hibernated.
 	secondOpener := &fakeOpener{output: "after relaunch\r\n"}
 	second := newPhoneFixtureWith(t, hosts, secondOpener, WithSessionStore(store))
 	second.selectSessions(t)
 
-	if got := len(second.shell.sessions.list()); got != 1 {
-		t.Fatalf("the relaunched shell listed %d Tabs, want the one that was open", got)
+	second.await(t, "the relaunched Pane to restore", func() bool {
+		views := second.shell.sessions.list()
+		return len(views) == 1 && views[0].status == tabHibernated &&
+			secondOpener.count() == 1
+	})
+	if !second.tester.HasText("Hibernated · deploy@prod.example.com:2222") {
+		t.Fatalf("the persisted Tab is not listed after relaunch; texts: %q", second.tester.Texts())
 	}
-	if !second.tester.HasText("Dormant · deploy@prod.example.com:2222") {
-		t.Fatalf("the persisted Tab is not listed as dormant after relaunch; texts: %q", second.tester.Texts())
+}
+
+// splitRestorePayload is one Tab with a split of two remote Panes beside a
+// second Tab with another remote Pane: the cold start must restore every leaf,
+// including the ones the Sessions route does not show.
+func splitRestorePayload(hosts []domainvault.Host) domainworkspace.Payload {
+	payload := domainworkspace.EmptyPayload()
+	payload.Tabs = []domainworkspace.RestoredTab{
+		{
+			ID: "tab-split", Title: "prod/console",
+			Root: domainworkspace.NewSplitNode("split-1", domainworkspace.Vertical, 61,
+				domainworkspace.NewPaneNode("pane-prod"),
+				domainworkspace.NewPaneNode("pane-console")),
+			FocusPath: []int{0},
+		},
+		{
+			ID: "tab-other", Title: "udp box",
+			Root: domainworkspace.NewPaneNode("pane-udp"),
+		},
 	}
-	if got := secondOpener.count(); got != 0 {
-		t.Fatalf("relaunch opened %d Session(s) before the user tapped", got)
+	for _, entry := range []struct {
+		id   model.PaneID
+		host domainvault.Host
+	}{
+		{"pane-prod", hosts[0]},
+		{"pane-console", hosts[1]},
+		{"pane-udp", hosts[2]},
+	} {
+		payload.Panes = append(payload.Panes, domainworkspace.RestoredPane{
+			ID: entry.id,
+			Session: domainworkspace.SessionDescriptor{
+				Kind:     sessionKindOf(entry.host),
+				Label:    hostName(entry.host),
+				HostID:   entry.host.ID,
+				Hostname: entry.host.Hostname,
+				Port:     entry.host.Port,
+				Username: entry.host.Username,
+				Dir:      "/srv/" + string(entry.host.ID),
+			},
+		})
+	}
+	return payload
+}
+
+// TestColdStartRestoresEveryPaneInEveryTab pins the ticket's cold-start rule:
+// one restore per restorable Pane, including Panes in a split Tab and Panes of
+// Tabs the route does not show.
+func TestColdStartRestoresEveryPaneInEveryTab(t *testing.T) {
+	hosts := phoneHosts()
+	store := &fakeSessionStore{payload: splitRestorePayload(hosts)}
+	opener := &fakeOpener{}
+	fixture := newPhoneFixtureWith(t, hosts, opener, WithSessionStore(store))
+	fixture.selectSessions(t)
+
+	fixture.await(t, "all three persisted Panes to restore", func() bool {
+		fixture.shell.sessions.mu.Lock()
+		defer fixture.shell.sessions.mu.Unlock()
+		if opener.count() != 3 || len(fixture.shell.sessions.tabs) != 2 {
+			return false
+		}
+		restored := 0
+		for _, tab := range fixture.shell.sessions.tabs {
+			for _, pane := range tab.panes {
+				if pane.handle != nil && pane.status == tabHibernated {
+					restored++
+				}
+			}
+		}
+		return restored == 3
+	})
+	if got := len(fixture.shell.sessions.tabs[0].panes); got != 2 {
+		t.Fatalf("the split Tab restored %d Panes, want 2", got)
+	}
+	if got := len(fixture.shell.sessions.tabs[1].panes); got != 1 {
+		t.Fatalf("the other Tab restored %d Panes, want 1", got)
+	}
+	if got := opener.liveViews(); got != 0 {
+		t.Fatalf("%d live views on the Sessions list, want none", got)
+	}
+}
+
+// TestFailedRestorePaneRetriesAlone keeps the per-Pane rule: one Pane's failed
+// restore leaves its entry in place, the sibling Pane keeps running, and the
+// failed Pane reconnects on its own retry without dialing the sibling again.
+func TestFailedRestorePaneRetriesAlone(t *testing.T) {
+	hosts := phoneHosts()
+	store := &fakeSessionStore{payload: splitRestorePayload(hosts)}
+	opener := &fakeOpener{}
+	opener.setHostErr(hosts[1].ID, errors.New("console is offline"))
+	fixture := newPhoneFixtureWith(t, hosts, opener, WithSessionStore(store))
+	fixture.selectSessions(t)
+
+	// The sibling restored; the failed one stayed a dormant entry with its
+	// problem text. Both Panes are still in the Tab and the payload.
+	fixture.await(t, "the healthy Pane and the failed entry", func() bool {
+		fixture.shell.sessions.mu.Lock()
+		defer fixture.shell.sessions.mu.Unlock()
+		tab := fixture.shell.sessions.tabs[0]
+		if len(fixture.shell.sessions.tabs) != 2 || len(tab.panes) != 2 {
+			return false
+		}
+		return tab.panes[0].handle != nil && tab.panes[0].status == tabHibernated &&
+			tab.panes[1].status == tabDormant && tab.panes[1].problem != ""
+	})
+	if got := len(store.last().Panes); got != 3 {
+		t.Fatalf("the failed restore changed the persisted Panes: %d", got)
+	}
+
+	// Visit the Tab, switch to the failed Pane, and retry only it.
+	if err := fixture.tester.Click("Open session prod box"); err != nil {
+		t.Fatalf("open the split Tab: %v", err)
+	}
+	fixture.settle()
+	fixture.await(t, "the healthy Pane's view", func() bool {
+		return opener.liveViews() == 1
+	})
+	if err := fixture.tester.Click("Show console"); err != nil {
+		t.Fatalf("focus the failed Pane: %v", err)
+	}
+	fixture.settle()
+	if !strings.Contains(strings.Join(fixture.tester.Texts(), " "), "Could not restore console") {
+		t.Fatalf("the failed Pane has no actionable error; texts: %q", fixture.tester.Texts())
+	}
+	opener.setHostErr(hosts[1].ID, nil)
+	if err := fixture.tester.Click("Try again"); err != nil {
+		t.Fatalf("retry the failed Pane: %v", err)
+	}
+	fixture.await(t, "the failed Pane to reconnect", func() bool {
+		return opener.count() == 3 && opener.liveViews() == 1
+	})
+	fixture.shell.sessions.mu.Lock()
+	healthy := fixture.shell.sessions.tabs[0].panes[0]
+	failed := fixture.shell.sessions.tabs[0].panes[1]
+	healthyHandle, failedHandle := healthy.handle, failed.handle
+	fixture.shell.sessions.mu.Unlock()
+	healthySession, ok := healthyHandle.(*fakeHandle)
+	if !ok || healthySession.isEnded() {
+		t.Fatal("the retry ended the healthy sibling's Session")
+	}
+	failedSession, ok := failedHandle.(*fakeHandle)
+	if !ok || !failedSession.isAttached() {
+		t.Fatal("the retried Pane did not attach")
+	}
+	if got := len(fixture.shell.sessions.tabs[0].panes); got != 2 {
+		t.Fatalf("the retry changed the Tab to %d Panes", got)
 	}
 }
 

@@ -56,7 +56,8 @@ var (
 )
 
 // The shared SQLite Workspace row is the phone's session persistence seam:
-// the same payload format, read back through FlattenRestored.
+// the same split-tree payload format the desktop writes, read back through
+// RestoreTabs.
 var _ phoneshell.SessionStore = (*store.WorkspaceRepository)(nil)
 
 // newPhoneVault builds the phone's Vault over the shared SQLite store. It

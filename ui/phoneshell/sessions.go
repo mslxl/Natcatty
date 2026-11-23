@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -69,13 +70,10 @@ type ResumePreservingHandle interface {
 }
 
 // SessionStore persists the Tabs a relaunch should list. The payload is the
-// same Workspace restore payload the desktop writes, so the phone keeps
-// reusing the shared format; the application wires it to the shared SQLite
-// Workspace row. A Shell without a store simply forgets its Tabs at exit.
-//
-// Until the shared split tree lands (ticket 25), a Tab is saved as its focused
-// Pane, the same single-Pane-per-Tab shape earlier phone builds wrote. That is
-// the legacy path this ticket must keep working without a migration.
+// same Workspace restore payload the desktop writes — the shared split tree with
+// its Tab and Pane IDs, focus paths, ratios, and each Pane's Dir — so the
+// application wires it to the same SQLite Workspace row. A Shell without a
+// store simply forgets its Tabs at exit.
 type SessionStore interface {
 	Load(ctx context.Context) (domainworkspace.Payload, error)
 	Save(ctx context.Context, payload domainworkspace.Payload) error
@@ -142,15 +140,20 @@ const (
 // terminal screen drawn over its view. Panes of the same Tab are independent:
 // one can connect, hibernate, or end without the others.
 type phonePane struct {
-	// id is the Pane's stable identity. Restored Panes keep the identity the
-	// incoming descriptor carried, so the shared split tree (ticket 25) can
-	// map the phone's Panes back onto it.
+	// id is the Pane's stable identity. It is minted monotonically within its
+	// Tab and never recycled, so a stale dial outcome cannot structurally match
+	// a later Pane in the same Tab. Restored Panes keep the incoming identity
+	// unless another live Pane already holds it.
 	id    domainmodel.PaneID
 	host  domainvault.Host
 	label string
-	// dir is the working directory a restored Pane reported. The phone does
-	// not use it yet; it is carried so the shared split tree (ticket 25) can
-	// persist it without a phone-side migration.
+	// descriptor is the non-secret Session description written back to the
+	// shared Workspace. A restored Pane keeps the desktop's descriptor,
+	// including fields the phone does not interpret.
+	descriptor domainworkspace.SessionDescriptor
+	// dir is the working directory the Pane's terminal last reported (OSC 7),
+	// or the one a restored descriptor carried. It is persisted with the split
+	// tree and replayed when the Session reopens.
 	dir    string
 	status tabStatus
 	// problem is the actionable failure text shown when status is tabFailed
@@ -185,15 +188,30 @@ type phonePane struct {
 	tools toolsState
 }
 
-// phoneTab is one Workspace Tab: an ordered set of Panes, one of which has
-// focus. The phone renders only the focused Pane; on this device a Tab is a
-// container of Sessions, not a split layout. A Tab with no Panes is an empty
-// Tab, kept in memory so its new-session entry stays where the user left it.
+// phoneTab is one Workspace Tab: the shared recursive split tree, its ordered
+// Panes, and the Pane that has focus. The phone renders only the focused Pane;
+// the tree is kept whole so the same Tab opens unchanged on the desktop, and a
+// tablet renders its visible Panes. A Tab with no Panes is an empty Tab, kept in
+// memory so its new-session entry stays where the user left it.
 type phoneTab struct {
 	id    string
 	label string
+	// number, titleNumber, autoTitle, generatedTitle, and copy are the shared
+	// Tab title metadata. They round-trip unchanged even though the phone does
+	// not edit them.
+	number         int
+	titleNumber    int
+	autoTitle      bool
+	generatedTitle bool
+	copy           int
+	// root is the shared split tree. A nil root is an empty Tab: closing the
+	// last Pane leaves it in memory and it is never persisted.
+	root  *domainworkspace.Node
 	panes []*phonePane
 	focus domainmodel.PaneID
+	// nextPane is this Tab's monotonic Pane sequence. It only moves forward, so
+	// a closed Pane's identity is never handed to a later Pane.
+	nextPane int
 }
 
 // paneOf returns the Pane with id, or nil.
@@ -214,6 +232,68 @@ func (tab *phoneTab) paneIndex(id domainmodel.PaneID) int {
 		}
 	}
 	return -1
+}
+
+// orderPanes sorts the Pane slice into the split tree's leaf order, so the
+// switcher and the tree never disagree about which Pane comes first. Panes the
+// tree does not mention are kept at the end rather than dropped.
+func (tab *phoneTab) orderPanes() {
+	if tab.root == nil {
+		return
+	}
+	order := domainworkspace.CollectPaneIDs(tab.root)
+	ordered := make([]*phonePane, 0, len(tab.panes))
+	for _, id := range order {
+		if pane := tab.paneOf(id); pane != nil {
+			ordered = append(ordered, pane)
+		}
+	}
+	for _, pane := range tab.panes {
+		keep := true
+		for _, placed := range ordered {
+			if placed == pane {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			ordered = append(ordered, pane)
+		}
+	}
+	tab.panes = ordered
+}
+
+// removeFromTree drops one Pane from the split tree. Removing the only Pane
+// leaves a nil root, which is the in-memory empty Tab.
+func (tab *phoneTab) removeFromTree(id domainmodel.PaneID) {
+	if tab.root == nil {
+		return
+	}
+	if root, err := domainworkspace.RemovePane(tab.root, id); err == nil {
+		tab.root = root
+	}
+}
+
+// captureDir records the working directory the Pane's terminal last reported.
+// It runs before a screen is detached, so a hibernated Pane keeps the directory
+// its Session last announced.
+func (pane *phonePane) captureDir() { pane.captureDirFrom(pane.screen) }
+
+// captureDirFrom records one detached screen's directory before it closes.
+func (pane *phonePane) captureDirFrom(screen TerminalScreen) {
+	if screen == nil {
+		return
+	}
+	reporter, ok := screen.(interface{ Dir() string })
+	if !ok {
+		return
+	}
+	dir := strings.TrimSpace(reporter.Dir())
+	if dir == "" {
+		return
+	}
+	pane.dir = dir
+	pane.descriptor.Dir = dir
 }
 
 // focusedPane returns the Pane the phone renders, or nil for an empty Tab.
@@ -292,6 +372,9 @@ func (tab *phoneTab) prunePanes(keep func(*phonePane) bool) []*phonePane {
 		return nil
 	}
 	tab.panes = kept
+	for _, pane := range removed {
+		tab.removeFromTree(pane.id)
+	}
 	if focusRemovedAt >= 0 {
 		tab.recomputeFocus(focusRemovedAt)
 	}
@@ -323,27 +406,11 @@ func (tab *phoneTab) listable() bool {
 	return true
 }
 
-// persistablePane is the Pane a Tab saves until ticket 25 writes the shared
-// split tree: the focused Pane, or the first Pane that is not a failed open
-// when focus sits on one. nil means the Tab persists nothing — an empty Tab,
-// or one whose every Pane failed to open.
-func (tab *phoneTab) persistablePane() *phonePane {
-	if pane := tab.focusedPane(); pane != nil && pane.status != tabFailed {
-		return pane
-	}
-	for _, pane := range tab.panes {
-		if pane.status != tabFailed {
-			return pane
-		}
-	}
-	return nil
-}
-
 // phonePaneRestorable reports whether the phone can open a Pane's Session at
 // all. Local shells run on the desktop and serial devices have no phone
 // adapter, so both are filtered out; a Tab keeps the remaining Panes and
-// repairs its focus. The shared split tree (ticket 25) uses this when it
-// rebuilds phone Tabs from a desktop layout.
+// repairs its focus. RestoreTabs applies the same rule to a persisted tree so a
+// desktop layout keeps its structure around the Panes a phone can open.
 func phonePaneRestorable(pane *phonePane) bool {
 	return pane != nil && pane.host.IsRemote()
 }
@@ -381,6 +448,9 @@ type sessionTabs struct {
 	pendingClose *closeRequest
 	tabs         []*phoneTab
 	next         int
+	// nextSplit is the split-identity sequence. It only moves forward, so a
+	// restored split id is never handed to a later split.
+	nextSplit int
 	// store persists the Tabs a relaunch lists. nil means this Shell forgets
 	// its Tabs at exit; it never fails navigation.
 	store SessionStore
@@ -459,11 +529,11 @@ func (t *sessionTabs) begin(host domainvault.Host) (*phoneTab, *phonePane) {
 	if t.next == 0 {
 		t.next = 1
 	}
-	tab := &phoneTab{id: fmt.Sprintf("tab-%d", t.next), label: hostName(host)}
-	t.next++
+	tab := &phoneTab{id: t.newTabIDLocked(), label: hostName(host)}
 	pane := t.newPaneLocked(tab, host)
-	tab.panes = append(tab.panes, pane)
+	t.attachPaneLocked(tab, pane)
 	tab.focus = pane.id
+	tab.number = len(t.tabs) + 1
 	t.tabs = append(t.tabs, tab)
 	t.mu.Unlock()
 	// The Tab exists the moment it is opened: an app suspended mid-connect
@@ -482,7 +552,7 @@ func (t *sessionTabs) addPane(tabID string, host domainvault.Host) (*phonePane, 
 		return nil, false
 	}
 	pane := t.newPaneLocked(tab, host)
-	tab.panes = append(tab.panes, pane)
+	t.attachPaneLocked(tab, pane)
 	// Moving focus to the new Pane closes the previous Pane's Tools surface,
 	// exactly as the switcher's focus move does.
 	tab.focusPane(pane.id)
@@ -493,38 +563,152 @@ func (t *sessionTabs) addPane(tabID string, host domainvault.Host) (*phonePane, 
 
 // newPaneLocked builds a connecting Pane for tab. The caller holds t.mu.
 func (t *sessionTabs) newPaneLocked(tab *phoneTab, host domainvault.Host) *phonePane {
-	pane := &phonePane{
-		id:     t.paneIDLocked(tab),
-		host:   host,
-		label:  hostName(host),
-		status: tabConnecting,
-	}
+	label := hostName(host)
+	resumeKey := ""
 	if protocolOf(host) == domainvault.ProtocolET {
 		// A new ET Session needs a locator before it opens: the adapter saves
 		// the credentials under it, and the same key must survive into the
 		// next launch's restore payload.
-		pane.resumeKey = appsession.NewETResumeKey()
+		resumeKey = appsession.NewETResumeKey()
 	}
-	return pane
+	descriptor := descriptorOf(host, label, resumeKey)
+	return &phonePane{
+		id:         t.paneIDLocked(tab),
+		host:       host,
+		label:      label,
+		descriptor: descriptor,
+		dir:        descriptor.Dir,
+		status:     tabConnecting,
+		resumeKey:  resumeKey,
+	}
+}
+
+// attachPaneLocked adds a new Pane to the Tab's split tree beside its focused
+// Pane and keeps the Pane slice in tree order. The caller holds t.mu. An empty
+// Tab becomes a root Pane; a Tab with a tree gains a split, so the phone-written
+// tree is the same shape the desktop restores.
+func (t *sessionTabs) attachPaneLocked(tab *phoneTab, pane *phonePane) {
+	if tab.root == nil || len(tab.panes) == 0 {
+		tab.root = domainworkspace.NewPaneNode(pane.id)
+	} else {
+		target := tab.focus
+		if target == "" || !domainworkspace.ContainsPane(tab.root, target) {
+			target = domainworkspace.CollectPaneIDs(tab.root)[0]
+		}
+		if root, err := domainworkspace.SplitAt(
+			tab.root, target, pane.id, t.splitIDLocked(), domainworkspace.SideRight,
+		); err == nil {
+			tab.root = root
+		}
+	}
+	tab.panes = append(tab.panes, pane)
+	tab.orderPanes()
+}
+
+// newTabIDLocked mints the next Tab identity. Tab identities are not recycled:
+// a finished open addressed to a closed Tab can never land on a new one.
+func (t *sessionTabs) newTabIDLocked() string {
+	if t.next == 0 {
+		t.next = 1
+	}
+	for {
+		id := fmt.Sprintf("tab-%d", t.next)
+		t.next++
+		if t.find(id) == nil {
+			return id
+		}
+	}
+}
+
+// reserveTabIDLocked adopts a persisted Tab identity when this launch does not
+// hold it, and otherwise mints a fresh one. The Tab sequence is bumped past a
+// numeric adopted identity so a later new Tab cannot collide with it.
+func (t *sessionTabs) reserveTabIDLocked(preferred domainmodel.TabID) string {
+	if preferred != "" && t.find(string(preferred)) == nil {
+		if n, err := strconv.Atoi(strings.TrimPrefix(string(preferred), "tab-")); err == nil {
+			if n >= t.next {
+				t.next = n + 1
+			}
+		}
+		return string(preferred)
+	}
+	return t.newTabIDLocked()
+}
+
+// splitIDLocked mints a split identity that no open tree holds. Split
+// identities only move forward.
+func (t *sessionTabs) splitIDLocked() domainmodel.SplitID {
+	for {
+		t.nextSplit++
+		id := domainmodel.SplitID(fmt.Sprintf("split-%d", t.nextSplit))
+		if !t.splitExistsLocked(id) {
+			return id
+		}
+	}
+}
+
+func (t *sessionTabs) splitExistsLocked(id domainmodel.SplitID) bool {
+	var walk func(*domainworkspace.Node) bool
+	walk = func(n *domainworkspace.Node) bool {
+		if n == nil || n.IsPane() {
+			return false
+		}
+		if n.SplitID == id {
+			return true
+		}
+		return walk(n.First) || walk(n.Second)
+	}
+	for _, tab := range t.tabs {
+		if walk(tab.root) {
+			return true
+		}
+	}
+	return false
 }
 
 // paneIDLocked mints a Pane identity that is stable and unique across every
-// Tab, not only within its own. A restored Pane keeps the incoming identity a
-// previous launch wrote, so uniqueness has to span Tabs: resolving a Pane by
-// identity alone (the prompt owner, a deep link) must never land on another
-// Tab's Pane. The first Pane keeps the earlier phone shape ("pane-"+tab id), so
-// existing single-Pane records and tests read back the same way.
+// Tab, not only within its own. The sequence is per Tab and monotonic: a
+// closed Pane's identity is never minted again, so a stale dial outcome cannot
+// find a reopened Pane by (Tab, identity). A restored Pane keeps the incoming
+// identity a previous launch wrote; the collision loop only moves past one that
+// is already held. The first Pane keeps the earlier phone shape ("pane-"+tab
+// id), so existing single-Pane records and tests read back the same way.
 func (t *sessionTabs) paneIDLocked(tab *phoneTab) domainmodel.PaneID {
 	base := "pane-" + tab.id
-	if len(tab.panes) == 0 && t.findPane(domainmodel.PaneID(base)) == nil {
-		return domainmodel.PaneID(base)
-	}
-	for n := 2; ; n++ {
-		id := domainmodel.PaneID(fmt.Sprintf("%s-%d", base, n))
+	for {
+		tab.nextPane++
+		id := domainmodel.PaneID(base)
+		if tab.nextPane > 1 {
+			id = domainmodel.PaneID(fmt.Sprintf("%s-%d", base, tab.nextPane))
+		}
 		if t.findPane(id) == nil {
 			return id
 		}
 	}
+}
+
+// reservePaneSequence moves the Tab's Pane sequence past an identity a
+// restored Pane holds. Without it, closing a restored Pane and adding another
+// could mint the same identity, and a stale dial outcome could reach the new
+// Pane.
+func (tab *phoneTab) reservePaneSequence(id domainmodel.PaneID) {
+	base := "pane-" + tab.id
+	value := id
+	if string(value) == base {
+		if tab.nextPane < 1 {
+			tab.nextPane = 1
+		}
+		return
+	}
+	suffix, ok := strings.CutPrefix(string(value), base+"-")
+	if !ok {
+		return
+	}
+	n, err := strconv.Atoi(suffix)
+	if err != nil || n <= tab.nextPane {
+		return
+	}
+	tab.nextPane = n
 }
 
 // uniquePaneIDLocked adopts preferred when no Tab already holds it, and
@@ -690,6 +874,7 @@ func (t *sessionTabs) syncVisible(visibleTab string) {
 	// Closing the screen detaches its view. Hibernate then marks the Session
 	// hibernated, keeping its transport and replay for Resume.
 	for _, item := range released {
+		item.pane.captureDir()
 		if item.screen != nil {
 			_ = item.screen.Close()
 		}
@@ -1013,6 +1198,7 @@ func (t *sessionTabs) retry(id string) {
 	if cancel != nil {
 		cancel()
 	}
+	pane.captureDirFrom(screen)
 	if screen != nil {
 		_ = screen.Close()
 	}
@@ -1080,6 +1266,7 @@ func (t *sessionTabs) reconnectVisible(id string) {
 	t.mu.Unlock()
 	// The old Session no longer runs; release it outside the lock, then open
 	// the Host again under the same Tab.
+	pane.captureDirFrom(screen)
 	if screen != nil {
 		_ = screen.Close()
 	}
@@ -1250,8 +1437,12 @@ func (t *sessionTabs) removePane(tabID, paneID string) bool {
 	}
 	pane := tab.panes[index]
 	tab.panes = append(tab.panes[:index], tab.panes[index+1:]...)
+	tab.removeFromTree(pane.id)
 	if tab.focus == pane.id {
 		tab.recomputeFocus(index)
+	}
+	if tab.root != nil {
+		tab.orderPanes()
 	}
 	if t.pendingClose != nil && t.pendingClose.paneID == paneID {
 		t.pendingClose = nil
@@ -1335,48 +1526,114 @@ func endPreservingResume(handle SessionHandle) {
 	_ = handle.End()
 }
 
-// adoptRestored adds the Panes a previous launch left open as dormant entries,
-// one Tab per flattened Session, in the order FlattenRestored produced them.
-// Each Pane keeps the incoming Pane identity and directory, which is the
-// identity the shared split tree (ticket 25) will use; each Tab resolves its
-// Host from the freshly loaded Vault list, so a renamed or reconfigured Host is
-// opened as it is now. A Host that is gone keeps the descriptor's identity and
-// fails actionably when restored.
+// adoptRestored rebuilds the Tabs a previous launch left open, keeping each
+// Tab's shared split tree, ratios, focus, and Pane identities. It then starts
+// one restore per restorable Pane, including Panes of other Tabs and Panes the
+// route does not show; each Pane keeps its own entry, so one failure leaves the
+// others running and stays retryable on its own.
 //
-// Tabs are renumbered from this launch's sequence, so a saved Tab identity
-// (tab-2, say) can differ from the Tab the Pane lands in. The incoming Pane
-// identity is therefore reserved against every Pane already in this launch,
-// including the Panes adopted just before it: the next minted identity can
-// never reuse a restored one, and a restored identity can never appear twice.
-func (t *sessionTabs) adoptRestored(restored []RestoredSession, lookup func(string) (domainvault.Host, bool)) {
+// Each Tab resolves its Host from the freshly loaded Vault list, so a renamed
+// or reconfigured Host is opened as it is now. A Host that is gone keeps the
+// descriptor's identity and fails actionably when restored.
+//
+// A restored Tab keeps its incoming identity when this launch does not hold it;
+// otherwise it is renumbered. The incoming Pane identity is reserved against
+// every Pane already in this launch: the next minted identity can never reuse a
+// restored one, and a restored identity can never appear twice. When a
+// collision forces a new identity, the split tree is remapped with it so the
+// tree and the Panes never disagree.
+func (t *sessionTabs) adoptRestored(restored []RestoredTab, lookup func(string) (domainvault.Host, bool)) {
+	type pendingLaunch struct{ tabID, paneID string }
+	launches := make([]pendingLaunch, 0, len(restored))
+
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	for _, session := range restored {
-		host, ok := lookup(string(session.Descriptor.HostID))
-		if !ok {
-			host = restoredHost(session)
+	for _, persisted := range restored {
+		descriptors := make(map[domainmodel.PaneID]domainworkspace.SessionDescriptor, len(persisted.Panes))
+		entries := make(map[domainmodel.PaneID]RestoredPane, len(persisted.Panes))
+		for _, entry := range persisted.Panes {
+			descriptors[entry.ID] = entry.Descriptor
+			entries[entry.ID] = entry
 		}
-		if t.next == 0 {
-			t.next = 1
+		root := restorableRoot(persisted.Root, descriptors)
+		if root == nil {
+			continue
 		}
-		tabID := fmt.Sprintf("tab-%d", t.next)
-		t.next++
-		paneID := domainmodel.PaneID(session.PaneID)
-		if paneID == "" {
-			paneID = domainmodel.PaneID("pane-" + tabID)
+		tab := &phoneTab{
+			id:             t.reserveTabIDLocked(persisted.ID),
+			label:          persisted.Title,
+			number:         persisted.Number,
+			titleNumber:    persisted.TitleNumber,
+			autoTitle:      persisted.AutoTitle,
+			generatedTitle: persisted.GeneratedTitle,
+			copy:           persisted.Copy,
+			root:           root,
 		}
-		paneID = t.uniquePaneIDLocked(paneID)
-		tab := &phoneTab{id: tabID, label: session.Title}
-		tab.panes = append(tab.panes, &phonePane{
-			id:        paneID,
-			host:      host,
-			label:     session.Title,
-			dir:       session.Descriptor.Dir,
-			status:    tabDormant,
-			resumeKey: session.Descriptor.ResumeKey,
-		})
-		tab.focus = paneID
+		if tab.number <= 0 {
+			tab.number = len(t.tabs) + 1
+		}
+		mapping := make(map[domainmodel.PaneID]domainmodel.PaneID)
+		panes := make(map[domainmodel.PaneID]*phonePane, len(persisted.Panes))
+		for _, id := range domainworkspace.CollectPaneIDs(root) {
+			entry := entries[id]
+			paneID := t.uniquePaneIDLocked(id)
+			tab.reservePaneSequence(paneID)
+			if paneID != id {
+				mapping[id] = paneID
+			}
+			host, ok := lookup(string(entry.Descriptor.HostID))
+			if !ok {
+				host = restoredHost(entry)
+			}
+			label := entry.Title
+			if strings.TrimSpace(label) == "" {
+				label = restoredTitle(entry.Descriptor)
+			}
+			panes[paneID] = &phonePane{
+				id:         paneID,
+				host:       host,
+				label:      label,
+				descriptor: entry.Descriptor,
+				dir:        entry.Descriptor.Dir,
+				status:     tabDormant,
+				restoring:  true,
+				resumeKey:  entry.Descriptor.ResumeKey,
+			}
+		}
+		tab.root = domainworkspace.RemapPanes(root, mapping)
+		for _, id := range domainworkspace.CollectPaneIDs(tab.root) {
+			if pane := panes[id]; pane != nil {
+				tab.panes = append(tab.panes, pane)
+			}
+		}
+		if len(tab.panes) == 0 {
+			continue
+		}
+		focus := persisted.Focus
+		if remapped, ok := mapping[focus]; ok {
+			focus = remapped
+		}
+		if focus == "" || !domainworkspace.ContainsPane(tab.root, focus) {
+			focus = domainworkspace.CollectPaneIDs(tab.root)[0]
+		}
+		tab.focus = focus
+		if strings.TrimSpace(tab.label) == "" {
+			tab.label = tab.focusedPane().label
+		}
 		t.tabs = append(t.tabs, tab)
+		for _, pane := range tab.panes {
+			launches = append(launches, pendingLaunch{tabID: tab.id, paneID: string(pane.id)})
+		}
+	}
+	t.mu.Unlock()
+
+	// Every restorable Pane gets its own restore, in Tab then tree order. The
+	// launch runs off the UI thread; finish records each outcome by Tab and
+	// identity, so a failed Pane stays dormant while the others connect.
+	if t.launch == nil {
+		return
+	}
+	for _, launch := range launches {
+		t.launch(launch.tabID, launch.paneID)
 	}
 }
 
@@ -1405,38 +1662,87 @@ func (t *sessionTabs) savePayload(payload domainworkspace.Payload) {
 }
 
 // payloadOf snapshots the Tabs that should survive a relaunch in the shared
-// Workspace restore format. An empty Tab is memory-only and is omitted.
+// Workspace restore format. It writes the full split tree — Pane and Tab IDs,
+// split structure and ratios, each Tab's focus path, and every Pane's Session
+// descriptor including its Dir. An empty Tab (a nil root) is memory-only and is
+// omitted, so it cannot come back after a relaunch.
 //
-// Until the shared split tree is written back (ticket 25), a Tab is saved as
-// its focused Pane: exactly the single-Pane-per-Tab shape earlier phone builds
-// wrote, so a phone saved by this build still loads and restores without a
-// migration. Ticket 25 replaces this projection with the full Pane tree.
+// A Pane whose fresh open failed is not a Session and is removed from the saved
+// tree; a dormant Pane whose restore failed stays, so its entry survives and
+// remains retryable. The same payload is what the desktop reads, so a
+// phone-saved Workspace opens with the same structure, focus, and ratios.
 func payloadOf(tabs []*phoneTab) domainworkspace.Payload {
 	payload := domainworkspace.EmptyPayload()
-	for i, tab := range tabs {
-		pane := tab.persistablePane()
-		if pane == nil {
+	for _, tab := range tabs {
+		for _, pane := range tab.panes {
+			// The visible Pane's screen is the only place a new directory can
+			// be observed; hidden Panes keep the value captured when detached.
+			pane.captureDir()
+		}
+		root := savedRoot(tab)
+		if root == nil {
 			continue
 		}
-		descriptor := descriptorOf(pane.host, pane.label, pane.resumeKey)
-		if !descriptor.Valid() {
-			// Without a Host identity and endpoint there is nothing restore
-			// could open, so it is not an entry.
-			continue
+		number := tab.number
+		if number <= 0 {
+			number = len(payload.Tabs) + 1
 		}
-		paneID := domainmodel.PaneID("pane-" + tab.id)
 		payload.Tabs = append(payload.Tabs, domainworkspace.RestoredTab{
-			ID:     domainmodel.TabID(tab.id),
-			Number: i + 1,
-			Title:  pane.label,
-			Root:   domainworkspace.NewPaneNode(paneID),
+			ID:             domainmodel.TabID(tab.id),
+			Number:         number,
+			TitleNumber:    tab.titleNumber,
+			Title:          tab.label,
+			AutoTitle:      tab.autoTitle,
+			GeneratedTitle: tab.generatedTitle,
+			Copy:           tab.copy,
+			Root:           root,
+			FocusPath:      domainworkspace.FocusPath(root, tab.focus),
 		})
-		payload.Panes = append(payload.Panes, domainworkspace.RestoredPane{
-			ID:      paneID,
-			Session: descriptor,
-		})
+		for _, id := range domainworkspace.CollectPaneIDs(root) {
+			pane := tab.paneOf(id)
+			if pane == nil {
+				continue
+			}
+			descriptor := pane.descriptor
+			descriptor.Dir = pane.dir
+			payload.Panes = append(payload.Panes, domainworkspace.RestoredPane{
+				ID:      id,
+				Session: descriptor,
+			})
+		}
+	}
+	if len(payload.Tabs) == 0 {
+		payload.ActiveTab = -1
+	} else {
+		payload.ActiveTab = 0
 	}
 	return payload
+}
+
+// savedRoot copies one Tab's split tree with the Panes that are not Sessions
+// pruned out. It returns nil when nothing is left, which omits the Tab from the
+// payload instead of persisting an empty tree.
+func savedRoot(tab *phoneTab) *domainworkspace.Node {
+	if tab.root == nil {
+		return nil
+	}
+	root := domainworkspace.Clone(tab.root)
+	if root == nil {
+		return nil
+	}
+	for _, id := range domainworkspace.CollectPaneIDs(root) {
+		pane := tab.paneOf(id)
+		if pane != nil && pane.status != tabFailed && pane.descriptor.Valid() {
+			continue
+		}
+		if pruned, err := domainworkspace.RemovePane(root, id); err == nil {
+			root = pruned
+		}
+	}
+	if root == nil || len(domainworkspace.CollectPaneIDs(root)) == 0 {
+		return nil
+	}
+	return root
 }
 
 // descriptorOf describes one open phone Pane for restore. It captures no
@@ -1458,11 +1764,11 @@ func descriptorOf(host domainvault.Host, label, resumeKey string) domainworkspac
 // restoredHost rebuilds the endpoint of a Host that is no longer in the
 // Vault. The restore still fails actionably through the Session service, and
 // the row keeps enough identity to tell the user what could not be opened.
-func restoredHost(session RestoredSession) domainvault.Host {
-	descriptor := session.Descriptor
+func restoredHost(pane RestoredPane) domainvault.Host {
+	descriptor := pane.Descriptor
 	return domainvault.Host{
 		ID:       descriptor.HostID,
-		Label:    firstNonEmpty(descriptor.CustomName, descriptor.Label, session.Title),
+		Label:    firstNonEmpty(descriptor.CustomName, descriptor.Label, pane.Title),
 		Hostname: descriptor.Hostname,
 		Port:     descriptor.Port,
 		Username: descriptor.Username,

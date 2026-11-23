@@ -79,6 +79,11 @@ func (s *ghosttyScreen) SetAppearance(a TerminalAppearance) {
 // InScrollback reports whether the viewport is above the live screen.
 func (s *ghosttyScreen) InScrollback() bool { return s.term.ScrolledBack() }
 
+// Dir is the working directory the shell reported through OSC 7. The phone
+// persists it with the shared split tree so a restored Pane reopens where it
+// left off, exactly as the desktop does.
+func (s *ghosttyScreen) Dir() string { return s.term.Dir() }
+
 // ToggleScrollback uses the terminal's own viewport API rather than a MyGo
 // scroll widget. The scrollback lives in libghostty-vt and reflows with the
 // grid, so a scroll container around the view could not show the rows above

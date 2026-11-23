@@ -148,16 +148,19 @@ func TestDormantRestoreIsPerTransportAndKeepsTheETResumeKey(t *testing.T) {
 				WithSessionStore(store))
 			fixture.selectSessions(t)
 
-			views := fixture.shell.sessions.list()
-			if len(views) != 1 || views[0].status != tabDormant {
-				t.Fatalf("cold start listed %+v, want one dormant Tab", views)
-			}
+			// A cold start restores the persisted Pane by itself. With the
+			// Sessions list visible it stays hibernated, not attached.
+			fixture.await(t, "the restored Session", func() bool {
+				views := fixture.shell.sessions.list()
+				return opener.count() == 1 && len(views) == 1 &&
+					views[0].status == tabHibernated
+			})
 			if err := fixture.tester.Click("Open session " + host.Label); err != nil {
-				t.Fatalf("tap the dormant Tab: %v", err)
+				t.Fatalf("tap the restored Tab: %v", err)
 			}
 			fixture.settle()
-			fixture.await(t, "the restored Session", func() bool {
-				return opener.count() == 1 && opener.liveViews() == 1
+			fixture.await(t, "the restored view", func() bool {
+				return opener.liveViews() == 1
 			})
 			opened := opener.opened()
 			if len(opened) != 1 || opened[0].ID != host.ID ||

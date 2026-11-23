@@ -503,7 +503,7 @@ func (s *Shell) restoreSessions(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	s.sessions.adoptRestored(FlattenRestored(payload), s.hosts.host)
+	s.sessions.adoptRestored(RestoreTabs(payload), s.hosts.host)
 }
 
 // Background is the app-lifecycle hook for leaving the foreground. It releases

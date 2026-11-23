@@ -263,11 +263,23 @@ func (h *fakeHandle) sentKeys() []sentKey {
 type fakeOpener struct {
 	mu         sync.Mutex
 	err        error
+	errFor     map[model.HostID]error
 	output     string
 	outputs    []string
 	hosts      []domainvault.Host
 	handles    []*fakeHandle
 	resumeKeys []string
+}
+
+// setHostErr makes opens for one Host fail while the others keep opening, so a
+// multi-Pane restore can have one failed entry beside healthy ones.
+func (o *fakeOpener) setHostErr(id model.HostID, err error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.errFor == nil {
+		o.errFor = make(map[model.HostID]error)
+	}
+	o.errFor[id] = err
 }
 
 // queueOutput makes the next opens return distinct output, in order, so a
@@ -294,6 +306,9 @@ func (o *fakeOpener) OpenHost(_ context.Context, host domainvault.Host) (Session
 	o.mu.Lock()
 	o.hosts = append(o.hosts, host)
 	err := o.err
+	if specific, ok := o.errFor[host.ID]; ok {
+		err = specific
+	}
 	output := o.nextOutputLocked()
 	o.mu.Unlock()
 	if err != nil {
