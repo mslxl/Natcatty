@@ -27,6 +27,8 @@ func extendedDesktopSizeRectangle(reason, status, width, height uint16, screens 
 
 func TestDecodeExtendedDesktopSizeResizesTheFramebuffer(t *testing.T) {
 	frame := newFrame(t, 4, 3, DefaultPixelFormat())
+	painted := color.RGBA{R: 9, G: 8, B: 7, A: 255}
+	frame.Image().SetRGBA(1, 1, painted)
 	data := extendedDesktopSizeRectangle(0, 0, 8, 6, []Screen{
 		{ID: 7, Width: 8, Height: 6},
 	})
@@ -41,11 +43,48 @@ func TestDecodeExtendedDesktopSizeResizesTheFramebuffer(t *testing.T) {
 	if extended.Reason != 0 || extended.Status != 0 || extended.Width != 8 || extended.Height != 6 {
 		t.Fatalf("extended = %+v", extended)
 	}
+	if !extended.Resized {
+		t.Fatal("a rectangle that changed the size did not report a resize")
+	}
 	if len(extended.Screens) != 1 || extended.Screens[0].ID != 7 {
 		t.Fatalf("screens = %+v", extended.Screens)
 	}
 	if got := frame.Bounds(); got != image.Rect(0, 0, 8, 6) {
 		t.Fatalf("framebuffer bounds = %v, want 8x6", got)
+	}
+	// A resized desktop must repaint: the pixels of the old layout are gone.
+	if got := frame.Image().RGBAAt(1, 1); got.A != 0 {
+		t.Fatalf("pixel = %+v after the resize, want the cleared buffer", got)
+	}
+}
+
+// TestDecodeExtendedDesktopSizeOfTheCurrentSizeKeepsThePixels proves a
+// successful rectangle that names the current size is a state report. Servers
+// answer every non-incremental update request that way, so treating it as a
+// resize would clear a valid framebuffer each time the client asked.
+func TestDecodeExtendedDesktopSizeOfTheCurrentSizeKeepsThePixels(t *testing.T) {
+	frame := newFrame(t, 4, 3, DefaultPixelFormat())
+	painted := color.RGBA{R: 9, G: 8, B: 7, A: 255}
+	frame.Image().SetRGBA(1, 1, painted)
+	data := extendedDesktopSizeRectangle(0, 0, 4, 3, []Screen{
+		{ID: 7, Width: 4, Height: 3},
+	})
+	rectangles, err := frame.ReadRectangles(bytes.NewReader(data), 1)
+	if err != nil {
+		t.Fatalf("ReadRectangles: %v", err)
+	}
+	extended := rectangles[0].Extended
+	if extended == nil || extended.Status != 0 {
+		t.Fatalf("extended = %+v", extended)
+	}
+	if extended.Resized {
+		t.Fatal("a rectangle naming the current size reported a resize")
+	}
+	if got := frame.Image().RGBAAt(1, 1); got != painted {
+		t.Fatalf("pixel = %+v, want the painted %+v", got, painted)
+	}
+	if got := frame.Bounds(); got != image.Rect(0, 0, 4, 3) {
+		t.Fatalf("framebuffer bounds = %v, want the unchanged 4x3", got)
 	}
 }
 

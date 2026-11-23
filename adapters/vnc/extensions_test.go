@@ -121,6 +121,47 @@ func TestFenceReplyClearsUnknownFlagBits(t *testing.T) {
 	}
 }
 
+// TestCurrentSizeRectangleDoesNotRequestAnotherFullUpdate proves a desktop-size
+// rectangle that names the size the framebuffer already has is not treated as a
+// resize. A server must answer every non-incremental update request with such a
+// rectangle, so answering it with another non-incremental request would make
+// the two sides loop, clearing the framebuffer on every turn.
+func TestCurrentSizeRectangleDoesNotRequestAnotherFullUpdate(t *testing.T) {
+	h := start(t, rfbtest.Config{
+		Frame:               testFrame(),
+		Encoding:            rfb.EncodingRaw,
+		ExtendedDesktopSize: true,
+	})
+	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	display := transport.(appsession.DisplayProvider).Display()
+	nextEvent(t, display.Events(), appsession.DisplayEventFrame)
+
+	// The exchange is still live: each delivered frame asks for the next one.
+	waitFor(t, "the client to keep polling", func() bool {
+		incremental := 0
+		for _, request := range h.server.Received().Requests {
+			if request.Incremental {
+				incremental++
+			}
+		}
+		return incremental > 1
+	})
+	full := 0
+	for _, request := range h.server.Received().Requests {
+		if !request.Incremental {
+			full++
+		}
+	}
+	if full != 1 {
+		t.Fatalf("non-incremental requests = %d, want only the initial one: %+v",
+			full, h.server.Received().Requests)
+	}
+}
+
 // TestPostResizeRequestsTheNewExtent proves a server without ContinuousUpdates
 // receives a non-incremental request that covers the new desktop, so the added
 // area is repainted.

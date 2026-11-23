@@ -529,21 +529,26 @@ func (t *transport) publishMetadata(rectangles []rfb.Rectangle) {
 				// A reasoned reply belongs to our outstanding request.
 				t.deliverResizeReply(rect.Extended)
 			}
-			if rect.Extended.Status == 0 && rect.Extended.Width > 0 && rect.Extended.Height > 0 {
+			if rect.Extended.Resized {
+				// The framebuffer adopted a new size and cleared itself, so the
+				// whole desktop must be repainted. A successful rectangle that
+				// names the current size is only a state report, and reacting to
+				// it would clear a valid framebuffer and, because it answers a
+				// non-incremental request, loop forever.
 				t.emitter.Publish(appsession.DisplayEvent{
 					Kind:   appsession.DisplayEventResize,
 					Width:  int(rect.Extended.Width),
 					Height: int(rect.Extended.Height),
 				})
 				// Continuous updates are scoped to a region. Re-scope them to
-				// the new extents when the extension is live; on a server
-				// without it, ask for a non-incremental repaint of the new
-				// size so the added area is never left stale.
+				// the new extents when the extension is live, then ask for one
+				// non-incremental repaint either way: the server must honor
+				// that request while continuous updates are active, and it is
+				// the only thing that repaints the cleared pixels.
 				if t.continuousEnabled.Load() {
 					t.refreshContinuousRegion(int(rect.Extended.Width), int(rect.Extended.Height))
-				} else {
-					t.requestFullUpdate(int(rect.Extended.Width), int(rect.Extended.Height))
 				}
+				t.requestFullUpdate(int(rect.Extended.Width), int(rect.Extended.Height))
 			}
 		case rect.Cursor != nil:
 			shape := appsession.NewCursorShape(rect.Cursor.Image, rect.Cursor.Hotspot)

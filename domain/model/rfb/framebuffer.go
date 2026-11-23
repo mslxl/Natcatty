@@ -86,9 +86,12 @@ func (f *Framebuffer) Bounds() image.Rectangle {
 	return f.img.Bounds()
 }
 
-// Resize reallocates the framebuffer for a new ExtendedDesktopSize. Pixels are
-// cleared; the protocol requires a resized desktop to repaint. The pixel
-// format and the ZRLE stream survive the resize.
+// Resize reallocates the framebuffer for a new desktop size. Pixels are
+// cleared; a resized desktop must repaint. The pixel format and the ZRLE
+// stream survive the resize.
+//
+// A call that names the current size changes nothing and keeps the pixels: an
+// unchanged desktop is not resized, and its contents stay valid.
 func (f *Framebuffer) Resize(width, height int) error {
 	if width <= 0 || height <= 0 {
 		return fmt.Errorf("%w: size %dx%d", ErrInvalidRectangle, width, height)
@@ -96,10 +99,12 @@ func (f *Framebuffer) Resize(width, height int) error {
 	if int64(width)*int64(height) > maxFramebufferPixels {
 		return fmt.Errorf("%w: %dx%d", ErrFramebufferTooLarge, width, height)
 	}
-	resized := image.NewRGBA(image.Rect(0, 0, width, height))
 	f.mu.Lock()
-	f.img = resized
-	f.mu.Unlock()
+	defer f.mu.Unlock()
+	if f.img.Bounds().Dx() == width && f.img.Bounds().Dy() == height {
+		return nil
+	}
+	f.img = image.NewRGBA(image.Rect(0, 0, width, height))
 	return nil
 }
 
@@ -209,8 +214,8 @@ func (f *Framebuffer) ReadRectangles(r io.Reader, count int) ([]Rectangle, error
 
 // readExtendedDesktopSize parses one ExtendedDesktopSize pseudo-rectangle. The
 // rectangle's dimensions are the new desktop size and its x/y header fields
-// are the change reason and status, so a successful result resizes the
-// framebuffer before any following rectangles are decoded.
+// are the change reason and status, so a successful result that changes the
+// size resizes the framebuffer before any following rectangles are decoded.
 func (f *Framebuffer) readExtendedDesktopSize(r io.Reader, reason, status, width, height uint16) (*ExtendedDesktopSize, error) {
 	var header [4]byte
 	if _, err := io.ReadFull(r, header[:]); err != nil {
@@ -241,10 +246,17 @@ func (f *Framebuffer) readExtendedDesktopSize(r io.Reader, reason, status, width
 		Screens: screens,
 	}
 	// A failure result leaves the dimensions undefined; only a success is a
-	// real resize. "Request forwarded" (4) is not final either.
+	// real resize. "Request forwarded" (4) is not final either. A success that
+	// names the current size reports the desktop rather than changing it:
+	// servers answer every non-incremental update request that way, and the
+	// pixels already decoded stay valid.
 	if status == 0 && width > 0 && height > 0 {
-		if err := f.Resize(int(width), int(height)); err != nil {
-			return nil, err
+		bounds := f.Bounds()
+		if bounds.Dx() != int(width) || bounds.Dy() != int(height) {
+			if err := f.Resize(int(width), int(height)); err != nil {
+				return nil, err
+			}
+			extended.Resized = true
 		}
 	}
 	return extended, nil

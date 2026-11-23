@@ -230,15 +230,14 @@ type Server struct {
 	err    error
 	pf     rfb.PixelFormat
 
-	mu           sync.Mutex
-	received     Received
-	sentBell     bool
-	sentCut      bool
-	sentEnd      bool
-	sentFence    bool
-	sentCursor   bool
-	sentExtended bool
-	sentExtKey   bool
+	mu         sync.Mutex
+	received   Received
+	sentBell   bool
+	sentCut    bool
+	sentEnd    bool
+	sentFence  bool
+	sentCursor bool
+	sentExtKey bool
 
 	// zrleBuf and zrleWriter form the connection's persistent ZRLE stream.
 	zrleBuf    bytes.Buffer
@@ -407,7 +406,7 @@ func (s *Server) Serve(conn io.ReadWriter) error {
 			if err != nil {
 				return err
 			}
-			if err := s.sendFrame(conn, request.Incremental); err != nil {
+			if err := s.sendUpdate(conn, request.Incremental); err != nil {
 				return err
 			}
 		case 4:
@@ -997,24 +996,23 @@ func (s *Server) readCutText(conn io.Reader) error {
 	return nil
 }
 
-func (s *Server) sendFrame(conn io.Writer, incremental bool) error {
-	// ExtendedDesktopSize must be the only rectangle in its update, so it is
-	// sent on its own before the framebuffer data.
+// sendUpdate answers one FramebufferUpdateRequest. A server must answer every
+// non-incremental request with an ExtendedDesktopSize rectangle naming its
+// current desktop, even when nothing changed; that is how a client learns the
+// extension is supported and what the current layout is. The rectangle must be
+// the only one in its update, so it is sent on its own before the framebuffer
+// data.
+func (s *Server) sendUpdate(conn io.Writer, incremental bool) error {
 	if s.cfg.ExtendedDesktopSize && !incremental && s.advertised(rfb.EncodingExtendedDesktopSize) {
-		s.mu.Lock()
-		due := !s.sentExtended
-		if due {
-			s.sentExtended = true
-		}
-		s.mu.Unlock()
-		if due {
-			screens := []rfb.Screen{{Width: uint16(s.width), Height: uint16(s.height)}}
-			if err := s.sendExtendedDesktopSize(conn, 0, 0, uint16(s.width), uint16(s.height), screens); err != nil {
-				return err
-			}
+		screens := []rfb.Screen{{Width: uint16(s.width), Height: uint16(s.height)}}
+		if err := s.sendExtendedDesktopSize(conn, 0, 0, uint16(s.width), uint16(s.height), screens); err != nil {
+			return err
 		}
 	}
+	return s.sendFrame(conn, incremental)
+}
 
+func (s *Server) sendFrame(conn io.Writer, incremental bool) error {
 	plan := s.cfg.Rectangles
 	if len(plan) == 0 {
 		plan = []Rectangle{{

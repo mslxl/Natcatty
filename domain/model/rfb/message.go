@@ -92,12 +92,19 @@ type Cursor struct {
 // Reason is the header's x-position: 0 for a server-side change, 1 when this
 // client asked, 2 when another client asked. Status is the header's
 // y-position: 0 means success. Width and Height are the new desktop size.
+//
+// Resized reports that the framebuffer adopted this size: the rectangle
+// changed it. A successful rectangle that names the size the framebuffer
+// already has is a state report, not a resize. Servers send one in answer to
+// every non-incremental update request, so acting on it would clear a valid
+// framebuffer and, once the client asked again, loop.
 type ExtendedDesktopSize struct {
 	Reason  uint8
 	Status  uint8
 	Width   uint16
 	Height  uint16
 	Screens []Screen
+	Resized bool
 }
 
 // Rectangle is the header of one FramebufferUpdate rectangle. For CopyRect
