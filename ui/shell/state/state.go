@@ -282,6 +282,10 @@ type State struct {
 	// localAutoCloseOnExit is the live Local shell exit setting. Nil keeps
 	// the default: a local Tab closes after a normal shell exit.
 	localAutoCloseOnExit func() bool
+	// motion is the live Pane and Tab motion setting. The motion runtime
+	// pulls it at each event, so a preference change reaches an already-open
+	// workspace. Nil keeps the defaults: motion enabled.
+	motion func() domainpreferences.Motion
 	// hostLabel resolves a Host's current label, so an open Tab follows a Vault
 	// rename. Nil falls back to the descriptor's label snapshot.
 	hostLabel func(model.HostID) (string, bool)
@@ -590,6 +594,22 @@ func WithDynamicTabTitleMode(mode func() domainterminal.DynamicTabTitleMode) Opt
 // exit; a getter that returns false keeps the ended screen instead.
 func WithLocalAutoCloseOnExit(enabled func() bool) Option {
 	return func(s *State) { s.localAutoCloseOnExit = enabled }
+}
+
+// WithMotion supplies the live Pane and Tab motion setting. The motion
+// runtime pulls it on every event, so a Settings change applies without
+// rebuilding the shell. Without it the shell reports the default motion: on.
+func WithMotion(motion func() domainpreferences.Motion) Option {
+	return func(s *State) { s.motion = motion }
+}
+
+// Motion returns the live Pane and Tab motion preferences. It is a pull
+// getter: the view reads it at the event, not once at construction.
+func (s *State) Motion() domainpreferences.Motion {
+	if s.motion == nil {
+		return domainpreferences.Defaults().Appearance.Motion
+	}
+	return s.motion()
 }
 
 // WithHostLabel supplies a Host's current label so open Tabs follow a Vault

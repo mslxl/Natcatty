@@ -109,7 +109,11 @@ type State struct {
 	// hosts backs the Host picker. A nil source leaves the picker with the
 	// local Shell entry and an empty Host list.
 	hosts HostSource
-	tabs  []Tab
+	// motion is the live Pane and Tab motion setting. The motion runtime
+	// pulls it at each event, so a preference change reaches an already-open
+	// Panel. Nil keeps the defaults: motion enabled.
+	motion func() domainpreferences.Motion
+	tabs   []Tab
 	// active is the index of the active Tab, or -1 when there is none.
 	active int
 	// nextNumber names local Tabs the way the main shell does, starting at 1.
@@ -152,6 +156,22 @@ func WithEmpty(fn func()) Option { return func(s *State) { s.empty = fn } }
 // WithHosts installs the saved Hosts the Host picker lists. It is read live,
 // so a Vault edit shows on the next frame without rebuilding the Panel.
 func WithHosts(source HostSource) Option { return func(s *State) { s.hosts = source } }
+
+// WithMotion supplies the live Pane and Tab motion setting. The motion
+// runtime pulls it on every event, so a Settings change applies without
+// rebuilding the Panel. Without it the Panel reports the default motion: on.
+func WithMotion(motion func() domainpreferences.Motion) Option {
+	return func(s *State) { s.motion = motion }
+}
+
+// Motion returns the live Pane and Tab motion preferences. It is a pull
+// getter: the view reads it at the event, not once at construction.
+func (s *State) Motion() domainpreferences.Motion {
+	if s.motion == nil {
+		return domainpreferences.Defaults().Appearance.Motion
+	}
+	return s.motion()
+}
 
 // NewState returns an empty Quake workspace. The first Activate opens the
 // local Shell; a new State never restores a previous run's Tabs.

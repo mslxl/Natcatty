@@ -15184,6 +15184,284 @@ func (msgs Messages) SettingsTerminalCursorBlink() string {
 	return Catalog.Format(msgs.locale, "settingsTerminalCursorBlink", nil)
 }
 
+// SettingsMotionTitle says "Motion"
+// in the language the app shows.
+func SettingsMotionTitle() string { return In(i18n.Locale()).SettingsMotionTitle() }
+
+// SettingsMotionTitle says "Motion"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionTitle() string {
+	return Catalog.Format(msgs.locale, "settingsMotionTitle", nil)
+}
+
+// SettingsMotionDescription says "Animate panes and tabs as they open, close, reorder, and switch. Follows the system Reduce Motion setting."
+// in the language the app shows.
+func SettingsMotionDescription() string { return In(i18n.Locale()).SettingsMotionDescription() }
+
+// SettingsMotionDescription says "Animate panes and tabs as they open, close, reorder, and switch. Follows the system Reduce Motion setting."
+// in the language of msgs.
+func (msgs Messages) SettingsMotionDescription() string {
+	return Catalog.Format(msgs.locale, "settingsMotionDescription", nil)
+}
+
+// SettingsMotionEnabled says "Enable motion"
+// in the language the app shows.
+func SettingsMotionEnabled() string { return In(i18n.Locale()).SettingsMotionEnabled() }
+
+// SettingsMotionEnabled says "Enable motion"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionEnabled() string {
+	return Catalog.Format(msgs.locale, "settingsMotionEnabled", nil)
+}
+
+// SettingsMotionPaneTitle says "Pane"
+// in the language the app shows.
+func SettingsMotionPaneTitle() string { return In(i18n.Locale()).SettingsMotionPaneTitle() }
+
+// SettingsMotionPaneTitle says "Pane"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionPaneTitle() string {
+	return Catalog.Format(msgs.locale, "settingsMotionPaneTitle", nil)
+}
+
+// SettingsMotionPaneOpen says "Open pane"
+// in the language the app shows.
+func SettingsMotionPaneOpen() string { return In(i18n.Locale()).SettingsMotionPaneOpen() }
+
+// SettingsMotionPaneOpen says "Open pane"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionPaneOpen() string {
+	return Catalog.Format(msgs.locale, "settingsMotionPaneOpen", nil)
+}
+
+// SettingsMotionPaneClose says "Close pane"
+// in the language the app shows.
+func SettingsMotionPaneClose() string { return In(i18n.Locale()).SettingsMotionPaneClose() }
+
+// SettingsMotionPaneClose says "Close pane"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionPaneClose() string {
+	return Catalog.Format(msgs.locale, "settingsMotionPaneClose", nil)
+}
+
+// SettingsMotionPaneReorder says "Reorder panes"
+// in the language the app shows.
+func SettingsMotionPaneReorder() string { return In(i18n.Locale()).SettingsMotionPaneReorder() }
+
+// SettingsMotionPaneReorder says "Reorder panes"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionPaneReorder() string {
+	return Catalog.Format(msgs.locale, "settingsMotionPaneReorder", nil)
+}
+
+// SettingsMotionTabTitle says "Tab"
+// in the language the app shows.
+func SettingsMotionTabTitle() string { return In(i18n.Locale()).SettingsMotionTabTitle() }
+
+// SettingsMotionTabTitle says "Tab"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionTabTitle() string {
+	return Catalog.Format(msgs.locale, "settingsMotionTabTitle", nil)
+}
+
+// SettingsMotionTabOpen says "Open tab"
+// in the language the app shows.
+func SettingsMotionTabOpen() string { return In(i18n.Locale()).SettingsMotionTabOpen() }
+
+// SettingsMotionTabOpen says "Open tab"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionTabOpen() string {
+	return Catalog.Format(msgs.locale, "settingsMotionTabOpen", nil)
+}
+
+// SettingsMotionTabClose says "Close tab"
+// in the language the app shows.
+func SettingsMotionTabClose() string { return In(i18n.Locale()).SettingsMotionTabClose() }
+
+// SettingsMotionTabClose says "Close tab"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionTabClose() string {
+	return Catalog.Format(msgs.locale, "settingsMotionTabClose", nil)
+}
+
+// SettingsMotionTabSwitch says "Switch tabs"
+// in the language the app shows.
+func SettingsMotionTabSwitch() string { return In(i18n.Locale()).SettingsMotionTabSwitch() }
+
+// SettingsMotionTabSwitch says "Switch tabs"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionTabSwitch() string {
+	return Catalog.Format(msgs.locale, "settingsMotionTabSwitch", nil)
+}
+
+// SettingsMotionTabReorder says "Reorder tabs"
+// in the language the app shows.
+func SettingsMotionTabReorder() string { return In(i18n.Locale()).SettingsMotionTabReorder() }
+
+// SettingsMotionTabReorder says "Reorder tabs"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionTabReorder() string {
+	return Catalog.Format(msgs.locale, "settingsMotionTabReorder", nil)
+}
+
+// SettingsMotionOpenStyle says "Opening style"
+// in the language the app shows.
+func SettingsMotionOpenStyle() string { return In(i18n.Locale()).SettingsMotionOpenStyle() }
+
+// SettingsMotionOpenStyle says "Opening style"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionOpenStyle() string {
+	return Catalog.Format(msgs.locale, "settingsMotionOpenStyle", nil)
+}
+
+// SettingsMotionCloseStyle says "Closing style"
+// in the language the app shows.
+func SettingsMotionCloseStyle() string { return In(i18n.Locale()).SettingsMotionCloseStyle() }
+
+// SettingsMotionCloseStyle says "Closing style"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionCloseStyle() string {
+	return Catalog.Format(msgs.locale, "settingsMotionCloseStyle", nil)
+}
+
+// SettingsMotionSwitchStyle says "Switching style"
+// in the language the app shows.
+func SettingsMotionSwitchStyle() string { return In(i18n.Locale()).SettingsMotionSwitchStyle() }
+
+// SettingsMotionSwitchStyle says "Switching style"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionSwitchStyle() string {
+	return Catalog.Format(msgs.locale, "settingsMotionSwitchStyle", nil)
+}
+
+// SettingsMotionStylePopin says "Pop in (87%)"
+// in the language the app shows.
+func SettingsMotionStylePopin() string { return In(i18n.Locale()).SettingsMotionStylePopin() }
+
+// SettingsMotionStylePopin says "Pop in (87%)"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionStylePopin() string {
+	return Catalog.Format(msgs.locale, "settingsMotionStylePopin", nil)
+}
+
+// SettingsMotionStyleSlide says "Slide"
+// in the language the app shows.
+func SettingsMotionStyleSlide() string { return In(i18n.Locale()).SettingsMotionStyleSlide() }
+
+// SettingsMotionStyleSlide says "Slide"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionStyleSlide() string {
+	return Catalog.Format(msgs.locale, "settingsMotionStyleSlide", nil)
+}
+
+// SettingsMotionStyleGnomed says "GNOME collapse"
+// in the language the app shows.
+func SettingsMotionStyleGnomed() string { return In(i18n.Locale()).SettingsMotionStyleGnomed() }
+
+// SettingsMotionStyleGnomed says "GNOME collapse"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionStyleGnomed() string {
+	return Catalog.Format(msgs.locale, "settingsMotionStyleGnomed", nil)
+}
+
+// SettingsMotionStyleFade says "Fade"
+// in the language the app shows.
+func SettingsMotionStyleFade() string { return In(i18n.Locale()).SettingsMotionStyleFade() }
+
+// SettingsMotionStyleFade says "Fade"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionStyleFade() string {
+	return Catalog.Format(msgs.locale, "settingsMotionStyleFade", nil)
+}
+
+// SettingsMotionSwitchStyleSlide says "Slide horizontally"
+// in the language the app shows.
+func SettingsMotionSwitchStyleSlide() string {
+	return In(i18n.Locale()).SettingsMotionSwitchStyleSlide()
+}
+
+// SettingsMotionSwitchStyleSlide says "Slide horizontally"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionSwitchStyleSlide() string {
+	return Catalog.Format(msgs.locale, "settingsMotionSwitchStyleSlide", nil)
+}
+
+// SettingsMotionSwitchStyleSlideVert says "Slide vertically"
+// in the language the app shows.
+func SettingsMotionSwitchStyleSlideVert() string {
+	return In(i18n.Locale()).SettingsMotionSwitchStyleSlideVert()
+}
+
+// SettingsMotionSwitchStyleSlideVert says "Slide vertically"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionSwitchStyleSlideVert() string {
+	return Catalog.Format(msgs.locale, "settingsMotionSwitchStyleSlideVert", nil)
+}
+
+// SettingsMotionSwitchStyleSlideFade says "Slide horizontally and fade"
+// in the language the app shows.
+func SettingsMotionSwitchStyleSlideFade() string {
+	return In(i18n.Locale()).SettingsMotionSwitchStyleSlideFade()
+}
+
+// SettingsMotionSwitchStyleSlideFade says "Slide horizontally and fade"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionSwitchStyleSlideFade() string {
+	return Catalog.Format(msgs.locale, "settingsMotionSwitchStyleSlideFade", nil)
+}
+
+// SettingsMotionSwitchStyleSlideFadeVert says "Slide vertically and fade"
+// in the language the app shows.
+func SettingsMotionSwitchStyleSlideFadeVert() string {
+	return In(i18n.Locale()).SettingsMotionSwitchStyleSlideFadeVert()
+}
+
+// SettingsMotionSwitchStyleSlideFadeVert says "Slide vertically and fade"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionSwitchStyleSlideFadeVert() string {
+	return Catalog.Format(msgs.locale, "settingsMotionSwitchStyleSlideFadeVert", nil)
+}
+
+// SettingsMotionSpeed says "Speed"
+// in the language the app shows.
+func SettingsMotionSpeed() string { return In(i18n.Locale()).SettingsMotionSpeed() }
+
+// SettingsMotionSpeed says "Speed"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionSpeed() string {
+	return Catalog.Format(msgs.locale, "settingsMotionSpeed", nil)
+}
+
+// SettingsMotionSpeedSlow says "Slow"
+// in the language the app shows.
+func SettingsMotionSpeedSlow() string { return In(i18n.Locale()).SettingsMotionSpeedSlow() }
+
+// SettingsMotionSpeedSlow says "Slow"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionSpeedSlow() string {
+	return Catalog.Format(msgs.locale, "settingsMotionSpeedSlow", nil)
+}
+
+// SettingsMotionSpeedStandard says "Standard"
+// in the language the app shows.
+func SettingsMotionSpeedStandard() string { return In(i18n.Locale()).SettingsMotionSpeedStandard() }
+
+// SettingsMotionSpeedStandard says "Standard"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionSpeedStandard() string {
+	return Catalog.Format(msgs.locale, "settingsMotionSpeedStandard", nil)
+}
+
+// SettingsMotionSpeedFast says "Fast"
+// in the language the app shows.
+func SettingsMotionSpeedFast() string { return In(i18n.Locale()).SettingsMotionSpeedFast() }
+
+// SettingsMotionSpeedFast says "Fast"
+// in the language of msgs.
+func (msgs Messages) SettingsMotionSpeedFast() string {
+	return Catalog.Format(msgs.locale, "settingsMotionSpeedFast", nil)
+}
+
 // SettingsLayoutTitle says "Layout & Tabs"
 // in the language the app shows.
 func SettingsLayoutTitle() string { return In(i18n.Locale()).SettingsLayoutTitle() }

@@ -151,6 +151,52 @@ func TestPreferencesStoreOverlaysPartialFilesOnDefaults(t *testing.T) {
 	}
 }
 
+// TestPreferencesStoreOverlaysMotionOnDefaults proves motion needs no
+// migration: a document written before the block existed loads with motion on,
+// and a partial block overrides only the keys it names.
+func TestPreferencesStoreOverlaysMotionOnDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "preferences.json")
+	store := OpenPreferences(path)
+	loadDocument := func(document string) domainpreferences.Settings {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		settings, err := store.Load(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return settings
+	}
+
+	defaults := domainpreferences.Defaults().Appearance.Motion
+	// An older version-1 document has no motion object at all.
+	settings := loadDocument(`{"version":1,"appearance":{"terminalFontSize":15}}`)
+	if settings.Appearance.Motion != defaults {
+		t.Fatalf("an old document loaded motion %+v, want the defaults %+v",
+			settings.Appearance.Motion, defaults)
+	}
+
+	// A partial object keeps every key it omits at its default.
+	settings = loadDocument(`{"version":1,"appearance":{"motion":{"enabled":false,"tabSwitch":false,"speed":"fast"}}}`)
+	want := defaults
+	want.Enabled = false
+	want.TabSwitch = false
+	want.Speed = domainpreferences.MotionFast
+	if settings.Appearance.Motion != want {
+		t.Fatalf("a partial motion object = %+v, want %+v", settings.Appearance.Motion, want)
+	}
+
+	// An unknown style normalizes to its default without disturbing the
+	// booleans, including an explicit false beside it.
+	settings = loadDocument(`{"version":1,"appearance":{"motion":{"paneClose":false,"openStyle":"bounce","speed":"instant"}}}`)
+	want = defaults
+	want.PaneClose = false
+	if settings.Appearance.Motion != want {
+		t.Fatalf("an unknown style = %+v, want %+v", settings.Appearance.Motion, want)
+	}
+}
+
 // TestSFTPTransferSettingsSurviveRestart proves the three transfer settings,
 // including compressed upload's default-on state, are saved and read back by a
 // new service over the same preferences file after a restart.

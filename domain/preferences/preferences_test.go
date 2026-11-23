@@ -252,8 +252,8 @@ func TestEveryFieldBelongsToAGroup(t *testing.T) {
 			t.Errorf("field %q has unknown group %q", field, group)
 		}
 	}
-	if len(seen) != 53 {
-		t.Errorf("fields = %d, want 53", len(seen))
+	if len(seen) != 65 {
+		t.Errorf("fields = %d, want 65", len(seen))
 	}
 }
 
@@ -430,6 +430,7 @@ func TestPortableStripsDeviceLocalPreferences(t *testing.T) {
 	settings := Defaults()
 	settings.Appearance.AppIcon = "device-icon"
 	settings.Appearance.TerminalFontSize = 18
+	settings.Appearance.Motion = nonDefaultMotion()
 	settings.SFTPEditor.DefaultOpener = Opener{Kind: OpenerExternal, Application: ExternalApplication{Path: "/opt/editor"}}
 	settings.SFTPEditor.FileAssociations = []FileAssociation{{Extension: "txt", Kind: OpenerExternal, Application: ExternalApplication{Path: "/opt/viewer"}}}
 	settings.Security.ConfirmDestructive = false
@@ -441,6 +442,9 @@ func TestPortableStripsDeviceLocalPreferences(t *testing.T) {
 	if portable.Appearance.TerminalFontSize != 18 {
 		t.Fatalf("portable TerminalFontSize = %v", portable.Appearance.TerminalFontSize)
 	}
+	if portable.Appearance.Motion != (Motion{}) {
+		t.Fatalf("portable Motion = %+v, want it stripped", portable.Appearance.Motion)
+	}
 	if portable.SFTPEditor.DefaultOpener.Kind != "" || len(portable.SFTPEditor.FileAssociations) != 0 {
 		t.Fatalf("portable SFTP editor = %+v", portable.SFTPEditor)
 	}
@@ -450,6 +454,8 @@ func TestPortableStripsDeviceLocalPreferences(t *testing.T) {
 
 	current := Defaults()
 	current.Appearance.AppIcon = "bright"
+	current.Appearance.Motion.Enabled = false
+	current.Appearance.Motion.OpenStyle = MotionFade
 	current.SFTPEditor.DefaultOpener = Opener{Kind: OpenerSystem}
 	current.SFTPEditor.FileAssociations = []FileAssociation{{Extension: "md", Kind: OpenerExternal, Application: ExternalApplication{Path: "/local/app"}}}
 	merged := MergePortable(current, portable)
@@ -458,6 +464,10 @@ func TestPortableStripsDeviceLocalPreferences(t *testing.T) {
 	}
 	if merged.Appearance.TerminalFontSize != 18 {
 		t.Fatalf("merged TerminalFontSize = %v", merged.Appearance.TerminalFontSize)
+	}
+	if merged.Appearance.Motion != current.Appearance.Motion {
+		t.Fatalf("merged Motion = %+v, want the local value %+v",
+			merged.Appearance.Motion, current.Appearance.Motion)
 	}
 	if merged.SFTPEditor.DefaultOpener.Kind != OpenerSystem ||
 		len(merged.SFTPEditor.FileAssociations) != 1 {

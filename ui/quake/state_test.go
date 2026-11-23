@@ -379,6 +379,38 @@ func TestShutdownClosesEverySessionWithoutHiding(t *testing.T) {
 	}
 }
 
+// TestMotionPullsTheLivePreference proves the Panel reads the motion setting
+// on every call rather than caching the value it was constructed with.
+func TestMotionPullsTheLivePreference(t *testing.T) {
+	motion := domainpreferences.Defaults().Appearance.Motion
+	motion.Enabled = false
+	state := NewState(&testOpener{}, func(*appsession.Session) (Surface, error) {
+		return &recordingSurface{}, nil
+	}, WithMotion(func() domainpreferences.Motion { return motion }))
+	t.Cleanup(state.Shutdown)
+	if got := state.Motion(); got != motion {
+		t.Fatalf("Motion = %+v, want %+v", got, motion)
+	}
+
+	motion.Enabled = true
+	motion.Speed = domainpreferences.MotionFast
+	if got := state.Motion(); got != motion {
+		t.Fatalf("Motion cached its first value: %+v, want %+v", got, motion)
+	}
+}
+
+// TestMotionDefaultsToOnWithoutAWiring keeps an unwired Quake state's motion
+// on, so a Panel built without the app cannot silently disable animation.
+func TestMotionDefaultsToOnWithoutAWiring(t *testing.T) {
+	state := NewState(&testOpener{}, func(*appsession.Session) (Surface, error) {
+		return &recordingSurface{}, nil
+	})
+	t.Cleanup(state.Shutdown)
+	if got, want := state.Motion(), domainpreferences.Defaults().Appearance.Motion; got != want {
+		t.Fatalf("unwired Motion = %+v, want %+v", got, want)
+	}
+}
+
 // TestFreshStateStartsWithNoTabs proves Quake state is memory-only: a new
 // State does not restore any previous Tab and opens a new local Shell.
 func TestFreshStateStartsWithNoTabs(t *testing.T) {
