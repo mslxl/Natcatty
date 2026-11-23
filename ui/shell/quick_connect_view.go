@@ -77,14 +77,16 @@ func quickConnectView(c *ui.Context, s *state.State, m locales.Messages) {
 }
 
 // quickConnectForm lays out the fields in a scroll and keeps the buttons
-// below it, so every field stays reachable at the minimum window.
+// below it, so every field stays reachable at the minimum window. The scroll
+// reserves the overlay scroll bar's gutter, so the fields never run under it.
 func quickConnectForm(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).Fill().Children(func() {
-		ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
-			ui.Column(c).FillWidth().Gap(quickConnectGap).Children(func() {
-				quickConnectFields(c, s, m, t)
+		ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).PaddingEnd(quickConnectScrollbarGutter(t)).
+			Children(func() {
+				ui.Column(c).FillWidth().Gap(quickConnectGap).Children(func() {
+					quickConnectFields(c, s, m, t)
+				})
 			})
-		})
 		ui.Row(c).FillWidth().Gap(8).Justify(ui.End).Children(func() {
 			if kit.PrimaryButton(c, "", m.VaultHostConnect()).Clicked() {
 				_ = s.ConnectQuickConnect()
@@ -96,6 +98,18 @@ func quickConnectForm(c *ui.Context, s *state.State, m locales.Messages, t *ui.T
 			}
 		})
 	})
+}
+
+// quickConnectScrollbarGutter is the width of the overlay scroll bar's track:
+// the thumb (t.ScrollbarWidth DIPs, 6 when unset) plus the 6 DIPs it is inset
+// and padded by in MyGo's scroll geometry. Reserving it keeps the fields from
+// running under the bar.
+func quickConnectScrollbarGutter(t *ui.Theme) float32 {
+	width := t.ScrollbarWidth
+	if width <= 0 {
+		width = 6
+	}
+	return width + 6
 }
 
 func quickConnectFields(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {

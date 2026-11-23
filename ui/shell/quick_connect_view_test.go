@@ -313,6 +313,36 @@ func TestQuickConnectFieldsShowALabelAboveTheirInputs(t *testing.T) {
 	}
 }
 
+// TestQuickConnectFieldsClearTheScrollbarGutter proves the scrolling form
+// reserves room for its overlay scroll bar, so no field runs under the bar
+// when the form overflows.
+func TestQuickConnectFieldsClearTheScrollbarGutter(t *testing.T) {
+	m := locales.In("en")
+	graph := newTestGraph(t)
+	tt := ui.NewTester(View(graph.state), 1100, 720)
+	tt.SetLocale("en")
+	tt.Frame()
+	graph.state.OpenQuickConnect()
+	tt.Frame()
+
+	contentWidth := quickConnectWidth - 2*quickConnectPadding
+	for _, label := range []string{
+		m.QuickConnectAddress(), m.QuickConnectPort(),
+		m.QuickConnectUsername(), m.QuickConnectPassword(),
+	} {
+		rect, ok := tt.Find(label)
+		if !ok {
+			t.Fatalf("the form does not draw the label %q", label)
+		}
+		// MyGo's overlay bar is t.ScrollbarWidth DIPs wide (6 by default), so a
+		// field must stop at least that far short of the content edge.
+		if rect.W > contentWidth-6 {
+			t.Fatalf("the label %q spans %v DIPs of the %v DIP content, leaving no gutter under the scroll bar",
+				label, rect.W, contentWidth)
+		}
+	}
+}
+
 // waitForQuickConnectFrame polls an observable condition with a hard deadline;
 // the poll interval is a cadence, not a synchronization assumption.
 func waitForQuickConnectFrame(t *testing.T, tt *ui.Tester, what string, ready func() bool) {
