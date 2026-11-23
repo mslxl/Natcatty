@@ -1,0 +1,487 @@
+package phoneshell
+
+// The Session Tools surface. It is opened from the terminal page's header and
+// drawn in place of the terminal, never as a routed page: the Session's route
+// does not change, so the Pane keeps its one live terminal view and closing the
+// surface returns to the same Pane at the same terminal position.
+//
+// The surface is a small catalog of tools. Command History is the first real
+// one; Files, Port Forwarding, System Management, Session Log, and Notes are
+// listed now and replaced by their own tickets through drawTool. Each Pane owns
+// its surface state, so switching focus cannot carry one Pane's overlay into
+// another, and closing a Pane discards its overlay with it.
+//
+// Host-key and credential prompts are never covered: a Pane that is connecting
+// draws the prompt page, not the terminal page, and the Tools entry exists only
+// on the terminal page. A surface state left open across a reconnect is
+// therefore not drawn until the Pane is ready again.
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/egoist/mygo/transfer"
+	"github.com/egoist/mygo/ui"
+
+	domainhistory "github.com/mslxl/natcatty/domain/history"
+	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
+)
+
+// CommandHistoryService is the phone Tools surface's seam onto Command
+// History. The application wires it to the same history.Service the desktop
+// History surface and Atuin sync use, so search, this-device clear, matching
+// clear, and delete-everywhere read and write the one journal.
+type CommandHistoryService interface {
+	// Entries lists the live commands, newest first.
+	Entries(ctx context.Context) ([]domainhistory.Entry, error)
+	// ClearThisDevice removes the rows this install created and leaves rows
+	// imported or synced from another writer.
+	ClearThisDevice(ctx context.Context) (int, error)
+	// PruneHistoryEntries removes exactly the listed rows. The surface passes
+	// the identities its confirmation counted, so an entry arriving between
+	// the confirmation and its answer is never removed unseen.
+	PruneHistoryEntries(ctx context.Context, ids []string) (int, error)
+	// DeleteEverywhere removes every live row this device knows and queues the
+	// matching Atuin delete records.
+	DeleteEverywhere(ctx context.Context) (int, error)
+}
+
+// toolID names one entry of the Tools surface.
+type toolID int
+
+const (
+	// toolNone is the catalog itself.
+	toolNone toolID = iota
+	toolHistory
+	toolFiles
+	toolForwarding
+	toolSystem
+	toolSessionLog
+	toolNotes
+)
+
+// toolSpec is one catalog row: its identity, title, and what it does.
+type toolSpec struct {
+	id    toolID
+	title string
+}
+
+// toolCatalog is the Tools surface's order. New tools land by implementing
+// their branch of drawTool; the catalog and the per-Pane state already carry
+// them.
+var toolCatalog = []toolSpec{
+	{id: toolHistory, title: "Command history"},
+	{id: toolFiles, title: "Files"},
+	{id: toolForwarding, title: "Port forwarding"},
+	{id: toolSystem, title: "System management"},
+	{id: toolSessionLog, title: "Session log"},
+	{id: toolNotes, title: "Notes"},
+}
+
+// toolPlaceholder is the reason a catalog row has no page yet.
+func toolPlaceholder(id toolID) string {
+	switch id {
+	case toolFiles:
+		return "Files from this Session are not on the phone yet."
+	case toolForwarding:
+		return "Port forwarding from this Session is not on the phone yet."
+	case toolSystem:
+		return "System management is not on the phone yet."
+	case toolSessionLog:
+		return "Session logs are not on the phone yet."
+	case toolNotes:
+		return "Notes are not on the phone yet."
+	}
+	return "This tool is not on the phone yet."
+}
+
+// toolHistoryLimit bounds how many matching commands one frame lists. The
+// search narrows the list; the cap only keeps a long journal from building
+// thousands of rows.
+const toolHistoryLimit = 50
+
+// clearScope is one of the three independent history clears. Each has its own
+// button and its own confirmation, and cancelling one deletes nothing.
+type clearScope int
+
+const (
+	clearThisDevice clearScope = iota
+	clearMatching
+	clearEverywhere
+)
+
+// toolsClear is one pending clear confirmation. ids is the matching scope's
+// frozen identity list: the confirmation names the rows it will delete.
+type toolsClear struct {
+	scope clearScope
+	ids   []string
+	count int
+}
+
+// toolsState is one Pane's Tools surface state. The zero value is a closed
+// surface showing the catalog.
+type toolsState struct {
+	open bool
+	tool toolID
+	// query is the Command History search text. Matching runs over the loaded
+	// entries each frame, so typing never touches the journal.
+	query string
+	// entries is the last successful load. loaded records that a load was
+	// attempted, so a nil service is a reported state rather than an endless
+	// retry.
+	entries []domainhistory.Entry
+	loaded  bool
+	// loadProblem is the reason history cannot be used. The surface still
+	// opens and every other catalog row stays available.
+	loadProblem string
+	// pending is the clear awaiting an answer, if any.
+	pending *toolsClear
+	// result is the last clear's outcome; resultProblem marks it a failure.
+	result        string
+	resultProblem bool
+}
+
+// openTools shows one Pane's Tools surface at the catalog. The journal is not
+// read until the Command History tool is entered, so a catalog of later tools
+// never pays for it.
+func (t *sessionTabs) openTools(st *toolsState) {
+	if st == nil {
+		return
+	}
+	st.open = true
+	st.tool = toolNone
+	st.pending = nil
+	st.result = ""
+	st.resultProblem = false
+}
+
+// closeTools hides one Pane's Tools surface. Nothing else changes: the
+// terminal stayed attached, so the Pane and its scroll position are untouched.
+func (t *sessionTabs) closeTools(st *toolsState) {
+	if st == nil {
+		return
+	}
+	st.open = false
+	st.pending = nil
+}
+
+// loadToolHistory refreshes the journal behind the Command History tool. A
+// nil or failing service records the reason; the surface stays usable.
+func (t *sessionTabs) loadToolHistory(st *toolsState) {
+	if st == nil {
+		return
+	}
+	st.loaded = true
+	st.entries = nil
+	st.loadProblem = ""
+	if t.history == nil {
+		st.loadProblem = "Command history is not available in this build."
+		return
+	}
+	entries, err := t.history.Entries(context.Background())
+	if err != nil {
+		st.loadProblem = "Command history is unavailable: " + err.Error()
+		return
+	}
+	st.entries = entries
+}
+
+// toolMatches is the Command History result set. The query matches the command
+// and the Host label, case-insensitively; an empty query lists every entry.
+func (st *toolsState) toolMatches() []domainhistory.Entry {
+	if st == nil {
+		return nil
+	}
+	query := strings.ToLower(strings.TrimSpace(st.query))
+	if query == "" {
+		return st.entries
+	}
+	matched := make([]domainhistory.Entry, 0, len(st.entries))
+	for _, entry := range st.entries {
+		if strings.Contains(strings.ToLower(entry.Command), query) ||
+			strings.Contains(strings.ToLower(entry.HostLabel), query) {
+			matched = append(matched, entry)
+		}
+	}
+	return matched
+}
+
+// requestToolClear opens the confirmation for one clear scope. The matching
+// scope freezes the identities it counted, so the answer deletes exactly what
+// the confirmation showed.
+func (t *sessionTabs) requestToolClear(st *toolsState, scope clearScope) {
+	if st == nil || st.loadProblem != "" {
+		return
+	}
+	request := &toolsClear{scope: scope}
+	if scope == clearMatching {
+		for _, entry := range st.toolMatches() {
+			request.ids = append(request.ids, entry.ID)
+		}
+		request.count = len(request.ids)
+	}
+	st.pending = request
+	st.result = ""
+	st.resultProblem = false
+}
+
+// resolveToolClear answers the pending confirmation. Cancel deletes nothing;
+// confirm applies exactly that scope and reloads the journal.
+func (t *sessionTabs) resolveToolClear(st *toolsState, confirmed bool) {
+	if st == nil || st.pending == nil {
+		return
+	}
+	request := st.pending
+	st.pending = nil
+	if !confirmed {
+		return
+	}
+	if t.history == nil {
+		st.result = "Command history is not available in this build."
+		st.resultProblem = true
+		return
+	}
+	ctx := context.Background()
+	var (
+		removed int
+		err     error
+	)
+	switch request.scope {
+	case clearThisDevice:
+		removed, err = t.history.ClearThisDevice(ctx)
+	case clearMatching:
+		removed, err = t.history.PruneHistoryEntries(ctx, request.ids)
+	case clearEverywhere:
+		removed, err = t.history.DeleteEverywhere(ctx)
+	}
+	if err != nil {
+		st.result = "Could not delete history: " + err.Error()
+		st.resultProblem = true
+	} else {
+		st.result = fmt.Sprintf("Deleted %d entries.", removed)
+		st.resultProblem = false
+	}
+	// Reload without clearing the result the user just caused.
+	t.loadToolHistory(st)
+}
+
+// useToolCommand writes one history command into the focused Pane. Fill leaves
+// it at the prompt; run adds Enter through the terminal's own key encoder, so
+// the shell decides what Enter means. The surface closes either way, returning
+// the user to the terminal it acted on.
+func useToolCommand(st *toolsState, screen TerminalScreen, command string, run bool) {
+	if st == nil {
+		return
+	}
+	if screen == nil {
+		st.result = "The terminal is not ready."
+		st.resultProblem = true
+		return
+	}
+	screen.PasteData(transfer.TextData(command))
+	if run {
+		screen.SendKey(ui.KeyEnter, 0)
+	}
+	st.open = false
+	st.pending = nil
+}
+
+// drawTools renders the focused Pane's Tools surface in place of the terminal.
+// The terminal screen stays attached; only its drawing is skipped.
+func (t *sessionTabs) drawTools(c *ui.Context, view tabView) {
+	st := view.tools
+	if st == nil {
+		return
+	}
+	ui.Scroll(c).Fill().Children(func() {
+		ui.Column(c).FillWidth().Padding(16).Gap(12).Children(func() {
+			kit.SectionBar(c, "Tools", func() {
+				if kit.GhostButton(c, icons.X, "Done").Clicked() {
+					t.closeTools(st)
+				}
+			})
+			switch st.tool {
+			case toolNone:
+				t.drawToolCatalog(c, st)
+			case toolHistory:
+				t.drawToolHistory(c, st, view.screen)
+			default:
+				t.drawToolPage(c, st)
+			}
+		})
+	})
+}
+
+// drawToolCatalog lists the tools. Command History carries its live entry count
+// or the availability reason; every other row says it is not here yet.
+func (t *sessionTabs) drawToolCatalog(c *ui.Context, st *toolsState) {
+	for _, spec := range toolCatalog {
+		spec := spec
+		row := kit.ListRow(c).Label("Open " + spec.title)
+		row.Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+				ui.Text(c, spec.title)
+				ui.Text(c, t.toolSummary(st, spec.id)).FontSize(12).
+					TextColor(c.Theme().TextMuted).SingleLine()
+			})
+			ui.Text(c, "›").FontSize(20).TextColor(c.Theme().TextMuted)
+		})
+		if row.Clicked() {
+			st.tool = spec.id
+			st.pending = nil
+			st.result = ""
+			st.resultProblem = false
+			if spec.id == toolHistory {
+				// Entering the tool reads the journal fresh; a command
+				// completed since the last visit is part of the list.
+				t.loadToolHistory(st)
+			}
+		}
+	}
+}
+
+// toolSummary is the catalog row's second line.
+func (t *sessionTabs) toolSummary(st *toolsState, id toolID) string {
+	if id != toolHistory {
+		return "Not on the phone yet"
+	}
+	if t.history == nil || st == nil || st.loadProblem != "" {
+		return "Unavailable"
+	}
+	if !st.loaded {
+		return "Search and reuse commands"
+	}
+	return fmt.Sprintf("%d entries", len(st.entries))
+}
+
+// drawToolHistory renders the Command History tool: search, the three clears,
+// the pending confirmation, the last result, and the matching commands.
+func (t *sessionTabs) drawToolHistory(c *ui.Context, st *toolsState, screen TerminalScreen) {
+	if kit.GhostButton(c, icons.ChevronLeft, "All tools").Clicked() {
+		st.tool = toolNone
+		st.pending = nil
+		return
+	}
+	if st.loadProblem != "" {
+		kit.Notice(c, icons.TriangleAlert, c.Theme().Danger, st.loadProblem, nil)
+		return
+	}
+	if !st.loaded {
+		t.loadToolHistory(st)
+	}
+	kit.FormRow(c, "Search", func() {
+		ui.TextInput(c, &st.query).Placeholder("Commands or hosts").FillWidth()
+	})
+	matches := st.toolMatches()
+	ui.Text(c, fmt.Sprintf("%d matching entries", len(matches))).FontSize(12).
+		TextColor(c.Theme().TextMuted)
+	t.drawToolClears(c, st, len(matches))
+	if st.pending != nil {
+		t.drawToolConfirm(c, st)
+	}
+	if st.result != "" {
+		tone := c.Theme().Success
+		icon := icons.CircleCheck
+		if st.resultProblem {
+			tone, icon = c.Theme().Danger, icons.TriangleAlert
+		}
+		kit.Notice(c, icon, tone, st.result, nil)
+	}
+	if len(matches) == 0 {
+		kit.EmptyHint(c, "No commands match this search.")
+		return
+	}
+	if len(matches) > toolHistoryLimit {
+		ui.Text(c, fmt.Sprintf("Showing the first %d. Search to narrow the list.", toolHistoryLimit)).
+			FontSize(12).TextColor(c.Theme().TextMuted)
+		matches = matches[:toolHistoryLimit]
+	}
+	for _, entry := range matches {
+		entry := entry
+		row := kit.ListRow(c)
+		row.Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+				ui.Text(c, entry.Command).FontSize(13).SingleLine()
+				meta := entry.HostLabel
+				if meta == "" {
+					meta = "This device"
+				}
+				ui.Text(c, meta).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
+			})
+			if kit.IconButton(c, icons.CornerDownLeft, "Fill: "+entry.Command).Clicked() {
+				useToolCommand(st, screen, entry.Command, false)
+				return
+			}
+			if kit.IconButton(c, icons.Play, "Run: "+entry.Command).Clicked() {
+				useToolCommand(st, screen, entry.Command, true)
+			}
+		})
+	}
+}
+
+// drawToolClears renders the three independent destructive actions. Each one
+// opens its own confirmation; none of them deletes on the tap itself.
+func (t *sessionTabs) drawToolClears(c *ui.Context, st *toolsState, matches int) {
+	ui.Row(c).Gap(8).Wrap().Children(func() {
+		if kit.GhostButton(c, icons.Trash, "Clear this device").Clicked() {
+			t.requestToolClear(st, clearThisDevice)
+		}
+		if kit.GhostButton(c, icons.Trash, "Clear matching entries").Clicked() {
+			t.requestToolClear(st, clearMatching)
+		}
+		if kit.GhostButton(c, icons.Trash, "Delete everywhere").Clicked() {
+			t.requestToolClear(st, clearEverywhere)
+		}
+	})
+	if matches == 0 {
+		ui.Text(c, "The matching clear has nothing to delete.").FontSize(12).
+			TextColor(c.Theme().TextMuted)
+	}
+}
+
+// drawToolConfirm renders the one pending clear confirmation. The detail names
+// the exact scope, so the user can tell the three actions apart.
+func (t *sessionTabs) drawToolConfirm(c *ui.Context, st *toolsState) {
+	request := st.pending
+	text, detail := "", ""
+	switch request.scope {
+	case clearThisDevice:
+		text = "Clear history recorded on this device?"
+		detail = "Imported and synced entries from other devices stay."
+	case clearMatching:
+		text = fmt.Sprintf("Delete %d matching entries?", request.count)
+		detail = "Only the entries matching the current search are removed."
+	case clearEverywhere:
+		text = "Delete history everywhere?"
+		detail = "Every entry this device knows is removed and the deletion syncs through Atuin."
+	}
+	cancelled, confirmed := kit.ConfirmBar(c, text, func() {
+		ui.Text(c, detail).FontSize(12).TextColor(c.Theme().TextMuted)
+	}, "Cancel", "Delete")
+	switch {
+	case cancelled:
+		t.resolveToolClear(st, false)
+	case confirmed:
+		t.resolveToolClear(st, true)
+	}
+}
+
+// drawToolPage renders a catalog row whose own ticket has not landed. The page
+// is the skeleton later tickets replace with their real content.
+func (t *sessionTabs) drawToolPage(c *ui.Context, st *toolsState) {
+	if kit.GhostButton(c, icons.ChevronLeft, "All tools").Clicked() {
+		st.tool = toolNone
+		return
+	}
+	title := ""
+	for _, spec := range toolCatalog {
+		if spec.id == st.tool {
+			title = spec.title
+			break
+		}
+	}
+	kit.SectionBar(c, title, nil)
+	kit.EmptyHint(c, toolPlaceholder(st.tool))
+}

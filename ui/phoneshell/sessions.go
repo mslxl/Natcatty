@@ -179,6 +179,10 @@ type phonePane struct {
 	// encrypted secret store; this key is what the restore payload carries so
 	// a relaunch reattaches instead of starting a second remote shell.
 	resumeKey string
+	// tools is this Pane's Tools surface state. It lives on the Pane, so a
+	// focus switch cannot carry one Pane's overlay into another, and closing
+	// the Pane discards the overlay with it.
+	tools toolsState
 }
 
 // phoneTab is one Workspace Tab: an ordered set of Panes, one of which has
@@ -227,10 +231,19 @@ func (tab *phoneTab) focusedPane() *phonePane {
 	return tab.panes[0]
 }
 
-// focusPane moves focus to id, reporting whether the Pane is in this Tab.
+// focusPane moves focus to id, reporting whether the Pane is in this Tab. The
+// Pane that loses focus closes its Tools surface: the surface belongs to the
+// focused Pane, so it never reappears on a Pane the user did not just open it
+// on. The caller holds the session lock.
 func (tab *phoneTab) focusPane(id domainmodel.PaneID) bool {
 	if tab.paneOf(id) == nil {
 		return false
+	}
+	if tab.focus != id {
+		if previous := tab.paneOf(tab.focus); previous != nil {
+			previous.tools.open = false
+			previous.tools.pending = nil
+		}
 	}
 	tab.focus = id
 	return true
@@ -347,6 +360,9 @@ type sessionTabs struct {
 	// settings reads the terminal policy the phone's paste path enforces.
 	// Nil means no paste guard, which is the original's default.
 	settings SettingsService
+	// history backs the Tools surface's Command History tool. Nil means the
+	// surface still opens, but that tool reports why it is unavailable.
+	history CommandHistoryService
 	// prompts holds the trust and credential prompts the Panes answer.
 	prompts *Prompts
 	// launch opens one Pane's Session off the UI thread. It is addressed by the
@@ -425,6 +441,9 @@ type tabView struct {
 	screen  TerminalScreen
 	// accessory is the page's latch state, which outlives a frame.
 	accessory *accessoryState
+	// tools is the focused Pane's Tools surface state, which outlives a
+	// frame and belongs to that Pane alone.
+	tools *toolsState
 	// panes lists every Pane of the Tab, in order, and focus names the one the
 	// viewport shows.
 	panes []paneView
@@ -464,7 +483,9 @@ func (t *sessionTabs) addPane(tabID string, host domainvault.Host) (*phonePane, 
 	}
 	pane := t.newPaneLocked(tab, host)
 	tab.panes = append(tab.panes, pane)
-	tab.focus = pane.id
+	// Moving focus to the new Pane closes the previous Pane's Tools surface,
+	// exactly as the switcher's focus move does.
+	tab.focusPane(pane.id)
 	t.mu.Unlock()
 	t.persist()
 	return pane, true
@@ -948,6 +969,7 @@ func (t *sessionTabs) viewOfTabLocked(tab *phoneTab) tabView {
 	view.problem = focused.problem
 	view.screen = focused.screen
 	view.accessory = &focused.accessory
+	view.tools = &focused.tools
 	view.focus = string(focused.id)
 	return view
 }
@@ -1684,6 +1706,7 @@ func (t *sessionTabs) drawSession(c *ui.Context, id string, retry, back, addPane
 			return
 		}
 		ui.Column(c).Fill().Children(func() {
+			toolsOpen := view.tools != nil && view.tools.open
 			header := ui.Row(c).FillWidth().Padding(6, 12).Gap(8).AlignItems(ui.Center).
 				Background(c.Theme().Surface)
 			header.Children(func() {
@@ -1691,6 +1714,17 @@ func (t *sessionTabs) drawSession(c *ui.Context, id string, retry, back, addPane
 					ui.Text(c, view.label).SingleLine().Bold()
 					statusLine(c, view)
 				})
+				toolsLabel := "Tools for " + view.label
+				if toolsOpen {
+					toolsLabel = "Close tools for " + view.label
+				}
+				if kit.IconButton(c, icons.Command, toolsLabel).Clicked() && view.tools != nil {
+					if toolsOpen {
+						t.closeTools(view.tools)
+					} else {
+						t.openTools(view.tools)
+					}
+				}
 				if kit.IconButton(c, icons.Plus, "Add pane to "+view.label).Clicked() && addPane != nil {
 					addPane()
 				}
@@ -1698,6 +1732,15 @@ func (t *sessionTabs) drawSession(c *ui.Context, id string, retry, back, addPane
 					t.requestPaneClose(view.id, view.focus)
 				}
 			})
+			// The Tools surface is drawn in place of the terminal, but only for
+			// a Pane that is ready: a connecting Pane's host-key and credential
+			// prompts own the page, and no overlay may cover or block them. The
+			// terminal screen itself stays attached, so closing the surface
+			// returns to the same Pane at the same terminal position.
+			if toolsOpen {
+				t.drawTools(c, view)
+				return
+			}
 			// The Pane switcher is the phone's Tab-internal tabs: one chip per
 			// Pane, the focused one chosen. Switching never reconnects.
 			if len(view.panes) > 1 {

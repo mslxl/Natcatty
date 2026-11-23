@@ -37,6 +37,42 @@ type phoneHistory struct {
 }
 
 var _ phoneshell.HistorySyncService = (*phoneHistory)(nil)
+var _ phoneshell.CommandHistoryService = (*phoneHistory)(nil)
+
+// Entries lists the live commands newest first for the Session Tools surface.
+func (h *phoneHistory) Entries(ctx context.Context) ([]domainhistory.Entry, error) {
+	if h == nil || h.history == nil {
+		return nil, nil
+	}
+	return h.history.Entries(ctx)
+}
+
+// ClearThisDevice deletes the rows this install created and leaves entries
+// imported or synced from another writer, the same scope the desktop uses.
+func (h *phoneHistory) ClearThisDevice(ctx context.Context) (int, error) {
+	if h == nil || h.history == nil {
+		return 0, nil
+	}
+	return h.history.ClearThisDevice(ctx)
+}
+
+// PruneHistoryEntries deletes exactly the identities the Tools confirmation
+// counted.
+func (h *phoneHistory) PruneHistoryEntries(ctx context.Context, ids []string) (int, error) {
+	if h == nil || h.history == nil {
+		return 0, nil
+	}
+	return h.history.PruneHistoryEntries(ctx, ids)
+}
+
+// DeleteEverywhere removes every live row this device knows and queues the
+// Atuin delete records, the desktop's delete-all scope.
+func (h *phoneHistory) DeleteEverywhere(ctx context.Context) (int, error) {
+	if h == nil || h.history == nil {
+		return 0, nil
+	}
+	return h.history.DeleteEverywhere(ctx)
+}
 
 // newPhoneHistory builds the phone's history graph. preferences is the same
 // device-local account configuration document the desktop reads and writes,

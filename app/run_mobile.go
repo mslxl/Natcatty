@@ -250,6 +250,10 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 		phoneshell.WithPrompts(prompts),
 		phoneshell.WithSettings(phoneshell.NewSettingsService(preferences, terminalSettings)),
 		phoneshell.WithHistorySync(history),
+		// The Session Tools surface reads the same journal the Settings History
+		// page configures, so a command captured here is searchable, fillable,
+		// and clearable from the terminal it came from.
+		phoneshell.WithCommandHistory(history),
 		// The phone configures WebDAV or S3-compatible storage on the Settings
 		// page; the engine carries portable settings documents and Vault
 		// records to a desktop configured for the same account.

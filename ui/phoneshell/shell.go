@@ -166,6 +166,13 @@ func WithPrompts(prompts *Prompts) Option {
 	return func(s *Shell) { s.sessions.prompts = prompts }
 }
 
+// WithCommandHistory gives the Session Tools surface the shared Command
+// History journal. Without it the surface still opens, every other tool stays
+// available, and the history tool says why it cannot be used.
+func WithCommandHistory(service CommandHistoryService) Option {
+	return func(s *Shell) { s.sessions.history = service }
+}
+
 // WithScreenFactory replaces the libghostty-vt terminal screen. Tests inject a
 // fake because ordinary `go test` runs have no native library.
 func WithScreenFactory(factory ScreenFactory) Option {
