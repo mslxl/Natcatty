@@ -106,13 +106,25 @@ else
   [ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"
 fi
 
+# Percent-encode the line for the OSC 133;C payload one UTF-8 byte at a time:
+# the terminal decodes the field with a byte-wise URL unescaper, so the code
+# points a UTF-8 locale gives ${s:i:1} would not round-trip. bash's printf also
+# reports a byte above 0x7F as negative, so mask the value back to 0..255.
+# printf -v keeps the loop fork-free; command substitution costs one process
+# per byte, which is hundreds for a path of Chinese characters.
 __natcatty_urlencode() {
-  local s=$1 out= c i
-  for ((i=0;i<${#s};i++)); do
+  local LC_ALL=C
+  local s=$1 out= c i value n
+  n=${#s}
+  for ((i=0;i<n;i++)); do
     c=${s:i:1}
     case $c in
       [a-zA-Z0-9.~_-]) out+=$c ;;
-      *) out+=$(printf '%%%02X' "'$c") ;;
+      *)
+        printf -v value '%d' "'$c"
+        printf -v c '%%%02X' "$((value & 255))"
+        out+=$c
+        ;;
     esac
   done
   printf %s "$out"
@@ -191,13 +203,19 @@ export ZDOTDIR=$__natcatty_zdotdir
 [ -f "$__natcatty_zdotdir/.zshenv" ] && source "$__natcatty_zdotdir/.zshenv"
 [[ -o interactive ]] || return 0
 
+# Percent-encode the line for the OSC 133;C payload one UTF-8 byte at a time:
+# the terminal decodes the field with a byte-wise URL unescaper, so the code
+# points a UTF-8 locale gives ${#s} and $s[i] would not round-trip. printf -v
+# keeps the loop fork-free; command substitution costs one process per byte.
 __natcatty_urlencode() {
-  local s=$1 out= c i
-  for (( i=1; i<=${#s}; i++ )); do
+  local LC_ALL=C
+  local s=$1 out= c i n
+  n=${#s}
+  for (( i=1; i<=n; i++ )); do
     c=$s[i]
     case $c in
       [a-zA-Z0-9.~_-]) out+=$c ;;
-      *) out+=$(printf '%%%02X' "'$c") ;;
+      *) printf -v c '%%%02X' "'$c"; out+=$c ;;
     esac
   done
   print -rn -- "$out"
