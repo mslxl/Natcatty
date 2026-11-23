@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/egoist/mygo/plugins/terminal"
+	"github.com/egoist/mygo/ui"
 	"github.com/mslxl/natcatty/application/lens/graphics"
 	"github.com/mslxl/natcatty/application/lens/lens"
 	_ "github.com/mslxl/natcatty/application/lens/lens/builtin"
@@ -59,7 +60,44 @@ type terminalFlow struct {
 	promptAfterCommand bool
 	promptSize         appview.Size
 	commandSincePrompt bool
+	// promptPending is set between a command's OSC 133;D and the next
+	// OSC 133;B: the shell has not drawn its next prompt yet, and the live
+	// replay still holds the finished command below the block it just
+	// entered. The Pane crops the live area at the cursor meanwhile, so the
+	// output is not shown twice until the prompt replaces it.
+	promptPending bool
+
+	// promptTheme is the live terminal scheme the captured prompt rows are
+	// resolved with. It is set from the Surface's theme each frame; a capture
+	// keeps the colours it had when the shell drew the prompt.
+	promptThemeMu sync.Mutex
+	promptTheme   *terminal.Theme
+
+	// The prompt rows a finished block shows above it. Every OSC 133;C gets one
+	// mark from the tap (the block it started, or -1) and one capture from the
+	// private mirror (the rows from the prompt boundary through the echoed
+	// input). pairPrompts matches them in stream order; promptRows keeps the
+	// result per block id, so a block draws the shell's own prompt — starship,
+	// powerlevel10k, any PS1 — instead of one this app invents.
+	promptMu       sync.Mutex
+	promptMarks    []vt.CommandMark
+	promptCaptures [][][]ui.Span
+	promptRows     map[int]promptCapture
 }
+
+// promptCapture is one OSC 133;C capture: the rows the shell drew, and the
+// store epoch the mark was recorded under. Block ids restart at zero after
+// Clear, so an epoch mismatch means the rows belong to a block that no longer
+// exists.
+type promptCapture struct {
+	epoch uint64
+	rows  [][]ui.Span
+}
+
+// maxPromptCaptures bounds the two pairing queues. They drain after every feed;
+// the cap only matters while the mirror is unbound, and both queues keep the
+// same tail so their pairing stays aligned.
+const maxPromptCaptures = 4096
 
 func newTerminalFlow(session *appsession.Session, redraw func()) *terminalFlow {
 	engine := lens.NewEngine()
@@ -83,6 +121,10 @@ func newTerminalFlow(session *appsession.Session, redraw func()) *terminalFlow {
 		// picture and OSC 133;D in one read).
 		runningID, running := surface.store.LastID(), surface.store.HasRunning()
 		tap.Feed(data)
+		// The tap's OSC 133;C marks line up with the mirror's captures below;
+		// take them now, before this chunk's captures exist, so both queues
+		// grow in the same order.
+		surface.notePromptMarks(tap.TakeCommandMarks())
 		images := surface.gfx.Feed(data)
 		// What the screen is now decides whether pictures show: on the
 		// alternate screen only the terminal's own view can draw one, so the
@@ -120,6 +162,7 @@ func newTerminalFlow(session *appsession.Session, redraw func()) *terminalFlow {
 		}
 		surface.tapMu.Unlock()
 		surface.feedBell(data)
+		surface.pairPrompts()
 		if redraw != nil {
 			redraw()
 		}
@@ -191,6 +234,13 @@ func (s *terminalFlow) clear() {
 	s.imageMu.Lock()
 	s.images = nil
 	s.imageMu.Unlock()
+	// Block ids restart at zero with the cleared store, so the rows captured
+	// for the old blocks must not attach to the new ones. The queues are left
+	// alone: a capture whose C is still in flight must stay paired with its
+	// own mark, and its old epoch makes promptRowsFor reject the result.
+	s.promptMu.Lock()
+	s.promptRows = nil
+	s.promptMu.Unlock()
 }
 
 func (s *terminalFlow) setSize(cols, rows int) {
@@ -268,6 +318,111 @@ func (s *terminalFlow) promptBoundaryAfterCommand() bool {
 	return s.promptAfterCommand
 }
 
+// promptBoundaryPending reports whether a command has ended and the shell has
+// not drawn its next prompt yet (OSC 133;D seen, no B since).
+func (s *terminalFlow) promptBoundaryPending() bool {
+	if s == nil {
+		return false
+	}
+	s.bellMu.Lock()
+	defer s.bellMu.Unlock()
+	return s.promptPending
+}
+
+// setPromptTheme records the live terminal scheme the mirror's snapshots are
+// resolved with, so a captured prompt row carries the colours the shell drew
+// it in. Rows captured earlier keep their own colours; a theme change applies
+// to the prompts drawn after it.
+func (s *terminalFlow) setPromptTheme(theme *terminal.Theme) {
+	if s == nil {
+		return
+	}
+	s.promptThemeMu.Lock()
+	s.promptTheme = theme
+	s.promptThemeMu.Unlock()
+}
+
+func (s *terminalFlow) flowPromptTheme() *terminal.Theme {
+	s.promptThemeMu.Lock()
+	defer s.promptThemeMu.Unlock()
+	return s.promptTheme
+}
+
+// notePromptMarks queues the tap's OSC 133;C marks, in order.
+func (s *terminalFlow) notePromptMarks(marks []vt.CommandMark) {
+	if s == nil || len(marks) == 0 {
+		return
+	}
+	s.promptMu.Lock()
+	s.promptMarks = append(s.promptMarks, marks...)
+	if len(s.promptMarks) > maxPromptCaptures {
+		s.promptMarks = append([]vt.CommandMark(nil), s.promptMarks[len(s.promptMarks)-maxPromptCaptures:]...)
+	}
+	s.promptMu.Unlock()
+}
+
+// notePromptCapture records the rows the shell has drawn for the command whose
+// OSC 133;C the mirror just replayed. One entry is recorded per C, even when
+// the rows are unavailable, so the queue stays aligned with the tap's marks.
+// Called with bellMu held, after the mirror has consumed the marker.
+func (s *terminalFlow) notePromptCapture() {
+	var rows [][]ui.Span
+	if s.promptRowKnown && s.bellTerm != nil {
+		if got, ok := appview.PromptRows(s.bellTerm.Snapshot(), s.bellSize, s.promptRow, s.flowPromptTheme()); ok {
+			rows = got
+		}
+	}
+	s.promptMu.Lock()
+	s.promptCaptures = append(s.promptCaptures, rows)
+	if len(s.promptCaptures) > maxPromptCaptures {
+		s.promptCaptures = append([][][]ui.Span(nil), s.promptCaptures[len(s.promptCaptures)-maxPromptCaptures:]...)
+	}
+	s.promptMu.Unlock()
+}
+
+// pairPrompts matches queued marks with queued captures in stream order and
+// stores the captures per block id. The mark's epoch is the one kept: it was
+// read at the C, before a later D in the same read could clear the store.
+// Marks that started no block (-1) keep the queues aligned but store nothing.
+func (s *terminalFlow) pairPrompts() {
+	if s == nil {
+		return
+	}
+	s.promptMu.Lock()
+	n := min(len(s.promptMarks), len(s.promptCaptures))
+	for i := 0; i < n; i++ {
+		mark := s.promptMarks[i]
+		rows := s.promptCaptures[i]
+		if mark.ID < 0 || len(rows) == 0 {
+			continue
+		}
+		if s.promptRows == nil {
+			s.promptRows = make(map[int]promptCapture)
+		}
+		s.promptRows[mark.ID] = promptCapture{epoch: mark.Epoch, rows: rows}
+	}
+	s.promptMarks = append([]vt.CommandMark(nil), s.promptMarks[n:]...)
+	s.promptCaptures = append([][][]ui.Span(nil), s.promptCaptures[n:]...)
+	s.promptMu.Unlock()
+}
+
+// promptRowsFor returns the captured prompt rows of a block, or nil when there
+// are none (the mirror was not bound at its prompt, or the store was cleared
+// since: ids restart at zero, so the epoch must match).
+func (s *terminalFlow) promptRowsFor(id int) [][]ui.Span {
+	if s == nil {
+		return nil
+	}
+	epoch := s.store.Epoch()
+	s.promptMu.Lock()
+	defer s.promptMu.Unlock()
+	capture, ok := s.promptRows[id]
+	if !ok || capture.epoch != epoch {
+		return nil
+	}
+	return capture.rows
+}
+
 // bindBellTracker attaches the exact-BEL cursor mirror to the visible terminal.
 // The visible terminal may already have replayed a Session snapshot, so seed
 // the mirror from that snapshot before applying any output chunks that arrived
@@ -320,6 +475,9 @@ func (s *terminalFlow) bindBellTracker(term *terminal.Terminal) {
 	for _, data := range backlog {
 		s.feedBell(data)
 	}
+	// The backlog's C marks were queued while the mirror was missing; its
+	// replay just produced their captures.
+	s.pairPrompts()
 }
 
 // feedBell mirrors one decoded output chunk and queues a cursor snapshot for
@@ -405,6 +563,10 @@ func (s *terminalFlow) recordOSC133(marker string) {
 	switch sub {
 	case "C":
 		s.commandSincePrompt = true
+		// The cursor is at the end of the echoed input now, before any of the
+		// command's output: this is the one moment the real prompt and input
+		// are both on the mirror, so capture them for the block.
+		s.notePromptCapture()
 	case "B":
 		row, _, ok := appview.CursorReplayRow(s.bellTerm.Snapshot(), s.bellSize)
 		if !ok {
@@ -418,10 +580,12 @@ func (s *terminalFlow) recordOSC133(marker string) {
 		s.promptSize = s.bellSize
 		s.promptAfterCommand = afterCommand
 		s.commandSincePrompt = false
+		s.promptPending = false
 	case "D":
 		// D ends a command, but the next B decides whether a new prompt starts
 		// a fresh live run or extends the run of empty prompts.
 		_ = args
+		s.promptPending = true
 	}
 }
 

@@ -1,6 +1,10 @@
 package lensview
 
-import "github.com/egoist/mygo/ui"
+import (
+	"github.com/egoist/mygo/ui"
+
+	"github.com/mslxl/natcatty/ui/terminal/surface"
+)
 
 // style is the surface design system a lens view is drawn with: the tokens Terminal's
 // own components are built from, measured from the CSS it ships (see
@@ -22,6 +26,7 @@ type style struct {
 	BodyIndent float32 // card body padding-left: 36
 	CellPadX   float32 // table cell padding: 7
 	LH         float32 // --sf-lh: one line of the surface
+	BodySize   float32 // the terminal font's size: the body text's size
 	SmallSize  float32 // 11.5: headers, badges, code heads
 	MeterH     float32 // a meter or bar is 6 DIP tall
 	MeterR     float32 // and rounded by 3
@@ -52,7 +57,12 @@ type style struct {
 // so a changed accent still moves the surfaces with it.
 func styleFor(c *ui.Context) style {
 	t := c.Theme()
+	// The body is terminal text, so its metrics follow the terminal's own font
+	// size; the UI theme's size is only a fallback when none was reported.
 	fs := t.FontSize
+	if _, size := surface.TerminalFont(); size > 0 {
+		fs = size
+	}
 	if fs <= 0 {
 		fs = 13
 	}
@@ -66,6 +76,7 @@ func styleFor(c *ui.Context) style {
 		BodyIndent: 36,
 		CellPadX:   7,
 		LH:         22, // Terminal --he-lh: 22px
+		BodySize:   fs,
 		SmallSize:  11.5,
 		MeterH:     6,
 		MeterR:     3,

@@ -97,6 +97,23 @@ func waitForBashOutput(t *testing.T, output *bashOutput, fragment string) {
 	t.Fatalf("the shell never wrote %q; output %q", fragment, output.String())
 }
 
+// TestBashIntegrationSendsNonASCIICommandsAsUTF8Bytes is the end-to-end
+// regression for the OSC 133;C payload. startIntegratedBash runs under
+// LC_ALL=C, where bash's printf reported every byte above 0x7F as a negative
+// number, so `echo 中文` reached the lens as %FFFFFFFFFFFFFFE4… instead of the
+// UTF-8 bytes it typed. The payload must carry the line exactly.
+func TestBashIntegrationSendsNonASCIICommandsAsUTF8Bytes(t *testing.T) {
+	home := t.TempDir()
+	shell, output := startIntegratedBash(t, home)
+	waitForBashOutput(t, output, "\x1b]133;B\x07")
+
+	if _, err := shell.Write([]byte("echo 中文\n")); err != nil {
+		t.Fatal(err)
+	}
+	want := "\x1b]133;C;echo%20%E4%B8%AD%E6%96%87;echo%20%E4%B8%AD%E6%96%87\x07"
+	waitForBashOutput(t, output, want)
+}
+
 // TestBashIntegrationLayersOnTheUsersHooks is the regression for a shell the
 // integration took over: the script sourced the user's .bashrc and then
 // replaced PROMPT_COMMAND and the DEBUG trap outright. Users' prompts are

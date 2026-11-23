@@ -3,21 +3,10 @@
 package model
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"time"
 )
-
-// PromptText is the prompt this app draws for a directory: the prompt row above a
-// block shows it, outside the block's chrome (Terminal keeps the prompt line a terminal
-// row, not part of .sf-block).
-func PromptText(dir string) string {
-	if dir == "" {
-		dir = "~"
-	}
-	return fmt.Sprintf("PS %s>", dir)
-}
 
 // Link is an OSC 8 hyperlink inside a line's text, as byte offsets.
 type Link struct {
@@ -188,6 +177,7 @@ type Store struct {
 	cur     *Block
 	curRaw  []byte
 	rev     uint64
+	epoch   uint64
 	nextID  int
 	hooks   Hooks
 	pending []Line // lines seen before a lens claimed the command
@@ -354,7 +344,17 @@ func (s *Store) Clear() {
 	s.cur = nil
 	s.curRaw = nil
 	s.nextID = 0
+	s.epoch++
 	s.rev++
+}
+
+// Epoch counts Clear calls. Block ids restart at zero after a Clear, so data a
+// caller keeps per block id (a block's captured prompt rows, say) must be
+// dropped when the epoch it was captured under no longer matches.
+func (s *Store) Epoch() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.epoch
 }
 
 // UID identifies this store's run: block ids restart at zero after Clear, so the

@@ -37,7 +37,7 @@ type Col struct {
 	ID       string
 	Head     string
 	Align    Align
-	Priority int     // low priority columns hide first when narrow
+	Priority int     // higher numbers hide first when narrow; 0 never hides
 	Grow     float32 // share of the spare width
 	Truncate Truncate
 }

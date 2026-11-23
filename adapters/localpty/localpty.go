@@ -230,6 +230,16 @@ func environment(extra []string) []string {
 		}
 		env = append(env, key+"="+value)
 	}
+	unset := func(key string) {
+		kept := env[:0]
+		for _, entry := range env {
+			if strings.HasPrefix(entry, key+"=") {
+				continue
+			}
+			kept = append(kept, entry)
+		}
+		env = kept
+	}
 	get := func(key string) string {
 		for _, entry := range env {
 			if value, ok := strings.CutPrefix(entry, key+"="); ok {
@@ -255,8 +265,8 @@ func environment(extra []string) []string {
 	set("PSQL_PAGER", "cat")
 	set("BUILDKIT_PROGRESS", "plain")
 	set("CLICOLOR", "1")
-	if runtime.GOOS != "windows" && !hasLocale(get("LANG"), get("LC_ALL"), get("LC_CTYPE")) {
-		set("LANG", "en_US.UTF-8")
+	if runtime.GOOS != "windows" {
+		ensureUTF8Locale(set, unset, get)
 	}
 	for _, entry := range extra {
 		key, value, ok := strings.Cut(entry, "=")
@@ -265,6 +275,70 @@ func environment(extra []string) []string {
 		}
 	}
 	return env
+}
+
+// ensureUTF8Locale gives the shell a UTF-8 character locale when the
+// environment only names the C/POSIX default. POSIX resolves the category
+// from LC_ALL, then LC_CTYPE, then LANG, so setting LANG alone does nothing
+// while an inherited LC_ALL=C or LC_CTYPE=C is still there. Under that C
+// locale zsh measures a UTF-8 prompt glyph such as "❯" by its bytes (three)
+// while the terminal draws one cell; its line editor's redraws then write and
+// erase at the wrong columns, and the screen a finished block's prompt band
+// captures is corrupted (the input lands on the prompt's own rows, or
+// disappears).
+//
+// Only the variables naming the C/POSIX default are touched: a configured
+// locale — including a non-UTF-8 one — stays the user's choice. An explicit C
+// default also pinned every other category to C, so those that shape command
+// output stay C even when a configured LANG is present; only the character
+// category becomes UTF-8. With no locale variable at all, the app's historical
+// LANG default applies.
+func ensureUTF8Locale(set func(string, string), unset func(string), get func(string) string) {
+	// A configured LC_ALL names every category; nothing to do.
+	if hasLocale(get("LC_ALL")) {
+		return
+	}
+	// An explicit C/POSIX LC_ALL is the caller's "C for everything". Clear it,
+	// but do not hand the other categories to LANG: Natcatty's command lenses
+	// parse English dates, messages and collation, and a configured non-English
+	// LANG would localize them just because the character category moved to
+	// UTF-8, where the terminal's cell widths need it.
+	if get("LC_ALL") != "" {
+		unset("LC_ALL")
+		keepCCategories(set)
+		set("LC_CTYPE", "en_US.UTF-8")
+		return
+	}
+	// A configured LC_CTYPE already names the character category.
+	if hasLocale(get("LC_CTYPE")) {
+		return
+	}
+	// An explicit C/POSIX LC_CTYPE becomes UTF-8; the other categories keep
+	// whatever LANG or their own variables already name.
+	if get("LC_CTYPE") != "" {
+		set("LC_CTYPE", "en_US.UTF-8")
+		return
+	}
+	unset("LC_CTYPE")
+	// A configured LANG names the character category, and the rest.
+	if hasLocale(get("LANG")) {
+		return
+	}
+	// No locale at all: the app's historical default names every category.
+	set("LANG", "en_US.UTF-8")
+}
+
+// cCategories are the POSIX locale categories besides LC_CTYPE that shape the
+// text Natcatty's lenses parse: sort order, numbers, dates and message
+// language. An explicit C/POSIX LC_ALL pinned them to C, so clearing it keeps
+// them there.
+var cCategories = []string{"LC_COLLATE", "LC_MONETARY", "LC_NUMERIC", "LC_TIME", "LC_MESSAGES"}
+
+// keepCCategories pins cCategories to C.
+func keepCCategories(set func(string, string)) {
+	for _, key := range cCategories {
+		set(key, "C")
+	}
 }
 
 // hasLocale reports whether the environment already names a locale. C and

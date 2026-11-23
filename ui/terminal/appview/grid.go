@@ -40,7 +40,7 @@ func paintGridRow(p *ui.Painter, r ui.Rect, spans []ui.Span, size float32) {
 	if cellWidth <= 0 || cellHeight <= 0 {
 		return
 	}
-	m := ui.Font{Family: "monospace", Size: size}.Metrics()
+	m := ui.Font{Family: cellFamily, Size: size}.Metrics()
 	// Center the monospace metrics in the row, as a line box centers its font:
 	// cellHeight includes the paragraph's line height, which can be a little
 	// taller than the glyphs.
@@ -193,7 +193,7 @@ func paintGridDeco(p *ui.Painter, r ui.Rect, sp ui.Span, col, total int, baselin
 		}
 	}
 	if sp.Strikethrough {
-		m := ui.Font{Family: "monospace", Size: size}.Metrics()
+		m := ui.Font{Family: cellFamily, Size: size}.Metrics()
 		y := r.Y + baseline - m.Ascent*0.32
 		p.Fill(ui.Rect{X: x0, Y: y, W: w, H: thick}, color, 0)
 	}

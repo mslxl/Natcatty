@@ -18,6 +18,8 @@ import (
 	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
 
+	lensmodel "github.com/mslxl/natcatty/application/lens/model"
+	"github.com/mslxl/natcatty/application/lens/vt"
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/ui/terminal/appview"
 )
@@ -585,5 +587,57 @@ func TestTerminalSurfaceKeepsLensReplayAcrossHibernateResume(t *testing.T) {
 	block := surface.flow.store.Snapshot()[0]
 	if block.Cmd.Typed != "echo hibernate" || block.Raw != "while hibernated\n" {
 		t.Fatalf("hibernated Lens replay = %+v", block)
+	}
+}
+
+// A block's captured prompt rows are paired to it by the OSC 133;C mark. Block
+// ids restart at zero when a command clears the store, so the capture keeps the
+// epoch it was taken under: rows captured for an old block must never appear
+// above a new block that happens to reuse its id.
+func TestTerminalFlowKeepsCapturedPromptRowsWithTheirOwnBlock(t *testing.T) {
+	flow := &terminalFlow{store: lensmodel.NewStore(nil)}
+	term, err := terminal.New(terminal.Options{Conn: newTerminalFlowTransport(), Scrollback: -1})
+	if err != nil {
+		t.Skipf("the terminal plugin is unavailable here: %v", err)
+	}
+	defer func() { _ = term.Close() }()
+	term.Resize(40, 8)
+	flow.bindBellTracker(term)
+	tap := vt.New(flow.store)
+	// The same order as the live subscription: the tap sees the bytes first,
+	// its mark is taken, then the mirror captures at the same mark.
+	emit := func(data []byte) {
+		tap.Feed(data)
+		flow.notePromptMarks(tap.TakeCommandMarks())
+		flow.feedBell(data)
+		flow.pairPrompts()
+	}
+	rowText := func(rows [][]ui.Span) string {
+		var b strings.Builder
+		for _, row := range rows {
+			for _, sp := range row {
+				b.WriteString(sp.Text)
+			}
+		}
+		return strings.TrimRight(b.String(), " ")
+	}
+
+	emit([]byte("\x1b]133;A\x07\x1b]133;B\x07one> "))
+	emit([]byte("echo old\r\n\x1b]133;C;echo old\x07"))
+	if rows := flow.promptRowsFor(0); rowText(rows) != "one> echo old" {
+		t.Fatalf("first block's prompt rows = %q, want the shell's drawn row", rowText(rows))
+	}
+	emit([]byte("\x1b]133;D;0\x07"))
+
+	// The `clear` command empties the store, so the next block starts at id 0
+	// again. The old rows must not come back with it.
+	flow.store.Clear()
+	if rows := flow.promptRowsFor(0); rows != nil {
+		t.Fatalf("the cleared block's prompt rows survived: %q", rowText(rows))
+	}
+	emit([]byte("\x1b]133;A\x07\x1b]133;B\x07two> "))
+	emit([]byte("echo new\r\n\x1b]133;C;echo new\x07"))
+	if rows := flow.promptRowsFor(0); rowText(rows) != "two> echo new" {
+		t.Fatalf("the reused block id shows %q, want its own prompt", rowText(rows))
 	}
 }

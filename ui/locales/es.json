@@ -1246,6 +1246,7 @@
   "sessionFilesClose": "Cerrar archivos",
   "sessionMenuPaste": "Pegar",
   "sessionMenuClearBuffer": "Borrar búfer",
+  "terminalMenuCopyWorkingDirectory": "Copiar directorio de trabajo",
   "sessionMenuSplitRight": "Dividir a la derecha",
   "sessionMenuSplitDown": "Dividir abajo",
   "sessionMenuDetach": "Separar del espacio de trabajo",

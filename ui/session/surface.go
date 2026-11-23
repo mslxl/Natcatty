@@ -29,6 +29,7 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/terminal/appview"
 	terminaleffects "github.com/mslxl/natcatty/ui/terminal/effects"
+	terminalsurface "github.com/mslxl/natcatty/ui/terminal/surface"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
@@ -337,8 +338,9 @@ type Surface struct {
 	focused          bool
 	focusPending     bool
 	focusInitialized bool
-	focusManaged     bool
-	focusEpoch       uint64
+
+	focusManaged bool
+	focusEpoch   uint64
 	// focusRetryFrames covers the short native-window focus transition when a
 	// Local Terminal is opened from Vault or a work Tab becomes visible. It is
 	// deliberately bounded; steady frames never keep calling Focus.
@@ -404,6 +406,13 @@ func New(session *appsession.Session, optionList ...Option) (*Surface, error) {
 	}
 	surface.flowCursor, surface.flowBlink = surface.terminalCursor()
 	surface.flow = newTerminalFlow(session, options.Redraw)
+	// The rows this app draws itself (the live grid, a block's prompt and plain
+	// cells, a lens view) are terminal text, so they use the terminal's own
+	// configured font. A Surface with no font option reports the empty font,
+	// which resets the shared setting to the fallback.
+	font := surface.terminalFont()
+	terminalsurface.SetTerminalFont(font.Family, font.Size)
+	surface.flow.setPromptTheme(surface.terminalTheme())
 	if options.LogDefaults != nil {
 		if defaults := options.LogDefaults(); validLogFormat(defaults.Format) {
 			surface.logFormat = defaults.Format
@@ -606,6 +615,46 @@ func (s *Surface) terminalKeybinds() []terminal.Keybind {
 	return s.options.Keybinds()
 }
 
+// terminalKeybindList is the terminal's effective bindings: MyGo's platform
+// defaults overlaid with the app's, in the same order and with the same
+// replace-or-unbind rule the terminal plugin applies (ActionNone removes the
+// default of its chord).
+func terminalKeybindList(binds []terminal.Keybind) []terminal.Keybind {
+	merged := terminal.DefaultKeybinds()
+	for _, k := range binds {
+		kept := merged[:0]
+		for _, o := range merged {
+			if o.Mods != k.Mods || o.Key != k.Key {
+				kept = append(kept, o)
+			}
+		}
+		merged = kept
+		if k.Action != terminal.ActionNone {
+			merged = append(merged, k)
+		}
+	}
+	return merged
+}
+
+// handlePasteChord runs a key bound to ActionPaste before the pane encodes it.
+// The drawn grid does not go through the terminal plugin's view, so a paste
+// chord used to be sent to the shell as its raw bytes (Ctrl+Shift+V became
+// 0x16, literal-next). A performable binding whose action cannot run — an
+// empty clipboard — falls through to the program, as the plugin's view does.
+func (s *Surface) handlePasteChord(c *ui.Context, mods ui.Modifiers, key ui.Key) bool {
+	for _, bind := range terminalKeybindList(s.terminalKeybinds()) {
+		if bind.Action != terminal.ActionPaste || bind.Mods != mods || bind.Key != key {
+			continue
+		}
+		if text := c.Services().ReadClipboard(); text != "" {
+			s.requestPaste(text)
+			return true
+		}
+		return !bind.Performable
+	}
+	return false
+}
+
 // SetTerminalFont restyles a live terminal without recreating its Session. It
 // is what applies the Appearance settings while Sessions are open.
 func (s *Surface) SetTerminalFont(family string, size float32) {
@@ -616,6 +665,10 @@ func (s *Surface) SetTerminalFont(family string, size float32) {
 	if s.observer != nil {
 		s.observer.SetFont(font)
 	}
+	// The app's own terminal rows (live grid, finished command rows, lens
+	// views) follow the same setting, so text does not change font when it
+	// moves out of the terminal plugin's grid into a block.
+	terminalsurface.SetTerminalFont(family, size)
 }
 
 // SetTerminalCursor applies a cursor shape and blink change to a live terminal
@@ -1011,6 +1064,9 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 		s.flowCount, s.flowLastID, s.flowLastExit = len(blocks), lastID, lastExited
 		images := s.flow.imagesSnapshot()
 		terminalTheme := s.terminalTheme()
+		// Prompt rows are captured from the mirror between frames; the scheme
+		// in force is the one the shell is drawing with now.
+		s.flow.setPromptTheme(terminalTheme)
 		promptRow, promptRowKnown := s.flow.promptBoundary(appview.Size{Cols: cols, Rows: rows})
 		if s.options.RawTerminal != nil && s.options.RawTerminal() {
 			promptRow, promptRowKnown = 0, false
@@ -1019,6 +1075,7 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 			PromptRow:          promptRow,
 			PromptRowKnown:     promptRowKnown,
 			PromptAfterCommand: s.flow.promptBoundaryAfterCommand(),
+			PromptPending:      s.flow.promptBoundaryPending(),
 		}
 		for _, block := range blocks {
 			if block.Exited {
@@ -1083,11 +1140,15 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 				// gets from Options.OpenLink: an archive name fills its
 				// extraction command, other file paths open nothing, and a
 				// URL opens in the browser.
-				OpenLink:  s.openPaneLink,
-				Hover:     &s.liveHover,
-				Focus:     focus,
-				Refocus:   flowRefocus,
-				KeepFocus: s.focused,
+				OpenLink: s.openPaneLink,
+				Hover:    &s.liveHover,
+				// A finished block shows the prompt and input the shell drew,
+				// captured at the command's OSC 133;C mark: the shell's own
+				// prompt, not one this app could only approximate.
+				PromptRows: s.flow.promptRowsFor,
+				Focus:      focus,
+				Refocus:    flowRefocus,
+				KeepFocus:  s.focused,
 				// A press on a finished command's row or Lens body must not
 				// leave the keyboard there. The block still selects text and
 				// its Native/Raw switch still works; the Session asks for the
@@ -1111,6 +1172,28 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 				},
 				Focused: func(focused bool) {
 					s.terminalLiveFocused = focused
+				},
+				Secondary: func() {
+					// Right-clicking a block's text opens a text menu, which
+					// focuses the read-only paragraph under the pointer. The
+					// shell keeps the keyboard, as it does after a primary
+					// press; the selection is left alone.
+					if s.focused {
+						s.focusPending = true
+						s.redraw()
+					}
+				},
+				// One menu for the whole terminal: the live grid, blank space,
+				// finished blocks, raw cells and Lens bodies. The text views
+				// prepend MyGo's editing items and pass no live actions.
+				Menu: func(m *ui.Menu, acts appview.MenuActions) {
+					model, actions := s.chrome(c, s.session.Snapshot())
+					dir := s.Dir()
+					var copyDir func()
+					if dir != "" {
+						copyDir = func() { c.Services().WriteClipboard(dir) }
+					}
+					buildTerminalMenu(m, model, locales.In(c.Locale()), acts, actions, copyDir)
 				},
 				OwnView: func(pictures, alt bool) {
 					if pictures != s.terminalOwnView && s.focused {
@@ -1141,12 +1224,26 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 				Images: s.flow.hasPictures(),
 				Input: func(ev ui.InputEvent) bool {
 					if ev.Kind == ui.InputCommand && ev.Text == "paste" {
-						if text := c.ReadClipboard(); text != "" {
-							s.terminal.Paste(text)
+						// The Edit menu's Paste reaches an input handler, outside
+						// any frame. Context.ReadClipboard is frame-gated and
+						// returns "" there, so the window's clipboard is read
+						// through Services, which works at any time. requestPaste
+						// (not Terminal.Paste) keeps this path on the same
+						// multiline policy and line-ending normalization as the
+						// Session menu and the plugin's own view.
+						if text := c.Services().ReadClipboard(); text != "" {
+							s.requestPaste(text)
 						}
 						return true
 					}
 					if ev.Kind == ui.InputKeyDown {
+						// The drawn grid bypasses the terminal plugin's view,
+						// so its paste chords (Ctrl+Shift+V, Shift+Insert, or a
+						// user binding) are taken here; otherwise they reach
+						// the shell as raw control bytes.
+						if s.handlePasteChord(c, ev.Mods, ev.Key) {
+							return true
+						}
 						// The pane builds the bytes the program reads, so the
 						// same key hook the plugin's own view calls (OnKey)
 						// runs before the pane's encoder. Shift+Enter's newline

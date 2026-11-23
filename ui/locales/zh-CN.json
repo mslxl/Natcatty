@@ -1246,6 +1246,7 @@
   "sessionFilesClose": "关闭文件",
   "sessionMenuPaste": "粘贴",
   "sessionMenuClearBuffer": "清除缓冲区",
+  "terminalMenuCopyWorkingDirectory": "复制工作目录",
   "sessionMenuSplitRight": "向右拆分",
   "sessionMenuSplitDown": "向下拆分",
   "sessionMenuDetach": "从工作区分离",

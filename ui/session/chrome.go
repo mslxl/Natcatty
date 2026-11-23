@@ -194,45 +194,7 @@ func toolbar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, 
 		menuLabel = m.SessionMenuLabel()
 	}
 	kit.IconButtonWith(c, icons.EllipsisVertical, menuLabel, kit.IconOptions{Role: kit.IconPane}).Menu(func(menu *ui.Menu) {
-		buildSessionMenu(menu, sessionMenuModel{
-			Encoding:     domainterminal.NormalizeEncoding(model.Encoding),
-			Logging:      model.Logging.Active,
-			LogFormat:    model.LogFormat,
-			LogDirectory: model.LogDirectory,
-			LogPath:      model.Logging.Path,
-			CanPaste:     model.CanPaste && actions.Paste != nil,
-			CanReconnect: model.CanReconnect && actions.Reconnect != nil,
-			CanClear:     actions.ClearBuffer != nil,
-			CanSave:      actions.SaveScreen != nil,
-			CanRename:    actions.Rename != nil,
-			CanSplit:     actions.SplitRight != nil || actions.SplitDown != nil,
-			CanDetach:    actions.Detach != nil,
-			CanClosePane: actions.ClosePane != nil,
-			Hibernated:   model.Hibernated,
-		}, m, sessionMenuActions{
-			Copy:           actions.Copy,
-			Paste:          actions.Paste,
-			PasteSelection: actions.PasteSelection,
-			SelectAll:      actions.SelectAll,
-			OpenBrowser:    actions.OpenBrowser,
-			Reconnect:      actions.Reconnect,
-			SendYmodem:     actions.SendYmodem,
-			ReceiveYmodem:  actions.ReceiveYmodem,
-			SaveScreen:     actions.SaveScreen,
-			ClearBuffer:    actions.ClearBuffer,
-			Rename:         actions.Rename,
-			SetEncoding:    actions.SetEncoding,
-			ToggleLog:      actions.ToggleLog,
-			OpenLog:        actions.OpenLog,
-			SetLogFormat:   actions.SetLogFormat,
-			SplitRight:     actions.SplitRight,
-			SplitDown:      actions.SplitDown,
-			Detach:         actions.Detach,
-			ClosePane:      actions.ClosePane,
-			Hibernate:      actions.Hibernate,
-			Resume:         actions.Resume,
-			Observe:        actions.Observe,
-		})
+		sessionMenu(menu, model, m, actions)
 	})
 }
 

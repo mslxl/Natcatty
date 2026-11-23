@@ -1,5 +1,7 @@
-// Package surface holds the small platform questions the Terminal surfaces need: which
-// font family a CSS stack resolves to on this machine.
+// Package surface holds the small platform questions the Terminal surfaces
+// need: which font family a CSS stack resolves to on this machine, and the
+// font the terminal itself is configured to draw with (recorded by the Session
+// surface and read by the views that draw terminal text themselves).
 package surface
 
 import (
@@ -49,6 +51,40 @@ func MonoFamily() string {
 func SansFamily() string {
 	sansOnce.Do(func() { sansName = pickFamily(installedFonts(), sansStack) })
 	return sansName
+}
+
+// The configured terminal font is process-wide: Appearance is one setting for
+// the whole app, and the terminal text this app draws itself (the live grid, a
+// finished command's rows, a lens view) has no options channel of its own.
+var (
+	configuredFontMu     sync.Mutex
+	configuredFontFamily string
+	configuredFontSize   float32
+)
+
+// SetTerminalFont records the font the terminal is configured to draw with: the
+// same comma-separated family list and size the terminal plugin receives (see
+// terminal.Font), not a resolved family or the UI theme's size. The app reports
+// it when a Surface is built and again whenever the Appearance settings change.
+//
+// The rows this app draws itself use it, so a command's rows are the same font
+// while they live in the grid and after they move into a block. Empty family or
+// zero size means nothing has been reported (tests, a view with no terminal);
+// callers fall back to the UI theme for the size and to the terminal plugin's
+// own default ("monospace") for the family.
+func SetTerminalFont(family string, size float32) {
+	configuredFontMu.Lock()
+	configuredFontFamily, configuredFontSize = strings.TrimSpace(family), size
+	configuredFontMu.Unlock()
+}
+
+// TerminalFont is the configured terminal font: the comma-separated family list
+// ui.Element.Font takes, and the size in DIPs. A zero size means no setting was
+// reported.
+func TerminalFont() (family string, size float32) {
+	configuredFontMu.Lock()
+	defer configuredFontMu.Unlock()
+	return configuredFontFamily, configuredFontSize
 }
 
 // pickFamily is the first installed family of the stack, matched without case or

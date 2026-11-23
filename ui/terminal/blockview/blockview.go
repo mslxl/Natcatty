@@ -1,9 +1,9 @@
 // Package blockview draws Terminal's command blocks: one card per command a lens
 // claimed, with a hover toolbar and the lens view or the raw output as its body.
-// A command no lens claimed is not a block: it prints cells, with its prompt row
-// and its output as plain terminal text. The prompt line is a row above either
-// (RenderCommand), not part of the card: Terminal's .sf-block has only the bar, the
-// body and the foot.
+// A command no lens claimed is not a block: it prints cells, with its output as
+// plain terminal text. The prompt and echoed input above either are screen rows
+// the Pane paints from its capture, not part of the card: Terminal's .sf-block
+// has only the bar, the body and the foot.
 //
 // The mapping mirrors findings/mygo-ui-mapping.md: MyGo has no CSS :hover, so
 // the toolbar is built only while the block's card is hovered or holds the
@@ -29,20 +29,16 @@ import (
 
 // maxRawLines caps how many raw lines one frame builds; the full raw text is
 // still what Copy copies. Terminal virtualizes the raw list; this is a simpler
-// bound because the raw body is a selectable Scroll (a virtualized List cannot
-// be selected as one document, as MyGo's text docs note).
+// bound because the raw body is one selectable document, and a virtualized List
+// cannot be selected as one (MyGo's text docs).
 const maxRawLines = 500
 
-// maxCellLines is how many lines a plain cell draws before it gets a scroll
-// viewport of its own. It keeps an ordinary command (a few lines) as plain flow
-// text instead of a nested scroll area.
-const maxCellLines = 40
-
-// Render draws every block in the store, in order, each with its prompt line
-// above it. viewport is the visible part of the flow in window coordinates
-// (the zero Rect when the caller has none); a block's toolbar uses it to stay
-// inside the visible range.
-func Render(c *ui.Context, store *model.Store, engine *lens.Engine, viewport ui.Rect, onCopy func(string)) {
+// Render draws every finished block in the store, in order. The prompt and
+// echoed input above each block are screen rows the Pane paints from its
+// capture (see appview.Hooks.PromptRows), not part of the card. viewport is the
+// visible part of the flow in window coordinates (the zero Rect when the caller
+// has none); a block's toolbar uses it to stay inside the visible range.
+func Render(c *ui.Context, store *model.Store, engine *lens.Engine, viewport ui.Rect, onCopy func(string), menu func(*ui.Menu)) {
 	blocks := store.Snapshot()
 	col := ui.Column(c).Gap(10).FillWidth()
 	col.Children(func() {
@@ -53,57 +49,38 @@ func Render(c *ui.Context, store *model.Store, engine *lens.Engine, viewport ui.
 			if !blocks[i].Exited {
 				continue
 			}
-			RenderCommand(c, store, engine, &blocks[i], viewport, onCopy)
+			RenderCommand(c, store, engine, &blocks[i], viewport, onCopy, menu)
 		}
 	})
 }
 
-// RenderCommand draws one command's cell the way Terminal's flow has it: the prompt
-// line as a row of its own, then either the lens block or, for a command no lens
-// claimed, plain cells. Terminal builds .sf-block only for a lens's command: its bar
-// always carries the lens name and the Native/Raw switch, so a plain command is
-// left as terminal output.
-func RenderCommand(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, viewport ui.Rect, onCopy func(string)) {
-	group := ui.Column(c).Gap(0).FillWidth()
-	group.Children(func() {
-		renderPromptLine(c, b)
-		if b.LensID == "" {
-			renderCell(c, store, b)
-			renderImages(c, b)
-			return
-		}
-		renderBlock(c, store, engine, b, viewport, onCopy)
-	})
-}
-
-// renderPromptLine is the row above a block: the prompt and the line the user
-// typed. Terminal draws the prompt itself (the shell's PS1 is blank columns) and the
-// shell echoes the typed line, so both are terminal content, not block chrome.
-// One RichText keeps it a terminal row: a Row of two Texts would be shorter than
-// the live grid's cell and the command would jump up a row when it ended.
-func renderPromptLine(c *ui.Context, b *model.Block) {
-	bc := lensview.BlockColorsFor(c)
-	cmd := b.Cmd.Typed
-	if cmd == "" {
-		cmd = b.Cmd.Line
+// RenderCommand draws one finished command the way Terminal's flow has it:
+// either the lens block or, for a command that has no lens view to show, plain
+// cells. The command's prompt and echoed input are not drawn here: they are
+// screen rows, and the Pane paints them above this element with the live grid's
+// own cell painter, from the rows the shell actually drew (see
+// appview.Hooks.PromptRows). Terminal builds .sf-block only for a command a lens
+// actually renders: its bar always carries the Native/Raw switch, so a block
+// without a native view — no lens claimed it, or the lens claimed it but built
+// no view (files.ls on a plain `ls`) — is left as terminal output.
+func RenderCommand(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, viewport ui.Rect, onCopy func(string), menu func(*ui.Menu)) {
+	if _, hasNative := b.Native.(lens.Node); b.LensID == "" || !hasNative {
+		renderCell(c, store, b, menu)
+		renderImages(c, b)
+		return
 	}
-	if cmd == "" {
-		cmd = "(command)"
-	}
-	ui.RichText(c,
-		ui.Span{Text: model.PromptText(b.Cmd.Cwd) + " ", Font: "monospace", Color: bc.T3},
-		ui.Span{Text: cmd, Font: "monospace"},
-	).SingleLine()
+	renderBlock(c, store, engine, b, viewport, onCopy, menu)
 }
 
-// RenderBlock draws one block's card, without its prompt line: the chrome, the
-// lens view or the raw output, and the foot. The flow draws the prompt line with
-// RenderCommand; a caller that shows a block on its own gets only the block.
-func RenderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, onCopy func(string)) {
-	renderBlock(c, store, engine, b, ui.Rect{}, onCopy)
+// RenderBlock draws one block's card, without the prompt rows above it: the
+// chrome, the lens view or the raw output, and the foot. A caller that shows a
+// block on its own gets only the block; the Pane draws the shell's own prompt
+// rows above it.
+func RenderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, onCopy func(string), menu func(*ui.Menu)) {
+	renderBlock(c, store, engine, b, ui.Rect{}, onCopy, menu)
 }
 
-func renderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, viewport ui.Rect, onCopy func(string)) {
+func renderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *model.Block, viewport ui.Rect, onCopy func(string), menu func(*ui.Menu)) {
 	t := c.Theme()
 	// Native holds a lens.Node for blocks a lens claimed.
 	native, hasNative := b.Native.(lens.Node)
@@ -118,6 +95,12 @@ func renderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *mode
 	// steps 10 px out. The card is pulled that far left so its own padding puts the
 	// body back on the prompt's edge (the prompt is drawn outside the card).
 	card := ui.Column(c).Padding(1, 0, 1, 10).Margin(0, 0, 0, -10).Gap(lensview.InnerGap(c)).FillWidth()
+	// A right-click on the card's chrome opens the terminal menu too. The text
+	// inside the body has its own menu (editing items first), which is nearer
+	// in the hit chain and wins; this one covers the bar, rail and padding.
+	if menu != nil {
+		card = card.ContextMenu(func(m *ui.Menu) { menu(m) })
+	}
 
 	// The toolbar shows while the pointer is over the card or keyboard focus
 	// is inside it: MyGo has no CSS :hover, so this is a per-frame query.
@@ -136,15 +119,24 @@ func renderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *mode
 		bar = withAlpha(bc.Bad, 0.5)
 	}
 
+	// A raw view is the program's output as it came out, with no block chrome:
+	// no rail and no foot badges (exit status, how long it took, progress), as a
+	// command that no lens claimed has none. The hover bar stays, faded out until
+	// the pointer is over the block: it is the way back to Native.
+	rawView := store.EffectiveView(b) == model.ViewRaw
 	card.Children(func() {
-		ui.Box(c).Absolute().Left(0).Top(2).Bottom(2).Width(2).Radius(1).Background(bar)
+		if !rawView {
+			ui.Box(c).Absolute().Left(0).Top(2).Bottom(2).Width(2).Radius(1).Background(bar)
+		}
 		// Terminal's .sf-block-bar: always mounted, faded in on hover; it is absolutely
 		// positioned, so it never takes room in the flow and a block never moves
 		// under the pointer.
 		renderActions(c, store, b, card, viewport, hasNative, onCopy, hovered)
-		renderBody(c, store, b, native, hasNative, engine)
+		renderBody(c, store, b, native, hasNative, engine, menu)
 		renderImages(c, b)
-		renderFoot(c, b)
+		if !rawView {
+			renderFoot(c, b)
+		}
 		// Terminal keeps a question a program is waiting on visible on the block
 		// ("they show … any prompt waiting on you, such as `[y/N]`"). A running
 		// block has no Raw yet, so read its partial output.
@@ -155,8 +147,9 @@ func renderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *mode
 			}
 		}
 		if p := promptTail(raw, !b.Exited); p != "" && !b.Exited {
+			family, size := terminalTextFont(c)
 			ui.Row(c).Gap(8).Children(func() {
-				ui.Text(c, p).Font("monospace").TextColor(t.Accent).SingleLine()
+				ui.Text(c, p).Font(family).FontSize(size).TextColor(t.Accent).SingleLine()
 				ui.Badge(c, "waiting for input").Background(t.Surface).TextColor(t.TextMuted)
 			})
 		}
@@ -265,7 +258,7 @@ func renderFoot(c *ui.Context, b *model.Block) {
 		el := b.Elapsed()
 		if el > 0 {
 			ui.Text(c, "took "+el.Round(time.Millisecond).String()).
-				TextColor(bc.T4).FontFeatures("tnum").FontSize(11).Font(surface.MonoFamily())
+				TextColor(bc.T4).FontFeatures("tnum").FontSize(11).Font(monoFamily())
 		}
 	})
 }
@@ -332,8 +325,11 @@ func renderActions(c *ui.Context, store *model.Store, b *model.Block, card ui.El
 		Radius(8).Background(pop).InsetShadow(0, 0, 0, 1, bc.L2)
 	op := bar.AnimateWith("blockbar:"+rawKey(store, b), target, 150*time.Millisecond, ui.EaseOut)
 	// Terminal hides the bar with translateY(-2px) and lifts it into place on hover, so
-	// it rides down as it fades in.
-	bar.Top(actionBarOffset(viewport, card.LayoutBounds()) + 2*op).Opacity(op).Disabled(!hovered)
+	// it rides down as it fades in. IgnoreInput — not Disabled — keeps the bar in the
+	// hit chain while it is hidden: a Disabled element is skipped by hit-testing, so
+	// card.Hovered() would drop as the pointer lands on the bar and the control
+	// flickers between enabled and disabled instead of staying up.
+	bar.Top(actionBarOffset(viewport, card.LayoutBounds()) + 2*op).Opacity(op).IgnoreInput(!hovered)
 	bar.Children(func() {
 		// .sf-block-lens: an icon and the name in 11px mono, the muted step, cut at
 		// 220 DIP.
@@ -352,10 +348,17 @@ func renderActions(c *ui.Context, store *model.Store, b *model.Block, card ui.El
 		if name == "" {
 			name = "raw"
 		}
-		ui.Text(c, name).Font(surface.MonoFamily()).TextColor(bc.T3).FontSize(11).
+		ui.Text(c, name).Font(monoFamily()).TextColor(bc.T3).FontSize(11).
 			MaxWidth(220).SingleLine()
 
-		if b.LensID != "" || hasNative {
+		// The switch exists only where a native view can actually be shown: a
+		// lens may claim a command yet return no view (files.ls does for a plain
+		// `ls`), leaving LensID set and Native nil. RenderCommand draws such a
+		// block as plain cells, so this gate matters only for a caller that
+		// renders the card on its own; without it the bar offered a Native
+		// option that could never be selected — SetMode(ViewNative) still read
+		// EffectiveView back as Raw.
+		if hasNative {
 			renderSegmented(c, store, b, hasNative, bc)
 		}
 
@@ -388,7 +391,12 @@ func renderActions(c *ui.Context, store *model.Store, b *model.Block, card ui.El
 			cp.Background(bc.L1)
 			glyph = bc.T1
 		}
-		ui.Icon(c, surface.CopyIcon()).Width(13).Height(13).TextColor(glyph)
+		// The icon belongs inside the button's children: as a sibling of cp it was
+		// laid out after cp's 22 DIP box, painting over the bar's padding with no
+		// hit region of its own — the icon looked offset and a click on it missed.
+		cp.Children(func() {
+			ui.Icon(c, surface.CopyIcon()).Width(13).Height(13).TextColor(glyph)
+		})
 	})
 }
 
@@ -428,32 +436,36 @@ func renderSegmented(c *ui.Context, store *model.Store, b *model.Block, hasNativ
 	})
 }
 
-func renderBody(c *ui.Context, store *model.Store, b *model.Block, native lens.Node, hasNative bool, engine *lens.Engine) {
+func renderBody(c *ui.Context, store *model.Store, b *model.Block, native lens.Node, hasNative bool, engine *lens.Engine, menu func(*ui.Menu)) {
 	if store.EffectiveView(b) == model.ViewNative && hasNative && native != nil {
 		ui.Column(c).FillWidth().Children(func() {
 			// Empty lines the program printed first stay rows: the live grid showed
 			// them, so without them the body jumps up when the command ends. The raw
 			// text carries empty lines itself; a native view starts at its first row,
 			// so the rows are drawn here.
+			family, size := terminalTextFont(c)
 			for i := 0; i < leadingBlankRows(store, b); i++ {
 				// A terminal row, not a surface gap: the line was a grid row while
 				// it lived, so the first real row must stay where it was.
-				ui.Text(c, " ").Font("monospace").SingleLine()
+				e := ui.Text(c, " ").Font(family).FontSize(size).SingleLine()
+				if CellRowHeight > 0 {
+					e.FixedLineHeight(CellRowHeight)
+				}
 			}
 			// The scope keeps a section's collapse state across frames; the lens
 			// rebuilds its tree every frame, so a bare bool would be forgotten. A
 			// click a row reports goes back to the lens, which decides what it
 			// selects and rebuilds its view.
-			lensview.RenderInto(c, native, lensScope(store, b), func(ev lens.Event) {
+			lensview.RenderIntoMenu(c, native, lensScope(store, b), func(ev lens.Event) {
 				if engine != nil {
 					engine.Event(b.ID, ev)
 				}
 				c.Invalidate()
-			})
+			}, menu)
 		})
 		return
 	}
-	renderRaw(c, store, b)
+	renderRaw(c, store, b, menu)
 }
 
 // leadingBlankRows is how many empty output rows the stream begins with. The stream
@@ -495,7 +507,7 @@ func cutBreak(s string) (string, bool) {
 	return s, false
 }
 
-func renderRaw(c *ui.Context, store *model.Store, b *model.Block) {
+func renderRaw(c *ui.Context, store *model.Store, b *model.Block, menu func(*ui.Menu)) {
 	t := c.Theme()
 	lines, hidden, expanded := rawLines(store, b)
 	if lines == nil {
@@ -504,24 +516,26 @@ func renderRaw(c *ui.Context, store *model.Store, b *model.Block) {
 		}
 		return
 	}
-	rawViewport(c, lines)
+	// The raw text is flow text, as tall as its lines: it never gets a scroll of
+	// its own. A viewport here put everything past 260 DIP behind a second
+	// scrollbar, inside the flow's own.
+	col := selectableText(ui.Column(c).Selectable().FillWidth(), menu)
+	col.Children(func() { rawTexts(c, lines) })
 	renderRawNotice(c, store, b, hidden, expanded)
 }
 
 // renderCell is a command no lens claimed: Terminal leaves it as terminal cells, so
 // the flow draws the shared prompt row and the raw output without block chrome
 // (no rail, hover bar, Native/Raw switch, copy button or foot).
-func renderCell(c *ui.Context, store *model.Store, b *model.Block) {
+func renderCell(c *ui.Context, store *model.Store, b *model.Block, menu func(*ui.Menu)) {
 	lines, hidden, expanded := rawLines(store, b)
 	if lines == nil {
 		return
 	}
-	if len(lines) <= maxCellLines && hidden == 0 {
-		col := ui.Column(c).Selectable()
-		col.Children(func() { cellTexts(c, lines) })
-	} else {
-		textViewport(c, lines, cellTexts)
-	}
+	// Cells are flow text too, whatever their count: a long output grows the
+	// flow, and the flow's scroll reaches its end.
+	col := selectableText(ui.Column(c).Selectable(), menu)
+	col.Children(func() { cellTexts(c, lines) })
 	renderRawNotice(c, store, b, hidden, expanded)
 }
 
@@ -547,17 +561,49 @@ func renderImages(c *ui.Context, b *model.Block) {
 // shorter. Zero leaves the text its natural height.
 var CellRowHeight float32
 
-// cellTexts draws a plain command's output as the terminal cells it was: monospace
-// at the theme size, on the grid's own row pitch. The rows were grid rows one frame
-// earlier, so a shorter line would make a multi-line output drift up and take the
-// prompt below it along, exactly as a block that moves when it ends.
+// monoFamily is the terminal's configured family list, which the block
+// chrome's monospace bits (the run time, the foot's command name) use too.
+// The resolved --mono stack is the fallback when no terminal font was reported.
+func monoFamily() string {
+	if family, _ := surface.TerminalFont(); family != "" {
+		return family
+	}
+	return surface.MonoFamily()
+}
+
+// terminalTextFont is the font the terminal draws with, for the rows this
+// package renders as terminal output (a plain cell, a block's raw text). They
+// were grid rows a moment ago, so they must use the configured terminal family
+// and size rather than the UI theme's: otherwise every glyph changes width and
+// the text shifts when a command moves into a block. The fallbacks match
+// appview's cell measurement.
+func terminalTextFont(c *ui.Context) (family string, size float32) {
+	family, size = surface.TerminalFont()
+	if family == "" {
+		family = "monospace" // the terminal plugin's own default
+	}
+	if size <= 0 {
+		size = 13
+		if t := c.Theme(); t != nil && t.FontSize > 0 {
+			size = t.FontSize
+		}
+	}
+	return family, size
+}
+
+// cellTexts draws a plain command's output as the terminal cells it was: the
+// terminal's configured font on the grid's own row pitch. The rows were grid
+// rows one frame earlier, so a shorter line would make a multi-line output
+// drift up and take the prompt below it along, exactly as a block that moves
+// when it ends.
 func cellTexts(c *ui.Context, lines []string) {
+	family, size := terminalTextFont(c)
 	for _, line := range lines {
 		txt := " "
 		if line != "" {
 			txt = line
 		}
-		e := ui.Text(c, txt).Font("monospace")
+		e := ui.Text(c, txt).Font(family).FontSize(size)
 		if CellRowHeight > 0 {
 			e = e.FixedLineHeight(CellRowHeight)
 		}
@@ -567,20 +613,19 @@ func cellTexts(c *ui.Context, lines []string) {
 	}
 }
 
-// rawViewport is the scrollable text area a long raw output gets, inside a block
-// (Terminal's `.sf-list-scroll.max`). One selectable container shares the selection
-// across its Text descendants, so the text can be copied as one document.
-func rawViewport(c *ui.Context, lines []string) { textViewport(c, lines, rawTexts) }
-
-// textViewport is rawViewport over any row drawing: a block's raw body and a plain
-// cell have different row metrics but the same scrolling frame.
-func textViewport(c *ui.Context, lines []string, draw func(*ui.Context, []string)) {
-	box := ui.Box(c).MaxHeight(260).Clip().FillWidth()
-	box.Children(func() {
-		ui.Scroll(c).Grow(1).Children(func() {
-			col := ui.Column(c).Selectable()
-			col.Children(func() { draw(c, lines) })
-		})
+// selectableText attaches the terminal's context menu to a Selectable text
+// view. MyGo's own editing items stay first — Copy and Select All act on the
+// text selection — and the terminal's commands follow after a separator. A
+// nil menu leaves MyGo's default two-item text menu, which is what a caller
+// outside the Session gets.
+func selectableText(e ui.Element, menu func(*ui.Menu)) ui.Element {
+	if menu == nil {
+		return e
+	}
+	return e.ContextMenu(func(m *ui.Menu) {
+		m.EditItems()
+		m.Separator()
+		menu(m)
 	})
 }
 
@@ -615,14 +660,21 @@ func rawLines(store *model.Store, b *model.Block) (lines []string, hidden int, e
 	return lines, hidden, expanded
 }
 
+// rawTexts draws a block's raw output as the terminal text it is: the
+// configured terminal font, on the grid's own row pitch so the rows keep the
+// positions they had in the live screen. It used to draw a point smaller than
+// the theme, which made the same output change size when a block ended.
 func rawTexts(c *ui.Context, lines []string) {
-	t := c.Theme()
+	family, size := terminalTextFont(c)
 	for _, line := range lines {
-		if line == "" {
-			ui.Text(c, " ")
-			continue
+		txt := line
+		if txt == "" {
+			txt = " "
 		}
-		ui.Text(c, line).Font("monospace").FontSize(t.FontSize - 1)
+		e := ui.Text(c, txt).Font(family).FontSize(size)
+		if CellRowHeight > 0 {
+			e = e.FixedLineHeight(CellRowHeight)
+		}
 	}
 }
 

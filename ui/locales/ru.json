@@ -1246,6 +1246,7 @@
   "sessionFilesClose": "Закрыть файлы",
   "sessionMenuPaste": "Вставить",
   "sessionMenuClearBuffer": "Очистить буфер",
+  "terminalMenuCopyWorkingDirectory": "Копировать рабочий каталог",
   "sessionMenuSplitRight": "Разделить справа",
   "sessionMenuSplitDown": "Разделить снизу",
   "sessionMenuDetach": "Отсоединить от рабочей области",
