@@ -256,7 +256,8 @@ func TestExplicitCloseConfirmsWhenLive(t *testing.T) {
 		t.Fatalf("cancelling left the page at %q", got)
 	}
 
-	// Confirming disconnects, removes the Tab, and leaves its page.
+	// Confirming closes the focused Pane. It was the Tab's last Pane, so the
+	// Tab stays as an empty in-memory Tab with its new-session entry.
 	if err := fixture.tester.Click("Close session prod box"); err != nil {
 		t.Fatalf("request close again: %v", err)
 	}
@@ -269,11 +270,14 @@ func TestExplicitCloseConfirmsWhenLive(t *testing.T) {
 	if got := opener.liveViews(); got != 0 {
 		t.Fatalf("a closed Session kept %d live view(s)", got)
 	}
-	if got := fixture.shell.Router(Sessions).Path(); got != "/" {
-		t.Fatalf("after closing, path = %q, want the Sessions list", got)
+	if got := fixture.shell.Router(Sessions).Path(); got != "/session/tab-1" {
+		t.Fatalf("after closing the last Pane, path = %q, want the empty Tab", got)
 	}
-	if !fixture.tester.HasText("No sessions yet. Open a Host from the Hosts tab.") {
-		t.Fatalf("the closed Tab is still listed; texts: %q", fixture.tester.Texts())
+	if !fixture.tester.HasText("This Tab is empty.") {
+		t.Fatalf("the closed Pane left no empty Tab; texts: %q", fixture.tester.Texts())
+	}
+	if !fixture.tester.HasText("New session") {
+		t.Fatalf("the empty Tab has no new-session entry; texts: %q", fixture.tester.Texts())
 	}
 }
 
@@ -382,16 +386,17 @@ func TestSessionEndingWhileVisibleBecomesRetryable(t *testing.T) {
 	})
 }
 
-// TestPhoneExposesNoSplitDetachOrMoveActions pins the flat phone Workspace:
-// one Tab per Session, one Pane per Tab, and no split, detach, or move action
-// anywhere the phone renders.
+// TestPhoneExposesNoSplitDetachOrMoveActions pins the phone Workspace this
+// ticket builds: a Host opens one Tab holding one Pane, Panes switch focus
+// within the Tab, and no split, detach, or move action is rendered (the tablet
+// split is a later ticket).
 func TestPhoneExposesNoSplitDetachOrMoveActions(t *testing.T) {
 	opener := &fakeOpener{output: "flat\r\n"}
 	fixture := newPhoneFixture(t, phoneHosts(), opener)
 	fixture.openSession(t, "prod box")
 	fixture.settle()
 
-	forbidden := []string{"split", "detach", "move to tab", "move-to-tab", "duplicate", "pane"}
+	forbidden := []string{"split", "detach", "move to tab", "move-to-tab", "duplicate"}
 	check := func(where string) {
 		t.Helper()
 		for _, text := range fixture.tester.Texts() {
@@ -405,13 +410,17 @@ func TestPhoneExposesNoSplitDetachOrMoveActions(t *testing.T) {
 	}
 	check("the terminal page")
 
-	// One Tab has exactly one Session and one Pane by construction: a phoneTab
-	// holds a single Host and a single Session handle.
+	// One Host opens one Tab with one Pane; every Pane owns its Session.
 	fixture.shell.sessions.mu.Lock()
 	for _, tab := range fixture.shell.sessions.tabs {
-		if tab.host.ID == "" || tab.handle == nil {
+		if len(tab.panes) != 1 {
 			fixture.shell.sessions.mu.Unlock()
-			t.Fatalf("a phone Tab is not one Session: %+v", tab)
+			t.Fatalf("one Host opened a Tab with %d Panes, want 1", len(tab.panes))
+		}
+		pane := tab.panes[0]
+		if pane.host.ID == "" || pane.handle == nil {
+			fixture.shell.sessions.mu.Unlock()
+			t.Fatalf("a phone Pane is not one Session: %+v", pane)
 		}
 	}
 	if got := len(fixture.shell.sessions.tabs); got != 1 {

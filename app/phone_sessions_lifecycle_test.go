@@ -528,7 +528,8 @@ func (o *phoneRecordingOpener) at(n int) *phoneSessionHandle {
 // through the actual phone shell over real in-process SSH servers: a Host tap
 // shows one Session, going back hibernates it while keeping the connection,
 // returning resumes it, switching sections follows the same rule, and only the
-// explicit close disconnects it.
+// explicit close disconnects it. Closing the Tab's last Pane leaves an empty
+// in-memory Tab with its new-session entry.
 func TestPhoneShellAppliesTheLifecycleToRealSessions(t *testing.T) {
 	fixture := newRealPhoneFixture(t)
 	opener := &phoneRecordingOpener{inner: fixture.runtime}
@@ -620,8 +621,7 @@ func TestPhoneShellAppliesTheLifecycleToRealSessions(t *testing.T) {
 	default:
 	}
 
-	// Only the explicit close disconnects and removes the Tab; a live Session
-	// asks first.
+	// Only the explicit close disconnects the Session; a live one asks first.
 	settle()
 	if err := tester.Click("Close session prod box 1"); err != nil {
 		t.Fatalf("request close: %v", err)
@@ -642,7 +642,16 @@ func TestPhoneShellAppliesTheLifecycleToRealSessions(t *testing.T) {
 			return false
 		}
 	})
-	if !tester.HasText("No sessions yet. Open a Host from the Hosts tab.") {
-		t.Fatalf("the closed Tab is still listed; texts: %q", tester.Texts())
+	// The closed Pane was the Tab's last, so the Tab stays as an empty
+	// in-memory Tab with its new-session entry rather than disappearing.
+	if !tester.HasText("This Tab is empty.") || !tester.HasText("New session") {
+		t.Fatalf("the closed Pane left no empty Tab; texts: %q", tester.Texts())
+	}
+	if err := tester.Click("Back to Sessions"); err != nil {
+		t.Fatalf("back to the list: %v", err)
+	}
+	settle()
+	if !tester.HasText("Empty · new session") {
+		t.Fatalf("the empty Tab is not listed; texts: %q", tester.Texts())
 	}
 }

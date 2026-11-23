@@ -103,9 +103,13 @@ func TestAppearancePageRestylesTheLiveTerminal(t *testing.T) {
 
 	screen := &fakeScreen{handle: newFakeHandle("")}
 	shell.sessions.tabs = []*phoneTab{{
-		id:     "live",
-		status: tabReady,
-		screen: screen,
+		id:    "live",
+		focus: "pane-live",
+		panes: []*phonePane{{
+			id:     "pane-live",
+			status: tabReady,
+			screen: screen,
+		}},
 	}}
 
 	// Draw the page directly, so the Sessions lifecycle does not hibernate

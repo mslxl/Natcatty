@@ -215,6 +215,14 @@ func (h *fakeHandle) rendered() string {
 	return h.output.String()
 }
 
+// emit appends output while the Session is open, so a test can prove a hidden
+// Pane kept running and replays what it produced.
+func (h *fakeHandle) emit(text string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.output.WriteString(text)
+}
+
 func (h *fakeHandle) isAttached() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -256,16 +264,37 @@ type fakeOpener struct {
 	mu         sync.Mutex
 	err        error
 	output     string
+	outputs    []string
 	hosts      []domainvault.Host
 	handles    []*fakeHandle
 	resumeKeys []string
+}
+
+// queueOutput makes the next opens return distinct output, in order, so a
+// multi-Pane test can tell the Panes' screens apart. The last value repeats
+// once the queue is drained.
+func (o *fakeOpener) queueOutput(outputs ...string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.outputs = append(o.outputs, outputs...)
+}
+
+func (o *fakeOpener) nextOutputLocked() string {
+	if len(o.outputs) == 0 {
+		return o.output
+	}
+	output := o.outputs[0]
+	if len(o.outputs) > 1 {
+		o.outputs = o.outputs[1:]
+	}
+	return output
 }
 
 func (o *fakeOpener) OpenHost(_ context.Context, host domainvault.Host) (SessionHandle, error) {
 	o.mu.Lock()
 	o.hosts = append(o.hosts, host)
 	err := o.err
-	output := o.output
+	output := o.nextOutputLocked()
 	o.mu.Unlock()
 	if err != nil {
 		return nil, err

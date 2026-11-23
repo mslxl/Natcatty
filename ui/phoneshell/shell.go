@@ -2,11 +2,13 @@
 // Sessions, Hosts, Vault and Settings — shown as the system's tab bar, each
 // with its own back stack.
 //
-// The sections are navigation, not Workspace Tabs: a Workspace Tab is an open
-// terminal Session, and the phone keeps one per Tab. The Sessions and Hosts
-// sections draw their own roots and push one page per open Session or Host;
-// the Vault and Settings pages read the same Vault store and the same settings
-// documents the desktop uses.
+// The sections are navigation, not Workspace Tabs: a Workspace Tab is a
+// container of one or more Panes, each an open terminal Session. The phone
+// renders one Pane at a time — the focused Pane of the visible Tab — and
+// switches focus within the Tab. The Sessions and Hosts sections draw their
+// own roots and push one page per open Tab or Host; the Vault and Settings
+// pages read the same Vault store and the same settings documents the desktop
+// uses.
 package phoneshell
 
 import (
@@ -16,6 +18,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	domainmodel "github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
@@ -222,7 +225,7 @@ func New(opts ...Option) *Shell {
 	s.vault.hostDetails = func(host domainvault.Host) {
 		s.sections[Vault].router.Push("/hosts/" + string(host.ID))
 	}
-	s.sessions.launch = s.launchTab
+	s.sessions.launch = s.launchPane
 	s.sessions.show = func(id string) {
 		s.sections[Sessions].router.Push("/session/" + id)
 	}
@@ -284,6 +287,14 @@ func (s *Shell) newSection(i Section) *section {
 	case Sessions:
 		sec.rootDraw = s.sessions.drawRoot
 		sec.route = func(c *ui.Context, r *ui.Route) bool {
+			// The fixed suffix is tested before the {id} route, which would
+			// otherwise read "new-pane" as part of the Tab's page.
+			if r.Match("/session/{id}/new-pane") {
+				id := r.Param("id")
+				r.Title("New Pane")
+				s.drawPanePicker(c, id)
+				return true
+			}
 			if !r.Match("/session/{id}") {
 				return false
 			}
@@ -291,7 +302,8 @@ func (s *Shell) newSection(i Section) *section {
 			r.Title("Session")
 			s.sessions.drawSession(c, id,
 				func() { s.sessions.retry(id) },
-				func() { s.leaveSession(id) })
+				func() { s.leaveSession(id) },
+				func() { s.sections[Sessions].router.Push("/session/" + id + "/new-pane") })
 			return true
 		}
 	case Hosts:
@@ -505,35 +517,100 @@ func (s *Shell) Close() { s.sessions.closeAll() }
 // the terminal page there. The Hosts section's router is untouched, so
 // selecting Hosts again returns to the page the user left.
 func (s *Shell) openHost(host domainvault.Host) {
-	tab := s.sessions.begin(host)
+	tab, pane := s.sessions.begin(host)
 	s.Select(Sessions)
 	s.sections[Sessions].router.Push("/session/" + tab.id)
-	s.launchTab(tab)
+	s.launchPane(tab.id, string(pane.id))
 }
 
-// launchTab opens one Tab off the UI thread. The Session service dials, so the
-// frame that handled the tap is not held while a network connect runs. The
-// dial context is tagged with the Tab's identity, so a host-key or credential
-// prompt is queued for this Tab, and cancelling the Tab aborts the dial
-// including any prompt it is waiting on.
-func (s *Shell) launchTab(tab *phoneTab) {
-	opener := s.sessions.opener
-	if opener == nil {
-		s.sessions.finish(tab.id, nil, errNoOpener)
+// addPaneToTab opens one Host as another Pane of an existing Tab, returns from
+// the Host picker to that Tab, and starts the connection. A Tab that closed
+// while the picker was open is left alone.
+func (s *Shell) addPaneToTab(tabID string, host domainvault.Host) {
+	pane, ok := s.sessions.addPane(tabID, host)
+	if !ok {
 		return
 	}
-	ctx, cancel := context.WithCancel(withPromptOwner(context.Background(), tab.id))
-	s.sessions.attachCancel(tab.id, cancel)
-	host := tab.host
+	router := s.sections[Sessions].router
+	if router.Path() != "/session/"+tabID {
+		router.Back()
+	}
+	s.launchPane(tabID, string(pane.id))
+}
+
+// drawPanePicker lists the remote Hosts as Panes to add to one Tab. It is the
+// new-session entry of an empty Tab and the Add action of a live one.
+func (s *Shell) drawPanePicker(c *ui.Context, tabID string) {
+	width := pageContentWidth(c)
+	ui.Scroll(c).Fill().Children(func() {
+		ui.Column(c).Width(width).Padding(16).Gap(12).Children(func() {
+			kit.SectionBar(c, "Add a pane", nil)
+			if s.sessions.tabLabel(tabID) == "" {
+				kit.EmptyHint(c, "This Tab has closed.")
+				return
+			}
+			if msg := s.hosts.problem; msg != "" {
+				kit.Notice(c, icons.TriangleAlert, c.Theme().Danger, msg, nil)
+			}
+			if len(s.hosts.hosts) == 0 {
+				kit.EmptyHint(c, "No remote Hosts yet. Hosts you add on the desktop appear here.")
+				return
+			}
+			for _, host := range s.hosts.hosts {
+				host := host
+				row := kit.ListRow(c).Label("Add " + hostName(host) + " as a pane")
+				row.Children(func() {
+					ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+						ui.Text(c, hostName(host)).FontWeight(600).SingleLine()
+						ui.Text(c, hostDetail(host)).FontSize(12).
+							TextColor(c.Theme().TextMuted).SingleLine()
+					})
+					ui.Text(c, "›").FontSize(20).TextColor(c.Theme().TextMuted)
+				})
+				if row.Clicked() {
+					s.addPaneToTab(tabID, host)
+				}
+			}
+		})
+	})
+}
+
+// launchPane opens one Pane off the UI thread. The Session service dials, so
+// the frame that handled the tap is not held while a network connect runs. The
+// dial context is tagged with the Pane's identity, so a host-key or credential
+// prompt is queued for this Pane, and cancelling the Pane aborts the dial
+// including any prompt it is waiting on.
+//
+// The Pane is resolved by its Tab and identity, never by identity alone: the
+// same identity could otherwise name a Pane of another Tab and dial the wrong
+// Host. The Tab and identity also address the outcome, so finish cannot land on
+// the wrong Pane.
+func (s *Shell) launchPane(tabID, paneID string) {
+	opener := s.sessions.opener
+	if opener == nil {
+		s.sessions.finish(tabID, paneID, nil, errNoOpener)
+		return
+	}
 	s.sessions.mu.Lock()
-	resumeKey := tab.resumeKey
+	tab := s.sessions.find(tabID)
+	var pane *phonePane
+	if tab != nil {
+		pane = tab.paneOf(domainmodel.PaneID(paneID))
+	}
+	if pane == nil {
+		s.sessions.mu.Unlock()
+		return
+	}
+	host, resumeKey := pane.host, pane.resumeKey
 	s.sessions.mu.Unlock()
+	ctx, cancel := context.WithCancel(withPromptOwner(context.Background(), paneID))
+	s.sessions.attachCancel(tabID, paneID, cancel)
 	go func() {
 		var (
 			handle SessionHandle
 			err    error
 		)
-		// A restored EternalTerminal Tab passes the locator its descriptor
+		// A restored EternalTerminal Pane passes the locator its descriptor
 		// carried, so the opener reattaches the saved session instead of
 		// starting a fresh one. Every other transport opens the Host normally.
 		if resumeKey != "" {
@@ -545,7 +622,7 @@ func (s *Shell) launchTab(tab *phoneTab) {
 		} else {
 			handle, err = opener.OpenHost(ctx, host)
 		}
-		s.sessions.finish(tab.id, handle, err)
+		s.sessions.finish(tabID, paneID, handle, err)
 	}()
 }
 
