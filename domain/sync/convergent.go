@@ -2145,6 +2145,15 @@ func registerWinnerValue(register MultiValueRegister) (json.RawMessage, bool) {
 // field even when it is unchanged, so preferLocal dominates a joined state.
 // It returns the new state and whether any write was allocated.
 func ApplyConvergentSnapshot(state ConvergentState, snapshot ConvergentSnapshot, node string, now int64, force bool) (ConvergentState, bool, error) {
+	return ApplyConvergentSnapshotWithUnmanagedSettings(state, snapshot, node, now, force, nil)
+}
+
+// ApplyConvergentSnapshotWithUnmanagedSettings is ApplyConvergentSnapshot with
+// settings documents another client owns left to the replica merge. A document
+// named in unmanaged is never written, resurrected, or tombstoned from this
+// snapshot, even when this device's snapshot omits it because this client
+// cannot edit it.
+func ApplyConvergentSnapshotWithUnmanagedSettings(state ConvergentState, snapshot ConvergentSnapshot, node string, now int64, force bool, unmanaged map[string]bool) (ConvergentState, bool, error) {
 	if err := ValidateConvergentState(state); err != nil {
 		return ConvergentState{}, false, err
 	}
@@ -2183,6 +2192,12 @@ func ApplyConvergentSnapshot(state ConvergentState, snapshot ConvergentSnapshot,
 		}
 		sort.Strings(ids)
 		for _, id := range ids {
+			if family == "settings" && unmanaged[id] {
+				// Another client owns this document. Its presence, value, and
+				// deletion are carried by the replica, never derived from this
+				// device's snapshot.
+				continue
+			}
 			rawValue, inIncoming := incoming[id]
 			entity, entityExists := getEntity(clone, family, id)
 			_, visibleExists := visibleEntity(clone, family, id)

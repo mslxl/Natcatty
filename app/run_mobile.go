@@ -28,9 +28,12 @@ import (
 	"github.com/egoist/mygo"
 
 	"github.com/mslxl/natcatty/adapters/store"
+	adaptersyncbackup "github.com/mslxl/natcatty/adapters/syncbackup"
+	adapterbackup "github.com/mslxl/natcatty/adapters/vaultbackup"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
 	appvault "github.com/mslxl/natcatty/application/vault"
+	appbackup "github.com/mslxl/natcatty/application/vaultbackup"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	platformsecrets "github.com/mslxl/natcatty/platform/secrets"
@@ -191,10 +194,41 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 	// page then reports that sync is unavailable, exactly as a Vault read
 	// failure reports its own error state.
 	if secrets != nil {
-		vaultSync, err = newPhoneSync(ctx, database, secrets, preferences, terminalSettings, userData)
+		// The phone takes the same protective restore points the desktop does
+		// before a sync overwrites either side. Conflict resolution fails
+		// closed when this adapter is missing or its key is unavailable.
+		backupStore := adapterbackup.Open(
+			filepath.Join(userData, "vault-backups"), platformsecrets.System{})
+		backupService := appbackup.NewService(database, backupStore,
+			appbackup.WithRetentionStore(backupStore))
+		vaultSync, err = newPhoneSync(ctx, database, secrets, preferences, terminalSettings, userData,
+			withPhoneSyncBackups(adaptersyncbackup.New(backupService)),
+			// A downloaded copy rewrites the Vault and the portable settings
+			// documents. Reload the lists the shell shows and re-style the live
+			// terminals before the next frame. The callback runs on the sync
+			// goroutine, so the shell is touched on the UI thread.
+			withPhoneSyncAppliedSnapshot(func() {
+				mygo.RunOnMain(func() {
+					if shell != nil {
+						_ = shell.Load(ctx)
+						shell.RefreshTerminalAppearance()
+					}
+				})
+			}),
+		)
 		if err != nil {
 			log.Printf("natcatty: Vault sync unavailable: %v", err)
 			vaultSync = nil
+		} else {
+			// A committed Vault record write is a sync fact. The change hook
+			// never blocks; the engine debounces and coalesces the run. A
+			// payload applied by the engine itself is suppressed inside the
+			// service, so a download does not queue a redundant sync.
+			database.SetChangeHook(func() {
+				if vaultSync != nil {
+					vaultSync.NotifyLocalChange()
+				}
+			})
 		}
 	}
 

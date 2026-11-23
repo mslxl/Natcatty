@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 
@@ -291,6 +292,28 @@ func withoutSettingsFamily(families map[string][]domainsync.ConvergentRecord) ma
 		out[family] = records
 	}
 	return out
+}
+
+// snapshotForLocalComparison drops the settings documents this client cannot
+// apply. They are present in the replica (written by the client that owns
+// them) but never in this device's local snapshot, so comparing them would
+// make every sync look like a remote change.
+func (s *Service) snapshotForLocalComparison(snapshot domainsync.ConvergentSnapshot) domainsync.ConvergentSnapshot {
+	if len(s.unmanagedSettings) == 0 {
+		return snapshot
+	}
+	families := maps.Clone(snapshot.Families)
+	if families == nil {
+		families = map[string][]domainsync.ConvergentRecord{}
+	}
+	settings := make([]domainsync.ConvergentRecord, 0, len(families["settings"]))
+	for _, record := range families["settings"] {
+		if !s.unmanagedSettings[record.ID] {
+			settings = append(settings, record)
+		}
+	}
+	families["settings"] = settings
+	return domainsync.ConvergentSnapshot{Families: families}
 }
 
 func snapshotsEqual(left, right domainsync.ConvergentSnapshot) bool {
@@ -1458,14 +1481,21 @@ func (s *Service) setConvergentEnabled(ctx context.Context, enabled bool) (Conve
 		s.finishSync(ProblemLocal)
 		return ConvergentMigrationPreview{}, err
 	}
-	localSnapshot, err := payloadSnapshot(local)
-	if err != nil {
-		s.finishSync(ProblemLocal)
-		return ConvergentMigrationPreview{}, err
-	}
 	remote, _, err := s.readConvergentRemote(ctx, token)
 	if err != nil {
 		s.fail(problemFor(err))
+		return ConvergentMigrationPreview{}, err
+	}
+	if remote.exists() {
+		// The migration compares the local snapshot with the provider's
+		// materialized state. Documents this phone does not manage exist only
+		// on the provider (or in the trusted baseline), so adopt their current
+		// values for the comparison instead of treating them as local deletions.
+		local.Settings = s.carryUnmanagedSettings(local.Settings, remote.Payload.Settings)
+	}
+	localSnapshot, err := payloadSnapshot(local)
+	if err != nil {
+		s.finishSync(ProblemLocal)
 		return ConvergentMigrationPreview{}, err
 	}
 	baseline, baselineProblem := s.strictLegacyBaseline(config)
@@ -1482,6 +1512,16 @@ func (s *Service) setConvergentEnabled(ctx context.Context, enabled bool) (Conve
 		})
 		s.finishSync(ProblemConvergentMigration)
 		return preview, fmt.Errorf("%w: %s", ErrConvergentMigration, baselineProblem)
+	}
+	if baseline != nil && remote.exists() {
+		// The legacy anchor records what both sides agreed on last time. For a
+		// document this phone does not manage, the provider's current value is
+		// the truthful baseline: the anchor may predate a desktop edit, and
+		// using it would make the migration resurrect the old copy or read the
+		// desktop's deletion as a local change.
+		comparable := *baseline
+		comparable.Settings = s.carryUnmanagedSettings(comparable.Settings, remote.Payload.Settings)
+		baseline = &comparable
 	}
 	plan := planConvergentMigration(convergentMigrationInput{
 		DeviceID:       config.DeviceID,
@@ -1534,7 +1574,7 @@ func (s *Service) setConvergentEnabled(ctx context.Context, enabled bool) (Conve
 		return plan.Preview, err
 	}
 	if !snapshotsEqual(localSnapshot, migratedSnapshot) {
-		if err := s.vault.Apply(ctx, *plan.Materialized); err != nil {
+		if err := s.applyPayload(ctx, *plan.Materialized); err != nil {
 			s.finishSync(ProblemLocal)
 			return plan.Preview, err
 		}
@@ -1774,7 +1814,7 @@ func (s *Service) RestoreLastVerified(ctx context.Context) (Result, error) {
 		s.finishSync(ProblemBackup)
 		return Result{Trigger: TriggerManual}, err
 	}
-	if err := s.vault.Apply(ctx, *verified); err != nil {
+	if err := s.applyPayload(ctx, *verified); err != nil {
 		s.finishSync(ProblemLocal)
 		return Result{Trigger: TriggerManual}, err
 	}
@@ -1863,7 +1903,7 @@ func (s *Service) syncConvergent(
 		if err := s.ensureProtectiveBackup(ctx); err != nil {
 			return fail(ProblemBackup, "failed", err)
 		}
-		if err := s.vault.Apply(ctx, pendingPayload); err != nil {
+		if err := s.applyPayload(ctx, pendingPayload); err != nil {
 			return fail(ProblemLocal, "failed", err)
 		}
 		s.notifySnapshotApplied()
@@ -1893,7 +1933,7 @@ func (s *Service) syncConvergent(
 		if strategy == domainsync.StrategySmartMergePreserve {
 			applySnapshot = preserveUnion(materializedBefore, localSnapshot, verified)
 		}
-		state, stateChanged, err = domainsync.ApplyConvergentSnapshot(state, applySnapshot, config.DeviceID, s.now().UnixMilli(), false)
+		state, stateChanged, err = domainsync.ApplyConvergentSnapshotWithUnmanagedSettings(state, applySnapshot, config.DeviceID, s.now().UnixMilli(), false, s.unmanagedSettings)
 		if err != nil {
 			return fail(ProblemLocal, "failed", err)
 		}
@@ -1917,14 +1957,14 @@ func (s *Service) syncConvergent(
 		// Only write values that actually differ from the joined state. A
 		// converged repeat must not allocate fresh dots: force-writing every
 		// field would turn each repeat into a provider write.
-		state, stateChanged, err = domainsync.ApplyConvergentSnapshot(state, localSnapshot, config.DeviceID, s.now().UnixMilli(), false)
+		state, stateChanged, err = domainsync.ApplyConvergentSnapshotWithUnmanagedSettings(state, localSnapshot, config.DeviceID, s.now().UnixMilli(), false, s.unmanagedSettings)
 		if err != nil {
 			return fail(ProblemLocal, "failed", err)
 		}
 	}
 	if strategy == domainsync.StrategySmartMergePreserve {
 		union := preserveUnion(mustMaterializeSnapshot(state), localSnapshot, verified)
-		next, changedUnion, applyErr := domainsync.ApplyConvergentSnapshot(state, union, config.DeviceID, s.now().UnixMilli(), false)
+		next, changedUnion, applyErr := domainsync.ApplyConvergentSnapshotWithUnmanagedSettings(state, union, config.DeviceID, s.now().UnixMilli(), false, s.unmanagedSettings)
 		if applyErr != nil {
 			return fail(ProblemLocal, "failed", applyErr)
 		}
@@ -2151,11 +2191,11 @@ func (s *Service) syncConvergent(
 		return fail(ProblemLocal, "failed", err)
 	}
 	downloadApplied := false
-	if !snapshotsEqual(localSnapshot, finalSnapshot) {
+	if !snapshotsEqual(s.snapshotForLocalComparison(localSnapshot), s.snapshotForLocalComparison(finalSnapshot)) {
 		if err := s.ensureProtectiveBackup(ctx); err != nil {
 			return fail(ProblemBackup, "failed", err)
 		}
-		if err := s.vault.Apply(ctx, finalPayload); err != nil {
+		if err := s.applyPayload(ctx, finalPayload); err != nil {
 			// Persist the verified state with PendingApply so a stale Vault is
 			// never mistaken for local deletions on the next run.
 			s.persistVerifiedConvergent(config, expected, finalPayload, verifiedRemote, writes, true)

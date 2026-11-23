@@ -313,7 +313,7 @@ func (s *Service) resolveLocked(ctx context.Context, resolution Resolution, forc
 
 	switch resolution {
 	case ResolutionRemote:
-		if err := s.vault.Apply(ctx, remotePayload); err != nil {
+		if err := s.applyPayload(ctx, remotePayload); err != nil {
 			s.fail(ProblemLocal)
 			return Result{Trigger: TriggerManual}, err
 		}
@@ -352,7 +352,7 @@ func (s *Service) resolveLocked(ctx context.Context, resolution Resolution, forc
 			return result, guardErr
 		}
 		if resolution == ResolutionMerge {
-			if err := s.vault.Apply(ctx, outgoing); err != nil {
+			if err := s.applyPayload(ctx, outgoing); err != nil {
 				s.fail(ProblemLocal)
 				return Result{Trigger: TriggerManual}, err
 			}
@@ -462,7 +462,7 @@ func (s *Service) RestoreGuard(ctx context.Context) (Result, error) {
 		s.fail(ProblemBackup)
 		return Result{Trigger: TriggerManual}, err
 	}
-	if err := s.vault.Apply(ctx, restore); err != nil {
+	if err := s.applyPayload(ctx, restore); err != nil {
 		s.fail(ProblemLocal)
 		return Result{Trigger: TriggerManual}, err
 	}
@@ -607,7 +607,7 @@ func (s *Service) RestoreBackup(ctx context.Context, source BackupSource, id str
 			s.fail(ProblemBackup)
 			return err
 		}
-		if err := s.vault.Apply(ctx, payload); err != nil {
+		if err := s.applyPayload(ctx, payload); err != nil {
 			s.fail(ProblemLocal)
 			return err
 		}

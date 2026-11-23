@@ -54,9 +54,40 @@ type phoneSyncDeps struct {
 	deviceID   string
 	deviceName string
 	version    string
+
+	// backups is the shared protective-backup port. Conflict resolution
+	// refuses to overwrite either side without it.
+	backups appsync.Backups
+	// appliedSnapshot refreshes the live phone surfaces after a downloaded
+	// cloud copy has been written: Host and SSH Key lists reload, and live
+	// terminals re-read the appearance document.
+	appliedSnapshot func()
+	// extraOptions lets a test install shared-service seams (for example a
+	// shorter debounce) without changing the production graph.
+	extraOptions []appsync.Option
 }
 
 type phoneSyncOption func(*phoneSyncDeps)
+
+func withPhoneSyncBackups(backups appsync.Backups) phoneSyncOption {
+	return func(d *phoneSyncDeps) {
+		if backups != nil {
+			d.backups = backups
+		}
+	}
+}
+
+func withPhoneSyncAppliedSnapshot(fn func()) phoneSyncOption {
+	return func(d *phoneSyncDeps) {
+		if fn != nil {
+			d.appliedSnapshot = fn
+		}
+	}
+}
+
+func withPhoneSyncOptions(options ...appsync.Option) phoneSyncOption {
+	return func(d *phoneSyncDeps) { d.extraOptions = append(d.extraOptions, options...) }
+}
 
 func withPhoneSyncConfigs(configs appsync.ConfigStore) phoneSyncOption {
 	return func(d *phoneSyncDeps) { d.configs = configs }
@@ -133,7 +164,23 @@ func newPhoneSync(ctx context.Context, database *store.Store, secrets *store.Sec
 	options := []appsync.Option{
 		appsync.WithProvider(deps.provider),
 		appsync.WithDevice(deviceID, deps.deviceName, deps.version),
+		// Themes, key bindings, SFTP bookmarks, and browser bookmarks are
+		// authored on the desktop. The phone carries the current cloud value
+		// through unchanged and never publishes, revives, or deletes them.
+		appsync.WithUnmanagedSettingsDocuments(
+			adaptersyncedsettings.KeyThemes,
+			adaptersyncedsettings.KeyKeybindings,
+			adaptersyncedsettings.KeySFTPBookmarks,
+			adaptersyncedsettings.KeyBrowserBookmarks,
+		),
 	}
+	if deps.backups != nil {
+		options = append(options, appsync.WithBackups(deps.backups))
+	}
+	if deps.appliedSnapshot != nil {
+		options = append(options, appsync.WithAppliedSnapshot(deps.appliedSnapshot))
+	}
+	options = append(options, deps.extraOptions...)
 	for provider, remote := range deps.remotes {
 		if provider == deps.provider {
 			continue
