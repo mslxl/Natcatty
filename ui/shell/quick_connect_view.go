@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"strconv"
+
 	"github.com/egoist/mygo/ui"
 
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -129,6 +131,11 @@ func quickConnectFields(c *ui.Context, s *state.State, m locales.Messages, t *ui
 			Placeholder(m.QuickConnectAddressPlaceholder()).FillWidth().AutoFocus()
 	}).FillWidth()
 	if form.Protocol == domainvault.ProtocolVNC {
+		if ui.Checkbox(c.Key("quick-connect-vnc-websocket"), &form.VNCWebSocket,
+			m.VaultHostVNCWebSocket()).Changed() {
+			s.SetQuickConnectVNCWebSocket(form.VNCWebSocket)
+			c.Invalidate()
+		}
 		vncEndpointFields(c, s, m)
 	} else {
 		kit.FormRow(c, m.QuickConnectPort(), func() {
@@ -148,6 +155,14 @@ func quickConnectFields(c *ui.Context, s *state.State, m locales.Messages, t *ui
 				m.VaultHostNetworkDevice())
 		}
 	case domainvault.ProtocolVNC:
+		if form.VNCWebSocket {
+			kit.FormRow(c, m.VaultHostVNCWebSocketPath(), func() {
+				ui.TextInput(c.Key("quick-connect-vnc-websocket-path"), &form.VNCWebSocketPath).
+					Placeholder(domainvault.VNCDefaultWebSocketPath).FillWidth()
+			}).FillWidth()
+			ui.Checkbox(c.Key("quick-connect-vnc-websocket-secure"), &form.VNCWebSocketSecure,
+				m.VaultHostVNCWebSocketSecure())
+		}
 		kit.FormRow(c, m.QuickConnectUsername(), func() {
 			ui.TextInput(c.Key("quick-connect-username"), &form.Username).FillWidth()
 		}).FillWidth()
@@ -218,6 +233,15 @@ func transportField(c *ui.Context, s *state.State, m locales.Messages) {
 // port. Both modes describe the same stored port.
 func vncEndpointFields(c *ui.Context, s *state.State, m locales.Messages) {
 	form := s.QuickConnectForm()
+	if form.VNCWebSocket {
+		// A noVNC/websockify endpoint is an HTTP port; the display-number
+		// toggle cannot describe it.
+		kit.FormRow(c, m.QuickConnectPort(), func() {
+			ui.TextInput(c.Key("quick-connect-vnc-port"), &form.Port).
+				Placeholder(strconv.Itoa(domainvault.VNCDefaultWebSocketPort)).FillWidth()
+		}).FillWidth()
+		return
+	}
 	inputLabels := []string{m.VaultHostVNCInputDisplay(), m.VaultHostVNCInputPort()}
 	inputModes := []string{
 		string(domainvault.VNCDisplayNumber),
@@ -276,6 +300,8 @@ func quickConnectProblem(m locales.Messages, issue state.QuickConnectIssue) stri
 		return m.QuickConnectPortInvalid()
 	case state.QuickConnectIssueDisplay:
 		return m.QuickConnectDisplayInvalid()
+	case state.QuickConnectIssueWebSocketPath:
+		return m.VaultProblemVncWebSocketPath()
 	case state.QuickConnectIssueNoSessions:
 		return m.QuickConnectUnavailable()
 	default:

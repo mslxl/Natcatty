@@ -1547,3 +1547,116 @@ func TestVNCPasswordUsesOnlyTheDedicatedFormField(t *testing.T) {
 		t.Fatalf("VNC draft password = %q", draft.VNCPassword)
 	}
 }
+
+// TestVNCWebSocketFormSeedsTheHTTPPortAndRoundTrips proves enabling the
+// WebSocket transport moves the editor to port input, seeds websockify's port,
+// and persists the upgrade path and TLS choice; disabling restores display 0.
+func TestVNCWebSocketFormSeedsTheHTTPPortAndRoundTrips(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+
+	state.BeginCreate()
+	form := state.Form()
+	form.Label = "desk"
+	form.Hostname = "desk.local"
+	state.SetHostProtocol(string(domainvault.ProtocolVNC))
+	form = state.Form()
+
+	state.SetVNCWebSocket(true)
+	form = state.Form()
+	wantPort := strconv.Itoa(domainvault.VNCDefaultWebSocketPort)
+	if !form.VNCWebSocket || form.VNCInputMode != string(domainvault.VNCPort) ||
+		form.Port != wantPort || form.VNCDisplay != "" {
+		t.Fatalf("WebSocket form = %+v, want the HTTP port", *form)
+	}
+	form.VNCWebSocketPath = "vnc?token=s3cret"
+	form.VNCWebSocketSecure = true
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if state.Problem() != ProblemNone {
+		t.Fatalf("Problem = %q, want none", state.Problem())
+	}
+	saved := repo.items[0]
+	if saved.Port != domainvault.VNCDefaultWebSocketPort {
+		t.Fatalf("saved port = %d, want the HTTP port", saved.Port)
+	}
+	if saved.VNC == nil || !saved.VNC.WebSocket || !saved.VNC.WebSocketSecure ||
+		saved.VNC.WebSocketPath != "/vnc?token=s3cret" ||
+		saved.VNC.DisplayMode != domainvault.VNCPort {
+		t.Fatalf("saved VNC config = %+v, want the WebSocket endpoint", saved.VNC)
+	}
+
+	if !state.BeginEdit(saved.ID) {
+		t.Fatal("BeginEdit failed")
+	}
+	form = state.Form()
+	if !form.VNCWebSocket || form.VNCWebSocketPath != "/vnc?token=s3cret" ||
+		!form.VNCWebSocketSecure || form.Port != wantPort {
+		t.Fatalf("reloaded form = %+v, want the saved WebSocket endpoint", *form)
+	}
+
+	state.SetVNCWebSocket(false)
+	form = state.Form()
+	if form.VNCWebSocket || form.VNCWebSocketPath != "" || form.VNCWebSocketSecure {
+		t.Fatalf("disabled form = %+v, want the WebSocket settings cleared", *form)
+	}
+	if form.Port != strconv.Itoa(domainvault.VNCDisplayBasePort) ||
+		form.VNCInputMode != string(domainvault.VNCDisplayNumber) || form.VNCDisplay != "0" {
+		t.Fatalf("disabled endpoint = %+v, want display 0", *form)
+	}
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save after disabling: %v", err)
+	}
+	if repo.items[0].Port != domainvault.VNCDisplayBasePort ||
+		repo.items[0].VNC == nil || repo.items[0].VNC.WebSocket {
+		t.Fatalf("saved Host = %+v, want the plain RFB endpoint", repo.items[0])
+	}
+}
+
+// TestVNCWebSocketFormRejectsAnUnrequestablePath proves the editor refuses a
+// path the HTTP upgrade cannot send, instead of saving it for the dial to fail.
+func TestVNCWebSocketFormRejectsAnUnrequestablePath(t *testing.T) {
+	for _, path := range []string{"/bad path", "/vnc#fragment", "/web\tsocket"} {
+		repo := &fakeHosts{}
+		state, _ := newTestState(t, repo)
+		state.BeginCreate()
+		form := state.Form()
+		form.Label = "desk"
+		form.Hostname = "desk.local"
+		state.SetHostProtocol(string(domainvault.ProtocolVNC))
+		state.SetVNCWebSocket(true)
+		state.Form().VNCWebSocketPath = path
+		if err := state.Save(); err != nil {
+			t.Fatalf("Save(%q): %v", path, err)
+		}
+		if state.Problem() != ProblemVNCWebSocketPath {
+			t.Fatalf("Problem(%q) = %q, want %q", path, state.Problem(), ProblemVNCWebSocketPath)
+		}
+		if len(repo.created) != 0 {
+			t.Fatalf("a Host was created with the unrequestable path %q", path)
+		}
+	}
+}
+
+// TestVNCWebSocketSeedsFromTheVisibleDisplayNotAHiddenPort proves enabling the
+// transport after a protocol switch reads the display field, not the Port the
+// previous protocol left hidden.
+func TestVNCWebSocketSeedsFromTheVisibleDisplayNotAHiddenPort(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+	state.BeginCreate()
+	form := state.Form()
+	form.Label = "desk"
+	form.Hostname = "desk.local"
+	form.Port = "2222"
+	state.SetHostProtocol(string(domainvault.ProtocolVNC))
+	if got := state.Form().VNCDisplay; got != "" {
+		t.Fatalf("display = %q, want the default placeholder", got)
+	}
+	state.SetVNCWebSocket(true)
+	form = state.Form()
+	if got, want := form.Port, strconv.Itoa(domainvault.VNCDefaultWebSocketPort); got != want {
+		t.Fatalf("WebSocket port = %q, want %q from the visible display 0", got, want)
+	}
+}

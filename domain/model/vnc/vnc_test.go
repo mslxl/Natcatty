@@ -71,3 +71,79 @@ func TestSessionConfigValidation(t *testing.T) {
 		t.Fatalf("out-of-range port = %v, want ErrInvalidConfig", err)
 	}
 }
+
+func TestWebSocketPathNormalization(t *testing.T) {
+	tests := map[string]string{
+		"":                 DefaultWebSocketPath,
+		"   ":              DefaultWebSocketPath,
+		"websockify":       "/websockify",
+		"/vnc":             "/vnc",
+		" /vnc?token=abc ": "/vnc?token=abc",
+	}
+	for input, want := range tests {
+		if got := NormalizeWebSocketPath(input); got != want {
+			t.Errorf("NormalizeWebSocketPath(%q) = %q, want %q", input, got, want)
+		}
+	}
+	for _, valid := range []string{"/websockify", "/vnc?token=a=b", "/a/b", "/vnc%20x"} {
+		if !ValidWebSocketPath(valid) {
+			t.Errorf("ValidWebSocketPath(%q) = false, want true", valid)
+		}
+	}
+	for _, invalid := range []string{
+		"", "websockify", "/web socket", "/vnc#frag", "/a\nb",
+		// The HTTP client parses the target, so a malformed escape cannot be
+		// sent even though it contains no forbidden character.
+		"/vnc%zz", "/vnc%2",
+	} {
+		if ValidWebSocketPath(invalid) {
+			t.Errorf("ValidWebSocketPath(%q) = true, want false", invalid)
+		}
+	}
+}
+
+func TestWebSocketConfigurationDefaultsAndClears(t *testing.T) {
+	enabled := NormalizeConfig(&Config{WebSocket: true})
+	if !enabled.WebSocket || enabled.WebSocketPath != DefaultWebSocketPath {
+		t.Fatalf("enabled config = %+v, want the websockify path", enabled)
+	}
+	custom := NormalizeConfig(&Config{WebSocket: true, WebSocketPath: "vnc", WebSocketSecure: true})
+	if custom.WebSocketPath != "/vnc" || !custom.WebSocketSecure {
+		t.Fatalf("custom config = %+v, want the trimmed secure path", custom)
+	}
+	disabled := NormalizeConfig(&Config{WebSocketPath: "/vnc", WebSocketSecure: true})
+	if disabled.WebSocket || disabled.WebSocketPath != "" || disabled.WebSocketSecure {
+		t.Fatalf("disabled config = %+v, want the WebSocket settings cleared", disabled)
+	}
+}
+
+func TestWebSocketSessionConfigDefaultsTheWebSocketPort(t *testing.T) {
+	normalized := SessionConfig{
+		Hostname:      "desk.local",
+		Configuration: Config{WebSocket: true},
+	}.Normalized()
+	if normalized.Port != DefaultWebSocketPort {
+		t.Fatalf("WebSocket port = %d, want %d", normalized.Port, DefaultWebSocketPort)
+	}
+	if normalized.Configuration.WebSocketPath != DefaultWebSocketPath {
+		t.Fatalf("path = %q, want %q", normalized.Configuration.WebSocketPath, DefaultWebSocketPath)
+	}
+	plain := SessionConfig{Hostname: "desk.local"}.Normalized()
+	if plain.Port != DefaultPort {
+		t.Fatalf("plain port = %d, want %d", plain.Port, DefaultPort)
+	}
+}
+
+func TestSessionConfigRejectsAnInvalidWebSocketPath(t *testing.T) {
+	config := SessionConfig{
+		Hostname: "desk.local",
+		Port:     DefaultWebSocketPort,
+		Configuration: Config{
+			WebSocket:     true,
+			WebSocketPath: "/bad path",
+		},
+	}.Normalized()
+	if err := config.Validate(); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("invalid path = %v, want ErrInvalidConfig", err)
+	}
+}

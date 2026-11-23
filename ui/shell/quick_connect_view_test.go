@@ -356,3 +356,52 @@ func waitForQuickConnectFrame(t *testing.T, tt *ui.Tester, what string, ready fu
 	}
 	t.Fatalf("timed out waiting for %s", what)
 }
+
+// TestQuickConnectVNCWebSocketShowsTheUpgradeControls drives the rendered
+// WebSocket checkbox: it swaps the display/port selector for the HTTP endpoint,
+// the upgrade path, and the TLS choice, and clicking it again restores them.
+func TestQuickConnectVNCWebSocketShowsTheUpgradeControls(t *testing.T) {
+	m := locales.In("en")
+	graph := newTestGraph(t)
+	tt := ui.NewTester(View(graph.state), 1100, 720)
+	tt.SetLocale("en")
+	tt.Frame()
+	graph.state.OpenQuickConnect()
+	graph.state.SetQuickConnectProtocol(domainvault.ProtocolVNC)
+	tt.Frame()
+
+	if err := tt.Click(m.VaultHostVNCWebSocket()); err != nil {
+		t.Fatalf("click %q: %v", m.VaultHostVNCWebSocket(), err)
+	}
+	tt.Frame()
+	if !graph.state.QuickConnectForm().VNCWebSocket {
+		t.Fatal("the rendered WebSocket checkbox did not reach the form")
+	}
+	for _, text := range []string{
+		m.VaultHostVNCWebSocket(), m.VaultHostVNCWebSocketPath(),
+		m.VaultHostVNCWebSocketSecure(), m.QuickConnectPort(),
+	} {
+		if !tt.HasText(text) {
+			t.Fatalf("the WebSocket form does not show %q; texts %q", text, tt.Texts())
+		}
+	}
+	for _, text := range []string{m.VaultHostVNCInputMode(), m.VaultHostVNCDisplay()} {
+		if tt.HasText(text) {
+			t.Fatalf("the WebSocket form still shows the display control %q", text)
+		}
+	}
+	if got := graph.state.QuickConnectForm().Port; got != "6080" {
+		t.Fatalf("WebSocket port = %q, want websockify's default", got)
+	}
+
+	if err := tt.Click(m.VaultHostVNCWebSocket()); err != nil {
+		t.Fatalf("click %q again: %v", m.VaultHostVNCWebSocket(), err)
+	}
+	tt.Frame()
+	if tt.HasText(m.VaultHostVNCWebSocketPath()) || tt.HasText(m.VaultHostVNCWebSocketSecure()) {
+		t.Fatalf("the WebSocket controls survived turning the transport off; texts %q", tt.Texts())
+	}
+	if !tt.HasText(m.VaultHostVNCInputMode()) || !tt.HasText(m.VaultHostVNCDisplay()) {
+		t.Fatalf("the display controls did not return; texts %q", tt.Texts())
+	}
+}

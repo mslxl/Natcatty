@@ -950,6 +950,9 @@ func draftFromRecord(record vaultimport.Record) domainvault.Draft {
 			Shared:                       record.VNC.Shared,
 			CursorMode:                   domainvault.VNCCursorMode(record.VNC.CursorMode),
 			PlaintextWarningAcknowledged: record.VNC.PlaintextWarningAcknowledged,
+			WebSocket:                    record.VNC.WebSocket,
+			WebSocketPath:                record.VNC.WebSocketPath,
+			WebSocketSecure:              record.VNC.WebSocketSecure,
 		}
 	}
 	return draft

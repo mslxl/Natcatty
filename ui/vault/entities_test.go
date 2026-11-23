@@ -2964,3 +2964,70 @@ func TestGroupEditorOffersVNCAsADefault(t *testing.T) {
 		t.Fatalf("saved group = %+v, want VNC default", groups.items)
 	}
 }
+
+// TestHostEditorVNCWebSocketShowsTheUpgradeControls drives the rendered
+// WebSocket checkbox: it replaces the display-number control with the HTTP
+// port, the upgrade path, and the TLS choice, turning it off hides them again,
+// and only wss suppresses the plaintext disclosure.
+func TestHostEditorVNCWebSocketShowsTheUpgradeControls(t *testing.T) {
+	m := locales.In("en")
+	// The VNC section sits at the bottom of the editor; a tall window keeps the
+	// rendered checkboxes inside it so the test can click them.
+	state, _, _, _, _, tt := newProductionEntityView(t, 900, 1200)
+	state.BeginCreate()
+	state.SetHostProtocol(string(domainvault.ProtocolVNC))
+	tt.Frame()
+	if !tt.HasText(m.VaultHostPlaintextWarning("VNC")) {
+		t.Fatalf("raw RFB does not disclose plaintext, texts %q", tt.Texts())
+	}
+
+	if err := tt.Click(m.VaultHostVNCWebSocket()); err != nil {
+		t.Fatalf("click %q: %v", m.VaultHostVNCWebSocket(), err)
+	}
+	tt.Frame()
+	if !state.Form().VNCWebSocket {
+		t.Fatal("the rendered WebSocket checkbox did not reach the state")
+	}
+	for _, text := range []string{
+		m.VaultHostVNCWebSocket(), m.VaultHostVNCWebSocketPath(),
+		m.VaultHostVNCWebSocketHint(), m.VaultHostVNCWebSocketSecure(),
+	} {
+		if !tt.HasText(text) {
+			t.Fatalf("a WebSocket VNC Host does not show %q, texts %q", text, tt.Texts())
+		}
+	}
+	if tt.HasText(m.VaultHostVNCInputMode()) || tt.HasText(m.VaultHostVNCDisplay()) {
+		t.Fatalf("the display-number controls are still shown, texts %q", tt.Texts())
+	}
+	if got := state.HostPortPlaceholder(); got != strconv.Itoa(domainvault.VNCDefaultWebSocketPort) {
+		t.Fatalf("WebSocket Port hint = %q, want the HTTP port", got)
+	}
+	if !tt.HasText(m.VaultHostPlaintextWarning("VNC")) {
+		t.Fatalf("plain ws does not disclose plaintext, texts %q", tt.Texts())
+	}
+
+	if err := tt.Click(m.VaultHostVNCWebSocketSecure()); err != nil {
+		t.Fatalf("click %q: %v", m.VaultHostVNCWebSocketSecure(), err)
+	}
+	tt.Frame()
+	if !state.Form().VNCWebSocketSecure {
+		t.Fatal("the rendered Secure checkbox did not reach the state")
+	}
+	if tt.HasText(m.VaultHostPlaintextWarning("VNC")) {
+		t.Fatalf("wss still discloses plaintext, texts %q", tt.Texts())
+	}
+
+	if err := tt.Click(m.VaultHostVNCWebSocket()); err != nil {
+		t.Fatalf("click %q again: %v", m.VaultHostVNCWebSocket(), err)
+	}
+	tt.Frame()
+	if tt.HasText(m.VaultHostVNCWebSocketPath()) || tt.HasText(m.VaultHostVNCWebSocketSecure()) {
+		t.Fatalf("the WebSocket controls are still shown, texts %q", tt.Texts())
+	}
+	if !tt.HasText(m.VaultHostVNCInputMode()) || !tt.HasText(m.VaultHostVNCDisplay()) {
+		t.Fatalf("the display-number controls did not return, texts %q", tt.Texts())
+	}
+	if got := state.HostPortPlaceholder(); got != "5900" {
+		t.Fatalf("plain VNC Port hint = %q, want 5900", got)
+	}
+}

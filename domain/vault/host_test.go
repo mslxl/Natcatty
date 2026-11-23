@@ -1197,3 +1197,47 @@ func TestVNCHostValidateRefusesSSHOnlyFeatures(t *testing.T) {
 		t.Fatalf("VNC SFTP validation = %v, want FieldSFTPSudo unsupported", err)
 	}
 }
+
+// TestVNCHostValidateRefusesAnUnrequestableWebSocketPath proves a saved Host
+// cannot carry a path the HTTP upgrade could never request, so an import fails
+// at save time instead of at connect time.
+func TestVNCHostValidateRefusesAnUnrequestableWebSocketPath(t *testing.T) {
+	configuration := NormalizeVNCConfig(&VNCConfig{
+		DisplayMode: VNCPort, WebSocket: true, WebSocketPath: "/bad path",
+	})
+	host := Host{
+		Label: "desk", Hostname: "desk.local", Port: 6080,
+		Protocol: ProtocolVNC, VNC: configuration,
+	}
+	var validation *ValidationError
+	if err := host.Validate(); !errors.As(err, &validation) ||
+		validation.Field != FieldVNCWebSocketPath || validation.Rule != RuleInvalid {
+		t.Fatalf("WebSocket path validation = %v, want FieldVNCWebSocketPath invalid", err)
+	}
+	if _, err := NormalizeDraft(Draft{
+		Label: "desk", Hostname: "desk.local", Port: 6080, Protocol: ProtocolVNC,
+		VNC: &VNCConfig{DisplayMode: VNCPort, WebSocket: true, WebSocketPath: "/bad path"},
+	}); !errors.As(err, &validation) || validation.Field != FieldVNCWebSocketPath {
+		t.Fatalf("NormalizeDraft = %v, want the WebSocket path rejected", err)
+	}
+
+	valid := host
+	valid.VNC = NormalizeVNCConfig(&VNCConfig{DisplayMode: VNCPort, WebSocket: true})
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("the default WebSocket path did not validate: %v", err)
+	}
+	valid.VNC = NormalizeVNCConfig(&VNCConfig{
+		DisplayMode: VNCPort, WebSocket: true, WebSocketPath: "/vnc?token=a=b",
+	})
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("a custom WebSocket path did not validate: %v", err)
+	}
+
+	// Validation normalizes first, so a hand-built Host that skipped
+	// NormalizeVNCConfig still treats an empty path as the websockify default.
+	handBuilt := host
+	handBuilt.VNC = &VNCConfig{DisplayMode: VNCPort, WebSocket: true}
+	if err := handBuilt.Validate(); err != nil {
+		t.Fatalf("an empty WebSocket path did not validate: %v", err)
+	}
+}

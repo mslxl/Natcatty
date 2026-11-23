@@ -637,6 +637,9 @@ func csvVNCConfig(config *domainvault.VNCConfig) *vaultimport.VNCConfig {
 		Shared:                       config.Shared,
 		CursorMode:                   string(config.CursorMode),
 		PlaintextWarningAcknowledged: config.PlaintextWarningAcknowledged,
+		WebSocket:                    config.WebSocket,
+		WebSocketPath:                config.WebSocketPath,
+		WebSocketSecure:              config.WebSocketSecure,
 	}
 }
 

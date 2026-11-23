@@ -75,3 +75,38 @@ func TestHostSessionSpecCarriesVNCOnlyForVNC(t *testing.T) {
 		}
 	}
 }
+
+// TestHostSessionSpecCarriesTheVNCWebSocketTransport proves a saved Host's
+// WebSocket transport, upgrade path, and TLS choice reach the Session start
+// section unchanged, with the endpoint staying the HTTP port.
+func TestHostSessionSpecCarriesTheVNCWebSocketTransport(t *testing.T) {
+	host := domainvault.Host{
+		ID:       "vnc-desktop",
+		Label:    "desktop",
+		Hostname: "desk.local",
+		Port:     domainvault.VNCDefaultWebSocketPort,
+		Protocol: domainvault.ProtocolVNC,
+		VNC: &domainvault.VNCConfig{
+			DisplayMode:     domainvault.VNCPort,
+			FitMode:         domainvault.VNCFit,
+			Shared:          true,
+			CursorMode:      domainvault.VNCCursorLocal,
+			WebSocket:       true,
+			WebSocketPath:   "/vnc?token=s3cret",
+			WebSocketSecure: true,
+		},
+	}
+	spec := HostSessionSpec(host)
+	if spec.Kind != appsession.KindVNC || spec.VNC == nil {
+		t.Fatalf("spec = %+v, want a VNC session", spec)
+	}
+	if spec.VNC.Port != domainvault.VNCDefaultWebSocketPort {
+		t.Fatalf("VNC port = %d, want the HTTP port", spec.VNC.Port)
+	}
+	configuration := spec.VNC.Configuration
+	if !configuration.WebSocket || !configuration.WebSocketSecure ||
+		configuration.WebSocketPath != "/vnc?token=s3cret" ||
+		configuration.DisplayMode != domainvault.VNCPort {
+		t.Fatalf("VNC configuration = %+v, want the WebSocket settings", configuration)
+	}
+}

@@ -10,6 +10,7 @@ package vnc
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/mslxl/natcatty/domain/model"
@@ -27,6 +28,52 @@ const (
 
 // DefaultPort is the RFB service port, the port of display 0.
 const DefaultPort = DisplayBasePort
+
+// WebSocket transport defaults. A noVNC page is served by websockify, which
+// upgrades the HTTP request at /websockify and forwards the RFB byte stream;
+// its HTTP port is 6080. The path and port are editor hints, not a second
+// endpoint: the Host always stores the WebSocket port in Port.
+const (
+	// DefaultWebSocketPort is the port websockify serves by default.
+	DefaultWebSocketPort = 6080
+	// DefaultWebSocketPath is the upgrade path websockify serves by default.
+	DefaultWebSocketPath = "/websockify"
+	// maxWebSocketPathLength bounds a pasted path.
+	maxWebSocketPathLength = 1024
+)
+
+// NormalizeWebSocketPath canonicalizes the HTTP path of a WebSocket endpoint:
+// empty becomes the websockify default, and a path without a leading slash
+// gains one. A query string (such as a websockify token) is preserved.
+func NormalizeWebSocketPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return DefaultWebSocketPath
+	}
+	if !strings.HasPrefix(path, "/") {
+		return "/" + path
+	}
+	return path
+}
+
+// ValidWebSocketPath reports whether a normalized path can be requested. It
+// requires an absolute request target, rejects control characters, whitespace,
+// and fragments, and rejects anything the HTTP client could not parse, such as
+// a malformed percent-escape.
+func ValidWebSocketPath(path string) bool {
+	if !strings.HasPrefix(path, "/") || len(path) > maxWebSocketPathLength {
+		return false
+	}
+	for _, char := range path {
+		if char <= ' ' || char == 0x7f || char == '#' {
+			return false
+		}
+	}
+	if _, err := url.Parse(path); err != nil {
+		return false
+	}
+	return true
+}
 
 // DisplayMode selects how the VNC Host editor accepts the endpoint. It is
 // presentation state: the Host record always stores the resolved TCP port.
@@ -113,6 +160,16 @@ type Config struct {
 	// PlaintextWarningAcknowledged records that the user accepted the
 	// unencrypted-transport warning for this Host.
 	PlaintextWarningAcknowledged bool `json:"plaintextWarningAcknowledged,omitempty"`
+	// WebSocket carries the RFB byte stream inside a WebSocket instead of a
+	// raw TCP connection, the transport a noVNC/websockify page uses. The
+	// Host's Port is then the WebSocket (HTTP) port.
+	WebSocket bool `json:"webSocket,omitempty"`
+	// WebSocketPath is the HTTP upgrade path. Empty means
+	// DefaultWebSocketPath; it is cleared when WebSocket is off.
+	WebSocketPath string `json:"webSocketPath,omitempty"`
+	// WebSocketSecure selects wss (TLS) over ws. It is cleared when WebSocket
+	// is off.
+	WebSocketSecure bool `json:"webSocketSecure,omitempty"`
 }
 
 // DefaultConfig is the configuration a new VNC Host starts from and the
@@ -138,6 +195,14 @@ func NormalizeConfig(config *Config) *Config {
 	normalized.DisplayMode = NormalizeDisplayMode(normalized.DisplayMode)
 	normalized.FitMode = NormalizeFitMode(normalized.FitMode)
 	normalized.CursorMode = NormalizeCursorMode(normalized.CursorMode)
+	if normalized.WebSocket {
+		normalized.WebSocketPath = NormalizeWebSocketPath(normalized.WebSocketPath)
+	} else {
+		// A raw TCP VNC Host keeps no WebSocket settings, so a hidden toggle
+		// cannot leave a path or TLS choice behind.
+		normalized.WebSocketPath = ""
+		normalized.WebSocketSecure = false
+	}
 	return &normalized
 }
 
@@ -221,15 +286,21 @@ type SessionConfig struct {
 func (c SessionConfig) Normalized() SessionConfig {
 	c.Hostname = strings.TrimSpace(c.Hostname)
 	c.Username = strings.TrimSpace(c.Username)
-	if c.Port == 0 {
-		c.Port = DefaultPort
-	}
 	if c.Configuration == (Config{}) {
 		// The start section is a value, so its zero form means "unset"; a
 		// saved or edited configuration always names at least one enum.
 		c.Configuration = DefaultConfig()
 	} else {
 		c.Configuration = *NormalizeConfig(&c.Configuration)
+	}
+	if c.Port == 0 {
+		// A WebSocket endpoint is an HTTP service (websockify's 6080), not an
+		// RFB display port.
+		if c.Configuration.WebSocket {
+			c.Port = DefaultWebSocketPort
+		} else {
+			c.Port = DefaultPort
+		}
 	}
 	c.Route = cloneRoute(c.Route)
 	return c
@@ -258,6 +329,9 @@ func (c SessionConfig) Validate() error {
 	}
 	if c.Port < 1 || c.Port > 65535 {
 		return &ValidationError{Field: "port", Reason: "is out of range"}
+	}
+	if c.Configuration.WebSocket && !ValidWebSocketPath(c.Configuration.WebSocketPath) {
+		return &ValidationError{Field: "webSocketPath", Reason: "is not a valid request path"}
 	}
 	return nil
 }

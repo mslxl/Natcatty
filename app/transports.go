@@ -396,7 +396,7 @@ func (f *vncTransportFactory) Open(ctx context.Context, spec appsession.StartSpe
 	if err != nil {
 		return nil, err
 	}
-	routed := len(route.Jumps) > 0 || route.Proxy != nil || route.Network != nil
+	routed := routeIsEncrypted(route, cfg)
 	var transport appsession.Transport
 	// The warning decision now depends on the negotiated security type, so the
 	// gate runs inside the handshake, after the type is known but before any
@@ -418,6 +418,17 @@ func (f *vncTransportFactory) Open(ctx context.Context, spec appsession.StartSpe
 		return nil, err
 	}
 	return f.withPlaintextNotice(transport, needsNotice), nil
+}
+
+// routeIsEncrypted reports whether the route or the VNC transport itself
+// already encrypts the stream. A jump chain, proxy, or Network Profile tunnels
+// the connection, and a wss WebSocket carries it inside TLS, so a plaintext RFB
+// security type in either case crosses the network encrypted and must not warn.
+func routeIsEncrypted(route appconnection.Route, cfg modelvnc.SessionConfig) bool {
+	if len(route.Jumps) > 0 || route.Proxy != nil || route.Network != nil {
+		return true
+	}
+	return cfg.Configuration.WebSocket && cfg.Configuration.WebSocketSecure
 }
 
 // withCredentials fills the endpoint's username and saved VNC password from the

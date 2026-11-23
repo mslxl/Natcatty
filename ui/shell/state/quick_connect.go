@@ -21,6 +21,9 @@ const (
 	// QuickConnectIssueDisplay means the VNC display is not a number between 0
 	// and VNCDisplayMax.
 	QuickConnectIssueDisplay
+	// QuickConnectIssueWebSocketPath means the VNC WebSocket path is not a
+	// request path.
+	QuickConnectIssueWebSocketPath
 	// QuickConnectIssueNoSessions means the shell has no Session service.
 	QuickConnectIssueNoSessions
 )
@@ -48,6 +51,12 @@ type QuickConnectForm struct {
 	VNCDisplay string
 	// VNCPassword is a one-shot VNC credential and never leaves memory.
 	VNCPassword string
+	// VNCWebSocket carries the RFB stream inside a WebSocket, as a
+	// noVNC/websockify page does. VNCWebSocketPath is the upgrade path and
+	// VNCWebSocketSecure selects wss.
+	VNCWebSocket       bool
+	VNCWebSocketPath   string
+	VNCWebSocketSecure bool
 	// NetworkDevice starts the temporary Session in network-device mode. It
 	// applies to plain SSH only.
 	NetworkDevice bool
@@ -155,6 +164,9 @@ func (s *State) SetQuickConnectProtocol(protocol domainvault.Protocol) {
 		form.VNCPassword = ""
 		form.VNCMode = domainvault.VNCDisplayNumber
 		form.VNCDisplay = ""
+		form.VNCWebSocket = false
+		form.VNCWebSocketPath = ""
+		form.VNCWebSocketSecure = false
 	}
 	// Telnet shows no credentials or device controls at all.
 	if protocol == domainvault.ProtocolTelnet {
@@ -225,6 +237,49 @@ func (s *State) SetQuickConnectVNCMode(mode domainvault.VNCDisplayMode) {
 	form.VNCMode = next
 }
 
+// SetQuickConnectVNCWebSocket switches the VNC endpoint between raw RFB and a
+// noVNC/websockify page. A WebSocket endpoint is an HTTP port, so enabling it
+// switches the form to port input and seeds websockify's 6080 while the
+// endpoint is still in the VNC display range. Disabling it restores display 0
+// when the port is still that default.
+func (s *State) SetQuickConnectVNCWebSocket(enabled bool) {
+	form := &s.quickConnect.form
+	if form.Protocol != domainvault.ProtocolVNC {
+		return
+	}
+	form.VNCWebSocket = enabled
+	if !enabled {
+		form.VNCWebSocketPath = ""
+		form.VNCWebSocketSecure = false
+		if strings.TrimSpace(form.Port) == strconv.Itoa(domainvault.VNCDefaultWebSocketPort) {
+			form.Port = strconv.Itoa(domainvault.VNCDisplayBasePort)
+			form.VNCMode = domainvault.VNCDisplayNumber
+			form.VNCDisplay = defaultQuickConnectDisplay
+		}
+		return
+	}
+	port := strings.TrimSpace(form.Port)
+	if domainvault.NormalizeDisplayMode(form.VNCMode) == domainvault.VNCDisplayNumber {
+		// The visible endpoint is the display field, so a Port left over from
+		// another protocol is not the endpoint. A blank display means the
+		// default display, and a malformed one cannot become an HTTP port.
+		port = ""
+		if display, ok := parseQuickConnectDisplay(form.VNCDisplay); ok {
+			if resolved, ok := domainvault.VNCPortForDisplay(display); ok {
+				port = strconv.Itoa(resolved)
+			}
+		}
+	}
+	parsed, err := strconv.Atoi(port)
+	if err != nil || parsed == 0 ||
+		(parsed >= domainvault.VNCDisplayBasePort &&
+			parsed <= domainvault.VNCDisplayBasePort+domainvault.VNCDisplayMax) {
+		form.Port = strconv.Itoa(domainvault.VNCDefaultWebSocketPort)
+	}
+	form.VNCMode = domainvault.VNCPort
+	form.VNCDisplay = ""
+}
+
 // RequestQuickConnectClose closes an empty form at once. A form with any typed
 // detail first asks to discard it, because an outside click or Escape must not
 // lose a partly filled form.
@@ -266,8 +321,23 @@ func (s *State) ConnectQuickConnect() error {
 
 	protocol := form.Protocol
 	port := 0
-	if protocol == domainvault.ProtocolVNC &&
-		domainvault.NormalizeDisplayMode(form.VNCMode) == domainvault.VNCDisplayNumber {
+	switch {
+	case protocol == domainvault.ProtocolVNC && form.VNCWebSocket:
+		// A WebSocket endpoint is an HTTP port; a display number cannot
+		// describe it. A blank field inherits websockify's default, the same
+		// value its placeholder shows.
+		port = domainvault.VNCDefaultWebSocketPort
+		if trimmed := strings.TrimSpace(form.Port); trimmed != "" {
+			typed, err := strconv.Atoi(trimmed)
+			if err != nil || typed < 1 || typed > 65535 {
+				s.quickConnect.issue = QuickConnectIssuePort
+				s.RequestRedraw()
+				return nil
+			}
+			port = typed
+		}
+	case protocol == domainvault.ProtocolVNC &&
+		domainvault.NormalizeDisplayMode(form.VNCMode) == domainvault.VNCDisplayNumber:
 		display, ok := parseQuickConnectDisplay(form.VNCDisplay)
 		if !ok || display < 0 || display > domainvault.VNCDisplayMax {
 			s.quickConnect.issue = QuickConnectIssueDisplay
@@ -281,7 +351,7 @@ func (s *State) ConnectQuickConnect() error {
 			return nil
 		}
 		port = vncPort
-	} else {
+	default:
 		typed, err := strconv.Atoi(strings.TrimSpace(form.Port))
 		if err != nil || typed < 1 || typed > 65535 {
 			s.quickConnect.issue = QuickConnectIssuePort
@@ -315,6 +385,20 @@ func (s *State) ConnectQuickConnect() error {
 		host.Username = username
 		configuration := domainvault.DefaultVNCConfig()
 		configuration.DisplayMode = domainvault.NormalizeDisplayMode(form.VNCMode)
+		configuration.WebSocket = form.VNCWebSocket
+		configuration.WebSocketPath = form.VNCWebSocketPath
+		configuration.WebSocketSecure = form.VNCWebSocketSecure
+		configuration = *domainvault.NormalizeVNCConfig(&configuration)
+		if configuration.WebSocket && !domainvault.ValidVNCWebSocketPath(configuration.WebSocketPath) {
+			s.quickConnect.issue = QuickConnectIssueWebSocketPath
+			s.RequestRedraw()
+			return nil
+		}
+		if configuration.WebSocket {
+			// The persisted mode follows the endpoint: an HTTP port, not a
+			// display number.
+			configuration.DisplayMode = domainvault.VNCPort
+		}
 		host.VNC = &configuration
 		// The VNC transport copies the one-shot password into its credential,
 		// so it is never stored on the Host or in the Vault.
@@ -342,7 +426,8 @@ func (f QuickConnectForm) untouched() bool {
 	return f.Hostname == "" && f.Port == defaultQuickConnectPort(f.Protocol) &&
 		f.Username == "" && f.Password == "" && !f.NetworkDevice &&
 		f.Transport == domainvault.TransportPlain &&
-		f.VNCPassword == "" &&
+		f.VNCPassword == "" && !f.VNCWebSocket &&
+		f.VNCWebSocketPath == "" && !f.VNCWebSocketSecure &&
 		domainvault.NormalizeDisplayMode(f.VNCMode) == domainvault.VNCDisplayNumber &&
 		(f.VNCDisplay == "" || f.VNCDisplay == defaultQuickConnectDisplay)
 }

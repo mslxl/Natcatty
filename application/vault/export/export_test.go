@@ -677,7 +677,8 @@ func TestCSVKeepsVNCConfigAndCredentialByteExact(t *testing.T) {
 	configCell := csvCell(t, rows, "desk.example.test", "VNC")
 	wantConfig := vaultimport.MarkerVNC +
 		"displayMode=port;fitMode=clip;viewOnly=false;shared=false;" +
-		"cursorMode=server;plaintextWarningAcknowledged=false"
+		"cursorMode=server;plaintextWarningAcknowledged=false;" +
+		"webSocket=false;webSocketPath=;webSocketSecure=false"
 	if configCell != wantConfig {
 		t.Fatalf("VNC cell = %q, want %q", configCell, wantConfig)
 	}
@@ -698,5 +699,41 @@ func TestCSVKeepsVNCConfigAndCredentialByteExact(t *testing.T) {
 	}
 	if record.VNC == nil || record.VNC.Shared || record.VNC.FitMode != "clip" {
 		t.Fatalf("parsed VNC = %+v", record.VNC)
+	}
+}
+
+// TestExportsCarryTheVNCWebSocketTransport proves a noVNC/websockify endpoint
+// survives both portable formats, including an upgrade path whose query holds
+// the cell separator.
+func TestExportsCarryTheVNCWebSocketTransport(t *testing.T) {
+	config := domainvault.VNCConfig{
+		DisplayMode: domainvault.VNCPort, FitMode: domainvault.VNCFit,
+		Shared: true, CursorMode: domainvault.VNCCursorLocal,
+		WebSocket: true, WebSocketPath: "/vnc?token=a;b%20c", WebSocketSecure: true,
+	}
+	dataset := Dataset{Hosts: []Host{{Host: domainvault.Host{
+		ID: "vnc-ws", Label: "Desk", Hostname: "desk.example.test",
+		Port: domainvault.VNCDefaultWebSocketPort, Protocol: domainvault.ProtocolVNC,
+		OrderKey: 1000, VNC: &config,
+	}}}}
+
+	csvDocument := vaultimport.Parse(vaultimport.FormatCSV,
+		string(exportDatasetFor(t, dataset, FormatCSV, Options{})), vaultimport.Options{})
+	if len(csvDocument.Records) != 1 || csvDocument.Records[0].VNC == nil {
+		t.Fatalf("CSV records = %+v, issues = %+v", csvDocument.Records, csvDocument.Issues)
+	}
+	jsonDocument := vaultimport.Parse(vaultimport.FormatNetcattyJSON,
+		string(exportDatasetFor(t, dataset, FormatJSON, Options{})), vaultimport.Options{})
+	if len(jsonDocument.Records) != 1 || jsonDocument.Records[0].VNC == nil {
+		t.Fatalf("JSON records = %+v, issues = %+v", jsonDocument.Records, jsonDocument.Issues)
+	}
+	for name, record := range map[string]vaultimport.VNCConfig{
+		"CSV":  *csvDocument.Records[0].VNC,
+		"JSON": *jsonDocument.Records[0].VNC,
+	} {
+		if !record.WebSocket || !record.WebSocketSecure ||
+			record.WebSocketPath != "/vnc?token=a;b%20c" {
+			t.Fatalf("%s VNC = %+v, want the WebSocket settings", name, record)
+		}
 	}
 }

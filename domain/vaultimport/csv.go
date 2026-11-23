@@ -197,8 +197,21 @@ func EncodeVNCConfig(config *VNCConfig) string {
 		"shared=" + strconv.FormatBool(config.Shared),
 		"cursorMode=" + config.CursorMode,
 		"plaintextWarningAcknowledged=" + strconv.FormatBool(config.PlaintextWarningAcknowledged),
+		"webSocket=" + strconv.FormatBool(config.WebSocket),
+		"webSocketPath=" + escapeVNCValue(config.WebSocketPath),
+		"webSocketSecure=" + strconv.FormatBool(config.WebSocketSecure),
 	}
 	return MarkerVNC + strings.Join(parts, ";")
+}
+
+// escapeVNCValue protects a value inside a VNC cell. Entries are separated by
+// ';' and every value is percent-decoded, so those two characters must be
+// escaped to survive the round trip.
+func escapeVNCValue(value string) string {
+	if !strings.ContainsAny(value, "%;") {
+		return value
+	}
+	return strings.NewReplacer("%", "%25", ";", "%3B").Replace(value)
 }
 
 // DecodeVNCConfig reads the marker-prefixed VNC cell. An empty or unmarked cell
@@ -213,13 +226,16 @@ func DecodeVNCConfig(raw string) *VNCConfig {
 	config := &VNCConfig{
 		DisplayMode: "display", FitMode: "fit", Shared: true, CursorMode: "local",
 	}
-	for _, token := range strings.Split(DecodeMarkedField(raw, MarkerVNC), ";") {
+	for _, token := range strings.Split(strings.TrimPrefix(raw, MarkerVNC), ";") {
 		key, value, ok := strings.Cut(token, "=")
 		if !ok {
 			continue
 		}
 		key = strings.ToLower(strings.TrimSpace(key))
 		value = strings.TrimSpace(value)
+		if decoded, err := url.PathUnescape(value); err == nil {
+			value = decoded
+		}
 		switch key {
 		case "displaymode":
 			config.DisplayMode = value
@@ -238,6 +254,16 @@ func DecodeVNCConfig(raw string) *VNCConfig {
 		case "plaintextwarningacknowledged":
 			if parsed, ok := parseBoolValue(value); ok {
 				config.PlaintextWarningAcknowledged = parsed
+			}
+		case "websocket":
+			if parsed, ok := parseBoolValue(value); ok {
+				config.WebSocket = parsed
+			}
+		case "websocketpath":
+			config.WebSocketPath = value
+		case "websocketsecure":
+			if parsed, ok := parseBoolValue(value); ok {
+				config.WebSocketSecure = parsed
 			}
 		}
 	}

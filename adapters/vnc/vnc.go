@@ -120,6 +120,16 @@ func (f Factory) Open(ctx context.Context, spec appsession.StartSpec) (appsessio
 		_ = conn.Close()
 		return nil, &appconnection.Error{Kind: appconnection.KindCancelled, Cause: ctx.Err()}
 	}
+	routed := f.Routed
+	if cfg.Configuration.WebSocket {
+		conn, err = f.upgradeWebSocket(ctx, conn, cfg)
+		if err != nil {
+			return nil, err
+		}
+		// A wss stream is already encrypted, so the RFB security negotiation
+		// must not add a second TLS layer or warn about plaintext.
+		routed = routed || cfg.Configuration.WebSocketSecure
+	}
 	// Bound the handshake; the deadline applies to the whole exchange below.
 	if deadline, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
 		_ = deadline.SetDeadline(time.Now().Add(handshakeTimeout))
@@ -140,7 +150,7 @@ func (f Factory) Open(ctx context.Context, spec appsession.StartSpec) (appsessio
 		Password:      password,
 		Username:      username,
 		ServerName:    cfg.Hostname,
-		Routed:        f.Routed,
+		Routed:        routed,
 		Context:       ctx,
 		KeygenTimeout: handshakeTimeout,
 		SecurityGate: func(choice rfb.SecurityChoice) error {
@@ -167,7 +177,7 @@ func (f Factory) Open(ctx context.Context, spec appsession.StartSpec) (appsessio
 		_ = conn.Close()
 		return nil, classifyHandshakeError(ctx, err)
 	}
-	return newTransport(conn, client, f.Routed), nil
+	return newTransport(conn, client, routed), nil
 }
 
 func (f Factory) dial(ctx context.Context, network, address string) (net.Conn, error) {

@@ -191,6 +191,11 @@ const (
 	VNCDisplayBasePort = modelvnc.DisplayBasePort
 	// VNCDisplayMax is the highest display number the editor accepts.
 	VNCDisplayMax = modelvnc.DisplayMax
+	// VNCDefaultWebSocketPort is the port a noVNC/websockify page serves by
+	// default.
+	VNCDefaultWebSocketPort = modelvnc.DefaultWebSocketPort
+	// VNCDefaultWebSocketPath is the upgrade path websockify serves by default.
+	VNCDefaultWebSocketPath = modelvnc.DefaultWebSocketPath
 )
 
 // VNCDisplayMode selects how the VNC Host editor accepts the endpoint. It is
@@ -262,6 +267,12 @@ func DefaultVNCConfig() VNCConfig {
 // and is preserved.
 func NormalizeVNCConfig(config *VNCConfig) *VNCConfig {
 	return modelvnc.NormalizeConfig(config)
+}
+
+// ValidVNCWebSocketPath reports whether a normalized WebSocket upgrade path can
+// be requested over HTTP.
+func ValidVNCWebSocketPath(path string) bool {
+	return modelvnc.ValidWebSocketPath(path)
 }
 
 // CloneVNCConfig returns a copy safe to store on a Host or draft. It keeps a
@@ -651,6 +662,9 @@ const (
 	// settings a validation error concerns.
 	FieldMoshServerPath Field = "mosh_server_path"
 	FieldETPort         Field = "et_port"
+	// FieldVNCWebSocketPath is the HTTP upgrade path of a VNC Host that
+	// carries RFB over a WebSocket.
+	FieldVNCWebSocketPath Field = "vnc_websocket_path"
 	// FieldStartupCommand names the command replayed on every connection.
 	FieldStartupCommand Field = "startup_command"
 	// FieldSnippet, FieldSnippetCommand, and FieldSnippetPackage name the
@@ -1166,6 +1180,15 @@ func validateFields(draft Draft) error {
 		}
 		if _, ok := VNCDisplayForPort(draft.Port); !ok && displayMode == VNCDisplayNumber {
 			return validation(FieldPort, RuleOutOfRange)
+		}
+	}
+	if protocol == ProtocolVNC && draft.VNC != nil && draft.VNC.WebSocket {
+		// A path the HTTP upgrade cannot request would fail at connect time.
+		// Normalize first, so an empty or slash-less saved path means the
+		// websockify default instead of being rejected. Save, imports, and
+		// sync all fail here rather than at the dial.
+		if !ValidVNCWebSocketPath(NormalizeVNCConfig(draft.VNC).WebSocketPath) {
+			return validation(FieldVNCWebSocketPath, RuleInvalid)
 		}
 	}
 

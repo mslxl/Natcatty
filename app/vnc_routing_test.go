@@ -435,3 +435,30 @@ func TestVNCMalformedHostOpensNoRoute(t *testing.T) {
 		t.Fatalf("direct dials = %d, want none", directCalls)
 	}
 }
+
+// TestVNCRouteEncryptionCoversSecureWebSocket proves a wss endpoint suppresses
+// the plaintext warning the same way a tunnel does, while plain ws does not.
+func TestVNCRouteEncryptionCoversSecureWebSocket(t *testing.T) {
+	webSocket := func(secure bool) modelvnc.SessionConfig {
+		configuration := modelvnc.DefaultConfig()
+		configuration.WebSocket = true
+		configuration.WebSocketSecure = secure
+		return modelvnc.SessionConfig{
+			Hostname: "desk.local", Port: modelvnc.DefaultWebSocketPort,
+			Configuration: configuration,
+		}.Normalized()
+	}
+	if !routeIsEncrypted(appconnection.Route{}, webSocket(true)) {
+		t.Fatal("a wss endpoint was treated as plaintext")
+	}
+	if routeIsEncrypted(appconnection.Route{}, webSocket(false)) {
+		t.Fatal("a ws endpoint was treated as encrypted")
+	}
+	raw := modelvnc.SessionConfig{Hostname: "desk.local", Port: 5901}.Normalized()
+	if routeIsEncrypted(appconnection.Route{}, raw) {
+		t.Fatal("a direct raw RFB endpoint was treated as encrypted")
+	}
+	if !routeIsEncrypted(appconnection.Route{Jumps: []appconnection.Hop{{Hostname: "bastion"}}}, raw) {
+		t.Fatal("a jump chain was treated as plaintext")
+	}
+}

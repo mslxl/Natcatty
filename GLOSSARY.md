@@ -68,8 +68,11 @@ a pixel Session in a normal Pane instead of a shell. The saved endpoint is
 always the real TCP port (default 5900; display 0-99 maps to 5900-5999), so the
 editor's display-number/port toggle is presentation only. Its viewer defaults
 live in `VNCConfig`, and its password lives in its own secret slot, independent
-of the SSH password. Route controls reuse the Host Chain, Proxy Profile, and
-Network Profile a Host already has.
+of the SSH password. A Host may also carry the RFB stream inside a WebSocket
+(`VNCConfig.WebSocket`, the transport a noVNC/websockify page uses); the Port
+is then the HTTP port and the display-number input does not apply. Route
+controls reuse the Host Chain, Proxy Profile, and Network Profile a Host
+already has.
 _Avoid_: remote desktop host, screen host, GUI host
 
 **SSH Key**:

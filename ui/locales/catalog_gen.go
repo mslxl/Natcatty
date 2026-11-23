@@ -6670,6 +6670,46 @@ func (msgs Messages) VaultHostVNCCursorServer() string {
 	return Catalog.Format(msgs.locale, "vaultHostVNCCursorServer", nil)
 }
 
+// VaultHostVNCWebSocket says "WebSocket (noVNC)"
+// in the language the app shows.
+func VaultHostVNCWebSocket() string { return In(i18n.Locale()).VaultHostVNCWebSocket() }
+
+// VaultHostVNCWebSocket says "WebSocket (noVNC)"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCWebSocket() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCWebSocket", nil)
+}
+
+// VaultHostVNCWebSocketHint says "Carries the RFB stream inside a WebSocket, like a noVNC/websockify page. Use the HTTP port (usually 6080) and the upg…"
+// in the language the app shows.
+func VaultHostVNCWebSocketHint() string { return In(i18n.Locale()).VaultHostVNCWebSocketHint() }
+
+// VaultHostVNCWebSocketHint says "Carries the RFB stream inside a WebSocket, like a noVNC/websockify page. Use the HTTP port (usually 6080) and the upg…"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCWebSocketHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCWebSocketHint", nil)
+}
+
+// VaultHostVNCWebSocketPath says "WebSocket path"
+// in the language the app shows.
+func VaultHostVNCWebSocketPath() string { return In(i18n.Locale()).VaultHostVNCWebSocketPath() }
+
+// VaultHostVNCWebSocketPath says "WebSocket path"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCWebSocketPath() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCWebSocketPath", nil)
+}
+
+// VaultHostVNCWebSocketSecure says "Secure (wss)"
+// in the language the app shows.
+func VaultHostVNCWebSocketSecure() string { return In(i18n.Locale()).VaultHostVNCWebSocketSecure() }
+
+// VaultHostVNCWebSocketSecure says "Secure (wss)"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCWebSocketSecure() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCWebSocketSecure", nil)
+}
+
 // VaultProblemVncDisplay says "The display number must be a whole number."
 // in the language the app shows.
 func VaultProblemVncDisplay() string { return In(i18n.Locale()).VaultProblemVncDisplay() }
@@ -6688,6 +6728,16 @@ func VaultProblemVncDisplayRange() string { return In(i18n.Locale()).VaultProble
 // in the language of msgs.
 func (msgs Messages) VaultProblemVncDisplayRange() string {
 	return Catalog.Format(msgs.locale, "vaultProblemVncDisplayRange", nil)
+}
+
+// VaultProblemVncWebSocketPath says "The WebSocket path must be a request path, such as /websockify, without spaces."
+// in the language the app shows.
+func VaultProblemVncWebSocketPath() string { return In(i18n.Locale()).VaultProblemVncWebSocketPath() }
+
+// VaultProblemVncWebSocketPath says "The WebSocket path must be a request path, such as /websockify, without spaces."
+// in the language of msgs.
+func (msgs Messages) VaultProblemVncWebSocketPath() string {
+	return Catalog.Format(msgs.locale, "vaultProblemVncWebSocketPath", nil)
 }
 
 // VaultHostNetworkDevice says "Network device mode"

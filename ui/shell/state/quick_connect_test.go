@@ -459,3 +459,139 @@ func TestQuickConnectKeepsAPartlyFilledFormUntilDiscarded(t *testing.T) {
 		t.Fatal("an untouched form did not close at once")
 	}
 }
+
+// TestQuickConnectVNCWebSocketSeedsTheHTTPPort proves enabling the WebSocket
+// transport moves the form to port input on websockify's 6080 and carries the
+// path and TLS choice into the Session start section.
+func TestQuickConnectVNCWebSocketSeedsTheHTTPPort(t *testing.T) {
+	graph := newTestGraph(t)
+	graph.state.OpenQuickConnect()
+	graph.state.SetQuickConnectProtocol(domainvault.ProtocolVNC)
+	form := graph.state.QuickConnectForm()
+	if form.Port != "5900" || form.VNCMode != domainvault.VNCDisplayNumber {
+		t.Fatalf("VNC defaults = %+v, want display 0", *form)
+	}
+
+	graph.state.SetQuickConnectVNCWebSocket(true)
+	if !form.VNCWebSocket || form.VNCMode != domainvault.VNCPort ||
+		form.Port != "6080" || form.VNCDisplay != "" {
+		t.Fatalf("WebSocket form = %+v, want the HTTP port", *form)
+	}
+	form.Hostname = "desk.local"
+	form.VNCWebSocketPath = "/vnc?token=s3cret"
+	form.VNCWebSocketSecure = true
+	if err := graph.state.ConnectQuickConnect(); err != nil {
+		t.Fatalf("ConnectQuickConnect: %v", err)
+	}
+	waitFor(t, "the VNC WebSocket dial", func() bool {
+		return graph.factory.openCount() == 1
+	})
+	spec := graph.factory.lastSpec()
+	if spec.Kind != appsession.KindVNC || spec.Port != domainvault.VNCDefaultWebSocketPort {
+		t.Fatalf("factory spec = %+v, want a VNC Session on the HTTP port", spec)
+	}
+	if spec.VNC == nil {
+		t.Fatal("the VNC Session has no VNC start section")
+	}
+	configuration := spec.VNC.Configuration
+	if !configuration.WebSocket || !configuration.WebSocketSecure ||
+		configuration.WebSocketPath != "/vnc?token=s3cret" ||
+		configuration.DisplayMode != domainvault.VNCPort {
+		t.Fatalf("VNC configuration = %+v, want the WebSocket endpoint", configuration)
+	}
+}
+
+// TestQuickConnectVNCWebSocketToggleRestoresTheRFBEndpoint proves turning the
+// transport back off clears the hidden path and TLS choice and returns the
+// form to display 0 while the port is still websockify's default.
+func TestQuickConnectVNCWebSocketToggleRestoresTheRFBEndpoint(t *testing.T) {
+	graph := newTestGraph(t)
+	graph.state.OpenQuickConnect()
+	graph.state.SetQuickConnectProtocol(domainvault.ProtocolVNC)
+	form := graph.state.QuickConnectForm()
+
+	graph.state.SetQuickConnectVNCWebSocket(true)
+	form.VNCWebSocketPath = "/custom"
+	form.VNCWebSocketSecure = true
+	graph.state.SetQuickConnectVNCWebSocket(false)
+	if form.VNCWebSocket || form.VNCWebSocketPath != "" || form.VNCWebSocketSecure {
+		t.Fatalf("form = %+v, want the WebSocket settings cleared", *form)
+	}
+	if form.Port != "5900" || form.VNCMode != domainvault.VNCDisplayNumber || form.VNCDisplay != "0" {
+		t.Fatalf("endpoint = %+v, want display 0 back", *form)
+	}
+}
+
+// TestQuickConnectVNCWebSocketRejectsABadPath keeps the dialog open and reports
+// a path that cannot be requested, instead of failing during the handshake.
+func TestQuickConnectVNCWebSocketRejectsABadPath(t *testing.T) {
+	graph := newTestGraph(t)
+	graph.state.OpenQuickConnect()
+	graph.state.SetQuickConnectProtocol(domainvault.ProtocolVNC)
+	graph.state.SetQuickConnectVNCWebSocket(true)
+	form := graph.state.QuickConnectForm()
+	form.Hostname = "desk.local"
+	form.VNCWebSocketPath = "/bad path"
+	if err := graph.state.ConnectQuickConnect(); err != nil {
+		t.Fatalf("ConnectQuickConnect: %v", err)
+	}
+	if !graph.state.QuickConnectOpen() {
+		t.Fatal("the dialog closed after a bad WebSocket path")
+	}
+	if graph.state.QuickConnectIssue() != QuickConnectIssueWebSocketPath {
+		t.Fatalf("issue = %v, want the WebSocket path issue", graph.state.QuickConnectIssue())
+	}
+	if graph.factory.openCount() != 0 {
+		t.Fatal("a Session opened despite the bad WebSocket path")
+	}
+}
+
+// TestQuickConnectVNCWebSocketCountsAsTypedInput proves the one-click transport
+// switch makes the form worth confirming before it is discarded.
+func TestQuickConnectVNCWebSocketCountsAsTypedInput(t *testing.T) {
+	graph := newTestGraph(t)
+	graph.state.OpenQuickConnect()
+	graph.state.SetQuickConnectProtocol(domainvault.ProtocolVNC)
+	graph.state.SetQuickConnectVNCWebSocket(true)
+	graph.state.RequestQuickConnectClose()
+	if !graph.state.QuickConnectConfirmingDiscard() {
+		t.Fatal("closing the form after enabling WebSocket did not ask to discard")
+	}
+}
+
+// TestQuickConnectVNCWebSocketBlankPortInheritsTheDefault proves clearing the
+// port field keeps the meaning of its websockify placeholder.
+func TestQuickConnectVNCWebSocketBlankPortInheritsTheDefault(t *testing.T) {
+	graph := newTestGraph(t)
+	graph.state.OpenQuickConnect()
+	graph.state.SetQuickConnectProtocol(domainvault.ProtocolVNC)
+	graph.state.SetQuickConnectVNCWebSocket(true)
+	form := graph.state.QuickConnectForm()
+	form.Hostname = "desk.local"
+	form.Port = ""
+	if err := graph.state.ConnectQuickConnect(); err != nil {
+		t.Fatalf("ConnectQuickConnect: %v", err)
+	}
+	waitFor(t, "the VNC WebSocket dial", func() bool {
+		return graph.factory.openCount() == 1
+	})
+	spec := graph.factory.lastSpec()
+	if spec.Port != domainvault.VNCDefaultWebSocketPort {
+		t.Fatalf("WebSocket port = %d, want websockify's default", spec.Port)
+	}
+}
+
+// TestQuickConnectVNCWebSocketSeedsFromTheVisibleDisplayNotAHiddenPort proves a
+// Port left over from another protocol is not mistaken for the endpoint.
+func TestQuickConnectVNCWebSocketSeedsFromTheVisibleDisplayNotAHiddenPort(t *testing.T) {
+	graph := newTestGraph(t)
+	graph.state.OpenQuickConnect()
+	graph.state.SetQuickConnectProtocol(domainvault.ProtocolVNC)
+	form := graph.state.QuickConnectForm()
+	form.VNCDisplay = ""
+	form.Port = "2222"
+	graph.state.SetQuickConnectVNCWebSocket(true)
+	if got, want := form.Port, "6080"; got != want {
+		t.Fatalf("WebSocket port = %q, want %q from the visible display 0", got, want)
+	}
+}

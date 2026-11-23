@@ -95,6 +95,9 @@ type jsonVNCConfig struct {
 	Shared                       *bool  `json:"shared"`
 	CursorMode                   string `json:"cursorMode"`
 	PlaintextWarningAcknowledged bool   `json:"plaintextWarningAcknowledged"`
+	WebSocket                    bool   `json:"webSocket"`
+	WebSocketPath                string `json:"webSocketPath"`
+	WebSocketSecure              bool   `json:"webSocketSecure"`
 }
 
 type jsonKey struct {
@@ -485,6 +488,9 @@ func vncConfigFromJSON(config *jsonVNCConfig) *VNCConfig {
 		Shared:                       shared,
 		CursorMode:                   strings.TrimSpace(config.CursorMode),
 		PlaintextWarningAcknowledged: config.PlaintextWarningAcknowledged,
+		WebSocket:                    config.WebSocket,
+		WebSocketPath:                strings.TrimSpace(config.WebSocketPath),
+		WebSocketSecure:              config.WebSocketSecure,
 	}
 }
 

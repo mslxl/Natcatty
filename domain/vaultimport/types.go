@@ -253,6 +253,12 @@ type VNCConfig struct {
 	Shared                       bool
 	CursorMode                   string
 	PlaintextWarningAcknowledged bool
+	// WebSocket carries the RFB stream inside a WebSocket, as a
+	// noVNC/websockify page does. WebSocketPath is the HTTP upgrade path and
+	// WebSocketSecure selects wss.
+	WebSocket       bool
+	WebSocketPath   string
+	WebSocketSecure bool
 }
 
 // Family is the non-Host data a Netcatty document carries. The application

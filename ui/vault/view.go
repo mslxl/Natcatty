@@ -1264,8 +1264,21 @@ func plaintextProtocolName(protocol domainvault.Protocol) string {
 // vncSection renders the persisted viewer defaults. View-only, scaling,
 // sharing, and the cursor are per-session toggles at connect time, but a Host
 // remembers the values a new Session starts from.
-func vncSection(c *ui.Context, form *vaultstate.Form, m locales.Messages) {
+func vncSection(c *ui.Context, s *vaultstate.State, form *vaultstate.Form, m locales.Messages) {
 	ui.Text(c, m.VaultHostVNC()).Bold()
+	if ui.Checkbox(c, &form.VNCWebSocket, m.VaultHostVNCWebSocket()).Changed() {
+		// The endpoint meaning changes with the transport, so the editor
+		// switches the port controls and seeds websockify's default.
+		s.SetVNCWebSocket(form.VNCWebSocket)
+		c.Invalidate()
+	}
+	if form.VNCWebSocket {
+		kit.FormRow(c, m.VaultHostVNCWebSocketPath(), func() {
+			ui.TextInput(c, &form.VNCWebSocketPath).
+				Placeholder(domainvault.VNCDefaultWebSocketPath).Width(240)
+		}).Description(m.VaultHostVNCWebSocketHint())
+		ui.Checkbox(c, &form.VNCWebSocketSecure, m.VaultHostVNCWebSocketSecure())
+	}
 	fitLabels := []string{
 		m.VaultHostVNCFitFit(), m.VaultHostVNCFitOneToOne(), m.VaultHostVNCFitClip(),
 	}
@@ -1542,38 +1555,48 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 			})
 			ui.Row(c).Gap(8).Wrap().Children(func() {
 				if domainvault.Protocol(form.Protocol) == domainvault.ProtocolVNC {
-					// A VNC endpoint is entered as a display number or as the
-					// real TCP port. Both modes describe the same stored port.
-					kit.FormRow(c, m.VaultHostVNCInputMode(), func() {
-						// The Select writes its choice before the callback runs, so
-						// bind a local: the state setter needs the old mode to carry
-						// the endpoint across.
-						inputLabels := []string{m.VaultHostVNCInputDisplay(), m.VaultHostVNCInputPort()}
-						inputModes := []string{string(domainvault.VNCDisplayNumber), string(domainvault.VNCPort)}
-						inputLabel := optionLabel(inputLabels, inputModes,
-							string(domainvault.NormalizeDisplayMode(domainvault.VNCDisplayMode(form.VNCInputMode))))
-						if ui.Select(c, &inputLabel, inputLabels).Width(160).Changed() {
-							s.SetVNCInputMode(optionValue(inputModes, inputLabels, inputLabel))
-							c.Invalidate()
-						}
-					})
-					if form.VNCInputMode == string(domainvault.VNCPort) {
-						portHint := ""
-						if placeholder := s.HostPortPlaceholder(); placeholder != "" {
-							portHint = m.VaultHostPortHint(placeholder)
-						}
-						portField := kit.FormRow(c, m.VaultHostPort(), func() {
+					if form.VNCWebSocket {
+						// A noVNC/websockify endpoint is an HTTP port; a
+						// display number cannot describe it.
+						kit.FormRow(c, m.VaultHostPort(), func() {
 							ui.TextInput(c, &form.Port).
-								Placeholder(s.HostPortPlaceholder()).Width(120)
-						})
-						if portHint != "" {
-							portField.Description(portHint)
-						}
+								Placeholder(s.HostPortPlaceholder()).
+								Width(120)
+						}).Description(m.VaultHostPortHint(s.HostPortPlaceholder()))
 					} else {
-						kit.FormRow(c, m.VaultHostVNCDisplay(), func() {
-							ui.TextInput(c, &form.VNCDisplay).
-								Placeholder("0").Width(120)
-						}).Description(m.VaultHostPortHint(strconv.Itoa(domainvault.VNCDisplayBasePort)))
+						// A VNC endpoint is entered as a display number or as the
+						// real TCP port. Both modes describe the same stored port.
+						kit.FormRow(c, m.VaultHostVNCInputMode(), func() {
+							// The Select writes its choice before the callback runs, so
+							// bind a local: the state setter needs the old mode to carry
+							// the endpoint across.
+							inputLabels := []string{m.VaultHostVNCInputDisplay(), m.VaultHostVNCInputPort()}
+							inputModes := []string{string(domainvault.VNCDisplayNumber), string(domainvault.VNCPort)}
+							inputLabel := optionLabel(inputLabels, inputModes,
+								string(domainvault.NormalizeDisplayMode(domainvault.VNCDisplayMode(form.VNCInputMode))))
+							if ui.Select(c, &inputLabel, inputLabels).Width(160).Changed() {
+								s.SetVNCInputMode(optionValue(inputModes, inputLabels, inputLabel))
+								c.Invalidate()
+							}
+						})
+						if form.VNCInputMode == string(domainvault.VNCPort) {
+							portHint := ""
+							if placeholder := s.HostPortPlaceholder(); placeholder != "" {
+								portHint = m.VaultHostPortHint(placeholder)
+							}
+							portField := kit.FormRow(c, m.VaultHostPort(), func() {
+								ui.TextInput(c, &form.Port).
+									Placeholder(s.HostPortPlaceholder()).Width(120)
+							})
+							if portHint != "" {
+								portField.Description(portHint)
+							}
+						} else {
+							kit.FormRow(c, m.VaultHostVNCDisplay(), func() {
+								ui.TextInput(c, &form.VNCDisplay).
+									Placeholder("0").Width(120)
+							}).Description(m.VaultHostPortHint(strconv.Itoa(domainvault.VNCDisplayBasePort)))
+						}
 					}
 				} else {
 					portHint := ""
@@ -1633,14 +1656,21 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					ui.TextInput(c, &form.Password).Password()
 				}).Description(passwordHint)
 			}
-			if s.HostFormCapabilities().Plaintext {
+			plaintext := s.HostFormCapabilities().Plaintext
+			if domainvault.Protocol(form.Protocol) == domainvault.ProtocolVNC &&
+				form.VNCWebSocket && form.VNCWebSocketSecure {
+				// A wss stream is already encrypted, so the plaintext
+				// disclosure would be false.
+				plaintext = false
+			}
+			if plaintext {
 				// The disclosure follows the descriptor capability shared with
 				// Telnet, so a future plaintext protocol inherits it.
 				ui.Text(c, m.VaultHostPlaintextWarning(plaintextProtocolName(domainvault.Protocol(form.Protocol)))).
 					FontSize(kit.M(c).Font.Footnote).TextColor(uitheme.DangerText(t))
 			}
 			if domainvault.Protocol(form.Protocol) == domainvault.ProtocolVNC {
-				vncSection(c, form, m)
+				vncSection(c, s, form, m)
 			}
 
 			if s.HostFormCapabilities().SSHAuth {
@@ -2202,6 +2232,8 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultProblemVncDisplay()
 	case vaultstate.ProblemVNCDisplayRange:
 		return m.VaultProblemVncDisplayRange()
+	case vaultstate.ProblemVNCWebSocketPath:
+		return m.VaultProblemVncWebSocketPath()
 	case vaultstate.ProblemTOTP:
 		return m.VaultProblemTOTP()
 	case vaultstate.ProblemTOTPImage:

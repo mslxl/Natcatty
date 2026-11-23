@@ -155,6 +155,7 @@ const (
 	ProblemETPort                   Problem = "et_port"
 	ProblemVNCDisplay               Problem = "vnc_display"
 	ProblemVNCDisplayRange          Problem = "vnc_display_range"
+	ProblemVNCWebSocketPath         Problem = "vnc_websocket_path"
 	ProblemTOTP                     Problem = "totp"
 	ProblemTOTPImage                Problem = "totp_image"
 )
@@ -257,6 +258,12 @@ type Form struct {
 	// VNCPlaintextAcknowledged carries the warning acceptance through an edit
 	// without exposing a control for it.
 	VNCPlaintextAcknowledged bool
+	// VNCWebSocket carries the RFB stream inside a WebSocket, as a
+	// noVNC/websockify page does. VNCWebSocketPath is the upgrade path and
+	// VNCWebSocketSecure selects wss.
+	VNCWebSocket       bool
+	VNCWebSocketPath   string
+	VNCWebSocketSecure bool
 	// VNCPassword is plaintext form input for the dedicated VNC password slot.
 	// HasVNCPassword mirrors the Host's non-secret marker.
 	VNCPassword    string
@@ -992,6 +999,9 @@ func (s *State) applyVNCDefaults() {
 	s.form.VNCShared = defaults.Shared
 	s.form.VNCCursorMode = string(defaults.CursorMode)
 	s.form.VNCPlaintextAcknowledged = defaults.PlaintextWarningAcknowledged
+	s.form.VNCWebSocket = defaults.WebSocket
+	s.form.VNCWebSocketPath = defaults.WebSocketPath
+	s.form.VNCWebSocketSecure = defaults.WebSocketSecure
 }
 
 // applyVNCForm fills the editor from a saved VNC configuration. A VNC Host
@@ -1011,6 +1021,9 @@ func (s *State) applyVNCForm(host domainvault.Host) {
 	s.form.VNCShared = config.Shared
 	s.form.VNCCursorMode = string(config.CursorMode)
 	s.form.VNCPlaintextAcknowledged = config.PlaintextWarningAcknowledged
+	s.form.VNCWebSocket = config.WebSocket
+	s.form.VNCWebSocketPath = config.WebSocketPath
+	s.form.VNCWebSocketSecure = config.WebSocketSecure
 	s.form.VNCDisplay = ""
 	if display, ok := domainvault.VNCDisplayForPort(host.Port); ok {
 		s.form.VNCDisplay = strconv.Itoa(display)
@@ -1054,6 +1067,46 @@ func (s *State) SetVNCInputMode(mode string) {
 		}
 	}
 	s.form.VNCInputMode = next
+}
+
+// SetVNCWebSocket switches the Host between raw RFB and a noVNC/websockify
+// endpoint. A WebSocket endpoint is an HTTP port, so enabling it moves the
+// editor to port input and seeds websockify's 6080 while the endpoint is still
+// in the VNC display range. Disabling it restores display 0 when the port is
+// still that WebSocket default.
+func (s *State) SetVNCWebSocket(enabled bool) {
+	s.form.VNCWebSocket = enabled
+	if !enabled {
+		s.form.VNCWebSocketPath = ""
+		s.form.VNCWebSocketSecure = false
+		if strings.TrimSpace(s.form.Port) == strconv.Itoa(domainvault.VNCDefaultWebSocketPort) {
+			s.form.Port = strconv.Itoa(domainvault.VNCDisplayBasePort)
+			s.form.VNCInputMode = string(domainvault.VNCDisplayNumber)
+			s.form.VNCDisplay = "0"
+		}
+		return
+	}
+	port := strings.TrimSpace(s.form.Port)
+	if domainvault.NormalizeDisplayMode(domainvault.VNCDisplayMode(s.form.VNCInputMode)) ==
+		domainvault.VNCDisplayNumber {
+		// The visible endpoint is the display field, so a Port left over from
+		// another protocol is not the endpoint. A blank display means the
+		// default display, and a malformed one cannot become an HTTP port.
+		port = ""
+		if display, ok := parseVNCDisplayNumber(s.form.VNCDisplay); ok {
+			if resolved, ok := domainvault.VNCPortForDisplay(display); ok {
+				port = strconv.Itoa(resolved)
+			}
+		}
+	}
+	parsed, err := strconv.Atoi(port)
+	if err != nil || parsed == 0 ||
+		(parsed >= domainvault.VNCDisplayBasePort &&
+			parsed <= domainvault.VNCDisplayBasePort+domainvault.VNCDisplayMax) {
+		s.form.Port = strconv.Itoa(domainvault.VNCDefaultWebSocketPort)
+	}
+	s.form.VNCInputMode = string(domainvault.VNCPort)
+	s.form.VNCDisplay = ""
 }
 
 // parseVNCDisplayNumber reads a display number typed as "1" or ":1".
@@ -1459,6 +1512,11 @@ func (s *State) HostPortPlaceholder() string {
 	if protocol == "" {
 		protocol = domainvault.ProtocolSSH
 	}
+	if protocol == domainvault.ProtocolVNC && s.form.VNCWebSocket {
+		// A WebSocket endpoint is an HTTP port; a group's RFB port default
+		// cannot apply.
+		return strconv.Itoa(domainvault.VNCDefaultWebSocketPort)
+	}
 	return portPlaceholder(protocol, defaults.Port)
 }
 
@@ -1538,14 +1596,26 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 	port := 0
 	var vncConfig *domainvault.VNCConfig
 	if protocol == domainvault.ProtocolVNC {
+		displayMode := domainvault.VNCDisplayMode(s.form.VNCInputMode)
+		if s.form.VNCWebSocket {
+			// A WebSocket endpoint is an HTTP port; a display number cannot
+			// describe it, so the editor persists port input.
+			displayMode = domainvault.VNCPort
+		}
 		config := domainvault.NormalizeVNCConfig(&domainvault.VNCConfig{
-			DisplayMode:                  domainvault.VNCDisplayMode(s.form.VNCInputMode),
+			DisplayMode:                  displayMode,
 			FitMode:                      domainvault.VNCFitMode(s.form.VNCFitMode),
 			ViewOnly:                     s.form.VNCViewOnly,
 			Shared:                       s.form.VNCShared,
 			CursorMode:                   domainvault.VNCCursorMode(s.form.VNCCursorMode),
 			PlaintextWarningAcknowledged: s.form.VNCPlaintextAcknowledged,
+			WebSocket:                    s.form.VNCWebSocket,
+			WebSocketPath:                s.form.VNCWebSocketPath,
+			WebSocketSecure:              s.form.VNCWebSocketSecure,
 		})
+		if config.WebSocket && !domainvault.ValidVNCWebSocketPath(config.WebSocketPath) {
+			return domainvault.Draft{}, ProblemVNCWebSocketPath
+		}
 		vncConfig = config
 		if config.DisplayMode == domainvault.VNCDisplayNumber {
 			text := strings.TrimSpace(s.form.VNCDisplay)
@@ -1569,6 +1639,11 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 				}
 				port = parsed
 			}
+		}
+		if s.form.VNCWebSocket && port == 0 {
+			// A blank WebSocket port inherits websockify's default, not the
+			// RFB display port a group or the protocol would supply.
+			port = domainvault.VNCDefaultWebSocketPort
 		}
 	} else if trimmed := strings.TrimSpace(s.form.Port); trimmed != "" {
 		parsed, err := strconv.Atoi(trimmed)
@@ -1775,6 +1850,8 @@ func problemForValidation(invalid *domainvault.ValidationError) Problem {
 		return ProblemFileProtocol
 	case domainvault.FieldETPort:
 		return ProblemETPort
+	case domainvault.FieldVNCWebSocketPath:
+		return ProblemVNCWebSocketPath
 	case domainvault.FieldSFTPSudo:
 		return ProblemSudoUnsupported
 	case domainvault.FieldTOTP:
