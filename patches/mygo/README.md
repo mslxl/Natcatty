@@ -39,14 +39,39 @@ source into this repository.
 
 ## The phone keyboard patch
 
-`0005-ios-reshow-keyboard-after-manual-dismissal.patch` is the one phone-only
-patch. The MyGo iOS host in v0.10.0 cannot re-show the soft keyboard after the
+`0005-ios-reshow-keyboard-after-manual-dismissal.patch` is one of the two
+phone-only patches (the web-view one is below). The MyGo iOS host in v0.10.0
+cannot re-show the soft keyboard after the
 user dismisses it with the keyboard's own key: `SurfaceWindow.setTextInput`
 calls `becomeFirstResponder()`, but the view never stopped being first
 responder, so UIKit does nothing. The patch tracks an explicit dismissal and
 uses `reloadInputViews()` (or a fresh `becomeFirstResponder()`) only when a
 tap asks for the keyboard, so the resize after a dismissal does not raise it
 again.
+
+## The phone web-view patch
+
+`0006-mobile-data-stores-cookies-downloads.patch` adds what the phone browser
+needs from MyGo's mobile host. In v0.10.0 `mobile.Backend` embeds
+`unsupported.Backend`, so `NewDataStore` returns `errUnsupported`, and no
+cookie or download call exists at all. The patch adds the wire calls and
+events, the Go implementation behind them, and the iOS (`WKWebsiteDataStore`,
+`WKHTTPCookieStore`, `WKDownloadDelegate`) and Android (`ProfileStore`,
+`CookieManager`, `WebView.setDownloadListener`) host sides.
+
+It touches `internal/mobile/{wire/gen/spec.go,wire/msgs.go,backend.go,
+window.go,events.go,mobile_test.go}` plus the generated `Wire.swift` and
+`Wire.kt`, `datastore.go`, `datastore_test.go`, and the four host files
+`internal/mobile/ios/Sources/MyGoHost/{Host,WebWindow}.swift` and
+`internal/mobile/android/mygo/src/main/java/dev/mygo/{HostImpl,WebWindow}.kt`.
+The generated wire files are produced with
+`go generate ./internal/mobile/wire` after editing the spec; regenerate rather
+than editing them by hand. The calls only reach mobile hosts, so the desktop
+backend and its behaviour are unchanged.
+
+At an upgrade, drop the patch if the release carries per-site data stores,
+cookie access and download events; otherwise rework it against the new host
+sources. Keeping it is a product decision, as the ADR says for new patches.
 
 ## The fork carries the same desktop fixes
 

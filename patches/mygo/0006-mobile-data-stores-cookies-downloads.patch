@@ -1,0 +1,3327 @@
+diff --git a/internal/mobile/android/mygo/src/main/java/dev/mygo/HostImpl.kt b/internal/mobile/android/mygo/src/main/java/dev/mygo/HostImpl.kt
+index c40cb589..ac443525 100644
+--- a/internal/mobile/android/mygo/src/main/java/dev/mygo/HostImpl.kt
++++ b/internal/mobile/android/mygo/src/main/java/dev/mygo/HostImpl.kt
+@@ -34,16 +34,23 @@ import android.util.Log
+ import android.view.HapticFeedbackConstants
+ import android.view.View
+ import android.view.WindowManager
++import android.webkit.CookieManager
+ import android.webkit.MimeTypeMap
++import android.webkit.WebStorage
+ import android.widget.FrameLayout
+ import androidx.core.content.FileProvider
+ import androidx.core.view.ViewCompat
+ import androidx.core.view.WindowCompat
+ import androidx.core.view.WindowInsetsControllerCompat
+ import androidx.core.view.WindowInsetsCompat
++import androidx.webkit.ProfileStore
++import androidx.webkit.WebViewFeature
+ import java.io.File
++import java.time.OffsetDateTime
++import java.time.format.DateTimeFormatter
+ import java.util.Calendar
+ import java.util.Locale
++import java.util.concurrent.ConcurrentHashMap
+ 
+ object HostImpl : HostCalls {
+     /** The Activity showing the app, null while none does. */
+@@ -272,6 +279,160 @@ object HostImpl : HostCalls {
+         Log.println(if (c.error) Log.ERROR else Log.INFO, "mygo", c.line)
+     }
+ 
++    // Website data stores.
++
++    /** The website data stores Go made: their profile names, by Go's number. */
++    val dataStores = ConcurrentHashMap<Long, String>()
++    private val ephemeralStores = HashSet<Long>()
++
++    private const val SITE_COOKIES = 1L
++    private const val SITE_LOCAL_STORAGE = 2L
++    private const val SITE_INDEXED_DB = 4L
++    private const val SITE_ALL = 0x80000000L
++
++    override fun newDataStore(c: NewDataStoreCall) {
++        // Android isolates pages by WebView profile (MULTI_PROFILE), which
++        // older WebViews do not have: the entry stays closed there.
++        if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
++            Go.send(Event.dataStoreCreated(c.req, c.store, "mygo: this device's WebView has no profiles"))
++            return
++        }
++        val name = when {
++            c.ephemeral -> "mygo-ephemeral-" + System.nanoTime()
++            c.id.isNotEmpty() -> c.id
++            else -> "mygo-" + c.store
++        }
++        try {
++            ProfileStore.getInstance().getOrCreateProfile(name)
++            dataStores[c.store] = name
++            if (c.ephemeral) ephemeralStores.add(c.store)
++            Go.send(Event.dataStoreCreated(c.req, c.store, ""))
++        } catch (e: Throwable) {
++            Go.send(Event.dataStoreCreated(c.req, c.store, "mygo: ${e.message ?: e.toString()}"))
++        }
++    }
++
++    override fun closeDataStore(c: CloseDataStoreCall) {
++        val name = dataStores.remove(c.store) ?: return
++        if (ephemeralStores.remove(c.store)) {
++            try {
++                ProfileStore.getInstance().deleteProfile(name)
++            } catch (_: Throwable) {
++            }
++        }
++    }
++
++    /** The cookies of a website data store, the default one for 0. */
++    fun cookieManager(store: Long): CookieManager = try {
++        val name = dataStores[store]
++        if (store == 0L || name == null) CookieManager.getInstance()
++        else ProfileStore.getInstance().getOrCreateProfile(name).cookieManager
++    } catch (_: Throwable) {
++        CookieManager.getInstance()
++    }
++
++    private fun webStorage(store: Long): WebStorage = try {
++        val name = dataStores[store]
++        if (store == 0L || name == null) WebStorage.getInstance()
++        else ProfileStore.getInstance().getOrCreateProfile(name).webStorage
++    } catch (_: Throwable) {
++        WebStorage.getInstance()
++    }
++
++    /** Eight strings per cookie, as the wire carries them. */
++    override fun listCookies(c: ListCookiesCall) {
++        if (c.url.isEmpty()) {
++            // Android enumerates no cookie without a URL to ask for.
++            Go.send(Event.cookiesListed(c.req, emptyList(), "mygo: Android lists cookies for a URL only"))
++            return
++        }
++        val header = try {
++            cookieManager(c.store).getCookie(c.url) ?: ""
++        } catch (e: Throwable) {
++            Go.send(Event.cookiesListed(c.req, emptyList(), "mygo: ${e.message ?: e.toString()}"))
++            return
++        }
++        val uri = Uri.parse(c.url)
++        val domain = uri.host ?: ""
++        val secure = uri.scheme.equals("https", true)
++        val fields = ArrayList<String>()
++        for (part in header.split(';')) {
++            val pair = part.trim()
++            val i = pair.indexOf('=')
++            if (i <= 0) continue
++            // Attributes unknown: Android gives a URL its Cookie header only.
++            fields.addAll(listOf(pair.substring(0, i), pair.substring(i + 1), domain, "/", "", "",
++                if (secure) "1" else "", ""))
++        }
++        Go.send(Event.cookiesListed(c.req, fields, ""))
++    }
++
++    override fun setCookie(c: SetCookieCall) {
++        val host = c.domain.removePrefix(".")
++        if (host.isEmpty()) {
++            Go.send(Event.dataStoreDone(c.req, "mygo: cookies: Set needs a domain"))
++            return
++        }
++        val url = "${if (c.secure) "https" else "http"}://$host/"
++        var value = "${c.name}=${c.value}; Path=${c.path.ifEmpty { "/" }}"
++        if (c.domain.isNotEmpty()) value += "; Domain=${c.domain}"
++        when (c.sameSite.lowercase()) {
++            "lax" -> value += "; SameSite=Lax"
++            "strict" -> value += "; SameSite=Strict"
++            "none" -> value += "; SameSite=None"
++        }
++        if (c.expires.isNotEmpty()) {
++            try {
++                val date = OffsetDateTime.parse(c.expires)
++                value += "; Expires=" + DateTimeFormatter.RFC_1123_DATE_TIME.format(date)
++            } catch (_: Throwable) {
++            }
++        }
++        if (c.secure) value += "; Secure"
++        if (c.httpOnly) value += "; HttpOnly"
++        cookieManager(c.store).setCookie(url, value) { ok ->
++            Go.send(Event.dataStoreDone(c.req, if (ok == true) "" else "mygo: the WebView refused the cookie"))
++        }
++    }
++
++    override fun deleteCookie(c: DeleteCookieCall) {
++        val host = c.domain.removePrefix(".")
++        if (host.isEmpty()) {
++            Go.send(Event.dataStoreDone(c.req, "mygo: cookies: Delete needs a domain"))
++            return
++        }
++        // Expiring a cookie of the same name, domain and path deletes it.
++        val value = "${c.name}=; Max-Age=0; Path=${c.path.ifEmpty { "/" }}; Domain=${c.domain}"
++        cookieManager(c.store).setCookie("https://$host/", value) {
++            Go.send(Event.dataStoreDone(c.req, ""))
++        }
++    }
++
++    override fun clearCookies(c: ClearCookiesCall) {
++        cookieManager(c.store).removeAllCookies {
++            Go.send(Event.dataStoreDone(c.req, ""))
++        }
++    }
++
++    override fun clearBrowsingData(c: ClearBrowsingDataCall) {
++        val all = c.types and SITE_ALL != 0L
++        val cookies = all || c.types and SITE_COOKIES != 0L
++        val storage = all || c.types and (SITE_LOCAL_STORAGE or SITE_INDEXED_DB) != 0L
++        if (storage) {
++            try {
++                webStorage(c.store).deleteAllData()
++            } catch (_: Throwable) {
++            }
++        }
++        if (cookies) {
++            cookieManager(c.store).removeAllCookies {
++                Go.send(Event.dataStoreDone(c.req, ""))
++            }
++        } else {
++            Go.send(Event.dataStoreDone(c.req, ""))
++        }
++    }
++
+     // Windows.
+ 
+     override fun createWindow(c: CreateWindowCall): CreateWindowReply {
+diff --git a/internal/mobile/android/mygo/src/main/java/dev/mygo/WebWindow.kt b/internal/mobile/android/mygo/src/main/java/dev/mygo/WebWindow.kt
+index 698e7ff0..36e88fd8 100644
+--- a/internal/mobile/android/mygo/src/main/java/dev/mygo/WebWindow.kt
++++ b/internal/mobile/android/mygo/src/main/java/dev/mygo/WebWindow.kt
+@@ -18,6 +18,7 @@ import android.view.ViewGroup
+ import android.webkit.JavascriptInterface
+ import android.webkit.PermissionRequest
+ import android.webkit.RenderProcessGoneDetail
++import android.webkit.URLUtil
+ import android.webkit.ValueCallback
+ import android.webkit.WebChromeClient
+ import android.webkit.WebResourceError
+@@ -31,7 +32,10 @@ import androidx.webkit.WebViewCompat
+ import androidx.webkit.WebViewFeature
+ import org.json.JSONObject
+ import java.io.ByteArrayOutputStream
++import java.io.File
+ import java.io.InputStream
++import java.net.HttpURLConnection
++import java.net.URL
+ import java.util.concurrent.CountDownLatch
+ import java.util.concurrent.LinkedBlockingQueue
+ import java.util.concurrent.TimeUnit
+@@ -42,12 +46,16 @@ class WebWindow(context: Context, c: CreateWindowCall) : HostWindow(context, c.i
+     override val view: View get() = frame
+     val web = WebView(context)
+     private val schemes = c.schemes.toSet()
++    /** The website data store the page uses, 0 for the default one. */
++    private val store = c.store
+     private var scripts = ArrayList<ScriptHandler>()
+     private var defaultUA = ""
+     private var suffix = c.userAgentSuffix
+     private val ui = Handler(Looper.getMainLooper())
+ 
+     init {
++        // The website data store the app chose, before the page loads.
++        if (c.store != 0L) HostImpl.dataStores[c.store]?.let { WebViewCompat.setProfile(web, it) }
+         val s = web.settings
+         s.javaScriptEnabled = true
+         s.domStorageEnabled = true
+@@ -64,6 +72,16 @@ class WebWindow(context: Context, c: CreateWindowCall) : HostWindow(context, c.i
+         web.addJavascriptInterface(Bridge(this), "mygoAndroid")
+         web.webViewClient = Client()
+         web.webChromeClient = Chrome()
++        web.setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
++            val suggested = try {
++                URLUtil.guessFileName(url, contentDisposition, mimetype)
++            } catch (_: Exception) {
++                "download"
++            }
++            val reply = Go.ask(Event.willDownload(id, url, suggested)) ?: return@setDownloadListener
++            val path = WillDownloadReply(reply).path
++            if (path.isNotEmpty()) download(url, userAgent, path)
++        }
+         setScripts(c.scripts, c.scriptFlags)
+         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+             WebViewCompat.addDocumentStartJavaScript(web, Schemes.bodyScript, setOf("*"))
+@@ -119,6 +137,32 @@ class WebWindow(context: Context, c: CreateWindowCall) : HostWindow(context, c.i
+         web.loadDataWithBaseURL(base.ifEmpty { null }, html, "text/html", "utf-8", null)
+     }
+ 
++    /**
++     * Downloads url to path, with the page's cookies, and tells Go how it
++     * ended. Android's web view downloads nothing by itself.
++     */
++    private fun download(url: String, userAgent: String, path: String) {
++        Thread {
++            try {
++                val f = File(path)
++                f.parentFile?.mkdirs()
++                val c = URL(url).openConnection() as HttpURLConnection
++                c.instanceFollowRedirects = true
++                if (userAgent.isNotEmpty()) c.setRequestProperty("User-Agent", userAgent)
++                try {
++                    HostImpl.cookieManager(store).getCookie(url)?.let { c.setRequestProperty("Cookie", it) }
++                } catch (_: Exception) {
++                }
++                val code = c.responseCode
++                if (code !in 200..299) throw java.io.IOException("HTTP $code")
++                c.inputStream.use { input -> f.outputStream().use { input.copyTo(it) } }
++                Go.send(Event.downloadDone(id, url, path, ""))
++            } catch (e: Exception) {
++                Go.send(Event.downloadDone(id, url, path, e.message ?: e.toString()))
++            }
++        }.start()
++    }
++
+     fun callAsync(req: Long, body: String) {
+         val js = "(function(){var r=$req;try{var F=Object.getPrototypeOf(async function(){}).constructor;" +
+             "new F(${JSONObject.quote(body)})().then(function(v){mygoAndroid.asyncResult(r,String(v),'')}," +
+diff --git a/internal/mobile/android/mygo/src/main/java/dev/mygo/Wire.kt b/internal/mobile/android/mygo/src/main/java/dev/mygo/Wire.kt
+index 153f2c58..99444b09 100644
+--- a/internal/mobile/android/mygo/src/main/java/dev/mygo/Wire.kt
++++ b/internal/mobile/android/mygo/src/main/java/dev/mygo/Wire.kt
+@@ -182,6 +182,108 @@ class LogCall(
+     }
+ }
+ 
++class NewDataStoreCall(
++    @JvmField var req: Long = 0L,
++    @JvmField var store: Long = 0L,
++    @JvmField var id: String = "",
++    @JvmField var ephemeral: Boolean = false,
++    @JvmField var dataDir: String = "",
++    @JvmField var cacheDir: String = "",
++) {
++    constructor(r: WireReader) : this() {
++        req = r.int()
++        store = r.int()
++        id = r.string()
++        ephemeral = r.bool()
++        dataDir = r.string()
++        cacheDir = r.string()
++    }
++}
++
++class CloseDataStoreCall(
++    @JvmField var store: Long = 0L,
++) {
++    constructor(r: WireReader) : this() {
++        store = r.int()
++    }
++}
++
++class ClearBrowsingDataCall(
++    @JvmField var req: Long = 0L,
++    @JvmField var store: Long = 0L,
++    @JvmField var types: Long = 0L,
++) {
++    constructor(r: WireReader) : this() {
++        req = r.int()
++        store = r.int()
++        types = r.int()
++    }
++}
++
++class ListCookiesCall(
++    @JvmField var req: Long = 0L,
++    @JvmField var store: Long = 0L,
++    @JvmField var url: String = "",
++) {
++    constructor(r: WireReader) : this() {
++        req = r.int()
++        store = r.int()
++        url = r.string()
++    }
++}
++
++class SetCookieCall(
++    @JvmField var req: Long = 0L,
++    @JvmField var store: Long = 0L,
++    @JvmField var name: String = "",
++    @JvmField var value: String = "",
++    @JvmField var domain: String = "",
++    @JvmField var path: String = "",
++    @JvmField var expires: String = "",
++    @JvmField var secure: Boolean = false,
++    @JvmField var httpOnly: Boolean = false,
++    @JvmField var sameSite: String = "",
++) {
++    constructor(r: WireReader) : this() {
++        req = r.int()
++        store = r.int()
++        name = r.string()
++        value = r.string()
++        domain = r.string()
++        path = r.string()
++        expires = r.string()
++        secure = r.bool()
++        httpOnly = r.bool()
++        sameSite = r.string()
++    }
++}
++
++class DeleteCookieCall(
++    @JvmField var req: Long = 0L,
++    @JvmField var store: Long = 0L,
++    @JvmField var name: String = "",
++    @JvmField var domain: String = "",
++    @JvmField var path: String = "",
++) {
++    constructor(r: WireReader) : this() {
++        req = r.int()
++        store = r.int()
++        name = r.string()
++        domain = r.string()
++        path = r.string()
++    }
++}
++
++class ClearCookiesCall(
++    @JvmField var req: Long = 0L,
++    @JvmField var store: Long = 0L,
++) {
++    constructor(r: WireReader) : this() {
++        req = r.int()
++        store = r.int()
++    }
++}
++
+ class CreateWindowCall(
+     @JvmField var id: Long = 0L,
+     @JvmField var surface: Boolean = false,
+@@ -200,6 +302,7 @@ class CreateWindowCall(
+     @JvmField var parent: Long = 0L,
+     @JvmField var viewType: String = "",
+     @JvmField var viewArgs: String = "",
++    @JvmField var store: Long = 0L,
+ ) {
+     constructor(r: WireReader) : this() {
+         id = r.int()
+@@ -219,6 +322,7 @@ class CreateWindowCall(
+         parent = r.int()
+         viewType = r.string()
+         viewArgs = r.string()
++        store = r.int()
+     }
+ }
+ 
+@@ -1230,6 +1334,20 @@ interface HostCalls {
+     fun screen(): ScreenReply
+     /** a line the app wrote to its standard output or error */
+     fun log(c: LogCall)
++    /** makes a website data store; DataStoreCreated answers. ID is a session's UUID, empty for an ephemeral store; DataDir and CacheDir are for the backends that choose */
++    fun newDataStore(c: NewDataStoreCall)
++    /** lets a website data store go */
++    fun closeDataStore(c: CloseDataStoreCall)
++    /** removes the site data of Types (platform.SiteData) from a website data store; DataStoreDone answers */
++    fun clearBrowsingData(c: ClearBrowsingDataCall)
++    /** the cookies of a website data store, those of URL when it is not empty; CookiesListed answers */
++    fun listCookies(c: ListCookiesCall)
++    /** sets a cookie of a website data store; DataStoreDone answers. Expires is RFC 3339, empty for a session cookie */
++    fun setCookie(c: SetCookieCall)
++    /** deletes the cookie of a website data store a key names; DataStoreDone answers */
++    fun deleteCookie(c: DeleteCookieCall)
++    /** deletes every cookie of a website data store; DataStoreDone answers */
++    fun clearCookies(c: ClearCookiesCall)
+     /** the screen's content: a web view, or a surface for native UI */
+     fun createWindow(c: CreateWindowCall): CreateWindowReply
+     /** the window's content presented its first frame */
+@@ -1362,85 +1480,92 @@ fun dispatchCall(h: HostCalls, buf: ByteArray): ByteArray? {
+         4 -> h.setAppearance(SetAppearanceCall(r))
+         5 -> { h.screen().encode(w); return w.toByteArray() }
+         6 -> h.log(LogCall(r))
+-        7 -> { h.createWindow(CreateWindowCall(r)).encode(w); return w.toByteArray() }
+-        8 -> h.firstFrame(FirstFrameCall(r))
+-        9 -> h.placeViews(PlaceViewsCall(r))
+-        10 -> h.showWindow(ShowWindowCall(r))
+-        11 -> h.hideWindow(HideWindowCall(r))
+-        12 -> h.closeWindow(CloseWindowCall(r))
+-        13 -> h.setBackground(SetBackgroundCall(r))
+-        14 -> h.focus(FocusCall(r))
+-        15 -> h.setTitle(SetTitleCall(r))
+-        16 -> h.createTabs(CreateTabsCall(r))
+-        17 -> h.addTab(AddTabCall(r))
+-        18 -> h.showTabs(ShowTabsCall(r))
+-        19 -> h.selectTab(SelectTabCall(r))
+-        20 -> h.setTabBadge(SetTabBadgeCall(r))
+-        21 -> h.closeTabs(CloseTabsCall(r))
+-        22 -> h.pushWindow(PushWindowCall(r))
+-        23 -> h.popWindow(PopWindowCall(r))
+-        24 -> { h.setStack(SetStackCall(r)).encode(w); return w.toByteArray() }
+-        25 -> h.stackShown(StackShownCall(r))
+-        26 -> h.loadURL(LoadURLCall(r))
+-        27 -> h.loadHTML(LoadHTMLCall(r))
+-        28 -> h.reload(ReloadCall(r))
+-        29 -> h.stopLoading(StopLoadingCall(r))
+-        30 -> h.goBack(GoBackCall(r))
+-        31 -> h.goForward(GoForwardCall(r))
+-        32 -> h.eval(EvalCall(r))
+-        33 -> h.callAsync(CallAsyncCall(r))
+-        34 -> h.setZoom(SetZoomCall(r))
+-        35 -> h.setUserAgent(SetUserAgentCall(r))
+-        36 -> h.setUserScripts(SetUserScriptsCall(r))
+-        37 -> h.capturePage(CapturePageCall(r))
+-        38 -> { h.userAgent(UserAgentCall(r)).encode(w); return w.toByteArray() }
+-        39 -> h.schemeRespond(SchemeRespondCall(r))
+-        40 -> h.schemeData(SchemeDataCall(r))
+-        41 -> h.schemeFinish(SchemeFinishCall(r))
+-        42 -> h.schemeFail(SchemeFailCall(r))
+-        43 -> h.messageBox(MessageBoxCall(r))
+-        44 -> h.openFiles(OpenFilesCall(r))
+-        45 -> h.shareFile(ShareFileCall(r))
+-        46 -> { h.clipboardText().encode(w); return w.toByteArray() }
+-        47 -> h.setClipboardText(SetClipboardTextCall(r))
+-        48 -> { h.openURL(OpenURLCall(r)).encode(w); return w.toByteArray() }
+-        49 -> { h.secretGet(SecretGetCall(r)).encode(w); return w.toByteArray() }
+-        50 -> { h.secretSet(SecretSetCall(r)).encode(w); return w.toByteArray() }
+-        51 -> { h.secretDelete(SecretDeleteCall(r)).encode(w); return w.toByteArray() }
+-        52 -> h.notify(NotifyCall(r))
+-        53 -> h.removeNotification(RemoveNotificationCall(r))
+-        54 -> h.removeAllNotifications()
+-        55 -> h.keepAwake(KeepAwakeCall(r))
+-        56 -> { h.networkStatus().encode(w); return w.toByteArray() }
+-        57 -> h.watchNetwork()
+-        58 -> { h.battery().encode(w); return w.toByteArray() }
+-        59 -> h.setSystemBars(SetSystemBarsCall(r))
+-        60 -> h.setOrientations(SetOrientationsCall(r))
+-        61 -> h.share(ShareCall(r))
+-        62 -> h.saveFile(SaveFileCall(r))
+-        63 -> { h.clipboardImage().encode(w); return w.toByteArray() }
+-        64 -> h.setClipboardImage(SetClipboardImageCall(r))
+-        65 -> h.popupMenu(PopupMenuCall(r))
+-        66 -> h.setBarItems(SetBarItemsCall(r))
+-        67 -> h.pluginCall(PluginCallCall(r))
+-        68 -> { h.audioOpen(AudioOpenCall(r)).encode(w); return w.toByteArray() }
+-        69 -> { h.audioWrite(AudioWriteCall(r)).encode(w); return w.toByteArray() }
+-        70 -> { h.audioClose().encode(w); return w.toByteArray() }
+-        71 -> h.haptic(HapticCall(r))
+-        72 -> h.requestFrame(RequestFrameCall(r))
+-        73 -> h.setTextInput(SetTextInputCall(r))
+-        74 -> h.setCursor(SetCursorCall(r))
+-        75 -> h.accessibilityChanged(AccessibilityChangedCall(r))
+-        76 -> h.announce(AnnounceCall(r))
+-        77 -> h.showMenu(ShowMenuCall(r))
+-        78 -> h.setBackAvailable(SetBackAvailableCall(r))
+-        79 -> h.showMagnifier(ShowMagnifierCall(r))
+-        80 -> h.hideMagnifier(HideMagnifierCall(r))
+-        81 -> { h.textMetrics(TextMetricsCall(r)).encode(w); return w.toByteArray() }
+-        82 -> { h.measureText(MeasureTextCall(r)).encode(w); return w.toByteArray() }
+-        83 -> { h.textAdvances(TextAdvancesCall(r)).encode(w); return w.toByteArray() }
+-        84 -> { h.drawText(DrawTextCall(r)).encode(w); return w.toByteArray() }
+-        85 -> { h.registerFont(RegisterFontCall(r)).encode(w); return w.toByteArray() }
++        7 -> h.newDataStore(NewDataStoreCall(r))
++        8 -> h.closeDataStore(CloseDataStoreCall(r))
++        9 -> h.clearBrowsingData(ClearBrowsingDataCall(r))
++        10 -> h.listCookies(ListCookiesCall(r))
++        11 -> h.setCookie(SetCookieCall(r))
++        12 -> h.deleteCookie(DeleteCookieCall(r))
++        13 -> h.clearCookies(ClearCookiesCall(r))
++        14 -> { h.createWindow(CreateWindowCall(r)).encode(w); return w.toByteArray() }
++        15 -> h.firstFrame(FirstFrameCall(r))
++        16 -> h.placeViews(PlaceViewsCall(r))
++        17 -> h.showWindow(ShowWindowCall(r))
++        18 -> h.hideWindow(HideWindowCall(r))
++        19 -> h.closeWindow(CloseWindowCall(r))
++        20 -> h.setBackground(SetBackgroundCall(r))
++        21 -> h.focus(FocusCall(r))
++        22 -> h.setTitle(SetTitleCall(r))
++        23 -> h.createTabs(CreateTabsCall(r))
++        24 -> h.addTab(AddTabCall(r))
++        25 -> h.showTabs(ShowTabsCall(r))
++        26 -> h.selectTab(SelectTabCall(r))
++        27 -> h.setTabBadge(SetTabBadgeCall(r))
++        28 -> h.closeTabs(CloseTabsCall(r))
++        29 -> h.pushWindow(PushWindowCall(r))
++        30 -> h.popWindow(PopWindowCall(r))
++        31 -> { h.setStack(SetStackCall(r)).encode(w); return w.toByteArray() }
++        32 -> h.stackShown(StackShownCall(r))
++        33 -> h.loadURL(LoadURLCall(r))
++        34 -> h.loadHTML(LoadHTMLCall(r))
++        35 -> h.reload(ReloadCall(r))
++        36 -> h.stopLoading(StopLoadingCall(r))
++        37 -> h.goBack(GoBackCall(r))
++        38 -> h.goForward(GoForwardCall(r))
++        39 -> h.eval(EvalCall(r))
++        40 -> h.callAsync(CallAsyncCall(r))
++        41 -> h.setZoom(SetZoomCall(r))
++        42 -> h.setUserAgent(SetUserAgentCall(r))
++        43 -> h.setUserScripts(SetUserScriptsCall(r))
++        44 -> h.capturePage(CapturePageCall(r))
++        45 -> { h.userAgent(UserAgentCall(r)).encode(w); return w.toByteArray() }
++        46 -> h.schemeRespond(SchemeRespondCall(r))
++        47 -> h.schemeData(SchemeDataCall(r))
++        48 -> h.schemeFinish(SchemeFinishCall(r))
++        49 -> h.schemeFail(SchemeFailCall(r))
++        50 -> h.messageBox(MessageBoxCall(r))
++        51 -> h.openFiles(OpenFilesCall(r))
++        52 -> h.shareFile(ShareFileCall(r))
++        53 -> { h.clipboardText().encode(w); return w.toByteArray() }
++        54 -> h.setClipboardText(SetClipboardTextCall(r))
++        55 -> { h.openURL(OpenURLCall(r)).encode(w); return w.toByteArray() }
++        56 -> { h.secretGet(SecretGetCall(r)).encode(w); return w.toByteArray() }
++        57 -> { h.secretSet(SecretSetCall(r)).encode(w); return w.toByteArray() }
++        58 -> { h.secretDelete(SecretDeleteCall(r)).encode(w); return w.toByteArray() }
++        59 -> h.notify(NotifyCall(r))
++        60 -> h.removeNotification(RemoveNotificationCall(r))
++        61 -> h.removeAllNotifications()
++        62 -> h.keepAwake(KeepAwakeCall(r))
++        63 -> { h.networkStatus().encode(w); return w.toByteArray() }
++        64 -> h.watchNetwork()
++        65 -> { h.battery().encode(w); return w.toByteArray() }
++        66 -> h.setSystemBars(SetSystemBarsCall(r))
++        67 -> h.setOrientations(SetOrientationsCall(r))
++        68 -> h.share(ShareCall(r))
++        69 -> h.saveFile(SaveFileCall(r))
++        70 -> { h.clipboardImage().encode(w); return w.toByteArray() }
++        71 -> h.setClipboardImage(SetClipboardImageCall(r))
++        72 -> h.popupMenu(PopupMenuCall(r))
++        73 -> h.setBarItems(SetBarItemsCall(r))
++        74 -> h.pluginCall(PluginCallCall(r))
++        75 -> { h.audioOpen(AudioOpenCall(r)).encode(w); return w.toByteArray() }
++        76 -> { h.audioWrite(AudioWriteCall(r)).encode(w); return w.toByteArray() }
++        77 -> { h.audioClose().encode(w); return w.toByteArray() }
++        78 -> h.haptic(HapticCall(r))
++        79 -> h.requestFrame(RequestFrameCall(r))
++        80 -> h.setTextInput(SetTextInputCall(r))
++        81 -> h.setCursor(SetCursorCall(r))
++        82 -> h.accessibilityChanged(AccessibilityChangedCall(r))
++        83 -> h.announce(AnnounceCall(r))
++        84 -> h.showMenu(ShowMenuCall(r))
++        85 -> h.setBackAvailable(SetBackAvailableCall(r))
++        86 -> h.showMagnifier(ShowMagnifierCall(r))
++        87 -> h.hideMagnifier(HideMagnifierCall(r))
++        88 -> { h.textMetrics(TextMetricsCall(r)).encode(w); return w.toByteArray() }
++        89 -> { h.measureText(MeasureTextCall(r)).encode(w); return w.toByteArray() }
++        90 -> { h.textAdvances(TextAdvancesCall(r)).encode(w); return w.toByteArray() }
++        91 -> { h.drawText(DrawTextCall(r)).encode(w); return w.toByteArray() }
++        92 -> { h.registerFont(RegisterFontCall(r)).encode(w); return w.toByteArray() }
+     }
+     return null
+ }
+@@ -1643,10 +1768,29 @@ object Event {
+         w.bool(userInitiated)
+         return w.toByteArray()
+     }
++    /** a page starts a download: the Path to save it, empty to cancel it */
++    @JvmStatic fun willDownload(id: Long, url: String, suggested: String): ByteArray {
++        val w = WireWriter()
++        w.uvarint(27)
++        w.int(id)
++        w.string(url)
++        w.string(suggested)
++        return w.toByteArray()
++    }
++    /** a download ended; Error why it failed, empty when it finished */
++    @JvmStatic fun downloadDone(id: Long, url: String, path: String, error: String): ByteArray {
++        val w = WireWriter()
++        w.uvarint(28)
++        w.int(id)
++        w.string(url)
++        w.string(path)
++        w.string(error)
++        return w.toByteArray()
++    }
+     /** what the page is at, after any change of it */
+     @JvmStatic fun pageState(id: Long, url: String, title: String, loading: Boolean, canGoBack: Boolean, canGoForward: Boolean): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(27)
++        w.uvarint(29)
+         w.int(id)
+         w.string(url)
+         w.string(title)
+@@ -1657,27 +1801,27 @@ object Event {
+     }
+     @JvmStatic fun navigationStarted(id: Long, url: String): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(28)
++        w.uvarint(30)
+         w.int(id)
+         w.string(url)
+         return w.toByteArray()
+     }
+     @JvmStatic fun navigationCommitted(id: Long, url: String): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(29)
++        w.uvarint(31)
+         w.int(id)
+         w.string(url)
+         return w.toByteArray()
+     }
+     @JvmStatic fun loadFinished(id: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(30)
++        w.uvarint(32)
+         w.int(id)
+         return w.toByteArray()
+     }
+     @JvmStatic fun loadFailed(id: Long, url: String, code: Long, description: String): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(31)
++        w.uvarint(33)
+         w.int(id)
+         w.string(url)
+         w.int(code)
+@@ -1686,27 +1830,27 @@ object Event {
+     }
+     @JvmStatic fun closedByPage(id: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(32)
++        w.uvarint(34)
+         w.int(id)
+         return w.toByteArray()
+     }
+     /** the user went to a window of its own scene, or (0) to the app's first */
+     @JvmStatic fun windowFront(id: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(33)
++        w.uvarint(35)
+         w.int(id)
+         return w.toByteArray()
+     }
+     @JvmStatic fun processGone(id: Long, reason: String): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(34)
++        w.uvarint(36)
+         w.int(id)
+         w.string(reason)
+         return w.toByteArray()
+     }
+     @JvmStatic fun permissionRequested(id: Long, kinds: List<String>, origin: String): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(35)
++        w.uvarint(37)
+         w.int(id)
+         w.strings(kinds)
+         w.string(origin)
+@@ -1715,7 +1859,7 @@ object Event {
+     /** a request of one of the app's schemes (Header: names and values in turn) */
+     @JvmStatic fun schemeRequest(id: Long, req: Long, method: String, url: String, header: List<String>, body: ByteArray, hasBody: Boolean): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(36)
++        w.uvarint(38)
+         w.int(id)
+         w.int(req)
+         w.string(method)
+@@ -1727,13 +1871,13 @@ object Event {
+     }
+     @JvmStatic fun schemeCancel(req: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(37)
++        w.uvarint(39)
+         w.int(req)
+         return w.toByteArray()
+     }
+     @JvmStatic fun asyncResult(req: Long, result: String, error: String): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(38)
++        w.uvarint(40)
+         w.int(req)
+         w.string(result)
+         w.string(error)
+@@ -1741,7 +1885,7 @@ object Event {
+     }
+     @JvmStatic fun captured(req: Long, png: ByteArray, error: String): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(39)
++        w.uvarint(41)
+         w.int(req)
+         w.bytes(png)
+         w.string(error)
+@@ -1749,14 +1893,14 @@ object Event {
+     }
+     @JvmStatic fun messageBoxResult(req: Long, response: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(40)
++        w.uvarint(42)
+         w.int(req)
+         w.int(response)
+         return w.toByteArray()
+     }
+     @JvmStatic fun filesResult(req: Long, paths: List<String>, error: String): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(41)
++        w.uvarint(43)
+         w.int(req)
+         w.strings(paths)
+         w.string(error)
+@@ -1764,28 +1908,54 @@ object Event {
+     }
+     @JvmStatic fun notifyDone(req: Long, error: String): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(42)
++        w.uvarint(44)
+         w.int(req)
+         w.string(error)
+         return w.toByteArray()
+     }
+     @JvmStatic fun notificationClicked(notificationID: String): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(43)
++        w.uvarint(45)
+         w.string(notificationID)
+         return w.toByteArray()
+     }
++    /** a website data store was made, or why it could not be */
++    @JvmStatic fun dataStoreCreated(req: Long, store: Long, error: String): ByteArray {
++        val w = WireWriter()
++        w.uvarint(46)
++        w.int(req)
++        w.int(store)
++        w.string(error)
++        return w.toByteArray()
++    }
++    /** the cookies of a website data store, eight strings each: name, value, domain, path, expires (RFC 3339), same site, secure ("1"), HTTPOnly ("1"); Error why they could not be listed */
++    @JvmStatic fun cookiesListed(req: Long, cookies: List<String>, error: String): ByteArray {
++        val w = WireWriter()
++        w.uvarint(47)
++        w.int(req)
++        w.strings(cookies)
++        w.string(error)
++        return w.toByteArray()
++    }
++    /** a change of a website data store finished; Error why it failed */
++    @JvmStatic fun dataStoreDone(req: Long, error: String): ByteArray {
++        val w = WireWriter()
++        w.uvarint(48)
++        w.int(req)
++        w.string(error)
++        return w.toByteArray()
++    }
+     /** the display refreshes: draw a frame if one was asked for */
+     @JvmStatic fun frame(id: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(44)
++        w.uvarint(49)
+         w.int(id)
+         return w.toByteArray()
+     }
+     /** the native surface to draw on (a CAMetalLayer, an ANativeWindow), 0 when gone */
+     @JvmStatic fun surfaceChanged(id: Long, handle: Long, width: Double, height: Double, scale: Double, refresh: Double): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(45)
++        w.uvarint(50)
+         w.int(id)
+         w.int(handle)
+         w.float(width)
+@@ -1797,14 +1967,14 @@ object Event {
+     /** the native surface goes: the host waits for Go to let go of it */
+     @JvmStatic fun surfaceDestroyed(id: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(46)
++        w.uvarint(51)
+         w.int(id)
+         return w.toByteArray()
+     }
+     /** a finger, a pen or a mouse: Phase is "down", "move", "up" or "cancel", Kind "touch", "pen" or "mouse" */
+     @JvmStatic fun touch(id: Long, pointer: Long, phase: String, kind: String, x: Double, y: Double, pressure: Double, buttons: Long, time: Double): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(47)
++        w.uvarint(52)
+         w.int(id)
+         w.int(pointer)
+         w.string(phase)
+@@ -1819,7 +1989,7 @@ object Event {
+     /** a mouse's or a trackpad's scrolling, in DIPs */
+     @JvmStatic fun scroll(id: Long, x: Double, y: Double, dx: Double, dy: Double, precise: Boolean, phase: String): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(48)
++        w.uvarint(53)
+         w.int(id)
+         w.float(x)
+         w.float(y)
+@@ -1832,7 +2002,7 @@ object Event {
+     /** a hardware keyboard's key: Down, its name (as ui names keys) and the text it types */
+     @JvmStatic fun key(id: Long, down: Boolean, key: String, text: String, mods: Long, repeated: Boolean): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(49)
++        w.uvarint(54)
+         w.int(id)
+         w.bool(down)
+         w.string(key)
+@@ -1844,7 +2014,7 @@ object Event {
+     /** the keyboard put Text in Start to End of the document, or with no range in place of the marked text or the selection; answers TextStateReply */
+     @JvmStatic fun textReplace(id: Long, hasRange: Boolean, start: Long, end: Long, text: String): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(50)
++        w.uvarint(55)
+         w.int(id)
+         w.bool(hasRange)
+         w.int(start)
+@@ -1855,7 +2025,7 @@ object Event {
+     /** the input method composes Text over Start to End, or with no range over the marked text or the selection; SelStart and SelEnd are in Text; answers TextStateReply */
+     @JvmStatic fun textMark(id: Long, hasRange: Boolean, start: Long, end: Long, text: String, selStart: Long, selEnd: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(51)
++        w.uvarint(56)
+         w.int(id)
+         w.bool(hasRange)
+         w.int(start)
+@@ -1868,14 +2038,14 @@ object Event {
+     /** the marked text stays as text; answers TextStateReply */
+     @JvmStatic fun textUnmark(id: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(52)
++        w.uvarint(57)
+         w.int(id)
+         return w.toByteArray()
+     }
+     /** the keyboard deleted Before units before the selection and After after it; answers TextStateReply */
+     @JvmStatic fun textDelete(id: Long, before: Long, after: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(53)
++        w.uvarint(58)
+         w.int(id)
+         w.int(before)
+         w.int(after)
+@@ -1884,7 +2054,7 @@ object Event {
+     /** the keyboard moved the selection; answers TextStateReply */
+     @JvmStatic fun textSelect(id: Long, start: Long, end: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(54)
++        w.uvarint(59)
+         w.int(id)
+         w.int(start)
+         w.int(end)
+@@ -1893,7 +2063,7 @@ object Event {
+     /** an editing action of the keyboard or the edit menu: "newline", "tab", "deleteBackward", "deleteForward", "cut", "copy", "paste", "selectAll", "left", …; answers TextStateReply */
+     @JvmStatic fun textCommand(id: Long, command: String): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(55)
++        w.uvarint(60)
+         w.int(id)
+         w.string(command)
+         return w.toByteArray()
+@@ -1901,14 +2071,14 @@ object Event {
+     /** the text around the selection, and the selection */
+     @JvmStatic fun textState(id: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(56)
++        w.uvarint(61)
+         w.int(id)
+         return w.toByteArray()
+     }
+     /** a part of the document outside the text the host has */
+     @JvmStatic fun textRange(id: Long, start: Long, end: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(57)
++        w.uvarint(62)
+         w.int(id)
+         w.int(start)
+         w.int(end)
+@@ -1917,7 +2087,7 @@ object Event {
+     /** where the range is on screen: its first line's rectangle */
+     @JvmStatic fun textBounds(id: Long, start: Long, end: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(58)
++        w.uvarint(63)
+         w.int(id)
+         w.int(start)
+         w.int(end)
+@@ -1926,7 +2096,7 @@ object Event {
+     /** the offset nearest a point of the window */
+     @JvmStatic fun textIndexAt(id: Long, x: Double, y: Double): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(59)
++        w.uvarint(64)
+         w.int(id)
+         w.float(x)
+         w.float(y)
+@@ -1935,21 +2105,21 @@ object Event {
+     /** the keyboard went away */
+     @JvmStatic fun textInputEnded(id: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(60)
++        w.uvarint(65)
+         w.int(id)
+         return w.toByteArray()
+     }
+     /** the accessible elements, encoded as Nodes: for each, its ID, parent, role, label, value, hint, frame and actions */
+     @JvmStatic fun accessibilityTree(id: Long): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(61)
++        w.uvarint(66)
+         w.int(id)
+         return w.toByteArray()
+     }
+     /** an assistive technology's action on an element: "press", "increment", "decrement", "focus", "scrollForward", … */
+     @JvmStatic fun accessibilityAction(id: Long, node: Long, action: String): ByteArray {
+         val w = WireWriter()
+-        w.uvarint(62)
++        w.uvarint(67)
+         w.int(id)
+         w.int(node)
+         w.string(action)
+@@ -1991,6 +2161,14 @@ class NewWindowReply(
+     }
+ }
+ 
++class WillDownloadReply(
++    @JvmField var path: String = "",
++) {
++    constructor(r: WireReader) : this() {
++        path = r.string()
++    }
++}
++
+ class PermissionRequestedReply(
+     @JvmField var allow: Boolean = false,
+ ) {
+diff --git a/internal/mobile/backend.go b/internal/mobile/backend.go
+index 8226a76e..0313dc2e 100644
+--- a/internal/mobile/backend.go
++++ b/internal/mobile/backend.go
+@@ -63,6 +63,8 @@ type Backend struct {
+ 	schemes map[int]*schemeRequest
+ 	tabs    map[int]*tabBar
+ 	notes   map[string]bool
++	// nextStore numbers the website data stores the core makes.
++	nextStore atomic.Int64
+ 	// shown lists the windows on screen, the one in front last.
+ 	shown []*window
+ 	dark  bool
+diff --git a/internal/mobile/events.go b/internal/mobile/events.go
+index b9da9e15..850488e3 100644
+--- a/internal/mobile/events.go
++++ b/internal/mobile/events.go
+@@ -147,6 +147,20 @@ func (b *Backend) handle(msg []byte) []byte {
+ 			}
+ 		}
+ 		reply.Encode(&w)
++	case wire.EventWillDownload:
++		var e wire.WillDownloadEvent
++		e.Decode(&r)
++		reply := wire.WillDownloadReply{}
++		if win := win(e.ID); win != nil {
++			reply.Path = win.h.DownloadStarted(win.appURL(e.URL), e.Suggested)
++		}
++		reply.Encode(&w)
++	case wire.EventDownloadDone:
++		var e wire.DownloadDoneEvent
++		e.Decode(&r)
++		if win := win(e.ID); win != nil {
++			win.h.DownloadFinished(win.appURL(e.URL), e.Path, errorOf(e.Error))
++		}
+ 	case wire.EventPageState:
+ 		var e wire.PageStateEvent
+ 		e.Decode(&r)
+@@ -247,7 +261,8 @@ func (b *Backend) handle(msg []byte) []byte {
+ 		e.Decode(&r)
+ 		b.h.NetworkChanged(platform.NetworkStatus{Online: e.Online, Metered: e.Metered})
+ 	case wire.EventAsyncResult, wire.EventCaptured, wire.EventMessageBoxResult, wire.EventFilesResult, wire.EventNotifyDone,
+-		wire.EventShareResult, wire.EventMenuPicked, wire.EventPluginResult:
++		wire.EventShareResult, wire.EventMenuPicked, wire.EventPluginResult,
++		wire.EventDataStoreCreated, wire.EventCookiesListed, wire.EventDataStoreDone:
+ 		// Answers to a request: its number first, then the rest.
+ 		rest := r
+ 		req := r.Int()
+diff --git a/internal/mobile/ios/Sources/MyGoHost/Host.swift b/internal/mobile/ios/Sources/MyGoHost/Host.swift
+index 62ebfaef..a5789ebc 100644
+--- a/internal/mobile/ios/Sources/MyGoHost/Host.swift
++++ b/internal/mobile/ios/Sources/MyGoHost/Host.swift
+@@ -101,6 +101,152 @@ final class Host: NSObject, HostCalls, UNUserNotificationCenterDelegate, UIDocum
+ 
+     func log(_ c: LogCall) { NSLog("%@", c.line) }
+ 
++    // Website data stores.
++
++    /// The website data stores Go made, by the number it knows them by.
++    private var dataStores: [Int: WKWebsiteDataStore] = [:]
++
++    static let rfc3339: ISO8601DateFormatter = {
++        let f = ISO8601DateFormatter()
++        f.formatOptions = [.withInternetDateTime]
++        return f
++    }()
++
++    static let httpDate: DateFormatter = {
++        let f = DateFormatter()
++        f.locale = Locale(identifier: "en_US_POSIX")
++        f.timeZone = TimeZone(secondsFromGMT: 0)
++        f.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
++        return f
++    }()
++
++    func newDataStore(_ c: NewDataStoreCall) {
++        let store: WKWebsiteDataStore
++        if c.ephemeral {
++            store = .nonPersistent()
++        } else if !c.id.isEmpty, let uuid = UUID(uuidString: c.id) {
++            store = WKWebsiteDataStore(forIdentifier: uuid)
++        } else {
++            store = .default()
++        }
++        dataStores[c.store] = store
++        Go.send(Event.dataStoreCreated(req: c.req, store: c.store, error: ""))
++    }
++
++    func closeDataStore(_ c: CloseDataStoreCall) { dataStores[c.store] = nil }
++
++    /// The store Go knows as id, the default one for 0.
++    func dataStore(_ id: Int) -> WKWebsiteDataStore { dataStores[id] ?? .default() }
++
++    /// The app's SiteData bits as WebKit's types.
++    private func websiteDataTypes(_ mask: Int) -> Set<String> {
++        let all = 1 << 31
++        if mask & all != 0 { return WKWebsiteDataStore.allWebsiteDataTypes() }
++        var types = Set<String>()
++        let kinds: [(Int, [String])] = [
++            (1, [WKWebsiteDataTypeCookies]),
++            (2, [WKWebsiteDataTypeLocalStorage, WKWebsiteDataTypeSessionStorage]),
++            (4, [WKWebsiteDataTypeIndexedDBDatabases, WKWebsiteDataTypeWebSQLDatabases]),
++            (8, [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeFetchCache]),
++            (16, [WKWebsiteDataTypeServiceWorkerRegistrations]),
++        ]
++        for (bit, names) in kinds where mask & bit != 0 { types.formUnion(names) }
++        return types
++    }
++
++    func clearBrowsingData(_ c: ClearBrowsingDataCall) {
++        dataStore(c.store).removeData(ofTypes: websiteDataTypes(c.types), modifiedSince: .distantPast) {
++            Go.send(Event.dataStoreDone(req: c.req, error: ""))
++        }
++    }
++
++    /// The fields the wire carries a cookie in: name, value, domain, path,
++    /// expires (RFC 3339), same site, secure and HTTPOnly.
++    static func cookieFields(_ c: HTTPCookie) -> [String] {
++        var expires = ""
++        if !c.isSessionOnly, let date = c.expiresDate { expires = rfc3339.string(from: date) }
++        var sameSite = ""
++        if let policy = c.sameSitePolicy { sameSite = policy.rawValue.lowercased() }
++        return [c.name, c.value, c.domain.lowercased(), c.path, expires, sameSite,
++                c.isSecure ? "1" : "", c.isHTTPOnly ? "1" : ""]
++    }
++
++    func listCookies(_ c: ListCookiesCall) {
++        dataStore(c.store).httpCookieStore.getAllCookies { cookies in
++            var fields: [String] = []
++            for cookie in cookies { fields += Host.cookieFields(cookie) }
++            Go.send(Event.cookiesListed(req: c.req, cookies: fields, error: ""))
++        }
++    }
++
++    func setCookie(_ c: SetCookieCall) {
++        let host = c.domain.hasPrefix(".") ? String(c.domain.dropFirst()) : c.domain
++        guard !host.isEmpty, let url = URL(string: "\(c.secure ? "https" : "http")://\(host)/") else {
++            Go.send(Event.dataStoreDone(req: c.req, error: "mygo: cookies: Set needs a domain"))
++            return
++        }
++        let path = c.path.isEmpty ? "/" : c.path
++        // Foundation parses the attributes, HTTPOnly among them, from a
++        // Set-Cookie header with a stand-in name and value, then the name
++        // and value replace it: a value with ", " in it is not split.
++        var header = "x=x; Path=\(path)"
++        if !c.domain.isEmpty { header += "; Domain=\(c.domain)" }
++        switch c.sameSite.lowercased() {
++        case "lax": header += "; SameSite=Lax"
++        case "strict": header += "; SameSite=Strict"
++        case "none": header += "; SameSite=None"
++        default: break
++        }
++        if !c.expires.isEmpty, let date = Host.rfc3339.date(from: c.expires) {
++            header += "; Expires=\(Host.httpDate.string(from: date))"
++        }
++        if c.secure { header += "; Secure" }
++        if c.httpOnly { header += "; HttpOnly" }
++        guard let base = HTTPCookie.cookies(withResponseHeaderFields: ["Set-Cookie": header], for: url).first else {
++            Go.send(Event.dataStoreDone(req: c.req, error: "mygo: cookies: Set could not construct the cookie"))
++            return
++        }
++        guard var props = base.properties else {
++            Go.send(Event.dataStoreDone(req: c.req, error: "mygo: cookies: Set could not construct the cookie"))
++            return
++        }
++        props[.name] = c.name
++        props[.value] = c.value
++        guard let cookie = HTTPCookie(properties: props) else {
++            Go.send(Event.dataStoreDone(req: c.req, error: "mygo: cookies: Set could not construct the cookie"))
++            return
++        }
++        dataStore(c.store).httpCookieStore.setCookie(cookie) {
++            Go.send(Event.dataStoreDone(req: c.req, error: ""))
++        }
++    }
++
++    func deleteCookie(_ c: DeleteCookieCall) {
++        let store = dataStore(c.store).httpCookieStore
++        store.getAllCookies { cookies in
++            let matches = cookies.filter {
++                $0.name == c.name && $0.domain.lowercased() == c.domain.lowercased() && $0.path == c.path
++            }
++            if matches.isEmpty {
++                Go.send(Event.dataStoreDone(req: c.req, error: ""))
++                return
++            }
++            if matches.count > 1 {
++                Go.send(Event.dataStoreDone(req: c.req, error: "mygo: cookies: ambiguous cookie key"))
++                return
++            }
++            store.delete(matches[0]) {
++                Go.send(Event.dataStoreDone(req: c.req, error: ""))
++            }
++        }
++    }
++
++    func clearCookies(_ c: ClearCookiesCall) {
++        dataStore(c.store).removeData(ofTypes: [WKWebsiteDataTypeCookies], modifiedSince: .distantPast) {
++            Go.send(Event.dataStoreDone(req: c.req, error: ""))
++        }
++    }
++
+     // Windows.
+ 
+     func createWindow(_ c: CreateWindowCall) -> CreateWindowReply {
+diff --git a/internal/mobile/ios/Sources/MyGoHost/WebWindow.swift b/internal/mobile/ios/Sources/MyGoHost/WebWindow.swift
+index 9ae705dd..d9b4fac2 100644
+--- a/internal/mobile/ios/Sources/MyGoHost/WebWindow.swift
++++ b/internal/mobile/ios/Sources/MyGoHost/WebWindow.swift
+@@ -3,7 +3,7 @@
+ import UIKit
+ import WebKit
+ 
+-final class WebWindow: HostWindow, WKNavigationDelegate, WKUIDelegate {
++final class WebWindow: HostWindow, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+     let webView: WKWebView
+     private let messages = MessageHandler()
+     private var observers: [NSKeyValueObservation] = []
+@@ -12,10 +12,15 @@ final class WebWindow: HostWindow, WKNavigationDelegate, WKUIDelegate {
+     private var appLoad = false
+     private var pinchZoom = false
+     var userAgent = ""
++    /// Where each download in flight saves, by the download's identity.
++    private var destinations: [ObjectIdentifier: (url: String, path: String)] = [:]
++    /// The downloads the app cancelled, whose failure it heard already.
++    private var cancelled: Set<ObjectIdentifier> = []
+ 
+     init(id: Int, _ c: CreateWindowCall) {
+         let config = WKWebViewConfiguration()
+         config.allowsInlineMediaPlayback = true
++        if c.store != 0 { config.websiteDataStore = Host.shared.dataStore(c.store) }
+         if c.autoplay { config.mediaTypesRequiringUserActionForPlayback = [] }
+         if !c.userAgentSuffix.isEmpty { config.applicationNameForUserAgent = c.userAgentSuffix }
+         for s in Set(c.schemes) where !WKWebView.handlesURLScheme(s) {
+@@ -120,6 +125,59 @@ final class WebWindow: HostWindow, WKNavigationDelegate, WKUIDelegate {
+         decisionHandler(allow ? .allow : .cancel)
+     }
+ 
++    func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse,
++                 decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
++        // What the web view cannot show, and an attachment, is a download.
++        var download = !response.canShowMIMEType
++        if let http = response.response as? HTTPURLResponse,
++           (http.value(forHTTPHeaderField: "Content-Disposition") ?? "").lowercased().contains("attachment") {
++            download = true
++        }
++        decisionHandler(download ? .download : .allow)
++    }
++
++    // WKDownloadDelegate
++
++    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
++        download.delegate = self
++    }
++
++    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
++        download.delegate = self
++    }
++
++    func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
++                  suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
++        let url = download.originalRequest?.url?.absoluteString ?? response.url?.absoluteString ?? ""
++        let path = Go.answer(Event.willDownload(id: id, url: url, suggested: suggestedFilename)) {
++            WillDownloadReply(&$0).path
++        } ?? ""
++        if path.isEmpty {
++            cancelled.insert(ObjectIdentifier(download))
++            completionHandler(nil)
++            return
++        }
++        // A file the app chose is replaced, as DownloadEvent.Path says.
++        try? FileManager.default.removeItem(atPath: path)
++        destinations[ObjectIdentifier(download)] = (url, path)
++        completionHandler(URL(fileURLWithPath: path))
++    }
++
++    func downloadDidFinish(_ download: WKDownload) {
++        let key = ObjectIdentifier(download)
++        if let d = destinations.removeValue(forKey: key) {
++            Go.send(Event.downloadDone(id: id, url: d.url, path: d.path, error: ""))
++        }
++        cancelled.remove(key)
++    }
++
++    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
++        let key = ObjectIdentifier(download)
++        if cancelled.remove(key) != nil { return }
++        let d = destinations.removeValue(forKey: key)
++        Go.send(Event.downloadDone(id: id, url: d?.url ?? "", path: d?.path ?? "", error: error.localizedDescription))
++    }
++
+     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+         Go.send(Event.navigationStarted(id: id, url: webView.url?.absoluteString ?? ""))
+     }
+diff --git a/internal/mobile/ios/Sources/MyGoHost/Wire.swift b/internal/mobile/ios/Sources/MyGoHost/Wire.swift
+index dcaad76d..0fcf7b85 100644
+--- a/internal/mobile/ios/Sources/MyGoHost/Wire.swift
++++ b/internal/mobile/ios/Sources/MyGoHost/Wire.swift
+@@ -161,6 +161,108 @@ public struct LogCall {
+     }
+ }
+ 
++public struct NewDataStoreCall {
++    public var req: Int = 0
++    public var store: Int = 0
++    public var id: String = ""
++    public var ephemeral: Bool = false
++    public var dataDir: String = ""
++    public var cacheDir: String = ""
++    public init() {}
++    init(_ r: inout WireReader) {
++        req = r.int()
++        store = r.int()
++        id = r.string()
++        ephemeral = r.bool()
++        dataDir = r.string()
++        cacheDir = r.string()
++    }
++}
++
++public struct CloseDataStoreCall {
++    public var store: Int = 0
++    public init() {}
++    init(_ r: inout WireReader) {
++        store = r.int()
++    }
++}
++
++public struct ClearBrowsingDataCall {
++    public var req: Int = 0
++    public var store: Int = 0
++    public var types: Int = 0
++    public init() {}
++    init(_ r: inout WireReader) {
++        req = r.int()
++        store = r.int()
++        types = r.int()
++    }
++}
++
++public struct ListCookiesCall {
++    public var req: Int = 0
++    public var store: Int = 0
++    public var url: String = ""
++    public init() {}
++    init(_ r: inout WireReader) {
++        req = r.int()
++        store = r.int()
++        url = r.string()
++    }
++}
++
++public struct SetCookieCall {
++    public var req: Int = 0
++    public var store: Int = 0
++    public var name: String = ""
++    public var value: String = ""
++    public var domain: String = ""
++    public var path: String = ""
++    public var expires: String = ""
++    public var secure: Bool = false
++    public var httpOnly: Bool = false
++    public var sameSite: String = ""
++    public init() {}
++    init(_ r: inout WireReader) {
++        req = r.int()
++        store = r.int()
++        name = r.string()
++        value = r.string()
++        domain = r.string()
++        path = r.string()
++        expires = r.string()
++        secure = r.bool()
++        httpOnly = r.bool()
++        sameSite = r.string()
++    }
++}
++
++public struct DeleteCookieCall {
++    public var req: Int = 0
++    public var store: Int = 0
++    public var name: String = ""
++    public var domain: String = ""
++    public var path: String = ""
++    public init() {}
++    init(_ r: inout WireReader) {
++        req = r.int()
++        store = r.int()
++        name = r.string()
++        domain = r.string()
++        path = r.string()
++    }
++}
++
++public struct ClearCookiesCall {
++    public var req: Int = 0
++    public var store: Int = 0
++    public init() {}
++    init(_ r: inout WireReader) {
++        req = r.int()
++        store = r.int()
++    }
++}
++
+ public struct CreateWindowCall {
+     public var id: Int = 0
+     public var surface: Bool = false
+@@ -179,6 +281,7 @@ public struct CreateWindowCall {
+     public var parent: Int = 0
+     public var viewType: String = ""
+     public var viewArgs: String = ""
++    public var store: Int = 0
+     public init() {}
+     init(_ r: inout WireReader) {
+         id = r.int()
+@@ -198,6 +301,7 @@ public struct CreateWindowCall {
+         parent = r.int()
+         viewType = r.string()
+         viewArgs = r.string()
++        store = r.int()
+     }
+ }
+ 
+@@ -1211,6 +1315,20 @@ public protocol HostCalls: AnyObject {
+     func screen() -> ScreenReply
+     /// a line the app wrote to its standard output or error
+     func log(_ c: LogCall)
++    /// makes a website data store; DataStoreCreated answers. ID is a session's UUID, empty for an ephemeral store; DataDir and CacheDir are for the backends that choose
++    func newDataStore(_ c: NewDataStoreCall)
++    /// lets a website data store go
++    func closeDataStore(_ c: CloseDataStoreCall)
++    /// removes the site data of Types (platform.SiteData) from a website data store; DataStoreDone answers
++    func clearBrowsingData(_ c: ClearBrowsingDataCall)
++    /// the cookies of a website data store, those of URL when it is not empty; CookiesListed answers
++    func listCookies(_ c: ListCookiesCall)
++    /// sets a cookie of a website data store; DataStoreDone answers. Expires is RFC 3339, empty for a session cookie
++    func setCookie(_ c: SetCookieCall)
++    /// deletes the cookie of a website data store a key names; DataStoreDone answers
++    func deleteCookie(_ c: DeleteCookieCall)
++    /// deletes every cookie of a website data store; DataStoreDone answers
++    func clearCookies(_ c: ClearCookiesCall)
+     /// the screen's content: a web view, or a surface for native UI
+     func createWindow(_ c: CreateWindowCall) -> CreateWindowReply
+     /// the window's content presented its first frame
+@@ -1356,240 +1474,261 @@ public func dispatchCall(_ h: HostCalls, _ buf: UnsafeRawBufferPointer) -> [UInt
+         h.log(LogCall(&r))
+         return nil
+     case 7:
++        h.newDataStore(NewDataStoreCall(&r))
++        return nil
++    case 8:
++        h.closeDataStore(CloseDataStoreCall(&r))
++        return nil
++    case 9:
++        h.clearBrowsingData(ClearBrowsingDataCall(&r))
++        return nil
++    case 10:
++        h.listCookies(ListCookiesCall(&r))
++        return nil
++    case 11:
++        h.setCookie(SetCookieCall(&r))
++        return nil
++    case 12:
++        h.deleteCookie(DeleteCookieCall(&r))
++        return nil
++    case 13:
++        h.clearCookies(ClearCookiesCall(&r))
++        return nil
++    case 14:
+         h.createWindow(CreateWindowCall(&r)).encode(&w)
+         return w.buf
+-    case 8:
++    case 15:
+         h.firstFrame(FirstFrameCall(&r))
+         return nil
+-    case 9:
++    case 16:
+         h.placeViews(PlaceViewsCall(&r))
+         return nil
+-    case 10:
++    case 17:
+         h.showWindow(ShowWindowCall(&r))
+         return nil
+-    case 11:
++    case 18:
+         h.hideWindow(HideWindowCall(&r))
+         return nil
+-    case 12:
++    case 19:
+         h.closeWindow(CloseWindowCall(&r))
+         return nil
+-    case 13:
++    case 20:
+         h.setBackground(SetBackgroundCall(&r))
+         return nil
+-    case 14:
++    case 21:
+         h.focus(FocusCall(&r))
+         return nil
+-    case 15:
++    case 22:
+         h.setTitle(SetTitleCall(&r))
+         return nil
+-    case 16:
++    case 23:
+         h.createTabs(CreateTabsCall(&r))
+         return nil
+-    case 17:
++    case 24:
+         h.addTab(AddTabCall(&r))
+         return nil
+-    case 18:
++    case 25:
+         h.showTabs(ShowTabsCall(&r))
+         return nil
+-    case 19:
++    case 26:
+         h.selectTab(SelectTabCall(&r))
+         return nil
+-    case 20:
++    case 27:
+         h.setTabBadge(SetTabBadgeCall(&r))
+         return nil
+-    case 21:
++    case 28:
+         h.closeTabs(CloseTabsCall(&r))
+         return nil
+-    case 22:
++    case 29:
+         h.pushWindow(PushWindowCall(&r))
+         return nil
+-    case 23:
++    case 30:
+         h.popWindow(PopWindowCall(&r))
+         return nil
+-    case 24:
++    case 31:
+         h.setStack(SetStackCall(&r)).encode(&w)
+         return w.buf
+-    case 25:
++    case 32:
+         h.stackShown(StackShownCall(&r))
+         return nil
+-    case 26:
++    case 33:
+         h.loadURL(LoadURLCall(&r))
+         return nil
+-    case 27:
++    case 34:
+         h.loadHTML(LoadHTMLCall(&r))
+         return nil
+-    case 28:
++    case 35:
+         h.reload(ReloadCall(&r))
+         return nil
+-    case 29:
++    case 36:
+         h.stopLoading(StopLoadingCall(&r))
+         return nil
+-    case 30:
++    case 37:
+         h.goBack(GoBackCall(&r))
+         return nil
+-    case 31:
++    case 38:
+         h.goForward(GoForwardCall(&r))
+         return nil
+-    case 32:
++    case 39:
+         h.eval(EvalCall(&r))
+         return nil
+-    case 33:
++    case 40:
+         h.callAsync(CallAsyncCall(&r))
+         return nil
+-    case 34:
++    case 41:
+         h.setZoom(SetZoomCall(&r))
+         return nil
+-    case 35:
++    case 42:
+         h.setUserAgent(SetUserAgentCall(&r))
+         return nil
+-    case 36:
++    case 43:
+         h.setUserScripts(SetUserScriptsCall(&r))
+         return nil
+-    case 37:
++    case 44:
+         h.capturePage(CapturePageCall(&r))
+         return nil
+-    case 38:
++    case 45:
+         h.userAgent(UserAgentCall(&r)).encode(&w)
+         return w.buf
+-    case 39:
++    case 46:
+         h.schemeRespond(SchemeRespondCall(&r))
+         return nil
+-    case 40:
++    case 47:
+         h.schemeData(SchemeDataCall(&r))
+         return nil
+-    case 41:
++    case 48:
+         h.schemeFinish(SchemeFinishCall(&r))
+         return nil
+-    case 42:
++    case 49:
+         h.schemeFail(SchemeFailCall(&r))
+         return nil
+-    case 43:
++    case 50:
+         h.messageBox(MessageBoxCall(&r))
+         return nil
+-    case 44:
++    case 51:
+         h.openFiles(OpenFilesCall(&r))
+         return nil
+-    case 45:
++    case 52:
+         h.shareFile(ShareFileCall(&r))
+         return nil
+-    case 46:
++    case 53:
+         h.clipboardText().encode(&w)
+         return w.buf
+-    case 47:
++    case 54:
+         h.setClipboardText(SetClipboardTextCall(&r))
+         return nil
+-    case 48:
++    case 55:
+         h.openURL(OpenURLCall(&r)).encode(&w)
+         return w.buf
+-    case 49:
++    case 56:
+         h.secretGet(SecretGetCall(&r)).encode(&w)
+         return w.buf
+-    case 50:
++    case 57:
+         h.secretSet(SecretSetCall(&r)).encode(&w)
+         return w.buf
+-    case 51:
++    case 58:
+         h.secretDelete(SecretDeleteCall(&r)).encode(&w)
+         return w.buf
+-    case 52:
++    case 59:
+         h.notify(NotifyCall(&r))
+         return nil
+-    case 53:
++    case 60:
+         h.removeNotification(RemoveNotificationCall(&r))
+         return nil
+-    case 54:
++    case 61:
+         h.removeAllNotifications()
+         return nil
+-    case 55:
++    case 62:
+         h.keepAwake(KeepAwakeCall(&r))
+         return nil
+-    case 56:
++    case 63:
+         h.networkStatus().encode(&w)
+         return w.buf
+-    case 57:
++    case 64:
+         h.watchNetwork()
+         return nil
+-    case 58:
++    case 65:
+         h.battery().encode(&w)
+         return w.buf
+-    case 59:
++    case 66:
+         h.setSystemBars(SetSystemBarsCall(&r))
+         return nil
+-    case 60:
++    case 67:
+         h.setOrientations(SetOrientationsCall(&r))
+         return nil
+-    case 61:
++    case 68:
+         h.share(ShareCall(&r))
+         return nil
+-    case 62:
++    case 69:
+         h.saveFile(SaveFileCall(&r))
+         return nil
+-    case 63:
++    case 70:
+         h.clipboardImage().encode(&w)
+         return w.buf
+-    case 64:
++    case 71:
+         h.setClipboardImage(SetClipboardImageCall(&r))
+         return nil
+-    case 65:
++    case 72:
+         h.popupMenu(PopupMenuCall(&r))
+         return nil
+-    case 66:
++    case 73:
+         h.setBarItems(SetBarItemsCall(&r))
+         return nil
+-    case 67:
++    case 74:
+         h.pluginCall(PluginCallCall(&r))
+         return nil
+-    case 68:
++    case 75:
+         h.audioOpen(AudioOpenCall(&r)).encode(&w)
+         return w.buf
+-    case 69:
++    case 76:
+         h.audioWrite(AudioWriteCall(&r)).encode(&w)
+         return w.buf
+-    case 70:
++    case 77:
+         h.audioClose().encode(&w)
+         return w.buf
+-    case 71:
++    case 78:
+         h.haptic(HapticCall(&r))
+         return nil
+-    case 72:
++    case 79:
+         h.requestFrame(RequestFrameCall(&r))
+         return nil
+-    case 73:
++    case 80:
+         h.setTextInput(SetTextInputCall(&r))
+         return nil
+-    case 74:
++    case 81:
+         h.setCursor(SetCursorCall(&r))
+         return nil
+-    case 75:
++    case 82:
+         h.accessibilityChanged(AccessibilityChangedCall(&r))
+         return nil
+-    case 76:
++    case 83:
+         h.announce(AnnounceCall(&r))
+         return nil
+-    case 77:
++    case 84:
+         h.showMenu(ShowMenuCall(&r))
+         return nil
+-    case 78:
++    case 85:
+         h.setBackAvailable(SetBackAvailableCall(&r))
+         return nil
+-    case 79:
++    case 86:
+         h.showMagnifier(ShowMagnifierCall(&r))
+         return nil
+-    case 80:
++    case 87:
+         h.hideMagnifier(HideMagnifierCall(&r))
+         return nil
+-    case 81:
++    case 88:
+         h.textMetrics(TextMetricsCall(&r)).encode(&w)
+         return w.buf
+-    case 82:
++    case 89:
+         h.measureText(MeasureTextCall(&r)).encode(&w)
+         return w.buf
+-    case 83:
++    case 90:
+         h.textAdvances(TextAdvancesCall(&r)).encode(&w)
+         return w.buf
+-    case 84:
++    case 91:
+         h.drawText(DrawTextCall(&r)).encode(&w)
+         return w.buf
+-    case 85:
++    case 92:
+         h.registerFont(RegisterFontCall(&r)).encode(&w)
+         return w.buf
+     default:
+@@ -1795,10 +1934,29 @@ public enum Event {
+         w.bool(userInitiated)
+         return w.buf
+     }
++    /// a page starts a download: the Path to save it, empty to cancel it
++    public static func willDownload(id: Int, url: String, suggested: String) -> [UInt8] {
++        var w = WireWriter()
++        w.uvarint(27)
++        w.int(id)
++        w.string(url)
++        w.string(suggested)
++        return w.buf
++    }
++    /// a download ended; Error why it failed, empty when it finished
++    public static func downloadDone(id: Int, url: String, path: String, error: String) -> [UInt8] {
++        var w = WireWriter()
++        w.uvarint(28)
++        w.int(id)
++        w.string(url)
++        w.string(path)
++        w.string(error)
++        return w.buf
++    }
+     /// what the page is at, after any change of it
+     public static func pageState(id: Int, url: String, title: String, loading: Bool, canGoBack: Bool, canGoForward: Bool) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(27)
++        w.uvarint(29)
+         w.int(id)
+         w.string(url)
+         w.string(title)
+@@ -1809,27 +1967,27 @@ public enum Event {
+     }
+     public static func navigationStarted(id: Int, url: String) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(28)
++        w.uvarint(30)
+         w.int(id)
+         w.string(url)
+         return w.buf
+     }
+     public static func navigationCommitted(id: Int, url: String) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(29)
++        w.uvarint(31)
+         w.int(id)
+         w.string(url)
+         return w.buf
+     }
+     public static func loadFinished(id: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(30)
++        w.uvarint(32)
+         w.int(id)
+         return w.buf
+     }
+     public static func loadFailed(id: Int, url: String, code: Int, description: String) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(31)
++        w.uvarint(33)
+         w.int(id)
+         w.string(url)
+         w.int(code)
+@@ -1838,27 +1996,27 @@ public enum Event {
+     }
+     public static func closedByPage(id: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(32)
++        w.uvarint(34)
+         w.int(id)
+         return w.buf
+     }
+     /// the user went to a window of its own scene, or (0) to the app's first
+     public static func windowFront(id: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(33)
++        w.uvarint(35)
+         w.int(id)
+         return w.buf
+     }
+     public static func processGone(id: Int, reason: String) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(34)
++        w.uvarint(36)
+         w.int(id)
+         w.string(reason)
+         return w.buf
+     }
+     public static func permissionRequested(id: Int, kinds: [String], origin: String) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(35)
++        w.uvarint(37)
+         w.int(id)
+         w.strings(kinds)
+         w.string(origin)
+@@ -1867,7 +2025,7 @@ public enum Event {
+     /// a request of one of the app's schemes (Header: names and values in turn)
+     public static func schemeRequest(id: Int, req: Int, method: String, url: String, header: [String], body: [UInt8], hasBody: Bool) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(36)
++        w.uvarint(38)
+         w.int(id)
+         w.int(req)
+         w.string(method)
+@@ -1879,13 +2037,13 @@ public enum Event {
+     }
+     public static func schemeCancel(req: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(37)
++        w.uvarint(39)
+         w.int(req)
+         return w.buf
+     }
+     public static func asyncResult(req: Int, result: String, error: String) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(38)
++        w.uvarint(40)
+         w.int(req)
+         w.string(result)
+         w.string(error)
+@@ -1893,7 +2051,7 @@ public enum Event {
+     }
+     public static func captured(req: Int, png: [UInt8], error: String) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(39)
++        w.uvarint(41)
+         w.int(req)
+         w.bytes(png)
+         w.string(error)
+@@ -1901,14 +2059,14 @@ public enum Event {
+     }
+     public static func messageBoxResult(req: Int, response: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(40)
++        w.uvarint(42)
+         w.int(req)
+         w.int(response)
+         return w.buf
+     }
+     public static func filesResult(req: Int, paths: [String], error: String) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(41)
++        w.uvarint(43)
+         w.int(req)
+         w.strings(paths)
+         w.string(error)
+@@ -1916,28 +2074,54 @@ public enum Event {
+     }
+     public static func notifyDone(req: Int, error: String) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(42)
++        w.uvarint(44)
+         w.int(req)
+         w.string(error)
+         return w.buf
+     }
+     public static func notificationClicked(notificationID: String) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(43)
++        w.uvarint(45)
+         w.string(notificationID)
+         return w.buf
+     }
++    /// a website data store was made, or why it could not be
++    public static func dataStoreCreated(req: Int, store: Int, error: String) -> [UInt8] {
++        var w = WireWriter()
++        w.uvarint(46)
++        w.int(req)
++        w.int(store)
++        w.string(error)
++        return w.buf
++    }
++    /// the cookies of a website data store, eight strings each: name, value, domain, path, expires (RFC 3339), same site, secure ("1"), HTTPOnly ("1"); Error why they could not be listed
++    public static func cookiesListed(req: Int, cookies: [String], error: String) -> [UInt8] {
++        var w = WireWriter()
++        w.uvarint(47)
++        w.int(req)
++        w.strings(cookies)
++        w.string(error)
++        return w.buf
++    }
++    /// a change of a website data store finished; Error why it failed
++    public static func dataStoreDone(req: Int, error: String) -> [UInt8] {
++        var w = WireWriter()
++        w.uvarint(48)
++        w.int(req)
++        w.string(error)
++        return w.buf
++    }
+     /// the display refreshes: draw a frame if one was asked for
+     public static func frame(id: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(44)
++        w.uvarint(49)
+         w.int(id)
+         return w.buf
+     }
+     /// the native surface to draw on (a CAMetalLayer, an ANativeWindow), 0 when gone
+     public static func surfaceChanged(id: Int, handle: Int, width: Double, height: Double, scale: Double, refresh: Double) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(45)
++        w.uvarint(50)
+         w.int(id)
+         w.int(handle)
+         w.float(width)
+@@ -1949,14 +2133,14 @@ public enum Event {
+     /// the native surface goes: the host waits for Go to let go of it
+     public static func surfaceDestroyed(id: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(46)
++        w.uvarint(51)
+         w.int(id)
+         return w.buf
+     }
+     /// a finger, a pen or a mouse: Phase is "down", "move", "up" or "cancel", Kind "touch", "pen" or "mouse"
+     public static func touch(id: Int, pointer: Int, phase: String, kind: String, x: Double, y: Double, pressure: Double, buttons: Int, time: Double) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(47)
++        w.uvarint(52)
+         w.int(id)
+         w.int(pointer)
+         w.string(phase)
+@@ -1971,7 +2155,7 @@ public enum Event {
+     /// a mouse's or a trackpad's scrolling, in DIPs
+     public static func scroll(id: Int, x: Double, y: Double, dx: Double, dy: Double, precise: Bool, phase: String) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(48)
++        w.uvarint(53)
+         w.int(id)
+         w.float(x)
+         w.float(y)
+@@ -1984,7 +2168,7 @@ public enum Event {
+     /// a hardware keyboard's key: Down, its name (as ui names keys) and the text it types
+     public static func key(id: Int, down: Bool, key: String, text: String, mods: Int, repeated: Bool) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(49)
++        w.uvarint(54)
+         w.int(id)
+         w.bool(down)
+         w.string(key)
+@@ -1996,7 +2180,7 @@ public enum Event {
+     /// the keyboard put Text in Start to End of the document, or with no range in place of the marked text or the selection; answers TextStateReply
+     public static func textReplace(id: Int, hasRange: Bool, start: Int, end: Int, text: String) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(50)
++        w.uvarint(55)
+         w.int(id)
+         w.bool(hasRange)
+         w.int(start)
+@@ -2007,7 +2191,7 @@ public enum Event {
+     /// the input method composes Text over Start to End, or with no range over the marked text or the selection; SelStart and SelEnd are in Text; answers TextStateReply
+     public static func textMark(id: Int, hasRange: Bool, start: Int, end: Int, text: String, selStart: Int, selEnd: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(51)
++        w.uvarint(56)
+         w.int(id)
+         w.bool(hasRange)
+         w.int(start)
+@@ -2020,14 +2204,14 @@ public enum Event {
+     /// the marked text stays as text; answers TextStateReply
+     public static func textUnmark(id: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(52)
++        w.uvarint(57)
+         w.int(id)
+         return w.buf
+     }
+     /// the keyboard deleted Before units before the selection and After after it; answers TextStateReply
+     public static func textDelete(id: Int, before: Int, after: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(53)
++        w.uvarint(58)
+         w.int(id)
+         w.int(before)
+         w.int(after)
+@@ -2036,7 +2220,7 @@ public enum Event {
+     /// the keyboard moved the selection; answers TextStateReply
+     public static func textSelect(id: Int, start: Int, end: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(54)
++        w.uvarint(59)
+         w.int(id)
+         w.int(start)
+         w.int(end)
+@@ -2045,7 +2229,7 @@ public enum Event {
+     /// an editing action of the keyboard or the edit menu: "newline", "tab", "deleteBackward", "deleteForward", "cut", "copy", "paste", "selectAll", "left", …; answers TextStateReply
+     public static func textCommand(id: Int, command: String) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(55)
++        w.uvarint(60)
+         w.int(id)
+         w.string(command)
+         return w.buf
+@@ -2053,14 +2237,14 @@ public enum Event {
+     /// the text around the selection, and the selection
+     public static func textState(id: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(56)
++        w.uvarint(61)
+         w.int(id)
+         return w.buf
+     }
+     /// a part of the document outside the text the host has
+     public static func textRange(id: Int, start: Int, end: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(57)
++        w.uvarint(62)
+         w.int(id)
+         w.int(start)
+         w.int(end)
+@@ -2069,7 +2253,7 @@ public enum Event {
+     /// where the range is on screen: its first line's rectangle
+     public static func textBounds(id: Int, start: Int, end: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(58)
++        w.uvarint(63)
+         w.int(id)
+         w.int(start)
+         w.int(end)
+@@ -2078,7 +2262,7 @@ public enum Event {
+     /// the offset nearest a point of the window
+     public static func textIndexAt(id: Int, x: Double, y: Double) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(59)
++        w.uvarint(64)
+         w.int(id)
+         w.float(x)
+         w.float(y)
+@@ -2087,21 +2271,21 @@ public enum Event {
+     /// the keyboard went away
+     public static func textInputEnded(id: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(60)
++        w.uvarint(65)
+         w.int(id)
+         return w.buf
+     }
+     /// the accessible elements, encoded as Nodes: for each, its ID, parent, role, label, value, hint, frame and actions
+     public static func accessibilityTree(id: Int) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(61)
++        w.uvarint(66)
+         w.int(id)
+         return w.buf
+     }
+     /// an assistive technology's action on an element: "press", "increment", "decrement", "focus", "scrollForward", …
+     public static func accessibilityAction(id: Int, node: Int, action: String) -> [UInt8] {
+         var w = WireWriter()
+-        w.uvarint(62)
++        w.uvarint(67)
+         w.int(id)
+         w.int(node)
+         w.string(action)
+@@ -2145,6 +2329,14 @@ public struct NewWindowReply {
+     }
+ }
+ 
++public struct WillDownloadReply {
++    public var path: String = ""
++    public init() {}
++    init(_ r: inout WireReader) {
++        path = r.string()
++    }
++}
++
+ public struct PermissionRequestedReply {
+     public var allow: Bool = false
+     public init() {}
+diff --git a/internal/mobile/mobile_test.go b/internal/mobile/mobile_test.go
+index 10605aa4..2ab90969 100644
+--- a/internal/mobile/mobile_test.go
++++ b/internal/mobile/mobile_test.go
+@@ -20,7 +20,9 @@ type fakeHost struct {
+ 	calls []uint64
+ 	// answer, when set, answers waited calls by number.
+ 	answer func(op uint64, r *wire.Reader) []byte
+-	b      *Backend
++	// serve, when set, hears every call and may answer it with events.
++	serve func(op uint64, r *wire.Reader)
++	b     *Backend
+ }
+ 
+ func newFakeHost(t *testing.T) *fakeHost {
+@@ -39,13 +41,16 @@ func (h *fakeHost) call(msg []byte) []byte {
+ 	op := r.Uvarint()
+ 	h.mu.Lock()
+ 	h.calls = append(h.calls, op)
+-	answer := h.answer
++	answer, serve := h.answer, h.serve
+ 	h.mu.Unlock()
+ 	if answer != nil {
+ 		if b := answer(op, &r); b != nil {
+ 			return b
+ 		}
+ 	}
++	if serve != nil {
++		serve(op, &r)
++	}
+ 	return []byte{}
+ }
+ 
+@@ -148,10 +153,16 @@ type winHandler struct {
+ 	platform.WindowHandler
+ 	willNavigate func(platform.Navigation) bool
+ 	scheme       func(*platform.SchemeRequest)
++	download     func(url, suggested string) string
++	downloaded   func(url, path string, err error)
+ }
+ 
+ func (w *winHandler) WillNavigate(n platform.Navigation) bool { return w.willNavigate(n) }
+ func (w *winHandler) SchemeRequest(r *platform.SchemeRequest) { w.scheme(r) }
++func (w *winHandler) DownloadStarted(url, suggested string) string {
++	return w.download(url, suggested)
++}
++func (w *winHandler) DownloadFinished(url, path string, err error) { w.downloaded(url, path, err) }
+ 
+ func encodeEvent(f func(w *wire.Writer)) []byte {
+ 	var w wire.Writer
+diff --git a/internal/mobile/window.go b/internal/mobile/window.go
+index 679b6abf..f225ef75 100644
+--- a/internal/mobile/window.go
++++ b/internal/mobile/window.go
+@@ -108,7 +108,7 @@ func (b *Backend) makeWindow(opts *platform.WindowOptions, h platform.WindowHand
+ 		ID: w.id, Surface: opts.Surface, OwnScene: opts.OwnScene, Schemes: opts.Schemes, Scripts: src, ScriptFlags: flags,
+ 		UserAgent: opts.UserAgent, UserAgentSuffix: opts.UserAgentSuffix, Inspectable: opts.DevTools,
+ 		Autoplay: opts.Autoplay, SwipeNavigation: opts.SwipeNavigation, PinchZoom: opts.PinchZoom,
+-		ViewType: viewType, ViewArgs: viewArgs,
++		ViewType: viewType, ViewArgs: viewArgs, Store: storeID(opts.DataStore),
+ 	}
+ 	if parent != nil {
+ 		c.Parent = parent.id
+diff --git a/internal/mobile/wire/gen/spec.go b/internal/mobile/wire/gen/spec.go
+index b0e2002a..325b671a 100644
+--- a/internal/mobile/wire/gen/spec.go
++++ b/internal/mobile/wire/gen/spec.go
+@@ -39,13 +39,27 @@ var calls = []msg{
+ 	}},
+ 	{name: "Log", doc: "a line the app wrote to its standard output or error", args: []field{f("Error", "bool"), f("Line", "string")}},
+ 
++	{name: "NewDataStore", doc: "makes a website data store; DataStoreCreated answers. ID is a session's UUID, empty for an ephemeral store; DataDir and CacheDir are for the backends that choose",
++		args: []field{f("Req", "int"), f("Store", "int"), f("ID", "string"), f("Ephemeral", "bool"), f("DataDir", "string"), f("CacheDir", "string")}},
++	{name: "CloseDataStore", doc: "lets a website data store go", args: []field{f("Store", "int")}},
++	{name: "ClearBrowsingData", doc: "removes the site data of Types (platform.SiteData) from a website data store; DataStoreDone answers",
++		args: []field{f("Req", "int"), f("Store", "int"), f("Types", "int")}},
++	{name: "ListCookies", doc: "the cookies of a website data store, those of URL when it is not empty; CookiesListed answers",
++		args: []field{f("Req", "int"), f("Store", "int"), f("URL", "string")}},
++	{name: "SetCookie", doc: "sets a cookie of a website data store; DataStoreDone answers. Expires is RFC 3339, empty for a session cookie",
++		args: []field{f("Req", "int"), f("Store", "int"), f("Name", "string"), f("Value", "string"), f("Domain", "string"),
++			f("Path", "string"), f("Expires", "string"), f("Secure", "bool"), f("HTTPOnly", "bool"), f("SameSite", "string")}},
++	{name: "DeleteCookie", doc: "deletes the cookie of a website data store a key names; DataStoreDone answers",
++		args: []field{f("Req", "int"), f("Store", "int"), f("Name", "string"), f("Domain", "string"), f("Path", "string")}},
++	{name: "ClearCookies", doc: "deletes every cookie of a website data store; DataStoreDone answers", args: []field{f("Req", "int"), f("Store", "int")}},
++
+ 	{name: "CreateWindow", doc: "the screen's content: a web view, or a surface for native UI", wait: true,
+ 		args: []field{
+ 			f("ID", "int"), f("Surface", "bool"), f("OwnScene", "bool"), f("Background", "int"), f("HasBackground", "bool"),
+ 			f("Schemes", "strings"), f("Scripts", "strings"), f("ScriptFlags", "strings"),
+ 			f("UserAgent", "string"), f("UserAgentSuffix", "string"), f("Inspectable", "bool"),
+ 			f("Autoplay", "bool"), f("SwipeNavigation", "bool"), f("PinchZoom", "bool"),
+-			f("Parent", "int"), f("ViewType", "string"), f("ViewArgs", "string"),
++			f("Parent", "int"), f("ViewType", "string"), f("ViewArgs", "string"), f("Store", "int"),
+ 		},
+ 		reply: []field{f("Error", "string"), f("Layer", "int")}},
+ 	{name: "FirstFrame", doc: "the window's content presented its first frame", args: []field{f("ID", "int")}},
+@@ -211,6 +225,10 @@ var events = []msg{
+ 		reply: []field{f("Allow", "bool")}},
+ 	{name: "NewWindow", doc: "window.open or a link to _blank: whether the app opened it", wait: true,
+ 		args: []field{f("ID", "int"), f("URL", "string"), f("UserInitiated", "bool")}, reply: []field{f("Handled", "bool")}},
++	{name: "WillDownload", doc: "a page starts a download: the Path to save it, empty to cancel it", wait: true,
++		args: []field{f("ID", "int"), f("URL", "string"), f("Suggested", "string")}, reply: []field{f("Path", "string")}},
++	{name: "DownloadDone", doc: "a download ended; Error why it failed, empty when it finished",
++		args: []field{f("ID", "int"), f("URL", "string"), f("Path", "string"), f("Error", "string")}},
+ 	{name: "PageState", doc: "what the page is at, after any change of it",
+ 		args: []field{f("ID", "int"), f("URL", "string"), f("Title", "string"), f("Loading", "bool"), f("CanGoBack", "bool"), f("CanGoForward", "bool")}},
+ 	{name: "NavigationStarted", args: []field{f("ID", "int"), f("URL", "string")}},
+@@ -231,6 +249,10 @@ var events = []msg{
+ 	{name: "FilesResult", args: []field{f("Req", "int"), f("Paths", "strings"), f("Error", "string")}},
+ 	{name: "NotifyDone", args: []field{f("Req", "int"), f("Error", "string")}},
+ 	{name: "NotificationClicked", args: []field{f("NotificationID", "string")}},
++	{name: "DataStoreCreated", doc: "a website data store was made, or why it could not be", args: []field{f("Req", "int"), f("Store", "int"), f("Error", "string")}},
++	{name: "CookiesListed", doc: "the cookies of a website data store, eight strings each: name, value, domain, path, expires (RFC 3339), same site, secure (\"1\"), HTTPOnly (\"1\"); Error why they could not be listed",
++		args: []field{f("Req", "int"), f("Cookies", "strings"), f("Error", "string")}},
++	{name: "DataStoreDone", doc: "a change of a website data store finished; Error why it failed", args: []field{f("Req", "int"), f("Error", "string")}},
+ 
+ 	// Native UI.
+ 	{name: "Frame", doc: "the display refreshes: draw a frame if one was asked for", args: []field{f("ID", "int")}},
+diff --git a/internal/mobile/wire/msgs.go b/internal/mobile/wire/msgs.go
+index d2bb1560..2f3219be 100644
+--- a/internal/mobile/wire/msgs.go
++++ b/internal/mobile/wire/msgs.go
+@@ -10,85 +10,92 @@ const (
+ 	CallSetAppearance          = 4
+ 	CallScreen                 = 5
+ 	CallLog                    = 6
+-	CallCreateWindow           = 7
+-	CallFirstFrame             = 8
+-	CallPlaceViews             = 9
+-	CallShowWindow             = 10
+-	CallHideWindow             = 11
+-	CallCloseWindow            = 12
+-	CallSetBackground          = 13
+-	CallFocus                  = 14
+-	CallSetTitle               = 15
+-	CallCreateTabs             = 16
+-	CallAddTab                 = 17
+-	CallShowTabs               = 18
+-	CallSelectTab              = 19
+-	CallSetTabBadge            = 20
+-	CallCloseTabs              = 21
+-	CallPushWindow             = 22
+-	CallPopWindow              = 23
+-	CallSetStack               = 24
+-	CallStackShown             = 25
+-	CallLoadURL                = 26
+-	CallLoadHTML               = 27
+-	CallReload                 = 28
+-	CallStopLoading            = 29
+-	CallGoBack                 = 30
+-	CallGoForward              = 31
+-	CallEval                   = 32
+-	CallCallAsync              = 33
+-	CallSetZoom                = 34
+-	CallSetUserAgent           = 35
+-	CallSetUserScripts         = 36
+-	CallCapturePage            = 37
+-	CallUserAgent              = 38
+-	CallSchemeRespond          = 39
+-	CallSchemeData             = 40
+-	CallSchemeFinish           = 41
+-	CallSchemeFail             = 42
+-	CallMessageBox             = 43
+-	CallOpenFiles              = 44
+-	CallShareFile              = 45
+-	CallClipboardText          = 46
+-	CallSetClipboardText       = 47
+-	CallOpenURL                = 48
+-	CallSecretGet              = 49
+-	CallSecretSet              = 50
+-	CallSecretDelete           = 51
+-	CallNotify                 = 52
+-	CallRemoveNotification     = 53
+-	CallRemoveAllNotifications = 54
+-	CallKeepAwake              = 55
+-	CallNetworkStatus          = 56
+-	CallWatchNetwork           = 57
+-	CallBattery                = 58
+-	CallSetSystemBars          = 59
+-	CallSetOrientations        = 60
+-	CallShare                  = 61
+-	CallSaveFile               = 62
+-	CallClipboardImage         = 63
+-	CallSetClipboardImage      = 64
+-	CallPopupMenu              = 65
+-	CallSetBarItems            = 66
+-	CallPluginCall             = 67
+-	CallAudioOpen              = 68
+-	CallAudioWrite             = 69
+-	CallAudioClose             = 70
+-	CallHaptic                 = 71
+-	CallRequestFrame           = 72
+-	CallSetTextInput           = 73
+-	CallSetCursor              = 74
+-	CallAccessibilityChanged   = 75
+-	CallAnnounce               = 76
+-	CallShowMenu               = 77
+-	CallSetBackAvailable       = 78
+-	CallShowMagnifier          = 79
+-	CallHideMagnifier          = 80
+-	CallTextMetrics            = 81
+-	CallMeasureText            = 82
+-	CallTextAdvances           = 83
+-	CallDrawText               = 84
+-	CallRegisterFont           = 85
++	CallNewDataStore           = 7
++	CallCloseDataStore         = 8
++	CallClearBrowsingData      = 9
++	CallListCookies            = 10
++	CallSetCookie              = 11
++	CallDeleteCookie           = 12
++	CallClearCookies           = 13
++	CallCreateWindow           = 14
++	CallFirstFrame             = 15
++	CallPlaceViews             = 16
++	CallShowWindow             = 17
++	CallHideWindow             = 18
++	CallCloseWindow            = 19
++	CallSetBackground          = 20
++	CallFocus                  = 21
++	CallSetTitle               = 22
++	CallCreateTabs             = 23
++	CallAddTab                 = 24
++	CallShowTabs               = 25
++	CallSelectTab              = 26
++	CallSetTabBadge            = 27
++	CallCloseTabs              = 28
++	CallPushWindow             = 29
++	CallPopWindow              = 30
++	CallSetStack               = 31
++	CallStackShown             = 32
++	CallLoadURL                = 33
++	CallLoadHTML               = 34
++	CallReload                 = 35
++	CallStopLoading            = 36
++	CallGoBack                 = 37
++	CallGoForward              = 38
++	CallEval                   = 39
++	CallCallAsync              = 40
++	CallSetZoom                = 41
++	CallSetUserAgent           = 42
++	CallSetUserScripts         = 43
++	CallCapturePage            = 44
++	CallUserAgent              = 45
++	CallSchemeRespond          = 46
++	CallSchemeData             = 47
++	CallSchemeFinish           = 48
++	CallSchemeFail             = 49
++	CallMessageBox             = 50
++	CallOpenFiles              = 51
++	CallShareFile              = 52
++	CallClipboardText          = 53
++	CallSetClipboardText       = 54
++	CallOpenURL                = 55
++	CallSecretGet              = 56
++	CallSecretSet              = 57
++	CallSecretDelete           = 58
++	CallNotify                 = 59
++	CallRemoveNotification     = 60
++	CallRemoveAllNotifications = 61
++	CallKeepAwake              = 62
++	CallNetworkStatus          = 63
++	CallWatchNetwork           = 64
++	CallBattery                = 65
++	CallSetSystemBars          = 66
++	CallSetOrientations        = 67
++	CallShare                  = 68
++	CallSaveFile               = 69
++	CallClipboardImage         = 70
++	CallSetClipboardImage      = 71
++	CallPopupMenu              = 72
++	CallSetBarItems            = 73
++	CallPluginCall             = 74
++	CallAudioOpen              = 75
++	CallAudioWrite             = 76
++	CallAudioClose             = 77
++	CallHaptic                 = 78
++	CallRequestFrame           = 79
++	CallSetTextInput           = 80
++	CallSetCursor              = 81
++	CallAccessibilityChanged   = 82
++	CallAnnounce               = 83
++	CallShowMenu               = 84
++	CallSetBackAvailable       = 85
++	CallShowMagnifier          = 86
++	CallHideMagnifier          = 87
++	CallTextMetrics            = 88
++	CallMeasureText            = 89
++	CallTextAdvances           = 90
++	CallDrawText               = 91
++	CallRegisterFont           = 92
+ )
+ 
+ // Numbers of events.
+@@ -119,42 +126,47 @@ const (
+ 	EventMessage             = 24
+ 	EventWillNavigate        = 25
+ 	EventNewWindow           = 26
+-	EventPageState           = 27
+-	EventNavigationStarted   = 28
+-	EventNavigationCommitted = 29
+-	EventLoadFinished        = 30
+-	EventLoadFailed          = 31
+-	EventClosedByPage        = 32
+-	EventWindowFront         = 33
+-	EventProcessGone         = 34
+-	EventPermissionRequested = 35
+-	EventSchemeRequest       = 36
+-	EventSchemeCancel        = 37
+-	EventAsyncResult         = 38
+-	EventCaptured            = 39
+-	EventMessageBoxResult    = 40
+-	EventFilesResult         = 41
+-	EventNotifyDone          = 42
+-	EventNotificationClicked = 43
+-	EventFrame               = 44
+-	EventSurfaceChanged      = 45
+-	EventSurfaceDestroyed    = 46
+-	EventTouch               = 47
+-	EventScroll              = 48
+-	EventKey                 = 49
+-	EventTextReplace         = 50
+-	EventTextMark            = 51
+-	EventTextUnmark          = 52
+-	EventTextDelete          = 53
+-	EventTextSelect          = 54
+-	EventTextCommand         = 55
+-	EventTextState           = 56
+-	EventTextRange           = 57
+-	EventTextBounds          = 58
+-	EventTextIndexAt         = 59
+-	EventTextInputEnded      = 60
+-	EventAccessibilityTree   = 61
+-	EventAccessibilityAction = 62
++	EventWillDownload        = 27
++	EventDownloadDone        = 28
++	EventPageState           = 29
++	EventNavigationStarted   = 30
++	EventNavigationCommitted = 31
++	EventLoadFinished        = 32
++	EventLoadFailed          = 33
++	EventClosedByPage        = 34
++	EventWindowFront         = 35
++	EventProcessGone         = 36
++	EventPermissionRequested = 37
++	EventSchemeRequest       = 38
++	EventSchemeCancel        = 39
++	EventAsyncResult         = 40
++	EventCaptured            = 41
++	EventMessageBoxResult    = 42
++	EventFilesResult         = 43
++	EventNotifyDone          = 44
++	EventNotificationClicked = 45
++	EventDataStoreCreated    = 46
++	EventCookiesListed       = 47
++	EventDataStoreDone       = 48
++	EventFrame               = 49
++	EventSurfaceChanged      = 50
++	EventSurfaceDestroyed    = 51
++	EventTouch               = 52
++	EventScroll              = 53
++	EventKey                 = 54
++	EventTextReplace         = 55
++	EventTextMark            = 56
++	EventTextUnmark          = 57
++	EventTextDelete          = 58
++	EventTextSelect          = 59
++	EventTextCommand         = 60
++	EventTextState           = 61
++	EventTextRange           = 62
++	EventTextBounds          = 63
++	EventTextIndexAt         = 64
++	EventTextInputEnded      = 65
++	EventAccessibilityTree   = 66
++	EventAccessibilityAction = 67
+ )
+ 
+ // AppInfo is the app's bundle and the system's settings, asked once at start.
+@@ -307,6 +319,143 @@ func (m *Log) Encode(w *Writer) {
+ // Wait reports whether the caller waits for the host to run it.
+ func (*Log) Wait() bool { return false }
+ 
++// NewDataStore is makes a website data store; DataStoreCreated answers. ID is a session's UUID, empty for an ephemeral store; DataDir and CacheDir are for the backends that choose.
++type NewDataStore struct {
++	Req       int
++	Store     int
++	ID        string
++	Ephemeral bool
++	DataDir   string
++	CacheDir  string
++}
++
++func (m *NewDataStore) Encode(w *Writer) {
++	w.Uvarint(CallNewDataStore)
++	w.Int(m.Req)
++	w.Int(m.Store)
++	w.String(m.ID)
++	w.Bool(m.Ephemeral)
++	w.String(m.DataDir)
++	w.String(m.CacheDir)
++}
++
++// Wait reports whether the caller waits for the host to run it.
++func (*NewDataStore) Wait() bool { return false }
++
++// CloseDataStore is lets a website data store go.
++type CloseDataStore struct {
++	Store int
++}
++
++func (m *CloseDataStore) Encode(w *Writer) {
++	w.Uvarint(CallCloseDataStore)
++	w.Int(m.Store)
++}
++
++// Wait reports whether the caller waits for the host to run it.
++func (*CloseDataStore) Wait() bool { return false }
++
++// ClearBrowsingData is removes the site data of Types (platform.SiteData) from a website data store; DataStoreDone answers.
++type ClearBrowsingData struct {
++	Req   int
++	Store int
++	Types int
++}
++
++func (m *ClearBrowsingData) Encode(w *Writer) {
++	w.Uvarint(CallClearBrowsingData)
++	w.Int(m.Req)
++	w.Int(m.Store)
++	w.Int(m.Types)
++}
++
++// Wait reports whether the caller waits for the host to run it.
++func (*ClearBrowsingData) Wait() bool { return false }
++
++// ListCookies is the cookies of a website data store, those of URL when it is not empty; CookiesListed answers.
++type ListCookies struct {
++	Req   int
++	Store int
++	URL   string
++}
++
++func (m *ListCookies) Encode(w *Writer) {
++	w.Uvarint(CallListCookies)
++	w.Int(m.Req)
++	w.Int(m.Store)
++	w.String(m.URL)
++}
++
++// Wait reports whether the caller waits for the host to run it.
++func (*ListCookies) Wait() bool { return false }
++
++// SetCookie is sets a cookie of a website data store; DataStoreDone answers. Expires is RFC 3339, empty for a session cookie.
++type SetCookie struct {
++	Req      int
++	Store    int
++	Name     string
++	Value    string
++	Domain   string
++	Path     string
++	Expires  string
++	Secure   bool
++	HTTPOnly bool
++	SameSite string
++}
++
++func (m *SetCookie) Encode(w *Writer) {
++	w.Uvarint(CallSetCookie)
++	w.Int(m.Req)
++	w.Int(m.Store)
++	w.String(m.Name)
++	w.String(m.Value)
++	w.String(m.Domain)
++	w.String(m.Path)
++	w.String(m.Expires)
++	w.Bool(m.Secure)
++	w.Bool(m.HTTPOnly)
++	w.String(m.SameSite)
++}
++
++// Wait reports whether the caller waits for the host to run it.
++func (*SetCookie) Wait() bool { return false }
++
++// DeleteCookie is deletes the cookie of a website data store a key names; DataStoreDone answers.
++type DeleteCookie struct {
++	Req    int
++	Store  int
++	Name   string
++	Domain string
++	Path   string
++}
++
++func (m *DeleteCookie) Encode(w *Writer) {
++	w.Uvarint(CallDeleteCookie)
++	w.Int(m.Req)
++	w.Int(m.Store)
++	w.String(m.Name)
++	w.String(m.Domain)
++	w.String(m.Path)
++}
++
++// Wait reports whether the caller waits for the host to run it.
++func (*DeleteCookie) Wait() bool { return false }
++
++// ClearCookies is deletes every cookie of a website data store; DataStoreDone answers.
++type ClearCookies struct {
++	Req   int
++	Store int
++}
++
++func (m *ClearCookies) Encode(w *Writer) {
++	w.Uvarint(CallClearCookies)
++	w.Int(m.Req)
++	w.Int(m.Store)
++}
++
++// Wait reports whether the caller waits for the host to run it.
++func (*ClearCookies) Wait() bool { return false }
++
+ // CreateWindow is the screen's content: a web view, or a surface for native UI.
+ type CreateWindow struct {
+ 	ID              int
+@@ -326,6 +475,7 @@ type CreateWindow struct {
+ 	Parent          int
+ 	ViewType        string
+ 	ViewArgs        string
++	Store           int
+ }
+ 
+ func (m *CreateWindow) Encode(w *Writer) {
+@@ -347,6 +497,7 @@ func (m *CreateWindow) Encode(w *Writer) {
+ 	w.Int(m.Parent)
+ 	w.String(m.ViewType)
+ 	w.String(m.ViewArgs)
++	w.Int(m.Store)
+ }
+ 
+ // Wait reports whether the caller waits for the host to run it.
+@@ -2050,6 +2201,42 @@ func (m *NewWindowReply) Encode(w *Writer) {
+ 	w.Bool(m.Handled)
+ }
+ 
++// WillDownloadEvent is a page starts a download: the Path to save it, empty to cancel it.
++type WillDownloadEvent struct {
++	ID        int
++	URL       string
++	Suggested string
++}
++
++func (m *WillDownloadEvent) Decode(r *Reader) {
++	m.ID = r.Int()
++	m.URL = r.String()
++	m.Suggested = r.String()
++}
++
++type WillDownloadReply struct {
++	Path string
++}
++
++func (m *WillDownloadReply) Encode(w *Writer) {
++	w.String(m.Path)
++}
++
++// DownloadDoneEvent is a download ended; Error why it failed, empty when it finished.
++type DownloadDoneEvent struct {
++	ID    int
++	URL   string
++	Path  string
++	Error string
++}
++
++func (m *DownloadDoneEvent) Decode(r *Reader) {
++	m.ID = r.Int()
++	m.URL = r.String()
++	m.Path = r.String()
++	m.Error = r.String()
++}
++
+ // PageStateEvent is what the page is at, after any change of it.
+ type PageStateEvent struct {
+ 	ID           int
+@@ -2251,6 +2438,43 @@ func (m *NotificationClickedEvent) Decode(r *Reader) {
+ 	m.NotificationID = r.String()
+ }
+ 
++// DataStoreCreatedEvent is a website data store was made, or why it could not be.
++type DataStoreCreatedEvent struct {
++	Req   int
++	Store int
++	Error string
++}
++
++func (m *DataStoreCreatedEvent) Decode(r *Reader) {
++	m.Req = r.Int()
++	m.Store = r.Int()
++	m.Error = r.String()
++}
++
++// CookiesListedEvent is the cookies of a website data store, eight strings each: name, value, domain, path, expires (RFC 3339), same site, secure ("1"), HTTPOnly ("1"); Error why they could not be listed.
++type CookiesListedEvent struct {
++	Req     int
++	Cookies []string
++	Error   string
++}
++
++func (m *CookiesListedEvent) Decode(r *Reader) {
++	m.Req = r.Int()
++	m.Cookies = r.Strings()
++	m.Error = r.String()
++}
++
++// DataStoreDoneEvent is a change of a website data store finished; Error why it failed.
++type DataStoreDoneEvent struct {
++	Req   int
++	Error string
++}
++
++func (m *DataStoreDoneEvent) Decode(r *Reader) {
++	m.Req = r.Int()
++	m.Error = r.String()
++}
++
+ // FrameEvent is the display refreshes: draw a frame if one was asked for.
+ type FrameEvent struct {
+ 	ID int
+@@ -2653,7 +2877,7 @@ func (m *AccessibilityActionReply) Encode(w *Writer) {
+ // EventWaits reports whether the host waits for the reply of event op.
+ func EventWaits(op uint64) bool {
+ 	switch op {
+-	case EventBackground, EventTerminating, EventBackPressed, EventWillNavigate, EventNewWindow, EventPermissionRequested, EventSurfaceDestroyed, EventKey, EventTextReplace, EventTextMark, EventTextUnmark, EventTextDelete, EventTextSelect, EventTextCommand, EventTextState, EventTextRange, EventTextBounds, EventTextIndexAt, EventAccessibilityTree, EventAccessibilityAction:
++	case EventBackground, EventTerminating, EventBackPressed, EventWillNavigate, EventNewWindow, EventWillDownload, EventPermissionRequested, EventSurfaceDestroyed, EventKey, EventTextReplace, EventTextMark, EventTextUnmark, EventTextDelete, EventTextSelect, EventTextCommand, EventTextState, EventTextRange, EventTextBounds, EventTextIndexAt, EventAccessibilityTree, EventAccessibilityAction:
+ 		return true
+ 	}
+ 	return false
+diff --git a/internal/mobile/datastore.go b/internal/mobile/datastore.go
+new file mode 100644
+index 00000000..ea84792a
+--- /dev/null
++++ b/internal/mobile/datastore.go
+@@ -0,0 +1,210 @@
++package mobile
++
++import (
++	"errors"
++	"net/url"
++	"strings"
++	"time"
++
++	"github.com/egoist/mygo/internal/mobile/wire"
++	"github.com/egoist/mygo/internal/platform"
++)
++
++// dataStore is a website data store the host made: cookies, local and
++// session storage, IndexedDB, caches and service workers that the pages
++// using it share, apart from those of other stores. Its id names it in
++// calls of the host and in CreateWindow.
++type dataStore struct {
++	b  *Backend
++	id int
++}
++
++// Close lets the store go. The core calls it on the main thread when no
++// page uses an ephemeral store.
++func (s *dataStore) Close() {
++	if s == nil || s.b == nil {
++		return
++	}
++	s.b.call(&wire.CloseDataStore{Store: s.id}, nil)
++}
++
++// storeID returns the host's number of store, 0 for the default store.
++func storeID(store platform.DataStore) int {
++	if s, ok := store.(*dataStore); ok && s != nil {
++		return s.id
++	}
++	return 0
++}
++
++// awaitReply waits for an answer the host sends an event for. On the
++// main thread it keeps handling events, as platform.await does, so that
++// the host can answer while the core waits.
++func awaitReply[T any](b *Backend, ch <-chan T) T {
++	if !b.IsMainThread() {
++		return <-ch
++	}
++	for {
++		select {
++		case v := <-ch:
++			return v
++		default:
++		}
++		if b.quit.Load() {
++			var zero T
++			return zero
++		}
++		b.Step()
++	}
++}
++
++// NewDataStore makes a website data store in the host. Main thread only.
++func (a appController) NewDataStore(opts platform.DataStoreOptions) (platform.DataStore, error) {
++	if a.b == nil || a.b.t == nil {
++		return nil, errors.New("mygo: the app runs outside its host")
++	}
++	id := int(a.b.nextStore.Add(1))
++	ch := make(chan string, 1)
++	req := a.b.request(func(r wire.Reader) {
++		var e wire.DataStoreCreatedEvent
++		e.Decode(&r)
++		ch <- e.Error
++	})
++	a.b.call(&wire.NewDataStore{Req: req, Store: id, ID: opts.ID, Ephemeral: opts.Ephemeral,
++		DataDir: opts.DataDir, CacheDir: opts.CacheDir}, nil)
++	if msg := awaitReply(a.b, ch); msg != "" {
++		return nil, errors.New(msg)
++	}
++	return &dataStore{b: a.b, id: id}, nil
++}
++
++// ClearBrowsingData removes the site data of types from store.
++func (a appController) ClearBrowsingData(store platform.DataStore, types platform.SiteData, done func(error)) {
++	a.b.dataStoreCall(func(req int) {
++		a.b.call(&wire.ClearBrowsingData{Req: req, Store: storeID(store), Types: int(types)}, nil)
++	}, done)
++}
++
++// ListCookies lists the cookies of store, those a request to rawURL sends
++// unless it is empty. The host returns all it has; the URL matching is
++// done here, as WebKit's store cannot.
++func (a appController) ListCookies(store platform.DataStore, rawURL string, done func([]platform.Cookie, error)) {
++	var u *url.URL
++	if rawURL != "" {
++		var err error
++		if u, err = url.Parse(rawURL); err != nil {
++			done(nil, err)
++			return
++		}
++	}
++	ch := make(chan wire.CookiesListedEvent, 1)
++	req := a.b.request(func(r wire.Reader) {
++		var e wire.CookiesListedEvent
++		e.Decode(&r)
++		ch <- e
++	})
++	a.b.call(&wire.ListCookies{Req: req, Store: storeID(store), URL: rawURL}, nil)
++	e := awaitReply(a.b, ch)
++	cookies, err := decodeCookies(e.Cookies)
++	if err == nil && e.Error != "" {
++		err = errors.New(e.Error)
++	}
++	if err != nil {
++		done(nil, err)
++		return
++	}
++	out := cookies[:0]
++	for _, c := range cookies {
++		if u == nil || platform.CookieMatchesURL(c, u) {
++			out = append(out, c)
++		}
++	}
++	done(out, nil)
++}
++
++// SetCookie sets c in store.
++func (a appController) SetCookie(store platform.DataStore, c platform.Cookie, done func(error)) {
++	a.b.dataStoreCall(func(req int) {
++		expires := ""
++		if !c.Expires.IsZero() {
++			expires = c.Expires.UTC().Format(time.RFC3339)
++		}
++		a.b.call(&wire.SetCookie{Req: req, Store: storeID(store), Name: c.Name, Value: c.Value,
++			Domain: c.Domain, Path: c.Path, Expires: expires, Secure: c.Secure, HTTPOnly: c.HTTPOnly,
++			SameSite: strings.ToLower(c.SameSite)}, nil)
++	}, done)
++}
++
++// DeleteCookie deletes the cookie key names from store.
++func (a appController) DeleteCookie(store platform.DataStore, key platform.CookieKey, done func(error)) {
++	a.b.dataStoreCall(func(req int) {
++		a.b.call(&wire.DeleteCookie{Req: req, Store: storeID(store), Name: key.Name, Domain: key.Domain, Path: key.Path}, nil)
++	}, done)
++}
++
++// ClearCookies deletes every cookie of store, and nothing else it keeps.
++func (a appController) ClearCookies(store platform.DataStore, done func(error)) {
++	a.b.dataStoreCall(func(req int) {
++		a.b.call(&wire.ClearCookies{Req: req, Store: storeID(store)}, nil)
++	}, done)
++}
++
++// dataStoreCall sends a call that DataStoreDone answers, and reports its
++// error to done. Main thread only.
++func (b *Backend) dataStoreCall(send func(req int), done func(error)) {
++	ch := make(chan string, 1)
++	req := b.request(func(r wire.Reader) {
++		var e wire.DataStoreDoneEvent
++		e.Decode(&r)
++		ch <- e.Error
++	})
++	send(req)
++	if msg := awaitReply(b, ch); msg != "" {
++		done(errors.New(msg))
++		return
++	}
++	done(nil)
++}
++
++// cookiesOf encodes cookies as the host passes them: eight strings each,
++// name, value, domain, path, expires (RFC 3339, empty for a session
++// cookie), same site, secure and HTTPOnly ("1" or "").
++func cookiesOf(cookies []platform.Cookie) []string {
++	out := make([]string, 0, len(cookies)*8)
++	for _, c := range cookies {
++		expires := ""
++		if !c.Expires.IsZero() {
++			expires = c.Expires.UTC().Format(time.RFC3339)
++		}
++		out = append(out, c.Name, c.Value, c.Domain, c.Path, expires, strings.ToLower(c.SameSite),
++			flag(c.Secure), flag(c.HTTPOnly))
++	}
++	return out
++}
++
++// decodeCookies reads what cookiesOf wrote.
++func decodeCookies(fields []string) ([]platform.Cookie, error) {
++	if len(fields)%8 != 0 {
++		return nil, errors.New("mygo: cookies: the host sent an incomplete cookie")
++	}
++	out := make([]platform.Cookie, 0, len(fields)/8)
++	for i := 0; i+8 <= len(fields); i += 8 {
++		var expires time.Time
++		if s := fields[i+4]; s != "" {
++			t, err := time.Parse(time.RFC3339, s)
++			if err != nil {
++				return nil, err
++			}
++			expires = t
++		}
++		out = append(out, platform.Cookie{Name: fields[i], Value: fields[i+1], Domain: fields[i+2], Path: fields[i+3],
++			Expires: expires, SameSite: fields[i+5], Secure: fields[i+6] == "1", HTTPOnly: fields[i+7] == "1"})
++	}
++	return out, nil
++}
++
++func flag(v bool) string {
++	if v {
++		return "1"
++	}
++	return ""
++}
+diff --git a/internal/mobile/datastore_test.go b/internal/mobile/datastore_test.go
+new file mode 100644
+index 00000000..959a9224
+--- /dev/null
++++ b/internal/mobile/datastore_test.go
+@@ -0,0 +1,350 @@
++package mobile
++
++import (
++	"slices"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/egoist/mygo/internal/mobile/wire"
++	"github.com/egoist/mygo/internal/platform"
++	"github.com/egoist/mygo/internal/wait"
++)
++
++// fakeStores is a host's website data stores: the stores it made, and
++// their cookies, apart from one another.
++type fakeStores struct {
++	mu       sync.Mutex
++	stores   []int
++	opts     []platform.DataStoreOptions
++	cookies  map[int]map[platform.CookieKey]platform.Cookie
++	closed   []int
++	cleared  []platform.SiteData
++	windowSt []int
++}
++
++func newFakeStores() *fakeStores {
++	return &fakeStores{cookies: map[int]map[platform.CookieKey]platform.Cookie{}}
++}
++
++// serve answers the calls of the data store and cookie protocol on the
++// fake host's UI thread, as the Swift and Kotlin hosts do.
++func (f *fakeStores) serve(op uint64, r *wire.Reader) {
++	switch op {
++	case wire.CallNewDataStore:
++		req, store := int(r.Int()), int(r.Int())
++		o := platform.DataStoreOptions{ID: r.String(), Ephemeral: r.Bool(), DataDir: r.String(), CacheDir: r.String()}
++		f.mu.Lock()
++		f.stores = append(f.stores, store)
++		f.opts = append(f.opts, o)
++		f.cookies[store] = map[platform.CookieKey]platform.Cookie{}
++		f.mu.Unlock()
++		deliver(encodeEvent(func(w *wire.Writer) {
++			w.Uvarint(wire.EventDataStoreCreated)
++			w.Int(req)
++			w.Int(store)
++			w.String("")
++		}), true)
++	case wire.CallCloseDataStore:
++		store := int(r.Int())
++		f.mu.Lock()
++		f.closed = append(f.closed, store)
++		delete(f.cookies, store)
++		f.mu.Unlock()
++	case wire.CallCreateWindow:
++		// The store is the last field of CreateWindow.
++		r.Int()        // ID
++		r.Bool()       // Surface
++		r.Bool()       // OwnScene
++		r.Int()        // Background
++		r.Bool()       // HasBackground
++		r.Strings()    // Schemes
++		r.Strings()    // Scripts
++		r.Strings()    // ScriptFlags
++		_ = r.String() // UserAgent
++		_ = r.String() // UserAgentSuffix
++		r.Bool()       // Inspectable
++		r.Bool()       // Autoplay
++		r.Bool()       // SwipeNavigation
++		r.Bool()       // PinchZoom
++		r.Int()        // Parent
++		_ = r.String() // ViewType
++		_ = r.String() // ViewArgs
++		store := int(r.Int())
++		f.mu.Lock()
++		f.windowSt = append(f.windowSt, store)
++		f.mu.Unlock()
++	case wire.CallListCookies:
++		req, store, _ := int(r.Int()), int(r.Int()), r.String()
++		f.mu.Lock()
++		var fields []string
++		for _, c := range f.cookies[store] {
++			fields = append(fields, cookiesOf([]platform.Cookie{c})...)
++		}
++		f.mu.Unlock()
++		deliver(encodeEvent(func(w *wire.Writer) {
++			w.Uvarint(wire.EventCookiesListed)
++			w.Int(req)
++			w.Strings(fields)
++			w.String("")
++		}), true)
++	case wire.CallSetCookie:
++		req, store := int(r.Int()), int(r.Int())
++		c := platform.Cookie{Name: r.String(), Value: r.String(), Domain: r.String(), Path: r.String()}
++		if s := r.String(); s != "" {
++			if t, err := time.Parse(time.RFC3339, s); err == nil {
++				c.Expires = t
++			}
++		}
++		c.Secure, c.HTTPOnly, c.SameSite = r.Bool(), r.Bool(), r.String()
++		f.mu.Lock()
++		f.cookies[store][platform.CookieKey{Name: c.Name, Domain: c.Domain, Path: c.Path}] = c
++		f.mu.Unlock()
++		deliver(encodeEvent(func(w *wire.Writer) {
++			w.Uvarint(wire.EventDataStoreDone)
++			w.Int(req)
++			w.String("")
++		}), true)
++	case wire.CallDeleteCookie:
++		req, store := int(r.Int()), int(r.Int())
++		key := platform.CookieKey{Name: r.String(), Domain: r.String(), Path: r.String()}
++		f.mu.Lock()
++		delete(f.cookies[store], key)
++		f.mu.Unlock()
++		deliver(encodeEvent(func(w *wire.Writer) {
++			w.Uvarint(wire.EventDataStoreDone)
++			w.Int(req)
++			w.String("")
++		}), true)
++	case wire.CallClearCookies:
++		req, store := int(r.Int()), int(r.Int())
++		f.mu.Lock()
++		f.cookies[store] = map[platform.CookieKey]platform.Cookie{}
++		f.mu.Unlock()
++		deliver(encodeEvent(func(w *wire.Writer) {
++			w.Uvarint(wire.EventDataStoreDone)
++			w.Int(req)
++			w.String("")
++		}), true)
++	case wire.CallClearBrowsingData:
++		req, store, types := int(r.Int()), int(r.Int()), platform.SiteData(r.Int())
++		f.mu.Lock()
++		f.cleared = append(f.cleared, types)
++		f.cookies[store] = map[platform.CookieKey]platform.Cookie{}
++		f.mu.Unlock()
++		deliver(encodeEvent(func(w *wire.Writer) {
++			w.Uvarint(wire.EventDataStoreDone)
++			w.Int(req)
++			w.String("")
++		}), true)
++	}
++}
++
++func (f *fakeStores) snapshot() (stores, windows []int) {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	return slices.Clone(f.stores), slices.Clone(f.windowSt)
++}
++
++func cookieList(t *testing.T, b *Backend, store platform.DataStore, url string) []platform.Cookie {
++	t.Helper()
++	var got []platform.Cookie
++	var err error
++	onMain(b, func() {
++		b.App().ListCookies(store, url, func(c []platform.Cookie, e error) { got, err = c, e })
++	})
++	if err != nil {
++		t.Fatalf("ListCookies: %v", err)
++	}
++	return got
++}
++
++// Every session's data store is its own, apart from the others', and a
++// page opens on the store the app chose.
++func TestDataStoreIsolation(t *testing.T) {
++	b, h := startBackend(t)
++	f := newFakeStores()
++	h.serve = f.serve
++
++	var s1, s2 platform.DataStore
++	onMain(b, func() {
++		var err error
++		if s1, err = b.App().NewDataStore(platform.DataStoreOptions{ID: "11111111-1111-4111-8111-111111111111"}); err != nil {
++			t.Errorf("NewDataStore: %v", err)
++		}
++		if s2, err = b.App().NewDataStore(platform.DataStoreOptions{ID: "22222222-2222-4222-8222-222222222222"}); err != nil {
++			t.Errorf("NewDataStore: %v", err)
++		}
++	})
++	stores, _ := f.snapshot()
++	if len(stores) != 2 || stores[0] == stores[1] {
++		t.Fatalf("stores = %v, want two distinct ones", stores)
++	}
++	onMain(b, func() {
++		b.NewWindow(&platform.WindowOptions{DataStore: s1}, &winHandler{})
++		b.NewWindow(&platform.WindowOptions{DataStore: s2}, &winHandler{})
++	})
++	_, windows := f.snapshot()
++	if !slices.Equal(windows, stores) {
++		t.Errorf("windows opened on stores %v, want %v", windows, stores)
++	}
++
++	// A cookie of one store is not one of the other.
++	onMain(b, func() {
++		b.App().SetCookie(s1, platform.Cookie{Name: "sid", Value: "one", Domain: "example.com", Path: "/", Secure: true, HTTPOnly: true, SameSite: "lax"}, func(err error) {
++			if err != nil {
++				t.Errorf("SetCookie: %v", err)
++			}
++		})
++	})
++	if got := cookieList(t, b, s1, "https://example.com/"); len(got) != 1 || got[0].Value != "one" {
++		t.Errorf("store 1 cookies = %+v", got)
++	}
++	if got := cookieList(t, b, s2, "https://example.com/"); len(got) != 0 {
++		t.Errorf("store 2 cookies = %+v, want none", got)
++	}
++}
++
++// Cookies round-trip through a store: set, list by URL, delete, clear.
++func TestCookieRoundTrip(t *testing.T) {
++	b, h := startBackend(t)
++	f := newFakeStores()
++	h.serve = f.serve
++
++	var store platform.DataStore
++	onMain(b, func() {
++		var err error
++		if store, err = b.App().NewDataStore(platform.DataStoreOptions{ID: "33333333-3333-4333-8333-333333333333"}); err != nil {
++			t.Errorf("NewDataStore: %v", err)
++		}
++	})
++	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
++	c := platform.Cookie{Name: "token", Value: "a=b", Domain: "example.com", Path: "/account",
++		Expires: expires, Secure: true, HTTPOnly: true, SameSite: "strict"}
++	onMain(b, func() {
++		b.App().SetCookie(store, c, func(err error) {
++			if err != nil {
++				t.Errorf("SetCookie: %v", err)
++			}
++		})
++	})
++	got := cookieList(t, b, store, "https://example.com/account")
++	if len(got) != 1 {
++		t.Fatalf("cookies = %+v, want one", got)
++	}
++	// The time wire format keeps whole seconds.
++	if !got[0].Expires.Equal(expires) || got[0].Name != "token" || got[0].Value != "a=b" ||
++		got[0].Domain != "example.com" || got[0].Path != "/account" || !got[0].Secure || !got[0].HTTPOnly || got[0].SameSite != "strict" {
++		t.Errorf("cookie = %+v, want %+v", got[0], c)
++	}
++	if got := cookieList(t, b, store, "https://other.example/account"); len(got) != 0 {
++		t.Errorf("a request to another host got %+v", got)
++	}
++	// An insecure request sends no Secure cookie.
++	if got := cookieList(t, b, store, "http://example.com/account"); len(got) != 0 {
++		t.Errorf("an http request got %+v", got)
++	}
++
++	onMain(b, func() {
++		b.App().DeleteCookie(store, platform.CookieKey{Name: "token", Domain: "example.com", Path: "/account"}, func(err error) {
++			if err != nil {
++				t.Errorf("DeleteCookie: %v", err)
++			}
++		})
++	})
++	if got := cookieList(t, b, store, "https://example.com/account"); len(got) != 0 {
++		t.Errorf("after Delete, cookies = %+v", got)
++	}
++
++	onMain(b, func() {
++		for _, n := range []string{"a", "b"} {
++			b.App().SetCookie(store, platform.Cookie{Name: n, Value: "1", Domain: "example.com", Path: "/"}, func(error) {})
++		}
++		b.App().ClearCookies(store, func(err error) {
++			if err != nil {
++				t.Errorf("ClearCookies: %v", err)
++			}
++		})
++	})
++	if got := cookieList(t, b, store, "https://example.com/"); len(got) != 0 {
++		t.Errorf("after Clear, cookies = %+v", got)
++	}
++}
++
++// Clearing site data goes to the store the app chose, and says which
++// kinds it asked for.
++func TestClearBrowsingData(t *testing.T) {
++	b, h := startBackend(t)
++	f := newFakeStores()
++	h.serve = f.serve
++
++	var store platform.DataStore
++	onMain(b, func() {
++		var err error
++		if store, err = b.App().NewDataStore(platform.DataStoreOptions{ID: "44444444-4444-4444-8444-444444444444"}); err != nil {
++			t.Errorf("NewDataStore: %v", err)
++		}
++	})
++	onMain(b, func() {
++		b.App().ClearBrowsingData(store, platform.SiteDataCookies|platform.SiteDataLocalStorage, func(err error) {
++			if err != nil {
++				t.Errorf("ClearBrowsingData: %v", err)
++			}
++		})
++	})
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	if len(f.cleared) != 1 || f.cleared[0] != platform.SiteDataCookies|platform.SiteDataLocalStorage {
++		t.Errorf("cleared = %v", f.cleared)
++	}
++}
++
++// A download's metadata reaches the shared handler, and the path it
++// chooses goes back to the host.
++func TestDownloadEvents(t *testing.T) {
++	b, h := startBackend(t)
++	started := make(chan bool, 1)
++	finished := make(chan bool, 1)
++	wh := &winHandler{
++		download: func(url, suggested string) string {
++			started <- url == "https://example.com/files/a.bin" && suggested == "a.bin"
++			return "/tmp/a.bin"
++		},
++		downloaded: func(url, path string, err error) {
++			finished <- url == "https://example.com/files/a.bin" && path == "/tmp/a.bin" && err == nil
++		},
++	}
++	onMain(b, func() {
++		if _, err := b.NewWindow(&platform.WindowOptions{}, wh); err != nil {
++			t.Error(err)
++		}
++	})
++	var reply []byte
++	h.onUI(func() {
++		reply = deliver(encodeEvent(func(w *wire.Writer) {
++			w.Uvarint(wire.EventWillDownload)
++			w.Int(1)
++			w.String("https://example.com/files/a.bin")
++			w.String("a.bin")
++		}), true)
++	})
++	if path := (&wire.Reader{Buf: reply}).String(); path != "/tmp/a.bin" {
++		t.Errorf("WillDownload path = %q, want the handler's", path)
++	}
++	if !wait.For(t, "DownloadStarted", started) {
++		t.Errorf("DownloadStarted got the wrong metadata")
++	}
++
++	h.onUI(func() {
++		deliver(encodeEvent(func(w *wire.Writer) {
++			w.Uvarint(wire.EventDownloadDone)
++			w.Int(1)
++			w.String("https://example.com/files/a.bin")
++			w.String("/tmp/a.bin")
++			w.String("")
++		}), true)
++	})
++	if !wait.For(t, "DownloadFinished", finished) {
++		t.Errorf("DownloadFinished got the wrong metadata")
++	}
++}
