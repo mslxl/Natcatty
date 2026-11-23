@@ -150,6 +150,11 @@ type openOutcome struct {
 	descriptor domainworkspace.SessionDescriptor
 	startup    StartupInput
 	err        error
+	// tabID and paneID name the Tab created when the dial started, whose
+	// pending Pane the outcome fills. They are empty for an open that creates
+	// its Tab only once the Session exists (MCP and serial).
+	tabID  model.TabID
+	paneID model.PaneID
 }
 
 // StartupInput is input a newly opened Session receives once it exists. A
@@ -1055,13 +1060,26 @@ func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput
 		label = host.Hostname
 	}
 	s.setProblem(nil)
-	s.pending = append(s.pending, label)
 
 	spec := HostSessionSpec(host)
 	// The one-shot password is never stored in the workspace descriptor; it
 	// only travels into this Session's StartSpec.
 	spec.Password = password
 	resumeKey, x11 := spec.ResumeKey, spec.X11Forwarding
+	// The Tab exists before the dial finishes, so it can be opened while the
+	// connection is still starting and its Pane can show the progress.
+	tabID, paneID := s.addPendingHostTab(label, domainworkspace.SessionDescriptor{
+		Kind:           plan.descriptor,
+		Label:          label,
+		HostID:         host.ID,
+		Hostname:       host.Hostname,
+		Port:           host.Port,
+		Username:       host.Username,
+		X11Forwarding:  x11,
+		AutoAttachTmux: plan.tmux,
+		ResumeKey:      resumeKey,
+	})
+
 	ctx := s.ctx
 	go func() {
 		s.attachAutoLogin(ctx, &spec, host, password)
@@ -1071,24 +1089,33 @@ func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput
 			session: session,
 			label:   label,
 			browser: browser,
-			descriptor: domainworkspace.SessionDescriptor{
-				Kind:           plan.descriptor,
-				Label:          label,
-				HostID:         host.ID,
-				Hostname:       host.Hostname,
-				Port:           host.Port,
-				Username:       host.Username,
-				X11Forwarding:  x11,
-				AutoAttachTmux: plan.tmux,
-				ResumeKey:      resumeKey,
-			},
 			startup: startup,
 			err:     err,
+			tabID:   tabID,
+			paneID:  paneID,
 		})
 		s.mu.Unlock()
 		s.RequestRedraw()
 	}()
 	return nil
+}
+
+// addPendingHostTab appends a Tab whose one Pane is waiting for the Session its
+// dial will produce, and makes it active. The Pane renders the connecting state
+// until Flush applies the outcome.
+func (s *State) addPendingHostTab(label string, descriptor domainworkspace.SessionDescriptor) (model.TabID, model.PaneID) {
+	tab := s.newTab(TabOptions{Label: label, AutoTitle: true, Descriptor: descriptor})
+	paneID := tab.paneIDs()[0]
+	tab.panes[paneID].pending = true
+	s.tabs = append(s.tabs, tab)
+	s.activateTab(len(s.tabs) - 1)
+	s.leaveMonitor()
+	s.vaultVisible = false
+	s.logsVisible = false
+	s.sftpVisible = false
+	s.save()
+	s.RequestRedraw()
+	return tab.ID, paneID
 }
 
 // OpenHostForMCP opens a real Host Session for an external MCP host_open call.
@@ -1418,6 +1445,10 @@ func (s *State) Flush() {
 		s.applyPaneOutcome(outcome)
 	}
 	for _, outcome := range outcomes {
+		if outcome.tabID != "" {
+			s.applyPendingHostOutcome(outcome)
+			continue
+		}
 		s.clearPending(outcome.label)
 		if outcome.err != nil {
 			s.setProblem(outcome.err)
@@ -1467,6 +1498,89 @@ func (s *State) Flush() {
 	// Tabs and Panes may have changed; keep the input-thread broadcast
 	// recipient snapshot exact.
 	s.refreshBroadcastState()
+}
+
+// applyPendingHostOutcome fills the Pane of a Tab created before its dial
+// finished. A failure leaves the Tab in place: its Pane shows the localized
+// problem and offers a reconnect instead of the Tab disappearing under the
+// user.
+func (s *State) applyPendingHostOutcome(outcome openOutcome) {
+	value := s.findPendingPane(outcome.tabID, outcome.paneID)
+	if value == nil {
+		// The user closed the Pane while the dial was running.
+		if outcome.session != nil {
+			_ = outcome.session.Close()
+		}
+		return
+	}
+	if outcome.err != nil {
+		value.pending = false
+		value.err = outcome.err
+		s.setProblem(outcome.err)
+		s.save()
+		return
+	}
+	surface, err := s.surfaces(outcome.session)
+	if err != nil {
+		_ = outcome.session.Close()
+		value.pending = false
+		value.err = err
+		s.setProblem(err)
+		s.save()
+		return
+	}
+	value.session = outcome.session
+	value.surface = surface
+	value.pending = false
+	value.err = nil
+	if outcome.browser {
+		if opener, ok := surface.(BrowserOpener); ok {
+			_ = opener.OpenBrowser()
+		}
+	}
+	s.setProblem(nil)
+	s.save()
+	if !outcome.startup.Empty() {
+		// Line-by-line delivery waits between chunks, so it cannot run on the
+		// UI thread. The Session and its transport already exist.
+		go s.deliverStartup(outcome.session.ID(), outcome.startup)
+	}
+}
+
+// findPendingPane finds the Pane whose dial produced the outcome. The Tab
+// recorded at open time is the first place to look, but the Pane may have been
+// moved to another Tab or into a detached window while the dial ran, and its
+// identity — not its old Tab — is what survives such a move.
+func (s *State) findPendingPane(tabID model.TabID, paneID model.PaneID) *pane {
+	if tab, _ := s.tabByAnyID(tabID); tab != nil {
+		if value := paneInTab(tab, paneID); value != nil {
+			return value
+		}
+	}
+	for _, tab := range s.tabs {
+		if value := paneInTab(tab, paneID); value != nil {
+			return value
+		}
+	}
+	for _, tab := range s.detached {
+		if value := paneInTab(tab, paneID); value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+// paneInTab returns the Tab's Pane by identity, but only while the Tab's tree
+// still shows it, so a stale map entry is not mistaken for a live Pane.
+func paneInTab(tab *Tab, paneID model.PaneID) *pane {
+	if tab == nil {
+		return nil
+	}
+	value, ok := tab.panes[paneID]
+	if !ok || !domainworkspace.ContainsPane(tab.Root, paneID) {
+		return nil
+	}
+	return value
 }
 
 // deliverStartup sends a new Session's startup input off the UI thread and

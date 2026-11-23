@@ -206,7 +206,7 @@ func TestTabTitleFollowsAHostRename(t *testing.T) {
 	}
 	waitFor(t, "the SSH tab", func() bool {
 		graph.state.Flush()
-		return graph.state.TabCount() == 1
+		return tabAttached(graph.state, 0)
 	})
 	if info, _ := graph.state.TabInfo(0); info.Title != "prod" {
 		t.Fatalf("tab title = %q, want the Host label", info.Title)

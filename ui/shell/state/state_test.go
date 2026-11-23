@@ -14,8 +14,10 @@ import (
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/domain/model"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 )
 
@@ -106,6 +108,63 @@ func (f *fakeFactory) setError(err error) {
 	f.mu.Lock()
 	f.err = err
 	f.mu.Unlock()
+}
+
+// fakeVNCTransport carries a pixel display, as a VNC transport does. The
+// Session rejects a transport without one, so the connecting and attached VNC
+// Pane tests need it.
+type fakeVNCTransport struct {
+	*fakeTransport
+	display *fakeDisplay
+}
+
+func (f *fakeVNCTransport) Display() appsession.DisplaySession { return f.display }
+
+func (f *fakeVNCTransport) Close() error {
+	_ = f.display.Close()
+	return f.fakeTransport.Close()
+}
+
+// fakeDisplay is an inert pixel stream for tests.
+type fakeDisplay struct {
+	events    chan appsession.DisplayEvent
+	closeOnce sync.Once
+}
+
+func newFakeDisplay() *fakeDisplay {
+	return &fakeDisplay{events: make(chan appsession.DisplayEvent)}
+}
+
+func (d *fakeDisplay) Events() <-chan appsession.DisplayEvent { return d.events }
+func (d *fakeDisplay) SendKey(uint32, bool) error             { return nil }
+func (d *fakeDisplay) SendPhysicalKey(uint32, uint32, bool) error {
+	return nil
+}
+func (d *fakeDisplay) SendPointer(int, int, uint8) error { return nil }
+func (d *fakeDisplay) SendCutText(string) error          { return nil }
+func (d *fakeDisplay) RequestUpdate(bool) error          { return nil }
+func (d *fakeDisplay) SetDesktopSize(int, int) error     { return nil }
+
+func (d *fakeDisplay) Close() error {
+	d.closeOnce.Do(func() { close(d.events) })
+	return nil
+}
+
+// fakeDisplayFactory opens VNC Sessions with a pixel display and every other
+// Kind with an ordinary transport.
+type fakeDisplayFactory struct {
+	mu   sync.Mutex
+	spec appsession.StartSpec
+}
+
+func (f *fakeDisplayFactory) Open(_ context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
+	f.mu.Lock()
+	f.spec = spec
+	f.mu.Unlock()
+	if spec.Kind == appsession.KindVNC {
+		return &fakeVNCTransport{fakeTransport: newFakeTransport(), display: newFakeDisplay()}, nil
+	}
+	return newFakeTransport(), nil
 }
 
 // fakeSurface stands in for the MyGo terminal the UI owns.
@@ -551,19 +610,29 @@ func TestOpenHostAddsAnSSHTabOnTheNextFlush(t *testing.T) {
 	if err := graph.state.OpenHost(host); err != nil {
 		t.Fatalf("OpenHost: %v", err)
 	}
-	// The dial is in flight until Flush applies the outcome, so the shell can
-	// show its connecting indicator.
-	if pending := graph.state.PendingConnections(); len(pending) != 1 || pending[0] != "prod" {
-		t.Fatalf("pending connections = %q, want prod", pending)
+	// The Tab exists while the dial runs, so the user can open it and see the
+	// connecting state instead of waiting on an indicator they cannot click.
+	if graph.state.TabCount() != 1 {
+		t.Fatalf("tabs = %d before Flush, want the connecting Tab", graph.state.TabCount())
 	}
-	// The dial goroutine only queues its outcome; Tabs change in Flush.
-	if graph.state.TabCount() != 0 {
-		t.Fatalf("tabs = %d before Flush, want 0", graph.state.TabCount())
+	if pending := graph.state.PendingConnections(); len(pending) != 0 {
+		t.Fatalf("pending connections = %q, want none in the strip", pending)
+	}
+	if !graph.state.TabPending(0) {
+		t.Fatal("the Tab does not report that it is still connecting")
+	}
+	paneID, ok := graph.state.FocusedPaneID(0)
+	if !ok {
+		t.Fatal("the connecting Tab has no focused Pane")
+	}
+	if info, ok := graph.state.PaneInfoAt(0, paneID); !ok || !info.Pending ||
+		info.Target != "root@example.com:2222" {
+		t.Fatalf("PaneInfo = %+v, %v; want a pending Pane reaching the typed endpoint", info, ok)
 	}
 
-	waitFor(t, "the SSH tab", func() bool {
+	waitFor(t, "the SSH Session", func() bool {
 		graph.state.Flush()
-		return graph.state.TabCount() == 1
+		return !graph.state.TabPending(0)
 	})
 	if got := graph.factory.lastSpec(); got.Kind != appsession.KindSSH || got.HostID != "host-1" ||
 		got.Hostname != "example.com" || got.Port != 2222 || got.Username != "root" {
@@ -594,6 +663,63 @@ func TestOpenHostAddsAnSSHTabOnTheNextFlush(t *testing.T) {
 	}
 }
 
+// TestOpenHostShowsAClickableVNCTabWhileConnecting pins the VNC contract the
+// pixel viewer needs: the Tab exists and can be selected before the desktop
+// handshake finishes, and its Pane names the endpoint it is reaching.
+func TestOpenHostShowsAClickableVNCTabWhileConnecting(t *testing.T) {
+	service := appsession.NewService(&fakeDisplayFactory{})
+	t.Cleanup(service.CloseAll)
+	st := NewState(WithSessions(service, func(*appsession.Session) (Surface, error) {
+		return &fakeSurface{}, nil
+	}))
+	if err := st.OpenHost(domainvault.Host{
+		ID: "vnc-desk", Label: "desk", Hostname: "desk.local", Port: 5901,
+		Username: "viewer", Protocol: domainvault.ProtocolVNC,
+	}); err != nil {
+		t.Fatalf("OpenHost VNC: %v", err)
+	}
+	if err := st.OpenHost(domainvault.Host{
+		ID: "host-ssh", Label: "prod", Hostname: "prod.local", Port: 22,
+		Protocol: domainvault.ProtocolSSH,
+	}); err != nil {
+		t.Fatalf("OpenHost SSH: %v", err)
+	}
+	if st.TabCount() != 2 || st.ActiveTab() != 1 {
+		t.Fatalf("tabs = %d, active = %d; want both connecting Tabs with the last active",
+			st.TabCount(), st.ActiveTab())
+	}
+
+	// Both dials are still in flight until Flush, so this selection happens in
+	// the connecting window.
+	st.SelectTab(0)
+	if st.ActiveTab() != 0 {
+		t.Fatalf("active tab = %d, want the connecting VNC Tab selectable", st.ActiveTab())
+	}
+	paneID := mustFocusedPane(t, st, 0)
+	info, ok := st.PaneInfoAt(0, paneID)
+	if !ok || !info.Pending {
+		t.Fatalf("PaneInfo = %+v, %v; want the VNC Pane still connecting", info, ok)
+	}
+	if info.ByteStream {
+		t.Fatal("the connecting VNC Pane reported a byte stream")
+	}
+	if info.Target != "viewer"+"@"+"desk.local:5901" {
+		t.Fatalf("Pane target = %q, want the VNC endpoint", info.Target)
+	}
+	if !st.TabPending(0) {
+		t.Fatal("the VNC Tab does not report that it is connecting")
+	}
+
+	waitFor(t, "the VNC Pane", func() bool {
+		st.Flush()
+		info, ok := st.PaneInfoAt(0, paneID)
+		return ok && !info.Pending && info.Surface != nil
+	})
+	if snapshot, ok := st.ActiveSnapshot(); !ok || snapshot.Kind != appsession.KindVNC {
+		t.Fatalf("snapshot = %+v, %v; want the VNC Session", snapshot, ok)
+	}
+}
+
 func TestOpenHostOpensATelnetHostWithTheTelnetTransport(t *testing.T) {
 	graph := newTestGraph(t)
 	host := domainvault.Host{
@@ -607,7 +733,7 @@ func TestOpenHostOpensATelnetHostWithTheTelnetTransport(t *testing.T) {
 	}
 	waitFor(t, "the Telnet tab", func() bool {
 		graph.state.Flush()
-		return graph.state.TabCount() == 1
+		return tabAttached(graph.state, 0)
 	})
 
 	spec := graph.factory.lastSpec()
@@ -645,14 +771,14 @@ func TestOpenHostCarriesTheAcknowledgedX11Preference(t *testing.T) {
 	}
 	waitFor(t, "the X11 SSH tab", func() bool {
 		graph.state.Flush()
-		return graph.state.TabCount() == 1
+		return tabAttached(graph.state, 0)
 	})
 	if !graph.factory.lastSpec().X11Forwarding {
 		t.Fatalf("factory spec X11 = %v, want enabled", graph.factory.lastSpec().X11Forwarding)
 	}
 }
 
-func TestOpenHostReportsATypedConnectionProblemWithoutATab(t *testing.T) {
+func TestOpenHostKeepsTheConnectingTabAndShowsTheProblem(t *testing.T) {
 	graph := newTestGraph(t)
 	graph.factory.setError(&appconnection.Error{
 		Kind:  appconnection.KindAuth,
@@ -660,7 +786,7 @@ func TestOpenHostReportsATypedConnectionProblemWithoutATab(t *testing.T) {
 	})
 
 	if err := graph.state.OpenHost(domainvault.Host{
-		ID: "host-1", Hostname: "example.com", Port: 22,
+		ID: "host-1", Label: "prod", Hostname: "example.com", Port: 22,
 		Username: "root", Protocol: domainvault.ProtocolSSH,
 	}); err != nil {
 		t.Fatalf("OpenHost: %v", err)
@@ -668,11 +794,123 @@ func TestOpenHostReportsATypedConnectionProblemWithoutATab(t *testing.T) {
 
 	waitFor(t, "the connection problem", func() bool {
 		graph.state.Flush()
-		return graph.state.Problem() == appconnection.KindAuth
+		info, ok := graph.state.PaneInfoAt(0, mustFocusedPane(t, graph.state, 0))
+		return ok && !info.Pending && info.Err != nil
 	})
-	if graph.state.TabCount() != 0 {
-		t.Fatalf("tabs = %d after a failed connection, want 0", graph.state.TabCount())
+	if graph.state.Problem() != appconnection.KindAuth {
+		t.Fatalf("problem = %q, want the typed authentication failure", graph.state.Problem())
 	}
+	// The Tab the user could already open stays, showing the failure and its
+	// Reconnect control, rather than vanishing under them.
+	if graph.state.TabCount() != 1 {
+		t.Fatalf("tabs = %d after a failed connection, want the Tab kept", graph.state.TabCount())
+	}
+	info, ok := graph.state.PaneInfoAt(0, mustFocusedPane(t, graph.state, 0))
+	if !ok || info.Err == nil || info.Pending {
+		t.Fatalf("PaneInfo = %+v, %v; want a failed Pane", info, ok)
+	}
+	if info.Target != "root@example.com:22" {
+		t.Fatalf("Pane target = %q, want the endpoint it tried", info.Target)
+	}
+}
+
+// hostGatedFactory holds an SSH dial open while opening every other Kind at
+// once, so a test can move a connecting Pane without also stalling the local
+// Tab it moves onto.
+type hostGatedFactory struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (f *hostGatedFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
+	if spec.Kind != appsession.KindSSH {
+		return newFakeTransport(), nil
+	}
+	select {
+	case f.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-f.release:
+		return newFakeTransport(), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// TestMovingAConnectingPaneKeepsItsDialOutcome pins the Pane identity rule: a
+// Pane moved to another Tab while its dial runs still receives the Session the
+// dial produces, instead of staying pending forever because its old Tab is
+// gone.
+func TestMovingAConnectingPaneKeepsItsDialOutcome(t *testing.T) {
+	factory := &hostGatedFactory{started: make(chan struct{}, 1), release: make(chan struct{})}
+	st := newMCPHostState(t, factory)
+	if err := st.NewTab(); err != nil {
+		t.Fatalf("NewTab: %v", err)
+	}
+	waitFor(t, "the local Pane", func() bool {
+		st.Flush()
+		return tabAttached(st, 0)
+	})
+
+	if err := st.OpenHost(domainvault.Host{
+		ID: "host-1", Label: "prod", Hostname: "example.com", Port: 22,
+		Protocol: domainvault.ProtocolSSH,
+	}); err != nil {
+		t.Fatalf("OpenHost: %v", err)
+	}
+	select {
+	case <-factory.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the dial never started")
+	}
+	if st.TabCount() != 2 || !st.TabPending(1) {
+		t.Fatalf("tabs = %d, pending = %v; want the connecting Host Tab",
+			st.TabCount(), st.TabPending(1))
+	}
+
+	hostTab := st.tabs[1]
+	movedID := mustFocusedPane(t, st, 1)
+	if !st.MovePane(hostTab.ID, movedID, st.tabs[0].ID,
+		mustFocusedPane(t, st, 0), domainworkspace.SideRight) {
+		t.Fatal("MovePane refused the connecting Pane")
+	}
+	if st.TabCount() != 1 {
+		t.Fatalf("tabs = %d after the move, want the emptied Host Tab gone", st.TabCount())
+	}
+
+	close(factory.release)
+	waitFor(t, "the moved Pane's Session", func() bool {
+		st.Flush()
+		value := st.tabs[0].panes[movedID]
+		return value != nil && !value.pending && value.surface != nil
+	})
+}
+
+// mustFocusedPane returns a Tab's focused Pane, failing the test when it has
+// none.
+func mustFocusedPane(t *testing.T, s *State, tab int) model.PaneID {
+	t.Helper()
+	id, ok := s.FocusedPaneID(tab)
+	if !ok {
+		t.Fatalf("Tab %d has no focused Pane", tab)
+	}
+	return id
+}
+
+// tabAttached reports whether the Tab at index exists and its focused Pane
+// owns a live Session. Opening a Host creates the Tab before the dial finishes,
+// so tests that need the Session wait on this rather than TabCount.
+func tabAttached(s *State, index int) bool {
+	if index < 0 || index >= s.TabCount() {
+		return false
+	}
+	id, ok := s.FocusedPaneID(index)
+	if !ok {
+		return false
+	}
+	value := s.tabs[index].panes[id]
+	return value != nil && !value.pending && value.session != nil
 }
 
 func waitFor(t *testing.T, what string, ready func() bool) {
@@ -700,7 +938,7 @@ func TestTerminalAppearanceReachesOpenSurfaces(t *testing.T) {
 	}
 	waitFor(t, "the SSH tab", func() bool {
 		graph.state.Flush()
-		return graph.state.TabCount() == 1
+		return tabAttached(graph.state, 0)
 	})
 
 	graph.state.SetTerminalFont("JetBrains Mono", 15)
@@ -728,7 +966,7 @@ func TestInsertAndSuggestionInvalidationReachOpenSurfaces(t *testing.T) {
 	}
 	waitFor(t, "the SSH tab", func() bool {
 		graph.state.Flush()
-		return graph.state.TabCount() == 1
+		return tabAttached(graph.state, 0)
 	})
 
 	if err := graph.state.InsertIntoFocused("git status"); err != nil {
@@ -843,7 +1081,7 @@ func TestOpenHostCarriesTheNetworkDeviceModeOnlyForSSH(t *testing.T) {
 	}
 	waitFor(t, "the network device tab", func() bool {
 		graph.state.Flush()
-		return graph.state.TabCount() == 1
+		return tabAttached(graph.state, 0)
 	})
 	if !graph.factory.lastSpec().NetworkDevice {
 		t.Fatal("the network device mode did not reach the Session")
@@ -860,7 +1098,7 @@ func TestOpenHostCarriesTheNetworkDeviceModeOnlyForSSH(t *testing.T) {
 	}
 	waitFor(t, "the Telnet tab", func() bool {
 		other.state.Flush()
-		return other.state.TabCount() == 1
+		return tabAttached(other.state, 0)
 	})
 	if other.factory.lastSpec().NetworkDevice {
 		t.Fatal("the network device mode reached a Telnet Session")
@@ -880,7 +1118,7 @@ func TestOpenHostOpensAMoshHostWithTheMoshTransport(t *testing.T) {
 	}
 	waitFor(t, "the Mosh tab", func() bool {
 		graph.state.Flush()
-		return graph.state.TabCount() == 1
+		return tabAttached(graph.state, 0)
 	})
 
 	spec := graph.factory.lastSpec()
@@ -913,7 +1151,7 @@ func TestOpenHostOpensAnETHostWithTheETTransport(t *testing.T) {
 	}
 	waitFor(t, "the ET tab", func() bool {
 		graph.state.Flush()
-		return graph.state.TabCount() == 1
+		return tabAttached(graph.state, 0)
 	})
 
 	spec := graph.factory.lastSpec()

@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -121,6 +123,10 @@ type PaneInfo struct {
 	Focused bool
 	Pending bool
 	Err     error
+	// Target is the endpoint a connecting or failed Pane is reaching: the
+	// username when set, then host:port. It is empty for a Pane with no remote
+	// endpoint.
+	Target  string
 	Surface Surface
 	// ByteStream reports whether the Pane is a terminal. It follows the Pane's
 	// kind rather than its Session, so a terminal Pane that is still connecting
@@ -632,6 +638,21 @@ func (s *State) TabSnapshot(index int) (appsession.Snapshot, bool) {
 		return appsession.Snapshot{}, false
 	}
 	return value.session.Snapshot(), true
+}
+
+// TabPending reports whether any Pane of the Tab at index is still opening its
+// Session.
+func (s *State) TabPending(index int) bool {
+	if index < 0 || index >= len(s.tabs) {
+		return false
+	}
+	tab := s.tabs[index]
+	for _, id := range tab.paneIDs() {
+		if value := tab.panes[id]; value != nil && value.pending {
+			return true
+		}
+	}
+	return false
 }
 
 // SetTabDirty marks or clears a Tab's activity indicator.
@@ -1263,12 +1284,40 @@ func (s *State) paneInfo(tab *Tab, id model.PaneID) (PaneInfo, bool) {
 		Focused: id == focusedID && focused != nil,
 		Pending: value.pending,
 		Err:     value.err,
+		Target:  paneTarget(value.descriptor),
 		Surface: value.surface,
 		// The kind is known as soon as the Pane exists, while the Session is
 		// still nil during the connect window. Gate the terminal toolbar on the
 		// Pane's kind so a connecting terminal keeps it and VNC never gets it.
 		ByteStream: value.descriptor.Kind != domainworkspace.SessionVNC,
 	}, true
+}
+
+// paneTarget is the endpoint a Pane connects to, in the form its connecting
+// state shows: the username when set, then host:port. A serial Pane names its
+// device path; a local Pane has no remote endpoint.
+func paneTarget(descriptor domainworkspace.SessionDescriptor) string {
+	switch descriptor.Kind {
+	case domainworkspace.SessionLocal:
+		return ""
+	case domainworkspace.SessionSerial:
+		if descriptor.Serial == nil {
+			return ""
+		}
+		return strings.TrimSpace(descriptor.Serial.Path)
+	}
+	host := strings.TrimSpace(descriptor.Hostname)
+	if host == "" {
+		return ""
+	}
+	address := host
+	if descriptor.Port > 0 {
+		address = net.JoinHostPort(host, strconv.Itoa(descriptor.Port))
+	}
+	if username := strings.TrimSpace(descriptor.Username); username != "" {
+		return username + "@" + address
+	}
+	return address
 }
 
 // titleMode returns the live Dynamic tab title setting.

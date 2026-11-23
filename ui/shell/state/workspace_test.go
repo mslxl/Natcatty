@@ -1150,7 +1150,7 @@ func TestOpenHostPersistsItsRestoreDescriptor(t *testing.T) {
 	if err := graph.state.OpenHost(host); err != nil {
 		t.Fatal(err)
 	}
-	graph.flushUntil(t, "the SSH Tab", func() bool { return graph.state.TabCount() == 1 })
+	graph.flushUntil(t, "the SSH Tab", func() bool { return tabAttached(graph.state, 0) })
 
 	payload := graph.state.WorkspacePayload()
 	if len(payload.Panes) != 1 {
@@ -1176,7 +1176,7 @@ func TestOpenHostPersistsATelnetRestoreDescriptor(t *testing.T) {
 	if err := graph.state.OpenHost(host); err != nil {
 		t.Fatal(err)
 	}
-	graph.flushUntil(t, "the Telnet Tab", func() bool { return graph.state.TabCount() == 1 })
+	graph.flushUntil(t, "the Telnet Tab", func() bool { return tabAttached(graph.state, 0) })
 
 	payload := graph.state.WorkspacePayload()
 	if len(payload.Panes) != 1 {
@@ -1757,7 +1757,7 @@ func TestETSplitGetsItsOwnResumeKey(t *testing.T) {
 		t.Fatalf("OpenHost: %v", err)
 	}
 	graph.flushUntil(t, "the first ET Pane", func() bool {
-		return graph.state.TabCount() == 1 && graph.factory.specCount() == 1 &&
+		return tabAttached(graph.state, 0) && graph.factory.specCount() == 1 &&
 			graph.state.ActiveSurface() != nil
 	})
 	first := graph.factory.lastSpec()
@@ -1791,7 +1791,7 @@ func TestETDuplicateGetsItsOwnResumeKey(t *testing.T) {
 		t.Fatalf("OpenHost: %v", err)
 	}
 	graph.flushUntil(t, "the first ET Pane", func() bool {
-		return graph.state.TabCount() == 1 && graph.factory.specCount() == 1 &&
+		return tabAttached(graph.state, 0) && graph.factory.specCount() == 1 &&
 			graph.state.ActiveSurface() != nil
 	})
 	first := graph.factory.lastSpec()
@@ -2110,7 +2110,7 @@ func TestOpeningATabReleasesTheOutgoingPanesInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	graph.flushUntil(t, "the first Pane surface", func() bool {
-		return graph.state.TabCount() == 1 && len(graph.surfaces) == 1
+		return tabAttached(graph.state, 0) && len(graph.surfaces) == 1
 	})
 	outgoing, ok := graph.state.ActiveSurface().(*fakeSurface)
 	if !ok || outgoing == nil {
@@ -2133,7 +2133,7 @@ func TestDetachAndCloseReleaseHeldInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	graph.flushUntil(t, "the Pane surface", func() bool {
-		return graph.state.TabCount() == 1 && len(graph.surfaces) == 1
+		return tabAttached(graph.state, 0) && len(graph.surfaces) == 1
 	})
 	detached, _ := graph.state.ActiveSurface().(*fakeSurface)
 	if !graph.state.DetachTab(0) {

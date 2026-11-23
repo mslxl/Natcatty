@@ -35,7 +35,7 @@ func TestQuickConnectOpensAnUnsavedHostSession(t *testing.T) {
 
 	waitFor(t, "the quick-connect Tab", func() bool {
 		graph.state.Flush()
-		return graph.state.TabCount() == 1
+		return tabAttached(graph.state, 0)
 	})
 	spec := graph.factory.lastSpec()
 	if spec.Kind != appsession.KindSSH || spec.HostID != "" {
@@ -91,7 +91,7 @@ func TestQuickConnectTelnetSkipsSSHCredentials(t *testing.T) {
 	}
 	waitFor(t, "the Telnet Tab", func() bool {
 		graph.state.Flush()
-		return graph.state.TabCount() == 1
+		return tabAttached(graph.state, 0)
 	})
 	spec := graph.factory.lastSpec()
 	if spec.Kind != appsession.KindTelnet || spec.HostID != "" {
@@ -152,7 +152,7 @@ func TestQuickConnectMoshAndETReuseSSHCredentials(t *testing.T) {
 			}
 			waitFor(t, "the "+string(transport)+" Tab", func() bool {
 				graph.state.Flush()
-				return graph.state.TabCount() == 1
+				return tabAttached(graph.state, 0)
 			})
 			spec := graph.factory.lastSpec()
 			wantKind := appsession.KindMosh

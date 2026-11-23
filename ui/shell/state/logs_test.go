@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -61,14 +60,10 @@ func TestOpenHistoryTargetFocusesALiveHost(t *testing.T) {
 	if err := graph.state.OpenHost(host); err != nil {
 		t.Fatalf("OpenHost: %v", err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for graph.state.TabCount() == 0 && time.Now().Before(deadline) {
+	waitFor(t, "the live Host Session", func() bool {
 		graph.state.Flush()
-		time.Sleep(5 * time.Millisecond)
-	}
-	if graph.state.TabCount() != 1 {
-		t.Fatalf("tabs = %d, want 1", graph.state.TabCount())
-	}
+		return tabAttached(graph.state, 0)
+	})
 	tab := graph.state.tabs[0]
 	paneID := tab.paneIDs()[0]
 	sessionID := tab.panes[paneID].session.ID()

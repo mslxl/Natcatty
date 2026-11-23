@@ -252,7 +252,11 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 		Active: info.Active,
 		Lead: func() {
 			snapshot, ok := s.TabSnapshot(index)
-			kit.StatusDot(c, sessionTone(t, snapshot, ok))
+			tone := sessionTone(t, snapshot, ok)
+			if s.TabPending(index) {
+				tone = t.Warning
+			}
+			kit.StatusDot(c, tone)
 		},
 		Marker:      marker,
 		Close:       m.CloseGlyph(),
@@ -702,6 +706,9 @@ func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 			ui.Box(c).Size(44, 44).Radius(12).Background(t.Danger.Alpha(0.1)).Center().TextColor(t.Danger).
 				Children(func() { ui.Icon(c, icons.Lucide(icons.TriangleAlert)).Size(20, 20) })
 			ui.Text(c, message).FontSize(kit.M(c).Font.Callout).MaxWidth(420).TextColor(uitheme.DangerText(t))
+			if info.Target != "" {
+				ui.Text(c, info.Target).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine()
+			}
 			if !retryable {
 				return
 			}
@@ -724,9 +731,14 @@ func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		}
 		info.Surface.View(c)
 	default:
-		ui.Column(c).Fill().Gap(10).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
-			ui.Icon(c, icons.Lucide(icons.Loader)).Size(22, 22).TextColor(t.TextMuted)
+		// A Pane whose Session is still opening shows the state and the
+		// endpoint, so the Tab is useful while the dial runs.
+		ui.Column(c).Fill().Padding(24).Gap(8).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
+			ui.Icon(c, icons.Lucide(icons.Loader)).Size(22, 22).TextColor(t.Warning)
 			ui.Text(c, m.PaneConnecting()).TextColor(t.TextMuted).FontSize(kit.M(c).Font.Callout)
+			if info.Target != "" {
+				ui.Text(c, info.Target).TextColor(t.TextMuted).FontSize(kit.M(c).Font.Footnote).SingleLine()
+			}
 		})
 	}
 }

@@ -564,6 +564,138 @@ func TestMissingHostPaneShowsNoReconnect(t *testing.T) {
 	}
 }
 
+// pendingVNCViewFactory holds a VNC handshake open so a test can observe the
+// connecting Tab, while every other Kind opens at once.
+type pendingVNCViewFactory struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (f *pendingVNCViewFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
+	if spec.Kind != appsession.KindVNC {
+		return newFakeTransport(), nil
+	}
+	select {
+	case f.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-f.release:
+		return newDisplayTransport(), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// displayTransport carries pixels instead of bytes, as a VNC backend does.
+type displayTransport struct {
+	*fakeTransport
+	display *viewFakeDisplay
+}
+
+func newDisplayTransport() *displayTransport {
+	return &displayTransport{
+		fakeTransport: newFakeTransport(),
+		display:       &viewFakeDisplay{events: make(chan appsession.DisplayEvent)},
+	}
+}
+
+func (t *displayTransport) Display() appsession.DisplaySession { return t.display }
+
+func (t *displayTransport) Close() error {
+	_ = t.display.Close()
+	return t.fakeTransport.Close()
+}
+
+type viewFakeDisplay struct {
+	events    chan appsession.DisplayEvent
+	closeOnce sync.Once
+}
+
+func (d *viewFakeDisplay) Events() <-chan appsession.DisplayEvent { return d.events }
+func (d *viewFakeDisplay) SendKey(uint32, bool) error             { return nil }
+func (d *viewFakeDisplay) SendPhysicalKey(uint32, uint32, bool) error {
+	return nil
+}
+func (d *viewFakeDisplay) SendPointer(int, int, uint8) error { return nil }
+func (d *viewFakeDisplay) SendCutText(string) error          { return nil }
+func (d *viewFakeDisplay) RequestUpdate(bool) error          { return nil }
+func (d *viewFakeDisplay) SetDesktopSize(int, int) error     { return nil }
+func (d *viewFakeDisplay) Close() error {
+	d.closeOnce.Do(func() { close(d.events) })
+	return nil
+}
+
+// TestConnectingVNCTabIsClickableAndShowsItsEndpoint is the VNC connecting
+// contract: the Tab exists at once, can be selected away from and back to
+// while the desktop handshake runs, and its Pane names the endpoint.
+func TestConnectingVNCTabIsClickableAndShowsItsEndpoint(t *testing.T) {
+	m := locales.In("en")
+	factory := &pendingVNCViewFactory{started: make(chan struct{}, 1), release: make(chan struct{})}
+	service := appsession.NewService(factory)
+	t.Cleanup(service.CloseAll)
+	st := state.NewState(state.WithSessions(service, func(*appsession.Session) (state.Surface, error) {
+		return fakeSurface{}, nil
+	}))
+	tt := ui.NewTester(View(st), 1100, 720)
+	tt.SetLocale("en")
+	tt.Frame()
+
+	if err := st.OpenHost(domainvault.Host{
+		ID: "vnc-desk", Label: "desk", Hostname: "desk.local", Port: 5901,
+		Username: "viewer", Protocol: domainvault.ProtocolVNC,
+	}); err != nil {
+		t.Fatalf("OpenHost: %v", err)
+	}
+	select {
+	case <-factory.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the VNC dial never started")
+	}
+	tt.Frame()
+	if !tt.HasText(m.PaneConnecting()) {
+		t.Fatalf("the connecting Pane shows no state; texts %q", tt.Texts())
+	}
+	endpoint := "viewer" + "@" + "desk.local:5901"
+	if !tt.HasText(endpoint) {
+		t.Fatalf("the connecting Pane does not show %q; texts %q", endpoint, tt.Texts())
+	}
+
+	// A second Tab makes the VNC Tab inactive; select it from the strip while
+	// its handshake is still running.
+	if err := st.NewTab(); err != nil {
+		t.Fatalf("NewTab: %v", err)
+	}
+	tt.Frame()
+	if st.ActiveTab() != 1 {
+		t.Fatalf("active tab = %d, want the new local Tab", st.ActiveTab())
+	}
+	if err := tt.Click("desk"); err != nil {
+		t.Fatalf("click the connecting Tab: %v", err)
+	}
+	tt.Frame()
+	if st.ActiveTab() != 0 {
+		t.Fatalf("active tab = %d, want the connecting VNC Tab", st.ActiveTab())
+	}
+	if !tt.HasText(m.PaneConnecting()) || !tt.HasText(endpoint) {
+		t.Fatalf("the reopened connecting Pane lost its state; texts %q", tt.Texts())
+	}
+
+	close(factory.release)
+	deadline := time.Now().Add(2 * time.Second)
+	for st.TabPending(0) {
+		if time.Now().After(deadline) {
+			t.Fatal("the VNC Tab never finished connecting")
+		}
+		st.Flush()
+		time.Sleep(time.Millisecond)
+	}
+	tt.Frame()
+	if !tt.HasText("terminal-surface") {
+		t.Fatalf("the connected Pane does not render its surface; texts %q", tt.Texts())
+	}
+}
+
 func TestShellKeepsWorkTabsVisibleOverTheVault(t *testing.T) {
 	graph := newWorkspaceViewGraph(t)
 	tt := ui.NewTester(View(graph.state), 900, 600)

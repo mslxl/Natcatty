@@ -119,7 +119,7 @@ func TestOpenHostCarriesAutoAttachTmuxOnlyForPlainSSH(t *testing.T) {
 			}
 			waitFor(t, "the Tab", func() bool {
 				graph.state.Flush()
-				return graph.state.TabCount() == 1
+				return tabAttached(graph.state, 0)
 			})
 			if got := graph.factory.lastSpec().AutoAttachTmux; got != testCase.expected {
 				t.Fatalf("StartSpec AutoAttachTmux = %v, want %v", got, testCase.expected)
@@ -140,7 +140,7 @@ func TestATmuxDetachClosesTheTabWithoutAnError(t *testing.T) {
 	}
 	waitFor(t, "the Tab", func() bool {
 		state.Flush()
-		return state.TabCount() == 1
+		return tabAttached(state, 0)
 	})
 
 	if err := factory.last().Close(); err != nil {
@@ -167,7 +167,7 @@ func TestAnOrdinaryShellExitKeepsTheTab(t *testing.T) {
 	}
 	waitFor(t, "the Tab", func() bool {
 		state.Flush()
-		return state.TabCount() == 1
+		return tabAttached(state, 0)
 	})
 	if err := factory.last().Close(); err != nil {
 		t.Fatalf("Close transport: %v", err)
