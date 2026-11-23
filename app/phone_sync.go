@@ -7,19 +7,24 @@
 // icon, filesystem paths, and other device-local fields stay in this phone's
 // files.
 //
-// The phone offers the two providers it can configure without a browser:
-// WebDAV and S3-compatible storage. The setup surface lives on the Settings
-// page; this file owns the services behind it.
+// The phone offers the providers it can configure on its own: WebDAV and
+// S3-compatible storage take user-entered credentials, and GitHub Gist runs
+// the same RFC 8628 device authorization as the desktop. The setup surface
+// lives on the Settings page; this file owns the services behind it.
 package app
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
+	adaptergithub "github.com/mslxl/natcatty/adapters/github"
 	adapters3 "github.com/mslxl/natcatty/adapters/s3"
 	"github.com/mslxl/natcatty/adapters/store"
 	adaptersyncedsettings "github.com/mslxl/natcatty/adapters/syncedsettings"
@@ -38,6 +43,16 @@ import (
 // for a portable settings write and Stop for shutdown.
 type phoneSync struct {
 	service *appsync.Service
+
+	// authCancel aborts the GitHub device flow that is in flight. The page
+	// starts the flow and follows Snapshot; the access token is written only
+	// to the shared credential store by appsync.Service.Connect. authGen tags
+	// each attempt so a late goroutine cannot overwrite a newer attempt's
+	// state after a cancel or retry.
+	authMu       sync.Mutex
+	authCancel   context.CancelFunc
+	authGen      int
+	authCanceled bool
 }
 
 var _ phoneshell.VaultSyncService = (*phoneSync)(nil)
@@ -133,6 +148,15 @@ func newPhoneSync(ctx context.Context, database *store.Store, secrets *store.Sec
 		configs: adaptersyncstore.OpenConfig(filepath.Join(userData, "cloud-sync.json")),
 		tokens:  adaptersyncstore.NewTokenStore(platformsecrets.System{}),
 		remotes: map[string]appsync.Remote{
+			// GitHub Gist uses the shared device authorization and Gist
+			// adapter. Both base URLs stay injectable through the same
+			// environment overrides the desktop uses, so an acceptance run can
+			// point the phone at a local fake without the real network.
+			appsync.ProviderGitHub: adaptergithub.New(adaptergithub.Options{
+				APIBase:  os.Getenv("NATCATTY_GITHUB_API_BASE"),
+				AuthBase: phoneGitHubAuthBase(),
+				ClientID: os.Getenv("NATCATTY_GITHUB_CLIENT_ID"),
+			}),
 			appsync.ProviderWebDAV: adapterwebdav.New(adapterwebdav.Options{}),
 			appsync.ProviderS3:     adapters3.New(adapters3.Options{}),
 		},
@@ -194,12 +218,108 @@ func newPhoneSync(ctx context.Context, database *store.Store, secrets *store.Sec
 	return &phoneSync{service: service}, nil
 }
 
-// Snapshot is the state the Settings page renders.
+// Snapshot is the state the Settings page renders. A failed GitHub
+// authorization must not leave the spent one-time code in the snapshot, and a
+// user cancel maps to the same retryable authorization problem as an expired
+// code, so the page can explain both with one sentence.
 func (p *phoneSync) Snapshot() appsync.Snapshot {
 	if p == nil || p.service == nil {
 		return appsync.Snapshot{}
 	}
-	return p.service.Snapshot()
+	snapshot := p.service.Snapshot()
+	p.authMu.Lock()
+	canceled := p.authCanceled
+	p.authMu.Unlock()
+	if !snapshot.Connected && snapshot.Status == appsync.StatusFailed {
+		snapshot.DeviceCode = appsync.DeviceCode{}
+		if canceled {
+			snapshot.Problem = appsync.ProblemAuthorization
+		}
+	}
+	return snapshot
+}
+
+// StartGitHubConnect switches the shared profile to GitHub Gist and starts the
+// device authorization on its own goroutine. The engine owns the RFC 8628
+// polling loop, so the phone supplies only this composition wiring and the
+// page. The access token goes to the system credential store through
+// appsync.Service.Connect and never enters the profile or a log line.
+func (p *phoneSync) StartGitHubConnect(password string) error {
+	if p == nil || p.service == nil {
+		return appsync.ErrNotConfigured
+	}
+	if password == "" {
+		return appsync.ErrPasswordRequired
+	}
+	p.authMu.Lock()
+	if p.authCancel != nil {
+		p.authMu.Unlock()
+		return appsync.ErrAlreadyInProgress
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	p.authGen++
+	gen := p.authGen
+	p.authCancel = cancel
+	p.authCanceled = false
+	p.authMu.Unlock()
+
+	go func() {
+		err := p.service.SetProvider(ctx, appsync.ProviderGitHub)
+		if err == nil {
+			err = p.service.SetPassword(password)
+		}
+		if err == nil {
+			err = p.service.Connect(ctx, password, nil)
+		}
+		p.authMu.Lock()
+		if p.authGen == gen {
+			p.authCancel = nil
+			if errors.Is(err, context.Canceled) {
+				p.authCanceled = true
+			}
+		}
+		p.authMu.Unlock()
+		cancel()
+	}()
+	return nil
+}
+
+// clearGitHubAuthorization abandons an in-flight device flow and its cancel
+// bookkeeping. It is called when the user connects another provider, so the
+// GitHub-specific reason cannot leak into that provider's failure surface.
+func (p *phoneSync) clearGitHubAuthorization() {
+	if p == nil {
+		return
+	}
+	p.authMu.Lock()
+	cancel := p.authCancel
+	p.authGen++
+	p.authCancel = nil
+	p.authCanceled = false
+	p.authMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// CancelGitHubConnect aborts an authorization that is in flight. The shared
+// engine's fail path records a problem; Snapshot reports it as the retryable
+// authorization state. The cancel is released here so a retry can start
+// before the abandoned goroutine finishes.
+func (p *phoneSync) CancelGitHubConnect() {
+	if p == nil {
+		return
+	}
+	p.authMu.Lock()
+	cancel := p.authCancel
+	if cancel != nil {
+		p.authCanceled = true
+		p.authCancel = nil
+	}
+	p.authMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // SetPassword keeps the master password for this process only.
@@ -224,6 +344,9 @@ func (p *phoneSync) ConnectWebDAV(ctx context.Context, password string,
 	if p == nil || p.service == nil {
 		return appsync.ErrNotConfigured
 	}
+	// A provider switch abandons any GitHub authorization state, so a later
+	// WebDAV problem is not reported as a GitHub sign-in problem.
+	p.clearGitHubAuthorization()
 	return p.service.ConnectWebDAV(ctx, password, settings, confirmInsecure)
 }
 
@@ -234,6 +357,7 @@ func (p *phoneSync) ConnectS3(ctx context.Context, password string,
 	if p == nil || p.service == nil {
 		return appsync.ErrNotConfigured
 	}
+	p.clearGitHubAuthorization()
 	return p.service.ConnectS3(ctx, password, settings, confirmInsecure)
 }
 
@@ -251,6 +375,7 @@ func (p *phoneSync) Disconnect(ctx context.Context) error {
 	if p == nil || p.service == nil {
 		return appsync.ErrNotConfigured
 	}
+	p.clearGitHubAuthorization()
 	return p.service.Disconnect(ctx)
 }
 
@@ -263,12 +388,28 @@ func (p *phoneSync) NotifyLocalChange() {
 	p.service.NotifyLocalChange()
 }
 
-// Stop ends the debounce timer and waits for a running sync to leave.
+// Stop ends the debounce timer, aborts an in-flight device authorization, and
+// waits for a running sync to leave.
 func (p *phoneSync) Stop() {
-	if p == nil || p.service == nil {
+	if p == nil {
+		return
+	}
+	p.CancelGitHubConnect()
+	if p.service == nil {
 		return
 	}
 	p.service.Stop()
+}
+
+// phoneGitHubAuthBase resolves the OAuth base the same way the desktop does,
+// without depending on the desktop composition root, which the mobile build
+// tags exclude: one API base override moves both endpoints, and an explicit
+// auth base takes precedence.
+func phoneGitHubAuthBase() string {
+	if auth := os.Getenv("NATCATTY_GITHUB_AUTH_BASE"); auth != "" {
+		return auth
+	}
+	return os.Getenv("NATCATTY_GITHUB_API_BASE")
 }
 
 // phoneSyncDeviceID is the stable identity a new profile records. The value is

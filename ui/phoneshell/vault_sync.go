@@ -19,9 +19,10 @@ import (
 // documents; tests provide a fake. No method exposes a token, a provider
 // credential, or the master password.
 //
-// The paged surface deliberately offers only the two providers a phone can
-// configure without a browser: WebDAV and S3-compatible storage. A phone
-// enters the endpoint and credentials on this page, so a portable settings
+// The paged surface offers the providers a phone can configure on its own:
+// WebDAV and S3-compatible storage take an endpoint and credentials typed on
+// this page, and GitHub Gist uses the shared RFC 8628 device authorization so
+// the user only enters a one-time code in a browser. A portable settings
 // document written here can reach a desktop that is configured for the same
 // account.
 type VaultSyncService interface {
@@ -30,6 +31,16 @@ type VaultSyncService interface {
 	SetAutoSync(ctx context.Context, enabled bool) error
 	ConnectWebDAV(ctx context.Context, password string, settings appsync.WebDAVSettings, confirmInsecure bool) error
 	ConnectS3(ctx context.Context, password string, settings appsync.S3Settings, confirmInsecure bool) error
+	// StartGitHubConnect switches the profile to GitHub Gist and starts the
+	// shared device authorization on its own goroutine. The page follows
+	// Snapshot for the one-time user code, the verification address, and the
+	// outcome, so the frame that handled the tap never waits on the network.
+	// The access token travels only to the system credential store.
+	StartGitHubConnect(password string) error
+	// CancelGitHubConnect aborts an authorization that is in flight. The
+	// engine returns to a retryable failed state with a problem the page can
+	// explain.
+	CancelGitHubConnect()
 	SyncNow()
 	Disconnect(ctx context.Context) error
 }
@@ -87,7 +98,7 @@ func (p *settingsPages) vaultSync(c *ui.Context) {
 		p.vaultSyncConnected(c, service, snapshot)
 		return
 	}
-	p.vaultSyncSetup(c, service)
+	p.vaultSyncSetup(c, service, snapshot)
 }
 
 // vaultSyncStatus renders the engine's state, the actionable problem, the
@@ -120,14 +131,24 @@ func (p *settingsPages) vaultSyncStatus(c *ui.Context, snapshot appsync.Snapshot
 
 // vaultSyncSetup is the first-run form. The provider choice switches which
 // endpoint fields are shown; the master password is shared because it encrypts
-// the cloud copy for either provider.
-func (p *settingsPages) vaultSyncSetup(c *ui.Context, service VaultSyncService) {
+// the cloud copy for every provider. While GitHub is authorizing, the form is
+// replaced by the device code and a Cancel action.
+func (p *settingsPages) vaultSyncSetup(c *ui.Context, service VaultSyncService, snapshot appsync.Snapshot) {
 	f := &p.syncForm
 	if !f.loaded {
 		f.provider = appsync.ProviderWebDAV
 		f.loaded = true
 	}
+	if f.provider == appsync.ProviderGitHub && snapshot.Status == appsync.StatusAuthorizing {
+		p.vaultSyncDeviceCode(c, service, snapshot)
+		return
+	}
 	p.choices(c, "Sync provider", []choice{
+		pick("GitHub Gist", f.provider == appsync.ProviderGitHub, func() {
+			f.provider = appsync.ProviderGitHub
+			f.pendingInsecure = false
+			f.problem = ""
+		}),
 		pick("WebDAV", f.provider == appsync.ProviderWebDAV, func() {
 			f.provider = appsync.ProviderWebDAV
 			f.pendingInsecure = false
@@ -143,9 +164,15 @@ func (p *settingsPages) vaultSyncSetup(c *ui.Context, service VaultSyncService) 
 	// left the user, and a phone's short viewport would otherwise push it
 	// below the fold.
 	p.vaultSyncInsecurePrompt(c, service)
-	if f.provider == appsync.ProviderS3 {
+	switch f.provider {
+	case appsync.ProviderGitHub:
+		// GitHub has no endpoint fields. Selecting it and tapping Connect
+		// starts the device code; the token is stored by the engine.
+		kit.Notice(c, icons.Info, c.Theme().TextMuted,
+			"Connect shows a one-time code to enter at github.com. The token stays in this phone's credential store.", nil)
+	case appsync.ProviderS3:
 		p.vaultSyncS3Form(c)
-	} else {
+	default:
 		p.vaultSyncWebDAVForm(c)
 	}
 	kit.FormRow(c, "Master password", func() {
@@ -154,6 +181,30 @@ func (p *settingsPages) vaultSyncSetup(c *ui.Context, service VaultSyncService) 
 	})
 	if kit.PrimaryButton(c, "", "Connect").Clicked() {
 		p.connectVaultSync(service)
+	}
+}
+
+// vaultSyncDeviceCode shows the one-time code and the address the user opens
+// while the shared engine polls GitHub. Only the public user code and the
+// verification address are rendered; the device code and any access token
+// never reach the page.
+func (p *settingsPages) vaultSyncDeviceCode(c *ui.Context, service VaultSyncService, snapshot appsync.Snapshot) {
+	code := snapshot.DeviceCode
+	if code.UserCode == "" {
+		return
+	}
+	t := c.Theme()
+	ui.Column(c).FillWidth().Gap(4).Padding(12, 14).Background(t.Surface).Radius(12).Children(func() {
+		ui.Text(c, "Enter this code on GitHub").FontSize(13).TextColor(t.TextMuted)
+		ui.Text(c, code.UserCode).FontSize(24).FontWeight(700).TextColor(t.Text)
+		if code.VerificationURI != "" {
+			ui.Text(c, "Open "+code.VerificationURI+" and enter the code above.").
+				FontSize(12).TextColor(t.TextMuted)
+		}
+	})
+	if kit.SecondaryButton(c, "", "Cancel sign-in").Clicked() {
+		service.CancelGitHubConnect()
+		p.syncForm.problem = ""
 	}
 }
 
@@ -221,6 +272,17 @@ func (p *settingsPages) connectVaultSync(service VaultSyncService) {
 	f := &p.syncForm
 	if f.master == "" {
 		f.problem = "Enter the master password."
+		return
+	}
+	switch f.provider {
+	case appsync.ProviderGitHub:
+		// The shared engine keeps the password for this run and polls GitHub.
+		// Snapshot reports the code and then the outcome.
+		if err := service.StartGitHubConnect(f.master); err != nil {
+			f.problem = vaultSyncActionProblem(err)
+			return
+		}
+		f.problem = ""
 		return
 	}
 	if err := service.SetPassword(f.master); err != nil {
@@ -351,6 +413,9 @@ func (p *settingsPages) vaultSyncConnected(c *ui.Context, service VaultSyncServi
 // provider message or an error string.
 func vaultSyncStateText(snapshot appsync.Snapshot) string {
 	if !snapshot.Connected {
+		if snapshot.Status == appsync.StatusFailed {
+			return "The provider connection did not finish."
+		}
 		return "Vault sync is not configured."
 	}
 	switch snapshot.Status {
@@ -416,6 +481,8 @@ func vaultSyncProblemText(problem appsync.Problem) string {
 		return "The bucket lives in a different region."
 	case appsync.ProblemRateLimited:
 		return "The provider is rate limiting this device."
+	case appsync.ProblemAuthorization:
+		return "GitHub sign-in did not finish. Try again."
 	case appsync.ProblemCorrupt:
 		return "The cloud copy is damaged."
 	case appsync.ProblemConflict:
@@ -449,6 +516,9 @@ func vaultSyncActionProblem(err error) string {
 		return "The provider could not be reached."
 	case errors.Is(err, appsync.ErrUnauthorized):
 		return "The provider rejected the credential."
+	case errors.Is(err, appsync.ErrAuthorizationDenied), errors.Is(err, appsync.ErrDeviceCodeExpired),
+		errors.Is(err, appsync.ErrAuthorizationTimeout):
+		return "GitHub sign-in did not finish. Try again."
 	case errors.Is(err, appsync.ErrForbidden):
 		return "The provider refused access."
 	case errors.Is(err, appsync.ErrWrongRegion):

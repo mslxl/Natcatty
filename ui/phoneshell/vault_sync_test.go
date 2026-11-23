@@ -2,6 +2,7 @@ package phoneshell
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	appsync "github.com/mslxl/natcatty/application/sync"
@@ -29,6 +30,14 @@ type fakeVaultSync struct {
 	autoSync        bool
 	disconnectCalls int
 	disconnectErr   error
+
+	// GitHub device-flow state. accessToken is a synthetic credential the page
+	// must never render; it stands in for the token the real engine keeps in
+	// the system credential store.
+	githubStarts   int
+	githubPassword string
+	githubCancels  int
+	accessToken    string
 }
 
 func (f *fakeVaultSync) Snapshot() appsync.Snapshot { return f.snapshot }
@@ -78,6 +87,30 @@ func (f *fakeVaultSync) ConnectS3(_ context.Context, password string,
 }
 
 func (f *fakeVaultSync) SyncNow() { f.syncNow++ }
+
+// StartGitHubConnect models the shared engine: it moves to the authorizing
+// state and publishes the public user code and verification address. The test
+// advances to the outcome by editing snapshot, as the real engine does when
+// its poll succeeds.
+func (f *fakeVaultSync) StartGitHubConnect(password string) error {
+	f.githubStarts++
+	f.githubPassword = password
+	f.snapshot.Provider = appsync.ProviderGitHub
+	f.snapshot.Status = appsync.StatusAuthorizing
+	f.snapshot.DeviceCode = appsync.DeviceCode{
+		DeviceCode:      "device-code-that-must-not-render",
+		UserCode:        "ABCD-1234",
+		VerificationURI: "https://github.com/login/device",
+	}
+	return nil
+}
+
+func (f *fakeVaultSync) CancelGitHubConnect() {
+	f.githubCancels++
+	f.snapshot.DeviceCode = appsync.DeviceCode{}
+	f.snapshot.Status = appsync.StatusFailed
+	f.snapshot.Problem = appsync.ProblemAuthorization
+}
 
 func (f *fakeVaultSync) Disconnect(context.Context) error {
 	f.disconnectCalls++
@@ -320,6 +353,118 @@ func TestVaultSyncPageRunsAndDisconnects(t *testing.T) {
 	}
 	if !tt.HasText("Vault sync is not configured.") {
 		t.Fatalf("page did not return to the setup state; texts: %v", tt.Texts())
+	}
+}
+
+// TestVaultSyncPageConnectsGitHubByDeviceCode drives ticket 43's flow: the
+// page offers GitHub Gist, starts the shared device authorization, shows the
+// public user code and verification address, and reports the connected state
+// once the engine's poll succeeds. The device code and any access token never
+// appear in the frame.
+func TestVaultSyncPageConnectsGitHubByDeviceCode(t *testing.T) {
+	service := &fakeVaultSync{accessToken: "gho_phone_secret_token"}
+	shell := New(WithSettings(newFakeSettings()), WithVaultSync(service))
+	tt := openSectionPage(t, shell, Settings, "Vault sync")
+
+	if err := tt.Click("Sync provider: GitHub Gist"); err != nil {
+		t.Fatalf("choose GitHub Gist: %v", err)
+	}
+	if err := tt.Click("Master password"); err != nil {
+		t.Fatalf("focus Master password: %v", err)
+	}
+	tt.Type("correct horse battery staple")
+	tt.Frame()
+	if err := tt.Click("Connect"); err != nil {
+		t.Fatalf("click Connect: %v", err)
+	}
+	if service.githubStarts != 1 {
+		t.Fatalf("StartGitHubConnect calls = %d, want 1", service.githubStarts)
+	}
+	if service.githubPassword != "correct horse battery staple" {
+		t.Fatal("the typed master password did not reach the service")
+	}
+
+	// The engine published the one-time code mid-authorization.
+	tt.Frame()
+	if !tt.HasText("ABCD-1234") {
+		t.Fatalf("page does not show the device user code; texts: %v", tt.Texts())
+	}
+	if !tt.HasText("https://github.com/login/device") {
+		t.Fatalf("page does not show the verification address; texts: %v", tt.Texts())
+	}
+
+	// The poll succeeds: the engine connects and clears the one-time code.
+	service.snapshot = appsync.Snapshot{
+		Connected: true, Provider: appsync.ProviderGitHub,
+		Login: "octocat", Status: appsync.StatusIdle, HasPassword: true,
+	}
+	tt.Frame()
+	if !tt.HasText("Sync now") {
+		t.Fatalf("page does not show the connected state after the poll; texts: %v", tt.Texts())
+	}
+	if !tt.HasText("GitHub") {
+		t.Fatalf("page does not name the GitHub provider; texts: %v", tt.Texts())
+	}
+	for _, text := range tt.Texts() {
+		if strings.Contains(text, "device-code-that-must-not-render") ||
+			strings.Contains(text, service.accessToken) {
+			t.Fatalf("the page rendered a credential: %q", text)
+		}
+	}
+}
+
+// TestVaultSyncPageGitHubCancelIsRetryable checks the cancel and expiry
+// outcomes: both return the setup form with a clear reason and the Connect
+// action still available, and the expired code is gone.
+func TestVaultSyncPageGitHubCancelIsRetryable(t *testing.T) {
+	service := &fakeVaultSync{}
+	shell := New(WithSettings(newFakeSettings()), WithVaultSync(service))
+	tt := openSectionPage(t, shell, Settings, "Vault sync")
+
+	if err := tt.Click("Sync provider: GitHub Gist"); err != nil {
+		t.Fatalf("choose GitHub Gist: %v", err)
+	}
+	if err := tt.Click("Master password"); err != nil {
+		t.Fatalf("focus Master password: %v", err)
+	}
+	tt.Type("master")
+	tt.Frame()
+	if err := tt.Click("Connect"); err != nil {
+		t.Fatalf("click Connect: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("ABCD-1234") {
+		t.Fatalf("page does not show the device code before cancel; texts: %v", tt.Texts())
+	}
+	if err := tt.Click("Cancel sign-in"); err != nil {
+		t.Fatalf("click Cancel sign-in: %v", err)
+	}
+	if service.githubCancels != 1 {
+		t.Fatalf("CancelGitHubConnect calls = %d, want 1", service.githubCancels)
+	}
+	tt.Frame()
+	if !tt.HasText("GitHub sign-in did not finish. Try again.") {
+		t.Fatalf("page does not explain the cancelled sign-in; texts: %v", tt.Texts())
+	}
+	if tt.HasText("ABCD-1234") {
+		t.Fatal("the cancelled code is still on screen")
+	}
+	if !tt.HasText("Connect") {
+		t.Fatal("the page does not offer a retry after cancel")
+	}
+
+	// An expired code leaves the same retryable state without a Cancel action
+	// because there is no code left to cancel.
+	service.snapshot = appsync.Snapshot{
+		Provider: appsync.ProviderGitHub, Status: appsync.StatusFailed,
+		Problem: appsync.ProblemAuthorization,
+	}
+	tt.Frame()
+	if !tt.HasText("GitHub sign-in did not finish. Try again.") {
+		t.Fatalf("page does not explain the expired code; texts: %v", tt.Texts())
+	}
+	if !tt.HasText("Connect") {
+		t.Fatal("the page does not offer a retry after expiry")
 	}
 }
 
