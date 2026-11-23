@@ -254,6 +254,65 @@ func TestQuickConnectTelnetHidesProtocolSpecificControls(t *testing.T) {
 	}
 }
 
+// TestQuickConnectFieldsShowALabelAboveTheirInputs guards the visible labeling
+// of every text field. A TextInput Label only names the control for assistive
+// technology; it draws nothing, which once left the address, port, and
+// credentials as unlabeled boxes. Each field must instead show a drawn label
+// above its input, and clicking that label must focus the input below it.
+func TestQuickConnectFieldsShowALabelAboveTheirInputs(t *testing.T) {
+	cases := []struct {
+		name   string
+		labels []func(locales.Messages) string
+	}{
+		{"ssh", []func(locales.Messages) string{
+			locales.Messages.QuickConnectAddress,
+			locales.Messages.QuickConnectPort,
+			locales.Messages.QuickConnectUsername,
+			locales.Messages.QuickConnectPassword,
+		}},
+		{"vnc", []func(locales.Messages) string{
+			locales.Messages.QuickConnectAddress,
+			locales.Messages.VaultHostVNCDisplay,
+			locales.Messages.QuickConnectUsername,
+			locales.Messages.VaultHostVNCPassword,
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := locales.In("en")
+			graph := newTestGraph(t)
+			tt := ui.NewTester(View(graph.state), 1100, 720)
+			tt.SetLocale("en")
+			tt.Frame()
+			graph.state.OpenQuickConnect()
+			if tc.name == "vnc" {
+				graph.state.SetQuickConnectProtocol(domainvault.ProtocolVNC)
+			}
+			tt.Frame()
+
+			for _, labelOf := range tc.labels {
+				label := labelOf(m)
+				if err := tt.Click(label); err != nil {
+					t.Fatalf("click %q: %v", label, err)
+				}
+				tt.Frame()
+				labelRect, ok := tt.Find(label)
+				if !ok {
+					t.Fatalf("the form does not draw the label %q", label)
+				}
+				caret, caretOK := tt.TextCaret()
+				if !caretOK {
+					t.Fatalf("clicking %q did not focus an input", label)
+				}
+				if labelRect.Y+labelRect.H >= caret.Y {
+					t.Fatalf("the label %q is not above its input: label %+v, caret %+v",
+						label, labelRect, caret)
+				}
+			}
+		})
+	}
+}
+
 // waitForQuickConnectFrame polls an observable condition with a hard deadline;
 // the poll interval is a cadence, not a synchronization assumption.
 func waitForQuickConnectFrame(t *testing.T, tt *ui.Tester, what string, ready func() bool) {

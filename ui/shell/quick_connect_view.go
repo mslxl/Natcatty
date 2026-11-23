@@ -107,30 +107,40 @@ func quickConnectFields(c *ui.Context, s *state.State, m locales.Messages, t *ui
 	if form.Protocol == domainvault.ProtocolSSH {
 		transportField(c, s, m)
 	}
-	ui.TextInput(c.Key("quick-connect-address"), &form.Hostname).
-		Label(m.QuickConnectAddress()).Placeholder(m.QuickConnectAddressPlaceholder()).
-		FillWidth().AutoFocus()
+	// Every field carries its label in a FormRow, the same as the New Host
+	// editor: a TextInput label alone is not drawn, which left the address,
+	// port, and credentials as unlabeled boxes.
+	kit.FormRow(c, m.QuickConnectAddress(), func() {
+		ui.TextInput(c.Key("quick-connect-address"), &form.Hostname).
+			Placeholder(m.QuickConnectAddressPlaceholder()).FillWidth().AutoFocus()
+	}).FillWidth()
 	if form.Protocol == domainvault.ProtocolVNC {
 		vncEndpointFields(c, s, m)
 	} else {
-		ui.TextInput(c.Key("quick-connect-port"), &form.Port).
-			Label(m.QuickConnectPort()).FillWidth()
+		kit.FormRow(c, m.QuickConnectPort(), func() {
+			ui.TextInput(c.Key("quick-connect-port"), &form.Port).FillWidth()
+		}).FillWidth()
 	}
 	switch form.Protocol {
 	case domainvault.ProtocolSSH:
-		ui.TextInput(c.Key("quick-connect-username"), &form.Username).
-			Label(m.QuickConnectUsername()).FillWidth()
-		ui.TextInput(c.Key("quick-connect-password"), &form.Password).
-			Label(m.QuickConnectPassword()).Password().FillWidth()
+		kit.FormRow(c, m.QuickConnectUsername(), func() {
+			ui.TextInput(c.Key("quick-connect-username"), &form.Username).FillWidth()
+		}).FillWidth()
+		kit.FormRow(c, m.QuickConnectPassword(), func() {
+			ui.TextInput(c.Key("quick-connect-password"), &form.Password).Password().FillWidth()
+		}).FillWidth()
 		if form.Transport == domainvault.TransportPlain {
 			ui.Checkbox(c.Key("quick-connect-network-device"), &form.NetworkDevice,
 				m.VaultHostNetworkDevice())
 		}
 	case domainvault.ProtocolVNC:
-		ui.TextInput(c.Key("quick-connect-username"), &form.Username).
-			Label(m.QuickConnectUsername()).FillWidth()
-		ui.TextInput(c.Key("quick-connect-vnc-password"), &form.VNCPassword).
-			Label(m.VaultHostVNCPassword()).Password().FillWidth()
+		kit.FormRow(c, m.QuickConnectUsername(), func() {
+			ui.TextInput(c.Key("quick-connect-username"), &form.Username).FillWidth()
+		}).FillWidth()
+		kit.FormRow(c, m.VaultHostVNCPassword(), func() {
+			ui.TextInput(c.Key("quick-connect-vnc-password"), &form.VNCPassword).
+				Password().FillWidth()
+		}).FillWidth()
 	}
 
 	if problem := quickConnectProblem(m, s.QuickConnectIssue()); problem != "" {
@@ -211,12 +221,14 @@ func vncEndpointFields(c *ui.Context, s *state.State, m locales.Messages) {
 	}
 
 	if domainvault.NormalizeDisplayMode(form.VNCMode) == domainvault.VNCPort {
-		ui.TextInput(c.Key("quick-connect-vnc-port"), &form.Port).
-			Label(m.QuickConnectPort()).FillWidth()
+		kit.FormRow(c, m.QuickConnectPort(), func() {
+			ui.TextInput(c.Key("quick-connect-vnc-port"), &form.Port).FillWidth()
+		}).FillWidth()
 		return
 	}
-	ui.TextInput(c.Key("quick-connect-vnc-display"), &form.VNCDisplay).
-		Label(m.VaultHostVNCDisplay()).FillWidth()
+	kit.FormRow(c, m.VaultHostVNCDisplay(), func() {
+		ui.TextInput(c.Key("quick-connect-vnc-display"), &form.VNCDisplay).FillWidth()
+	}).FillWidth()
 }
 
 // quickConnectOptionLabel returns the label for current, or the first label
