@@ -225,7 +225,13 @@ func New(opts ...Option) *Shell {
 	s.hosts.details = func(host domainvault.Host) {
 		s.sections[Hosts].router.Push("/host/" + string(host.ID))
 	}
-	s.hosts.created = s.finishCreatedHost
+	// The full editor binds the same shared form state as the desktop. It is
+	// built after the options so both the Host writer and the Vault's Key and
+	// Identity lists are known.
+	s.hosts.editor = newHostEditor(s.hosts, s.hosts.create, s.vault.store)
+	s.hosts.newHost = s.beginNewHostEditor
+	s.hosts.editHost = s.beginHostEdit
+	s.hosts.saveDone = s.finishHostEditorSave
 	// The Vault's Hosts family reads the Hosts tab's list and detail pages.
 	// Only the router differs: the Vault section owns its own stack.
 	s.vault.hosts = s.hosts
@@ -316,11 +322,16 @@ func (s *Shell) newSection(i Section) *section {
 	case Hosts:
 		sec.rootDraw = s.hosts.drawRoot
 		sec.route = func(c *ui.Context, r *ui.Route) bool {
-			// The fixed path is tested before the {id} route, which would
-			// otherwise read "new" as a Host identity.
+			// The fixed paths are tested before the {id} route, which would
+			// otherwise read "new" or "edit" as part of the Host identity.
 			if r.Match(createHostPath) {
 				r.Title("New Host")
-				s.hosts.drawCreate(c, s.cancelCreateHost)
+				s.hosts.drawEditor(c, s.cancelHostEditor)
+				return true
+			}
+			if r.Match("/host/{id}/edit") {
+				r.Title("Edit Host")
+				s.hosts.drawEditor(c, s.cancelHostEditor)
 				return true
 			}
 			if !r.Match("/host/{id}") {

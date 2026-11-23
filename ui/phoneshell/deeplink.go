@@ -3,8 +3,6 @@ package phoneshell
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strconv"
 	"strings"
 
 	launch "github.com/mslxl/natcatty/domain/model/launch"
@@ -76,59 +74,132 @@ func (s *Shell) applyDeepLink(raw string) error {
 	}
 	s.deepLinkProblem = ""
 
-	if host, ok := domainvault.MatchHost(s.hosts.hosts, target); ok {
-		s.openOrSelectHost(host)
+	if host, ok := s.hosts.matchEffectiveHost(target); ok {
+		// A link names an existing endpoint: open that record in the editor.
+		// Saving is the explicit step; connecting only follows a second tap.
+		s.beginDeepLinkHostEdit(host)
 		return nil
 	}
 	s.promptToCreateHost(target)
 	return nil
 }
 
-// openOrSelectHost is the link's success path. A Host that already has a Tab
-// is selected, so a repeated link never stacks a second Session on the same
-// endpoint; otherwise the Host is opened as a new Tab. Either way the
-// lifecycle rule hibernates what is no longer visible and never ends it.
-func (s *Shell) openOrSelectHost(host domainvault.Host) {
-	if id, ok := s.sessions.tabForHost(host.ID); ok {
-		s.Select(Sessions)
-		route := "/session/" + id
-		if s.sections[Sessions].router.Path() != route {
-			s.sections[Sessions].router.Push(route)
-		}
-		return
+// matchEffectiveHost finds the one saved Host a link names, using the same
+// effective connection path a Session would use. A Host that inherits its
+// non-default port or username from a Host Group therefore matches the link
+// that names that effective endpoint, not only its raw record.
+func (h *hostPages) matchEffectiveHost(target launch.Target) (domainvault.Host, bool) {
+	effective := make([]domainvault.Host, 0, len(h.hosts))
+	for _, host := range h.hosts {
+		effective = append(effective, h.effectiveHost(host))
 	}
-	s.openHost(host)
+	matched, ok := domainvault.MatchHost(effective, target)
+	if !ok {
+		return domainvault.Host{}, false
+	}
+	for _, host := range h.hosts {
+		if host.ID == matched.ID {
+			return host, true
+		}
+	}
+	return domainvault.Host{}, false
 }
 
 // promptToCreateHost is the link's unmatched path: an ssh:// link names an
-// endpoint the Vault does not have, so the Hosts section asks for a Host with
-// the link's user, host, and port already filled in.
+// endpoint the Vault does not have, so the Hosts section opens the editor
+// prefilled with the link's user, host, and port. Here Save and connect leads,
+// because opening the link's address is what the user asked for.
 func (s *Shell) promptToCreateHost(target launch.Target) {
-	s.hosts.form = formFromHost(domainvault.DraftHost(target))
-	s.hosts.formProblem = ""
-	s.Select(Hosts)
-	router := s.sections[Hosts].router
-	if router.Path() == createHostPath {
-		router.Replace(createHostPath)
+	editor := s.hosts.editor
+	if editor == nil {
+		s.deepLinkProblem = "This build cannot open the Host editor."
 		return
 	}
-	router.Push(createHostPath)
+	draft := domainvault.DraftHost(target)
+	editor.beginCreate(&draft, true)
+	s.Select(Hosts)
+	pushHostEditorRoute(s, createHostPath)
 }
 
-// finishCreatedHost moves from the create form to the new Host's page, where
-// Connect is one tap away. The Host is added to the loaded list first, so the
-// page and a repeat link both find it without a reload.
-func (s *Shell) finishCreatedHost(host domainvault.Host) {
-	s.hosts.remember(host)
-	s.hosts.form = nil
-	s.hosts.formProblem = ""
-	s.sections[Hosts].router.Replace("/host/" + string(host.ID))
+// pushHostEditorRoute never stacks editors. A second link, or a link that
+// arrives while an editor is open, replaces that route, so Cancel returns to
+// the page the editor was opened from rather than to a draft it has already
+// discarded.
+func pushHostEditorRoute(s *Shell, route string) {
+	router := s.sections[Hosts].router
+	if route == router.Path() || isHostEditorPath(router.Path()) {
+		router.Replace(route)
+		return
+	}
+	router.Push(route)
 }
 
-// cancelCreateHost leaves the create form without changing the Vault.
-func (s *Shell) cancelCreateHost() {
-	s.hosts.form = nil
-	s.hosts.formProblem = ""
+func isHostEditorPath(path string) bool {
+	return path == createHostPath || strings.HasSuffix(path, "/edit")
+}
+
+// beginNewHostEditor opens the manual create form. Saving leads; connecting is
+// the secondary action.
+func (s *Shell) beginNewHostEditor() {
+	editor := s.hosts.editor
+	if editor == nil {
+		return
+	}
+	editor.beginCreate(nil, false)
+	s.Select(Hosts)
+	pushHostEditorRoute(s, createHostPath)
+}
+
+// beginHostEdit opens one saved record from a detail page.
+func (s *Shell) beginHostEdit(host domainvault.Host) {
+	s.openHostEditor(host, false)
+}
+
+// beginDeepLinkHostEdit opens the record a deep link matched.
+func (s *Shell) beginDeepLinkHostEdit(host domainvault.Host) {
+	s.openHostEditor(host, true)
+}
+
+func (s *Shell) openHostEditor(host domainvault.Host, fromLink bool) {
+	editor := s.hosts.editor
+	if editor == nil || !editor.beginEdit(host, fromLink) {
+		if fromLink {
+			s.deepLinkProblem = "This Host is no longer in the Vault, so there is nothing to edit."
+		} else {
+			s.hosts.detailProblem = "This build cannot edit the Host."
+		}
+		return
+	}
+	s.Select(Hosts)
+	route := "/host/" + string(host.ID) + "/edit"
+	pushHostEditorRoute(s, route)
+}
+
+// finishHostEditorSave moves off the editor after a save. A refresh failure
+// closes the editor and returns to the list without connecting; a successful
+// save goes to the new Host's page, or to its Session when the user chose Save
+// and connect.
+func (s *Shell) finishHostEditorSave(host domainvault.Host, connect, refreshFailed bool) {
+	router := s.sections[Hosts].router
+	if refreshFailed {
+		router.Replace("/")
+		return
+	}
+	if connect {
+		router.Replace("/")
+		s.openHost(host)
+		return
+	}
+	router.Replace("/host/" + string(host.ID))
+}
+
+// cancelHostEditor leaves the editor without changing the Vault. The shared
+// state drops the draft, including any typed password or authenticator.
+func (s *Shell) cancelHostEditor() {
+	if s.hosts.editor != nil {
+		s.hosts.editor.state.CancelEdit()
+	}
+	s.hosts.detailProblem = ""
 	s.sections[Hosts].router.Back()
 }
 
@@ -141,76 +212,4 @@ func (s *Shell) reportDeepLinkProblem(err error) {
 		return
 	}
 	s.deepLinkProblem = "Natcatty could not open that link. Check the address and port, then try again."
-}
-
-// hostForm is the editable state of the create form. It is a form, not a Host:
-// the draft built on submit is what the Vault validates and stores.
-type hostForm struct {
-	label    string
-	hostname string
-	port     string
-	username string
-}
-
-// formFromHost prefills the form from an unsaved Host built from the link.
-func formFromHost(host domainvault.Host) *hostForm {
-	port := ""
-	if host.Port > 0 {
-		port = strconv.Itoa(host.Port)
-	}
-	return &hostForm{
-		label:    host.Label,
-		hostname: host.Hostname,
-		port:     port,
-		username: host.Username,
-	}
-}
-
-// endpoint is the address the form names, for the label that explains which
-// link asked for a new Host.
-func (f *hostForm) endpoint() string {
-	return hostEndpoint(f.host())
-}
-
-// host is the form's current values as an unsaved Host, used for the summary
-// and as the source of the draft.
-func (f *hostForm) host() domainvault.Host {
-	port, _ := strconv.Atoi(strings.TrimSpace(f.port))
-	return domainvault.Host{
-		Label:    strings.TrimSpace(f.label),
-		Hostname: strings.TrimSpace(f.hostname),
-		Port:     port,
-		Username: strings.TrimSpace(f.username),
-		Protocol: domainvault.ProtocolSSH,
-	}
-}
-
-// draft validates the form's values and builds the creation draft. Errors are
-// the form's inline text: they name the field to fix.
-func (f *hostForm) draft() (domainvault.Draft, error) {
-	host := f.host()
-	if host.Hostname == "" {
-		return domainvault.Draft{}, errors.New("Enter the Host's address.")
-	}
-	if strings.TrimSpace(f.port) != "" && (host.Port < 1 || host.Port > 65535) {
-		return domainvault.Draft{}, errors.New("Enter a port between 1 and 65535.")
-	}
-	return domainvault.Draft{
-		Label:    host.Label,
-		Hostname: host.Hostname,
-		Port:     host.Port,
-		Username: host.Username,
-		Protocol: domainvault.ProtocolSSH,
-	}, nil
-}
-
-// createProblem turns a failed creation into an actionable sentence. It keeps
-// the Vault's reason so a duplicate endpoint reads differently from a storage
-// failure, and names the user's next step.
-func createProblem(err error) string {
-	reason := strings.TrimSpace(err.Error())
-	if reason == "" {
-		reason = "the Vault refused the Host"
-	}
-	return fmt.Sprintf("Could not create the Host: %s. Check the address and port, then try again.", reason)
 }
