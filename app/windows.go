@@ -107,6 +107,9 @@ type hostWindow interface {
 	Minimize()
 	ToggleMaximize()
 	IsMaximized() bool
+	// ToggleFullScreen enters or leaves native fullscreen, for the VNC
+	// viewer's chrome action.
+	ToggleFullScreen()
 }
 
 // windowHost creates native windows. The real host uses MyGo; tests record
@@ -278,6 +281,21 @@ type windowManager struct {
 	// accelerators at window scope, and the dispatcher omits any chord a
 	// terminal owns so terminal copy and SIGINT keep precedence.
 	shortcuts []keyShortcut
+	// keyboardGrab reports whether the main window's focused pane has taken
+	// every chord for the guest. detachedKeyboardGrab does the same for one
+	// detached Tab's window. When either is true that window registers no
+	// shortcuts at all, so MyGo delivers the keys to the pane instead of an
+	// accelerator; other windows keep their accelerators.
+	keyboardGrab         func() bool
+	detachedKeyboardGrab func(model.TabID) bool
+	// dropdownKeyboardGrab reports whether the Pane the Dropdown Panel renders
+	// has grabbed the keyboard: the Quake workspace's active Pane in own mode,
+	// or the main Workspace's active Pane in follow and top-down modes.
+	dropdownKeyboardGrab func() bool
+	// focusedWindow resolves the window a viewer action (such as fullscreen)
+	// targets when it runs, so a detached VNC Pane drives its own window
+	// rather than the main one. Nil reads MyGo's focused window.
+	focusedWindow func() hostWindow
 	// opacity is the live Appearance setting applied to every window.
 	opacity float64
 	// theme and icon read the live Appearance settings. Both are resolved per
@@ -388,6 +406,47 @@ func (m *windowManager) SetAccelerators(bindings []acceleratorBinding) {
 // accelerators. It is called whenever the bindings are rebuilt.
 func (m *windowManager) SetShortcuts(shortcuts []keyShortcut) {
 	m.shortcuts = shortcuts
+}
+
+// SetKeyboardGrabProvider installs the predicates that report a focused pane
+// has grabbed the keyboard: main for the main window, detached for a detached
+// Tab's window. They are read on every frame, so a grab toggled in the chrome
+// takes effect without rebuilding any table, and one window's grab never
+// silences another window's accelerators.
+func (m *windowManager) SetKeyboardGrabProvider(main func() bool, detached func(model.TabID) bool) {
+	m.keyboardGrab = main
+	m.detachedKeyboardGrab = detached
+}
+
+// SetDropdownKeyboardGrabProvider installs the accelerator gate for the
+// Dropdown Panel's routed content. The Panel renders either the Quake
+// workspace or the main Workspace, and each mode resolves its own active Pane.
+func (m *windowManager) SetDropdownKeyboardGrabProvider(fn func() bool) {
+	m.dropdownKeyboardGrab = fn
+}
+
+// ToggleFocusedFullScreen toggles the native fullscreen state of the window
+// hosting the action at the moment it runs. MyGo resolves the focused window,
+// so the same VNC Surface toggles the main window while it is there and its
+// detached window after it moves. The Dropdown Panel never offers this action.
+// focusedWindow is the injectable seam for offscreen tests.
+func (m *windowManager) ToggleFocusedFullScreen() {
+	window := m.focusedWindowValue()
+	if window != nil && !window.IsDestroyed() {
+		window.ToggleFullScreen()
+	}
+}
+
+// focusedWindowValue resolves the window an action targets: the injected
+// provider first, then MyGo's focused window.
+func (m *windowManager) focusedWindowValue() hostWindow {
+	if m.focusedWindow != nil {
+		return m.focusedWindow()
+	}
+	if focused := mygo.FocusedWindow(); focused != nil {
+		return mygoHostWindow{Window: focused}
+	}
+	return nil
 }
 
 // SetOpacity applies the Appearance opacity to every open window and to
@@ -608,8 +667,16 @@ func (m *windowManager) withTheme(content func(*ui.Context)) func(*ui.Context) {
 // withAccelerators binds the menu shortcuts at the window's root context,
 // before the App Lock gate or the content builds anything. MyGo then handles
 // them as window shortcuts, ahead of the focused terminal's input handler.
-func (m *windowManager) withAccelerators(content func(*ui.Context)) func(*ui.Context) {
+// grab is that window's keyboard-grab predicate; nil means it never grabs.
+func (m *windowManager) withAccelerators(grab func() bool, content func(*ui.Context)) func(*ui.Context) {
 	return func(c *ui.Context) {
+		if grab != nil && grab() {
+			// The guest owns every chord in this window. Registering even a
+			// no-op shortcut would claim the key before the focused pane could
+			// send it.
+			content(c)
+			return
+		}
 		bindAccelerators(c, m.accelerators)
 		bindShortcuts(c, m.shortcuts)
 		content(c)
@@ -660,7 +727,10 @@ func (m *windowManager) wrapChrome(content func(*ui.Context)) func(*ui.Context) 
 // behind the same shared App Lock gate as every other window.
 func (m *windowManager) detachedContent(tabID model.TabID) func(*ui.Context) {
 	window := func() hostWindow { return m.detached[tabID] }
-	content := m.withTheme(m.withAccelerators(withFrame(titlebar.Popup, window, m.wrap(shell.DetachedView(m.state, tabID)))))
+	grab := func() bool {
+		return m.detachedKeyboardGrab != nil && m.detachedKeyboardGrab(tabID)
+	}
+	content := m.withTheme(m.withAccelerators(grab, withFrame(titlebar.Popup, window, m.wrap(shell.DetachedView(m.state, tabID)))))
 	return m.withDetachedTitle(tabID, content)
 }
 
@@ -707,7 +777,7 @@ func (m *windowManager) OpenMain() hostWindow {
 	// container, so MyGo registers window shortcuts. Inside the gate they
 	// would become element-scoped and fail from the Vault view with no
 	// terminal focus.
-	content := m.withTheme(m.withAccelerators(gated))
+	content := m.withTheme(m.withAccelerators(m.keyboardGrab, gated))
 	window := m.create(windowSpec{
 		Key:       "main",
 		Title:     m.messages().AppName(),
@@ -818,7 +888,18 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 		Chrome:    titlebar.Popup,
 		Content:   content,
 	}, windowHooks{
-		OnFocus:        m.recordActivity,
+		OnFocus: func() {
+			m.recordActivity()
+			// Focusing the detached window acknowledges its bell marker, the
+			// same way selecting a main Tab clears its activity marker.
+			m.state.ClearDetachedBell(tabID)
+		},
+		OnBlur: func() {
+			// A bell that arrives while the window is already focused has no
+			// focus transition to acknowledge it, so leaving the window is the
+			// acknowledgement. ClearDetachedBell is idempotent.
+			m.state.ClearDetachedBell(tabID)
+		},
 		OnCloseRequest: func() bool { return m.allowDetachedClose(tabID) },
 		OnClosed: func() {
 			m.windowsMu.Lock()
@@ -1161,7 +1242,11 @@ func (m *windowManager) dropdownView() func(*ui.Context) {
 			bar = m.wrapChrome(provided)
 		}
 	}
-	return m.withTheme(m.withAccelerators(dropdown.View(m.HideDropdown, bar, m.wrap(content))))
+	// The Dropdown Panel renders either the main Workspace or the Quake
+	// workspace, so it gates its accelerators on the Pane that content shows.
+	// A VNC Pane there can take the keyboard exactly as one in the main
+	// window does.
+	return m.withTheme(m.withAccelerators(m.dropdownKeyboardGrab, dropdown.View(m.HideDropdown, bar, m.wrap(content))))
 }
 
 // dropdownBounds is the Panel's rectangle: the work area's top-left corner,

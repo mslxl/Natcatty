@@ -597,3 +597,47 @@ func TestDropdownQuakeEscapeHidesAPanelLockedOverAnOpenPicker(t *testing.T) {
 		t.Fatal("the Escape close request destroyed the Panel")
 	}
 }
+
+// TestBellRouterMarksTheOwningWorkspace proves the helper both app bell hooks
+// call reaches the Quake state for a Quake Session, reaches it for a terminal
+// BEL as well as a viewer bell, and leaves it alone for a main-workspace
+// Session.
+func TestBellRouterMarksTheOwningWorkspace(t *testing.T) {
+	q := newQuakeGraph(t)
+	q.manager.ToggleDropdown()
+	if q.quake.TabCount() != 1 {
+		t.Fatalf("Quake Tabs = %d, want the first local Shell", q.quake.TabCount())
+	}
+	tab, _ := q.quake.TabAt(0)
+	router := bellRouter{shell: q.state, quake: q.quake}
+
+	router.viewer(tab.Session.ID())
+	q.quake.Flush()
+	if info, ok := q.quake.TabForSession(tab.Session.ID()); !ok || !info.Bell {
+		t.Fatalf("a viewer bell did not mark its Quake Tab: %+v", info)
+	}
+
+	// The terminal BEL path reaches the same mark.
+	q.quake.SelectTab(0)
+	router.terminal(tab.Session.ID())
+	q.quake.Flush()
+	if !q.quake.Tabs()[0].Bell {
+		t.Fatal("a terminal bell did not mark its Quake Tab")
+	}
+
+	// A main-workspace bell is not Quake's to mark.
+	if err := q.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	waitForSurface(t, q.state, 0)
+	mainSnapshot, ok := q.state.ActiveSnapshot()
+	if !ok {
+		t.Fatal("the main Tab has no Session")
+	}
+	q.quake.SelectTab(0)
+	router.viewer(mainSnapshot.ID)
+	q.quake.Flush()
+	if q.quake.Tabs()[0].Bell {
+		t.Fatal("a main-workspace Session marked a Quake Tab")
+	}
+}

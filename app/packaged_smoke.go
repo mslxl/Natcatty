@@ -387,24 +387,27 @@ func packagedSmokePlatform() string { return runtime.GOOS + "/" + runtime.GOARCH
 // packagedSmokeKind is one fixed lab Session. Marker is the exact output the
 // command must produce; commands are never read from the environment.
 type packagedSmokeKind struct {
-	Name     string
-	Label    string
-	Protocol domainvault.Protocol
-	Marker   string
+	Name      string
+	Label     string
+	Protocol  domainvault.Protocol
+	Transport domainvault.Transport
+	Marker    string
 }
 
 var packagedSmokeKinds = []packagedSmokeKind{
 	{
-		Name:     "mosh",
-		Label:    "packaged smoke mosh",
-		Protocol: domainvault.ProtocolMosh,
-		Marker:   "NATCATTY_SMOKE_MOSH_OK",
+		Name:      "mosh",
+		Label:     "packaged smoke mosh",
+		Protocol:  domainvault.ProtocolSSH,
+		Transport: domainvault.TransportMosh,
+		Marker:    "NATCATTY_SMOKE_MOSH_OK",
 	},
 	{
-		Name:     "et",
-		Label:    "packaged smoke et",
-		Protocol: domainvault.ProtocolET,
-		Marker:   "NATCATTY_SMOKE_ET_OK",
+		Name:      "et",
+		Label:     "packaged smoke et",
+		Protocol:  domainvault.ProtocolSSH,
+		Transport: domainvault.TransportET,
+		Marker:    "NATCATTY_SMOKE_ET_OK",
 	},
 }
 
@@ -426,10 +429,11 @@ func (c packagedSmokeConfig) hostDraft(kind packagedSmokeKind, username string) 
 		Port:       c.SSHPort,
 		Username:   username,
 		Protocol:   kind.Protocol,
+		Transport:  kind.Transport,
 		Password:   c.Password,
 		AuthMethod: domainvault.HostAuthPassword,
 	}
-	if kind.Protocol == domainvault.ProtocolET {
+	if kind.Transport == domainvault.TransportET {
 		draft.ETPort = c.ETPort
 	}
 	return draft

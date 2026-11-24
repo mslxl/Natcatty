@@ -82,21 +82,31 @@ func TestNormalizeDraftDisablingX11DropsTheAcknowledgement(t *testing.T) {
 	}
 }
 
-func TestNormalizeDraftClearsX11OutsideSSH(t *testing.T) {
-	for _, protocol := range []Protocol{ProtocolLocal, ProtocolTelnet} {
+func TestNormalizeDraftClearsX11OutsidePlainSSH(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		protocol  Protocol
+		transport Transport
+	}{
+		{"telnet", ProtocolTelnet, TransportPlain},
+		{"vnc", ProtocolVNC, TransportPlain},
+		{"mosh", ProtocolSSH, TransportMosh},
+		{"et", ProtocolSSH, TransportET},
+	} {
 		draft, err := NormalizeDraft(Draft{
-			Label: "web", Hostname: "example.com", Protocol: protocol,
+			Label: "web", Hostname: "example.com",
+			Protocol: test.protocol, Transport: test.transport,
 			X11Forwarding: true, X11WarningAcknowledged: true,
 		})
 		if err != nil {
-			t.Errorf("%s: NormalizeDraft: %v", protocol, err)
+			t.Errorf("%s: NormalizeDraft: %v", test.name, err)
 			continue
 		}
-		// X11 is forwarded over the target's SSH connection, which these
-		// protocols do not have. The hidden preference is cleared instead of
-		// making an imported record impossible to save.
+		// X11 is forwarded over a plain SSH connection. These protocols and
+		// transports have no X11 channel, so the hidden preference is cleared
+		// instead of making the record impossible to save.
 		if draft.X11Forwarding || draft.X11WarningAcknowledged {
-			t.Errorf("%s: draft = %+v, want X11 cleared", protocol, draft)
+			t.Errorf("%s: draft = %+v, want X11 cleared", test.name, draft)
 		}
 	}
 }
@@ -113,7 +123,7 @@ func TestHostX11EnabledNeedsBothPreferenceAndAcknowledgement(t *testing.T) {
 }
 
 func TestNormalizeDraftKeepsAnEmptyPortForGroupInheritance(t *testing.T) {
-	for _, protocol := range []Protocol{ProtocolSSH, ProtocolTelnet, ProtocolLocal} {
+	for _, protocol := range []Protocol{ProtocolSSH, ProtocolTelnet, ProtocolVNC} {
 		t.Run(string(protocol), func(t *testing.T) {
 			draft, err := NormalizeDraft(Draft{
 				Label:    "example.com",
@@ -140,7 +150,8 @@ func TestEffectivePortUsesTheHostThenTheProtocolDefault(t *testing.T) {
 		{"explicit SSH port wins", ProtocolSSH, 2222, 2222},
 		{"SSH default", ProtocolSSH, 0, 22},
 		{"telnet default", ProtocolTelnet, 0, 23},
-		{"local has no port", ProtocolLocal, 0, 0},
+		{"vnc default", ProtocolVNC, 0, 5900},
+		{"vnc display port", ProtocolVNC, 5901, 5901},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -196,10 +207,28 @@ func TestNormalizeDraftRejectsInvalidInput(t *testing.T) {
 			rule:  RuleUnsupported,
 		},
 		{
-			name:  "local Host without a label",
-			draft: Draft{Protocol: ProtocolLocal},
-			field: FieldLabel,
-			rule:  RuleRequired,
+			name:  "removed local protocol",
+			draft: Draft{Label: "web", Hostname: "a", Protocol: Protocol("local")},
+			field: FieldProtocol,
+			rule:  RuleUnsupported,
+		},
+		{
+			name:  "removed mosh protocol",
+			draft: Draft{Label: "web", Hostname: "a", Protocol: Protocol("mosh")},
+			field: FieldProtocol,
+			rule:  RuleUnsupported,
+		},
+		{
+			name:  "removed et protocol",
+			draft: Draft{Label: "web", Hostname: "a", Protocol: Protocol("et")},
+			field: FieldProtocol,
+			rule:  RuleUnsupported,
+		},
+		{
+			name:  "unknown transport",
+			draft: Draft{Label: "web", Hostname: "a", Protocol: ProtocolSSH, Transport: Transport("udp")},
+			field: FieldTransport,
+			rule:  RuleUnsupported,
 		},
 		{
 			name:  "group with a control character",
@@ -229,13 +258,45 @@ func TestNormalizeDraftRejectsInvalidInput(t *testing.T) {
 	}
 }
 
-func TestLocalHostAllowsAnEmptyHostname(t *testing.T) {
-	draft, err := NormalizeDraft(Draft{Label: "My shell", Protocol: ProtocolLocal})
-	if err != nil {
-		t.Fatalf("NormalizeDraft: %v", err)
+func TestNormalizeDraftCanonicalizesTheTransport(t *testing.T) {
+	cases := []struct {
+		transport Transport
+		want      Transport
+	}{
+		{"", TransportPlain},
+		{" ssh ", TransportPlain},
+		{"SSH", TransportPlain},
+		{"mosh", TransportMosh},
+		{" MOSH ", TransportMosh},
+		{"et", TransportET},
+		{"ET", TransportET},
 	}
-	if draft.Hostname != "" || draft.Port != 0 {
-		t.Fatalf("hostname = %q, port = %d, want empty and 0", draft.Hostname, draft.Port)
+	for _, test := range cases {
+		draft, err := NormalizeDraft(Draft{
+			Label: "web", Hostname: "example.com",
+			Protocol: ProtocolSSH, Transport: test.transport,
+		})
+		if err != nil {
+			t.Fatalf("NormalizeDraft(%q): %v", test.transport, err)
+		}
+		if draft.Transport != test.want {
+			t.Errorf("transport %q normalized to %q, want %q", test.transport, draft.Transport, test.want)
+		}
+	}
+}
+
+func TestNormalizeDraftClearsATransportOnANonSSHHost(t *testing.T) {
+	for _, protocol := range []Protocol{ProtocolTelnet, ProtocolVNC} {
+		draft, err := NormalizeDraft(Draft{
+			Label: "web", Hostname: "example.com",
+			Protocol: protocol, Transport: TransportMosh,
+		})
+		if err != nil {
+			t.Fatalf("NormalizeDraft %q: %v", protocol, err)
+		}
+		if draft.Transport != TransportPlain {
+			t.Errorf("%q kept transport %q", protocol, draft.Transport)
+		}
 	}
 }
 
@@ -257,7 +318,7 @@ func TestDraftGroupNormalizationKeepsPathsReadable(t *testing.T) {
 	}
 }
 
-func TestMergeKeyDistinguishesEndpointsAndLocalHosts(t *testing.T) {
+func TestMergeKeyDistinguishesEndpointsAndTransports(t *testing.T) {
 	base := Host{Label: "web", Protocol: ProtocolSSH, Hostname: "Example.COM", Port: 22, Username: "Root", Group: "prod"}
 	same := base
 	same.Label = "renamed"
@@ -273,10 +334,14 @@ func TestMergeKeyDistinguishesEndpointsAndLocalHosts(t *testing.T) {
 		t.Fatal("merge keys match for different ports")
 	}
 
-	localA := Host{Label: "Bash", Protocol: ProtocolLocal}
-	localB := Host{Label: "PowerShell", Protocol: ProtocolLocal}
-	if localA.MergeKey() == localB.MergeKey() {
-		t.Fatal("merge keys match for two local Hosts")
+	plain := base
+	mosh := base
+	mosh.Transport = TransportMosh
+	et := base
+	et.Transport = TransportET
+	if plain.MergeKey() == mosh.MergeKey() || plain.MergeKey() == et.MergeKey() ||
+		mosh.MergeKey() == et.MergeKey() {
+		t.Fatal("merge keys match for different SSH transports")
 	}
 }
 
@@ -639,25 +704,32 @@ func TestNetworkDeviceModeIsKeptOnlyForSSH(t *testing.T) {
 	}
 }
 
-func TestProtocolUsesSSHAuthOnlyForSSHBootstrappedProtocols(t *testing.T) {
-	// The Host editor hides Identity, SSH Key, and Method when the selected
-	// protocol does not bootstrap through SSH. Mosh and Eternal Terminal do
-	// ride SSH, so they keep the controls; Telnet, a Local shell, and File
-	// transfer do not. The editor and the state layer both call this method,
-	// so the boundary is pinned here.
+func TestUsesSSHAuthFollowsTheEffectiveTransport(t *testing.T) {
+	// The Host editor hides Identity, SSH Key, and Method when the effective
+	// transport does not bootstrap through SSH. Mosh and Eternal Terminal ride
+	// SSH, so an SSH Host with either transport keeps the controls; Telnet and
+	// VNC do not. The editor and the state layer read the Host/Draft
+	// capability, so the boundary is pinned here.
 	for _, test := range []struct {
-		protocol Protocol
-		want     bool
+		name string
+		host Host
+		want bool
 	}{
-		{ProtocolSSH, true},
-		{ProtocolMosh, true},
-		{ProtocolET, true},
-		{ProtocolTelnet, false},
-		{ProtocolLocal, false},
-		{Protocol("unknown"), false},
+		{"ssh", Host{Protocol: ProtocolSSH}, true},
+		{"mosh", Host{Protocol: ProtocolSSH, Transport: TransportMosh}, true},
+		{"et", Host{Protocol: ProtocolSSH, Transport: TransportET}, true},
+		{"telnet", Host{Protocol: ProtocolTelnet}, false},
+		{"vnc", Host{Protocol: ProtocolVNC}, false},
+		// An unknown protocol or transport has no capabilities.
+		{"unknown protocol", Host{Protocol: Protocol("unknown")}, false},
+		{"unknown transport", Host{Protocol: ProtocolSSH, Transport: Transport("udp")}, false},
 	} {
-		if got := test.protocol.UsesSSHAuth(); got != test.want {
-			t.Errorf("%q.UsesSSHAuth() = %v, want %v", test.protocol, got, test.want)
+		if got := test.host.UsesSSHAuth(); got != test.want {
+			t.Errorf("%s: UsesSSHAuth() = %v, want %v", test.name, got, test.want)
+		}
+		draft := Draft{Protocol: test.host.Protocol, Transport: test.host.Transport}
+		if got := draft.UsesSSHAuth(); got != test.want {
+			t.Errorf("%s: Draft.UsesSSHAuth() = %v, want %v", test.name, got, test.want)
 		}
 	}
 }
@@ -674,12 +746,9 @@ func TestNormalizeDraftDropsSSHCredentialsFromNonSSHProtocols(t *testing.T) {
 		AuthMethod:  HostAuthKey,
 		UseSSHAgent: true, RequiresMFA: true,
 	}
-	for _, protocol := range []Protocol{ProtocolTelnet, ProtocolLocal} {
+	for _, protocol := range []Protocol{ProtocolTelnet, ProtocolVNC} {
 		draft := credentialed
 		draft.Protocol = protocol
-		if protocol == ProtocolLocal {
-			draft.Hostname = ""
-		}
 		normalized, err := NormalizeDraft(draft)
 		if err != nil {
 			t.Fatalf("NormalizeDraft %q: %v", protocol, err)
@@ -693,24 +762,26 @@ func TestNormalizeDraftDropsSSHCredentialsFromNonSSHProtocols(t *testing.T) {
 		}
 	}
 
-	for _, protocol := range []Protocol{ProtocolSSH, ProtocolMosh, ProtocolET} {
+	for _, transport := range []Transport{TransportPlain, TransportMosh, TransportET} {
 		draft := credentialed
-		draft.Protocol = protocol
+		draft.Protocol = ProtocolSSH
+		draft.Transport = transport
 		normalized, err := NormalizeDraft(draft)
 		if err != nil {
-			t.Fatalf("NormalizeDraft %q: %v", protocol, err)
+			t.Fatalf("NormalizeDraft ssh/%q: %v", transport, err)
 		}
 		if normalized.IdentityID != "identity-1" || normalized.KeyID != "key-1" ||
 			normalized.AuthMethod != HostAuthKey ||
 			!normalized.UseSSHAgent || !normalized.RequiresMFA {
-			t.Errorf("%q lost its SSH bundle: %+v", protocol, normalized)
+			t.Errorf("ssh/%q lost its SSH bundle: %+v", transport, normalized)
 		}
 	}
 }
 
-func TestNormalizeDraftKeepsMoshAndETSettingsOnTheirProtocol(t *testing.T) {
+func TestNormalizeDraftKeepsMoshAndETSettingsOnTheirTransport(t *testing.T) {
 	mosh, err := NormalizeDraft(Draft{
-		Label: "web", Hostname: "example.com", Protocol: ProtocolMosh,
+		Label: "web", Hostname: "example.com",
+		Protocol: ProtocolSSH, Transport: TransportMosh,
 		MoshServerPath: "  /usr/local/bin/mosh-server  ", ETPort: 2022,
 	})
 	if err != nil {
@@ -724,7 +795,8 @@ func TestNormalizeDraftKeepsMoshAndETSettingsOnTheirProtocol(t *testing.T) {
 	}
 
 	et, err := NormalizeDraft(Draft{
-		Label: "web", Hostname: "example.com", Protocol: ProtocolET,
+		Label: "web", Hostname: "example.com",
+		Protocol: ProtocolSSH, Transport: TransportET,
 		MoshServerPath: "/usr/bin/mosh-server", ETPort: 8737,
 	})
 	if err != nil {
@@ -736,11 +808,22 @@ func TestNormalizeDraftKeepsMoshAndETSettingsOnTheirProtocol(t *testing.T) {
 	if et.MoshServerPath != "" {
 		t.Fatalf("et kept MoshServerPath = %q", et.MoshServerPath)
 	}
+
+	if plain, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com",
+		Protocol:       ProtocolSSH,
+		MoshServerPath: "/usr/bin/mosh-server", ETPort: 8737,
+	}); err != nil {
+		t.Fatalf("NormalizeDraft plain: %v", err)
+	} else if plain.MoshServerPath != "" || plain.ETPort != 0 {
+		t.Fatalf("plain SSH kept transport settings: %+v", plain)
+	}
 }
 
 func TestNormalizeDraftRejectsAnOutOfRangeETPort(t *testing.T) {
 	_, err := NormalizeDraft(Draft{
-		Label: "web", Hostname: "example.com", Protocol: ProtocolET, ETPort: 70000,
+		Label: "web", Hostname: "example.com",
+		Protocol: ProtocolSSH, Transport: TransportET, ETPort: 70000,
 	})
 	var invalid *ValidationError
 	if !errors.As(err, &invalid) || invalid.Field != FieldETPort || invalid.Rule != RuleOutOfRange {
@@ -794,11 +877,11 @@ func TestStartupCommandIsTrimmedAndSurvivesTheRecord(t *testing.T) {
 	}
 }
 
-func TestEffectivePortUsesSSHDefaultsForMoshAndET(t *testing.T) {
-	for _, protocol := range []Protocol{ProtocolMosh, ProtocolET} {
-		if got := EffectivePort(protocol, 0); got != 22 {
-			t.Errorf("%s: EffectivePort = %d, want 22", protocol, got)
-		}
+func TestEffectivePortUsesTheSSHDefault(t *testing.T) {
+	// The transport is not part of port resolution: an SSH Host with Mosh or
+	// ET still connects to the SSH bootstrap port.
+	if got := EffectivePort(ProtocolSSH, 0); got != 22 {
+		t.Errorf("EffectivePort = %d, want 22", got)
 	}
 }
 
@@ -814,16 +897,25 @@ func TestAutoAttachTmuxIsKeptOnlyForPlainSSHHosts(t *testing.T) {
 		t.Fatal("an SSH draft lost the auto-attach preference")
 	}
 
-	for _, protocol := range []Protocol{ProtocolTelnet, ProtocolLocal, ProtocolMosh, ProtocolET} {
+	for _, test := range []struct {
+		protocol  Protocol
+		transport Transport
+	}{
+		{ProtocolTelnet, TransportPlain},
+		{ProtocolVNC, TransportPlain},
+		{ProtocolSSH, TransportMosh},
+		{ProtocolSSH, TransportET},
+	} {
 		normalized, err := NormalizeDraft(Draft{
-			Label: "web", Hostname: "example.com", Protocol: protocol,
+			Label: "web", Hostname: "example.com",
+			Protocol: test.protocol, Transport: test.transport,
 			AutoAttachTmux: true,
 		})
 		if err != nil {
-			t.Fatalf("NormalizeDraft %s: %v", protocol, err)
+			t.Fatalf("NormalizeDraft %s/%s: %v", test.protocol, test.transport, err)
 		}
 		if normalized.AutoAttachTmux {
-			t.Errorf("%s kept autoAttachTmux", protocol)
+			t.Errorf("%s/%s kept autoAttachTmux", test.protocol, test.transport)
 		}
 	}
 
@@ -887,14 +979,15 @@ func TestNormalizeDraftClearsTOTPForNonSSHProtocols(t *testing.T) {
 	}
 }
 
-// TestNormalizeDraftKeepsTheRouteForTelnetAndDropsItForLocal pins the split
-// between route fields and target-side SSH features: an SSH jump chain, a
-// proxy, and algorithm overrides describe how to reach the Host, so a Telnet
-// Host keeps them; a Local shell dials nothing, so they are cleared.
-func TestNormalizeDraftKeepsTheRouteForTelnetAndDropsItForLocal(t *testing.T) {
-	route := func(protocol Protocol) Draft {
+// TestNormalizeDraftKeepsTheRouteForEveryProtocol pins the split between route
+// fields and target-side SSH features: an SSH jump chain, a proxy, and
+// algorithm overrides describe how to reach the Host, so every built-in
+// protocol and every SSH transport keeps them.
+func TestNormalizeDraftKeepsTheRouteForEveryProtocol(t *testing.T) {
+	route := func(protocol Protocol, transport Transport) Draft {
 		return Draft{
-			Label: "console", Hostname: "console.local", Protocol: protocol,
+			Label: "console", Hostname: "console.local",
+			Protocol: protocol, Transport: transport,
 			HostChain:        &HostChain{HostIDs: []model.HostID{"bastion"}},
 			Proxy:            &ProxyConfig{Type: "socks5", Host: "proxy.local", Port: 1080},
 			ProxyProfileID:   "proxy-1",
@@ -905,26 +998,246 @@ func TestNormalizeDraftKeepsTheRouteForTelnetAndDropsItForLocal(t *testing.T) {
 		}
 	}
 
-	telnet, err := NormalizeDraft(route(ProtocolTelnet))
-	if err != nil {
-		t.Fatalf("Telnet NormalizeDraft: %v", err)
+	for _, test := range []struct {
+		name      string
+		protocol  Protocol
+		transport Transport
+	}{
+		{"ssh", ProtocolSSH, TransportPlain},
+		{"mosh", ProtocolSSH, TransportMosh},
+		{"et", ProtocolSSH, TransportET},
+		{"telnet", ProtocolTelnet, TransportPlain},
+		{"vnc", ProtocolVNC, TransportPlain},
+	} {
+		normalized, err := NormalizeDraft(route(test.protocol, test.transport))
+		if err != nil {
+			t.Fatalf("%s NormalizeDraft: %v", test.name, err)
+		}
+		if normalized.HostChain == nil || normalized.Proxy == nil ||
+			normalized.ProxyProfileID != "proxy-1" || normalized.NetworkProfileID != "net-1" ||
+			!normalized.LegacyAlgorithms || !normalized.SkipEcdsaHostKey || normalized.Algorithms == nil {
+			t.Fatalf("%s route = chain %+v, proxy %+v, profile %q, network %q, algorithms %v/%v/%+v",
+				test.name, normalized.HostChain, normalized.Proxy, normalized.ProxyProfileID,
+				normalized.NetworkProfileID, normalized.LegacyAlgorithms,
+				normalized.SkipEcdsaHostKey, normalized.Algorithms)
+		}
 	}
-	if telnet.HostChain == nil || telnet.Proxy == nil ||
-		telnet.ProxyProfileID != "proxy-1" || telnet.NetworkProfileID != "net-1" ||
-		!telnet.LegacyAlgorithms || !telnet.SkipEcdsaHostKey || telnet.Algorithms == nil {
-		t.Fatalf("Telnet route = chain %+v, proxy %+v, profile %q, network %q, algorithms %v/%v/%+v",
-			telnet.HostChain, telnet.Proxy, telnet.ProxyProfileID, telnet.NetworkProfileID,
-			telnet.LegacyAlgorithms, telnet.SkipEcdsaHostKey, telnet.Algorithms)
+}
+
+// TestNormalizeVNCDraftDefaultsTheConfiguration pins the viewer defaults a new
+// VNC Host starts from and proves the stored endpoint stays the real port.
+func TestNormalizeVNCDraftDefaultsTheConfiguration(t *testing.T) {
+	draft, err := NormalizeDraft(Draft{
+		Label: "desk", Hostname: "desk.local", Protocol: ProtocolVNC, Port: 5901,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if draft.Port != 5901 {
+		t.Fatalf("Port = %d, want the stored TCP port 5901", draft.Port)
+	}
+	if draft.VNC == nil {
+		t.Fatal("a VNC Host lost its configuration")
+	}
+	want := DefaultVNCConfig()
+	if *draft.VNC != want {
+		t.Fatalf("VNC = %+v, want defaults %+v", *draft.VNC, want)
 	}
 
-	local, err := NormalizeDraft(route(ProtocolLocal))
+	// Unknown enum values from an older or hand-edited record fall back to
+	// their defaults, while an explicit Shared=false survives.
+	fallback, err := NormalizeDraft(Draft{
+		Label: "desk", Hostname: "desk.local", Protocol: ProtocolVNC,
+		VNC: &VNCConfig{DisplayMode: "unknown", FitMode: "", CursorMode: "", Shared: true},
+	})
 	if err != nil {
-		t.Fatalf("Local NormalizeDraft: %v", err)
+		t.Fatalf("fallback NormalizeDraft: %v", err)
 	}
-	if local.HostChain != nil || local.Proxy != nil ||
-		local.ProxyProfileID != "" || local.NetworkProfileID != "" ||
-		local.LegacyAlgorithms || local.SkipEcdsaHostKey || local.Algorithms != nil {
-		t.Fatalf("Local kept a route it cannot use: chain %+v, proxy %+v, profile %q, network %q",
-			local.HostChain, local.Proxy, local.ProxyProfileID, local.NetworkProfileID)
+	if *fallback.VNC != want {
+		t.Fatalf("VNC fallback = %+v, want defaults %+v", *fallback.VNC, want)
+	}
+	exclusive, err := NormalizeDraft(Draft{
+		Label: "desk", Hostname: "desk.local", Protocol: ProtocolVNC,
+		VNC: &VNCConfig{Shared: false},
+	})
+	if err != nil {
+		t.Fatalf("exclusive NormalizeDraft: %v", err)
+	}
+	if exclusive.VNC.Shared {
+		t.Fatal("an explicit Shared=false was replaced by the default")
+	}
+}
+
+// TestNormalizeDraftClearsVNCOutsideTheProtocol proves a hidden VNC section
+// leaves no configuration or password behind when the Host is saved with
+// another protocol, while the SSH password input is left alone.
+func TestNormalizeDraftClearsVNCOutsideTheProtocol(t *testing.T) {
+	draft, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com", Protocol: ProtocolSSH,
+		Password:    "alpha-pass",
+		VNCPassword: "beta-pass",
+		VNC:         &VNCConfig{DisplayMode: VNCPort, FitMode: VNCClip},
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if draft.VNC != nil || draft.VNCPassword != "" {
+		t.Fatalf("SSH draft kept VNC config %+v / password %q", draft.VNC, draft.VNCPassword)
+	}
+	if draft.Password != "alpha-pass" {
+		t.Fatalf("SSH password = %q, want it untouched", draft.Password)
+	}
+}
+
+// TestNormalizeVNCNeverAcceptsTheSSHPasswordSlot proves a switched form cannot
+// migrate its SSH password into a VNC Host; VNC uses only its own slot.
+func TestNormalizeVNCNeverAcceptsTheSSHPasswordSlot(t *testing.T) {
+	draft, err := NormalizeDraft(Draft{
+		Label: "desk", Hostname: "desk.local", Protocol: ProtocolVNC,
+		Password: "alpha-pass", VNCPassword: "beta-pass",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if draft.Password != "" {
+		t.Fatalf("VNC draft kept the SSH password %q", draft.Password)
+	}
+	if draft.VNCPassword != "beta-pass" {
+		t.Fatalf("VNC password = %q, want the dedicated input", draft.VNCPassword)
+	}
+}
+
+// TestNormalizeVNCRejectsAnOutOfRangeDisplayEndpoint pins the display rule:
+// display-number input maps to 5900-5999, while port input accepts any valid
+// TCP port.
+func TestNormalizeVNCRejectsAnOutOfRangeDisplayEndpoint(t *testing.T) {
+	for _, port := range []int{6000, 22, 5900 + VNCDisplayMax + 1} {
+		_, err := NormalizeDraft(Draft{
+			Label: "desk", Hostname: "desk.local", Protocol: ProtocolVNC, Port: port,
+			VNC: &VNCConfig{DisplayMode: VNCDisplayNumber},
+		})
+		var validation *ValidationError
+		if !errors.As(err, &validation) || validation.Field != FieldPort || validation.Rule != RuleOutOfRange {
+			t.Fatalf("port %d: error = %v, want FieldPort out of range", port, err)
+		}
+	}
+
+	// The same port is valid when the editor presents raw-port input.
+	portDraft, err := NormalizeDraft(Draft{
+		Label: "desk", Hostname: "desk.local", Protocol: ProtocolVNC, Port: 6000,
+		VNC: &VNCConfig{DisplayMode: VNCPort},
+	})
+	if err != nil {
+		t.Fatalf("port-mode NormalizeDraft: %v", err)
+	}
+	if portDraft.Port != 6000 {
+		t.Fatalf("port-mode Port = %d, want 6000", portDraft.Port)
+	}
+}
+
+// TestVNCVersionDisplayMapping pins the one editor rule both the state and
+// domain use to translate a display number.
+func TestVNCDisplayPortMapping(t *testing.T) {
+	for display := 0; display <= VNCDisplayMax; display++ {
+		port, ok := VNCPortForDisplay(display)
+		if !ok || port != VNCDisplayBasePort+display {
+			t.Fatalf("VNCPortForDisplay(%d) = %d, %v", display, port, ok)
+		}
+		back, ok := VNCDisplayForPort(port)
+		if !ok || back != display {
+			t.Fatalf("VNCDisplayForPort(%d) = %d, %v, want %d", port, back, ok, display)
+		}
+	}
+	if _, ok := VNCPortForDisplay(VNCDisplayMax + 1); ok {
+		t.Fatal("an out-of-range display resolved to a port")
+	}
+	if _, ok := VNCDisplayForPort(VNCDisplayBasePort + VNCDisplayMax + 1); ok {
+		t.Fatal("a port outside the display range resolved to a display")
+	}
+}
+
+// TestVNCHostIdentityIncludesTheProtocol proves a VNC Host and an SSH Host on
+// the same address remain distinct Vault entries.
+func TestVNCHostIdentityIncludesTheProtocol(t *testing.T) {
+	ssh := Host{Label: "desk", Hostname: "desk.local", Port: 5901, Protocol: ProtocolSSH}
+	vnc := Host{Label: "desk", Hostname: "desk.local", Port: 5901, Protocol: ProtocolVNC}
+	if ssh.MergeKey() == vnc.MergeKey() {
+		t.Fatalf("SSH and VNC merge keys are equal: %q", ssh.MergeKey())
+	}
+	if !strings.HasPrefix(ssh.MergeKey(), "ssh\x1f") {
+		t.Fatalf("SSH merge key = %q, want the protocol first", ssh.MergeKey())
+	}
+	if !strings.HasPrefix(vnc.MergeKey(), "vnc\x1f") {
+		t.Fatalf("VNC merge key = %q, want the protocol first", vnc.MergeKey())
+	}
+}
+
+// TestVNCHostValidateRefusesSSHOnlyFeatures proves a record that bypassed the
+// editor still fails closed for X11 and SFTP rather than carrying settings the
+// VNC transport can never apply.
+func TestVNCHostValidateRefusesSSHOnlyFeatures(t *testing.T) {
+	base := Host{
+		Label: "desk", Hostname: "desk.local", Port: 5901,
+		Protocol: ProtocolVNC, VNC: NormalizeVNCConfig(nil),
+	}
+
+	x11 := base
+	x11.X11Forwarding = true
+	x11.X11WarningAcknowledged = true
+	var validation *ValidationError
+	if err := x11.Validate(); !errors.As(err, &validation) ||
+		validation.Field != FieldX11 || validation.Rule != RuleUnsupported {
+		t.Fatalf("VNC X11 validation = %v, want FieldX11 unsupported", err)
+	}
+
+	sftp := base
+	sftp.SFTPSudo = true
+	if err := sftp.Validate(); !errors.As(err, &validation) ||
+		validation.Field != FieldSFTPSudo || validation.Rule != RuleUnsupported {
+		t.Fatalf("VNC SFTP validation = %v, want FieldSFTPSudo unsupported", err)
+	}
+}
+
+// TestVNCHostValidateRefusesAnUnrequestableWebSocketPath proves a saved Host
+// cannot carry a path the HTTP upgrade could never request, so an import fails
+// at save time instead of at connect time.
+func TestVNCHostValidateRefusesAnUnrequestableWebSocketPath(t *testing.T) {
+	configuration := NormalizeVNCConfig(&VNCConfig{
+		DisplayMode: VNCPort, WebSocket: true, WebSocketPath: "/bad path",
+	})
+	host := Host{
+		Label: "desk", Hostname: "desk.local", Port: 6080,
+		Protocol: ProtocolVNC, VNC: configuration,
+	}
+	var validation *ValidationError
+	if err := host.Validate(); !errors.As(err, &validation) ||
+		validation.Field != FieldVNCWebSocketPath || validation.Rule != RuleInvalid {
+		t.Fatalf("WebSocket path validation = %v, want FieldVNCWebSocketPath invalid", err)
+	}
+	if _, err := NormalizeDraft(Draft{
+		Label: "desk", Hostname: "desk.local", Port: 6080, Protocol: ProtocolVNC,
+		VNC: &VNCConfig{DisplayMode: VNCPort, WebSocket: true, WebSocketPath: "/bad path"},
+	}); !errors.As(err, &validation) || validation.Field != FieldVNCWebSocketPath {
+		t.Fatalf("NormalizeDraft = %v, want the WebSocket path rejected", err)
+	}
+
+	valid := host
+	valid.VNC = NormalizeVNCConfig(&VNCConfig{DisplayMode: VNCPort, WebSocket: true})
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("the default WebSocket path did not validate: %v", err)
+	}
+	valid.VNC = NormalizeVNCConfig(&VNCConfig{
+		DisplayMode: VNCPort, WebSocket: true, WebSocketPath: "/vnc?token=a=b",
+	})
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("a custom WebSocket path did not validate: %v", err)
+	}
+
+	// Validation normalizes first, so a hand-built Host that skipped
+	// NormalizeVNCConfig still treats an empty path as the websockify default.
+	handBuilt := host
+	handBuilt.VNC = &VNCConfig{DisplayMode: VNCPort, WebSocket: true}
+	if err := handBuilt.Validate(); err != nil {
+		t.Fatalf("an empty WebSocket path did not validate: %v", err)
 	}
 }

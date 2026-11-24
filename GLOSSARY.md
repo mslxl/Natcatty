@@ -11,6 +11,20 @@ A saved target the user can connect to, identified by an opaque `HostID` and car
 connection settings, credentials references, and display metadata.
 _Avoid_: server, target, machine
 
+**Host Protocol**:
+What a Host's endpoint speaks: `ssh`, `telnet`, or `vnc`. It decides the default
+port, the credential bundle, and which Session kind opens. A blank value is the
+SSH default. A Local shell and the Mosh and EternalTerminal transports are not
+Host protocols.
+_Avoid_: connection type, mode
+
+**SSH Transport**:
+The way an SSH Host carries its interactive Session: plain SSH, Mosh, or
+EternalTerminal. It is meaningful only when the Host protocol is SSH and is
+empty for the other protocols. Mosh and ET reuse SSH authentication, routing,
+forwarding, and monitoring, but have no file transfer or X11 forwarding.
+_Avoid_: protocol, connection method
+
 **Host Group**:
 A user-defined grouping of hosts with shared display and connection defaults.
 In Go, `domain/vault.Group` is a Host Group with a stable ID and a
@@ -46,6 +60,20 @@ A connection target the user typed but did not save as a Host, so it has no
 not the local shell and must not be reported or filtered as one. "Draft Host"
 means the same thing but is not the preferred term in code or UI.
 _Avoid_: local terminal, typed target, ad-hoc host, temporary host
+
+**VNC Host**:
+A Host whose protocol is `vnc`, the RFB remote-desktop protocol. It is an
+ordinary Host for groups, tags, search, routing, export, and sync, and it opens
+a pixel Session in a normal Pane instead of a shell. The saved endpoint is
+always the real TCP port (default 5900; display 0-99 maps to 5900-5999), so the
+editor's display-number/port toggle is presentation only. Its viewer defaults
+live in `VNCConfig`, and its password lives in its own secret slot, independent
+of the SSH password. A Host may also carry the RFB stream inside a WebSocket
+(`VNCConfig.WebSocket`, the transport a noVNC/websockify page uses); the Port
+is then the HTTP port and the display-number input does not apply. Route
+controls reuse the Host Chain, Proxy Profile, and Network Profile a Host
+already has.
+_Avoid_: remote desktop host, screen host, GUI host
 
 **SSH Key**:
 A saved private/public key pair, optionally protected by a passphrase.
@@ -138,9 +166,25 @@ or the app quits.
 _Avoid_: cache, warm pool
 
 **Session**:
-A user-visible terminal instance (local, SSH, serial, telnet, mosh, or EternalTerminal)
-with its own lifecycle, transport, and terminal surface.
+A user-visible connection instance (local, SSH, serial, telnet, mosh,
+EternalTerminal, or VNC) with its own lifecycle, transport, and surface: a
+terminal for a byte stream, or a pixel display for VNC.
 _Avoid_: terminal, tab, shell
+
+**Display Session**:
+The pixel half of a VNC Session. It carries framebuffer events and display
+input instead of a byte stream, so scrollback, capture, compose, broadcast, and
+terminal resize do not apply. It is the only new seam a VNC Host adds; the
+viewer, the Session, and tests all depend on it.
+_Avoid_: VNC terminal, screen session
+
+**View-only**:
+A VNC viewer state in which the client writes no keyboard, pointer, or
+clipboard-send input, while frame updates, bell, desktop name, and clipboard
+pull continue. Local pointer tracking and clip panning still work, and the Pane
+still splits, detaches, renames, and closes. A VNC Host's
+`VNCConfig.ViewOnly` is the default a new Session starts with.
+_Avoid_: read-only, observer, locked view
 
 **Editing Session**:
 The service's record of one file handed to an opener: the materialized local copy,

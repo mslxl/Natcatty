@@ -26,13 +26,23 @@ func TestNormalizeDraftKeepsSSHInputCompatibility(t *testing.T) {
 	}
 }
 
-func TestNormalizeDraftClearsInputCompatibilityOutsideSSH(t *testing.T) {
-	for _, protocol := range []Protocol{ProtocolTelnet, ProtocolLocal, ProtocolMosh, ProtocolET} {
-		t.Run(string(protocol), func(t *testing.T) {
+func TestNormalizeDraftClearsInputCompatibilityOutsidePlainSSH(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		protocol  Protocol
+		transport Transport
+	}{
+		{"telnet", ProtocolTelnet, TransportPlain},
+		{"vnc", ProtocolVNC, TransportPlain},
+		{"mosh", ProtocolSSH, TransportMosh},
+		{"et", ProtocolSSH, TransportET},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			draft, err := NormalizeDraft(Draft{
 				Label:           "web",
 				Hostname:        "example.com",
-				Protocol:        protocol,
+				Protocol:        test.protocol,
+				Transport:       test.transport,
 				NewlineMode:     modelterminal.NewlineLF,
 				BackspaceMode:   modelterminal.BackspaceCtrlH,
 				LineEditingMode: modelterminal.LineEditingByte,
@@ -41,7 +51,7 @@ func TestNormalizeDraftClearsInputCompatibilityOutsideSSH(t *testing.T) {
 				t.Fatalf("NormalizeDraft: %v", err)
 			}
 			if got := draftInputCompatibility(draft); !got.IsDefault() {
-				t.Fatalf("%s kept %+v, want the default", protocol, got)
+				t.Fatalf("%s kept %+v, want the default", test.name, got)
 			}
 		})
 	}

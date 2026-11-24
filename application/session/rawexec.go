@@ -98,6 +98,9 @@ type RawExecResult struct {
 // overall timeout and on cancellation, Ctrl+C is written so the device abandons
 // the command; the partial output is returned with the error.
 func (s *Session) RawExec(ctx context.Context, command string, opts RawExecOptions) (RawExecResult, error) {
+	if !s.ByteStream() {
+		return RawExecResult{}, ErrNoByteStream
+	}
 	if !s.supportsRawExec() {
 		return RawExecResult{}, ErrRawExecUnsupported
 	}

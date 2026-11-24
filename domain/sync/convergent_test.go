@@ -958,3 +958,40 @@ func TestParseConvergentSnapshotValidation(t *testing.T) {
 		t.Fatalf("raw snapshot = %s", again["hosts"])
 	}
 }
+
+// TestConvergentMaterializesVNCConfigurationAsAnOrdinaryField proves the v2
+// CRDT treats the VNC configuration and the HasVNCPassword marker like any
+// other Host field: a one-sided edit is applied and materialized without a
+// VNC-specific register.
+func TestConvergentMaterializesVNCConfigurationAsAnOrdinaryField(t *testing.T) {
+	base := familySnapshot("hosts", map[string]json.RawMessage{
+		"host-1": mustJSONValue(t, map[string]any{
+			"id": "host-1", "protocol": "vnc",
+			"hasVncPassword": false,
+			"vnc":            map[string]any{"displayMode": "display", "fitMode": "fit", "shared": true},
+		}),
+	})
+	state := mustCreateState(t, base, "device-base", 1000)
+	updated := familySnapshot("hosts", map[string]json.RawMessage{
+		"host-1": mustJSONValue(t, map[string]any{
+			"id": "host-1", "protocol": "vnc",
+			"hasVncPassword": true,
+			"vnc":            map[string]any{"displayMode": "port", "fitMode": "clip", "shared": true},
+		}),
+	})
+	state, changed := mustApply(t, state, updated, "device-a", 2000, false)
+	if !changed {
+		t.Fatal("the VNC edit did not change the convergent state")
+	}
+	value := materializedValue(t, mustMaterialize(t, state), "hosts", "host-1")
+	if value["hasVncPassword"] != true {
+		t.Fatalf("materialized hasVncPassword = %v", value["hasVncPassword"])
+	}
+	config, ok := value["vnc"].(map[string]any)
+	if !ok {
+		t.Fatalf("materialized vnc = %#v", value["vnc"])
+	}
+	if config["displayMode"] != "port" || config["fitMode"] != "clip" {
+		t.Fatalf("materialized vnc = %#v", config)
+	}
+}

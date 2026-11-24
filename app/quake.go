@@ -7,6 +7,7 @@ import (
 
 	appdesktop "github.com/mslxl/natcatty/application/desktop"
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/dropdown"
 	quakeui "github.com/mslxl/natcatty/ui/quake"
@@ -36,6 +37,9 @@ func (o quakeSessionOpener) OpenLocal() (*appsession.Session, error) {
 func (o quakeSessionOpener) OpenHost(host domainvault.Host) (*appsession.Session, error) {
 	if o.sessions == nil {
 		return nil, quakeui.ErrNoSessions
+	}
+	if !host.ConnectionSupported() {
+		return nil, shellstate.ErrUnsupportedHost
 	}
 	return o.sessions.Open(context.Background(), shellstate.HostSessionSpec(host))
 }
@@ -167,6 +171,20 @@ func wireDropdownQuake(windows *windowManager, state *quakeui.State, shellState 
 	windows.SetDropdownOwnershipProvider(func() bool {
 		return topdown() || quakeFollow()
 	})
+	// The Panel's accelerator gate follows the Pane its routed content shows.
+	// Quake's own workspace asks its active Tab; follow and top-down draw the
+	// main Workspace, whose active Pane owns the grab there. A terminal Pane
+	// reports false, so the Panel keeps its shortcuts as before.
+	windows.SetDropdownKeyboardGrabProvider(func() bool {
+		switch {
+		case quakeOwn():
+			return state.KeyboardGrab()
+		case quakeFollow() || topdown():
+			return shellState != nil && shellState.KeyboardGrab()
+		default:
+			return false
+		}
+	})
 }
 
 // configuredDropdownHeight turns the persisted height and unit into the
@@ -206,4 +224,38 @@ func configuredDropdownHeight(settings appdesktop.Settings, topdown bool, workAr
 		height = workArea.Height
 	}
 	return height
+}
+
+// bellRouter hands a bell to the workspace that owns the Session. Both the
+// shell and Quake workspaces ignore a Session they do not own, so one call
+// never marks the wrong Tab or strip. The terminal BEL uses the shell's
+// activity path (a focused Pane is already visible); the VNC viewer uses the
+// bell path so even a focused Pane gets an explicit cue in the detached
+// window. The Quake workspace always uses its bell mark because it owns its
+// own tab strip.
+//
+// The fields are read when a hook fires, not when the router is built, so the
+// Quake state may be assigned after the Session service that captures the
+// terminal hook.
+type bellRouter struct {
+	shell *shellstate.State
+	quake *quakeui.State
+}
+
+func (b bellRouter) terminal(id model.SessionID) {
+	if b.shell != nil {
+		b.shell.NoteSessionActivity(id)
+	}
+	if b.quake != nil {
+		b.quake.NoteSessionBell(id)
+	}
+}
+
+func (b bellRouter) viewer(id model.SessionID) {
+	if b.shell != nil {
+		b.shell.NoteSessionBell(id)
+	}
+	if b.quake != nil {
+		b.quake.NoteSessionBell(id)
+	}
 }

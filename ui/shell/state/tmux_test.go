@@ -95,7 +95,8 @@ func TestOpenHostCarriesAutoAttachTmuxOnlyForPlainSSH(t *testing.T) {
 			name: "mosh",
 			host: domainvault.Host{
 				ID: "host-4", Label: "mosh", Hostname: "example.com", Port: 22,
-				Username: "root", Protocol: domainvault.ProtocolMosh, AutoAttachTmux: true,
+				Username: "root", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportMosh,
+				AutoAttachTmux: true,
 			},
 			expected: false,
 		},
@@ -103,7 +104,8 @@ func TestOpenHostCarriesAutoAttachTmuxOnlyForPlainSSH(t *testing.T) {
 			name: "et",
 			host: domainvault.Host{
 				ID: "host-5", Label: "et", Hostname: "example.com", Port: 22,
-				Username: "root", Protocol: domainvault.ProtocolET, AutoAttachTmux: true,
+				Username: "root", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET,
+				AutoAttachTmux: true,
 			},
 			expected: false,
 		},
@@ -124,7 +126,7 @@ func TestOpenHostCarriesAutoAttachTmuxOnlyForPlainSSH(t *testing.T) {
 			}
 			waitFor(t, "the Tab", func() bool {
 				graph.state.Flush()
-				return graph.state.TabCount() == 1
+				return tabAttached(graph.state, 0)
 			})
 			if got := graph.factory.lastSpec().AutoAttachTmux; got != testCase.expected {
 				t.Fatalf("StartSpec AutoAttachTmux = %v, want %v", got, testCase.expected)
@@ -145,7 +147,7 @@ func TestATmuxDetachClosesTheTabWithoutAnError(t *testing.T) {
 	}
 	waitFor(t, "the Tab", func() bool {
 		state.Flush()
-		return state.TabCount() == 1
+		return tabAttached(state, 0)
 	})
 
 	if err := factory.last().Close(); err != nil {
@@ -172,7 +174,7 @@ func TestAnOrdinaryShellExitKeepsTheTab(t *testing.T) {
 	}
 	waitFor(t, "the Tab", func() bool {
 		state.Flush()
-		return state.TabCount() == 1
+		return tabAttached(state, 0)
 	})
 	if err := factory.last().Close(); err != nil {
 		t.Fatalf("Close transport: %v", err)

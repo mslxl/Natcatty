@@ -565,6 +565,9 @@ func TestNoticeTextLocalizesX11Failures(t *testing.T) {
 	if got := noticeText(m, &appsession.Notice{Code: appsession.NoticeHostAtuinImportFailed}); got != m.ConnectionHostAtuinImportFailed() {
 		t.Fatalf("Host Atuin import failure notice = %q, want %q", got, m.ConnectionHostAtuinImportFailed())
 	}
+	if got := noticeText(m, &appsession.Notice{Code: appsession.NoticeVNCPlaintext}); got == "" || got != m.ConnectionVNCPlaintextWarning() {
+		t.Fatalf("VNC plaintext notice = %q, want %q", got, m.ConnectionVNCPlaintextWarning())
+	}
 	if got := noticeText(m, &appsession.Notice{Code: "unknown"}); got != "" {
 		t.Fatalf("unknown notice = %q, want empty", got)
 	}

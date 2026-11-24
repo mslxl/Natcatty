@@ -273,6 +273,12 @@ func (e *Error) Permanent() bool {
 	return e != nil && (e.Kind == KindAuth || e.Kind == KindHostKey || e.Kind == KindX11)
 }
 
+// AuthFailure reports whether this is a rejected credential or host key. It is
+// narrower than Permanent, which also covers an X11 forwarding refusal.
+func (e *Error) AuthFailure() bool {
+	return e != nil && (e.Kind == KindAuth || e.Kind == KindHostKey)
+}
+
 func hostKeyError(cause error) error     { return &Error{Kind: KindHostKey, Cause: cause} }
 func authError(cause error) error        { return &Error{Kind: KindAuth, Cause: cause} }
 func networkError(cause error) error     { return &Error{Kind: KindNetwork, Cause: cause} }

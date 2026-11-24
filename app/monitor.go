@@ -24,7 +24,7 @@ type monitorConnector struct {
 var _ appmonitor.Connector = monitorConnector{}
 
 func (c monitorConnector) Open(ctx context.Context, host domainvault.Host) (appmonitor.Connection, error) {
-	if !host.Protocol.SupportsMonitoring() {
+	if !host.SupportsMonitoring() {
 		return nil, &appmonitor.Error{
 			Reason: appmonitor.ReasonUnsupported,
 			Cause:  fmt.Errorf("app: %s Hosts have no monitoring channel", host.Protocol),

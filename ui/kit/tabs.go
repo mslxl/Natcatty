@@ -276,6 +276,9 @@ func paneTab(c *ui.Context, spec TabSpec) (ui.Element, TabResult) {
 	el.Children(func() {
 		tabLead(c, spec, M(c).Icon.Small, glyph)
 		ui.Text(c, spec.Title).FontSize(M(c).Font.Footnote).FontWeight(500).SingleLine().MinWidth(0).Grow(1).TextColor(text)
+		if spec.Marker != "" {
+			ui.Text(c, spec.Marker).FontSize(9).TextColor(t.Accent)
+		}
 		if spec.Close != "" {
 			closer := ui.ButtonBase(c).Label(spec.Close).Tooltip(spec.Close).
 				Size(18, 18).Radius(M(c).Radius.Small).Justify(ui.Center).AlignItems(ui.Center).Shrink(0).
@@ -347,6 +350,9 @@ func nativePaneTab(c *ui.Context, spec TabSpec) (ui.Element, TabResult) {
 	el.Children(func() {
 		tabLead(c, spec, M(c).Icon.Small, glyph)
 		ui.Text(c, spec.Title).FontSize(M(c).Font.Footnote).FontWeight(500).SingleLine().MinWidth(0).Grow(1).TextColor(text)
+		if spec.Marker != "" {
+			ui.Text(c, spec.Marker).FontSize(9).TextColor(t.Accent)
+		}
 		if spec.Close != "" {
 			closer := ui.ButtonBase(c).Label(spec.Close).Tooltip(spec.Close).
 				Size(18, 18).Radius(M(c).Radius.Pill).Justify(ui.Center).AlignItems(ui.Center).Shrink(0).

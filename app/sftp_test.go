@@ -31,6 +31,7 @@ import (
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
+	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -529,5 +530,36 @@ func TestDedicatedRoutingSurvivesTrustSaveAndReconnect(t *testing.T) {
 	}
 	if prompts := fixture.prompter.count(); prompts != 1 {
 		t.Fatalf("host-key prompts = %d, want the persisted trust to suppress the rest", prompts)
+	}
+}
+
+// sftpGuardVault is the minimal Vault read the file-transfer guard needs.
+type sftpGuardVault struct{ host domainvault.Host }
+
+func (v sftpGuardVault) Get(context.Context, model.HostID) (domainvault.Host, error) {
+	return v.host, nil
+}
+
+func (v sftpGuardVault) Secret(context.Context, model.HostID, string) (string, error) {
+	return "", appvault.ErrSecretNotFound
+}
+
+// TestSFTPRefusesAVNCHost covers the remote-opener guard: RFB has no SFTP or
+// SCP subsystem, so opening a file pane must fail with a message naming the
+// protocol instead of dialing an SSH transport.
+func TestSFTPRefusesAVNCHost(t *testing.T) {
+	opener := &sftpRemoteOpener{
+		manager: appconnection.NewManager(nil, nil, nil),
+		vault: sftpGuardVault{host: domainvault.Host{
+			ID: "desk", Label: "desk", Hostname: "desk.local", Port: 5901,
+			Protocol: domainvault.ProtocolVNC,
+		}},
+	}
+	_, err := opener.OpenRemote(context.Background(), "desk", "")
+	if err == nil {
+		t.Fatal("OpenRemote accepted a VNC Host")
+	}
+	if !strings.Contains(err.Error(), "vnc") || !strings.Contains(err.Error(), "file transfer") {
+		t.Fatalf("OpenRemote error = %v, want a clear VNC file-transfer refusal", err)
 	}
 }

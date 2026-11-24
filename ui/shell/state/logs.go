@@ -153,7 +153,7 @@ func (t *Tab) livePaneWithHost(hostID model.HostID) (model.PaneID, bool) {
 // focusPane makes tab active, focuses paneID, hides the Vault, and persists
 // the selection.
 func (s *State) focusPane(index int, tab *Tab, paneID model.PaneID) {
-	s.active = index
+	s.activateTab(index)
 	tab.setFocus(paneID)
 	tab.Dirty = false
 	s.leaveMonitor()

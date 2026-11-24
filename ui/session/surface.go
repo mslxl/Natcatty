@@ -7,6 +7,7 @@ package sessionui
 
 import (
 	"errors"
+	"image"
 	"io"
 	"math"
 	"runtime"
@@ -120,6 +121,38 @@ type BrowserPanel interface {
 // ScreenWriter saves text and reports the path it wrote, or an error.
 type ScreenWriter func(text string) (string, error)
 
+// ScreenRect is one screen of a desktop a Tab arranges to match its Panes.
+// Index is the screen the Pane shows; Rect is the Pane's rectangle in window
+// pixels. The Tab normalizes the rectangles before asking the remote.
+type ScreenRect struct {
+	Index int
+	Rect  image.Rectangle
+}
+
+// ScreenLayoutHost is implemented by a Surface that shows one screen of a
+// desktop shared by the Tab's Panes. The remote has one desktop, so a single
+// Pane cannot size it for everyone: the Tab gathers every Pane's rectangle,
+// sends one request through one Pane, and the server applies that layout to
+// the desktop all Panes share. Driving it per Pane would make two Panes
+// compete for the same desktop size.
+type ScreenLayoutHost interface {
+	// ScreenGeometry reports the screen index this Surface shows and the Pane
+	// rectangle of its last draw, in window pixels. ok is false before the
+	// first draw.
+	ScreenGeometry() (index int, rect image.Rectangle, ok bool)
+	// LayoutScreens asks the remote for exactly these screens, one per Pane.
+	// The request runs off the UI thread and the Surface records its outcome:
+	// a remote that does not adopt the layout falls back to local scaling.
+	// It reports whether this Pane took the request: a hibernated, view-only,
+	// or not-yet-ready Pane returns false so the Tab can drive through another
+	// Pane. A layout the remote already reports, or one already requested, is
+	// taken (true) without sending.
+	LayoutScreens(screens []ScreenRect) bool
+	// SetScreenGeometryListener installs the callback draw invokes, on the UI
+	// thread, when the Pane rectangle changes or the remote's layout does.
+	SetScreenGeometryListener(fn func())
+}
+
 // PaneActions are the Pane commands the Session menu offers. The shell
 // supplies them for a Pane in a split-capable Tab; a detached Pane leaves
 // them nil and the items show disabled.
@@ -130,6 +163,10 @@ type PaneActions struct {
 	Close      func()
 	// Rename sets the Pane's Tab title to the trimmed, non-empty argument.
 	Rename func(title string)
+	// Reconnect reopens a failed Pane's Session from its descriptor. It is
+	// wired for kinds whose surface offers a manual reconnect; nil leaves the
+	// action unavailable.
+	Reconnect func()
 	// ToggleFiles opens or closes the Tab's side panel on this Pane's Host;
 	// FilesOpen reports that it is open. Nil hides the toolbar's side panel
 	// button. FilesIcon is that button's glyph, the panel's docked edge; empty

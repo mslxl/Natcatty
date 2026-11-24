@@ -98,6 +98,11 @@ func parsePuTTY(text string) Result {
 		case "Protocol":
 			if protocol := normalizeProtocol(value); protocol != "" {
 				current.Protocol = protocol
+			} else if value = strings.TrimSpace(value); value != "" {
+				// Keep an unsupported protocol spelling so validation rejects
+				// the record. Silently leaving the SSH default would import a
+				// raw, serial, or removed endpoint as SSH.
+				current.Protocol = strings.ToLower(value)
 			}
 		}
 	}

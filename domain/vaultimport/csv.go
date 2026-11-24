@@ -4,29 +4,37 @@ import (
 	"encoding/csv"
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode"
 )
 
 // CSV marked-field prefixes. They let a cell carry a value the legacy CSV
-// format cannot represent directly (a key path, passphrase, proxy, or local
-// shell spec) without confusing spreadsheets. A value that begins with a
-// formula character or with the marker itself is percent-encoded behind the
-// marker.
+// format cannot represent directly (a key path, passphrase, proxy, local shell
+// spec, or VNC viewer configuration) without confusing spreadsheets. A value
+// that begins with a formula character or with the marker itself is
+// percent-encoded behind the marker.
 const (
 	MarkerKeyPath    = "__netcatty_csv_keypath_v1__:"
 	MarkerPassphrase = "__netcatty_csv_passphrase_v1__:"
 	MarkerProxy      = "__netcatty_csv_proxy_v1__:"
 	MarkerProxyJump  = "__netcatty_csv_proxyjump_v1__:"
 	MarkerLocalShell = "__netcatty_csv_localshell_v1__:"
+	// MarkerVNC prefixes a VNC Host's viewer configuration. The payload is a
+	// semicolon-separated list of key=value pairs so a spreadsheet user can
+	// read and hand-edit it.
+	MarkerVNC = "__netcatty_csv_vnc_v1__:"
 )
 
 // csvHeader is the canonical Netcatty CSV header. Import accepts variants and
-// additional columns; export writes this exact order.
+// additional columns; export writes this exact order. VNC, VNCPassword, and
+// Transport are appended after the original fourteen columns, so an older
+// reader ignores them and a file written by an older build still imports.
+// Without the Transport column an SSH Host is read as plain SSH.
 var csvHeader = []string{
 	"Groups", "Label", "Tags", "Notes", "Hostname/IP", "Protocol",
 	"Port", "Username", "Password", "KeyPath", "Passphrase", "Proxy", "ProxyJump",
-	"LocalShell",
+	"LocalShell", "VNC", "VNCPassword", "Transport",
 }
 
 // CSVHeader returns a copy of the canonical header.
@@ -174,6 +182,104 @@ func DecodeMarkedField(value, marker string) string {
 	return decoded
 }
 
+// EncodeVNCConfig renders a VNC viewer configuration as a marker-prefixed,
+// human-readable cell. Every field is written explicitly, so the encoding is
+// stable and a reader never has to guess whether a value was omitted or set to
+// its zero value. A nil configuration writes an empty cell.
+func EncodeVNCConfig(config *VNCConfig) string {
+	if config == nil {
+		return ""
+	}
+	parts := []string{
+		"displayMode=" + config.DisplayMode,
+		"fitMode=" + config.FitMode,
+		"viewOnly=" + strconv.FormatBool(config.ViewOnly),
+		"shared=" + strconv.FormatBool(config.Shared),
+		"cursorMode=" + config.CursorMode,
+		"plaintextWarningAcknowledged=" + strconv.FormatBool(config.PlaintextWarningAcknowledged),
+		"webSocket=" + strconv.FormatBool(config.WebSocket),
+		"webSocketPath=" + escapeVNCValue(config.WebSocketPath),
+		"webSocketSecure=" + strconv.FormatBool(config.WebSocketSecure),
+	}
+	return MarkerVNC + strings.Join(parts, ";")
+}
+
+// escapeVNCValue protects a value inside a VNC cell. Entries are separated by
+// ';' and every value is percent-decoded, so those two characters must be
+// escaped to survive the round trip.
+func escapeVNCValue(value string) string {
+	if !strings.ContainsAny(value, "%;") {
+		return value
+	}
+	return strings.NewReplacer("%", "%25", ";", "%3B").Replace(value)
+}
+
+// DecodeVNCConfig reads the marker-prefixed VNC cell. An empty or unmarked cell
+// means the Host has no VNC configuration. Unknown keys are ignored and known
+// keys with missing or unrecognized values fall back to the viewer defaults;
+// in particular, an absent shared key means true, matching a new VNC Host.
+func DecodeVNCConfig(raw string) *VNCConfig {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, MarkerVNC) {
+		return nil
+	}
+	config := &VNCConfig{
+		DisplayMode: "display", FitMode: "fit", Shared: true, CursorMode: "local",
+	}
+	for _, token := range strings.Split(strings.TrimPrefix(raw, MarkerVNC), ";") {
+		key, value, ok := strings.Cut(token, "=")
+		if !ok {
+			continue
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		value = strings.TrimSpace(value)
+		if decoded, err := url.PathUnescape(value); err == nil {
+			value = decoded
+		}
+		switch key {
+		case "displaymode":
+			config.DisplayMode = value
+		case "fitmode":
+			config.FitMode = value
+		case "viewonly":
+			if parsed, ok := parseBoolValue(value); ok {
+				config.ViewOnly = parsed
+			}
+		case "shared":
+			if parsed, ok := parseBoolValue(value); ok {
+				config.Shared = parsed
+			}
+		case "cursormode":
+			config.CursorMode = value
+		case "plaintextwarningacknowledged":
+			if parsed, ok := parseBoolValue(value); ok {
+				config.PlaintextWarningAcknowledged = parsed
+			}
+		case "websocket":
+			if parsed, ok := parseBoolValue(value); ok {
+				config.WebSocket = parsed
+			}
+		case "websocketpath":
+			config.WebSocketPath = value
+		case "websocketsecure":
+			if parsed, ok := parseBoolValue(value); ok {
+				config.WebSocketSecure = parsed
+			}
+		}
+	}
+	return config
+}
+
+// parseBoolValue accepts the same spellings as strconv.ParseBool. An
+// unrecognized spelling leaves the caller's default untouched.
+func parseBoolValue(value string) (bool, bool) {
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return false, false
+	}
+	return parsed, true
+}
+
 // isFormulaStart reports whether a spreadsheet could read the value as a
 // formula. The tab and carriage return cases match the original exporter.
 func isFormulaStart(value string) bool {
@@ -303,32 +409,37 @@ func splitTags(raw string) []string {
 // parseTarget reads the hostname cell. It accepts a bare host, user@host,
 // host:port, [IPv6]:port, and ssh://, telnet://, or ssh://user@host:port
 // URLs. A recognized source protocol or username fills only the fields the
-// dedicated columns left empty.
-func parseTarget(raw string) (hostname, username string, port int, protocol string, ok bool) {
+// dedicated columns left empty. On failure code names the issue; an unknown
+// URL scheme is IssueUnsupportedProtocol rather than a bare host, so a value
+// such as mosh:// or rdp:// is never imported as SSH.
+func parseTarget(raw string) (hostname, username string, port int, protocol string, code IssueCode, ok bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return "", "", 0, "", false
+		return "", "", 0, "", IssueInvalidHostname, false
 	}
 
 	if strings.Contains(trimmed, "://") {
 		parsed, err := url.Parse(trimmed)
 		if err != nil || parsed.Hostname() == "" {
-			return "", "", 0, "", false
+			return "", "", 0, "", IssueInvalidHostname, false
 		}
 		host := parsed.Hostname()
 		if !validHostname(host) {
-			return "", "", 0, "", false
+			return "", "", 0, "", IssueInvalidHostname, false
 		}
 		value := 0
 		if parsed.Port() != "" {
 			var portOK bool
 			value, portOK = parsePort(parsed.Port())
 			if !portOK {
-				return "", "", 0, "", false
+				return "", "", 0, "", IssueInvalidPort, false
 			}
 		}
-		return host, parsed.User.Username(), value,
-			normalizeProtocol(strings.TrimSuffix(parsed.Scheme, ":")), true
+		protocol = normalizeProtocol(strings.TrimSuffix(parsed.Scheme, ":"))
+		if protocol == "" {
+			return "", "", 0, "", IssueUnsupportedProtocol, false
+		}
+		return host, parsed.User.Username(), value, protocol, "", true
 	}
 
 	rest := trimmed
@@ -339,16 +450,16 @@ func parseTarget(raw string) (hostname, username string, port int, protocol stri
 	if strings.HasPrefix(rest, "[") {
 		end := strings.IndexByte(rest, ']')
 		if end < 0 {
-			return "", "", 0, "", false
+			return "", "", 0, "", IssueInvalidHostname, false
 		}
 		hostname = rest[1:end]
 		if tail := rest[end+1:]; tail != "" {
 			if !strings.HasPrefix(tail, ":") {
-				return "", "", 0, "", false
+				return "", "", 0, "", IssueInvalidHostname, false
 			}
 			value, portOK := parsePort(tail[1:])
 			if !portOK {
-				return "", "", 0, "", false
+				return "", "", 0, "", IssueInvalidPort, false
 			}
 			port = value
 		}
@@ -362,9 +473,9 @@ func parseTarget(raw string) (hostname, username string, port int, protocol stri
 		}
 	}
 	if !validHostname(hostname) {
-		return "", "", 0, "", false
+		return "", "", 0, "", IssueInvalidHostname, false
 	}
-	return hostname, username, port, "", true
+	return hostname, username, port, "", "", true
 }
 
 // validHostname rejects empty, whitespace-containing, and control-character
@@ -412,6 +523,14 @@ func parseCSV(text string) Result {
 	proxyIdx := findExactHeader(headers, "proxy", "proxyserver", "proxy server")
 	proxyJumpIdx := findExactHeader(headers, "proxyjump")
 	localShellIdx := findExactHeader(headers, "localshell", "local shell")
+	// VNC and VNCPassword are matched exactly: a prefix match would confuse the
+	// VNC configuration column with VNCPassword, and neither may be mistaken
+	// for the generic Password column above.
+	vncIdx := findExactHeader(headers, "vnc")
+	vncPasswordIdx := findExactHeader(headers, "vncpassword", "vnc password")
+	// A file written before SSH transports existed has no Transport column; an
+	// absent column means plain SSH.
+	transportIdx := findExactHeader(headers, "transport")
 	passwordIdx := findExactHeader(headers, "password", "pass", "passwd")
 	if passwordIdx < 0 {
 		passwordIdx = findHeader(headers, "password", "passwd")
@@ -443,11 +562,14 @@ func parseCSV(text string) Result {
 		record.Row = rowNumber
 		record.Source = "csv"
 
-		hostname, targetUser, targetPort, targetProtocol, ok := parseTarget(
+		hostname, targetUser, targetPort, targetProtocol, targetIssue, ok := parseTarget(
 			StripFormulaGuard(hostnameRaw))
 		if !ok {
+			if targetIssue == "" {
+				targetIssue = IssueInvalidHostname
+			}
 			result.Issues = append(result.Issues,
-				issue(IssueInvalidHostname, rowNumber, "hostname", hostnameRaw))
+				issue(targetIssue, rowNumber, "hostname", hostnameRaw))
 			result.Records = result.Records[:len(result.Records)-1]
 			continue
 		}
@@ -479,6 +601,21 @@ func parseCSV(text string) Result {
 		if record.Protocol == "" {
 			record.Protocol = "ssh"
 		}
+		if raw := strings.TrimSpace(cell(row, transportIdx)); raw != "" {
+			value, ok := normalizeTransport(raw)
+			if !ok {
+				result.Records = result.Records[:len(result.Records)-1]
+				result.Issues = append(result.Issues,
+					issue(IssueUnsupportedProtocol, rowNumber, "transport", raw))
+				continue
+			}
+			record.Transport = value
+		}
+		if record.Protocol != "ssh" {
+			// A transport belongs to an SSH Host. Another protocol clears it
+			// rather than saving a setting its Session never reads.
+			record.Transport = ""
+		}
 		if portRaw := strings.TrimSpace(cell(row, portIdx)); portRaw != "" {
 			value, portOK := parsePort(portRaw)
 			if !portOK {
@@ -492,6 +629,12 @@ func parseCSV(text string) Result {
 			record.Username = value
 		}
 		record.Password = cell(row, passwordIdx)
+		// The VNC configuration and its credential are separate columns from
+		// the generic Password cell. The credential stays byte-exact.
+		if raw := strings.TrimSpace(cell(row, vncIdx)); raw != "" {
+			record.VNC = DecodeVNCConfig(raw)
+		}
+		record.VNCPassword = cell(row, vncPasswordIdx)
 		if raw := strings.TrimSpace(cell(row, keyPathIdx)); raw != "" {
 			record.KeyPath = DecodeMarkedField(raw, MarkerKeyPath)
 		}
@@ -551,15 +694,17 @@ func mergeKey(record Record) string {
 	if protocol == "" {
 		protocol = "ssh"
 	}
+	transport := record.Transport
+	if protocol != "ssh" {
+		transport = ""
+	}
 	parts := []string{
 		protocol,
+		transport,
 		strings.ToLower(record.Hostname),
 		itoa(record.Port),
 		strings.ToLower(record.Username),
 		normalizeGroup(record.Group),
-	}
-	if protocol == "local" {
-		parts = append(parts, strings.ToLower(strings.TrimSpace(record.Label)))
 	}
 	return strings.Join(parts, "\x1f")
 }

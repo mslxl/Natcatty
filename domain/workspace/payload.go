@@ -28,6 +28,8 @@ const (
 	SessionMosh SessionKind = "mosh"
 	// SessionET is an EternalTerminal Session on a saved Host.
 	SessionET SessionKind = "et"
+	// SessionVNC is a pixel desktop on a saved VNC Host.
+	SessionVNC SessionKind = "vnc"
 )
 
 // SessionDescriptor is the non-secret description of a Pane's Session. It is
@@ -57,6 +59,10 @@ type SessionDescriptor struct {
 	// Serial is the port and framing a serial Pane reopens with. It carries no
 	// credential material.
 	Serial *serial.Config `json:"serial,omitempty"`
+	// Screen is the remote screen a VNC Pane shows. Zero is the whole desktop
+	// on a single-screen server and the first screen of a multi-screen layout.
+	// Panes of one Tab claim distinct screens.
+	Screen int `json:"screen,omitempty"`
 	// ResumeKey locates an EternalTerminal Pane's saved session credentials in
 	// the encrypted secret store. It is an opaque locator, never the ET
 	// session id or passkey; those stay only in the store.
@@ -68,7 +74,7 @@ func (d SessionDescriptor) Valid() bool {
 	switch d.Kind {
 	case SessionLocal:
 		return true
-	case SessionSSH, SessionTelnet, SessionMosh, SessionET:
+	case SessionSSH, SessionTelnet, SessionMosh, SessionET, SessionVNC:
 		return d.HostID != "" && d.Hostname != ""
 	case SessionSerial:
 		return d.Serial != nil && d.Serial.Normalized().Validate() == nil

@@ -22,7 +22,7 @@ func TestOpenHostWithStartupSendsTheExactChunksAfterAttaching(t *testing.T) {
 	}
 	waitFor(t, "the SSH tab", func() bool {
 		graph.state.Flush()
-		return graph.state.TabCount() == 1
+		return tabAttached(graph.state, 0)
 	})
 	waitFor(t, "the startup input", func() bool {
 		graph.factory.transport.mu.Lock()
@@ -59,7 +59,7 @@ func TestFocusedHostIDReportsOnlySSHSessions(t *testing.T) {
 	}
 	waitFor(t, "the SSH tab", func() bool {
 		graph.state.Flush()
-		return graph.state.TabCount() == 2 && graph.state.ActiveTab() == 1
+		return tabAttached(graph.state, 1) && graph.state.ActiveTab() == 1
 	})
 	if hostID, ok := graph.state.FocusedHostID(); !ok || hostID != "host-1" {
 		t.Fatalf("FocusedHostID = %q, %v; want host-1", hostID, ok)

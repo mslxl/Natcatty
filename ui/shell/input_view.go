@@ -86,6 +86,11 @@ func terminalPanels(c *ui.Context, s *state.State, m locales.Messages, t *ui.The
 	if !s.BroadcastPanelOpen() && !s.ComposeOpen() {
 		return
 	}
+	// The panels target terminal Sessions. A VNC Pane offers no capture,
+	// broadcast, compose, or scrollback actions.
+	if s.FocusedSessionIsPixel() {
+		return
+	}
 	ui.Column(c).FillWidth().Padding(8, 8, 0, 8).Gap(6).Children(func() {
 		if s.BroadcastPanelOpen() {
 			broadcastPanel(c, s, m, t)

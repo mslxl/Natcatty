@@ -17,12 +17,9 @@ const (
 	SSH ID = "ssh"
 	// Telnet is a Host reached over Telnet.
 	Telnet ID = "telnet"
-	// Local is a shell that runs on this machine.
-	Local ID = "local"
-	// Mosh is an SSH Host that swaps to Mosh after the bootstrap.
-	Mosh ID = "mosh"
-	// ET is an SSH Host reached through the EternalTerminal transport.
-	ET ID = "et"
+	// VNC is a Host reached over the RFB protocol. Its Session carries pixels
+	// through a display-session port rather than a byte stream.
+	VNC ID = "vnc"
 )
 
 // Transport names the Session transport a protocol selects. The values match
@@ -37,10 +34,16 @@ const (
 	TransportSSH Transport = "ssh"
 	// TransportTelnet is a Telnet terminal.
 	TransportTelnet Transport = "telnet"
+	// TransportVNC is a VNC pixel Session over RFB.
+	TransportVNC Transport = "vnc"
 	// TransportMosh is a UDP Mosh Session bootstrapped over SSH.
 	TransportMosh Transport = "mosh"
 	// TransportET is an EternalTerminal Session.
 	TransportET Transport = "et"
+	// TransportUnsupported is returned when a persisted Host names a protocol
+	// or transport this build does not support. It is deliberately not a
+	// Session kind: callers fail closed instead of falling back to SSH.
+	TransportUnsupported Transport = "unsupported"
 )
 
 // Descriptor is one protocol's identity and the facts the app resolves from
@@ -74,10 +77,16 @@ type Descriptor struct {
 	Proxy bool
 	// X11 reports whether X11 forwarding applies to the Host.
 	X11 bool
+	// Plaintext reports whether the protocol's own transport sends credentials
+	// and keystrokes over the network unencrypted. A route through SSH encrypts
+	// the wire, but the capability describes the native protocol and lets the
+	// Vault editor disclose the exposure without comparing protocol names.
+	Plaintext bool
 }
 
-// builtins is the ordered built-in protocol set. The order is the order the
-// Vault presents when a caller does not impose its own.
+// builtins is the ordered built-in Host protocol set. The order is the order
+// the Vault presents when a caller does not impose its own. Mosh and ET are
+// SSH transports, not Host protocols, so they are absent here.
 var builtins = []Descriptor{
 	{
 		ID: SSH, Transport: TransportSSH, DefaultPort: 22,
@@ -86,43 +95,75 @@ var builtins = []Descriptor{
 		Monitoring: true, Proxy: true, X11: true,
 	},
 	{
-		ID: Mosh, Transport: TransportMosh, DefaultPort: 22,
-		SSHAuth: true, HostProtocol: true, GroupDefault: false,
-		FileTransfer: false, Forwarding: true,
-		Monitoring: true, Proxy: true, X11: false,
-	},
-	{
-		ID: ET, Transport: TransportET, DefaultPort: 22,
-		SSHAuth: true, HostProtocol: true, GroupDefault: false,
-		FileTransfer: false, Forwarding: true,
-		Monitoring: true, Proxy: true, X11: false,
-	},
-	{
 		ID: Telnet, Transport: TransportTelnet, DefaultPort: 23,
 		SSHAuth: false, HostProtocol: true, GroupDefault: true,
 		// Telnet's target has no SSH handshake, but its route can still run
 		// through SSH jumps and a proxy, so the route controls apply.
 		FileTransfer: false, Forwarding: false,
 		Monitoring: false, Proxy: true, X11: false,
+		// The native protocol sends its password and every keystroke in the
+		// clear. The editor discloses that through this capability.
+		Plaintext: true,
 	},
 	{
-		ID: Local, Transport: TransportLocal, DefaultPort: 0,
-		SSHAuth: false, HostProtocol: true, GroupDefault: false,
+		ID: VNC, Transport: TransportVNC, DefaultPort: 5900,
+		SSHAuth: false, HostProtocol: true, GroupDefault: true,
+		// RFB is a single pixel stream. Jump chains and a proxy can still
+		// carry it, like a Telnet stream, but there is no SSH application
+		// channel for SFTP, forwarding, monitoring, or X11.
 		FileTransfer: false, Forwarding: false,
-		Monitoring: false, Proxy: false, X11: false,
+		Monitoring: false, Proxy: true, X11: false,
+		// VNC password authentication is challenge-response over an
+		// unencrypted stream; only TLS or an SSH route encrypts the wire.
+		Plaintext: true,
 	},
 }
 
-// Builtins returns the built-in descriptors in display order. The slice is a
-// copy; callers may keep or reorder it.
+// transportDescriptors is the capability table keyed by Session transport. It
+// adds Mosh and ET, which an SSH Host selects through its Transport field and
+// which are never persisted as Host protocol IDs.
+var transportDescriptors = func() []Descriptor {
+	descriptors := append([]Descriptor(nil), builtins...)
+	return append(descriptors,
+		Descriptor{
+			Transport: TransportMosh, DefaultPort: 22,
+			SSHAuth: true, HostProtocol: false, GroupDefault: false,
+			FileTransfer: false, Forwarding: true,
+			Monitoring: true, Proxy: true, X11: false,
+		},
+		Descriptor{
+			Transport: TransportET, DefaultPort: 22,
+			SSHAuth: true, HostProtocol: false, GroupDefault: false,
+			FileTransfer: false, Forwarding: true,
+			Monitoring: true, Proxy: true, X11: false,
+		},
+	)
+}()
+
+// Builtins returns the built-in Host protocol descriptors in display order.
+// The slice is a copy; callers may keep or reorder it.
 func Builtins() []Descriptor {
 	return append([]Descriptor(nil), builtins...)
 }
 
-// Resolve returns the descriptor for a built-in protocol.
+// Resolve returns the descriptor for a built-in Host protocol. Mosh and ET do
+// not resolve: they are transports, not protocol IDs.
 func Resolve(id ID) (Descriptor, bool) {
 	for _, descriptor := range builtins {
 		if descriptor.ID == id {
+			return descriptor, true
+		}
+	}
+	return Descriptor{}, false
+}
+
+// DescriptorForTransport returns the capability descriptor for a Session
+// transport. It lets a Host resolve its effective capabilities from
+// `protocol: ssh` + `transport: mosh|et` without comparing protocol names. An
+// unknown transport has no descriptor.
+func DescriptorForTransport(transport Transport) (Descriptor, bool) {
+	for _, descriptor := range transportDescriptors {
+		if descriptor.Transport == transport {
 			return descriptor, true
 		}
 	}

@@ -23,6 +23,7 @@ import (
 	domainserial "github.com/mslxl/natcatty/domain/model/serial"
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
+	domainvnc "github.com/mslxl/natcatty/domain/model/vnc"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -50,12 +51,44 @@ var ErrNoTextInserter = errors.New("shell: the focused terminal cannot insert te
 // which Session is missing; nothing is invented in its place.
 var ErrHostUnavailable = errors.New("shell: restored Host is unavailable")
 
+// ErrUnsupportedHost reports a Host whose protocol or transport this build
+// does not support. Connecting fails before a Session is created.
+var ErrUnsupportedHost = uiconnection.ErrUnsupportedHost
+
+// ErrSplitUnavailable reports a Pane action the Pane's remote cannot support.
+// A VNC Pane splits only when the server gives each Pane its own screen;
+// showing one framebuffer in two Panes would be the same desktop twice.
+var ErrSplitUnavailable = errors.New("shell: this pane cannot split")
+
+// ScreenSplitter is implemented by a Surface whose remote must provide a screen
+// for each Pane before the Tab splits. The shell prepares the remote, then
+// opens the new Pane on the returned index.
+type ScreenSplitter interface {
+	// CanSplit reports whether splitting is still possible. It is optimistic
+	// until the remote has refused a multi-screen layout.
+	CanSplit() bool
+	// ScreenCount is the number of screens the remote currently reports.
+	ScreenCount() int
+	// PrepareSplit asks the remote for at least count screens.
+	PrepareSplit(count int) error
+}
+
 // Surface is the terminal surface a Pane shows. The UI owns it and the
 // application owns the transport beneath it; the shell only renders and closes
 // it.
 type Surface interface {
 	View(c *ui.Context) ui.Element
 	Close()
+}
+
+// KeyReleaser is implemented by a Surface that can tell its remote peer to
+// release keyboard keys, synthesized modifiers, and pointer buttons the viewer
+// last reported down. The shell calls it before a Surface stops rendering:
+// switching Tabs, detaching a Pane, or closing it. MyGo does not deliver key-up
+// events for a subtree it stops building, so without this seam a held key
+// would stay down in the guest.
+type KeyReleaser interface {
+	ReleaseInput()
 }
 
 // BrowserOpener is implemented by a Session surface that can show its Host's
@@ -148,6 +181,11 @@ type openOutcome struct {
 	descriptor domainworkspace.SessionDescriptor
 	startup    StartupInput
 	err        error
+	// tabID and paneID name the Tab created when the dial started, whose
+	// pending Pane the outcome fills. They are empty for an open that creates
+	// its Tab only once the Session exists (MCP and serial).
+	tabID  model.TabID
+	paneID model.PaneID
 }
 
 // StartupInput is input a newly opened Session receives once it exists. A
@@ -260,6 +298,10 @@ type State struct {
 	surfaces    SurfaceFactory
 	trustPrompt *sessionui.TrustPrompt
 	authPrompt  *sessionui.AuthPrompt
+	// plaintextPrompt asks the user to accept an unencrypted VNC connection
+	// before an unrouted Host dials. It is the same prompt the VNC transport
+	// factory waits on.
+	plaintextPrompt *sessionui.VNCPlaintextPrompt
 	// etResumeStore lets the shell clear a saved ET credential pair when no
 	// live Session owns it any more: a restored reattach the server refuses as
 	// unsupported, or an ET Pane closed while its Session never opened. Nil
@@ -319,7 +361,10 @@ type State struct {
 	// activity queues Session change notifications from Session goroutines.
 	// Flush transfers them to the activity markers on the UI thread.
 	activity []model.SessionID
-	problem  appconnection.Kind
+	// bells queues remote bells from the viewer goroutine. Flush applies them
+	// on the UI thread beside the activity markers.
+	bells   []model.SessionID
+	problem appconnection.Kind
 	// problemErr keeps the last failure's cause so the view can distinguish a
 	// missing OpenSSH agent from a missed security key deadline, which share
 	// their protocol-level Kind with other failures.
@@ -579,6 +624,13 @@ func WithAuthPrompt(prompt *sessionui.AuthPrompt) Option {
 	return func(s *State) { s.authPrompt = prompt }
 }
 
+// WithVNCPlaintextPrompt gives the shell the unencrypted-VNC confirmation to
+// render. The same prompt blocks the VNC transport factory after the stream is
+// open and the security type is known, before any credential is sent.
+func WithVNCPlaintextPrompt(prompt *sessionui.VNCPlaintextPrompt) Option {
+	return func(s *State) { s.plaintextPrompt = prompt }
+}
+
 // WithDynamicTabTitleMode supplies the live Dynamic tab title setting. Without
 // it the shell follows the default: every Session's title.
 func WithDynamicTabTitleMode(mode func() domainterminal.DynamicTabTitleMode) Option {
@@ -646,6 +698,10 @@ func (s *State) TrustPrompt() *sessionui.TrustPrompt { return s.trustPrompt }
 
 // AuthPrompt returns the authentication prompt the shell renders, or nil.
 func (s *State) AuthPrompt() *sessionui.AuthPrompt { return s.authPrompt }
+
+// VNCPlaintextPrompt returns the unencrypted-VNC confirmation the shell
+// renders, or nil.
+func (s *State) VNCPlaintextPrompt() *sessionui.VNCPlaintextPrompt { return s.plaintextPrompt }
 
 // Problem returns the last connection failure, or "" when the last attempt
 // succeeded or none has run.
@@ -812,6 +868,9 @@ func (s *State) ConsumeHostListFocus() bool {
 
 // ShowVault makes the Vault the visible surface.
 func (s *State) ShowVault() {
+	// The work Tab stops rendering, so its focused pane must not leave guest
+	// input held.
+	s.releaseActiveInput()
 	s.home = HomeVault
 	s.leaveMonitor()
 	s.leaveSystemManager()
@@ -832,6 +891,7 @@ func (s *State) LogsView() func(*ui.Context) { return s.logsView }
 // stays over it, so a user can return to a Session without leaving Logs
 // first.
 func (s *State) ShowLogs() {
+	s.releaseActiveInput()
 	s.home = HomeLogs
 	s.leaveMonitor()
 	s.leaveSystemManager()
@@ -859,6 +919,7 @@ func (s *State) ShowSFTP() {
 	if !s.SFTPTabShown() {
 		return
 	}
+	s.releaseActiveInput()
 	s.leaveMonitor()
 	s.leaveSystemManager()
 	s.sftpVisible = true
@@ -876,6 +937,7 @@ func (s *State) MonitorView() func(*ui.Context) { return s.monitorView }
 // ShowMonitor makes the Host monitoring surface visible and asks it to start
 // sampling. The work Tab strip stays over it like Logs and SFTP.
 func (s *State) ShowMonitor() {
+	s.releaseActiveInput()
 	s.home = HomeMonitor
 	s.leaveSystemManager()
 	s.monitorVisible = true
@@ -909,6 +971,7 @@ func (s *State) SysManagerView() func(*ui.Context) { return s.sysManagerView }
 // ShowSystemManager makes the System manager visible and asks it to start
 // sampling. The work Tab strip stays over it like Logs and SFTP.
 func (s *State) ShowSystemManager() {
+	s.releaseActiveInput()
 	s.home = HomeSystem
 	s.leaveMonitor()
 	s.sysManagerVisible = true
@@ -979,8 +1042,9 @@ func (s *State) NewTabWithShell(shell string) error {
 		Label: session.Label(),
 	}})
 	tab.attachOnlySession(session, surface)
+	s.wireScreenLayout(tab)
 	s.tabs = append(s.tabs, tab)
-	s.active = len(s.tabs) - 1
+	s.activateTab(len(s.tabs) - 1)
 	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
@@ -1026,19 +1090,38 @@ func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput
 	if s.sessions == nil || s.surfaces == nil {
 		return ErrNoSessions
 	}
+	plan := hostSessionTransport(host)
+	if plan.unsupported {
+		// Never dial a removed or unknown protocol as SSH. The record has to be
+		// edited before it can connect.
+		s.setProblem(ErrUnsupportedHost)
+		return ErrUnsupportedHost
+	}
 	label := host.Label
 	if label == "" {
 		label = host.Hostname
 	}
 	s.setProblem(nil)
-	s.pending = append(s.pending, label)
 
-	plan := hostSessionTransport(host)
 	spec := HostSessionSpec(host)
 	// The one-shot password is never stored in the workspace descriptor; it
 	// only travels into this Session's StartSpec.
 	spec.Password = password
 	resumeKey, x11 := spec.ResumeKey, spec.X11Forwarding
+	// The Tab exists before the dial finishes, so it can be opened while the
+	// connection is still starting and its Pane can show the progress.
+	tabID, paneID := s.addPendingHostTab(label, domainworkspace.SessionDescriptor{
+		Kind:           plan.descriptor,
+		Label:          label,
+		HostID:         host.ID,
+		Hostname:       host.Hostname,
+		Port:           host.Port,
+		Username:       host.Username,
+		X11Forwarding:  x11,
+		AutoAttachTmux: plan.tmux,
+		ResumeKey:      resumeKey,
+	})
+
 	ctx := s.ctx
 	go func() {
 		s.attachAutoLogin(ctx, &spec, host, password)
@@ -1048,24 +1131,33 @@ func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput
 			session: session,
 			label:   label,
 			browser: browser,
-			descriptor: domainworkspace.SessionDescriptor{
-				Kind:           plan.descriptor,
-				Label:          label,
-				HostID:         host.ID,
-				Hostname:       host.Hostname,
-				Port:           host.Port,
-				Username:       host.Username,
-				X11Forwarding:  x11,
-				AutoAttachTmux: plan.tmux,
-				ResumeKey:      resumeKey,
-			},
 			startup: startup,
 			err:     err,
+			tabID:   tabID,
+			paneID:  paneID,
 		})
 		s.mu.Unlock()
 		s.RequestRedraw()
 	}()
 	return nil
+}
+
+// addPendingHostTab appends a Tab whose one Pane is waiting for the Session its
+// dial will produce, and makes it active. The Pane renders the connecting state
+// until Flush applies the outcome.
+func (s *State) addPendingHostTab(label string, descriptor domainworkspace.SessionDescriptor) (model.TabID, model.PaneID) {
+	tab := s.newTab(TabOptions{Label: label, AutoTitle: true, Descriptor: descriptor})
+	paneID := tab.paneIDs()[0]
+	tab.panes[paneID].pending = true
+	s.tabs = append(s.tabs, tab)
+	s.activateTab(len(s.tabs) - 1)
+	s.leaveMonitor()
+	s.vaultVisible = false
+	s.logsVisible = false
+	s.sftpVisible = false
+	s.save()
+	s.RequestRedraw()
+	return tab.ID, paneID
 }
 
 // OpenHostForMCP opens a real Host Session for an external MCP host_open call.
@@ -1075,6 +1167,10 @@ func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput
 func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (model.SessionID, error) {
 	if s.sessions == nil || s.surfaces == nil {
 		return "", ErrNoSessions
+	}
+	plan := hostSessionTransport(host)
+	if plan.unsupported {
+		return "", ErrUnsupportedHost
 	}
 	label := host.Label
 	if label == "" {
@@ -1088,7 +1184,6 @@ func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (mode
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	plan := hostSessionTransport(host)
 	spec := HostSessionSpec(host)
 	resumeKey, x11 := spec.ResumeKey, spec.X11Forwarding
 	s.attachAutoLogin(ctx, &spec, host, "")
@@ -1148,6 +1243,7 @@ func HostSessionSpec(host domainvault.Host) appsession.StartSpec {
 		Telnet:         plan.telnet,
 		Mosh:           plan.mosh,
 		ET:             plan.et,
+		VNC:            plan.vnc,
 		// Input compatibility is local-only: the Session translates typed keys
 		// before they reach this transport.
 		InputCompatibility: host.InputCompatibility(),
@@ -1164,10 +1260,14 @@ type hostTransportPlan struct {
 	telnet     *domaintelnet.Config
 	mosh       *domoshmodel.Config
 	et         *domainetmodel.Config
+	vnc        *domainvnc.SessionConfig
 	reconnect  *appsession.ReconnectPolicy
 	// tmux carries the Host's opt-in auto-attach setting. Only a plain SSH
 	// Session may use it; Mosh and ET keep their own persistence.
 	tmux bool
+	// unsupported marks a Host whose protocol or transport this build cannot
+	// open. Callers fail closed instead of falling through to SSH.
+	unsupported bool
 }
 
 // newResumeKey returns a fresh opaque locator for an ET Session's saved
@@ -1186,16 +1286,13 @@ func (p hostTransportPlan) newResumeKey() string {
 // action without automatically retrying a dropped socket, matching the
 // original's SSH-only auto-reconnect.
 func hostSessionTransport(host domainvault.Host) hostTransportPlan {
-	// The protocol descriptor owns transport selection, so this switch never
-	// needs a new case when a built-in protocol is added.
-	switch host.Protocol.SessionTransport() {
-	case domainprotocol.TransportLocal:
-		// A saved local-shell Host opens a shell on this machine, exactly like
-		// the original's local Hosts. Its label is the Tab's connection label.
-		return hostTransportPlan{
-			kind:       appsession.KindLocal,
-			descriptor: domainworkspace.SessionLocal,
-		}
+	if !host.ConnectionSupported() {
+		return hostTransportPlan{unsupported: true}
+	}
+	// The Host resolves its effective transport: an SSH Host with Transport
+	// mosh or et selects that Session kind; this switch only builds the
+	// kind-specific start payload and restore descriptor.
+	switch host.SessionTransport() {
 	case domainprotocol.TransportTelnet:
 		cfg := domaintelnet.Config{Hostname: host.Hostname, Port: host.Port}.Normalized()
 		return hostTransportPlan{
@@ -1218,9 +1315,18 @@ func hostSessionTransport(host domainvault.Host) hostTransportPlan {
 			et:         etConfig(host),
 			reconnect:  &appsession.ReconnectPolicy{},
 		}
+	case domainprotocol.TransportVNC:
+		// VNC follows the SSH reconnect policy: a dropped pixel stream retries,
+		// but an authentication failure never does.
+		return hostTransportPlan{
+			kind:       appsession.KindVNC,
+			descriptor: domainworkspace.SessionVNC,
+			vnc:        vncConfig(host),
+			reconnect:  &appsession.ReconnectPolicy{},
+		}
 	}
 	// A dropped SSH transport retries every five seconds under the original
-	// reason predicate. Local shells have no policy.
+	// reason predicate.
 	return hostTransportPlan{
 		kind:       appsession.KindSSH,
 		descriptor: domainworkspace.SessionSSH,
@@ -1250,6 +1356,29 @@ func etConfig(host domainvault.Host) *domainetmodel.Config {
 		Port:     host.Port,
 		Username: host.Username,
 		ETPort:   host.ETPort,
+	}.Normalized()
+	return &cfg
+}
+
+// vncConfig is the kind-selected start section for a VNC Host. The password is
+// resolved by the app from the Host's own secret slot; this mapping carries the
+// endpoint, the non-secret viewer configuration, and the route references.
+func vncConfig(host domainvault.Host) *domainvnc.SessionConfig {
+	configuration := domainvnc.DefaultConfig()
+	if host.VNC != nil {
+		configuration = *domainvnc.NormalizeConfig(host.VNC)
+	}
+	cfg := domainvnc.SessionConfig{
+		Hostname:      host.Hostname,
+		Port:          host.Port,
+		Username:      host.Username,
+		Configuration: configuration,
+		Route: domainvnc.Route{
+			Jumps:            host.HostChain.IDs(),
+			ProxyProfileID:   host.ProxyProfileID,
+			NetworkProfileID: host.NetworkProfileID,
+			DirectProxy:      host.DirectProxy,
+		},
 	}.Normalized()
 	return &cfg
 }
@@ -1339,6 +1468,8 @@ func (s *State) Flush() {
 	s.outcomes = nil
 	activity := s.activity
 	s.activity = nil
+	bells := s.bells
+	s.bells = nil
 	startupFailures := s.startupFailures
 	s.startupFailures = 0
 	s.mu.Unlock()
@@ -1349,10 +1480,17 @@ func (s *State) Flush() {
 	for _, id := range activity {
 		s.applySessionActivity(id)
 	}
+	for _, id := range bells {
+		s.applySessionBell(id)
+	}
 	for _, outcome := range paneOutcomes {
 		s.applyPaneOutcome(outcome)
 	}
 	for _, outcome := range outcomes {
+		if outcome.tabID != "" {
+			s.applyPendingHostOutcome(outcome)
+			continue
+		}
 		s.clearPending(outcome.label)
 		if outcome.err != nil {
 			s.setProblem(outcome.err)
@@ -1369,13 +1507,14 @@ func (s *State) Flush() {
 		descriptor.Number = number
 		tab := s.newTab(TabOptions{Label: outcome.label, AutoTitle: true, Descriptor: descriptor})
 		tab.attachOnlySession(outcome.session, surface)
+		s.wireScreenLayout(tab)
 		if outcome.browser {
 			if opener, ok := surface.(BrowserOpener); ok {
 				_ = opener.OpenBrowser()
 			}
 		}
 		s.tabs = append(s.tabs, tab)
-		s.active = len(s.tabs) - 1
+		s.activateTab(len(s.tabs) - 1)
 		s.leaveMonitor()
 		s.vaultVisible = false
 		s.logsVisible = false
@@ -1403,6 +1542,92 @@ func (s *State) Flush() {
 	// Tabs and Panes may have changed; keep the input-thread broadcast
 	// recipient snapshot exact.
 	s.refreshBroadcastState()
+}
+
+// applyPendingHostOutcome fills the Pane of a Tab created before its dial
+// finished. A failure leaves the Tab in place: its Pane shows the localized
+// problem and offers a reconnect instead of the Tab disappearing under the
+// user.
+func (s *State) applyPendingHostOutcome(outcome openOutcome) {
+	value := s.findPendingPane(outcome.tabID, outcome.paneID)
+	if value == nil {
+		// The user closed the Pane while the dial was running.
+		if outcome.session != nil {
+			_ = outcome.session.Close()
+		}
+		return
+	}
+	if outcome.err != nil {
+		value.pending = false
+		value.err = outcome.err
+		s.setProblem(outcome.err)
+		s.save()
+		return
+	}
+	surface, err := s.surfaces(outcome.session)
+	if err != nil {
+		_ = outcome.session.Close()
+		value.pending = false
+		value.err = err
+		s.setProblem(err)
+		s.save()
+		return
+	}
+	value.session = outcome.session
+	value.surface = surface
+	value.pending = false
+	value.err = nil
+	if tab, _ := s.tabByAnyID(outcome.tabID); tab != nil {
+		s.wireScreenLayout(tab)
+	}
+	if outcome.browser {
+		if opener, ok := surface.(BrowserOpener); ok {
+			_ = opener.OpenBrowser()
+		}
+	}
+	s.setProblem(nil)
+	s.save()
+	if !outcome.startup.Empty() {
+		// Line-by-line delivery waits between chunks, so it cannot run on the
+		// UI thread. The Session and its transport already exist.
+		go s.deliverStartup(outcome.session.ID(), outcome.startup)
+	}
+}
+
+// findPendingPane finds the Pane whose dial produced the outcome. The Tab
+// recorded at open time is the first place to look, but the Pane may have been
+// moved to another Tab or into a detached window while the dial ran, and its
+// identity — not its old Tab — is what survives such a move.
+func (s *State) findPendingPane(tabID model.TabID, paneID model.PaneID) *pane {
+	if tab, _ := s.tabByAnyID(tabID); tab != nil {
+		if value := paneInTab(tab, paneID); value != nil {
+			return value
+		}
+	}
+	for _, tab := range s.tabs {
+		if value := paneInTab(tab, paneID); value != nil {
+			return value
+		}
+	}
+	for _, tab := range s.detached {
+		if value := paneInTab(tab, paneID); value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+// paneInTab returns the Tab's Pane by identity, but only while the Tab's tree
+// still shows it, so a stale map entry is not mistaken for a live Pane.
+func paneInTab(tab *Tab, paneID model.PaneID) *pane {
+	if tab == nil {
+		return nil
+	}
+	value, ok := tab.panes[paneID]
+	if !ok || !domainworkspace.ContainsPane(tab.Root, paneID) {
+		return nil
+	}
+	return value
 }
 
 // deliverStartup sends a new Session's startup input off the UI thread and

@@ -479,7 +479,9 @@ func TestPackagedSmokeHostDraft(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Mosh draft is invalid: %v", err)
 	}
-	if normalized.Protocol != domainvault.ProtocolMosh || normalized.Hostname != "127.0.0.1" ||
+	if normalized.Protocol != domainvault.ProtocolSSH ||
+		normalized.Transport != domainvault.TransportMosh ||
+		normalized.Hostname != "127.0.0.1" ||
 		normalized.Port != 2222 || normalized.Username != "alice" {
 		t.Fatalf("Mosh draft = %+v", normalized)
 	}
@@ -495,7 +497,7 @@ func TestPackagedSmokeHostDraft(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ET draft is invalid: %v", err)
 	}
-	if et.Protocol != domainvault.ProtocolET || et.ETPort != 8822 {
+	if et.Protocol != domainvault.ProtocolSSH || et.Transport != domainvault.TransportET || et.ETPort != 8822 {
 		t.Fatalf("ET draft = %+v", et)
 	}
 	// Password-only auth keeps the smoke from enumerating the real ~/.ssh keys.
@@ -642,21 +644,22 @@ func (f *smokeVaultFake) Create(_ context.Context, draft domainvault.Draft) (dom
 		return domainvault.Host{}, f.createErr
 	}
 	return domainvault.Host{
-		ID:       model.HostID("host-" + string(draft.Protocol)),
-		Label:    draft.Label,
-		Hostname: draft.Hostname,
-		Port:     draft.Port,
-		Username: draft.Username,
-		Protocol: draft.Protocol,
-		ETPort:   draft.ETPort,
+		ID:        model.HostID("host-" + string(draft.Protocol)),
+		Label:     draft.Label,
+		Hostname:  draft.Hostname,
+		Port:      draft.Port,
+		Username:  draft.Username,
+		Protocol:  draft.Protocol,
+		Transport: draft.Transport,
+		ETPort:    draft.ETPort,
 	}, nil
 }
 
 type smokeShellFake struct {
-	mu           sync.Mutex
-	opened       []domainvault.Host
-	err          error
-	failProtocol map[domainvault.Protocol]error
+	mu            sync.Mutex
+	opened        []domainvault.Host
+	err           error
+	failTransport map[domainvault.Transport]error
 }
 
 func (f *smokeShellFake) OpenHostForMCP(_ context.Context, host domainvault.Host) (model.SessionID, error) {
@@ -666,10 +669,10 @@ func (f *smokeShellFake) OpenHostForMCP(_ context.Context, host domainvault.Host
 	if f.err != nil {
 		return "", f.err
 	}
-	if err := f.failProtocol[host.Protocol]; err != nil {
+	if err := f.failTransport[host.SessionTransport()]; err != nil {
 		return "", err
 	}
-	return model.SessionID("session-" + string(host.Protocol)), nil
+	return model.SessionID("session-" + string(host.SessionTransport())), nil
 }
 
 type smokeSessionsFake struct {
@@ -826,9 +829,13 @@ func TestPackagedSmokeSessionSuccess(t *testing.T) {
 	if len(vault.drafts) != 2 {
 		t.Fatalf("created %d Hosts, want 2", len(vault.drafts))
 	}
-	if vault.drafts[0].Protocol != domainvault.ProtocolMosh ||
-		vault.drafts[1].Protocol != domainvault.ProtocolET {
-		t.Fatalf("protocols = %q, %q", vault.drafts[0].Protocol, vault.drafts[1].Protocol)
+	if vault.drafts[0].Protocol != domainvault.ProtocolSSH ||
+		vault.drafts[0].Transport != domainvault.TransportMosh ||
+		vault.drafts[1].Protocol != domainvault.ProtocolSSH ||
+		vault.drafts[1].Transport != domainvault.TransportET {
+		t.Fatalf("protocols = %q/%q, %q/%q",
+			vault.drafts[0].Protocol, vault.drafts[0].Transport,
+			vault.drafts[1].Protocol, vault.drafts[1].Transport)
 	}
 	for _, draft := range vault.drafts {
 		if draft.Password != "lab-secret" {
@@ -1027,8 +1034,8 @@ func TestPackagedSmokeCommandChecksRequireAnExitCodeAndMarker(t *testing.T) {
 }
 
 func TestPackagedSmokeAttemptsETAfterAMoshOpenFailure(t *testing.T) {
-	shell := &smokeShellFake{failProtocol: map[domainvault.Protocol]error{
-		domainvault.ProtocolMosh: errors.New("mosh handshake refused"),
+	shell := &smokeShellFake{failTransport: map[domainvault.Transport]error{
+		domainvault.TransportMosh: errors.New("mosh handshake refused"),
 	}}
 	sessions := &smokeSessionsFake{}
 	result, exit, quit := runPackagedSmokeSession(t, shell, sessions)

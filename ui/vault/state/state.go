@@ -153,6 +153,9 @@ const (
 	ProblemFileProtocol             Problem = "file_protocol"
 	ProblemSudoUnsupported          Problem = "sftp_sudo_unsupported"
 	ProblemETPort                   Problem = "et_port"
+	ProblemVNCDisplay               Problem = "vnc_display"
+	ProblemVNCDisplayRange          Problem = "vnc_display_range"
+	ProblemVNCWebSocketPath         Problem = "vnc_websocket_path"
 	ProblemTOTP                     Problem = "totp"
 	ProblemTOTPImage                Problem = "totp_image"
 )
@@ -167,10 +170,14 @@ type Form struct {
 	Port     string
 	Username string
 	Protocol string
-	Group    string
-	Tags     string
-	Notes    string
-	Pinned   bool
+	// Transport selects an SSH Host's Session transport: empty is plain SSH,
+	// "mosh" and "et" are the SSH-based transports. It is empty for every
+	// other protocol and is never offered on one.
+	Transport string
+	Group     string
+	Tags      string
+	Notes     string
+	Pinned    bool
 	// StartupCommand is typed once after the Session is ready and replayed
 	// after every reconnect.
 	StartupCommand string
@@ -236,6 +243,31 @@ type Form struct {
 	// ETPort is the EternalTerminal server port text for an ET Host. It stays a
 	// string so a malformed value can be rejected.
 	ETPort string
+	// VNCInputMode selects display-number or raw-port input for a VNC Host.
+	// VNCDisplay holds the display text while that mode is active; Port always
+	// holds the resolved endpoint in port mode.
+	VNCInputMode string
+	VNCDisplay   string
+	// VNCFitMode, VNCViewOnly, VNCShared, and VNCCursorMode are the persisted
+	// viewer defaults. They are round-tripped for a VNC Host and cleared for
+	// another protocol.
+	VNCFitMode    string
+	VNCViewOnly   bool
+	VNCShared     bool
+	VNCCursorMode string
+	// VNCPlaintextAcknowledged carries the warning acceptance through an edit
+	// without exposing a control for it.
+	VNCPlaintextAcknowledged bool
+	// VNCWebSocket carries the RFB stream inside a WebSocket, as a
+	// noVNC/websockify page does. VNCWebSocketPath is the upgrade path and
+	// VNCWebSocketSecure selects wss.
+	VNCWebSocket       bool
+	VNCWebSocketPath   string
+	VNCWebSocketSecure bool
+	// VNCPassword is plaintext form input for the dedicated VNC password slot.
+	// HasVNCPassword mirrors the Host's non-secret marker.
+	VNCPassword    string
+	HasVNCPassword bool
 }
 
 // State is the Vault surface's state.
@@ -800,6 +832,7 @@ func (s *State) BeginCreate() {
 		AuthMethod:   string(domainvault.HostAuthAuto),
 		FileProtocol: string(domainvault.FileProtocolAuto),
 	}
+	s.applyVNCDefaults()
 	s.problem = ProblemNone
 	s.pendingDelete = ""
 	s.hostChain = nil
@@ -817,18 +850,25 @@ func (s *State) BeginEdit(id model.HostID) bool {
 	if !ok {
 		return false
 	}
+	// A blank protocol has always meant SSH and the transport input spelling
+	// "ssh" means plain SSH. The editor shows the effective pair so a
+	// hand-edited or older record does not hide the SSH-only controls.
+	host = domainvault.NormalizeHost(host)
 	s.closeEntityEditors()
 	s.editing = true
 	s.selected = host.ID
 	s.problem = ProblemNone
 	s.pendingDelete = ""
 	s.form = Form{
-		ID:             host.ID,
-		Label:          host.Label,
-		Hostname:       host.Hostname,
-		Port:           hostPortText(host),
-		Username:       host.Username,
-		Protocol:       string(host.Protocol),
+		ID:       host.ID,
+		Label:    host.Label,
+		Hostname: host.Hostname,
+		Port:     hostPortText(host),
+		Username: host.Username,
+		Protocol: string(host.Protocol),
+		// The raw stored transport, not a display label: an unknown value must
+		// reach Save and be rejected instead of being rewritten as plain SSH.
+		Transport:      string(host.Transport),
 		Group:          host.Group,
 		Tags:           strings.Join(host.Tags, ", "),
 		Notes:          host.Notes,
@@ -860,7 +900,9 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		LineEditingMode:  string(host.LineEditingMode),
 		MoshServerPath:   host.MoshServerPath,
 		ETPort:           etPortText(host),
+		HasVNCPassword:   host.HasVNCPassword,
 	}
+	s.applyVNCForm(host)
 	s.hostChain = domainvault.CloneHostChain(host.HostChain)
 	s.proxy = domainvault.CloneProxy(host.Proxy)
 	s.legacyAlgorithms = host.LegacyAlgorithms
@@ -868,9 +910,6 @@ func (s *State) BeginEdit(id model.HostID) bool {
 	s.algorithms = domainvault.CloneAlgorithms(host.Algorithms)
 	if s.form.AuthMethod == "" {
 		s.form.AuthMethod = string(domainvault.HostAuthAuto)
-	}
-	if host.Protocol == domainvault.ProtocolLocal {
-		s.form.Port = ""
 	}
 	s.inheritHostX11(host)
 	s.redraw()
@@ -894,7 +933,10 @@ func (s *State) inheritHostX11(host domainvault.Host) {
 	if protocol == "" {
 		protocol = domainvault.ProtocolSSH
 	}
-	if protocol != domainvault.ProtocolSSH || !defaults.X11Enabled() {
+	// X11 needs a plain SSH connection; Mosh and ET bring their own session
+	// layer and cannot carry it.
+	if protocol != domainvault.ProtocolSSH ||
+		host.Transport != domainvault.TransportPlain || !defaults.X11Enabled() {
 		return
 	}
 	s.form.X11Forwarding = true
@@ -915,6 +957,8 @@ func (s *State) BeginDuplicate(id model.HostID, suffix string) bool {
 	// A copy has no credential of its own: the source's encrypted values are
 	// keyed by its ID and are never inherited.
 	s.form.HasPassword = false
+	s.form.VNCPassword = ""
+	s.form.HasVNCPassword = false
 	s.form.TOTP = ""
 	s.form.HasTOTP = false
 	s.form.ClearTOTP = false
@@ -944,17 +988,212 @@ func (s *State) SetX11Forwarding(enabled bool) {
 	}
 }
 
+// applyVNCDefaults resets the editor's VNC fields to the values a new VNC
+// Host starts from. It never touches the SSH credential fields.
+func (s *State) applyVNCDefaults() {
+	defaults := domainvault.DefaultVNCConfig()
+	s.form.VNCInputMode = string(defaults.DisplayMode)
+	s.form.VNCDisplay = ""
+	s.form.VNCFitMode = string(defaults.FitMode)
+	s.form.VNCViewOnly = defaults.ViewOnly
+	s.form.VNCShared = defaults.Shared
+	s.form.VNCCursorMode = string(defaults.CursorMode)
+	s.form.VNCPlaintextAcknowledged = defaults.PlaintextWarningAcknowledged
+	s.form.VNCWebSocket = defaults.WebSocket
+	s.form.VNCWebSocketPath = defaults.WebSocketPath
+	s.form.VNCWebSocketSecure = defaults.WebSocketSecure
+}
+
+// applyVNCForm fills the editor from a saved VNC configuration. A VNC Host
+// presents its stored TCP port as a display number when the saved input mode
+// asks for one; another protocol clears the whole section.
+func (s *State) applyVNCForm(host domainvault.Host) {
+	if host.Protocol != domainvault.ProtocolVNC {
+		s.applyVNCDefaults()
+		s.form.VNCPassword = ""
+		s.form.HasVNCPassword = false
+		return
+	}
+	config := domainvault.NormalizeVNCConfig(host.VNC)
+	s.form.VNCInputMode = string(config.DisplayMode)
+	s.form.VNCFitMode = string(config.FitMode)
+	s.form.VNCViewOnly = config.ViewOnly
+	s.form.VNCShared = config.Shared
+	s.form.VNCCursorMode = string(config.CursorMode)
+	s.form.VNCPlaintextAcknowledged = config.PlaintextWarningAcknowledged
+	s.form.VNCWebSocket = config.WebSocket
+	s.form.VNCWebSocketPath = config.WebSocketPath
+	s.form.VNCWebSocketSecure = config.WebSocketSecure
+	s.form.VNCDisplay = ""
+	if display, ok := domainvault.VNCDisplayForPort(host.Port); ok {
+		s.form.VNCDisplay = strconv.Itoa(display)
+	}
+}
+
+// SetVNCInputMode switches the display-number and raw-port controls while
+// carrying the current endpoint across, so the same server stays selected.
+func (s *State) SetVNCInputMode(mode string) {
+	next := string(domainvault.NormalizeDisplayMode(domainvault.VNCDisplayMode(mode)))
+	if next == s.form.VNCInputMode {
+		return
+	}
+	switch domainvault.VNCDisplayMode(next) {
+	case domainvault.VNCPort:
+		if strings.TrimSpace(s.form.VNCDisplay) == "" {
+			s.form.Port = ""
+			break
+		}
+		display, ok := parseVNCDisplayNumber(s.form.VNCDisplay)
+		if !ok {
+			// A malformed display must not become a raw port. Keep the
+			// display-mode text so Save still reports and rejects it.
+			s.problem = ProblemVNCDisplay
+			return
+		}
+		port, ok := domainvault.VNCPortForDisplay(display)
+		if !ok {
+			// An out-of-range display (including a negative one) must not be
+			// laundered into a port outside the VNC display range. Keep the
+			// current endpoint and the invalid text so Save still rejects it.
+			s.problem = ProblemVNCDisplayRange
+			return
+		}
+		s.form.Port = strconv.Itoa(port)
+	case domainvault.VNCDisplayNumber:
+		if port, err := strconv.Atoi(strings.TrimSpace(s.form.Port)); err == nil && port != 0 {
+			s.form.VNCDisplay = strconv.Itoa(port - domainvault.VNCDisplayBasePort)
+		} else {
+			s.form.VNCDisplay = ""
+		}
+	}
+	s.form.VNCInputMode = next
+}
+
+// SetVNCWebSocket switches the Host between raw RFB and a noVNC/websockify
+// endpoint. A WebSocket endpoint is an HTTP port, so enabling it moves the
+// editor to port input and seeds websockify's 6080 while the endpoint is still
+// in the VNC display range. Disabling it restores display 0 when the port is
+// still that WebSocket default.
+func (s *State) SetVNCWebSocket(enabled bool) {
+	s.form.VNCWebSocket = enabled
+	if !enabled {
+		s.form.VNCWebSocketPath = ""
+		s.form.VNCWebSocketSecure = false
+		if strings.TrimSpace(s.form.Port) == strconv.Itoa(domainvault.VNCDefaultWebSocketPort) {
+			s.form.Port = strconv.Itoa(domainvault.VNCDisplayBasePort)
+			s.form.VNCInputMode = string(domainvault.VNCDisplayNumber)
+			s.form.VNCDisplay = "0"
+		}
+		return
+	}
+	port := strings.TrimSpace(s.form.Port)
+	if domainvault.NormalizeDisplayMode(domainvault.VNCDisplayMode(s.form.VNCInputMode)) ==
+		domainvault.VNCDisplayNumber {
+		// The visible endpoint is the display field, so a Port left over from
+		// another protocol is not the endpoint. A blank display means the
+		// default display, and a malformed one cannot become an HTTP port.
+		port = ""
+		if display, ok := parseVNCDisplayNumber(s.form.VNCDisplay); ok {
+			if resolved, ok := domainvault.VNCPortForDisplay(display); ok {
+				port = strconv.Itoa(resolved)
+			}
+		}
+	}
+	parsed, err := strconv.Atoi(port)
+	if err != nil || parsed == 0 ||
+		(parsed >= domainvault.VNCDisplayBasePort &&
+			parsed <= domainvault.VNCDisplayBasePort+domainvault.VNCDisplayMax) {
+		s.form.Port = strconv.Itoa(domainvault.VNCDefaultWebSocketPort)
+	}
+	s.form.VNCInputMode = string(domainvault.VNCPort)
+	s.form.VNCDisplay = ""
+}
+
+// parseVNCDisplayNumber reads a display number typed as "1" or ":1".
+func parseVNCDisplayNumber(text string) (int, bool) {
+	text = strings.TrimSpace(text)
+	text = strings.TrimPrefix(text, ":")
+	if text == "" {
+		return 0, false
+	}
+	display, err := strconv.Atoi(text)
+	if err != nil {
+		return 0, false
+	}
+	return display, true
+}
+
 // SetHostProtocol records the Host editor's protocol and clears settings that
 // belong to the previous protocol. A hidden control must never leave a value
 // behind that Save would persist: file-transfer settings, X11, and SSH-only
 // credentials all follow the protocol. Route fields survive a switch to Telnet
-// because SSH jumps and a proxy can still carry a Telnet stream; only a Local
-// shell, which dials nothing, drops them.
+// or VNC because SSH jumps and a proxy can still carry the stream.
 func (s *State) SetHostProtocol(protocol string) {
+	previous := domainvault.Protocol(s.form.Protocol)
 	s.form.Protocol = protocol
-	capabilities := domainvault.Protocol(protocol)
-	if !capabilities.SupportsX11() {
-		// X11 has no control on another protocol, so neither a shown value nor
+	if protocol != string(domainvault.ProtocolSSH) {
+		// A transport belongs to SSH; another protocol has no control for it.
+		s.form.Transport = ""
+	}
+	if protocol == string(domainvault.ProtocolVNC) && previous != domainvault.ProtocolVNC {
+		// Entering VNC starts from the viewer defaults. A typed VNC password
+		// from an earlier VNC edit is not carried over a protocol switch.
+		s.applyVNCDefaults()
+		s.form.VNCPassword = ""
+	}
+	if protocol != string(domainvault.ProtocolVNC) && previous == domainvault.ProtocolVNC {
+		// Leaving VNC hides every VNC control. Configuration is cleared and
+		// the SSH credential fields are left exactly as they were.
+		s.applyVNCDefaults()
+		s.form.VNCPassword = ""
+		s.form.HasVNCPassword = false
+	}
+	s.clearHostTransportScopedValues()
+}
+
+// SetHostTransport records the SSH transport and clears values the newly
+// hidden controls would otherwise save. A protocol other than SSH keeps no
+// transport.
+func (s *State) SetHostTransport(transport string) {
+	if s.form.Protocol != string(domainvault.ProtocolSSH) {
+		transport = ""
+	}
+	s.form.Transport = transport
+	s.clearHostTransportScopedValues()
+}
+
+// hostFormDraft is the protocol/transport pair the editor currently shows. Its
+// capability methods make the visibility rules agree with the domain.
+func (s *State) hostFormDraft() domainvault.Draft {
+	return domainvault.Draft{
+		Protocol:  domainvault.Protocol(s.form.Protocol),
+		Transport: domainvault.Transport(s.form.Transport),
+	}
+}
+
+// HostFormCapabilities resolves the editor's current protocol and transport.
+// The view reads it instead of comparing protocol names.
+func (s *State) HostFormCapabilities() domainvault.HostCapabilities {
+	return s.hostFormDraft().Capabilities()
+}
+
+// HostFormPlainSSH reports whether the editor is on plain SSH. Controls that
+// only a plain SSH login shell can use are hidden for Mosh and ET.
+func (s *State) HostFormPlainSSH() bool {
+	return domainvault.Protocol(s.form.Protocol) == domainvault.ProtocolSSH &&
+		domainvault.Transport(s.form.Transport) == domainvault.TransportPlain
+}
+
+// clearHostTransportScopedValues drops every value whose control the current
+// protocol and transport hide. A switch must never leave a setting on the
+// record that its Session never reads.
+func (s *State) clearHostTransportScopedValues() {
+	draft := s.hostFormDraft()
+	capabilities := draft.Capabilities()
+	plainSSH := draft.Protocol == domainvault.ProtocolSSH &&
+		draft.Transport == domainvault.TransportPlain
+	if !capabilities.X11 {
+		// X11 has no control on this transport, so neither a shown value nor
 		// an inherited one may survive Save. Ownership is dropped too: the
 		// preference was never a choice the user could see.
 		s.form.X11Forwarding = false
@@ -962,26 +1201,26 @@ func (s *State) SetHostProtocol(protocol string) {
 		s.form.X11ForwardingSet = false
 		s.form.X11Inherited = false
 	}
-	if !capabilities.SupportsFileTransfer() {
+	if !capabilities.FileTransfer {
 		s.form.FileProtocol = string(domainvault.FileProtocolAuto)
 		s.form.SFTPSudo = false
 	}
-	if !capabilities.SupportsProxy() {
+	if !capabilities.Proxy {
 		s.form.ProxyProfileID = ""
 		s.form.NetworkProfileID = ""
 	}
-	if protocol != string(domainvault.ProtocolSSH) {
+	if !plainSSH {
 		s.form.NetworkDevice = false
 		s.form.AutoAttachTmux = false
 	}
-	if protocol != string(domainvault.ProtocolMosh) {
+	if draft.Transport != domainvault.TransportMosh {
 		s.form.MoshServerPath = ""
 	}
-	if protocol != string(domainvault.ProtocolET) {
+	if draft.Transport != domainvault.TransportET {
 		s.form.ETPort = ""
 	}
-	if domainvault.Protocol(protocol) == domainvault.ProtocolSSH {
-		// X11 becomes visible again with this protocol. Re-resolve the Host
+	if plainSSH {
+		// X11 becomes visible again with plain SSH. Re-resolve the Host
 		// Group's default so the checkbox shows the value a Session would use
 		// instead of staying at the off the hidden control left behind.
 		s.inheritHostX11(domainvault.Host{
@@ -989,7 +1228,7 @@ func (s *State) SetHostProtocol(protocol string) {
 			Protocol: domainvault.ProtocolSSH,
 		})
 	}
-	if !capabilities.UsesSSHAuth() {
+	if !capabilities.SSHAuth {
 		s.form.IdentityID = ""
 		s.form.KeyID = ""
 		s.form.AuthMethod = string(domainvault.HostAuthAuto)
@@ -1265,13 +1504,18 @@ func etPortText(host domainvault.Host) string {
 // HostPortPlaceholder is the Port field's hint: the effective default for the
 // protocol and Host Group currently selected in the editor. A blank field
 // still means "inherit", so the stored value stays empty; the hint shows what
-// a connection would use (a group port when one is set, otherwise 22 for SSH
-// and 23 for Telnet).
+// a connection would use (a group port when one is set, otherwise 22 for SSH,
+// 23 for Telnet, and 5900 for VNC).
 func (s *State) HostPortPlaceholder() string {
 	defaults := domainvault.ResolveGroupDefaults(s.groupItems, s.form.Group)
 	protocol := domainvault.Protocol(s.form.Protocol)
 	if protocol == "" {
 		protocol = domainvault.ProtocolSSH
+	}
+	if protocol == domainvault.ProtocolVNC && s.form.VNCWebSocket {
+		// A WebSocket endpoint is an HTTP port; a group's RFB port default
+		// cannot apply.
+		return strconv.Itoa(domainvault.VNCDefaultWebSocketPort)
 	}
 	return portPlaceholder(protocol, defaults.Port)
 }
@@ -1293,7 +1537,7 @@ func (s *State) GroupPortPlaceholder() string {
 }
 
 // portPlaceholder renders the effective default port a blank field inherits.
-// A Local shell has no port, so it shows no hint.
+// A protocol with no TCP port shows no hint.
 func portPlaceholder(protocol domainvault.Protocol, inherited int) string {
 	if port := domainvault.EffectivePort(protocol, inherited); port > 0 {
 		return strconv.Itoa(port)
@@ -1310,6 +1554,7 @@ func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 		Port:                   host.Port,
 		Username:               host.Username,
 		Protocol:               host.Protocol,
+		Transport:              host.Transport,
 		Group:                  host.Group,
 		Tags:                   host.Tags,
 		Notes:                  host.Notes,
@@ -1340,14 +1585,67 @@ func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 		LineEditingMode:        host.LineEditingMode,
 		MoshServerPath:         host.MoshServerPath,
 		ETPort:                 host.ETPort,
+		VNC:                    domainvault.CloneVNCConfig(host.VNC),
 	}
 }
 
 // draft turns the form into a domain draft, decoding the fields that the
 // editor keeps as text.
 func (s *State) draft() (domainvault.Draft, Problem) {
+	protocol := domainvault.Protocol(s.form.Protocol)
 	port := 0
-	if trimmed := strings.TrimSpace(s.form.Port); trimmed != "" {
+	var vncConfig *domainvault.VNCConfig
+	if protocol == domainvault.ProtocolVNC {
+		displayMode := domainvault.VNCDisplayMode(s.form.VNCInputMode)
+		if s.form.VNCWebSocket {
+			// A WebSocket endpoint is an HTTP port; a display number cannot
+			// describe it, so the editor persists port input.
+			displayMode = domainvault.VNCPort
+		}
+		config := domainvault.NormalizeVNCConfig(&domainvault.VNCConfig{
+			DisplayMode:                  displayMode,
+			FitMode:                      domainvault.VNCFitMode(s.form.VNCFitMode),
+			ViewOnly:                     s.form.VNCViewOnly,
+			Shared:                       s.form.VNCShared,
+			CursorMode:                   domainvault.VNCCursorMode(s.form.VNCCursorMode),
+			PlaintextWarningAcknowledged: s.form.VNCPlaintextAcknowledged,
+			WebSocket:                    s.form.VNCWebSocket,
+			WebSocketPath:                s.form.VNCWebSocketPath,
+			WebSocketSecure:              s.form.VNCWebSocketSecure,
+		})
+		if config.WebSocket && !domainvault.ValidVNCWebSocketPath(config.WebSocketPath) {
+			return domainvault.Draft{}, ProblemVNCWebSocketPath
+		}
+		vncConfig = config
+		if config.DisplayMode == domainvault.VNCDisplayNumber {
+			text := strings.TrimSpace(s.form.VNCDisplay)
+			text = strings.TrimPrefix(text, ":")
+			if text != "" {
+				display, err := strconv.Atoi(text)
+				if err != nil || display < 0 {
+					return domainvault.Draft{}, ProblemVNCDisplay
+				}
+				if display > domainvault.VNCDisplayMax {
+					return domainvault.Draft{}, ProblemVNCDisplayRange
+				}
+				port = domainvault.VNCDisplayBasePort + display
+			}
+		} else {
+			trimmed := strings.TrimSpace(s.form.Port)
+			if trimmed != "" {
+				parsed, err := strconv.Atoi(trimmed)
+				if err != nil {
+					return domainvault.Draft{}, ProblemPortInvalid
+				}
+				port = parsed
+			}
+		}
+		if s.form.VNCWebSocket && port == 0 {
+			// A blank WebSocket port inherits websockify's default, not the
+			// RFB display port a group or the protocol would supply.
+			port = domainvault.VNCDefaultWebSocketPort
+		}
+	} else if trimmed := strings.TrimSpace(s.form.Port); trimmed != "" {
 		parsed, err := strconv.Atoi(trimmed)
 		if err != nil {
 			return domainvault.Draft{}, ProblemPortInvalid
@@ -1356,12 +1654,14 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 	}
 
 	etPort := 0
-	if trimmed := strings.TrimSpace(s.form.ETPort); trimmed != "" {
-		parsed, err := strconv.Atoi(trimmed)
-		if err != nil {
-			return domainvault.Draft{}, ProblemETPort
+	if domainvault.Transport(s.form.Transport) == domainvault.TransportET {
+		if trimmed := strings.TrimSpace(s.form.ETPort); trimmed != "" {
+			parsed, err := strconv.Atoi(trimmed)
+			if err != nil {
+				return domainvault.Draft{}, ProblemETPort
+			}
+			etPort = parsed
 		}
-		etPort = parsed
 	}
 
 	var tags []string
@@ -1377,18 +1677,29 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 	// editor only displayed from the group is not saved at all, so the Host
 	// keeps following the group.
 	inheritedX11 := s.form.X11Inherited && !s.form.X11ForwardingSet
+	// A VNC Host never submits the SSH password, even if a value typed before
+	// a protocol switch is still in the hidden field.
+	password := s.form.Password
+	vncPassword := s.form.VNCPassword
+	if protocol == domainvault.ProtocolVNC {
+		password = ""
+	} else {
+		vncPassword = ""
+	}
 	return domainvault.Draft{
 		Label:                  s.form.Label,
 		Hostname:               s.form.Hostname,
 		Port:                   port,
 		Username:               s.form.Username,
-		Protocol:               domainvault.Protocol(s.form.Protocol),
+		Protocol:               protocol,
+		Transport:              domainvault.Transport(s.form.Transport),
 		Group:                  s.form.Group,
 		Tags:                   tags,
 		Notes:                  s.form.Notes,
 		Pinned:                 s.form.Pinned,
 		StartupCommand:         s.form.StartupCommand,
-		Password:               s.form.Password,
+		Password:               password,
+		VNCPassword:            vncPassword,
 		TOTP:                   s.form.TOTP,
 		ClearTOTP:              s.form.ClearTOTP,
 		IdentityID:             model.IdentityID(s.form.IdentityID),
@@ -1411,31 +1722,35 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		Algorithms:       domainvault.CloneAlgorithms(s.algorithms),
 		SFTPFileProtocol: domainvault.FileProtocol(s.form.FileProtocol),
 		SFTPSudo:         s.form.SFTPSudo,
-		DeviceType:       formDeviceType(s.form.NetworkDevice, s.form.Protocol),
-		AutoAttachTmux:   formAutoAttachTmux(s.form.AutoAttachTmux, s.form.NetworkDevice, s.form.Protocol),
+		DeviceType:       formDeviceType(s.form.NetworkDevice, s.form.Protocol, s.form.Transport),
+		AutoAttachTmux:   formAutoAttachTmux(s.form.AutoAttachTmux, s.form.NetworkDevice, s.form.Protocol, s.form.Transport),
 		NewlineMode:      modelterminal.NewlineMode(s.form.NewlineMode),
 		BackspaceMode:    modelterminal.BackspaceMode(s.form.BackspaceMode),
 		LineEditingMode:  modelterminal.LineEditingMode(s.form.LineEditingMode),
 		MoshServerPath:   s.form.MoshServerPath,
 		ETPort:           etPort,
+		VNC:              vncConfig,
 	}, ProblemNone
 }
 
 // formDeviceType maps the editor's checkbox onto the Host record. The mode is
 // offered only for SSH, so a hidden checkbox can never save it for another
 // protocol.
-func formDeviceType(enabled bool, protocol string) domainvault.DeviceType {
-	if enabled && domainvault.Protocol(protocol) == domainvault.ProtocolSSH {
+func formDeviceType(enabled bool, protocol, transport string) domainvault.DeviceType {
+	if enabled && domainvault.Protocol(protocol) == domainvault.ProtocolSSH &&
+		domainvault.Transport(transport) == domainvault.TransportPlain {
 		return domainvault.DeviceTypeNetwork
 	}
 	return domainvault.DeviceTypeDefault
 }
 
 // formAutoAttachTmux maps the editor's checkbox onto the Host record. tmux
-// wraps an interactive POSIX login shell, so neither another protocol nor
-// network-device mode may save it.
-func formAutoAttachTmux(enabled, networkDevice bool, protocol string) bool {
-	return enabled && !networkDevice && domainvault.Protocol(protocol) == domainvault.ProtocolSSH
+// wraps an interactive POSIX login shell, so neither another protocol, an SSH
+// transport, nor network-device mode may save it.
+func formAutoAttachTmux(enabled, networkDevice bool, protocol, transport string) bool {
+	return enabled && !networkDevice &&
+		domainvault.Protocol(protocol) == domainvault.ProtocolSSH &&
+		domainvault.Transport(transport) == domainvault.TransportPlain
 }
 
 // problemFor maps a typed application error to the view's problem id.
@@ -1510,7 +1825,7 @@ func problemForValidation(invalid *domainvault.ValidationError) Problem {
 			return ProblemPortRange
 		}
 		return ProblemPortInvalid
-	case domainvault.FieldProtocol:
+	case domainvault.FieldProtocol, domainvault.FieldTransport:
 		return ProblemProtocol
 	case domainvault.FieldUsername:
 		return ProblemUsername
@@ -1535,6 +1850,8 @@ func problemForValidation(invalid *domainvault.ValidationError) Problem {
 		return ProblemFileProtocol
 	case domainvault.FieldETPort:
 		return ProblemETPort
+	case domainvault.FieldVNCWebSocketPath:
+		return ProblemVNCWebSocketPath
 	case domainvault.FieldSFTPSudo:
 		return ProblemSudoUnsupported
 	case domainvault.FieldTOTP:

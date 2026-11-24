@@ -258,6 +258,78 @@ func TestApplyStoresIncomingSecretsAndClearsStaleOnes(t *testing.T) {
 	}
 }
 
+// TestSnapshotAndApplyCarryTheVNCPassword proves the VNC credential is an
+// ordinary field secret in its own slot: the viewer configuration and the
+// HasVNCPassword marker travel on the Host record, the password travels in
+// Secrets under FieldVNCPassword, and neither side touches the SSH slot.
+func TestSnapshotAndApplyCarryTheVNCPassword(t *testing.T) {
+	const password = "vnc-zwqr-jjp-nvkh"
+	vncRef := appvault.HostSecretRef(model.HostID("host-1"), appvault.FieldVNCPassword)
+	sshRef := appvault.HostSecretRef(model.HostID("host-1"), appvault.FieldPassword)
+	records := &fakeRecords{hosts: []domainvault.Host{{
+		ID: "host-1", Label: "desk", Hostname: "desk.example", Port: 5901,
+		Protocol: domainvault.ProtocolVNC, HasVNCPassword: true,
+		VNC: &domainvault.VNCConfig{
+			DisplayMode: domainvault.VNCPort, FitMode: domainvault.VNCClip,
+			Shared: true, CursorMode: domainvault.VNCCursorServer, ViewOnly: true,
+		},
+	}}}
+	source := &fakeSecrets{mode: appvault.SecretModeOS, values: map[appvault.SecretRef]string{
+		vncRef: password,
+	}}
+	payload, err := New(records, source).Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Secrets) != 1 || payload.Secrets[0].Field != appvault.FieldVNCPassword ||
+		payload.Secrets[0].Value != password {
+		t.Fatalf("snapshot secrets = %+v", payload.Secrets)
+	}
+	if !payload.Hosts[0].HasVNCPassword || payload.Hosts[0].VNC == nil {
+		t.Fatalf("snapshot Host = %+v", payload.Hosts[0])
+	}
+
+	// The v1 materialized payload is plain JSON. Both VNC fields must survive
+	// an encode/decode cycle before the credential is applied.
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded appsync.Payload
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.Hosts[0].HasVNCPassword || decoded.Hosts[0].VNC == nil ||
+		*decoded.Hosts[0].VNC != *records.hosts[0].VNC {
+		t.Fatalf("decoded Host = %+v", decoded.Hosts[0])
+	}
+
+	target := &fakeSecrets{mode: appvault.SecretModeOS, values: map[appvault.SecretRef]string{
+		vncRef: "stale-vnc",
+	}}
+	if err := New(&fakeRecords{}, target).Apply(context.Background(), decoded); err != nil {
+		t.Fatal(err)
+	}
+	if target.values[vncRef] != password {
+		t.Fatalf("applied VNC password = %q", target.values[vncRef])
+	}
+	if _, ok := target.values[sshRef]; ok {
+		t.Fatal("the VNC password landed in the SSH password slot")
+	}
+
+	decoded.Hosts[0].HasVNCPassword = false
+	decoded.Secrets = nil
+	if err := New(&fakeRecords{}, target).Apply(context.Background(), decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := target.values[vncRef]; ok {
+		t.Fatal("the VNC password survived a payload that dropped its marker")
+	}
+	if _, ok := target.values[sshRef]; ok {
+		t.Fatal("clearing the VNC password wrote the SSH password slot")
+	}
+}
+
 func TestSnapshotAndApplyCarryTheHostTOTP(t *testing.T) {
 	const uri = "otpauth://totp/Acme:root?secret=JBSWY3DPEHPK3PXP"
 	ref := appvault.HostSecretRef(model.HostID("host-1"), appvault.FieldTOTP)

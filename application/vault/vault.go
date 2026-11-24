@@ -243,6 +243,7 @@ func (s *Service) Create(ctx context.Context, draft domainvault.Draft) (domainva
 	passwordStored := normalized.Password != ""
 	proxyPasswordStored := normalized.Proxy != nil && normalized.Proxy.Password != ""
 	totpStored := normalized.TOTP != ""
+	vncPasswordStored := normalized.VNCPassword != ""
 	if err := s.persistPassword(ctx, host.ID, normalized.Password); err != nil {
 		return domainvault.Host{}, err
 	}
@@ -263,9 +264,22 @@ func (s *Service) Create(ctx context.Context, draft domainvault.Draft) (domainva
 		}
 		return domainvault.Host{}, err
 	}
+	if err := s.persistVNCPassword(ctx, host.ID, normalized.VNCPassword); err != nil {
+		if passwordStored {
+			_ = s.secrets.Delete(ctx, HostSecretRef(host.ID, FieldPassword))
+		}
+		if proxyPasswordStored {
+			_ = s.secrets.Delete(ctx, HostSecretRef(host.ID, FieldProxyPassword))
+		}
+		if totpStored {
+			_ = s.secrets.Delete(ctx, HostSecretRef(host.ID, FieldTOTP))
+		}
+		return domainvault.Host{}, err
+	}
 	// Session-only credentials are deliberately forgotten on restart, so the
 	// Host record must not claim a persisted password.
 	host.HasPassword = passwordStored && s.SecretMode() != SecretModeSession
+	host.HasVNCPassword = vncPasswordStored && s.SecretMode() != SecretModeSession
 	host.HasTOTP = totpStored && s.SecretMode() != SecretModeSession
 	if host.Proxy != nil {
 		host.Proxy.HasPassword = proxyPasswordStored && s.SecretMode() != SecretModeSession
@@ -281,6 +295,9 @@ func (s *Service) Create(ctx context.Context, draft domainvault.Draft) (domainva
 		}
 		if totpStored {
 			_ = s.secrets.Delete(ctx, HostSecretRef(host.ID, FieldTOTP))
+		}
+		if vncPasswordStored {
+			_ = s.secrets.Delete(ctx, HostSecretRef(host.ID, FieldVNCPassword))
 		}
 		return domainvault.Host{}, internal(err)
 	}
@@ -333,13 +350,20 @@ func (s *Service) Update(ctx context.Context, id model.HostID, draft domainvault
 	}
 	// A new authenticator, an explicit clear, or a protocol that no longer
 	// authenticates over SSH replaces the stored one.
-	totpReplaced := normalized.TOTP != "" || normalized.ClearTOTP || !normalized.Protocol.UsesSSHAuth()
+	totpReplaced := normalized.TOTP != "" || normalized.ClearTOTP || !normalized.UsesSSHAuth()
 	previousTOTP, err := s.readSecret(ctx, existing.ID, FieldTOTP, totpReplaced)
 	if err != nil {
 		return domainvault.Host{}, err
 	}
+	// A new VNC password, or a protocol that no longer speaks VNC, replaces
+	// the stored VNC secret. The SSH password slot is never part of this.
+	vncReplaced := normalized.VNCPassword != "" || normalized.Protocol != domainvault.ProtocolVNC
+	previousVNC, err := s.readSecret(ctx, existing.ID, FieldVNCPassword, vncReplaced)
+	if err != nil {
+		return domainvault.Host{}, err
+	}
 
-	var passwordWritten, proxyWritten, totpWritten bool
+	var passwordWritten, proxyWritten, totpWritten, vncWritten bool
 	rollback := func() {
 		if passwordWritten {
 			rollbackSecret(ctx, s.secrets, HostSecretRef(updated.ID, FieldPassword), previousPassword)
@@ -349,6 +373,9 @@ func (s *Service) Update(ctx context.Context, id model.HostID, draft domainvault
 		}
 		if totpWritten {
 			rollbackSecret(ctx, s.secrets, HostSecretRef(updated.ID, FieldTOTP), previousTOTP)
+		}
+		if vncWritten {
+			rollbackSecret(ctx, s.secrets, HostSecretRef(updated.ID, FieldVNCPassword), previousVNC)
 		}
 	}
 
@@ -395,7 +422,7 @@ func (s *Service) Update(ctx context.Context, id model.HostID, draft domainvault
 		if s.SecretMode() != SecretModeSession {
 			updated.HasTOTP = true
 		}
-	case normalized.ClearTOTP || !normalized.Protocol.UsesSSHAuth():
+	case normalized.ClearTOTP || !normalized.UsesSSHAuth():
 		// A non-SSH protocol never reads an authenticator. NormalizeDraft drops
 		// the input, so remove any secret the Host stored under SSH as well.
 		if s.secrets != nil {
@@ -409,6 +436,32 @@ func (s *Service) Update(ctx context.Context, id model.HostID, draft domainvault
 		updated.HasTOTP = false
 	default:
 		updated.HasTOTP = existing.HasTOTP
+	}
+
+	switch {
+	case normalized.VNCPassword != "":
+		if err := s.persistVNCPassword(ctx, updated.ID, normalized.VNCPassword); err != nil {
+			rollback()
+			return domainvault.Host{}, err
+		}
+		vncWritten = true
+		if s.SecretMode() != SecretModeSession {
+			updated.HasVNCPassword = true
+		}
+	case normalized.Protocol != domainvault.ProtocolVNC:
+		// A Host that left VNC must not keep a credential its hidden control
+		// can no longer clear. The SSH password slot is untouched.
+		if s.secrets != nil {
+			if err := s.secrets.Delete(ctx, HostSecretRef(updated.ID, FieldVNCPassword)); err != nil &&
+				!errors.Is(err, ErrSecretNotFound) {
+				rollback()
+				return domainvault.Host{}, secretError(err)
+			}
+			vncWritten = true
+		}
+		updated.HasVNCPassword = false
+	default:
+		updated.HasVNCPassword = existing.HasVNCPassword
 	}
 
 	if err := s.repo.Save(ctx, updated); err != nil {
@@ -475,7 +528,9 @@ func (s *Service) Delete(ctx context.Context, id model.HostID) error {
 	// secret store leaves an orphan ciphertext, never plaintext, and must
 	// not block deleting the Host.
 	if s.secrets != nil {
-		for _, field := range []string{FieldPassword, FieldPassphrase, FieldProxyPassword, FieldTOTP} {
+		for _, field := range []string{
+			FieldPassword, FieldPassphrase, FieldVNCPassword, FieldProxyPassword, FieldTOTP,
+		} {
 			_ = s.secrets.Delete(ctx, HostSecretRef(id, field))
 		}
 	}
@@ -507,6 +562,22 @@ func (s *Service) persistProxyPassword(ctx context.Context, id model.HostID, pro
 		return unsupported(ErrSecretsUnavailable)
 	}
 	if err := s.secrets.Set(ctx, HostSecretRef(id, FieldProxyPassword), proxy.Password); err != nil {
+		return secretError(err)
+	}
+	return nil
+}
+
+// persistVNCPassword encrypts a draft's VNC password into its dedicated
+// field-secret slot. An empty value means "leave the stored credential as it
+// is"; a protocol switch removes it instead.
+func (s *Service) persistVNCPassword(ctx context.Context, id model.HostID, password string) error {
+	if password == "" {
+		return nil
+	}
+	if s.secrets == nil {
+		return unsupported(ErrSecretsUnavailable)
+	}
+	if err := s.secrets.Set(ctx, HostSecretRef(id, FieldVNCPassword), password); err != nil {
 		return secretError(err)
 	}
 	return nil
@@ -560,6 +631,50 @@ func (s *Service) MarkConnected(ctx context.Context, id model.HostID) error {
 		return internal(err)
 	}
 	host.LastConnectedAt = s.now().UnixMilli()
+	if err := s.repo.Save(ctx, host); err != nil {
+		return internal(err)
+	}
+	return nil
+}
+
+// PlaintextWarningAcknowledged reports whether a VNC Host's unencrypted
+// transport warning was accepted. A Host without a VNC configuration has
+// nothing to acknowledge.
+func (s *Service) PlaintextWarningAcknowledged(ctx context.Context, id model.HostID) (bool, error) {
+	host, err := s.repo.Get(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, internal(err)
+	}
+	if host.VNC == nil {
+		return false, nil
+	}
+	return host.VNC.PlaintextWarningAcknowledged, nil
+}
+
+// AcknowledgePlaintextWarning records the acceptance for a VNC Host. Like
+// MarkConnected, accepting the warning is a runtime observation rather than a
+// user edit, so it deliberately leaves UpdatedAt alone and does not reorder the
+// Vault or win a sync conflict.
+func (s *Service) AcknowledgePlaintextWarning(ctx context.Context, id model.HostID) error {
+	host, err := s.repo.Get(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return internal(err)
+	}
+	if host.Protocol != domainvault.ProtocolVNC {
+		return nil
+	}
+	config := domainvault.DefaultVNCConfig()
+	if host.VNC != nil {
+		config = *host.VNC
+	}
+	config.PlaintextWarningAcknowledged = true
+	host.VNC = &config
 	if err := s.repo.Save(ctx, host); err != nil {
 		return internal(err)
 	}

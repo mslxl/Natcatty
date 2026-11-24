@@ -146,6 +146,33 @@ func csvCell(t *testing.T, rows [][]string, hostname, column string) string {
 	return ""
 }
 
+// TestExportsPreserveAnUnsupportedTransport proves CSV writes the raw stored
+// transport instead of a presentation label, so re-import rejects the record
+// rather than silently turning it into plain SSH.
+func TestExportsPreserveAnUnsupportedTransport(t *testing.T) {
+	dataset := Dataset{Hosts: []Host{
+		{Host: domainvault.Host{
+			ID: "bad", Label: "bad", Hostname: "bad.example.test", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Transport: "ssh2",
+		}},
+	}}
+	csvText := string(exportDatasetFor(t, dataset, FormatCSV, Options{}))
+	rows, issues := vaultimport.ParseCSV(csvText)
+	if len(issues) != 0 {
+		t.Fatalf("CSV parse issues = %+v", issues)
+	}
+	if got := csvCell(t, rows, "bad.example.test", "Transport"); got != "ssh2" {
+		t.Fatalf("CSV Transport = %q, want the raw ssh2", got)
+	}
+	parsed := vaultimport.Parse(vaultimport.FormatCSV, csvText, vaultimport.Options{})
+	if len(parsed.Records) != 0 {
+		t.Fatalf("an unsupported transport was imported as %+v", parsed.Records)
+	}
+	if len(parsed.Issues) == 0 {
+		t.Fatal("an unsupported transport was imported without an issue")
+	}
+}
+
 func TestCSVUsesHeaderMarkedFieldsAndGuards(t *testing.T) {
 	csvText := string(exportFor(t, FormatCSV, Options{IncludeSecrets: true}))
 	if !strings.HasPrefix(csvText, "\xef\xbb\xbf") {
@@ -193,6 +220,78 @@ func TestCSVRoundTripsThroughImporter(t *testing.T) {
 	if host.Proxy == nil || host.Proxy.Type != "socks5" || host.Proxy.Port != 1080 ||
 		host.Proxy.Password != "p@ss" {
 		t.Fatalf("proxy lost: %+v", host.Proxy)
+	}
+}
+
+// TestExportsCarryTheSSHTransport proves Mosh and ET leave an SSH Host as a
+// transport field, not as a protocol, in both portable formats.
+func TestExportsCarryTheSSHTransport(t *testing.T) {
+	dataset := Dataset{Hosts: []Host{
+		{Host: domainvault.Host{
+			ID: "m", Label: "mosh", Hostname: "mosh.example.test", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportMosh,
+		}},
+		{Host: domainvault.Host{
+			ID: "e", Label: "et", Hostname: "et.example.test", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET,
+		}},
+		{Host: domainvault.Host{
+			ID: "p", Label: "plain", Hostname: "plain.example.test", Port: 22,
+			Protocol: domainvault.ProtocolSSH,
+		}},
+	}}
+
+	csvText := string(exportDatasetFor(t, dataset, FormatCSV, Options{}))
+	rows, issues := vaultimport.ParseCSV(csvText)
+	if len(issues) != 0 {
+		t.Fatalf("CSV parse issues = %+v", issues)
+	}
+	for hostname, want := range map[string]string{
+		"mosh.example.test":  "mosh",
+		"et.example.test":    "et",
+		"plain.example.test": "",
+	} {
+		if got := csvCell(t, rows, hostname, "Transport"); got != want {
+			t.Errorf("%s CSV Transport = %q, want %q", hostname, got, want)
+		}
+		if got := csvCell(t, rows, hostname, "Protocol"); got != "ssh" {
+			t.Errorf("%s CSV Protocol = %q, want ssh", hostname, got)
+		}
+	}
+	parsedCSV := vaultimport.Parse(vaultimport.FormatCSV, csvText, vaultimport.Options{})
+	if len(parsedCSV.Records) != 3 {
+		t.Fatalf("parsed CSV records = %+v", parsedCSV.Records)
+	}
+
+	document := string(exportDatasetFor(t, dataset, FormatJSON, Options{}))
+	parsedJSON := vaultimport.Parse(vaultimport.FormatNetcattyJSON, document, vaultimport.Options{})
+	if len(parsedJSON.Records) != 3 {
+		t.Fatalf("parsed JSON records = %+v, issues = %+v", parsedJSON.Records, parsedJSON.Issues)
+	}
+	for hostname, want := range map[string]string{
+		"mosh.example.test":  "mosh",
+		"et.example.test":    "et",
+		"plain.example.test": "",
+	} {
+		found := false
+		for _, record := range parsedJSON.Records {
+			if record.Hostname != hostname {
+				continue
+			}
+			found = true
+			if record.Transport != want {
+				t.Errorf("%s JSON transport = %q, want %q", hostname, record.Transport, want)
+			}
+			if record.Protocol != "ssh" {
+				t.Errorf("%s JSON protocol = %q, want ssh", hostname, record.Protocol)
+			}
+		}
+		if !found {
+			t.Errorf("%s missing from JSON export", hostname)
+		}
+	}
+	if strings.Contains(document, `"transport": ""`) {
+		t.Fatalf("plain SSH wrote an empty transport:\n%s", document)
 	}
 }
 
@@ -551,5 +650,90 @@ func TestThemesExportCarriesTheActiveTheme(t *testing.T) {
 	}
 	if !strings.Contains(string(content), `"activeTheme": "light"`) {
 		t.Fatalf("themes = %s", content)
+	}
+}
+
+// TestCSVKeepsVNCConfigAndCredentialByteExact proves the VNC configuration
+// cell keeps its marker payload and the VNC password is never formula-guarded,
+// while the generic Password cell stays empty for a VNC Host.
+func TestCSVKeepsVNCConfigAndCredentialByteExact(t *testing.T) {
+	config := domainvault.VNCConfig{
+		DisplayMode: domainvault.VNCPort, FitMode: domainvault.VNCClip,
+		Shared: false, CursorMode: domainvault.VNCCursorServer,
+	}
+	dataset := Dataset{Hosts: []Host{{
+		Host: domainvault.Host{
+			ID: "vnc", Label: "Desk", Hostname: "desk.example.test",
+			Port: 5901, Protocol: domainvault.ProtocolVNC, OrderKey: 1000,
+			HasPassword: true, HasVNCPassword: true, VNC: &config,
+		},
+		Password: "ssh-slot-value", VNCPassword: "=1+2",
+	}}}
+	content := exportDatasetFor(t, dataset, FormatCSV, Options{IncludeSecrets: true})
+	rows, issues := vaultimport.ParseCSV(string(content))
+	if len(issues) != 0 {
+		t.Fatalf("parse issues = %+v", issues)
+	}
+	configCell := csvCell(t, rows, "desk.example.test", "VNC")
+	wantConfig := vaultimport.MarkerVNC +
+		"displayMode=port;fitMode=clip;viewOnly=false;shared=false;" +
+		"cursorMode=server;plaintextWarningAcknowledged=false;" +
+		"webSocket=false;webSocketPath=;webSocketSecure=false"
+	if configCell != wantConfig {
+		t.Fatalf("VNC cell = %q, want %q", configCell, wantConfig)
+	}
+	if got := csvCell(t, rows, "desk.example.test", "Password"); got != "" {
+		t.Fatalf("Password cell = %q, want empty for a VNC Host", got)
+	}
+	if got := csvCell(t, rows, "desk.example.test", "VNCPassword"); got != "=1+2" {
+		t.Fatalf("VNCPassword cell = %q, want the raw credential", got)
+	}
+
+	parsed := vaultimport.Parse(vaultimport.FormatCSV, string(content), vaultimport.Options{})
+	if len(parsed.Records) != 1 {
+		t.Fatalf("records = %+v", parsed.Records)
+	}
+	record := parsed.Records[0]
+	if record.VNCPassword != "=1+2" || record.Password != "" {
+		t.Fatalf("parsed credentials = password %q, vnc %q", record.Password, record.VNCPassword)
+	}
+	if record.VNC == nil || record.VNC.Shared || record.VNC.FitMode != "clip" {
+		t.Fatalf("parsed VNC = %+v", record.VNC)
+	}
+}
+
+// TestExportsCarryTheVNCWebSocketTransport proves a noVNC/websockify endpoint
+// survives both portable formats, including an upgrade path whose query holds
+// the cell separator.
+func TestExportsCarryTheVNCWebSocketTransport(t *testing.T) {
+	config := domainvault.VNCConfig{
+		DisplayMode: domainvault.VNCPort, FitMode: domainvault.VNCFit,
+		Shared: true, CursorMode: domainvault.VNCCursorLocal,
+		WebSocket: true, WebSocketPath: "/vnc?token=a;b%20c", WebSocketSecure: true,
+	}
+	dataset := Dataset{Hosts: []Host{{Host: domainvault.Host{
+		ID: "vnc-ws", Label: "Desk", Hostname: "desk.example.test",
+		Port: domainvault.VNCDefaultWebSocketPort, Protocol: domainvault.ProtocolVNC,
+		OrderKey: 1000, VNC: &config,
+	}}}}
+
+	csvDocument := vaultimport.Parse(vaultimport.FormatCSV,
+		string(exportDatasetFor(t, dataset, FormatCSV, Options{})), vaultimport.Options{})
+	if len(csvDocument.Records) != 1 || csvDocument.Records[0].VNC == nil {
+		t.Fatalf("CSV records = %+v, issues = %+v", csvDocument.Records, csvDocument.Issues)
+	}
+	jsonDocument := vaultimport.Parse(vaultimport.FormatNetcattyJSON,
+		string(exportDatasetFor(t, dataset, FormatJSON, Options{})), vaultimport.Options{})
+	if len(jsonDocument.Records) != 1 || jsonDocument.Records[0].VNC == nil {
+		t.Fatalf("JSON records = %+v, issues = %+v", jsonDocument.Records, jsonDocument.Issues)
+	}
+	for name, record := range map[string]vaultimport.VNCConfig{
+		"CSV":  *csvDocument.Records[0].VNC,
+		"JSON": *jsonDocument.Records[0].VNC,
+	} {
+		if !record.WebSocket || !record.WebSocketSecure ||
+			record.WebSocketPath != "/vnc?token=a;b%20c" {
+			t.Fatalf("%s VNC = %+v, want the WebSocket settings", name, record)
+		}
 	}
 }

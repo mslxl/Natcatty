@@ -8,8 +8,15 @@ import (
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
+	"github.com/mslxl/natcatty/domain/model/rfb"
 	"github.com/mslxl/natcatty/ui/locales"
+	sessionui "github.com/mslxl/natcatty/ui/session"
 )
+
+// ErrUnsupportedHost reports a saved Host whose protocol or transport this
+// build does not support. It is permanent and local: no connection is
+// attempted, and the Host is never reinterpreted as a supported protocol.
+var ErrUnsupportedHost = errors.New("connection: unsupported Host protocol or transport")
 
 // Kind classifies a connection failure. An error without a typed kind is
 // internal, matching the application's own fallback.
@@ -50,6 +57,21 @@ func ProblemTextFor(m locales.Messages, err error) string {
 		return m.ConnectionErrorMoshNetwork()
 	case errors.Is(err, moshmodel.ErrHandshake):
 		return m.ConnectionErrorMoshHandshake()
+	// VNC-specific failures need their own wording: a certificate failure is
+	// not a bad password, and an unsupported security offer needs the SSH-route
+	// suggestion rather than the generic algorithm mismatch.
+	case errors.Is(err, sessionui.ErrPlaintextDeclined):
+		// Cancel on the unencrypted-connection modal is a deliberate user
+		// decision, not an internal failure: say that no credential was sent.
+		return m.ConnectionErrorVNCCancelled()
+	case errors.Is(err, rfb.ErrTLSVerification):
+		return m.ConnectionErrorVNCCertificate()
+	case errors.Is(err, rfb.ErrUnsupportedSecurity):
+		return m.ConnectionErrorVNCUnsupported()
+	case errors.Is(err, ErrUnsupportedHost):
+		// A record written by an older build or hand-edited to a removed
+		// protocol must fail closed with an actionable message, not open SSH.
+		return m.ConnectionErrorUnsupportedHost()
 	}
 	return ProblemText(m, Kind(err))
 }

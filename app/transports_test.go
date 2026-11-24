@@ -137,6 +137,34 @@ func TestInProcessMoshRoutesTheBootstrapThroughTheSelectedProvider(t *testing.T)
 	}
 }
 
+// TestMoshQuickConnectBootstrapCarriesTheOneShotPassword proves the Mosh SSH
+// bootstrap authenticates with the typed password: a Quick Connect target has no
+// saved Host, so the Manager can only offer that one-shot credential. Without
+// it the dial would fall back to the auto key/agent plan and fail on a
+// password-only server.
+func TestMoshQuickConnectBootstrapCarriesTheOneShotPassword(t *testing.T) {
+	dialer := &factoryDialer{client: &factoryClient{terminal: &factoryTerminal{}}}
+	manager := appconnection.NewManager(dialer, nil, &factoryKnownHosts{})
+	t.Cleanup(manager.CloseAll)
+	factory := &moshTransportFactory{routes: fakeTransportRoute{}, manager: manager}
+	cfg := moshmodel.Config{Hostname: "mosh.example", Port: 22}.Normalized()
+	_, _ = factory.Open(context.Background(), appsession.StartSpec{
+		Kind: appsession.KindMosh, Hostname: "mosh.example", Port: 22,
+		Username: "admin", Password: "s3cret", Mosh: &cfg,
+	})
+	if dialer.calls != 1 {
+		t.Fatalf("SSH bootstrap dials = %d, want exactly one", dialer.calls)
+	}
+	if dialer.request.Password != "s3cret" || dialer.request.Username != "admin" {
+		t.Fatalf("bootstrap request = %q/%q, want the typed password and username",
+			dialer.request.Username, dialer.request.Password)
+	}
+	if dialer.request.Auth.Mode != appconnection.AuthModePassword {
+		t.Fatalf("bootstrap auth mode = %q, want the one-shot password plan",
+			dialer.request.Auth.Mode)
+	}
+}
+
 func TestMoshRejectsAProxyBeforeOpeningAnything(t *testing.T) {
 	factory := &moshTransportFactory{
 		routes: fakeTransportRoute{route: appconnection.Route{

@@ -120,7 +120,9 @@ func TestVaultViewListsHostDetails(t *testing.T) {
 			Group: "prod/web", Tags: []string{"prod"}, Pinned: true,
 		},
 		{
-			ID: "host-2", Label: "My shell", Protocol: domainvault.ProtocolLocal,
+			ID: "host-2", Label: "roaming", Hostname: "roam.example.com", Port: 22,
+			Username: "alice", Protocol: domainvault.ProtocolSSH,
+			Transport: domainvault.TransportMosh,
 		},
 	}}
 	_, tt := newView(t, repo)
@@ -130,7 +132,7 @@ func TestVaultViewListsHostDetails(t *testing.T) {
 	// card of its own.
 	for _, want := range []string{
 		"web", "root@example.com", "prod", m.VaultGroupMemberCount(1),
-		"My shell", m.VaultHostLocal(),
+		"roaming", "alice@roam.example.com",
 	} {
 		if !tt.HasText(want) {
 			t.Errorf("Vault does not show %q, texts %q", want, tt.Texts())
@@ -206,11 +208,11 @@ func TestVaultViewShowsTheX11WarningOnlyAfterEnablingForSSH(t *testing.T) {
 		t.Fatal("enabling X11 did not show the acknowledgement")
 	}
 
-	// A non-SSH protocol cannot use X11, so the editor must not offer it.
-	state.Form().Protocol = string(domainvault.ProtocolLocal)
+	// A non-plain-SSH transport cannot use X11, so the editor must not offer it.
+	state.Form().Transport = string(domainvault.TransportMosh)
 	tt.Frame()
 	if tt.HasText(m.VaultHostX11Forwarding()) {
-		t.Fatal("the X11 option was shown for a non-SSH Host")
+		t.Fatal("the X11 option was shown for a Mosh Host")
 	}
 }
 
@@ -282,14 +284,14 @@ func TestVaultViewOffersNetworkDeviceModeOnlyForSSH(t *testing.T) {
 		t.Fatal("the click did not enable network device mode")
 	}
 
-	state.Form().Protocol = string(domainvault.ProtocolLocal)
+	state.Form().Transport = string(domainvault.TransportMosh)
 	tt.Frame()
 	if tt.HasText(m.VaultHostNetworkDevice()) || tt.HasText(m.VaultHostNetworkDeviceHint()) {
-		t.Fatal("network device mode was shown for a non-SSH Host")
+		t.Fatal("network device mode was shown for a Mosh Host")
 	}
 }
 
-func TestVaultViewOffersMoshAndETFieldsForTheirProtocols(t *testing.T) {
+func TestVaultViewOffersMoshAndETFieldsForTheirTransport(t *testing.T) {
 	m := locales.In("en")
 	state := vaultstate.NewState(&fakeHosts{})
 	if err := state.Reload(); err != nil {
@@ -297,9 +299,12 @@ func TestVaultViewOffersMoshAndETFieldsForTheirProtocols(t *testing.T) {
 	}
 	tt := ui.NewTester(View(state), 900, 1800)
 	state.BeginCreate()
-	state.Form().Protocol = string(domainvault.ProtocolMosh)
+	state.Form().Transport = string(domainvault.TransportMosh)
 	tt.Frame()
 
+	if !tt.HasText(m.VaultHostTransport()) || !tt.HasText(m.VaultHostTransportMosh()) {
+		t.Fatal("the SSH Host editor does not offer the transport select")
+	}
 	if !tt.HasText(m.VaultHostMoshServerPath()) || !tt.HasText(m.VaultHostMoshServerPathHint()) {
 		t.Fatal("the Mosh Host editor does not offer the server path")
 	}
@@ -310,7 +315,7 @@ func TestVaultViewOffersMoshAndETFieldsForTheirProtocols(t *testing.T) {
 		t.Fatal("the ET port was shown for a Mosh Host")
 	}
 
-	state.Form().Protocol = string(domainvault.ProtocolET)
+	state.Form().Transport = string(domainvault.TransportET)
 	tt.Frame()
 	if !tt.HasText(m.VaultHostETPort()) || !tt.HasText(m.VaultHostETPortHint()) {
 		t.Fatal("the ET Host editor does not offer the ET port")

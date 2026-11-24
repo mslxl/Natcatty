@@ -226,6 +226,250 @@ func (msgs Messages) SessionScreenFailed() string {
 	return Catalog.Format(msgs.locale, "sessionScreenFailed", nil)
 }
 
+// SessionVNCResizeFallback says "Using local scaling: the server cannot resize its desktop."
+// in the language the app shows.
+func SessionVNCResizeFallback() string { return In(i18n.Locale()).SessionVNCResizeFallback() }
+
+// SessionVNCResizeFallback says "Using local scaling: the server cannot resize its desktop."
+// in the language of msgs.
+func (msgs Messages) SessionVNCResizeFallback() string {
+	return Catalog.Format(msgs.locale, "sessionVNCResizeFallback", nil)
+}
+
+// SessionVNCMultiScreenUnavailable says "Cannot split: the server cannot give each pane its own screen."
+// in the language the app shows.
+func SessionVNCMultiScreenUnavailable() string {
+	return In(i18n.Locale()).SessionVNCMultiScreenUnavailable()
+}
+
+// SessionVNCMultiScreenUnavailable says "Cannot split: the server cannot give each pane its own screen."
+// in the language of msgs.
+func (msgs Messages) SessionVNCMultiScreenUnavailable() string {
+	return Catalog.Format(msgs.locale, "sessionVNCMultiScreenUnavailable", nil)
+}
+
+// SessionVNCConnectionFailed says "Desktop connection failed"
+// in the language the app shows.
+func SessionVNCConnectionFailed() string { return In(i18n.Locale()).SessionVNCConnectionFailed() }
+
+// SessionVNCConnectionFailed says "Desktop connection failed"
+// in the language of msgs.
+func (msgs Messages) SessionVNCConnectionFailed() string {
+	return Catalog.Format(msgs.locale, "sessionVNCConnectionFailed", nil)
+}
+
+// SessionVNCReconnectHint says "The connection ended and will not retry automatically. Reconnect to try again."
+// in the language the app shows.
+func SessionVNCReconnectHint() string { return In(i18n.Locale()).SessionVNCReconnectHint() }
+
+// SessionVNCReconnectHint says "The connection ended and will not retry automatically. Reconnect to try again."
+// in the language of msgs.
+func (msgs Messages) SessionVNCReconnectHint() string {
+	return Catalog.Format(msgs.locale, "sessionVNCReconnectHint", nil)
+}
+
+// SessionVNCHibernatedBody says "The connection stays open and the last frame is kept. Resume to show the desktop again."
+// in the language the app shows.
+func SessionVNCHibernatedBody() string { return In(i18n.Locale()).SessionVNCHibernatedBody() }
+
+// SessionVNCHibernatedBody says "The connection stays open and the last frame is kept. Resume to show the desktop again."
+// in the language of msgs.
+func (msgs Messages) SessionVNCHibernatedBody() string {
+	return Catalog.Format(msgs.locale, "sessionVNCHibernatedBody", nil)
+}
+
+// SessionVNCScaleFit says "Scaling: Fit"
+// in the language the app shows.
+func SessionVNCScaleFit() string { return In(i18n.Locale()).SessionVNCScaleFit() }
+
+// SessionVNCScaleFit says "Scaling: Fit"
+// in the language of msgs.
+func (msgs Messages) SessionVNCScaleFit() string {
+	return Catalog.Format(msgs.locale, "sessionVNCScaleFit", nil)
+}
+
+// SessionVNCScaleOneToOne says "Scaling: 1:1"
+// in the language the app shows.
+func SessionVNCScaleOneToOne() string { return In(i18n.Locale()).SessionVNCScaleOneToOne() }
+
+// SessionVNCScaleOneToOne says "Scaling: 1:1"
+// in the language of msgs.
+func (msgs Messages) SessionVNCScaleOneToOne() string {
+	return Catalog.Format(msgs.locale, "sessionVNCScaleOneToOne", nil)
+}
+
+// SessionVNCScaleClip says "Scaling: Clip"
+// in the language the app shows.
+func SessionVNCScaleClip() string { return In(i18n.Locale()).SessionVNCScaleClip() }
+
+// SessionVNCScaleClip says "Scaling: Clip"
+// in the language of msgs.
+func (msgs Messages) SessionVNCScaleClip() string {
+	return Catalog.Format(msgs.locale, "sessionVNCScaleClip", nil)
+}
+
+// SessionVNCViewOnly says "View only"
+// in the language the app shows.
+func SessionVNCViewOnly() string { return In(i18n.Locale()).SessionVNCViewOnly() }
+
+// SessionVNCViewOnly says "View only"
+// in the language of msgs.
+func (msgs Messages) SessionVNCViewOnly() string {
+	return Catalog.Format(msgs.locale, "sessionVNCViewOnly", nil)
+}
+
+// SessionVNCClipboardSend says "Send clipboard to desktop"
+// in the language the app shows.
+func SessionVNCClipboardSend() string { return In(i18n.Locale()).SessionVNCClipboardSend() }
+
+// SessionVNCClipboardSend says "Send clipboard to desktop"
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardSend() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardSend", nil)
+}
+
+// SessionVNCClipboardPull says "Copy desktop clipboard"
+// in the language the app shows.
+func SessionVNCClipboardPull() string { return In(i18n.Locale()).SessionVNCClipboardPull() }
+
+// SessionVNCClipboardPull says "Copy desktop clipboard"
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardPull() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardPull", nil)
+}
+
+// SessionVNCCtrlAltDel says "Send Ctrl-Alt-Del"
+// in the language the app shows.
+func SessionVNCCtrlAltDel() string { return In(i18n.Locale()).SessionVNCCtrlAltDel() }
+
+// SessionVNCCtrlAltDel says "Send Ctrl-Alt-Del"
+// in the language of msgs.
+func (msgs Messages) SessionVNCCtrlAltDel() string {
+	return Catalog.Format(msgs.locale, "sessionVNCCtrlAltDel", nil)
+}
+
+// SessionVNCFullscreen says "Fullscreen"
+// in the language the app shows.
+func SessionVNCFullscreen() string { return In(i18n.Locale()).SessionVNCFullscreen() }
+
+// SessionVNCFullscreen says "Fullscreen"
+// in the language of msgs.
+func (msgs Messages) SessionVNCFullscreen() string {
+	return Catalog.Format(msgs.locale, "sessionVNCFullscreen", nil)
+}
+
+// SessionVNCKeyboardGrab says "Capture keyboard shortcuts"
+// in the language the app shows.
+func SessionVNCKeyboardGrab() string { return In(i18n.Locale()).SessionVNCKeyboardGrab() }
+
+// SessionVNCKeyboardGrab says "Capture keyboard shortcuts"
+// in the language of msgs.
+func (msgs Messages) SessionVNCKeyboardGrab() string {
+	return Catalog.Format(msgs.locale, "sessionVNCKeyboardGrab", nil)
+}
+
+// SessionVNCClipboardSent says "Clipboard sent to the desktop."
+// in the language the app shows.
+func SessionVNCClipboardSent() string { return In(i18n.Locale()).SessionVNCClipboardSent() }
+
+// SessionVNCClipboardSent says "Clipboard sent to the desktop."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardSent() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardSent", nil)
+}
+
+// SessionVNCClipboardPulled says "Desktop clipboard copied."
+// in the language the app shows.
+func SessionVNCClipboardPulled() string { return In(i18n.Locale()).SessionVNCClipboardPulled() }
+
+// SessionVNCClipboardPulled says "Desktop clipboard copied."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardPulled() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardPulled", nil)
+}
+
+// SessionVNCClipboardEmpty says "The clipboard is empty; nothing was sent."
+// in the language the app shows.
+func SessionVNCClipboardEmpty() string { return In(i18n.Locale()).SessionVNCClipboardEmpty() }
+
+// SessionVNCClipboardEmpty says "The clipboard is empty; nothing was sent."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardEmpty() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardEmpty", nil)
+}
+
+// SessionVNCClipboardTooLarge says "The clipboard is too large to send (limit 1 MiB)."
+// in the language the app shows.
+func SessionVNCClipboardTooLarge() string { return In(i18n.Locale()).SessionVNCClipboardTooLarge() }
+
+// SessionVNCClipboardTooLarge says "The clipboard is too large to send (limit 1 MiB)."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardTooLarge() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardTooLarge", nil)
+}
+
+// SessionVNCClipboardNotLatin1 says "The clipboard has characters that cannot be sent as Latin-1."
+// in the language the app shows.
+func SessionVNCClipboardNotLatin1() string { return In(i18n.Locale()).SessionVNCClipboardNotLatin1() }
+
+// SessionVNCClipboardNotLatin1 says "The clipboard has characters that cannot be sent as Latin-1."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardNotLatin1() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardNotLatin1", nil)
+}
+
+// SessionVNCClipboardNoRemoteText says "The desktop has not shared clipboard text yet."
+// in the language the app shows.
+func SessionVNCClipboardNoRemoteText() string {
+	return In(i18n.Locale()).SessionVNCClipboardNoRemoteText()
+}
+
+// SessionVNCClipboardNoRemoteText says "The desktop has not shared clipboard text yet."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardNoRemoteText() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardNoRemoteText", nil)
+}
+
+// SessionVNCClipboardViewOnly says "View-only: clipboard send is disabled."
+// in the language the app shows.
+func SessionVNCClipboardViewOnly() string { return In(i18n.Locale()).SessionVNCClipboardViewOnly() }
+
+// SessionVNCClipboardViewOnly says "View-only: clipboard send is disabled."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardViewOnly() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardViewOnly", nil)
+}
+
+// SessionVNCViewOnlyAction says "View-only: input is disabled."
+// in the language the app shows.
+func SessionVNCViewOnlyAction() string { return In(i18n.Locale()).SessionVNCViewOnlyAction() }
+
+// SessionVNCViewOnlyAction says "View-only: input is disabled."
+// in the language of msgs.
+func (msgs Messages) SessionVNCViewOnlyAction() string {
+	return Catalog.Format(msgs.locale, "sessionVNCViewOnlyAction", nil)
+}
+
+// SessionVNCBell says "Remote bell"
+// in the language the app shows.
+func SessionVNCBell() string { return In(i18n.Locale()).SessionVNCBell() }
+
+// SessionVNCBell says "Remote bell"
+// in the language of msgs.
+func (msgs Messages) SessionVNCBell() string {
+	return Catalog.Format(msgs.locale, "sessionVNCBell", nil)
+}
+
+// SessionVNCClipboardFailed says "Could not send the clipboard to the desktop."
+// in the language the app shows.
+func SessionVNCClipboardFailed() string { return In(i18n.Locale()).SessionVNCClipboardFailed() }
+
+// SessionVNCClipboardFailed says "Could not send the clipboard to the desktop."
+// in the language of msgs.
+func (msgs Messages) SessionVNCClipboardFailed() string {
+	return Catalog.Format(msgs.locale, "sessionVNCClipboardFailed", nil)
+}
+
 // SessionMenuHibernate says "Hibernate"
 // in the language the app shows.
 func SessionMenuHibernate() string { return In(i18n.Locale()).SessionMenuHibernate() }
@@ -902,6 +1146,16 @@ func (msgs Messages) QuickConnectPortInvalid() string {
 	return Catalog.Format(msgs.locale, "quickConnectPortInvalid", nil)
 }
 
+// QuickConnectDisplayInvalid says "Enter a display number between 0 and 99."
+// in the language the app shows.
+func QuickConnectDisplayInvalid() string { return In(i18n.Locale()).QuickConnectDisplayInvalid() }
+
+// QuickConnectDisplayInvalid says "Enter a display number between 0 and 99."
+// in the language of msgs.
+func (msgs Messages) QuickConnectDisplayInvalid() string {
+	return Catalog.Format(msgs.locale, "quickConnectDisplayInvalid", nil)
+}
+
 // QuickConnectUnavailable says "Sessions are unavailable."
 // in the language the app shows.
 func QuickConnectUnavailable() string { return In(i18n.Locale()).QuickConnectUnavailable() }
@@ -1206,16 +1460,6 @@ func (msgs Messages) VaultHostEmpty() string {
 	return Catalog.Format(msgs.locale, "vaultHostEmpty", nil)
 }
 
-// VaultHostLocal says "Local shell"
-// in the language the app shows.
-func VaultHostLocal() string { return In(i18n.Locale()).VaultHostLocal() }
-
-// VaultHostLocal says "Local shell"
-// in the language of msgs.
-func (msgs Messages) VaultHostLocal() string {
-	return Catalog.Format(msgs.locale, "vaultHostLocal", nil)
-}
-
 // VaultHostFormCreateTitle says "New Host"
 // in the language the app shows.
 func VaultHostFormCreateTitle() string { return In(i18n.Locale()).VaultHostFormCreateTitle() }
@@ -1294,6 +1538,46 @@ func VaultHostProtocol() string { return In(i18n.Locale()).VaultHostProtocol() }
 // in the language of msgs.
 func (msgs Messages) VaultHostProtocol() string {
 	return Catalog.Format(msgs.locale, "vaultHostProtocol", nil)
+}
+
+// VaultHostTransport says "Transport"
+// in the language the app shows.
+func VaultHostTransport() string { return In(i18n.Locale()).VaultHostTransport() }
+
+// VaultHostTransport says "Transport"
+// in the language of msgs.
+func (msgs Messages) VaultHostTransport() string {
+	return Catalog.Format(msgs.locale, "vaultHostTransport", nil)
+}
+
+// VaultHostTransportSSH says "SSH"
+// in the language the app shows.
+func VaultHostTransportSSH() string { return In(i18n.Locale()).VaultHostTransportSSH() }
+
+// VaultHostTransportSSH says "SSH"
+// in the language of msgs.
+func (msgs Messages) VaultHostTransportSSH() string {
+	return Catalog.Format(msgs.locale, "vaultHostTransportSSH", nil)
+}
+
+// VaultHostTransportMosh says "Mosh"
+// in the language the app shows.
+func VaultHostTransportMosh() string { return In(i18n.Locale()).VaultHostTransportMosh() }
+
+// VaultHostTransportMosh says "Mosh"
+// in the language of msgs.
+func (msgs Messages) VaultHostTransportMosh() string {
+	return Catalog.Format(msgs.locale, "vaultHostTransportMosh", nil)
+}
+
+// VaultHostTransportET says "ET"
+// in the language the app shows.
+func VaultHostTransportET() string { return In(i18n.Locale()).VaultHostTransportET() }
+
+// VaultHostTransportET says "ET"
+// in the language of msgs.
+func (msgs Messages) VaultHostTransportET() string {
+	return Catalog.Format(msgs.locale, "vaultHostTransportET", nil)
 }
 
 // VaultHostGroup says "Host Group"
@@ -6216,16 +6500,266 @@ func (msgs Messages) VaultHostX11Acknowledge() string {
 	return Catalog.Format(msgs.locale, "vaultHostX11Acknowledge", nil)
 }
 
-// VaultHostTelnetPlaintextWarning says "Telnet is a plaintext protocol: everything you type, including the password, crosses the network unencrypted. Use it …"
+// VaultHostPlaintextWarning says "{protocol} is a plaintext protocol: everything you type, including the password, crosses the network unencrypted. Use…"
 // in the language the app shows.
-func VaultHostTelnetPlaintextWarning() string {
-	return In(i18n.Locale()).VaultHostTelnetPlaintextWarning()
+func VaultHostPlaintextWarning(protocol string) string {
+	return In(i18n.Locale()).VaultHostPlaintextWarning(protocol)
 }
 
-// VaultHostTelnetPlaintextWarning says "Telnet is a plaintext protocol: everything you type, including the password, crosses the network unencrypted. Use it …"
+// VaultHostPlaintextWarning says "{protocol} is a plaintext protocol: everything you type, including the password, crosses the network unencrypted. Use…"
 // in the language of msgs.
-func (msgs Messages) VaultHostTelnetPlaintextWarning() string {
-	return Catalog.Format(msgs.locale, "vaultHostTelnetPlaintextWarning", nil)
+func (msgs Messages) VaultHostPlaintextWarning(protocol string) string {
+	return Catalog.Format(msgs.locale, "vaultHostPlaintextWarning", map[string]any{"protocol": protocol})
+}
+
+// VaultHostVNC says "VNC"
+// in the language the app shows.
+func VaultHostVNC() string { return In(i18n.Locale()).VaultHostVNC() }
+
+// VaultHostVNC says "VNC"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNC() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNC", nil)
+}
+
+// VaultHostVNCInputMode says "Endpoint input"
+// in the language the app shows.
+func VaultHostVNCInputMode() string { return In(i18n.Locale()).VaultHostVNCInputMode() }
+
+// VaultHostVNCInputMode says "Endpoint input"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCInputMode() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCInputMode", nil)
+}
+
+// VaultHostVNCInputDisplay says "Display number"
+// in the language the app shows.
+func VaultHostVNCInputDisplay() string { return In(i18n.Locale()).VaultHostVNCInputDisplay() }
+
+// VaultHostVNCInputDisplay says "Display number"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCInputDisplay() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCInputDisplay", nil)
+}
+
+// VaultHostVNCInputPort says "TCP port"
+// in the language the app shows.
+func VaultHostVNCInputPort() string { return In(i18n.Locale()).VaultHostVNCInputPort() }
+
+// VaultHostVNCInputPort says "TCP port"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCInputPort() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCInputPort", nil)
+}
+
+// VaultHostVNCDisplay says "Display"
+// in the language the app shows.
+func VaultHostVNCDisplay() string { return In(i18n.Locale()).VaultHostVNCDisplay() }
+
+// VaultHostVNCDisplay says "Display"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCDisplay() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCDisplay", nil)
+}
+
+// VaultHostVNCPassword says "VNC Password"
+// in the language the app shows.
+func VaultHostVNCPassword() string { return In(i18n.Locale()).VaultHostVNCPassword() }
+
+// VaultHostVNCPassword says "VNC Password"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCPassword() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCPassword", nil)
+}
+
+// VaultHostVNCPasswordHint says "Stored encrypted and never shown again."
+// in the language the app shows.
+func VaultHostVNCPasswordHint() string { return In(i18n.Locale()).VaultHostVNCPasswordHint() }
+
+// VaultHostVNCPasswordHint says "Stored encrypted and never shown again."
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCPasswordHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCPasswordHint", nil)
+}
+
+// VaultHostVNCPasswordKeep says "A VNC password is stored. Leave blank to keep it."
+// in the language the app shows.
+func VaultHostVNCPasswordKeep() string { return In(i18n.Locale()).VaultHostVNCPasswordKeep() }
+
+// VaultHostVNCPasswordKeep says "A VNC password is stored. Leave blank to keep it."
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCPasswordKeep() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCPasswordKeep", nil)
+}
+
+// VaultHostVNCFitMode says "Scaling"
+// in the language the app shows.
+func VaultHostVNCFitMode() string { return In(i18n.Locale()).VaultHostVNCFitMode() }
+
+// VaultHostVNCFitMode says "Scaling"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCFitMode() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCFitMode", nil)
+}
+
+// VaultHostVNCFitFit says "Fit to window"
+// in the language the app shows.
+func VaultHostVNCFitFit() string { return In(i18n.Locale()).VaultHostVNCFitFit() }
+
+// VaultHostVNCFitFit says "Fit to window"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCFitFit() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCFitFit", nil)
+}
+
+// VaultHostVNCFitOneToOne says "1:1"
+// in the language the app shows.
+func VaultHostVNCFitOneToOne() string { return In(i18n.Locale()).VaultHostVNCFitOneToOne() }
+
+// VaultHostVNCFitOneToOne says "1:1"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCFitOneToOne() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCFitOneToOne", nil)
+}
+
+// VaultHostVNCFitClip says "Clip"
+// in the language the app shows.
+func VaultHostVNCFitClip() string { return In(i18n.Locale()).VaultHostVNCFitClip() }
+
+// VaultHostVNCFitClip says "Clip"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCFitClip() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCFitClip", nil)
+}
+
+// VaultHostVNCViewOnly says "View only"
+// in the language the app shows.
+func VaultHostVNCViewOnly() string { return In(i18n.Locale()).VaultHostVNCViewOnly() }
+
+// VaultHostVNCViewOnly says "View only"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCViewOnly() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCViewOnly", nil)
+}
+
+// VaultHostVNCShared says "Share session with other clients"
+// in the language the app shows.
+func VaultHostVNCShared() string { return In(i18n.Locale()).VaultHostVNCShared() }
+
+// VaultHostVNCShared says "Share session with other clients"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCShared() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCShared", nil)
+}
+
+// VaultHostVNCCursorMode says "Cursor"
+// in the language the app shows.
+func VaultHostVNCCursorMode() string { return In(i18n.Locale()).VaultHostVNCCursorMode() }
+
+// VaultHostVNCCursorMode says "Cursor"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCCursorMode() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCCursorMode", nil)
+}
+
+// VaultHostVNCCursorLocal says "Local cursor"
+// in the language the app shows.
+func VaultHostVNCCursorLocal() string { return In(i18n.Locale()).VaultHostVNCCursorLocal() }
+
+// VaultHostVNCCursorLocal says "Local cursor"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCCursorLocal() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCCursorLocal", nil)
+}
+
+// VaultHostVNCCursorServer says "Server-drawn cursor"
+// in the language the app shows.
+func VaultHostVNCCursorServer() string { return In(i18n.Locale()).VaultHostVNCCursorServer() }
+
+// VaultHostVNCCursorServer says "Server-drawn cursor"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCCursorServer() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCCursorServer", nil)
+}
+
+// VaultHostVNCTransportTCP says "TCP (standard RFB)"
+// in the language the app shows.
+func VaultHostVNCTransportTCP() string { return In(i18n.Locale()).VaultHostVNCTransportTCP() }
+
+// VaultHostVNCTransportTCP says "TCP (standard RFB)"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCTransportTCP() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCTransportTCP", nil)
+}
+
+// VaultHostVNCWebSocket says "WebSocket (noVNC)"
+// in the language the app shows.
+func VaultHostVNCWebSocket() string { return In(i18n.Locale()).VaultHostVNCWebSocket() }
+
+// VaultHostVNCWebSocket says "WebSocket (noVNC)"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCWebSocket() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCWebSocket", nil)
+}
+
+// VaultHostVNCWebSocketHint says "Carries the RFB stream inside a WebSocket, like a noVNC/websockify page. Use the HTTP port (usually 6080) and the upg…"
+// in the language the app shows.
+func VaultHostVNCWebSocketHint() string { return In(i18n.Locale()).VaultHostVNCWebSocketHint() }
+
+// VaultHostVNCWebSocketHint says "Carries the RFB stream inside a WebSocket, like a noVNC/websockify page. Use the HTTP port (usually 6080) and the upg…"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCWebSocketHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCWebSocketHint", nil)
+}
+
+// VaultHostVNCWebSocketPath says "WebSocket path"
+// in the language the app shows.
+func VaultHostVNCWebSocketPath() string { return In(i18n.Locale()).VaultHostVNCWebSocketPath() }
+
+// VaultHostVNCWebSocketPath says "WebSocket path"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCWebSocketPath() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCWebSocketPath", nil)
+}
+
+// VaultHostVNCWebSocketSecure says "Secure (wss)"
+// in the language the app shows.
+func VaultHostVNCWebSocketSecure() string { return In(i18n.Locale()).VaultHostVNCWebSocketSecure() }
+
+// VaultHostVNCWebSocketSecure says "Secure (wss)"
+// in the language of msgs.
+func (msgs Messages) VaultHostVNCWebSocketSecure() string {
+	return Catalog.Format(msgs.locale, "vaultHostVNCWebSocketSecure", nil)
+}
+
+// VaultProblemVncDisplay says "The display number must be a whole number."
+// in the language the app shows.
+func VaultProblemVncDisplay() string { return In(i18n.Locale()).VaultProblemVncDisplay() }
+
+// VaultProblemVncDisplay says "The display number must be a whole number."
+// in the language of msgs.
+func (msgs Messages) VaultProblemVncDisplay() string {
+	return Catalog.Format(msgs.locale, "vaultProblemVncDisplay", nil)
+}
+
+// VaultProblemVncDisplayRange says "The display number must be between 0 and 99."
+// in the language the app shows.
+func VaultProblemVncDisplayRange() string { return In(i18n.Locale()).VaultProblemVncDisplayRange() }
+
+// VaultProblemVncDisplayRange says "The display number must be between 0 and 99."
+// in the language of msgs.
+func (msgs Messages) VaultProblemVncDisplayRange() string {
+	return Catalog.Format(msgs.locale, "vaultProblemVncDisplayRange", nil)
+}
+
+// VaultProblemVncWebSocketPath says "The WebSocket path must be a request path, such as /websockify, without spaces."
+// in the language the app shows.
+func VaultProblemVncWebSocketPath() string { return In(i18n.Locale()).VaultProblemVncWebSocketPath() }
+
+// VaultProblemVncWebSocketPath says "The WebSocket path must be a request path, such as /websockify, without spaces."
+// in the language of msgs.
+func (msgs Messages) VaultProblemVncWebSocketPath() string {
+	return Catalog.Format(msgs.locale, "vaultProblemVncWebSocketPath", nil)
 }
 
 // VaultHostNetworkDevice says "Network device mode"
@@ -27828,6 +28362,74 @@ func (msgs Messages) ConnectionHostAtuinImportFailed() string {
 	return Catalog.Format(msgs.locale, "connectionHostAtuinImportFailed", nil)
 }
 
+// ConnectionVNCPlaintextWarning says "This VNC connection is not encrypted. The screen and everything you type cross the network in the clear."
+// in the language the app shows.
+//
+// A one-time warning that an unrouted VNC Session negotiated an unencrypted
+// security type.
+func ConnectionVNCPlaintextWarning() string { return In(i18n.Locale()).ConnectionVNCPlaintextWarning() }
+
+// ConnectionVNCPlaintextWarning says "This VNC connection is not encrypted. The screen and everything you type cross the network in the clear."
+// in the language of msgs.
+//
+// A one-time warning that an unrouted VNC Session negotiated an unencrypted
+// security type.
+func (msgs Messages) ConnectionVNCPlaintextWarning() string {
+	return Catalog.Format(msgs.locale, "connectionVNCPlaintextWarning", nil)
+}
+
+// ConnectionVNCPlaintextPromptTitle says "Unencrypted VNC connection"
+// in the language the app shows.
+func ConnectionVNCPlaintextPromptTitle() string {
+	return In(i18n.Locale()).ConnectionVNCPlaintextPromptTitle()
+}
+
+// ConnectionVNCPlaintextPromptTitle says "Unencrypted VNC connection"
+// in the language of msgs.
+func (msgs Messages) ConnectionVNCPlaintextPromptTitle() string {
+	return Catalog.Format(msgs.locale, "connectionVNCPlaintextPromptTitle", nil)
+}
+
+// ConnectionVNCPlaintextPromptBody says "The VNC connection to {host} is not encrypted. Anyone who can observe the network can see the screen and everything y…"
+// in the language the app shows.
+//
+// Asks the user to accept an unencrypted VNC connection before it starts.
+func ConnectionVNCPlaintextPromptBody(host string) string {
+	return In(i18n.Locale()).ConnectionVNCPlaintextPromptBody(host)
+}
+
+// ConnectionVNCPlaintextPromptBody says "The VNC connection to {host} is not encrypted. Anyone who can observe the network can see the screen and everything y…"
+// in the language of msgs.
+//
+// Asks the user to accept an unencrypted VNC connection before it starts.
+func (msgs Messages) ConnectionVNCPlaintextPromptBody(host string) string {
+	return Catalog.Format(msgs.locale, "connectionVNCPlaintextPromptBody", map[string]any{"host": host})
+}
+
+// ConnectionVNCPlaintextPromptContinue says "Continue anyway"
+// in the language the app shows.
+func ConnectionVNCPlaintextPromptContinue() string {
+	return In(i18n.Locale()).ConnectionVNCPlaintextPromptContinue()
+}
+
+// ConnectionVNCPlaintextPromptContinue says "Continue anyway"
+// in the language of msgs.
+func (msgs Messages) ConnectionVNCPlaintextPromptContinue() string {
+	return Catalog.Format(msgs.locale, "connectionVNCPlaintextPromptContinue", nil)
+}
+
+// ConnectionVNCPlaintextPromptCancel says "Cancel"
+// in the language the app shows.
+func ConnectionVNCPlaintextPromptCancel() string {
+	return In(i18n.Locale()).ConnectionVNCPlaintextPromptCancel()
+}
+
+// ConnectionVNCPlaintextPromptCancel says "Cancel"
+// in the language of msgs.
+func (msgs Messages) ConnectionVNCPlaintextPromptCancel() string {
+	return Catalog.Format(msgs.locale, "connectionVNCPlaintextPromptCancel", nil)
+}
+
 // SettingsAtuinSectionTitle says "Command History sync"
 // in the language the app shows.
 func SettingsAtuinSectionTitle() string { return In(i18n.Locale()).SettingsAtuinSectionTitle() }
@@ -29076,4 +29678,46 @@ func CommandDescriptionSystemctl() string { return In(i18n.Locale()).CommandDesc
 // in the language of msgs.
 func (msgs Messages) CommandDescriptionSystemctl() string {
 	return Catalog.Format(msgs.locale, "commandDescriptionSystemctl", nil)
+}
+
+// ConnectionErrorUnsupportedHost says "This Host uses a protocol or transport this version does not support. Edit the Host before connecting."
+// in the language the app shows.
+func ConnectionErrorUnsupportedHost() string {
+	return In(i18n.Locale()).ConnectionErrorUnsupportedHost()
+}
+
+// ConnectionErrorUnsupportedHost says "This Host uses a protocol or transport this version does not support. Edit the Host before connecting."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorUnsupportedHost() string {
+	return Catalog.Format(msgs.locale, "connectionErrorUnsupportedHost", nil)
+}
+
+// ConnectionErrorVNCUnsupported says "This VNC server offers no security type Natcatty supports. Use an SSH route to encrypt and reach it."
+// in the language the app shows.
+func ConnectionErrorVNCUnsupported() string { return In(i18n.Locale()).ConnectionErrorVNCUnsupported() }
+
+// ConnectionErrorVNCUnsupported says "This VNC server offers no security type Natcatty supports. Use an SSH route to encrypt and reach it."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorVNCUnsupported() string {
+	return Catalog.Format(msgs.locale, "connectionErrorVNCUnsupported", nil)
+}
+
+// ConnectionErrorVNCCertificate says "The VNC server's certificate did not verify against the system trust store and the Host name. Check the Host name and…"
+// in the language the app shows.
+func ConnectionErrorVNCCertificate() string { return In(i18n.Locale()).ConnectionErrorVNCCertificate() }
+
+// ConnectionErrorVNCCertificate says "The VNC server's certificate did not verify against the system trust store and the Host name. Check the Host name and…"
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorVNCCertificate() string {
+	return Catalog.Format(msgs.locale, "connectionErrorVNCCertificate", nil)
+}
+
+// ConnectionErrorVNCCancelled says "Connection cancelled before sending credentials."
+// in the language the app shows.
+func ConnectionErrorVNCCancelled() string { return In(i18n.Locale()).ConnectionErrorVNCCancelled() }
+
+// ConnectionErrorVNCCancelled says "Connection cancelled before sending credentials."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorVNCCancelled() string {
+	return Catalog.Format(msgs.locale, "connectionErrorVNCCancelled", nil)
 }

@@ -670,3 +670,28 @@ func assertKind(t *testing.T, err error, want Kind) {
 		t.Fatalf("error kind = %q, want %q (%v)", typed.Kind, want, err)
 	}
 }
+
+// TestErrorClassifiesAuthRejections proves the method the Session layer reads:
+// credentials and host keys are authentication rejections, while an X11
+// refusal, a provider failure and a network failure are not.
+func TestErrorClassifiesAuthRejections(t *testing.T) {
+	cases := []struct {
+		kind Kind
+		want bool
+	}{
+		{KindAuth, true},
+		{KindHostKey, true},
+		{KindX11, false},
+		{KindProvider, false},
+		{KindNetwork, false},
+	}
+	for _, tc := range cases {
+		if got := (&Error{Kind: tc.kind}).AuthFailure(); got != tc.want {
+			t.Fatalf("%s AuthFailure = %v, want %v", tc.kind, got, tc.want)
+		}
+	}
+	var nilError *Error
+	if nilError.AuthFailure() {
+		t.Fatal("a nil error reported an authentication rejection")
+	}
+}

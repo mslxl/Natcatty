@@ -81,6 +81,43 @@ func newTestService(t *testing.T, hosts *fakeHosts) *Service {
 	)
 }
 
+// TestAcknowledgePlaintextWarningPersistsPerHost proves the one-time VNC
+// transport warning is remembered on the Host record and ignored for protocols
+// that never show it.
+func TestAcknowledgePlaintextWarningPersistsPerHost(t *testing.T) {
+	configuration := domainvault.DefaultVNCConfig()
+	repo := &fakeHosts{hosts: []domainvault.Host{
+		{ID: "vnc-desk", Protocol: domainvault.ProtocolVNC, VNC: &configuration},
+		{ID: "ssh-box", Protocol: domainvault.ProtocolSSH},
+	}}
+	service := newTestService(t, repo)
+
+	acknowledged, err := service.PlaintextWarningAcknowledged(context.Background(), "vnc-desk")
+	if err != nil {
+		t.Fatalf("PlaintextWarningAcknowledged: %v", err)
+	}
+	if acknowledged {
+		t.Fatal("a fresh VNC Host already acknowledged the warning")
+	}
+	if err := service.AcknowledgePlaintextWarning(context.Background(), "vnc-desk"); err != nil {
+		t.Fatalf("AcknowledgePlaintextWarning: %v", err)
+	}
+	acknowledged, err = service.PlaintextWarningAcknowledged(context.Background(), "vnc-desk")
+	if err != nil || !acknowledged {
+		t.Fatalf("after acknowledgement = %v, %v; want true", acknowledged, err)
+	}
+	if repo.hosts[0].VNC == nil || !repo.hosts[0].VNC.PlaintextWarningAcknowledged {
+		t.Fatalf("stored VNC config = %+v, want the acknowledgement", repo.hosts[0].VNC)
+	}
+	// A non-VNC Host is a no-op: the acknowledgement belongs only to VNC.
+	if err := service.AcknowledgePlaintextWarning(context.Background(), "ssh-box"); err != nil {
+		t.Fatalf("AcknowledgePlaintextWarning for SSH: %v", err)
+	}
+	if repo.hosts[1].VNC != nil {
+		t.Fatalf("an SSH Host gained a VNC configuration: %+v", repo.hosts[1].VNC)
+	}
+}
+
 func TestCreateHostNormalizesAndPersists(t *testing.T) {
 	repo := &fakeHosts{}
 	service := newTestService(t, repo)

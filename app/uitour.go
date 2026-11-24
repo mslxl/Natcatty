@@ -71,7 +71,8 @@ func RunUITour() error {
 			theme(domainpreferences.ThemeLight)
 			pages("light")
 			step("light-terminal", func() {
-				_ = shell.OpenHost(domainvault.Host{ID: "tour-local", Label: "Local shell", Protocol: domainvault.ProtocolLocal})
+				// A local shell is a Session, not a saved Host.
+				_ = shell.NewTab()
 			})
 			time.Sleep(2 * time.Second)
 			step("light-terminal-ready", func() {})
@@ -157,11 +158,10 @@ func tourSeed(ctx context.Context, deps packagedSmokeDeps) {
 		{Label: "prod-web-01", Hostname: "10.0.1.11", Port: 22, Username: "deploy", Protocol: domainvault.ProtocolSSH, Group: "Production", Tags: []string{"web", "nginx"}, Pinned: true},
 		{Label: "prod-web-02", Hostname: "10.0.1.12", Port: 22, Username: "deploy", Protocol: domainvault.ProtocolSSH, Group: "Production", Tags: []string{"web"}},
 		{Label: "prod-db-primary", Hostname: "db.internal.example.com", Port: 2222, Username: "postgres", Protocol: domainvault.ProtocolSSH, Group: "Production/Database", Tags: []string{"db"}},
-		{Label: "staging-api", Hostname: "staging.example.com", Port: 22, Username: "ubuntu", Protocol: domainvault.ProtocolMosh, Group: "Staging"},
-		{Label: "build-box-with-a-really-long-name-for-truncation", Hostname: "build-01.ci.very-long-subdomain.example.org", Port: 22, Username: "ci", Protocol: domainvault.ProtocolET, Group: "CI", Tags: []string{"ci", "linux", "arm64", "large"}},
+		{Label: "staging-api", Hostname: "staging.example.com", Port: 22, Username: "ubuntu", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportMosh, Group: "Staging"},
+		{Label: "build-box-with-a-really-long-name-for-truncation", Hostname: "build-01.ci.very-long-subdomain.example.org", Port: 22, Username: "ci", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET, Group: "CI", Tags: []string{"ci", "linux", "arm64", "large"}},
 		{Label: "core-switch", Hostname: "192.168.0.1", Port: 23, Protocol: domainvault.ProtocolTelnet, Group: "Network"},
 		{Label: "开发机", Hostname: "dev.local", Port: 22, Username: "me", Protocol: domainvault.ProtocolSSH},
-		{Label: "Local zsh", Protocol: domainvault.ProtocolLocal},
 	}
 	for _, d := range drafts {
 		if _, err := deps.vault.Create(ctx, d); err != nil {

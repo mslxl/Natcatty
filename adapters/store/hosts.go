@@ -24,6 +24,9 @@ func (s *Store) List(ctx context.Context) ([]domainvault.Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	for index := range hosts {
+		hosts[index] = domainvault.NormalizeHost(hosts[index])
+	}
 	return s.materializeHostGroups(ctx, hosts)
 }
 
@@ -62,6 +65,9 @@ func (s *Store) Get(ctx context.Context, id model.HostID) (domainvault.Host, err
 	if err := decodeData(data, "Host", &host); err != nil {
 		return domainvault.Host{}, err
 	}
+	// A hand-edited row or a restored backup may spell the transport "ssh";
+	// canonicalize on every read so no caller sees the input spelling.
+	host = domainvault.NormalizeHost(host)
 	hosts, err := s.materializeHostGroups(ctx, []domainvault.Host{host})
 	if err != nil {
 		return domainvault.Host{}, err

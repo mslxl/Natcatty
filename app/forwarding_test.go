@@ -18,25 +18,27 @@ func (v forwardingTestVault) Get(context.Context, model.HostID) (domainvault.Hos
 }
 
 // TestForwardingRefusesAProtocolWithoutChannelSupport covers the connector
-// guard: a Telnet Host is a real Host, but it has no SSH connection to carry a
-// forwarding channel, so the rule must fail with a typed permanent error
-// before any dial.
+// guard: a Telnet or VNC Host is a real Host, but it has no SSH connection to
+// carry a forwarding channel, so the rule must fail with a typed permanent
+// error before any dial.
 func TestForwardingRefusesAProtocolWithoutChannelSupport(t *testing.T) {
-	connector := forwardingConnector{
-		vault: forwardingTestVault{host: domainvault.Host{
-			ID: "console", Label: "console", Hostname: "console.local",
-			Protocol: domainvault.ProtocolTelnet,
-		}},
-		connections: appconnection.NewManager(nil, nil, nil),
-	}
+	for _, protocol := range []domainvault.Protocol{domainvault.ProtocolTelnet, domainvault.ProtocolVNC} {
+		connector := forwardingConnector{
+			vault: forwardingTestVault{host: domainvault.Host{
+				ID: "console", Label: "console", Hostname: "console.local",
+				Protocol: protocol,
+			}},
+			connections: appconnection.NewManager(nil, nil, nil),
+		}
 
-	_, err := connector.Connect(context.Background(), "console")
-	var typed *appforwarding.RuntimeError
-	if !errors.As(err, &typed) || typed.Kind != appforwarding.ErrorUnsupported {
-		t.Fatalf("Connect = %v, want an unsupported runtime error", err)
-	}
-	if !typed.Permanent() {
-		t.Fatal("a protocol without forwarding support must not be retried")
+		_, err := connector.Connect(context.Background(), "console")
+		var typed *appforwarding.RuntimeError
+		if !errors.As(err, &typed) || typed.Kind != appforwarding.ErrorUnsupported {
+			t.Fatalf("%s: Connect = %v, want an unsupported runtime error", protocol, err)
+		}
+		if !typed.Permanent() {
+			t.Fatalf("%s: a protocol without forwarding support must not be retried", protocol)
+		}
 	}
 }
 

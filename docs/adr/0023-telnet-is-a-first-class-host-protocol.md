@@ -1,5 +1,8 @@
 # Telnet is a first-class Host protocol
 
+> Partly superseded by ADR 0025: Mosh, EternalTerminal, and Local are no longer
+> Host protocols. Telnet's own status and capabilities are unchanged.
+
 A Host may select Telnet (`telnet`, port 23) like SSH, Mosh, EternalTerminal, or
 a Local shell. Telnet has its own Session transport (`adapters/telnet`), no SSH
 handshake or credential bundle, and no SSH application channels. Built-in

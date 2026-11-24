@@ -456,8 +456,8 @@ func AssignHostsGroup(hosts []Host, groupID string, at time.Time) ([]Host, error
 }
 
 // ApplyGroupDefaults fills a Host's unset connection settings from its group's
-// effective defaults. The Host's own value wins, as in the original Vault.
-// Local shells never inherit remote credentials or SSH transport settings.
+// effective defaults. The Host's own value wins, as in the original Vault. A
+// group sets no transport: Mosh and ET stay a per-Host choice.
 func ApplyGroupDefaults(host Host, defaults GroupDefaults) Host {
 	effective := host
 	effective.Tags = append([]string(nil), host.Tags...)
@@ -465,9 +465,6 @@ func ApplyGroupDefaults(host Host, defaults GroupDefaults) Host {
 	effective.Proxy = CloneProxy(host.Proxy)
 	effective.Algorithms = CloneAlgorithms(host.Algorithms)
 
-	if effective.Protocol == ProtocolLocal {
-		return effective
-	}
 	// A jump chain is one value: the Host's own hops replace the group's
 	// chain whole, and a Host with no chain inherits the group's.
 	if effective.HostChain == nil {
@@ -505,11 +502,12 @@ func ApplyGroupDefaults(host Host, defaults GroupDefaults) Host {
 	}
 	// X11 is a tri-state preference: a Host that owns one (including an
 	// explicit off) keeps it, and an unset Host inherits the group's. It only
-	// applies to a plain SSH Session, since the other protocols cannot carry
-	// the forwarding channel. An empty protocol is the legacy SSH default.
+	// applies to a plain SSH Session, since Mosh, ET, and the other protocols
+	// cannot carry the forwarding channel. An empty protocol is the SSH
+	// default.
 	hostOwnsX11 := effective.X11ForwardingSet || effective.X11Forwarding
 	if (effective.Protocol == ProtocolSSH || effective.Protocol == "") &&
-		!hostOwnsX11 && defaults.X11Enabled() {
+		effective.Transport == TransportPlain && !hostOwnsX11 && defaults.X11Enabled() {
 		effective.X11Forwarding = true
 		effective.X11WarningAcknowledged = true
 		effective.X11ForwardingSet = true

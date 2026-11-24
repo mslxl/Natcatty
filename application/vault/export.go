@@ -141,6 +141,9 @@ func omittedSecrets(dataset vaultexport.Dataset, format ExportFormat, includeSec
 			if host.Host.HasPassword {
 				count++
 			}
+			if host.Host.HasVNCPassword {
+				count++
+			}
 			if host.Host.Proxy != nil && host.Host.Proxy.HasPassword {
 				count++
 			}
@@ -268,6 +271,16 @@ func (s *Service) exportDataset(ctx context.Context, opts ExportOptions) (vaulte
 					unreadable++
 				} else {
 					entry.Password = value
+				}
+			}
+			if host.HasVNCPassword {
+				// A VNC password lives in its own slot and is never read from
+				// or written to the SSH password address.
+				value, readErr := s.Secret(ctx, host.ID, FieldVNCPassword)
+				if readErr != nil {
+					unreadable++
+				} else {
+					entry.VNCPassword = value
 				}
 			}
 			if host.Proxy != nil && host.Proxy.HasPassword {

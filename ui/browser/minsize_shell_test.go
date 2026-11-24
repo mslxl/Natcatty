@@ -147,16 +147,22 @@ func newBrowserShellTester(t *testing.T, locale string, width, height int) *brow
 	if err := h.shell.OpenHost(host); err != nil {
 		t.Fatalf("open the self-test Session: %v", err)
 	}
+	// The Tab appears while the dial runs, so its presence alone does not mean
+	// the Pane has attached. Wait for the Pane's own menu, which the Session
+	// surface draws only after it is mounted.
+	m := locales.In(locale)
 	deadline := time.Now().Add(5 * time.Second)
-	for h.shell.TabCount() != 1 {
+	for {
 		h.shell.Flush()
 		h.tester.Frame()
+		if _, ok := h.tester.Find(m.SessionMenuFor(1)); ok && h.shell.TabCount() == 1 {
+			break
+		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for the Session to attach; texts %q", h.tester.Texts())
 		}
 	}
 
-	m := locales.In(locale)
 	if err := h.tester.Click(m.SessionMenuFor(1)); err != nil {
 		t.Fatalf("open the Session menu: %v", err)
 	}

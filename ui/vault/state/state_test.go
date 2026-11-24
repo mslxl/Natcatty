@@ -45,6 +45,7 @@ func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainva
 		Port:                   normalized.Port,
 		Username:               normalized.Username,
 		Protocol:               normalized.Protocol,
+		Transport:              normalized.Transport,
 		Group:                  normalized.Group,
 		Tags:                   normalized.Tags,
 		Notes:                  normalized.Notes,
@@ -72,6 +73,7 @@ func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainva
 		LineEditingMode:        normalized.LineEditingMode,
 		MoshServerPath:         normalized.MoshServerPath,
 		ETPort:                 normalized.ETPort,
+		VNC:                    domainvault.CloneVNCConfig(normalized.VNC),
 		OrderKey:               int64(f.nextID) * 1000,
 	}
 	f.created = append(f.created, draft)
@@ -96,6 +98,7 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.Port = normalized.Port
 		host.Username = normalized.Username
 		host.Protocol = normalized.Protocol
+		host.Transport = normalized.Transport
 		host.Group = normalized.Group
 		host.Tags = normalized.Tags
 		host.Notes = normalized.Notes
@@ -124,6 +127,7 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.LineEditingMode = normalized.LineEditingMode
 		host.MoshServerPath = normalized.MoshServerPath
 		host.ETPort = normalized.ETPort
+		host.VNC = domainvault.CloneVNCConfig(normalized.VNC)
 		f.items[i] = host
 		f.updated = append(f.updated, draft)
 		return host, nil
@@ -249,8 +253,9 @@ func TestHostDetailsClearsInputCompatibilityWhenLeavingSSH(t *testing.T) {
 	state, _ := newTestState(t, repo)
 	state.BeginCreate()
 	form := state.Form()
-	form.Label = "local-shell"
-	form.Protocol = string(domainvault.ProtocolLocal)
+	form.Label = "console"
+	form.Hostname = "console.example.com"
+	form.Protocol = string(domainvault.ProtocolTelnet)
 	form.NewlineMode = string(modelterminal.NewlineLF)
 	form.BackspaceMode = string(modelterminal.BackspaceCtrlH)
 	form.LineEditingMode = string(modelterminal.LineEditingByte)
@@ -1098,14 +1103,16 @@ func TestNetworkDeviceModeIsSavedOnlyForSSH(t *testing.T) {
 	// save raw execution onto a Host whose transport cannot run it.
 	state.BeginCreate()
 	form = state.Form()
-	form.Label = "local"
-	form.Protocol = string(domainvault.ProtocolLocal)
+	form.Label = "roaming"
+	form.Hostname = "roaming.example.com"
+	form.Protocol = string(domainvault.ProtocolSSH)
+	form.Transport = string(domainvault.TransportMosh)
 	form.NetworkDevice = true
 	if err := state.Save(); err != nil {
-		t.Fatalf("Save local: %v", err)
+		t.Fatalf("Save Mosh Host: %v", err)
 	}
 	if last := repo.created[len(repo.created)-1]; last.DeviceType != domainvault.DeviceTypeDefault {
-		t.Fatalf("local Host device type = %q, want the default", last.DeviceType)
+		t.Fatalf("Mosh Host device type = %q, want the default", last.DeviceType)
 	}
 }
 
@@ -1138,7 +1145,37 @@ func TestBeginEditRestoresTheNetworkDeviceMode(t *testing.T) {
 	}
 }
 
-func TestMoshAndETSettingsAreSavedOnlyForTheirProtocol(t *testing.T) {
+// TestEditorPreservesAnUnsupportedTransportTillSaveRejectsIt proves opening a
+// record with an unknown transport does not rewrite it as plain SSH: the form
+// keeps the raw value, and Save reports it instead of persisting a change.
+func TestEditorPreservesAnUnsupportedTransportTillSaveRejectsIt(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "bad", Label: "bad", Hostname: "bad.example.com", Port: 22,
+		Protocol: domainvault.ProtocolSSH, Transport: "ssh2",
+	}}}
+	state, _ := newTestState(t, repo)
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEdit("bad") {
+		t.Fatal("BeginEdit did not open the Host")
+	}
+	if got := state.Form().Transport; got != "ssh2" {
+		t.Fatalf("form transport = %q, want the raw ssh2", got)
+	}
+	state.Form().Label = "renamed"
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if got := state.Problem(); got != ProblemProtocol {
+		t.Fatalf("problem = %q, want %q", got, ProblemProtocol)
+	}
+	if len(repo.updated) != 0 {
+		t.Fatalf("an unsupported transport was persisted: %+v", repo.updated)
+	}
+}
+
+func TestMoshAndETSettingsAreSavedOnlyForTheirTransport(t *testing.T) {
 	repo := &fakeHosts{}
 	state, _ := newTestState(t, repo)
 
@@ -1146,7 +1183,8 @@ func TestMoshAndETSettingsAreSavedOnlyForTheirProtocol(t *testing.T) {
 	form := state.Form()
 	form.Label = "build-box"
 	form.Hostname = "build.example.com"
-	form.Protocol = string(domainvault.ProtocolMosh)
+	form.Protocol = string(domainvault.ProtocolSSH)
+	form.Transport = string(domainvault.TransportMosh)
 	form.MoshServerPath = "/usr/local/bin/mosh-server"
 	// A hidden ET field must not leak into a Mosh Host.
 	form.ETPort = "8737"
@@ -1167,7 +1205,8 @@ func TestMoshAndETSettingsAreSavedOnlyForTheirProtocol(t *testing.T) {
 	form = state.Form()
 	form.Label = "et-box"
 	form.Hostname = "et.example.com"
-	form.Protocol = string(domainvault.ProtocolET)
+	form.Protocol = string(domainvault.ProtocolSSH)
+	form.Transport = string(domainvault.TransportET)
 	form.ETPort = "8737"
 	form.MoshServerPath = "/opt/mosh-server"
 	if err := state.Save(); err != nil {
@@ -1198,7 +1237,8 @@ func TestMoshAndETSettingsAreSavedOnlyForTheirProtocol(t *testing.T) {
 	form = state.Form()
 	form.Label = "bad-port"
 	form.Hostname = "bad.example.com"
-	form.Protocol = string(domainvault.ProtocolET)
+	form.Protocol = string(domainvault.ProtocolSSH)
+	form.Transport = string(domainvault.TransportET)
 	form.ETPort = "not-a-port"
 	if err := state.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -1264,5 +1304,359 @@ func TestNetworkDeviceModeClearsAutoAttachTmux(t *testing.T) {
 	}
 	if len(repo.created) != 1 || repo.created[0].AutoAttachTmux {
 		t.Fatalf("network-device draft = %+v, want autoAttachTmux cleared", repo.created)
+	}
+}
+
+// TestVNCFormStoresTheDisplayAsTheRealPort proves the editor's display-number
+// input resolves to a TCP port, and switching input modes carries the same
+// endpoint without changing it.
+func TestVNCFormStoresTheDisplayAsTheRealPort(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+
+	state.BeginCreate()
+	form := state.Form()
+	form.Label = "desk"
+	form.Hostname = "desk.local"
+	state.SetHostProtocol(string(domainvault.ProtocolVNC))
+	form = state.Form()
+	if form.VNCInputMode != string(domainvault.VNCDisplayNumber) ||
+		form.VNCFitMode != string(domainvault.VNCFit) ||
+		!form.VNCShared ||
+		form.VNCCursorMode != string(domainvault.VNCCursorLocal) {
+		t.Fatalf("VNC defaults = %+v", *form)
+	}
+	form.VNCDisplay = "1"
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if state.Problem() != ProblemNone {
+		t.Fatalf("Problem = %q", state.Problem())
+	}
+	saved := repo.items[0]
+	if saved.Port != 5901 || saved.Protocol != domainvault.ProtocolVNC {
+		t.Fatalf("saved Host = %+v, want VNC on 5901", saved)
+	}
+	if saved.VNC == nil || saved.VNC.DisplayMode != domainvault.VNCDisplayNumber {
+		t.Fatalf("saved VNC config = %+v", saved.VNC)
+	}
+
+	if !state.BeginEdit(saved.ID) {
+		t.Fatal("BeginEdit failed")
+	}
+	form = state.Form()
+	if form.Port != "5901" || form.VNCDisplay != "1" {
+		t.Fatalf("reloaded endpoint = port %q display %q, want 5901 / 1", form.Port, form.VNCDisplay)
+	}
+
+	state.SetVNCInputMode(string(domainvault.VNCPort))
+	form = state.Form()
+	if form.Port != "5901" || form.VNCInputMode != string(domainvault.VNCPort) {
+		t.Fatalf("port mode = %+v, want port 5901", *form)
+	}
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save port mode: %v", err)
+	}
+	if got := repo.items[0].Port; got != 5901 {
+		t.Fatalf("switching modes changed the stored port to %d", got)
+	}
+	if got := repo.items[0].VNC.DisplayMode; got != domainvault.VNCPort {
+		t.Fatalf("saved input mode = %q, want port", got)
+	}
+
+	// The raw port 6000 has no display, so keeping port input is the only
+	// way to save it; the display field is not the source of truth there.
+	if !state.BeginEdit(saved.ID) {
+		t.Fatal("BeginEdit for the display-range check failed")
+	}
+	form = state.Form()
+	form.Port = "6000"
+	state.SetVNCInputMode(string(domainvault.VNCDisplayNumber))
+	if form.VNCDisplay != "100" {
+		t.Fatalf("display derivation = %q, want 100 so the range error is visible", form.VNCDisplay)
+	}
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if state.Problem() != ProblemVNCDisplayRange {
+		t.Fatalf("Problem = %q, want %q", state.Problem(), ProblemVNCDisplayRange)
+	}
+}
+
+// TestVNCInputModeSwitchRejectsOutOfRangeDisplay proves an out-of-range
+// display is not laundered into a fabricated raw port when the endpoint input
+// mode is switched. The stored endpoint stays as it was, the invalid text is
+// kept so Save still rejects it, and the range problem is reported.
+func TestVNCInputModeSwitchRejectsOutOfRangeDisplay(t *testing.T) {
+	for _, display := range []string{"150", "-1"} {
+		t.Run(display, func(t *testing.T) {
+			repo := &fakeHosts{items: []domainvault.Host{{
+				ID: "host-1", Label: "desk", Hostname: "desk.local", Port: 5901,
+				Protocol: domainvault.ProtocolVNC,
+				VNC:      &domainvault.VNCConfig{DisplayMode: domainvault.VNCDisplayNumber},
+			}}}
+			state, _ := newTestState(t, repo)
+			if err := state.Reload(); err != nil {
+				t.Fatalf("Reload: %v", err)
+			}
+			if !state.BeginEdit("host-1") {
+				t.Fatal("BeginEdit failed")
+			}
+			form := state.Form()
+			form.VNCDisplay = display
+
+			state.SetVNCInputMode(string(domainvault.VNCPort))
+
+			form = state.Form()
+			if form.Port != "5901" {
+				t.Fatalf("switch fabricated port %q, want the stored endpoint 5901", form.Port)
+			}
+			if form.VNCInputMode != string(domainvault.VNCDisplayNumber) {
+				t.Fatalf("input mode = %q, want display mode kept so Save still validates", form.VNCInputMode)
+			}
+			if state.Problem() != ProblemVNCDisplayRange {
+				t.Fatalf("Problem = %q, want %q", state.Problem(), ProblemVNCDisplayRange)
+			}
+
+			if err := state.Save(); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			if got := repo.items[0].Port; got != 5901 {
+				t.Fatalf("stored endpoint changed to %d", got)
+			}
+			if repo.items[0].VNC == nil || repo.items[0].VNC.DisplayMode != domainvault.VNCDisplayNumber {
+				t.Fatalf("stored VNC config = %+v, want display mode kept", repo.items[0].VNC)
+			}
+		})
+	}
+}
+
+// TestVNCFormRejectsInvalidDisplayAndPort proves malformed endpoint input
+// never reaches the Vault.
+func TestVNCFormRejectsInvalidDisplayAndPort(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    domainvault.VNCDisplayMode
+		display string
+		port    string
+		problem Problem
+	}{
+		{"non-numeric display", domainvault.VNCDisplayNumber, "one", "", ProblemVNCDisplay},
+		{"negative display", domainvault.VNCDisplayNumber, "-1", "", ProblemVNCDisplay},
+		{"display too high", domainvault.VNCDisplayNumber, "100", "", ProblemVNCDisplayRange},
+		{"non-numeric port", domainvault.VNCPort, "", "not-a-port", ProblemPortInvalid},
+		{"port too high", domainvault.VNCPort, "", "70000", ProblemPortRange},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := &fakeHosts{}
+			state, _ := newTestState(t, repo)
+			state.BeginCreate()
+			form := state.Form()
+			form.Label = "desk"
+			form.Hostname = "desk.local"
+			state.SetHostProtocol(string(domainvault.ProtocolVNC))
+			form = state.Form()
+			form.VNCInputMode = string(test.mode)
+			form.VNCDisplay = test.display
+			form.Port = test.port
+			if err := state.Save(); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			if state.Problem() != test.problem {
+				t.Fatalf("Problem = %q, want %q", state.Problem(), test.problem)
+			}
+			if len(repo.created) != 0 {
+				t.Fatalf("an invalid VNC endpoint was saved: %+v", repo.created)
+			}
+		})
+	}
+}
+
+// TestSwitchingAwayFromVNCClearsTheConfigurationWithoutTouchingSSHCredentials
+// proves the hidden VNC section leaves no state behind, and returning to VNC
+// starts from the defaults.
+func TestSwitchingAwayFromVNCClearsTheConfigurationWithoutTouchingSSHCredentials(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "host-1", Label: "desk", Hostname: "desk.local", Port: 5901,
+		Protocol: domainvault.ProtocolVNC, HasPassword: true,
+		VNC: &domainvault.VNCConfig{
+			DisplayMode: domainvault.VNCPort, FitMode: domainvault.VNCClip,
+			ViewOnly: true, Shared: false, CursorMode: domainvault.VNCCursorServer,
+		},
+	}}}
+	state, _ := newTestState(t, repo)
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit failed")
+	}
+	state.SetHostProtocol(string(domainvault.ProtocolSSH))
+	form := state.Form()
+	if form.VNCFitMode != string(domainvault.VNCFit) || form.VNCViewOnly ||
+		!form.VNCShared || form.VNCCursorMode != string(domainvault.VNCCursorLocal) {
+		t.Fatalf("leaving VNC did not clear the configuration: %+v", *form)
+	}
+	if form.Password != "" || !form.HasPassword {
+		t.Fatalf("leaving VNC touched SSH credentials: %+v", *form)
+	}
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if got := repo.updated[len(repo.updated)-1]; got.VNC != nil || got.VNCPassword != "" {
+		t.Fatalf("saved draft = %+v, want VNC cleared", got)
+	}
+	if repo.items[0].VNC != nil {
+		t.Fatalf("saved Host = %+v, want VNC cleared", repo.items[0])
+	}
+
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit after switch failed")
+	}
+	state.SetHostProtocol(string(domainvault.ProtocolVNC))
+	form = state.Form()
+	if form.VNCInputMode != string(domainvault.VNCDisplayNumber) ||
+		form.VNCFitMode != string(domainvault.VNCFit) || form.VNCViewOnly ||
+		!form.VNCShared || form.VNCCursorMode != string(domainvault.VNCCursorLocal) {
+		t.Fatalf("returning to VNC did not start from defaults: %+v", *form)
+	}
+}
+
+// TestVNCPasswordUsesOnlyTheDedicatedFormField proves a stale SSH password in
+// the form is never submitted for a VNC Host.
+func TestVNCPasswordUsesOnlyTheDedicatedFormField(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+	state.BeginCreate()
+	form := state.Form()
+	form.Label = "desk"
+	form.Hostname = "desk.local"
+	state.SetHostProtocol(string(domainvault.ProtocolVNC))
+	form = state.Form()
+	form.Password = "ssh-value"
+	form.VNCPassword = "vnc-value"
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	draft := repo.created[0]
+	if draft.Password != "" {
+		t.Fatalf("VNC draft submitted the SSH password %q", draft.Password)
+	}
+	if draft.VNCPassword != "vnc-value" {
+		t.Fatalf("VNC draft password = %q", draft.VNCPassword)
+	}
+}
+
+// TestVNCWebSocketFormSeedsTheHTTPPortAndRoundTrips proves enabling the
+// WebSocket transport moves the editor to port input, seeds websockify's port,
+// and persists the upgrade path and TLS choice; disabling restores display 0.
+func TestVNCWebSocketFormSeedsTheHTTPPortAndRoundTrips(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+
+	state.BeginCreate()
+	form := state.Form()
+	form.Label = "desk"
+	form.Hostname = "desk.local"
+	state.SetHostProtocol(string(domainvault.ProtocolVNC))
+	form = state.Form()
+
+	state.SetVNCWebSocket(true)
+	form = state.Form()
+	wantPort := strconv.Itoa(domainvault.VNCDefaultWebSocketPort)
+	if !form.VNCWebSocket || form.VNCInputMode != string(domainvault.VNCPort) ||
+		form.Port != wantPort || form.VNCDisplay != "" {
+		t.Fatalf("WebSocket form = %+v, want the HTTP port", *form)
+	}
+	form.VNCWebSocketPath = "vnc?token=s3cret"
+	form.VNCWebSocketSecure = true
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if state.Problem() != ProblemNone {
+		t.Fatalf("Problem = %q, want none", state.Problem())
+	}
+	saved := repo.items[0]
+	if saved.Port != domainvault.VNCDefaultWebSocketPort {
+		t.Fatalf("saved port = %d, want the HTTP port", saved.Port)
+	}
+	if saved.VNC == nil || !saved.VNC.WebSocket || !saved.VNC.WebSocketSecure ||
+		saved.VNC.WebSocketPath != "/vnc?token=s3cret" ||
+		saved.VNC.DisplayMode != domainvault.VNCPort {
+		t.Fatalf("saved VNC config = %+v, want the WebSocket endpoint", saved.VNC)
+	}
+
+	if !state.BeginEdit(saved.ID) {
+		t.Fatal("BeginEdit failed")
+	}
+	form = state.Form()
+	if !form.VNCWebSocket || form.VNCWebSocketPath != "/vnc?token=s3cret" ||
+		!form.VNCWebSocketSecure || form.Port != wantPort {
+		t.Fatalf("reloaded form = %+v, want the saved WebSocket endpoint", *form)
+	}
+
+	state.SetVNCWebSocket(false)
+	form = state.Form()
+	if form.VNCWebSocket || form.VNCWebSocketPath != "" || form.VNCWebSocketSecure {
+		t.Fatalf("disabled form = %+v, want the WebSocket settings cleared", *form)
+	}
+	if form.Port != strconv.Itoa(domainvault.VNCDisplayBasePort) ||
+		form.VNCInputMode != string(domainvault.VNCDisplayNumber) || form.VNCDisplay != "0" {
+		t.Fatalf("disabled endpoint = %+v, want display 0", *form)
+	}
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save after disabling: %v", err)
+	}
+	if repo.items[0].Port != domainvault.VNCDisplayBasePort ||
+		repo.items[0].VNC == nil || repo.items[0].VNC.WebSocket {
+		t.Fatalf("saved Host = %+v, want the plain RFB endpoint", repo.items[0])
+	}
+}
+
+// TestVNCWebSocketFormRejectsAnUnrequestablePath proves the editor refuses a
+// path the HTTP upgrade cannot send, instead of saving it for the dial to fail.
+func TestVNCWebSocketFormRejectsAnUnrequestablePath(t *testing.T) {
+	for _, path := range []string{"/bad path", "/vnc#fragment", "/web\tsocket"} {
+		repo := &fakeHosts{}
+		state, _ := newTestState(t, repo)
+		state.BeginCreate()
+		form := state.Form()
+		form.Label = "desk"
+		form.Hostname = "desk.local"
+		state.SetHostProtocol(string(domainvault.ProtocolVNC))
+		state.SetVNCWebSocket(true)
+		state.Form().VNCWebSocketPath = path
+		if err := state.Save(); err != nil {
+			t.Fatalf("Save(%q): %v", path, err)
+		}
+		if state.Problem() != ProblemVNCWebSocketPath {
+			t.Fatalf("Problem(%q) = %q, want %q", path, state.Problem(), ProblemVNCWebSocketPath)
+		}
+		if len(repo.created) != 0 {
+			t.Fatalf("a Host was created with the unrequestable path %q", path)
+		}
+	}
+}
+
+// TestVNCWebSocketSeedsFromTheVisibleDisplayNotAHiddenPort proves enabling the
+// transport after a protocol switch reads the display field, not the Port the
+// previous protocol left hidden.
+func TestVNCWebSocketSeedsFromTheVisibleDisplayNotAHiddenPort(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+	state.BeginCreate()
+	form := state.Form()
+	form.Label = "desk"
+	form.Hostname = "desk.local"
+	form.Port = "2222"
+	state.SetHostProtocol(string(domainvault.ProtocolVNC))
+	if got := state.Form().VNCDisplay; got != "" {
+		t.Fatalf("display = %q, want the default placeholder", got)
+	}
+	state.SetVNCWebSocket(true)
+	form = state.Form()
+	if got, want := form.Port, strconv.Itoa(domainvault.VNCDefaultWebSocketPort); got != want {
+		t.Fatalf("WebSocket port = %q, want %q from the visible display 0", got, want)
 	}
 }

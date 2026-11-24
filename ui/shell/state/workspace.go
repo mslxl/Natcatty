@@ -6,7 +6,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"image"
+	"net"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,11 +20,13 @@ import (
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
+	domainvnc "github.com/mslxl/natcatty/domain/model/vnc"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainsessiontitle "github.com/mslxl/natcatty/domain/sessiontitle"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
+	sessionui "github.com/mslxl/natcatty/ui/session"
 )
 
 // ErrUnknownSession reports a restored Pane descriptor this shell cannot
@@ -50,6 +56,10 @@ type Tab struct {
 	// Copy counts duplicate generations: 0 is the original, 1 the first copy.
 	Copy  int
 	Dirty bool
+	// Bell marks a detached Tab that received a remote bell. A detached window
+	// has no Tab strip, so the view shows the marker in its header until the
+	// window is focused.
+	Bell bool
 	// Magnified is the Pane currently zoomed to fill the whole Tab, or "".
 	// While set, the Tab's other member Panes are hidden and accept no drops.
 	// Magnification is a view state: it is not part of the saved Workspace.
@@ -99,6 +109,10 @@ type TabInfo struct {
 	Copy      int
 	Dirty     bool
 	Active    bool
+	// Bell marks a detached Tab that received a remote bell. A detached window
+	// has no Tab strip, so the view shows the marker in its header until the
+	// window is focused.
+	Bell bool
 }
 
 // PaneInfo is the immutable Pane description the view renders.
@@ -112,7 +126,16 @@ type PaneInfo struct {
 	Focused bool
 	Pending bool
 	Err     error
+	// Target is the endpoint a connecting or failed Pane is reaching: the
+	// username when set, then host:port. It is empty for a Pane with no remote
+	// endpoint.
+	Target  string
 	Surface Surface
+	// ByteStream reports whether the Pane is a terminal. It follows the Pane's
+	// kind rather than its Session, so a terminal Pane that is still connecting
+	// keeps the terminal toolbar. A pixel Session (VNC) never has one: capture,
+	// broadcast, compose, and terminal resize do not apply.
+	ByteStream bool
 }
 
 // DetachedTabInfo describes a Tab that left the main window and now belongs to
@@ -125,7 +148,10 @@ type DetachedTabInfo struct {
 	Title       string
 	AutoTitle   bool
 	// Copy counts duplicate generations, as Tab.Copy does.
-	Copy  int
+	Copy int
+	// Bell reports a remote bell the user has not acknowledged by focusing
+	// the detached window.
+	Bell  bool
 	Panes []model.PaneID
 }
 
@@ -253,6 +279,28 @@ func (t *Tab) setFocus(paneID model.PaneID) {
 func (t *Tab) clearStaleMagnification() {
 	if t.Magnified != "" && !domainworkspace.ContainsPane(t.Root, t.Magnified) {
 		t.Magnified = ""
+	}
+}
+
+// setMagnified zooms paneID to fill its Tab, or restores the split when it is
+// empty. Zooming hides every other member, and MyGo delivers no key-up to a
+// subtree it stops building, so each newly hidden Pane -- focused or not --
+// releases guest input. The Pane that stays visible is deliberately untouched.
+// Restoring the split hides nothing and releases nothing: doing so would send
+// a spurious release to Panes that just became visible.
+func (t *Tab) setMagnified(paneID model.PaneID) {
+	if paneID != "" && t.Magnified != paneID {
+		for _, id := range t.paneIDs() {
+			if id != paneID {
+				releasePaneInput(t.panes[id])
+			}
+		}
+	}
+	t.Magnified = paneID
+	// The zoomed Pane is the only visible member, so it must also hold focus.
+	// Otherwise the keyboard and compose target would stay on a hidden Pane.
+	if paneID != "" {
+		t.setFocus(paneID)
 	}
 }
 
@@ -436,13 +484,114 @@ func (s *State) FocusedPaneID(index int) (model.PaneID, bool) {
 	return id, id != ""
 }
 
+// KeyboardGrab reports whether the focused Pane of the active Tab has taken
+// the keyboard for its guest. The window asks this before registering its
+// accelerators, so a VNC viewer's grab sends chords to the guest instead of
+// firing an application command. A terminal or any Surface without the
+// interface never grabs, which keeps terminal panes on their existing path.
+//
+// The work Tab only owns the keyboard while it is the visible surface. A home
+// page (the Vault, Logs, monitoring, or System manager) or SFTP replaces it,
+// so the grab must report false there; otherwise the main window would stand
+// down every accelerator with no guest to receive the chords.
+func (s *State) KeyboardGrab() bool {
+	if s.HomeVisible() || s.SFTPVisible() {
+		return false
+	}
+	tab, _ := s.activeTab()
+	return tabKeyboardGrab(tab)
+}
+
+// DetachedKeyboardGrab reports the same for one detached Tab's window. The
+// window's accelerators read this predicate rather than the main window's, so
+// a grab in one window never silences another window's shortcuts.
+func (s *State) DetachedKeyboardGrab(tabID model.TabID) bool {
+	return tabKeyboardGrab(s.detachedTabByID(tabID))
+}
+
+// tabKeyboardGrab asks a Tab's focused Pane whether it took the keyboard. A
+// Pane that is still opening, failed, or running a stopped Session owns no
+// guest input, and a hibernated Surface renders no live screen, so none of
+// them may silence the window's accelerators. The user's grab preference is
+// kept on the Surface; this gate simply reports false until the Pane is live
+// and visible again.
+func tabKeyboardGrab(tab *Tab) bool {
+	if tab == nil {
+		return false
+	}
+	value, _ := tab.focusedPane()
+	if value == nil || value.surface == nil || value.pending || value.err != nil {
+		return false
+	}
+	if value.session != nil && value.session.Snapshot().Status != appsession.StatusRunning {
+		return false
+	}
+	grabber, ok := value.surface.(interface{ KeyboardGrab() bool })
+	if !ok || !grabber.KeyboardGrab() {
+		return false
+	}
+	if hibernator, ok := value.surface.(interface{ Hibernated() bool }); ok && hibernator.Hibernated() {
+		return false
+	}
+	return true
+}
+
+// releasePaneInput asks a Surface to release guest input it believes is still
+// held. MyGo stops building a Tab's subtree when it is not the active one and
+// delivers no key-up events for it, so the shell owns this transition.
+func releasePaneInput(value *pane) {
+	if value == nil || value.surface == nil {
+		return
+	}
+	if releaser, ok := value.surface.(KeyReleaser); ok {
+		releaser.ReleaseInput()
+	}
+}
+
+// releaseTabInput asks every Pane in tab to let go of guest input. MyGo builds
+// a Tab's subtree only while the Tab is visible, so all of its Panes stop
+// rendering together when another Tab or page replaces it. Releasing only the
+// focused Pane is not enough: hit testing routes pointer buttons to any Pane,
+// so a non-focused member of a split can be the one holding a button and
+// modifiers. Calling this for a Pane that already released its input is
+// harmless, and a Surface without KeyReleaser is ignored.
+func releaseTabInput(tab *Tab) {
+	if tab == nil {
+		return
+	}
+	for _, id := range tab.paneIDs() {
+		releasePaneInput(tab.panes[id])
+	}
+}
+
+// releaseActiveInput releases guest input held by every Pane in the active Tab.
+// Call it before changing which Tab or page is visible.
+func (s *State) releaseActiveInput() {
+	tab, _ := s.activeTab()
+	releaseTabInput(tab)
+}
+
+// activateTab makes index the active Tab. When this hides the outgoing Tab,
+// its whole subtree stops being built this frame, so release any key,
+// modifier, or pointer button the guest still believes down. Every Tab route
+// that shows a different Tab (select, open, duplicate, reattach, move) uses
+// this switch point; page routes call releaseActiveInput directly. Keeping the
+// release centralized is what guarantees an outgoing Tab releases all of its
+// Panes.
+func (s *State) activateTab(index int) {
+	if index != s.active {
+		s.releaseActiveInput()
+	}
+	s.active = index
+}
+
 // SelectTab makes the Tab at index active and shows it. Out-of-range indexes
 // are ignored. Choosing a Tab marks its activity seen.
 func (s *State) SelectTab(index int) {
 	if index < 0 || index >= len(s.tabs) {
 		return
 	}
-	s.active = index
+	s.activateTab(index)
 	s.tabs[index].Dirty = false
 	s.leaveMonitor()
 	s.leaveSystemManager()
@@ -494,6 +643,21 @@ func (s *State) TabSnapshot(index int) (appsession.Snapshot, bool) {
 	return value.session.Snapshot(), true
 }
 
+// TabPending reports whether any Pane of the Tab at index is still opening its
+// Session.
+func (s *State) TabPending(index int) bool {
+	if index < 0 || index >= len(s.tabs) {
+		return false
+	}
+	tab := s.tabs[index]
+	for _, id := range tab.paneIDs() {
+		if value := tab.panes[id]; value != nil && value.pending {
+			return true
+		}
+	}
+	return false
+}
+
 // SetTabDirty marks or clears a Tab's activity indicator.
 func (s *State) SetTabDirty(index int, dirty bool) {
 	if index < 0 || index >= len(s.tabs) {
@@ -539,6 +703,69 @@ func (s *State) applySessionActivity(id model.SessionID) {
 			return
 		}
 	}
+}
+
+// NoteSessionBell queues a bell cue for the Session's Tab. A terminal Session
+// already marks activity through NoteSessionActivity; the VNC viewer calls
+// this so a focused Pane and a detached window get a cue too. Both paths are
+// idempotent, so one bell never shows two markers.
+func (s *State) NoteSessionBell(id model.SessionID) {
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	s.bells = append(s.bells, id)
+	s.mu.Unlock()
+	s.RequestRedraw()
+}
+
+// applySessionBell makes a Session's bell visible. A main Tab, including the
+// focused one, gets the activity marker; a detached Tab, which has no strip,
+// gets the header bell marker. A Session that is neither (for example one in
+// the Quake workspace) has no shell cue here and is ignored.
+func (s *State) applySessionBell(id model.SessionID) {
+	for _, tab := range s.tabs {
+		if !tabOwnsSession(tab, id) {
+			continue
+		}
+		if !tab.Dirty {
+			tab.Dirty = true
+			s.RequestRedraw()
+		}
+		return
+	}
+	for _, tab := range s.detached {
+		if !tabOwnsSession(tab, id) {
+			continue
+		}
+		if !tab.Bell {
+			tab.Bell = true
+			s.RequestRedraw()
+		}
+		return
+	}
+}
+
+// ClearDetachedBell acknowledges a detached window's bell, as focusing the
+// window does. It reports whether a marker was cleared.
+func (s *State) ClearDetachedBell(id model.TabID) bool {
+	tab := s.detachedTabByID(id)
+	if tab == nil || !tab.Bell {
+		return false
+	}
+	tab.Bell = false
+	s.RequestRedraw()
+	return true
+}
+
+// tabOwnsSession reports whether any Pane of tab runs id.
+func tabOwnsSession(tab *Tab, id model.SessionID) bool {
+	for _, value := range tab.panes {
+		if value.session != nil && value.session.Snapshot().ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // CloseActiveTab closes the active work Tab's terminal surfaces and Sessions,
@@ -627,7 +854,7 @@ func (s *State) DuplicateTab(index int) error {
 	s.tabs = append(s.tabs, nil)
 	copy(s.tabs[index+2:], s.tabs[index+1:])
 	s.tabs[index+1] = copyTab
-	s.active = index + 1
+	s.activateTab(index + 1)
 	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
@@ -735,6 +962,10 @@ func (s *State) DetachTab(index int) bool {
 		return false
 	}
 	tab := s.tabs[index]
+	// The whole Tab leaves this window before the detached one builds it, so
+	// every Pane in it must let go of guest input across that gap, not only
+	// the focused one.
+	releaseTabInput(tab)
 	s.removeTabAt(index)
 	s.detached = append(s.detached, tab)
 	if s.onDetach != nil {
@@ -769,6 +1000,7 @@ func (s *State) DetachedTabInfo(id model.TabID) (DetachedTabInfo, bool) {
 		Title:       s.tabTitle(tab),
 		AutoTitle:   tab.AutoTitle,
 		Copy:        tab.Copy,
+		Bell:        tab.Bell,
 		Panes:       panes,
 	}, true
 }
@@ -857,7 +1089,7 @@ func (s *State) ReattachDetachedTab(id model.TabID) bool {
 		}
 		s.detached = append(s.detached[:index], s.detached[index+1:]...)
 		s.tabs = append(s.tabs, tab)
-		s.active = len(s.tabs) - 1
+		s.activateTab(len(s.tabs) - 1)
 		s.leaveMonitor()
 		s.vaultVisible = false
 		s.logsVisible = false
@@ -889,6 +1121,10 @@ func (s *State) DetachPane(tabIndex int, paneID model.PaneID) bool {
 	if len(tab.paneIDs()) == 1 {
 		return s.DetachTab(tabIndex)
 	}
+
+	// The Pane is removed from this split tree before the detached window
+	// builds it; release any input it was holding first.
+	releasePaneInput(value)
 
 	focused, _ := tab.focusedPane()
 	focusedID := model.PaneID("")
@@ -1051,8 +1287,40 @@ func (s *State) paneInfo(tab *Tab, id model.PaneID) (PaneInfo, bool) {
 		Focused: id == focusedID && focused != nil,
 		Pending: value.pending,
 		Err:     value.err,
+		Target:  paneTarget(value.descriptor),
 		Surface: value.surface,
+		// The kind is known as soon as the Pane exists, while the Session is
+		// still nil during the connect window. Gate the terminal toolbar on the
+		// Pane's kind so a connecting terminal keeps it and VNC never gets it.
+		ByteStream: value.descriptor.Kind != domainworkspace.SessionVNC,
 	}, true
+}
+
+// paneTarget is the endpoint a Pane connects to, in the form its connecting
+// state shows: the username when set, then host:port. A serial Pane names its
+// device path; a local Pane has no remote endpoint.
+func paneTarget(descriptor domainworkspace.SessionDescriptor) string {
+	switch descriptor.Kind {
+	case domainworkspace.SessionLocal:
+		return ""
+	case domainworkspace.SessionSerial:
+		if descriptor.Serial == nil {
+			return ""
+		}
+		return strings.TrimSpace(descriptor.Serial.Path)
+	}
+	host := strings.TrimSpace(descriptor.Hostname)
+	if host == "" {
+		return ""
+	}
+	address := host
+	if descriptor.Port > 0 {
+		address = net.JoinHostPort(host, strconv.Itoa(descriptor.Port))
+	}
+	if username := strings.TrimSpace(descriptor.Username); username != "" {
+		return username + "@" + address
+	}
+	return address
 }
 
 // titleMode returns the live Dynamic tab title setting.
@@ -1213,6 +1481,18 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 	if value == nil {
 		return ErrNoActiveTab
 	}
+	// A VNC Tab splits into one Pane per remote screen, so the server must
+	// provide another screen first. A server that cannot is refused here
+	// rather than opening a Pane that would show the same desktop again.
+	screenIndex := 0
+	screenSplit := value.descriptor.Kind == domainworkspace.SessionVNC
+	if screenSplit {
+		var err error
+		screenIndex, err = s.prepareSplitScreen(tab, value)
+		if err != nil {
+			return err
+		}
+	}
 	newPaneID := model.PaneID(newRuntimeID("pane-"))
 	root, err := domainworkspace.SplitAt(
 		tab.Root, focusedID, newPaneID,
@@ -1222,6 +1502,11 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 	}
 	tab.Root = root
 	descriptor := withFreshResumeKey(value.descriptor)
+	// Each Pane of a VNC Tab owns one screen, so the new Pane takes the first
+	// index the Tab does not already use.
+	if screenSplit {
+		descriptor.Screen = screenIndex
+	}
 	// A new shell is not the Session the user renamed.
 	descriptor.CustomName = ""
 	tab.panes[newPaneID] = &pane{
@@ -1242,6 +1527,140 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 	return nil
 }
 
+// wireScreenLayout makes the Tab the driver of its Panes' desktop layout. A
+// Pane that shows one screen of a shared desktop reports its rectangle from
+// draw; the Tab turns all of them into one request, so two Panes never compete
+// for the single desktop size. It is safe to call again after a reconnect.
+func (s *State) wireScreenLayout(tab *Tab) {
+	if tab == nil {
+		return
+	}
+	for _, value := range tab.panes {
+		host, ok := value.surface.(sessionui.ScreenLayoutHost)
+		if !ok {
+			continue
+		}
+		host.SetScreenGeometryListener(func() { s.driveTabScreens(tab) })
+	}
+}
+
+// driveTabScreens asks the remote for a screen layout that mirrors the Tab's
+// Panes: each screen takes its Pane's size and relative position, so every
+// Pane shows its own screen at its own size. The lowest screen number sends the
+// whole request, which makes the Tab the single driver instead of one request
+// per Pane.
+//
+// It runs on the UI thread from a Surface's draw callback. A Pane that has not
+// drawn yet owns a screen the Tab cannot describe, so the layout waits for it
+// rather than asking the remote to drop that screen.
+func (s *State) driveTabScreens(tab *Tab) {
+	// A zoomed Tab shows one Pane; its rectangle says nothing about the screens
+	// the hidden members still own, so the layout stays as it is.
+	if tab == nil || tab.Magnified != "" {
+		return
+	}
+	type driver struct {
+		index int
+		host  sessionui.ScreenLayoutHost
+	}
+	screens := make(map[int]image.Rectangle, len(tab.panes))
+	drivers := make([]driver, 0, len(tab.panes))
+	minX, minY := 0, 0
+	first := true
+	for _, value := range tab.panes {
+		host, ok := value.surface.(sessionui.ScreenLayoutHost)
+		if !ok {
+			if value.descriptor.Kind == domainworkspace.SessionVNC {
+				return
+			}
+			continue
+		}
+		index, rect, ok := host.ScreenGeometry()
+		if !ok || index < 0 || index >= 0xff {
+			return
+		}
+		if _, duplicate := screens[index]; duplicate {
+			return
+		}
+		screens[index] = rect
+		if first {
+			minX, minY = rect.Min.X, rect.Min.Y
+			first = false
+		}
+		minX, minY = min(minX, rect.Min.X), min(minY, rect.Min.Y)
+		drivers = append(drivers, driver{index: index, host: host})
+	}
+	if len(drivers) == 0 {
+		return
+	}
+	// The lowest screen number drives first, so the choice is stable; a
+	// hibernated or view-only Pane passes the request on to the next one.
+	sort.Slice(drivers, func(i, j int) bool { return drivers[i].index < drivers[j].index })
+	maxIndex := 0
+	right, bottom := 0, 0
+	for index := range screens {
+		maxIndex = max(maxIndex, index)
+	}
+	for _, rect := range screens {
+		right = max(right, rect.Max.X-minX)
+		bottom = max(bottom, rect.Max.Y-minY)
+	}
+	// The server numbers screens by their position in the list and a Pane maps
+	// its screen by index, so the list covers every index up to the highest one
+	// in use. A freed index keeps a 1x1 placeholder out of the way, which is
+	// what lets a later split reuse the index without renumbering its peers.
+	layout := make([]sessionui.ScreenRect, 0, maxIndex+1)
+	for index := 0; index <= maxIndex; index++ {
+		rect, used := screens[index]
+		if used {
+			rect = rect.Sub(image.Pt(minX, minY))
+		} else {
+			rect = image.Rect(right, 0, right+1, 1)
+			right++
+		}
+		layout = append(layout, sessionui.ScreenRect{Index: index, Rect: rect})
+	}
+	if right > 0xffff || bottom > 0xffff {
+		return
+	}
+	for _, candidate := range drivers {
+		if candidate.host.LayoutScreens(layout) {
+			return
+		}
+	}
+}
+
+// prepareSplitScreen finds the screen a new VNC Pane should show and makes sure
+// the remote provides it. The index is the lowest one the Tab's VNC Panes do
+// not already use, so closing a Pane frees its screen for the next split. When
+// the remote already reports that many screens nothing is asked of it.
+func (s *State) prepareSplitScreen(tab *Tab, focused *pane) (int, error) {
+	splitter, ok := focused.surface.(ScreenSplitter)
+	if !ok || !splitter.CanSplit() {
+		return 0, ErrSplitUnavailable
+	}
+	used := make(map[int]bool, len(tab.panes))
+	for _, other := range tab.panes {
+		if other.descriptor.Kind == domainworkspace.SessionVNC {
+			used[other.descriptor.Screen] = true
+		}
+	}
+	screen := 0
+	for used[screen] {
+		screen++
+	}
+	// The wire field is one octet; a Tab cannot have more Panes than screens.
+	if screen > 0xfe {
+		return 0, ErrSplitUnavailable
+	}
+	if screen >= splitter.ScreenCount() {
+		if err := splitter.PrepareSplit(screen + 1); err != nil {
+			return 0, err
+		}
+	}
+	return screen, nil
+}
+
 // TogglePaneZoom magnifies the focused Pane to fill its Tab, or restores the
 // split when it is already magnified. It reports false without an active Pane.
 func (s *State) TogglePaneZoom() bool {
@@ -1254,9 +1673,9 @@ func (s *State) TogglePaneZoom() bool {
 		return false
 	}
 	if tab.Magnified == focusedID {
-		tab.Magnified = ""
+		tab.setMagnified("")
 	} else {
-		tab.Magnified = focusedID
+		tab.setMagnified(focusedID)
 	}
 	s.RequestRedraw()
 	return true
@@ -1280,12 +1699,10 @@ func (s *State) SetMagnifiedPane(index int, paneID model.PaneID) bool {
 	if paneID != "" && !domainworkspace.ContainsPane(tab.Root, paneID) {
 		return false
 	}
-	tab.Magnified = paneID
-	// The zoomed Pane is the only visible member, so it must also hold focus.
-	// Otherwise the keyboard and compose target would stay on a hidden Pane.
-	if paneID != "" {
-		tab.setFocus(paneID)
-	}
+	// Zooming hides every other member of the split, focused or not, so each
+	// of them releases the input it was holding. Empty paneID restores the
+	// split, which hides nothing and therefore releases nothing.
+	tab.setMagnified(paneID)
 	s.RequestRedraw()
 	return true
 }
@@ -1554,6 +1971,14 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 	} else {
 		target.setFocus(sourcePaneID)
 	}
+	// A destination that is magnified to another Pane renders only that Pane,
+	// so the moved Pane never appears in it and must release whatever it held
+	// in the source. A non-magnified destination shows the moved Pane, so it
+	// keeps its input; and because this move never changes the destination's
+	// magnification, no Pane that was already visible there stops rendering.
+	if target.Magnified != "" && target.Magnified != sourcePaneID {
+		releasePaneInput(value)
+	}
 	source.clearStaleMagnification()
 	if sourcePanes == 1 && targetPanes == 1 {
 		// Dragging one single-Pane Tab onto another merges them into a Tab
@@ -1576,7 +2001,7 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 		if sourceIndex < targetIndex {
 			targetIndex--
 		}
-		s.active = targetIndex
+		s.activateTab(targetIndex)
 	} else {
 		// Install the post-removal tree before asking whether the zoom is
 		// stale. The old order checked the pre-removal root, so a magnified
@@ -1592,7 +2017,7 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 		} else {
 			source.FocusPath = domainworkspace.FocusPath(sourceRoot, "")
 		}
-		s.active = targetIndex
+		s.activateTab(targetIndex)
 	}
 	s.leaveMonitor()
 	s.vaultVisible = false
@@ -1832,6 +2257,52 @@ func (s *State) RetryPane(tabID model.TabID, paneID model.PaneID) bool {
 	return true
 }
 
+// ReconnectPane reopens a Pane whose Session can no longer reconnect by
+// itself, namely one that stopped on a permanent failure such as a rejected
+// VNC password. It closes the stopped Session and Surface and dials the
+// Pane's own descriptor again. A Pane that is still live or still reconnecting
+// is left alone, so a manual reconnect cannot throw away a working transport.
+// It also handles a Pane that never opened. It reports whether a new dial was
+// started.
+func (s *State) ReconnectPane(tabID model.TabID, paneID model.PaneID) bool {
+	if s.sessions == nil || s.surfaces == nil {
+		return false
+	}
+	tab, _ := s.tabByAnyID(tabID)
+	if tab == nil {
+		return false
+	}
+	value, ok := tab.panes[paneID]
+	if !ok || !domainworkspace.ContainsPane(tab.Root, paneID) {
+		return false
+	}
+	if value.pending {
+		return false
+	}
+	if value.surface == nil || value.session == nil {
+		// A pane that never opened has its own retry path.
+		return s.RetryPane(tabID, paneID)
+	}
+	snapshot := value.session.Snapshot()
+	live := snapshot.Status == appsession.StatusRunning &&
+		(snapshot.Connection == appsession.ConnectionStatusActive ||
+			snapshot.Connection == appsession.ConnectionStatusReconnecting ||
+			snapshot.Connection == "")
+	if live {
+		// The Session owns its eager reconnect. A manual reopen here would
+		// abandon a connection that is still recovering.
+		return false
+	}
+	s.closePane(value, false)
+	value.session = nil
+	value.surface = nil
+	value.pending = true
+	value.err = nil
+	s.requestPaneOpen(tab.ID, paneID, value.descriptor, true)
+	s.RequestRedraw()
+	return true
+}
+
 func (s *State) applyPaneOutcome(outcome paneOutcome) {
 	tab, _ := s.tabByAnyID(outcome.tabID)
 	if tab == nil {
@@ -1863,6 +2334,7 @@ func (s *State) applyPaneOutcome(outcome paneOutcome) {
 	value.surface = surface
 	value.pending = false
 	value.err = nil
+	s.wireScreenLayout(tab)
 	if outcome.restore {
 		restoreRemoteDirectory(outcome.session, value.descriptor)
 	}
@@ -1937,6 +2409,9 @@ func (s *State) openDescriptor(ctx context.Context,
 			if !ok {
 				return nil, ErrHostUnavailable
 			}
+			if !host.ConnectionSupported() {
+				return nil, ErrUnsupportedHost
+			}
 			spec.HostID = host.ID
 			spec.Hostname = host.Hostname
 			spec.Port = host.Port
@@ -1966,6 +2441,9 @@ func (s *State) openDescriptor(ctx context.Context,
 			host, ok := s.resolveHost(ctx, descriptor.HostID)
 			if !ok {
 				return nil, ErrHostUnavailable
+			}
+			if !host.ConnectionSupported() {
+				return nil, ErrUnsupportedHost
 			}
 			plan := hostSessionTransport(host)
 			spec.HostID = host.ID
@@ -2004,6 +2482,9 @@ func (s *State) openDescriptor(ctx context.Context,
 			if !ok {
 				return nil, ErrHostUnavailable
 			}
+			if !host.ConnectionSupported() {
+				return nil, ErrUnsupportedHost
+			}
 			spec.HostID = host.ID
 			spec.Hostname = host.Hostname
 			spec.Port = host.Port
@@ -2021,6 +2502,40 @@ func (s *State) openDescriptor(ctx context.Context,
 			ID: descriptor.HostID, Hostname: spec.Hostname,
 			Port: spec.Port, Username: spec.Username,
 		}, "")
+	case domainworkspace.SessionVNC:
+		spec.Kind = appsession.KindVNC
+		spec.HostID = descriptor.HostID
+		spec.Hostname = descriptor.Hostname
+		spec.Port = descriptor.Port
+		spec.Username = descriptor.Username
+		spec.VNCScreen = descriptor.Screen
+		spec.X11Forwarding = false
+		spec.AutoAttachTmux = false
+		if s.resolveHost != nil {
+			host, ok := s.resolveHost(ctx, descriptor.HostID)
+			if !ok {
+				return nil, ErrHostUnavailable
+			}
+			if !host.ConnectionSupported() {
+				return nil, ErrUnsupportedHost
+			}
+			plan := hostSessionTransport(host)
+			spec.HostID = host.ID
+			spec.Hostname = host.Hostname
+			spec.Port = host.Port
+			spec.Username = host.Username
+			spec.VNC = plan.vnc
+			spec.Dir = ""
+		}
+		if spec.VNC == nil {
+			cfg := domainvnc.SessionConfig{
+				Hostname: spec.Hostname, Port: spec.Port, Username: spec.Username,
+			}.Normalized()
+			spec.VNC = &cfg
+		}
+		// VNC follows the SSH reconnect policy: retry a network drop, never an
+		// authentication failure.
+		spec.Reconnect = &appsession.ReconnectPolicy{}
 	case domainworkspace.SessionSerial:
 		if descriptor.Serial == nil {
 			return nil, fmt.Errorf("%w: %q", ErrUnknownSession, descriptor.Kind)
@@ -2160,6 +2675,9 @@ func (s *State) closePane(value *pane, preserve bool) {
 	if value == nil {
 		return
 	}
+	// Release held input before the transport closes so the guest is not left
+	// with a key or button down.
+	releasePaneInput(value)
 	if value.surface != nil {
 		value.surface.Close()
 	}
@@ -2180,7 +2698,12 @@ func (s *State) closePane(value *pane, preserve bool) {
 }
 
 // removeTabAt removes the Tab at index and keeps the active index valid. It
-// does not close Sessions.
+// does not close Sessions and does not release input itself: every caller has
+// already done so. CloseTab closes each Pane (which releases its Surface);
+// DetachTab releases every Pane before moving the Tab out; MovePane only calls
+// it for a source Tab whose last Pane was moved away, releasing that Pane if
+// its destination hides it. The direct s.active assignments below therefore
+// never expose a Surface that was rendering and was not released.
 func (s *State) removeTabAt(index int) {
 	if index < 0 || index >= len(s.tabs) {
 		return

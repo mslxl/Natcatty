@@ -87,8 +87,16 @@ func parseSecureCRT(text string, opts Options) Result {
 			case "ssh2", "ssh-2":
 				current.sshName = "ssh2"
 			}
-			if current.protocol == "" && current.sshName != "" {
-				current.protocol = "ssh"
+			if current.protocol == "" {
+				if current.sshName != "" {
+					// SecureCRT's own SSH1/SSH2 names select SSH even though
+					// they are not Vault spellings.
+					current.protocol = "ssh"
+				} else if normalized != "" {
+					// An unsupported protocol stays visible to the check below
+					// instead of becoming the SSH default.
+					current.protocol = normalized
+				}
 			}
 		case "Session Name":
 			current.label = value

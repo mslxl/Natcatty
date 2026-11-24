@@ -46,6 +46,7 @@ import (
 	adapterstnet "github.com/mslxl/natcatty/adapters/telnet"
 	"github.com/mslxl/natcatty/adapters/textcodec"
 	adapterbackup "github.com/mslxl/natcatty/adapters/vaultbackup"
+	adaptervnc "github.com/mslxl/natcatty/adapters/vnc"
 	adapterwebdav "github.com/mslxl/natcatty/adapters/webdav"
 	appapplock "github.com/mslxl/natcatty/application/applock"
 	"github.com/mslxl/natcatty/application/autocomplete"
@@ -102,6 +103,7 @@ import (
 	vaultui "github.com/mslxl/natcatty/ui/vault"
 	vaultsection "github.com/mslxl/natcatty/ui/vault/section"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
+	vncui "github.com/mslxl/natcatty/ui/vnc"
 )
 
 // Run starts Natcatty and blocks until the application quits.
@@ -720,6 +722,9 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// the UI thread.
 	trustPrompt := sessionui.NewTrustPrompt(sessionui.WithTrustRedrawRequest(invalidate))
 	authPrompt := sessionui.NewAuthPrompt(sessionui.WithAuthPromptRedrawRequest(invalidate))
+	// The unencrypted-VNC confirmation is both the transport factory's
+	// post-negotiation gate and the shell modal that answers it.
+	plaintextPrompt := sessionui.NewVNCPlaintextPrompt(sessionui.WithVNCPlaintextRedrawRequest(invalidate))
 
 	// A persisted host-key trust decision marks the Vault's Known Host list
 	// stale through this pointer, which is declared with the app's other
@@ -997,7 +1002,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	sessions = appsession.NewService(newTransportFactory(
 		localpty.Factory{}, adapterserial.Factory{},
 		newTelnetFactory(adapterstnet.Factory{}, routes, networkProviders, connections), connections, routes,
-	).withInProcess(
+	).withVNC(newVNCFactory(adaptervnc.Factory{}, routes, networkProviders, connections).
+		withVNCPasswords(vaultService).
+		withPlaintextWarnings(vaultService).
+		withPlaintextPrompt(plaintextPrompt)).withInProcess(
 		newMoshFactory(connections, routes, networkProviders),
 		adapteret.InProcessFactory{
 			Manager:  connections,
@@ -1096,10 +1104,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				transientRegistry)),
 		// A BEL marks the Session active, matching the original's tab badge.
 		// The notification mode is applied separately by the notification hook.
+		// A terminal BEL in the Quake workspace has no shell Tab to mark, so the
+		// router also hands it to the Quake strip.
 		appsession.WithBellHook(func(id model.SessionID) {
-			if shellState != nil {
-				shellState.NoteSessionActivity(id)
-			}
+			bellRouter{shell: shellState, quake: quakeState}.terminal(id)
 		}),
 		appsession.WithHighlightPolicy(func() (bool, []domainterminal.KeywordHighlightRule) {
 			current := terminalService.Settings()
@@ -1370,6 +1378,35 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		}
 		return sessionui.New(s, options...)
 	}
+	// newSurface chooses the surface a Session's kind owns. A VNC Session
+	// renders pixels in the viewer; every byte-stream kind keeps the terminal
+	// surface and its full chrome.
+	newSurface := func(s *appsession.Session) (state.Surface, error) {
+		if s.Snapshot().Kind == appsession.KindVNC {
+			return vncui.New(s,
+				vncui.WithRedraw(invalidate),
+				// Fullscreen is resolved at invocation time, so the action
+				// targets the host window showing this Pane: the main window
+				// or a detached window. The Dropdown Panel uses the embedded
+				// toolbar, which omits fullscreen. It is injectable so an
+				// offscreen test never drives a real window.
+				vncui.WithFullscreen(func() {
+					if windows != nil {
+						windows.ToggleFocusedFullScreen()
+					}
+				}),
+				// A remote bell reuses the app's Session bell path with the
+				// Session ID, so a focused main Pane and a detached window get
+				// a visible cue. The same router reaches the Quake workspace,
+				// whose Sessions own their own Tab strip. The Session's own
+				// bell hook also fires, and both markers are idempotent.
+				vncui.WithBell(func() {
+					bellRouter{shell: shellState, quake: quakeState}.viewer(s.ID())
+				}),
+			)
+		}
+		return newSessionSurface(s)
+	}
 	shellState = state.NewState(
 		state.WithLocaleRequest(func(tag string) {
 			mygo.App.SetLocale(tag)
@@ -1418,9 +1455,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		state.WithLocalShell(func() ([]string, bool) {
 			return preferenceService.Settings().Appearance.LocalShell.Command(appsession.LocalShellExists)
 		}),
-		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
-			return newSessionSurface(s)
-		}),
+		state.WithSessions(sessions, newSurface),
 		// A serial Session's saved profile and a Telnet Host's Vault login
 		// become the console's expect engine. The password is read from the
 		// encrypted field-secret store on the open goroutine and never enters
@@ -1549,6 +1584,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		state.WithSerialDialog(serialui.View(serialDialog), serialDialog.Show),
 		state.WithTrustPrompt(trustPrompt),
 		state.WithAuthPrompt(authPrompt),
+		state.WithVNCPlaintextPrompt(plaintextPrompt),
 		// The shell clears a stale ET pair when no live Session owns it: a
 		// restored Pane a legacy server refuses to reattach, or one closed
 		// while its Open never produced a Session.
@@ -1626,13 +1662,18 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		},
 		func() string { return mygo.App.Locale() },
 	)
+	// A VNC pane that grabbed the keyboard makes its own window stand down its
+	// accelerators, so chords reach the guest. The shell reads the focused
+	// pane's Surface; terminal panes report false, and a detached window reads
+	// its own Tab rather than the main window's.
+	windows.SetKeyboardGrabProvider(shellState.KeyboardGrab, shellState.DetachedKeyboardGrab)
 	// The Dropdown Panel's Quake workspace is separate from the main shell's
 	// Workspace: its Tabs never enter the main Tab strip, and the Panel is
 	// created lazily on the first hotkey press. Its state is memory-only.
 	quakeState = quakeui.NewState(
 		quakeSessionOpener{sessions: sessions},
 		func(s *appsession.Session) (quakeui.Surface, error) {
-			return newSessionSurface(s)
+			return newSurface(s)
 		},
 		// The Host picker reads the Vault's effective Host list live, so a
 		// renamed Host or an edited group default shows on the next frame.

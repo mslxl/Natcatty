@@ -5,8 +5,9 @@
 //
 // Every serializer is deterministic. Records are ordered by their stored order
 // key and then identity, so exporting the same Vault twice produces identical
-// bytes. CSV keeps the original header order and marked fields so the
-// ticket-24 importer can read an export back.
+// bytes. CSV keeps the original fourteen-column order, appends the VNC and
+// VNCPassword columns, and keeps marked fields so the ticket-24 importer can
+// read an export back and an older reader can ignore the appended columns.
 package vaultexport
 
 import (
@@ -112,6 +113,10 @@ type Host struct {
 	KeyPath       string
 	Passphrase    string
 	ProxyPassword string
+	// VNCPassword is a VNC Host's password plaintext. It is a separate
+	// credential from Password, the SSH password slot a VNC Host never uses.
+	// It is populated only for a destructive export.
+	VNCPassword string
 	// TOTP is the Host authenticator URI plaintext. It is populated only for a
 	// destructive export and is credential material.
 	TOTP string
@@ -333,6 +338,10 @@ type jsonHost struct {
 	KeyPath    string `json:"keyPath,omitempty"`
 	Passphrase string `json:"passphrase,omitempty"`
 	Proxy      string `json:"proxy,omitempty"`
+	// VNCPassword is present only in a destructive export. The embedded Host
+	// carries the HasVNCPassword marker, and this value is a separate
+	// credential from the SSH password above.
+	VNCPassword string `json:"vncPassword,omitempty"`
 	// TOTP carries the authenticator URI only in a destructive export. The
 	// embedded Host still serializes its HasTOTP marker.
 	TOTP string `json:"totp,omitempty"`
@@ -420,6 +429,7 @@ func exportJSON(d Dataset, opts Options) ([]byte, error) {
 		entry := jsonHost{Host: host.Host}
 		if opts.IncludeSecrets {
 			entry.Password = host.Password
+			entry.VNCPassword = host.VNCPassword
 			entry.TOTP = host.TOTP
 		}
 		entry.KeyPath = vaultimport.EncodeMarkedField(host.KeyPath, vaultimport.MarkerKeyPath)
@@ -515,16 +525,20 @@ func marshal(value any) ([]byte, error) {
 
 // ---------------------------------------------------------------- CSV
 
-// Header is the canonical Netcatty CSV header, in the exact order the
-// ticket-24 importer expects.
+// Header is the canonical Netcatty CSV header: the original fourteen columns
+// in the exact order the ticket-24 importer expects, followed by VNC,
+// VNCPassword, and Transport. An older reader ignores the appended columns and
+// reads an SSH Host as plain SSH.
 func Header() []string { return vaultimport.CSVHeader() }
 
 // Column indexes of the Host CSV header. These cells carry raw passwords and
 // already-marked references, so they skip the formula guard; every other cell
-// is guarded.
+// is guarded. VNC, VNCPassword, and Transport are appended after the original
+// fourteen columns; VNCPassword is a raw credential and is never guarded.
 const (
-	csvPasswordColumn   = 8
-	csvLocalShellColumn = 13
+	csvPasswordColumn    = 8
+	csvLocalShellColumn  = 13
+	csvVNCPasswordColumn = 15
 )
 
 func exportCSV(d Dataset, opts Options) ([]byte, []Issue, error) {
@@ -546,6 +560,12 @@ func exportCSV(d Dataset, opts Options) ([]byte, []Issue, error) {
 		if opts.IncludeSecrets {
 			password, passphrase = host.Password, host.Passphrase
 		}
+		if host.Host.Protocol == domainvault.ProtocolVNC {
+			// A VNC Host never uses the SSH password slot, even when a legacy
+			// record still advertises it. Its credential lives only in
+			// VNCPassword.
+			password = ""
+		}
 		proxy := ""
 		if host.Host.Proxy != nil {
 			proxy = vaultimport.EncodeMarkedField(
@@ -558,6 +578,11 @@ func exportCSV(d Dataset, opts Options) ([]byte, []Issue, error) {
 			issues = append(issues, Issue{
 				Host: exportHostName(host.Host), Code: jumpCode, Hop: hop,
 			})
+		}
+		vnc := vaultimport.EncodeVNCConfig(csvVNCConfig(host.Host.VNC))
+		vncPassword := ""
+		if opts.IncludeSecrets {
+			vncPassword = host.VNCPassword
 		}
 		row := []string{
 			host.Host.Group,
@@ -574,19 +599,48 @@ func exportCSV(d Dataset, opts Options) ([]byte, []Issue, error) {
 			proxy,
 			proxyJump,
 			"",
+			vnc,
+			vncPassword,
+			// The raw stored value, not the presentation label: an unknown or
+			// unsupported transport must survive export so re-import rejects
+			// it instead of silently turning into plain SSH.
+			string(host.Host.Transport),
 		}
 		for index, value := range row {
 			if index > 0 {
 				out.WriteByte(',')
 			}
 			// Passwords and marked reference fields stay byte-exact; every
-			// other cell gets the spreadsheet formula guard.
-			guard := index < csvPasswordColumn || index > csvLocalShellColumn
+			// other cell gets the spreadsheet formula guard. The VNC
+			// configuration marker starts with an underscore, so guarding it
+			// never rewrites the value, and the VNC password is a credential
+			// that must stay byte-exact.
+			guard := index < csvPasswordColumn ||
+				(index > csvLocalShellColumn && index != csvVNCPasswordColumn)
 			out.WriteString(vaultimport.EscapeCSVField(value, guard))
 		}
 		out.WriteString("\r\n")
 	}
 	return []byte(out.String()), issues, nil
+}
+
+// csvVNCConfig maps the domain viewer configuration onto the portable import
+// type. A nil configuration writes an empty VNC cell, not a zero-value one.
+func csvVNCConfig(config *domainvault.VNCConfig) *vaultimport.VNCConfig {
+	if config == nil {
+		return nil
+	}
+	return &vaultimport.VNCConfig{
+		DisplayMode:                  string(config.DisplayMode),
+		FitMode:                      string(config.FitMode),
+		ViewOnly:                     config.ViewOnly,
+		Shared:                       config.Shared,
+		CursorMode:                   string(config.CursorMode),
+		PlaintextWarningAcknowledged: config.PlaintextWarningAcknowledged,
+		WebSocket:                    config.WebSocket,
+		WebSocketPath:                config.WebSocketPath,
+		WebSocketSecure:              config.WebSocketSecure,
+	}
 }
 
 // exportHostName names one exported Host in a warning, falling back to the
@@ -685,12 +739,13 @@ func formatCSVProxyJumpHop(host domainvault.Host) (string, bool) {
 	return hop, true
 }
 
-// canServeAsSSHJump reports whether a Host's transport can be dialed as a jump
-// hop. Mosh and ET bootstrap over SSH; telnet, local shells, and network
-// devices cannot carry a chained session.
+// canServeAsSSHJump reports whether a Host's protocol can be dialed as a jump
+// hop. Only SSH does: a Mosh or ET Host is still an SSH Host at that layer, so
+// its protocol value is ssh, while Telnet and VNC cannot carry a chained
+// session.
 func canServeAsSSHJump(protocol domainvault.Protocol) bool {
 	switch protocol {
-	case "", domainvault.ProtocolSSH, domainvault.ProtocolMosh, domainvault.ProtocolET:
+	case "", domainvault.ProtocolSSH:
 		return true
 	default:
 		return false
@@ -718,18 +773,11 @@ func formatHostname(hostname string) string {
 	return hostname
 }
 
+// portText writes the endpoint an imported Host would use. A zero port means
+// the Host inherits its Group's, so the protocol's default (22 SSH and its
+// transports, 23 Telnet, 5900 VNC) is the value that survives a round trip.
 func portText(host domainvault.Host) string {
-	port := host.Port
-	if port == 0 {
-		if host.Protocol == domainvault.ProtocolLocal {
-			return "0"
-		}
-		port = 22
-		if host.Protocol == domainvault.ProtocolTelnet {
-			port = 23
-		}
-	}
-	return strconv.Itoa(port)
+	return strconv.Itoa(domainvault.EffectivePort(host.Protocol, host.Port))
 }
 
 // ---------------------------------------------------------------- Snippets

@@ -41,6 +41,7 @@ type fakeWindow struct {
 	bounds        windowBounds
 	minimized     bool
 	maximized     bool
+	fullscreen    bool
 	// events records the host calls that matter for ordering assertions.
 	events []string
 }
@@ -93,6 +94,10 @@ func (w *fakeWindow) SetVibrancy(v mygo.Vibrancy) { w.vibrancy = v }
 func (w *fakeWindow) Minimize()                   { w.minimized = true }
 func (w *fakeWindow) ToggleMaximize()             { w.maximized = !w.maximized }
 func (w *fakeWindow) IsMaximized() bool           { return w.maximized }
+func (w *fakeWindow) ToggleFullScreen() {
+	w.fullscreen = !w.fullscreen
+	w.events = append(w.events, "toggle-fullscreen")
+}
 func (w *fakeWindow) SetIcon(png []byte) error {
 	w.icon = append([]byte(nil), png...)
 	return nil
@@ -1102,5 +1107,78 @@ func TestQuitAsksWhenTheTransferStateCannotBeRead(t *testing.T) {
 	graph.confirmer.answer = true
 	if !graph.manager.ConfirmQuit() {
 		t.Fatal("quit did not proceed after the fail-closed consent")
+	}
+}
+
+// TestToggleFocusedFullScreenTargetsTheInvokingWindow proves the VNC
+// fullscreen action resolves its host at invocation time: a detached window
+// takes the toggle instead of the main window, nothing happens once that
+// window is gone, and an injected provider is the offscreen seam.
+func TestToggleFocusedFullScreenTargetsTheInvokingWindow(t *testing.T) {
+	main := &fakeWindow{}
+	detached := &fakeWindow{}
+	manager := &windowManager{main: main}
+	focused := hostWindow(detached)
+	manager.focusedWindow = func() hostWindow { return focused }
+
+	manager.ToggleFocusedFullScreen()
+	if !detached.fullscreen || main.fullscreen {
+		t.Fatalf("detached fullscreen = %v, main = %v; want only the detached window",
+			detached.fullscreen, main.fullscreen)
+	}
+	if !slices.Contains(detached.events, "toggle-fullscreen") || slices.Contains(main.events, "toggle-fullscreen") {
+		t.Fatalf("toggle events detached = %v, main = %v; want only detached", detached.events, main.events)
+	}
+
+	detached.destroyed = true
+	before := len(detached.events)
+	manager.ToggleFocusedFullScreen()
+	if len(detached.events) != before {
+		t.Fatalf("a destroyed window was toggled again: %v", detached.events[before:])
+	}
+}
+
+// TestDetachedBellClearsOnBlurAndFocus proves a detached bell is acknowledged
+// from both focus transitions: a bell that arrives while the window is already
+// focused is cleared when the user leaves it, and focusing it still clears a
+// bell that arrived while it was in the background.
+func TestDetachedBellClearsOnBlurAndFocus(t *testing.T) {
+	graph := newWindowGraph(t, nil)
+	graph.manager.OpenMain()
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	waitForSurface(t, graph.state, 0)
+	snapshot, ok := graph.state.ActiveSnapshot()
+	if !ok {
+		t.Fatal("the new Tab has no Session")
+	}
+	if !graph.state.DetachTab(0) {
+		t.Fatal("DetachTab returned false")
+	}
+	tabID := graph.state.DetachedTabIDs()[0]
+	window := graph.host.last()
+	if window == nil {
+		t.Fatal("the detached window was not created")
+	}
+
+	graph.state.NoteSessionBell(snapshot.ID)
+	graph.state.Flush()
+	if info, _ := graph.state.DetachedTabInfo(tabID); !info.Bell {
+		t.Fatal("the detached Tab did not record the bell")
+	}
+	window.Blur()
+	if info, _ := graph.state.DetachedTabInfo(tabID); info.Bell {
+		t.Fatal("leaving the focused window did not acknowledge the bell")
+	}
+
+	graph.state.NoteSessionBell(snapshot.ID)
+	graph.state.Flush()
+	if info, _ := graph.state.DetachedTabInfo(tabID); !info.Bell {
+		t.Fatal("the second bell was not recorded")
+	}
+	window.hooks.OnFocus()
+	if info, _ := graph.state.DetachedTabInfo(tabID); info.Bell {
+		t.Fatal("focusing the window did not acknowledge the bell")
 	}
 }

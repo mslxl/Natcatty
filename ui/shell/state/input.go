@@ -72,6 +72,12 @@ func (s *State) selectedBroadcastTargetIDsLocked() []model.SessionID {
 	return append([]model.SessionID(nil), s.broadcastTargetIDs...)
 }
 
+// broadcastTarget reports whether a Pane can receive typed or composed input.
+// A pixel Session has no terminal to type into.
+func broadcastTarget(value *pane) bool {
+	return value != nil && value.session != nil && value.session.ByteStream()
+}
+
 // refreshBroadcastState reconciles the input-thread delivery snapshot with
 // the main window's Tabs. It runs on the UI thread after every structural
 // change. A selected Session that was detached or closed leaves the target
@@ -86,7 +92,7 @@ func (s *State) refreshBroadcastState() {
 		}
 		for _, paneID := range tab.paneIDs() {
 			value := tab.panes[paneID]
-			if value == nil || value.session == nil {
+			if !broadcastTarget(value) {
 				continue
 			}
 			id := value.session.ID()
@@ -173,7 +179,7 @@ func (s *State) BroadcastSessions() []BroadcastSessionInfo {
 		focusedPane, focusedID := tab.focusedPane()
 		for _, paneID := range tab.paneIDs() {
 			value := tab.panes[paneID]
-			if value == nil || value.session == nil {
+			if !broadcastTarget(value) {
 				continue
 			}
 			id := value.session.ID()
@@ -281,8 +287,12 @@ func (s *State) CloseBroadcastPanel() {
 	s.RequestRedraw()
 }
 
-// ToggleBroadcastPanel shows or hides the target panel.
+// ToggleBroadcastPanel shows or hides the target panel. A pixel Session has
+// no terminal to broadcast into, so its Pane offers no broadcast action.
 func (s *State) ToggleBroadcastPanel() {
+	if !s.BroadcastPanelOpen() && s.FocusedSessionIsPixel() {
+		return
+	}
 	if s.BroadcastPanelOpen() {
 		s.CloseBroadcastPanel()
 		return
@@ -453,8 +463,13 @@ func (s *State) NoteSessionInput(id model.SessionID, data []byte) {
 	s.RequestRedraw()
 }
 
-// OpenCompose shows the compose bar. A draft from an earlier open is kept.
+// OpenCompose shows the compose bar. A draft from an earlier open is kept. A
+// pixel Session has no terminal to type into, so its Pane offers no compose
+// action.
 func (s *State) OpenCompose() {
+	if s.FocusedSessionIsPixel() {
+		return
+	}
 	s.inputMu.Lock()
 	s.composeOpen = true
 	s.composeBroadcast = false
@@ -575,9 +590,22 @@ func (s *State) defaultComposeTargets() (ids []model.SessionID, broadcast bool) 
 		return selected, true
 	}
 	if id, ok := s.FocusedSessionID(); ok {
-		return []model.SessionID{id}, false
+		if session, ok := s.SessionByID(id); ok && session.ByteStream() {
+			return []model.SessionID{id}, false
+		}
 	}
 	return nil, false
+}
+
+// FocusedSessionIsPixel reports whether the focused Pane holds a pixel
+// Session. Compose and broadcast exist only for a byte stream.
+func (s *State) FocusedSessionIsPixel() bool {
+	id, ok := s.FocusedSessionID()
+	if !ok {
+		return false
+	}
+	session, ok := s.SessionByID(id)
+	return ok && !session.ByteStream()
 }
 
 // ComposeTargets reports where Send would deliver. An explicit choice in the

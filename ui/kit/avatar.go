@@ -23,6 +23,10 @@ const (
 	AvatarTelnet
 	// AvatarGroup is a Host Group.
 	AvatarGroup
+	// AvatarMosh is an SSH Host reached over Mosh.
+	AvatarMosh
+	// AvatarET is an SSH Host reached over EternalTerminal.
+	AvatarET
 )
 
 // avatarPalette colors Hosts without a known distribution, by a hash of
@@ -52,6 +56,10 @@ func HostAvatar(c *ui.Context, distro string, kind AvatarKind, seed string, size
 			fill, glyph = ui.Hex("#0F766E"), icons.Lucide(icons.Network)
 		case AvatarGroup:
 			fill, glyph = c.Theme().Accent, icons.Lucide(icons.Folder)
+		case AvatarMosh:
+			fill, glyph = ui.Hex("#7C3AED"), icons.Lucide(icons.Wifi)
+		case AvatarET:
+			fill, glyph = ui.Hex("#0891B2"), icons.Lucide(icons.RefreshCw)
 		default:
 			fill, glyph = SeedColor(seed), icons.Lucide(icons.Server)
 		}

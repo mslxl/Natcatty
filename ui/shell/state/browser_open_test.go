@@ -21,7 +21,7 @@ func TestOpenHostBrowserOpensThePanelAfterTheTabAttaches(t *testing.T) {
 	}
 	waitFor(t, "the SSH tab", func() bool {
 		graph.state.Flush()
-		return graph.state.TabCount() == 1
+		return tabAttached(graph.state, 0)
 	})
 	if !graph.surface.browserOpened {
 		t.Fatal("the browser panel was not opened on the new surface")
@@ -38,7 +38,7 @@ func TestOpenHostLeavesTheBrowserPanelClosed(t *testing.T) {
 	}
 	waitFor(t, "the SSH tab", func() bool {
 		graph.state.Flush()
-		return graph.state.TabCount() == 1
+		return tabAttached(graph.state, 0)
 	})
 	if graph.surface.browserOpened {
 		t.Fatal("a plain connection opened the browser panel")

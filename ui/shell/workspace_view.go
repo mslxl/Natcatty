@@ -48,6 +48,8 @@ type tabRef struct {
 	detach       func(model.PaneID) bool
 	rename       func(model.PaneID, string) bool
 	retry        func(model.PaneID) bool
+	// reconnect reopens a stopped Pane whose Session cannot recover by itself.
+	reconnect func(model.PaneID) bool
 	// magnified reports the Tab's zoomed Pane, or "". While set, the Tree
 	// renders that Pane alone; its hidden members show no drop zones.
 	magnified func() model.PaneID
@@ -86,6 +88,7 @@ func mainTabRef(owner state.RenderOwner, s *state.State, tabIndex int, focusEpoc
 			return s.RenamePane(tabIndex, paneID, title)
 		},
 		retry:     func(paneID model.PaneID) bool { return s.RetryPane(id, paneID) },
+		reconnect: func(paneID model.PaneID) bool { return s.ReconnectPane(id, paneID) },
 		magnified: func() model.PaneID { return s.MagnifiedPaneID(tabIndex) },
 	}
 }
@@ -119,7 +122,8 @@ func detachedTabRef(s *state.State, tabID model.TabID) tabRef {
 		rename: func(paneID model.PaneID, title string) bool {
 			return s.RenameDetachedPane(tabID, paneID, title)
 		},
-		retry: func(paneID model.PaneID) bool { return s.RetryPane(tabID, paneID) },
+		retry:     func(paneID model.PaneID) bool { return s.RetryPane(tabID, paneID) },
+		reconnect: func(paneID model.PaneID) bool { return s.ReconnectPane(tabID, paneID) },
 	}
 }
 
@@ -254,7 +258,11 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 		Active: info.Active,
 		Lead: func() {
 			snapshot, ok := s.TabSnapshot(index)
-			kit.StatusDot(c, sessionTone(t, snapshot, ok))
+			tone := sessionTone(t, snapshot, ok)
+			if s.TabPending(index) {
+				tone = t.Warning
+			}
+			kit.StatusDot(c, tone)
 		},
 		Marker:      marker,
 		Close:       m.CloseGlyph(),
@@ -389,7 +397,14 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 			Title:     renameStart,
 			MenuLabel: m.SessionMenuFor(paneNumber),
 		}
-		if ref.managesPanes {
+		// A remote that cannot give each Pane its own screen must not split:
+		// every Pane would show the same desktop. The viewer's chrome explains
+		// the refusal once the remote has answered.
+		splittable := true
+		if splitter, ok := info.Surface.(state.ScreenSplitter); ok {
+			splittable = splitter.CanSplit()
+		}
+		if ref.managesPanes && splittable {
 			actions.SplitRight = func() {
 				ref.focus(info.ID)
 				_ = ref.splitRight()
@@ -422,6 +437,16 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 				actions.ToggleFiles = func() {
 					ref.focus(info.ID)
 					s.ToggleFiles(tabID, host, info.Label)
+					c.Invalidate()
+				}
+			}
+		}
+		// A stopped Session needs a new dial rather than the eager reconnect
+		// the transport owns. Detached Panes keep this action too, so a failed
+		// VNC desktop can be reopened from its own window.
+		if ref.reconnect != nil {
+			actions.Reconnect = func() {
+				if ref.reconnect(info.ID) {
 					c.Invalidate()
 				}
 			}
@@ -513,9 +538,12 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	ref tabRef, info state.PaneInfo) {
 	// A detached window's lone Pane is already named by the window's title
 	// bar, as the original's terminal popup, so it shows no header of its own
-	// unless it has a status to report.
+	// unless it has a status to report. A viewer that owns a per-kind chrome
+	// row (VNC) is the exception: that row carries controls the window cannot
+	// get anywhere else, so it renders even when the title is suppressed.
 	lone := !ref.managesPanes && !ref.split
-	if lone && !info.Pending && !(info.Focused && ref.status.text != "" && !ref.status.settled) {
+	viewerChrome := isViewerChrome(info)
+	if lone && !viewerChrome && !info.Pending && !(info.Focused && ref.status.text != "" && !ref.status.settled) {
 		return
 	}
 	header := kit.Bar(c, kit.BarPane).Padding(0, 4, 0, 8).Gap(4)
@@ -551,14 +579,21 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		ui.Column(c).Grow(1).MinWidth(0)
 
 		if !ref.managesPanes {
+			// A detached window keeps the viewer's own chrome, so scaling,
+			// view-only, clipboard, Ctrl-Alt-Del, fullscreen, and grab stay
+			// reachable there. Terminal panes keep the original popup layout.
+			// The Dropdown Panel's follow and top-down routes also render a
+			// Pane here; they are not host windows, so they use the embedded
+			// toolbar without fullscreen.
+			if viewerChrome {
+				renderPaneToolbar(c, ref.owner, info.Surface)
+			}
 			return
 		}
-		if info.Focused {
+		if info.Focused && info.ByteStream {
 			terminalToolbar(c, s, m, t)
 		}
-		if bar, ok := info.Surface.(interface{ Toolbar(*ui.Context) }); ok && info.Err == nil {
-			bar.Toolbar(c)
-		} else {
+		if info.Err != nil || !renderPaneToolbar(c, ref.owner, info.Surface) {
 			paneMenu(c, m, ref, info)
 		}
 		if kit.IconButtonWith(c, icons.X, m.CloseGlyph(), kit.IconOptions{Role: kit.IconTab}).Clicked() {
@@ -567,6 +602,40 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 			c.Invalidate()
 		}
 	})
+}
+
+// isViewerChrome reports whether a Surface asks the shell to render its
+// per-kind toolbar even in a window that does not manage Pane commands. The
+// marker keeps terminal Surfaces on their existing header placement: only a
+// VNC viewer asks for its row in a detached window or the Quake panel.
+func isViewerChrome(info state.PaneInfo) bool {
+	if info.Err != nil || info.Surface == nil {
+		return false
+	}
+	marker, ok := info.Surface.(interface{ ViewerChrome() bool })
+	return ok && marker.ViewerChrome()
+}
+
+// renderPaneToolbar draws a Surface's own toolbar and reports whether it did.
+// A renderer that is not a host window (the Dropdown Panel) uses the embedded
+// form when the Surface offers one, so a control such as fullscreen that only
+// works on a real window is not drawn there. Surfaces without an embedded form
+// keep their original toolbar.
+func renderPaneToolbar(c *ui.Context, owner state.RenderOwner, surface state.Surface) bool {
+	if surface == nil {
+		return false
+	}
+	if owner == state.RenderOwnerDropdown {
+		if embedded, ok := surface.(interface{ ToolbarEmbedded(*ui.Context) }); ok {
+			embedded.ToolbarEmbedded(c)
+			return true
+		}
+	}
+	if bar, ok := surface.(interface{ Toolbar(*ui.Context) }); ok {
+		bar.Toolbar(c)
+		return true
+	}
+	return false
 }
 
 // paneMenu is the Pane commands of a Pane with no Session to hold them: one
@@ -654,6 +723,9 @@ func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 			ui.Box(c).Size(44, 44).Radius(12).Background(t.Danger.Alpha(0.1)).Center().TextColor(t.Danger).
 				Children(func() { ui.Icon(c, icons.Lucide(icons.TriangleAlert)).Size(20, 20) })
 			ui.Text(c, message).FontSize(kit.M(c).Font.Callout).MaxWidth(420).TextColor(uitheme.DangerText(t))
+			if info.Target != "" {
+				ui.Text(c, info.Target).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine()
+			}
 			if !retryable {
 				return
 			}
@@ -679,9 +751,14 @@ func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		}
 		info.Surface.View(c)
 	default:
-		ui.Column(c).Fill().Gap(10).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
-			ui.Icon(c, icons.Lucide(icons.Loader)).Size(22, 22).TextColor(t.TextMuted)
+		// A Pane whose Session is still opening shows the state and the
+		// endpoint, so the Tab is useful while the dial runs.
+		ui.Column(c).Fill().Padding(24).Gap(8).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
+			ui.Icon(c, icons.Lucide(icons.Loader)).Size(22, 22).TextColor(t.Warning)
 			ui.Text(c, m.PaneConnecting()).TextColor(t.TextMuted).FontSize(kit.M(c).Font.Callout)
+			if info.Target != "" {
+				ui.Text(c, info.Target).TextColor(t.TextMuted).FontSize(kit.M(c).Font.Footnote).SingleLine()
+			}
 		})
 	}
 }

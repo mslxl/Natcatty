@@ -41,7 +41,7 @@ func TestOpenSerialAttachesTheProfileAndPersistsNoSecret(t *testing.T) {
 		t.Fatalf("OpenSerial: %v", err)
 	}
 	graph.flushUntil(t, "the serial tab", func() bool {
-		return graph.state.TabCount() == 1
+		return tabAttached(graph.state, 0)
 	})
 
 	spec := graph.factory.lastSpec()
@@ -134,7 +134,7 @@ func TestOpenTelnetHostAttachesTheVaultLogin(t *testing.T) {
 		t.Fatalf("OpenHost: %v", err)
 	}
 	graph.flushUntil(t, "the Telnet tab", func() bool {
-		return graph.state.TabCount() == 1
+		return tabAttached(graph.state, 0)
 	})
 
 	spec := graph.factory.lastSpec()
@@ -226,7 +226,7 @@ func TestSerialAutoLoginRunsThroughTheProductionOpenPath(t *testing.T) {
 	}
 	waitFor(t, "the serial tab", func() bool {
 		shell.Flush()
-		return shell.TabCount() == 1
+		return tabAttached(shell, 0)
 	})
 
 	port.incoming <- []byte("login: ")
