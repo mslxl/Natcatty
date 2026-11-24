@@ -62,6 +62,13 @@ type SessionOpener interface {
 	OpenHost(ctx context.Context, host domainvault.Host) (SessionHandle, error)
 }
 
+// CommandOpener is implemented by an opener that can start a Session with a
+// one-shot command typed once the shell is ready. An opener that does not
+// implement it still opens the Host normally, without the command.
+type CommandOpener interface {
+	OpenHostWithCommand(ctx context.Context, host domainvault.Host, command string) (SessionHandle, error)
+}
+
 // ResumeKeyOpener is implemented by an opener that can reattach a restored
 // resumable Session. The key is the opaque, non-secret locator a workspace
 // descriptor carries; the credentials it names stay in the encrypted secret
@@ -198,6 +205,10 @@ type phonePane struct {
 	// It travels only into this Session's StartSpec and is never persisted: an
 	// Unsaved Host is not saved as a Vault record or a restore descriptor.
 	unsavedSecret string
+	// startup is a command typed once the Session is ready, used by tmux
+	// attach and a Pod terminal. It is not persisted: reopening the Host later
+	// starts its normal shell.
+	startup string
 	// tools is this Pane's Tools surface state. It lives on the Pane, so a
 	// focus switch cannot carry one Pane's overlay into another, and closing
 	// the Pane discards the overlay with it.
@@ -480,6 +491,14 @@ type sessionTabs struct {
 	// fileHosts lists the saved Hosts the Files copy target picker offers. The
 	// Shell points it at the Hosts section's remote Host list.
 	fileHosts func() []domainvault.Host
+	// system is the shell's one System Manager page. The Session Tools overlay
+	// opens the focused Host in it; the Host-detail route draws the same page.
+	system *systemPages
+	// systemEligible and systemHostReason report whether, and why not, the
+	// System manager entry can open a Session's Host. The Shell points them at
+	// the same rule the Host-detail entry uses.
+	systemEligible   func(domainvault.Host) bool
+	systemHostReason func(domainvault.Host) string
 	// window is the Sessions window a Browser's WebViews belong to. It is nil
 	// until Show created the windows.
 	window func() *mygo.Window
@@ -597,6 +616,16 @@ type tabView struct {
 // starts the open.
 func (t *sessionTabs) begin(host domainvault.Host) (*phoneTab, *phonePane) {
 	return t.beginWith(host, false, "")
+}
+
+// beginWithCommand records a connecting Tab whose Session types command once
+// it is ready. tmux attach and a Pod terminal open this way.
+func (t *sessionTabs) beginWithCommand(host domainvault.Host, command string) (*phoneTab, *phonePane) {
+	tab, pane := t.beginWith(host, false, "")
+	t.mu.Lock()
+	pane.startup = command
+	t.mu.Unlock()
+	return tab, pane
 }
 
 // beginQuickConnect records a connecting Tab for a Quick Connect target. Its
@@ -1381,6 +1410,14 @@ func (t *sessionTabs) failAttach(pane *phonePane, label string, resuming bool, e
 	if handle != nil {
 		_ = handle.End()
 	}
+}
+
+// view returns one Tab's state for a caller outside the package's draw path,
+// such as the per-frame System Manager activation check.
+func (t *sessionTabs) view(id string) (tabView, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.viewOfLocked(id)
 }
 
 // viewOfLocked returns one Tab's state. It never builds a screen: only

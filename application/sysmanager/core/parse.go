@@ -1,4 +1,4 @@
-package sysmanager
+package core
 
 import (
 	"encoding/json"

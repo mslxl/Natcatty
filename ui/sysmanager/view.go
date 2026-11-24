@@ -573,7 +573,7 @@ func dockerContainers(c *ui.Context, s *State, state appsysmanager.TabState,
 			container := rows[row]
 			switch col {
 			case 0:
-				ui.Text(c, containerDisplayName(container)).FontSize(kit.M(c).Font.Footnote).SingleLine()
+				ui.Text(c, appsysmanager.ContainerDisplayName(container)).FontSize(kit.M(c).Font.Footnote).SingleLine()
 			case 1:
 				ui.Text(c, container.Image).FontSize(kit.M(c).Font.Footnote).SingleLine()
 			case 2:
@@ -611,7 +611,7 @@ func dockerContainerActions(c *ui.Context, s *State, m locales.Messages, t *ui.T
 	}
 	running := strings.EqualFold(container.State, "running")
 	actionBar(c, func() {
-		ui.Text(c, m.SysManagerSelectedContainer(containerDisplayName(container),
+		ui.Text(c, m.SysManagerSelectedContainer(appsysmanager.ContainerDisplayName(container),
 			container.Image)).FontSize(kit.M(c).Font.Caption).TextColor(t.TextMuted).Grow(1).SingleLine()
 		if kit.SecondaryButton(c, "", m.SysManagerStart()).Key("sysmanager-docker-start").
 			Disabled(s.ActionBusy() || running).Clicked() {

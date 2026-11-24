@@ -82,6 +82,13 @@ type hostPages struct {
 	// openFiles pushes this Host's Files page on the section showing the
 	// detail page. Nil means this build has no transfer service.
 	openFiles func(domainvault.Host)
+	// systemAvailable reports whether this build wired the System Manager.
+	// openSystem pushes the System Manager page for an eligible Host, and
+	// systemReason is the inline reason the entry is absent for one that is
+	// not eligible (an unsaved or non-SSH Host).
+	systemAvailable func() bool
+	openSystem      func(domainvault.Host)
+	systemReason    func(domainvault.Host) string
 	// saveDone navigates after a save: to the saved Host's page, to the new
 	// Session, or away from the editor when the list refresh failed.
 	saveDone func(domainvault.Host, bool, bool)
@@ -892,6 +899,32 @@ func (h *hostPages) drawDetail(c *ui.Context, id string) {
 				})
 				if files.Clicked() {
 					h.openFiles(host)
+				}
+			}
+			// System management runs fixed exec commands over an SSH channel,
+			// so only a saved SSH-capable Host offers it. An ineligible Host
+			// states why the entry is absent rather than showing a page that
+			// can only fail. A build without the runtime states that reason
+			// here too, matching the Session Tools catalog.
+			if h.systemAvailable != nil {
+				reason := ""
+				if h.systemReason != nil {
+					reason = h.systemReason(host)
+				}
+				if reason != "" {
+					kit.Notice(c, icons.TriangleAlert, c.Theme().Warning, reason, nil)
+				} else if h.systemAvailable() && h.openSystem != nil {
+					system := kit.ListRow(c).Label("Open System management for " + hostName(host))
+					system.Children(func() {
+						ui.Row(c).Grow(1).Gap(10).AlignItems(ui.Center).Children(func() {
+							ui.Icon(c, icons.Lucide(icons.MonitorCog)).TextColor(c.Theme().Accent)
+							ui.Text(c, "System management").FontWeight(600)
+						})
+						ui.Text(c, "›").FontSize(20).TextColor(c.Theme().TextMuted)
+					})
+					if system.Clicked() {
+						h.openSystem(host)
+					}
 				}
 			}
 			// A forwarded port is another way to reach this Host's services.

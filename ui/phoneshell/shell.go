@@ -13,6 +13,7 @@ package phoneshell
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -172,6 +173,12 @@ type Shell struct {
 	// hostFiles is the Files page shared by the Hosts and Vault Host-detail
 	// routes. It is released when the user leaves those pages.
 	hostFiles *filesPages
+	// systemFactory builds one shared System Manager runtime per surface. The
+	// Host-detail route and the Session Tools overlay share one page because
+	// only one of them is on screen at a time. Nil hides every entry.
+	systemFactory func() SystemService
+	// system owns the System Manager page state and the one service it built.
+	system *systemPages
 	// hostBrowsers holds one Browser per Host-detail page, keyed by section
 	// and Host. The Vault and the Hosts tab can show the same Host without
 	// sharing one panel's gateway.
@@ -432,6 +439,22 @@ func New(opts ...Option) *Shell {
 	if s.files != nil {
 		s.hosts.openFiles = s.openHostFiles
 	}
+	// The System Manager runtime comes from the explicit option or the Session
+	// opener, like Monitoring and Files. One page is shared by the Host-detail
+	// route and the Session Tools overlay, so a Host switch retargets the same
+	// service and a leaving page releases its lease.
+	if s.systemFactory == nil {
+		if provider, ok := s.sessions.opener.(SystemProvider); ok {
+			s.systemFactory = provider.NewSystemService
+		}
+	}
+	s.system = newSystemPages(s.systemFactory, s.openHostCommand, s.invalidateWindows)
+	s.sessions.system = s.system
+	s.sessions.systemEligible = s.systemHostEligible
+	s.sessions.systemHostReason = s.systemHostReason
+	s.hosts.systemAvailable = func() bool { return s.system != nil && s.system.available() }
+	s.hosts.systemReason = s.systemReason
+	s.hosts.openSystem = s.openHostSystem
 	// The Snippets page runs a Snippet in the Sessions section, so it is built
 	// after the Shell and holds it.
 	s.vault.snippets = newSnippetPages(s)
@@ -485,6 +508,7 @@ func (s *Shell) beforeFrame() {
 	s.syncLiveView()
 	s.syncMonitoring()
 	s.syncHostFiles()
+	s.syncSystem()
 }
 
 // syncMonitoring samples only while the Monitoring page is the one on screen.
@@ -508,6 +532,9 @@ func (s *Shell) syncMonitoring() {
 func (s *Shell) suspendMonitoring() {
 	if s.monitoring != nil {
 		s.monitoring.deactivate()
+	}
+	if s.system != nil {
+		s.system.deactivate()
 	}
 }
 
@@ -597,6 +624,11 @@ func (s *Shell) newSection(i Section) *section {
 				s.drawHostFiles(c, r.Param("id"))
 				return true
 			}
+			if r.Match("/host/{id}/system") {
+				r.Title("System management")
+				s.drawHostSystem(c, r.Param("id"))
+				return true
+			}
 			if !r.Match("/host/{id}") {
 				return false
 			}
@@ -622,6 +654,11 @@ func (s *Shell) newSection(i Section) *section {
 			if r.Match("/hosts/{id}/files") {
 				r.Title("Files")
 				s.drawHostFiles(c, r.Param("id"))
+				return true
+			}
+			if r.Match("/hosts/{id}/system") {
+				r.Title("System management")
+				s.drawHostSystem(c, r.Param("id"))
 				return true
 			}
 			if !r.Match("/hosts/{id}") {
@@ -802,6 +839,7 @@ func (s *Shell) Background() {
 	s.backgrounded = true
 	s.sessions.syncVisible("")
 	s.syncMonitoring()
+	s.syncSystem()
 	s.sessions.persist()
 	// Close the gate before the system snapshots the app: the snapshot then
 	// shows the lock screen rather than the terminal. An App Lock that is
@@ -843,6 +881,11 @@ func (s *Shell) Close() {
 	// A Host-detail Files page holds an SFTP transport of its own.
 	if s.hostFiles != nil {
 		s.hostFiles.release()
+	}
+	// The System Manager service owns a sampler and action goroutines, and
+	// each holds a channel lease until it is stopped.
+	if s.system != nil {
+		s.system.close()
 	}
 	s.sessions.closeAll()
 }
@@ -900,6 +943,145 @@ func (s *Shell) syncHostFiles() {
 	if !strings.HasSuffix(path, "/files") {
 		s.hostFiles.release()
 	}
+}
+
+// systemRouteID returns the Host a System Manager route names.
+func systemRouteID(path string) (string, bool) {
+	path = strings.TrimSuffix(path, "/")
+	for _, prefix := range []string{"/host/", "/hosts/"} {
+		if rest, ok := strings.CutPrefix(path, prefix); ok {
+			if id, found := strings.CutSuffix(rest, "/system"); found && id != "" {
+				return id, true
+			}
+		}
+	}
+	return "", false
+}
+
+// systemHostReason reports why host itself cannot open System management, or
+// "" when it can. The shared executor needs a saved Host and a protocol with
+// SSH auth. UsesSSHAuth is the desktop System Manager's capability rule: SSH,
+// Mosh, and EternalTerminal all bootstrap through SSH and can run the fixed
+// exec commands, while Telnet and a Local shell cannot. The build's runtime is
+// a separate question, so a Session tool can still list its row and state why
+// the runtime is unavailable.
+func (s *Shell) systemHostReason(host domainvault.Host) string {
+	if host.ID == "" {
+		return "This Host is not saved in the Vault."
+	}
+	if !host.Protocol.UsesSSHAuth() {
+		return "This Host has no SSH shell for system management."
+	}
+	if s.hosts != nil {
+		for _, saved := range s.hosts.hosts {
+			if saved.ID == host.ID {
+				return ""
+			}
+		}
+		return "This Host is no longer in the Vault."
+	}
+	return ""
+}
+
+// systemHostEligible reports whether the Host itself can use System
+// management, regardless of whether this build wired the runtime.
+func (s *Shell) systemHostEligible(host domainvault.Host) bool {
+	return s.systemHostReason(host) == ""
+}
+
+// systemReason reports why the Host-detail entry is absent: first the Host's
+// own eligibility, then this build's runtime.
+func (s *Shell) systemReason(host domainvault.Host) string {
+	if reason := s.systemHostReason(host); reason != "" {
+		return reason
+	}
+	if s.system == nil || !s.system.available() {
+		return "System management is not available in this build."
+	}
+	return ""
+}
+
+// systemEligible reports whether the System Manager entry can open this Host.
+func (s *Shell) systemEligible(host domainvault.Host) bool {
+	return s.systemReason(host) == ""
+}
+
+// openHostSystem pushes one Host's System Manager page on the section that is
+// showing its detail page. The Vault's routes live under /hosts and the Hosts
+// tab's under /host, so each section keeps its own back stack.
+func (s *Shell) openHostSystem(host domainvault.Host) {
+	if s.system == nil || !s.system.available() {
+		return
+	}
+	if s.selected == Vault {
+		s.sections[Vault].router.Push("/hosts/" + string(host.ID) + "/system")
+		return
+	}
+	s.sections[Hosts].router.Push("/host/" + string(host.ID) + "/system")
+}
+
+// drawHostSystem renders the route's page. The per-frame syncSystem owns
+// opening and sampling; this only draws the Host the route names.
+func (s *Shell) drawHostSystem(c *ui.Context, id string) {
+	host, ok := s.hosts.host(id)
+	if !ok {
+		kit.EmptyHint(c, "This Host is no longer in the Vault. Refresh the Hosts list.")
+		return
+	}
+	if reason := s.systemReason(host); reason != "" {
+		kit.EmptyHint(c, reason)
+		return
+	}
+	s.system.draw(c, host)
+}
+
+// syncSystem samples only while the System Manager page is the one on screen:
+// the Host-detail route, or a Session Tools overlay at the System tool.
+// Leaving, backgrounding, or closing App Lock releases the service's lease.
+func (s *Shell) syncSystem() {
+	if s.system == nil || !s.system.available() {
+		return
+	}
+	locked := s.appLock != nil && s.appLock.Locked()
+	if s.backgrounded || locked {
+		s.system.deactivate()
+		return
+	}
+	switch s.selected {
+	case Hosts, Vault:
+		if id, ok := systemRouteID(s.sections[s.selected].router.Path()); ok {
+			if host, found := s.hosts.host(id); found && s.systemEligible(host) {
+				s.system.openFor(host)
+				s.system.activate()
+				return
+			}
+		}
+	case Sessions:
+		if id := s.visibleSession(); id != "" {
+			if view, ok := s.sessions.view(id); ok && view.tools != nil &&
+				view.tools.open && view.tools.tool == toolSystem &&
+				s.systemEligible(view.host) {
+				s.system.openFor(view.host)
+				s.system.activate()
+				return
+			}
+		}
+	}
+	s.system.deactivate()
+}
+
+// openHostCommand opens host as a new Session Tab and types command once the
+// Session is ready. tmux attach and a Pod terminal use it, so the interactive
+// program owns the Tab exactly as it does on the desktop.
+func (s *Shell) openHostCommand(host domainvault.Host, command string) error {
+	if s.sessions == nil {
+		return errors.New("the Session runtime is unavailable")
+	}
+	tab, pane := s.sessions.beginWithCommand(host, command)
+	s.Select(Sessions)
+	s.sections[Sessions].router.Push("/session/" + tab.id)
+	s.launchPane(tab.id, string(pane.id))
+	return nil
 }
 
 // addPaneToTab opens one Host as another Pane of an existing Tab, returns from
@@ -981,7 +1163,7 @@ func (s *Shell) launchPane(tabID, paneID string) {
 		return
 	}
 	host, resumeKey := pane.host, pane.resumeKey
-	unsaved, secret := pane.unsaved, pane.unsavedSecret
+	unsaved, secret, startup := pane.unsaved, pane.unsavedSecret, pane.startup
 	s.sessions.mu.Unlock()
 	ctx, cancel := context.WithCancel(withPromptOwner(context.Background(), paneID))
 	s.sessions.attachCancel(tabID, paneID, cancel)
@@ -999,6 +1181,15 @@ func (s *Shell) launchPane(tabID, paneID string) {
 				handle, err = target.OpenTarget(ctx, host, secret)
 			} else {
 				err = errNoQuickConnectOpener
+			}
+		case startup != "":
+			// tmux attach and a Pod terminal type their command once the
+			// Session has a prompt. An opener without the seam reports it,
+			// rather than opening a bare shell the user did not ask for.
+			if command, ok := opener.(CommandOpener); ok {
+				handle, err = command.OpenHostWithCommand(ctx, host, startup)
+			} else {
+				err = errors.New("the Session opener cannot run a startup command")
 			}
 		case resumeKey != "":
 			// A restored EternalTerminal Pane passes the locator its descriptor

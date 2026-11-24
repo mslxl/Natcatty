@@ -1,4 +1,4 @@
-// Package sysmanager owns the per-Host system-manager use cases: probing the
+// Package core owns the per-Host system-manager use cases: probing the
 // remote command inventory, sampling the overview, processes, listening
 // ports, and systemd services, and running the confirmed destructive actions.
 //
@@ -6,7 +6,7 @@
 // them. Every command runs through a Connection lease opened by the injected
 // Connector, so the same host-key trust decision a Session uses gates every
 // sample and action. The package is pure Go: it imports no adapter and no UI.
-package sysmanager
+package core
 
 import (
 	"context"

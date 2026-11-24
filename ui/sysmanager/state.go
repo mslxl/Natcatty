@@ -31,6 +31,10 @@ type Service interface {
 	Signal(ctx context.Context, host domainvault.Host, pid int, signal string) (appsysmanager.ActionResult, error)
 	ServiceAction(ctx context.Context, host domainvault.Host, unit string,
 		action appsysmanager.ServiceAction, scope appsysmanager.Scope) (appsysmanager.ActionResult, error)
+	// RunPending executes an already-confirmed action through the shared
+	// implementation, so the desktop and the phone open the same lease and run
+	// the same command.
+	RunPending(ctx context.Context, pending appsysmanager.PendingAction) (appsysmanager.ActionResult, error)
 }
 
 // ExtendedService is the ticket-46 action seam. It is separate from Service so
@@ -85,38 +89,20 @@ const (
 )
 
 // Origin identifies where a confirmed signal came from, so the confirmation
-// can name the process or the listening socket.
-type Origin string
+// can name the process or the listening socket. The value and its constants
+// live in the shared application package, so the phone's confirmation names
+// the same target.
+type Origin = appsysmanager.Origin
 
 const (
-	OriginProcess Origin = "process"
-	OriginPort    Origin = "port"
+	OriginProcess = appsysmanager.OriginProcess
+	OriginPort    = appsysmanager.OriginPort
 )
 
 // PendingAction is one destructive command awaiting confirmation. Requesting
-// it does not run anything; only ConfirmPending opens a lease.
-type PendingAction struct {
-	Kind     appsysmanager.ActionKind
-	Origin   Origin
-	Host     domainvault.Host
-	PID      int
-	Signal   string
-	Unit     string
-	Action   appsysmanager.ServiceAction
-	Scope    appsysmanager.Scope
-	Command  string
-	Address  string
-	Port     int
-	Protocol string
-	// Session is the tmux session a create or kill targets.
-	Session string
-	// ContainerID is the Docker target; ContainerName is its display name.
-	ContainerID   string
-	ContainerName string
-	DockerAction  appsysmanager.DockerAction
-	// Runtime is the container engine the confirmed command runs through.
-	Runtime appsysmanager.ContainerRuntime
-}
+// it does not run anything; only ConfirmPending opens a lease. The type lives
+// in the shared application package.
+type PendingAction = appsysmanager.PendingAction
 
 // State is the System manager surface's window-scoped state. It is mutated on
 // the UI thread; sampler snapshots and action outcomes cross threads under mu.
@@ -997,7 +983,7 @@ func (s *State) RequestDockerAction(container appsysmanager.Container,
 	if err != nil {
 		return err
 	}
-	kind, ok := dockerActionKind(action)
+	kind, ok := appsysmanager.DockerActionKind(action)
 	if !ok {
 		return errors.New("sysmanager: unknown container action")
 	}
@@ -1009,7 +995,7 @@ func (s *State) RequestDockerAction(container appsysmanager.Container,
 		Kind:          kind,
 		Host:          host,
 		ContainerID:   container.ID,
-		ContainerName: containerDisplayName(container),
+		ContainerName: appsysmanager.ContainerDisplayName(container),
 		DockerAction:  action,
 		Runtime:       runtime,
 		Command:       command,
@@ -1017,26 +1003,6 @@ func (s *State) RequestDockerAction(container appsysmanager.Container,
 	s.actionDone = false
 	s.requestRedraw()
 	return nil
-}
-
-func dockerActionKind(action appsysmanager.DockerAction) (appsysmanager.ActionKind, bool) {
-	switch action {
-	case appsysmanager.DockerStart:
-		return appsysmanager.ActionDockerStart, true
-	case appsysmanager.DockerStop:
-		return appsysmanager.ActionDockerStop, true
-	case appsysmanager.DockerRemove:
-		return appsysmanager.ActionDockerRemove, true
-	default:
-		return "", false
-	}
-}
-
-func containerDisplayName(container appsysmanager.Container) string {
-	if name := strings.TrimSpace(container.Name); name != "" {
-		return name
-	}
-	return container.ID
 }
 
 // DockerView returns 0 for containers and 1 for images.
@@ -1172,10 +1138,7 @@ func (s *State) actionHost() (domainvault.Host, error) {
 	return host, nil
 }
 
-var (
-	errNoExtendedService = errors.New("sysmanager: extended actions are unavailable")
-	errUnknownAction     = errors.New("sysmanager: unknown action")
-)
+var errNoExtendedService = errors.New("sysmanager: extended actions are unavailable")
 
 // ConfirmPending runs the pending command off the UI thread. It is the only
 // path from a confirmation to the remote command.
@@ -1198,45 +1161,15 @@ func (s *State) startAction(pending PendingAction) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.actionCancel = cancel
 	service := s.service
-	extended := s.extended
 	go func() {
 		var result appsysmanager.ActionResult
 		var err error
-		switch {
-		case pending.Kind == appsysmanager.ActionSignal:
-			if service == nil {
-				err = errors.New("sysmanager: no service")
-			} else {
-				result, err = service.Signal(ctx, pending.Host, pending.PID, pending.Signal)
-			}
-		case pending.Kind == appsysmanager.ActionServiceAction:
-			if service == nil {
-				err = errors.New("sysmanager: no service")
-			} else {
-				result, err = service.ServiceAction(ctx, pending.Host, pending.Unit,
-					pending.Action, pending.Scope)
-			}
-		case pending.Kind == appsysmanager.ActionTmuxCreate,
-			pending.Kind == appsysmanager.ActionTmuxKill,
-			pending.Kind == appsysmanager.ActionDockerStart,
-			pending.Kind == appsysmanager.ActionDockerStop,
-			pending.Kind == appsysmanager.ActionDockerRemove:
-			if extended == nil {
-				err = errNoExtendedService
-				break
-			}
-			switch pending.Kind {
-			case appsysmanager.ActionTmuxCreate:
-				result, err = extended.TmuxCreate(ctx, pending.Host, pending.Session)
-			case appsysmanager.ActionTmuxKill:
-				result, err = extended.TmuxKill(ctx, pending.Host, pending.Session)
-			default:
-				result, err = extended.ContainerAction(ctx, pending.Host,
-					appsysmanager.NormalizeContainerRuntime(pending.Runtime),
-					pending.ContainerID, pending.DockerAction)
-			}
-		default:
-			err = errUnknownAction
+		if service == nil {
+			err = errors.New("sysmanager: no service")
+		} else {
+			// The shared implementation owns the kind switch and opens the
+			// same trusted lease the phone's confirmed action uses.
+			result, err = service.RunPending(ctx, pending)
 		}
 		cancel()
 		s.mu.Lock()
@@ -1488,8 +1421,8 @@ func (s *State) prepareContainers(query string) []appsysmanager.Container {
 		rows = append(rows, container)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
-		return strings.ToLower(containerDisplayName(rows[i])) <
-			strings.ToLower(containerDisplayName(rows[j]))
+		return strings.ToLower(appsysmanager.ContainerDisplayName(rows[i])) <
+			strings.ToLower(appsysmanager.ContainerDisplayName(rows[j]))
 	})
 	return rows
 }
@@ -1766,7 +1699,7 @@ func (s *State) rowLabel(row int) string {
 				return s.imageRows[row].Name()
 			}
 		} else if row >= 0 && row < len(s.containerRows) {
-			return containerDisplayName(s.containerRows[row])
+			return appsysmanager.ContainerDisplayName(s.containerRows[row])
 		}
 	case appsysmanager.TabKubernetes:
 		if row >= 0 && row < len(s.podRows) {

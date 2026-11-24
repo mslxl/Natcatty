@@ -89,8 +89,6 @@ func toolPlaceholder(id toolID) string {
 	switch id {
 	case toolFiles:
 		return "Files from this Session are not on the phone yet."
-	case toolSystem:
-		return "System management is not on the phone yet."
 	case toolSessionLog:
 		return "Session logs are not on the phone yet."
 	}
@@ -357,6 +355,8 @@ func (t *sessionTabs) drawTools(c *ui.Context, view tabView) {
 				t.drawToolForwarding(c, st, view)
 			case toolFiles:
 				t.drawToolFiles(c, st, view)
+			case toolSystem:
+				t.drawToolSystem(c, st, view)
 			case toolSessionLog:
 				t.drawToolSessionLog(c, st, view)
 			case toolNotes:
@@ -388,6 +388,13 @@ func (t *sessionTabs) drawToolCatalog(c *ui.Context, st *toolsState, view tabVie
 		// a restored Host can outlive its Vault record; both would show a tool
 		// that can only fail, so only a saved, file-capable Host gets the entry.
 		if spec.id == toolFiles && !t.filesToolEligible(view.host) {
+			continue
+		}
+		// System management needs a saved Host with an SSH shell: the shared
+		// executor resolves the Host by ID and every command runs over a
+		// channel lease. A Quick Connect Host or a Telnet/Local Host would
+		// only reach a page that cannot work, so the entry is hidden.
+		if spec.id == toolSystem && !t.systemToolEligible(view.host) {
 			continue
 		}
 		row := kit.ListRow(c).Label("Open " + spec.title)
@@ -435,6 +442,17 @@ func (t *sessionTabs) drawToolCatalog(c *ui.Context, st *toolsState, view tabVie
 	if browserEligible(view.host) && !t.browserCapability().Supported {
 		kit.Notice(c, icons.TriangleAlert, c.Theme().Warning,
 			browserReason(t.browserCapability()), nil)
+	}
+	// A Host that cannot use System management states the reason instead of
+	// silently omitting the row, so the absence is understandable. A build
+	// without the runtime still lists the row but says it is unavailable.
+	if !t.systemToolEligible(view.host) {
+		if reason := t.systemToolReason(view.host); reason != "" {
+			kit.Notice(c, icons.TriangleAlert, c.Theme().Warning, reason, nil)
+		}
+	} else if t.systemToolUnavailable() {
+		kit.Notice(c, icons.TriangleAlert, c.Theme().Warning,
+			"System management is not available in this build.", nil)
 	}
 }
 
@@ -487,6 +505,14 @@ func (t *sessionTabs) toolSummary(st *toolsState, id toolID, view tabView) strin
 			return st.files.ui.dir
 		}
 		return "Browse this Host's files"
+	case toolSystem:
+		if t.systemToolUnavailable() {
+			return "Unavailable"
+		}
+		if reason := t.systemToolReason(host); reason != "" {
+			return reason
+		}
+		return "Inspect and manage this Host"
 	case toolForwarding:
 		if !t.forwardingAvailable() {
 			return "Unavailable"
@@ -545,6 +571,60 @@ func (t *sessionTabs) filesToolEligible(host domainvault.Host) bool {
 		}
 	}
 	return false
+}
+
+// systemToolEligible reports whether the System Management tool may be listed
+// for this Session's Host. A Host's own eligibility decides the row; a build
+// without the runtime still lists it and the page states that reason.
+func (t *sessionTabs) systemToolEligible(host domainvault.Host) bool {
+	if t == nil {
+		return false
+	}
+	if t.systemEligible != nil {
+		return t.systemEligible(host)
+	}
+	return host.ID != "" && host.Protocol.UsesSSHAuth()
+}
+
+// systemToolReason is the inline reason the System Management entry is
+// absent for this Host, or "" when the row may be shown.
+func (t *sessionTabs) systemToolReason(host domainvault.Host) string {
+	if t == nil {
+		return "System management is not available in this build."
+	}
+	if t.systemHostReason != nil {
+		return t.systemHostReason(host)
+	}
+	if host.ID != "" && host.Protocol.UsesSSHAuth() {
+		return ""
+	}
+	return "This Host has no SSH shell for system management."
+}
+
+// systemToolUnavailable is the build-level reason the tool is listed but
+// cannot open. It is shown by the tool page and its catalog summary.
+func (t *sessionTabs) systemToolUnavailable() bool {
+	return t == nil || t.system == nil || !t.system.available()
+}
+
+// drawToolSystem renders the System Manager for this Session's Host. The
+// terminal stays attached underneath; All tools returns to the catalog and
+// Done returns to the Pane.
+func (t *sessionTabs) drawToolSystem(c *ui.Context, st *toolsState, view tabView) {
+	if kit.GhostButton(c, icons.ChevronLeft, "All tools").Clicked() {
+		st.tool = toolNone
+		return
+	}
+	if reason := t.systemToolReason(view.host); reason != "" {
+		kit.EmptyHint(c, reason)
+		return
+	}
+	if t.systemToolUnavailable() {
+		kit.Notice(c, icons.TriangleAlert, c.Theme().Warning,
+			"System management is not available in this build.", nil)
+		return
+	}
+	t.system.draw(c, view.host)
 }
 
 // browserToolAvailable reports whether this Pane's Host can offer the Browser

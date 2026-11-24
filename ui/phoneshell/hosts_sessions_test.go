@@ -287,6 +287,9 @@ type fakeOpener struct {
 	hosts      []domainvault.Host
 	handles    []*fakeHandle
 	resumeKeys []string
+	// startupCommands records the typed command of a Session opened by a
+	// System Manager action such as tmux attach or a Pod terminal.
+	startupCommands []string
 }
 
 // setHostErr makes opens for one Host fail while the others keep opening, so a

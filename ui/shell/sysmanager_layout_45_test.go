@@ -107,6 +107,19 @@ func (s *sysManagerLayoutService) ServiceAction(context.Context, domainvault.Hos
 	return appsysmanager.ActionResult{}, nil
 }
 
+// RunPending is the shared confirmed-action entry; this fixture only lays out
+// rows, so it maps the two action kinds it could receive and refuses others.
+func (s *sysManagerLayoutService) RunPending(ctx context.Context,
+	pending appsysmanager.PendingAction) (appsysmanager.ActionResult, error) {
+	switch pending.Kind {
+	case appsysmanager.ActionSignal:
+		return s.Signal(ctx, pending.Host, pending.PID, pending.Signal)
+	case appsysmanager.ActionServiceAction:
+		return s.ServiceAction(ctx, pending.Host, pending.Unit, pending.Action, pending.Scope)
+	}
+	return appsysmanager.ActionResult{}, appsysmanager.ErrUnknownAction
+}
+
 // sysManagerLayoutUnit names row i of the service fixture. The names mirror
 // the independent acceptance fixture: a failed system unit first and a
 // user-scoped unit last.

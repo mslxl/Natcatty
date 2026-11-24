@@ -1,4 +1,4 @@
-package sysmanager
+package core
 
 // ContainerRuntime is one container engine the Docker tab can drive. The
 // engine name is also the remote binary, so every command template takes the

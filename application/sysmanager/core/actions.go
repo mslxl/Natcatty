@@ -1,4 +1,4 @@
-package sysmanager
+package core
 
 import (
 	"bytes"
@@ -89,7 +89,7 @@ func (s *Service) TmuxKill(ctx context.Context, host domainvault.Host, name stri
 // called only after the surface's confirmation is accepted.
 func (s *Service) ContainerAction(ctx context.Context, host domainvault.Host,
 	runtime ContainerRuntime, id string, action DockerAction) (ActionResult, error) {
-	kind, ok := dockerActionKind(action)
+	kind, ok := DockerActionKind(action)
 	if !ok {
 		return ActionResult{Command: ""}, &Error{Reason: ReasonInternal,
 			Cause: errors.New("sysmanager: invalid container action")}
@@ -106,19 +106,6 @@ func (s *Service) ContainerAction(ctx context.Context, host domainvault.Host,
 func (s *Service) DockerContainerAction(ctx context.Context, host domainvault.Host,
 	id string, action DockerAction) (ActionResult, error) {
 	return s.ContainerAction(ctx, host, RuntimeDocker, id, action)
-}
-
-func dockerActionKind(action DockerAction) (ActionKind, bool) {
-	switch action {
-	case DockerStart:
-		return ActionDockerStart, true
-	case DockerStop:
-		return ActionDockerStop, true
-	case DockerRemove:
-		return ActionDockerRemove, true
-	default:
-		return "", false
-	}
 }
 
 // ContainerInspect returns the container's inspect JSON, indented and

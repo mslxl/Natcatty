@@ -191,6 +191,10 @@ func pickTransferSources() ([]string, error) {
 // Ensure the runtime is the shell's opener seam.
 var _ phoneshell.SessionOpener = (*phoneSessionRuntime)(nil)
 
+// The runtime can type a System Manager terminal command (tmux attach, a Pod
+// terminal) into a new Session.
+var _ phoneshell.CommandOpener = (*phoneSessionRuntime)(nil)
+
 // The runtime also supplies the Files tool's shared transfer service.
 var _ phoneshell.FilesProvider = (*phoneSessionRuntime)(nil)
 
@@ -477,7 +481,15 @@ func newPhoneTransportFactory(manager *appconnection.Manager, routes vaultRoutes
 // one only while the Session is visible (and resumes it when the user returns),
 // so a hidden Session never holds a live view.
 func (r *phoneSessionRuntime) OpenHost(ctx context.Context, host domainvault.Host) (phoneshell.SessionHandle, error) {
-	return r.openHost(ctx, host, "")
+	return r.openHost(ctx, host, "", "")
+}
+
+// OpenHostWithCommand opens a Session whose shell types command once it is
+// ready. tmux attach and a Kubernetes Pod terminal use it, so the interactive
+// program owns the new Tab exactly as it does on the desktop.
+func (r *phoneSessionRuntime) OpenHostWithCommand(ctx context.Context,
+	host domainvault.Host, command string) (phoneshell.SessionHandle, error) {
+	return r.openHost(ctx, host, "", command)
 }
 
 // OpenHostWithResume opens a restored EternalTerminal Tab under the resume key
@@ -488,11 +500,11 @@ func (r *phoneSessionRuntime) OpenHost(ctx context.Context, host domainvault.Hos
 func (r *phoneSessionRuntime) OpenHostWithResume(ctx context.Context, host domainvault.Host,
 	resumeKey string) (phoneshell.SessionHandle, error) {
 
-	return r.openHost(ctx, host, resumeKey)
+	return r.openHost(ctx, host, resumeKey, "")
 }
 
 func (r *phoneSessionRuntime) openHost(ctx context.Context, host domainvault.Host,
-	resumeKey string) (phoneshell.SessionHandle, error) {
+	resumeKey, startup string) (phoneshell.SessionHandle, error) {
 
 	// The Hosts list carries stored records, while the desktop opens a Host
 	// with its Host Group defaults and selected Proxy Profile applied. Resolve
@@ -508,6 +520,11 @@ func (r *phoneSessionRuntime) openHost(ctx context.Context, host domainvault.Hos
 	spec := appsession.HostSpec(host)
 	if phoneRefusesKind(spec.Kind) {
 		return nil, errPhoneLocalSession
+	}
+	// A System Manager terminal action overrides the Host's own startup
+	// command for this one Tab; the saved Host is not modified.
+	if startup != "" {
+		spec.StartupCommand = startup
 	}
 	// HostSpec generates a fresh locator for a new ET Session. A restore
 	// supplies the one its descriptor saved, which is what makes the saved
