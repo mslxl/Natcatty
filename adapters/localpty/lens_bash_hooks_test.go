@@ -33,6 +33,44 @@ func (o *bashOutput) String() string {
 	return o.buf.String()
 }
 
+// withUTF8Locale applies the Session's locale policy to a minimal shell
+// environment: an explicit C LC_ALL leaves the character category UTF-8 and
+// the categories the lenses parse at C (see ensureUTF8Locale). Without it,
+// bash 3.2's readline keeps the whole shell in C and mangles a UTF-8 command
+// while it is typed, before the integration can mark it. The encoder still
+// drops to LC_ALL=C itself, which is where the negative-byte regression lives.
+func withUTF8Locale(env []string) []string {
+	set := func(key, value string) {
+		for i, entry := range env {
+			if strings.HasPrefix(entry, key+"=") {
+				env[i] = key + "=" + value
+				return
+			}
+		}
+		env = append(env, key+"="+value)
+	}
+	unset := func(key string) {
+		kept := env[:0]
+		for _, entry := range env {
+			if strings.HasPrefix(entry, key+"=") {
+				continue
+			}
+			kept = append(kept, entry)
+		}
+		env = kept
+	}
+	get := func(key string) string {
+		for _, entry := range env {
+			if value, ok := strings.CutPrefix(entry, key+"="); ok {
+				return value
+			}
+		}
+		return ""
+	}
+	ensureUTF8Locale(set, unset, get)
+	return env
+}
+
 // startIntegratedBash runs a real interactive bash with the production rcfile in
 // an isolated HOME, so the only startup files are the test's own .bashrc.
 func startIntegratedBash(t *testing.T, home string) (*pty.PTY, *bashOutput) {
@@ -49,7 +87,7 @@ func startIntegratedBash(t *testing.T, home string) (*pty.PTY, *bashOutput) {
 		Path: bash,
 		Args: []string{bash, "--rcfile", rcfile},
 		Dir:  home,
-		Env: []string{
+		Env: withUTF8Locale([]string{
 			"HOME=" + home,
 			"PATH=/usr/bin:/bin:/usr/sbin:/sbin",
 			"TERM=xterm-256color",
@@ -57,7 +95,7 @@ func startIntegratedBash(t *testing.T, home string) (*pty.PTY, *bashOutput) {
 			"HISTFILE=/dev/null",
 			"PROMPT_COMMAND=",
 			"PS1=",
-		},
+		}),
 		Cols: 100,
 		Rows: 24,
 	})
