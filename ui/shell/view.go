@@ -165,30 +165,53 @@ func homeVisible(s *state.State) bool {
 	return !terminalVisible(s) && !s.SFTPVisible()
 }
 
-// body draws the chosen Tab's surface below the Tab bar.
+// body draws the chosen Tab's surface below the Tab bar. A Tab event animates
+// it as one whole body through the pane motion runtime; an idle frame is the
+// state's final surface. A renderer without a runtime, such as the Dropdown
+// Panel's top-down route, draws the final surface directly.
 func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
+	owner state.RenderOwner, focusEpoch uint64, wm *workspacePaneMotion) {
+	if wm == nil || wm.body == nil {
+		bodySurface(c, s, m, t, owner, focusEpoch, wm)
+		return
+	}
+	wm.body.view(c, s, m, t, owner, focusEpoch, wm)
+}
+
+// bodySurface draws the surface the state shows now at its final layout.
+func bodySurface(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	owner state.RenderOwner, focusEpoch uint64, wm *workspacePaneMotion) {
 	switch {
 	case terminalVisible(s):
 		activeTab(c, s, m, t, owner, focusEpoch, wm)
 	case s.SFTPVisible():
-		layout.HomeLayout(c, layout.HomeSlots{
-			Notices: func() { notices(c, s, m, t) },
-			Content: func() {
-				if view := s.SFTPView(); view != nil {
-					view(c)
-					return
-				}
-				placeholder(c, icons.FolderOpen, m.NavSftp(), "")
-			},
-		})
+		sftpBody(c, s, m, t)
 	default:
-		layout.HomeLayout(c, layout.HomeSlots{
-			Sidebar: func() { layout.Sidebar(c, homeSidebar(c, s, m, t)) },
-			Notices: func() { notices(c, s, m, t) },
-			Content: func() { homeSurface(c, s, m, t) },
-		})
+		homeBody(c, s, m, t)
 	}
+}
+
+// sftpBody draws the SFTP Tab: its notices above the file browser.
+func sftpBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	layout.HomeLayout(c, layout.HomeSlots{
+		Notices: func() { notices(c, s, m, t) },
+		Content: func() {
+			if view := s.SFTPView(); view != nil {
+				view(c)
+				return
+			}
+			placeholder(c, icons.FolderOpen, m.NavSftp(), "")
+		},
+	})
+}
+
+// homeBody draws the Vault Tab: its sidebar, notices, and page.
+func homeBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	layout.HomeLayout(c, layout.HomeSlots{
+		Sidebar: func() { layout.Sidebar(c, homeSidebar(c, s, m, t)) },
+		Notices: func() { notices(c, s, m, t) },
+		Content: func() { homeSurface(c, s, m, t) },
+	})
 }
 
 // notices shows the window's desktop and connection problems above the

@@ -235,8 +235,8 @@ func TestSplitFocusedPaneRecordsAPaneOpenEvent(t *testing.T) {
 	if err := graph.state.NewTab(); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := graph.state.MotionEvent(); ok {
-		t.Fatalf("a fresh Tab already recorded a motion event")
+	if event, ok := graph.state.MotionEvent(); !ok || event.Kind != motion.TabOpen {
+		t.Fatalf("a fresh Tab recorded %+v, want its TabOpen", event)
 	}
 	before, _ := graph.state.FocusedPaneID(0)
 	if err := graph.state.SplitRight(); err != nil {
@@ -1792,6 +1792,9 @@ func TestFailedETPaneCloseClearsSavedCredentials(t *testing.T) {
 	if !graph.state.CloseTab(0) {
 		t.Fatal("CloseTab returned false")
 	}
+	// The closed body keeps its Surface until the view releases the copy it
+	// animates; with no view here, release it as the view would.
+	graph.state.ReleaseTabGhosts()
 	if graph.etResume.has(resumeKey) {
 		t.Fatal("closing a failed ET Pane left its saved pair orphaned")
 	}

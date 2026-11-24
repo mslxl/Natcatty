@@ -152,6 +152,10 @@ type workspacePaneMotion struct {
 	state      *state.State
 	controller *motion.Controller
 	mode       paneMotionMode
+	// body plays Tab open, close, and switch as one whole-body transition
+	// below the Tab strip. It is separate from the Pane run: a Tab change
+	// never splits or reflows a Pane tree.
+	body *workspaceBodyMotion
 
 	rects  map[model.PaneID]motion.PaneRects
 	region ui.Rect
@@ -180,6 +184,7 @@ func newWorkspacePaneMotion(s *state.State, mode paneMotionMode) *workspacePaneM
 		state:      s,
 		controller: motion.NewController(s.Motion),
 		mode:       mode,
+		body:       newWorkspaceBodyMotion(mode),
 		rects:      map[model.PaneID]motion.PaneRects{},
 	}
 }
@@ -200,6 +205,26 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	hidden := c.WindowHidden()
 	wasHidden := wm.windowHidden
 	wm.windowHidden = hidden
+	setting := s.Motion()
+	event, ok := s.MotionEvent()
+	unseen := ok && wm.controller.Unseen(event.Seq)
+	// A Pane event consumed on this frame starts its own animation. MyGo's
+	// DisableAnimations is window-wide, so a Tab body warp using it would also
+	// rest that native Pane transition while the Pane's switch is still on;
+	// the body waits it out instead (the one-switch rule).
+	paneMotionPending := unseen && wm.paneMotionUsesMyGo(c, setting, event, firstFrame, hidden, wasHidden)
+	// A Pane transition MyGo is already carrying also keeps a body warp from
+	// using DisableAnimations on this frame, even when the newest layout change
+	// records no event at all (a batch Tab close): the Pane run must keep
+	// playing (the one-switch rule).
+	paneMotionActive := wm.paneTransitionInFlight()
+	// A close of a Tab this body is not showing ends its run with a warp on
+	// this frame; tick must not schedule the animation frame that warp drops.
+	otherClose := unseen && wm.body.endsOtherBody(event)
+	// A body run advances or warps before this frame is laid out. A hidden
+	// window, an off switch, Reduce Motion, or a batch close with no event ends
+	// it without asking for another frame.
+	wm.body.tick(c, s, setting, hidden, paneMotionPending, paneMotionActive, otherClose)
 
 	activeIndex := s.ActiveTab()
 	activeID, _ := s.TabID(activeIndex)
@@ -213,7 +238,6 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 		// An animation belongs to its Tab; leaving the Tab warps it.
 		wm.finish()
 	}
-	setting := s.Motion()
 	if wm.run != nil && (!setting.Enabled || c.Preferences().ReduceMotion) {
 		// Switching motion off mid-run warps at once and stops asking for
 		// frames (ticket 08).
@@ -236,8 +260,7 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 		wm.finish()
 	}
 
-	event, ok := s.MotionEvent()
-	if !ok || !wm.controller.Unseen(event.Seq) {
+	if !unseen {
 		if wm.run != nil {
 			if _, done := wm.run.anim.Progress(now); done {
 				wm.finish()
@@ -249,6 +272,29 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 		return
 	}
 	wm.controller.MarkSeen(event.Seq)
+	switch event.Kind {
+	case motion.TabOpen, motion.TabClose, motion.TabSwitch:
+		// A Tab event is a whole-body transition, never a Pane run. Any Pane
+		// run or retained Pane ghost from the Tab being left is over.
+		wm.finish()
+		s.ReleasePaneGhosts()
+		visible := !firstFrame && !hidden && !wasHidden && !c.Preferences().ReduceMotion
+		wm.body.consume(c, s, event, setting, visible, paneMotionPending)
+		return
+	}
+	// Any other event (a Pane event, or a strip-only Tab reorder) ends a body
+	// run that is still playing; this frame is the final layout. When the Pane
+	// event animates through MyGo, its transition shares this frame and must
+	// not be rested, so the body warps alone by generation instead of with
+	// DisableAnimations (the one-switch rule).
+	if wm.body.phase != bodyIdle {
+		if paneMotionPending {
+			wm.body.warpBodyOnly()
+		} else {
+			wm.body.warp(c)
+		}
+	}
+	s.ReleaseTabGhosts()
 	if event.TabID != activeID || activeIndex < 0 {
 		wm.finish()
 		// A ghost retained for a Tab this view no longer shows has no run to
@@ -1340,6 +1386,13 @@ func (wm *workspacePaneMotion) nativeMoved(id model.PaneID) bool {
 // flight box, whose slot and column insets would corrupt the next event's
 // final geometry.
 func (wm *workspacePaneMotion) recordPane(id model.PaneID, slot, column, body ui.Rect, framed bool) {
+	if wm.body != nil {
+		// The body's Enter/Exit moves its whole child in the layout; the Pane
+		// rectangles the next event starts from must be the untransformed
+		// final-layout boxes, not the animated show positions.
+		off := wm.body.recordOffset
+		slot, column, body = off.untranslate(slot), off.untranslate(column), off.untranslate(body)
+	}
 	if wm.nativeMoved(id) {
 		if end, ok := wm.run.final[id]; ok {
 			wm.rects[id] = end
@@ -1368,7 +1421,13 @@ func (wm *workspacePaneMotion) recordPane(id model.PaneID, slot, column, body ui
 // computed in. It changes only with the window or the side panel, so the
 // previous frame's box is the region the change happens in.
 func (wm *workspacePaneMotion) recordRegion(region ui.Element) {
-	wm.region = region.LayoutBounds()
+	r := region.LayoutBounds()
+	if wm.body != nil {
+		// Keep the region in the untransformed final layout while a Tab body
+		// transition moves the whole child.
+		r = wm.body.recordOffset.untranslate(r)
+	}
+	wm.region = r
 }
 
 // nativeCloseEnabled reports that this view animates a close's survivors
@@ -1396,6 +1455,51 @@ func (wm *workspacePaneMotion) nativeReorderEnabled() bool {
 // the previous box to record; an idle Pane's duration is -1 (arrive at once).
 func (wm *workspacePaneMotion) nativeKeys() bool {
 	return wm.mode.native || wm.nativeCloseEnabled() || wm.nativeReorderEnabled()
+}
+
+// paneTransitionInFlight reports that a Pane animation already playing is
+// carried by MyGo's own ElementTransition. DisableAnimations is window-wide,
+// so a body warp must not use it on such a frame even when the layout change
+// that forces the warp records no event (a batch Tab close): the running Pane
+// transition keeps playing (the one-switch rule). An overlay run does not need
+// this protection; DisableAnimations does not touch it.
+func (wm *workspacePaneMotion) paneTransitionInFlight() bool {
+	run := wm.run
+	if run == nil {
+		return false
+	}
+	switch run.kind {
+	case motion.PaneOpen:
+		return wm.mode.native && run.native
+	case motion.PaneClose:
+		return run.native && !run.magnified
+	case motion.PaneReorder:
+		return len(run.nativePanes) > 0
+	}
+	return false
+}
+
+// paneMotionUsesMyGo reports that the unseen event on this frame starts a Pane
+// animation carried by MyGo's own ElementTransition rather than the opaque
+// overlay. Only those transitions respond to DisableAnimations, so only they
+// keep a Tab body warp from using it on their frame: the Pane's own switch is
+// still on, and the one-switch rule must hold. A hidden or still window
+// animates nothing.
+func (wm *workspacePaneMotion) paneMotionUsesMyGo(c *ui.Context, setting domainpreferences.Motion,
+	event motion.Event, firstFrame, hidden, wasHidden bool) bool {
+	if firstFrame || hidden || wasHidden || c.Preferences().ReduceMotion {
+		return false
+	}
+	switch event.Kind {
+	case motion.PaneOpen:
+		// The native open route is test-only; production overlays it.
+		return wm.mode.native && motion.Enabled(setting, motion.PaneOpen)
+	case motion.PaneClose:
+		return !wm.mode.overlayClose && motion.Enabled(setting, motion.PaneClose)
+	case motion.PaneReorder:
+		return !wm.mode.overlayReorder && motion.Enabled(setting, motion.PaneReorder)
+	}
+	return false
 }
 
 // nativeTransition is the native no-reflow route. A close run's survivors get

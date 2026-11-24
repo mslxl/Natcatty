@@ -303,11 +303,23 @@ type State struct {
 	// view decides whether to animate it or warp to the final layout.
 	motionEvent motion.Event
 	motionSeq   uint64
+	// bodyWarpSeq counts layout changes that intentionally record no motion
+	// event but must make the body jump to the final layout. The body runtime
+	// reads it on every frame: a batch Tab close closes several Tabs with no
+	// per-Tab animation, so the whole body warps instead of letting the run
+	// already playing finish (ticket 19). A separate sequence keeps the
+	// no-event expectations of the motion event stream intact.
+	bodyWarpSeq uint64
 	// closing keeps the Surfaces of Panes whose PaneClose event the view has
 	// not drawn yet. The view takes one with TakePaneGhost; a newer layout
 	// change or the app's shutdown releases any still here, so a delayed
 	// surface never leaks.
 	closing map[model.PaneID]*PaneGhost
+	// closingTabs keeps the whole body of a Tab whose TabClose event the view
+	// has not drawn yet. The view takes one with TakeTabGhost; a newer layout
+	// change or the app's shutdown releases any still here, so the Tab's
+	// Surfaces never leak.
+	closingTabs map[model.TabID]*TabGhost
 	// hostLabel resolves a Host's current label, so an open Tab follows a Vault
 	// rename. Nil falls back to the descriptor's label snapshot.
 	hostLabel func(model.HostID) (string, bool)
@@ -645,6 +657,22 @@ func (s *State) MotionEvent() (motion.Event, bool) {
 	return s.motionEvent, true
 }
 
+// BodyWarpSeq returns the count of layout changes that record no motion event
+// but must make the Tab body final on the next frame. A batch Tab close is the
+// case: ticket 19 says closing several Tabs warps with no per-Tab animation.
+// The value is a change signal, not geometry; reading it on an idle body is a
+// no-op.
+func (s *State) BodyWarpSeq() uint64 {
+	return s.bodyWarpSeq
+}
+
+// recordBodyWarp marks a layout change that has no motion event and must not
+// animate. It is deliberately not recordMotion: no view may play a per-Tab
+// event for it, and the motion event stream keeps its no-event contract.
+func (s *State) recordBodyWarp() {
+	s.bodyWarpSeq++
+}
+
 // recordMotion stamps event with the next sequence and keeps it as the
 // latest. The state records events even while motion is off; the view decides
 // to warp.
@@ -694,6 +722,34 @@ func (s *State) ReleasePaneGhosts() {
 		delete(s.closing, id)
 		ghost.Release()
 	}
+}
+
+// TakeTabGhost hands a retained closing Tab to the view, which owns the ghost
+// until it calls Release. It reports false when the Tab was closed eagerly
+// (motion off, a non-current close) or another view already took it.
+func (s *State) TakeTabGhost(id model.TabID) (*TabGhost, bool) {
+	ghost, ok := s.closingTabs[id]
+	if !ok {
+		return nil, false
+	}
+	delete(s.closingTabs, id)
+	return ghost, true
+}
+
+// ReleaseTabGhosts closes every retained closing Tab that no view took. A
+// newer layout change supersedes their events, so the whole body's surfaces
+// must not outlive it.
+func (s *State) ReleaseTabGhosts() {
+	for id, ghost := range s.closingTabs {
+		delete(s.closingTabs, id)
+		ghost.Release()
+	}
+}
+
+// TabIndexByID returns the index of the Tab with id in the main window.
+func (s *State) TabIndexByID(id model.TabID) (int, bool) {
+	_, index := s.tabByID(id)
+	return index, index >= 0
 }
 
 // WithHostLabel supplies a Host's current label so open Tabs follow a Vault
@@ -805,13 +861,14 @@ func (s *State) clearPending(label string) {
 }
 
 // Shutdown cancels pending connections and trust prompts, and releases any
-// closing Pane whose ghost no view will draw. The app calls it on quit, before
-// closing Sessions.
+// closing Pane or Tab whose ghost no view will draw. The app calls it on quit,
+// before closing Sessions.
 func (s *State) Shutdown() {
 	if s.cancel != nil {
 		s.cancel()
 	}
 	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
 }
 
 // VaultVisible reports whether the main window shows the Vault rather than a
@@ -1087,10 +1144,15 @@ func (s *State) NewTabWithShell(shell string) error {
 	tab.attachOnlySession(session, surface)
 	s.tabs = append(s.tabs, tab)
 	s.active = len(s.tabs) - 1
+	// The new Tab's body enters; a PaneClose or TabClose the view has not
+	// drawn yet is superseded.
+	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
 	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
 	s.sftpVisible = false
+	s.recordMotion(motion.Event{Kind: motion.TabOpen, TabID: tab.ID, At: time.Now()})
 	s.save()
 	s.RequestRedraw()
 	return nil
@@ -1482,11 +1544,16 @@ func (s *State) Flush() {
 		}
 		s.tabs = append(s.tabs, tab)
 		s.active = len(s.tabs) - 1
+		// A Host Tab attached by this frame is a new current Tab; any close
+		// the view still had in flight is superseded.
+		s.ReleasePaneGhosts()
+		s.ReleaseTabGhosts()
 		s.leaveMonitor()
 		s.vaultVisible = false
 		s.logsVisible = false
 		s.sftpVisible = false
 		s.setProblem(nil)
+		s.recordMotion(motion.Event{Kind: motion.TabOpen, TabID: tab.ID, At: time.Now()})
 		s.save()
 		if !outcome.startup.Empty() {
 			// Line-by-line delivery waits between chunks, so it cannot run on

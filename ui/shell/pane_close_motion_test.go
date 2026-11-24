@@ -887,8 +887,9 @@ func TestPaneClosePendingAndFailedPanesKeepTheirBody(t *testing.T) {
 }
 
 // TestPaneCloseOfTheLastPaneRoutesToTabClose keeps the last-Pane path out of
-// Pane motion: closing it closes its Tab, records no PaneClose event, and
-// destroys the surface once instead of retaining a ghost the view cannot draw.
+// Pane motion: closing it closes its Tab and records the TabClose that took
+// the Tab away instead of a PaneClose. The Tab body's exit copy keeps each
+// Surface until it is released, and then each Surface is destroyed once.
 func TestPaneCloseOfTheLastPaneRoutesToTabClose(t *testing.T) {
 	g := motionGraph(t, paneClosePreferences(true, true, domainpreferences.MotionPopin))
 	if err := g.state.NewTab(); err != nil {
@@ -898,8 +899,8 @@ func TestPaneCloseOfTheLastPaneRoutesToTabClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForRealSurfaces(t, g.state, 2)
-	if event, ok := g.state.MotionEvent(); ok {
-		t.Fatalf("creating the Tabs recorded a motion event: %+v", event)
+	if event, ok := g.state.MotionEvent(); !ok || event.Kind != motion.TabOpen {
+		t.Fatalf("creating the Tabs recorded %+v, want their TabOpen", event)
 	}
 	if !g.state.CloseFocusedPane() {
 		t.Fatalf("closing the active Tab's only Pane returned false")
@@ -907,18 +908,28 @@ func TestPaneCloseOfTheLastPaneRoutesToTabClose(t *testing.T) {
 	if got := g.state.TabCount(); got != 1 {
 		t.Fatalf("the Tab count after the last-Pane close = %d, want 1", got)
 	}
-	if event, ok := g.state.MotionEvent(); ok {
-		t.Fatalf("closing the last Pane recorded a Pane motion event: %+v", event)
+	event, ok := g.state.MotionEvent()
+	if !ok || event.Kind != motion.TabClose || event.TargetTabID == "" {
+		t.Fatalf("closing the last Pane recorded %+v, want the TabClose onto a replacement", event)
 	}
+	if event.Kind == motion.PaneClose {
+		t.Fatalf("closing the last Pane recorded a PaneClose: %+v", event)
+	}
+	g.state.ReleaseTabGhosts()
 	if !g.state.CloseFocusedPane() {
 		t.Fatalf("closing the remaining Tab's only Pane returned false")
 	}
 	if got := g.state.TabCount(); got != 0 {
 		t.Fatalf("the Tab count after both last-Pane closes = %d, want 0", got)
 	}
-	if event, ok := g.state.MotionEvent(); ok {
-		t.Fatalf("the final last-Pane close recorded a Pane motion event: %+v", event)
+	event, ok = g.state.MotionEvent()
+	if !ok || event.Kind != motion.TabClose || event.TargetTabID != "" {
+		t.Fatalf("the final last-Pane close recorded %+v, want a TabClose with no replacement", event)
 	}
+	if event.Kind == motion.PaneClose {
+		t.Fatalf("the final last-Pane close recorded a PaneClose: %+v", event)
+	}
+	g.state.ReleaseTabGhosts()
 	for i, surface := range g.factory.all() {
 		if got := surface.Closes(); got != 1 {
 			t.Errorf("surface %d closed %d times, want once", i+1, got)
@@ -1383,9 +1394,13 @@ func TestPaneCloseMagnifiedStartsFromTheFullWindowAndRevealsTheFinalSplit(t *tes
 		t.Fatalf("the last Pane's close left %d Tabs, want 0", got)
 	}
 	after, ok := g.state.MotionEvent()
-	if !ok || after.Seq != previous.Seq || after.Kind != motion.PaneClose {
-		t.Fatalf("the last Pane's close recorded a new event: %+v (was %+v)", after, previous)
+	if !ok || after.Kind != motion.TabClose || after.TabID != previous.TabID {
+		t.Fatalf("the last Pane's close recorded %+v, want the TabClose of %q (was %+v)", after, previous.TabID, previous)
 	}
+	if after.Kind == motion.PaneClose {
+		t.Fatalf("the last Pane's close recorded a PaneClose: %+v", after)
+	}
+	g.state.ReleaseTabGhosts()
 	tt.Frame()
 	if wm.run != nil {
 		t.Fatalf("the last Pane's close started a Pane run")

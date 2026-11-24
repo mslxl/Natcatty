@@ -379,6 +379,9 @@ func TestCloseActiveTabClosesItsSessionAndSurface(t *testing.T) {
 	if !graph.state.CloseActiveTab() {
 		t.Fatal("CloseActiveTab returned false")
 	}
+	// The closing body is retained for its exit copy; with no view here,
+	// release it as the view does when the copy is gone.
+	graph.state.ReleaseTabGhosts()
 	if !graph.surface.closed {
 		t.Error("the tab's surface was not closed")
 	}

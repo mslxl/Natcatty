@@ -1,8 +1,11 @@
 package state
 
 import (
+	"time"
+
 	"github.com/mslxl/natcatty/domain/model"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
+	"github.com/mslxl/natcatty/ui/motion"
 )
 
 // FocusSession makes the Tab that owns the live Session active and gives the
@@ -151,14 +154,30 @@ func (t *Tab) livePaneWithHost(hostID model.HostID) (model.PaneID, bool) {
 }
 
 // focusPane makes tab active, focuses paneID, hides the Vault, and persists
-// the selection.
+// the selection. Choosing a different Tab records a TabSwitch, with the
+// direction taken before the active index changes; focusing a Pane in the
+// already-active Tab changes no body.
 func (s *State) focusPane(index int, tab *Tab, paneID model.PaneID) {
+	changed := index != s.active
+	direction := tabDirection(s.active, index)
+	s.ReleasePaneGhosts()
+	if changed {
+		s.ReleaseTabGhosts()
+	}
 	s.active = index
 	tab.setFocus(paneID)
 	tab.Dirty = false
 	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
+	if changed {
+		s.recordMotion(motion.Event{
+			Kind:      motion.TabSwitch,
+			TabID:     tab.ID,
+			Direction: direction,
+			At:        time.Now(),
+		})
+	}
 	s.save()
 	s.RequestRedraw()
 }

@@ -377,6 +377,11 @@ func TestShellShowsTheSiblingAfterAMagnifiedPaneJoinsAnotherTab(t *testing.T) {
 	graph.waitForSurfaces(t, 3)
 	graph.state.SelectTab(0)
 	tt.Frame()
+	// Let the body switch settle: the drag below targets what the screen
+	// shows, and a transition in flight paints at a different place than
+	// the pointer boxes it hit-tests against.
+	tt.Advance(300 * time.Millisecond)
+	tt.Frame()
 
 	handle, ok := tt.Find("::")
 	if !ok {

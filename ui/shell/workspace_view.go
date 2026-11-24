@@ -60,6 +60,11 @@ type tabRef struct {
 	// motion is the window's Pane motion runtime; nil in a renderer that
 	// does not animate (the Follow and top-down routes, until their ticket).
 	motion *workspacePaneMotion
+	// inert draws a still copy of a Tab for a Tab-body transition. It shows
+	// the split tree and headers the live Tab shows, but its Surfaces use
+	// ViewInert, its header holds no commands, and it never records motion
+	// geometry or asks for focus.
+	inert bool
 }
 
 // mainTabRef binds the split renderer to a Tab in the window that owns it. A
@@ -392,7 +397,7 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 	paneNumber := *ordinal
 	if aware, ok := info.Surface.(interface {
 		SetPaneActions(sessionui.PaneActions)
-	}); ok {
+	}); ok && !ref.inert {
 		// Rename starts from the connection label, as the original's does, not
 		// from a live OSC title that the user did not choose.
 		renameStart := info.Label
@@ -548,7 +553,7 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	// A detached window's lone Pane is already named by the window's title
 	// bar, as the original's terminal popup, so it shows no header of its own
 	// unless it has a status to report.
-	lone := !ref.managesPanes && !ref.split
+	lone := !ref.managesPanes && !ref.split && !ref.inert
 	if lone && !info.Pending && !(info.Focused && ref.status.text != "" && !ref.status.settled) {
 		return
 	}
@@ -569,7 +574,7 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 			} else {
 				titleElement.TextColor(t.TextMuted)
 			}
-			if titleElement.Clicked() {
+			if titleElement.Clicked() && !ref.inert && ref.focus != nil {
 				if ref.focus(info.ID) {
 					c.Invalidate()
 				}
@@ -671,6 +676,12 @@ func paneTitle(m locales.Messages, info state.PaneInfo) string {
 
 func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	ref tabRef, info state.PaneInfo) {
+	if ref.inert {
+		// A still copy: the Surface paints its retained screen without taking
+		// focus, rebuilding a terminal, or resizing a grid.
+		paneMotionBody(c, m, t, info)
+		return
+	}
 	switch {
 	case info.Err != nil:
 		// A missing Host cannot come back by retrying, so it keeps the shell's

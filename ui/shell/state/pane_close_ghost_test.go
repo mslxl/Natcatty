@@ -102,7 +102,8 @@ func TestPaneGhostIsReleasedWhenSupersededOrShutDown(t *testing.T) {
 // TestPaneCloseWhileMagnifiedRecordsTheFullWindowStart checks the state's half
 // of the magnified contract: the event names the closed magnified Pane and
 // carries Magnified so the view starts its ghost from the full pane region.
-// The last-Pane path still records no PaneClose.
+// The last-Pane path still records no PaneClose; it records the TabClose that
+// took the Pane's Tab away.
 func TestPaneCloseWhileMagnifiedRecordsTheFullWindowStart(t *testing.T) {
 	graph := newWorkspaceGraphWithOptions(t, WithMotion(paneCloseMotion))
 	if err := graph.state.NewTab(); err != nil {
@@ -139,7 +140,21 @@ func TestPaneCloseWhileMagnifiedRecordsTheFullWindowStart(t *testing.T) {
 		t.Fatalf("the last Pane's close left %d Tabs, want 0", got)
 	}
 	after, ok := graph.state.MotionEvent()
-	if !ok || after.Seq != event.Seq {
-		t.Fatalf("the last Pane's close recorded a new event: %+v (was %+v)", after, event)
+	if !ok || after.Kind != motion.TabClose || after.TabID != event.TabID || after.TargetTabID != "" {
+		t.Fatalf("the last Pane's close recorded %+v, want the TabClose of %q with no replacement", after, event.TabID)
 	}
+	if after.Kind == motion.PaneClose {
+		t.Fatalf("the last Pane's close recorded a PaneClose: %+v", after)
+	}
+	// The whole body was snapshotted before the Pane left the Tab, so the Tab
+	// close's exit shows the closing Pane rather than a blank body.
+	body, ok := graph.state.TakeTabGhost(after.TabID)
+	if !ok {
+		t.Fatal("the last Pane's Tab close retained no whole body")
+	}
+	if len(body.Panes) != 1 || body.Panes[0].Info.ID != right {
+		t.Fatalf("the retained body has %d Panes, want the closing Pane %q", len(body.Panes), right)
+	}
+	body.Release()
+	graph.state.ReleaseTabGhosts()
 }

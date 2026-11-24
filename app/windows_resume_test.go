@@ -352,6 +352,9 @@ func TestExplicitTabCloseDiscardsETResume(t *testing.T) {
 	if !graph.state.CloseTab(0) {
 		t.Fatal("CloseTab returned false")
 	}
+	// This graph has no view to draw the close, so hand the Tab body's
+	// retained ghost back as the end of the exit animation would.
+	graph.state.ReleaseTabGhosts()
 	waitForTransportDone(t, transport)
 	if got := transport.discards(); got == 0 {
 		t.Fatal("an explicit Tab close kept the ET resume credentials")
