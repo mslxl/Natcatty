@@ -37,13 +37,15 @@ index 59f5db51..e7abd7b8 100644
  	}
  	if target.editor != nil {
  		target.editor.pressMods = mods
-@@ -1142,6 +1159,12 @@ func (rt *engine) keyDownPhysical(mods Modifiers, key, physical Key, code KeyCod
+@@ -1142,6 +1159,14 @@ func (rt *engine) keyDownPhysical(mods Modifiers, key, physical Key, code KeyCod
  		// Windows, leaves it rather than pasting a second time.
  		return true
  	}
 +	// The focus may have left a selectable paragraph since the drag, and its
-+	// Copy key must still copy the selection the user sees.
-+	if !rt.claimed(k) && k.mods == Cmd && k.key == KeyC && rt.copyTextSelection() {
++	// Copy key must still copy the selection the user sees. Outside macOS the
++	// Copy chord is Control+Shift+C, since a terminal keeps plain Control+C
++	// for the program (see Natcatty's appview.CopyKey).
++	if !rt.claimed(k) && k.key == KeyC && (k.mods == Cmd || k.mods == Cmd|Shift) && rt.copyTextSelection() {
 +		rt.requestFrame()
 +		return false
 +	}
