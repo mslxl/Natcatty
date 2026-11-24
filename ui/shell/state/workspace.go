@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	appsession "github.com/mslxl/natcatty/application/session"
@@ -114,6 +115,29 @@ type PaneInfo struct {
 	Pending bool
 	Err     error
 	Surface Surface
+}
+
+// PaneGhost is the closed Pane a PaneClose animation draws while its surface
+// must stay alive. CloseFocusedPane removes the Pane from its Tab and records
+// the event, but does not destroy the Pane's Session or Surface: the view
+// takes the ghost with TakePaneGhost, draws its still frame as the exit
+// ghost, and calls Release when the run ends or warps. Release is idempotent,
+// so the same Surface is never closed twice.
+type PaneGhost struct {
+	ID   model.PaneID
+	Info PaneInfo
+
+	once    sync.Once
+	release func()
+}
+
+// Release destroys the Pane's Surface and Session. It is safe to call more
+// than once and on a nil ghost.
+func (g *PaneGhost) Release() {
+	if g == nil {
+		return
+	}
+	g.once.Do(g.release)
 }
 
 // DetachedTabInfo describes a Tab that left the main window and now belongs to
@@ -443,6 +467,8 @@ func (s *State) SelectTab(index int) {
 	if index < 0 || index >= len(s.tabs) {
 		return
 	}
+	// Leaving the Tab supersedes a PaneClose the view has not drawn yet.
+	s.ReleasePaneGhosts()
 	s.active = index
 	s.tabs[index].Dirty = false
 	s.leaveMonitor()
@@ -554,6 +580,9 @@ func (s *State) CloseTab(index int) bool {
 	if index < 0 || index >= len(s.tabs) {
 		return false
 	}
+	// A Tab close supersedes a PaneClose the view has not drawn yet; ticket 19
+	// owns the Tab body animation.
+	s.ReleasePaneGhosts()
 	tab := s.tabs[index]
 	s.closeTab(tab, false)
 	s.removeTabAt(index)
@@ -567,6 +596,7 @@ func (s *State) CloseOtherTabs(index int) bool {
 	if index < 0 || index >= len(s.tabs) {
 		return false
 	}
+	s.ReleasePaneGhosts()
 	keep := s.tabs[index]
 	closed := false
 	for _, tab := range s.tabs {
@@ -597,6 +627,7 @@ func (s *State) CloseTabsRight(index int) bool {
 	if index == len(s.tabs)-1 {
 		return false
 	}
+	s.ReleasePaneGhosts()
 	for _, tab := range s.tabs[index+1:] {
 		s.closeTab(tab, false)
 	}
@@ -735,6 +766,8 @@ func (s *State) DetachTab(index int) bool {
 	if index < 0 || index >= len(s.tabs) {
 		return false
 	}
+	// The main window's view cannot draw a ghost for a Tab that left it.
+	s.ReleasePaneGhosts()
 	tab := s.tabs[index]
 	s.removeTabAt(index)
 	s.detached = append(s.detached, tab)
@@ -896,6 +929,9 @@ func (s *State) DetachPane(tabIndex int, paneID model.PaneID) bool {
 	if focused != nil {
 		focusedID = focused.ID
 	}
+	// Detaching changes the layout; a PaneClose the view has not drawn yet is
+	// superseded.
+	s.ReleasePaneGhosts()
 	root, err := domainworkspace.RemovePane(tab.Root, paneID)
 	if err != nil {
 		return false
@@ -970,6 +1006,7 @@ func (s *State) ActiveSessionCountDetached(id model.TabID) int {
 // windows before OnWillQuit runs, so this is the only point where the
 // credentials can still be preserved.
 func (s *State) CloseMainSessionsPreserving() {
+	s.ReleasePaneGhosts()
 	for _, tab := range s.tabs {
 		s.closeTab(tab, true)
 	}
@@ -1210,6 +1247,8 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 	if s.sessions == nil || s.surfaces == nil {
 		return ErrNoSessions
 	}
+	// A split supersedes a PaneClose the view has not drawn yet.
+	s.ReleasePaneGhosts()
 	value, focusedID := tab.focusedPane()
 	if value == nil {
 		return ErrNoActiveTab
@@ -1269,6 +1308,8 @@ func (s *State) TogglePaneZoom() bool {
 	if focusedID == "" {
 		return false
 	}
+	// A zoom supersedes a PaneClose the view has not drawn yet.
+	s.ReleasePaneGhosts()
 	if tab.Magnified == focusedID {
 		tab.Magnified = ""
 	} else {
@@ -1296,6 +1337,8 @@ func (s *State) SetMagnifiedPane(index int, paneID model.PaneID) bool {
 	if paneID != "" && !domainworkspace.ContainsPane(tab.Root, paneID) {
 		return false
 	}
+	// A zoom supersedes a PaneClose the view has not drawn yet.
+	s.ReleasePaneGhosts()
 	tab.Magnified = paneID
 	// The zoomed Pane is the only visible member, so it must also hold focus.
 	// Otherwise the keyboard and compose target would stay on a hidden Pane.
@@ -1314,7 +1357,8 @@ func (s *State) SplitDown() error { return s.SplitFocusedPane(domainworkspace.Si
 
 // CloseFocusedPane closes the focused Pane and collapses its sibling subtree.
 // Closing the last Pane closes its Tab. Focus moves to a deterministic
-// remaining Pane.
+// remaining Pane. A non-last Pane records a PaneClose event; its Surface is
+// kept alive until the view finishes the exit ghost, then released.
 func (s *State) CloseFocusedPane() bool {
 	tab, index := s.activeTab()
 	if tab == nil {
@@ -1333,7 +1377,25 @@ func (s *State) CloseFocusedPane() bool {
 		return false
 	}
 	next := domainworkspace.FocusAfterRemove(root, focusedID, focusedID)
-	s.closePane(value, false)
+	// A second close before the view drew the first one supersedes it: only
+	// the latest event animates, so the older retained Surface is released now.
+	s.ReleasePaneGhosts()
+	// Capture what the ghost draws before the Pane leaves the tree. The info's
+	// Surface stays the live one until Release; Err and Pending make the ghost
+	// keep the error or the placeholder instead of going blank.
+	info, haveInfo := s.paneInfo(tab, focusedID)
+	magnified := tab.Magnified == focusedID
+	switch {
+	case next == "":
+		// This is a Tab close, not a Pane close: no ghost and no PaneClose
+		// event (ticket 19 owns the Tab animation).
+		s.closePane(value, false)
+	case haveInfo && motion.Enabled(s.Motion(), motion.PaneClose):
+		s.keepPaneGhost(focusedID, info, value)
+	default:
+		// Motion off: nothing would draw the retained Surface.
+		s.closePane(value, false)
+	}
 	delete(tab.panes, focusedID)
 	tab.Root = root
 	tab.clearStaleMagnification()
@@ -1342,6 +1404,14 @@ func (s *State) CloseFocusedPane() bool {
 	}
 	tab.setFocus(next)
 	s.refreshBroadcastState()
+	s.recordMotion(motion.Event{
+		Kind:      motion.PaneClose,
+		TabID:     tab.ID,
+		PaneID:    focusedID,
+		TargetID:  next,
+		Magnified: magnified,
+		At:        time.Now(),
+	})
 	s.save()
 	s.RequestRedraw()
 	return true
@@ -1522,6 +1592,8 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 	if !ok || !side.Valid() {
 		return false
 	}
+	// A Pane move supersedes a PaneClose the view has not drawn yet.
+	s.ReleasePaneGhosts()
 	source, target := plan.source, plan.target
 	sourceIndex, targetIndex := plan.sourceIndex, plan.targetIndex
 	value, emptyTarget := plan.value, plan.emptyTarget

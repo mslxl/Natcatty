@@ -28,17 +28,44 @@ type recordingTerminalTransport struct {
 	mu      sync.Mutex
 	resizes []appview.Size
 	writes  []byte
+	output  chan []byte
 	closed  chan struct{}
 	once    sync.Once
 }
 
 func newRecordingTerminalTransport() *recordingTerminalTransport {
-	return &recordingTerminalTransport{closed: make(chan struct{})}
+	return &recordingTerminalTransport{
+		output: make(chan []byte, 8),
+		closed: make(chan struct{}),
+	}
 }
 
 func (t *recordingTerminalTransport) Read(p []byte) (int, error) {
-	<-t.closed
-	return 0, io.EOF
+	select {
+	case data := <-t.output:
+		return copy(p, data), nil
+	case <-t.closed:
+		return 0, io.EOF
+	}
+}
+
+// feed sends screen output to the terminal, so a test can put content on the
+// terminal the ghost draws. It is the fake PTY's program talking.
+func (t *recordingTerminalTransport) feed(data []byte) {
+	select {
+	case t.output <- append([]byte(nil), data...):
+	case <-t.closed:
+	}
+}
+
+// isClosed reports that the terminal closed this transport.
+func (t *recordingTerminalTransport) isClosed() bool {
+	select {
+	case <-t.closed:
+		return true
+	default:
+		return false
+	}
 }
 
 // Write records what the terminal sends the program, so a test can prove a
@@ -127,6 +154,14 @@ type realTerminalSurface struct {
 	focused      bool
 	focusPending bool
 	liveFocused  bool
+
+	// closeMu guards closeCount, the number of Close calls. A ghost's retained
+	// surface must be closed exactly once, however many release paths run.
+	closeMu    sync.Mutex
+	closeCount int
+	// dead makes ViewInert take the blank last-resort route, as a Surface that
+	// cannot draw a still copy would.
+	dead bool
 }
 
 func newRealTerminalSurface() (*realTerminalSurface, error) {
@@ -203,11 +238,25 @@ func (s *realTerminalSurface) view(c *ui.Context, focused bool) ui.Element {
 func (s *realTerminalSurface) LiveFocused() bool { return s.liveFocused }
 
 func (s *realTerminalSurface) Close() {
+	s.closeMu.Lock()
+	s.closeCount++
+	s.closeMu.Unlock()
 	if s.term != nil {
 		_ = s.term.Close()
 	}
 	_ = s.transport.Close()
 }
+
+// Closes is how many times this surface was closed. A retained ghost surface
+// must close once, whether the run ends, warps, or is superseded.
+func (s *realTerminalSurface) Closes() int {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	return s.closeCount
+}
+
+// feed puts text on this Pane's terminal screen, as its program would.
+func (s *realTerminalSurface) feed(text string) { s.transport.feed([]byte(text)) }
 
 // inertSurfaceKey identifies a still copy's live container apart from the real
 // Pane's.
@@ -217,7 +266,9 @@ type inertSurfaceKey struct{ surface *realTerminalSurface }
 // grid math, delivers no PTY resize, reports no viewport, and never asks for
 // focus. The real Pane keeps the live View.
 func (s *realTerminalSurface) ViewInert(c *ui.Context) ui.Element {
-	if s.term == nil {
+	if s.term == nil || s.dead {
+		// The blank last resort: the ghost's own opaque background remains; no
+		// live terminal content is drawn.
 		return ui.Column(c).Fill()
 	}
 	cols, rows := s.term.Size()

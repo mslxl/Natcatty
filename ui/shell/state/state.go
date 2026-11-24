@@ -303,6 +303,11 @@ type State struct {
 	// view decides whether to animate it or warp to the final layout.
 	motionEvent motion.Event
 	motionSeq   uint64
+	// closing keeps the Surfaces of Panes whose PaneClose event the view has
+	// not drawn yet. The view takes one with TakePaneGhost; a newer layout
+	// change or the app's shutdown releases any still here, so a delayed
+	// surface never leaks.
+	closing map[model.PaneID]*PaneGhost
 	// hostLabel resolves a Host's current label, so an open Tab follows a Vault
 	// rename. Nil falls back to the descriptor's label snapshot.
 	hostLabel func(model.HostID) (string, bool)
@@ -652,6 +657,45 @@ func (s *State) recordMotion(event motion.Event) {
 	s.motionEvent = event
 }
 
+// keepPaneGhost retains a closed Pane's Surface for the view's exit ghost.
+// The caller has already removed the Pane from its Tab and must not close it
+// itself.
+func (s *State) keepPaneGhost(id model.PaneID, info PaneInfo, value *pane) {
+	if s.closing == nil {
+		s.closing = map[model.PaneID]*PaneGhost{}
+	}
+	s.closing[id] = &PaneGhost{
+		ID:   id,
+		Info: info,
+		release: func() {
+			s.closePane(value, false)
+		},
+	}
+}
+
+// TakePaneGhost hands a retained closing Pane to the view, which owns the
+// ghost until it calls Release. It reports false when the Pane was closed
+// eagerly (motion off) or another view already took it.
+func (s *State) TakePaneGhost(id model.PaneID) (*PaneGhost, bool) {
+	ghost, ok := s.closing[id]
+	if !ok {
+		return nil, false
+	}
+	delete(s.closing, id)
+	return ghost, true
+}
+
+// ReleasePaneGhosts closes every retained closing Pane that no view took. A
+// new layout change supersedes their events, so their ghosts must not outlive
+// it. The view calls this when it consumes an event that is not the PaneClose
+// that retained them.
+func (s *State) ReleasePaneGhosts() {
+	for id, ghost := range s.closing {
+		delete(s.closing, id)
+		ghost.Release()
+	}
+}
+
 // WithHostLabel supplies a Host's current label so open Tabs follow a Vault
 // rename. The getter runs on the UI thread.
 func WithHostLabel(label func(model.HostID) (string, bool)) Option {
@@ -760,12 +804,14 @@ func (s *State) clearPending(label string) {
 	}
 }
 
-// Shutdown cancels pending connections and trust prompts. The app calls it on
-// quit, before closing Sessions.
+// Shutdown cancels pending connections and trust prompts, and releases any
+// closing Pane whose ghost no view will draw. The app calls it on quit, before
+// closing Sessions.
 func (s *State) Shutdown() {
 	if s.cancel != nil {
 		s.cancel()
 	}
+	s.ReleasePaneGhosts()
 }
 
 // VaultVisible reports whether the main window shows the Vault rather than a

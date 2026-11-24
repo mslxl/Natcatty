@@ -222,6 +222,131 @@ func TestResolveEdgePicksTheNearestContentEdge(t *testing.T) {
 	}
 }
 
+func TestExitStylesGeometryAndOpacity(t *testing.T) {
+	from := ui.Rect{X: 4, Y: 4, W: 892, H: 560}
+	content := ui.Rect{X: 0, Y: 0, W: 900, H: 600}
+	const eps = 0.01
+	for _, tc := range []struct {
+		name string
+		test func(*testing.T)
+	}{
+		{"popin", func(t *testing.T) {
+			r := ExitRect(from, domainpreferences.MotionPopin, EdgeAuto, content, 0)
+			if r != from {
+				t.Fatalf("popin at 0 = %+v, want the whole Pane %+v", r, from)
+			}
+			r = ExitRect(from, domainpreferences.MotionPopin, EdgeAuto, content, 1)
+			if d := abs(r.W - from.W*0.87); d > eps {
+				t.Fatalf("popin width at rest = %v, want the fixed 87%% of %v", r.W, from.W)
+			}
+			if abs(r.X+r.W/2-(from.X+from.W/2)) > eps ||
+				abs(r.Y+r.H/2-(from.Y+from.H/2)) > eps {
+				t.Fatalf("popin is not centered: %+v", r)
+			}
+			if got := ExitOpacity(domainpreferences.MotionPopin, 1, 0); got != 1 {
+				t.Fatalf("popin opacity at 0 = %v, want 1", got)
+			}
+			if got := ExitOpacity(domainpreferences.MotionPopin, 1, 1); got != 0 {
+				t.Fatalf("popin opacity at rest = %v, want 0", got)
+			}
+			// An interrupted popin starts from what it showed.
+			if got := ExitOpacity(domainpreferences.MotionPopin, 0.4, 0); abs(got-0.4) > eps {
+				t.Fatalf("interrupted popin opacity at 0 = %v, want 0.4", got)
+			}
+		}},
+		{"slide", func(t *testing.T) {
+			// The Pane fills the content, so the nearest edge is a tie; the
+			// slide still leaves by one Pane width from that edge.
+			r := ExitRect(from, domainpreferences.MotionSlide, EdgeAuto, content, 0)
+			if r != from {
+				t.Fatalf("slide at 0 = %+v, want %+v", r, from)
+			}
+			r = ExitRect(from, domainpreferences.MotionSlide, EdgeAuto, content, 1)
+			if r.W != from.W || r.H != from.H {
+				t.Fatalf("slide size = %vx%v, want the Pane %vx%v", r.W, r.H, from.W, from.H)
+			}
+			moved := abs(r.X-from.X) >= from.W-eps || abs(r.Y-from.Y) >= from.H-eps
+			if !moved {
+				t.Fatalf("slide at rest = %+v, want one Pane size away from %+v", r, from)
+			}
+			if got := ExitOpacity(domainpreferences.MotionSlide, 1, 0.5); got != 1 {
+				t.Fatalf("slide opacity = %v, want an explicit 1", got)
+			}
+			// An interrupted slide starts from the current opacity and reaches
+			// the style's explicit 1.
+			if got := ExitOpacity(domainpreferences.MotionSlide, 0.4, 0); abs(got-0.4) > eps {
+				t.Fatalf("interrupted slide opacity at 0 = %v, want 0.4", got)
+			}
+			if got := ExitOpacity(domainpreferences.MotionSlide, 0.4, 1); abs(got-1) > eps {
+				t.Fatalf("interrupted slide opacity at rest = %v, want 1", got)
+			}
+		}},
+		{"gnomed", func(t *testing.T) {
+			r := ExitRect(from, domainpreferences.MotionGnomed, EdgeAuto, content, 0)
+			if r != from {
+				t.Fatalf("gnomed at 0 = %+v, want %+v", r, from)
+			}
+			r = ExitRect(from, domainpreferences.MotionGnomed, EdgeAuto, content, 0.5)
+			if r.W != from.W || abs(r.H-from.H*0.5) > eps ||
+				abs(r.Y+r.H-(from.Y+from.H)) > eps {
+				t.Fatalf("gnomed halfway = %+v, want the width fixed, half height, bottom at %v",
+					r, from.Y+from.H)
+			}
+			if r := ExitRect(from, domainpreferences.MotionGnomed, EdgeAuto, content, 1); r.H != 0 {
+				t.Fatalf("gnomed at rest = %+v, want no height", r)
+			}
+			if got := ExitOpacity(domainpreferences.MotionGnomed, 1, 0.5); got != 1 {
+				t.Fatalf("gnomed opacity = %v, want an explicit 1", got)
+			}
+		}},
+		{"fade", func(t *testing.T) {
+			for _, k := range []float32{0, 0.4, 1} {
+				if r := ExitRect(from, domainpreferences.MotionFade, EdgeAuto, content, k); r != from {
+					t.Fatalf("fade geometry at %v = %+v, want %+v", k, r, from)
+				}
+			}
+			if got := ExitOpacity(domainpreferences.MotionFade, 1, 0.4); abs(got-0.6) > eps {
+				t.Fatalf("fade opacity at 0.4 = %v, want 0.6", got)
+			}
+		}},
+	} {
+		t.Run(tc.name, tc.test)
+	}
+}
+
+// TestExitAnimationStateMovesFromTheCurrentVisual checks the interruption
+// contract at the animation level: an Exit visual starts where fromOpacity
+// says, so a close during an open does not snap to opaque or transparent.
+func TestExitAnimationStateMovesFromTheCurrentVisual(t *testing.T) {
+	start := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	from := ui.Rect{X: 4, Y: 4, W: 892, H: 560}
+	anim := &Animation{
+		Started:  start,
+		Duration: 150 * time.Millisecond,
+		Visuals: []Visual{{
+			Pane:        "pane-a",
+			Kind:        Exit,
+			Style:       domainpreferences.MotionPopin,
+			From:        from,
+			FromOpacity: 0.4,
+		}},
+	}
+	v, ok := anim.VisualFor("pane-a")
+	if !ok {
+		t.Fatalf("VisualFor did not find the exit visual")
+	}
+	if rect, opacity := anim.State(v, 0); rect != from || abs(opacity-0.4) > 0.001 {
+		t.Fatalf("exit state at 0 = %+v, %v, want %+v, 0.4", rect, opacity, from)
+	}
+	rect, opacity := anim.State(v, 1)
+	if abs(opacity) > 0.001 {
+		t.Fatalf("exit opacity at rest = %v, want 0", opacity)
+	}
+	if abs(rect.W-from.W*0.87) > 0.01 {
+		t.Fatalf("exit width at rest = %v, want 87%% of %v", rect.W, from.W)
+	}
+}
+
 func abs(v float32) float32 {
 	if v < 0 {
 		return -v

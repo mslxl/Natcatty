@@ -72,6 +72,10 @@ type Event struct {
 	// target after the source, -1 before it. For PaneOpen it is +1 when the
 	// new Pane is the split's second child and -1 when it is the first.
 	Direction int
+	// Magnified reports that the event's Pane filled its Tab when the
+	// change happened: a closing Pane's ghost starts from the full-window
+	// box, and the split behind it appears at its final layout.
+	Magnified bool
 	Seq       uint64
 	At        time.Time
 }
@@ -277,6 +281,10 @@ const (
 	Move VisualKind = iota
 	// Enter uses an open style to bring the final body box in.
 	Enter
+	// Exit uses a close style to take the start rect out. The Pane is
+	// already gone: the view keeps its surface alive and draws it as an
+	// opaque ghost until the run ends.
+	Exit
 )
 
 // Visual is one Pane being animated: the content is laid out once at Box
@@ -354,16 +362,16 @@ func (a *Animation) State(v Visual, k float32) (ui.Rect, float32) {
 	switch v.Kind {
 	case Enter:
 		rect = EnterRect(v.To, v.Style, v.Edge, v.Content, k)
+		// A style's own opacity curve is the open contract: popin and fade
+		// go 0 to 1, slide and gnomed stay opaque.
+		return rect, EnterOpacity(v.Style, k)
+	case Exit:
+		rect = ExitRect(v.From, v.Style, v.Edge, v.Content, k)
+		return rect, ExitOpacity(v.Style, v.FromOpacity, k)
 	default:
 		rect = LerpRect(v.From, v.To, k)
 	}
-	opacity := Lerp(v.FromOpacity, v.ToOpacity, k)
-	if v.Kind == Enter {
-		// A style's own opacity curve is the open contract: popin and fade
-		// go 0 to 1, slide and gnomed stay opaque.
-		opacity = EnterOpacity(v.Style, k)
-	}
-	return rect, opacity
+	return rect, Lerp(v.FromOpacity, v.ToOpacity, k)
 }
 
 // Lerp moves a to b by k.
@@ -424,6 +432,54 @@ func EnterOpacity(style domainpreferences.MotionStyle, k float32) float32 {
 		return k
 	default:
 		return 1
+	}
+}
+
+// ExitRect is the visual rect a Pane with a close style has at eased
+// progress k. from is the whole-Pane rect it showed when the close began;
+// content is the area whose nearest edge a slide leaves towards. popin
+// shrinks around from's center to the fixed 87%, slide leaves by 100% of
+// the Pane's size, gnomed folds up to its bottom edge with the width
+// fixed, and fade keeps the geometry.
+func ExitRect(from ui.Rect, style domainpreferences.MotionStyle, edge Edge, content ui.Rect, k float32) ui.Rect {
+	switch style {
+	case domainpreferences.MotionPopin:
+		scale := 1 - (1-PopinStartScale)*k
+		cx, cy := from.X+from.W/2, from.Y+from.H/2
+		w, h := from.W*scale, from.H*scale
+		return ui.Rect{X: cx - w/2, Y: cy - h/2, W: w, H: h}
+	case domainpreferences.MotionSlide:
+		edge = ResolveEdge(edge, from, content)
+		switch edge {
+		case EdgeLeft:
+			return ui.Rect{X: from.X - from.W*k, Y: from.Y, W: from.W, H: from.H}
+		case EdgeRight:
+			return ui.Rect{X: from.X + from.W*k, Y: from.Y, W: from.W, H: from.H}
+		case EdgeTop:
+			return ui.Rect{X: from.X, Y: from.Y - from.H*k, W: from.W, H: from.H}
+		case EdgeBottom:
+			return ui.Rect{X: from.X, Y: from.Y + from.H*k, W: from.W, H: from.H}
+		default:
+			return from
+		}
+	case domainpreferences.MotionGnomed:
+		return ui.Rect{X: from.X, Y: from.Y + from.H*k, W: from.W, H: from.H * (1 - k)}
+	default:
+		return from
+	}
+}
+
+// ExitOpacity is the opacity a Pane with a close style has at k, starting
+// at fromOpacity (what the user last saw: 1 at rest). popin and fade go to
+// transparent; slide and gnomed stay opaque, as the close contract says.
+// An interrupted run starts from what it was showing and moves from there,
+// so a half-faded Pane keeps its opacity.
+func ExitOpacity(style domainpreferences.MotionStyle, fromOpacity, k float32) float32 {
+	switch style {
+	case domainpreferences.MotionPopin, domainpreferences.MotionFade:
+		return Lerp(fromOpacity, 0, k)
+	default:
+		return Lerp(fromOpacity, 1, k)
 	}
 }
 

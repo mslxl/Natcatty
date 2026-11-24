@@ -23,32 +23,80 @@ import (
 // the dialogs and the Quick Switcher, which are built after them.
 const paneMotionZIndex = 1
 
-// paneMotionMode selects the test-only routes. Production uses the overlay
-// route: MyGo's native Match cannot cross the newly created split parent the
-// prototype measured (ticket 04). Native keeps a Match transition on every
-// Pane so the old Pane's native route can be exercised against the overlay
-// fallback; labels names the overlays for tests.
+// paneMotionMode selects the routes a test observes. Production animates a
+// close's survivors natively: the ticket-17 measurement showed Match +
+// ScaleContent crossing the split a close collapses, unlike the split an open
+// creates (ticket 04, which the overlay still handles). Native keeps a Match
+// transition on every Pane so a layout change can start from the previous
+// frame's recorded box; overlayClose forces the older opaque-overlay survivor
+// route so the fallback stays exercised; labels names the overlays for tests.
 type paneMotionMode struct {
-	native bool
-	labels bool
+	native       bool
+	overlayClose bool
+	labels       bool
 }
 
-// paneMotionRun is one Pane-open animation this view is playing.
+// paneMotionRun is one Pane animation this view is playing: a Pane open, or a
+// Pane close with its survivor(s) and its exit ghost.
 type paneMotionRun struct {
+	kind   motion.Kind
 	tabID  model.TabID
 	seq    uint64
 	target model.PaneID
 	anim   *motion.Animation
-	// native marks a run whose old Pane is moved by MyGo's own
+	// native marks a run whose moving Panes are moved by MyGo's own
 	// ElementTransition instead of an overlay.
 	native bool
+	// magnified marks a close whose Pane filled the Tab at the change. Its
+	// ghost starts at the whole pane region and the split is revealed at its
+	// final layout, so its survivors do not animate.
+	magnified bool
 	// final is every leaf Pane's final boxes. The overlay lays each whole
 	// Pane out at final[id].Column and an opaque mask covers the real Pane
 	// there while the copy moves; pinPanes froze the same body boxes.
 	final map[model.PaneID]motion.PaneRects
+	// ghosts are the exiting Panes' retained surfaces and the boxes they
+	// showed. The view draws each as an opaque ghost and releases its surface
+	// when the run ends, is replaced, or warps.
+	ghosts map[model.PaneID]paneMotionGhost
 	// pins are the Surfaces whose final grid this run set at the change;
 	// they are released if their own layout never confirms the pin.
 	pins map[model.PaneID]state.ViewportMotion
+}
+
+// paneMotionGhost is one exiting Pane a close run draws. info keeps its last
+// state, so a pending Pane's placeholder and a failed Pane's error are the
+// ghost; rects are the whole-Pane boxes it showed when the close began. A
+// blank ghost is the last resort when no state retained a Pane info: it is an
+// opaque pane-shaped background, never the connecting placeholder.
+//
+// The preferred snapshot route is unavailable in production. MyGo v0.9.2's
+// ui.NewBitmap wraps an image.Image the caller already owns; it exposes no
+// application-level raster capture of an element or window (the only frame
+// image accessor is the test harness's Tester.Image). A production Surface
+// therefore keeps its live terminal and the view paints a still copy through
+// ViewInert while the state delays the Surface's destruction until the run
+// ends, warps, or is superseded. A Surface without ViewInert paints only its
+// opaque background (the blank last resort). Ticket 17's real-terminal tests
+// exercise the live route and that blank fallback; the fake transport proves
+// the ghost shows the terminal's actual screen content.
+type paneMotionGhost struct {
+	info   state.PaneInfo
+	rects  motion.PaneRects
+	handle *state.PaneGhost
+	blank  bool
+}
+
+// rectWithin reports that every edge of a is within eps of b.
+func rectWithin(a, b ui.Rect, eps float32) bool {
+	diff := func(v float32) float32 {
+		if v < 0 {
+			return -v
+		}
+		return v
+	}
+	return diff(a.X-b.X) <= eps && diff(a.Y-b.Y) <= eps &&
+		diff(a.W-b.W) <= eps && diff(a.H-b.H) <= eps
 }
 
 // workspacePaneMotion is the main window's Pane motion runtime. It records
@@ -110,7 +158,7 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 		wm.finish()
 	}
 	setting := s.Motion()
-	if wm.run != nil && (!motion.Enabled(setting, motion.PaneOpen) || c.Preferences().ReduceMotion) {
+	if wm.run != nil && (!motion.Enabled(setting, wm.run.kind) || c.Preferences().ReduceMotion) {
 		// Switching motion off mid-run warps at once and stops asking for
 		// frames (ticket 08).
 		wm.finish()
@@ -134,19 +182,54 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 		return
 	}
 	wm.controller.MarkSeen(event.Seq)
-	if event.Kind != motion.PaneOpen || event.TabID != activeID || activeIndex < 0 {
+	if event.TabID != activeID || activeIndex < 0 {
 		wm.finish()
+		// A ghost retained for a Tab this view no longer shows has no run to
+		// draw it; release its surface now.
+		s.ReleasePaneGhosts()
 		return
 	}
 
-	animate := motion.Enabled(setting, motion.PaneOpen) &&
+	animate := motion.Enabled(setting, event.Kind) &&
 		!c.Preferences().ReduceMotion &&
 		!firstFrame && !hidden && !wasHidden
 	// Only a visible view has the previous frame's boxes on screen; a hidden
 	// or first frame must not pin a grid from geometry it never showed. The
 	// final layout sizes each Pane once instead.
 	pin := !hidden && !wasHidden && !firstFrame
-	wm.plan(c, s, activeIndex, event, setting, animate, pin, now)
+	switch event.Kind {
+	case motion.PaneOpen:
+		wm.plan(c, s, activeIndex, event, setting, animate, pin, now)
+	case motion.PaneClose:
+		wm.planClose(c, s, activeIndex, event, setting, animate, pin, now)
+	default:
+		wm.finish()
+		s.ReleasePaneGhosts()
+	}
+}
+
+// paneVisualState is what the user sees of a Pane at a change: the rect and
+// opacity the previous run's overlay painted, or the settled boxes of a Pane
+// that was not moving. An interruption restarts from it, so a Pane that was
+// half faded or half moved does not snap.
+type paneVisualState struct {
+	rect    ui.Rect
+	opacity float32
+}
+
+// currentVisual reports what of Pane id the user saw at the change.
+func (wm *workspacePaneMotion) currentVisual(prev *paneMotionRun, prevK float32,
+	id model.PaneID) (paneVisualState, bool) {
+	if prev != nil {
+		if v, ok := prev.anim.VisualFor(id); ok {
+			r, opacity := prev.anim.State(v, prevK)
+			return paneVisualState{rect: r, opacity: opacity}, true
+		}
+	}
+	if r, ok := wm.rects[id]; ok && r.Valid() {
+		return paneVisualState{rect: r.Column, opacity: 1}, true
+	}
+	return paneVisualState{}, false
 }
 
 // plan turns one Pane-open event into a run, or warps it. The final boxes are
@@ -182,28 +265,8 @@ func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State, index int,
 	if prev != nil {
 		prevK, _ = prev.anim.Progress(now)
 	}
-	// visible is what the user sees of a Pane at the change: the rect and
-	// opacity the previous run's overlay painted, or the settled boxes of a
-	// Pane that was not moving. An interruption restarts both, so a Pane that
-	// was half faded in does not snap to opaque.
-	type visible struct {
-		rect    ui.Rect
-		opacity float32
-	}
-	current := func(id model.PaneID) (visible, bool) {
-		if prev != nil {
-			if v, ok := prev.anim.VisualFor(id); ok {
-				r, opacity := prev.anim.State(v, prevK)
-				return visible{rect: r, opacity: opacity}, true
-			}
-		}
-		if r, ok := wm.rects[id]; ok && r.Valid() {
-			return visible{rect: r.Column, opacity: 1}, true
-		}
-		return visible{}, false
-	}
 
-	old, oldOK := current(event.TargetID)
+	old, oldOK := wm.currentVisual(prev, prevK, event.TargetID)
 	if !oldOK {
 		wm.finish()
 		if pin {
@@ -218,6 +281,7 @@ func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State, index int,
 	wm.finish()
 
 	run := &paneMotionRun{
+		kind:   motion.PaneOpen,
 		tabID:  event.TabID,
 		seq:    event.Seq,
 		target: event.TargetID,
@@ -286,8 +350,201 @@ func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State, index int,
 	c.AnimationFrame()
 }
 
-// finish ends the run and lets every pinned Pane follow its own layout again.
-// Pins that their layout already confirmed were spent by the Surface itself.
+// planClose turns one Pane-close event into an exit run, or warps it. The
+// final layout is the collapsed tree; each survivor's grid is pinned at the
+// change, and the exiting Pane is an opaque ghost laid out at the boxes it
+// showed. A magnified close starts the ghost at the whole pane region and
+// reveals the split at its final layout; its survivors warp rather than
+// animate under the ghost.
+func (wm *workspacePaneMotion) planClose(c *ui.Context, s *state.State, index int,
+	event motion.Event, setting domainpreferences.Motion, animate, pin bool, now time.Time) {
+	root, _, ok := s.TabTree(index)
+	if !ok || root == nil {
+		wm.finish()
+		s.ReleasePaneGhosts()
+		return
+	}
+	ghostHandle, haveGhost := s.TakePaneGhost(event.PaneID)
+	closeRects, hadClosing := wm.rects[event.PaneID]
+	frameTop, frameRight, frameBottom, frameLeft := kit.PaneFrameInset()
+	split := !root.IsPane()
+	final := paneFinalRects(root, wm.region, wm.rects, c.Theme().Space(10), closeRects,
+		split, frameTop, frameRight, frameBottom, frameLeft)
+	if !hadClosing || !closeRects.Valid() || wm.region.W <= 0 || wm.region.H <= 0 {
+		animate = false
+	}
+	if !animate {
+		wm.finish()
+		if ghostHandle != nil {
+			ghostHandle.Release()
+		}
+		if pin {
+			wm.pinSurvivors(index, event.PaneID, final)
+		}
+		return
+	}
+
+	prev := wm.run
+	var prevK float32
+	if prev != nil {
+		prevK, _ = prev.anim.Progress(now)
+	}
+	// Carry the ghosts of an earlier close that this event does not replace:
+	// their Panes are already gone, so the new run keeps their surfaces alive
+	// and continues them from where the user sees them.
+	carried := map[model.PaneID]paneMotionGhost{}
+	if prev != nil {
+		for id, ghost := range prev.ghosts {
+			if id != event.PaneID {
+				carried[id] = ghost
+			}
+		}
+		prev.ghosts = nil
+	}
+	old, oldOK := wm.currentVisual(prev, prevK, event.PaneID)
+	if !oldOK {
+		wm.finish()
+		for _, ghost := range carried {
+			ghost.handle.Release()
+		}
+		if ghostHandle != nil {
+			ghostHandle.Release()
+		}
+		if pin {
+			wm.pinSurvivors(index, event.PaneID, final)
+		}
+		return
+	}
+	// The ghost's content is laid out in the box it was painted in. An
+	// interrupted open may have laid it out at its final column; the current
+	// visual rect is only where it shows.
+	ghostBox := closeRects.Column
+	if prev != nil {
+		if v, ok := prev.anim.VisualFor(event.PaneID); ok && v.Box.W > 0 && v.Box.H > 0 {
+			ghostBox = v.Box
+		}
+	}
+	start := old
+	if event.Magnified && prev == nil {
+		// The magnified Pane filled the pane region. Its ghost starts there and
+		// reveals the split at its final layout as it leaves.
+		start = paneVisualState{rect: wm.region, opacity: 1}
+	}
+
+	// Latest event wins: stop the old run, whose current visuals are the new
+	// starts and whose carried ghosts move to the new run, before pinning.
+	wm.finish()
+
+	// Native can start only from the previous frame's recorded box, so a run
+	// that interrupts another (or reveals a magnified split) uses the overlay
+	// instead: its start is the current visual, and a native transition would
+	// animate the real Pane underneath the overlay as well.
+	nativeSurvivors := wm.nativeCloseEnabled() && prev == nil && !event.Magnified
+	run := &paneMotionRun{
+		kind:      motion.PaneClose,
+		tabID:     event.TabID,
+		seq:       event.Seq,
+		target:    event.TargetID,
+		native:    nativeSurvivors,
+		magnified: event.Magnified,
+		final:     final,
+		ghosts:    carried,
+		pins:      map[model.PaneID]state.ViewportMotion{},
+	}
+	ghost := paneMotionGhost{rects: closeRects, handle: ghostHandle}
+	if haveGhost {
+		ghost.info = ghostHandle.Info
+	} else {
+		ghost.blank = true
+	}
+	run.ghosts[event.PaneID] = ghost
+
+	visuals := []motion.Visual{{
+		Pane: event.PaneID,
+		Box:  ghostBox, From: start.rect, To: start.rect, Content: wm.region,
+		Kind: motion.Exit, Style: setting.CloseStyle,
+		FromOpacity: start.opacity,
+	}}
+	// A carried ghost continues its exit from what the user saw, with the
+	// latest event's full duration.
+	for id, ghost := range carried {
+		if prev == nil {
+			continue
+		}
+		v, ok := prev.anim.VisualFor(id)
+		if !ok {
+			continue
+		}
+		from, opacity := prev.anim.State(v, prevK)
+		visuals = append(visuals, motion.Visual{
+			Pane: id,
+			Box:  ghost.rects.Column, From: from, To: from, Content: wm.region,
+			Kind: motion.Exit, Style: setting.CloseStyle, FromOpacity: opacity,
+		})
+	}
+	// Every survivor that changes has a visual, even on the native route: the
+	// native route paints the real Pane and the overlay skips this bookkeeping,
+	// but an interrupting event needs it to restart from what the user sees. A
+	// magnified close reveals the split at its final layout under the ghost.
+	if !event.Magnified {
+		for id, end := range final {
+			if id == event.PaneID {
+				continue
+			}
+			seen, ok := wm.currentVisual(prev, prevK, id)
+			if !ok {
+				continue
+			}
+			if rectWithin(seen.rect, end.Column, 0.5) && seen.opacity >= 0.999 {
+				continue
+			}
+			visuals = append(visuals, motion.Visual{
+				Pane: id, Box: end.Column, From: seen.rect, To: end.Column, Content: end.Column,
+				Kind: motion.Move, FromOpacity: seen.opacity, ToOpacity: 1,
+			})
+		}
+	}
+
+	run.anim = &motion.Animation{
+		Started:  now,
+		Duration: motion.ScaleMotion(motion.BaseDuration(motion.PaneClose), setting.Speed),
+		Visuals:  visuals,
+	}
+	wm.run = run
+	panes := make([]model.PaneID, 0, len(final))
+	for id := range final {
+		if id != event.PaneID {
+			panes = append(panes, id)
+		}
+	}
+	wm.pinPanes(index, panes, final, event.TargetID)
+	wm.animationFrames++
+	c.AnimationFrame()
+}
+
+// pinSurvivors freezes every surviving Pane's final grid at the change. A
+// Pane whose body did not change needs no pin: its own layout already reports
+// the same room and delivers no resize.
+func (wm *workspacePaneMotion) pinSurvivors(index int, closing model.PaneID, final map[model.PaneID]motion.PaneRects) {
+	panes := make([]model.PaneID, 0, len(final))
+	for id, end := range final {
+		if id == closing {
+			continue
+		}
+		if before, ok := wm.rects[id]; ok && before.Valid() &&
+			before.Framed == end.Framed && rectWithin(before.Body, end.Body, 0.5) {
+			continue
+		}
+		panes = append(panes, id)
+	}
+	wm.pinPanes(index, panes, final, closing)
+}
+
+// finish ends the run, lets every pinned Pane follow its own layout again,
+// releases the retained surfaces of its exiting Panes, and forgets their
+// boxes. Pins that their layout already confirmed were spent by the Surface
+// itself. An interruption detaches the ghosts it carries before calling this,
+// so a ghost that continues is not closed and reopened.
 func (wm *workspacePaneMotion) finish() {
 	run := wm.run
 	if run == nil {
@@ -295,6 +552,10 @@ func (wm *workspacePaneMotion) finish() {
 	}
 	for _, pin := range run.pins {
 		pin.ReleaseViewport()
+	}
+	for id, ghost := range run.ghosts {
+		ghost.handle.Release()
+		delete(wm.rects, id)
 	}
 	wm.run = nil
 }
@@ -396,16 +657,44 @@ func (wm *workspacePaneMotion) recordRegion(region ui.Element) {
 	wm.region = region.LayoutBounds()
 }
 
-// nativeTransition is the old Pane's native no-reflow route, used only by the
-// test mode. It stays on every Pane so the previous frame records the Match
-// the change can start from.
+// nativeCloseEnabled reports that this view animates a close's survivors
+// natively. Production takes this route; overlayClose forces the opaque
+// fallback a test can compare with.
+func (wm *workspacePaneMotion) nativeCloseEnabled() bool {
+	if wm.mode.overlayClose {
+		return false
+	}
+	return motion.Enabled(wm.controller.Setting(), motion.PaneClose)
+}
+
+// nativeKeys reports that this view installs the native Match route. The
+// transition must be on every Pane on the frame before a change so MyGo has
+// the previous box to record; an idle Pane's duration is -1 (arrive at once).
+func (wm *workspacePaneMotion) nativeKeys() bool {
+	return wm.mode.native || wm.nativeCloseEnabled()
+}
+
+// nativeTransition is the native no-reflow route. A close run's survivors get
+// the run's duration and move from the previous frame's recorded box; every
+// other Pane keeps Duration -1, which records the Match without animating. A
+// magnified close reveals the split at its final layout under the ghost, so
+// its survivors do not animate. The test-only native open route is also kept.
 func (wm *workspacePaneMotion) nativeTransition(id model.PaneID) (ui.ElementTransition, bool) {
-	if !wm.mode.native {
+	if !wm.nativeKeys() {
 		return ui.ElementTransition{}, false
 	}
-	duration := motion.ScaleMotion(motion.BaseDuration(motion.PaneOpen), wm.state.Motion().Speed)
-	if wm.run != nil && id == wm.run.target {
-		duration = wm.run.anim.Duration
+	duration := time.Duration(-1)
+	if wm.run != nil {
+		switch wm.run.kind {
+		case motion.PaneOpen:
+			if wm.mode.native && id == wm.run.target {
+				duration = wm.run.anim.Duration
+			}
+		case motion.PaneClose:
+			if _, survivor := wm.run.final[id]; survivor && wm.run.native && !wm.run.magnified {
+				duration = wm.run.anim.Duration
+			}
+		}
 	}
 	return ui.ElementTransition{
 		Duration:     duration,
@@ -417,15 +706,26 @@ func (wm *workspacePaneMotion) nativeTransition(id model.PaneID) (ui.ElementTran
 	}, true
 }
 
-// paneKey is the element key of a Pane. Only the native test route changes
-// it, so the element appearing at the change is fresh and its Match can start
-// it from the previous frame's box.
+// paneKey is the element key of a Pane. A Pane that starts moving is keyed
+// fresh at the change, so its Match starts it from the previous frame's box:
+// the native test route does that for an open's old Pane, and the native close
+// route for each survivor. Every other Pane keeps a stable key.
 func (wm *workspacePaneMotion) paneKey(id model.PaneID) (string, bool) {
-	if !wm.mode.native {
+	if !wm.nativeKeys() {
 		return "", false
 	}
-	if wm.run != nil && id == wm.run.target {
-		return "pane-" + string(id) + "-motion-" + strconv.FormatUint(wm.run.seq, 10), true
+	if wm.run != nil {
+		fresh := false
+		switch wm.run.kind {
+		case motion.PaneOpen:
+			fresh = wm.mode.native && id == wm.run.target
+		case motion.PaneClose:
+			_, fresh = wm.run.final[id]
+			fresh = fresh && wm.run.native && !wm.run.magnified
+		}
+		if fresh {
+			return "pane-" + string(id) + "-motion-" + strconv.FormatUint(wm.run.seq, 10), true
+		}
 	}
 	return "pane-" + string(id) + "-native", true
 }
@@ -438,12 +738,15 @@ type inertBody interface {
 	ViewInert(c *ui.Context) ui.Element
 }
 
-// drawOverlay paints the run's moving copies. Each is a whole Pane, frame and
-// header included, laid out once at its final column and mapped to the visual
-// rect. An opaque mask covers each real Pane at its final column while its
-// copy moves, so the real Pane stays built, focused, and receiving pointer and
-// keyboard underneath; the masks and copies ignore input. A native old Pane is
-// moved by MyGo itself and has no visual, so nothing masks it.
+// drawOverlay paints the run's moving copies and its exit ghosts. Each copy is
+// a whole Pane, frame and header included, laid out once at its box and mapped
+// to the visual rect. An opaque mask covers each real survivor at its final
+// column while its copy moves, so the real Pane stays built, focused, and
+// receiving pointer and keyboard underneath; the masks and copies ignore
+// input. A native close's survivors are moved by MyGo itself, so nothing masks
+// or copies them; their visuals are only the bookkeeping an interruption
+// starts from. The exiting Panes' ghosts are drawn last, opaque and above the
+// survivors, from the surfaces the state kept alive.
 func (wm *workspacePaneMotion) drawOverlay(c *ui.Context, ref tabRef, t *ui.Theme, m locales.Messages) {
 	run := wm.run
 	if run == nil || run.anim == nil || ref.motion != wm {
@@ -455,6 +758,11 @@ func (wm *workspacePaneMotion) drawOverlay(c *ui.Context, ref tabRef, t *ui.Them
 	}
 	ui.Overlay(c, func() {
 		for _, v := range run.anim.Visuals {
+			if v.Kind == motion.Exit || (run.native && run.kind == motion.PaneClose) {
+				// A native close's survivors paint themselves; their visuals
+				// are only the bookkeeping an interruption starts from.
+				continue
+			}
 			if _, ok := ref.pane(v.Pane); !ok {
 				continue
 			}
@@ -470,11 +778,24 @@ func (wm *workspacePaneMotion) drawOverlay(c *ui.Context, ref tabRef, t *ui.Them
 			}
 		}
 		for _, v := range run.anim.Visuals {
+			if v.Kind == motion.Exit || (run.native && run.kind == motion.PaneClose) {
+				continue
+			}
 			info, ok := ref.pane(v.Pane)
 			if !ok {
 				continue
 			}
 			end, ok := run.final[v.Pane]
+			if !ok {
+				continue
+			}
+			wm.paneMotionCopy(c, ref, m, t, run, v, info, end, k)
+		}
+		for _, v := range run.anim.Visuals {
+			if v.Kind != motion.Exit {
+				continue
+			}
+			ghost, ok := run.ghosts[v.Pane]
 			if !ok {
 				continue
 			}
@@ -486,11 +807,36 @@ func (wm *workspacePaneMotion) drawOverlay(c *ui.Context, ref tabRef, t *ui.Them
 				TransformOrigin(0, 0).Transform(paneOverlayTransform(box, rect)).
 				Background(t.Background).Clip().IgnoreInput(true)
 			if wm.mode.labels {
-				e.Label("pane-motion:" + string(v.Pane))
+				e.Label("pane-close-ghost:" + string(v.Pane))
 			}
-			e.Children(func() { wm.paneMotionPane(c, ref, m, t, info, end, v.Pane) })
+			if ghost.blank {
+				// No state kept this Pane's info: an opaque pane-shaped
+				// background is the last resort, never a live placeholder.
+				continue
+			}
+			e.Children(func() {
+				wm.paneMotionPane(c, ref, m, t, ghost.info, ghost.rects, ghost.rects.Framed, v.Pane)
+			})
 		}
 	})
+}
+
+// paneMotionCopy draws one moving survivor: laid out at box, mapped to the
+// visual rect at k. The content is the final grid, so the copy never reflows.
+func (wm *workspacePaneMotion) paneMotionCopy(c *ui.Context, ref tabRef, m locales.Messages,
+	t *ui.Theme, run *paneMotionRun, v motion.Visual, info state.PaneInfo,
+	end motion.PaneRects, k float32) {
+	rect, opacity := run.anim.State(v, k)
+	box := v.Box
+	e := ui.Column(c).Absolute().
+		Left(box.X).Top(box.Y).Size(box.W, box.H).
+		ZIndex(paneMotionZIndex).Opacity(opacity).
+		TransformOrigin(0, 0).Transform(paneOverlayTransform(box, rect)).
+		Background(t.Background).Clip().IgnoreInput(true)
+	if wm.mode.labels {
+		e.Label("pane-motion:" + string(v.Pane))
+	}
+	e.Children(func() { wm.paneMotionPane(c, ref, m, t, info, end, end.Framed, v.Pane) })
 }
 
 // paneOverlayTransform maps the content laid out in box onto target, around
@@ -506,26 +852,26 @@ func paneOverlayTransform(box, target ui.Rect) ui.Transform {
 	return ui.Scaling(kx, ky).Then(ui.Translation(target.X-box.X, target.Y-box.Y))
 }
 
-// paneMotionPane draws one whole Pane for its overlay: PaneFrame when the Tab
-// is split, the real header row, and the body. final gives the final column
-// and body, so the header height is the same one the real Pane has. The header
-// is inert because the whole copy ignores input; the body uses ViewInert when
-// the Surface offers it, so the copy never takes focus, asks for it, or sizes
-// the terminal.
+// paneMotionPane draws one whole Pane for its overlay or ghost: PaneFrame when
+// the Pane showed inside a split, the header row, and the body. rects gives
+// the column and body the copy is laid out from, so the header height is the
+// same one the real Pane had. The header is inert because the whole copy
+// ignores input; the body uses ViewInert when the Surface offers it, so the
+// copy never takes focus, asks for it, or sizes the terminal.
 func (wm *workspacePaneMotion) paneMotionPane(c *ui.Context, ref tabRef, m locales.Messages, t *ui.Theme,
-	info state.PaneInfo, final motion.PaneRects, id model.PaneID) {
+	info state.PaneInfo, rects motion.PaneRects, framed bool, id model.PaneID) {
 	frameTop := float32(0)
-	if ref.split {
+	if framed {
 		frameTop, _, _, _ = kit.PaneFrameInset()
 	}
 	column := ui.Column(c).Fill().MinWidth(0).Background(t.Background).Clip()
-	if ref.split {
+	if framed {
 		column = kit.PaneFrame(c, column, info.Focused)
 	}
 	if wm.mode.labels {
 		column.Label("pane-motion-frame:" + string(id))
 	}
-	header := final.Body.Y - final.Column.Y - frameTop
+	header := rects.Body.Y - rects.Column.Y - frameTop
 	if header < 0 {
 		header = 0
 	}
@@ -610,11 +956,24 @@ func paneFinalRects(root *domainworkspace.Node, region ui.Rect,
 		footer := r.Column.Y + r.Column.H - (r.Body.Y + r.Body.H)
 		frameLeftInset := r.Body.X - r.Column.X
 		frameRightInset := r.Column.X + r.Column.W - (r.Body.X + r.Body.W)
-		if split && !r.Framed {
+		switch {
+		case split && !r.Framed:
+			// The Pane gains a split's PaneFrame: its border joins the inset.
 			header += frameTop
 			footer += frameBottom
 			frameLeftInset += frameLeft
 			frameRightInset += frameRight
+		case !split && r.Framed:
+			// The split collapses around this Pane: the PaneFrame goes, so
+			// its border leaves the inset and the body grows by it.
+			header -= frameTop
+			footer -= frameBottom
+			frameLeftInset -= frameLeft
+			frameRightInset -= frameRight
+			header = max(header, 0)
+			footer = max(footer, 0)
+			frameLeftInset = max(frameLeftInset, 0)
+			frameRightInset = max(frameRightInset, 0)
 		}
 		column := ui.Rect{
 			X: slot.X + left,
