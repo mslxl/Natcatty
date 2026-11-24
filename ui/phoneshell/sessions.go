@@ -540,6 +540,10 @@ type tabView struct {
 	// viewport shows.
 	panes []paneView
 	focus string
+	// root is the shared split tree a tablet lays out. The phone view reads it
+	// but never rewrites a node: a divider drag goes back through
+	// domainworkspace.WithSplitRatio, so the tree stays immutable.
+	root *domainworkspace.Node
 	// empty marks a Tab with no Panes left.
 	empty bool
 }
@@ -1183,6 +1187,7 @@ func (t *sessionTabs) viewOfTabLocked(tab *phoneTab) tabView {
 	view := tabView{
 		id:    tab.id,
 		label: tab.label,
+		root:  tab.root,
 		panes: make([]paneView, 0, len(tab.panes)),
 	}
 	for _, pane := range tab.panes {
@@ -2007,6 +2012,14 @@ func (t *sessionTabs) drawSession(c *ui.Context, id string, retry, back, addPane
 	// A close requested from the page asks for confirmation above it, so the
 	// user keeps seeing the terminal while deciding.
 	t.drawPanePendingClose(c, view)
+	// A tablet, or an unfolded book-style phone, has the room to show the Tab's
+	// shared split tree at once. The layout is derived from the window on every
+	// frame, so narrowing or folding drops back to the in-Tab Pane switcher and
+	// widening unfolds the same Tabs and Panes again — no state moves.
+	if splitViewFits(c) && len(view.panes) > 1 && view.root != nil {
+		t.drawSplitView(c, view, retry, back, addPane)
+		return
+	}
 	switch view.status {
 	case tabConnecting:
 		ui.Column(c).Fill().Padding(16).Gap(10).Children(func() {
@@ -2207,18 +2220,24 @@ func (t *sessionTabs) drawCloseConfirm(c *ui.Context, label string) {
 // statusLine is the second line of a Sessions row: the lifecycle state and the
 // endpoint, so two Sessions for the same Host label can still be told apart.
 func statusLine(c *ui.Context, view tabView) {
+	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+		kit.StatusDot(c, sessionStatusColor(c, view.status))
+		ui.Text(c, tabStatusText(view)).FontSize(12).
+			TextColor(c.Theme().TextMuted).SingleLine()
+	})
+}
+
+// sessionStatusColor is the lifecycle dot's color for one Session, shared by
+// the Sessions list, a phone Pane, and a tablet tile.
+func sessionStatusColor(c *ui.Context, status tabStatus) ui.Color {
 	color := c.Theme().Accent
-	switch view.status {
+	switch status {
 	case tabHibernated, tabDormant, tabEmpty:
 		color = c.Theme().TextMuted
 	case tabConnecting, tabReconnecting:
 		color = c.Theme().Warning
 	}
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		kit.StatusDot(c, color)
-		ui.Text(c, tabStatusText(view)).FontSize(12).
-			TextColor(c.Theme().TextMuted).SingleLine()
-	})
+	return color
 }
 
 // tabStatusText names the lifecycle of a Sessions row and identifies the Host.
@@ -2226,26 +2245,31 @@ func tabStatusText(view tabView) string {
 	if view.status == tabEmpty {
 		return "Empty · new session"
 	}
-	identity := tabIdentity(view.host)
-	text := ""
-	switch view.status {
-	case tabConnecting:
-		text = "Connecting… · " + identity
-	case tabHibernated:
-		text = "Hibernated · " + identity
-	case tabDormant:
-		text = "Dormant · " + identity
-	case tabReconnecting:
-		text = "Reconnecting… · " + identity
-	case tabFailed:
-		text = "Connection failed · " + identity
-	default:
-		text = "Connected · " + identity
-	}
+	text := sessionStatusText(view.status, view.host)
 	if len(view.panes) > 1 {
 		text += fmt.Sprintf(" · %d panes", len(view.panes))
 	}
 	return text
+}
+
+// sessionStatusText names one Session's lifecycle and endpoint, without the
+// Sessions row's multi-Pane suffix. A Pane tile uses it directly.
+func sessionStatusText(status tabStatus, host domainvault.Host) string {
+	identity := tabIdentity(host)
+	switch status {
+	case tabConnecting:
+		return "Connecting… · " + identity
+	case tabHibernated:
+		return "Hibernated · " + identity
+	case tabDormant:
+		return "Dormant · " + identity
+	case tabReconnecting:
+		return "Reconnecting… · " + identity
+	case tabFailed:
+		return "Connection failed · " + identity
+	default:
+		return "Connected · " + identity
+	}
 }
 
 // tabIdentity is the endpoint that distinguishes two Sessions with the same
