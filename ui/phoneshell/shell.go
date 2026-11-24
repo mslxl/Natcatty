@@ -1,6 +1,6 @@
-// Package phoneshell is natcatty's phone navigation: four sections —
-// Sessions, Hosts, Vault and Settings — shown as the system's tab bar, each
-// with its own back stack.
+// Package phoneshell is natcatty's phone navigation: five sections —
+// Sessions, Hosts, Monitoring, Vault and Settings — shown as the system's tab
+// bar, each with its own back stack.
 //
 // The sections are navigation, not Workspace Tabs: a Workspace Tab is a
 // container of one or more Panes, each an open terminal Session. The phone
@@ -27,12 +27,13 @@ import (
 	vaultsection "github.com/mslxl/natcatty/ui/vault/section"
 )
 
-// Section identifies one of the phone's four navigation sections.
+// Section identifies one of the phone's five navigation sections.
 type Section int
 
 const (
 	Sessions Section = iota
 	Hosts
+	Monitoring
 	Vault
 	Settings
 	sectionCount
@@ -46,10 +47,11 @@ type Info struct {
 }
 
 var infos = [sectionCount]Info{
-	Sessions: {Title: "Sessions", Symbol: "rectangle.stack"},
-	Hosts:    {Title: "Hosts", Symbol: "server.rack"},
-	Vault:    {Title: "Vault", Symbol: "key"},
-	Settings: {Title: "Settings", Symbol: "gearshape"},
+	Sessions:   {Title: "Sessions", Symbol: "rectangle.stack"},
+	Hosts:      {Title: "Hosts", Symbol: "server.rack"},
+	Monitoring: {Title: "Monitoring", Symbol: "chart.line.uptrend.xyaxis"},
+	Vault:      {Title: "Vault", Symbol: "key"},
+	Settings:   {Title: "Settings", Symbol: "gearshape"},
 }
 
 // page is one page of a section.
@@ -87,6 +89,10 @@ type section struct {
 	// before runs before the section draws a frame. Every section uses the
 	// same hook — the Shell's lifecycle rule — so navigation cannot bypass it.
 	before func()
+	// beforeLocked runs when a closed App Lock hides this section. It releases
+	// page-owned work that must not continue behind the lock screen; the
+	// section's content and its before hook never run while the gate is shut.
+	beforeLocked func()
 	// banner draws the shell's cross-section message, such as a rejected deep
 	// link. It runs inside whichever section is showing, so a problem never
 	// moves the user to another page to read it.
@@ -96,7 +102,7 @@ type section struct {
 	gate *lockGate
 }
 
-// Shell is the four sections of the phone app. Construct it with New; its
+// Shell is the five sections of the phone app. Construct it with New; its
 // zero value is not usable.
 type Shell struct {
 	sections [sectionCount]*section
@@ -141,6 +147,14 @@ type Shell struct {
 	// browser is the shared browser panel seam. Nil hides every Browser entry
 	// with a stated reason.
 	browser BrowserProvider
+	// monitoringService is the shared Host monitoring runtime, taken from the
+	// explicit option or the Session opener. Nil leaves the Monitoring section
+	// in its unavailable state (the bottom-bar entry stays) and hides the
+	// Host-detail action.
+	monitoringService MonitoringService
+	// monitoring owns the Monitoring section's page state. Load always builds
+	// it; available reports whether the build wired a monitoring runtime.
+	monitoring *monitoringPages
 	// hostBrowsers holds one Browser per Host-detail page, keyed by section
 	// and Host. The Vault and the Hosts tab can show the same Host without
 	// sharing one panel's gateway.
@@ -328,6 +342,16 @@ func New(opts ...Option) *Shell {
 	// documents applied from outside the pages.
 	s.settings.onAppearanceChange = s.RefreshTerminalAppearance
 	s.hosts.open = s.openHost
+	// Monitoring takes its runtime from the explicit option or, as the rest of
+	// the phone root does, from the Session opener it already receives. The
+	// page keeps its Hosts in memory so focusing one from Host detail never
+	// rewrites a saved desktop panel.
+	if s.monitoringService == nil {
+		if provider, ok := s.sessions.opener.(MonitoringProvider); ok {
+			s.monitoringService = provider.MonitoringService()
+		}
+	}
+	s.monitoring = newMonitoringPages(s.monitoringService, s.hosts.store)
 	// The Browser entry is a Host-detail action. It pushes the Browser page
 	// in whichever section is showing the detail page.
 	s.hosts.browserCapability = s.browserCapability
@@ -403,6 +427,38 @@ func (s *Shell) confirmClosingSessions() bool {
 // outside the page (a Vault sync, for example).
 func (s *Shell) RefreshTerminalAppearance() { s.sessions.applyAppearance() }
 
+// beforeFrame applies the shell's per-frame lifecycle rules. It runs once
+// before every section draws, so navigation, tab switches, backgrounding, and
+// deep links all reach the same rule.
+func (s *Shell) beforeFrame() {
+	s.syncLiveView()
+	s.syncMonitoring()
+}
+
+// syncMonitoring samples only while the Monitoring page is the one on screen.
+// Leaving the section, navigating within it, or backgrounding pauses sampling;
+// returning resumes the panel the user started.
+func (s *Shell) syncMonitoring() {
+	if s.monitoring == nil {
+		return
+	}
+	locked := s.appLock != nil && s.appLock.Locked()
+	visible := s.selected == Monitoring && !s.backgrounded && !locked &&
+		s.sections[Monitoring].router.Path() == "/"
+	if visible {
+		s.monitoring.activate()
+		return
+	}
+	s.monitoring.deactivate()
+}
+
+// suspendMonitoring pauses sampling when a closed App Lock covers the page.
+func (s *Shell) suspendMonitoring() {
+	if s.monitoring != nil {
+		s.monitoring.deactivate()
+	}
+}
+
 // syncLiveView derives the visible Session from the current route and applies
 // the lifecycle: that Tab is attached and resumed, every other Tab hibernates.
 // It is the only place the rule is applied, so back-navigation, section
@@ -432,7 +488,7 @@ func (s *Shell) visibleSession() string {
 }
 
 func (s *Shell) newSection(i Section) *section {
-	sec := &section{info: infos[i], router: ui.NewRouter("/"), before: s.syncLiveView, banner: s.drawDeepLinkNotice, gate: s.appLock}
+	sec := &section{info: infos[i], router: ui.NewRouter("/"), before: s.beforeFrame, beforeLocked: s.suspendMonitoring, banner: s.drawDeepLinkNotice, gate: s.appLock}
 	switch i {
 	case Sessions:
 		sec.rootDraw = s.sessions.drawRoot
@@ -488,9 +544,11 @@ func (s *Shell) newSection(i Section) *section {
 				return false
 			}
 			r.Title("Host")
-			s.hosts.drawDetail(c, r.Param("id"))
+			s.drawHostDetail(c, r.Param("id"))
 			return true
 		}
+	case Monitoring:
+		sec.rootDraw = s.monitoring.drawRoot
 	case Vault:
 		sec.intro = "Browse the Vault on the phone."
 		sec.pages = s.vaultSectionPages()
@@ -508,7 +566,7 @@ func (s *Shell) newSection(i Section) *section {
 				return false
 			}
 			r.Title("Host")
-			s.hosts.drawDetail(c, r.Param("id"))
+			s.drawHostDetail(c, r.Param("id"))
 			return true
 		}
 	case Settings:
@@ -647,6 +705,11 @@ func (s *Shell) Load(ctx context.Context) error {
 	// Restore even when the Host list failed: a dormant entry built from its
 	// descriptor is still identifiable, and its restore reports the failure.
 	s.restoreSessions(ctx)
+	// The Monitoring page reads the same Host list. Loading it here resolves a
+	// Host before Host detail can focus it, without starting sampling.
+	if s.monitoring != nil {
+		s.monitoring.reload()
+	}
 	if hostErr != nil {
 		return hostErr
 	}
@@ -676,6 +739,7 @@ func (s *Shell) restoreSessions(ctx context.Context) {
 func (s *Shell) Background() {
 	s.backgrounded = true
 	s.sessions.syncVisible("")
+	s.syncMonitoring()
 	s.sessions.persist()
 	// Close the gate before the system snapshots the app: the snapshot then
 	// shows the lock screen rather than the terminal. An App Lock that is
@@ -698,10 +762,16 @@ func (s *Shell) Foreground() {
 	visible := s.visibleSession()
 	s.sessions.syncVisible(visible)
 	s.sessions.reconnectVisible(visible)
+	s.syncMonitoring()
 }
 
 // Close ends every open Session. The phone root calls it on quit.
 func (s *Shell) Close() {
+	// Monitoring owns sampler goroutines and their channel leases; stopping
+	// them first releases the transports before the pool closes.
+	if s.monitoring != nil {
+		s.monitoring.close()
+	}
 	// Release every Browser first: each holds a dedicated gateway and channel
 	// lease that must not outlive the shell.
 	for key, surface := range s.hostBrowsers {
@@ -864,7 +934,11 @@ func (s *Shell) View(sec Section) func(c *ui.Context) { return s.sections[sec].v
 func (sec *section) view(c *ui.Context) {
 	if sec.gate != nil {
 		// A closed gate replaces the whole frame, so no page, router, banner,
-		// or terminal view is built behind it.
+		// or terminal view is built behind it. Page-owned work that would
+		// otherwise keep running behind the lock is released first.
+		if sec.gate.Locked() && sec.beforeLocked != nil {
+			sec.beforeLocked()
+		}
 		sec.gate.wrap(sec.drawFrame)(c)
 		return
 	}

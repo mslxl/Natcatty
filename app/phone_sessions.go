@@ -42,6 +42,11 @@ type phoneSessionRuntime struct {
 	service     *appsession.Service
 	connections *appconnection.Manager
 	vault       *appvault.Service
+	// routes is the exact Vault route resolver the Session factory uses. The
+	// monitoring connector takes this same value, so a Session and a Monitoring
+	// connection resolve the Host chain, Network Profile, and app-wide default
+	// Proxy Profile through one path.
+	routes vaultRoutes
 	// networkControl drives the same Provider registry Host dails use, so the
 	// Networks page's Sign in, Cancel, and Retry act on the profile's live
 	// node rather than starting a second one.
@@ -303,6 +308,7 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 		service:         service,
 		connections:     connections,
 		vault:           vault,
+		routes:          routes,
 		networkControl:  networkControl,
 		networkStatuses: statuses,
 		forwarding:      forwarding,
