@@ -283,3 +283,14 @@ func PaneFrame(c *ui.Context, pane ui.Element, focused bool) ui.Element {
 	}
 	return pane.BorderWidth(2, 0, 0, 0).BorderColor(ui.Transparent)
 }
+
+// PaneFrameInset is the room PaneFrame's border takes out of the Pane's
+// column: one DIP on every side in the classic styles, two DIPs on the top in
+// the native style. Layout code that must know a split Pane's final body
+// before the frame is laid out uses it; the focus color never changes it.
+func PaneFrameInset() (top, right, bottom, left float32) {
+	if CurrentStyle().Native() {
+		return 2, 0, 0, 0
+	}
+	return 1, 1, 1, 1
+}

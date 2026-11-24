@@ -365,6 +365,13 @@ type Surface struct {
 	gridCellW    float32
 	gridCellH    float32
 	gridKnown    bool
+	// pinViewport is the final room the motion runtime gave this Pane at a
+	// layout change (PinViewport). While viewportPinned is set, noteViewport
+	// ignores the previous-frame box the Pane's own layout reports, which lags
+	// the change, until the reported room matches the pin. The grid is
+	// therefore set once at the change and never per animation frame.
+	pinViewport    appview.Viewport
+	viewportPinned bool
 	// terminalSawAlt tells that an alternate screen was drawn since a program
 	// placed its pictures; the frame that leaves that screen clears them.
 	terminalSawAlt bool
@@ -749,6 +756,94 @@ func (s *Surface) ViewFocused(c *ui.Context, focused bool) ui.Element {
 	return s.view(c, focused, true)
 }
 
+// ViewInert draws a still copy of the Session for a Pane-motion overlay. It
+// takes no keyboard focus and requests none, does not resize the terminal, and
+// leaves every focus field of the live Surface untouched. The real Pane keeps
+// the live View under the overlay's opaque mask, so typing and the pointer keep
+// reaching it while the copy moves.
+func (s *Surface) ViewInert(c *ui.Context) ui.Element {
+	if s == nil || s.session == nil {
+		return ui.Column(c).Fill()
+	}
+	t := c.Theme()
+	if s.browser != nil {
+		// A native page must not be built twice; the moving copy needs only
+		// the Pane's shape.
+		return ui.Column(c).Fill().Background(t.Background)
+	}
+	m := locales.In(c.Locale())
+	snapshot := s.session.Snapshot()
+	model, actions := s.chrome(c, snapshot)
+	return ui.Column(c).Fill().MinHeight(0).Children(func() {
+		renderChrome(c, model, m, t, actions)
+		switch {
+		case s.observing && s.observer != nil:
+			// The observer's native terminal view stays live in the real
+			// Pane; the copy keeps its shape without building it twice.
+			ui.Column(c).Fill().Background(t.Background)
+		case model.Hibernated || s.terminal == nil:
+			s.hibernatedView(c, m, t)
+		default:
+			s.terminalViewInert(c)
+		}
+	})
+}
+
+// terminalViewInert replays the live terminal into an ordinary element tree
+// without the live view's input, focus, selection, scroll, or resize paths.
+// It uses a private scroll and follow state so the real Pane's follow and
+// scroll position are untouched.
+func (s *Surface) terminalViewInert(c *ui.Context) ui.Element {
+	if s.flow == nil || s.terminal == nil {
+		return ui.Column(c).Fill().MinHeight(0)
+	}
+	cols, rows := s.terminal.Size()
+	size := appview.Size{Cols: cols, Rows: rows}
+	promptRow, promptRowKnown := s.flow.promptBoundary(size)
+	if s.options.RawTerminal != nil && s.options.RawTerminal() {
+		promptRow, promptRowKnown = 0, false
+	}
+	tail := appview.Tail{
+		PromptRow:          promptRow,
+		PromptRowKnown:     promptRowKnown,
+		PromptAfterCommand: s.flow.promptBoundaryAfterCommand(),
+		PromptPending:      s.flow.promptBoundaryPending(),
+	}
+	for _, block := range s.flow.store.Snapshot() {
+		if block.Exited {
+			continue
+		}
+		tail.Running = block.Cmd.Typed
+		if tail.Running == "" {
+			tail.Running = block.Cmd.Line
+		}
+	}
+	terminalTheme := s.terminalTheme()
+	cursorColor := ui.Color{}
+	if terminalTheme != nil {
+		cursorColor = terminalTheme.Cursor
+	}
+	// A copy of the position, never the live state: laying the copy out must
+	// not move the flow the user is reading.
+	var scroll ui.ScrollState
+	scroll.X, scroll.Y = s.flowScroll.X, s.flowScroll.Y
+	var follow appview.Follow
+	var ripple terminaleffects.Ripple
+	return ui.Column(c).Fill().MinHeight(0).Children(func() {
+		appview.Pane(c, s.flow.store, s.flow.engine, s.terminal, size,
+			s.flow.imagesSnapshot(), &scroll, &follow, &ripple,
+			appview.Bell{Col: -1, Row: -1}, tail,
+			appview.Cursor{Style: s.flowCursor, Color: cursorColor, Blink: false},
+			terminalTheme,
+			appview.Hooks{Key: inertTerminalKey{s}, PromptRows: s.flow.promptRowsFor}, nil)
+	})
+}
+
+// inertTerminalKey identifies a still copy's live container. It is distinct
+// from the real terminal's key so the two builds in one frame never share an
+// element identity.
+type inertTerminalKey struct{ surface *Surface }
+
 // SetFocusEpoch tells a live Surface that its Tab became visible again. The
 // self-drawn terminal uses this display epoch in its retained container key:
 // command blocks can be inserted without losing focus, while a Tab switch
@@ -1041,9 +1136,95 @@ func (s *Surface) textInputClient() ui.TextInputClient {
 // noteViewport records the room this Pane's live screen was laid out in. The
 // Pane reports it from its own flow's scroll, so the grid follows this Pane's
 // box and never a sibling's.
+//
+// The reported box is the previous frame's layout, so after a motion event it
+// still names the old room for a frame. While the motion runtime has pinned
+// the final room, that stale report is ignored; once the layout catches up
+// and reports the pinned room, the pin is spent and later layout changes are
+// accepted again.
 func (s *Surface) noteViewport(w, h float32) {
-	if w > 0 && h > 0 {
-		s.viewport = appview.Viewport{W: w, H: h}
+	if w <= 0 || h <= 0 {
+		return
+	}
+	if s.viewportPinned {
+		if sameViewport(w, h, s.pinViewport) {
+			s.viewportPinned = false
+			s.viewport = appview.Viewport{W: w, H: h}
+		}
+		return
+	}
+	s.viewport = appview.Viewport{W: w, H: h}
+}
+
+// sameViewport reports that a reported box is the pinned one, allowing for
+// sub-DIP layout rounding. Comparing the boxes keeps the check free of grid
+// math, so an animation frame never recomputes a grid.
+func sameViewport(w, h float32, want appview.Viewport) bool {
+	const epsilon = 0.5
+	return absf(w-want.W) <= epsilon && absf(h-want.H) <= epsilon
+}
+
+func absf(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// MotionViewport reports the room this Pane's live screen currently gets, for
+// a view that animates a split. It reports false before the Pane's first
+// layout, when there is no box to shrink or grow from.
+func (s *Surface) MotionViewport() (w, h float32, ok bool) {
+	if s == nil || s.viewport.W <= 0 || s.viewport.H <= 0 {
+		return 0, 0, false
+	}
+	return s.viewport.W, s.viewport.H, true
+}
+
+// PinViewport sets this Pane's final room and grid at a layout change, before
+// the Pane's own layout reports it. The grid is computed once here and the
+// PTY receives at most one size change; animation frames then draw the frame
+// already painted at that grid (ADR 0026). A Session whose peer owns its
+// screen size, or a full-screen program drawing its own view, is left alone:
+// neither is sized by the Pane.
+func (s *Surface) PinViewport(w, h float32) {
+	if s == nil || s.terminal == nil || w <= 0 || h <= 0 {
+		return
+	}
+	if s.session != nil && s.session.ScreenSizeFromRemote() {
+		return
+	}
+	if s.terminalOwnView {
+		return
+	}
+	s.viewport = appview.Viewport{W: w, H: h}
+	s.pinViewport = s.viewport
+	s.viewportPinned = true
+	s.resizeTerminalToGrid()
+}
+
+// ReleaseViewport lets the Pane's own layout size the terminal again. It is
+// called when a motion run ends, so a later window resize is not ignored.
+func (s *Surface) ReleaseViewport() {
+	if s == nil {
+		return
+	}
+	s.viewportPinned = false
+}
+
+// resizeTerminalToGrid gives the terminal the grid its current viewport has
+// room for. It is a no-op when the cached grid already matches, which is what
+// keeps a steady frame free of grid math and PTY resizes.
+func (s *Surface) resizeTerminalToGrid() {
+	if s.terminal == nil {
+		return
+	}
+	grid, ok := s.gridForViewport()
+	if !ok {
+		return
+	}
+	if cols, rows := s.terminal.Size(); cols != grid.Cols || rows != grid.Rows {
+		s.terminal.Resize(grid.Cols, grid.Rows)
 	}
 }
 

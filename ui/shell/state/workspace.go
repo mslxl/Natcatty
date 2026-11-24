@@ -21,6 +21,7 @@ import (
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
+	"github.com/mslxl/natcatty/ui/motion"
 )
 
 // ErrUnknownSession reports a restored Pane descriptor this shell cannot
@@ -1234,6 +1235,21 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 	// zoom set would focus a hidden member and show only the source Pane.
 	tab.Magnified = ""
 	tab.setFocus(newPaneID)
+	// Record the open for the views after the new Pane exists and the final
+	// tree is in place. TargetID is the Pane that was split; Direction is +1
+	// when the new Pane is the split's second child.
+	direction := 1
+	if side.PutsFirst() {
+		direction = -1
+	}
+	s.recordMotion(motion.Event{
+		Kind:      motion.PaneOpen,
+		TabID:     tab.ID,
+		PaneID:    newPaneID,
+		TargetID:  focusedID,
+		Direction: direction,
+		At:        time.Now(),
+	})
 	// The new Pane inherits the source Session's last known directory, as the
 	// original split did when it copied the shell's current cwd.
 	s.requestPaneOpen(tab.ID, newPaneID, descriptor, true)

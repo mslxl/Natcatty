@@ -27,6 +27,7 @@ import (
 type recordingTerminalTransport struct {
 	mu      sync.Mutex
 	resizes []appview.Size
+	writes  []byte
 	closed  chan struct{}
 	once    sync.Once
 }
@@ -40,7 +41,14 @@ func (t *recordingTerminalTransport) Read(p []byte) (int, error) {
 	return 0, io.EOF
 }
 
-func (t *recordingTerminalTransport) Write(p []byte) (int, error) { return len(p), nil }
+// Write records what the terminal sends the program, so a test can prove a
+// keystroke reached this Pane's terminal during a motion run.
+func (t *recordingTerminalTransport) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	t.writes = append(t.writes, p...)
+	t.mu.Unlock()
+	return len(p), nil
+}
 
 func (t *recordingTerminalTransport) Resize(cols, rows int) error {
 	t.mu.Lock()
@@ -72,7 +80,15 @@ func (t *recordingTerminalTransport) last() (appview.Size, bool) {
 func (t *recordingTerminalTransport) reset() {
 	t.mu.Lock()
 	t.resizes = nil
+	t.writes = nil
 	t.mu.Unlock()
+}
+
+// input is what this Pane's terminal has sent the program.
+func (t *recordingTerminalTransport) input() []byte {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]byte(nil), t.writes...)
 }
 
 // realTerminalSurface is the test-only real terminal surface: a real MyGo
@@ -99,6 +115,18 @@ type realTerminalSurface struct {
 	gridCellH    float32
 	gridKnown    bool
 	gridCalls    int
+	// pinViewport is the final room the motion runtime pushed at a layout
+	// change. While viewportPinned is set, the previous-frame report from the
+	// Pane's layout is ignored until it names the pinned room.
+	pinViewport    appview.Viewport
+	viewportPinned bool
+	// focused and focusPending mirror the production Surface's one-shot focus
+	// request: the frame a Pane gains focus asks for the keyboard, later frames
+	// keep it while it is here. liveFocused is what the terminal's own input
+	// box reported after the frame, so a test can assert the keyboard owner.
+	focused      bool
+	focusPending bool
+	liveFocused  bool
 }
 
 func newRealTerminalSurface() (*realTerminalSurface, error) {
@@ -120,11 +148,28 @@ func newRealTerminalSurface() (*realTerminalSurface, error) {
 // View renders the terminal the way the application does: the grid comes from
 // this Pane's own viewport, never from a sibling's.
 func (s *realTerminalSurface) View(c *ui.Context) ui.Element {
+	return s.view(c, false)
+}
+
+// ViewFocused is the focused Pane's render: the frame the Pane gains focus
+// asks the terminal's input box for the keyboard, and later frames keep it
+// while the Pane is focused, as the production Surface does.
+func (s *realTerminalSurface) ViewFocused(c *ui.Context, focused bool) ui.Element {
+	if focused && !s.focused {
+		s.focusPending = true
+	}
+	s.focused = focused
+	return s.view(c, focused)
+}
+
+func (s *realTerminalSurface) view(c *ui.Context, focused bool) ui.Element {
 	if grid, ok := s.gridForViewport(); ok {
 		if cols, rows := s.term.Size(); cols != grid.Cols || rows != grid.Rows {
 			s.term.Resize(grid.Cols, grid.Rows)
 		}
 	}
+	focus := s.focusPending
+	s.focusPending = false
 	cols, rows := s.term.Size()
 	return ui.Column(c).Fill().MinHeight(0).Children(func() {
 		appview.Pane(
@@ -141,11 +186,21 @@ func (s *realTerminalSurface) View(c *ui.Context) ui.Element {
 			appview.Tail{},
 			appview.Cursor{},
 			nil,
-			appview.Hooks{Key: s, Viewport: s.noteViewport},
+			appview.Hooks{
+				Key:       s,
+				Viewport:  s.noteViewport,
+				Focus:     focus,
+				KeepFocus: focused,
+				Focused:   func(ok bool) { s.liveFocused = ok },
+			},
 			nil,
 		)
 	})
 }
+
+// LiveFocused reports whether this Pane's terminal input box held the
+// keyboard after the last frame.
+func (s *realTerminalSurface) LiveFocused() bool { return s.liveFocused }
 
 func (s *realTerminalSurface) Close() {
 	if s.term != nil {
@@ -154,11 +209,84 @@ func (s *realTerminalSurface) Close() {
 	_ = s.transport.Close()
 }
 
-// noteViewport records the room this Pane's live screen was laid out in.
-func (s *realTerminalSurface) noteViewport(w, h float32) {
-	if w > 0 && h > 0 {
-		s.viewport = appview.Viewport{W: w, H: h}
+// inertSurfaceKey identifies a still copy's live container apart from the real
+// Pane's.
+type inertSurfaceKey struct{ surface *realTerminalSurface }
+
+// ViewInert draws a still copy of this Pane for a motion overlay: it does no
+// grid math, delivers no PTY resize, reports no viewport, and never asks for
+// focus. The real Pane keeps the live View.
+func (s *realTerminalSurface) ViewInert(c *ui.Context) ui.Element {
+	if s.term == nil {
+		return ui.Column(c).Fill()
 	}
+	cols, rows := s.term.Size()
+	var scroll ui.ScrollState
+	var follow appview.Follow
+	var ripple terminaleffects.Ripple
+	return ui.Column(c).Fill().MinHeight(0).Children(func() {
+		appview.Pane(c, s.store, s.engine, s.term, appview.Size{Cols: cols, Rows: rows},
+			nil, &scroll, &follow, &ripple, appview.Bell{}, appview.Tail{}, appview.Cursor{},
+			nil, appview.Hooks{Key: inertSurfaceKey{s}}, nil)
+	})
+}
+
+// noteViewport records the room this Pane's live screen was laid out in. The
+// reported box is the previous frame's layout, so after a motion event it
+// still names the old room for a frame; a pinned final room wins until the
+// layout catches up.
+func (s *realTerminalSurface) noteViewport(w, h float32) {
+	if w <= 0 || h <= 0 {
+		return
+	}
+	if s.viewportPinned {
+		if sameViewport(w, h, s.pinViewport) {
+			s.viewportPinned = false
+			s.viewport = appview.Viewport{W: w, H: h}
+		}
+		return
+	}
+	s.viewport = appview.Viewport{W: w, H: h}
+}
+
+// MotionViewport reports the room this Pane's live screen currently gets.
+func (s *realTerminalSurface) MotionViewport() (w, h float32, ok bool) {
+	if s.viewport.W <= 0 || s.viewport.H <= 0 {
+		return 0, 0, false
+	}
+	return s.viewport.W, s.viewport.H, true
+}
+
+// PinViewport sets the final room and grid at a layout change, so the PTY
+// receives at most one size and animation frames do no grid math.
+func (s *realTerminalSurface) PinViewport(w, h float32) {
+	if s.term == nil || w <= 0 || h <= 0 {
+		return
+	}
+	s.viewport = appview.Viewport{W: w, H: h}
+	s.pinViewport = s.viewport
+	s.viewportPinned = true
+	if grid, ok := s.gridForViewport(); ok {
+		if cols, rows := s.term.Size(); cols != grid.Cols || rows != grid.Rows {
+			s.term.Resize(grid.Cols, grid.Rows)
+		}
+	}
+}
+
+// ReleaseViewport lets the Pane's own layout size the terminal again.
+func (s *realTerminalSurface) ReleaseViewport() { s.viewportPinned = false }
+
+// sameViewport reports that a reported box is the pinned one, allowing for
+// sub-DIP layout rounding.
+func sameViewport(w, h float32, want appview.Viewport) bool {
+	const epsilon = 0.5
+	abs := func(v float32) float32 {
+		if v < 0 {
+			return -v
+		}
+		return v
+	}
+	return abs(w-want.W) <= epsilon && abs(h-want.H) <= epsilon
 }
 
 // gridForViewport is the grid this Pane's terminal fits, recomputed only when
@@ -239,12 +367,13 @@ type realTerminalGraph struct {
 	factory *realTerminalSurfaceFactory
 }
 
-func newRealTerminalGraph(t *testing.T) *realTerminalGraph {
+func newRealTerminalGraph(t *testing.T, options ...state.Option) *realTerminalGraph {
 	t.Helper()
 	service := appsession.NewService(sessionTransportFactory{})
 	t.Cleanup(service.CloseAll)
 	factory := &realTerminalSurfaceFactory{}
-	st := state.NewState(state.WithSessions(service, factory.open))
+	options = append([]state.Option{state.WithSessions(service, factory.open)}, options...)
+	st := state.NewState(options...)
 	t.Cleanup(func() {
 		for _, surface := range factory.all() {
 			surface.Close()

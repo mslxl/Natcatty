@@ -28,6 +28,7 @@ import (
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
+	"github.com/mslxl/natcatty/ui/motion"
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/vault/section"
@@ -90,6 +91,17 @@ type TerminalFontSetter interface {
 // Compose.
 type FocusedSurface interface {
 	ViewFocused(c *ui.Context, focused bool) ui.Element
+}
+
+// ViewportMotion is implemented by a Surface whose Pane takes part in motion.
+// MotionViewport is the room this Pane's live screen last got; PinViewport
+// sets the Pane's final room and grid at a layout change, before the Pane's
+// own layout reports it, so the event delivers exactly one PTY resize; and
+// ReleaseViewport lets the layout's reported room take over again.
+type ViewportMotion interface {
+	MotionViewport() (w, h float32, ok bool)
+	PinViewport(w, h float32)
+	ReleaseViewport()
 }
 
 // FocusEpochSetter lets a Surface reset its retained live-terminal identity
@@ -286,6 +298,11 @@ type State struct {
 	// pulls it at each event, so a preference change reaches an already-open
 	// workspace. Nil keeps the defaults: motion enabled.
 	motion func() domainpreferences.Motion
+	// motionEvent is the latest layout-changing action, with its monotonic
+	// sequence. The state records every event even when motion is off; each
+	// view decides whether to animate it or warp to the final layout.
+	motionEvent motion.Event
+	motionSeq   uint64
 	// hostLabel resolves a Host's current label, so an open Tab follows a Vault
 	// rename. Nil falls back to the descriptor's label snapshot.
 	hostLabel func(model.HostID) (string, bool)
@@ -610,6 +627,29 @@ func (s *State) Motion() domainpreferences.Motion {
 		return domainpreferences.Defaults().Appearance.Motion
 	}
 	return s.motion()
+}
+
+// MotionEvent returns the latest layout-changing event and whether the state
+// has recorded one. Its Seq is monotonic: a view consumes only the latest
+// event it has not seen, so several events between two frames collapse to
+// the newest.
+func (s *State) MotionEvent() (motion.Event, bool) {
+	if s.motionSeq == 0 {
+		return motion.Event{}, false
+	}
+	return s.motionEvent, true
+}
+
+// recordMotion stamps event with the next sequence and keeps it as the
+// latest. The state records events even while motion is off; the view decides
+// to warp.
+func (s *State) recordMotion(event motion.Event) {
+	s.motionSeq++
+	event.Seq = s.motionSeq
+	if event.At.IsZero() {
+		event.At = time.Now()
+	}
+	s.motionEvent = event
 }
 
 // WithHostLabel supplies a Host's current label so open Tabs follow a Vault

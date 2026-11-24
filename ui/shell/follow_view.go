@@ -115,7 +115,7 @@ func TopdownView(s *state.State, opts ...FollowOption) func(*ui.Context) {
 		if s.ActiveBrowserOpen() {
 			followEmpty(c, m, icons.Globe, m.FollowBrowserTitle(), m.FollowBrowserDescription(), options.openMain)
 		} else {
-			shellLayout(c, s, m, t, state.RenderOwnerDropdown, reveal, focus.next(s))
+			shellLayout(c, s, m, t, state.RenderOwnerDropdown, reveal, focus.next(s), nil)
 		}
 		s.FinishSideFrameFor(state.RenderOwnerDropdown)
 	}

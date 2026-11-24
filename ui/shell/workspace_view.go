@@ -57,18 +57,23 @@ type tabRef struct {
 	// status is the focused Pane's Session status, shown in its header while
 	// it is not settled.
 	status paneStatus
+	// motion is the window's Pane motion runtime; nil in a renderer that
+	// does not animate (the Follow and top-down routes, until their ticket).
+	motion *workspacePaneMotion
 }
 
 // mainTabRef binds the split renderer to a Tab in the window that owns it. A
 // window renderer holds the full Pane commands; owner scopes the side panel's
 // per-renderer bookkeeping, so the main window and the Dropdown Panel's
 // top-down route never stop each other's live tool.
-func mainTabRef(owner state.RenderOwner, s *state.State, tabIndex int, focusEpoch uint64) tabRef {
+func mainTabRef(owner state.RenderOwner, s *state.State, tabIndex int, focusEpoch uint64,
+	wm *workspacePaneMotion) tabRef {
 	id, _ := s.TabID(tabIndex)
 	return tabRef{
 		id:         id,
 		owner:      owner,
 		focusEpoch: focusEpoch,
+		motion:     wm,
 		tree:       func() (*domainworkspace.Node, []int, bool) { return s.TabTree(tabIndex) },
 		pane:       func(id model.PaneID) (state.PaneInfo, bool) { return s.PaneInfoAt(tabIndex, id) },
 		setRatio: func(id model.SplitID, ratio float32) bool {
@@ -429,7 +434,13 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 		aware.SetPaneActions(actions)
 	}
 	tabID := ref.id
-	column := ui.Column(c).Fill()
+	paneCtx := c
+	if ref.motion != nil {
+		if key, ok := ref.motion.paneKey(paneID); ok {
+			paneCtx = c.Key(key)
+		}
+	}
+	column := ui.Column(paneCtx).Fill()
 	column.Children(func() {
 		if ref.managesPanes {
 			paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideTop, true)
@@ -461,10 +472,24 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 			if ref.split {
 				kit.PaneFrame(c, pane, info.Focused)
 			}
+			if ref.motion != nil {
+				if transition, ok := ref.motion.nativeTransition(paneID); ok {
+					pane.Transition(transition)
+				}
+			}
+			var body ui.Element
 			pane.Children(func() {
 				paneHeader(c, s, m, t, ref, info)
-				paneContent(c, s, m, t, ref, info)
+				// The real Pane stays whole, live, and focused every frame.
+				// While it animates, an opaque mask above it covers its frame,
+				// header, and body, and the moving copy draws the same Pane;
+				// the keyboard and pointer still reach this one.
+				body = ui.Column(c).Grow(1).FillWidth().MinHeight(0)
+				body.Children(func() { paneContent(c, s, m, t, ref, info) })
 			})
+			if ref.motion != nil {
+				ref.motion.recordPane(paneID, column.LayoutBounds(), pane.LayoutBounds(), body.LayoutBounds(), ref.split)
+			}
 			if ref.managesPanes {
 				paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideRight, false)
 			}

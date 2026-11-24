@@ -14,8 +14,10 @@ import (
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	"github.com/mslxl/natcatty/domain/model"
 	etmodel "github.com/mslxl/natcatty/domain/model/et"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
+	"github.com/mslxl/natcatty/ui/motion"
 )
 
 // fakeETResumeStore is the slice of the ET secret store the shell uses: notes
@@ -221,6 +223,59 @@ func TestSplitFocusedPaneBuildsRecursiveTreeAndFocus(t *testing.T) {
 		if !ok || info.Surface == nil || info.Pending || info.Err != nil {
 			t.Fatalf("pane %q = %+v, %v; want a live surface", id, info, ok)
 		}
+	}
+}
+
+func TestSplitFocusedPaneRecordsAPaneOpenEvent(t *testing.T) {
+	// The state records events even while motion is off; the view decides to
+	// warp, so switching motion on later must not lose the sequence.
+	off := domainpreferences.Defaults().Appearance.Motion
+	off.Enabled = false
+	graph := newWorkspaceGraphWithOptions(t, WithMotion(func() domainpreferences.Motion { return off }))
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := graph.state.MotionEvent(); ok {
+		t.Fatalf("a fresh Tab already recorded a motion event")
+	}
+	before, _ := graph.state.FocusedPaneID(0)
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	first, ok := graph.state.MotionEvent()
+	if !ok {
+		t.Fatalf("SplitRight recorded no motion event")
+	}
+	after, _ := graph.state.FocusedPaneID(0)
+	if first.Kind != motion.PaneOpen {
+		t.Fatalf("event kind = %v, want PaneOpen", first.Kind)
+	}
+	if first.TabID == "" || first.PaneID != after || first.TargetID != before {
+		t.Fatalf("event = %+v, want the new Pane %q from target %q in Tab %q", first, after, before, first.TabID)
+	}
+	if first.Direction != 1 {
+		t.Fatalf("SplitRight direction = %d, want +1 for the second child", first.Direction)
+	}
+	if first.Seq == 0 || first.At.IsZero() {
+		t.Fatalf("event has no sequence or time: %+v", first)
+	}
+
+	if err := graph.state.SplitFocusedPane(domainworkspace.SideLeft); err != nil {
+		t.Fatal(err)
+	}
+	second, ok := graph.state.MotionEvent()
+	if !ok {
+		t.Fatalf("SplitFocusedPane recorded no motion event")
+	}
+	newest, _ := graph.state.FocusedPaneID(0)
+	if second.Seq <= first.Seq {
+		t.Fatalf("sequence did not advance: %d then %d", first.Seq, second.Seq)
+	}
+	if second.Kind != motion.PaneOpen || second.PaneID != newest || second.TargetID != after {
+		t.Fatalf("second event = %+v, want the new Pane %q from target %q", second, newest, after)
+	}
+	if second.Direction != -1 {
+		t.Fatalf("left split direction = %d, want -1 for the first child", second.Direction)
 	}
 }
 
