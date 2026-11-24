@@ -53,6 +53,15 @@ type phoneSessionRuntime struct {
 	// Connection Manager. It is nil when the known-host repository does not
 	// also store forwarding rules (a test's fake, for example).
 	forwarding *phoneForwarding
+	// logs supplies the Session Tools surface's Session Log folder, saved-log
+	// list, and system export path. It is built lazily and replaced by a test
+	// that points the surface at a temporary Documents folder.
+	logs *phoneSessionLogService
+	// handles tracks the Sessions this runtime opened, so app shutdown can
+	// flush an active Session log before the process exits. An explicit Tab
+	// close finalizes its own log through the Session's normal teardown.
+	handlesMu sync.Mutex
+	handles   map[*phoneSessionHandle]struct{}
 }
 
 // phoneNetworkStatuses stores the latest non-secret Provider status per
@@ -443,7 +452,9 @@ func (r *phoneSessionRuntime) openHost(ctx context.Context, host domainvault.Hos
 	if err != nil {
 		return nil, err
 	}
-	return &phoneSessionHandle{session: session}, nil
+	handle := &phoneSessionHandle{session: session}
+	r.trackHandle(handle)
+	return handle, nil
 }
 
 // Close ends every Session and shuts the Connection Manager down.
@@ -451,6 +462,10 @@ func (r *phoneSessionRuntime) Close() {
 	if r == nil {
 		return
 	}
+	// Flush every active Session log before the Sessions are closed: the
+	// process may exit before a background teardown reaches its logger, and a
+	// log the user started must be complete on disk.
+	r.stopSessionLogs()
 	if r.service != nil {
 		r.service.CloseAll()
 	}

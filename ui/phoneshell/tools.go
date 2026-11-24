@@ -150,6 +150,9 @@ type toolsState struct {
 	// is entered and reads the shared runtime through the Session opener, so a
 	// Pane that never opens it costs nothing.
 	forwarding *forwardingPages
+	// sessionLog is this Pane's Session Log page state: the saved-log list and
+	// the last outcome. The live recording state stays on the Session handle.
+	sessionLog sessionLogViewState
 	// result is the last clear's outcome; resultProblem marks it a failure.
 	result        string
 	resultProblem bool
@@ -337,6 +340,8 @@ func (t *sessionTabs) drawTools(c *ui.Context, view tabView) {
 				t.drawToolBrowser(c, st, view)
 			case toolForwarding:
 				t.drawToolForwarding(c, st, view)
+			case toolSessionLog:
+				t.drawToolSessionLog(c, st, view)
 			case toolNotes:
 				t.drawToolNotes(c, st)
 			default:
@@ -365,7 +370,7 @@ func (t *sessionTabs) drawToolCatalog(c *ui.Context, st *toolsState, view tabVie
 		row.Children(func() {
 			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 				ui.Text(c, spec.title)
-				ui.Text(c, t.toolSummary(st, spec.id, view.host)).FontSize(12).
+				ui.Text(c, t.toolSummary(st, spec.id, view)).FontSize(12).
 					TextColor(c.Theme().TextMuted).SingleLine()
 			})
 			ui.Text(c, "›").FontSize(20).TextColor(c.Theme().TextMuted)
@@ -389,6 +394,14 @@ func (t *sessionTabs) drawToolCatalog(c *ui.Context, st *toolsState, view tabVie
 					_ = t.notes.reload(context.Background())
 				}
 			}
+			if spec.id == toolSessionLog {
+				// Entering Session Log re-reads the saved-log directory, so a
+				// log left by an earlier Session or an earlier app run is
+				// reachable from the export entry.
+				st.sessionLog.loaded = false
+				st.sessionLog.result = ""
+				st.sessionLog.resultProblem = false
+			}
 		}
 	}
 	// A device without the WebView capability still states why its entry is
@@ -402,7 +415,8 @@ func (t *sessionTabs) drawToolCatalog(c *ui.Context, st *toolsState, view tabVie
 }
 
 // toolSummary is the catalog row's second line.
-func (t *sessionTabs) toolSummary(st *toolsState, id toolID, host domainvault.Host) string {
+func (t *sessionTabs) toolSummary(st *toolsState, id toolID, view tabView) string {
+	host := view.host
 	switch id {
 	case toolHistory:
 		if t.history == nil || st == nil || st.loadProblem != "" {
@@ -453,6 +467,23 @@ func (t *sessionTabs) toolSummary(st *toolsState, id toolID, host domainvault.Ho
 			}
 		}
 		return "Start and stop this Host's rules"
+	case toolSessionLog:
+		if _, ok := t.sessionLogWorkspace(); !ok {
+			return "Unavailable"
+		}
+		if handle := t.sessionLogHandle(view); handle != nil {
+			status := handle.SessionLogStatus()
+			if status.Active {
+				return "Recording this Session"
+			}
+			if status.Problem != "" {
+				return "Recording failed"
+			}
+		}
+		if st != nil && st.sessionLog.loaded && len(st.sessionLog.files) > 0 {
+			return sessionLogCount(len(st.sessionLog.files))
+		}
+		return "Record this Session to a file"
 	}
 	return "Not on the phone yet"
 }

@@ -55,5 +55,7 @@ func (r *phoneSessionRuntime) OpenTarget(ctx context.Context, host domainvault.H
 	if err != nil {
 		return nil, err
 	}
-	return &phoneSessionHandle{session: session}, nil
+	handle := &phoneSessionHandle{session: session}
+	r.trackHandle(handle)
+	return handle, nil
 }
