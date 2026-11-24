@@ -47,6 +47,37 @@ func TestMobileConfigurationDeclaresMinimums(t *testing.T) {
 	}
 }
 
+// TestMobileConfigurationAllowsOnlyLoopbackCleartext pins the cleartext
+// allow-list the Android Browser build carries. MyGo's generator turns
+// android.cleartextDomains into a network security config whose base policy
+// refuses cleartext to every other host, and mygo.json names only the two
+// loopback gateways. Widening the list would let the app talk plain HTTP to a
+// third party, so the test makes that a visible edit rather than a quiet
+// configuration change.
+func TestMobileConfigurationAllowsOnlyLoopbackCleartext(t *testing.T) {
+	root := testutil.ModuleRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "mygo.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Android struct {
+			CleartextDomains []string `json:"cleartextDomains"`
+		} `json:"android"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatalf("mygo.json: %v", err)
+	}
+
+	got := slices.Clone(config.Android.CleartextDomains)
+	slices.Sort(got)
+	want := []string{"127.0.0.1", "127.0.0.2"}
+	if !slices.Equal(got, want) {
+		t.Errorf("android.cleartextDomains = %v, want exactly %v",
+			config.Android.CleartextDomains, want)
+	}
+}
+
 // TestMobileConfigurationRegistersSSHDeepLinks pins the committed registration
 // of the ssh:// handler under the single application identifier. MyGo v0.10.0
 // turns urlSchemes into the iOS bundle's CFBundleURLTypes (CFBundleURLName is

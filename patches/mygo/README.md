@@ -96,6 +96,28 @@ At an upgrade, drop the patch if the release carries per-site data stores,
 cookie access and download events; otherwise rework it against the new host
 sources. Keeping it is a product decision, as the ADR says for new patches.
 
+## The Android cleartext patch
+
+`0008-android-network-security.patch` lets the phone browser reach a Host's
+gateway, which serves plain HTTP on the loopback. Android refuses cleartext by
+default from target API 28 on, so the Browser build would fail every request to
+`127.0.0.1` and `127.0.0.2`. A plugin cannot fix this: MyGo v0.10.0 hardcodes
+the generated `<application>` attributes, and the plugin hook can only inject
+children, while `android:networkSecurityConfig` must be an attribute. The patch
+adds an opt-in `android.cleartextDomains` field and emits the attribute and the
+resource only when it is non-empty. The generated
+`res/xml/mygo_network_security.xml` sets
+`cleartextTrafficPermitted="false"` as the base policy and permits it only for
+the named hosts, so the app needs nothing beyond the two loopback gateways.
+
+It touches `cmd/mygo/android.go`, `cmd/mygo/config.go`,
+`cmd/mygo/mobile_config_test.go` and the TypeScript declaration
+`packages/cli/index.d.ts`. An app without the new field keeps the system
+default: no attribute, no resource.
+
+At an upgrade, drop the patch if upstream carries a cleartext-domains option;
+otherwise rework it against the new generator.
+
 ## The fork carries the same desktop fixes
 
 Natcatty's desktop and phone terminal now run the source fork in `ui/terminal`

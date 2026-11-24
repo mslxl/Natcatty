@@ -1,0 +1,177 @@
+diff --git a/cmd/mygo/android.go b/cmd/mygo/android.go
+index 400fe25c..cedfe946 100644
+--- a/cmd/mygo/android.go
++++ b/cmd/mygo/android.go
+@@ -241,12 +241,18 @@ func androidManifest(c *Config, plugins mobilePlugins) []byte {
+ 	if c.Android.Splash != "" {
+ 		theme = androidSplashTheme
+ 	}
++	// The attribute names a resource, so it exists only when the app
++	// declares hosts: an app without them keeps the system default.
++	security := ""
++	if len(c.Android.CleartextDomains) > 0 {
++		security = "\n        android:networkSecurityConfig=\"@xml/" + androidNetworkSecurityConfig + "\""
++	}
+ 	b.WriteString(`    <application
+         android:label="${mygoAppName}"
+         android:icon="${mygoIcon}"
+         android:supportsRtl="true"
+         android:enableOnBackInvokedCallback="true"
+-        android:theme="@style/` + theme + `">
++        android:theme="@style/` + theme + `"` + security + `>
+         <activity
+             android:name="dev.mygo.MyGoActivity"
+             android:exported="true"
+@@ -387,6 +393,31 @@ func flattenAdaptiveIcon(fg image.Image, background string) (image.Image, error)
+ // its source set, with the splash screen's color.
+ const androidSplashTheme = "Theme.MyGo.Splash"
+ 
++// androidNetworkSecurityConfig is the resource the manifest's
++// android:networkSecurityConfig names when the app declares cleartext hosts.
++const androidNetworkSecurityConfig = "mygo_network_security"
++
++// writeAndroidNetworkSecurity writes the configuration that permits cleartext
++// only to the hosts the app names. Every other host is refused, as Android's
++// default from target API 28 on does.
++func writeAndroidNetworkSecurity(res string, domains []string) error {
++	var b strings.Builder
++	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>
++<network-security-config>
++    <base-config cleartextTrafficPermitted="false" />
++    <domain-config cleartextTrafficPermitted="true">
++`)
++	for _, d := range domains {
++		fmt.Fprintf(&b, "        <domain includeSubdomains=\"false\">%s</domain>\n", d)
++	}
++	b.WriteString(`    </domain-config>
++</network-security-config>
++`)
++	return writeResFiles(res, map[string]string{
++		filepath.Join("xml", androidNetworkSecurityConfig+".xml"): b.String(),
++	})
++}
++
+ // writeAndroidSplash writes the style of the splash screen into res. Android
+ // 12 and later take its color from windowSplashScreenBackground, and
+ // earlier systems show the window's background while the app starts.
+@@ -450,6 +481,11 @@ func (t *androidToolchain) gradle(ctx context.Context, c, dc *Config, dir, work,
+ 			return err
+ 		}
+ 	}
++	if len(dc.Android.CleartextDomains) > 0 {
++		if err := writeAndroidNetworkSecurity(res, dc.Android.CleartextDomains); err != nil {
++			return err
++		}
++	}
+ 	plugins, err := c.mobilePlugins("android")
+ 	if err != nil {
+ 		return err
+diff --git a/cmd/mygo/config.go b/cmd/mygo/config.go
+index eb7d1f1e..abaaf119 100644
+--- a/cmd/mygo/config.go
++++ b/cmd/mygo/config.go
+@@ -321,6 +321,12 @@ type Android struct {
+ 	// Splash is the color of the screen the system shows while the app
+ 	// starts, as "#102030" (default: the theme's).
+ 	Splash string `json:"splash"`
++	// CleartextDomains are the hosts the app may reach over plain HTTP,
++	// as 127.0.0.1 for a local gateway. Cleartext to every other host is
++	// refused, which is Android's default from target API 28 on. Without
++	// it, the app has no network security configuration and keeps the
++	// system default.
++	CleartextDomains []string `json:"cleartextDomains"`
+ }
+ 
+ // AndroidAdaptiveIcon is an icon of two layers.
+@@ -517,6 +523,13 @@ func (c *Config) validateMobile() error {
+ 			return fmt.Errorf("android.appLinks: %q is not a host, as example.com or *.example.com, without https://", h)
+ 		}
+ 	}
++	for _, h := range c.Android.CleartextDomains {
++		// A wildcard would permit cleartext to hosts the app does not name,
++		// which defeats the point of listing them.
++		if !hostRe.MatchString(h) || strings.HasPrefix(h, "*.") {
++			return fmt.Errorf("android.cleartextDomains: %q is not a host, as 127.0.0.1 or gateway.example.com", h)
++		}
++	}
+ 	if a := c.Android.AdaptiveIcon; a != nil {
+ 		if a.Foreground == "" {
+ 			return errors.New("android.adaptiveIcon needs a foreground")
+diff --git a/cmd/mygo/mobile_config_test.go b/cmd/mygo/mobile_config_test.go
+index 30d33d06..72b6d03a 100644
+--- a/cmd/mygo/mobile_config_test.go
++++ b/cmd/mygo/mobile_config_test.go
+@@ -49,6 +49,8 @@ func TestMobileConfigValidate(t *testing.T) {
+ 		`{"android": {"adaptiveIcon": {"foreground": "a.png"}}}`:                  "background",
+ 		`{"android": {"adaptiveIcon": {"foreground": "a", "background": "#12"}}}`: "background",
+ 		`{"android": {"splash": "#12345g"}}`:                                      "splash",
++		`{"android": {"cleartextDomains": ["https://127.0.0.1"]}}`:                "cleartextDomains",
++		`{"android": {"cleartextDomains": ["*.example.com"]}}`:                    "cleartextDomains",
+ 	} {
+ 		dir := t.TempDir()
+ 		writeBytes(t, filepath.Join(dir, jsonConfig), []byte(config))
+@@ -93,6 +95,46 @@ func TestAndroidManifestOfConfig(t *testing.T) {
+ 	}
+ }
+ 
++func TestAndroidCleartextDomains(t *testing.T) {
++	// Without hosts the manifest keeps the system default: no attribute,
++	// no resource.
++	c := &Config{}
++	if m := string(androidManifest(c, nil)); strings.Contains(m, "networkSecurityConfig") {
++		t.Errorf("a manifest without cleartext hosts names a configuration:\n%s", m)
++	}
++
++	c.Android.CleartextDomains = []string{"127.0.0.1", "127.0.0.2"}
++	m := string(androidManifest(c, nil))
++	if !strings.Contains(m, `android:networkSecurityConfig="@xml/`+androidNetworkSecurityConfig+`"`) {
++		t.Errorf("no network security configuration in:\n%s", m)
++	}
++	// The attribute must be on <application>, not a child: only a start-tag
++	// attribute reaches Android's manifest.
++	if !strings.Contains(m, `android:theme="@style/Theme.MyGo"`+"\n        "+`android:networkSecurityConfig=`) {
++		t.Errorf("the configuration is not an <application> attribute:\n%s", m)
++	}
++
++	dir := t.TempDir()
++	if err := writeAndroidNetworkSecurity(dir, c.Android.CleartextDomains); err != nil {
++		t.Fatal(err)
++	}
++	xml, err := os.ReadFile(filepath.Join(dir, "xml", androidNetworkSecurityConfig+".xml"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	s := string(xml)
++	for _, want := range []string{
++		`<base-config cleartextTrafficPermitted="false" />`,
++		`<domain-config cleartextTrafficPermitted="true">`,
++		`<domain includeSubdomains="false">127.0.0.1</domain>`,
++		`<domain includeSubdomains="false">127.0.0.2</domain>`,
++	} {
++		if !strings.Contains(s, want) {
++			t.Errorf("no %s in:\n%s", want, s)
++		}
++	}
++}
++
+ func TestAndroidAdaptiveIcon(t *testing.T) {
+ 	dir := t.TempDir()
+ 	writeBytes(t, filepath.Join(dir, "fg.png"), solidPNG(t, 432, color.NRGBA{255, 0, 0, 255}))
+diff --git a/packages/cli/index.d.ts b/packages/cli/index.d.ts
+index 6cf7501e..35b486fe 100644
+--- a/packages/cli/index.d.ts
++++ b/packages/cli/index.d.ts
+@@ -352,6 +352,13 @@ export interface AndroidConfig {
+   adaptiveIcon?: AndroidAdaptiveIcon;
+   /** The color of the screen the system shows while the app starts, as `#102030` (default: the theme's). */
+   splash?: string;
++  /**
++   * The hosts the app may reach over plain HTTP, as `127.0.0.1` for a local
++   * gateway. Cleartext to every other host is refused, which is Android's
++   * default from target API 28 on. Without it, the app keeps the system
++   * default.
++   */
++  cleartextDomains?: string[];
+ }
+ 
+ /** An icon of two layers. */

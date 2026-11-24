@@ -21,6 +21,7 @@
     }
   },
   "android": {
-    "minSdk": 26
+    "minSdk": 26,
+    "cleartextDomains": ["127.0.0.1", "127.0.0.2"]
   }
 }
