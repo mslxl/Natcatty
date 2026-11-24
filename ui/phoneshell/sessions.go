@@ -474,6 +474,9 @@ type sessionTabs struct {
 	// service; each Pane's toolsState holds its own directory and selection.
 	// Nil means the tool reports why it is unavailable.
 	files FilesService
+	// queue is the global Transfer queue panel the Sessions home shows. Nil
+	// draws no panel; the Files page owns the same object.
+	queue *transferQueuePages
 	// fileHosts lists the saved Hosts the Files copy target picker offers. The
 	// Shell points it at the Hosts section's remote Host list.
 	fileHosts func() []domainvault.Host
@@ -2169,6 +2172,11 @@ func (t *sessionTabs) drawRoot(c *ui.Context) {
 			// saved Host, so it is offered even when no Session is open.
 			if kit.PrimaryButton(c, icons.Zap, "Quick Connect").Clicked() && t.quickOpen != nil {
 				t.quickOpen()
+			}
+			// The global Transfer queue is the same panel the Files page
+			// draws; a copy started there keeps running and reports here.
+			if t.queue != nil {
+				t.queue.draw(c)
 			}
 			kit.SectionBar(c, "Open Sessions", nil)
 			if len(views) == 0 {

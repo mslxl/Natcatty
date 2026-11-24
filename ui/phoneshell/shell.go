@@ -20,6 +20,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appapplock "github.com/mslxl/natcatty/application/applock"
+	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	domainmodel "github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/icons"
@@ -159,6 +160,15 @@ type Shell struct {
 	// Session Files tool use. Nil hides the Host entry and makes the tool report
 	// that this build cannot browse files.
 	files FilesService
+	// queue is the global Transfer queue. The Files page and the Sessions home
+	// both draw it, and phone copies and uploads run on it. Nil keeps the
+	// Files page's direct-copy behavior and hides the queue panel.
+	queue *apptransfer.Queue
+	// transferPicker chooses device files for an upload or a source
+	// re-selection. Nil hides both actions.
+	transferPicker func() ([]string, error)
+	// transferQueue owns the shared queue panel state and controls.
+	transferQueue *transferQueuePages
 	// hostFiles is the Files page shared by the Hosts and Vault Host-detail
 	// routes. It is released when the user leaves those pages.
 	hostFiles *filesPages
@@ -401,13 +411,24 @@ func New(opts ...Option) *Shell {
 			s.files = provider.FilesService()
 		}
 	}
+	// The global Transfer queue comes from the explicit option or the Session
+	// opener, exactly like the transfer service. A build without one keeps the
+	// page's direct copy and draws no queue panel.
+	if s.queue == nil {
+		if provider, ok := s.sessions.opener.(TransferQueueProvider); ok {
+			s.queue = provider.TransferQueue()
+		}
+	}
+	s.transferQueue = newTransferQueuePages(s.queue, s.files, s.transferPicker, s.invalidateWindows)
 	s.sessions.files = s.files
 	s.sessions.fileHosts = func() []domainvault.Host {
 		return s.hosts.hosts
 	}
+	s.sessions.queue = s.transferQueue
 	s.hostFiles = newFilesPages(s.files, func() []domainvault.Host {
 		return s.hosts.hosts
 	})
+	s.hostFiles.transferQueue = s.transferQueue
 	if s.files != nil {
 		s.hosts.openFiles = s.openHostFiles
 	}

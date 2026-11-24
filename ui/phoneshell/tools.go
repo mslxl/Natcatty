@@ -661,6 +661,9 @@ func (t *sessionTabs) drawToolFiles(c *ui.Context, st *toolsState, view tabView)
 	if st.files == nil {
 		st.files = newFilesPages(t.files, t.fileHosts)
 	}
+	// Every Files surface shows the one global queue, so a copy started from a
+	// Session tool appears on the Host detail page and the Sessions home too.
+	st.files.transferQueue = t.queue
 	if directory, ok := view.handle.(SessionDirectory); ok {
 		st.files.followCWD = directory.SessionCWD
 	} else {

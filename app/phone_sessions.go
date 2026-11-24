@@ -13,11 +13,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"sync"
 
 	"github.com/egoist/mygo"
 
 	adapteret "github.com/mslxl/natcatty/adapters/et"
+	adaptersftp "github.com/mslxl/natcatty/adapters/sftp"
 	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
 	"github.com/mslxl/natcatty/adapters/store"
 	adapterstnet "github.com/mslxl/natcatty/adapters/telnet"
@@ -63,6 +65,10 @@ type phoneSessionRuntime struct {
 	// Manager. Host detail and the Session Files tool browse and copy through
 	// it, so protocol selection and the copy engine are the desktop's.
 	files *apptransfer.Service
+	// queue is the global Transfer queue. Phone copies and uploads run on it,
+	// and it persists under the app's user-data directory so an unfinished row
+	// returns after a process restart.
+	queue *apptransfer.Queue
 	// logs supplies the Session Tools surface's Session Log folder, saved-log
 	// list, and system export path. It is built lazily and replaced by a test
 	// that points the surface at a temporary Documents folder.
@@ -162,11 +168,35 @@ func (r *phoneSessionRuntime) FilesService() phoneshell.FilesService {
 	return r.files
 }
 
+// TransferQueue lets the phone Shell take the global Transfer queue from the
+// same opener, so the Files page and the Sessions home share one queue.
+func (r *phoneSessionRuntime) TransferQueue() *apptransfer.Queue {
+	if r == nil {
+		return nil
+	}
+	return r.queue
+}
+
+// pickTransferSources is the system document picker for a device upload and a
+// source re-selection. On a phone the picker answers with app-readable copies;
+// the queue row keeps the destination and checkpoint, so an evicted copy can
+// be chosen again without starting a new Transfer.
+func pickTransferSources() ([]string, error) {
+	return mygo.Dialog.Open(mygo.OpenDialogOptions{
+		Title:    "Choose files to transfer",
+		Multiple: true,
+	})
+}
+
 // Ensure the runtime is the shell's opener seam.
 var _ phoneshell.SessionOpener = (*phoneSessionRuntime)(nil)
 
 // The runtime also supplies the Files tool's shared transfer service.
 var _ phoneshell.FilesProvider = (*phoneSessionRuntime)(nil)
+
+// The runtime also supplies the global Transfer queue the Files page and the
+// Sessions home share.
+var _ phoneshell.TransferQueueProvider = (*phoneSessionRuntime)(nil)
 
 // The same runtime drives the Networks page's Tailscale login and supplies its
 // status; both seams use the shared application controller and status sink.
@@ -316,13 +346,25 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 	routes := vaultRoutes{vault: vault, preferences: preferences}
 	forwarding := newPhoneForwarding(known, vault, routes, connections, true)
 	// The shared transfer service opens SFTP/SCP with the same route resolver
-	// and Connection pool a Session uses. The phone has no local filesystem
-	// pane, so only the remote opener is wired.
-	files := apptransfer.NewService(nil, &sftpRemoteOpener{
+	// and Connection pool a Session uses. The local opener reads the system
+	// picker's app-readable copies for a device upload; there is no local
+	// browsing pane.
+	files := apptransfer.NewService(adaptersftp.NewLocal(), &sftpRemoteOpener{
 		manager: connections,
 		routes:  routes,
 		vault:   vault,
 	})
+	// The queue is the desktop's scheduler, checkpoint, and conflict machinery.
+	// Its history lives in the phone's user-data directory, the same place the
+	// Vault and settings documents live, so a process restart downgrades an
+	// unfinished row to interrupted instead of losing it.
+	queuePath := ""
+	if userData != "" {
+		queuePath = filepath.Join(userData, "sftp-transfer-queue.json")
+	}
+	queue := apptransfer.NewQueue(files,
+		apptransfer.WithQueueRepository(adaptersftp.NewTransferQueue(queuePath)))
+	_ = queue.Start(context.Background())
 	service := appsession.NewService(
 		newPhoneTransportFactory(connections, routes, providers, secrets),
 		phoneSessionOptions(vault, history, terminalSettings)...)
@@ -338,6 +380,7 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 		networkStatuses: statuses,
 		forwarding:      forwarding,
 		files:           files,
+		queue:           queue,
 	}
 }
 

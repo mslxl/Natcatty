@@ -116,6 +116,35 @@ func (o *fakeFileOpener) setErr(hostID model.HostID, err error) {
 	o.mu.Unlock()
 }
 
+func (o *fakeFileOpener) setTree(hostID model.HostID, files apptransfer.FileSystem) {
+	o.mu.Lock()
+	o.trees[hostID] = files
+	o.mu.Unlock()
+}
+
+// fakePicker serves the device picker. answer is returned until the test
+// changes it; err stands in for a canceled or refused picker.
+type fakePicker struct {
+	mu     sync.Mutex
+	answer []string
+	err    error
+	calls  int
+}
+
+func (p *fakePicker) pick() ([]string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls++
+	return append([]string(nil), p.answer...), p.err
+}
+
+func (p *fakePicker) set(answer ...string) {
+	p.mu.Lock()
+	p.answer = answer
+	p.err = nil
+	p.mu.Unlock()
+}
+
 // filesFixture is the phone Shell over the shared transfer service and two
 // temporary Host trees.
 type filesFixture struct {
@@ -123,9 +152,17 @@ type filesFixture struct {
 	source *localTree
 	target *localTree
 	opener *fakeFileOpener
+	queue  *apptransfer.Queue
+	picker *fakePicker
 }
 
 func newFilesFixture(t *testing.T) *filesFixture {
+	return newFilesFixtureWithQueue(t, nil)
+}
+
+// newFilesFixtureWithQueue builds the fixture over the shared transfer service
+// and the global queue. repo, when non-nil, persists the queue.
+func newFilesFixtureWithQueue(t *testing.T, repo apptransfer.QueueRepository) *filesFixture {
 	t.Helper()
 	source := newLocalTree(t, "prod")
 	target := newLocalTree(t, "target")
@@ -144,15 +181,31 @@ func newFilesFixture(t *testing.T) *filesFixture {
 		},
 		errs: make(map[model.HostID]error),
 	}
-	service := apptransfer.NewService(nil, opener)
+	// The local opener serves device uploads; the remote opener stands in for
+	// the two Hosts.
+	service := apptransfer.NewService(adaptersftp.NewLocal(), opener)
+	options := []apptransfer.QueueOption{}
+	if repo != nil {
+		options = append(options, apptransfer.WithQueueRepository(repo))
+	}
+	queue := apptransfer.NewQueue(service, options...)
+	if err := queue.Start(context.Background()); err != nil {
+		t.Fatalf("start transfer queue: %v", err)
+	}
+	t.Cleanup(queue.Shutdown)
+	picker := &fakePicker{}
 	hosts := append(phoneHosts(), domainvault.Host{
 		ID: "target", Label: "target box", Hostname: "target.example.com",
 		Port: 22, Username: "deploy", Protocol: domainvault.ProtocolSSH,
 	})
 	sessionOpener := &fakeOpener{output: "remote prompt $ "}
 	fixture := newPhoneFixtureWith(t, hosts, sessionOpener,
-		WithFiles(service), WithScreenFactory(fakeScreens))
-	return &filesFixture{phoneFixture: fixture, source: source, target: target, opener: opener}
+		WithFiles(service), WithTransferQueue(queue),
+		WithTransferSourcePicker(picker.pick), WithScreenFactory(fakeScreens))
+	return &filesFixture{
+		phoneFixture: fixture, source: source, target: target,
+		opener: opener, queue: queue, picker: picker,
+	}
 }
 
 func writeTreeFile(t *testing.T, root, name, content string) {

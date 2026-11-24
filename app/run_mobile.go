@@ -351,6 +351,10 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 		phoneshell.WithVault(vault),
 		phoneshell.WithHosts(vault),
 		phoneshell.WithSessionOpener(sessionRuntime),
+		// Device uploads and a re-selected cached source use the system
+		// document picker; the queue's row keeps the destination and
+		// checkpoint.
+		phoneshell.WithTransferSourcePicker(pickTransferSources),
 		// A deep link for an endpoint the Vault does not have asks to create
 		// that Host. The shared Vault service writes the record, so the new
 		// Host is the same one the desktop lists.

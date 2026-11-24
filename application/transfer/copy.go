@@ -77,6 +77,10 @@ type Progress struct {
 	// checkpoint covers, which excludes a partially written current file.
 	Checkpoint      *domainsftp.DirectoryCheckpoint
 	CheckpointBytes int64
+	// CheckpointRebased reports that this attempt rebuilt the checkpoint's
+	// completed prefix onto the current plan instead of verifying the saved
+	// source paths. The queue clears its durable rebase marker on this report.
+	CheckpointRebased bool
 }
 
 // Done reports whether every planned file has been written.
@@ -115,6 +119,16 @@ type CopyRequest struct {
 	// names. The engine validates it against a fresh traversal before
 	// skipping anything.
 	Checkpoint *domainsftp.DirectoryCheckpoint
+	// RebaseCheckpoint accepts a checkpoint whose source paths changed under
+	// an explicit re-selection. It rebuilds the prefix digest from this plan's
+	// identities instead of comparing the saved digest. Normal resumes leave
+	// it false and keep full identity verification.
+	RebaseCheckpoint bool
+	// CheckpointPlanEntries is the entry count of the plan the saved
+	// checkpoint came from. A rebase requires the replacement plan to have the
+	// same count, which is the only shape check left once the old identities
+	// are unknowable. Zero means unknown and disables the rebase.
+	CheckpointPlanEntries int
 	// KnownTargets pins the destination root chosen by an earlier attempt, so
 	// a resumed duplicate or replacement continues in the same tree.
 	KnownTargets map[string]string
@@ -216,6 +230,11 @@ type copyPlan struct {
 	resumedEntries  int
 	checkpoint      *domainsftp.DirectoryCheckpoint
 	checkpointBytes int64
+	// checkpointRebased records that this attempt evaluated a saved prefix
+	// whose source paths were replaced, so progress can tell the queue to
+	// clear its durable rebase marker whether the prefix was accepted or
+	// rejected.
+	checkpointRebased bool
 }
 
 // Copy runs a copy or move request. It checks ctx between every chunk and
@@ -448,6 +467,7 @@ func newPlanProgress(kind domainsftp.OperationKind, plan *copyPlan) Progress {
 		checkpoint := *plan.checkpoint
 		progress.Checkpoint = &checkpoint
 		progress.CheckpointBytes = plan.checkpointBytes
+		progress.CheckpointRebased = plan.checkpointRebased
 	}
 	return progress
 }
@@ -532,7 +552,8 @@ func buildCopyPlan(ctx context.Context, request CopyRequest, policy ConflictPoli
 		planned.Count = len(plan.entries) - planned.First
 		plan.sources = append(plan.sources, planned)
 	}
-	plan.resumedEntries = seedCheckpoint(plan, request.Checkpoint)
+	plan.resumedEntries = seedCheckpoint(plan, request.Checkpoint,
+		request.RebaseCheckpoint, request.CheckpointPlanEntries)
 	return plan, nil
 }
 
@@ -540,19 +561,63 @@ func buildCopyPlan(ctx context.Context, request CopyRequest, policy ConflictPoli
 // number of already-completed entries to skip. A checkpoint that does not
 // match the freshly traversed prefix is discarded, so a changed source is
 // copied again rather than skipped.
-func seedCheckpoint(plan *copyPlan, saved *domainsftp.DirectoryCheckpoint) int {
+//
+// rebase is the explicit re-selection case. Android's picker returns the same
+// cached tree at a different absolute path, so every saved identity differs
+// even though the completed files are the same. The checkpoint keeps only a
+// digest, not the old identities, so the old prefix cannot be proven equal
+// entry for entry; what can be validated is that the record is well formed and
+// that the completed count fits the new plan, and (when the durable row knows
+// it) that the replacement plan has the same number of entries as the original
+// so a completely different tree cannot inherit a prefix. The prefix count is
+// then clamped to the new entry count and a fresh version-2 manifest is
+// computed from the new plan's identities over that prefix, after which the
+// remaining entries copy normally. A normal resume never takes this path and
+// still verifies the full digest.
+func seedCheckpoint(plan *copyPlan, saved *domainsftp.DirectoryCheckpoint,
+	rebase bool, oldPlanEntries int) int {
 	if !plan.hasDirs {
 		plan.checkpoint = nil
 		return 0
 	}
 	empty := domainsftp.CreateEmptyDirectoryCheckpoint()
 	plan.checkpoint = &empty
+	// A requested rebase is consumed by this attempt even when validation
+	// rejects it: the queue must clear its marker rather than carry a stale
+	// shortcut into a later, unrelated resume.
+	plan.checkpointRebased = rebase
 	if saved == nil {
 		return 0
 	}
 	identities := make([]string, len(plan.entries))
 	for index, entry := range plan.entries {
 		identities[index] = entry.Identity
+	}
+	if rebase {
+		if !saved.Valid() || saved.CompletedEntries == 0 ||
+			oldPlanEntries <= 0 || oldPlanEntries != len(identities) {
+			return 0
+		}
+		completed := saved.CompletedEntries
+		if completed > len(identities) {
+			completed = len(identities)
+		}
+		rebased := domainsftp.CreateEmptyDirectoryCheckpoint()
+		accumulator, err := domainsftp.NewDirectoryManifestAccumulator(rebased)
+		if err != nil {
+			return 0
+		}
+		for _, identity := range identities[:completed] {
+			if err := accumulator.Append(identity); err != nil {
+				return 0
+			}
+		}
+		rebased.ManifestHash = accumulator.Digest()
+		rebased.CoveredEntries = completed
+		rebased.CompletedEntries = completed
+		plan.checkpoint = &rebased
+		plan.checkpointBytes = prefixBytes(plan, completed)
+		return completed
 	}
 	checkpoint := *saved
 	if checkpoint.Version == 1 {
@@ -567,13 +632,19 @@ func seedCheckpoint(plan *copyPlan, saved *domainsftp.DirectoryCheckpoint) int {
 		return 0
 	}
 	plan.checkpoint = &checkpoint
-	plan.checkpointBytes = 0
-	for index := 0; index < checkpoint.CompletedEntries; index++ {
+	plan.checkpointBytes = prefixBytes(plan, checkpoint.CompletedEntries)
+	return checkpoint.CompletedEntries
+}
+
+// prefixBytes sums the non-directory entries in a completed plan prefix.
+func prefixBytes(plan *copyPlan, completed int) int64 {
+	var bytes int64
+	for index := 0; index < completed && index < len(plan.entries); index++ {
 		if !plan.entries[index].Directory {
-			plan.checkpointBytes += plan.entries[index].Size
+			bytes += plan.entries[index].Size
 		}
 	}
-	return checkpoint.CompletedEntries
+	return bytes
 }
 
 // plannedFile builds a regular-file plan entry.

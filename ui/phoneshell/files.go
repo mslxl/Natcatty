@@ -35,6 +35,9 @@ import (
 type FilesService interface {
 	// OpenRemote opens one saved Host's filesystem.
 	OpenRemote(ctx context.Context, hostID model.HostID, label string) (apptransfer.FileSystem, error)
+	// OpenLocal opens the phone's own filesystem. Device uploads read the
+	// system picker's copies through it.
+	OpenLocal(ctx context.Context) (apptransfer.FileSystem, error)
 	// List returns one directory's entries, including the typed parent entry.
 	List(ctx context.Context, files apptransfer.FileSystem, dir string) ([]domainsftp.Entry, error)
 	// Copy runs one copy request through the shared engine.
@@ -123,6 +126,16 @@ type filesState struct {
 	// failing path is not re-read on every frame.
 	followTried string
 
+	// taskID is the queue row this page enqueued, when the shell has the
+	// global queue. The page watches it for the result the direct path used to
+	// report; leaving the page does not cancel it.
+	taskID domainsftp.TaskID
+	// taskDest names the queued row's destination in the result line. It is
+	// kept because an upload has no target Host picked into targetHost.
+	taskDest string
+	// hostLabel names the source Host for the queued request.
+	hostLabel string
+
 	result        string
 	resultProblem bool
 }
@@ -133,6 +146,9 @@ type filesState struct {
 // thread drains it before drawing.
 type filesPages struct {
 	service FilesService
+	// transferQueue is the shared global Transfer queue panel. A nil value
+	// keeps the page's direct single-operation copy.
+	transferQueue *transferQueuePages
 	// targetHosts lists the saved Hosts the copy target picker offers. The
 	// Shell points it at the Hosts section's list.
 	targetHosts func() []domainvault.Host
@@ -166,6 +182,8 @@ type filesOutcome struct {
 	conflicts []filesConflict
 	copied    int
 	copyErr   error
+	// taskID is the queue row a filesQueued outcome created.
+	taskID domainsftp.TaskID
 }
 
 type filesOutcomeKind int
@@ -176,6 +194,7 @@ const (
 	filesOpenedTarget
 	filesPreflighted
 	filesCopied
+	filesQueued
 )
 
 func newFilesPages(service FilesService, targetHosts func() []domainvault.Host) *filesPages {
@@ -229,9 +248,10 @@ func (p *filesPages) resetForHost(host domainvault.Host) {
 	gen := p.generation
 	p.mu.Unlock()
 	p.ui = filesState{
-		gen:    gen,
-		hostID: host.ID,
-		status: filesLoading,
+		gen:       gen,
+		hostID:    host.ID,
+		hostLabel: hostName(host),
+		status:    filesLoading,
 	}
 }
 
@@ -364,6 +384,101 @@ func (p *filesPages) apply(out filesOutcome) {
 		p.ui.resultProblem = false
 		p.ui.plan = nil
 		p.ui.targetHost = nil
+		p.ui.taskID = ""
+	case filesQueued:
+		p.ui.targetFS = nil
+		p.ui.targetOpen = false
+		if out.copyErr != nil {
+			p.ui.result = "Could not copy: " + out.copyErr.Error()
+			p.ui.resultProblem = true
+			return
+		}
+		// The queue owns the copy now. The row reports its own progress in
+		// the shared panel; the page keeps the plan so a failure can be
+		// retried from here as well.
+		p.ui.taskID = out.taskID
+		p.ui.result = ""
+		p.ui.resultProblem = false
+	}
+}
+
+// pollQueue folds a queued copy's terminal state into the page's result. The
+// row itself keeps running and reporting in the shared panel; this only keeps
+// the page's own result line truthful, as the direct-copy path did.
+func (p *filesPages) pollQueue() {
+	if p.transferQueue == nil || p.ui.taskID == "" {
+		return
+	}
+	task, ok := p.transferQueue.queue.Task(p.ui.taskID)
+	if !ok {
+		p.ui.taskID = ""
+		return
+	}
+	if !task.Terminal() {
+		return
+	}
+	p.ui.taskID = ""
+	switch task.Status {
+	case domainsftp.TaskCompleted:
+		noun := "files"
+		if task.FilesDone == 1 {
+			noun = "file"
+		}
+		target := p.targetName()
+		if p.ui.taskDest != "" {
+			target = p.ui.taskDest
+		}
+		p.ui.result = fmt.Sprintf("Copied %d %s to %s.", task.FilesDone, noun, target)
+		p.ui.resultProblem = false
+		p.ui.plan = nil
+		p.ui.targetHost = nil
+	case domainsftp.TaskFailed:
+		reason := task.Error
+		if task.Err != nil {
+			reason = task.Err.Error()
+		}
+		if reason == "" {
+			reason = "the transfer failed"
+		}
+		p.ui.result = "Could not copy: " + reason
+		p.ui.resultProblem = true
+	case domainsftp.TaskCancelled:
+		p.ui.result = "Copy cancelled."
+		p.ui.resultProblem = false
+		p.ui.plan = nil
+		p.ui.targetHost = nil
+	}
+}
+
+// beginUpload picks device files and queues them into the current directory.
+// The system picker returns app-readable copies; the queue row keeps the
+// destination Host and directory so an evicted source can be re-selected
+// later without starting a new Transfer.
+func (p *filesPages) beginUpload() {
+	if p.transferQueue == nil || !p.transferQueue.canEnqueueUpload() || p.ui.files == nil {
+		return
+	}
+	paths, err := p.transferQueue.pick()
+	if err != nil {
+		p.ui.result = "Could not choose files: " + err.Error()
+		p.ui.resultProblem = true
+		return
+	}
+	if len(paths) == 0 {
+		return
+	}
+	hostID, hostLabel, dir := p.ui.hostID, p.ui.hostLabel, p.ui.dir
+	p.ui.result = ""
+	p.ui.resultProblem = false
+	p.ui.taskID = ""
+	p.ui.taskDest = hostLabel
+	started := p.run("Queueing…", func(gen int) filesOutcome {
+		id, err := p.transferQueue.enqueueUpload(context.Background(), hostID, hostLabel, dir, paths)
+		return filesOutcome{kind: filesQueued, taskID: id, copyErr: err}
+	})
+	if !started {
+		p.ui.result = "Another file operation is still running."
+		p.ui.resultProblem = true
 	}
 }
 
@@ -648,6 +763,25 @@ func (p *filesPages) launchCopy() {
 	// Retry opens a new transport, so its action can never be a dead button.
 	p.ui.targetFS = nil
 	p.ui.targetOpen = false
+	p.ui.taskID = ""
+	p.ui.taskDest = plan.targetLabel
+	if p.transferQueue != nil && p.transferQueue.available() {
+		// The global queue owns the work, so leaving this page or backgrounding
+		// the app does not stop it. It opens its own transports: the page's
+		// browsing transport is closed here and the queue's row carries the
+		// request, checkpoint, and answers.
+		_ = target.Close()
+		sourceHost, sourceLabel := p.ui.hostID, p.ui.hostLabel
+		started := p.run("Queueing…", func(gen int) filesOutcome {
+			id, err := p.transferQueue.enqueueCopy(context.Background(), sourceHost, sourceLabel,
+				plan.targetID, plan.targetLabel, plan.sources, plan.destDir, answers)
+			return filesOutcome{kind: filesQueued, taskID: id, copyErr: err}
+		})
+		if !started {
+			p.ui.targetError = "Another file operation is still running."
+		}
+		return
+	}
 	started := p.run("Copying…", func(gen int) filesOutcome {
 		defer func() { _ = target.Close() }()
 		request := apptransfer.CopyRequest{
@@ -762,6 +896,7 @@ func (p *filesPages) drawBody(c *ui.Context, host domainvault.Host) {
 	p.ensureSource(host)
 	p.followTerminal()
 	p.drain()
+	p.pollQueue()
 
 	if p.ui.status == filesFailed {
 		kit.Notice(c, icons.TriangleAlert, c.Theme().Danger, p.ui.problem, func() {
@@ -810,6 +945,11 @@ func (p *filesPages) drawBody(c *ui.Context, host domainvault.Host) {
 				p.chooseTarget(*p.ui.targetHost)
 			}
 		})
+	}
+	// The global Transfer queue is the same panel the Sessions home draws, so
+	// a copy started here keeps reporting after the page is left.
+	if p.transferQueue != nil {
+		p.transferQueue.draw(c)
 	}
 	if p.ui.conflictAt < len(p.ui.conflicts) {
 		p.drawConflict(c)
@@ -899,6 +1039,15 @@ func (p *filesPages) drawBrowser(c *ui.Context) {
 
 // drawCopyControls renders the selection summary and the copy action.
 func (p *filesPages) drawCopyControls(c *ui.Context) {
+	if p.transferQueue != nil && p.transferQueue.canEnqueueUpload() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "Upload files from this device into the directory above.").
+				FontSize(12).TextColor(c.Theme().TextMuted)
+			if kit.GhostButton(c, icons.Upload, "Upload from device").Clicked() {
+				p.beginUpload()
+			}
+		})
+	}
 	count := len(p.ui.selected)
 	if count == 0 {
 		ui.Text(c, "Select files or folders to copy to another Host.").FontSize(12).
