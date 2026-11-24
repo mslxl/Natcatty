@@ -187,6 +187,13 @@ type phonePane struct {
 	// focus switch cannot carry one Pane's overlay into another, and closing
 	// the Pane discards the overlay with it.
 	tools toolsState
+	// appearanceOpen shows the quick color-scheme and font-size bar under the
+	// header. It belongs to the Pane, like the Tools surface, so a focus
+	// switch cannot carry one Pane's controls into another.
+	appearanceOpen bool
+	// appearanceProblem is the notice shown when the last quick appearance
+	// write failed. A successful write clears it.
+	appearanceProblem string
 }
 
 // phoneTab is one Workspace Tab: the shared recursive split tree, its ordered
@@ -525,6 +532,10 @@ type tabView struct {
 	// tools is the focused Pane's Tools surface state, which outlives a
 	// frame and belongs to that Pane alone.
 	tools *toolsState
+	// appearanceOpen and appearanceProblem are the focused Pane's quick
+	// appearance bar state, for the same reason.
+	appearanceOpen    bool
+	appearanceProblem string
 	// panes lists every Pane of the Tab, in order, and focus names the one the
 	// viewport shows.
 	panes []paneView
@@ -1062,7 +1073,12 @@ func (t *sessionTabs) buildScreen(conn io.ReadWriteCloser) (TerminalScreen, erro
 	if t.newScreen == nil {
 		return nil, errors.New("the terminal screen is not available on this device")
 	}
-	return t.newScreen(conn, t.currentAppearance())
+	screen, err := t.newScreen(conn, t.currentAppearance())
+	if err != nil {
+		return nil, err
+	}
+	t.applyScreenMode(screen)
+	return screen, nil
 }
 
 // currentAppearance reads the live Appearance document. The provider is
@@ -1093,6 +1109,28 @@ func (t *sessionTabs) applyAppearance() {
 	t.mu.Unlock()
 	for _, screen := range screens {
 		screen.SetAppearance(appearance)
+	}
+}
+
+// lensEnabled reads the global Lens terminal mode. RawTerminalMode is the
+// inverse switch the desktop's app root and Terminal settings write, so the
+// phone enters and leaves the inline command flow with the same document and
+// never owns a phone-only toggle.
+func (t *sessionTabs) lensEnabled() bool {
+	if t.settings == nil {
+		return true
+	}
+	return !t.settings.Terminal().RawTerminalMode
+}
+
+// applyScreenMode tells one screen which terminal mode is in force. A fake
+// screen in a test need not implement it; the real one does.
+func (t *sessionTabs) applyScreenMode(screen TerminalScreen) {
+	if screen == nil {
+		return
+	}
+	if mode, ok := screen.(interface{ SetLensMode(bool) }); ok {
+		mode.SetLensMode(t.lensEnabled())
 	}
 }
 
@@ -1166,6 +1204,8 @@ func (t *sessionTabs) viewOfTabLocked(tab *phoneTab) tabView {
 	view.screen = focused.screen
 	view.accessory = &focused.accessory
 	view.tools = &focused.tools
+	view.appearanceOpen = focused.appearanceOpen
+	view.appearanceProblem = focused.appearanceProblem
 	view.focus = string(focused.id)
 	return view
 }
@@ -2048,6 +2088,13 @@ func (t *sessionTabs) drawSession(c *ui.Context, id string, retry, back, addPane
 						t.openTools(view.tools)
 					}
 				}
+				appearanceLabel := "Terminal appearance for " + view.label
+				if view.appearanceOpen {
+					appearanceLabel = "Close terminal appearance for " + view.label
+				}
+				if kit.IconButton(c, icons.Palette, appearanceLabel).Clicked() {
+					t.togglePaneAppearance(view.id, view.focus)
+				}
 				if kit.IconButton(c, icons.Plus, "Add pane to "+view.label).Clicked() && addPane != nil {
 					addPane()
 				}
@@ -2069,6 +2116,16 @@ func (t *sessionTabs) drawSession(c *ui.Context, id string, retry, back, addPane
 			if len(view.panes) > 1 {
 				t.drawPaneSwitcher(c, view)
 			}
+			// The quick appearance bar changes a Session's scheme and font
+			// size where the user needs them, and writes the same shared
+			// Appearance document the Settings page edits.
+			if view.appearanceOpen {
+				t.drawQuickAppearance(c, view)
+			}
+			// The global Lens terminal mode decides the screen's own mode on
+			// every frame, so a Settings or desktop change applies without
+			// recreating the Session.
+			t.applyScreenMode(view.screen)
 			// The bar goes above the keyboard, inside the safe area the
 			// window root already applies, and the terminal takes what is left.
 			accessoryBar(c, view.accessory, view.screen, t.pasteNeedsConfirmation)
