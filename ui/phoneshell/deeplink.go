@@ -47,12 +47,21 @@ func (s *Shell) HandleDeepLink(raw string) error {
 // Ready marks the shell loaded and shown, and applies the links that arrived
 // while it was starting. The phone root calls it after Load and Show; calling
 // it again delivers only links buffered since the last call.
+//
+// Notification clicks that arrived during startup are applied here too, after
+// Load restored the Tabs and Panes they name, so a tap that launched the app
+// lands on the Session it notified about.
 func (s *Shell) Ready() {
 	s.ready = true
 	pending := s.pendingLinks
 	s.pendingLinks = nil
 	for _, raw := range pending {
 		_ = s.applyDeepLink(raw)
+	}
+	routes := s.pendingNotificationRoutes
+	s.pendingNotificationRoutes = nil
+	for _, route := range routes {
+		_ = s.applySessionRoute(route)
 	}
 }
 

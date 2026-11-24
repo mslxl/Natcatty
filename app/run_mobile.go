@@ -404,6 +404,18 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 			nil,
 		)),
 	)
+	// Program notifications from a phone Session reach the system notification
+	// center with enough identity to open the owning Tab and Pane on a tap,
+	// including after the system ended the process. Delivery is best effort: a
+	// denied permission or an absent sender never touches the terminal.
+	installPhoneNotifications(sessionRuntime.service, shell,
+		func() domainterminal.NotificationMode { return terminalSettings.Settings().OSCNotifications })
+	// A notification tap is a system event, not a URL. Registering before Run
+	// makes the tap that launched the app arrive too; before Ready the shell
+	// buffers it until the workspace restore has created the Tab.
+	mygo.App.OnNotificationClick(func(id string) {
+		applyPhoneNotificationClick(shell, id)
+	})
 	// A Provider status arrives on its own goroutine. Repaint every phone
 	// window so the Networks row shows the new phase, Auth URL, or error
 	// without waiting for another tap.

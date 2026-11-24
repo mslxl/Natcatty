@@ -159,6 +159,10 @@ type Shell struct {
 	// and Host. The Vault and the Hosts tab can show the same Host without
 	// sharing one panel's gateway.
 	hostBrowsers map[string]*browserSurface
+	// pendingNotificationRoutes are notification taps that arrived before Load
+	// and Show finished. Ready applies them after the workspace restore, so a
+	// click that launched the app lands on the restored Tab and Pane.
+	pendingNotificationRoutes []SessionRoute
 }
 
 // Option customizes a Shell. The composition root passes the shared Vault
