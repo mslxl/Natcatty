@@ -46,6 +46,13 @@ type SessionHandle interface {
 	End() error
 }
 
+// SessionDirectory is implemented by a Session handle whose Session reports
+// the working directory its shell last published (OSC 7). The Files tool reads
+// it while Follow terminal directory is on.
+type SessionDirectory interface {
+	SessionCWD() string
+}
+
 // SessionOpener opens a saved Host as a Session and returns its handle. The
 // application wires it to the same Session service the desktop uses. The
 // returned handle does not attach a terminal view: the focused Pane of the
@@ -463,6 +470,13 @@ type sessionTabs struct {
 	// the Vault section lists; each Pane's toolsState holds its own selection
 	// and draft. Nil means the tool reports why it is unavailable.
 	notes *notePages
+	// files backs the Tools surface's Files tool. It is the shared transfer
+	// service; each Pane's toolsState holds its own directory and selection.
+	// Nil means the tool reports why it is unavailable.
+	files FilesService
+	// fileHosts lists the saved Hosts the Files copy target picker offers. The
+	// Shell points it at the Hosts section's remote Host list.
+	fileHosts func() []domainvault.Host
 	// window is the Sessions window a Browser's WebViews belong to. It is nil
 	// until Show created the windows.
 	window func() *mygo.Window
@@ -552,6 +566,9 @@ type tabView struct {
 	status  tabStatus
 	problem string
 	screen  TerminalScreen
+	// handle is the focused Pane's Session handle. The Files tool reads its
+	// working directory when Follow terminal directory is on.
+	handle SessionHandle
 	// accessory is the page's latch state, which outlives a frame.
 	accessory *accessoryState
 	// tools is the focused Pane's Tools surface state, which outlives a
@@ -1398,6 +1415,7 @@ func (t *sessionTabs) viewOfTabLocked(tab *phoneTab) tabView {
 	view.status = focused.status
 	view.problem = focused.problem
 	view.screen = focused.screen
+	view.handle = focused.handle
 	view.accessory = &focused.accessory
 	view.tools = &focused.tools
 	view.appearanceOpen = focused.appearanceOpen
@@ -1661,6 +1679,7 @@ func (t *sessionTabs) remove(id string) bool {
 			// A Browser opened from this Pane's Tools surface holds a
 			// dedicated channel lease; closing the Tab must release it.
 			pane.tools.closeBrowser()
+			pane.tools.closeFiles()
 		}
 		// A closed Tab is no longer a Session a relaunch lists.
 		t.persist()
@@ -1707,8 +1726,9 @@ func (t *sessionTabs) removePane(tabID, paneID string) bool {
 	if pane.handle != nil {
 		_ = pane.handle.End()
 	}
-	// The Pane's Browser, if any, held a dedicated channel lease of its own.
+	// The Pane's Browser and Files, if any, held channel leases of their own.
 	pane.tools.closeBrowser()
+	pane.tools.closeFiles()
 	// An empty Tab is deliberately not persisted; payloadOf omits it.
 	t.persist()
 	return true
@@ -1764,6 +1784,7 @@ func (t *sessionTabs) closeAll() {
 				endPreservingResume(pane.handle)
 			}
 			pane.tools.closeBrowser()
+			pane.tools.closeFiles()
 		}
 	}
 	t.savePayload(payload)

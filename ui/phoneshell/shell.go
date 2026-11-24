@@ -155,6 +155,13 @@ type Shell struct {
 	// monitoring owns the Monitoring section's page state. Load always builds
 	// it; available reports whether the build wired a monitoring runtime.
 	monitoring *monitoringPages
+	// files is the shared transfer service the Host detail Files pages and the
+	// Session Files tool use. Nil hides the Host entry and makes the tool report
+	// that this build cannot browse files.
+	files FilesService
+	// hostFiles is the Files page shared by the Hosts and Vault Host-detail
+	// routes. It is released when the user leaves those pages.
+	hostFiles *filesPages
 	// hostBrowsers holds one Browser per Host-detail page, keyed by section
 	// and Host. The Vault and the Hosts tab can show the same Host without
 	// sharing one panel's gateway.
@@ -385,6 +392,25 @@ func New(opts ...Option) *Shell {
 	}
 	s.vault.forwarding.hosts = s.hosts
 	s.hosts.forwarding = s.vault.forwarding
+	// Files is the shared transfer service. A Shell given WithFiles keeps that
+	// service; otherwise it comes from the Session opener, where the phone root
+	// wires the shared Connection Manager. Host detail and the Session tool then
+	// browse through one service instead of two.
+	if s.files == nil {
+		if provider, ok := s.sessions.opener.(FilesProvider); ok {
+			s.files = provider.FilesService()
+		}
+	}
+	s.sessions.files = s.files
+	s.sessions.fileHosts = func() []domainvault.Host {
+		return s.hosts.hosts
+	}
+	s.hostFiles = newFilesPages(s.files, func() []domainvault.Host {
+		return s.hosts.hosts
+	})
+	if s.files != nil {
+		s.hosts.openFiles = s.openHostFiles
+	}
 	// The Snippets page runs a Snippet in the Sessions section, so it is built
 	// after the Shell and holds it.
 	s.vault.snippets = newSnippetPages(s)
@@ -437,6 +463,7 @@ func (s *Shell) RefreshTerminalAppearance() { s.sessions.applyAppearance() }
 func (s *Shell) beforeFrame() {
 	s.syncLiveView()
 	s.syncMonitoring()
+	s.syncHostFiles()
 }
 
 // syncMonitoring samples only while the Monitoring page is the one on screen.
@@ -544,6 +571,11 @@ func (s *Shell) newSection(i Section) *section {
 				s.drawHostBrowser(c, Hosts, r.Param("id"))
 				return true
 			}
+			if r.Match("/host/{id}/files") {
+				r.Title("Files")
+				s.drawHostFiles(c, r.Param("id"))
+				return true
+			}
 			if !r.Match("/host/{id}") {
 				return false
 			}
@@ -564,6 +596,11 @@ func (s *Shell) newSection(i Section) *section {
 			if r.Match("/hosts/{id}/browser") {
 				r.Title("Browser")
 				s.drawHostBrowser(c, Vault, r.Param("id"))
+				return true
+			}
+			if r.Match("/hosts/{id}/files") {
+				r.Title("Files")
+				s.drawHostFiles(c, r.Param("id"))
 				return true
 			}
 			if !r.Match("/hosts/{id}") {
@@ -782,6 +819,10 @@ func (s *Shell) Close() {
 		delete(s.hostBrowsers, key)
 		surface.close()
 	}
+	// A Host-detail Files page holds an SFTP transport of its own.
+	if s.hostFiles != nil {
+		s.hostFiles.release()
+	}
 	s.sessions.closeAll()
 }
 
@@ -793,6 +834,51 @@ func (s *Shell) openHost(host domainvault.Host) {
 	s.Select(Sessions)
 	s.sections[Sessions].router.Push("/session/" + tab.id)
 	s.launchPane(tab.id, string(pane.id))
+}
+
+// openHostFiles pushes one Host's Files page on the section that is showing
+// the Host detail. The Vault's Host-detail routes live under /hosts; the Hosts
+// tab's under /host, so each section keeps its own back stack.
+func (s *Shell) openHostFiles(host domainvault.Host) {
+	if s.files == nil {
+		return
+	}
+	if s.selected == Vault {
+		s.sections[Vault].router.Push("/hosts/" + string(host.ID) + "/files")
+		return
+	}
+	s.sections[Hosts].router.Push("/host/" + string(host.ID) + "/files")
+}
+
+// drawHostFiles renders one Host's Files page for a Host-detail route.
+func (s *Shell) drawHostFiles(c *ui.Context, id string) {
+	host, ok := s.hosts.host(id)
+	if !ok {
+		kit.EmptyHint(c, "This Host is no longer in the Vault. Refresh the Hosts list.")
+		return
+	}
+	if !host.Protocol.SupportsFileTransfer() {
+		kit.EmptyHint(c, "This Host does not support file transfer.")
+		return
+	}
+	s.hostFiles.draw(c, host, false)
+}
+
+// syncHostFiles releases the Host-detail Files transport when no Files route
+// is showing. Returning to the page opens it again, so a channel lease never
+// outlives the page that needed it.
+func (s *Shell) syncHostFiles() {
+	if s.hostFiles == nil {
+		return
+	}
+	if s.selected != Hosts && s.selected != Vault {
+		s.hostFiles.release()
+		return
+	}
+	path := s.sections[s.selected].router.Path()
+	if !strings.HasSuffix(path, "/files") {
+		s.hostFiles.release()
+	}
 }
 
 // addPaneToTab opens one Host as another Pane of an existing Tab, returns from

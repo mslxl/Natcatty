@@ -86,6 +86,9 @@ type fakeHandle struct {
 	ended      bool
 	// resumeErr, when set, makes Resume fail after the next Hibernate.
 	resumeErr error
+	// cwd is the working directory the fake Session reports, which the Files
+	// tool follows while Follow terminal directory is on.
+	cwd string
 }
 
 // sentKey is one key the accessory bar asked the screen to send.
@@ -126,6 +129,21 @@ func (h *fakeHandle) Write(p []byte) (int, error) {
 }
 
 func (h *fakeHandle) Resize(int, int) error { return nil }
+
+// SessionCWD reports the directory the fake shell last published. The Files
+// tool's Follow toggle reads it.
+func (h *fakeHandle) SessionCWD() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.cwd
+}
+
+// setCWD changes the directory the fake shell reports.
+func (h *fakeHandle) setCWD(cwd string) {
+	h.mu.Lock()
+	h.cwd = cwd
+	h.mu.Unlock()
+}
 
 // Close detaches the view: it is what a terminal screen's Close reaches.
 func (h *fakeHandle) Close() error {

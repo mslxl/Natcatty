@@ -150,6 +150,10 @@ type toolsState struct {
 	// is entered and reads the shared runtime through the Session opener, so a
 	// Pane that never opens it costs nothing.
 	forwarding *forwardingPages
+	// files is this Pane's Files view. It is made when the tool is entered and
+	// holds its own directory, selection, and SFTP transport, so two Panes
+	// never share a browse location.
+	files *filesPages
 	// sessionLog is this Pane's Session Log page state: the saved-log list and
 	// the last outcome. The live recording state stays on the Session handle.
 	sessionLog sessionLogViewState
@@ -180,9 +184,20 @@ func (t *sessionTabs) closeTools(st *toolsState) {
 	}
 	st.open = false
 	st.pending = nil
-	// Leaving the Tools surface releases a Browser opened from it. The
-	// terminal was never detached, so the Pane is exactly as it was.
+	// Leaving the Tools surface releases a Browser or Files view opened from
+	// it. The terminal was never detached, so the Pane is exactly as it was.
 	st.closeBrowser()
+	st.closeFiles()
+}
+
+// closeFiles releases one Pane's Files transport. It is safe when Files was
+// never opened.
+func (st *toolsState) closeFiles() {
+	if st == nil || st.files == nil {
+		return
+	}
+	st.files.release()
+	st.files = nil
 }
 
 // closeBrowser releases one Pane's Browser and its dedicated channel lease.
@@ -340,6 +355,8 @@ func (t *sessionTabs) drawTools(c *ui.Context, view tabView) {
 				t.drawToolBrowser(c, st, view)
 			case toolForwarding:
 				t.drawToolForwarding(c, st, view)
+			case toolFiles:
+				t.drawToolFiles(c, st, view)
 			case toolSessionLog:
 				t.drawToolSessionLog(c, st, view)
 			case toolNotes:
@@ -364,6 +381,13 @@ func (t *sessionTabs) drawToolCatalog(c *ui.Context, st *toolsState, view tabVie
 		// Only an SSH-capable Host can carry a Port Forwarding Rule. A Telnet
 		// or Local Host has no entry rather than a page that can only say no.
 		if spec.id == toolForwarding && !view.host.Protocol.SupportsForwarding() {
+			continue
+		}
+		// File browsing opens the Host through the shared transfer service,
+		// which resolves a saved Host by ID. A Quick Connect Host has no ID and
+		// a restored Host can outlive its Vault record; both would show a tool
+		// that can only fail, so only a saved, file-capable Host gets the entry.
+		if spec.id == toolFiles && !t.filesToolEligible(view.host) {
 			continue
 		}
 		row := kit.ListRow(c).Label("Open " + spec.title)
@@ -449,6 +473,20 @@ func (t *sessionTabs) toolSummary(st *toolsState, id toolID, view tabView) strin
 		default:
 			return fmt.Sprintf("%d Notes", len(t.notes.notes))
 		}
+	case toolFiles:
+		if t.files == nil {
+			return "Unavailable"
+		}
+		if !host.Protocol.SupportsFileTransfer() {
+			return "This Host cannot browse files"
+		}
+		if !t.filesToolEligible(host) {
+			return "This Session's Host is no longer saved"
+		}
+		if st != nil && st.files != nil && st.files.ui.status == filesReady && st.files.ui.dir != "" {
+			return st.files.ui.dir
+		}
+		return "Browse this Host's files"
 	case toolForwarding:
 		if !t.forwardingAvailable() {
 			return "Unavailable"
@@ -486,6 +524,27 @@ func (t *sessionTabs) toolSummary(st *toolsState, id toolID, view tabView) strin
 		return "Record this Session to a file"
 	}
 	return "Not on the phone yet"
+}
+
+// filesToolEligible reports whether the Files tool can open this Session's
+// Host right now. The shared opener resolves the destination by saved Host ID,
+// so an Unsaved Host (Quick Connect) or a restored Host whose Vault record was
+// deleted cannot open Files. The entry is hidden for those instead of shown
+// broken; a missing transfer service is not part of this test, because that
+// row still opens and states why the tool is unavailable.
+func (t *sessionTabs) filesToolEligible(host domainvault.Host) bool {
+	if !host.Protocol.SupportsFileTransfer() {
+		return false
+	}
+	if host.ID == "" || t == nil || t.fileHosts == nil {
+		return false
+	}
+	for _, saved := range t.fileHosts() {
+		if saved.ID == host.ID {
+			return true
+		}
+	}
+	return false
 }
 
 // browserToolAvailable reports whether this Pane's Host can offer the Browser
@@ -581,6 +640,55 @@ func (t *sessionTabs) forwardingSurface(st *toolsState) (*forwardingPages, bool)
 	}
 	st.forwarding.service = provider.ForwardingService()
 	return st.forwarding, st.forwarding.service != nil
+}
+
+// drawToolFiles renders this Session Host's files. The terminal stays attached
+// underneath; All tools returns to the catalog and Done returns to the Pane.
+// When the Session reports a working directory, the tool offers Follow
+// terminal directory, which moves the browser whenever the shell changes
+// directory.
+func (t *sessionTabs) drawToolFiles(c *ui.Context, st *toolsState, view tabView) {
+	if kit.GhostButton(c, icons.ChevronLeft, "All tools").Clicked() {
+		st.tool = toolNone
+		st.closeFiles()
+		return
+	}
+	if t.files == nil {
+		kit.Notice(c, icons.TriangleAlert, c.Theme().Warning,
+			"Files is not available in this build.", nil)
+		return
+	}
+	if st.files == nil {
+		st.files = newFilesPages(t.files, t.fileHosts)
+	}
+	if directory, ok := view.handle.(SessionDirectory); ok {
+		st.files.followCWD = directory.SessionCWD
+	} else {
+		st.files.followCWD = nil
+		st.files.ui.follow = false
+	}
+	if st.files.followCWD != nil {
+		if kit.FormToggle(c, "Follow terminal directory", &st.files.ui.follow, nil) &&
+			st.files.ui.follow {
+			// Establish the baseline the next terminal directory is compared
+			// against. If the terminal is already where the browser is, record
+			// that directory rather than clearing the baseline: an empty
+			// baseline would make the next manual move look like a terminal
+			// change and snap the browser back once. When the terminal is
+			// elsewhere, clearing it asks followTerminal to move there now.
+			cwd := strings.TrimSpace(st.files.followCWD())
+			if cwd != "" && cwd != st.files.ui.dir {
+				st.files.ui.followTried = ""
+			} else {
+				st.files.ui.followTried = cwd
+			}
+		}
+		if st.files.ui.follow && strings.TrimSpace(st.files.followCWD()) == "" {
+			ui.Text(c, "The terminal has not reported a directory yet.").FontSize(12).
+				TextColor(c.Theme().TextMuted)
+		}
+	}
+	st.files.draw(c, view.host, true)
 }
 
 // drawToolForwarding renders this Session Host's rules. The terminal stays

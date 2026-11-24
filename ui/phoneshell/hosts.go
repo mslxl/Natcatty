@@ -79,6 +79,9 @@ type hostPages struct {
 	// The Shell points it at the Vault's forwarding pages; nil hides the
 	// section.
 	forwarding *forwardingPages
+	// openFiles pushes this Host's Files page on the section showing the
+	// detail page. Nil means this build has no transfer service.
+	openFiles func(domainvault.Host)
 	// saveDone navigates after a save: to the saved Host's page, to the new
 	// Session, or away from the editor when the list refresh failed.
 	saveDone func(domainvault.Host, bool, bool)
@@ -873,6 +876,22 @@ func (h *hostPages) drawDetail(c *ui.Context, id string) {
 				} else {
 					kit.Notice(c, icons.TriangleAlert, c.Theme().Warning,
 						browserReason(capability), nil)
+				}
+			}
+			// File transfer needs SFTP/SCP, so only an SSH Host offers the
+			// browser. A different Host can be chosen as the copy target on
+			// the page itself.
+			if host.Protocol.SupportsFileTransfer() && h.openFiles != nil {
+				files := kit.ListRow(c).Label("Open Files for " + hostName(host))
+				files.Children(func() {
+					ui.Row(c).Grow(1).Gap(10).AlignItems(ui.Center).Children(func() {
+						ui.Icon(c, icons.Lucide(icons.Folder)).TextColor(c.Theme().Accent)
+						ui.Text(c, "Files").FontWeight(600)
+					})
+					ui.Text(c, "›").FontSize(20).TextColor(c.Theme().TextMuted)
+				})
+				if files.Clicked() {
+					h.openFiles(host)
 				}
 			}
 			// A forwarded port is another way to reach this Host's services.

@@ -23,6 +23,7 @@ import (
 	adapterstnet "github.com/mslxl/natcatty/adapters/telnet"
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
+	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
@@ -58,6 +59,10 @@ type phoneSessionRuntime struct {
 	// Connection Manager. It is nil when the known-host repository does not
 	// also store forwarding rules (a test's fake, for example).
 	forwarding *phoneForwarding
+	// files is the shared transfer service over this device's Connection
+	// Manager. Host detail and the Session Files tool browse and copy through
+	// it, so protocol selection and the copy engine are the desktop's.
+	files *apptransfer.Service
 	// logs supplies the Session Tools surface's Session Log folder, saved-log
 	// list, and system export path. It is built lazily and replaced by a test
 	// that points the surface at a temporary Documents folder.
@@ -148,8 +153,20 @@ func (r *phoneSessionRuntime) NetworkStatus(profileID string) (vaultstate.Networ
 	return r.networkStatuses.NetworkStatus(profileID)
 }
 
+// FilesService lets the phone Shell take the shared transfer service from the
+// Session opener it already receives, so the root wiring stays one option.
+func (r *phoneSessionRuntime) FilesService() phoneshell.FilesService {
+	if r == nil || r.files == nil {
+		return nil
+	}
+	return r.files
+}
+
 // Ensure the runtime is the shell's opener seam.
 var _ phoneshell.SessionOpener = (*phoneSessionRuntime)(nil)
+
+// The runtime also supplies the Files tool's shared transfer service.
+var _ phoneshell.FilesProvider = (*phoneSessionRuntime)(nil)
 
 // The same runtime drives the Networks page's Tailscale login and supplies its
 // status; both seams use the shared application controller and status sink.
@@ -298,6 +315,14 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 	connections := appconnection.NewManager(dialer, vaultPasswords{vault: vault}, known, options...)
 	routes := vaultRoutes{vault: vault, preferences: preferences}
 	forwarding := newPhoneForwarding(known, vault, routes, connections, true)
+	// The shared transfer service opens SFTP/SCP with the same route resolver
+	// and Connection pool a Session uses. The phone has no local filesystem
+	// pane, so only the remote opener is wired.
+	files := apptransfer.NewService(nil, &sftpRemoteOpener{
+		manager: connections,
+		routes:  routes,
+		vault:   vault,
+	})
 	service := appsession.NewService(
 		newPhoneTransportFactory(connections, routes, providers, secrets),
 		phoneSessionOptions(vault, history, terminalSettings)...)
@@ -312,6 +337,7 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 		networkControl:  networkControl,
 		networkStatuses: statuses,
 		forwarding:      forwarding,
+		files:           files,
 	}
 }
 
@@ -511,6 +537,10 @@ type phoneSessionHandle struct {
 
 var _ phoneshell.SessionHandle = (*phoneSessionHandle)(nil)
 
+// The handle reports the Session's published working directory so the Files
+// tool can follow the terminal.
+var _ phoneshell.SessionDirectory = (*phoneSessionHandle)(nil)
+
 func (h *phoneSessionHandle) Attach() (io.ReadWriteCloser, error) {
 	view, err := h.session.AttachView()
 	if err != nil {
@@ -530,6 +560,11 @@ func (h *phoneSessionHandle) Resume() (io.ReadWriteCloser, error) {
 }
 
 func (h *phoneSessionHandle) Done() <-chan struct{} { return h.session.Done() }
+
+// SessionCWD reports the directory the Session's shell last published. The
+// Files tool follows it while Follow terminal directory is on. An empty value
+// means the shell has not reported one yet.
+func (h *phoneSessionHandle) SessionCWD() string { return h.session.Snapshot().CWD }
 
 // InsertInput queues bytes in the Session's transport without claiming the one
 // live terminal view. The phone Snippets page uses it to run a command in a

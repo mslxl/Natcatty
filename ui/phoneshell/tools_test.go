@@ -588,11 +588,11 @@ func TestToolsHistoryUnavailableStillOpensTheSurface(t *testing.T) {
 		}
 		fixture.tester.Frame()
 		if err := fixture.tester.Click("Open Files"); err != nil {
-			t.Fatalf("open the placeholder tool: %v", err)
+			t.Fatalf("open the Files tool: %v", err)
 		}
 		fixture.tester.Frame()
-		if !fixture.tester.HasText("Files from this Session are not on the phone yet.") {
-			t.Fatalf("the placeholder tool did not open; texts: %q", fixture.tester.Texts())
+		if !fixture.tester.HasText("Files is not available in this build.") {
+			t.Fatalf("the Files tool did not state why it cannot work; texts: %q", fixture.tester.Texts())
 		}
 	})
 
