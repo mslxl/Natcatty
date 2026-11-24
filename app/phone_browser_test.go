@@ -2,11 +2,16 @@ package app
 
 import (
 	"context"
+	"errors"
+	"net"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo"
 
+	appbrowser "github.com/mslxl/natcatty/application/browser"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/phoneshell"
@@ -139,19 +144,217 @@ func TestPhoneBrowserPageIsUntrusted(t *testing.T) {
 	}
 }
 
-// TestPhoneBrowserSessionNameIsStableAndPerHost proves two Hosts never share a
-// cookie jar and a Host keeps its jar across opens.
-func TestPhoneBrowserSessionNameIsStableAndPerHost(t *testing.T) {
-	if phoneBrowserSessionName("prod") != phoneBrowserSessionName("prod") {
-		t.Fatal("a Host's session name is not stable")
+// TestPhoneBrowserSessionNameIsStableAndPerSite proves the isolation
+// boundary: two Hosts never share a store for the same site, one Host's two
+// sites never share one, and a Host keeps a site's store across opens and
+// reconnects because the key never uses the gateway's ephemeral port.
+func TestPhoneBrowserSessionNameIsStableAndPerSite(t *testing.T) {
+	const appSite = "https://app.example.com"
+	const mailSite = "https://mail.example.com"
+	if phoneBrowserSessionName("prod", appSite) != phoneBrowserSessionName("prod", appSite) {
+		t.Fatal("a Host and site's session name is not stable")
 	}
-	if phoneBrowserSessionName("prod") == phoneBrowserSessionName("web") {
-		t.Fatal("two Hosts share a session name")
+	if phoneBrowserSessionName("prod", appSite) == phoneBrowserSessionName("web", appSite) {
+		t.Fatal("two Hosts share a session for the same site")
 	}
-	for _, name := range []string{phoneBrowserSessionName("prod"), phoneBrowserSessionName("a/b c")} {
+	if phoneBrowserSessionName("prod", appSite) == phoneBrowserSessionName("prod", mailSite) {
+		t.Fatal("one Host's two sites share a session")
+	}
+	// The same site spelled with another case or a default port is one store.
+	for _, equivalent := range []string{"https://APP.example.com", "https://app.example.com:443"} {
+		if phoneBrowserSessionName("prod", equivalent) != phoneBrowserSessionName("prod", appSite) {
+			t.Fatalf("equivalent origin %q got another session", equivalent)
+		}
+	}
+	for _, name := range []string{
+		phoneBrowserSessionName("prod", appSite),
+		phoneBrowserSessionName("a/b c", appSite),
+	} {
 		if name == "" || strings.ContainsAny(name, `/\ :`) {
 			t.Fatalf("session name %q is not a safe on-disk name", name)
 		}
+	}
+}
+
+// TestPhoneBrowserPagesUseTheirOwnSiteStore drives the page factory seam: two
+// pages of one Host and site share a store, the same Host's other site gets
+// another, and another Host never sees either.
+func TestPhoneBrowserPagesUseTheirOwnSiteStore(t *testing.T) {
+	const appSite = "https://app.example.com"
+	const mailSite = "https://mail.example.com"
+
+	var mu sync.Mutex
+	var sessions []string
+	newView := func(options mygo.WebViewOptions) (*mygo.WebView, error) {
+		mu.Lock()
+		if options.Page.Session != nil {
+			sessions = append(sessions, options.Page.Session.Name())
+		} else {
+			sessions = append(sessions, "")
+		}
+		mu.Unlock()
+		// A real WebView needs a native window, so the factory stops after
+		// recording the options it was asked for.
+		return nil, errFakeWebView
+	}
+
+	browserFor := func(host model.HostID) *phoneBrowser {
+		return &phoneBrowser{
+			hostID:   host,
+			core:     appbrowser.New(appbrowser.Config{HostID: host}),
+			newView:  newView,
+			sessions: make(map[string]*mygo.Session),
+		}
+	}
+
+	prod := browserFor("prod")
+	_, _ = prod.NewPage(appSite)
+	_, _ = prod.NewPage("https://APP.example.com:443")
+	_, _ = prod.NewPage(mailSite)
+	web := browserFor("web")
+	_, _ = web.NewPage(appSite)
+
+	mu.Lock()
+	got := append([]string(nil), sessions...)
+	mu.Unlock()
+	want := []string{
+		phoneBrowserSessionName("prod", appSite),
+		phoneBrowserSessionName("prod", appSite),
+		phoneBrowserSessionName("prod", mailSite),
+		phoneBrowserSessionName("web", appSite),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("page sessions = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("page %d session = %q, want %q", i, got[i], want[i])
+		}
+	}
+	if got[0] == got[2] {
+		t.Fatal("one Host's two sites shared a store")
+	}
+	if got[0] == got[3] {
+		t.Fatal("two Hosts shared a store for the same site")
+	}
+}
+
+// errFakeWebView lets the page-factory test stop after recording the options:
+// a real WebView needs a native window.
+var errFakeWebView = errors.New("test: no native web view")
+
+// TestPhoneBrowserGatewayMapsToTheSiteSession proves a download or favicon
+// request that arrives as a loopback gateway URL reads the cookies of the
+// site whose page started it. The real panel maps the URL back to the remote
+// origin, and that origin selects the same store the page uses.
+func TestPhoneBrowserGatewayMapsToTheSiteSession(t *testing.T) {
+	panel := appbrowser.New(appbrowser.Config{
+		HostID:    "prod",
+		Connector: phoneBrowserTestConnector{},
+	})
+	updates := make(chan appbrowser.State, 8)
+	panel.Subscribe(func(state appbrowser.State) {
+		select {
+		case updates <- state:
+		default:
+		}
+	})
+	panel.Start()
+	defer panel.Close()
+	state := waitPhoneBrowserState(t, updates, func(state appbrowser.State) bool {
+		return state.Route == appbrowser.RouteConnected
+	})
+	gatewayURL, err := panel.Navigate(state.ActiveID, "https://app.example.com/files/report.pdf")
+	if err != nil {
+		t.Fatalf("Navigate: %v", err)
+	}
+
+	browser := &phoneBrowser{
+		hostID:   "prod",
+		core:     panel,
+		sessions: make(map[string]*mygo.Session),
+	}
+	got := browser.sessionForGateway(gatewayURL)
+	if got == nil {
+		t.Fatal("the gateway URL mapped to no session")
+	}
+	want := phoneBrowserSessionName("prod", "https://app.example.com")
+	if got.Name() != want {
+		t.Fatalf("gateway session = %q, want the page's session %q", got.Name(), want)
+	}
+	if foreign := browser.sessionForSite("https://mail.example.com"); foreign.Name() == got.Name() {
+		t.Fatal("another site mapped to the same session")
+	}
+}
+
+// phoneBrowserTestConnector satisfies the shared panel's connector without a
+// transport: the test never fetches through the gateway.
+type phoneBrowserTestConnector struct{}
+
+func (phoneBrowserTestConnector) Connect(context.Context, model.HostID) (appbrowser.Tunnel, error) {
+	return phoneBrowserTestTunnel{}, nil
+}
+
+type phoneBrowserTestTunnel struct{}
+
+func (phoneBrowserTestTunnel) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	var dialer net.Dialer
+	return dialer.DialContext(ctx, network, address)
+}
+func (phoneBrowserTestTunnel) Done() <-chan struct{} { return nil }
+func (phoneBrowserTestTunnel) Discard()              {}
+
+// waitPhoneBrowserState waits on the panel's own state stream with a hard
+// deadline, so the asynchronous connect is never a fixed sleep.
+func waitPhoneBrowserState(t *testing.T, updates <-chan appbrowser.State, cond func(appbrowser.State) bool) appbrowser.State {
+	t.Helper()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case state := <-updates:
+			if cond(state) {
+				return state
+			}
+		case <-deadline.C:
+			t.Fatal("timed out waiting for the panel state")
+		}
+	}
+}
+
+// TestPhoneBrowserExportUsesTheSystemSavePath proves a finished download is
+// handed to MyGo's save/share path and that a cancellation is reported as
+// such, never as a failure.
+func TestPhoneBrowserExportUsesTheSystemSavePath(t *testing.T) {
+	var gotPath, gotName string
+	browser := &phoneBrowser{saveCopy: func(path, name string) (string, error) {
+		gotPath, gotName = path, name
+		return "/shared/report.pdf", nil
+	}}
+	download := appbrowser.Download{
+		ID: "download-1", Filename: "report.pdf",
+		SavePath: "/app/downloads/report.pdf", Status: appbrowser.DownloadCompleted,
+	}
+	path, err := browser.ExportDownload(download)
+	if err != nil {
+		t.Fatalf("ExportDownload: %v", err)
+	}
+	if path != "/shared/report.pdf" {
+		t.Fatalf("export path = %q, want the picker's path", path)
+	}
+	if gotPath != download.SavePath || gotName != download.Filename {
+		t.Fatalf("save copy got %q/%q, want %q/%q", gotPath, gotName, download.SavePath, download.Filename)
+	}
+
+	browser.saveCopy = func(string, string) (string, error) { return "", nil }
+	if path, err := browser.ExportDownload(download); err != nil || path != "" {
+		t.Fatalf("a cancelled export = %q, %v; want an empty path and no error", path, err)
+	}
+
+	unfinished := download
+	unfinished.Status = appbrowser.DownloadProgressing
+	if _, err := browser.ExportDownload(unfinished); err == nil {
+		t.Fatal("an unfinished download was exported")
 	}
 }
 

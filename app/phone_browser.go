@@ -37,6 +37,7 @@ import (
 
 	appbrowser "github.com/mslxl/natcatty/application/browser"
 	appconnection "github.com/mslxl/natcatty/application/connection"
+	domainbrowser "github.com/mslxl/natcatty/domain/browser"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/phoneshell"
@@ -140,7 +141,6 @@ func (p *phoneBrowserProvider) Open(host domainvault.Host, window *mygo.Window) 
 	if window == nil {
 		return nil, errors.New("app: the Browser's window is not open")
 	}
-	session := mygo.NewSession(phoneBrowserSessionName(host.ID))
 	label := strings.TrimSpace(host.Label)
 	if label == "" {
 		label = host.Hostname
@@ -155,8 +155,15 @@ func (p *phoneBrowserProvider) Open(host domainvault.Host, window *mygo.Window) 
 	if redraw == nil {
 		redraw = invalidatePhoneBrowserWindows
 	}
-	cookieHeader := func(gatewayURL string) string {
-		return phoneBrowserCookieHeader(session, gatewayURL)
+	creator := func(opts mygo.WebViewOptions) (*mygo.WebView, error) {
+		return newView(window, opts)
+	}
+	browser := &phoneBrowser{
+		hostID:     host.ID,
+		newView:    creator,
+		newSession: mygo.NewSession,
+		saveCopy:   mygo.Dialog.SaveCopy,
+		sessions:   make(map[string]*mygo.Session),
 	}
 	core := appbrowser.New(appbrowser.Config{
 		HostID: host.ID,
@@ -169,25 +176,39 @@ func (p *phoneBrowserProvider) Open(host domainvault.Host, window *mygo.Window) 
 		Redraw: redraw,
 		// Bookmarks and site icons are desktop stores; the phone Browser
 		// deliberately keeps no cross-Host list of its own.
-		Cookies: cookieHeader,
+		Cookies: browser.cookieHeader,
 		Downloads: appbrowser.DownloadOptions{
 			Dir:     p.downloadsDir,
-			Cookies: cookieHeader,
+			Cookies: browser.cookieHeader,
 			Redraw:  redraw,
 		},
 	})
-	creator := func(opts mygo.WebViewOptions) (*mygo.WebView, error) {
-		return newView(window, opts)
-	}
-	return &phoneBrowser{core: core, session: session, newView: creator}, nil
+	browser.core = core
+	return browser, nil
 }
 
-// phoneBrowserSessionName gives each Host a persistent, isolated website data
-// store. Hashing the identity keeps the on-disk name safe whatever characters a
-// Vault record uses, while the same Host always maps back to the same store.
-func phoneBrowserSessionName(id model.HostID) string {
-	sum := sha256.Sum256([]byte(id))
+// phoneBrowserSessionName gives one Host's page at one remote site its own
+// persistent website data store. The identity is the Host plus the remote
+// site's origin (scheme, host, and port), never the loopback gateway's port:
+// cookies are not isolated by port, so two sites behind one Host would
+// otherwise share one jar, and a reconnect rebinds the gateway on a new port
+// while the site stays the same. Hashing keeps the on-disk name safe whatever
+// characters a Vault record uses; the same pair always maps back to the same
+// store.
+func phoneBrowserSessionName(id model.HostID, siteOrigin string) string {
+	sum := sha256.Sum256([]byte(string(id) + "\n" + phoneBrowserSiteOrigin(siteOrigin)))
 	return "phone-browser-" + hex.EncodeToString(sum[:])
+}
+
+// phoneBrowserSiteOrigin canonicalizes a site origin so equivalent spellings
+// (case, a default port) share a store and distinct sites never do. It is the
+// same normalization the surface compares pages by.
+func phoneBrowserSiteOrigin(raw string) string {
+	origin, err := domainbrowser.CanonicalOrigin(strings.TrimSpace(raw))
+	if err != nil {
+		return strings.ToLower(strings.TrimSpace(raw))
+	}
+	return origin
 }
 
 // phoneBrowserCookieHeader reads the Host's own session cookies for a gateway
@@ -298,11 +319,103 @@ func (t *phoneBrowserTunnel) Done() <-chan struct{} { return t.lease.Done() }
 func (t *phoneBrowserTunnel) Discard()              { _ = t.lease.Discard() }
 
 // phoneBrowser is the shared panel as the phone shell sees it. It also owns
-// the Host's website data store and the window's web-view factory.
+// the per-site website data stores, the window's web-view factory, and the
+// system save path a finished download is exported through.
 type phoneBrowser struct {
 	core    *appbrowser.Panel
-	session *mygo.Session
+	hostID  model.HostID
 	newView func(mygo.WebViewOptions) (*mygo.WebView, error)
+	// newSession makes the persistent store of a site. A test injects one
+	// that records the names without a native host.
+	newSession func(string) *mygo.Session
+	// saveCopy is the system save/share path (MyGo's Dialog.SaveCopy on a
+	// phone). An empty path with a nil error means the user cancelled.
+	saveCopy func(path, name string) (string, error)
+
+	mu       sync.Mutex
+	sessions map[string]*mygo.Session
+}
+
+// sessionForSite returns the store of one canonical site origin, making it on
+// first use. An empty origin (a blank tab) has no store: nothing has been
+// written anywhere yet.
+func (b *phoneBrowser) sessionForSite(siteOrigin string) *mygo.Session {
+	site := phoneBrowserSiteOrigin(siteOrigin)
+	if site == "" {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if session := b.sessions[site]; session != nil {
+		return session
+	}
+	newSession := b.newSession
+	if newSession == nil {
+		newSession = mygo.NewSession
+	}
+	session := newSession(phoneBrowserSessionName(b.hostID, site))
+	if b.sessions == nil {
+		b.sessions = make(map[string]*mygo.Session)
+	}
+	b.sessions[site] = session
+	return session
+}
+
+// sessionForGateway returns the store the page at a gateway URL belongs to.
+// The panel maps the loopback URL back to the real remote address, so a
+// download or favicon reads the cookies of the site whose page started it and
+// never another Host's or site's jar.
+func (b *phoneBrowser) sessionForGateway(gatewayURL string) *mygo.Session {
+	if b == nil || b.core == nil {
+		return nil
+	}
+	remote, ok := b.core.RemoteURL(gatewayURL)
+	if !ok {
+		return nil
+	}
+	origin, err := domainbrowser.Origin(remote)
+	if err != nil {
+		return nil
+	}
+	return b.sessionForSite(origin)
+}
+
+// cookieHeader reads the cookies of the site the gateway URL serves. The page
+// never sees these values; they go on the tunnel request for a favicon or a
+// download.
+func (b *phoneBrowser) cookieHeader(gatewayURL string) string {
+	return phoneBrowserCookieHeader(b.sessionForGateway(gatewayURL), gatewayURL)
+}
+
+// Downloads is the shared manager's history.
+func (b *phoneBrowser) Downloads() []appbrowser.Download {
+	if b == nil || b.core == nil {
+		return nil
+	}
+	return b.core.Downloads()
+}
+
+// CancelDownload aborts one active download.
+func (b *phoneBrowser) CancelDownload(id string) bool {
+	if b == nil || b.core == nil {
+		return false
+	}
+	return b.core.CancelDownload(id)
+}
+
+// ExportDownload copies a finished file through the system save picker. The
+// downloaded file stays in the app's directory; the picker receives a copy.
+func (b *phoneBrowser) ExportDownload(download appbrowser.Download) (string, error) {
+	if download.Status != appbrowser.DownloadCompleted {
+		return "", errors.New("app: only a completed download can be exported")
+	}
+	if strings.TrimSpace(download.SavePath) == "" {
+		return "", errors.New("app: the download has no file")
+	}
+	if b.saveCopy == nil {
+		return "", errors.New("app: this build has no system save path")
+	}
+	return b.saveCopy(download.SavePath, download.Filename)
 }
 
 var _ phoneshell.Browser = (*phoneBrowser)(nil)
@@ -336,15 +449,19 @@ func (b *phoneBrowser) StartDownload(gatewayURL, suggestedName string) (appbrows
 	return b.core.StartDownload(gatewayURL, suggestedName)
 }
 
-// NewPage makes one untrusted web view in the Host's own session. The page is
-// isolated per tab: it shares the Host's cookies and storage, as one browser
-// does, and nothing with another Host.
-func (b *phoneBrowser) NewPage() (phoneshell.BrowserPage, error) {
+// NewPage makes one untrusted web view in the store of the page's own site.
+// Pages of one Host and site share that store, as tabs of one browser do;
+// another site gets another store, and another Host never shares either.
+func (b *phoneBrowser) NewPage(siteOrigin string) (phoneshell.BrowserPage, error) {
 	if b.newView == nil {
 		return nil, errors.New("app: no Browser window")
 	}
+	session := b.sessionForSite(siteOrigin)
+	if session == nil {
+		return nil, errors.New("app: a Browser page needs a site")
+	}
 	view, err := b.newView(mygo.WebViewOptions{
-		Page: phoneBrowserPageOptions(b.session),
+		Page: phoneBrowserPageOptions(session),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create browser page: %w", err)

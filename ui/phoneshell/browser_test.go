@@ -70,16 +70,23 @@ func (p *fakeBrowserProvider) lastBrowser(t *testing.T) *fakeBrowser {
 type fakeBrowser struct {
 	host domainvault.Host
 
-	mu          sync.Mutex
-	state       appbrowser.State
-	subs        []func(appbrowser.State)
-	started     bool
-	closed      bool
-	gateway     string
-	pages       []*fakeBrowserPage
-	navigations []string
-	downloads   []string
-	nextTab     int
+	mu              sync.Mutex
+	state           appbrowser.State
+	subs            []func(appbrowser.State)
+	started         bool
+	closed          bool
+	gateway         string
+	pages           []*fakeBrowserPage
+	pageSites       []string
+	navigations     []string
+	downloads       []string
+	downloadHistory []appbrowser.Download
+	cancelled       []string
+	exported        []appbrowser.Download
+	exportPath      string
+	exportErr       error
+	stopped         []string
+	nextTab         int
 }
 
 var _ Browser = (*fakeBrowser)(nil)
@@ -208,16 +215,22 @@ func (b *fakeBrowser) GatewayURL(tabID string) (string, error) {
 	return b.gateway, nil
 }
 
+// IsGatewayURL matches the real panel's exact-origin rule: the scheme, host,
+// and port must all be this browser's gateway, not merely another loopback
+// address.
 func (b *fakeBrowser) IsGatewayURL(rawURL string) bool {
+	b.mu.Lock()
+	gateway := b.gateway
+	b.mu.Unlock()
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return false
 	}
-	if parsed.Scheme != "http" {
+	want, err := url.Parse(gateway)
+	if err != nil {
 		return false
 	}
-	host := parsed.Hostname()
-	return host == "127.0.0.2" || host == "127.0.0.1"
+	return parsed.Scheme == want.Scheme && parsed.Host == want.Host
 }
 
 func (b *fakeBrowser) PageChanged(tabID string, page appbrowser.PageState) {
@@ -247,7 +260,12 @@ func (b *fakeBrowser) PageFailed(tabID, detail string) {
 	b.state.Detail = detail
 }
 
-func (b *fakeBrowser) PageStopped(tabID string) bool { return true }
+func (b *fakeBrowser) PageStopped(tabID string) bool {
+	b.mu.Lock()
+	b.stopped = append(b.stopped, tabID)
+	b.mu.Unlock()
+	return true
+}
 
 func (b *fakeBrowser) SetPageFlags(tabID string, canBack, canForward, loading bool) {
 }
@@ -259,11 +277,37 @@ func (b *fakeBrowser) StartDownload(gatewayURL, suggestedName string) (appbrowse
 	return appbrowser.Download{URL: gatewayURL, Filename: suggestedName}, nil
 }
 
-func (b *fakeBrowser) NewPage() (BrowserPage, error) {
+func (b *fakeBrowser) Downloads() []appbrowser.Download {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]appbrowser.Download(nil), b.downloadHistory...)
+}
+
+func (b *fakeBrowser) CancelDownload(id string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, item := range b.downloadHistory {
+		if item.ID == id {
+			b.cancelled = append(b.cancelled, id)
+			return true
+		}
+	}
+	return false
+}
+
+func (b *fakeBrowser) ExportDownload(download appbrowser.Download) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.exported = append(b.exported, download)
+	return b.exportPath, b.exportErr
+}
+
+func (b *fakeBrowser) NewPage(siteOrigin string) (BrowserPage, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	page := &fakeBrowserPage{}
 	b.pages = append(b.pages, page)
+	b.pageSites = append(b.pageSites, siteOrigin)
 	return page, nil
 }
 
@@ -341,6 +385,12 @@ func (p *fakeBrowserPage) loadedURLs() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]string(nil), p.loaded...)
+}
+
+func (p *fakeBrowserPage) isDestroyed() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.destroyed
 }
 
 // Note: Native must return ui.NativeWebView. It is declared on the concrete
@@ -506,15 +556,36 @@ func TestBrowserNavigationGuardRefusesEveryNonGatewayDestination(t *testing.T) {
 	if replacement, handled := guard(browser.gateway + "index"); handled || replacement != "" {
 		t.Fatalf("a gateway URL was refused: replacement=%q handled=%v", replacement, handled)
 	}
-	replacement, handled := guard("https://example.com/login")
+	// A navigation within the page's own site maps to the gateway and loads
+	// there.
+	replacement, handled := guard("https://prod.example.com/login")
 	if !handled || replacement != browser.gateway {
-		t.Fatalf("remote URL mapped to %q handled=%v, want the gateway", replacement, handled)
+		t.Fatalf("same-site URL mapped to %q handled=%v, want the gateway", replacement, handled)
+	}
+	// A navigation to another origin is cancelled here: the surface swaps in
+	// a page of that site's own store rather than loading it into the
+	// current site's cookies.
+	if replacement, handled := guard("https://example.com/login"); !handled || replacement != "" {
+		t.Fatalf("cross-site URL = %q handled=%v, want a cancel for the surface", replacement, handled)
 	}
 	browser.mu.Lock()
 	navigations := append([]string(nil), browser.navigations...)
 	browser.mu.Unlock()
-	if len(navigations) != 1 || navigations[0] != "https://example.com/login" {
-		t.Fatalf("panel navigations = %v, want the remote URL routed once", navigations)
+	if len(navigations) != 2 ||
+		navigations[0] != "https://prod.example.com/login" ||
+		navigations[1] != "https://example.com/login" {
+		t.Fatalf("panel navigations = %v, want each HTTP(S) link routed once", navigations)
+	}
+	// A lookalike loopback origin (another port, scheme, or host) is not this
+	// gateway either, so it goes through the same exact-origin decision.
+	for _, lookalike := range []string{
+		"http://127.0.0.2:1/",
+		"https://127.0.0.2:55123/",
+		"http://127.0.0.1:55123/",
+	} {
+		if replacement, handled := guard(lookalike); !handled || replacement != "" {
+			t.Fatalf("lookalike gateway %q = %q handled=%v, want a cancel", lookalike, replacement, handled)
+		}
 	}
 	for _, refused := range []string{"ssh://host.example", "javascript:alert(1)", "file:///etc/passwd", "mailto:a@example.com"} {
 		if replacement, handled := guard(refused); !handled || replacement != "" {
@@ -524,8 +595,8 @@ func TestBrowserNavigationGuardRefusesEveryNonGatewayDestination(t *testing.T) {
 	browser.mu.Lock()
 	after := len(browser.navigations)
 	browser.mu.Unlock()
-	if after != 1 {
-		t.Fatalf("a refused navigation reached the panel: %d navigations", after)
+	if after != 5 {
+		t.Fatalf("a non-HTTP navigation reached the panel: %d navigations", after)
 	}
 }
 

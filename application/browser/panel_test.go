@@ -457,3 +457,54 @@ func TestPanelCloseDiscardsTheTunnel(t *testing.T) {
 		t.Fatalf("closed panel state = %+v", state)
 	}
 }
+
+// TestPanelIsGatewayURLIsTheExactOrigin pins the native navigation rule: only
+// this panel gateway scheme, host, and port is allowed. Another loopback
+// port, the other loopback address, a different scheme, and the remote URL
+// itself are all refused, and the download/cookie lookup refuses them too.
+func TestPanelIsGatewayURLIsTheExactOrigin(t *testing.T) {
+	connector := &fakeConnector{}
+	panel, _, state := startPanel(t, connector)
+	defer panel.Close()
+
+	gatewayURL, err := panel.Navigate(state.ActiveID, "https://docs.example.com/a")
+	if err != nil {
+		t.Fatalf("Navigate: %v", err)
+	}
+	if !panel.IsGatewayURL(gatewayURL) {
+		t.Fatalf("the panel refused its own gateway URL %q", gatewayURL)
+	}
+	if remote, ok := panel.RemoteURL(gatewayURL); !ok || remote != "https://docs.example.com/a" {
+		t.Fatalf("RemoteURL(%q) = %q, %v; want the remote page", gatewayURL, remote, ok)
+	}
+
+	parsed, err := url.Parse(gatewayURL)
+	if err != nil {
+		t.Fatalf("parse gateway: %v", err)
+	}
+	otherPort := *parsed
+	otherPort.Host = net.JoinHostPort(parsed.Hostname(), "1")
+	otherHost := *parsed
+	fallback := GatewayFallbackLoopbackHost
+	if parsed.Hostname() == fallback {
+		fallback = GatewayLoopbackHost
+	}
+	otherHost.Host = net.JoinHostPort(fallback, parsed.Port())
+	otherScheme := *parsed
+	otherScheme.Scheme = "https"
+
+	for name, refused := range map[string]string{
+		"another port":     otherPort.String(),
+		"another loopback": otherHost.String(),
+		"another scheme":   otherScheme.String(),
+		"the remote page":  "https://docs.example.com/a",
+		"a script URL":     "javascript:alert(1)",
+	} {
+		if panel.IsGatewayURL(refused) {
+			t.Fatalf("%s (%q) was accepted as this gateway", name, refused)
+		}
+		if remote, ok := panel.RemoteURL(refused); ok {
+			t.Fatalf("%s mapped to the remote %q, want a refusal", name, remote)
+		}
+	}
+}

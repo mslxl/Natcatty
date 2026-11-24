@@ -76,3 +76,43 @@ func TestOriginSeparatesSchemeAuthorityAndPath(t *testing.T) {
 		t.Fatalf("Origin(javascript) error = %v", err)
 	}
 }
+
+// TestCanonicalOriginNamesOneStorePerRealOrigin proves the spelling rule the
+// per-site stores rely on: case and a scheme's default port name the same
+// origin, while a non-default port, another host, or another scheme never do.
+func TestCanonicalOriginNamesOneStorePerRealOrigin(t *testing.T) {
+	same := []string{
+		"https://example.com/",
+		"https://Example.COM:443/console",
+		"HTTPS://example.com:443",
+		"https://example.com",
+	}
+	for _, raw := range same {
+		origin, err := CanonicalOrigin(raw)
+		if err != nil {
+			t.Fatalf("CanonicalOrigin(%q) error = %v", raw, err)
+		}
+		if origin != "https://example.com" {
+			t.Fatalf("CanonicalOrigin(%q) = %q, want one spelling", raw, origin)
+		}
+	}
+
+	distinct := map[string]string{
+		"http://example.com/":        "http://example.com",
+		"https://example.com:8443/":  "https://example.com:8443",
+		"https://other.example.com/": "https://other.example.com",
+		"http://127.0.0.1:8080/":     "http://127.0.0.1:8080",
+	}
+	for raw, want := range distinct {
+		origin, err := CanonicalOrigin(raw)
+		if err != nil {
+			t.Fatalf("CanonicalOrigin(%q) error = %v", raw, err)
+		}
+		if origin != want {
+			t.Fatalf("CanonicalOrigin(%q) = %q, want %q", raw, origin, want)
+		}
+	}
+	if _, err := CanonicalOrigin("javascript:alert(1)"); !errors.Is(err, ErrAddressScheme) {
+		t.Fatalf("CanonicalOrigin(javascript) error = %v", err)
+	}
+}

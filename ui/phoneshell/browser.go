@@ -24,6 +24,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appbrowser "github.com/mslxl/natcatty/application/browser"
+	domainbrowser "github.com/mslxl/natcatty/domain/browser"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/icons"
@@ -77,9 +78,20 @@ type Browser interface {
 	SetPageFlags(tabID string, canBack, canForward, loading bool)
 	StartDownload(gatewayURL, suggestedName string) (appbrowser.Download, error)
 
-	// NewPage makes one isolated web view for a tab. The caller wires its
-	// navigation guard and events before loading anything into it.
-	NewPage() (BrowserPage, error)
+	// Downloads is the shared manager's history, newest first.
+	Downloads() []appbrowser.Download
+	// CancelDownload aborts one active download; the worker removes its
+	// temporary file.
+	CancelDownload(id string) bool
+	// ExportDownload copies a finished file through the system save picker.
+	// An empty path with a nil error means the user cancelled.
+	ExportDownload(download appbrowser.Download) (string, error)
+
+	// NewPage makes one isolated web view for a tab at siteOrigin, the
+	// remote origin (scheme+host+port) the tab shows. Pages of one Host and
+	// site share a store; another site or Host gets its own. The caller wires
+	// its navigation guard and events before loading anything into it.
+	NewPage(siteOrigin string) (BrowserPage, error)
 }
 
 // BrowserPageEventKind is one page lifecycle event the native page reports.
@@ -162,6 +174,19 @@ type browserSurface struct {
 	// the user is editing.
 	addressTab string
 	problem    string
+	// pageSites is the remote origin (scheme+host+port) each page's website
+	// data store belongs to. A tab moved to another site gets a page of that
+	// site's own, so the WebView never loads one site into another's store.
+	pageSites map[string]string
+	// pageGatewayOrigins is the loopback origin each page last loaded. A
+	// reconnect rebinds the gateway on a new port, so the origin changing is
+	// what makes the page reload; a path change on the same origin is the
+	// page's own navigation and is left alone.
+	pageGatewayOrigins map[string]string
+	// downloadMessage reports the last download action. A cancelled or failed
+	// download leaves the page as it was.
+	downloadMessage string
+	downloadProblem bool
 }
 
 // newBrowserSurface starts one browser and subscribes its state changes to
@@ -171,7 +196,13 @@ func newBrowserSurface(browser Browser, redraw func()) *browserSurface {
 	if redraw == nil {
 		redraw = invalidatePhoneWindows
 	}
-	s := &browserSurface{browser: browser, redraw: redraw, pages: make(map[string]BrowserPage)}
+	s := &browserSurface{
+		browser:            browser,
+		redraw:             redraw,
+		pages:              make(map[string]BrowserPage),
+		pageSites:          make(map[string]string),
+		pageGatewayOrigins: make(map[string]string),
+	}
 	s.unsub = browser.Subscribe(func(appbrowser.State) { redraw() })
 	browser.Start()
 	s.syncAddress()
@@ -203,6 +234,8 @@ func (s *browserSurface) close() {
 	s.closed = true
 	pages := s.pages
 	s.pages = nil
+	s.pageSites = nil
+	s.pageGatewayOrigins = nil
 	unsub := s.unsub
 	s.unsub = nil
 	s.mu.Unlock()
@@ -234,44 +267,91 @@ func (s *browserSurface) syncAddress() {
 }
 
 // ensurePage returns the tab's page, making it on first use and loading the
-// tab's current gateway URL. It returns nil, with a problem recorded, when
-// the platform cannot make a web view.
+// tab's current gateway URL. A blank tab has no site yet, so it has no page:
+// nothing can be written into a store before the page's own site is known.
+// A tab moved to another site has its old page released and gets a page of
+// the new site's own store, so two sites on one Host never share a jar. It
+// returns nil, with a problem recorded, when the platform cannot make a web
+// view.
 func (s *browserSurface) ensurePage(tabID string) BrowserPage {
 	if tabID == "" {
 		return nil
 	}
+	site := s.tabSite(tabID)
+	if site == "" {
+		// A tab that lost its site keeps no page: a page is always the store
+		// of the site it was made for, and a blank tab has none.
+		s.releasePage(tabID)
+		return nil
+	}
+
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return nil
 	}
-	if page := s.pages[tabID]; page != nil {
+	page := s.pages[tabID]
+	moved := page != nil && s.pageSites[tabID] != site
+	s.mu.Unlock()
+	if moved {
+		s.releasePage(tabID)
+		return s.ensurePage(tabID)
+	}
+
+	if page == nil {
+		var err error
+		page, err = s.browser.NewPage(site)
+		if err != nil {
+			s.problem = "The web area is unavailable: " + err.Error()
+			return nil
+		}
+		page.SetNavigationGuard(s.navigationGuard(tabID))
+		page.OnEvent(func(event BrowserPageEvent) { s.pageEvent(tabID, page, event) })
+
+		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			page.Destroy()
+			return nil
+		}
+		s.pages[tabID] = page
+		s.pageSites[tabID] = site
 		s.mu.Unlock()
+	}
+
+	gatewayURL, err := s.browser.GatewayURL(tabID)
+	if err != nil || gatewayURL == "" {
 		return page
 	}
-	s.mu.Unlock()
-
-	page, err := s.browser.NewPage()
+	origin, err := domainbrowser.CanonicalOrigin(gatewayURL)
 	if err != nil {
-		s.problem = "The web area is unavailable: " + err.Error()
-		return nil
+		origin = gatewayURL
 	}
-	page.SetNavigationGuard(s.navigationGuard(tabID))
-	page.OnEvent(func(event BrowserPageEvent) { s.pageEvent(tabID, page, event) })
-
 	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		page.Destroy()
-		return nil
-	}
-	s.pages[tabID] = page
+	loaded := s.pageGatewayOrigins[tabID]
+	s.pageGatewayOrigins[tabID] = origin
 	s.mu.Unlock()
-
-	if gatewayURL, err := s.browser.GatewayURL(tabID); err == nil && gatewayURL != "" {
+	if loaded != origin {
 		_ = page.Load(gatewayURL)
 	}
 	return page
+}
+
+// tabSite is the remote origin of one tab's page, "" for a blank tab or a
+// page that is not an HTTP(S) document.
+func (s *browserSurface) tabSite(tabID string) string {
+	state := s.browser.State()
+	for i := range state.Tabs {
+		if state.Tabs[i].ID != tabID {
+			continue
+		}
+		origin, err := domainbrowser.CanonicalOrigin(state.Tabs[i].URL)
+		if err != nil {
+			return ""
+		}
+		return origin
+	}
+	return ""
 }
 
 // navigationGuard keeps every page on the shared gateway. A gateway URL is
@@ -291,6 +371,20 @@ func (s *browserSurface) navigationGuard(tabID string) func(string) (string, boo
 		}
 		gatewayURL, err := s.browser.Navigate(tabID, rawURL)
 		if err != nil {
+			return "", true
+		}
+		// A navigation within the page's own site can load the replacement in
+		// the page it came from. A different site must not: that page belongs
+		// to another website data store, so cancel here and let the surface
+		// swap in a page of the new site's own store on the next frame.
+		site, err := domainbrowser.CanonicalOrigin(rawURL)
+		if err != nil {
+			return "", true
+		}
+		s.mu.Lock()
+		pageSite := s.pageSites[tabID]
+		s.mu.Unlock()
+		if pageSite == "" || pageSite != site {
 			return "", true
 		}
 		return gatewayURL, true
@@ -327,9 +421,11 @@ func (s *browserSurface) pageEvent(tabID string, page BrowserPage, event Browser
 		// directory and uses the Host's own route.
 		s.browser.PageStopped(tabID)
 		if _, err := s.browser.StartDownload(event.URL, event.SuggestedName); err != nil {
-			s.problem = "Could not start the download: " + err.Error()
+			s.downloadMessage = "Could not start the download: " + err.Error()
+			s.downloadProblem = true
 		} else {
-			s.problem = "Download started."
+			s.downloadMessage = "Download started."
+			s.downloadProblem = false
 		}
 	}
 	s.syncAddress()
@@ -365,6 +461,43 @@ func (s *browserSurface) navigate() {
 	}
 }
 
+// cancelDownload aborts one active download. The worker removes its
+// temporary file and the page keeps showing what it showed before the
+// download navigation was aborted.
+func (s *browserSurface) cancelDownload(id string) {
+	if s.browser.CancelDownload(id) {
+		s.downloadMessage = "Download cancelled."
+		s.downloadProblem = false
+	} else {
+		s.downloadMessage = "That download is no longer running."
+		s.downloadProblem = true
+	}
+	if s.redraw != nil {
+		s.redraw()
+	}
+}
+
+// exportDownload copies one finished download through the system save
+// picker. An empty returned path means the user cancelled; the downloaded
+// file in the app's directory is left as it was.
+func (s *browserSurface) exportDownload(download appbrowser.Download) {
+	path, err := s.browser.ExportDownload(download)
+	switch {
+	case err != nil:
+		s.downloadMessage = "Could not export " + download.Filename + ": " + err.Error()
+		s.downloadProblem = true
+	case strings.TrimSpace(path) == "":
+		s.downloadMessage = "Export cancelled."
+		s.downloadProblem = false
+	default:
+		s.downloadMessage = "Exported " + download.Filename + "."
+		s.downloadProblem = false
+	}
+	if s.redraw != nil {
+		s.redraw()
+	}
+}
+
 // command applies a history or reload action to the active tab.
 func (s *browserSurface) command(apply func(BrowserPage)) {
 	state := s.browser.State()
@@ -394,15 +527,24 @@ func (s *browserSurface) newTab() {
 	}
 }
 
-// closeTab closes one tab and forgets its page.
-func (s *browserSurface) closeTab(tabID string) {
+// releasePage forgets and destroys one tab's page. The per-site store lives in
+// the Browser, not the page, so the store survives; only this surface's view
+// of it goes.
+func (s *browserSurface) releasePage(tabID string) {
 	s.mu.Lock()
 	page := s.pages[tabID]
 	delete(s.pages, tabID)
+	delete(s.pageSites, tabID)
+	delete(s.pageGatewayOrigins, tabID)
 	s.mu.Unlock()
 	if page != nil {
 		page.Destroy()
 	}
+}
+
+// closeTab closes one tab and forgets its page.
+func (s *browserSurface) closeTab(tabID string) {
+	s.releasePage(tabID)
 	if !s.browser.CloseTab(tabID) {
 		return
 	}
@@ -420,6 +562,45 @@ func (s *browserSurface) activate(tabID string) {
 	s.syncAddress()
 	if s.redraw != nil {
 		s.redraw()
+	}
+}
+
+// drawDownloads renders the shared download manager's list. An active
+// download can be cancelled; a completed one is exported through the
+// system's save picker. A cancelled or failed download changes nothing about
+// the page.
+func (s *browserSurface) drawDownloads(c *ui.Context) {
+	downloads := s.browser.Downloads()
+	if len(downloads) == 0 {
+		if s.downloadMessage == "" {
+			return
+		}
+	}
+	if len(downloads) > 0 {
+		ui.Row(c).FillWidth().Gap(6).Wrap().Children(func() {
+			for _, download := range downloads {
+				download := download
+				switch download.Status {
+				case appbrowser.DownloadWaiting, appbrowser.DownloadProgressing:
+					if kit.GhostButton(c, icons.X, "Cancel download "+download.Filename).Clicked() {
+						s.cancelDownload(download.ID)
+					}
+				case appbrowser.DownloadCompleted:
+					if kit.GhostButton(c, icons.Download, "Export download "+download.Filename).Clicked() {
+						s.exportDownload(download)
+					}
+				default:
+					kit.EmptyHint(c, download.Filename+" — "+string(download.Status))
+				}
+			}
+		})
+	}
+	if s.downloadMessage != "" {
+		tone := c.Theme().Warning
+		if s.downloadProblem {
+			tone = c.Theme().Danger
+		}
+		kit.Notice(c, icons.Download, tone, s.downloadMessage, nil)
 	}
 }
 
@@ -484,6 +665,8 @@ func drawBrowserSurface(c *ui.Context, surface *browserSurface, doneLabel string
 		kit.Notice(c, icons.TriangleAlert, c.Theme().Warning, state.NoticeMsg, nil)
 	}
 
+	surface.drawDownloads(c)
+
 	switch state.Route {
 	case appbrowser.RouteConnecting:
 		kit.EmptyHint(c, "Connecting "+state.Label+"'s browser…")
@@ -502,7 +685,7 @@ func drawBrowserSurface(c *ui.Context, surface *browserSurface, doneLabel string
 	}
 
 	active := activeBrowserTab(state)
-	if active == nil {
+	if active == nil || surface.tabSite(active.ID) == "" {
 		kit.EmptyHint(c, "Open an address to start browsing.")
 		return
 	}
