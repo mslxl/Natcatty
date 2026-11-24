@@ -9,7 +9,10 @@ to a clean checkout before building.
 Run `scripts/apply-mygo-patches.sh` after checking out the repository, or use
 `just prepare-mygo`. The script initializes the submodule, resets it to the
 pinned commit (removing untracked files), and applies every `*.patch` here in
-name order. `just dev`, `just test`, and `just build` depend on it, and CI runs
+name order. It also refuses to prepare the build when `go.mod`'s
+`github.com/egoist/mygo` version and the submodule's exact tag differ: the
+replace directive would otherwise compile one release while `go.mod` names
+another. `just dev`, `just test`, and `just build` depend on it, and CI runs
 it before Go.
 
 The patches are relative to v0.10.0. If the submodule moves to another upstream
