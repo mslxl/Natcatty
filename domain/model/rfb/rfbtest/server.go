@@ -99,6 +99,14 @@ type Config struct {
 	// server-initiated ExtendedDesktopSize (reason 0) plus a repaint at that
 	// size, modeling QEMU finishing a forwarded request.
 	DesktopSizeFollowUp bool
+	// ScreenLayout is the desktop's initial screen layout. The frame is the
+	// whole desktop, so each screen names a rectangle inside it. Empty means
+	// one screen covering the whole framebuffer.
+	ScreenLayout []rfb.Screen
+	// IgnoreScreens makes the server resize its desktop while answering with a
+	// single screen whose size is the whole framebuffer, the behavior of a
+	// server that implements ExtendedDesktopSize but not multi-head.
+	IgnoreScreens bool
 	// FenceBurst sends this many additional ServerFence requests during
 	// extension acknowledgement, reading one client message between each so a
 	// synchronous client cannot deadlock on an unbuffered stream.
@@ -227,8 +235,11 @@ type Server struct {
 	frame  *image.RGBA
 	width  int
 	height int
-	err    error
-	pf     rfb.PixelFormat
+	// screens is the desktop's current layout. An empty layout means one
+	// screen covering the whole framebuffer.
+	screens []rfb.Screen
+	err     error
+	pf      rfb.PixelFormat
 
 	mu         sync.Mutex
 	received   Received
@@ -280,6 +291,13 @@ func New(cfg Config) *Server {
 	}
 	if s.frame == nil {
 		s.frame = image.NewRGBA(image.Rect(0, 0, s.width, s.height))
+	}
+	if cfg.ScreenLayout != nil {
+		if len(cfg.ScreenLayout) == 0 {
+			s.err = fmt.Errorf("rfbtest: empty screen layout")
+			return s
+		}
+		s.screens = append([]rfb.Screen(nil), cfg.ScreenLayout...)
 	}
 	if err := s.pf.Validate(); err != nil {
 		s.err = err
@@ -872,15 +890,15 @@ func (s *Server) readSetDesktopSize(conn io.ReadWriter) error {
 		// Answer with the current desktop and the configured status. For a
 		// refusal this is final; for status 4 with follow-up the server later
 		// adopts the request, as QEMU does after the guest boots.
-		screens := []rfb.Screen{{Width: uint16(s.width), Height: uint16(s.height)}}
-		if err := s.sendExtendedDesktopSize(conn, 1, s.cfg.DesktopSizeStatus, uint16(s.width), uint16(s.height), screens); err != nil {
+		if err := s.sendExtendedDesktopSize(conn, 1, s.cfg.DesktopSizeStatus, uint16(s.width), uint16(s.height), s.screenLayout()); err != nil {
 			return err
 		}
 		if s.cfg.DesktopSizeStatus == 4 && s.cfg.DesktopSizeFollowUp {
 			if err := s.resizeFrame(int(request.Width), int(request.Height)); err != nil {
 				return err
 			}
-			if err := s.sendExtendedDesktopSize(conn, 0, 0, request.Width, request.Height, request.Screens); err != nil {
+			s.adoptScreens(request)
+			if err := s.sendExtendedDesktopSize(conn, 0, 0, request.Width, request.Height, s.screenLayout()); err != nil {
 				return err
 			}
 			return s.sendFrame(conn, false)
@@ -890,11 +908,22 @@ func (s *Server) readSetDesktopSize(conn io.ReadWriter) error {
 	if err := s.resizeFrame(int(request.Width), int(request.Height)); err != nil {
 		return err
 	}
-	if err := s.sendExtendedDesktopSize(conn, 1, 0, request.Width, request.Height, request.Screens); err != nil {
+	s.adoptScreens(request)
+	if err := s.sendExtendedDesktopSize(conn, 1, 0, request.Width, request.Height, s.screenLayout()); err != nil {
 		return err
 	}
 	// A following data update lets the client repaint at the new size.
 	return s.sendFrame(conn, false)
+}
+
+// adoptScreens records the layout the client asked for, unless the server
+// models one that resizes its desktop but ignores the screen list.
+func (s *Server) adoptScreens(request DesktopSizeRequest) {
+	if s.cfg.IgnoreScreens || len(request.Screens) == 0 {
+		s.screens = nil
+		return
+	}
+	s.screens = append([]rfb.Screen(nil), request.Screens...)
 }
 
 // resizeFrame reallocates the canned frame for a requested desktop size,
@@ -1004,12 +1033,20 @@ func (s *Server) readCutText(conn io.Reader) error {
 // data.
 func (s *Server) sendUpdate(conn io.Writer, incremental bool) error {
 	if s.cfg.ExtendedDesktopSize && !incremental && s.advertised(rfb.EncodingExtendedDesktopSize) {
-		screens := []rfb.Screen{{Width: uint16(s.width), Height: uint16(s.height)}}
-		if err := s.sendExtendedDesktopSize(conn, 0, 0, uint16(s.width), uint16(s.height), screens); err != nil {
+		if err := s.sendExtendedDesktopSize(conn, 0, 0, uint16(s.width), uint16(s.height), s.screenLayout()); err != nil {
 			return err
 		}
 	}
 	return s.sendFrame(conn, incremental)
+}
+
+// screenLayout returns the layout the server reports: its stored layout, or one
+// screen covering the whole framebuffer.
+func (s *Server) screenLayout() []rfb.Screen {
+	if len(s.screens) > 0 {
+		return append([]rfb.Screen(nil), s.screens...)
+	}
+	return []rfb.Screen{{Width: uint16(s.width), Height: uint16(s.height)}}
 }
 
 func (s *Server) sendFrame(conn io.Writer, incremental bool) error {
