@@ -1272,8 +1272,21 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 	// Zoom is a view onto the split, not a separate layout. Splitting the
 	// zoomed Pane restores the split so the new Pane is visible; leaving the
 	// zoom set would focus a hidden member and show only the source Pane.
+	// The sequence is one logical change: the reorder records the old
+	// full-window Pane shrinking, and the latest PaneOpen carries the same
+	// zoom context so the view plays it as one continuous open.
+	wasMagnified := tab.Magnified
 	tab.Magnified = ""
 	tab.setFocus(newPaneID)
+	if wasMagnified != "" {
+		s.recordMotion(motion.Event{
+			Kind:          motion.PaneReorder,
+			TabID:         tab.ID,
+			PaneID:        wasMagnified,
+			FromMagnified: wasMagnified,
+			At:            time.Now(),
+		})
+	}
 	// Record the open for the views after the new Pane exists and the final
 	// tree is in place. TargetID is the Pane that was split; Direction is +1
 	// when the new Pane is the split's second child.
@@ -1282,12 +1295,13 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 		direction = -1
 	}
 	s.recordMotion(motion.Event{
-		Kind:      motion.PaneOpen,
-		TabID:     tab.ID,
-		PaneID:    newPaneID,
-		TargetID:  focusedID,
-		Direction: direction,
-		At:        time.Now(),
+		Kind:          motion.PaneOpen,
+		TabID:         tab.ID,
+		PaneID:        newPaneID,
+		TargetID:      focusedID,
+		Direction:     direction,
+		FromMagnified: wasMagnified,
+		At:            time.Now(),
 	})
 	// The new Pane inherits the source Session's last known directory, as the
 	// original split did when it copied the shell's current cwd.
@@ -1310,13 +1324,34 @@ func (s *State) TogglePaneZoom() bool {
 	}
 	// A zoom supersedes a PaneClose the view has not drawn yet.
 	s.ReleasePaneGhosts()
-	if tab.Magnified == focusedID {
-		tab.Magnified = ""
-	} else {
-		tab.Magnified = focusedID
+	from := tab.Magnified
+	to := focusedID
+	if from == focusedID {
+		to = ""
 	}
+	tab.Magnified = to
+	// One PaneReorder is the whole zoom: PaneID is the Pane that grows or
+	// shrinks, and the magnification fields tell the view which Pane filled
+	// the Tab before and after. A move leaves both empty.
+	s.recordMotion(motion.Event{
+		Kind:          motion.PaneReorder,
+		TabID:         tab.ID,
+		PaneID:        zoomedPane(from, to),
+		FromMagnified: from,
+		ToMagnified:   to,
+		At:            time.Now(),
+	})
 	s.RequestRedraw()
 	return true
+}
+
+// zoomedPane is the Pane a zoom event moves: the new zoomed Pane when one
+// is set, otherwise the Pane leaving the zoom.
+func zoomedPane(from, to model.PaneID) model.PaneID {
+	if to != "" {
+		return to
+	}
+	return from
 }
 
 // MagnifiedPaneID returns the zoomed Pane of the Tab at index, or "".
@@ -1339,11 +1374,24 @@ func (s *State) SetMagnifiedPane(index int, paneID model.PaneID) bool {
 	}
 	// A zoom supersedes a PaneClose the view has not drawn yet.
 	s.ReleasePaneGhosts()
+	from := tab.Magnified
 	tab.Magnified = paneID
 	// The zoomed Pane is the only visible member, so it must also hold focus.
 	// Otherwise the keyboard and compose target would stay on a hidden Pane.
 	if paneID != "" {
 		tab.setFocus(paneID)
+	}
+	if from != paneID {
+		// Direct A→B is one zoom event, not an unzoom followed by a zoom:
+		// PaneID is B, and the fields carry A as the Pane being covered.
+		s.recordMotion(motion.Event{
+			Kind:          motion.PaneReorder,
+			TabID:         tab.ID,
+			PaneID:        zoomedPane(from, paneID),
+			FromMagnified: from,
+			ToMagnified:   paneID,
+			At:            time.Now(),
+		})
 	}
 	s.RequestRedraw()
 	return true
@@ -1609,6 +1657,18 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 		}
 		source.Root = root
 		source.setFocus(sourcePaneID)
+		// A same-Tab move is one logical event: PaneID is the Pane that
+		// changed places and TargetID is the Pane it landed beside. The
+		// view applies PaneClose, PaneOpen and PaneReorder to its three
+		// parts; recording three events would let latest-wins collapse two
+		// of them. Both magnification fields stay empty: this is not a zoom.
+		s.recordMotion(motion.Event{
+			Kind:     motion.PaneReorder,
+			TabID:    source.ID,
+			PaneID:   sourcePaneID,
+			TargetID: targetPaneID,
+			At:       time.Now(),
+		})
 		s.save()
 		s.RequestRedraw()
 		return true

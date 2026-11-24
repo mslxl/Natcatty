@@ -29,15 +29,36 @@ const paneMotionZIndex = 1
 // creates (ticket 04, which the overlay still handles). Native keeps a Match
 // transition on every Pane so a layout change can start from the previous
 // frame's recorded box; overlayClose forces the older opaque-overlay survivor
-// route so the fallback stays exercised; labels names the overlays for tests.
+// route so the fallback stays exercised; overlayReorder forces a same-Tab
+// move's siblings through the opaque overlay so both reorder routes have
+// coverage; labels names the overlays for tests.
 type paneMotionMode struct {
-	native       bool
-	overlayClose bool
-	labels       bool
+	native         bool
+	overlayClose   bool
+	overlayReorder bool
+	labels         bool
 }
 
-// paneMotionRun is one Pane animation this view is playing: a Pane open, or a
-// Pane close with its survivor(s) and its exit ghost.
+// zoomRender is which Pane tree a zoom run shows while its spring plays. A
+// zoom in renders the real split until the overlay covers it, so the hidden
+// Panes keep their split grids and no tree is rebuilt per frame; a direct
+// A→B renders only the Pane that was magnified, which stays full and does
+// not resize. Every other zoom renders the state's layout.
+type zoomRender int
+
+const (
+	// zoomRenderState shows the state's current zoom: the split after a
+	// zoom out.
+	zoomRenderState zoomRender = iota
+	// zoomRenderSplit suppresses the new zoom while a zoom-in grows over
+	// the split it covers.
+	zoomRenderSplit
+	// zoomRenderPane shows one Pane alone while another grows over it.
+	zoomRenderPane
+)
+
+// paneMotionRun is one Pane animation this view is playing: a Pane open, a
+// Pane close with its survivor(s) and its exit ghost, or a Pane reorder/zoom.
 type paneMotionRun struct {
 	kind   motion.Kind
 	tabID  model.TabID
@@ -51,13 +72,33 @@ type paneMotionRun struct {
 	// ghost starts at the whole pane region and the split is revealed at its
 	// final layout, so its survivors do not animate.
 	magnified bool
+	// zoom marks a PaneReorder that changes magnification. zoomPane is the
+	// Pane whose overlay springs, and render/renderPane select the tree the
+	// view shows behind it.
+	zoom     bool
+	zoomPane model.PaneID
+	// zoomHome is where the zoomPane came from: the boxes it showed before
+	// this zoom. A direct magnification reversed mid-run sends its outgoing
+	// copy back there, so it is captured at the change before recordPane can
+	// replace wm.rects[zoomPane] with the zoom's final boxes.
+	zoomHome   motion.PaneRects
+	render     zoomRender
+	renderPane model.PaneID
+	// spring is the exact ui.SpringOptions this run's native siblings and
+	// overlay copies use, kept so a test and an interruption read one value.
+	spring *ui.SpringOptions
+	// nativePanes are the siblings MyGo's Match + ScaleContent carries; their
+	// visuals are bookkeeping only and their real Panes are not masked.
+	nativePanes map[model.PaneID]bool
 	// final is every leaf Pane's final boxes. The overlay lays each whole
 	// Pane out at final[id].Column and an opaque mask covers the real Pane
 	// there while the copy moves; pinPanes froze the same body boxes.
 	final map[model.PaneID]motion.PaneRects
 	// ghosts are the exiting Panes' retained surfaces and the boxes they
 	// showed. The view draws each as an opaque ghost and releases its surface
-	// when the run ends, is replaced, or warps.
+	// when the run ends, is replaced, or warps. A ghost is owned when the
+	// state retained its surface (a closed Pane); a same-Tab move's old
+	// position is a live copy of the moving Pane and must never be released.
 	ghosts map[model.PaneID]paneMotionGhost
 	// pins are the Surfaces whose final grid this run set at the change;
 	// they are released if their own layout never confirms the pin.
@@ -85,6 +126,10 @@ type paneMotionGhost struct {
 	rects  motion.PaneRects
 	handle *state.PaneGhost
 	blank  bool
+	// owned marks a closed Pane's retained surface. The run releases it and
+	// forgets its boxes when the ghost ends; an unowned ghost is the live
+	// moving Pane copied at its old position for a same-Tab move.
+	owned bool
 }
 
 // rectWithin reports that every edge of a is within eps of b.
@@ -123,6 +168,11 @@ type workspacePaneMotion struct {
 	// animationFrames counts the frames the runtime asked for while a run
 	// played. A warped event asks for none; tests assert it.
 	animationFrames int
+	// effectiveMagnified is the Pane the next layout must show alone. It is
+	// the state's zoom except while a zoom run keeps the split (or the old
+	// magnified Pane) on screen behind its overlay. The view reads it instead
+	// of the state so a zoom in does not rebuild the tree per frame.
+	effectiveMagnified model.PaneID
 }
 
 func newWorkspacePaneMotion(s *state.State, mode paneMotionMode) *workspacePaneMotion {
@@ -153,14 +203,31 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 
 	activeIndex := s.ActiveTab()
 	activeID, _ := s.TabID(activeIndex)
+	// The tree is built after preFrame returns, so the zoom the layout shows
+	// is decided here and read by mainTabRef. A run that keeps the split (or
+	// the old magnified Pane) overrides the state for this frame; every exit
+	// path updates it.
+	defer wm.updateEffective(activeIndex)
+
 	if wm.run != nil && wm.run.tabID != activeID {
 		// An animation belongs to its Tab; leaving the Tab warps it.
 		wm.finish()
 	}
 	setting := s.Motion()
-	if wm.run != nil && (!motion.Enabled(setting, wm.run.kind) || c.Preferences().ReduceMotion) {
+	if wm.run != nil && (!setting.Enabled || c.Preferences().ReduceMotion) {
 		// Switching motion off mid-run warps at once and stops asking for
 		// frames (ticket 08).
+		wm.finish()
+	}
+	if wm.run != nil && wm.run.kind == motion.PaneReorder {
+		// A reorder is the one event whose three parts have their own
+		// switches. Switching one off mid-run warps only that part; the
+		// rest keeps playing. An empty run is over (ticket 18).
+		wm.gateReorder(wm.run, setting)
+		if len(wm.run.anim.Visuals) == 0 {
+			wm.finish()
+		}
+	} else if wm.run != nil && !motion.Enabled(setting, wm.run.kind) {
 		wm.finish()
 	}
 	if wm.run != nil && hidden {
@@ -190,8 +257,7 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 		return
 	}
 
-	animate := motion.Enabled(setting, event.Kind) &&
-		!c.Preferences().ReduceMotion &&
+	visible := setting.Enabled && !c.Preferences().ReduceMotion &&
 		!firstFrame && !hidden && !wasHidden
 	// Only a visible view has the previous frame's boxes on screen; a hidden
 	// or first frame must not pin a grid from geometry it never showed. The
@@ -199,12 +265,82 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	pin := !hidden && !wasHidden && !firstFrame
 	switch event.Kind {
 	case motion.PaneOpen:
+		animate := visible && setting.PaneOpen
 		wm.plan(c, s, activeIndex, event, setting, animate, pin, now)
 	case motion.PaneClose:
+		animate := visible && setting.PaneClose
 		wm.planClose(c, s, activeIndex, event, setting, animate, pin, now)
+	case motion.PaneReorder:
+		wm.planReorder(c, s, activeIndex, event, setting, visible, pin, now)
 	default:
 		wm.finish()
 		s.ReleasePaneGhosts()
+	}
+}
+
+// updateEffective decides the Pane the next layout shows alone. While a zoom
+// run is still covering the split, the state's new zoom must not switch the
+// tree yet; the run's render says what stays behind the overlay.
+func (wm *workspacePaneMotion) updateEffective(index int) {
+	var pane model.PaneID
+	if index >= 0 {
+		pane = wm.state.MagnifiedPaneID(index)
+	}
+	if run := wm.run; run != nil && run.zoom {
+		switch run.render {
+		case zoomRenderSplit:
+			pane = ""
+		case zoomRenderPane:
+			pane = run.renderPane
+		}
+	}
+	wm.effectiveMagnified = pane
+}
+
+// gateReorder applies the per-part switches to a running same-Tab move: the
+// close ghost obeys PaneClose, the new-position overlay PaneOpen, and the
+// sibling spring PaneReorder. A part whose switch went off is removed and
+// warps to its final position while the other parts continue. A closed
+// Pane's carried ghost is released with its part; the live moving Pane's old
+// copy is only a view of the still-running Pane and is never released.
+func (wm *workspacePaneMotion) gateReorder(run *paneMotionRun, setting domainpreferences.Motion) {
+	if run == nil || run.kind != motion.PaneReorder {
+		return
+	}
+	keep := run.anim.Visuals[:0]
+	for _, v := range run.anim.Visuals {
+		on := true
+		switch v.Kind {
+		case motion.Exit:
+			on = setting.PaneClose
+		case motion.Enter:
+			on = setting.PaneOpen
+		default:
+			on = setting.PaneReorder
+		}
+		if on {
+			keep = append(keep, v)
+			continue
+		}
+		if v.Kind == motion.Exit {
+			if ghost, ok := run.ghosts[v.Pane]; ok {
+				if ghost.owned {
+					// A closed Pane's retained surface is the run's to
+					// release. A same-Tab move's old-position copy has no
+					// handle: the moving Pane is alive at its final place.
+					if ghost.handle != nil {
+						ghost.handle.Release()
+					}
+					delete(wm.rects, v.Pane)
+				}
+				delete(run.ghosts, v.Pane)
+			}
+		}
+	}
+	run.anim.Visuals = keep
+	if !setting.PaneReorder {
+		run.nativePanes = nil
+		run.spring = nil
 	}
 }
 
@@ -217,12 +353,15 @@ type paneVisualState struct {
 	opacity float32
 }
 
-// currentVisual reports what of Pane id the user saw at the change.
-func (wm *workspacePaneMotion) currentVisual(prev *paneMotionRun, prevK float32,
+// currentVisual reports what of Pane id the user saw at the change. A part
+// with its own duration or spring is read at now, never with the run's eased
+// progress, so an interrupting event starts from exactly what the frame
+// painted.
+func (wm *workspacePaneMotion) currentVisual(prev *paneMotionRun, now time.Time,
 	id model.PaneID) (paneVisualState, bool) {
 	if prev != nil {
 		if v, ok := prev.anim.VisualFor(id); ok {
-			r, opacity := prev.anim.State(v, prevK)
+			r, opacity := prev.anim.StateAt(v, now)
 			return paneVisualState{rect: r, opacity: opacity}, true
 		}
 	}
@@ -230,6 +369,39 @@ func (wm *workspacePaneMotion) currentVisual(prev *paneMotionRun, prevK float32,
 		return paneVisualState{rect: r.Column, opacity: 1}, true
 	}
 	return paneVisualState{}, false
+}
+
+// currentVelocity is the rect velocity of Pane id at the change, or zero
+// when the Pane was not moving. A new spring starts with it, so retargeting
+// a zoom or a sibling does not restart from rest.
+func (wm *workspacePaneMotion) currentVelocity(prev *paneMotionRun, now time.Time, id model.PaneID) ui.Rect {
+	if prev == nil {
+		return ui.Rect{}
+	}
+	v, ok := prev.anim.VisualFor(id)
+	if !ok {
+		return ui.Rect{}
+	}
+	return prev.anim.VelocityAt(v, now)
+}
+
+// visualInFlight reports that Pane id is still moving at now in the previous
+// run. MyGo retargets a native element's channel only while that element
+// survives the layout change; a same-Tab move recreates the split around the
+// target, so the sibling is a new element and its Match starts from rest.
+// Such a moving Pane must therefore continue through the overlay, whose
+// spring carries the measured velocity; a Pane at rest can still start
+// natively from its matched box.
+func (wm *workspacePaneMotion) visualInFlight(prev *paneMotionRun, now time.Time, id model.PaneID) bool {
+	if prev == nil || prev.anim == nil {
+		return false
+	}
+	v, ok := prev.anim.VisualFor(id)
+	if !ok || v.Kind != motion.Move {
+		return false
+	}
+	rect, _ := prev.anim.StateAt(v, now)
+	return !rectWithin(rect, v.To, 0.5)
 }
 
 // plan turns one Pane-open event into a run, or warps it. The final boxes are
@@ -261,13 +433,30 @@ func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State, index int,
 	}
 
 	prev := wm.run
-	var prevK float32
-	if prev != nil {
-		prevK, _ = prev.anim.Progress(now)
-	}
-
-	old, oldOK := wm.currentVisual(prev, prevK, event.TargetID)
+	old, oldOK := wm.currentVisual(prev, now, event.TargetID)
 	if !oldOK {
+		wm.finish()
+		if pin {
+			wm.pinPanes(index, []model.PaneID{event.TargetID, event.PaneID}, final, event.TargetID)
+		}
+		return
+	}
+	if event.FromMagnified != "" {
+		// A split from a magnified Pane is one continuous open whose old
+		// Pane starts at the full window, not at LayoutBounds or at a
+		// suppression frame's split slot. Rebuild that whole-Pane box from
+		// the same tree geometry the zoom used.
+		single := domainworkspace.NewPaneNode(event.TargetID)
+		full := paneFinalRects(single, wm.region, wm.rects, c.Theme().Space(10), targetRects,
+			!root.IsPane(), frameTop, frameRight, frameBottom, frameLeft)
+		fullOld, ok := full[event.TargetID]
+		if !ok || fullOld.Column.W <= 0 || fullOld.Column.H <= 0 {
+			animate = false
+		} else {
+			old = paneVisualState{rect: fullOld.Column, opacity: 1}
+		}
+	}
+	if !animate {
 		wm.finish()
 		if pin {
 			wm.pinPanes(index, []model.PaneID{event.TargetID, event.PaneID}, final, event.TargetID)
@@ -285,7 +474,10 @@ func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State, index int,
 		tabID:  event.TabID,
 		seq:    event.Seq,
 		target: event.TargetID,
-		native: wm.mode.native,
+		// A magnified split grows the real old Pane from the full window;
+		// the native test route starts from the previous frame's split box
+		// and cannot represent that, so this one case uses the overlay.
+		native: wm.mode.native && event.FromMagnified == "",
 		final:  final,
 		pins:   map[model.PaneID]state.ViewportMotion{},
 	}
@@ -316,7 +508,7 @@ func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State, index int,
 				continue
 			}
 			box := end.Column
-			from, opacity := prev.anim.State(v, prevK)
+			from, opacity := prev.anim.StateAt(v, now)
 			// Continue the fade from what is on screen to the old visual's
 			// target. Every current route targets opaque; an unset target
 			// stays visible instead of fading the Pane out.
@@ -348,6 +540,482 @@ func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State, index int,
 	wm.pinPanes(index, []model.PaneID{event.TargetID, event.PaneID}, final, event.TargetID)
 	wm.animationFrames++
 	c.AnimationFrame()
+}
+
+// planReorder turns one PaneReorder into a same-Tab move or a zoom, or
+// warps it. The three parts of a move have independent switches; a zoom has
+// only the PaneReorder spring.
+func (wm *workspacePaneMotion) planReorder(c *ui.Context, s *state.State, index int,
+	event motion.Event, setting domainpreferences.Motion, visible, pin bool, now time.Time) {
+	if event.IsZoom() {
+		wm.planZoom(c, s, index, event, setting, visible, pin, now)
+		return
+	}
+	wm.planMove(c, s, index, event, setting, visible, pin, now)
+}
+
+// planMove animates a same-Tab move: the Pane's old position is an opaque
+// close-style ghost of the still-live Surface, its new position is an
+// open-style overlay over the already-final real Pane, and every sibling
+// that changes box makes room with the reorder spring. Each part obeys its
+// own switch; a part that is off warps while the others play.
+func (wm *workspacePaneMotion) planMove(c *ui.Context, s *state.State, index int,
+	event motion.Event, setting domainpreferences.Motion, visible, pin bool, now time.Time) {
+	root, _, ok := s.TabTree(index)
+	if !ok || root == nil || wm.region.W <= 0 || wm.region.H <= 0 {
+		wm.finish()
+		return
+	}
+	moved := event.PaneID
+	old, haveOld := wm.rects[moved]
+	frameTop, frameRight, frameBottom, frameLeft := kit.PaneFrameInset()
+	final := paneFinalRects(root, wm.region, wm.rects, c.Theme().Space(10), old,
+		!root.IsPane(), frameTop, frameRight, frameBottom, frameLeft)
+	end, haveEnd := final[moved]
+	closeOn := visible && setting.PaneClose
+	openOn := visible && setting.PaneOpen
+	reorderOn := visible && setting.PaneReorder
+	if !haveOld || !old.Valid() || !haveEnd {
+		// The old-position ghost, the new-position overlay and the sibling
+		// spring all start from the previous frame's recorded boxes. Without
+		// them the whole change warps; the final grid is still set once.
+		wm.finish()
+		if pin {
+			wm.pinSurvivors(index, "", final)
+		}
+		return
+	}
+	if !closeOn && !openOn && !reorderOn {
+		wm.finish()
+		if pin {
+			wm.pinSurvivors(index, "", final)
+		}
+		return
+	}
+
+	prev := wm.run
+	// Carry a closed Pane's ghost that this move does not replace, but never
+	// an old-position copy of a live moving Pane: that Pane keeps its
+	// Surface and the new layout is the truth.
+	carried := map[model.PaneID]paneMotionGhost{}
+	if prev != nil && closeOn {
+		rest := map[model.PaneID]paneMotionGhost{}
+		for id, ghost := range prev.ghosts {
+			if id != moved && ghost.owned {
+				carried[id] = ghost
+				continue
+			}
+			rest[id] = ghost
+		}
+		prev.ghosts = rest
+	}
+	oldState, _ := wm.currentVisual(prev, now, moved)
+	oldStart, oldOpacity := oldState.rect, oldState.opacity
+	ghostBox := old.Column
+	if prev != nil {
+		if v, ok := prev.anim.VisualFor(moved); ok && v.Box.W > 0 && v.Box.H > 0 {
+			ghostBox = v.Box
+		}
+	}
+
+	// Latest event wins: stop the old run, whose current visuals are the new
+	// starts, before pinning the new finals.
+	wm.finish()
+
+	spring := motion.ReorderSpring(setting.Speed)
+	run := &paneMotionRun{
+		kind:        motion.PaneReorder,
+		tabID:       event.TabID,
+		seq:         event.Seq,
+		target:      event.TargetID,
+		final:       final,
+		ghosts:      carried,
+		pins:        map[model.PaneID]state.ViewportMotion{},
+		nativePanes: map[model.PaneID]bool{},
+	}
+	if reorderOn {
+		run.spring = &spring
+	}
+	var visuals []motion.Visual
+	native := wm.nativeReorderEnabled()
+	if reorderOn {
+		for id, sibling := range final {
+			if id == moved {
+				continue
+			}
+			seen, ok := wm.currentVisual(prev, now, id)
+			if !ok {
+				continue
+			}
+			if rectWithin(seen.rect, sibling.Column, 0.5) && seen.opacity >= 0.999 {
+				continue
+			}
+			visual := motion.Visual{
+				Pane: id, Box: sibling.Column, From: seen.rect, To: sibling.Column,
+				Content: sibling.Column, Kind: motion.Move,
+				FromOpacity: seen.opacity, ToOpacity: 1,
+				Spring:   &spring,
+				Velocity: wm.currentVelocity(prev, now, id),
+			}
+			// A native sibling can start from rest (a fresh move) but cannot
+			// carry a velocity through an interruption: the move recreates
+			// the split around the target, so MyGo sees a new element and its
+			// Match starts from rest. Paint that Pane with the opaque overlay
+			// instead, whose spring keeps the velocity measured above.
+			if native && !wm.visualInFlight(prev, now, id) {
+				visual.Native = true
+				run.nativePanes[id] = true
+			}
+			visuals = append(visuals, visual)
+		}
+	}
+	if openOn {
+		// The real Pane is already at its final position; the copy enters
+		// there over a mask. Slide resolves against the Pane's old box, so it
+		// comes from where the Pane was. If the previous run was already
+		// opening this Pane, its visible rect and opacity are the new start
+		// and the open restarts its full duration from there, so a reverse
+		// move does not flash the masked real Pane.
+		enter := motion.Visual{
+			Pane: moved, Box: end.Column, To: end.Column, Content: old.Column,
+			Kind: motion.Enter, Style: setting.OpenStyle,
+			FromOpacity: 0, ToOpacity: 1,
+			Duration: motion.ScaleMotion(motion.BaseDuration(motion.PaneOpen), setting.Speed),
+		}
+		if prev != nil {
+			for _, was := range prev.anim.Visuals {
+				if was.Pane != moved || was.Kind != motion.Enter {
+					continue
+				}
+				from, opacity := prev.anim.StateAt(was, now)
+				enter.From = from
+				enter.FromOpacity = opacity
+				enter.Interrupted = true
+				enter.Duration = motion.ScaleMotion(motion.BaseDuration(motion.PaneOpen), setting.Speed)
+				break
+			}
+		}
+		visuals = append(visuals, enter)
+	}
+	// A closed Pane's ghost carried from an earlier close keeps leaving from
+	// where the user saw it, at the close part's duration.
+	for id, ghost := range carried {
+		if id == moved || prev == nil {
+			continue
+		}
+		v, ok := prev.anim.VisualFor(id)
+		if !ok {
+			continue
+		}
+		from, opacity := prev.anim.StateAt(v, now)
+		visuals = append(visuals, motion.Visual{
+			Pane: id, Box: ghost.rects.Column, From: from, To: from, Content: wm.region,
+			Kind: motion.Exit, Style: setting.CloseStyle, FromOpacity: opacity,
+			Duration: motion.ScaleMotion(motion.BaseDuration(motion.PaneClose), setting.Speed),
+		})
+	}
+	if closeOn {
+		ghost := paneMotionGhost{rects: old}
+		if info, ok := s.PaneInfoAt(index, moved); ok {
+			ghost.info = info
+		} else {
+			ghost.blank = true
+		}
+		run.ghosts[moved] = ghost
+		visuals = append(visuals, motion.Visual{
+			Pane: moved, Box: ghostBox, From: oldStart, To: oldStart,
+			Content: wm.region, Kind: motion.Exit, Style: setting.CloseStyle,
+			FromOpacity: oldOpacity,
+			Duration:    motion.ScaleMotion(motion.BaseDuration(motion.PaneClose), setting.Speed),
+		})
+	}
+	if len(visuals) == 0 {
+		wm.finish()
+		if pin {
+			wm.pinSurvivors(index, "", final)
+		}
+		return
+	}
+	run.anim = &motion.Animation{Started: now, Visuals: visuals}
+	run.anim.Measure()
+	wm.run = run
+	if pin {
+		wm.pinSurvivors(index, "", final)
+	}
+	wm.animationFrames++
+	c.AnimationFrame()
+}
+
+// planZoom springs the magnified Pane between its slot and the full window.
+// Zoom in keeps the split (or, for a direct A→B, the Pane that was
+// magnified) on screen until the opaque copy covers it; zoom out renders the
+// split behind the shrinking copy at once. The Pane's own grid is the final
+// one throughout, so the PTY gets at most one resize.
+func (wm *workspacePaneMotion) planZoom(c *ui.Context, s *state.State, index int,
+	event motion.Event, setting domainpreferences.Motion, visible, pin bool, now time.Time) {
+	root, _, ok := s.TabTree(index)
+	if !ok || root == nil || wm.region.W <= 0 || wm.region.H <= 0 {
+		wm.finish()
+		return
+	}
+	from, to := event.FromMagnified, event.ToMagnified
+	zoomPane := event.PaneID
+	if zoomPane == "" {
+		zoomPane = zoomedZoomPane(from, to)
+	}
+	if zoomPane == "" {
+		wm.finish()
+		return
+	}
+	split := !root.IsPane()
+	frameTop, frameRight, frameBottom, frameLeft := kit.PaneFrameInset()
+	var final map[model.PaneID]motion.PaneRects
+	var end motion.PaneRects
+	render := zoomRenderState
+	renderPane := model.PaneID("")
+	if to != "" {
+		// The final tree is the single magnified Pane. It still wears a
+		// PaneFrame when the Tab has more than one leaf, exactly as the real
+		// single-Pane layout will after the run.
+		single := domainworkspace.NewPaneNode(to)
+		final = paneFinalRects(single, wm.region, wm.rects, c.Theme().Space(10), wm.rects[to],
+			split, frameTop, frameRight, frameBottom, frameLeft)
+		var have bool
+		end, have = final[to]
+		if !have || end.Column.W <= 0 || end.Column.H <= 0 {
+			wm.finish()
+			if pin {
+				wm.pinSurvivors(index, "", final)
+			}
+			return
+		}
+		render = zoomRenderSplit
+		// A direct A→B covers the Pane that was magnified. Rendering that
+		// Pane alone keeps its full-window grid and hides the split, which is
+		// what the user saw a frame ago; B's copy then grows over it.
+		if from != "" && from == wm.effectiveMagnified && from != to {
+			render = zoomRenderPane
+			renderPane = from
+		}
+	} else {
+		final = paneFinalRects(root, wm.region, wm.rects, c.Theme().Space(10), wm.rects[from],
+			split, frameTop, frameRight, frameBottom, frameLeft)
+		var have bool
+		end, have = final[from]
+		if !have || end.Column.W <= 0 || end.Column.H <= 0 {
+			wm.finish()
+			if pin {
+				wm.pinSurvivors(index, "", final)
+			}
+			return
+		}
+	}
+	prev := wm.run
+	old, oldOK := wm.currentVisual(prev, now, zoomPane)
+	if !oldOK || (!visible || !setting.PaneReorder) {
+		wm.finish()
+		if pin {
+			wm.pinSurvivors(index, "", final)
+		}
+		return
+	}
+	if rectWithin(old.rect, end.Column, 0.5) && old.opacity >= 0.999 {
+		// The newly magnified Pane is already where it must end. A one-Pane
+		// Tab's zoom changes no geometry; switch the tree at once without
+		// spending an animation frame. A direct magnification reversed while
+		// its outgoing copy is still visible is the exception: that copy is
+		// what the user sees moving, so carry it back to where it came from
+		// over the newly final layout instead of warping it away.
+		if home, ok := wm.zoomReversalHome(prev, from, to); ok {
+			if out, moving := wm.movingVisual(prev, now, from); moving {
+				wm.planZoomReversal(c, index, event, setting, pin, now, final,
+					zoomPane, from, home, out, prev)
+				return
+			}
+		}
+		wm.finish()
+		if pin {
+			wm.pinSurvivors(index, "", final)
+		}
+		return
+	}
+
+	// Latest event wins. A zoom supersedes a close the view still had in
+	// flight; the state already retained no newer ghost for this event.
+	wm.finish()
+
+	spring := motion.ReorderSpring(setting.Speed)
+	run := &paneMotionRun{
+		kind:        motion.PaneReorder,
+		tabID:       event.TabID,
+		seq:         event.Seq,
+		target:      zoomPane,
+		zoom:        true,
+		zoomPane:    zoomPane,
+		zoomHome:    wm.rects[zoomPane],
+		render:      render,
+		renderPane:  renderPane,
+		spring:      &spring,
+		final:       final,
+		pins:        map[model.PaneID]state.ViewportMotion{},
+		nativePanes: map[model.PaneID]bool{},
+	}
+	visual := motion.Visual{
+		Pane: zoomPane, Box: end.Column, From: old.rect, To: end.Column,
+		Content: wm.region, Kind: motion.Move,
+		FromOpacity: old.opacity, ToOpacity: 1,
+		Spring:   &spring,
+		Velocity: wm.currentVelocity(prev, now, zoomPane),
+		NoMask:   true,
+	}
+	run.anim = &motion.Animation{Started: now, Visuals: []motion.Visual{visual}}
+	run.anim.Measure()
+	wm.run = run
+	if pin {
+		wm.pinSurvivors(index, "", final)
+	}
+	wm.animationFrames++
+	c.AnimationFrame()
+}
+
+// zoomedZoomPane is the Pane a zoom moves when the event names none: the
+// new magnified Pane, otherwise the one leaving.
+func zoomedZoomPane(from, to model.PaneID) model.PaneID {
+	if to != "" {
+		return to
+	}
+	return from
+}
+
+// movingVisual reports what Pane id showed in prev at now, but only while its
+// visual is still in flight: a settled or absent visual is not a copy an
+// interruption can carry.
+func (wm *workspacePaneMotion) movingVisual(prev *paneMotionRun, now time.Time,
+	id model.PaneID) (paneVisualState, bool) {
+	if prev == nil || prev.anim == nil {
+		return paneVisualState{}, false
+	}
+	v, ok := prev.anim.VisualFor(id)
+	if !ok || v.Kind != motion.Move {
+		return paneVisualState{}, false
+	}
+	rect, opacity := prev.anim.StateAt(v, now)
+	if rectWithin(rect, v.To, 0.5) {
+		return paneVisualState{}, false
+	}
+	return paneVisualState{rect: rect, opacity: opacity}, true
+}
+
+// zoomReversalHome reports where a mid-run direct-magnification reversal must
+// send its outgoing copy: the boxes the previous zoom's Pane showed before it
+// grew. Only the Pane that was growing can reverse; a zoom of a different
+// Pane has no outgoing copy to carry.
+func (wm *workspacePaneMotion) zoomReversalHome(prev *paneMotionRun,
+	from, to model.PaneID) (motion.PaneRects, bool) {
+	if prev == nil || !prev.zoom || from == "" || to == "" || from == to {
+		return motion.PaneRects{}, false
+	}
+	if prev.zoomPane != from || !prev.zoomHome.Valid() {
+		return motion.PaneRects{}, false
+	}
+	return prev.zoomHome, true
+}
+
+// planZoomReversal carries a direct magnification's outgoing copy back to its
+// remembered slot. The newly magnified Pane is already at its final full
+// window, so it needs no visual; the outgoing copy keeps the rect, opacity
+// and velocity the user saw and springs home over that layout. The outgoing
+// Pane is returning to its slot, so its grid is pinned there once and its
+// recorded boxes are the same home pair: the real Pane is not laid out while
+// the new Pane is magnified, so nothing else would reconcile its full-window
+// viewport with the split boxes the next event reads as a pin source.
+func (wm *workspacePaneMotion) planZoomReversal(c *ui.Context, index int, event motion.Event,
+	setting domainpreferences.Motion, pin bool, now time.Time, final map[model.PaneID]motion.PaneRects,
+	zoomPane, outgoing model.PaneID, home motion.PaneRects, out paneVisualState, prev *paneMotionRun) {
+	// Latest event wins: out was read from the run the user saw; stop it
+	// before pinning the new finals.
+	wm.finish()
+	final[outgoing] = home
+	spring := motion.ReorderSpring(setting.Speed)
+	run := &paneMotionRun{
+		kind:        motion.PaneReorder,
+		tabID:       event.TabID,
+		seq:         event.Seq,
+		target:      zoomPane,
+		zoom:        true,
+		zoomPane:    zoomPane,
+		zoomHome:    wm.rects[zoomPane],
+		render:      zoomRenderState,
+		spring:      &spring,
+		final:       final,
+		pins:        map[model.PaneID]state.ViewportMotion{},
+		nativePanes: map[model.PaneID]bool{},
+	}
+	visual := motion.Visual{
+		Pane: outgoing, Box: home.Column, From: out.rect, To: home.Column,
+		Content: home.Column, Kind: motion.Move,
+		FromOpacity: out.opacity, ToOpacity: 1,
+		Spring:   &spring,
+		Velocity: wm.currentVelocity(prev, now, outgoing),
+		NoMask:   true,
+	}
+	run.anim = &motion.Animation{Started: now, Visuals: []motion.Visual{visual}}
+	run.anim.Measure()
+	wm.run = run
+	if pin {
+		// The outgoing Pane is zooming out: its surface currently fills the
+		// window, so its grid returns to the remembered slot now, once. The
+		// pin target is the home body expressed in the same viewport units
+		// the zoom pinned; deriving it from the stale split boxes instead
+		// would widen it past the window.
+		wm.pinZoomHome(index, prev, outgoing, home)
+		wm.pinSurvivors(index, outgoing, final)
+	}
+	wm.animationFrames++
+	c.AnimationFrame()
+}
+
+// pinZoomHome returns the outgoing Pane of a direct-magnification reversal to
+// the slot grid it showed before the zoom, and records the same home boxes.
+// The pair must agree: the next magnification reads wm.rects[outgoing] as its
+// pin source and motionViewport as the room that source currently has, so a
+// full-window viewport left beside split boxes would make the next pin widen
+// the grid out of the window.
+func (wm *workspacePaneMotion) pinZoomHome(index int, prev *paneMotionRun,
+	outgoing model.PaneID, home motion.PaneRects) {
+	if !home.Valid() {
+		return
+	}
+	info, ok := wm.state.PaneInfoAt(index, outgoing)
+	if !ok || info.Surface == nil {
+		return
+	}
+	vm, ok := info.Surface.(state.ViewportMotion)
+	if !ok {
+		return
+	}
+	// The outgoing Pane's full grid corresponds to the box the interrupted
+	// zoom laid it out in, not to its stale split record. Keep the same
+	// body-to-viewport difference pinPanes uses (layout rounding can make
+	// them differ sub-DIP), so the PTY lands exactly on the room it had at
+	// its slot: one resize home.
+	source := home
+	if prev != nil {
+		if end, ok := prev.final[outgoing]; ok && end.Body.W > 0 && end.Body.H > 0 {
+			source = end
+		}
+	}
+	viewW, viewH, ok := wm.motionViewport(index, outgoing, outgoing)
+	if !ok {
+		return
+	}
+	vm.PinViewport(home.Body.W-(source.Body.W-viewW), home.Body.H-(source.Body.H-viewH))
+	if wm.run != nil {
+		wm.run.pins[outgoing] = vm
+	}
+	// The Pane is not laid out while the new Pane is magnified, so nothing
+	// else can correct these boxes before the next event.
+	wm.rects[outgoing] = home
 }
 
 // planClose turns one Pane-close event into an exit run, or warps it. The
@@ -385,23 +1053,24 @@ func (wm *workspacePaneMotion) planClose(c *ui.Context, s *state.State, index in
 	}
 
 	prev := wm.run
-	var prevK float32
-	if prev != nil {
-		prevK, _ = prev.anim.Progress(now)
-	}
 	// Carry the ghosts of an earlier close that this event does not replace:
 	// their Panes are already gone, so the new run keeps their surfaces alive
-	// and continues them from where the user sees them.
+	// and continues them from where the user sees them. A live copy of a
+	// moving Pane is not retained by the state and is dropped here; that Pane
+	// is still in the tree and its new layout is the truth.
 	carried := map[model.PaneID]paneMotionGhost{}
 	if prev != nil {
+		rest := map[model.PaneID]paneMotionGhost{}
 		for id, ghost := range prev.ghosts {
-			if id != event.PaneID {
+			if id != event.PaneID && ghost.owned {
 				carried[id] = ghost
+				continue
 			}
+			rest[id] = ghost
 		}
-		prev.ghosts = nil
+		prev.ghosts = rest
 	}
-	old, oldOK := wm.currentVisual(prev, prevK, event.PaneID)
+	old, oldOK := wm.currentVisual(prev, now, event.PaneID)
 	if !oldOK {
 		wm.finish()
 		for _, ghost := range carried {
@@ -425,9 +1094,10 @@ func (wm *workspacePaneMotion) planClose(c *ui.Context, s *state.State, index in
 		}
 	}
 	start := old
-	if event.Magnified && prev == nil {
-		// The magnified Pane filled the pane region. Its ghost starts there and
-		// reveals the split at its final layout as it leaves.
+	if event.Magnified {
+		// The magnified Pane filled the pane region, whatever an in-flight
+		// zoom run was painting: a close during a zoom in must still ghost
+		// from the full window and reveal the split at its final layout.
 		start = paneVisualState{rect: wm.region, opacity: 1}
 	}
 
@@ -451,7 +1121,7 @@ func (wm *workspacePaneMotion) planClose(c *ui.Context, s *state.State, index in
 		ghosts:    carried,
 		pins:      map[model.PaneID]state.ViewportMotion{},
 	}
-	ghost := paneMotionGhost{rects: closeRects, handle: ghostHandle}
+	ghost := paneMotionGhost{rects: closeRects, handle: ghostHandle, owned: true}
 	if haveGhost {
 		ghost.info = ghostHandle.Info
 	} else {
@@ -466,16 +1136,17 @@ func (wm *workspacePaneMotion) planClose(c *ui.Context, s *state.State, index in
 		FromOpacity: start.opacity,
 	}}
 	// A carried ghost continues its exit from what the user saw, with the
-	// latest event's full duration.
+	// latest event's full duration. The run's own ghost was just added to
+	// the same map; it already has the visual above.
 	for id, ghost := range carried {
-		if prev == nil {
+		if prev == nil || id == event.PaneID {
 			continue
 		}
 		v, ok := prev.anim.VisualFor(id)
 		if !ok {
 			continue
 		}
-		from, opacity := prev.anim.State(v, prevK)
+		from, opacity := prev.anim.StateAt(v, now)
 		visuals = append(visuals, motion.Visual{
 			Pane: id,
 			Box:  ghost.rects.Column, From: from, To: from, Content: wm.region,
@@ -491,7 +1162,7 @@ func (wm *workspacePaneMotion) planClose(c *ui.Context, s *state.State, index in
 			if id == event.PaneID {
 				continue
 			}
-			seen, ok := wm.currentVisual(prev, prevK, id)
+			seen, ok := wm.currentVisual(prev, now, id)
 			if !ok {
 				continue
 			}
@@ -555,7 +1226,10 @@ func (wm *workspacePaneMotion) finish() {
 	}
 	for id, ghost := range run.ghosts {
 		ghost.handle.Release()
-		delete(wm.rects, id)
+		if ghost.owned {
+			// The Pane is gone; its boxes belonged only to the ghost.
+			delete(wm.rects, id)
+		}
 	}
 	wm.run = nil
 }
@@ -638,11 +1312,51 @@ func (wm *workspacePaneMotion) motionViewport(index int, id, fallback model.Pane
 	return vm.MotionViewport()
 }
 
+// nativeMoved reports that MyGo's own transition is moving Pane id in the
+// current run. Such an element's LayoutBounds is its shifted flight box, not
+// its layout box, so it must be recorded from the run's computed final boxes.
+func (wm *workspacePaneMotion) nativeMoved(id model.PaneID) bool {
+	run := wm.run
+	if run == nil {
+		return false
+	}
+	switch run.kind {
+	case motion.PaneOpen:
+		return run.native && wm.mode.native && id == run.target
+	case motion.PaneClose:
+		_, survivor := run.final[id]
+		return survivor && run.native && !run.magnified
+	case motion.PaneReorder:
+		return run.nativePanes[id]
+	}
+	return false
+}
+
 // recordPane stores the boxes a Pane showed this frame. LayoutBounds is the
 // previous frame's box; a Tester frame settles, so the last pass records the
 // frame's final boxes, and a real window records exactly the previous frame
-// the next event needs as its start.
+// the next event needs as its start. A Pane MyGo moves natively is recorded
+// at the run's final boxes instead: its live LayoutBounds is the shifted
+// flight box, whose slot and column insets would corrupt the next event's
+// final geometry.
 func (wm *workspacePaneMotion) recordPane(id model.PaneID, slot, column, body ui.Rect, framed bool) {
+	if wm.nativeMoved(id) {
+		if end, ok := wm.run.final[id]; ok {
+			wm.rects[id] = end
+			return
+		}
+	}
+	if run := wm.run; run != nil && run.zoom && run.render == zoomRenderSplit && id == run.zoomPane {
+		// A zoom in keeps the split on screen while the Pane's overlay
+		// grows. Its real Pane is still laid out at the split slot, but the
+		// box the next event must start from is the full window the user is
+		// being shown: the ghost/overlay is already there, and the PTY is
+		// pinned to the final full grid.
+		if end, ok := run.final[id]; ok {
+			wm.rects[id] = end
+			return
+		}
+	}
 	rects := motion.PaneRects{Slot: slot, Column: column, Body: body, Framed: framed}
 	if !rects.Valid() {
 		return
@@ -667,11 +1381,21 @@ func (wm *workspacePaneMotion) nativeCloseEnabled() bool {
 	return motion.Enabled(wm.controller.Setting(), motion.PaneClose)
 }
 
+// nativeReorderEnabled reports that a same-Tab move's siblings use MyGo's
+// Match + ScaleContent route. Production takes it; overlayReorder forces the
+// opaque fallback a test compares with.
+func (wm *workspacePaneMotion) nativeReorderEnabled() bool {
+	if wm.mode.overlayReorder {
+		return false
+	}
+	return motion.Enabled(wm.controller.Setting(), motion.PaneReorder)
+}
+
 // nativeKeys reports that this view installs the native Match route. The
 // transition must be on every Pane on the frame before a change so MyGo has
 // the previous box to record; an idle Pane's duration is -1 (arrive at once).
 func (wm *workspacePaneMotion) nativeKeys() bool {
-	return wm.mode.native || wm.nativeCloseEnabled()
+	return wm.mode.native || wm.nativeCloseEnabled() || wm.nativeReorderEnabled()
 }
 
 // nativeTransition is the native no-reflow route. A close run's survivors get
@@ -684,6 +1408,7 @@ func (wm *workspacePaneMotion) nativeTransition(id model.PaneID) (ui.ElementTran
 		return ui.ElementTransition{}, false
 	}
 	duration := time.Duration(-1)
+	var spring *ui.Animation
 	if wm.run != nil {
 		switch wm.run.kind {
 		case motion.PaneOpen:
@@ -694,22 +1419,40 @@ func (wm *workspacePaneMotion) nativeTransition(id model.PaneID) (ui.ElementTran
 			if _, survivor := wm.run.final[id]; survivor && wm.run.native && !wm.run.magnified {
 				duration = wm.run.anim.Duration
 			}
+		case motion.PaneReorder:
+			if wm.run.nativePanes[id] && wm.run.spring != nil {
+				// The sibling makes room with the ticket's exact spring. A
+				// stable element retargets its channel and keeps velocity;
+				// planMove sends an interrupted sibling through the overlay
+				// because the recreated split makes MyGo start a new Match
+				// flight at rest.
+				spring = &ui.Animation{Spring: *wm.run.spring}
+			}
 		}
 	}
-	return ui.ElementTransition{
-		Duration:     duration,
+	transition := ui.ElementTransition{
 		Ease:         ui.EaseOut,
 		Position:     true,
 		Size:         true,
 		ScaleContent: true,
 		Match:        motion.PaneMatch{ID: id},
-	}, true
+	}
+	if spring != nil {
+		transition.Animation = spring
+	} else {
+		transition.Duration = duration
+	}
+	return transition, true
 }
 
 // paneKey is the element key of a Pane. A Pane that starts moving is keyed
 // fresh at the change, so its Match starts it from the previous frame's box:
 // the native test route does that for an open's old Pane, and the native close
-// route for each survivor. Every other Pane keeps a stable key.
+// route for each survivor. A reorder sibling keeps its stable key: MyGo then
+// retargets the channel it already has when the element survives the change,
+// which is what carries velocity through an interruption. The move's recreated
+// split usually makes the sibling a new element anyway; its Match then starts
+// from the old box and planMove paints the interruption with the overlay.
 func (wm *workspacePaneMotion) paneKey(id model.PaneID) (string, bool) {
 	if !wm.nativeKeys() {
 		return "", false
@@ -752,15 +1495,20 @@ func (wm *workspacePaneMotion) drawOverlay(c *ui.Context, ref tabRef, t *ui.Them
 	if run == nil || run.anim == nil || ref.motion != wm {
 		return
 	}
-	k, done := run.anim.Progress(c.Now())
-	if done {
+	now := c.Now()
+	if _, done := run.anim.Progress(now); done {
 		return
+	}
+	// A native visual (a close's survivor or a reorder's sibling) paints
+	// itself; its overlay entry is only the bookkeeping an interruption
+	// starts from. A zoom copy masks nothing: it covers its own real Pane
+	// as it grows, and the split behind it must stay visible.
+	copyable := func(v motion.Visual) bool {
+		return v.Kind != motion.Exit && !v.Native && !(run.native && run.kind == motion.PaneClose)
 	}
 	ui.Overlay(c, func() {
 		for _, v := range run.anim.Visuals {
-			if v.Kind == motion.Exit || (run.native && run.kind == motion.PaneClose) {
-				// A native close's survivors paint themselves; their visuals
-				// are only the bookkeeping an interruption starts from.
+			if !copyable(v) || v.NoMask {
 				continue
 			}
 			if _, ok := ref.pane(v.Pane); !ok {
@@ -778,7 +1526,7 @@ func (wm *workspacePaneMotion) drawOverlay(c *ui.Context, ref tabRef, t *ui.Them
 			}
 		}
 		for _, v := range run.anim.Visuals {
-			if v.Kind == motion.Exit || (run.native && run.kind == motion.PaneClose) {
+			if !copyable(v) {
 				continue
 			}
 			info, ok := ref.pane(v.Pane)
@@ -789,7 +1537,7 @@ func (wm *workspacePaneMotion) drawOverlay(c *ui.Context, ref tabRef, t *ui.Them
 			if !ok {
 				continue
 			}
-			wm.paneMotionCopy(c, ref, m, t, run, v, info, end, k)
+			wm.paneMotionCopy(c, ref, m, t, run, v, info, end, now)
 		}
 		for _, v := range run.anim.Visuals {
 			if v.Kind != motion.Exit {
@@ -799,7 +1547,7 @@ func (wm *workspacePaneMotion) drawOverlay(c *ui.Context, ref tabRef, t *ui.Them
 			if !ok {
 				continue
 			}
-			rect, opacity := run.anim.State(v, k)
+			rect, opacity := run.anim.StateAt(v, now)
 			box := v.Box
 			e := ui.Column(c).Absolute().
 				Left(box.X).Top(box.Y).Size(box.W, box.H).
@@ -822,11 +1570,12 @@ func (wm *workspacePaneMotion) drawOverlay(c *ui.Context, ref tabRef, t *ui.Them
 }
 
 // paneMotionCopy draws one moving survivor: laid out at box, mapped to the
-// visual rect at k. The content is the final grid, so the copy never reflows.
+// visual rect at now. The content is the final grid, so the copy never
+// reflows.
 func (wm *workspacePaneMotion) paneMotionCopy(c *ui.Context, ref tabRef, m locales.Messages,
 	t *ui.Theme, run *paneMotionRun, v motion.Visual, info state.PaneInfo,
-	end motion.PaneRects, k float32) {
-	rect, opacity := run.anim.State(v, k)
+	end motion.PaneRects, now time.Time) {
+	rect, opacity := run.anim.StateAt(v, now)
 	box := v.Box
 	e := ui.Column(c).Absolute().
 		Left(box.X).Top(box.Y).Size(box.W, box.H).

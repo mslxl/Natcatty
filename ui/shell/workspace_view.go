@@ -90,8 +90,17 @@ func mainTabRef(owner state.RenderOwner, s *state.State, tabIndex int, focusEpoc
 		rename: func(paneID model.PaneID, title string) bool {
 			return s.RenamePane(tabIndex, paneID, title)
 		},
-		retry:     func(paneID model.PaneID) bool { return s.RetryPane(id, paneID) },
-		magnified: func() model.PaneID { return s.MagnifiedPaneID(tabIndex) },
+		retry: func(paneID model.PaneID) bool { return s.RetryPane(id, paneID) },
+		magnified: func() model.PaneID {
+			// The motion runtime may keep the split (or the Pane that was
+			// magnified) on screen while a zoom overlay covers it. It computes
+			// that per frame; without it the view would rebuild the tree on
+			// the event frame, which the no-reflow contract forbids.
+			if wm != nil {
+				return wm.effectiveMagnified
+			}
+			return s.MagnifiedPaneID(tabIndex)
+		},
 	}
 }
 

@@ -76,8 +76,22 @@ type Event struct {
 	// change happened: a closing Pane's ghost starts from the full-window
 	// box, and the split behind it appears at its final layout.
 	Magnified bool
-	Seq       uint64
-	At        time.Time
+	// FromMagnified and ToMagnified are the Tab's zoomed Pane before and
+	// after a PaneReorder, or before a PaneOpen that clears the zoom. Both
+	// empty means a same-Tab move; a zoom out has To empty, a zoom in has
+	// From empty. A PaneReorder with either set is the zoom spring; the
+	// view renders the split behind the moving overlay until it is covered.
+	FromMagnified model.PaneID
+	ToMagnified   model.PaneID
+	Seq           uint64
+	At            time.Time
+}
+
+// IsZoom reports that a PaneReorder changes the Tab's zoomed Pane rather
+// than moving one Pane inside an unzoomed split. A same-Tab move has both
+// zoom fields empty.
+func (e Event) IsZoom() bool {
+	return e.Kind == PaneReorder && (e.FromMagnified != "" || e.ToMagnified != "")
 }
 
 // BaseDuration is the standard (1x speed) duration of kind.
@@ -107,6 +121,17 @@ func ScaleMotion(base time.Duration, speed domainpreferences.MotionSpeed) time.D
 		return base * 3 / 5
 	default:
 		return base
+	}
+}
+
+// ReorderSpring is the Pane reorder and zoom spring: 240 ms at standard
+// speed with a 0.1 bounce. The tier scales only the duration, never the
+// bounce. It is deliberately not ui.Smooth, ui.Snappy or ui.Bouncy, whose
+// fixed 500 ms duration would ignore the speed setting.
+func ReorderSpring(speed domainpreferences.MotionSpeed) ui.SpringOptions {
+	return ui.SpringOptions{
+		Duration: ScaleMotion(240*time.Millisecond, speed),
+		Bounce:   0.1,
 	}
 }
 
@@ -311,6 +336,28 @@ type Visual struct {
 	// FromOpacity and ToOpacity are the fade at each end.
 	FromOpacity float32
 	ToOpacity   float32
+	// Duration, when positive, is how long this part takes instead of the
+	// Animation's duration. A same-Tab move's close ghost (150 ms) and open
+	// overlay (200 ms) each keep their own curve while the run as a whole
+	// lasts as long as its spring.
+	Duration time.Duration
+	// Spring, when set on a Move, sends From to To along this spring
+	// instead of the eased Duration. Velocity is the rect's velocity in
+	// DIPs per second at Started; an interruption keeps it, so a retargeted
+	// spring continues instead of restarting from rest.
+	Spring   *ui.SpringOptions
+	Velocity ui.Rect
+	// Interrupted is an Enter whose interruption starts from From and
+	// FromOpacity on the run's eased curve instead of at the open style's
+	// own start. A fresh open leaves it false and uses its style.
+	Interrupted bool
+	// Native marks a visual that MyGo's own ElementTransition moves. The
+	// overlay only keeps it as the bookkeeping an interruption starts from.
+	Native bool
+	// NoMask skips the opaque mask at the final column. A zoom's copy is
+	// the Pane itself growing over its own real slot (and over the split
+	// behind it), so masking would hide the split the ticket keeps visible.
+	NoMask bool
 }
 
 // Animation is one run: a start, a duration, and the Panes it moves. A
@@ -321,6 +368,27 @@ type Animation struct {
 	Started  time.Time
 	Duration time.Duration
 	Visuals  []Visual
+}
+
+// Measure sets each spring visual's own duration to the spring's settle
+// time and the run's duration to the longest part. It leaves an eased open
+// or close run untouched: its visuals have no per-part duration and keep
+// using the run's duration.
+func (a *Animation) Measure() {
+	if a == nil {
+		return
+	}
+	total := a.Duration
+	for i := range a.Visuals {
+		v := &a.Visuals[i]
+		if v.Kind == Move && v.Spring != nil {
+			v.Duration = SpringSettleTime(*v.Spring, v.From, v.To, v.Velocity)
+		}
+		if v.Duration > total {
+			total = v.Duration
+		}
+	}
+	a.Duration = total
 }
 
 // Progress returns the eased progress at now, from 0 to 1, and whether the
@@ -343,6 +411,148 @@ func (a *Animation) Progress(now time.Time) (float32, bool) {
 	return ui.EaseOut(t), false
 }
 
+// StateAt is what the user sees of v at now, honouring a part's own
+// duration and spring. Callers that paint a frame or restart an interrupted
+// run use this rather than Progress+State; State remains the eased curve a
+// test reads a run by.
+func (a *Animation) StateAt(v Visual, now time.Time) (ui.Rect, float32) {
+	if a == nil {
+		return a.State(v, 1)
+	}
+	duration := v.Duration
+	if duration <= 0 {
+		duration = a.Duration
+	}
+	elapsed := now.Sub(a.Started)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	if duration <= 0 || elapsed >= duration {
+		return a.State(v, 1)
+	}
+	if v.Kind == Move && v.Spring != nil {
+		rect := SpringRect(*v.Spring, v.From, v.To, v.Velocity, elapsed)
+		return rect, a.springOpacity(v, elapsed, duration)
+	}
+	t := float32(elapsed) / float32(duration)
+	return a.State(v, ui.EaseOut(t))
+}
+
+// springOpacity fades a spring Move from the opacity the user last saw to
+// its target, clamped to the visible range while the spring overshoots.
+func (a *Animation) springOpacity(v Visual, elapsed, duration time.Duration) float32 {
+	if v.FromOpacity == v.ToOpacity {
+		return v.FromOpacity
+	}
+	opts := *v.Spring
+	opts.Velocity = 0
+	q := float32(0)
+	if elapsed > 0 && duration > 0 {
+		q = float32(opts.Progress(elapsed))
+	}
+	return Lerp(v.FromOpacity, v.ToOpacity, clamp01(q))
+}
+
+// VelocityAt is v's rect velocity in DIPs per second at now. A spring that
+// has not started reports its stored initial velocity; any other visual is
+// differentiated numerically so an interrupted eased or native move also
+// hands its current speed to the new spring.
+func (a *Animation) VelocityAt(v Visual, now time.Time) ui.Rect {
+	if a == nil {
+		return ui.Rect{}
+	}
+	if v.Kind == Move && v.Spring != nil && !now.After(a.Started) {
+		return v.Velocity
+	}
+	const step = time.Millisecond
+	t0, t1 := now.Add(-step), now
+	if !now.After(a.Started) {
+		t0, t1 = now, now.Add(step)
+	}
+	r0, _ := a.StateAt(v, t0)
+	r1, _ := a.StateAt(v, t1)
+	seconds := float32(t1.Sub(t0)) / float32(time.Second)
+	if seconds <= 0 {
+		return ui.Rect{}
+	}
+	return ui.Rect{
+		X: (r1.X - r0.X) / seconds,
+		Y: (r1.Y - r0.Y) / seconds,
+		W: (r1.W - r0.W) / seconds,
+		H: (r1.H - r0.H) / seconds,
+	}
+}
+
+// SpringRect is the rect of a spring Move at elapsed. Every edge follows
+// the same spring with its own normalized initial velocity, so a wide
+// Pane's X and a narrow Pane's W do not share one speed scale.
+func SpringRect(opts ui.SpringOptions, from, to, velocity ui.Rect, elapsed time.Duration) ui.Rect {
+	return ui.Rect{
+		X: springEdge(opts, from.X, to.X, velocity.X, elapsed),
+		Y: springEdge(opts, from.Y, to.Y, velocity.Y, elapsed),
+		W: springEdge(opts, from.W, to.W, velocity.W, elapsed),
+		H: springEdge(opts, from.H, to.H, velocity.H, elapsed),
+	}
+}
+
+// springEdge moves one edge. ui.SpringOptions.Velocity is in units of the
+// 0-to-1 distance a second, so a channel's DIP/s velocity is divided by
+// that channel's distance.
+func springEdge(opts ui.SpringOptions, from, to, velocity float32, elapsed time.Duration) float32 {
+	distance := to - from
+	if distance == 0 {
+		return to
+	}
+	opts.Velocity = velocity / distance
+	return from + distance*float32(opts.Progress(elapsed))
+}
+
+// SpringSettleTime is how long a spring Move of the four edges takes to
+// rest, the longest channel. MyGo's spring precision is 0.001 of the
+// value's units (DIPs), so each channel is normalized with that pixel
+// precision; ending a run early would re-key a native Pane in mid-flight.
+func SpringSettleTime(opts ui.SpringOptions, from, to, velocity ui.Rect) time.Duration {
+	edges := [4][3]float32{
+		{from.X, to.X, velocity.X},
+		{from.Y, to.Y, velocity.Y},
+		{from.W, to.W, velocity.W},
+		{from.H, to.H, velocity.H},
+	}
+	var longest time.Duration
+	for _, edge := range edges {
+		distance := edge[1] - edge[0]
+		channel := opts
+		if distance == 0 {
+			channel.Velocity = 0
+			channel.Precision = 0.001
+		} else {
+			channel.Velocity = edge[2] / distance
+			channel.Precision = 0.001 / float64(abs32(distance))
+		}
+		if settle := channel.SettleTime(); settle > longest {
+			longest = settle
+		}
+	}
+	return longest
+}
+
+func abs32(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func clamp01(v float32) float32 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
 // VisualFor returns the running visual for a Pane.
 func (a *Animation) VisualFor(pane model.PaneID) (Visual, bool) {
 	if a == nil {
@@ -361,6 +571,11 @@ func (a *Animation) State(v Visual, k float32) (ui.Rect, float32) {
 	var rect ui.Rect
 	switch v.Kind {
 	case Enter:
+		if v.Interrupted {
+			// An interrupted open restarts a full duration from what the
+			// frame showed, rather than from its style's zero-opacity start.
+			return LerpRect(v.From, v.To, k), Lerp(v.FromOpacity, v.ToOpacity, k)
+		}
 		rect = EnterRect(v.To, v.Style, v.Edge, v.Content, k)
 		// A style's own opacity curve is the open contract: popin and fade
 		// go 0 to 1, slide and gnomed stay opaque.
