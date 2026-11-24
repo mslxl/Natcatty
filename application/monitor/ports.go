@@ -15,8 +15,10 @@ import (
 // ErrNoConnector reports a Service constructed without a transport port.
 var ErrNoConnector = errors.New("monitor: no connector")
 
-// ErrTooManyHosts reports a demand above the 256-Host cap.
-var ErrTooManyHosts = errors.New("monitor: more than 256 Hosts")
+// ErrTooManyHosts reports a demand above the 256-Host cap. The sentinel is a
+// domain rule; this alias keeps the name the application port has always
+// published.
+var ErrTooManyHosts = domainmonitor.ErrTooManyHosts
 
 // Reason is the typed failure code carried across the monitor port. The
 // values are the domain's, so a portrait of a failure needs no translation.

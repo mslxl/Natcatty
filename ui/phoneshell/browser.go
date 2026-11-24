@@ -27,6 +27,7 @@ import (
 	domainbrowser "github.com/mslxl/natcatty/domain/browser"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	"github.com/mslxl/natcatty/ui/browser/phoneview"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
 )
@@ -696,7 +697,7 @@ func drawBrowserSurface(c *ui.Context, surface *browserSurface, doneLabel string
 	}
 	ui.Box(c).FillWidth().Grow(1).MinHeight(220).Radius(12).Children(func() {
 		if native := page.Native(); native != nil {
-			ui.WebView(c, native).Fill()
+			phoneview.WebArea(c, native)
 			return
 		}
 		kit.EmptyHint(c, "The web page renders in the platform WebView.")

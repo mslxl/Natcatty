@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	appmonitor "github.com/mslxl/natcatty/application/monitor"
 	domainmonitor "github.com/mslxl/natcatty/domain/monitor"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -1224,7 +1223,7 @@ func (s *State) startActive() {
 	}
 	interval := time.Duration(s.panelInterval(panel)) * time.Second
 	if err := s.service.Start(panel.ID, hosts, interval); err != nil {
-		if errors.Is(err, appmonitor.ErrTooManyHosts) {
+		if errors.Is(err, domainmonitor.ErrTooManyHosts) {
 			s.problem = ProblemTooManyHosts
 		} else {
 			s.problem = ProblemInternal
