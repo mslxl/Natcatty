@@ -193,7 +193,16 @@ type Manager struct {
 }
 
 type runtimeEntry struct {
-	view          View
+	view View
+	// running records the user's intent: the rule was started and has not
+	// been stopped since. It survives a transport failure, so a foreground or
+	// network rebuild can retry a rule whose status is temporarily Error,
+	// while a rule the user stopped is never restarted behind their back.
+	running bool
+	// stopSeq moves on every stop, so a rebuild that releases resources
+	// outside the lock can notice that the user stopped the rule while the
+	// cleanup was in flight.
+	stopSeq       uint64
 	generation    uint64
 	stopCh        chan struct{}
 	reconnectStop func()
@@ -449,6 +458,8 @@ func (m *Manager) upsertRule(rule domainforward.Rule) {
 // stopEntryLocked cancels a runtime entry. The caller owns the lock.
 func (m *Manager) stopEntryLocked(entry *runtimeEntry) {
 	entry.generation++
+	entry.stopSeq++
+	entry.running = false
 	if entry.reconnectStop != nil {
 		entry.reconnectStop()
 		entry.reconnectStop = nil

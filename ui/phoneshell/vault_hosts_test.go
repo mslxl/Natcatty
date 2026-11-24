@@ -108,7 +108,7 @@ func TestVaultSectionsNavigate(t *testing.T) {
 		{"Keychain", "/keychain", "SSH keys"},
 		{"Proxies", "/proxies", "No Proxy Profiles yet"},
 		{"Networks", "/networks", "Network Profiles are not available on this device."},
-		{"Forwarding", "/forwarding", "Port forwarding rules are not on the phone yet."},
+		{"Forwarding", "/forwarding", "Port forwarding rules are not available on this device."},
 		{"Snippets", "/snippets", "Snippets are not available on this device."},
 		{"Notes", "/notes", "Notes are not available on this device."},
 		{"Known hosts", "/known-hosts", "No known hosts yet"},

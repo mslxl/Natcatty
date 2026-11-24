@@ -49,6 +49,10 @@ type phoneSessionRuntime struct {
 	// networkStatuses is the non-secret Provider status the Networks page
 	// reads. Provider events are posted by the shared status sink.
 	networkStatuses *phoneNetworkStatuses
+	// forwarding is the shared Port Forwarding runtime over this device's
+	// Connection Manager. It is nil when the known-host repository does not
+	// also store forwarding rules (a test's fake, for example).
+	forwarding *phoneForwarding
 }
 
 // phoneNetworkStatuses stores the latest non-secret Provider status per
@@ -279,6 +283,7 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 	}
 	connections := appconnection.NewManager(dialer, vaultPasswords{vault: vault}, known, options...)
 	routes := vaultRoutes{vault: vault, preferences: preferences}
+	forwarding := newPhoneForwarding(known, vault, routes, connections, true)
 	service := appsession.NewService(
 		newPhoneTransportFactory(connections, routes, providers, secrets),
 		phoneSessionOptions(vault, history, terminalSettings)...)
@@ -291,6 +296,7 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 		vault:           vault,
 		networkControl:  networkControl,
 		networkStatuses: statuses,
+		forwarding:      forwarding,
 	}
 }
 
@@ -447,6 +453,11 @@ func (r *phoneSessionRuntime) Close() {
 	}
 	if r.service != nil {
 		r.service.CloseAll()
+	}
+	// Stop forwarding rules before the shared Connection Manager goes away:
+	// each running rule holds one channel lease the manager must release.
+	if r.forwarding != nil {
+		r.forwarding.Close()
 	}
 	if r.connections != nil {
 		r.connections.CloseAll()

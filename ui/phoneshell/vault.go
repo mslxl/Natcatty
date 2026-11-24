@@ -112,6 +112,11 @@ type vaultPages struct {
 	// The Session Tools surface reads the same records with its own per-Pane
 	// view state.
 	notes *notePages
+	// forwarding owns the Vault's Forwarding section: the shared Port
+	// Forwarding Rule list, editor, and runtime actions. A Host's detail page
+	// and the Session Tools surface draw the same runtime restricted to one
+	// Host.
+	forwarding *forwardingPages
 
 	pendingKey       model.KeyID
 	pendingIdentity  model.IdentityID
@@ -133,6 +138,7 @@ func newVaultPages() *vaultPages {
 		proxyStatus:      vaultLoading,
 		networks:         newNetworkPages(),
 		notes:            newNotePages(),
+		forwarding:       newForwardingPages(),
 	}
 }
 
@@ -156,6 +162,12 @@ func (v *vaultPages) load(ctx context.Context) error {
 		}
 		if v.notes != nil {
 			v.notes.status, v.notes.problem = vaultFailed, unavailable
+		}
+		// Forwarding is its own runtime, not a Vault list: a build may wire it
+		// even when no other Vault store exists, so it still gets its chance to
+		// load and reports its own unavailable state when it cannot.
+		if v.forwarding != nil {
+			_ = v.forwarding.load(ctx)
 		}
 		return nil
 	}
@@ -209,6 +221,11 @@ func (v *vaultPages) load(ctx context.Context) error {
 	v.loadNetworks(ctx)
 	v.loadSnippets(ctx)
 	v.loadNotes(ctx)
+	// The rule list loads through the same manager the desktop uses. A failure
+	// is this page's own error state and never hides another Vault section.
+	if v.forwarding != nil {
+		_ = v.forwarding.load(ctx)
+	}
 	return firstErr
 }
 
@@ -263,6 +280,8 @@ func (v *vaultPages) draw(c *ui.Context, p page) {
 		v.drawProxies(c)
 	case "/networks":
 		v.drawNetworks(c)
+	case "/forwarding":
+		v.forwarding.draw(c)
 	case "/snippets":
 		v.drawSnippets(c)
 	case "/notes":

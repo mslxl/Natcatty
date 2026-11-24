@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sort"
+	"sync"
 	"syscall"
 	"time"
 
@@ -38,6 +40,7 @@ func (m *Manager) Start(ctx context.Context, id model.ForwardingRuleID) error {
 		m.runtime[id] = entry
 	}
 	entry.view.Rule = rule
+	entry.running = true
 	if entry.view.Status == domainforward.StatusConnecting || entry.view.Status == domainforward.StatusActive {
 		m.mu.Unlock()
 		return nil
@@ -73,6 +76,106 @@ func (m *Manager) Stop(ctx context.Context, id model.ForwardingRuleID) error {
 		go m.cleanup(entry, listener, conn)
 	}
 	return nil
+}
+
+// RebuildRunning stops and starts every rule the user left running. The phone
+// calls it when the network changes or the app returns to the foreground, so
+// local, remote, and dynamic Port Forwarding Rules all re-establish from the
+// current route.
+//
+// "Running" is the user's intent, not the transient status: a rule whose
+// transport just failed is still a rule the user started, so it is retried
+// too. A rule the user stopped is never restarted. Each rule rebuilds on its
+// own goroutine and records its own failure, so a slow Port Forwarding Rule
+// release or a failed connection on one rule cannot delay or fail another.
+func (m *Manager) RebuildRunning(ctx context.Context) {
+	type candidate struct {
+		id       model.ForwardingRuleID
+		orderKey int64
+		label    string
+	}
+	m.mu.Lock()
+	candidates := make([]candidate, 0, len(m.runtime))
+	for id, entry := range m.runtime {
+		if entry.running && entry.view.Rule.IsEnabled() {
+			candidates = append(candidates, candidate{
+				id:       id,
+				orderKey: entry.view.Rule.OrderKey,
+				label:    entry.view.Rule.Label,
+			})
+		}
+	}
+	m.mu.Unlock()
+	// A deterministic order keeps the rebuild's connection attempts stable,
+	// which makes a failure on one rule easy to attribute.
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].orderKey != candidates[j].orderKey {
+			return candidates[i].orderKey < candidates[j].orderKey
+		}
+		if candidates[i].label != candidates[j].label {
+			return candidates[i].label < candidates[j].label
+		}
+		return candidates[i].id < candidates[j].id
+	})
+	var wg sync.WaitGroup
+	for _, rule := range candidates {
+		rule := rule
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.rebuild(ctx, rule.id)
+		}()
+	}
+	wg.Wait()
+}
+
+// rebuild releases one rule's runtime and starts it again. The cleanup runs
+// before the new start so a local or dynamic listener is closed before the
+// new bind, and a remote listener releases its server-side Port Forwarding
+// Rule first. A stop that arrives while cleanup runs wins: the rule is not
+// restarted.
+func (m *Manager) rebuild(ctx context.Context, id model.ForwardingRuleID) {
+	if m.connector == nil {
+		return
+	}
+	rule, err := m.getRule(ctx, id)
+	if err != nil || !rule.IsEnabled() {
+		return
+	}
+
+	m.mu.Lock()
+	entry, ok := m.runtime[id]
+	if !ok || !entry.running || m.closed {
+		m.mu.Unlock()
+		return
+	}
+	m.stopEntryLocked(entry)
+	// stopEntryLocked records a user stop; this rebuild keeps the intent.
+	entry.running = true
+	stopSeq := entry.stopSeq
+	listener, conn := entry.listener, entry.conn
+	entry.listener, entry.conn = nil, nil
+	m.mu.Unlock()
+
+	m.cleanup(entry, listener, conn)
+
+	m.mu.Lock()
+	entry, ok = m.runtime[id]
+	if !ok || !entry.running || entry.stopSeq != stopSeq || m.closed {
+		m.mu.Unlock()
+		return
+	}
+	if entry.view.Status == domainforward.StatusConnecting ||
+		entry.view.Status == domainforward.StatusActive {
+		// A manual Start while cleanup ran already owns the new generation.
+		m.mu.Unlock()
+		return
+	}
+	entry.view.Rule = rule
+	generation := m.beginLocked(entry, true)
+	m.mu.Unlock()
+
+	go m.run(id, generation)
 }
 
 // AutoStart starts every enabled rule that requests auto-start. Start is

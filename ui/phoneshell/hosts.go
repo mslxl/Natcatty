@@ -75,6 +75,10 @@ type hostPages struct {
 	// when either is nil the Browser entry is absent with a stated reason.
 	browserCapability func() BrowserCapability
 	openBrowser       func(domainvault.Host)
+	// forwarding draws this Host's Port Forwarding Rules on its detail page.
+	// The Shell points it at the Vault's forwarding pages; nil hides the
+	// section.
+	forwarding *forwardingPages
 	// saveDone navigates after a save: to the saved Host's page, to the new
 	// Session, or away from the editor when the list refresh failed.
 	saveDone func(domainvault.Host, bool, bool)
@@ -870,6 +874,13 @@ func (h *hostPages) drawDetail(c *ui.Context, id string) {
 					kit.Notice(c, icons.TriangleAlert, c.Theme().Warning,
 						browserReason(capability), nil)
 				}
+			}
+			// A forwarded port is another way to reach this Host's services.
+			// The section is drawn here rather than behind a second page so the
+			// rules and their runtime state are visible with the Host they
+			// belong to.
+			if host.Protocol.SupportsForwarding() && h.forwarding != nil && h.forwarding.available() {
+				h.forwarding.drawHostRules(c, host)
 			}
 			if h.editHost != nil {
 				edit := kit.ListRow(c).Label("Edit " + hostName(host))

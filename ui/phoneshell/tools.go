@@ -89,8 +89,6 @@ func toolPlaceholder(id toolID) string {
 	switch id {
 	case toolFiles:
 		return "Files from this Session are not on the phone yet."
-	case toolForwarding:
-		return "Port forwarding from this Session is not on the phone yet."
 	case toolSystem:
 		return "System management is not on the phone yet."
 	case toolSessionLog:
@@ -148,6 +146,10 @@ type toolsState struct {
 	// shared notePages; only the search, open viewer, and draft are per Pane,
 	// so one Pane's half-filled editor never appears in another.
 	notes notesViewState
+	// forwarding is this Pane's Port Forwarding view. It is made when the tool
+	// is entered and reads the shared runtime through the Session opener, so a
+	// Pane that never opens it costs nothing.
+	forwarding *forwardingPages
 	// result is the last clear's outcome; resultProblem marks it a failure.
 	result        string
 	resultProblem bool
@@ -333,6 +335,8 @@ func (t *sessionTabs) drawTools(c *ui.Context, view tabView) {
 				t.drawToolHistory(c, st, view.screen)
 			case toolBrowser:
 				t.drawToolBrowser(c, st, view)
+			case toolForwarding:
+				t.drawToolForwarding(c, st, view)
 			case toolNotes:
 				t.drawToolNotes(c, st)
 			default:
@@ -350,6 +354,11 @@ func (t *sessionTabs) drawToolCatalog(c *ui.Context, st *toolsState, view tabVie
 	for _, spec := range toolCatalog {
 		spec := spec
 		if spec.id == toolBrowser && !t.browserToolAvailable(view.host) {
+			continue
+		}
+		// Only an SSH-capable Host can carry a Port Forwarding Rule. A Telnet
+		// or Local Host has no entry rather than a page that can only say no.
+		if spec.id == toolForwarding && !view.host.Protocol.SupportsForwarding() {
 			continue
 		}
 		row := kit.ListRow(c).Label("Open " + spec.title)
@@ -426,6 +435,24 @@ func (t *sessionTabs) toolSummary(st *toolsState, id toolID, host domainvault.Ho
 		default:
 			return fmt.Sprintf("%d Notes", len(t.notes.notes))
 		}
+	case toolForwarding:
+		if !t.forwardingAvailable() {
+			return "Unavailable"
+		}
+		if !host.Protocol.SupportsForwarding() {
+			return "This Host cannot forward ports"
+		}
+		if st != nil && st.forwarding != nil && st.forwarding.status == vaultReady {
+			switch count := len(st.forwarding.rulesFor(host.ID)); count {
+			case 0:
+				return "No rules for this Host"
+			case 1:
+				return "1 rule for this Host"
+			default:
+				return fmt.Sprintf("%d rules for this Host", count)
+			}
+		}
+		return "Start and stop this Host's rules"
 	}
 	return "Not on the phone yet"
 }
@@ -495,6 +522,51 @@ func (t *sessionTabs) drawToolNotes(c *ui.Context, st *toolsState) {
 		return
 	}
 	t.notes.drawTool(c, &st.notes)
+}
+
+// forwardingAvailable reports whether this build wired the Port Forwarding
+// runtime through the Session opener.
+func (t *sessionTabs) forwardingAvailable() bool {
+	if t == nil {
+		return false
+	}
+	provider, ok := t.opener.(ForwardingProvider)
+	if !ok {
+		return false
+	}
+	return provider.ForwardingService() != nil
+}
+
+// forwardingSurface returns this Pane's forwarding view, creating it on first
+// use. It reads the service through the opener so the Tools surface does not
+// need a second copy of the runtime.
+func (t *sessionTabs) forwardingSurface(st *toolsState) (*forwardingPages, bool) {
+	if st == nil || !t.forwardingAvailable() {
+		return nil, false
+	}
+	provider := t.opener.(ForwardingProvider)
+	if st.forwarding == nil {
+		st.forwarding = newForwardingPages()
+	}
+	st.forwarding.service = provider.ForwardingService()
+	return st.forwarding, st.forwarding.service != nil
+}
+
+// drawToolForwarding renders this Session Host's rules. The terminal stays
+// attached underneath; All tools returns to the catalog and Done returns to
+// the Pane.
+func (t *sessionTabs) drawToolForwarding(c *ui.Context, st *toolsState, view tabView) {
+	if kit.GhostButton(c, icons.ChevronLeft, "All tools").Clicked() {
+		st.tool = toolNone
+		return
+	}
+	surface, ok := t.forwardingSurface(st)
+	if !ok {
+		kit.Notice(c, icons.TriangleAlert, c.Theme().Warning,
+			"Port forwarding is not available in this build.", nil)
+		return
+	}
+	surface.drawHostRules(c, view.host)
 }
 
 // browserWindow returns the Sessions window the Browser's WebViews belong to.

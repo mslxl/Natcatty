@@ -324,6 +324,18 @@ func New(opts ...Option) *Shell {
 	// The Vault's Hosts family reads the Hosts tab's list and detail pages.
 	// Only the router differs: the Vault section owns its own stack.
 	s.vault.hosts = s.hosts
+	// Port Forwarding is the same runtime the Session opener holds. A Shell
+	// given WithForwarding keeps that service; otherwise the runtime comes
+	// from the opener, which is where the phone root wires the shared
+	// Connection Manager. Host detail and the Vault section then draw one rule
+	// set instead of a second copy.
+	if s.vault.forwarding.service == nil {
+		if provider, ok := s.sessions.opener.(ForwardingProvider); ok {
+			s.vault.forwarding.service = provider.ForwardingService()
+		}
+	}
+	s.vault.forwarding.hosts = s.hosts
+	s.hosts.forwarding = s.vault.forwarding
 	// The Snippets page runs a Snippet in the Sessions section, so it is built
 	// after the Shell and holds it.
 	s.vault.snippets = newSnippetPages(s)
@@ -505,6 +517,8 @@ func (s *Shell) vaultSectionPages() []page {
 			p.summary = s.vault.proxiesSummary
 		case vaultsection.Networks:
 			p.summary = s.vault.networksSummary
+		case vaultsection.Forwarding:
+			p.summary = s.vault.forwarding.summary
 		case vaultsection.Snippets:
 			p.summary = s.vault.snippetsSummary
 		case vaultsection.Notes:
