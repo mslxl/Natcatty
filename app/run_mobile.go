@@ -32,7 +32,6 @@ import (
 	adapterbackup "github.com/mslxl/natcatty/adapters/vaultbackup"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
-	appvault "github.com/mslxl/natcatty/application/vault"
 	appbackup "github.com/mslxl/natcatty/application/vaultbackup"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
@@ -56,7 +55,7 @@ func Run() error {
 	log.Printf("natcatty: libghostty-vt %s", v)
 
 	ctx := context.Background()
-	shell, database, sessions, history, vaultSync, err := newPhoneShell(ctx)
+	shell, database, sessions, history, credentialRuntime, err := newPhoneShell(ctx)
 	if err != nil {
 		return err
 	}
@@ -64,9 +63,7 @@ func Run() error {
 		shell.Close()
 		sessions.Close()
 		history.Stop()
-		if vaultSync != nil {
-			vaultSync.Stop()
-		}
+		credentialRuntime.Stop()
 		_ = database.Close()
 	}()
 	var showErr error
@@ -94,7 +91,7 @@ func Run() error {
 		// A Vault-sync OAuth redirect belongs to the sync engine, not the
 		// Host deep-link router. HandleOpenURL claims every URL of the app's
 		// custom scheme and reports whether it did.
-		if vaultSync != nil && vaultSync.HandleOpenURL(raw) {
+		if vaultSync := credentialRuntime.currentSync(); vaultSync != nil && vaultSync.HandleOpenURL(raw) {
 			return
 		}
 		_ = shell.HandleDeepLink(raw)
@@ -106,13 +103,15 @@ func Run() error {
 	// the screen, so a suspended app never spends its callback budget.
 	mygo.App.OnDidResignActive(func() {
 		shell.Background()
-		if vaultSync != nil {
+		if vaultSync := credentialRuntime.currentSync(); vaultSync != nil {
 			vaultSync.Background()
 		}
 	})
 	mygo.App.OnDidBecomeActive(func() {
+		// Foreground retries the credential service. A successful retry clears
+		// the Vault notice and attaches Vault Sync, so read the engine after.
 		shell.Foreground()
-		if vaultSync != nil {
+		if vaultSync := credentialRuntime.currentSync(); vaultSync != nil {
 			vaultSync.Foreground()
 		}
 	})
@@ -126,7 +125,7 @@ func Run() error {
 // newPhoneShell opens the device's Vault and settings stores and wires the
 // shell to them. The database and the Session runtime are returned so Run can
 // close them.
-func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phoneSessionRuntime, *phoneHistory, *phoneSync, error) {
+func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phoneSessionRuntime, *phoneHistory, *phoneRuntime, error) {
 	userData, err := mygo.App.Path(mygo.PathUserData)
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
@@ -145,28 +144,31 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 		return nil, nil, nil, nil, nil, err
 	}
 
-	// The field-secret store protects key material at rest on the desktop.
-	// On a phone without an OS credential store it reports the unavailable
-	// mode instead of failing; listing and deleting Keys still work against
-	// the same Vault, and deletion simply has no ciphertext to remove.
-	secrets, err := store.OpenSecretStore(ctx, database, platformsecrets.System{})
-	var fieldSecrets appvault.FieldSecrets
-	if err != nil {
-		secrets = nil
+	// The field-secret store protects key material at rest. On a phone the
+	// platform credential service can be temporarily unavailable (for example
+	// before the first unlock). Opening it is attempted once here and again on
+	// every foreground transition; a failure never blocks startup and never
+	// substitutes a session-only or plaintext store. Listing and deleting Keys
+	// still work against the same Vault while the service is down.
+	credentials := newPhoneCredentials(database, platformsecrets.System{})
+	if credentials.Retry(ctx) {
+		log.Printf("natcatty: field-secret store open")
 	} else {
-		fieldSecrets = secrets
+		log.Printf("natcatty: system credential store unavailable; credentials and Vault Sync are paused")
 	}
+	credentialRuntime := &phoneRuntime{}
 	// The phone Vault registers the same record families as the desktop, so a
 	// Host's jump chain, Identity, Proxy Profile, and Network Profile resolve
-	// through the shared route code instead of being ignored here.
-	vault := newPhoneVault(database, secrets)
+	// through the shared route code instead of being ignored here. The Vault
+	// holds the credential wrapper, not one snapshot of the store, so a later
+	// retry reaches the already-built pages and Sessions.
+	vault := newPhoneVault(database, credentials)
 
 	// The shell is assigned after the services are built. The change hooks
 	// below only fire on a successful Update, which a user can only reach
 	// through the shown UI, so the nil checks cover construction only.
 	var shell *phoneshell.Shell
 	var sessionRuntime *phoneSessionRuntime
-	var vaultSync *phoneSync
 
 	preferences := apppreferences.NewService(
 		store.OpenPreferences(filepath.Join(userData, "preferences.json")),
@@ -179,7 +181,7 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 			}
 			// A portable theme or font change is a Vault-sync fact: schedule
 			// an automatic upload when sync is configured and enabled.
-			if vaultSync != nil {
+			if vaultSync := credentialRuntime.currentSync(); vaultSync != nil {
 				vaultSync.NotifyLocalChange()
 			}
 		}))
@@ -194,7 +196,7 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 			if sessionRuntime != nil {
 				sessionRuntime.SetClipboardPolicy(current.OSC52)
 			}
-			if vaultSync != nil {
+			if vaultSync := credentialRuntime.currentSync(); vaultSync != nil {
 				vaultSync.NotifyLocalChange()
 			}
 		}))
@@ -212,14 +214,19 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 	// document, field-secret store, and sync services as the desktop. The
 	// engine runs on its own goroutine; a failed upload updates the status
 	// the Settings page shows and never reaches a Session.
-	history := newPhoneHistory(database, preferences, terminalSettings, secrets)
+	history := newPhoneHistory(database, preferences, terminalSettings, credentials.Store())
 	history.Start(ctx)
 
 	// Cloud sync uses the same shared Vault and settings documents. A failure
 	// to open the profile must not stop the phone from starting: the Settings
 	// page then reports that sync is unavailable, exactly as a Vault read
 	// failure reports its own error state.
-	if secrets != nil {
+	//
+	// Vault Sync reads the field-secret store, so it is built only when the
+	// credential service is usable. When the service recovers on a foreground
+	// retry, the same builder runs again and the engine is attached to the
+	// already-shown shell instead of requiring a relaunch.
+	buildVaultSync := func(secrets *store.SecretStore) (*phoneSync, error) {
 		// The phone takes the same protective restore points the desktop does
 		// before a sync overwrites either side. Conflict resolution fails
 		// closed when this adapter is missing or its key is unavailable.
@@ -227,7 +234,7 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 			filepath.Join(userData, "vault-backups"), platformsecrets.System{})
 		backupService := appbackup.NewService(database, backupStore,
 			appbackup.WithRetentionStore(backupStore))
-		vaultSync, err = newPhoneSync(ctx, database, secrets, preferences, terminalSettings, userData,
+		return newPhoneSync(ctx, database, secrets, preferences, terminalSettings, userData,
 			withPhoneSyncBackups(adaptersyncbackup.New(backupService)),
 			// A downloaded copy rewrites the Vault and the portable settings
 			// documents. Reload the lists the shell shows and re-style the live
@@ -246,37 +253,63 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 			// intent-filter and is routed below.
 			withPhoneSyncBrowserOpener(mygo.Shell.OpenExternal),
 		)
-		if err != nil {
+	}
+	if available, _ := credentials.Status(); available {
+		if built, err := buildVaultSync(credentials.Store()); err != nil {
 			log.Printf("natcatty: Vault sync unavailable: %v", err)
-			vaultSync = nil
 		} else {
-			// A committed Vault record write is a sync fact. The change hook
-			// never blocks; the engine debounces and coalesces the run. A
-			// payload applied by the engine itself is suppressed inside the
-			// service, so a download does not queue a redundant sync.
-			database.SetChangeHook(func() {
-				if vaultSync != nil {
-					vaultSync.NotifyLocalChange()
-				}
-			})
+			credentialRuntime.setSync(built)
 		}
 	}
+	// A committed Vault record write is a sync fact. The change hook never
+	// blocks; the engine debounces and coalesces the run. A payload applied by
+	// the engine itself is suppressed inside the service, so a download does
+	// not queue a redundant sync. The hook is installed even while no engine
+	// exists, because a credential retry can attach one later.
+	database.SetChangeHook(func() {
+		if vaultSync := credentialRuntime.currentSync(); vaultSync != nil {
+			vaultSync.NotifyLocalChange()
+		}
+	})
+	credentials.SetOnAvailable(func(secrets *store.SecretStore) {
+		if credentialRuntime.currentSync() != nil {
+			return
+		}
+		built, err := buildVaultSync(secrets)
+		if err != nil {
+			log.Printf("natcatty: Vault sync unavailable after credential recovery: %v", err)
+			return
+		}
+		credentialRuntime.setSync(built)
+		if shell != nil {
+			shell.AttachVaultSync(built)
+		}
+	})
 
 	// The phone registers only remote transports: SSH, Telnet, Mosh, and ET.
 	// Local and serial shells are not constructed here at all. The terminal
 	// settings supply the same OSC 52 policy the desktop's Session service
 	// uses, so the Terminal page's Remote clipboard control has an effect.
-	sessionRuntime = newPhoneSessionRuntime(vault, database, userData, prompts, history, fieldSecrets,
+	sessionRuntime = newPhoneSessionRuntime(vault, database, userData, prompts, history, credentials,
 		func() domainterminal.Settings { return terminalSettings.Settings() }, preferences)
 	// Terminal widgets consume their own input, so the gate never sees
 	// keystrokes typed there. A Session change (including output) is the
 	// observable activity, exactly as the desktop composition root counts it.
 	installSessionActivityHook(sessionRuntime.service, appLock.RecordActivity)
 
+	// A typed nil must not reach WithVaultSync: the Settings page tests the
+	// interface for nil to decide between "configure sync" and "unavailable".
+	var vaultSyncService phoneshell.VaultSyncService
+	if vaultSync := credentialRuntime.currentSync(); vaultSync != nil {
+		vaultSyncService = vaultSync
+	}
+
 	shell = phoneshell.New(
 		// App Lock covers every section and closes on background, so the
 		// system's snapshot cannot show terminal content.
 		phoneshell.WithAppLock(appLock),
+		// The Vault home states a credential outage and Foreground retries it.
+		phoneshell.WithCredentialService(credentials),
 		phoneshell.WithVault(vault),
 		phoneshell.WithHosts(vault),
 		phoneshell.WithSessionOpener(sessionRuntime),
@@ -294,7 +327,7 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 		// The phone configures WebDAV or S3-compatible storage on the Settings
 		// page; the engine carries portable settings documents and Vault
 		// records to a desktop configured for the same account.
-		phoneshell.WithVaultSync(vaultSync),
+		phoneshell.WithVaultSync(vaultSyncService),
 		// The terminal is built with and re-styled from the shared Appearance
 		// document. mygo.Theme is read when a screen is built, which is after
 		// App.Run has started the event loop.
@@ -338,5 +371,5 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 			window.Invalidate()
 		}
 	})
-	return shell, database, sessionRuntime, history, vaultSync, nil
+	return shell, database, sessionRuntime, history, credentialRuntime, nil
 }

@@ -162,11 +162,13 @@ var _ phoneshell.SessionStore = (*store.WorkspaceRepository)(nil)
 // dial around a selected Proxy Profile and fail closed on a Network Profile.
 //
 // The secret store is optional. A phone whose OS credential store is
-// unavailable reports the session-only mode instead of refusing to start, so
-// listing and deleting Keys still work against the same Vault. The key parser
-// is always registered: adding or replacing a Key must validate the pasted
-// material exactly as the desktop editor does.
-func newPhoneVault(database *store.Store, secrets *store.SecretStore) *appvault.Service {
+// unavailable reports the unavailable mode instead of refusing to start, so
+// listing and deleting Keys still work against the same Vault. A wrapper that
+// can open the store on a later foreground retry is passed here unchanged, so
+// the already-built Vault starts using credentials after the recovery. The key
+// parser is always registered: adding or replacing a Key must validate the
+// pasted material exactly as the desktop editor does.
+func newPhoneVault(database *store.Store, secrets appvault.FieldSecrets) *appvault.Service {
 	options := []appvault.Option{
 		appvault.WithKeys(database),
 		appvault.WithIdentities(database),

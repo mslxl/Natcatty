@@ -78,6 +78,9 @@ type section struct {
 	// rootDraw renders the section's root page instead of the list of pages.
 	// Sessions and Hosts own their roots this way.
 	rootDraw func(c *ui.Context)
+	// rootNotice draws a section-wide notice above the root list, such as the
+	// Vault's credential-store outage. Nil leaves the root unchanged.
+	rootNotice func(c *ui.Context)
 	// route renders a dynamic page, such as /session/{id}. It reports whether
 	// it matched the current path.
 	route func(c *ui.Context, r *ui.Route) bool
@@ -129,6 +132,9 @@ type Shell struct {
 	// appLock wraps every section while App Lock is closed. A shell without an
 	// App Lock service has no gate and renders its sections directly.
 	appLock *lockGate
+	// credentials reports whether the field-secret service can be opened. The
+	// Vault home states an outage and Foreground retries it.
+	credentials CredentialService
 	// browser is the shared browser panel seam. Nil hides every Browser entry
 	// with a stated reason.
 	browser BrowserProvider
@@ -445,6 +451,9 @@ func (s *Shell) newSection(i Section) *section {
 		sec.intro = "Browse the Vault on the phone."
 		sec.pages = s.vaultSectionPages()
 		sec.draw = s.vault.draw
+		// The credential outage is a Vault-home statement: the lists stay
+		// usable, but the user must know secrets and sync are paused.
+		sec.rootNotice = s.drawCredentialNotice
 		sec.route = func(c *ui.Context, r *ui.Route) bool {
 			if r.Match("/hosts/{id}/browser") {
 				r.Title("Browser")
@@ -634,6 +643,10 @@ func (s *Shell) Background() {
 // whose reconnect then fails stays reconnecting and retryable.
 func (s *Shell) Foreground() {
 	s.backgrounded = false
+	// The credential service may have been unavailable at launch. A foreground
+	// transition is the safe moment to try it again: the device is unlocked and
+	// the user can still navigate while it is failing.
+	s.retryCredentials()
 	visible := s.visibleSession()
 	s.sessions.syncVisible(visible)
 	s.sessions.reconnectVisible(visible)
@@ -891,6 +904,9 @@ func (sec *section) root(c *ui.Context) {
 	t := c.Theme()
 	ui.Scroll(c).Fill().Children(func() {
 		ui.Column(c).FillWidth().Padding(16).Gap(10).Children(func() {
+			if sec.rootNotice != nil {
+				sec.rootNotice(c)
+			}
 			ui.Text(c, sec.intro).TextColor(t.TextMuted)
 			for _, p := range sec.pages {
 				row := ui.Row(c.Key(p.path)).FillWidth().Padding(14, 16).Gap(12).

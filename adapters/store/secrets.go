@@ -292,6 +292,11 @@ func (s *SecretStore) Get(ctx context.Context, ref appvault.SecretRef) (string, 
 }
 
 // Delete removes one field. Deleting a missing value is not an error.
+//
+// Deletion deliberately ignores a locked or unavailable mode: removing a
+// ciphertext row needs no key. That is what lets a Key deleted while the
+// credential service is unavailable still clean up the same Vault's encrypted
+// material, instead of leaving an orphan until the next unlock.
 func (s *SecretStore) Delete(ctx context.Context, ref appvault.SecretRef) error {
 	if err := validateRef(ref); err != nil {
 		return err
@@ -303,10 +308,26 @@ func (s *SecretStore) Delete(ctx context.Context, ref appvault.SecretRef) error 
 		delete(s.session, ref)
 		return nil
 	}
-	if err := s.modeError(); err != nil {
+	return s.db.deleteSecretValue(ctx, ref)
+}
+
+// DeleteSecretValue removes one field's ciphertext row from the Vault without
+// opening the field-secret store. It exists for the credential outage case: a
+// caller that cannot read the platform credential store still owns an explicit
+// user deletion (a Key, or a cleared Host secret) and must clean up the same
+// Vault's ciphertext instead of orphaning it until the next unlock.
+//
+// It applies the same reference validation as SecretStore.Delete and deletes
+// only that exact row. It never reads, writes, or returns plaintext, never
+// touches another entity, and never creates or substitutes a secret store.
+func DeleteSecretValue(ctx context.Context, db *Store, ref appvault.SecretRef) error {
+	if db == nil {
+		return errors.New("store: secret deletion needs a database")
+	}
+	if err := validateRef(ref); err != nil {
 		return err
 	}
-	return s.db.deleteSecretValue(ctx, ref)
+	return db.deleteSecretValue(ctx, ref)
 }
 
 // SetPassphrase configures passphrase mode when no OS store exists. It
