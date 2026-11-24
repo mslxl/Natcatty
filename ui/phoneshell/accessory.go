@@ -45,6 +45,10 @@ type accessoryState struct {
 	// It survives frames so the confirmation stays on screen until the user
 	// answers, and it is never written to a log or the settings document.
 	pendingPaste string
+	// pendingData is the whole clipboard payload of a held paste, so a
+	// confirmation keeps the PNG as well as the text. The one paste path
+	// fills both fields together.
+	pendingData transfer.Data
 }
 
 // take consumes the held latches and returns their modifiers.
@@ -133,17 +137,12 @@ func accessoryControls(c *ui.Context, acc *accessoryState, screen TerminalScreen
 			}
 		}
 		if b := accessoryButton(c, "Paste", false); b.Clicked() {
-			if d := c.Services().ReadClipboardData(); len(d.Items()) > 0 {
-				// The guard needs the text, but a clipboard holding only
-				// files or images has none: those still go straight to the
-				// terminal, which ignores formats it does not paste.
-				text, err := d.Read(transfer.Text)
-				if err == nil && pasteGuard != nil && pasteGuard(string(text)) {
-					acc.pendingPaste = string(text)
-				} else {
-					screen.PasteData(d)
-				}
-			}
+			// Read the representations the phone can paste, then take the
+			// same decision an external keyboard's paste key does. The guard
+			// needs the text, but a clipboard holding only an image has none:
+			// that goes straight to the terminal, which ignores formats it
+			// does not paste.
+			pasteData(c, screen, acc, readPhoneClipboard(c), pasteGuard)
 		}
 		scrolled := screen.InScrollback()
 		label := "History"
@@ -180,9 +179,12 @@ func accessoryPasteConfirmation(c *ui.Context, acc *accessoryState, screen Termi
 	switch {
 	case cancelled:
 		acc.pendingPaste = ""
+		acc.pendingData = transfer.Data{}
 	case confirmed:
+		data := heldPaste(acc)
 		acc.pendingPaste = ""
-		screen.PasteData(transfer.TextData(text))
+		acc.pendingData = transfer.Data{}
+		screen.PasteData(data)
 	}
 }
 

@@ -49,6 +49,29 @@ uses `reloadInputViews()` (or a fresh `becomeFirstResponder()`) only when a
 tap asks for the keyboard, so the resize after a dismissal does not raise it
 again.
 
+## The phone hardware-key text patch
+
+`0007-key-text-and-punctuation.patch` carries what a hardware keyboard sends
+with a key, not only the key. In v0.10.0 `internal/mobile/surface.go` drops
+`wire.KeyEvent.Text` when it makes the `platform.SurfaceEvent`, so the text
+Android composes for an Alt chord (Alt+C is "ç") never reaches the content,
+and `ui/input.go` builds the content's key-down `InputEvent`s without it. The
+patch forwards the text through both, and it maps the punctuation names the
+hosts use (`Comma`, `Period`, … and the one-character forms) in `keyOf`. The
+Android and iOS hosts list those keys in `keyNames` too, so a Ctrl or other
+chorded punctuation key keeps a name when the character is not typed
+(`unicodeChar` 0 on Android). The app's phone shell types the text a key
+carries where the terminal's own encoding would drop it.
+
+It touches `internal/mobile/{surface.go,key_test.go}`,
+`ui/{input.go,webview.go,key_text_test.go}` and the two host files
+`internal/mobile/ios/Sources/MyGoHost/SurfaceWindow.swift` and
+`internal/mobile/android/mygo/src/main/java/dev/mygo/SurfaceWindow.kt`. The
+keyboard's IME (text replacement) path is unchanged.
+
+At an upgrade, drop the patch if `KeyEvent.Text` reaches the platform event
+and the input event, and the punctuation names map, upstream.
+
 ## The phone web-view patch
 
 `0006-mobile-data-stores-cookies-downloads.patch` adds what the phone browser

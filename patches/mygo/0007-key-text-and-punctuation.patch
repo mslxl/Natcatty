@@ -1,0 +1,266 @@
+diff --git a/internal/mobile/android/mygo/src/main/java/dev/mygo/SurfaceWindow.kt b/internal/mobile/android/mygo/src/main/java/dev/mygo/SurfaceWindow.kt
+index 47f81c4..147494e 100644
+--- a/internal/mobile/android/mygo/src/main/java/dev/mygo/SurfaceWindow.kt
++++ b/internal/mobile/android/mygo/src/main/java/dev/mygo/SurfaceWindow.kt
+@@ -767,6 +767,14 @@ class SurfaceWindow(context: Context, id: Long) : HostWindow(context, id) {
+             KeyEvent.KEYCODE_MOVE_HOME to "Home", KeyEvent.KEYCODE_MOVE_END to "End", KeyEvent.KEYCODE_PAGE_UP to "PageUp",
+             KeyEvent.KEYCODE_PAGE_DOWN to "PageDown", KeyEvent.KEYCODE_DPAD_LEFT to "ArrowLeft",
+             KeyEvent.KEYCODE_DPAD_RIGHT to "ArrowRight", KeyEvent.KEYCODE_DPAD_UP to "ArrowUp", KeyEvent.KEYCODE_DPAD_DOWN to "ArrowDown",
++            // Punctuation keeps a name when a chord leaves unicodeChar 0, where
++            // the character fallback below has nothing to name.
++            KeyEvent.KEYCODE_COMMA to "Comma", KeyEvent.KEYCODE_PERIOD to "Period",
++            KeyEvent.KEYCODE_SLASH to "Slash", KeyEvent.KEYCODE_SEMICOLON to "Semicolon",
++            KeyEvent.KEYCODE_APOSTROPHE to "Quote", KeyEvent.KEYCODE_LEFT_BRACKET to "BracketLeft",
++            KeyEvent.KEYCODE_RIGHT_BRACKET to "BracketRight", KeyEvent.KEYCODE_BACKSLASH to "Backslash",
++            KeyEvent.KEYCODE_GRAVE to "Backquote", KeyEvent.KEYCODE_MINUS to "Minus",
++            KeyEvent.KEYCODE_EQUALS to "Equal",
+         )
+     }
+ }
+diff --git a/internal/mobile/ios/Sources/MyGoHost/SurfaceWindow.swift b/internal/mobile/ios/Sources/MyGoHost/SurfaceWindow.swift
+index 0c200d7..e80bd1e 100644
+--- a/internal/mobile/ios/Sources/MyGoHost/SurfaceWindow.swift
++++ b/internal/mobile/ios/Sources/MyGoHost/SurfaceWindow.swift
+@@ -272,6 +272,12 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
+         .keyboardTab: "Tab", .keyboardSpacebar: "Space", .keyboardDeleteForward: "Delete", .keyboardHome: "Home",
+         .keyboardEnd: "End", .keyboardPageUp: "PageUp", .keyboardPageDown: "PageDown", .keyboardLeftArrow: "ArrowLeft",
+         .keyboardRightArrow: "ArrowRight", .keyboardUpArrow: "ArrowUp", .keyboardDownArrow: "ArrowDown",
++        // Punctuation by the name MyGo's key map uses, as the hardware
++        // keyboard's HID usages name it.
++        .keyboardHyphen: "Minus", .keyboardEqualSign: "Equal", .keyboardOpenBracket: "BracketLeft",
++        .keyboardCloseBracket: "BracketRight", .keyboardBackslash: "Backslash", .keyboardSemicolon: "Semicolon",
++        .keyboardQuote: "Quote", .keyboardGraveAccentAndTilde: "Backquote", .keyboardComma: "Comma",
++        .keyboardPeriod: "Period", .keyboardSlash: "Slash",
+     ]
+ 
+     private func keys(_ presses: Set<UIPress>, down: Bool) -> Set<UIPress> {
+diff --git a/internal/mobile/key_test.go b/internal/mobile/key_test.go
+new file mode 100644
+index 0000000..d1a8857
+--- /dev/null
++++ b/internal/mobile/key_test.go
+@@ -0,0 +1,82 @@
++package mobile
++
++import (
++	"testing"
++
++	"github.com/egoist/mygo/internal/mobile/wire"
++	"github.com/egoist/mygo/internal/platform"
++)
++
++// TestKeyOfPunctuation: the hosts name a punctuation key by the name MyGo
++// uses where a chord leaves no character, and by the character itself where
++// the key types one.
++func TestKeyOfPunctuation(t *testing.T) {
++	for _, c := range []struct {
++		name string
++		want platform.Key
++	}{
++		{"Comma", platform.KeyComma}, {",", platform.KeyComma},
++		{"Period", platform.KeyPeriod}, {".", platform.KeyPeriod},
++		{"Slash", platform.KeySlash}, {"/", platform.KeySlash},
++		{"Semicolon", platform.KeySemicolon}, {";", platform.KeySemicolon},
++		{"Quote", platform.KeyQuote}, {"'", platform.KeyQuote},
++		{"BracketLeft", platform.KeyBracketLeft}, {"[", platform.KeyBracketLeft},
++		{"BracketRight", platform.KeyBracketRight}, {"]", platform.KeyBracketRight},
++		{"Backslash", platform.KeyBackslash}, {"\\", platform.KeyBackslash},
++		{"Backquote", platform.KeyBackquote}, {"`", platform.KeyBackquote},
++		{"Minus", platform.KeyMinus}, {"-", platform.KeyMinus},
++		{"Equal", platform.KeyEqual}, {"=", platform.KeyEqual},
++	} {
++		if got := keyOf(c.name); got != c.want {
++			t.Errorf("keyOf(%q) = %v, want %v", c.name, got, c.want)
++		}
++	}
++}
++
++// TestKeyEventCarriesItsText: the text the host composed for a hardware key,
++// as Android's Alt-composed "ç", reaches the content's key event instead of
++// being dropped on the way. A release carries none, and still reaches it.
++func TestKeyEventCarriesItsText(t *testing.T) {
++	b, h := startBackend(t)
++	w, wh := surfaceWindow(t, b, h)
++	h.onUI(func() {
++		deliver(encodeEvent(func(wr *wire.Writer) {
++			wr.Uvarint(wire.EventKey)
++			wr.Int(w.id)
++			wr.Bool(true)
++			wr.String("c")
++			wr.String("ç")
++			wr.Int(int(platform.ModAlt))
++			wr.Bool(false)
++		}), true)
++		deliver(encodeEvent(func(wr *wire.Writer) {
++			wr.Uvarint(wire.EventKey)
++			wr.Int(w.id)
++			wr.Bool(false)
++			wr.String("c")
++			wr.String("")
++			wr.Int(int(platform.ModAlt))
++			wr.Bool(false)
++		}), true)
++	})
++	wh.mu.Lock()
++	defer wh.mu.Unlock()
++	var down, up *platform.SurfaceEvent
++	for i := range wh.events {
++		switch wh.events[i].Kind {
++		case platform.KeyPressed:
++			down = &wh.events[i]
++		case platform.KeyReleased:
++			up = &wh.events[i]
++		}
++	}
++	if down == nil || up == nil {
++		t.Fatalf("key events: down %v, up %v", down, up)
++	}
++	if down.Key != platform.KeyC || down.Text != "ç" {
++		t.Errorf("key down = key %v, text %q; want %v, %q", down.Key, down.Text, platform.KeyC, "ç")
++	}
++	if up.Key != platform.KeyC || up.Text != "" {
++		t.Errorf("key up = key %v, text %q; want %v, %q", up.Key, up.Text, platform.KeyC, "")
++	}
++}
+diff --git a/internal/mobile/surface.go b/internal/mobile/surface.go
+index cece6e5..293a7b7 100644
+--- a/internal/mobile/surface.go
++++ b/internal/mobile/surface.go
+@@ -487,6 +487,19 @@ var keys = map[string]platform.Key{
+ 	"Space": platform.KeySpace, "Delete": platform.KeyDelete, "Home": platform.KeyHome, "End": platform.KeyEnd,
+ 	"PageUp": platform.KeyPageUp, "PageDown": platform.KeyPageDown, "ArrowLeft": platform.KeyLeft,
+ 	"ArrowRight": platform.KeyRight, "ArrowUp": platform.KeyUp, "ArrowDown": platform.KeyDown,
++	// Punctuation, by the name the hosts give it and by the one character it
++	// types: Android names the key by the character where it types one, and
++	// by the name in keyNames where a chord leaves unicodeChar 0.
++	"Comma": platform.KeyComma, "Period": platform.KeyPeriod, "Slash": platform.KeySlash,
++	"Semicolon": platform.KeySemicolon, "Quote": platform.KeyQuote,
++	"BracketLeft": platform.KeyBracketLeft, "BracketRight": platform.KeyBracketRight,
++	"Backslash": platform.KeyBackslash, "Backquote": platform.KeyBackquote,
++	"Minus": platform.KeyMinus, "Equal": platform.KeyEqual,
++	",": platform.KeyComma, ".": platform.KeyPeriod, "/": platform.KeySlash,
++	";": platform.KeySemicolon, "'": platform.KeyQuote,
++	"[": platform.KeyBracketLeft, "]": platform.KeyBracketRight,
++	"\\": platform.KeyBackslash, "`": platform.KeyBackquote,
++	"-": platform.KeyMinus, "=": platform.KeyEqual,
+ }
+ 
+ func keyOf(name string) platform.Key {
+@@ -622,7 +635,7 @@ func (b *Backend) handleSurface(op uint64, r *wire.Reader, w *wire.Writer) bool
+ 				kind = platform.KeyReleased
+ 			}
+ 			k := keyOf(e.Key)
+-			reply.Handled = s.send(platform.SurfaceEvent{Kind: kind, Key: k, PhysicalKey: k, Mods: platform.Modifiers(e.Mods), Repeat: e.Repeated})
++			reply.Handled = s.send(platform.SurfaceEvent{Kind: kind, Key: k, PhysicalKey: k, Mods: platform.Modifiers(e.Mods), Repeat: e.Repeated, Text: e.Text})
+ 		}
+ 		reply.Encode(w)
+ 	case wire.EventBackGesture:
+diff --git a/ui/input.go b/ui/input.go
+index 4f21e4f..c378c33 100644
+--- a/ui/input.go
++++ b/ui/input.go
+@@ -142,7 +142,7 @@ func (rt *engine) event(ev platform.SurfaceEvent) (taken bool) {
+ 	case platform.KeyPressed:
+ 		rt.modsChanged(Modifiers(ev.Mods))
+ 		rt.holdKey(Modifiers(ev.Mods), Key(ev.Key), Key(ev.PhysicalKey))
+-		taken = rt.keyDownPhysical(Modifiers(ev.Mods), Key(ev.Key), Key(ev.PhysicalKey), KeyCode(ev.Code), ev.Repeat)
++		taken = rt.keyDownPhysical(Modifiers(ev.Mods), Key(ev.Key), Key(ev.PhysicalKey), KeyCode(ev.Code), ev.Repeat, ev.Text)
+ 	case platform.ModifiersChanged:
+ 		rt.modsChanged(Modifiers(ev.Mods))
+ 	case platform.RawKeyPressed, platform.RawKeyReleased:
+@@ -1131,13 +1131,14 @@ func (rt *engine) claimedBy(k keyEvent, window bool) bool {
+ // keyDown handles a key pressed, and reports whether an element took it as
+ // it came (HandleInput).
+ func (rt *engine) keyDown(mods Modifiers, key Key, repeat bool) bool {
+-	return rt.keyDownPhysical(mods, key, KeyUnknown, CodeUnknown, repeat)
++	return rt.keyDownPhysical(mods, key, KeyUnknown, CodeUnknown, repeat, "")
+ }
+ 
+-// keyDownPhysical is keyDown with the key by position (InputEvent.PhysicalKey).
++// keyDownPhysical is keyDown with the key by position (InputEvent.PhysicalKey)
++// and the text the platform says the key composed (InputEvent.Text).
+ // A chord of a key the layout does not type as a US key, as S on a Cyrillic
+ // layout, matches shortcuts by that position; plain typing is untouched.
+-func (rt *engine) keyDownPhysical(mods Modifiers, key, physical Key, code KeyCode, repeat bool) bool {
++func (rt *engine) keyDownPhysical(mods Modifiers, key, physical Key, code KeyCode, repeat bool, text string) bool {
+ 	if platform.KeyByPosition(platform.Key(key), platform.Key(physical), platform.Modifiers(mods)) {
+ 		if rt.byPosition == nil {
+ 			rt.byPosition = map[Key]bool{}
+@@ -1150,12 +1151,12 @@ func (rt *engine) keyDownPhysical(mods Modifiers, key, physical Key, code KeyCod
+ 	if rt.inspectKey(mods, key) {
+ 		return true
+ 	}
+-	rt.observeFocus(InputEvent{Kind: InputKeyDown, Key: key, PhysicalKey: physical, Code: code, Mods: mods, Repeat: repeat})
++	rt.observeFocus(InputEvent{Kind: InputKeyDown, Key: key, PhysicalKey: physical, Code: code, Mods: mods, Repeat: repeat, Text: text})
+ 	k := keyEvent{mods, key, repeat}
+ 	if key == KeyEscape && mods == 0 && rt.dragCancel() {
+ 		return true
+ 	}
+-	if h := rt.focusHandler(); h != nil && !rt.claimed(k) && rt.deliver(h, InputEvent{Kind: InputKeyDown, Key: key, PhysicalKey: physical, Code: code, Mods: mods, Repeat: repeat}) {
++	if h := rt.focusHandler(); h != nil && !rt.claimed(k) && rt.deliver(h, InputEvent{Kind: InputKeyDown, Key: key, PhysicalKey: physical, Code: code, Mods: mods, Repeat: repeat, Text: text}) {
+ 		rt.blinkStart = rt.now()
+ 		return true
+ 	}
+diff --git a/ui/key_text_test.go b/ui/key_text_test.go
+new file mode 100644
+index 0000000..9629689
+--- /dev/null
++++ b/ui/key_text_test.go
+@@ -0,0 +1,44 @@
++package ui
++
++import (
++	"testing"
++
++	"github.com/egoist/mygo/internal/platform"
++)
++
++// TestKeyDownCarriesThePlatformText: a hardware key may carry the text the
++// platform composed for it, as Android's Alt-composed "ç" and a punctuation
++// key's character. Both the elements observing the focus and the one that
++// handles it see that text on the key down.
++func TestKeyDownCarriesThePlatformText(t *testing.T) {
++	var observed, handled []InputEvent
++	tt := NewTester(func(c *Context) {
++		Column(c).ObserveInput(func(ev InputEvent) {
++			if ev.Kind == InputKeyDown {
++				observed = append(observed, ev)
++			}
++		}).Children(func() {
++			Box(c).Size(100, 100).Focusable().AutoFocus().HandleInput(func(ev InputEvent) bool {
++				if ev.Kind == InputKeyDown {
++					handled = append(handled, ev)
++				}
++				return false
++			})
++		})
++	}, 200, 200)
++	tt.Frame()
++	tt.send(platform.SurfaceEvent{Kind: platform.KeyPressed, Key: platform.KeyUnknown, Text: "ç"})
++	tt.send(platform.SurfaceEvent{Kind: platform.KeyReleased, Key: platform.KeyUnknown})
++
++	for _, got := range []struct {
++		what   string
++		events []InputEvent
++	}{{"observed", observed}, {"handled", handled}} {
++		if len(got.events) != 1 {
++			t.Fatalf("%s %d key downs, want 1", got.what, len(got.events))
++		}
++		if ev := got.events[0]; ev.Key != KeyUnknown || ev.Text != "ç" {
++			t.Errorf("%s key down = key %v, text %q; want KeyUnknown, %q", got.what, ev.Key, ev.Text, "ç")
++		}
++	}
++}
+diff --git a/ui/webview.go b/ui/webview.go
+index 843d71f..11d3434 100644
+--- a/ui/webview.go
++++ b/ui/webview.go
+@@ -418,7 +418,7 @@ func (rt *engine) webViewKey(v NativeWebView, mods Modifiers, key, physical Key,
+ 		rt.focused = id
+ 		rt.focusVisible = false
+ 	}
+-	rt.keyDownPhysical(mods, key, physical, CodeUnknown, repeat)
++	rt.keyDownPhysical(mods, key, physical, CodeUnknown, repeat, "")
+ 	rt.updateTextInput()
+ }
+ 

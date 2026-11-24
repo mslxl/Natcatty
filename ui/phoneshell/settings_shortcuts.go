@@ -43,6 +43,8 @@ type ShortcutService interface {
 func WithShortcuts(service ShortcutService) Option {
 	return func(s *Shell) {
 		s.settings.shortcuts = service
+		// The same document drives the external-keyboard dispatcher.
+		s.installKeyboardShortcuts(service)
 		s.terminalKeybinds = func() []terminal.Keybind {
 			return phoneTerminalKeybinds(service)
 		}
@@ -55,8 +57,9 @@ type terminalKeybindsFunc func() []terminal.Keybind
 
 // phoneTerminalKeybinds maps the active catalog onto the terminal's key table,
 // as the desktop composition root does. Only the terminal category is mapped:
-// every other binding is an application action the phone has no dispatcher
-// for, and must not swallow a key the terminal needs. The catalog's terminal
+// every other binding is an application action dispatched by the
+// external-keyboard handler (see keyboard.go), and must not swallow a key the
+// terminal needs through MyGo's own table. The catalog's terminal
 // defaults are explicitly unbound when the user moved or disabled them, so the
 // old chord does not keep firing through MyGo's own defaults.
 func phoneTerminalKeybinds(service ShortcutService) []terminal.Keybind {

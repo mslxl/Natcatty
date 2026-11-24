@@ -443,6 +443,16 @@ type sessionTabs struct {
 	// settings reads the terminal policy the phone's paste path enforces.
 	// Nil means no paste guard, which is the original's default.
 	settings SettingsService
+	// shortcuts is the shared keyboard-binding document the external-keyboard
+	// dispatcher is built from. Nil leaves application bindings uninstalled;
+	// the terminal's own key table still applies.
+	shortcuts ShortcutService
+	// openHosts, openSettings and openPanePicker are the Shell transitions an
+	// external-keyboard binding can trigger. Nil leaves that binding
+	// undispatched, so a chord never claims a key with no phone destination.
+	openHosts      func()
+	openSettings   func()
+	openPanePicker func(tabID string)
 	// history backs the Tools surface's Command History tool. Nil means the
 	// surface still opens, but that tool reports why it is unavailable.
 	history CommandHistoryService
@@ -1178,6 +1188,156 @@ func (t *sessionTabs) pasteNeedsConfirmation(text string) bool {
 	}
 	settings := t.settings.Terminal()
 	return domainterminal.ShouldConfirmPaste(text, settings.PasteProtection, settings.PasteMinLines)
+}
+
+// installScreenInput attaches this frame's external-keyboard table and the
+// one paste decision to a live screen. Both are optional interfaces, so a
+// test's fake screen and the terminal seam's other implementations are
+// unchanged.
+func (t *sessionTabs) installScreenInput(view tabView) {
+	screen := view.screen
+	if screen == nil {
+		return
+	}
+	if installer, ok := screen.(interface{ SetKeyboard(*phoneKeyboard) }); ok {
+		installer.SetKeyboard(t.keyboardFor(view))
+	}
+	if setter, ok := screen.(interface {
+		SetPasteTarget(func(*ui.Context, transfer.Data) bool)
+	}); ok {
+		setter.SetPasteTarget(func(c *ui.Context, data transfer.Data) bool {
+			return pasteData(c, screen, view.accessory, data, t.pasteNeedsConfirmation)
+		})
+	}
+}
+
+// keyboardFor builds the application-binding table for one visible Pane. The
+// actions close over the Tab and Pane the frame is drawing, so a chord acts on
+// what the user sees; the shared binding document decides the chords.
+func (t *sessionTabs) keyboardFor(view tabView) *phoneKeyboard {
+	if t.shortcuts == nil {
+		return nil
+	}
+	return phoneKeyboardFor(t.shortcuts, phoneShortcutActions{
+		SwitchTab: t.showTabNumber,
+		NextTab:   func() { t.cycleTab(1) },
+		PrevTab:   func() { t.cycleTab(-1) },
+		NewTab:    func() { t.openNewTab() },
+		CloseTab:  func() { t.requestClose(view.id) },
+		ClosePane: func() { t.requestPaneClose(view.id, view.focus) },
+		MoveFocus: func(key ui.Key) { t.movePaneFocus(view.id, view.focus, key) },
+		SplitPane: func(bool) {
+			if t.openPanePicker != nil {
+				t.openPanePicker(view.id)
+			}
+		},
+		OpenHosts:    t.openHosts,
+		OpenSettings: t.openSettings,
+		History:      func() { t.openPaneHistory(view.id, view.focus) },
+	})
+}
+
+// openNewTab is the phone's counterpart to the desktop's new-Tab chord: the
+// Quick Connect form, which opens a Tab without a saved Host.
+func (t *sessionTabs) openNewTab() {
+	if t.quickOpen != nil {
+		t.quickOpen()
+	}
+}
+
+// showTabNumber switches to the Tab at a one-based position, as the numbered
+// tab binding does. An out-of-range number changes nothing.
+func (t *sessionTabs) showTabNumber(number int) {
+	t.mu.Lock()
+	if number < 1 || number > len(t.tabs) {
+		t.mu.Unlock()
+		return
+	}
+	id := t.tabs[number-1].id
+	t.mu.Unlock()
+	if t.show != nil {
+		t.show(id)
+	}
+}
+
+// cycleTab moves to the next (+1) or previous (-1) Tab, wrapping. The visible
+// Tab is the one holding the phone's one live screen.
+func (t *sessionTabs) cycleTab(delta int) {
+	t.mu.Lock()
+	if len(t.tabs) == 0 {
+		t.mu.Unlock()
+		return
+	}
+	current := -1
+	for i, tab := range t.tabs {
+		for _, pane := range tab.panes {
+			if pane.screen != nil {
+				current = i
+				break
+			}
+		}
+		if current >= 0 {
+			break
+		}
+	}
+	if current < 0 {
+		current = 0
+	}
+	next := (current + delta + len(t.tabs)) % len(t.tabs)
+	id := t.tabs[next].id
+	t.mu.Unlock()
+	if t.show != nil {
+		t.show(id)
+	}
+}
+
+// movePaneFocus moves focus within the visible Tab. Left/Up go to the previous
+// Pane and Right/Down to the next, wrapping, which is the phone's equivalent of
+// the desktop's directional pane focus.
+func (t *sessionTabs) movePaneFocus(tabID, paneID string, key ui.Key) {
+	delta := 1
+	switch key {
+	case ui.KeyLeft, ui.KeyUp:
+		delta = -1
+	}
+	t.mu.Lock()
+	tab := t.find(tabID)
+	if tab == nil {
+		t.mu.Unlock()
+		return
+	}
+	index := tab.paneIndex(domainmodel.PaneID(paneID))
+	if index < 0 || len(tab.panes) < 2 {
+		t.mu.Unlock()
+		return
+	}
+	next := (index + delta + len(tab.panes)) % len(tab.panes)
+	target := string(tab.panes[next].id)
+	t.mu.Unlock()
+	t.focusPane(tabID, target)
+}
+
+// openPaneHistory opens the focused Pane's Tools surface at Command History,
+// which is the phone's counterpart to the desktop's global history search.
+func (t *sessionTabs) openPaneHistory(tabID, paneID string) {
+	t.mu.Lock()
+	tab := t.find(tabID)
+	if tab == nil {
+		t.mu.Unlock()
+		return
+	}
+	pane := tab.paneOf(domainmodel.PaneID(paneID))
+	if pane == nil {
+		t.mu.Unlock()
+		return
+	}
+	pane.tools.open = true
+	pane.tools.tool = toolHistory
+	pane.tools.pending = nil
+	pane.tools.result = ""
+	pane.tools.resultProblem = false
+	t.mu.Unlock()
+	t.loadToolHistory(&pane.tools)
 }
 
 // failAttach records a failed attach or resume. A failed resume leaves the
@@ -2175,6 +2335,10 @@ func (t *sessionTabs) drawSession(c *ui.Context, id string, retry, back, addPane
 			// every frame, so a Settings or desktop change applies without
 			// recreating the Session.
 			t.applyScreenMode(view.screen)
+			// The external-keyboard dispatcher and the one paste path both
+			// need this frame's Tab and Pane, so they are installed per frame
+			// on the screen that already survives frames.
+			t.installScreenInput(view)
 			// The bar goes above the keyboard, inside the safe area the
 			// window root already applies, and the terminal takes what is left.
 			accessoryBar(c, view.accessory, view.screen, t.pasteNeedsConfirmation)

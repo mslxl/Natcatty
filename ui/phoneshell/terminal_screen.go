@@ -38,6 +38,18 @@ func newTerminalScreen(conn io.ReadWriteCloser, appearance TerminalAppearance) (
 	// before the terminal consumes them. The tap wraps the view; the view's
 	// optional methods (Resize) stay reachable through it.
 	flow := newPhoneLensFlow(nil)
+	// The screen exists before the terminal because the terminal's OnKey hook
+	// dispatches through it: an external keyboard's application bindings are
+	// resolved before the terminal encodes the key.
+	screen := &ghosttyScreen{
+		appearance:   appearance,
+		flow:         flow,
+		lensMode:     true,
+		focusNext:    true,
+		remoteScreen: remoteScreen,
+		viewConn:     conn,
+		pasteKeys:    phonePasteKeys(appearance.Keybinds),
+	}
 	term, err := terminal.New(terminal.Options{
 		Conn:         &lensTapConn{conn: conn, flow: flow},
 		ResizeByConn: remoteScreen,
@@ -47,6 +59,8 @@ func newTerminalScreen(conn io.ReadWriteCloser, appearance TerminalAppearance) (
 		Cursor:       appearance.Cursor,
 		NoBlink:      !appearance.Blink,
 		Keybinds:     appearance.Keybinds,
+		OnKey:        screen.onKey,
+		OnPaste:      screen.onPaste,
 	})
 	if err != nil {
 		flow.close()
@@ -60,16 +74,8 @@ func newTerminalScreen(conn io.ReadWriteCloser, appearance TerminalAppearance) (
 			sink.SetScreenSizeSink(term.Resize)
 		}
 	}
-	screen := &ghosttyScreen{
-		term:         term,
-		appearance:   appearance,
-		flow:         flow,
-		lensMode:     true,
-		focusNext:    true,
-		remoteScreen: remoteScreen,
-		viewConn:     conn,
-		input:        appview.NewInputClient(func(p []byte) { term.Send(p) }),
-	}
+	screen.term = term
+	screen.input = appview.NewInputClient(func(p []byte) { term.Send(p) })
 	if remoteScreen {
 		screen.viewSizeCh = make(chan appview.Size, 1)
 		screen.viewSizeQuit = make(chan struct{})
@@ -112,6 +118,23 @@ type ghosttyScreen struct {
 	scroll    ui.ScrollState
 	follow    appview.Follow
 	input     *appview.InputClient
+	// keyboard is the external-keyboard dispatcher the Sessions page installs
+	// on every frame the Pane is visible. It is nil when the Shell has no
+	// binding document, and the terminal then keeps its own keys alone.
+	keyboard *phoneKeyboard
+	// pasteKeys are the chords the terminal's key table treats as paste. They
+	// are intercepted here so every entry point — touch, hardware key and the
+	// system's Paste command — reads the clipboard and asks for confirmation
+	// through the one phone paste path.
+	pasteKeys map[phoneChordKey]bool
+	// pasteTarget is the Sessions page's unified paste decision. It reports
+	// whether it took the data (by sending it or by holding it for the
+	// confirmation row).
+	pasteTarget func(c *ui.Context, d transfer.Data) bool
+	// echoKey marks that the last key was handled here — a binding ran, or
+	// the screen typed the composed text the key carried — so the text the
+	// platform commits for it is not typed as well.
+	echoKey bool
 	// frame is the last build's context. A tap arrives between frames, and
 	// the URL outcome has to repaint the same window.
 	frame *ui.Context
@@ -233,6 +256,9 @@ func (s *ghosttyScreen) lensPane(c *ui.Context) ui.Element {
 		appview.Hooks{
 			Key:       s.term,
 			TextInput: s.input,
+			// An external keyboard's application bindings and the shared
+			// paste path run before the terminal encodes a key.
+			Input:     s.handleInput,
 			Selection: &s.selection,
 			Focus:     focus,
 			KeepFocus: true,
@@ -453,6 +479,147 @@ func (s *ghosttyScreen) setNotice(text string) {
 
 // SendKey types an accessory-bar key through the terminal's own encoder.
 func (s *ghosttyScreen) SendKey(key ui.Key, mods ui.Modifiers) { s.term.SendKey(key, mods) }
+
+// SetKeyboard installs the external-keyboard dispatcher. The Sessions page
+// calls it for every frame the Pane is visible; a nil table leaves the
+// terminal's own keys alone.
+func (s *ghosttyScreen) SetKeyboard(keyboard *phoneKeyboard) { s.keyboard = keyboard }
+
+// SetPasteTarget installs the Sessions page's unified paste decision. Every
+// paste entry point on this screen hands the clipboard data to it.
+func (s *ghosttyScreen) SetPasteTarget(target func(c *ui.Context, d transfer.Data) bool) {
+	s.pasteTarget = target
+}
+
+// handleInput runs before the terminal encodes a key. It gives an external
+// keyboard's application bindings their chance, intercepts the paste keys and
+// the system's Paste command so they share the touch path's confirmation,
+// types the composed text a key carries where the terminal's own encoding
+// would drop it, and leaves every other key to the terminal untouched.
+func (s *ghosttyScreen) handleInput(ev ui.InputEvent) bool {
+	switch ev.Kind {
+	case ui.InputText:
+		if s.echoKey {
+			// The platform committed the text of a key this screen already
+			// handled; typing it too would run the action twice.
+			s.echoKey = false
+			return true
+		}
+		if ev.Text == "\u0000" {
+			// Android's modifier artifact, never typed.
+			return true
+		}
+		return false
+	case ui.InputCommand:
+		if ev.Text == "paste" {
+			return s.pasteFromClipboard()
+		}
+		return false
+	case ui.InputKeyDown:
+		s.echoKey = false
+		mods, key, text, ok := phoneKeyInput(ev)
+		if ok {
+			if s.isPasteChord(mods, key) {
+				return s.pasteFromClipboard()
+			}
+			if s.keyboard.run(mods, key) {
+				s.echoKey = true
+				return true
+			}
+		}
+		// The platform composed text the key's own encoding does not type:
+		// punctuation whose name suppresses Android's text fallback, a key
+		// with no name, or an Alt-composed character. Type it, and swallow
+		// the commit the platform may send after the key, as a handled
+		// chord does.
+		if s.term != nil && phoneTypesText(mods, key, text) {
+			s.term.Send([]byte(text))
+			s.echoKey = true
+			return true
+		}
+		return false
+	case ui.InputKeyUp:
+		// The text a handled key commits arrives before its release. Clearing
+		// here keeps the flag from swallowing the first character the user
+		// later types on the on-screen keyboard.
+		s.echoKey = false
+		return false
+	default:
+		return false
+	}
+}
+
+// onKey is the raw terminal view's hook, which runs before the terminal's
+// keybinds and before it encodes the key. The Lens flow does not use it: its
+// Pane calls handleInput, which sees the event's text as well.
+func (s *ghosttyScreen) onKey(mods ui.Modifiers, key ui.Key) bool {
+	if s.isPasteChord(mods, key) {
+		return s.pasteFromClipboard()
+	}
+	return s.keyboard.run(mods, key)
+}
+
+// onPaste is the raw view's paste hook: a Paste menu command, a secondary
+// click with RightClickPaste, and any paste key the terminal resolves itself
+// all arrive here. Taking every one of them keeps the view from falling back to
+// its own unfiltered read when the phone can paste none of the formats, and
+// sends what it can through the one paste path.
+func (s *ghosttyScreen) onPaste(transfer.Data) bool {
+	s.pasteFromClipboard()
+	return true
+}
+
+// isPasteChord reports whether the terminal's own key table binds the chord to
+// paste, so this screen can route it through the shared confirmation.
+func (s *ghosttyScreen) isPasteChord(mods ui.Modifiers, key ui.Key) bool {
+	return s.pasteKeys[phoneChordKey{mods: mods, key: key}]
+}
+
+// pasteFromClipboard reads the clipboard explicitly as text and PNG and hands
+// it to the Sessions page's one paste path. It reports whether anything was
+// pasted: an empty clipboard takes nothing, as MyGo returns empty data rather
+// than an error for it.
+func (s *ghosttyScreen) pasteFromClipboard() bool {
+	if s.term == nil {
+		return false
+	}
+	data := readPhoneClipboard(s.frame)
+	if len(data.Items()) == 0 {
+		return false
+	}
+	if s.pasteTarget != nil {
+		return s.pasteTarget(s.frame, data)
+	}
+	s.term.PasteData(data)
+	return true
+}
+
+// phonePasteKeys computes the chords the terminal's key table binds to paste,
+// merging the installed bindings over MyGo's defaults exactly as
+// terminal.keybinds does. The touch control and the hardware keys then agree on
+// which chords paste.
+func phonePasteKeys(binds []terminal.Keybind) map[phoneChordKey]bool {
+	effective := terminal.DefaultKeybinds()
+	for _, bind := range binds {
+		kept := effective[:0]
+		for _, existing := range effective {
+			if existing.Mods != bind.Mods || existing.Key != bind.Key {
+				kept = append(kept, existing)
+			}
+		}
+		effective = kept
+		if bind.Action != terminal.ActionNone {
+			effective = append(effective, bind)
+		}
+	}
+	keys := make(map[phoneChordKey]bool)
+	for _, bind := range effective {
+		if bind.Action == terminal.ActionPaste {
+			keys[phoneChordKey{mods: bind.Mods, key: bind.Key}] = true
+		}
+	}
+	return keys
+}
 
 // SelectionText reads the selection the long press and drag made. The raw
 // view keeps the terminal's own selection; the Lens flow selects replay rows
