@@ -55,6 +55,24 @@ var ErrHostUnavailable = errors.New("shell: restored Host is unavailable")
 // does not support. Connecting fails before a Session is created.
 var ErrUnsupportedHost = uiconnection.ErrUnsupportedHost
 
+// ErrSplitUnavailable reports a Pane action the Pane's remote cannot support.
+// A VNC Pane splits only when the server gives each Pane its own screen;
+// showing one framebuffer in two Panes would be the same desktop twice.
+var ErrSplitUnavailable = errors.New("shell: this pane cannot split")
+
+// ScreenSplitter is implemented by a Surface whose remote must provide a screen
+// for each Pane before the Tab splits. The shell prepares the remote, then
+// opens the new Pane on the returned index.
+type ScreenSplitter interface {
+	// CanSplit reports whether splitting is still possible. It is optimistic
+	// until the remote has refused a multi-screen layout.
+	CanSplit() bool
+	// ScreenCount is the number of screens the remote currently reports.
+	ScreenCount() int
+	// PrepareSplit asks the remote for at least count screens.
+	PrepareSplit(count int) error
+}
+
 // Surface is the terminal surface a Pane shows. The UI owns it and the
 // application owns the transport beneath it; the shell only renders and closes
 // it.
@@ -1001,6 +1019,7 @@ func (s *State) NewTabWithShell(shell string) error {
 		Label: session.Label(),
 	}})
 	tab.attachOnlySession(session, surface)
+	s.wireScreenLayout(tab)
 	s.tabs = append(s.tabs, tab)
 	s.activateTab(len(s.tabs) - 1)
 	s.leaveMonitor()
@@ -1465,6 +1484,7 @@ func (s *State) Flush() {
 		descriptor.Number = number
 		tab := s.newTab(TabOptions{Label: outcome.label, AutoTitle: true, Descriptor: descriptor})
 		tab.attachOnlySession(outcome.session, surface)
+		s.wireScreenLayout(tab)
 		if outcome.browser {
 			if opener, ok := surface.(BrowserOpener); ok {
 				_ = opener.OpenBrowser()
@@ -1533,6 +1553,9 @@ func (s *State) applyPendingHostOutcome(outcome openOutcome) {
 	value.surface = surface
 	value.pending = false
 	value.err = nil
+	if tab, _ := s.tabByAnyID(outcome.tabID); tab != nil {
+		s.wireScreenLayout(tab)
+	}
 	if outcome.browser {
 		if opener, ok := surface.(BrowserOpener); ok {
 			_ = opener.OpenBrowser()

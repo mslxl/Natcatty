@@ -391,7 +391,14 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 			Title:     renameStart,
 			MenuLabel: m.SessionMenuFor(paneNumber),
 		}
-		if ref.managesPanes {
+		// A remote that cannot give each Pane its own screen must not split:
+		// every Pane would show the same desktop. The viewer's chrome explains
+		// the refusal once the remote has answered.
+		splittable := true
+		if splitter, ok := info.Surface.(state.ScreenSplitter); ok {
+			splittable = splitter.CanSplit()
+		}
+		if ref.managesPanes && splittable {
 			actions.SplitRight = func() {
 				ref.focus(info.ID)
 				_ = ref.splitRight()

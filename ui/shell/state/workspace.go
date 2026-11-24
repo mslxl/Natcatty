@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"image"
 	"net"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +26,7 @@ import (
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
+	sessionui "github.com/mslxl/natcatty/ui/session"
 )
 
 // ErrUnknownSession reports a restored Pane descriptor this shell cannot
@@ -1478,6 +1481,18 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 	if value == nil {
 		return ErrNoActiveTab
 	}
+	// A VNC Tab splits into one Pane per remote screen, so the server must
+	// provide another screen first. A server that cannot is refused here
+	// rather than opening a Pane that would show the same desktop again.
+	screenIndex := 0
+	screenSplit := value.descriptor.Kind == domainworkspace.SessionVNC
+	if screenSplit {
+		var err error
+		screenIndex, err = s.prepareSplitScreen(tab, value)
+		if err != nil {
+			return err
+		}
+	}
 	newPaneID := model.PaneID(newRuntimeID("pane-"))
 	root, err := domainworkspace.SplitAt(
 		tab.Root, focusedID, newPaneID,
@@ -1487,6 +1502,11 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 	}
 	tab.Root = root
 	descriptor := withFreshResumeKey(value.descriptor)
+	// Each Pane of a VNC Tab owns one screen, so the new Pane takes the first
+	// index the Tab does not already use.
+	if screenSplit {
+		descriptor.Screen = screenIndex
+	}
 	// A new shell is not the Session the user renamed.
 	descriptor.CustomName = ""
 	tab.panes[newPaneID] = &pane{
@@ -1505,6 +1525,140 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 	s.save()
 	s.RequestRedraw()
 	return nil
+}
+
+// wireScreenLayout makes the Tab the driver of its Panes' desktop layout. A
+// Pane that shows one screen of a shared desktop reports its rectangle from
+// draw; the Tab turns all of them into one request, so two Panes never compete
+// for the single desktop size. It is safe to call again after a reconnect.
+func (s *State) wireScreenLayout(tab *Tab) {
+	if tab == nil {
+		return
+	}
+	for _, value := range tab.panes {
+		host, ok := value.surface.(sessionui.ScreenLayoutHost)
+		if !ok {
+			continue
+		}
+		host.SetScreenGeometryListener(func() { s.driveTabScreens(tab) })
+	}
+}
+
+// driveTabScreens asks the remote for a screen layout that mirrors the Tab's
+// Panes: each screen takes its Pane's size and relative position, so every
+// Pane shows its own screen at its own size. The lowest screen number sends the
+// whole request, which makes the Tab the single driver instead of one request
+// per Pane.
+//
+// It runs on the UI thread from a Surface's draw callback. A Pane that has not
+// drawn yet owns a screen the Tab cannot describe, so the layout waits for it
+// rather than asking the remote to drop that screen.
+func (s *State) driveTabScreens(tab *Tab) {
+	// A zoomed Tab shows one Pane; its rectangle says nothing about the screens
+	// the hidden members still own, so the layout stays as it is.
+	if tab == nil || tab.Magnified != "" {
+		return
+	}
+	type driver struct {
+		index int
+		host  sessionui.ScreenLayoutHost
+	}
+	screens := make(map[int]image.Rectangle, len(tab.panes))
+	drivers := make([]driver, 0, len(tab.panes))
+	minX, minY := 0, 0
+	first := true
+	for _, value := range tab.panes {
+		host, ok := value.surface.(sessionui.ScreenLayoutHost)
+		if !ok {
+			if value.descriptor.Kind == domainworkspace.SessionVNC {
+				return
+			}
+			continue
+		}
+		index, rect, ok := host.ScreenGeometry()
+		if !ok || index < 0 || index >= 0xff {
+			return
+		}
+		if _, duplicate := screens[index]; duplicate {
+			return
+		}
+		screens[index] = rect
+		if first {
+			minX, minY = rect.Min.X, rect.Min.Y
+			first = false
+		}
+		minX, minY = min(minX, rect.Min.X), min(minY, rect.Min.Y)
+		drivers = append(drivers, driver{index: index, host: host})
+	}
+	if len(drivers) == 0 {
+		return
+	}
+	// The lowest screen number drives first, so the choice is stable; a
+	// hibernated or view-only Pane passes the request on to the next one.
+	sort.Slice(drivers, func(i, j int) bool { return drivers[i].index < drivers[j].index })
+	maxIndex := 0
+	right, bottom := 0, 0
+	for index := range screens {
+		maxIndex = max(maxIndex, index)
+	}
+	for _, rect := range screens {
+		right = max(right, rect.Max.X-minX)
+		bottom = max(bottom, rect.Max.Y-minY)
+	}
+	// The server numbers screens by their position in the list and a Pane maps
+	// its screen by index, so the list covers every index up to the highest one
+	// in use. A freed index keeps a 1x1 placeholder out of the way, which is
+	// what lets a later split reuse the index without renumbering its peers.
+	layout := make([]sessionui.ScreenRect, 0, maxIndex+1)
+	for index := 0; index <= maxIndex; index++ {
+		rect, used := screens[index]
+		if used {
+			rect = rect.Sub(image.Pt(minX, minY))
+		} else {
+			rect = image.Rect(right, 0, right+1, 1)
+			right++
+		}
+		layout = append(layout, sessionui.ScreenRect{Index: index, Rect: rect})
+	}
+	if right > 0xffff || bottom > 0xffff {
+		return
+	}
+	for _, candidate := range drivers {
+		if candidate.host.LayoutScreens(layout) {
+			return
+		}
+	}
+}
+
+// prepareSplitScreen finds the screen a new VNC Pane should show and makes sure
+// the remote provides it. The index is the lowest one the Tab's VNC Panes do
+// not already use, so closing a Pane frees its screen for the next split. When
+// the remote already reports that many screens nothing is asked of it.
+func (s *State) prepareSplitScreen(tab *Tab, focused *pane) (int, error) {
+	splitter, ok := focused.surface.(ScreenSplitter)
+	if !ok || !splitter.CanSplit() {
+		return 0, ErrSplitUnavailable
+	}
+	used := make(map[int]bool, len(tab.panes))
+	for _, other := range tab.panes {
+		if other.descriptor.Kind == domainworkspace.SessionVNC {
+			used[other.descriptor.Screen] = true
+		}
+	}
+	screen := 0
+	for used[screen] {
+		screen++
+	}
+	// The wire field is one octet; a Tab cannot have more Panes than screens.
+	if screen > 0xfe {
+		return 0, ErrSplitUnavailable
+	}
+	if screen >= splitter.ScreenCount() {
+		if err := splitter.PrepareSplit(screen + 1); err != nil {
+			return 0, err
+		}
+	}
+	return screen, nil
 }
 
 // TogglePaneZoom magnifies the focused Pane to fill its Tab, or restores the
@@ -2180,6 +2334,7 @@ func (s *State) applyPaneOutcome(outcome paneOutcome) {
 	value.surface = surface
 	value.pending = false
 	value.err = nil
+	s.wireScreenLayout(tab)
 	if outcome.restore {
 		restoreRemoteDirectory(outcome.session, value.descriptor)
 	}
@@ -2353,6 +2508,7 @@ func (s *State) openDescriptor(ctx context.Context,
 		spec.Hostname = descriptor.Hostname
 		spec.Port = descriptor.Port
 		spec.Username = descriptor.Username
+		spec.VNCScreen = descriptor.Screen
 		spec.X11Forwarding = false
 		spec.AutoAttachTmux = false
 		if s.resolveHost != nil {

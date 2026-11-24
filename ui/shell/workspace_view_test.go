@@ -617,10 +617,12 @@ func (d *viewFakeDisplay) SendKey(uint32, bool) error             { return nil }
 func (d *viewFakeDisplay) SendPhysicalKey(uint32, uint32, bool) error {
 	return nil
 }
-func (d *viewFakeDisplay) SendPointer(int, int, uint8) error { return nil }
-func (d *viewFakeDisplay) SendCutText(string) error          { return nil }
-func (d *viewFakeDisplay) RequestUpdate(bool) error          { return nil }
-func (d *viewFakeDisplay) SetDesktopSize(int, int) error     { return nil }
+func (d *viewFakeDisplay) SendPointer(int, int, uint8) error                { return nil }
+func (d *viewFakeDisplay) SendCutText(string) error                         { return nil }
+func (d *viewFakeDisplay) RequestUpdate(bool) error                         { return nil }
+func (d *viewFakeDisplay) Screens() []appsession.DisplayScreen              { return nil }
+func (d *viewFakeDisplay) SetScreenCount(int) error                         { return nil }
+func (d *viewFakeDisplay) SetScreenLayout([]appsession.DisplayScreen) error { return nil }
 func (d *viewFakeDisplay) Close() error {
 	d.closeOnce.Do(func() { close(d.events) })
 	return nil
