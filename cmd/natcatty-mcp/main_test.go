@@ -252,7 +252,7 @@ func TestRunExplainsAMissingDiscoveryFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("run without discovery succeeded")
 	}
-	if !strings.Contains(err.Error(), "is the Netcatty app running?") {
+	if !strings.Contains(err.Error(), "is Netcatty running with External MCP enabled?") {
 		t.Fatalf("error = %v", err)
 	}
 }
