@@ -162,6 +162,55 @@ func TestTabKeepsAFreedScreenPlaceholder(t *testing.T) {
 	}
 }
 
+// TestDetachedPaneKeepsItsOwnScreen proves a window still drives the screens
+// of the Panes that left it. Both windows connect to the same server, so one
+// desktop layout must cover both; a layout built from the staying window alone
+// would drop the detached Pane's screen, and that Pane would fall back to the
+// whole framebuffer — the two windows showing the same picture.
+func TestDetachedPaneKeepsItsOwnScreen(t *testing.T) {
+	stayed := &layoutSurface{index: 0, ready: true, rect: image.Rect(0, 0, 200, 160)}
+	left := &layoutSurface{index: 1, ready: true, rect: image.Rect(0, 0, 180, 160)}
+	mainTab := splitScreenTab(layoutPane("pane-1", 0, stayed))
+	detachedTab := splitScreenTab(layoutPane("pane-2", 1, left))
+	state := &State{tabs: []*Tab{mainTab}, detached: []*Tab{detachedTab}}
+	state.wireScreenLayout(mainTab)
+	state.wireScreenLayout(detachedTab)
+
+	// The Pane that stayed takes the whole split area, so its geometry report
+	// drives the shared desktop.
+	stayed.listener()
+
+	if len(stayed.layouts) != 1 {
+		t.Fatalf("layouts = %v, want one request", stayed.layouts)
+	}
+	screens := stayed.layouts[0]
+	if len(screens) != 2 {
+		t.Fatalf("screens = %v, want the staying and the detached screen", screens)
+	}
+	if screens[0].Rect.Empty() || screens[1].Rect.Empty() {
+		t.Fatalf("a screen has no rectangle: %v", screens)
+	}
+	if screens[0].Rect.Overlaps(screens[1].Rect) {
+		t.Fatalf("screens overlap: %v and %v", screens[0].Rect, screens[1].Rect)
+	}
+
+	// The detached window's own draw reaches the same desktop, since the server
+	// has one layout for every connection.
+	left.listener()
+	if len(stayed.layouts) != 2 {
+		t.Fatalf("layouts = %v, want the detached window's report to drive too", stayed.layouts)
+	}
+	second := stayed.layouts[1]
+	if len(second) != len(screens) {
+		t.Fatalf("the detached window drove %v, want the same two screens", second)
+	}
+	for i := range screens {
+		if second[i] != screens[i] {
+			t.Fatalf("screen %d = %+v, want the same layout %+v", i, second[i], screens[i])
+		}
+	}
+}
+
 // TestWireScreenLayoutDrivesFromThePaneListener proves the shell connects a
 // Pane's geometry reports to the Tab's driver: the Tab sends the layout when
 // the Pane says it moved.

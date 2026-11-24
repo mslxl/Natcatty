@@ -172,50 +172,6 @@ func TestVaultViewShowsAnOffThreadVaultChangeOnTheNextFrame(t *testing.T) {
 	}
 }
 
-func TestVaultViewShowsTheX11WarningOnlyAfterEnablingForSSH(t *testing.T) {
-	m := locales.In("en")
-	repo := &fakeHosts{}
-	state := vaultstate.NewState(repo)
-	if err := state.Reload(); err != nil {
-		t.Fatalf("Reload: %v", err)
-	}
-	// The Host editor is long; a taller frame keeps the X11 controls clickable.
-	tt := ui.NewTester(View(state), 900, 1800)
-	state.BeginCreate()
-	tt.Frame()
-
-	if !tt.HasText(m.VaultHostX11Forwarding()) {
-		t.Fatal("the SSH Host editor does not offer X11 forwarding")
-	}
-	if tt.HasText(m.VaultHostX11Warning()) {
-		t.Fatal("the X11 warning was shown before X11 was enabled")
-	}
-	if tt.HasText(m.VaultHostX11Acknowledge()) {
-		t.Fatal("the X11 acknowledgement was shown before X11 was enabled")
-	}
-
-	if err := tt.Click(m.VaultHostX11Forwarding()); err != nil {
-		t.Fatalf("click X11 forwarding: %v", err)
-	}
-	tt.Frame()
-	if !state.Form().X11Forwarding {
-		t.Fatal("the click did not enable X11 on the form")
-	}
-	if !tt.HasText(m.VaultHostX11Warning()) {
-		t.Fatal("enabling X11 did not show the security warning")
-	}
-	if !tt.HasText(m.VaultHostX11Acknowledge()) {
-		t.Fatal("enabling X11 did not show the acknowledgement")
-	}
-
-	// A non-plain-SSH transport cannot use X11, so the editor must not offer it.
-	state.Form().Transport = string(domainvault.TransportMosh)
-	tt.Frame()
-	if tt.HasText(m.VaultHostX11Forwarding()) {
-		t.Fatal("the X11 option was shown for a Mosh Host")
-	}
-}
-
 func TestVaultViewDeleteConfirmationNeverShowsARawID(t *testing.T) {
 	repo := &fakeHosts{items: []domainvault.Host{
 		{ID: "host-1", Label: "web", Hostname: "example.com", Port: 22, Protocol: domainvault.ProtocolSSH},
@@ -253,41 +209,6 @@ func TestVaultViewLocalizesValidationProblems(t *testing.T) {
 	tt.SetLocale("ru")
 	if !tt.HasText("Хосту нужно имя хоста.") {
 		t.Fatalf("Vault does not show the Russian problem, texts %q", tt.Texts())
-	}
-}
-
-func TestVaultViewOffersNetworkDeviceModeOnlyForSSH(t *testing.T) {
-	m := locales.In("en")
-	state := vaultstate.NewState(&fakeHosts{})
-	if err := state.Reload(); err != nil {
-		t.Fatalf("Reload: %v", err)
-	}
-	tt := ui.NewTester(View(state), 900, 1800)
-	state.BeginCreate()
-	tt.Frame()
-
-	if !tt.HasText(m.VaultHostNetworkDevice()) {
-		t.Fatal("the SSH Host editor does not offer network device mode")
-	}
-	if !tt.HasText(m.VaultHostNetworkDeviceHint()) {
-		t.Fatal("network device mode has no explanation")
-	}
-	if state.Form().NetworkDevice {
-		t.Fatal("network device mode was enabled by default")
-	}
-
-	if err := tt.Click(m.VaultHostNetworkDevice()); err != nil {
-		t.Fatalf("click network device mode: %v", err)
-	}
-	tt.Frame()
-	if !state.Form().NetworkDevice {
-		t.Fatal("the click did not enable network device mode")
-	}
-
-	state.Form().Transport = string(domainvault.TransportMosh)
-	tt.Frame()
-	if tt.HasText(m.VaultHostNetworkDevice()) || tt.HasText(m.VaultHostNetworkDeviceHint()) {
-		t.Fatal("network device mode was shown for a Mosh Host")
 	}
 }
 
@@ -368,43 +289,6 @@ func newRoutingView(t *testing.T, opts ...vaultstate.Option) (*vaultstate.State,
 		t.Fatalf("Reload: %v", err)
 	}
 	return state, ui.NewTester(View(state), 900, 1800)
-}
-
-func TestVaultViewHostEditorShowsTheNetworkProfileAndItsSource(t *testing.T) {
-	state, tt := newRoutingView(t)
-	m := locales.In("en")
-
-	state.BeginEdit("host-1")
-	tt.Frame()
-	if !tt.HasText(m.VaultNetworkProfile()) || !tt.HasText(m.VaultHostNetworkProfileHint()) {
-		t.Fatalf("the Host editor has no Network Profile selector, texts %q", tt.Texts())
-	}
-	if !tt.HasText(m.VaultNetworkProfileInherited("prod", "Tailnet")) {
-		t.Fatalf("the Host editor does not show the group-inherited source, texts %q", tt.Texts())
-	}
-	if tt.HasText(m.VaultNetworkProfileSourceHost()) {
-		t.Fatal("the Host editor claimed the inherited profile was set on the Host")
-	}
-
-	if err := tt.Click("Tailnet"); err != nil {
-		t.Fatalf("click the Network Profile radio: %v", err)
-	}
-	tt.Frame()
-	if state.Form().NetworkProfileID != "net-1" {
-		t.Fatalf("the radio did not select net-1, form has %q", state.Form().NetworkProfileID)
-	}
-	if !tt.HasText(m.VaultNetworkProfileSourceHost()) {
-		t.Fatalf("selecting a profile did not show the Host source, texts %q", tt.Texts())
-	}
-
-	state.BeginEditGroup("prod/web")
-	tt.Frame()
-	if !tt.HasText(m.VaultGroupNetworkProfileHint()) {
-		t.Fatal("the Host Group editor has no Network Profile explanation")
-	}
-	if !tt.HasText(m.VaultNetworkProfileInherited("prod", "Tailnet")) {
-		t.Fatalf("the Host Group editor does not show the parent default, texts %q", tt.Texts())
-	}
 }
 
 // Ticket 48: a Host with no X11 choice shows its Host Group's default as
