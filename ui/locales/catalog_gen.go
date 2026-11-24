@@ -236,6 +236,18 @@ func (msgs Messages) SessionVNCResizeFallback() string {
 	return Catalog.Format(msgs.locale, "sessionVNCResizeFallback", nil)
 }
 
+// SessionVNCMultiScreenUnavailable says "Cannot split: the server cannot give each pane its own screen."
+// in the language the app shows.
+func SessionVNCMultiScreenUnavailable() string {
+	return In(i18n.Locale()).SessionVNCMultiScreenUnavailable()
+}
+
+// SessionVNCMultiScreenUnavailable says "Cannot split: the server cannot give each pane its own screen."
+// in the language of msgs.
+func (msgs Messages) SessionVNCMultiScreenUnavailable() string {
+	return Catalog.Format(msgs.locale, "sessionVNCMultiScreenUnavailable", nil)
+}
+
 // SessionVNCConnectionFailed says "Desktop connection failed"
 // in the language the app shows.
 func SessionVNCConnectionFailed() string { return In(i18n.Locale()).SessionVNCConnectionFailed() }

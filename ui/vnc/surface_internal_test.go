@@ -14,6 +14,7 @@ import (
 	"github.com/mslxl/natcatty/domain/model/rfb"
 	"github.com/mslxl/natcatty/domain/model/rfb/rfbtest"
 	modelvnc "github.com/mslxl/natcatty/domain/model/vnc"
+	sessionui "github.com/mslxl/natcatty/ui/session"
 )
 
 // TestApplyButtonCombinesMasks proves press, drag and release combine every
@@ -47,126 +48,171 @@ func TestApplyButtonCombinesMasks(t *testing.T) {
 	}
 }
 
-// TestApplyResizeResultRecordsEachOutcome proves the viewer's resize state:
-// success clears the requested size, a refusal latches the fallback, and a
-// forwarded (pending) status neither latches nor clears the pending request.
-func TestApplyResizeResultRecordsEachOutcome(t *testing.T) {
-	succeeded := &Surface{resizeInFlight: true, resizeRequested: image.Pt(160, 120)}
-	succeeded.applyResizeResult(nil)
+// TestApplyLayoutResultRecordsEachOutcome proves the viewer's layout state: a
+// success and a refusal clear the requested layout, a refusal latches the local
+// scaling fallback, and a forwarded (pending) status keeps the request without
+// latching.
+func TestApplyLayoutResultRecordsEachOutcome(t *testing.T) {
+	layout := []appsession.DisplayScreen{{Rect: image.Rect(0, 0, 160, 120)}}
+	desktop := image.Pt(160, 120)
+
+	succeeded := &Surface{resizeInFlight: true, layoutRequested: layout, layoutDesktop: desktop}
+	succeeded.applyLayoutResult(nil)
 	if succeeded.resizeInFlight {
-		t.Fatal("success left the resize in flight")
+		t.Fatal("success left the layout in flight")
 	}
-	if succeeded.resizeRequested != (image.Point{}) {
-		t.Fatalf("successful size still cached as %v", succeeded.resizeRequested)
+	if succeeded.layoutRequested != nil {
+		t.Fatalf("successful layout still cached as %v", succeeded.layoutRequested)
 	}
 	if succeeded.resizeUnsupported {
 		t.Fatal("a success latched the local scaling fallback")
 	}
 
-	refused := &Surface{resizeInFlight: true, resizeRequested: image.Pt(160, 120)}
-	refused.applyResizeResult(appsession.ErrDesktopResizeRefused)
+	refused := &Surface{resizeInFlight: true, layoutRequested: layout, layoutDesktop: desktop}
+	refused.applyLayoutResult(appsession.ErrDesktopResizeRefused)
 	if refused.resizeInFlight {
-		t.Fatal("a refusal left the resize in flight")
+		t.Fatal("a refusal left the layout in flight")
 	}
-	if refused.resizeRequested != (image.Point{}) {
-		t.Fatalf("refused size still cached as %v", refused.resizeRequested)
+	if refused.layoutRequested != nil {
+		t.Fatalf("refused layout still cached as %v", refused.layoutRequested)
 	}
 	if !refused.resizeUnsupported {
 		t.Fatal("a refusal did not latch the local scaling fallback")
 	}
 
-	pending := &Surface{resizeInFlight: true, resizeRequested: image.Pt(160, 120)}
-	pending.applyResizeResult(appsession.ErrDesktopResizePending)
-	if pending.resizeInFlight {
-		t.Fatal("a pending reply left the resize in flight")
+	multi := &Surface{resizeInFlight: true, layoutRequested: layout, layoutDesktop: desktop}
+	multi.applyLayoutResult(appsession.ErrMultiScreenUnsupported)
+	if !multi.resizeUnsupported {
+		t.Fatal("a server that ignored the screen layout did not latch the fallback")
 	}
-	if pending.resizeRequested != image.Pt(160, 120) {
-		t.Fatalf("pending size = %v, want the request kept", pending.resizeRequested)
+
+	pending := &Surface{resizeInFlight: true, layoutRequested: layout, layoutDesktop: desktop}
+	pending.applyLayoutResult(appsession.ErrDesktopResizePending)
+	if pending.resizeInFlight {
+		t.Fatal("a pending reply left the layout in flight")
+	}
+	if len(pending.layoutRequested) != 1 || pending.layoutDesktop != desktop {
+		t.Fatal("a pending reply dropped the requested layout")
 	}
 	if pending.resizeUnsupported {
 		t.Fatal("a forwarded (status 4) reply latched the local scaling fallback")
 	}
-}
 
-// TestTimeoutKeepsTheFailedSizeButAllowsADifferentOne proves the per-size
-// backoff: after a timeout, redraws at the same pane size do not start another
-// slow wait, while a different pane size may retry.
-func TestTimeoutKeepsTheFailedSizeButAllowsADifferentOne(t *testing.T) {
-	surface := &Surface{
-		frameNumber:     1,
-		frame:           image.Rect(0, 0, 200, 150),
-		resizeInFlight:  true,
-		resizeRequested: image.Pt(160, 120),
+	timedOut := &Surface{resizeInFlight: true, layoutRequested: layout, layoutDesktop: desktop}
+	timedOut.applyLayoutResult(appsession.ErrDesktopResizeTimeout)
+	if len(timedOut.layoutRequested) != 1 || timedOut.layoutDesktop != desktop {
+		t.Fatal("a timeout dropped the layout instead of keeping it as a backoff")
 	}
-	surface.applyResizeResult(appsession.ErrDesktopResizeTimeout)
-	if surface.resizeInFlight {
-		t.Fatal("a timeout left the resize in flight")
-	}
-	if surface.resizeRequested != image.Pt(160, 120) {
-		t.Fatalf("timed-out size = %v, want the failed size kept as backoff", surface.resizeRequested)
-	}
-	if surface.resizeUnsupported {
+	if timedOut.resizeUnsupported {
 		t.Fatal("a timeout latched the fallback instead of allowing a retry")
 	}
+}
 
-	surface.mu.Lock()
-	same := surface.shouldRequestDesktopSize(160, 120)
-	different := surface.shouldRequestDesktopSize(80, 60)
-	surface.mu.Unlock()
-	if same {
-		t.Fatal("the timed-out size was retried on a redraw")
+// TestStartLayoutSkipsRepeatsAndUnreadyPanes proves the launch gate: nothing is
+// sent before the first frame, while hibernated or view-only, after the fallback
+// latched, while a request is outstanding, or for a layout the server already
+// reports or already received.
+func TestStartLayoutSkipsRepeatsAndUnreadyPanes(t *testing.T) {
+	layout := []appsession.DisplayScreen{{Rect: image.Rect(0, 0, 160, 120)}}
+	desktop := image.Pt(160, 120)
+	cases := []struct {
+		name    string
+		surface *Surface
+	}{
+		{"before the first frame", &Surface{}},
+		{"view only", &Surface{frameNumber: 1, viewOnly: true}},
+		{"hibernated", &Surface{frameNumber: 1, hibernated: true}},
+		{"local scaling latched", &Surface{frameNumber: 1, resizeUnsupported: true}},
+		{"already in flight", &Surface{frameNumber: 1, resizeInFlight: true}},
+		{"already reported", &Surface{frameNumber: 1, desktop: desktop, screens: layout}},
+		{"already requested", &Surface{frameNumber: 1, layoutDesktop: desktop, layoutRequested: layout}},
 	}
-	if !different {
-		t.Fatal("a different pane size was not allowed to retry")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.surface.startLayoutLocked(layout, desktop) {
+				t.Fatal("startLayoutLocked launched a request")
+			}
+		})
+	}
+
+	surface := &Surface{frameNumber: 1}
+	if !surface.startLayoutLocked(layout, desktop) {
+		t.Fatal("a ready surface did not launch its first layout")
+	}
+	if !surface.resizeInFlight {
+		t.Fatal("the launched layout is not marked in flight")
+	}
+	if surface.layoutDesktop != desktop || len(surface.layoutRequested) != 1 {
+		t.Fatalf("requested layout = %v at %v", surface.layoutRequested, surface.layoutDesktop)
 	}
 }
 
-// TestStaleNonzeroReplyDoesNotLatchTheFallback proves the viewer's half of the
-// stale-reply rule: a late nonzero answer for an older request is surfaced by
-// the adapter as a timeout, and a timeout must never latch local scaling.
-func TestStaleNonzeroReplyDoesNotLatchTheFallback(t *testing.T) {
-	surface := &Surface{
-		frameNumber:     1,
-		frame:           image.Rect(0, 0, 64, 48),
-		resizeInFlight:  true,
-		resizeRequested: image.Pt(64, 48),
-	}
-	surface.applyResizeResult(appsession.ErrDesktopResizeTimeout)
-	if surface.resizeUnsupported {
-		t.Fatal("a stale nonzero reply latched the local scaling fallback")
-	}
-	if surface.resizeRequested != image.Pt(64, 48) {
-		t.Fatalf("timed-out size = %v, want the per-size backoff kept", surface.resizeRequested)
+// TestLayoutScreensCoalescesWhileARequestIsInFlight proves a burst of layout
+// passes keeps only the newest target as a follow-up, instead of sending every
+// intermediate pane arrangement.
+func TestLayoutScreensCoalescesWhileARequestIsInFlight(t *testing.T) {
+	surface := &Surface{frameNumber: 1, resizeInFlight: true}
+	first := []sessionui.ScreenRect{{Index: 0, Rect: image.Rect(0, 0, 100, 80)}}
+	second := []sessionui.ScreenRect{{Index: 0, Rect: image.Rect(0, 0, 120, 90)}}
+	surface.LayoutScreens(first)
+	surface.LayoutScreens(second)
+	surface.mu.Lock()
+	defer surface.mu.Unlock()
+	if len(surface.layoutPending) != 1 || surface.layoutPending[0].Rect != second[0].Rect {
+		t.Fatalf("pending layout = %v, want the newest target", surface.layoutPending)
 	}
 }
 
-// TestStageFourWithoutFollowUpSuppressesTheSameSizeButRetries proves a
-// forwarded (status 4) request with no follow-up keeps the requested size: a
-// redraw at that size is suppressed, a different pane size retries, and the
-// fallback never latches.
-func TestStageFourWithoutFollowUpSuppressesTheSameSizeButRetries(t *testing.T) {
-	surface := &Surface{
-		frameNumber:     1,
-		frame:           image.Rect(0, 0, 200, 150),
-		resizeInFlight:  true,
-		resizeRequested: image.Pt(160, 120),
+// TestDisplayLayoutReportsTheBoundingDesktop proves the viewer hands the port
+// the Tab's rectangles unchanged and computes the desktop as their bounding
+// box, and that a rectangle the wire cannot carry never reaches the server.
+func TestDisplayLayoutReportsTheBoundingDesktop(t *testing.T) {
+	screens := []sessionui.ScreenRect{
+		{Index: 0, Rect: image.Rect(0, 0, 100, 50)},
+		{Index: 1, Rect: image.Rect(100, 0, 180, 50)},
 	}
-	surface.applyResizeResult(appsession.ErrDesktopResizePending)
-	if surface.resizeInFlight {
-		t.Fatal("a pending reply left the resize in flight")
+	layout, desktop, ok := displayLayout(screens)
+	if !ok {
+		t.Fatal("displayLayout rejected a valid layout")
 	}
-	if surface.resizeUnsupported {
-		t.Fatal("a forwarded (status 4) reply latched the local scaling fallback")
+	if desktop != image.Pt(180, 50) {
+		t.Fatalf("desktop = %v, want the bounding box 180x50", desktop)
 	}
-	surface.mu.Lock()
-	same := surface.shouldRequestDesktopSize(160, 120)
-	different := surface.shouldRequestDesktopSize(80, 60)
-	surface.mu.Unlock()
-	if same {
-		t.Fatal("the pending size was re-requested on a redraw")
+	if len(layout) != 2 || layout[1].Rect != screens[1].Rect {
+		t.Fatalf("layout = %v, want both rectangles unchanged", layout)
 	}
-	if !different {
-		t.Fatal("a different pane size was not allowed to retry")
+
+	for _, bad := range []sessionui.ScreenRect{
+		{Index: 0, Rect: image.Rectangle{}},
+		{Index: 0, Rect: image.Rect(-1, 0, 10, 10)},
+		{Index: 0, Rect: image.Rect(0, 0, 0x10000, 10)},
+	} {
+		if _, _, ok := displayLayout([]sessionui.ScreenRect{bad}); ok {
+			t.Fatalf("displayLayout accepted %v", bad.Rect)
+		}
+	}
+	if _, _, ok := displayLayout(nil); ok {
+		t.Fatal("displayLayout accepted an empty layout")
+	}
+}
+
+// TestScreenGeometryReportsTheDrawnPane proves the Tab sees the Pane rectangle
+// from the last draw and the screen index the Session was opened with.
+func TestScreenGeometryReportsTheDrawnPane(t *testing.T) {
+	surface := &Surface{screenIndex: 2}
+	if _, _, ok := surface.ScreenGeometry(); ok {
+		t.Fatal("a surface that never drew reported geometry")
+	}
+	surface.paneRect = ui.Rect{X: 8, Y: 16, W: 100, H: 80}
+	index, rect, ok := surface.ScreenGeometry()
+	if !ok {
+		t.Fatal("a drawn surface reported no geometry")
+	}
+	if index != 2 {
+		t.Fatalf("screen index = %d, want 2", index)
+	}
+	if rect != image.Rect(8, 16, 108, 96) {
+		t.Fatalf("rect = %v, want the drawn window rectangle", rect)
 	}
 }
 
@@ -307,4 +353,28 @@ func TestInputComposeTextAndCommandAreIgnoredDirectly(t *testing.T) {
 		{Down: true, Keysym: 0x62},
 		{Down: false, Keysym: 0x62},
 	})
+}
+
+// TestLayoutScreensDeclinesWhenAPaneCannotDrive proves the Tab is told when
+// this Pane cannot take the request, so it can drive through another Pane: a
+// view-only, hibernated, or not-yet-drawn Pane declines instead of swallowing
+// the layout.
+func TestLayoutScreensDeclinesWhenAPaneCannotDrive(t *testing.T) {
+	screens := []sessionui.ScreenRect{{Index: 0, Rect: image.Rect(0, 0, 100, 80)}}
+	cases := []struct {
+		name    string
+		surface *Surface
+	}{
+		{"before the first frame", &Surface{}},
+		{"view only", &Surface{frameNumber: 1, viewOnly: true}},
+		{"hibernated", &Surface{frameNumber: 1, hibernated: true}},
+		{"local scaling latched", &Surface{frameNumber: 1, resizeUnsupported: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.surface.LayoutScreens(screens) {
+				t.Fatal("the Pane took a layout it cannot drive")
+			}
+		})
+	}
 }

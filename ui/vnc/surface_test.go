@@ -2,6 +2,7 @@ package vnc_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -19,6 +20,7 @@ import (
 	modelterminal "github.com/mslxl/natcatty/domain/model/terminal"
 	modelvnc "github.com/mslxl/natcatty/domain/model/vnc"
 	"github.com/mslxl/natcatty/domain/sessiontitle"
+	sessionui "github.com/mslxl/natcatty/ui/session"
 	vncui "github.com/mslxl/natcatty/ui/vnc"
 )
 
@@ -66,8 +68,10 @@ type fixture struct {
 type fixtureOptions struct {
 	frame         *image.RGBA
 	width, height int
-	root          func(*ui.Context, *vncui.Surface) ui.Element
-	configure     func(*rfbtest.Config)
+	// screen is the remote screen index the viewer shows.
+	screen    int
+	root      func(*ui.Context, *vncui.Surface) ui.Element
+	configure func(*rfbtest.Config)
 	// config overrides the Host's viewer configuration; nil uses defaults.
 	config *modelvnc.Config
 	// serviceOptions and surfaceOptions pass test seams through to the
@@ -124,9 +128,10 @@ func newFixtureWithOptions(t *testing.T, opts fixtureOptions) *fixture {
 		Configuration: configuration,
 	}
 	session, err := appsession.NewService(factory, opts.serviceOptions...).Open(context.Background(), appsession.StartSpec{
-		Kind:  appsession.KindVNC,
-		Label: "workstation",
-		VNC:   &cfg,
+		Kind:      appsession.KindVNC,
+		Label:     "workstation",
+		VNC:       &cfg,
+		VNCScreen: opts.screen,
 	})
 	if err != nil {
 		t.Fatalf("Open VNC: %v", err)
@@ -638,6 +643,26 @@ func desktopSizes(server *rfbtest.Server) []rfbtest.DesktopSizeRequest {
 	return server.Received().DesktopSizes
 }
 
+// driveTabLayout performs the Tab's job for a single-Pane Tab: whenever the
+// Pane reports its geometry, it asks the server for one screen covering that
+// Pane. The real shell derives the layout from every Pane; one Pane is the
+// case these viewer tests need.
+func driveTabLayout(f *fixture) {
+	drive := func() {
+		index, rect, ok := f.surface.ScreenGeometry()
+		if !ok {
+			return
+		}
+		f.surface.LayoutScreens([]sessionui.ScreenRect{{Index: index, Rect: rect.Sub(rect.Min)}})
+	}
+	f.surface.SetScreenGeometryListener(drive)
+	f.tester.Frame()
+	// A draw may already have reported its geometry before the listener was
+	// installed, so drive once by hand; later reports arrive through the
+	// listener.
+	drive()
+}
+
 func requestedSize(server *rfbtest.Server, width, height uint16) bool {
 	for _, request := range desktopSizes(server) {
 		if request.Width == width && request.Height == height {
@@ -647,20 +672,21 @@ func requestedSize(server *rfbtest.Server, width, height uint16) bool {
 	return false
 }
 
-// TestPaneResizeAsksTheServerForTheMatchingDesktopSize proves ExtendedDesktopSize
-// is used for both the initial pane fit and a later pane resize, and that the
-// server's follow-up resize reaches the Session snapshot.
-func TestPaneResizeAsksTheServerForTheMatchingDesktopSize(t *testing.T) {
+// TestTabLayoutResizesTheDesktopToThePane proves the viewer sends the Tab's
+// explicit layout, that the request carries the Pane's own screen rectangle,
+// and that the server's follow-up resize reaches the Session snapshot.
+func TestTabLayoutResizesTheDesktopToThePane(t *testing.T) {
 	f := newFixtureWithOptions(t, fixtureOptions{configure: func(cfg *rfbtest.Config) {
 		cfg.ExtendedDesktopSize = true
 	}})
-	f.tester.Frame()
+	driveTabLayout(f)
 	waitUntil(t, "the initial 160x120 resize", func() bool {
 		f.tester.Frame()
 		return requestedSize(f.server, 160, 120)
 	})
 
 	f.tester.SetSize(80, 60)
+	driveTabLayout(f)
 	waitUntil(t, "the 80x60 resize", func() bool {
 		f.tester.Frame()
 		return requestedSize(f.server, 80, 60)
@@ -673,6 +699,13 @@ func TestPaneResizeAsksTheServerForTheMatchingDesktopSize(t *testing.T) {
 	if f.surface.LocalScaling() {
 		t.Fatal("a supporting server was reported as local scaling")
 	}
+	// The request names one screen covering the whole Pane, so the server can
+	// give a multi-Pane Tab one screen per Pane without changing this case.
+	sizes := desktopSizes(f.server)
+	last := sizes[len(sizes)-1]
+	if len(last.Screens) != 1 || last.Screens[0].Width != 80 || last.Screens[0].Height != 60 {
+		t.Fatalf("last layout = %+v, want one 80x60 screen", last.Screens)
+	}
 }
 
 // TestServerWithoutResizeKeepsLocalScaling proves the fallback: when the server
@@ -680,6 +713,7 @@ func TestPaneResizeAsksTheServerForTheMatchingDesktopSize(t *testing.T) {
 // locally and exposes a notice the chrome can show.
 func TestServerWithoutResizeKeepsLocalScaling(t *testing.T) {
 	f := newFixture(t)
+	driveTabLayout(f)
 	waitUntil(t, "the local scaling fallback", func() bool {
 		f.tester.Frame()
 		return f.surface.LocalScaling()
@@ -709,7 +743,7 @@ func TestServerRefusingResizeShowsTheFallback(t *testing.T) {
 		cfg.ExtendedDesktopSize = true
 		cfg.DesktopSizeStatus = 1
 	}})
-	f.tester.Frame()
+	driveTabLayout(f)
 	waitUntil(t, "the resize request to reach the refusing server", func() bool {
 		f.tester.Frame()
 		return len(desktopSizes(f.server)) > 0
@@ -746,7 +780,7 @@ func TestForwardedResizeStaysPendingThenCompletes(t *testing.T) {
 		cfg.DesktopSizeStatus = 4
 		cfg.DesktopSizeFollowUp = true
 	}})
-	f.tester.Frame()
+	driveTabLayout(f)
 	waitUntil(t, "the pane-size request", func() bool {
 		f.tester.Frame()
 		return requestedSize(f.server, 160, 120)
@@ -781,7 +815,7 @@ func TestForwardedResizeWithoutFollowUpKeepsTheRequest(t *testing.T) {
 		cfg.DesktopSizeStatus = 4
 		cfg.DesktopSizeFollowUp = false
 	}})
-	f.tester.Frame()
+	driveTabLayout(f)
 	waitUntil(t, "the first pane-size request", func() bool {
 		f.tester.Frame()
 		return requestedSize(f.server, 160, 120)
@@ -799,6 +833,7 @@ func TestForwardedResizeWithoutFollowUpKeepsTheRequest(t *testing.T) {
 
 	// A different pane size is allowed to retry.
 	f.tester.SetSize(80, 60)
+	driveTabLayout(f)
 	waitUntil(t, "a retry at the new pane size", func() bool {
 		f.tester.Frame()
 		return requestedSize(f.server, 80, 60)
@@ -820,7 +855,7 @@ func TestRefusedResizeStatusesLatchTheFallback(t *testing.T) {
 				cfg.ExtendedDesktopSize = true
 				cfg.DesktopSizeStatus = status
 			}})
-			f.tester.Frame()
+			driveTabLayout(f)
 			waitUntil(t, "the resize request", func() bool {
 				f.tester.Frame()
 				return len(desktopSizes(f.server)) > 0
@@ -863,4 +898,87 @@ func TestPointerUsesPaneLocalCoordinates(t *testing.T) {
 		}
 		return false
 	})
+}
+
+// twoScreenFrame is one 320x120 desktop split into a red left screen and a blue
+// right screen of 160x120 each.
+func twoScreenFrame() *image.RGBA {
+	frame := image.NewRGBA(image.Rect(0, 0, 320, 120))
+	for y := 0; y < 120; y++ {
+		for x := 0; x < 320; x++ {
+			pixel := red
+			if x >= 160 {
+				pixel = blue
+			}
+			frame.SetRGBA(x, y, pixel)
+		}
+	}
+	return frame
+}
+
+// TestPaneShowsItsOwnScreenOfAMultiScreenDesktop proves a Pane with a screen
+// index renders only that screen at 1:1 and offsets pointer input by the
+// screen's origin, so split Panes show different screens rather than the same
+// desktop twice.
+func TestPaneShowsItsOwnScreenOfAMultiScreenDesktop(t *testing.T) {
+	f := newFixtureWithOptions(t, fixtureOptions{
+		frame:  twoScreenFrame(),
+		width:  160,
+		height: 120,
+		screen: 1,
+		configure: func(c *rfbtest.Config) {
+			c.ExtendedDesktopSize = true
+			c.ScreenLayout = []rfb.Screen{
+				{ID: 1, Width: 160, Height: 120},
+				{ID: 2, X: 160, Width: 160, Height: 120},
+			}
+		},
+	})
+
+	// The second screen fills the pane exactly, so every pixel is blue. The
+	// whole 320x120 desktop would be letterboxed instead.
+	var shot *image.RGBA
+	waitUntil(t, "the second screen to render", func() bool {
+		f.tester.Frame()
+		shot = f.tester.Image()
+		return shot.RGBAAt(5, 5) == blue && shot.RGBAAt(150, 115) == blue
+	})
+	if got := shot.RGBAAt(5, 5); got != blue {
+		t.Fatalf("pane pixel = %+v, want the second screen", got)
+	}
+
+	// A pointer at the pane origin is the screen's own origin, so the guest
+	// sees it 160 pixels into the desktop.
+	f.tester.Move(35, 60)
+	waitUntil(t, "the pointer at the screen's desktop position", func() bool {
+		for _, pointer := range f.server.Received().Pointers {
+			if pointer.X == 195 && pointer.Y == 60 {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// TestPrepareSplitRefusesAServerWithoutMultiScreen proves the viewer latches a
+// refusal and explains it, so the shell can hide Split instead of opening a
+// Pane that would repeat the same desktop.
+func TestPrepareSplitRefusesAServerWithoutMultiScreen(t *testing.T) {
+	f := newFixtureWithOptions(t, fixtureOptions{
+		configure: func(c *rfbtest.Config) {
+			c.ExtendedDesktopSize = true
+			c.IgnoreScreens = true
+		},
+	})
+	waitUntil(t, "the initial layout", func() bool { return len(f.session.Screens()) == 1 })
+
+	if err := f.surface.PrepareSplit(2); !errors.Is(err, appsession.ErrMultiScreenUnsupported) {
+		t.Fatalf("PrepareSplit = %v, want ErrMultiScreenUnsupported", err)
+	}
+	if f.surface.CanSplit() {
+		t.Fatal("the viewer still offers Split after the server refused multi-screen")
+	}
+	if f.surface.SplitNotice() == "" {
+		t.Fatal("the viewer has no explanation for the refused split")
+	}
 }

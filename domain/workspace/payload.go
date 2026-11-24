@@ -59,6 +59,10 @@ type SessionDescriptor struct {
 	// Serial is the port and framing a serial Pane reopens with. It carries no
 	// credential material.
 	Serial *serial.Config `json:"serial,omitempty"`
+	// Screen is the remote screen a VNC Pane shows. Zero is the whole desktop
+	// on a single-screen server and the first screen of a multi-screen layout.
+	// Panes of one Tab claim distinct screens.
+	Screen int `json:"screen,omitempty"`
 	// ResumeKey locates an EternalTerminal Pane's saved session credentials in
 	// the encrypted secret store. It is an opaque locator, never the ET
 	// session id or passkey; those stay only in the store.

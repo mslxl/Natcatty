@@ -641,7 +641,7 @@ func TestLeavingViewOnlyClearsTheClipboardRefusal(t *testing.T) {
 	f := newFixtureWithOptions(t, fixtureOptions{root: vncChromeRoot})
 	f.tester.SetSize(1000, 240)
 	f.tester.SetLocale("en")
-	f.tester.Frame()
+	driveTabLayout(f)
 	f.tester.Frame()
 	m := locales.In("en")
 
@@ -689,7 +689,7 @@ func TestToolbarCyclesScaleAndRendersTheFallbackNotice(t *testing.T) {
 	f := newFixtureWithOptions(t, fixtureOptions{root: vncChromeRoot})
 	f.tester.SetSize(1000, 240)
 	f.tester.SetLocale("en")
-	f.tester.Frame()
+	driveTabLayout(f)
 	f.tester.Frame()
 	m := locales.In("en")
 
@@ -867,6 +867,7 @@ func TestViewOnlySendsNoDesktopResize(t *testing.T) {
 	enableResize := func(cfg *rfbtest.Config) { cfg.ExtendedDesktopSize = true }
 
 	control := newFixtureWithOptions(t, fixtureOptions{configure: enableResize})
+	driveTabLayout(control)
 	waitUntil(t, "the control desktop-resize request", func() bool {
 		control.tester.Frame()
 		return len(control.server.Received().DesktopSizes) > 0
@@ -875,6 +876,8 @@ func TestViewOnlySendsNoDesktopResize(t *testing.T) {
 	config := modelvnc.DefaultConfig()
 	config.ViewOnly = true
 	f := newFixtureWithOptions(t, fixtureOptions{config: &config, configure: enableResize})
+	// The Tab drives this Pane too; view-only must refuse to forward it.
+	driveTabLayout(f)
 	waitUntil(t, "the view-only frame", func() bool {
 		f.tester.Frame()
 		return f.tester.Image().RGBAAt(35, 15) == red

@@ -19,6 +19,7 @@
   "sessionScreenSaved": "已保存当前屏幕。",
   "sessionScreenFailed": "无法保存当前屏幕。",
   "sessionVNCResizeFallback": "正在使用本地缩放：服务器无法调整其桌面大小。",
+  "sessionVNCMultiScreenUnavailable": "无法拆分：服务器无法为每个窗格提供独立屏幕。",
   "sessionVNCConnectionFailed": "桌面连接失败",
   "sessionVNCReconnectHint": "连接已结束，不会自动重试。请重新连接以再试一次。",
   "sessionVNCHibernatedBody": "连接保持打开，并保留最后一帧。恢复后可再次显示桌面。",

@@ -134,12 +134,45 @@ type Surface struct {
 	// desktop resizing, so the viewer stops asking and keeps local scaling.
 	resizeUnsupported bool
 	resizeInFlight    bool
-	// resizeRequested is the pane size of the outstanding or last-answered
-	// resize. It suppresses duplicate requests for that size: it stays set
-	// while a forwarded (pending) request may still complete, and after a
-	// timeout it acts as a per-size backoff until the pane uses another size.
-	// A DisplayEventResize of the same size, or a successful reply, clears it.
-	resizeRequested image.Point
+	// layoutRequested is the screen layout of the outstanding request and
+	// layoutDesktop its desktop size. The pair suppresses duplicate requests:
+	// it stays set while a forwarded (pending) request may still complete, and
+	// after a timeout it acts as a backoff for that layout. A resize event of
+	// the same desktop size, or a non-retryable reply, clears it.
+	layoutRequested []appsession.DisplayScreen
+	layoutDesktop   image.Point
+	// layoutPending is the newest layout the Tab asked for while a request was
+	// in flight. Bursts of layout passes (a window resize draws one Pane after
+	// another) collapse into one follow-up request instead of a queue.
+	layoutPending        []appsession.DisplayScreen
+	layoutPendingDesktop image.Point
+	// paneRect is the Pane rectangle of the last draw, in window pixels, and
+	// geometryDirty asks the next draw to tell the Tab about it even when the
+	// rectangle did not move (the remote's own layout changed, or the first
+	// frame arrived after the last report).
+	paneRect      ui.Rect
+	geometryDirty bool
+	// geometryFn is the Tab's listener, installed by the shell. It runs on the
+	// UI thread during draw.
+	geometryFn func()
+
+	// screens is the newest server-reported layout and desktop is the full
+	// framebuffer extent it describes. A Pane with a screen index crops its
+	// screen out of every frame, so the bitmap, the scale modes, and pointer
+	// mapping all treat that screen as the desktop. An empty layout means the
+	// whole framebuffer is the one screen.
+	screens []appsession.DisplayScreen
+	desktop image.Point
+	// screenIndex is the remote screen this Pane shows: 0 is the whole desktop
+	// on a single-screen server and the first screen of a multi-screen layout.
+	screenIndex int
+	// screenOrigin is the framebuffer origin of the screen drawn last; pointer
+	// positions are offset by it before they reach the guest.
+	screenOrigin image.Point
+	// multiScreenRefused latches after the server answered a split request
+	// without adopting the layout, so the Pane stops offering Split and the
+	// chrome explains why. A Pane never shows the same desktop twice.
+	multiScreenRefused bool
 
 	// hibernated replaces the live desktop with a resumable placeholder while
 	// the Session and its transport stay alive. pixels is kept: it is the
@@ -243,6 +276,7 @@ func New(session *appsession.Session, options ...Option) (*Surface, error) {
 		scaleMode:    modelvnc.NormalizeFitMode(config.FitMode),
 		cursorMode:   modelvnc.NormalizeCursorMode(config.CursorMode),
 		viewOnly:     config.ViewOnly,
+		screenIndex:  session.VNCScreen(),
 		locale:       "en",
 		done:         make(chan struct{}),
 	}
@@ -278,11 +312,20 @@ func (s *Surface) consume(events <-chan appsession.DisplayEvent) {
 			case appsession.DisplayEventResize:
 				if event.Width > 0 && event.Height > 0 {
 					s.mu.Lock()
-					// The server reached the size we last asked for. A pending
-					// (status 4) request is complete and must not be re-sent.
-					if s.resizeRequested == image.Pt(event.Width, event.Height) {
-						s.resizeRequested = image.Point{}
+					s.desktop = image.Pt(event.Width, event.Height)
+					s.screens = append([]appsession.DisplayScreen(nil), event.Screens...)
+					// The server reached the desktop size we last asked for. A
+					// pending (status 4) request is complete and must not be
+					// re-sent.
+					if s.layoutDesktop == image.Pt(event.Width, event.Height) {
+						s.layoutRequested = nil
+						s.layoutDesktop = image.Point{}
 					}
+					// The remote's layout changed, so the Tab may need to ask
+					// for it again: its Panes' rectangles are unchanged, but a
+					// re-drive is cheap and converges when another client moved
+					// the desktop.
+					s.geometryDirty = true
 					s.mu.Unlock()
 					s.requestRedraw()
 				}
@@ -401,8 +444,11 @@ func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
 	return element
 }
 
-// applyPendingFrame copies the newest snapshot into the owned bitmap. It runs
-// on the UI thread, as drawing does.
+// applyPendingFrame copies the newest snapshot's screen into the owned bitmap.
+// It runs on the UI thread, as drawing does. A Pane that shows one screen of a
+// multi-screen desktop copies only that screen, so every later stage — the
+// bitmap, the scale modes, the cursor, and pointer mapping — works in screen
+// coordinates and the Pane never shows a neighbour's pixels.
 func (s *Surface) applyPendingFrame() {
 	s.mu.Lock()
 	frame := s.pending
@@ -412,98 +458,230 @@ func (s *Surface) applyPendingFrame() {
 		return
 	}
 	bounds := frame.Image.Bounds()
-	size := image.Rect(0, 0, bounds.Dx(), bounds.Dy())
+	s.mu.Lock()
+	screen := s.screenRectLocked(bounds)
+	s.mu.Unlock()
+	size := image.Rect(0, 0, screen.Dx(), screen.Dy())
 	// Hibernation keeps pixels but drops the drawn bitmap, so a pending frame
 	// that arrived while hibernated must recreate it before Update.
 	if s.pixels == nil || s.pixels.Bounds() != size || s.bitmap == nil {
 		s.pixels = image.NewRGBA(size)
 		s.bitmap = ui.NewBitmap(s.pixels).Pixelated()
 	}
-	copy(s.pixels.Pix, frame.Image.Pix)
+	copyScreenPixels(s.pixels, frame.Image, screen)
 	s.bitmap.Update(s.pixels)
+	s.mu.Lock()
 	s.frame = size
+	s.screenOrigin = screen.Min
 	s.frameNumber++
+	if s.frameNumber == 1 {
+		// The first applied frame is what makes a layout request meaningful:
+		// an earlier draw had no frame to show, and the Tab may already have
+		// asked while this Pane could not answer. Report the geometry again.
+		s.geometryDirty = true
+	}
+	s.mu.Unlock()
 	s.scaled = nil
 	s.scaledPix = nil
 }
 
-// maybeRequestDesktopSize asks the server to match a pane size change. It runs
-// only after the first frame, because ExtendedDesktopSize support is learned
-// from the server's initial full update; asking earlier would mistake
-// "not negotiated yet" for "unsupported". The request runs off the UI thread
-// so drawing never waits on the network.
-func (s *Surface) maybeRequestDesktopSize(width, height float32) {
-	// View-only is a read-only promise: asking the guest to resize is a
-	// guest-directed write, like a key or a pointer button. Frames keep
-	// arriving and the viewer keeps scaling them locally.
-	if s.viewOnly {
-		return
+// screenRectLocked returns the framebuffer rectangle this Pane displays,
+// clamped to bounds. A Pane whose index does not name a reported screen — a
+// restored Pane after the server shrank its layout, or a single-screen desktop
+// — shows the whole framebuffer. The caller holds s.mu.
+func (s *Surface) screenRectLocked(bounds image.Rectangle) image.Rectangle {
+	if s.screenIndex < 0 || s.screenIndex >= len(s.screens) {
+		return bounds
 	}
-	w, h := int(width+0.5), int(height+0.5)
-	if w <= 0 || h <= 0 {
-		return
+	rect := s.screens[s.screenIndex].Rect.Intersect(bounds)
+	if rect.Empty() {
+		return bounds
+	}
+	return rect
+}
+
+// copyScreenPixels copies the screen rectangle of src into dst, whose origin is
+// (0,0). Both images use the RGBA layout, so a row is one contiguous copy.
+func copyScreenPixels(dst, src *image.RGBA, screen image.Rectangle) {
+	width := min(screen.Dx(), dst.Bounds().Dx())
+	for y := 0; y < screen.Dy() && y < dst.Bounds().Dy(); y++ {
+		srcOffset := src.PixOffset(screen.Min.X, screen.Min.Y+y)
+		dstOffset := dst.PixOffset(0, y)
+		copy(dst.Pix[dstOffset:dstOffset+width*4], src.Pix[srcOffset:srcOffset+width*4])
+	}
+}
+
+// ScreenGeometry reports the screen this Pane shows and its rectangle from the
+// last draw, in window pixels. The Tab uses it to lay the desktop's screens out
+// to match the Panes. ok is false before the first draw.
+func (s *Surface) ScreenGeometry() (int, image.Rectangle, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rect := s.paneRect
+	width, height := int(rect.W+0.5), int(rect.H+0.5)
+	if width <= 0 || height <= 0 {
+		return s.screenIndex, image.Rectangle{}, false
+	}
+	x, y := int(rect.X+0.5), int(rect.Y+0.5)
+	return s.screenIndex, image.Rect(x, y, x+width, y+height), true
+}
+
+// SetScreenGeometryListener installs the Tab's callback. Draw invokes it on the
+// UI thread when the Pane rectangle changes or the remote reports a layout, so
+// the Tab can re-drive the desktop from every Pane's geometry.
+func (s *Surface) SetScreenGeometryListener(fn func()) {
+	s.mu.Lock()
+	s.geometryFn = fn
+	s.mu.Unlock()
+}
+
+// LayoutScreens asks the server for the screen layout the Tab derived from its
+// Panes. The Tab calls it on the UI thread when a Pane moves or resizes; the
+// request runs off the UI thread so drawing never waits on the network.
+//
+// The remote has one desktop, so the Tab is the only driver: a Pane never asks
+// for a size of its own, which is what would make two Panes compete for the
+// same desktop size.
+func (s *Surface) LayoutScreens(screens []sessionui.ScreenRect) bool {
+	layout, desktop, ok := displayLayout(screens)
+	if !ok {
+		return false
 	}
 	s.mu.Lock()
-	if !s.shouldRequestDesktopSize(w, h) {
+	if s.viewOnly || s.hibernated || s.resizeUnsupported || s.frameNumber == 0 {
 		s.mu.Unlock()
-		return
+		return false
 	}
-	s.resizeRequested = image.Pt(w, h)
-	s.resizeInFlight = true
+	if s.resizeInFlight {
+		// Coalesce: the request in flight describes an older layout, and this
+		// one is newer than anything queued. Replacing the pending target keeps
+		// one follow-up request per burst. A repeat of the outstanding layout
+		// needs no follow-up at all.
+		if !s.layoutIsRequestedLocked(layout, desktop) {
+			s.layoutPending, s.layoutPendingDesktop = layout, desktop
+		}
+		s.mu.Unlock()
+		return true
+	}
+	launch := s.startLayoutLocked(layout, desktop)
 	s.mu.Unlock()
-	go s.requestDesktopSize(w, h)
+	if launch {
+		go s.requestScreenLayout(layout)
+	}
+	return true
 }
 
-// shouldRequestDesktopSize reports whether a pane size should start a resize
-// request. The caller holds s.mu. A timeout leaves resizeRequested at the
-// failed size, so redraws at that size are suppressed while a different pane
-// size is still allowed to retry.
-func (s *Surface) shouldRequestDesktopSize(w, h int) bool {
-	if s.resizeUnsupported || s.resizeInFlight || s.frameNumber == 0 {
-		return false
+// displayLayout converts the Tab's screen rectangles into the display port's
+// layout and its desktop size. ok is false for a rectangle the wire cannot
+// carry, so a malformed layout never reaches the server.
+func displayLayout(screens []sessionui.ScreenRect) ([]appsession.DisplayScreen, image.Point, bool) {
+	if len(screens) == 0 {
+		return nil, image.Point{}, false
 	}
-	if s.frame.Dx() == w && s.frame.Dy() == h {
-		return false
+	layout := make([]appsession.DisplayScreen, 0, len(screens))
+	desktop := image.Point{}
+	for _, screen := range screens {
+		rect := screen.Rect
+		if rect.Empty() || rect.Min.X < 0 || rect.Min.Y < 0 ||
+			rect.Max.X > 0xffff || rect.Max.Y > 0xffff {
+			return nil, image.Point{}, false
+		}
+		layout = append(layout, appsession.DisplayScreen{Rect: rect})
+		desktop.X = max(desktop.X, rect.Max.X)
+		desktop.Y = max(desktop.Y, rect.Max.Y)
 	}
-	return s.resizeRequested != image.Pt(w, h)
+	return layout, desktop, true
 }
 
-// requestDesktopSize sends one resize and folds its outcome into the viewer
+// startLayoutLocked records layout as the outstanding request and reports
+// whether the caller must launch it. The caller holds s.mu. Nothing is launched
+// before the first frame: ExtendedDesktopSize support is learned from the
+// server's initial full update, and asking earlier would mistake "not
+// negotiated yet" for unsupported.
+func (s *Surface) startLayoutLocked(layout []appsession.DisplayScreen, desktop image.Point) bool {
+	if s.viewOnly || s.hibernated || s.resizeUnsupported || s.resizeInFlight || s.frameNumber == 0 {
+		return false
+	}
+	if s.layoutMatchesLocked(layout, desktop) || s.layoutIsRequestedLocked(layout, desktop) {
+		return false
+	}
+	s.layoutRequested, s.layoutDesktop = layout, desktop
+	s.resizeInFlight = true
+	return true
+}
+
+// layoutMatchesLocked reports whether the server already reports this layout.
+// The caller holds s.mu.
+func (s *Surface) layoutMatchesLocked(layout []appsession.DisplayScreen, desktop image.Point) bool {
+	if s.desktop != desktop || len(s.screens) != len(layout) {
+		return false
+	}
+	for i := range layout {
+		if s.screens[i].Rect != layout[i].Rect {
+			return false
+		}
+	}
+	return true
+}
+
+// layoutIsRequestedLocked reports whether this exact layout is already the one
+// outstanding or last asked for. The caller holds s.mu.
+func (s *Surface) layoutIsRequestedLocked(layout []appsession.DisplayScreen, desktop image.Point) bool {
+	if s.layoutDesktop != desktop || len(s.layoutRequested) != len(layout) {
+		return false
+	}
+	for i := range layout {
+		if s.layoutRequested[i].Rect != layout[i].Rect {
+			return false
+		}
+	}
+	return true
+}
+
+// requestScreenLayout sends one layout and folds its outcome into the viewer
 // state. Any other error is left to the Session, which owns reconnect and
 // teardown.
-func (s *Surface) requestDesktopSize(width, height int) {
-	err := s.session.SetDesktopSize(width, height)
-	s.applyResizeResult(err)
+func (s *Surface) requestScreenLayout(layout []appsession.DisplayScreen) {
+	err := s.session.SetScreenLayout(layout)
+	s.applyLayoutResult(err)
 	s.requestRedraw()
 }
 
-// applyResizeResult records the result of one desktop-resize request.
+// applyLayoutResult records the result of one layout request.
 //
-//   - Success clears resizeRequested; the server adopted the size.
+//   - Success clears the request; the server adopted the layout and its next
+//     report makes the Panes crop their new screens.
 //   - A pending (forwarded) status is not a failure: the server may complete it
-//     later, so the requested size stays set to avoid spamming and local
-//     scaling is not latched. A later DisplayEventResize of that size clears it.
-//   - A refusal latches the local-scaling fallback and clears the size.
-//   - A timeout keeps resizeRequested at the failed size as a per-size
-//     backoff, so a silent server cannot make every redraw wait again; a
-//     different pane size may still retry.
-func (s *Surface) applyResizeResult(err error) {
+//     later, so the layout stays requested to avoid spamming, and local scaling
+//     is not latched.
+//   - A refusal, or a server that did not adopt the layout, latches the
+//     local-scaling fallback: the Panes keep their screens and letterbox.
+//   - A timeout keeps the layout as a backoff, so a silent server cannot make
+//     every layout pass wait again.
+func (s *Surface) applyLayoutResult(err error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.resizeInFlight = false
 	switch {
-	case err == nil:
-		s.resizeRequested = image.Point{}
-	case errors.Is(err, appsession.ErrDesktopResizePending):
-		// Keep the request; the server may complete it asynchronously.
-	case errors.Is(err, appsession.ErrDesktopResizeUnsupported),
-		errors.Is(err, appsession.ErrDesktopResizeRefused):
-		s.resizeRequested = image.Point{}
-		s.resizeUnsupported = true
 	case errors.Is(err, appsession.ErrDesktopResizeTimeout):
-		// Keep resizeRequested as the per-size backoff.
+		// Keep the layout as the backoff.
+	case errors.Is(err, appsession.ErrDesktopResizePending):
+		// Keep the layout; the server may complete it asynchronously.
+	case errors.Is(err, appsession.ErrDesktopResizeUnsupported),
+		errors.Is(err, appsession.ErrDesktopResizeRefused),
+		errors.Is(err, appsession.ErrMultiScreenUnsupported):
+		s.layoutRequested, s.layoutDesktop = nil, image.Point{}
+		s.resizeUnsupported = true
 	default:
-		s.resizeRequested = image.Point{}
+		// Success, and anything else that did not adopt the layout yet: the
+		// server's next report decides whether it is in place.
+		s.layoutRequested, s.layoutDesktop = nil, image.Point{}
+	}
+	pending, pendingDesktop := s.layoutPending, s.layoutPendingDesktop
+	s.layoutPending, s.layoutPendingDesktop = nil, image.Point{}
+	launch := pending != nil && s.startLayoutLocked(pending, pendingDesktop)
+	s.mu.Unlock()
+	if launch {
+		go s.requestScreenLayout(pending)
 	}
 }
 
@@ -541,9 +719,19 @@ func (s *Surface) draw(p *ui.Painter, r ui.Rect) {
 	s.mu.Lock()
 	bitmap := s.bitmap
 	frame := s.frame
+	if s.paneRect != r {
+		s.paneRect = r
+		s.geometryDirty = true
+	}
 	s.pane = ui.Rect{W: r.W, H: r.H}
+	dirty, listener := s.geometryDirty, s.geometryFn
+	s.geometryDirty = false
 	s.mu.Unlock()
-	s.maybeRequestDesktopSize(r.W, r.H)
+	// The Tab lays the desktop's screens out from every Pane's rectangle, so a
+	// moved or resized Pane, or a new remote layout, is what starts a request.
+	if dirty && listener != nil {
+		listener()
+	}
 	if bitmap == nil || frame.Empty() {
 		return
 	}
@@ -1063,19 +1251,21 @@ func (s *Surface) SendCtrlAltDel() error {
 
 // sendPointer maps a local pixel position onto the framebuffer and sends it.
 // The mapping inverts the active scale mode and clip pan, so 1:1 and a panned
-// viewport name the same remote pixels they show. View-only writes nothing.
+// viewport name the same remote pixels they show. A Pane that shows one screen
+// of a multi-screen desktop offsets the result by that screen's origin, because
+// the guest expects desktop coordinates. View-only writes nothing.
 func (s *Surface) sendPointer(x, y float32, mask uint8) {
 	if !s.canSendInput() {
 		return
 	}
 	s.mu.Lock()
-	pane, frame := s.pane, s.frame
+	pane, frame, origin := s.pane, s.frame, s.screenOrigin
 	s.mu.Unlock()
 	if frame.Empty() {
 		return
 	}
 	rx, ry := remotePointFor(x, y, pane, frame, s.scaleMode, s.panX, s.panY)
-	_ = s.session.SendPointer(rx, ry, mask)
+	_ = s.session.SendPointer(rx+origin.X, ry+origin.Y, mask)
 }
 
 // applyButton sets or clears one button's bit in a pointer mask, returning the

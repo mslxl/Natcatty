@@ -330,3 +330,38 @@ func TestSanitizePayloadMapsActiveTabPastDroppedTabs(t *testing.T) {
 		t.Fatalf("active Tab = %q, want a", got.Tabs[got.ActiveTab].ID)
 	}
 }
+
+// TestVNCDescriptorKeepsItsScreen proves a restored Pane reopens on the screen
+// it showed, so splitting a VNC Tab survives a restart without two Panes
+// claiming the same screen.
+func TestVNCDescriptorKeepsItsScreen(t *testing.T) {
+	descriptor := SessionDescriptor{
+		Kind: SessionVNC, HostID: "host-vnc", Hostname: "desk.local", Port: 5900,
+		Screen: 2,
+	}
+	if !descriptor.Valid() {
+		t.Fatal("a complete VNC descriptor is invalid")
+	}
+	data, err := json.Marshal(descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded SessionDescriptor
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Screen != 2 {
+		t.Fatalf("screen after a JSON round trip = %d, want 2", decoded.Screen)
+	}
+
+	payload := Payload{
+		Version:   PayloadVersion,
+		ActiveTab: 0,
+		Tabs:      []RestoredTab{{ID: "tab-1", Root: NewPaneNode("pane-1")}},
+		Panes:     []RestoredPane{{ID: "pane-1", Session: descriptor}},
+	}
+	got := SanitizePayload(payload)
+	if len(got.Panes) != 1 || got.Panes[0].Session.Screen != 2 {
+		t.Fatalf("sanitized panes = %+v, want the screen kept", got.Panes)
+	}
+}

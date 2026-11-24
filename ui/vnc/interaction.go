@@ -95,13 +95,16 @@ func (s *Surface) ToggleFullscreen() {
 	}
 }
 
-// notices renders the local-scaling fallback and the latest clipboard outcome
-// in the Pane's chrome row. Both are explicit user-visible results; keeping
-// them out of the desktop means a notice never covers the pixels the user is
-// interacting with or changes the pane size.
+// notices renders the local-scaling fallback, the split refusal, and the latest
+// clipboard outcome in the Pane's chrome row. All are explicit user-visible
+// results; keeping them out of the desktop means a notice never covers the
+// pixels the user is interacting with or changes the pane size.
 func (s *Surface) notices(c *ui.Context, t *ui.Theme) {
 	if fallback := s.ResizeFallbackNotice(); fallback != "" {
 		kit.Badge(c, t.Warning, fallback)
+	}
+	if split := s.SplitNotice(); split != "" {
+		kit.Badge(c, t.Warning, split)
 	}
 	s.mu.Lock()
 	result := s.clipboardResult
