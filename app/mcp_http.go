@@ -51,10 +51,15 @@ func newExternalMCPHTTP(handler mcprpc.Handler, token func() string,
 }
 
 // Apply starts, stops, or reconfigures the endpoint to match settings. It is
-// idempotent, so the preferences change hook can call it for any update.
+// idempotent, so the preferences change hook can call it for any update. The
+// master External MCP switch always wins: an endpoint cannot listen while the
+// feature itself is off.
 func (h *externalMCPHTTP) Apply(settings domainpreferences.ExternalMCP) error {
 	if h == nil {
 		return nil
+	}
+	if !settings.Enabled {
+		settings.HTTPEnabled = false
 	}
 	before := h.transport.State()
 	state, err := h.transport.Apply(mcp.HTTPConfig{
@@ -73,8 +78,10 @@ func (h *externalMCPHTTP) Apply(settings domainpreferences.ExternalMCP) error {
 		if endpoint == "" {
 			endpoint = "no client URL until a client address is configured"
 		}
-		h.logf("natcatty: external MCP Streamable HTTP listening on %s:%d (%s)",
-			state.ListenAddress, state.Port, endpoint)
+		if h.logf != nil {
+			h.logf("natcatty: external MCP Streamable HTTP listening on %s:%d (%s)",
+				state.ListenAddress, state.Port, endpoint)
+		}
 	}
 	return nil
 }

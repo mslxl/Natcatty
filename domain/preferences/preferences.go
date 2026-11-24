@@ -27,9 +27,10 @@ const (
 	GroupTransport  Group = "transport"
 	GroupMonitor    Group = "monitor"
 	GroupSysManager Group = "sysManager"
-	// GroupExternalMCP owns the device-local Streamable HTTP endpoint. It is
-	// absent from Groups and from PortableSettings: the opt-in switch and bind
-	// fields are currently device-local only, with no Settings surface yet.
+	// GroupExternalMCP owns the device-local External MCP server: its master
+	// switch and the optional Streamable HTTP endpoint. It is absent from
+	// Groups and from PortableSettings, so a synced document never turns a
+	// machine's listener on or rebinds it.
 	GroupExternalMCP Group = "externalMcp"
 )
 
@@ -491,10 +492,12 @@ type Security struct {
 	ConfirmDestructive   bool `json:"confirmDestructive"`
 }
 
-// ExternalMCP is the optional Streamable HTTP endpoint for the external MCP
-// server. It is device-local: a bind address and port name this machine, and
-// the endpoint is off until the user enables it.
+// ExternalMCP is the device-local External MCP server configuration. The
+// master switch is off by default: while it is off the app opens neither the
+// loopback bridge listener nor the Streamable HTTP endpoint and publishes no
+// discovery file. The HTTP endpoint is a second opt-in beneath it.
 type ExternalMCP struct {
+	Enabled             bool   `json:"enabled"`
 	HTTPEnabled         bool   `json:"httpEnabled"`
 	HTTPPort            int    `json:"httpPort"`
 	HTTPAllowCustomBind bool   `json:"httpAllowCustomBind"`
@@ -524,9 +527,8 @@ func (e ExternalMCP) EffectiveHTTPListenAddress() string {
 	return DefaultExternalMCPHTTPListenAddress
 }
 
-// NormalizeExternalMCP repairs an unusable endpoint configuration. The
-// transport is still off after normalization; only an explicit enable turns
-// it on.
+// NormalizeExternalMCP repairs an unusable endpoint configuration. It never
+// turns the server or the HTTP endpoint on; only the stored enable switches do.
 func NormalizeExternalMCP(group ExternalMCP) ExternalMCP {
 	if group.HTTPPort < MinExternalMCPHTTPPort || group.HTTPPort > MaxExternalMCPHTTPPort {
 		group.HTTPPort = DefaultExternalMCPHTTPPort
@@ -738,8 +740,9 @@ func Defaults() Settings {
 		Monitor:    DefaultMonitor(),
 		SysManager: DefaultSysManager(),
 		ExternalMCP: ExternalMCP{
-			// The HTTP endpoint is opt-in; a fresh profile exposes MCP over
-			// stdio only, as the original did.
+			// External MCP is opt-in: a fresh profile opens no listener and
+			// publishes no discovery file until the user enables it.
+			Enabled:           false,
 			HTTPEnabled:       false,
 			HTTPPort:          DefaultExternalMCPHTTPPort,
 			HTTPListenAddress: DefaultExternalMCPHTTPListenAddress,

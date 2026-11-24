@@ -26410,14 +26410,106 @@ func (msgs Messages) SettingsAreaMCP() string {
 	return Catalog.Format(msgs.locale, "settingsAreaMCP", nil)
 }
 
-// SettingsMCPDescription says "Control how an external MCP client may use this app: its Session scope, permission mode, and approval requests."
+// SettingsMCPDescription says "Control whether an external MCP client may use this app, and how: its endpoint, Session scope, permission mode, and a…"
 // in the language the app shows.
 func SettingsMCPDescription() string { return In(i18n.Locale()).SettingsMCPDescription() }
 
-// SettingsMCPDescription says "Control how an external MCP client may use this app: its Session scope, permission mode, and approval requests."
+// SettingsMCPDescription says "Control whether an external MCP client may use this app, and how: its endpoint, Session scope, permission mode, and a…"
 // in the language of msgs.
 func (msgs Messages) SettingsMCPDescription() string {
 	return Catalog.Format(msgs.locale, "settingsMCPDescription", nil)
+}
+
+// SettingsMCPEnabled says "Enable External MCP"
+// in the language the app shows.
+func SettingsMCPEnabled() string { return In(i18n.Locale()).SettingsMCPEnabled() }
+
+// SettingsMCPEnabled says "Enable External MCP"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPEnabled() string {
+	return Catalog.Format(msgs.locale, "settingsMCPEnabled", nil)
+}
+
+// SettingsMCPEnableHint says "External MCP is off. No client can connect until it is enabled here."
+// in the language the app shows.
+func SettingsMCPEnableHint() string { return In(i18n.Locale()).SettingsMCPEnableHint() }
+
+// SettingsMCPEnableHint says "External MCP is off. No client can connect until it is enabled here."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPEnableHint() string {
+	return Catalog.Format(msgs.locale, "settingsMCPEnableHint", nil)
+}
+
+// SettingsMCPHTTPEnabled says "Streamable HTTP endpoint"
+// in the language the app shows.
+func SettingsMCPHTTPEnabled() string { return In(i18n.Locale()).SettingsMCPHTTPEnabled() }
+
+// SettingsMCPHTTPEnabled says "Streamable HTTP endpoint"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPHTTPEnabled() string {
+	return Catalog.Format(msgs.locale, "settingsMCPHTTPEnabled", nil)
+}
+
+// SettingsMCPHTTPHint says "Serves the same tools at /mcp. Every request must present the discovery token as a bearer token."
+// in the language the app shows.
+func SettingsMCPHTTPHint() string { return In(i18n.Locale()).SettingsMCPHTTPHint() }
+
+// SettingsMCPHTTPHint says "Serves the same tools at /mcp. Every request must present the discovery token as a bearer token."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPHTTPHint() string {
+	return Catalog.Format(msgs.locale, "settingsMCPHTTPHint", nil)
+}
+
+// SettingsMCPHTTPListenAddress says "Listen address"
+// in the language the app shows.
+func SettingsMCPHTTPListenAddress() string { return In(i18n.Locale()).SettingsMCPHTTPListenAddress() }
+
+// SettingsMCPHTTPListenAddress says "Listen address"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPHTTPListenAddress() string {
+	return Catalog.Format(msgs.locale, "settingsMCPHTTPListenAddress", nil)
+}
+
+// SettingsMCPHTTPAddressHint says "127.0.0.1 keeps the endpoint on this computer. Another address exposes it to your network."
+// in the language the app shows.
+func SettingsMCPHTTPAddressHint() string { return In(i18n.Locale()).SettingsMCPHTTPAddressHint() }
+
+// SettingsMCPHTTPAddressHint says "127.0.0.1 keeps the endpoint on this computer. Another address exposes it to your network."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPHTTPAddressHint() string {
+	return Catalog.Format(msgs.locale, "settingsMCPHTTPAddressHint", nil)
+}
+
+// SettingsMCPHTTPAddressInvalid says "Enter 127.0.0.1, localhost, or an IP address."
+// in the language the app shows.
+func SettingsMCPHTTPAddressInvalid() string { return In(i18n.Locale()).SettingsMCPHTTPAddressInvalid() }
+
+// SettingsMCPHTTPAddressInvalid says "Enter 127.0.0.1, localhost, or an IP address."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPHTTPAddressInvalid() string {
+	return Catalog.Format(msgs.locale, "settingsMCPHTTPAddressInvalid", nil)
+}
+
+// SettingsMCPHTTPPort says "Port"
+// in the language the app shows.
+func SettingsMCPHTTPPort() string { return In(i18n.Locale()).SettingsMCPHTTPPort() }
+
+// SettingsMCPHTTPPort says "Port"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPHTTPPort() string {
+	return Catalog.Format(msgs.locale, "settingsMCPHTTPPort", nil)
+}
+
+// SettingsMCPHTTPExposed says "The endpoint is reachable from other devices at {address}. Anyone who obtains the discovery token can control shared …"
+// in the language the app shows.
+func SettingsMCPHTTPExposed(address string) string {
+	return In(i18n.Locale()).SettingsMCPHTTPExposed(address)
+}
+
+// SettingsMCPHTTPExposed says "The endpoint is reachable from other devices at {address}. Anyone who obtains the discovery token can control shared …"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPHTTPExposed(address string) string {
+	return Catalog.Format(msgs.locale, "settingsMCPHTTPExposed", map[string]any{"address": address})
 }
 
 // SettingsMCPMode says "Permission mode"
@@ -26996,6 +27088,16 @@ func SettingsMCPProblemSharing() string { return In(i18n.Locale()).SettingsMCPPr
 // in the language of msgs.
 func (msgs Messages) SettingsMCPProblemSharing() string {
 	return Catalog.Format(msgs.locale, "settingsMCPProblemSharing", nil)
+}
+
+// SettingsMCPProblemEndpoint says "The External MCP endpoint setting could not be saved."
+// in the language the app shows.
+func SettingsMCPProblemEndpoint() string { return In(i18n.Locale()).SettingsMCPProblemEndpoint() }
+
+// SettingsMCPProblemEndpoint says "The External MCP endpoint setting could not be saved."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPProblemEndpoint() string {
+	return Catalog.Format(msgs.locale, "settingsMCPProblemEndpoint", nil)
 }
 
 // SftpGoTerminalCwd says "Go to terminal directory"

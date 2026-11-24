@@ -3,6 +3,7 @@ package settings
 import (
 	"errors"
 	"math"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appmcp "github.com/mslxl/natcatty/application/mcp"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 )
@@ -29,6 +31,11 @@ type MCPService interface {
 	SetSharing(enabled bool) error
 	// RefreshScope repaints the exposed-Session list from the live scope.
 	RefreshScope()
+	// Endpoint returns the device-local External MCP server settings.
+	Endpoint() domainpreferences.ExternalMCP
+	// UpdateEndpoint saves a change to those settings. The app applies the
+	// master switch and bind without a restart.
+	UpdateEndpoint(change func(*domainpreferences.ExternalMCP)) error
 }
 
 // MCPProblem is the last action outcome the surface shows. It is a stable
@@ -42,6 +49,7 @@ const (
 	MCPProblemInvalid
 	MCPProblemMode
 	MCPProblemSharing
+	MCPProblemEndpoint
 )
 
 // MCPState owns the Settings MCP surface. All fields are mutated only on the
@@ -49,6 +57,12 @@ const (
 type MCPState struct {
 	service MCPService
 	problem MCPProblem
+	// addressDraft keeps the listen-address input editable while the typed
+	// value is not yet a usable address. Saving every keystroke would let
+	// normalization replace a half-typed address with the loopback default.
+	addressDraft    string
+	addressDraftSet bool
+	addressInvalid  bool
 }
 
 // NewMCPState builds the external MCP surface from the policy service.
@@ -122,6 +136,116 @@ func (s *MCPState) RefreshScope() {
 		return
 	}
 	s.service.RefreshScope()
+}
+
+// Endpoint returns the External MCP server settings the surface edits. A nil
+// service renders the default, which has the server off.
+func (s *MCPState) Endpoint() domainpreferences.ExternalMCP {
+	if s == nil || s.service == nil {
+		return domainpreferences.Defaults().ExternalMCP
+	}
+	return s.service.Endpoint()
+}
+
+// SetEndpointEnabled is the master switch. Turning it off stops both the
+// loopback bridge and the Streamable HTTP endpoint.
+func (s *MCPState) SetEndpointEnabled(enabled bool) {
+	s.updateEndpoint(func(endpoint *domainpreferences.ExternalMCP) {
+		endpoint.Enabled = enabled
+	})
+}
+
+// SetHTTPEnabled is the second opt-in beneath the master switch.
+func (s *MCPState) SetHTTPEnabled(enabled bool) {
+	s.updateEndpoint(func(endpoint *domainpreferences.ExternalMCP) {
+		endpoint.HTTPEnabled = enabled
+	})
+}
+
+// SetHTTPPort stores the Streamable HTTP port.
+func (s *MCPState) SetHTTPPort(port int) {
+	s.updateEndpoint(func(endpoint *domainpreferences.ExternalMCP) {
+		endpoint.HTTPPort = port
+	})
+}
+
+// HTTPListenAddressDraft returns the bound text of the listen-address input.
+// It starts at the stored address (or the loopback default) and then follows
+// the user's typing even while the value is not yet valid.
+func (s *MCPState) HTTPListenAddressDraft() *string {
+	if s == nil {
+		return new(string)
+	}
+	if !s.addressDraftSet {
+		// Show the address the endpoint actually binds, not a stored custom
+		// value that the custom-bind gate is ignoring.
+		s.addressDraft = s.Endpoint().EffectiveHTTPListenAddress()
+		s.addressDraftSet = true
+	}
+	return &s.addressDraft
+}
+
+// SetHTTPListenAddress keeps typing local until the value is usable, then
+// saves it and lets the app rebind. The domain honors a custom address only
+// behind its opt-in, so this sets the opt-in for every address except the
+// default loopback literal.
+func (s *MCPState) SetHTTPListenAddress(address string) {
+	if s == nil {
+		return
+	}
+	s.addressDraft = address
+	s.addressDraftSet = true
+	trimmed := strings.TrimSpace(address)
+	if !validMCPListenAddress(trimmed) {
+		s.addressInvalid = true
+		return
+	}
+	s.addressInvalid = false
+	s.updateEndpoint(func(endpoint *domainpreferences.ExternalMCP) {
+		endpoint.HTTPListenAddress = trimmed
+		// The domain only honors a custom address behind this opt-in. Clear it
+		// for the default loopback literal and set it for every other choice,
+		// including localhost and an IPv6 loopback.
+		endpoint.HTTPAllowCustomBind = trimmed != "" &&
+			trimmed != domainpreferences.DefaultExternalMCPHTTPListenAddress
+	})
+}
+
+// HTTPAddressInvalid reports whether the address draft is not an IP address,
+// localhost, or empty (the loopback default).
+func (s *MCPState) HTTPAddressInvalid() bool {
+	return s != nil && s.addressInvalid
+}
+
+func (s *MCPState) updateEndpoint(change func(*domainpreferences.ExternalMCP)) {
+	if s == nil || s.service == nil {
+		return
+	}
+	if err := s.service.UpdateEndpoint(change); err != nil {
+		s.problem = MCPProblemEndpoint
+		return
+	}
+	s.problem = MCPProblemNone
+}
+
+// validMCPListenAddress accepts what the domain's normalization accepts.
+func validMCPListenAddress(address string) bool {
+	address = strings.TrimSpace(address)
+	if address == "" || strings.EqualFold(address, "localhost") {
+		return true
+	}
+	return net.ParseIP(address) != nil
+}
+
+// mcpListenAddressIsLoopback reports whether address keeps the endpoint on
+// this computer.
+func mcpListenAddressIsLoopback(address string) bool {
+	address = strings.TrimSpace(address)
+	if address == "" || strings.EqualFold(address, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(address)
+	return ip != nil && ip.IsLoopback()
 }
 
 // Problem returns the last localized problem, or MCPProblemNone.
@@ -206,6 +330,8 @@ func mcpProblemText(problem MCPProblem, m locales.Messages) string {
 		return m.SettingsMCPProblemMode()
 	case MCPProblemSharing:
 		return m.SettingsMCPProblemSharing()
+	case MCPProblemEndpoint:
+		return m.SettingsMCPProblemEndpoint()
 	default:
 		return ""
 	}
@@ -340,49 +466,118 @@ func mcpArea(c *ui.Context, state *MCPState, m locales.Messages, t *ui.Theme) {
 		return
 	}
 	snapshot := state.Snapshot()
+	endpoint := state.Endpoint()
 	body := mcpBodyTextColor(t, t.Surface)
 	sectionBody(c, t, func() {
-		// The last action is the strip a user checks after a client call, so it
-		// is the first thing in the area: at the shortest client size, and with
-		// the longer zh-CN status text, it stays above the fold without a
-		// scroll. It is compact (two rows) so it never pushes the mode control
-		// or the prompt heading out of view either.
-		if snapshot.LastActivity != nil {
-			mcpActivityStrip(c, *snapshot.LastActivity, m, t)
-		}
-		mcpModeField(c, state, snapshot, m, t)
-		ui.Text(c, mcpModeDescription(snapshot.Mode, m)).FontSize(kit.M(c).Font.Footnote).TextColor(body)
+		// The policy controls describe what a client may do, so they only make
+		// sense while the server is on. The endpoint section at the bottom is
+		// then the only content of a disabled page and starts at its top.
+		if endpoint.Enabled {
+			// The last action is the strip a user checks after a client call,
+			// so it is the first thing in the area: at the shortest client
+			// size, and with the longer zh-CN status text, it stays above the
+			// fold without a scroll. It is compact (two rows) so it never
+			// pushes the mode control or the prompt heading out of view either.
+			if snapshot.LastActivity != nil {
+				mcpActivityStrip(c, *snapshot.LastActivity, m, t)
+			}
+			mcpModeField(c, state, snapshot, m, t)
+			ui.Text(c, mcpModeDescription(snapshot.Mode, m)).FontSize(kit.M(c).Font.Footnote).TextColor(body)
 
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.SettingsMCPScope()).FontSize(kit.M(c).Font.Caption).TextColor(body)
-			ui.Text(c, m.SettingsMCPScopeValue(snapshot.ForcedScope)).FontSize(kit.M(c).Font.Footnote).TextColor(body)
-		})
-		mcpSessionsSection(c, state, snapshot, m, t)
-		ui.Text(c, m.SettingsMCPGeneration(strconv.FormatUint(snapshot.Generation, 10))).
-			FontSize(kit.M(c).Font.Footnote).TextColor(body)
-		ui.Text(c, m.SettingsMCPBypassHint()).FontSize(kit.M(c).Font.Caption).TextColor(body)
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, m.SettingsMCPScope()).FontSize(kit.M(c).Font.Caption).TextColor(body)
+				ui.Text(c, m.SettingsMCPScopeValue(snapshot.ForcedScope)).FontSize(kit.M(c).Font.Footnote).TextColor(body)
+			})
+			mcpSessionsSection(c, state, snapshot, m, t)
+			ui.Text(c, m.SettingsMCPGeneration(strconv.FormatUint(snapshot.Generation, 10))).
+				FontSize(kit.M(c).Font.Footnote).TextColor(body)
+			ui.Text(c, m.SettingsMCPBypassHint()).FontSize(kit.M(c).Font.Caption).TextColor(body)
+		}
 
 		if problem := mcpProblemText(state.Problem(), m); problem != "" {
 			ui.Text(c, problem).FontSize(kit.M(c).Font.Footnote).TextColor(mcpWarningTextColor(t, t.Surface))
 		}
 
+		// A prompt requested before the master switch was turned off still
+		// needs a decision or its deadline, and the pinned bar renders it.
 		prompt, expired, ok := mcpCurrentPrompt(snapshot)
-		if !ok {
-			return
-		}
-		mcpPromptCard(c, prompt, expired, m, t)
-		if len(snapshot.Pending) > 1 {
-			ui.Text(c, m.SettingsMCPMorePending(len(snapshot.Pending)-1)).
-				FontSize(kit.M(c).Font.Caption).TextColor(body)
-		}
-		if !expired {
-			// The policy owns the deadline; this only asks for a frame so the
-			// remaining label counts down while the client waits.
-			delay := prompt.Remaining
-			if delay <= 0 || delay > time.Second {
-				delay = time.Second
+		if ok {
+			mcpPromptCard(c, prompt, expired, m, t)
+			if len(snapshot.Pending) > 1 {
+				ui.Text(c, m.SettingsMCPMorePending(len(snapshot.Pending)-1)).
+					FontSize(kit.M(c).Font.Caption).TextColor(body)
 			}
-			c.After(delay)
+			if !expired {
+				// The policy owns the deadline; this only asks for a frame so
+				// the remaining label counts down while the client waits.
+				delay := prompt.Remaining
+				if delay <= 0 || delay > time.Second {
+					delay = time.Second
+				}
+				c.After(delay)
+			}
+		}
+
+		mcpEndpointSection(c, state, endpoint, m, t)
+	})
+}
+
+// mcpEndpointSection is the External MCP server configuration: the master
+// switch, then the Streamable HTTP endpoint's own opt-in and bind. It renders
+// after the policy content so a pending approval keeps its place above the
+// fold; while the server is off the policy content is absent, so the switch
+// itself is the first control on the page.
+func mcpEndpointSection(c *ui.Context, state *MCPState, endpoint domainpreferences.ExternalMCP,
+	m locales.Messages, t *ui.Theme) {
+	body := mcpBodyTextColor(t, t.Surface)
+	enabled := endpoint.Enabled
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		if ui.Checkbox(c, &enabled, m.SettingsMCPEnabled()).Changed() {
+			state.SetEndpointEnabled(enabled)
+			c.Invalidate()
+		}
+	})
+	if !enabled {
+		ui.Text(c, m.SettingsMCPEnableHint()).FontSize(kit.M(c).Font.Caption).TextColor(body)
+		return
+	}
+
+	httpEnabled := endpoint.HTTPEnabled
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		if ui.Checkbox(c, &httpEnabled, m.SettingsMCPHTTPEnabled()).Changed() {
+			state.SetHTTPEnabled(httpEnabled)
+			c.Invalidate()
+		}
+	})
+	ui.Text(c, m.SettingsMCPHTTPHint()).FontSize(kit.M(c).Font.Caption).TextColor(body)
+	if !httpEnabled {
+		return
+	}
+
+	kit.FormRow(c, m.SettingsMCPHTTPListenAddress(), func() {
+		address := state.HTTPListenAddressDraft()
+		if ui.TextInput(c, address).Width(220).Changed() {
+			state.SetHTTPListenAddress(*address)
+			c.Invalidate()
+		}
+	})
+	if state.HTTPAddressInvalid() {
+		ui.Text(c, m.SettingsMCPHTTPAddressInvalid()).FontSize(kit.M(c).Font.Caption).
+			TextColor(mcpWarningTextColor(t, t.Surface))
+	} else {
+		ui.Text(c, m.SettingsMCPHTTPAddressHint()).FontSize(kit.M(c).Font.Caption).TextColor(body)
+		if address := endpoint.EffectiveHTTPListenAddress(); !mcpListenAddressIsLoopback(address) {
+			ui.Text(c, m.SettingsMCPHTTPExposed(address)).FontSize(kit.M(c).Font.Caption).
+				TextColor(mcpWarningTextColor(t, t.Surface))
+		}
+	}
+
+	port := float64(endpoint.HTTPPort)
+	kit.FormRow(c, m.SettingsMCPHTTPPort(), func() {
+		if ui.NumberInput(c, &port, float64(domainpreferences.MinExternalMCPHTTPPort),
+			float64(domainpreferences.MaxExternalMCPHTTPPort), 1).Width(110).Changed() {
+			state.SetHTTPPort(int(port))
+			c.Invalidate()
 		}
 	})
 }

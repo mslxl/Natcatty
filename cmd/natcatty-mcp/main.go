@@ -92,7 +92,7 @@ func resolveTarget() (mcprpc.Discovery, error) {
 	}
 	discovery, err := mcprpc.ReadDiscovery(path)
 	if err != nil {
-		return mcprpc.Discovery{}, fmt.Errorf("%w (is the Netcatty app running?)", err)
+		return mcprpc.Discovery{}, fmt.Errorf("%w (is Netcatty running with External MCP enabled?)", err)
 	}
 	return discovery, nil
 }
