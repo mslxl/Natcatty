@@ -37,6 +37,24 @@ func TestExternalMCPHTTPOpensNoListenerWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestExternalMCPHTTPStaysClosedWhileTheMasterSwitchIsOff(t *testing.T) {
+	endpoint := newExternalMCPHTTP(mcprpc.HandlerFunc(func(context.Context, string, json.RawMessage) (any, error) {
+		t.Fatal("an endpoint under a disabled server dispatched a request")
+		return nil, nil
+	}), func() string { return mcpHTTPTestToken }, t.Logf)
+	defer endpoint.Close()
+
+	settings := domainpreferences.Defaults().ExternalMCP
+	settings.HTTPEnabled = true
+	settings.HTTPPort = 0
+	if err := endpoint.Apply(settings); err != nil {
+		t.Fatalf("apply an HTTP opt-in under a disabled server: %v", err)
+	}
+	if state := endpoint.transport.State(); state.Listening || state.Port != 0 || state.URL != "" {
+		t.Fatalf("disabled state = %+v, want no listener", state)
+	}
+}
+
 func TestExternalMCPHTTPDispatchesThroughThePolicyHandler(t *testing.T) {
 	var methods []string
 	handler := mcprpc.HandlerFunc(func(_ context.Context, method string, params json.RawMessage) (any, error) {
@@ -53,6 +71,7 @@ func TestExternalMCPHTTPDispatchesThroughThePolicyHandler(t *testing.T) {
 	defer endpoint.Close()
 
 	settings := domainpreferences.Defaults().ExternalMCP
+	settings.Enabled = true
 	settings.HTTPEnabled = true
 	settings.HTTPPort = 0 // ephemeral for the test
 	if err := endpoint.Apply(settings); err != nil {

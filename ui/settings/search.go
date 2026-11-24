@@ -264,6 +264,10 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaSync, domain.FieldSyncAutoSync, m.SettingsSyncAutoSync(), "auto sync")
 	add(AreaSync, domain.FieldSyncConflictStrategy, m.SettingsSyncConflictStrategy(), "conflict strategy")
 
+	add(AreaMCP, "", m.SettingsMCPEnabled(), "external mcp server enable master switch")
+	add(AreaMCP, "", m.SettingsMCPHTTPEnabled(), "streamable http endpoint enable")
+	add(AreaMCP, "", m.SettingsMCPHTTPListenAddress(), "listen address host bind interface")
+	add(AreaMCP, "", m.SettingsMCPHTTPPort(), "port streamable http")
 	add(AreaMCP, "", m.SettingsMCPMode(), "permission mode observer confirm auto write approval")
 	add(AreaMCP, "", m.SettingsMCPSessions(), "session allowlist scope ownership generation")
 	add(AreaMCP, "", m.SettingsMCPApprovalTitle(), "approval prompt approve deny expiry")

@@ -223,8 +223,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	var atuinState *settings.AtuinState
 	var logsState *logsui.State
 	var sessions *appsession.Service
-	var externalMCPServer *externalMCP
-	var externalMCPHTTPServer *externalMCPHTTP
+	var externalMCPRuntime *externalMCPEndpoints
 	var desktopCtl *desktopController
 	var ready bool
 	var focusRequested bool
@@ -1165,28 +1164,22 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	mcpHandler := newMCPPolicyHandler(mcpBridge, mcpPolicy, sessions, sessions, nil)
 	mcpSettingsState := settings.NewMCPState(&mcpSettingsController{
 		policy: mcpPolicy, mode: mcpMode, sessions: mcpLive,
+		preferences: preferenceService,
 	})
+	// The listeners follow the External MCP master switch: they stay closed
+	// until the preferences enable them, and the change hook below starts or
+	// stops them without a restart. A dev or smoke profile never opens them.
 	if !options.isolated() {
-		externalMCPServer, err = startExternalMCP(context.Background(), mcpBridge,
-			externalMCPDiscoveryPath(userData), func(format string, args ...any) {
-				fmt.Fprintf(os.Stderr, format+"\n", args...)
-			}, withMCPHandler(mcpHandler), withMCPModeState(mcpMode))
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "natcatty: external MCP:", err)
-		}
-	}
-	// The optional Streamable HTTP endpoint reuses the loopback transport's
-	// bearer token and the same policy handler. It is disabled until the
-	// preferences enable it, so a default profile opens no HTTP listener.
-	if !options.packagedSmoke {
-		externalMCPHTTPServer = newExternalMCPHTTP(mcpHandler, func() string {
-			if externalMCPServer == nil {
-				return ""
-			}
-			return externalMCPServer.token
-		}, func(format string, args ...any) {
+		logMCP := func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, format+"\n", args...)
-		})
+		}
+		externalMCPRuntime = newExternalMCPEndpoints(context.Background(), mcpBridge,
+			mcpHandler, mcpMode, externalMCPDiscoveryPath(userData), logMCP)
+		// The Streamable HTTP endpoint reuses the loopback transport's bearer
+		// token and the same policy handler. It is a second opt-in beneath the
+		// master switch.
+		externalMCPRuntime.SetHTTP(newExternalMCPHTTP(mcpHandler,
+			externalMCPRuntime.Token, logMCP))
 	}
 	// The Workspace restores Tabs, splits, and working directories at startup
 	// and persists them after every structural change. Output is never stored.
@@ -1807,10 +1800,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				_ = mygo.App.Dock.SetIcon(icon)
 			})
 		}
-		// The MCP endpoint follows its preference without a restart. An
-		// unchanged configuration is a no-op inside the transport.
-		if externalMCPHTTPServer != nil {
-			if err := externalMCPHTTPServer.Apply(current.ExternalMCP); err != nil {
+		// The External MCP listeners follow the master switch without a
+		// restart. An unchanged configuration is a no-op inside the runtime.
+		if externalMCPRuntime != nil {
+			if err := externalMCPRuntime.Apply(current.ExternalMCP); err != nil {
 				fmt.Fprintln(os.Stderr, "natcatty:", err)
 			}
 		}
@@ -1911,8 +1904,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// Stop accepting external MCP calls before the services they read are
 		// torn down, then remove the discovery pointer if it is still ours.
 		// The HTTP listener goes first because it shares the same handler.
-		externalMCPHTTPServer.Close()
-		externalMCPServer.Close()
+		externalMCPRuntime.Close()
 		closeForwarding(forwardingManager, forwardingState)
 		// Monitoring leases are connection channels; release them before the
 		// manager closes every remaining transport.

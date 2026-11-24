@@ -5,9 +5,13 @@ import (
 	"testing"
 )
 
-// TestExternalMCPHTTPIsOffByDefault is the opt-in contract for ticket 41.
-func TestExternalMCPHTTPIsOffByDefault(t *testing.T) {
+// TestExternalMCPIsOffByDefault is the opt-in contract for the external MCP
+// server and its Streamable HTTP endpoint.
+func TestExternalMCPIsOffByDefault(t *testing.T) {
 	group := Defaults().ExternalMCP
+	if group.Enabled {
+		t.Fatal("the External MCP server is enabled by default")
+	}
 	if group.HTTPEnabled {
 		t.Fatal("the Streamable HTTP endpoint is enabled by default")
 	}
@@ -76,6 +80,7 @@ func TestExternalMCPHTTPIgnoresACustomAddressWithoutTheOptIn(t *testing.T) {
 func TestExternalMCPHTTPSurvivesJSONAndStaysDeviceLocal(t *testing.T) {
 	settings := Defaults()
 	settings.ExternalMCP = ExternalMCP{
+		Enabled:             true,
 		HTTPEnabled:         true,
 		HTTPPort:            51234,
 		HTTPAllowCustomBind: true,

@@ -16,8 +16,10 @@ import (
 	"sync"
 
 	appmcp "github.com/mslxl/natcatty/application/mcp"
+	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/domain/model"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	"github.com/mslxl/natcatty/internal/adapters/mcprpc"
 	"github.com/mslxl/natcatty/internal/mcp/catalog"
 )
@@ -446,6 +448,9 @@ type mcpSettingsController struct {
 	policy   *appmcp.Service
 	mode     *mcpModeState
 	sessions *mcpLiveSessions
+	// preferences stores the device-local External MCP endpoint settings. The
+	// app's change hook starts or stops the listeners from the same document.
+	preferences *apppreferences.Service
 }
 
 func (c *mcpSettingsController) Snapshot() appmcp.Snapshot { return c.policy.Snapshot() }
@@ -471,4 +476,23 @@ func (c *mcpSettingsController) RefreshScope() {
 	if c.sessions != nil {
 		c.policy.NotifyViewChanged()
 	}
+}
+
+// Endpoint returns the device-local External MCP endpoint settings.
+func (c *mcpSettingsController) Endpoint() domainpreferences.ExternalMCP {
+	if c.preferences == nil {
+		return domainpreferences.Defaults().ExternalMCP
+	}
+	return c.preferences.Settings().ExternalMCP
+}
+
+// UpdateEndpoint saves a change to the endpoint settings. The preferences
+// change hook applies the new master switch and bind without a restart.
+func (c *mcpSettingsController) UpdateEndpoint(change func(*domainpreferences.ExternalMCP)) error {
+	if c.preferences == nil {
+		return fmt.Errorf("external MCP: the endpoint settings are not available")
+	}
+	return c.preferences.Update(func(settings *domainpreferences.Settings) {
+		change(&settings.ExternalMCP)
+	})
 }

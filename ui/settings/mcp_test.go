@@ -17,6 +17,7 @@ import (
 
 	appmcp "github.com/mslxl/natcatty/application/mcp"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -26,20 +27,46 @@ import (
 // resolving a prompt removes it from Pending and, for expiry, records it in
 // Recent.
 type fakeMCPService struct {
-	snapshot   appmcp.Snapshot
-	modes      []appmcp.Mode
-	approved   []string
-	denied     []string
-	dismissed  []string
-	shared     bool
-	refreshed  int
-	approveErr error
-	denyErr    error
-	modeErr    error
-	sharingErr error
+	snapshot    appmcp.Snapshot
+	modes       []appmcp.Mode
+	approved    []string
+	denied      []string
+	dismissed   []string
+	shared      bool
+	refreshed   int
+	approveErr  error
+	denyErr     error
+	modeErr     error
+	sharingErr  error
+	endpoint    domainpreferences.ExternalMCP
+	endpointSet bool
+	endpointErr error
 }
 
 func (f *fakeMCPService) Snapshot() appmcp.Snapshot { return f.snapshot }
+
+// Endpoint starts from a fixture whose server is on, so the policy-surface
+// tests keep rendering the controls they cover. A test that exercises the
+// master switch sets endpointSet itself.
+func (f *fakeMCPService) Endpoint() domainpreferences.ExternalMCP {
+	if !f.endpointSet {
+		endpoint := domainpreferences.Defaults().ExternalMCP
+		endpoint.Enabled = true
+		return endpoint
+	}
+	return f.endpoint
+}
+
+func (f *fakeMCPService) UpdateEndpoint(change func(*domainpreferences.ExternalMCP)) error {
+	if f.endpointErr != nil {
+		return f.endpointErr
+	}
+	endpoint := f.Endpoint()
+	change(&endpoint)
+	f.endpoint = domainpreferences.NormalizeExternalMCP(endpoint)
+	f.endpointSet = true
+	return nil
+}
 
 func (f *fakeMCPService) SetMode(mode appmcp.Mode) error {
 	if f.modeErr != nil {
