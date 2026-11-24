@@ -59,6 +59,28 @@ func TestPrepareSplitScreenAsksForOneMoreScreen(t *testing.T) {
 	}
 }
 
+// TestPrepareSplitScreenCountsADetachedPane proves the free-index search spans
+// windows: the detached Pane still shows its screen, so a split in the main
+// window must not take that index and put two Panes on one screen.
+func TestPrepareSplitScreenCountsADetachedPane(t *testing.T) {
+	surface := &splitSurface{canSplit: true, screens: 2}
+	focused := vncPane("pane-1", 0, surface)
+	tab := splitScreenTab(focused)
+	detached := splitScreenTab(vncPane("pane-2", 1, &splitSurface{canSplit: true, screens: 2}))
+	state := &State{tabs: []*Tab{tab}, detached: []*Tab{detached}}
+
+	screen, err := state.prepareSplitScreen(tab, focused)
+	if err != nil {
+		t.Fatalf("prepareSplitScreen: %v", err)
+	}
+	if screen != 2 {
+		t.Fatalf("screen = %d, want the index the detached Pane does not own", screen)
+	}
+	if len(surface.prepared) != 1 || surface.prepared[0] != 3 {
+		t.Fatalf("prepared = %v, want one request for 3 screens", surface.prepared)
+	}
+}
+
 // TestPrepareSplitScreenReusesAFreedScreen proves closing a Pane frees its
 // screen for the next split without asking the server for another one.
 func TestPrepareSplitScreenReusesAFreedScreen(t *testing.T) {

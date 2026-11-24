@@ -968,6 +968,9 @@ func (s *State) DetachTab(index int) bool {
 	releaseTabInput(tab)
 	s.removeTabAt(index)
 	s.detached = append(s.detached, tab)
+	// The detached window drives the same VNC desktop as the Tabs left behind,
+	// so its Panes report their geometry like any main-window Pane.
+	s.wireScreenLayout(tab)
 	if s.onDetach != nil {
 		s.onDetach(tab.ID)
 	}
@@ -1093,6 +1096,8 @@ func (s *State) ReattachDetachedTab(id model.TabID) bool {
 		s.leaveMonitor()
 		s.vaultVisible = false
 		s.logsVisible = false
+		// Both windows drive the one desktop, so the layout follows the move.
+		s.driveAllScreens()
 		// A reattached Session is again part of the main target list. It is
 		// not selected automatically; the panel shows it as an available row.
 		s.refreshBroadcastState()
@@ -1169,6 +1174,10 @@ func (s *State) DetachPane(tabIndex int, paneID model.PaneID) bool {
 		detached.TitleNumber = number
 	}
 	s.detached = append(s.detached, detached)
+	// The new window shows the Pane's own screen while the Tab it left keeps
+	// the other ones, and both windows drive the one shared desktop.
+	s.wireScreenLayout(detached)
+	s.driveAllScreens()
 	s.refreshBroadcastState()
 	if s.onDetach != nil {
 		s.onDetach(detached.ID)
@@ -1233,6 +1242,9 @@ func (s *State) CloseDetachedTab(id model.TabID) bool {
 		}
 		s.closeTab(tab, false)
 		s.detached = append(s.detached[:index], s.detached[index+1:]...)
+		// The screens the closed Panes owned are free again for the windows
+		// that remain.
+		s.driveAllScreens()
 		s.RequestRedraw()
 		return true
 	}
@@ -1527,10 +1539,11 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 	return nil
 }
 
-// wireScreenLayout makes the Tab the driver of its Panes' desktop layout. A
-// Pane that shows one screen of a shared desktop reports its rectangle from
-// draw; the Tab turns all of them into one request, so two Panes never compete
-// for the single desktop size. It is safe to call again after a reconnect.
+// wireScreenLayout makes the shell the driver of a VNC desktop. A Pane that
+// shows one screen of a shared desktop reports its rectangle from draw; every
+// Pane of that desktop, in this window or another, is then described by one
+// request, so two Panes never compete for the single desktop size. It is safe
+// to call again after a reconnect.
 func (s *State) wireScreenLayout(tab *Tab) {
 	if tab == nil {
 		return
@@ -1544,51 +1557,122 @@ func (s *State) wireScreenLayout(tab *Tab) {
 	}
 }
 
-// driveTabScreens asks the remote for a screen layout that mirrors the Tab's
-// Panes: each screen takes its Pane's size and relative position, so every
-// Pane shows its own screen at its own size. The lowest screen number sends the
-// whole request, which makes the Tab the single driver instead of one request
-// per Pane.
-//
-// It runs on the UI thread from a Surface's draw callback. A Pane that has not
-// drawn yet owns a screen the Tab cannot describe, so the layout waits for it
-// rather than asking the remote to drop that screen.
+// vncDesktopKey names the VNC desktop a Pane shows. Every Pane of one Host
+// reaches the same VNC server, and a server has one desktop, so Panes in
+// different windows — a detached Pane and the one that stayed — must drive it
+// together: a window that describes only its own Panes would drop the screens
+// the other window still shows.
+func vncDesktopKey(value *pane) string {
+	if value == nil || value.descriptor.Kind != domainworkspace.SessionVNC {
+		return ""
+	}
+	if value.descriptor.HostID != "" {
+		return "host:" + string(value.descriptor.HostID)
+	}
+	return "vnc:" + value.descriptor.Hostname + ":" + strconv.Itoa(value.descriptor.Port)
+}
+
+// driveTabScreens asks the remote for the layout of every VNC desktop the Tab
+// shows. A merged Tab can hold Panes of more than one Host, so each desktop is
+// driven on its own.
 func (s *State) driveTabScreens(tab *Tab) {
-	// A zoomed Tab shows one Pane; its rectangle says nothing about the screens
-	// the hidden members still own, so the layout stays as it is.
-	if tab == nil || tab.Magnified != "" {
+	if tab == nil {
 		return
 	}
+	keys := make(map[string]bool, len(tab.panes))
+	for _, value := range tab.panes {
+		key := vncDesktopKey(value)
+		if key == "" || keys[key] {
+			continue
+		}
+		keys[key] = true
+		s.driveDesktopScreens(key, tab)
+	}
+}
+
+// driveDesktopScreens asks the remote for a screen layout that covers every
+// Pane of one VNC desktop, in this window or another: each screen takes its
+// Pane's size, so every Pane shows its own screen at its own size. The lowest
+// screen number sends the whole request, which makes the shell the single
+// driver instead of one request per Pane.
+//
+// Each window's Panes keep their relative geometry but are placed in a row
+// after the previous window's, so screens in different windows never overlap.
+//
+// It runs on the UI thread from a Surface's draw callback. A Pane that has not
+// drawn yet owns a screen the shell cannot describe, so the layout waits for it
+// rather than asking the remote to drop that screen.
+func (s *State) driveDesktopScreens(key string, source *Tab) {
 	type driver struct {
 		index int
 		host  sessionui.ScreenLayoutHost
+		rect  image.Rectangle
 	}
-	screens := make(map[int]image.Rectangle, len(tab.panes))
-	drivers := make([]driver, 0, len(tab.panes))
-	minX, minY := 0, 0
-	first := true
-	for _, value := range tab.panes {
-		host, ok := value.surface.(sessionui.ScreenLayoutHost)
-		if !ok {
-			if value.descriptor.Kind == domainworkspace.SessionVNC {
+	tabs := make([]*Tab, 0, len(s.tabs)+len(s.detached)+1)
+	seen := make(map[*Tab]bool, len(s.tabs)+len(s.detached)+1)
+	for _, tab := range s.tabs {
+		if tab != nil && !seen[tab] {
+			seen[tab] = true
+			tabs = append(tabs, tab)
+		}
+	}
+	for _, tab := range s.detached {
+		if tab != nil && !seen[tab] {
+			seen[tab] = true
+			tabs = append(tabs, tab)
+		}
+	}
+	if source != nil && !seen[source] {
+		tabs = append(tabs, source)
+	}
+
+	screens := make(map[int]image.Rectangle, len(tabs))
+	drivers := make([]driver, 0, len(tabs))
+	right, bottom := 0, 0
+	offsetX := 0
+	for _, tab := range tabs {
+		var group []driver
+		for _, value := range tab.panes {
+			if vncDesktopKey(value) != key {
+				continue
+			}
+			// A zoomed Tab shows one Pane at full size; its rectangle says
+			// nothing about the screens the hidden members still own. The
+			// desktop stays as it is until the zoom is restored.
+			if tab.Magnified != "" {
 				return
 			}
+			host, ok := value.surface.(sessionui.ScreenLayoutHost)
+			if !ok {
+				return
+			}
+			index, rect, ok := host.ScreenGeometry()
+			if !ok || index < 0 || index >= 0xff {
+				return
+			}
+			if _, duplicate := screens[index]; duplicate {
+				return
+			}
+			screens[index] = rect
+			group = append(group, driver{index: index, host: host, rect: rect})
+		}
+		if len(group) == 0 {
 			continue
 		}
-		index, rect, ok := host.ScreenGeometry()
-		if !ok || index < 0 || index >= 0xff {
-			return
+		minX, minY := group[0].rect.Min.X, group[0].rect.Min.Y
+		for _, candidate := range group {
+			minX = min(minX, candidate.rect.Min.X)
+			minY = min(minY, candidate.rect.Min.Y)
 		}
-		if _, duplicate := screens[index]; duplicate {
-			return
+		for i := range group {
+			rect := group[i].rect.Sub(image.Pt(minX, minY)).Add(image.Pt(offsetX, 0))
+			group[i].rect = rect
+			screens[group[i].index] = rect
+			right = max(right, rect.Max.X)
+			bottom = max(bottom, rect.Max.Y)
 		}
-		screens[index] = rect
-		if first {
-			minX, minY = rect.Min.X, rect.Min.Y
-			first = false
-		}
-		minX, minY = min(minX, rect.Min.X), min(minY, rect.Min.Y)
-		drivers = append(drivers, driver{index: index, host: host})
+		offsetX = right
+		drivers = append(drivers, group...)
 	}
 	if len(drivers) == 0 {
 		return
@@ -1597,13 +1681,8 @@ func (s *State) driveTabScreens(tab *Tab) {
 	// hibernated or view-only Pane passes the request on to the next one.
 	sort.Slice(drivers, func(i, j int) bool { return drivers[i].index < drivers[j].index })
 	maxIndex := 0
-	right, bottom := 0, 0
 	for index := range screens {
 		maxIndex = max(maxIndex, index)
-	}
-	for _, rect := range screens {
-		right = max(right, rect.Max.X-minX)
-		bottom = max(bottom, rect.Max.Y-minY)
 	}
 	// The server numbers screens by their position in the list and a Pane maps
 	// its screen by index, so the list covers every index up to the highest one
@@ -1612,9 +1691,7 @@ func (s *State) driveTabScreens(tab *Tab) {
 	layout := make([]sessionui.ScreenRect, 0, maxIndex+1)
 	for index := 0; index <= maxIndex; index++ {
 		rect, used := screens[index]
-		if used {
-			rect = rect.Sub(image.Pt(minX, minY))
-		} else {
+		if !used {
 			rect = image.Rect(right, 0, right+1, 1)
 			right++
 		}
@@ -1630,21 +1707,61 @@ func (s *State) driveTabScreens(tab *Tab) {
 	}
 }
 
+// driveAllScreens re-drives every VNC desktop after Panes moved between
+// windows, so a screen a closed or reattached Pane owned is not left behind
+// waiting for a Pane to happen to resize.
+func (s *State) driveAllScreens() {
+	keys := make(map[string]bool)
+	for _, tabs := range [][]*Tab{s.tabs, s.detached} {
+		for _, tab := range tabs {
+			if tab == nil {
+				continue
+			}
+			for _, value := range tab.panes {
+				key := vncDesktopKey(value)
+				if key == "" || keys[key] {
+					continue
+				}
+				keys[key] = true
+				s.driveDesktopScreens(key, tab)
+			}
+		}
+	}
+}
+
+// usedScreens collects the screen indices Panes of one VNC desktop occupy in
+// every window. A Pane detached into its own window still shows its screen, so
+// a split that looked only at its own Tab would hand out that index again and
+// put two Panes on one screen.
+func (s *State) usedScreens(key string, source *Tab) map[int]bool {
+	used := make(map[int]bool)
+	seen := make(map[*Tab]bool)
+	for _, tabs := range [][]*Tab{s.tabs, s.detached, {source}} {
+		for _, tab := range tabs {
+			if tab == nil || seen[tab] {
+				continue
+			}
+			seen[tab] = true
+			for _, value := range tab.panes {
+				if vncDesktopKey(value) == key {
+					used[value.descriptor.Screen] = true
+				}
+			}
+		}
+	}
+	return used
+}
+
 // prepareSplitScreen finds the screen a new VNC Pane should show and makes sure
-// the remote provides it. The index is the lowest one the Tab's VNC Panes do
-// not already use, so closing a Pane frees its screen for the next split. When
-// the remote already reports that many screens nothing is asked of it.
+// the remote provides it. The index is the lowest one no Pane of the desktop
+// uses in any window, so closing a Pane frees its screen for the next split.
+// When the remote already reports that many screens nothing is asked of it.
 func (s *State) prepareSplitScreen(tab *Tab, focused *pane) (int, error) {
 	splitter, ok := focused.surface.(ScreenSplitter)
 	if !ok || !splitter.CanSplit() {
 		return 0, ErrSplitUnavailable
 	}
-	used := make(map[int]bool, len(tab.panes))
-	for _, other := range tab.panes {
-		if other.descriptor.Kind == domainworkspace.SessionVNC {
-			used[other.descriptor.Screen] = true
-		}
-	}
+	used := s.usedScreens(vncDesktopKey(focused), tab)
 	screen := 0
 	for used[screen] {
 		screen++
