@@ -1073,9 +1073,9 @@ func (s *Surface) held(event ui.InputEvent) (rfb.KeyCode, heldKey, bool) {
 
 // resolveEvent maps MyGo's key identities onto the RFB resolver's tiers.
 //
-// MyGo v0.7.4 (the vendored version) exposes no USB HID code, so the Code tier
-// is unavailable and the physical ANSI-US position is the first tier. A future
-// MyGo with InputEvent.Code can fill Code without changing the resolver.
+// MyGo v0.10.0 (the vendored version) exposes InputEvent.Code, a USB HID usage
+// ID, but this resolver does not read it yet: the physical ANSI-US position is
+// still the first tier. Filling the Code tier from it is a separate change.
 //
 // MyGo's Key is also reduced to a fixed US-key enum (KeyForRune), so a layout
 // character outside that set, such as ISO '#' or a non-US punctuation mark,

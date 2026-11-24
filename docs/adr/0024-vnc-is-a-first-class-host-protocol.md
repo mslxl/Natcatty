@@ -133,9 +133,10 @@ switching modes never changes the saved target.
   implemented, but it encrypts only the credential block with a DH-derived AES
   key; the session that follows is still plaintext, so it warns too, and its
   64-byte credential halves cap a username or password at 63 bytes. The viewer's
-  keyboard fidelity is bounded by MyGo v0.7.4: it exposes no USB HID code and
-  no Print Screen, Fn, modifier-side, numpad, or media identities, and its
-  `Key` is reduced to a fixed US layout, so the physical ANSI-US position is the
-  first resolution tier and an unmapped layout character falls back to that
-  position. The resolver already understands the richer tiers; a later MyGo
-  that reports them needs no resolver change.
+  keyboard fidelity is bounded by MyGo v0.10.0's `Key`: it has no Print
+  Screen, Fn, modifier-side, numpad, or media identities, and it is reduced to
+  a fixed US layout, so the physical ANSI-US position is the first resolution
+  tier and an unmapped layout character falls back to that position. MyGo
+  v0.10.0 also reports a USB HID `InputEvent.Code`, but the resolver does not
+  read it yet; the resolver already understands the richer tiers, so wiring it
+  in needs no resolver change.

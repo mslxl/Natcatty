@@ -1,9 +1,9 @@
 diff --git a/ui/input.go b/ui/input.go
-index ac8a47b9..72e4c002 100644
+index 59f5db51..e7abd7b8 100644
 --- a/ui/input.go
 +++ b/ui/input.go
-@@ -307,6 +307,17 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, clicks i
- 	defer rt.endDown()
+@@ -536,6 +536,17 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, clicks i
+ 	rt.observePointer(InputEvent{Kind: InputPointerDown, Button: button, Mods: mods, Clicks: max(clicks, 1)})
  	chain := rt.hitChain(x, y)
  	rt.setHover(chain)
 +	// A primary press outside the container of the selection ends it, as a
@@ -18,9 +18,9 @@ index ac8a47b9..72e4c002 100644
 +		rt.selection = textSelection{}
 +	}
  	rt.pressDragger = 0
+ 	rt.pressEnded = nil
  	if len(chain) > 0 {
- 		rt.downs = append(rt.downs, chain[0])
-@@ -382,8 +393,14 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, clicks i
+@@ -617,8 +628,14 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, clicks i
  	target.pressPending = true
  	target.pressX, target.pressY = target.local(x, y)
  	target.drag.reset(rt.now(), x, y)
@@ -37,22 +37,20 @@ index ac8a47b9..72e4c002 100644
  	}
  	if target.editor != nil {
  		target.editor.pressMods = mods
-@@ -739,6 +756,14 @@ func (rt *engine) keyDownPhysical(mods Modifiers, key, physical Key, repeat bool
+@@ -1142,6 +1159,12 @@ func (rt *engine) keyDownPhysical(mods Modifiers, key, physical Key, code KeyCod
  		// Windows, leaves it rather than pasting a second time.
  		return true
  	}
 +	// The focus may have left a selectable paragraph since the drag, and its
-+	// Copy key must still copy the selection the user sees. Outside macOS the
-+	// Copy chord is Control+Shift+C, since a terminal keeps plain Control+C
-+	// for the program (see Natcatty's appview.CopyKey).
-+	if !rt.claimed(k) && k.key == KeyC && (k.mods == Cmd || k.mods == Cmd|Shift) && rt.copyTextSelection() {
++	// Copy key must still copy the selection the user sees.
++	if !rt.claimed(k) && k.mods == Cmd && k.key == KeyC && rt.copyTextSelection() {
 +		rt.requestFrame()
 +		return false
 +	}
  	if s := rt.states[rt.focused]; s != nil && s.flags&flagTypeSelect != 0 && !rt.claimed(k) {
  		// The first letters of a row of a list: they add up while typed
  		// quickly enough, with spaces once the first came.
-@@ -1007,6 +1032,13 @@ func (rt *engine) editEvent(ev editEvent) {
+@@ -1429,6 +1452,13 @@ func (rt *engine) editEvent(ev editEvent) bool {
  			// A handler of text without styles pastes it as Paste does.
  			handled = rt.deliver(h, InputEvent{Kind: kind, Text: "paste"})
  		}
@@ -61,24 +59,24 @@ index ac8a47b9..72e4c002 100644
 +			// returning the keyboard to the shell: the menu's Copy still acts
 +			// on the text selection the user dragged.
 +			rt.requestFrame()
-+			return
++			return true
 +		}
  		if handled {
  			rt.blinkStart = rt.now()
  		} else {
-@@ -1016,6 +1048,10 @@ func (rt *engine) editEvent(ev editEvent) {
+@@ -1438,6 +1468,10 @@ func (rt *engine) editEvent(ev editEvent) bool {
  	}
  	s := rt.states[rt.focused]
  	if s == nil || s.editor == nil {
 +		if ev.kind == editCommand && ev.text == "copy" && rt.copyTextSelection() {
 +			rt.requestFrame()
-+			return
++			return true
 +		}
  		rt.commandKey(ev, nil)
- 		return
+ 		return false
  	}
 diff --git a/ui/textselection.go b/ui/textselection.go
-index 5ead0356..9ab7b020 100644
+index 01fcd0f8..2434bff3 100644
 --- a/ui/textselection.go
 +++ b/ui/textselection.go
 @@ -152,8 +152,13 @@ func (rt *engine) textSelectionVisible(s *state) bool {

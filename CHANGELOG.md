@@ -99,6 +99,10 @@ requests; this file is the human-maintained changelog.
   so the toolchain moves to 1.27.4; nixpkgs still ships 1.27.3, and `flake.nix`
   overrides the Go source until nixpkgs catches up. `golang.zx2c4.com/wireguard`
   stays at v0.0.0-20261024220952-b3bc704ef0ee.
+- The pinned MyGo submodule is upgraded from v0.7.4 to v0.10.0, so the version
+  compiled through the `replace` directive now matches `go.mod`; the five local
+  patches are rebased onto v0.10.0. MyGo v0.10.0's `InputEvent.Code` is not
+  wired into the VNC key resolver yet.
 
 ### Removed
 

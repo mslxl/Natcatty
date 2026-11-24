@@ -1,17 +1,17 @@
 diff --git a/plugins/terminal/internal/vt/lib.go b/plugins/terminal/internal/vt/lib.go
-index ae5c3c0c8..7b3728746 100644
+index e4489c7a..9ee983f5 100644
 --- a/plugins/terminal/internal/vt/lib.go
 +++ b/plugins/terminal/internal/vt/lib.go
-@@ -332,6 +332,7 @@ var enums = []struct {
+@@ -333,6 +333,7 @@ var enums = []struct {
  	{"GhosttyTerminalData", "KITTY_KEYBOARD_FLAGS", dataKittyKeyboardFlags},
  	{"GhosttyTerminalData", "SCROLLBACK_ROWS", dataScrollbackRows},
  	{"GhosttyTerminalData", "MOUSE_TRACKING", dataMouseTracking},
 +	{"GhosttyTerminalData", "VT_GROUND", dataVTGround},
  	{"GhosttyTerminalData", "MOUSE_SHAPE", dataMouseShape},
  	{"GhosttyRowData", "WRAP", rowDataWrap},
- 	{"GhosttyRenderStateRowData", "RAW", rowDataRaw},
+ 	{"GhosttyRowData", "SEMANTIC_PROMPT", rowDataSemanticPrompt},
 diff --git a/plugins/terminal/internal/vt/terminal.go b/plugins/terminal/internal/vt/terminal.go
-index e390fa6e1..24e8fca9f 100644
+index 0ef24ae0..cc6699c6 100644
 --- a/plugins/terminal/internal/vt/terminal.go
 +++ b/plugins/terminal/internal/vt/terminal.go
 @@ -37,10 +37,10 @@ type Terminal struct {
@@ -161,7 +161,7 @@ index e390fa6e1..24e8fca9f 100644
  }
 diff --git a/plugins/terminal/internal/vt/terminal_test.go b/plugins/terminal/internal/vt/terminal_test.go
 new file mode 100644
-index 000000000..c5c4b0741
+index 00000000..c5c4b074
 --- /dev/null
 +++ b/plugins/terminal/internal/vt/terminal_test.go
 @@ -0,0 +1,298 @@

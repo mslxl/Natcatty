@@ -1,8 +1,8 @@
 # MyGo patches
 
 MyGo is a git submodule at `third_party/mygo`, pinned by the parent
-repository's gitlink to upstream v0.7.4
-(`9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e`). The submodule is never edited in
+repository's gitlink to upstream v0.10.0
+(`ebde9399baf2734b3361856a53f4036859973d1d`). The submodule is never edited in
 place in this repository's history: the patches in this directory are applied
 to a clean checkout before building.
 
@@ -12,7 +12,7 @@ pinned commit (removing untracked files), and applies every `*.patch` here in
 name order. `just dev`, `just test`, and `just build` depend on it, and CI runs
 it before Go.
 
-The patches are relative to v0.7.4. If the submodule moves to another upstream
+The patches are relative to v0.10.0. If the submodule moves to another upstream
 commit, rebase them and re-run the archive and terminal tests.
 
 If GitHub over HTTPS is unavailable in your environment, point the submodule

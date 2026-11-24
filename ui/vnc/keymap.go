@@ -12,8 +12,9 @@ import (
 // position tiers by the resolver, the logical one only when the physical one
 // is unknown.
 //
-// MyGo v0.7.4 has no KeyPrintScreen, KeyFn, modifier-side, numpad or media
-// identities, so those protocol codes are reachable only by a future platform
+// MyGo v0.10.0's Key has no KeyPrintScreen, KeyFn, modifier-side, numpad or
+// media identities (its KeyCode has some of them, but this resolver takes a
+// ui.Key), so those protocol codes are reachable only by a future platform
 // report; the resolver already understands them.
 func rfbKeyCode(key ui.Key) rfb.KeyCode {
 	switch {

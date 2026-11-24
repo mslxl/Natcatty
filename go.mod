@@ -17,7 +17,7 @@ go 1.27.4
 // re-checked against the new module graph.
 require (
 	github.com/coder/websocket v1.8.15
-	github.com/egoist/mygo v0.9.2
+	github.com/egoist/mygo v0.10.0
 	github.com/glebarez/go-sqlite v1.23.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/kayrus/putty v1.0.5
@@ -40,7 +40,6 @@ require (
 	github.com/alexbrainman/sspi v0.0.0-20250919150558-7d374ff0d59e // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/creachadair/msync v0.10.1 // indirect
-	github.com/creack/pty v1.1.24 // indirect
 	github.com/dblohm7/wingoes v0.0.0-20260526185140-fb298caac7ca // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.11.1 // indirect
@@ -106,7 +105,7 @@ tool github.com/egoist/mygo/cmd/mygo
 // CGO_ENABLED=0 five-target build.
 replace golang.zx2c4.com/wireguard/tun/netstack => golang.zx2c4.com/wireguard v0.0.0-20261024220952-b3bc704ef0ee
 
-// MyGo v0.7.4 is a git submodule at third_party/mygo, pinned by the gitlink.
+// MyGo v0.10.0 is a git submodule at third_party/mygo, pinned by the gitlink.
 // patches/mygo holds the local behavioral patches (link policy while a
 // program takes the mouse, DEC 1001 tracking, ConPTY padding, and encoder mode
 // restoration); scripts/apply-mygo-patches.sh applies them to a clean

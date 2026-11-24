@@ -82,7 +82,7 @@ def canonical-asset-name [name: string, version: string] {
     let linux_arm64_tar = $"natcatty-($version)-linux-arm64.tar.gz"
     let linux_amd64_deb = $"natcatty-($version)-linux-amd64.deb"
     let linux_arm64_deb = $"natcatty-($version)-linux-arm64.deb"
-    # MyGo v0.7.4, the pinned submodule, writes slug names:
+    # MyGo v0.10.0, the pinned submodule, writes slug names:
     # natcatty-<version>-<arch>.dmg and natcatty-setup-<version>-<arch>.exe.
     if ($base == $"natcatty-($version)-arm64.dmg") { return $dmg_arm64 }
     if ($base == $"natcatty-($version)-amd64.dmg") { return $dmg_amd64 }
