@@ -547,3 +547,26 @@ func TestInProcessPredictionAdaptiveOnDelayedLink(t *testing.T) {
 		t.Fatalf("server received user bytes %q, want exactly QZ", got)
 	}
 }
+
+// TestPredictionDisplayChangesOnALiveRenderer proves the Settings change hook
+// can move a running Mosh client between the stock modes without reopening the
+// transport.
+func TestPredictionDisplayChangesOnALiveRenderer(t *testing.T) {
+	renderer := newTerminalRenderer(newOutputQueue(4), 80, 24)
+	predictions := func() terminal.DisplayPreference {
+		renderer.mu.Lock()
+		defer renderer.mu.Unlock()
+		return renderer.overlays.Predictions().DisplayPreference()
+	}
+	if got := predictions(); got != terminal.DisplayAdaptive {
+		t.Fatalf("initial prediction display = %v, want adaptive", got)
+	}
+	renderer.setPredictionDisplay(moshmodel.PredictionAlways)
+	if got := predictions(); got != terminal.DisplayAlways {
+		t.Fatalf("prediction display after always = %v, want always", got)
+	}
+	renderer.setPredictionDisplay(moshmodel.PredictionNever)
+	if got := predictions(); got != terminal.DisplayNever {
+		t.Fatalf("prediction display after never = %v, want never", got)
+	}
+}

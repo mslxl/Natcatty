@@ -108,6 +108,9 @@ type Shell struct {
 	settings *settingsPages
 	hosts    *hostPages
 	sessions *sessionTabs
+	// terminalKeybinds supplies the external-keyboard bindings a new terminal
+	// captures. Nil keeps MyGo's stock terminal defaults.
+	terminalKeybinds terminalKeybindsFunc
 	// backgrounded suppresses the per-frame lifecycle rule while the app is
 	// not in the foreground. Background applies the rule once (releasing the
 	// view); a frame that still arrives must not reattach it before Foreground
@@ -289,6 +292,12 @@ func New(opts ...Option) *Shell {
 	s.hosts.proxyProfiles = func() []domainvault.ProxyProfile {
 		return s.vault.proxyProfiles
 	}
+	// The Transport page's app-wide default Proxy lists the same profiles the
+	// Proxies page and the Host editor show, so a profile created in the Vault
+	// is immediately selectable as the connection default.
+	s.settings.proxyProfiles = func() []domainvault.ProxyProfile {
+		return s.vault.proxyProfiles
+	}
 	// The Sessions section reads the same Appearance and terminal documents
 	// the Settings pages edit. A shell given no provider still follows the
 	// shared defaults, and a test's fake service supplies its own values.
@@ -300,6 +309,18 @@ func New(opts ...Option) *Shell {
 			}
 			return TerminalAppearanceFromAppearance(
 				s.settings.service.Preferences().Appearance, false)
+		}
+	}
+	// A terminal captures its key table when it is built, so the provider is
+	// wrapped into the appearance read rather than set on live screens. The
+	// Shortcuts page edits the shared binding document; the next terminal
+	// opened by the shell uses the new table.
+	if s.terminalKeybinds != nil {
+		baseAppearance := s.sessions.appearance
+		s.sessions.appearance = func() TerminalAppearance {
+			appearance := baseAppearance()
+			appearance.Keybinds = s.terminalKeybinds()
+			return appearance
 		}
 	}
 	// A Settings tap that changes the font, cursor or scheme re-styles open
@@ -495,7 +516,9 @@ func (s *Shell) newSection(i Section) *section {
 		sec.pages = []page{
 			{path: "/appearance", title: "Appearance", summary: staticSummary("Theme, font, cursor, icons")},
 			{path: "/terminal", title: "Terminal", summary: staticSummary("Remote clipboard")},
+			{path: "/transport", title: "Transport", summary: staticSummary("Mosh prediction")},
 			{path: "/input", title: "Input", summary: staticSummary("Paste confirmation")},
+			{path: "/shortcuts", title: "Shortcuts", summary: staticSummary("External keyboard")},
 			{path: "/security", title: "Security", summary: staticSummary("Confirmations")},
 			{path: "/history", title: "History sync", summary: staticSummary("Atuin account and sync")},
 			{path: "/vault-sync", title: "Vault sync", summary: staticSummary("Portable settings and Vault")},

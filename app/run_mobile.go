@@ -24,12 +24,14 @@ import (
 	"context"
 	"log"
 	"path/filepath"
+	"runtime"
 
 	"github.com/egoist/mygo"
 
 	"github.com/mslxl/natcatty/adapters/store"
 	adaptersyncbackup "github.com/mslxl/natcatty/adapters/syncbackup"
 	adapterbackup "github.com/mslxl/natcatty/adapters/vaultbackup"
+	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
 	appbackup "github.com/mslxl/natcatty/application/vaultbackup"
@@ -172,12 +174,18 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 
 	preferences := apppreferences.NewService(
 		store.OpenPreferences(filepath.Join(userData, "preferences.json")),
-		apppreferences.WithChangeHook(func(domainpreferences.Settings) {
+		apppreferences.WithChangeHook(func(settings domainpreferences.Settings) {
 			// The font, cursor and scheme are read when a terminal is built.
 			// Re-style the live ones now, as the desktop root does; this also
 			// covers a preference document applied from outside the page.
 			if shell != nil {
 				shell.RefreshTerminalAppearance()
+			}
+			// The Transport page writes the same document. The Session runtime
+			// applies the Mosh local-echo choice to Sessions that are already
+			// open and keeps it for the next one.
+			if sessionRuntime != nil {
+				sessionRuntime.ApplyTransportSettings(settings)
 			}
 			// A portable theme or font change is a Vault-sync fact: schedule
 			// an automatic upload when sync is configured and enabled.
@@ -201,6 +209,32 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 			}
 		}))
 	if err := terminalSettings.Load(ctx); err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+
+	// Keyboard bindings are the same catalog and document the desktop uses.
+	// The device's platform picks the default scheme; the user's overrides and
+	// the active scheme are device-local, and the phone's Vault sync treats the
+	// keybindings document as desktop-authored, so an edit here never
+	// overwrites the desktop. The terminal reads the active table when it is
+	// built, exactly as the desktop terminal does.
+	// An external keyboard on iOS has the same Command key as the Mac, so the
+	// default scheme is the Mac one; Android and every other platform use PC.
+	bindingGOOS := runtime.GOOS
+	if bindingGOOS == "ios" {
+		bindingGOOS = "darwin"
+	}
+	keybindings := appkeybindings.NewService(
+		store.OpenKeyBindings(filepath.Join(userData, "keybindings.json")),
+		appkeybindings.WithGOOS(bindingGOOS),
+		appkeybindings.WithChangeHook(func(appkeybindings.State) {
+			// A shortcut edit repaints the Settings page and makes the next
+			// terminal capture the new table.
+			for _, window := range mygo.Windows() {
+				window.Invalidate()
+			}
+		}))
+	if err := keybindings.Load(ctx); err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
 
@@ -292,6 +326,10 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 	// uses, so the Terminal page's Remote clipboard control has an effect.
 	sessionRuntime = newPhoneSessionRuntime(vault, database, userData, prompts, history, credentials,
 		func() domainterminal.Settings { return terminalSettings.Settings() }, preferences)
+	// Apply the saved Transport document before any Session can open, so the
+	// first Host connects under the same rule as a Session opened after the
+	// Settings page changes it.
+	sessionRuntime.ApplyTransportSettings(preferences.Settings())
 	// Terminal widgets consume their own input, so the gate never sees
 	// keystrokes typed there. A Session change (including output) is the
 	// observable activity, exactly as the desktop composition root counts it.
@@ -319,6 +357,9 @@ func newPhoneShell(ctx context.Context) (*phoneshell.Shell, *store.Store, *phone
 		phoneshell.WithHostCreator(vault),
 		phoneshell.WithPrompts(prompts),
 		phoneshell.WithSettings(phoneshell.NewSettingsService(preferences, terminalSettings)),
+		// The Shortcuts page edits the shared catalog and override document;
+		// new terminals capture the active table from the same service.
+		phoneshell.WithShortcuts(keybindings),
 		phoneshell.WithHistorySync(history),
 		// The Session Tools surface reads the same journal the Settings History
 		// page configures, so a command captured here is searchable, fillable,

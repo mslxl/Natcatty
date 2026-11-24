@@ -8,6 +8,7 @@ import (
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
 )
@@ -35,10 +36,24 @@ type settingsPages struct {
 	syncForm    vaultSyncDraft
 	historyForm historyDraft
 	problem     string
+	// shortcuts is the shared keyboard-binding service. Nil hides the
+	// Shortcuts controls with a stated reason instead of writing a document
+	// nobody reads.
+	shortcuts ShortcutService
+	// shortcutSelected names the binding whose editor is open, and
+	// shortcutChord is its draft. recording makes the chord field capture the
+	// next key press through an external keyboard.
+	shortcutSelected string
+	shortcutChord    string
+	recording        bool
 	// onAppearanceChange re-styles live terminals after a successful
 	// Appearance write. Nil is only for a build whose Shell did not install
 	// the hook; a newly built terminal still reads the new value.
 	onAppearanceChange func()
+	// proxyProfiles lists the Vault's Proxy Profiles for the Transport page's
+	// app-wide default. Nil means none are selectable, which is also the
+	// state before the Vault has loaded.
+	proxyProfiles func() []domainvault.ProxyProfile
 }
 
 func newSettingsPages() *settingsPages { return &settingsPages{} }
@@ -60,8 +75,12 @@ func (p *settingsPages) draw(c *ui.Context, page page) {
 				p.appearance(c)
 			case "/terminal":
 				p.terminal(c)
+			case "/transport":
+				p.transport(c)
 			case "/input":
 				p.input(c)
+			case "/shortcuts":
+				p.shortcutsPage(c)
 			case "/security":
 				p.security(c)
 			case "/history":

@@ -46,6 +46,7 @@ func newTerminalScreen(conn io.ReadWriteCloser, appearance TerminalAppearance) (
 		Theme:        appearance.Theme,
 		Cursor:       appearance.Cursor,
 		NoBlink:      !appearance.Blink,
+		Keybinds:     appearance.Keybinds,
 	})
 	if err != nil {
 		flow.close()

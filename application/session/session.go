@@ -405,6 +405,15 @@ func preserveTransportResume(transport Transport) {
 	}
 }
 
+// applyMoshPrediction hands a local-echo choice to a transport that can change
+// it in place. Transports for other protocols, and an older Mosh adapter, keep
+// the mode they opened with.
+func applyMoshPrediction(transport Transport, mode moshmodel.PredictionDisplay) {
+	if setter, ok := transport.(MoshPredictionDisplaySetter); ok {
+		setter.SetPredictionDisplay(mode.Normalized())
+	}
+}
+
 // ResumeDiscarder is implemented by resumable transports that must clear the
 // credentials after an earlier PreserveResume. An explicit Session close uses
 // it when the transport was already closed for a reconnect handover.
@@ -429,6 +438,14 @@ func discardTransportResume(transport Transport) {
 // handler that carries the signal to the attached view.
 type ScreenSizer interface {
 	SetScreenSizeHandler(handler func(cols, rows int, position uint64))
+}
+
+// MoshPredictionDisplaySetter is implemented by a transport whose local-echo
+// mode can change without reopening it. The Mosh client implements it, so a
+// Settings change applies to Sessions that are already running as well as to
+// ones opened later.
+type MoshPredictionDisplaySetter interface {
+	SetPredictionDisplay(mode moshmodel.PredictionDisplay)
 }
 
 // StartSpec describes a Session to open. Command empty asks the transport
@@ -684,6 +701,10 @@ type Session struct {
 
 	tap             *terminalTap
 	clipboardAccess domainterminal.ClipboardAccess
+	// moshPrediction is the local-echo mode applied by a Settings change; the
+	// command loop re-applies it to a transport opened by a reconnect.
+	moshPrediction    moshmodel.PredictionDisplay
+	moshPredictionSet bool
 	// captureCleanup releases the capture hook's session-scoped resources. The
 	// command loop calls it exactly once during teardown.
 	captureCleanup func()
@@ -805,6 +826,7 @@ const (
 	commandTransportOpen
 	commandTransportFailed
 	commandReconnectNow
+	commandMoshPrediction
 )
 
 type command struct {
@@ -815,6 +837,7 @@ type command struct {
 	transport  Transport
 	end        End
 	err        error
+	prediction moshmodel.PredictionDisplay
 }
 
 // closeRequest is the Session's one explicit close. The command loop or
@@ -848,19 +871,25 @@ type Service struct {
 	// startupSchedule replaces the readiness fallback timer. It is nil in
 	// production; tests inject it to observe the default bound and fire it
 	// without waiting.
-	startupSchedule     func(time.Duration, func()) *time.Timer
-	clipboardPolicy     func() domainterminal.ClipboardAccess
-	encodingPolicy      func(StartSpec) domainterminal.Encoding
-	codecFactory        CodecFactory
-	onNotification      func(model.SessionID, TerminalNotification)
-	onTransfer          func(model.SessionID, TransferState)
-	onInput             func(model.SessionID, []byte)
-	onCommandCompletion func(CommandEvent)
-	onBell              func(model.SessionID)
-	onConnection        func(ConnectionEvent)
-	highlightPolicy     func() (bool, []domainterminal.KeywordHighlightRule)
-	captureHook         CaptureHook
-	hostAtuin           HostAtuin
+	startupSchedule func(time.Duration, func()) *time.Timer
+	clipboardPolicy func() domainterminal.ClipboardAccess
+	// moshPredictionDisplay is the latest Transport setting applied to Mosh
+	// Sessions. moshPredictionSet distinguishes an explicit adaptive choice
+	// from "no policy configured", so an unsaved Open keeps the caller's own
+	// configuration.
+	moshPredictionDisplay moshmodel.PredictionDisplay
+	moshPredictionSet     bool
+	encodingPolicy        func(StartSpec) domainterminal.Encoding
+	codecFactory          CodecFactory
+	onNotification        func(model.SessionID, TerminalNotification)
+	onTransfer            func(model.SessionID, TransferState)
+	onInput               func(model.SessionID, []byte)
+	onCommandCompletion   func(CommandEvent)
+	onBell                func(model.SessionID)
+	onConnection          func(ConnectionEvent)
+	highlightPolicy       func() (bool, []domainterminal.KeywordHighlightRule)
+	captureHook           CaptureHook
+	hostAtuin             HostAtuin
 	// localShell resolves the configured custom shell for a local Session. It
 	// runs before the capture-hook planner so the hook wraps the user's shell
 	// instead of the OS login shell; nil keeps the OS default.
@@ -1076,10 +1105,21 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 				}
 			}
 		}
-		spec.Encoding = domainterminal.NormalizeEncoding(spec.Encoding)
-		if spec.Encoding != domainterminal.EncodingUTF8 && s.codecFactory == nil {
-			return nil, fmt.Errorf("session: no codec factory for encoding %q", spec.Encoding)
+	}
+	spec.Encoding = domainterminal.NormalizeEncoding(spec.Encoding)
+	// A Mosh Session opened after the Settings page changed follows the same
+	// prediction display as the ones already running.
+	if spec.Mosh != nil {
+		s.mu.Lock()
+		if s.moshPredictionSet {
+			cfg := spec.Mosh.Normalized()
+			cfg.PredictionDisplay = s.moshPredictionDisplay.Normalized()
+			spec.Mosh = &cfg
 		}
+		s.mu.Unlock()
+	}
+	if spec.Encoding != domainterminal.EncodingUTF8 && s.codecFactory == nil {
+		return nil, fmt.Errorf("session: no codec factory for encoding %q", spec.Encoding)
 	}
 	codec := Codec(identityCodec{})
 	if s.codecFactory != nil && spec.Kind != KindVNC {
@@ -1470,6 +1510,25 @@ func (s *Service) SetClipboardPolicy(policy domainterminal.ClipboardAccess) {
 	}
 }
 
+// SetMoshPredictionDisplay applies a Transport setting to every live Session
+// and to Sessions opened later. Like the clipboard policy, it is what makes a
+// Settings change take effect without relaunching a Session. Transports that
+// cannot change the mode in place simply keep the mode they opened with.
+func (s *Service) SetMoshPredictionDisplay(mode moshmodel.PredictionDisplay) {
+	mode = mode.Normalized()
+	s.mu.Lock()
+	s.moshPredictionDisplay = mode
+	s.moshPredictionSet = true
+	live := make([]*Session, 0, len(s.sessions))
+	for _, session := range s.sessions {
+		live = append(live, session)
+	}
+	s.mu.Unlock()
+	for _, session := range live {
+		session.setMoshPredictionDisplay(mode)
+	}
+}
+
 // SetHighlightPolicy applies a keyword highlight change to every live Session
 // and to Sessions opened later. Rules are normalized by the domain highlighter.
 func (s *Service) SetHighlightPolicy(enabled bool, rules []domainterminal.KeywordHighlightRule) {
@@ -1791,6 +1850,17 @@ func (s *Session) Resize(cols, rows int) error {
 	}
 }
 
+// setMoshPredictionDisplay hands a Settings change to the command loop, which
+// is the only goroutine that replaces the transport. The loop applies it to the
+// current transport and remembers it for a reconnect.
+func (s *Session) setMoshPredictionDisplay(mode moshmodel.PredictionDisplay) {
+	select {
+	case s.commands <- command{kind: commandMoshPrediction, prediction: mode}:
+	case <-s.done:
+	case <-s.ctx.Done():
+	}
+}
+
 // CanReconnect reports whether ReconnectNow can reopen the transport: the
 // Session has a reconnect policy and has not ended.
 func (s *Session) CanReconnect() bool {
@@ -2015,6 +2085,16 @@ func (s *Session) loop() {
 				s.update(func(snapshot *Snapshot) {
 					snapshot.Cols, snapshot.Rows = cmd.cols, cmd.rows
 				})
+			case commandMoshPrediction:
+				s.mu.Lock()
+				s.moshPrediction = cmd.prediction.Normalized()
+				s.moshPredictionSet = true
+				transport := s.transport
+				reopening := s.reopening
+				s.mu.Unlock()
+				if transport != nil && !reopening {
+					applyMoshPrediction(transport, cmd.prediction)
+				}
 			case commandTransportEnded:
 				if cmd.generation != s.generation || s.reopening {
 					// A late read or write error from a transport this Session
@@ -2105,6 +2185,15 @@ func (s *Session) loop() {
 				}
 				s.bindScreenSizer(cmd.transport)
 				s.bindCWDProbe(cmd.transport)
+				// A replacement transport opens with the Session's original
+				// StartSpec, so re-apply a prediction display chosen while the
+				// reconnect was in flight.
+				s.mu.Lock()
+				prediction, predictionSet := s.moshPrediction, s.moshPredictionSet
+				s.mu.Unlock()
+				if predictionSet {
+					applyMoshPrediction(cmd.transport, prediction)
+				}
 				// Every reconnect gets its own one-shot startup command and a
 				// fresh detector for the console's new boot.
 				s.armStartupCommand(cmd.generation, cmd.transport)

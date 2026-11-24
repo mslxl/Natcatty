@@ -19,6 +19,12 @@ type TerminalAppearance struct {
 	Theme  *terminal.Theme
 	Cursor terminal.CursorStyle
 	Blink  bool
+	// Keybinds are the external-keyboard bindings MyGo honors in this
+	// terminal. They are captured when the terminal is built, as on the
+	// desktop; a live terminal keeps the table it was created with. The
+	// Appearance document contributes none, so this stays nil unless the
+	// composition root installs the shared keybinding service.
+	Keybinds []terminal.Keybind
 }
 
 // TerminalAppearanceFromAppearance maps the shared Appearance document onto
