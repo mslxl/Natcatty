@@ -355,6 +355,9 @@ func New(opts ...Option) *Shell {
 	s.sessions.show = func(id string) {
 		s.sections[Sessions].router.Push("/session/" + id)
 	}
+	// The Sessions home's Quick Connect entry pushes the form; connecting from
+	// it uses the same begin/select/push flow a saved Host does.
+	s.sessions.quickOpen = s.openQuickConnectForm
 	s.sessions.close = s.closeSession
 	s.sessions.confirmClose = s.confirmClosingSessions
 	for i := range s.sections {
@@ -413,6 +416,14 @@ func (s *Shell) newSection(i Section) *section {
 	case Sessions:
 		sec.rootDraw = s.sessions.drawRoot
 		sec.route = func(c *ui.Context, r *ui.Route) bool {
+			// Quick Connect is a plain page, not a Tab. It is tested before
+			// the {id} route, which would otherwise read "quick-connect" as a
+			// Tab identity.
+			if r.Match(quickConnectPath) {
+				r.Title("Quick Connect")
+				s.drawQuickConnect(c)
+				return true
+			}
 			// The fixed suffix is tested before the {id} route, which would
 			// otherwise read "new-pane" as part of the Tab's page.
 			if r.Match("/session/{id}/new-pane") {
@@ -766,6 +777,7 @@ func (s *Shell) launchPane(tabID, paneID string) {
 		return
 	}
 	host, resumeKey := pane.host, pane.resumeKey
+	unsaved, secret := pane.unsaved, pane.unsavedSecret
 	s.sessions.mu.Unlock()
 	ctx, cancel := context.WithCancel(withPromptOwner(context.Background(), paneID))
 	s.sessions.attachCancel(tabID, paneID, cancel)
@@ -774,16 +786,26 @@ func (s *Shell) launchPane(tabID, paneID string) {
 			handle SessionHandle
 			err    error
 		)
-		// A restored EternalTerminal Pane passes the locator its descriptor
-		// carried, so the opener reattaches the saved session instead of
-		// starting a fresh one. Every other transport opens the Host normally.
-		if resumeKey != "" {
+		switch {
+		case unsaved:
+			// A Quick Connect Pane's Host has no Vault record. The opener must
+			// take the parsed target and one-shot credential directly; a Vault
+			// lookup of the empty Host ID would fail with a misleading error.
+			if target, ok := opener.(QuickConnectOpener); ok {
+				handle, err = target.OpenTarget(ctx, host, secret)
+			} else {
+				err = errNoQuickConnectOpener
+			}
+		case resumeKey != "":
+			// A restored EternalTerminal Pane passes the locator its descriptor
+			// carried, so the opener reattaches the saved session instead of
+			// starting a fresh one. Every other transport opens the Host normally.
 			if resuming, ok := opener.(ResumeKeyOpener); ok {
 				handle, err = resuming.OpenHostWithResume(ctx, host, resumeKey)
 			} else {
 				handle, err = opener.OpenHost(ctx, host)
 			}
-		} else {
+		default:
 			handle, err = opener.OpenHost(ctx, host)
 		}
 		s.sessions.finish(tabID, paneID, handle, err)

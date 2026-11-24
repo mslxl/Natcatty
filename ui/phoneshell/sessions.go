@@ -183,6 +183,14 @@ type phonePane struct {
 	// encrypted secret store; this key is what the restore payload carries so
 	// a relaunch reattaches instead of starting a second remote shell.
 	resumeKey string
+	// unsaved marks a Pane opened from the Sessions home's Quick Connect form.
+	// Its Host is an Unsaved Host with no Vault record, so the opener must
+	// accept the target directly instead of resolving a saved Host by ID.
+	unsaved bool
+	// unsavedSecret is the one-shot password the Quick Connect form supplied.
+	// It travels only into this Session's StartSpec and is never persisted: an
+	// Unsaved Host is not saved as a Vault record or a restore descriptor.
+	unsavedSecret string
 	// tools is this Pane's Tools surface state. It lives on the Pane, so a
 	// focus switch cannot carry one Pane's overlay into another, and closing
 	// the Pane discards the overlay with it.
@@ -466,6 +474,13 @@ type sessionTabs struct {
 	pendingClose *closeRequest
 	tabs         []*phoneTab
 	next         int
+	// quickConnect is the Sessions home's Quick Connect form. It lives with the
+	// Tabs because connecting opens one, and keeping the draft here lets a
+	// corrected target survive leaving and returning to the form.
+	quickConnect quickConnectState
+	// quickOpen pushes the Quick Connect form on the Sessions router. A Shell
+	// built without the entry leaves it nil.
+	quickOpen func()
 	// nextSplit is the split-identity sequence. It only moves forward, so a
 	// restored split id is never handed to a later split.
 	nextSplit int
@@ -548,15 +563,31 @@ type tabView struct {
 	empty bool
 }
 
-// begin records a connecting Tab with one Pane and returns both. The caller
+// begin records a connecting Tab with one Pane for a saved Host. The caller
 // starts the open.
 func (t *sessionTabs) begin(host domainvault.Host) (*phoneTab, *phonePane) {
+	return t.beginWith(host, false, "")
+}
+
+// beginQuickConnect records a connecting Tab for a Quick Connect target. Its
+// Pane is marked unsaved so launchPane asks the opener for a direct open
+// instead of a Vault lookup, which an empty Host ID could never satisfy.
+func (t *sessionTabs) beginQuickConnect(host domainvault.Host, secret string) (*phoneTab, *phonePane) {
+	return t.beginWith(host, true, secret)
+}
+
+// beginWith records a connecting Tab with one Pane and returns both. unsaved
+// and secret describe a Pane whose Host has no Vault record; a saved Host
+// passes false and "". The caller starts the open.
+func (t *sessionTabs) beginWith(host domainvault.Host, unsaved bool, secret string) (*phoneTab, *phonePane) {
 	t.mu.Lock()
 	if t.next == 0 {
 		t.next = 1
 	}
 	tab := &phoneTab{id: t.newTabIDLocked(), label: hostName(host)}
 	pane := t.newPaneLocked(tab, host)
+	pane.unsaved = unsaved
+	pane.unsavedSecret = secret
 	t.attachPaneLocked(tab, pane)
 	tab.focus = pane.id
 	tab.number = len(t.tabs) + 1
@@ -1953,6 +1984,11 @@ func (t *sessionTabs) drawRoot(c *ui.Context) {
 	ui.Scroll(c).Fill().Children(func() {
 		ui.Column(c).Width(width).Padding(16).Gap(12).Children(func() {
 			views := t.list()
+			// Quick Connect is the home's temporary-session entry. It needs no
+			// saved Host, so it is offered even when no Session is open.
+			if kit.PrimaryButton(c, icons.Zap, "Quick Connect").Clicked() && t.quickOpen != nil {
+				t.quickOpen()
+			}
 			kit.SectionBar(c, "Open Sessions", nil)
 			if len(views) == 0 {
 				kit.EmptyHint(c, "No sessions yet. Open a Host from the Hosts tab.")
