@@ -61,6 +61,12 @@ requests; this file is the human-maintained changelog.
 
 ### Changed
 
+- External MCP is now opt-in. A fresh or existing profile opens no loopback
+  listener and publishes no discovery file until Settings → External MCP is
+  enabled; `natcatty-mcp` clients cannot connect before that, and the stored
+  document needs no migration. The same area now exposes the Streamable HTTP
+  endpoint's enable switch, listen address, and port, and all three apply
+  without a restart.
 - Settings → System → Global Hotkey is now the four-mode choice above. The old
   enable checkbox and the stored `globalHotkeyEnabled` value were removed; an
   old record loads with Quake as the default and no migration, while tray,
