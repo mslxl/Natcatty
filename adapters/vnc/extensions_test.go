@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"net"
 	"sync"
@@ -18,41 +19,19 @@ import (
 	"github.com/mslxl/natcatty/domain/model/rfb/rfbtest"
 )
 
-// TestDesktopResizeRefusalIsTyped proves a nonzero ExtendedDesktopSize status
-// is surfaced as a distinct refusal instead of masquerading as success.
-func TestDesktopResizeRefusalIsTyped(t *testing.T) {
-	h := start(t, rfbtest.Config{
-		Frame:               testFrame(),
-		Encoding:            rfb.EncodingRaw,
-		ExtendedDesktopSize: true,
-		DesktopSizeStatus:   1,
-	})
-	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { _ = transport.Close() })
-	display := transport.(appsession.DisplayProvider).Display()
-	// The first update carries the ExtendedDesktopSize capability.
-	nextEvent(t, display.Events(), appsession.DisplayEventFrame)
-
-	if err := display.SetDesktopSize(8, 6); !errors.Is(err, appsession.ErrDesktopResizeRefused) {
-		t.Fatalf("SetDesktopSize = %v, want ErrDesktopResizeRefused", err)
-	}
-}
-
-// TestDesktopResizeStatusesAreClassified proves status 4 ("request forwarded")
-// is pending, while statuses 1-3 and an unknown nonzero status are refusals.
-func TestDesktopResizeStatusesAreClassified(t *testing.T) {
+// TestScreenLayoutStatusesAreClassified proves status 4 ("request forwarded")
+// is pending, while statuses 1-3 and an unknown nonzero status report that the
+// server did not adopt the layout.
+func TestScreenLayoutStatusesAreClassified(t *testing.T) {
 	cases := []struct {
 		status uint8
 		want   error
 	}{
 		{4, appsession.ErrDesktopResizePending},
-		{1, appsession.ErrDesktopResizeRefused},
-		{2, appsession.ErrDesktopResizeRefused},
-		{3, appsession.ErrDesktopResizeRefused},
-		{9, appsession.ErrDesktopResizeRefused},
+		{1, appsession.ErrMultiScreenUnsupported},
+		{2, appsession.ErrMultiScreenUnsupported},
+		{3, appsession.ErrMultiScreenUnsupported},
+		{9, appsession.ErrMultiScreenUnsupported},
 	}
 	for _, tc := range cases {
 		t.Run(fmt.Sprintf("status-%d", tc.status), func(t *testing.T) {
@@ -70,8 +49,8 @@ func TestDesktopResizeStatusesAreClassified(t *testing.T) {
 			display := transport.(appsession.DisplayProvider).Display()
 			nextEvent(t, display.Events(), appsession.DisplayEventFrame)
 
-			if err := display.SetDesktopSize(8, 6); !errors.Is(err, tc.want) {
-				t.Fatalf("SetDesktopSize = %v, want %v", err, tc.want)
+			if err := display.SetScreenLayout([]appsession.DisplayScreen{{Rect: image.Rect(0, 0, 8, 6)}}); !errors.Is(err, tc.want) {
+				t.Fatalf("SetScreenLayout = %v, want %v", err, tc.want)
 			}
 			// Even a refusal or an unknown status must not kill the session.
 			if err := display.SendKey(0x62, true); err != nil {
@@ -179,8 +158,8 @@ func TestPostResizeRequestsTheNewExtent(t *testing.T) {
 	display := transport.(appsession.DisplayProvider).Display()
 	nextEvent(t, display.Events(), appsession.DisplayEventFrame)
 
-	if err := display.SetDesktopSize(8, 6); err != nil {
-		t.Fatalf("SetDesktopSize: %v", err)
+	if err := display.SetScreenLayout([]appsession.DisplayScreen{{Rect: image.Rect(0, 0, 8, 6)}}); err != nil {
+		t.Fatalf("SetScreenLayout: %v", err)
 	}
 	waitFor(t, "a full update request for the new size", func() bool {
 		for _, request := range h.server.Received().Requests {
@@ -271,6 +250,233 @@ func TestFenceBurstDoesNotStallTheWriter(t *testing.T) {
 		}
 		return false
 	})
+}
+
+// TestDesktopSizeReportCarriesTheScreenLayout proves the adapter reports the
+// server's screens with the resize event, which is how the viewer learns a
+// desktop can be split into one Pane per screen.
+func TestDesktopSizeReportCarriesTheScreenLayout(t *testing.T) {
+	h := start(t, rfbtest.Config{
+		Frame:               testFrame(),
+		Encoding:            rfb.EncodingRaw,
+		ExtendedDesktopSize: true,
+		ScreenLayout: []rfb.Screen{
+			{ID: 7, Width: 2, Height: 4},
+			{ID: 9, X: 2, Width: 2, Height: 4},
+		},
+	})
+	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	display := transport.(appsession.DisplayProvider).Display()
+
+	var layout []appsession.DisplayScreen
+	waitFor(t, "a resize event carrying the screens", func() bool {
+		for {
+			select {
+			case event := <-display.Events():
+				if event.Kind == appsession.DisplayEventResize && len(event.Screens) > 0 {
+					layout = event.Screens
+					return true
+				}
+			default:
+				return false
+			}
+		}
+	})
+	if len(layout) != 2 {
+		t.Fatalf("screens = %+v, want 2", layout)
+	}
+	if layout[0].ID != 7 || layout[0].Rect != image.Rect(0, 0, 2, 4) {
+		t.Fatalf("first screen = %+v", layout[0])
+	}
+	if layout[1].ID != 9 || layout[1].Rect != image.Rect(2, 0, 4, 4) {
+		t.Fatalf("second screen = %+v", layout[1])
+	}
+}
+
+// TestScreenCountAdoptsTheServerLayout proves the adapter asks for one screen
+// per pane and treats a reply with that many screens as success.
+func TestScreenCountAdoptsTheServerLayout(t *testing.T) {
+	h := start(t, rfbtest.Config{
+		Frame:               testFrame(),
+		Encoding:            rfb.EncodingRaw,
+		ExtendedDesktopSize: true,
+	})
+	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	display := transport.(appsession.DisplayProvider).Display()
+	waitFor(t, "the initial layout", func() bool { return len(display.Screens()) == 1 })
+
+	if err := display.SetScreenCount(2); err != nil {
+		t.Fatalf("SetScreenCount: %v", err)
+	}
+	screens := display.Screens()
+	if len(screens) != 2 {
+		t.Fatalf("screens = %+v, want 2", screens)
+	}
+	// Each screen keeps the size the desktop had, laid side by side.
+	if screens[0].Rect != image.Rect(0, 0, 4, 4) || screens[1].Rect != image.Rect(4, 0, 8, 4) {
+		t.Fatalf("screens = %+v, want two 4x4 tiles", screens)
+	}
+}
+
+// TestScreenCountRejectsAServerThatIgnoresScreens proves a server that resizes
+// its desktop but keeps one screen is reported as unable to go multi-screen,
+// and the adapter puts the previous size back.
+func TestScreenCountRejectsAServerThatIgnoresScreens(t *testing.T) {
+	h := start(t, rfbtest.Config{
+		Frame:               testFrame(),
+		Encoding:            rfb.EncodingRaw,
+		ExtendedDesktopSize: true,
+		IgnoreScreens:       true,
+	})
+	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	display := transport.(appsession.DisplayProvider).Display()
+	waitFor(t, "the initial layout", func() bool { return len(display.Screens()) == 1 })
+
+	if err := display.SetScreenCount(2); !errors.Is(err, appsession.ErrMultiScreenUnsupported) {
+		t.Fatalf("SetScreenCount = %v, want ErrMultiScreenUnsupported", err)
+	}
+	waitFor(t, "the restored desktop size", func() bool {
+		requests := h.server.Received().DesktopSizes
+		if len(requests) < 2 {
+			return false
+		}
+		last := requests[len(requests)-1]
+		return last.Width == 4 && last.Height == 4 && len(last.Screens) == 1
+	})
+}
+
+// TestScreenLayoutAdoptsTheExactScreens proves the adapter sends the Tab's
+// rectangles unchanged, computes the desktop as their bounding box, and reports
+// the server's adopted layout afterwards.
+func TestScreenLayoutAdoptsTheExactScreens(t *testing.T) {
+	h := start(t, rfbtest.Config{
+		Frame:               testFrame(),
+		Encoding:            rfb.EncodingRaw,
+		ExtendedDesktopSize: true,
+	})
+	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	display := transport.(appsession.DisplayProvider).Display()
+	waitFor(t, "the initial layout", func() bool { return len(display.Screens()) == 1 })
+
+	want := []appsession.DisplayScreen{
+		{Rect: image.Rect(0, 0, 3, 4)},
+		{Rect: image.Rect(3, 0, 8, 4)},
+	}
+	if err := display.SetScreenLayout(want); err != nil {
+		t.Fatalf("SetScreenLayout: %v", err)
+	}
+	screens := display.Screens()
+	if len(screens) != 2 {
+		t.Fatalf("screens = %+v, want 2", screens)
+	}
+	if screens[0].Rect != want[0].Rect || screens[1].Rect != want[1].Rect {
+		t.Fatalf("screens = %+v, want the requested rectangles", screens)
+	}
+	requests := h.server.Received().DesktopSizes
+	last := requests[len(requests)-1]
+	if last.Width != 8 || last.Height != 4 {
+		t.Fatalf("desktop = %dx%d, want the bounding box 8x4", last.Width, last.Height)
+	}
+	if len(last.Screens) != 2 || last.Screens[1].X != 3 || last.Screens[1].Width != 5 {
+		t.Fatalf("request screens = %+v, want the uneven rectangles", last.Screens)
+	}
+}
+
+// TestScreenLayoutRejectsAServerThatIgnoresScreens proves a server that resizes
+// its desktop but keeps one screen is reported as unable to adopt the layout,
+// and the adapter puts the previous desktop back.
+func TestScreenLayoutRejectsAServerThatIgnoresScreens(t *testing.T) {
+	h := start(t, rfbtest.Config{
+		Frame:               testFrame(),
+		Encoding:            rfb.EncodingRaw,
+		ExtendedDesktopSize: true,
+		IgnoreScreens:       true,
+	})
+	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	display := transport.(appsession.DisplayProvider).Display()
+	waitFor(t, "the initial layout", func() bool { return len(display.Screens()) == 1 })
+
+	layout := []appsession.DisplayScreen{{Rect: image.Rect(0, 0, 4, 4)}, {Rect: image.Rect(4, 0, 8, 4)}}
+	if err := display.SetScreenLayout(layout); !errors.Is(err, appsession.ErrMultiScreenUnsupported) {
+		t.Fatalf("SetScreenLayout = %v, want ErrMultiScreenUnsupported", err)
+	}
+	waitFor(t, "the restored desktop size", func() bool {
+		requests := h.server.Received().DesktopSizes
+		if len(requests) < 2 {
+			return false
+		}
+		last := requests[len(requests)-1]
+		return last.Width == 4 && last.Height == 4
+	})
+}
+
+// TestScreenLayoutRejectsARectangleTheWireCannotCarry proves a malformed layout
+// never reaches the server.
+func TestScreenLayoutRejectsARectangleTheWireCannotCarry(t *testing.T) {
+	h := start(t, rfbtest.Config{
+		Frame:               testFrame(),
+		Encoding:            rfb.EncodingRaw,
+		ExtendedDesktopSize: true,
+	})
+	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	display := transport.(appsession.DisplayProvider).Display()
+	waitFor(t, "the initial layout", func() bool { return len(display.Screens()) == 1 })
+
+	before := len(h.server.Received().DesktopSizes)
+	err = display.SetScreenLayout([]appsession.DisplayScreen{{Rect: image.Rectangle{}}})
+	if err == nil || errors.Is(err, appsession.ErrMultiScreenUnsupported) {
+		t.Fatalf("SetScreenLayout = %v, want an invalid-layout error", err)
+	}
+	if after := len(h.server.Received().DesktopSizes); after != before {
+		t.Fatalf("the server received %d malformed requests", after-before)
+	}
+}
+
+// TestScreenCountRequiresExtendedDesktopSize proves a server without the
+// extension is refused before any request is written.
+func TestScreenCountRequiresExtendedDesktopSize(t *testing.T) {
+	h := start(t, rfbtest.Config{
+		Frame:    testFrame(),
+		Encoding: rfb.EncodingRaw,
+	})
+	transport, err := h.factory.Open(context.Background(), openSpec("desk.test", 5900))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	display := transport.(appsession.DisplayProvider).Display()
+	nextEvent(t, display.Events(), appsession.DisplayEventFrame)
+
+	if err := display.SetScreenCount(2); !errors.Is(err, appsession.ErrDesktopResizeUnsupported) {
+		t.Fatalf("SetScreenCount = %v, want ErrDesktopResizeUnsupported", err)
+	}
+	if requests := h.server.Received().DesktopSizes; len(requests) != 0 {
+		t.Fatalf("the client sent %d resize requests without the extension", len(requests))
+	}
 }
 
 // openRawTransport opens a VNC transport over a client conn served by script.

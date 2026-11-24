@@ -272,7 +272,7 @@ type transport struct {
 	done chan struct{}
 
 	// Negotiated extensions. The reader sets these as the server proves
-	// support; SetDesktopSize reads resizeSupport from the caller's goroutine,
+	// support; screen requests read resizeSupport from the caller's goroutine,
 	// so it is atomic.
 	resizeSupport     atomic.Bool
 	continuousEnabled atomic.Bool
@@ -281,7 +281,7 @@ type transport struct {
 	fenceRequestOnce  sync.Once
 
 	// layoutMu guards the last ExtendedDesktopSize layout. The reader
-	// remembers it; SetDesktopSize reads it from the Surface goroutine.
+	// remembers it; screen requests read it from the Surface goroutine.
 	layoutMu sync.Mutex
 	layout   desktopLayout
 	// resizeMu guards the pending client-initiated resize: the reply channel,
@@ -351,6 +351,32 @@ func newTransport(conn net.Conn, client *rfb.Client, routed bool) *transport {
 // Display returns the adapter's display session. The transport owns its
 // lifetime and closes it exactly once.
 func (t *transport) Display() appsession.DisplaySession { return t }
+
+// Screens returns the desktop's current screen layout. It is empty until the
+// server has reported an ExtendedDesktopSize layout.
+func (t *transport) Screens() []appsession.DisplayScreen {
+	t.layoutMu.Lock()
+	screens := append([]rfb.Screen(nil), t.layout.screens...)
+	t.layoutMu.Unlock()
+	return displayScreens(screens)
+}
+
+// displayScreens converts a wire layout into the display port's screens.
+func displayScreens(screens []rfb.Screen) []appsession.DisplayScreen {
+	if len(screens) == 0 {
+		return nil
+	}
+	out := make([]appsession.DisplayScreen, len(screens))
+	for i, screen := range screens {
+		x, y := int(screen.X), int(screen.Y)
+		out[i] = appsession.DisplayScreen{
+			ID:    screen.ID,
+			Rect:  image.Rect(x, y, x+int(screen.Width), y+int(screen.Height)),
+			Flags: screen.Flags,
+		}
+	}
+	return out
+}
 
 // Routed reports the app's decision that the stream is already encrypted by a
 // tunnel. It is the value the Factory received, never a protocol inference.
@@ -529,17 +555,24 @@ func (t *transport) publishMetadata(rectangles []rfb.Rectangle) {
 				// A reasoned reply belongs to our outstanding request.
 				t.deliverResizeReply(rect.Extended)
 			}
+			if rect.Extended.Status == 0 {
+				// Report the layout even when the size did not change: a state
+				// report is how the viewer learns the desktop's screens, which
+				// decide whether it may split a Tab into one Pane per screen.
+				t.emitter.Publish(appsession.DisplayEvent{
+					Kind:    appsession.DisplayEventResize,
+					Width:   int(rect.Extended.Width),
+					Height:  int(rect.Extended.Height),
+					Screens: displayScreens(rect.Extended.Screens),
+				})
+			}
 			if rect.Extended.Resized {
 				// The framebuffer adopted a new size and cleared itself, so the
 				// whole desktop must be repainted. A successful rectangle that
 				// names the current size is only a state report, and reacting to
 				// it would clear a valid framebuffer and, because it answers a
 				// non-incremental request, loop forever.
-				t.emitter.Publish(appsession.DisplayEvent{
-					Kind:   appsession.DisplayEventResize,
-					Width:  int(rect.Extended.Width),
-					Height: int(rect.Extended.Height),
-				})
+				//
 				// Continuous updates are scoped to a region. Re-scope them to
 				// the new extents when the extension is live, then ask for one
 				// non-incremental repaint either way: the server must honor
@@ -725,7 +758,7 @@ func (t *transport) RequestUpdate(incremental bool) error {
 	return t.write(func() error { return t.client.RequestFullUpdate(incremental) })
 }
 
-// desktopResizeTimeout bounds how long SetDesktopSize waits for the server's
+// desktopResizeTimeout bounds how long a screen request waits for the server's
 // ExtendedDesktopSize reply. It is a variable so a test can shorten it.
 var desktopResizeTimeout = 5 * time.Second
 
@@ -739,7 +772,7 @@ var staleResizeWindow = 30 * time.Second
 // cannot grow it without bound; the oldest entry is dropped first.
 const maxStaleResizes = 16
 
-// resizeResult is one outcome delivered to a waiting SetDesktopSize. A timed
+// resizeResult is one outcome delivered to a waiting screen request. A timed
 // out true result is used when a stale reply makes the answer ambiguous: the
 // caller must not treat it as a refusal, because that would latch the local
 // scaling fallback for a server that may have resized.
@@ -748,7 +781,7 @@ type resizeResult struct {
 	timeout  bool
 }
 
-// staleResize is a timed-out SetDesktopSize request. Its epoch and dimensions
+// staleResize is a timed-out screen request. Its epoch and dimensions
 // identify the reply that may still arrive for it.
 type staleResize struct {
 	epoch   uint64
@@ -757,43 +790,160 @@ type staleResize struct {
 	expires time.Time
 }
 
-// SetDesktopSize asks the server to match the pane's size and waits for the
-// server's ExtendedDesktopSize reply. ExtendedDesktopSize must have been
-// negotiated first, which the client learns from the server's initial full
-// update; until then the pane keeps its local scaling. The method runs on the
-// Surface goroutine, never on the processing goroutine, so waiting does not
-// stall reads.
-func (t *transport) SetDesktopSize(width, height int) error {
+// SetScreenCount asks the server to arrange its desktop as count screens, each
+// the size one screen already has, laid left to right. It succeeds only when
+// the server's reply reports exactly that many screens: a server may resize the
+// desktop while ignoring the screen list, and a viewer that splits panes on
+// such a server would show the same desktop twice.
+func (t *transport) SetScreenCount(count int) error {
 	if t.closed.Load() {
 		return appsession.ErrNoDisplay
 	}
-	if width <= 0 || height <= 0 || width > 0xffff || height > 0xffff {
-		return fmt.Errorf("vnc: invalid desktop size %dx%d", width, height)
+	if count < 1 || count > rfb.MaxScreens {
+		return fmt.Errorf("vnc: invalid screen count %d", count)
 	}
 	if !t.resizeSupport.Load() {
 		return appsession.ErrDesktopResizeUnsupported
 	}
-	screens := t.desktopScreens(uint16(width), uint16(height))
+	screenWidth, screenHeight, oldWidth, oldHeight, oldScreens := t.screenTile()
+	width, height, screens, err := rfb.ScreenRowLayout(count, screenWidth, screenHeight)
+	if err != nil {
+		return fmt.Errorf("vnc: layout %d screens: %w", count, err)
+	}
+	result, err := t.sendDesktopChange(width, height, screens)
+	if err != nil {
+		return err
+	}
+	extended := result.extended
+	if extended != nil && extended.Status == 0 && len(extended.Screens) == count {
+		return nil
+	}
+	// The server answered but did not adopt the layout. It may still have
+	// resized the desktop (that is exactly what a server that ignores the
+	// screen list does), so put the previous size back.
+	if extended != nil && (extended.Status == 0 || extended.Status == 4) &&
+		(width != oldWidth || height != oldHeight) {
+		t.writeAsync(func() error {
+			return t.client.SendSetDesktopSize(oldWidth, oldHeight, oldScreens)
+		})
+	}
+	return appsession.ErrMultiScreenUnsupported
+}
 
+// SetScreenLayout asks the server for exactly these screens. Their rectangles
+// are the desktop's screen viewports, so the desktop is their bounding box and
+// each viewer can crop one screen at its own size. It succeeds only when the
+// reply reports the same rectangles: a server may resize the desktop while
+// ignoring the screen list, and a viewer that trusted such a reply would crop
+// the wrong region.
+func (t *transport) SetScreenLayout(screens []appsession.DisplayScreen) error {
+	if t.closed.Load() {
+		return appsession.ErrNoDisplay
+	}
+	if len(screens) == 0 || len(screens) > rfb.MaxScreens {
+		return fmt.Errorf("vnc: invalid screen count %d", len(screens))
+	}
+	if !t.resizeSupport.Load() {
+		return appsession.ErrDesktopResizeUnsupported
+	}
+	want, width, height, err := screenRects(screens)
+	if err != nil {
+		return err
+	}
+	oldWidth, oldHeight, oldScreens := t.currentLayout()
+	result, err := t.sendDesktopChange(width, height, want)
+	if err != nil {
+		return err
+	}
+	extended := result.extended
+	switch {
+	case extended == nil:
+		return appsession.ErrDesktopResizeRefused
+	case extended.Status == 4:
+		// Forwarded: the server accepted the request and reports the real
+		// result asynchronously. Its reply still describes the old layout, so
+		// it says nothing about adoption.
+		return appsession.ErrDesktopResizePending
+	case extended.Status == 0 && screensAdopted(extended.Screens, want):
+		return nil
+	}
+	// The server answered but did not adopt the layout. It may still have
+	// resized the desktop, so put the previous one back.
+	if extended.Status == 0 && (width != oldWidth || height != oldHeight) {
+		t.writeAsync(func() error {
+			return t.client.SendSetDesktopSize(oldWidth, oldHeight, oldScreens)
+		})
+	}
+	return appsession.ErrMultiScreenUnsupported
+}
+
+// screenRects validates a viewer's layout and converts it to the wire form.
+// Screen IDs are assigned by position; callers match replies by position, not
+// by ID, because a server may renumber the screens it reports.
+func screenRects(screens []appsession.DisplayScreen) ([]rfb.Screen, uint16, uint16, error) {
+	wire := make([]rfb.Screen, len(screens))
+	width, height := 0, 0
+	for i, screen := range screens {
+		rect := screen.Rect
+		if rect.Empty() || rect.Min.X < 0 || rect.Min.Y < 0 ||
+			rect.Max.X > 0xffff || rect.Max.Y > 0xffff {
+			return nil, 0, 0, fmt.Errorf("vnc: invalid screen %d: %v", i, rect)
+		}
+		wire[i] = rfb.Screen{
+			ID:     uint32(i + 1),
+			X:      uint16(rect.Min.X),
+			Y:      uint16(rect.Min.Y),
+			Width:  uint16(rect.Dx()),
+			Height: uint16(rect.Dy()),
+			Flags:  screen.Flags,
+		}
+		width = max(width, rect.Max.X)
+		height = max(height, rect.Max.Y)
+	}
+	if width == 0 || height == 0 {
+		return nil, 0, 0, fmt.Errorf("vnc: empty screen layout")
+	}
+	return wire, uint16(width), uint16(height), nil
+}
+
+// screensAdopted reports whether the server's reply describes the requested
+// screens. IDs are the server's to assign, so only the rectangles are compared.
+func screensAdopted(replied, want []rfb.Screen) bool {
+	if len(replied) != len(want) {
+		return false
+	}
+	for i := range want {
+		if replied[i].X != want[i].X || replied[i].Y != want[i].Y ||
+			replied[i].Width != want[i].Width || replied[i].Height != want[i].Height {
+			return false
+		}
+	}
+	return true
+}
+
+// sendDesktopChange sends one SetDesktopSize and waits for its reply. The
+// caller validates the size and support first. A timeout and a closed Session
+// are returned as errors; every other outcome is the server's reply.
+func (t *transport) sendDesktopChange(width, height uint16, screens []rfb.Screen) (resizeResult, error) {
 	reply := make(chan resizeResult, 1)
 	t.resizeMu.Lock()
 	if t.resizeReply != nil {
 		t.resizeMu.Unlock()
-		return fmt.Errorf("vnc: a desktop resize is already in progress")
+		return resizeResult{}, fmt.Errorf("vnc: a desktop resize is already in progress")
 	}
 	t.resizeEpoch++
 	epoch := t.resizeEpoch
 	t.resizeReply = reply
-	t.resizeWidth = uint16(width)
-	t.resizeHeight = uint16(height)
+	t.resizeWidth = width
+	t.resizeHeight = height
 	t.resizePendingEpoch = epoch
 	t.resizeMu.Unlock()
 
 	if err := t.write(func() error {
-		return t.client.SendSetDesktopSize(uint16(width), uint16(height), screens)
+		return t.client.SendSetDesktopSize(width, height, screens)
 	}); err != nil {
 		t.finishResize(reply, false)
-		return err
+		return resizeResult{}, err
 	}
 
 	timer := time.NewTimer(desktopResizeTimeout)
@@ -801,33 +951,50 @@ func (t *transport) SetDesktopSize(width, height int) error {
 	select {
 	case result := <-reply:
 		if result.timeout {
-			return appsession.ErrDesktopResizeTimeout
+			return resizeResult{}, appsession.ErrDesktopResizeTimeout
 		}
-		extended := result.extended
-		switch {
-		case extended == nil:
-			return appsession.ErrDesktopResizeRefused
-		case extended.Status == 0:
-			return nil
-		case extended.Status == 4:
-			// RFC-style status 4 ("request forwarded") is the normal answer
-			// while a guest is booting: the server accepted the request and
-			// sends the real result asynchronously. It is not a refusal.
-			return appsession.ErrDesktopResizePending
-		default:
-			// Statuses 1-3 are refusals; an unknown nonzero status fails safe
-			// as a refusal without ending the session.
-			return appsession.ErrDesktopResizeRefused
-		}
+		return result, nil
 	case <-timer.C:
 		// Keep the timed-out request briefly so its late nonzero reply cannot
 		// answer (and latch) a newer request.
 		t.finishResize(reply, true)
-		return appsession.ErrDesktopResizeTimeout
+		return resizeResult{}, appsession.ErrDesktopResizeTimeout
 	case <-t.done:
 		t.finishResize(reply, false)
-		return appsession.ErrNoDisplay
+		return resizeResult{}, appsession.ErrNoDisplay
 	}
+}
+
+// screenTile reports the size one screen should have in a new layout, and the
+// desktop size and screen list that must be restored if the server refuses.
+// The tile is the first reported screen when the server already has a layout,
+// otherwise the whole framebuffer.
+func (t *transport) screenTile() (tileWidth, tileHeight, desktopWidth, desktopHeight uint16, screens []rfb.Screen) {
+	width, height, screens := t.currentLayout()
+	if len(screens) > 0 {
+		first := screens[0]
+		return first.Width, first.Height, width, height, screens
+	}
+	return width, height, width, height, nil
+}
+
+// currentLayout is the last layout the server reported, or the whole
+// framebuffer as one screen before it reports one.
+func (t *transport) currentLayout() (uint16, uint16, []rfb.Screen) {
+	t.layoutMu.Lock()
+	layout := desktopLayout{
+		width:   t.layout.width,
+		height:  t.layout.height,
+		screens: append([]rfb.Screen(nil), t.layout.screens...),
+	}
+	t.layoutMu.Unlock()
+	if layout.width > 0 && layout.height > 0 && len(layout.screens) > 0 {
+		return layout.width, layout.height, layout.screens
+	}
+	bounds := t.client.Frame().Bounds()
+	width := uint16(min(bounds.Dx(), 0xffff))
+	height := uint16(min(bounds.Dy(), 0xffff))
+	return width, height, nil
 }
 
 // finishResize clears the pending request if reply still owns it and, when the
@@ -853,7 +1020,7 @@ func (t *transport) finishResize(reply chan resizeResult, timedOut bool) {
 }
 
 // deliverResizeReply hands a client-initiated ExtendedDesktopSize reply to a
-// waiting SetDesktopSize. The reader never blocks: an unexpected reply is
+// waiting screen request. The reader never blocks: an unexpected reply is
 // discarded.
 //
 // Correlation uses the request epoch plus dimensions. A success (status 0) is
@@ -1011,64 +1178,6 @@ func (t *transport) rememberLayout(extended *rfb.ExtendedDesktopSize) {
 	t.layoutMu.Unlock()
 }
 
-// desktopScreens builds the screen list for a SetDesktopSize request from the
-// remembered layout. With no layout it falls back to one synthetic screen.
-func (t *transport) desktopScreens(width, height uint16) []rfb.Screen {
-	t.layoutMu.Lock()
-	layout := desktopLayout{
-		width:   t.layout.width,
-		height:  t.layout.height,
-		screens: append([]rfb.Screen(nil), t.layout.screens...),
-	}
-	t.layoutMu.Unlock()
-	return resizeScreens(layout.screens, layout.width, layout.height, width, height)
-}
-
-// resizeScreens returns the remembered layout scaled to width by height.
-// Every screen keeps its ID and flags; origins and sizes scale proportionally
-// and are clamped so the union fits the requested desktop and no screen shrinks
-// to zero. The clamping applies to a single remembered screen too: a screen
-// remembered at a nonzero origin must not push the union past the desktop.
-func resizeScreens(screens []rfb.Screen, oldWidth, oldHeight, width, height uint16) []rfb.Screen {
-	if len(screens) == 0 {
-		return []rfb.Screen{{Width: width, Height: height}}
-	}
-	oldW, oldH := int(oldWidth), int(oldHeight)
-	if oldW <= 0 || oldH <= 0 {
-		oldW, oldH = layoutExtent(screens)
-	}
-	newW, newH := int(width), int(height)
-	scaled := make([]rfb.Screen, len(screens))
-	for i, screen := range screens {
-		scaled[i] = screen
-		x := clamp(scaledExtent(int(screen.X), oldW, newW), 0, newW-1)
-		y := clamp(scaledExtent(int(screen.Y), oldH, newH), 0, newH-1)
-		w := max(scaledExtent(int(screen.Width), oldW, newW), 1)
-		h := max(scaledExtent(int(screen.Height), oldH, newH), 1)
-		if x+w > newW {
-			w = newW - x
-		}
-		if y+h > newH {
-			h = newH - y
-		}
-		scaled[i].X = uint16(x)
-		scaled[i].Y = uint16(y)
-		scaled[i].Width = uint16(max(w, 1))
-		scaled[i].Height = uint16(max(h, 1))
-	}
-	return scaled
-}
-
-// scaledExtent scales one coordinate or dimension from an old total to a new
-// one. A non-positive old total yields zero. The multiplication uses int64 so
-// a 32-bit target cannot overflow on a large screen layout.
-func scaledExtent(value, oldTotal, newTotal int) int {
-	if oldTotal <= 0 {
-		return 0
-	}
-	return int(int64(value) * int64(newTotal) / int64(oldTotal))
-}
-
 // layoutExtent returns the bounding size of a screen layout.
 func layoutExtent(screens []rfb.Screen) (int, int) {
 	width, height := 1, 1
@@ -1081,13 +1190,6 @@ func layoutExtent(screens []rfb.Screen) (int, int) {
 		}
 	}
 	return width, height
-}
-
-func clamp(value, low, high int) int {
-	if high < low {
-		high = low
-	}
-	return min(max(value, low), high)
 }
 
 // write enqueues one client message and waits for the writer goroutine to send

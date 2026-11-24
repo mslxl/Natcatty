@@ -289,8 +289,8 @@ func TestOpenRendersTheServerFrameAndSendsInput(t *testing.T) {
 	if err := display.SendCutText("from-client"); err != nil {
 		t.Fatalf("SendCutText: %v", err)
 	}
-	if err := display.SetDesktopSize(1024, 768); !errors.Is(err, appsession.ErrDesktopResizeUnsupported) {
-		t.Fatalf("SetDesktopSize = %v, want ErrDesktopResizeUnsupported", err)
+	if err := display.SetScreenLayout([]appsession.DisplayScreen{{Rect: image.Rect(0, 0, 1024, 768)}}); !errors.Is(err, appsession.ErrDesktopResizeUnsupported) {
+		t.Fatalf("SetScreenLayout = %v, want ErrDesktopResizeUnsupported", err)
 	}
 
 	pollUntil := time.Now().Add(5 * time.Second)
@@ -624,8 +624,8 @@ func TestExtensionsAreNegotiatedAndKeepUpdatesFlowing(t *testing.T) {
 		}
 	}
 
-	if err := display.SetDesktopSize(8, 6); err != nil {
-		t.Fatalf("SetDesktopSize: %v", err)
+	if err := display.SetScreenLayout([]appsession.DisplayScreen{{Rect: image.Rect(0, 0, 8, 6)}}); err != nil {
+		t.Fatalf("SetScreenLayout: %v", err)
 	}
 	waitFor(t, "the resize request to reach the server", func() bool {
 		for _, request := range h.server.Received().DesktopSizes {

@@ -42,6 +42,12 @@ var ErrDesktopResizeUnsupported = errors.New("session: desktop resize was not ne
 // byte-stream Session. A VNC Session exposes pixels, not a terminal.
 var ErrNoByteStream = errors.New("session: display session has no byte stream")
 
+// ErrMultiScreenUnsupported reports a multi-screen request the server did not
+// adopt. It is distinct from ErrDesktopResizeUnsupported: the server may resize
+// its desktop while ignoring the screen layout, which is exactly the case a
+// viewer must refuse to split for.
+var ErrMultiScreenUnsupported = errors.New("session: the server did not adopt a multi-screen layout")
+
 // DisplayEventKind discriminates DisplayEvent values.
 type DisplayEventKind uint8
 
@@ -135,24 +141,35 @@ func NewCursorShape(source *image.RGBA, hotspot image.Point) *CursorShape {
 	return &CursorShape{Image: clone, Hotspot: hotspot}
 }
 
+// DisplayScreen is one head of a multi-screen desktop. Rect is the screen's
+// viewport inside the framebuffer, so a pane that shows one screen crops there
+// and offsets pointer positions by Rect.Min. Flags are the protocol's screen
+// flags, preserved for a resize request but not interpreted by the viewer.
+type DisplayScreen struct {
+	ID    uint32
+	Rect  image.Rectangle
+	Flags uint32
+}
+
 // DisplayEvent is one event from a pixel Session's receive direction. Kind
 // selects which fields are meaningful:
 //
 //	Frame         Frame
-//	Resize        Width, Height
+//	Resize        Width, Height, Screens
 //	Bell          -
 //	CutText       Text
 //	DesktopName   Text
 //	CursorShape   Cursor
 //	Error         Err
 type DisplayEvent struct {
-	Kind   DisplayEventKind
-	Frame  *DisplayFrame
-	Width  int
-	Height int
-	Text   string
-	Cursor *CursorShape
-	Err    error
+	Kind    DisplayEventKind
+	Frame   *DisplayFrame
+	Width   int
+	Height  int
+	Screens []DisplayScreen
+	Text    string
+	Cursor  *CursorShape
+	Err     error
 }
 
 // DisplaySession is one pixel Session. Events is drained by one consumer and
@@ -176,10 +193,20 @@ type DisplaySession interface {
 	// RequestUpdate asks the server for a framebuffer update. An incremental
 	// request asks only for changed pixels.
 	RequestUpdate(incremental bool) error
-	// SetDesktopSize asks the server to resize the desktop. It returns
-	// ErrDesktopResizeUnsupported when the server did not negotiate the
-	// extension.
-	SetDesktopSize(width, height int) error
+	// Screens returns the desktop's current screen layout, in protocol order.
+	// It is empty until the server has reported one.
+	Screens() []DisplayScreen
+	// SetScreenCount asks the server to arrange its desktop as count adjacent
+	// screens, each the size the desktop currently has. It returns
+	// ErrDesktopResizeUnsupported when the extension was not negotiated and
+	// ErrMultiScreenUnsupported when the server ignored the screen list.
+	SetScreenCount(count int) error
+	// SetScreenLayout asks the server for exactly these screens. Their
+	// rectangles are the desktop's screen viewports, so the desktop is their
+	// bounding box. It returns ErrDesktopResizeUnsupported when the extension
+	// was not negotiated and ErrMultiScreenUnsupported when the server did not
+	// adopt the layout.
+	SetScreenLayout(screens []DisplayScreen) error
 	// Close ends the Session and closes the event channel exactly once.
 	Close() error
 }
@@ -304,14 +331,34 @@ func (s *Session) RequestUpdate(incremental bool) error {
 	return display.RequestUpdate(incremental)
 }
 
-// SetDesktopSize asks a pixel Session's server to resize the desktop. It
-// returns ErrDesktopResizeUnsupported when the extension was not negotiated.
-func (s *Session) SetDesktopSize(width, height int) error {
+// Screens returns a pixel Session's current screen layout. A byte-stream
+// Session, or one with no server-reported layout, returns nil.
+func (s *Session) Screens() []DisplayScreen {
+	display := s.Display()
+	if display == nil {
+		return nil
+	}
+	return display.Screens()
+}
+
+// SetScreenCount asks a pixel Session's server to arrange its desktop as count
+// adjacent screens. It returns ErrDesktopResizeUnsupported or
+// ErrMultiScreenUnsupported when the server cannot provide that layout.
+func (s *Session) SetScreenCount(count int) error {
 	display := s.Display()
 	if display == nil {
 		return ErrNoDisplay
 	}
-	return display.SetDesktopSize(width, height)
+	return display.SetScreenCount(count)
+}
+
+// SetScreenLayout asks a pixel Session's server for exactly these screens.
+func (s *Session) SetScreenLayout(screens []DisplayScreen) error {
+	display := s.Display()
+	if display == nil {
+		return ErrNoDisplay
+	}
+	return display.SetScreenLayout(screens)
 }
 
 // ByteStream reports whether the Session carries a terminal byte stream. A
@@ -479,16 +526,26 @@ func (d *SerializedDisplay) RequestUpdate(incremental bool) error {
 	return d.inner.RequestUpdate(incremental)
 }
 
-// SetDesktopSize sends one desktop resize request. The adapter may block for
-// its reply bound (several seconds) while a server is slow or silent, so the
-// send mutex is deliberately NOT held across the wait: key and pointer input
-// must keep flowing while a resize is outstanding. The mutex is acquired only
-// to check closed; concurrent resize calls are serialized by resizeMu. Close
-// marks the wrapper closed, closes the adapter (which must unblock an in-flight
-// adapter wait), and then waits for any call that passed the open check to
-// return before Close itself returns. A SetDesktopSize that starts after the
-// closed flag is set therefore never reaches the closed adapter.
-func (d *SerializedDisplay) SetDesktopSize(width, height int) error {
+// Screens returns a copy of the adapter's current screen layout.
+func (d *SerializedDisplay) Screens() []DisplayScreen {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return nil
+	}
+	return d.inner.Screens()
+}
+
+// SetScreenCount sends one multi-screen layout request. A screen request may
+// block for its reply bound (several seconds) while a server is slow or
+// silent, so the send mutex is deliberately NOT held across the wait: key and
+// pointer input must keep flowing while a request is outstanding. Concurrent
+// requests are serialized by resizeMu, and Close marks the wrapper closed,
+// closes the adapter (which must unblock an in-flight adapter wait), and then
+// waits for any call that passed the open check to return. A request that
+// starts after the closed flag is set therefore never reaches the closed
+// adapter.
+func (d *SerializedDisplay) SetScreenCount(count int) error {
 	d.resizeMu.Lock()
 	defer d.resizeMu.Unlock()
 
@@ -499,18 +556,34 @@ func (d *SerializedDisplay) SetDesktopSize(width, height int) error {
 	}
 	d.mu.Unlock()
 
-	return d.inner.SetDesktopSize(width, height)
+	return d.inner.SetScreenCount(count)
+}
+
+// SetScreenLayout sends one explicit screen layout. It shares SetScreenCount's
+// serialization contract.
+func (d *SerializedDisplay) SetScreenLayout(screens []DisplayScreen) error {
+	d.resizeMu.Lock()
+	defer d.resizeMu.Unlock()
+
+	d.mu.Lock()
+	if err := d.checkOpen(); err != nil {
+		d.mu.Unlock()
+		return err
+	}
+	d.mu.Unlock()
+
+	return d.inner.SetScreenLayout(screens)
 }
 
 // Close closes the adapter exactly once. Once it returns, every send reports
 // ErrNoDisplay instead of reaching the closed adapter.
 //
 // It first sets the closed flag and closes the adapter under the send mutex, so
-// no other send can overlap the adapter's Close. An in-flight SetDesktopSize
+// no other send can overlap the adapter's Close. An in-flight screen request
 // does not hold the send mutex; the adapter's Close must unblock that wait (the
 // VNC adapter closes its done channel). Close then joins the resize mutex, so
 // a call that passed the open check cannot call the adapter after Close returns.
-// Adapters whose blocking SetDesktopSize does not observe Close would make
+// Adapters whose blocking screen request does not observe Close would make
 // Close wait for its own timeout; that is the adapter's contract to uphold.
 func (d *SerializedDisplay) Close() error {
 	d.closeOnce.Do(func() {

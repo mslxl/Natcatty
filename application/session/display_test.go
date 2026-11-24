@@ -24,18 +24,23 @@ import (
 type fakeDisplay struct {
 	events chan DisplayEvent
 
-	mu         sync.Mutex
-	active     int
-	maxActive  int
-	keys       []uint32
-	physical   [][2]uint32
-	pointers   [][2]int
-	cutTexts   []string
-	updates    []bool
-	resize     int
-	resizeErr  error
-	closeCount int
-	// resizeGate, when non-nil, blocks SetDesktopSize until it is closed.
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	keys      []uint32
+	physical  [][2]uint32
+	pointers  [][2]int
+	cutTexts  []string
+	updates   []bool
+	resize    int
+	// screens is the layout Screens reports; screenCount, screenLayout, and
+	// screenErr record the last SetScreenCount and SetScreenLayout calls.
+	screens      []DisplayScreen
+	screenCount  int
+	screenLayout []DisplayScreen
+	screenErr    error
+	closeCount   int
+	// resizeGate, when non-nil, blocks SetScreenLayout until it is closed.
 	// resizeEntered, when non-nil, receives once when the call has started.
 	resizeGate    chan struct{}
 	resizeEntered chan struct{}
@@ -110,7 +115,25 @@ func (d *fakeDisplay) RequestUpdate(incremental bool) error {
 	return nil
 }
 
-func (d *fakeDisplay) SetDesktopSize(width, height int) error {
+// Screens returns the layout a test supplied.
+func (d *fakeDisplay) Screens() []DisplayScreen {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]DisplayScreen(nil), d.screens...)
+}
+
+// SetScreenCount records the requested count and reports screenErr.
+func (d *fakeDisplay) SetScreenCount(count int) error {
+	d.mu.Lock()
+	d.screenCount = count
+	err := d.screenErr
+	d.mu.Unlock()
+	return err
+}
+
+// SetScreenLayout records the requested layout, reports screenErr, and takes
+// the optional gate so a test can hold the call inside the adapter.
+func (d *fakeDisplay) SetScreenLayout(screens []DisplayScreen) error {
 	d.enter()
 	defer d.leave()
 	d.mu.Lock()
@@ -127,7 +150,8 @@ func (d *fakeDisplay) SetDesktopSize(width, height int) error {
 	}
 	d.mu.Lock()
 	d.resize++
-	err := d.resizeErr
+	d.screenLayout = append([]DisplayScreen(nil), screens...)
+	err := d.screenErr
 	d.mu.Unlock()
 	return err
 }
@@ -523,24 +547,26 @@ func TestDisplayFrameRateCapsABurstWithoutLoss(t *testing.T) {
 	}
 }
 
-// TestDesktopResizeUnsupportedIsExplicit proves the port's resize contract.
-func TestDesktopResizeUnsupportedIsExplicit(t *testing.T) {
+// TestScreenLayoutUnsupportedIsExplicit proves the port's screen-layout
+// contract.
+func TestScreenLayoutUnsupportedIsExplicit(t *testing.T) {
 	display := newFakeDisplay()
-	display.resizeErr = ErrDesktopResizeUnsupported
+	display.screenErr = ErrDesktopResizeUnsupported
 	factory := &displayFactory{transports: []*fakeDisplayTransport{
 		newFakeDisplayTransport(display),
 	}}
 	session := openVNC(t, factory)
+	layout := []DisplayScreen{{Rect: image.Rect(0, 0, 1280, 720)}}
 
-	if err := session.SetDesktopSize(1280, 720); !errors.Is(err, ErrDesktopResizeUnsupported) {
-		t.Fatalf("SetDesktopSize = %v, want ErrDesktopResizeUnsupported", err)
+	if err := session.SetScreenLayout(layout); !errors.Is(err, ErrDesktopResizeUnsupported) {
+		t.Fatalf("SetScreenLayout = %v, want ErrDesktopResizeUnsupported", err)
 	}
 
 	display.mu.Lock()
-	display.resizeErr = nil
+	display.screenErr = nil
 	display.mu.Unlock()
-	if err := session.SetDesktopSize(1280, 720); err != nil {
-		t.Fatalf("supported SetDesktopSize = %v, want nil", err)
+	if err := session.SetScreenLayout(layout); err != nil {
+		t.Fatalf("supported SetScreenLayout = %v, want nil", err)
 	}
 }
 
@@ -890,8 +916,8 @@ func TestExplicitCloseClearsDisplay(t *testing.T) {
 	if err := session.RequestUpdate(false); !errors.Is(err, ErrNoDisplay) {
 		t.Fatalf("RequestUpdate after Close = %v, want ErrNoDisplay", err)
 	}
-	if err := session.SetDesktopSize(800, 600); !errors.Is(err, ErrNoDisplay) {
-		t.Fatalf("SetDesktopSize after Close = %v, want ErrNoDisplay", err)
+	if err := session.SetScreenLayout([]DisplayScreen{{Rect: image.Rect(0, 0, 800, 600)}}); !errors.Is(err, ErrNoDisplay) {
+		t.Fatalf("SetScreenLayout after Close = %v, want ErrNoDisplay", err)
 	}
 	keys, pointers, cutTexts, updates := display.sends()
 	if keys != keysBefore || pointers != pointersBefore ||
@@ -950,8 +976,8 @@ func TestSerializedDisplayRejectsSendsAfterClose(t *testing.T) {
 	if err := display.RequestUpdate(true); !errors.Is(err, ErrNoDisplay) {
 		t.Fatalf("RequestUpdate = %v, want ErrNoDisplay", err)
 	}
-	if err := display.SetDesktopSize(640, 480); !errors.Is(err, ErrNoDisplay) {
-		t.Fatalf("SetDesktopSize = %v, want ErrNoDisplay", err)
+	if err := display.SetScreenLayout([]DisplayScreen{{Rect: image.Rect(0, 0, 640, 480)}}); !errors.Is(err, ErrNoDisplay) {
+		t.Fatalf("SetScreenLayout = %v, want ErrNoDisplay", err)
 	}
 	keys, pointers, cutTexts, updates := inner.sends()
 	if keys != 0 || pointers != 0 || cutTexts != 0 || updates != 0 {
@@ -977,11 +1003,11 @@ func TestSendKeyIsNotBlockedByAnOutstandingResize(t *testing.T) {
 	display := NewSerializedDisplay(inner)
 
 	resizeDone := make(chan error, 1)
-	go func() { resizeDone <- display.SetDesktopSize(800, 600) }()
+	go func() { resizeDone <- display.SetScreenLayout([]DisplayScreen{{Rect: image.Rect(0, 0, 800, 600)}}) }()
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
-		t.Fatal("SetDesktopSize never reached the adapter")
+		t.Fatal("SetScreenLayout never reached the adapter")
 	}
 
 	keyDone := make(chan error, 1)
@@ -1005,15 +1031,15 @@ func TestSendKeyIsNotBlockedByAnOutstandingResize(t *testing.T) {
 	select {
 	case err := <-resizeDone:
 		if err != nil {
-			t.Fatalf("SetDesktopSize: %v", err)
+			t.Fatalf("SetScreenLayout: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("SetDesktopSize did not return after the gate opened")
+		t.Fatal("SetScreenLayout did not return after the gate opened")
 	}
 }
 
 // TestCloseWaitsForAnInFlightResize proves Close does not return while a
-// SetDesktopSize that already passed the open check is still inside the
+// SetScreenLayout that already passed the open check is still inside the
 // adapter, and that a resize starting afterwards never reaches the adapter.
 func TestCloseWaitsForAnInFlightResize(t *testing.T) {
 	inner := newFakeDisplay()
@@ -1024,11 +1050,11 @@ func TestCloseWaitsForAnInFlightResize(t *testing.T) {
 	display := NewSerializedDisplay(inner)
 
 	resizeDone := make(chan error, 1)
-	go func() { resizeDone <- display.SetDesktopSize(800, 600) }()
+	go func() { resizeDone <- display.SetScreenLayout([]DisplayScreen{{Rect: image.Rect(0, 0, 800, 600)}}) }()
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
-		t.Fatal("SetDesktopSize never reached the adapter")
+		t.Fatal("SetScreenLayout never reached the adapter")
 	}
 
 	closeDone := make(chan error, 1)
@@ -1043,10 +1069,10 @@ func TestCloseWaitsForAnInFlightResize(t *testing.T) {
 	select {
 	case err := <-resizeDone:
 		if err != nil {
-			t.Fatalf("SetDesktopSize: %v", err)
+			t.Fatalf("SetScreenLayout: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("SetDesktopSize did not return")
+		t.Fatal("SetScreenLayout did not return")
 	}
 	select {
 	case err := <-closeDone:
@@ -1068,8 +1094,8 @@ func TestCloseWaitsForAnInFlightResize(t *testing.T) {
 	}
 
 	// A resize that starts after Close must not reach the closed adapter.
-	if err := display.SetDesktopSize(640, 480); !errors.Is(err, ErrNoDisplay) {
-		t.Fatalf("post-close SetDesktopSize = %v, want ErrNoDisplay", err)
+	if err := display.SetScreenLayout([]DisplayScreen{{Rect: image.Rect(0, 0, 640, 480)}}); !errors.Is(err, ErrNoDisplay) {
+		t.Fatalf("post-close SetScreenLayout = %v, want ErrNoDisplay", err)
 	}
 	inner.mu.Lock()
 	resizes = inner.resize

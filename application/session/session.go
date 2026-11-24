@@ -510,6 +510,11 @@ type StartSpec struct {
 	// and route selection. It is required when Kind is KindVNC and ignored by
 	// every other transport.
 	VNC *modelvnc.SessionConfig
+	// VNCScreen is the index of the remote screen this Session displays. Zero
+	// is the whole desktop on a single-screen server and the first screen when
+	// the server reports a multi-screen layout. Only the viewer crops to it;
+	// the transport always receives the whole framebuffer.
+	VNCScreen int
 	// ResumeKey locates a saved ET session in the secret store so a new
 	// process can reattach it. It is an opaque, non-secret identifier; the
 	// session id and passkey live only in the store. Empty disables reattach.
@@ -1671,6 +1676,11 @@ func (s *Session) VNCConfiguration() modelvnc.Config {
 	return s.spec.VNC.Configuration
 }
 
+// VNCScreen is the index of the remote screen this Session's viewer displays.
+// Zero is the whole desktop on a single-screen server and the first screen of a
+// multi-screen layout.
+func (s *Session) VNCScreen() int { return s.spec.VNCScreen }
+
 // BracketedPaste reports whether the peer last enabled DECSET 2004. The
 // compose bar uses it to wrap multiline submissions in one paste.
 func (s *Session) BracketedPaste() bool {
@@ -1733,7 +1743,8 @@ func (s *Session) Resize(cols, rows int) error {
 	}
 	if !s.ByteStream() {
 		// A pixel Session has no terminal to resize. The viewer scales its own
-		// bitmap; a remote desktop resize is SetDesktopSize and is explicit.
+		// bitmap; a remote screen-layout change is SetScreenLayout and is
+		// explicit.
 		return nil
 	}
 	select {

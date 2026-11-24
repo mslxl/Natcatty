@@ -67,8 +67,8 @@ func TestReasonZeroResizeDoesNotSatisfyAPendingRequest(t *testing.T) {
 			Width: width, Height: height,
 		}})
 	})
-	if err := tr.SetDesktopSize(8, 6); !errors.Is(err, appsession.ErrDesktopResizeTimeout) {
-		t.Fatalf("SetDesktopSize = %v, want ErrDesktopResizeTimeout", err)
+	if err := tr.SetScreenLayout([]appsession.DisplayScreen{{Rect: image.Rect(0, 0, 8, 6)}}); !errors.Is(err, appsession.ErrDesktopResizeTimeout) {
+		t.Fatalf("SetScreenLayout = %v, want ErrDesktopResizeTimeout", err)
 	}
 }
 
@@ -82,8 +82,8 @@ func TestStaleSuccessDoesNotSatisfyAPendingRequest(t *testing.T) {
 			Width: 4, Height: 3,
 		}})
 	})
-	if err := tr.SetDesktopSize(8, 6); !errors.Is(err, appsession.ErrDesktopResizeTimeout) {
-		t.Fatalf("SetDesktopSize = %v, want ErrDesktopResizeTimeout", err)
+	if err := tr.SetScreenLayout([]appsession.DisplayScreen{{Rect: image.Rect(0, 0, 8, 6)}}); !errors.Is(err, appsession.ErrDesktopResizeTimeout) {
+		t.Fatalf("SetScreenLayout = %v, want ErrDesktopResizeTimeout", err)
 	}
 }
 
@@ -96,8 +96,8 @@ func TestMatchingSuccessCompletesTheRequest(t *testing.T) {
 			Width: width, Height: height,
 		}})
 	})
-	if err := tr.SetDesktopSize(8, 6); err != nil {
-		t.Fatalf("SetDesktopSize = %v, want nil", err)
+	if err := tr.SetScreenLayout([]appsession.DisplayScreen{{Rect: image.Rect(0, 0, 8, 6)}}); err != nil {
+		t.Fatalf("SetScreenLayout = %v, want nil", err)
 	}
 }
 
@@ -522,14 +522,14 @@ func TestStaleRefusalDoesNotRefuseANewerRequest(t *testing.T) {
 	tr, requests, replies := startScriptedResizeTransport(t)
 
 	first := make(chan error, 1)
-	go func() { first <- tr.SetDesktopSize(40, 30) }()
+	go func() { first <- tr.SetScreenLayout([]appsession.DisplayScreen{{Rect: image.Rect(0, 0, 40, 30)}}) }()
 	awaitResizeRequest(t, requests, 40, 30)
 	if err := <-first; !errors.Is(err, appsession.ErrDesktopResizeTimeout) {
-		t.Fatalf("first SetDesktopSize = %v, want ErrDesktopResizeTimeout", err)
+		t.Fatalf("first SetScreenLayout = %v, want ErrDesktopResizeTimeout", err)
 	}
 
 	second := make(chan error, 1)
-	go func() { second <- tr.SetDesktopSize(64, 48) }()
+	go func() { second <- tr.SetScreenLayout([]appsession.DisplayScreen{{Rect: image.Rect(0, 0, 64, 48)}}) }()
 	awaitResizeRequest(t, requests, 64, 48)
 
 	replies <- scriptedResizeReply{
@@ -542,7 +542,7 @@ func TestStaleRefusalDoesNotRefuseANewerRequest(t *testing.T) {
 		t.Fatal("a late refusal for an older request refused the newer one")
 	}
 	if !errors.Is(err, appsession.ErrDesktopResizeTimeout) {
-		t.Fatalf("second SetDesktopSize = %v, want ErrDesktopResizeTimeout", err)
+		t.Fatalf("second SetScreenLayout = %v, want ErrDesktopResizeTimeout", err)
 	}
 
 	// The server actually reached the newer size; a server-initiated success is
@@ -562,14 +562,14 @@ func TestStaleSuccessDoesNotSatisfyANewerRequest(t *testing.T) {
 	tr, requests, replies := startScriptedResizeTransport(t)
 
 	first := make(chan error, 1)
-	go func() { first <- tr.SetDesktopSize(40, 30) }()
+	go func() { first <- tr.SetScreenLayout([]appsession.DisplayScreen{{Rect: image.Rect(0, 0, 40, 30)}}) }()
 	awaitResizeRequest(t, requests, 40, 30)
 	if err := <-first; !errors.Is(err, appsession.ErrDesktopResizeTimeout) {
-		t.Fatalf("first SetDesktopSize = %v, want ErrDesktopResizeTimeout", err)
+		t.Fatalf("first SetScreenLayout = %v, want ErrDesktopResizeTimeout", err)
 	}
 
 	second := make(chan error, 1)
-	go func() { second <- tr.SetDesktopSize(64, 48) }()
+	go func() { second <- tr.SetScreenLayout([]appsession.DisplayScreen{{Rect: image.Rect(0, 0, 64, 48)}}) }()
 	awaitResizeRequest(t, requests, 64, 48)
 
 	// A success for the timed-out A arrives while B is pending. It resizes the
@@ -580,7 +580,7 @@ func TestStaleSuccessDoesNotSatisfyANewerRequest(t *testing.T) {
 	}
 	waitForFrameSize(t, tr, 40, 30)
 	if err := <-second; !errors.Is(err, appsession.ErrDesktopResizeTimeout) {
-		t.Fatalf("second SetDesktopSize = %v, want ErrDesktopResizeTimeout", err)
+		t.Fatalf("second SetScreenLayout = %v, want ErrDesktopResizeTimeout", err)
 	}
 }
 
@@ -593,7 +593,7 @@ func TestServerInitiatedResizeWhilePendingPublishesAndKeepsTheRequest(t *testing
 	resizes := resizeTimeouts(tr)
 
 	second := make(chan error, 1)
-	go func() { second <- tr.SetDesktopSize(64, 48) }()
+	go func() { second <- tr.SetScreenLayout([]appsession.DisplayScreen{{Rect: image.Rect(0, 0, 64, 48)}}) }()
 	awaitResizeRequest(t, requests, 64, 48)
 
 	replies <- scriptedResizeReply{
@@ -615,18 +615,18 @@ func TestServerInitiatedResizeWhilePendingPublishesAndKeepsTheRequest(t *testing
 published:
 	waitForFrameSize(t, tr, 80, 60)
 	if err := <-second; !errors.Is(err, appsession.ErrDesktopResizeTimeout) {
-		t.Fatalf("SetDesktopSize = %v, want ErrDesktopResizeTimeout", err)
+		t.Fatalf("SetScreenLayout = %v, want ErrDesktopResizeTimeout", err)
 	}
 }
 
 // TestCloseUnblocksAnOutstandingResize proves Close ends the session while
-// SetDesktopSize is waiting and joins the reader and writer goroutines. The
+// SetScreenLayout is waiting and joins the reader and writer goroutines. The
 // full production timeout is used, so only Close can unblock the waiter.
 func TestCloseUnblocksAnOutstandingResize(t *testing.T) {
 	tr, requests, _ := startScriptedResizeTransport(t)
 
 	result := make(chan error, 1)
-	go func() { result <- tr.SetDesktopSize(64, 48) }()
+	go func() { result <- tr.SetScreenLayout([]appsession.DisplayScreen{{Rect: image.Rect(0, 0, 64, 48)}}) }()
 	awaitResizeRequest(t, requests, 64, 48)
 
 	if err := tr.Close(); err != nil {
@@ -635,10 +635,10 @@ func TestCloseUnblocksAnOutstandingResize(t *testing.T) {
 	select {
 	case err := <-result:
 		if !errors.Is(err, appsession.ErrNoDisplay) {
-			t.Fatalf("SetDesktopSize = %v, want ErrNoDisplay", err)
+			t.Fatalf("SetScreenLayout = %v, want ErrNoDisplay", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("SetDesktopSize did not unblock on Close")
+		t.Fatal("SetScreenLayout did not unblock on Close")
 	}
 	waitClosed(t, tr.readerDone, "reader goroutine")
 	waitClosed(t, tr.loopDone, "read loop")
