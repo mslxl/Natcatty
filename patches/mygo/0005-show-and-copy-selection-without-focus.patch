@@ -1,5 +1,5 @@
 diff --git a/ui/input.go b/ui/input.go
-index ac8a47b9..d1213f0b 100644
+index ac8a47b9..72e4c002 100644
 --- a/ui/input.go
 +++ b/ui/input.go
 @@ -307,6 +307,17 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, clicks i
@@ -37,20 +37,22 @@ index ac8a47b9..d1213f0b 100644
  	}
  	if target.editor != nil {
  		target.editor.pressMods = mods
-@@ -739,6 +756,12 @@ func (rt *engine) keyDownPhysical(mods Modifiers, key, physical Key, repeat bool
+@@ -739,6 +756,14 @@ func (rt *engine) keyDownPhysical(mods Modifiers, key, physical Key, repeat bool
  		// Windows, leaves it rather than pasting a second time.
  		return true
  	}
 +	// The focus may have left a selectable paragraph since the drag, and its
-+	// Copy key must still copy the selection the user sees.
-+	if !rt.claimed(k) && k.mods == Cmd && k.key == KeyC && rt.copyTextSelection() {
++	// Copy key must still copy the selection the user sees. Outside macOS the
++	// Copy chord is Control+Shift+C, since a terminal keeps plain Control+C
++	// for the program (see Natcatty's appview.CopyKey).
++	if !rt.claimed(k) && k.key == KeyC && (k.mods == Cmd || k.mods == Cmd|Shift) && rt.copyTextSelection() {
 +		rt.requestFrame()
 +		return false
 +	}
  	if s := rt.states[rt.focused]; s != nil && s.flags&flagTypeSelect != 0 && !rt.claimed(k) {
  		// The first letters of a row of a list: they add up while typed
  		// quickly enough, with spaces once the first came.
-@@ -1007,6 +1030,13 @@ func (rt *engine) editEvent(ev editEvent) {
+@@ -1007,6 +1032,13 @@ func (rt *engine) editEvent(ev editEvent) {
  			// A handler of text without styles pastes it as Paste does.
  			handled = rt.deliver(h, InputEvent{Kind: kind, Text: "paste"})
  		}
@@ -64,7 +66,7 @@ index ac8a47b9..d1213f0b 100644
  		if handled {
  			rt.blinkStart = rt.now()
  		} else {
-@@ -1016,6 +1046,10 @@ func (rt *engine) editEvent(ev editEvent) {
+@@ -1016,6 +1048,10 @@ func (rt *engine) editEvent(ev editEvent) {
  	}
  	s := rt.states[rt.focused]
  	if s == nil || s.editor == nil {

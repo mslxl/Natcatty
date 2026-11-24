@@ -68,7 +68,7 @@ func dragOver(tester *ui.Tester, r ui.Rect) {
 	tester.Frame()
 }
 
-func TestPlainCellSelectionCopiesWithCmdC(t *testing.T) {
+func TestPlainCellSelectionCopiesWithCopyChord(t *testing.T) {
 	surface, transport, tester := newSelectionSurface(t)
 	emitEchoBlock(t, surface, transport, tester)
 	for i := 0; i < 8; i++ {
@@ -84,10 +84,12 @@ func TestPlainCellSelectionCopiesWithCmdC(t *testing.T) {
 	if diff := changedPixels(before, tester.Image(), r); diff == 0 {
 		t.Fatal("the drag painted no selection over the output: the pane's refocus blanked it out")
 	}
-	tester.Key(ui.Cmd, ui.KeyC)
+	// The Copy chord: Command on macOS, Control+Shift elsewhere, where a
+	// terminal cannot take plain Control+C from the program.
+	tester.Key(liveCopyMods(), ui.KeyC)
 	tester.Frame()
 	if got := tester.Clipboard(); got != "123" {
-		t.Fatalf("Cmd+C copied %q, want the selected output %q", got, "123")
+		t.Fatalf("the Copy chord copied %q, want the selected output %q", got, "123")
 	}
 
 	// The pane's refocus is why the selection survives a press: typing must
@@ -145,9 +147,9 @@ func TestLensTableSelectionCopies(t *testing.T) {
 		t.Fatalf("no table row: %v", tester.Texts())
 	}
 	dragOver(tester, r)
-	tester.Key(ui.Cmd, ui.KeyC)
+	tester.Key(liveCopyMods(), ui.KeyC)
 	tester.Frame()
 	if got := tester.Clipboard(); !strings.Contains(got, "Applications") {
-		t.Fatalf("Cmd+C copied %q, want the selected table row", got)
+		t.Fatalf("the Copy chord copied %q, want the selected table row", got)
 	}
 }

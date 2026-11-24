@@ -944,6 +944,13 @@ func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, 
 							c.Invalidate()
 							return true
 						}
+						// Nothing is selected on the live screen, but a
+						// finished block's paragraph may still show the text
+						// the user dragged; MyGo's Copy acts on it. Leave the
+						// chord unclaimed: the encoder below would otherwise
+						// turn Control+Shift+C into Control+C and interrupt
+						// the program.
+						return false
 					}
 				}
 			}
