@@ -94,8 +94,14 @@ func TestPlainCellSelectionCopiesWithCopyChord(t *testing.T) {
 
 	// The pane's refocus is why the selection survives a press: typing must
 	// still reach the shell, and the press on the live screen ends the
-	// block's selection instead.
-	tester.ClickAt(360, 420)
+	// block's selection instead. Press the live prompt itself: a point that
+	// misses it leaves the focus cleared, and where the box ends depends on
+	// the platform's layout.
+	live, ok := findLivePrefix(tester, "✦ work ❯")
+	if !ok {
+		t.Fatalf("no live prompt: %v", tester.Texts())
+	}
+	tester.ClickAt(live.X+2, live.Y+live.H/2)
 	tester.Frame()
 	if diff := changedPixels(before, tester.Image(), r); diff != 0 {
 		t.Fatalf("the block kept its selection after a press on the live screen: %d pixels", diff)
