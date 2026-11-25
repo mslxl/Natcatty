@@ -22,8 +22,10 @@ import (
 // reorder never starts a body run and a Tab switch never moves the strip.
 
 // tabStripBaseDuration is the strip's standard duration for an enter, an
-// exit and a reorder. The speed tier scales this time alone.
-const tabStripBaseDuration = 180 * time.Millisecond
+// exit and a reorder. The speed tier scales this time alone. It is the shared
+// tab-strip duration so the work strip, Follow's mini strip and Quake's bar
+// cannot drift apart.
+const tabStripBaseDuration = motion.TabStripBaseDuration
 
 // tabStripSignals is what a view knows about its strip before the build. The
 // strip cannot see the layout this frame makes, so the view supplies the last
@@ -139,6 +141,11 @@ type tabStripMotion struct {
 	// wasHidden is the previous frame's window visibility. An event first
 	// seen on the frame a window shows was not on screen and warps.
 	wasHidden bool
+	// skipped reports that the view built no strip on the previous frame (a
+	// top-down browser placeholder or an unmounted route). The next build
+	// treats the gap like a hidden frame and warps; it is a view-local signal,
+	// never a wall-clock judgement.
+	skipped bool
 	// lastSeq is the last state event this view consumed.
 	lastSeq uint64
 	// run is the strip animation playing, or nil.
@@ -248,9 +255,16 @@ func (m *tabStripMotion) beginFrame(c *ui.Context, s *state.State, sig tabStripS
 	}
 	first := m.frames == 0
 	m.frames++
-	hidden := c.WindowHidden()
+	skipped := m.skipped
+	m.skipped = false
+	// Record the window's own visibility as it reports it. A view-local skip
+	// is not a window hide: it makes this frame warp, and the frame after it is
+	// a normal visible one, so a later event still animates instead of being
+	// treated as a second show frame (ticket 08).
+	windowHidden := c.WindowHidden()
+	hidden := windowHidden || skipped
 	wasHidden := m.wasHidden
-	m.wasHidden = hidden
+	m.wasHidden = windowHidden
 	setting := s.Motion()
 	reduce := c.Preferences().ReduceMotion
 	now := c.Now()
@@ -566,6 +580,15 @@ func permutationOfRow(current, committed *tabRowSnapshot) bool {
 		delete(remaining, item.id)
 	}
 	return len(remaining) == 0
+}
+
+// noteUnrendered records that this view built no strip on the frame it just
+// drew. The next beginFrame warps the gap instead of animating an event the
+// user could not see, and asks for no frame of its own.
+func (m *tabStripMotion) noteUnrendered() {
+	if m != nil {
+		m.skipped = true
+	}
 }
 
 // stopMotion ends whatever the strip is moving so this frame builds the final
@@ -926,16 +949,7 @@ func (m *tabStripMotion) zIndex(tab model.TabID, dragging bool) int {
 // only, with a collapsing enter and exit. Duration -1 shows the change at
 // once, MyGo's warp.
 func tabStripTransition(duration, exitDuration time.Duration) ui.ElementTransition {
-	return ui.ElementTransition{
-		Duration:     duration,
-		ExitDuration: exitDuration,
-		Ease:         ui.EaseOut,
-		ExitEase:     ui.EaseOut,
-		Position:     true,
-		Size:         true,
-		Enter:        &ui.Motion{Collapse: true},
-		Exit:         &ui.Motion{Collapse: true},
-	}
+	return motion.TabStripTransition(duration, exitDuration)
 }
 
 // tabStripPassiveTransition is an idle Tab's recording: its layout follows
@@ -943,14 +957,7 @@ func tabStripTransition(duration, exitDuration time.Duration) ui.ElementTransiti
 // Position is set (and only Position) so MyGo does not fall back to animating
 // every property, Colors included, with its 200 ms default.
 func tabStripPassiveTransition(exitDuration time.Duration) ui.ElementTransition {
-	return ui.ElementTransition{
-		Duration:     -1,
-		ExitDuration: exitDuration,
-		Ease:         ui.EaseOut,
-		ExitEase:     ui.EaseOut,
-		Position:     true,
-		Exit:         &ui.Motion{Collapse: true},
-	}
+	return motion.TabStripPassiveTransition(exitDuration)
 }
 
 // followStripTransition is the mini strip's animated or warped item: Position
@@ -959,26 +966,11 @@ func tabStripPassiveTransition(exitDuration time.Duration) ui.ElementTransition 
 // frame; only its place moves. Opacity stays 1 so the selected fill is the
 // element's own from the first frame.
 func followStripTransition(duration, exitDuration time.Duration) ui.ElementTransition {
-	return ui.ElementTransition{
-		Duration:     duration,
-		ExitDuration: exitDuration,
-		Ease:         ui.EaseOut,
-		ExitEase:     ui.EaseOut,
-		Position:     true,
-		Enter:        &ui.Motion{XPercent: 100, Opacity: 1},
-		Exit:         &ui.Motion{XPercent: -100, Opacity: 1},
-	}
+	return motion.FollowStripTransition(duration, exitDuration)
 }
 
 // followStripPassiveTransition is an idle mini Tab's recording: its layout
 // follows at once, and a close copy slides out with the strip's duration.
 func followStripPassiveTransition(exitDuration time.Duration) ui.ElementTransition {
-	return ui.ElementTransition{
-		Duration:     -1,
-		ExitDuration: exitDuration,
-		Ease:         ui.EaseOut,
-		ExitEase:     ui.EaseOut,
-		Position:     true,
-		Exit:         &ui.Motion{XPercent: -100, Opacity: 1},
-	}
+	return motion.FollowStripPassiveTransition(exitDuration)
 }

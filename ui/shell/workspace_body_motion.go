@@ -728,25 +728,13 @@ func ghostTabRef(ghost *state.TabGhost) tabRef {
 // switchDirection turns a Tab event's index direction into a motion sign:
 // +1 for a target later in the strip, -1 for one before it.
 func switchDirection(direction int) float32 {
-	if direction > 0 {
-		return 1
-	}
-	return -1
+	return motion.SwitchDirection(direction)
 }
 
 // bodyOpenMotion is the whole body's entrance for an open style. slide and
 // gnomed must say opacity 1: MyGo's Motion opacity defaults to 0.
 func bodyOpenMotion(style domainpreferences.MotionStyle) ui.Motion {
-	switch style {
-	case domainpreferences.MotionSlide:
-		return ui.Motion{XPercent: -100, Opacity: 1}
-	case domainpreferences.MotionGnomed:
-		return ui.Motion{YPercent: 100, Collapse: true, Opacity: 1}
-	case domainpreferences.MotionFade:
-		return ui.Motion{Opacity: 0}
-	default:
-		return ui.Motion{Scale: motion.PopinStartScale, Opacity: 0}
-	}
+	return motion.BodyOpenMotion(style)
 }
 
 // bodyCloseMotion is the whole body's exit for a close style. It is the same
@@ -754,16 +742,7 @@ func bodyOpenMotion(style domainpreferences.MotionStyle) ui.Motion {
 // left by its own width, gnomed folds to its bottom edge, fade keeps its
 // geometry.
 func bodyCloseMotion(style domainpreferences.MotionStyle) ui.Motion {
-	switch style {
-	case domainpreferences.MotionSlide:
-		return ui.Motion{XPercent: -100, Opacity: 1}
-	case domainpreferences.MotionGnomed:
-		return ui.Motion{YPercent: 100, Collapse: true, Opacity: 1}
-	case domainpreferences.MotionFade:
-		return ui.Motion{Opacity: 0}
-	default:
-		return ui.Motion{Scale: motion.PopinStartScale, Opacity: 0}
-	}
+	return motion.BodyCloseMotion(style)
 }
 
 // bodySwitchMotions is the incoming and outgoing body motion for a switch
@@ -772,16 +751,5 @@ func bodyCloseMotion(style domainpreferences.MotionStyle) ui.Motion {
 // it is earlier. slide and slidevert stay opaque; the fade variants use MyGo's
 // default opacity 0 on both ends, and fade moves nothing.
 func bodySwitchMotions(style domainpreferences.MotionSwitchStyle, dir float32) (enter, exit ui.Motion) {
-	switch style {
-	case domainpreferences.MotionSwitchSlideVert:
-		return ui.Motion{YPercent: 100 * dir, Opacity: 1}, ui.Motion{YPercent: -100 * dir, Opacity: 1}
-	case domainpreferences.MotionSwitchSlideFade:
-		return ui.Motion{XPercent: 100 * dir}, ui.Motion{XPercent: -100 * dir}
-	case domainpreferences.MotionSwitchSlideFadeVert:
-		return ui.Motion{YPercent: 100 * dir}, ui.Motion{YPercent: -100 * dir}
-	case domainpreferences.MotionSwitchFade:
-		return ui.Motion{}, ui.Motion{}
-	default:
-		return ui.Motion{XPercent: 100 * dir, Opacity: 1}, ui.Motion{XPercent: -100 * dir, Opacity: 1}
-	}
+	return motion.BodySwitchMotions(style, dir)
 }

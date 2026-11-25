@@ -148,18 +148,44 @@ func rectWithin(a, b ui.Rect, eps float32) bool {
 		diff(a.W-b.W) <= eps && diff(a.H-b.H) <= eps
 }
 
-// workspacePaneMotion is the main window's Pane motion runtime. It records
-// the last frame's Pane boxes, consumes the state's latest event, freezes the
-// final grids at the change, and draws the overlay for the run. Each window
+// paneMotionTabSource is the Tab a view's Pane runtime reads. The shell's
+// active-Tab renderers leave it nil and read the state's active Tab; a
+// detached window supplies its fixed Tab. Every view owns this source, so the
+// same state can drive two visible renderers without sharing their Tab
+// choice, recorded boxes or controller progress.
+type paneMotionTabSource struct {
+	id        func() (model.TabID, bool)
+	tree      func() (*domainworkspace.Node, []int, bool)
+	pane      func(model.PaneID) (state.PaneInfo, bool)
+	magnified func() model.PaneID
+}
+
+// workspacePaneMotion is one view's Pane motion runtime. It records the last
+// frame's Pane boxes, consumes the state's latest event, freezes the final
+// grids at the change, and draws the overlay for the run. Each window
 // renderer owns one, so a second renderer never shares progress or pins.
 type workspacePaneMotion struct {
 	state      *state.State
 	controller *motion.Controller
 	mode       paneMotionMode
+	// tab names the Tab this renderer shows; nil reads the state's active Tab.
+	tab *paneMotionTabSource
 	// body plays Tab open, close, and switch as one whole-body transition
 	// below the Tab strip. It is separate from the Pane run: a Tab change
-	// never splits or reflows a Pane tree.
+	// never splits or reflows a Pane tree. A Pane-only renderer (Follow's
+	// read-only tree, a detached window) leaves it nil: it owns no Tab strip
+	// or body and must not consume Tab ghosts the main window may still draw.
 	body *workspaceBodyMotion
+	// ownsGhosts marks a renderer that also owns the state's Tab-body and Pane
+	// ghost pools. The full shell renderers do; a Pane-only second view does
+	// not, so it never releases a ghost another visible view is about to draw.
+	ownsGhosts bool
+	// skipped reports that this renderer's content was not built on the last
+	// frame (an empty Follow placeholder, a browser placeholder, or a detached
+	// tab that left). The next preFrame treats the gap like a hidden frame and
+	// warps instead of replaying events the user never saw. It is a view-local
+	// signal, never a wall-clock judgement (ticket 08).
+	skipped bool
 
 	rects  map[model.PaneID]motion.PaneRects
 	region ui.Rect
@@ -189,8 +215,92 @@ func newWorkspacePaneMotion(s *state.State, mode paneMotionMode) *workspacePaneM
 		controller: motion.NewController(s.Motion),
 		mode:       mode,
 		body:       newWorkspaceBodyMotion(mode),
+		ownsGhosts: true,
 		rects:      map[model.PaneID]motion.PaneRects{},
 	}
+}
+
+// newActivePaneOnlyMotion is a second visible renderer of the state's active
+// Tab, such as Follow's read-only tree. It owns its controller and Pane
+// rectangles, but no Tab body or ghost pool: the main window may be drawing
+// the same Tab, and the two must not release each other's retained Surfaces.
+func newActivePaneOnlyMotion(s *state.State) *workspacePaneMotion {
+	wm := newWorkspacePaneMotion(s, paneMotionMode{})
+	wm.body = nil
+	wm.ownsGhosts = false
+	wm.tab = &paneMotionTabSource{
+		id: func() (model.TabID, bool) { return s.TabID(s.ActiveTab()) },
+		tree: func() (*domainworkspace.Node, []int, bool) {
+			return s.TabTree(s.ActiveTab())
+		},
+		pane: func(id model.PaneID) (state.PaneInfo, bool) {
+			return s.PaneInfoAt(s.ActiveTab(), id)
+		},
+		magnified: func() model.PaneID { return s.MagnifiedPaneID(s.ActiveTab()) },
+	}
+	return wm
+}
+
+// newDetachedPaneMotion is one detached window's Pane runtime. It reads only
+// the detached Tab's tree and Pane infos, so an event for the main window's
+// active Tab is not this window's to animate. A detached Tab has no Tab strip
+// and no Tab events.
+func newDetachedPaneMotion(s *state.State, tabID model.TabID) *workspacePaneMotion {
+	wm := newWorkspacePaneMotion(s, paneMotionMode{})
+	wm.body = nil
+	wm.ownsGhosts = false
+	wm.tab = &paneMotionTabSource{
+		id: func() (model.TabID, bool) { return tabID, s.DetachedTabExists(tabID) },
+		tree: func() (*domainworkspace.Node, []int, bool) {
+			return s.DetachedTabTree(tabID)
+		},
+		pane: func(id model.PaneID) (state.PaneInfo, bool) {
+			return s.DetachedPaneInfoAt(tabID, id)
+		},
+		magnified: func() model.PaneID { return "" },
+	}
+	return wm
+}
+
+// noteSkipped records that this renderer built no Pane tree on the frame it
+// just drew. The next preFrame warps the gap instead of animating an event the
+// user could not see. It asks for no frame of its own.
+func (wm *workspacePaneMotion) noteSkipped() {
+	if wm != nil {
+		wm.skipped = true
+	}
+}
+
+// tabID reports the Tab this renderer shows.
+func (wm *workspacePaneMotion) tabID() (model.TabID, bool) {
+	if wm.tab != nil {
+		return wm.tab.id()
+	}
+	return wm.state.TabID(wm.state.ActiveTab())
+}
+
+// tabTree reports the tree this renderer draws.
+func (wm *workspacePaneMotion) tabTree() (*domainworkspace.Node, []int, bool) {
+	if wm.tab != nil {
+		return wm.tab.tree()
+	}
+	return wm.state.TabTree(wm.state.ActiveTab())
+}
+
+// paneInfo reports one Pane of the Tab this renderer shows.
+func (wm *workspacePaneMotion) paneInfo(id model.PaneID) (state.PaneInfo, bool) {
+	if wm.tab != nil {
+		return wm.tab.pane(id)
+	}
+	return wm.state.PaneInfoAt(wm.state.ActiveTab(), id)
+}
+
+// magnifiedPane reports the Tab's zoomed Pane.
+func (wm *workspacePaneMotion) magnifiedPane() model.PaneID {
+	if wm.tab != nil {
+		return wm.tab.magnified()
+	}
+	return wm.state.MagnifiedPaneID(wm.state.ActiveTab())
 }
 
 // preFrame consumes the latest event before the frame is laid out. The event
@@ -206,9 +316,21 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	// once as it shows, and holds other frames while hidden. An event the
 	// view first sees on either of those frames was not on screen, so it
 	// warps; a visible view animates whatever it sees, however late the frame.
-	hidden := c.WindowHidden()
+	// A renderer that built no Pane tree on the previous frame (an empty
+	// Follow placeholder, a detached Tab that left, the top-down browser
+	// placeholder) is treated like a hidden one: nothing it might have drawn
+	// was on screen, so the latest event must warp. The signal is view-local;
+	// wall-clock event age is never consulted (ticket 08).
+	skipped := wm.skipped
+	wm.skipped = false
+	// Record the window's own visibility as it reports it. A view-local skip
+	// is not a window hide: it makes this frame final, but the frame after it
+	// is a normal visible one, so an event that arrives after the warp still
+	// animates instead of being treated as a second show frame (ticket 08).
+	windowHidden := c.WindowHidden()
+	hidden := windowHidden || skipped
 	wasHidden := wm.windowHidden
-	wm.windowHidden = hidden
+	wm.windowHidden = windowHidden
 	setting := s.Motion()
 	event, ok := s.MotionEvent()
 	unseen := ok && wm.controller.Unseen(event.Seq)
@@ -216,7 +338,8 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	// DisableAnimations is window-wide, so a Tab body warp using it would also
 	// rest that native Pane transition while the Pane's switch is still on;
 	// the body waits it out instead (the one-switch rule).
-	paneMotionPending := unseen && wm.paneMotionUsesMyGo(c, setting, event, firstFrame, hidden, wasHidden)
+	paneMotionPending := wm.body != nil &&
+		unseen && wm.paneMotionUsesMyGo(c, setting, event, firstFrame, hidden, wasHidden)
 	// A Pane transition MyGo is already carrying also keeps a body warp from
 	// using DisableAnimations on this frame, even when the newest layout change
 	// records no event at all (a batch Tab close): the Pane run must keep
@@ -224,19 +347,20 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	paneMotionActive := wm.paneTransitionInFlight()
 	// A close of a Tab this body is not showing ends its run with a warp on
 	// this frame; tick must not schedule the animation frame that warp drops.
-	otherClose := unseen && wm.body.endsOtherBody(event)
+	otherClose := wm.body != nil && unseen && wm.body.endsOtherBody(event)
 	// A body run advances or warps before this frame is laid out. A hidden
 	// window, an off switch, Reduce Motion, or a batch close with no event ends
 	// it without asking for another frame.
-	wm.body.tick(c, s, setting, hidden, paneMotionPending, paneMotionActive, otherClose)
+	if wm.body != nil {
+		wm.body.tick(c, s, setting, hidden, paneMotionPending, paneMotionActive, otherClose)
+	}
 
-	activeIndex := s.ActiveTab()
-	activeID, _ := s.TabID(activeIndex)
+	activeID, activeOK := wm.tabID()
 	// The tree is built after preFrame returns, so the zoom the layout shows
-	// is decided here and read by mainTabRef. A run that keeps the split (or
+	// is decided here and read by the tab ref. A run that keeps the split (or
 	// the old magnified Pane) overrides the state for this frame; every exit
 	// path updates it.
-	defer wm.updateEffective(activeIndex)
+	defer wm.updateEffective()
 
 	if wm.run != nil && wm.run.tabID != activeID {
 		// An animation belongs to its Tab; leaving the Tab warps it.
@@ -279,10 +403,20 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	}
 	switch event.Kind {
 	case motion.TabOpen, motion.TabClose, motion.TabSwitch:
+		if wm.body == nil {
+			// A Pane-only renderer has no Tab strip or body. The event may still
+			// end a Pane run that belonged to the Tab being left (the tree
+			// identity check above already did); otherwise it is not this
+			// renderer's to animate. It owns no Tab ghosts, so it releases none.
+			wm.advanceRun(c, now)
+			return
+		}
 		// A Tab event is a whole-body transition, never a Pane run. Any Pane
 		// run or retained Pane ghost from the Tab being left is over.
 		wm.finish()
-		s.ReleasePaneGhosts()
+		if wm.ownsGhosts {
+			s.ReleasePaneGhosts()
+		}
 		visible := !firstFrame && !hidden && !wasHidden && !c.Preferences().ReduceMotion
 		wm.body.consume(c, s, event, setting, visible, paneMotionPending)
 		return
@@ -292,19 +426,24 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	// event animates through MyGo, its transition shares this frame and must
 	// not be rested, so the body warps alone by generation instead of with
 	// DisableAnimations (the one-switch rule).
-	if wm.body.phase != bodyIdle {
+	if wm.body != nil && wm.body.phase != bodyIdle {
 		if paneMotionPending {
 			wm.body.warpBodyOnly()
 		} else {
 			wm.body.warp(c)
 		}
 	}
-	s.ReleaseTabGhosts()
-	if event.TabID != activeID || activeIndex < 0 {
+	if wm.ownsGhosts {
+		s.ReleaseTabGhosts()
+	}
+	if !activeOK || event.TabID != activeID {
 		wm.finish()
 		// A ghost retained for a Tab this view no longer shows has no run to
-		// draw it; release its surface now.
-		s.ReleasePaneGhosts()
+		// draw it; release its surface now. A Pane-only second view leaves the
+		// shared pool to the renderer that owns it.
+		if wm.ownsGhosts {
+			s.ReleasePaneGhosts()
+		}
 		return
 	}
 
@@ -317,15 +456,17 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	switch event.Kind {
 	case motion.PaneOpen:
 		animate := visible && setting.PaneOpen
-		wm.plan(c, s, activeIndex, event, setting, animate, pin, now)
+		wm.plan(c, s, event, setting, animate, pin, now)
 	case motion.PaneClose:
 		animate := visible && setting.PaneClose
-		wm.planClose(c, s, activeIndex, event, setting, animate, pin, now)
+		wm.planClose(c, s, event, setting, animate, pin, now)
 	case motion.PaneReorder:
-		wm.planReorder(c, s, activeIndex, event, setting, visible, pin, now)
+		wm.planReorder(c, s, event, setting, visible, pin, now)
 	default:
 		wm.finish()
-		s.ReleasePaneGhosts()
+		if wm.ownsGhosts {
+			s.ReleasePaneGhosts()
+		}
 	}
 }
 
@@ -348,11 +489,8 @@ func (wm *workspacePaneMotion) advanceRun(c *ui.Context, now time.Time) {
 // updateEffective decides the Pane the next layout shows alone. While a zoom
 // run is still covering the split, the state's new zoom must not switch the
 // tree yet; the run's render says what stays behind the overlay.
-func (wm *workspacePaneMotion) updateEffective(index int) {
-	var pane model.PaneID
-	if index >= 0 {
-		pane = wm.state.MagnifiedPaneID(index)
-	}
+func (wm *workspacePaneMotion) updateEffective() {
+	pane := wm.magnifiedPane()
 	if run := wm.run; run != nil && run.zoom {
 		switch run.render {
 		case zoomRenderSplit:
@@ -475,9 +613,9 @@ func (wm *workspacePaneMotion) visualInFlight(prev *paneMotionRun, now time.Time
 // computed from the Tab's tree and the pane region the previous frame showed,
 // never from LayoutBounds at the change: the layout has not run yet and its
 // report would lag.
-func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State, index int,
+func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State,
 	event motion.Event, setting domainpreferences.Motion, animate, pin bool, now time.Time) {
-	root, _, ok := s.TabTree(index)
+	root, _, ok := wm.tabTree()
 	if !ok || root == nil {
 		wm.finish()
 		return
@@ -494,7 +632,7 @@ func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State, index int,
 	if !animate {
 		wm.finish()
 		if pin {
-			wm.pinPanes(index, []model.PaneID{event.TargetID, event.PaneID}, final, event.TargetID)
+			wm.pinPanes([]model.PaneID{event.TargetID, event.PaneID}, final, event.TargetID)
 		}
 		return
 	}
@@ -504,7 +642,7 @@ func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State, index int,
 	if !oldOK {
 		wm.finish()
 		if pin {
-			wm.pinPanes(index, []model.PaneID{event.TargetID, event.PaneID}, final, event.TargetID)
+			wm.pinPanes([]model.PaneID{event.TargetID, event.PaneID}, final, event.TargetID)
 		}
 		return
 	}
@@ -526,7 +664,7 @@ func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State, index int,
 	if !animate {
 		wm.finish()
 		if pin {
-			wm.pinPanes(index, []model.PaneID{event.TargetID, event.PaneID}, final, event.TargetID)
+			wm.pinPanes([]model.PaneID{event.TargetID, event.PaneID}, final, event.TargetID)
 		}
 		return
 	}
@@ -604,7 +742,7 @@ func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State, index int,
 		Visuals:  visuals,
 	}
 	wm.run = run
-	wm.pinPanes(index, []model.PaneID{event.TargetID, event.PaneID}, final, event.TargetID)
+	wm.pinPanes([]model.PaneID{event.TargetID, event.PaneID}, final, event.TargetID)
 	wm.animationFrames++
 	c.AnimationFrame()
 }
@@ -612,13 +750,13 @@ func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State, index int,
 // planReorder turns one PaneReorder into a same-Tab move or a zoom, or
 // warps it. The three parts of a move have independent switches; a zoom has
 // only the PaneReorder spring.
-func (wm *workspacePaneMotion) planReorder(c *ui.Context, s *state.State, index int,
+func (wm *workspacePaneMotion) planReorder(c *ui.Context, s *state.State,
 	event motion.Event, setting domainpreferences.Motion, visible, pin bool, now time.Time) {
 	if event.IsZoom() {
-		wm.planZoom(c, s, index, event, setting, visible, pin, now)
+		wm.planZoom(c, s, event, setting, visible, pin, now)
 		return
 	}
-	wm.planMove(c, s, index, event, setting, visible, pin, now)
+	wm.planMove(c, s, event, setting, visible, pin, now)
 }
 
 // planMove animates a same-Tab move: the Pane's old position is an opaque
@@ -626,9 +764,9 @@ func (wm *workspacePaneMotion) planReorder(c *ui.Context, s *state.State, index 
 // open-style overlay over the already-final real Pane, and every sibling
 // that changes box makes room with the reorder spring. Each part obeys its
 // own switch; a part that is off warps while the others play.
-func (wm *workspacePaneMotion) planMove(c *ui.Context, s *state.State, index int,
+func (wm *workspacePaneMotion) planMove(c *ui.Context, s *state.State,
 	event motion.Event, setting domainpreferences.Motion, visible, pin bool, now time.Time) {
-	root, _, ok := s.TabTree(index)
+	root, _, ok := wm.tabTree()
 	if !ok || root == nil || wm.region.W <= 0 || wm.region.H <= 0 {
 		wm.finish()
 		return
@@ -648,14 +786,14 @@ func (wm *workspacePaneMotion) planMove(c *ui.Context, s *state.State, index int
 		// them the whole change warps; the final grid is still set once.
 		wm.finish()
 		if pin {
-			wm.pinSurvivors(index, "", final)
+			wm.pinSurvivors("", final)
 		}
 		return
 	}
 	if !closeOn && !openOn && !reorderOn {
 		wm.finish()
 		if pin {
-			wm.pinSurvivors(index, "", final)
+			wm.pinSurvivors("", final)
 		}
 		return
 	}
@@ -783,7 +921,7 @@ func (wm *workspacePaneMotion) planMove(c *ui.Context, s *state.State, index int
 	}
 	if closeOn {
 		ghost := paneMotionGhost{rects: old}
-		if info, ok := s.PaneInfoAt(index, moved); ok {
+		if info, ok := wm.paneInfo(moved); ok {
 			ghost.info = info
 		} else {
 			ghost.blank = true
@@ -799,7 +937,7 @@ func (wm *workspacePaneMotion) planMove(c *ui.Context, s *state.State, index int
 	if len(visuals) == 0 {
 		wm.finish()
 		if pin {
-			wm.pinSurvivors(index, "", final)
+			wm.pinSurvivors("", final)
 		}
 		return
 	}
@@ -807,7 +945,7 @@ func (wm *workspacePaneMotion) planMove(c *ui.Context, s *state.State, index int
 	run.anim.Measure()
 	wm.run = run
 	if pin {
-		wm.pinSurvivors(index, "", final)
+		wm.pinSurvivors("", final)
 	}
 	wm.animationFrames++
 	c.AnimationFrame()
@@ -818,9 +956,9 @@ func (wm *workspacePaneMotion) planMove(c *ui.Context, s *state.State, index int
 // magnified) on screen until the opaque copy covers it; zoom out renders the
 // split behind the shrinking copy at once. The Pane's own grid is the final
 // one throughout, so the PTY gets at most one resize.
-func (wm *workspacePaneMotion) planZoom(c *ui.Context, s *state.State, index int,
+func (wm *workspacePaneMotion) planZoom(c *ui.Context, s *state.State,
 	event motion.Event, setting domainpreferences.Motion, visible, pin bool, now time.Time) {
-	root, _, ok := s.TabTree(index)
+	root, _, ok := wm.tabTree()
 	if !ok || root == nil || wm.region.W <= 0 || wm.region.H <= 0 {
 		wm.finish()
 		return
@@ -852,7 +990,7 @@ func (wm *workspacePaneMotion) planZoom(c *ui.Context, s *state.State, index int
 		if !have || end.Column.W <= 0 || end.Column.H <= 0 {
 			wm.finish()
 			if pin {
-				wm.pinSurvivors(index, "", final)
+				wm.pinSurvivors("", final)
 			}
 			return
 		}
@@ -872,7 +1010,7 @@ func (wm *workspacePaneMotion) planZoom(c *ui.Context, s *state.State, index int
 		if !have || end.Column.W <= 0 || end.Column.H <= 0 {
 			wm.finish()
 			if pin {
-				wm.pinSurvivors(index, "", final)
+				wm.pinSurvivors("", final)
 			}
 			return
 		}
@@ -882,7 +1020,7 @@ func (wm *workspacePaneMotion) planZoom(c *ui.Context, s *state.State, index int
 	if !oldOK || (!visible || !setting.PaneReorder) {
 		wm.finish()
 		if pin {
-			wm.pinSurvivors(index, "", final)
+			wm.pinSurvivors("", final)
 		}
 		return
 	}
@@ -895,14 +1033,14 @@ func (wm *workspacePaneMotion) planZoom(c *ui.Context, s *state.State, index int
 		// over the newly final layout instead of warping it away.
 		if home, ok := wm.zoomReversalHome(prev, from, to); ok {
 			if out, moving := wm.movingVisual(prev, now, from); moving {
-				wm.planZoomReversal(c, index, event, setting, pin, now, final,
+				wm.planZoomReversal(c, event, setting, pin, now, final,
 					zoomPane, from, home, out, prev)
 				return
 			}
 		}
 		wm.finish()
 		if pin {
-			wm.pinSurvivors(index, "", final)
+			wm.pinSurvivors("", final)
 		}
 		return
 	}
@@ -939,7 +1077,7 @@ func (wm *workspacePaneMotion) planZoom(c *ui.Context, s *state.State, index int
 	run.anim.Measure()
 	wm.run = run
 	if pin {
-		wm.pinSurvivors(index, "", final)
+		wm.pinSurvivors("", final)
 	}
 	wm.animationFrames++
 	c.AnimationFrame()
@@ -996,7 +1134,7 @@ func (wm *workspacePaneMotion) zoomReversalHome(prev *paneMotionRun,
 // recorded boxes are the same home pair: the real Pane is not laid out while
 // the new Pane is magnified, so nothing else would reconcile its full-window
 // viewport with the split boxes the next event reads as a pin source.
-func (wm *workspacePaneMotion) planZoomReversal(c *ui.Context, index int, event motion.Event,
+func (wm *workspacePaneMotion) planZoomReversal(c *ui.Context, event motion.Event,
 	setting domainpreferences.Motion, pin bool, now time.Time, final map[model.PaneID]motion.PaneRects,
 	zoomPane, outgoing model.PaneID, home motion.PaneRects, out paneVisualState, prev *paneMotionRun) {
 	// Latest event wins: out was read from the run the user saw; stop it
@@ -1035,8 +1173,8 @@ func (wm *workspacePaneMotion) planZoomReversal(c *ui.Context, index int, event 
 		// pin target is the home body expressed in the same viewport units
 		// the zoom pinned; deriving it from the stale split boxes instead
 		// would widen it past the window.
-		wm.pinZoomHome(index, prev, outgoing, home)
-		wm.pinSurvivors(index, outgoing, final)
+		wm.pinZoomHome(prev, outgoing, home)
+		wm.pinSurvivors(outgoing, final)
 	}
 	wm.animationFrames++
 	c.AnimationFrame()
@@ -1048,12 +1186,12 @@ func (wm *workspacePaneMotion) planZoomReversal(c *ui.Context, index int, event 
 // pin source and motionViewport as the room that source currently has, so a
 // full-window viewport left beside split boxes would make the next pin widen
 // the grid out of the window.
-func (wm *workspacePaneMotion) pinZoomHome(index int, prev *paneMotionRun,
+func (wm *workspacePaneMotion) pinZoomHome(prev *paneMotionRun,
 	outgoing model.PaneID, home motion.PaneRects) {
 	if !home.Valid() {
 		return
 	}
-	info, ok := wm.state.PaneInfoAt(index, outgoing)
+	info, ok := wm.paneInfo(outgoing)
 	if !ok || info.Surface == nil {
 		return
 	}
@@ -1072,7 +1210,7 @@ func (wm *workspacePaneMotion) pinZoomHome(index int, prev *paneMotionRun,
 			source = end
 		}
 	}
-	viewW, viewH, ok := wm.motionViewport(index, outgoing, outgoing)
+	viewW, viewH, ok := wm.motionViewport(outgoing, outgoing)
 	if !ok {
 		return
 	}
@@ -1091,12 +1229,14 @@ func (wm *workspacePaneMotion) pinZoomHome(index int, prev *paneMotionRun,
 // showed. A magnified close starts the ghost at the whole pane region and
 // reveals the split at its final layout; its survivors warp rather than
 // animate under the ghost.
-func (wm *workspacePaneMotion) planClose(c *ui.Context, s *state.State, index int,
+func (wm *workspacePaneMotion) planClose(c *ui.Context, s *state.State,
 	event motion.Event, setting domainpreferences.Motion, animate, pin bool, now time.Time) {
-	root, _, ok := s.TabTree(index)
+	root, _, ok := wm.tabTree()
 	if !ok || root == nil {
 		wm.finish()
-		s.ReleasePaneGhosts()
+		if wm.ownsGhosts {
+			s.ReleasePaneGhosts()
+		}
 		return
 	}
 	ghostHandle, haveGhost := s.TakePaneGhost(event.PaneID)
@@ -1114,7 +1254,7 @@ func (wm *workspacePaneMotion) planClose(c *ui.Context, s *state.State, index in
 			ghostHandle.Release()
 		}
 		if pin {
-			wm.pinSurvivors(index, event.PaneID, final)
+			wm.pinSurvivors(event.PaneID, final)
 		}
 		return
 	}
@@ -1147,7 +1287,7 @@ func (wm *workspacePaneMotion) planClose(c *ui.Context, s *state.State, index in
 			ghostHandle.Release()
 		}
 		if pin {
-			wm.pinSurvivors(index, event.PaneID, final)
+			wm.pinSurvivors(event.PaneID, final)
 		}
 		return
 	}
@@ -1255,7 +1395,7 @@ func (wm *workspacePaneMotion) planClose(c *ui.Context, s *state.State, index in
 			panes = append(panes, id)
 		}
 	}
-	wm.pinPanes(index, panes, final, event.TargetID)
+	wm.pinPanes(panes, final, event.TargetID)
 	wm.animationFrames++
 	c.AnimationFrame()
 }
@@ -1263,7 +1403,7 @@ func (wm *workspacePaneMotion) planClose(c *ui.Context, s *state.State, index in
 // pinSurvivors freezes every surviving Pane's final grid at the change. A
 // Pane whose body did not change needs no pin: its own layout already reports
 // the same room and delivers no resize.
-func (wm *workspacePaneMotion) pinSurvivors(index int, closing model.PaneID, final map[model.PaneID]motion.PaneRects) {
+func (wm *workspacePaneMotion) pinSurvivors(closing model.PaneID, final map[model.PaneID]motion.PaneRects) {
 	panes := make([]model.PaneID, 0, len(final))
 	for id, end := range final {
 		if id == closing {
@@ -1275,7 +1415,7 @@ func (wm *workspacePaneMotion) pinSurvivors(index int, closing model.PaneID, fin
 		}
 		panes = append(panes, id)
 	}
-	wm.pinPanes(index, panes, final, closing)
+	wm.pinPanes(panes, final, closing)
 }
 
 // finish ends the run, lets every pinned Pane follow its own layout again,
@@ -1307,7 +1447,7 @@ func (wm *workspacePaneMotion) finish() {
 // delivered and animation frames do no grid math (ADR 0026). A Pane that has
 // no previous frame of its own (the one the split creates) takes its flow
 // chrome from the split target, whose surface it replaces.
-func (wm *workspacePaneMotion) pinPanes(index int, panes []model.PaneID, final map[model.PaneID]motion.PaneRects,
+func (wm *workspacePaneMotion) pinPanes(panes []model.PaneID, final map[model.PaneID]motion.PaneRects,
 	fallback model.PaneID) {
 	type pin struct {
 		id   model.PaneID
@@ -1322,7 +1462,7 @@ func (wm *workspacePaneMotion) pinPanes(index int, panes []model.PaneID, final m
 		if !ok || body.Body.W <= 0 || body.Body.H <= 0 {
 			continue
 		}
-		info, ok := wm.state.PaneInfoAt(index, id)
+		info, ok := wm.paneInfo(id)
 		if !ok || info.Surface == nil {
 			continue
 		}
@@ -1337,7 +1477,7 @@ func (wm *workspacePaneMotion) pinPanes(index int, panes []model.PaneID, final m
 		if !source.Valid() {
 			continue
 		}
-		viewW, viewH, ok := wm.motionViewport(index, id, fallback)
+		viewW, viewH, ok := wm.motionViewport(id, fallback)
 		if !ok {
 			// The Pane has not laid its screen out yet; its first body in
 			// the final box sizes it once.
@@ -1359,8 +1499,8 @@ func (wm *workspacePaneMotion) pinPanes(index int, panes []model.PaneID, final m
 // motionViewport reports the flow room of the surface that supplies a Pane's
 // chrome. The Pane's own surface is preferred; a Pane with no previous layout
 // takes the split target's surface.
-func (wm *workspacePaneMotion) motionViewport(index int, id, fallback model.PaneID) (w, h float32, ok bool) {
-	info, found := wm.state.PaneInfoAt(index, id)
+func (wm *workspacePaneMotion) motionViewport(id, fallback model.PaneID) (w, h float32, ok bool) {
+	info, found := wm.paneInfo(id)
 	if found && info.Surface != nil {
 		if vm, isVM := info.Surface.(state.ViewportMotion); isVM {
 			if w, h, ok := vm.MotionViewport(); ok {
@@ -1368,7 +1508,7 @@ func (wm *workspacePaneMotion) motionViewport(index int, id, fallback model.Pane
 			}
 		}
 	}
-	info, found = wm.state.PaneInfoAt(index, fallback)
+	info, found = wm.paneInfo(fallback)
 	if !found || info.Surface == nil {
 		return 0, 0, false
 	}

@@ -26,19 +26,38 @@ const hostPickerMaxHeight float32 = 320
 // it, outside the App Lock gate, so the Panel can still be hidden while the
 // content is locked.
 func Bar(s *State) func(*ui.Context) {
+	// The bar owns its strip runtime for as long as this mounted bar lives. It
+	// is separate from the body runtime, so a Tab switch changes only the
+	// selected fill and the body while an open, close or reorder moves the
+	// strip.
+	return barWithStrip(s, &quakeStripMotion{})
+}
+
+// barWithStrip is Bar with the strip runtime supplied, so a test can read its
+// run, generation and frame count. Bar owns one runtime per mounted bar.
+func barWithStrip(s *State, strip *quakeStripMotion) func(*ui.Context) {
 	return func(c *ui.Context) {
 		// A Host connection may have finished since the last frame. Applying it
 		// here keeps Tab mutation on the UI thread and lets this frame draw the
 		// new Tab immediately.
 		s.Flush()
 		m := locales.In(c.Locale())
+		setting := s.Motion()
+		// The app marks the bar when the current route drew another bar (or no
+		// frame at all). Nothing it might have shown was on screen, so this
+		// frame warps the events it missed instead of sliding stale items.
+		if s.takeBarUnrendered() {
+			strip.skip()
+		}
+		strip.beginFrame(c, s)
 		// Click actions are applied after the strip is built: closing a Tab
 		// would shift the indexes of the entries still being drawn.
 		selected, closed := -1, -1
 		var pickerAnchor ui.Element
 		added := kit.TabStrip(c, kit.TabPane, kit.TabStripOptions{
-			Label: m.AppName(),
-			Add:   m.MenuNewTab(),
+			Label:      m.AppName(),
+			Add:        m.MenuNewTab(),
+			Generation: strip.generation,
 			Trailing: func() {
 				pickerAnchor = kit.IconButtonWith(c, icons.Server, m.QuakeHostPicker(), kit.IconOptions{
 					Role: kit.IconCard,
@@ -56,12 +75,15 @@ func Bar(s *State) func(*ui.Context) {
 				if title == "" {
 					title = m.LocalSessionTab(tab.Number)
 				}
-				_, result := kit.Tab(c, kit.TabPane, kit.TabSpec{
+				body, result := kit.Tab(c, kit.TabPane, kit.TabSpec{
 					Key:    fmt.Sprintf("quake-tab-%d", tab.Number),
 					Title:  title,
 					Active: tab.Active,
 					Close:  m.MenuCloseTab(),
 				})
+				// No Colors transition: the selected fill changes on this frame.
+				// The strip's enter, exit and reorder are Position/Size only.
+				body.Transition(strip.transition(setting))
 				if result.Closed {
 					closed = tab.Index
 					continue
@@ -219,12 +241,29 @@ func filterHosts(hosts []domainvault.Host, query string) []domainvault.Host {
 // keyboard follows a Tab switch after MyGo pruned the previous subtree. A
 // failed first show explains itself instead of leaving an empty Panel.
 func View(s *State) func(*ui.Context) {
+	// The body runtime belongs to this mounted view. It consumes the same
+	// event sequence as the bar independently: a strip-only event never moves
+	// the body, and a switch changes only the selection and the body.
+	return viewWithBody(s, &quakeBodyMotion{})
+}
+
+// viewWithBody is View with the body runtime supplied, so a test can read its
+// phase, durations and frame count. View owns one runtime per mounted view.
+func viewWithBody(s *State, body *quakeBodyMotion) func(*ui.Context) {
 	return func(c *ui.Context) {
 		// Apply completed Host opens before drawing the active Tab. The bar also
 		// flushes; the second call in one frame is a no-op.
 		s.Flush()
-		tab, ok := s.Active()
-		if !ok {
+		// The app marks the body when another route (or a hidden Panel) drew
+		// none of it. This first frame back warps the gap's events; a later
+		// visible event still animates normally.
+		if s.takeViewUnrendered() {
+			body.skip()
+		}
+		body.beginFrame(c, s)
+		if _, ok := s.Active(); !ok && body.phase == quakeBodyIdle {
+			// No Tab and no closing body to draw: keep the Panel's empty state
+			// instead of an empty body container.
 			if s.Problem() != nil {
 				ui.Column(c).Fill().Justify(ui.Center).Children(func() {
 					kit.EmptyState(c, icons.TriangleAlert, locales.In(c.Locale()).PaneOpenFailed(), "", nil)
@@ -232,12 +271,6 @@ func View(s *State) func(*ui.Context) {
 			}
 			return
 		}
-		ui.Column(c).FillWidth().Grow(1).MinWidth(0).MinHeight(0).Children(func() {
-			if focused, ok := tab.Surface.(FocusedSurface); ok {
-				focused.ViewFocused(c, true)
-				return
-			}
-			tab.Surface.View(c)
-		})
+		body.view(c, s)
 	}
 }

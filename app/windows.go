@@ -323,6 +323,13 @@ type windowManager struct {
 	// the frame's hide button in the same row. It is resolved once at
 	// creation, like dropdownContent.
 	dropdownBar func() func(*ui.Context)
+	// dropdownContentSkip and dropdownBarSkip run on a frame the App Lock gate
+	// replaced the routed content or bar slot. They mark the per-view motion
+	// notices so the route's runtimes warp an event the user never saw
+	// instead of animating it on the unlock frame. Nil is allowed: a host
+	// without motion runtimes behind the Panel has nothing to mark.
+	dropdownContentSkip func()
+	dropdownBarSkip     func()
 	// dropdownShow runs before the Panel is created or shown. The composition
 	// root uses it to activate the routed workspace so its first frame already
 	// has content.
@@ -632,27 +639,50 @@ func withFrame(style titlebar.Style, window func() hostWindow, content func(*ui.
 // wrap puts every window's content behind the one shared App Lock gate. The
 // current gate is resolved per frame, so replacing it also governs windows
 // that already exist, and no window builds its content while locked.
-func (m *windowManager) wrap(content func(*ui.Context)) func(*ui.Context) {
+//
+// skipped, when non-nil, runs on a frame the gate replaced the content with
+// some other slot: the lock screen, or nothing for chrome. A locked-app frame
+// is a frame the content's motion runtimes never saw, so the composition root
+// uses the callback to record the per-view unrendered notice; the view then
+// warps the events it missed instead of animating them when the unlock frame
+// arrives. The gate is asked rather than pre-checked because it can lock
+// itself while wrapping (an idle timeout), which is exactly such a frame.
+func (m *windowManager) wrap(content func(*ui.Context), skipped func()) func(*ui.Context) {
 	return func(c *ui.Context) {
 		if m.gate == nil {
 			content(c)
 			return
 		}
-		m.gate.Wrap(content)(c)
+		built := false
+		m.gate.Wrap(func(inner *ui.Context) {
+			built = true
+			content(inner)
+		})(c)
+		if !built && skipped != nil {
+			skipped()
+		}
 	}
 }
 
 // wrapChrome gates a window's shared chrome, such as the Dropdown Panel's
 // routed bar. While locked the chrome renders nothing; the content slot draws
 // the one lock screen, so chrome that shares a row with the frame's own
-// controls does not paint a second one.
-func (m *windowManager) wrapChrome(content func(*ui.Context)) func(*ui.Context) {
+// controls does not paint a second one. skipped mirrors wrap's: it runs on a
+// frame the chrome slot built nothing.
+func (m *windowManager) wrapChrome(content func(*ui.Context), skipped func()) func(*ui.Context) {
 	return func(c *ui.Context) {
 		if m.gate == nil {
 			content(c)
 			return
 		}
-		m.gate.WrapChrome(content)(c)
+		built := false
+		m.gate.WrapChrome(func(inner *ui.Context) {
+			built = true
+			content(inner)
+		})(c)
+		if !built && skipped != nil {
+			skipped()
+		}
 	}
 }
 
@@ -660,7 +690,13 @@ func (m *windowManager) wrapChrome(content func(*ui.Context)) func(*ui.Context) 
 // behind the same shared App Lock gate as every other window.
 func (m *windowManager) detachedContent(tabID model.TabID) func(*ui.Context) {
 	window := func() hostWindow { return m.detached[tabID] }
-	content := m.withTheme(m.withAccelerators(withFrame(titlebar.Popup, window, m.wrap(shell.DetachedView(m.state, tabID)))))
+	content := m.withTheme(m.withAccelerators(withFrame(titlebar.Popup, window,
+		m.wrap(shell.DetachedView(m.state, tabID), func() {
+			// The lock screen replaced this window's Tab. Mark its own
+			// renderer: each detached window owns one Pane runtime for its
+			// fixed Tab, so the notice is keyed by that Tab, not by view kind.
+			m.state.NoteDetachedViewUnrendered(tabID)
+		}))))
 	return m.withDetachedTitle(tabID, content)
 }
 
@@ -702,7 +738,13 @@ func (m *windowManager) OpenMain() hostWindow {
 	// The content is inside the gate: while App Lock is closed no window
 	// builds anything. The view is a provider so a later render-ownership
 	// route can change what the main window shows without recreating it.
-	gated := withFrame(titlebar.Tabs, func() hostWindow { return m.main }, m.wrap(m.mainView()))
+	gated := withFrame(titlebar.Tabs, func() hostWindow { return m.main }, m.wrap(m.mainView(), func() {
+		// The lock screen replaced the main Workspace. Mark its renderer so
+		// the first unlocked frame warps Pane and Tab events recorded while
+		// it was not on screen (the production commands and shortcuts stay
+		// bound at the window root, outside the gate).
+		m.state.NoteMotionViewUnrendered(state.MotionViewMain)
+	}))
 	// withAccelerators binds at the root context, before the gate builds its
 	// container, so MyGo registers window shortcuts. Inside the gate they
 	// would become element-scoped and fail from the Vault view with no
@@ -777,7 +819,7 @@ func (m *windowManager) OpenSettings() {
 		MinWidth:  720,
 		MinHeight: 480,
 		Chrome:    titlebar.Dialog,
-		Content:   m.withTheme(withFrame(titlebar.Dialog, func() hostWindow { return m.settings }, m.wrap(m.settingsContent()))),
+		Content:   m.withTheme(withFrame(titlebar.Dialog, func() hostWindow { return m.settings }, m.wrap(m.settingsContent(), nil))),
 	}, windowHooks{
 		OnFocus: m.recordActivity,
 		// Settings owns no Sessions, but closing the last counted window quits
@@ -867,6 +909,19 @@ func (m *windowManager) SetDropdownContentProvider(fn func() func(*ui.Context)) 
 // native window. Nil leaves the bar's leading space empty.
 func (m *windowManager) SetDropdownBarProvider(fn func() func(*ui.Context)) {
 	m.dropdownBar = fn
+}
+
+// SetDropdownContentSkip installs the notice the Panel's content slot runs on
+// a frame the App Lock gate replaced it. The composition root marks every
+// routed view that keeps a motion runtime; nil leaves such frames unmarked.
+func (m *windowManager) SetDropdownContentSkip(fn func()) {
+	m.dropdownContentSkip = fn
+}
+
+// SetDropdownBarSkip installs the notice the Panel's routed bar runs on a
+// frame the App Lock gate skipped it. Nil leaves such frames unmarked.
+func (m *windowManager) SetDropdownBarSkip(fn func()) {
+	m.dropdownBarSkip = fn
 }
 
 // SetDropdownShowHook installs the work the composition root runs before the
@@ -1158,10 +1213,10 @@ func (m *windowManager) dropdownView() func(*ui.Context) {
 	var bar func(*ui.Context)
 	if m.dropdownBar != nil {
 		if provided := m.dropdownBar(); provided != nil {
-			bar = m.wrapChrome(provided)
+			bar = m.wrapChrome(provided, m.dropdownBarSkip)
 		}
 	}
-	return m.withTheme(m.withAccelerators(dropdown.View(m.HideDropdown, bar, m.wrap(content))))
+	return m.withTheme(m.withAccelerators(dropdown.View(m.HideDropdown, bar, m.wrap(content, m.dropdownContentSkip))))
 }
 
 // dropdownBounds is the Panel's rectangle: the work area's top-left corner,

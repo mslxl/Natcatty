@@ -1694,6 +1694,15 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	windows.SetMainContentProvider(func() func(*ui.Context) {
 		return func(c *ui.Context) {
 			if windows.DropdownOwnsMain() {
+				// The main view built no Workspace frame here. Record the gap so
+				// its first frame after ownership returns warps the events it
+				// missed instead of animating stale Pane and strip boxes. The
+				// ownership provider marks the same view at transfer; keeping
+				// the mark on every placeholder frame covers a later transfer
+				// whose provider path was not consulted again.
+				if shellState != nil {
+					shellState.NoteMotionViewUnrendered(state.MotionViewMain)
+				}
 				shell.MainPlaceholder(c)
 				return
 			}

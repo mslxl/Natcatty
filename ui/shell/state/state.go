@@ -310,6 +310,18 @@ type State struct {
 	// already playing finish (ticket 19). A separate sequence keeps the
 	// no-event expectations of the motion event stream intact.
 	bodyWarpSeq uint64
+	// motionUnrendered records, per renderer, that its last frame was skipped
+	// by the app's route (the main window drawing its placeholder, an
+	// unselected Dropdown route, a hidden Panel). Each renderer consumes its
+	// own notice on its next frame and warps, so a view whose events were not
+	// on screen never replays them. A fixed array keeps the notice
+	// allocation-free on every frame.
+	motionUnrendered [motionViewCount]bool
+	// detachedMotionUnrendered is motionUnrendered for the detached windows.
+	// Every detached window has its own Pane runtime over its own fixed Tab,
+	// so MotionView cannot name them: the notice is keyed by the window's Tab
+	// ID. Lazily allocated because most sessions open no detached window.
+	detachedMotionUnrendered map[model.TabID]bool
 	// closing keeps the Surfaces of Panes whose PaneClose event the view has
 	// not drawn yet. The view takes one with TakePaneGhost; a newer layout
 	// change or the app's shutdown releases any still here, so a delayed

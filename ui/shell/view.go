@@ -71,6 +71,14 @@ func shellView(owner state.RenderOwner, s *state.State, wm *workspacePaneMotion)
 	focus := &focusEpochTracker{}
 	return func(c *ui.Context) {
 		m, t := shellPreamble(c, s, func() bool { return terminalVisible(s) })
+		// The app draws the neutral placeholder (or no frame at all) while
+		// another route owns the Workspace. A notice from that gap makes this
+		// first restored frame warp every runtime: the events it missed were
+		// never on screen, so replaying them would animate stale boxes.
+		if s.TakeMotionViewUnrendered(state.MotionViewMain) {
+			wm.noteSkipped()
+			reveal.strip.noteUnrendered()
+		}
 		wm.preFrame(c, s)
 		shellLayout(c, s, m, t, owner, reveal, focus.next(s), wm)
 		// A side panel tool no longer drawn, such as System sampling a Host,

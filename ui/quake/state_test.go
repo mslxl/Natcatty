@@ -11,9 +11,11 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/domain/model"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	"github.com/mslxl/natcatty/ui/motion"
 )
 
 // testTransport keeps a Session alive until the test closes it. It is the
@@ -408,6 +410,72 @@ func TestMotionDefaultsToOnWithoutAWiring(t *testing.T) {
 	t.Cleanup(state.Shutdown)
 	if got, want := state.Motion(), domainpreferences.Defaults().Appearance.Motion; got != want {
 		t.Fatalf("unwired Motion = %+v, want %+v", got, want)
+	}
+}
+
+// TestTabEventsRecordTheLatestTransition pins the Quake event stream the bar
+// and the body consume: only Tab kinds exist, each carries the Tab identity
+// and direction, and an active close names the replacement that takes its
+// place rather than the Tab that just left.
+func TestTabEventsRecordTheLatestTransition(t *testing.T) {
+	state, _, _ := newTestState(t)
+	if _, ok := state.MotionEvent(); ok {
+		t.Fatal("a new Quake workspace recorded an event")
+	}
+	mustEvent := func(what string, kind motion.Kind, tabID model.TabID, target model.TabID, direction int) {
+		t.Helper()
+		event, ok := state.MotionEvent()
+		if !ok {
+			t.Fatalf("%s recorded no event", what)
+		}
+		if event.Kind != kind || event.TabID != tabID ||
+			event.TargetTabID != target || event.Direction != direction {
+			t.Fatalf("%s event = %+v, want kind %v Tab %q target %q direction %d",
+				what, event, kind, tabID, target, direction)
+		}
+		if event.At.IsZero() {
+			t.Fatalf("%s event has no timestamp", what)
+		}
+	}
+
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	first, _ := state.MotionEvent()
+	mustEvent("Activate", motion.TabOpen, quakeTabID(1), "", 0)
+	if first.Seq != 1 {
+		t.Fatalf("the first event Seq = %d, want 1", first.Seq)
+	}
+
+	if err := state.AddLocalTab(); err != nil {
+		t.Fatalf("AddLocalTab: %v", err)
+	}
+	second, _ := state.MotionEvent()
+	mustEvent("AddLocalTab", motion.TabOpen, quakeTabID(2), "", 0)
+	if second.Seq != first.Seq+1 {
+		t.Fatalf("the second event Seq = %d, want %d", second.Seq, first.Seq+1)
+	}
+
+	state.SelectTab(0)
+	mustEvent("SelectTab", motion.TabSwitch, quakeTabID(1), "", -1)
+
+	// Closing the active first Tab of two moves to its right neighbour.
+	if !state.CloseTab(0) {
+		t.Fatal("CloseTab returned false")
+	}
+	mustEvent("CloseTab active first", motion.TabClose, quakeTabID(1), quakeTabID(2), 1)
+	if tab, ok := state.Active(); !ok || tab.Number != 2 {
+		t.Fatalf("active Tab after the close = %+v, %v; want number 2", tab, ok)
+	}
+
+	// Closing the sole Tab names no replacement: the direction is the
+	// stream's neutral default and the body has no incoming Tab to switch to.
+	if !state.CloseTab(0) {
+		t.Fatal("CloseTab returned false")
+	}
+	mustEvent("CloseTab last", motion.TabClose, quakeTabID(2), "", 1)
+	if state.TabCount() != 0 || state.ActiveIndex() != -1 {
+		t.Fatalf("tabs = %d, active = %d; want an empty workspace", state.TabCount(), state.ActiveIndex())
 	}
 }
 

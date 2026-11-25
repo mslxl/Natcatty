@@ -123,7 +123,40 @@ func wireDropdownQuake(windows *windowManager, state *quakeui.State, shellState 
 	windows.SetDropdownHideOnEscapeProvider(func() bool {
 		return currentSettings().HideOnEscape
 	})
+	// While the App Lock gate is closed the Panel's routed content and bar are
+	// not built at all, so the route providers below cannot record which view
+	// built nothing: the gate replaces them before they run. These notices
+	// stand in for that frame. They mark every route a locked frame could
+	// have shown; marking a route that is not selected is harmless because a
+	// notice only makes the next frame warp (it is one-shot), and the show
+	// hook already marks all of them.
+	windows.SetDropdownContentSkip(func() {
+		if shellState != nil {
+			shellState.NoteMotionViewUnrendered(shellstate.MotionViewFollow)
+			shellState.NoteMotionViewUnrendered(shellstate.MotionViewTopdown)
+		}
+		state.NoteViewUnrendered()
+	})
+	windows.SetDropdownBarSkip(func() {
+		if shellState != nil {
+			shellState.NoteMotionViewUnrendered(shellstate.MotionViewFollowBar)
+		}
+		state.NoteBarUnrendered()
+	})
 	windows.SetDropdownShowHook(func() {
+		// Every route this Panel may show has been invisible while the Panel
+		// was hidden, and the main window may have been hidden by the ownership
+		// transfer. Mark all of their motion views before anything renders, so
+		// the first frame after the show warps the events recorded in the gap
+		// instead of replaying them. The markers are per view, and a view that
+		// does render this frame consumes its own marker and warps once.
+		if shellState != nil {
+			shellState.NoteMotionViewUnrendered(shellstate.MotionViewFollow)
+			shellState.NoteMotionViewUnrendered(shellstate.MotionViewTopdown)
+			shellState.NoteMotionViewUnrendered(shellstate.MotionViewFollowBar)
+		}
+		state.NoteBarUnrendered()
+		state.NoteViewUnrendered()
 		if !quakeOwn() {
 			return
 		}
@@ -142,30 +175,71 @@ func wireDropdownQuake(windows *windowManager, state *quakeui.State, shellState 
 	})
 	windows.SetDropdownBarProvider(func() func(*ui.Context) {
 		return func(c *ui.Context) {
+			// Track which bar this frame actually built. The route changes live,
+			// so a bar the route bypassed keeps its runtime and its last-seen
+			// event stamp; telling it now makes its next frame warp instead of
+			// replaying an event the user never saw. The bar that did build
+			// this frame is left alone: it saw the event itself.
+			drewQuake, drewFollow := false, false
 			switch {
 			case quakeOwn():
 				quakeBar(c)
+				drewQuake = true
 			case quakeFollow() && followBar != nil:
 				followBar(c)
+				drewFollow = true
+			}
+			if !drewQuake {
+				state.NoteBarUnrendered()
+			}
+			if !drewFollow && shellState != nil {
+				shellState.NoteMotionViewUnrendered(shellstate.MotionViewFollowBar)
 			}
 		}
 	})
 	windows.SetDropdownContentProvider(func() func(*ui.Context) {
 		return func(c *ui.Context) {
+			// The content route owns one Workspace renderer at a time. Every
+			// other view persists unwired, so mark each one that built no frame
+			// now; its next frame catches the sequence up and warps. The view
+			// that did render is not marked.
+			drewQuake, drewFollow, drewTopdown := false, false, false
 			switch {
 			case quakeOwn():
 				quakeView(c)
+				drewQuake = true
 			case quakeFollow() && followView != nil:
 				followView(c)
+				drewFollow = true
 			case topdown() && topdownView != nil:
 				topdownView(c)
+				drewTopdown = true
 			default:
 				dropdown.Placeholder(c)
+			}
+			if !drewQuake {
+				state.NoteViewUnrendered()
+			}
+			if shellState != nil {
+				if !drewFollow {
+					shellState.NoteMotionViewUnrendered(shellstate.MotionViewFollow)
+				}
+				if !drewTopdown {
+					shellState.NoteMotionViewUnrendered(shellstate.MotionViewTopdown)
+				}
 			}
 		}
 	})
 	windows.SetDropdownOwnershipProvider(func() bool {
-		return topdown() || quakeFollow()
+		owns := topdown() || quakeFollow()
+		if owns && shellState != nil {
+			// Taking the Workspace hides the main window before its next frame,
+			// and the main provider may not run again while the Panel owns it.
+			// Mark the main view now: its first restored frame must warp the
+			// events recorded while it was bypassed.
+			shellState.NoteMotionViewUnrendered(shellstate.MotionViewMain)
+		}
+		return owns
 	})
 }
 

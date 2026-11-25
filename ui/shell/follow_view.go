@@ -3,6 +3,7 @@ package shell
 import (
 	"github.com/egoist/mygo/ui"
 
+	"github.com/mslxl/natcatty/domain/model"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
@@ -37,6 +38,18 @@ func WithFollowOpenMain(fn func()) FollowOption {
 // that offers the main window instead of mounting a surface that cannot move
 // between windows.
 func FollowView(s *state.State, opts ...FollowOption) func(*ui.Context) {
+	// Follow draws the main Workspace's active Tab through a read-only ref. It
+	// still owns a Pane motion runtime of its own: the main window and Follow
+	// may show the same Tab and each plays its own copy from its own recorded
+	// boxes. It is Pane-only, so it never consumes the main window's Tab body
+	// or ghost pools.
+	return followView(s, newActivePaneOnlyMotion(s), opts...)
+}
+
+// followView is FollowView with the view's Pane motion runtime supplied, so a
+// test can read its run, recorded boxes and frame count. The runtime belongs
+// to this mounted view and must never be shared with the main window.
+func followView(s *state.State, wm *workspacePaneMotion, opts ...FollowOption) func(*ui.Context) {
 	options := followOptions{}
 	for _, opt := range opts {
 		opt(&options)
@@ -44,16 +57,39 @@ func FollowView(s *state.State, opts ...FollowOption) func(*ui.Context) {
 	focus := &focusEpochTracker{}
 	return func(c *ui.Context) {
 		m, t := shellPreamble(c, s, func() bool { return terminalVisible(s) })
-		followBody(c, s, m, t, options.openMain, focus.next(s))
+		// The app marks this route when another route or a hidden Panel
+		// bypassed it. The events recorded in the gap were never on screen, so
+		// the next real frame warps instead of replaying them.
+		if s.TakeMotionViewUnrendered(state.MotionViewFollow) {
+			wm.noteSkipped()
+		}
+		tab, tabOK := followReadOnlyTab(s)
+		if tabOK {
+			wm.preFrame(c, s)
+		} else {
+			wm.noteSkipped()
+		}
+		followBody(c, s, m, t, options.openMain, focus.next(s), tab, tabOK, wm)
 		s.FinishSideFrameFor(state.RenderOwnerDropdown)
 	}
 }
 
+// followReadOnlyTab reports the Tab Follow draws, or false for every empty
+// placeholder. A browser panel owns a native webview MyGo cannot mount in a
+// second window, so it also has no read-only Tab here.
+func followReadOnlyTab(s *state.State) (state.ReadOnlyTab, bool) {
+	if !terminalVisible(s) || s.ActiveBrowserOpen() {
+		return state.ReadOnlyTab{}, false
+	}
+	return s.ActiveReadOnlyTab()
+}
+
 // followBody draws the current follow surface. It is separate so the one
 // FinishSideFrameFor call above runs for every branch, including the empty
-// states.
+// states. tab and tabOK are the snapshot the caller already took for the
+// motion runtime; wm is Follow's Pane runtime.
 func followBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
-	openMain func(), focusEpoch uint64) {
+	openMain func(), focusEpoch uint64, tab state.ReadOnlyTab, tabOK bool, wm *workspacePaneMotion) {
 	if !terminalVisible(s) {
 		followEmpty(c, m, icons.SquareTerminal, m.FollowEmptyTitle(), m.FollowEmptyDescription(), openMain)
 		return
@@ -65,12 +101,16 @@ func followBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		followEmpty(c, m, icons.Globe, m.FollowBrowserTitle(), m.FollowBrowserDescription(), openMain)
 		return
 	}
-	tab, ok := s.ActiveReadOnlyTab()
-	if !ok {
+	if !tabOK {
 		followEmpty(c, m, icons.SquareTerminal, m.FollowEmptyTitle(), m.FollowEmptyDescription(), openMain)
 		return
 	}
-	activeTabBody(c, s, m, t, readOnlyTabRef(state.RenderOwnerDropdown, tab, focusEpoch))
+	ref := readOnlyTabRef(state.RenderOwnerDropdown, tab, focusEpoch)
+	if wm != nil {
+		ref.motion = wm
+		ref.magnified = func() model.PaneID { return wm.effectiveMagnified }
+	}
+	activeTabBody(c, s, m, t, ref)
 }
 
 // followEmpty centers a placeholder and, when the app supplied the action,
@@ -104,18 +144,48 @@ func followEmpty(c *ui.Context, m locales.Messages, icon, title, description str
 // and offers the main window instead; the browser is never closed on the
 // user's behalf.
 func TopdownView(s *state.State, opts ...FollowOption) func(*ui.Context) {
+	return topdownView(s, newWorkspacePaneMotion(s, paneMotionMode{}), opts...)
+}
+
+// topdownView is TopdownView with the view's motion runtime supplied, so a
+// test can read its run, recorded boxes and frame count. The dropdown route
+// owns this runtime for as long as it is mounted; it must never share the main
+// window's controller, rects or strip.
+func topdownView(s *state.State, wm *workspacePaneMotion, opts ...FollowOption) func(*ui.Context) {
 	options := followOptions{}
 	for _, opt := range opts {
 		opt(&options)
 	}
+	// The work Tab strip's reveal and its motion runtime belong to this view
+	// too: the same Tab strip is drawn in a second window, and its progress
+	// must not follow the main window's.
 	reveal := newWorkTabReveal()
+	if wm.mode.stripReveal != nil {
+		// Tests inject the strip's reveal to read its runtime; a mounted
+		// Topdown route always keeps its own.
+		reveal = wm.mode.stripReveal
+	}
+	reveal.labels = wm.mode.labels
+	reveal.canInstant = wm.stripWarpCanBeInstant
 	focus := &focusEpochTracker{}
 	return func(c *ui.Context) {
 		m, t := shellPreamble(c, s, func() bool { return terminalVisible(s) })
+		// A route or hidden Panel that bypassed this view leaves events it never
+		// drew; the next real frame warps both runtimes. It ORs with the
+		// browser placeholder's own notice below.
+		if s.TakeMotionViewUnrendered(state.MotionViewTopdown) {
+			wm.noteSkipped()
+			reveal.strip.noteUnrendered()
+		}
 		if s.ActiveBrowserOpen() {
+			// No Pane tree or Tab strip is built on this frame. The next real
+			// frame must warp events the placeholder never showed.
+			wm.noteSkipped()
+			reveal.strip.noteUnrendered()
 			followEmpty(c, m, icons.Globe, m.FollowBrowserTitle(), m.FollowBrowserDescription(), options.openMain)
 		} else {
-			shellLayout(c, s, m, t, state.RenderOwnerDropdown, reveal, focus.next(s), nil)
+			wm.preFrame(c, s)
+			shellLayout(c, s, m, t, state.RenderOwnerDropdown, reveal, focus.next(s), wm)
 		}
 		s.FinishSideFrameFor(state.RenderOwnerDropdown)
 	}
@@ -139,6 +209,12 @@ func FollowBar(s *state.State) func(*ui.Context) {
 func followBarWithStrip(s *state.State, strip *tabStripMotion) func(*ui.Context) {
 	return func(c *ui.Context) {
 		m := locales.In(c.Locale())
+		// The app marks the mini strip when another route (Quake own, top-down,
+		// or the neutral placeholder) bypassed it. Its next frame warps the
+		// events it never drew instead of sliding stale items into place.
+		if s.TakeMotionViewUnrendered(state.MotionViewFollowBar) {
+			strip.noteUnrendered()
+		}
 		// Snapshot the row this build draws before beginFrame, as workTabs
 		// does: the removal guard compares it with the committed row, so a
 		// mini Tab removed with no close event (a detach or a batch close) is

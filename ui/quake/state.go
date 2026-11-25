@@ -7,8 +7,10 @@ package quake
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -17,6 +19,7 @@ import (
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	"github.com/mslxl/natcatty/ui/motion"
 )
 
 // ErrNoSessions reports a Quake workspace without a Session opener or surface
@@ -132,6 +135,36 @@ type State struct {
 	// closed reports that Shutdown ran, so a Host open that finishes later
 	// closes its Session instead of attaching an orphaned Tab.
 	closed bool
+	// motionEvent is the latest layout-changing Tab event and motionSeq its
+	// monotonic stamp. The bar and the body consume it independently: each
+	// keeps its own last sequence, so the strip's progress never drives the
+	// body and a second visible renderer plays its own copy.
+	motionEvent motion.Event
+	motionSeq   uint64
+	// barUnrendered and viewUnrendered record that the bar or the body built
+	// no frame since its last one, because the Panel's current route (another
+	// route or a hidden Panel) bypassed it. Each runtime consumes its own
+	// notice on its next frame and warps, so an event the user never saw is not
+	// replayed. They are view-local: the bar and body keep separate runtimes.
+	barUnrendered  bool
+	viewUnrendered bool
+}
+
+// quakeTabID is the motion identity of a Quake Tab. A Quake Tab has no
+// model.TabID: its number is stable for the Tab's whole life and is already the
+// strip item's key.
+func quakeTabID(number int) model.TabID {
+	return model.TabID("quake-tab-" + strconv.Itoa(number))
+}
+
+// tabNumberFromID is the inverse of quakeTabID, or 0 when id is not a Quake
+// Tab identity.
+func tabNumberFromID(id model.TabID) int {
+	value, err := strconv.Atoi(strings.TrimPrefix(string(id), "quake-tab-"))
+	if err != nil {
+		return 0
+	}
+	return value
 }
 
 // hostOpen is one Host connection that finished off the UI thread. Flush builds
@@ -171,6 +204,69 @@ func (s *State) Motion() domainpreferences.Motion {
 		return domainpreferences.Defaults().Appearance.Motion
 	}
 	return s.motion()
+}
+
+// MotionEvent returns the latest Quake Tab event and whether the workspace
+// has recorded one. Only Tab kinds are ever recorded: a Quake Tab is one
+// terminal with no split Panes, so there are no Pane events. Seq is monotonic,
+// and each view consumes only the latest event it has not seen.
+func (s *State) MotionEvent() (motion.Event, bool) {
+	if s.motionSeq == 0 {
+		return motion.Event{}, false
+	}
+	return s.motionEvent, true
+}
+
+// NoteBarUnrendered records that the Panel's bar built no frame since its last
+// one. The app calls it for every route whose top bar is not the Quake bar (the
+// follow route, top-down, or the neutral placeholder) and on every show, so a
+// Panel that reappears warps the Tab events recorded while it was hidden. A nil
+// State ignores the notice.
+func (s *State) NoteBarUnrendered() {
+	if s != nil {
+		s.barUnrendered = true
+	}
+}
+
+// NoteViewUnrendered records that the Panel's body built no frame since its
+// last one. It is the body's copy of NoteBarUnrendered: the bar and body keep
+// separate runtimes and last-seen stamps, so each needs its own notice.
+func (s *State) NoteViewUnrendered() {
+	if s != nil {
+		s.viewUnrendered = true
+	}
+}
+
+// takeBarUnrendered consumes the bar's notice for the next frame. It is
+// one-shot, so an event seen on a later visible frame still animates.
+func (s *State) takeBarUnrendered() bool {
+	if s == nil {
+		return false
+	}
+	unrendered := s.barUnrendered
+	s.barUnrendered = false
+	return unrendered
+}
+
+// takeViewUnrendered consumes the body's notice for the next frame.
+func (s *State) takeViewUnrendered() bool {
+	if s == nil {
+		return false
+	}
+	unrendered := s.viewUnrendered
+	s.viewUnrendered = false
+	return unrendered
+}
+
+// recordMotion stamps event with the next sequence and keeps it as the latest.
+// The state records events even while motion is off; the view decides to warp.
+func (s *State) recordMotion(event motion.Event) {
+	s.motionSeq++
+	event.Seq = s.motionSeq
+	if event.At.IsZero() {
+		event.At = time.Now()
+	}
+	s.motionEvent = event
 }
 
 // NewState returns an empty Quake workspace. The first Activate opens the
@@ -276,16 +372,18 @@ func (s *State) Flush() {
 			s.problem = err
 			continue
 		}
-		s.tabs = append(s.tabs, Tab{
+		tab := Tab{
 			Number:  s.nextNumber,
 			Label:   outcome.label,
 			HostID:  outcome.hostID,
 			Session: outcome.session,
 			Surface: surface,
-		})
+		}
+		s.tabs = append(s.tabs, tab)
 		s.nextNumber++
 		s.active = len(s.tabs) - 1
 		s.problem = nil
+		s.recordMotion(motion.Event{Kind: motion.TabOpen, TabID: quakeTabID(tab.Number)})
 	}
 }
 
@@ -315,15 +413,17 @@ func (s *State) openTab(label string, hostID model.HostID, open func() (*appsess
 		s.requestRedraw()
 		return err
 	}
-	s.tabs = append(s.tabs, Tab{
+	tab := Tab{
 		Number:  s.nextNumber,
 		Label:   label,
 		HostID:  hostID,
 		Session: session,
 		Surface: surface,
-	})
+	}
+	s.tabs = append(s.tabs, tab)
 	s.nextNumber++
 	s.active = len(s.tabs) - 1
+	s.recordMotion(motion.Event{Kind: motion.TabOpen, TabID: quakeTabID(tab.Number)})
 	s.requestRedraw()
 	return nil
 }
@@ -491,7 +591,20 @@ func (s *State) SelectTab(index int) {
 	if index < 0 || index >= len(s.tabs) || index == s.active {
 		return
 	}
+	// The direction is the target index against the current one; it must be
+	// computed before the active index moves. A Tab switch animates the body
+	// only and changes the selected fill immediately.
+	direction := 1
+	if index < s.active {
+		direction = -1
+	}
+	tab := s.tabs[index]
 	s.active = index
+	s.recordMotion(motion.Event{
+		Kind:      motion.TabSwitch,
+		TabID:     quakeTabID(tab.Number),
+		Direction: direction,
+	})
 	s.requestRedraw()
 }
 
@@ -503,6 +616,35 @@ func (s *State) CloseTab(index int) bool {
 		return false
 	}
 	tab := s.tabs[index]
+	wasActive := index == s.active
+	// The replacement and its direction are read from the Tab list before the
+	// removal. Closing the active Tab moves to its right neighbour, or to the
+	// left one when it was last; a non-current close moves no body.
+	replacement := 0
+	direction := 1
+	if len(s.tabs) > 1 {
+		// The replacement is the Tab that takes the closing one's place: the
+		// right neighbour in the surviving list, or the left one when the
+		// closed Tab was last. Reading the old list means an active close in
+		// the middle names the old index+1.
+		targetIndex := s.active
+		switch {
+		case index < s.active:
+			targetIndex = s.active - 1
+		case index == s.active && s.active < len(s.tabs)-1:
+			targetIndex = s.active + 1
+		case index == s.active:
+			targetIndex = len(s.tabs) - 2
+		}
+		if wasActive {
+			replacement = s.tabs[targetIndex].Number
+		}
+		if targetIndex > index {
+			direction = 1
+		} else {
+			direction = -1
+		}
+	}
 	if tab.Surface != nil {
 		tab.Surface.Close()
 	}
@@ -519,6 +661,15 @@ func (s *State) CloseTab(index int) bool {
 		// The active Tab was the last one; the new last Tab takes over.
 		s.active = len(s.tabs) - 1
 	}
+	event := motion.Event{
+		Kind:      motion.TabClose,
+		TabID:     quakeTabID(tab.Number),
+		Direction: direction,
+	}
+	if wasActive && replacement != 0 {
+		event.TargetTabID = quakeTabID(replacement)
+	}
+	s.recordMotion(event)
 	s.requestRedraw()
 	if len(s.tabs) == 0 && s.empty != nil {
 		s.empty()
