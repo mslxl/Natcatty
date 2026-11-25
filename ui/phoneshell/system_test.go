@@ -975,8 +975,8 @@ func TestMoshHostOpensSystemManagerWithItsCapabilities(t *testing.T) {
 		t.Fatalf("the probe result was not shown; texts: %q", fixture.tester.Texts())
 	}
 	start := service.lastStart(t)
-	if start.host.Protocol != domainvault.ProtocolMosh {
-		t.Fatalf("sampled protocol = %q, want Mosh", start.host.Protocol)
+	if start.host.TransportLabel() != domainvault.TransportMosh {
+		t.Fatalf("sampled transport = %q, want Mosh", start.host.TransportLabel())
 	}
 }
 

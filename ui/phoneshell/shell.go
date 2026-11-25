@@ -921,7 +921,7 @@ func (s *Shell) drawHostFiles(c *ui.Context, id string) {
 		kit.EmptyHint(c, "This Host is no longer in the Vault. Refresh the Hosts list.")
 		return
 	}
-	if !host.Protocol.SupportsFileTransfer() {
+	if !host.SupportsFileTransfer() {
 		kit.EmptyHint(c, "This Host does not support file transfer.")
 		return
 	}

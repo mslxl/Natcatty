@@ -57,7 +57,7 @@ func (c phoneForwardingConnector) Connect(ctx context.Context, hostID model.Host
 	if err != nil {
 		return nil, phoneForwardingRuntimeError(err)
 	}
-	if !host.Protocol.SupportsForwarding() {
+	if !host.SupportsForwarding() {
 		return nil, appforwarding.NewRuntimeError(
 			appforwarding.ErrorUnsupported, nil,
 			fmt.Sprintf("app: %s Hosts cannot forward ports", host.Protocol), nil)

@@ -28,11 +28,11 @@ func remoteTransportHosts() []domainvault.Host {
 		},
 		{
 			ID: "mosh", Label: "mosh box", Hostname: "mosh.example.com", Port: 22,
-			Username: "deploy", Protocol: domainvault.ProtocolMosh,
+			Username: "deploy", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportMosh,
 		},
 		{
 			ID: "et", Label: "et box", Hostname: "et.example.com", Port: 22,
-			Username: "deploy", Protocol: domainvault.ProtocolET, ETPort: 2022,
+			Username: "deploy", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET, ETPort: 2022,
 		},
 	}
 }
@@ -61,7 +61,7 @@ func descriptorPayload(host domainvault.Host, resumeKey string) domainworkspace.
 func TestBackgroundAndForegroundAreTheSameForEveryRemoteTransport(t *testing.T) {
 	for _, host := range remoteTransportHosts() {
 		host := host
-		t.Run(string(host.Protocol), func(t *testing.T) {
+		t.Run(hostProtocolLabel(host), func(t *testing.T) {
 			store := &fakeSessionStore{}
 			opener := &fakeOpener{output: "keep running\r\n"}
 			fixture := newPhoneFixtureWith(t, []domainvault.Host{host}, opener,
@@ -102,7 +102,7 @@ func TestBackgroundAndForegroundAreTheSameForEveryRemoteTransport(t *testing.T) 
 			// that same locator, so the saved credentials and the restore
 			// payload cannot disagree.
 			keys := opener.resumeKeysUsed()
-			if host.Protocol == domainvault.ProtocolET {
+			if host.TransportLabel() == domainvault.TransportET {
 				if descriptor.ResumeKey == "" {
 					t.Fatal("a new ET Tab persisted no resume key")
 				}
@@ -137,9 +137,9 @@ func TestBackgroundAndForegroundAreTheSameForEveryRemoteTransport(t *testing.T) 
 func TestDormantRestoreIsPerTransportAndKeepsTheETResumeKey(t *testing.T) {
 	for _, host := range remoteTransportHosts() {
 		host := host
-		t.Run(string(host.Protocol), func(t *testing.T) {
+		t.Run(hostProtocolLabel(host), func(t *testing.T) {
 			resumeKey := ""
-			if host.Protocol == domainvault.ProtocolET {
+			if host.TransportLabel() == domainvault.TransportET {
 				resumeKey = "et-resume-restored-tab"
 			}
 			store := &fakeSessionStore{payload: descriptorPayload(host, resumeKey)}
@@ -169,7 +169,7 @@ func TestDormantRestoreIsPerTransportAndKeepsTheETResumeKey(t *testing.T) {
 			}
 
 			keys := opener.resumeKeysUsed()
-			if host.Protocol == domainvault.ProtocolET {
+			if host.TransportLabel() == domainvault.TransportET {
 				if len(keys) != 1 || keys[0] != resumeKey {
 					t.Fatalf("ET restore resume keys = %q, want %q", keys, resumeKey)
 				}

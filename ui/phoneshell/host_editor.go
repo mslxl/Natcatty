@@ -234,6 +234,7 @@ func prefillForm(form *vaultstate.Form, host domainvault.Host) {
 	if host.Protocol != "" {
 		form.Protocol = string(host.Protocol)
 	}
+	form.Transport = string(host.Transport)
 }
 
 // drawEditor renders the editor over the shared form. The Scroll holds the
@@ -269,7 +270,7 @@ func (h *hostPages) drawEditor(c *ui.Context, cancel func()) {
 					kit.Notice(c, icons.TriangleAlert, c.Theme().Danger, editor.problem, nil)
 				}
 				editor.drawBasics(c)
-				if domainvault.Protocol(form.Protocol).UsesSSHAuth() {
+				if editor.state.HostFormCapabilities().SSHAuth {
 					editor.drawGroupHeader(c, "Authentication", &editor.authOpen, "Password, Identity, MFA")
 					if editor.authOpen {
 						editor.drawAuth(c)
@@ -308,10 +309,10 @@ func (e *hostEditor) drawBasics(c *ui.Context) {
 		ui.TextInput(c, &form.Username).Placeholder("user").FillWidth()
 	})
 	kit.FormRow(c, "Protocol", func() {
+		// VNC is not offered: the phone carries no pixel-session transport,
+		// so a VNC Host never appears in its Hosts list.
 		protocols := []string{
 			string(domainvault.ProtocolSSH),
-			string(domainvault.ProtocolMosh),
-			string(domainvault.ProtocolET),
 			string(domainvault.ProtocolTelnet),
 		}
 		if ui.Select(c, &form.Protocol, protocols).Width(160).Changed() {
@@ -321,6 +322,35 @@ func (e *hostEditor) drawBasics(c *ui.Context) {
 			c.Invalidate()
 		}
 	})
+	if domainvault.Protocol(form.Protocol) == domainvault.ProtocolSSH {
+		// Mosh and ET are SSH transports, not protocols: they keep SSH
+		// authentication and routing but bring their own session layer.
+		transportLabels := []string{"SSH", "Mosh", "ET"}
+		transportValues := []string{
+			string(domainvault.TransportPlain),
+			string(domainvault.TransportMosh),
+			string(domainvault.TransportET),
+		}
+		current := transportLabels[0]
+		for index, value := range transportValues {
+			if value == form.Transport {
+				current = transportLabels[index]
+			}
+		}
+		kit.FormRow(c, "Transport", func() {
+			if ui.Select(c, &current, transportLabels).Width(160).Changed() {
+				transport := transportValues[0]
+				for index, label := range transportLabels {
+					if label == current {
+						transport = transportValues[index]
+					}
+				}
+				// Values the newly hidden controls owned must not be saved.
+				e.state.SetHostTransport(transport)
+				c.Invalidate()
+			}
+		})
+	}
 }
 
 // drawGroupHeader is one collapsible group's title. Its chevron says whether
@@ -459,8 +489,8 @@ func (e *hostEditor) drawAdvanced(c *ui.Context) {
 	}).Description("Typed once the Session is ready; replayed after every reconnect.")
 	ui.Checkbox(c, &form.Pinned, "Pinned")
 
-	protocol := domainvault.Protocol(form.Protocol)
-	if protocol == domainvault.ProtocolSSH {
+	transport := domainvault.NormalizeTransport(domainvault.Protocol(form.Protocol), domainvault.Transport(form.Transport))
+	if e.state.HostFormPlainSSH() {
 		ui.Text(c, "File transfer").FontWeight(600)
 		kit.FormRow(c, "File protocol", func() {
 			changed := ui.Select(c, &form.FileProtocol, []string{
@@ -493,17 +523,17 @@ func (e *hostEditor) drawAdvanced(c *ui.Context) {
 			Disabled(form.NetworkDevice)
 		e.drawInputModes(c, form)
 	}
-	if protocol == domainvault.ProtocolMosh {
+	if transport == domainvault.TransportMosh {
 		kit.FormRow(c, "Mosh server path", func() {
 			ui.TextInput(c, &form.MoshServerPath).Placeholder("mosh-server").FillWidth()
 		})
 	}
-	if protocol == domainvault.ProtocolET {
+	if transport == domainvault.TransportET {
 		kit.FormRow(c, "ET port", func() {
 			ui.TextInput(c, &form.ETPort).Placeholder("2022").Width(120)
 		})
 	}
-	if protocol.SupportsProxy() {
+	if e.state.HostFormCapabilities().Proxy {
 		e.drawProxyControls(c)
 	}
 }

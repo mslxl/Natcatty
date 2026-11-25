@@ -135,7 +135,7 @@ func (p *phoneBrowserProvider) Open(host domainvault.Host, window *mygo.Window) 
 		}
 		return nil, errors.New(reason)
 	}
-	if !host.Protocol.SupportsForwarding() {
+	if !host.SupportsForwarding() {
 		return nil, fmt.Errorf("app: %s Hosts cannot carry a Browser", host.Protocol)
 	}
 	if window == nil {
@@ -270,7 +270,7 @@ func (c phoneBrowserConnector) Connect(ctx context.Context, hostID model.HostID)
 	// A browser tunnel opens an SSH direct-tcpip channel. A Telnet or Local
 	// Host has no channel to dedicate, so refuse it before touching the
 	// Connection Manager.
-	if !host.Protocol.SupportsForwarding() {
+	if !host.SupportsForwarding() {
 		return nil, fmt.Errorf("app: %s Hosts cannot host a browser tunnel", host.Protocol)
 	}
 	if c.connections == nil {

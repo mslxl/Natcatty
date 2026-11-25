@@ -344,7 +344,7 @@ func TestFilteredPanesRecomputeFocus(t *testing.T) {
 		focus: "pane-local",
 		panes: []*phonePane{
 			{id: "pane-ssh", host: domainvault.Host{ID: "prod", Protocol: domainvault.ProtocolSSH}},
-			{id: "pane-local", host: domainvault.Host{ID: "local", Protocol: domainvault.ProtocolLocal}},
+			{id: "pane-local", host: domainvault.Host{ID: "local", Protocol: domainvault.Protocol("local")}},
 			{id: "pane-serial", host: domainvault.Host{ID: "serial", Protocol: domainvault.Protocol("serial")}},
 		},
 	}

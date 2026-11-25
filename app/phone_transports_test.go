@@ -259,7 +259,7 @@ func TestPhoneMoshRunsInteractiveProgramSurvivesNetworkChangeAndResizes(t *testi
 	})
 	host := domainvault.Host{
 		ID: "udp", Label: "udp box", Hostname: "127.0.0.1", Port: 2222,
-		Username: "deploy", Protocol: domainvault.ProtocolMosh,
+		Username: "deploy", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportMosh,
 	}
 	env.addHost(t, host, signer)
 
@@ -494,7 +494,7 @@ func TestPhoneETResumesAfterRelaunchWithoutBootstrap(t *testing.T) {
 	})
 	host := domainvault.Host{
 		ID: "et", Label: "et box", Hostname: "127.0.0.1", Port: 2222,
-		Username: "deploy", Protocol: domainvault.ProtocolET, ETPort: 2022,
+		Username: "deploy", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET, ETPort: 2022,
 	}
 	first.addHost(t, host, signer)
 	resumeKey := "et-resume-phone-restart"
@@ -742,7 +742,7 @@ func TestPhoneSessionLifecycleIsTheSameForEveryRemoteTransport(t *testing.T) {
 		})
 		host := domainvault.Host{
 			ID: "mosh", Label: "mosh box", Hostname: "127.0.0.1", Port: 2222,
-			Username: "deploy", Protocol: domainvault.ProtocolMosh,
+			Username: "deploy", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportMosh,
 		}
 		env.addHost(t, host, signer)
 		handle := env.openHost(t, host)
@@ -777,7 +777,7 @@ func TestPhoneSessionLifecycleIsTheSameForEveryRemoteTransport(t *testing.T) {
 		})
 		host := domainvault.Host{
 			ID: "et", Label: "et box", Hostname: "127.0.0.1", Port: 2222,
-			Username: "deploy", Protocol: domainvault.ProtocolET, ETPort: 2022,
+			Username: "deploy", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET, ETPort: 2022,
 		}
 		env.addHost(t, host, signer)
 		handle := env.openHost(t, host)

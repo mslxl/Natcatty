@@ -16,6 +16,7 @@ import (
 
 	appsession "github.com/mslxl/natcatty/application/session"
 	domainmodel "github.com/mslxl/natcatty/domain/model"
+	domainprotocol "github.com/mslxl/natcatty/domain/model/protocol"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
@@ -681,7 +682,7 @@ func (t *sessionTabs) addPane(tabID string, host domainvault.Host) (*phonePane, 
 func (t *sessionTabs) newPaneLocked(tab *phoneTab, host domainvault.Host) *phonePane {
 	label := hostName(host)
 	resumeKey := ""
-	if protocolOf(host) == domainvault.ProtocolET {
+	if host.SessionTransport() == domainprotocol.TransportET {
 		// A new ET Session needs a locator before it opens: the adapter saves
 		// the credentials under it, and the same key must survive into the
 		// next launch's restore payload.
@@ -2080,13 +2081,15 @@ func descriptorOf(host domainvault.Host, label, resumeKey string) domainworkspac
 // the row keeps enough identity to tell the user what could not be opened.
 func restoredHost(pane RestoredPane) domainvault.Host {
 	descriptor := pane.Descriptor
+	protocol, transport := protocolOfKind(descriptor.Kind)
 	return domainvault.Host{
-		ID:       descriptor.HostID,
-		Label:    firstNonEmpty(descriptor.CustomName, descriptor.Label, pane.Title),
-		Hostname: descriptor.Hostname,
-		Port:     descriptor.Port,
-		Username: descriptor.Username,
-		Protocol: protocolOfKind(descriptor.Kind),
+		ID:        descriptor.HostID,
+		Label:     firstNonEmpty(descriptor.CustomName, descriptor.Label, pane.Title),
+		Hostname:  descriptor.Hostname,
+		Port:      descriptor.Port,
+		Username:  descriptor.Username,
+		Protocol:  protocol,
+		Transport: transport,
 	}
 }
 
@@ -2099,33 +2102,38 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// sessionKindOf names the Session kind a Host's effective transport opens.
+// Mosh and ET are SSH transports, so the protocol name alone is not enough.
 func sessionKindOf(host domainvault.Host) domainworkspace.SessionKind {
-	switch protocolOf(host) {
-	case domainvault.ProtocolTelnet:
+	switch host.SessionTransport() {
+	case domainprotocol.TransportTelnet:
 		return domainworkspace.SessionTelnet
-	case domainvault.ProtocolMosh:
+	case domainprotocol.TransportMosh:
 		return domainworkspace.SessionMosh
-	case domainvault.ProtocolET:
+	case domainprotocol.TransportET:
 		return domainworkspace.SessionET
-	case domainvault.ProtocolLocal:
-		return domainworkspace.SessionLocal
+	case domainprotocol.TransportVNC:
+		return domainworkspace.SessionVNC
 	default:
 		return domainworkspace.SessionSSH
 	}
 }
 
-func protocolOfKind(kind domainworkspace.SessionKind) domainvault.Protocol {
+// protocolOfKind reverses sessionKindOf for a Host this launch no longer has.
+// A Local descriptor has no remote endpoint, but the phone never restores one:
+// phoneCanRestore rejects it before this is reached.
+func protocolOfKind(kind domainworkspace.SessionKind) (domainvault.Protocol, domainvault.Transport) {
 	switch kind {
 	case domainworkspace.SessionTelnet:
-		return domainvault.ProtocolTelnet
+		return domainvault.ProtocolTelnet, domainvault.TransportPlain
 	case domainworkspace.SessionMosh:
-		return domainvault.ProtocolMosh
+		return domainvault.ProtocolSSH, domainvault.TransportMosh
 	case domainworkspace.SessionET:
-		return domainvault.ProtocolET
-	case domainworkspace.SessionLocal:
-		return domainvault.ProtocolLocal
+		return domainvault.ProtocolSSH, domainvault.TransportET
+	case domainworkspace.SessionVNC:
+		return domainvault.ProtocolVNC, domainvault.TransportPlain
 	default:
-		return domainvault.ProtocolSSH
+		return domainvault.ProtocolSSH, domainvault.TransportPlain
 	}
 }
 
@@ -2542,8 +2550,8 @@ func sessionStatusText(status tabStatus, host domainvault.Host) string {
 // label, plus the protocol when it is not plain SSH.
 func tabIdentity(host domainvault.Host) string {
 	parts := []string{hostEndpoint(host)}
-	if protocol := protocolOf(host); protocol != domainvault.ProtocolSSH {
-		parts = append(parts, string(protocol))
+	if label := hostProtocolLabel(host); label != string(domainvault.ProtocolSSH) {
+		parts = append(parts, label)
 	}
 	return strings.Join(parts, " · ")
 }

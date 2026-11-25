@@ -32,7 +32,7 @@ func vaultHosts() []domainvault.Host {
 		},
 		{
 			ID: "local", Label: "desktop shell", Hostname: "localhost",
-			Protocol: domainvault.ProtocolLocal,
+			Protocol: domainvault.Protocol("local"),
 		},
 	}
 }

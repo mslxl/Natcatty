@@ -556,10 +556,12 @@ func phoneHosts() []domainvault.Host {
 		},
 		{
 			ID: "udp", Label: "udp box", Hostname: "udp.example.com", Port: 22,
-			Protocol: domainvault.ProtocolMosh,
+			Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportMosh,
 		},
 		{
-			ID: "local", Label: "desktop shell", Hostname: "localhost", Protocol: domainvault.ProtocolLocal,
+			// A record still naming the retired local protocol; the phone's
+			// remote-only filter must keep it out of the list.
+			ID: "local", Label: "desktop shell", Hostname: "localhost", Protocol: domainvault.Protocol("local"),
 		},
 		{
 			ID: "serial", Label: "serial console", Hostname: "/dev/tty.usbserial",

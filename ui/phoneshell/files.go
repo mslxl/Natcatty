@@ -606,7 +606,7 @@ func (p *filesPages) targetCandidates() []domainvault.Host {
 	hosts := p.targetHosts()
 	out := make([]domainvault.Host, 0, len(hosts))
 	for _, host := range hosts {
-		if !host.Protocol.SupportsFileTransfer() || host.ID == p.ui.hostID {
+		if !host.SupportsFileTransfer() || host.ID == p.ui.hostID {
 			continue
 		}
 		out = append(out, host)

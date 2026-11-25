@@ -380,7 +380,7 @@ func (t *sessionTabs) drawToolCatalog(c *ui.Context, st *toolsState, view tabVie
 		}
 		// Only an SSH-capable Host can carry a Port Forwarding Rule. A Telnet
 		// or Local Host has no entry rather than a page that can only say no.
-		if spec.id == toolForwarding && !view.host.Protocol.SupportsForwarding() {
+		if spec.id == toolForwarding && !view.host.SupportsForwarding() {
 			continue
 		}
 		// File browsing opens the Host through the shared transfer service,
@@ -495,7 +495,7 @@ func (t *sessionTabs) toolSummary(st *toolsState, id toolID, view tabView) strin
 		if t.files == nil {
 			return "Unavailable"
 		}
-		if !host.Protocol.SupportsFileTransfer() {
+		if !host.SupportsFileTransfer() {
 			return "This Host cannot browse files"
 		}
 		if !t.filesToolEligible(host) {
@@ -517,7 +517,7 @@ func (t *sessionTabs) toolSummary(st *toolsState, id toolID, view tabView) strin
 		if !t.forwardingAvailable() {
 			return "Unavailable"
 		}
-		if !host.Protocol.SupportsForwarding() {
+		if !host.SupportsForwarding() {
 			return "This Host cannot forward ports"
 		}
 		if st != nil && st.forwarding != nil && st.forwarding.status == vaultReady {
@@ -559,7 +559,7 @@ func (t *sessionTabs) toolSummary(st *toolsState, id toolID, view tabView) strin
 // broken; a missing transfer service is not part of this test, because that
 // row still opens and states why the tool is unavailable.
 func (t *sessionTabs) filesToolEligible(host domainvault.Host) bool {
-	if !host.Protocol.SupportsFileTransfer() {
+	if !host.SupportsFileTransfer() {
 		return false
 	}
 	if host.ID == "" || t == nil || t.fileHosts == nil {

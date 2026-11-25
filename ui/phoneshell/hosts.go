@@ -888,7 +888,7 @@ func (h *hostPages) drawDetail(c *ui.Context, id string) {
 			// File transfer needs SFTP/SCP, so only an SSH Host offers the
 			// browser. A different Host can be chosen as the copy target on
 			// the page itself.
-			if host.Protocol.SupportsFileTransfer() && h.openFiles != nil {
+			if host.SupportsFileTransfer() && h.openFiles != nil {
 				files := kit.ListRow(c).Label("Open Files for " + hostName(host))
 				files.Children(func() {
 					ui.Row(c).Grow(1).Gap(10).AlignItems(ui.Center).Children(func() {
@@ -931,7 +931,7 @@ func (h *hostPages) drawDetail(c *ui.Context, id string) {
 			// The section is drawn here rather than behind a second page so the
 			// rules and their runtime state are visible with the Host they
 			// belong to.
-			if host.Protocol.SupportsForwarding() && h.forwarding != nil && h.forwarding.available() {
+			if host.SupportsForwarding() && h.forwarding != nil && h.forwarding.available() {
 				h.forwarding.drawHostRules(c, host)
 			}
 			if h.editHost != nil {
@@ -985,7 +985,7 @@ func (h *hostPages) detailColumn(c *ui.Context, host domainvault.Host) {
 	ui.Column(c).FillWidth().PaddingY(12).Gap(6).Background(c.Theme().Surface).Radius(12).
 		Children(func() {
 			detailLine(c, "Endpoint", hostEndpoint(effective))
-			detailLine(c, "Protocol", string(protocolOf(effective)))
+			detailLine(c, "Protocol", hostProtocolLabel(effective))
 			if effective.Group != "" {
 				detailLine(c, "Group", effective.Group)
 			}
@@ -1019,9 +1019,6 @@ func (h *hostPages) effectiveHost(host domainvault.Host) domainvault.Host {
 func (h *hostPages) effectiveChain(host domainvault.Host) ([]model.HostID, string) {
 	if host.HostChain != nil {
 		return host.HostChain.IDs(), "This Host"
-	}
-	if protocolOf(host) == domainvault.ProtocolLocal {
-		return nil, "Direct connection"
 	}
 	defaults := h.groupDefaults(host)
 	if defaults.HostChain == nil {
@@ -1102,8 +1099,8 @@ func hostName(host domainvault.Host) string {
 // endpoint, plus the protocol when it is not plain SSH.
 func hostDetail(host domainvault.Host) string {
 	parts := []string{hostEndpoint(host)}
-	if protocol := protocolOf(host); protocol != domainvault.ProtocolSSH {
-		parts = append(parts, string(protocol))
+	if label := hostProtocolLabel(host); label != string(domainvault.ProtocolSSH) {
+		parts = append(parts, label)
 	}
 	if host.Proxy != nil || host.ProxyProfileID != "" {
 		parts = append(parts, "via proxy")
@@ -1135,4 +1132,16 @@ func protocolOf(host domainvault.Host) domainvault.Protocol {
 		return domainvault.ProtocolSSH
 	}
 	return host.Protocol
+}
+
+// hostProtocolLabel names the transport a Session actually opens. Mosh and ET
+// are SSH transports, so the protocol name alone would call them "ssh".
+func hostProtocolLabel(host domainvault.Host) string {
+	switch host.TransportLabel() {
+	case domainvault.TransportMosh:
+		return "Mosh"
+	case domainvault.TransportET:
+		return "ET"
+	}
+	return string(protocolOf(host))
 }

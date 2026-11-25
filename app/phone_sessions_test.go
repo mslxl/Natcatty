@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -20,24 +19,20 @@ import (
 )
 
 // TestPhoneRuntimeRefusesLocalAndSerialSessions proves the phone composition
-// root registers no local PTY and no serial adapter: the Host->StartSpec
-// mapping still names a Local shell for the desktop, but the phone's opener
-// and transport registry fail closed, and a serial Session has no Host record
-// that could reach the phone's list in the first place.
+// root registers no local PTY and no serial adapter. A record that still names
+// the retired local protocol fails closed in the shared Host->StartSpec
+// mapping, the phone's opener refuses a Local or serial kind, and a serial
+// device has no Host record that could reach the phone's list in the first
+// place.
 func TestPhoneRuntimeRefusesLocalAndSerialSessions(t *testing.T) {
-	runtime := &phoneSessionRuntime{}
-
 	local := domainvault.Host{
 		ID: "local", Label: "desktop shell", Hostname: "localhost",
-		Protocol: domainvault.ProtocolLocal,
+		Protocol: domainvault.Protocol("local"),
 	}
-	if _, err := runtime.OpenHost(context.Background(), local); !errors.Is(err, errPhoneLocalSession) {
-		t.Fatalf("OpenHost(local) error = %v, want errPhoneLocalSession", err)
-	}
-	// The mapping still names the local kind, so the refusal is the phone's,
-	// not a domain change the desktop would inherit.
-	if kind := appsession.HostSpec(local).Kind; kind != appsession.KindLocal {
-		t.Fatalf("HostSpec(local).Kind = %q, want local", kind)
+	// The local protocol is retired, so the shared mapping names no kind and
+	// the record can never open a shell on the device.
+	if kind := appsession.HostSpec(local).Kind; kind != "" {
+		t.Fatalf("HostSpec(retired local).Kind = %q, want the fail-closed empty kind", kind)
 	}
 	// A Local Host is not remote, so the phone's Hosts list never shows it.
 	if local.IsRemote() {

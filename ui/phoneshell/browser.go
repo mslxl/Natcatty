@@ -145,7 +145,7 @@ type BrowserPage interface {
 // its protocol must support a forwarding channel. Telnet and Local Hosts are
 // therefore never offered an entry.
 func browserEligible(host domainvault.Host) bool {
-	return host.IsRemote() && protocolOf(host).SupportsForwarding()
+	return host.IsRemote() && host.SupportsForwarding()
 }
 
 // browserReason is the sentence shown when the device cannot run the

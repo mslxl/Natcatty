@@ -219,7 +219,7 @@ func (f *forwardingPages) drawHostRules(c *ui.Context, host domainvault.Host) {
 			"Port forwarding is not available on this device.", nil)
 		return
 	}
-	if !host.Protocol.SupportsForwarding() {
+	if !host.SupportsForwarding() {
 		kit.EmptyHint(c, "This Host cannot carry a forwarding channel.")
 		return
 	}
@@ -524,7 +524,7 @@ func (f *forwardingPages) eligibleHosts() []domainvault.Host {
 	}
 	out := make([]domainvault.Host, 0, len(f.hosts.hosts))
 	for _, host := range f.hosts.hosts {
-		if host.Protocol.SupportsForwarding() {
+		if host.SupportsForwarding() {
 			out = append(out, host)
 		}
 	}

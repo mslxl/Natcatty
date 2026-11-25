@@ -35,8 +35,8 @@ import (
 )
 
 // errPhoneLocalSession is the closed failure for a Host that would run a shell
-// on the phone. The domain still maps ProtocolLocal to KindLocal for the
-// desktop; the phone's factory and opener both refuse it.
+// on the phone. A Local shell exists only on the desktop, and a serial device
+// has no phone adapter; the phone's factory and opener both refuse them.
 var errPhoneLocalSession = errors.New("app: local and serial Sessions are not available on a phone")
 
 // phoneSessionRuntime opens Hosts as Sessions for the phone shell. It owns the
