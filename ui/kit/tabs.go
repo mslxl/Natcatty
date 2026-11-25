@@ -1,6 +1,8 @@
 package kit
 
 import (
+	"strconv"
+
 	"github.com/egoist/mygo/ui"
 
 	"github.com/mslxl/natcatty/ui/icons"
@@ -31,10 +33,111 @@ type TabStripOptions struct {
 	Height float32
 	// Add names the control that opens a new tab; empty leaves it out.
 	Add string
+	// AddKey keeps the add control the same element while the tabs before it
+	// come and go. Without it its positional identity changes with the tab
+	// count, so a layout warp that rests MyGo's records in place still loses
+	// the keyboard focus the control held.
+	AddKey string
+	// FocusAdd gives the add control the keyboard focus as it is built, for
+	// a strip whose row had to remount and is restoring focus a warp took
+	// with it.
+	FocusAdd bool
+	// AddFocused, if set, receives whether the add control holds the keyboard
+	// focus after this build, so the caller can restore it across a remount.
+	AddFocused *bool
 	// Trailing draws one control after the Tab strip and the add control, as
 	// the Quake bar's Host picker. It draws a shrink-wrapped control; the
 	// strip takes the remaining width.
 	Trailing func()
+	// Scroll, if set, keeps the strip's horizontal scrolling there. MaxX is
+	// the last built frame's overflow, so a view reading it before a build
+	// knows whether a reveal's scroll and a position transition would fight.
+	Scroll *ui.ScrollState
+	// Boxes, if set, receives the strip's previous-frame boxes before this
+	// frame's build: the scrolling viewport and the row of tabs and add
+	// control inside it. A view predicts from them whether the layout this
+	// frame will overflow, which a reveal must not animate into.
+	Boxes *TabStripBoxes
+	// Generation renames the row that holds the items. A view that must
+	// cancel its items' in-flight transitions and exit copies at once, such
+	// as a batch Tab close, raises it: the row becomes a new parent, so MyGo
+	// drops every record under the old one without window-wide
+	// DisableAnimations. Zero keeps the row's positional identity.
+	Generation int
+}
+
+// TabStripBoxes are a TabStrip's previous-frame boxes, in window DIPs.
+type TabStripBoxes struct {
+	// Viewport is the scrolling strip's visible box.
+	Viewport ui.Rect
+	// Content is the row of tabs and the add control inside it. Its width
+	// is the strip's content width, whether or not it is scrolled.
+	Content ui.Rect
+}
+
+// WorkTabMinWidth and WorkTabMaxWidth bound a Work Tab's laid-out width,
+// whatever its title. A strip that predicts whether an opening Tab's reveal
+// will overflow uses both: the minimum for a lower bound and the maximum for
+// an upper one (ticket 20).
+const (
+	WorkTabMinWidth float32 = 140
+	WorkTabMaxWidth float32 = 240
+)
+
+// WorkTabGap is the row's gap between Work Tabs.
+func WorkTabGap(c *ui.Context) float32 { return workTabGap(c) }
+
+// The Work Tab row's fixed room, which WorkTabWidthBound charges on top of the
+// measured title and marker. workTab draws
+//
+//	Row.Padding(0, 4, 0, 12).Gap(8) { StatusDot, title, marker?, menu, close }
+//
+// so the bound adds the horizontal padding, the 8-DIP status-dot lead, one
+// 8-DIP gap between every pair of the row's children (three without a marker,
+// four with one), and the two reserved Control.Mini controls. The title's own
+// MinWidth(72) is charged even for an empty or one-glyph title. The marker,
+// when the row draws one, adds its gap and measured glyphs. workTabWidthSafety
+// covers float rounding and a font metric a style may round differently; the
+// measured values match the laid-out widths exactly in both styles today.
+const (
+	workTabWidthPadding    float32 = 12 + 4
+	workTabWidthLead       float32 = 8
+	workTabWidthGap        float32 = 8
+	workTabTitleMinWidth   float32 = 72
+	workTabReservedActions float32 = 2
+	workTabWidthSafety     float32 = 4
+)
+
+// WorkTabWidthBound returns an upper bound of a Work Tab body's laid-out
+// width for the title and marker in the active Interface Style. It measures
+// the text the row draws instead of reading a previous frame's layout, so a
+// strip can decide from the state it is about to draw whether an open will
+// overflow: a rename, a dirty marker or a style change is part of the bound
+// on the frame it happens, and a resize cannot leave it describing the old
+// layout (ticket 20). The result is clamped to the Work Tab's own
+// WorkTabMinWidth/WorkTabMaxWidth, so it is never below what workTab lays out
+// and never above the widest a Tab can be.
+//
+// The bound describes the row the shell draws: a status-dot Lead, a Menu and a
+// Close control, which workTab reserves the room of even while idle.
+func WorkTabWidthBound(c *ui.Context, title, marker string) float32 {
+	titleWidth, _ := c.MeasureText(0, ui.Span{Text: title, Size: M(c).Font.Footnote, Weight: 600})
+	if titleWidth < workTabTitleMinWidth {
+		titleWidth = workTabTitleMinWidth
+	}
+	bound := workTabWidthPadding + workTabWidthLead + workTabReservedActions*M(c).Control.Mini +
+		3*workTabWidthGap + titleWidth + workTabWidthSafety
+	if marker != "" {
+		markerWidth, _ := c.MeasureText(0, ui.Span{Text: marker, Size: 9})
+		bound += workTabWidthGap + markerWidth
+	}
+	if bound < WorkTabMinWidth {
+		return WorkTabMinWidth
+	}
+	if bound > WorkTabMaxWidth {
+		return WorkTabMaxWidth
+	}
+	return bound
 }
 
 // TabStrip lays out a row of tabs drawn by tabs, which scrolls sideways when
@@ -52,15 +155,31 @@ func TabStrip(c *ui.Context, role TabRole, o TabStripOptions, tabs func()) (adde
 		}
 		Bar(c, BarTabs).Children(func() {
 			strip := ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Height(height)
+			if o.Scroll != nil {
+				strip.TrackScroll(o.Scroll)
+			}
 			if o.Label != "" {
 				strip.Label(o.Label)
 			}
-			strip.Children(func() { ui.Row(c).Height(height).Children(tabs) })
+			strip.Children(func() {
+				row := ui.Row(c).Height(height)
+				if o.Generation > 0 {
+					row.Key(tabStripRowKey(o.Generation))
+				}
+				if o.Boxes != nil {
+					o.Boxes.Viewport = strip.Bounds()
+					o.Boxes.Content = row.Bounds()
+				}
+				row.Children(tabs)
+			})
 			if o.Add == "" {
 				if o.Trailing != nil {
 					o.Trailing()
 				}
 				return
+			}
+			if o.AddKey != "" {
+				c = c.Key(o.AddKey)
 			}
 			add := ui.ButtonBase(c).Label(o.Add).Tooltip(o.Add).
 				Width(height).FillHeight().Justify(ui.Center).AlignItems(ui.Center).Shrink(0).
@@ -69,7 +188,13 @@ func TabStrip(c *ui.Context, role TabRole, o TabStripOptions, tabs func()) (adde
 				add.Background(Subtle(t)).TextColor(t.Text)
 			}
 			add.Children(func() { IconSized(c, icons.Plus, M(c).Icon.Medium) })
+			if o.FocusAdd {
+				add.AutoFocus()
+			}
 			added = add.Clicked()
+			if o.AddFocused != nil {
+				*o.AddFocused = add.Focused()
+			}
 			if o.Trailing != nil {
 				o.Trailing()
 			}
@@ -84,16 +209,43 @@ func TabStrip(c *ui.Context, role TabRole, o TabStripOptions, tabs func()) (adde
 	if CurrentStyle().Native() {
 		addMargin = [4]float32{0, 0, 0, 4}
 	}
-	ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Height(height).Label(o.Label).Children(func() {
-		ui.Row(c).Height(height).AlignItems(align).Gap(workTabGap(c)).Children(func() {
+	scroll := ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Height(height).Label(o.Label)
+	if o.Scroll != nil {
+		scroll.TrackScroll(o.Scroll)
+	}
+	if o.Boxes != nil {
+		o.Boxes.Viewport = scroll.Bounds()
+	}
+	scroll.Children(func() {
+		row := ui.Row(c).Height(height).AlignItems(align).Gap(workTabGap(c))
+		if o.Generation > 0 {
+			row.Key(tabStripRowKey(o.Generation))
+		}
+		if o.Boxes != nil {
+			o.Boxes.Content = row.Bounds()
+		}
+		row.Children(func() {
 			tabs()
 			if o.Add != "" {
-				added = IconButtonWith(c, icons.Plus, o.Add, IconOptions{Role: IconTab}).
-					Margin(addMargin[0], addMargin[1], addMargin[2], addMargin[3]).Clicked()
+				add := IconButtonWith(c, icons.Plus, o.Add, IconOptions{Role: IconTab, Key: o.AddKey}).
+					Margin(addMargin[0], addMargin[1], addMargin[2], addMargin[3])
+				if o.FocusAdd {
+					add.AutoFocus()
+				}
+				added = add.Clicked()
+				if o.AddFocused != nil {
+					*o.AddFocused = add.Focused()
+				}
 			}
 		})
 	})
 	return added
+}
+
+// tabStripRowKey names the row of a strip whose view raised its generation,
+// so a warp can make every item under it a fresh element.
+func tabStripRowKey(generation int) string {
+	return "tab-strip-row:" + strconv.Itoa(generation)
 }
 
 // workTabAlign is where Work tabs sit in their bar: Classic tabs on its
@@ -141,6 +293,21 @@ func workTabFill(c *ui.Context, tab ui.Element, active, hovered bool) {
 	}
 }
 
+// TabControlFocus names a control of a Tab that can hold the keyboard focus.
+// A caller that remounts its row after a warp (a new element key) loses the
+// focus MyGo keeps by element ID; it names the control the user had focused
+// so the rebuilt Tab gives that same control the focus back.
+type TabControlFocus int
+
+const (
+	// TabFocusNone gives no control the focus.
+	TabFocusNone TabControlFocus = iota
+	// TabFocusMenu gives the menu control the focus.
+	TabFocusMenu
+	// TabFocusClose gives the close control the focus.
+	TabFocusClose
+)
+
 // TabSpec is one tab of a TabStrip.
 type TabSpec struct {
 	Key    string
@@ -163,6 +330,11 @@ type TabSpec struct {
 	MenuLabel   string
 	Menu        func(*ui.Menu)
 	ContextMenu func(*ui.Menu)
+	// Focus names a control that takes the keyboard focus as the tab is
+	// built, used by a row that remounted its items to restore equivalent
+	// focus. It only takes effect while the control is built, which is while
+	// the tab is active or hovered.
+	Focus TabControlFocus
 	// Reveal scrolls the tab into view while it is active.
 	Reveal bool
 }
@@ -171,6 +343,11 @@ type TabSpec struct {
 type TabResult struct {
 	Clicked bool
 	Closed  bool
+	// MenuFocused and CloseFocused report that this build's menu or close
+	// control holds the keyboard focus, so a caller that remounts its row
+	// can give the same control the focus back (TabSpec.Focus).
+	MenuFocused  bool
+	CloseFocused bool
 }
 
 // Tab draws one tab of a TabStrip of role. It returns the tab's element, for
@@ -206,7 +383,7 @@ func fixedWorkTab(c *ui.Context, spec TabSpec) (ui.Element, TabResult) {
 
 func workTab(c *ui.Context, spec TabSpec) (ui.Element, TabResult) {
 	t := c.Theme()
-	body := ui.Row(c).Height(M(c).Control.Regular).MinWidth(140).MaxWidth(240).Padding(0, 4, 0, 12).Gap(8).
+	body := ui.Row(c).Height(M(c).Control.Regular).MinWidth(WorkTabMinWidth).MaxWidth(WorkTabMaxWidth).Padding(0, 4, 0, 12).Gap(8).
 		AlignItems(ui.Center).Tooltip(spec.Title)
 	workTabShape(c, body)
 	if spec.Key != "" {
@@ -243,10 +420,20 @@ func workTab(c *ui.Context, spec TabSpec) (ui.Element, TabResult) {
 			return
 		}
 		if spec.Menu != nil {
-			IconButtonWith(c, icons.Ellipsis, spec.MenuLabel, IconOptions{Role: IconTab}).Menu(spec.Menu)
+			menu := IconButtonWith(c, icons.Ellipsis, spec.MenuLabel, IconOptions{Role: IconTab})
+			if spec.Focus == TabFocusMenu {
+				menu.AutoFocus()
+			}
+			result.MenuFocused = menu.Focused()
+			menu.Menu(spec.Menu)
 		}
 		if spec.Close != "" {
-			result.Closed = IconButtonWith(c, icons.X, spec.Close, IconOptions{Role: IconTab}).Clicked()
+			closer := IconButtonWith(c, icons.X, spec.Close, IconOptions{Role: IconTab})
+			if spec.Focus == TabFocusClose {
+				closer.AutoFocus()
+			}
+			result.CloseFocused = closer.Focused()
+			result.Closed = closer.Clicked()
 		}
 	})
 	if spec.Active && spec.Reveal {
@@ -309,14 +496,32 @@ func nativePaneStrip(c *ui.Context, o TabStripOptions, tabs func()) (added bool)
 	}
 	Bar(c, BarTabs).Padding(0, 4).Gap(2).Children(func() {
 		strip := ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Height(height)
+		if o.Scroll != nil {
+			strip.TrackScroll(o.Scroll)
+		}
 		if o.Label != "" {
 			strip.Label(o.Label)
 		}
 		strip.Children(func() {
-			ui.Row(c).Height(height).Gap(M(c).Space.Hairline).AlignItems(ui.Center).Children(tabs)
+			row := ui.Row(c).Height(height).Gap(M(c).Space.Hairline).AlignItems(ui.Center)
+			if o.Generation > 0 {
+				row.Key(tabStripRowKey(o.Generation))
+			}
+			if o.Boxes != nil {
+				o.Boxes.Viewport = strip.Bounds()
+				o.Boxes.Content = row.Bounds()
+			}
+			row.Children(tabs)
 		})
 		if o.Add != "" {
-			added = IconButtonWith(c, icons.Plus, o.Add, IconOptions{Role: IconCard}).Clicked()
+			add := IconButtonWith(c, icons.Plus, o.Add, IconOptions{Role: IconCard, Key: o.AddKey})
+			if o.FocusAdd {
+				add.AutoFocus()
+			}
+			added = add.Clicked()
+			if o.AddFocused != nil {
+				*o.AddFocused = add.Focused()
+			}
 		}
 		if o.Trailing != nil {
 			o.Trailing()

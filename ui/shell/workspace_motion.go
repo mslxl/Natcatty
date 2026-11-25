@@ -37,6 +37,10 @@ type paneMotionMode struct {
 	overlayClose   bool
 	overlayReorder bool
 	labels         bool
+	// stripReveal, if set, is the work Tab strip's reveal the test renders
+	// with, so a test can read the strip runtime's run, generation and
+	// previous-frame boxes. A window always leaves it nil and builds its own.
+	stripReveal *workTabReveal
 }
 
 // zoomRender is which Pane tree a zoom run shows while its spring plays. A
@@ -261,17 +265,18 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	}
 
 	if !unseen {
-		if wm.run != nil {
-			if _, done := wm.run.anim.Progress(now); done {
-				wm.finish()
-			} else {
-				wm.animationFrames++
-				c.AnimationFrame()
-			}
-		}
+		wm.advanceRun(c, now)
 		return
 	}
 	wm.controller.MarkSeen(event.Seq)
+	if event.Kind == motion.TabReorder {
+		// A Tab reorder moves the strip's items only; the body does not move
+		// (ticket 20). It must not warp, restart, or release a body run, and a
+		// body switch in flight keeps playing to its normal final. A Pane run
+		// continues for the same reason: the reorder changes no Pane's layout.
+		wm.advanceRun(c, now)
+		return
+	}
 	switch event.Kind {
 	case motion.TabOpen, motion.TabClose, motion.TabSwitch:
 		// A Tab event is a whole-body transition, never a Pane run. Any Pane
@@ -322,6 +327,22 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 		wm.finish()
 		s.ReleasePaneGhosts()
 	}
+}
+
+// advanceRun moves a playing Pane run to now and asks for its next frame, or
+// ends it on the frame its animation completes. A frame that consumes no
+// event, and a Tab reorder no part of the Pane or body motion owns, use it so
+// the run keeps its normal final instead of being cut.
+func (wm *workspacePaneMotion) advanceRun(c *ui.Context, now time.Time) {
+	if wm.run == nil {
+		return
+	}
+	if _, done := wm.run.anim.Progress(now); done {
+		wm.finish()
+		return
+	}
+	wm.animationFrames++
+	c.AnimationFrame()
 }
 
 // updateEffective decides the Pane the next layout shows alone. While a zoom
@@ -1477,6 +1498,19 @@ func (wm *workspacePaneMotion) paneTransitionInFlight() bool {
 		return len(run.nativePanes) > 0
 	}
 	return false
+}
+
+// stripWarpCanBeInstant reports that a Tab strip warp may call
+// DisableAnimations on this frame: no Tab body transition is playing and no
+// Pane transition MyGo carries is playing or starting. The switch is
+// window-wide, so resting one of those would stop motion under a switch that
+// is still on (the one-switch rule). An overlay-carried Pane run is not
+// MyGo's, so it does not hold the strip back.
+func (wm *workspacePaneMotion) stripWarpCanBeInstant() bool {
+	if wm == nil {
+		return false
+	}
+	return wm.body.phase == bodyIdle && !wm.paneTransitionInFlight()
 }
 
 // paneMotionUsesMyGo reports that the unseen event on this frame starts a Pane

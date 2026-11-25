@@ -125,25 +125,63 @@ func TopdownView(s *state.State, opts ...FollowOption) func(*ui.Context) {
 // only: no close, add, menu, split, or drag control exists, so the only
 // Workspace change a click can make is the active index.
 func FollowBar(s *state.State) func(*ui.Context) {
+	// The mini strip is its own strip surface: it consumes the same events as
+	// the main strip so an open, close or reorder animates here too, and a
+	// switch changes only the selected color (ticket 20's Follow consistency).
+	// It moves Position alone: a mini Tab takes its final width on the frame
+	// it appears, and the selected fill never fades.
+	return followBarWithStrip(s, &tabStripMotion{positionOnly: true})
+}
+
+// followBarWithStrip is FollowBar with the mini strip's runtime supplied, so a
+// regression can read its run, generation and frame count. FollowBar owns one
+// runtime per mounted bar; tests are the only other caller.
+func followBarWithStrip(s *state.State, strip *tabStripMotion) func(*ui.Context) {
 	return func(c *ui.Context) {
 		m := locales.In(c.Locale())
+		// Snapshot the row this build draws before beginFrame, as workTabs
+		// does: the removal guard compares it with the committed row, so a
+		// mini Tab removed with no close event (a detach or a batch close) is
+		// suppressed on the frame it disappears instead of replaying the exit
+		// record the previous build attached (ticket 20).
+		entries := make([]tabEntry, 0, s.TabCount())
+		for index := 0; index < s.TabCount(); index++ {
+			if info, ok := s.TabInfo(index); ok {
+				entries = append(entries, tabEntry{index: index, info: info})
+			}
+		}
+		strip.noteCurrentRow(c, m, entries, nil)
+		strip.beginFrame(c, s, tabStripSignals{row: &strip.current})
 		selected := -1
-		kit.TabStrip(c, kit.TabPane, kit.TabStripOptions{Label: m.FollowTabsLabel()}, func() {
-			for index := 0; index < s.TabCount(); index++ {
-				info, ok := s.TabInfo(index)
-				if !ok {
-					continue
-				}
-				_, tab := kit.Tab(c, kit.TabPane, kit.TabSpec{
+		kit.TabStrip(c, kit.TabPane, kit.TabStripOptions{
+			Label: m.FollowTabsLabel(), Generation: strip.generation,
+		}, func() {
+			for _, entry := range entries {
+				info := entry.info
+				title, marker := tabTitle(m, info), tabMarker(m, info)
+				body, tab := kit.Tab(c, kit.TabPane, kit.TabSpec{
 					Key:    "follow-tab-" + string(info.ID),
-					Title:  tabTitle(m, info),
+					Title:  title,
 					Active: info.Active,
 				})
+				// The row the next build compares against is recorded with the
+				// same title/marker/bound noteCurrentRow uses, so a steady
+				// mini strip compares exactly equal. The mini strip draws no
+				// Pending Connection rows, so its pending list stays empty.
+				strip.noteTabRow(info.ID, title, marker, kit.WorkTabWidthBound(c, title, marker))
+				strip.noteWidth(info.ID, body.LayoutBounds().W)
+				if transition, ok := strip.transition(s.Motion(), false); ok {
+					body.Transition(transition)
+				}
+				if strip.zIndex(info.ID, false) > 0 {
+					body.ZIndex(1)
+				}
 				if tab.Clicked {
-					selected = index
+					selected = entry.index
 				}
 			}
 		})
+		strip.commitRow(c, nil)
 		if selected >= 0 {
 			s.SelectTab(selected)
 			c.Invalidate()

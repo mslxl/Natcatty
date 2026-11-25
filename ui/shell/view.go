@@ -55,6 +55,19 @@ func shellView(owner state.RenderOwner, s *state.State, wm *workspacePaneMotion)
 	// belongs to this window's content function, so the active Tab is revealed
 	// when it changes or the window is resized.
 	reveal := newWorkTabReveal()
+	if wm.mode.stripReveal != nil {
+		// Tests inject the strip's reveal to read its runtime; a window
+		// always keeps its own.
+		reveal = wm.mode.stripReveal
+	}
+	reveal.labels = wm.mode.labels
+	// A strip warp that has nothing else moving in the window rests MyGo's
+	// records instead of renaming the row, so a focused item control keeps
+	// its focus. The runtime asks this each frame: a Pane or body transition
+	// in flight holds the warp back (the one-switch rule).
+	if wm != nil {
+		reveal.canInstant = wm.stripWarpCanBeInstant
+	}
 	focus := &focusEpochTracker{}
 	return func(c *ui.Context) {
 		m, t := shellPreamble(c, s, func() bool { return terminalVisible(s) })

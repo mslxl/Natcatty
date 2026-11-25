@@ -1776,6 +1776,14 @@ func (s *State) MoveTab(source, target model.TabID, after bool) bool {
 			break
 		}
 	}
+	// A reorder moves the strip's items only: the body of every Tab stays where
+	// it was, so ticket 19's body runtime ignores this event (ticket 20).
+	s.recordMotion(motion.Event{
+		Kind:        motion.TabReorder,
+		TabID:       source,
+		TargetTabID: target,
+		At:          time.Now(),
+	})
 	s.save()
 	s.RequestRedraw()
 	return true

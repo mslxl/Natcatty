@@ -13,6 +13,7 @@ import (
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
+	"github.com/mslxl/natcatty/ui/motion"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
@@ -150,9 +151,161 @@ type workTabReveal struct {
 	active model.TabID
 	width  float32
 	reveal bool
+	// scroll tracks the strip's horizontal scrolling. Its MaxX is the last
+	// built frame's overflow. MaxX and the strip's boxes tell a reveal before
+	// building whether its scroll and the strip's position transition would
+	// fight, and whether the first Tab past the viewport is about to appear;
+	// workTabs warps that frame.
+	scroll ui.ScrollState
+	// boxes are the strip's previous-frame viewport and content boxes. Boxes
+	// is written during each build from MyGo's Bounds, which reads the layout
+	// of the build before, so the boxes a build reads describe the build
+	// before last. They are not trusted for a Tab-open decision unless
+	// boxesWidth names the window width that produced them.
+	boxes kit.TabStripBoxes
+	// boxesWidth is the window width of the build whose layout boxes
+	// describes: the width two builds back. A build compares it with the
+	// window's width now and warps an open when they differ, because neither
+	// the viewport nor the content box then describes the row this frame will
+	// lay out. It is updated after every build from the width of the build
+	// just ended, which is exactly the layout the next build's Bounds reads
+	// (ticket 20).
+	boxesWidth float32
+	// strip is this view's Tab strip motion bookkeeping.
+	strip tabStripMotion
+	// canInstant reports that no MyGo transition outside the strip is moving
+	// in this window this frame. A strip warp may then call
+	// DisableAnimations, which is window-wide, without resting a Pane or body
+	// transition; nil keeps the conservative new-generation remount.
+	canInstant func() bool
+	// labels gives every strip item a test-only Label naming its Tab, so the
+	// offscreen Tester can measure the item's animated box (the text inside it
+	// collapses with it, and an exit copy is inert). The shell's tests set it
+	// through paneMotionMode; a window never does.
+	labels bool
 }
 
 func newWorkTabReveal() *workTabReveal { return &workTabReveal{} }
+
+// openWillOverflow reports whether a TabOpen's reveal will overflow the strip
+// on the frame it is laid out, so the strip event must warp instead of
+// starting an enter under the reveal's scroll jump. It answers from the state
+// the frame is about to draw, not from widths and boxes measured for earlier
+// content:
+//
+//   - the boxes and the window width that produced them must agree with this
+//     frame's window width; a resize makes both the viewport and the content
+//     box describe the old layout, and the width-ago layout no longer bounds
+//     this frame's row. The build after the boxes' width is current again.
+//   - a row without a usable viewport or content box, such as the first build
+//     of a remounted generation, has no layout to compare against: warp.
+//   - otherwise the row's content width is bounded from the Tabs' current
+//     titles and markers and the current Pending Connection labels, each
+//     charged its own maximum. A title rename, a dirty marker or a style
+//     change is part of that bound on its own frame, and a leaving Tab's
+//     record can never be subtracted from content that no longer holds it
+//     (ticket 20).
+//
+// The bound is conservative: an open that would really fit may warp when the
+// bound cannot prove it fits, which the narrow-window conflict rule accepts.
+// The strip runtime keeps the post-layout actual-MaxX cancel as a backstop for
+// a layout this bound could not see, such as the title bar's other controls
+// changing width in the same frame.
+func (r *workTabReveal) openWillOverflow(c *ui.Context, s *state.State, m locales.Messages, pending []string) bool {
+	width, _ := c.Size()
+	if width <= 0 || r.boxesWidth <= 0 || width != r.boxesWidth {
+		// The boxes were not laid out at this window width (or there are no
+		// boxes yet), so their viewport cannot decide this frame's reveal.
+		return true
+	}
+	if r.boxes.Viewport.W <= 0 || r.boxes.Content.W <= 0 {
+		// A remounted row has no previous content box; the viewport alone
+		// cannot say whether the new row fits.
+		return true
+	}
+	return r.contentWidthBound(c, s, m, pending) > r.boxes.Viewport.W+0.5
+}
+
+// The row items a Work Tab contributes beyond its body, and the add control's
+// bound. A Tab draws two insertion placeholders in the row; their laid-out
+// room is 2 DIPs each in Classic and macOS, and tabInsertionStripsBound
+// charges a safe 12 DIPs for both. The add control is a Control.Mini icon
+// button; workTabAddSafety covers its margins and rounding, above the 4-DIP
+// horizontal margin the row gives it in both styles.
+const (
+	tabInsertionStripsBound float32 = 12
+	workTabAddSafety        float32 = 12
+)
+
+// tabRowChildCount is how many children one Work Tab contributes to the strip
+// row: the before insertion placeholder, the body and the after placeholder.
+// The open bound charges a Tab this many children, and the close-clamp
+// prediction takes this many row gaps with the Tab it removes, so a change to
+// the row's shape updates both forecasts from one number.
+const tabRowChildCount = 3
+
+// tabRowRemoveWidth is the exact content width a Work Tab close takes out of
+// the strip row:
+//
+//	body + 2*tabInsertionStripWidth + tabRowChildCount*WorkTabGap
+//
+// The row is Row.Gap(g) over [before strip, body, after strip] for every Tab,
+// and each insertion strip's margin is bottom-only, so its horizontal room is
+// exactly tabInsertionStripWidth. Removing k adjacent children from a gapped
+// row removes k gaps: the two between the Tab's three children and the one
+// that joins its neighbours. The open bound charges the same child count and a
+// conservative tabInsertionStripsBound; a close must use the laid-out widths,
+// because subtracting the 12-DIP bound would warp a close that does not clamp
+// (ticket 20).
+func tabRowRemoveWidth(c *ui.Context, bodyWidth float32) float32 {
+	return bodyWidth + 2*tabInsertionStripWidth + tabRowChildCount*kit.WorkTabGap(c)
+}
+
+// contentWidthBound is an upper bound of the strip row's content width for the
+// Tabs and Pending Connections the state holds now, in the active Interface
+// Style. Every row child is charged its own bound and the row's gap between
+// every pair of children: each Tab is tabRowChildCount children (two insertion
+// strips and the body), each Pending Connection is one, and the add control is
+// one.
+func (r *workTabReveal) contentWidthBound(c *ui.Context, s *state.State, m locales.Messages, pending []string) float32 {
+	children := 1 // the add control
+	bound := kit.M(c).Control.Mini + workTabAddSafety
+	for index := 0; index < s.TabCount(); index++ {
+		info, ok := s.TabInfo(index)
+		if !ok {
+			continue
+		}
+		bound += kit.WorkTabWidthBound(c, tabTitle(m, info), tabMarker(m, info)) + tabInsertionStripsBound
+		children += tabRowChildCount
+	}
+	for _, label := range pending {
+		bound += pendingRowWidthBound(c, m, label)
+		children++
+	}
+	return bound + kit.WorkTabGap(c)*float32(children-1)
+}
+
+// pendingRowWidthBound is an upper bound of one Pending Connection row: its
+// horizontal padding, the row gap, the loader icon, the left margin the row
+// takes in the strip, and the measured localized label. The laid-out row is
+// 46 DIPs of fixed room plus its text in both styles; the extra 8 is safety.
+func pendingRowWidthBound(c *ui.Context, m locales.Messages, label string) float32 {
+	text, _ := c.MeasureText(0, ui.Span{
+		Text: m.ConnectionConnectingTo(label), Size: kit.M(c).Font.Footnote,
+	})
+	const fixed = 24 + 8 + 4 + 8 // padding + gap + left margin + safety
+	return fixed + kit.M(c).Icon.Medium + text
+}
+
+// tabEntry is one Tab in the order a build renders. A Tab drop mutates the
+// order while the pass runs, so a build renders the snapshot it began with:
+// the drop invalidates the frame, and the next build draws the new order.
+// Reading the live order mid-pass could reach one Tab twice and give its item
+// and insertion strips duplicate keys under one parent.
+type tabEntry struct {
+	index int
+	info  state.TabInfo
+}
 
 // workTabs renders the ordered terminal Tabs in the window's Tab bar and the
 // button that opens a new one. Each terminal Tab is a drag source; the
@@ -168,39 +321,98 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 		reveal.reveal = true
 	}
 	// A resize changes the room the strip has for its Tabs. Reveal the active
-	// Tab again so one chosen at a wider window does not stay half cut.
-	if width, _ := c.Size(); width > 0 {
+	// Tab again so one chosen at a wider window does not stay half cut. The
+	// boxes an open's bound reads were laid out for an older width; boxesWidth
+	// records that width so the open can tell they no longer describe this
+	// frame, and a strip run cannot slide under the resize's reflow (ticket
+	// 20).
+	width, _ := c.Size()
+	previousWidth := reveal.width
+	resized := false
+	if width > 0 {
 		if reveal.width > 0 && width != reveal.width {
 			reveal.reveal = true
+			resized = true
 		}
 		reveal.width = width
 	}
 	revealActive := reveal.reveal
 	reveal.reveal = false
 	terminal := terminalVisible(s)
-
+	// The strip consumes the same event stream as the body but keeps its own
+	// sequence: a strip-only reorder never starts a body run, and a body
+	// switch never moves the strip. An overflowing strip whose reveal
+	// scrolls on this frame warps instead of sliding under the jump. The
+	// reveal's overflow is bounded from the state this frame draws, not from
+	// a previous frame's widths, so an open after a resize, a rename, a dirty
+	// marker or a style change cannot outgrow the forecast (ticket 20). The
+	// strip runtime still reads the actual overflow after the build and
+	// cancels an enter the bound could not foresee.
+	// The pending rows and the Tab order are read once, before the build: a
+	// drop mutates the order mid-pass, and the prediction, the run rules and
+	// the row must describe the same frame. The row this build will draw is
+	// recorded before beginFrame so a running strip can tell whether the row
+	// it started on changed without a strip event, and a reorder can tell
+	// whether it moves a pure permutation of the committed row (ticket 20).
+	pending := s.PendingConnections()
+	overflow := reveal.scroll.MaxX > 0.5
+	if event, ok := s.MotionEvent(); ok && event.Kind == motion.TabOpen && revealActive &&
+		reveal.openWillOverflow(c, s, m, pending) {
+		overflow = true
+	}
 	// The strip scrolls sideways at the minimum window width. Tabs keep a
 	// readable title width instead of shrinking or clipping the last Tab;
 	// every Tab stays reachable with the wheel, trackpad or keyboard.
+	entries := make([]tabEntry, 0, s.TabCount())
+	for index := 0; index < s.TabCount(); index++ {
+		if info, ok := s.TabInfo(index); ok {
+			entries = append(entries, tabEntry{index: index, info: info})
+		}
+	}
+	reveal.strip.noteCurrentRow(c, m, entries, pending)
+	reveal.strip.beginFrame(c, s, tabStripSignals{
+		revealActive: revealActive,
+		overflow:     overflow,
+		resized:      resized,
+		scrollX:      reveal.scroll.X,
+		maxX:         reveal.scroll.MaxX,
+		row:          &reveal.strip.current,
+		instant:      reveal.canInstant != nil && reveal.canInstant(),
+	})
+	// The add control keeps one element identity while Tabs come and go, so an
+	// at-rest warp does not lose its keyboard focus; a warp that must remount
+	// the row asks it to take the focus back. The strip runtime records the
+	// control's focus each build for the next remount.
+	var addFocused bool
 	added := kit.TabStrip(c, kit.TabWork, kit.TabStripOptions{
 		Label: m.WorkTabsLabel(), Height: topBarHeight, Add: m.MenuNewTab(),
+		AddKey: workTabAddKey, FocusAdd: reveal.strip.focusAdd(), AddFocused: &addFocused,
+		Scroll: &reveal.scroll, Boxes: &reveal.boxes, Generation: reveal.strip.generation,
 	}, func() {
-		for index := 0; index < s.TabCount(); index++ {
-			info, ok := s.TabInfo(index)
-			if !ok {
-				continue
-			}
+		for _, entry := range entries {
+			info := entry.info
 			if !terminal {
 				info.Active = false
 			}
 			tabInsertionStrip(c, s, t, info.ID, false)
-			tabBody(c, s, m, t, index, info, revealActive && terminal)
+			tabBody(c, s, m, t, entry.index, info, &reveal.strip, revealActive && terminal, reveal.labels)
 			tabInsertionStrip(c, s, t, info.ID, true)
 		}
-		for _, label := range s.PendingConnections() {
+		for _, label := range pending {
 			pendingTab(c, m, t, label)
 		}
 	})
+	// Commit the row this build drew for a later close's clamp prediction: its
+	// Tabs in order with the title/marker/bound each was laid out with, the
+	// Pending rows, and the style/gap. A close may only be predicted from it
+	// while the state still describes this row minus the closing Tab.
+	reveal.strip.commitRow(c, pending)
+	// The boxes this build wrote describe the build before it, which was laid
+	// out at previousWidth. The next build compares that width with its own.
+	if width > 0 {
+		reveal.boxesWidth = previousWidth
+	}
+	reveal.strip.noteAddFocus(addFocused)
 	if added {
 		_ = s.NewTab()
 		c.Invalidate()
@@ -218,8 +430,23 @@ func terminalVisible(s *state.State) bool {
 		!s.MonitorVisible() && !s.SysManagerVisible() && !s.SFTPVisible()
 }
 
+// tabInsertionStripWidth is the horizontal room one insertion target takes in
+// the row: its 2 DIP placeholder. tabInsertionStripMargin is its 3 DIP bottom
+// margin, which adds no horizontal room; the open bound's
+// tabInsertionStripsBound is the conservative charge for both placeholders,
+// while the close-clamp prediction uses the laid-out
+// 2*tabInsertionStripWidth (ticket 20).
+const (
+	tabInsertionStripWidth  float32 = 2
+	tabInsertionStripMargin float32 = 3
+)
+
 func tabInsertionStrip(c *ui.Context, s *state.State, t *ui.Theme, target model.TabID, after bool) {
-	strip := ui.Column(c).Width(2).Height(22).Margin(0, 0, 3, 0).Radius(1)
+	// The 2px placeholder is a layout target as well as a drop zone. Keying it
+	// keeps MyGo's reconciliation stable while keyed Tabs enter, leave and
+	// reorder around it; it carries no Transition, so it warps with the layout.
+	strip := ui.Column(c).Key(tabInsertionStripKey(target, after)).
+		Width(tabInsertionStripWidth).Height(22).Margin(0, 0, tabInsertionStripMargin, 0).Radius(1)
 	if drag, over := ui.DragOver[state.DragItem](strip); over &&
 		drag.Kind == state.DragKindTab && drag.TabID != target {
 		strip.Background(t.Accent)
@@ -232,7 +459,28 @@ func tabInsertionStrip(c *ui.Context, s *state.State, t *ui.Theme, target model.
 	}
 }
 
-func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, index int, info state.TabInfo, reveal bool) {
+// workTabAddKey is the add control's stable element key. It sits after every
+// Tab, so its positional identity would otherwise change whenever the Tab
+// count does, and a warp that rests the row in place would lose the focus.
+const workTabAddKey = "work-tab-add"
+
+// tabInsertionStripKey is the stable element key of one insertion target.
+// The target Tab's ID names it, so the placeholder follows the Tab it sits
+// beside through a reorder instead of changing identity with its index.
+func tabInsertionStripKey(target model.TabID, after bool) string {
+	side := "before"
+	if after {
+		side = "after"
+	}
+	return "work-tab-gap:" + string(target) + ":" + side
+}
+
+// tabStripBoxLabel names a strip item's whole box for the shell's tests; the
+// view labels an item only under paneMotionMode's labels.
+func tabStripBoxLabel(id model.TabID) string { return "work-tab:" + string(id) }
+
+func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, index int, info state.TabInfo,
+	strip *tabStripMotion, reveal, label bool) {
 	tabMenu := func(menu *ui.Menu) {
 		if menu.Item(m.MenuCloseTab()).Chosen() {
 			s.CloseTab(index)
@@ -260,16 +508,19 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 			c.Invalidate()
 		}
 	}
-	marker := ""
-	if info.Dirty {
-		marker = m.TabDirtyMarker()
+	marker := tabMarker(m, info)
+	focus := kit.TabFocusNone
+	if strip != nil {
+		focus = strip.focusControl(info.ID)
 	}
 	// The menu and close controls show on the active and the hovered Tab,
 	// as the original's; a right-click opens the same menu on any Tab. The
 	// strip scrolls sideways, so reveal keeps the active Tab whole when it is
 	// opened or selected while the strip is scrolled, and after a resize.
+	title := tabTitle(m, info)
 	body, tab := kit.Tab(c, kit.TabWork, kit.TabSpec{
-		Title:  tabTitle(m, info),
+		Key:    "work-tab-" + string(info.ID),
+		Title:  title,
 		Active: info.Active,
 		Lead: func() {
 			snapshot, ok := s.TabSnapshot(index)
@@ -280,9 +531,40 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 		MenuLabel:   m.TabMenuGlyph(),
 		Menu:        tabMenu,
 		ContextMenu: tabMenu,
+		Focus:       focus,
 		Reveal:      reveal,
 	})
 	body.Drag(state.TabDrag(info.ID))
+	if label {
+		body.Label(tabStripBoxLabel(info.ID))
+	}
+	if strip != nil {
+		// Record the Tab this pass draws and an upper bound of the body width
+		// for the layout it will produce, from the title and marker the build
+		// lays out in its current style. LayoutBounds on this pass still
+		// describes the layout before it, so a rename or dirty change built on
+		// the previous frame would leave a measured record one build old. The
+		// close-clamp prediction reads this row; the measured width stays as
+		// the strip's observable record (ticket 20).
+		strip.noteTabRow(info.ID, title, marker, kit.WorkTabWidthBound(c, title, marker))
+		strip.noteWidth(info.ID, body.LayoutBounds().W)
+		// Record the focused item control, so a warp that must remount the
+		// row can give the same control the focus back.
+		strip.noteFocus(info.ID, tab)
+		// The strip moves Position and Size only, so the selected fill and the
+		// drag-over border change in the same frame. A Tab under the pointer
+		// keeps its layout instant: its drag copy follows the pointer, and a
+		// Position transition underneath would fight it.
+		dragging := body.Dragging()
+		if transition, ok := strip.transition(s.Motion(), dragging); ok {
+			body.Transition(transition)
+		}
+		if strip.zIndex(info.ID, dragging) > 0 {
+			// The dragged item and a reorder's moving Tab paint above their
+			// siblings, so they do not pass under them.
+			body.ZIndex(1)
+		}
+	}
 	if tab.Clicked {
 		s.SelectTab(index)
 		c.Invalidate()
@@ -308,9 +590,11 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 	}
 }
 
-// pendingTab is a connection still opening, shown after the Tabs.
-func pendingTab(c *ui.Context, m locales.Messages, t *ui.Theme, label string) {
-	ui.Row(c).Height(tabHeight).Padding(0, 12).Gap(8).Margin(0, 0, 0, 4).Radius(tabRadius, tabRadius, 0, 0).
+// pendingTab is a connection still opening, shown after the Tabs. It returns
+// its row so the strip's width bound can be checked against the row this
+// build drew.
+func pendingTab(c *ui.Context, m locales.Messages, t *ui.Theme, label string) ui.Element {
+	return ui.Row(c).Height(tabHeight).Padding(0, 12).Gap(8).Margin(0, 0, 0, 4).Radius(tabRadius, tabRadius, 0, 0).
 		AlignItems(ui.Center).TextColor(t.TextMuted).Children(func() {
 		kit.IconSized(c, icons.Loader, kit.M(c).Icon.Medium).TextColor(t.Warning)
 		ui.Text(c, m.ConnectionConnectingTo(label)).FontSize(kit.M(c).Font.Footnote).SingleLine()
@@ -327,6 +611,16 @@ func tabTitle(m locales.Messages, info state.TabInfo) string {
 		title = info.Label
 	}
 	return composeTabTitle(m, title, number)
+}
+
+// tabMarker is the mark a Tab's row draws after its title. It takes room in
+// the row, so it is part of the width signature a strip prediction compares:
+// a Tab that becomes dirty or clean can widen or narrow without a new title.
+func tabMarker(m locales.Messages, info state.TabInfo) string {
+	if info.Dirty {
+		return m.TabDirtyMarker()
+	}
+	return ""
 }
 
 // TabTitle names a Tab summary the way the tab strip names the Tab. The Quick
