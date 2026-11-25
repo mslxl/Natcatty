@@ -837,6 +837,16 @@ func paneDropZone(c *ui.Context, s *state.State, t *ui.Theme,
 	}
 }
 
+// loneHeaderShown reports that a lone Pane draws its header row: a Pending
+// placeholder names itself, and a focused Pane with an unresolved Session
+// status reports that status. A settled running Session shows no row (the
+// terminal already shows it is live). The header and the motion runtime's
+// final-rect math both ask this, so the two cannot drift and leave a pinned
+// grid one row off.
+func loneHeaderShown(info state.PaneInfo, status paneStatus) bool {
+	return info.Pending || (info.Focused && status.text != "" && !status.settled)
+}
+
 // paneHeader is the Pane's one header row, as the original's terminal
 // toolbar: the drag grip of a split Tab, the title, a status only while the
 // Session is not simply connected, and at the right the Session's controls
@@ -848,7 +858,7 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	// bar, as the original's terminal popup, so it shows no header of its own
 	// unless it has a status to report.
 	lone := !ref.managesPanes && !ref.split && !ref.inert
-	if lone && !info.Pending && !(info.Focused && ref.status.text != "" && !ref.status.settled) {
+	if lone && !loneHeaderShown(info, ref.status) {
 		return
 	}
 	header := kit.Bar(c, kit.BarPane).Padding(0, 4, 0, 8).Gap(4)

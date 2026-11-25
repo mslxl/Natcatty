@@ -214,7 +214,7 @@ func TestPaneFinalRectsPredictsTheFinalBoxes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			frameTop, frameRight, frameBottom, frameLeft := tc.insets()
 			got := paneFinalRects(tc.root, region, tc.rects, 10, tc.fallback, true,
-				frameTop, frameRight, frameBottom, frameLeft)
+				paneChrome{top: frameTop, right: frameRight, bottom: frameBottom, left: frameLeft})
 			if len(got) != len(tc.want) {
 				t.Fatalf("predicted %d Panes, want %d: %+v", len(got), len(tc.want), got)
 			}

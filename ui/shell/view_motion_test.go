@@ -43,7 +43,7 @@ func topdownWithPaneMotion(s *state.State, mode paneMotionMode) (func(*ui.Contex
 // exposed.
 func followWithPaneMotion(s *state.State) (func(*ui.Context), *workspacePaneMotion) {
 	wm := newActivePaneOnlyMotion(s)
-	wm.mode = paneMotionMode{labels: true}
+	wm.mode.labels = true
 	return followView(s, wm), wm
 }
 

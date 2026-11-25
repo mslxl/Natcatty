@@ -67,6 +67,11 @@ type quakeBodyMotion struct {
 	gen int
 	// animationFrames counts the frames this runtime asked for.
 	animationFrames int
+	// width and height are the Panel size the last frame was laid out at. A
+	// resize reflows the terminal body outside any motion event, so a run
+	// planned for the old geometry warps and this frame is final (ticket 08).
+	width, height float32
+	haveSize      bool
 }
 
 // skip records that the Panel body was not built on the last frame (its own
@@ -87,6 +92,15 @@ func (b *quakeBodyMotion) beginFrame(c *ui.Context, s *State) {
 	hidden := windowHidden || skipped
 	wasHidden := b.wasHidden
 	b.wasHidden = windowHidden
+	// A Panel resize reflows the terminal body outside any motion event. Like
+	// a hide, it makes this frame final: a run planned for the old size warps,
+	// and an event first seen here animates nothing (ticket 08).
+	width, height := c.Size()
+	resized := b.haveSize && (width != b.width || height != b.height)
+	if width > 0 && height > 0 {
+		b.width, b.height = width, height
+		b.haveSize = true
+	}
 	setting := s.Motion()
 	reduce := c.Preferences().ReduceMotion
 	now := c.Now()
@@ -101,7 +115,7 @@ func (b *quakeBodyMotion) beginFrame(c *ui.Context, s *State) {
 	}
 	if b.phase != quakeBodyIdle {
 		switch {
-		case hidden || reduce || !motion.Enabled(setting, b.event.Kind):
+		case hidden || resized || reduce || !motion.Enabled(setting, b.event.Kind):
 			b.abort()
 		case b.phase == quakeBodyOut:
 			if !b.outBuilt {
@@ -140,7 +154,7 @@ func (b *quakeBodyMotion) beginFrame(c *ui.Context, s *State) {
 		// view's to animate.
 		return
 	}
-	visible := !first && !hidden && !wasHidden && !reduce
+	visible := !first && !hidden && !wasHidden && !resized && !reduce
 	b.consume(c, s, event, setting, visible)
 }
 
@@ -375,6 +389,11 @@ type quakeStripMotion struct {
 	exit bool
 	// animationFrames counts the frames this runtime asked for.
 	animationFrames int
+	// width and height are the Panel size the last frame was laid out at. A
+	// resize reflows the row and can move every item under a run, so the run
+	// warps instead of sliding from the old boxes (ticket 08).
+	width, height float32
+	haveSize      bool
 }
 
 // skip records that the bar was not built on the last frame.
@@ -395,13 +414,19 @@ func (m *quakeStripMotion) beginFrame(c *ui.Context, s *State) {
 	hidden := windowHidden || skipped
 	wasHidden := m.wasHidden
 	m.wasHidden = windowHidden
+	width, height := c.Size()
+	resized := m.haveSize && (width != m.width || height != m.height)
+	if width > 0 && height > 0 {
+		m.width, m.height = width, height
+		m.haveSize = true
+	}
 	setting := s.Motion()
 	reduce := c.Preferences().ReduceMotion
 	now := c.Now()
-	m.exit = !reduce && !hidden && motion.Enabled(setting, motion.TabClose)
+	m.exit = !reduce && !hidden && !resized && motion.Enabled(setting, motion.TabClose)
 
 	if m.run != nil {
-		cut := hidden || reduce || !motion.Enabled(setting, m.run.kind)
+		cut := hidden || resized || reduce || !motion.Enabled(setting, m.run.kind)
 		switch {
 		case cut:
 			m.generation++
@@ -424,7 +449,7 @@ func (m *quakeStripMotion) beginFrame(c *ui.Context, s *State) {
 	m.lastSeq = event.Seq
 	switch event.Kind {
 	case motion.TabOpen, motion.TabClose, motion.TabReorder:
-		warped := first || hidden || wasHidden || reduce ||
+		warped := first || hidden || wasHidden || resized || reduce ||
 			!motion.Enabled(setting, event.Kind)
 		if warped {
 			if m.run != nil || event.Kind == motion.TabClose {

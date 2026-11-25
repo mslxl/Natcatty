@@ -1965,6 +1965,24 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
+	// A cross-Tab drop activates the target Tab, but it is one Pane open, not
+	// a Tab switch: the whole body must not slide in, and the source close is
+	// already off screen. SourceTabID tells each view to enter only the moved
+	// Pane, at its final box, without making the target's other Panes room.
+	// A magnified target inserts the Pane hidden behind its zoom, so it plays
+	// no Pane event at all; the body warp still ends a run the layout change
+	// interrupted.
+	if target.Magnified == "" {
+		s.recordMotion(motion.Event{
+			Kind:        motion.PaneOpen,
+			TabID:       target.ID,
+			SourceTabID: source.ID,
+			PaneID:      sourcePaneID,
+			TargetID:    targetPaneID,
+			At:          time.Now(),
+		})
+	}
+	s.recordBodyWarp()
 	s.save()
 	s.RequestRedraw()
 	return true

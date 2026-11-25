@@ -310,3 +310,75 @@ func TestQuakeLastTabCloseLeavesTheEmptyPanel(t *testing.T) {
 		t.Fatalf("the closed Tab's terminal stayed on the empty Panel: %v", tester.Texts())
 	}
 }
+
+// TestQuakeWindowResizeWarpsTheBarAndBody reflows the Panel mid-open. The
+// resize is outside any Tab event: the bar and body runs are cut on that
+// frame and ask for no further animation frame, and the next event still
+// animates normally.
+func TestQuakeWindowResizeWarpsTheBarAndBody(t *testing.T) {
+	setting := standardMotion()
+	fixture := newViewFixture(t, WithMotion(func() domainpreferences.Motion { return setting }))
+	state := fixture.state
+	if err := state.Activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	strip := &quakeStripMotion{}
+	body := &quakeBodyMotion{}
+	tester := ui.NewTester(motionPanel(state, strip, body), 800, 400)
+	tester.SetLocale("en")
+	tester.Frame()
+	if strip.animationFrames != 0 || body.animationFrames != 0 {
+		t.Fatalf("the first frame animated: strip %d body %d",
+			strip.animationFrames, body.animationFrames)
+	}
+
+	if err := state.AddLocalTab(); err != nil {
+		t.Fatalf("AddLocalTab: %v", err)
+	}
+	tester.Frame()
+	if strip.run == nil {
+		t.Fatalf("the open did not start a strip run")
+	}
+	if body.phase == quakeBodyIdle {
+		t.Fatalf("the open did not start a body run")
+	}
+	stripFrames := strip.animationFrames
+	bodyFrames := body.animationFrames
+	stripGen := strip.generation
+	bodyGen := body.gen
+
+	tester.SetSize(700, 300)
+	if strip.run != nil || strip.animate {
+		t.Fatalf("the strip run survived the resize: run %+v animate %v", strip.run, strip.animate)
+	}
+	if strip.animationFrames != stripFrames {
+		t.Fatalf("the resize frame asked for %d strip frames", strip.animationFrames-stripFrames)
+	}
+	if strip.generation == stripGen {
+		t.Fatalf("the resize did not cut the strip run by generation")
+	}
+	if body.phase != quakeBodyIdle {
+		t.Fatalf("the body run survived the resize: phase %v", body.phase)
+	}
+	if body.animationFrames != bodyFrames {
+		t.Fatalf("the resize frame asked for %d body frames", body.animationFrames-bodyFrames)
+	}
+	if body.gen == bodyGen {
+		t.Fatalf("the resize did not cut the body run by generation")
+	}
+	if !tester.HasText("surface-2") {
+		t.Fatalf("the resized Panel lost its final body: %v", tester.Texts())
+	}
+
+	// The cut is one-shot: the next event animates again.
+	if err := state.AddLocalTab(); err != nil {
+		t.Fatalf("AddLocalTab: %v", err)
+	}
+	tester.Frame()
+	if strip.run == nil {
+		t.Fatalf("the strip stopped animating after the resize")
+	}
+	if body.phase == quakeBodyIdle {
+		t.Fatalf("the body stopped animating after the resize")
+	}
+}

@@ -201,19 +201,19 @@ func newWorkspaceBodyMotion(mode paneMotionMode) *workspaceBodyMotion {
 
 // tick advances the body run before the frame is built. The event frame
 // already built the outgoing body; this frame becomes the incoming one, and
-// the run lasts until its longest part ends. A hidden window, Reduce Motion,
-// or a setting switched off mid-run warps without asking for more frames.
-// paneMotionPending is a Pane event consumed on this same frame that will
-// animate; paneMotionActive is a Pane transition already carried by MyGo. An
-// instant warp would rest either transition too, so the body ends without one
-// (the one-switch rule).
+// the run lasts until its longest part ends. A hidden or resized window,
+// Reduce Motion, or a setting switched off mid-run warps without asking for
+// more frames. paneMotionPending is a Pane event consumed on this same frame
+// that will animate; paneMotionActive is a Pane transition already carried by
+// MyGo. An instant warp would rest either transition too, so the body ends
+// without one (the one-switch rule).
 //
 // A body warp signal is consumed before anything else: a layout change with no
 // motion event (a batch Tab close) makes this frame final, and a run that was
 // playing must not keep animating. While the body rests the signal is a
 // no-op; only its sequence advances.
 func (b *workspaceBodyMotion) tick(c *ui.Context, s *state.State, setting domainpreferences.Motion,
-	hidden, paneMotionPending, paneMotionActive, otherClose bool) {
+	hidden, resized, paneMotionPending, paneMotionActive, otherClose bool) {
 	if b == nil {
 		return
 	}
@@ -245,7 +245,9 @@ func (b *workspaceBodyMotion) tick(c *ui.Context, s *state.State, setting domain
 		// animation frame here would only schedule a repaint the warp discards.
 		return
 	}
-	if hidden {
+	if hidden || resized {
+		// A hidden window shows nothing of the run; a resize has reflowed the
+		// body it was moving. Both make this frame final (ticket 08).
 		b.warp(c)
 		return
 	}

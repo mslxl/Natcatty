@@ -312,12 +312,14 @@ func TestBatchTabCloseRaisesTheBodyWarpSignal(t *testing.T) {
 
 // TestCrossTabPaneMoveRecordsNoTabSwitch checks that moving a Pane into
 // another Tab activates that Tab for ticket 18's Pane open but does not play
-// a Tab switch over it.
+// a Tab switch over it. The PaneOpen names the source Tab so a view never
+// ghosts the source position or makes the target's other Panes room.
 func TestCrossTabPaneMoveRecordsNoTabSwitch(t *testing.T) {
 	g := newWorkspaceGraph(t)
 	ids := mustTab(t, g, 2)
 	g.state.SelectTab(0)
 	before := mustEvent(t, g.state)
+	warpBefore := g.state.BodyWarpSeq()
 	pane := panesOf(t, g.state, 0)[0]
 	target := panesOf(t, g.state, 1)[0]
 	if !g.state.MovePane(ids[0], pane, ids[1], target, domainworkspace.SideRight) {
@@ -332,11 +334,61 @@ func TestCrossTabPaneMoveRecordsNoTabSwitch(t *testing.T) {
 		t.Fatalf("the active Tab after the move = %q, want the target %q", id, ids[1])
 	}
 	after := mustEvent(t, g.state)
-	if after.Seq != before.Seq && after.Kind == motion.TabSwitch {
+	if after.Kind == motion.TabSwitch {
 		t.Fatalf("a cross-Tab pane move recorded a TabSwitch: %+v", after)
 	}
-	if after.Seq != before.Seq && after.Kind != motion.PaneOpen && after.Kind != motion.PaneReorder {
-		t.Fatalf("a cross-Tab pane move recorded %+v, want the target Pane's own event", after)
+	if after.Kind != motion.PaneOpen {
+		t.Fatalf("a cross-Tab pane move recorded %+v, want one PaneOpen", after)
+	}
+	if after.TabID != ids[1] || after.SourceTabID != ids[0] || after.PaneID != pane || after.TargetID != target {
+		t.Fatalf("the cross-Tab PaneOpen = %+v, want target Tab %q, source Tab %q, Pane %q beside %q",
+			after, ids[1], ids[0], pane, target)
+	}
+	if after.Seq == before.Seq {
+		t.Fatalf("the cross-Tab move did not record a new sequence")
+	}
+	if got := g.state.BodyWarpSeq(); got == warpBefore {
+		t.Fatalf("the cross-Tab move did not raise the body warp signal")
+	}
+	if focused, _ := g.state.FocusedPaneID(0); focused != pane {
+		t.Fatalf("focus after the cross-Tab move = %q, want the moved Pane %q", focused, pane)
+	}
+
+	// A magnified target inserts the Pane hidden behind its zoom. That is not
+	// a Pane open a view could draw, so the move records no Pane event; the
+	// body warp signal still ends a run the layout change interrupted.
+	g = newWorkspaceGraph(t)
+	ids = mustTab(t, g, 2)
+	if err := g.state.SplitRight(); err != nil {
+		t.Fatalf("SplitRight: %v", err)
+	}
+	zoom, _ := g.state.FocusedPaneID(1)
+	if !g.state.SetMagnifiedPane(1, zoom) {
+		t.Fatalf("SetMagnifiedPane(%q) failed", zoom)
+	}
+	g.state.SelectTab(0)
+	before = mustEvent(t, g.state)
+	warpBefore = g.state.BodyWarpSeq()
+	pane = panesOf(t, g.state, 0)[0]
+	if !g.state.MovePane(ids[0], pane, ids[1], zoom, domainworkspace.SideRight) {
+		t.Fatalf("MovePane onto a magnified Tab failed")
+	}
+	after = mustEvent(t, g.state)
+	if after.Seq != before.Seq || after.Kind != motion.TabSwitch {
+		t.Fatalf("a move into a magnified Tab recorded %+v, want no new motion event", after)
+	}
+	if got := g.state.BodyWarpSeq(); got == warpBefore {
+		t.Fatalf("the move into a magnified Tab did not raise the body warp signal")
+	}
+	active := g.state.ActiveTab()
+	if id, ok := g.state.TabID(active); !ok || id != ids[1] {
+		t.Fatalf("the active Tab after the move = %q, want the magnified target %q", id, ids[1])
+	}
+	if got := g.state.MagnifiedPaneID(active); got != zoom {
+		t.Fatalf("the magnified Tab lost its zoom: %q, want %q", got, zoom)
+	}
+	if focused, _ := g.state.FocusedPaneID(active); focused != zoom {
+		t.Fatalf("focus in the magnified Tab = %q, want the zoomed Pane %q", focused, zoom)
 	}
 }
 

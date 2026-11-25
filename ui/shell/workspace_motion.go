@@ -37,6 +37,16 @@ type paneMotionMode struct {
 	overlayClose   bool
 	overlayReorder bool
 	labels         bool
+	// loneNoHeader marks a view that hides a lone Pane's header (Follow, a
+	// detached window's Pane). A split shows the header, so the final-rect
+	// math must add or remove that row when the split appears or collapses;
+	// otherwise the Pinned grid is one header off and the Pane resizes twice.
+	loneNoHeader bool
+	// loneHeaderStatus marks a view whose lone Pane also draws the active
+	// Tab's unresolved Session status in that header (Follow). A detached
+	// window leaves it false: its ref carries no status, so only a Pending
+	// Pane keeps the row.
+	loneHeaderStatus bool
 	// stripReveal, if set, is the work Tab strip's reveal the test renders
 	// with, so a test can read the strip runtime's run, generation and
 	// previous-frame boxes. A window always leaves it nil and builds its own.
@@ -202,6 +212,12 @@ type workspacePaneMotion struct {
 	// animationFrames counts the frames the runtime asked for while a run
 	// played. A warped event asks for none; tests assert it.
 	animationFrames int
+	// width and height are the window size the last frame was laid out at. A
+	// resize reflows every Pane outside any motion event, so a run planned for
+	// the old geometry must warp and the frame that sees the change is final
+	// (ticket 08). The first frame has no previous size and is final anyway.
+	width, height float32
+	haveSize      bool
 	// effectiveMagnified is the Pane the next layout must show alone. It is
 	// the state's zoom except while a zoom run keeps the split (or the old
 	// magnified Pane) on screen behind its overlay. The view reads it instead
@@ -225,7 +241,7 @@ func newWorkspacePaneMotion(s *state.State, mode paneMotionMode) *workspacePaneM
 // rectangles, but no Tab body or ghost pool: the main window may be drawing
 // the same Tab, and the two must not release each other's retained Surfaces.
 func newActivePaneOnlyMotion(s *state.State) *workspacePaneMotion {
-	wm := newWorkspacePaneMotion(s, paneMotionMode{})
+	wm := newWorkspacePaneMotion(s, paneMotionMode{loneNoHeader: true, loneHeaderStatus: true})
 	wm.body = nil
 	wm.ownsGhosts = false
 	wm.tab = &paneMotionTabSource{
@@ -246,7 +262,7 @@ func newActivePaneOnlyMotion(s *state.State) *workspacePaneMotion {
 // active Tab is not this window's to animate. A detached Tab has no Tab strip
 // and no Tab events.
 func newDetachedPaneMotion(s *state.State, tabID model.TabID) *workspacePaneMotion {
-	wm := newWorkspacePaneMotion(s, paneMotionMode{})
+	wm := newWorkspacePaneMotion(s, paneMotionMode{loneNoHeader: true})
 	wm.body = nil
 	wm.ownsGhosts = false
 	wm.tab = &paneMotionTabSource{
@@ -331,6 +347,17 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	hidden := windowHidden || skipped
 	wasHidden := wm.windowHidden
 	wm.windowHidden = windowHidden
+	// A window resize reflows every Pane outside any motion event. Like a
+	// hide, it makes this frame final: a run planned for the old size warps,
+	// and an event first seen on this frame animates nothing. Every Pane's own
+	// layout at the new size delivers its one resize instead of a pinned grid
+	// from the old geometry (ticket 08, ADR 0026).
+	width, height := c.Size()
+	resized := wm.haveSize && (width != wm.width || height != wm.height)
+	if width > 0 && height > 0 {
+		wm.width, wm.height = width, height
+		wm.haveSize = true
+	}
 	setting := s.Motion()
 	event, ok := s.MotionEvent()
 	unseen := ok && wm.controller.Unseen(event.Seq)
@@ -339,7 +366,7 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	// rest that native Pane transition while the Pane's switch is still on;
 	// the body waits it out instead (the one-switch rule).
 	paneMotionPending := wm.body != nil &&
-		unseen && wm.paneMotionUsesMyGo(c, setting, event, firstFrame, hidden, wasHidden)
+		unseen && wm.paneMotionUsesMyGo(c, setting, event, firstFrame, hidden || resized, wasHidden)
 	// A Pane transition MyGo is already carrying also keeps a body warp from
 	// using DisableAnimations on this frame, even when the newest layout change
 	// records no event at all (a batch Tab close): the Pane run must keep
@@ -352,7 +379,7 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	// window, an off switch, Reduce Motion, or a batch close with no event ends
 	// it without asking for another frame.
 	if wm.body != nil {
-		wm.body.tick(c, s, setting, hidden, paneMotionPending, paneMotionActive, otherClose)
+		wm.body.tick(c, s, setting, hidden, resized, paneMotionPending, paneMotionActive, otherClose)
 	}
 
 	activeID, activeOK := wm.tabID()
@@ -382,9 +409,10 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	} else if wm.run != nil && !motion.Enabled(setting, wm.run.kind) {
 		wm.finish()
 	}
-	if wm.run != nil && hidden {
-		// Nothing of the window shows while hidden; a run that outlives the
-		// hide is over before it is seen again.
+	if wm.run != nil && (hidden || resized) {
+		// Nothing of the window shows while hidden, and a resize has reflowed
+		// every box: a run that outlives either is over before it is seen
+		// again (ticket 08).
 		wm.finish()
 	}
 
@@ -417,7 +445,8 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 		if wm.ownsGhosts {
 			s.ReleasePaneGhosts()
 		}
-		visible := !firstFrame && !hidden && !wasHidden && !c.Preferences().ReduceMotion
+		visible := !firstFrame && !hidden && !wasHidden && !resized &&
+			!c.Preferences().ReduceMotion
 		wm.body.consume(c, s, event, setting, visible, paneMotionPending)
 		return
 	}
@@ -448,11 +477,11 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	}
 
 	visible := setting.Enabled && !c.Preferences().ReduceMotion &&
-		!firstFrame && !hidden && !wasHidden
-	// Only a visible view has the previous frame's boxes on screen; a hidden
-	// or first frame must not pin a grid from geometry it never showed. The
-	// final layout sizes each Pane once instead.
-	pin := !hidden && !wasHidden && !firstFrame
+		!firstFrame && !hidden && !wasHidden && !resized
+	// Only a visible view has the previous frame's boxes on screen; a hidden,
+	// resized, or first frame must not pin a grid from geometry it never
+	// showed at this size. The final layout sizes each Pane once instead.
+	pin := !hidden && !wasHidden && !firstFrame && !resized
 	switch event.Kind {
 	case motion.PaneOpen:
 		animate := visible && setting.PaneOpen
@@ -615,15 +644,19 @@ func (wm *workspacePaneMotion) visualInFlight(prev *paneMotionRun, now time.Time
 // report would lag.
 func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State,
 	event motion.Event, setting domainpreferences.Motion, animate, pin bool, now time.Time) {
+	if event.SourceTabID != "" {
+		wm.planCrossTab(c, s, event, setting, animate, pin, now)
+		return
+	}
 	root, _, ok := wm.tabTree()
 	if !ok || root == nil {
 		wm.finish()
 		return
 	}
 	targetRects, targetOK := wm.rects[event.TargetID]
-	frameTop, frameRight, frameBottom, frameLeft := kit.PaneFrameInset()
+	chrome := wm.chrome(c, s)
 	final := paneFinalRects(root, wm.region, wm.rects, c.Theme().Space(10), targetRects,
-		!root.IsPane(), frameTop, frameRight, frameBottom, frameLeft)
+		!root.IsPane(), chrome)
 	targetFinal, haveTarget := final[event.TargetID]
 	newFinal, haveNew := final[event.PaneID]
 	if !targetOK || !targetRects.Valid() || wm.region.W <= 0 || wm.region.H <= 0 || !haveTarget || !haveNew {
@@ -653,7 +686,7 @@ func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State,
 		// the same tree geometry the zoom used.
 		single := domainworkspace.NewPaneNode(event.TargetID)
 		full := paneFinalRects(single, wm.region, wm.rects, c.Theme().Space(10), targetRects,
-			!root.IsPane(), frameTop, frameRight, frameBottom, frameLeft)
+			!root.IsPane(), chrome)
 		fullOld, ok := full[event.TargetID]
 		if !ok || fullOld.Column.W <= 0 || fullOld.Column.H <= 0 {
 			animate = false
@@ -747,6 +780,69 @@ func (wm *workspacePaneMotion) plan(c *ui.Context, s *state.State,
 	c.AnimationFrame()
 }
 
+// planCrossTab turns a cross-Tab Pane drop into the one open it plays. The
+// target Tab became active in the same change, so the source position is off
+// screen and must not be ghosted, and the target Tab's other Panes had no
+// previous frame in this view, so they cannot make room. Only the moved Pane
+// enters, at its final box and already at its final content: the open style
+// animates a copy of the Pane the layout has already placed (ticket 08).
+func (wm *workspacePaneMotion) planCrossTab(c *ui.Context, s *state.State,
+	event motion.Event, setting domainpreferences.Motion, animate, pin bool, now time.Time) {
+	root, _, ok := wm.tabTree()
+	if !ok || root == nil || wm.region.W <= 0 || wm.region.H <= 0 {
+		wm.finish()
+		return
+	}
+	// The moved Pane's source box is the only geometry this view recorded for
+	// the new Tab. Its chrome is what every Pane at this window size shows, so
+	// it derives each final body; the target's slots come from its tree.
+	source, haveSource := wm.rects[event.PaneID]
+	chrome := wm.chrome(c, s)
+	final := paneFinalRects(root, wm.region, nil, c.Theme().Space(10), source,
+		!root.IsPane(), chrome)
+	entryFinal, haveEntry := final[event.PaneID]
+	_, haveTarget := final[event.TargetID]
+	if !haveSource || !source.Valid() || !haveEntry || event.TargetID == "" || !haveTarget {
+		// The moved Pane or the Pane it was dropped beside is not in the tree
+		// this event names (either was closed or detached before the frame):
+		// never animate a stale target. The target Tab had no previous frame in
+		// this view, so only its final boxes can prove it is still there.
+		animate = false
+	}
+	if !animate {
+		wm.finish()
+		if pin {
+			wm.pinPanes([]model.PaneID{event.PaneID}, final, event.PaneID)
+		}
+		return
+	}
+	// Latest event wins. Nothing of the previous run continues: every visual
+	// it owned belonged to the source Tab, which is no longer on screen.
+	wm.finish()
+	run := &paneMotionRun{
+		kind:   motion.PaneOpen,
+		tabID:  event.TabID,
+		seq:    event.Seq,
+		target: event.PaneID,
+		final:  final,
+		pins:   map[model.PaneID]state.ViewportMotion{},
+	}
+	run.anim = &motion.Animation{
+		Started:  now,
+		Duration: motion.ScaleMotion(motion.BaseDuration(motion.PaneOpen), setting.Speed),
+		Visuals: []motion.Visual{{
+			Pane: event.PaneID,
+			Box:  entryFinal.Column, To: entryFinal.Column, Content: entryFinal.Column,
+			Kind: motion.Enter, Style: setting.OpenStyle,
+			FromOpacity: 0, ToOpacity: 1,
+		}},
+	}
+	wm.run = run
+	wm.pinPanes([]model.PaneID{event.PaneID}, final, event.PaneID)
+	wm.animationFrames++
+	c.AnimationFrame()
+}
+
 // planReorder turns one PaneReorder into a same-Tab move or a zoom, or
 // warps it. The three parts of a move have independent switches; a zoom has
 // only the PaneReorder spring.
@@ -773,9 +869,9 @@ func (wm *workspacePaneMotion) planMove(c *ui.Context, s *state.State,
 	}
 	moved := event.PaneID
 	old, haveOld := wm.rects[moved]
-	frameTop, frameRight, frameBottom, frameLeft := kit.PaneFrameInset()
+	chrome := wm.chrome(c, s)
 	final := paneFinalRects(root, wm.region, wm.rects, c.Theme().Space(10), old,
-		!root.IsPane(), frameTop, frameRight, frameBottom, frameLeft)
+		!root.IsPane(), chrome)
 	end, haveEnd := final[moved]
 	closeOn := visible && setting.PaneClose
 	openOn := visible && setting.PaneOpen
@@ -973,7 +1069,7 @@ func (wm *workspacePaneMotion) planZoom(c *ui.Context, s *state.State,
 		return
 	}
 	split := !root.IsPane()
-	frameTop, frameRight, frameBottom, frameLeft := kit.PaneFrameInset()
+	chrome := wm.chrome(c, s)
 	var final map[model.PaneID]motion.PaneRects
 	var end motion.PaneRects
 	render := zoomRenderState
@@ -984,7 +1080,7 @@ func (wm *workspacePaneMotion) planZoom(c *ui.Context, s *state.State,
 		// single-Pane layout will after the run.
 		single := domainworkspace.NewPaneNode(to)
 		final = paneFinalRects(single, wm.region, wm.rects, c.Theme().Space(10), wm.rects[to],
-			split, frameTop, frameRight, frameBottom, frameLeft)
+			split, chrome)
 		var have bool
 		end, have = final[to]
 		if !have || end.Column.W <= 0 || end.Column.H <= 0 {
@@ -1004,7 +1100,7 @@ func (wm *workspacePaneMotion) planZoom(c *ui.Context, s *state.State,
 		}
 	} else {
 		final = paneFinalRects(root, wm.region, wm.rects, c.Theme().Space(10), wm.rects[from],
-			split, frameTop, frameRight, frameBottom, frameLeft)
+			split, chrome)
 		var have bool
 		end, have = final[from]
 		if !have || end.Column.W <= 0 || end.Column.H <= 0 {
@@ -1241,10 +1337,10 @@ func (wm *workspacePaneMotion) planClose(c *ui.Context, s *state.State,
 	}
 	ghostHandle, haveGhost := s.TakePaneGhost(event.PaneID)
 	closeRects, hadClosing := wm.rects[event.PaneID]
-	frameTop, frameRight, frameBottom, frameLeft := kit.PaneFrameInset()
+	chrome := wm.chrome(c, s)
 	split := !root.IsPane()
 	final := paneFinalRects(root, wm.region, wm.rects, c.Theme().Space(10), closeRects,
-		split, frameTop, frameRight, frameBottom, frameLeft)
+		split, chrome)
 	if !hadClosing || !closeRects.Valid() || wm.region.W <= 0 || wm.region.H <= 0 {
 		animate = false
 	}
@@ -1666,6 +1762,12 @@ func (wm *workspacePaneMotion) paneMotionUsesMyGo(c *ui.Context, setting domainp
 	}
 	switch event.Kind {
 	case motion.PaneOpen:
+		if event.SourceTabID != "" {
+			// A cross-Tab open enters through the overlay: the moved Pane's
+			// element is new in the target Tab and has no previous box MyGo
+			// could match across the body change.
+			return false
+		}
 		// The native open route is test-only; production overlays it.
 		return wm.mode.native && motion.Enabled(setting, motion.PaneOpen)
 	case motion.PaneClose:
@@ -1948,17 +2050,70 @@ func paneMotionBody(c *ui.Context, m locales.Messages, t *ui.Theme, info state.P
 	}
 }
 
+// paneChrome is the fixed chrome this window's style adds around a Pane's
+// body: the PaneFrame insets a split draws, and the header row a split shows.
+// A view that hides a lone Pane's header sets hideLoneHeader, so the row
+// joins the inset when a split appears and leaves it when the split collapses.
+type paneChrome struct {
+	top, right, bottom, left float32
+	loneHeader               float32
+	hideLoneHeader           bool
+	// loneHeaderShown reports that the view still draws Pane id's header after
+	// a split collapses around it. nil means no lone Pane draws one, which is
+	// the base chrome's behavior; paneChromeFor never sets it.
+	loneHeaderShown func(model.PaneID) bool
+}
+
+// paneChromeFor reads the chrome this view draws. loneHeader is the same
+// BarPane row paneHeader builds.
+func paneChromeFor(c *ui.Context, mode paneMotionMode) paneChrome {
+	top, right, bottom, left := kit.PaneFrameInset()
+	return paneChrome{
+		top: top, right: right, bottom: bottom, left: left,
+		loneHeader:     kit.M(c).Bar.Pane,
+		hideLoneHeader: mode.loneNoHeader,
+	}
+}
+
+// chrome is the chrome a plan call must predict. A view that hides a lone
+// Pane's header also reports which Pane keeps that row when the split
+// collapses: a Pending Pane or a focused Pane with an unresolved Session
+// status draws it, exactly as paneHeader does. The predicate reads this
+// view's own Tab source, so a second renderer never borrows the main window's
+// Pane state.
+func (wm *workspacePaneMotion) chrome(c *ui.Context, s *state.State) paneChrome {
+	chrome := paneChromeFor(c, wm.mode)
+	if !wm.mode.loneNoHeader {
+		return chrome
+	}
+	var status paneStatus
+	if wm.mode.loneHeaderStatus {
+		// Follow draws the active Tab's own Session status in a lone header.
+		// A detached window never sets its ref's status, so it reports Pending
+		// alone.
+		status = activeStatus(s, locales.In(c.Locale()), c.Theme())
+	}
+	chrome.loneHeaderShown = func(id model.PaneID) bool {
+		info, ok := wm.paneInfo(id)
+		if !ok {
+			return false
+		}
+		return loneHeaderShown(info, status)
+	}
+	return chrome
+}
+
 // paneFinalRects returns each leaf Pane's final boxes for the Tab tree in
 // region. Slots follow MyGo's SplitPercent: a one-DIP divider, the rest shared
 // by the ratio, with each side keeping the split's minimum pane. A Pane's
 // chrome insets come from its own last boxes; a Pane with no previous frame
 // uses the split target's, which is the Pane it replaces. A Pane that gains a
-// split's PaneFrame adds that border, which its previous single-Pane boxes did
-// not include.
+// split's PaneFrame and header adds them, which its previous single-Pane boxes
+// did not include; a view that hides a lone Pane's header reverses that when
+// the split collapses.
 func paneFinalRects(root *domainworkspace.Node, region ui.Rect,
 	rects map[model.PaneID]motion.PaneRects, minPane float32,
-	fallback motion.PaneRects, split bool,
-	frameTop, frameRight, frameBottom, frameLeft float32) map[model.PaneID]motion.PaneRects {
+	fallback motion.PaneRects, split bool, chrome paneChrome) map[model.PaneID]motion.PaneRects {
 	final := map[model.PaneID]motion.PaneRects{}
 	if root == nil || region.W <= 0 || region.H <= 0 {
 		return final
@@ -1986,17 +2141,28 @@ func paneFinalRects(root *domainworkspace.Node, region ui.Rect,
 		switch {
 		case split && !r.Framed:
 			// The Pane gains a split's PaneFrame: its border joins the inset.
-			header += frameTop
-			footer += frameBottom
-			frameLeftInset += frameLeft
-			frameRightInset += frameRight
+			// A view that hides a lone Pane's header gains that row too.
+			if chrome.hideLoneHeader && header == 0 {
+				header += chrome.loneHeader
+			}
+			header += chrome.top
+			footer += chrome.bottom
+			frameLeftInset += chrome.left
+			frameRightInset += chrome.right
 		case !split && r.Framed:
 			// The split collapses around this Pane: the PaneFrame goes, so
-			// its border leaves the inset and the body grows by it.
-			header -= frameTop
-			footer -= frameBottom
-			frameLeftInset -= frameLeft
-			frameRightInset -= frameRight
+			// its border leaves the inset and the body grows by it. A view
+			// that hides a lone Pane's header loses that row as well, unless
+			// the collapsed Pane still draws one (Pending, or a focused Pane
+			// with an unresolved status), in which case the row stays.
+			header -= chrome.top
+			footer -= chrome.bottom
+			frameLeftInset -= chrome.left
+			frameRightInset -= chrome.right
+			if chrome.hideLoneHeader &&
+				(chrome.loneHeaderShown == nil || !chrome.loneHeaderShown(id)) {
+				header -= chrome.loneHeader
+			}
 			header = max(header, 0)
 			footer = max(footer, 0)
 			frameLeftInset = max(frameLeftInset, 0)

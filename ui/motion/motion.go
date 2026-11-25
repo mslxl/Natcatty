@@ -61,13 +61,19 @@ func (k Kind) String() string {
 // Event is one layout change a view may animate. Seq is monotonic across the
 // state, so a view consumes only the latest event it has not seen; multiple
 // events between two frames collapse to the latest. TargetID is a Pane ID;
-// TargetTabID is the target of a Tab close, switch, or reorder.
+// TargetTabID is the target of a Tab close, switch, or reorder. SourceTabID is
+// the Tab a cross-Tab Pane drag took the Pane from.
 type Event struct {
 	Kind        Kind
 	TabID       model.TabID
 	TargetTabID model.TabID
 	PaneID      model.PaneID
 	TargetID    model.PaneID
+	// SourceTabID is set on the PaneOpen a cross-Tab drag records. The
+	// source Tab left the screen in the same change, so its close is not
+	// drawn and the target Tab's other Panes make no room: only the moved
+	// Pane enters, at its final box (ticket 08).
+	SourceTabID model.TabID
 	// Direction is the side or order a Tab/Pane moves towards: +1 for a
 	// target after the source, -1 before it. For PaneOpen it is +1 when the
 	// new Pane is the split's second child and -1 when it is the first.
