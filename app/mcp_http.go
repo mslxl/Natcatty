@@ -1,3 +1,5 @@
+//go:build !ios && !android
+
 // Optional Streamable HTTP endpoint for External MCP. The endpoint is off
 // until preferences enable it; when it is on, every request is authenticated
 // with the same discovery token the loopback JSON-RPC transport publishes and

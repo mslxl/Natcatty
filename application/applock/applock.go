@@ -31,6 +31,9 @@ const (
 	ReasonIdle Reason = "idle"
 	// ReasonManual is the lock the user asks for.
 	ReasonManual Reason = "manual"
+	// ReasonBackground is the lock applied when the app leaves the foreground,
+	// so the system's snapshot of it shows the lock screen instead of content.
+	ReasonBackground Reason = "background"
 )
 
 // Errors the UI maps to localized messages.

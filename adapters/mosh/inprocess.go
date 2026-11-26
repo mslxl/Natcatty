@@ -504,6 +504,16 @@ type inProcessTransport struct {
 
 func (t *inProcessTransport) Read(p []byte) (int, error) { return t.queue.Read(p) }
 
+// SetPredictionDisplay applies a changed Mosh prediction choice to a running
+// transport. The Session service calls it when the shared Transport setting
+// changes, so an open Session follows the same rule as one opened later.
+func (t *inProcessTransport) SetPredictionDisplay(mode moshmodel.PredictionDisplay) {
+	if t == nil || t.renderer == nil {
+		return
+	}
+	t.renderer.setPredictionDisplay(mode)
+}
+
 func (t *inProcessTransport) Write(p []byte) (int, error) {
 	forwarded := t.renderer.translateInput(p)
 	t.sendMu.Lock()

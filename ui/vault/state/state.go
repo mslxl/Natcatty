@@ -944,6 +944,21 @@ func (s *State) inheritHostX11(host domainvault.Host) {
 	s.form.X11Inherited = true
 }
 
+// HostProxy returns a copy of the editor's inline Proxy transport, or nil when
+// the Host has none. The copy keeps an editor from changing the stored value
+// before Save, and the shared draft round-trips it verbatim when the user edits
+// another field.
+func (s *State) HostProxy() *domainvault.ProxyConfig {
+	return domainvault.CloneProxy(s.proxy)
+}
+
+// SetHostProxy replaces the editor's inline Proxy transport. A nil value
+// clears it; the explicit Profile reference and Direct choice are separate
+// form fields.
+func (s *State) SetHostProxy(proxy *domainvault.ProxyConfig) {
+	s.proxy = domainvault.CloneProxy(proxy)
+}
+
 // BeginDuplicate opens the Host editor with a copy of a listed Host. Identity,
 // the pinned flag, and every stored credential are dropped so Save creates a
 // second Host instead of overwriting the first; the label carries the
@@ -1270,32 +1285,53 @@ func (s *State) CancelEdit() {
 	s.redraw()
 }
 
+// SaveOutcome reports what one Save did. Saved is true once the Host record
+// was written; RefreshErr is the list refresh that follows a successful
+// write. Validation and write failures leave Saved false and the editor open
+// with its Problem, exactly as Save does on the desktop.
+type SaveOutcome struct {
+	Host       domainvault.Host
+	Saved      bool
+	RefreshErr error
+}
+
 // Save validates the form through the application service and persists the
 // Host. Validation, conflict, and storage failures are reported through
 // Problem; the editor stays open so the user can correct the input.
 func (s *State) Save() error {
+	_ = s.SaveWithOutcome()
+	return nil
+}
+
+// SaveWithOutcome is Save with the write and the list refresh separated. The
+// desktop closes only after both succeed. A surface that must close on a
+// successful write even when the refresh fails — the phone editor, which then
+// re-reads its own list and never connects — uses the flags instead of
+// guessing from Problem.
+func (s *State) SaveWithOutcome() SaveOutcome {
 	draft, problem := s.draft()
 	if problem != ProblemNone {
 		s.problem = problem
 		s.redraw()
-		return nil
+		return SaveOutcome{}
 	}
 
+	var host domainvault.Host
 	var err error
 	if s.form.ID == "" {
-		_, err = s.hosts.Create(context.Background(), draft)
+		host, err = s.hosts.Create(context.Background(), draft)
 	} else {
-		_, err = s.hosts.Update(context.Background(), s.form.ID, draft)
+		host, err = s.hosts.Update(context.Background(), s.form.ID, draft)
 	}
 	if err != nil {
 		s.problem = problemFor(err)
 		s.redraw()
-		return nil
+		return SaveOutcome{}
 	}
 
 	if err := s.load(); err != nil {
 		s.redraw()
-		return nil
+		return SaveOutcome{Host: host, Saved: true, RefreshErr: err}
 	}
 	s.editing = false
 	s.form = Form{}
@@ -1306,7 +1342,7 @@ func (s *State) Save() error {
 	s.algorithms = nil
 	s.problem = ProblemNone
 	s.redraw()
-	return nil
+	return SaveOutcome{Host: host, Saved: true}
 }
 
 // RequestDelete opens the confirmation for one Host.

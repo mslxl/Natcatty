@@ -3,8 +3,16 @@
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+  # The same MyGo release the third_party/mygo submodule pins. A submodule's
+  # contents are not part of a git flake's source, so the package takes the
+  # tree from this input and overlays it in place of the empty gitlink.
+  inputs.mygo = {
+    url = "github:egoist/mygo/v0.10.0";
+    flake = false;
+  };
+
   outputs =
-    { self, nixpkgs }:
+    { self, nixpkgs, mygo }:
     let
       systems = [
         "aarch64-darwin"
@@ -46,9 +54,22 @@
         buildGoModule {
           pname = "natcatty";
           version = "0.1.0";
-          src = ./.;
+          # The submodule is a gitlink here, not content: supply the pinned
+          # MyGo tree from the flake input and apply the same patches the
+          # checkout applies, so the package builds the phone host natcatty
+          # actually ships.
+          src = pkgs.runCommand "natcatty-src" { } ''
+            cp -R ${./.} $out
+            chmod -R u+w $out
+            rm -rf $out/third_party/mygo
+            cp -R ${mygo} $out/third_party/mygo
+            chmod -R u+w $out/third_party/mygo
+            for p in $out/patches/mygo/*.patch; do
+              patch -p1 -d $out/third_party/mygo < "$p"
+            done
+          '';
 
-          vendorHash = "sha256-ppz3enfI1XVqZLeWjktZTeUTKjfwcrQHyZX67E0NIFM=";
+          vendorHash = "sha256-MeeEImEnkj1jhivx+wpPj1OsqmcRXvYM1RTZNpmiIko=";
           subPackages = [ "." ];
           env.CGO_ENABLED = "0";
           ldflags = [
@@ -87,6 +108,43 @@
         let
           pkgs = import nixpkgs { inherit system; };
           go = goFor pkgs;
+
+          # The SDK licenses are accepted globally for this shell only; the
+          # default shell keeps unconfigured nixpkgs.
+          androidPkgs = import nixpkgs {
+            inherit system;
+            config = {
+              android_sdk.accept_license = true;
+              allowUnfree = true;
+            };
+          };
+
+          # A writable AVD home is resolved in the shell hook: the SDK itself
+          # comes from the nix store and is read-only, but AVDs must be created
+          # at runtime.
+
+          androidPackages = androidPkgs.androidenv.composeAndroidPackages {
+            platformVersions = [ "36" ];
+            # AGP 8.12, which MyGo's Gradle host uses, asks for Build-Tools
+            # 35.0.0 by default; keeping 37.0.0 as well leaves the newer
+            # tools available without changing what Gradle resolves.
+            buildToolsVersions = [ "35.0.0" "37.0.0" ];
+            # Emulator ABIs. `armeabi-v7a` is a Go/NDK target name, not an
+            # emulator image ABI, so only the emulator ABI is listed here.
+            abiVersions = [ "arm64-v8a" ];
+            systemImageTypes = [ "google_apis" ];
+            includeSystemImages = true;
+            includeEmulator = true;
+            # cgo builds for Android need the NDK. androidenv exposes it as
+            # `ndk-bundle` (which is why `androidPkgs.ndk` does not exist) and
+            # links it into the SDK as both `ndk/<version>` and `ndk-bundle`.
+            includeNDK = true;
+            extraLicenses = [
+              "android-sdk-license"
+              "android-sdk-preview-license"
+            ];
+          };
+          androidSdk = androidPackages.androidsdk;
         in
         {
           default = pkgs.mkShell {
@@ -96,6 +154,62 @@
               pkgs.just
             ];
             env.CGO_ENABLED = "0";
+          };
+
+          # iOS needs no packaged SDK: Xcode is the toolchain, and nix only
+          # supplies Go. DEVELOPER_DIR pins the Xcode the simulator tools must
+          # come from.
+          ios = pkgs.mkShell {
+            packages = [
+              go
+              pkgs.just
+            ];
+            env = {
+              CGO_ENABLED = "1";
+            };
+            shellHook = ''
+              # nixpkgs' xcbuild setup hook points DEVELOPER_DIR and SDKROOT at
+              # the packaged macOS SDK, which makes xcrun unable to find the
+              # iphonesimulator SDK. Phone work must use the host Xcode, so
+              # override both after the setup hook has run.
+              unset SDKROOT
+              export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+              echo "iOS dev shell — Xcode: $(xcodebuild -version 2>/dev/null | head -1)"
+              echo "boot a simulator: scripts/dev/ios-boot.sh   stop: scripts/dev/ios-stop.sh"
+            '';
+          };
+
+          # Android SDK, emulator and a system image come from nix so every
+          # machine gets the same toolchain. AVDs live outside the store.
+          android = pkgs.mkShell {
+            packages = [
+              go
+              pkgs.just
+              # MyGo's Gradle host asks for a Java 17 toolchain in every
+              # module (jvmToolchain(17)); Gradle matches that request by
+              # language version, so a newer JDK alone cannot satisfy it.
+              androidPkgs.jdk17
+              androidSdk
+            ];
+            env = {
+              CGO_ENABLED = "1";
+              ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
+              ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
+              # Point cgo at the NDK linked into the SDK above; the version is
+              # resolved from the same derivation, so it never drifts.
+              ANDROID_NDK_HOME = "${androidSdk}/libexec/android-sdk/ndk/${androidPackages.ndk-bundle.version}";
+              ANDROID_NDK_ROOT = "${androidSdk}/libexec/android-sdk/ndk/${androidPackages.ndk-bundle.version}";
+            };
+            shellHook = ''
+              # AVDs and avdmanager's config live in the checkout, not the
+              # read-only nix store, so resolve them from wherever the shell
+              # was entered.
+              export ANDROID_AVD_HOME="$PWD/.dev/avd"
+              export ANDROID_USER_HOME="$PWD/.dev/android-home"
+              mkdir -p "$ANDROID_AVD_HOME" "$ANDROID_USER_HOME"
+              echo "Android dev shell — $(adb version | head -1)"
+              echo "boot an emulator: scripts/dev/android-boot.sh   stop: scripts/dev/android-stop.sh"
+            '';
           };
         }
       );

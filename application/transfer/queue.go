@@ -35,6 +35,10 @@ type TaskSpec struct {
 	Move    bool
 	// Conflict is the policy to apply. Empty means ConflictStop.
 	Conflict ConflictPolicy
+	// Answers seeds per-source conflict decisions the caller already made, for
+	// example the phone's pre-enqueue check. They are stored on the durable
+	// row as targets, so a resume, restart, or re-bound source keeps them.
+	Answers map[string]ConflictPolicy
 	// BatchID groups the rows one user action created. Apply-to-all answers
 	// are scoped to a batch and a conflict type; an empty value is one row.
 	BatchID string
@@ -310,6 +314,25 @@ func (q *Queue) Enqueue(spec TaskSpec) (domainsftp.TaskID, error) {
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
+	for source, action := range spec.Answers {
+		switch action {
+		case ConflictReplace:
+			if task.ReplaceTargets == nil {
+				task.ReplaceTargets = map[string]bool{}
+			}
+			task.ReplaceTargets[source] = true
+		case ConflictSkip:
+			if task.SkipTargets == nil {
+				task.SkipTargets = map[string]bool{}
+			}
+			task.SkipTargets[source] = true
+		case ConflictDuplicate:
+			if task.DuplicateTargets == nil {
+				task.DuplicateTargets = map[string]bool{}
+			}
+			task.DuplicateTargets[source] = true
+		}
+	}
 	q.mu.Lock()
 	if err := q.reserveClaimsLocked(task.ID, spec.Dest, kind, claims); err != nil {
 		q.mu.Unlock()
@@ -543,8 +566,25 @@ func (q *Queue) Reattach(id domainsftp.TaskID, spec TaskSpec) error {
 		return domainsftp.ErrTaskReattachNotNeeded
 	}
 	copied := specCopy(spec)
+	oldSources := append([]string(nil), entry.task.Sources...)
 	entry.spec = &copied
-	entry.claims = queueClaims(copied)
+	// A restored row may be re-bound to a different source (the phone's
+	// re-selection after an evicted cache copy). The durable row must name the
+	// source the worker will actually read, or a second restart returns to the
+	// old path and the UI keeps prompting for a replacement.
+	remapSourceAnswers(&entry.task, oldSources, copied.Sources)
+	entry.task.Sources = append([]string(nil), copied.Sources...)
+	if sourcesChanged(oldSources, copied.Sources) && entry.task.DirectoryResumeCheckpoint != nil {
+		// The checkpoint names the old source paths; the next attempt must
+		// rebase its digest onto this request rather than discard the prefix.
+		entry.task.CheckpointRebase = true
+	}
+	// The old request owned destination names; the new request may own
+	// different ones. Release the old reservations and rebuild the set,
+	// including pinned duplicate targets, so Resume never blocks on a claim
+	// for a path this row no longer writes.
+	q.releaseReservationsLocked(id)
+	entry.claims = resumeClaims(entry)
 	entry.task.SkipUnchanged = copied.SkipUnchanged == nil || *copied.SkipUnchanged
 	if copied.BatchID != "" {
 		entry.task.BatchID = copied.BatchID
@@ -577,6 +617,160 @@ func (q *Queue) Reattach(id domainsftp.TaskID, spec TaskSpec) error {
 	q.persist()
 	q.pump()
 	return nil
+}
+
+// ReplaceSource rebinds a non-running Transfer to a new source filesystem and
+// source paths. It is how the phone continues a row whose system-provided
+// source copy was evicted: the original row, its target Host, directory
+// checkpoint, pinned targets, and conflict answers all stay, and only the
+// source side changes. The row becomes interrupted so Resume continues from
+// that state instead of replaying from the beginning. A completed or
+// cancelled row is refused; Re-select is not a resurrection of a finished
+// Transfer.
+func (q *Queue) ReplaceSource(id domainsftp.TaskID, source FileSystem, sources []string) error {
+	if q == nil {
+		return domainsftp.ErrTaskNotFound
+	}
+	if source == nil || len(sources) == 0 {
+		return domainsftp.ErrTaskUnavailable
+	}
+	q.mu.Lock()
+	entry := q.tasks[id]
+	if entry == nil {
+		q.mu.Unlock()
+		return domainsftp.ErrTaskNotFound
+	}
+	if entry.running || entry.task.Status == domainsftp.TaskCompleted ||
+		entry.task.Status == domainsftp.TaskCancelled {
+		q.mu.Unlock()
+		return domainsftp.ErrTaskNotRetryable
+	}
+	if entry.spec == nil {
+		// A row restored from a previous process has no live filesystem to
+		// replace; Reattach binds the whole request first.
+		q.mu.Unlock()
+		return domainsftp.ErrTaskUnavailable
+	}
+	oldSources := append([]string(nil), entry.task.Sources...)
+	changed := sourcesChanged(oldSources, sources)
+	entry.spec.Source = source
+	entry.spec.Sources = append([]string(nil), sources...)
+	remapSourceAnswers(&entry.task, oldSources, sources)
+	entry.task.Sources = append([]string(nil), sources...)
+	// A pending rebase is not cancelled by choosing the same replacement
+	// again: the checkpoint still names the original source, so discarding the
+	// marker would make the next verification reject the completed prefix.
+	entry.task.CheckpointRebase = entry.task.CheckpointRebase ||
+		(changed && entry.task.DirectoryResumeCheckpoint != nil)
+	// The row no longer writes the old source's destination names. Drop those
+	// reservations and rebuild from the replacement sources (plus any pinned
+	// duplicate names) so another transfer may take the old path and Resume
+	// does not collide with it.
+	q.releaseReservationsLocked(id)
+	entry.claims = resumeClaims(entry)
+	entry.task.Status = domainsftp.TaskInterrupted
+	entry.task.PauseRequested = false
+	entry.task.CancelRequested = false
+	entry.task.ReconnectRequired = false
+	entry.task.Error = ""
+	entry.task.Err = nil
+	entry.task.Speed = 0
+	entry.task.CurrentFile = ""
+	entry.task.Epoch++
+	entry.task.UpdatedAt = q.now()
+	snapshot := entry.task.Clone()
+	q.mu.Unlock()
+
+	q.emit(snapshot)
+	q.persist()
+	return nil
+}
+
+// remapSourceAnswers moves the per-source conflict decisions recorded for an
+// evicted source onto its replacement. Android's picker hands back a cached
+// copy whose path changes between sessions, so the decision the user already
+// made (overwrite, skip, rename) belongs to the task, not to the old path.
+// Sources are positionally paired; a multi-source task keeps every unchanged
+// source's answer. A source dropped by a shorter selection loses its answers
+// and pinned target too, so a later Resume cannot claim a path this request no
+// longer writes.
+//
+// Pinned targets follow the source unless they came from a Rename: a rename
+// name was derived from the old basename and must be recomputed, while an
+// ordinary known target (including a resumed merge root) is still valid and
+// keeps the row from re-asking a conflict it already resolved.
+func remapSourceAnswers(task *domainsftp.Task, oldSources, newSources []string) {
+	limit := len(oldSources)
+	if len(newSources) < limit {
+		limit = len(newSources)
+	}
+	for i := 0; i < limit; i++ {
+		from, to := oldSources[i], newSources[i]
+		if from == "" || to == "" || from == to {
+			continue
+		}
+		renamed := task.DuplicateTargets[from]
+		if task.ReplaceTargets[from] {
+			delete(task.ReplaceTargets, from)
+			task.ReplaceTargets[to] = true
+		}
+		if task.SkipTargets[from] {
+			delete(task.SkipTargets, from)
+			task.SkipTargets[to] = true
+		}
+		if renamed {
+			delete(task.DuplicateTargets, from)
+			task.DuplicateTargets[to] = true
+			delete(task.Targets, from)
+		} else if target, ok := task.Targets[from]; ok {
+			delete(task.Targets, from)
+			// A known target keeps its name only while the replacement keeps
+			// the source's basename. A different basename would pin the
+			// destination to a name derived from the old source, so the pin is
+			// recomputed just like a Rename-derived one.
+			if sourceBase(target) == sourceBase(to) {
+				task.Targets[to] = target
+			}
+		}
+	}
+	for i := len(newSources); i < len(oldSources); i++ {
+		dropSourceState(task, oldSources[i])
+	}
+}
+
+// dropSourceState removes every durable decision and pinned destination for a
+// source the new selection no longer contains.
+func dropSourceState(task *domainsftp.Task, source string) {
+	if source == "" {
+		return
+	}
+	delete(task.ReplaceTargets, source)
+	delete(task.SkipTargets, source)
+	delete(task.DuplicateTargets, source)
+	delete(task.Targets, source)
+}
+
+// sourcesChanged reports whether a re-selection names a different source set
+// in any position.
+// sourceBase returns a path's final element for either separator style.
+func sourceBase(p string) string {
+	trimmed := strings.TrimRight(p, `/\`)
+	if index := strings.LastIndexAny(trimmed, `/\`); index >= 0 {
+		return trimmed[index+1:]
+	}
+	return trimmed
+}
+
+func sourcesChanged(oldSources, newSources []string) bool {
+	if len(oldSources) != len(newSources) {
+		return true
+	}
+	for i := range oldSources {
+		if oldSources[i] != newSources[i] {
+			return true
+		}
+	}
+	return false
 }
 
 // HostReattach is the live side of one Host reconnect. Host names the saved
@@ -794,9 +988,11 @@ func (q *Queue) Retry(id domainsftp.TaskID) error {
 	// directory's checkpoint.
 	entry.task.DirectoryResumeCheckpoint = nil
 	entry.task.CheckpointBytesDone = 0
+	entry.task.CheckpointRebase = false
 	entry.task.Targets = nil
 	entry.task.ReplaceTargets = nil
 	entry.task.SkipTargets = nil
+	entry.task.DuplicateTargets = nil
 	entry.task.PendingConflict = nil
 	entry.task.Skipped = 0
 	entry.task.BytesDone = 0
@@ -849,9 +1045,11 @@ func (q *Queue) Cancel(id domainsftp.TaskID) error {
 		// the beginning.
 		entry.task.DirectoryResumeCheckpoint = nil
 		entry.task.CheckpointBytesDone = 0
+		entry.task.CheckpointRebase = false
 		entry.task.Targets = nil
 		entry.task.ReplaceTargets = nil
 		entry.task.SkipTargets = nil
+		entry.task.DuplicateTargets = nil
 		entry.task.PendingConflict = nil
 		entry.task.Skipped = 0
 		q.releaseReservationsLocked(id)
@@ -962,7 +1160,7 @@ func (q *Queue) run(ctx context.Context, id domainsftp.TaskID) {
 		// Re-read the durable resume state per attempt: an automatic retry
 		// after a transient failure continues from the files the previous
 		// attempt completed instead of replaying them.
-		checkpoint, targets, baseBytes := q.resumeState(id)
+		checkpoint, targets, baseBytes, rebase, planEntries := q.resumeState(id)
 		replaceTargets, skipTargets := q.attemptPolicies(id)
 		skipUnchanged := q.skipUnchanged(id)
 		progress := func(update Progress) {
@@ -971,21 +1169,23 @@ func (q *Queue) run(ctx context.Context, id domainsftp.TaskID) {
 		result, copyErr := q.service.Copy(ctx, CopyRequest{
 			// The durable Task ID seeds every staging file name, so a resumed
 			// attempt reuses the staging file an interrupted process left.
-			StageKey:       string(id),
-			Source:         spec.Source,
-			Dest:           spec.Dest,
-			Sources:        spec.Sources,
-			DestDir:        spec.DestDir,
-			Move:           spec.Move,
-			Kind:           spec.Kind,
-			Conflict:       spec.Conflict,
-			Progress:       progress,
-			Checkpoint:     checkpoint,
-			KnownTargets:   targets,
-			ReplaceTargets: replaceTargets,
-			SkipTargets:    skipTargets,
-			SkipUnchanged:  skipUnchanged,
-			Compressed:     spec.Compressed,
+			StageKey:              string(id),
+			Source:                spec.Source,
+			Dest:                  spec.Dest,
+			Sources:               spec.Sources,
+			DestDir:               spec.DestDir,
+			Move:                  spec.Move,
+			Kind:                  spec.Kind,
+			Conflict:              spec.Conflict,
+			Progress:              progress,
+			Checkpoint:            checkpoint,
+			RebaseCheckpoint:      rebase,
+			CheckpointPlanEntries: planEntries,
+			KnownTargets:          targets,
+			ReplaceTargets:        replaceTargets,
+			SkipTargets:           skipTargets,
+			SkipUnchanged:         skipUnchanged,
+			Compressed:            spec.Compressed,
 			OnConflict: func(conflict domainsftp.Conflict) ConflictResolution {
 				return q.waitConflict(ctx, id, conflict)
 			},
@@ -1034,12 +1234,12 @@ func (q *Queue) run(ctx context.Context, id domainsftp.TaskID) {
 
 // resumeState snapshots the checkpoint and pinned targets for one attempt.
 func (q *Queue) resumeState(id domainsftp.TaskID) (*domainsftp.DirectoryCheckpoint,
-	map[string]string, int64) {
+	map[string]string, int64, bool, int) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	entry := q.tasks[id]
 	if entry == nil {
-		return nil, nil, 0
+		return nil, nil, 0, false, 0
 	}
 	var checkpoint *domainsftp.DirectoryCheckpoint
 	if entry.task.DirectoryResumeCheckpoint != nil {
@@ -1053,7 +1253,8 @@ func (q *Queue) resumeState(id domainsftp.TaskID) (*domainsftp.DirectoryCheckpoi
 			targets[source] = target
 		}
 	}
-	return checkpoint, targets, entry.task.CheckpointBytesDone
+	return checkpoint, targets, entry.task.CheckpointBytesDone,
+		entry.task.CheckpointRebase, entry.task.FilesTotal
 }
 
 // attemptPolicies snapshots the per-source conflict answers and the
@@ -1130,6 +1331,22 @@ func (q *Queue) waitConflict(ctx context.Context, id domainsftp.TaskID,
 		q.mu.Unlock()
 		return ConflictResolution{Action: action}
 	}
+	// A decision the row already carries (seeded at enqueue or answered
+	// before an interruption) answers the same source again. This is what
+	// keeps a phone's pre-enqueue answers and a resumed row's decisions from
+	// re-prompting after a source is re-bound.
+	if entry.task.SkipTargets[conflict.SourcePath] {
+		q.mu.Unlock()
+		return ConflictResolution{Action: ConflictSkip}
+	}
+	if entry.task.ReplaceTargets[conflict.SourcePath] {
+		q.mu.Unlock()
+		return ConflictResolution{Action: ConflictReplace}
+	}
+	if entry.task.DuplicateTargets[conflict.SourcePath] {
+		q.mu.Unlock()
+		return ConflictResolution{Action: ConflictDuplicate}
+	}
 	conflict.ApplyToAllCount = q.applyToAllCountLocked(entry.task, conflict)
 	entry.task.Status = domainsftp.TaskAttention
 	entry.task.PendingConflict = &conflict
@@ -1166,6 +1383,12 @@ func (q *Queue) waitConflict(ctx context.Context, id domainsftp.TaskID,
 			entry.task.SkipTargets = map[string]bool{}
 		}
 		entry.task.SkipTargets[conflict.SourcePath] = true
+	}
+	if answer.Action == ConflictDuplicate && conflict.SourcePath != "" {
+		if entry.task.DuplicateTargets == nil {
+			entry.task.DuplicateTargets = map[string]bool{}
+		}
+		entry.task.DuplicateTargets[conflict.SourcePath] = true
 	}
 	if !entry.task.CancelRequested && !entry.task.PauseRequested && ctx.Err() == nil {
 		entry.task.Status = domainsftp.TaskTransferring
@@ -1303,9 +1526,11 @@ func (q *Queue) ResolveConflict(id domainsftp.TaskID, action ConflictPolicy, app
 			other.task.UpdatedAt = now
 			other.task.DirectoryResumeCheckpoint = nil
 			other.task.CheckpointBytesDone = 0
+			other.task.CheckpointRebase = false
 			other.task.Targets = nil
 			other.task.ReplaceTargets = nil
 			other.task.SkipTargets = nil
+			other.task.DuplicateTargets = nil
 			other.task.Skipped = 0
 			q.releaseReservationsLocked(other.task.ID)
 			snapshots = append(snapshots, other.task.Clone())
@@ -1586,9 +1811,11 @@ func (q *Queue) clearResumeState(id domainsftp.TaskID) {
 	}
 	entry.task.DirectoryResumeCheckpoint = nil
 	entry.task.CheckpointBytesDone = 0
+	entry.task.CheckpointRebase = false
 	entry.task.Targets = nil
 	entry.task.ReplaceTargets = nil
 	entry.task.SkipTargets = nil
+	entry.task.DuplicateTargets = nil
 	entry.task.FilesDone = 0
 	entry.task.BytesDone = 0
 	entry.task.CurrentFile = ""
@@ -1606,6 +1833,13 @@ func (q *Queue) recordProgress(id domainsftp.TaskID, update Progress, baseBytes 
 	}
 	now := q.now()
 	changedCheckpoint := false
+	rebasedNow := update.CheckpointRebased && entry.task.CheckpointRebase
+	if rebasedNow {
+		// The saved prefix now has a digest over the replacement plan. Clear
+		// the marker so the next resume is a normal, fully verified one.
+		entry.task.CheckpointRebase = false
+		changedCheckpoint = true
+	}
 	if update.Checkpoint != nil && update.Checkpoint.Valid() {
 		copied := update.Checkpoint.Clone()
 		entry.task.DirectoryResumeCheckpoint = &copied
@@ -1617,6 +1851,7 @@ func (q *Queue) recordProgress(id domainsftp.TaskID, update Progress, baseBytes 
 		// written.
 		entry.task.DirectoryResumeCheckpoint = nil
 		entry.task.CheckpointBytesDone = 0
+		entry.task.CheckpointRebase = false
 		changedCheckpoint = true
 	}
 	entry.task.BytesDone = update.BytesDone
@@ -1637,7 +1872,7 @@ func (q *Queue) recordProgress(id domainsftp.TaskID, update Progress, baseBytes 
 	}
 	entry.task.UpdatedAt = now
 	snapshot := entry.task.Clone()
-	persist := changedCheckpoint && now.Sub(q.lastCheckpointSave) >= time.Second
+	persist := changedCheckpoint && (rebasedNow || now.Sub(q.lastCheckpointSave) >= time.Second)
 	if persist {
 		q.lastCheckpointSave = now
 	}
@@ -1702,9 +1937,11 @@ func (q *Queue) settle(id domainsftp.TaskID, err error) {
 		// Cancel is a hard stop: a later Retry replays from the beginning.
 		entry.task.DirectoryResumeCheckpoint = nil
 		entry.task.CheckpointBytesDone = 0
+		entry.task.CheckpointRebase = false
 		entry.task.Targets = nil
 		entry.task.ReplaceTargets = nil
 		entry.task.SkipTargets = nil
+		entry.task.DuplicateTargets = nil
 	case entry.task.PauseRequested:
 		entry.task.Status = domainsftp.TaskPaused
 		entry.task.Error = ""
@@ -1732,9 +1969,11 @@ func (q *Queue) settle(id domainsftp.TaskID, err error) {
 		entry.task.Err = nil
 		entry.task.DirectoryResumeCheckpoint = nil
 		entry.task.CheckpointBytesDone = 0
+		entry.task.CheckpointRebase = false
 		entry.task.Targets = nil
 		entry.task.ReplaceTargets = nil
 		entry.task.SkipTargets = nil
+		entry.task.DuplicateTargets = nil
 	}
 	if entry.task.Terminal() {
 		entry.task.FinishedAt = now
@@ -1885,6 +2124,12 @@ func kindOfSpec(spec TaskSpec) domainsftp.OperationKind {
 func specCopy(spec TaskSpec) TaskSpec {
 	out := spec
 	out.Sources = append([]string(nil), spec.Sources...)
+	if spec.Answers != nil {
+		out.Answers = make(map[string]ConflictPolicy, len(spec.Answers))
+		for source, action := range spec.Answers {
+			out.Answers[source] = action
+		}
+	}
 	return out
 }
 

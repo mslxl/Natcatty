@@ -43,7 +43,7 @@ func TestBuildAuthPlanMFAOrdersKeyboardInteractiveFirstWhenPasswordMissing(t *te
 	t.Parallel()
 
 	passwordPlan := BuildAuthPlan(AuthSpec{Mode: AuthModePassword, RequiresMFA: true})
-	if got, want := candidateIDs(passwordPlan), []string{CandidateKeyboardInteractive}; !reflect.DeepEqual(got, want) {
+	if got, want := candidateIDs(passwordPlan), []string{CandidateKeyboardInteractive, CandidatePassword}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("password-mode candidates = %v, want %v", got, want)
 	}
 
@@ -53,7 +53,7 @@ func TestBuildAuthPlanMFAOrdersKeyboardInteractiveFirstWhenPasswordMissing(t *te
 		UseAgent:    true,
 		SelectedKey: testKey("key-1", "work"),
 	})
-	want := []string{CandidateKeyboardInteractive, CandidateAgent, "publickey-user"}
+	want := []string{CandidateKeyboardInteractive, CandidateAgent, "publickey-user", CandidatePassword}
 	if got := candidateIDs(autoPlan); !reflect.DeepEqual(got, want) {
 		t.Fatalf("auto-mode candidates = %v, want %v", got, want)
 	}
@@ -124,13 +124,13 @@ func TestPromoteCachedCandidateOnlyInAutoMode(t *testing.T) {
 		UseAgent:    true,
 	})
 	PromoteCachedCandidate(&withKey, "publickey-user", AuthModeAuto)
-	if got, want := candidateIDs(withKey), []string{"publickey-user", CandidateAgent, CandidateKeyboardInteractive}; !reflect.DeepEqual(got, want) {
+	if got, want := candidateIDs(withKey), []string{"publickey-user", CandidateAgent, CandidatePassword, CandidateKeyboardInteractive}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("publickey promotion = %v, want %v", got, want)
 	}
 
 	keyMode := BuildAuthPlan(AuthSpec{Mode: AuthModeKey, SelectedKey: testKey("key-1", "work")})
 	PromoteCachedCandidate(&keyMode, CandidateKeyboardInteractive, AuthModeKey)
-	if got, want := candidateIDs(keyMode), []string{"publickey-user", CandidateKeyboardInteractive}; !reflect.DeepEqual(got, want) {
+	if got, want := candidateIDs(keyMode), []string{"publickey-user", CandidatePassword, CandidateKeyboardInteractive}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("explicit key mode was reordered: %v", got)
 	}
 }

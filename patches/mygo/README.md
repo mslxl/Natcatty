@@ -15,8 +15,10 @@ replace directive would otherwise compile one release while `go.mod` names
 another. `just dev`, `just test`, and `just build` depend on it, and CI runs
 it before Go.
 
-The patches are relative to v0.10.0. If the submodule moves to another upstream
-commit, rebase them and re-run the archive and terminal tests.
+The patches are relative to v0.10.0 and are applied in name order, because
+later ones build on earlier ones (0004 extends the tracking modes 0002 adds).
+If the submodule moves to another upstream commit, rebase them and re-run the
+archive and terminal tests.
 
 If GitHub over HTTPS is unavailable in your environment, point the submodule
 at SSH locally (not committed):
@@ -34,3 +36,112 @@ no report for a Command+click over a link-looking string; MyGo opened the link
 instead. TUIs commonly bind Command/Alt+click to their own action. The patches
 keep the link policy in MyGo, where the ordering lives, without vendoring its
 source into this repository.
+
+## The phone keyboard patch
+
+`0005-ios-reshow-keyboard-after-manual-dismissal.patch` is one of the two
+phone-only patches (the web-view one is below). The MyGo iOS host in v0.10.0
+cannot re-show the soft keyboard after the
+user dismisses it with the keyboard's own key: `SurfaceWindow.setTextInput`
+calls `becomeFirstResponder()`, but the view never stopped being first
+responder, so UIKit does nothing. The patch tracks an explicit dismissal and
+uses `reloadInputViews()` (or a fresh `becomeFirstResponder()`) only when a
+tap asks for the keyboard, so the resize after a dismissal does not raise it
+again.
+
+## The phone hardware-key text patch
+
+`0007-key-text-and-punctuation.patch` carries what a hardware keyboard sends
+with a key, not only the key. In v0.10.0 `internal/mobile/surface.go` drops
+`wire.KeyEvent.Text` when it makes the `platform.SurfaceEvent`, so the text
+Android composes for an Alt chord (Alt+C is "ç") never reaches the content,
+and `ui/input.go` builds the content's key-down `InputEvent`s without it. The
+patch forwards the text through both, and it maps the punctuation names the
+hosts use (`Comma`, `Period`, … and the one-character forms) in `keyOf`. The
+Android and iOS hosts list those keys in `keyNames` too, so a Ctrl or other
+chorded punctuation key keeps a name when the character is not typed
+(`unicodeChar` 0 on Android). The app's phone shell types the text a key
+carries where the terminal's own encoding would drop it.
+
+It touches `internal/mobile/{surface.go,key_test.go}`,
+`ui/{input.go,webview.go,key_text_test.go}` and the two host files
+`internal/mobile/ios/Sources/MyGoHost/SurfaceWindow.swift` and
+`internal/mobile/android/mygo/src/main/java/dev/mygo/SurfaceWindow.kt`. The
+keyboard's IME (text replacement) path is unchanged.
+
+At an upgrade, drop the patch if `KeyEvent.Text` reaches the platform event
+and the input event, and the punctuation names map, upstream.
+
+## The phone web-view patch
+
+`0006-mobile-data-stores-cookies-downloads.patch` adds what the phone browser
+needs from MyGo's mobile host. In v0.10.0 `mobile.Backend` embeds
+`unsupported.Backend`, so `NewDataStore` returns `errUnsupported`, and no
+cookie or download call exists at all. The patch adds the wire calls and
+events, the Go implementation behind them, and the iOS (`WKWebsiteDataStore`,
+`WKHTTPCookieStore`, `WKDownloadDelegate`) and Android (`ProfileStore`,
+`CookieManager`, `WebView.setDownloadListener`) host sides.
+
+It touches `internal/mobile/{wire/gen/spec.go,wire/msgs.go,backend.go,
+window.go,events.go,mobile_test.go}` plus the generated `Wire.swift` and
+`Wire.kt`, `datastore.go`, `datastore_test.go`, and the four host files
+`internal/mobile/ios/Sources/MyGoHost/{Host,WebWindow}.swift` and
+`internal/mobile/android/mygo/src/main/java/dev/mygo/{HostImpl,WebWindow}.kt`.
+The generated wire files are produced with
+`go generate ./internal/mobile/wire` after editing the spec; regenerate rather
+than editing them by hand. The calls only reach mobile hosts, so the desktop
+backend and its behaviour are unchanged.
+
+At an upgrade, drop the patch if the release carries per-site data stores,
+cookie access and download events; otherwise rework it against the new host
+sources. Keeping it is a product decision, as the ADR says for new patches.
+
+## The Android cleartext patch
+
+`0008-android-network-security.patch` lets the phone browser reach a Host's
+gateway, which serves plain HTTP on the loopback. Android refuses cleartext by
+default from target API 28 on, so the Browser build would fail every request to
+`127.0.0.1` and `127.0.0.2`. A plugin cannot fix this: MyGo v0.10.0 hardcodes
+the generated `<application>` attributes, and the plugin hook can only inject
+children, while `android:networkSecurityConfig` must be an attribute. The patch
+adds an opt-in `android.cleartextDomains` field and emits the attribute and the
+resource only when it is non-empty. The generated
+`res/xml/mygo_network_security.xml` sets
+`cleartextTrafficPermitted="false"` as the base policy and permits it only for
+the named hosts, so the app needs nothing beyond the two loopback gateways.
+
+It touches `cmd/mygo/android.go`, `cmd/mygo/config.go`,
+`cmd/mygo/mobile_config_test.go` and the TypeScript declaration
+`packages/cli/index.d.ts`. An app without the new field keeps the system
+default: no attribute, no resource.
+
+At an upgrade, drop the patch if upstream carries a cleartext-domains option;
+otherwise rework it against the new generator.
+
+## The unsigned iOS device patch
+
+`0009-unsigned-ios-device-build.patch` makes a device package buildable
+without an Apple account. In v0.10.0 `buildIOS` always picks a provisioning
+profile and signs with it, so a machine with no profile cannot produce one and
+CI could offer only the simulator app. The patch adds `mygo build -unsigned`:
+the device app is compiled and packaged exactly as before, but no profile is
+picked, no entitlements are read and `codesign` never runs, so the `.ipa`
+leaves `Payload/` unsigned for AltStore, Sideloadly or Xcode to sign with the
+installer's own identity. `-unsigned` is refused for the simulator (which
+stays ad hoc signed) and for any target other than `ios` or `ios/arm64`.
+
+It touches `cmd/mygo/build.go` and `cmd/mygo/ios.go`. The signed device
+package is unchanged: without the flag the build still requires
+`ios.team`/`ios.provisioningProfile` and signs with the profile.
+
+At an upgrade, drop the patch if upstream carries a way to build an unsigned
+device package; otherwise rework it against the new `buildIOS`.
+
+## The fork carries the same desktop fixes
+
+Natcatty's desktop and phone terminal now run the source fork in `ui/terminal`
+(it forked MyGo's terminal so the phone could use one core). The four desktop
+fixes above are therefore carried in that fork's source as well, and the copy
+in this directory keeps MyGo's own bundled plugin consistent. When an upgrade
+moves either tree, update both: the patches here for the submodule, and the
+forked files for the terminal Natcatty builds.

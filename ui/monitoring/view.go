@@ -920,7 +920,11 @@ func picker(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, width floa
 	form := s.Form()
 	kit.Panel(c, width, m.MonitoringChooseHosts(), m.MonitoringSelectedCount(len(form.HostIDs)),
 		m.MonitoringClose(), nil, s.EndPickHosts, func() {
-			ui.SearchField(c, &s.pickerSearch).Placeholder(m.MonitoringSearch()).FillWidth()
+			search := s.PickerSearch()
+			ui.SearchField(c, &search).Placeholder(m.MonitoringSearch()).FillWidth()
+			if search != s.PickerSearch() {
+				s.SetPickerSearch(search)
+			}
 			hosts := s.PickerHosts()
 			if len(hosts) == 0 {
 				ui.Text(c, m.MonitoringNoHostsAvailable()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)

@@ -63,6 +63,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          submodules: recursive
           # Pin every job to the workflow's commit so a force-moved tag cannot
           # mix trees between jobs.
           ref: ${{ github.sha }}
@@ -101,6 +102,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          submodules: recursive
           # Pin every job to the workflow's commit so a force-moved tag cannot
           # mix trees between jobs.
           ref: ${{ github.sha }}
@@ -137,6 +139,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          submodules: recursive
           # Pin every job to the workflow's commit so a force-moved tag cannot
           # mix trees between jobs.
           ref: ${{ github.sha }}
@@ -176,6 +179,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          submodules: recursive
           # Pin every job to the workflow's commit so a force-moved tag cannot
           # mix trees between jobs.
           ref: ${{ github.sha }}
@@ -237,6 +241,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          submodules: recursive
           # Pin every job to the workflow's commit so a force-moved tag cannot
           # mix trees between jobs.
           ref: ${{ github.sha }}

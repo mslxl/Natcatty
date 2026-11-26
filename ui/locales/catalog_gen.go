@@ -29823,3 +29823,83 @@ func ConnectionErrorVNCCancelled() string { return In(i18n.Locale()).ConnectionE
 func (msgs Messages) ConnectionErrorVNCCancelled() string {
 	return Catalog.Format(msgs.locale, "connectionErrorVNCCancelled", nil)
 }
+
+// TerminalClearTerminal says "Clear"
+// in the language the app shows.
+func TerminalClearTerminal() string { return In(i18n.Locale()).TerminalClearTerminal() }
+
+// TerminalClearTerminal says "Clear"
+// in the language of msgs.
+func (msgs Messages) TerminalClearTerminal() string {
+	return Catalog.Format(msgs.locale, "terminalClearTerminal", nil)
+}
+
+// TerminalClipboardRead says "A program wants to read the clipboard."
+// in the language the app shows.
+func TerminalClipboardRead() string { return In(i18n.Locale()).TerminalClipboardRead() }
+
+// TerminalClipboardRead says "A program wants to read the clipboard."
+// in the language of msgs.
+func (msgs Messages) TerminalClipboardRead() string {
+	return Catalog.Format(msgs.locale, "terminalClipboardRead", nil)
+}
+
+// TerminalClipboardReadAllow says "Allow"
+// in the language the app shows.
+func TerminalClipboardReadAllow() string { return In(i18n.Locale()).TerminalClipboardReadAllow() }
+
+// TerminalClipboardReadAllow says "Allow"
+// in the language of msgs.
+func (msgs Messages) TerminalClipboardReadAllow() string {
+	return Catalog.Format(msgs.locale, "terminalClipboardReadAllow", nil)
+}
+
+// TerminalClipboardReadDeny says "Deny"
+// in the language the app shows.
+func TerminalClipboardReadDeny() string { return In(i18n.Locale()).TerminalClipboardReadDeny() }
+
+// TerminalClipboardReadDeny says "Deny"
+// in the language of msgs.
+func (msgs Messages) TerminalClipboardReadDeny() string {
+	return Catalog.Format(msgs.locale, "terminalClipboardReadDeny", nil)
+}
+
+// TerminalClipboardReadEmpty says "The clipboard is empty."
+// in the language the app shows.
+func TerminalClipboardReadEmpty() string { return In(i18n.Locale()).TerminalClipboardReadEmpty() }
+
+// TerminalClipboardReadEmpty says "The clipboard is empty."
+// in the language of msgs.
+func (msgs Messages) TerminalClipboardReadEmpty() string {
+	return Catalog.Format(msgs.locale, "terminalClipboardReadEmpty", nil)
+}
+
+// TerminalCopy says "Copy"
+// in the language the app shows.
+func TerminalCopy() string { return In(i18n.Locale()).TerminalCopy() }
+
+// TerminalCopy says "Copy"
+// in the language of msgs.
+func (msgs Messages) TerminalCopy() string {
+	return Catalog.Format(msgs.locale, "terminalCopy", nil)
+}
+
+// TerminalPaste says "Paste"
+// in the language the app shows.
+func TerminalPaste() string { return In(i18n.Locale()).TerminalPaste() }
+
+// TerminalPaste says "Paste"
+// in the language of msgs.
+func (msgs Messages) TerminalPaste() string {
+	return Catalog.Format(msgs.locale, "terminalPaste", nil)
+}
+
+// TerminalSelectAll says "Select All"
+// in the language the app shows.
+func TerminalSelectAll() string { return In(i18n.Locale()).TerminalSelectAll() }
+
+// TerminalSelectAll says "Select All"
+// in the language of msgs.
+func (msgs Messages) TerminalSelectAll() string {
+	return Catalog.Format(msgs.locale, "terminalSelectAll", nil)
+}

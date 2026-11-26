@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -297,6 +298,87 @@ func TestDownloadUniqueNamesAndMarker(t *testing.T) {
 	}
 	if _, err := os.Stat(final.SavePath + ".part"); !os.IsNotExist(err) {
 		t.Fatalf("part marker still present: %v", err)
+	}
+}
+
+// recordingTunnel is the SSH route seam: it records every address the
+// gateway dials through the dedicated tunnel and connects with a real dialer.
+type recordingTunnel struct {
+	dial net.Dialer
+
+	mu        sync.Mutex
+	addresses []string
+}
+
+func (t *recordingTunnel) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	t.mu.Lock()
+	t.addresses = append(t.addresses, address)
+	t.mu.Unlock()
+	return t.dial.DialContext(ctx, network, address)
+}
+func (t *recordingTunnel) Done() <-chan struct{} { return nil }
+func (t *recordingTunnel) Discard()              {}
+
+// TestDownloadUsesTheSitesCookiesAndTheDedicatedTunnel is the logged-in
+// attachment acceptance: the shared manager sends the Cookie header the page's
+// site session supplied, and the request goes through the panel's tunnel
+// rather than a direct local connection.
+func TestDownloadUsesTheSitesCookiesAndTheDedicatedTunnel(t *testing.T) {
+	const cookie = "session=abc123"
+	var gotCookie string
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCookie = r.Header.Get("Cookie")
+		_, _ = io.WriteString(w, "attachment")
+	}))
+	defer origin.Close()
+
+	tunnel := &recordingTunnel{}
+	gw := newGateway(tunnel)
+	defer gw.Close()
+	base, err := gw.URLFor(origin.URL + "/")
+	if err != nil {
+		t.Fatalf("URLFor: %v", err)
+	}
+	dir := t.TempDir()
+	manager := newDownloadManager(DownloadOptions{
+		Dir: func() (string, error) { return dir, nil },
+		Cookies: func(gatewayURL string) string {
+			if _, ok := gw.RemoteURL(gatewayURL); !ok {
+				return ""
+			}
+			return cookie
+		},
+		Validate: func(gatewayURL string) error {
+			if _, ok := gw.RemoteURL(gatewayURL); !ok {
+				return ErrDownloadURL
+			}
+			return nil
+		},
+	}, func(ctx context.Context, gatewayURL, cookies string) (*http.Response, error) {
+		return gw.openDownload(ctx, gatewayURL, cookies)
+	})
+	defer manager.Close()
+
+	item, err := manager.Start(strings.TrimSuffix(base, "/")+"/files/report.bin", "report.bin")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	manager.Wait()
+	if final := manager.Get(item.ID); final.Status != DownloadCompleted {
+		t.Fatalf("status = %q (%s), want completed", final.Status, final.Failure)
+	}
+	if gotCookie != cookie {
+		t.Fatalf("download Cookie = %q, want the site session's %q", gotCookie, cookie)
+	}
+	tunnel.mu.Lock()
+	addresses := append([]string(nil), tunnel.addresses...)
+	tunnel.mu.Unlock()
+	if len(addresses) == 0 {
+		t.Fatal("the download did not use the dedicated tunnel")
+	}
+	wantAddress := strings.TrimPrefix(origin.URL, "http://")
+	if addresses[0] != wantAddress {
+		t.Fatalf("tunnel dialed %v, want the remote origin %q", addresses, wantAddress)
 	}
 }
 

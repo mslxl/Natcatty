@@ -1,0 +1,234 @@
+package phoneshell
+
+// The accessory key bar. A phone keyboard has no Esc, Tab, Control or arrow
+// keys, so full-screen programs are unusable without one. MyGo has no native
+// accessory-view API: the bar is an ordinary row in the terminal page,
+// directly above the terminal. The window's root keeps the page inside the
+// safe area, whose bottom is the keyboard's inset, so the bar lands just
+// above the keyboard and above nothing else; it is not hidden when the
+// keyboard is (a hardware keyboard still needs Esc and Ctrl).
+//
+// Every element keeps the focus where it is (KeepFocus). A button that took
+// the focus would make the terminal stop reporting an active text input,
+// and the keyboard would collapse on the first tap.
+//
+// A third row holds the controls a phone has no keyboard shortcut for:
+// Copy puts the terminal's selection on the system clipboard, Paste reads
+// the system clipboard through the terminal's own paste path (so bracketed
+// paste mode applies), and History/Latest moves the terminal's viewport into
+// the scrollback and back. None of them takes the drag the grid selects
+// with, and all sit within the thumb's reach above the keyboard.
+//
+// The bar's keys go through TerminalScreen.SendKey, which uses the
+// terminal's own key encoder: arrows follow application cursor mode and
+// Control combinations are the control characters a shell reads (Ctrl+C is
+// 0x03). Ctrl and Alt are one-shot latches: the next bar key carries them,
+// and tapping the latch again without a key cancels it. ^C, ^D and ^Z are
+// the combinations a phone user needs most, without a latch.
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/egoist/mygo/transfer"
+	"github.com/egoist/mygo/ui"
+
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
+	"github.com/mslxl/natcatty/ui/kit"
+)
+
+// accessoryState is one terminal page's latch state. It lives on the page's
+// Tab and survives frames; the zero value has no latch held.
+type accessoryState struct {
+	ctrl, alt bool
+	// pendingPaste is the clipboard text a guarded paste is waiting to send.
+	// It survives frames so the confirmation stays on screen until the user
+	// answers, and it is never written to a log or the settings document.
+	pendingPaste string
+	// pendingData is the whole clipboard payload of a held paste, so a
+	// confirmation keeps the PNG as well as the text. The one paste path
+	// fills both fields together.
+	pendingData transfer.Data
+}
+
+// take consumes the held latches and returns their modifiers.
+func (a *accessoryState) take() ui.Modifiers {
+	var mods ui.Modifiers
+	if a.ctrl {
+		mods |= ui.Ctrl
+		a.ctrl = false
+	}
+	if a.alt {
+		mods |= ui.Alt
+		a.alt = false
+	}
+	return mods
+}
+
+// accessoryKey is one key of the bar. mods are the modifications the key
+// itself needs, as a Shift for | on a US layout; the held latches are added
+// to them.
+type accessoryKey struct {
+	label string
+	key   ui.Key
+	mods  ui.Modifiers
+}
+
+// The bar's two rows. The first holds the keys a terminal needs most, the
+// second the rest and the symbols a shell uses constantly.
+var (
+	accessoryRowOne = []accessoryKey{
+		{label: "Esc", key: ui.KeyEscape},
+		{label: "Tab", key: ui.KeyTab},
+		{label: "←", key: ui.KeyLeft},
+		{label: "↑", key: ui.KeyUp},
+		{label: "↓", key: ui.KeyDown},
+		{label: "→", key: ui.KeyRight},
+	}
+	accessoryRowTwo = []accessoryKey{
+		{label: "PgUp", key: ui.KeyPageUp},
+		{label: "PgDn", key: ui.KeyPageDown},
+		{label: "^C", key: ui.KeyC, mods: ui.Ctrl},
+		{label: "^D", key: ui.KeyD, mods: ui.Ctrl},
+		{label: "^Z", key: ui.KeyZ, mods: ui.Ctrl},
+		{label: "|", key: ui.KeyBackslash, mods: ui.Shift},
+		{label: "-", key: ui.KeyMinus},
+		{label: "~", key: ui.KeyBackquote, mods: ui.Shift},
+		{label: "/", key: ui.KeySlash},
+	}
+)
+
+// accessoryBar draws the bar and sends tapped keys to screen. It takes the
+// latches it reads and writes, so the page's Ctrl and Alt buttons toggle the
+// same state the keys consult. pasteGuard reports whether a paste needs
+// confirmation, as the shared PasteProtection setting decides; nil means
+// every paste is sent directly.
+func accessoryBar(c *ui.Context, acc *accessoryState, screen TerminalScreen, pasteGuard func(string) bool) ui.Element {
+	if acc == nil {
+		acc = &accessoryState{}
+	}
+	t := c.Theme()
+	bar := ui.Column(c).FillWidth().Shrink(0).Padding(4, 6).Gap(4).
+		Background(t.Surface).KeepFocus().Label("Accessory keys")
+	bar.Children(func() {
+		accessoryRow(c, acc, screen, accessoryRowOne,
+			accessoryLatch{label: "Ctrl", held: &acc.ctrl},
+			accessoryLatch{label: "Alt", held: &acc.alt})
+		accessoryRow(c, acc, screen, accessoryRowTwo)
+		accessoryControls(c, acc, screen, pasteGuard)
+		accessoryPasteConfirmation(c, acc, screen)
+	})
+	return bar
+}
+
+// accessoryControls draws Copy, Paste and the scrollback toggle. Copy writes
+// the selection through MyGo's Services, the system clipboard seam the
+// terminal view uses too; Paste hands the clipboard's data to the terminal so
+// the terminal, not the page, decides whether to wrap it for bracketed paste.
+// A guarded paste is held on the page and a confirmation row asks first; the
+// payload reaches the terminal only from that row's confirm action.
+// The label tells where the toggle goes: History into the scrollback, Latest
+// back to the live screen.
+func accessoryControls(c *ui.Context, acc *accessoryState, screen TerminalScreen, pasteGuard func(string) bool) {
+	ui.Row(c).FillWidth().Shrink(0).Gap(4).KeepFocus().Children(func() {
+		if b := accessoryButton(c, "Copy", false); b.Clicked() {
+			if text, ok := screen.SelectionText(); ok && text != "" {
+				c.Services().WriteClipboard(text)
+			}
+		}
+		if b := accessoryButton(c, "Paste", false); b.Clicked() {
+			// Read the representations the phone can paste, then take the
+			// same decision an external keyboard's paste key does. The guard
+			// needs the text, but a clipboard holding only an image has none:
+			// that goes straight to the terminal, which ignores formats it
+			// does not paste.
+			pasteData(c, screen, acc, readPhoneClipboard(c), pasteGuard)
+		}
+		scrolled := screen.InScrollback()
+		label := "History"
+		if scrolled {
+			label = "Latest"
+		}
+		if b := accessoryButton(c, label, scrolled); b.Clicked() {
+			screen.ToggleScrollback()
+		}
+	})
+}
+
+// accessoryPasteConfirmation draws the PasteProtection question for a held
+// paste: how many lines, a bounded preview, and the two answers. Cancelling
+// discards the held text; confirming sends it through the terminal's own
+// bracketed-paste path.
+func accessoryPasteConfirmation(c *ui.Context, acc *accessoryState, screen TerminalScreen) {
+	if acc.pendingPaste == "" {
+		return
+	}
+	text := acc.pendingPaste
+	lines := domainterminal.PasteLineCount(text)
+	cancelled, confirmed := kit.ConfirmBar(c,
+		fmt.Sprintf("Paste %d lines?", lines),
+		func() {
+			preview, truncated := domainterminal.PreviewPaste(text, 120)
+			preview = strings.ReplaceAll(preview, "\n", " ↵ ")
+			if truncated {
+				preview += "…"
+			}
+			ui.Text(c, preview).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
+		},
+		"Cancel", "Paste anyway")
+	switch {
+	case cancelled:
+		acc.pendingPaste = ""
+		acc.pendingData = transfer.Data{}
+	case confirmed:
+		data := heldPaste(acc)
+		acc.pendingPaste = ""
+		acc.pendingData = transfer.Data{}
+		screen.PasteData(data)
+	}
+}
+
+// accessoryLatch is a modifier button that toggles held.
+type accessoryLatch struct {
+	label string
+	held  *bool
+}
+
+// accessoryRow draws one row of keys, after any latches.
+func accessoryRow(c *ui.Context, acc *accessoryState, screen TerminalScreen, keys []accessoryKey, latches ...accessoryLatch) {
+	ui.Row(c).FillWidth().Shrink(0).Gap(4).KeepFocus().Children(func() {
+		for _, latch := range latches {
+			on := *latch.held
+			b := accessoryButton(c, latch.label, on)
+			if b.Clicked() {
+				*latch.held = !on
+			}
+		}
+		for _, k := range keys {
+			k := k
+			b := accessoryButton(c, k.label, false)
+			if b.Clicked() {
+				screen.SendKey(k.key, k.mods|acc.take())
+			}
+		}
+	})
+}
+
+// accessoryButton is one bar key: a compact, focus-keeping button, filled
+// with the accent color while its latch is held.
+func accessoryButton(c *ui.Context, label string, active bool) ui.Element {
+	t := c.Theme()
+	b := ui.ButtonBase(c).Label(label).KeepFocus().Shrink(0).
+		Height(30).Padding(0, 8).Radius(6).AlignItems(ui.Center).Justify(ui.Center).
+		FontSize(12).TextColor(t.Text).Background(t.Background).Border(1, t.Border)
+	switch {
+	case active:
+		b.Background(t.Accent).TextColor(t.AccentText).Border(1, t.Accent)
+	case b.Pressed():
+		b.Background(t.Background.Mix(t.Text, 0.12))
+	case b.Hovered():
+		b.Background(t.Background.Mix(t.Text, 0.06))
+	}
+	b.Children(func() { ui.Text(c, label).FontSize(12).SingleLine() })
+	return b
+}

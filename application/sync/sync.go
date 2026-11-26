@@ -302,10 +302,11 @@ type DeviceAuthorizer interface {
 }
 
 // BrowserAuthorizer is implemented by remotes that use an authorization code
-// with PKCE in the system browser and a loopback redirect (Google Drive).
-// Authorize must open the URL through open, listen on loopback, validate the
-// redirect's state, and exchange the code without a client secret. Tests pass
-// an opener that drives a local fake.
+// with PKCE in the system browser (Google Drive, OneDrive). Authorize must
+// open the URL through open, receive the redirect (loopback on the desktop, a
+// registered custom URI scheme on a phone), validate its state, and exchange
+// the code without a client secret. Tests pass an opener that drives a local
+// fake.
 type BrowserAuthorizer interface {
 	Authorize(ctx context.Context, open func(url string) error) (domainsync.Token, Grant, error)
 }
@@ -569,6 +570,25 @@ func WithAppliedSnapshot(fn func()) Option {
 	return func(s *Service) { s.onSnapshotApplied = fn }
 }
 
+// WithUnmanagedSettingsDocuments declares settings documents this client cannot
+// edit. A sender carries the current remote value for each key (including
+// absence) instead of publishing its own copy, and a v2 receiver never treats
+// them as local edits or allocates writes for them. The owning client stays the
+// only writer.
+func WithUnmanagedSettingsDocuments(keys ...string) Option {
+	return func(s *Service) {
+		if len(keys) == 0 {
+			return
+		}
+		s.unmanagedSettings = make(map[string]bool, len(keys))
+		for _, key := range keys {
+			if key != "" {
+				s.unmanagedSettings[key] = true
+			}
+		}
+	}
+}
+
 // WithRandom sets the envelope's salt and IV source.
 func WithRandom(reader io.Reader) Option {
 	return func(s *Service) {
@@ -660,6 +680,13 @@ type Service struct {
 	// onSnapshotApplied, when set, reports that a downloaded cloud copy has
 	// been written locally. It runs on the sync goroutine.
 	onSnapshotApplied func()
+	// unmanagedSettings names settings documents another client owns. They are
+	// carried through unchanged and never allocated a local write.
+	unmanagedSettings map[string]bool
+	// applying is true while a cloud payload is being written into the local
+	// Vault. A change notification raised by that write must not queue another
+	// automatic sync: the run that applied it already reconciled both sides.
+	applying bool
 
 	password       string
 	status         Status
@@ -1878,7 +1905,7 @@ func (s *Service) mergeAndUpload(
 		s.finishSync(ProblemBackup)
 		return Result{Trigger: trigger}, err
 	}
-	if err := s.vault.Apply(ctx, outgoing); err != nil {
+	if err := s.applyPayload(ctx, outgoing); err != nil {
 		s.finishSync(ProblemLocal)
 		return Result{Trigger: trigger}, err
 	}
@@ -1954,7 +1981,7 @@ func (s *Service) download(
 		s.finishSync(ProblemBackup)
 		return Result{Trigger: trigger}, err
 	}
-	if err := s.vault.Apply(ctx, remotePayload); err != nil {
+	if err := s.applyPayload(ctx, remotePayload); err != nil {
 		s.finishSync(ProblemLocal)
 		return Result{Trigger: trigger}, err
 	}
@@ -2177,7 +2204,7 @@ func (s *Service) NotifyLocalChange() {
 	// A saved plain-HTTP endpoint never auto-syncs. The service refuses the
 	// automatic trigger as well; skipping the timer keeps the preference from
 	// producing a failure on every local edit.
-	if s.stopped || !s.config.AutoSync || s.webdavInsecure || s.s3Insecure {
+	if s.stopped || !s.config.AutoSync || s.webdavInsecure || s.s3Insecure || s.applying {
 		s.mu.Unlock()
 		return
 	}
@@ -2290,6 +2317,21 @@ func (s *Service) notifySnapshotApplied() {
 	if applied != nil {
 		applied()
 	}
+}
+
+// applyPayload writes a reconciled payload into the local Vault. The Vault's
+// own change hook is suppressed for the duration so the write cannot queue a
+// redundant automatic sync behind the run that just converged both sides.
+func (s *Service) applyPayload(ctx context.Context, payload Payload) error {
+	s.mu.Lock()
+	s.applying = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.applying = false
+		s.mu.Unlock()
+	}()
+	return s.vault.Apply(ctx, payload)
 }
 
 func problemFor(err error) Problem {

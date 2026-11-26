@@ -188,6 +188,11 @@ var (
 	// spawns a local process on the operating system's network, which an
 	// in-process Provider cannot carry.
 	ErrProxyCommandNetworkConflict = errors.New("connection: ProxyCommand cannot be combined with a Network Profile")
+	// ErrProxyCommandUnavailable reports that the current platform or build
+	// does not execute ProxyCommand. A phone keeps the process transport closed
+	// until its platform passes device acceptance; the transport must return
+	// this before starting any process or dialing directly.
+	ErrProxyCommandUnavailable = errors.New("ProxyCommand is unavailable on this platform")
 )
 
 // ProxyCommandNetworkConflict returns the typed failure for a route that

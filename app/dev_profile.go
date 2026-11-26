@@ -1,3 +1,5 @@
+//go:build !ios && !android
+
 package app
 
 // Dev profile. A development build (mygo.IsDev: go run, go build, and

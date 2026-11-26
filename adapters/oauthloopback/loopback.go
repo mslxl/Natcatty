@@ -35,6 +35,22 @@ type PKCE struct {
 	State     string
 }
 
+// Redirect is the callback seam for platforms whose OAuth redirect is a
+// custom URI scheme instead of a 127.0.0.1 listener. iOS and Android suspend
+// a phone app while the system browser is open and cannot reach a loopback
+// port; the OS instead hands the redirect URL back to the app, whose
+// composition root routes it to a Redirect.
+//
+// RedirectURI is the fixed redirect_uri sent to the provider and registered in
+// the mobile client (the iOS URL type and the Android intent-filter). Wait
+// blocks until the matching callback arrives, returning its query parameters,
+// or fails with a typed error. Implementations are responsible for their own
+// timeout and for not counting time while the app is suspended.
+type Redirect interface {
+	RedirectURI() string
+	Wait(ctx context.Context) (url.Values, error)
+}
+
 // NewPKCE builds a verifier from 32 random bytes (43 base64url characters),
 // its S256 challenge, and a 16-byte state. It reads from random; nil uses the
 // process CSPRNG.
@@ -85,11 +101,16 @@ type Flow struct {
 	ClientID string
 	// ExtraQuery carries provider-specific parameters such as prompt=consent.
 	ExtraQuery url.Values
-	// Timeout bounds the wait for the redirect. The zero value is five
-	// minutes.
+	// Timeout bounds the wait for the loopback redirect. The zero value is
+	// five minutes. A custom Redirect owns its own timeout, so this field is
+	// ignored when Redirect is set.
 	Timeout time.Duration
 	// Random feeds PKCE generation; nil uses the process CSPRNG.
 	Random io.Reader
+	// Redirect replaces the loopback listener with a custom URI scheme
+	// callback. Phones set it because the OS suspends the app while the
+	// system browser is open; desktop builds leave it nil.
+	Redirect Redirect
 }
 
 // Authorization is what a completed redirect yields.
@@ -111,6 +132,9 @@ func (f Flow) Authorize(ctx context.Context, open func(string) error) (Authoriza
 	}
 	if open == nil {
 		return Authorization{}, appsync.ErrBrowserUnavailable
+	}
+	if f.Redirect != nil {
+		return f.authorizeWithRedirect(ctx, open)
 	}
 	proof, err := NewPKCE(f.Random)
 	if err != nil {
@@ -163,6 +187,48 @@ func (f Flow) Authorize(ctx context.Context, open func(string) error) (Authoriza
 	}
 }
 
+// authorizeWithRedirect runs the same authorization-code grant as the loopback
+// path, but sends the provider a fixed custom-scheme redirect_uri and waits
+// for the OS to deliver the callback through f.Redirect.
+func (f Flow) authorizeWithRedirect(ctx context.Context, open func(string) error) (Authorization, error) {
+	redirectURI := f.Redirect.RedirectURI()
+	if redirectURI == "" {
+		return Authorization{}, fmt.Errorf("%w: the custom redirect has no URI", appsync.ErrNotConfigured)
+	}
+	proof, err := NewPKCE(f.Random)
+	if err != nil {
+		return Authorization{}, err
+	}
+	if err := open(f.authorizationURL(redirectURI, proof)); err != nil {
+		return Authorization{}, fmt.Errorf("%w: %v", appsync.ErrBrowserUnavailable, err)
+	}
+	query, err := f.Redirect.Wait(ctx)
+	if err != nil {
+		return Authorization{}, err
+	}
+	code, err := parseCallback(query, proof.State)
+	if err != nil {
+		return Authorization{}, err
+	}
+	return Authorization{Code: code, Verifier: proof.Verifier, RedirectURI: redirectURI}, nil
+}
+
+// parseCallback validates one authorization response. State is checked before
+// anything else so a response from a different attempt can never exchange a
+// code with this attempt's verifier.
+func parseCallback(query url.Values, expectedState string) (string, error) {
+	if query.Get("state") != expectedState {
+		return "", appsync.ErrAuthorizationState
+	}
+	if query.Get("error") != "" {
+		return "", fmt.Errorf("%w: %s", appsync.ErrAuthorizationDenied, query.Get("error_description"))
+	}
+	if query.Get("code") == "" {
+		return "", fmt.Errorf("%w: the redirect carried no code", appsync.ErrAuthorizationDenied)
+	}
+	return query.Get("code"), nil
+}
+
 func (f Flow) provider() string {
 	if f.Provider == "" {
 		return "The provider"
@@ -205,19 +271,20 @@ func callbackHandler(provider, expectedState string, results chan<- callbackResu
 	mux := http.NewServeMux()
 	mux.HandleFunc(CallbackPath, func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
+		code, err := parseCallback(query, expectedState)
 		switch {
-		case query.Get("state") != expectedState:
+		case errors.Is(err, appsync.ErrAuthorizationState):
 			writeCallbackPage(w, http.StatusBadRequest, "Authorization failed", "The authorization state did not match this attempt. Return to Netcatty and try again.")
-			publishCallback(results, callbackResult{err: appsync.ErrAuthorizationState})
-		case query.Get("error") != "":
+			publishCallback(results, callbackResult{err: err})
+		case errors.Is(err, appsync.ErrAuthorizationDenied) && query.Get("error") != "":
 			writeCallbackPage(w, http.StatusOK, "Authorization cancelled", provider+" did not grant access. You can close this window and try again from Netcatty.")
-			publishCallback(results, callbackResult{err: appsync.ErrAuthorizationDenied})
-		case query.Get("code") == "":
+			publishCallback(results, callbackResult{err: err})
+		case err != nil:
 			writeCallbackPage(w, http.StatusBadRequest, "Authorization failed", "The redirect carried no authorization code. Return to Netcatty and try again.")
-			publishCallback(results, callbackResult{err: fmt.Errorf("%w: the redirect carried no code", appsync.ErrAuthorizationDenied)})
+			publishCallback(results, callbackResult{err: err})
 		default:
 			writeCallbackPage(w, http.StatusOK, "Netcatty is connected", "Authorization finished. You can close this window and return to Netcatty.")
-			publishCallback(results, callbackResult{code: query.Get("code")})
+			publishCallback(results, callbackResult{code: code})
 		}
 	})
 	return mux

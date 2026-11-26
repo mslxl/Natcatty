@@ -495,6 +495,15 @@ func (r *terminalRenderer) resetPredictions() {
 	r.mu.Unlock()
 }
 
+// setPredictionDisplay applies a changed local-echo choice to a running
+// renderer. It takes the same lock as the prediction engine's other callers,
+// so a Settings change never races a frame.
+func (r *terminalRenderer) setPredictionDisplay(mode moshmodel.PredictionDisplay) {
+	r.mu.Lock()
+	r.overlays.Predictions().SetDisplayPreference(predictionPreference(mode))
+	r.mu.Unlock()
+}
+
 // translateInput applies the client's forced DECCKM state and the remote
 // terminal's actual cursor-key mode to user bytes, exactly as
 // Terminal::UserInput does.

@@ -1,3 +1,5 @@
+//go:build !ios && !android
+
 // External MCP read surface: the app side of the stdio bridge. It projects
 // Vault records, live Sessions, SFTP listings, and Port Forwarding views into
 // the original catalog's read-only result shapes. Every write tool is answered

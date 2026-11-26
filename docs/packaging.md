@@ -23,9 +23,11 @@ keeps the SemVer form.
 | Windows amd64 | `natcatty-0.1.0-windows-amd64-portable.zip` | The raw executable and resources, without the NSIS installer. |
 | Linux amd64 | `natcatty-0.1.0-linux-amd64.tar.gz`, `natcatty-0.1.0-linux-amd64.deb` | The tarball holds the executable and resources. MyGo's standalone `install.sh` is removed and not published. |
 | Linux arm64 | `natcatty-0.1.0-linux-arm64.tar.gz`, `natcatty-0.1.0-linux-arm64.deb` | Same shape. |
+| Android (universal) | `natcatty-0.1.0-android.apk` | One APK with the `arm64-v8a`, `armeabi-v7a` and `x86_64` libraries, all 16 KB page compatible. Signed with the project's release keystore. Installed from the file, not a store. See [android-release.md](android-release.md). |
+| iOS arm64 (unsigned) | `natcatty-0.1.0-ios-unsigned.ipa` | Device build with no signature and no provisioning profile. A sideloading tool signs it with the installer's Apple ID before installing. See [ios-unsigned.md](releases/ios-unsigned.md). |
 
-Every artifact copies the `resources/` tree next to the executable (inside
-`Contents/Resources` on macOS). That includes `THIRD-PARTY-NOTICES.md`,
+Every desktop artifact copies the `resources/` tree next to the executable
+(inside `Contents/Resources` on macOS). That includes `THIRD-PARTY-NOTICES.md`,
 `LICENSE`, `NOTICE`, `SOURCE-OFFER.md`, `CHANGELOG.md`, the ET metadata and
 licenses, `icon.png`, and the `mygo.json` release manifest. `CHANGELOG.md`
 ships as product documentation. `LICENSE`, `NOTICE`, and the third-party notices are
@@ -42,11 +44,18 @@ Build the platform you can package on its own machine:
 go tool mygo build -platform windows/amd64 -o dist
 go tool mygo build -platform linux/amd64,linux/arm64 -o dist
 go tool mygo build -platform darwin/arm64,darwin/amd64 -o dist
+go tool mygo build -platform android -o dist
 ```
 
 The DMG and its `hdiutil` steps need macOS. Windows NSIS needs Windows, where
 MyGo downloads NSIS when it is not installed. Cross-compiling the executables
 needs no cgo, but the installers are a convenience of the native host.
+
+The Android build needs the pinned SDK/NDK in `nix develop .#android`, the
+libghostty-vt archive for each ABI staged by `scripts/mobile/android-libs.sh`,
+and (for a release) the keystore described in
+[android-release.md](android-release.md). Without a keystore it produces a
+debug-signed APK, which is enough for development.
 
 No transport client binary needs to be fetched or placed before packaging:
 every Mosh and EternalTerminal Session runs in process.
@@ -61,8 +70,11 @@ commit of the pushed tag or the dispatched ref, and `validate` asserts that
 `git rev-parse HEAD` equals it.
 
 1. **validate** reads the version and pre-release flag from `mygo.json` with
-   `nu scripts/release.nu`, refuses updater or signing environment variables,
-   and pins the release commit to `github.sha`.
+   `nu scripts/release.nu`, computes the Android version code with
+   `internal/tools/androidversion` and fails unless it is greater than the
+   previous release tag's, refuses updater or desktop signing environment
+   variables, rejects committed keystore files and any committed
+   `android.keystore` path, and pins the release commit to `github.sha`.
 2. **build** runs on `macos-latest`, `windows-latest`, and `ubuntu-latest`,
    writes `resources/SOURCE-OFFER.md` for the manifest version with
    `go run ./internal/tools/sourceoffer`, builds with MyGo, renames every
@@ -83,14 +95,34 @@ commit of the pushed tag or the dispatched ref, and `validate` asserts that
    - Linux: `dpkg-deb -f`/`-c` and `tar -tzf` must list the app, resources
      (including `CHANGELOG.md` and the legal documents), and platform transport
      clients.
+
+   A separate **build-android** job installs the pinned SDK, NDK and
+   build-tools, builds the pinned libghostty-vt archives from the commit and
+   Zig version in `ui/terminal/artifacts.json` with
+   `scripts/mobile/build-ghostty-vt.sh`, stages them with
+   `scripts/mobile/android-libs.sh`, decodes the release keystore from
+   secrets into `$RUNNER_TEMP`, writes the computed version code into the
+   disposable manifest, and builds the universal APK. It deletes the `.aab`,
+   then verifies the version code with `apkanalyzer manifest version-code`
+   and every ABI's 16 KB `LOAD` alignment with `zipalign -c -P 16` and
+   `llvm-readelf`.
+
+   A **build-ios-unsigned** job fetches and stages the iOS device slices, then
+   builds the device app with `go tool mygo build -platform ios -unsigned`
+   (patch 0009). It needs no Apple account: the package carries no signature
+   and no provisioning profile, so a sideloading tool signs it later. The job
+   verifies that the executable is device-targeted (`vtool -show-build`
+   reports `platform IOS`) and that the archive holds neither a
+   `_CodeSignature` directory nor an `embedded.mobileprovision`.
 3. **checksums** downloads the platform artifacts, flattens the release set
-   with `nu scripts/release.nu collect`, asserts the exact eight-file set, and
+   with `nu scripts/release.nu collect`, asserts the exact ten-file set, and
    generates one aggregate checksum manifest with relative names. Both the
    platform artifacts and the aggregate manifest are uploaded as workflow
-   artifacts. It depends on `build`, so a failed build prevents the release set
-   from being assembled.
-4. **publish** runs only for a pushed tag, depends on `validate`, `build`, and
-   `checksums`, and is the only job with `contents: write`. Its condition is
+   artifacts. It depends on `build`, `build-android` and `build-ios-unsigned`,
+   so a failed build prevents the release set from being assembled.
+4. **publish** runs only for a pushed tag, depends on `validate`, `build`,
+   `build-android`, `build-ios-unsigned`, and `checksums`, and is the only job with
+   `contents: write`. Its condition is
    `success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')`;
    it never uses `if: always()`, so a failed or skipped prerequisite blocks
    publication even when the tag condition is true. It downloads the platform
@@ -100,7 +132,9 @@ commit of the pushed tag or the dispatched ref, and `validate` asserts that
    `Natcatty <version>` for the tag, or edits the existing release when the
    tag is re-pushed or force-moved, and attaches the release assets with
    `--clobber`. The body is generated by GitHub's release-notes API from the
-   tag's commits and merged pull requests; it is not read from the repository.
+   tag's commits and merged pull requests; apart from the one-time
+   identifier-migration note described under Release page, it is not read from
+   the repository.
    A version with a SemVer pre-release suffix is marked as a GitHub pre-release
    and is never marked Latest. The tag and the release are
    never deleted. A `workflow_dispatch` run skips this job and publishes
@@ -134,8 +168,17 @@ that run.
 
 A tag push creates a GitHub release for that tag. Its body is generated by
 GitHub's release-notes API from the tag's commits and merged pull requests; it
-is not written by hand and is not derived from `CHANGELOG.md`. The assets are
-the eight installers and the checksum manifest:
+is not written by hand and is not derived from `CHANGELOG.md`. Two checked-in
+notes are appended. The first release whose `mygo.json` identifier differs
+from the previous release's gets the checked-in
+`docs/releases/identifier-migration.md` note, so a reader who sees only the
+release page learns about the one-time reset; later releases do not repeat it.
+Every release also appends the checked-in
+`docs/releases/android-apk.md` note, which says the Android app is installed
+from the APK file rather than a store, and the
+`docs/releases/ios-unsigned.md` note, which says the iOS package must be
+signed by a sideloading tool first. The assets are the ten installers and the
+checksum manifest:
 
 - `natcatty-<version>-macos-arm64.dmg`
 - `natcatty-<version>-macos-amd64.dmg`
@@ -145,7 +188,9 @@ the eight installers and the checksum manifest:
 - `natcatty-<version>-linux-arm64.tar.gz`
 - `natcatty-<version>-linux-amd64.deb`
 - `natcatty-<version>-linux-arm64.deb`
-- the checksum manifest, which lists all eight with relative names
+- `natcatty-<version>-android.apk`
+- `natcatty-<version>-ios-unsigned.ipa`
+- the checksum manifest, which lists all ten with relative names
 
 A tag whose version has a pre-release suffix (for example
 `v0.1.0-rc.1`) produces a GitHub pre-release instead of a normal release, and
@@ -154,9 +199,10 @@ notices, and corresponding-source offer are carried inside each installer next
 to the executable. The workflow asserts the offer is in every extracted package
 before publishing; the release body does not repeat it.
 
-The release stays unsigned apart from MyGo's ad hoc macOS signature and carries
-no notarization or update metadata; publishing it does not relax any of the
-checks above.
+The desktop release stays unsigned apart from MyGo's ad hoc macOS signature
+and carries no notarization or update metadata; publishing it does not relax
+any of the checks above. The Android APK is signed with the project keystore
+as described under Signing, notarization, and updates.
 
 `scripts/release.nu` is the checked release tooling. It reads `mygo.json`,
 renames the built packages, writes the Windows portable archive, and generates
@@ -191,6 +237,20 @@ passes the result to `gh release create` or `gh release edit` with
 its new commit. `CHANGELOG.md` remains the human-maintained changelog, but the
 release body is not parsed from it.
 
+The publish job then runs `internal/tools/releasebody`. It reads the identifier
+from `mygo.json`, reads the manifest at the nearest tag reachable from the new
+tag's parent, and appends `docs/releases/identifier-migration.md` only when
+that previous identifier differs or no previous tag exists. An unreadable
+previous manifest counts as different, so the note errs toward being shown;
+running the tool again on existing notes is idempotent. Compose a body locally
+with:
+
+```sh
+go run ./internal/tools/releasebody -notes NOTES.md -out NOTES.md \
+  -manifest mygo.json -previous-manifest PREVIOUS-MYGO.json \
+  -fragment docs/releases/identifier-migration.md
+```
+
 The GPL corresponding-source offer is separate from the release notes. The
 checked tool in `internal/tools/sourceoffer` writes it for one version:
 
@@ -208,14 +268,22 @@ artifact check requires the file in the package.
 
 ## Signing, notarization, and updates
 
-The release is deliberately unsigned apart from MyGo's **ad hoc** macOS
-signature, which only makes the bundle internally consistent; it is not a
-Developer ID signature and Gatekeeper will not trust it. There is no
-notarization, no Authenticode certificate, and no `mygo keygen`. `mygo.json`
-has no `updates` block, `macos.signingIdentity`, `macos.notarize`, or Windows
-signing configuration, and the workflow refuses those inputs and rejects
-`update-*.json`, `latest*.yml`, appcast files, and delta archives in the built
-artifacts.
+The desktop release is deliberately unsigned apart from MyGo's **ad hoc**
+macOS signature, which only makes the bundle internally consistent; it is not
+a Developer ID signature and Gatekeeper will not trust it. There is no
+desktop notarization, no Authenticode certificate, and no `mygo keygen`.
+`mygo.json` has no `updates` block, `macos.signingIdentity`,
+`macos.notarize`, or Windows signing configuration, and the workflow refuses
+those inputs and rejects `update-*.json`, `latest*.yml`, appcast files, and
+delta archives in the built artifacts.
+
+The Android APK is different: it is signed with natcatty's own release
+keystore, whose material lives only in repository secrets and never in the
+checkout; the build fails closed when a secret is missing. There is still no
+store account: users install the APK from the release file. Development builds
+with no keystore fall back to the Android debug key. Keystore creation, backup,
+and the unrecoverable loss of the key are documented in
+[android-release.md](android-release.md).
 
 ## Linux CJK fonts
 

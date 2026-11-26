@@ -570,12 +570,19 @@ func redactWireGuardStatus(status adapterwireguard.Status, secrets ...string) ad
 	return status
 }
 
+// networkStatusPoster receives non-secret Provider status. The desktop's
+// Vault State and the phone's status store both implement it, so both surfaces
+// read the same Provider events instead of each mapping them separately.
+type networkStatusPoster interface {
+	PostNetworkProviderStatus(status vaultstate.NetworkProviderStatus)
+}
+
 // networkProviderStatusSink fans one Provider status out to the Vault surface
 // and the Connection Log. It is safe to call from the Provider's dial
 // goroutine: the Vault state enqueues for the UI thread, and the history
 // service owns its own synchronization.
 type networkProviderStatusSink struct {
-	vault   func() *vaultstate.State
+	vault   func() networkStatusPoster
 	history *apphistory.Service
 	now     func() time.Time
 	// onPhase receives every Provider phase change. The runtime uses terminal

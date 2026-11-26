@@ -3864,5 +3864,13 @@
   "connectionErrorUnsupportedHost": "Этот узел использует протокол или транспорт, который эта версия не поддерживает. Измените узел перед подключением.",
   "connectionErrorVNCUnsupported": "Этот сервер VNC не предлагает ни одного поддерживаемого Natcatty типа защиты. Используйте SSH-маршрут, чтобы зашифровать подключение.",
   "connectionErrorVNCCertificate": "Сертификат сервера VNC не прошёл проверку по системному хранилищу доверия и имени хоста. Проверьте имя хоста и сертификат сервера.",
-  "connectionErrorVNCCancelled": "Подключение отменено до отправки учётных данных."
+  "connectionErrorVNCCancelled": "Подключение отменено до отправки учётных данных.",
+  "terminalClearTerminal": "Очистить",
+  "terminalClipboardRead": "Программа хочет прочитать буфер обмена.",
+  "terminalClipboardReadAllow": "Разрешить",
+  "terminalClipboardReadDeny": "Запретить",
+  "terminalClipboardReadEmpty": "Буфер обмена пуст.",
+  "terminalCopy": "Копировать",
+  "terminalPaste": "Вставить",
+  "terminalSelectAll": "Выбрать всё"
 }

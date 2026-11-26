@@ -809,6 +809,19 @@ func (p *Panel) GatewayURL(tabID string) (string, error) {
 	return p.gateway.URLFor(p.tabs[index].URL)
 }
 
+// RemoteURL maps one of this route's gateway URLs back to the real remote
+// address. It reports false for a URL the gateway did not serve, so the app's
+// per-site cookie lookup can never read another route's or site's store.
+func (p *Panel) RemoteURL(gatewayURL string) (string, bool) {
+	p.mu.Lock()
+	gateway := p.gateway
+	p.mu.Unlock()
+	if gateway == nil {
+		return "", false
+	}
+	return gateway.RemoteURL(gatewayURL)
+}
+
 // IsGatewayURL reports whether rawURL is one of this route's loopback
 // gateway URLs. The UI allows those navigations and maps every other HTTP(S)
 // address back through Navigate.

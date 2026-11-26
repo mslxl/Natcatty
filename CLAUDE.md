@@ -22,6 +22,13 @@ When testing the app, run `just dev` (`go run .`). A development build keeps its
 
 Use at most one iOS simulator and at most one Android emulator. Before creating one, check existing devices (`xcrun simctl list devices` for iOS, `emulator -list-avds` for Android); if any exists for that platform, reuse it and do not create another, even if it differs in device type, runtime, profile, or system image.
 
+## Mobile test environments
+
+Phone work runs in one of two dedicated shells: `nix develop .#ios` and `nix develop .#android`, entered from the repository root (the Android shell keys its AVDs to the checkout). They pin the toolchains; the iOS shell uses the host Xcode and the Android shell ships a pinned SDK, NDK, emulator and system image.
+
+- Boot a device with `scripts/dev/ios-boot.sh` or `scripts/dev/android-boot.sh`; both print the device identifier and both are idempotent.
+- **Shut the simulator or emulator down as soon as the test run finishes**: `scripts/dev/ios-stop.sh` / `scripts/dev/android-stop.sh`. Do not leave one booted between tasks or after a failed run — a running emulator holds CPU and memory, and the next run inherits its stale state.
+
 ## Git merges
 
 Merge feature branches into `main` only after verifying the baseline.

@@ -96,6 +96,25 @@ func (f *fakeExtendedService) ContainerAction(ctx context.Context, host domainva
 	return appsysmanager.ActionResult{Command: command, Stdout: "ok", HasExitCode: true}, nil
 }
 
+// RunPending mirrors the shared executor, routing each confirmed kind to the
+// fake method the tests assert on.
+func (f *fakeExtendedService) RunPending(ctx context.Context, pending appsysmanager.PendingAction) (appsysmanager.ActionResult, error) {
+	switch pending.Kind {
+	case appsysmanager.ActionSignal, appsysmanager.ActionServiceAction:
+		return f.fakeService.RunPending(ctx, pending)
+	case appsysmanager.ActionTmuxCreate:
+		return f.TmuxCreate(ctx, pending.Host, pending.Session)
+	case appsysmanager.ActionTmuxKill:
+		return f.TmuxKill(ctx, pending.Host, pending.Session)
+	case appsysmanager.ActionDockerStart, appsysmanager.ActionDockerStop, appsysmanager.ActionDockerRemove:
+		return f.ContainerAction(ctx, pending.Host,
+			appsysmanager.NormalizeContainerRuntime(pending.Runtime),
+			pending.ContainerID, pending.DockerAction)
+	}
+	return appsysmanager.ActionResult{Kind: pending.Kind, Command: pending.Command},
+		appsysmanager.ErrUnknownAction
+}
+
 func (f *fakeExtendedService) SetContainerRuntime(runtime appsysmanager.ContainerRuntime) {
 	f.mu.Lock()
 	f.runtimes = append(f.runtimes, runtime)

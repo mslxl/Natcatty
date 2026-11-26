@@ -2,7 +2,9 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"maps"
 
 	domainsync "github.com/mslxl/natcatty/domain/sync"
 )
@@ -72,6 +74,27 @@ func (s *Service) encodeAnchor(ctx context.Context, payload Payload) (string, st
 	return string(content), signature, nil
 }
 
+// carryUnmanagedSettings publishes the current remote value of every settings
+// document this client does not manage. The remote value wins even when this
+// client has a pending local edit, and a document absent from the remote stays
+// absent: this client must never revive or overwrite another client's document.
+func (s *Service) carryUnmanagedSettings(local, remote map[string]json.RawMessage) map[string]json.RawMessage {
+	if len(s.unmanagedSettings) == 0 {
+		return local
+	}
+	settings := maps.Clone(local)
+	for key := range s.unmanagedSettings {
+		delete(settings, key)
+		if value, present := remote[key]; present {
+			if settings == nil {
+				settings = make(map[string]json.RawMessage)
+			}
+			settings[key] = value
+		}
+	}
+	return settings
+}
+
 // prepareOutgoing adds durable tombstones to a payload that is about to be
 // uploaded. Tombstones for entities still present are removed; entities that
 // disappeared relative to the base get a new tombstone. This is the original's
@@ -85,6 +108,7 @@ func (s *Service) prepareOutgoing(payload Payload, base *Payload, remote *Payloa
 	if remote != nil {
 		r = *remote
 	}
+	payload.Settings = s.carryUnmanagedSettings(payload.Settings, r.Settings)
 	meta := mergeSyncMeta(b, payload, r, payload)
 	if meta == nil {
 		payload.SyncMeta = nil

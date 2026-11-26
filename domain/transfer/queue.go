@@ -236,6 +236,11 @@ type Task struct {
 	// CheckpointBytesDone is the honest byte count of the checkpointed prefix,
 	// excluding a partially written current file.
 	CheckpointBytesDone int64 `json:"checkpointBytesDone,omitempty"`
+	// CheckpointRebase marks a checkpoint whose source path changed under an
+	// explicit re-selection. The next attempt rebuilds the prefix digest from
+	// the replacement plan instead of verifying source paths that Android's
+	// cache rewrite makes unknowable. A normal resume never sets it.
+	CheckpointRebase bool `json:"checkpointRebase,omitempty"`
 	// Targets pins each top-level source to the destination root an earlier
 	// attempt chose, so a resumed duplicate or replacement continues in the
 	// same tree.
@@ -245,6 +250,10 @@ type Task struct {
 	// another, so the request-wide policy alone cannot express the answers.
 	ReplaceTargets map[string]bool `json:"replaceTargets,omitempty"`
 	SkipTargets    map[string]bool `json:"skipTargets,omitempty"`
+	// DuplicateTargets remembers a source answered with Rename. The chosen
+	// name itself is pinned in Targets by the plan, so this only keeps the
+	// answer from being asked again after a resume or source re-selection.
+	DuplicateTargets map[string]bool `json:"duplicateTargets,omitempty"`
 }
 
 // Name returns the row's label, deriving it from the single source when the
@@ -350,6 +359,12 @@ func (t Task) Clone() Task {
 		out.SkipTargets = make(map[string]bool, len(t.SkipTargets))
 		for source, skip := range t.SkipTargets {
 			out.SkipTargets[source] = skip
+		}
+	}
+	if t.DuplicateTargets != nil {
+		out.DuplicateTargets = make(map[string]bool, len(t.DuplicateTargets))
+		for source, duplicate := range t.DuplicateTargets {
+			out.DuplicateTargets[source] = duplicate
 		}
 	}
 	if t.PendingConflict != nil {

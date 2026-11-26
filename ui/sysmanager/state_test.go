@@ -191,6 +191,19 @@ func (f *fakeService) ServiceAction(ctx context.Context, host domainvault.Host, 
 		Stdout: "ok", HasExitCode: true}, nil
 }
 
+// RunPending mirrors the shared executor for the base fake: it covers the two
+// core actions and leaves the extended ones to fakeExtendedService.
+func (f *fakeService) RunPending(ctx context.Context, pending appsysmanager.PendingAction) (appsysmanager.ActionResult, error) {
+	switch pending.Kind {
+	case appsysmanager.ActionSignal:
+		return f.Signal(ctx, pending.Host, pending.PID, pending.Signal)
+	case appsysmanager.ActionServiceAction:
+		return f.ServiceAction(ctx, pending.Host, pending.Unit, pending.Action, pending.Scope)
+	}
+	return appsysmanager.ActionResult{Kind: pending.Kind, Command: pending.Command},
+		appsysmanager.ErrUnknownAction
+}
+
 func (f *fakeService) calls() (signals, services int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

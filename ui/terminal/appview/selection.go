@@ -4,8 +4,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
+	"github.com/mslxl/natcatty/ui/terminal"
 )
 
 // Cell is a position on the replayed screen. Row counts from the first line

@@ -54,6 +54,16 @@ func (d *Dialer) dialProxy(ctx context.Context, proxy *appconnection.Proxy, prov
 // is no separate connect step to bound: the SSH handshake is the first I/O, so
 // the authentication deadline and the caller's context bound it.
 func (d *Dialer) dialProxyCommand(ctx context.Context, proxy *appconnection.Proxy, targetHost string, targetPort int) (net.Conn, error) {
+	// A platform that has not passed device acceptance must fail before the
+	// command is substituted or a process is spawned. Dial and DialStream run
+	// the ProxyCommand/Network Profile conflict check first, so that exclusion
+	// still wins when both apply.
+	if d.proxyCommandUnavailable {
+		return nil, &appconnection.Error{
+			Kind:  appconnection.KindUnsupported,
+			Cause: appconnection.ErrProxyCommandUnavailable,
+		}
+	}
 	command, err := substituteProxyCommand(proxy.Command, targetHost, targetPort, runtime.GOOS)
 	if err != nil {
 		return nil, &appconnection.Error{Kind: appconnection.KindInternal, Cause: err}

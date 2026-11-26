@@ -1521,6 +1521,20 @@ func (p Protocol) SessionTransport() domainprotocol.Transport {
 	return domainprotocol.TransportUnsupported
 }
 
+// IsRemote reports whether a remote-only client, such as the phone app, can
+// list and open this Host. A Local Host runs a shell on the machine the client
+// is not, a serial device is a Session without a Host record, and a VNC Host
+// needs a pixel-session transport the phone does not carry, so none of them
+// can be opened there. An empty protocol is a legacy record that NormalizeDraft
+// would have made SSH.
+func (h Host) IsRemote() bool {
+	switch h.Protocol {
+	case "", ProtocolSSH, ProtocolTelnet:
+		return true
+	}
+	return false
+}
+
 // UsesSSHAuth reports whether a protocol authenticates with the shared SSH
 // credential settings (Identity, SSH Key, Method, agent, and MFA). Only SSH
 // does; Telnet and VNC do not, so their editors must not show those controls.

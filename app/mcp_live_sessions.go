@@ -1,3 +1,5 @@
+//go:build !ios && !android
+
 // The live-Session scope the external MCP policy reads while sharing is on.
 // The original renderer kept the reserved __external_mcp__ scope aligned with
 // every live terminal Session through useExternalMcpSessionSync; this file is

@@ -184,7 +184,7 @@ needed. A sensible starting point:
 ```json
 {
   "name": "Natcatty",
-  "identifier": "io.github.mslxl.natcatty",
+  "identifier": "com.mslxl.natcatty",
   "version": "0.1.0",
   "out": "build",
   "resources": "resources",

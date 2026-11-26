@@ -1,15 +1,27 @@
 {
   "name": "Natcatty",
-  "identifier": "io.github.mslxl.natcatty",
+  "identifier": "com.mslxl.natcatty",
   "version": "0.2.1",
   "out": "build",
   "resources": ["mygo.json", "CHANGELOG.md", "LICENSE", "NOTICE"],
-  "urlSchemes": ["ssh"],
+  "urlSchemes": ["ssh", "netcatty"],
   "i18n": {
     "dir": "ui/locales",
     "source": "en"
   },
   "macos": {
     "minimumSystemVersion": "13.0"
+  },
+  "ios": {
+    "minimumSystemVersion": "17.0",
+    "multipleWindows": false,
+    "orientations": ["portrait", "landscape"],
+    "infoPlist": {
+      "NSLocalNetworkUsageDescription": "Connect to SSH hosts on your local network."
+    }
+  },
+  "android": {
+    "minSdk": 26,
+    "cleartextDomains": ["127.0.0.1", "127.0.0.2"]
   }
 }

@@ -102,3 +102,32 @@ func Origin(raw string) (string, error) {
 	}
 	return parsed.Scheme + "://" + parsed.Host, nil
 }
+
+// CanonicalOrigin is Origin in one spelling: lowercased, and without a port
+// that is the scheme's default. Two spellings of one origin therefore name
+// the same website data store, and different schemes, hosts, or explicit
+// ports never do. The store is keyed by origin because cookies are not
+// isolated by the gateway's loopback port.
+func CanonicalOrigin(raw string) (string, error) {
+	origin, err := Origin(raw)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return "", ErrAddressInvalid
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	host := strings.ToLower(parsed.Hostname())
+	port := parsed.Port()
+	if (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
+		port = ""
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port != "" {
+		host += ":" + port
+	}
+	return scheme + "://" + host, nil
+}

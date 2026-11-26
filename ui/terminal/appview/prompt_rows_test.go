@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
+	"github.com/mslxl/natcatty/ui/terminal"
 )
 
 // PromptRows is the block's prompt: the shell's own drawing, captured at the

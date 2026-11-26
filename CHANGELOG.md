@@ -21,6 +21,21 @@ requests; this file is the human-maintained changelog.
   Because the setting is synced, a device still running an older build
   normalizes the new values to Vault once; re-select the choice after all
   devices are upgraded.
+- The first phone release: iOS 17+ and Android 8+ (API 26) builds share the
+  desktop's Vault, Hosts, settings and Sessions. A phone opens only remote
+  Sessions — SSH, telnet, Mosh and EternalTerminal — in a native
+  libghostty-vt terminal with no webview. A visible Session is resumed, a
+  hidden one is hibernated with its connection and state kept, and only an
+  explicit close ends it. Distribution is direct: a signed APK from the
+  release file and an iOS simulator app, with no store account. See
+  `docs/mobile.md`.
+- Android releases publish one universal, 16 KB page compatible APK signed
+  with natcatty's own release keystore. It carries every supported ABI, is
+  installed from the release file rather than a store, and its version code
+  grows with every release so a newer APK installs over an older one.
+  Development builds need no account and fall back to the debug key; losing
+  the release keystore is unrecoverable and its backup lives outside the
+  repository.
 - The global shortcut has four user-selectable Hotkey Modes: release it to the
   system, toggle the main window as before, pull down a Quake terminal, or
   pull down the complete application. Quake is the default. The Dropdown
@@ -67,6 +82,19 @@ requests; this file is the human-maintained changelog.
   document needs no migration. The same area now exposes the Streamable HTTP
   endpoint's enable switch, listen address, and port, and all three apply
   without a restart.
+- The bundle identifier is now `com.mslxl.natcatty` on every platform (it was
+  `io.github.mslxl.natcatty`). The operating system treats this build as a
+  different app: quit the previous version before installing, then expect to
+  grant permissions again and to re-enter every orphaned credential — saved
+  passwords and passphrases, and each EternalTerminal resume identity and key
+  (they are still in the system credential store, under the old name, but the
+  app can no longer read them). On macOS the notification authorization is
+  asked again and an existing Start at login entry is no longer recognised;
+  re-enable it once and delete the old entry if System Settings shows two. On
+  Windows the old Apps & Features entry and the old Run value under
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` linger and should be
+  removed. The Vault, Hosts, settings, Sessions and window layout live under
+  the unchanged application name and survive untouched.
 - Settings → System → Global Hotkey is now the four-mode choice above. The old
   enable checkbox and the stored `globalHotkeyEnabled` value were removed; an
   old record loads with Quake as the default and no migration, while tray,

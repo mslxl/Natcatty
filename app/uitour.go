@@ -1,4 +1,4 @@
-//go:build uitour
+//go:build uitour && !ios && !android
 
 package app
 

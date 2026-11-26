@@ -19,9 +19,9 @@ shipping attribution is the stock-mosh and mosh-go material in
 - Ticket: 15, "Commission mosh provenance audit and fix notices" (HITL)
 - Date: 2026-11-04
 - Branch: `ticket-15-provenance`, based on `2f013f84c`
-- Related decisions: ADR-0014 (host app stays GPL-3.0-or-later) and ADR-0015
-  (desktop moves toward an application-owned pure-Go mosh client; the bundled
-  MoshCatty adapter is still present and shipped on this branch)
+- Related decisions: ADR-0015 (desktop moves toward an application-owned
+  pure-Go mosh client; the bundled MoshCatty adapter is still present and
+  shipped on this branch)
 - Related research:
   - `docs/research/mosh-go-and-moshcatty-provenance.md` on
     `research/mosh-provenance` at
@@ -53,8 +53,8 @@ Out of scope:
 
 Evidence inspected directly for this report:
 
-- Ticket 15, ticket 13's research audit, ADR-0014, ADR-0015, and the two
-  research documents named above.
+- Ticket 15, ticket 13's research audit, ADR-0015, and the two research
+  documents named above.
 - A full clone of `binaricat/MoshCatty` at tag `moshcatty-0.1.8`
   (`554b9d305e7ac4b11de740d764bbc3e05f816d7b`, 2026-07-17). The clone has 53
   commits across all refs and no `CONTRIBUTING`, CLA, DCO, or copyright
@@ -213,23 +213,6 @@ The repository now states this explicitly in `resources/mosh/README.md`,
 `resources/mosh/BUILD-PROVENANCE.json` (`reproducibility.status` is
 `not-established`), and the third-party notices. The binaries must not be
 described as reproducible until independent evidence exists.
-
-### 3.7 GPL obligations under the current distribution decision
-
-ADR-0014 keeps the host app GPL-3.0-or-later, so using a GPL client is
-license-compatible and relicensing consent is not a precondition for desktop
-distribution. The distribution still needs:
-
-- the GPL-3.0-or-later text (present at the repository root and under
-  `resources/mosh/`),
-- a corresponding-source offer naming MoshCatty's tag and commit (present in
-  `NOTICE`, the generated `SOURCE-OFFER.md`, and the notices), and
-- the third-party notices for the MIT-derived material and Rust crates (now
-  added).
-
-Relicensing MoshCatty under MIT/Apache-2.0 is a separate question, necessary
-only if a permissive mobile/App Store path reopens. It is not required or
-approved by this report.
 
 ## 4. Findings: mosh-go
 

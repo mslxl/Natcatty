@@ -19,5 +19,5 @@ in-process client, and no stored implementation value needs migration.
 - ET port forwarding is out of scope for v1; the transport interface must leave room for it.
 - A reattached terminal starts blank, matching stock `et`: etserver keeps no screen snapshot, and reset recovery exchanges empty catchup buffers rather than replaying prior output. Natcatty preserves that behavior and does not synthesize a restored screen.
 - The vendored `et-go` code needs its Apache-2.0 LICENSE/NOTICE and attribution in the app's third-party notices.
-- Mobile remains deferred; the pure-Go client is portable when the mobile gate reopens.
+- Mobile runs the pure-Go client in-process; there is no native binary to ship.
 - Supersedes ADR-0005.

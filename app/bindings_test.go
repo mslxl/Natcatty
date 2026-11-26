@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
+	"github.com/mslxl/natcatty/ui/terminal"
 
 	"github.com/mslxl/natcatty/application/command"
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"

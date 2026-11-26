@@ -1,3 +1,5 @@
+//go:build !ios && !android
+
 package app
 
 // Packaged-artifact smoke mode. This file ships in the normal, untagged app so

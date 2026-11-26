@@ -111,6 +111,20 @@ func TestNormalizeDraftClearsX11OutsidePlainSSH(t *testing.T) {
 	}
 }
 
+func TestHostIsRemoteExcludesOnlyLocalShells(t *testing.T) {
+	remote := []Protocol{ProtocolSSH, ProtocolTelnet, ""}
+	for _, protocol := range remote {
+		if !(Host{Protocol: protocol}).IsRemote() {
+			t.Errorf("protocol %q is not remote, want remote", protocol)
+		}
+	}
+	for _, protocol := range []Protocol{Protocol("local"), Protocol("serial"), ProtocolVNC, Protocol("unknown")} {
+		if (Host{Protocol: protocol}).IsRemote() {
+			t.Errorf("protocol %q is remote, want excluded", protocol)
+		}
+	}
+}
+
 func TestHostX11EnabledNeedsBothPreferenceAndAcknowledgement(t *testing.T) {
 	host := Host{X11Forwarding: true}
 	if host.X11Enabled() {

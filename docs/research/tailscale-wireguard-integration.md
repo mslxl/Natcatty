@@ -744,7 +744,6 @@ MVS 统一到 Tailscale 要求的较新版本（`v0.0.0-20260915211658-a6f909f08
 
 ### 6.2 许可与 GPL 兼容性
 
-本应用是 GPL-3.0-or-later（`docs/adr/0014-host-app-licensing-and-distribution.md:1-17`）。
 拟引入依赖的许可：
 
 | 依赖 | 许可 | 与 GPLv3 兼容 | 备注 |
@@ -760,8 +759,7 @@ MVS 统一到 Tailscale 要求的较新版本（`v0.0.0-20260915211658-a6f909f08
 （“compatible with version 3 of the GNU GPL”）；
 [Modified BSD](https://www.gnu.org/licenses/license-list.html#ModifiedBSD)；
 [Expat/MIT](https://www.gnu.org/licenses/license-list.html#Expat)。
-这不是法律意见；发布前应把新依赖加入第三方 notices/SPDX 检查
-（ADR 0014 已要求 per-release notices）。
+这不是法律意见；发布前应把新依赖加入第三方 notices/SPDX 检查。
 
 ### 6.3 供应链与维护
 
@@ -1020,6 +1018,5 @@ MVS 统一到 Tailscale 要求的较新版本（`v0.0.0-20260915211658-a6f909f08
 - `application/vault/secrets.go`、`application/vault/groups.go`
 - `docs/adr/0002-xcrypto-ssh-as-sole-transport.md`、
   `docs/adr/0010-field-secret-key-hierarchy.md`、
-  `docs/adr/0014-host-app-licensing-and-distribution.md`、
   `docs/adr/0015-pure-go-mosh-client.md`、`docs/adr/0016-pure-go-et-client.md`
 - `.github/workflows/ci.yml`、`.github/workflows/release.yml`

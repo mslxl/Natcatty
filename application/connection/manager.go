@@ -916,6 +916,7 @@ func (m *Manager) authPlan(ctx context.Context, req Request) (AuthPlan, error) {
 		if plan.Mode == "" {
 			plan.Mode = AuthModeAuto
 		}
+		plan.HostID = req.HostID
 		return plan, nil
 	}
 
@@ -923,11 +924,13 @@ func (m *Manager) authPlan(ctx context.Context, req Request) (AuthPlan, error) {
 	if err != nil {
 		return AuthPlan{}, err
 	}
-	return BuildAuthPlan(AuthSpec{
+	plan := BuildAuthPlan(AuthSpec{
 		Username: req.Username,
 		Mode:     AuthModePassword,
 		Password: password,
-	}), nil
+	})
+	plan.HostID = req.HostID
+	return plan, nil
 }
 
 func authCacheKey(username, hostname string, port int) string {

@@ -4,6 +4,15 @@
 # Build output
 build/
 
+# MyGo's generated phone host project (Gradle / Xcode)
+.mygo/
+
+# libghostty-vt phone artifacts are built, hashed and published, never committed.
+# The manifest is the committed record; see scripts/mobile/build-ghostty-vt.sh.
+build/ghostty-vt/
+ui/terminal/mobile/lib/android/**/libghostty-vt.a
+ui/terminal/mobile/*.syso
+
 # Runtime log written by the app when it is launched from a checkout
 myeasylog.log
 
@@ -16,3 +25,6 @@ resources/winconpty/*.exe
 
 # direnv's per-checkout cache. The .envrc itself is tracked.
 .direnv/
+
+# Local mobile test state (AVDs, simulator ids, emulator logs)
+.dev/

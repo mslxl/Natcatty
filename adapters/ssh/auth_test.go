@@ -23,12 +23,14 @@ import (
 
 type promptLog struct {
 	passphraseReqs []appconnection.PassphraseRequest
+	passwordReqs   []appconnection.PasswordRequest
 	kiReqs         []appconnection.KeyboardInteractiveRequest
 }
 
 type fakeAuthPrompter struct {
 	mu         sync.Mutex
 	passphrase func(appconnection.PassphraseRequest) (appconnection.PassphraseDecision, error)
+	password   func(appconnection.PasswordRequest) (appconnection.PasswordDecision, error)
 	keyboard   func(appconnection.KeyboardInteractiveRequest) (appconnection.KeyboardInteractiveDecision, error)
 	log        promptLog
 }
@@ -41,6 +43,19 @@ func (f *fakeAuthPrompter) Passphrase(_ context.Context, req appconnection.Passp
 		return appconnection.PassphraseDecision{Passphrase: "testkey"}, nil
 	}
 	return f.passphrase(req)
+}
+
+// Password implements the optional PasswordPrompter capability. Tests that do
+// not configure it return an empty decision, which keeps the password method
+// skipped exactly as a prompter without the capability.
+func (f *fakeAuthPrompter) Password(_ context.Context, req appconnection.PasswordRequest) (appconnection.PasswordDecision, error) {
+	f.mu.Lock()
+	f.log.passwordReqs = append(f.log.passwordReqs, req)
+	f.mu.Unlock()
+	if f.password == nil {
+		return appconnection.PasswordDecision{}, nil
+	}
+	return f.password(req)
 }
 
 func (f *fakeAuthPrompter) KeyboardInteractive(_ context.Context, req appconnection.KeyboardInteractiveRequest) (appconnection.KeyboardInteractiveDecision, error) {
@@ -58,6 +73,7 @@ func (f *fakeAuthPrompter) requests() promptLog {
 	defer f.mu.Unlock()
 	return promptLog{
 		passphraseReqs: append([]appconnection.PassphraseRequest(nil), f.log.passphraseReqs...),
+		passwordReqs:   append([]appconnection.PasswordRequest(nil), f.log.passwordReqs...),
 		kiReqs:         append([]appconnection.KeyboardInteractiveRequest(nil), f.log.kiReqs...),
 	}
 }
@@ -219,6 +235,82 @@ func TestDialPassphraseCancellationIsTyped(t *testing.T) {
 	assertKind(t, err, appconnection.KindCancelled)
 	if !errors.Is(err, appconnection.ErrPromptCancelled) {
 		t.Fatalf("error = %v, want ErrPromptCancelled", err)
+	}
+}
+
+// TestDialPromptsForAPasswordWhenNoneIsStored covers the interactive-password
+// capability: password mode with no stored credential still offers the method,
+// asking the prompter only at the moment the server would accept it.
+func TestDialPromptsForAPasswordWhenNoneIsStored(t *testing.T) {
+	server, dialFunc := startFixture(t, fakessh.Options{Password: "s3cret"})
+	prompter := &fakeAuthPrompter{password: func(req appconnection.PasswordRequest) (appconnection.PasswordDecision, error) {
+		if req.Hostname != "example.com" || req.Username != "alice" || req.HostID != "host-7" {
+			t.Errorf("password request = %+v", req)
+		}
+		return appconnection.PasswordDecision{Password: "s3cret"}, nil
+	}}
+	plan := appconnection.BuildAuthPlan(appconnection.AuthSpec{
+		Username: "alice", Mode: appconnection.AuthModePassword,
+	})
+	plan.HostID = "host-7"
+
+	client, err := dialWithPlan(t, dialFunc, plan, prompter)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	if server.PasswordAttempts() == 0 {
+		t.Fatal("the server saw no password attempt")
+	}
+	username, password := server.LastCredentials()
+	if username != "alice" || password != "s3cret" {
+		t.Fatalf("credentials = %s/%s, want alice/s3cret", username, password)
+	}
+	if prompts := prompter.requests().passwordReqs; len(prompts) != 1 {
+		t.Fatalf("password prompts = %d, want 1", len(prompts))
+	}
+}
+
+func TestDialPasswordPromptCancellationIsTyped(t *testing.T) {
+	server, dialFunc := startFixture(t, fakessh.Options{Password: "s3cret"})
+	prompter := &fakeAuthPrompter{password: func(appconnection.PasswordRequest) (appconnection.PasswordDecision, error) {
+		return appconnection.PasswordDecision{Cancelled: true}, nil
+	}}
+	plan := appconnection.BuildAuthPlan(appconnection.AuthSpec{Username: "alice", Mode: appconnection.AuthModePassword})
+
+	_, err := dialWithPlan(t, dialFunc, plan, prompter)
+	assertKind(t, err, appconnection.KindCancelled)
+	if !errors.Is(err, appconnection.ErrPromptCancelled) {
+		t.Fatalf("error = %v, want ErrPromptCancelled", err)
+	}
+	if server.PasswordAttempts() != 0 {
+		t.Fatalf("password attempts = %d after cancellation, want 0", server.PasswordAttempts())
+	}
+}
+
+// withoutPasswordPrompter exposes only the base AuthPrompter methods, which is
+// what the desktop prompt does today.
+type withoutPasswordPrompter struct{}
+
+func (withoutPasswordPrompter) Passphrase(context.Context, appconnection.PassphraseRequest) (appconnection.PassphraseDecision, error) {
+	return appconnection.PassphraseDecision{}, nil
+}
+
+func (withoutPasswordPrompter) KeyboardInteractive(context.Context, appconnection.KeyboardInteractiveRequest) (appconnection.KeyboardInteractiveDecision, error) {
+	return appconnection.KeyboardInteractiveDecision{}, nil
+}
+
+func TestDialSkipsPasswordWhenThePrompterCannotAsk(t *testing.T) {
+	server, dialFunc := startFixture(t, fakessh.Options{Password: "s3cret"})
+	plan := appconnection.BuildAuthPlan(appconnection.AuthSpec{Mode: appconnection.AuthModePassword})
+
+	_, err := dialWithPlan(t, dialFunc, plan, withoutPasswordPrompter{})
+	if err == nil {
+		t.Fatal("Dial succeeded without a password or an interactive prompt")
+	}
+	if server.PasswordAttempts() != 0 {
+		t.Fatalf("password attempts = %d, want none without a credential", server.PasswordAttempts())
 	}
 }
 

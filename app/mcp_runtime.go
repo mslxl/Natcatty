@@ -1,3 +1,5 @@
+//go:build !ios && !android
+
 // External MCP runtime ownership. The loopback discovery bridge and the
 // optional Streamable HTTP endpoint are opened only while the preferences'
 // master switch is on, so the app can follow a Settings change without a

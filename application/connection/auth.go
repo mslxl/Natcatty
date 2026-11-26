@@ -73,9 +73,13 @@ type AuthCandidate struct {
 
 // AuthPlan is the ordered authentication strategy for one Connection.
 type AuthPlan struct {
-	Mode        AuthMode
-	Username    string
-	Password    string
+	Mode     AuthMode
+	Username string
+	Password string
+	// HostID names the Host the plan belongs to. It is not a credential: a
+	// prompter that offers an interactive password uses it to record the
+	// answer against the right Host.
+	HostID      model.HostID
 	Candidates  []AuthCandidate
 	FailClosed  bool
 	RequiresMFA bool
@@ -158,6 +162,34 @@ type AuthPrompter interface {
 	KeyboardInteractive(ctx context.Context, req KeyboardInteractiveRequest) (KeyboardInteractiveDecision, error)
 }
 
+// PasswordRequest asks for a password when the Host has none stored. It is
+// issued only when the transport is about to try the password method, so the
+// user is never asked for a credential the server would not accept.
+type PasswordRequest struct {
+	HostID   model.HostID
+	Hostname string
+	Username string
+	// Invalid reports that a previously entered password was rejected, so the
+	// prompt can say so.
+	Invalid bool
+}
+
+// PasswordDecision is the user's answer. Cancelled aborts authentication
+// without treating empty input as a password.
+type PasswordDecision struct {
+	Password  string
+	Cancelled bool
+}
+
+// PasswordPrompter is the optional interactive-password capability of an
+// AuthPrompter. A transport offers the password method without a stored
+// credential only when its prompter implements this interface; a prompter that
+// does not (the desktop's current one) keeps skipping the method, so the
+// capability can be adopted per platform.
+type PasswordPrompter interface {
+	Password(ctx context.Context, req PasswordRequest) (PasswordDecision, error)
+}
+
 // BuildAuthPlan produces the ordered attempts for a Host's resolved mode. The
 // "none" probe happens inside the transport before this plan is consulted.
 //
@@ -185,9 +217,11 @@ func BuildAuthPlan(spec AuthSpec) AuthPlan {
 		if preferKeyboardInteractive {
 			addCandidate(&plan, AuthCandidate{Kind: AuthKindKeyboardInteractive, ID: CandidateKeyboardInteractive})
 		}
-		if spec.Password != "" {
-			addCandidate(&plan, AuthCandidate{Kind: AuthKindPassword, ID: CandidatePassword})
-		}
+		// The password candidate is always part of the plan. The transport
+		// skips it when no stored password exists and its prompter cannot ask
+		// for one, so the candidate only becomes a prompt when the platform
+		// supports interactive passwords.
+		addCandidate(&plan, AuthCandidate{Kind: AuthKindPassword, ID: CandidatePassword})
 	}
 	ensureKeyboardInteractive := func() {
 		for _, candidate := range plan.Candidates {

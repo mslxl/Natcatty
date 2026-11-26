@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
+	"github.com/mslxl/natcatty/ui/terminal"
 
 	"github.com/mslxl/natcatty/application/autocomplete"
 	lensmodel "github.com/mslxl/natcatty/application/lens/model"

@@ -206,6 +206,12 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		}
 		return f.vnc.Open(ctx, spec)
 	default:
+		if f.local == nil {
+			// A phone root registers no local PTY: opening a Host that maps to a
+			// local shell must fail closed rather than create a shell on the
+			// device.
+			return nil, errors.New("app: no local transport on this platform")
+		}
 		return f.local.Open(ctx, f.withLocalShell(spec))
 	}
 	if f.manager == nil {
