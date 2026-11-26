@@ -1954,8 +1954,16 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 				}
 				// Cursor keys and home/end move the line editor's cursor;
 				// tracking them keeps the accepted-suggestion erase boundary
-				// and the typed line in agreement.
-				t.applyInputCSI(value)
+				// and the typed line in agreement. Inside a paste they are not
+				// keys at all: the editor inserts the pasted bytes literally,
+				// so the sequence must neither move the tracked cursor nor
+				// (for the recall keys) discard a paste that is fully
+				// traceable. The pasted control bytes themselves never join
+				// the tracked line either way, since the input filter only
+				// takes printable text.
+				if !t.inputPaste {
+					t.applyInputCSI(value)
+				}
 				t.inputEscape = inputPlain
 				t.inputCSIParams = t.inputCSIParams[:0]
 			case value >= 0x30 && value <= 0x3f:

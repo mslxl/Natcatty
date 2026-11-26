@@ -952,3 +952,27 @@ func TestTapEnterReArmsAfterADiscardedLine(t *testing.T) {
 		t.Fatalf("the line after the discarded one did not capture: %+v", state.Command)
 	}
 }
+
+// TestTapBracketedPasteDoesNotReadKeys proves the paste gate covers the whole
+// sequence: text pasted into the line editor may itself contain what looks
+// like a cursor or recall key, and the editor inserts it literally. Reading
+// it as a key would move the tracked cursor wrongly, and reading Up as a
+// recall would discard a paste the tap can trace exactly.
+func TestTapBracketedPasteDoesNotReadKeys(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	// DEC 2004 is on: the shell wraps the paste, and inside it a byte string
+	// shaped like the Up recall is text, not a key.
+	tap.handleInput([]byte("echo "), tapAt(0))
+	tap.handleInput([]byte("\x1b[200~before\x1b[Aafter\x1b[201~"), tapAt(time.Second))
+	tap.handleInput([]byte(" tail\r"), tapAt(2*time.Second))
+	state := tap.state(tapAt(2 * time.Second))
+	if !state.Command.Running {
+		t.Fatalf("the paste's embedded recall bytes discarded the capture: %+v", state.Command)
+	}
+	// The control bytes never join the tracked line — the input filter takes
+	// printable text — so the command is the printable paste content around
+	// them, exactly as the editor shows it.
+	if got := state.Command.Text; got != "echo beforeafter tail" {
+		t.Fatalf("command text = %q, want the pasted text without its escape bytes", got)
+	}
+}
