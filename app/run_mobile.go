@@ -70,6 +70,9 @@ func Run() error {
 	}()
 	var showErr error
 	mygo.App.WhenReady(func() {
+		// Register bundled fonts once the mobile host bridge and extracted
+		// resources directory are active, before the first terminal renders.
+		registerBundledFonts()
 		// Load before the first frame. A read failure is the Vault pages'
 		// error state, not a startup failure, so the shell still opens.
 		_ = shell.Load(ctx)

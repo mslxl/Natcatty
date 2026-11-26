@@ -15,9 +15,20 @@ type TerminalFont struct {
 	Family string
 }
 
-// terminalFonts is the original's catalog of monospace fonts, ids unchanged
-// so settings stay compatible.
+const (
+	// BundledTerminalFontID is the catalog ID of the Maple Mono NF font bundled
+	// under resources/fonts/maple-mono-nf and registered at startup.
+	BundledTerminalFontID = "maple-mono-nf"
+	// BundledTerminalFontFamily is the exact family name registered with MyGo's
+	// ui.RegisterFont for the bundled terminal font.
+	BundledTerminalFontFamily = "Maple Mono NF"
+)
+
+// terminalFonts is the catalog of monospace fonts. The bundled Maple Mono NF
+// font is listed first as the cross-platform default; the remaining entries
+// preserve the original's IDs so existing settings stay compatible.
 var terminalFonts = []TerminalFont{
+	{BundledTerminalFontID, BundledTerminalFontFamily, BundledTerminalFontFamily + ", monospace"},
 	{"menlo", "Menlo", "Menlo, monospace"},
 	{"monaco", "Monaco", "Monaco, monospace"},
 	{"consolas", "Consolas", "Consolas, monospace"},
@@ -83,17 +94,12 @@ func TerminalFontFamily(setting string) string {
 	return setting + ", monospace"
 }
 
-// DefaultTerminalFontFor is the default font id on an OS, as the original's
-// getDefaultTerminalFontIdForPlatform: one the OS ships, so the first frame
-// already draws with it.
+// DefaultTerminalFontFor returns the default terminal font ID for goos.
+// Natcatty bundles Maple Mono NF on every desktop and phone target, and its
+// family stack still falls back to monospace when unavailable.
 func DefaultTerminalFontFor(goos string) string {
-	switch goos {
-	case "windows":
-		return "consolas"
-	case "linux":
-		return "dejavu-sans-mono"
-	}
-	return "menlo"
+	_ = goos
+	return BundledTerminalFontID
 }
 
 // DefaultTerminalFont is the default font id on this OS.

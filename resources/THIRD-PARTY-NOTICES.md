@@ -257,12 +257,47 @@ below applies to the adapted portions.
 - **Pending human/legal review:** this attribution follows the vendored
   tree's `PROVENANCE.md`; it has not been independently reviewed.
 
+## Bundled terminal font (Maple Mono NF)
+
+- Component: Maple Mono NF (`MapleMono-NF.zip`, release `v7.9`), unmodified
+  Regular, Bold, Italic, and BoldItalic TrueType font files bundled as
+  standalone resource files under `resources/fonts/maple-mono-nf/` and
+  registered at runtime as the default terminal font
+- Source: <https://github.com/subframe7536/maple-font/releases/download/v7.9/MapleMono-NF.zip>
+- Upstream archive SHA-256:
+  `59098b87c895d871635d37680e88000ae2b2b25b55428195b228ec589e35fb89`
+- Shipped files and SHA-256 checksums:
+  - `resources/fonts/maple-mono-nf/MapleMono-NF-Regular.ttf`:
+    `dbf160ce96358056a47777e95a50af208b438312787cf20917ce2321066de8e5`
+  - `resources/fonts/maple-mono-nf/MapleMono-NF-Bold.ttf`:
+    `cf6fb13160424257ea764a5deb1d55116c9ab5c347cb69c6be2576b44dc3d544`
+  - `resources/fonts/maple-mono-nf/MapleMono-NF-Italic.ttf`:
+    `f20012da3a738ff070292aae453b5f7b47de3992451a581cd4ba6f7fed7b9785`
+  - `resources/fonts/maple-mono-nf/MapleMono-NF-BoldItalic.ttf`:
+    `97a40e0a25c8adb2c9e29d755a127b7fae989debf40e9f62ca3e393b1de2d429`
+  - `resources/fonts/maple-mono-nf/LICENSE.txt`:
+    `eb2d28d2e565a0757e3d64e34ebb452e75a0cad87c0ab3faf4e08ba7596de902`
+- Copyright: Copyright 2022 The Maple Mono Project Authors
+  (<https://github.com/subframe7536/maple-font>)
+- License: SIL Open Font License, Version 1.1 (`OFL-1.1`). The unmodified
+  upstream license file ships at `resources/fonts/maple-mono-nf/LICENSE.txt`
+  and is reproduced in full below under
+  [SIL Open Font License 1.1](#sil-open-font-license-11). The font files are
+  aggregated as separate resource files alongside Natcatty's GPL-3.0-or-later
+  executable and remain licensed under OFL-1.1.
+- Nerd Fonts glyphs: Maple Mono NF `v7.9` embeds Nerd Fonts `v3.4.0` icon
+  glyphs (<https://github.com/ryanoasis/nerd-fonts>, patcher and tooling under
+  the [MIT license](#mit-license); aggregated upstream icon glyph licenses are
+  cataloged in
+  <https://github.com/ryanoasis/nerd-fonts/blob/master/license-audit.md>).
+
 ## Platform components that are not distributed
 
 Natcatty uses the operating system's webview (WKWebView on macOS, WebView2 on
-Windows, WebKitGTK on Linux) and the system font collection. Those components
-are provided by the operating system and are not copied into Natcatty's
-artifacts. The `.deb` does not depend on or bundle a CJK font.
+Windows, WebKitGTK on Linux) and the system font collection for UI text and CJK
+fallback. Those OS components are provided by the operating system and are not
+copied into Natcatty's artifacts. The `.deb` does not depend on or bundle a CJK
+font.
 
 ## License texts
 
@@ -562,6 +597,102 @@ conflicts with the conditions of the GPLv2, you may retroactively and
 prospectively choose to deem waived or otherwise exclude such Section(s) of
 the License, but only in their entirety and only with respect to the Combined
 Software.
+
+### SIL Open Font License 1.1
+
+Copyright 2022 The Maple Mono Project Authors (https://github.com/subframe7536/maple-font)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+https://openfontlicense.org
+
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## Verification and open gaps
 

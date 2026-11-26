@@ -245,6 +245,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	if !options.isolated() && !singleInstancePrimary(mygoInstanceLock{}, secondInstance) {
 		return nil
 	}
+	registerBundledFonts()
 
 	invalidate := func() {
 		if windows != nil {

@@ -7,10 +7,11 @@ import (
 
 func TestTerminalFontFamilyAlwaysEndsInMonospace(t *testing.T) {
 	for setting, want := range map[string]string{
-		"menlo":          "Menlo, monospace",
-		"jetbrains-mono": "JetBrains Mono, monospace",
-		"My Font":        "My Font, monospace",
-		"":               "monospace",
+		BundledTerminalFontID: BundledTerminalFontFamily + ", monospace",
+		"menlo":               "Menlo, monospace",
+		"jetbrains-mono":      "JetBrains Mono, monospace",
+		"My Font":             "My Font, monospace",
+		"":                    "monospace",
 	} {
 		if got := TerminalFontFamily(setting); got != want {
 			t.Errorf("TerminalFontFamily(%q) = %q, want %q", setting, got, want)
@@ -23,13 +24,18 @@ func TestTerminalFontFamilyAlwaysEndsInMonospace(t *testing.T) {
 	}
 }
 
-func TestDefaultTerminalFontIsOneTheOSShips(t *testing.T) {
-	for goos, want := range map[string]string{"windows": "consolas", "linux": "dejavu-sans-mono", "darwin": "menlo"} {
-		if got := DefaultTerminalFontFor(goos); got != want {
-			t.Errorf("DefaultTerminalFontFor(%q) = %q, want %q", goos, got, want)
+func TestDefaultTerminalFontIsBundledMapleMonoNF(t *testing.T) {
+	for _, goos := range []string{"windows", "linux", "darwin", "ios", "android"} {
+		if got := DefaultTerminalFontFor(goos); got != BundledTerminalFontID {
+			t.Errorf("DefaultTerminalFontFor(%q) = %q, want %q", goos, got, BundledTerminalFontID)
 		}
-		if _, ok := LookupTerminalFont(DefaultTerminalFontFor(goos)); !ok {
+		font, ok := LookupTerminalFont(DefaultTerminalFontFor(goos))
+		if !ok {
 			t.Errorf("the %s default is not in the catalog", goos)
+			continue
+		}
+		if font.Family != BundledTerminalFontFamily+", monospace" {
+			t.Errorf("the %s default family = %q, want %q", goos, font.Family, BundledTerminalFontFamily+", monospace")
 		}
 	}
 }
