@@ -63,6 +63,30 @@ func (j *captureJournal) Record(_ context.Context, entry domainhistory.Entry) er
 	return nil
 }
 
+// countCommand is how many journal rows hold exactly this command text.
+func (j *captureJournal) countCommand(command string) int {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	n := 0
+	for _, entry := range j.entries {
+		if entry.Command == command {
+			n++
+		}
+	}
+	return n
+}
+
+// commands is the journal's command texts, for diagnostics.
+func (j *captureJournal) commands() []string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	out := make([]string, len(j.entries))
+	for i, entry := range j.entries {
+		out[i] = entry.Command
+	}
+	return out
+}
+
 // captureShell is a real zsh Session wired to the production capture hook, the
 // production completion hook and a real autocomplete service, rendered through
 // the Surface.
@@ -71,6 +95,7 @@ type captureShell struct {
 	surface *sessionui.Surface
 	tester  *ui.Tester
 	service *autocomplete.Service
+	journal *captureJournal
 }
 
 // openCaptureShell starts a zsh Session and focuses the terminal. delayMs is
@@ -182,7 +207,7 @@ func openCaptureShellNamed(t *testing.T, name string, delayMs int) *captureShell
 	// Focus the terminal so the Pane takes the production key path.
 	tester.ClickAt(450, 560)
 
-	return &captureShell{session: session, surface: surface, tester: tester, service: autocompleteService}
+	return &captureShell{session: session, surface: surface, tester: tester, service: autocompleteService, journal: journal}
 }
 
 // runCaptureCommand types the command, runs it and waits until the capture is
@@ -372,6 +397,105 @@ func TestTabAcceptsACapturedCommandInARealBash(t *testing.T) {
 			shell.session.Snapshot().Input, captureCommand)
 	}
 	shell.runAcceptedLine(t, before+2)
+}
+
+// TestRecallRecordsTheRenderedCommand is the end-to-end guard for the screen
+// capture fallback. A history recall rewrites the line invisibly to the
+// keystroke mirror: the user types a command, runs it, presses Up so zsh
+// repaints it on the prompt, and runs it again. The mirror saw only the Up
+// arrow, so before the fallback the second execution captured nothing (the
+// hybrid discard). Now the tap reads the rendered line at Enter, and the
+// recalled command reaches the journal a second time — correct, not dropped,
+// not a hybrid.
+func TestRecallRecordsTheRenderedCommand(t *testing.T) {
+	shell := openCaptureShell(t, 0)
+	shell.runCaptureCommand(t) // first execution: journal count 1
+
+	if got := shell.journal.countCommand(captureCommand); got != 1 {
+		t.Fatalf("after the first run the journal holds %d rows of %q, want 1: %v",
+			got, captureCommand, shell.journal.commands())
+	}
+
+	// Press Up once: zsh recalls the last command onto the line. The keystroke
+	// mirror sees only the arrow; the line editor swaps the buffer invisibly.
+	shell.tester.Key(0, ui.KeyUp)
+	pumpTUIFrames(shell.tester, 300*time.Millisecond)
+	// Run the recalled line. If the fallback reads the screen, this records the
+	// same correct command again; if it still discards, the count stays 1.
+	shell.tester.Key(0, ui.KeyEnter)
+	if !realShellWait(t, func() bool {
+		return shell.journal.countCommand(captureCommand) >= 2
+	}) {
+		t.Fatalf("the recalled execution never reached the journal: count %d, commands %v, screen %q",
+			shell.journal.countCommand(captureCommand), shell.journal.commands(), shell.surface.ScreenText())
+	}
+	// The captured text must be the verbatim command, not a hybrid fragment or
+	// control-byte residue.
+	for _, command := range shell.journal.commands() {
+		if strings.ContainsRune(command, '\x1b') || strings.ContainsRune(command, '\x03') {
+			t.Fatalf("the journal holds a garbled row %q: %v", command, shell.journal.commands())
+		}
+	}
+}
+
+// TestRecallRecordsTheRenderedCommandInBash runs the recall flow against bash,
+// whose readline repaints the recalled line just as zsh's zle does. The capture
+// fallback must read the rendered line in either shell.
+//
+// It is skipped: a real bash session's prompt rows are not marked with the OSC
+// 133 prompt semantics ghostty exposes, so there is no trustworthy line to read
+// (Terminal.SubmittedLine reports not-ok). zsh rows are marked; bash's are not,
+// even though the integration emits the same A/B marks in both. That marking
+// gap is independent of the recall fallback — it decides whether any screen
+// read is possible at all — so it is tracked separately, and the recall capture
+// in bash degrades to the safe discard exactly as it did before this feature.
+func TestRecallRecordsTheRenderedCommandInBash(t *testing.T) {
+	t.Skip("bash prompt rows are not OSC 133-marked, so no trustworthy line exists to read; the recall degrades to the discard")
+	shell := openCaptureShellNamed(t, "bash", 0)
+	shell.runCaptureCommand(t)
+
+	if got := shell.journal.countCommand(captureCommand); got != 1 {
+		t.Fatalf("after the first run the journal holds %d rows of %q, want 1: %v",
+			got, captureCommand, shell.journal.commands())
+	}
+
+	shell.tester.Key(0, ui.KeyUp)
+	pumpTUIFrames(shell.tester, 300*time.Millisecond)
+	shell.tester.Key(0, ui.KeyEnter)
+	if !realShellWait(t, func() bool {
+		return shell.journal.countCommand(captureCommand) >= 2
+	}) {
+		t.Fatalf("the recalled execution never reached the journal in bash: count %d, commands %v, screen %q",
+			shell.journal.countCommand(captureCommand), shell.journal.commands(), shell.surface.ScreenText())
+	}
+}
+
+// TestEmptyRecallDoesNotCaptureThePrompt is the negative guard: when the
+// recall leaves nothing on the line, or the user backs out of a reverse search
+// to a bare prompt, Enter must not record the prompt chrome as a command. The
+// journal must keep only the one real execution.
+func TestEmptyRecallDoesNotCaptureThePrompt(t *testing.T) {
+	shell := openCaptureShell(t, 0)
+	shell.runCaptureCommand(t)
+
+	if got := shell.journal.countCommand(captureCommand); got != 1 {
+		t.Fatalf("after the first run the journal holds %d rows of %q, want 1: %v",
+			got, captureCommand, shell.journal.commands())
+	}
+
+	// Recall then erase the line with Ctrl+U, so Enter submits a bare prompt.
+	// No command ran, so the journal must not grow — and especially must not
+	// grow with a row that is only the prompt text.
+	shell.tester.Key(0, ui.KeyUp)
+	pumpTUIFrames(shell.tester, 200*time.Millisecond)
+	shell.tester.Key(ui.Ctrl, ui.KeyU)
+	pumpTUIFrames(shell.tester, 200*time.Millisecond)
+	before := len(shell.journal.commands())
+	shell.tester.Key(0, ui.KeyEnter)
+	pumpTUIFrames(shell.tester, 400*time.Millisecond)
+	if got := len(shell.journal.commands()); got != before {
+		t.Fatalf("a bare-prompt Enter grew the journal to %v", shell.journal.commands())
+	}
 }
 
 // shareUserCache points an isolated HOME at the developer's real cache
