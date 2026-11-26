@@ -207,6 +207,10 @@ func TestShellTabMenuDuplicateKeepsTheSameTitle(t *testing.T) {
 	}
 	graph.state.RenameTab(0, "Build shell")
 	tt.Frame()
+	// The strip's TabOpen enter starts collapsed; let it finish before the
+	// menu control is clicked.
+	tt.Advance(400 * time.Millisecond)
+	tt.Frame()
 
 	if err := tt.Click("⋯"); err != nil {
 		t.Fatal(err)
@@ -267,6 +271,10 @@ func TestShellDragReordersTabs(t *testing.T) {
 		graph.state.RenameTab(index, fmt.Sprintf("Tab %d", index+1))
 	}
 	tt.Frame()
+	// The strip's TabOpen enter starts collapsed; let the Tabs reach their
+	// final boxes before they are dragged.
+	tt.Advance(400 * time.Millisecond)
+	tt.Frame()
 
 	third, ok := tt.Find("Tab 3")
 	if !ok {
@@ -324,6 +332,10 @@ func TestShellDragMovesAPaneOntoAnotherTab(t *testing.T) {
 	graph.state.RenameTab(1, "Tab 2")
 	graph.waitForSurfaces(t, 2)
 	tt.Frame()
+	// The strip's TabOpen enter starts collapsed; let the Tabs reach their
+	// final boxes before the drop target is measured.
+	tt.Advance(400 * time.Millisecond)
+	tt.Frame()
 
 	handle, ok := tt.Find("::")
 	if !ok {
@@ -376,6 +388,11 @@ func TestShellShowsTheSiblingAfterAMagnifiedPaneJoinsAnotherTab(t *testing.T) {
 	graph.state.RenameTab(1, "Tab 2")
 	graph.waitForSurfaces(t, 3)
 	graph.state.SelectTab(0)
+	tt.Frame()
+	// Let the body switch settle: the drag below targets what the screen
+	// shows, and a transition in flight paints at a different place than
+	// the pointer boxes it hit-tests against.
+	tt.Advance(300 * time.Millisecond)
 	tt.Frame()
 
 	handle, ok := tt.Find("::")
@@ -706,6 +723,10 @@ func TestShellKeepsWorkTabsVisibleOverTheVault(t *testing.T) {
 	}
 	graph.state.RenameTab(0, "Work Tab")
 	graph.state.ShowVault()
+	tt.Frame()
+	// The strip's TabOpen enter starts collapsed; let it finish before the Tab
+	// is clicked.
+	tt.Advance(400 * time.Millisecond)
 	tt.Frame()
 
 	tab, ok := tt.Find("Work Tab")

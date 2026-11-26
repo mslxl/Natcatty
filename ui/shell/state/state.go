@@ -28,6 +28,7 @@ import (
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
+	"github.com/mslxl/natcatty/ui/motion"
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/vault/section"
@@ -122,6 +123,17 @@ type TerminalFontSetter interface {
 // Compose.
 type FocusedSurface interface {
 	ViewFocused(c *ui.Context, focused bool) ui.Element
+}
+
+// ViewportMotion is implemented by a Surface whose Pane takes part in motion.
+// MotionViewport is the room this Pane's live screen last got; PinViewport
+// sets the Pane's final room and grid at a layout change, before the Pane's
+// own layout reports it, so the event delivers exactly one PTY resize; and
+// ReleaseViewport lets the layout's reported room take over again.
+type ViewportMotion interface {
+	MotionViewport() (w, h float32, ok bool)
+	PinViewport(w, h float32)
+	ReleaseViewport()
 }
 
 // FocusEpochSetter lets a Surface reset its retained live-terminal identity
@@ -323,6 +335,44 @@ type State struct {
 	// localAutoCloseOnExit is the live Local shell exit setting. Nil keeps
 	// the default: a local Tab closes after a normal shell exit.
 	localAutoCloseOnExit func() bool
+	// motion is the live Pane and Tab motion setting. The motion runtime
+	// pulls it at each event, so a preference change reaches an already-open
+	// workspace. Nil keeps the defaults: motion enabled.
+	motion func() domainpreferences.Motion
+	// motionEvent is the latest layout-changing action, with its monotonic
+	// sequence. The state records every event even when motion is off; each
+	// view decides whether to animate it or warp to the final layout.
+	motionEvent motion.Event
+	motionSeq   uint64
+	// bodyWarpSeq counts layout changes that intentionally record no motion
+	// event but must make the body jump to the final layout. The body runtime
+	// reads it on every frame: a batch Tab close closes several Tabs with no
+	// per-Tab animation, so the whole body warps instead of letting the run
+	// already playing finish (ticket 19). A separate sequence keeps the
+	// no-event expectations of the motion event stream intact.
+	bodyWarpSeq uint64
+	// motionUnrendered records, per renderer, that its last frame was skipped
+	// by the app's route (the main window drawing its placeholder, an
+	// unselected Dropdown route, a hidden Panel). Each renderer consumes its
+	// own notice on its next frame and warps, so a view whose events were not
+	// on screen never replays them. A fixed array keeps the notice
+	// allocation-free on every frame.
+	motionUnrendered [motionViewCount]bool
+	// detachedMotionUnrendered is motionUnrendered for the detached windows.
+	// Every detached window has its own Pane runtime over its own fixed Tab,
+	// so MotionView cannot name them: the notice is keyed by the window's Tab
+	// ID. Lazily allocated because most sessions open no detached window.
+	detachedMotionUnrendered map[model.TabID]bool
+	// closing keeps the Surfaces of Panes whose PaneClose event the view has
+	// not drawn yet. The view takes one with TakePaneGhost; a newer layout
+	// change or the app's shutdown releases any still here, so a delayed
+	// surface never leaks.
+	closing map[model.PaneID]*PaneGhost
+	// closingTabs keeps the whole body of a Tab whose TabClose event the view
+	// has not drawn yet. The view takes one with TakeTabGhost; a newer layout
+	// change or the app's shutdown releases any still here, so the Tab's
+	// Surfaces never leak.
+	closingTabs map[model.TabID]*TabGhost
 	// hostLabel resolves a Host's current label, so an open Tab follows a Vault
 	// rename. Nil falls back to the descriptor's label snapshot.
 	hostLabel func(model.HostID) (string, bool)
@@ -643,6 +693,128 @@ func WithLocalAutoCloseOnExit(enabled func() bool) Option {
 	return func(s *State) { s.localAutoCloseOnExit = enabled }
 }
 
+// WithMotion supplies the live Pane and Tab motion setting. The motion
+// runtime pulls it on every event, so a Settings change applies without
+// rebuilding the shell. Without it the shell reports the default motion: on.
+func WithMotion(motion func() domainpreferences.Motion) Option {
+	return func(s *State) { s.motion = motion }
+}
+
+// Motion returns the live Pane and Tab motion preferences. It is a pull
+// getter: the view reads it at the event, not once at construction.
+func (s *State) Motion() domainpreferences.Motion {
+	if s.motion == nil {
+		return domainpreferences.Defaults().Appearance.Motion
+	}
+	return s.motion()
+}
+
+// MotionEvent returns the latest layout-changing event and whether the state
+// has recorded one. Its Seq is monotonic: a view consumes only the latest
+// event it has not seen, so several events between two frames collapse to
+// the newest.
+func (s *State) MotionEvent() (motion.Event, bool) {
+	if s.motionSeq == 0 {
+		return motion.Event{}, false
+	}
+	return s.motionEvent, true
+}
+
+// BodyWarpSeq returns the count of layout changes that record no motion event
+// but must make the Tab body final on the next frame. A batch Tab close is the
+// case: ticket 19 says closing several Tabs warps with no per-Tab animation.
+// The value is a change signal, not geometry; reading it on an idle body is a
+// no-op.
+func (s *State) BodyWarpSeq() uint64 {
+	return s.bodyWarpSeq
+}
+
+// recordBodyWarp marks a layout change that has no motion event and must not
+// animate. It is deliberately not recordMotion: no view may play a per-Tab
+// event for it, and the motion event stream keeps its no-event contract.
+func (s *State) recordBodyWarp() {
+	s.bodyWarpSeq++
+}
+
+// recordMotion stamps event with the next sequence and keeps it as the
+// latest. The state records events even while motion is off; the view decides
+// to warp.
+func (s *State) recordMotion(event motion.Event) {
+	s.motionSeq++
+	event.Seq = s.motionSeq
+	if event.At.IsZero() {
+		event.At = time.Now()
+	}
+	s.motionEvent = event
+}
+
+// keepPaneGhost retains a closed Pane's Surface for the view's exit ghost.
+// The caller has already removed the Pane from its Tab and must not close it
+// itself.
+func (s *State) keepPaneGhost(id model.PaneID, info PaneInfo, value *pane) {
+	if s.closing == nil {
+		s.closing = map[model.PaneID]*PaneGhost{}
+	}
+	s.closing[id] = &PaneGhost{
+		ID:   id,
+		Info: info,
+		release: func() {
+			s.closePane(value, false)
+		},
+	}
+}
+
+// TakePaneGhost hands a retained closing Pane to the view, which owns the
+// ghost until it calls Release. It reports false when the Pane was closed
+// eagerly (motion off) or another view already took it.
+func (s *State) TakePaneGhost(id model.PaneID) (*PaneGhost, bool) {
+	ghost, ok := s.closing[id]
+	if !ok {
+		return nil, false
+	}
+	delete(s.closing, id)
+	return ghost, true
+}
+
+// ReleasePaneGhosts closes every retained closing Pane that no view took. A
+// new layout change supersedes their events, so their ghosts must not outlive
+// it. The view calls this when it consumes an event that is not the PaneClose
+// that retained them.
+func (s *State) ReleasePaneGhosts() {
+	for id, ghost := range s.closing {
+		delete(s.closing, id)
+		ghost.Release()
+	}
+}
+
+// TakeTabGhost hands a retained closing Tab to the view, which owns the ghost
+// until it calls Release. It reports false when the Tab was closed eagerly
+// (motion off, a non-current close) or another view already took it.
+func (s *State) TakeTabGhost(id model.TabID) (*TabGhost, bool) {
+	ghost, ok := s.closingTabs[id]
+	if !ok {
+		return nil, false
+	}
+	delete(s.closingTabs, id)
+	return ghost, true
+}
+
+// ReleaseTabGhosts closes every retained closing Tab that no view took. A
+// newer layout change supersedes their events, so the whole body's surfaces
+// must not outlive it.
+func (s *State) ReleaseTabGhosts() {
+	for id, ghost := range s.closingTabs {
+		delete(s.closingTabs, id)
+		ghost.Release()
+	}
+}
+
+// TabIndexByID returns the index of the Tab with id in the main window.
+func (s *State) TabIndexByID(id model.TabID) (int, bool) {
+	_, index := s.tabByID(id)
+	return index, index >= 0
+}
+
 // WithHostLabel supplies a Host's current label so open Tabs follow a Vault
 // rename. The getter runs on the UI thread.
 func WithHostLabel(label func(model.HostID) (string, bool)) Option {
@@ -755,12 +927,15 @@ func (s *State) clearPending(label string) {
 	}
 }
 
-// Shutdown cancels pending connections and trust prompts. The app calls it on
-// quit, before closing Sessions.
+// Shutdown cancels pending connections and trust prompts, and releases any
+// closing Pane or Tab whose ghost no view will draw. The app calls it on quit,
+// before closing Sessions.
 func (s *State) Shutdown() {
 	if s.cancel != nil {
 		s.cancel()
 	}
+	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
 }
 
 // VaultVisible reports whether the main window shows the Vault rather than a
@@ -1043,11 +1218,16 @@ func (s *State) NewTabWithShell(shell string) error {
 	tab.attachOnlySession(session, surface)
 	s.wireScreenLayout(tab)
 	s.tabs = append(s.tabs, tab)
+	// The new Tab's body enters; a PaneClose or TabClose the view has not
+	// drawn yet is superseded.
+	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
 	s.activateTab(len(s.tabs) - 1)
 	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
 	s.sftpVisible = false
+	s.recordMotion(motion.Event{Kind: motion.TabOpen, TabID: tab.ID, At: time.Now()})
 	s.save()
 	s.RequestRedraw()
 	return nil
@@ -1401,12 +1581,17 @@ func (s *State) Flush() {
 			}
 		}
 		s.tabs = append(s.tabs, tab)
+		// A Host Tab attached by this frame is a new current Tab; any close
+		// the view still had in flight is superseded.
+		s.ReleasePaneGhosts()
+		s.ReleaseTabGhosts()
 		s.activateTab(len(s.tabs) - 1)
 		s.leaveMonitor()
 		s.vaultVisible = false
 		s.logsVisible = false
 		s.sftpVisible = false
 		s.setProblem(nil)
+		s.recordMotion(motion.Event{Kind: motion.TabOpen, TabID: tab.ID, At: time.Now()})
 		s.save()
 		if !outcome.startup.Empty() {
 			// Line-by-line delivery waits between chunks, so it cannot run on

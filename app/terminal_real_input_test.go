@@ -149,9 +149,17 @@ func waitForRealShellSurfaces(t *testing.T, st *shellstate.State, count int) {
 	t.Fatalf("timed out waiting for %d real shell surfaces", count)
 }
 
+// pumpFrames builds frames for the wall duration, as a window's render loop
+// does. The Tester's clock stands still unless it is advanced, so the pump
+// moves it by the wall time each frame took: an animation (the Tab strip's
+// 180 ms enter, the body's switch) then reaches its final layout while the
+// helper waits, and a click after the pump sees the settled controls.
 func pumpFrames(tester *ui.Tester, duration time.Duration) {
 	deadline := time.Now().Add(duration)
+	last := time.Now()
 	for time.Now().Before(deadline) {
+		tester.Advance(time.Since(last))
+		last = time.Now()
 		tester.Frame()
 		time.Sleep(time.Millisecond)
 	}

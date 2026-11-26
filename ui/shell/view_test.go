@@ -171,6 +171,10 @@ func TestShellLayoutFitsAtDefaultAndMinimumSizes(t *testing.T) {
 		shellState.RenameTab(0, "Local Shell")
 		shellState.ShowVault()
 		tt.Frame()
+		// The strip's TabOpen enter starts collapsed; let it finish before the
+		// title is measured.
+		tt.Advance(400 * time.Millisecond)
+		tt.Frame()
 
 		// The Tab sits in the window's Tab bar and its title is readable.
 		title := assertInTabBar(t, tt, size[0], "Local Shell")

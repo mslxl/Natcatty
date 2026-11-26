@@ -73,7 +73,7 @@ type viewFixture struct {
 	hosts    *testHostSource
 }
 
-func newViewFixture(t *testing.T) *viewFixture {
+func newViewFixture(t *testing.T, opts ...Option) *viewFixture {
 	t.Helper()
 	service := appsession.NewService(&testFactory{})
 	t.Cleanup(service.CloseAll)
@@ -81,11 +81,12 @@ func newViewFixture(t *testing.T) *viewFixture {
 		opener: &testOpener{service: service},
 		hosts:  &testHostSource{hosts: hostsForTest()},
 	}
+	options := append([]Option{WithHosts(fixture.hosts)}, opts...)
 	fixture.state = NewState(fixture.opener, func(*appsession.Session) (Surface, error) {
 		surface := &viewSurface{name: fmt.Sprintf("surface-%d", len(fixture.surfaces)+1)}
 		fixture.surfaces = append(fixture.surfaces, surface)
 		return surface, nil
-	}, WithHosts(fixture.hosts))
+	}, options...)
 	t.Cleanup(fixture.state.Shutdown)
 	return fixture
 }

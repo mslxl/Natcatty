@@ -103,11 +103,16 @@ type ghosttyScreen struct {
 	viewSizeCh   chan appview.Size
 	viewSizeQuit chan struct{}
 	// viewRect is the Pane's laid-out box in the last paint. The grid divides
-	// that room, but the measurement is only readable on the build after it
-	// (appview.GridFor reads the previous layout), so a changed box asks for
-	// the frame that can report it.
-	viewRect     ui.Rect
-	viewRectOK   bool
+	// the room the Pane reported, but that measurement is only readable on
+	// the build after it, so a changed box asks for the frame that can report
+	// it.
+	viewRect   ui.Rect
+	viewRectOK bool
+	// viewport is the room the Pane's live screen was laid out in, as the
+	// Pane reported it on the last build. The grid divides that room; it is
+	// this screen's own Pane's viewport, never a package-level value a sibling
+	// could overwrite.
+	viewport     appview.Viewport
 	reportedSize appview.Size
 	reportedOK   bool
 	// focusNext asks the pane for one frame of keyboard focus: when the pane
@@ -190,7 +195,7 @@ func (s *ghosttyScreen) lensView(c *ui.Context) ui.Element {
 	if !s.remoteScreen {
 		// The pane sizes the terminal to the room it has; the peer-owned
 		// screen size is already authoritative for a remote TUI.
-		if grid, ok := appview.GridFor(); ok {
+		if grid, ok := appview.GridFor(s.viewport); ok {
 			if cols, rows := s.term.Size(); cols != grid.Cols || rows != grid.Rows {
 				s.term.Resize(grid.Cols, grid.Rows)
 			}
@@ -262,6 +267,21 @@ func (s *ghosttyScreen) lensPane(c *ui.Context) ui.Element {
 			Selection: &s.selection,
 			Focus:     focus,
 			KeepFocus: true,
+			// The Pane reports the box it laid its live screen out in. It is
+			// this screen's own Pane, so the grid computed from it cannot read
+			// another Pane's viewport. A changed room asks for the frame that
+			// resizes the terminal to it.
+			Viewport: func(w, h float32) {
+				if w <= 0 || h <= 0 {
+					return
+				}
+				next := appview.Viewport{W: w, H: h}
+				if next == s.viewport {
+					return
+				}
+				s.viewport = next
+				c.Invalidate()
+			},
 			Click: func() {
 				// A press on a finished block takes the keyboard back to the
 				// live screen, as the desktop Session does.
@@ -308,7 +328,7 @@ func (s *ghosttyScreen) reportViewSize() {
 	if !s.remoteScreen || s.viewSizeCh == nil {
 		return
 	}
-	grid, ok := appview.GridFor()
+	grid, ok := appview.GridFor(s.viewport)
 	if !ok {
 		return
 	}

@@ -1,0 +1,130 @@
+{
+  "tab-close-active": {
+    "bar": {
+      "x": 16,
+      "y": 2,
+      "w": 688,
+      "h": 32
+    },
+    "body": {
+      "x": 0,
+      "y": 36,
+      "w": 800,
+      "h": 364
+    },
+    "surface": "surface-2",
+    "surfaceBox": {
+      "x": 0,
+      "y": 36,
+      "w": 800,
+      "h": 364
+    },
+    "tabs": [
+      {
+        "title": "Local Session 1",
+        "selected": false
+      },
+      {
+        "title": "Local Session 2",
+        "selected": true
+      }
+    ]
+  },
+  "tab-close-inactive": {
+    "bar": {
+      "x": 16,
+      "y": 2,
+      "w": 688,
+      "h": 32
+    },
+    "body": {
+      "x": 0,
+      "y": 36,
+      "w": 800,
+      "h": 364
+    },
+    "surface": "surface-3",
+    "surfaceBox": {
+      "x": 0,
+      "y": 36,
+      "w": 800,
+      "h": 364
+    },
+    "tabs": [
+      {
+        "title": "Local Session 2",
+        "selected": false
+      },
+      {
+        "title": "Local Session 3",
+        "selected": true
+      }
+    ]
+  },
+  "tab-open": {
+    "bar": {
+      "x": 16,
+      "y": 2,
+      "w": 688,
+      "h": 32
+    },
+    "body": {
+      "x": 0,
+      "y": 36,
+      "w": 800,
+      "h": 364
+    },
+    "surface": "surface-2",
+    "surfaceBox": {
+      "x": 0,
+      "y": 36,
+      "w": 800,
+      "h": 364
+    },
+    "tabs": [
+      {
+        "title": "Local Session 1",
+        "selected": false
+      },
+      {
+        "title": "Local Session 2",
+        "selected": true
+      }
+    ]
+  },
+  "tab-switch": {
+    "bar": {
+      "x": 16,
+      "y": 2,
+      "w": 688,
+      "h": 32
+    },
+    "body": {
+      "x": 0,
+      "y": 36,
+      "w": 800,
+      "h": 364
+    },
+    "surface": "surface-1",
+    "surfaceBox": {
+      "x": 0,
+      "y": 36,
+      "w": 800,
+      "h": 364
+    },
+    "tabs": [
+      {
+        "title": "Local Session 1",
+        "selected": true
+      },
+      {
+        "title": "Local Session 2",
+        "selected": false
+      },
+      {
+        "title": "Local Session 3",
+        "selected": false
+      }
+    ]
+  }
+}

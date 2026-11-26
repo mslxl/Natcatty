@@ -345,6 +345,107 @@ func FormatArgs(args []string) string {
 	return strings.Join(parts, " ")
 }
 
+// MotionStyle is the look of a Pane or Tab body opening or closing.
+type MotionStyle string
+
+const (
+	MotionPopin  MotionStyle = "popin"
+	MotionSlide  MotionStyle = "slide"
+	MotionGnomed MotionStyle = "gnomed"
+	MotionFade   MotionStyle = "fade"
+)
+
+// Valid reports whether style is one the application knows.
+func (style MotionStyle) Valid() bool {
+	switch style {
+	case MotionPopin, MotionSlide, MotionGnomed, MotionFade:
+		return true
+	default:
+		return false
+	}
+}
+
+// MotionSwitchStyle is the look of a Tab body switch.
+type MotionSwitchStyle string
+
+const (
+	MotionSwitchSlide         MotionSwitchStyle = "slide"
+	MotionSwitchSlideVert     MotionSwitchStyle = "slidevert"
+	MotionSwitchSlideFade     MotionSwitchStyle = "slidefade"
+	MotionSwitchSlideFadeVert MotionSwitchStyle = "slidefadevert"
+	MotionSwitchFade          MotionSwitchStyle = "fade"
+)
+
+// Valid reports whether style is one the application knows.
+func (style MotionSwitchStyle) Valid() bool {
+	switch style {
+	case MotionSwitchSlide, MotionSwitchSlideVert, MotionSwitchSlideFade,
+		MotionSwitchSlideFadeVert, MotionSwitchFade:
+		return true
+	default:
+		return false
+	}
+}
+
+// MotionSpeed is the global speed tier for every animated event.
+type MotionSpeed string
+
+const (
+	MotionSlow     MotionSpeed = "slow"
+	MotionStandard MotionSpeed = "standard"
+	MotionFast     MotionSpeed = "fast"
+)
+
+// Valid reports whether speed is one the application knows.
+func (speed MotionSpeed) Valid() bool {
+	switch speed {
+	case MotionSlow, MotionStandard, MotionFast:
+		return true
+	default:
+		return false
+	}
+}
+
+// Motion is the Pane and Tab motion preferences. The event switches and
+// Enabled are positive booleans defaulting to true; the store overlays
+// Defaults() on every load, so an absent value means on. It is device-local:
+// animation depends on this device's speed and accessibility settings, so
+// Portable strips it and MergePortable keeps the local choice.
+type Motion struct {
+	Enabled     bool `json:"enabled"`
+	PaneOpen    bool `json:"paneOpen"`
+	PaneClose   bool `json:"paneClose"`
+	PaneReorder bool `json:"paneReorder"`
+	TabOpen     bool `json:"tabOpen"`
+	TabClose    bool `json:"tabClose"`
+	TabSwitch   bool `json:"tabSwitch"`
+	TabReorder  bool `json:"tabReorder"`
+
+	OpenStyle   MotionStyle       `json:"openStyle"`
+	CloseStyle  MotionStyle       `json:"closeStyle"`
+	SwitchStyle MotionSwitchStyle `json:"switchStyle"`
+	Speed       MotionSpeed       `json:"speed"`
+}
+
+// Normalized replaces unknown styles and speeds with defaults. The booleans
+// are left alone: false is a real choice, and an absent document never reaches
+// here as a zero Motion because Load starts from Defaults().
+func (motion Motion) Normalized(defaults Motion) Motion {
+	if !motion.OpenStyle.Valid() {
+		motion.OpenStyle = defaults.OpenStyle
+	}
+	if !motion.CloseStyle.Valid() {
+		motion.CloseStyle = defaults.CloseStyle
+	}
+	if !motion.SwitchStyle.Valid() {
+		motion.SwitchStyle = defaults.SwitchStyle
+	}
+	if !motion.Speed.Valid() {
+		motion.Speed = defaults.Speed
+	}
+	return motion
+}
+
 // Appearance group.
 type Appearance struct {
 	ThemeMode     ThemeMode  `json:"themeMode"`
@@ -384,6 +485,9 @@ type Appearance struct {
 	// LocalShell replaces the OS login shell for local Sessions. It is
 	// device-local and stripped from the synced document.
 	LocalShell LocalShell `json:"localShell"`
+	// Motion is device-local: animation depends on the device's speed and
+	// accessibility settings, so it is stripped from the synced document.
+	Motion Motion `json:"motion"`
 }
 
 // Layout group.
@@ -613,6 +717,8 @@ func Portable(settings Settings) PortableSettings {
 	appearance.InterfaceStyle = ""
 	// A shell path names a program installed on this device.
 	appearance.LocalShell = LocalShell{}
+	// Animation depends on this device's speed and accessibility settings.
+	appearance.Motion = Motion{}
 	editor := settings.SFTPEditor
 	editor.DefaultOpener = Opener{}
 	editor.FileAssociations = nil
@@ -642,6 +748,7 @@ func MergePortable(current Settings, portable PortableSettings) Settings {
 	next.Appearance.AppIcon = current.Appearance.AppIcon
 	next.Appearance.InterfaceStyle = current.Appearance.InterfaceStyle
 	next.Appearance.LocalShell = current.Appearance.LocalShell
+	next.Appearance.Motion = current.Appearance.Motion
 	next.Layout = portable.Layout
 	next.Layout.HostViewMode = current.Layout.HostViewMode
 	next.Layout.HostSortMode = current.Layout.HostSortMode
@@ -691,6 +798,20 @@ func Defaults() Settings {
 			TerminalFontSize:       DefaultTerminalFontSize,
 			// The original starts with a block cursor that blinks.
 			TerminalCursorStyle: DefaultCursorStyle,
+			Motion: Motion{
+				Enabled:     true,
+				PaneOpen:    true,
+				PaneClose:   true,
+				PaneReorder: true,
+				TabOpen:     true,
+				TabClose:    true,
+				TabSwitch:   true,
+				TabReorder:  true,
+				OpenStyle:   MotionPopin,
+				CloseStyle:  MotionPopin,
+				SwitchStyle: MotionSwitchSlide,
+				Speed:       MotionStandard,
+			},
 		},
 		Layout: Layout{
 			ShowHostTreeSidebar:          true,
@@ -789,6 +910,7 @@ func Normalize(settings Settings) Settings {
 		settings.Appearance.TerminalCursorStyle = defaults.Appearance.TerminalCursorStyle
 	}
 	settings.Appearance.LocalShell = settings.Appearance.LocalShell.Normalized()
+	settings.Appearance.Motion = settings.Appearance.Motion.Normalized(defaults.Appearance.Motion)
 
 	if !settings.Layout.HostViewMode.Valid() {
 		settings.Layout.HostViewMode = defaults.Layout.HostViewMode
@@ -926,6 +1048,18 @@ const (
 	FieldTerminalFontSize             Field = "appearance.terminalFontSize"
 	FieldTerminalCursorStyle          Field = "appearance.terminalCursorStyle"
 	FieldTerminalCursorBlink          Field = "appearance.terminalCursorBlink"
+	FieldMotionEnabled                Field = "appearance.motionEnabled"
+	FieldMotionPaneOpen               Field = "appearance.motionPaneOpen"
+	FieldMotionPaneClose              Field = "appearance.motionPaneClose"
+	FieldMotionPaneReorder            Field = "appearance.motionPaneReorder"
+	FieldMotionTabOpen                Field = "appearance.motionTabOpen"
+	FieldMotionTabClose               Field = "appearance.motionTabClose"
+	FieldMotionTabSwitch              Field = "appearance.motionTabSwitch"
+	FieldMotionTabReorder             Field = "appearance.motionTabReorder"
+	FieldMotionOpenStyle              Field = "appearance.motionOpenStyle"
+	FieldMotionCloseStyle             Field = "appearance.motionCloseStyle"
+	FieldMotionSwitchStyle            Field = "appearance.motionSwitchStyle"
+	FieldMotionSpeed                  Field = "appearance.motionSpeed"
 	FieldTerminalShiftEnter           Field = "appearance.terminalShiftEnter"
 	FieldLocalShell                   Field = "appearance.localShell"
 	FieldLocalShellArgs               Field = "appearance.localShellArgs"
@@ -973,6 +1107,9 @@ func Fields() []Field {
 		FieldAccentColor, FieldAppIcon, FieldUIFont,
 		FieldWindowOpacity, FieldInterfaceStyle, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
 		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink,
+		FieldMotionEnabled, FieldMotionPaneOpen, FieldMotionPaneClose, FieldMotionPaneReorder,
+		FieldMotionTabOpen, FieldMotionTabClose, FieldMotionTabSwitch, FieldMotionTabReorder,
+		FieldMotionOpenStyle, FieldMotionCloseStyle, FieldMotionSwitchStyle, FieldMotionSpeed,
 		FieldTerminalShiftEnter, FieldLocalShell, FieldLocalShellArgs,
 		FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
 		FieldShowOnlyUngroupedHostsInRoot, FieldHostClickBehavior,
@@ -1001,6 +1138,9 @@ func GroupOf(field Field) (Group, bool) {
 		FieldAccentColor, FieldAppIcon, FieldUIFont,
 		FieldWindowOpacity, FieldInterfaceStyle, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
 		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink,
+		FieldMotionEnabled, FieldMotionPaneOpen, FieldMotionPaneClose, FieldMotionPaneReorder,
+		FieldMotionTabOpen, FieldMotionTabClose, FieldMotionTabSwitch, FieldMotionTabReorder,
+		FieldMotionOpenStyle, FieldMotionCloseStyle, FieldMotionSwitchStyle, FieldMotionSpeed,
 		FieldTerminalShiftEnter, FieldLocalShell, FieldLocalShellArgs:
 		return GroupAppearance, true
 	case FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
@@ -1064,6 +1204,30 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.Appearance.TerminalCursorStyle = defaults.Appearance.TerminalCursorStyle
 	case FieldTerminalCursorBlink:
 		settings.Appearance.TerminalCursorSteady = defaults.Appearance.TerminalCursorSteady
+	case FieldMotionEnabled:
+		settings.Appearance.Motion.Enabled = defaults.Appearance.Motion.Enabled
+	case FieldMotionPaneOpen:
+		settings.Appearance.Motion.PaneOpen = defaults.Appearance.Motion.PaneOpen
+	case FieldMotionPaneClose:
+		settings.Appearance.Motion.PaneClose = defaults.Appearance.Motion.PaneClose
+	case FieldMotionPaneReorder:
+		settings.Appearance.Motion.PaneReorder = defaults.Appearance.Motion.PaneReorder
+	case FieldMotionTabOpen:
+		settings.Appearance.Motion.TabOpen = defaults.Appearance.Motion.TabOpen
+	case FieldMotionTabClose:
+		settings.Appearance.Motion.TabClose = defaults.Appearance.Motion.TabClose
+	case FieldMotionTabSwitch:
+		settings.Appearance.Motion.TabSwitch = defaults.Appearance.Motion.TabSwitch
+	case FieldMotionTabReorder:
+		settings.Appearance.Motion.TabReorder = defaults.Appearance.Motion.TabReorder
+	case FieldMotionOpenStyle:
+		settings.Appearance.Motion.OpenStyle = defaults.Appearance.Motion.OpenStyle
+	case FieldMotionCloseStyle:
+		settings.Appearance.Motion.CloseStyle = defaults.Appearance.Motion.CloseStyle
+	case FieldMotionSwitchStyle:
+		settings.Appearance.Motion.SwitchStyle = defaults.Appearance.Motion.SwitchStyle
+	case FieldMotionSpeed:
+		settings.Appearance.Motion.Speed = defaults.Appearance.Motion.Speed
 	case FieldTerminalShiftEnter:
 		settings.Appearance.TerminalShiftEnterPlain = defaults.Appearance.TerminalShiftEnterPlain
 	case FieldLocalShell:

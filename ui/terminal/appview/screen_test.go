@@ -666,10 +666,9 @@ func TestScreenParseBudget(t *testing.T) {
 // wrapped "for no reason" while empty space sat to its right).
 func TestGridFor(t *testing.T) {
 	cellWidth, cellHeight = 8, 16
-	defer func() { cellWidth, cellHeight = 0, 0; availableWidth, availableHeight = 0, 0 }()
+	defer func() { cellWidth, cellHeight = 0, 0 }()
 
-	noteAvailable(1100, 780)
-	size, ok := GridFor()
+	size, ok := GridFor(Viewport{W: 1100, H: 780})
 	if !ok {
 		t.Fatalf("no grid for a 1100x780 viewport")
 	}
@@ -681,24 +680,49 @@ func TestGridFor(t *testing.T) {
 	}
 
 	// A wider viewport has more columns, a narrower one fewer.
-	noteAvailable(1600, 780)
-	wide, _ := GridFor()
-	noteAvailable(700, 780)
-	narrow, _ := GridFor()
-	noteAvailable(1100, 780)
+	wide, _ := GridFor(Viewport{W: 1600, H: 780})
+	narrow, _ := GridFor(Viewport{W: 700, H: 780})
 	if wide.Cols <= size.Cols || narrow.Cols >= size.Cols {
 		t.Errorf("the grid does not follow the viewport: %d / %d / %d", narrow.Cols, size.Cols, wide.Cols)
 	}
 	// Extremes are clamped, not zero or negative.
-	noteAvailable(60, 60)
-	tiny, _ := GridFor()
+	tiny, _ := GridFor(Viewport{W: 60, H: 60})
 	if tiny.Cols != 20 || tiny.Rows != 8 {
 		t.Errorf("tiny viewport = %+v, want the 20x8 floor", tiny)
 	}
 	// Without a measurement there is no answer.
-	availableWidth, availableHeight = 0, 0
-	if _, ok := GridFor(); ok {
+	if _, ok := GridFor(Viewport{}); ok {
 		t.Errorf("a grid was reported before the viewport was measured")
+	}
+}
+
+// Each Pane's grid comes from that Pane's own viewport. Two Panes measured in
+// one frame must not read each other: the wide Pane keeps the wide grid and the
+// narrow Pane the narrow one, whatever order they ask in.
+func TestGridForKeepsViewportsApart(t *testing.T) {
+	cellWidth, cellHeight = 8, 16
+	defer func() { cellWidth, cellHeight = 0, 0 }()
+
+	wide := Viewport{W: 619, H: 504}
+	narrow := Viewport{W: 260, H: 504}
+	wideGrid, ok := GridFor(wide)
+	if !ok {
+		t.Fatal("no grid for the wide Pane")
+	}
+	narrowGrid, ok := GridFor(narrow)
+	if !ok {
+		t.Fatal("no grid for the narrow Pane")
+	}
+	if wideGrid.Cols <= narrowGrid.Cols {
+		t.Fatalf("wide Pane cols = %d, narrow Pane cols = %d: the viewports were swapped",
+			wideGrid.Cols, narrowGrid.Cols)
+	}
+	// Asking again in the other order must not change either answer.
+	if again, _ := GridFor(narrow); again != narrowGrid {
+		t.Errorf("narrow Pane changed after the wide Pane asked: %+v, want %+v", again, narrowGrid)
+	}
+	if again, _ := GridFor(wide); again != wideGrid {
+		t.Errorf("wide Pane changed after the narrow Pane asked: %+v, want %+v", again, wideGrid)
 	}
 }
 

@@ -117,6 +117,11 @@ type Hooks struct {
 	// not one this app draws. Nil, or nil rows for a block, falls back to the
 	// typed line alone; a prompt is never invented.
 	PromptRows func(blockID int) [][]ui.Span
+	// Viewport reports the room this Pane's live screen was laid out in: its
+	// own flow's content box, measured in this frame from this Pane's scroll.
+	// The caller keeps it per Pane and computes the grid from it (see
+	// GridFor); it is never a package-level value a sibling can overwrite.
+	Viewport func(w, h float32)
 }
 
 // MenuActions are the live screen's selection commands at the time a context
@@ -250,10 +255,10 @@ func Pane(c *ui.Context, store *model.Store, engine *lens.Engine, term *terminal
 			// The program's view paints its own background: it is the whole
 			// scroll box, margins included, so that background reaches the
 			// pane's edges.
-			noteAvailable(r.W, r.H-2*flowPadY)
+			reportViewport(hooks, r.W, r.H-2*flowPadY)
 			viewport = r
 		} else if r.H > 2*flowPadY {
-			noteAvailable(r.W, r.H-2*flowPadY)
+			reportViewport(hooks, r.W, r.H-2*flowPadY)
 			viewport = ui.Rect{X: r.X, Y: r.Y + flowPadY, W: r.W, H: r.H - 2*flowPadY}
 		}
 	}
@@ -341,6 +346,15 @@ func Pane(c *ui.Context, store *model.Store, engine *lens.Engine, term *terminal
 		})
 	}
 	return s.Label("Terminal")
+}
+
+// reportViewport tells the caller the room this Pane's live screen got. An
+// unmeasured or empty box is not reported, so a first frame keeps the terminal
+// at its previous size instead of resizing it to nothing.
+func reportViewport(hooks Hooks, w, h float32) {
+	if hooks.Viewport != nil && w > 0 && h > 0 {
+		hooks.Viewport(w, h)
+	}
 }
 
 // Live draws the terminal's screen as rows of the flow and takes the keyboard for

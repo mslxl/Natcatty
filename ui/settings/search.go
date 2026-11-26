@@ -150,6 +150,26 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaAppearance, domain.FieldTerminalFontSize, m.SettingsTerminalFontSize(), "terminal font size")
 	add(AreaAppearance, domain.FieldTerminalCursorStyle, m.SettingsTerminalCursorStyle(), "terminal cursor shape block bar underline")
 	add(AreaAppearance, domain.FieldTerminalCursorBlink, m.SettingsTerminalCursorBlink(), "terminal cursor blink blinking steady")
+	add(AreaAppearance, "", m.SettingsMotionTitle(), "motion animation")
+	add(AreaAppearance, domain.FieldMotionEnabled, m.SettingsMotionEnabled(), "motion animation enable master")
+	add(AreaAppearance, domain.FieldMotionPaneOpen, m.SettingsMotionPaneOpen(), "motion animation pane open split")
+	add(AreaAppearance, domain.FieldMotionPaneClose, m.SettingsMotionPaneClose(), "motion animation pane close")
+	add(AreaAppearance, domain.FieldMotionPaneReorder, m.SettingsMotionPaneReorder(),
+		"motion animation pane reorder move drag")
+	add(AreaAppearance, domain.FieldMotionTabOpen, m.SettingsMotionTabOpen(), "motion animation tab open")
+	add(AreaAppearance, domain.FieldMotionTabClose, m.SettingsMotionTabClose(), "motion animation tab close")
+	add(AreaAppearance, domain.FieldMotionTabSwitch, m.SettingsMotionTabSwitch(),
+		"motion animation tab switch workspace")
+	add(AreaAppearance, domain.FieldMotionTabReorder, m.SettingsMotionTabReorder(),
+		"motion animation tab reorder move drag")
+	add(AreaAppearance, domain.FieldMotionOpenStyle, m.SettingsMotionOpenStyle(),
+		"motion animation open style popin slide gnomed fade")
+	add(AreaAppearance, domain.FieldMotionCloseStyle, m.SettingsMotionCloseStyle(),
+		"motion animation close style popin slide gnomed fade")
+	add(AreaAppearance, domain.FieldMotionSwitchStyle, m.SettingsMotionSwitchStyle(),
+		"motion animation switch style slidevert slidefade slidefadevert fade")
+	add(AreaAppearance, domain.FieldMotionSpeed, m.SettingsMotionSpeed(),
+		"motion animation speed slow standard fast")
 	add(AreaAppearance, "", m.SettingsTerminalThemeImport(), "import iterm itermcolors scheme")
 	add(AreaAppearance, "", m.SettingsTerminalThemeFilter(), "filter search scheme")
 

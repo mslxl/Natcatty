@@ -42,7 +42,7 @@ const (
 // surface. Only the home Tab has a sidebar, so a terminal gets the whole
 // window.
 func View(s *state.State) func(*ui.Context) {
-	return shellView(state.RenderOwnerMain, s)
+	return shellView(state.RenderOwnerMain, s, newWorkspacePaneMotion(s, paneMotionMode{}))
 }
 
 // shellView is the full shell layout rendered by owner. The main window uses
@@ -50,15 +50,37 @@ func View(s *state.State) func(*ui.Context) {
 // with RenderOwnerDropdown, so the per-frame preamble, the side-frame
 // bookkeeping, and the side panel's tool lifetime all match the window that
 // actually draws the frame.
-func shellView(owner state.RenderOwner, s *state.State) func(*ui.Context) {
+func shellView(owner state.RenderOwner, s *state.State, wm *workspacePaneMotion) func(*ui.Context) {
 	// The work Tab strip scrolls sideways at the minimum window. This tracker
 	// belongs to this window's content function, so the active Tab is revealed
 	// when it changes or the window is resized.
 	reveal := newWorkTabReveal()
+	if wm.mode.stripReveal != nil {
+		// Tests inject the strip's reveal to read its runtime; a window
+		// always keeps its own.
+		reveal = wm.mode.stripReveal
+	}
+	reveal.labels = wm.mode.labels
+	// A strip warp that has nothing else moving in the window rests MyGo's
+	// records instead of renaming the row, so a focused item control keeps
+	// its focus. The runtime asks this each frame: a Pane or body transition
+	// in flight holds the warp back (the one-switch rule).
+	if wm != nil {
+		reveal.canInstant = wm.stripWarpCanBeInstant
+	}
 	focus := &focusEpochTracker{}
 	return func(c *ui.Context) {
 		m, t := shellPreamble(c, s, func() bool { return terminalVisible(s) })
-		shellLayout(c, s, m, t, owner, reveal, focus.next(s))
+		// The app draws the neutral placeholder (or no frame at all) while
+		// another route owns the Workspace. A notice from that gap makes this
+		// first restored frame warp every runtime: the events it missed were
+		// never on screen, so replaying them would animate stale boxes.
+		if s.TakeMotionViewUnrendered(state.MotionViewMain) {
+			wm.noteSkipped()
+			reveal.strip.noteUnrendered()
+		}
+		wm.preFrame(c, s)
+		shellLayout(c, s, m, t, owner, reveal, focus.next(s), wm)
 		// A side panel tool no longer drawn, such as System sampling a Host,
 		// stops once the frame is done. FinishSideFrameFor is per renderer, so
 		// this call cannot stop a tool another window still draws.
@@ -101,7 +123,7 @@ func (f *focusEpochTracker) next(s *state.State) uint64 {
 // surface, and every global overlay above it. It runs the per-frame Flush
 // through shellPreamble only, so both renderers execute it exactly once.
 func shellLayout(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
-	owner state.RenderOwner, reveal *workTabReveal, focusEpoch uint64) {
+	owner state.RenderOwner, reveal *workTabReveal, focusEpoch uint64, wm *workspacePaneMotion) {
 	// Hiding the SFTP Tab while it is shown leaves for the Vault, as the
 	// original's; the Session panel still browses files.
 	if !s.SFTPTabShown() && s.SFTPVisible() {
@@ -112,7 +134,7 @@ func shellLayout(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		HomeTabs: func() { homeTabs(c, s, m) },
 		Tabs:     func() { workTabs(c, s, m, t, reveal) },
 		Flush:    terminalVisible(s),
-		Body:     func() { body(c, s, m, t, owner, focusEpoch) },
+		Body:     func() { body(c, s, m, t, owner, focusEpoch, wm) },
 	})
 
 	if prompt := s.TrustPrompt(); prompt != nil {
@@ -167,30 +189,53 @@ func homeVisible(s *state.State) bool {
 	return !terminalVisible(s) && !s.SFTPVisible()
 }
 
-// body draws the chosen Tab's surface below the Tab bar.
+// body draws the chosen Tab's surface below the Tab bar. A Tab event animates
+// it as one whole body through the pane motion runtime; an idle frame is the
+// state's final surface. A renderer without a runtime, such as the Dropdown
+// Panel's top-down route, draws the final surface directly.
 func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
-	owner state.RenderOwner, focusEpoch uint64) {
+	owner state.RenderOwner, focusEpoch uint64, wm *workspacePaneMotion) {
+	if wm == nil || wm.body == nil {
+		bodySurface(c, s, m, t, owner, focusEpoch, wm)
+		return
+	}
+	wm.body.view(c, s, m, t, owner, focusEpoch, wm)
+}
+
+// bodySurface draws the surface the state shows now at its final layout.
+func bodySurface(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
+	owner state.RenderOwner, focusEpoch uint64, wm *workspacePaneMotion) {
 	switch {
 	case terminalVisible(s):
-		activeTab(c, s, m, t, owner, focusEpoch)
+		activeTab(c, s, m, t, owner, focusEpoch, wm)
 	case s.SFTPVisible():
-		layout.HomeLayout(c, layout.HomeSlots{
-			Notices: func() { notices(c, s, m, t) },
-			Content: func() {
-				if view := s.SFTPView(); view != nil {
-					view(c)
-					return
-				}
-				placeholder(c, icons.FolderOpen, m.NavSftp(), "")
-			},
-		})
+		sftpBody(c, s, m, t)
 	default:
-		layout.HomeLayout(c, layout.HomeSlots{
-			Sidebar: func() { layout.Sidebar(c, homeSidebar(c, s, m, t)) },
-			Notices: func() { notices(c, s, m, t) },
-			Content: func() { homeSurface(c, s, m, t) },
-		})
+		homeBody(c, s, m, t)
 	}
+}
+
+// sftpBody draws the SFTP Tab: its notices above the file browser.
+func sftpBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	layout.HomeLayout(c, layout.HomeSlots{
+		Notices: func() { notices(c, s, m, t) },
+		Content: func() {
+			if view := s.SFTPView(); view != nil {
+				view(c)
+				return
+			}
+			placeholder(c, icons.FolderOpen, m.NavSftp(), "")
+		},
+	})
+}
+
+// homeBody draws the Vault Tab: its sidebar, notices, and page.
+func homeBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	layout.HomeLayout(c, layout.HomeSlots{
+		Sidebar: func() { layout.Sidebar(c, homeSidebar(c, s, m, t)) },
+		Notices: func() { notices(c, s, m, t) },
+		Content: func() { homeSurface(c, s, m, t) },
+	})
 }
 
 // notices shows the window's desktop and connection problems above the
@@ -349,8 +394,8 @@ func vaultPageLabel(m locales.Messages, page section.Section) string {
 // window rendering the Workspace. focusEpoch is the renderer's count of focus
 // changes, which tells a live Surface its terminal is shown again.
 func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
-	owner state.RenderOwner, focusEpoch uint64) {
-	activeTabBody(c, s, m, t, mainTabRef(owner, s, s.ActiveTab(), focusEpoch))
+	owner state.RenderOwner, focusEpoch uint64, wm *workspacePaneMotion) {
+	activeTabBody(c, s, m, t, mainTabRef(owner, s, s.ActiveTab(), focusEpoch, wm))
 }
 
 // activeTabBody draws one Tab's split tree, the side panel beside it, and the
@@ -371,25 +416,65 @@ func activeTabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Them
 			}
 		}
 	}}
+	var panelSpec sidePanelSpec
+	var panelDrawn bool
 	if root, focus, ok := ref.tree(); ok {
 		ordinal := 0
 		ref.split = !root.IsPane()
 		ref.status = activeStatus(s, m, t)
-		slots.Panes = func() { paneTree(c, s, m, t, ref, root, focus, &ordinal) }
+		slots.Panes = func() {
+			// The wrapper records the region every final split box is
+			// computed in. It fills the WorkLayout's Pane area exactly, so
+			// the tree's layout is unchanged.
+			region := ui.Column(c).Fill()
+			if ref.motion != nil {
+				ref.motion.recordRegion(region)
+			}
+			region.Children(func() { paneTree(c, s, m, t, ref, root, focus, &ordinal) })
+		}
 		dock := s.FilesDock()
 		window, _ := c.Size()
 		width := window
 		if dock != state.DockBottom {
 			width = *s.FilesWidth(window)
 		}
-		if files := s.FilesViewFor(ref.owner, ref.id, width); files != nil {
-			tabID := ref.id
-			slots.Panel = func() { sidePanel(c, s, m, t, tabID, dock, files) }
-			slots.Dock = layoutDock(dock)
+		files := s.FilesViewFor(ref.owner, ref.id, width)
+		spec := sidePanelSpec{
+			tab: ref.id, dock: dock,
+			ids: s.SideTools(ref.id), chosen: s.SideTool(ref.id), tool: files,
+		}
+		var reveal *layout.PanelReveal
+		draw := files != nil
+		if ref.motion != nil {
+			// A close keeps drawing the panel the user saw while its slot
+			// shrinks, even though the state has closed it.
+			spec, reveal, draw = ref.motion.panel.panelFrame(files != nil, spec)
+		}
+		if draw {
+			panelSpec = spec
+			panelDrawn = true
+			slots.Panel = func() { sidePanelView(c, s, m, t, spec) }
+			slots.Dock = layoutDock(spec.dock)
+			slots.PanelReveal = reveal
+			if ref.motion != nil && ref.motion.mode.labels {
+				slots.PanelLabel = "side-panel"
+			}
 			slots.Width, slots.Ratio = s.FilesWidth(window), s.FilesRatio()
 		}
 	}
 	layout.WorkLayout(c, slots)
+	// The Pane overlays are window-level and are built after the final
+	// layout, so every Pane's box and grid are already the final ones.
+	if ref.motion != nil {
+		ref.motion.drawOverlay(c, ref, t, m)
+		if panelDrawn {
+			ref.motion.panel.notePanel(panelSpec)
+			// The drawer paints the tool from its captured spec after the
+			// state has closed the panel; hold it alive until the panel
+			// leaves.
+			s.HoldSideToolFor(ref.owner, panelSpec.chosen)
+		}
+	}
 }
 
 // layoutDock is the layout's edge for the side panel's dock.
@@ -403,31 +488,38 @@ func layoutDock(dock state.PanelDock) layout.Dock {
 	return layout.DockLeft
 }
 
-// sidePanel is a Session Tab's side panel, as the original's: a strip of
+// sidePanelView is a Session Tab's side panel, as the original's: a strip of
 // tools along the top (SFTP, Scripts, History, Theme, System, Notes), the
-// panel's dock and close at its end, and the chosen tool below.
-func sidePanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
-	tab model.TabID, dock state.PanelDock, tool func(*ui.Context)) {
+// panel's dock and close at its end, and the chosen tool below. spec is the
+// frame's captured panel, so a closing drawer keeps painting the same strip
+// and tool the user last saw after the state has closed the panel.
+func sidePanelView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
+	spec sidePanelSpec) ui.Element {
 	// The panel shares the terminal's background, as the original's, with a
 	// line under its strip; the macOS style raises it as a card.
-	ui.Column(c).Fill().MinWidth(0).Background(kit.CardInnerFill(t, t.Background)).Children(func() {
-		ids := s.SideTools(tab)
-		chosen, tools := -1, make([]kit.Segment, len(ids))
-		for i, id := range ids {
+	panel := ui.Column(c).Fill().MinWidth(0).Background(kit.CardInnerFill(t, t.Background))
+	panel.Children(func() {
+		chosen, tools := -1, make([]kit.Segment, len(spec.ids))
+		for i, id := range spec.ids {
 			icon, label := sideToolFace(m, id)
 			// Each button keys its tool's identity, so a tool's state
 			// follows it however the strip changes.
 			tools[i] = kit.Segment{Key: "side-tool-" + string(id), Label: label, Icon: icon}
-			if id == s.SideTool(tab) {
+			if id == spec.chosen {
 				chosen = i
 			}
 		}
-		if kit.ToolStrip(c, tools, &chosen, m.SessionFilesPanel(), func() { sidePanelControls(c, s, m, tab, dock) }) {
-			s.SetSideTool(tab, ids[chosen])
-			c.Invalidate()
+		if kit.ToolStrip(c, tools, &chosen, m.SessionFilesPanel(), func() {
+			sidePanelControls(c, s, m, spec.tab, spec.dock)
+		}) {
+			if chosen >= 0 && chosen < len(spec.ids) {
+				s.SetSideTool(spec.tab, spec.ids[chosen])
+				c.Invalidate()
+			}
 		}
-		ui.Column(c).FillWidth().Grow(1).MinHeight(0).Children(func() { tool(c) })
+		ui.Column(c).FillWidth().Grow(1).MinHeight(0).Children(func() { spec.tool(c) })
 	})
+	return panel
 }
 
 // sidePanelControls are the side panel's dock menu and close button.

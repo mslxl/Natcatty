@@ -118,6 +118,8 @@ func appearanceArea(c *ui.Context, state *PreferencesState, themes *ThemesState,
 			}
 		})
 
+		motionSection(c, state, m, t, settings)
+
 		groupReset(c, m, t, m.SettingsAppearanceTitle(), func() bool {
 			return state.ResetGroup(domain.GroupAppearance)
 		}, true)

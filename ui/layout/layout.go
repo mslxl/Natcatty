@@ -135,24 +135,32 @@ func floatingSidebar(c *ui.Context, width, top, gap float32, children func()) {
 	})
 }
 
-// insetPanel is the macOS style's docked panel: a raised, rounded card inset
+// InsetPanel is the macOS style's docked panel: a raised, rounded card inset
 // from the window's edges, as the home sidebar floats, and set off from the
-// terminal beside it.
-func insetPanel(c *ui.Context, dock Dock, panel func()) func() {
-	return func() {
-		t := c.Theme()
-		outer := ui.Column(c).Fill().MinWidth(0).MinHeight(0)
-		top := float32(0)
-		if dock == DockBottom {
-			top = CardGap
-		}
-		outer.Padding(top, CardGap, CardGap, CardGap)
-		outer.Children(func() {
-			ui.Column(c).Fill().MinWidth(0).MinHeight(0).Radius(kit.M(c).Radius.Card).Clip().
-				Border(1, t.Border).Shadow(0, 1, 4, 0, kit.CardShadow(t)).Background(kit.Raised(t)).
-				Children(panel)
-		})
+// terminal beside it. It builds its element into the current parent.
+func InsetPanel(c *ui.Context, dock Dock, panel func()) ui.Element {
+	t := c.Theme()
+	outer := ui.Column(c).Fill().MinWidth(0).MinHeight(0)
+	top := float32(0)
+	if dock == DockBottom {
+		top = CardGap
 	}
+	outer.Padding(top, CardGap, CardGap, CardGap)
+	outer.Children(func() {
+		ui.Column(c).Fill().MinWidth(0).MinHeight(0).Radius(kit.M(c).Radius.Card).Clip().
+			Border(1, t.Border).Shadow(0, 1, 4, 0, kit.CardShadow(t)).Background(kit.Raised(t)).
+			Children(panel)
+	})
+	return outer
+}
+
+// PanelReveal is a side panel on its way open or closed. The panel's content
+// keeps its final size, Size, laid out once; the dock shows Visible DIPs of it
+// from the dock's fixed edge and clips the rest. The panes take the room the
+// reveal leaves, so the divider and the terminal move together.
+type PanelReveal struct {
+	Visible float32
+	Size    float32
 }
 
 // Dock is the edge a WorkLayout's panel docks at.
@@ -172,7 +180,14 @@ type WorkSlots struct {
 	Panes func()
 	// Panel draws the docked side panel; nil gives the panes the room.
 	Panel func()
-	Dock  Dock
+	// PanelReveal, when non-nil, replaces the Split with a hand layout: the
+	// panel keeps its final size and is clipped to the revealed DIPs, and the
+	// panes take the rest. It is the side panel's open and close animation.
+	PanelReveal *PanelReveal
+	// PanelLabel, if set, labels the panel's visible slot, so a test can
+	// measure what the reveal shows.
+	PanelLabel string
+	Dock       Dock
 	// Width is the panel's width when docked at a side, and Ratio the panes'
 	// share in percent when docked at the bottom. The divider writes them.
 	Width, Ratio *float32
@@ -193,32 +208,97 @@ func WorkLayout(c *ui.Context, slots WorkSlots) {
 				return
 			}
 			if slots.Panel != nil && kit.CurrentStyle().Native() {
-				slots.Panel = insetPanel(c, slots.Dock, slots.Panel)
+				framed := slots.Panel
+				slots.Panel = func() { InsetPanel(c, slots.Dock, framed) }
 			}
 			panes := func() { ui.Column(c).Fill().MinWidth(0).Children(slots.Panes) }
 			if slots.Panel == nil {
 				ui.Column(c).FillWidth().Grow(1).MinHeight(0).Children(panes)
 				return
 			}
+			if slots.PanelReveal != nil {
+				revealWork(c, slots)
+				return
+			}
+			panel := slots.Panel
+			if slots.PanelLabel != "" {
+				// The labeled wrapper fills the Split's slot, so a test reads
+				// the panel's visible box in both layouts.
+				inner, label := panel, slots.PanelLabel
+				panel = func() {
+					ui.Column(c).Fill().MinWidth(0).MinHeight(0).Label(label).Children(inner)
+				}
+			}
 			switch slots.Dock {
 			case DockBottom:
-				ui.SplitVerticalPercent(c, slots.Ratio, panes, slots.Panel).FillWidth().Grow(1).MinHeight(0)
+				ui.SplitVerticalPercent(c, slots.Ratio, panes, panel).FillWidth().Grow(1).MinHeight(0)
 			case DockRight:
 				// Split puts its first child, the panel and its width, at
 				// the leading edge; a right-to-left box makes that the right
 				// one, and each side turns back to left to right inside.
 				ui.Row(c).Direction(ui.RightToLeft).FillWidth().Grow(1).MinHeight(0).Children(func() {
 					ui.Split(c, slots.Width, func() {
-						ui.Column(c).Direction(ui.LeftToRight).Fill().MinWidth(0).Children(slots.Panel)
+						ui.Column(c).Direction(ui.LeftToRight).Fill().MinWidth(0).Children(panel)
 					}, func() {
 						ui.Column(c).Direction(ui.LeftToRight).Fill().MinWidth(0).Children(panes)
 					}).Fill()
 				})
 			default:
-				ui.Split(c, slots.Width, slots.Panel, panes).FillWidth().Grow(1).MinHeight(0)
+				ui.Split(c, slots.Width, panel, panes).FillWidth().Grow(1).MinHeight(0)
 			}
 		})
 	})
+}
+
+// revealWork lays a side panel out by hand for its open or close animation.
+// Unlike a Split, the panel's slot may shrink to nothing: the panes take the
+// room beside it, so the divider and the terminal move together. The panel's
+// content is laid out once at its final size and anchored to the dock's fixed
+// edge; the slot clips it, so its text and controls slide into view instead
+// of being squeezed. The one-DIP line matches the Split's own divider, so the
+// final reveal frame and the settled Split frame are the same geometry.
+func revealWork(c *ui.Context, slots WorkSlots) {
+	reveal := *slots.PanelReveal
+	visible := max(reveal.Visible, 0)
+	panes := func() { ui.Column(c).Fill().MinWidth(0).Children(slots.Panes) }
+	slot := func(e ui.Element) ui.Element {
+		if slots.PanelLabel != "" {
+			e = e.Label(slots.PanelLabel)
+		}
+		return e
+	}
+	switch slots.Dock {
+	case DockBottom:
+		ui.Column(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
+			ui.Column(c).FillWidth().Grow(1).MinHeight(0).Clip().Children(panes)
+			if visible > 0 {
+				ui.Box(c).FillWidth().Height(1).Shrink(0).Background(c.Theme().Border)
+			}
+			slot(ui.Column(c).FillWidth().Height(visible).Shrink(0).Clip().Justify(ui.End)).Children(func() {
+				ui.Column(c).FillWidth().Height(reveal.Size).Shrink(0).MinWidth(0).Children(slots.Panel)
+			})
+		})
+	case DockRight:
+		ui.Row(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
+			ui.Column(c).Grow(1).FillHeight().MinWidth(0).Clip().Children(panes)
+			if visible > 0 {
+				ui.Box(c).Width(1).FillHeight().Shrink(0).Background(c.Theme().Border)
+			}
+			slot(ui.Row(c).Width(visible).FillHeight().Shrink(0).Clip().Justify(ui.End)).Children(func() {
+				ui.Column(c).Width(reveal.Size).FillHeight().Shrink(0).MinWidth(0).Children(slots.Panel)
+			})
+		})
+	default:
+		ui.Row(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
+			slot(ui.Row(c).Width(visible).FillHeight().Shrink(0).Clip()).Children(func() {
+				ui.Column(c).Width(reveal.Size).FillHeight().Shrink(0).MinWidth(0).Children(slots.Panel)
+			})
+			if visible > 0 {
+				ui.Box(c).Width(1).FillHeight().Shrink(0).Background(c.Theme().Border)
+			}
+			ui.Column(c).Grow(1).FillHeight().MinHeight(0).MinWidth(0).Clip().Children(panes)
+		})
+	}
 }
 
 // SettingsSlots fill a SettingsLayout.

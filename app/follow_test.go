@@ -20,6 +20,9 @@ func installMainShellView(q *quakeGraph) {
 	q.manager.SetMainContentProvider(func() func(*ui.Context) {
 		return func(c *ui.Context) {
 			if q.manager.DropdownOwnsMain() {
+				// Mirror the composition root's gap notice: the main view is
+				// bypassed, so its next frame must warp.
+				q.state.NoteMotionViewUnrendered(shellstate.MotionViewMain)
 				shell.MainPlaceholder(c)
 				return
 			}

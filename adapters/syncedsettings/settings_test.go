@@ -140,9 +140,16 @@ func TestSnapshotAndApplyPreserveDeviceLocalSettings(t *testing.T) {
 	f := newFixture(t)
 
 	// Local state carries a mix of portable values and device-local ones.
+	localMotion := domainpreferences.Defaults().Appearance.Motion
+	localMotion.Enabled = false
+	localMotion.PaneOpen = false
+	localMotion.TabOpen = false
+	localMotion.OpenStyle = domainpreferences.MotionGnomed
+	localMotion.Speed = domainpreferences.MotionFast
 	if err := f.preferences.Update(func(next *domainpreferences.Settings) {
 		next.Appearance.AppIcon = "bright"
 		next.Appearance.TerminalFontSize = 18
+		next.Appearance.Motion = localMotion
 		next.Layout.ShowSFTPTab = true
 		next.SFTPEditor.DefaultOpener = domainpreferences.Opener{
 			Kind:        domainpreferences.OpenerExternal,
@@ -195,6 +202,9 @@ func TestSnapshotAndApplyPreserveDeviceLocalSettings(t *testing.T) {
 	if portable.Appearance.TerminalFontSize != 18 {
 		t.Fatalf("snapshot font size = %v", portable.Appearance.TerminalFontSize)
 	}
+	if portable.Appearance.Motion != (domainpreferences.Motion{}) {
+		t.Fatalf("snapshot leaked device-local motion: %+v", portable.Appearance.Motion)
+	}
 	if portable.SFTPEditor.DefaultOpener.Kind != "" ||
 		len(portable.SFTPEditor.FileAssociations) != 0 {
 		t.Fatalf("snapshot leaked the device opener: %+v", portable.SFTPEditor)
@@ -217,6 +227,12 @@ func TestSnapshotAndApplyPreserveDeviceLocalSettings(t *testing.T) {
 	}
 	portable.Appearance.AppIcon = "dark"
 	portable.Appearance.TerminalFontSize = 22
+	portable.Appearance.Motion = domainpreferences.Motion{
+		Enabled:   true,
+		PaneOpen:  true,
+		OpenStyle: domainpreferences.MotionFade,
+		Speed:     domainpreferences.MotionSlow,
+	}
 	portable.Layout.ShowSFTPTab = false
 	portable.SFTPEditor.DefaultOpener = domainpreferences.Opener{
 		Kind: domainpreferences.OpenerSystem,
@@ -252,6 +268,10 @@ func TestSnapshotAndApplyPreserveDeviceLocalSettings(t *testing.T) {
 	}
 	if preferences.Appearance.TerminalFontSize != 22 {
 		t.Fatalf("font size = %v, want the synced value", preferences.Appearance.TerminalFontSize)
+	}
+	if preferences.Appearance.Motion != localMotion {
+		t.Fatalf("motion = %+v, want the device-local value %+v",
+			preferences.Appearance.Motion, localMotion)
 	}
 	if preferences.Layout.ShowSFTPTab {
 		t.Fatal("layout was not applied")

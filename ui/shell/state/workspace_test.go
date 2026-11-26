@@ -14,8 +14,10 @@ import (
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	"github.com/mslxl/natcatty/domain/model"
 	etmodel "github.com/mslxl/natcatty/domain/model/et"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
+	"github.com/mslxl/natcatty/ui/motion"
 )
 
 // fakeETResumeStore is the slice of the ET secret store the shell uses: notes
@@ -221,6 +223,59 @@ func TestSplitFocusedPaneBuildsRecursiveTreeAndFocus(t *testing.T) {
 		if !ok || info.Surface == nil || info.Pending || info.Err != nil {
 			t.Fatalf("pane %q = %+v, %v; want a live surface", id, info, ok)
 		}
+	}
+}
+
+func TestSplitFocusedPaneRecordsAPaneOpenEvent(t *testing.T) {
+	// The state records events even while motion is off; the view decides to
+	// warp, so switching motion on later must not lose the sequence.
+	off := domainpreferences.Defaults().Appearance.Motion
+	off.Enabled = false
+	graph := newWorkspaceGraphWithOptions(t, WithMotion(func() domainpreferences.Motion { return off }))
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if event, ok := graph.state.MotionEvent(); !ok || event.Kind != motion.TabOpen {
+		t.Fatalf("a fresh Tab recorded %+v, want its TabOpen", event)
+	}
+	before, _ := graph.state.FocusedPaneID(0)
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	first, ok := graph.state.MotionEvent()
+	if !ok {
+		t.Fatalf("SplitRight recorded no motion event")
+	}
+	after, _ := graph.state.FocusedPaneID(0)
+	if first.Kind != motion.PaneOpen {
+		t.Fatalf("event kind = %v, want PaneOpen", first.Kind)
+	}
+	if first.TabID == "" || first.PaneID != after || first.TargetID != before {
+		t.Fatalf("event = %+v, want the new Pane %q from target %q in Tab %q", first, after, before, first.TabID)
+	}
+	if first.Direction != 1 {
+		t.Fatalf("SplitRight direction = %d, want +1 for the second child", first.Direction)
+	}
+	if first.Seq == 0 || first.At.IsZero() {
+		t.Fatalf("event has no sequence or time: %+v", first)
+	}
+
+	if err := graph.state.SplitFocusedPane(domainworkspace.SideLeft); err != nil {
+		t.Fatal(err)
+	}
+	second, ok := graph.state.MotionEvent()
+	if !ok {
+		t.Fatalf("SplitFocusedPane recorded no motion event")
+	}
+	newest, _ := graph.state.FocusedPaneID(0)
+	if second.Seq <= first.Seq {
+		t.Fatalf("sequence did not advance: %d then %d", first.Seq, second.Seq)
+	}
+	if second.Kind != motion.PaneOpen || second.PaneID != newest || second.TargetID != after {
+		t.Fatalf("second event = %+v, want the new Pane %q from target %q", second, newest, after)
+	}
+	if second.Direction != -1 {
+		t.Fatalf("left split direction = %d, want -1 for the first child", second.Direction)
 	}
 }
 
@@ -1737,6 +1792,9 @@ func TestFailedETPaneCloseClearsSavedCredentials(t *testing.T) {
 	if !graph.state.CloseTab(0) {
 		t.Fatal("CloseTab returned false")
 	}
+	// The closed body keeps its Surface until the view releases the copy it
+	// animates; with no view here, release it as the view would.
+	graph.state.ReleaseTabGhosts()
 	if graph.etResume.has(resumeKey) {
 		t.Fatal("closing a failed ET Pane left its saved pair orphaned")
 	}
@@ -2153,9 +2211,14 @@ func TestDetachAndCloseReleaseHeldInput(t *testing.T) {
 	if !graph.state.CloseActiveTab() {
 		t.Fatal("CloseActiveTab returned false")
 	}
+	// The closing body is retained for its exit copy, which only paints, so
+	// the Surface lets go of input at the close; the Surface itself stays
+	// open until the view is done with the copy.
 	if closed == nil || closed.releases != 1 {
 		t.Fatalf("closed surface releases = %v, want 1", closed)
 	}
+	// With no view here, release the copy as the view does when it is gone.
+	graph.state.ReleaseTabGhosts()
 	if closed.closed != true {
 		t.Fatal("the closed Pane's surface was not closed")
 	}

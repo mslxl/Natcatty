@@ -180,6 +180,12 @@ func newBrowserShellTester(t *testing.T, locale string, width, height int) *brow
 			t.Fatalf("timed out waiting for the browser route; texts %q", h.tester.Texts())
 		}
 	}
+	// The Session Tab opened after the window was already drawing, so its body
+	// enters with the open animation. Let it finish before the test drives
+	// clicks inside the body: pointer hits use layout boxes, not the painted
+	// transition.
+	h.tester.Advance(400 * time.Millisecond)
+	h.tester.Frame()
 	h.waitSettled(t, m, m.BrowserNewTab(), m.BrowserAddress())
 	return h
 }

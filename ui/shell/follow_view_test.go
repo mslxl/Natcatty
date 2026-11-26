@@ -277,8 +277,18 @@ func TestFollowViewFinishesItsOwnSideFrame(t *testing.T) {
 
 	shellState.CloseFiles(tabID)
 	tester.Frame()
+	if hides != 0 {
+		t.Fatalf("the closing drawer stopped the side tool before it left: %d", hides)
+	}
+	if !tester.HasText("side-probe") {
+		t.Fatalf("the closing drawer did not paint the side tool: %v", tester.Texts())
+	}
+	// The drawer keeps the tool alive until its run ends; then this renderer,
+	// not the main window's, stops it exactly once.
+	tester.Advance(2 * time.Second)
+	tester.Frame()
 	if hides != 1 {
-		t.Fatalf("the follow renderer hid the side tool %d times, want 1", hides)
+		t.Fatalf("the follow renderer hid the side tool %d times after the drawer, want 1", hides)
 	}
 	tester.Frame()
 	if hides != 1 {

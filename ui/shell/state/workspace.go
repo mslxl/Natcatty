@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	appsession "github.com/mslxl/natcatty/application/session"
@@ -26,6 +27,7 @@ import (
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
+	"github.com/mslxl/natcatty/ui/motion"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 )
 
@@ -136,6 +138,79 @@ type PaneInfo struct {
 	// keeps the terminal toolbar. A pixel Session (VNC) never has one: capture,
 	// broadcast, compose, and terminal resize do not apply.
 	ByteStream bool
+}
+
+// PaneGhost is the closed Pane a PaneClose animation draws while its surface
+// must stay alive. CloseFocusedPane removes the Pane from its Tab and records
+// the event, but does not destroy the Pane's Session or Surface: the view
+// takes the ghost with TakePaneGhost, draws its still frame as the exit
+// ghost, and calls Release when the run ends or warps. Release is idempotent,
+// so the same Surface is never closed twice.
+type PaneGhost struct {
+	ID   model.PaneID
+	Info PaneInfo
+
+	once    sync.Once
+	release func()
+}
+
+// Release destroys the Pane's Surface and Session. It is safe to call more
+// than once and on a nil ghost.
+func (g *PaneGhost) Release() {
+	if g == nil {
+		return
+	}
+	g.once.Do(g.release)
+}
+
+// TabGhost is the closed Tab a TabClose body animation draws while its whole
+// body must stay alive. CloseTab removes the Tab from the layout, retains one
+// of these when the closed Tab was the current body and Tab motion is on, and
+// records the TabClose event. The view takes the ghost with TakeTabGhost,
+// draws its split tree as one still body, and calls Release when the body
+// animation ends, warps, or is superseded.
+//
+// The ghost keeps a cloned tree and each Pane's last immutable info, so the
+// view never reads a Tab that is no longer in the layout. Release destroys
+// every Pane Surface and Session exactly once, however many release paths
+// run.
+type TabGhost struct {
+	ID        model.TabID
+	Root      *domainworkspace.Node
+	FocusPath []int
+	Magnified model.PaneID
+	Panes     []TabGhostPane
+
+	once    sync.Once
+	release func()
+}
+
+// TabGhostPane is one Pane of a closed Tab: the info the ghost draws and,
+// privately, the live Pane whose Surface Release destroys.
+type TabGhostPane struct {
+	Info PaneInfo
+}
+
+// Release destroys the closed Tab's Surfaces and Sessions. It is safe to call
+// more than once and on a nil ghost.
+func (g *TabGhost) Release() {
+	if g == nil {
+		return
+	}
+	g.once.Do(g.release)
+}
+
+// Pane returns the captured info of one Pane of the closed Tab.
+func (g *TabGhost) Pane(id model.PaneID) (PaneInfo, bool) {
+	if g == nil {
+		return PaneInfo{}, false
+	}
+	for _, pane := range g.Panes {
+		if pane.Info.ID == id {
+			return pane.Info, true
+		}
+	}
+	return PaneInfo{}, false
 }
 
 // DetachedTabInfo describes a Tab that left the main window and now belongs to
@@ -591,6 +666,18 @@ func (s *State) SelectTab(index int) {
 	if index < 0 || index >= len(s.tabs) {
 		return
 	}
+	changed := index != s.active
+	// Direction is the index order before the active index changes: +1 when
+	// the target is after the current Tab, -1 when it is before it, so a
+	// wrap from the last Tab to the first is -1 and the reverse is +1.
+	direction := tabDirection(s.active, index)
+	// Leaving the Tab supersedes a PaneClose or TabClose the view has not
+	// drawn yet. Choosing the already-active Tab changes no body, so it
+	// leaves a close run alone.
+	s.ReleasePaneGhosts()
+	if changed {
+		s.ReleaseTabGhosts()
+	}
 	s.activateTab(index)
 	s.tabs[index].Dirty = false
 	s.leaveMonitor()
@@ -598,7 +685,52 @@ func (s *State) SelectTab(index int) {
 	s.vaultVisible = false
 	s.logsVisible = false
 	s.sftpVisible = false
+	if changed {
+		s.recordMotion(motion.Event{
+			Kind:      motion.TabSwitch,
+			TabID:     s.tabs[index].ID,
+			Direction: direction,
+			At:        time.Now(),
+		})
+	}
 	s.save()
+}
+
+// tabDirection is the index-order direction from the current Tab index to the
+// target: +1 when the target is later, -1 when it is earlier or when there is
+// no current Tab.
+func tabDirection(from, to int) int {
+	if from >= 0 && to > from {
+		return 1
+	}
+	return -1
+}
+
+// keepTabGhost retains a closed Tab's whole body for the view's exit. The
+// caller has already removed the Tab from the layout and must not close its
+// Panes itself. The release closure closes each Pane exactly once.
+func (s *State) keepTabGhost(tab *Tab) *TabGhost {
+	ghost := &TabGhost{
+		ID:        tab.ID,
+		Root:      domainworkspace.Clone(tab.Root),
+		FocusPath: append([]int(nil), tab.FocusPath...),
+		Magnified: tab.Magnified,
+	}
+	values := make([]*pane, 0, len(tab.panes))
+	for _, id := range tab.paneIDs() {
+		info, ok := s.paneInfo(tab, id)
+		if !ok {
+			continue
+		}
+		ghost.Panes = append(ghost.Panes, TabGhostPane{Info: info})
+		values = append(values, tab.panes[id])
+	}
+	ghost.release = func() {
+		for _, value := range values {
+			s.closePane(value, false)
+		}
+	}
+	return ghost
 }
 
 // ActiveSurface returns the terminal surface of the focused Pane in the active
@@ -775,24 +907,71 @@ func (s *State) CloseActiveTab() bool {
 	return s.CloseTab(s.active)
 }
 
-// CloseTab closes the Tab at index.
+// CloseTab closes the Tab at index. It records a TabClose for every close:
+// the current Tab's body exits as one whole body (retained when Tab motion is
+// on), while a non-current close only lets the strip animate. The replacement
+// Tab is the right neighbour, or the left one for a last Tab; when no Tab
+// remains the target is empty and Home appears.
 func (s *State) CloseTab(index int) bool {
 	if index < 0 || index >= len(s.tabs) {
 		return false
 	}
+	// A Tab close supersedes a PaneClose or TabClose the view has not drawn.
+	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
 	tab := s.tabs[index]
-	s.closeTab(tab, false)
+	wasActive := index == s.active
+	// The replacement is the right neighbour, or the left one for a last
+	// Tab, which is what removeTabAt leaves selected. Its direction is the
+	// original index order: right is +1, left is -1, and Home is -1.
+	var targetID model.TabID
+	direction := -1
+	switch {
+	case index+1 < len(s.tabs):
+		targetID = s.tabs[index+1].ID
+		direction = 1
+	case index > 0:
+		targetID = s.tabs[index-1].ID
+	}
+	var ghost *TabGhost
+	if wasActive && motion.Enabled(s.Motion(), motion.TabClose) {
+		// Keep the whole body alive: the view takes it as one exit ghost.
+		ghost = s.keepTabGhost(tab)
+		// The ghost only paints: its Panes no longer receive input, so let
+		// go of whatever they held now, not when the copy is gone.
+		releaseTabInput(tab)
+	} else {
+		// Nothing will draw this Tab's body: close its Panes now.
+		s.closeTab(tab, false)
+	}
 	s.removeTabAt(index)
+	if ghost != nil {
+		if s.closingTabs == nil {
+			s.closingTabs = map[model.TabID]*TabGhost{}
+		}
+		s.closingTabs[tab.ID] = ghost
+	}
+	s.recordMotion(motion.Event{
+		Kind:        motion.TabClose,
+		TabID:       tab.ID,
+		TargetTabID: targetID,
+		Direction:   direction,
+		At:          time.Now(),
+	})
 	s.save()
 	s.RequestRedraw()
 	return true
 }
 
-// CloseOtherTabs closes every Tab except the one at index.
+// CloseOtherTabs closes every Tab except the one at index. Several Tabs close
+// at once, so no per-Tab animation plays: the body runtime is told to warp to
+// the final layout with the body warp signal.
 func (s *State) CloseOtherTabs(index int) bool {
 	if index < 0 || index >= len(s.tabs) {
 		return false
 	}
+	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
 	keep := s.tabs[index]
 	closed := false
 	for _, tab := range s.tabs {
@@ -809,13 +988,20 @@ func (s *State) CloseOtherTabs(index int) bool {
 	s.logsVisible = false
 	s.refreshBroadcastState()
 	if closed {
+		// Several Tabs left the layout at once; a body run that was playing
+		// must be final on the next frame, not keep animating a Tab that is
+		// gone. No event is recorded, so the strip plays nothing either.
+		s.recordBodyWarp()
 		s.save()
 		s.RequestRedraw()
 	}
 	return closed
 }
 
-// CloseTabsRight closes every Tab after index.
+// CloseTabsRight closes every Tab after index. Closing exactly one is a
+// single-Tab close: it records TabClose so the body and strip can animate.
+// Closing several warps with no per-Tab animation, so it records no event and
+// only raises the body warp signal.
 func (s *State) CloseTabsRight(index int) bool {
 	if index < 0 || index >= len(s.tabs) {
 		return false
@@ -823,12 +1009,51 @@ func (s *State) CloseTabsRight(index int) bool {
 	if index == len(s.tabs)-1 {
 		return false
 	}
-	for _, tab := range s.tabs[index+1:] {
-		s.closeTab(tab, false)
-	}
-	s.tabs = s.tabs[:index+1]
-	if s.active > index {
-		s.active = index
+	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
+	closed := append([]*Tab(nil), s.tabs[index+1:]...)
+	if len(closed) == 1 {
+		tab := closed[0]
+		wasActive := s.active == index+1
+		var ghost *TabGhost
+		if wasActive && motion.Enabled(s.Motion(), motion.TabClose) {
+			ghost = s.keepTabGhost(tab)
+			// The ghost only paints: its Panes no longer receive input, so
+			// let go of whatever they held now, not when the copy is gone.
+			releaseTabInput(tab)
+		} else {
+			s.closeTab(tab, false)
+		}
+		keptID, _ := s.TabID(index)
+		s.tabs = s.tabs[:index+1]
+		if s.active > index {
+			s.active = index
+		}
+		if ghost != nil {
+			if s.closingTabs == nil {
+				s.closingTabs = map[model.TabID]*TabGhost{}
+			}
+			s.closingTabs[tab.ID] = ghost
+		}
+		s.recordMotion(motion.Event{
+			Kind:        motion.TabClose,
+			TabID:       tab.ID,
+			TargetTabID: keptID,
+			// The kept Tab is the closed Tab's left neighbour.
+			Direction: -1,
+			At:        time.Now(),
+		})
+	} else {
+		for _, tab := range closed {
+			s.closeTab(tab, false)
+		}
+		s.tabs = s.tabs[:index+1]
+		if s.active > index {
+			s.active = index
+		}
+		// Several Tabs close at once: warp the body to this final layout. The
+		// motion event stream stays empty because no per-Tab animation plays.
+		s.recordBodyWarp()
 	}
 	s.refreshBroadcastState()
 	s.save()
@@ -851,6 +1076,8 @@ func (s *State) DuplicateTab(index int) error {
 		return err
 	}
 
+	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
 	s.tabs = append(s.tabs, nil)
 	copy(s.tabs[index+2:], s.tabs[index+1:])
 	s.tabs[index+1] = copyTab
@@ -863,6 +1090,7 @@ func (s *State) DuplicateTab(index int) error {
 		// A duplicate opens where its source last was.
 		s.requestPaneOpen(copyTab.ID, newID, value.descriptor, true)
 	}
+	s.recordMotion(motion.Event{Kind: motion.TabOpen, TabID: copyTab.ID, At: time.Now()})
 	s.save()
 	s.RequestRedraw()
 	return nil
@@ -961,6 +1189,9 @@ func (s *State) DetachTab(index int) bool {
 	if index < 0 || index >= len(s.tabs) {
 		return false
 	}
+	// The main window's view cannot draw a ghost for a Tab that left it.
+	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
 	tab := s.tabs[index]
 	// The whole Tab leaves this window before the detached one builds it, so
 	// every Pane in it must let go of guest input across that gap, not only
@@ -1092,6 +1323,11 @@ func (s *State) ReattachDetachedTab(id model.TabID) bool {
 		}
 		s.detached = append(s.detached[:index], s.detached[index+1:]...)
 		s.tabs = append(s.tabs, tab)
+		// A reattached Tab is appended after every current Tab, so showing it
+		// is a switch towards the strip's end. A close the view still had in
+		// flight is superseded.
+		s.ReleasePaneGhosts()
+		s.ReleaseTabGhosts()
 		s.activateTab(len(s.tabs) - 1)
 		s.leaveMonitor()
 		s.vaultVisible = false
@@ -1101,6 +1337,12 @@ func (s *State) ReattachDetachedTab(id model.TabID) bool {
 		// A reattached Session is again part of the main target list. It is
 		// not selected automatically; the panel shows it as an available row.
 		s.refreshBroadcastState()
+		s.recordMotion(motion.Event{
+			Kind:      motion.TabSwitch,
+			TabID:     tab.ID,
+			Direction: 1,
+			At:        time.Now(),
+		})
 		s.save()
 		if s.onDetachReattached != nil {
 			s.onDetachReattached(id)
@@ -1136,6 +1378,10 @@ func (s *State) DetachPane(tabIndex int, paneID model.PaneID) bool {
 	if focused != nil {
 		focusedID = focused.ID
 	}
+	// Detaching changes the layout; a PaneClose or TabClose the view has not
+	// drawn yet is superseded.
+	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
 	root, err := domainworkspace.RemovePane(tab.Root, paneID)
 	if err != nil {
 		return false
@@ -1214,6 +1460,8 @@ func (s *State) ActiveSessionCountDetached(id model.TabID) int {
 // windows before OnWillQuit runs, so this is the only point where the
 // credentials can still be preserved.
 func (s *State) CloseMainSessionsPreserving() {
+	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
 	for _, tab := range s.tabs {
 		s.closeTab(tab, true)
 	}
@@ -1489,6 +1737,9 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 	if s.sessions == nil || s.surfaces == nil {
 		return ErrNoSessions
 	}
+	// A split supersedes a PaneClose or TabClose the view has not drawn yet.
+	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
 	value, focusedID := tab.focusedPane()
 	if value == nil {
 		return ErrNoActiveTab
@@ -1529,8 +1780,37 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 	// Zoom is a view onto the split, not a separate layout. Splitting the
 	// zoomed Pane restores the split so the new Pane is visible; leaving the
 	// zoom set would focus a hidden member and show only the source Pane.
+	// The sequence is one logical change: the reorder records the old
+	// full-window Pane shrinking, and the latest PaneOpen carries the same
+	// zoom context so the view plays it as one continuous open.
+	wasMagnified := tab.Magnified
 	tab.Magnified = ""
 	tab.setFocus(newPaneID)
+	if wasMagnified != "" {
+		s.recordMotion(motion.Event{
+			Kind:          motion.PaneReorder,
+			TabID:         tab.ID,
+			PaneID:        wasMagnified,
+			FromMagnified: wasMagnified,
+			At:            time.Now(),
+		})
+	}
+	// Record the open for the views after the new Pane exists and the final
+	// tree is in place. TargetID is the Pane that was split; Direction is +1
+	// when the new Pane is the split's second child.
+	direction := 1
+	if side.PutsFirst() {
+		direction = -1
+	}
+	s.recordMotion(motion.Event{
+		Kind:          motion.PaneOpen,
+		TabID:         tab.ID,
+		PaneID:        newPaneID,
+		TargetID:      focusedID,
+		Direction:     direction,
+		FromMagnified: wasMagnified,
+		At:            time.Now(),
+	})
 	// The new Pane inherits the source Session's last known directory, as the
 	// original split did when it copied the shell's current cwd.
 	s.requestPaneOpen(tab.ID, newPaneID, descriptor, true)
@@ -1789,13 +2069,37 @@ func (s *State) TogglePaneZoom() bool {
 	if focusedID == "" {
 		return false
 	}
-	if tab.Magnified == focusedID {
-		tab.setMagnified("")
-	} else {
-		tab.setMagnified(focusedID)
+	// A zoom supersedes a PaneClose or TabClose the view has not drawn yet.
+	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
+	from := tab.Magnified
+	to := focusedID
+	if from == focusedID {
+		to = ""
 	}
+	tab.setMagnified(to)
+	// One PaneReorder is the whole zoom: PaneID is the Pane that grows or
+	// shrinks, and the magnification fields tell the view which Pane filled
+	// the Tab before and after. A move leaves both empty.
+	s.recordMotion(motion.Event{
+		Kind:          motion.PaneReorder,
+		TabID:         tab.ID,
+		PaneID:        zoomedPane(from, to),
+		FromMagnified: from,
+		ToMagnified:   to,
+		At:            time.Now(),
+	})
 	s.RequestRedraw()
 	return true
+}
+
+// zoomedPane is the Pane a zoom event moves: the new zoomed Pane when one
+// is set, otherwise the Pane leaving the zoom.
+func zoomedPane(from, to model.PaneID) model.PaneID {
+	if to != "" {
+		return to
+	}
+	return from
 }
 
 // MagnifiedPaneID returns the zoomed Pane of the Tab at index, or "".
@@ -1816,10 +2120,23 @@ func (s *State) SetMagnifiedPane(index int, paneID model.PaneID) bool {
 	if paneID != "" && !domainworkspace.ContainsPane(tab.Root, paneID) {
 		return false
 	}
-	// Zooming hides every other member of the split, focused or not, so each
-	// of them releases the input it was holding. Empty paneID restores the
-	// split, which hides nothing and therefore releases nothing.
+	// A zoom supersedes a PaneClose or TabClose the view has not drawn yet.
+	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
+	from := tab.Magnified
 	tab.setMagnified(paneID)
+	if from != paneID {
+		// Direct A→B is one zoom event, not an unzoom followed by a zoom:
+		// PaneID is B, and the fields carry A as the Pane being covered.
+		s.recordMotion(motion.Event{
+			Kind:          motion.PaneReorder,
+			TabID:         tab.ID,
+			PaneID:        zoomedPane(from, paneID),
+			FromMagnified: from,
+			ToMagnified:   paneID,
+			At:            time.Now(),
+		})
+	}
 	s.RequestRedraw()
 	return true
 }
@@ -1832,7 +2149,8 @@ func (s *State) SplitDown() error { return s.SplitFocusedPane(domainworkspace.Si
 
 // CloseFocusedPane closes the focused Pane and collapses its sibling subtree.
 // Closing the last Pane closes its Tab. Focus moves to a deterministic
-// remaining Pane.
+// remaining Pane. A non-last Pane records a PaneClose event; its Surface is
+// kept alive until the view finishes the exit ghost, then released.
 func (s *State) CloseFocusedPane() bool {
 	tab, index := s.activeTab()
 	if tab == nil {
@@ -1851,15 +2169,46 @@ func (s *State) CloseFocusedPane() bool {
 		return false
 	}
 	next := domainworkspace.FocusAfterRemove(root, focusedID, focusedID)
-	s.closePane(value, false)
+	if next == "" {
+		// Closing the last Pane closes the Tab, not a Pane: one TabClose and
+		// one whole-body exit (ticket 19). Hand the Tab to CloseTab before
+		// anything leaves it, so the snapshot is the real body including the
+		// Pane being closed, never a blank Tab.
+		return s.CloseTab(index)
+	}
+	// A second close before the view drew the first one supersedes it: only
+	// the latest event animates, so the older retained Surface is released now.
+	// A Tab body exit the view had in flight is superseded too.
+	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
+	// Capture what the ghost draws before the Pane leaves the tree. The info's
+	// Surface stays the live one until Release; Err and Pending make the ghost
+	// keep the error or the placeholder instead of going blank.
+	info, haveInfo := s.paneInfo(tab, focusedID)
+	magnified := tab.Magnified == focusedID
+	switch {
+	case haveInfo && motion.Enabled(s.Motion(), motion.PaneClose):
+		s.keepPaneGhost(focusedID, info, value)
+		// The ghost only paints: the Pane no longer receives input, so let
+		// go of whatever it held now, not when the copy is gone.
+		releasePaneInput(value)
+	default:
+		// Motion off: nothing would draw the retained Surface.
+		s.closePane(value, false)
+	}
 	delete(tab.panes, focusedID)
 	tab.Root = root
 	tab.clearStaleMagnification()
-	if next == "" {
-		return s.CloseTab(index)
-	}
 	tab.setFocus(next)
 	s.refreshBroadcastState()
+	s.recordMotion(motion.Event{
+		Kind:      motion.PaneClose,
+		TabID:     tab.ID,
+		PaneID:    focusedID,
+		TargetID:  next,
+		Magnified: magnified,
+		At:        time.Now(),
+	})
 	s.save()
 	s.RequestRedraw()
 	return true
@@ -1967,6 +2316,14 @@ func (s *State) MoveTab(source, target model.TabID, after bool) bool {
 			break
 		}
 	}
+	// A reorder moves the strip's items only: the body of every Tab stays where
+	// it was, so ticket 19's body runtime ignores this event (ticket 20).
+	s.recordMotion(motion.Event{
+		Kind:        motion.TabReorder,
+		TabID:       source,
+		TargetTabID: target,
+		At:          time.Now(),
+	})
 	s.save()
 	s.RequestRedraw()
 	return true
@@ -2040,6 +2397,11 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 	if !ok || !side.Valid() {
 		return false
 	}
+	// A Pane move supersedes a PaneClose or TabClose the view has not drawn
+	// yet. A cross-Tab move activates the target Tab without recording a
+	// TabSwitch: tickets 18/21 play only the moved Pane's open there.
+	s.ReleasePaneGhosts()
+	s.ReleaseTabGhosts()
 	source, target := plan.source, plan.target
 	sourceIndex, targetIndex := plan.sourceIndex, plan.targetIndex
 	value, emptyTarget := plan.value, plan.emptyTarget
@@ -2055,6 +2417,18 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 		}
 		source.Root = root
 		source.setFocus(sourcePaneID)
+		// A same-Tab move is one logical event: PaneID is the Pane that
+		// changed places and TargetID is the Pane it landed beside. The
+		// view applies PaneClose, PaneOpen and PaneReorder to its three
+		// parts; recording three events would let latest-wins collapse two
+		// of them. Both magnification fields stay empty: this is not a zoom.
+		s.recordMotion(motion.Event{
+			Kind:     motion.PaneReorder,
+			TabID:    source.ID,
+			PaneID:   sourcePaneID,
+			TargetID: targetPaneID,
+			At:       time.Now(),
+		})
 		s.save()
 		s.RequestRedraw()
 		return true
@@ -2139,6 +2513,24 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
+	// A cross-Tab drop activates the target Tab, but it is one Pane open, not
+	// a Tab switch: the whole body must not slide in, and the source close is
+	// already off screen. SourceTabID tells each view to enter only the moved
+	// Pane, at its final box, without making the target's other Panes room.
+	// A magnified target inserts the Pane hidden behind its zoom, so it plays
+	// no Pane event at all; the body warp still ends a run the layout change
+	// interrupted.
+	if target.Magnified == "" {
+		s.recordMotion(motion.Event{
+			Kind:        motion.PaneOpen,
+			TabID:       target.ID,
+			SourceTabID: source.ID,
+			PaneID:      sourcePaneID,
+			TargetID:    targetPaneID,
+			At:          time.Now(),
+		})
+	}
+	s.recordBodyWarp()
 	s.save()
 	s.RequestRedraw()
 	return true

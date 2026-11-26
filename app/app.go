@@ -1433,6 +1433,12 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		state.WithLocalAutoCloseOnExit(func() bool {
 			return terminalService.Settings().LocalAutoCloseOnExit
 		}),
+		// The Pane and Tab motion preferences are pulled on every layout
+		// event, so a Settings change reaches the main window, Follow and
+		// Detach, which all render this one shell state.
+		state.WithMotion(func() domainpreferences.Motion {
+			return preferenceService.Settings().Appearance.Motion
+		}),
 		state.WithHostLabel(func(id model.HostID) (string, bool) {
 			if vaultState == nil {
 				return "", false
@@ -1671,6 +1677,11 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		// The Host picker reads the Vault's effective Host list live, so a
 		// renamed Host or an edited group default shows on the next frame.
 		quakeui.WithHosts(quakeHostSource{vault: vaultState}),
+		// The Quake-owned workspace reads the same live motion preference as
+		// the main shell, independently of its own Tab and Pane state.
+		quakeui.WithMotion(func() domainpreferences.Motion {
+			return preferenceService.Settings().Appearance.Motion
+		}),
 		// Quake Tabs appear in the tray's Session list, so a new, renamed, or
 		// closed Tab rebuilds it as well as repainting the Panel. The
 		// controller is assigned after this state; the closure resolves it
@@ -1717,6 +1728,15 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	windows.SetMainContentProvider(func() func(*ui.Context) {
 		return func(c *ui.Context) {
 			if windows.DropdownOwnsMain() {
+				// The main view built no Workspace frame here. Record the gap so
+				// its first frame after ownership returns warps the events it
+				// missed instead of animating stale Pane and strip boxes. The
+				// ownership provider marks the same view at transfer; keeping
+				// the mark on every placeholder frame covers a later transfer
+				// whose provider path was not consulted again.
+				if shellState != nil {
+					shellState.NoteMotionViewUnrendered(state.MotionViewMain)
+				}
 				shell.MainPlaceholder(c)
 				return
 			}

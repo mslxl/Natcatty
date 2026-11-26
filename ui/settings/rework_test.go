@@ -341,6 +341,11 @@ func TestSettingsAreasShowFieldLabels(t *testing.T) {
 					m.SettingsUIFont(), m.SettingsWindowOpacity(), m.SettingsFollowAppTerminalTheme(),
 					m.SettingsTerminalFontFamily(), m.SettingsTerminalFontSize(),
 					m.SettingsTerminalCursorStyle(), m.SettingsTerminalCursorBlink(),
+					m.SettingsMotionTitle(), m.SettingsMotionEnabled(),
+					m.SettingsMotionPaneTitle(), m.SettingsMotionTabTitle(),
+					m.SettingsMotionPaneOpen(), m.SettingsMotionTabSwitch(),
+					m.SettingsMotionOpenStyle(), m.SettingsMotionCloseStyle(),
+					m.SettingsMotionSwitchStyle(), m.SettingsMotionSpeed(),
 				}
 			}},
 			{AreaTerminal, func(m locales.Messages) []string {

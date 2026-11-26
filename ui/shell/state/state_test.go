@@ -16,6 +16,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/domain/model"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	sessionui "github.com/mslxl/natcatty/ui/session"
@@ -454,6 +455,9 @@ func TestCloseActiveTabClosesItsSessionAndSurface(t *testing.T) {
 	if !graph.state.CloseActiveTab() {
 		t.Fatal("CloseActiveTab returned false")
 	}
+	// The closing body is retained for its exit copy; with no view here,
+	// release it as the view does when the copy is gone.
+	graph.state.ReleaseTabGhosts()
 	if !graph.surface.closed {
 		t.Error("the tab's surface was not closed")
 	}
@@ -524,6 +528,32 @@ func TestRequestSettingsReportsTheRequest(t *testing.T) {
 
 	if requests != 2 {
 		t.Fatalf("settings requests = %d, want 2", requests)
+	}
+}
+
+// TestMotionPullsTheLivePreference proves the shell reads the motion setting
+// on every call rather than caching the value it was constructed with.
+func TestMotionPullsTheLivePreference(t *testing.T) {
+	motion := domainpreferences.Defaults().Appearance.Motion
+	motion.Enabled = false
+	state := NewState(WithMotion(func() domainpreferences.Motion { return motion }))
+	if got := state.Motion(); got != motion {
+		t.Fatalf("Motion = %+v, want %+v", got, motion)
+	}
+
+	motion.Enabled = true
+	motion.Speed = domainpreferences.MotionFast
+	if got := state.Motion(); got != motion {
+		t.Fatalf("Motion cached its first value: %+v, want %+v", got, motion)
+	}
+}
+
+// TestMotionDefaultsToOnWithoutAWiring keeps an unwired state's motion on, as
+// a fresh profile is, so a view built without the app cannot silently disable
+// animation.
+func TestMotionDefaultsToOnWithoutAWiring(t *testing.T) {
+	if got, want := NewState().Motion(), domainpreferences.Defaults().Appearance.Motion; got != want {
+		t.Fatalf("unwired Motion = %+v, want %+v", got, want)
 	}
 }
 

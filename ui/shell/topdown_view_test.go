@@ -2,6 +2,7 @@ package shell
 
 import (
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -237,8 +238,22 @@ func TestTopdownViewFinishesItsOwnSideFrame(t *testing.T) {
 	if hidden != 0 {
 		t.Fatalf("the live tool was stopped while drawn: %d", hidden)
 	}
+	// Let the opening drawer finish so the close starts from the panel the
+	// user sees.
+	tester.Advance(2 * time.Second)
+	tester.Frame()
 
 	shellState.CloseFiles(tabID)
+	tester.Frame()
+	if hidden != 0 {
+		t.Fatalf("the closing drawer stopped the tool before it left: hides = %d", hidden)
+	}
+	if !tester.HasText("notes-tool") {
+		t.Fatalf("the closing drawer did not paint the tool: %v", tester.Texts())
+	}
+	// The drawer holds the tool until its run ends; then this renderer, under
+	// the dropdown owner, finishes the side frame.
+	tester.Advance(2 * time.Second)
 	tester.Frame()
 	if hidden != 1 {
 		t.Fatalf("the top-down renderer did not finish its side frame: hides = %d", hidden)
