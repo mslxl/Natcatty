@@ -243,6 +243,55 @@ func (entry Entry) Valid() bool {
 		!entry.RecordedAt.IsZero()
 }
 
+// Corrupted reports whether the command text could never have been typed as
+// one shell line: it holds a control character a line editor cannot enter,
+// or the caret notation a terminal echo prints for control bytes. The echo
+// form is the corruption the typed-input fallback actually recorded:
+// pressing Ctrl+C at a prompt never runs "^C" as a command, so a row that
+// starts with caret notation or is mostly caret notation ("^C^Cc^C") is echo
+// folded into the captured line, never a typed command. An isolated caret
+// pair deeper in the line is not enough: "grep '^C'" and "sed 's/^A/b/'" are
+// real commands, and a regex anchor inside quotes must never cost a row.
+//
+// Invalid UTF-8 is deliberately not corruption: a filesystem name is raw
+// bytes on every platform, so "cd" into a directory whose name is not valid
+// UTF-8 records exactly such a row, and the user really ran it. A newline is
+// not corruption either: the editor inserts one inside a quoted string or a
+// bracketed paste, and the capture hook records the multi-line command the
+// shell really ran. The check is deliberately narrow throughout — a short or
+// odd command the user really ran ("ls", "g", ";s") is valid history and
+// never matches, because deleting real history by mistake is worse than
+// leaving a fragment behind.
+func Corrupted(command string) bool {
+	caretPairs := 0
+	for index := 0; index < len(command); index++ {
+		b := command[index]
+		if b == '\t' || b == '\n' || b == '\r' {
+			continue
+		}
+		if b < 0x20 || b == 0x7f {
+			return true
+		}
+		if b == '^' && index+1 < len(command) {
+			next := command[index+1]
+			// ^@ through ^Z are the control bytes; ^[ is the escape key's
+			// echo. A real regex anchors on a letter or a digit, never on a
+			// bracket in this position.
+			if (next >= '@' && next <= 'Z') || next == '[' {
+				if index == 0 {
+					return true
+				}
+				caretPairs += 2
+				index++
+			}
+		}
+	}
+	// Notation making up more than half the row is an echo artifact even when
+	// ordinary characters are mixed in; real commands carry at most one
+	// isolated regex anchor.
+	return caretPairs > 0 && caretPairs*2 > len(command)
+}
+
 // HasUUIDIdentity reports whether the entry can be represented on the Atuin
 // wire. Legacy local rows carry a non-UUID identity: they stay readable and
 // deletable locally, but they are never uploaded and get no fabricated UUID.

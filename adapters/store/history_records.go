@@ -25,6 +25,7 @@ const (
 	metaKeyHistoryKeyFingerprint      = "history.key_fingerprint"
 	metaKeyHistoryUnverifiedConfirmed = "history.unverified_key_confirmed"
 	metaKeyHistoryAccount             = "history.account"
+	metaKeyHistoryCorruptedCleaned    = "history.corrupted_rows_cleaned"
 	metaKeyHistoryHostImports         = "history.host_imports"
 	metaKeyHistoryHostNotified        = "history.host_atuin_notified"
 	metaKeyHistorySeries              = "history.series_checkpoints"
@@ -98,6 +99,10 @@ func readHistoryMetadata(tx *gorm.DB) (domainhistory.Metadata, error) {
 		metadata.WriterUUID = writer
 	}
 	metadata.ShellHistoryImported, err = readMetaFlag(tx, metaKeyHistoryShellImport)
+	if err != nil {
+		return metadata, err
+	}
+	metadata.CorruptedRowsCleaned, err = readMetaFlag(tx, metaKeyHistoryCorruptedCleaned)
 	if err != nil {
 		return metadata, err
 	}
@@ -260,6 +265,9 @@ func (s *Store) MarkHostAtuinNoticed(ctx context.Context, hostID string) (bool, 
 // caller's transaction.
 func writeHistoryMetadata(tx *gorm.DB, metadata domainhistory.Metadata) error {
 	if err := writeMetaFlag(tx, metaKeyHistoryShellImport, metadata.ShellHistoryImported); err != nil {
+		return err
+	}
+	if err := writeMetaFlag(tx, metaKeyHistoryCorruptedCleaned, metadata.CorruptedRowsCleaned); err != nil {
 		return err
 	}
 	if err := writeMetaText(tx, metaKeyHistoryKeyFingerprint, metadata.KeyFingerprint); err != nil {

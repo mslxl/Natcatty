@@ -15,6 +15,12 @@ type Metadata struct {
 	// ShellHistoryImported marks the one-time Shell History File import. An
 	// empty set of files still sets it.
 	ShellHistoryImported bool `json:"shellHistoryImported,omitempty"`
+	// CorruptedRowsCleaned marks the one-time migration that soft-deleted
+	// journal rows whose command text could never have been typed (control
+	// bytes, caret-notation echo, invalid UTF-8). The migration runs once per
+	// install; a row captured after it is the capture pipeline's own problem,
+	// not a legacy artifact.
+	CorruptedRowsCleaned bool `json:"corruptedRowsCleaned,omitempty"`
 	// KeyFingerprint is a hash prefix of the local Atuin master key, never the
 	// key itself.
 	KeyFingerprint string `json:"keyFingerprint,omitempty"`
