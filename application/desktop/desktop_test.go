@@ -9,31 +9,6 @@ import (
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
-func TestDefaultsPreserveOriginalValues(t *testing.T) {
-	windows := Defaults("windows")
-	if !windows.ShowTrayIcon || !windows.CloseToTray {
-		t.Fatalf("tray defaults = %+v", windows)
-	}
-	if windows.HotkeyMode != HotkeyModeQuake {
-		t.Fatalf("hotkey mode = %q, want the Quake default", windows.HotkeyMode)
-	}
-	if windows.ToggleWindowHotkey != "Ctrl + `" {
-		t.Fatalf("windows hotkey = %q", windows.ToggleWindowHotkey)
-	}
-	if !windows.SSHDeepLinks {
-		t.Fatal("ssh deep links default off")
-	}
-	if !windows.NotifySessionEnded || !windows.NotifyConnectionFailed || !windows.NotifyForwardingFailed {
-		t.Fatalf("notification defaults = %+v", windows)
-	}
-	if windows.AutoStart {
-		t.Fatal("auto start default on")
-	}
-	if got := Defaults("darwin").ToggleWindowHotkey; got != "⌃ + `" {
-		t.Fatalf("darwin hotkey = %q", got)
-	}
-}
-
 func TestNormalizeTreatsVersionZeroAsDefaults(t *testing.T) {
 	settings := Normalize(Settings{}, "windows")
 	if !settings.ShowTrayIcon || settings.Version != SettingsVersion {

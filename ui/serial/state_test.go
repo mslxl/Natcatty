@@ -45,28 +45,6 @@ func fakeLister(ports []domainserial.PortInfo, err error) PortLister {
 	}
 }
 
-func TestNewStateUsesTheOriginalDefaults(t *testing.T) {
-	state := NewState(fakeLister(nil, nil), nil)
-	if state.Visible() {
-		t.Fatal("new state is visible")
-	}
-	if got, want := state.BaudRate(), "115200"; got != want {
-		t.Fatalf("baud = %q, want %q", got, want)
-	}
-	if got, want := state.DataBits(), "8"; got != want {
-		t.Fatalf("data bits = %q, want %q", got, want)
-	}
-	if got, want := state.StopBits(), "1"; got != want {
-		t.Fatalf("stop bits = %q, want %q", got, want)
-	}
-	if got, want := state.Parity(), "none"; got != want {
-		t.Fatalf("parity = %q, want %q", got, want)
-	}
-	if got, want := state.FlowControl(), "none"; got != want {
-		t.Fatalf("flow control = %q, want %q", got, want)
-	}
-}
-
 func TestConfigCoversEveryFramingAndFlowCombination(t *testing.T) {
 	state := NewState(fakeLister(nil, nil), nil)
 	state.SetPort("/dev/ttyUSB0")

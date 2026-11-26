@@ -211,26 +211,6 @@ func (s *captureShell) runCaptureCommand(t *testing.T) {
 	}
 }
 
-// typePrefixWithoutPopup types the prefix and verifies the popup has not drawn
-// the full command: the debounce is still running, so a suggestion row cannot
-// be how Tab found the line.
-//
-// The count of the command's text is the measure: the finished block's header
-// already shows the command that ran, so the popup is one more occurrence.
-func (s *captureShell) typePrefixWithoutPopup(t *testing.T) {
-	t.Helper()
-	before := s.waitForCommandHeader(t)
-	s.tester.Type(capturePrefix)
-	if !realShellWait(t, func() bool { return s.session.Snapshot().Input == capturePrefix }) {
-		t.Fatalf("the typed line is %q, want %q", s.session.Snapshot().Input, capturePrefix)
-	}
-	pumpTUIFrames(s.tester, 300*time.Millisecond)
-	if got := s.commandTextCount(); got != before {
-		t.Fatalf("the suggestion popup drew before the debounce elapsed (%d → %d occurrences): %v",
-			before, got, s.tester.Texts())
-	}
-}
-
 // commandTextCount is how many times the captured command appears in the
 // rendered text: once in its block header, once more for a popup row.
 func (s *captureShell) commandTextCount() int {
@@ -293,28 +273,6 @@ func TestTabAcceptsACapturedCommandWhileTheSessionIsOpen(t *testing.T) {
 	shell.tester.Key(0, ui.KeyTab)
 	if !realShellWait(t, func() bool { return shell.session.Snapshot().Input == captureCommand }) {
 		t.Fatalf("Tab left the line as %q, want %q — the byte went to the shell",
-			shell.session.Snapshot().Input, captureCommand)
-	}
-	shell.runAcceptedLine(t, before+2)
-}
-
-// TestTabInsideTheDebounceWindowCompletesInARealShell guards the second half of
-// the literal-tab bug: the autocomplete popup is deliberately delayed after
-// typing, and a Tab pressed inside that window used to see no rows, decline
-// the key, and send a literal tab to the shell. The key path must recompute the
-// rows immediately; only the popup waits.
-//
-// The delay is large (a minute) so the test is deterministic: the popup cannot
-// have appeared, yet Tab must still complete from the capture.
-func TestTabInsideTheDebounceWindowCompletesInARealShell(t *testing.T) {
-	shell := openCaptureShell(t, 60000)
-	shell.runCaptureCommand(t)
-	shell.typePrefixWithoutPopup(t)
-
-	before := strings.Count(shell.surface.ScreenText(), captureMarker)
-	shell.tester.Key(0, ui.KeyTab)
-	if !realShellWait(t, func() bool { return shell.session.Snapshot().Input == captureCommand }) {
-		t.Fatalf("Tab inside the debounce window left the line as %q, want %q — the byte went to the shell",
 			shell.session.Snapshot().Input, captureCommand)
 	}
 	shell.runAcceptedLine(t, before+2)

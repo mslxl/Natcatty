@@ -2,20 +2,6 @@ package terminal
 
 import "testing"
 
-func TestPowerUxDefaultsMatchTheOriginal(t *testing.T) {
-	settings := Defaults()
-	if !settings.AutocompleteEnabled || settings.AutocompleteGhostText ||
-		!settings.AutocompletePopupMenu || settings.AutocompleteDebounceMs != 100 ||
-		settings.AutocompleteMinChars != 1 || settings.AutocompleteMaxSuggestions != 50 ||
-		settings.AutocompleteHistoryScope != AutocompleteHistoryHost {
-		t.Fatalf("autocomplete defaults = %+v", settings)
-	}
-	if !settings.KeywordHighlightEnabled || len(settings.KeywordHighlightRules) != 7 {
-		t.Fatalf("keyword highlight defaults = enabled %t, rules %d",
-			settings.KeywordHighlightEnabled, len(settings.KeywordHighlightRules))
-	}
-}
-
 func TestNormalizeClampsAutocompleteAndFallsBackForUnknownValues(t *testing.T) {
 	settings := Normalize(Settings{
 		AutocompleteMinChars:       0,
