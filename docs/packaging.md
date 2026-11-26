@@ -28,13 +28,14 @@ keeps the SemVer form.
 
 Every desktop artifact copies the `resources/` tree next to the executable
 (inside `Contents/Resources` on macOS). That includes `THIRD-PARTY-NOTICES.md`,
-`LICENSE`, `NOTICE`, `SOURCE-OFFER.md`, `CHANGELOG.md`, the ET metadata and
-licenses, `icon.png`, and the `mygo.json` release manifest. `CHANGELOG.md`
-ships as product documentation. `LICENSE`, `NOTICE`, and the third-party notices are
-also read by the in-app **Settings → About & Licenses** area. The five locale
-catalogs (`en`, `es`, `ru`, `zh-CN`, `zh-TW`) are compiled into the executable
-with `go:embed`; they are not loose files. `SOURCE-OFFER.md` is generated for
-the release version by `internal/tools/sourceoffer`; it is not committed.
+`LICENSE`, `NOTICE`, `SOURCE-OFFER.md`, `CHANGELOG.md`, the bundled terminal
+font files and OFL license under `fonts/maple-mono-nf/`, `icon.png`, and the
+`mygo.json` release manifest. `CHANGELOG.md` ships as product documentation.
+`LICENSE`, `NOTICE`, and the third-party notices are also read by the in-app
+**Settings → About & Licenses** area. The five locale catalogs (`en`, `es`,
+`ru`, `zh-CN`, `zh-TW`) are compiled into the executable with `go:embed`; they
+are not loose files. `SOURCE-OFFER.md` is generated for the release version by
+`internal/tools/sourceoffer`; it is not committed.
 
 ## Building
 
@@ -285,12 +286,17 @@ with no keystore fall back to the Android debug key. Keystore creation, backup,
 and the unrecoverable loss of the key are documented in
 [android-release.md](android-release.md).
 
-## Linux CJK fonts
+## Bundled terminal font and Linux CJK fonts
 
-MyGo renders text through the system font collection. A Linux system with no
-CJK font draws no glyphs for `zh-CN` or `zh-TW`; the window and layout still
-work, but the Chinese labels appear blank. Install a CJK font before running
-the app, for example on Debian/Ubuntu:
+Natcatty bundles unmodified Maple Mono NF (`v7.9`, SIL OFL 1.1, Latin + Nerd
+Font glyphs) under `resources/fonts/maple-mono-nf/` and registers it at startup
+with `ui.RegisterFont` as the default terminal font on desktop and phone
+builds.
+
+MyGo still renders UI text and CJK fallback through the system font collection.
+A Linux system with no CJK font draws no glyphs for `zh-CN` or `zh-TW`; the
+window and layout still work, but the Chinese labels appear blank. Install a
+CJK font before running the app, for example on Debian/Ubuntu:
 
 ```sh
 sudo apt-get install fonts-noto-cjk
@@ -298,9 +304,9 @@ fc-cache -f
 ```
 
 The CI images install `fonts-noto-cjk` for the same reason. The app does not
-bundle a CJK font and the `.deb` does not declare a font dependency. MyGo does
-expose `ui.RegisterFont`, but shipping a full CJK font would add tens of
-megabytes and licensing review; the prerequisite is documented instead.
+bundle a CJK font and the `.deb` does not declare a font dependency; shipping a
+full CJK font would add tens of megabytes, so CJK glyphs rely on the system
+font fallback.
 
 ## Reproducibility
 
