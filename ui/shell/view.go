@@ -413,6 +413,8 @@ func activeTabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Them
 			}
 		}
 	}}
+	var panelSpec sidePanelSpec
+	var panelDrawn bool
 	if root, focus, ok := ref.tree(); ok {
 		ordinal := 0
 		ref.split = !root.IsPane()
@@ -433,10 +435,27 @@ func activeTabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Them
 		if dock != state.DockBottom {
 			width = *s.FilesWidth(window)
 		}
-		if files := s.FilesViewFor(ref.owner, ref.id, width); files != nil {
-			tabID := ref.id
-			slots.Panel = func() { sidePanel(c, s, m, t, tabID, dock, files) }
-			slots.Dock = layoutDock(dock)
+		files := s.FilesViewFor(ref.owner, ref.id, width)
+		spec := sidePanelSpec{
+			tab: ref.id, dock: dock,
+			ids: s.SideTools(ref.id), chosen: s.SideTool(ref.id), tool: files,
+		}
+		var reveal *layout.PanelReveal
+		draw := files != nil
+		if ref.motion != nil {
+			// A close keeps drawing the panel the user saw while its slot
+			// shrinks, even though the state has closed it.
+			spec, reveal, draw = ref.motion.panel.panelFrame(files != nil, spec)
+		}
+		if draw {
+			panelSpec = spec
+			panelDrawn = true
+			slots.Panel = func() { sidePanelView(c, s, m, t, spec) }
+			slots.Dock = layoutDock(spec.dock)
+			slots.PanelReveal = reveal
+			if ref.motion != nil && ref.motion.mode.labels {
+				slots.PanelLabel = "side-panel"
+			}
 			slots.Width, slots.Ratio = s.FilesWidth(window), s.FilesRatio()
 		}
 	}
@@ -445,6 +464,13 @@ func activeTabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Them
 	// layout, so every Pane's box and grid are already the final ones.
 	if ref.motion != nil {
 		ref.motion.drawOverlay(c, ref, t, m)
+		if panelDrawn {
+			ref.motion.panel.notePanel(panelSpec)
+			// The drawer paints the tool from its captured spec after the
+			// state has closed the panel; hold it alive until the panel
+			// leaves.
+			s.HoldSideToolFor(ref.owner, panelSpec.chosen)
+		}
 	}
 }
 
@@ -459,31 +485,38 @@ func layoutDock(dock state.PanelDock) layout.Dock {
 	return layout.DockLeft
 }
 
-// sidePanel is a Session Tab's side panel, as the original's: a strip of
+// sidePanelView is a Session Tab's side panel, as the original's: a strip of
 // tools along the top (SFTP, Scripts, History, Theme, System, Notes), the
-// panel's dock and close at its end, and the chosen tool below.
-func sidePanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
-	tab model.TabID, dock state.PanelDock, tool func(*ui.Context)) {
+// panel's dock and close at its end, and the chosen tool below. spec is the
+// frame's captured panel, so a closing drawer keeps painting the same strip
+// and tool the user last saw after the state has closed the panel.
+func sidePanelView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
+	spec sidePanelSpec) ui.Element {
 	// The panel shares the terminal's background, as the original's, with a
 	// line under its strip; the macOS style raises it as a card.
-	ui.Column(c).Fill().MinWidth(0).Background(kit.CardInnerFill(t, t.Background)).Children(func() {
-		ids := s.SideTools(tab)
-		chosen, tools := -1, make([]kit.Segment, len(ids))
-		for i, id := range ids {
+	panel := ui.Column(c).Fill().MinWidth(0).Background(kit.CardInnerFill(t, t.Background))
+	panel.Children(func() {
+		chosen, tools := -1, make([]kit.Segment, len(spec.ids))
+		for i, id := range spec.ids {
 			icon, label := sideToolFace(m, id)
 			// Each button keys its tool's identity, so a tool's state
 			// follows it however the strip changes.
 			tools[i] = kit.Segment{Key: "side-tool-" + string(id), Label: label, Icon: icon}
-			if id == s.SideTool(tab) {
+			if id == spec.chosen {
 				chosen = i
 			}
 		}
-		if kit.ToolStrip(c, tools, &chosen, m.SessionFilesPanel(), func() { sidePanelControls(c, s, m, tab, dock) }) {
-			s.SetSideTool(tab, ids[chosen])
-			c.Invalidate()
+		if kit.ToolStrip(c, tools, &chosen, m.SessionFilesPanel(), func() {
+			sidePanelControls(c, s, m, spec.tab, spec.dock)
+		}) {
+			if chosen >= 0 && chosen < len(spec.ids) {
+				s.SetSideTool(spec.tab, spec.ids[chosen])
+				c.Invalidate()
+			}
 		}
-		ui.Column(c).FillWidth().Grow(1).MinHeight(0).Children(func() { tool(c) })
+		ui.Column(c).FillWidth().Grow(1).MinHeight(0).Children(func() { spec.tool(c) })
 	})
+	return panel
 }
 
 // sidePanelControls are the side panel's dock menu and close button.

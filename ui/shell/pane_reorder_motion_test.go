@@ -207,8 +207,11 @@ func TestPaneReorderSameTabMovePlaysTheThreeParts(t *testing.T) {
 	if sibling.Spring == nil || sibling.Duration <= 0 {
 		t.Fatalf("the sibling is not on the reorder spring: %+v", sibling)
 	}
-	if !sibling.Native || !run.nativePanes[target] {
-		t.Fatalf("production did not carry the sibling natively: visual %+v nativePanes %+v",
+	// The sibling shrinks in this scene, so the overlay carries it: MyGo's
+	// Match + ScaleContent would grow its final grid back to the old box,
+	// enlarging the terminal's text before it settled.
+	if sibling.Native || len(run.nativePanes) != 0 {
+		t.Fatalf("a shrinking sibling was carried natively: visual %+v nativePanes %+v",
 			sibling, run.nativePanes)
 	}
 	if run.spring == nil || run.spring.Duration != 240*time.Millisecond || run.spring.Bounce != 0.1 {
@@ -230,11 +233,13 @@ func TestPaneReorderSameTabMovePlaysTheThreeParts(t *testing.T) {
 	} else if !rectNearOK(mask, final[moved].Column, 0.5) {
 		t.Fatalf("the moved Pane's mask = %+v, want its final column %+v", mask, final[moved].Column)
 	}
-	if _, ok := tt.Find("pane-motion:" + string(target)); ok {
-		t.Fatalf("the native sibling was also copied by the overlay")
+	if _, ok := tt.Find("pane-motion:" + string(target)); !ok {
+		t.Fatalf("the shrinking sibling is not copied by the overlay")
 	}
-	if _, ok := tt.Find("pane-motion-mask:" + string(target)); ok {
-		t.Fatalf("the native sibling was masked")
+	if mask, ok := tt.Find("pane-motion-mask:" + string(target)); !ok {
+		t.Fatalf("the shrinking sibling is not masked")
+	} else if !rectNearOK(mask, final[target].Column, 0.5) {
+		t.Fatalf("the sibling's mask = %+v, want its final column %+v", mask, final[target].Column)
 	}
 	if got, want := len(scene.surfaces[moved].ResizeLog()), 1; got != want {
 		t.Fatalf("the moved Pane delivered %d resizes, want %d: %+v",
@@ -279,6 +284,15 @@ func TestPaneReorderSameTabMovePlaysTheThreeParts(t *testing.T) {
 	} else if !rectNearOK(got, clipToWindow(enterRect), 0.75) {
 		t.Fatalf("the overlay at mid-run = %+v, want %+v", got, clipToWindow(enterRect))
 	}
+	// The shrinking sibling's copy is laid out at its animated box, so its
+	// final grid draws at its own cell size instead of scaling up to the old
+	// box.
+	siblingRect, _ := run.anim.StateAt(sibling, now)
+	if got, ok := tt.Find("pane-motion:" + string(target)); !ok {
+		t.Fatalf("the sibling overlay disappeared mid-run")
+	} else if !rectNearOK(got, clipToWindow(siblingRect), 0.75) {
+		t.Fatalf("the sibling overlay at mid-run = %+v, want %+v", got, clipToWindow(siblingRect))
+	}
 	for id, surface := range scene.surfaces {
 		if got := surface.GridForCalls() - changeCalls[id]; got != 0 {
 			t.Fatalf("Pane %s (moved %s, target %s) computed %d grids during animation frames, want none",
@@ -314,6 +328,9 @@ func TestPaneReorderSameTabMovePlaysTheThreeParts(t *testing.T) {
 	}
 	if _, ok := tt.Find("pane-motion:" + string(moved)); ok {
 		t.Fatalf("the overlay is still drawn after the run")
+	}
+	if _, ok := tt.Find("pane-motion:" + string(target)); ok {
+		t.Fatalf("the sibling overlay is still drawn after the run")
 	}
 }
 
@@ -358,8 +375,10 @@ func TestPaneReorderGatesEachPartWithItsOwnSwitch(t *testing.T) {
 			if _, ok := run.ghosts[moved]; ok != tc.wantGhost {
 				t.Fatalf("the run's old-position ghost presence = %v, want %v", ok, tc.wantGhost)
 			}
-			if got := len(run.nativePanes); (got > 0) != tc.wantSib {
-				t.Fatalf("native sibling count = %d, want part present %v", got, tc.wantSib)
+			if len(run.nativePanes) != 0 {
+				// The scene's sibling shrinks, so no reorder sibling may take
+				// the native ScaleContent route.
+				t.Fatalf("a shrinking sibling was carried natively: %+v", run.nativePanes)
 			}
 			if got, want := run.spring != nil, tc.wantSib; got != want {
 				t.Fatalf("run spring presence = %v, want %v", got, want)
@@ -369,6 +388,9 @@ func TestPaneReorderGatesEachPartWithItsOwnSwitch(t *testing.T) {
 			}
 			if _, ok := tt.Find("pane-motion:" + string(moved)); ok != tc.wantEnter {
 				t.Fatalf("drawn overlay presence = %v, want %v", ok, tc.wantEnter)
+			}
+			if _, ok := tt.Find("pane-motion:" + string(target)); ok != tc.wantSib {
+				t.Fatalf("drawn sibling overlay presence = %v, want %v", ok, tc.wantSib)
 			}
 
 			tt.Advance(2 * time.Second)
@@ -1313,19 +1335,21 @@ func signOf(v float32) int {
 }
 
 // TestPaneReorderNativeSiblingKeepsVelocityOnReverse measures the production
-// native sibling route across an interruption, not just its bookkeeping: the
-// real Pane is sampled through its painted PaneRegion at the reverse and four
-// milliseconds later. It must continue in the direction it was moving at the
-// speed the pre-reverse spring had, then head back to the new target. A
-// sibling re-keyed at the change would start from rest and move the opposite
-// way immediately.
+// native sibling route across an interruption, not just its bookkeeping. The
+// scene moves the larger Pane, so its sibling grows into the room it takes;
+// a growing sibling keeps MyGo's Match + ScaleContent route. The reverse move
+// recreates the split, so the sibling continues through the overlay, whose
+// spring must keep the measured velocity: it carries on in the pre-reverse
+// direction at the pre-reverse speed for a few milliseconds, then heads back
+// to the new target. A sibling re-keyed at the change would start from rest
+// and move the opposite way immediately.
 func TestPaneReorderNativeSiblingKeepsVelocityOnReverse(t *testing.T) {
 	scene := newReorderScene(t, reorderPreferences(true, true, true), paneMotionMode{labels: true})
 	g, tt, wm := scene.graph, scene.tt, scene.wm
-	moved, target := scene.ids[1], scene.ids[0]
+	moved, target := scene.ids[0], scene.ids[1]
 	tabID, _ := g.state.TabID(0)
 
-	if !g.state.MovePane(tabID, moved, tabID, target, domainworkspace.SideLeft) {
+	if !g.state.MovePane(tabID, moved, tabID, target, domainworkspace.SideRight) {
 		t.Fatalf("the first MovePane returned false")
 	}
 	tt.Frame()
@@ -1335,22 +1359,20 @@ func TestPaneReorderNativeSiblingKeepsVelocityOnReverse(t *testing.T) {
 	}
 	firstSibling := findVisual(t, first, target, motion.Move)
 	if !firstSibling.Native {
-		t.Fatalf("production did not carry the sibling on the native route: %+v", firstSibling)
+		t.Fatalf("production did not carry the growing sibling on the native route: %+v", firstSibling)
 	}
 	tt.Advance(60 * time.Millisecond)
 	tt.Frame()
 	now := tt.Now()
 	preBook, _ := first.anim.StateAt(firstSibling, now)
 	preVelocity := first.anim.VelocityAt(firstSibling, now)
-	if preVelocity.X <= 0 {
-		t.Fatalf("the sibling's flight left edge is not moving right: velocity %+v", preVelocity)
+	// The sibling grows from the right slot into the left one, so its flight
+	// left edge is moving left.
+	if preVelocity.X >= 0 {
+		t.Fatalf("the sibling's flight left edge is not moving left: velocity %+v", preVelocity)
 	}
-	// The real Pane paints inside its new split slot's clip. The flight's
-	// left edge lies inside that slot, so the visible left edge below is the
-	// unclipped flight edge, and the interruption must carry it on the same
-	// way before the retargeted spring turns it around.
 
-	if !g.state.MovePane(tabID, moved, tabID, target, domainworkspace.SideRight) {
+	if !g.state.MovePane(tabID, moved, tabID, target, domainworkspace.SideLeft) {
 		t.Fatalf("the reversing MovePane returned false")
 	}
 	tt.Frame()

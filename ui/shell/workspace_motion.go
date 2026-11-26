@@ -29,9 +29,10 @@ const paneMotionZIndex = 1
 // creates (ticket 04, which the overlay still handles). Native keeps a Match
 // transition on every Pane so a layout change can start from the previous
 // frame's recorded box; overlayClose forces the older opaque-overlay survivor
-// route so the fallback stays exercised; overlayReorder forces a same-Tab
-// move's siblings through the opaque overlay so both reorder routes have
-// coverage; labels names the overlays for tests.
+// route so the fallback stays exercised; overlayReorder forces every same-Tab
+// move sibling through the opaque overlay, so the growing sibling's fallback
+// stays exercised alongside the shrinking siblings production already routes
+// there; labels names the overlays for tests.
 type paneMotionMode struct {
 	native         bool
 	overlayClose   bool
@@ -199,6 +200,10 @@ type workspacePaneMotion struct {
 
 	rects  map[model.PaneID]motion.PaneRects
 	region ui.Rect
+	// panel animates the side panel's open and close. It is separate from the
+	// Pane run: a panel change is a layout change that freezes the Panes'
+	// final grids, but the panel itself is transformed by hand.
+	panel sidePanelMotion
 
 	frames int
 	run    *paneMotionRun
@@ -233,6 +238,7 @@ func newWorkspacePaneMotion(s *state.State, mode paneMotionMode) *workspacePaneM
 		body:       newWorkspaceBodyMotion(mode),
 		ownsGhosts: true,
 		rects:      map[model.PaneID]motion.PaneRects{},
+		panel:      sidePanelMotion{enabled: true},
 	}
 }
 
@@ -265,6 +271,9 @@ func newDetachedPaneMotion(s *state.State, tabID model.TabID) *workspacePaneMoti
 	wm := newWorkspacePaneMotion(s, paneMotionMode{loneNoHeader: true})
 	wm.body = nil
 	wm.ownsGhosts = false
+	// A detached window draws no side panel, so a panel open or close in its
+	// Tab must not start a run, pin its Panes, or ask for frames here.
+	wm.panel.enabled = false
 	wm.tab = &paneMotionTabSource{
 		id: func() (model.TabID, bool) { return tabID, s.DetachedTabExists(tabID) },
 		tree: func() (*domainworkspace.Node, []int, bool) {
@@ -361,12 +370,26 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	setting := s.Motion()
 	event, ok := s.MotionEvent()
 	unseen := ok && wm.controller.Unseen(event.Seq)
+	activeID, activeOK := wm.tabID()
+	// The side panel is a layout change beside the Panes. Observing it before
+	// the Pane and body runtimes decide makes this frame final for them: an
+	// open or close reflows every Pane, so nothing may animate boxes measured
+	// beside the old panel. The panel's own run is visual and pins the Panes'
+	// final viewports at the change.
+	panelChanged := wm.observePanel(c, s, setting, now, activeID, activeOK,
+		firstFrame, hidden, wasHidden, resized, event, unseen)
+	reflowed := resized || panelChanged
+	if unseen && !panelChanged {
+		// Another event owns this frame's layout. The panel's visual may keep
+		// playing, but it must not hold a Pane at the old panel's final room.
+		wm.panel.releasePins()
+	}
 	// A Pane event consumed on this frame starts its own animation. MyGo's
 	// DisableAnimations is window-wide, so a Tab body warp using it would also
 	// rest that native Pane transition while the Pane's switch is still on;
 	// the body waits it out instead (the one-switch rule).
 	paneMotionPending := wm.body != nil &&
-		unseen && wm.paneMotionUsesMyGo(c, setting, event, firstFrame, hidden || resized, wasHidden)
+		unseen && wm.paneMotionUsesMyGo(c, setting, event, firstFrame, hidden || reflowed, wasHidden)
 	// A Pane transition MyGo is already carrying also keeps a body warp from
 	// using DisableAnimations on this frame, even when the newest layout change
 	// records no event at all (a batch Tab close): the Pane run must keep
@@ -379,10 +402,9 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	// window, an off switch, Reduce Motion, or a batch close with no event ends
 	// it without asking for another frame.
 	if wm.body != nil {
-		wm.body.tick(c, s, setting, hidden, resized, paneMotionPending, paneMotionActive, otherClose)
+		wm.body.tick(c, s, setting, hidden, reflowed, paneMotionPending, paneMotionActive, otherClose)
 	}
 
-	activeID, activeOK := wm.tabID()
 	// The tree is built after preFrame returns, so the zoom the layout shows
 	// is decided here and read by the tab ref. A run that keeps the split (or
 	// the old magnified Pane) overrides the state for this frame; every exit
@@ -409,10 +431,10 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	} else if wm.run != nil && !motion.Enabled(setting, wm.run.kind) {
 		wm.finish()
 	}
-	if wm.run != nil && (hidden || resized) {
-		// Nothing of the window shows while hidden, and a resize has reflowed
-		// every box: a run that outlives either is over before it is seen
-		// again (ticket 08).
+	if wm.run != nil && (hidden || reflowed) {
+		// Nothing of the window shows while hidden, and a resize or a side
+		// panel change has reflowed every box: a run that outlives either is
+		// over before it is seen again (ticket 08).
 		wm.finish()
 	}
 
@@ -445,7 +467,7 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 		if wm.ownsGhosts {
 			s.ReleasePaneGhosts()
 		}
-		visible := !firstFrame && !hidden && !wasHidden && !resized &&
+		visible := !firstFrame && !hidden && !wasHidden && !reflowed &&
 			!c.Preferences().ReduceMotion
 		wm.body.consume(c, s, event, setting, visible, paneMotionPending)
 		return
@@ -477,11 +499,11 @@ func (wm *workspacePaneMotion) preFrame(c *ui.Context, s *state.State) {
 	}
 
 	visible := setting.Enabled && !c.Preferences().ReduceMotion &&
-		!firstFrame && !hidden && !wasHidden && !resized
+		!firstFrame && !hidden && !wasHidden && !reflowed
 	// Only a visible view has the previous frame's boxes on screen; a hidden,
-	// resized, or first frame must not pin a grid from geometry it never
-	// showed at this size. The final layout sizes each Pane once instead.
-	pin := !hidden && !wasHidden && !firstFrame && !resized
+	// resized, reflowed, or first frame must not pin a grid from geometry it
+	// never showed at this size. The final layout sizes each Pane once instead.
+	pin := !hidden && !wasHidden && !firstFrame && !reflowed
 	switch event.Kind {
 	case motion.PaneOpen:
 		animate := visible && setting.PaneOpen
@@ -962,8 +984,13 @@ func (wm *workspacePaneMotion) planMove(c *ui.Context, s *state.State,
 			// carry a velocity through an interruption: the move recreates
 			// the split around the target, so MyGo sees a new element and its
 			// Match starts from rest. Paint that Pane with the opaque overlay
-			// instead, whose spring keeps the velocity measured above.
-			if native && !wm.visualInFlight(prev, now, id) {
+			// instead, whose spring keeps the velocity measured above. A
+			// sibling that shrinks also takes the overlay: ScaleContent would
+			// grow its final grid back to the old box, enlarging its text
+			// before it settles.
+			shrinks := sibling.Column.W < seen.rect.W-0.5 ||
+				sibling.Column.H < seen.rect.H-0.5
+			if native && !shrinks && !wm.visualInFlight(prev, now, id) {
 				visual.Native = true
 				run.nativePanes[id] = true
 			}
@@ -1545,6 +1572,18 @@ func (wm *workspacePaneMotion) finish() {
 // chrome from the split target, whose surface it replaces.
 func (wm *workspacePaneMotion) pinPanes(panes []model.PaneID, final map[model.PaneID]motion.PaneRects,
 	fallback model.PaneID) {
+	var pins map[model.PaneID]state.ViewportMotion
+	if wm.run != nil {
+		pins = wm.run.pins
+	}
+	wm.pinPanesInto(pins, panes, final, fallback)
+}
+
+// pinPanesInto freezes the panes' viewports and records them in pins when a
+// run owns them. A warp pins without a run: the Surface spends the pin when
+// its own layout reports the final box.
+func (wm *workspacePaneMotion) pinPanesInto(pins map[model.PaneID]state.ViewportMotion,
+	panes []model.PaneID, final map[model.PaneID]motion.PaneRects, fallback model.PaneID) {
 	type pin struct {
 		id   model.PaneID
 		vm   state.ViewportMotion
@@ -1552,7 +1591,7 @@ func (wm *workspacePaneMotion) pinPanes(panes []model.PaneID, final map[model.Pa
 		dw   float32
 		dh   float32
 	}
-	var pins []pin
+	var list []pin
 	for _, id := range panes {
 		body, ok := final[id]
 		if !ok || body.Body.W <= 0 || body.Body.H <= 0 {
@@ -1579,15 +1618,15 @@ func (wm *workspacePaneMotion) pinPanes(panes []model.PaneID, final map[model.Pa
 			// the final box sizes it once.
 			continue
 		}
-		pins = append(pins, pin{id: id, vm: vm, body: body.Body,
+		list = append(list, pin{id: id, vm: vm, body: body.Body,
 			dw: source.Body.W - viewW, dh: source.Body.H - viewH})
 	}
 	// Pin after measuring every source: pinning the split target changes its
 	// viewport, and the new Pane's chrome comes from that source.
-	for _, p := range pins {
+	for _, p := range list {
 		p.vm.PinViewport(p.body.W-p.dw, p.body.H-p.dh)
-		if wm.run != nil {
-			wm.run.pins[p.id] = p.vm
+		if pins != nil {
+			pins[p.id] = p.vm
 		}
 	}
 }
@@ -1949,19 +1988,31 @@ func (wm *workspacePaneMotion) drawOverlay(c *ui.Context, ref tabRef, t *ui.Them
 	})
 }
 
-// paneMotionCopy draws one moving survivor: laid out at box, mapped to the
-// visual rect at now. The content is the final grid, so the copy never
-// reflows.
+// paneMotionCopy draws one moving survivor as its animated box: the copy is
+// laid out at the box the animation shows this frame, and its content is the
+// final grid at its own cell size, clipped by that box. A layout move never
+// scales the content: scaling the final grid up to a Pane's old box would make
+// the text of a shrinking Pane grow before it settles. A style enter still
+// scales the whole Pane, because there the scale is the motion the user chose.
 func (wm *workspacePaneMotion) paneMotionCopy(c *ui.Context, ref tabRef, m locales.Messages,
 	t *ui.Theme, run *paneMotionRun, v motion.Visual, info state.PaneInfo,
 	end motion.PaneRects, now time.Time) {
 	rect, opacity := run.anim.StateAt(v, now)
 	box := v.Box
-	e := ui.Column(c).Absolute().
-		Left(box.X).Top(box.Y).Size(box.W, box.H).
-		ZIndex(paneMotionZIndex).Opacity(opacity).
-		TransformOrigin(0, 0).Transform(paneOverlayTransform(box, rect)).
-		Background(t.Background).Clip().IgnoreInput(true)
+	var e ui.Element
+	if v.Kind == motion.Move {
+		box = rect
+		e = ui.Column(c).Absolute().
+			Left(box.X).Top(box.Y).Size(box.W, box.H).
+			ZIndex(paneMotionZIndex).Opacity(opacity).
+			Background(t.Background).Clip().IgnoreInput(true)
+	} else {
+		e = ui.Column(c).Absolute().
+			Left(box.X).Top(box.Y).Size(box.W, box.H).
+			ZIndex(paneMotionZIndex).Opacity(opacity).
+			TransformOrigin(0, 0).Transform(paneOverlayTransform(box, rect)).
+			Background(t.Background).Clip().IgnoreInput(true)
+	}
 	if wm.mode.labels {
 		e.Label("pane-motion:" + string(v.Pane))
 	}

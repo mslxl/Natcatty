@@ -205,6 +205,23 @@ func (s *State) FinishSideFrameFor(owner RenderOwner) {
 	}
 }
 
+// HoldSideToolFor marks id as still drawn by owner this frame. A side panel
+// that is closing keeps painting its last built frame while its slot shrinks,
+// so the tool must stay live until the panel leaves, even though the Tab's
+// panel is already closed and FilesViewFor returns nil. It is the drawer's
+// equivalent of drawing the tool.
+func (s *State) HoldSideToolFor(owner RenderOwner, id SideToolID) {
+	if id == "" {
+		return
+	}
+	owner = renderOwner(owner)
+	if s.sideDrawn == nil {
+		s.sideDrawn = map[RenderOwner]SideToolID{}
+	}
+	s.sideDrawn[owner] = id
+	delete(s.sideHidden, id)
+}
+
 // sideToolDrawnByOther reports whether another renderer draws id in this
 // frame. A tool shared by the two windows therefore stays alive until the
 // last one stops drawing it.
