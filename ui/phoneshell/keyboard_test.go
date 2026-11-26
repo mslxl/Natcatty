@@ -367,12 +367,12 @@ func TestRawTerminalKeepsReservedKeysAndDispatchesBindings(t *testing.T) {
 type keyboardFakeScreen struct {
 	fakeScreen
 	keyboard    *phoneKeyboard
-	pasteTarget func(*ui.Context, transfer.Data) bool
+	pasteTarget func(ui.Services, transfer.Data) bool
 }
 
 func (s *keyboardFakeScreen) SetKeyboard(keyboard *phoneKeyboard) { s.keyboard = keyboard }
 
-func (s *keyboardFakeScreen) SetPasteTarget(target func(*ui.Context, transfer.Data) bool) {
+func (s *keyboardFakeScreen) SetPasteTarget(target func(ui.Services, transfer.Data) bool) {
 	s.pasteTarget = target
 }
 
@@ -393,7 +393,7 @@ func TestInstallScreenInputWiresTheVisiblePane(t *testing.T) {
 	if screen.pasteTarget == nil {
 		t.Fatal("the Pane got no paste decision")
 	}
-	if !screen.pasteTarget(nil, transfer.TextData("hello")) {
+	if !screen.pasteTarget(ui.Services{}, transfer.TextData("hello")) {
 		t.Fatal("the Pane's paste decision did not take the data")
 	}
 	if text, err := screen.pasted.Read(transfer.Text); err != nil || string(text) != "hello" {

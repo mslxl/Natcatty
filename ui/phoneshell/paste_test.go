@@ -76,8 +76,8 @@ func TestPhonePasteReadsOnlyTextAndPNG(t *testing.T) {
 func TestEveryPasteEntryPointSharesTheOneConfirmation(t *testing.T) {
 	guard := func(text string) bool { return domainterminal.ShouldConfirmPaste(text, true, 2) }
 	screen, acc, tt, handle := newPasteTerminal(t, "ready\r\n", guard)
-	screen.SetPasteTarget(func(c *ui.Context, d transfer.Data) bool {
-		return pasteData(c, screen, acc, d, guard)
+	screen.SetPasteTarget(func(services ui.Services, d transfer.Data) bool {
+		return pasteData(services, screen, acc, d, guard)
 	})
 
 	// The touch control.
@@ -146,7 +146,7 @@ func TestEveryPasteEntryPointSharesTheOneConfirmation(t *testing.T) {
 func TestSystemPasteCommandReadsOnlyTextAndPNG(t *testing.T) {
 	screen, _, tt, _ := newPasteTerminal(t, "ready\r\n", nil)
 	var captured transfer.Data
-	screen.SetPasteTarget(func(c *ui.Context, d transfer.Data) bool {
+	screen.SetPasteTarget(func(_ ui.Services, d transfer.Data) bool {
 		captured = d
 		return true
 	})

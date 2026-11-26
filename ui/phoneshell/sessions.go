@@ -1253,10 +1253,10 @@ func (t *sessionTabs) installScreenInput(view tabView) {
 		installer.SetKeyboard(t.keyboardFor(view))
 	}
 	if setter, ok := screen.(interface {
-		SetPasteTarget(func(*ui.Context, transfer.Data) bool)
+		SetPasteTarget(func(ui.Services, transfer.Data) bool)
 	}); ok {
-		setter.SetPasteTarget(func(c *ui.Context, data transfer.Data) bool {
-			return pasteData(c, screen, view.accessory, data, t.pasteNeedsConfirmation)
+		setter.SetPasteTarget(func(services ui.Services, data transfer.Data) bool {
+			return pasteData(services, screen, view.accessory, data, t.pasteNeedsConfirmation)
 		})
 	}
 }
