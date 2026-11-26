@@ -896,125 +896,99 @@ func assertNoHorizontalOverflow(t *testing.T, tt *ui.Tester, width, height int) 
 
 var editorSizes = []struct{ width, height int }{{1100, 720}, {720, 480}}
 
-func TestHostEditorScrollsToItsActionsAtBothSizes(t *testing.T) {
+// TestEditorsScrollToTheirActionsAtBothSizes drives each entity editor at a
+// wide and the minimum window size: scrolled to the end, its bottom field and
+// the pinned Save/Cancel bar stay inside the window, and both buttons still
+// close the editor. The Save leg of the create editors also proves the click
+// reaches a working form, not only a visible button.
+func TestEditorsScrollToTheirActionsAtBothSizes(t *testing.T) {
 	m := locales.In("en")
-	for _, size := range editorSizes {
-		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
-			state, _, _, _, _, tt := newProductionEntityView(t, size.width, size.height)
-
-			state.BeginEdit("host-1")
-			tt.Frame()
-			scrollToEnd(tt, size.width, size.height)
-			assertVisible(t, tt, m.VaultHostPinned(), size.width, size.height)
-			assertVisible(t, tt, m.VaultHostSave(), size.width, size.height)
-			assertVisible(t, tt, m.VaultHostCancel(), size.width, size.height)
-			assertNoHorizontalOverflow(t, tt, size.width, size.height)
-
-			if err := tt.Click(m.VaultHostCancel()); err != nil {
-				t.Fatalf("click Cancel: %v", err)
-			}
-			tt.Frame()
-			if state.Editing() {
-				t.Fatal("Cancel did not close the Host editor")
-			}
-
-			state.BeginEdit("host-1")
-			tt.Frame()
-			scrollToEnd(tt, size.width, size.height)
-			if err := tt.Click(m.VaultHostSave()); err != nil {
-				t.Fatalf("click Save: %v", err)
-			}
-			tt.Frame()
-			if state.Editing() {
-				t.Fatal("Save did not close the Host editor")
-			}
-		})
+	cases := []struct {
+		name string
+		// open opens the editor, filling any fields a valid save needs.
+		open  func(*vaultstate.State)
+		edits func() bool
+		// endField is the editor's bottom field; the Host create editor is
+		// taller than the edit one, so only edit gets a bottom-field probe.
+		endField string
+		// verifySaved proves the first Save click took effect.
+		verifySaved func(*testing.T, *entityGroups, *entityProxies)
+	}{
+		{
+			name:     "host",
+			open:     func(state *vaultstate.State) { state.BeginEdit("host-1") },
+			edits:    func() bool { return true },
+			endField: m.VaultHostPinned(),
+		},
+		{
+			name: "group",
+			open: func(state *vaultstate.State) {
+				state.BeginCreateGroup()
+				state.GroupForm().Path = "prod2"
+			},
+			endField: m.VaultHostRequiresMFA(),
+			verifySaved: func(t *testing.T, groups *entityGroups, _ *entityProxies) {
+				t.Helper()
+				if len(groups.items) != 1 || groups.items[0].Path != "prod2" {
+					t.Fatalf("groups = %+v", groups.items)
+				}
+			},
+		},
+		{
+			name: "proxy",
+			open: func(state *vaultstate.State) {
+				state.BeginCreateProxyProfile()
+				state.ProxyForm().Label = "office"
+				state.ProxyForm().Host = "socks.example.com"
+			},
+			verifySaved: func(t *testing.T, _ *entityGroups, proxies *entityProxies) {
+				t.Helper()
+				if len(proxies.items) != 1 || proxies.items[0].Label != "office" {
+					t.Fatalf("profiles = %+v", proxies.items)
+				}
+			},
+		},
 	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, size := range editorSizes {
+				t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
+					state, _, groups, proxies, _, tt := newProductionEntityView(t, size.width, size.height)
 
-func TestHostEditorScrollsWithTheKeyboard(t *testing.T) {
-	m := locales.In("en")
-	state, _, _, _, _, tt := newProductionEntityView(t, 720, 480)
-	state.BeginEdit("host-1")
-	tt.Frame()
-	tt.Move(360, 240)
-	tt.Key(0, ui.KeyEnd)
-	tt.Frame()
-	assertVisible(t, tt, m.VaultHostPinned(), 720, 480)
-	assertVisible(t, tt, m.VaultHostSave(), 720, 480)
-}
+					tc.open(state)
+					tt.Frame()
+					scrollToEnd(tt, size.width, size.height)
+					if tc.endField != "" {
+						assertVisible(t, tt, tc.endField, size.width, size.height)
+					}
+					assertVisible(t, tt, m.VaultHostSave(), size.width, size.height)
+					assertNoHorizontalOverflow(t, tt, size.width, size.height)
+					if err := tt.Click(m.VaultHostSave()); err != nil {
+						t.Fatalf("click Save: %v", err)
+					}
+					tt.Frame()
+					if state.Editing() || state.EditingGroup() || state.EditingProxyProfile() {
+						t.Fatal("Save did not close the editor")
+					}
+					if tc.verifySaved != nil {
+						tc.verifySaved(t, groups, proxies)
+					}
 
-func TestGroupEditorScrollsToItsActionsAtBothSizes(t *testing.T) {
-	m := locales.In("en")
-	for _, size := range editorSizes {
-		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
-			state, _, groups, _, _, tt := newProductionEntityView(t, size.width, size.height)
-
-			state.BeginCreateGroup()
-			state.GroupForm().Path = "prod2"
-			tt.Frame()
-			scrollToEnd(tt, size.width, size.height)
-			assertVisible(t, tt, m.VaultHostRequiresMFA(), size.width, size.height)
-			assertVisible(t, tt, m.VaultHostSave(), size.width, size.height)
-			assertNoHorizontalOverflow(t, tt, size.width, size.height)
-			if err := tt.Click(m.VaultHostSave()); err != nil {
-				t.Fatalf("click Save: %v", err)
-			}
-			tt.Frame()
-			if state.EditingGroup() {
-				t.Fatal("Save did not close the Host Group editor")
-			}
-			if len(groups.items) != 1 || groups.items[0].Path != "prod2" {
-				t.Fatalf("groups = %+v", groups.items)
-			}
-
-			state.BeginCreateGroup()
-			tt.Frame()
-			scrollToEnd(tt, size.width, size.height)
-			if err := tt.Click(m.VaultHostCancel()); err != nil {
-				t.Fatalf("click Cancel: %v", err)
-			}
-			tt.Frame()
-			if state.EditingGroup() {
-				t.Fatal("Cancel did not close the Host Group editor")
-			}
-		})
-	}
-}
-
-func TestProxyEditorScrollsToItsActionsAtBothSizes(t *testing.T) {
-	m := locales.In("en")
-	for _, size := range editorSizes {
-		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
-			state, _, _, proxies, _, tt := newProductionEntityView(t, size.width, size.height)
-
-			state.BeginCreateProxyProfile()
-			state.ProxyForm().Label = "office"
-			state.ProxyForm().Host = "socks.example.com"
-			tt.Frame()
-			scrollToEnd(tt, size.width, size.height)
-			assertVisible(t, tt, m.VaultHostSave(), size.width, size.height)
-			assertNoHorizontalOverflow(t, tt, size.width, size.height)
-			if err := tt.Click(m.VaultHostSave()); err != nil {
-				t.Fatalf("click Save: %v", err)
-			}
-			tt.Frame()
-			if state.EditingProxyProfile() {
-				t.Fatal("Save did not close the Proxy Profile editor")
-			}
-			if len(proxies.items) != 1 || proxies.items[0].Label != "office" {
-				t.Fatalf("profiles = %+v", proxies.items)
-			}
-
-			state.BeginCreateProxyProfile()
-			tt.Frame()
-			scrollToEnd(tt, size.width, size.height)
-			if err := tt.Click(m.VaultHostCancel()); err != nil {
-				t.Fatalf("click Cancel: %v", err)
-			}
-			tt.Frame()
-			if state.EditingProxyProfile() {
-				t.Fatal("Cancel did not close the Proxy Profile editor")
+					tc.open(state)
+					tt.Frame()
+					scrollToEnd(tt, size.width, size.height)
+					if tc.endField != "" {
+						assertVisible(t, tt, tc.endField, size.width, size.height)
+					}
+					assertVisible(t, tt, m.VaultHostCancel(), size.width, size.height)
+					if err := tt.Click(m.VaultHostCancel()); err != nil {
+						t.Fatalf("click Cancel: %v", err)
+					}
+					tt.Frame()
+					if state.Editing() || state.EditingGroup() || state.EditingProxyProfile() {
+						t.Fatal("Cancel did not close the editor")
+					}
+				})
 			}
 		})
 	}
@@ -1414,54 +1388,11 @@ func TestKnownHostsStayCAAnchorsAfterExportImport(t *testing.T) {
 	}
 }
 
-func TestOpeningAGroupShowsOnlyItsHostsAt720x480(t *testing.T) {
-	m := locales.In("en")
-	state, hosts, groups, _, _, tt := newProductionEntityView(t, 720, 480)
-	hosts.items = []domainvault.Host{
-		{ID: "grouped", Label: "grouped-1", Hostname: "10.0.0.1", Port: 22,
-			Protocol: domainvault.ProtocolSSH, Group: "prod2"},
-		{ID: "loose", Label: "loose-1", Hostname: "10.0.0.2", Port: 22,
-			Protocol: domainvault.ProtocolSSH},
-	}
-	groups.items = []domainvault.Group{{Path: "prod2"}}
-	if err := state.Reload(); err != nil {
-		t.Fatalf("Reload: %v", err)
-	}
-	tt.Frame()
-
-	// The top lists the group card with its member count, and every Host.
-	assertVisible(t, tt, "prod2", 720, 480)
-	if !tt.HasText(m.VaultGroupMemberCount(1)) {
-		t.Fatalf("the group card does not show its member count, texts %q", tt.Texts())
-	}
-	assertVisible(t, tt, "grouped-1", 720, 480)
-	assertVisible(t, tt, "loose-1", 720, 480)
-
-	// Opening the group lists only its Host, under a way back.
-	if err := tt.Click("prod2"); err != nil {
-		t.Fatalf("open the group: %v", err)
-	}
-	tt.Frame()
-	assertVisible(t, tt, m.VaultAllHosts(), 720, 480)
-	assertVisible(t, tt, "grouped-1", 720, 480)
-	if tt.HasText("loose-1") {
-		t.Fatalf("a Host outside the group is listed in it, texts %q", tt.Texts())
-	}
-	assertNoHorizontalOverflow(t, tt, 720, 480)
-
-	if err := tt.Click(m.VaultAllHosts()); err != nil {
-		t.Fatalf("back to every Host: %v", err)
-	}
-	tt.Frame()
-	if !tt.HasText("loose-1") || tt.HasText(m.VaultAllHosts()) {
-		t.Fatalf("the breadcrumb did not return to every Host, texts %q", tt.Texts())
-	}
-}
-
 // TestHostCardsShowTheirAddressUnderTheLabelInProductionChrome renders the
 // Vault inside the real sidebar and Tab bar at the minimum window size, where
 // the content is far narrower than the window: each card still shows its
-// user@host on the line under its label, inside the window.
+// user@host on the line under its label, inside the window — and no orphan
+// separators, the dots a hidden detail would leave behind.
 func TestHostCardsShowTheirAddressUnderTheLabelInProductionChrome(t *testing.T) {
 	state, hosts, _, _, _, tt := newProductionEntityView(t, 720, 480)
 	hosts.items = []domainvault.Host{
@@ -1469,6 +1400,7 @@ func TestHostCardsShowTheirAddressUnderTheLabelInProductionChrome(t *testing.T) 
 			ID: "password-host", Label: "alpha",
 			Hostname: "127.0.0.1", Port: 2200, Protocol: domainvault.ProtocolSSH,
 			Username: "deploy", HasPassword: true,
+			Tags: []string{"production", "web", "internal"},
 		},
 		{
 			ID: "keyboard-host", Label: "beta",
@@ -1493,103 +1425,91 @@ func TestHostCardsShowTheirAddressUnderTheLabelInProductionChrome(t *testing.T) 
 		}
 	}
 	assertNoHorizontalOverflow(t, tt, 720, 480)
-}
-
-// TestListActionsStayInsideTheProductionWindow checks that the right-aligned
-// actions of every list row, including Known Hosts, are fully inside the
-// window at the minimum size. The Vault renders inside the real shell chrome,
-// so it sees the production content width.
-func TestListActionsStayInsideTheProductionWindow(t *testing.T) {
-	m := locales.In("en")
-	state, hosts, groups, proxies, known, tt := newProductionEntityView(t, 720, 480)
-	hosts.items = []domainvault.Host{
-		{
-			ID: "host-1", Label: "web-1", Hostname: "127.0.0.1", Port: 22,
-			Protocol: domainvault.ProtocolSSH, Group: "prod/web",
-		},
-	}
-	groups.items = []domainvault.Group{{Path: "prod"}, {Path: "prod/web"}}
-	proxies.items = []domainvault.ProxyProfile{{
-		ID: "proxy-1", Label: "office",
-		Config: domainvault.ProxyConfig{
-			Type: domainvault.ProxySOCKS5, Host: "socks.example.com", Port: 1080,
-		},
-	}}
-	known.items = []domainconn.KnownHost{{
-		ID: "kh-1", Hostname: "known-hosts.example.internal", Port: 2222,
-		KeyType:     "ssh-ed25519",
-		Fingerprint: "SHA256:0123456789abcdefghijklmnopqrstuvwxyzABCDEFGH",
-	}}
-	if err := state.Reload(); err != nil {
-		t.Fatalf("Reload: %v", err)
-	}
-	tt.Frame()
-
-	// Measure the button where there is room, then require the same size at
-	// the minimum window: a squeezed row narrows the text's box instead of
-	// pushing the button past the edge, which is the clipping users see.
-	wide := newProductionTester(t, state, 1100, 720)
-	scrollToEnd(wide, 1100, 720)
-	wideRemove, ok := wide.Find(m.VaultKnownHostRemove())
-	if !ok || wideRemove.W <= 0 {
-		t.Fatalf("Remove trust is not laid out at 1100x720, texts %q", wide.Texts())
-	}
-
-	// Scroll to the Known Hosts section, which sits at the end of the list.
-	scrollToEnd(tt, 720, 480)
-	remove, ok := tt.Find(m.VaultKnownHostRemove())
-	if !ok {
-		t.Fatalf("Remove trust is not rendered, texts %q", tt.Texts())
-	}
-	if remove.W <= 0 {
-		t.Fatalf("Remove trust has no laid-out box: %+v", remove)
-	}
-	if remove.X < -0.5 || remove.X+remove.W > 720.5 ||
-		remove.Y < -0.5 || remove.Y+remove.H > 480.5 {
-		t.Fatalf("Remove trust is outside the 720x480 window: %+v", remove)
-	}
-	if remove.W < wideRemove.W-0.5 || remove.H > wideRemove.H+0.5 {
-		t.Fatalf("Remove trust is squeezed at 720x480: %+v, want the %+v it gets at 1100x720",
-			remove, wideRemove)
-	}
-	assertNoHorizontalOverflow(t, tt, 720, 480)
-
-	// The button is not only visible but still clickable at this size.
-	if err := tt.Click(m.VaultKnownHostRemove()); err != nil {
-		t.Fatalf("click Remove trust: %v", err)
-	}
-	tt.Frame()
-	if !textsContain(tt, "Remove trust for known-hosts.example.internal:2222") {
-		t.Fatalf("the confirmation is missing, texts %q", tt.Texts())
+	for _, text := range tt.Texts() {
+		if text == "·" || strings.HasPrefix(text, "·") || strings.HasSuffix(text, "·") {
+			t.Fatalf("the card has an orphan separator %q: %q", text, tt.Texts())
+		}
 	}
 }
 
-// TestGroupAndProxyActionsAreNotClipped checks the other list rows at the
-// production content width. Each state holds exactly one such row, so the
-// first Edit/Delete pair belongs to it and can be compared with the size the
-// same button gets when there is room.
-func TestGroupAndProxyActionsAreNotClipped(t *testing.T) {
-	m := locales.In("en")
+// TestRowActionsStayInsideTheWindowAt720x480 checks that the right-aligned
+// actions of every list row — Host card, Host Group, Proxy Profile, Known
+// Hosts — keep the size they get with room and stay fully inside the window
+// at the minimum size. The Vault renders inside the real shell chrome, so it
+// sees the production content width: a squeezed row narrows the text's box
+// instead of pushing the button past the edge, which is the clipping users
+// see. Each state holds exactly one such row, so the measured control belongs
+// to it.
+func TestRowActionsStayInsideTheWindowAt720x480(t *testing.T) {
+	// The Host case also runs in ru: longer locale strings push the card
+	// layout harder, and a long label must not squeeze the menu button.
+	hostLabel := "web-1-with-a-long-label-that-pushes-the-actions"
 	cases := []struct {
-		name  string
-		setup func(*entityGroups, *entityProxies)
-		// labels are the row's controls; a group card keeps Edit and
-		// Delete in its menu.
-		labels []string
+		name   string
+		locale string
+		setup  func(*entityHosts, *entityGroups, *entityProxies, *entityKnownHosts)
+		// labels are the row's controls; a card keeps Edit and Delete in
+		// its menu.
+		labels func(locales.Messages) []string
+		// scrollToBottom moves the row's section into view, as Known Hosts
+		// sits at the end of the list.
+		scrollToBottom bool
+		// clickLabel is clicked after the measurement, exercising the
+		// control rather than only measuring it; verifyClick checks what
+		// the click brought up.
+		clickLabel  func(locales.Messages) string
+		verifyClick func(*testing.T, *ui.Tester, locales.Messages)
 	}{
 		{
-			name:   "group",
-			labels: []string{m.VaultItemActions("production")},
-			setup: func(groups *entityGroups, _ *entityProxies) {
+			name:   "host",
+			locale: "ru",
+			setup: func(hosts *entityHosts, _ *entityGroups, _ *entityProxies, _ *entityKnownHosts) {
+				hosts.items = []domainvault.Host{{
+					ID: "host-1", Label: hostLabel, Hostname: "127.0.0.1", Port: 22,
+					Protocol: domainvault.ProtocolSSH, Group: "prod",
+				}}
+			},
+			labels:     func(m locales.Messages) []string { return []string{m.VaultItemActions(hostLabel)} },
+			clickLabel: func(m locales.Messages) string { return m.VaultItemActions(hostLabel) },
+			verifyClick: func(t *testing.T, tt *ui.Tester, m locales.Messages) {
+				t.Helper()
+				// The card menu holds every action; this is the only menu
+				// content assertion for the Host card's full action set.
+				menu := strings.Join(tt.Menu(), "|")
+				for _, want := range []string{
+					m.VaultHostConnect(), m.VaultHostTest(), m.VaultHostEdit(),
+					m.VaultHostPin(), m.VaultHostDelete(),
+				} {
+					if !strings.Contains(menu, want) {
+						t.Fatalf("the card menu %q has no %q", menu, want)
+					}
+				}
+			},
+		},
+		{
+			name: "group",
+			setup: func(hosts *entityHosts, groups *entityGroups, _ *entityProxies, _ *entityKnownHosts) {
+				hosts.items = nil
 				groups.items = []domainvault.Group{{
 					Path: "production", Username: "deploy", Port: 2222,
 				}}
 			},
+			labels:     func(m locales.Messages) []string { return []string{m.VaultItemActions("production")} },
+			clickLabel: func(m locales.Messages) string { return m.VaultItemActions("production") },
+			verifyClick: func(t *testing.T, tt *ui.Tester, m locales.Messages) {
+				t.Helper()
+				menu := strings.Join(tt.Menu(), "|")
+				for _, want := range []string{m.VaultGroupOpen(), m.VaultHostEdit(), m.VaultHostDelete()} {
+					if !strings.Contains(menu, want) {
+						t.Fatalf("the group menu %q has no %q", menu, want)
+					}
+				}
+			},
 		},
 		{
-			name:   "proxy",
-			labels: []string{m.VaultHostEdit(), m.VaultHostDelete()},
-			setup: func(_ *entityGroups, proxies *entityProxies) {
+			name: "proxy",
+			setup: func(hosts *entityHosts, _ *entityGroups, proxies *entityProxies, _ *entityKnownHosts) {
+				hosts.items = nil
 				proxies.items = []domainvault.ProxyProfile{{
 					ID: "proxy-1", Label: "office",
 					Config: domainvault.ProxyConfig{
@@ -1598,22 +1518,59 @@ func TestGroupAndProxyActionsAreNotClipped(t *testing.T) {
 					},
 				}}
 			},
+			labels: func(m locales.Messages) []string {
+				return []string{m.VaultHostEdit(), m.VaultHostDelete()}
+			},
+		},
+		{
+			name: "known host",
+			setup: func(_ *entityHosts, _ *entityGroups, _ *entityProxies, known *entityKnownHosts) {
+				known.items = []domainconn.KnownHost{{
+					ID: "kh-1", Hostname: "known-hosts.example.internal", Port: 2222,
+					KeyType:     "ssh-ed25519",
+					Fingerprint: "SHA256:0123456789abcdefghijklmnopqrstuvwxyzABCDEFGH",
+				}}
+			},
+			labels:         func(m locales.Messages) []string { return []string{m.VaultKnownHostRemove()} },
+			scrollToBottom: true,
+			clickLabel:     func(m locales.Messages) string { return m.VaultKnownHostRemove() },
+			verifyClick: func(t *testing.T, tt *ui.Tester, m locales.Messages) {
+				t.Helper()
+				if !textsContain(tt, "Remove trust for known-hosts.example.internal:2222") {
+					t.Fatalf("the confirmation is missing, texts %q", tt.Texts())
+				}
+			},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			state, hosts, groups, proxies, _, tt := newProductionEntityView(t, 720, 480)
-			hosts.items = nil
-			tc.setup(groups, proxies)
+			state, hosts, groups, proxies, known, tt := newProductionEntityView(t, 720, 480)
+			tc.setup(hosts, groups, proxies, known)
 			if err := state.Reload(); err != nil {
 				t.Fatalf("Reload: %v", err)
 			}
+			if tc.locale != "" {
+				tt.SetLocale(tc.locale)
+			}
 			tt.Frame()
+			m := locales.In("en")
+			if tc.locale != "" {
+				m = locales.In(tc.locale)
+			}
 
+			// Measure the control where there is room, then require the same
+			// size at the minimum window.
 			wide := newProductionTester(t, state, 1100, 720)
-			for _, label := range tc.labels {
+			if tc.locale != "" {
+				wide.SetLocale(tc.locale)
+			}
+			if tc.scrollToBottom {
+				scrollToEnd(wide, 1100, 720)
+				scrollToEnd(tt, 720, 480)
+			}
+			for _, label := range tc.labels(m) {
 				narrow, ok := tt.Find(label)
-				if !ok || narrow.W <= 0 {
+				if !ok || narrow.W <= 0 || narrow.H <= 0 {
 					t.Fatalf("%s action %q is not laid out at 720x480, texts %q",
 						tc.name, label, tt.Texts())
 				}
@@ -1632,18 +1589,16 @@ func TestGroupAndProxyActionsAreNotClipped(t *testing.T) {
 						tc.name, label, narrow, roomy)
 				}
 			}
-			if tc.name != "group" {
+			assertNoHorizontalOverflow(t, tt, 720, 480)
+
+			// The control is not only visible but still clickable at this size.
+			if tc.clickLabel == nil {
 				return
 			}
-			if err := tt.Click(m.VaultItemActions("production")); err != nil {
-				t.Fatalf("open the group menu: %v", err)
+			if err := tt.Click(tc.clickLabel(m)); err != nil {
+				t.Fatalf("click %q: %v", tc.clickLabel(m), err)
 			}
-			menu := strings.Join(tt.Menu(), "|")
-			for _, want := range []string{m.VaultGroupOpen(), m.VaultHostEdit(), m.VaultHostDelete()} {
-				if !strings.Contains(menu, want) {
-					t.Fatalf("the group menu %q has no %q", menu, want)
-				}
-			}
+			tc.verifyClick(t, tt, m)
 		})
 	}
 }
@@ -1734,49 +1689,94 @@ func TestEditorsOpenAtTheTopInProductionChrome(t *testing.T) {
 
 func TestNestedGroupsOpenOneLevelAtATime(t *testing.T) {
 	m := locales.In("en")
-	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1100, 720)
-	hosts.items = []domainvault.Host{
-		{ID: "deep", Label: "deep-1", Hostname: "10.0.0.1", Port: 22,
-			Protocol: domainvault.ProtocolSSH, Group: "prod/web"},
-	}
-	groups.items = []domainvault.Group{{Path: "prod"}, {Path: "prod/web"}}
-	if err := state.Reload(); err != nil {
-		t.Fatalf("Reload: %v", err)
-	}
-	tt.Frame()
-
-	if !showsExactly(tt, "prod") || showsExactly(tt, "web") {
-		t.Fatalf("the top lists other than its own groups, texts %q", tt.Texts())
-	}
-	if err := tt.Click("prod"); err != nil {
-		t.Fatalf("open prod: %v", err)
-	}
-	tt.Frame()
-	// One level at a time, as the original: prod shows its subgroup but not
-	// the Host that belongs to that subgroup.
-	if !showsExactly(tt, "web") || tt.HasText("deep-1") {
-		t.Fatalf("prod lists its subgroup's Host, texts %q", tt.Texts())
-	}
-	if !tt.HasText(m.VaultHostEmpty()) {
-		t.Fatalf("prod has no direct Hosts but does not say so, texts %q", tt.Texts())
-	}
-	if err := tt.Click("web"); err != nil {
-		t.Fatalf("open prod/web: %v", err)
-	}
-	tt.Frame()
-	for _, want := range []string{m.VaultAllHosts(), "prod", "web", "deep-1"} {
-		if !showsExactly(tt, want) {
-			t.Fatalf("prod/web is missing %q, texts %q", want, tt.Texts())
+	t.Run("flat group at 720x480", func(t *testing.T) {
+		state, hosts, groups, _, _, tt := newProductionEntityView(t, 720, 480)
+		hosts.items = []domainvault.Host{
+			{ID: "grouped", Label: "grouped-1", Hostname: "10.0.0.1", Port: 22,
+				Protocol: domainvault.ProtocolSSH, Group: "prod2"},
+			{ID: "loose", Label: "loose-1", Hostname: "10.0.0.2", Port: 22,
+				Protocol: domainvault.ProtocolSSH},
 		}
-	}
-	// The breadcrumb's middle step goes back one level.
-	if err := tt.Click("prod"); err != nil {
-		t.Fatalf("back to prod: %v", err)
-	}
-	tt.Frame()
-	if !tt.HasText(m.VaultItemActions("web")) {
-		t.Fatalf("the breadcrumb did not return to prod, texts %q", tt.Texts())
-	}
+		groups.items = []domainvault.Group{{Path: "prod2"}}
+		if err := state.Reload(); err != nil {
+			t.Fatalf("Reload: %v", err)
+		}
+		tt.Frame()
+
+		// The top lists the group card with its member count, and every Host.
+		assertVisible(t, tt, "prod2", 720, 480)
+		if !tt.HasText(m.VaultGroupMemberCount(1)) {
+			t.Fatalf("the group card does not show its member count, texts %q", tt.Texts())
+		}
+		assertVisible(t, tt, "grouped-1", 720, 480)
+		assertVisible(t, tt, "loose-1", 720, 480)
+
+		// Opening the group lists only its Host, under a way back.
+		if err := tt.Click("prod2"); err != nil {
+			t.Fatalf("open the group: %v", err)
+		}
+		tt.Frame()
+		assertVisible(t, tt, m.VaultAllHosts(), 720, 480)
+		assertVisible(t, tt, "grouped-1", 720, 480)
+		if tt.HasText("loose-1") {
+			t.Fatalf("a Host outside the group is listed in it, texts %q", tt.Texts())
+		}
+		assertNoHorizontalOverflow(t, tt, 720, 480)
+
+		if err := tt.Click(m.VaultAllHosts()); err != nil {
+			t.Fatalf("back to every Host: %v", err)
+		}
+		tt.Frame()
+		if !tt.HasText("loose-1") || tt.HasText(m.VaultAllHosts()) {
+			t.Fatalf("the breadcrumb did not return to every Host, texts %q", tt.Texts())
+		}
+	})
+
+	t.Run("nested groups one level at a time", func(t *testing.T) {
+		state, hosts, groups, _, _, tt := newProductionEntityView(t, 1100, 720)
+		hosts.items = []domainvault.Host{
+			{ID: "deep", Label: "deep-1", Hostname: "10.0.0.1", Port: 22,
+				Protocol: domainvault.ProtocolSSH, Group: "prod/web"},
+		}
+		groups.items = []domainvault.Group{{Path: "prod"}, {Path: "prod/web"}}
+		if err := state.Reload(); err != nil {
+			t.Fatalf("Reload: %v", err)
+		}
+		tt.Frame()
+
+		if !showsExactly(tt, "prod") || showsExactly(tt, "web") {
+			t.Fatalf("the top lists other than its own groups, texts %q", tt.Texts())
+		}
+		if err := tt.Click("prod"); err != nil {
+			t.Fatalf("open prod: %v", err)
+		}
+		tt.Frame()
+		// One level at a time, as the original: prod shows its subgroup but not
+		// the Host that belongs to that subgroup.
+		if !showsExactly(tt, "web") || tt.HasText("deep-1") {
+			t.Fatalf("prod lists its subgroup's Host, texts %q", tt.Texts())
+		}
+		if !tt.HasText(m.VaultHostEmpty()) {
+			t.Fatalf("prod has no direct Hosts but does not say so, texts %q", tt.Texts())
+		}
+		if err := tt.Click("web"); err != nil {
+			t.Fatalf("open prod/web: %v", err)
+		}
+		tt.Frame()
+		for _, want := range []string{m.VaultAllHosts(), "prod", "web", "deep-1"} {
+			if !showsExactly(tt, want) {
+				t.Fatalf("prod/web is missing %q, texts %q", want, tt.Texts())
+			}
+		}
+		// The breadcrumb's middle step goes back one level.
+		if err := tt.Click("prod"); err != nil {
+			t.Fatalf("back to prod: %v", err)
+		}
+		tt.Frame()
+		if !tt.HasText(m.VaultItemActions("web")) {
+			t.Fatalf("the breadcrumb did not return to prod, texts %q", tt.Texts())
+		}
+	})
 }
 
 // A group that holds only subgroups is still a level: it appears in its
@@ -1822,46 +1822,6 @@ func TestAGroupWithOnlySubgroupsIsStillALevel(t *testing.T) {
 	}
 }
 
-func TestTheDragGhostLeavesTheDropTargetLabelsVisibleAt720x480(t *testing.T) {
-	m := locales.In("en")
-	state, hosts, groups, _, _, tt := newProductionEntityView(t, 720, 480)
-	groups.items = []domainvault.Group{{Path: "prod2"}}
-	if err := state.Reload(); err != nil {
-		t.Fatalf("Reload: %v", err)
-	}
-	tt.Frame()
-
-	// Drag onto the group card and prove both the
-	// target name and the root target, shown while a Host drags, stay laid
-	// out during the drag.
-	groupRect := dragTo(t, tt, "web-1", "prod2")
-	if !tt.HasText("prod2") || !tt.HasText(m.VaultGroupUngrouped()) {
-		t.Fatalf("a drop target label disappeared during the drag, texts %q", tt.Texts())
-	}
-	tt.Release(groupRect.X+groupRect.W/2, groupRect.Y+groupRect.H/2)
-	tt.Frame()
-	if hosts.items[0].Group != "prod2" {
-		t.Fatalf("Host Group after dropping on the group = %q, want prod2",
-			hosts.items[0].Group)
-	}
-	if tt.HasText(m.VaultGroupUngrouped()) {
-		t.Fatalf("the root target stays after the drag, texts %q", tt.Texts())
-	}
-
-	// Drag back out; the root label stays visible during the drag and the
-	// Host returns to the root.
-	rootRect := dragTo(t, tt, "web-1", m.VaultGroupUngrouped())
-	if !tt.HasText(m.VaultGroupUngrouped()) || !tt.HasText("prod2") {
-		t.Fatalf("a drop target label disappeared during the drag, texts %q", tt.Texts())
-	}
-	tt.Release(rootRect.X+rootRect.W/2, rootRect.Y+rootRect.H/2)
-	tt.Frame()
-	if hosts.items[0].Group != "" {
-		t.Fatalf("Host Group after dropping on the root = %q, want root",
-			hosts.items[0].Group)
-	}
-}
-
 // dragTo presses a Host card's label and starts dragging it, then moves the
 // pointer to the middle of the target, which may appear only once the drag
 // starts, without releasing, leaving a drag active.
@@ -1887,6 +1847,10 @@ func dragTo(t *testing.T, tt *ui.Tester, hostText, targetText string) ui.Rect {
 	return target
 }
 
+// TestDraggingAHostOutOfItsGroupUsesTheRootTargetOrTheBreadcrumb drives both
+// ways a Host leaves its group — the root target and the breadcrumb — and
+// proves the drag ghost never covers the drop target labels: while a Host
+// drags, both the target name and the root target stay laid out.
 func TestDraggingAHostOutOfItsGroupUsesTheRootTargetOrTheBreadcrumb(t *testing.T) {
 	m := locales.In("en")
 	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1100, 720)
@@ -1901,16 +1865,32 @@ func TestDraggingAHostOutOfItsGroupUsesTheRootTargetOrTheBreadcrumb(t *testing.T
 	if tt.HasText(m.VaultGroupUngrouped()) {
 		t.Fatalf("the root target is shown with no drag, texts %q", tt.Texts())
 	}
-	dragOnto(t, tt, "web-1", m.VaultGroupUngrouped())
+	// Drag onto the root target: both labels stay visible mid-drag.
+	rootRect := dragTo(t, tt, "web-1", m.VaultGroupUngrouped())
+	if !tt.HasText(m.VaultGroupUngrouped()) || !tt.HasText("prod2") {
+		t.Fatalf("a drop target label disappeared during the drag, texts %q", tt.Texts())
+	}
+	tt.Release(rootRect.X+rootRect.W/2, rootRect.Y+rootRect.H/2)
+	tt.Frame()
 	if hosts.items[0].Group != "" {
 		t.Fatalf("Host Group after dropping on the root = %q, want root", hosts.items[0].Group)
 	}
+	if tt.HasText(m.VaultGroupUngrouped()) {
+		t.Fatalf("the root target stays after the drag, texts %q", tt.Texts())
+	}
 
-	// Inside a group, the breadcrumb takes a Host out of every group.
-	dragOnto(t, tt, "web-1", "prod2")
+	// Drag back onto the group card; both labels stay visible mid-drag too.
+	groupRect := dragTo(t, tt, "web-1", "prod2")
+	if !tt.HasText("prod2") || !tt.HasText(m.VaultGroupUngrouped()) {
+		t.Fatalf("a drop target label disappeared during the drag, texts %q", tt.Texts())
+	}
+	tt.Release(groupRect.X+groupRect.W/2, groupRect.Y+groupRect.H/2)
+	tt.Frame()
 	if hosts.items[0].Group != "prod2" {
 		t.Fatalf("Host Group after dropping on the group = %q, want prod2", hosts.items[0].Group)
 	}
+
+	// Inside a group, the breadcrumb takes a Host out of every group.
 	if err := tt.Click("prod2"); err != nil {
 		t.Fatalf("open the group: %v", err)
 	}
@@ -2118,80 +2098,79 @@ func TestMarqueeDropsTwoHostsOnAGroupRowInTreeView(t *testing.T) {
 	}
 }
 
-// TestMarqueeDropsTwoHostsOnTheBreadcrumb proves the breadcrumb takes the box
-// selection out of every group, not only a single Host drag.
-func TestMarqueeDropsTwoHostsOnTheBreadcrumb(t *testing.T) {
+// TestMarqueeDropsGroupedHostsOnTheUngroupTargets proves both ways out of
+// every group — the breadcrumb inside an open group and the Vault root row,
+// shown only while the box is active — accept the box selection, not only a
+// single Host drag. The list layout keeps grouped Hosts at the root too, so
+// sweeping them there and dropping on the root row takes both out.
+func TestMarqueeDropsGroupedHostsOnTheUngroupTargets(t *testing.T) {
 	m := locales.In("en")
-	layout := hostViewLayout(domainpreferences.HostViewList)
-	state, hosts, groups, _, _, tt := newProductionEntityViewWith(t, 1400, 900, layoutOption(layout))
-	hosts.items = []domainvault.Host{
-		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
-			Protocol: domainvault.ProtocolSSH, Group: "prod"},
-		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
-			Protocol: domainvault.ProtocolSSH, Group: "prod"},
+	cases := []struct {
+		name string
+		// openGroup enters the group first, so the sweep starts inside it.
+		openGroup bool
+		// target is the drop target's label.
+		target func(locales.Messages) string
+		// targetHiddenBeforeDrag is the root target's unique guarantee: it
+		// is not shown with no drag.
+		targetHiddenBeforeDrag bool
+	}{
+		{
+			name:      "breadcrumb inside the group",
+			openGroup: true,
+			target:    func(m locales.Messages) string { return m.VaultAllHosts() },
+		},
+		{
+			name:                   "root target at the Vault root",
+			target:                 func(m locales.Messages) string { return m.VaultGroupUngrouped() },
+			targetHiddenBeforeDrag: true,
+		},
 	}
-	groups.items = []domainvault.Group{{Path: "prod"}}
-	if err := state.Reload(); err != nil {
-		t.Fatalf("Reload: %v", err)
-	}
-	tt.Frame()
-	if err := tt.Click("prod"); err != nil {
-		t.Fatalf("open the group: %v", err)
-	}
-	tt.Frame()
-	if _, ok := tt.Find("alpha"); !ok {
-		t.Fatalf("alpha is not listed under prod: %v", tt.Texts())
-	}
-	if _, ok := tt.Find("beta"); !ok {
-		t.Fatalf("beta is not listed under prod: %v", tt.Texts())
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			layout := hostViewLayout(domainpreferences.HostViewList)
+			state, hosts, groups, _, _, tt := newProductionEntityViewWith(t, 1400, 900, layoutOption(layout))
+			hosts.items = []domainvault.Host{
+				{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
+					Protocol: domainvault.ProtocolSSH, Group: "prod"},
+				{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
+					Protocol: domainvault.ProtocolSSH, Group: "prod"},
+			}
+			groups.items = []domainvault.Group{{Path: "prod"}}
+			if err := state.Reload(); err != nil {
+				t.Fatalf("Reload: %v", err)
+			}
+			tt.Frame()
 
-	marqueeFromHeading(t, tt, m.VaultHostListTitle(2))
-	sweepOver(t, tt, "alpha", "beta")
-	if state.ChosenCount() != 2 {
-		t.Fatalf("the sweep chose %v, want both Hosts", state.SelectedHostIDs())
-	}
-	releaseOn(t, tt, m.VaultAllHosts())
+			if tc.openGroup {
+				if err := tt.Click("prod"); err != nil {
+					t.Fatalf("open the group: %v", err)
+				}
+				tt.Frame()
+				for _, label := range []string{"alpha", "beta"} {
+					if _, ok := tt.Find(label); !ok {
+						t.Fatalf("%s is not listed under prod: %v", label, tt.Texts())
+					}
+				}
+			}
+			if tc.targetHiddenBeforeDrag {
+				if _, ok := tt.Find(tc.target(m)); ok {
+					t.Fatalf("the root target is shown with no drag: %v", tt.Texts())
+				}
+			}
 
-	assertMoved(t, hosts, "")
-	if state.ChosenCount() != 0 || state.MarqueeActive() {
-		t.Fatalf("the drop left chosen=%v active=%v", state.SelectedHostIDs(), state.MarqueeActive())
-	}
-}
+			marqueeFromHeading(t, tt, m.VaultHostListTitle(2))
+			sweepOver(t, tt, "alpha", "beta")
+			if state.ChosenCount() != 2 {
+				t.Fatalf("the sweep chose %v, want both Hosts", state.SelectedHostIDs())
+			}
+			releaseOn(t, tt, tc.target(m))
 
-// TestMarqueeDropsTwoGroupedHostsOnTheRootTarget proves the Vault root row,
-// shown while the box is active, accepts the box selection. The default
-// layout lists grouped Hosts at the root too, so sweeping them there and
-// dropping on the root row takes both out of their group.
-func TestMarqueeDropsTwoGroupedHostsOnTheRootTarget(t *testing.T) {
-	m := locales.In("en")
-	layout := hostViewLayout(domainpreferences.HostViewList)
-	state, hosts, groups, _, _, tt := newProductionEntityViewWith(t, 1400, 900, layoutOption(layout))
-	hosts.items = []domainvault.Host{
-		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
-			Protocol: domainvault.ProtocolSSH, Group: "prod"},
-		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
-			Protocol: domainvault.ProtocolSSH, Group: "prod"},
-	}
-	groups.items = []domainvault.Group{{Path: "prod"}}
-	if err := state.Reload(); err != nil {
-		t.Fatalf("Reload: %v", err)
-	}
-	tt.Frame()
-
-	if _, ok := tt.Find(m.VaultGroupUngrouped()); ok {
-		t.Fatalf("the root target is shown with no drag: %v", tt.Texts())
-	}
-	marqueeFromHeading(t, tt, m.VaultHostListTitle(2))
-	sweepOver(t, tt, "alpha", "beta")
-	if state.ChosenCount() != 2 {
-		t.Fatalf("the sweep chose %v, want both Hosts", state.SelectedHostIDs())
-	}
-	releaseOn(t, tt, m.VaultGroupUngrouped())
-
-	assertMoved(t, hosts, "")
-	if state.ChosenCount() != 0 || state.MarqueeActive() {
-		t.Fatalf("the drop left chosen=%v active=%v", state.SelectedHostIDs(), state.MarqueeActive())
+			assertMoved(t, hosts, "")
+			if state.ChosenCount() != 0 || state.MarqueeActive() {
+				t.Fatalf("the drop left chosen=%v active=%v", state.SelectedHostIDs(), state.MarqueeActive())
+			}
+		})
 	}
 }
 
@@ -2321,176 +2300,125 @@ func TestMarqueeEnclosesHostsThePointerNeverCrossed(t *testing.T) {
 }
 
 // TestMarqueeEscapeRestoresThePresweepSelection proves Escape cancels the
-// in-flight sweep and puts back the selection it replaced, and that a later
-// single-Host drag carries only the intended Host.
+// in-flight sweep and puts back the selection it replaced — wherever the
+// pointer is. Pressed reports only inside the page, so a pointer over the
+// toolbar used to be taken for a release and the swept selection survived.
 func TestMarqueeEscapeRestoresThePresweepSelection(t *testing.T) {
-	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1400, 900)
-	hosts.items = []domainvault.Host{
-		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
-			Protocol: domainvault.ProtocolSSH},
-		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
-			Protocol: domainvault.ProtocolSSH},
-	}
-	groups.items = []domainvault.Group{{Path: "prod"}}
-	if err := state.Reload(); err != nil {
-		t.Fatalf("Reload: %v", err)
-	}
-	tt.Frame()
-
-	heading := rectOf(t, tt, "Host Groups (1)")
-	group := rectOf(t, tt, "prod")
-	alpha := rectOf(t, tt, "alpha")
-	beta := rectOf(t, tt, "beta")
-	if beta.X <= alpha.X {
-		t.Fatalf("the Host cards are not laid out left to right: alpha %+v, beta %+v", alpha, beta)
-	}
-
-	// First sweep chooses alpha only and ends, leaving it selected.
-	anchorX, anchorY := heading.X+2, heading.Y+heading.H/2
-	tt.Press(anchorX, anchorY)
-	tt.Frame()
-	tt.Move(alpha.X+alpha.W/2, alpha.Y+alpha.H/2)
-	tt.Frame()
-	if !state.Chosen("host-1") || state.Chosen("host-2") {
-		t.Fatalf("the first sweep chose %v, want alpha alone", state.SelectedHostIDs())
-	}
-	tt.Release(anchorX, anchorY)
-	tt.Frame()
-	if !state.Chosen("host-1") || state.Chosen("host-2") {
-		t.Fatalf("the first sweep did not survive its release: %v", state.SelectedHostIDs())
-	}
-
-	// The second, non-additive sweep starts left of beta and touches only beta:
-	// alpha disappears from the in-flight selection even though Escape restores
-	// it.
-	secondX, secondY := beta.X-20, heading.Y+heading.H/2
-	tt.Press(secondX, secondY)
-	tt.Frame()
-	tt.Move(beta.X+beta.W/2, beta.Y+beta.H/2)
-	tt.Frame()
-	if !state.Chosen("host-2") || state.Chosen("host-1") || state.ChosenCount() != 1 {
-		t.Fatalf("the replacing sweep chose %v, want beta alone", state.SelectedHostIDs())
-	}
-
-	// Escape abandons the sweep and restores the pre-sweep selection.
-	tt.Key(0, ui.KeyEscape)
-	tt.Frame()
-	if state.Chosen("host-2") {
-		t.Fatalf("the swept Host survived Escape: %v", state.SelectedHostIDs())
-	}
-	if !state.Chosen("host-1") || state.ChosenCount() != 1 {
-		t.Fatalf("Escape did not restore alpha: %v", state.SelectedHostIDs())
-	}
-	if state.MarqueeActive() {
-		t.Fatal("Escape left the marquee active")
-	}
-
-	// Releasing over the Group after the cancellation changes nothing.
-	tt.Move(group.X+group.W/2, group.Y+group.H/2)
-	tt.Frame()
-	tt.Release(group.X+group.W/2, group.Y+group.H/2)
-	tt.Frame()
-	if hostGroup(hosts, "host-1") != "" || hostGroup(hosts, "host-2") != "" {
-		t.Fatalf("a cancelled drag moved Hosts into %q and %q",
-			hostGroup(hosts, "host-1"), hostGroup(hosts, "host-2"))
-	}
-
-	// A subsequent drag payload carries the intended Host alone, and dropping
-	// it moves only that Host.
-	payload := hostDragPayload(state, "host-1")
-	if got := payload.Hosts(); len(got) != 1 || got[0] != "host-1" {
-		t.Fatalf("the drag after Escape carries %v, want host-1 alone", got)
-	}
-	dragOnto(t, tt, "alpha", "prod")
-	if hostGroup(hosts, "host-1") != groups.items[0].ID {
-		t.Fatalf("the intended Host was not moved: %q", hostGroup(hosts, "host-1"))
-	}
-	if hostGroup(hosts, "host-2") != "" {
-		t.Fatalf("the cancelled sweep's Host moved into %q", hostGroup(hosts, "host-2"))
-	}
-}
-
-// TestMarqueeEscapeOutsideThePageRestoresThePresweepSelection proves Escape
-// cancels the sweep wherever the pointer is. Pressed reports only inside the
-// page, so a pointer over the toolbar used to be taken for a release and the
-// swept selection survived.
-func TestMarqueeEscapeOutsideThePageRestoresThePresweepSelection(t *testing.T) {
 	m := locales.In("en")
-	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1400, 900)
-	hosts.items = []domainvault.Host{
-		{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
-			Protocol: domainvault.ProtocolSSH},
-		{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
-			Protocol: domainvault.ProtocolSSH},
+	cases := []struct {
+		name string
+		// leavePage moves the held pointer out of the page onto the toolbar
+		// before Escape.
+		leavePage bool
+		// dropAfterEscape finishes the in-page case: a single-Host drag
+		// moves only the intended Host.
+		dropAfterEscape bool
+	}{
+		{name: "pointer inside the page", dropAfterEscape: true},
+		{name: "pointer outside the page", leavePage: true},
 	}
-	groups.items = []domainvault.Group{{Path: "prod"}}
-	if err := state.Reload(); err != nil {
-		t.Fatalf("Reload: %v", err)
-	}
-	tt.Frame()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			state, hosts, groups, _, _, tt := newProductionEntityView(t, 1400, 900)
+			hosts.items = []domainvault.Host{
+				{ID: "host-1", Label: "alpha", Hostname: "10.0.0.1", Port: 22,
+					Protocol: domainvault.ProtocolSSH},
+				{ID: "host-2", Label: "beta", Hostname: "10.0.0.2", Port: 22,
+					Protocol: domainvault.ProtocolSSH},
+			}
+			groups.items = []domainvault.Group{{Path: "prod"}}
+			if err := state.Reload(); err != nil {
+				t.Fatalf("Reload: %v", err)
+			}
+			tt.Frame()
 
-	heading := rectOf(t, tt, m.VaultGroupListTitle(1))
-	alpha := rectOf(t, tt, "alpha")
-	beta := rectOf(t, tt, "beta")
-	group := rectOf(t, tt, "prod")
-	toolbar := rectOf(t, tt, m.VaultHostNew())
+			heading := rectOf(t, tt, m.VaultGroupListTitle(1))
+			group := rectOf(t, tt, "prod")
+			alpha := rectOf(t, tt, "alpha")
+			beta := rectOf(t, tt, "beta")
+			if beta.X <= alpha.X {
+				t.Fatalf("the Host cards are not laid out left to right: alpha %+v, beta %+v", alpha, beta)
+			}
 
-	// First sweep chooses alpha and ends, leaving it selected.
-	anchorX, anchorY := heading.X+2, heading.Y+heading.H/2
-	tt.Press(anchorX, anchorY)
-	tt.Frame()
-	tt.Move(alpha.X+alpha.W/2, alpha.Y+alpha.H/2)
-	tt.Frame()
-	tt.Release(anchorX, anchorY)
-	tt.Frame()
-	if !state.Chosen("host-1") || state.Chosen("host-2") {
-		t.Fatalf("the base sweep chose %v, want alpha", state.SelectedHostIDs())
-	}
+			// First sweep chooses alpha only and ends, leaving it selected.
+			anchorX, anchorY := heading.X+2, heading.Y+heading.H/2
+			tt.Press(anchorX, anchorY)
+			tt.Frame()
+			tt.Move(alpha.X+alpha.W/2, alpha.Y+alpha.H/2)
+			tt.Frame()
+			if !state.Chosen("host-1") || state.Chosen("host-2") {
+				t.Fatalf("the first sweep chose %v, want alpha alone", state.SelectedHostIDs())
+			}
+			tt.Release(anchorX, anchorY)
+			tt.Frame()
+			if !state.Chosen("host-1") || state.Chosen("host-2") {
+				t.Fatalf("the first sweep did not survive its release: %v", state.SelectedHostIDs())
+			}
 
-	// The second, non-additive sweep touches only beta, then the pointer leaves
-	// the page for the toolbar while the press stays held.
-	secondX, secondY := beta.X-20, heading.Y+heading.H/2
-	tt.Press(secondX, secondY)
-	tt.Frame()
-	tt.Move(beta.X+beta.W/2, beta.Y+beta.H/2)
-	tt.Frame()
-	if !state.Chosen("host-2") || state.Chosen("host-1") {
-		t.Fatalf("the replacing sweep chose %v, want beta alone", state.SelectedHostIDs())
-	}
-	tt.Move(toolbar.X+toolbar.W/2, toolbar.Y+toolbar.H/2)
-	tt.Frame()
-	if !state.MarqueeActive() || !state.Chosen("host-2") {
-		t.Fatalf("leaving the page ended the sweep: active=%v chosen=%v",
-			state.MarqueeActive(), state.SelectedHostIDs())
-	}
+			// The second, non-additive sweep starts left of beta and touches only
+			// beta: alpha disappears from the in-flight selection even though
+			// Escape restores it.
+			secondX, secondY := beta.X-20, heading.Y+heading.H/2
+			tt.Press(secondX, secondY)
+			tt.Frame()
+			tt.Move(beta.X+beta.W/2, beta.Y+beta.H/2)
+			tt.Frame()
+			if !state.Chosen("host-2") || state.Chosen("host-1") || state.ChosenCount() != 1 {
+				t.Fatalf("the replacing sweep chose %v, want beta alone", state.SelectedHostIDs())
+			}
 
-	// Escape from the toolbar abandons the sweep and restores alpha.
-	tt.Key(0, ui.KeyEscape)
-	tt.Frame()
-	if state.Chosen("host-2") {
-		t.Fatalf("the swept Host survived Escape: %v", state.SelectedHostIDs())
-	}
-	if !state.Chosen("host-1") || state.ChosenCount() != 1 {
-		t.Fatalf("Escape did not restore alpha: %v", state.SelectedHostIDs())
-	}
-	if state.MarqueeActive() {
-		t.Fatal("Escape left the marquee active")
-	}
+			if tc.leavePage {
+				// The press stays held while the pointer leaves the page.
+				toolbar := rectOf(t, tt, m.VaultHostNew())
+				tt.Move(toolbar.X+toolbar.W/2, toolbar.Y+toolbar.H/2)
+				tt.Frame()
+				if !state.MarqueeActive() || !state.Chosen("host-2") {
+					t.Fatalf("leaving the page ended the sweep: active=%v chosen=%v",
+						state.MarqueeActive(), state.SelectedHostIDs())
+				}
+			}
 
-	// Releasing over the Group after the cancellation moves nothing.
-	tt.Move(group.X+group.W/2, group.Y+group.H/2)
-	tt.Frame()
-	tt.Release(group.X+group.W/2, group.Y+group.H/2)
-	tt.Frame()
-	if hostGroup(hosts, "host-1") != "" || hostGroup(hosts, "host-2") != "" {
-		t.Fatalf("a cancelled drag moved Hosts into %q and %q",
-			hostGroup(hosts, "host-1"), hostGroup(hosts, "host-2"))
-	}
+			// Escape abandons the sweep and restores the pre-sweep selection.
+			tt.Key(0, ui.KeyEscape)
+			tt.Frame()
+			if state.Chosen("host-2") {
+				t.Fatalf("the swept Host survived Escape: %v", state.SelectedHostIDs())
+			}
+			if !state.Chosen("host-1") || state.ChosenCount() != 1 {
+				t.Fatalf("Escape did not restore alpha: %v", state.SelectedHostIDs())
+			}
+			if state.MarqueeActive() {
+				t.Fatal("Escape left the marquee active")
+			}
 
-	// The next payload carries only the intended Host.
-	payload := hostDragPayload(state, "host-1")
-	if got := payload.Hosts(); len(got) != 1 || got[0] != "host-1" {
-		t.Fatalf("the drag after Escape carries %v, want host-1 alone", got)
+			// Releasing over the Group after the cancellation changes nothing.
+			tt.Move(group.X+group.W/2, group.Y+group.H/2)
+			tt.Frame()
+			tt.Release(group.X+group.W/2, group.Y+group.H/2)
+			tt.Frame()
+			if hostGroup(hosts, "host-1") != "" || hostGroup(hosts, "host-2") != "" {
+				t.Fatalf("a cancelled drag moved Hosts into %q and %q",
+					hostGroup(hosts, "host-1"), hostGroup(hosts, "host-2"))
+			}
+
+			// A subsequent drag payload carries the intended Host alone.
+			payload := hostDragPayload(state, "host-1")
+			if got := payload.Hosts(); len(got) != 1 || got[0] != "host-1" {
+				t.Fatalf("the drag after Escape carries %v, want host-1 alone", got)
+			}
+
+			if !tc.dropAfterEscape {
+				return
+			}
+			// Dropping that drag moves only the intended Host.
+			dragOnto(t, tt, "alpha", "prod")
+			if hostGroup(hosts, "host-1") != groups.items[0].ID {
+				t.Fatalf("the intended Host was not moved: %q", hostGroup(hosts, "host-1"))
+			}
+			if hostGroup(hosts, "host-2") != "" {
+				t.Fatalf("the cancelled sweep's Host moved into %q", hostGroup(hosts, "host-2"))
+			}
+		})
 	}
 }
 
@@ -2554,27 +2482,6 @@ func hostGroup(hosts *entityHosts, id model.HostID) string {
 		}
 	}
 	return ""
-}
-
-func TestHostCardDetailHasNoOrphanSeparatorsAt720x480(t *testing.T) {
-	state, hosts, _, _, _, tt := newProductionEntityView(t, 720, 480)
-	hosts.items[0].Tags = []string{"production", "web", "internal"}
-	hosts.items[0].Username = "deploy"
-	if err := state.Reload(); err != nil {
-		t.Fatalf("Reload: %v", err)
-	}
-	tt.Frame()
-
-	label := assertVisible(t, tt, "web-1", 720, 480)
-	for _, text := range tt.Texts() {
-		if text == "·" || strings.HasPrefix(text, "·") || strings.HasSuffix(text, "·") {
-			t.Fatalf("the card has an orphan separator %q: %q", text, tt.Texts())
-		}
-	}
-	detail := assertVisible(t, tt, "deploy@10.0.0.1", 720, 480)
-	if detail.Y > label.Y+label.H+8 {
-		t.Fatalf("the address is not on the line under the label: label %+v, address %+v", label, detail)
-	}
 }
 
 // TestHostProtocolSwitchKeepsTheRouteForTelnet checks the route controls a

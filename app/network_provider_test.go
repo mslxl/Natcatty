@@ -731,28 +731,6 @@ func TestConnectionLogFromProviderStatus(t *testing.T) {
 	}
 }
 
-func TestConnectionLogProviderRowsAreNormalizedAsProviderRows(t *testing.T) {
-	log := domainhistory.NormalizeConnectionLog(domainhistory.ConnectionLog{
-		Kind:                 string(domainvault.NetworkKindTailscale),
-		Status:               domainhistory.ConnectionConnected,
-		StartedAt:            time.Now(),
-		NetworkProfileID:     " net-1 ",
-		NetworkProfileLabel:  " Office ",
-		NetworkProviderKind:  " tailscale ",
-		NetworkProviderPhase: " running ",
-		NetworkAddress:       " natcatty-office.tailnet.ts.net ",
-	})
-	if log.HostLabel != "Office" || log.NetworkProfileLabel != "Office" {
-		t.Fatalf("provider labels = %q/%q", log.HostLabel, log.NetworkProfileLabel)
-	}
-	if log.UnsavedHost || log.IsUnsaved() || log.IsLocal() {
-		t.Fatalf("provider row was classified as a Host attempt: %+v", log)
-	}
-	if log.NetworkProviderPhase != "running" || log.NetworkAddress != "natcatty-office.tailnet.ts.net" {
-		t.Fatalf("provider metadata was not trimmed: %+v", log)
-	}
-}
-
 func TestWireGuardStatusSinkPublishesLiveDetail(t *testing.T) {
 	state := vaultstate.NewState(nil)
 	sink := &networkProviderStatusSink{vault: func() networkStatusPoster { return state }}

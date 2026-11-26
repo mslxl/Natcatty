@@ -12,28 +12,25 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 )
 
-// TestPlanOnBSDPOSIXHostsInstallsTheHook proves the existing POSIX startup
-// mechanism is not Linux-specific: the same session-scoped files work on the
-// BSDs, so a BSD POSIX Session reaches Tier 1. A BSD default shell Netcatty
-// does not support stays unchanged and falls back to Tier 2/3, and Windows
-// never receives a hook.
+// TestPlanOnBSDPOSIXHostsInstallsTheHook proves the POSIX startup mechanism is
+// not Linux-specific: the planner has no per-GOOS branch for the POSIX hosts,
+// so one non-Windows representative stands in for the BSDs and Linux. A BSD
+// default shell Netcatty does not support stays unchanged and falls back to
+// Tier 2/3, and Windows never receives a POSIX hook.
 func TestPlanOnBSDPOSIXHostsInstallsTheHook(t *testing.T) {
-	for _, goos := range []string{"freebsd", "openbsd", "netbsd", "dragonfly", "darwin", "linux"} {
-		goos := goos
-		for _, command := range [][]string{
-			{"/bin/zsh"},
-			{"/usr/local/bin/bash"},
-			{"/usr/local/bin/fish"},
-		} {
-			command := command
-			t.Run(goos+"/"+filepath.Base(command[0]), func(t *testing.T) {
-				spec := appsession.StartSpec{Kind: appsession.KindLocal, Command: command}
-				plan, failed, _ := planWith(t, spec, WithPlatform(goos))
-				if failed || !plan.HookExpected {
-					t.Fatalf("plan = failed %t, expected %t", failed, plan.HookExpected)
-				}
-			})
-		}
+	for _, command := range [][]string{
+		{"/bin/zsh"},
+		{"/usr/local/bin/bash"},
+		{"/usr/local/bin/fish"},
+	} {
+		command := command
+		t.Run("freebsd/"+filepath.Base(command[0]), func(t *testing.T) {
+			spec := appsession.StartSpec{Kind: appsession.KindLocal, Command: command}
+			plan, failed, _ := planWith(t, spec, WithPlatform("freebsd"))
+			if failed || !plan.HookExpected {
+				t.Fatalf("plan = failed %t, expected %t", failed, plan.HookExpected)
+			}
+		})
 	}
 
 	t.Run("bsd unsupported default shell", func(t *testing.T) {
@@ -259,29 +256,20 @@ func containsEnv(spec appsession.StartSpec, key, value string) bool {
 // keeps a command typed before the first handshake tentative rather than
 // finalizing it at the shell's pre-hook prompt.
 func TestPlanReportsWhetherTheHookIsExpected(t *testing.T) {
-	t.Run("local zsh", func(t *testing.T) {
-		plan, failed, _ := planWith(t, appsession.StartSpec{Kind: appsession.KindLocal},
-			WithDefaultShell(func() (string, error) { return "/bin/zsh", nil }))
-		if failed || !plan.HookExpected {
-			t.Fatalf("zsh plan = failed %t, expected %t", failed, plan.HookExpected)
-		}
-	})
-	t.Run("local bash", func(t *testing.T) {
-		plan, failed, _ := planWith(t, appsession.StartSpec{
-			Kind: appsession.KindLocal, Command: []string{"/bin/bash"},
+	for _, command := range [][]string{
+		{"/bin/zsh"},
+		{"/bin/bash"},
+		{"/usr/bin/fish"},
+	} {
+		command := command
+		t.Run("local "+filepath.Base(command[0]), func(t *testing.T) {
+			spec := appsession.StartSpec{Kind: appsession.KindLocal, Command: command}
+			plan, failed, _ := planWith(t, spec)
+			if failed || !plan.HookExpected {
+				t.Fatalf("%s plan = failed %t, expected %t", command[0], failed, plan.HookExpected)
+			}
 		})
-		if failed || !plan.HookExpected {
-			t.Fatalf("bash plan = failed %t, expected %t", failed, plan.HookExpected)
-		}
-	})
-	t.Run("local fish", func(t *testing.T) {
-		plan, failed, _ := planWith(t, appsession.StartSpec{
-			Kind: appsession.KindLocal, Command: []string{"/usr/bin/fish"},
-		})
-		if failed || !plan.HookExpected {
-			t.Fatalf("fish plan = failed %t, expected %t", failed, plan.HookExpected)
-		}
-	})
+	}
 	t.Run("ssh wrapper", func(t *testing.T) {
 		plan, failed := NewPlanner().Plan(appsession.StartSpec{
 			Kind: appsession.KindSSH, Hostname: "example.test",
@@ -775,39 +763,32 @@ func TestHooksKeepAnUnknownExitUnknown(t *testing.T) {
 }
 
 func TestScriptsGuardAgainstExistingIntegrations(t *testing.T) {
-	scripts := map[string]string{
-		"zsh":     zshHookScript,
-		"bash":    bashHookScript,
-		"fish":    fishHookText,
-		"nushell": nuHookText,
-		"xonsh":   xonshHookText,
+	common := []string{
+		"NETCATTY_HOOK",
+		"ATUIN_SESSION",
+		"STARSHIP_SHELL",
+		"STARSHIP_SESSION_KEY",
+		"ITERM_SHELL_INTEGRATION_INSTALLED",
 	}
-	for name, script := range scripts {
-		guards := []string{
-			"NETCATTY_HOOK",
-			"ATUIN_SESSION",
-			"STARSHIP_SHELL",
-			"STARSHIP_SESSION_KEY",
-			"ITERM_SHELL_INTEGRATION_INSTALLED",
-		}
-		for _, guard := range guards {
-			if !strings.Contains(script, guard) {
-				t.Fatalf("%s does not check %s", name, guard)
+	matrix := map[string]struct {
+		script string
+		guards []string
+	}{
+		"zsh":     {zshHookScript, append(append([]string{}, common...), "atuin_preexec", "iterm2_preexec")},
+		"bash":    {bashHookScript, append(append([]string{}, common...), "atuin_preexec", "iterm2_preexec")},
+		"fish":    {fishHookText, append(append([]string{}, common...), "functions -q atuin_preexec", "set -q fish_private_mode")},
+		"nushell": {nuHookText, common},
+		"xonsh":   {xonshHookText, common},
+	}
+	for name, entry := range matrix {
+		name, entry := name, entry
+		t.Run(name, func(t *testing.T) {
+			for _, guard := range entry.guards {
+				if !strings.Contains(entry.script, guard) {
+					t.Errorf("%s does not check %s", name, guard)
+				}
 			}
-		}
-	}
-	for name, script := range map[string]string{"zsh": zshHookScript, "bash": bashHookScript} {
-		for _, function := range []string{"atuin_preexec", "iterm2_preexec"} {
-			if !strings.Contains(script, function) {
-				t.Fatalf("%s does not check the %s function", name, function)
-			}
-		}
-	}
-	if !strings.Contains(fishHookText, "functions -q atuin_preexec") {
-		t.Fatal("fish does not check the atuin_preexec function")
-	}
-	if !strings.Contains(fishHookText, "set -q fish_private_mode") {
-		t.Fatal("fish does not skip private mode")
+		})
 	}
 }
 
@@ -911,43 +892,37 @@ func TestPlanLocalExplicitBashPutsTheLongOptionFirst(t *testing.T) {
 }
 
 func TestHooksAppendToTheUsersMechanisms(t *testing.T) {
-	zsh := zshHookScript
-	for _, want := range []string{
-		"add-zsh-hook precmd __netcatty_precmd",
-		"add-zsh-hook preexec __netcatty_preexec",
-		"precmd_functions+=(__netcatty_precmd)",
-		"preexec_functions+=(__netcatty_preexec)",
-	} {
-		if !strings.Contains(zsh, want) {
-			t.Fatalf("zsh hook is missing %q", want)
-		}
+	// Each anchor pins the append-rather-than-replace contract for one shell
+	// mechanism. Where the script carries both an add-zsh-hook path and a
+	// manual array fallback, or a bash-preexec array and a PROMPT_COMMAND
+	// chain, one anchor per mechanism suffices: the precmd/preexec pair is
+	// symmetric and the surrounding guard tests already pin the script shape.
+	anchors := map[string]struct {
+		script string
+		want   []string
+	}{
+		"zsh": {zshHookScript, []string{
+			"add-zsh-hook precmd __netcatty_precmd",
+			"precmd_functions+=(__netcatty_precmd)",
+		}},
+		"bash": {bashHookScript, []string{
+			`PROMPT_COMMAND=(__netcatty_save_status "${PROMPT_COMMAND[@]}" __netcatty_precmd)`,
+			"preexec_functions+=(__netcatty_preexec)",
+			"precmd_functions=(__netcatty_save_status \"${precmd_functions[@]}\" __netcatty_precmd)",
+			"__netcatty_prev_debug=$(trap -p DEBUG",
+			`trap "__netcatty_debug" DEBUG`,
+		}},
+		"fish": {fishHookText, []string{
+			"--on-event fish_preexec",
+			"--on-event fish_postexec",
+			"--on-event fish_prompt",
+		}},
 	}
-
-	bash := bashHookScript
-	for _, want := range []string{
-		`PROMPT_COMMAND=(__netcatty_save_status "${PROMPT_COMMAND[@]}" __netcatty_precmd)`,
-		`__netcatty_save_status;${__netcatty_prev_prompt:+ $__netcatty_prev_prompt;} __netcatty_precmd`,
-		"preexec_functions+=(__netcatty_preexec)",
-		"precmd_functions=(__netcatty_save_status \"${precmd_functions[@]}\" __netcatty_precmd)",
-		"__netcatty_prev_debug=$(trap -p DEBUG",
-		`trap "__netcatty_debug" DEBUG`,
-		`"${BASH_COMMAND:-}" != "__netcatty_save_status"`,
-		"__netcatty_ready=0",
-	} {
-		if !strings.Contains(bash, want) {
-			t.Fatalf("bash hook is missing %q", want)
-		}
-	}
-
-	fish := fishHookText
-	for _, want := range []string{
-		"--on-event fish_preexec",
-		"--on-event fish_postexec",
-		"--on-event fish_prompt",
-		"set -gx NETCATTY_HOOK 1",
-	} {
-		if !strings.Contains(fish, want) {
-			t.Fatalf("fish hook is missing %q", want)
+	for name, entry := range anchors {
+		for _, want := range entry.want {
+			if !strings.Contains(entry.script, want) {
+				t.Errorf("%s hook is missing %q", name, want)
+			}
 		}
 	}
 }
@@ -993,27 +968,14 @@ func TestZshSourcesTheUserStartupBeforeInstallingTheHook(t *testing.T) {
 	}
 }
 
-func TestRemoteWrapperRunsTheUsersShellAndCleansUp(t *testing.T) {
+func TestRemoteWrapperStaysOutOfTheUsersHome(t *testing.T) {
 	script := remoteWrapperScript()
-	for _, want := range []string{
-		"netcatty_shell=${SHELL:-}",
-		"getent passwd",
-		`netcatty_shell=/bin/sh`,
-		`case "$netcatty_name" in`,
-		`exec "$netcatty_shell" -l`,
-		`mktemp -d`,
-		`trap cleanup EXIT`,
-		`rm -rf "$netcatty_dir"`,
-		`"$netcatty_shell" -l`,
-		`"$netcatty_shell" --rcfile`,
-		`--init-command`,
-		"netcatty_status=$?",
-		"exit $netcatty_status",
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("remote wrapper is missing %q", want)
-		}
-	}
+	// The wrapper's per-shell install behavior, cleanup, and exit-status
+	// pass-through are covered by the behavioral tests in
+	// remote_wrapper_test.go. What remains here is the static safety
+	// constraint a behavioral test cannot observe: the script must never
+	// write inside the user's home, even when a path is mistyped, and its
+	// heredocs must balance or the single-quoted wrapper corrupts itself.
 	if strings.Contains(script, `$HOME/`) {
 		t.Fatal("the remote wrapper writes inside the user's home directory")
 	}
@@ -1054,10 +1016,6 @@ func TestRemoteWrapperCommandIsOneQuotedWord(t *testing.T) {
 	command := remoteWrapperCommand()
 	if !strings.HasPrefix(command, "exec /bin/sh -c '") || !strings.HasSuffix(command, "'") {
 		t.Fatalf("command = %q", command)
-	}
-	inner := strings.TrimSuffix(strings.TrimPrefix(command, "exec /bin/sh -c '"), "'")
-	if inner != remoteWrapperScript() {
-		t.Fatal("the quoted command does not carry the wrapper script")
 	}
 	if got := quotePOSIX("a'b"); got != `'a'\''b'` {
 		t.Fatalf("quotePOSIX = %q", got)

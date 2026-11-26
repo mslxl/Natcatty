@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1805,9 +1804,6 @@ func TestLoopbackValidation(t *testing.T) {
 		if err := validateLoopbackAddress(address); err == nil {
 			t.Fatalf("%q accepted", address)
 		}
-	}
-	if host, port, err := net.SplitHostPort("127.0.0.1:2322"); err != nil || host == "" || port != "2322" {
-		t.Fatal("test assumption broken")
 	}
 }
 

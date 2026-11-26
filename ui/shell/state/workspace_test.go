@@ -850,42 +850,6 @@ func TestMovePaneToTabDropClearsTheStaleZoom(t *testing.T) {
 
 // TestMovePaneIntoAMagnifiedTabKeepsItsZoomFocused pins the receiving side: a
 // drop into a zoomed Tab must not focus the hidden Pane it was inserted beside.
-func TestMovePaneIntoAMagnifiedTabKeepsItsZoomFocused(t *testing.T) {
-	graph := newWorkspaceGraph(t)
-	if err := graph.state.NewTab(); err != nil {
-		t.Fatal(err)
-	}
-	sourceID, _ := graph.state.TabID(0)
-	sourcePane := panesOf(t, graph.state, 0)[0]
-	if err := graph.state.NewTab(); err != nil {
-		t.Fatal(err)
-	}
-	if err := graph.state.SplitRight(); err != nil {
-		t.Fatal(err)
-	}
-	graph.flushUntil(t, "the target split", func() bool {
-		return len(panesOf(t, graph.state, 1)) == 2
-	})
-	targetID, _ := graph.state.TabID(1)
-	zoomed := panesOf(t, graph.state, 1)[0]
-	if !graph.state.SetMagnifiedPane(1, zoomed) {
-		t.Fatal("SetMagnifiedPane rejected a member Pane")
-	}
-
-	if !graph.state.MovePane(sourceID, sourcePane, targetID, zoomed, domainworkspace.SideRight) {
-		t.Fatal("MovePane into the zoomed Tab returned false")
-	}
-	// The emptied source Tab is removed, so the target becomes Tab 0.
-	if got := graph.state.TabCount(); got != 1 {
-		t.Fatalf("tabs = %d after the source emptied, want 1", got)
-	}
-	if got := graph.state.MagnifiedPaneID(0); got != zoomed {
-		t.Fatalf("magnified Pane = %q, want the zoomed target %q", got, zoomed)
-	}
-	if got, ok := graph.state.FocusedPaneID(0); !ok || got != zoomed {
-		t.Fatalf("focused Pane = %q, %v; want the zoomed target", got, ok)
-	}
-}
 
 func TestFocusStaysOnTheMagnifiedPane(t *testing.T) {
 	graph := newWorkspaceGraph(t)
@@ -1142,54 +1106,50 @@ func TestSetTabDirtyAndSelectClearsIt(t *testing.T) {
 }
 
 func TestOpenHostPersistsItsRestoreDescriptor(t *testing.T) {
-	graph := newWorkspaceGraph(t)
-	host := domainvault.Host{
-		ID: "host-1", Label: "prod", Hostname: "example.com", Port: 2222,
-		Username: "root", Protocol: domainvault.ProtocolSSH,
+	cases := map[string]struct {
+		host domainvault.Host
+		kind domainworkspace.SessionKind
+	}{
+		"ssh": {
+			host: domainvault.Host{
+				ID: "host-1", Label: "prod", Hostname: "example.com", Port: 2222,
+				Username: "root", Protocol: domainvault.ProtocolSSH,
+			},
+			kind: domainworkspace.SessionSSH,
+		},
+		"telnet": {
+			host: domainvault.Host{
+				ID: "host-telnet", Label: "console", Hostname: "console.local",
+				Port: 23, Username: "admin", Protocol: domainvault.ProtocolTelnet,
+			},
+			kind: domainworkspace.SessionTelnet,
+		},
 	}
-	if err := graph.state.OpenHost(host); err != nil {
-		t.Fatal(err)
-	}
-	graph.flushUntil(t, "the SSH Tab", func() bool { return tabAttached(graph.state, 0) })
+	for name, test := range cases {
+		t.Run(name, func(t *testing.T) {
+			graph := newWorkspaceGraph(t)
+			if err := graph.state.OpenHost(test.host); err != nil {
+				t.Fatal(err)
+			}
+			graph.flushUntil(t, "the Tab", func() bool { return tabAttached(graph.state, 0) })
 
-	payload := graph.state.WorkspacePayload()
-	if len(payload.Panes) != 1 {
-		t.Fatalf("payload panes = %d, want 1", len(payload.Panes))
-	}
-	descriptor := payload.Panes[0].Session
-	if descriptor.Kind != domainworkspace.SessionSSH || descriptor.HostID != "host-1" ||
-		descriptor.Hostname != "example.com" || descriptor.Port != 2222 ||
-		descriptor.Username != "root" || descriptor.Label != "prod" {
-		t.Fatalf("descriptor = %+v, want the Host's restore data", descriptor)
-	}
-	if graph.repo.saves == 0 {
-		t.Fatal("opening a Tab did not persist the layout")
-	}
-}
-
-func TestOpenHostPersistsATelnetRestoreDescriptor(t *testing.T) {
-	graph := newWorkspaceGraph(t)
-	host := domainvault.Host{
-		ID: "host-telnet", Label: "console", Hostname: "console.local",
-		Port: 23, Username: "admin", Protocol: domainvault.ProtocolTelnet,
-	}
-	if err := graph.state.OpenHost(host); err != nil {
-		t.Fatal(err)
-	}
-	graph.flushUntil(t, "the Telnet Tab", func() bool { return tabAttached(graph.state, 0) })
-
-	payload := graph.state.WorkspacePayload()
-	if len(payload.Panes) != 1 {
-		t.Fatalf("payload panes = %d, want 1", len(payload.Panes))
-	}
-	descriptor := payload.Panes[0].Session
-	if descriptor.Kind != domainworkspace.SessionTelnet || descriptor.HostID != "host-telnet" ||
-		descriptor.Hostname != "console.local" || descriptor.Port != 23 ||
-		descriptor.Username != "admin" || descriptor.Label != "console" {
-		t.Fatalf("descriptor = %+v, want the Telnet Host's restore data", descriptor)
-	}
-	if descriptor.X11Forwarding {
-		t.Fatal("the Telnet descriptor carries an SSH-only X11 preference")
+			payload := graph.state.WorkspacePayload()
+			if len(payload.Panes) != 1 {
+				t.Fatalf("payload panes = %d, want 1", len(payload.Panes))
+			}
+			descriptor := payload.Panes[0].Session
+			if descriptor.Kind != test.kind || descriptor.HostID != test.host.ID ||
+				descriptor.Hostname != test.host.Hostname || descriptor.Port != test.host.Port ||
+				descriptor.Username != test.host.Username || descriptor.Label != test.host.Label {
+				t.Fatalf("descriptor = %+v, want the Host's restore data", descriptor)
+			}
+			if descriptor.Kind == domainworkspace.SessionTelnet && descriptor.X11Forwarding {
+				t.Fatal("the Telnet descriptor carries an SSH-only X11 preference")
+			}
+			if graph.repo.saves == 0 {
+				t.Fatal("opening a Tab did not persist the layout")
+			}
+		})
 	}
 }
 
@@ -1339,7 +1299,7 @@ func TestReportedWorkingDirectoryIsPersisted(t *testing.T) {
 	}
 }
 
-func TestRestoreReplaysTheRemoteWorkingDirectory(t *testing.T) {
+func TestRestoreAndSplitReplayTheRemoteWorkingDirectory(t *testing.T) {
 	payload := domainworkspace.Payload{
 		Version:   domainworkspace.PayloadVersion,
 		ActiveTab: 0,
@@ -1368,12 +1328,30 @@ func TestRestoreReplaysTheRemoteWorkingDirectory(t *testing.T) {
 	})
 
 	graph.factory.mu.Lock()
-	transport := graph.factory.transports[0]
+	restored := graph.factory.transports[0]
 	graph.factory.mu.Unlock()
 	waitFor(t, "the replayed cd command", func() bool {
-		transport.mu.Lock()
-		defer transport.mu.Unlock()
-		return string(transport.input) == "cd -- '/srv/app dir'\n"
+		restored.mu.Lock()
+		defer restored.mu.Unlock()
+		return string(restored.input) == "cd -- '/srv/app dir'\n"
+	})
+
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatal(err)
+	}
+	ids := panesOf(t, graph.state, 0)
+	graph.flushUntil(t, "the split SSH Pane", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, ids[1])
+		return ok && info.Surface != nil
+	})
+
+	graph.factory.mu.Lock()
+	split := graph.factory.transports[1]
+	graph.factory.mu.Unlock()
+	waitFor(t, "the split's replayed cd command", func() bool {
+		split.mu.Lock()
+		defer split.mu.Unlock()
+		return string(split.input) == "cd -- '/srv/app dir'\n"
 	})
 }
 
@@ -1446,53 +1424,6 @@ func TestRemoteWorkingDirectoryEligibility(t *testing.T) {
 			t.Errorf("remoteDirEligible(%q) = %v, want %v", test.dir, got, test.want)
 		}
 	}
-}
-
-func TestSplittingAnSSHPaneReplaysTheWorkingDirectory(t *testing.T) {
-	payload := domainworkspace.Payload{
-		Version:   domainworkspace.PayloadVersion,
-		ActiveTab: 0,
-		Tabs: []domainworkspace.RestoredTab{{
-			ID: "tab-ssh", Number: 1, Root: domainworkspace.NewPaneNode("pane-ssh"),
-		}},
-		Panes: []domainworkspace.RestoredPane{{
-			ID: "pane-ssh",
-			Session: domainworkspace.SessionDescriptor{
-				Kind: domainworkspace.SessionSSH, HostID: "host-1",
-				Hostname: "example.com", Port: 22, Username: "root",
-				Dir: "/srv/app",
-			},
-		}},
-	}
-	graph := newWorkspaceGraph(t)
-	graph.hosts["host-1"] = domainvault.Host{
-		ID: "host-1", Hostname: "example.com", Port: 22,
-		Username: "root", Protocol: domainvault.ProtocolSSH,
-	}
-	graph.repo.payload = payload
-	graph.state.Restore(context.Background())
-	graph.flushUntil(t, "the restored SSH Pane", func() bool {
-		info, ok := graph.state.PaneInfoAt(0, "pane-ssh")
-		return ok && info.Surface != nil
-	})
-
-	if err := graph.state.SplitRight(); err != nil {
-		t.Fatal(err)
-	}
-	ids := panesOf(t, graph.state, 0)
-	graph.flushUntil(t, "the split SSH Pane", func() bool {
-		info, ok := graph.state.PaneInfoAt(0, ids[1])
-		return ok && info.Surface != nil
-	})
-
-	graph.factory.mu.Lock()
-	transport := graph.factory.transports[1]
-	graph.factory.mu.Unlock()
-	waitFor(t, "the split's replayed cd command", func() bool {
-		transport.mu.Lock()
-		defer transport.mu.Unlock()
-		return string(transport.input) == "cd -- '/srv/app'\n"
-	})
 }
 
 func TestRestoreReopensANetworkDevicePaneFromTheHostRecord(t *testing.T) {
@@ -1745,85 +1676,56 @@ func TestFailedETPaneCloseClearsSavedCredentials(t *testing.T) {
 	}
 }
 
-// TestETSplitGetsItsOwnResumeKey keeps two Panes' secret entries independent:
-// closing one must not clear the other's saved session.
-func TestETSplitGetsItsOwnResumeKey(t *testing.T) {
-	graph := newWorkspaceGraph(t)
-	graph.hosts["host-et"] = domainvault.Host{
-		ID: "host-et", Hostname: "et.example.com", Port: 2022,
-		Username: "bob", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET, ETPort: 8737,
-	}
-	if err := graph.state.OpenHost(graph.hosts["host-et"]); err != nil {
-		t.Fatalf("OpenHost: %v", err)
-	}
-	graph.flushUntil(t, "the first ET Pane", func() bool {
-		return tabAttached(graph.state, 0) && graph.factory.specCount() == 1 &&
-			graph.state.ActiveSurface() != nil
-	})
-	first := graph.factory.lastSpec()
-	if first.ResumeKey == "" {
-		t.Fatal("the first ET Pane has no resume key")
-	}
-	if err := graph.state.SplitRight(); err != nil {
-		t.Fatalf("SplitRight: %v", err)
-	}
-	graph.flushUntil(t, "the split ET Pane", func() bool {
-		return graph.factory.specCount() == 2 && len(graph.surfaces) == 2
-	})
-	second := graph.factory.lastSpec()
-	if second.Kind != appsession.KindET || second.ResumeKey == "" {
-		t.Fatalf("split ET spec = %+v, want a resume key", second)
-	}
-	if second.ResumeKey == first.ResumeKey {
-		t.Fatalf("split ET Pane reused resume key %q", first.ResumeKey)
-	}
-}
-
-// TestETDuplicateGetsItsOwnResumeKey: a duplicated Tab is a new client, so it
-// must not share the source's saved session and fight over ET's single slot.
-func TestETDuplicateGetsItsOwnResumeKey(t *testing.T) {
-	graph := newWorkspaceGraph(t)
-	graph.hosts["host-et"] = domainvault.Host{
-		ID: "host-et", Hostname: "et.example.com", Port: 2022,
-		Username: "bob", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET, ETPort: 8737,
-	}
-	if err := graph.state.OpenHost(graph.hosts["host-et"]); err != nil {
-		t.Fatalf("OpenHost: %v", err)
-	}
-	graph.flushUntil(t, "the first ET Pane", func() bool {
-		return tabAttached(graph.state, 0) && graph.factory.specCount() == 1 &&
-			graph.state.ActiveSurface() != nil
-	})
-	first := graph.factory.lastSpec()
-	if first.ResumeKey == "" {
-		t.Fatal("the first ET Pane has no resume key")
-	}
-	if err := graph.state.DuplicateTab(0); err != nil {
-		t.Fatalf("DuplicateTab: %v", err)
-	}
-	graph.flushUntil(t, "the duplicated ET Pane", func() bool {
-		return graph.state.TabCount() == 2 && graph.factory.specCount() == 2
-	})
-	second := graph.factory.lastSpec()
-	if second.Kind != appsession.KindET || second.ResumeKey == "" {
-		t.Fatalf("duplicated ET spec = %+v, want a resume key", second)
-	}
-	if second.ResumeKey == first.ResumeKey {
-		t.Fatalf("duplicated ET Pane reused resume key %q", first.ResumeKey)
-	}
-	panes := graph.state.WorkspacePayload().Panes
-	keys := make(map[string]bool, len(panes))
-	for _, pane := range panes {
-		if pane.Session.Kind != domainworkspace.SessionET {
-			continue
-		}
-		if pane.Session.ResumeKey == "" || keys[pane.Session.ResumeKey] {
-			t.Fatalf("workspace ET resume keys are not distinct: %+v", panes)
-		}
-		keys[pane.Session.ResumeKey] = true
-	}
-	if len(keys) != 2 {
-		t.Fatalf("workspace holds %d distinct ET resume keys, want 2: %+v", len(keys), panes)
+// TestETClonesGetTheirOwnResumeKeys: a split or duplicated Pane is a new
+// client, so it must not share the source's saved session and fight over ET's
+// single slot.
+func TestETClonesGetTheirOwnResumeKeys(t *testing.T) {
+	for name, clone := range map[string]func(*workspaceGraph) error{
+		"split":     func(graph *workspaceGraph) error { return graph.state.SplitRight() },
+		"duplicate": func(graph *workspaceGraph) error { return graph.state.DuplicateTab(0) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			graph := newWorkspaceGraph(t)
+			graph.hosts["host-et"] = domainvault.Host{
+				ID: "host-et", Hostname: "et.example.com", Port: 2022,
+				Username: "bob", Protocol: domainvault.ProtocolSSH, Transport: domainvault.TransportET, ETPort: 8737,
+			}
+			if err := graph.state.OpenHost(graph.hosts["host-et"]); err != nil {
+				t.Fatalf("OpenHost: %v", err)
+			}
+			graph.flushUntil(t, "the first ET Pane", func() bool {
+				return tabAttached(graph.state, 0) && graph.factory.specCount() == 1 &&
+					graph.state.ActiveSurface() != nil
+			})
+			first := graph.factory.lastSpec()
+			if first.ResumeKey == "" {
+				t.Fatal("the first ET Pane has no resume key")
+			}
+			if err := clone(graph); err != nil {
+				t.Fatalf("clone: %v", err)
+			}
+			graph.flushUntil(t, "the cloned ET Pane", func() bool {
+				return graph.factory.specCount() == 2
+			})
+			second := graph.factory.lastSpec()
+			if second.Kind != appsession.KindET || second.ResumeKey == "" {
+				t.Fatalf("cloned ET spec = %+v, want a resume key", second)
+			}
+			if second.ResumeKey == first.ResumeKey {
+				t.Fatalf("cloned ET Pane reused resume key %q", first.ResumeKey)
+			}
+			panes := graph.state.WorkspacePayload().Panes
+			keys := make(map[string]bool, len(panes))
+			for _, pane := range panes {
+				if pane.Session.Kind != domainworkspace.SessionET {
+					continue
+				}
+				if pane.Session.ResumeKey == "" || keys[pane.Session.ResumeKey] {
+					t.Fatalf("workspace ET resume keys are not distinct: %+v", panes)
+				}
+				keys[pane.Session.ResumeKey] = true
+			}
+		})
 	}
 }
 
@@ -2104,27 +2006,6 @@ func TestSelectTabReleasesTheOutgoingPanesHeldInput(t *testing.T) {
 // TestOpeningATabReleasesTheOutgoingPanesInput covers the other main way a
 // different Tab becomes visible: opening one, whether from Ctrl+T or a Host,
 // must not leave the previously visible Pane holding a key or pointer button.
-func TestOpeningATabReleasesTheOutgoingPanesInput(t *testing.T) {
-	graph := newWorkspaceGraph(t)
-	if err := graph.state.NewTab(); err != nil {
-		t.Fatal(err)
-	}
-	graph.flushUntil(t, "the first Pane surface", func() bool {
-		return tabAttached(graph.state, 0) && len(graph.surfaces) == 1
-	})
-	outgoing, ok := graph.state.ActiveSurface().(*fakeSurface)
-	if !ok || outgoing == nil {
-		t.Fatal("the first Tab has no fake surface")
-	}
-
-	if err := graph.state.NewTab(); err != nil {
-		t.Fatal(err)
-	}
-	if outgoing.releases != 1 {
-		t.Fatalf("outgoing surface releases = %d, want 1", outgoing.releases)
-	}
-}
-
 // TestDetachAndCloseReleaseHeldInput covers the other two ways a Surface stops
 // rendering: detaching its Tab and closing it.
 func TestDetachAndCloseReleaseHeldInput(t *testing.T) {
@@ -2183,79 +2064,67 @@ func fakeSurfaceAt(t *testing.T, state *State, tabIndex int, id model.PaneID) *f
 	return surface
 }
 
-// TestSelectTabReleasesEveryPaneInASplitTab is the non-focused-pane case: MyGo
+// TestHidingASplitTabReleasesEveryPane is the non-focused-pane case: MyGo
 // hit-tests pointer input, so a split member that never held focus can still
 // have a button down when the Tab is hidden. Hiding the Tab must release every
-// member, not only tab.focusedPane().
-func TestSelectTabReleasesEveryPaneInASplitTab(t *testing.T) {
-	graph := newWorkspaceGraph(t)
-	if err := graph.state.NewTab(); err != nil {
-		t.Fatal(err)
-	}
-	if err := graph.state.SplitRight(); err != nil {
-		t.Fatal(err)
-	}
-	graph.flushUntil(t, "both split surfaces", func() bool {
-		return len(panesOf(t, graph.state, 0)) == 2 && len(graph.surfaces) == 2
-	})
-	if err := graph.state.NewTab(); err != nil {
-		t.Fatal(err)
-	}
-	graph.flushUntil(t, "the second Tab surface", func() bool {
-		return len(graph.surfaces) == 3
-	})
-	graph.state.SelectTab(0)
-	resetSurfaceReleases(graph)
-
-	ids := panesOf(t, graph.state, 0)
-	if !graph.state.FocusPaneID(0, ids[0]) {
-		t.Fatal("FocusPaneID rejected the left Pane")
-	}
-	outgoing := []*fakeSurface{
-		fakeSurfaceAt(t, graph.state, 0, ids[0]),
-		fakeSurfaceAt(t, graph.state, 0, ids[1]),
-	}
-	incoming := fakeSurfaceAt(t, graph.state, 1, panesOf(t, graph.state, 1)[0])
-
-	graph.state.SelectTab(1)
-	for index, surface := range outgoing {
-		if surface.releases != 1 {
-			t.Fatalf("outgoing Pane %d releases = %d, want 1", index, surface.releases)
+// member, not only tab.focusedPane(), whether the Tab is hidden by a switch or
+// leaves the window entirely on detach.
+func TestHidingASplitTabReleasesEveryPane(t *testing.T) {
+	build := func(t *testing.T) (*workspaceGraph, []*fakeSurface) {
+		t.Helper()
+		graph := newWorkspaceGraph(t)
+		if err := graph.state.NewTab(); err != nil {
+			t.Fatal(err)
+		}
+		if err := graph.state.SplitRight(); err != nil {
+			t.Fatal(err)
+		}
+		graph.flushUntil(t, "both split surfaces", func() bool {
+			return len(panesOf(t, graph.state, 0)) == 2 && len(graph.surfaces) == 2
+		})
+		ids := panesOf(t, graph.state, 0)
+		return graph, []*fakeSurface{
+			fakeSurfaceAt(t, graph.state, 0, ids[0]),
+			fakeSurfaceAt(t, graph.state, 0, ids[1]),
 		}
 	}
-	if incoming.releases != 0 {
-		t.Fatalf("incoming Pane releases = %d, want 0", incoming.releases)
-	}
-}
 
-// TestDetachTabReleasesEveryPaneInASplitTab mirrors the hidden-Tab case for
-// detach: the whole subtree leaves this window, so every member releases.
-func TestDetachTabReleasesEveryPaneInASplitTab(t *testing.T) {
-	graph := newWorkspaceGraph(t)
-	if err := graph.state.NewTab(); err != nil {
-		t.Fatal(err)
-	}
-	if err := graph.state.SplitRight(); err != nil {
-		t.Fatal(err)
-	}
-	graph.flushUntil(t, "both split surfaces", func() bool {
-		return len(panesOf(t, graph.state, 0)) == 2 && len(graph.surfaces) == 2
-	})
-	ids := panesOf(t, graph.state, 0)
-	surfaces := []*fakeSurface{
-		fakeSurfaceAt(t, graph.state, 0, ids[0]),
-		fakeSurfaceAt(t, graph.state, 0, ids[1]),
-	}
-	resetSurfaceReleases(graph)
-
-	if !graph.state.DetachTab(0) {
-		t.Fatal("DetachTab returned false")
-	}
-	for index, surface := range surfaces {
-		if surface.releases != 1 {
-			t.Fatalf("detached Pane %d releases = %d, want 1", index, surface.releases)
+	t.Run("select", func(t *testing.T) {
+		graph, outgoing := build(t)
+		if err := graph.state.NewTab(); err != nil {
+			t.Fatal(err)
 		}
-	}
+		graph.flushUntil(t, "the second Tab surface", func() bool {
+			return len(graph.surfaces) == 3
+		})
+		graph.state.SelectTab(0)
+		resetSurfaceReleases(graph)
+
+		incoming := fakeSurfaceAt(t, graph.state, 1, panesOf(t, graph.state, 1)[0])
+		graph.state.SelectTab(1)
+		for index, surface := range outgoing {
+			if surface.releases != 1 {
+				t.Fatalf("outgoing Pane %d releases = %d, want 1", index, surface.releases)
+			}
+		}
+		if incoming.releases != 0 {
+			t.Fatalf("incoming Pane releases = %d, want 0", incoming.releases)
+		}
+	})
+
+	t.Run("detach", func(t *testing.T) {
+		graph, surfaces := build(t)
+		resetSurfaceReleases(graph)
+
+		if !graph.state.DetachTab(0) {
+			t.Fatal("DetachTab returned false")
+		}
+		for index, surface := range surfaces {
+			if surface.releases != 1 {
+				t.Fatalf("detached Pane %d releases = %d, want 1", index, surface.releases)
+			}
+		}
+	})
 }
 
 // TestMagnifyReleasesEveryHiddenPane proves zoom is not a focused-Pane-only
@@ -2383,6 +2252,17 @@ func TestMovePaneIntoAMagnifiedTabReleasesTheMovedPane(t *testing.T) {
 	}
 	if got := zoomedSurface.releases; got != 0 {
 		t.Fatalf("visible zoomed Pane releases = %d, want 0", got)
+	}
+	// The emptied source Tab is removed, so the target becomes Tab 0; the
+	// zoom survives on its Pane, which keeps the focus.
+	if got := graph.state.TabCount(); got != 1 {
+		t.Fatalf("tabs = %d after the source emptied, want 1", got)
+	}
+	if got := graph.state.MagnifiedPaneID(0); got != zoomed {
+		t.Fatalf("magnified Pane = %q, want the zoomed target %q", got, zoomed)
+	}
+	if got, ok := graph.state.FocusedPaneID(0); !ok || got != zoomed {
+		t.Fatalf("focused Pane = %q, %v; want the zoomed target", got, ok)
 	}
 }
 

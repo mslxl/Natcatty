@@ -1114,53 +1114,38 @@ func secondLocalAt(t *testing.T, f *fixture, path string) {
 	})
 }
 
-func TestCrossTabPasteIntoSourceSubtreeIsRefused(t *testing.T) {
-	f := newFixture(t)
-	secondLocalAt(t, f, "/home/me/folder")
-	selectOne(t, f.state, Left, "folder")
-	f.state.CopySelection(Left)
-	f.state.Paste(Right)
-	f.state.Flush()
+func TestCrossTabCopyIntoSourceSubtreeIsRefused(t *testing.T) {
+	trigger := map[string]func(f *fixture){
+		"paste": func(f *fixture) {
+			f.state.CopySelection(Left)
+			f.state.Paste(Right)
+		},
+		"move": func(f *fixture) {
+			f.state.MoveToOther(Left)
+		},
+		"drag": func(f *fixture) {
+			payload := f.state.BeginDrag(Left)
+			if payload == nil {
+				t.Fatal("the folder did not produce a drag payload")
+			}
+			f.state.DropPane(Right, "/home/me/folder", payload)
+		},
+	}
+	for _, name := range []string{"paste", "move", "drag"} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			secondLocalAt(t, f, "/home/me/folder")
+			selectOne(t, f.state, Left, "folder")
+			trigger[name](f)
+			f.state.Flush()
 
-	if got := f.state.Notice(); got != "copy-into-self" {
-		t.Fatalf("cross-Tab paste notice = %q", got)
-	}
-	if f.local.has("/home/me/folder/folder") {
-		t.Fatal("the refused paste created a folder inside its source")
-	}
-}
-
-func TestCrossTabMoveIntoSourceSubtreeIsRefused(t *testing.T) {
-	f := newFixture(t)
-	secondLocalAt(t, f, "/home/me/folder")
-	selectOne(t, f.state, Left, "folder")
-	f.state.MoveToOther(Left)
-	f.state.Flush()
-
-	if got := f.state.Notice(); got != "copy-into-self" {
-		t.Fatalf("cross-Tab move notice = %q", got)
-	}
-	if !f.local.has("/home/me/folder") || f.local.has("/home/me/folder/folder") {
-		t.Fatal("the refused move changed the source tree")
-	}
-}
-
-func TestCrossTabDragIntoSourceSubtreeIsRefused(t *testing.T) {
-	f := newFixture(t)
-	secondLocalAt(t, f, "/home/me/folder")
-	selectOne(t, f.state, Left, "folder")
-	payload := f.state.BeginDrag(Left)
-	if payload == nil {
-		t.Fatal("the folder did not produce a drag payload")
-	}
-	f.state.DropPane(Right, "/home/me/folder", payload)
-	f.state.Flush()
-
-	if got := f.state.Notice(); got != "copy-into-self" {
-		t.Fatalf("cross-Tab drag notice = %q", got)
-	}
-	if f.local.has("/home/me/folder/folder") {
-		t.Fatal("the refused drag created a folder inside its source")
+			if got := f.state.Notice(); got != "copy-into-self" {
+				t.Fatalf("cross-Tab %s notice = %q", name, got)
+			}
+			if !f.local.has("/home/me/folder") || f.local.has("/home/me/folder/folder") {
+				t.Fatal("the refused copy changed the source tree")
+			}
+		})
 	}
 }
 

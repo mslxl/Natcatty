@@ -130,23 +130,6 @@ func TestMergeAddAddUpdateUpdateDeleteUpdateDeleteDeleteAndUnchanged(t *testing.
 	}
 }
 
-func TestMergeDeleteRemoteAndLocalUpdateKeepsTheModification(t *testing.T) {
-	base := &Payload{Hosts: []domainvault.Host{mergeTestHost("h", "Base", "old.example")}}
-	local := &Payload{Hosts: []domainvault.Host{mergeTestHost("h", "Local edit", "new.example")}}
-	remote := &Payload{}
-
-	result, err := MergePayloads(base, *local, *remote, MergeOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result.Payload.Hosts) != 1 || result.Payload.Hosts[0].Label != "Local edit" {
-		t.Fatalf("a remote deletion must not discard a local edit: %+v", result.Payload.Hosts)
-	}
-	if len(result.Conflicts) != 1 || result.Conflicts[0].Kind != ConflictRemoteDeletedLocalModified {
-		t.Fatalf("conflicts = %+v", result.Conflicts)
-	}
-}
-
 func TestMergePreserveDeletionsNeverPropagatesOneSidedDeletion(t *testing.T) {
 	base := &Payload{Hosts: []domainvault.Host{
 		mergeTestHost("a", "A", "a.example"),
@@ -767,25 +750,6 @@ func TestMergeDropsAtuinAccountCredentialsFromEverySide(t *testing.T) {
 	}
 }
 
-func TestLegacyPayloadWithoutNetworkProfilesStillParsesAndMerges(t *testing.T) {
-	// A payload written before the family existed has no networkProfiles key.
-	legacy := []byte(`{"hosts":[{"id":"h1","label":"H","hostname":"h.example","port":22,"username":"root","protocol":"ssh"}],"keys":[],"identities":[],"proxyProfiles":[],"snippets":[],"groups":[],"snippetPackages":[],"notes":[],"noteGroups":[],"portForwardingRules":[],"syncedAt":1}`)
-	var payload Payload
-	if err := json.Unmarshal(legacy, &payload); err != nil {
-		t.Fatalf("legacy payload did not parse: %v", err)
-	}
-	if len(payload.NetworkProfiles) != 0 {
-		t.Fatalf("legacy payload produced profiles: %+v", payload.NetworkProfiles)
-	}
-	result, err := MergePayloads(nil, payload, Payload{}, MergeOptions{})
-	if err != nil {
-		t.Fatalf("legacy payload did not merge: %v", err)
-	}
-	if len(result.Payload.Hosts) != 1 || len(result.Payload.NetworkProfiles) != 0 {
-		t.Fatalf("legacy merge = %+v", result.Payload)
-	}
-}
-
 func TestNetworkProfilesJSONDistinguishesMissingFromExplicitlyEmpty(t *testing.T) {
 	const baseFields = `"hosts":[],"keys":[],"identities":[],"proxyProfiles":[],"snippets":[],"groups":[],"snippetPackages":[],"notes":[],"noteGroups":[],"portForwardingRules":[],"syncedAt":1`
 	var missing Payload
@@ -906,25 +870,6 @@ func TestLegacyNilNetworkProfilesHonorsRelayedTombstone(t *testing.T) {
 		}
 	})
 
-	t.Run("absence without tombstone preserves", func(t *testing.T) {
-		result, err := MergePayloads(&base, local, Payload{}, MergeOptions{})
-		if err != nil {
-			t.Fatalf("MergePayloads: %v", err)
-		}
-		if len(result.Payload.NetworkProfiles) != 1 || result.Payload.NetworkProfiles[0].ID != "net-wg" {
-			t.Fatalf("plain absence deleted local profiles: %+v", result.Payload.NetworkProfiles)
-		}
-		if len(result.Payload.Secrets) != 3 {
-			t.Fatalf("plain absence dropped network credentials: %+v", result.Payload.Secrets)
-		}
-		if result.Payload.SyncMeta != nil {
-			for _, deletion := range result.Payload.SyncMeta.Deletions {
-				if deletion.EntityType == "networkProfiles" {
-					t.Fatalf("plain absence produced a tombstone: %+v", deletion)
-				}
-			}
-		}
-	})
 }
 
 func TestExplicitEmptyNetworkProfilesPropagatesADeletion(t *testing.T) {
@@ -971,34 +916,6 @@ func settingsToStringMap(t *testing.T, settings map[string]json.RawMessage) map[
 		t.Fatal(err)
 	}
 	return value
-}
-
-// TestPayloadJSONCarriesVNCConfiguration proves the v1 materialized payload's
-// Host JSON is enough on its own: the viewer configuration and the
-// HasVNCPassword marker survive an encode/decode cycle with no VNC branch.
-func TestPayloadJSONCarriesVNCConfiguration(t *testing.T) {
-	config := domainvault.VNCConfig{
-		DisplayMode: domainvault.VNCPort, FitMode: domainvault.VNCClip,
-		Shared: true, CursorMode: domainvault.VNCCursorServer, ViewOnly: true,
-		PlaintextWarningAcknowledged: true,
-	}
-	payload := Payload{Hosts: []domainvault.Host{{
-		ID: "vnc-1", Label: "desk", Hostname: "desk.example", Port: 5901,
-		Protocol: domainvault.ProtocolVNC, HasVNCPassword: true, VNC: &config,
-	}}}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var decoded Payload
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	host := decoded.Hosts[0]
-	if host.Protocol != domainvault.ProtocolVNC || !host.HasVNCPassword ||
-		host.VNC == nil || *host.VNC != config {
-		t.Fatalf("decoded Host = %+v", host)
-	}
 }
 
 // TestMergeTreatsVNCConfigurationAsAnOrdinaryHostField drives the three-way

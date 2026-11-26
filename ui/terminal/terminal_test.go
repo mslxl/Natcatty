@@ -456,8 +456,6 @@ func TestSelectAndCopy(t *testing.T) {
 		t.Errorf("triple click copied %q", got)
 	}
 	save(t, tt, "selected")
-	// The Edit menu's Copy and Select All.
-	tt.Key(0, ui.KeyEscape) // typing clears the selection
 }
 
 func TestPaste(t *testing.T) {
@@ -593,9 +591,6 @@ func TestMouse(t *testing.T) {
 	if got := conn.take(term); !strings.HasPrefix(got, "\x1b[<64;3;4M") {
 		t.Errorf("wheel sent %q", got)
 	}
-	// Focus reports.
-	term.Feed([]byte("\x1b[?1004h"))
-	tt.Frame()
 }
 
 // TestNoExitMessage: with NoExitMessage, the screen keeps what the
