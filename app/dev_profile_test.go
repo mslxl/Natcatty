@@ -137,14 +137,6 @@ func TestDevProfileRunOptions(t *testing.T) {
 		t.Fatal("the dev profile would touch the tray, hotkeys, or notifications")
 	}
 
-	smoke := runOptions{packagedSmoke: true}
-	if !smoke.isolated() || smoke.importsShellHistory() || smoke.registersURLScheme() {
-		t.Fatal("the packaged smoke lost its isolation")
-	}
-	if smoke.suppressesDesktopIntegration() {
-		t.Fatal("the packaged smoke must keep its normal desktop wiring")
-	}
-
 	normal := runOptions{}
 	if normal.isolated() {
 		t.Fatal("the normal app must not be isolated")

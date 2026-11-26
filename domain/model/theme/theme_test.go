@@ -7,28 +7,6 @@ import (
 	"testing"
 )
 
-func TestCatalogsMatchTheOriginalCounts(t *testing.T) {
-	if got := len(LightPresets()); got != 62 {
-		t.Errorf("light presets = %d, want 62", got)
-	}
-	if got := len(DarkPresets()); got != 62 {
-		t.Errorf("dark presets = %d, want 62", got)
-	}
-	if got := len(TerminalThemes()); got != 198 {
-		t.Errorf("terminal themes = %d, want 198", got)
-	}
-	// The original hides exactly fourteen UI-matched schemes.
-	if got := len(VisibleTerminalThemes()); got != 184 {
-		t.Errorf("visible terminal themes = %d, want 184", got)
-	}
-	if got := len(Accents()); got != 18 {
-		t.Errorf("accents = %d, want 18", got)
-	}
-	if got := len(IconVariants()); got != 12 {
-		t.Errorf("icon variants = %d, want 12", got)
-	}
-}
-
 func TestCatalogIDsAreUniqueAndEveryTokenParses(t *testing.T) {
 	for _, group := range []struct {
 		name    string

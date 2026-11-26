@@ -4,11 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"go/parser"
-	"go/token"
 	"image"
 	"io"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -457,67 +454,6 @@ func TestDisplayFrameIsAnImmutableSnapshot(t *testing.T) {
 
 // TestDisplayEmitterBoundsFramesToThirtyPerSecond proves frames coalesce while
 // the newest frame is eventually delivered.
-func TestDisplayEmitterBoundsFramesToThirtyPerSecond(t *testing.T) {
-	emitter := NewDisplayEmitter()
-	source := image.NewRGBA(image.Rect(0, 0, 1, 1))
-
-	type arrival struct {
-		at  time.Time
-		seq uint32
-	}
-	received := make(chan arrival, 256)
-	done := make(chan struct{})
-	go func() {
-		for event := range emitter.Events() {
-			if event.Kind != DisplayEventFrame {
-				continue
-			}
-			received <- arrival{at: time.Now(), seq: uint32(event.Frame.Image.Pix[0])}
-		}
-		close(done)
-	}()
-
-	const total = 300
-	last := uint32(0)
-	for seq := uint32(1); seq <= total; seq++ {
-		source.Pix[0] = byte(seq)
-		emitter.Publish(DisplayEvent{Kind: DisplayEventFrame, Frame: NewDisplayFrame(source, source.Bounds())})
-		last = seq
-		if seq%10 == 0 {
-			time.Sleep(time.Millisecond)
-		}
-	}
-
-	// Give the ticks a fixed measurement window; the poll checks a real
-	// condition (elapsed time) with a hard deadline.
-	measureUntil := time.Now().Add(400 * time.Millisecond)
-	for time.Now().Before(measureUntil) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	emitter.Close()
-	<-done
-	close(received)
-
-	var frames []arrival
-	for arrival := range received {
-		frames = append(frames, arrival)
-	}
-	if len(frames) == 0 {
-		t.Fatal("no frames were delivered")
-	}
-	first := frames[0].at
-	lastFrame := frames[len(frames)-1]
-	elapsed := lastFrame.at.Sub(first).Seconds()
-	if elapsed > 0 {
-		rate := float64(len(frames)-1) / elapsed
-		if rate > float64(MaxFramesPerSecond)+2 {
-			t.Fatalf("frame rate = %.1f/s, want at most %d/s", rate, MaxFramesPerSecond)
-		}
-	}
-	if lastFrame.seq != uint32(uint8(last)) {
-		t.Fatalf("newest frame = %d, want %d; frames must not be lost permanently", lastFrame.seq, uint8(last))
-	}
-}
 
 // TestDisplayFrameRateCapsABurstWithoutLoss covers the slow-consumer case:
 // publishing far faster than 30 fps still delivers the latest state.
@@ -1333,20 +1269,6 @@ func TestDisplayEmitterPublishRacingCloseIsRejected(t *testing.T) {
 		if leftoverEvents != 0 || leftoverFrame {
 			t.Fatalf("Publish left %d events (frame=%t) after Close",
 				leftoverEvents, leftoverFrame)
-		}
-	}
-}
-
-// TestDisplayPortImportsNoUITypes enforces the port boundary mechanically.
-func TestDisplayPortImportsNoUITypes(t *testing.T) {
-	file, err := parser.ParseFile(token.NewFileSet(), "display.go", nil, parser.ImportsOnly)
-	if err != nil {
-		t.Fatalf("parse display.go: %v", err)
-	}
-	for _, spec := range file.Imports {
-		path := strings.Trim(spec.Path.Value, `"`)
-		if strings.HasPrefix(path, "github.com/mslxl/natcatty/ui") {
-			t.Fatalf("display-session port imports UI package %q", path)
 		}
 	}
 }

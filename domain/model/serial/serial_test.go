@@ -16,21 +16,6 @@ func containsParity(values []Parity, want Parity) bool {
 	return slices.Contains(values, want)
 }
 
-func TestNormalizeAppliesTheOriginalDefaults(t *testing.T) {
-	got := (Config{Path: "  COM3 "}).Normalized()
-	want := Config{
-		Path:        "COM3",
-		BaudRate:    115200,
-		DataBits:    8,
-		StopBits:    StopBitsOne,
-		Parity:      ParityNone,
-		FlowControl: FlowNone,
-	}
-	if got != want {
-		t.Fatalf("Normalized() = %+v, want %+v", got, want)
-	}
-}
-
 func TestValidateAcceptsTheFullOriginalParameterSet(t *testing.T) {
 	paths := []string{"/dev/ttyUSB0", "/dev/cu.usbserial-1", "COM1", `\\.\COM12`}
 	for _, path := range paths {

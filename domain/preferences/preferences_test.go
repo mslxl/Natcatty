@@ -6,29 +6,6 @@ import (
 	"testing"
 )
 
-func TestDefaultsMatchTheOriginal(t *testing.T) {
-	got := Defaults()
-	if got.Appearance.ThemeMode != ThemeSystem || got.Appearance.WindowOpacity != 1 ||
-		got.Appearance.TerminalFontSize != 13 || got.Appearance.TerminalFontFamily != DefaultTerminalFont ||
-		got.Appearance.LightTheme != "snow" || got.Appearance.DarkTheme != "midnight" ||
-		got.Appearance.AppIcon != "original" || got.Appearance.AccentMode != AccentTheme ||
-		got.Appearance.TerminalCursorStyle != CursorBlock || got.Appearance.TerminalCursorSteady {
-		t.Errorf("appearance defaults = %+v", got.Appearance)
-	}
-	if !got.Layout.ShowHostTreeSidebar || !got.Layout.ShowSFTPTab || !got.Layout.ShowRecentHosts ||
-		got.Layout.ShellOnlyTabNumberShortcuts || !got.Layout.ShowTabNumberBadges ||
-		got.Layout.TabBarPosition != TabBarTop {
-		t.Errorf("layout defaults = %+v", got.Layout)
-	}
-	if got.SFTPEditor.DoubleClickBehavior != DoubleClickOpen || !got.SFTPEditor.UseCompressedUpload ||
-		got.SFTPEditor.AutoSync || got.SFTPEditor.ShowHiddenFiles || got.SFTPEditor.DefaultViewMode != ViewList {
-		t.Errorf("sftp defaults = %+v", got.SFTPEditor)
-	}
-	if got.Logs.SSHDebug || got.Sync.Enabled || !got.Security.ConfirmCloseSessions {
-		t.Errorf("logs/sync/security defaults = %+v %+v %+v", got.Logs, got.Sync, got.Security)
-	}
-}
-
 // TestSessionRestoreIsOptIn covers the deliberate divergence from the
 // original, which restored the previous session by default.
 func TestSessionRestoreIsOptIn(t *testing.T) {

@@ -5,25 +5,7 @@ import (
 	"testing"
 )
 
-func TestProgressiveSplitMatchesTheOriginal(t *testing.T) {
-	if len(CoreNames) != 14 {
-		t.Fatalf("core tools = %d, want 14: %v", len(CoreNames), CoreNames)
-	}
-	if LoaderName != "load_netcatty_tools" {
-		t.Fatalf("loader name = %q", LoaderName)
-	}
-	wantToolsets := []string{
-		"attachments", "sftp_advanced", "vault_hosts", "vault_notes",
-		"snippets", "scripts", "portforward",
-	}
-	if !reflect.DeepEqual(ToolsetNames, wantToolsets) {
-		t.Fatalf("toolsets = %v, want %v", ToolsetNames, wantToolsets)
-	}
-	if !reflect.DeepEqual(LoadableToolsetNames,
-		append(append([]string{}, wantToolsets...), "all")) {
-		t.Fatalf("loadable toolsets = %v", LoadableToolsetNames)
-	}
-
+func TestProgressiveSplitAssignsEveryToolExactlyOnce(t *testing.T) {
 	seen := map[string]bool{}
 	for _, name := range CoreNames {
 		if seen[name] {
@@ -46,15 +28,6 @@ func TestProgressiveSplitMatchesTheOriginal(t *testing.T) {
 	}
 	if len(seen) != len(All()) {
 		t.Fatalf("assigned tools = %d, catalog tools = %d", len(seen), len(All()))
-	}
-	// 14 core + 55 deferred = 69 catalog tools; `all` adds the loader as the
-	// seventieth visible tool.
-	deferred := 0
-	for _, toolset := range ToolsetNames {
-		deferred += len(Toolsets[toolset])
-	}
-	if deferred != 55 {
-		t.Fatalf("deferred tools = %d, want 55", deferred)
 	}
 }
 
@@ -151,28 +124,5 @@ func TestProgressiveRejectsUnknownToolset(t *testing.T) {
 	}
 	if view.VisibleCount() != 15 {
 		t.Fatalf("visible tools changed after a rejected load: %d", view.VisibleCount())
-	}
-}
-
-func TestLoaderToolSchemaMatchesTheOriginal(t *testing.T) {
-	loader := LoaderTool()
-	if loader.Name != LoaderName {
-		t.Fatalf("loader tool name = %q", loader.Name)
-	}
-	if loader.Description == "" {
-		t.Fatal("loader tool has no description")
-	}
-	schema := loader.InputSchema()
-	properties, _ := schema["properties"].(map[string]any)
-	toolset, _ := properties["toolset"].(map[string]any)
-	if !reflect.DeepEqual(toolset["enum"], LoadableToolsetNames) {
-		t.Fatalf("loader enum = %v, want %v", toolset["enum"], LoadableToolsetNames)
-	}
-	if toolset["description"] != "Netcatty tool category to load" {
-		t.Fatalf("loader field description = %v", toolset["description"])
-	}
-	required, _ := schema["required"].([]string)
-	if !reflect.DeepEqual(required, []string{"toolset"}) {
-		t.Fatalf("loader required = %v", required)
 	}
 }

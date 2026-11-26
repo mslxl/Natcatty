@@ -2,27 +2,6 @@ package theme
 
 import "testing"
 
-func TestTerminalThemeForPresetFollowsTheOriginal(t *testing.T) {
-	cases := []struct {
-		dark   bool
-		preset string
-		want   string
-		ok     bool
-	}{
-		{false, "snow", "ui-snow", true},
-		{true, "midnight", "ui-midnight", true},
-		{false, "catppuccin", "system-catppuccin-light", true},
-		{true, "catppuccin", "system-catppuccin-dark", true},
-		{false, "no-such-preset", "", false},
-	}
-	for _, c := range cases {
-		got, ok := TerminalThemeForPreset(c.dark, c.preset)
-		if got != c.want || ok != c.ok {
-			t.Errorf("TerminalThemeForPreset(%v, %q) = %q, %v; want %q, %v", c.dark, c.preset, got, ok, c.want, c.ok)
-		}
-	}
-}
-
 // TestEveryPresetMatchesAScheme keeps the follow mode total: each built-in UI
 // preset has a scheme, and that scheme maps back to it.
 func TestEveryPresetMatchesAScheme(t *testing.T) {

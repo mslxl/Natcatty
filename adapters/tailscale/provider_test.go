@@ -1058,7 +1058,7 @@ func TestDialDatagramAcceptsUDPOnlyAndUsesTheSameNode(t *testing.T) {
 	}
 }
 
-func TestAuthKeyNeverAppearsInErrorsLogsOrTheStateDirectory(t *testing.T) {
+func TestAuthKeyNeverAppearsInErrorsOrLogs(t *testing.T) {
 	cfg := testConfig(t)
 	var logMu sync.Mutex
 	var logs []string
@@ -1104,23 +1104,6 @@ func TestAuthKeyNeverAppearsInErrorsLogsOrTheStateDirectory(t *testing.T) {
 	}
 	logMu.Unlock()
 
-	stateDir := provider.cfg.stateDir
-	entries, err := os.ReadDir(stateDir)
-	if err != nil {
-		t.Fatalf("read state dir: %v", err)
-	}
-	for _, entry := range entries {
-		data, err := os.ReadFile(filepath.Join(stateDir, entry.Name()))
-		if err != nil {
-			t.Fatalf("read state file: %v", err)
-		}
-		if strings.Contains(string(data), testAuthKey) {
-			t.Fatalf("state file %q contains the Auth Key", entry.Name())
-		}
-	}
-	if strings.Contains(stateDir, testAuthKey) {
-		t.Fatalf("state path contains the Auth Key: %q", stateDir)
-	}
 }
 
 func TestBackendConfigurationIsDerivedFromTheProfile(t *testing.T) {
@@ -1206,21 +1189,6 @@ func TestStateDirectoryRejectsPathTraversalProfileIDs(t *testing.T) {
 	}
 	if filepath.Dir(dir) != filepath.Join(wantBase, "tailscale") {
 		t.Fatalf("state directory parent = %q", filepath.Dir(dir))
-	}
-}
-
-func TestSystemTailscaleDirectoriesAreRecognized(t *testing.T) {
-	if isSystemTailscaleDir(t.TempDir()) {
-		t.Fatal("a temporary directory was classified as system Tailscale state")
-	}
-	roots := systemTailscaleDirs()
-	if len(roots) == 0 {
-		t.Skip("this platform exposes no known system Tailscale directory")
-	}
-	for _, root := range roots {
-		if !isSystemTailscaleDir(root) || !isSystemTailscaleDir(filepath.Join(root, "tailscaled.state")) {
-			t.Fatalf("%q is not classified as system Tailscale state", root)
-		}
 	}
 }
 

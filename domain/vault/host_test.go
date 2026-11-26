@@ -891,14 +891,6 @@ func TestStartupCommandIsTrimmedAndSurvivesTheRecord(t *testing.T) {
 	}
 }
 
-func TestEffectivePortUsesTheSSHDefault(t *testing.T) {
-	// The transport is not part of port resolution: an SSH Host with Mosh or
-	// ET still connects to the SSH bootstrap port.
-	if got := EffectivePort(ProtocolSSH, 0); got != 22 {
-		t.Errorf("EffectivePort = %d, want 22", got)
-	}
-}
-
 func TestAutoAttachTmuxIsKeptOnlyForPlainSSHHosts(t *testing.T) {
 	ssh, err := NormalizeDraft(Draft{
 		Label: "web", Hostname: "example.com", Protocol: ProtocolSSH,

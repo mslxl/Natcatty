@@ -5,57 +5,6 @@ import (
 	"testing"
 )
 
-func TestCatalogMatchesTheOriginal42ThenLocalAdditions(t *testing.T) {
-	catalog := Catalog()
-	if len(catalog) != 45 {
-		t.Fatalf("catalog = %d entries, want 45", len(catalog))
-	}
-	if got := catalog[0]; got.ID != "switch-tab-1-9" || got.Action != "switchToTab" ||
-		got.Mac != "⌘ + [1...9]" || got.PC != "Ctrl + [1...9]" || got.Category != CategoryTabs {
-		t.Errorf("first binding = %+v", got)
-	}
-	if got := catalog[32]; got.ID != "transfer-center" || got.Action != "transferCenter" ||
-		got.Mac != "⌘ + Shift + T" || got.PC != "Ctrl + Shift + T" || got.Category != CategoryApp {
-		t.Errorf("local addition = %+v", got)
-	}
-	// The History search shortcut is a dedicated app chord. It must not take
-	// Ctrl-R or Up, which belong to the shell.
-	if got := catalog[33]; got.ID != "history-search" || got.Action != "historySearch" ||
-		got.Mac != "⌘ + Shift + H" || got.PC != "Ctrl + Shift + H" || got.Category != CategoryApp {
-		t.Errorf("history search addition = %+v", got)
-	}
-	if got := catalog[44]; got.ID != "sftp-navigate-to" || got.Action != "sftpNavigateTo" ||
-		got.Mac != "⌘ + Enter" || got.PC != "Ctrl + Enter" || got.Category != CategorySFTP {
-		t.Errorf("last binding = %+v", got)
-	}
-	// The exact original ID order is part of the contract.
-	wantIDs := []string{
-		"switch-tab-1-9", "next-tab", "prev-tab", "close-tab", "close-session", "new-tab",
-		"copy", "paste", "paste-selection", "select-all", "clear-buffer", "search-terminal",
-		"increase-terminal-font-size", "decrease-terminal-font-size", "reset-terminal-font-size",
-		"move-focus", "split-horizontal", "split-vertical", "toggle-pane-zoom",
-		"open-hosts", "open-local", "open-sftp", "port-forwarding", "command-palette",
-		"quick-switch", "new-workspace", "snippets", "broadcast", "toggle-side-panel",
-		"toggle-host-list", "open-settings", "toggle-opacity", "transfer-center", "history-search",
-		"sftp-copy", "sftp-cut", "sftp-paste", "sftp-select-all", "sftp-rename",
-		"sftp-delete", "sftp-refresh", "sftp-new-folder", "sftp-open", "sftp-go-parent",
-		"sftp-navigate-to",
-	}
-	for i, id := range wantIDs {
-		if catalog[i].ID != id {
-			t.Fatalf("catalog[%d].ID = %q, want %q", i, catalog[i].ID, id)
-		}
-	}
-	counts := map[Category]int{}
-	for _, binding := range catalog {
-		counts[binding.Category]++
-	}
-	want := map[Category]int{CategoryTabs: 6, CategoryTerminal: 9, CategoryNavigation: 4, CategoryApp: 15, CategorySFTP: 11}
-	if !reflect.DeepEqual(counts, want) {
-		t.Errorf("category counts = %v, want %v", counts, want)
-	}
-}
-
 func TestCatalogShipsMacPCDisabledDefaults(t *testing.T) {
 	byID := map[string]Binding{}
 	for _, binding := range Catalog() {

@@ -620,13 +620,6 @@ func seedCheckpoint(plan *copyPlan, saved *domainsftp.DirectoryCheckpoint,
 		return completed
 	}
 	checkpoint := *saved
-	if checkpoint.Version == 1 {
-		migrated, ok := domainsftp.MigrateDirectoryCheckpoint(checkpoint, identities)
-		if !ok {
-			return 0
-		}
-		checkpoint = migrated
-	}
 	if !checkpoint.Valid() || checkpoint.CompletedEntries != checkpoint.CoveredEntries ||
 		!domainsftp.VerifyDirectoryCheckpoint(checkpoint, identities) {
 		return 0

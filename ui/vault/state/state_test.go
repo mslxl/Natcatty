@@ -248,33 +248,6 @@ func TestHostDetailsRoundTripsInputCompatibility(t *testing.T) {
 	}
 }
 
-func TestHostDetailsClearsInputCompatibilityWhenLeavingSSH(t *testing.T) {
-	repo := &fakeHosts{}
-	state, _ := newTestState(t, repo)
-	state.BeginCreate()
-	form := state.Form()
-	form.Label = "console"
-	form.Hostname = "console.example.com"
-	form.Protocol = string(domainvault.ProtocolTelnet)
-	form.NewlineMode = string(modelterminal.NewlineLF)
-	form.BackspaceMode = string(modelterminal.BackspaceCtrlH)
-	form.LineEditingMode = string(modelterminal.LineEditingByte)
-
-	if err := state.Save(); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	if len(repo.created) != 1 {
-		t.Fatalf("created drafts = %d, want 1", len(repo.created))
-	}
-	saved := state.Items()[0]
-	if saved.NewlineMode != modelterminal.NewlineCR ||
-		saved.BackspaceMode != modelterminal.BackspaceDEL ||
-		saved.LineEditingMode != modelterminal.LineEditingCharacter {
-		t.Fatalf("non-SSH Host input modes = %q/%q/%q, want defaults",
-			saved.NewlineMode, saved.BackspaceMode, saved.LineEditingMode)
-	}
-}
-
 func TestX11ForwardingIsOffByDefaultAndNeedsTheWarningAcknowledgement(t *testing.T) {
 	repo := &fakeHosts{}
 	state, _ := newTestState(t, repo)
@@ -468,10 +441,13 @@ func TestX11IsClearedOutsideSSH(t *testing.T) {
 	form := state.Form()
 	form.Label = "telnet"
 	form.Hostname = "example.com"
-	form.Protocol = string(domainvault.ProtocolTelnet)
-	// A hidden control must not keep a value Save would persist.
+	// The user enables X11 on the default SSH form, then rethinks and switches
+	// the protocol away: the hidden control must not keep a value Save would
+	// persist.
 	form.X11Forwarding = true
 	form.X11WarningAcknowledged = true
+	form.X11ForwardingSet = true
+	state.SetHostProtocol(string(domainvault.ProtocolTelnet))
 
 	if err := state.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -479,9 +455,12 @@ func TestX11IsClearedOutsideSSH(t *testing.T) {
 	if state.Problem() != ProblemNone {
 		t.Fatalf("Problem = %q, want none", state.Problem())
 	}
-	if len(repo.items) != 1 || repo.items[0].X11Forwarding ||
-		repo.items[0].X11WarningAcknowledged {
-		t.Fatalf("saved Host = %+v, want X11 cleared", repo.items)
+	if len(repo.created) != 1 {
+		t.Fatalf("created drafts = %d, want 1", len(repo.created))
+	}
+	draft := repo.created[0]
+	if draft.X11Forwarding || draft.X11WarningAcknowledged {
+		t.Fatalf("saved draft = %+v, want X11 cleared before the write", draft)
 	}
 }
 

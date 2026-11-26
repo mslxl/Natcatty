@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -835,27 +836,10 @@ func TestScheduledRetryResumesAfterATransientFailure(t *testing.T) {
 	}
 }
 
-func TestLockedSecretsPauseSyncWithoutOpeningARemote(t *testing.T) {
-	factory := fake.NewFactory(fake.Options{})
-	store := newMemorySyncStore()
-	service, _, secrets := newEngine(t, store, factory)
-	secrets.mode = historysync.SecretModePassphraseLocked
-
-	if _, err := service.SyncNow(context.Background()); !errors.Is(err, historysync.ErrSecretsLocked) {
-		t.Fatalf("SyncNow = %v, want ErrSecretsLocked", err)
-	}
-	if factory.Opens() != 0 {
-		t.Fatalf("factory opened %d remotes while locked", factory.Opens())
-	}
-	status := service.Status()
-	if status.State != atuinmodel.SyncLocked || status.NextRetryAt != (time.Time{}) {
-		t.Fatalf("status = %+v, want locked with no retry", status)
-	}
-}
-
 // TestLockedStoresNeverDecryptCredentials proves the pause happens before the
 // credential read, not merely before the remote open: a locked field-secret
-// store and an engaged App Lock must not call Get at all.
+// store and an engaged App Lock must not call Get at all, and the sync status
+// surfaces the lock without scheduling a retry.
 func TestLockedStoresNeverDecryptCredentials(t *testing.T) {
 	t.Run("passphrase locked", func(t *testing.T) {
 		factory := fake.NewFactory(fake.Options{})
@@ -884,6 +868,10 @@ func TestLockedStoresNeverDecryptCredentials(t *testing.T) {
 		}
 		if factory.Opens() != 0 {
 			t.Fatalf("a locked store opened %d remote(s)", factory.Opens())
+		}
+		status := service.Status()
+		if status.State != atuinmodel.SyncLocked || status.NextRetryAt != (time.Time{}) {
+			t.Fatalf("status = %+v, want locked with no retry", status)
 		}
 	})
 
@@ -1019,12 +1007,10 @@ func TestUploadsAreBatchedInIndexOrderAndNeverSkipAnIndex(t *testing.T) {
 	store.setMetadata(func(metadata *domainhistory.Metadata) {
 		metadata.UnverifiedKeyConfirmed = true
 	})
-	var ids []string
 	for index := 0; index < 5; index++ {
 		id := "0198d000-0000-7000-8000-00000000008" + string(rune('0'+index))
 		entry := localEntry(id, "command", testStart.Add(time.Duration(index)*time.Minute))
 		store.addLocalEntry(entry)
-		ids = append(ids, id+"-record")
 	}
 	service, _, _ := newEngine(t, store, factory)
 
@@ -1051,9 +1037,6 @@ func TestUploadsAreBatchedInIndexOrderAndNeverSkipAnIndex(t *testing.T) {
 		if record.Index != int64(index) {
 			t.Fatalf("server index %d = %d, want a continuous series", index, record.Index)
 		}
-	}
-	if len(ids) != 5 {
-		t.Fatalf("seeded %d records, want 5", len(ids))
 	}
 }
 
@@ -1846,65 +1829,6 @@ func TestRestoredLocalCapturesReachingServerMaxAreReindexed(t *testing.T) {
 	}
 }
 
-// TestServerSeriesHoleWithLocalCaptureIsFilled models a pinned server whose
-// writer series has a hole at index 5 while the local log holds an unsent
-// capture there. The download may use the local capture to skip the gap, but
-// the server's high-water mark must not turn that capture into an
-// acknowledgement: it must actually be uploaded into the hole.
-func TestServerSeriesHoleWithLocalCaptureIsFilled(t *testing.T) {
-	store := newMemorySyncStore()
-	store.setMetadata(func(metadata *domainhistory.Metadata) {
-		metadata.UnverifiedKeyConfirmed = true
-	})
-	var acknowledged []string
-	server := make([]historysync.SyncRecord, 0, 7)
-	for index := 0; index < 5; index++ {
-		id := "0198d000-0000-7000-8000-0000000003a" + string(rune('0'+index))
-		at := testStart.Add(time.Duration(index) * time.Minute)
-		record := store.addLocalEntry(localEntry(id, "old", at))
-		acknowledged = append(acknowledged, record.ID)
-		server = append(server, remoteCreate(testWriter, id, "old", int64(index), at))
-	}
-	store.setUploaded(acknowledged...)
-	captured := store.addLocalEntry(localEntry(
-		"0198d000-0000-7000-8000-0000000003b1", "capture in the server hole",
-		testStart.Add(7*time.Minute)))
-	server = append(server, remoteCreate(testWriter,
-		"0198d000-0000-7000-8000-0000000003d6", "server six", 6, testStart.Add(6*time.Minute)))
-	factory := fake.NewFactory(fake.Options{Records: server})
-	service, _, _ := newEngine(t, store, factory)
-
-	result, err := service.SyncNow(context.Background())
-	if err != nil {
-		t.Fatalf("SyncNow: %v", err)
-	}
-	if result.Downloaded != 1 || result.Applied != 1 || result.Uploaded != 1 {
-		t.Fatalf("result = %+v (events %v), want the server record applied and the capture uploaded",
-			result, factory.Events())
-	}
-	stored, ok := recordByID(store.snapshotRecords(), captured.ID)
-	if !ok {
-		t.Fatal("captured record vanished")
-	}
-	if stored.Index != 5 || stored.UploadedAt.IsZero() {
-		t.Fatalf("capture = %+v, want index 5 and acknowledged only by a real upload", stored)
-	}
-	serverRecord, onServer := syncRecordByID(factory.ServerRecords(), captured.ID)
-	if !onServer {
-		t.Fatalf("capture %s was acknowledged but never reached the server: %v",
-			captured.ID, factory.Events())
-	}
-	if serverRecord.Index != 5 {
-		t.Fatalf("server capture index = %d, want the hole at 5", serverRecord.Index)
-	}
-	if got := store.checkpoint(testWriter); got.AppliedIndex != 6 || got.UploadedIndex != 6 {
-		t.Fatalf("checkpoint = %+v, want applied 6 and uploaded 6", got)
-	}
-	if status := service.Status(); status.PendingUploads != 0 {
-		t.Fatalf("pending uploads = %d, want none", status.PendingUploads)
-	}
-}
-
 // TestServerSeriesHoleWithoutLocalCaptureFailsClosed proves a server hole
 // with no local record to fill it stops the sync instead of advancing past a
 // record this device never received.
@@ -1950,82 +1874,137 @@ func TestServerSeriesHoleWithoutLocalCaptureFailsClosed(t *testing.T) {
 	}
 }
 
-// TestServerSeriesMultipleHolesWithLocalCapturesAreFilled proves every hole
-// in the server series that a local capture covers is uploaded, including
-// holes in the middle of a page, and that the download applies the records on
-// either side.
-func TestServerSeriesMultipleHolesWithLocalCapturesAreFilled(t *testing.T) {
-	store := newMemorySyncStore()
-	store.setMetadata(func(metadata *domainhistory.Metadata) {
-		metadata.UnverifiedKeyConfirmed = true
-	})
-	var acknowledged []string
-	server := make([]historysync.SyncRecord, 0, 6)
-	for index := 0; index < 4; index++ {
-		id := "0198d000-0000-7000-8000-0000000004a" + string(rune('0'+index))
-		at := testStart.Add(time.Duration(index) * time.Minute)
-		record := store.addLocalEntry(localEntry(id, "old", at))
-		acknowledged = append(acknowledged, record.ID)
-		server = append(server, remoteCreate(testWriter, id, "old", int64(index), at))
-	}
-	store.setUploaded(acknowledged...)
-	captures := []domainhistory.Record{
-		store.addLocalEntry(localEntry(
-			"0198d000-0000-7000-8000-0000000004b1", "capture four", testStart.Add(4*time.Minute))),
-		store.addLocalEntry(localEntry(
-			"0198d000-0000-7000-8000-0000000004b2", "capture five", testStart.Add(5*time.Minute))),
-		store.addLocalEntry(localEntry(
-			"0198d000-0000-7000-8000-0000000004b3", "capture seven", testStart.Add(7*time.Minute))),
-	}
-	// The third capture was appended at index 6; move it to 7 so the server's
-	// record at 6 and its hole at 7 model two separate gaps.
-	thirdID := captures[2].ID
-	store.mu.Lock()
-	for index := range store.records {
-		if store.records[index].ID == thirdID {
-			store.records[index].Index = 7
+// TestServerSeriesHolesWithLocalCapturesAreFilled models a pinned server
+// whose writer series has holes while the local log holds unsent captures
+// there. The download may use the local captures to skip the gaps, but the
+// server's high-water mark must not turn those captures into
+// acknowledgements: they must actually be uploaded into the holes. The
+// multiple-holes case additionally proves holes in the middle of a page are
+// filled and that the download applies the records on either side.
+func TestServerSeriesHolesWithLocalCapturesAreFilled(t *testing.T) {
+	seedPrefix := func(count int, store *memorySyncStore) []historysync.SyncRecord {
+		var acknowledged []string
+		server := make([]historysync.SyncRecord, 0, count+2)
+		for index := 0; index < count; index++ {
+			id := fmt.Sprintf("0198d000-0000-7000-8000-00000000%04x", index)
+			at := testStart.Add(time.Duration(index) * time.Minute)
+			record := store.addLocalEntry(localEntry(id, "old", at))
+			acknowledged = append(acknowledged, record.ID)
+			server = append(server, remoteCreate(testWriter, id, "old", int64(index), at))
 		}
+		store.setUploaded(acknowledged...)
+		return server
 	}
-	store.mu.Unlock()
-	captures[2].Index = 7
-	server = append(server,
-		remoteCreate(testWriter, "0198d000-0000-7000-8000-0000000004c6", "server six", 6, testStart.Add(6*time.Minute)),
-		remoteCreate(testWriter, "0198d000-0000-7000-8000-0000000004c8", "server eight", 8, testStart.Add(8*time.Minute)))
-	factory := fake.NewFactory(fake.Options{Records: server})
-	service, _, _ := newEngine(t, store, factory)
 
-	result, err := service.SyncNow(context.Background())
-	if err != nil {
-		t.Fatalf("SyncNow: %v", err)
-	}
-	if result.Applied != 2 || result.Uploaded != 3 {
-		t.Fatalf("result = %+v (events %v), want two applied and three captures uploaded",
-			result, factory.Events())
-	}
-	records := store.snapshotRecords()
-	for _, capture := range captures {
-		stored, ok := recordByID(records, capture.ID)
+	t.Run("single hole", func(t *testing.T) {
+		store := newMemorySyncStore()
+		store.setMetadata(func(metadata *domainhistory.Metadata) {
+			metadata.UnverifiedKeyConfirmed = true
+		})
+		server := seedPrefix(5, store)
+		captured := store.addLocalEntry(localEntry(
+			"0198d000-0000-7000-8000-0000000003b1", "capture in the server hole",
+			testStart.Add(7*time.Minute)))
+		server = append(server, remoteCreate(testWriter,
+			"0198d000-0000-7000-8000-0000000003d6", "server six", 6, testStart.Add(6*time.Minute)))
+		factory := fake.NewFactory(fake.Options{Records: server})
+		service, _, _ := newEngine(t, store, factory)
+
+		result, err := service.SyncNow(context.Background())
+		if err != nil {
+			t.Fatalf("SyncNow: %v", err)
+		}
+		if result.Downloaded != 1 || result.Applied != 1 || result.Uploaded != 1 {
+			t.Fatalf("result = %+v (events %v), want the server record applied and the capture uploaded",
+				result, factory.Events())
+		}
+		stored, ok := recordByID(store.snapshotRecords(), captured.ID)
 		if !ok {
-			t.Fatalf("capture %s vanished", capture.ID)
+			t.Fatal("captured record vanished")
 		}
-		if stored.UploadedAt.IsZero() {
-			t.Fatalf("capture %s was not acknowledged: %+v", capture.ID, stored)
+		if stored.Index != 5 || stored.UploadedAt.IsZero() {
+			t.Fatalf("capture = %+v, want index 5 and acknowledged only by a real upload", stored)
 		}
-		serverRecord, onServer := syncRecordByID(factory.ServerRecords(), capture.ID)
+		serverRecord, onServer := syncRecordByID(factory.ServerRecords(), captured.ID)
 		if !onServer {
 			t.Fatalf("capture %s was acknowledged but never reached the server: %v",
-				capture.ID, factory.Events())
+				captured.ID, factory.Events())
 		}
-		if serverRecord.Index != stored.Index {
-			t.Fatalf("capture %s server index %d, local %d", capture.ID, serverRecord.Index, stored.Index)
+		if serverRecord.Index != 5 {
+			t.Fatalf("server capture index = %d, want the hole at 5", serverRecord.Index)
 		}
-	}
-	if got := store.checkpoint(testWriter); got.AppliedIndex != 8 || got.UploadedIndex != 8 {
-		t.Fatalf("checkpoint = %+v, want applied 8 and uploaded 8", got)
-	}
-	if status := service.Status(); status.PendingUploads != 0 {
-		t.Fatalf("pending uploads = %d, want none", status.PendingUploads)
-	}
+		if got := store.checkpoint(testWriter); got.AppliedIndex != 6 || got.UploadedIndex != 6 {
+			t.Fatalf("checkpoint = %+v, want applied 6 and uploaded 6", got)
+		}
+		if status := service.Status(); status.PendingUploads != 0 {
+			t.Fatalf("pending uploads = %d, want none", status.PendingUploads)
+		}
+	})
+
+	t.Run("multiple holes", func(t *testing.T) {
+		store := newMemorySyncStore()
+		store.setMetadata(func(metadata *domainhistory.Metadata) {
+			metadata.UnverifiedKeyConfirmed = true
+		})
+		server := seedPrefix(4, store)
+		captures := []domainhistory.Record{
+			store.addLocalEntry(localEntry(
+				"0198d000-0000-7000-8000-0000000004b1", "capture four", testStart.Add(4*time.Minute))),
+			store.addLocalEntry(localEntry(
+				"0198d000-0000-7000-8000-0000000004b2", "capture five", testStart.Add(5*time.Minute))),
+			store.addLocalEntry(localEntry(
+				"0198d000-0000-7000-8000-0000000004b3", "capture seven", testStart.Add(7*time.Minute))),
+		}
+		// The third capture was appended at index 6; move it to 7 so the server's
+		// record at 6 and its hole at 7 model two separate gaps.
+		thirdID := captures[2].ID
+		store.mu.Lock()
+		for index := range store.records {
+			if store.records[index].ID == thirdID {
+				store.records[index].Index = 7
+			}
+		}
+		store.mu.Unlock()
+		captures[2].Index = 7
+		server = append(server,
+			remoteCreate(testWriter, "0198d000-0000-7000-8000-0000000004c6", "server six", 6, testStart.Add(6*time.Minute)),
+			remoteCreate(testWriter, "0198d000-0000-7000-8000-0000000004c8", "server eight", 8, testStart.Add(8*time.Minute)))
+		factory := fake.NewFactory(fake.Options{Records: server})
+		service, _, _ := newEngine(t, store, factory)
+
+		result, err := service.SyncNow(context.Background())
+		if err != nil {
+			t.Fatalf("SyncNow: %v", err)
+		}
+		if result.Applied != 2 || result.Uploaded != 3 {
+			t.Fatalf("result = %+v (events %v), want two applied and three captures uploaded",
+				result, factory.Events())
+		}
+		records := store.snapshotRecords()
+		for _, capture := range captures {
+			stored, ok := recordByID(records, capture.ID)
+			if !ok {
+				t.Fatalf("capture %s vanished", capture.ID)
+			}
+			if stored.UploadedAt.IsZero() {
+				t.Fatalf("capture %s was not acknowledged: %+v", capture.ID, stored)
+			}
+			serverRecord, onServer := syncRecordByID(factory.ServerRecords(), capture.ID)
+			if !onServer {
+				t.Fatalf("capture %s was acknowledged but never reached the server: %v",
+					capture.ID, factory.Events())
+			}
+			if serverRecord.Index != stored.Index {
+				t.Fatalf("capture %s server index %d, local %d", capture.ID, serverRecord.Index, stored.Index)
+			}
+		}
+		if got := store.checkpoint(testWriter); got.AppliedIndex != 8 || got.UploadedIndex != 8 {
+			t.Fatalf("checkpoint = %+v, want applied 8 and uploaded 8", got)
+		}
+		if status := service.Status(); status.PendingUploads != 0 {
+			t.Fatalf("pending uploads = %d, want none", status.PendingUploads)
+		}
+	})
 }
 
 // recordByID and syncRecordByID are small lookup helpers for the hole tests.

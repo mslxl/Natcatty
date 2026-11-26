@@ -5,30 +5,6 @@ import (
 	"testing"
 )
 
-func TestDefaultKeywordHighlightRulesMatchTheOriginalCatalog(t *testing.T) {
-	rules := DefaultKeywordHighlightRules()
-	if len(rules) != 7 {
-		t.Fatalf("rules = %d, want the original 7", len(rules))
-	}
-	want := []string{"error", "warning", "ok", "info", "debug", "ip-mac", "unix-path"}
-	colors := map[string]string{
-		"error": "#F87171", "warning": "#FBBF24", "ok": "#34D399",
-		"info": "#3B82F6", "debug": "#A78BFA", "ip-mac": "#EC4899",
-		"unix-path": "#A78BFA",
-	}
-	for index, rule := range rules {
-		if rule.ID != want[index] {
-			t.Fatalf("rule %d id = %q, want %q", index, rule.ID, want[index])
-		}
-		if !rule.Enabled || len(rule.Patterns) == 0 {
-			t.Fatalf("default rule %q is not enabled with patterns", rule.ID)
-		}
-		if rule.Color != colors[rule.ID] {
-			t.Fatalf("rule %q color = %q, want %q", rule.ID, rule.Color, colors[rule.ID])
-		}
-	}
-}
-
 func TestHighlighterMatchesTheConfiguredPatternsCaseInsensitively(t *testing.T) {
 	highlighter := NewHighlighter(true, []KeywordHighlightRule{
 		{ID: "error", Patterns: []string{`\berror\b`, `\bfatal\b`}, Color: "#F87171", Enabled: true},

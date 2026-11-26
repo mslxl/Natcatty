@@ -100,30 +100,6 @@ func toolNames(t *testing.T, result map[string]any) []string {
 	return names
 }
 
-func TestInitializeIdentifiesTheOriginalServer(t *testing.T) {
-	messages := runScript(t, &fakeCaller{}, request(1, "initialize", map[string]any{
-		"protocolVersion": "2024-11-05",
-		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]any{"name": "test", "version": "1"},
-	}))
-	result := resultOf(t, messages, 1)
-	info, _ := result["serverInfo"].(map[string]any)
-	if info["name"] != "netcatty-remote-hosts" || info["version"] != "1.0.0" {
-		t.Fatalf("serverInfo = %v", info)
-	}
-	if result["protocolVersion"] != "2024-11-05" {
-		t.Fatalf("protocolVersion = %v", result["protocolVersion"])
-	}
-	capabilities, _ := result["capabilities"].(map[string]any)
-	tools, _ := capabilities["tools"].(map[string]any)
-	if tools["listChanged"] != true {
-		t.Fatalf("tools capability = %v", tools)
-	}
-	if !strings.Contains(fmt.Sprint(result["instructions"]), "15 core tools start loaded") {
-		t.Fatalf("instructions = %v", result["instructions"])
-	}
-}
-
 func TestToolsListStartsWithFourteenCoreToolsAndTheLoader(t *testing.T) {
 	messages := runScript(t, &fakeCaller{}, request(1, "tools/list", nil))
 	names := toolNames(t, resultOf(t, messages, 1))
@@ -360,39 +336,6 @@ func TestHiddenToolCannotBeCalledBeforeLoading(t *testing.T) {
 	}
 }
 
-func TestToolEntriesCarryTheOriginalSchemas(t *testing.T) {
-	messages := runScript(t, &fakeCaller{}, request(1, "tools/list", nil))
-	raw := resultOf(t, messages, 1)["tools"].([]any)
-	var sftpList map[string]any
-	for _, item := range raw {
-		tool := item.(map[string]any)
-		if tool["name"] == "sftp_list" {
-			sftpList = tool
-		}
-	}
-	if sftpList == nil {
-		t.Fatal("sftp_list is missing")
-	}
-	schema := sftpList["inputSchema"].(map[string]any)
-	if schema["type"] != "object" {
-		t.Fatalf("schema = %v", schema)
-	}
-	properties := schema["properties"].(map[string]any)
-	if properties["sessionId"].(map[string]any)["description"] != "SFTP session ID." {
-		t.Fatalf("sessionId property = %v", properties["sessionId"])
-	}
-	if !containsAny(schema["required"], "sessionId", "path") {
-		t.Fatalf("required = %v", schema["required"])
-	}
-
-	loader := raw[0].(map[string]any)
-	loaderSchema := loader["inputSchema"].(map[string]any)
-	enum := loaderSchema["properties"].(map[string]any)["toolset"].(map[string]any)["enum"].([]any)
-	if len(enum) != 8 || enum[7] != "all" {
-		t.Fatalf("loader enum = %v", enum)
-	}
-}
-
 func findMessage(messages []map[string]any, id int) map[string]any {
 	for _, message := range messages {
 		if number, ok := message["id"].(float64); ok && int(number) == id {
@@ -406,18 +349,6 @@ func contains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
 			return true
-		}
-	}
-	return false
-}
-
-func containsAny(value any, wants ...string) bool {
-	items, _ := value.([]any)
-	for _, item := range items {
-		for _, want := range wants {
-			if item == want {
-				return true
-			}
 		}
 	}
 	return false

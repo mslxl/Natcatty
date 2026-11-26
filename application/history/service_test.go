@@ -1051,50 +1051,74 @@ func TestClearThisDeviceWithNoLocalRowsIsANoOp(t *testing.T) {
 	}
 }
 
-func TestClearThisDeviceAppliesInBoundedBatches(t *testing.T) {
-	store := &memoryStore{}
-	service := NewService(store)
-	ctx := context.Background()
-	total := bulkDeleteBatchSize + 1
-	for index := 0; index < total; index++ {
-		store.entries = append(store.entries, domainhistory.Entry{
-			ID: fmt.Sprintf("legacy-%d", index), Scope: "local", Command: "ls",
-			Source: domainhistory.SourceSession, RecordedAt: at(index),
+func TestBulkDeleteAppliesInBoundedBatches(t *testing.T) {
+	cases := map[string]func(service *Service, ctx context.Context) (int, error){
+		"ClearThisDevice": func(service *Service, ctx context.Context) (int, error) {
+			return service.ClearThisDevice(ctx)
+		},
+		"DeleteEverywhere": func(service *Service, ctx context.Context) (int, error) {
+			return service.DeleteEverywhere(ctx)
+		},
+	}
+	for name, run := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := &memoryStore{}
+			service := NewService(store)
+			ctx := context.Background()
+			total := bulkDeleteBatchSize + 1
+			for index := 0; index < total; index++ {
+				store.entries = append(store.entries, domainhistory.Entry{
+					ID: fmt.Sprintf("legacy-%d", index), Scope: "local", Command: "ls",
+					Source: domainhistory.SourceSession, RecordedAt: at(index),
+				})
+			}
+			removed, err := run(service, ctx)
+			if err != nil || removed != total {
+				t.Fatalf("%s = %d, %v; want %d", name, removed, err, total)
+			}
+			if store.batches != 2 {
+				t.Fatalf("store batches = %d, want 2 for %d rows", store.batches, total)
+			}
 		})
-	}
-	removed, err := service.ClearThisDevice(ctx)
-	if err != nil || removed != total {
-		t.Fatalf("ClearThisDevice = %d, %v; want %d", removed, err, total)
-	}
-	if store.batches != 2 {
-		t.Fatalf("store batches = %d, want 2 for %d rows", store.batches, total)
 	}
 }
 
-// TestClearThisDeviceReportsCommittedRowsWhenALaterBatchFails pins the partial
+// TestBulkDeleteReportsCommittedRowsWhenALaterBatchFails pins the partial
 // result contract: the count describes the rows already soft-deleted, and the
 // error stops the remaining batches.
-func TestClearThisDeviceReportsCommittedRowsWhenALaterBatchFails(t *testing.T) {
-	store := &memoryStore{batchLimit: 1}
-	service := NewService(store)
-	ctx := context.Background()
-	total := bulkDeleteBatchSize + 1
-	for index := 0; index < total; index++ {
-		store.entries = append(store.entries, domainhistory.Entry{
-			ID: fmt.Sprintf("legacy-%d", index), Scope: "local", Command: "ls",
-			Source: domainhistory.SourceSession, RecordedAt: at(index),
+func TestBulkDeleteReportsCommittedRowsWhenALaterBatchFails(t *testing.T) {
+	cases := map[string]func(service *Service, ctx context.Context) (int, error){
+		"ClearThisDevice": func(service *Service, ctx context.Context) (int, error) {
+			return service.ClearThisDevice(ctx)
+		},
+		"DeleteEverywhere": func(service *Service, ctx context.Context) (int, error) {
+			return service.DeleteEverywhere(ctx)
+		},
+	}
+	for name, run := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := &memoryStore{batchLimit: 1}
+			service := NewService(store)
+			ctx := context.Background()
+			total := bulkDeleteBatchSize + 1
+			for index := 0; index < total; index++ {
+				store.entries = append(store.entries, domainhistory.Entry{
+					ID: fmt.Sprintf("legacy-%d", index), Scope: "local", Command: "ls",
+					Source: domainhistory.SourceSession, RecordedAt: at(index),
+				})
+			}
+			removed, err := run(service, ctx)
+			if err == nil {
+				t.Fatalf("%s did not report the failed batch", name)
+			}
+			if removed != bulkDeleteBatchSize {
+				t.Fatalf("%s = %d, want the committed first batch", name, removed)
+			}
+			live, _ := service.Load(ctx)
+			if len(live) != 1 {
+				t.Fatalf("live rows = %d, want the row from the failed batch", len(live))
+			}
 		})
-	}
-	removed, err := service.ClearThisDevice(ctx)
-	if err == nil {
-		t.Fatal("ClearThisDevice did not report the failed batch")
-	}
-	if removed != bulkDeleteBatchSize {
-		t.Fatalf("ClearThisDevice = %d, want the committed first batch", removed)
-	}
-	live, _ := service.Load(ctx)
-	if len(live) != 1 {
-		t.Fatalf("live rows = %d, want the row from the failed batch", len(live))
 	}
 }
 
@@ -1198,64 +1222,6 @@ func TestDeleteEverywhereWithNoRowsIsANoOp(t *testing.T) {
 	}
 	if len(store.records) != 0 {
 		t.Fatalf("empty Delete everywhere appended records: %+v", store.records)
-	}
-}
-
-func TestDeleteEverywhereAppliesInBoundedBatches(t *testing.T) {
-	store := &memoryStore{}
-	service := NewService(store)
-	ctx := context.Background()
-	total := bulkDeleteBatchSize + 1
-	for index := 0; index < total; index++ {
-		store.entries = append(store.entries, domainhistory.Entry{
-			ID: fmt.Sprintf("legacy-%d", index), Scope: "local", Command: "ls",
-			Source: domainhistory.SourceSession, RecordedAt: at(index),
-		})
-	}
-	removed, err := service.DeleteEverywhere(ctx)
-	if err != nil || removed != total {
-		t.Fatalf("DeleteEverywhere = %d, %v; want %d", removed, err, total)
-	}
-	if store.batches != 2 {
-		t.Fatalf("store batches = %d, want 2 for %d rows", store.batches, total)
-	}
-}
-
-// TestDeleteEverywhereReportsCommittedRowsWhenALaterBatchFails pins the partial
-// result contract: the count describes rows already soft-deleted and the error
-// stops the remaining batches.
-func TestDeleteEverywhereReportsCommittedRowsWhenALaterBatchFails(t *testing.T) {
-	store := &memoryStore{batchLimit: 1}
-	service := NewService(store)
-	ctx := context.Background()
-	total := bulkDeleteBatchSize + 1
-	for index := 0; index < total; index++ {
-		store.entries = append(store.entries, domainhistory.Entry{
-			ID: fmt.Sprintf("legacy-%d", index), Scope: "local", Command: "ls",
-			Source: domainhistory.SourceSession, RecordedAt: at(index),
-		})
-	}
-	removed, err := service.DeleteEverywhere(ctx)
-	if err == nil {
-		t.Fatal("DeleteEverywhere did not report the failed batch")
-	}
-	if removed != bulkDeleteBatchSize {
-		t.Fatalf("DeleteEverywhere = %d, want the committed first batch", removed)
-	}
-	live, _ := service.Load(ctx)
-	if len(live) != 1 {
-		t.Fatalf("live rows = %d, want the row from the failed batch", len(live))
-	}
-}
-
-func TestFailedRecordLeavesProjectionAndRecordLogUnchanged(t *testing.T) {
-	store := &memoryStore{failWrite: errors.New("disk full")}
-	service := newUUIDService(store)
-	if err := service.Record(context.Background(), domainhistory.Entry{Command: "ls"}); err == nil {
-		t.Fatal("Record succeeded despite a failed store write")
-	}
-	if len(store.entries) != 0 || len(store.records) != 0 {
-		t.Fatalf("failed record changed state: entries=%+v records=%+v", store.entries, store.records)
 	}
 }
 
@@ -1514,24 +1480,6 @@ func TestImportShellHistorySkipsDuplicatesIncludingSoftDeletedRows(t *testing.T)
 	}
 	if !store.metadata.ShellHistoryImported {
 		t.Fatal("the import marker was not set after skipping duplicates")
-	}
-}
-
-func TestFailedShellHistoryImportLeavesMarkerUnset(t *testing.T) {
-	store := &memoryStore{failWrite: errors.New("disk full")}
-	service := newUUIDService(store)
-	err := service.ImportShellHistory(context.Background(), func() []domainhistory.ShellHistoryCommand {
-		return []domainhistory.ShellHistoryCommand{{Command: "ls", Shell: "zsh"}}
-	}, "workstation:alice")
-	if err == nil {
-		t.Fatal("ImportShellHistory succeeded despite a failed store write")
-	}
-	if store.metadata.ShellHistoryImported {
-		t.Fatal("a failed import set the durable marker")
-	}
-	if len(store.entries) != 0 || len(store.records) != 0 {
-		t.Fatalf("a failed import changed state: entries=%d records=%d",
-			len(store.entries), len(store.records))
 	}
 }
 

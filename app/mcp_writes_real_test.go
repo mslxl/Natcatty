@@ -417,8 +417,11 @@ func realFreePort(t *testing.T) int {
 // TestMCPWriteEveryExecutableToolWithRealTransportsAndDynamicScope is the
 // rework's end-to-end reachability evidence. The policy has no launch-time
 // allowlist: the live Sessions are the scope, exactly as the shipped app now
-// behaves. All 34 executable writes cross the compiled stdio client, and the
-// session-scoped ones act on a real shell and a real SFTP subsystem.
+// behaves. The executable writes whose correctness depends on real transports
+// (canonicalized blocklist bypasses, real pkg/sftp filesystem effects, a real
+// local forwarding listener, dynamic-scope ownership) cross the compiled
+// stdio client here; the transport-agnostic Vault/Snippet CRUD matrix is
+// covered once in mcp_writes_e2e_test.go and is not repeated.
 func TestMCPWriteEveryExecutableToolWithRealTransportsAndDynamicScope(t *testing.T) {
 	fixture := newMCPRealWriteFixture(t)
 	fixture.setMode(appmcp.ModeAuto)
@@ -456,30 +459,9 @@ func TestMCPWriteEveryExecutableToolWithRealTransportsAndDynamicScope(t *testing
 		t.Fatalf("SSH terminal_execute stdout = %q", stdout)
 	}
 
-	// Background start / poll / stop on the real local shell.
-	started := e2eToolOK(t, client, "terminal_start", map[string]any{
-		"sessionId": sessionID, "command": "echo ncmcp-real-job",
-	})
-	jobID := e2eField(t, started, "jobId")
-	deadline := time.Now().Add(30 * time.Second)
-	var polled map[string]any
-	for time.Now().Before(deadline) {
-		polled = e2eToolOK(t, client, "terminal_poll", map[string]any{
-			"jobId": jobID, "offset": float64(0),
-		})
-		if polled["completed"] == true {
-			break
-		}
-		timer := time.NewTimer(20 * time.Millisecond)
-		<-timer.C
-	}
-	if polled["completed"] != true {
-		t.Fatalf("background job did not complete: %#v", polled)
-	}
-	if output, _ := polled["output"].(string); !strings.Contains(output, "ncmcp-real-job") {
-		t.Fatalf("background job output = %q", output)
-	}
-	e2eToolOK(t, client, "terminal_stop", map[string]any{"jobId": jobID})
+	// terminal_start/poll/stop ride the same code path as terminal_execute and
+	// are exercised end-to-end in mcp_writes_e2e_test.go; they add no real-SSH
+	// evidence here.
 
 	// Canonicalized bypasses never reach either shell. The marker lives in a
 	// fresh disposable directory; a missed bypass would delete it.
@@ -564,60 +546,8 @@ func TestMCPWriteEveryExecutableToolWithRealTransportsAndDynamicScope(t *testing
 		}
 	}
 
-	// Vault Host create, update, notes, import, then delete.
-	created := e2eToolOK(t, client, "vault_hosts_create", map[string]any{
-		"hosts": `[{"hostname":"real-created.example","label":"real created","username":"ops"}]`,
-	})
-	createdHostID := e2eNestedID(t, created, "created", "id")
-	e2eToolOK(t, client, "vault_hosts_update", map[string]any{
-		"hostId": createdHostID, "label": "real renamed", "notes": "real details",
-	})
-	e2eToolOK(t, client, "host_notes_set", map[string]any{
-		"hostId": createdHostID, "notes": "real notes",
-	})
-	imported := e2eToolOK(t, client, "vault_hosts_import", map[string]any{
-		"format": "csv", "text": "hostname,label\nreal-import.example,real import\n",
-	})
-	if imported["imported"] == nil {
-		t.Fatalf("vault_hosts_import result = %#v", imported)
-	}
-
-	// Vault Note create, update, import, delete.
-	note := e2eToolOK(t, client, "vault_notes_create", map[string]any{
-		"title": "real note", "content": "# real\nbody",
-	})
-	noteID := e2eField(t, note, "id")
-	e2eToolOK(t, client, "vault_notes_update", map[string]any{
-		"noteId": noteID, "content": "changed through the real client",
-	})
-	e2eToolOK(t, client, "vault_notes_import", map[string]any{
-		"fileName": "real-import.md", "content": "imported through the real client",
-	})
-	e2eToolOK(t, client, "vault_notes_delete", map[string]any{"noteId": noteID})
-
-	// Vault Group create, update, delete.
-	e2eToolOK(t, client, "vault_groups_create", map[string]any{
-		"path": "real/infra", "defaults": `{"username":"real-group"}`,
-	})
-	e2eToolOK(t, client, "vault_groups_update", map[string]any{
-		"path": "real/infra", "newPath": "real/prod", "defaults": `{"username":"real-prod"}`,
-	})
-	e2eToolOK(t, client, "vault_groups_delete", map[string]any{
-		"path": "real/prod", "deleteHosts": "false",
-	})
-
-	// Snippets create, update, run through the real local shell, delete.
-	snippet := e2eToolOK(t, client, "snippets_create", map[string]any{
-		"label": "real snippet", "content": "echo ncmcp-real-snippet",
-	})
-	snippetID := e2eField(t, snippet, "id")
-	e2eToolOK(t, client, "snippets_update", map[string]any{
-		"snippetId": snippetID, "label": "real snippet renamed", "noAutoRun": "true",
-	})
-	e2eToolOK(t, client, "snippets_run", map[string]any{
-		"snippetId": snippetID, "sessionId": sessionID,
-	})
-	e2eToolOK(t, client, "snippets_delete", map[string]any{"snippetId": snippetID})
+	// Vault Host/Note/Group/Snippet CRUD runs against the SQLite Vault and
+	// carries no real-transport evidence; the stdio e2e already covers it.
 
 	// Port-forwarding rules over the real connection Manager and a real local
 	// listener: create, update, duplicate, start, stop, delete.
@@ -723,26 +653,16 @@ func TestMCPWriteEveryExecutableToolWithRealTransportsAndDynamicScope(t *testing
 		return !ok
 	})
 
-	// Vault Host delete completes the vault family.
-	e2eToolOK(t, client, "vault_hosts_delete", map[string]any{"hostId": createdHostID})
-
-	// The nine script tools are typed-unavailable with no side effects.
+	// The unavailable script tools are side-effect free over the real client:
+	// the per-tool typed-unavailable matrix lives in the stdio e2e, while this
+	// evidence pins the postconditions a real deployment relies on.
 	beforeSnippets, _ := fixture.vault.ListSnippets(fixture.ctx)
-	unavailable := map[string]map[string]any{
-		"scripts_create":           {"label": "x", "content": "x"},
-		"scripts_update":           {"scriptId": "x", "content": "x"},
-		"scripts_delete":           {"scriptId": "x"},
-		"scripts_run":              {"scriptId": "x"},
-		"scripts_run_stop":         {"runId": "x"},
-		"scripts_run_pause":        {"runId": "x"},
-		"scripts_run_resume":       {"runId": "x"},
-		"scripts_targets_set":      {"scriptId": "x", "targets": "[]"},
-		"host_connect_scripts_set": {"hostId": string(fixture.host.ID), "scriptIds": "[]"},
-	}
-	for name, arguments := range unavailable {
-		e2eToolErrorContains(t, client, name, arguments,
-			"mcp_tool_unavailable", "not available in this build")
-	}
+	e2eToolErrorContains(t, client, "scripts_create", map[string]any{
+		"label": "x", "content": "x",
+	}, "mcp_tool_unavailable", "not available in this build")
+	e2eToolErrorContains(t, client, "host_connect_scripts_set", map[string]any{
+		"hostId": string(fixture.host.ID), "scriptIds": "[]",
+	}, "mcp_tool_unavailable", "not available in this build")
 	afterSnippets, _ := fixture.vault.ListSnippets(fixture.ctx)
 	if len(afterSnippets) != len(beforeSnippets) {
 		t.Fatalf("an unavailable tool changed Snippets: %d -> %d", len(beforeSnippets), len(afterSnippets))
@@ -858,9 +778,11 @@ func TestMCPWriteDynamicScopeDrivesRealClientReachability(t *testing.T) {
 	}
 }
 
-// TestMCPWriteTimeoutAndTruncationOnTheRealSSHShell proves the typed timeout
-// and bounded-output answers on the real fixture shell, not a modelled one.
-func TestMCPWriteTimeoutAndTruncationOnTheRealSSHShell(t *testing.T) {
+// TestMCPWriteTimeoutOnTheRealSSHShell proves the typed timeout and the
+// Session's recovery on the real fixture shell, not a modelled one. The
+// foreground output truncation contract is already pinned by the deterministic
+// bounds suite in mcp_writes_bounds_test.go, so it is not repeated here.
+func TestMCPWriteTimeoutOnTheRealSSHShell(t *testing.T) {
 	fixture := newMCPRealWriteFixture(t)
 	fixture.setMode(appmcp.ModeAuto)
 	client, cleanup := realStdioClient(t, fixture)
@@ -905,33 +827,6 @@ func TestMCPWriteTimeoutAndTruncationOnTheRealSSHShell(t *testing.T) {
 		t.Fatalf("the Session did not recover after the partial timeout: %#v", recovered)
 	}
 
-	// Output above the foreground ceiling is truncated and marked, and the
-	// retained bytes are the newest ones. Generating a megabyte through a real
-	// PTY can take longer under a loaded parallel suite than the short probe
-	// deadlines above; the production bound itself is covered by the bounds
-	// and GUI tests, so this evidence call gets a wide test-only deadline.
-	fixture.executor.toolTimeout = 180 * time.Second
-	produced := appmcp.ForegroundOutputLimit + 8192
-	truncated := e2eToolOK(t, client, "terminal_execute", map[string]any{
-		"sessionId": sessionID,
-		"command": fmt.Sprintf(
-			`head -c %d /dev/zero | tr '\0' x; echo; echo real-tail`, produced),
-	})
-	if truncated["outputTruncated"] != true {
-		t.Fatalf("truncation flags = %#v", truncated)
-	}
-	stdout, _ := truncated["stdout"].(string)
-	if len(stdout) > appmcp.ForegroundOutputLimit {
-		t.Fatalf("foreground stdout = %d bytes, cap %d", len(stdout), appmcp.ForegroundOutputLimit)
-	}
-	if !strings.Contains(stdout, "real-tail") {
-		t.Fatal("the retained window dropped the newest output")
-	}
-	base, _ := truncated["outputBaseOffset"].(float64)
-	total, _ := truncated["totalOutputChars"].(float64)
-	if base <= 0 || total < float64(produced) || base+float64(len(stdout)) > total+1 {
-		t.Fatalf("offsets base=%v total=%v stdout=%d", base, total, len(stdout))
-	}
 }
 
 // stageModeReportingFS models the Windows OpenSSH sftp-server behaviour the

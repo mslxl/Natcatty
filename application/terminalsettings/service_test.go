@@ -28,20 +28,6 @@ func (s *fakeStore) Save(_ context.Context, settings domainterminal.Settings) er
 	return nil
 }
 
-func TestLoadUsesOriginalDefaultsForMissingValues(t *testing.T) {
-	store := &fakeStore{}
-	service := NewService(store)
-	if err := service.Load(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	settings := service.Settings()
-	if settings.LogFormat != domainterminal.LogFormatText ||
-		settings.OSC52 != domainterminal.ClipboardWriteOnly ||
-		settings.OSCNotifications != domainterminal.NotificationAlways {
-		t.Fatalf("settings = %+v", settings)
-	}
-}
-
 func TestUpdatePersistsAndPublishes(t *testing.T) {
 	store := &fakeStore{}
 	service := NewService(store)

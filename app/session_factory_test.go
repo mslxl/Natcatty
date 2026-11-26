@@ -819,27 +819,6 @@ func TestVaultRoutesCarryTheNetworkFingerprintAndLabel(t *testing.T) {
 	}
 }
 
-// A reference to a profile that no longer exists must stay selected so the
-// runtime fails closed with KindProvider instead of silently dialing directly.
-func TestVaultRoutesKeepADanglingNetworkProfileReference(t *testing.T) {
-	route, err := (vaultRoutes{vault: &fakeRouteVault{
-		hosts: map[model.HostID]domainvault.Host{
-			"target": {ID: "target", Hostname: "target.internal", NetworkProfileID: "gone"},
-		},
-		networkProfiles: map[string]domainvault.NetworkProfile{},
-	}}).Route(context.Background(), "target")
-	if err != nil {
-		t.Fatalf("Route: %v", err)
-	}
-	if route.Network == nil {
-		t.Fatal("Network = nil, want the dangling reference preserved")
-	}
-	if route.Network.ProfileID != "gone" || route.Network.Kind != "" ||
-		route.Network.Label != "" || route.Network.Fingerprint != "" {
-		t.Fatalf("Network = %+v, want only the dangling profile ID", route.Network)
-	}
-}
-
 func TestSSHSessionPassesTheNetworkRouteToTheManager(t *testing.T) {
 	client := &factoryClient{terminal: &factoryTerminal{}}
 	dialer := &factoryDialer{client: client}

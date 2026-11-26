@@ -1055,60 +1055,45 @@ func TestProbeTreatsAStaleDatabaseWithoutAtuinAsAbsent(t *testing.T) {
 
 // A profile with an ATUIN_HOME assignment is installation evidence and a data
 // directory hint, all without running the shell or Atuin.
-func TestProbeUsesAnAtuinHomeHintFromAProfile(t *testing.T) {
-	const historyPath = "/home/me/.atuin-custom/history.db"
-	files := &fakeRemoteFiles{
-		root:      "/home/me",
-		noInstall: true,
-		files: map[string]*fakeFile{
-			"/home/me/.profile": {
-				content: []byte("export PATH=$HOME/bin:$PATH\nexport ATUIN_HOME=\"$HOME/.atuin-custom\"\n"),
-				regular: true,
-			},
-			historyPath: {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
+func TestProbeUsesTheRelocationHintFromAProfile(t *testing.T) {
+	cases := map[string]struct {
+		rcFile    string
+		rcContent string
+		history   string
+	}{
+		"ATUIN_HOME": {
+			rcFile:    "/home/me/.profile",
+			rcContent: "export PATH=$HOME/bin:$PATH\nexport ATUIN_HOME=\"$HOME/.atuin-custom\"\n",
+			history:   "/home/me/.atuin-custom/history.db",
+		},
+		"XDG_DATA_HOME": {
+			rcFile:    "/home/me/.bashrc",
+			rcContent: "export XDG_DATA_HOME=\"$HOME/.xdg\"\n",
+			history:   "/home/me/.xdg/atuin/history.db",
 		},
 	}
-	database := &fakeDatabase{rows: []domainhistory.AtuinRow{testRow("id-1", 100, "ls")}}
-	recorder := &fakeRecorder{}
-	service := testService(&fakeRemoteSource{files: files}, database, recorder)
+	for name, test := range cases {
+		t.Run(name, func(t *testing.T) {
+			files := &fakeRemoteFiles{
+				root:      "/home/me",
+				noInstall: true,
+				files: map[string]*fakeFile{
+					test.rcFile:  {content: []byte(test.rcContent), regular: true},
+					test.history: {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
+				},
+			}
+			database := &fakeDatabase{rows: []domainhistory.AtuinRow{testRow("id-1", 100, "ls")}}
+			recorder := &fakeRecorder{}
+			service := testService(&fakeRemoteSource{files: files}, database, recorder)
 
-	result, err := service.Probe(context.Background(), testRef)
-	if err != nil {
-		t.Fatalf("Probe: %v", err)
-	}
-	if !result.Present || result.Imported != 1 {
-		t.Fatalf("result = %+v, want an import from the hinted directory", result)
-	}
-	if database.calls != 1 {
-		t.Fatalf("database reads = %d, want 1", database.calls)
-	}
-}
-
-// XDG_DATA_HOME is the other documented relocation hint; its Atuin directory
-// is checked without running the shell.
-func TestProbeUsesAnXDGDataHomeHintFromAProfile(t *testing.T) {
-	const historyPath = "/home/me/.xdg/atuin/history.db"
-	files := &fakeRemoteFiles{
-		root:      "/home/me",
-		noInstall: true,
-		files: map[string]*fakeFile{
-			"/home/me/.bashrc": {
-				content: []byte("export XDG_DATA_HOME=\"$HOME/.xdg\"\n"),
-				regular: true,
-			},
-			historyPath: {content: []byte("database"), modTime: time.Unix(100, 0), regular: true},
-		},
-	}
-	database := &fakeDatabase{rows: []domainhistory.AtuinRow{testRow("id-1", 100, "ls")}}
-	recorder := &fakeRecorder{}
-	service := testService(&fakeRemoteSource{files: files}, database, recorder)
-
-	result, err := service.Probe(context.Background(), testRef)
-	if err != nil {
-		t.Fatalf("Probe: %v", err)
-	}
-	if !result.Present || result.Imported != 1 {
-		t.Fatalf("result = %+v, want an import from XDG_DATA_HOME", result)
+			result, err := service.Probe(context.Background(), testRef)
+			if err != nil {
+				t.Fatalf("Probe: %v", err)
+			}
+			if !result.Present || result.Imported != 1 {
+				t.Fatalf("result = %+v, want an import from the hinted directory", result)
+			}
+		})
 	}
 }
 
