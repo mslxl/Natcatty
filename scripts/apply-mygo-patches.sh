@@ -25,6 +25,14 @@ if [ -z "$required" ]; then
 	exit 1
 fi
 tags=$(git -C third_party/mygo tag --points-at HEAD)
+if [ -z "$tags" ]; then
+	# A CI checkout clones the pinned submodule commit without the remote's
+	# tags, so the pin check cannot see the release the gitlink names. Fetch
+	# them once before calling the pin wrong; an offline checkout fails the
+	# fetch quietly and reports the missing tag below as before.
+	git -C third_party/mygo fetch --tags --quiet origin >/dev/null 2>&1 || true
+	tags=$(git -C third_party/mygo tag --points-at HEAD)
+fi
 if ! printf '%s\n' "$tags" | grep -qx "$required"; then
 	if [ -z "$tags" ]; then
 		echo "mygo: third_party/mygo HEAD has no tag; fetch tags with 'git -C third_party/mygo fetch --tags'" >&2

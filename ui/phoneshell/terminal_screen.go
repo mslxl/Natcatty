@@ -134,15 +134,17 @@ type ghosttyScreen struct {
 	pasteKeys map[phoneChordKey]bool
 	// pasteTarget is the Sessions page's unified paste decision. It reports
 	// whether it took the data (by sending it or by holding it for the
-	// confirmation row).
-	pasteTarget func(c *ui.Context, d transfer.Data) bool
+	// confirmation row). It takes Services, not a Context: a paste arrives
+	// between frames, and only Services outlives the build.
+	pasteTarget func(services ui.Services, d transfer.Data) bool
 	// echoKey marks that the last key was handled here — a binding ran, or
 	// the screen typed the composed text the key carried — so the text the
 	// platform commits for it is not typed as well.
 	echoKey bool
-	// frame is the last build's context. A tap arrives between frames, and
-	// the URL outcome has to repaint the same window.
-	frame *ui.Context
+	// services are the last build's window services. A tap or a paste arrives
+	// between frames, where the per-pass Context is gone; Services stays valid,
+	// so it carries the repaint and clipboard requests across frames.
+	services ui.Services
 	// tapGeom is the live grid's geometry as the last frame laid it out.
 	tapGeom tapGeometry
 	// tapX and tapY are where the finger went down, so a drag is a selection
@@ -162,7 +164,7 @@ type ghosttyScreen struct {
 // View draws the screen for this frame. The appview flow needs a frame after
 // output arrives; the Context's invalidate is safe from the reader goroutine.
 func (s *ghosttyScreen) View(c *ui.Context) ui.Element {
-	s.frame = c
+	s.services = c.Services()
 	s.runPendingTap(c)
 	s.flow.setRedraw(c.Invalidate)
 	if !s.lensMode {
@@ -400,9 +402,7 @@ func (s *ghosttyScreen) observeTap(ev ui.InputEvent) {
 			// where a Context's OpenURLThen has no frame to act on.
 			s.pendingTap = true
 			s.pendingTapX, s.pendingTapY = ev.X, ev.Y
-			if s.frame != nil {
-				s.frame.Invalidate()
-			}
+			s.services.Invalidate()
 		}
 	}
 }
@@ -507,7 +507,7 @@ func (s *ghosttyScreen) SetKeyboard(keyboard *phoneKeyboard) { s.keyboard = keyb
 
 // SetPasteTarget installs the Sessions page's unified paste decision. Every
 // paste entry point on this screen hands the clipboard data to it.
-func (s *ghosttyScreen) SetPasteTarget(target func(c *ui.Context, d transfer.Data) bool) {
+func (s *ghosttyScreen) SetPasteTarget(target func(services ui.Services, d transfer.Data) bool) {
 	s.pasteTarget = target
 }
 
@@ -603,12 +603,12 @@ func (s *ghosttyScreen) pasteFromClipboard() bool {
 	if s.term == nil {
 		return false
 	}
-	data := readPhoneClipboard(s.frame)
+	data := readPhoneClipboard(s.services)
 	if len(data.Items()) == 0 {
 		return false
 	}
 	if s.pasteTarget != nil {
-		return s.pasteTarget(s.frame, data)
+		return s.pasteTarget(s.services, data)
 	}
 	s.term.PasteData(data)
 	return true
@@ -716,9 +716,7 @@ func (s *ghosttyScreen) ToggleScrollback() {
 		}
 		s.scroll.Y = max(0, s.scroll.Y-page)
 	}
-	if s.frame != nil {
-		s.frame.Invalidate()
-	}
+	s.services.Invalidate()
 }
 
 // Close detaches the screen. Closing the tap flow first stops the reader's

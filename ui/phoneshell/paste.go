@@ -23,11 +23,10 @@ var phoneClipboardFormats = []transfer.Format{transfer.Text, transfer.PNG}
 
 // readPhoneClipboard reads the clipboard's text and PNG representations. An
 // empty clipboard gives empty data, which callers treat as "nothing to paste".
-func readPhoneClipboard(c *ui.Context) transfer.Data {
-	if c == nil {
-		return transfer.Data{}
-	}
-	return c.Services().ReadClipboardData(phoneClipboardFormats...)
+// It takes the persistent Services so a caller between frames can read the
+// clipboard without keeping a build's Context.
+func readPhoneClipboard(services ui.Services) transfer.Data {
+	return services.ReadClipboardData(phoneClipboardFormats...)
 }
 
 // pasteData is the phone's only paste decision. It applies the shared
@@ -39,7 +38,7 @@ func readPhoneClipboard(c *ui.Context) transfer.Data {
 //
 // It reports whether it took the data, so a keyboard hook can say the key was
 // handled.
-func pasteData(c *ui.Context, screen TerminalScreen, acc *accessoryState,
+func pasteData(services ui.Services, screen TerminalScreen, acc *accessoryState,
 	data transfer.Data, guard func(string) bool) bool {
 
 	if screen == nil || len(data.Items()) == 0 {
@@ -50,9 +49,7 @@ func pasteData(c *ui.Context, screen TerminalScreen, acc *accessoryState,
 			acc.pendingPaste = string(text)
 			acc.pendingData = data
 		}
-		if c != nil {
-			c.Invalidate()
-		}
+		services.Invalidate()
 		return true
 	}
 	screen.PasteData(data)

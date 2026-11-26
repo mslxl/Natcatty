@@ -142,7 +142,8 @@ func accessoryControls(c *ui.Context, acc *accessoryState, screen TerminalScreen
 			// needs the text, but a clipboard holding only an image has none:
 			// that goes straight to the terminal, which ignores formats it
 			// does not paste.
-			pasteData(c, screen, acc, readPhoneClipboard(c), pasteGuard)
+			services := c.Services()
+			pasteData(services, screen, acc, readPhoneClipboard(services), pasteGuard)
 		}
 		scrolled := screen.InScrollback()
 		label := "History"
