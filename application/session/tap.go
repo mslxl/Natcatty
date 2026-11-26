@@ -288,6 +288,27 @@ type terminalTap struct {
 	// wrong row, because the hook and the shell's own native marks still
 	// capture what they can prove. The next Enter or Ctrl+C re-arms the tap.
 	inputLost bool
+	// submittedInput reads the logical input line the shell actually shows on
+	// the cursor's prompt rows, prompt chrome included — the screen's truth at
+	// the moment Enter is pressed. It is nil when no live view is attached, and
+	// it answers ok=false when there is no trustworthy line (no shell
+	// integration, a program running, the alternate screen). The tap consults
+	// it to reconcile the keystroke mirror against the rendered line: after a
+	// history recall or reverse search the mirror is empty or lost but the
+	// rendered line is the command about to run. It is invoked synchronously
+	// from the input path, so it must only read the screen, never write input.
+	// Guarded by mu.
+	submittedInput func() (string, int, bool)
+	// promptPrefix is the prompt chrome the tap captured from the screen: the
+	// text up to the cursor at the first keystroke of a fresh line, the one
+	// moment echo is provably absent because the keystroke has not even reached
+	// the shell. It is the natcatty answer to the original's cached
+	// lastPromptText — read from the screen, never guessed from prompt shapes.
+	// The recall fallback subtracts it from the rendered line to split the
+	// input from the chrome. Empty when never captured, in which case a recall
+	// capture degrades to the safe discard. Guarded by mu.
+	promptPrefix    string
+	promptPrefixSet bool
 	// inputCSIParams holds the parameter bytes of the CSI sequence being
 	// parsed, so the tap can recognize the bracketed-paste markers.
 	inputCSIParams []byte
@@ -341,6 +362,16 @@ func newTerminalTap(policy domainterminal.ClipboardAccess) *terminalTap {
 func (t *terminalTap) setClipboardPolicy(policy domainterminal.ClipboardAccess) {
 	t.mu.Lock()
 	t.policy = policy
+	t.mu.Unlock()
+}
+
+// setSubmittedInputReader registers the reader the tap consults at Enter, or
+// clears it with nil. The reader is the live view's window onto the screen; it
+// is replaced when a view attaches and cleared when it detaches, so a
+// hibernated view never answers for its replacement.
+func (t *terminalTap) setSubmittedInputReader(reader func() (string, int, bool)) {
+	t.mu.Lock()
+	t.submittedInput = reader
 	t.mu.Unlock()
 }
 
@@ -2043,7 +2074,7 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 				changed = true
 			}
 		case '\r', '\n':
-			command := strings.TrimSpace(t.inputBuffer)
+			mirror := strings.TrimSpace(t.inputBuffer)
 			lost := t.inputLost
 			t.inputBuffer = ""
 			t.inputCursor = 0
@@ -2067,7 +2098,8 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 				changed = true
 				continue
 			}
-			if command != "" && !lost {
+			command := t.arbitrateSubmittedLocked(mirror, lost)
+			if command != "" {
 				if previous := t.finalizePendingLocked(now, false, 0, false); previous != nil {
 					// A new Enter finalizes the previous command with an
 					// unknown exit and no finish time before the next one
@@ -2095,11 +2127,49 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 			changed = true
 		default:
 			if value >= 0x20 {
+				// The first keystroke of a fresh line is the one moment the
+				// screen provably shows the bare prompt: the echo of this very
+				// byte cannot have rendered yet, because it has not even reached
+				// the shell. Capturing the prompt at Enter is unreliable — fast
+				// input outruns the echo round-trip, so the screen then lags the
+				// mirror — but here the line is still exactly the prompt. This
+				// is the natcatty answer to the original's prompt cache.
+				if t.inputBuffer == "" && !t.inputLost {
+					t.captureEmptyPromptLocked()
+				}
 				changed = t.appendInputByte(value) || changed
 			}
 		}
 	}
 	return changed, started, completions
+}
+
+// captureEmptyPromptLocked records the bare prompt as the prompt prefix. It
+// reads the rendered line while the mirror is still empty at a fresh prompt, so
+// everything up to the cursor is prompt chrome. The cursor sits at the
+// input-start position there, and a prompt's trailing space is before it, so
+// the text up to the cursor is exactly the prefix; the renderer's padding
+// beyond the cursor never joins it. Reading only while the mirror is empty
+// keeps the capture free of echo, so it never mistakes input for chrome. The
+// caller holds mu.
+func (t *terminalTap) captureEmptyPromptLocked() {
+	if t.submittedInput == nil {
+		return
+	}
+	line, cursorOffset, ok := t.submittedInput()
+	if !ok {
+		return
+	}
+	runes := []rune(line)
+	if cursorOffset <= 0 || cursorOffset > len(runes) {
+		return
+	}
+	prefix := string(runes[:cursorOffset])
+	if prefix == "" {
+		return
+	}
+	t.promptPrefix = prefix
+	t.promptPrefixSet = true
 }
 
 // appendInputByte records typed text one byte at a time, waiting for a
@@ -2235,6 +2305,63 @@ func (t *terminalTap) applyInputCSI(final byte) {
 // unknown, so the line never becomes traceable again in this capture.
 func (t *terminalTap) invalidateInputLocked() {
 	t.inputLost = true
+}
+
+// arbitrateSubmittedLocked reconciles the keystroke mirror with the input the
+// shell actually shows on the cursor's line, returning the command Enter is
+// about to submit. The mirror is the most current witness when it is reliable
+// — echo can lag behind fast typing on a slow link, so the screen then trails
+// the buffer — but it goes blind when the line editor rewrites the line in a
+// way the tap cannot mirror: a history recall or reverse search swaps in text
+// the tap never sees. Then the rendered line is the truth, and an empty or
+// lost mirror must not discard a capture the screen can prove.
+//
+// The rendered line carries the prompt chrome, which the tap strips with the
+// prompt prefix it captured at the first keystroke of a fresh line. mirror is
+// the trimmed keystroke buffer; lost reports an untraceable edit. The reader
+// is consulted at most once, here, and never under a hook-owned or
+// awaiting-hook line (those return before this point). The caller holds mu.
+func (t *terminalTap) arbitrateSubmittedLocked(mirror string, lost bool) string {
+	// A reliable non-empty mirror wins: it is ahead of any lagging echo, and
+	// nothing the editor did went unmirrored. This is the common case.
+	if mirror != "" && !lost {
+		return mirror
+	}
+	// From here the mirror is either empty or a lost hybrid. Neither may be
+	// recorded as-is: the hybrid is a command that never ran, and empty is
+	// nothing. The only thing that can rescue the capture is the rendered line
+	// minus the prompt; without it the recall discard stands, because no row is
+	// better than a wrong row.
+	if t.submittedInput == nil || !t.promptPrefixSet {
+		return ""
+	}
+	line, _, ok := t.submittedInput()
+	if !ok {
+		return ""
+	}
+	input := t.stripPromptPrefixLocked(strings.TrimRight(line, " \t"))
+	if input == "" {
+		// An empty input is also what a no-echo password prompt looks like, and
+		// a line that does not start with the captured prompt is a redraw the
+		// capture cannot trust. Never record either, and never surface the
+		// secret the mirror may still hold — the discard is the safe answer.
+		return ""
+	}
+	// The mirror is empty or a lost hybrid, and the rendered line minus the
+	// prompt is the command about to run: a recall repainted it whole.
+	return input
+}
+
+// stripPromptPrefixLocked removes the captured prompt chrome from the rendered
+// line, returning the input the line editor is showing. It returns "" when the
+// line does not start with the captured prefix (a prompt that changed shape, or
+// input echoing a different program's prompt) or when nothing but the prompt is
+// on the line. The caller holds mu.
+func (t *terminalTap) stripPromptPrefixLocked(line string) string {
+	if !strings.HasPrefix(line, t.promptPrefix) {
+		return ""
+	}
+	return strings.TrimSpace(line[len(t.promptPrefix):])
 }
 
 // firstCSIParameter is the first numeric parameter of a CSI sequence, for the
