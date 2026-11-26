@@ -17,7 +17,6 @@ import (
 // tree from growing an operation without bound.
 const (
 	// DirectoryCheckpointVersion is the manifest form this build writes.
-	// Version 1 is still accepted and migrated on resume.
 	DirectoryCheckpointVersion = 2
 
 	// MaxFollowedSymlinkDepth is how many nested symlinked directories a
@@ -30,9 +29,6 @@ const (
 	// MaxTraversalEntries bounds the directory entries one traversal reads.
 	MaxTraversalEntries = 200_000
 )
-
-// EmptyDirectoryManifestHash is the version 1 chain's seed.
-const EmptyDirectoryManifestHash = "0000000000000000000000000000000000000000000000000000000000000000"
 
 // emptyDirectoryManifestStateV2 is the SHA-256 initial state, used as the
 // version 2 seed so the first identity is one compression block.
@@ -57,8 +53,8 @@ var (
 // is already written. The manifest is a fixed 64-character value no matter how
 // many entries the tree holds.
 type DirectoryCheckpoint struct {
-	// Version 1 chained a full SHA-256 over the previous digest; version 2
-	// appends independent identity blocks onto the carried state.
+	// Version is the manifest form; only DirectoryCheckpointVersion is
+	// accepted.
 	Version int `json:"version"`
 	// CoveredEntries is the prefix covered by the manifest.
 	CoveredEntries int `json:"coveredEntries"`
@@ -81,7 +77,7 @@ func CreateEmptyDirectoryCheckpoint() DirectoryCheckpoint {
 // Valid reports whether a persisted checkpoint can be trusted as a resume
 // record. It does not prove the manifest matches a plan; verification does.
 func (c DirectoryCheckpoint) Valid() bool {
-	if c.Version != 1 && c.Version != DirectoryCheckpointVersion {
+	if c.Version != DirectoryCheckpointVersion {
 		return false
 	}
 	if c.CoveredEntries < 0 || c.CompletedEntries < 0 || c.CompletedEntries > c.CoveredEntries {
@@ -128,13 +124,10 @@ func CreateDirectoryEntryIdentity(sourcePath, targetPath string, size, lastModif
 }
 
 // DirectoryManifestAccumulator appends entry identities to a checkpoint
-// manifest. Version 2 carries the raw SHA-256 state, so each append costs one
-// compression block; version 1 re-hashes the previous digest as the original
-// legacy chain did.
+// manifest. It carries the raw SHA-256 state, so each append costs one
+// compression block.
 type DirectoryManifestAccumulator struct {
-	version int
-	state   [8]uint32
-	legacy  string
+	state [8]uint32
 }
 
 // NewDirectoryManifestAccumulator starts from a checkpoint's covered prefix.
@@ -142,25 +135,17 @@ func NewDirectoryManifestAccumulator(checkpoint DirectoryCheckpoint) (*Directory
 	if !checkpoint.Valid() {
 		return nil, errInvalidDirectoryManifest
 	}
-	if checkpoint.Version == 1 {
-		return &DirectoryManifestAccumulator{version: 1, legacy: checkpoint.ManifestHash}, nil
-	}
 	state, err := parseManifestState(checkpoint.ManifestHash)
 	if err != nil {
 		return nil, err
 	}
-	return &DirectoryManifestAccumulator{version: 2, state: state}, nil
+	return &DirectoryManifestAccumulator{state: state}, nil
 }
 
 // Append adds one 64-character entry identity.
 func (a *DirectoryManifestAccumulator) Append(identity string) error {
 	if !validManifestHash(identity) {
 		return errInvalidDirectoryManifest
-	}
-	if a.version == 1 {
-		sum := sha256.Sum256([]byte(a.legacy + ":" + identity))
-		a.legacy = hex.EncodeToString(sum[:])
-		return nil
 	}
 	var block [64]byte
 	copy(block[:], identity)
@@ -170,9 +155,6 @@ func (a *DirectoryManifestAccumulator) Append(identity string) error {
 
 // Digest returns the current fixed-width manifest.
 func (a *DirectoryManifestAccumulator) Digest() string {
-	if a.version == 1 {
-		return a.legacy
-	}
 	var out [64]byte
 	for index, word := range a.state {
 		hex.Encode(out[index*8:index*8+8], []byte{
@@ -203,13 +185,7 @@ func VerifyDirectoryCheckpoint(checkpoint DirectoryCheckpoint, identities []stri
 	if !checkpoint.Valid() || checkpoint.CoveredEntries > len(identities) {
 		return false
 	}
-	seed := DirectoryCheckpoint{
-		Version:      checkpoint.Version,
-		ManifestHash: EmptyDirectoryManifestHash,
-	}
-	if checkpoint.Version == DirectoryCheckpointVersion {
-		seed = CreateEmptyDirectoryCheckpoint()
-	}
+	seed := CreateEmptyDirectoryCheckpoint()
 	accumulator, err := NewDirectoryManifestAccumulator(seed)
 	if err != nil {
 		return false
@@ -220,29 +196,6 @@ func VerifyDirectoryCheckpoint(checkpoint DirectoryCheckpoint, identities []stri
 		}
 	}
 	return accumulator.Digest() == checkpoint.ManifestHash
-}
-
-// MigrateDirectoryCheckpoint upgrades a verified version 1 record to version
-// 2. It returns false when the record is not a legacy record or its manifest
-// does not match the plan.
-func MigrateDirectoryCheckpoint(checkpoint DirectoryCheckpoint, identities []string) (DirectoryCheckpoint, bool) {
-	if checkpoint.Version != 1 || !VerifyDirectoryCheckpoint(checkpoint, identities) {
-		return DirectoryCheckpoint{}, false
-	}
-	migrated := CreateEmptyDirectoryCheckpoint()
-	accumulator, err := NewDirectoryManifestAccumulator(migrated)
-	if err != nil {
-		return DirectoryCheckpoint{}, false
-	}
-	for _, identity := range identities[:checkpoint.CoveredEntries] {
-		if err := accumulator.Append(identity); err != nil {
-			return DirectoryCheckpoint{}, false
-		}
-	}
-	migrated.ManifestHash = accumulator.Digest()
-	migrated.CoveredEntries = checkpoint.CoveredEntries
-	migrated.CompletedEntries = checkpoint.CompletedEntries
-	return migrated, true
 }
 
 // DirectoryTraversalBudget bounds one traversal and tracks the current branch

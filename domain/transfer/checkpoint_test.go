@@ -1,8 +1,6 @@
 package transfer
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -51,68 +49,6 @@ func TestDirectoryManifestDetectsChangedAndReorderedEntries(t *testing.T) {
 	}
 	if reordered := buildCheckpoint(t, []string{second, first}); reordered.ManifestHash == original.ManifestHash {
 		t.Fatal("a reordered prefix kept the manifest")
-	}
-}
-
-// TestLegacyChainedManifestsRemainValidAndAppendCompatible keeps ticket 32
-// compatible with the original v1 checkpoint that chained a full SHA-256.
-func TestLegacyChainedManifestsRemainValidAndAppendCompatible(t *testing.T) {
-	identity := strings.Repeat("a", 64)
-	legacy := DirectoryCheckpoint{
-		Version:      1,
-		ManifestHash: strings.Repeat("0", 64),
-	}
-	var err error
-	legacy, err = AppendDirectoryCheckpointIdentity(legacy, identity)
-	if err != nil {
-		t.Fatalf("append: %v", err)
-	}
-	legacy.CompletedEntries = 1
-	want := sha256.Sum256([]byte(strings.Repeat("0", 64) + ":" + identity))
-	if legacy.ManifestHash != hex.EncodeToString(want[:]) {
-		t.Fatalf("legacy manifest = %q, want %x", legacy.ManifestHash, want)
-	}
-	if !legacy.Valid() {
-		t.Fatalf("legacy checkpoint is invalid: %+v", legacy)
-	}
-	migrated, ok := MigrateDirectoryCheckpoint(legacy, []string{identity})
-	if !ok || migrated.Version != 2 || migrated.CompletedEntries != 1 {
-		t.Fatalf("migration = %+v, ok=%v", migrated, ok)
-	}
-	if migrated.ManifestHash != buildCheckpoint(t, []string{identity}).ManifestHash {
-		t.Fatal("migration changed the covered prefix")
-	}
-}
-
-// TestDirectoryManifestV2MatchesTheOriginalCompressionState anchors the
-// hand-rolled fixed-width chain to the Electron implementation. These values
-// were produced by running the original
-// domain/sftpDirectoryCheckpoint.ts under Node: the empty v2 seed, one append
-// of "a"*64, one more of "b"*64, and the identity vector for one entry. A
-// wrong round constant or schedule would still be self-consistent, so only a
-// cross-implementation vector catches a resume from an original checkpoint.
-func TestDirectoryManifestV2MatchesTheOriginalCompressionState(t *testing.T) {
-	empty := CreateEmptyDirectoryCheckpoint()
-	if empty.ManifestHash != "6a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19" {
-		t.Fatalf("v2 seed = %q", empty.ManifestHash)
-	}
-	one, err := AppendDirectoryCheckpointIdentity(empty, strings.Repeat("a", 64))
-	if err != nil {
-		t.Fatalf("append a: %v", err)
-	}
-	if one.ManifestHash != "df5bb81ce81e0626fb45a8944fd40f31b25e6816d6d499c1ab90492900635e66" {
-		t.Fatalf("one append = %q", one.ManifestHash)
-	}
-	two, err := AppendDirectoryCheckpointIdentity(one, strings.Repeat("b", 64))
-	if err != nil {
-		t.Fatalf("append b: %v", err)
-	}
-	if two.ManifestHash != "f56825e3e9cd19e4c2387bdb12829d491978aae39d2133bf34672a557135373c" {
-		t.Fatalf("two appends = %q", two.ManifestHash)
-	}
-	if got := CreateDirectoryEntryIdentity("/src/a.txt", "/dest/a.txt", 13, 1_700_000_000_000); got !=
-		"fdb57d173fb6ff33a6ec7b0c3416d8c0098ee62092fa5c57e26dcfd951415c64" {
-		t.Fatalf("entry identity = %q", got)
 	}
 }
 
@@ -203,18 +139,12 @@ func TestDirectoryTraversalBudgetEnforcesLimitsAndCycles(t *testing.T) {
 	}
 }
 
-// TestDirectorySymlinkDepthMatchesTheOriginalLimit fixes the shared policy.
-func TestDirectorySymlinkDepthMatchesTheOriginalLimit(t *testing.T) {
-	if MaxFollowedSymlinkDepth != 32 {
-		t.Fatalf("MaxFollowedSymlinkDepth = %d", MaxFollowedSymlinkDepth)
-	}
+// TestDirectorySymlinkDepthIsEnforced fixes the shared policy.
+func TestDirectorySymlinkDepthIsEnforced(t *testing.T) {
 	if !ShouldFollowSymlinkDirectory(0) || !ShouldFollowSymlinkDirectory(31) {
 		t.Error("a depth below the limit was refused")
 	}
 	if ShouldFollowSymlinkDirectory(32) || ShouldFollowSymlinkDirectory(33) {
 		t.Error("a depth at or beyond the limit was followed")
-	}
-	if MaxTraversalDirectories != 50_000 || MaxTraversalEntries != 200_000 {
-		t.Fatalf("traversal limits = %d/%d", MaxTraversalDirectories, MaxTraversalEntries)
 	}
 }

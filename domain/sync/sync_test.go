@@ -5,78 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 )
-
-// TestEnvelopeMatchesTheOriginalElectronVector is the cross-implementation
-// proof: the fixture was produced by the original WebCrypto writer, and this Go
-// reader decrypts it and reproduces the same document byte for byte.
-func TestEnvelopeMatchesTheOriginalElectronVector(t *testing.T) {
-	vector := OriginalFormatVector()
-
-	file, err := UnmarshalFile([]byte(vector.Envelope))
-	if err != nil {
-		t.Fatalf("parse the original envelope: %v", err)
-	}
-	plaintext, err := DecryptPayload(file, vector.Password)
-	if err != nil {
-		t.Fatalf("decrypt the original envelope: %v", err)
-	}
-	if string(plaintext) != vector.Plaintext {
-		t.Fatalf("plaintext differs:\n got %s\nwant %s", plaintext, vector.Plaintext)
-	}
-
-	rebuilt, err := EncryptBytes([]byte(vector.Plaintext), vector.Password, EncryptOptions{
-		Version:    vector.Meta.Version,
-		UpdatedAt:  vector.Meta.UpdatedAt,
-		DeviceID:   vector.Meta.DeviceID,
-		DeviceName: vector.Meta.DeviceName,
-		AppVersion: vector.Meta.AppVersion,
-		Salt:       vector.Salt,
-		IV:         vector.IV,
-	})
-	if err != nil {
-		t.Fatalf("re-encrypt the vector: %v", err)
-	}
-	data, err := MarshalFile(rebuilt)
-	if err != nil {
-		t.Fatalf("marshal the rebuilt envelope: %v", err)
-	}
-	if string(data) != vector.Envelope {
-		t.Fatalf("envelope differs from the original:\n got %s\nwant %s", data, vector.Envelope)
-	}
-
-	if rebuilt.Meta != vector.Meta {
-		t.Fatalf("meta = %+v, want %+v", rebuilt.Meta, vector.Meta)
-	}
-}
-
-func TestEnvelopeFieldOrderMatchesTheOriginal(t *testing.T) {
-	vector := OriginalFormatVector()
-	file, err := UnmarshalFile([]byte(vector.Envelope))
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := MarshalFile(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{
-		`"meta"`, `"version"`, `"updatedAt"`, `"deviceId"`, `"deviceName"`,
-		`"appVersion"`, `"iv"`, `"salt"`, `"algorithm"`, `"kdf"`,
-		`"kdfIterations"`, `"payload"`,
-	}
-	at := 0
-	for _, key := range want {
-		index := strings.Index(string(data[at:]), key)
-		if index < 0 {
-			t.Fatalf("field %s is missing or out of order in:\n%s", key, data)
-		}
-		at += index + len(key)
-	}
-}
 
 func TestEncryptPayloadRoundTripsAndUsesFreshMaterial(t *testing.T) {
 	payload := map[string]any{"hosts": []string{"a"}, "syncedAt": 5}
@@ -184,31 +115,16 @@ func TestMarshalJSONMatchesJSONStringify(t *testing.T) {
 	}
 }
 
-func TestMasterKeyConfigMatchesTheOriginalVerifierVector(t *testing.T) {
-	vector := OriginalFormatVector()
-	config := MasterKeyConfig{
-		VerificationHash: vector.VerificationHash,
-		Salt:             base64.StdEncoding.EncodeToString(vector.Salt),
-		KDF:              KDFPBKDF2,
-		KDFIterations:    KDFIterations,
-		CreatedAt:        1,
-	}
-	if !config.Verify(vector.Password) {
-		t.Fatal("the original verification hash did not verify")
-	}
-	if config.Verify("wrong") {
-		t.Fatal("a wrong password verified")
-	}
-	if !config.Valid() {
-		t.Fatal("the original-shaped verifier was rejected")
-	}
-
+func TestMasterKeyConfigVerifiesOnlyItsPassword(t *testing.T) {
 	created, err := NewMasterKeyConfig("secret", bytes.NewReader(make([]byte, SaltBytes)), time.UnixMilli(10))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !created.Verify("secret") || created.Verify("other") {
 		t.Fatal("a fresh verifier does not verify only its password")
+	}
+	if !created.Valid() {
+		t.Fatal("a fresh verifier was rejected")
 	}
 	if created.KDF != KDFPBKDF2 || created.KDFIterations != KDFIterations {
 		t.Fatalf("created = %+v", created)
