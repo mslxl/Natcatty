@@ -552,6 +552,11 @@ func (s *Surface) attach(conn io.ReadWriteCloser) error {
 		}
 	}
 	s.terminal = term
+	// The capture fallback reads this view's screen at Enter: after a history
+	// recall the rendered line is the truth the keystroke mirror cannot see.
+	// The closure captures this terminal, so a reattach that replaces it stops
+	// answering for the old screen — the registration below is refreshed too.
+	s.session.SetSubmittedInputReader(term.SubmittedLine)
 	// The selection named cells of the terminal that was showing; Resume (or a
 	// reattach) brings a different screen and the rows no longer name it.
 	s.liveSelection.Clear()
@@ -1558,6 +1563,10 @@ func (s *Surface) Hibernate() bool {
 	s.dropOver = false
 	// Closing the terminal closes its ViewConn, which only detaches this
 	// view: the Session, the transport, and the observer feeds stay alive.
+	// Its screen is gone, so the capture fallback must stop reading it — a
+	// hibernated view never answers for the screen, and the recall discard
+	// stands until Resume registers the next view's reader.
+	s.session.SetSubmittedInputReader(nil)
 	_ = s.terminal.Close()
 	s.terminal = nil
 	s.redraw()
@@ -1824,6 +1833,9 @@ func (s *Surface) Close() {
 		s.gate.Cancel()
 		s.drops.Dismiss()
 		if s.terminal != nil {
+			if s.session != nil {
+				s.session.SetSubmittedInputReader(nil)
+			}
 			_ = s.terminal.Close()
 			s.terminal = nil
 		}

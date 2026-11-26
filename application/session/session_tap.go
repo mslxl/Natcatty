@@ -27,6 +27,16 @@ func (s *Session) setClipboardAccess(policy domainterminal.ClipboardAccess) {
 	s.tap.setClipboardPolicy(policy)
 }
 
+// SetSubmittedInputReader registers the reader the tap consults at Enter for
+// the input the shell actually shows, or clears it with nil. The terminal
+// surface registers its live view's reader when it attaches and clears it when
+// the view detaches, so a hibernated or replaced view never answers for the
+// screen the user is actually typing on. The reader runs synchronously on the
+// input path; it must only read the screen, never write input.
+func (s *Session) SetSubmittedInputReader(reader func() (string, int, bool)) {
+	s.tap.setSubmittedInputReader(reader)
+}
+
 // CancelTransfer closes an active file-transfer gate from the UI. It reports
 // whether a transfer was active.
 func (s *Session) CancelTransfer() bool {
